@@ -483,7 +483,11 @@ class SessionOpenWorker:
         if size > 0:
             order["entry_units_intent"] = max(1, int(round(float(size) * 100000)))
         if isinstance(entry_probability, (int, float)):
-            order["entry_probability"] = max(0.0, min(1.0, float(entry_probability)))
+            order_probability = max(0.0, min(1.0, float(entry_probability)))
+            order["entry_probability"] = order_probability
+            order_meta = order.get("meta")
+            if isinstance(order_meta, dict):
+                order_meta["entry_probability"] = order_probability
         return order
 
 

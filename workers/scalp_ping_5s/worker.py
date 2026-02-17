@@ -2032,6 +2032,57 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
             return None, "revert_not_found"
         return None, revert_reason
 
+    if config.DROP_FLOW_ONLY:
+        drop_cutoff = latest_epoch - config.DROP_FLOW_WINDOW_SEC
+        drop_rows: list[dict] = []
+        for row in rows:
+            row_epoch = _safe_float(row.get("epoch"), 0.0)
+            if row_epoch <= 0.0 or row_epoch < drop_cutoff:
+                continue
+            drop_rows.append(row)
+        if len(drop_rows) < config.DROP_FLOW_MIN_TICKS:
+            return (
+                None,
+                "drop_flow_not_enough_rows:"
+                f"{len(drop_rows)}/{config.DROP_FLOW_MIN_TICKS}",
+            )
+
+        drop_mids: list[float] = []
+        for row in drop_rows:
+            _, _, row_mid = _quotes_from_row(row, fallback_mid=0.0)
+            if row_mid <= 0.0:
+                continue
+            drop_mids.append(row_mid)
+        if len(drop_mids) < 2:
+            return None, "drop_flow_invalid_rows"
+
+        drop_pips = (drop_mids[-1] - drop_mids[0]) / config.PIP_VALUE
+        drop_pips_abs = abs(drop_pips)
+        if drop_pips_abs < config.DROP_FLOW_MIN_PIPS:
+            return (
+                None,
+                f"drop_flow_strength_not_met:{drop_pips:.2f}>{config.DROP_FLOW_MIN_PIPS:.2f}",
+            )
+
+        if side == "short" and drop_pips >= 0.0:
+            return None, f"drop_flow_direction_mismatch:{drop_pips:.2f}"
+        if side == "long" and drop_pips <= 0.0:
+            return None, f"drop_flow_direction_mismatch:{drop_pips:.2f}"
+
+        if config.DROP_FLOW_MAX_BOUNCE_PIPS > 0.0:
+            if side == "short":
+                max_bounce = (drop_mids[-1] - min(drop_mids)) / config.PIP_VALUE
+            else:
+                max_bounce = (max(drop_mids) - drop_mids[-1]) / config.PIP_VALUE
+            if max_bounce > config.DROP_FLOW_MAX_BOUNCE_PIPS:
+                return (
+                    None,
+                    f"drop_flow_tail_bounce:{max_bounce:.2f}>{config.DROP_FLOW_MAX_BOUNCE_PIPS:.2f}",
+                )
+
+    if config.SIDE_FILTER and side != config.SIDE_FILTER:
+        return None, f"side_filter_block:{side}"
+
     selected_strength = abs(selected_momentum_pips) / max(0.01, selected_trigger_pips)
     confidence = config.CONFIDENCE_FLOOR + 2 if mode == "revert" else config.CONFIDENCE_FLOOR
     confidence += int(min(22.0, selected_strength * 8.0))
@@ -3339,6 +3390,18 @@ async def scalp_ping_5s_worker() -> None:
             return "momentum_tail_failed_no_revert"
         if base.startswith("momentum_tail_failed"):
             return "momentum_tail_failed"
+        if base.startswith("drop_flow_not_enough_rows"):
+            return "drop_flow_not_enough_rows"
+        if base.startswith("drop_flow_invalid_rows"):
+            return "drop_flow_invalid_rows"
+        if base.startswith("drop_flow_strength_not_met"):
+            return "drop_flow_strength_not_met"
+        if base.startswith("drop_flow_tail_bounce"):
+            return "drop_flow_tail_bounce"
+        if base.startswith("drop_flow_direction_mismatch"):
+            return "drop_flow_direction_mismatch"
+        if base.startswith("drop_flow_short_only"):
+            return "drop_flow_short_only"
         return base
 
     def _infer_signal_side_from_reason(
@@ -3349,6 +3412,24 @@ async def scalp_ping_5s_worker() -> None:
         if "revert_long" in source or "side=long" in source:
             return "long"
         if "revert_short" in source or "side=short" in source:
+            return "short"
+        if "side_filter_block" in source and "long" in source:
+            return "long"
+        if "side_filter_block" in source and "short" in source:
+            return "short"
+        if "drop_flow_strength_not_met" in source and "side=short" in source:
+            return "short"
+        if "drop_flow_direction_mismatch" in source and "side=short" in source:
+            return "short"
+        if "drop_flow_direction_mismatch" in source and "side=long" in source:
+            return "long"
+        if "drop_flow_strength_not_met" in source and "side=long" in source:
+            return "long"
+        if "drop_flow_tail_bounce" in source and "side=long" in source:
+            return "long"
+        if "drop_flow_tail_bounce" in source and "side=short" in source:
+            return "short"
+        if "drop_flow_short_only" in source and "side=short" in source:
             return "short"
         return None
 

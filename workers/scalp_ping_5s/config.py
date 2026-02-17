@@ -31,6 +31,15 @@ def _csv_env(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(tokens))
 
 
+def _normalize_side(raw: str) -> str:
+    side = str(raw or "").strip().lower()
+    if side in {"buy", "long", "open_long"}:
+        return "long"
+    if side in {"sell", "short", "open_short"}:
+        return "short"
+    return ""
+
+
 ENABLED: bool = _bool_env("SCALP_PING_5S_ENABLED", False)
 REQUIRE_PRACTICE: bool = _bool_env("SCALP_PING_5S_REQUIRE_PRACTICE", True)
 POCKET: str = os.getenv("SCALP_PING_5S_POCKET", "scalp_fast").strip() or "scalp_fast"
@@ -39,6 +48,15 @@ STRATEGY_TAG: str = (
 )
 LOG_PREFIX: str = os.getenv("SCALP_PING_5S_LOG_PREFIX", "[SCALP_PING_5S]")
 PATTERN_GATE_OPT_IN: bool = _bool_env("SCALP_PING_5S_PATTERN_GATE_OPT_IN", True)
+SIDE_FILTER: str = _normalize_side(os.getenv("SCALP_PING_5S_SIDE_FILTER", ""))
+DROP_FLOW_ONLY: bool = _bool_env("SCALP_PING_5S_DROP_FLOW_ONLY", False)
+DROP_FLOW_WINDOW_SEC: float = max(0.5, float(os.getenv("SCALP_PING_5S_DROP_FLOW_WINDOW_SEC", "15.0")))
+DROP_FLOW_MIN_PIPS: float = max(0.05, float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_PIPS", "0.30")))
+DROP_FLOW_MIN_TICKS: int = max(2, int(float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_TICKS", "6"))))
+DROP_FLOW_MAX_BOUNCE_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_DROP_FLOW_MAX_BOUNCE_PIPS", "0.05")),
+)
 
 LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))

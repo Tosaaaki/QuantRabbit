@@ -770,6 +770,14 @@ async def scalp_rangefader_worker() -> None:
                     else:
                         _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
                 conf = _tech_conf
+            else:
+                conf = float(signal.get("confidence", 0))
+
+            if isinstance(conf, (int, float)):
+                probability = max(0.0, min(1.0, float(conf) / 100.0))
+                entry_probability = round(probability, 3)
+                entry_thesis["entry_probability"] = entry_probability
+                entry_thesis_ctx["entry_probability"] = entry_probability
 
 
             res = await market_order(
