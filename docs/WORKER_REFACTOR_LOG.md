@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-17（追記）`scalp_ping_5s` / `scalp_ping_5s_b` の低証拠金旧キー整理
+
+- `execution/risk_guard.py` の `allowed_lot` から
+  `MIN_FREE_MARGIN_RATIO` / `ALLOW_HEDGE_ON_LOW_MARGIN` ベースの即時拒否分岐を削除し、A/B共通で
+  margin cap / usage ガードのみに統一。
+- `tests/execution/test_risk_guard.py` の該当期待値を
+  「低マージン閾値の即時拒否」前提から「usage/逆方向ネット縮小時の優先整合」前提へ更新。
+- `ops/env` の `scalp_ping_5s` 系環境ファイルから旧キーを整理。
+  - `SCALP_PING_5S_MIN_FREE_MARGIN_RATIO`
+  - `SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_*`
+  - `SCALP_PING_5S_B_MIN_FREE_MARGIN_RATIO`
+  - `SCALP_PING_5S_B_LOW_MARGIN_HEDGE_RELIEF_*`
+- 全体運用オーバーライド `config/vm_env_overrides_aggressive.env` の
+  `MIN_FREE_MARGIN_RATIO` を除去し、運用キー整合を維持。
+- 対象追記: `ops/env/quant-scalp-ping-5s.env`, `ops/env/scalp_ping_5s_b.env`,
+  `ops/env/scalp_ping_5s_tuning_20260212.env`, `ops/env/scalp_ping_5s_entry_profit_boost_20260213.env`,
+  `ops/env/scalp_ping_5s_max_20260212.env`, `config/vm_env_overrides_aggressive.env`。
+
 ### 2026-02-17（追記）M1Scalper に提案戦略 1/3（`breakout_retest`, `vshape_rebound`）を実装
 
 - `strategies/scalping/m1_scalper.py` に `breakout_retest` / `vshape_rebound` の2シグナル生成ヘルパーを追加。

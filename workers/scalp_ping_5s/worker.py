@@ -2898,55 +2898,6 @@ def _resolve_active_caps(
     return total_cap, side_cap, True
 
 
-def _allow_low_margin_hedge_relief(
-    *,
-    side: str,
-    long_units: float,
-    short_units: float,
-    free_ratio: float,
-    margin_available: float,
-) -> bool:
-    if not config.LOW_MARGIN_HEDGE_RELIEF_ENABLED:
-        return False
-    if free_ratio < config.LOW_MARGIN_HEDGE_RELIEF_MIN_FREE_RATIO:
-        return False
-    if margin_available < config.LOW_MARGIN_HEDGE_RELIEF_MIN_MARGIN_AVAILABLE_JPY:
-        return False
-    if side == "short":
-        return long_units > short_units
-    if side == "long":
-        return short_units > long_units
-    return False
-
-
-def _cap_low_margin_hedge_units(
-    *,
-    side: str,
-    units: int,
-    account_long_units: float,
-    account_short_units: float,
-) -> int:
-    if side == "short":
-        imbalance_units = max(0.0, account_long_units - account_short_units)
-    elif side == "long":
-        imbalance_units = max(0.0, account_short_units - account_long_units)
-    else:
-        imbalance_units = 0.0
-
-    if imbalance_units <= 0.0:
-        return 0
-    max_relief_units = int(
-        max(
-            float(config.MIN_UNITS),
-            imbalance_units * config.LOW_MARGIN_HEDGE_RELIEF_MAX_IMBALANCE_FRACTION,
-        )
-    )
-    abs_units = min(abs(int(units)), max_relief_units)
-    if abs_units < config.MIN_UNITS:
-        return 0
-    return -abs_units if side == "short" else abs_units
-
-
 def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
     if not isinstance(positions, dict):
         return TrapState(False, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
@@ -3338,7 +3289,6 @@ async def scalp_ping_5s_worker() -> None:
     last_density_topup_log_mono = 0.0
     last_keepalive_log_mono = 0.0
     last_max_active_bypass_log_mono = 0.0
-    last_margin_guard_bypass_log_mono = 0.0
     last_bias_log_mono = 0.0
     last_lookahead_log_mono = 0.0
     last_regime_log_mono = 0.0
@@ -4195,36 +4145,7 @@ async def scalp_ping_5s_worker() -> None:
             margin_rate = _safe_float(snap.margin_rate, 0.0)
             free_ratio = _safe_float(snap.free_margin_ratio, 0.0)
 
-            low_margin_hedge_relief = False
-            if free_ratio > 0.0 and free_ratio < config.MIN_FREE_MARGIN_RATIO:
-                low_margin_hedge_relief = _allow_low_margin_hedge_relief(
-                    side=signal.side,
-                    long_units=account_long_units,
-                    short_units=account_short_units,
-                    free_ratio=free_ratio,
-                    margin_available=margin_available,
-                )
-                if not low_margin_hedge_relief:
-                    _note_entry_skip(
-                        "low_margin_block",
-                        f"free_ratio={free_ratio:.3f} threshold={config.MIN_FREE_MARGIN_RATIO:.3f}",
-                    )
-                    continue
-                if (
-                    now_mono - last_margin_guard_bypass_log_mono
-                    >= config.LOW_MARGIN_HEDGE_RELIEF_LOG_INTERVAL_SEC
-                ):
-                    LOG.warning(
-                        "%s margin_guard_hedge_relief side=%s free_ratio=%.3f(min=%.3f) margin_avail=%.0f long=%.0f short=%.0f",
-                        config.LOG_PREFIX,
-                        signal.side,
-                        free_ratio,
-                        config.MIN_FREE_MARGIN_RATIO,
-                        margin_available,
-                        account_long_units,
-                        account_short_units,
-                    )
-                    last_margin_guard_bypass_log_mono = now_mono
+            # 低マージン判定は order_manager の共通ガードへ委譲し、戦略側ではローカル拒否を行わない。
 
             active_total, active_long, active_short = _strategy_trade_counts(
                 pocket_info,
@@ -4413,17 +4334,6 @@ async def scalp_ping_5s_worker() -> None:
             units = abs(units)
             if signal.side == "short":
                 units = -units
-            if low_margin_hedge_relief:
-                units = _cap_low_margin_hedge_units(
-                    side=signal.side,
-                    units=units,
-                    account_long_units=account_long_units,
-                    account_short_units=account_short_units,
-                )
-                if units == 0:
-                    _note_entry_skip("low_margin_hedge_unit_zero")
-                    continue
-
             entry_price = signal.ask if signal.side == "long" else signal.bid
             if entry_price <= 0.0:
                 entry_price = signal.mid

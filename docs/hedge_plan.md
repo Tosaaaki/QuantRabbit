@@ -2,7 +2,8 @@
 
 ## 現状の挙動
 - OANDA は同一ペアで netting。必要証拠金は「ネット units × 価格 × 証拠金率(≒4%)」で計算される。
-- `ALLOW_HEDGE_ON_LOW_MARGIN=1`（デフォルトON）: free margin が閾値未満でもヘッジ方向のエントリーをスキップしない。
+- `ALLOW_HEDGE_ON_LOW_MARGIN` / `MIN_FREE_MARGIN_RATIO` は 2026-02-17 の方針で即時拒否ゲートからは廃止済み。\
+  現在は `allowed_lot` 側の usage / margin cap を起点にサイズ調整し、ヘッジ方向でも低マージン継続の可否を判断。
 - `allowed_lot` でロット計算時に open long/short を参照し、エントリー後の net margin をシミュレートしてサイズ決定（`workers/fast_scalp` / `workers/micro_multistrat` で適用済み）。
 - cap は `MAX_MARGIN_USAGE` を 0.92 にクランプし、`MARGIN_SAFETY_FACTOR` でさらに少し絞る（デフォルト0.9）。
 
@@ -11,8 +12,8 @@
 - 例: 45kショート保有時に50kロングを入れると net +5k → 必要証拠金は ~3.1万円まで低下し、余力が回復する。
 
 ## 推奨設定
-- 確保: `ALLOW_HEDGE_ON_LOW_MARGIN=1`（既定）。
-- 必要なら緩和: `MIN_FREE_MARGIN_RATIO` を 0.005–0.008 に下げてヘッジ方向を通しやすくする。
+- 確保: ヘッジ方向を通す前提自体は維持（usage/NETベースでサイズ管理）。
+- `ALLOW_HEDGE_ON_LOW_MARGIN` / `MIN_FREE_MARGIN_RATIO` は既存設定のままでも本ガードには影響しない（旧キーとして整理対象）。
 - スプレッドが原因で止まる場合: `FAST_SCALP_MAX_SPREAD_PIPS` を 1.1–1.2p 目安に調整して検証。
 - stale 緩和: `FAST_SCALP_MAX_SIGNAL_AGE_MS=6000`（遅い tick feed でもエントリー可能）。
 

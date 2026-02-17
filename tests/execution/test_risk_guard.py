@@ -166,10 +166,9 @@ def test_allowed_lot_allows_flatten_when_risk_overshoots(monkeypatch):
     assert abs(lot - 0.300) < 1e-9
 
 
-def test_allowed_lot_treats_buy_sell_as_long_short_for_hedge_relief(monkeypatch):
+def test_allowed_lot_distinguishes_hedge_direction_under_tight_margin(monkeypatch):
     monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
     monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
-    monkeypatch.setenv("ALLOW_HEDGE_ON_LOW_MARGIN", "0")
 
     equity = 200_000.0
     margin_available = 1_000.0  # free ratio 0.5%
@@ -193,7 +192,7 @@ def test_allowed_lot_treats_buy_sell_as_long_short_for_hedge_relief(monkeypatch)
     )
     assert lot_sell > 0.0
 
-    # buy (= long) is same-side in this setup, so low-margin guard should block.
+    # buy (= long) is same-side in this setup, so margin gate should block.
     lot_buy = risk_guard.allowed_lot(
         equity,
         sl_pips=120.0,

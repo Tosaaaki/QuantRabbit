@@ -968,35 +968,7 @@ def allowed_lot(
         gap_units = max(0.0, long_units - short_units)
     gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
 
-    # free margin が枯渇していれば発注自体を止める
-    min_free_margin_ratio = max(0.005, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.01") or 0.01))
-    if equity > 0 and margin_available is not None:
-        free_ratio = margin_available / equity if equity > 0 else 0.0
-        netting_reduce = False
-        if side_norm == "long" and long_units < short_units:
-            netting_reduce = True
-        elif side_norm == "short" and short_units < long_units:
-            netting_reduce = True
-        if free_ratio < min_free_margin_ratio and not netting_reduce:
-            allow_low_margin = os.getenv("ALLOW_HEDGE_ON_LOW_MARGIN", "1").strip().lower() not in {
-                "",
-                "0",
-                "false",
-                "off",
-                "no",
-            }
-            if not allow_low_margin:
-                logging.info(
-                    "[RISK] free margin low: ratio=%.3f < min=%.3f -> skip",
-                    free_ratio,
-                    min_free_margin_ratio,
-                )
-                return 0.0
-            logging.warning(
-                "[RISK] free margin low but ALLOW_HEDGE_ON_LOW_MARGIN enabled: ratio=%.3f < min=%.3f (continue)",
-                free_ratio,
-                min_free_margin_ratio,
-            )
+    # ここでのサイズ制御は margin cap / usage 側のガードに一本化し、低証拠金閾値の即時拒否は行わない。
 
     risk_amount = equity * risk_pct
     lot_risk = MAX_LOT

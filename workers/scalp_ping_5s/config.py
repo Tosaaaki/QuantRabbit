@@ -836,42 +836,6 @@ MAX_UNITS: int = max(MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_MAX_UNITS", "
 BASE_ENTRY_UNITS: int = max(
     MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_BASE_ENTRY_UNITS", "10000")))
 )
-MIN_FREE_MARGIN_RATIO: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_MIN_FREE_MARGIN_RATIO", "0.03"))
-)
-LOW_MARGIN_HEDGE_RELIEF_ENABLED: bool = _bool_env(
-    "SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_ENABLED",
-    False,
-)
-LOW_MARGIN_HEDGE_RELIEF_MIN_FREE_RATIO: float = max(
-    0.0,
-    float(os.getenv("SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_MIN_FREE_RATIO", "0.015")),
-)
-LOW_MARGIN_HEDGE_RELIEF_MIN_MARGIN_AVAILABLE_JPY: float = max(
-    0.0,
-    float(
-        os.getenv(
-            "SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_MIN_MARGIN_AVAILABLE_JPY",
-            "1500",
-        )
-    ),
-)
-LOW_MARGIN_HEDGE_RELIEF_MAX_IMBALANCE_FRACTION: float = max(
-    0.1,
-    min(
-        1.0,
-        float(
-            os.getenv(
-                "SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_MAX_IMBALANCE_FRACTION",
-                "0.60",
-            )
-        ),
-    ),
-)
-LOW_MARGIN_HEDGE_RELIEF_LOG_INTERVAL_SEC: float = max(
-    1.0,
-    float(os.getenv("SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_LOG_INTERVAL_SEC", "8.0")),
-)
 
 CONFIDENCE_FLOOR: int = max(0, int(float(os.getenv("SCALP_PING_5S_CONF_FLOOR", "58"))))
 CONFIDENCE_CEIL: int = max(
