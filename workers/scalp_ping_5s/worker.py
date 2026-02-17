@@ -4828,6 +4828,11 @@ async def scalp_ping_5s_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
+            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M1", "step_bars": 1})
+            entry_thesis_ctx.setdefault("forecast_timeframe", "M1")
+            entry_thesis_ctx.setdefault("forecast_step_bars", 1)
+            entry_thesis_ctx.setdefault("forecast_horizon", "1m")
+            entry_thesis_ctx.setdefault("forecast_technical_only", True)
 
             tech_decision = evaluate_entry_techniques(
                 entry_price=_tech_entry_price,
@@ -4847,6 +4852,30 @@ async def scalp_ping_5s_worker() -> None:
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
             entry_thesis_ctx["tech_decision_allowed"] = bool(tech_decision.allowed)
+            _tech_tp_mult = max(
+                0.2,
+                min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
+            )
+            entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
+            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+                _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
+                if _tp_gap > 0:
+                    _tp_target = (
+                        float(_tech_entry_price) + (_tp_gap * _tech_tp_mult)
+                        if _tech_side == "long"
+                        else float(_tech_entry_price) - (_tp_gap * _tech_tp_mult)
+                    )
+                    sl_price, tp_price = clamp_sl_tp(
+                        price=float(_tech_entry_price),
+                        sl=sl_price,
+                        tp=round(_tp_target, 3),
+                        is_buy=(_tech_side == "long"),
+                    )
+                    if isinstance(tp_price, (int, float)):
+                        entry_thesis_ctx["tp_pips"] = round(
+                            abs(float(tp_price) - float(_tech_entry_price)) / 0.01,
+                            3,
+                        )
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):

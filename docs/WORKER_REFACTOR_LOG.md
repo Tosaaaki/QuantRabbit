@@ -1234,3 +1234,25 @@
   - `ops/env/quant-scalp-ping-5s.env`: `SCALP_PING_5S_ENABLED=0` に変更。
   - `ops/env/quant-scalp-ping-5s-b.env`: `SCALP_PING_5S_B_ENABLED=1` に変更。
 - 意図: systemdの `EnvironmentFile` 多重読み込み時でも、無印は常時idle、Bは常時有効の状態を維持する。
+
+### 2026-02-17（追記）戦略ローカル予測で TP/ロット補正を標準化
+
+- `analysis/technique_engine.py`
+  - `evaluate_entry_techniques()` に戦略ローカル予測（forecast profile: `timeframe`/`step_bars`）を追加。
+  - 予測から `expected_pips` / `p_up` / `directional_edge` を算出し、`size_mult` と `tp_mult` を出力。
+  - `TechniqueEntryDecision` に `tp_mult` を追加し、`debug.forecast` で監査できるようにした。
+- `workers/scalp_ping_5s/worker.py`
+  - `forecast_profile=M1x1` を `entry_thesis` に明示。
+  - `tech_decision.tp_mult` で TP を再スケールし、`entry_units_intent` は `size_mult` 反映後の値を維持。
+- `workers/scalp_m1scalper/worker.py`
+  - limit/market の両経路で `forecast_profile=M1x5` を明示。
+  - `tech_tp_mult` を `entry_thesis` へ記録し、TP価格を再計算して `clamp_sl_tp` へ再適用。
+- `workers/scalp_rangefader/worker.py`
+  - `forecast_profile=M1x5` を明示し、ローカル予測を TP/units の補正へ接続。
+- `workers/scalp_macd_rsi_div/worker.py`
+  - `forecast_profile=M5x2`（10分相当）を明示し、TP再スケールを追加。
+- `workers/micro_runtime/worker.py`
+  - `forecast_profile=M5x2` を明示し、各 micro 戦略のエントリーで TP/ロット補正を統一。
+- `execution/strategy_entry.py`
+  - `_STRATEGY_TECH_CONTEXT_REQUIREMENTS` に `forecast_profile` と `forecast_technical_only` を追加。
+  - 戦略契約未指定でも、`forecast_horizon` と整合する予測間隔が補完されるようにした。

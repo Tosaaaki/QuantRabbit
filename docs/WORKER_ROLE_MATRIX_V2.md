@@ -61,6 +61,9 @@
   - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
 - 各戦略ENTRYでは `entry_thesis["technical_context"]` に技術入力断面（`indicators`/`ticks`/要求TF）を保持する。  
 - N波/フィボ/ローソクを含む技術判定は、各戦略ワーカー側のローカルロジックで実施する。  
+- 各戦略ENTRYは、戦略タグ別の `forecast_profile`（`timeframe`/`step_bars`）を `entry_thesis` へ持ち、
+  ローカル予測（テクニカル由来の方向・期待pips）を算出して `tp_mult` / `size_mult` の補正に使う。  
+- TP再計算とロット補正は戦略ワーカー内で完結させ、`order_manager` 側で戦略意図を再採点しない。  
 - `technical_context.result` は保存用の監査フィールド。戦略側が独自評価を入れる場合のみ埋める。  
 - 補足（技術要件契約）:
   - 技術要件は `execution/strategy_entry.py` の契約辞書で戦略タグ単位に定義し、`entry_thesis` 未指定項目を自動補完する。
@@ -131,6 +134,8 @@
 - `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
 - 予測決定は `expected_pips` に加えて `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor`
   を `forecast_context` として各経路へ伝播し、`order_manager` と `entry_intent_board` の監査へ反映する。
+- 戦略ワーカー側では forecast gate とは独立に、短中期（例: `M1x1`, `M1x5`, `M5x2`）のローカル予測を
+  エントリー時に都度計算し、`entry_thesis.tech_tp_mult` / `tech_score` / `entry_units_intent` へ反映する。
 - `forecast` 系は `order_manager` の判定処理から切り離し、`execution` 側の責務分離として
   専用 service を通した決定供給を行う。
 

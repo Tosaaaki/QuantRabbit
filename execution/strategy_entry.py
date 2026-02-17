@@ -184,6 +184,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "1m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 1},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_M1SCALPER": {
@@ -192,6 +194,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 120, "M5": 80, "H1": 60},
         "forecast_horizon": "5m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 5},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_MACD_RSI_DIV": {
@@ -200,6 +204,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 160, "M5": 100, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_TICK_IMBALANCE": {
@@ -208,6 +214,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
         "technical_context_candle_counts": {"M1": 160, "M5": 90, "H1": 50},
         "forecast_horizon": "5m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 5},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_PING_5S_B": {
@@ -216,6 +224,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "1m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 1},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_WICK_REVERSAL_BLEND": {
@@ -224,6 +234,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_WICK_REVERSAL_PRO": {
@@ -232,6 +244,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_SQUEEZE_PULSE_BREAK": {
@@ -240,6 +254,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "MICRO_ADAPTIVE_REVERT": {
@@ -248,6 +264,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M5": 120, "M1": 80, "H1": 50},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "MICRO_MULTISTRAT": {
@@ -256,6 +274,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M5": 120, "M1": 140, "H1": 60},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SESSION_OPEN": {
@@ -264,6 +284,8 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
         "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
 }

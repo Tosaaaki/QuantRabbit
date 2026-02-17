@@ -673,6 +673,7 @@ class TechniqueEntryDecision:
     coverage: Optional[float]
     size_mult: float
     debug: Dict[str, object]
+    tp_mult: float = 1.0
 
 
 def _normalize_tf(value: Optional[str]) -> Optional[str]:
@@ -964,6 +965,200 @@ def _resolve_thesis_lookback(
     if not value or value <= 0:
         return fallback
     return value
+
+
+def _resolve_forecast_profile(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    entry_thesis: Optional[dict],
+) -> tuple[str, int]:
+    timeframe: Optional[str] = None
+    step_bars: Optional[int] = None
+    if isinstance(entry_thesis, Mapping):
+        profile = entry_thesis.get("forecast_profile")
+        if isinstance(profile, Mapping):
+            timeframe = _normalize_tf(
+                profile.get("timeframe") or profile.get("forecast_timeframe")
+            )
+            step_raw = _to_float(profile.get("step_bars") or profile.get("forecast_step_bars"))
+            if step_raw is not None and step_raw > 0:
+                step_bars = int(round(step_raw))
+        if timeframe is None:
+            timeframe = _normalize_tf(
+                entry_thesis.get("forecast_timeframe") or entry_thesis.get("timeframe")
+            )
+        if step_bars is None:
+            step_raw = _to_float(entry_thesis.get("forecast_step_bars"))
+            if step_raw is not None and step_raw > 0:
+                step_bars = int(round(step_raw))
+
+    tag_key = _normalize_tag_key(str(strategy_tag or ""))
+    if timeframe is None:
+        if "ping5s" in tag_key or "s5" in tag_key:
+            timeframe = "M1"
+        elif pocket in {"micro", "macro"}:
+            timeframe = "M5"
+        elif pocket in {"scalp", "scalp_fast"}:
+            timeframe = "M1"
+        else:
+            timeframe = "M5"
+
+    if step_bars is None or step_bars <= 0:
+        if timeframe == "M1":
+            if "ping5s" in tag_key or "s5" in tag_key:
+                step_bars = 1
+            elif "m1" in tag_key or pocket in {"scalp", "scalp_fast"}:
+                step_bars = 5
+            else:
+                step_bars = 10
+        elif timeframe == "M5":
+            step_bars = 2 if pocket in {"scalp", "scalp_fast", "micro"} else 3
+        elif timeframe == "H1":
+            step_bars = 2
+        else:
+            step_bars = 1
+    return timeframe, max(1, int(step_bars))
+
+
+def _candle_close_value(candle: Mapping[str, object]) -> Optional[float]:
+    for key in ("close", "c", "mid_c"):
+        value = _to_float(candle.get(key))
+        if value is not None:
+            return value
+    mid = candle.get("mid")
+    if isinstance(mid, Mapping):
+        value = _to_float(mid.get("c"))
+        if value is not None:
+            return value
+    return None
+
+
+def _candle_range_value(candle: Mapping[str, object]) -> Optional[float]:
+    high = None
+    low = None
+    for key in ("high", "h"):
+        high = _to_float(candle.get(key))
+        if high is not None:
+            break
+    for key in ("low", "l"):
+        low = _to_float(candle.get(key))
+        if low is not None:
+            break
+    mid = candle.get("mid")
+    if (high is None or low is None) and isinstance(mid, Mapping):
+        if high is None:
+            high = _to_float(mid.get("h"))
+        if low is None:
+            low = _to_float(mid.get("l"))
+    if high is None or low is None:
+        return None
+    span = high - low
+    if span <= 0:
+        return None
+    return span
+
+
+def _build_local_forecast_adjustment(
+    *,
+    side: str,
+    pocket: str,
+    strategy_tag: Optional[str],
+    policy: TechniquePolicy,
+    entry_thesis: Optional[dict],
+) -> Optional[dict[str, object]]:
+    timeframe, step_bars = _resolve_forecast_profile(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        entry_thesis=entry_thesis,
+    )
+    base_lookback = _LOOKBACK_BY_TF.get(timeframe, policy.lookback)
+    lookback = max(base_lookback, step_bars * 8, 20)
+    lookback = _resolve_thesis_lookback(
+        timeframe,
+        entry_thesis=entry_thesis,
+        fallback=lookback,
+    )
+    candles = get_candles_snapshot(timeframe, limit=lookback)
+    if not candles:
+        return None
+
+    closes: list[float] = []
+    ranges: list[float] = []
+    for candle in candles:
+        if not isinstance(candle, Mapping):
+            continue
+        close = _candle_close_value(candle)
+        if close is None:
+            continue
+        closes.append(close)
+        span = _candle_range_value(candle)
+        if span is not None:
+            ranges.append(span)
+
+    min_sample = max(6, step_bars + 2)
+    if len(closes) < min_sample:
+        return None
+
+    short_window = min(max(4, step_bars + 1), len(closes) - 1)
+    long_window = min(max(short_window + 1, step_bars * 3), len(closes) - 1)
+    short_change = closes[-1] - closes[-1 - short_window]
+    long_change = closes[-1] - closes[-1 - long_window]
+    drift_per_bar = (
+        0.65 * (short_change / max(short_window, 1))
+        + 0.35 * (long_change / max(long_window, 1))
+    )
+    expected_move = drift_per_bar * float(step_bars)
+    expected_pips = expected_move / PIP
+
+    if ranges:
+        avg_range = sum(ranges[-min(24, len(ranges)) :]) / float(min(24, len(ranges)))
+    else:
+        deltas = [abs(closes[i] - closes[i - 1]) for i in range(1, len(closes))]
+        if not deltas:
+            return None
+        avg_range = sum(deltas[-min(24, len(deltas)) :]) / float(min(24, len(deltas)))
+    avg_range = max(avg_range, PIP * 0.2)
+    avg_range_pips = avg_range / PIP
+
+    normalized = expected_move / avg_range
+    p_up = _clamp(0.5 + normalized * 0.22, 0.05, 0.95)
+    side_key = str(side or "").lower()
+    if side_key in {"buy", "long", "open_long"}:
+        expected_side_pips = expected_pips
+        directional_edge = p_up - 0.5
+    else:
+        expected_side_pips = -expected_pips
+        directional_edge = 0.5 - p_up
+
+    range_unit = max(1.0, avg_range_pips * max(step_bars, 1))
+    edge_from_pips = _clamp(expected_side_pips / range_unit, -1.0, 1.0)
+    support = directional_edge + edge_from_pips * 0.35
+    size_mult = _clamp(1.0 + support * 0.5, 0.35, 1.6)
+    tp_support = directional_edge * 0.8 + edge_from_pips * 0.45
+    tp_mult = _clamp(1.0 + tp_support * 0.55, 0.55, 1.7)
+    if expected_side_pips < 0.0:
+        tp_mult = min(tp_mult, 0.95)
+    trend_bias = "flat"
+    if expected_pips > 0.08:
+        trend_bias = "up"
+    elif expected_pips < -0.08:
+        trend_bias = "down"
+
+    return {
+        "available": True,
+        "timeframe": timeframe,
+        "step_bars": step_bars,
+        "sample": len(closes),
+        "expected_pips": round(expected_pips, 4),
+        "expected_side_pips": round(expected_side_pips, 4),
+        "p_up": round(p_up, 4),
+        "directional_edge": round(directional_edge, 4),
+        "avg_range_pips": round(avg_range_pips, 4),
+        "trend_bias": trend_bias,
+        "size_mult": round(size_mult, 4),
+        "tp_mult": round(tp_mult, 4),
+    }
 
 
 def _resolve_mtf_tfs(
@@ -1412,7 +1607,28 @@ def evaluate_entry_techniques(
     if score is not None:
         size_mult = 1.0 + max(0.0, score) * policy.size_scale
         size_mult = max(policy.size_min, min(policy.size_max, size_mult))
+    base_size_mult = size_mult
+    forecast_tp_mult = 1.0
+    forecast_debug = _build_local_forecast_adjustment(
+        side=side,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        policy=policy,
+        entry_thesis=entry_thesis,
+    )
+    if isinstance(forecast_debug, dict):
+        forecast_size_mult = _to_float(forecast_debug.get("size_mult")) or 1.0
+        forecast_tp_mult = _to_float(forecast_debug.get("tp_mult")) or 1.0
+        size_mult = _clamp(
+            base_size_mult * forecast_size_mult,
+            policy.size_min,
+            max(policy.size_max, policy.size_min),
+        )
+        forecast_tp_mult = _clamp(forecast_tp_mult, 0.4, 2.0)
+        debug["forecast"] = forecast_debug
+    debug["size_mult_base"] = round(base_size_mult, 3)
     debug["size_mult"] = round(size_mult, 3)
+    debug["tp_mult"] = round(float(forecast_tp_mult), 3)
 
     return TechniqueEntryDecision(
         allowed=allowed,
@@ -1421,6 +1637,7 @@ def evaluate_entry_techniques(
         coverage=coverage,
         size_mult=size_mult,
         debug=debug,
+        tp_mult=float(forecast_tp_mult),
     )
 def _axis_from_thesis(thesis: dict) -> Optional[RangeSnapshot]:
     if not isinstance(thesis, dict):
