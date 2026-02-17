@@ -138,6 +138,9 @@
   エントリー時に都度計算し、`entry_thesis.tech_tp_mult` / `tech_score` / `entry_units_intent` へ反映する。
 - ローカル予測の過去再現評価は `scripts/eval_local_forecast.py` を正規手順として使い、
   `baseline` 比で `hit_rate` と `MAE(pips)` を同時監査する。
+- 短期 horizon（`1m`/`5m`/`10m`）は `forecast_gate` 内で `M1` 基準に正規化して計算する。
+  戦略が `M5x2` のような指定を渡した場合も、短期は `M1` へ換算（例: `M5x2 -> M1x10`）し、
+  足更新遅延による stale/欠損の影響を最小化する。
 - `forecast` 系は `order_manager` の判定処理から切り離し、`execution` 側の責務分離として
   専用 service を通した決定供給を行う。
 

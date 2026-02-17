@@ -285,9 +285,9 @@ _HORIZON_META_DEFAULT = {
     "8h": {"timeframe": "M5", "step_bars": 96},
     "1d": {"timeframe": "H1", "step_bars": 24},
     "1w": {"timeframe": "D1", "step_bars": 5},
-    "1m": {"timeframe": "M1", "step_bars": 12},
-    "5m": {"timeframe": "M5", "step_bars": 6},
-    "10m": {"timeframe": "M5", "step_bars": 12},
+    "1m": {"timeframe": "M1", "step_bars": 1},
+    "5m": {"timeframe": "M1", "step_bars": 5},
+    "10m": {"timeframe": "M1", "step_bars": 10},
 }
 _TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 _TECH_HORIZON_CFG = {
@@ -779,6 +779,26 @@ def _timeframe_minutes(timeframe: str) -> float:
     return float(_TF_MINUTES.get(str(timeframe or "").strip().upper(), 5.0))
 
 
+def _normalize_short_horizon_profile_to_m1(
+    *,
+    horizon: str,
+    timeframe: str,
+    step_bars: int,
+) -> tuple[str, int, Optional[str]]:
+    horizon_key = str(horizon or "").strip().lower()
+    if horizon_key not in {"1m", "5m", "10m"}:
+        return timeframe, step_bars, None
+    tf = str(timeframe or "").strip().upper()
+    if tf == "M1":
+        return "M1", int(step_bars), None
+    minutes = _timeframe_minutes(tf)
+    if minutes <= 0.0:
+        return timeframe, step_bars, None
+    converted_step = max(1, int(round(float(step_bars) * minutes)))
+    detail = f"{tf}x{int(step_bars)}->M1x{converted_step}"
+    return "M1", converted_step, detail
+
+
 def _projection_bias_from_candles(
     candles: list[dict],
     *,
@@ -1205,17 +1225,26 @@ def _technical_row_for_forecast_profile(
                 step_bars = _to_positive_int(horizon_spec.get("step_bars"))
     if not timeframe or not step_bars:
         return None
+    timeframe, step_bars, normalized_detail = _normalize_short_horizon_profile_to_m1(
+        horizon=horizon,
+        timeframe=timeframe,
+        step_bars=step_bars,
+    )
     try:
         candles_by_tf = _fetch_candles_by_tf()
     except Exception:
         return None
     candles = candles_by_tf.get(timeframe) or []
-    return _technical_prediction_for_horizon(
+    row = _technical_prediction_for_horizon(
         candles,
         horizon=horizon,
         step_bars=step_bars,
         timeframe=timeframe,
     )
+    if isinstance(row, dict):
+        if normalized_detail:
+            row["profile_normalization"] = normalized_detail
+    return row
 
 
 def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:

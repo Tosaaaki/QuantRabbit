@@ -1290,3 +1290,15 @@
     - step=1: hit `0.4597`, MAE `1.6391`（改善）
     - step=5: hit `0.4850`, MAE `4.3381`（改善）
     - step=10: hit `0.4699`, MAE `6.8365`（維持）
+
+### 2026-02-17（追記）短期 horizon（1m/5m/10m）を M1 基準へ統一
+
+- `workers/common/forecast_gate.py`
+  - `_HORIZON_META_DEFAULT` の短期定義を `M1x1 / M1x5 / M1x10` へ変更。
+  - `profile.timeframe` が `M5/H1` 等でも、`horizon in {1m,5m,10m}` の場合は
+    `step_bars * timeframe_minutes` で `M1` へ正規化する処理を追加。
+  - 正規化時は `profile_normalization`（例: `M5x2->M1x10`）を予測行へ残し監査可能化。
+- 目的:
+  - 短期予測で `M5` 足更新遅延の影響を避ける。
+  - 戦略ごとの `forecast_profile` が `M5x2` を指定していても、短期では最新 `M1` 系列で計算できるようにする。
+  - `NO_MATCHING_HORIZONS` / stale 由来の短期予測欠損を運用側で吸収しやすくする。
