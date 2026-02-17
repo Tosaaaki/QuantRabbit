@@ -1268,3 +1268,25 @@
 - `execution/strategy_entry.py`
   - `_STRATEGY_TECH_CONTEXT_REQUIREMENTS` に `forecast_profile` と `forecast_technical_only` を追加。
   - 戦略契約未指定でも、`forecast_horizon` と整合する予測間隔が補完されるようにした。
+
+### 2026-02-17（追記）ローカル予測の過去検証と精度改善（M1/M5）
+
+- 検証データ:
+  - `logs/candles_M1*.json`, `logs/candles_USDJPY_M1*.json`, `logs/oanda/candles_M1_latest.json` を統合（重複時刻は後勝ち）。
+  - 総バー数: 9,204（`2026-01-06` 〜 `2026-02-17`）。
+- 追加:
+  - `scripts/eval_local_forecast.py` を新規追加。`baseline`（旧式）と `improved`（新式）を同一データで比較可能。
+- `analysis/technique_engine.py` 改善:
+  - `step_bars<=1`: momentum + short mean-reversion（ノイズ抑制）。
+  - `step_bars<=5`: persistence（連続方向性）で trend/reversion を混合。
+  - `step_bars>=10`: 既存 baseline を維持（過剰改変を避ける）。
+  - 予測値は `close_vol` ベースでクリップし、`debug.forecast` に `regime/persistence/close_vol_pips` を出力。
+- 検証結果（`scripts/eval_local_forecast.py --steps 1,5,10`）:
+  - baseline
+    - step=1: hit `0.4592`, MAE `1.6525`
+    - step=5: hit `0.4821`, MAE `4.4869`
+    - step=10: hit `0.4699`, MAE `6.8365`
+  - improved
+    - step=1: hit `0.4597`, MAE `1.6391`（改善）
+    - step=5: hit `0.4850`, MAE `4.3381`（改善）
+    - step=10: hit `0.4699`, MAE `6.8365`（維持）

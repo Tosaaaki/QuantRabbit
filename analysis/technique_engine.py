@@ -1100,25 +1100,73 @@ def _build_local_forecast_adjustment(
     if len(closes) < min_sample:
         return None
 
+    close_deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    if not close_deltas:
+        return None
+
     short_window = min(max(4, step_bars + 1), len(closes) - 1)
     long_window = min(max(short_window + 1, step_bars * 3), len(closes) - 1)
     short_change = closes[-1] - closes[-1 - short_window]
     long_change = closes[-1] - closes[-1 - long_window]
-    drift_per_bar = (
-        0.65 * (short_change / max(short_window, 1))
-        + 0.35 * (long_change / max(long_window, 1))
+    short_drift = short_change / max(short_window, 1)
+    long_drift = long_change / max(long_window, 1)
+
+    close_vol_window = min(max(10, step_bars * 8), len(close_deltas))
+    recent_close_deltas = close_deltas[-close_vol_window:]
+    close_vol = (
+        sum(abs(delta) for delta in recent_close_deltas) / float(close_vol_window)
+        if close_vol_window > 0
+        else (PIP * 0.12)
     )
-    expected_move = drift_per_bar * float(step_bars)
+    close_vol = max(close_vol, PIP * 0.12)
+
+    persistence: Optional[float] = None
+    regime = "baseline_momentum"
+    if step_bars <= 1:
+        # 1m profile: slight momentum + short mean reversion to damp noise.
+        w_short = 0.68
+        ma_window = min(max(8, step_bars * 8), len(closes))
+        ma_price = sum(closes[-ma_window:]) / float(ma_window)
+        deviation = closes[-1] - ma_price
+        momentum_move = (
+            w_short * short_drift + (1.0 - w_short) * long_drift
+        ) * float(step_bars)
+        expected_move = momentum_move + (0.10 * close_deltas[-1]) - (0.05 * deviation)
+        regime = "micro_reversion_blend"
+        cap = 1.9 * close_vol * float(max(step_bars, 1))
+        expected_move = _clamp(expected_move, -cap, cap)
+    elif step_bars <= 5:
+        # 5m profile: trend persistence blend with low-persistence reversion.
+        w_short = 0.70
+        ma_window = min(max(8, step_bars * 10), len(closes))
+        ma_price = sum(closes[-ma_window:]) / float(ma_window)
+        deviation = closes[-1] - ma_price
+        signs = [
+            1.0 if delta > 0 else (-1.0 if delta < 0 else 0.0)
+            for delta in recent_close_deltas
+        ]
+        persistence = abs(sum(signs)) / float(len(signs)) if signs else 0.0
+        momentum_move = (
+            w_short * short_drift + (1.0 - w_short) * long_drift
+        ) * float(step_bars)
+        reversion_move = (-deviation) * (1.0 - persistence) * 0.06
+        expected_move = momentum_move + (0.12 * close_deltas[-1]) + reversion_move
+        regime = "trend_persistence_blend"
+        cap = 1.9 * close_vol * float(max(step_bars, 1))
+        expected_move = _clamp(expected_move, -cap, cap)
+    else:
+        drift_per_bar = (0.65 * short_drift) + (0.35 * long_drift)
+        expected_move = drift_per_bar * float(step_bars)
     expected_pips = expected_move / PIP
 
     if ranges:
         avg_range = sum(ranges[-min(24, len(ranges)) :]) / float(min(24, len(ranges)))
     else:
-        deltas = [abs(closes[i] - closes[i - 1]) for i in range(1, len(closes))]
-        if not deltas:
+        abs_deltas = [abs(delta) for delta in close_deltas]
+        if not abs_deltas:
             return None
-        avg_range = sum(deltas[-min(24, len(deltas)) :]) / float(min(24, len(deltas)))
-    avg_range = max(avg_range, PIP * 0.2)
+        avg_range = sum(abs_deltas[-min(24, len(abs_deltas)) :]) / float(min(24, len(abs_deltas)))
+    avg_range = max(avg_range, close_vol, PIP * 0.2)
     avg_range_pips = avg_range / PIP
 
     normalized = expected_move / avg_range
@@ -1150,6 +1198,11 @@ def _build_local_forecast_adjustment(
         "timeframe": timeframe,
         "step_bars": step_bars,
         "sample": len(closes),
+        "regime": regime,
+        "short_window": short_window,
+        "long_window": long_window,
+        "close_vol_pips": round(close_vol / PIP, 4),
+        "persistence": round(persistence, 4) if persistence is not None else None,
         "expected_pips": round(expected_pips, 4),
         "expected_side_pips": round(expected_side_pips, 4),
         "p_up": round(p_up, 4),
