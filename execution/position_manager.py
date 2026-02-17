@@ -56,6 +56,10 @@ _METRICS_DB = pathlib.Path("logs/metrics.db")
 _CHUNK_SIZE = 100
 _MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
 _REQUEST_TIMEOUT = float(os.getenv("POSITION_MANAGER_HTTP_TIMEOUT", "7.0"))
+_ORDERS_DB_READ_TIMEOUT_SEC = max(
+    0.05,
+    _env_float("POSITION_MANAGER_ORDERS_DB_READ_TIMEOUT_SEC", 0.35),
+)
 _RETRY_STATUS_CODES = tuple(
     int(code.strip())
     for code in os.getenv(
@@ -696,6 +700,25 @@ def _build_http_session() -> requests.Session:
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
+
+
+def _open_orders_db_readonly(
+    timeout_sec: float = _ORDERS_DB_READ_TIMEOUT_SEC,
+) -> sqlite3.Connection | None:
+    if not _ORDERS_DB.exists():
+        return None
+    timeout_sec = max(0.05, float(timeout_sec))
+    con = sqlite3.connect(
+        f"file:{_ORDERS_DB}?mode=ro",
+        uri=True,
+        timeout=timeout_sec,
+    )
+    con.row_factory = sqlite3.Row
+    try:
+        con.execute(f"PRAGMA busy_timeout={int(timeout_sec * 1000)}")
+    except sqlite3.Error:
+        pass
+    return con
 
 
 def _ensure_orders_db() -> sqlite3.Connection:
@@ -2098,9 +2121,11 @@ class PositionManager:
             return fallback
 
     def _get_trade_details_from_orders(self, trade_id: str) -> dict | None:
+        con = None
         try:
-            con = _ensure_orders_db()
-            con.row_factory = sqlite3.Row
+            con = _open_orders_db_readonly()
+            if con is None:
+                return None
             row = con.execute(
                 """
                 SELECT pocket, instrument, units, executed_price, ts, client_order_id
@@ -2112,10 +2137,15 @@ class PositionManager:
                 """,
                 (trade_id,),
             ).fetchone()
-            con.close()
         except sqlite3.Error as exc:
             print(f"[PositionManager] orders.db lookup failed for trade {trade_id}: {exc}")
             return None
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
         if not row:
             return None
         ts = row["ts"]
@@ -2131,9 +2161,11 @@ class PositionManager:
         strategy_tag = None
         thesis_obj = None
         if client_id:
+            con2 = None
             try:
-                con2 = _ensure_orders_db()
-                con2.row_factory = sqlite3.Row
+                con2 = _open_orders_db_readonly()
+                if con2 is None:
+                    raise sqlite3.OperationalError("orders.db unavailable")
                 att = con2.execute(
                     """
                     SELECT request_json FROM orders
@@ -2143,7 +2175,6 @@ class PositionManager:
                     """,
                     (client_id,),
                 ).fetchone()
-                con2.close()
                 if att and att["request_json"]:
                     try:
                         payload = json.loads(att["request_json"]) or {}
@@ -2154,6 +2185,12 @@ class PositionManager:
                         thesis_obj = None
             except sqlite3.Error:
                 pass
+            finally:
+                if con2 is not None:
+                    try:
+                        con2.close()
+                    except Exception:
+                        pass
         if strategy_tag is None:
             strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
         raw_tag = None
@@ -2759,10 +2796,20 @@ class PositionManager:
                             thesis_from_comment = parsed
                 except Exception:
                     thesis_from_comment = None
-                # Only resolve entry meta for bot-managed trades.
-                # Manual trades can be long-lived; resolving meta for them triggers repeated orders.db scans
-                # across many workers, which increases CPU load and data lag.
-                meta = self._resolve_entry_meta(trade_id) if is_agent_client else None
+                # Keep open_positions hot path lightweight:
+                # orders.db lookup per trade can block under write contention and fan out into
+                # request timeouts across strategy workers. Resolve from orders.db only when we
+                # cannot infer a strategy tag from client metadata.
+                meta = None
+                if is_agent_client:
+                    inferred_fast = self._infer_strategy_tag(
+                        thesis_from_comment,
+                        client_id,
+                        pocket,
+                    )
+                    needs_orders_lookup = (not client_id) or (inferred_fast is None)
+                    if needs_orders_lookup:
+                        meta = self._resolve_entry_meta(trade_id)
                 if meta:
                     thesis = meta.get("entry_thesis")
                     if isinstance(thesis, str):
@@ -3000,8 +3047,11 @@ class PositionManager:
         unique_ids = tuple(dict.fromkeys(cid for cid in client_ids if cid))
         if not unique_ids:
             return {}
+        con = None
         try:
-            con = _ensure_orders_db()
+            con = _open_orders_db_readonly()
+            if con is None:
+                return {}
         except sqlite3.Error as exc:
             print(f"[PositionManager] Failed to open orders.db: {exc}")
             return {}
@@ -3019,9 +3069,13 @@ class PositionManager:
             ).fetchall()
         except sqlite3.Error as exc:
             print(f"[PositionManager] orders.db query failed: {exc}")
-            con.close()
             return {}
-        con.close()
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
         result: Dict[str, dict] = {}
         for row in rows:
             cid = row["client_order_id"]

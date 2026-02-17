@@ -35,6 +35,23 @@
 - テスト: `tests/workers/test_market_data_feed_worker.py` を追加し、
   timeframe 受け渡しと sync コールバック許容を検証。
 
+### 2026-02-17（追記）position_manager `open_positions` のタイムアウト耐性を強化
+
+- 事象: `scalp_ping_5s_b` / `scalp_ping_5s_flow` で
+  `position_manager open_positions timeout after 6.0s` が断続し、エントリー見送りが増加。
+- 原因:
+  - `get_open_positions()` のホットパスで、agent trade ごとに `orders.db` を参照していた。
+  - 参照側でも `CREATE TABLE/INDEX + COMMIT` を伴う ` _ensure_orders_db()` を毎回呼び、
+    `orders.db` 書き込み競合時に busy timeout を引きずって API 応答が遅延。
+- 対応（`execution/position_manager.py`）:
+  - `orders.db` 読み取り専用ヘルパ（`mode=ro`）を追加し、短い read timeout で fail-fast 化。
+  - `_load_entry_thesis()` / `_get_trade_details_from_orders()` を read-only 経路へ切替。
+  - `get_open_positions()` の per-trade `orders.db` 参照を常時実行から条件実行へ変更し、
+    `client_id/comment` から strategy 推定できる場合は DB lookup を回避。
+- 期待効果:
+  - position-manager API 応答の tail latency を抑制し、
+    strategy worker 側の `position_manager_timeout` による skip を低減。
+
 ### 2026-02-17（追記）予測の価格到達メタを一元化しVMで可視化
 
 - `workers/common/forecast_gate.py` の `ForecastDecision` に `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor` を追加し、ロジック決定と同時に保存するよう統一。
