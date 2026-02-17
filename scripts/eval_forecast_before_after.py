@@ -1,0 +1,607 @@
+#!/usr/bin/env python3
+"""Evaluate forecast technical formulas (before vs after) on the same period.
+
+This script compares:
+- `before`: technical forecast formula before trendline/support-resistance expansion
+- `after`: current technical forecast formula
+
+It also reports directional consistency of `breakout_bias_20` against realized future
+move direction for each horizon step.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import math
+from dataclasses import asdict
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+from typing import Any
+from typing import Optional
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from analysis.forecast_sklearn import compute_feature_frame
+
+PIP = 0.01
+TECH_SCORE_GAIN = 1.0
+TECH_PROB_STRENGTH = 0.75
+TECH_PROJECTION_WEIGHT = 0.38
+DEFAULT_FEATURE_EXPANSION_GAIN = 0.35
+
+TECH_HORIZON_CFG = {
+    "1m": {"trend_w": 0.9, "mr_w": 0.1, "temp": 0.9},
+    "5m": {"trend_w": 0.86, "mr_w": 0.14, "temp": 1.0},
+    "10m": {"trend_w": 0.84, "mr_w": 0.16, "temp": 1.04},
+    "1h": {"trend_w": 0.56, "mr_w": 0.44, "temp": 1.35},
+    "8h": {"trend_w": 0.68, "mr_w": 0.32, "temp": 1.25},
+    "1d": {"trend_w": 0.76, "mr_w": 0.24, "temp": 1.10},
+    "1w": {"trend_w": 0.82, "mr_w": 0.18, "temp": 1.00},
+}
+
+
+@dataclass(frozen=True)
+class EvalRow:
+    step: int
+    horizon: str
+    n: int
+    hit_before: float
+    hit_after: float
+    mae_before: float
+    mae_after: float
+    hit_delta: float
+    mae_delta: float
+    breakout_hit: float
+    breakout_hit_filtered: float
+    breakout_filtered_coverage: float
+
+
+@dataclass(frozen=True)
+class Summary:
+    bars: int
+    from_ts: str
+    to_ts: str
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _sigmoid(x: float) -> float:
+    x = _clamp(float(x), -40.0, 40.0)
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _parse_ts(value: Any) -> Optional[pd.Timestamp]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    ts = pd.to_datetime(text, utc=True, errors="coerce")
+    if pd.isna(ts):
+        return None
+    return ts
+
+
+def _extract_price(candle: dict[str, Any], key: str) -> Optional[float]:
+    if key in candle:
+        return _safe_float(candle.get(key), math.nan)
+    mid = candle.get("mid")
+    if isinstance(mid, dict):
+        return _safe_float(mid.get(key[0]), math.nan)
+    return None
+
+
+def _normalize_candle(candle: dict[str, Any]) -> Optional[dict[str, Any]]:
+    ts = _parse_ts(candle.get("time") or candle.get("timestamp") or candle.get("ts"))
+    if ts is None:
+        return None
+
+    def _pick(*keys: str) -> Optional[float]:
+        for key in keys:
+            if key in candle:
+                value = _safe_float(candle.get(key), math.nan)
+                if math.isfinite(value):
+                    return value
+        mid = candle.get("mid")
+        if isinstance(mid, dict):
+            for k in keys:
+                mkey = k[0]
+                value = _safe_float(mid.get(mkey), math.nan)
+                if math.isfinite(value):
+                    return value
+        return None
+
+    o = _pick("open", "o")
+    h = _pick("high", "h")
+    l = _pick("low", "l")
+    c = _pick("close", "c")
+    if None in {o, h, l, c}:
+        return None
+    return {
+        "timestamp": ts.isoformat(),
+        "open": float(o),
+        "high": float(h),
+        "low": float(l),
+        "close": float(c),
+    }
+
+
+def _load_candles(patterns: list[str]) -> list[dict[str, Any]]:
+    paths: list[str] = []
+    for pattern in patterns:
+        paths.extend(glob.glob(pattern))
+    paths = sorted(set(paths))
+
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        candles = payload.get("candles") if isinstance(payload, dict) else None
+        if not isinstance(candles, list):
+            continue
+        for candle in candles:
+            if not isinstance(candle, dict):
+                continue
+            normalized = _normalize_candle(candle)
+            if normalized is not None:
+                rows.append(normalized)
+
+    if not rows:
+        return []
+
+    # Keep the last candle for each timestamp.
+    dedup: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        dedup[str(row["timestamp"])] = row
+    out = sorted(dedup.values(), key=lambda r: str(r["timestamp"]))
+    return out
+
+
+def _horizon_from_step(step: int) -> str:
+    if step == 1:
+        return "1m"
+    if step == 5:
+        return "5m"
+    if step == 10:
+        return "10m"
+    if step == 12:
+        return "1h"
+    if step >= 24:
+        return "1d"
+    return "8h"
+
+
+def _prediction_before(
+    row: pd.Series,
+    *,
+    step: int,
+    sample_count: int,
+    projection_score: float = 0.0,
+    projection_confidence: float = 0.0,
+) -> tuple[float, float]:
+    atr = max(0.45, abs(_safe_float(row.get("atr_pips_14"), 0.0)))
+    vol = max(0.2, abs(_safe_float(row.get("vol_pips_20"), 0.0)))
+    ret1 = _safe_float(row.get("ret_pips_1"), 0.0) / atr
+    ret3 = _safe_float(row.get("ret_pips_3"), 0.0) / atr
+    ret12 = _safe_float(row.get("ret_pips_12"), 0.0) / max(0.7, atr * 1.2)
+    ma_gap = _safe_float(row.get("ma_gap_pips_10_20"), 0.0) / atr
+    close_ma20 = _safe_float(row.get("close_ma20_pips"), 0.0) / max(0.6, atr)
+    close_ma50 = _safe_float(row.get("close_ma50_pips"), 0.0) / max(0.8, atr)
+    rsi = (_safe_float(row.get("rsi_14"), 50.0) - 50.0) / 16.0
+    range_pos = (_safe_float(row.get("range_pos"), 0.5) - 0.5) * 2.0
+
+    trend_score = (
+        0.82 * math.tanh(ret1 * 1.2)
+        + 1.02 * math.tanh(ret3 * 1.0)
+        + 0.68 * math.tanh(ret12 * 0.7)
+        + 0.74 * math.tanh(ma_gap * 1.1)
+        + 0.46 * math.tanh(close_ma20 * 1.0)
+        + 0.33 * math.tanh(close_ma50 * 0.9)
+        + 0.24 * math.tanh(rsi)
+    )
+    mean_revert_score = (
+        -0.68 * math.tanh(close_ma20 * 1.2)
+        - 0.58 * math.tanh(range_pos * 1.4)
+        - 0.42 * math.tanh(rsi * 1.1)
+    )
+
+    trend_boost = 0.0
+    range_boost = 0.0
+    trend_strength = _clamp(
+        0.18
+        + 0.44 * abs(math.tanh(ma_gap * 1.4))
+        + 0.33 * abs(math.tanh(ret3 * 1.1))
+        + 0.18 * _clamp((vol / max(atr, 1e-6)) - 0.55, 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    trend_strength = _clamp(
+        trend_strength + trend_boost - 0.35 * range_boost + 0.05 * abs(projection_score),
+        0.0,
+        1.0,
+    )
+    range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
+    range_pressure = _clamp(range_pressure + 0.45 * range_boost - 0.15 * trend_boost, 0.0, 1.0)
+
+    horizon = _horizon_from_step(step)
+    cfg = TECH_HORIZON_CFG.get(horizon, TECH_HORIZON_CFG["8h"])
+    combo = (
+        cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
+        + cfg["mr_w"] * mean_revert_score * range_pressure
+        + TECH_PROJECTION_WEIGHT * projection_score
+    )
+    raw_prob = _sigmoid(float(cfg["temp"]) * TECH_SCORE_GAIN * combo)
+
+    sample_strength = _clamp((sample_count - 40.0) / 120.0, 0.25, 1.0)
+    damp = TECH_PROB_STRENGTH * sample_strength
+    p_up = _clamp(0.5 + (raw_prob - 0.5) * damp, 0.02, 0.98)
+
+    step_scale = math.sqrt(max(1.0, float(step)) / 12.0)
+    expected_move = max(0.35, vol * step_scale * (0.92 + 0.25 * projection_confidence))
+    expected_pips = (p_up - 0.5) * 2.0 * expected_move
+    return p_up, expected_pips
+
+
+def _prediction_after(
+    row: pd.Series,
+    *,
+    step: int,
+    sample_count: int,
+    feature_expansion_gain: float,
+    projection_score: float = 0.0,
+    projection_confidence: float = 0.0,
+) -> tuple[float, float]:
+    atr = max(0.45, abs(_safe_float(row.get("atr_pips_14"), 0.0)))
+    vol = max(0.2, abs(_safe_float(row.get("vol_pips_20"), 0.0)))
+    ret1 = _safe_float(row.get("ret_pips_1"), 0.0) / atr
+    ret3 = _safe_float(row.get("ret_pips_3"), 0.0) / atr
+    ret12 = _safe_float(row.get("ret_pips_12"), 0.0) / max(0.7, atr * 1.2)
+    ma_gap = _safe_float(row.get("ma_gap_pips_10_20"), 0.0) / atr
+    close_ma20 = _safe_float(row.get("close_ma20_pips"), 0.0) / max(0.6, atr)
+    close_ma50 = _safe_float(row.get("close_ma50_pips"), 0.0) / max(0.8, atr)
+    rsi = (_safe_float(row.get("rsi_14"), 50.0) - 50.0) / 16.0
+    range_pos = (_safe_float(row.get("range_pos"), 0.5) - 0.5) * 2.0
+
+    trend_slope20 = _safe_float(row.get("trend_slope_pips_20"), 0.0) / max(0.55, atr * 0.42)
+    trend_slope50 = _safe_float(row.get("trend_slope_pips_50"), 0.0) / max(0.55, atr * 0.46)
+    trend_accel = _safe_float(row.get("trend_accel_pips"), 0.0) / max(0.40, atr * 0.34)
+    sr_balance = _clamp(_safe_float(row.get("sr_balance_20"), 0.0), -1.0, 1.0)
+    breakout_up = _safe_float(row.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
+    breakout_down = _safe_float(row.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
+    breakout_bias = breakout_up - breakout_down
+    donchian_width = max(0.25, abs(_safe_float(row.get("donchian_width_pips_20"), 0.0)))
+    range_compression = _safe_float(row.get("range_compression_20"), 0.0)
+    trend_pullback = _safe_float(row.get("trend_pullback_norm_20"), 0.0)
+    width_ratio = donchian_width / max(0.45, atr)
+    squeeze_score = _clamp(1.0 - (width_ratio / 8.0), 0.0, 1.0)
+
+    trend_score = (
+        0.82 * math.tanh(ret1 * 1.2)
+        + 1.02 * math.tanh(ret3 * 1.0)
+        + 0.68 * math.tanh(ret12 * 0.7)
+        + 0.74 * math.tanh(ma_gap * 1.1)
+        + 0.46 * math.tanh(close_ma20 * 1.0)
+        + 0.33 * math.tanh(close_ma50 * 0.9)
+        + 0.24 * math.tanh(rsi)
+        + feature_expansion_gain
+        * (
+            0.58 * math.tanh(trend_slope20 * 1.05)
+            + 0.34 * math.tanh(trend_slope50 * 0.95)
+            + 0.22 * math.tanh(trend_accel * 1.2)
+            + 0.30 * math.tanh(breakout_bias * 0.85)
+            + 0.18 * math.tanh(sr_balance * 0.9)
+            + 0.16 * math.tanh(trend_pullback * 0.8)
+        )
+    )
+    mean_revert_score = (
+        -0.68 * math.tanh(close_ma20 * 1.2)
+        - 0.58 * math.tanh(range_pos * 1.4)
+        - 0.42 * math.tanh(rsi * 1.1)
+        + feature_expansion_gain
+        * (
+            -0.44 * math.tanh(sr_balance * 1.2)
+            - 0.26 * math.tanh(breakout_bias * 0.9)
+            - 0.20 * math.tanh(trend_pullback * 0.95)
+            + 0.22 * squeeze_score
+            + 0.08 * math.tanh((0.20 - range_compression) * 3.5)
+        )
+    )
+
+    trend_boost = 0.0
+    range_boost = 0.0
+    trend_strength = _clamp(
+        0.18
+        + 0.44 * abs(math.tanh(ma_gap * 1.4))
+        + 0.33 * abs(math.tanh(ret3 * 1.1))
+        + feature_expansion_gain
+        * (
+            0.18 * abs(math.tanh(trend_slope20 * 1.0))
+            + 0.10 * abs(math.tanh(trend_slope50 * 1.0))
+            + 0.09 * abs(math.tanh(breakout_bias * 0.85))
+        )
+        + 0.18 * _clamp((vol / max(atr, 1e-6)) - 0.55, 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    trend_strength = _clamp(
+        trend_strength + trend_boost - 0.35 * range_boost + 0.05 * abs(projection_score),
+        0.0,
+        1.0,
+    )
+    range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
+    range_pressure = _clamp(
+        range_pressure
+        + 0.45 * range_boost
+        - 0.15 * trend_boost
+        + feature_expansion_gain
+        * (
+            0.16 * squeeze_score
+            + 0.10 * _clamp(1.0 - abs(sr_balance), 0.0, 1.0)
+            - 0.12 * abs(math.tanh(breakout_bias * 0.8))
+        ),
+        0.0,
+        1.0,
+    )
+
+    horizon = _horizon_from_step(step)
+    cfg = TECH_HORIZON_CFG.get(horizon, TECH_HORIZON_CFG["8h"])
+    combo = (
+        cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
+        + cfg["mr_w"] * mean_revert_score * range_pressure
+        + TECH_PROJECTION_WEIGHT * projection_score
+    )
+    raw_prob = _sigmoid(float(cfg["temp"]) * TECH_SCORE_GAIN * combo)
+
+    sample_strength = _clamp((sample_count - 40.0) / 120.0, 0.25, 1.0)
+    damp = TECH_PROB_STRENGTH * sample_strength
+    p_up = _clamp(0.5 + (raw_prob - 0.5) * damp, 0.02, 0.98)
+
+    step_scale = math.sqrt(max(1.0, float(step)) / 12.0)
+    expected_move = max(0.35, vol * step_scale * (0.92 + 0.25 * projection_confidence))
+    expected_pips = (p_up - 0.5) * 2.0 * expected_move
+    return p_up, expected_pips
+
+
+def _evaluate_step(
+    *,
+    candles_df: pd.DataFrame,
+    feats_df: pd.DataFrame,
+    step: int,
+    min_abs_breakout_bias: float,
+    feature_expansion_gain: float,
+) -> EvalRow:
+    merged = feats_df.join(candles_df[["close"]], how="inner")
+    merged["future_pips"] = (merged["close"].shift(-step) - merged["close"]) / PIP
+
+    required = [
+        "future_pips",
+        "atr_pips_14",
+        "vol_pips_20",
+        "ret_pips_1",
+        "ret_pips_3",
+        "ret_pips_12",
+        "ma_gap_pips_10_20",
+        "close_ma20_pips",
+        "close_ma50_pips",
+        "rsi_14",
+        "range_pos",
+        "trend_slope_pips_20",
+        "trend_slope_pips_50",
+        "trend_accel_pips",
+        "sr_balance_20",
+        "breakout_up_pips_20",
+        "breakout_down_pips_20",
+        "donchian_width_pips_20",
+        "range_compression_20",
+        "trend_pullback_norm_20",
+    ]
+    merged = merged.dropna(subset=required)
+
+    hit_before: list[int] = []
+    hit_after: list[int] = []
+    mae_before: list[float] = []
+    mae_after: list[float] = []
+    breakout_hits: list[int] = []
+    breakout_filtered_hits: list[int] = []
+    breakout_filtered_count = 0
+
+    for i, (_, row) in enumerate(merged.iterrows(), start=1):
+        realized = float(row["future_pips"])
+        if abs(realized) < 1e-12:
+            continue
+
+        _, expected_before = _prediction_before(row, step=step, sample_count=i)
+        _, expected_after = _prediction_after(
+            row,
+            step=step,
+            sample_count=i,
+            feature_expansion_gain=feature_expansion_gain,
+        )
+
+        hit_before.append(1 if expected_before * realized > 0.0 else 0)
+        hit_after.append(1 if expected_after * realized > 0.0 else 0)
+        mae_before.append(abs(expected_before - realized))
+        mae_after.append(abs(expected_after - realized))
+
+        breakout_bias = float(row["breakout_up_pips_20"] - row["breakout_down_pips_20"])
+        breakout_hits.append(1 if breakout_bias * realized > 0.0 else 0)
+        if abs(breakout_bias) >= float(min_abs_breakout_bias):
+            breakout_filtered_count += 1
+            breakout_filtered_hits.append(1 if breakout_bias * realized > 0.0 else 0)
+
+    n = len(hit_before)
+    if n <= 0:
+        return EvalRow(
+            step=step,
+            horizon=_horizon_from_step(step),
+            n=0,
+            hit_before=0.0,
+            hit_after=0.0,
+            mae_before=0.0,
+            mae_after=0.0,
+            hit_delta=0.0,
+            mae_delta=0.0,
+            breakout_hit=0.0,
+            breakout_hit_filtered=0.0,
+            breakout_filtered_coverage=0.0,
+        )
+
+    hit_b = sum(hit_before) / float(n)
+    hit_a = sum(hit_after) / float(n)
+    mae_b = sum(mae_before) / float(n)
+    mae_a = sum(mae_after) / float(n)
+    breakout_hit = sum(breakout_hits) / float(len(breakout_hits)) if breakout_hits else 0.0
+    breakout_hit_filtered = (
+        sum(breakout_filtered_hits) / float(len(breakout_filtered_hits))
+        if breakout_filtered_hits
+        else 0.0
+    )
+    coverage = breakout_filtered_count / float(n)
+
+    return EvalRow(
+        step=step,
+        horizon=_horizon_from_step(step),
+        n=n,
+        hit_before=hit_b,
+        hit_after=hit_a,
+        mae_before=mae_b,
+        mae_after=mae_a,
+        hit_delta=hit_a - hit_b,
+        mae_delta=mae_a - mae_b,
+        breakout_hit=breakout_hit,
+        breakout_hit_filtered=breakout_hit_filtered,
+        breakout_filtered_coverage=coverage,
+    )
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--patterns",
+        default="logs/candles_M1*.json,logs/candles_USDJPY_M1*.json,logs/oanda/candles_M1_latest.json",
+        help="Comma-separated glob patterns for M1 candle JSON files.",
+    )
+    ap.add_argument("--steps", default="1,5,10", help="Comma-separated step bars.")
+    ap.add_argument(
+        "--max-bars",
+        type=int,
+        default=0,
+        help="If >0, keep only the latest N bars before evaluation.",
+    )
+    ap.add_argument(
+        "--min-abs-breakout-bias",
+        type=float,
+        default=0.2,
+        help="Minimum abs breakout_bias_20 to count as filtered signal.",
+    )
+    ap.add_argument(
+        "--feature-expansion-gain",
+        type=float,
+        default=DEFAULT_FEATURE_EXPANSION_GAIN,
+        help="Gain for added trendline/support-resistance terms in after formula.",
+    )
+    ap.add_argument("--json-out", default="", help="Optional output JSON path.")
+    args = ap.parse_args()
+
+    patterns = [token.strip() for token in str(args.patterns).split(",") if token.strip()]
+    candles = _load_candles(patterns)
+    if not candles:
+        print("no candles loaded")
+        return 1
+
+    if args.max_bars and args.max_bars > 0:
+        candles = candles[-int(args.max_bars) :]
+
+    candles_df = pd.DataFrame(candles)
+    candles_df["timestamp"] = pd.to_datetime(candles_df["timestamp"], utc=True, errors="coerce")
+    candles_df = candles_df.dropna(subset=["timestamp", "close"]).set_index("timestamp")
+    candles_df = candles_df[~candles_df.index.duplicated(keep="last")]
+    candles_df = candles_df.sort_index()
+
+    feats_df = compute_feature_frame(candles)
+    if feats_df.empty:
+        print("feature frame empty")
+        return 1
+
+    steps: list[int] = []
+    for token in [t.strip() for t in str(args.steps).split(",") if t.strip()]:
+        try:
+            value = int(token)
+        except Exception:
+            continue
+        if value > 0:
+            steps.append(value)
+    steps = sorted(set(steps))
+    if not steps:
+        print("no valid steps")
+        return 1
+
+    feature_expansion_gain = _clamp(float(args.feature_expansion_gain), 0.0, 1.0)
+
+    rows = [
+        _evaluate_step(
+            candles_df=candles_df,
+            feats_df=feats_df,
+            step=step,
+            min_abs_breakout_bias=float(args.min_abs_breakout_bias),
+            feature_expansion_gain=feature_expansion_gain,
+        )
+        for step in steps
+    ]
+
+    summary = Summary(
+        bars=len(candles_df),
+        from_ts=str(candles_df.index.min().isoformat()),
+        to_ts=str(candles_df.index.max().isoformat()),
+    )
+
+    print(
+        f"bars={summary.bars} from={summary.from_ts} to={summary.to_ts} "
+        f"min_abs_breakout_bias={float(args.min_abs_breakout_bias):.4f} "
+        f"feature_expansion_gain={feature_expansion_gain:.4f}"
+    )
+    print(
+        "step horizon n "
+        "hit_before hit_after hit_delta "
+        "mae_before mae_after mae_delta "
+        "breakout_hit breakout_hit_filtered breakout_filtered_coverage"
+    )
+    for row in rows:
+        print(
+            f"{row.step:>4} {row.horizon:>7} {row.n:>5} "
+            f"{row.hit_before:>10.4f} {row.hit_after:>9.4f} {row.hit_delta:>9.4f} "
+            f"{row.mae_before:>10.4f} {row.mae_after:>9.4f} {row.mae_delta:>9.4f} "
+            f"{row.breakout_hit:>11.4f} {row.breakout_hit_filtered:>20.4f} {row.breakout_filtered_coverage:>26.4f}"
+        )
+
+    if args.json_out:
+        payload = {
+            "summary": asdict(summary),
+            "rows": [asdict(r) for r in rows],
+        }
+        out = Path(args.json_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"json_out={out}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

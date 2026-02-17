@@ -195,6 +195,10 @@ def compute_feature_frame(
     ma10 = close.rolling(10).mean()
     ma20 = close.rolling(20).mean()
     ma50 = close.rolling(50).mean()
+    trend_window_short = 20
+    trend_window_long = 50
+    slope20 = (close - close.shift(trend_window_short - 1)) / max(1, trend_window_short - 1)
+    slope50 = (close - close.shift(trend_window_long - 1)) / max(1, trend_window_long - 1)
 
     prev_close = close.shift(1)
     tr = pd.concat(
@@ -211,8 +215,19 @@ def compute_feature_frame(
 
     hh = high.rolling(range_window).max()
     ll = low.rolling(range_window).min()
+    hh_prev = high.shift(1).rolling(range_window).max()
+    ll_prev = low.shift(1).rolling(range_window).min()
     span = (hh - ll).replace(0.0, np.nan)
     range_pos = ((close - ll) / span).clip(0.0, 1.0).fillna(0.5)
+    sr_span_pips = span / pip_size
+    support_gap_pips = (close - ll) / pip_size
+    resistance_gap_pips = (hh - close) / pip_size
+    breakout_up_pips = (close - hh_prev) / pip_size
+    breakout_down_pips = (ll_prev - close) / pip_size
+    sr_balance = ((support_gap_pips - resistance_gap_pips) / sr_span_pips).clip(-1.0, 1.0)
+    compression_ratio = vol20 / sr_span_pips.replace(0.0, np.nan)
+    trend_pullback_norm = ((close - ma20) / pip_size) / atr14.replace(0.0, np.nan)
+    trend_accel = (slope20 - slope50) / pip_size
 
     idx = df.index
     hour = idx.hour.to_numpy()
@@ -230,10 +245,21 @@ def compute_feature_frame(
             "ma_gap_pips_10_20": (ma10 - ma20) / pip_size,
             "close_ma20_pips": (close - ma20) / pip_size,
             "close_ma50_pips": (close - ma50) / pip_size,
+            "trend_slope_pips_20": slope20 / pip_size,
+            "trend_slope_pips_50": slope50 / pip_size,
+            "trend_accel_pips": trend_accel,
             "atr_pips_14": atr14,
             "vol_pips_20": vol20,
             "rsi_14": _rsi(close, 14),
             "range_pos": range_pos,
+            "support_gap_pips_20": support_gap_pips,
+            "resistance_gap_pips_20": resistance_gap_pips,
+            "sr_balance_20": sr_balance,
+            "breakout_up_pips_20": breakout_up_pips,
+            "breakout_down_pips_20": breakout_down_pips,
+            "donchian_width_pips_20": sr_span_pips,
+            "range_compression_20": compression_ratio,
+            "trend_pullback_norm_20": trend_pullback_norm,
             "hour_sin": hour_sin,
             "hour_cos": hour_cos,
             "dow_sin": dow_sin,
@@ -487,4 +513,3 @@ __all__ = [
     "load_bundle",
     "predict_latest",
 ]
-

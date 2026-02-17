@@ -38,6 +38,29 @@ def _synthetic_candles(*, n: int, freq: str) -> list[dict[str, object]]:
     return out
 
 
+def _trend_candles(*, n: int, freq: str, drift: float) -> list[dict[str, object]]:
+    idx = pd.date_range("2026-01-01", periods=n, freq=freq, tz="UTC")
+    base = 150.0
+    wave = 0.01 * np.sin(np.linspace(0.0, 6.0 * math.pi, n))
+    trend = drift * np.arange(n)
+    close = base + trend + wave
+    open_ = np.concatenate([[close[0]], close[:-1]])
+    high = np.maximum(open_, close) + 0.01
+    low = np.minimum(open_, close) - 0.01
+    out: list[dict[str, object]] = []
+    for ts, o, h, l, c in zip(idx, open_, high, low, close):
+        out.append(
+            {
+                "timestamp": ts.isoformat(),
+                "open": float(o),
+                "high": float(h),
+                "low": float(l),
+                "close": float(c),
+            }
+        )
+    return out
+
+
 def test_compute_feature_frame_columns() -> None:
     candles = _synthetic_candles(n=200, freq="5min")
     feats = compute_feature_frame(candles)
@@ -48,10 +71,29 @@ def test_compute_feature_frame_columns() -> None:
         "atr_pips_14",
         "rsi_14",
         "range_pos",
+        "trend_slope_pips_20",
+        "trend_slope_pips_50",
+        "trend_accel_pips",
+        "sr_balance_20",
+        "breakout_up_pips_20",
+        "breakout_down_pips_20",
         "hour_sin",
         "dow_cos",
     ):
         assert col in feats.columns
+
+
+def test_compute_feature_frame_trendline_features_follow_trend() -> None:
+    up = _trend_candles(n=260, freq="5min", drift=0.0035)
+    down = _trend_candles(n=260, freq="5min", drift=-0.0035)
+
+    up_last = compute_feature_frame(up).dropna().iloc[-1]
+    down_last = compute_feature_frame(down).dropna().iloc[-1]
+
+    assert float(up_last["trend_slope_pips_20"]) > 0.0
+    assert float(down_last["trend_slope_pips_20"]) < 0.0
+    assert float(up_last["breakout_up_pips_20"]) > float(down_last["breakout_up_pips_20"])
+    assert float(down_last["breakout_down_pips_20"]) > float(up_last["breakout_down_pips_20"])
 
 
 def test_build_direction_dataset_shapes() -> None:
@@ -71,4 +113,3 @@ def test_train_forecast_model_smoke() -> None:
     assert model.horizon.name == "test"
     assert 0.0 <= metrics["brier"] <= 1.0
     assert metrics["logloss"] >= 0.0
-

@@ -16,6 +16,13 @@
 - `FORECAST_GATE_SOURCE=auto` の場合: bundle と technical をブレンド
 - 戦略スタイル（trend/range）と予測コンテキスト（trend_strength/range_pressure）が不一致ならブロック
 
+## 予測特徴量（2026-02-17 更新）
+- 回帰系: `ret_pips_*`, `ma_gap_pips_10_20`, `close_ma*`, `atr_pips_14`, `vol_pips_20`, `rsi_14`
+- 線形トレンド系（線を引く系）: `trend_slope_pips_20`, `trend_slope_pips_50`, `trend_accel_pips`
+- サポレジ/ブレイク系: `support_gap_pips_20`, `resistance_gap_pips_20`, `sr_balance_20`,
+  `breakout_up_pips_20`, `breakout_down_pips_20`, `donchian_width_pips_20`, `range_compression_20`
+- 予測行には監査用に `breakout_bias_20` / `squeeze_score_20` も出力され、`vm_forecast_snapshot.py` で確認可能
+
 ## 学習に必要な足の履歴
 `scripts/train_forecast_bundle.py` の既定は以下です（概ね「学習や予測が成立する」目安）。
 - M5: 120 日
@@ -52,6 +59,7 @@ python scripts/train_forecast_bundle.py --instrument USD_JPY --out config/foreca
 - `FORECAST_BUNDLE_PATH=config/forecast_models/USD_JPY_bundle.joblib`
 - `FORECAST_GATE_SOURCE=auto|bundle|technical`
 - `FORECAST_TECH_ENABLED=1`
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`（新特徴量の寄与ゲイン。`0.0` で無効、`0.0-1.0` で段階適用）
 - `FORECAST_GATE_HORIZON_SCALP_FAST=1m`（scalp_fast 向け）
 - `FORECAST_GATE_HORIZON_SCALP=5m`（scalp 向け）
 - `FORECAST_GATE_TECH_PREFERRED_HORIZONS=1m,5m,10m`（`auto` 時に短期3軸をテック優先で利用）
@@ -106,6 +114,19 @@ JSONで回収する場合:
 ```bash
 python3 scripts/vm_forecast_snapshot.py --json
 ```
+
+## before/after 比較ジョブ（同一期間）
+短期予測式の変更を入れたときは、同一データで `before/after` の hit率・MAE を比較します。
+
+```bash
+python3 scripts/eval_forecast_before_after.py \
+  --patterns logs/candles_M1*.json,logs/candles_USDJPY_M1*.json,logs/oanda/candles_M1_latest.json \
+  --steps 1,5,10 \
+  --feature-expansion-gain 0.35
+```
+
+`breakout_bias_20` の方向一致率（filtered/unfiltered）も同時に出るため、
+「線形トレンド＋サポレジ圧力」の有効性を同一期間で監査できます。
 
 運用上はまず `scalp_fast` なら `1m`、`scalp` なら `5m` / `10m` を短期軸として見る前提にして、`8h` / `1d` を中期〜長期補完として確認します。  
 `1h` と `8h` が同方向で `trend_strength` が高いほど「現在の順張り解釈」が強くなります。`range_pressure` 優勢で中立寄りの場合は「レンジ中の天井/底付近」に寄るケースが増えます。

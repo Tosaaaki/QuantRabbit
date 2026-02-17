@@ -1334,3 +1334,58 @@
   - 短期予測で `M5` 足更新遅延の影響を避ける。
   - 戦略ごとの `forecast_profile` が `M5x2` を指定していても、短期では最新 `M1` 系列で計算できるようにする。
   - `NO_MATCHING_HORIZONS` / stale 由来の短期予測欠損を運用側で吸収しやすくする。
+
+### 2026-02-17（追記）今回の予測改善フロー（依頼対応ログ）
+
+- 要望: 「過去分で予測し、今あっているか検証し、精度を上げる」。
+- 実施フロー:
+  - VMの過去足（M1中心）で baseline/improved を比較し、hit率とMAEを定量化。
+  - `analysis/technique_engine.py` の短期予測式（1m/5m）を改善し、10mは回帰防止で据え置き。
+  - `scripts/eval_local_forecast.py` を追加し、同じ条件で再評価できる手順を固定化。
+  - `workers/common/forecast_gate.py` で短期 horizon を `M1` 基準に統一（`M5x2 -> M1x10` 換算）。
+  - `M1` が stale の場合は `logs/oanda/candles_M1_latest.json` へフォールバックするよう変更。
+  - VMへ反映後、`vm_forecast_snapshot.py` で 1m/5m/10m が最新 `feature_ts` で出力されることを確認。
+- 反映確認（当日）:
+  - VM `git rev-parse HEAD` と `origin/main` の一致を確認済み。
+  - `quant-order-manager.service` 再起動後の `Application startup complete` を確認済み。
+
+### 2026-02-17（追記）予測特徴量をトレンドライン/サポレジ圧力へ拡張
+
+- 目的:
+  - 「過去足から未来方向を推定する」ロジックで、単純モメンタム偏重を下げる。
+  - 線形トレンド（線を引く系）とサポレジ圧力（ブレイク/圧縮）を同時に判定し、`p_up` の再現性を上げる。
+- `analysis/forecast_sklearn.py`
+  - `compute_feature_frame()` に以下を追加:
+    - `trend_slope_pips_20`, `trend_slope_pips_50`, `trend_accel_pips`
+    - `support_gap_pips_20`, `resistance_gap_pips_20`, `sr_balance_20`
+    - `breakout_up_pips_20`, `breakout_down_pips_20`
+    - `donchian_width_pips_20`, `range_compression_20`, `trend_pullback_norm_20`
+  - 既存の return/MA/ATR/RSI 特徴量と併用して学習・推論の特徴空間を拡張。
+- `workers/common/forecast_gate.py`
+  - テクニカル予測の `required_keys` に上記追加特徴量を組み込み。
+  - `trend_score` / `mean_revert_score` を更新し、短期の方向性に対して
+    `trend_slope`・`breakout_bias`・`sr_balance`・`squeeze_score` を反映。
+  - 出力行へ `trend_slope_pips_20/50`, `trend_accel_pips`, `sr_balance_20`,
+    `breakout_bias_20`, `squeeze_score_20` を追加し、監査ログから根拠を追跡可能化。
+- テスト:
+  - `tests/analysis/test_forecast_sklearn.py` に新特徴量列の存在確認と、上昇/下落トレンドでの傾き方向一致テストを追加。
+  - `tests/workers/test_forecast_gate.py` に `trendline/sr` 出力項目の存在・方向性テストを追加。
+  - 実行: `pytest -q tests/analysis/test_forecast_sklearn.py tests/workers/test_forecast_gate.py`（13 passed）。
+
+### 2026-02-17（追記）VM実データで breakout_bias 一致率監査 + before/after 比較ジョブ追加
+
+- VM実データ監査（`fx-trader-vm`）:
+  - `/home/tossaki/QuantRabbit/.venv/bin/python scripts/vm_forecast_snapshot.py --horizon 1m,5m,10m` を実行し、
+    短期 horizon の予測行が `status=ready` で取得できることを確認。
+  - 同期間（`logs/oanda/candles_M1_latest.json`, 500 bars）で `breakout_bias_20` の先行方向一致率を算出。
+    - step=1: hit `0.4872`（filtered `0.4828`）
+    - step=5: hit `0.4831`（filtered `0.4829`）
+    - step=10: hit `0.4711`（filtered `0.4708`）
+- 追加ジョブ:
+  - `scripts/eval_forecast_before_after.py` を追加。
+  - 同一期間で `before/after` の `hit_rate` / `MAE(pips)` と `breakout_bias_20` 一致率を一括出力。
+  - `--feature-expansion-gain` で新特徴量寄与を段階評価可能化（0.0-1.0）。
+- 同一期間比較（VMデータ 1,930 bars）:
+  - gain=0.35 では before 比で短期 hit/MAE が小幅悪化（1m/5m/10m）。
+  - 実運用デフォルトは保守設定として `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0` を採用。
+    - 既存挙動を維持しつつ、追加特徴量は監査ログとオフライン評価で継続検証する方針。

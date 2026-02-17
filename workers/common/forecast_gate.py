@@ -71,6 +71,10 @@ _TECH_PROJECTION_WEIGHT = max(
     min(1.2, _env_float("FORECAST_TECH_PROJECTION_WEIGHT", 0.38)),
 )
 _TECH_PROJECTION_GAIN = max(0.1, _env_float("FORECAST_TECH_PROJECTION_GAIN", 1.0))
+_TECH_FEATURE_EXPANSION_GAIN = max(
+    0.0,
+    min(1.0, _env_float("FORECAST_TECH_FEATURE_EXPANSION_GAIN", 0.0)),
+)
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -1133,6 +1137,15 @@ def _technical_prediction_for_horizon(
             "close_ma50_pips",
             "rsi_14",
             "range_pos",
+            "trend_slope_pips_20",
+            "trend_slope_pips_50",
+            "trend_accel_pips",
+            "sr_balance_20",
+            "breakout_up_pips_20",
+            "breakout_down_pips_20",
+            "donchian_width_pips_20",
+            "range_compression_20",
+            "trend_pullback_norm_20",
         )
         for key in required_keys:
             fv = last.get(key)
@@ -1164,6 +1177,18 @@ def _technical_prediction_for_horizon(
     close_ma50 = _safe_float(last.get("close_ma50_pips"), 0.0) / max(0.8, atr)
     rsi = (_safe_float(last.get("rsi_14"), 50.0) - 50.0) / 16.0
     range_pos = (_safe_float(last.get("range_pos"), 0.5) - 0.5) * 2.0
+    trend_slope20 = _safe_float(last.get("trend_slope_pips_20"), 0.0) / max(0.55, atr * 0.42)
+    trend_slope50 = _safe_float(last.get("trend_slope_pips_50"), 0.0) / max(0.55, atr * 0.46)
+    trend_accel = _safe_float(last.get("trend_accel_pips"), 0.0) / max(0.40, atr * 0.34)
+    sr_balance = _clamp(_safe_float(last.get("sr_balance_20"), 0.0), -1.0, 1.0)
+    breakout_up = _safe_float(last.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
+    breakout_down = _safe_float(last.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
+    breakout_bias = breakout_up - breakout_down
+    donchian_width = max(0.25, abs(_safe_float(last.get("donchian_width_pips_20"), 0.0)))
+    range_compression = _safe_float(last.get("range_compression_20"), 0.0)
+    trend_pullback = _safe_float(last.get("trend_pullback_norm_20"), 0.0)
+    width_ratio = donchian_width / max(0.45, atr)
+    squeeze_score = _clamp(1.0 - (width_ratio / 8.0), 0.0, 1.0)
 
     trend_score = (
         0.82 * math.tanh(ret1 * 1.2)
@@ -1173,11 +1198,28 @@ def _technical_prediction_for_horizon(
         + 0.46 * math.tanh(close_ma20 * 1.0)
         + 0.33 * math.tanh(close_ma50 * 0.9)
         + 0.24 * math.tanh(rsi)
+        + _TECH_FEATURE_EXPANSION_GAIN
+        * (
+            0.58 * math.tanh(trend_slope20 * 1.05)
+            + 0.34 * math.tanh(trend_slope50 * 0.95)
+            + 0.22 * math.tanh(trend_accel * 1.2)
+            + 0.30 * math.tanh(breakout_bias * 0.85)
+            + 0.18 * math.tanh(sr_balance * 0.9)
+            + 0.16 * math.tanh(trend_pullback * 0.8)
+        )
     )
     mean_revert_score = (
         -0.68 * math.tanh(close_ma20 * 1.2)
         - 0.58 * math.tanh(range_pos * 1.4)
         - 0.42 * math.tanh(rsi * 1.1)
+        + _TECH_FEATURE_EXPANSION_GAIN
+        * (
+            -0.44 * math.tanh(sr_balance * 1.2)
+            - 0.26 * math.tanh(breakout_bias * 0.9)
+            - 0.20 * math.tanh(trend_pullback * 0.95)
+            + 0.22 * squeeze_score
+            + 0.08 * math.tanh((0.20 - range_compression) * 3.5)
+        )
     )
     trend_hint = math.tanh(trend_score * 0.8)
     proj = _projection_bias_from_candles(
@@ -1196,6 +1238,12 @@ def _technical_prediction_for_horizon(
         0.18
         + 0.44 * abs(math.tanh(ma_gap * 1.4))
         + 0.33 * abs(math.tanh(ret3 * 1.1))
+        + _TECH_FEATURE_EXPANSION_GAIN
+        * (
+            0.18 * abs(math.tanh(trend_slope20 * 1.0))
+            + 0.10 * abs(math.tanh(trend_slope50 * 1.0))
+            + 0.09 * abs(math.tanh(breakout_bias * 0.85))
+        )
         + 0.18 * _clamp((vol / max(atr, 1e-6)) - 0.55, 0.0, 1.0),
         0.0,
         1.0,
@@ -1206,7 +1254,19 @@ def _technical_prediction_for_horizon(
         1.0,
     )
     range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
-    range_pressure = _clamp(range_pressure + 0.45 * range_boost - 0.15 * trend_boost, 0.0, 1.0)
+    range_pressure = _clamp(
+        range_pressure
+        + 0.45 * range_boost
+        - 0.15 * trend_boost
+        + _TECH_FEATURE_EXPANSION_GAIN
+        * (
+            0.16 * squeeze_score
+            + 0.10 * _clamp(1.0 - abs(sr_balance), 0.0, 1.0)
+            - 0.12 * abs(math.tanh(breakout_bias * 0.8))
+        ),
+        0.0,
+        1.0,
+    )
 
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
     combo = (
@@ -1246,6 +1306,12 @@ def _technical_prediction_for_horizon(
             "projection_score": round(float(projection_score), 6),
             "projection_confidence": round(float(projection_confidence), 6),
             "projection_components": proj.get("components"),
+            "trend_slope_pips_20": round(float(_safe_float(last.get("trend_slope_pips_20"), 0.0)), 6),
+            "trend_slope_pips_50": round(float(_safe_float(last.get("trend_slope_pips_50"), 0.0)), 6),
+            "trend_accel_pips": round(float(_safe_float(last.get("trend_accel_pips"), 0.0)), 6),
+            "sr_balance_20": round(float(sr_balance), 6),
+            "breakout_bias_20": round(float(breakout_bias), 6),
+            "squeeze_score_20": round(float(squeeze_score), 6),
             "timeframe": timeframe,
             "step_bars": int(step_bars) if step_bars else 0,
             "available_candles": available,

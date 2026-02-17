@@ -62,6 +62,32 @@ def test_technical_prediction_projection_score_tracks_direction() -> None:
     assert 0.0 <= float(down_row.get("projection_confidence") or 0.0) <= 1.0
 
 
+def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
+    up = _synthetic_candles(n=520, freq="5min", drift=0.0032)
+    down = _synthetic_candles(n=520, freq="5min", drift=-0.0032)
+
+    up_row = forecast_gate._technical_prediction_for_horizon(up, horizon="1h", step_bars=12)
+    down_row = forecast_gate._technical_prediction_for_horizon(down, horizon="1h", step_bars=12)
+
+    assert isinstance(up_row, dict)
+    assert isinstance(down_row, dict)
+    for key in (
+        "trend_slope_pips_20",
+        "trend_slope_pips_50",
+        "trend_accel_pips",
+        "sr_balance_20",
+        "breakout_bias_20",
+        "squeeze_score_20",
+    ):
+        assert key in up_row
+        assert key in down_row
+    assert float(up_row["trend_slope_pips_20"]) > 0.0
+    assert float(down_row["trend_slope_pips_20"]) < 0.0
+    assert float(up_row["breakout_bias_20"]) > float(down_row["breakout_bias_20"])
+    assert 0.0 <= float(up_row["squeeze_score_20"]) <= 1.0
+    assert 0.0 <= float(down_row["squeeze_score_20"]) <= 1.0
+
+
 def test_decide_blocks_opposite_side_when_only_technical_source_available(monkeypatch) -> None:
     candles_m5 = _synthetic_candles(n=600, freq="5min", drift=0.0025)
     candles_h1 = _synthetic_candles(n=520, freq="1h", drift=0.018)
