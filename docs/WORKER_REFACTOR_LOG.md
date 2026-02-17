@@ -1440,6 +1440,9 @@
     - service 失敗時は短時間の stale キャッシュ
       （`POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC`, 既定 2.0s）を返せるようにし、
       一時的な遅延バーストでの entry 停止を抑止。
+    - OANDA `openTrades` 取得専用 timeout
+      （`POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT`, 既定 3.5s）を追加し、
+      service 側の fetch が 4.5s client timeout を超えないように調整。
   - `workers/position_manager/worker.py`
     - Uvicorn の access log をデフォルト OFF（`POSITION_MANAGER_ACCESS_LOG=0` 相当）に変更。
     - 高頻度 `open_positions` アクセス時のログI/Oボトルネックを低減。

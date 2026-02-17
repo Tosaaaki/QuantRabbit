@@ -56,6 +56,13 @@ _METRICS_DB = pathlib.Path("logs/metrics.db")
 _CHUNK_SIZE = 100
 _MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
 _REQUEST_TIMEOUT = float(os.getenv("POSITION_MANAGER_HTTP_TIMEOUT", "7.0"))
+_OPEN_TRADES_REQUEST_TIMEOUT = max(
+    0.5,
+    _env_float(
+        "POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT",
+        min(_REQUEST_TIMEOUT, 3.5),
+    ),
+)
 _ORDERS_DB_READ_TIMEOUT_SEC = max(
     0.05,
     _env_float("POSITION_MANAGER_ORDERS_DB_READ_TIMEOUT_SEC", 0.35),
@@ -2706,11 +2713,20 @@ class PositionManager:
             self._sync_trades_lock.release()
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:
+        return self._request_json_with_timeout(url, params=params, timeout_sec=_REQUEST_TIMEOUT)
+
+    def _request_json_with_timeout(
+        self,
+        url: str,
+        *,
+        params: dict | None = None,
+        timeout_sec: float,
+    ) -> dict:
         resp = self._http.get(
             url,
             headers=HEADERS,
             params=params,
-            timeout=_REQUEST_TIMEOUT,
+            timeout=max(0.5, float(timeout_sec)),
         )
         resp.raise_for_status()
         try:
@@ -2776,7 +2792,10 @@ class PositionManager:
 
             url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/openTrades"
             try:
-                payload = self._request_json(url) or {}
+                payload = self._request_json_with_timeout(
+                    url,
+                    timeout_sec=_OPEN_TRADES_REQUEST_TIMEOUT,
+                ) or {}
                 trades = payload.get("trades", [])
                 self._open_trade_failures = 0
                 self._next_open_fetch_after = now_mono + _OPEN_TRADES_CACHE_TTL

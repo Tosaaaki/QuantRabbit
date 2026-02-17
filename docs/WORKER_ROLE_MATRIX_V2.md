@@ -231,6 +231,8 @@
   - worker起動時に service-mode の誤自己参照を抑止するガードを追加。
   - `position_manager` の `/position/open_positions` 呼び出しを keep-alive session + 短TTLキャッシュで平準化し、
     `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT` を既定 4.5s に分離。
+  - `openTrades` の upstream 取得 timeout は `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT`（既定 3.5s）で
+    `open_positions` client timeout より短く制御し、worker 側 6s timeout への連鎖を抑止。
   - `quant-position-manager` は Uvicorn access log を既定 OFF とし、
     高頻度 `open_positions` リクエスト時のログI/O飽和を抑止。
 - `micro_multistrat` は共通Runnerとしての運用を打ち切り、レンジ時の順張り/押し目判定運用は各独立 micro ワーカー側へ移行したため、同種の範囲制御は
