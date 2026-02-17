@@ -8,6 +8,18 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-17（追記）M1Scalper に提案戦略 1/3（`breakout_retest`, `vshape_rebound`）を実装
+
+- `strategies/scalping/m1_scalper.py` に `breakout_retest` / `vshape_rebound` の2シグナル生成ヘルパーを追加。
+  - 直近レンジ突破→浅いリテスト時の順張り再突入を拾う `breakout_retest`。
+  - 急変動後の最初の反発（long/short）を拾う `vshape_rebound`。
+- 両シグナルは `check()` の momentum/既存シグナル判定前に評価し、成立時は共通の `structure_targets` と
+  技術倍率適用を経て `_attach_kill()` を通して発注可否パスへ接続。
+- `ops/env/quant-m1scalper.env` にデフォルト閾値を追加。
+  - `M1SCALP_BREAKOUT_RETEST_*`
+  - `M1SCALP_VSHAPE_REBOUND_*`
+- `docs/KATA_SCALP_M1SCALPER.md` へ 1/3 実装の要件・観測観点を追記し、監査可能化。
+
 ### 2026-02-17（追記）order_manager の意図改変を既定停止
 
 - `execution/order_manager.py` の `market_order` / `limit_order` における

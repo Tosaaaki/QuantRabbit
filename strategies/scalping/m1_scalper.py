@@ -132,6 +132,35 @@ _NWAVE_ALIGN_PREV_BODY_LONG = abs(_env_float("M1SCALP_NWAVE_ALIGN_PREV_BODY_PIPS
 _NWAVE_ALIGN_LAST_BODY_LONG = abs(_env_float("M1SCALP_NWAVE_ALIGN_LAST_BODY_PIPS", 0.15))
 _NWAVE_ALIGN_PREV_BODY_SHORT = abs(_env_float("M1SCALP_NWAVE_ALIGN_PREV_BODY_SHORT_PIPS", 0.35))
 _NWAVE_ALIGN_LAST_BODY_SHORT = abs(_env_float("M1SCALP_NWAVE_ALIGN_LAST_BODY_SHORT_PIPS", 0.15))
+_BREAKOUT_RETEST_ENABLED = _env_bool("M1SCALP_BREAKOUT_RETEST_ENABLED", True)
+_BREAKOUT_RETEST_LOOKBACK = max(6, _env_int("M1SCALP_BREAKOUT_RETEST_LOOKBACK", 8))
+_BREAKOUT_RETEST_BREAKOUT_MOVE_PIPS = abs(
+    _env_float("M1SCALP_BREAKOUT_RETEST_BREAKOUT_MOVE_PIPS", 1.1)
+)
+_BREAKOUT_RETEST_BODY_PIPS = abs(_env_float("M1SCALP_BREAKOUT_RETEST_BODY_PIPS", 0.30))
+_BREAKOUT_RETEST_RETEST_BAND_PIPS = abs(
+    _env_float("M1SCALP_BREAKOUT_RETEST_RETEST_BAND_PIPS", 0.62)
+)
+_BREAKOUT_RETEST_RETEST_MIN_PIPS = abs(_env_float("M1SCALP_BREAKOUT_RETEST_RETEST_MIN_PIPS", 0.05))
+_BREAKOUT_RETEST_MOMENTUM_PIPS = abs(_env_float("M1SCALP_BREAKOUT_RETEST_MOMENTUM_PIPS", 0.12))
+_BREAKOUT_RETEST_ENTRY_TOL_PIPS = abs(_env_float("M1SCALP_BREAKOUT_RETEST_ENTRY_TOL_PIPS", 0.22))
+_BREAKOUT_RETEST_LIMIT_TTL_SEC = max(
+    10.0,
+    _env_float("M1SCALP_BREAKOUT_RETEST_LIMIT_TTL_SEC", 48.0),
+)
+_BREAKOUT_RETEST_BASE_CONF = int(_env_int("M1SCALP_BREAKOUT_RETEST_BASE_CONF", 74))
+
+_VSHAPE_REBOUND_ENABLED = _env_bool("M1SCALP_VSHAPE_REBOUND_ENABLED", True)
+_VSHAPE_REBOUND_LOOKBACK = max(8, _env_int("M1SCALP_VSHAPE_REBOUND_LOOKBACK", 9))
+_VSHAPE_DROP_PIPS = abs(_env_float("M1SCALP_VSHAPE_DROP_PIPS", 2.4))
+_VSHAPE_BODY_PIPS = abs(_env_float("M1SCALP_VSHAPE_BODY_PIPS", 0.30))
+_VSHAPE_RETEST_PIPS = abs(_env_float("M1SCALP_VSHAPE_RETEST_PIPS", 1.6))
+_VSHAPE_ENTRY_TOL_PIPS = abs(_env_float("M1SCALP_VSHAPE_ENTRY_TOL_PIPS", 0.25))
+_VSHAPE_LIMIT_TTL_SEC = max(10.0, _env_float("M1SCALP_VSHAPE_LIMIT_TTL_SEC", 52.0))
+_VSHAPE_BASE_CONF = int(_env_int("M1SCALP_VSHAPE_BASE_CONF", 72))
+_VSHAPE_LONG_RSI_MAX = _env_float("M1SCALP_VSHAPE_LONG_RSI_MAX", 54.0)
+_VSHAPE_SHORT_RSI_MIN = _env_float("M1SCALP_VSHAPE_SHORT_RSI_MIN", 46.0)
+_VSHAPE_MAX_ADX = _env_float("M1SCALP_VSHAPE_MAX_ADX", 28.0)
 
 
 def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
@@ -418,6 +447,321 @@ def _scale_signal(signal: Dict[str, object], mult: float) -> Dict[str, object]:
         sig["tp_pips"] = round(tp_scaled, 2)
     return sig
 
+
+def _build_range(values: list[float]) -> tuple[float, float]:
+    if not values:
+        return 0.0, 0.0
+    return min(values), max(values)
+
+
+def _breakout_retest_signal(
+    *,
+    candles: list[dict],
+    close: float,
+    rsi: float,
+    atr_pips: float,
+    trend_up: bool,
+    trend_down: bool,
+    strong_up: bool,
+    strong_down: bool,
+    range_reversion_only: bool,
+    fast_cut: float,
+    fast_cut_time: float,
+    tp_dyn: float,
+    sl_dyn: float,
+    adjust_tp,
+) -> Optional[Dict[str, object]]:
+    if not _BREAKOUT_RETEST_ENABLED:
+        return None
+    current = _to_float(close)
+    if current is None:
+        return None
+    if len(candles) < max(6, _BREAKOUT_RETEST_LOOKBACK + 2):
+        return None
+
+    breakout_idx = len(candles) - 2
+    if breakout_idx < 1:
+        return None
+    prev = candles[breakout_idx]
+    prev_open = _to_float(prev.get("open") or prev.get("o"))
+    prev_close = _to_float(prev.get("close") or prev.get("c"))
+    if prev_open is None or prev_close is None:
+        return None
+
+    prev_body_pips = _candle_body_pips(prev)
+    if prev_body_pips is None:
+        return None
+    if abs(prev_body_pips) < _BREAKOUT_RETEST_BODY_PIPS:
+        return None
+
+    lookback = _BREAKOUT_RETEST_LOOKBACK
+    start = max(0, breakout_idx - lookback)
+    history = candles[start:breakout_idx]
+    range_values: list[float] = []
+    for item in history:
+        item_high, item_low = _candle_high_low(item)
+        if item_high is not None:
+            range_values.append(item_high)
+        if item_low is not None:
+            range_values.append(item_low)
+    range_low, range_high = _build_range(range_values)
+    if range_low == 0.0 and range_high == 0.0:
+        return None
+    move = max(_BREAKOUT_RETEST_BREAKOUT_MOVE_PIPS * _PIP, abs(prev_body_pips) * 0.8 * _PIP)
+
+    long_break = prev_close >= range_high + move and prev_body_pips >= _BREAKOUT_RETEST_BODY_PIPS
+    short_break = prev_close <= range_low - move and prev_body_pips <= -_BREAKOUT_RETEST_BODY_PIPS
+    if not (long_break or short_break):
+        return None
+
+    band = _BREAKOUT_RETEST_RETEST_BAND_PIPS
+    pull = (current - range_high) / _PIP if long_break else (range_low - current) / _PIP
+    if pull < _BREAKOUT_RETEST_RETEST_MIN_PIPS or pull > band:
+        return None
+    if abs((prev_close - prev_open) / _PIP) < _BREAKOUT_RETEST_BODY_PIPS:
+        return None
+
+    momentum = current - prev_close
+    if abs(momentum) / _PIP < _BREAKOUT_RETEST_MOMENTUM_PIPS:
+        return None
+
+    if long_break:
+        if strong_down or (range_reversion_only and not trend_up):
+            return None
+        if not trend_up and atr_pips >= 2.8:
+            return None
+        score = int(_BREAKOUT_RETEST_BASE_CONF + min(12, abs(prev_body_pips) * 2 + pull * 3))
+        score = max(60, min(96, score))
+        tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+        return {
+            "action": "OPEN_LONG",
+            "entry_type": "limit",
+            "entry_price": round(current, 3),
+            "entry_tolerance_pips": round(_BREAKOUT_RETEST_ENTRY_TOL_PIPS, 2),
+            "limit_expiry_seconds": int(_BREAKOUT_RETEST_LIMIT_TTL_SEC),
+            "sl_pips": round(max(sl_dyn * 0.88, 4.0), 2),
+            "tp_pips": round(tp or 0.0, 2),
+            "confidence": score,
+            "fast_cut_pips": round(fast_cut, 2),
+            "fast_cut_time_sec": int(fast_cut_time),
+            "tag": f"{M1Scalper.name}-breakout-retest-long",
+            "notes": {
+                "mode": "breakout_retest",
+                "lookback": lookback,
+                "pull_pips": round(pull, 2),
+                "range_high": round(range_high, 3),
+                "rsi": round(rsi, 2),
+            },
+        }
+
+    if short_break:
+        if strong_up or (range_reversion_only and not trend_down):
+            return None
+        if not trend_down and atr_pips >= 2.8:
+            return None
+        score = int(_BREAKOUT_RETEST_BASE_CONF + min(12, abs(prev_body_pips) * 2 + pull * 3))
+        score = max(60, min(96, score))
+        tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+        return {
+            "action": "OPEN_SHORT",
+            "entry_type": "limit",
+            "entry_price": round(current, 3),
+            "entry_tolerance_pips": round(_BREAKOUT_RETEST_ENTRY_TOL_PIPS, 2),
+            "limit_expiry_seconds": int(_BREAKOUT_RETEST_LIMIT_TTL_SEC),
+            "sl_pips": round(max(sl_dyn * 0.88, 4.0), 2),
+            "tp_pips": round(tp or 0.0, 2),
+            "confidence": score,
+            "fast_cut_pips": round(fast_cut, 2),
+            "fast_cut_time_sec": int(fast_cut_time),
+            "tag": f"{M1Scalper.name}-breakout-retest-short",
+            "notes": {
+                "mode": "breakout_retest",
+                "lookback": lookback,
+                "pull_pips": round(pull, 2),
+                "range_low": round(range_low, 3),
+                "rsi": round(rsi, 2),
+            },
+        }
+
+    return None
+
+
+def _vshape_rebound_signal(
+    *,
+    candles: list[dict],
+    close: float,
+    rsi: float,
+    adx: float,
+    atr_pips: float,
+    trend_up: bool,
+    trend_down: bool,
+    strong_up: bool,
+    strong_down: bool,
+    range_reversion_only: bool,
+    fast_cut: float,
+    fast_cut_time: float,
+    tp_dyn: float,
+    sl_dyn: float,
+    adjust_tp,
+) -> Optional[Dict[str, object]]:
+    if not _VSHAPE_REBOUND_ENABLED:
+        return None
+    current = _to_float(close)
+    if current is None:
+        return None
+    if adx is not None and _VSHAPE_MAX_ADX > 0.0 and adx > _VSHAPE_MAX_ADX:
+        return None
+
+    window = max(8, _VSHAPE_REBOUND_LOOKBACK + 1)
+    if len(candles) < window:
+        return None
+    start = max(0, len(candles) - window)
+    history = candles[start:-1]
+    if len(history) < 5:
+        return None
+
+    prev_close = _to_float(history[-1].get("close") or history[-1].get("c"))
+    if prev_close is None:
+        return None
+
+    low_i = -1
+    high_i = -1
+    low_v = float("inf")
+    high_v = float("-inf")
+    for idx, item in enumerate(history[:-1]):
+        item_high, item_low = _candle_high_low(item)
+        if item_low is not None and item_low < low_v:
+            low_v = item_low
+            low_i = idx
+        if item_high is not None and item_high > high_v:
+            high_v = item_high
+            high_i = idx
+
+    # Long: sharp drop to a local low, then immediate rebound.
+    if 1 <= low_i < len(history) - 1:
+        low_candle = history[low_i]
+        pre = history[max(0, low_i - 3):low_i]
+        rebound = history[low_i + 1]
+        rebound_body = _candle_body_pips(rebound) if rebound else 0.0
+        if rebound_body is None:
+            rebound_body = 0.0
+        pre_high = None
+        for c in pre:
+            h = _to_float(c.get("high") or c.get("h"))
+            if h is not None:
+                pre_high = h if pre_high is None else max(pre_high, h)
+        if pre_high is None:
+            pre_high = _to_float(low_candle.get("open") or low_candle.get("o"))
+
+        low_price = _to_float(low_candle.get("low") or low_candle.get("l"))
+        if low_price is None:
+            return None
+        if pre_high is None:
+            pre_high = _to_float(low_candle.get("open") or low_candle.get("o"))
+            if pre_high is None:
+                return None
+        drop = (pre_high - low_price) / _PIP
+        recovery = (current - low_price) / _PIP
+        if (
+            drop >= _VSHAPE_DROP_PIPS
+            and rebound_body >= _VSHAPE_BODY_PIPS
+            and recovery <= _VSHAPE_RETEST_PIPS
+            and recovery >= 0.05
+            and current >= (low_price + 0.0001)
+            and (current - prev_close) / _PIP >= _VSHAPE_BODY_PIPS
+            and rsi <= _VSHAPE_LONG_RSI_MAX
+            and not strong_down
+            and not range_reversion_only
+            and (trend_up or not trend_down)
+        ):
+            score = int(_VSHAPE_BASE_CONF + min(15, drop * 1.2 + recovery * 0.7))
+            score = max(58, min(96, score))
+            tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+            return {
+                "action": "OPEN_LONG",
+                "entry_type": "limit",
+                "entry_price": round(current, 3),
+                "entry_tolerance_pips": round(_VSHAPE_ENTRY_TOL_PIPS, 2),
+                "limit_expiry_seconds": int(_VSHAPE_LIMIT_TTL_SEC),
+                "sl_pips": round(max(sl_dyn * 0.9, 4.2), 2),
+                "tp_pips": round(tp or 0.0, 2),
+                "confidence": score,
+                "fast_cut_pips": round(fast_cut, 2),
+                "fast_cut_time_sec": int(fast_cut_time),
+                "tag": f"{M1Scalper.name}-vshape-rebound-long",
+                "notes": {
+                    "mode": "vshape_rebound",
+                    "lookback": _VSHAPE_REBOUND_LOOKBACK,
+                    "drop_pips": round(drop, 2),
+                    "rebound_body": round(rebound_body, 3),
+                    "rsi": round(rsi, 2),
+                    "adx": round(adx, 2),
+                },
+            }
+
+    # Short: sharp rise to a local high, then immediate pullback.
+    if 1 <= high_i < len(history) - 1:
+        high_candle = history[high_i]
+        pre = history[max(0, high_i - 3) : high_i]
+        rebound = history[high_i + 1]
+        rebound_body = _candle_body_pips(rebound) if rebound else 0.0
+        if rebound_body is None:
+            rebound_body = 0.0
+        pre_high = 0.0
+        pre_low = None
+        for c in pre:
+            l = _to_float(c.get("low") or c.get("l"))
+            if l is not None:
+                pre_low = l if pre_low is None else min(pre_low, l)
+        if pre_low is None:
+            pre_low = _to_float(high_candle.get("open") or high_candle.get("o"))
+
+        high_price = _to_float(high_candle.get("high") or high_candle.get("h"))
+        if pre_low is None or high_price is None:
+            return None
+        rebound_amount = (high_price - pre_low) / _PIP
+        pullback = (high_price - current) / _PIP
+
+        if (
+            rebound_amount >= _VSHAPE_DROP_PIPS
+            and rebound_body <= -_VSHAPE_BODY_PIPS
+            and pullback <= _VSHAPE_RETEST_PIPS
+            and pullback >= 0.05
+            and rebound_body < 0
+            and rsi >= _VSHAPE_SHORT_RSI_MIN
+            and not strong_up
+            and not range_reversion_only
+            and (trend_down or not trend_up)
+            and current <= (high_price - 0.0001)
+            and (prev_close - current) / _PIP >= _VSHAPE_BODY_PIPS
+        ):
+            score = int(_VSHAPE_BASE_CONF + min(15, rebound_amount * 1.2 + pullback * 0.7))
+            score = max(58, min(96, score))
+            tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+            return {
+                "action": "OPEN_SHORT",
+                "entry_type": "limit",
+                "entry_price": round(current, 3),
+                "entry_tolerance_pips": round(_VSHAPE_ENTRY_TOL_PIPS, 2),
+                "limit_expiry_seconds": int(_VSHAPE_LIMIT_TTL_SEC),
+                "sl_pips": round(max(sl_dyn * 0.9, 4.2), 2),
+                "tp_pips": round(tp or 0.0, 2),
+                "confidence": score,
+                "fast_cut_pips": round(fast_cut, 2),
+                "fast_cut_time_sec": int(fast_cut_time),
+                "tag": f"{M1Scalper.name}-vshape-rebound-short",
+                "notes": {
+                    "mode": "vshape_rebound",
+                    "lookback": _VSHAPE_REBOUND_LOOKBACK,
+                    "rebound_amount_pips": round(rebound_amount, 2),
+                    "rebound_body": round(rebound_body, 3),
+                    "rsi": round(rsi, 2),
+                    "adx": round(adx, 2),
+                },
+            }
+
+    return None
+
 class M1Scalper:
     name = "M1Scalper"
     pocket = "scalp"
@@ -678,6 +1022,65 @@ class M1Scalper:
         conf_scale = 1.0
         if atr_pips > 4.0:
             conf_scale = 0.8
+
+        breakout_retest_signal = _breakout_retest_signal(
+            candles=candles,
+            close=close,
+            rsi=rsi,
+            atr_pips=atr_pips,
+            trend_up=trend_up,
+            trend_down=trend_down,
+            strong_up=strong_up,
+            strong_down=strong_down,
+            range_reversion_only=range_reversion_only,
+            fast_cut=fast_cut,
+            fast_cut_time=fast_cut_time,
+            tp_dyn=tp_dyn,
+            sl_dyn=sl_dyn,
+            adjust_tp=_adjust_tp,
+        )
+        if breakout_retest_signal is not None:
+            signal = _apply_mult(_structure_targets(breakout_retest_signal, fac, "long" if breakout_retest_signal["action"] == "OPEN_LONG" else "short"))
+            _log(
+                "signal_breakout_retest",
+                action=signal["action"],
+                conf=signal["confidence"],
+                tp=signal["tp_pips"],
+                sl=signal["sl_pips"],
+                atr_pips=round(atr_pips, 2),
+                rsi=round(rsi, 2),
+            )
+            return _attach_kill(signal)
+
+        vshape_rebound_signal = _vshape_rebound_signal(
+            candles=candles,
+            close=close,
+            rsi=rsi,
+            adx=adx,
+            atr_pips=atr_pips,
+            trend_up=trend_up,
+            trend_down=trend_down,
+            strong_up=strong_up,
+            strong_down=strong_down,
+            range_reversion_only=range_reversion_only,
+            fast_cut=fast_cut,
+            fast_cut_time=fast_cut_time,
+            tp_dyn=tp_dyn,
+            sl_dyn=sl_dyn,
+            adjust_tp=_adjust_tp,
+        )
+        if vshape_rebound_signal is not None:
+            signal = _apply_mult(_structure_targets(vshape_rebound_signal, fac, "long" if vshape_rebound_signal["action"] == "OPEN_LONG" else "short"))
+            _log(
+                "signal_vshape_rebound",
+                action=signal["action"],
+                conf=signal["confidence"],
+                tp=signal["tp_pips"],
+                sl=signal["sl_pips"],
+                atr_pips=round(atr_pips, 2),
+                rsi=round(rsi, 2),
+            )
+            return _attach_kill(signal)
 
         if momentum < -momentum_thresh and rsi < rsi_long_max:
             speed = abs(momentum) / max(0.0005, atr)

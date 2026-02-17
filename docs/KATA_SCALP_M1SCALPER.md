@@ -136,3 +136,47 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t sql \
 Gate が発注に反映されているか（orders.db の pattern_gate payload を点検）:
 - `pattern_gate.allowed/scale/reason/pattern_id` を確認する
 - “generic で no-op” の場合は payload 自体が付かない
+
+## 8. 今回追加実装（2026-02-17）
+
+### 8.1 戦略A: ブレイク → リテスト順張り（`breakout_retest`）
+
+エントリー前提:
+- 直近1本（`candles[-2]`）で直近レンジを明確に上抜け/下抜け
+- その後の価格がバンド内に再接近したときに、順方向で再エントリー
+
+実装キー:
+- `M1Scalper._breakout_retest_signal(...)`
+- `note.mode = breakout_retest`
+
+主な設定:
+- `M1SCALP_BREAKOUT_RETEST_LOOKBACK`
+- `M1SCALP_BREAKOUT_RETEST_BREAKOUT_MOVE_PIPS`
+- `M1SCALP_BREAKOUT_RETEST_RETEST_BAND_PIPS`
+- `M1SCALP_BREAKOUT_RETEST_MOMENTUM_PIPS`
+- `M1SCALP_BREAKOUT_RETEST_LIMIT_TTL_SEC`
+
+### 8.2 戦略B: 急変動V字初期反発（`vshape_rebound`）
+
+エントリー前提:
+- 直近窓内の局所安値/高値を起点とした急落→第一反発、または急騰→第一押し
+- RSIが極端過ぎない方向を優先
+- `ADX` が上限超過なら抑止
+
+実装キー:
+- `M1Scalper._vshape_rebound_signal(...)`
+- `note.mode = vshape_rebound`
+
+主な設定:
+- `M1SCALP_VSHAPE_REBOUND_LOOKBACK`
+- `M1SCALP_VSHAPE_DROP_PIPS`
+- `M1SCALP_VSHAPE_BODY_PIPS`
+- `M1SCALP_VSHAPE_RETEST_PIPS`
+- `M1SCALP_VSHAPE_LONG_RSI_MAX`
+- `M1SCALP_VSHAPE_SHORT_RSI_MIN`
+- `M1SCALP_VSHAPE_MAX_ADX`
+
+運用時の観測ポイント:
+- `orders.db` の `entry-skip` 理由に `entry_probability_below_min_units` が増えないか
+- `signal` ノートに `notes.mode` が入り、`signal` で採点が継続的に上振れしているか
+- 直近 `nwave`、`fallback` の比率が極端に下がらないこと
