@@ -10,12 +10,12 @@ os.environ["MICRO_MULTI_EXIT_ENABLED"] = "1"
 os.environ["MICRO_MULTI_LOG_PREFIX"] = "[MicroVWAPBound]"
 os.environ["MICRO_MULTI_EXIT_TAG_ALLOWLIST"] = "MicroVWAPBound"
 
-from workers.micro_runtime.exit_worker import micro_multistrat_exit_worker
+from workers.micro_runtime.exit_worker import micro_runtime_exit_worker
 
 LOG = logging.getLogger(__name__)
 
 
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
-    asyncio.run(micro_multistrat_exit_worker())
+    asyncio.run(micro_runtime_exit_worker())
 

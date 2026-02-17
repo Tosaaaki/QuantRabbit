@@ -1,4 +1,4 @@
-"""Exit loop for micro_multistrat (micro pocket) - positive exits with MR exception."""
+"""Exit loop for micro_runtime (micro pocket) - positive exits with MR exception."""
 
 from __future__ import annotations
 
@@ -348,7 +348,7 @@ class _TradeState:
 
 class MicroMultiExitWorker:
     """
-    micro_multistrat 用の専用 EXIT。
+    micro_runtime 用の専用 EXIT。
     - min_hold 経過まではクローズ禁止
     - PnL>0 のみクローズ（TP/トレール/RSI利確/レンジ長時間微益のみ）
     - ポケット共通 ExitManager 非依存
@@ -812,14 +812,14 @@ class MicroMultiExitWorker:
 
     async def run(self) -> None:
         if not EXIT_ENABLED:
-            LOG.info("[EXIT-micro_multistrat] disabled (idle)")
+            LOG.info("[EXIT-micro_runtime] disabled (idle)")
             try:
                 while True:
                     await asyncio.sleep(3600.0)
             except asyncio.CancelledError:
                 return
         LOG.info(
-            "[EXIT-micro_multistrat] worker starting (interval=%.2fs tags=%s)",
+            "[EXIT-micro_runtime] worker starting (interval=%.2fs tags=%s)",
             self.loop_interval,
             ",".join(sorted(ALLOWED_TAGS)),
         )
@@ -848,19 +848,19 @@ class MicroMultiExitWorker:
                     try:
                         await self._review_trade(tr, now, mid, rsi, range_active, adx, bbw)
                     except Exception:
-                        LOG.exception("[EXIT-micro_multistrat] review failed trade=%s", tr.get("trade_id"))
+                        LOG.exception("[EXIT-micro_runtime] review failed trade=%s", tr.get("trade_id"))
                         continue
         except asyncio.CancelledError:
-            LOG.info("[EXIT-micro_multistrat] worker cancelled")
+            LOG.info("[EXIT-micro_runtime] worker cancelled")
             raise
         finally:
             try:
                 self._pos_manager.close()
             except Exception:
-                LOG.exception("[EXIT-micro_multistrat] failed to close PositionManager")
+                LOG.exception("[EXIT-micro_runtime] failed to close PositionManager")
 
 
-async def micro_multistrat_exit_worker() -> None:
+async def micro_runtime_exit_worker() -> None:
     worker = MicroMultiExitWorker()
     await worker.run()
 
@@ -984,4 +984,4 @@ def _exit_candle_reversal(side):
 
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
-    asyncio.run(micro_multistrat_exit_worker())
+    asyncio.run(micro_runtime_exit_worker())
