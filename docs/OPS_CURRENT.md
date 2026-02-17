@@ -7,6 +7,10 @@
 - 5秒スキャは B版（`scalp_ping_5s_b_live`）のみ稼働。
   - 使用env: `ops/env/quant-scalp-ping-5s-b.env`, `ops/env/quant-scalp-ping-5s-b-exit.env`, `ops/env/scalp_ping_5s_b.env`
 
+- 2026-02-17 UTC 追加: 下落継続局面のショート取り逃し抑制。
+  - `ops/env/scalp_ping_5s_b.env`: `SCALP_PING_5S_B_MIN_UNITS=300`, `SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT=1`
+  - `workers/scalp_ping_5s` 側は extrema 合意条件を side別（long/short）で設定可能化。
+
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。
   - `TickImbalance`: `range_max_hold_sec=600`, `loss_cut_max_hold_sec=600`

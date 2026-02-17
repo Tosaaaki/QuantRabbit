@@ -2754,7 +2754,7 @@ def _extrema_gate_decision(
     if is_long:
         m1_top = m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_BLOCK_POS
         m5_top = m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_BLOCK_POS
-        if config.EXTREMA_REQUIRE_M1_M5_AGREE:
+        if config.EXTREMA_REQUIRE_M1_M5_AGREE_LONG:
             top_block = m1_top and m5_top
         else:
             top_block = m1_top or m5_top
@@ -2802,7 +2802,7 @@ def _extrema_gate_decision(
     else:
         m1_bottom = m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
         m5_bottom = m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
-        if config.EXTREMA_REQUIRE_M1_M5_AGREE:
+        if config.EXTREMA_REQUIRE_M1_M5_AGREE_SHORT:
             bottom_block = m1_bottom and m5_bottom
         else:
             bottom_block = m1_bottom or m5_bottom

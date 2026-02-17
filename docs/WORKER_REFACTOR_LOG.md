@@ -1449,3 +1449,23 @@
 - 期待効果:
   - `open_positions` 呼び出しの tail latency（6-9秒帯）と worker 側 `position_manager_timeout` の頻度を低下。
   - position-manager service の過負荷時でも、短期キャッシュ経由で戦略ループ継続性を維持。
+
+### 2026-02-17（追記）下落局面ショート取り逃し対策（scalp_ping_5s_b）
+
+- 背景（VM実測）:
+  - `2026-02-17 17:16 JST` 以降の下落継続で、`orders.db` に新規ショート約定が出ず、`quant-scalp-ping-5s-b.service` では
+    `extrema block side=short reason=short_bottom_m1m5` と `units_below_min` が連発。
+  - 同時間帯のM1終値は `153.014 -> 152.884`（`08:16 -> 08:34 UTC`、約 `13.0 pips` 下落）。
+- 修正:
+  - `workers/scalp_ping_5s/config.py`
+    - extrema の M1/M5 合意条件を side 別に分離:
+      - `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_LONG`
+      - `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT`
+    - 既存 `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE` を共通デフォルトとして維持。
+  - `workers/scalp_ping_5s/worker.py`
+    - long 側は `...AGREE_LONG`、short 側は `...AGREE_SHORT` を参照するよう変更。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MIN_UNITS=300` を追加（`units_below_min` の空振り抑制）。
+    - `SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT=1` を追加（ショートは M1 単独の底判定では block せず、M1+M5 合意時のみ block）。
+- 意図:
+  - 方向別に extrema ブロック感度を制御し、下落継続局面のショート再エントリーを回復する。
