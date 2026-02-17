@@ -30,6 +30,30 @@
 - 運用判断: `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0` を維持し、
   分位レンジ（上下帯）は予測監査と `forecast_context` 伝播に先行適用する。
 
+### 2026-02-17（追記）短期TF（1m/5m/10m）の trend/range 重みを再配分
+
+- `workers/common/forecast_gate.py` と `scripts/eval_forecast_before_after.py` の
+  `TECH_HORIZON_CFG` を短期TFのみ調整。
+  - `1m`: `trend_w=0.90, mr_w=0.10` -> `trend_w=0.70, mr_w=0.30`
+  - `5m`: `trend_w=0.86, mr_w=0.14` -> `trend_w=0.40, mr_w=0.60`
+  - `10m`: `trend_w=0.84, mr_w=0.16` -> `trend_w=0.40, mr_w=0.60`
+- 背景:
+  - VM実測で短期足はレンジ区間が多く、順張り寄り配分だと MAE が悪化しやすい傾向が継続。
+  - 「時間帯=TF」前提で、戦略ごとの主TFに対して mean-reversion 成分を短期ほど強める方針へ変更。
+- VM同一条件評価（`bars=8050`, `--steps 1,5,10`, `--max-bars 12000`）:
+  - `feature_expansion_gain=0.0`（before=after一致の基準式）
+    - `1m`: hit `0.4932 -> 0.4947`, MAE `1.4868 -> 1.4754`
+    - `5m`: hit `0.4880 -> 0.4887`, MAE `3.4739 -> 3.3885`
+    - `10m`: hit `0.4810 -> 0.4836`, MAE `5.1633 -> 5.0371`
+  - `feature_expansion_gain=0.35`（before/after 比較）
+    - `1m`: after hit `0.4905 -> 0.4922`, after MAE `1.4994 -> 1.4883`
+    - `5m`: after hit `0.4858 -> 0.4902`, after MAE `3.4955 -> 3.4162`
+    - `10m`: after hit `0.4808 -> 0.4827`, after MAE `5.1878 -> 5.0774`
+- 反映:
+  - commit: `61105190`
+  - VM: `HEAD == origin/main` を確認し、`quant-market-data-feed` / `quant-order-manager` /
+    `quant-forecast` を再起動。
+
 ### 2026-02-17（追記）「時間帯=TF」前提で戦略別主TF＋補助TF整合を追加
 
 - `execution/strategy_entry.py` の戦略契約に `forecast_support_horizons` を追加し、

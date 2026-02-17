@@ -149,6 +149,14 @@ python3 scripts/eval_forecast_before_after.py \
 `after` 側は `breakout_bias_20` の符号を固定解釈せず、過去サンプルだけで推定した方向スキル
 （`--breakout-adaptive-*`）で強弱/反転するため、レジーム変化時の逆噴射を抑える設計です。
 
+2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
+- `1m`: `trend_w=0.70`, `mr_w=0.30`
+- `5m`: `trend_w=0.40`, `mr_w=0.60`
+- `10m`: `trend_w=0.40`, `mr_w=0.60`
+VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基準で
+`1m/5m/10m` の hit がそれぞれ `+0.0015/+0.0007/+0.0026`、MAE は
+`-0.0114/-0.0854/-0.1262` 改善しました。
+
 運用上はまず `scalp_fast` なら `1m`、`scalp` なら `5m` / `10m` を短期軸として見る前提にして、`8h` / `1d` を中期〜長期補完として確認します。  
 `1h` と `8h` が同方向で `trend_strength` が高いほど「現在の順張り解釈」が強くなります。`range_pressure` 優勢で中立寄りの場合は「レンジ中の天井/底付近」に寄るケースが増えます。
 
