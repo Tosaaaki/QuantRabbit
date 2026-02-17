@@ -246,6 +246,9 @@
 - 運用整備（2026-02-17）
   - `scalp_ping_5s_b` / `scalp_ping_5s_flow` は VM 実ログの skip 要因（`revert_not_found`, `low_tick_count`, `units_below_min`）に合わせ、
     戦略ローカル閾値を `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_flow.env` で緩和して現況追従性を回復。
+  - 追記（2026-02-17 08:46 UTC 反映）:
+    - `scalp_ping_5s_b` は `short_bottom_m1m5` 連発抑止のため short extrema 閾値を緩和し、`MIN_UNITS` を 150 へ引き下げ。
+    - `scalp_ping_5s_flow` は `revert_not_found` 優勢に対し `REVERT_*` と `SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW` を緩和。
 
 ## 監査用更新プロトコル（毎回）
 
