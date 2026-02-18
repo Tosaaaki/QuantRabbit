@@ -2236,3 +2236,27 @@
 - 期待効果:
   - 「予測を主軸にしつつ、手元テクニカルを併用（auto blend）」のまま、
     明確な逆行予測は ENTRY 段階で見送りやすくなる。
+
+### 2026-02-18（追記）quant-position-manager 応答詰まり対策（single-flight + stale cache）
+
+- 背景:
+  - VM実運用で `position_manager(127.0.0.1:8301)` の `/position/open_positions` が 12-15秒 read timeout を連発し、
+    EXIT worker の `position_manager_timeout` が断続的に発生。
+  - 同時リクエスト集中時に `quant-position-manager` の threadpool が詰まり、`/health` まで応答遅延する状態を確認。
+- 実装:
+  - `workers/position_manager/worker.py` を更新。
+  - `/position/open_positions` を server-side single-flight 化し、fresh/stale キャッシュを優先返却。
+  - `/position/sync_trades` も single-flight + TTL/stale cache 化して同時負荷を平準化。
+  - manager 呼び出しを `asyncio.wait_for(asyncio.to_thread(...))` で timeout 制御し、
+    長時間処理時も API 応答の詰まりを回避。
+  - `/health` を `async` 化し、threadpool飽和時でもヘルス応答が取りやすい形へ変更。
+- 追加env（任意）:
+  - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC`
+  - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_CACHE_TTL_SEC`
+  - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_CACHE_TTL_SEC`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC`
+- 期待効果:
+  - `open_positions`/`sync_trades` の同時呼び出し時でも service 側の tail latency を抑え、
+    EXIT worker 側 timeout 連鎖を縮小。

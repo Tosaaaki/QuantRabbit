@@ -246,6 +246,11 @@
     `open_positions` client timeout より短く制御し、worker 側 6s timeout への連鎖を抑止。
   - `quant-position-manager` は Uvicorn access log を既定 OFF とし、
     高頻度 `open_positions` リクエスト時のログI/O飽和を抑止。
+- 運用整備（2026-02-18）
+  - `workers/position_manager/worker.py` の API 実装を single-flight 化し、
+    `/position/open_positions` / `/position/sync_trades` は worker 側で fresh/stale cache を返す。
+  - manager 呼び出しを `asyncio.wait_for(...to_thread...)` で timeout 制御し、
+    同時アクセス集中時でも `/health` を含む応答詰まりを起こしにくい構成へ更新。
 - `micro_multistrat` は共通Runnerとしての運用を打ち切り、レンジ時の順張り/押し目判定運用は各独立 micro ワーカー側へ移行したため、同種の範囲制御は
   各専用ワーカーの設定で管理している。
 - 運用整備（2026-02-24）
