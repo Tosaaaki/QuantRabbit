@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-import copy
 import logging
 import os
 import threading
@@ -122,7 +121,7 @@ async def _lifespan(app: FastAPI):
                 if isinstance(snapshot, dict):
                     app.state.open_positions_cache[bool(include_unknown)] = (
                         time.monotonic(),
-                        copy.deepcopy(snapshot),
+                        snapshot,
                     )
             except Exception as exc:
                 LOG.warning(
@@ -245,11 +244,11 @@ def _cache_lookup(
     age = max(0.0, time.monotonic() - float(ts))
     if age > max_age_sec:
         return None
-    return copy.deepcopy(value), age
+    return value, age
 
 
 def _cache_store(cache: dict[Any, tuple[float, Any]], key: Any, value: Any) -> None:
-    cache[key] = (time.monotonic(), copy.deepcopy(value))
+    cache[key] = (time.monotonic(), value)
 
 
 def _try_acquire_call_lock(request: Request, lock_name: str) -> bool:
@@ -277,11 +276,10 @@ def _mark_open_positions_cache_meta(
     stale: bool,
     reason: str | None,
 ) -> dict[str, Any]:
-    result = copy.deepcopy(payload)
-    meta = result.get("__meta__")
-    if not isinstance(meta, dict):
-        meta = {}
-        result["__meta__"] = meta
+    result = dict(payload)
+    base_meta = payload.get("__meta__")
+    meta: dict[str, Any] = dict(base_meta) if isinstance(base_meta, dict) else {}
+    result["__meta__"] = meta
     meta["worker_cache"] = True
     meta["worker_cache_age_sec"] = round(max(age_sec, 0.0), 2)
     if stale:

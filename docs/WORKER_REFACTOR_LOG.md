@@ -2246,6 +2246,7 @@
 - 実装:
   - `workers/position_manager/worker.py` を更新。
   - `/position/open_positions` を server-side single-flight 化し、起動時warmupでキャッシュを事前投入したうえで fresh/stale を優先返却。
+  - `open_positions` キャッシュ処理の `deepcopy` を除去し、返却時はトップレベル shallow copy のみでメタ付与。
   - `/position/sync_trades` も single-flight + TTL/stale cache 化して同時負荷を平準化。
   - manager 呼び出しを `asyncio.wait_for(asyncio.to_thread(...))` で timeout 制御し、
     長時間処理時も API 応答の詰まりを回避。
