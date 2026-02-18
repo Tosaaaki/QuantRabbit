@@ -150,7 +150,7 @@ python3 scripts/eval_forecast_before_after.py \
 ```
 
 反発項を同一期間で比較する場合は `--rebound-weight` / `--rebound-weight-map` を併用します
-（例: `--rebound-weight 0.06 --rebound-weight-map 1m=0.10,5m=0.02,10m=0.01`）。
+（例: `--rebound-weight 0.06 --rebound-weight-map 1m=0.10,5m=0.06,10m=0.01`）。
 
 `breakout_bias_20` の方向一致率（filtered/unfiltered）も同時に出るため、
 「線形トレンド＋サポレジ圧力」の有効性を同一期間で監査できます。
@@ -197,7 +197,7 @@ python3 scripts/eval_forecast_before_after.py \
 - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`
 - `FORECAST_TECH_REBOUND_ENABLED=1`
 - `FORECAST_TECH_REBOUND_WEIGHT=0.06`
-- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.02,10m=0.01`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.06,10m=0.01`
 
 同一データ比較（`logs/reports/forecast_improvement/rebound_tune_report_20260218T024741Z.md`）では、
 候補適用時の `after` 指標差分（candidate-after - base-after）は次:
@@ -225,6 +225,11 @@ python3 scripts/eval_forecast_before_after.py \
 
 `5m=0.26` 比で、`2h/4h` は同等、`24h` は `hit/mae` とも小幅改善、
 `72h` はごく小幅の悪化に留まるため、短中期バランス優先で `5m=0.22` を採用しました。
+
+同日追加の微調整（`report_20260218T041728Z_more_improve.md`）では、
+`breakout/session` は現行（`5m=0.22`）が最適のまま、`rebound_5m` のみ再探索。
+`rebound_5m=0.06` は `0.02` 比で hit は同等のまま `2h/4h/24h/72h` 全窓で MAE を
+微小改善したため、運用値を `1m=0.10,5m=0.06,10m=0.01` に更新しました。
 
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`

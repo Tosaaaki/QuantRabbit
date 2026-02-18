@@ -2421,3 +2421,27 @@
     - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`（維持）
     - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.22,10m=0.28`
     - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`（維持）
+
+### 2026-02-18（追記）rebound_5m を追加最適化して微改善
+
+- 背景:
+  - `breakout/session` は `5m=0.22` で概ね収束したため、残りの改善余地として
+    `FORECAST_TECH_REBOUND_WEIGHT_MAP` の `5m` 成分のみを再探索。
+- 実施:
+  - 最新VM実データを再取得:
+    - `logs/oanda/candles_M1_eval_24h_latest.json`（1554 bars）
+    - `logs/oanda/candles_M1_eval_72h_latest.json`（3224 bars）
+  - グリッド:
+    - `breakout_5m=[0.20,0.22,0.24,0.26]`
+    - `session_5m=[0.20,0.22,0.24]`
+    - `rebound_5m=[0.00,0.02,0.04,0.06]`
+  - 出力:
+    - `logs/reports/forecast_improvement/more_improve_grid_20260218T041728Z.json`
+    - `logs/reports/forecast_improvement/report_20260218T041728Z_more_improve.md`
+- 判定:
+  - 有効候補は `breakout/session` を現行維持したままの `rebound_5m` 調整のみ。
+  - `rebound_5m=0.06` は `0.02` 比で `hit_delta` を維持しつつ、
+    `2h/4h/24h/72h` 全窓で `mae_delta` を微小改善（いずれもマイナス方向）。
+- 反映:
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.06,10m=0.01`
