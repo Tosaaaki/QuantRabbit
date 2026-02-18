@@ -139,6 +139,8 @@
 - EXIT 側は共通一律ゲートを追加せず、各 `exit_worker` が `entry_thesis.forecast` / `forecast_fusion`
   を参照して `profit_take` / `trail_start` / `lock_buffer` / `loss_cut_*` を戦略内で補正する。
   補正は `workers/common/exit_forecast.py` の係数計算を使うが、最終判定は各戦略ワーカー側ロジックのまま維持する。
+- EXIT 実行導線は `exit_worker` 間の委譲（他戦略 worker 呼び出し）を禁止し、各戦略パッケージ内で
+  実体ロジックを保持する。
 - 戦略ワーカー側では forecast gate とは独立に、短中期（例: `M1x1`, `M1x5`, `M5x2`）のローカル予測を
   エントリー時に都度計算し、`entry_thesis.tech_tp_mult` / `tech_score` / `entry_units_intent` へ反映する。
 - ローカル予測の過去再現評価は `scripts/eval_local_forecast.py` を正規手順として使い、

@@ -1980,8 +1980,7 @@
     - `workers/scalp_tick_imbalance/exit_worker.py`
     - `workers/scalp_wick_reversal_blend/exit_worker.py`
     - `workers/scalp_wick_reversal_pro/exit_worker.py`
-  - 既存 `micro_*` 個別 exit ワーカー（`micro_rangebreak` など）は `micro_runtime` ラッパー経由のため、
-    追加修正なしで同補正を継承。
+  - 既存 `micro_*` 個別 exit ワーカー（`micro_rangebreak` など）も同補正を適用。
 - テスト:
   - 追加: `tests/workers/test_exit_forecast.py`
   - 実行:
@@ -1993,3 +1992,30 @@
     EXIT 側の利確・トレール・損切り閾値補正にも接続済み。
   - ただし最終クローズ判定の責務は従来どおり各 strategy `exit_worker` に残し、
     共通レイヤでの一律拒否/強制クローズは導入していない。
+
+### 2026-02-18（追記）EXITワーカーの戦略別実体化（委譲停止）
+
+- 要求:
+  - 「共通テンプレート委譲ではなく、全戦略を個別EXITワーカー化」。
+- 実装:
+  - `micro_*` 系11本の `exit_worker` から `workers.micro_runtime.exit_worker` への委譲を廃止し、
+    各戦略パッケージ内に実体ロジックを配置。
+    - 対象:
+      - `workers/micro_compressionrevert/exit_worker.py`
+      - `workers/micro_levelreactor/exit_worker.py`
+      - `workers/micro_momentumburst/exit_worker.py`
+      - `workers/micro_momentumpulse/exit_worker.py`
+      - `workers/micro_momentumstack/exit_worker.py`
+      - `workers/micro_pullbackema/exit_worker.py`
+      - `workers/micro_rangebreak/exit_worker.py`
+      - `workers/micro_trendmomentum/exit_worker.py`
+      - `workers/micro_trendretest/exit_worker.py`
+      - `workers/micro_vwapbound/exit_worker.py`
+      - `workers/micro_vwaprevert/exit_worker.py`
+  - `workers/scalp_ping_5s_flow/exit_worker.py` の `workers.scalp_ping_5s.exit_worker` subprocess 委譲を廃止し、
+    同ファイル内でflow専用envマップ + EXIT実体ロジックを実行する構成へ変更。
+  - 各 micro 戦略および flow 戦略にローカル `config.py` を追加し、`ENV_PREFIX` を戦略パッケージ内で解決。
+- 検証:
+  - `rg` による委譲参照確認で `exit_worker -> 別 exit_worker` 参照は 0 件。
+  - `python3 -m py_compile`（対象13 worker + 12 config）通過。
+  - `pytest -q tests/workers/test_exit_forecast.py tests/workers/test_loss_cut.py tests/addons/test_session_open_worker.py`（8 passed）。
