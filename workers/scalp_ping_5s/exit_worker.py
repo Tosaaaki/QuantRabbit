@@ -27,6 +27,11 @@ try:  # optional config
 except Exception:  # pragma: no cover - optional
     yaml = None
 
+try:  # optional predictive bias helper
+    from analysis.local_decider import _technical_forecast_bias as _forecast_bias_from_factors
+except Exception:  # pragma: no cover - optional
+    _forecast_bias_from_factors = None
+
 
 from . import config
 from utils.env_utils import env_bool, env_float
@@ -547,6 +552,14 @@ class _TradeState:
             self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
 
 
+@dataclass
+class _DirectionFlipState:
+    hits: int = 0
+    last_hit_ts: float = 0.0
+    last_close_ts: float = 0.0
+    last_score: float = 0.0
+
+
 class RangeFaderExitWorker:
     def __init__(self) -> None:
         self.loop_interval = max(
@@ -661,6 +674,10 @@ class RangeFaderExitWorker:
             0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MAX_PIPS", 6.0)
         )
         self.exit_policy_start_ts = load_rollout_start_ts("SCALP_PRECISION_EXIT_POLICY_START_TS")
+        self.new_policy_start_ts = max(
+            0.0,
+            _float_env("RANGEFADER_EXIT_NEW_POLICY_START_TS", time.time()),
+        )
 
         self._pos_manager = PositionManager()
         self._pos_manager_open_positions_timeout_sec = max(
@@ -675,6 +692,7 @@ class RangeFaderExitWorker:
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
         self._rollout_skip_log_ts: dict[str, float] = {}
+        self._direction_flip_states: dict[str, _DirectionFlipState] = {}
 
     def _unrealized_pnl_pips(
         self,
@@ -746,6 +764,153 @@ class RangeFaderExitWorker:
         if not loss_cut_require_sl:
             return True
         return self._trade_has_stop_loss(trade)
+
+    def _direction_flip_score(
+        self,
+        *,
+        side: str,
+        fac_m1: dict,
+        fac_h4: dict,
+        forecast_weight: float,
+    ) -> tuple[float, dict[str, float]]:
+        sign = 1.0 if side == "long" else -1.0
+
+        def _clip01(value: float) -> float:
+            return max(0.0, min(1.0, value))
+
+        atr_pips = max(0.6, _bb_float(fac_m1.get("atr_pips")) or 0.0)
+        rsi = _bb_float(fac_m1.get("rsi"))
+        adx = _bb_float(fac_m1.get("adx")) or 0.0
+        ma10 = _bb_float(fac_m1.get("ma10"))
+        ma20 = _bb_float(fac_m1.get("ma20"))
+        vwap_gap = _bb_float(fac_m1.get("vwap_gap"))
+        ema_slope = _bb_float(fac_m1.get("ema_slope_10"))
+        if ema_slope is None:
+            ema_slope = _bb_float(fac_m1.get("ema_slope_5"))
+
+        ma_gap_pips = (ma10 - ma20) / _BB_PIP if ma10 is not None and ma20 is not None else 0.0
+        slope_pips = 0.0
+        if ema_slope is not None:
+            slope_pips = ema_slope / _BB_PIP if abs(ema_slope) <= 1.5 else ema_slope
+
+        ma_against = _clip01((-sign * ma_gap_pips) / max(1.2, atr_pips * 0.9))
+        slope_against = _clip01((-sign * slope_pips) / max(0.8, atr_pips * 0.7))
+        vwap_against = _clip01((-sign * (vwap_gap or 0.0)) / max(1.6, atr_pips * 0.8))
+        if rsi is None:
+            rsi_against = 0.0
+        elif side == "long":
+            rsi_against = _clip01((50.0 - rsi) / 15.0)
+        else:
+            rsi_against = _clip01((rsi - 50.0) / 15.0)
+
+        adx_amp = 0.78 + 0.22 * _clip01((adx - 12.0) / 16.0)
+        tech_score = _clip01(
+            adx_amp
+            * (
+                0.36 * ma_against
+                + 0.24 * rsi_against
+                + 0.20 * slope_against
+                + 0.20 * vwap_against
+            )
+        )
+
+        forecast_score = 0.0
+        forecast_edge = 0.0
+        projection_against = 0.0
+        if callable(_forecast_bias_from_factors):
+            try:
+                bias = _forecast_bias_from_factors(fac_m1, fac_h4) or {}
+            except Exception:
+                bias = {}
+            p_up = _bb_float((bias or {}).get("p_up"))
+            forecast_edge = _clip01(_bb_float((bias or {}).get("edge")) or 0.0)
+            projection = _bb_float((bias or {}).get("projection_score")) or 0.0
+            if p_up is not None:
+                against_prob = (1.0 - p_up) if side == "long" else p_up
+                forecast_score = _clip01((against_prob - 0.5) * 2.0) * _clip01(
+                    forecast_edge / 0.45
+                )
+            projection_against = _clip01(-sign * projection)
+            forecast_score = max(forecast_score, projection_against * 0.85)
+
+        fw = _clip01(float(forecast_weight))
+        score = _clip01((1.0 - fw) * tech_score + fw * forecast_score)
+        return score, {
+            "score": round(score, 5),
+            "tech_score": round(tech_score, 5),
+            "forecast_score": round(forecast_score, 5),
+            "forecast_edge": round(forecast_edge, 5),
+            "projection_against": round(projection_against, 5),
+            "ma_against": round(ma_against, 5),
+            "rsi_against": round(rsi_against, 5),
+            "slope_against": round(slope_against, 5),
+            "vwap_against": round(vwap_against, 5),
+            "adx": round(float(adx), 5),
+            "atr_pips": round(float(atr_pips), 5),
+        }
+
+    def _maybe_direction_flip_reason(
+        self,
+        *,
+        trade_id: str,
+        side: str,
+        hold_sec: float,
+        adverse_pips: float,
+        reason: str,
+        enabled: bool,
+        min_hold_sec: float,
+        min_adverse_pips: float,
+        score_threshold: float,
+        score_release: float,
+        confirm_hits: int,
+        confirm_window_sec: float,
+        cooldown_sec: float,
+        forecast_weight: float,
+        fac_m1: dict,
+        fac_h4: dict,
+    ) -> tuple[Optional[str], Optional[dict[str, float]]]:
+        state = self._direction_flip_states.get(trade_id)
+        if state is None:
+            state = _DirectionFlipState()
+            self._direction_flip_states[trade_id] = state
+
+        now_mono = time.monotonic()
+        if not enabled:
+            state.hits = 0
+            return None, None
+        if min_hold_sec > 0 and hold_sec < min_hold_sec:
+            state.hits = 0
+            return None, None
+        if min_adverse_pips > 0 and adverse_pips < min_adverse_pips:
+            state.hits = 0
+            return None, None
+        if cooldown_sec > 0 and (now_mono - state.last_close_ts) < cooldown_sec:
+            return None, None
+
+        score, diag = self._direction_flip_score(
+            side=side,
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
+            forecast_weight=forecast_weight,
+        )
+        state.last_score = score
+        diag["hits"] = float(state.hits)
+        diag["adverse_pips"] = round(float(adverse_pips), 5)
+
+        stale = confirm_window_sec > 0 and (now_mono - state.last_hit_ts) > confirm_window_sec
+        if score >= score_threshold:
+            state.hits = 1 if stale or state.hits <= 0 else state.hits + 1
+            state.last_hit_ts = now_mono
+            diag["hits"] = float(state.hits)
+            if state.hits >= max(1, int(confirm_hits)):
+                state.hits = 0
+                state.last_close_ts = now_mono
+                return reason, diag
+            return None, diag
+
+        if score <= score_release or stale:
+            state.hits = 0
+        return None, diag
 
     def _maybe_log_rollout_skip(
         self,
@@ -854,6 +1019,11 @@ class RangeFaderExitWorker:
             self.exit_policy_start_ts,
             unknown_is_new=False,
         )
+        new_policy_active = trade_passes_rollout(
+            opened_at,
+            self.new_policy_start_ts,
+            unknown_is_new=False,
+        )
 
         thesis = trade.get("entry_thesis") or {}
         if isinstance(thesis, str):
@@ -924,6 +1094,67 @@ class RangeFaderExitWorker:
             str(exit_profile.get("loss_cut_reason_time") or self.loss_cut_reason_time).strip()
             or self.loss_cut_reason_time
         )
+        non_range_max_hold_sec = max(
+            0.0, _pick_float(exit_profile.get("non_range_max_hold_sec"), 0.0)
+        )
+        direction_flip_cfg = exit_profile.get("direction_flip")
+        if not isinstance(direction_flip_cfg, dict):
+            direction_flip_cfg = {}
+        direction_flip_enabled = _coerce_bool(direction_flip_cfg.get("enabled"), False)
+        direction_flip_min_hold_sec = max(
+            0.0, _pick_float(direction_flip_cfg.get("min_hold_sec"), min_hold_sec)
+        )
+        direction_flip_min_adverse_pips = max(
+            0.0, _pick_float(direction_flip_cfg.get("min_adverse_pips"), 0.0)
+        )
+        direction_flip_score_threshold = max(
+            0.0, min(1.0, _pick_float(direction_flip_cfg.get("score_threshold"), 0.62))
+        )
+        direction_flip_score_release = max(
+            0.0,
+            min(
+                direction_flip_score_threshold,
+                _pick_float(
+                    direction_flip_cfg.get("release_threshold"),
+                    max(0.0, direction_flip_score_threshold - 0.18),
+                ),
+            ),
+        )
+        direction_flip_confirm_hits = max(
+            1, _pick_int(direction_flip_cfg.get("confirm_hits"), 3)
+        )
+        direction_flip_confirm_window_sec = max(
+            0.0, _pick_float(direction_flip_cfg.get("confirm_window_sec"), 25.0)
+        )
+        direction_flip_cooldown_sec = max(
+            0.0, _pick_float(direction_flip_cfg.get("cooldown_sec"), 8.0)
+        )
+        direction_flip_forecast_weight = max(
+            0.0, min(1.0, _pick_float(direction_flip_cfg.get("forecast_weight"), 0.35))
+        )
+        direction_flip_reason = (
+            str(direction_flip_cfg.get("reason") or "direction_flip").strip()
+            or "direction_flip"
+        )
+        base_tag_lower = str(base_tag or strategy_tag or "").strip().lower()
+        # User safety requirement: legacy/open positions must keep legacy behavior.
+        # Only apply newly added ping-specific loss/flip controls to positions opened
+        # after RANGEFADER_EXIT_NEW_POLICY_START_TS.
+        if (not new_policy_active) and base_tag_lower.startswith("scalp_ping_5s"):
+            loss_cut_enabled = self.loss_cut_enabled
+            loss_cut_require_sl = self.loss_cut_require_sl
+            loss_cut_soft_pips = self.loss_cut_soft_pips
+            loss_cut_hard_pips = max(
+                loss_cut_soft_pips,
+                self.loss_cut_hard_pips,
+            )
+            loss_cut_max_hold_sec = self.loss_cut_max_hold_sec
+            loss_cut_cooldown_sec = self.loss_cut_cooldown_sec
+            loss_cut_reason_soft = self.loss_cut_reason_soft
+            loss_cut_reason_hard = self.loss_cut_reason_hard
+            loss_cut_reason_time = self.loss_cut_reason_time
+            non_range_max_hold_sec = 0.0
+            direction_flip_enabled = False
         loss_cut_hard_atr_mult = max(
             0.0, _pick_float(exit_profile.get("loss_cut_hard_atr_mult"), 0.0)
         )
@@ -1177,7 +1408,76 @@ class RangeFaderExitWorker:
             if reentry and reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
                 self._states.pop(trade_id, None)
+                self._direction_flip_states.pop(trade_id, None)
                 return
+
+            adverse_pips = abs(float(pnl))
+            fac_h4 = all_factors().get("H4") or {}
+            if new_policy_active:
+                if (
+                    not range_active
+                    and non_range_max_hold_sec > 0.0
+                    and hold_sec >= non_range_max_hold_sec
+                ):
+                    await self._close(
+                        trade_id,
+                        -units,
+                        loss_cut_reason_time,
+                        pnl,
+                        client_id,
+                        allow_negative=True,
+                    )
+                    self._states.pop(trade_id, None)
+                    self._direction_flip_states.pop(trade_id, None)
+                    return
+                flip_reason, flip_diag = self._maybe_direction_flip_reason(
+                    trade_id=trade_id,
+                    side=side,
+                    hold_sec=hold_sec,
+                    adverse_pips=adverse_pips,
+                    reason=direction_flip_reason,
+                    enabled=direction_flip_enabled,
+                    min_hold_sec=direction_flip_min_hold_sec,
+                    min_adverse_pips=direction_flip_min_adverse_pips,
+                    score_threshold=direction_flip_score_threshold,
+                    score_release=direction_flip_score_release,
+                    confirm_hits=direction_flip_confirm_hits,
+                    confirm_window_sec=direction_flip_confirm_window_sec,
+                    cooldown_sec=direction_flip_cooldown_sec,
+                    forecast_weight=direction_flip_forecast_weight,
+                    fac_m1=fac_m1,
+                    fac_h4=fac_h4,
+                )
+                if flip_reason:
+                    log_metric(
+                        "scalp_precision_direction_flip_exit",
+                        float((flip_diag or {}).get("score") or 0.0),
+                        tags={
+                            "strategy": str(base_tag or strategy_tag or "unknown"),
+                            "side": side,
+                        },
+                        ts=now,
+                    )
+                    LOG.info(
+                        "[exit-rangefader] direction_flip trade=%s tag=%s side=%s pnl=%.2fp hold=%.0fs diag=%s",
+                        trade_id,
+                        base_tag or strategy_tag or "unknown",
+                        side,
+                        pnl,
+                        hold_sec,
+                        json.dumps(flip_diag or {}, ensure_ascii=False, sort_keys=True),
+                    )
+                    await self._close(
+                        trade_id,
+                        -units,
+                        flip_reason,
+                        pnl,
+                        client_id,
+                        allow_negative=True,
+                    )
+                    self._states.pop(trade_id, None)
+                    self._direction_flip_states.pop(trade_id, None)
+                    return
 
             eff_loss_cut_soft_pips = max(0.0, float(loss_cut_soft_pips))
             eff_loss_cut_hard_pips = max(
@@ -1229,7 +1529,6 @@ class RangeFaderExitWorker:
             if loss_cut_cooldown_sec > 0 and (now_mono - last) < loss_cut_cooldown_sec:
                 return
 
-            adverse_pips = abs(float(pnl))
             reason = None
             if loss_cut_max_hold_sec > 0 and hold_sec >= loss_cut_max_hold_sec:
                 reason = loss_cut_reason_time
@@ -1241,6 +1540,7 @@ class RangeFaderExitWorker:
                 return
             self._loss_cut_last_ts[trade_id] = now_mono
             await self._close(trade_id, -units, reason, pnl, client_id, allow_negative=True)
+            self._direction_flip_states.pop(trade_id, None)
             return
 
         lock_buffer = range_lock_buffer if range_active else lock_buffer
@@ -1360,15 +1660,17 @@ class RangeFaderExitWorker:
         if range_active and hold_sec >= range_max_hold_sec:
             await self._close(trade_id, -units, "range_timeout", pnl, client_id)
             self._states.pop(trade_id, None)
+            self._direction_flip_states.pop(trade_id, None)
 
     async def run(self) -> None:
         LOG.info(
-            "[exit-rangefader] exit worker start interval=%.2fs idle=%.2fs tags=%s pocket=%s policy_start_ts=%.3f",
+            "[exit-rangefader] exit worker start interval=%.2fs idle=%.2fs tags=%s pocket=%s policy_start_ts=%.3f new_policy_start_ts=%.3f",
             self.loop_interval,
             self.idle_interval,
             ",".join(sorted(ALLOWED_TAGS)) if ALLOWED_TAGS else "none",
             POCKET,
             float(self.exit_policy_start_ts or 0.0),
+            float(self.new_policy_start_ts or 0.0),
         )
         LOG.info("Application started!")
         if not ALLOWED_TAGS:
@@ -1401,6 +1703,9 @@ class RangeFaderExitWorker:
                 for tid in list(self._rollout_skip_log_ts.keys()):
                     if tid not in active_ids:
                         self._rollout_skip_log_ts.pop(tid, None)
+                for tid in list(self._direction_flip_states.keys()):
+                    if tid not in active_ids:
+                        self._direction_flip_states.pop(tid, None)
                 if not trades:
                     continue
 

@@ -254,6 +254,16 @@
       `LOOKAHEAD_GATE_ENABLED=0` と `REVERT_*`（window/range/sweep/bounce）および `DROP_FLOW_*` 閾値を追加緩和。
     - `no_signal:revert_not_found` が継続したため、config下限に合わせて `MIN_*`/`SHORT_MIN_*`/`IMBALANCE_MIN` を明示し、
       `MOMENTUM_TRIGGER_PIPS` を 0.10 へ引き下げて momentum 側シグナルの成立条件を緩和。
+- 運用整備（2026-02-18）
+  - `scalp_ping_5s` / `scalp_ping_5s_b` の EXIT worker に
+    予測バイアス（`analysis.local_decider._technical_forecast_bias`）を併用した
+    `direction_flip` 判定を追加（戦略内で完結、共通一律ゲートは追加しない）。
+  - `direction_flip` はヒステリシスと連続確認でノイズを抑制し、
+    含み損の取り残し玉のみを対象に close する。
+  - `range_timeout` 非依存の取り残しを抑えるため、
+    非レンジ時の含み損向け `non_range_max_hold_sec` を追加。
+  - 新ルールは `RANGEFADER_EXIT_NEW_POLICY_START_TS` 以降の新規建玉に限定し、
+    既存建玉には適用しない。
 
 ## 監査用更新プロトコル（毎回）
 

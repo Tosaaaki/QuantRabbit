@@ -8,6 +8,26 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-18（追記）`scalp_ping_5s(_b)` EXIT に反転検知（予測バイアス併用）を追加
+
+- 対象:
+  - `workers/scalp_ping_5s/exit_worker.py`
+  - `workers/scalp_ping_5s_b/exit_worker.py`
+  - `config/strategy_exit_protections.yaml` (`scalp_ping_5s`, `scalp_ping_5s_live`, `scalp_ping_5s_b`)
+- 変更:
+  - 含み損時に `M1` 構造（MA差/RSI/EMA傾き/VWAP乖離）と
+    `analysis.local_decider._technical_forecast_bias` の予測バイアスを合成した
+    `direction_flip` 判定を追加。
+  - ヒステリシス（`score_threshold` / `release_threshold`）と
+    連続ヒット確認（`confirm_hits` / `confirm_window_sec`）でノイズ起因の早切りを抑制。
+  - `range_active` 前提の `range_timeout` だけでは残るケース向けに、
+    非レンジ時の時間上限 `non_range_max_hold_sec` を追加（含み損時のみ）。
+  - 新ロジックは既存建玉を触らないよう、
+    `RANGEFADER_EXIT_NEW_POLICY_START_TS` 以降に建ったポジションだけに適用。
+- 意図:
+  - 「利益を削る一律SL」ではなく、方向転換が確認された負け玉のみを機械的に整理し、
+    長時間取り残しとマージン圧迫の再発を抑える。
+
 ### 2026-02-17（追記）forecast に分位レンジ予測（上下帯）を追加
 
 - `analysis/forecast_sklearn.py` の最新予測出力に
@@ -1767,4 +1787,3 @@
 - テスト:
   - `tests/execution/test_strategy_entry_forecast_fusion.py` を追加し、
     逆行縮小・順行拡大・確率補完・コンテキスト欠損時不変を検証。
-

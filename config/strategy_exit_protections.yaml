@@ -768,6 +768,28 @@ strategies:
     max_delay_sec: 10
     be_profile: {trigger_pips: 0.65, lock_ratio: 0.52, min_lock_pips: 0.18, cooldown_sec: 3}
     tp_move: {enabled: true, trigger_pips: 0.75, buffer_pips: 0.25}
+    exit_profile:
+      # 取り残し対策: 新規建玉のみを対象に、反転検知+時間上限で tail を抑える。
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      # Soft は hidden hard-stop になりやすいため無効化し、方向反転シグナルを優先する。
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 8.0
+      loss_cut_max_hold_sec: 1200
+      loss_cut_cooldown_sec: 5
+      # 非レンジの含み損を長時間放置しない（range_timeout 依存を回避）。
+      non_range_max_hold_sec: 900
+      direction_flip:
+        enabled: true
+        min_hold_sec: 90
+        min_adverse_pips: 1.8
+        score_threshold: 0.64
+        release_threshold: 0.46
+        confirm_hits: 3
+        confirm_window_sec: 25
+        cooldown_sec: 8
+        forecast_weight: 0.35
+        reason: m1_structure_break
     neg_exit:
       enabled: true
       strict_no_negative: true
@@ -819,6 +841,25 @@ strategies:
     max_delay_sec: 10
     be_profile: {trigger_pips: 0.65, lock_ratio: 0.52, min_lock_pips: 0.18, cooldown_sec: 3}
     tp_move: {enabled: true, trigger_pips: 0.75, buffer_pips: 0.25}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 8.0
+      loss_cut_max_hold_sec: 1200
+      loss_cut_cooldown_sec: 5
+      non_range_max_hold_sec: 900
+      direction_flip:
+        enabled: true
+        min_hold_sec: 90
+        min_adverse_pips: 1.8
+        score_threshold: 0.64
+        release_threshold: 0.46
+        confirm_hits: 3
+        confirm_window_sec: 25
+        cooldown_sec: 8
+        forecast_weight: 0.35
+        reason: m1_structure_break
     neg_exit:
       enabled: true
       strict_no_negative: true
