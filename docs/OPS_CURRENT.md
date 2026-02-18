@@ -1,5 +1,29 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-1. 2026-02-18 UTC MicroCompressionRevert デリスク（専用調整）
+- 背景:
+  - 直近24hで `MicroCompressionRevert-short` が `PF<1`（特に同時多発エントリー後の損失クラスター）を確認。
+- 対応（`ops/env/quant-micro-compressionrevert.env`）:
+  - サイズ縮小:
+    - `MICRO_MULTI_BASE_UNITS=14000`（従来 28000）
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroCompressionRevert:0.45`
+  - 同時多発抑制:
+    - `MICRO_MULTI_MAX_SIGNALS_PER_CYCLE=1`
+    - `MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE=0.55`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=120`
+  - 低成績ブロックを前倒し:
+    - `MICRO_MULTI_HIST_MIN_TRADES=8`
+    - `MICRO_MULTI_HIST_SKIP_SCORE=0.55`
+    - `MICRO_MULTI_DYN_ALLOC_MIN_TRADES=8`
+    - `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.45`
+- EXIT調整（`config/strategy_exit_protections.yaml` `MicroCompressionRevert.exit_profile`）:
+  - `range_max_hold_sec=900`
+  - `loss_cut_soft_sl_mult=0.95`
+  - `loss_cut_hard_sl_mult=1.20`（従来 1.60）
+  - `loss_cut_max_hold_sec=900`（従来 2400）
+  - `loss_cut_cooldown_sec=4`
+  - 追加: `profit/trail/lock` の明示値（`profit_pips=1.1`, `trail_start_pips=1.5` など）
+
 ## 0. 2026-02-17 UTC 5秒スキャをB専用へ固定
 - 無印5秒スキャ（`scalp_ping_5s_live`）の運用導線を削除。
   - 削除: `quant-scalp-ping-5s.service`, `quant-scalp-ping-5s-exit.service`

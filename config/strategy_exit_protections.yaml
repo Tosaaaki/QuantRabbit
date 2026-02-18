@@ -418,13 +418,24 @@ strategies:
 
   MicroCompressionRevert:
     exit_profile:
+      min_hold_sec: 8
+      profit_pips: 1.1
+      trail_start_pips: 1.5
+      trail_backoff_pips: 0.45
+      lock_buffer_pips: 0.22
+      range_profit_pips: 0.9
+      range_trail_start_pips: 1.2
+      range_trail_backoff_pips: 0.40
+      range_lock_buffer_pips: 0.20
+      range_max_hold_sec: 900
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
+      loss_cut_soft_sl_mult: 0.95
       loss_cut_hard_pips: 0.0
-      loss_cut_hard_sl_mult: 1.60
-      loss_cut_max_hold_sec: 2400
-      loss_cut_cooldown_sec: 6
+      loss_cut_hard_sl_mult: 1.20
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 4
 
   MicroTrendRetest:
     exit_profile:

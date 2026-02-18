@@ -2041,3 +2041,29 @@
   - `rg` で `exit_worker` + ローカルEXITモジュール群に `workers.common` 参照が残っていないことを確認。
   - `python3 -m py_compile`（exit_worker + ローカルEXITモジュール、193ファイル）通過。
   - `pytest -q tests/workers/test_exit_forecast.py tests/workers/test_loss_cut.py tests/addons/test_session_open_worker.py`（8 passed）。
+
+### 2026-02-18（追記）MicroCompressionRevert の実運用デリスク（ENTRY/EXIT）
+
+- 背景:
+  - VM `trades.db` 直近24hで `MicroCompressionRevert-short` が `PF<1` を継続。
+  - 同時刻に複数玉が積み上がるクラスター損失（`MARKET_ORDER_TRADE_CLOSE`）を確認。
+- 対応:
+  - `ops/env/quant-micro-compressionrevert.env`
+    - `MICRO_MULTI_BASE_UNITS=14000`（28000→半減）
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroCompressionRevert:0.45`
+    - `MICRO_MULTI_MAX_SIGNALS_PER_CYCLE=1`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=120`
+    - `MICRO_MULTI_HIST_MIN_TRADES=8`
+    - `MICRO_MULTI_HIST_SKIP_SCORE=0.55`
+    - `MICRO_MULTI_DYN_ALLOC_MIN_TRADES=8`
+    - `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.45`
+  - `config/strategy_exit_protections.yaml` `MicroCompressionRevert.exit_profile`
+    - `loss_cut_hard_sl_mult=1.20`（1.60→引き締め）
+    - `loss_cut_soft_sl_mult=0.95` を追加
+    - `loss_cut_max_hold_sec=900`（2400→短縮）
+    - `range_max_hold_sec=900`
+    - `loss_cut_cooldown_sec=4`
+    - `profit/trail/lock` を明示（`profit_pips=1.1`, `trail_start_pips=1.5` など）
+- 目的:
+  - まずは「損失クラスターを作らない」ことを優先し、サイズ・頻度・保有時間を同時に圧縮。
+  - 2h/6h/24h 窓で `PF/avg_pips/close_reason` を再判定し、必要なら段階的に再開放。
