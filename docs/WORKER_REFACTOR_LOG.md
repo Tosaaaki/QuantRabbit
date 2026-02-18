@@ -1787,3 +1787,32 @@
 - テスト:
   - `tests/execution/test_strategy_entry_forecast_fusion.py` を追加し、
     逆行縮小・順行拡大・確率補完・コンテキスト欠損時不変を検証。
+
+### 2026-02-18（追記）全戦略の forecast+戦略ローカル融合を確度寄りに強化
+
+- 背景:
+  - 「各戦略が forecast と自戦略計算を同時に使い、逆行局面を減らす」要件に対し、
+    既存 `forecast_fusion` は方向補正中心で、TF整合と強逆行の明示拒否が不足していた。
+  - 併せて `quant-m1scalper.env` が `FORECAST_GATE_ENABLED=0` のままで、M1系の forecast 参照が欠落していた。
+- 実装:
+  - `execution/strategy_entry.py`
+    - `tf_confluence_score/tf_confluence_count` を `units` と `entry_probability` の補正に追加。
+      - 低整合（負値）は追加縮小、高整合（正値）は小幅増加。
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*` を追加し、強い逆行予測
+      （`direction_prob` 低位 + `edge` 高位、または `allowed=false`）は `units=0` で見送り。
+    - 監査に `tf_confluence_score/tf_confluence_count/strong_contra_reject/reject_reason` を追加。
+  - `ops/env/quant-m1scalper.env`
+    - `FORECAST_GATE_ENABLED=1` へ変更。
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_GATE_ENABLED=1`
+    - `STRATEGY_FORECAST_CONTEXT_ENABLED=1`
+    - `STRATEGY_FORECAST_FUSION_ENABLED=1`
+    - `STRATEGY_FORECAST_FUSION_TF_CUT_MAX=0.35`
+    - `STRATEGY_FORECAST_FUSION_TF_BOOST_MAX=0.12`
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=1`
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX=0.22`
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN=0.65`
+- テスト:
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    - 強逆行見送り（`units=0`）の検証を追加。
+    - `tf_confluence_score` が負のときに `units/probability` が縮小する検証を追加。

@@ -109,6 +109,26 @@ _STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN = max(
     0.0,
     min(1.0, _env_float("STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN", 0.40)),
 )
+_STRATEGY_FORECAST_FUSION_TF_CUT_MAX = max(
+    0.0,
+    min(0.9, _env_float("STRATEGY_FORECAST_FUSION_TF_CUT_MAX", 0.35)),
+)
+_STRATEGY_FORECAST_FUSION_TF_BOOST_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_TF_BOOST_MAX", 0.12)),
+)
+_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX", 0.22)),
+)
+_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN", 0.65)),
+)
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 
 
@@ -1545,6 +1565,17 @@ def _apply_forecast_fusion(
         edge_strength = max(0.0, min(1.0, (edge_clamped - 0.5) / 0.5))
 
     allowed_flag = _coerce_bool(forecast_context.get("allowed"), None)
+    tf_confluence_score_raw = _to_float(forecast_context.get("tf_confluence_score"))
+    tf_confluence_score = (
+        max(-1.0, min(1.0, float(tf_confluence_score_raw)))
+        if tf_confluence_score_raw is not None
+        else None
+    )
+    tf_confluence_count = _to_positive_int(forecast_context.get("tf_confluence_count"))
+    if tf_confluence_count is None:
+        tf_confluence_weight = 0.5
+    else:
+        tf_confluence_weight = max(0.35, min(1.0, float(tf_confluence_count) / 3.0))
 
     units_scale = 1.0
     if direction_bias >= 0.0:
@@ -1557,6 +1588,21 @@ def _apply_forecast_fusion(
             * abs(direction_bias)
             * (0.5 + 0.5 * edge_strength)
         )
+    if tf_confluence_score is not None:
+        if tf_confluence_score >= 0.0:
+            units_scale *= (
+                1.0
+                + _STRATEGY_FORECAST_FUSION_TF_BOOST_MAX
+                * tf_confluence_score
+                * tf_confluence_weight
+            )
+        else:
+            units_scale *= (
+                1.0
+                - _STRATEGY_FORECAST_FUSION_TF_CUT_MAX
+                * abs(tf_confluence_score)
+                * tf_confluence_weight
+            )
     if allowed_flag is False:
         units_scale *= _STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT
     units_scale = max(
@@ -1578,6 +1624,18 @@ def _apply_forecast_fusion(
             0.0,
             min(1.0, float(adjusted_probability) + probability_shift),
         )
+        if tf_confluence_score is not None:
+            adjusted_probability = max(
+                0.0,
+                min(
+                    1.0,
+                    float(adjusted_probability)
+                    + tf_confluence_score
+                    * _STRATEGY_FORECAST_FUSION_PROB_GAIN
+                    * 0.35
+                    * tf_confluence_weight,
+                ),
+            )
         if allowed_flag is False:
             adjusted_probability = max(
                 0.0,
@@ -1587,6 +1645,17 @@ def _apply_forecast_fusion(
                     * _STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT,
                 ),
             )
+
+    strong_contra = (
+        _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED
+        and direction_prob <= _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX
+        and edge_strength >= _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN
+        and (allowed_flag is False or direction_bias < 0.0)
+    )
+    if strong_contra:
+        adjusted_units = 0
+        if adjusted_probability is not None:
+            adjusted_probability = max(0.0, min(float(adjusted_probability), direction_prob))
 
     applied: dict[str, object] = {
         "strategy_tag": str(strategy_tag or ""),
@@ -1610,13 +1679,20 @@ def _apply_forecast_fusion(
         "forecast_horizon": forecast_context.get("horizon"),
         "forecast_allowed": allowed_flag,
         "forecast_reason": forecast_context.get("reason"),
+        "tf_confluence_score": (
+            round(float(tf_confluence_score), 6) if tf_confluence_score is not None else None
+        ),
+        "tf_confluence_count": tf_confluence_count,
+        "strong_contra_reject": bool(strong_contra),
     }
+    if strong_contra:
+        applied["reject_reason"] = "strong_contra_forecast"
 
     if isinstance(entry_thesis, dict):
         entry_thesis["forecast_fusion"] = applied
         if adjusted_probability is not None:
             entry_thesis["entry_probability"] = adjusted_probability
-        if _STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED:
+        if adjusted_units != 0 and _STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED:
             tp_hint = _to_float(forecast_context.get("tp_pips_hint"))
             if tp_hint is not None and tp_hint > 0.0 and direction_prob >= 0.5:
                 base_tp = _to_float(
@@ -1642,16 +1718,17 @@ def _apply_forecast_fusion(
                 applied["tp_blend"] = round(float(tp_blend), 4)
                 applied["tp_after"] = round(float(entry_thesis["tp_pips"]), 4)
 
-        sl_cap = _to_float(forecast_context.get("sl_pips_cap"))
-        current_sl = _to_float(entry_thesis.get("sl_pips"))
-        if (
-            sl_cap is not None
-            and sl_cap > 0.0
-            and current_sl is not None
-            and current_sl > sl_cap
-        ):
-            entry_thesis["sl_pips"] = round(float(sl_cap), 3)
-            applied["sl_cap_applied"] = round(float(sl_cap), 4)
+        if adjusted_units != 0:
+            sl_cap = _to_float(forecast_context.get("sl_pips_cap"))
+            current_sl = _to_float(entry_thesis.get("sl_pips"))
+            if (
+                sl_cap is not None
+                and sl_cap > 0.0
+                and current_sl is not None
+                and current_sl > sl_cap
+            ):
+                entry_thesis["sl_pips"] = round(float(sl_cap), 3)
+                applied["sl_cap_applied"] = round(float(sl_cap), 4)
 
     return adjusted_units, adjusted_probability, applied
 

@@ -78,6 +78,36 @@ def _set_default_fusion_knobs(monkeypatch) -> None:
         0.40,
         raising=False,
     )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_TF_CUT_MAX",
+        0.35,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_TF_BOOST_MAX",
+        0.12,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX",
+        0.22,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN",
+        0.65,
+        raising=False,
+    )
 
 
 def test_forecast_fusion_scales_down_on_mismatch(monkeypatch) -> None:
@@ -169,3 +199,55 @@ def test_forecast_fusion_no_context_keeps_values(monkeypatch) -> None:
     assert prob == 0.58
     assert applied == {}
     assert thesis.get("tp_pips") == 1.2
+
+
+def test_forecast_fusion_rejects_strong_contra(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    thesis: dict[str, object] = {"tp_pips": 2.1, "sl_pips": 1.8}
+    units, prob, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1000,
+        entry_probability=0.66,
+        entry_thesis=thesis,
+        forecast_context={
+            "allowed": False,
+            "reason": "hard_opposite",
+            "p_up": 0.08,
+            "edge": 0.93,
+            "tp_pips_hint": 3.0,
+            "sl_pips_cap": 1.0,
+        },
+    )
+
+    assert units == 0
+    assert prob is not None and 0.0 <= prob <= 0.22
+    assert applied.get("strong_contra_reject") is True
+    assert applied.get("reject_reason") == "strong_contra_forecast"
+    # Strong contra reject keeps TP/SL untouched because order is not sent.
+    assert thesis.get("tp_pips") == 2.1
+    assert thesis.get("sl_pips") == 1.8
+
+
+def test_forecast_fusion_tf_confluence_cuts_units(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    units, prob, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="MicroRangeBreak-long",
+        pocket="micro",
+        units=1000,
+        entry_probability=0.60,
+        entry_thesis={},
+        forecast_context={
+            "allowed": True,
+            "reason": "mtf_divergence",
+            "p_up": 0.62,
+            "edge": 0.65,
+            "tf_confluence_score": -0.85,
+            "tf_confluence_count": 3,
+        },
+    )
+
+    assert units < 1000
+    assert prob is not None and prob < 0.60
+    assert applied.get("tf_confluence_score") == -0.85
+    assert applied.get("tf_confluence_count") == 3

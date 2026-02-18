@@ -185,6 +185,7 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - `forecast_gate` は主TF予測に加えて補助TFとの整合を評価し、同方向なら `edge` を微補正、逆方向なら `edge` を減衰します（`FORECAST_GATE_TF_CONFLUENCE_*`）。
 - `entry_thesis` の `forecast_horizon/forecast_profile` が欠ける経路でも、`forecast_gate` 側で `strategy_tag` から主TFを補完します（例: `Micro*` は `10m`、`scalp_ping_5s*` は `1m`、`scalp_macd_rsi_div*` は `10m`）。
 - micro系は各 `quant-micro-*.env` で `FORECAST_GATE_ENABLED=1` を維持し、`entry_thesis.forecast` の欠損（`not_applicable`）を防止します。
+- `quant-m1scalper.env` も `FORECAST_GATE_ENABLED=1` を維持し、M1系の forecast 欠損を防止します。
 - 例:
   - `SCALP_PING_5S*`: 主TF `1m` + 補助TF `5m,10m`
   - `SCALP_M1SCALPER`: 主TF `5m` + 補助TF `1m,10m`
@@ -199,7 +200,11 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - `execution/strategy_entry.py` で、戦略の既存計算（`units`, `entry_probability`）に対して
   forecast の向き（`p_up`）と強さ（`edge`）を合成する `forecast_fusion` を適用します。
 - 方向一致時はロット/確率を小幅に押し上げ、逆行時や `allowed=false` はロット/確率を縮小します。
+- `tf_confluence_score`（上位/下位TF整合）も同時に反映し、整合が弱いときは追加縮小、整合が強いときのみ軽微に押し上げます。
+- `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*` で、強い逆行予測（例: `direction_prob<=0.22` かつ `edge>=0.65`）は
+  `units=0` として見送りできます。
 - 反映結果は `entry_thesis["forecast_fusion"]` に保存し、監査時に
-  `units_before/after`, `entry_probability_before/after`, `units_scale`, `forecast_reason` を追跡できます。
+  `units_before/after`, `entry_probability_before/after`, `units_scale`, `forecast_reason`,
+  `tf_confluence_score`, `strong_contra_reject` を追跡できます。
 - TPは `tp_pips_hint` がある場合に `tp_pips` へブレンドし（順方向時のみ）、
   SLは `sl_pips_cap` がある場合に `sl_pips` を上限でクリップします。
