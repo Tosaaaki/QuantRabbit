@@ -32,6 +32,28 @@
   - 「利益を削る一律SL」ではなく、方向転換が確認された負け玉のみを機械的に整理し、
     長時間取り残しとマージン圧迫の再発を抑える。
 
+### 2026-02-18（追記）`position_manager` の close 導線を service-safe 化 + `MicroCompressionRevert` 一時抑制
+
+- 対象:
+  - `execution/position_manager.py`
+  - `tests/execution/test_position_manager_close.py`
+  - `ops/env/quant-micro-compressionrevert.env`
+- 変更:
+  - `PositionManager.close()` で、`POSITION_MANAGER_SERVICE_ENABLED=1` のとき
+    `/position/close` をリモート呼び出ししないよう変更。
+    - `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1` 運用でも shared service を閉じない。
+    - close はローカル接続 (`self.con`) の後始末のみに限定。
+  - 再発防止テストを追加し、service 有効時に `/position/close` を叩かないことを固定化。
+  - `quant-micro-compressionrevert` 専用 env で
+    `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.33` へ引き上げ（従来 `0.28`）。
+    直近 score≈`0.307` の負け筋を当面自動ブロックする。
+- 背景:
+  - VM で `POSITION_MANAGER_SERVICE_ENABLED=1` かつ
+    `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1` の runtime において、
+    `Cannot operate on a closed database` が継続発生。
+  - 直近の `MicroCompressionRevert-short` は 24h/7d で pips 合計がマイナスのため、
+    loser block 閾値を専用 worker 側で一段引き上げ。
+
 ### 2026-02-17（追記）forecast に分位レンジ予測（上下帯）を追加
 
 - `analysis/forecast_sklearn.py` の最新予測出力に

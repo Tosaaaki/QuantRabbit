@@ -178,6 +178,10 @@
 - `get_open_positions` はホットパスでの `orders.db` 参照を最小化し、`orders.db` は read-only/短timeoutで参照する。
   writer 競合時は fail-fast + 既存キャッシュ返却を優先し、strategy worker 側 timeout を増幅させない。
 - service 呼び出し側は keep-alive session と短TTL/stale キャッシュを持ち、`open_positions` の tail latency を吸収する。
+- `PositionManager.close()` の契約:
+  - `POSITION_MANAGER_SERVICE_ENABLED=1` のクライアント側から shared service の `/position/close` を呼ばない。
+  - close は呼び出し元プロセスのローカル fallback 接続 (`self.con`) の解放のみに限定し、
+    singleton `quant-position-manager` の DB 接続を誤って閉じない。
 
 ### 7) 分析・監視面（データ管理）
 

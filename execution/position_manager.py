@@ -3777,10 +3777,21 @@ class PositionManager:
             ]
 
     def close(self):
-        if _POSITION_MANAGER_SERVICE_ENABLED and not _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL:
+        # Never propagate close() to the shared position-manager service.
+        # In runtime deployments we often run with SERVICE_ENABLED=1 and
+        # FALLBACK_LOCAL=1; forwarding /position/close from each client would
+        # close the singleton DB connection for everyone.
+        if _position_manager_service_enabled():
+            if self.con is None:
+                return None
+            try:
+                self.con.close()
+            except sqlite3.ProgrammingError:
+                pass
+            self.con = None
             logging.debug(
-                "[PositionManager] close() ignored while running in shared service mode to avoid "
-                "terminating singleton position_manager DB connection."
+                "[PositionManager] close() cleaned local fallback connection only; "
+                "skipped shared service /position/close call."
             )
             return None
         service_result = _position_manager_service_request("/position/close", {})
