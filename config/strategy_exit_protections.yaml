@@ -773,6 +773,18 @@ strategies:
       loss_cut_max_hold_sec: 300
       loss_cut_cooldown_sec: 4
 
+  scalp_macd_rsi_div_live:
+    min_profit_pips: 0.2
+    min_profit_ratio: 0.0
+    exit_profile:
+      min_hold_sec: 5
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 7.0
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 4
+
   scalp_ping_5s: &SCALP_PING_5S_EXIT_PROFILE
     # 5s ping scalp: lock small profits quickly to avoid giveback when flow stalls.
     start_delay_sec: 3

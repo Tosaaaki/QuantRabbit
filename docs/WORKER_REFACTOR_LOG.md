@@ -39,6 +39,22 @@
   - 旧タグ建玉も現行タグへ収束させ、EXITワーカーの監視漏れで
     長時間の上方向取り残しが発生しない状態を維持する。
 
+### 2026-02-18（追記）`scalp_macd_rsi_div_live` EXITプロファイルを明示（defaultフォールバック解消）
+
+- 対象:
+  - `config/strategy_exit_protections.yaml`
+- 変更:
+  - `scalp_macd_rsi_div_live` を strategy profile に追加し、
+    `loss_cut_enabled=true` / `loss_cut_require_sl=false` /
+    `loss_cut_hard_pips=7.0` / `loss_cut_max_hold_sec=1800` を明示。
+- 背景:
+  - legacy tag 正規化後も、当該 strategy の profile 未定義時は default へフォールバックし、
+    `loss_cut_enabled=false` かつ `require_sl=true` により
+    無SLの負け玉が close 条件に入らない経路が残っていた。
+- 意図:
+  - `scalp_macd_rsi_div_live` を profile 指定で明示管理し、
+    含み損の長期滞留を機械的に抑止する。
+
 ### 2026-02-18（追記）`RANGEFADER_EXIT_NEW_POLICY_START_TS` の形式不一致を修正
 
 - 対象:

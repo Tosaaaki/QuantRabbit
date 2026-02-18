@@ -36,6 +36,9 @@
 - `workers/scalp_macd_rsi_div.exit_worker` では
   `scalpmacdrsi*`（例: `scalpmacdrsic7c3e9c1`）を `scalp_macd_rsi_div_live` に正規化し、
   旧 client_id 由来タグでも EXIT 監視から外れないようにする。
+- `config/strategy_exit_protections.yaml` に
+  `scalp_macd_rsi_div_live` の `exit_profile` を必ず定義し、
+  default（`loss_cut_enabled=false`）フォールバックで負け玉が残留しないようにする。
 
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
