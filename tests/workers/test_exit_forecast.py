@@ -1,26 +1,47 @@
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+
 import pytest
 
-from workers.common.exit_forecast import (
-    apply_exit_forecast_to_loss_cut,
-    apply_exit_forecast_to_targets,
-    build_exit_forecast_adjustment,
-)
+
+def _exit_forecast_modules() -> list[str]:
+    root = Path(__file__).resolve().parents[2] / "workers"
+    modules: list[str] = []
+    for path in sorted(root.glob("*/exit_forecast.py")):
+        if path.parent.name == "common":
+            continue
+        modules.append(f"workers.{path.parent.name}.exit_forecast")
+    return modules
 
 
-def test_build_adjustment_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+EXIT_FORECAST_MODULES = _exit_forecast_modules()
+
+
+def _mod(module_path: str):
+    return importlib.import_module(module_path)
+
+
+@pytest.mark.parametrize("module_path", EXIT_FORECAST_MODULES)
+def test_build_adjustment_disabled(module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _mod(module_path)
     monkeypatch.setenv("EXIT_FORECAST_ENABLED", "0")
-    adj = build_exit_forecast_adjustment(side="long", entry_thesis={"forecast": {"p_up": 0.2}})
+    adj = module.build_exit_forecast_adjustment(
+        side="long",
+        entry_thesis={"forecast": {"p_up": 0.2}},
+    )
     assert adj.enabled is False
     assert adj.contra_score == 0.0
     assert adj.profit_take_mult == 1.0
 
 
-def test_build_adjustment_contra_tightens_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("module_path", EXIT_FORECAST_MODULES)
+def test_build_adjustment_contra_tightens_exit(module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _mod(module_path)
     monkeypatch.delenv("EXIT_FORECAST_ENABLED", raising=False)
     monkeypatch.setenv("EXIT_FORECAST_MIN_AGAINST_PROB", "0.54")
-    adj = build_exit_forecast_adjustment(
+    adj = module.build_exit_forecast_adjustment(
         side="long",
         entry_thesis={
             "forecast": {
@@ -38,14 +59,16 @@ def test_build_adjustment_contra_tightens_exit(monkeypatch: pytest.MonkeyPatch) 
     assert adj.lock_buffer_mult > 1.0
 
 
-def test_apply_adjustments_for_targets_and_loss_cut() -> None:
-    adj = build_exit_forecast_adjustment(
+@pytest.mark.parametrize("module_path", EXIT_FORECAST_MODULES)
+def test_apply_adjustments_for_targets_and_loss_cut(module_path: str) -> None:
+    module = _mod(module_path)
+    adj = module.build_exit_forecast_adjustment(
         side="short",
         entry_thesis={
             "forecast": {"p_up": 0.85, "edge": 0.8},
         },
     )
-    profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
+    profit_take, trail_start, trail_backoff, lock_buffer = module.apply_exit_forecast_to_targets(
         profit_take=3.0,
         trail_start=2.0,
         trail_backoff=1.0,
@@ -57,7 +80,7 @@ def test_apply_adjustments_for_targets_and_loss_cut() -> None:
     assert trail_backoff <= 1.0
     assert lock_buffer >= 0.5
 
-    soft, hard, hold = apply_exit_forecast_to_loss_cut(
+    soft, hard, hold = module.apply_exit_forecast_to_loss_cut(
         soft_pips=10.0,
         hard_pips=16.0,
         max_hold_sec=1200.0,
