@@ -282,6 +282,7 @@ def _forecast_service_decision_from_payload(
         horizon=str(payload.get("horizon") or ""),
         edge=_as_float(payload.get("edge"), 0.0),
         p_up=_as_float(payload.get("p_up"), 0.0),
+        rebound_probability=_as_float(payload.get("rebound_probability"), None),
         expected_pips=_as_float(payload.get("expected_pips"), None),
         anchor_price=_as_float(payload.get("anchor_price"), None),
         target_price=_as_float(payload.get("target_price"), None),
@@ -291,6 +292,7 @@ def _forecast_service_decision_from_payload(
         range_low_price=_as_float(payload.get("range_low_price"), None),
         range_high_price=_as_float(payload.get("range_high_price"), None),
         tp_pips_hint=_as_float(payload.get("tp_pips_hint"), None),
+        target_reach_prob=_as_float(payload.get("target_reach_prob"), None),
         sl_pips_cap=_as_float(payload.get("sl_pips_cap"), None),
         rr_floor=_as_float(payload.get("rr_floor"), None),
         feature_ts=payload.get("feature_ts") if payload.get("feature_ts") is not None else None,
@@ -7998,6 +8000,7 @@ async def market_order(
                         "forecast_style": fc_decision.style,
                         "forecast_edge": fc_decision.edge,
                         "forecast_p_up": fc_decision.p_up,
+                        "forecast_rebound_probability": fc_decision.rebound_probability,
                         "forecast_trend_strength": fc_decision.trend_strength,
                         "forecast_range_pressure": fc_decision.range_pressure,
                         "forecast_future_flow": fc_decision.future_flow,
@@ -8012,6 +8015,7 @@ async def market_order(
                         "forecast_tf_confluence_count": fc_decision.tf_confluence_count,
                         "forecast_tf_confluence_horizons": fc_decision.tf_confluence_horizons,
                         "forecast_expected_pips": fc_decision.expected_pips,
+                        "forecast_target_reach_prob": fc_decision.target_reach_prob,
                         "forecast_range_low_pips": fc_decision.range_low_pips,
                         "forecast_range_high_pips": fc_decision.range_high_pips,
                         "forecast_range_sigma_pips": fc_decision.range_sigma_pips,
@@ -8069,6 +8073,8 @@ async def market_order(
                             "forecast_source": fc_decision.source,
                             "forecast_style": fc_decision.style,
                             "forecast_edge": fc_decision.edge,
+                            "forecast_p_up": fc_decision.p_up,
+                            "forecast_rebound_probability": fc_decision.rebound_probability,
                             "forecast_trend_strength": fc_decision.trend_strength,
                             "forecast_range_pressure": fc_decision.range_pressure,
                             "forecast_future_flow": fc_decision.future_flow,
@@ -8082,6 +8088,7 @@ async def market_order(
                             "forecast_tf_confluence_score": fc_decision.tf_confluence_score,
                             "forecast_tf_confluence_count": fc_decision.tf_confluence_count,
                             "forecast_tf_confluence_horizons": fc_decision.tf_confluence_horizons,
+                            "forecast_target_reach_prob": fc_decision.target_reach_prob,
                             "forecast_range_low_pips": fc_decision.range_low_pips,
                             "forecast_range_high_pips": fc_decision.range_high_pips,
                             "forecast_range_sigma_pips": fc_decision.range_sigma_pips,
@@ -8142,6 +8149,11 @@ async def market_order(
                         "style": fc_decision.style,
                         "edge": round(float(fc_decision.edge), 6),
                         "p_up": round(float(fc_decision.p_up), 6),
+                        "rebound_probability": (
+                            round(float(fc_decision.rebound_probability), 6)
+                            if fc_decision.rebound_probability is not None
+                            else None
+                        ),
                         "expected_pips": (
                             round(float(fc_decision.expected_pips), 4)
                             if fc_decision.expected_pips is not None
@@ -8185,6 +8197,11 @@ async def market_order(
                         "tp_pips_hint": (
                             round(float(fc_decision.tp_pips_hint), 4)
                             if fc_decision.tp_pips_hint is not None
+                            else None
+                        ),
+                        "target_reach_prob": (
+                            round(float(fc_decision.target_reach_prob), 6)
+                            if fc_decision.target_reach_prob is not None
                             else None
                         ),
                         "sl_pips_cap": (
@@ -8270,9 +8287,19 @@ async def market_order(
                     "sl_before": round(float(base_sl_hint), 4) if base_sl_hint is not None else None,
                     "sl_after": round(float(thesis_sl_pips), 4) if thesis_sl_pips is not None else None,
                     "tp_hint": round(float(tp_hint), 4) if tp_hint is not None else None,
+                    "target_reach_prob": (
+                        round(float(fc_decision.target_reach_prob), 6)
+                        if fc_decision.target_reach_prob is not None
+                        else None
+                    ),
                     "sl_cap": round(float(sl_cap), 4) if sl_cap is not None else None,
                     "rr_floor": round(float(rr_floor), 4) if rr_floor is not None else None,
                     "edge_strength": round(edge_strength, 6),
+                    "rebound_probability": (
+                        round(float(fc_decision.rebound_probability), 6)
+                        if fc_decision.rebound_probability is not None
+                        else None
+                    ),
                     "anchor_price": round(float(fc_decision.anchor_price), 5)
                     if fc_decision.anchor_price is not None
                     else None,

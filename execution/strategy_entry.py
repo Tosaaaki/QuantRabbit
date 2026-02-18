@@ -1177,6 +1177,7 @@ def _format_forecast_context(decision: Any) -> dict[str, object]:
         "reason": str(decision.reason or ""),
         "edge": _to_float(decision.edge),
         "p_up": _to_float(decision.p_up),
+        "rebound_probability": _to_float(getattr(decision, "rebound_probability", None)),
         "expected_pips": _to_float(decision.expected_pips),
         "anchor_price": _to_float(decision.anchor_price),
         "target_price": _to_float(decision.target_price),

@@ -208,6 +208,7 @@ def test_decide_includes_range_band_fields(monkeypatch) -> None:
                 "range_sigma_pips": 1.2,
                 "range_low_price": 149.82,
                 "range_high_price": 149.86,
+                "rebound_signal_20": 0.73,
             }
         },
     )
@@ -227,6 +228,7 @@ def test_decide_includes_range_band_fields(monkeypatch) -> None:
     assert decision.range_sigma_pips == 1.2
     assert decision.range_low_price == 149.82
     assert decision.range_high_price == 149.86
+    assert decision.rebound_probability == 0.73
     assert decision.target_reach_prob is not None
     assert 0.0 <= float(decision.target_reach_prob) <= 1.0
 

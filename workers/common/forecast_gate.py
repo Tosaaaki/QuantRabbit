@@ -245,6 +245,7 @@ class ForecastDecision:
     horizon: str
     edge: float
     p_up: float
+    rebound_probability: Optional[float] = None
     expected_pips: Optional[float] = None
     anchor_price: Optional[float] = None
     target_price: Optional[float] = None
@@ -2372,6 +2373,12 @@ def decide(
     except Exception:
         return None
     p_up = max(0.0, min(1.0, p_up))
+    rebound_probability = _safe_optional_float(row.get("rebound_probability"))
+    if rebound_probability is None:
+        rebound_probability = _safe_optional_float(row.get("rebound_signal_20"))
+    if rebound_probability is not None:
+        rebound_probability = _clamp(float(rebound_probability), 0.0, 1.0)
+        row["rebound_probability"] = rebound_probability
     source = row.get("source")
     style = _strategy_style(strategy_tag)
     trend_strength = _safe_float(row.get("trend_strength"), 0.5)
@@ -2475,6 +2482,7 @@ def decide(
             horizon=horizon,
             edge=edge,
             p_up=p_up,
+            rebound_probability=rebound_probability,
             expected_pips=row.get("expected_pips"),
             anchor_price=row.get("anchor_price"),
             target_price=row.get("target_price"),
@@ -2522,6 +2530,7 @@ def decide(
             horizon=horizon,
             edge=edge,
             p_up=p_up,
+            rebound_probability=rebound_probability,
             expected_pips=row.get("expected_pips"),
             anchor_price=row.get("anchor_price"),
             target_price=row.get("target_price"),
@@ -2576,6 +2585,7 @@ def decide(
             horizon=horizon,
             edge=edge,
             p_up=p_up,
+            rebound_probability=rebound_probability,
             expected_pips=row.get("expected_pips"),
             anchor_price=row.get("anchor_price"),
             target_price=row.get("target_price"),
@@ -2632,6 +2642,7 @@ def decide(
                     horizon=horizon,
                     edge=edge,
                     p_up=p_up,
+                    rebound_probability=rebound_probability,
                     expected_pips=row.get("expected_pips"),
                     anchor_price=row.get("anchor_price"),
                     target_price=row.get("target_price"),
@@ -2685,6 +2696,7 @@ def decide(
         horizon=horizon,
         edge=edge,
         p_up=p_up,
+        rebound_probability=rebound_probability,
         expected_pips=row.get("expected_pips"),
         anchor_price=row.get("anchor_price"),
         target_price=row.get("target_price"),

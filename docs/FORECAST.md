@@ -24,6 +24,8 @@
 - 予測行には監査用に `breakout_bias_20` / `squeeze_score_20` も出力され、`vm_forecast_snapshot.py` で確認可能
 - 反発監査キー: `rebound_signal_20` / `rebound_drop_score_20` / `rebound_oversold_score_20` /
   `rebound_decel_score_20` / `rebound_wick_score_20` / `rebound_weight`
+- `forecast_gate.decide()` は `rebound_signal_20` から独立値 `rebound_probability`（0.0-1.0）も返し、
+  `p_up` とは別軸で「急落後反発の強さ」を戦略側に渡せるようにします。
 - 分位レンジ（上下帯）として `range_low_pips` / `range_high_pips` / `range_sigma_pips` と
   `range_low_price` / `range_high_price` を出力し、`q10_pips` / `q50_pips` / `q90_pips` も監査可能
 
@@ -121,6 +123,7 @@ python3 scripts/vm_forecast_snapshot.py \
 - `breakout_hit_rate_20`: 直近サンプルでの `breakout_bias_20` 一致率
 - `breakout_samples_20`: スキル推定に使った直近サンプル数
 - `tp_pips_hint`: TP 方向ヒント（pips）
+- `rebound_probability`: 反発確率ヒント（0.0-1.0, `p_up` と独立）
 - `target_reach_prob`: 現在ポジ方向で `tp_pips_hint` 到達を見込む確率（0.0-1.0）
 - `sl_pips_cap`: SL 上限ヒント（pips）
 - `rr_floor`: TP/SL の下限 R:R 値

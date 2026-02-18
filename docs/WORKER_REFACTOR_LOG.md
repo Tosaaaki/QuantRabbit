@@ -2268,3 +2268,23 @@
 - 期待効果:
   - `open_positions`/`sync_trades` の同時呼び出し時でも service 側の tail latency を抑え、
     EXIT worker 側 timeout 連鎖を縮小。
+
+### 2026-02-18（追記）反発予測を `p_up` から独立出力化
+
+- 背景:
+  - 反発シグナル（`rebound_signal_20`）は `p_up` 合成に使っていたが、戦略側で独立に扱える値が不足していた。
+- 実装:
+  - `workers/common/forecast_gate.py`
+    - `ForecastDecision` に `rebound_probability` を追加。
+    - `row["rebound_probability"]` または `rebound_signal_20` から 0.0-1.0 へ正規化して返却。
+  - `workers/forecast/worker.py`
+    - `/forecast/decide` のシリアライズに `rebound_probability` と `target_reach_prob` を追加（service/local parity 修正）。
+  - `execution/order_manager.py`
+    - forecast service payload 逆シリアライズに `rebound_probability` / `target_reach_prob` を追加。
+    - `entry_thesis["forecast"]` と order log の forecast監査項目へ `rebound_probability` を反映。
+  - `execution/strategy_entry.py`
+    - `forecast_context` に `rebound_probability` を追加（戦略ローカルで任意利用可能）。
+- テスト:
+  - `tests/workers/test_forecast_gate.py` に `rebound_probability` 伝播検証を追加。
+  - `tests/workers/test_forecast_worker.py` を新規追加（serviceシリアライズ検証）。
+  - `tests/execution/test_order_manager_preflight.py` に service payload 変換検証を追加。

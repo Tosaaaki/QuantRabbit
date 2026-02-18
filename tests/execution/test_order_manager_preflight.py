@@ -421,3 +421,21 @@ def test_fallback_protections_widens_only_rejected_side() -> None:
 
     assert sl == 153.032
     assert tp == 153.059
+
+
+def test_forecast_service_decision_parses_rebound_and_target_prob() -> None:
+    decision = order_manager._forecast_service_decision_from_payload(
+        {
+            "allowed": True,
+            "scale": 0.9,
+            "reason": "edge_scale",
+            "horizon": "5m",
+            "edge": 0.62,
+            "p_up": 0.66,
+            "rebound_probability": 0.74,
+            "target_reach_prob": 0.58,
+        }
+    )
+    assert decision is not None
+    assert decision.rebound_probability == 0.74
+    assert decision.target_reach_prob == 0.58
