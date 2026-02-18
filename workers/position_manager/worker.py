@@ -44,7 +44,7 @@ def _env_float(name: str, default: float) -> float:
 
 _WORKER_OPEN_POSITIONS_TIMEOUT_SEC = max(
     0.5,
-    _env_float("POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC", 4.0),
+    _env_float("POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC", 8.0),
 )
 _WORKER_OPEN_POSITIONS_CACHE_TTL_SEC = max(
     0.0,
