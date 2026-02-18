@@ -97,10 +97,19 @@ def compute_scores(rows: List[Tuple], *, min_trades: int, pf_cap: float) -> Dict
         score = base_score * (0.6 + 0.4 * sample_scale)
         pocket_counts = pockets.get(strat, {})
         pocket = max(pocket_counts, key=pocket_counts.get) if pocket_counts else "unknown"
+        lot_multiplier = 0.8 + 0.8 * score
+        # Guardrail: strategies with poor payoff quality should not receive size-up even when
+        # short-term win-rate looks high. Keep underperformers below neutral size.
+        if pf < 1.0:
+            lot_multiplier = min(lot_multiplier, 0.95)
+        if pf < 0.7:
+            lot_multiplier = min(lot_multiplier, 0.90)
+        if trades < max(1, min_trades):
+            lot_multiplier = min(lot_multiplier, 1.00)
         scores[strat] = {
             "pocket": pocket,
             "score": round(score, 3),
-            "lot_multiplier": round(0.8 + 0.8 * score, 3),
+            "lot_multiplier": round(lot_multiplier, 3),
             "trades": trades,
             "win_rate": round(wr, 3),
             "pf": round(pf, 3),

@@ -40,6 +40,15 @@
   `scalp_macd_rsi_div_live` の `exit_profile` を必ず定義し、
   default（`loss_cut_enabled=false`）フォールバックで負け玉が残留しないようにする。
 
+### dynamic_alloc 運用補足（サイズ過多抑止）
+- `scripts/dynamic_alloc_worker.py` は PF ガードを持ち、
+  `pf < 1.0` の戦略を `lot_multiplier <= 0.95`、
+  `pf < 0.7` を `lot_multiplier <= 0.90` に制限する。
+- `trades < min_trades` の戦略は `lot_multiplier <= 1.00` とし、
+  サンプル不足での過剰増量を防ぐ。
+- `quant-dynamic-alloc.service` の `--target-use` は `0.88` を基準とし、
+  `account.margin_usage_ratio` が高止まりする局面での margin block 連発を抑える。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

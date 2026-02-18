@@ -55,6 +55,26 @@
   - `scalp_macd_rsi_div_live` を profile 指定で明示管理し、
     含み損の長期滞留を機械的に抑止する。
 
+### 2026-02-18（追記）dynamic_alloc のサイズ配分を保守化（負け戦略の増量抑止）
+
+- 対象:
+  - `scripts/dynamic_alloc_worker.py`
+  - `systemd/quant-dynamic-alloc.service`
+- 変更:
+  - `dynamic_alloc_worker` に PF ガードを追加。
+    - `pf < 1.0` の戦略は `lot_multiplier <= 0.95`
+    - `pf < 0.7` の戦略は `lot_multiplier <= 0.90`
+    - `trades < min_trades` は `lot_multiplier <= 1.00`
+  - `quant-dynamic-alloc.service` の `--target-use` を `0.90 -> 0.88` に調整。
+- 背景:
+  - VM 実メトリクス（過去6h）で `account.margin_usage_ratio` が平均 `0.94` 台と高く、
+    `margin_usage_exceeds_cap` / `margin_usage_projected_cap` が多発していた。
+  - 旧ロジックでは PF<1 の戦略でも win-rate 由来で `lot_multiplier > 1` になるケースがあり、
+    負け筋への過剰配分を招いていた。
+- 意図:
+  - ブロック多発時の過剰エクスポージャを抑えつつ、勝ち筋への配分を維持し、
+    実運用の約定効率と期待値を改善する。
+
 ### 2026-02-18（追記）`RANGEFADER_EXIT_NEW_POLICY_START_TS` の形式不一致を修正
 
 - 対象:
