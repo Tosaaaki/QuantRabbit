@@ -184,7 +184,13 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - 各戦略は `execution/strategy_entry.py` の契約で `forecast_profile`（主TF）を持ち、`forecast_support_horizons`（補助TF）を併せて注入します。
 - `forecast_gate` は主TF予測に加えて補助TFとの整合を評価し、同方向なら `edge` を微補正、逆方向なら `edge` を減衰します（`FORECAST_GATE_TF_CONFLUENCE_*`）。
 - `entry_thesis` の `forecast_horizon/forecast_profile` が欠ける経路でも、`forecast_gate` 側で `strategy_tag` から主TFを補完します（例: `Micro*` は `10m`、`scalp_ping_5s*` は `1m`、`scalp_macd_rsi_div*` は `10m`）。
+- micro系は各 `quant-micro-*.env` で `FORECAST_GATE_ENABLED=1` を維持し、`entry_thesis.forecast` の欠損（`not_applicable`）を防止します。
 - 例:
   - `SCALP_PING_5S*`: 主TF `1m` + 補助TF `5m,10m`
   - `SCALP_M1SCALPER`: 主TF `5m` + 補助TF `1m,10m`
   - `SCALP_MACD_RSI_DIV` / `MICRO_*`: 主TF `10m` + 補助TF `5m,1h`
+
+## 黒板（entry_intent_board）での扱い
+- 黒板は forecast を「方向決定ロジック」としては使わず、`details.forecast_context` の監査メタとして保持します。
+- 協調の主判定は `raw_units * entry_probability` の score 集計で、forecast は記録・追跡用途です。
+- 実際の `allow/scale/block` と TP/SL ヒント反映は `strategy_entry` / `order_manager` の preflight で行います。

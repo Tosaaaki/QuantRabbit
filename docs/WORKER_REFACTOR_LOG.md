@@ -1722,3 +1722,27 @@
 - 目的:
   - 極値局面での同方向積み上げを抑えつつ、注文本数は維持する。
   - `orders.db` から反転適用率と成績を継続監視できる状態にする。
+
+### 2026-02-18（追記）micro戦略の forecast 参照を常時有効化
+
+- 背景:
+  - VM監査で `micro` pocket の `entry_thesis.forecast.reason=not_applicable` が継続し、
+    `scalp/scalp_fast` に比べて forecast 文脈の記録が欠落していた。
+  - 原因は `quant-micro-*.env` の `FORECAST_GATE_ENABLED=0`。
+- 反映:
+  - 以下 11 エントリーworker env を `FORECAST_GATE_ENABLED=1` に統一。
+    - `ops/env/quant-micro-compressionrevert.env`
+    - `ops/env/quant-micro-levelreactor.env`
+    - `ops/env/quant-micro-momentumburst.env`
+    - `ops/env/quant-micro-momentumpulse.env`
+    - `ops/env/quant-micro-momentumstack.env`
+    - `ops/env/quant-micro-pullbackema.env`
+    - `ops/env/quant-micro-rangebreak.env`
+    - `ops/env/quant-micro-trendmomentum.env`
+    - `ops/env/quant-micro-trendretest.env`
+    - `ops/env/quant-micro-vwapbound.env`
+    - `ops/env/quant-micro-vwaprevert.env`
+- 期待効果:
+  - `execution/strategy_entry.py` の forecast 注入経路で micro も `entry_thesis["forecast"]` を保持。
+  - `coordinate_entry_intent` 呼び出し時に `forecast_context` が黒板へ監査記録される。
+  - `tp_pips_hint/target_price` などの forecast メタを micro でも追跡可能化。
