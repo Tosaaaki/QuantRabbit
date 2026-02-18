@@ -2067,3 +2067,29 @@
 - 目的:
   - まずは「損失クラスターを作らない」ことを優先し、サイズ・頻度・保有時間を同時に圧縮。
   - 2h/6h/24h 窓で `PF/avg_pips/close_reason` を再判定し、必要なら段階的に再開放。
+
+### 2026-02-18（追記）forecast短期窓の精度改善（2h/4h、VM実データ）
+
+- 背景:
+  - 直近監査（`max-bars=120/240`）で、評価用構成
+    `feature_expansion_gain=0.35`,
+    `breakout=1m=0.16,5m=0.22,10m=0.30`,
+    `session=1m=0.0,5m=0.26,10m=0.38`
+    が `1m/5m` の `hit_delta` を押し下げる局面を確認。
+- 実施:
+  - VM上で `scripts/eval_forecast_before_after.py` を使い、2段階で探索。
+    - 重みグリッド探索（`forecast_tune_grid_latest.json`）
+    - `feature_expansion_gain` を含む再探索（`forecast_tune_feature_latest.json`）
+  - 同一期間（`bars=120/240`）で baseline/candidate を比較し、
+    `logs/reports/forecast_improvement/report_tuning_20260218T023002Z.md` を生成。
+- 採用設定（runtime env）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.10,5m=0.18,10m=0.26`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`
+- 比較結果（同一時点、before/after差分の合計）:
+  - `hit_delta_sum`: `-0.0025 -> +0.0219`（改善）
+  - `mae_delta_sum`: `-0.0366 -> -0.0096`（改善幅は縮小）
+  - `1m/5m` の `hit_delta` マイナスは解消、`10m` はプラス維持。
+- 備考:
+  - 方向一致（hit）優先で短期TFをデチューンし、過反応を抑える方針。
+  - MAE改善幅が縮小するため、次回は 6h/12h 窓でも再検証して再調整する。

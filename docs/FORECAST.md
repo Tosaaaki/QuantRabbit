@@ -169,6 +169,15 @@ python3 scripts/eval_forecast_before_after.py \
   `5m hit 0.4886 -> 0.4886`（同等）, `5m MAE 3.2707 -> 3.2707`（同等）,
   `10m hit 0.4878 -> 0.4900`, `10m MAE 4.8568 -> 4.8564` を確認。
 
+2026-02-18 の短期窓（2h/4h）では、`feature_expansion_gain=0.35` 構成で
+`1m/5m` の `hit_delta` がマイナスに寄る局面を確認したため、運用側の runtime env は次を明示設定:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.10,5m=0.18,10m=0.26`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`
+
+同一時点の before/after 比較（`max-bars=120/240`）では、上記設定で
+`1m/5m` の `hit_delta` マイナスを解消し、`10m` はプラスを維持することを確認済みです。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
