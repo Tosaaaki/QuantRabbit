@@ -2397,3 +2397,27 @@
     - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`
     - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.26,10m=0.28`
     - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`
+
+### 2026-02-18（追記）2h/4h/24h + 72h 統合監査で5m重みを最終調整
+
+- 背景:
+  - 72h単独では `breakout_5m=0.26` が最良だったが、同日直近の 2h/4h 窓でヒット改善が伸びにくい時間帯を確認。
+  - 過学習回避のため、`2h/4h/24h`（直近25hデータ）と `72h`（既存72hデータ）を同時評価して最終値を確定。
+- 実施:
+  - 直近25hデータ取得: `logs/oanda/candles_M1_eval_24h_latest.json`（1494 bars）
+  - 比較レポート:
+    - `report_20260218T035819Z_followup_2h4h24h.md`
+    - `followup_tune_2h4h24h_strict_20260218T040401Z.json`
+    - `followup_aggregate_2h4h24h72h_20260218T040516Z.json`
+    - `report_20260218T040516Z_followup_final.md`
+- 判定:
+  - `breakout_5m=0.22` は `breakout_5m=0.26` 比で
+    - `2h/4h`: 同等（hit差ほぼ0）
+    - `24h`: hit/mae とも小幅改善
+    - `72h`: ごく小幅の悪化（許容範囲）
+  - 短中期バランスを優先し、`5m=0.22` を最終採用。
+- 反映:
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`（維持）
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.22,10m=0.28`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`（維持）

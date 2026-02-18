@@ -217,6 +217,15 @@ python3 scripts/eval_forecast_before_after.py \
 `1m/10m` は同等で、合計は `hit_delta_sum +0.0117 -> +0.0131`,
 `mae_delta_sum -0.0061 -> -0.0064` と改善しました。
 
+同日フォローアップとして、直近VM実データで `2h/4h/24h` と `72h` を同時監査
+（`report_20260218T040516Z_followup_final.md`）し、`5m` 重みを最終調整:
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.22,10m=0.28`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`（維持）
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`（維持）
+
+`5m=0.26` 比で、`2h/4h` は同等、`24h` は `hit/mae` とも小幅改善、
+`72h` はごく小幅の悪化に留まるため、短中期バランス優先で `5m=0.22` を採用しました。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
