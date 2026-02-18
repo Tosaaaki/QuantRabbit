@@ -194,3 +194,12 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - 黒板は forecast を「方向決定ロジック」としては使わず、`details.forecast_context` の監査メタとして保持します。
 - 協調の主判定は `raw_units * entry_probability` の score 集計で、forecast は記録・追跡用途です。
 - 実際の `allow/scale/block` と TP/SL ヒント反映は `strategy_entry` / `order_manager` の preflight で行います。
+
+## 戦略内融合（forecast_fusion）
+- `execution/strategy_entry.py` で、戦略の既存計算（`units`, `entry_probability`）に対して
+  forecast の向き（`p_up`）と強さ（`edge`）を合成する `forecast_fusion` を適用します。
+- 方向一致時はロット/確率を小幅に押し上げ、逆行時や `allowed=false` はロット/確率を縮小します。
+- 反映結果は `entry_thesis["forecast_fusion"]` に保存し、監査時に
+  `units_before/after`, `entry_probability_before/after`, `units_scale`, `forecast_reason` を追跡できます。
+- TPは `tp_pips_hint` がある場合に `tp_pips` へブレンドし（順方向時のみ）、
+  SLは `sl_pips_cap` がある場合に `sl_pips` を上限でクリップします。

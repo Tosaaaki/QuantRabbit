@@ -1746,3 +1746,25 @@
   - `execution/strategy_entry.py` の forecast 注入経路で micro も `entry_thesis["forecast"]` を保持。
   - `coordinate_entry_intent` 呼び出し時に `forecast_context` が黒板へ監査記録される。
   - `tp_pips_hint/target_price` などの forecast メタを micro でも追跡可能化。
+
+### 2026-02-18（追記）戦略内 forecast 融合（units/probability/TP/SL）
+
+- 背景:
+  - これまで forecast は主に監査メタとして連携され、戦略ごとの `units`/`entry_probability` と
+    同時最適化が弱い経路が残っていた。
+- 実装:
+  - `execution/strategy_entry.py` に `_apply_forecast_fusion(...)` を追加。
+  - `market_order` / `limit_order` の共通経路で、`_apply_strategy_feedback(...)` 後に
+    forecast 融合を適用するよう変更。
+  - 合成ルール:
+    - `p_up` と売買方向から `direction_prob` を算出。
+    - `edge` と整合して `units_scale` を導出し、順方向で小幅boost、逆方向/`allowed=false` で縮小。
+    - `entry_probability` を同様に補正（欠損時は forecast から補完可能）。
+    - `tp_pips_hint` は順方向時に `tp_pips` へブレンド、`sl_pips_cap` は `sl_pips` の上限として適用。
+  - 監査:
+    - `entry_thesis["forecast_fusion"]` に `units_before/after`、`entry_probability_before/after`、
+      `units_scale`、`forecast_reason`、`forecast_horizon` を保存。
+- テスト:
+  - `tests/execution/test_strategy_entry_forecast_fusion.py` を追加し、
+    逆行縮小・順行拡大・確率補完・コンテキスト欠損時不変を検証。
+

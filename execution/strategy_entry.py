@@ -33,6 +33,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 _ENTRY_TECH_CONTEXT_ENABLED = _env_bool("ENTRY_TECH_CONTEXT_ENABLED", True)
 _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS = _env_bool(
     "ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS",
@@ -50,6 +60,54 @@ _ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS = _env_bool(
 _STRATEGY_FORECAST_CONTEXT_ENABLED = _env_bool(
     "STRATEGY_FORECAST_CONTEXT_ENABLED",
     True,
+)
+_STRATEGY_FORECAST_FUSION_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX = max(
+    0.0,
+    min(0.95, _env_float("STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX", 0.65)),
+)
+_STRATEGY_FORECAST_FUSION_UNITS_BOOST_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_UNITS_BOOST_MAX", 0.20)),
+)
+_STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE = max(
+    0.05,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE", 0.25)),
+)
+_STRATEGY_FORECAST_FUSION_UNITS_MAX_SCALE = max(
+    _STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE,
+    min(2.0, _env_float("STRATEGY_FORECAST_FUSION_UNITS_MAX_SCALE", 1.20)),
+)
+_STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT", 0.65)),
+)
+_STRATEGY_FORECAST_FUSION_PROB_GAIN = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_PROB_GAIN", 0.22)),
+)
+_STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT", 0.70)),
+)
+_STRATEGY_FORECAST_FUSION_SYNTH_PROB_IF_MISSING = _env_bool(
+    "STRATEGY_FORECAST_FUSION_SYNTH_PROB_IF_MISSING",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_TP_BLEND_BASE = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_TP_BLEND_BASE", 0.20)),
+)
+_STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN", 0.40)),
 )
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 
@@ -1452,6 +1510,152 @@ def _apply_strategy_feedback(
     return adjusted_units, adjusted_probability, adjusted_sl_price, adjusted_tp_price, applied
 
 
+def _apply_forecast_fusion(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+) -> tuple[int, Optional[float], dict[str, object]]:
+    if not _STRATEGY_FORECAST_FUSION_ENABLED:
+        return units, entry_probability, {}
+    if not units:
+        return units, entry_probability, {}
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, {}
+    if not isinstance(forecast_context, dict):
+        return units, entry_probability, {}
+
+    p_up_raw = _to_float(forecast_context.get("p_up"))
+    if p_up_raw is None:
+        return units, entry_probability, {}
+    p_up = max(0.0, min(1.0, float(p_up_raw)))
+    side_sign = 1 if units > 0 else -1
+    direction_prob = p_up if side_sign > 0 else (1.0 - p_up)
+    direction_prob = max(0.0, min(1.0, direction_prob))
+    direction_bias = max(-1.0, min(1.0, (direction_prob - 0.5) * 2.0))
+
+    edge_raw = _to_float(forecast_context.get("edge"))
+    if edge_raw is None:
+        edge_strength = max(0.0, min(1.0, abs(direction_bias)))
+    else:
+        edge_clamped = max(0.0, min(1.0, float(edge_raw)))
+        edge_strength = max(0.0, min(1.0, (edge_clamped - 0.5) / 0.5))
+
+    allowed_flag = _coerce_bool(forecast_context.get("allowed"), None)
+
+    units_scale = 1.0
+    if direction_bias >= 0.0:
+        units_scale += (
+            _STRATEGY_FORECAST_FUSION_UNITS_BOOST_MAX * direction_bias * edge_strength
+        )
+    else:
+        units_scale -= (
+            _STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX
+            * abs(direction_bias)
+            * (0.5 + 0.5 * edge_strength)
+        )
+    if allowed_flag is False:
+        units_scale *= _STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT
+    units_scale = max(
+        _STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE,
+        min(_STRATEGY_FORECAST_FUSION_UNITS_MAX_SCALE, units_scale),
+    )
+    adjusted_units = int((1 if side_sign > 0 else -1) * round(abs(units) * units_scale))
+
+    adjusted_probability = entry_probability
+    if adjusted_probability is None and _STRATEGY_FORECAST_FUSION_SYNTH_PROB_IF_MISSING:
+        adjusted_probability = direction_prob
+    if adjusted_probability is not None:
+        probability_shift = (
+            direction_bias
+            * _STRATEGY_FORECAST_FUSION_PROB_GAIN
+            * (0.35 + 0.65 * edge_strength)
+        )
+        adjusted_probability = max(
+            0.0,
+            min(1.0, float(adjusted_probability) + probability_shift),
+        )
+        if allowed_flag is False:
+            adjusted_probability = max(
+                0.0,
+                min(
+                    1.0,
+                    float(adjusted_probability)
+                    * _STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT,
+                ),
+            )
+
+    applied: dict[str, object] = {
+        "strategy_tag": str(strategy_tag or ""),
+        "pocket": str(pocket or ""),
+        "units_before": int(units),
+        "units_after": int(adjusted_units),
+        "units_scale": round(float(units_scale), 6),
+        "entry_probability_before": (
+            round(float(entry_probability), 6)
+            if entry_probability is not None
+            else None
+        ),
+        "entry_probability_after": (
+            round(float(adjusted_probability), 6)
+            if adjusted_probability is not None
+            else None
+        ),
+        "direction_prob": round(float(direction_prob), 6),
+        "direction_bias": round(float(direction_bias), 6),
+        "edge_strength": round(float(edge_strength), 6),
+        "forecast_horizon": forecast_context.get("horizon"),
+        "forecast_allowed": allowed_flag,
+        "forecast_reason": forecast_context.get("reason"),
+    }
+
+    if isinstance(entry_thesis, dict):
+        entry_thesis["forecast_fusion"] = applied
+        if adjusted_probability is not None:
+            entry_thesis["entry_probability"] = adjusted_probability
+        if _STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED:
+            tp_hint = _to_float(forecast_context.get("tp_pips_hint"))
+            if tp_hint is not None and tp_hint > 0.0 and direction_prob >= 0.5:
+                base_tp = _to_float(
+                    entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips")
+                )
+                if base_tp is None or base_tp <= 0.0:
+                    merged_tp = tp_hint
+                    tp_blend = 1.0
+                else:
+                    tp_blend = max(
+                        0.0,
+                        min(
+                            1.0,
+                            _STRATEGY_FORECAST_FUSION_TP_BLEND_BASE
+                            + _STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN
+                            * edge_strength
+                            * max(0.0, direction_bias),
+                        ),
+                    )
+                    merged_tp = (1.0 - tp_blend) * base_tp + tp_blend * tp_hint
+                entry_thesis["tp_pips"] = round(max(0.1, float(merged_tp)), 3)
+                applied["tp_hint_pips"] = round(float(tp_hint), 4)
+                applied["tp_blend"] = round(float(tp_blend), 4)
+                applied["tp_after"] = round(float(entry_thesis["tp_pips"]), 4)
+
+        sl_cap = _to_float(forecast_context.get("sl_pips_cap"))
+        current_sl = _to_float(entry_thesis.get("sl_pips"))
+        if (
+            sl_cap is not None
+            and sl_cap > 0.0
+            and current_sl is not None
+            and current_sl > sl_cap
+        ):
+            entry_thesis["sl_pips"] = round(float(sl_cap), 3)
+            applied["sl_cap_applied"] = round(float(sl_cap), 4)
+
+    return adjusted_units, adjusted_probability, applied
+
+
 async def _coordinate_entry_units(
     *,
     instrument: str,
@@ -1563,6 +1767,14 @@ async def market_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
+    units, entry_probability, _ = _apply_forecast_fusion(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
@@ -1649,6 +1861,14 @@ async def limit_order(
         sl_price=sl_price,
         tp_price=tp_price,
         entry_thesis=entry_thesis,
+    )
+    units, entry_probability, _ = _apply_forecast_fusion(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
     )
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
