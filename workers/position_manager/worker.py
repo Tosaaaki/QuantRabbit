@@ -111,7 +111,6 @@ async def _lifespan(app: FastAPI):
         )
     app.state.position_manager = pm
     app.state.position_manager_init_error = str(init_error) if init_error else None
-    app.state.position_manager_open_positions_call_lock = threading.Lock()
     app.state.position_manager_db_call_lock = threading.Lock()
     app.state.open_positions_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
     app.state.sync_trades_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
@@ -321,10 +320,14 @@ async def _handle_open_positions(
                 )
             )
 
-    if not _try_acquire_call_lock(
-        request,
-        "position_manager_open_positions_call_lock",
-    ):
+    try:
+        result = await _call_manager_with_timeout(
+            request,
+            "get_open_positions",
+            timeout_sec=_WORKER_OPEN_POSITIONS_TIMEOUT_SEC,
+            kwargs={"include_unknown": include_unknown},
+        )
+    except asyncio.TimeoutError:
         stale = _cache_lookup(
             cache,
             key,
@@ -338,64 +341,35 @@ async def _handle_open_positions(
                         payload,
                         age_sec=age_sec,
                         stale=True,
-                        reason="manager_busy",
+                        reason="timeout",
                     )
                 )
-        return _failure("position manager busy")
-
-    try:
-        try:
-            result = await _call_manager_with_timeout(
-                request,
-                "get_open_positions",
-                timeout_sec=_WORKER_OPEN_POSITIONS_TIMEOUT_SEC,
-                kwargs={"include_unknown": include_unknown},
-            )
-        except asyncio.TimeoutError:
-            stale = _cache_lookup(
-                cache,
-                key,
-                max_age_sec=_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC,
-            )
-            if stale is not None:
-                payload, age_sec = stale
-                if isinstance(payload, dict):
-                    return _success(
-                        _mark_open_positions_cache_meta(
-                            payload,
-                            age_sec=age_sec,
-                            stale=True,
-                            reason="timeout",
-                        )
+        return _failure(
+            f"open_positions timeout ({_WORKER_OPEN_POSITIONS_TIMEOUT_SEC:.1f}s)"
+        )
+    except Exception as exc:
+        stale = _cache_lookup(
+            cache,
+            key,
+            max_age_sec=_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC,
+        )
+        if stale is not None:
+            payload, age_sec = stale
+            if isinstance(payload, dict):
+                return _success(
+                    _mark_open_positions_cache_meta(
+                        payload,
+                        age_sec=age_sec,
+                        stale=True,
+                        reason="error_fallback",
                     )
-            return _failure(
-                f"open_positions timeout ({_WORKER_OPEN_POSITIONS_TIMEOUT_SEC:.1f}s)"
-            )
-        except Exception as exc:
-            stale = _cache_lookup(
-                cache,
-                key,
-                max_age_sec=_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC,
-            )
-            if stale is not None:
-                payload, age_sec = stale
-                if isinstance(payload, dict):
-                    return _success(
-                        _mark_open_positions_cache_meta(
-                            payload,
-                            age_sec=age_sec,
-                            stale=True,
-                            reason="error_fallback",
-                        )
-                    )
-            return _failure(str(exc))
+                )
+        return _failure(str(exc))
 
-        if not isinstance(result, dict):
-            return _failure("unexpected response type")
-        _cache_store(cache, key, result)
-        return _success(result)
-    finally:
-        _release_call_lock(request, "position_manager_open_positions_call_lock")
+    if not isinstance(result, dict):
+        return _failure("unexpected response type")
+    _cache_store(cache, key, result)
+    return _success(result)
 
 
 @app.post("/position/sync_trades")
