@@ -18,6 +18,10 @@
   - 含み損時に `M1` 構造（MA差/RSI/EMA傾き/VWAP乖離）と
     `analysis.local_decider._technical_forecast_bias` の予測バイアスを合成した
     `direction_flip` 判定を追加。
+  - `direction_flip` に二段階制御を追加:
+    - 疑い段階（閾値弱）で `risk_reduce` の部分クローズ（de-risk）
+    - 継続悪化（閾値強+確認ヒット）で全クローズ
+    - 回復時は保持し、再エントリー側の通常シグナルで追加玉を許容
   - ヒステリシス（`score_threshold` / `release_threshold`）と
     連続ヒット確認（`confirm_hits` / `confirm_window_sec`）でノイズ起因の早切りを抑制。
   - `range_active` 前提の `range_timeout` だけでは残るケース向けに、

@@ -783,6 +783,14 @@ strategies:
         enabled: true
         min_hold_sec: 90
         min_adverse_pips: 1.8
+        # Suspicious phase: de-risk first, then full close only on stronger continuation.
+        de_risk_enabled: true
+        de_risk_threshold: 0.54
+        de_risk_fraction: 0.40
+        de_risk_min_units: 1000
+        de_risk_min_remaining: 1000
+        de_risk_cooldown_sec: 15
+        de_risk_reason: risk_reduce
         score_threshold: 0.64
         release_threshold: 0.46
         confirm_hits: 3
@@ -853,6 +861,13 @@ strategies:
         enabled: true
         min_hold_sec: 90
         min_adverse_pips: 1.8
+        de_risk_enabled: true
+        de_risk_threshold: 0.54
+        de_risk_fraction: 0.40
+        de_risk_min_units: 1000
+        de_risk_min_remaining: 1000
+        de_risk_cooldown_sec: 15
+        de_risk_reason: risk_reduce
         score_threshold: 0.64
         release_threshold: 0.46
         confirm_hits: 3

@@ -558,6 +558,8 @@ class _DirectionFlipState:
     last_hit_ts: float = 0.0
     last_close_ts: float = 0.0
     last_score: float = 0.0
+    de_risked: bool = False
+    de_risk_ts: float = 0.0
 
 
 class RangeFaderExitWorker:
@@ -868,6 +870,9 @@ class RangeFaderExitWorker:
         forecast_weight: float,
         fac_m1: dict,
         fac_h4: dict,
+        de_risk_enabled: bool = False,
+        de_risk_threshold: float = 0.0,
+        de_risk_cooldown_sec: float = 0.0,
     ) -> tuple[Optional[str], Optional[dict[str, float]]]:
         state = self._direction_flip_states.get(trade_id)
         if state is None:
@@ -896,6 +901,18 @@ class RangeFaderExitWorker:
         state.last_score = score
         diag["hits"] = float(state.hits)
         diag["adverse_pips"] = round(float(adverse_pips), 5)
+        diag["de_risked"] = 1.0 if state.de_risked else 0.0
+
+        if (
+            de_risk_enabled
+            and not state.de_risked
+            and score >= max(0.0, min(score_threshold, de_risk_threshold))
+            and (
+                de_risk_cooldown_sec <= 0.0
+                or (now_mono - float(state.de_risk_ts or 0.0)) >= de_risk_cooldown_sec
+            )
+        ):
+            return "__de_risk__", diag
 
         stale = confirm_window_sec > 0 and (now_mono - state.last_hit_ts) > confirm_window_sec
         if score >= score_threshold:
@@ -1136,6 +1153,36 @@ class RangeFaderExitWorker:
             str(direction_flip_cfg.get("reason") or "direction_flip").strip()
             or "direction_flip"
         )
+        direction_flip_de_risk_enabled = _coerce_bool(
+            direction_flip_cfg.get("de_risk_enabled"), True
+        )
+        direction_flip_de_risk_threshold = max(
+            0.0,
+            min(
+                direction_flip_score_threshold,
+                _pick_float(
+                    direction_flip_cfg.get("de_risk_threshold"),
+                    max(0.0, direction_flip_score_threshold - 0.10),
+                ),
+            ),
+        )
+        direction_flip_de_risk_fraction = max(
+            0.05,
+            min(0.9, _pick_float(direction_flip_cfg.get("de_risk_fraction"), 0.4)),
+        )
+        direction_flip_de_risk_min_units = max(
+            1, _pick_int(direction_flip_cfg.get("de_risk_min_units"), 1000)
+        )
+        direction_flip_de_risk_min_remaining = max(
+            1, _pick_int(direction_flip_cfg.get("de_risk_min_remaining"), 1000)
+        )
+        direction_flip_de_risk_cooldown_sec = max(
+            0.0, _pick_float(direction_flip_cfg.get("de_risk_cooldown_sec"), 15.0)
+        )
+        direction_flip_de_risk_reason = (
+            str(direction_flip_cfg.get("de_risk_reason") or "risk_reduce").strip()
+            or "risk_reduce"
+        )
         base_tag_lower = str(base_tag or strategy_tag or "").strip().lower()
         # User safety requirement: legacy/open positions must keep legacy behavior.
         # Only apply newly added ping-specific loss/flip controls to positions opened
@@ -1155,6 +1202,7 @@ class RangeFaderExitWorker:
             loss_cut_reason_time = self.loss_cut_reason_time
             non_range_max_hold_sec = 0.0
             direction_flip_enabled = False
+            direction_flip_de_risk_enabled = False
         loss_cut_hard_atr_mult = max(
             0.0, _pick_float(exit_profile.get("loss_cut_hard_atr_mult"), 0.0)
         )
@@ -1447,7 +1495,52 @@ class RangeFaderExitWorker:
                     forecast_weight=direction_flip_forecast_weight,
                     fac_m1=fac_m1,
                     fac_h4=fac_h4,
+                    de_risk_enabled=direction_flip_de_risk_enabled,
+                    de_risk_threshold=direction_flip_de_risk_threshold,
+                    de_risk_cooldown_sec=direction_flip_de_risk_cooldown_sec,
                 )
+                if flip_reason == "__de_risk__":
+                    reduce_units = int(abs(units) * direction_flip_de_risk_fraction)
+                    remaining = abs(units) - reduce_units
+                    if (
+                        reduce_units >= direction_flip_de_risk_min_units
+                        and remaining >= direction_flip_de_risk_min_remaining
+                    ):
+                        ok = await close_trade(
+                            trade_id,
+                            reduce_units,
+                            client_order_id=client_id,
+                            allow_negative=True,
+                            exit_reason=direction_flip_de_risk_reason,
+                            env_prefix=_BB_ENV_PREFIX,
+                        )
+                        if ok:
+                            st = self._direction_flip_states.get(trade_id)
+                            if st is not None:
+                                st.de_risked = True
+                                st.de_risk_ts = time.monotonic()
+                                st.hits = 0
+                            log_metric(
+                                "scalp_precision_direction_flip_derisk",
+                                float((flip_diag or {}).get("score") or 0.0),
+                                tags={
+                                    "strategy": str(base_tag or strategy_tag or "unknown"),
+                                    "side": side,
+                                },
+                                ts=now,
+                            )
+                            LOG.info(
+                                "[exit-rangefader] direction_flip derisk trade=%s tag=%s side=%s cut=%s remain=%s pnl=%.2fp hold=%.0fs diag=%s",
+                                trade_id,
+                                base_tag or strategy_tag or "unknown",
+                                side,
+                                reduce_units,
+                                remaining,
+                                pnl,
+                                hold_sec,
+                                json.dumps(flip_diag or {}, ensure_ascii=False, sort_keys=True),
+                            )
+                            return
                 if flip_reason:
                     log_metric(
                         "scalp_precision_direction_flip_exit",

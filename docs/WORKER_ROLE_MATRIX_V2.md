@@ -258,6 +258,8 @@
   - `scalp_ping_5s` / `scalp_ping_5s_b` の EXIT worker に
     予測バイアス（`analysis.local_decider._technical_forecast_bias`）を併用した
     `direction_flip` 判定を追加（戦略内で完結、共通一律ゲートは追加しない）。
+  - `direction_flip` は「de-risk（部分クローズ）→ full-exit（全クローズ）」の二段階制御にし、
+    疑い局面ではロットを落として観察、継続悪化でのみ撤退する。
   - `direction_flip` はヒステリシスと連続確認でノイズを抑制し、
     含み損の取り残し玉のみを対象に close する。
   - `range_timeout` 非依存の取り残しを抑えるため、

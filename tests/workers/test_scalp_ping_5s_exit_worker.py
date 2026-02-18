@@ -95,6 +95,66 @@ def test_direction_flip_requires_hysteresis_hits(monkeypatch):
     assert reason == "m1_structure_break"
 
 
+def test_direction_flip_derisk_then_exit(monkeypatch):
+    worker = exit_worker.RangeFaderExitWorker()
+    scores = iter([0.58, 0.92])
+    monkeypatch.setattr(
+        worker,
+        "_direction_flip_score",
+        lambda **_kwargs: (next(scores), {"score": 0.0}),
+    )
+
+    reason, _diag = worker._maybe_direction_flip_reason(
+        trade_id="T2",
+        side="short",
+        hold_sec=180.0,
+        adverse_pips=3.0,
+        reason="m1_structure_break",
+        enabled=True,
+        min_hold_sec=60.0,
+        min_adverse_pips=1.0,
+        score_threshold=0.64,
+        score_release=0.46,
+        confirm_hits=1,
+        confirm_window_sec=30.0,
+        cooldown_sec=0.0,
+        forecast_weight=0.35,
+        fac_m1={},
+        fac_h4={},
+        de_risk_enabled=True,
+        de_risk_threshold=0.54,
+        de_risk_cooldown_sec=0.0,
+    )
+    assert reason == "__de_risk__"
+
+    st = worker._direction_flip_states.get("T2")
+    assert st is not None
+    st.de_risked = True
+
+    reason, _diag = worker._maybe_direction_flip_reason(
+        trade_id="T2",
+        side="short",
+        hold_sec=180.0,
+        adverse_pips=3.0,
+        reason="m1_structure_break",
+        enabled=True,
+        min_hold_sec=60.0,
+        min_adverse_pips=1.0,
+        score_threshold=0.64,
+        score_release=0.46,
+        confirm_hits=1,
+        confirm_window_sec=30.0,
+        cooldown_sec=0.0,
+        forecast_weight=0.35,
+        fac_m1={},
+        fac_h4={},
+        de_risk_enabled=True,
+        de_risk_threshold=0.54,
+        de_risk_cooldown_sec=0.0,
+    )
+    assert reason == "m1_structure_break"
+
+
 def test_new_policy_gate_skips_existing_positions(monkeypatch):
     worker = exit_worker.RangeFaderExitWorker()
     worker.exit_policy_start_ts = 0.0
