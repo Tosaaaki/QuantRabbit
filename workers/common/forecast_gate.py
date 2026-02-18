@@ -244,6 +244,7 @@ class ForecastDecision:
     range_low_price: Optional[float] = None
     range_high_price: Optional[float] = None
     tp_pips_hint: Optional[float] = None
+    target_reach_prob: Optional[float] = None
     sl_pips_cap: Optional[float] = None
     rr_floor: Optional[float] = None
     feature_ts: Optional[str] = None
@@ -816,6 +817,54 @@ def _attach_range_prices(row: dict[str, Any]) -> dict[str, Any]:
     row["range_low_price"] = round(anchor + low * float(_PIP_SIZE), 5)
     row["range_high_price"] = round(anchor + high * float(_PIP_SIZE), 5)
     return row
+
+
+def _estimate_target_reach_prob(
+    row: dict[str, Any],
+    *,
+    side_key: str,
+    units: int,
+) -> Optional[float]:
+    if not isinstance(row, dict):
+        return None
+
+    expected = _safe_optional_float(row.get("expected_pips"))
+    if expected is None:
+        return None
+
+    sigma = _safe_optional_float(row.get("range_sigma_pips"))
+    if sigma is None or sigma <= 0.0:
+        sigma = _estimate_range_sigma_pips(row)
+    if sigma is None or sigma <= 0.0 or not math.isfinite(float(sigma)):
+        return None
+    sigma = max(_RANGE_SIGMA_FLOOR_PIPS, float(sigma))
+
+    target_abs = _safe_abs_float(row.get("tp_pips_hint"))
+    if target_abs is None or target_abs <= 0.0:
+        low = _safe_optional_float(row.get("range_low_pips"))
+        high = _safe_optional_float(row.get("range_high_pips"))
+        if low is not None and high is not None and high > low:
+            target_abs = max(0.1, abs(float(high - low)) * 0.5)
+        else:
+            target_abs = max(0.1, abs(float(expected)))
+
+    side_norm = str(side_key or "").strip().lower()
+    is_long = side_norm in {"buy", "long"} or (
+        side_norm not in {"sell", "short"} and int(units) > 0
+    )
+
+    if is_long:
+        threshold = float(target_abs)
+        z = (threshold - float(expected)) / sigma
+        prob = 1.0 - _RANGE_NORMAL.cdf(z)
+    else:
+        threshold = -float(target_abs)
+        z = (threshold - float(expected)) / sigma
+        prob = _RANGE_NORMAL.cdf(z)
+
+    if not math.isfinite(prob):
+        return None
+    return round(_clamp(float(prob), 0.0, 1.0), 6)
 
 
 def _normalize_strategy_key(text: str) -> str:
@@ -2239,6 +2288,13 @@ def decide(
         trend_strength=trend_strength,
         range_pressure=range_pressure,
     )
+    target_reach_prob = _estimate_target_reach_prob(
+        row,
+        side_key=side_key,
+        units=units,
+    )
+    if target_reach_prob is not None:
+        row["target_reach_prob"] = target_reach_prob
 
     if style_guard_enabled and style == "trend" and trend_strength < trend_min_strength:
         log_metric(
@@ -2276,6 +2332,7 @@ def decide(
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
             feature_ts=row.get("feature_ts"),
@@ -2322,6 +2379,7 @@ def decide(
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
             feature_ts=row.get("feature_ts"),
@@ -2375,6 +2433,7 @@ def decide(
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
             feature_ts=row.get("feature_ts"),
@@ -2430,6 +2489,7 @@ def decide(
                     tf_confluence_count=int(tf_confluence_count),
                     tf_confluence_horizons=tf_confluence_horizons or None,
                     tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                    target_reach_prob=target_reach_prob,
                     sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
                     rr_floor=_safe_optional_float(row.get("rr_floor")),
                     feature_ts=str(feature_ts),
@@ -2482,6 +2542,7 @@ def decide(
         tf_confluence_count=int(tf_confluence_count),
         tf_confluence_horizons=tf_confluence_horizons or None,
         tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+        target_reach_prob=target_reach_prob,
         sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
         rr_floor=_safe_optional_float(row.get("rr_floor")),
         feature_ts=row.get("feature_ts"),

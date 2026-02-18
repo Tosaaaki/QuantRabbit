@@ -90,3 +90,40 @@ def test_apply_adjustments_for_targets_and_loss_cut(module_path: str) -> None:
     assert hard <= 16.0
     assert hard >= soft
     assert hold is not None and hold <= 1200.0
+
+
+@pytest.mark.parametrize("module_path", EXIT_FORECAST_MODULES)
+def test_target_reach_prob_influences_contra_score(
+    module_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _mod(module_path)
+    monkeypatch.delenv("EXIT_FORECAST_ENABLED", raising=False)
+    monkeypatch.setenv("EXIT_FORECAST_PRICE_HINT_ENABLED", "0")
+    monkeypatch.setenv("EXIT_FORECAST_TARGET_REACH_ENABLED", "1")
+    monkeypatch.setenv("EXIT_FORECAST_TARGET_REACH_WEIGHT_MAX", "0.35")
+    monkeypatch.setenv("EXIT_FORECAST_MIN_AGAINST_PROB", "0.70")
+
+    low = module.build_exit_forecast_adjustment(
+        side="long",
+        entry_thesis={
+            "forecast": {
+                "p_up": 0.62,
+                "edge": 0.72,
+                "target_reach_prob": 0.20,
+            }
+        },
+    )
+    high = module.build_exit_forecast_adjustment(
+        side="long",
+        entry_thesis={
+            "forecast": {
+                "p_up": 0.62,
+                "edge": 0.72,
+                "target_reach_prob": 0.85,
+            }
+        },
+    )
+
+    assert low.target_reach_prob == pytest.approx(0.2)
+    assert high.target_reach_prob == pytest.approx(0.85)
+    assert low.contra_score > high.contra_score

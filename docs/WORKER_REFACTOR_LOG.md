@@ -32,6 +32,23 @@
   - 「利益を削る一律SL」ではなく、方向転換が確認された負け玉のみを機械的に整理し、
     長時間取り残しとマージン圧迫の再発を抑える。
 
+### 2026-02-18（追記）forecast に目標到達確率（`target_reach_prob`）を追加
+
+- 対象:
+  - `workers/common/forecast_gate.py`
+  - `execution/strategy_entry.py`
+  - `workers/*/exit_forecast.py`（全戦略）
+- 変更:
+  - `forecast_gate` で、予測分布（`expected_pips`/`range_sigma_pips`）と `tp_pips_hint` から
+    方向別の `target_reach_prob`（0.0-1.0）を算出。
+  - `ForecastDecision` と `entry_thesis["forecast"]` へ `target_reach_prob` を伝播。
+  - 各 `exit_forecast` で `target_reach_prob` を参照し、
+    低確率時は `contra_score` を加算（早期EXIT寄り）、
+    高確率時は `contra_score` を減衰（ホールド寄り）する補正を追加。
+- 意図:
+  - 「このまま持つか / いったん切ってプルバック再エントリーを待つか」の判断を、
+    方向確率・edge に加えて目標到達確率でも機械判定できるようにする。
+
 ### 2026-02-18（追記）`position_manager` の close 導線を service-safe 化 + `MicroCompressionRevert` 一時抑制
 
 - 対象:
@@ -2093,3 +2110,52 @@
 - 備考:
   - 方向一致（hit）優先で短期TFをデチューンし、過反応を抑える方針。
   - MAE改善幅が縮小するため、次回は 6h/12h 窓でも再検証して再調整する。
+
+### 2026-02-18（追記）M1Scalper / RangeFader EXITのforecast損切り補正を有効化
+
+- 背景:
+  - `scalp_m1scalper` / `scalp_rangefader` は `apply_exit_forecast_to_targets` は接続済みだったが、
+    `apply_exit_forecast_to_loss_cut` の経路が未接続で、EXITの負け側制御が他戦略と非対称だった。
+- 実装:
+  - `workers/scalp_m1scalper/exit_worker.py`
+    - `apply_exit_forecast_to_loss_cut` を導入し、`max_adverse` / `max_hold` の補正を統一。
+    - `entry_thesis.hard_stop_pips`（存在時）を hard 側しきい値に反映。
+  - `workers/scalp_rangefader/exit_worker.py`
+    - `apply_exit_forecast_to_loss_cut` を導入。
+    - 逆行時 (`pnl<=0`) に forecast補正済み `loss_cut_hard_pips` / `loss_cut_max_hold_sec` を評価し、
+      `max_adverse` / `max_hold_loss` でクローズ可能な経路を追加。
+    - 追加env:
+      - `RANGEFADER_EXIT_SOFT_ADVERSE_PIPS`（default: `1.8`）
+      - `RANGEFADER_EXIT_HARD_ADVERSE_PIPS`（default: `2.8`）
+      - `RANGEFADER_EXIT_MAX_HOLD_LOSS_SEC`（default: `180`）
+- 検証:
+  - `python3 -m py_compile workers/scalp_m1scalper/exit_worker.py workers/scalp_rangefader/exit_worker.py`
+  - `pytest -q tests/workers/test_exit_forecast.py`（3 passed）
+- 状態:
+  - forecast は ENTRY（units/probability/TP/SL）だけでなく、
+    `scalp_m1scalper` / `scalp_rangefader` でも EXITの利確・損切り・負け持ち保持時間まで一貫して反映。
+
+### 2026-02-18（追記）全EXITワーカーで予測価格ヒントを補正に反映
+
+- 背景:
+  - 既存のEXIT forecast補正は主に `p_up` / `edge` ベースで、
+    `target_price` / `anchor_price` / `range_price` を直接使っていなかった。
+- 実装:
+  - 全 `workers/*/exit_forecast.py`（25戦略）に同一変更を適用。
+  - `build_exit_forecast_adjustment(...)` で以下を評価して `contra_score` に反映:
+    - `target_price` と `anchor_price` の距離（pips）
+    - `tp_pips_hint`
+    - `range_low_price` / `range_high_price` の予測レンジ幅（pips）
+  - 追加env:
+    - `EXIT_FORECAST_PRICE_HINT_ENABLED`（default: `1`）
+    - `EXIT_FORECAST_PRICE_HINT_WEIGHT_MAX`（default: `0.20`）
+    - `EXIT_FORECAST_PRICE_HINT_MIN_PIPS`（default: `0.6`）
+    - `EXIT_FORECAST_PRICE_HINT_MAX_PIPS`（default: `8.0`）
+    - `EXIT_FORECAST_RANGE_HINT_NARROW_PIPS`（default: `3.5`）
+    - `EXIT_FORECAST_RANGE_HINT_WIDE_PIPS`（default: `18.0`）
+- 期待効果:
+  - 予測ターゲット距離が小さい（伸び余地が薄い）局面ではEXITを引き締め、
+    予測レンジが十分広く方向確率が有利な局面では過度な早期EXITを抑制。
+- 検証:
+  - `python3 -m py_compile workers/*/exit_forecast.py`
+  - `pytest -q tests/workers/test_exit_forecast.py`（75 passed）

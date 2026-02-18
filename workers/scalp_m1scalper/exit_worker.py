@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
 from .exit_forecast import (
+    apply_exit_forecast_to_loss_cut,
     apply_exit_forecast_to_targets,
     build_exit_forecast_adjustment,
 )
@@ -613,10 +614,17 @@ async def _run_exit_loop(
             trail_backoff_floor=0.05,
             lock_buffer_floor=0.05,
         )
-        if forecast_adj.enabled and max_adverse > 0.0:
-            max_adverse = max(0.5, max_adverse * forecast_adj.loss_cut_mult)
-        if forecast_adj.enabled and max_hold > 0.0:
-            max_hold = max(min_hold, max_hold * forecast_adj.max_hold_mult)
+        hard_stop_base = state.hard_stop if state.hard_stop and state.hard_stop > 0.0 else max_adverse
+        _soft_adverse, hard_adverse, hold_adj = apply_exit_forecast_to_loss_cut(
+            soft_pips=max_adverse,
+            hard_pips=max(max_adverse, hard_stop_base),
+            max_hold_sec=max_hold,
+            adjustment=forecast_adj,
+            floor_pips=0.1,
+        )
+        max_adverse = max(0.5, hard_adverse)
+        if hold_adj is not None and hold_adj > 0.0:
+            max_hold = max(min_hold, hold_adj)
 
         if state.tp_hint:
             tp = max(tp, max(1.0, state.tp_hint * 0.9))

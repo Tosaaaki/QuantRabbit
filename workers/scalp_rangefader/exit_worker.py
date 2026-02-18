@@ -12,6 +12,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from .exit_forecast import (
+    apply_exit_forecast_to_loss_cut,
     apply_exit_forecast_to_targets,
     build_exit_forecast_adjustment,
 )
@@ -297,6 +298,18 @@ class RangeFaderExitWorker:
             60.0,
             _float_env("RANGEFADER_EXIT_RANGE_MAX_HOLD_SEC", 600.0),
         )
+        self.loss_cut_soft_pips = max(
+            0.2,
+            _float_env("RANGEFADER_EXIT_SOFT_ADVERSE_PIPS", 1.8),
+        )
+        self.loss_cut_hard_pips = max(
+            self.loss_cut_soft_pips,
+            _float_env("RANGEFADER_EXIT_HARD_ADVERSE_PIPS", 2.8),
+        )
+        self.loss_cut_max_hold_sec = max(
+            self.min_hold_sec + 1.0,
+            _float_env("RANGEFADER_EXIT_MAX_HOLD_LOSS_SEC", 180.0),
+        )
 
 
         self._pos_manager = PositionManager()
@@ -361,6 +374,21 @@ class RangeFaderExitWorker:
             entry_thesis=thesis,
             env_prefix=_BB_ENV_PREFIX,
         )
+        hard_stop_hint = _bb_float(thesis.get("hard_stop_pips"))
+        if hard_stop_hint is None or hard_stop_hint <= 0.0:
+            hard_stop_hint = _bb_float(thesis.get("sl_pips"))
+        loss_cut_soft_base = self.loss_cut_soft_pips
+        loss_cut_hard_base = self.loss_cut_hard_pips
+        if hard_stop_hint is not None and hard_stop_hint > 0.0:
+            loss_cut_hard_base = max(loss_cut_soft_base, float(hard_stop_hint))
+            loss_cut_soft_base = min(loss_cut_hard_base, max(0.1, loss_cut_soft_base))
+        loss_cut_soft_pips, loss_cut_hard_pips, loss_cut_max_hold_sec = apply_exit_forecast_to_loss_cut(
+            soft_pips=loss_cut_soft_base,
+            hard_pips=loss_cut_hard_base,
+            max_hold_sec=self.loss_cut_max_hold_sec,
+            adjustment=forecast_adj,
+            floor_pips=0.1,
+        )
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -413,6 +441,32 @@ class RangeFaderExitWorker:
                 return
             if reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
+                self._states.pop(trade_id, None)
+                return
+            if abs(float(pnl)) >= loss_cut_hard_pips:
+                await self._close(
+                    trade_id,
+                    -units,
+                    "max_adverse",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
+            if (
+                loss_cut_max_hold_sec is not None
+                and loss_cut_max_hold_sec > 0.0
+                and hold_sec >= loss_cut_max_hold_sec
+            ):
+                await self._close(
+                    trade_id,
+                    -units,
+                    "max_hold_loss",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
                 self._states.pop(trade_id, None)
                 return
             return

@@ -1186,6 +1186,7 @@ def _format_forecast_context(decision: Any) -> dict[str, object]:
         "range_low_price": _to_float(decision.range_low_price),
         "range_high_price": _to_float(decision.range_high_price),
         "tp_pips_hint": _to_float(decision.tp_pips_hint),
+        "target_reach_prob": _to_float(decision.target_reach_prob),
         "sl_pips_cap": _to_float(decision.sl_pips_cap),
         "rr_floor": _to_float(decision.rr_floor),
         "trend_strength": _to_float(decision.trend_strength),

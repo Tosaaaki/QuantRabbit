@@ -116,6 +116,7 @@ python3 scripts/vm_forecast_snapshot.py \
 - `breakout_hit_rate_20`: 直近サンプルでの `breakout_bias_20` 一致率
 - `breakout_samples_20`: スキル推定に使った直近サンプル数
 - `tp_pips_hint`: TP 方向ヒント（pips）
+- `target_reach_prob`: 現在ポジ方向で `tp_pips_hint` 到達を見込む確率（0.0-1.0）
 - `sl_pips_cap`: SL 上限ヒント（pips）
 - `rr_floor`: TP/SL の下限 R:R 値
 
@@ -217,3 +218,26 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
   `tf_confluence_score`, `strong_contra_reject` を追跡できます。
 - TPは `tp_pips_hint` がある場合に `tp_pips` へブレンドし（順方向時のみ）、
   SLは `sl_pips_cap` がある場合に `sl_pips` を上限でクリップします。
+
+## EXITでのforecast補正
+- 各 `exit_worker` は `entry_thesis.forecast` / `forecast_fusion` を参照し、
+  `build_exit_forecast_adjustment` で逆行確率を評価して EXIT 閾値へ反映します。
+- 2026-02-18 時点で `scalp_m1scalper` / `scalp_rangefader` を含む全EXIT系で
+  `apply_exit_forecast_to_targets`（利確/トレール）と
+  `apply_exit_forecast_to_loss_cut`（損切り/最大保持）の補正が有効です。
+- 2026-02-18 追記: `target_price` / `anchor_price` / `tp_pips_hint` / `range_low_price` / `range_high_price` を
+  EXIT補正に取り込み、予測レンジが狭い局面では早めの利確・損切り、予測ターゲット距離が大きい局面では
+  過度な早期クローズを抑える方向へ補正するようにしました。
+- 2026-02-18 追記: `target_reach_prob`（目標到達確率）を EXIT 補正へ追加し、
+  低確率なら早期クローズ寄り、高確率ならホールド寄りへ補正します（`allowed=false` 時は緩和しない）。
+- 主なenv:
+  - `EXIT_FORECAST_PRICE_HINT_ENABLED`
+  - `EXIT_FORECAST_PRICE_HINT_WEIGHT_MAX`
+  - `EXIT_FORECAST_PRICE_HINT_MIN_PIPS`
+  - `EXIT_FORECAST_PRICE_HINT_MAX_PIPS`
+  - `EXIT_FORECAST_RANGE_HINT_NARROW_PIPS`
+  - `EXIT_FORECAST_RANGE_HINT_WIDE_PIPS`
+  - `EXIT_FORECAST_TARGET_REACH_ENABLED`
+  - `EXIT_FORECAST_TARGET_REACH_WEIGHT_MAX`
+  - `EXIT_FORECAST_TARGET_REACH_LOW`
+  - `EXIT_FORECAST_TARGET_REACH_HIGH`
