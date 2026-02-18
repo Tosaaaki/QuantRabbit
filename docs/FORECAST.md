@@ -202,6 +202,18 @@ python3 scripts/eval_forecast_before_after.py \
 - `5m`: `hit -0.0001`, `mae -0.0002`
 - `10m`: `hit +0.0000`, `mae -0.0002`
 
+2026-02-18 の72h窓（VM実データ, `bars=3181`, `2026-02-15T22:06:00+00:00`〜`2026-02-18T03:34:00+00:00`）で
+`5m` 重視の再探索を実施し、短期TFの採用値を次に更新:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.26,10m=0.28`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`
+
+同一72h窓の再チェック（`logs/reports/forecast_improvement/report_20260218T035154Z_72h_candidate_recheck.md`）では、
+旧運用値（`gain=0.05`, `breakout_5m=0.20`, `session_5m=0.18`）比で
+`5m hit_delta +0.0026 -> +0.0039`, `5m mae_delta -0.0013 -> -0.0016` を確認。
+`1m/10m` は同等で、合計は `hit_delta_sum +0.0117 -> +0.0131`,
+`mae_delta_sum -0.0061 -> -0.0064` と改善しました。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

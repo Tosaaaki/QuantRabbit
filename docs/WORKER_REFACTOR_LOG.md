@@ -2341,3 +2341,26 @@
   - `tests/execution/test_strategy_entry_forecast_fusion.py`
     - 反発確率あり/なしで contra-buy の縮小率が変わることを追加検証。
     - 反発高確率で strong-contra reject を回避できるケースを追加検証。
+
+### 2026-02-18（追記）72h forecast再評価で5m重みを更新
+
+- 背景:
+  - 2h/4h/48h では改善傾向を確認済みだったため、信頼度を上げる目的で72h窓を追加検証。
+  - 同一M1連続窓（`bars=3181`, `2026-02-15T22:06:00+00:00`〜`2026-02-18T03:34:00+00:00`）で
+    現行値（`gain=0.05`, `breakout_5m=0.20`, `session_5m=0.18`）と候補を比較した。
+- 実施:
+  - 72hグリッド探索（`forecast_tune_72h_5m_20260218T033726Z.json`）をVM実データで実行。
+  - 上位候補 `gain=0.05`, `breakout_5m=0.26`, `session_5m=0.22` を同一窓で再評価。
+    - `forecast_eval_20260218T035154Z_72h_current_recheck.json`
+    - `forecast_eval_20260218T035154Z_72h_tuned_candidate.json`
+    - `report_20260218T035154Z_72h_candidate_recheck.md`
+- 結果（candidate - current）:
+  - `1m`: ほぼ同等
+  - `5m`: `hit_delta +0.0013`, `mae_delta -0.0003`, `range_cov_delta +0.0007`
+  - `10m`: 同等
+  - 合計: `hit_delta_sum +0.0013`, `mae_delta_sum -0.0003` で改善判定
+- 反映:
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.26,10m=0.28`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`
