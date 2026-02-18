@@ -11,6 +11,10 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
+from workers.common.exit_forecast import (
+    apply_exit_forecast_to_targets,
+    build_exit_forecast_adjustment,
+)
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.rollout_gate import load_rollout_start_ts, trade_passes_rollout
@@ -593,6 +597,26 @@ async def _run_exit_loop(
         ts = scale_value(trail_start, scale=scale, floor=trail_start)
         tb = scale_value(trail_backoff, scale=scale, floor=trail_backoff)
         lb = scale_value(lock_buffer, scale=scale, floor=lock_buffer)
+        forecast_adj = build_exit_forecast_adjustment(
+            side=side,
+            entry_thesis=thesis,
+            env_prefix=_BB_ENV_PREFIX,
+        )
+        tp, ts, tb, lb = apply_exit_forecast_to_targets(
+            profit_take=tp,
+            trail_start=ts,
+            trail_backoff=tb,
+            lock_buffer=lb,
+            adjustment=forecast_adj,
+            profit_take_floor=0.5,
+            trail_start_floor=0.5,
+            trail_backoff_floor=0.05,
+            lock_buffer_floor=0.05,
+        )
+        if forecast_adj.enabled and max_adverse > 0.0:
+            max_adverse = max(0.5, max_adverse * forecast_adj.loss_cut_mult)
+        if forecast_adj.enabled and max_hold > 0.0:
+            max_hold = max(min_hold, max_hold * forecast_adj.max_hold_mult)
 
         if state.tp_hint:
             tp = max(tp, max(1.0, state.tp_hint * 0.9))

@@ -136,6 +136,9 @@
 - `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
 - 予測決定は `expected_pips` に加えて `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor`
   を `forecast_context` として各経路へ伝播し、`order_manager` と `entry_intent_board` の監査へ反映する。
+- EXIT 側は共通一律ゲートを追加せず、各 `exit_worker` が `entry_thesis.forecast` / `forecast_fusion`
+  を参照して `profit_take` / `trail_start` / `lock_buffer` / `loss_cut_*` を戦略内で補正する。
+  補正は `workers/common/exit_forecast.py` の係数計算を使うが、最終判定は各戦略ワーカー側ロジックのまま維持する。
 - 戦略ワーカー側では forecast gate とは独立に、短中期（例: `M1x1`, `M1x5`, `M5x2`）のローカル予測を
   エントリー時に都度計算し、`entry_thesis.tech_tp_mult` / `tech_score` / `entry_units_intent` へ反映する。
 - ローカル予測の過去再現評価は `scripts/eval_local_forecast.py` を正規手順として使い、

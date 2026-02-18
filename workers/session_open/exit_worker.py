@@ -12,9 +12,14 @@ from analysis.range_guard import detect_range_mode
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from workers.common.exit_forecast import (
+    apply_exit_forecast_to_loss_cut,
+    apply_exit_forecast_to_targets,
+    build_exit_forecast_adjustment,
+)
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
-from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
+from workers.common.loss_cut import LossCutParams, pick_loss_cut_reason, resolve_loss_cut
 from utils.strategy_protection import exit_profile_for_tag
 
 
@@ -363,6 +368,14 @@ class SessionOpenExitWorker:
         pnl = mark_pnl_pips(entry, units, mid=mid)
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+        forecast_adj = build_exit_forecast_adjustment(
+            side=side,
+            entry_thesis=thesis,
+            env_prefix=_BB_ENV_PREFIX,
+        )
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -377,9 +390,6 @@ class SessionOpenExitWorker:
 
         # Strategy-level "loss-cut" (disabled by default): once beyond the point of return, exit and redeploy.
         if pnl <= 0:
-            thesis = trade.get("entry_thesis") or {}
-            if not isinstance(thesis, dict):
-                thesis = {}
             strategy_tag = (
                 thesis.get("strategy_tag")
                 or thesis.get("strategy_tag_raw")
@@ -397,6 +407,24 @@ class SessionOpenExitWorker:
             except Exception:
                 sl_hint = None
             params = resolve_loss_cut(exit_profile, sl_pips=sl_hint)
+            soft_adj, hard_adj, hold_adj = apply_exit_forecast_to_loss_cut(
+                soft_pips=params.soft_pips,
+                hard_pips=params.hard_pips,
+                max_hold_sec=params.max_hold_sec,
+                adjustment=forecast_adj,
+                floor_pips=0.1,
+            )
+            params = LossCutParams(
+                enabled=params.enabled,
+                require_sl=params.require_sl,
+                soft_pips=soft_adj,
+                hard_pips=hard_adj,
+                max_hold_sec=float(hold_adj or 0.0),
+                cooldown_sec=params.cooldown_sec,
+                reason_soft=params.reason_soft,
+                reason_hard=params.reason_hard,
+                reason_time=params.reason_time,
+            )
             reason = pick_loss_cut_reason(
                 pnl_pips=float(pnl),
                 hold_sec=float(hold_sec),
@@ -459,6 +487,17 @@ class SessionOpenExitWorker:
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start
         trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
+        profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
+            profit_take=profit_take,
+            trail_start=trail_start,
+            trail_backoff=trail_backoff,
+            lock_buffer=lock_buffer,
+            adjustment=forecast_adj,
+            profit_take_floor=0.5,
+            trail_start_floor=0.5,
+            trail_backoff_floor=0.05,
+            lock_buffer_floor=0.05,
+        )
 
         state = self._states.get(trade_id)
         if state is None:

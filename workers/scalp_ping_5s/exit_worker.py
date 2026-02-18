@@ -21,6 +21,11 @@ from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.rollout_gate import load_rollout_start_ts, trade_passes_rollout
 from workers.common.reentry_decider import decide_reentry
 from workers.common.pro_stop import maybe_close_pro_stop
+from workers.common.exit_forecast import (
+    apply_exit_forecast_to_loss_cut,
+    apply_exit_forecast_to_targets,
+    build_exit_forecast_adjustment,
+)
 
 try:  # optional config
     import yaml  # type: ignore
@@ -1233,6 +1238,42 @@ class RangeFaderExitWorker:
             # tended to cause premature max_adverse closes and occasional tail risk).
             loss_cut_enabled = True
             loss_cut_require_sl = False
+        forecast_adj = build_exit_forecast_adjustment(
+            side=side,
+            entry_thesis=thesis,
+            env_prefix=_BB_ENV_PREFIX,
+        )
+        profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
+            profit_take=profit_take,
+            trail_start=trail_start,
+            trail_backoff=trail_backoff,
+            lock_buffer=lock_buffer,
+            adjustment=forecast_adj,
+            profit_take_floor=0.5,
+            trail_start_floor=0.5,
+            trail_backoff_floor=0.05,
+            lock_buffer_floor=0.05,
+        )
+        range_profit_take, range_trail_start, range_trail_backoff, range_lock_buffer = apply_exit_forecast_to_targets(
+            profit_take=range_profit_take,
+            trail_start=range_trail_start,
+            trail_backoff=range_trail_backoff,
+            lock_buffer=range_lock_buffer,
+            adjustment=forecast_adj,
+            profit_take_floor=0.5,
+            trail_start_floor=0.5,
+            trail_backoff_floor=0.05,
+            lock_buffer_floor=0.05,
+        )
+        loss_cut_soft_pips, loss_cut_hard_pips, loss_cut_max_hold_sec = apply_exit_forecast_to_loss_cut(
+            soft_pips=loss_cut_soft_pips,
+            hard_pips=loss_cut_hard_pips,
+            max_hold_sec=loss_cut_max_hold_sec,
+            adjustment=forecast_adj,
+            floor_pips=0.1,
+        )
+        if "non_range_max_hold_sec" in locals() and non_range_max_hold_sec > 0.0 and forecast_adj.enabled:
+            non_range_max_hold_sec = max(min_hold_sec, non_range_max_hold_sec * forecast_adj.max_hold_mult)
         tick_imb_profile = exit_profile.get("tick_imb")
         if not isinstance(tick_imb_profile, dict):
             tick_imb_profile = {}
@@ -1649,6 +1690,18 @@ class RangeFaderExitWorker:
                 trail_start = tick_imb_trail_start
             if tick_imb_trail_backoff > 0:
                 trail_backoff = tick_imb_trail_backoff
+
+        profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
+            profit_take=profit_take,
+            trail_start=trail_start,
+            trail_backoff=trail_backoff,
+            lock_buffer=lock_buffer,
+            adjustment=forecast_adj,
+            profit_take_floor=0.5,
+            trail_start_floor=0.5,
+            trail_backoff_floor=0.05,
+            lock_buffer_floor=0.05,
+        )
 
         state = self._states.get(trade_id)
         if state is None:

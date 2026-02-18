@@ -11,6 +11,10 @@ from analysis.range_guard import detect_range_mode
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from workers.common.exit_forecast import (
+    apply_exit_forecast_to_targets,
+    build_exit_forecast_adjustment,
+)
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
 from workers.common.pro_stop import maybe_close_pro_stop
@@ -349,6 +353,14 @@ class RangeFaderExitWorker:
         pnl = mark_pnl_pips(entry, units, mid=mid)
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+        forecast_adj = build_exit_forecast_adjustment(
+            side=side,
+            entry_thesis=thesis,
+            env_prefix=_BB_ENV_PREFIX,
+        )
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -409,6 +421,17 @@ class RangeFaderExitWorker:
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start
         trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
+        profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
+            profit_take=profit_take,
+            trail_start=trail_start,
+            trail_backoff=trail_backoff,
+            lock_buffer=lock_buffer,
+            adjustment=forecast_adj,
+            profit_take_floor=0.5,
+            trail_start_floor=0.5,
+            trail_backoff_floor=0.05,
+            lock_buffer_floor=0.05,
+        )
 
         state = self._states.get(trade_id)
         if state is None:

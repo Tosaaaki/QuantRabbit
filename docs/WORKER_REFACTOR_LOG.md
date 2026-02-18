@@ -1949,3 +1949,47 @@
   - EXITロジック（`take_profit/lock_floor/max_adverse`）は変更せず、
     判定結果が実際に `close_request -> close_ok` まで到達する通路だけを安定化。
   - 失敗時は stale cache 返却で「無応答より継続判定」を優先し、取りこぼしを抑制。
+
+### 2026-02-18（追記）全戦略EXITへ forecast 補正を接続（TP/Trail/LossCut）
+
+- 要求:
+  - 「全戦略の EXIT でも forecast を使い、損切りにも反映する」を実装。
+  - 共通一律の後付け EXIT 判定は作らず、各戦略 `exit_worker` 内ロジックに補正として組み込む。
+- 実装:
+  - 新規: `workers/common/exit_forecast.py`
+    - `entry_thesis.forecast` / `forecast_fusion` から逆行確率（`against_prob`）を算出。
+    - 逆行強度に応じて `profit_take` / `trail_start` / `trail_backoff` / `lock_buffer` / `loss_cut` / `max_hold` の
+      乗数補正を返す。
+    - 主要 env:
+      - `EXIT_FORECAST_ENABLED`
+      - `EXIT_FORECAST_MIN_AGAINST_PROB`
+      - `EXIT_FORECAST_PROFIT_TIGHTEN_MAX`
+      - `EXIT_FORECAST_LOSSCUT_TIGHTEN_MAX`
+      - `EXIT_FORECAST_MAX_HOLD_TIGHTEN_MAX`
+  - 適用先:
+    - `workers/micro_runtime/exit_worker.py`
+    - `workers/session_open/exit_worker.py`
+    - `workers/scalp_rangefader/exit_worker.py`
+    - `workers/scalp_m1scalper/exit_worker.py`
+    - `workers/scalp_ping_5s/exit_worker.py`
+    - `workers/scalp_ping_5s_b/exit_worker.py`
+    - `workers/scalp_false_break_fade/exit_worker.py`
+    - `workers/scalp_level_reject/exit_worker.py`
+    - `workers/scalp_macd_rsi_div/exit_worker.py`
+    - `workers/scalp_squeeze_pulse_break/exit_worker.py`
+    - `workers/scalp_tick_imbalance/exit_worker.py`
+    - `workers/scalp_wick_reversal_blend/exit_worker.py`
+    - `workers/scalp_wick_reversal_pro/exit_worker.py`
+  - 既存 `micro_*` 個別 exit ワーカー（`micro_rangebreak` など）は `micro_runtime` ラッパー経由のため、
+    追加修正なしで同補正を継承。
+- テスト:
+  - 追加: `tests/workers/test_exit_forecast.py`
+  - 実行:
+    - `pytest -q tests/workers/test_exit_forecast.py`（3 passed）
+    - `pytest -q tests/workers/test_loss_cut.py tests/addons/test_session_open_worker.py`（5 passed）
+    - `python3 -m py_compile ...`（対象 exit_worker + `workers/common/exit_forecast.py`）
+- 現在の状態:
+  - forecast は ENTRY 側の `units/probability/TP/SL` 補正だけでなく、
+    EXIT 側の利確・トレール・損切り閾値補正にも接続済み。
+  - ただし最終クローズ判定の責務は従来どおり各 strategy `exit_worker` に残し、
+    共通レイヤでの一律拒否/強制クローズは導入していない。
