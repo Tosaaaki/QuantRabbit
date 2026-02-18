@@ -51,7 +51,7 @@ _WORKER_OPEN_POSITIONS_CACHE_TTL_SEC = max(
 )
 _WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC = max(
     _WORKER_OPEN_POSITIONS_CACHE_TTL_SEC,
-    _env_float("POSITION_MANAGER_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC", 15.0),
+    _env_float("POSITION_MANAGER_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC", 45.0),
 )
 _WORKER_SYNC_TRADES_TIMEOUT_SEC = max(
     0.5,
@@ -289,6 +289,34 @@ def _mark_open_positions_cache_meta(
     return result
 
 
+def _manager_snapshot_fallback(
+    request: Request,
+) -> tuple[dict[str, Any], float] | None:
+    manager = getattr(request.app.state, "position_manager", None)
+    if manager is None:
+        return None
+    snapshot = getattr(manager, "_last_positions", None)
+    if not isinstance(snapshot, dict) or not snapshot:
+        return None
+    ts = float(getattr(manager, "_last_positions_ts", 0.0) or 0.0)
+    age_sec = max(0.0, time.monotonic() - ts)
+    extra_meta = getattr(manager, "_last_positions_meta", None)
+    try:
+        payload = manager._package_positions(
+            snapshot,
+            stale=True,
+            age_sec=age_sec,
+            extra_meta=extra_meta if isinstance(extra_meta, dict) else None,
+        )
+    except Exception:
+        LOG.debug(
+            "[POSITION_MANAGER_WORKER] fallback snapshot packaging failed",
+            exc_info=True,
+        )
+        return None
+    return payload, age_sec
+
+
 async def _call_manager_with_timeout(
     request: Request,
     method_name: str,
@@ -354,6 +382,20 @@ async def _handle_open_positions(
                         reason="busy_stale",
                     )
                 )
+        fallback = _manager_snapshot_fallback(
+            request,
+        )
+        if fallback is not None:
+            payload, age_sec = fallback
+            _cache_store(cache, key, payload)
+            return _success(
+                _mark_open_positions_cache_meta(
+                    payload,
+                    age_sec=age_sec,
+                    stale=True,
+                    reason="manager_snapshot_busy",
+                )
+            )
         return _failure("position manager busy")
 
     try:
@@ -381,6 +423,20 @@ async def _handle_open_positions(
                             reason="timeout",
                         )
                     )
+            fallback = _manager_snapshot_fallback(
+                request,
+            )
+            if fallback is not None:
+                payload, age_sec = fallback
+                _cache_store(cache, key, payload)
+                return _success(
+                    _mark_open_positions_cache_meta(
+                        payload,
+                        age_sec=age_sec,
+                        stale=True,
+                        reason="manager_snapshot_timeout",
+                    )
+                )
             return _failure(
                 f"open_positions timeout ({_WORKER_OPEN_POSITIONS_TIMEOUT_SEC:.1f}s)"
             )
@@ -401,6 +457,20 @@ async def _handle_open_positions(
                             reason="error_fallback",
                         )
                     )
+            fallback = _manager_snapshot_fallback(
+                request,
+            )
+            if fallback is not None:
+                payload, age_sec = fallback
+                _cache_store(cache, key, payload)
+                return _success(
+                    _mark_open_positions_cache_meta(
+                        payload,
+                        age_sec=age_sec,
+                        stale=True,
+                        reason="manager_snapshot_error",
+                    )
+                )
             return _failure(str(exc))
 
         if not isinstance(result, dict):

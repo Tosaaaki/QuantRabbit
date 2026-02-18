@@ -276,6 +276,18 @@ _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC = max(
     _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC,
     _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC", 20.0),
 )
+_POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS = _env_bool(
+    "POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS",
+    False,
+)
+_POSITION_MANAGER_ENTRY_THESIS_CACHE_TTL_SEC = max(
+    5.0,
+    _env_float("POSITION_MANAGER_ENTRY_THESIS_CACHE_TTL_SEC", 900.0),
+)
+_POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES = max(
+    128,
+    int(os.getenv("POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES", "4096")),
+)
 _POSITION_MANAGER_SERVICE_SESSION: requests.Session | None = None
 _POSITION_MANAGER_SERVICE_SESSION_LOCK = threading.Lock()
 _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE: dict[bool, tuple[float, object]] = {}
@@ -1429,6 +1441,8 @@ class PositionManager:
         self._last_sync_cache_window_sec: float = 1.2
         self._last_positions_meta: dict | None = None
         self._entry_meta_cache: dict[str, dict] = {}
+        self._entry_thesis_cache: dict[str, tuple[float, dict | None]] = {}
+        self._entry_thesis_cache_lock = threading.Lock()
         self._last_sync_fetch_meta: dict[str, float | int] = {}
         self._last_sync_parse_meta: dict[str, float | int] = {}
         self._last_sync_breakdown: dict[str, float | int] = {}
@@ -2837,7 +2851,7 @@ class PositionManager:
             manual_trades = 0
             manual_units = 0
             manual_unrealized = 0.0
-            client_ids: set[str] = set()
+            entry_thesis_client_ids: set[str] = set()
             for tr in trades:
                 client_ext = tr.get("clientExtensions", {}) or {}
                 client_id_raw = client_ext.get("id")
@@ -2872,8 +2886,6 @@ class PositionManager:
                 trade_id_raw = tr.get("id") or tr.get("tradeID")
                 trade_id = str(trade_id_raw)
                 price = float(tr.get("price", 0.0))
-                if client_id:
-                    client_ids.add(client_id)
                 open_time_raw = tr.get("openTime")
                 open_time_iso: str | None = None
                 if open_time_raw:
@@ -3011,6 +3023,16 @@ class PositionManager:
                     trade_entry["entry_thesis"] = thesis_obj
                 if norm_tag:
                     trade_entry["strategy_tag"] = norm_tag
+                if client_id:
+                    if _POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS:
+                        entry_thesis_client_ids.add(client_id)
+                    else:
+                        needs_entry_enrich = (
+                            not trade_entry.get("strategy_tag")
+                            or not isinstance(trade_entry.get("entry_thesis"), dict)
+                        )
+                        if needs_entry_enrich:
+                            entry_thesis_client_ids.add(client_id)
                 # EXIT誤爆防止: エージェント管理ポケットかつ strategy_tag 不明なら除外
                 if pocket in agent_pockets and not trade_entry.get("strategy_tag"):
                     if include_unknown:
@@ -3068,8 +3090,8 @@ class PositionManager:
                     manual_units += units
                     manual_unrealized += unrealized_pl
 
-            if client_ids:
-                entry_map = self._load_entry_thesis(client_ids)
+            if entry_thesis_client_ids:
+                entry_map = self._load_entry_thesis(list(entry_thesis_client_ids))
                 for pocket_info in pockets.values():
                     trades_list = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
                     if not trades_list:
@@ -3090,7 +3112,7 @@ class PositionManager:
                                 trade["strategy_tag"] = norm_tag
 
             pockets["__net__"] = {"units": net_units}
-            self._last_positions = copy.deepcopy(pockets)
+            self._last_positions = pockets
             self._last_positions_ts = now_mono
 
             extra_meta = {}
@@ -3210,15 +3232,37 @@ class PositionManager:
         unique_ids = tuple(dict.fromkeys(cid for cid in client_ids if cid))
         if not unique_ids:
             return {}
+        now_mono = time.monotonic()
+        result: Dict[str, dict] = {}
+        misses: list[str] = []
+
+        with self._entry_thesis_cache_lock:
+            for cid in unique_ids:
+                cached = self._entry_thesis_cache.get(cid)
+                if not cached:
+                    misses.append(cid)
+                    continue
+                ts, thesis_obj = cached
+                if now_mono - float(ts) > _POSITION_MANAGER_ENTRY_THESIS_CACHE_TTL_SEC:
+                    misses.append(cid)
+                    continue
+                if isinstance(thesis_obj, dict):
+                    result[cid] = dict(thesis_obj)
+
+        if not misses:
+            return result
+
         con = None
         try:
             con = _open_orders_db_readonly()
             if con is None:
-                return {}
+                return result
         except sqlite3.Error as exc:
             print(f"[PositionManager] Failed to open orders.db: {exc}")
-            return {}
-        placeholders = ",".join("?" for _ in unique_ids)
+            return result
+
+        placeholders = ",".join("?" for _ in misses)
+        fetched: Dict[str, dict | None] = {}
         try:
             rows = con.execute(
                 f"""
@@ -3228,31 +3272,59 @@ class PositionManager:
                   AND status='submit_attempt'
                 ORDER BY id DESC
                 """,
-                unique_ids,
+                tuple(misses),
             ).fetchall()
         except sqlite3.Error as exc:
             print(f"[PositionManager] orders.db query failed: {exc}")
-            return {}
+            return result
         finally:
             if con is not None:
                 try:
                     con.close()
                 except Exception:
                     pass
-        result: Dict[str, dict] = {}
+
         for row in rows:
             cid = row["client_order_id"]
-            if cid in result:
+            if cid in fetched:
                 continue
             payload_raw = row["request_json"]
             if not payload_raw:
+                fetched[cid] = None
                 continue
             try:
                 payload = json.loads(payload_raw)
             except json.JSONDecodeError:
+                fetched[cid] = None
                 continue
-            thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis") or {}
-            result[cid] = thesis
+            thesis = (
+                payload.get("entry_thesis")
+                or (payload.get("meta") or {}).get("entry_thesis")
+                or {}
+            )
+            if isinstance(thesis, dict) and thesis:
+                thesis_obj = dict(thesis)
+                fetched[cid] = thesis_obj
+                result[cid] = dict(thesis_obj)
+            else:
+                fetched[cid] = None
+
+        for cid in misses:
+            fetched.setdefault(cid, None)
+
+        with self._entry_thesis_cache_lock:
+            for cid, thesis_obj in fetched.items():
+                cached_value = dict(thesis_obj) if isinstance(thesis_obj, dict) else None
+                self._entry_thesis_cache[cid] = (now_mono, cached_value)
+            overflow = len(self._entry_thesis_cache) - _POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES
+            if overflow > 0:
+                stale_keys = sorted(
+                    self._entry_thesis_cache.items(),
+                    key=lambda item: item[1][0],
+                )[:overflow]
+                for stale_key, _ in stale_keys:
+                    self._entry_thesis_cache.pop(stale_key, None)
+
         return result
 
     def _load_cashflows(self) -> list[dict]:

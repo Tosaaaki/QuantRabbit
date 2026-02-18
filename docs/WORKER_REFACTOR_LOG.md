@@ -2269,6 +2269,34 @@
   - `open_positions`/`sync_trades` の同時呼び出し時でも service 側の tail latency を抑え、
     EXIT worker 側 timeout 連鎖を縮小。
 
+### 2026-02-18（追記）`open_positions` の `busy/timeout` 連鎖を追加抑止
+
+- 背景:
+  - 前段対策後も VM で `open_positions` の `ok=false` が継続し、`position manager busy` と
+    `open_positions timeout (8.0s)` が優勢な時間帯が残存。
+  - `execution/position_manager.py` の hot path で `orders.db` 参照が広く残り、
+    `entry_thesis` 補完が毎回フルスキャンになっていた。
+- 実装:
+  - `execution/position_manager.py`
+    - `open_positions` の `entry_thesis` 補完を「全 client_id 一律」から
+      「`strategy_tag` / `entry_thesis` が不足する client_id 優先」に変更
+      （`POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS=1` で従来挙動へ戻せる）。
+    - `client_order_id -> entry_thesis` の in-memory TTL キャッシュを追加し、
+      `orders.db` の同一問い合わせを短時間で再実行しないように変更。
+      - `POSITION_MANAGER_ENTRY_THESIS_CACHE_TTL_SEC`（default: `900`）
+      - `POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES`（default: `4096`）
+    - `self._last_positions = copy.deepcopy(pockets)` を廃止し、
+      `open_positions` 計算完了時の重複 deep copy を削減。
+  - `workers/position_manager/worker.py`
+    - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_STALE_MAX_AGE_SEC` 既定を `45s` に拡張。
+    - `busy/timeout/error` かつ worker cache 未命中時に、
+      `PositionManager` が保持する最新スナップショット（`_last_positions`）へ
+      フォールバックして `ok=true` 応答を返せる経路を追加。
+- 期待効果:
+  - `/position/open_positions` の `ok=false` 比率を下げ、EXIT worker 側の
+    timeout/connection refused 連鎖を縮小。
+  - `orders.db` 読み取り競合による tail latency を抑制。
+
 ### 2026-02-18（追記）反発予測を `p_up` から独立出力化
 
 - 背景:

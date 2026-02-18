@@ -251,6 +251,10 @@
     `/position/open_positions` / `/position/sync_trades` は worker 側で fresh/stale cache を返す。
   - manager 呼び出しを `asyncio.wait_for(...to_thread...)` で timeout 制御し、
     同時アクセス集中時でも `/health` を含む応答詰まりを起こしにくい構成へ更新。
+  - `open_positions` の `busy/timeout` 残存に対し、worker cache 未命中時は
+    `PositionManager._last_positions` へフォールバックして `ok=true` 応答を優先。
+  - `execution/position_manager.py` は `entry_thesis` 補完対象を不足 trade 中心へ絞り、
+    `client_order_id -> entry_thesis` の TTL cache を導入して `orders.db` 再参照を削減。
   - runtime は `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=4.0` /
     `...STALE_MAX_AGE_SEC=24.0` / `...OPEN_POSITIONS_TIMEOUT=8.0` に更新し、
     クライアント側の過密ポーリングを抑制。
