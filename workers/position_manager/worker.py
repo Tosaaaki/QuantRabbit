@@ -66,6 +66,16 @@ _WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC = max(
     _WORKER_SYNC_TRADES_CACHE_TTL_SEC,
     _env_float("POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC", 12.0),
 )
+_WORKER_FAILURE_LOG_INTERVAL_SEC = max(
+    1.0,
+    _env_float("POSITION_MANAGER_WORKER_FAILURE_LOG_INTERVAL_SEC", 12.0),
+)
+_WORKER_BUSY_LOG_INTERVAL_SEC = max(
+    1.0,
+    _env_float("POSITION_MANAGER_WORKER_BUSY_LOG_INTERVAL_SEC", 30.0),
+)
+_FAILURE_LAST_LOG_TS: dict[str, float] = {}
+_FAILURE_LOG_LOCK = threading.Lock()
 
 
 @asynccontextmanager
@@ -101,7 +111,8 @@ async def _lifespan(app: FastAPI):
         )
     app.state.position_manager = pm
     app.state.position_manager_init_error = str(init_error) if init_error else None
-    app.state.position_manager_call_lock = threading.Lock()
+    app.state.position_manager_open_positions_call_lock = threading.Lock()
+    app.state.position_manager_db_call_lock = threading.Lock()
     app.state.open_positions_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
     app.state.sync_trades_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
     try:
@@ -177,8 +188,23 @@ def _success(result: Any) -> dict[str, Any]:
 
 
 def _failure(message: str) -> dict[str, Any]:
-    LOG.warning("[POSITION_MANAGER_WORKER] request failed: %s", message)
-    return {"ok": False, "error": message}
+    text = str(message)
+    key = text.strip().lower() or "unknown"
+    interval = (
+        _WORKER_BUSY_LOG_INTERVAL_SEC
+        if key.startswith("position manager busy")
+        else _WORKER_FAILURE_LOG_INTERVAL_SEC
+    )
+    should_log = False
+    now = time.monotonic()
+    with _FAILURE_LOG_LOCK:
+        last = _FAILURE_LAST_LOG_TS.get(key, 0.0)
+        if now - last >= interval:
+            _FAILURE_LAST_LOG_TS[key] = now
+            should_log = True
+    if should_log:
+        LOG.warning("[POSITION_MANAGER_WORKER] request failed: %s", text)
+    return {"ok": False, "error": text}
 
 
 def _manager(request: Request) -> position_manager.PositionManager:
@@ -211,16 +237,16 @@ def _cache_store(cache: dict[Any, tuple[float, Any]], key: Any, value: Any) -> N
     cache[key] = (time.monotonic(), copy.deepcopy(value))
 
 
-def _try_acquire_call_lock(request: Request) -> bool:
-    lock = getattr(request.app.state, "position_manager_call_lock", None)
+def _try_acquire_call_lock(request: Request, lock_name: str) -> bool:
+    lock = getattr(request.app.state, lock_name, None)
     if lock is None:
         lock = threading.Lock()
-        request.app.state.position_manager_call_lock = lock
+        setattr(request.app.state, lock_name, lock)
     return bool(lock.acquire(blocking=False))
 
 
-def _release_call_lock(request: Request) -> None:
-    lock = getattr(request.app.state, "position_manager_call_lock", None)
+def _release_call_lock(request: Request, lock_name: str) -> None:
+    lock = getattr(request.app.state, lock_name, None)
     if lock is None:
         return
     try:
@@ -295,7 +321,10 @@ async def _handle_open_positions(
                 )
             )
 
-    if not _try_acquire_call_lock(request):
+    if not _try_acquire_call_lock(
+        request,
+        "position_manager_open_positions_call_lock",
+    ):
         stale = _cache_lookup(
             cache,
             key,
@@ -366,7 +395,7 @@ async def _handle_open_positions(
         _cache_store(cache, key, result)
         return _success(result)
     finally:
-        _release_call_lock(request)
+        _release_call_lock(request, "position_manager_open_positions_call_lock")
 
 
 @app.post("/position/sync_trades")
@@ -388,7 +417,10 @@ async def sync_trades(
         if isinstance(result, list):
             return _success(result)
 
-    if not _try_acquire_call_lock(request):
+    if not _try_acquire_call_lock(
+        request,
+        "position_manager_db_call_lock",
+    ):
         stale = _cache_lookup(
             cache,
             key,
@@ -442,7 +474,7 @@ async def sync_trades(
         _cache_store(cache, key, result)
         return _success(result)
     finally:
-        _release_call_lock(request)
+        _release_call_lock(request, "position_manager_db_call_lock")
 
 
 @app.get("/position/open_positions")
@@ -475,7 +507,10 @@ async def get_performance_summary(
 ) -> dict[str, Any]:
     body = _as_dict(payload)
     parsed_now = _to_datetime(body.get("now"))
-    if not _try_acquire_call_lock(request):
+    if not _try_acquire_call_lock(
+        request,
+        "position_manager_db_call_lock",
+    ):
         return _failure("position manager busy")
     try:
         result = await _call_manager_with_timeout(
@@ -487,7 +522,7 @@ async def get_performance_summary(
     except Exception as exc:
         return _failure(str(exc))
     finally:
-        _release_call_lock(request)
+        _release_call_lock(request, "position_manager_db_call_lock")
     if not isinstance(result, dict):
         return _failure("unexpected response type")
     return _success(result)
@@ -500,7 +535,10 @@ async def fetch_recent_trades(
 ) -> dict[str, Any]:
     body = _as_dict(payload)
     limit = _to_int(body.get("limit"), 50)
-    if not _try_acquire_call_lock(request):
+    if not _try_acquire_call_lock(
+        request,
+        "position_manager_db_call_lock",
+    ):
         return _failure("position manager busy")
     try:
         result = await _call_manager_with_timeout(
@@ -512,7 +550,7 @@ async def fetch_recent_trades(
     except Exception as exc:
         return _failure(str(exc))
     finally:
-        _release_call_lock(request)
+        _release_call_lock(request, "position_manager_db_call_lock")
     if not isinstance(result, list):
         return _failure("unexpected response type")
     return _success(result)
@@ -520,7 +558,10 @@ async def fetch_recent_trades(
 
 @app.post("/position/close")
 async def close_manager(request: Request) -> dict[str, Any]:
-    if not _try_acquire_call_lock(request):
+    if not _try_acquire_call_lock(
+        request,
+        "position_manager_db_call_lock",
+    ):
         return _failure("position manager busy")
     try:
         await _call_manager_with_timeout(
@@ -533,7 +574,7 @@ async def close_manager(request: Request) -> dict[str, Any]:
     except Exception as exc:
         return _failure(str(exc))
     finally:
-        _release_call_lock(request)
+        _release_call_lock(request, "position_manager_db_call_lock")
 
 
 @app.get("/health")
