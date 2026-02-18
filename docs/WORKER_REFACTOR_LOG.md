@@ -2445,3 +2445,33 @@
 - 反映:
   - `ops/env/quant-v2-runtime.env`
     - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.06,10m=0.01`
+
+### 2026-02-18（追記）72h/24h 同時最適化で forecast 5m の hit を上積み
+
+- 背景:
+  - 反発予測を含む運用値で、`5m` の hit をもう一段上げるために
+    `feature_expansion_gain` / `breakout_5m` / `session_5m` / `rebound_5m` を再探索した。
+- 実施:
+  - VM上で高速グリッド（`108` 候補）を同一データ比較で実行。
+  - 窓:
+    - 72h相当: `max-bars=4320`
+    - 24h相当: `max-bars=1440`
+  - 出力:
+    - `logs/reports/forecast_improvement/grid_fast_5m_20260218T044010Z.json`
+  - 選定候補:
+    - `gain=0.04`, `breakout_5m=0.20`, `session_5m=0.20`, `rebound_5m=0.03`
+- 判定（候補 - 旧運用）:
+  - 72h:
+    - `1m`: `hit_after +0.0007`, `mae_delta -0.0006`
+    - `5m`: `hit_after +0.0016`, `mae_delta -0.0018`
+    - `10m`: `hit_after -0.0010`, `mae_delta -0.0022`
+  - 24h:
+    - `hit_after` は `1m/5m/10m` で同値
+    - `mae_delta` は微小差（`5m +0.0001`）
+  - 24h hit を維持したまま `5m` を上積みできるため採用。
+- 反映:
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.04`
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.28`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.30`
+    - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.03,10m=0.01`

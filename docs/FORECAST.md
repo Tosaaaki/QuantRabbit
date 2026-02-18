@@ -231,6 +231,19 @@ python3 scripts/eval_forecast_before_after.py \
 `rebound_5m=0.06` は `0.02` 比で hit は同等のまま `2h/4h/24h/72h` 全窓で MAE を
 微小改善したため、運用値を `1m=0.10,5m=0.06,10m=0.01` に更新しました。
 
+さらに 2026-02-18 04:40 UTC のVM実データ再探索（`logs/reports/forecast_improvement/grid_fast_5m_20260218T044010Z.json`）で、
+`72h(4320 bars)` と `24h(1440 bars)` を同時評価し、次を採用値に更新:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.04`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.28`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.30`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.03,10m=0.01`
+
+比較結果（新 - 旧）:
+- 72h: `1m hit +0.0007 / mae_delta -0.0006`, `5m hit +0.0016 / mae_delta -0.0018`, `10m hit -0.0010 / mae_delta -0.0022`
+- 24h: `hit_after` は `1m/5m/10m` で同値、`mae_delta` 変化は微小（`5m +0.0001` を含む誤差レンジ）
+
+`5m` の確率改善を優先しつつ直近24hの hit を落とさないため、上記を運用値として反映しています。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
