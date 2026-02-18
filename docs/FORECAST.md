@@ -179,6 +179,15 @@ python3 scripts/eval_forecast_before_after.py \
 同一時点の before/after 比較（`max-bars=120/240`）では、上記設定で
 `1m/5m` の `hit_delta` マイナスを解消し、`10m` はプラスを維持することを確認済みです。
 
+同日フォローアップとして、OANDA再取得の連続データ（M1 774本, 直近13h）で
+`6h/12h` 同時グリッドを再実施し、次を採用値に更新:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.28`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`（維持）
+
+短中期比較（120/240/360/720 bars）では、旧候補（gain=0.0, breakout=0.10/0.18/0.26）比で
+`total_hit` と `total_mae` がともに小幅改善し、`5m` の符号悪化回数を増やさないことを確認。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

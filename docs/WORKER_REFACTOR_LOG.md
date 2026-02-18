@@ -2111,6 +2111,30 @@
   - 方向一致（hit）優先で短期TFをデチューンし、過反応を抑える方針。
   - MAE改善幅が縮小するため、次回は 6h/12h 窓でも再検証して再調整する。
 
+### 2026-02-18（追記）forecast監査の12h窓不整合を修正し、6h/12hで再チューニング
+
+- 事象:
+  - `eval_forecast_before_after.py --max-bars 720` で、`bars=220` かつ
+    `2026-01-23` 帯だけが評価されるケースを確認。
+  - 原因は timestamp の小数秒あり/なし混在時に `pd.to_datetime(..., errors='coerce')`
+    が一部を `NaT` 化していたこと。
+- 対応:
+  - `scripts/eval_forecast_before_after.py` に mixed-format 対応パーサ
+    `pd.to_datetime(..., format='mixed')` のフォールバック付き処理を追加。
+  - テスト追加: `tests/test_eval_forecast_before_after.py`
+    (`test_to_datetime_utc_handles_mixed_precision_iso8601`)。
+- 追加評価（VM実データ）:
+  - OANDAから直近13hの M1 を再取得（`logs/oanda/candles_M1_eval_12h_latest.json`, 774本）し、
+    連続データで `120/240/360/720 bars` を再比較。
+  - 6h/12h 同時グリッド（`forecast_tune_grid_6h12h_latest.json`）で最良:
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.28`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`（維持）
+- 反映:
+  - `ops/env/quant-v2-runtime.env` を上記へ更新。
+  - 旧候補（gain=0.0, breakout=0.10/0.18/0.26）比で、
+    `total_hit`/`total_mae` は小幅改善、`5m` 悪化件数は同等に維持。
+
 ### 2026-02-18（追記）M1Scalper / RangeFader EXITのforecast損切り補正を有効化
 
 - 背景:

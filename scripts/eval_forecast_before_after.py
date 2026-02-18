@@ -273,6 +273,18 @@ def _parse_ts(value: Any) -> Optional[pd.Timestamp]:
     return ts
 
 
+def _to_datetime_utc(values: Any) -> Any:
+    """Parse datetimes robustly for mixed ISO8601 precision inputs.
+
+    Some live feeds emit timestamps with fractional seconds while others do not.
+    Pandas may coerce one format to NaT when inferring from a mixed series.
+    """
+    try:
+        return pd.to_datetime(values, utc=True, errors="coerce", format="mixed")
+    except TypeError:
+        return pd.to_datetime(values, utc=True, errors="coerce")
+
+
 def _extract_price(candle: dict[str, Any], key: str) -> Optional[float]:
     if key in candle:
         return _safe_float(candle.get(key), math.nan)
@@ -896,7 +908,7 @@ def main() -> int:
         candles = candles[-int(args.max_bars) :]
 
     candles_df = pd.DataFrame(candles)
-    candles_df["timestamp"] = pd.to_datetime(candles_df["timestamp"], utc=True, errors="coerce")
+    candles_df["timestamp"] = _to_datetime_utc(candles_df["timestamp"])
     candles_df = candles_df.dropna(subset=["timestamp", "close"]).set_index("timestamp")
     candles_df = candles_df[~candles_df.index.duplicated(keep="last")]
     candles_df = candles_df.sort_index()
