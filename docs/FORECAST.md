@@ -149,6 +149,9 @@ python3 scripts/eval_forecast_before_after.py \
   --feature-expansion-gain 0.35
 ```
 
+反発項を同一期間で比較する場合は `--rebound-weight` / `--rebound-weight-map` を併用します
+（例: `--rebound-weight 0.06 --rebound-weight-map 1m=0.10,5m=0.04,10m=0.02`）。
+
 `breakout_bias_20` の方向一致率（filtered/unfiltered）も同時に出るため、
 「線形トレンド＋サポレジ圧力」の有効性を同一期間で監査できます。
 

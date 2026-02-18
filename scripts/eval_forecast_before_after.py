@@ -52,6 +52,8 @@ DEFAULT_SESSION_BIAS_WEIGHT = 0.12
 DEFAULT_SESSION_BIAS_WEIGHT_MAP = "1m=0.0,5m=0.26,10m=0.38"
 DEFAULT_SESSION_BIAS_MIN_SAMPLES = 24
 DEFAULT_SESSION_BIAS_LOOKBACK = 720
+DEFAULT_REBOUND_WEIGHT = 0.06
+DEFAULT_REBOUND_WEIGHT_MAP = "1m=0.10,5m=0.04,10m=0.02"
 RANGE_BAND_LOWER_Q = 0.20
 RANGE_BAND_UPPER_Q = 0.80
 RANGE_SIGMA_FLOOR_PIPS = 0.35
@@ -236,6 +238,89 @@ def _normalized_breakout_bias(row: pd.Series) -> float:
     breakout_up = _safe_float(row.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
     breakout_down = _safe_float(row.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
     return float(breakout_up - breakout_down)
+
+
+def _extract_ohlc(row: pd.Series) -> Optional[tuple[float, float, float, float]]:
+    o = _safe_float(row.get("open"), math.nan)
+    h = _safe_float(row.get("high"), math.nan)
+    l = _safe_float(row.get("low"), math.nan)
+    c = _safe_float(row.get("close"), math.nan)
+    if not (math.isfinite(o) and math.isfinite(h) and math.isfinite(l) and math.isfinite(c)):
+        return None
+    if h < l:
+        h, l = l, h
+    if h <= l:
+        h = l + 1e-6
+    return float(o), float(h), float(l), float(c)
+
+
+def _rebound_bias_signal(
+    *,
+    ret1: float,
+    ret3: float,
+    ret12: float,
+    rsi: float,
+    range_pos: float,
+    sr_balance: float,
+    trend_accel: float,
+    trend_pullback: float,
+    breakout_bias: float,
+    trend_strength: float,
+    ohlc: Optional[tuple[float, float, float, float]],
+) -> float:
+    drop_score = _clamp(
+        0.44 * _clamp(math.tanh(-ret1 * 1.35), 0.0, 1.0)
+        + 0.34 * _clamp(math.tanh(-ret3 * 1.05), 0.0, 1.0)
+        + 0.22 * _clamp(math.tanh(-ret12 * 0.72), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    oversold_score = _clamp(
+        0.40 * _clamp(math.tanh(-rsi * 1.15), 0.0, 1.0)
+        + 0.32 * _clamp(math.tanh(-range_pos * 1.25), 0.0, 1.0)
+        + 0.28 * _clamp(math.tanh(-sr_balance * 1.10), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    decel_score = _clamp(
+        0.58 * _clamp(math.tanh(trend_accel * 1.20), 0.0, 1.0)
+        + 0.42 * _clamp(math.tanh(-trend_pullback * 0.95), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    wick_score = 0.0
+    if ohlc is not None:
+        o, h, l, c = ohlc
+        span = max(1e-6, h - l)
+        lower_wick = max(0.0, min(o, c) - l)
+        upper_wick = max(0.0, h - max(o, c))
+        body = abs(c - o)
+        lower_ratio = lower_wick / span
+        upper_ratio = upper_wick / span
+        close_pos = _clamp((c - l) / span, 0.0, 1.0)
+        body_ratio = _clamp(body / span, 0.0, 1.0)
+        wick_score = _clamp(
+            0.62 * max(lower_ratio - upper_ratio, 0.0)
+            + 0.28 * _clamp((close_pos - 0.52) / 0.48, 0.0, 1.0)
+            + 0.10 * _clamp((0.40 - body_ratio) / 0.40, 0.0, 1.0),
+            0.0,
+            1.0,
+        )
+    breakout_drag = _clamp(math.tanh(max(0.0, -breakout_bias) * 1.05), 0.0, 1.0)
+    trend_drag = _clamp((trend_strength - 0.72) / 0.28, 0.0, 1.0)
+    core = _clamp(
+        0.42 * oversold_score + 0.36 * decel_score + 0.22 * wick_score,
+        0.0,
+        1.0,
+    )
+    rebound_signal = drop_score * core
+    rebound_signal *= (1.0 - 0.42 * breakout_drag)
+    rebound_signal *= (1.0 - 0.48 * trend_drag)
+    if drop_score < 0.20:
+        rebound_signal *= 0.35
+    if oversold_score < 0.15:
+        rebound_signal *= 0.50
+    return _clamp(rebound_signal, 0.0, 1.0)
 
 
 def _normal_quantile_z(quantile: float) -> float:
@@ -467,6 +552,7 @@ def _prediction_after(
     breakout_adaptive_weight: float = 0.0,
     session_bias: float = 0.0,
     session_bias_weight: float = 0.0,
+    rebound_weight: float = 0.0,
     projection_score: float = 0.0,
     projection_confidence: float = 0.0,
 ) -> StepPrediction:
@@ -570,12 +656,29 @@ def _prediction_after(
         if str(horizon).strip().lower() == "1m"
         else _clamp(float(session_bias_weight), 0.0, 1.0)
     )
+    rebound_signal = 0.0
+    rebound_weight_eff = _clamp(float(rebound_weight), 0.0, 1.0)
+    if rebound_weight_eff > 0.0:
+        rebound_signal = _rebound_bias_signal(
+            ret1=ret1,
+            ret3=ret3,
+            ret12=ret12,
+            rsi=rsi,
+            range_pos=range_pos,
+            sr_balance=sr_balance,
+            trend_accel=trend_accel,
+            trend_pullback=trend_pullback,
+            breakout_bias=breakout_bias,
+            trend_strength=trend_strength,
+            ohlc=_extract_ohlc(row),
+        )
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + TECH_PROJECTION_WEIGHT * projection_score
         + _clamp(float(breakout_adaptive_weight), 0.0, 1.0) * breakout_adaptive
         + session_weight * _clamp(float(session_bias), -1.0, 1.0)
+        + rebound_weight_eff * rebound_signal
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * TECH_SCORE_GAIN * combo)
 
@@ -614,8 +717,10 @@ def _evaluate_step(
     session_bias_weight_map: dict[str, float],
     session_bias_min_samples: int,
     session_bias_lookback: int,
+    rebound_weight: float,
+    rebound_weight_map: dict[str, float],
 ) -> EvalRow:
-    merged = feats_df.join(candles_df[["close"]], how="inner")
+    merged = feats_df.join(candles_df[["open", "high", "low", "close"]], how="inner")
     merged["future_pips"] = (merged["close"].shift(-step) - merged["close"]) / PIP
 
     required = [
@@ -650,6 +755,11 @@ def _evaluate_step(
     )
     session_bias_weight_eff = _clamp(
         float(session_bias_weight_map.get(horizon_name, session_bias_weight)),
+        0.0,
+        1.0,
+    )
+    rebound_weight_eff = _clamp(
+        float(rebound_weight_map.get(horizon_name, rebound_weight)),
         0.0,
         1.0,
     )
@@ -719,6 +829,7 @@ def _evaluate_step(
             breakout_adaptive_weight=breakout_adaptive_weight_eff,
             session_bias=session_bias,
             session_bias_weight=session_bias_weight_eff,
+            rebound_weight=rebound_weight_eff,
         )
         expected_before = pred_before.expected_pips
         expected_after = pred_after.expected_pips
@@ -895,6 +1006,17 @@ def main() -> int:
         default=DEFAULT_SESSION_BIAS_LOOKBACK,
         help="Lookback window for JST session bias estimation.",
     )
+    ap.add_argument(
+        "--rebound-weight",
+        type=float,
+        default=DEFAULT_REBOUND_WEIGHT,
+        help="Weight for rebound signal term in after formula.",
+    )
+    ap.add_argument(
+        "--rebound-weight-map",
+        default=DEFAULT_REBOUND_WEIGHT_MAP,
+        help="Comma-separated horizon weights, e.g. '1m=0.10,5m=0.04,10m=0.02'.",
+    )
     ap.add_argument("--json-out", default="", help="Optional output JSON path.")
     args = ap.parse_args()
 
@@ -946,6 +1068,8 @@ def main() -> int:
         session_bias_min_samples,
         int(args.session_bias_lookback),
     )
+    rebound_weight = _clamp(float(args.rebound_weight), 0.0, 1.0)
+    rebound_weight_map = _parse_horizon_weight_map(args.rebound_weight_map)
 
     rows = [
         _evaluate_step(
@@ -962,6 +1086,8 @@ def main() -> int:
             session_bias_weight_map=session_bias_weight_map,
             session_bias_min_samples=session_bias_min_samples,
             session_bias_lookback=session_bias_lookback,
+            rebound_weight=rebound_weight,
+            rebound_weight_map=rebound_weight_map,
         )
         for step in steps
     ]
@@ -983,7 +1109,9 @@ def main() -> int:
         f"session_bias_weight={session_bias_weight:.4f} "
         f"session_bias_weight_map={json.dumps(session_bias_weight_map, ensure_ascii=False)} "
         f"session_bias_min_samples={session_bias_min_samples} "
-        f"session_bias_lookback={session_bias_lookback}"
+        f"session_bias_lookback={session_bias_lookback} "
+        f"rebound_weight={rebound_weight:.4f} "
+        f"rebound_weight_map={json.dumps(rebound_weight_map, ensure_ascii=False)}"
     )
     print(
         "step horizon n "
@@ -1017,6 +1145,8 @@ def main() -> int:
                 "session_bias_weight_map": session_bias_weight_map,
                 "session_bias_min_samples": session_bias_min_samples,
                 "session_bias_lookback": session_bias_lookback,
+                "rebound_weight": rebound_weight,
+                "rebound_weight_map": rebound_weight_map,
             },
             "rows": [asdict(r) for r in rows],
         }

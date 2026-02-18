@@ -2342,6 +2342,22 @@
     - 反発確率あり/なしで contra-buy の縮小率が変わることを追加検証。
     - 反発高確率で strong-contra reject を回避できるケースを追加検証。
 
+### 2026-02-18（追記）forecast before/after 評価スクリプトに反発項を追加
+
+- 背景:
+  - `scripts/eval_forecast_before_after.py` は breakout/session までしか比較できず、
+    `FORECAST_TECH_REBOUND_WEIGHT(_MAP)` の候補比較を同一期間で行えなかった。
+- 実装:
+  - `scripts/eval_forecast_before_after.py`
+    - CLIに `--rebound-weight` / `--rebound-weight-map` を追加。
+    - after式に `rebound_signal`（`_rebound_bias_signal` 相当）を追加し、
+      `combo` へ `rebound_weight * rebound_signal` を反映。
+    - wick判定のため評価用 `merged` に `open/high/low` を追加。
+    - JSON出力の `config` に rebound パラメータを保存。
+- 期待効果:
+  - VM同一データで反発重み候補を機械的に比較し、
+    hit/MAE ベースで `quant-v2-runtime.env` の重み更新可否を判断できる。
+
 ### 2026-02-18（追記）72h forecast再評価で5m重みを更新
 
 - 背景:
