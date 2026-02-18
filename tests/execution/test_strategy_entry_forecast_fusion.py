@@ -108,6 +108,48 @@ def _set_default_fusion_knobs(monkeypatch) -> None:
         0.65,
         raising=False,
     )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX",
+        0.18,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX",
+        0.30,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN",
+        0.10,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN",
+        0.82,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX",
+        0.18,
+        raising=False,
+    )
 
 
 def test_forecast_fusion_scales_down_on_mismatch(monkeypatch) -> None:
@@ -254,6 +296,66 @@ def test_forecast_fusion_rejects_strong_contra_on_bearish_edge(monkeypatch) -> N
     assert applied.get("reject_reason") == "strong_contra_forecast"
     assert thesis.get("tp_pips") == 1.8
     assert thesis.get("sl_pips") == 1.4
+
+
+def test_forecast_fusion_rebound_supports_contra_buy(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    units_base, prob_base, _ = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1000,
+        entry_probability=0.60,
+        entry_thesis={},
+        forecast_context={
+            "allowed": False,
+            "reason": "edge_block",
+            "p_up": 0.32,
+            "edge": 0.40,
+        },
+    )
+    units_rebound, prob_rebound, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1000,
+        entry_probability=0.60,
+        entry_thesis={},
+        forecast_context={
+            "allowed": False,
+            "reason": "edge_block",
+            "p_up": 0.32,
+            "edge": 0.40,
+            "rebound_probability": 0.90,
+        },
+    )
+
+    assert units_rebound > units_base
+    assert prob_rebound is not None and prob_base is not None and prob_rebound > prob_base
+    assert applied.get("rebound_probability") == 0.9
+    assert float(applied.get("rebound_side_support") or 0.0) > 0.0
+
+
+def test_forecast_fusion_rebound_overrides_strong_contra_for_buy(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    thesis: dict[str, object] = {"tp_pips": 2.1, "sl_pips": 1.8}
+    units, prob, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1000,
+        entry_probability=0.66,
+        entry_thesis=thesis,
+        forecast_context={
+            "allowed": False,
+            "reason": "hard_opposite",
+            "p_up": 0.08,
+            "edge": 0.93,
+            "rebound_probability": 0.90,
+        },
+    )
+
+    assert units > 0
+    assert prob is not None and prob > 0.0
+    assert applied.get("strong_contra_reject") is False
+    assert applied.get("rebound_override_strong_contra") is True
 
 
 def test_forecast_fusion_tf_confluence_cuts_units(monkeypatch) -> None:

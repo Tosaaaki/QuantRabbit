@@ -129,6 +129,34 @@ _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN = max(
     0.0,
     min(1.0, _env_float("STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN", 0.65)),
 )
+_STRATEGY_FORECAST_FUSION_REBOUND_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_REBOUND_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX", 0.18)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX = max(
+    0.0,
+    min(0.9, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX", 0.30)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN", 0.10)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA = _env_bool(
+    "STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN", 0.82)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX", 0.18)),
+)
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 
 
@@ -1558,6 +1586,24 @@ def _apply_forecast_fusion(
     direction_prob = p_up if side_sign > 0 else (1.0 - p_up)
     direction_prob = max(0.0, min(1.0, direction_prob))
     direction_bias = max(-1.0, min(1.0, (direction_prob - 0.5) * 2.0))
+    rebound_probability_raw = _to_float(
+        forecast_context.get("rebound_probability"),
+    )
+    if rebound_probability_raw is None:
+        rebound_probability_raw = _to_float(forecast_context.get("rebound_signal_20"))
+    rebound_probability = (
+        max(0.0, min(1.0, float(rebound_probability_raw)))
+        if rebound_probability_raw is not None
+        else None
+    )
+    rebound_side_support: Optional[float] = None
+    rebound_units_multiplier = 1.0
+    rebound_probability_shift = 0.0
+    if _STRATEGY_FORECAST_FUSION_REBOUND_ENABLED and rebound_probability is not None:
+        rebound_side_support = (rebound_probability - 0.5) * 2.0
+        if side_sign < 0:
+            rebound_side_support *= -1.0
+        rebound_side_support = max(-1.0, min(1.0, float(rebound_side_support)))
 
     edge_raw = _to_float(forecast_context.get("edge"))
     if edge_raw is None:
@@ -1607,6 +1653,22 @@ def _apply_forecast_fusion(
                 * abs(tf_confluence_score)
                 * tf_confluence_weight
             )
+    if rebound_side_support is not None:
+        if rebound_side_support >= 0.0:
+            rebound_gain = (
+                _STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX
+                * rebound_side_support
+                * (0.45 + 0.55 * max(0.0, -direction_bias))
+            )
+            rebound_units_multiplier = 1.0 + rebound_gain
+        else:
+            rebound_cut = (
+                _STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX
+                * abs(rebound_side_support)
+                * (0.35 + 0.65 * edge_strength)
+            )
+            rebound_units_multiplier = max(0.0, 1.0 - rebound_cut)
+        units_scale *= rebound_units_multiplier
     if allowed_flag is False:
         units_scale *= _STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT
     units_scale = max(
@@ -1640,6 +1702,16 @@ def _apply_forecast_fusion(
                     * tf_confluence_weight,
                 ),
             )
+        if rebound_side_support is not None:
+            rebound_probability_shift = (
+                rebound_side_support
+                * _STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN
+                * (0.45 + 0.55 * max(0.0, -direction_bias))
+            )
+            adjusted_probability = max(
+                0.0,
+                min(1.0, float(adjusted_probability) + rebound_probability_shift),
+            )
         if allowed_flag is False:
             adjusted_probability = max(
                 0.0,
@@ -1650,11 +1722,19 @@ def _apply_forecast_fusion(
                 ),
             )
 
+    rebound_override_strong_contra = (
+        _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA
+        and side_sign > 0
+        and rebound_probability is not None
+        and rebound_probability >= _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN
+        and direction_prob <= _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX
+    )
     strong_contra = (
         _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED
         and direction_prob <= _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX
         and edge_strength >= _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN
         and (allowed_flag is False or direction_bias < 0.0)
+        and not rebound_override_strong_contra
     )
     if strong_contra:
         adjusted_units = 0
@@ -1680,6 +1760,17 @@ def _apply_forecast_fusion(
         "direction_prob": round(float(direction_prob), 6),
         "direction_bias": round(float(direction_bias), 6),
         "edge_strength": round(float(edge_strength), 6),
+        "rebound_probability": (
+            round(float(rebound_probability), 6) if rebound_probability is not None else None
+        ),
+        "rebound_side_support": (
+            round(float(rebound_side_support), 6)
+            if rebound_side_support is not None
+            else None
+        ),
+        "rebound_units_multiplier": round(float(rebound_units_multiplier), 6),
+        "rebound_probability_shift": round(float(rebound_probability_shift), 6),
+        "rebound_override_strong_contra": bool(rebound_override_strong_contra),
         "forecast_horizon": forecast_context.get("horizon"),
         "forecast_allowed": allowed_flag,
         "forecast_reason": forecast_context.get("reason"),

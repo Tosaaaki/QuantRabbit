@@ -2316,3 +2316,28 @@
   - `tests/workers/test_forecast_gate.py` に `rebound_probability` 伝播検証を追加。
   - `tests/workers/test_forecast_worker.py` を新規追加（serviceシリアライズ検証）。
   - `tests/execution/test_order_manager_preflight.py` に service payload 変換検証を追加。
+
+### 2026-02-18（追記）反発予測を ENTRY融合ロジックへ反映
+
+- 背景:
+  - `rebound_probability` を独立出力しただけでは、実際の entry units / probability へ直接効かない。
+- 実装:
+  - `execution/strategy_entry.py`
+    - `forecast_fusion` に反発項を追加し、`rebound_probability` から
+      side別 support（`rebound_side_support`）を算出して `units_scale` / `entry_probability` を補正。
+    - 追加env:
+      - `STRATEGY_FORECAST_FUSION_REBOUND_ENABLED`
+      - `STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX`
+      - `STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX`
+      - `STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN`
+      - `STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA`
+      - `STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN`
+      - `STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX`
+    - strong-contra 条件は維持しつつ、`long` かつ反発確率が十分高いときだけ
+      `units=0` 拒否を回避して縮小試行できるオーバーライドを追加。
+  - `ops/env/quant-v2-runtime.env`
+    - 上記の反発融合キーを運用値として明示（再起動で反映）。
+- テスト:
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    - 反発確率あり/なしで contra-buy の縮小率が変わることを追加検証。
+    - 反発高確率で strong-contra reject を回避できるケースを追加検証。
