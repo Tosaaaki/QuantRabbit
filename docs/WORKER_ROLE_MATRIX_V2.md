@@ -251,6 +251,9 @@
     `/position/open_positions` / `/position/sync_trades` は worker 側で fresh/stale cache を返す。
   - manager 呼び出しを `asyncio.wait_for(...to_thread...)` で timeout 制御し、
     同時アクセス集中時でも `/health` を含む応答詰まりを起こしにくい構成へ更新。
+  - runtime は `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=4.0` /
+    `...STALE_MAX_AGE_SEC=24.0` / `...OPEN_POSITIONS_TIMEOUT=8.0` に更新し、
+    クライアント側の過密ポーリングを抑制。
 - `micro_multistrat` は共通Runnerとしての運用を打ち切り、レンジ時の順張り/押し目判定運用は各独立 micro ワーカー側へ移行したため、同種の範囲制御は
   各専用ワーカーの設定で管理している。
 - 運用整備（2026-02-24）

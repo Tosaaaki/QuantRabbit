@@ -269,12 +269,12 @@ _POSITION_MANAGER_SERVICE_POOL_MAXSIZE = max(
     int(os.getenv("POSITION_MANAGER_SERVICE_POOL_MAXSIZE", "256")),
 )
 _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC = max(
-    0.0,
-    _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC", 0.35),
+    0.8,
+    _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC", 2.5),
 )
 _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC = max(
     _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC,
-    _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC", 2.0),
+    _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC", 20.0),
 )
 _POSITION_MANAGER_SERVICE_SESSION: requests.Session | None = None
 _POSITION_MANAGER_SERVICE_SESSION_LOCK = threading.Lock()
@@ -334,6 +334,18 @@ def _position_manager_service_session() -> requests.Session:
         session.mount("https://", adapter)
         _POSITION_MANAGER_SERVICE_SESSION = session
     return session
+
+
+def _position_manager_service_reset_session() -> None:
+    global _POSITION_MANAGER_SERVICE_SESSION
+    with _POSITION_MANAGER_SERVICE_SESSION_LOCK:
+        session = _POSITION_MANAGER_SERVICE_SESSION
+        _POSITION_MANAGER_SERVICE_SESSION = None
+    if session is not None:
+        try:
+            session.close()
+        except Exception:
+            pass
 
 
 def _open_positions_cache_key(payload: dict) -> bool:
@@ -476,6 +488,8 @@ def _position_manager_service_request(path: str, payload: dict) -> object | None
             _set_cached_open_positions(payload, result)
         return result
     except Exception as exc:
+        if isinstance(exc, requests.exceptions.RequestException):
+            _position_manager_service_reset_session()
         _POSITION_MANAGER_SERVICE_ERROR_COUNT += 1
         backoff = min(
             _POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC
