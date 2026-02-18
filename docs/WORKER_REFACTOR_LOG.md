@@ -1865,3 +1865,50 @@
       `*_SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED=1` を追加（適用はOFFのまま）。
 - 目的:
   - まず本番ログで「候補窓ごとの期待値差」を収集し、過学習を避けて段階的に適用する。
+
+### 2026-02-18（追記）forecast改善フローの記録（依頼対応ログ）
+
+- 要求:
+  - 「各戦略が forecast と戦略ローカル計算を併用して、確実性のあるトレードを行う状態」
+  - micro だけでなく全戦略で同一の監査可能な forecast 参照経路を維持すること。
+- 実施フロー（時系列）:
+  - `execution/strategy_entry.py` の forecast 融合を拡張し、
+    `tf_confluence_score/tf_confluence_count` を units/probability 補正へ追加。
+  - 強い逆行予測時の見送りガード
+    （`STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*`）を追加し、`units=0` で発注回避。
+  - `ops/env/quant-m1scalper.env` を `FORECAST_GATE_ENABLED=1` へ変更。
+  - `ops/env/quant-v2-runtime.env` に
+    `STRATEGY_FORECAST_CONTEXT_ENABLED=1` / `STRATEGY_FORECAST_FUSION_ENABLED=1` と
+    強逆行拒否・TF補正パラメータを明示追加。
+  - テスト:
+    - `tests/execution/test_strategy_entry_forecast_fusion.py`（6 passed）
+    - `tests/execution/test_order_manager_preflight.py`（20 passed）
+  - commit/push:
+    - `ddd7c3a3` `feat: harden strategy forecast fusion with tf-confluence guard`
+  - VM反映:
+    - `scripts/vm.sh ... deploy -b main -i --restart quant-market-data-feed.service -t`
+    - VMで `git rev-parse HEAD == origin/main` を確認。
+    - `quant-order-manager` / `quant-micro-rangebreak` / `quant-scalp-ping-5s-b` /
+      `quant-m1scalper` / `quant-session-open` の再起動と
+      `Application started!` / `Application startup complete.` を確認。
+  - ランタイム監査:
+    - `quant-m1scalper`, `quant-micro-rangebreak`, `quant-scalp-ping-5s-b` の
+      `/proc/<pid>/environ` で
+      `FORECAST_GATE_ENABLED=1`,
+      `STRATEGY_FORECAST_FUSION_ENABLED=1`,
+      `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=1` を確認。
+  - 参考観測:
+    - `scripts/vm_forecast_snapshot.py --horizon 1m,5m,10m` で
+      直近 snapshot（p_up/edge/expected_pips/range帯）を取得して稼働確認。
+
+- 運用整備（依頼「スキル化/オートメーション化」対応）:
+  - 監査手順を再利用可能にするため、
+    `$CODEX_HOME/skills/qr-forecast-improvement-audit/` を新規作成。
+    - `SKILL.md`
+    - `references/forecast_improvement_playbook.md`
+    - `agents/openai.yaml`
+  - 2時間周期で実行する automation の作成案（`QR Forecast Audit 2h`）を提示済み。
+- 現在の状態:
+  - forecast は「黒板の監査メタ」に留まらず、strategy_entry 内で
+    各戦略の units/probability/TP/SL へ反映される運用へ移行済み。
+  - 効果判定は `eval_forecast_before_after.py` で同一期間比較を継続する。
