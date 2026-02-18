@@ -88,6 +88,11 @@ _TRADE_FORCE_EXIT_DEFER_LOG_MONO: dict[str, float] = {}
 _PROFIT_BANK_STATS_CACHE: dict[tuple[str, str, str, str], tuple[float, tuple[float, float, float]]] = {}
 _PROFIT_BANK_START_CACHE: tuple[str, Optional[datetime.datetime]] = ("", None)
 _PROFIT_BANK_LAST_CLOSE_MONO: float = 0.0
+_SIGNAL_WINDOW_STATS_CACHE: dict[
+    tuple[str, str],
+    tuple[float, list[dict[str, object]]],
+] = {}
+_SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -335,6 +340,334 @@ def _norm01(value: float, low: float, high: float) -> float:
     if high <= low:
         return 0.0
     return _clamp((value - low) / (high - low), 0.0, 1.0)
+
+
+def _signal_window_bucket(window_sec: float) -> float:
+    step = max(0.01, _safe_float(getattr(config, "SIGNAL_WINDOW_ADAPTIVE_BUCKET_SEC", 0.05), 0.05))
+    value = max(0.0, _safe_float(window_sec, 0.0))
+    return round(round(value / step) * step, 4)
+
+
+def _load_signal_window_stats(*, strategy_tag: str, pocket: str) -> list[dict[str, object]]:
+    cache_key = (
+        str(strategy_tag or "").strip().lower(),
+        str(pocket or "").strip().lower(),
+    )
+    now_mono = time.monotonic()
+    cached = _SIGNAL_WINDOW_STATS_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= config.SIGNAL_WINDOW_ADAPTIVE_STATS_TTL_SEC:
+        return cached[1]
+
+    rows: list[dict[str, object]] = []
+    if not _TRADES_DB.exists():
+        _SIGNAL_WINDOW_STATS_CACHE[cache_key] = (now_mono, rows)
+        return rows
+
+    con: Optional[sqlite3.Connection] = None
+    lookback_minutes = max(
+        1,
+        int(round(max(1.0, config.SIGNAL_WINDOW_ADAPTIVE_LOOKBACK_HOURS) * 60.0)),
+    )
+    lookback_expr = f"-{lookback_minutes} minutes"
+    try:
+        con = sqlite3.connect(_TRADES_DB)
+        fetched = con.execute(
+            """
+            SELECT
+              CAST(json_extract(entry_thesis, '$.signal_window_sec') AS REAL) AS signal_window_sec,
+              lower(COALESCE(json_extract(entry_thesis, '$.signal_mode'), 'unknown')) AS signal_mode,
+              CASE WHEN units >= 0 THEN 'long' ELSE 'short' END AS side,
+              COUNT(*) AS sample,
+              AVG(pl_pips) AS mean_pips,
+              AVG(CASE WHEN pl_pips > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND close_time >= datetime('now', ?)
+              AND lower(COALESCE(strategy_tag, '')) = ?
+              AND lower(COALESCE(pocket, '')) = ?
+              AND pl_pips IS NOT NULL
+              AND json_type(entry_thesis, '$.signal_window_sec') IN ('real', 'integer')
+            GROUP BY 1, 2, 3
+            """,
+            (lookback_expr, cache_key[0], cache_key[1]),
+        ).fetchall()
+    except Exception:
+        fetched = []
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    for raw_window, raw_mode, raw_side, raw_sample, raw_mean, raw_win in fetched:
+        try:
+            window_sec = float(raw_window)
+            sample = int(raw_sample)
+            mean_pips = float(raw_mean)
+            win_rate = float(raw_win)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(window_sec) or window_sec <= 0.0:
+            continue
+        if sample <= 0:
+            continue
+        mode = str(raw_mode or "unknown").strip().lower() or "unknown"
+        side = str(raw_side or "").strip().lower()
+        if side not in {"long", "short"}:
+            continue
+        rows.append(
+            {
+                "window_sec": float(window_sec),
+                "window_bucket": _signal_window_bucket(window_sec),
+                "mode": mode,
+                "side": side,
+                "sample": sample,
+                "mean_pips": float(mean_pips),
+                "win_rate": _clamp(float(win_rate), 0.0, 1.0),
+            }
+        )
+
+    _SIGNAL_WINDOW_STATS_CACHE[cache_key] = (now_mono, rows)
+    return rows
+
+
+def _candidate_signal_windows(
+    *,
+    live_window_sec: float,
+    speed_scale: float,
+) -> list[float]:
+    windows = [max(0.3, _safe_float(live_window_sec, 0.3))]
+    for raw in config.SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC:
+        candidate = _safe_float(raw, 0.0)
+        if candidate <= 0.0:
+            continue
+        if config.SIGNAL_WINDOW_ADAPTIVE_SCALE_WITH_SPEED:
+            candidate *= max(0.1, speed_scale)
+        candidate = _clamp(
+            candidate,
+            config.SIGNAL_WINDOW_ADAPTIVE_MIN_SEC,
+            config.SIGNAL_WINDOW_ADAPTIVE_MAX_SEC,
+        )
+        windows.append(max(0.3, candidate))
+
+    deduped: list[float] = []
+    for value in windows:
+        rounded = round(float(value), 4)
+        if rounded not in deduped:
+            deduped.append(rounded)
+
+    base = deduped[0] if deduped else max(0.3, _safe_float(live_window_sec, 0.3))
+    deduped.sort(key=lambda item: (abs(item - base), item))
+    return deduped
+
+
+def _score_signal_window_candidate(
+    *,
+    candidate: TickSignal,
+    stats_rows: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    target_bucket = _signal_window_bucket(candidate.signal_window_sec)
+    tol = max(0.0, _safe_float(config.SIGNAL_WINDOW_ADAPTIVE_MATCH_TOL_SEC, 0.35))
+    min_trades = max(1, int(_safe_float(config.SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES, 30)))
+    bonus = max(0.0, _safe_float(config.SIGNAL_WINDOW_ADAPTIVE_UCB_BONUS_PIPS, 0.0))
+    cold_penalty = max(
+        0.0,
+        _safe_float(config.SIGNAL_WINDOW_ADAPTIVE_COLDSTART_PENALTY_PIPS, 0.0),
+    )
+
+    best_row: Optional[dict[str, object]] = None
+    best_key: tuple[int, float, int] | None = None
+    for row in stats_rows:
+        row_bucket = _safe_float(row.get("window_bucket"), -1.0)
+        if row_bucket <= 0.0:
+            continue
+        distance = abs(row_bucket - target_bucket)
+        if distance > tol:
+            continue
+        side = str(row.get("side") or "").strip().lower()
+        mode = str(row.get("mode") or "unknown").strip().lower() or "unknown"
+        side_match = side == candidate.side
+        mode_match = mode == candidate.mode
+        priority = 0
+        if side_match and mode_match:
+            priority = 0
+        elif side_match:
+            priority = 1
+        elif mode_match:
+            priority = 2
+        else:
+            priority = 3
+        sample = int(_safe_float(row.get("sample"), 0.0))
+        key = (priority, distance, -sample)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_row = row
+
+    if best_row is None:
+        return {
+            "score_pips": 0.0,
+            "mean_pips": 0.0,
+            "sample": 0,
+            "win_rate": 0.5,
+            "source": "no_stats",
+            "bucket": target_bucket,
+        }
+
+    sample = max(0, int(_safe_float(best_row.get("sample"), 0.0)))
+    mean_pips = _safe_float(best_row.get("mean_pips"), 0.0)
+    win_rate = _clamp(_safe_float(best_row.get("win_rate"), 0.5), 0.0, 1.0)
+    if sample > 0:
+        score = mean_pips + (bonus / math.sqrt(sample))
+    else:
+        score = mean_pips
+    if sample < min_trades:
+        score -= cold_penalty
+    return {
+        "score_pips": float(score),
+        "mean_pips": float(mean_pips),
+        "sample": int(sample),
+        "win_rate": float(win_rate),
+        "source": str(best_row.get("mode") or "unknown"),
+        "bucket": target_bucket,
+    }
+
+
+def _maybe_adapt_signal_window(
+    *,
+    ticks: Sequence[dict],
+    spread_pips: float,
+    base_signal: TickSignal,
+) -> tuple[TickSignal, dict[str, object]]:
+    adaptive_enabled = bool(config.SIGNAL_WINDOW_ADAPTIVE_ENABLED)
+    shadow_enabled = bool(config.SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED)
+    if not adaptive_enabled and not shadow_enabled:
+        return base_signal, {}
+
+    stats_rows = _load_signal_window_stats(
+        strategy_tag=config.STRATEGY_TAG,
+        pocket=config.POCKET,
+    )
+    speed_scale = _instant_speed_scale(base_signal.instant_range_pips)
+    windows = _candidate_signal_windows(
+        live_window_sec=base_signal.signal_window_sec,
+        speed_scale=speed_scale,
+    )
+
+    candidates: list[dict[str, object]] = [
+        {
+            "window_sec": float(base_signal.signal_window_sec),
+            "signal": base_signal,
+            "reason": "live",
+        }
+    ]
+    skipped: list[str] = []
+    for window_sec in windows:
+        if abs(window_sec - base_signal.signal_window_sec) < 1e-6:
+            continue
+        alt_signal, alt_reason = _build_tick_signal(
+            ticks,
+            spread_pips,
+            signal_window_override_sec=float(window_sec),
+            allow_window_fallback=False,
+        )
+        if alt_signal is None:
+            skipped.append(f"{window_sec:.2f}:{alt_reason}")
+            continue
+        candidates.append(
+            {
+                "window_sec": float(alt_signal.signal_window_sec),
+                "signal": alt_signal,
+                "reason": str(alt_reason),
+            }
+        )
+
+    scored: list[dict[str, object]] = []
+    for candidate in candidates:
+        signal = candidate["signal"]
+        if not isinstance(signal, TickSignal):
+            continue
+        metrics = _score_signal_window_candidate(candidate=signal, stats_rows=stats_rows)
+        scored.append({**candidate, **metrics})
+    if not scored:
+        return base_signal, {}
+
+    live_candidate = next(
+        (item for item in scored if item.get("reason") == "live"),
+        scored[0],
+    )
+    best_candidate = max(
+        scored,
+        key=lambda item: (
+            _safe_float(item.get("score_pips"), 0.0),
+            _safe_float(item.get("mean_pips"), 0.0),
+            _safe_float(item.get("sample"), 0.0),
+        ),
+    )
+
+    margin = max(0.0, _safe_float(config.SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS, 0.0))
+    min_trades = max(1, int(_safe_float(config.SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES, 30)))
+    improvement = _safe_float(best_candidate.get("score_pips"), 0.0) - _safe_float(
+        live_candidate.get("score_pips"),
+        0.0,
+    )
+    should_apply = (
+        adaptive_enabled
+        and isinstance(best_candidate.get("signal"), TickSignal)
+        and best_candidate is not live_candidate
+        and int(_safe_float(best_candidate.get("sample"), 0.0)) >= min_trades
+        and improvement >= margin
+    )
+
+    selected_candidate = best_candidate if should_apply else live_candidate
+    selected_signal = selected_candidate.get("signal")
+    if not isinstance(selected_signal, TickSignal):
+        selected_signal = base_signal
+
+    global _SIGNAL_WINDOW_SHADOW_LOG_MONO
+    now_mono = time.monotonic()
+    if shadow_enabled and (now_mono - _SIGNAL_WINDOW_SHADOW_LOG_MONO) >= config.SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC:
+        top = sorted(
+            scored,
+            key=lambda item: _safe_float(item.get("score_pips"), 0.0),
+            reverse=True,
+        )[:3]
+        top_summary = ",".join(
+            (
+                f"{_safe_float(item.get('window_sec'), 0.0):.2f}s:"
+                f"s={_safe_float(item.get('score_pips'), 0.0):+.3f}/"
+                f"m={_safe_float(item.get('mean_pips'), 0.0):+.3f}/"
+                f"n={int(_safe_float(item.get('sample'), 0.0))}"
+            )
+            for item in top
+        )
+        LOG.info(
+            "%s signal_window shadow live=%.2fs best=%.2fs selected=%.2fs apply=%s improve=%.3f top=[%s] skipped=%s",
+            config.LOG_PREFIX,
+            _safe_float(base_signal.signal_window_sec, 0.0),
+            _safe_float(best_candidate.get("window_sec"), 0.0),
+            _safe_float(selected_signal.signal_window_sec, 0.0),
+            should_apply,
+            improvement,
+            top_summary or "-",
+            ";".join(skipped[:6]) if skipped else "-",
+        )
+        _SIGNAL_WINDOW_SHADOW_LOG_MONO = now_mono
+
+    meta = {
+        "enabled": adaptive_enabled,
+        "shadow_enabled": shadow_enabled,
+        "applied": should_apply,
+        "live_window_sec": round(_safe_float(base_signal.signal_window_sec, 0.0), 3),
+        "selected_window_sec": round(_safe_float(selected_signal.signal_window_sec, 0.0), 3),
+        "best_window_sec": round(_safe_float(best_candidate.get("window_sec"), 0.0), 3),
+        "live_score_pips": round(_safe_float(live_candidate.get("score_pips"), 0.0), 5),
+        "selected_score_pips": round(_safe_float(selected_candidate.get("score_pips"), 0.0), 5),
+        "best_score_pips": round(_safe_float(best_candidate.get("score_pips"), 0.0), 5),
+        "best_sample": int(_safe_float(best_candidate.get("sample"), 0.0)),
+        "candidate_count": len(scored),
+    }
+    return selected_signal, meta
 
 
 def _instant_speed_scale(instant_range_pips: float) -> float:
@@ -1656,7 +1989,13 @@ def _momentum_tail_continuation_ok(
     return tail_delta_pips <= -required_tail
 
 
-def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Optional[TickSignal], str]:
+def _build_tick_signal(
+    rows: Sequence[dict],
+    spread_pips: float,
+    *,
+    signal_window_override_sec: Optional[float] = None,
+    allow_window_fallback: bool = True,
+) -> tuple[Optional[TickSignal], str]:
     if len(rows) < config.MIN_TICKS:
         return None, f"insufficient_rows:{len(rows)}/{config.MIN_TICKS}"
 
@@ -1693,7 +2032,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     long_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale)))
     min_signal_ticks = max(config.MIN_SIGNAL_TICKS, min(short_min_signal_ticks, long_min_signal_ticks))
     fallback_rate_windows_sec = None
-    if config.MIN_TICK_RATE > 0 and min_signal_ticks > 1:
+    if allow_window_fallback and config.MIN_TICK_RATE > 0 and min_signal_ticks > 1:
         fallback_rate_windows_sec = max(
             0.0,
             min(
@@ -1701,9 +2040,16 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
                 (min_signal_ticks - 1) / config.MIN_TICK_RATE,
             ),
         )
-    fallback_sec = max(
-        0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
-    )
+    if allow_window_fallback:
+        fallback_sec = max(
+            0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
+        )
+    else:
+        fallback_sec = 0.0
+
+    signal_window_seed = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
+    if signal_window_override_sec is not None:
+        signal_window_seed = max(0.3, _safe_float(signal_window_override_sec, signal_window_seed))
 
     if len(rows) < min_signal_ticks:
         row_min_epoch = latest_epoch
@@ -1714,8 +2060,8 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
         rows_span_sec = max(0.0, latest_epoch - row_min_epoch)
         detail_parts = [
             f"insufficient_signal_rows:{len(rows)}/{min_signal_ticks}",
-            f"window={max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale):.2f}",
-            f"fallback_window={max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale):.2f}",
+            f"window={signal_window_seed:.2f}",
+            f"fallback_window={signal_window_seed:.2f}",
             f"fallback_count={len(rows)}/{min_signal_ticks}",
             "fallback_attempts=none",
             "fallback_used=no_data",
@@ -1732,20 +2078,26 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
             " ".join(detail_parts),
         )
 
-    signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
+    signal_window_sec = signal_window_seed
     base_signal_window_sec = signal_window_sec
     signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
     fallback_signal_rows: list[dict] = signal_rows
     fallback_window_sec: float = signal_window_sec
 
     fallback_windows = [signal_window_sec]
-    if fallback_rate_windows_sec is not None and fallback_rate_windows_sec > signal_window_sec:
+    if (
+        allow_window_fallback
+        and fallback_rate_windows_sec is not None
+        and fallback_rate_windows_sec > signal_window_sec
+    ):
         fallback_windows.append(fallback_rate_windows_sec)
     fallback_attempted = False
-    if fallback_sec > 0.0:
+    if allow_window_fallback and fallback_sec > 0.0:
         fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
     if (
-        fallback_sec > 0.0
+        allow_window_fallback
+        and signal_window_override_sec is None
+        and fallback_sec > 0.0
         and config.WINDOW_SEC > signal_window_sec
         and config.SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW
     ):
@@ -4089,6 +4441,7 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 continue
 
+            signal_window_meta: dict[str, object] = {}
             signal, signal_reason = _build_tick_signal(ticks, spread_pips)
             if signal is None:
                 _note_entry_skip(
@@ -4104,6 +4457,11 @@ async def scalp_ping_5s_worker() -> None:
                     f"spread={signal.spread_pips:.2f} max={config.MAX_SPREAD_PIPS:.2f}",
                 )
                 continue
+            signal, signal_window_meta = _maybe_adapt_signal_window(
+                ticks=ticks,
+                spread_pips=signal.spread_pips,
+                base_signal=signal,
+            )
 
             now_mono = time.monotonic()
             try:
@@ -4719,6 +5077,41 @@ async def scalp_ping_5s_worker() -> None:
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "env_prefix": config.ENV_PREFIX,
                 "signal_window_sec": round(signal.signal_window_sec, 3),
+                "signal_window_adaptive_enabled": bool(signal_window_meta.get("enabled", False)),
+                "signal_window_adaptive_shadow_enabled": bool(
+                    signal_window_meta.get("shadow_enabled", False)
+                ),
+                "signal_window_adaptive_applied": bool(signal_window_meta.get("applied", False)),
+                "signal_window_adaptive_live_sec": round(
+                    _safe_float(signal_window_meta.get("live_window_sec"), signal.signal_window_sec),
+                    3,
+                ),
+                "signal_window_adaptive_selected_sec": round(
+                    _safe_float(signal_window_meta.get("selected_window_sec"), signal.signal_window_sec),
+                    3,
+                ),
+                "signal_window_adaptive_best_sec": round(
+                    _safe_float(signal_window_meta.get("best_window_sec"), signal.signal_window_sec),
+                    3,
+                ),
+                "signal_window_adaptive_live_score_pips": round(
+                    _safe_float(signal_window_meta.get("live_score_pips"), 0.0),
+                    5,
+                ),
+                "signal_window_adaptive_selected_score_pips": round(
+                    _safe_float(signal_window_meta.get("selected_score_pips"), 0.0),
+                    5,
+                ),
+                "signal_window_adaptive_best_score_pips": round(
+                    _safe_float(signal_window_meta.get("best_score_pips"), 0.0),
+                    5,
+                ),
+                "signal_window_adaptive_best_sample": int(
+                    _safe_float(signal_window_meta.get("best_sample"), 0.0)
+                ),
+                "signal_window_adaptive_candidate_count": int(
+                    _safe_float(signal_window_meta.get("candidate_count"), 0.0)
+                ),
                 "window_sec": config.WINDOW_SEC,
                 "momentum_pips": round(signal.momentum_pips, 3),
                 "trigger_pips": round(signal.trigger_pips, 3),

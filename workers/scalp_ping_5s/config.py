@@ -31,6 +31,28 @@ def _csv_env(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(tokens))
 
 
+def _csv_float_env(name: str, default: str) -> tuple[float, ...]:
+    raw = str(os.getenv(name, default) or "").strip()
+    if not raw:
+        return ()
+    values: list[float] = []
+    for part in raw.replace("\n", ",").split(","):
+        token = str(part).strip()
+        if not token:
+            continue
+        try:
+            parsed = float(token)
+        except ValueError:
+            continue
+        if parsed > 0.0:
+            values.append(parsed)
+    deduped: list[float] = []
+    for value in values:
+        if value not in deduped:
+            deduped.append(value)
+    return tuple(deduped)
+
+
 def _normalize_side(raw: str) -> str:
     side = str(raw or "").strip().lower()
     if side in {"buy", "long", "open_long"}:
@@ -68,6 +90,66 @@ SIGNAL_WINDOW_FALLBACK_SEC: float = max(
 SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW: bool = _bool_env(
     "SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW",
     True,
+)
+SIGNAL_WINDOW_ADAPTIVE_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_ENABLED",
+    False,
+)
+SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED",
+    False,
+)
+SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC: tuple[float, ...] = _csv_float_env(
+    "SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC",
+    "0.4,0.78,1.2,1.5,2.0,2.857,8.0",
+)
+SIGNAL_WINDOW_ADAPTIVE_SCALE_WITH_SPEED: bool = _bool_env(
+    "SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SCALE_WITH_SPEED",
+    True,
+)
+SIGNAL_WINDOW_ADAPTIVE_MIN_SEC: float = max(
+    0.2,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_MIN_SEC", "0.3")),
+)
+SIGNAL_WINDOW_ADAPTIVE_MAX_SEC: float = max(
+    SIGNAL_WINDOW_ADAPTIVE_MIN_SEC + 0.1,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_MAX_SEC", str(WINDOW_SEC))),
+)
+SIGNAL_WINDOW_ADAPTIVE_STATS_TTL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_STATS_TTL_SEC", "25.0")),
+)
+SIGNAL_WINDOW_ADAPTIVE_LOOKBACK_HOURS: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_LOOKBACK_HOURS", "48.0")),
+)
+SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES: int = max(
+    5,
+    int(float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES", "30"))),
+)
+SIGNAL_WINDOW_ADAPTIVE_MATCH_TOL_SEC: float = max(
+    0.01,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_MATCH_TOL_SEC", "0.35")),
+)
+SIGNAL_WINDOW_ADAPTIVE_BUCKET_SEC: float = max(
+    0.01,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_BUCKET_SEC", "0.05")),
+)
+SIGNAL_WINDOW_ADAPTIVE_UCB_BONUS_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_UCB_BONUS_PIPS", "0.12")),
+)
+SIGNAL_WINDOW_ADAPTIVE_COLDSTART_PENALTY_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_COLDSTART_PENALTY_PIPS", "0.20")),
+)
+SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", "0.05")),
+)
+SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC", "15.0")),
 )
 INSTANT_VOL_WINDOW_SEC: float = max(
     0.25,

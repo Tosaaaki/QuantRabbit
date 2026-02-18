@@ -1842,3 +1842,26 @@
   - `tests/execution/test_strategy_entry_forecast_fusion.py`
     - 強逆行見送り（`units=0`）の検証を追加。
     - `tf_confluence_score` が負のときに `units/probability` が縮小する検証を追加。
+
+### 2026-02-18（追記）`scalp_ping_5s` に signal window 可変化 + shadow 評価を追加
+
+- 背景:
+  - `signal_window_sec` の固定値運用（1.2s/1.5s 等）だけでは地合い変化時の追従が弱く、
+    「まずは本番同等ロジックで shadow 計測し、十分なサンプルが揃ったら適用」にしたい要望があった。
+- 実装:
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_*` 一式を追加。
+    - デフォルトは `ADAPTIVE_ENABLED=0`（挙動据え置き）。
+    - `*_SHADOW_ENABLED` と候補窓 (`*_CANDIDATES_SEC`) で shadow 比較を可能化。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_build_tick_signal(...)` に `signal_window_override_sec` / `allow_window_fallback` を追加。
+    - `trades.db` から `signal_window_sec` 別成績を読む `_load_signal_window_stats(...)` を追加（TTL cache）。
+    - 候補窓をスコアリングする `_maybe_adapt_signal_window(...)` を追加。
+      - `adaptive=off` なら選択は変えず shadow ログのみ。
+      - `adaptive=on` かつ `min_trades` と `selection_margin` を満たす場合のみ窓を切替。
+    - `entry_thesis` に `signal_window_adaptive_*` 監査キーを追加（live/best/selected, sample, score）。
+  - env:
+    - `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_flow.env` に
+      `*_SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED=1` を追加（適用はOFFのまま）。
+- 目的:
+  - まず本番ログで「候補窓ごとの期待値差」を収集し、過学習を避けて段階的に適用する。

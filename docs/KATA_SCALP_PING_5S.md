@@ -199,3 +199,26 @@ DB:
 - 運用意図:
   - 「極値で止める」よりも「極値で方向転換する」設計へ寄せることで、
     発注本数を維持しつつ bottom/top 近傍の逆行エントリーを抑える。
+
+## 13. 2026-02-18 更新（signal window 可変化 + shadow 計測）
+
+- 追加設定（`workers/scalp_ping_5s/config.py`）:
+  - `SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_ENABLED`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS`
+- 実装:
+  - `_build_tick_signal(...)` に window override を追加し、候補窓を同一ティック列で評価可能化。
+  - `trades.db` の `entry_thesis.signal_window_sec` を戦略タグ単位で集計し、
+    side/mode と窓幅近傍で期待値を推定。
+  - `adaptive=off` 時は既存窓を維持しつつ shadow 比較のみログ出力。
+  - `adaptive=on` 時のみ、十分サンプル + マージン超過時に窓を切替。
+- 監査キー（`entry_thesis`）:
+  - `signal_window_adaptive_applied`
+  - `signal_window_adaptive_live_sec`
+  - `signal_window_adaptive_selected_sec`
+  - `signal_window_adaptive_best_sec`
+  - `signal_window_adaptive_best_sample`
+- 運用方針:
+  - 先に shadow で分布を確認し、`best_sample` と `best_score` の安定後に `ADAPTIVE_ENABLED=1` を段階適用する。
