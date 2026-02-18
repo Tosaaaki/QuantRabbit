@@ -2245,7 +2245,7 @@
   - 同時リクエスト集中時に `quant-position-manager` の threadpool が詰まり、`/health` まで応答遅延する状態を確認。
 - 実装:
   - `workers/position_manager/worker.py` を更新。
-  - `/position/open_positions` を server-side single-flight 化し、fresh/stale キャッシュを優先返却。
+  - `/position/open_positions` を server-side single-flight 化し、起動時warmupでキャッシュを事前投入したうえで fresh/stale を優先返却。
   - `/position/sync_trades` も single-flight + TTL/stale cache 化して同時負荷を平準化。
   - manager 呼び出しを `asyncio.wait_for(asyncio.to_thread(...))` で timeout 制御し、
     長時間処理時も API 応答の詰まりを回避。
