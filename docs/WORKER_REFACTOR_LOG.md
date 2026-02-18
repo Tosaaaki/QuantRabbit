@@ -2520,3 +2520,23 @@
     - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.28`
     - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.30`
     - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.03,10m=0.01`
+
+### 2026-02-18（追記）scalp_ping_5s_b の「上方向取り残し」抑制チューニング
+
+- 背景:
+  - 本番VM/OANDA実データで、`scalp_ping_5s_b_live` の一部エントリーが
+    `forecast.reason=edge_block` / `forecast.allowed=0` でも約定し、
+    逆行時に長時間取り残されるケースを確認。
+  - 同時間帯に `quant-position-manager` / `quant-order-manager` の再起動・busy/timeout が重なり、
+    exit worker の close 呼び出し失敗（connection refused）が発生。
+- 実施:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.70` を追加。
+    - 低確率シグナルを `order_manager` 側で機械的に reject し、逆張り方向の残留ポジ増加を抑制。
+  - `ops/env/quant-scalp-ping-5s-b-exit.env`
+    - `RANGEFADER_EXIT_NEW_POLICY_START_TS=2026-02-17T00:00:00Z` を追加。
+    - service再起動のたびに `new_policy_start_ts` が現在時刻へリセットされ、
+      既存建玉が legacy 扱いで loss-cut 系ルールから外れる事象を回避。
+- 期待効果:
+  - `scalp_ping_5s_b_live` の低確率エントリー頻度を抑制。
+  - 既存建玉にも `loss_cut/non_range_max_hold/direction_flip` を継続適用し、長時間取り残しを低減。

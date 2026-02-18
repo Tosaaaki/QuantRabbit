@@ -20,6 +20,12 @@
 - 共通 `execution/exit_manager.py` は常に空を返す互換スタブ。
 - `execution/stage_tracker` がクールダウンと方向別ブロックを管理。
 
+### scalp_ping_5s_b 運用補足（取り残し抑制）
+- `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE` を
+  `quant-order-manager` の環境で運用し、低確率シグナルを `order_manager` 側で reject する。
+- `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
+  service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
