@@ -229,6 +229,33 @@ def test_forecast_fusion_rejects_strong_contra(monkeypatch) -> None:
     assert thesis.get("sl_pips") == 1.8
 
 
+def test_forecast_fusion_rejects_strong_contra_on_bearish_edge(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    thesis: dict[str, object] = {"tp_pips": 1.8, "sl_pips": 1.4}
+    units, prob, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1200,
+        entry_probability=0.62,
+        entry_thesis=thesis,
+        forecast_context={
+            "allowed": False,
+            "reason": "hard_bearish_flow",
+            "p_up": 0.10,
+            "edge": 0.08,
+            "tp_pips_hint": 2.4,
+            "sl_pips_cap": 1.0,
+        },
+    )
+
+    assert units == 0
+    assert prob is not None and 0.0 <= prob <= 0.22
+    assert applied.get("strong_contra_reject") is True
+    assert applied.get("reject_reason") == "strong_contra_forecast"
+    assert thesis.get("tp_pips") == 1.8
+    assert thesis.get("sl_pips") == 1.4
+
+
 def test_forecast_fusion_tf_confluence_cuts_units(monkeypatch) -> None:
     _set_default_fusion_knobs(monkeypatch)
     units, prob, applied = strategy_entry._apply_forecast_fusion(

@@ -231,8 +231,9 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
   forecast の向き（`p_up`）と強さ（`edge`）を合成する `forecast_fusion` を適用します。
 - 方向一致時はロット/確率を小幅に押し上げ、逆行時や `allowed=false` はロット/確率を縮小します。
 - `tf_confluence_score`（上位/下位TF整合）も同時に反映し、整合が弱いときは追加縮小、整合が強いときのみ軽微に押し上げます。
-- `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*` で、強い逆行予測（例: `direction_prob<=0.22` かつ `edge>=0.65`）は
-  `units=0` として見送りできます。
+- `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*` で、強い逆行予測は `units=0` として見送りできます。
+  - 逆行強度は `edge_strength = abs(edge - 0.5) / 0.5` で評価します。
+  - 例: `direction_prob<=0.22` かつ `edge_strength>=0.65`（`allowed=false` も条件）で reject。
 - 反映結果は `entry_thesis["forecast_fusion"]` に保存し、監査時に
   `units_before/after`, `entry_probability_before/after`, `units_scale`, `forecast_reason`,
   `tf_confluence_score`, `strong_contra_reject` を追跡できます。

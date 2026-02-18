@@ -2216,3 +2216,23 @@
 - 検証:
   - `python3 -m py_compile workers/*/exit_forecast.py`
   - `pytest -q tests/workers/test_exit_forecast.py`（75 passed）
+
+### 2026-02-18（追記）ENTRY forecast_fusion の strong-contra 判定を実データ整合へ修正
+
+- 背景:
+  - 直近VM実績で、`p_up<0.20` かつ `forecast.allowed=0` のロングが縮小のみで通過し、
+    予測逆行の拒否が発火しないケースを確認。
+  - 原因は `execution/strategy_entry.py` の `edge_strength` が
+    `max((edge-0.5)/0.5, 0)` だったため、`edge<0.5`（強い下方向）で常に 0 になっていたこと。
+- 実装:
+  - `execution/strategy_entry.py`
+    - `edge_strength = abs(edge-0.5)/0.5` に変更し、上方向/下方向どちらの強い予測も
+      strong-contra 判定へ反映するよう修正。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    - `edge=0.08`, `p_up=0.10`, `allowed=false` の bearish 強逆行ケースで
+      `strong_contra_reject=True` と `units=0` を確認する回帰テストを追加。
+  - `docs/FORECAST.md`
+    - strong-contra の `edge_strength` 定義を明文化。
+- 期待効果:
+  - 「予測を主軸にしつつ、手元テクニカルを併用（auto blend）」のまま、
+    明確な逆行予測は ENTRY 段階で見送りやすくなる。

@@ -1563,7 +1563,9 @@ def _apply_forecast_fusion(
         edge_strength = max(0.0, min(1.0, abs(direction_bias)))
     else:
         edge_clamped = max(0.0, min(1.0, float(edge_raw)))
-        edge_strength = max(0.0, min(1.0, (edge_clamped - 0.5) / 0.5))
+        # Strength is distance from neutral (0.5), not only bullish-side excess.
+        # This allows strong bearish forecasts (edge<<0.5) to trigger contra rejects.
+        edge_strength = max(0.0, min(1.0, abs(edge_clamped - 0.5) / 0.5))
 
     allowed_flag = _coerce_bool(forecast_context.get("allowed"), None)
     tf_confluence_score_raw = _to_float(forecast_context.get("tf_confluence_score"))
