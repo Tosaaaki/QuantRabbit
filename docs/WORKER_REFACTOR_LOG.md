@@ -2358,6 +2358,23 @@
   - VM同一データで反発重み候補を機械的に比較し、
     hit/MAE ベースで `quant-v2-runtime.env` の重み更新可否を判断できる。
 
+### 2026-02-18（追記）反発重みグリッド再評価で短期TFを微調整
+
+- 実データ評価:
+  - VM上で `scripts/eval_forecast_before_after.py` を実行し、
+    `max-bars=8050` / `steps=1,5,10` / breakout+session固定のまま
+    `rebound_weight_map` 候補を比較。
+  - 出力:
+    - `logs/reports/forecast_improvement/rebound_grid_20260218T035935Z_*.json`
+- 採用:
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.02,10m=0.01`（soft5m）
+- 理由:
+  - base（`1m=0.10,5m=0.04,10m=0.02`）比で、集計 `hit_after` が僅差で上回り、
+    `mae_after` も悪化せず改善側を維持。
+  - 1mは据え置き、5m/10mの反発寄与を控えめにして過反応リスクを抑制。
+- 反映:
+  - `ops/env/quant-v2-runtime.env` を更新し、`quant-forecast` / strategy worker再起動で適用。
+
 ### 2026-02-18（追記）72h forecast再評価で5m重みを更新
 
 - 背景:

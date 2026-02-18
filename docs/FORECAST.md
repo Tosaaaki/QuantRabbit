@@ -68,7 +68,7 @@ python scripts/train_forecast_bundle.py --instrument USD_JPY --out config/foreca
 - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`（新特徴量の寄与ゲイン。`0.0` で無効、`0.0-1.0` で段階適用）
 - `FORECAST_TECH_REBOUND_ENABLED=1`（急落後反発シグナルを有効化）
 - `FORECAST_TECH_REBOUND_WEIGHT=0.06`（horizon map 未指定時の既定重み）
-- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.04,10m=0.02`（短期TFの反発重み）
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.02,10m=0.01`（短期TFの反発重み）
 - `FORECAST_RANGE_BAND_LOWER_Q=0.20`（予測帯の下限分位）
 - `FORECAST_RANGE_BAND_UPPER_Q=0.80`（予測帯の上限分位）
 - `FORECAST_RANGE_SIGMA_FLOOR_PIPS=0.35`（予測帯の最小分散）
@@ -150,7 +150,7 @@ python3 scripts/eval_forecast_before_after.py \
 ```
 
 反発項を同一期間で比較する場合は `--rebound-weight` / `--rebound-weight-map` を併用します
-（例: `--rebound-weight 0.06 --rebound-weight-map 1m=0.10,5m=0.04,10m=0.02`）。
+（例: `--rebound-weight 0.06 --rebound-weight-map 1m=0.10,5m=0.02,10m=0.01`）。
 
 `breakout_bias_20` の方向一致率（filtered/unfiltered）も同時に出るため、
 「線形トレンド＋サポレジ圧力」の有効性を同一期間で監査できます。
@@ -197,7 +197,7 @@ python3 scripts/eval_forecast_before_after.py \
 - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`
 - `FORECAST_TECH_REBOUND_ENABLED=1`
 - `FORECAST_TECH_REBOUND_WEIGHT=0.06`
-- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.04,10m=0.02`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.02,10m=0.01`
 
 同一データ比較（`logs/reports/forecast_improvement/rebound_tune_report_20260218T024741Z.md`）では、
 候補適用時の `after` 指標差分（candidate-after - base-after）は次:
