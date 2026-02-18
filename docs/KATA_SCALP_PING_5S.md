@@ -222,3 +222,21 @@ DB:
   - `signal_window_adaptive_best_sample`
 - 運用方針:
   - 先に shadow で分布を確認し、`best_sample` と `best_score` の安定後に `ADAPTIVE_ENABLED=1` を段階適用する。
+
+## 14. 2026-02-18 更新（direction_flip de-risk の close reason 正規化）
+
+- 対象:
+  - `workers/scalp_ping_5s/exit_worker.py`
+  - `workers/scalp_ping_5s_b/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+- 変更:
+  - de-risk 内部判定の sentinel `__de_risk__` は内部制御専用とし、
+    部分クローズ失敗時の full close は `direction_flip.reason`（既定: `m1_structure_break`）にフォールバック。
+  - `scalp_ping_5s*` の negative close 許可理由に
+    `m1_structure_break` / `risk_reduce` を追加。
+- 背景:
+  - VM で `reason=__de_risk__` の close 失敗連発が発生し、
+    負け玉の整理が遅延するケースを確認。
+- 運用意図:
+  - internal sentinel の外部流出を防ぎ、strict negative gate 下でも
+    direction flip 系の損失縮小が実行される状態を維持する。

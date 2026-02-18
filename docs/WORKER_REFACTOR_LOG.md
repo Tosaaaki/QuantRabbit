@@ -23,6 +23,27 @@
   - `scalp_ping_5s_b_live` 建玉にも `scalp_ping_5s` 系の負け玉整理ルールを確実適用し、
     上方向取り残しの再発を抑制する。
 
+### 2026-02-18（追記）`direction_flip` de-risk 失敗時の sentinel reason 漏れ修正
+
+- 対象:
+  - `workers/scalp_ping_5s/exit_worker.py`
+  - `workers/scalp_ping_5s_b/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/workers/test_scalp_ping_5s_exit_worker.py`
+- 変更:
+  - `direction_flip` の de-risk 判定で部分クローズが失敗した場合、
+    内部 sentinel `__de_risk__` をそのまま full close 理由に使わず、
+    `direction_flip.reason`（既定 `m1_structure_break`）へフォールバックするよう修正。
+  - `scalp_ping_5s*` の `neg_exit.strict_allow_reasons / allow_reasons` に
+    `m1_structure_break` と `risk_reduce` を追加。
+  - 回帰防止テスト（de-risk sentinel fallback）を追加。
+- 背景:
+  - VM 実ログで `quant-scalp-ping-5s-b-exit` が `reason=__de_risk__` の close 失敗を大量連発し、
+    `order_manager /order/close_trade` timeout と組み合わさって含み損整理が遅延していた。
+- 意図:
+  - internal 用 reason の外部流出を止め、negative-close ガード下でも
+    `direction_flip` 系の損切り/デリスクを機械的に実行可能にする。
+
 ### 2026-02-18（追記）`scalp_macd_rsi_div` legacy tag 正規化（EXIT監視漏れ修正）
 
 - 対象:

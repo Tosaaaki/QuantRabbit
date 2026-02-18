@@ -1582,6 +1582,18 @@ class RangeFaderExitWorker:
                                 json.dumps(flip_diag or {}, ensure_ascii=False, sort_keys=True),
                             )
                             return
+                        LOG.warning(
+                            "[exit-rangefader] direction_flip derisk failed; fallback full close trade=%s tag=%s side=%s cut=%s remain=%s reason=%s",
+                            trade_id,
+                            base_tag or strategy_tag or "unknown",
+                            side,
+                            reduce_units,
+                            remaining,
+                            direction_flip_reason,
+                        )
+                    # "__de_risk__" is an internal sentinel only. Never pass it to order_manager as
+                    # an exit_reason because strict negative-exit gates can reject unknown reasons.
+                    flip_reason = direction_flip_reason
                 if flip_reason:
                     log_metric(
                         "scalp_precision_direction_flip_exit",

@@ -239,3 +239,90 @@ def test_new_policy_gate_skips_existing_positions(monkeypatch):
     asyncio.run(worker._review_trade(trade, now, mid=150.030, range_active=False))
 
     assert closed == []
+
+
+def test_direction_flip_derisk_sentinel_falls_back_to_direction_reason(monkeypatch):
+    worker = exit_worker.RangeFaderExitWorker()
+    worker.exit_policy_start_ts = 0.0
+    worker.new_policy_start_ts = 0.0
+
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda *_args, **_kwargs: {
+            "min_hold_sec": 1.0,
+            "loss_cut_enabled": False,
+            "direction_flip": {
+                "enabled": True,
+                "min_hold_sec": 10.0,
+                "min_adverse_pips": 1.0,
+                "de_risk_enabled": True,
+                "de_risk_threshold": 0.54,
+                "de_risk_fraction": 0.40,
+                "de_risk_min_units": 1000,
+                "de_risk_min_remaining": 1000,
+                "de_risk_cooldown_sec": 0.0,
+                "de_risk_reason": "risk_reduce",
+                "score_threshold": 0.64,
+                "release_threshold": 0.46,
+                "confirm_hits": 1,
+                "confirm_window_sec": 25.0,
+                "cooldown_sec": 0.0,
+                "forecast_weight": 0.35,
+                "reason": "m1_structure_break",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        worker,
+        "_direction_flip_score",
+        lambda **_kwargs: (0.91, {"score": 0.91}),
+    )
+    monkeypatch.setattr(
+        exit_worker,
+        "all_factors",
+        lambda: {
+            "M1": {
+                "rsi": 30.0,
+                "adx": 26.0,
+                "atr_pips": 1.4,
+                "ma10": 150.00,
+                "ma20": 150.08,
+                "vwap_gap": -4.2,
+                "ema_slope_10": -0.03,
+            },
+            "H4": {"adx": 24.0, "ma10": 150.0, "ma20": 150.1},
+        },
+    )
+
+    async def _fake_pro_stop(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(exit_worker, "maybe_close_pro_stop", _fake_pro_stop)
+
+    async def _fake_close_trade(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(exit_worker, "close_trade", _fake_close_trade)
+
+    closed_reasons: list[str] = []
+
+    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+        closed_reasons.append(str(reason))
+
+    monkeypatch.setattr(worker, "_close", _fake_close)
+
+    now = datetime.now(timezone.utc)
+    trade = {
+        "trade_id": "T-derisk-fallback",
+        "units": 1800,
+        "price": 150.100,
+        "unrealized_pl_pips": -3.2,
+        "open_time": (now - timedelta(minutes=12)).isoformat(),
+        "client_order_id": "cid-derisk-fallback",
+        "entry_thesis": {"strategy_tag": "scalp_ping_5s_b_live"},
+    }
+
+    asyncio.run(worker._review_trade(trade, now, mid=150.030, range_active=False))
+
+    assert closed_reasons == ["m1_structure_break"]

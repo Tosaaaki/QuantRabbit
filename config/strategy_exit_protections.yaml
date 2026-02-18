@@ -836,6 +836,8 @@ strategies:
         - timeout
         - drawdown
         - max_drawdown
+        - m1_structure_break
+        - risk_reduce
         - health_exit
         - margin_health
         - free_margin_low
@@ -855,6 +857,8 @@ strategies:
         - timeout
         - drawdown
         - max_drawdown
+        - m1_structure_break
+        - risk_reduce
         - health_exit
         - margin_health
         - free_margin_low
@@ -913,6 +917,8 @@ strategies:
         - timeout
         - drawdown
         - max_drawdown
+        - m1_structure_break
+        - risk_reduce
         - health_exit
         - margin_health
         - free_margin_low
@@ -932,6 +938,8 @@ strategies:
         - timeout
         - drawdown
         - max_drawdown
+        - m1_structure_break
+        - risk_reduce
         - health_exit
         - margin_health
         - free_margin_low
