@@ -260,6 +260,23 @@ python3 scripts/eval_forecast_before_after.py \
 重み付き objective は `+0.02198` で正、かつ 24h/72h の安全条件を満たすため、
 上記値を runtime env の運用値へ更新しました。
 
+同日 2026-02-18 05:23 UTC の追加探索（`logs/reports/forecast_improvement/extra_improve_b5s5_latest.json`）で、
+現行（`fg=0.03,b5=0.20,b10=0.30,s5=0.20,s10=0.30,rb5=0.01,rb10=0.02`）を基準に
+`5m` 系重みを局所再探索し、劣化ガードを満たす最上位候補を次で採用:
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.24,10m=0.30`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.03`（維持）
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`（維持）
+
+差分（new - current）:
+- 2h: `hit +0.0000`, `mae +0.000018`
+- 4h: `hit +0.0000`, `mae +0.000062`
+- 24h: `hit +0.0000`, `mae -0.000242`
+- 72h: `hit +0.002222`, `mae -0.000156`
+
+短期窓（2h/4h）の MAE は微小悪化する一方、24h/72h で MAE 改善、
+72h の hit が上振れし、重み付き objective は `+0.01762` を確認しました。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

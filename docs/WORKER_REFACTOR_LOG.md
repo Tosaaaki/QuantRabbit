@@ -8,6 +8,29 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-18（追記）forecast 追加改善（5m breakout/session 局所再探索）を運用値へ再反映
+
+- 対象:
+  - `ops/env/quant-v2-runtime.env`
+  - `docs/FORECAST.md`
+- 変更:
+  - 追加グリッド（`logs/reports/forecast_improvement/extra_improve_b5s5_latest.json`）で
+    現行 `fg=0.03,b5=0.20,b10=0.30,s5=0.20,s10=0.30,rb5=0.01,rb10=0.02` を基準に、
+    `5m` 重みのみ局所再探索。
+  - 採用値:
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.24,10m=0.30`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.30`
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.03`（維持）
+    - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`（維持）
+- 評価（new - current）:
+  - `2h`: `hit +0.0000`, `mae +0.000018`
+  - `4h`: `hit +0.0000`, `mae +0.000062`
+  - `24h`: `hit +0.0000`, `mae -0.000242`
+  - `72h`: `hit +0.002222`, `mae -0.000156`
+  - weighted objective: `+0.01762`（safe）
+- 意図:
+  - 直近短期の微小悪化を許容しつつ、24h/72h の安定改善と 72h hit 上振れを優先する。
+
 ### 2026-02-18（追記）forecast 追加改善（2h/4h/24h/72h 同時最適化）を運用値へ反映
 
 - 対象:
