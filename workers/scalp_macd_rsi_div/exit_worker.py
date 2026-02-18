@@ -112,6 +112,11 @@ def _base_strategy_tag(tag: Optional[str]) -> str:
     if not text:
         return ""
     base = text.split("-", 1)[0].strip() or text
+    normalized = "".join(ch for ch in base.lower() if ch.isalnum())
+    # Legacy client IDs (e.g. scalpmacdrsic7c3e9c1) should map to current live tag
+    # so exit_worker can manage old open positions after worker/tag migrations.
+    if normalized.startswith("scalpmacdrsi"):
+        return "scalp_macd_rsi_div_live"
     alias = _STRATEGY_ALIAS_BASE.get(base.lower())
     return alias or base
 

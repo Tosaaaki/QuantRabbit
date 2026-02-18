@@ -23,6 +23,22 @@
   - `scalp_ping_5s_b_live` 建玉にも `scalp_ping_5s` 系の負け玉整理ルールを確実適用し、
     上方向取り残しの再発を抑制する。
 
+### 2026-02-18（追記）`scalp_macd_rsi_div` legacy tag 正規化（EXIT監視漏れ修正）
+
+- 対象:
+  - `workers/scalp_macd_rsi_div/exit_worker.py`
+- 変更:
+  - `_base_strategy_tag()` で、`scalpmacdrsi*` 形式（例: `scalpmacdrsic7c3e9c1`）を
+    `scalp_macd_rsi_div_live` へ正規化する分岐を追加。
+- 背景:
+  - `quant-scalp-macd-rsi-div-exit` の `SCALP_PRECISION_EXIT_TAGS` は
+    `scalp_macd_rsi_div_live` を想定しているが、
+    旧 client_id 由来の `strategy_tag=scalpmacdrsi...` は一致せず
+    `_filter_trades()` で除外され、EXIT管理（max_hold/loss_cut）から外れていた。
+- 意図:
+  - 旧タグ建玉も現行タグへ収束させ、EXITワーカーの監視漏れで
+    長時間の上方向取り残しが発生しない状態を維持する。
+
 ### 2026-02-18（追記）`RANGEFADER_EXIT_NEW_POLICY_START_TS` の形式不一致を修正
 
 - 対象:

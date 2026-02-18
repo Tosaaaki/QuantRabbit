@@ -31,6 +31,12 @@
   `scalp_ping_5s_b_live: *SCALP_PING_5S_EXIT_PROFILE` を維持し、
   `ALLOWED_TAGS=scalp_ping_5s_b_live` の建玉が default EXITプロファイルへ落ちないようにする。
 
+### scalp_macd_rsi_div 運用補足（legacy tag 互換）
+- `quant-scalp-macd-rsi-div-exit` は `SCALP_PRECISION_EXIT_TAGS=scalp_macd_rsi_div_live` で運用する。
+- `workers/scalp_macd_rsi_div.exit_worker` では
+  `scalpmacdrsi*`（例: `scalpmacdrsic7c3e9c1`）を `scalp_macd_rsi_div_live` に正規化し、
+  旧 client_id 由来タグでも EXIT 監視から外れないようにする。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
