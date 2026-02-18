@@ -1926,3 +1926,26 @@
   - forecast は「黒板の監査メタ」に留まらず、strategy_entry 内で
     各戦略の units/probability/TP/SL へ反映される運用へ移行済み。
   - 効果判定は `eval_forecast_before_after.py` で同一期間比較を継続する。
+
+### 2026-02-18（追記）EXIT導線のタイムアウト不整合を是正（position/order service）
+
+- 背景:
+  - 本番VMで `position_manager` の `/position/open_positions` が 8s ではタイムアウトし、
+    実測で 10s 前後になる局面が継続。
+  - exit worker 側は `SCALP_PRECISION_EXIT_OPEN_POSITIONS_TIMEOUT_SEC=6.0` と
+    `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT` の既定（4.5s）で fail-fast しており、
+    `close_request` が止まり建玉が残留した。
+  - `ORDER_MANAGER_SERVICE_TIMEOUT=5.0` により `close_trade` 呼び出しもタイムアウトが発生。
+- 対応（`ops/env/quant-v2-runtime.env`）:
+  - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0`
+  - `POSITION_MANAGER_SERVICE_TIMEOUT=15.0`
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=12.0`
+  - `POSITION_MANAGER_HTTP_RETRY_TOTAL=1`
+  - `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT=4.0`
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=1.2`
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC=12.0`
+  - `SCALP_PRECISION_EXIT_OPEN_POSITIONS_TIMEOUT_SEC=12.0`
+- 意図:
+  - EXITロジック（`take_profit/lock_floor/max_adverse`）は変更せず、
+    判定結果が実際に `close_request -> close_ok` まで到達する通路だけを安定化。
+  - 失敗時は stale cache 返却で「無応答より継続判定」を優先し、取りこぼしを抑制。
