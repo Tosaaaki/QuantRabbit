@@ -54,6 +54,20 @@
   - 直近の `MicroCompressionRevert-short` は 24h/7d で pips 合計がマイナスのため、
     loser block 閾値を専用 worker 側で一段引き上げ。
 
+### 2026-02-18（追記）`quant-micro-compressionrevert-exit` の `open_positions` timeout 緩和
+
+- 対象:
+  - `ops/env/quant-micro-compressionrevert-exit.env`
+- 変更:
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=6.5`
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=1.5`
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC=6.0`
+- 目的:
+  - `quant-micro-compressionrevert-exit` で継続していた
+    `position_manager service call failed ... Read timed out` の抑制。
+  - worker 側で `open_positions` を短TTLキャッシュし、問い合わせ頻度を下げて
+    `quant-position-manager` への集中アクセスを緩和。
+
 ### 2026-02-17（追記）forecast に分位レンジ予測（上下帯）を追加
 
 - `analysis/forecast_sklearn.py` の最新予測出力に
