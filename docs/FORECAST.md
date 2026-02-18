@@ -244,6 +244,22 @@ python3 scripts/eval_forecast_before_after.py \
 
 `5m` の確率改善を優先しつつ直近24hの hit を落とさないため、上記を運用値として反映しています。
 
+同日 2026-02-18 05:09 UTC の追加再探索（VM実データ, `logs/reports/forecast_improvement/extra_improve_grid_latest.json`）で、
+`2h/4h/24h/72h` を同時最適化し、劣化ガード（24h/72h の hit/MAE 下限）を満たした候補として次を採用:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.03`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.30`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.30`（維持）
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`
+
+最終差分（new - baseline, baseline=`fg=0.04,b10=0.28,rb5=0.03,rb10=0.01`）:
+- 2h: `hit +0.0000`, `mae -0.000120`
+- 4h: `hit +0.0000`, `mae -0.000061`
+- 24h: `hit +0.003672`, `mae +0.000110`（許容ガード内）
+- 72h: `hit +0.001266`, `mae -0.000164`, `range_cov +0.000317`
+
+重み付き objective は `+0.02198` で正、かつ 24h/72h の安全条件を満たすため、
+上記値を runtime env の運用値へ更新しました。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

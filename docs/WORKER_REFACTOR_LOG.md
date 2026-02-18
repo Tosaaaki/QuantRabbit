@@ -8,6 +8,28 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-18（追記）forecast 追加改善（2h/4h/24h/72h 同時最適化）を運用値へ反映
+
+- 対象:
+  - `ops/env/quant-v2-runtime.env`
+  - `docs/FORECAST.md`
+- 変更:
+  - VM実データ再探索結果（`logs/reports/forecast_improvement/extra_improve_grid_latest.json`）に基づき、
+    次を runtime 採用値へ更新:
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.03`
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.30`
+    - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.30` は維持。
+- 評価（new - baseline）:
+  - `2h`: `hit +0.0000`, `mae -0.000120`
+  - `4h`: `hit +0.0000`, `mae -0.000061`
+  - `24h`: `hit +0.003672`, `mae +0.000110`（劣化ガード内）
+  - `72h`: `hit +0.001266`, `mae -0.000164`, `range_cov +0.000317`
+  - weighted objective: `+0.02198`
+- 意図:
+  - 24h/72h の安全条件を維持したまま、72h の hit/MAE と短中期 MAE を同時改善し、
+    直近窓での過剰反発バイアス（5m）を抑制する。
+
 ### 2026-02-18（追記）`scalp_ping_5s(_b)` EXIT に反転検知（予測バイアス併用）を追加
 
 - 対象:
