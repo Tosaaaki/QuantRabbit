@@ -8,6 +8,21 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-18（追記）`scalp_ping_5s_b_live` 取り残し対策（EXITプロファイル適用漏れ修正）
+
+- 対象:
+  - `config/strategy_exit_protections.yaml`
+- 変更:
+  - `scalp_ping_5s_b_live` キーを `*SCALP_PING_5S_EXIT_PROFILE` へ明示的にエイリアス追加。
+- 背景:
+  - `quant-scalp-ping-5s-b-exit` は `ALLOWED_TAGS=scalp_ping_5s_b_live` で建玉を監視する一方、
+    EXITプロファイル定義は `scalp_ping_5s_b` のみだったため、`_exit_profile_for_tag` が default へフォールバック。
+  - その結果、`loss_cut/non_range_max_hold/direction_flip` が無効化され、
+    無SLの負け玉が長時間残留する経路が発生していた。
+- 意図:
+  - `scalp_ping_5s_b_live` 建玉にも `scalp_ping_5s` 系の負け玉整理ルールを確実適用し、
+    上方向取り残しの再発を抑制する。
+
 ### 2026-02-18（追記）forecast 追加改善（5m breakout/session 局所再探索）を運用値へ再反映
 
 - 対象:

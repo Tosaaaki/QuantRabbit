@@ -932,6 +932,7 @@ strategies:
         - take_profit_zone
 
   scalp_ping_5s_b: *SCALP_PING_5S_EXIT_PROFILE
+  scalp_ping_5s_b_live: *SCALP_PING_5S_EXIT_PROFILE
 
   fast_scalp:
     min_profit_ratio: 0.45
