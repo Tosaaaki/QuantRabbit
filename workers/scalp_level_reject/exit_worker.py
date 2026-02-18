@@ -17,11 +17,11 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
-from workers.common.exit_utils import close_trade, mark_pnl_pips
-from workers.common.rollout_gate import load_rollout_start_ts, trade_passes_rollout
-from workers.common.reentry_decider import decide_reentry
-from workers.common.pro_stop import maybe_close_pro_stop
-from workers.common.exit_forecast import (
+from .exit_utils import close_trade, mark_pnl_pips
+from .rollout_gate import load_rollout_start_ts, trade_passes_rollout
+from .reentry_decider import decide_reentry
+from .pro_stop import maybe_close_pro_stop
+from .exit_forecast import (
     apply_exit_forecast_to_loss_cut,
     apply_exit_forecast_to_targets,
     build_exit_forecast_adjustment,

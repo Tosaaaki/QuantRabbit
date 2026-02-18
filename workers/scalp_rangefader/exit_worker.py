@@ -11,13 +11,13 @@ from analysis.range_guard import detect_range_mode
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
-from workers.common.exit_forecast import (
+from .exit_forecast import (
     apply_exit_forecast_to_targets,
     build_exit_forecast_adjustment,
 )
-from workers.common.exit_utils import close_trade, mark_pnl_pips
-from workers.common.reentry_decider import decide_reentry
-from workers.common.pro_stop import maybe_close_pro_stop
+from .exit_utils import close_trade, mark_pnl_pips
+from .reentry_decider import decide_reentry
+from .pro_stop import maybe_close_pro_stop
 
 
 from . import config

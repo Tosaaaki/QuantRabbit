@@ -2019,3 +2019,25 @@
   - `rg` による委譲参照確認で `exit_worker -> 別 exit_worker` 参照は 0 件。
   - `python3 -m py_compile`（対象13 worker + 12 config）通過。
   - `pytest -q tests/workers/test_exit_forecast.py tests/workers/test_loss_cut.py tests/addons/test_session_open_worker.py`（8 passed）。
+
+### 2026-02-18（追記）EXIT低レイヤ共通モジュールの戦略別内製化
+
+- 要求:
+  - 「戦略ごとに内製化」: `exit_worker` 実行パスで `workers/common/*` に依存しない構成へ移行。
+- 実装:
+  - 全 `workers/*/exit_worker.py`（25本）の `from workers.common.*` をローカル import へ差し替え。
+  - 各戦略パッケージ内へ、必要なEXIT低レイヤを複製配置:
+    - `exit_utils.py`
+    - `exit_emergency.py`
+    - `reentry_decider.py`
+    - `pro_stop.py`
+    - `loss_cut.py`
+    - `exit_scaling.py`
+    - `exit_forecast.py`
+    - `rollout_gate.py`（使用戦略のみ）
+  - `exit_utils.py` 内の緊急許可参照も `workers.common.exit_emergency` ではなく
+    同一戦略パッケージ内 `exit_emergency` を参照するよう変更。
+- 検証:
+  - `rg` で `exit_worker` + ローカルEXITモジュール群に `workers.common` 参照が残っていないことを確認。
+  - `python3 -m py_compile`（exit_worker + ローカルEXITモジュール、193ファイル）通過。
+  - `pytest -q tests/workers/test_exit_forecast.py tests/workers/test_loss_cut.py tests/addons/test_session_open_worker.py`（8 passed）。
