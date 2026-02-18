@@ -25,6 +25,8 @@
   `quant-order-manager` の環境で運用し、低確率シグナルを `order_manager` 側で reject する。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
+  - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、
+    値は ISO ではなく Unix秒（例: `1771286400`）で指定する。
 - `config/strategy_exit_protections.yaml` では
   `scalp_ping_5s_b_live: *SCALP_PING_5S_EXIT_PROFILE` を維持し、
   `ALLOWED_TAGS=scalp_ping_5s_b_live` の建玉が default EXITプロファイルへ落ちないようにする。

@@ -23,6 +23,22 @@
   - `scalp_ping_5s_b_live` 建玉にも `scalp_ping_5s` 系の負け玉整理ルールを確実適用し、
     上方向取り残しの再発を抑制する。
 
+### 2026-02-18（追記）`RANGEFADER_EXIT_NEW_POLICY_START_TS` の形式不一致を修正
+
+- 対象:
+  - `ops/env/quant-scalp-ping-5s-b-exit.env`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を ISO文字列から Unix秒へ変更。
+    - 旧: `2026-02-17T00:00:00Z`（`_float_env` で読めず default=現在時刻へフォールバック）
+    - 新: `1771286400`（2026-02-17 00:00:00 UTC）
+- 背景:
+  - `workers/scalp_ping_5s_b/exit_worker.py` は同キーを `_float_env` で読む実装のため、
+    文字列日時だと毎回「起動時刻」が `new_policy_start_ts` になり、既存建玉が常に legacy 扱いになっていた。
+- 意図:
+  - restart後も既存の `scalp_ping_5s_b_live` 建玉へ新ポリシーを継続適用し、
+    `loss_cut/non_range_max_hold/direction_flip` が有効な状態を維持する。
+
 ### 2026-02-18（追記）forecast 追加改善（5m breakout/session 局所再探索）を運用値へ再反映
 
 - 対象:
