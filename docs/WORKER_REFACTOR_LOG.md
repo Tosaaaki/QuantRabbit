@@ -150,6 +150,26 @@
     `1m=0.0,5m=0.26,10m=0.34` に更新。
   - `scripts/eval_forecast_before_after.py` の既定 map も同値へ更新。
 
+### 2026-02-17（追記）session bias 10m重みを 0.38 へ再引き上げ
+
+- 背景:
+  - 上記更新後に同一固定データで再グリッド（`/tmp/forecast_eval_grid_00..07.json`）を実施し、
+    5mを維持しつつ10mをさらに上げられる設定を探索。
+- 比較条件:
+  - 入力固定: `/tmp/candles_eval_full_20260217_2237_wrapped.json`
+  - 期間: `bars=8050`（`2026-01-06T07:30:00+00:00`〜`2026-02-17T23:59:00+00:00`）
+  - breakout は `1m=0.16,5m=0.22,10m=0.30` 固定。
+- 最良:
+  - `session_bias_weight_map=1m=0.0,5m=0.26,10m=0.38`
+    - `5m`: hit `0.4886`（維持）, MAE `3.2707`（維持）
+    - `10m`: hit `0.4878 -> 0.4900`, MAE `4.8568 -> 4.8564`
+  - 参考: grid score（`score_5_10`）は `0.897385` で候補中最大。
+- 反映:
+  - `workers/common/forecast_gate.py` の既定
+    `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP` を
+    `1m=0.0,5m=0.26,10m=0.38` に更新。
+  - `scripts/eval_forecast_before_after.py` の既定 map も同値へ更新。
+
 ### 2026-02-17（追記）live未確定バーでの `feature_row_incomplete` 誤発生を抑止
 
 - 事象:
