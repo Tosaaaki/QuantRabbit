@@ -141,6 +141,16 @@ _TECH_SESSION_BIAS_LOOKBACK = max(
     _TECH_SESSION_BIAS_MIN_SAMPLES,
     int(_env_float("FORECAST_TECH_SESSION_BIAS_LOOKBACK", 720)),
 )
+_TECH_REBOUND_ENABLED = _env_bool("FORECAST_TECH_REBOUND_ENABLED", True)
+_TECH_REBOUND_WEIGHT = max(
+    0.0,
+    min(0.5, _env_float("FORECAST_TECH_REBOUND_WEIGHT", 0.06)),
+)
+_TECH_REBOUND_WEIGHT_MAP = _parse_horizon_weight_map(
+    os.getenv("FORECAST_TECH_REBOUND_WEIGHT_MAP", "1m=0.10,5m=0.04,10m=0.02"),
+    lo=0.0,
+    hi=0.5,
+)
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -558,6 +568,35 @@ def _extract_candle_close(candle: Any) -> Optional[float]:
     return None
 
 
+def _extract_candle_ohlc(candle: Any) -> Optional[tuple[float, float, float, float]]:
+    if not isinstance(candle, dict):
+        return None
+
+    def _pick(primary: str, fallback: str) -> Optional[float]:
+        value = candle.get(primary)
+        if isinstance(value, dict):
+            value = value.get(fallback)
+        parsed = _safe_optional_float(value)
+        if parsed is not None and math.isfinite(parsed):
+            return float(parsed)
+        mid = candle.get("mid")
+        if isinstance(mid, dict):
+            parsed_mid = _safe_optional_float(mid.get(fallback))
+            if parsed_mid is not None and math.isfinite(parsed_mid):
+                return float(parsed_mid)
+        return None
+
+    o = _pick("open", "o")
+    h = _pick("high", "h")
+    l = _pick("low", "l")
+    c = _pick("close", "c")
+    if None in {o, h, l, c}:
+        return None
+    if float(h) < float(l):
+        return None
+    return float(o), float(h), float(l), float(c)
+
+
 def _future_pips_from_candles_tail(
     *,
     candles: list[dict],
@@ -702,6 +741,15 @@ def _breakout_adaptive_weight_for_horizon(horizon: str) -> float:
     if key in _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP:
         return float(_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP[key])
     return float(_TECH_BREAKOUT_ADAPTIVE_WEIGHT)
+
+
+def _rebound_weight_for_horizon(horizon: str) -> float:
+    key = str(horizon or "").strip().lower()
+    if not key:
+        return float(_TECH_REBOUND_WEIGHT)
+    if key in _TECH_REBOUND_WEIGHT_MAP:
+        return float(_TECH_REBOUND_WEIGHT_MAP[key])
+    return float(_TECH_REBOUND_WEIGHT)
 
 
 def _sigmoid(x: float) -> float:
@@ -865,6 +913,86 @@ def _estimate_target_reach_prob(
     if not math.isfinite(prob):
         return None
     return round(_clamp(float(prob), 0.0, 1.0), 6)
+
+
+def _rebound_bias_signal(
+    *,
+    ret1: float,
+    ret3: float,
+    ret12: float,
+    rsi: float,
+    range_pos: float,
+    sr_balance: float,
+    trend_accel: float,
+    trend_pullback: float,
+    breakout_bias: float,
+    trend_strength: float,
+    last_candle: Optional[dict[str, Any]],
+) -> tuple[float, dict[str, float]]:
+    drop_score = _clamp(
+        0.44 * _clamp(math.tanh(-ret1 * 1.35), 0.0, 1.0)
+        + 0.34 * _clamp(math.tanh(-ret3 * 1.05), 0.0, 1.0)
+        + 0.22 * _clamp(math.tanh(-ret12 * 0.72), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    oversold_score = _clamp(
+        0.40 * _clamp(math.tanh(-rsi * 1.15), 0.0, 1.0)
+        + 0.32 * _clamp(math.tanh(-range_pos * 1.25), 0.0, 1.0)
+        + 0.28 * _clamp(math.tanh(-sr_balance * 1.10), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    decel_score = _clamp(
+        0.58 * _clamp(math.tanh(trend_accel * 1.20), 0.0, 1.0)
+        + 0.42 * _clamp(math.tanh(-trend_pullback * 0.95), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+
+    wick_score = 0.0
+    ohlc = _extract_candle_ohlc(last_candle)
+    if ohlc is not None:
+        o, h, l, c = ohlc
+        span = max(1e-6, h - l)
+        lower_wick = max(0.0, min(o, c) - l)
+        upper_wick = max(0.0, h - max(o, c))
+        body = abs(c - o)
+        lower_ratio = lower_wick / span
+        upper_ratio = upper_wick / span
+        close_pos = _clamp((c - l) / span, 0.0, 1.0)
+        body_ratio = _clamp(body / span, 0.0, 1.0)
+        wick_score = _clamp(
+            0.62 * max(lower_ratio - upper_ratio, 0.0)
+            + 0.28 * _clamp((close_pos - 0.52) / 0.48, 0.0, 1.0)
+            + 0.10 * _clamp((0.40 - body_ratio) / 0.40, 0.0, 1.0),
+            0.0,
+            1.0,
+        )
+
+    breakout_drag = _clamp(math.tanh(max(0.0, -breakout_bias) * 1.05), 0.0, 1.0)
+    trend_drag = _clamp((trend_strength - 0.72) / 0.28, 0.0, 1.0)
+
+    core = _clamp(
+        0.42 * oversold_score + 0.36 * decel_score + 0.22 * wick_score,
+        0.0,
+        1.0,
+    )
+    rebound_signal = drop_score * core
+    rebound_signal *= (1.0 - 0.42 * breakout_drag)
+    rebound_signal *= (1.0 - 0.48 * trend_drag)
+    if drop_score < 0.20:
+        rebound_signal *= 0.35
+    if oversold_score < 0.15:
+        rebound_signal *= 0.50
+    rebound_signal = _clamp(rebound_signal, 0.0, 1.0)
+
+    return rebound_signal, {
+        "drop_score": round(float(drop_score), 6),
+        "oversold_score": round(float(oversold_score), 6),
+        "decel_score": round(float(decel_score), 6),
+        "wick_score": round(float(wick_score), 6),
+    }
 
 
 def _normalize_strategy_key(text: str) -> str:
@@ -1905,12 +2033,37 @@ def _technical_prediction_for_horizon(
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
     breakout_weight = _breakout_adaptive_weight_for_horizon(horizon)
     session_bias_weight = _session_bias_weight_for_horizon(horizon)
+    rebound_weight = 0.0
+    rebound_signal = 0.0
+    rebound_components: dict[str, float] = {
+        "drop_score": 0.0,
+        "oversold_score": 0.0,
+        "decel_score": 0.0,
+        "wick_score": 0.0,
+    }
+    if _TECH_REBOUND_ENABLED:
+        rebound_weight = _rebound_weight_for_horizon(horizon)
+        if rebound_weight > 0.0:
+            rebound_signal, rebound_components = _rebound_bias_signal(
+                ret1=ret1,
+                ret3=ret3,
+                ret12=ret12,
+                rsi=rsi,
+                range_pos=range_pos,
+                sr_balance=sr_balance,
+                trend_accel=trend_accel,
+                trend_pullback=trend_pullback,
+                breakout_bias=breakout_bias,
+                trend_strength=trend_strength,
+                last_candle=(candles[-1] if candles else None),
+            )
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + _TECH_PROJECTION_WEIGHT * projection_score
         + breakout_weight * breakout_adaptive
         + session_bias_weight * session_bias
+        + rebound_weight * rebound_signal
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * float(_TECH_SCORE_GAIN) * combo)
 
@@ -1966,6 +2119,12 @@ def _technical_prediction_for_horizon(
             "session_mean_pips_jst": round(float(session_mean_pips), 6),
             "session_samples_jst": int(session_samples),
             "session_hour_jst": int(session_hour_jst) if session_hour_jst is not None else None,
+            "rebound_signal_20": round(float(rebound_signal), 6),
+            "rebound_drop_score_20": rebound_components.get("drop_score"),
+            "rebound_oversold_score_20": rebound_components.get("oversold_score"),
+            "rebound_decel_score_20": rebound_components.get("decel_score"),
+            "rebound_wick_score_20": rebound_components.get("wick_score"),
+            "rebound_weight": round(float(rebound_weight), 6),
             "squeeze_score_20": round(float(squeeze_score), 6),
             "timeframe": timeframe,
             "step_bars": int(step_bars) if step_bars else 0,

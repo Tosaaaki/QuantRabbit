@@ -22,6 +22,8 @@
 - サポレジ/ブレイク系: `support_gap_pips_20`, `resistance_gap_pips_20`, `sr_balance_20`,
   `breakout_up_pips_20`, `breakout_down_pips_20`, `donchian_width_pips_20`, `range_compression_20`
 - 予測行には監査用に `breakout_bias_20` / `squeeze_score_20` も出力され、`vm_forecast_snapshot.py` で確認可能
+- 反発監査キー: `rebound_signal_20` / `rebound_drop_score_20` / `rebound_oversold_score_20` /
+  `rebound_decel_score_20` / `rebound_wick_score_20` / `rebound_weight`
 - 分位レンジ（上下帯）として `range_low_pips` / `range_high_pips` / `range_sigma_pips` と
   `range_low_price` / `range_high_price` を出力し、`q10_pips` / `q50_pips` / `q90_pips` も監査可能
 
@@ -62,6 +64,9 @@ python scripts/train_forecast_bundle.py --instrument USD_JPY --out config/foreca
 - `FORECAST_GATE_SOURCE=auto|bundle|technical`
 - `FORECAST_TECH_ENABLED=1`
 - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`（新特徴量の寄与ゲイン。`0.0` で無効、`0.0-1.0` で段階適用）
+- `FORECAST_TECH_REBOUND_ENABLED=1`（急落後反発シグナルを有効化）
+- `FORECAST_TECH_REBOUND_WEIGHT=0.06`（horizon map 未指定時の既定重み）
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.04,10m=0.02`（短期TFの反発重み）
 - `FORECAST_RANGE_BAND_LOWER_Q=0.20`（予測帯の下限分位）
 - `FORECAST_RANGE_BAND_UPPER_Q=0.80`（予測帯の上限分位）
 - `FORECAST_RANGE_SIGMA_FLOOR_PIPS=0.35`（予測帯の最小分散）
@@ -179,14 +184,20 @@ python3 scripts/eval_forecast_before_after.py \
 同一時点の before/after 比較（`max-bars=120/240`）では、上記設定で
 `1m/5m` の `hit_delta` マイナスを解消し、`10m` はプラスを維持することを確認済みです。
 
-同日フォローアップとして、OANDA再取得の連続データ（M1 774本, 直近13h）で
-`6h/12h` 同時グリッドを再実施し、次を採用値に更新:
-- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.05`
-- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.20,10m=0.28`
-- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`（維持）
+2026-02-18 フォローアップ（反発シグナル追加）では、VM実データ（M1連続窓）を同一期間で再評価し、
+短期TFの採用値を次で固定:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`（再固定）
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.10,5m=0.18,10m=0.26`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`
+- `FORECAST_TECH_REBOUND_ENABLED=1`
+- `FORECAST_TECH_REBOUND_WEIGHT=0.06`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.04,10m=0.02`
 
-短中期比較（120/240/360/720 bars）では、旧候補（gain=0.0, breakout=0.10/0.18/0.26）比で
-`total_hit` と `total_mae` がともに小幅改善し、`5m` の符号悪化回数を増やさないことを確認。
+同一データ比較（`logs/reports/forecast_improvement/rebound_tune_report_20260218T024741Z.md`）では、
+候補適用時の `after` 指標差分（candidate-after - base-after）は次:
+- `1m`: `hit +0.0002`, `mae -0.0002`
+- `5m`: `hit -0.0001`, `mae -0.0002`
+- `10m`: `hit +0.0000`, `mae -0.0002`
 
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`

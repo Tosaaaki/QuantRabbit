@@ -77,6 +77,12 @@ def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
         "trend_accel_pips",
         "sr_balance_20",
         "breakout_bias_20",
+        "rebound_signal_20",
+        "rebound_drop_score_20",
+        "rebound_oversold_score_20",
+        "rebound_decel_score_20",
+        "rebound_wick_score_20",
+        "rebound_weight",
         "squeeze_score_20",
         "range_low_pips",
         "range_high_pips",
@@ -95,6 +101,50 @@ def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
     assert float(down_row["range_low_pips"]) < float(down_row["range_high_pips"])
     assert float(up_row["range_sigma_pips"]) > 0.0
     assert float(down_row["range_sigma_pips"]) > 0.0
+
+
+def test_rebound_bias_signal_rewards_lower_wick_rejection() -> None:
+    reject_signal, reject_components = forecast_gate._rebound_bias_signal(
+        ret1=-1.8,
+        ret3=-2.2,
+        ret12=-2.6,
+        rsi=-0.9,
+        range_pos=-0.8,
+        sr_balance=-0.7,
+        trend_accel=0.35,
+        trend_pullback=-0.5,
+        breakout_bias=-0.4,
+        trend_strength=0.55,
+        last_candle={
+            "open": 153.70,
+            "high": 153.72,
+            "low": 153.58,
+            "close": 153.715,
+        },
+    )
+    continuation_signal, continuation_components = forecast_gate._rebound_bias_signal(
+        ret1=-1.8,
+        ret3=-2.2,
+        ret12=-2.6,
+        rsi=-0.9,
+        range_pos=-0.8,
+        sr_balance=-0.7,
+        trend_accel=0.35,
+        trend_pullback=-0.5,
+        breakout_bias=-0.4,
+        trend_strength=0.55,
+        last_candle={
+            "open": 153.70,
+            "high": 153.71,
+            "low": 153.58,
+            "close": 153.62,
+        },
+    )
+
+    assert 0.0 <= float(reject_signal) <= 1.0
+    assert 0.0 <= float(continuation_signal) <= 1.0
+    assert float(reject_components["wick_score"]) > float(continuation_components["wick_score"])
+    assert float(reject_signal) > float(continuation_signal)
 
 
 def test_technical_prediction_uses_latest_finite_feature_row(monkeypatch) -> None:

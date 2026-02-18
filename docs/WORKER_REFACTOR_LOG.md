@@ -49,6 +49,39 @@
   - 「このまま持つか / いったん切ってプルバック再エントリーを待つか」の判断を、
     方向確率・edge に加えて目標到達確率でも機械判定できるようにする。
 
+### 2026-02-18（追記）forecast に「急落後反発」シグナルを追加し短期重みを再固定
+
+- 対象:
+  - `workers/common/forecast_gate.py`
+  - `tests/workers/test_forecast_gate.py`
+  - `ops/env/quant-v2-runtime.env`
+  - `docs/FORECAST.md`
+- 変更:
+  - `forecast_gate` の technical 予測へ、急落後反発の補助シグナルを追加。
+    - 構成: `drop_score`（直近下落強度）+ `oversold_score` + `decel_score` + `wick_score`（下ヒゲ拒否）
+    - 監査キー: `rebound_signal_20`, `rebound_*_score_20`, `rebound_weight`
+    - `combo` へ `rebound_weight * rebound_signal` を加算（短期重み map で調整）。
+  - 新env:
+    - `FORECAST_TECH_REBOUND_ENABLED=1`
+    - `FORECAST_TECH_REBOUND_WEIGHT=0.06`
+    - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.04,10m=0.02`
+  - 既定再固定:
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.10,5m=0.18,10m=0.26`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.18,10m=0.30`
+  - テスト:
+    - `tests/workers/test_forecast_gate.py` に反発シグナルと下ヒゲ拒否の差分検証を追加。
+    - 実行: `pytest -q tests/workers/test_forecast_gate.py`（20 passed）。
+- 評価（VM実データ由来の同一期間）:
+  - 比較レポート:
+    - `logs/reports/forecast_improvement/forecast_eval_rebound_base_20260218T024741Z.json`
+    - `logs/reports/forecast_improvement/forecast_eval_rebound_tuned_20260218T024741Z.json`
+    - `logs/reports/forecast_improvement/rebound_tune_report_20260218T024741Z.md`
+  - candidate-after - base-after:
+    - `1m`: `hit +0.0002`, `mae -0.0002`
+    - `5m`: `hit -0.0001`, `mae -0.0002`
+    - `10m`: `hit +0.0000`, `mae -0.0002`
+
 ### 2026-02-18（追記）`position_manager` の close 導線を service-safe 化 + `MicroCompressionRevert` 一時抑制
 
 - 対象:
