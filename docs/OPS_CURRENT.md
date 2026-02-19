@@ -1,5 +1,33 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-5. 2026-02-19 UTC `scalp_ping_5s_b_live` 方向転換遅れ + 注文ログ詰まりの同時是正
+- 背景（VM実測）:
+  - `sl_streak_direction_flip_reason` が `below_min_streak / streak_stale` に偏り、SL連敗後の反転が不発。
+  - `quant-order-manager` と `quant-scalp-ping-5s-b` で `failed to persist orders log: database is locked` が多発し、
+    `coordinate_entry_intent` timeout と `order_manager_none` を誘発。
+- 実装反映:
+  - `workers/scalp_ping_5s/worker.py`
+    - `SL streak flip` に `metrics override` を追加。
+      - 連続SL streak が不足/失効でも、side別 recent統計（`SL hits / side trades / opposite MARKET+`）が
+        閾値を満たす場合は方向反転を許可。
+      - 監査 reason に `slrate` と `m_ovr`（metrics override）を追加。
+  - `workers/scalp_ping_5s/config.py`
+    - 追加パラメータ:
+      - `SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED`
+      - `SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN`
+      - `SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN`
+  - `execution/order_manager.py`
+    - `ORDER_DB_BUSY_TIMEOUT_MS` の既定を `5000 -> 250` ms に短縮
+      （orders.db lock待機で発注経路が詰まるのを回避）。
+  - `ops/env/scalp_ping_5s_b.env` / `ops/env/quant-order-manager.env`
+    - `SL_STREAK_DIRECTION_FLIP_METRICS_*` をBへ明示設定。
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE: 0.45 -> 0.42`
+      （方向補正後probの通過率を少し戻し、件数低下を抑制）。
+    - `ORDER_DB_BUSY_TIMEOUT_MS=250` を反映。
+- 目的:
+  - 「SLを何回か踏んだ側」を早く切り替える。
+  - DBロック由来の timeout/reject で反転シグナル自体が失われる問題を抑える。
+
 ## 0-4. 2026-02-19 UTC `scalp_ping_5s_b_live` 緊急デリスク（連続マイナス拡大の抑制）
 - 背景（VM実測）:
   - `scalp_ping_5s_b_live` 直近2hで `-104.8 pips`。

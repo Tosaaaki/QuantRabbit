@@ -2654,7 +2654,9 @@ def _manual_net_units(positions: Optional[dict] = None) -> tuple[int, int]:
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
 _ORDER_DB_JOURNAL_MODE = os.getenv("ORDER_DB_JOURNAL_MODE", "WAL")
 _ORDER_DB_SYNCHRONOUS = os.getenv("ORDER_DB_SYNCHRONOUS", "NORMAL")
-_ORDER_DB_BUSY_TIMEOUT_MS = int(os.getenv("ORDER_DB_BUSY_TIMEOUT_MS", "5000"))
+# Keep order logging non-blocking in hot paths; long DB waits can cascade into
+# coordinate_entry_intent timeouts and delayed direction flips.
+_ORDER_DB_BUSY_TIMEOUT_MS = int(os.getenv("ORDER_DB_BUSY_TIMEOUT_MS", "250"))
 _ORDER_DB_WAL_AUTOCHECKPOINT_PAGES = int(
     os.getenv("ORDER_DB_WAL_AUTOCHECKPOINT_PAGES", "500")
 )

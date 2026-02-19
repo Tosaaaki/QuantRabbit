@@ -412,6 +412,33 @@ SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS: int = max(
     0,
     int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS", "1"))),
 )
+SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN",
+                "4" if ENV_PREFIX == "SCALP_PING_5S_B" else "8",
+            )
+        )
+    ),
+)
+SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN",
+                "0.50" if ENV_PREFIX == "SCALP_PING_5S_B" else "0.60",
+            )
+        ),
+    ),
+)
 SL_STREAK_DIRECTION_FLIP_FORCE_STREAK: int = max(
     SL_STREAK_DIRECTION_FLIP_MIN_STREAK,
     int(

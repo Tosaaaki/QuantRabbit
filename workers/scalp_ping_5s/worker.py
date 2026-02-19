@@ -3463,38 +3463,73 @@ def _maybe_sl_streak_direction_flip(
     if current_side not in {"long", "short"}:
         return None, "invalid_signal_side", SlFlipEval(None, 0, 0, False, False)
 
-    streak = _load_stop_loss_streak(
-        strategy_tag=strategy_tag,
-        pocket=pocket,
-        now_utc=now_utc,
-        now_mono=now_mono,
-    )
-    if streak is None:
-        return None, "no_streak", SlFlipEval(None, 0, 0, False, False)
-
-    min_streak = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_STREAK))
-    if streak.streak < min_streak:
-        return None, "below_min_streak", SlFlipEval(streak, 0, 0, False, False)
-    max_age_sec = max(0.0, float(config.SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC))
-    if max_age_sec > 0.0 and streak.age_sec > max_age_sec:
-        return None, "streak_stale", SlFlipEval(streak, 0, 0, False, False)
-    if streak.side != current_side:
-        return None, "already_opposite", SlFlipEval(streak, 0, 0, False, False)
-
     target_side = "short" if current_side == "long" else "long"
-    direction_confirmed = False
-    horizon_confirmed = False
+    min_streak = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_STREAK))
+    max_age_sec = max(0.0, float(config.SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC))
+    min_side_sl_hits = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS))
+    min_target_market_plus = max(0, int(config.SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS))
+
     metrics = _load_recent_side_close_metrics(
         strategy_tag=strategy_tag,
         pocket=pocket,
         now_mono=now_mono,
     )
     if metrics is None:
-        return None, "metrics_unavailable", SlFlipEval(streak, 0, 0, False, False)
-
+        return None, "metrics_unavailable", SlFlipEval(None, 0, 0, False, False)
     side_sl_hits_recent = int(metrics.sl_hits(current_side))
     target_market_plus_recent = int(metrics.market_plus(target_side))
-    min_side_sl_hits = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS))
+    side_trades_recent = (
+        int(metrics.long_trades)
+        if current_side == "long"
+        else int(metrics.short_trades)
+    )
+    side_sl_rate_recent = (
+        float(side_sl_hits_recent) / float(max(1, side_trades_recent))
+    )
+
+    streak = _load_stop_loss_streak(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        now_utc=now_utc,
+        now_mono=now_mono,
+    )
+    direction_confirmed = False
+    horizon_confirmed = False
+    if streak is not None and streak.side != current_side:
+        return (
+            None,
+            "already_opposite",
+            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+        )
+
+    streak_count = int(streak.streak) if streak is not None else 0
+    streak_is_stale = bool(
+        streak is not None and max_age_sec > 0.0 and streak.age_sec > max_age_sec
+    )
+    metrics_override = bool(config.SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED)
+    metrics_override = bool(
+        metrics_override
+        and side_sl_hits_recent >= min_side_sl_hits
+        and target_market_plus_recent >= min_target_market_plus
+        and side_trades_recent >= int(config.SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN)
+        and side_sl_rate_recent
+        >= float(config.SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN)
+    )
+    if streak is None and not metrics_override:
+        return None, "no_streak", SlFlipEval(None, side_sl_hits_recent, target_market_plus_recent, False, False)
+    if streak_count < min_streak and not metrics_override:
+        return (
+            None,
+            "below_min_streak",
+            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+        )
+    if streak_is_stale and not metrics_override:
+        return (
+            None,
+            "streak_stale",
+            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+        )
+
     if side_sl_hits_recent < min_side_sl_hits:
         return (
             None,
@@ -3502,9 +3537,8 @@ def _maybe_sl_streak_direction_flip(
             SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
         )
 
-    min_target_market_plus = max(0, int(config.SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS))
     force_streak = max(min_streak, int(config.SL_STREAK_DIRECTION_FLIP_FORCE_STREAK))
-    force_flip_by_streak = streak.streak >= force_streak
+    force_flip_by_streak = streak_count >= force_streak
     if target_market_plus_recent < min_target_market_plus and not force_flip_by_streak:
         return (
             None,
@@ -3555,7 +3589,7 @@ def _maybe_sl_streak_direction_flip(
 
     confidence_add = int(config.SL_STREAK_DIRECTION_FLIP_CONFIDENCE_ADD) + max(
         0,
-        streak.streak - min_streak,
+        max(streak_count, side_sl_hits_recent) - min_streak,
     )
     flipped = _retarget_signal(
         signal,
@@ -3565,8 +3599,9 @@ def _maybe_sl_streak_direction_flip(
     )
     reason = (
         f"{current_side}->{target_side}:"
-        f"slx{streak.streak},age={streak.age_sec:.0f}s,"
+        f"slx{streak_count},age={(streak.age_sec if streak is not None else float('inf')):.0f}s,"
         f"slhits={side_sl_hits_recent},mktplus={target_market_plus_recent},"
+        f"slrate={side_sl_rate_recent:.2f},m_ovr={int(metrics_override)},"
         f"tech={int(direction_confirmed or horizon_confirmed)},"
         f"force={int(force_flip_by_streak)},"
         f"force_tech={int(force_tech_bypass)}"
