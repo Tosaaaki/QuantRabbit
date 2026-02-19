@@ -336,6 +336,18 @@ FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN: int = max(
     1,
     int(float(os.getenv("SCALP_PING_5S_FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN", "2"))),
 )
+FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN: float = max(
+    FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN",
+                "0.70",
+            )
+        ),
+    ),
+)
 FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS: float = max(
     0.0,
     float(os.getenv("SCALP_PING_5S_FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS", "0.08")),

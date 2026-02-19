@@ -2710,6 +2710,10 @@
       reject せず `signal.side` を即時反転する
       `_maybe_fast_direction_flip` を追加。
     - 反転後は `horizon` を再評価し、`*_fflip` モードで `entry_thesis` に記録。
+    - `extrema_reversal` 後にも最終 side へ再適用するようにし、
+      逆向き上書きが残っても post-route で是正できるよう更新。
+    - `horizon=neutral` でも `direction_bias` が強い場合は反転を許可する
+      neutral-horizon 条件（bias強度閾値）を追加。
   - `ops/env/scalp_ping_5s_b.env`
     - `SCALP_PING_5S_B_FAST_DIRECTION_FLIP_*` を設定し、
       低遅延（cooldown短め）で方向反転を許可。

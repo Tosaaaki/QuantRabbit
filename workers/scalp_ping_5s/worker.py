@@ -2993,21 +2993,23 @@ def _maybe_fast_direction_flip(
     if now_mono - _LAST_FAST_FLIP_MONO < cooldown_sec:
         return None, "cooldown"
 
-    horizon_side = str(getattr(horizon, "composite_side", "")).strip().lower()
-    if horizon_side != target_side:
-        return None, "horizon_mismatch"
-
     bias_score = abs(_safe_float(getattr(direction_bias, "score", 0.0), 0.0))
     if bias_score < float(config.FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN):
         return None, "bias_weak"
 
+    horizon_side = str(getattr(horizon, "composite_side", "")).strip().lower()
     horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
-    if horizon_score < float(config.FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN):
-        return None, "horizon_weak"
-
     horizon_agree = int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0))
-    if horizon_agree < int(config.FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN):
-        return None, "horizon_disagree"
+    if horizon_side == target_side:
+        if horizon_score < float(config.FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN):
+            return None, "horizon_weak"
+        if horizon_agree < int(config.FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN):
+            return None, "horizon_disagree"
+    elif horizon_side == "neutral":
+        if bias_score < float(config.FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN):
+            return None, "horizon_neutral_bias_weak"
+    else:
+        return None, "horizon_mismatch"
 
     bias_momentum = _safe_float(getattr(direction_bias, "momentum_pips", 0.0), 0.0)
     min_momentum = max(0.0, float(config.FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS))

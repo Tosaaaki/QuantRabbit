@@ -32,6 +32,12 @@ def _set_fast_flip_config(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         scalp_worker.config,
+        "FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN",
+        0.7,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
         "FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS",
         0.05,
         raising=False,
@@ -213,6 +219,48 @@ def test_fast_direction_flip_respects_cooldown(monkeypatch) -> None:
 
     assert flipped is None
     assert reason == "cooldown"
+
+
+def test_fast_direction_flip_allows_neutral_horizon_when_bias_is_strong(monkeypatch) -> None:
+    _set_fast_flip_config(monkeypatch)
+    monkeypatch.setattr(scalp_worker, "_LAST_FAST_FLIP_MONO", 0.0)
+
+    signal = _sample_signal("short")
+    bias = scalp_worker.DirectionBias(
+        side="long",
+        score=0.85,
+        momentum_pips=0.25,
+        flow=0.7,
+        range_pips=1.6,
+        vol_norm=0.8,
+        tick_rate=8.5,
+        span_sec=1.0,
+    )
+    horizon = scalp_worker.HorizonBias(
+        long_side="neutral",
+        long_score=0.04,
+        mid_side="neutral",
+        mid_score=0.02,
+        short_side="neutral",
+        short_score=-0.03,
+        micro_side="neutral",
+        micro_score=0.01,
+        composite_side="neutral",
+        composite_score=0.02,
+        agreement=0,
+    )
+
+    flipped, reason = scalp_worker._maybe_fast_direction_flip(
+        signal,
+        direction_bias=bias,
+        horizon=horizon,
+        regime=None,
+        now_mono=10.0,
+    )
+
+    assert flipped is not None
+    assert flipped.side == "long"
+    assert "short->long" in reason
 
 
 def test_fast_direction_flip_blocks_on_strong_counter_regime(monkeypatch) -> None:

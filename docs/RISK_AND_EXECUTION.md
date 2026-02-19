@@ -34,6 +34,8 @@
   `direction_bias` と `horizon_bias` が同方向で強く一致した場合に
   エントリーをブロックせず `fast_direction_flip` で side を即時リルートする。
   - 既定は B で有効（`SCALP_PING_5S_B_FAST_DIRECTION_FLIP_ENABLED=1`）。
+  - `horizon=neutral` でも `direction_bias` が十分強ければ反転を許可する
+    （`SCALP_PING_5S_B_FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN`）。
   - 頻度維持のため、reject ではなく side リライト＋confidence 加算のみ行う。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
