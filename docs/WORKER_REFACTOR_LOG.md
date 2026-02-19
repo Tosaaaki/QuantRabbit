@@ -3081,3 +3081,33 @@
 - 目的:
   - エントリー頻度を落とさず、損失が出やすい確率帯への過大配分を抑える。
   - 利が伸びる帯へロットを寄せることで、同一シグナル密度でも期待値を改善する。
+
+### 2026-02-19（追記）利小損大是正: `scalp_ping_5s_b_live` EXIT非対称を再調整
+
+- 背景（VM, 直近12h）:
+  - `scalp_ping_5s_b_live` は `avg_win=+2.021p` に対して `avg_loss=-3.634p`。
+  - 特に `MARKET_ORDER_TRADE_CLOSE` 負け平均が `-6.343p` と深く、
+    short 側で長時間保有の tail 損失が残っていた。
+- 実施:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_b` / `scalp_ping_5s_b_live` の `exit_profile` を再調整。
+      - 利益側（利を伸ばす）:
+        - `profit_pips: 2.4`（from 2.0）
+        - `trail_start_pips: 2.7`（from 2.3）
+        - `range_profit_pips: 1.8`（from 1.6）
+      - 損失側（深い逆行を抑制）:
+        - `loss_cut_hard_pips: 6.0`（from 8.0）
+        - `loss_cut_hard_cap_pips: 6.2`（新規）
+        - `loss_cut_max_hold_sec: 900`（from 1200）
+        - `non_range_max_hold_sec: 780`（from 900）
+        - `non_range_max_hold_sec_short: 240`（`b_live` にも追加）
+      - 方向反転（short早期退避）:
+        - `direction_flip` の `short_*` 閾値を前倒し
+        - `de_risk_fraction: 0.55`（from 0.40）
+- テスト:
+  - `tests/workers/test_scalp_ping_5s_exit_worker.py`
+  - `tests/workers/test_scalp_ping_5s_extrema_routes.py`
+  - 結果: `11 passed`
+- 目的:
+  - まず「負けを深くしない」を優先して、
+    1トレード損益の非対称（損大・利小）を改善する。

@@ -209,6 +209,21 @@
   - 目的:
     - エントリー頻度は維持しつつ、負け筋への過大ロット集中を抑え、
       勝ち筋への配分を増やす。
+- 2026-02-19 UTC 追加: `scalp_ping_5s_b_live` 利小損大是正（EXIT非対称の強化）
+  - 背景（VM, 直近12h）:
+    - 平均勝ち `+2.021p` に対し平均負け `-3.634p`。
+    - `MARKET_ORDER_TRADE_CLOSE` の負け平均が `-6.343p` と大きく、
+      特に short 側で長時間保有後の深いマイナスが残っていた。
+  - 反映（`config/strategy_exit_protections.yaml`）:
+    - `scalp_ping_5s_b` / `scalp_ping_5s_b_live` の exit profile を再調整
+      - 利益側: `profit_pips/trail_start` を引き上げ（利を伸ばす）
+      - 損失側: `loss_cut_hard_pips=6.0`, `loss_cut_hard_cap_pips=6.2`,
+        `loss_cut_max_hold_sec=900` に圧縮
+      - `non_range_max_hold_sec_short=240` を `b_live` にも明示
+      - `direction_flip` の short 閾値を前倒し（早期 de-risk/close）
+  - 目的:
+    - 「勝ちをやや伸ばす」よりも先に「負けを深くしない」を強化し、
+      1トレード当たりの損益非対称を改善する。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。
