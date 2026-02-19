@@ -1,5 +1,36 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-3. 2026-02-19 UTC `scalp_ping_5s_b_live` 逆配分・反転遅れの根本補正
+- 背景（VM実績, 直近600 close）:
+  - 高確率帯 (`entry_probability>=0.90`) が劣後継続。
+    - long: `n=268`, `avg=-0.485 pips`, `SL率=45.5%`
+    - short: `n=100`, `avg=-1.532 pips`, `SL率=77.0%`
+  - ロット逆配分が残存（高確率帯ほど平均unitsが大きい）。
+- 実施:
+  - `workers/scalp_ping_5s/worker.py`
+    - `entry_probability` の floor 適用を厳格化。
+      - 逆方向優勢（`support < counter`）または counter過大時は floor を不適用。
+    - `SL streak flip` に強制反転バイパスを追加。
+      - 連敗が `force_streak` 以上で `SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM=1` の場合、
+        tech confirm 未充足でも方向反転を許可。
+    - `confidence` ロット増幅を `CONFIDENCE_SCALE_MIN/MAX_MULT` で可変化し、
+      Bでは過大増幅を圧縮。
+  - `workers/scalp_ping_5s/config.py`
+    - 追加:
+      - `CONFIDENCE_SCALE_MIN_MULT`, `CONFIDENCE_SCALE_MAX_MULT`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER`
+      - `SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM`
+  - `ops/env/scalp_ping_5s_b.env`
+    - 反映:
+      - `CONF_SCALE_MIN/MAX_MULT` を追加
+      - `ENTRY_PROBABILITY_BAND_ALLOC_*` の high削減/side減衰を強化
+      - `FAST_DIRECTION_FLIP_*` を前倒し
+      - `SL_STREAK_DIRECTION_FLIP_*` を前倒し + `FORCE_WITHOUT_TECH_CONFIRM=1`
+- 目的:
+  - エントリー頻度を落とさず、`高確率=高ロット` の過信を抑制。
+  - 連続SL局面での方向転換を早め、損失テールを短縮する。
+
 ## 0-2. 2026-02-19 UTC `scalp_macd_rsi_div_b_live` 精度優先チューニング
 - 背景:
   - VM `trades.db`（UTC 2026-02-18 02:22〜2026-02-19 01:33）で

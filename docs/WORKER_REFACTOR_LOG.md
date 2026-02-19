@@ -3046,6 +3046,20 @@
     - `python scripts/replay_quality_gate.py --config config/replay_quality_gate.yaml --ticks-glob 'logs/replay/USD_JPY/USD_JPY_ticks_YYYYMM*.jsonl' --strict`
   - pass/fail は worker 単位で fold pass rate を集計し、`min_fold_pass_rate` を下回った worker を fail とする。
 
+### 2026-02-19（追記）replay ワーカー互換性修正: 不在モジュールを optional 化
+
+- 背景:
+  - 実行環境によって `workers.impulse_*` / `workers.pullback_s5` などが存在しない場合、`scripts/replay_exit_workers_groups.py` が import 時点で停止していた。
+  - `scripts/replay_exit_workers.py` も `workers.micro_bbrsi` 不在で同様に停止していた。
+- 実施:
+  - `scripts/replay_exit_workers.py`
+    - `workers.micro_bbrsi.exit_worker` を optional import 化。
+  - `scripts/replay_exit_workers_groups.py`
+    - exit worker import を optional 化し、存在する worker のみ実行対象へ動的登録。
+    - 要求 worker が全て不在の場合は fail-fast で明示エラーを返す。
+  - `config/replay_quality_gate.yaml`
+    - 既定 worker を `session_open` へ更新（現行 VM 構成で実行可能なデフォルト）。
+
 ### 2026-02-19（追記）確率帯ロット再配分: 勝ち小ロット/負け大ロットの逆配分を補正
 
 - 背景（VM実績, `scalp_ping_5s_b_live`, 2026-02-18 17:00 JST 以降）:
@@ -3111,3 +3125,42 @@
 - 目的:
   - まず「負けを深くしない」を優先して、
     1トレード損益の非対称（損大・利小）を改善する。
+
+### 2026-02-19（追記）`scalp_ping_5s_b_live` 根本補正: 確率floor厳格化 + 連敗反転高速化 + ロット増幅圧縮
+
+- 背景（VM実績）:
+  - 高確率帯の成績劣後が継続し、ロット逆配分（高確率帯に重いサイズ）が残っていた。
+  - `SL streak` 連敗時に tech confirm 不足で方向転換が遅延するケースがあった。
+- 実施:
+  - `workers/scalp_ping_5s/worker.py`
+    - `_adjust_entry_probability_alignment()`:
+      - floor適用条件に `support/counter` ガードを追加。
+      - `support < counter` または `counter > FLOOR_MAX_COUNTER` の場合は floor を不適用。
+      - メタ情報に `floor_block_reason` を追加。
+    - `_maybe_sl_streak_direction_flip()`:
+      - `force_streak` 到達時、`SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM=1`
+        なら tech confirm 未充足でも反転を許可。
+      - reason に `force_tech` を記録。
+    - `_confidence_scale()`:
+      - 固定レンジ（0.65〜1.15）を廃止し、config駆動へ変更。
+  - `workers/scalp_ping_5s/config.py`
+    - 追加:
+      - `CONFIDENCE_SCALE_MIN_MULT` / `CONFIDENCE_SCALE_MAX_MULT`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER`
+      - `SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM`
+  - `ops/env/scalp_ping_5s_b.env`
+    - B専用チューニングを更新:
+      - confidence増幅圧縮
+      - probability-band再配分強化（high縮小/side減衰）
+      - fast flip / sl streak flip の前倒し
+      - force streak時のtechバイパス有効化
+- テスト:
+  - 追加/更新:
+    - `tests/workers/test_scalp_ping_5s_probability_band_alloc.py`
+      - floor block / floor apply のケースを追加
+    - `tests/workers/test_scalp_ping_5s_sl_streak_flip.py`
+      - force streak + tech bypass の有効/無効ケースを追加
+- 目的:
+  - 方向逆行時の「高確率過信」を減らし、連敗局面での反転遅れを圧縮。
+  - エントリー頻度を維持したまま、損大・利小の非対称を改善する。

@@ -142,6 +142,12 @@ def _set_sl_flip_config(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         scalp_worker.config,
+        "SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
         "SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN",
         0.4,
         raising=False,
@@ -405,6 +411,105 @@ def test_sl_streak_direction_flip_allows_force_streak_even_if_target_market_plus
     assert flipped is not None
     assert flipped.side == "short"
     assert "force=1" in reason
+
+
+def test_sl_streak_direction_flip_force_streak_can_bypass_tech_confirm(
+    monkeypatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    _set_sl_flip_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SL_STREAK_DIRECTION_FLIP_FORCE_STREAK",
+        3,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM",
+        True,
+        raising=False,
+    )
+    now_utc = datetime.datetime(2026, 2, 19, 10, 0, tzinfo=datetime.timezone.utc)
+    db_path = tmp_path / "trades.db"
+    _create_trades_db(
+        db_path,
+        [
+            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
+            ("2026-02-19T09:59:35+00:00", 1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -18.0),
+            ("2026-02-19T09:59:10+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -15.0),
+            ("2026-02-19T09:58:45+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", -2.0),
+        ],
+    )
+    monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
+    monkeypatch.setattr(scalp_worker, "_SL_STREAK_CACHE", {}, raising=False)
+    monkeypatch.setattr(scalp_worker, "_SL_METRICS_CACHE", {}, raising=False)
+
+    signal = _sample_signal("long")
+    flipped, reason, eval_ctx = scalp_worker._maybe_sl_streak_direction_flip(
+        signal,
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        now_utc=now_utc,
+        now_mono=10.0,
+        direction_bias=None,
+        horizon=None,
+        fast_flip_applied=False,
+    )
+
+    assert eval_ctx.streak is not None
+    assert flipped is not None
+    assert flipped.side == "short"
+    assert "force=1" in reason
+    assert "force_tech=1" in reason
+
+
+def test_sl_streak_direction_flip_force_streak_requires_tech_when_bypass_disabled(
+    monkeypatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    _set_sl_flip_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SL_STREAK_DIRECTION_FLIP_FORCE_STREAK",
+        3,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM",
+        False,
+        raising=False,
+    )
+    now_utc = datetime.datetime(2026, 2, 19, 10, 0, tzinfo=datetime.timezone.utc)
+    db_path = tmp_path / "trades.db"
+    _create_trades_db(
+        db_path,
+        [
+            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
+            ("2026-02-19T09:59:35+00:00", 1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -18.0),
+            ("2026-02-19T09:59:10+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -15.0),
+            ("2026-02-19T09:58:45+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", -2.0),
+        ],
+    )
+    monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
+    monkeypatch.setattr(scalp_worker, "_SL_STREAK_CACHE", {}, raising=False)
+    monkeypatch.setattr(scalp_worker, "_SL_METRICS_CACHE", {}, raising=False)
+
+    signal = _sample_signal("long")
+    flipped, reason, _eval_ctx = scalp_worker._maybe_sl_streak_direction_flip(
+        signal,
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        now_utc=now_utc,
+        now_mono=10.0,
+        direction_bias=None,
+        horizon=None,
+        fast_flip_applied=False,
+    )
+
+    assert flipped is None
+    assert reason == "tech_not_confirmed"
 
 
 def test_sl_streak_direction_flip_skips_when_fast_flip_is_already_applied(

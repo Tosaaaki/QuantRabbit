@@ -16,6 +16,30 @@ if str(PROJECT_ROOT) not in sys.path:
 from workers.scalp_ping_5s import worker as scalp_worker
 
 
+def _sample_signal_for_prob(side: str = "long", mode: str = "momentum") -> scalp_worker.TickSignal:
+    return scalp_worker.TickSignal(
+        side=side,
+        mode=mode,
+        mode_score=1.0,
+        momentum_score=0.8,
+        revert_score=0.0,
+        confidence=92,
+        momentum_pips=0.2 if side == "long" else -0.2,
+        trigger_pips=0.1,
+        imbalance=0.65,
+        tick_rate=5.0,
+        span_sec=1.2,
+        tick_age_ms=90.0,
+        spread_pips=0.8,
+        bid=154.5,
+        ask=154.51,
+        mid=154.505,
+        range_pips=1.1,
+        instant_range_pips=0.7,
+        signal_window_sec=1.5,
+    )
+
+
 def _set_band_alloc_config(monkeypatch) -> None:
     monkeypatch.setattr(
         scalp_worker.config,
@@ -308,3 +332,195 @@ def test_load_entry_probability_band_metrics_from_trades_db(monkeypatch, tmp_pat
     assert metrics.low_win_rate == pytest.approx(1.0, abs=1e-9)
     assert metrics.high_sl_rate == pytest.approx(0.5, abs=1e-9)
     assert metrics.low_sl_rate == pytest.approx(0.0, abs=1e-9)
+
+
+def _set_probability_align_config(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_DIRECTION_WEIGHT",
+        1.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_HORIZON_WEIGHT",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_M1_WEIGHT",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_BOOST_MAX",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_PENALTY_MAX",
+        0.90,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_REVERT_PENALTY_MULT",
+        1.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN",
+        0.70,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_FLOOR",
+        0.46,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER",
+        0.30,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_MIN",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_MAX",
+        1.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT",
+        0.10,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT",
+        1.0,
+        raising=False,
+    )
+
+
+def test_entry_probability_alignment_floor_is_blocked_when_counter_dominates(monkeypatch) -> None:
+    _set_probability_align_config(monkeypatch)
+
+    direction_bias = scalp_worker.DirectionBias(
+        side="short",
+        score=-0.8,
+        momentum_pips=-0.4,
+        flow=-0.6,
+        range_pips=1.2,
+        vol_norm=0.6,
+        tick_rate=6.0,
+        span_sec=1.2,
+    )
+
+    adjusted, units_mult, meta = scalp_worker._adjust_entry_probability_alignment(
+        signal=_sample_signal_for_prob("long"),
+        raw_probability=0.90,
+        direction_bias=direction_bias,
+        horizon=None,
+        m1_score=None,
+    )
+
+    assert adjusted < 0.46
+    assert units_mult < 1.0
+    assert meta["floor_applied"] is False
+    assert meta["floor_block_reason"] == "support_lt_counter"
+
+
+def test_entry_probability_alignment_floor_applies_when_support_not_weaker(monkeypatch) -> None:
+    _set_probability_align_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_DIRECTION_WEIGHT",
+        0.5,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_HORIZON_WEIGHT",
+        0.5,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX",
+        0.90,
+        raising=False,
+    )
+
+    direction_bias = scalp_worker.DirectionBias(
+        side="long",
+        score=0.6,
+        momentum_pips=0.4,
+        flow=0.5,
+        range_pips=1.1,
+        vol_norm=0.6,
+        tick_rate=6.0,
+        span_sec=1.2,
+    )
+    horizon = scalp_worker.HorizonBias(
+        long_side="neutral",
+        long_score=0.0,
+        mid_side="neutral",
+        mid_score=0.0,
+        short_side="short",
+        short_score=0.6,
+        micro_side="short",
+        micro_score=0.6,
+        composite_side="short",
+        composite_score=-0.6,
+        agreement=2,
+    )
+
+    adjusted, units_mult, meta = scalp_worker._adjust_entry_probability_alignment(
+        signal=_sample_signal_for_prob("long"),
+        raw_probability=0.90,
+        direction_bias=direction_bias,
+        horizon=horizon,
+        m1_score=None,
+    )
+
+    assert adjusted == pytest.approx(0.46, abs=1e-9)
+    assert units_mult == pytest.approx(0.511111111, rel=1e-6)
+    assert meta["floor_applied"] is True
+    assert meta["floor_block_reason"] == ""

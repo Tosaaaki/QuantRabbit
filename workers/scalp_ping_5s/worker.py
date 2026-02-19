@@ -3534,9 +3534,13 @@ def _maybe_sl_streak_direction_flip(
             horizon_side == target_side
             and horizon_score >= float(config.SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN)
         )
+    force_tech_bypass = (
+        force_flip_by_streak
+        and bool(config.SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM)
+    )
     if config.SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM and not (
         direction_confirmed or horizon_confirmed
-    ):
+    ) and not force_tech_bypass:
         return (
             None,
             "tech_not_confirmed",
@@ -3564,7 +3568,8 @@ def _maybe_sl_streak_direction_flip(
         f"slx{streak.streak},age={streak.age_sec:.0f}s,"
         f"slhits={side_sl_hits_recent},mktplus={target_market_plus_recent},"
         f"tech={int(direction_confirmed or horizon_confirmed)},"
-        f"force={int(force_flip_by_streak)}"
+        f"force={int(force_flip_by_streak)},"
+        f"force_tech={int(force_tech_bypass)}"
     )
     return flipped, reason, SlFlipEval(
         streak,
@@ -3971,12 +3976,14 @@ def _extrema_reversal_route(
 def _confidence_scale(conf: int) -> float:
     lo = config.CONFIDENCE_FLOOR
     hi = config.CONFIDENCE_CEIL
+    min_mult = max(0.1, float(config.CONFIDENCE_SCALE_MIN_MULT))
+    max_mult = max(min_mult, float(config.CONFIDENCE_SCALE_MAX_MULT))
     if conf <= lo:
-        return 0.65
+        return min_mult
     if conf >= hi:
-        return 1.15
+        return max_mult
     ratio = (conf - lo) / max(1.0, hi - lo)
-    return 0.65 + ratio * 0.5
+    return min_mult + ratio * (max_mult - min_mult)
 
 
 def _probability_side_edge(side: str, raw_score: float) -> float:
@@ -4019,6 +4026,7 @@ def _adjust_entry_probability_alignment(
         "horizon_edge": None,
         "m1_edge": None,
         "floor_applied": False,
+        "floor_block_reason": "",
     }
     if not config.ENTRY_PROBABILITY_ALIGN_ENABLED:
         return raw, 1.0, meta
@@ -4073,8 +4081,18 @@ def _adjust_entry_probability_alignment(
 
     floor_raw_min = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN), 0.0, 1.0)
     floor_prob = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR), 0.0, 1.0)
+    floor_requires_support = bool(config.ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT)
+    floor_counter_max = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER), 0.0, 1.0)
     floor_applied = False
-    if raw >= floor_raw_min and adjusted < floor_prob:
+    floor_block_reason = ""
+    floor_allowed = True
+    if floor_requires_support and support < counter:
+        floor_allowed = False
+        floor_block_reason = "support_lt_counter"
+    if floor_allowed and counter > floor_counter_max:
+        floor_allowed = False
+        floor_block_reason = "counter_too_high"
+    if raw >= floor_raw_min and adjusted < floor_prob and floor_allowed:
         adjusted = floor_prob
         floor_applied = True
 
@@ -4103,6 +4121,7 @@ def _adjust_entry_probability_alignment(
             "penalty": round(penalty, 6),
             "counter_extra": round(counter_extra, 6),
             "floor_applied": bool(floor_applied),
+            "floor_block_reason": floor_block_reason,
             "weights": {
                 "direction": round(direction_weight, 6),
                 "horizon": round(horizon_weight, 6),

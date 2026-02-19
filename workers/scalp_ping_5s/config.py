@@ -439,6 +439,10 @@ SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM",
     True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
 )
+SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM: bool = _bool_env(
+    "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
 SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN: float = max(
     DIRECTION_BIAS_NEUTRAL_SCORE,
     min(
@@ -1230,6 +1234,30 @@ CONFIDENCE_FLOOR: int = max(0, int(float(os.getenv("SCALP_PING_5S_CONF_FLOOR", "
 CONFIDENCE_CEIL: int = max(
     CONFIDENCE_FLOOR + 1, int(float(os.getenv("SCALP_PING_5S_CONF_CEIL", "92")))
 )
+CONFIDENCE_SCALE_MIN_MULT: float = max(
+    0.10,
+    min(
+        2.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_CONF_SCALE_MIN_MULT",
+                "0.72" if ENV_PREFIX == "SCALP_PING_5S_B" else "0.65",
+            )
+        ),
+    ),
+)
+CONFIDENCE_SCALE_MAX_MULT: float = max(
+    CONFIDENCE_SCALE_MIN_MULT,
+    min(
+        2.5,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_CONF_SCALE_MAX_MULT",
+                "1.00" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.15",
+            )
+        ),
+    ),
+)
 ENTRY_PROBABILITY_ALIGN_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_ENABLED",
     True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
@@ -1315,6 +1343,22 @@ ENTRY_PROBABILITY_ALIGN_FLOOR: float = max(
     min(
         1.0,
         float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR", "0.46")),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT: bool = _bool_env(
+    "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER",
+                "0.30" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.00",
+            )
+        ),
     ),
 )
 ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED: bool = _bool_env(
