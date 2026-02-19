@@ -140,6 +140,20 @@
   - 目的:
     - `lock_floor` での早取り（平均 +0.6p）を減らし、
       `take_profit` 側での利伸ばし比率を上げる。
+- 2026-02-19 UTC 追加: `scalp_ping_5s_b` ロット逆転是正（確率スケール平坦化）
+  - 観測（直近24h, VM）:
+    - `win3` 平均ロット `620.6` に対し、`loss24` 平均ロット `864.7`
+    - `ep>=0.90` は `avg_units=1464.4` なのに `avg_pips=-0.95`
+  - 反映:
+    - `ops/env/quant-order-manager.env`
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.45`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.75`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
+    - `ops/env/scalp_ping_5s_b.env`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.75`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
+  - 目的:
+    - 高確率時の過大ロットを抑えつつ、低確率側の過小ロットを補正する。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

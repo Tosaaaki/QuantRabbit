@@ -2929,3 +2929,24 @@
 - 期待効果:
   - 早い `lock_floor` クローズを抑え、`take_profit` 側へ遷移する比率を上げる。
   - 頻度を落とさず、伸びるトレードの平均利幅を押し上げる。
+
+### 2026-02-19（追記）ロット逆転是正: 「勝ちで小、負けで大」を確率スケールで補正
+
+- 背景（VM実績, `scalp_ping_5s_b_live`, 直近24時間）:
+  - `win3 (>=+3p)` の平均ロット: `620.6`
+  - `loss24 (<=-2.4p)` の平均ロット: `864.7`
+  - `entry_probability` 別では
+    - `ep>=0.90`: `n=463`, `avg_units=1464.4`, `avg_pips=-0.95`, `win3_rate=0.03`
+    - `<0.70`: `n=308`, `avg_units=388.8`, `avg_pips=-1.01`, `win3_rate=0.127`
+  - 高確率側が高ロットに寄りつつ期待値が改善しておらず、サイズ配分が逆効率だった。
+- 実施:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.45`（0.70→0.45）
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.75`（新規）
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`（新規）
+  - `ops/env/scalp_ping_5s_b.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.75`（0.65→0.75）
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`（新規）
+- 期待効果:
+  - 高 `entry_probability` 時の過大ロット（>1.0x）を禁止し、負け側の損失振れ幅を抑える。
+  - 低〜中 `entry_probability` の過小ロットを緩和し、勝ち側の取り分を改善する。
