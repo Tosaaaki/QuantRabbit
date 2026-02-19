@@ -2902,3 +2902,30 @@
 - 期待効果:
   - `margin_closeout_n` を理由にした order_manager 側の一律 reject を防ぎ、
     件数を落とさず方向改善ロジックの効果検証を継続可能にする。
+
+### 2026-02-19（追記）利伸ばし強化: scalp_ping_5s_b の早利確/早ロックを緩和
+
+- 背景（VM実績, `scalp_ping_5s_b_live`, 直近6時間）:
+  - `win3 (>=+3p)` は `35件 / 平均 +4.15p` だが、
+    `loss24 (<=-2.4p)` は `231件 / 平均 -2.64p`。
+  - `close_request` 理由では
+    - `take_profit`: `168件 / 平均 +2.279p / win3=41 / loss24=0`
+    - `lock_floor`: `55件 / 平均 +0.609p / win3=1`
+  - 伸ばせる局面で lock_floor が先に発火しやすく、利伸ばし余地が残っていた。
+- 実施:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_b` / `scalp_ping_5s_b_live` を alias から個別定義へ変更。
+    - 追加/変更（exit_profile）:
+      - `profit_pips=2.0`（実質TP発火の底上げ）
+      - `trail_start_pips=2.3`
+      - `trail_backoff_pips=0.95`
+      - `lock_buffer_pips=0.70`
+      - `lock_floor_min_hold_sec=45`
+      - `range_profit_pips=1.6`
+      - `range_trail_start_pips=2.0`
+      - `range_trail_backoff_pips=0.80`
+      - `range_lock_buffer_pips=0.55`
+    - 既存の `loss_cut/non_range_max_hold/direction_flip` は維持。
+- 期待効果:
+  - 早い `lock_floor` クローズを抑え、`take_profit` 側へ遷移する比率を上げる。
+  - 頻度を落とさず、伸びるトレードの平均利幅を押し上げる。

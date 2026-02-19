@@ -125,6 +125,21 @@
   - 目的:
     - `OPEN_REJECT note=perf_block:margin_closeout_n=...` を防ぎ、
       scalp_ping_5s_b の方向改善ロジックを発注欠落なく評価する。
+- 2026-02-19 UTC 追加: `scalp_ping_5s_b` 利伸ばし設定（exit最適化）
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_b` / `scalp_ping_5s_b_live` を個別exit_profile化
+    - `profit_pips=2.0`
+    - `trail_start_pips=2.3`
+    - `trail_backoff_pips=0.95`
+    - `lock_buffer_pips=0.70`
+    - `lock_floor_min_hold_sec=45`
+    - `range_profit_pips=1.6`
+    - `range_trail_start_pips=2.0`
+    - `range_trail_backoff_pips=0.80`
+    - `range_lock_buffer_pips=0.55`
+  - 目的:
+    - `lock_floor` での早取り（平均 +0.6p）を減らし、
+      `take_profit` 側での利伸ばし比率を上げる。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

@@ -951,8 +951,90 @@ strategies:
         - take_profit
         - take_profit_zone
 
-  scalp_ping_5s_b: *SCALP_PING_5S_EXIT_PROFILE
-  scalp_ping_5s_b_live: *SCALP_PING_5S_EXIT_PROFILE
+  # B profile: keep direction logic but let profitable legs breathe longer.
+  scalp_ping_5s_b:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile:
+      profit_pips: 2.0
+      trail_start_pips: 2.3
+      trail_backoff_pips: 0.95
+      lock_buffer_pips: 0.70
+      lock_floor_min_hold_sec: 45
+      range_profit_pips: 1.6
+      range_trail_start_pips: 2.0
+      range_trail_backoff_pips: 0.80
+      range_lock_buffer_pips: 0.55
+      # 取り残し対策: 新規建玉のみを対象に、反転検知+時間上限で tail を抑える。
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      # Soft は hidden hard-stop になりやすいため無効化し、方向反転シグナルを優先する。
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 8.0
+      loss_cut_max_hold_sec: 1200
+      loss_cut_cooldown_sec: 5
+      # 非レンジの含み損を長時間放置しない（range_timeout 依存を回避）。
+      non_range_max_hold_sec: 900
+      direction_flip:
+        enabled: true
+        min_hold_sec: 90
+        min_adverse_pips: 1.8
+        # Suspicious phase: de-risk first, then full close only on stronger continuation.
+        de_risk_enabled: true
+        de_risk_threshold: 0.54
+        de_risk_fraction: 0.40
+        de_risk_min_units: 1000
+        de_risk_min_remaining: 1000
+        de_risk_cooldown_sec: 15
+        de_risk_reason: risk_reduce
+        score_threshold: 0.64
+        release_threshold: 0.46
+        confirm_hits: 3
+        confirm_window_sec: 25
+        cooldown_sec: 8
+        forecast_weight: 0.35
+        reason: m1_structure_break
+
+  scalp_ping_5s_b_live:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile:
+      profit_pips: 2.0
+      trail_start_pips: 2.3
+      trail_backoff_pips: 0.95
+      lock_buffer_pips: 0.70
+      lock_floor_min_hold_sec: 45
+      range_profit_pips: 1.6
+      range_trail_start_pips: 2.0
+      range_trail_backoff_pips: 0.80
+      range_lock_buffer_pips: 0.55
+      # 取り残し対策: 新規建玉のみを対象に、反転検知+時間上限で tail を抑える。
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      # Soft は hidden hard-stop になりやすいため無効化し、方向反転シグナルを優先する。
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 8.0
+      loss_cut_max_hold_sec: 1200
+      loss_cut_cooldown_sec: 5
+      # 非レンジの含み損を長時間放置しない（range_timeout 依存を回避）。
+      non_range_max_hold_sec: 900
+      direction_flip:
+        enabled: true
+        min_hold_sec: 90
+        min_adverse_pips: 1.8
+        # Suspicious phase: de-risk first, then full close only on stronger continuation.
+        de_risk_enabled: true
+        de_risk_threshold: 0.54
+        de_risk_fraction: 0.40
+        de_risk_min_units: 1000
+        de_risk_min_remaining: 1000
+        de_risk_cooldown_sec: 15
+        de_risk_reason: risk_reduce
+        score_threshold: 0.64
+        release_threshold: 0.46
+        confirm_hits: 3
+        confirm_window_sec: 25
+        cooldown_sec: 8
+        forecast_weight: 0.35
+        reason: m1_structure_break
 
   fast_scalp:
     min_profit_ratio: 0.45
