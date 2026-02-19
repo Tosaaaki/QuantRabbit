@@ -4666,40 +4666,6 @@ async def scalp_ping_5s_worker() -> None:
             direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
             fast_flip_applied = False
             fast_flip_reason = ""
-            flipped_signal, flip_reason = _maybe_fast_direction_flip(
-                signal,
-                direction_bias=direction_bias,
-                horizon=horizon,
-                regime=regime,
-                now_mono=now_mono,
-            )
-            if flipped_signal is not None:
-                signal = flipped_signal
-                fast_flip_applied = True
-                fast_flip_reason = str(flip_reason)
-                tech_route_reasons.append("fast_flip")
-                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
-                    signal,
-                    horizon,
-                )
-                if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
-                    signal = refreshed_signal
-                    horizon_units_mult = float(refreshed_horizon_mult)
-                    horizon_gate = f"{refreshed_horizon_gate}_fflip"
-                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
-                    LOG.info(
-                        "%s fast_flip side=%s reason=%s bias=%s(%.2f,mom=%.2fp) horizon=%s(%.2f,agree=%d)",
-                        config.LOG_PREFIX,
-                        signal.side,
-                        fast_flip_reason,
-                        direction_bias.side if direction_bias is not None else "none",
-                        _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
-                        _safe_float(getattr(direction_bias, "momentum_pips", 0.0), 0.0),
-                        horizon.composite_side if horizon is not None else "none",
-                        _safe_float(getattr(horizon, "composite_score", 0.0), 0.0),
-                        int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0)),
-                    )
-                    last_bias_log_mono = now_mono
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
@@ -4897,6 +4863,56 @@ async def scalp_ping_5s_worker() -> None:
                     h4_pos_log,
                 )
                 last_extrema_log_mono = now_mono
+
+            # Apply fast flip after extrema routing so late short/long overrides
+            # can be corrected without suppressing entry frequency.
+            post_flip_signal, post_flip_reason = _maybe_fast_direction_flip(
+                signal,
+                direction_bias=direction_bias,
+                horizon=horizon,
+                regime=regime,
+                now_mono=now_mono,
+            )
+            if post_flip_signal is not None:
+                signal = post_flip_signal
+                fast_flip_applied = True
+                fast_flip_reason = str(post_flip_reason)
+                tech_route_reasons.append("fast_flip")
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
+                    signal,
+                    horizon,
+                )
+                if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
+                    signal = refreshed_signal
+                    horizon_units_mult = float(refreshed_horizon_mult)
+                    horizon_gate = f"{refreshed_horizon_gate}_fflip"
+                m1_trend_units_mult, m1_trend_gate = _m1_trend_units_multiplier(
+                    signal.side,
+                    m1_score,
+                    regime=regime,
+                )
+                bias_units_mult, bias_gate = _direction_units_multiplier(
+                    signal.side,
+                    direction_bias,
+                    signal_mode=signal.mode,
+                )
+                if bias_units_mult <= 0.0:
+                    bias_units_mult = max(0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT))
+                    bias_gate = f"{bias_gate}_fflip_clamped"
+                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                    LOG.info(
+                        "%s fast_flip side=%s reason=%s bias=%s(%.2f,mom=%.2fp) horizon=%s(%.2f,agree=%d)",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        fast_flip_reason,
+                        direction_bias.side if direction_bias is not None else "none",
+                        _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
+                        _safe_float(getattr(direction_bias, "momentum_pips", 0.0), 0.0),
+                        horizon.composite_side if horizon is not None else "none",
+                        _safe_float(getattr(horizon, "composite_score", 0.0), 0.0),
+                        int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0)),
+                    )
+                    last_bias_log_mono = now_mono
             decision_cooldown_sec = max(
                 config.ENTRY_COOLDOWN_SEC * config.INSTANT_COOLDOWN_SCALE_MIN,
                 config.ENTRY_COOLDOWN_SEC * decision_speed_scale,
