@@ -2983,3 +2983,42 @@
   - 高確率の遅行・過大評価を抑え、逆行局面でのロット集中を低減。
   - エントリー件数を大きく落とさず（高prob floor あり）、
     方向転換遅れ時の損失インパクトを縮小。
+
+### 2026-02-19（追記）反転撤退遅れの是正: short側EXITをサイド別に高速化
+
+- 背景（VM実績, `scalp_ping_5s_b_live`, 2026-02-18 17:00 JST 以降）:
+  - 合計: `n=1529`, `PL=-19,369.5 JPY`, `avg_pips=-1.745`
+  - side別:
+    - `long`: `n=528`, `PL=-2,590.0`, `avg_pips=-0.249`
+    - `short`: `n=1001`, `PL=-16,779.5`, `avg_pips=-2.534`
+  - `short + MARKET_ORDER_TRADE_CLOSE`: `n=831`, `PL=-14,279.4`, `avg_pips=-2.666`, `avg_hold=625s`
+  - 保有時間バケット（short + MARKET close）:
+    - `900s+`: `n=278`, `PL=-12,537.1`, `avg_pips=-6.565`（損失の主塊）
+- 実施:
+  - `workers/scalp_ping_5s/exit_worker.py`
+    - `exit_profile` にサイド別キーを追加サポート:
+      - `non_range_max_hold_sec_<side>`（例: `_short`）
+      - `direction_flip` の `<side>_*` 上書き
+        - `min_hold_sec`, `min_adverse_pips`
+        - `score_threshold`, `release_threshold`
+        - `confirm_hits`, `confirm_window_sec`, `cooldown_sec`
+        - `forecast_weight`, `de_risk_threshold`
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_b_live` のみ調整:
+      - `non_range_max_hold_sec_short=300`（既定900からshortのみ短縮）
+      - `direction_flip.short_*` を追加してshort逆行時の判定を早める
+        - `min_hold_sec=45`
+        - `min_adverse_pips=1.0`
+        - `score_threshold=0.56`
+        - `release_threshold=0.42`
+        - `confirm_hits=2`
+        - `confirm_window_sec=18`
+        - `de_risk_threshold=0.50`
+        - `forecast_weight=0.45`
+  - テスト:
+    - `tests/workers/test_scalp_ping_5s_exit_worker.py`
+      - short側オーバーライド適用テスト
+      - `non_range_max_hold_sec_short` がshortのみに効くテスト
+- 期待効果:
+  - 「反転を察して微益/小損で撤退」の遅れを short 側で直接改善。
+  - エントリー頻度を落とさず、長時間逆行ホールド由来の tail 損失を圧縮。

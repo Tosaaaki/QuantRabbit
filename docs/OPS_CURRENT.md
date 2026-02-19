@@ -171,6 +171,26 @@
   - 目的:
     - 高確率の過大評価による逆行ロット集中を抑え、
       エントリー頻度を大きく落とさずに損失振れ幅を下げる。
+- 2026-02-19 UTC 追加: `scalp_ping_5s_b_live` short反転撤退の高速化（サイド別EXIT）
+  - 背景（VM, 2026-02-18 17:00 JST 以降）:
+    - `short + MARKET_ORDER_TRADE_CLOSE`: `n=831`, `avg=-2.666p`, `avg_hold=625s`
+    - `900s+` 保有の short MARKET close: `n=278`, `PL=-12,537.1 JPY`（主損失塊）
+  - 反映:
+    - `workers/scalp_ping_5s/exit_worker.py`
+      - `non_range_max_hold_sec_<side>` と `direction_flip.<side>_*` オーバーライドを追加
+    - `config/strategy_exit_protections.yaml`（`scalp_ping_5s_b_live`）
+      - `non_range_max_hold_sec_short=300`
+      - `direction_flip.short_*` を追加
+        - `min_hold_sec=45`
+        - `min_adverse_pips=1.0`
+        - `score_threshold=0.56`
+        - `release_threshold=0.42`
+        - `confirm_hits=2`
+        - `confirm_window_sec=18`
+        - `de_risk_threshold=0.50`
+        - `forecast_weight=0.45`
+  - 目的:
+    - short逆行を長時間抱える tail を圧縮し、反転時の微益/小損撤退を前倒しする。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

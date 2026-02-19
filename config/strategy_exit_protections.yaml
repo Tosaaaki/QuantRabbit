@@ -974,6 +974,8 @@ strategies:
       loss_cut_cooldown_sec: 5
       # 非レンジの含み損を長時間放置しない（range_timeout 依存を回避）。
       non_range_max_hold_sec: 900
+      # VM実測: short+MARKET_ORDER_TRADE_CLOSE の 900s+ が大幅マイナスのため短縮。
+      non_range_max_hold_sec_short: 300
       direction_flip:
         enabled: true
         min_hold_sec: 90
@@ -992,6 +994,15 @@ strategies:
         confirm_window_sec: 25
         cooldown_sec: 8
         forecast_weight: 0.35
+        # shortの取り残しを抑えるため、逆行時は早期にde-risk/closeへ寄せる。
+        short_min_hold_sec: 45
+        short_min_adverse_pips: 1.0
+        short_score_threshold: 0.56
+        short_release_threshold: 0.42
+        short_confirm_hits: 2
+        short_confirm_window_sec: 18
+        short_de_risk_threshold: 0.50
+        short_forecast_weight: 0.45
         reason: m1_structure_break
 
   scalp_ping_5s_b_live:
