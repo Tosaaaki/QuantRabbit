@@ -93,6 +93,7 @@ _SIGNAL_WINDOW_STATS_CACHE: dict[
     tuple[float, list[dict[str, object]]],
 ] = {}
 _SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
+_LAST_FAST_FLIP_MONO: float = 0.0
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -2962,6 +2963,86 @@ def _direction_units_multiplier(
     return 1.0 + boost, "align_boost"
 
 
+def _maybe_fast_direction_flip(
+    signal: TickSignal,
+    *,
+    direction_bias: Optional[DirectionBias],
+    horizon: Optional[HorizonBias],
+    regime: Optional[MtfRegime],
+    now_mono: float,
+) -> tuple[Optional[TickSignal], str]:
+    global _LAST_FAST_FLIP_MONO
+
+    if not config.FAST_DIRECTION_FLIP_ENABLED:
+        return None, "disabled"
+    if direction_bias is None:
+        return None, "no_direction_bias"
+    if horizon is None:
+        return None, "no_horizon"
+
+    current_side = str(signal.side or "").strip().lower()
+    target_side = str(direction_bias.side or "").strip().lower()
+    if current_side not in {"long", "short"}:
+        return None, "invalid_signal_side"
+    if target_side not in {"long", "short"}:
+        return None, "bias_neutral"
+    if current_side == target_side:
+        return None, "already_aligned"
+
+    cooldown_sec = max(0.0, float(config.FAST_DIRECTION_FLIP_COOLDOWN_SEC))
+    if now_mono - _LAST_FAST_FLIP_MONO < cooldown_sec:
+        return None, "cooldown"
+
+    horizon_side = str(getattr(horizon, "composite_side", "")).strip().lower()
+    if horizon_side != target_side:
+        return None, "horizon_mismatch"
+
+    bias_score = abs(_safe_float(getattr(direction_bias, "score", 0.0), 0.0))
+    if bias_score < float(config.FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN):
+        return None, "bias_weak"
+
+    horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
+    if horizon_score < float(config.FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN):
+        return None, "horizon_weak"
+
+    horizon_agree = int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0))
+    if horizon_agree < int(config.FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN):
+        return None, "horizon_disagree"
+
+    bias_momentum = _safe_float(getattr(direction_bias, "momentum_pips", 0.0), 0.0)
+    min_momentum = max(0.0, float(config.FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS))
+    if target_side == "long" and bias_momentum < min_momentum:
+        return None, "bias_momentum_weak"
+    if target_side == "short" and bias_momentum > -min_momentum:
+        return None, "bias_momentum_weak"
+
+    if regime is not None:
+        regime_side = str(getattr(regime, "side", "")).strip().lower()
+        regime_score = abs(_safe_float(getattr(regime, "trend_score", 0.0), 0.0))
+        if (
+            regime_side in {"long", "short"}
+            and regime_side != target_side
+            and regime_score >= float(config.FAST_DIRECTION_FLIP_REGIME_BLOCK_SCORE)
+        ):
+            return None, "regime_counter"
+
+    confidence_add = int(config.FAST_DIRECTION_FLIP_CONFIDENCE_ADD)
+    if horizon_agree >= 3:
+        confidence_add += 1
+    flipped = _retarget_signal(
+        signal,
+        side=target_side,
+        mode=f"{signal.mode}_fflip",
+        confidence_add=confidence_add,
+    )
+    _LAST_FAST_FLIP_MONO = now_mono
+    reason = (
+        f"{current_side}->{target_side}:"
+        f"bias={bias_score:.2f},horizon={horizon_score:.2f},agree={horizon_agree}"
+    )
+    return flipped, reason
+
+
 def _range_pos_from_candles(
     *,
     tf: str,
@@ -4583,6 +4664,42 @@ async def scalp_ping_5s_worker() -> None:
                 last_density_topup_log_mono = now_mono
 
             direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
+            fast_flip_applied = False
+            fast_flip_reason = ""
+            flipped_signal, flip_reason = _maybe_fast_direction_flip(
+                signal,
+                direction_bias=direction_bias,
+                horizon=horizon,
+                regime=regime,
+                now_mono=now_mono,
+            )
+            if flipped_signal is not None:
+                signal = flipped_signal
+                fast_flip_applied = True
+                fast_flip_reason = str(flip_reason)
+                tech_route_reasons.append("fast_flip")
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
+                    signal,
+                    horizon,
+                )
+                if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
+                    signal = refreshed_signal
+                    horizon_units_mult = float(refreshed_horizon_mult)
+                    horizon_gate = f"{refreshed_horizon_gate}_fflip"
+                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                    LOG.info(
+                        "%s fast_flip side=%s reason=%s bias=%s(%.2f,mom=%.2fp) horizon=%s(%.2f,agree=%d)",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        fast_flip_reason,
+                        direction_bias.side if direction_bias is not None else "none",
+                        _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
+                        _safe_float(getattr(direction_bias, "momentum_pips", 0.0), 0.0),
+                        horizon.composite_side if horizon is not None else "none",
+                        _safe_float(getattr(horizon, "composite_score", 0.0), 0.0),
+                        int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0)),
+                    )
+                    last_bias_log_mono = now_mono
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
@@ -5181,6 +5298,9 @@ async def scalp_ping_5s_worker() -> None:
                 },
                 "direction_bias_gate": bias_gate,
                 "direction_bias_units_mult": round(bias_units_mult, 3),
+                "fast_direction_flip_enabled": bool(config.FAST_DIRECTION_FLIP_ENABLED),
+                "fast_direction_flip_applied": bool(fast_flip_applied),
+                "fast_direction_flip_reason": fast_flip_reason,
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),

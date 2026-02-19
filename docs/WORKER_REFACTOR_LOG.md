@@ -2694,3 +2694,25 @@
 - 期待効果:
   - B戦略で「SLなし + ハードストップ無効」の組み合わせを既定で禁止し、
     同種のテイル損失を設定ドリフト起因で再発させない。
+
+### 2026-02-19（追記）scalp_ping_5s_b の方向転換遅延を即時リルート化
+
+- 背景:
+  - VM実績で `scalp_ping_5s_b_live` は long 側の方向一致率は高い一方、
+    short 側で方向一致率が低く、逆向きエントリーの SL ヒットが連発。
+  - 要件として「エントリー頻度を落とさず、方向転換だけ速くする」を固定。
+- 実施:
+  - `workers/scalp_ping_5s/config.py`
+    - `FAST_DIRECTION_FLIP_*` 系パラメータを追加。
+    - Bプレフィックス（`SCALP_PING_5S_B`）では既定有効化。
+  - `workers/scalp_ping_5s/worker.py`
+    - `direction_bias` と `horizon_bias` が同方向で強く一致した場合、
+      reject せず `signal.side` を即時反転する
+      `_maybe_fast_direction_flip` を追加。
+    - 反転後は `horizon` を再評価し、`*_fflip` モードで `entry_thesis` に記録。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_FAST_DIRECTION_FLIP_*` を設定し、
+      低遅延（cooldown短め）で方向反転を許可。
+- 期待効果:
+  - ショート偏重時にエントリー自体を止めず、ロング側への反転を優先して
+    頻度を維持しながら SL 到達率を圧縮する。

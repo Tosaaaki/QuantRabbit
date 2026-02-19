@@ -30,6 +30,11 @@
   - Bワーカー env は `SCALP_PING_5S_B_USE_SL=1` / `SCALP_PING_5S_B_DISABLE_ENTRY_HARD_STOP=0` を維持する。
   - `workers/scalp_ping_5s_b.worker` は fail-safe として上記2値を起動時に強制補正する
     （`SCALP_PING_5S_B_ALLOW_UNPROTECTED_ENTRY=1` のときのみ無効化）。
+- `scalp_ping_5s_b*` は方向転換遅延による逆張り連発を抑えるため、
+  `direction_bias` と `horizon_bias` が同方向で強く一致した場合に
+  エントリーをブロックせず `fast_direction_flip` で side を即時リルートする。
+  - 既定は B で有効（`SCALP_PING_5S_B_FAST_DIRECTION_FLIP_ENABLED=1`）。
+  - 頻度維持のため、reject ではなく side リライト＋confidence 加算のみ行う。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、

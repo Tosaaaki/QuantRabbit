@@ -304,6 +304,62 @@ DIRECTION_BIAS_LOG_INTERVAL_SEC: float = max(
     1.0,
     float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_LOG_INTERVAL_SEC", "8.0")),
 )
+FAST_DIRECTION_FLIP_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_FAST_DIRECTION_FLIP_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN: float = max(
+    DIRECTION_BIAS_NEUTRAL_SCORE,
+    min(
+        0.95,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN",
+                "0.44",
+            )
+        ),
+    ),
+)
+FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN: float = max(
+    DIRECTION_BIAS_NEUTRAL_SCORE,
+    min(
+        0.95,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN",
+                "0.24",
+            )
+        ),
+    ),
+)
+FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN: int = max(
+    1,
+    int(float(os.getenv("SCALP_PING_5S_FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN", "2"))),
+)
+FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS", "0.08")),
+)
+FAST_DIRECTION_FLIP_CONFIDENCE_ADD: int = max(
+    0,
+    int(float(os.getenv("SCALP_PING_5S_FAST_DIRECTION_FLIP_CONFIDENCE_ADD", "3"))),
+)
+FAST_DIRECTION_FLIP_COOLDOWN_SEC: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_FAST_DIRECTION_FLIP_COOLDOWN_SEC", "0.8")),
+)
+FAST_DIRECTION_FLIP_REGIME_BLOCK_SCORE: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_FAST_DIRECTION_FLIP_REGIME_BLOCK_SCORE",
+                "0.62",
+            )
+        ),
+    ),
+)
 
 LOOKAHEAD_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_GATE_ENABLED", True)
 LOOKAHEAD_ALLOW_THIN_EDGE: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_ALLOW_THIN_EDGE", True)
