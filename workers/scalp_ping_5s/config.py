@@ -494,6 +494,117 @@ SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN: float = max(
         ),
     ),
 )
+SIDE_METRICS_DIRECTION_FLIP_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+SIDE_METRICS_DIRECTION_FLIP_CACHE_TTL_SEC: float = max(
+    0.1,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_CACHE_TTL_SEC",
+            "1.0",
+        )
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_LOOKBACK_TRADES: int = max(
+    4,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_LOOKBACK_TRADES",
+                "36",
+            )
+        )
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES",
+                "8",
+            )
+        )
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_MIN_TARGET_TRADES: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_MIN_TARGET_TRADES",
+                "6",
+            )
+        )
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_SL_RATE: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_SL_RATE",
+                "0.62",
+            )
+        ),
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_MIN_SL_GAP: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_MIN_SL_GAP",
+                "0.22",
+            )
+        ),
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_MIN_MARKET_PLUS_GAP: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_MIN_MARKET_PLUS_GAP",
+                "0.12",
+            )
+        ),
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_CONFIDENCE_ADD: int = max(
+    0,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_CONFIDENCE_ADD",
+                "2",
+            )
+        )
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_COOLDOWN_SEC: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_COOLDOWN_SEC",
+            "0.8",
+        )
+    ),
+)
+SIDE_METRICS_DIRECTION_FLIP_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_LOG_INTERVAL_SEC",
+            "6.0",
+        )
+    ),
+)
 
 LOOKAHEAD_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_GATE_ENABLED", True)
 LOOKAHEAD_ALLOW_THIN_EDGE: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_ALLOW_THIN_EDGE", True)

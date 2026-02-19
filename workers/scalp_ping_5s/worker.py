@@ -94,9 +94,14 @@ _SIGNAL_WINDOW_STATS_CACHE: dict[
 ] = {}
 _SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
 _LAST_FAST_FLIP_MONO: float = 0.0
+_LAST_SIDE_METRICS_FLIP_MONO: float = 0.0
 _SL_STREAK_CACHE: dict[tuple[str, str], tuple[float, Optional["StopLossStreak"]]] = {}
 _SL_METRICS_CACHE: dict[tuple[str, str], tuple[float, Optional["SideCloseMetrics"]]] = {}
 _SIDE_CLOSE_METRICS_ALLOC_CACHE: dict[
+    tuple[str, str],
+    tuple[float, Optional["SideCloseMetrics"]],
+] = {}
+_SIDE_CLOSE_METRICS_FLIP_CACHE: dict[
     tuple[str, str],
     tuple[float, Optional["SideCloseMetrics"]],
 ] = {}
@@ -239,6 +244,18 @@ class SlFlipEval:
     target_market_plus_recent: int
     direction_confirmed: bool
     horizon_confirmed: bool
+
+
+@dataclass(slots=True)
+class SideMetricsFlipEval:
+    current_side: str
+    target_side: str
+    current_trades: int
+    target_trades: int
+    current_sl_rate: float
+    target_sl_rate: float
+    current_market_plus_rate: float
+    target_market_plus_rate: float
 
 
 @dataclass(slots=True)
@@ -3615,6 +3632,126 @@ def _maybe_sl_streak_direction_flip(
     )
 
 
+def _maybe_side_metrics_direction_flip(
+    signal: TickSignal,
+    *,
+    strategy_tag: str,
+    pocket: str,
+    now_mono: float,
+) -> tuple[Optional[TickSignal], str, SideMetricsFlipEval]:
+    global _LAST_SIDE_METRICS_FLIP_MONO
+
+    current_side = str(signal.side or "").strip().lower()
+    target_side = "short" if current_side == "long" else "long"
+    empty_eval = SideMetricsFlipEval(
+        current_side=current_side,
+        target_side=target_side,
+        current_trades=0,
+        target_trades=0,
+        current_sl_rate=0.0,
+        target_sl_rate=0.0,
+        current_market_plus_rate=0.0,
+        target_market_plus_rate=0.0,
+    )
+    if not config.SIDE_METRICS_DIRECTION_FLIP_ENABLED:
+        return None, "disabled", empty_eval
+    if current_side not in {"long", "short"}:
+        return None, "invalid_signal_side", empty_eval
+
+    cooldown_sec = max(0.0, float(config.SIDE_METRICS_DIRECTION_FLIP_COOLDOWN_SEC))
+    if now_mono - _LAST_SIDE_METRICS_FLIP_MONO < cooldown_sec:
+        return None, "cooldown", empty_eval
+
+    metrics = _load_side_close_metrics(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        lookback=max(4, int(config.SIDE_METRICS_DIRECTION_FLIP_LOOKBACK_TRADES)),
+        cache_ttl_sec=max(0.1, float(config.SIDE_METRICS_DIRECTION_FLIP_CACHE_TTL_SEC)),
+        now_mono=now_mono,
+        cache_store=_SIDE_CLOSE_METRICS_FLIP_CACHE,
+    )
+    if metrics is None:
+        return None, "metrics_unavailable", empty_eval
+
+    current_trades = (
+        int(metrics.long_trades) if current_side == "long" else int(metrics.short_trades)
+    )
+    target_trades = (
+        int(metrics.short_trades) if current_side == "long" else int(metrics.long_trades)
+    )
+    current_sl_rate = _clamp(
+        float(metrics.sl_hits(current_side)) / float(max(1, current_trades)),
+        0.0,
+        1.0,
+    )
+    target_sl_rate = _clamp(
+        float(metrics.sl_hits(target_side)) / float(max(1, target_trades)),
+        0.0,
+        1.0,
+    )
+    current_market_plus_rate = _clamp(
+        float(metrics.market_plus(current_side)) / float(max(1, current_trades)),
+        0.0,
+        1.0,
+    )
+    target_market_plus_rate = _clamp(
+        float(metrics.market_plus(target_side)) / float(max(1, target_trades)),
+        0.0,
+        1.0,
+    )
+    eval_info = SideMetricsFlipEval(
+        current_side=current_side,
+        target_side=target_side,
+        current_trades=current_trades,
+        target_trades=target_trades,
+        current_sl_rate=current_sl_rate,
+        target_sl_rate=target_sl_rate,
+        current_market_plus_rate=current_market_plus_rate,
+        target_market_plus_rate=target_market_plus_rate,
+    )
+
+    min_current_trades = max(1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES))
+    min_target_trades = max(1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_TARGET_TRADES))
+    if current_trades < min_current_trades:
+        return None, "current_sample_weak", eval_info
+    if target_trades < min_target_trades:
+        return None, "target_sample_weak", eval_info
+
+    min_current_sl_rate = _clamp(
+        float(config.SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_SL_RATE),
+        0.0,
+        1.0,
+    )
+    if current_sl_rate < min_current_sl_rate:
+        return None, "current_sl_rate_weak", eval_info
+
+    min_sl_gap = max(0.0, float(config.SIDE_METRICS_DIRECTION_FLIP_MIN_SL_GAP))
+    if (current_sl_rate - target_sl_rate) < min_sl_gap:
+        return None, "sl_gap_weak", eval_info
+
+    min_market_plus_gap = max(
+        0.0,
+        float(config.SIDE_METRICS_DIRECTION_FLIP_MIN_MARKET_PLUS_GAP),
+    )
+    if (target_market_plus_rate - current_market_plus_rate) < min_market_plus_gap:
+        return None, "market_plus_gap_weak", eval_info
+
+    flipped = _retarget_signal(
+        signal,
+        side=target_side,
+        mode=f"{signal.mode}_smflip",
+        confidence_add=int(config.SIDE_METRICS_DIRECTION_FLIP_CONFIDENCE_ADD),
+    )
+    _LAST_SIDE_METRICS_FLIP_MONO = now_mono
+    reason = (
+        f"{current_side}->{target_side}:"
+        f"sl={current_sl_rate:.2f}/{target_sl_rate:.2f},"
+        f"mplus={current_market_plus_rate:.2f}/{target_market_plus_rate:.2f},"
+        f"n={current_trades}/{target_trades}"
+    )
+    return flipped, reason, eval_info
+
+
 def _range_pos_from_candles(
     *,
     tf: str,
@@ -4931,6 +5068,7 @@ async def scalp_ping_5s_worker() -> None:
     last_profit_bank_log_mono = 0.0
     last_extrema_log_mono = 0.0
     last_sl_streak_log_mono = 0.0
+    last_side_metrics_flip_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
     last_loop_heartbeat_mono = 0.0
     entry_skip_reasons: dict[str, int] = {}
@@ -5613,6 +5751,14 @@ async def scalp_ping_5s_worker() -> None:
             sl_streak_target_market_plus_recent = 0
             sl_streak_direction_confirmed = False
             sl_streak_horizon_confirmed = False
+            side_metrics_flip_applied = False
+            side_metrics_flip_reason = ""
+            side_metrics_flip_current_sl_rate = 0.0
+            side_metrics_flip_target_sl_rate = 0.0
+            side_metrics_flip_current_market_plus_rate = 0.0
+            side_metrics_flip_target_market_plus_rate = 0.0
+            side_metrics_flip_current_trades = 0
+            side_metrics_flip_target_trades = 0
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
@@ -5925,6 +6071,69 @@ async def scalp_ping_5s_worker() -> None:
                         int(sl_streak_horizon_confirmed),
                     )
                     last_sl_streak_log_mono = now_mono
+
+            side_metrics_flip_signal, side_metrics_flip_candidate_reason, side_metrics_eval = (
+                _maybe_side_metrics_direction_flip(
+                    signal,
+                    strategy_tag=config.STRATEGY_TAG,
+                    pocket=config.POCKET,
+                    now_mono=now_mono,
+                )
+            )
+            side_metrics_flip_reason = str(side_metrics_flip_candidate_reason)
+            side_metrics_flip_current_sl_rate = float(side_metrics_eval.current_sl_rate)
+            side_metrics_flip_target_sl_rate = float(side_metrics_eval.target_sl_rate)
+            side_metrics_flip_current_market_plus_rate = float(
+                side_metrics_eval.current_market_plus_rate
+            )
+            side_metrics_flip_target_market_plus_rate = float(
+                side_metrics_eval.target_market_plus_rate
+            )
+            side_metrics_flip_current_trades = int(side_metrics_eval.current_trades)
+            side_metrics_flip_target_trades = int(side_metrics_eval.target_trades)
+            if side_metrics_flip_signal is not None:
+                signal = side_metrics_flip_signal
+                side_metrics_flip_applied = True
+                side_metrics_flip_reason = str(side_metrics_flip_candidate_reason)
+                tech_route_reasons.append("side_metrics_flip")
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
+                    signal,
+                    horizon,
+                )
+                if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
+                    signal = refreshed_signal
+                    horizon_units_mult = float(refreshed_horizon_mult)
+                    horizon_gate = f"{refreshed_horizon_gate}_smflip"
+                m1_trend_units_mult, m1_trend_gate = _m1_trend_units_multiplier(
+                    signal.side,
+                    m1_score,
+                    regime=regime,
+                )
+                bias_units_mult, bias_gate = _direction_units_multiplier(
+                    signal.side,
+                    direction_bias,
+                    signal_mode=signal.mode,
+                )
+                if bias_units_mult <= 0.0:
+                    bias_units_mult = max(0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT))
+                    bias_gate = f"{bias_gate}_smflip_clamped"
+                if (
+                    now_mono - last_side_metrics_flip_log_mono
+                    >= config.SIDE_METRICS_DIRECTION_FLIP_LOG_INTERVAL_SEC
+                ):
+                    LOG.info(
+                        "%s side_metrics_flip side=%s reason=%s sl=%.2f/%.2f mplus=%.2f/%.2f n=%d/%d",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        side_metrics_flip_reason,
+                        side_metrics_flip_current_sl_rate,
+                        side_metrics_flip_target_sl_rate,
+                        side_metrics_flip_current_market_plus_rate,
+                        side_metrics_flip_target_market_plus_rate,
+                        side_metrics_flip_current_trades,
+                        side_metrics_flip_target_trades,
+                    )
+                    last_side_metrics_flip_log_mono = now_mono
             decision_cooldown_sec = max(
                 config.ENTRY_COOLDOWN_SEC * config.INSTANT_COOLDOWN_SCALE_MIN,
                 config.ENTRY_COOLDOWN_SEC * decision_speed_scale,
@@ -6354,6 +6563,33 @@ async def scalp_ping_5s_worker() -> None:
                 "sl_streak_target_market_plus_recent": int(sl_streak_target_market_plus_recent),
                 "sl_streak_direction_confirmed": bool(sl_streak_direction_confirmed),
                 "sl_streak_horizon_confirmed": bool(sl_streak_horizon_confirmed),
+                "side_metrics_direction_flip_enabled": bool(
+                    config.SIDE_METRICS_DIRECTION_FLIP_ENABLED
+                ),
+                "side_metrics_direction_flip_applied": bool(side_metrics_flip_applied),
+                "side_metrics_direction_flip_reason": side_metrics_flip_reason,
+                "side_metrics_direction_flip_current_sl_rate": round(
+                    side_metrics_flip_current_sl_rate,
+                    4,
+                ),
+                "side_metrics_direction_flip_target_sl_rate": round(
+                    side_metrics_flip_target_sl_rate,
+                    4,
+                ),
+                "side_metrics_direction_flip_current_market_plus_rate": round(
+                    side_metrics_flip_current_market_plus_rate,
+                    4,
+                ),
+                "side_metrics_direction_flip_target_market_plus_rate": round(
+                    side_metrics_flip_target_market_plus_rate,
+                    4,
+                ),
+                "side_metrics_direction_flip_current_trades": int(
+                    side_metrics_flip_current_trades
+                ),
+                "side_metrics_direction_flip_target_trades": int(
+                    side_metrics_flip_target_trades
+                ),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),

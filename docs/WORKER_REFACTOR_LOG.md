@@ -43,6 +43,35 @@
   - 取引頻度は維持しつつ、逆方向の過大ロットを即時縮小。
   - SL連敗後のフリップ待ち時間を短縮し、方向修正を先行させる。
 
+### 2026-02-20（追記）`scalp_ping_5s_b_live` side実績フリップを追加（long偏重SL対策）
+
+- 対象:
+  - `workers/scalp_ping_5s/worker.py`
+  - `workers/scalp_ping_5s/config.py`
+  - `ops/env/scalp_ping_5s_b.env`
+- 変更:
+  - `side_metrics_direction_flip` を新設。
+    - 直近side実績（`SL率` と `MARKET close +率`）を比較し、
+      現在sideが劣後している局面では opposite side へ即時リターゲット。
+    - 既存の `fast_flip` / `sl_streak_flip` と併用し、`entry` 頻度を落とさず方向修正を前倒し。
+  - 追加設定（B運用）:
+    - `SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED=1`
+    - `...LOOKBACK_TRADES=36`
+    - `...MIN_CURRENT_TRADES=8`, `...MIN_TARGET_TRADES=6`
+    - `...MIN_CURRENT_SL_RATE=0.58`
+    - `...MIN_SL_GAP=0.18`
+    - `...MIN_MARKET_PLUS_GAP=0.08`
+    - `...CONFIDENCE_ADD=3`, `...COOLDOWN_SEC=0.6`
+  - 監査キー:
+    - `entry_thesis.side_metrics_direction_flip_*`
+    - `tech_route_reasons` に `side_metrics_flip` を追加記録。
+- 背景:
+  - VMで long 側SLが急増する短時間クラスタを確認し、
+    `sl_streak` 発火だけでは転換が遅れる局面が残った。
+- 意図:
+  - 「何回かSLにかかったら方向を疑う」を明示ロジック化し、
+    side別実績に基づく反転を機械的に実行する。
+
 ### 2026-02-19（追記）`scalp_ping_5s_b_live` 反転遅れと order log lock を同時修正
 
 - 対象:

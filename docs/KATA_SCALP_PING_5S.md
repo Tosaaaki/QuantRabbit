@@ -303,3 +303,28 @@ DB:
 - 運用意図:
   - エントリー頻度は維持しつつ、逆方向の過大ロットを早期に絞る。
   - SL発生後の side 反転までの待ち時間を短縮し、取り返しの遅れを減らす。
+
+## 17. 2026-02-20 更新（side実績フリップ導入）
+
+- 目的:
+  - 「特定sideでSLが連続しているのに反転が遅い」局面を、連敗数だけでなく
+    side実績そのもの（SL率・成り行き利確率）で検知して即時反転する。
+- 実装:
+  - `workers/scalp_ping_5s/worker.py`
+    - `_maybe_side_metrics_direction_flip()` を追加。
+    - 条件:
+      - 現在sideの `SL率` が閾値以上
+      - 現在sideと反対sideの `SL率` 差が閾値以上
+      - 反対sideの `MARKET_ORDER_TRADE_CLOSE(+PL)` 率が優位
+      - 最低サンプル数を満たす
+    - 条件成立時は `signal.side` を opposite side へリターゲットし、
+      `mode` に `_smflip` を付与して追跡可能化。
+  - `workers/scalp_ping_5s/config.py`
+    - `SIDE_METRICS_DIRECTION_FLIP_*` の設定群を追加。
+  - `ops/env/scalp_ping_5s_b.env`
+    - B運用値を反映（lookback 36, min trades 8/6, min SL rate 0.58 等）。
+- 監査:
+  - `entry_thesis.side_metrics_direction_flip_*`
+  - `tech_route_reasons` に `side_metrics_flip`
+- 運用意図:
+  - 頻度を落とさず、負けsideへの連続エントリーを短時間で打ち切る。
