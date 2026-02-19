@@ -8,6 +8,41 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-20（追記）`scalp_ping_5s_b_live` 方向転換遅延と逆配分を是正（反応速度優先）
+
+- 対象:
+  - `ops/env/scalp_ping_5s_b.env`
+- 変更:
+  - `entry_probability` 帯別ロット補正を短期反応寄りへ変更。
+    - `ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES: 180 -> 120`
+    - `...MIN_TRADES_PER_BAND: 20 -> 14`
+    - `...HIGH_REDUCE_MAX: 0.55 -> 0.78`
+    - `...LOW_BOOST_MAX: 0.35 -> 0.50`
+    - `...SAMPLE_STRONG_TRADES: 60 -> 30`
+  - side成績補正（SL率と成り行き利確率）を短期化・強化。
+    - `...SIDE_METRICS_LOOKBACK_TRADES: 120 -> 36`
+    - `...SIDE_METRICS_GAIN: 0.90 -> 1.35`
+    - `...SIDE_METRICS_MIN_MULT: 0.60 -> 0.40`
+  - 方向フリップを加速。
+    - `FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS: 0.12 -> 0.08`
+    - `FAST_DIRECTION_FLIP_COOLDOWN_SEC: 1.2 -> 0.6`
+    - `SL_STREAK_DIRECTION_FLIP_MIN_STREAK: 2 -> 1`
+    - `SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP: 0 -> 1`
+    - `SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS: 2 -> 1`
+    - `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK: 3 -> 2`
+    - `SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM: 1 -> 0`
+    - `SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN: 0.55 -> 0.48`
+    - `SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN: 0.42 -> 0.30`
+  - 極値ゲート由来の反転遅れを緩和。
+    - `EXTREMA_REQUIRE_M1_M5_AGREE_SHORT: 1 -> 0`
+    - `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT: 0 -> 1`
+- 背景（VM実測）:
+  - `2026-02-20 01:39 JST` 時点、直近クローズは `long SL 2件 = -25.5` に対して `short MARKET_CLOSE 5件 = +12.9` で、方向転換が遅れた局面で損失が先行。
+  - `2026-02-18 17:00 JST` 以降の `scalp_ping_5s_b` は `entry_probability >= 0.90` 帯が劣後し、ロット配分の過大評価が継続。
+- 意図:
+  - 取引頻度は維持しつつ、逆方向の過大ロットを即時縮小。
+  - SL連敗後のフリップ待ち時間を短縮し、方向修正を先行させる。
+
 ### 2026-02-19（追記）`scalp_ping_5s_b_live` 反転遅れと order log lock を同時修正
 
 - 対象:

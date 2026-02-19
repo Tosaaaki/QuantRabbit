@@ -268,3 +268,38 @@ DB:
 - 運用意図:
   - エントリー件数を維持したまま、損失帯へのロット集中を抑える。
   - 有利帯へロットを寄せ、同一頻度でのPL効率を改善する。
+
+## 16. 2026-02-20 更新（方向転換の反応速度を優先）
+
+- 背景（VM実測）:
+  - `2026-02-20 01:39 JST` 時点の直近クローズで
+    - long: `STOP_LOSS_ORDER` 2件 `-25.5`
+    - short: `MARKET_ORDER_TRADE_CLOSE` 5件 `+12.9`
+  - 高頻度帯で「方向転換の遅れ」と「逆方向ロット偏重」が再発。
+- 反映（`ops/env/scalp_ping_5s_b.env`）:
+  - 確率帯配分の反応を短期化:
+    - `ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES=120`
+    - `...MIN_TRADES_PER_BAND=14`
+    - `...HIGH_REDUCE_MAX=0.78`
+    - `...LOW_BOOST_MAX=0.50`
+    - `...SAMPLE_STRONG_TRADES=30`
+  - side成績配分を即応化:
+    - `...SIDE_METRICS_LOOKBACK_TRADES=36`
+    - `...SIDE_METRICS_GAIN=1.35`
+    - `...SIDE_METRICS_MIN_MULT=0.40`
+  - flip発火を前倒し:
+    - `FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS=0.08`
+    - `FAST_DIRECTION_FLIP_COOLDOWN_SEC=0.6`
+    - `SL_STREAK_DIRECTION_FLIP_MIN_STREAK=1`
+    - `SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP=1`
+    - `SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS=1`
+    - `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK=2`
+    - `SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM=0`
+    - `SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN=0.48`
+    - `SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN=0.30`
+  - 極値由来のショート遅れを緩和:
+    - `EXTREMA_REQUIRE_M1_M5_AGREE_SHORT=0`
+    - `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=1`
+- 運用意図:
+  - エントリー頻度は維持しつつ、逆方向の過大ロットを早期に絞る。
+  - SL発生後の side 反転までの待ち時間を短縮し、取り返しの遅れを減らす。
