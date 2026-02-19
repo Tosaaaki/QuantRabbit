@@ -1,5 +1,28 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-4. 2026-02-19 UTC `scalp_ping_5s_b_live` 緊急デリスク（連続マイナス拡大の抑制）
+- 背景（VM実測）:
+  - `scalp_ping_5s_b_live` 直近2hで `-104.8 pips`。
+  - 損失主因は `long + STOP_LOSS_ORDER`（`155件 / -373.8 pips`）。
+  - `SL streak flip` が `streak_stale` で不発になる比率が高かった。
+  - 同方向の同時建玉が増えやすく、SLクラスターで損失が拡大。
+- 反映（`ops/env/scalp_ping_5s_b.env`）:
+  - 建玉クラスター抑制:
+    - `MAX_ACTIVE_TRADES: 40 -> 20`
+    - `MAX_PER_DIRECTION: 24 -> 12`
+  - 方向転換の有効期限を延長:
+    - `SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC: 180 -> 480`
+    - `SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES: 24 -> 36`
+  - side成績連動のロット減衰を強化:
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN: 0.65 -> 0.90`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT: 0.70 -> 0.60`
+  - 片側シグナルの取りこぼし低減:
+    - `MIN_UNITS: 150 -> 100`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE): 150 -> 100`
+- 目的:
+  - エントリー頻度を極端に落とさず、同方向クラスター起因のSL連鎖を抑える。
+  - 連続SL時の方向転換を「失効しにくい」状態にする。
+
 ## 0-3. 2026-02-19 UTC `scalp_ping_5s_b_live` 逆配分・反転遅れの根本補正
 - 背景（VM実績, 直近600 close）:
   - 高確率帯 (`entry_probability>=0.90`) が劣後継続。

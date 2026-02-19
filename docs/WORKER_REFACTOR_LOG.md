@@ -3164,3 +3164,27 @@
 - 目的:
   - 方向逆行時の「高確率過信」を減らし、連敗局面での反転遅れを圧縮。
   - エントリー頻度を維持したまま、損大・利小の非対称を改善する。
+
+### 2026-02-19（追記）`scalp_ping_5s_b_live` 緊急デリスク: 同方向クラスター抑制 + SL反転失効の緩和
+
+- 背景（VM実績, 直近2h）:
+  - `scalp_ping_5s_b_live` が `-104.8 pips`。
+  - 損失の主因は `long + STOP_LOSS_ORDER`（`155件 / -373.8 pips`）。
+  - `sl_streak_direction_flip_reason` が `streak_stale` となるケースが多く、
+    連続SL後の方向転換が有効期限切れで機能しにくかった。
+- 実施（`ops/env/scalp_ping_5s_b.env`）:
+  - 建玉集中の抑制:
+    - `SCALP_PING_5S_B_MAX_ACTIVE_TRADES=20`（from 40）
+    - `SCALP_PING_5S_B_MAX_PER_DIRECTION=12`（from 24）
+  - SL反転の有効期限を延長:
+    - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC=480`（from 180）
+    - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES=36`（from 24）
+  - side成績連動の減衰強化:
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN=0.90`（from 0.65）
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.60`（from 0.70）
+  - 取りこぼし抑制（片側小ロット通過）:
+    - `SCALP_PING_5S_B_MIN_UNITS=100`（from 150）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=100`（from 150）
+- 目的:
+  - 同方向同時建玉でのSLクラスターを抑え、ドローダウン加速を止める。
+  - 連続SL時の転換ロジックを、実運用時間軸で失効しにくくする。
