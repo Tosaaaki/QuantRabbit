@@ -3022,3 +3022,26 @@
 - 期待効果:
   - 「反転を察して微益/小損で撤退」の遅れを short 側で直接改善。
   - エントリー頻度を落とさず、長時間逆行ホールド由来の tail 損失を圧縮。
+
+### 2026-02-19（追記）内部テスト精度ゲート: replay walk-forward 品質判定を追加
+
+- 背景:
+  - 戦略ワーカーのリプレイ比較が `summary_all.json` 手動確認中心で、期間分割（in-sample / out-of-sample）と閾値判定の自動化が不足していた。
+  - 「改善したつもり」の変更を機械判定で落とす仕組みを標準化する必要があった。
+- 実施:
+  - 追加: `analytics/replay_quality_gate.py`
+    - `PF/勝率/総pips/maxDD` 算出
+    - walk-forward fold 生成
+    - gate 判定（`pf_stability_ratio` を含む）
+  - 追加: `scripts/replay_quality_gate.py`
+    - `scripts/replay_exit_workers_groups.py` を複数 tick へ連続実行
+    - fold ごとに train/test 判定
+    - `quality_gate_report.json` / `quality_gate_report.md` / `commands.json` を出力
+  - 追加: `config/replay_quality_gate.yaml`
+    - 対象ワーカー、標準 replay フラグ、閾値、walk-forward 分割を定義
+  - 追加テスト: `tests/analysis/test_replay_quality_gate.py`
+  - 仕様追記: `docs/REPLAY_STANDARD.md`, `docs/ARCHITECTURE.md`
+- 運用:
+  - 標準実行:
+    - `python scripts/replay_quality_gate.py --config config/replay_quality_gate.yaml --ticks-glob 'logs/replay/USD_JPY/USD_JPY_ticks_YYYYMM*.jsonl' --strict`
+  - pass/fail は worker 単位で fold pass rate を集計し、`min_fold_pass_rate` を下回った worker を fail とする。

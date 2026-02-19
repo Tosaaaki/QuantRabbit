@@ -110,3 +110,14 @@ class OrderIntent(BaseModel):
 ### client_order_id
 - `client_order_id = f"qr-{ts_ms}-{focus_tag}-{tag}"`（9桁以内のハッシュで重複防止）。
 - Exit も同形式で 90 日ユニーク。
+
+## 5. リプレイ品質ゲート（内部テスト）
+
+- 目的: 戦略ワーカーのリプレイ結果を walk-forward で評価し、過学習や不安定な調整を早期検知する。
+- 実行: `scripts/replay_quality_gate.py` が `scripts/replay_exit_workers_groups.py` を複数 tick ファイルに対して実行し、fold 単位で `train/test` を評価する。
+- 判定指標: `trade_count`, `profit_factor`, `win_rate`, `total_pips`, `max_drawdown_pips`, `pf_stability_ratio`。
+- 閾値管理: `config/replay_quality_gate.yaml`（`gates.default` + `gates.workers.<worker>`）。
+- 成果物:
+  - `quality_gate_report.json`（fold 詳細 + pass/fail）
+  - `quality_gate_report.md`（運用サマリ）
+  - `commands.json`（再現用コマンドログ）

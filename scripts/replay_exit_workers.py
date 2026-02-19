@@ -98,9 +98,6 @@ ALLOWED_RANGE_STRATEGIES = {
     "MicroMomentumStack",
 }
 
-import workers.micro_bbrsi.exit_worker as bbrsi_exit
-
-
 PIP = 0.01
 PIP_VALUE = PIP
 
@@ -250,6 +247,12 @@ try:
     import workers.macro_trendma.exit_worker as trendma_exit
 except Exception:
     trendma_exit = None
+
+bbrsi_exit: Any = None
+try:
+    import workers.micro_bbrsi.exit_worker as bbrsi_exit
+except Exception:
+    bbrsi_exit = None
 
 
 @dataclass
@@ -1638,7 +1641,8 @@ def main() -> None:
     if not args.fast_only:
         _patch_exit_module(sp_level_reject_exit, broker)
         _patch_exit_module(sp_false_break_exit, broker)
-        _patch_exit_module(bbrsi_exit, broker)
+        if bbrsi_exit is not None:
+            _patch_exit_module(bbrsi_exit, broker)
         if trendma_exit is not None:
             _patch_exit_module(trendma_exit, broker)
 
@@ -1662,7 +1666,8 @@ def main() -> None:
             sp_false_break_exit.RangeFaderExitWorker(),
             broker,
         )
-        bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
+        if bbrsi_exit is not None:
+            bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
         if not args.disable_macro and trendma_exit is not None:
             trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
 

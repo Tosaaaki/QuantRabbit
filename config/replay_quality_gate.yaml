@@ -1,0 +1,40 @@
+# Replay quality gate defaults for internal strategy validation.
+# Override from CLI when needed.
+
+ticks_glob: "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
+
+workers:
+  - impulse_break_s5
+  - impulse_momentum_s5
+  - impulse_retest_s5
+  - pullback_s5
+
+replay:
+  no_hard_sl: true
+  no_hard_tp: false
+  exclude_end_of_replay: true
+  realistic: true
+  tune: false
+  resample_sec: 0
+  fill_mode: next_tick
+
+gates:
+  default:
+    min_train_trades: 20
+    min_test_trades: 10
+    min_test_pf: 1.0
+    min_test_win_rate: 0.50
+    min_test_total_pips: 0.0
+    max_test_drawdown_pips: 45.0
+    min_pf_stability_ratio: 0.60
+  workers:
+    # Example per-worker override:
+    # pullback_s5:
+    #   min_test_pf: 0.95
+    #   max_test_drawdown_pips: 55.0
+
+walk_forward:
+  train_files: 4
+  test_files: 1
+  step_files: 1
+  min_fold_pass_rate: 0.70
