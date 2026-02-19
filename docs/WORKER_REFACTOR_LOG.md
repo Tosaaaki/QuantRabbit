@@ -2888,3 +2888,17 @@
     - `HORIZON_SCORE_MIN=0.42`（旧0.24）
 - 期待効果:
   - 逆方向への過剰リライトを減らし、連続SLによる利益の全戻しを抑制する。
+
+### 2026-02-19（追記）order_manager 側 perf_block による発注欠落を是正
+
+- 背景:
+  - flip 厳格化デプロイ後、`quant-order-manager` ログで
+    `OPEN_REJECT note=perf_block:margin_closeout_n=...` を確認。
+  - `scalp_ping_5s_b` ワーカー側の `PERF_GUARD_MODE=warn` は
+    ワーカー env にのみ存在し、V2 分離の `quant-order-manager` には未反映だった。
+- 実施:
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=warn` を追加。
+- 期待効果:
+  - `margin_closeout_n` を理由にした order_manager 側の一律 reject を防ぎ、
+    件数を落とさず方向改善ロジックの効果検証を継続可能にする。

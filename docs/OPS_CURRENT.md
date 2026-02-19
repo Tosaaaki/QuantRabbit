@@ -119,6 +119,12 @@
     - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_FORCE_STREAK=5`
     - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN=0.55`
     - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN=0.42`
+- 2026-02-19 UTC 追加: `quant-order-manager` 側の `perf_block` 是正（件数維持）
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=warn`
+  - 目的:
+    - `OPEN_REJECT note=perf_block:margin_closeout_n=...` を防ぎ、
+      scalp_ping_5s_b の方向改善ロジックを発注欠落なく評価する。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。
