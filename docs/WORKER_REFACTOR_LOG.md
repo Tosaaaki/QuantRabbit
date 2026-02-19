@@ -2950,3 +2950,36 @@
 - 期待効果:
   - 高 `entry_probability` 時の過大ロット（>1.0x）を禁止し、負け側の損失振れ幅を抑える。
   - 低〜中 `entry_probability` の過小ロットを緩和し、勝ち側の取り分を改善する。
+
+### 2026-02-19（追記）高確率遅行補正: `entry_probability` を方向整合で再校正
+
+- 背景（VM実績, `scalp_ping_5s_b_live`, 2026-02-18 17:00 JST 以降）:
+  - `entry_probability >= 0.90`: `367件`, `avg_pips=-0.59`, `SL率=49%`
+  - ショート `entry_probability >= 0.90`: `123件`, `avg_pips=-1.07`, `SL率=63.4%`
+  - `0.50-0.59` 帯の方が `avg_pips=+0.40` で優位
+  - 発注遅延は主要因でなく、`preflight->fill ≒ 381ms` で安定
+- 実施:
+  - `workers/scalp_ping_5s/config.py`
+    - `ENTRY_PROBABILITY_ALIGN_*` パラメータ群を追加
+      - direction/horizon/m1 重み
+      - penalty/boost
+      - revert 時ペナルティ緩和
+      - floor（高prob時の過剰リジェクト回避）
+      - units follow（確率調整比率でロットを追随縮小）
+  - `workers/scalp_ping_5s/worker.py`
+    - `entry_probability` を `confidence` 直結から
+      `direction_bias + horizon + m1_trend` の整合再校正へ変更。
+    - 追加した `probability_units_mult` をサイズ計算へ反映し、
+      過大評価局面のロットを自動縮小。
+    - `entry_thesis` に監査項目を追加:
+      - `entry_probability_raw`
+      - `entry_probability_units_mult`
+      - `entry_probability_alignment.{support,counter,penalty,...}`
+    - openログへ `prob=raw->adjusted` と `p_mult` を追加。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_*` を追加
+      （本番Bワーカーの既定値を明示）。
+- 期待効果:
+  - 高確率の遅行・過大評価を抑え、逆行局面でのロット集中を低減。
+  - エントリー件数を大きく落とさず（高prob floor あり）、
+    方向転換遅れ時の損失インパクトを縮小。

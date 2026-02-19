@@ -154,6 +154,23 @@
       - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
   - 目的:
     - 高確率時の過大ロットを抑えつつ、低確率側の過小ロットを補正する。
+- 2026-02-19 UTC 追加: `scalp_ping_5s_b` 高確率遅行補正（方向整合prob再校正）
+  - 背景（VM, 2026-02-18 17:00 JST 以降）:
+    - `ep>=0.90`: `367件`, `avg_pips=-0.59`
+    - ショート `ep>=0.90`: `123件`, `avg_pips=-1.07`, `SL率=63.4%`
+    - 発注遅延は主要因でなく `preflight->fill ≒ 381ms`
+  - 反映:
+    - `workers/scalp_ping_5s/config.py`
+      - `ENTRY_PROBABILITY_ALIGN_*`（direction/horizon/m1 加重、penalty/boost、units follow）
+    - `workers/scalp_ping_5s/worker.py`
+      - `entry_probability` を `confidence` 直結から整合再校正へ変更
+      - `probability_units_mult` をサイズ計算に追加
+      - `entry_thesis` に `entry_probability_raw` と `entry_probability_alignment.*` を追加
+    - `ops/env/scalp_ping_5s_b.env`
+      - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_*` を追加
+  - 目的:
+    - 高確率の過大評価による逆行ロット集中を抑え、
+      エントリー頻度を大きく落とさずに損失振れ幅を下げる。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

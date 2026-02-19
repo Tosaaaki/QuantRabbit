@@ -1230,6 +1230,121 @@ CONFIDENCE_FLOOR: int = max(0, int(float(os.getenv("SCALP_PING_5S_CONF_FLOOR", "
 CONFIDENCE_CEIL: int = max(
     CONFIDENCE_FLOOR + 1, int(float(os.getenv("SCALP_PING_5S_CONF_CEIL", "92")))
 )
+ENTRY_PROBABILITY_ALIGN_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+ENTRY_PROBABILITY_ALIGN_DIRECTION_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_DIRECTION_WEIGHT", "0.15")),
+)
+ENTRY_PROBABILITY_ALIGN_HORIZON_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_HORIZON_WEIGHT", "0.65")),
+)
+ENTRY_PROBABILITY_ALIGN_M1_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_M1_WEIGHT", "0.20")),
+)
+ENTRY_PROBABILITY_ALIGN_BOOST_MAX: float = max(
+    0.0,
+    min(
+        0.50,
+        float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_BOOST_MAX", "0.08")),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_PENALTY_MAX: float = max(
+    0.0,
+    min(
+        0.95,
+        float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_PENALTY_MAX", "0.45")),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX: float = max(
+    0.0,
+    min(
+        0.95,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX",
+                "0.25",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_REVERT_PENALTY_MULT: float = max(
+    0.10,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_REVERT_PENALTY_MULT",
+                "0.82",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_MIN: float = max(
+    0.0,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_MIN", "0.0")),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_MAX: float = max(
+    ENTRY_PROBABILITY_ALIGN_MIN,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_MAX", "1.0")),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN",
+                "0.70",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_FLOOR: float = max(
+    0.0,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR", "0.46")),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT: float = max(
+    0.10,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT",
+                "0.55",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT: float = max(
+    ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT,
+    min(
+        2.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT",
+                "1.00",
+            )
+        ),
+    ),
+)
 
 SIDE_BIAS_ENABLED: bool = _bool_env("SCALP_PING_5S_SIDE_BIAS_ENABLED", True)
 SIDE_BIAS_WINDOW_SEC: float = max(

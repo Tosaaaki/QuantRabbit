@@ -3783,6 +3783,140 @@ def _confidence_scale(conf: int) -> float:
     return 0.65 + ratio * 0.5
 
 
+def _probability_side_edge(side: str, raw_score: float) -> float:
+    side_key = str(side or "").strip().lower()
+    score = _safe_float(raw_score, 0.0)
+    if side_key == "short":
+        score *= -1.0
+    return _clamp(score, -1.0, 1.0)
+
+
+def _raw_entry_probability(signal: TickSignal) -> float:
+    raw = _safe_float(getattr(signal, "confidence", 0.0), 0.0)
+    if raw > 1.0:
+        raw /= 100.0
+    return float(_clamp(raw, 0.0, 1.0))
+
+
+def _adjust_entry_probability_alignment(
+    *,
+    signal: TickSignal,
+    raw_probability: float,
+    direction_bias: Optional[DirectionBias],
+    horizon: Optional[HorizonBias],
+    m1_score: Optional[float],
+) -> tuple[float, float, dict[str, object]]:
+    side = str(signal.side or "").strip().lower()
+    mode = str(signal.mode or "").strip().lower()
+    raw = float(_clamp(raw_probability, 0.0, 1.0))
+    meta: dict[str, object] = {
+        "enabled": bool(config.ENTRY_PROBABILITY_ALIGN_ENABLED),
+        "raw": raw,
+        "adjusted": raw,
+        "units_mult": 1.0,
+        "support": 0.0,
+        "counter": 0.0,
+        "boost": 0.0,
+        "penalty": 0.0,
+        "counter_extra": 0.0,
+        "direction_edge": None,
+        "horizon_edge": None,
+        "m1_edge": None,
+        "floor_applied": False,
+    }
+    if not config.ENTRY_PROBABILITY_ALIGN_ENABLED:
+        return raw, 1.0, meta
+    if side not in {"long", "short"}:
+        meta["reason"] = "invalid_side"
+        return raw, 1.0, meta
+
+    weighted_edges: list[tuple[str, float, float]] = []
+    direction_weight = max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_DIRECTION_WEIGHT))
+    horizon_weight = max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_HORIZON_WEIGHT))
+    m1_weight = max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_M1_WEIGHT))
+
+    if direction_bias is not None and direction_weight > 0.0:
+        direction_edge = _probability_side_edge(side, _safe_float(direction_bias.score, 0.0))
+        meta["direction_edge"] = round(direction_edge, 6)
+        weighted_edges.append(("direction", direction_edge, direction_weight))
+
+    horizon_edge = 0.0
+    if horizon is not None and horizon_weight > 0.0:
+        horizon_edge_raw = (
+            0.7 * (_safe_float(horizon.long_score, 0.0) - _safe_float(horizon.short_score, 0.0))
+            + 0.3 * _safe_float(horizon.composite_score, 0.0)
+        )
+        horizon_edge = _probability_side_edge(side, horizon_edge_raw)
+        meta["horizon_edge"] = round(horizon_edge, 6)
+        weighted_edges.append(("horizon", horizon_edge, horizon_weight))
+
+    if m1_score is not None and m1_weight > 0.0:
+        m1_edge = _probability_side_edge(side, _safe_float(m1_score, 0.0))
+        meta["m1_edge"] = round(m1_edge, 6)
+        weighted_edges.append(("m1", m1_edge, m1_weight))
+
+    total_weight = sum(w for _, _, w in weighted_edges if w > 0.0)
+    if total_weight <= 0.0:
+        meta["reason"] = "no_alignment_inputs"
+        return raw, 1.0, meta
+
+    support = sum(w * max(0.0, edge) for _, edge, w in weighted_edges) / total_weight
+    counter = sum(w * max(0.0, -edge) for _, edge, w in weighted_edges) / total_weight
+    boost = support * max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_BOOST_MAX))
+    penalty = counter * max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_PENALTY_MAX))
+    if mode.startswith("revert"):
+        penalty *= _clamp(float(config.ENTRY_PROBABILITY_ALIGN_REVERT_PENALTY_MULT), 0.0, 1.0)
+    counter_extra = max(0.0, -horizon_edge) * max(
+        0.0, float(config.ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX)
+    )
+    penalty = min(0.98, penalty + counter_extra)
+
+    adjusted = raw * (1.0 - penalty)
+    if boost > 0.0:
+        adjusted += (1.0 - adjusted) * min(0.95, boost)
+
+    floor_raw_min = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN), 0.0, 1.0)
+    floor_prob = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR), 0.0, 1.0)
+    floor_applied = False
+    if raw >= floor_raw_min and adjusted < floor_prob:
+        adjusted = floor_prob
+        floor_applied = True
+
+    adjusted = _clamp(
+        adjusted,
+        float(config.ENTRY_PROBABILITY_ALIGN_MIN),
+        float(config.ENTRY_PROBABILITY_ALIGN_MAX),
+    )
+
+    units_mult = 1.0
+    if config.ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED and raw > 0.0:
+        ratio = adjusted / raw
+        units_mult = _clamp(
+            ratio,
+            float(config.ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT),
+            float(config.ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT),
+        )
+
+    meta.update(
+        {
+            "adjusted": round(adjusted, 6),
+            "units_mult": round(units_mult, 6),
+            "support": round(support, 6),
+            "counter": round(counter, 6),
+            "boost": round(boost, 6),
+            "penalty": round(penalty, 6),
+            "counter_extra": round(counter_extra, 6),
+            "floor_applied": bool(floor_applied),
+            "weights": {
+                "direction": round(direction_weight, 6),
+                "horizon": round(horizon_weight, 6),
+                "m1": round(m1_weight, 6),
+            },
+        }
+    )
+    return float(adjusted), float(units_mult), meta
+
+
 def _compute_targets(
     *,
     spread_pips: float,
@@ -5534,6 +5668,15 @@ async def scalp_ping_5s_worker() -> None:
                 risk_sl_pips = float(
                     config.SHORT_SL_MIN_PIPS if signal.side == "short" else config.SL_MIN_PIPS
                 )
+            raw_entry_probability = _raw_entry_probability(signal)
+            entry_probability, probability_units_mult, probability_meta = _adjust_entry_probability_alignment(
+                signal=signal,
+                raw_probability=raw_entry_probability,
+                direction_bias=direction_bias,
+                horizon=horizon,
+                m1_score=m1_score,
+            )
+
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
                 0.75,
@@ -5556,6 +5699,7 @@ async def scalp_ping_5s_worker() -> None:
             units = int(round(units * horizon_units_mult))
             units = int(round(units * m1_trend_units_mult))
             units = int(round(units * extrema_units_mult))
+            units = int(round(units * probability_units_mult))
             snapshot_units_scale = _snapshot_stale_units_scale()
             if snapshot_units_scale < 1.0:
                 units = int(round(units * snapshot_units_scale))
@@ -5634,14 +5778,6 @@ async def scalp_ping_5s_worker() -> None:
             )
             order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
 
-            try:
-                _entry_probability_raw = float(signal.confidence)
-            except Exception:
-                _entry_probability_raw = 0.0
-            if _entry_probability_raw > 1.0:
-                _entry_probability_raw /= 100.0
-            entry_probability = max(0.0, min(1.0, _entry_probability_raw))
-
             entry_thesis = {
                 "strategy_tag": config.STRATEGY_TAG,
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
@@ -5690,6 +5826,7 @@ async def scalp_ping_5s_worker() -> None:
                 "tick_age_ms": round(signal.tick_age_ms, 1),
                 "spread_pips": round(signal.spread_pips, 3),
                 "confidence": int(signal.confidence),
+                "entry_probability_raw": round(raw_entry_probability, 6),
                 "tp_pips": round(effective_tp_pips, 3),
                 "sl_pips": 0.0 if not config.USE_SL else round(sl_pips, 3),
                 "sl_risk_pips": round(risk_sl_pips, 3),
@@ -5718,6 +5855,7 @@ async def scalp_ping_5s_worker() -> None:
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
                 ),
                 "entry_probability": round(entry_probability, 3),
+                "entry_probability_units_mult": round(probability_units_mult, 3),
                 "tp_time_target_sec": round(config.TP_TARGET_HOLD_SEC, 1),
                 "tp_time_sample": int(tp_profile.sample),
                 "side_bias_scale": round(float(bias_scale), 3),
@@ -5780,6 +5918,19 @@ async def scalp_ping_5s_worker() -> None:
                 "tech_sl_mult": round(float(tech_profile.sl_mult), 3),
                 "tech_hold_mult": round(float(tech_profile.hold_mult), 3),
                 "tech_hard_loss_mult": round(float(tech_profile.hard_loss_mult), 3),
+            }
+            entry_thesis["entry_probability_alignment"] = {
+                "enabled": bool(probability_meta.get("enabled", False)),
+                "support": round(_safe_float(probability_meta.get("support"), 0.0), 6),
+                "counter": round(_safe_float(probability_meta.get("counter"), 0.0), 6),
+                "boost": round(_safe_float(probability_meta.get("boost"), 0.0), 6),
+                "penalty": round(_safe_float(probability_meta.get("penalty"), 0.0), 6),
+                "counter_extra": round(_safe_float(probability_meta.get("counter_extra"), 0.0), 6),
+                "direction_edge": _safe_float(probability_meta.get("direction_edge"), None),
+                "horizon_edge": _safe_float(probability_meta.get("horizon_edge"), None),
+                "m1_edge": _safe_float(probability_meta.get("m1_edge"), None),
+                "floor_applied": bool(probability_meta.get("floor_applied", False)),
+                "weights": probability_meta.get("weights"),
             }
             if dynamic_max_hold_sec > 0.0:
                 entry_thesis["force_exit_max_hold_sec"] = round(dynamic_max_hold_sec, 1)
@@ -6087,12 +6238,15 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d prob=%.3f->%.3f p_mult=%.2f mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s",
                 config.LOG_PREFIX,
                 signal.mode,
                 signal.side,
                 units,
                 signal.confidence,
+                raw_entry_probability,
+                entry_probability,
+                probability_units_mult,
                 signal.momentum_pips,
                 signal.trigger_pips,
                 signal.spread_pips,
