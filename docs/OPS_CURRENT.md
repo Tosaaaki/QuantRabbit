@@ -1,5 +1,29 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-2. 2026-02-19 UTC `scalp_macd_rsi_div_b_live` 精度優先チューニング
+- 背景:
+  - VM `trades.db`（UTC 2026-02-18 02:22〜2026-02-19 01:33）で
+    `scalp_macd_rsi_div_b_live` が `4 trades / PF=0.046 / -32.9 pips`。
+  - `tick_entry_validate`（ticket `365759`）で
+    `TP_touch<=600s = 0/1` を確認し、逆行局面での誤発火を優先是正。
+- 対応（`ops/env/quant-scalp-macd-rsi-div-b.env`）:
+  - レンジ限定:
+    - `SCALP_MACD_RSI_DIV_B_REQUIRE_RANGE_ACTIVE=1`
+    - `SCALP_MACD_RSI_DIV_B_RANGE_MIN_SCORE=0.35`
+    - `SCALP_MACD_RSI_DIV_B_MAX_ADX=30`
+  - シグナル品質の引き締め:
+    - `SCALP_MACD_RSI_DIV_B_MIN_DIV_SCORE=0.08`
+    - `SCALP_MACD_RSI_DIV_B_MIN_DIV_STRENGTH=0.12`
+    - `SCALP_MACD_RSI_DIV_B_MAX_DIV_AGE_BARS=24`
+    - `SCALP_MACD_RSI_DIV_B_RSI_LONG_ENTRY=36`
+    - `SCALP_MACD_RSI_DIV_B_RSI_SHORT_ENTRY=62`
+  - エクスポージャ抑制:
+    - `SCALP_MACD_RSI_DIV_B_MAX_OPEN_TRADES=1`
+    - `SCALP_MACD_RSI_DIV_B_COOLDOWN_SEC=45`
+    - `SCALP_MACD_RSI_DIV_B_BASE_ENTRY_UNITS=5000`
+  - fail-open 経路を停止:
+    - `SCALP_MACD_RSI_DIV_B_TECH_FAILOPEN=0`
+
 ## 0-1. 2026-02-18 UTC MicroCompressionRevert デリスク（専用調整）
 - 背景:
   - 直近24hで `MicroCompressionRevert-short` が `PF<1`（特に同時多発エントリー後の損失クラスター）を確認。

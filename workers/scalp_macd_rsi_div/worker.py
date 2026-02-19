@@ -409,6 +409,17 @@ async def scalp_macd_rsi_div_worker() -> None:
                 div_strength=div_strength,
                 range_score=range_score,
             )
+            if confidence < int(config.MIN_ENTRY_CONF):
+                if now_mono - last_gate_log_mono > 60.0:
+                    LOG.info(
+                        "%s gate_block confidence conf=%s min=%s",
+                        config.LOG_PREFIX,
+                        confidence,
+                        int(config.MIN_ENTRY_CONF),
+                    )
+                    last_gate_log_mono = now_mono
+                prev_rsi = rsi
+                continue
             tp_pips, sl_pips = _compute_targets(atr_pips)
 
             base_units = int(

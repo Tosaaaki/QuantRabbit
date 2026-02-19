@@ -51,6 +51,10 @@
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
+- 2026-02-19 追記: `scalp_macd_rsi_div_b_live` は精度改善のため
+  `range-only` + divergence 閾値強化のプロファイルへ更新。
+  運用値は `ops/env/quant-scalp-macd-rsi-div-b.env`、監査ログは
+  `docs/WORKER_REFACTOR_LOG.md` と `docs/RISK_AND_EXECUTION.md` を正とする。
 
 ## 4. 仕様ドキュメント索引
 - `docs/INDEX.md`: ドキュメントの起点。

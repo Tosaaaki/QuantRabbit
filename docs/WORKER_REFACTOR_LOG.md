@@ -31,6 +31,31 @@
   - `scalp_ping_5s_b_live` の負けトレードを exit遅延依存にせず、
     entry時点で broker SL を復帰して tail-loss を抑制する。
 
+### 2026-02-19（追記）`scalp_macd_rsi_div_b_live` を精度優先プロファイルへ更新
+
+- 対象:
+  - `ops/env/quant-scalp-macd-rsi-div-b.env`
+  - `workers/scalp_macd_rsi_div/worker.py`
+- 変更:
+  - B版 env を「looser mode」から「precision-biased」へ変更。
+    - `REQUIRE_RANGE_ACTIVE=1`（range-only）
+    - `RANGE_MIN_SCORE=0.35`
+    - `MAX_ADX=30`, `MAX_SPREAD_PIPS=1.0`
+    - `MIN_DIV_SCORE=0.08`, `MIN_DIV_STRENGTH=0.12`, `MAX_DIV_AGE_BARS=24`
+    - `RSI_LONG/SHORT_ARM, ENTRY` を `36/62` に引き締め
+    - `MAX_OPEN_TRADES=1`, `COOLDOWN_SEC=45`, `BASE_ENTRY_UNITS=5000`
+    - `TECH_FAILOPEN=0`（tech不許可時は fail-close）
+  - `workers/scalp_macd_rsi_div.worker` に `MIN_ENTRY_CONF` の実効ガードを追加し、
+    低信頼シグナルを `gate_block confidence` で reject するよう修正。
+- 背景:
+  - VM `trades.db` で `scalp_macd_rsi_div_b_live` の直近実績（UTC 2026-02-18 02:22〜
+    2026-02-19 01:33, 4 trades）が `PF=0.046`, `sum=-32.9 pips` と悪化。
+  - `tick_entry_validate` でも直近負け（ticket `365759`）は
+    `TP_touch<=600s = 0/1` かつ逆行継続で、エントリー条件の緩さが主因と判定。
+- 意図:
+  - B版を「件数優先」から「精度優先」に切り替え、
+    トレンド局面の逆張りエントリーと弱い divergence の誤発火を抑制する。
+
 ### 2026-02-18（追記）`scalp_ping_5s_b_live` 取り残し対策（EXITプロファイル適用漏れ修正）
 
 - 対象:

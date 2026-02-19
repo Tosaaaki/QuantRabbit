@@ -72,6 +72,21 @@
   `scalp_macd_rsi_div_live` の `exit_profile` を必ず定義し、
   default（`loss_cut_enabled=false`）フォールバックで負け玉が残留しないようにする。
 
+### scalp_macd_rsi_div_b 運用補足（精度優先プロファイル）
+- `ops/env/quant-scalp-macd-rsi-div-b.env` は 2026-02-19 以降、
+  looser mode ではなく precision-biased を既定とする。
+- 主要ゲートは次を維持する:
+  - `SCALP_MACD_RSI_DIV_B_REQUIRE_RANGE_ACTIVE=1`
+  - `SCALP_MACD_RSI_DIV_B_RANGE_MIN_SCORE=0.35`
+  - `SCALP_MACD_RSI_DIV_B_MAX_ADX=30`
+  - `SCALP_MACD_RSI_DIV_B_MIN_DIV_SCORE=0.08`
+  - `SCALP_MACD_RSI_DIV_B_MIN_DIV_STRENGTH=0.12`
+  - `SCALP_MACD_RSI_DIV_B_MAX_DIV_AGE_BARS=24`
+  - `SCALP_MACD_RSI_DIV_B_TECH_FAILOPEN=0`
+- `workers/scalp_macd_rsi_div.worker` は `MIN_ENTRY_CONF` を実効評価し、
+  `confidence < MIN_ENTRY_CONF` のエントリーを reject する
+  （`gate_block confidence` ログで監査）。
+
 ### dynamic_alloc 運用補足（サイズ過多抑止）
 - `scripts/dynamic_alloc_worker.py` は PF ガードを持ち、
   `pf < 1.0` の戦略を `lot_multiplier <= 0.95`、
