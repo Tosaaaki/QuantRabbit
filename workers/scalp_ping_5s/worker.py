@@ -94,6 +94,7 @@ _SIGNAL_WINDOW_STATS_CACHE: dict[
 ] = {}
 _SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
 _LAST_FAST_FLIP_MONO: float = 0.0
+_SL_STREAK_CACHE: dict[tuple[str, str], tuple[float, Optional["StopLossStreak"]]] = {}
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -170,6 +171,15 @@ class DirectionBias:
     vol_norm: float
     tick_rate: float
     span_sec: float
+
+
+@dataclass(slots=True)
+class StopLossStreak:
+    side: str
+    streak: int
+    age_sec: float
+    latest_close_time: Optional[datetime.datetime]
+    sample: int
 
 
 @dataclass(slots=True)
@@ -3045,6 +3055,138 @@ def _maybe_fast_direction_flip(
     return flipped, reason
 
 
+def _load_stop_loss_streak(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    now_utc: datetime.datetime,
+    now_mono: Optional[float] = None,
+) -> Optional[StopLossStreak]:
+    cache_key = (
+        str(strategy_tag or "").strip().lower(),
+        str(pocket or "").strip().lower(),
+    )
+    if not cache_key[0] or not cache_key[1]:
+        return None
+
+    if now_mono is None:
+        now_mono = time.monotonic()
+    ttl_sec = max(0.1, float(config.SL_STREAK_DIRECTION_FLIP_CACHE_TTL_SEC))
+    cached = _SL_STREAK_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= ttl_sec:
+        return cached[1]
+
+    streak_info: Optional[StopLossStreak] = None
+    if _TRADES_DB.exists():
+        con: Optional[sqlite3.Connection] = None
+        rows: list[tuple[object, object, object]] = []
+        lookback = max(1, int(config.SL_STREAK_DIRECTION_FLIP_LOOKBACK_TRADES))
+        try:
+            con = sqlite3.connect(_TRADES_DB)
+            rows = con.execute(
+                """
+                SELECT close_time, units, close_reason
+                FROM trades
+                WHERE close_time IS NOT NULL
+                  AND lower(coalesce(strategy_tag, '')) = ?
+                  AND lower(coalesce(pocket, '')) = ?
+                ORDER BY datetime(close_time) DESC
+                LIMIT ?
+                """,
+                (cache_key[0], cache_key[1], lookback),
+            ).fetchall()
+        except Exception:
+            rows = []
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+
+        streak_side = ""
+        streak_count = 0
+        sample = 0
+        latest_close_time: Optional[datetime.datetime] = None
+        for raw_close_time, raw_units, raw_reason in rows:
+            sample += 1
+            close_reason = str(raw_reason or "").strip().upper()
+            if close_reason != "STOP_LOSS_ORDER":
+                break
+            side = _trade_side_from_units(int(_safe_float(raw_units, 0.0)))
+            if side not in {"long", "short"}:
+                break
+            if not streak_side:
+                streak_side = side
+                latest_close_time = _parse_iso_utc(raw_close_time)
+            if side != streak_side:
+                break
+            streak_count += 1
+
+        if streak_count > 0 and streak_side in {"long", "short"}:
+            age_sec = float("inf")
+            if latest_close_time is not None:
+                age_sec = max(0.0, (now_utc - latest_close_time).total_seconds())
+            streak_info = StopLossStreak(
+                side=streak_side,
+                streak=streak_count,
+                age_sec=float(age_sec),
+                latest_close_time=latest_close_time,
+                sample=sample,
+            )
+
+    _SL_STREAK_CACHE[cache_key] = (now_mono, streak_info)
+    return streak_info
+
+
+def _maybe_sl_streak_direction_flip(
+    signal: TickSignal,
+    *,
+    strategy_tag: str,
+    pocket: str,
+    now_utc: datetime.datetime,
+    now_mono: float,
+) -> tuple[Optional[TickSignal], str, Optional[StopLossStreak]]:
+    if not config.SL_STREAK_DIRECTION_FLIP_ENABLED:
+        return None, "disabled", None
+
+    current_side = str(signal.side or "").strip().lower()
+    if current_side not in {"long", "short"}:
+        return None, "invalid_signal_side", None
+
+    streak = _load_stop_loss_streak(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        now_utc=now_utc,
+        now_mono=now_mono,
+    )
+    if streak is None:
+        return None, "no_streak", None
+
+    min_streak = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_STREAK))
+    if streak.streak < min_streak:
+        return None, "below_min_streak", streak
+    max_age_sec = max(0.0, float(config.SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC))
+    if max_age_sec > 0.0 and streak.age_sec > max_age_sec:
+        return None, "streak_stale", streak
+    if streak.side != current_side:
+        return None, "already_opposite", streak
+
+    target_side = "short" if current_side == "long" else "long"
+    confidence_add = int(config.SL_STREAK_DIRECTION_FLIP_CONFIDENCE_ADD) + max(
+        0,
+        streak.streak - min_streak,
+    )
+    flipped = _retarget_signal(
+        signal,
+        side=target_side,
+        mode=f"{signal.mode}_slflip",
+        confidence_add=confidence_add,
+    )
+    reason = f"{current_side}->{target_side}:slx{streak.streak},age={streak.age_sec:.0f}s"
+    return flipped, reason, streak
+
+
 def _range_pos_from_candles(
     *,
     tf: str,
@@ -3995,6 +4137,7 @@ async def scalp_ping_5s_worker() -> None:
     last_horizon_log_mono = 0.0
     last_profit_bank_log_mono = 0.0
     last_extrema_log_mono = 0.0
+    last_sl_streak_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
     last_loop_heartbeat_mono = 0.0
     entry_skip_reasons: dict[str, int] = {}
@@ -4668,6 +4811,11 @@ async def scalp_ping_5s_worker() -> None:
             direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
             fast_flip_applied = False
             fast_flip_reason = ""
+            sl_streak_flip_applied = False
+            sl_streak_flip_reason = ""
+            sl_streak_side = ""
+            sl_streak_count = 0
+            sl_streak_age_sec = -1.0
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
@@ -4915,6 +5063,59 @@ async def scalp_ping_5s_worker() -> None:
                         int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0)),
                     )
                     last_bias_log_mono = now_mono
+
+            sl_flip_signal, sl_flip_reason, sl_streak = _maybe_sl_streak_direction_flip(
+                signal,
+                strategy_tag=config.STRATEGY_TAG,
+                pocket=config.POCKET,
+                now_utc=now_utc,
+                now_mono=now_mono,
+            )
+            if sl_streak is not None:
+                sl_streak_side = str(sl_streak.side)
+                sl_streak_count = int(sl_streak.streak)
+                sl_streak_age_sec = float(sl_streak.age_sec)
+                sl_streak_flip_reason = str(sl_flip_reason)
+            if sl_flip_signal is not None:
+                signal = sl_flip_signal
+                sl_streak_flip_applied = True
+                sl_streak_flip_reason = str(sl_flip_reason)
+                tech_route_reasons.append("sl_streak_flip")
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
+                    signal,
+                    horizon,
+                )
+                if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
+                    signal = refreshed_signal
+                    horizon_units_mult = float(refreshed_horizon_mult)
+                    horizon_gate = f"{refreshed_horizon_gate}_slflip"
+                m1_trend_units_mult, m1_trend_gate = _m1_trend_units_multiplier(
+                    signal.side,
+                    m1_score,
+                    regime=regime,
+                )
+                bias_units_mult, bias_gate = _direction_units_multiplier(
+                    signal.side,
+                    direction_bias,
+                    signal_mode=signal.mode,
+                )
+                if bias_units_mult <= 0.0:
+                    bias_units_mult = max(0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT))
+                    bias_gate = f"{bias_gate}_slflip_clamped"
+                if (
+                    now_mono - last_sl_streak_log_mono
+                    >= config.SL_STREAK_DIRECTION_FLIP_LOG_INTERVAL_SEC
+                ):
+                    LOG.info(
+                        "%s sl_streak_flip side=%s reason=%s streak=%sx%d age=%.0fs",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        sl_streak_flip_reason,
+                        sl_streak_side or "-",
+                        sl_streak_count,
+                        sl_streak_age_sec,
+                    )
+                    last_sl_streak_log_mono = now_mono
             decision_cooldown_sec = max(
                 config.ENTRY_COOLDOWN_SEC * config.INSTANT_COOLDOWN_SCALE_MIN,
                 config.ENTRY_COOLDOWN_SEC * decision_speed_scale,
@@ -5319,6 +5520,14 @@ async def scalp_ping_5s_worker() -> None:
                 "fast_direction_flip_enabled": bool(config.FAST_DIRECTION_FLIP_ENABLED),
                 "fast_direction_flip_applied": bool(fast_flip_applied),
                 "fast_direction_flip_reason": fast_flip_reason,
+                "sl_streak_direction_flip_enabled": bool(config.SL_STREAK_DIRECTION_FLIP_ENABLED),
+                "sl_streak_direction_flip_applied": bool(sl_streak_flip_applied),
+                "sl_streak_direction_flip_reason": sl_streak_flip_reason,
+                "sl_streak_side": sl_streak_side,
+                "sl_streak_count": int(sl_streak_count),
+                "sl_streak_age_sec": (
+                    round(float(sl_streak_age_sec), 1) if sl_streak_age_sec >= 0.0 else None
+                ),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),

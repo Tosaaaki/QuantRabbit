@@ -2720,3 +2720,33 @@
 - 期待効果:
   - ショート偏重時にエントリー自体を止めず、ロング側への反転を優先して
     頻度を維持しながら SL 到達率を圧縮する。
+
+### 2026-02-19（追記）scalp_ping_5s_b に連続SL起点の方向反転（SL Streak Flip）を追加
+
+- 背景:
+  - VM実績で `scalp_ping_5s_b_live` は、同方向の `STOP_LOSS_ORDER` が連続した直後に
+    同方向エントリーを継続すると勝率が大きく低下し、損失が連鎖する傾向を確認。
+  - 要件は「エントリー頻度を落とさず、方向だけを根本補正する」こと。
+- 実施:
+  - `workers/scalp_ping_5s/config.py`
+    - `SL_STREAK_DIRECTION_FLIP_*` パラメータを追加
+      （enabled/min_streak/lookback/max_age/confidence_add/cache_ttl/log_interval）。
+  - `workers/scalp_ping_5s/worker.py`
+    - `trades.db` の `strategy_tag + pocket` クローズ履歴から
+      直近の `STOP_LOSS_ORDER` 同方向連敗を検出する `_load_stop_loss_streak` を追加。
+    - `extrema/fast_flip` 後に `_maybe_sl_streak_direction_flip` を適用し、
+      連敗方向と同じ side の新規シグナルのみ `*_slflip` モードで反転。
+    - 反転後は `horizon/m1_trend/direction_bias` のロット倍率を再評価し、
+      エントリー拒否はせず side リライトのみ実施。
+    - `entry_thesis` へ `sl_streak_direction_flip_*` と `sl_streak_*` を記録。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_*` を追加してB戦略で有効化。
+  - テスト:
+    - `tests/workers/test_scalp_ping_5s_sl_streak_flip.py`
+      - 同方向SL連敗の検出
+      - 同方向シグナル時の反転
+      - 既に逆方向シグナル時の非反転
+      - 連敗が古い場合（stale）の非反転
+- 期待効果:
+  - 「連続SL後に同方向へ入り続ける」局面を自動で切り替え、
+    時間帯ブロックやエントリー削減なしで方向遅延損失を抑制する。

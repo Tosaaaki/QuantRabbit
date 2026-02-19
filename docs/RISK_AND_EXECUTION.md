@@ -37,6 +37,14 @@
   - `horizon=neutral` でも `direction_bias` が十分強ければ反転を許可する
     （`SCALP_PING_5S_B_FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN`）。
   - 頻度維持のため、reject ではなく side リライト＋confidence 加算のみ行う。
+- `scalp_ping_5s_b*` は「同方向の `STOP_LOSS_ORDER` 連発」を方向ミスマッチとして扱い、
+  直近クローズ履歴に同方向SLが規定回数（既定2連）続いた場合、
+  次エントリーの side を `sl_streak_direction_flip` で反転する。
+  - 既定は B で有効（`SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED=1`）。
+  - 発注拒否ではなく side リライトで頻度を維持し、`entry_thesis` に
+    `sl_streak_*`（side/count/age/applied/reason）を記録する。
+  - 過去トレード参照は `strategy_tag + pocket` のクローズ履歴に限定し、
+    `SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC` を超える古い連敗は反転対象外にする。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、
