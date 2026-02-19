@@ -240,3 +240,31 @@ DB:
 - 運用意図:
   - internal sentinel の外部流出を防ぎ、strict negative gate 下でも
     direction flip 系の損失縮小が実行される状態を維持する。
+
+## 15. 2026-02-19 更新（確率帯ロット再配分）
+
+- 問題:
+  - `scalp_ping_5s_b_live` で `entry_probability >= 0.90` 帯の期待値が劣後しているのに、
+    ロットが高確率帯へ偏っていた。
+  - 逆に `entry_probability < 0.70` 帯は相対優位でもロット不足になり、
+    「勝ちで小、負けで大」の逆配分が発生していた。
+- 実装:
+  - `workers/scalp_ping_5s/worker.py`
+    - `EntryProbabilityBandMetrics` を追加。
+    - `_load_entry_probability_band_metrics()` で side別に
+      `mean_pips/win_rate/sl_rate` を帯別集計（lookbackベース）。
+    - `_entry_probability_band_units_multiplier()` を追加し、
+      帯間ギャップ（pips/win/sl）とサンプル強度で
+      `high縮小 / low増量` を決定。
+    - side別 `SL hit` と `MARKET close +` の比率を `side_mult` に反映。
+    - 最終ロット計算に `probability_band_units_mult` を適用。
+  - `workers/scalp_ping_5s/config.py`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_*` を追加。
+  - `ops/env/scalp_ping_5s_b.env`
+    - B本番用の `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_*` を追加。
+- 監査キー（`entry_thesis`）:
+  - `entry_probability_band_units_mult`
+  - `entry_probability_band_allocation.{reason,bucket,band_mult,side_mult,units_mult,...}`
+- 運用意図:
+  - エントリー件数を維持したまま、損失帯へのロット集中を抑える。
+  - 有利帯へロットを寄せ、同一頻度でのPL効率を改善する。

@@ -3045,3 +3045,39 @@
   - 標準実行:
     - `python scripts/replay_quality_gate.py --config config/replay_quality_gate.yaml --ticks-glob 'logs/replay/USD_JPY/USD_JPY_ticks_YYYYMM*.jsonl' --strict`
   - pass/fail は worker 単位で fold pass rate を集計し、`min_fold_pass_rate` を下回った worker を fail とする。
+
+### 2026-02-19（追記）確率帯ロット再配分: 勝ち小ロット/負け大ロットの逆配分を補正
+
+- 背景（VM実績, `scalp_ping_5s_b_live`, 2026-02-18 17:00 JST 以降）:
+  - `entry_probability >= 0.90` 帯が低成績でもロット比重が高く、逆行時の損失インパクトが大きかった。
+  - `entry_probability < 0.70` 帯は相対優位でもロットが小さく、利益回収効率が悪かった。
+  - 直近では「勝ちで小、負けで大」の逆配分が継続していた。
+- 実施:
+  - `workers/scalp_ping_5s/worker.py`
+    - side別に `trades.db` の確率帯統計（`<0.70` / `>=0.90`）を集計する
+      `EntryProbabilityBandMetrics` とキャッシュを追加。
+    - `_entry_probability_band_units_multiplier()` を追加し、
+      - 高確率帯が劣後する局面: high帯ロットを縮小
+      - 低確率帯が優位な局面: low帯ロットを増量
+      の動的再配分を実装。
+    - 追加で side別 `SL hit` と `MARKET_ORDER_TRADE_CLOSE +` 件数を係数化し、
+      同一 side の連敗圧が高いときはロットを減衰。
+    - サイズ計算チェーンに `probability_band_units_mult` を追加。
+    - `entry_thesis` に `entry_probability_band_units_mult` と
+      `entry_probability_band_allocation.*` を記録。
+  - `workers/scalp_ping_5s/config.py`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_*` 設定群を追加
+      （lookback, 閾値, 最大縮小/増量, side指標ゲインなど）。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_*` を追加。
+- テスト:
+  - 追加: `tests/workers/test_scalp_ping_5s_probability_band_alloc.py`
+    - high帯縮小 / low帯増量 / side指標減衰 / DB集計を検証。
+  - 実行: `22 passed`
+    - `tests/workers/test_scalp_ping_5s_probability_band_alloc.py`
+    - `tests/workers/test_scalp_ping_5s_sl_streak_flip.py`
+    - `tests/workers/test_scalp_ping_5s_exit_worker.py`
+    - `tests/workers/test_scalp_ping_5s_extrema_routes.py`
+- 目的:
+  - エントリー頻度を落とさず、損失が出やすい確率帯への過大配分を抑える。
+  - 利が伸びる帯へロットを寄せることで、同一シグナル密度でも期待値を改善する。

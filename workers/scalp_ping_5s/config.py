@@ -1345,6 +1345,205 @@ ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT: float = max(
         ),
     ),
 )
+ENTRY_PROBABILITY_BAND_ALLOC_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES: int = max(
+    20,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES",
+                "180",
+            )
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_CACHE_TTL_SEC: float = max(
+    0.2,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_CACHE_TTL_SEC",
+            "4.0",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD",
+                "0.70",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD: float = max(
+    ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD + 0.01,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD",
+                "0.90",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_MIN_TRADES_PER_BAND: int = max(
+    5,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_MIN_TRADES_PER_BAND",
+                "20",
+            )
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX: float = max(
+    0.0,
+    min(
+        0.90,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX",
+                "0.45",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX: float = max(
+    0.0,
+    min(
+        0.90,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX",
+                "0.30",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_GAP_PIPS_REF: float = max(
+    0.05,
+    float(
+        os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_GAP_PIPS_REF", "1.0")
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_GAP_WIN_RATE_REF: float = max(
+    0.01,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_GAP_WIN_RATE_REF",
+            "0.20",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_GAP_SL_RATE_REF: float = max(
+    0.01,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_GAP_SL_RATE_REF",
+            "0.20",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SAMPLE_STRONG_TRADES: int = max(
+    5,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SAMPLE_STRONG_TRADES",
+                "60",
+            )
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT: float = max(
+    0.10,
+    min(
+        2.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT",
+                "0.55",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MAX_MULT: float = max(
+    ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT,
+    min(
+        3.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MAX_MULT",
+                "1.35",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_ENABLED",
+    True,
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_LOOKBACK_TRADES: int = max(
+    20,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_LOOKBACK_TRADES",
+                "120",
+            )
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_CACHE_TTL_SEC: float = max(
+    0.2,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_CACHE_TTL_SEC",
+            "4.0",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN",
+            "0.30",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT: float = max(
+    0.10,
+    min(
+        2.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT",
+                "0.85",
+            )
+        ),
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT: float = max(
+    ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT,
+    min(
+        3.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT",
+                "1.08",
+            )
+        ),
+    ),
+)
 
 SIDE_BIAS_ENABLED: bool = _bool_env("SCALP_PING_5S_SIDE_BIAS_ENABLED", True)
 SIDE_BIAS_WINDOW_SEC: float = max(

@@ -191,6 +191,24 @@
         - `forecast_weight=0.45`
   - 目的:
     - short逆行を長時間抱える tail を圧縮し、反転時の微益/小損撤退を前倒しする。
+- 2026-02-19 UTC 追加: `scalp_ping_5s_b_live` 確率帯ロット再配分（逆配分是正）
+  - 背景（VM, 2026-02-18 17:00 JST 以降）:
+    - 高確率帯（`ep>=0.90`）の成績劣後に対してロットが重く、
+      低確率帯（`ep<0.70`）の優位局面でロットが不足していた。
+  - 反映:
+    - `workers/scalp_ping_5s/config.py`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_*` を追加。
+    - `workers/scalp_ping_5s/worker.py`
+      - `trades.db` の帯別統計（`<0.70` / `>=0.90`）で
+        `probability_band_units_mult` を算出し、最終ロットへ反映。
+      - side別 `SL hit` と `MARKET_ORDER_TRADE_CLOSE +` 件数を `side_mult` に反映。
+      - `entry_thesis` に `entry_probability_band_units_mult` と
+        `entry_probability_band_allocation.*` を記録。
+    - `ops/env/scalp_ping_5s_b.env`
+      - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_*` を追加。
+  - 目的:
+    - エントリー頻度は維持しつつ、負け筋への過大ロット集中を抑え、
+      勝ち筋への配分を増やす。
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

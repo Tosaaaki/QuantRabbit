@@ -96,6 +96,14 @@ _SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
 _LAST_FAST_FLIP_MONO: float = 0.0
 _SL_STREAK_CACHE: dict[tuple[str, str], tuple[float, Optional["StopLossStreak"]]] = {}
 _SL_METRICS_CACHE: dict[tuple[str, str], tuple[float, Optional["SideCloseMetrics"]]] = {}
+_SIDE_CLOSE_METRICS_ALLOC_CACHE: dict[
+    tuple[str, str],
+    tuple[float, Optional["SideCloseMetrics"]],
+] = {}
+_ENTRY_PROB_BAND_METRICS_CACHE: dict[
+    tuple[str, str, str],
+    tuple[float, Optional["EntryProbabilityBandMetrics"]],
+] = {}
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -208,6 +216,20 @@ class SideCloseMetrics:
         if key == "short":
             return int(self.short_market_plus)
         return 0
+
+
+@dataclass(slots=True)
+class EntryProbabilityBandMetrics:
+    side: str
+    sample: int
+    high_sample: int
+    high_mean_pips: float
+    high_win_rate: float
+    high_sl_rate: float
+    low_sample: int
+    low_mean_pips: float
+    low_win_rate: float
+    low_sl_rate: float
 
 
 @dataclass(slots=True)
@@ -3182,6 +3204,25 @@ def _load_recent_side_close_metrics(
     pocket: str,
     now_mono: Optional[float] = None,
 ) -> Optional[SideCloseMetrics]:
+    return _load_side_close_metrics(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        lookback=max(1, int(config.SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES)),
+        cache_ttl_sec=max(0.1, float(config.SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC)),
+        now_mono=now_mono,
+        cache_store=_SL_METRICS_CACHE,
+    )
+
+
+def _load_side_close_metrics(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    lookback: int,
+    cache_ttl_sec: float,
+    now_mono: Optional[float],
+    cache_store: dict[tuple[str, str], tuple[float, Optional[SideCloseMetrics]]],
+) -> Optional[SideCloseMetrics]:
     cache_key = (
         str(strategy_tag or "").strip().lower(),
         str(pocket or "").strip().lower(),
@@ -3191,15 +3232,15 @@ def _load_recent_side_close_metrics(
 
     if now_mono is None:
         now_mono = time.monotonic()
-    ttl_sec = max(0.1, float(config.SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC))
-    cached = _SL_METRICS_CACHE.get(cache_key)
+    ttl_sec = max(0.1, float(cache_ttl_sec))
+    cached = cache_store.get(cache_key)
     if cached and now_mono - cached[0] <= ttl_sec:
         return cached[1]
 
     metrics: Optional[SideCloseMetrics] = None
     if _TRADES_DB.exists():
         con: Optional[sqlite3.Connection] = None
-        lookback = max(1, int(config.SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES))
+        bounded_lookback = max(1, int(lookback))
         row = None
         try:
             con = sqlite3.connect(_TRADES_DB)
@@ -3223,7 +3264,7 @@ def _load_recent_side_close_metrics(
                   LIMIT ?
                 )
                 """,
-                (cache_key[0], cache_key[1], lookback),
+                (cache_key[0], cache_key[1], bounded_lookback),
             ).fetchone()
         except Exception:
             row = None
@@ -3245,7 +3286,162 @@ def _load_recent_side_close_metrics(
                 sample=int(_safe_float(row[6], 0.0)),
             )
 
-    _SL_METRICS_CACHE[cache_key] = (now_mono, metrics)
+    cache_store[cache_key] = (now_mono, metrics)
+    return metrics
+
+
+def _load_recent_side_close_metrics_for_allocation(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    now_mono: Optional[float] = None,
+) -> Optional[SideCloseMetrics]:
+    return _load_side_close_metrics(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        lookback=max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_LOOKBACK_TRADES)),
+        cache_ttl_sec=max(
+            0.1,
+            float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_CACHE_TTL_SEC),
+        ),
+        now_mono=now_mono,
+        cache_store=_SIDE_CLOSE_METRICS_ALLOC_CACHE,
+    )
+
+
+def _coerce_entry_probability(
+    *,
+    entry_probability: object,
+    entry_probability_raw: object,
+    confidence: object,
+) -> Optional[float]:
+    for raw in (entry_probability, entry_probability_raw, confidence):
+        value = _safe_float(raw, float("nan"))
+        if math.isnan(value):
+            continue
+        if value > 1.0:
+            value /= 100.0
+        if 0.0 <= value <= 1.0:
+            return float(value)
+    return None
+
+
+def _load_entry_probability_band_metrics(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    side: str,
+    now_mono: Optional[float] = None,
+) -> Optional[EntryProbabilityBandMetrics]:
+    side_key = str(side or "").strip().lower()
+    if side_key not in {"long", "short"}:
+        return None
+    cache_key = (
+        str(strategy_tag or "").strip().lower(),
+        str(pocket or "").strip().lower(),
+        side_key,
+    )
+    if not cache_key[0] or not cache_key[1]:
+        return None
+
+    if now_mono is None:
+        now_mono = time.monotonic()
+    ttl_sec = max(0.2, float(config.ENTRY_PROBABILITY_BAND_ALLOC_CACHE_TTL_SEC))
+    cached = _ENTRY_PROB_BAND_METRICS_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= ttl_sec:
+        return cached[1]
+
+    metrics: Optional[EntryProbabilityBandMetrics] = None
+    if _TRADES_DB.exists():
+        lookback = max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES))
+        low_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD), 0.0, 1.0)
+        high_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD), 0.0, 1.0)
+        if low_cutoff < high_cutoff:
+            side_cond = "units > 0" if side_key == "long" else "units < 0"
+            con: Optional[sqlite3.Connection] = None
+            rows: Sequence[tuple[object, object, object, object, object]] = []
+            try:
+                con = sqlite3.connect(_TRADES_DB)
+                rows = con.execute(
+                    f"""
+                    SELECT
+                      CAST(json_extract(entry_thesis, '$.entry_probability') AS REAL) AS entry_probability,
+                      CAST(json_extract(entry_thesis, '$.entry_probability_raw') AS REAL) AS entry_probability_raw,
+                      CAST(json_extract(entry_thesis, '$.confidence') AS REAL) AS confidence,
+                      pl_pips,
+                      upper(coalesce(close_reason, '')) AS close_reason
+                    FROM (
+                      SELECT entry_thesis, pl_pips, close_reason
+                      FROM trades
+                      WHERE close_time IS NOT NULL
+                        AND pl_pips IS NOT NULL
+                        AND lower(coalesce(strategy_tag, '')) = ?
+                        AND lower(coalesce(pocket, '')) = ?
+                        AND {side_cond}
+                      ORDER BY datetime(close_time) DESC
+                      LIMIT ?
+                    )
+                    """,
+                    (cache_key[0], cache_key[1], lookback),
+                ).fetchall()
+            except Exception:
+                rows = []
+            finally:
+                if con is not None:
+                    try:
+                        con.close()
+                    except Exception:
+                        pass
+
+            sample = 0
+            high_sample = 0
+            low_sample = 0
+            high_pl_sum = 0.0
+            low_pl_sum = 0.0
+            high_wins = 0
+            low_wins = 0
+            high_sl_hits = 0
+            low_sl_hits = 0
+            for raw_prob, raw_prob_raw, raw_conf, raw_pl_pips, raw_close_reason in rows:
+                probability = _coerce_entry_probability(
+                    entry_probability=raw_prob,
+                    entry_probability_raw=raw_prob_raw,
+                    confidence=raw_conf,
+                )
+                if probability is None:
+                    continue
+                pl_pips = _safe_float(raw_pl_pips, 0.0)
+                close_reason = str(raw_close_reason or "").strip().upper()
+                sample += 1
+                if probability >= high_cutoff:
+                    high_sample += 1
+                    high_pl_sum += pl_pips
+                    if pl_pips > 0.0:
+                        high_wins += 1
+                    if close_reason == "STOP_LOSS_ORDER":
+                        high_sl_hits += 1
+                elif probability < low_cutoff:
+                    low_sample += 1
+                    low_pl_sum += pl_pips
+                    if pl_pips > 0.0:
+                        low_wins += 1
+                    if close_reason == "STOP_LOSS_ORDER":
+                        low_sl_hits += 1
+
+            metrics = EntryProbabilityBandMetrics(
+                side=side_key,
+                sample=sample,
+                high_sample=high_sample,
+                high_mean_pips=(high_pl_sum / high_sample) if high_sample > 0 else 0.0,
+                high_win_rate=(high_wins / high_sample) if high_sample > 0 else 0.0,
+                high_sl_rate=(high_sl_hits / high_sample) if high_sample > 0 else 0.0,
+                low_sample=low_sample,
+                low_mean_pips=(low_pl_sum / low_sample) if low_sample > 0 else 0.0,
+                low_win_rate=(low_wins / low_sample) if low_sample > 0 else 0.0,
+                low_sl_rate=(low_sl_hits / low_sample) if low_sample > 0 else 0.0,
+            )
+
+    _ENTRY_PROB_BAND_METRICS_CACHE[cache_key] = (now_mono, metrics)
     return metrics
 
 
@@ -3915,6 +4111,197 @@ def _adjust_entry_probability_alignment(
         }
     )
     return float(adjusted), float(units_mult), meta
+
+
+def _entry_probability_band_units_multiplier(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    side: str,
+    entry_probability: float,
+    now_mono: Optional[float] = None,
+) -> tuple[float, dict[str, object]]:
+    side_key = str(side or "").strip().lower()
+    probability = _clamp(float(entry_probability), 0.0, 1.0)
+    min_mult = max(0.05, float(config.ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT))
+    max_mult = max(min_mult, float(config.ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MAX_MULT))
+    meta: dict[str, object] = {
+        "enabled": bool(config.ENTRY_PROBABILITY_BAND_ALLOC_ENABLED),
+        "entry_probability": round(probability, 6),
+        "bucket": "mid",
+        "band_mult": 1.0,
+        "side_mult": 1.0,
+        "units_mult": 1.0,
+        "shift_strength": 0.0,
+        "sample_strength": 0.0,
+        "gap_pips": 0.0,
+        "gap_win_rate": 0.0,
+        "gap_sl_rate": 0.0,
+        "high_sample": 0,
+        "low_sample": 0,
+        "high_mean_pips": 0.0,
+        "low_mean_pips": 0.0,
+        "high_win_rate": 0.0,
+        "low_win_rate": 0.0,
+        "high_sl_rate": 0.0,
+        "low_sl_rate": 0.0,
+        "side_trades": 0,
+        "side_sl_hits": 0,
+        "side_market_plus": 0,
+        "side_sl_rate": 0.0,
+        "side_market_plus_rate": 0.0,
+        "reason": "disabled",
+    }
+    if not config.ENTRY_PROBABILITY_BAND_ALLOC_ENABLED:
+        return 1.0, meta
+    if side_key not in {"long", "short"}:
+        meta["reason"] = "invalid_side"
+        return 1.0, meta
+
+    low_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD), 0.0, 1.0)
+    high_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD), 0.0, 1.0)
+    if low_cutoff >= high_cutoff:
+        meta["reason"] = "invalid_threshold"
+        return 1.0, meta
+
+    if probability < low_cutoff:
+        bucket = "low"
+    elif probability >= high_cutoff:
+        bucket = "high"
+    else:
+        bucket = "mid"
+    meta["bucket"] = bucket
+
+    metrics = _load_entry_probability_band_metrics(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        side=side_key,
+        now_mono=now_mono,
+    )
+    if metrics is None:
+        meta["reason"] = "no_metrics"
+        return 1.0, meta
+
+    meta.update(
+        {
+            "high_sample": int(metrics.high_sample),
+            "low_sample": int(metrics.low_sample),
+            "high_mean_pips": round(float(metrics.high_mean_pips), 6),
+            "low_mean_pips": round(float(metrics.low_mean_pips), 6),
+            "high_win_rate": round(float(metrics.high_win_rate), 6),
+            "low_win_rate": round(float(metrics.low_win_rate), 6),
+            "high_sl_rate": round(float(metrics.high_sl_rate), 6),
+            "low_sl_rate": round(float(metrics.low_sl_rate), 6),
+        }
+    )
+
+    min_band_sample = max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_MIN_TRADES_PER_BAND))
+    band_mult = 1.0
+    band_reason = "insufficient_band_sample"
+    if metrics.high_sample >= min_band_sample and metrics.low_sample >= min_band_sample:
+        pips_ref = max(0.05, float(config.ENTRY_PROBABILITY_BAND_ALLOC_GAP_PIPS_REF))
+        win_ref = max(0.01, float(config.ENTRY_PROBABILITY_BAND_ALLOC_GAP_WIN_RATE_REF))
+        sl_ref = max(0.01, float(config.ENTRY_PROBABILITY_BAND_ALLOC_GAP_SL_RATE_REF))
+        gap_pips = float(metrics.low_mean_pips - metrics.high_mean_pips)
+        gap_win_rate = float(metrics.low_win_rate - metrics.high_win_rate)
+        gap_sl_rate = float(metrics.high_sl_rate - metrics.low_sl_rate)
+        edge_strength = (
+            _clamp(gap_pips / pips_ref, 0.0, 1.0)
+            + _clamp(gap_win_rate / win_ref, 0.0, 1.0)
+            + _clamp(gap_sl_rate / sl_ref, 0.0, 1.0)
+        ) / 3.0
+        strong_sample = max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_SAMPLE_STRONG_TRADES))
+        sample_strength = _clamp(
+            min(metrics.high_sample, metrics.low_sample) / float(strong_sample),
+            0.0,
+            1.0,
+        )
+        shift_strength = _clamp(edge_strength * sample_strength, 0.0, 1.0)
+        high_target = 1.0 - (
+            max(0.0, float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX))
+            * shift_strength
+        )
+        low_target = 1.0 + (
+            max(0.0, float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX))
+            * shift_strength
+        )
+        high_target = _clamp(high_target, min_mult, max_mult)
+        low_target = _clamp(low_target, min_mult, max_mult)
+        if bucket == "high":
+            band_mult = high_target
+        elif bucket == "low":
+            band_mult = low_target
+        else:
+            band_mult = _lerp(
+                low_target,
+                high_target,
+                (probability - low_cutoff) / max(1e-6, high_cutoff - low_cutoff),
+            )
+        band_reason = "ok"
+        meta.update(
+            {
+                "shift_strength": round(float(shift_strength), 6),
+                "sample_strength": round(float(sample_strength), 6),
+                "gap_pips": round(gap_pips, 6),
+                "gap_win_rate": round(gap_win_rate, 6),
+                "gap_sl_rate": round(gap_sl_rate, 6),
+            }
+        )
+
+    side_mult = 1.0
+    if config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_ENABLED:
+        side_metrics = _load_recent_side_close_metrics_for_allocation(
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            now_mono=now_mono,
+        )
+        if side_metrics is not None:
+            side_trades = (
+                int(side_metrics.long_trades)
+                if side_key == "long"
+                else int(side_metrics.short_trades)
+            )
+            if side_trades > 0:
+                side_sl_hits = int(side_metrics.sl_hits(side_key))
+                side_market_plus = int(side_metrics.market_plus(side_key))
+                side_sl_rate = _clamp(side_sl_hits / float(side_trades), 0.0, 1.0)
+                side_market_plus_rate = _clamp(
+                    side_market_plus / float(side_trades),
+                    0.0,
+                    1.0,
+                )
+                side_balance = side_market_plus_rate - side_sl_rate
+                side_mult = _clamp(
+                    1.0 + (
+                        side_balance
+                        * max(
+                            0.0,
+                            float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN),
+                        )
+                    ),
+                    float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT),
+                    float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT),
+                )
+                meta.update(
+                    {
+                        "side_trades": side_trades,
+                        "side_sl_hits": side_sl_hits,
+                        "side_market_plus": side_market_plus,
+                        "side_sl_rate": round(side_sl_rate, 6),
+                        "side_market_plus_rate": round(side_market_plus_rate, 6),
+                    }
+                )
+
+    units_mult = _clamp(band_mult * side_mult, min_mult, max_mult)
+    meta.update(
+        {
+            "band_mult": round(float(band_mult), 6),
+            "side_mult": round(float(side_mult), 6),
+            "units_mult": round(float(units_mult), 6),
+            "reason": band_reason,
+        }
+    )
+    return float(units_mult), meta
 
 
 def _compute_targets(
@@ -5676,6 +6063,13 @@ async def scalp_ping_5s_worker() -> None:
                 horizon=horizon,
                 m1_score=m1_score,
             )
+            probability_band_units_mult, probability_band_meta = _entry_probability_band_units_multiplier(
+                strategy_tag=config.STRATEGY_TAG,
+                pocket=config.POCKET,
+                side=signal.side,
+                entry_probability=entry_probability,
+                now_mono=now_mono,
+            )
 
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
@@ -5700,6 +6094,7 @@ async def scalp_ping_5s_worker() -> None:
             units = int(round(units * m1_trend_units_mult))
             units = int(round(units * extrema_units_mult))
             units = int(round(units * probability_units_mult))
+            units = int(round(units * probability_band_units_mult))
             snapshot_units_scale = _snapshot_stale_units_scale()
             if snapshot_units_scale < 1.0:
                 units = int(round(units * snapshot_units_scale))
@@ -5856,6 +6251,7 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "entry_probability": round(entry_probability, 3),
                 "entry_probability_units_mult": round(probability_units_mult, 3),
+                "entry_probability_band_units_mult": round(probability_band_units_mult, 3),
                 "tp_time_target_sec": round(config.TP_TARGET_HOLD_SEC, 1),
                 "tp_time_sample": int(tp_profile.sample),
                 "side_bias_scale": round(float(bias_scale), 3),
@@ -5931,6 +6327,70 @@ async def scalp_ping_5s_worker() -> None:
                 "m1_edge": _safe_float(probability_meta.get("m1_edge"), None),
                 "floor_applied": bool(probability_meta.get("floor_applied", False)),
                 "weights": probability_meta.get("weights"),
+            }
+            entry_thesis["entry_probability_band_allocation"] = {
+                "enabled": bool(probability_band_meta.get("enabled", False)),
+                "reason": str(probability_band_meta.get("reason") or ""),
+                "bucket": str(probability_band_meta.get("bucket") or "mid"),
+                "band_mult": round(_safe_float(probability_band_meta.get("band_mult"), 1.0), 6),
+                "side_mult": round(_safe_float(probability_band_meta.get("side_mult"), 1.0), 6),
+                "units_mult": round(_safe_float(probability_band_meta.get("units_mult"), 1.0), 6),
+                "shift_strength": round(
+                    _safe_float(probability_band_meta.get("shift_strength"), 0.0),
+                    6,
+                ),
+                "sample_strength": round(
+                    _safe_float(probability_band_meta.get("sample_strength"), 0.0),
+                    6,
+                ),
+                "high_sample": int(_safe_float(probability_band_meta.get("high_sample"), 0.0)),
+                "low_sample": int(_safe_float(probability_band_meta.get("low_sample"), 0.0)),
+                "high_mean_pips": round(
+                    _safe_float(probability_band_meta.get("high_mean_pips"), 0.0),
+                    6,
+                ),
+                "low_mean_pips": round(
+                    _safe_float(probability_band_meta.get("low_mean_pips"), 0.0),
+                    6,
+                ),
+                "high_win_rate": round(
+                    _safe_float(probability_band_meta.get("high_win_rate"), 0.0),
+                    6,
+                ),
+                "low_win_rate": round(
+                    _safe_float(probability_band_meta.get("low_win_rate"), 0.0),
+                    6,
+                ),
+                "high_sl_rate": round(
+                    _safe_float(probability_band_meta.get("high_sl_rate"), 0.0),
+                    6,
+                ),
+                "low_sl_rate": round(
+                    _safe_float(probability_band_meta.get("low_sl_rate"), 0.0),
+                    6,
+                ),
+                "gap_pips": round(_safe_float(probability_band_meta.get("gap_pips"), 0.0), 6),
+                "gap_win_rate": round(
+                    _safe_float(probability_band_meta.get("gap_win_rate"), 0.0),
+                    6,
+                ),
+                "gap_sl_rate": round(
+                    _safe_float(probability_band_meta.get("gap_sl_rate"), 0.0),
+                    6,
+                ),
+                "side_trades": int(_safe_float(probability_band_meta.get("side_trades"), 0.0)),
+                "side_sl_hits": int(_safe_float(probability_band_meta.get("side_sl_hits"), 0.0)),
+                "side_market_plus": int(
+                    _safe_float(probability_band_meta.get("side_market_plus"), 0.0)
+                ),
+                "side_sl_rate": round(
+                    _safe_float(probability_band_meta.get("side_sl_rate"), 0.0),
+                    6,
+                ),
+                "side_market_plus_rate": round(
+                    _safe_float(probability_band_meta.get("side_market_plus_rate"), 0.0),
+                    6,
+                ),
             }
             if dynamic_max_hold_sec > 0.0:
                 entry_thesis["force_exit_max_hold_sec"] = round(dynamic_max_hold_sec, 1)
@@ -6238,7 +6698,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open mode=%s side=%s units=%s conf=%d prob=%.3f->%.3f p_mult=%.2f mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d prob=%.3f->%.3f p_mult=%.2f p_band=%.2f mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s",
                 config.LOG_PREFIX,
                 signal.mode,
                 signal.side,
@@ -6247,6 +6707,7 @@ async def scalp_ping_5s_worker() -> None:
                 raw_entry_probability,
                 entry_probability,
                 probability_units_mult,
+                probability_band_units_mult,
                 signal.momentum_pips,
                 signal.trigger_pips,
                 signal.spread_pips,
