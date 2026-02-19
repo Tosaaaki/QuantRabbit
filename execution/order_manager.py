@@ -27,6 +27,7 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 
 from execution.order_ids import build_client_order_id
 from execution.stop_loss_policy import (
+    fixed_sl_mode,
     stop_loss_disabled_for_pocket,
     trailing_sl_allowed,
 )
@@ -2050,7 +2051,11 @@ _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1")
 }
 
 
-def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
+def _allow_stop_loss_on_fill(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+) -> bool:
     """Return whether broker stopLossOnFill can be attached for entries.
 
     V1 behavior: only ORDER_FIXED_SL_MODE decides attachment:
@@ -2058,7 +2063,13 @@ def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
     - 0: never attach
     - unset: default OFF
     """
-    return bool(fixed_sl_mode())
+    mode = fixed_sl_mode()
+    if mode is not None:
+        return bool(mode)
+    tag = str(strategy_tag or "").strip().lower()
+    if tag.startswith("scalp_ping_5s_b"):
+        return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", True)
+    return False
 
 
 def _disable_hard_stop_by_strategy(
@@ -2074,13 +2085,15 @@ def _disable_hard_stop_by_strategy(
     if not base_tag:
         base_tag = (_strategy_tag_from_thesis(entry_thesis) or "").strip().lower()
 
-    # 5s ping family should always be hard-stop-disabled by default.
-    if base_tag.startswith("scalp_ping_5"):
-        return True
-
     if isinstance(entry_thesis, dict):
         if "disable_entry_hard_stop" in entry_thesis:
             return _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False)
+    # B variant: enable hard-stop by default unless explicitly disabled.
+    if base_tag.startswith("scalp_ping_5s_b"):
+        return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B", False)
+    # Legacy 5s ping family keeps previous default (disabled) unless overridden.
+    if base_tag.startswith("scalp_ping_5"):
+        return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5", True)
     if base_tag in {
         "scalp_ping_5",
         "scalp_ping_5s",
@@ -7291,6 +7304,12 @@ async def market_order(
             strategy_tag = None
     else:
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
+    if (
+        sl_disabled
+        and isinstance(strategy_tag, str)
+        and strategy_tag.strip().lower().startswith("scalp_ping_5s_b")
+    ):
+        sl_disabled = False
     thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
         strategy_tag,
         pocket,
@@ -10293,7 +10312,7 @@ async def market_order(
         and not reduce_only
         and not thesis_disable_hard_stop
         and sl_price is not None
-        and _allow_stop_loss_on_fill(pocket)
+        and _allow_stop_loss_on_fill(pocket, strategy_tag=strategy_tag)
     ):
         order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
@@ -10459,7 +10478,9 @@ async def market_order(
                             fallback_sl is not None
                             and not thesis_disable_hard_stop
                             and (not reduce_only)
-                            and _allow_stop_loss_on_fill(pocket)
+                            and _allow_stop_loss_on_fill(
+                                pocket, strategy_tag=strategy_tag
+                            )
                         ):
                             order_data["order"]["stopLossOnFill"] = {
                                 "price": f"{fallback_sl:.3f}"
@@ -10558,7 +10579,9 @@ async def market_order(
                 target_sl = None if sl_disabled else sl_price
                 # EXIT_NO_NEGATIVE_CLOSE=1 is meant to enforce profit-only exits. Honor that policy by not
                 # attaching a broker SL on the loss side unless explicitly allowed (rollout flag).
-                if target_sl is not None and not _allow_stop_loss_on_fill(pocket):
+                if target_sl is not None and not _allow_stop_loss_on_fill(
+                    pocket, strategy_tag=strategy_tag
+                ):
                     basis = executed_price if executed_price is not None else estimated_entry
                     try:
                         basis_val = float(basis) if basis is not None else None
@@ -10878,6 +10901,12 @@ async def limit_order(
         return None, None
 
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
+    if (
+        sl_disabled
+        and isinstance(strategy_tag, str)
+        and strategy_tag.strip().lower().startswith("scalp_ping_5s_b")
+    ):
+        sl_disabled = False
     thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
         strategy_tag,
         pocket,
@@ -11482,7 +11511,7 @@ async def limit_order(
         and not reduce_only
         and not thesis_disable_hard_stop
         and sl_price is not None
-        and _allow_stop_loss_on_fill(pocket)
+        and _allow_stop_loss_on_fill(pocket, strategy_tag=strategy_tag)
     ):
         payload["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:

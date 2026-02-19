@@ -1575,5 +1575,8 @@ FORCE_EXIT_ACTIVE: bool = FORCE_EXIT_ENABLED and FORCE_EXIT_MAX_ACTIONS > 0 and 
 )
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
-USE_SL: bool = False
-DISABLE_ENTRY_HARD_STOP: bool = True
+_IS_B_VARIANT: bool = STRATEGY_TAG.startswith("scalp_ping_5s_b")
+USE_SL: bool = _bool_env("SCALP_PING_5S_USE_SL", _IS_B_VARIANT)
+DISABLE_ENTRY_HARD_STOP: bool = _bool_env(
+    "SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP", not USE_SL
+)

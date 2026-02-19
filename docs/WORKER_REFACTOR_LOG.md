@@ -8,6 +8,29 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-19（追記）`scalp_ping_5s_b_live` のSL欠損を根治（entry時SL復帰）
+
+- 対象:
+  - `execution/order_manager.py`
+  - `workers/scalp_ping_5s/config.py`
+  - `config/env.example.toml`
+- 変更:
+  - `order_manager` の `scalp_ping_5*` 一律 hard-stop 無効化を戦略別に分離。
+    - `scalp_ping_5s_b*` は既定で `disable_entry_hard_stop=False`
+    - legacy `scalp_ping_5*` は従来どおり既定 `True`（env で上書き可）
+  - `ORDER_FIXED_SL_MODE` が未設定/0でも、`scalp_ping_5s_b*` は
+    `stopLossOnFill` を許可できるように戦略別オーバーライドを追加。
+  - `workers.scalp_ping_5s.config` を修正し、B系タグ（`scalp_ping_5s_b*`）は
+    `SCALP_PING_5S_USE_SL` を既定有効、`SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP` を既定無効化。
+- 背景:
+  - VM実データ（`2026-02-18 15:00 JST`以降）で
+    `scalp_ping_5s_b_live` の filled 注文が `SL missing 66/66` を確認。
+  - 既存実装では `scalp_ping_5*` を order_manager で一律 hard-stop 無効化しており、
+    `ORDER_FIXED_SL_MODE` 未設定時は `stopLossOnFill` も常時OFFだった。
+- 意図:
+  - `scalp_ping_5s_b_live` の負けトレードを exit遅延依存にせず、
+    entry時点で broker SL を復帰して tail-loss を抑制する。
+
 ### 2026-02-18（追記）`scalp_ping_5s_b_live` 取り残し対策（EXITプロファイル適用漏れ修正）
 
 - 対象:

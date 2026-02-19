@@ -23,6 +23,11 @@
 ### scalp_ping_5s_b 運用補足（取り残し抑制）
 - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE` を
   `quant-order-manager` の環境で運用し、低確率シグナルを `order_manager` 側で reject する。
+- `scalp_ping_5s_b*` は entry 時の SL 欠損を防ぐため、
+  `order_manager` 側で `stopLossOnFill` を戦略別に許可する。
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B=1`
+  - `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B=0`
+  - 必要なら `SCALP_PING_5S_USE_SL=1` / `SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP=0` を併用する。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、
