@@ -2862,3 +2862,29 @@
 - 期待効果:
   - エントリー拒否ではなく「方向補正 + ロット縮小」で件数を維持し、
     ショート偏重の逆行SL連鎖を抑える。
+
+### 2026-02-19（追記）方向誤判定クラスタ向けホットフィックス（flip発火の厳格化）
+
+- 背景:
+  - VM直近ログで `fast_flip side=long` / `sl_streak_flip side=long` が短時間に連続し、
+    方向上書き後の `STOP_LOSS_ORDER` がクラスター化。
+  - 要件「方向性を改善して利益を残す」に対して、反転発火の閾値を即時に引き締めた。
+- 実施（`ops/env/scalp_ping_5s_b.env`）:
+  - `FAST_DIRECTION_FLIP_*` を厳格化:
+    - `DIRECTION_SCORE_MIN=0.52`（旧0.38）
+    - `HORIZON_SCORE_MIN=0.32`（旧0.18）
+    - `HORIZON_AGREE_MIN=3`（旧2）
+    - `NEUTRAL_HORIZON_BIAS_SCORE_MIN=0.82`（旧0.68）
+    - `MOMENTUM_MIN_PIPS=0.18`（旧0.06）
+    - `CONFIDENCE_ADD=2`（旧4）
+    - `COOLDOWN_SEC=1.2`（旧0.4）
+    - `REGIME_BLOCK_SCORE=0.60`（旧0.70）
+  - `SL_STREAK_DIRECTION_FLIP_*` を厳格化:
+    - `LOOKBACK_TRADES=10`（旧6）
+    - `MIN_SIDE_SL_HITS=3`（旧2）
+    - `MIN_TARGET_MARKET_PLUS=2`（旧1）
+    - `FORCE_STREAK=5`（旧3）
+    - `DIRECTION_SCORE_MIN=0.55`（旧0.40）
+    - `HORIZON_SCORE_MIN=0.42`（旧0.24）
+- 期待効果:
+  - 逆方向への過剰リライトを減らし、連続SLによる利益の全戻しを抑制する。
