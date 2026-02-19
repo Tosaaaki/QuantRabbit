@@ -2750,3 +2750,48 @@
 - 期待効果:
   - 「連続SL後に同方向へ入り続ける」局面を自動で切り替え、
     時間帯ブロックやエントリー削減なしで方向遅延損失を抑制する。
+
+### 2026-02-19（追記）SL Streak Flip を「SL回数 + 成り行きプラス + テクニカル一致」へ再調整
+
+- 背景:
+  - デプロイ初期の実績で `sl_streak_direction_flip_applied=1` 群の成績が劣化。
+  - `fast_direction_flip` でロングへ反転した直後に
+    `sl_streak` が再度ショートへ上書きするケースを確認。
+- 実施:
+  - `workers/scalp_ping_5s/config.py`
+    - `SL_STREAK_DIRECTION_FLIP_*` に以下を追加:
+      - `ALLOW_WITH_FAST_FLIP`
+      - `MIN_SIDE_SL_HITS`
+      - `MIN_TARGET_MARKET_PLUS`
+      - `METRICS_LOOKBACK_TRADES`
+      - `METRICS_CACHE_TTL_SEC`
+      - `REQUIRE_TECH_CONFIRM`
+      - `DIRECTION_SCORE_MIN`
+      - `HORIZON_SCORE_MIN`
+  - `workers/scalp_ping_5s/worker.py`
+    - 直近クローズ履歴から side別に
+      - `STOP_LOSS_ORDER` 回数
+      - `MARKET_ORDER_TRADE_CLOSE` かつ `realized_pl>0` 回数
+      を集計する `SideCloseMetrics` を追加。
+    - `sl_streak_flip` 発火条件を以下へ変更:
+      - 同方向SL連敗（既存）
+      - side別SL回数が閾値以上
+      - 反転先sideの成り行きプラス回数が閾値以上
+      - `direction_bias` または `horizon` が反転先sideを支持
+      - 同ループで `fast_flip` 済みなら（既定）`sl_streak` は発火しない
+    - `entry_thesis` に
+      `sl_streak_side_sl_hits_recent` /
+      `sl_streak_target_market_plus_recent` /
+      `sl_streak_direction_confirmed` /
+      `sl_streak_horizon_confirmed`
+      を追記。
+  - `ops/env/scalp_ping_5s_b.env`
+    - 上記 `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_*` の新規パラメータを追加。
+  - テスト:
+    - `tests/workers/test_scalp_ping_5s_sl_streak_flip.py`
+      - target market-plus不足時の非発火
+      - fast_flip優先時の非発火
+      を追加。
+- 期待効果:
+  - 連敗反転の発火を「条件付きの高品質反転」に絞り、
+    方向衝突（fast_flip vs sl_streak）での逆行エントリーを抑制する。

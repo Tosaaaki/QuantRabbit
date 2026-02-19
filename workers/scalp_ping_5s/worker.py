@@ -95,6 +95,7 @@ _SIGNAL_WINDOW_STATS_CACHE: dict[
 _SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
 _LAST_FAST_FLIP_MONO: float = 0.0
 _SL_STREAK_CACHE: dict[tuple[str, str], tuple[float, Optional["StopLossStreak"]]] = {}
+_SL_METRICS_CACHE: dict[tuple[str, str], tuple[float, Optional["SideCloseMetrics"]]] = {}
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -180,6 +181,42 @@ class StopLossStreak:
     age_sec: float
     latest_close_time: Optional[datetime.datetime]
     sample: int
+
+
+@dataclass(slots=True)
+class SideCloseMetrics:
+    long_sl_hits: int
+    short_sl_hits: int
+    long_market_plus: int
+    short_market_plus: int
+    long_trades: int
+    short_trades: int
+    sample: int
+
+    def sl_hits(self, side: str) -> int:
+        key = str(side or "").strip().lower()
+        if key == "long":
+            return int(self.long_sl_hits)
+        if key == "short":
+            return int(self.short_sl_hits)
+        return 0
+
+    def market_plus(self, side: str) -> int:
+        key = str(side or "").strip().lower()
+        if key == "long":
+            return int(self.long_market_plus)
+        if key == "short":
+            return int(self.short_market_plus)
+        return 0
+
+
+@dataclass(slots=True)
+class SlFlipEval:
+    streak: Optional[StopLossStreak]
+    side_sl_hits_recent: int
+    target_market_plus_recent: int
+    direction_confirmed: bool
+    horizon_confirmed: bool
 
 
 @dataclass(slots=True)
@@ -3139,6 +3176,79 @@ def _load_stop_loss_streak(
     return streak_info
 
 
+def _load_recent_side_close_metrics(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    now_mono: Optional[float] = None,
+) -> Optional[SideCloseMetrics]:
+    cache_key = (
+        str(strategy_tag or "").strip().lower(),
+        str(pocket or "").strip().lower(),
+    )
+    if not cache_key[0] or not cache_key[1]:
+        return None
+
+    if now_mono is None:
+        now_mono = time.monotonic()
+    ttl_sec = max(0.1, float(config.SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC))
+    cached = _SL_METRICS_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= ttl_sec:
+        return cached[1]
+
+    metrics: Optional[SideCloseMetrics] = None
+    if _TRADES_DB.exists():
+        con: Optional[sqlite3.Connection] = None
+        lookback = max(1, int(config.SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES))
+        row = None
+        try:
+            con = sqlite3.connect(_TRADES_DB)
+            row = con.execute(
+                """
+                SELECT
+                  COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
+                  COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
+                  COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
+                  COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
+                  COALESCE(SUM(CASE WHEN units > 0 THEN 1 ELSE 0 END), 0),
+                  COALESCE(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END), 0),
+                  COUNT(*)
+                FROM (
+                  SELECT units, close_reason, realized_pl
+                  FROM trades
+                  WHERE close_time IS NOT NULL
+                    AND lower(coalesce(strategy_tag, '')) = ?
+                    AND lower(coalesce(pocket, '')) = ?
+                  ORDER BY datetime(close_time) DESC
+                  LIMIT ?
+                )
+                """,
+                (cache_key[0], cache_key[1], lookback),
+            ).fetchone()
+        except Exception:
+            row = None
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+
+        if row is not None:
+            metrics = SideCloseMetrics(
+                long_sl_hits=int(_safe_float(row[0], 0.0)),
+                short_sl_hits=int(_safe_float(row[1], 0.0)),
+                long_market_plus=int(_safe_float(row[2], 0.0)),
+                short_market_plus=int(_safe_float(row[3], 0.0)),
+                long_trades=int(_safe_float(row[4], 0.0)),
+                short_trades=int(_safe_float(row[5], 0.0)),
+                sample=int(_safe_float(row[6], 0.0)),
+            )
+
+    _SL_METRICS_CACHE[cache_key] = (now_mono, metrics)
+    return metrics
+
+
 def _maybe_sl_streak_direction_flip(
     signal: TickSignal,
     *,
@@ -3146,13 +3256,16 @@ def _maybe_sl_streak_direction_flip(
     pocket: str,
     now_utc: datetime.datetime,
     now_mono: float,
-) -> tuple[Optional[TickSignal], str, Optional[StopLossStreak]]:
+    direction_bias: Optional[DirectionBias],
+    horizon: Optional[HorizonBias],
+    fast_flip_applied: bool,
+) -> tuple[Optional[TickSignal], str, SlFlipEval]:
     if not config.SL_STREAK_DIRECTION_FLIP_ENABLED:
-        return None, "disabled", None
+        return None, "disabled", SlFlipEval(None, 0, 0, False, False)
 
     current_side = str(signal.side or "").strip().lower()
     if current_side not in {"long", "short"}:
-        return None, "invalid_signal_side", None
+        return None, "invalid_signal_side", SlFlipEval(None, 0, 0, False, False)
 
     streak = _load_stop_loss_streak(
         strategy_tag=strategy_tag,
@@ -3161,18 +3274,83 @@ def _maybe_sl_streak_direction_flip(
         now_mono=now_mono,
     )
     if streak is None:
-        return None, "no_streak", None
+        return None, "no_streak", SlFlipEval(None, 0, 0, False, False)
 
     min_streak = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_STREAK))
     if streak.streak < min_streak:
-        return None, "below_min_streak", streak
+        return None, "below_min_streak", SlFlipEval(streak, 0, 0, False, False)
     max_age_sec = max(0.0, float(config.SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC))
     if max_age_sec > 0.0 and streak.age_sec > max_age_sec:
-        return None, "streak_stale", streak
+        return None, "streak_stale", SlFlipEval(streak, 0, 0, False, False)
     if streak.side != current_side:
-        return None, "already_opposite", streak
+        return None, "already_opposite", SlFlipEval(streak, 0, 0, False, False)
 
     target_side = "short" if current_side == "long" else "long"
+    direction_confirmed = False
+    horizon_confirmed = False
+    metrics = _load_recent_side_close_metrics(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        now_mono=now_mono,
+    )
+    if metrics is None:
+        return None, "metrics_unavailable", SlFlipEval(streak, 0, 0, False, False)
+
+    side_sl_hits_recent = int(metrics.sl_hits(current_side))
+    target_market_plus_recent = int(metrics.market_plus(target_side))
+    min_side_sl_hits = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS))
+    if side_sl_hits_recent < min_side_sl_hits:
+        return (
+            None,
+            "side_sl_hits_weak",
+            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+        )
+
+    min_target_market_plus = max(0, int(config.SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS))
+    if target_market_plus_recent < min_target_market_plus:
+        return (
+            None,
+            "target_market_plus_weak",
+            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+        )
+
+    if not config.SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP and fast_flip_applied:
+        return (
+            None,
+            "fast_flip_priority",
+            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+        )
+
+    # Tech alignment gate: keep SL-streak flip as secondary override.
+    if direction_bias is not None:
+        bias_side = str(getattr(direction_bias, "side", "")).strip().lower()
+        bias_score = abs(_safe_float(getattr(direction_bias, "score", 0.0), 0.0))
+        direction_confirmed = (
+            bias_side == target_side
+            and bias_score >= float(config.SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN)
+        )
+    if horizon is not None:
+        horizon_side = str(getattr(horizon, "composite_side", "")).strip().lower()
+        horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
+        horizon_confirmed = (
+            horizon_side == target_side
+            and horizon_score >= float(config.SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN)
+        )
+    if config.SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM and not (
+        direction_confirmed or horizon_confirmed
+    ):
+        return (
+            None,
+            "tech_not_confirmed",
+            SlFlipEval(
+                streak,
+                side_sl_hits_recent,
+                target_market_plus_recent,
+                direction_confirmed,
+                horizon_confirmed,
+            ),
+        )
+
     confidence_add = int(config.SL_STREAK_DIRECTION_FLIP_CONFIDENCE_ADD) + max(
         0,
         streak.streak - min_streak,
@@ -3183,8 +3361,19 @@ def _maybe_sl_streak_direction_flip(
         mode=f"{signal.mode}_slflip",
         confidence_add=confidence_add,
     )
-    reason = f"{current_side}->{target_side}:slx{streak.streak},age={streak.age_sec:.0f}s"
-    return flipped, reason, streak
+    reason = (
+        f"{current_side}->{target_side}:"
+        f"slx{streak.streak},age={streak.age_sec:.0f}s,"
+        f"slhits={side_sl_hits_recent},mktplus={target_market_plus_recent},"
+        f"tech={int(direction_confirmed or horizon_confirmed)}"
+    )
+    return flipped, reason, SlFlipEval(
+        streak,
+        side_sl_hits_recent,
+        target_market_plus_recent,
+        direction_confirmed,
+        horizon_confirmed,
+    )
 
 
 def _range_pos_from_candles(
@@ -4816,6 +5005,10 @@ async def scalp_ping_5s_worker() -> None:
             sl_streak_side = ""
             sl_streak_count = 0
             sl_streak_age_sec = -1.0
+            sl_streak_side_sl_hits_recent = 0
+            sl_streak_target_market_plus_recent = 0
+            sl_streak_direction_confirmed = False
+            sl_streak_horizon_confirmed = False
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
@@ -5064,13 +5257,21 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_bias_log_mono = now_mono
 
-            sl_flip_signal, sl_flip_reason, sl_streak = _maybe_sl_streak_direction_flip(
+            sl_flip_signal, sl_flip_reason, sl_flip_eval = _maybe_sl_streak_direction_flip(
                 signal,
                 strategy_tag=config.STRATEGY_TAG,
                 pocket=config.POCKET,
                 now_utc=now_utc,
                 now_mono=now_mono,
+                direction_bias=direction_bias,
+                horizon=horizon,
+                fast_flip_applied=fast_flip_applied,
             )
+            sl_streak = sl_flip_eval.streak
+            sl_streak_side_sl_hits_recent = int(sl_flip_eval.side_sl_hits_recent)
+            sl_streak_target_market_plus_recent = int(sl_flip_eval.target_market_plus_recent)
+            sl_streak_direction_confirmed = bool(sl_flip_eval.direction_confirmed)
+            sl_streak_horizon_confirmed = bool(sl_flip_eval.horizon_confirmed)
             if sl_streak is not None:
                 sl_streak_side = str(sl_streak.side)
                 sl_streak_count = int(sl_streak.streak)
@@ -5107,13 +5308,17 @@ async def scalp_ping_5s_worker() -> None:
                     >= config.SL_STREAK_DIRECTION_FLIP_LOG_INTERVAL_SEC
                 ):
                     LOG.info(
-                        "%s sl_streak_flip side=%s reason=%s streak=%sx%d age=%.0fs",
+                        "%s sl_streak_flip side=%s reason=%s streak=%sx%d age=%.0fs sl_hits=%d mkt_plus=%d tech(dir=%d,hz=%d)",
                         config.LOG_PREFIX,
                         signal.side,
                         sl_streak_flip_reason,
                         sl_streak_side or "-",
                         sl_streak_count,
                         sl_streak_age_sec,
+                        sl_streak_side_sl_hits_recent,
+                        sl_streak_target_market_plus_recent,
+                        int(sl_streak_direction_confirmed),
+                        int(sl_streak_horizon_confirmed),
                     )
                     last_sl_streak_log_mono = now_mono
             decision_cooldown_sec = max(
@@ -5528,6 +5733,10 @@ async def scalp_ping_5s_worker() -> None:
                 "sl_streak_age_sec": (
                     round(float(sl_streak_age_sec), 1) if sl_streak_age_sec >= 0.0 else None
                 ),
+                "sl_streak_side_sl_hits_recent": int(sl_streak_side_sl_hits_recent),
+                "sl_streak_target_market_plus_recent": int(sl_streak_target_market_plus_recent),
+                "sl_streak_direction_confirmed": bool(sl_streak_direction_confirmed),
+                "sl_streak_horizon_confirmed": bool(sl_streak_horizon_confirmed),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),

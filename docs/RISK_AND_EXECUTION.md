@@ -45,6 +45,16 @@
     `sl_streak_*`（side/count/age/applied/reason）を記録する。
   - 過去トレード参照は `strategy_tag + pocket` のクローズ履歴に限定し、
     `SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC` を超える古い連敗は反転対象外にする。
+  - 2026-02-19 追記:
+    - `SL回数` と `MARKET_ORDER_TRADE_CLOSE でのプラス回数` を追加条件にした。
+      - `SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS`（既定2）
+      - `SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS`（既定1）
+      - 集計窓は `SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES`（既定24）
+    - さらに `direction_bias/horizon` のテクニカル一致がない場合は反転しない
+      （`SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM=1`）。
+    - `fast_direction_flip` が同ループで発火した場合は `fast_flip` を優先し、
+      `sl_streak` 側の逆上書きを禁止する
+      （`SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP=0` 既定）。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、
