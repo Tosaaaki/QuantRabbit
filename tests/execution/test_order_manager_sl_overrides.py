@@ -36,6 +36,19 @@ def test_allow_stop_loss_on_fill_keeps_default_off_for_non_override(monkeypatch)
     )
 
 
+def test_allow_stop_loss_on_fill_b_variant_can_override_global_off(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
+    monkeypatch.setenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", "1")
+
+    assert (
+        order_manager._allow_stop_loss_on_fill(
+            "scalp_fast",
+            strategy_tag="scalp_ping_5s_b_live",
+        )
+        is True
+    )
+
+
 def test_disable_hard_stop_b_variant_enabled_by_default(monkeypatch) -> None:
     monkeypatch.delenv("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B", raising=False)
     assert (

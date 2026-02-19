@@ -27,7 +27,9 @@
   `order_manager` 側で `stopLossOnFill` を戦略別に許可する。
   - `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B=1`
   - `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B=0`
-  - 必要なら `SCALP_PING_5S_USE_SL=1` / `SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP=0` を併用する。
+  - Bワーカー env は `SCALP_PING_5S_B_USE_SL=1` / `SCALP_PING_5S_B_DISABLE_ENTRY_HARD_STOP=0` を維持する。
+  - `workers/scalp_ping_5s_b.worker` は fail-safe として上記2値を起動時に強制補正する
+    （`SCALP_PING_5S_B_ALLOW_UNPROTECTED_ENTRY=1` のときのみ無効化）。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、

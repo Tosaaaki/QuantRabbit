@@ -2667,3 +2667,30 @@
 - 期待効果:
   - `scalp_ping_5s_b_live` の低確率エントリー頻度を抑制。
   - 既存建玉にも `loss_cut/non_range_max_hold/direction_flip` を継続適用し、長時間取り残しを低減。
+
+### 2026-02-19（追記）scalp_ping_5s_b のSL欠損再発を根本遮断
+
+- 背景:
+  - VM実運用で `scalp_ping_5s_b_live` の新規約定に `stopLossOnFill` 未付与が再発。
+  - 原因は `ops/env/scalp_ping_5s_b.env` の `SCALP_PING_5S_B_USE_SL=0` が
+    `workers/scalp_ping_5s_b.worker` の prefix マッピングで
+    `SCALP_PING_5S_USE_SL=0` に投影され、SL/ハードストップが同時に無効化される構成だったこと。
+- 実施:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_USE_SL=1`
+    - `SCALP_PING_5S_B_DISABLE_ENTRY_HARD_STOP=0`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B=1`
+    - `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B=0`
+  - `workers/scalp_ping_5s_b/worker.py`
+    - 起動時 fail-safe を追加し、B戦略はデフォルトで
+      `SCALP_PING_5S_USE_SL=1` / `SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP=0`
+      へ自動補正する。
+    - 例外運用は `SCALP_PING_5S_B_ALLOW_UNPROTECTED_ENTRY=1` でのみ許可。
+  - `execution/order_manager.py`
+    - `ORDER_FIXED_SL_MODE=0` でも、`scalp_ping_5s_b*` は
+      `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B` を優先して
+      `stopLossOnFill` を戦略ローカルで有効化可能に修正。
+- 期待効果:
+  - B戦略で「SLなし + ハードストップ無効」の組み合わせを既定で禁止し、
+    同種のテイル損失を設定ドリフト起因で再発させない。

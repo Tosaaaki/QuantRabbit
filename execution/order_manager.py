@@ -2063,10 +2063,16 @@ def _allow_stop_loss_on_fill(
     - 0: never attach
     - unset: default OFF
     """
+    tag = str(strategy_tag or "").strip().lower()
     mode = fixed_sl_mode()
     if mode is not None:
-        return bool(mode)
-    tag = str(strategy_tag or "").strip().lower()
+        if bool(mode):
+            return True
+        # Keep B variant protected even when global fixed-mode is OFF unless
+        # explicitly disabled per strategy.
+        if tag.startswith("scalp_ping_5s_b"):
+            return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", True)
+        return False
     if tag.startswith("scalp_ping_5s_b"):
         return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", True)
     return False

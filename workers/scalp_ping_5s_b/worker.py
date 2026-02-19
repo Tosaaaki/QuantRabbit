@@ -12,6 +12,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+_FALSEY = {"", "0", "false", "no", "off"}
+
+
+def _env_truthy(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in _FALSEY
+
 
 def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) -> None:
     base_prefix = "SCALP_PING_5S"
@@ -52,6 +61,29 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         f"{prefix}_LOG_PREFIX", fallback_log_prefix
     )
 
+    logger = logging.getLogger(__name__)
+
+    # Safety baseline for B variant: keep entry protection on by default.
+    # Explicitly opt out only for temporary experiments.
+    allow_unprotected = _env_truthy(f"{prefix}_ALLOW_UNPROTECTED_ENTRY", False)
+    mapped_use_sl_key = f"{base_prefix}_USE_SL"
+    mapped_disable_hard_stop_key = f"{base_prefix}_DISABLE_ENTRY_HARD_STOP"
+    if not allow_unprotected:
+        if not _env_truthy(mapped_use_sl_key, False):
+            logger.warning(
+                "[SCALP5S_B] forcing %s=1 (set %s_ALLOW_UNPROTECTED_ENTRY=1 to bypass)",
+                mapped_use_sl_key,
+                prefix,
+            )
+            os.environ[mapped_use_sl_key] = "1"
+        if _env_truthy(mapped_disable_hard_stop_key, False):
+            logger.warning(
+                "[SCALP5S_B] forcing %s=0 (set %s_ALLOW_UNPROTECTED_ENTRY=1 to bypass)",
+                mapped_disable_hard_stop_key,
+                prefix,
+            )
+            os.environ[mapped_disable_hard_stop_key] = "0"
+
     # Guardrails for mixed-prefix risk: explicitly surface effective runtime knobs
     # used by entry logic so missing/shifted B-side toggles are visible in startup
     # logs before any order path is evaluated.
@@ -60,7 +92,6 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     base_env_prefix = os.getenv(f"{base_prefix}_ENV_PREFIX", "")
     base_strategy = os.getenv(f"{base_prefix}_STRATEGY_TAG", fallback_tag)
     base_log_prefix = os.getenv(f"{base_prefix}_LOG_PREFIX", fallback_log_prefix)
-    logger = logging.getLogger(__name__)
     logger.info(
         "[SCALP5S_B] env mapped: source=%s mapped_prefix=%s enabled=%s revert_enabled=%s env_prefix=%s strategy=%s log_prefix=%s",
         prefix,
