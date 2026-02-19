@@ -55,6 +55,18 @@
     - `fast_direction_flip` が同ループで発火した場合は `fast_flip` を優先し、
       `sl_streak` 側の逆上書きを禁止する
       （`SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP=0` 既定）。
+    - 連敗数が `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK` 以上のときは、
+      `MIN_TARGET_MARKET_PLUS` 条件のみをバイパス可能にして反転遅延を抑える
+      （`direction_bias/horizon` の tech 一致要件は維持）。
+- `scalp_ping_5s_b*` の extrema は 2026-02-19 以降、ショート側のみ非対称チューニング。
+  - `short_bottom_soft` は専用倍率
+    `EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT`（B既定 0.42）で縮小。
+  - `mtf_balanced` かつ short非優勢では
+    `EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT`（B既定 0.30）へ追加縮小し、
+    `entry_thesis.extrema_gate_reason=short_bottom_soft_balanced` で監査する。
+  - extrema reversal は B既定で `long -> short` を無効化
+    （`EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=0`）し、
+    `long_top_soft_reverse` クラスタの誤反転を抑制する。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、

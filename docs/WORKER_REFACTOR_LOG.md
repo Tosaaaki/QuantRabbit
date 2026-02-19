@@ -2820,3 +2820,45 @@
 - 期待効果:
   - 連敗反転の発火を「条件付きの高品質反転」に絞り、
     方向衝突（fast_flip vs sl_streak）での逆行エントリーを抑制する。
+
+### 2026-02-19（追記）scalp_ping_5s_b のショート偏重クラスタを根本抑制（extrema 非対称化）
+
+- 背景:
+  - VM `trades.db`（2026-02-17 以降）で `scalp_ping_5s_b_live` は
+    `short_bottom_soft` / `long_top_soft_reverse` クラスタの平均損益が大幅マイナス。
+  - 要件は「時間帯ブロックではなく、方向決定ロジックを根本補正しつつ件数は落とさない」。
+- 実施:
+  - `workers/scalp_ping_5s/config.py`
+    - 追加:
+      - `EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT`
+      - `EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT`
+      - `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT`
+      - `EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE`
+      - `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK`
+  - `workers/scalp_ping_5s/worker.py`
+    - `short_bottom_soft` を side=short 専用の縮小倍率で処理し、
+      `mtf_balanced` かつ short非優勢時はさらに縮小
+      （`short_bottom_soft_balanced` を `entry_thesis` に記録）。
+    - extrema reversal を非対称化し、
+      B既定で `long -> short` の reversal 経路を無効化。
+      （`short -> long` reversal は維持）
+    - `sl_streak_direction_flip` に
+      `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK` を追加し、
+      連敗が閾値以上のときは `target_market_plus` 条件をバイパス可能にした
+      （tech確認条件は維持）。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT=0.42`
+    - `SCALP_PING_5S_B_EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT=0.30`
+    - `SCALP_PING_5S_B_EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=0`
+    - `SCALP_PING_5S_B_EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE=2.10`
+    - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_FORCE_STREAK=3`
+  - テスト:
+    - 新規 `tests/workers/test_scalp_ping_5s_extrema_routes.py`
+      - `long->short` reversal 抑止
+      - `short->long` reversal 維持
+      - `short_bottom_soft_balanced` 縮小倍率適用
+    - `tests/workers/test_scalp_ping_5s_sl_streak_flip.py`
+      - `force_streak` で `target_market_plus` 弱いケースを反転許可する回帰テストを追加。
+- 期待効果:
+  - エントリー拒否ではなく「方向補正 + ロット縮小」で件数を維持し、
+    ショート偏重の逆行SL連鎖を抑える。

@@ -412,6 +412,21 @@ SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS: int = max(
     0,
     int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS", "1"))),
 )
+SL_STREAK_DIRECTION_FLIP_FORCE_STREAK: int = max(
+    SL_STREAK_DIRECTION_FLIP_MIN_STREAK,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_FORCE_STREAK",
+                (
+                    "3"
+                    if ENV_PREFIX == "SCALP_PING_5S_B"
+                    else str(SL_STREAK_DIRECTION_FLIP_MIN_STREAK + 2)
+                ),
+            )
+        )
+    ),
+)
 SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES: int = max(
     SL_STREAK_DIRECTION_FLIP_LOOKBACK_TRADES,
     int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES", "24"))),
@@ -932,6 +947,38 @@ EXTREMA_SHORT_BOTTOM_SOFT_POS: float = min(
         float(os.getenv("SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_POS", "0.22")),
     ),
 )
+EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT: float = max(
+    0.10,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT",
+                (
+                    "0.42"
+                    if ENV_PREFIX == "SCALP_PING_5S_B"
+                    else "0.68"
+                ),
+            )
+        ),
+    ),
+)
+EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT: float = max(
+    0.05,
+    min(
+        EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT",
+                (
+                    "0.30"
+                    if ENV_PREFIX == "SCALP_PING_5S_B"
+                    else str(EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT)
+                ),
+            )
+        ),
+    ),
+)
 EXTREMA_SHORT_H4_LOW_BLOCK_POS: float = max(
     0.01,
     min(0.50, float(os.getenv("SCALP_PING_5S_EXTREMA_SHORT_H4_LOW_BLOCK_POS", "0.20"))),
@@ -995,12 +1042,25 @@ EXTREMA_REVERSAL_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_EXTREMA_REVERSAL_ENABLED",
     True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
 )
+EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT: bool = _bool_env(
+    "SCALP_PING_5S_EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT",
+    False if ENV_PREFIX == "SCALP_PING_5S_B" else True,
+)
 EXTREMA_REVERSAL_MIN_SCORE: float = max(
     0.1,
     float(
         os.getenv(
             "SCALP_PING_5S_EXTREMA_REVERSAL_MIN_SCORE",
             "1.45" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.80",
+        )
+    ),
+)
+EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE: float = max(
+    0.1,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE",
+            "2.10" if ENV_PREFIX == "SCALP_PING_5S_B" else str(EXTREMA_REVERSAL_MIN_SCORE),
         )
     ),
 )

@@ -3307,7 +3307,9 @@ def _maybe_sl_streak_direction_flip(
         )
 
     min_target_market_plus = max(0, int(config.SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS))
-    if target_market_plus_recent < min_target_market_plus:
+    force_streak = max(min_streak, int(config.SL_STREAK_DIRECTION_FLIP_FORCE_STREAK))
+    force_flip_by_streak = streak.streak >= force_streak
+    if target_market_plus_recent < min_target_market_plus and not force_flip_by_streak:
         return (
             None,
             "target_market_plus_weak",
@@ -3365,7 +3367,8 @@ def _maybe_sl_streak_direction_flip(
         f"{current_side}->{target_side}:"
         f"slx{streak.streak},age={streak.age_sec:.0f}s,"
         f"slhits={side_sl_hits_recent},mktplus={target_market_plus_recent},"
-        f"tech={int(direction_confirmed or horizon_confirmed)}"
+        f"tech={int(direction_confirmed or horizon_confirmed)},"
+        f"force={int(force_flip_by_streak)}"
     )
     return flipped, reason, SlFlipEval(
         streak,
@@ -3614,6 +3617,27 @@ def _extrema_gate_decision(
             or (m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_SOFT_POS)
             or (h4_pos is not None and h4_pos <= config.EXTREMA_SHORT_H4_LOW_SOFT_POS)
         )
+        if soft_hit:
+            soft_units_mult = float(config.EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT)
+            soft_reason = "short_bottom_soft"
+            if regime is not None:
+                regime_mode = str(getattr(regime, "mode", "")).strip().lower()
+                regime_side = str(getattr(regime, "side", "")).strip().lower()
+                if regime_mode == "balanced" and regime_side != "short":
+                    soft_units_mult = min(
+                        soft_units_mult,
+                        float(config.EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT),
+                    )
+                    soft_reason = "short_bottom_soft_balanced"
+            if soft_units_mult < 0.999:
+                return ExtremaGateDecision(
+                    True,
+                    soft_reason,
+                    soft_units_mult,
+                    m1_pos,
+                    m5_pos,
+                    h4_pos,
+                )
         if soft_hit and config.EXTREMA_SOFT_UNITS_MULT < 0.999:
             return ExtremaGateDecision(
                 True,
@@ -3646,6 +3670,8 @@ def _extrema_reversal_route(
 
     side_key = str(signal.side or "").strip().lower()
     if side_key not in {"long", "short"}:
+        return None, 1.0, "", 0.0
+    if side_key == "long" and not config.EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT:
         return None, 1.0, "", 0.0
     reverse_side = "short" if side_key == "long" else "long"
 
@@ -3726,7 +3752,10 @@ def _extrema_reversal_route(
                 ):
                     score += 1.10
 
-    if score < config.EXTREMA_REVERSAL_MIN_SCORE:
+    min_score = float(config.EXTREMA_REVERSAL_MIN_SCORE)
+    if side_key == "long":
+        min_score = max(min_score, float(config.EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE))
+    if score < min_score:
         return None, 1.0, "", float(score)
 
     reversed_signal = _retarget_signal(

@@ -51,7 +51,7 @@ systemd（VM）:
 - `signal_mode`（例: `momentum`, `revert`, `momentum_cont`, `revert_hz` など）
 - `mtf_regime_gate`（例: `mtf_continuation_follow`, `mtf_reversion_to_trend` など）
 - `horizon_gate`（例: `horizon_align`, `horizon_counter_scaled` など）
-- `extrema_gate_reason`（例: `ok`, `long_top_soft`, `short_bottom_soft` など）
+- `extrema_gate_reason`（例: `ok`, `long_top_soft`, `short_bottom_soft`, `short_bottom_soft_balanced` など）
 
 `pattern_trade_features` に保存され deep 分析に使われるキー（抜粋）:
 - `confidence` / `spread_pips` / `tp_pips` / `sl_pips`
