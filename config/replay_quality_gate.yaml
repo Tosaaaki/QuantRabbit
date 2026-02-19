@@ -4,10 +4,7 @@
 ticks_glob: "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
 
 workers:
-  - impulse_break_s5
-  - impulse_momentum_s5
-  - impulse_retest_s5
-  - pullback_s5
+  - session_open
 
 replay:
   no_hard_sl: true

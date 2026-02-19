@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import importlib
+from importlib import import_module
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,46 +29,72 @@ if str(REPO_ROOT) not in sys.path:
 import scripts.replay_exit_workers as rew
 import scripts.replay_workers as rw
 
-# exit workers
-import workers.impulse_break_s5.exit_worker as impulse_break_exit
-import workers.impulse_retest_s5.exit_worker as impulse_retest_exit
-import workers.impulse_momentum_s5.exit_worker as impulse_momentum_exit
-import workers.pullback_s5.exit_worker as pullback_s5_exit
-import workers.session_open.exit_worker as session_open_exit
-import workers.stop_run_reversal.exit_worker as stop_run_exit
-import workers.vwap_magnet_s5.exit_worker as vwap_magnet_exit
-
 PIP = 0.01
 
-WORKER_TAGS = {
-    "impulse_break_s5": "impulse_break_s5",
-    "impulse_retest_s5": "impulse_retest_s5",
-    "impulse_momentum_s5": "impulse_momentum_s5",
-    "pullback_s5": "pullback_s5",
-    "vwap_magnet_s5": "vwap_magnet_s5",
-    "stop_run_reversal": "stop_run_reversal",
-    "session_open": "session_open_breakout",
+def _optional_import(module_name: str):
+    try:
+        return import_module(module_name)
+    except Exception:
+        return None
+
+
+WORKER_SPECS = {
+    "impulse_break_s5": {
+        "tag": "impulse_break_s5",
+        "exit_module_name": "workers.impulse_break_s5.exit_worker",
+        "exit_worker_class": "ImpulseBreakExitWorker",
+        "config_module_name": "workers.impulse_break_s5.config",
+    },
+    "impulse_retest_s5": {
+        "tag": "impulse_retest_s5",
+        "exit_module_name": "workers.impulse_retest_s5.exit_worker",
+        "exit_worker_class": "ImpulseRetestExitWorker",
+        "config_module_name": "workers.impulse_retest_s5.config",
+    },
+    "impulse_momentum_s5": {
+        "tag": "impulse_momentum_s5",
+        "exit_module_name": "workers.impulse_momentum_s5.exit_worker",
+        "exit_worker_class": "ImpulseMomentumExitWorker",
+        "config_module_name": "workers.impulse_momentum_s5.config",
+    },
+    "pullback_s5": {
+        "tag": "pullback_s5",
+        "exit_module_name": "workers.pullback_s5.exit_worker",
+        "exit_worker_class": "PullbackExitWorker",
+        "config_module_name": "workers.pullback_s5.config",
+    },
+    "vwap_magnet_s5": {
+        "tag": "vwap_magnet_s5",
+        "exit_module_name": "workers.vwap_magnet_s5.exit_worker",
+        "exit_worker_class": "VWAPMagnetExitWorker",
+        "config_module_name": "workers.vwap_magnet_s5.config",
+    },
+    "stop_run_reversal": {
+        "tag": "stop_run_reversal",
+        "exit_module_name": "workers.stop_run_reversal.exit_worker",
+        "exit_worker_class": "StopRunReversalExitWorker",
+        "config_module_name": "workers.stop_run_reversal.config",
+    },
+    "session_open": {
+        "tag": "session_open_breakout",
+        "exit_module_name": "workers.session_open.exit_worker",
+        "exit_worker_class": "SessionOpenExitWorker",
+        "config_module_name": "workers.session_open.config",
+    },
 }
 
-EXIT_MODULES = {
-    "impulse_break_s5": impulse_break_exit,
-    "impulse_retest_s5": impulse_retest_exit,
-    "impulse_momentum_s5": impulse_momentum_exit,
-    "pullback_s5": pullback_s5_exit,
-    "vwap_magnet_s5": vwap_magnet_exit,
-    "stop_run_reversal": stop_run_exit,
-    "session_open": session_open_exit,
-}
+_AVAILABLE_SPECS: dict[str, dict] = {}
+for _worker_name, _spec in WORKER_SPECS.items():
+    _exit_module = _optional_import(str(_spec["exit_module_name"]))
+    if _exit_module is None:
+        continue
+    merged = dict(_spec)
+    merged["exit_module"] = _exit_module
+    _AVAILABLE_SPECS[_worker_name] = merged
 
-EXIT_WORKER_CLASSES = {
-    "impulse_break_s5": "ImpulseBreakExitWorker",
-    "impulse_retest_s5": "ImpulseRetestExitWorker",
-    "impulse_momentum_s5": "ImpulseMomentumExitWorker",
-    "pullback_s5": "PullbackExitWorker",
-    "vwap_magnet_s5": "VWAPMagnetExitWorker",
-    "stop_run_reversal": "StopRunReversalExitWorker",
-    "session_open": "SessionOpenExitWorker",
-}
+WORKER_TAGS = {name: str(spec["tag"]) for name, spec in _AVAILABLE_SPECS.items()}
+EXIT_MODULES = {name: spec["exit_module"] for name, spec in _AVAILABLE_SPECS.items()}
+EXIT_WORKER_CLASSES = {name: str(spec["exit_worker_class"]) for name, spec in _AVAILABLE_SPECS.items()}
 
 
 @dataclass
@@ -142,16 +169,11 @@ def _run_replay_workers(
     if env:
         os.environ.update(env)
     try:
-        module_names = {
-            "impulse_break_s5": ["workers.impulse_break_s5.config"],
-            "impulse_retest_s5": ["workers.impulse_retest_s5.config"],
-            "impulse_momentum_s5": ["workers.impulse_momentum_s5.config"],
-            "pullback_s5": ["workers.pullback_s5.config"],
-            "vwap_magnet_s5": ["workers.vwap_magnet_s5.config"],
-            "stop_run_reversal": ["workers.stop_run_reversal.config"],
-            "session_open": ["workers.session_open.config"],
-        }
-        for mod_name in module_names.get(worker, []):
+        spec = WORKER_SPECS.get(worker) or {}
+        module_names = [str(spec.get("config_module_name") or "")]
+        for mod_name in module_names:
+            if not mod_name:
+                continue
             mod = sys.modules.get(mod_name)
             if mod is not None:
                 importlib.reload(mod)
@@ -566,6 +588,15 @@ def main() -> None:
         args.slip_latency_coef = 0.0006
         args.fill_mode = "next_tick"
     workers = [w.strip() for w in args.workers.split(",") if w.strip()]
+    runnable_workers = [w for w in workers if w in WORKER_TAGS]
+    skipped_workers = [w for w in workers if w not in WORKER_TAGS]
+    if skipped_workers:
+        print(f"[replay_exit_workers_groups] skip unavailable workers: {','.join(skipped_workers)}")
+    if not runnable_workers:
+        available = ",".join(sorted(WORKER_TAGS.keys())) or "<none>"
+        raise SystemExit(
+            f"no compatible workers to run (requested={','.join(workers)} available={available})"
+        )
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     results: Dict[str, dict] = {}
@@ -587,9 +618,7 @@ def main() -> None:
         if closed:
             prefeed_h4.append(closed)
 
-    for worker in workers:
-        if worker not in WORKER_TAGS:
-            continue
+    for worker in runnable_workers:
         base_out = args.out_dir / f"replay_exit_{worker}_base.json"
         replay_out = args.out_dir / f"replay_workers_{worker}_base.json"
         _run_replay_workers(

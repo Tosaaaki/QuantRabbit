@@ -16,7 +16,7 @@
 ```bash
 python scripts/replay_exit_workers_groups.py \
   --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
-  --workers impulse_break_s5,impulse_momentum_s5,impulse_retest_s5,pullback_s5 \
+  --workers session_open \
   --no-hard-sl \
   --exclude-end-of-replay \
   --out-dir tmp/replay_exit_workers_groups_YYYYMM_all
@@ -26,6 +26,7 @@ python scripts/replay_exit_workers_groups.py \
 - `--ticks` は bid/ask を含む JSONL を前提にする。
 - 窓を変える場合は `--ticks` の入力だけ差し替える。
 - ルールを変えない限り、比較は `summary_all.json` 同士で行う。
+- `replay_exit_workers_groups.py` は存在するワーカーのみ実行する。環境差分でモジュールが無いワーカーはスキップされるため、実行時は `--workers` を現行 VM のワーカー構成に合わせる。
 
 ## 内部精度ゲート（walk-forward）
 
