@@ -20,6 +20,7 @@ _DB_RETRY_MAX_SLEEP_SEC = max(
     _DB_RETRY_BASE_SLEEP_SEC,
     float(os.getenv("METRICS_DB_RETRY_MAX_SLEEP_SEC", "0.60")),
 )
+_SCHEMA_READY = False
 
 
 def _parse_csv_env(name: str, default: str) -> set[str]:
@@ -122,13 +123,15 @@ def _resolve_agg_window(metric: str) -> float:
 
 
 def _write_payload(payload: dict[str, object], metric: str) -> bool:
+    global _SCHEMA_READY
     for attempt in range(1, _DB_WRITE_RETRIES + 1):
         con: sqlite3.Connection | None = None
         try:
             con = sqlite3.connect(str(_DB_PATH), timeout=max(1.0, _DB_BUSY_TIMEOUT_MS / 1000.0))
             con.execute(f"PRAGMA busy_timeout={_DB_BUSY_TIMEOUT_MS};")
-            con.execute("PRAGMA journal_mode=WAL;")
-            _ensure_schema(con)
+            if not _SCHEMA_READY:
+                _ensure_schema(con)
+                _SCHEMA_READY = True
             con.execute(
                 "INSERT INTO metrics(ts, metric, value, tags) VALUES (:ts, :metric, :value, :tags)",
                 payload,

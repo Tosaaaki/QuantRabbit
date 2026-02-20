@@ -21,6 +21,8 @@
     - `METRICS_DB_BUSY_TIMEOUT_MS`（既定 5000ms）
     - `METRICS_DB_WRITE_RETRIES`（既定 6）
     - `METRICS_DB_RETRY_BASE_SLEEP_SEC` / `...MAX_SLEEP_SEC`
+  - `metrics_logger` の write ループから毎回の `PRAGMA journal_mode=WAL` を除去し、
+    `CREATE TABLE IF NOT EXISTS` はプロセス初回のみ実行するよう変更。
   - lock 時は指数バックオフで再試行し、最終失敗時は `metric/reason/attempts/db` を debug ログへ記録。
   - `log_metric()` が書き込み可否を返すようにし、
     `publish_range_mode` で write 失敗時は `logged active=...` を出さず

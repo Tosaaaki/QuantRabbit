@@ -14,6 +14,7 @@ import utils.metrics_logger as metrics_logger
 def _patch_db_settings(tmp_path: pathlib.Path, monkeypatch) -> pathlib.Path:
     db_path = tmp_path / "metrics.db"
     monkeypatch.setattr(metrics_logger, "_DB_PATH", db_path)
+    monkeypatch.setattr(metrics_logger, "_SCHEMA_READY", False)
     monkeypatch.setattr(metrics_logger, "_DB_BUSY_TIMEOUT_MS", 120)
     monkeypatch.setattr(metrics_logger, "_DB_WRITE_RETRIES", 2)
     monkeypatch.setattr(metrics_logger, "_DB_RETRY_BASE_SLEEP_SEC", 0.0)
@@ -62,4 +63,3 @@ def test_log_metric_returns_false_when_db_is_locked(tmp_path: pathlib.Path, monk
         lock_con.close()
 
     assert ok is False
-
