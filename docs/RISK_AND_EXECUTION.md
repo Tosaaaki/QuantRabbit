@@ -75,6 +75,14 @@
   `scalp_ping_5s_b_live: *SCALP_PING_5S_EXIT_PROFILE` を維持し、
   `ALLOWED_TAGS=scalp_ping_5s_b_live` の建玉が default EXITプロファイルへ落ちないようにする。
 
+### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
+- `quant-order-manager` 環境で
+  `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を運用する。
+- `margin_closeout_n>0` の緊急ブロック条件自体は維持し、
+  「直近1日」の closeout のみで block 判定する。
+- これにより、古い closeout（2日以上前）で `OPEN_REJECT perf_block:margin_closeout_n=*`
+  が継続し、flow 戦略の新規が長時間停止する経路を避ける。
+
 ### scalp_macd_rsi_div 運用補足（legacy tag 互換）
 - `quant-scalp-macd-rsi-div-exit` は `SCALP_PRECISION_EXIT_TAGS=scalp_macd_rsi_div_live` で運用する。
 - `workers/scalp_macd_rsi_div.exit_worker` では

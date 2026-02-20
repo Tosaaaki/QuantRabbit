@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-20（追記）`scalp_ping_5s_flow_live` の stale margin_closeout ブロックを短縮
+
+- 対象:
+  - `ops/env/quant-order-manager.env`
+- 変更:
+  - `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を追加。
+  - `perf_guard` の `margin_closeout_n>0` 緊急ブロックは維持しつつ、
+    参照窓を `3日 -> 1日` に短縮。
+- 背景（VM実測）:
+  - `2026-02-20 08:57 JST` 時点で `quant-order-manager` は
+    `OPEN_REJECT note=perf_block:margin_closeout_n=1 n=24` を連発し、
+    reboot後の `OPEN_SCALE` がすべて reject されていた。
+  - 該当 closeout は `2026-02-18 00:01 JST`（`MARKET_ORDER_MARGIN_CLOSEOUT`）で、
+    直近1日には同事象がなく、古い closeout 参照が過剰抑止を発生させていた。
+- 意図:
+  - 直近の強制ロスカが再発した時だけ即時ブロックする挙動を維持し、
+    stale 事象でエントリーが長時間停止する状態を解消する。
+
 ### 2026-02-20（追記）`scalp_ping_5s_b_live` 方向転換遅延と逆配分を是正（反応速度優先）
 
 - 対象:
