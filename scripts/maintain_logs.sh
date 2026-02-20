@@ -12,6 +12,7 @@ LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$LOG_DIR/archive}"
 MAX_AGE_DAYS="${LOG_ROTATE_MAX_AGE_DAYS:-7}"
 REPLAY_ARCHIVE_TIMEOUT_SEC="${REPLAY_ARCHIVE_TIMEOUT_SEC:-180}"
+CHECKPOINT_BUSY_TIMEOUT_MS="${CHECKPOINT_BUSY_TIMEOUT_MS:-5000}"
 ARCHIVE_BUCKET="${LOG_ARCHIVE_BUCKET:-}"
 ARCHIVE_PREFIX="${LOG_ARCHIVE_PREFIX:-$(hostname -s)/logs}"
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -65,7 +66,9 @@ checkpoint_db() {
   local db="$1"
   if [[ -f "$db" ]]; then
     echo "[checkpoint] $db"
-    sqlite3 "$db" "pragma wal_checkpoint(full);"
+    if ! sqlite3 "$db" "pragma busy_timeout=${CHECKPOINT_BUSY_TIMEOUT_MS}; pragma wal_checkpoint(full);"; then
+      echo "[checkpoint] warning: wal checkpoint failed for $db"
+    fi
   fi
 }
 
