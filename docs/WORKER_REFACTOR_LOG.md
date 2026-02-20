@@ -3346,3 +3346,19 @@
 - 目的:
   - 方向ミス時の同方向積み増しをサイズで抑え、SLクラスターの損失勾配を下げる。
   - 発注本数は維持しながら、悪い局面でだけ損失の厚みを削る。
+
+### 2026-02-20（追記）`scalp_ping_5s_flow_live` fallback経路の perf_guard 整合化
+
+- 背景（VM実測）:
+  - `strategy_entry -> quant-order-manager` の service call が timeout した場合、
+    worker 内 local fallback で `order_manager.market_order` が実行される。
+  - flow 専用の `PERF_GUARD_LOOKBACK_DAYS=1` を order-manager 側にのみ設定していると、
+    fallback 側では default(3日) となり `perf_block:margin_closeout_n=1 n=24` が継続する。
+- 実施:
+  - `ops/env/scalp_ping_5s_flow.env` に
+    `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を追加。
+  - `ops/env/quant-scalp-ping-5s-flow.env` にも同値を追加し、
+    systemd worker env と repo override env の双方で値を一致させた。
+- 目的:
+  - service 経路と local fallback 経路で同一の perf_guard 判定を維持し、
+    timeout 時だけ stale closeout 判定へ戻る不整合を排除する。

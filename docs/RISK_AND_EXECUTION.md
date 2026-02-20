@@ -78,6 +78,10 @@
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で
   `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を運用する。
+- service timeout 時の local fallback でも同条件を維持するため、
+  `quant-scalp-ping-5s-flow` worker 環境
+  （`ops/env/quant-scalp-ping-5s-flow.env` と `ops/env/scalp_ping_5s_flow.env`）
+  にも同じ `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を設定する。
 - `margin_closeout_n>0` の緊急ブロック条件自体は維持し、
   「直近1日」の closeout のみで block 判定する。
 - これにより、古い closeout（2日以上前）で `OPEN_REJECT perf_block:margin_closeout_n=*`
