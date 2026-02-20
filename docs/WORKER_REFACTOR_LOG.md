@@ -8,6 +8,29 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-20（追記）`position_manager` read timeout 連発を fail-fast + stale 優先へ再調整
+
+- 背景（VM実測）:
+  - strategy worker で `position_manager service call failed ... Read timed out (read timeout=8.0)` が連発し、
+    `entry-skip summary ... position_manager_timeout=*` が継続。
+  - `quant-position-manager` 側では `sync_trades timeout (6.0s)` と
+    `orders.db lookup failed ... database is locked` が並発し、`open_positions` tail latency が増加。
+- 実施:
+  - `ops/env/quant-v2-runtime.env` を調整。
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=6.0`
+    - `POSITION_MANAGER_HTTP_RETRY_TOTAL=0`
+    - `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT=2.8`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC=60.0`
+    - `POSITION_MANAGER_ORDERS_DB_READ_TIMEOUT_SEC=0.08`
+    - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC=5.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=8.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=20.0`
+  - `ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE=0` は維持
+    （service mode worker の pre-service `orders.db` 書き込み抑止を継続）。
+- 意図:
+  - `open_positions` を 6 秒以内で stale fallback へ寄せ、
+    strategy 側の read timeout と `position_manager_timeout` skip を同時に低減する。
+
 ### 2026-02-20（追記）分析メトリクス書き込みの lock 耐性を強化
 
 - 対象:

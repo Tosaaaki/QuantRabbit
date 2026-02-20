@@ -124,6 +124,19 @@
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
   発注可否ロジック（perf/risk/policy/coordination）には影響しない。
 
+### position_manager タイムアウト運用補足（2026-02-20）
+- `open_positions` の read timeout 連発を避けるため、`quant-v2-runtime.env` は次を運用値とする。
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=6.0`
+  - `POSITION_MANAGER_HTTP_RETRY_TOTAL=0`
+  - `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT=2.8`
+  - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC=60.0`
+  - `POSITION_MANAGER_ORDERS_DB_READ_TIMEOUT_SEC=0.08`
+  - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC=5.0`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=8.0`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=20.0`
+- 目的は、`position_manager` が不調時でも stale cache へ早めにフォールバックし、
+  strategy worker 側の `position_manager_timeout` による entry skip を減らすこと。
+
 ### scalp_macd_rsi_div 運用補足（legacy tag 互換）
 - `quant-scalp-macd-rsi-div-exit` は `SCALP_PRECISION_EXIT_TAGS=scalp_macd_rsi_div_live` で運用する。
 - `workers/scalp_macd_rsi_div.exit_worker` では
