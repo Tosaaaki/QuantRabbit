@@ -80,6 +80,7 @@ def test_build_replay_command_main_realistic_no_duplicate_flags() -> None:
             "latency_ms": 250.0,
             "intraday_start_utc": "00:00:00",
             "intraday_end_utc": "06:00:00",
+            "main_only": True,
         },
     )
 
@@ -92,6 +93,7 @@ def test_build_replay_command_main_realistic_no_duplicate_flags() -> None:
     assert _arg_value(cmd, "--slip-spread-coef") == "0.15"
     assert _arg_value(cmd, "--slip-atr-coef") == "0.02"
     assert _arg_value(cmd, "--slip-latency-coef") == "0.0006"
+    assert "--main-only" in cmd
     assert _arg_value(cmd, "--start") == "2026-02-10T00:00:00+00:00"
     assert _arg_value(cmd, "--end") == "2026-02-10T06:00:00+00:00"
 

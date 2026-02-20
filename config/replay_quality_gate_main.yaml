@@ -26,6 +26,7 @@ replay:
   sp_live_entry: false
   disable_macro: false
   no_main_strategies: false
+  main_only: true
   fill_mode: next_tick
 
 gates:

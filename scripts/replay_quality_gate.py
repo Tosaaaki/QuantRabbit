@@ -195,6 +195,8 @@ def _build_replay_command_main(
         cmd.append("--disable-macro")
     if _to_bool(replay_cfg.get("no_main_strategies"), default=False):
         cmd.append("--no-main-strategies")
+    if _to_bool(replay_cfg.get("main_only"), default=False):
+        cmd.append("--main-only")
     start = str(replay_cfg.get("start") or "").strip()
     if start:
         cmd.extend(["--start", start])

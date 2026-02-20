@@ -1550,6 +1550,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--disable-macro", action="store_true", help="Disable macro entries/exit.")
     parser.add_argument("--no-main-strategies", action="store_true", help="Disable main strategy entries.")
+    parser.add_argument(
+        "--main-only",
+        action="store_true",
+        help="Run only main strategy path (TrendMA/BB_RSI) and skip scalp entry/exit workers.",
+    )
     parser.add_argument("--slip-base-pips", type=float, default=0.0)
     parser.add_argument("--slip-spread-coef", type=float, default=0.0)
     parser.add_argument("--slip-atr-coef", type=float, default=0.0)
@@ -1568,6 +1573,8 @@ def main() -> None:
     args = parse_args()
     if args.fast_only and not _FAST_SCALP_AVAILABLE:
         raise SystemExit("--fast-only is unavailable because fast_scalp modules were removed")
+    if args.fast_only and args.main_only:
+        raise SystemExit("--fast-only and --main-only cannot be enabled together")
     if args.quiet:
         logging.disable(logging.CRITICAL)
     elif args.fast_only:
@@ -1605,10 +1612,10 @@ def main() -> None:
     asyncio.set_event_loop(loop)
 
     fast_entry: Optional[FastScalpEntryEngine] = None
-    if not args.sp_only and _FAST_SCALP_AVAILABLE:
+    if not args.sp_only and not args.main_only and _FAST_SCALP_AVAILABLE:
         fast_entry = FastScalpEntryEngine(broker)
     sim_account: Optional[SimAccount] = None
-    if args.sp_live_entry and not args.fast_only:
+    if args.sp_live_entry and not args.fast_only and not args.main_only:
         sim_account = SimAccount(balance=args.equity, margin_rate=args.margin_rate)
         _patch_live_deps(broker, sim_account)
         def _on_close(trade: dict) -> None:
@@ -1622,7 +1629,7 @@ def main() -> None:
         if fast_entry is not None:
             broker.on_close = fast_entry.on_closed
     sp_entry: Optional[ScalpReplayEntryEngine] = None
-    if not args.fast_only:
+    if not args.fast_only and not args.main_only:
         sp_entry = ScalpReplayEntryEngine(
             broker,
             live_entry=args.sp_live_entry,
@@ -1638,22 +1645,27 @@ def main() -> None:
 
     if fast_exit is not None:
         _patch_exit_module(fast_exit, broker)
-    if not args.fast_only:
+    if not args.fast_only and not args.main_only:
         _patch_exit_module(sp_level_reject_exit, broker)
         _patch_exit_module(sp_false_break_exit, broker)
         if bbrsi_exit is not None:
             _patch_exit_module(bbrsi_exit, broker)
         if trendma_exit is not None:
             _patch_exit_module(trendma_exit, broker)
+    elif args.main_only:
+        if bbrsi_exit is not None:
+            _patch_exit_module(bbrsi_exit, broker)
+        if trendma_exit is not None:
+            _patch_exit_module(trendma_exit, broker)
 
     fast_runner = None
-    if not args.sp_only and fast_exit is not None:
+    if not args.sp_only and not args.main_only and fast_exit is not None:
         fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
     sp_level_reject_runner = None
     sp_false_break_runner = None
     bbrsi_runner = None
     trend_runner = None
-    if not args.fast_only:
+    if not args.fast_only and not args.main_only:
         sp_level_reject_runner = ExitRunner(
             "scalp_level_reject",
             sp_level_reject_exit,
@@ -1666,6 +1678,11 @@ def main() -> None:
             sp_false_break_exit.RangeFaderExitWorker(),
             broker,
         )
+        if bbrsi_exit is not None:
+            bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
+        if not args.disable_macro and trendma_exit is not None:
+            trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
+    elif args.main_only:
         if bbrsi_exit is not None:
             bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
         if not args.disable_macro and trendma_exit is not None:
@@ -1769,6 +1786,7 @@ def main() -> None:
             "hard_sl": bool(hard_sl),
             "hard_tp": bool(hard_tp),
             "macro_enabled": not args.disable_macro,
+            "main_only": bool(args.main_only),
             "main_strategies_enabled": not args.no_main_strategies,
             "slip_base_pips": args.slip_base_pips,
             "slip_spread_coef": args.slip_spread_coef,

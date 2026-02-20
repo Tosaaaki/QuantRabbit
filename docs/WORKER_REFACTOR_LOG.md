@@ -41,6 +41,23 @@
 - 意図:
   - walk-forward を実運用データで回しつつ、処理時間を制御して継続的な内部精度検証を成立させる。
 
+### 2026-02-20（追記）`replay_exit_workers` に `--main-only` を追加（品質ゲート高速化）
+
+- 対象:
+  - `scripts/replay_exit_workers.py`
+  - `scripts/replay_quality_gate.py`
+  - `config/replay_quality_gate_main.yaml`
+  - `tests/analysis/test_replay_quality_gate_script.py`
+  - `docs/REPLAY_STANDARD.md`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - `replay_exit_workers.py` に `--main-only` を追加し、scalp replay entry/exit worker を無効化したうえで
+    main 戦略（TrendMA/BB_RSI）の entry/exit のみ実行可能にした。
+  - `replay_quality_gate` から `replay.main_only` を pass-through できるようにし、
+    `replay_quality_gate_main.yaml` 既定を `main_only: true` に設定。
+- 意図:
+  - main 戦略の walk-forward 品質判定を、不要経路を省いた状態で繰り返し実行できるようにする。
+
 ### 2026-02-20（追記）`scalp_ping_5s_flow_live` の stale margin_closeout ブロックを短縮
 
 - 対象:
