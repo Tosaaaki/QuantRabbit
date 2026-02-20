@@ -101,6 +101,12 @@
   - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.03`
   - `ORDER_DB_LOG_RETRY_BACKOFF=2.0`
   - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.20`
+- `quant-order-manager.service` は
+  `ops/env/quant-v2-runtime.env` に加えて
+  `ops/env/quant-order-manager.env` も読むため、
+  両ファイルで `ORDER_DB_*` を同値に揃える。
+  `quant-order-manager.env` 側の古い `ORDER_DB_BUSY_TIMEOUT_MS=250` が残ると、
+  runtime 設定を後段で上書きして lock 警告が再発する。
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
   発注可否ロジック（perf/risk/policy/coordination）には影響しない。
 

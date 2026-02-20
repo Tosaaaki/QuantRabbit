@@ -3459,3 +3459,25 @@
 - 目的:
   - 高頻度発注時の SQLite write 競合で orders 監査ログが落ちる経路を縮小し、
     実運用での可観測性を維持する。
+
+### 2026-02-20（追記）orders.db lock再発の設定上書き修正（quant-order-manager.env）
+
+- 背景（VM実測）:
+  - code と `quant-v2-runtime.env` では `ORDER_DB_BUSY_TIMEOUT_MS=1500` へ更新済みだったが、
+    `quant-order-manager.service` は `ops/env/quant-order-manager.env` を後段で読み込むため、
+    同ファイルの `ORDER_DB_BUSY_TIMEOUT_MS=250` が runtime 値を再上書きしていた。
+  - その結果、`[ORDER][LOG] failed to persist orders log: database is locked` が
+    直近30分で再び多発（`lock_count_30m=20`）していた。
+- 実施:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
+    - `ORDER_DB_LOG_RETRY_ATTEMPTS=3`
+    - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.03`
+    - `ORDER_DB_LOG_RETRY_BACKOFF=2.0`
+    - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.20`
+  - `docs/RISK_AND_EXECUTION.md` に
+    「`quant-order-manager.env` と `quant-v2-runtime.env` の `ORDER_DB_*` 同期必須」
+    を追記。
+- 目的:
+  - service 起動時の env 上書き順による設定逆戻りを防ぎ、
+    lock 耐性設定を本番実行値へ確実に反映する。
