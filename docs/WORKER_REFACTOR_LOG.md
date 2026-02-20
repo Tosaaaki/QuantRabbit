@@ -3665,3 +3665,29 @@
 - 目的:
   - `quant-order-manager` を `orders.db` の主ライターに寄せ、
     複数 worker 同時書き込みによる lock 競合を低減する。
+
+### 2026-02-20（追記）ops/保守ワーカーの安定化（audit timeout・log maintenance）
+
+- 背景（VM実測）:
+  - `quant-v2-audit.service` が `journalctl` 呼び出しで `TimeoutExpired` し、oneshot が失敗していた。
+  - `quant-maintain-logs.service` は `logs/replay` の並行更新で `rm ... Directory not empty` や
+    `sqlite3 ... database is locked` で失敗していた。
+  - SSH/IAP 不調時の metadata デプロイで `deploy_via_metadata.sh` 生成スクリプト内の
+    `RUNTIME_ENV_FILE` クオート不整合により startup-script が早期失敗していた。
+- 実施:
+  - `scripts/ops_v2_audit.py`
+    - `OPS_V2_AUDIT_JOURNAL_TIMEOUT_SEC` を追加し、`_run()` で timeout 例外を握って
+      audit 全体を落とさないように修正。
+    - `journalctl` 側へ `--grep` を追加して検索対象を絞り、重い全量走査を回避。
+  - `scripts/maintain_logs.sh`
+    - `archive_replay()` を stage 退避方式へ変更し、ライブ書き込みパスを即再作成。
+    - `REPLAY_ARCHIVE_TIMEOUT_SEC` を追加して replay 圧縮の長時間化を打ち切り可能化。
+    - `checkpoint_db()` に `busy_timeout` と warning-only ハンドリングを追加し、
+      lock 発生時も service を成功終了可能に修正。
+  - `scripts/deploy_via_metadata.sh`
+    - startup-script 生成時の `RUNTIME_ENV_FILE` 参照クオートを修正し、
+      metadata fallback デプロイの早期失敗を解消。
+- 反映確認（VM）:
+  - `git rev-parse HEAD == git rev-parse origin/main` を確認。
+  - `quant-v2-audit.service` は `status=0/SUCCESS` で `warn=0` を確認。
+  - `quant-maintain-logs.service` は最新実行で `status=0/SUCCESS` を確認。
