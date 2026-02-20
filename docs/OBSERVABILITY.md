@@ -4,6 +4,9 @@
 - `max_data_lag_ms = 3000` 超は `DataFetcher` が `stale=True` を返し Risk Guard が発注拒否。
 - Candle 確定は `tick.ts_ms // 60000` 変化で判定し、終値は最後の mid。
 - `volume=0` は `missing_bar` としてログ。
+- UI snapshot（`apps/autotune_ui.py`）は `generated_at` の鮮度を評価し、
+  `UI_SNAPSHOT_MAX_AGE_SEC`（default: `max(120, UI_AUTO_REFRESH_SEC*4)`）を超えた stale 候補は
+  `remote/gcs/local` の優先採用対象から除外する。全候補 stale の場合のみ最新時刻を採用する。
 
 ## 2. ログの真偽と参照ルール
 - 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。

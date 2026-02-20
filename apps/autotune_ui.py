@@ -140,6 +140,9 @@ _INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().low
     "yes",
 }
 _AUTO_REFRESH_SEC = max(5, int(os.getenv("UI_AUTO_REFRESH_SEC", "15")))
+_SNAPSHOT_STALE_MAX_AGE_SEC = max(
+    30, int(os.getenv("UI_SNAPSHOT_MAX_AGE_SEC", str(max(120, _AUTO_REFRESH_SEC * 4))))
+)
 _RECENT_TRADES_LIMIT = max(20, int(os.getenv("UI_RECENT_TRADES_LIMIT", "80")))
 _RECENT_TRADES_DISPLAY = max(
     10, min(int(os.getenv("UI_RECENT_TRADES_DISPLAY", "30")), _RECENT_TRADES_LIMIT)
@@ -990,6 +993,21 @@ def _resolve_ui_state_object_path() -> str:
     return value or _DEFAULT_UI_STATE_OBJECT
 
 
+def _snapshot_age_sec(snapshot: Optional[dict], *, now: Optional[datetime] = None) -> Optional[int]:
+    if not isinstance(snapshot, dict):
+        return None
+    dt = _parse_dt(snapshot.get("generated_at"))
+    if not dt:
+        return None
+    now_dt = now or datetime.now(timezone.utc)
+    return int(max(0, (now_dt - dt).total_seconds()))
+
+
+def _is_snapshot_fresh(snapshot: Optional[dict], *, now: Optional[datetime] = None) -> bool:
+    age_sec = _snapshot_age_sec(snapshot, now=now)
+    return age_sec is not None and age_sec <= _SNAPSHOT_STALE_MAX_AGE_SEC
+
+
 def _snapshot_metric_count(snapshot: Optional[dict]) -> int:
     if not isinstance(snapshot, dict):
         return 0
@@ -1042,13 +1060,14 @@ def _snapshot_metric_count(snapshot: Optional[dict]) -> int:
     return metric_count
 
 
-def _snapshot_sort_key(source: str, snapshot: dict) -> tuple[float, int]:
+def _snapshot_sort_key(source: str, snapshot: dict) -> tuple[int, int, float, int]:
     metric_count = _snapshot_metric_count(snapshot)
     metric_score = 1 if metric_count else 0
+    fresh_score = 1 if _is_snapshot_fresh(snapshot) else 0
     dt = _parse_dt(snapshot.get("generated_at"))
     ts = dt.timestamp() if dt else 0.0
     priority = {"local": 0, "gcs": 1, "remote": 2}.get(source, 0)
-    return (metric_score, priority, ts)
+    return (metric_score, fresh_score, ts, priority)
 
 
 def _pick_latest_snapshot(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
@@ -1110,7 +1129,7 @@ def _pick_snapshot_by_preference(candidates: list[tuple[str, dict]]) -> Optional
     source_snapshot_map = {source: snapshot for source, snapshot in candidates}
     for source in source_preference:
         snapshot = source_snapshot_map.get(source)
-        if snapshot and _snapshot_metric_count(snapshot) > 0:
+        if snapshot and _snapshot_metric_count(snapshot) > 0 and _is_snapshot_fresh(snapshot):
             return source, snapshot
     return _pick_latest_snapshot(candidates)
 
@@ -2528,11 +2547,8 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     gen_dt = _parse_dt(snapshot.get("generated_at"))
     snapshot_mode = snapshot.get("snapshot_mode")
     snapshot_source = snapshot.get("snapshot_source")
-    age_sec = None
-    stale = False
-    if gen_dt:
-        age_sec = int(max(0, (now - gen_dt).total_seconds()))
-        stale = age_sec > max(60, _AUTO_REFRESH_SEC * 2)
+    age_sec = _snapshot_age_sec(snapshot, now=now)
+    stale = age_sec is not None and age_sec > _SNAPSHOT_STALE_MAX_AGE_SEC
     base["snapshot"] = {
         "mode": snapshot_mode,
         "source": snapshot_source,

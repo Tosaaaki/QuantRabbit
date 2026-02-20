@@ -3381,6 +3381,28 @@
   - service 経路と local fallback 経路で同一の perf_guard 判定を維持し、
     timeout 時だけ stale closeout 判定へ戻る不整合を排除する。
 
+### 2026-02-20（追記）Autotune UI の snapshot 選択を「鮮度優先」に修正
+
+- 背景:
+  - `apps/autotune_ui.py` の dashboard/snapshot 選択は `remote -> gcs -> local` の固定優先で、
+    `generated_at` が古い remote snapshot でも metrics があれば常に採用される経路があった。
+  - その結果、UI の「1時間ごとのトレード」などが更新停止に見える事象を誘発しうる。
+- 実施:
+  - `apps/autotune_ui.py`
+    - `UI_SNAPSHOT_MAX_AGE_SEC`（default: `max(120, UI_AUTO_REFRESH_SEC*4)`）を追加。
+    - `generated_at` から snapshot 年齢を判定する `_snapshot_age_sec` / `_is_snapshot_fresh` を追加。
+    - `_pick_snapshot_by_preference` を更新し、fresh な snapshot のみを優先採用。
+    - fresh が無い場合は source 固定優先ではなく、`generated_at` が新しい snapshot を採用。
+    - dashboard の stale 表示判定も同一閾値へ統一。
+  - テスト追加:
+    - `tests/apps/test_autotune_ui_snapshot_selection.py`
+      - stale remote + fresh local で local を採用
+      - fresh remote を優先採用
+      - 全候補 stale 時は最も新しい候補を採用
+- 目的:
+  - stale な外部 snapshot に引きずられて UI 更新が止まって見える問題を防止し、
+    時間帯実績を含む表示を実データ鮮度に追従させる。
+
 ### 2026-02-20（追記）orders.db ロック耐性の強化（order_manager）
 
 - 背景（VM実測）:
