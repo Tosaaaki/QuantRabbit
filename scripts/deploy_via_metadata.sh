@@ -114,9 +114,9 @@ STAMP_FILE="\$STAMP_DIR/deploy_id"
 echo "[startup] deploy_id=\$DEPLOY_ID branch=\$BRANCH repo=\$REPO_DIR service=\$SERVICE"
 MARKER_BUCKET=""
 if [[ -f "\$RUNTIME_ENV_FILE" ]]; then
-  MARKER_BUCKET="\$(grep -E '^(GCS_UI_BUCKET|ui_bucket_name)=' \"\$RUNTIME_ENV_FILE\" | tail -n 1 | cut -d= -f2-)"
+  MARKER_BUCKET="\$(grep -E '^(GCS_UI_BUCKET|ui_bucket_name)=' "\$RUNTIME_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
   if [[ -z "\$MARKER_BUCKET" ]]; then
-    MARKER_BUCKET="\$(grep -E '^GCS_BACKUP_BUCKET=' \"\$RUNTIME_ENV_FILE\" | tail -n 1 | cut -d= -f2-)"
+    MARKER_BUCKET="\$(grep -E '^GCS_BACKUP_BUCKET=' "\$RUNTIME_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
   fi
 fi
 if [[ -n "\$MARKER_BUCKET" ]] && command -v python3 >/dev/null 2>&1; then
