@@ -11,6 +11,7 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$LOG_DIR/archive}"
 MAX_AGE_DAYS="${LOG_ROTATE_MAX_AGE_DAYS:-7}"
+REPLAY_ARCHIVE_TIMEOUT_SEC="${REPLAY_ARCHIVE_TIMEOUT_SEC:-180}"
 ARCHIVE_BUCKET="${LOG_ARCHIVE_BUCKET:-}"
 ARCHIVE_PREFIX="${LOG_ARCHIVE_PREFIX:-$(hostname -s)/logs}"
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -41,13 +42,19 @@ archive_replay() {
     fi
     # Keep the live path available for writers while we archive the staged snapshot.
     mkdir -p "$src"
-    echo "[archive] replay -> $dst"
-    if tar -czf "$dst" -C "$ARCHIVE_DIR" "$(basename "$stage")"; then
+    echo "[archive] replay -> $dst (timeout=${REPLAY_ARCHIVE_TIMEOUT_SEC}s)"
+    local rc=0
+    if ! timeout "${REPLAY_ARCHIVE_TIMEOUT_SEC}" tar -czf "$dst" -C "$ARCHIVE_DIR" "$(basename "$stage")"; then
+      rc=$?
+    fi
+    if [[ $rc -eq 0 ]]; then
       if ! rm -rf "$stage"; then
         echo "[archive] warning: staged replay cleanup failed: $stage"
       fi
+    elif [[ $rc -eq 124 ]]; then
+      echo "[archive] warning: replay archive timed out after ${REPLAY_ARCHIVE_TIMEOUT_SEC}s (stage preserved): $stage"
     else
-      echo "[archive] warning: replay archive failed, preserving staged dir: $stage"
+      echo "[archive] warning: replay archive failed (rc=$rc), preserving staged dir: $stage"
     fi
   else
     echo "[archive] replay not found (skip)"
