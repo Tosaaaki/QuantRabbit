@@ -95,18 +95,34 @@
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に
   `ORDER_DB_LOG_RETRY_*` の短時間 backoff 再試行を行う。
+- 最終失敗時も `rollback + connection reset` を行い、
+  lock例外後に同一接続が詰まったまま残る経路を回避する。
 - 既定運用値:
-  - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
-  - `ORDER_DB_LOG_RETRY_ATTEMPTS=3`
-  - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.03`
-  - `ORDER_DB_LOG_RETRY_BACKOFF=2.0`
-  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.20`
+  - `ORDER_DB_BUSY_TIMEOUT_MS=5000`
+  - `ORDER_DB_LOG_RETRY_ATTEMPTS=8`
+  - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.05`
+  - `ORDER_DB_LOG_RETRY_BACKOFF=1.8`
+  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=1.00`
+- `close_trade` 経路の orders 監査ログは fast-fail モードで記録する。
+  - DB lock 中は `/order/close_trade` 応答遅延を避けることを優先し、
+    ログ書き込みは短い retry budget で打ち切る。
+  - 既定値:
+    - `ORDER_DB_LOG_FAST_RETRY_ATTEMPTS=1`
+    - `ORDER_DB_LOG_FAST_RETRY_SLEEP_SEC=0.0`
+    - `ORDER_DB_LOG_FAST_RETRY_BACKOFF=1.0`
+    - `ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC=0.0`
 - `quant-order-manager.service` は
   `ops/env/quant-v2-runtime.env` に加えて
   `ops/env/quant-order-manager.env` も読むため、
   両ファイルで `ORDER_DB_*` を同値に揃える。
-  `quant-order-manager.env` 側の古い `ORDER_DB_BUSY_TIMEOUT_MS=250` が残ると、
-  runtime 設定を後段で上書きして lock 警告が再発する。
+  `quant-order-manager.env` 側が runtime より後段で上書きされる点に注意する。
+- `ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE=0` を維持し、
+  service mode worker（`ORDER_MANAGER_SERVICE_ENABLED=1`）では
+  `entry_probability_reject` / `probability_scaled` など
+  pre-service 状態を `orders.db` に直接記録しない。
+  - order-manager service を主ライターに寄せて同時書き込み競合を抑える。
+  - service call 失敗時の fallback は journald の
+    `order_manager service call failed` で監査する。
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
   発注可否ロジック（perf/risk/policy/coordination）には影響しない。
 

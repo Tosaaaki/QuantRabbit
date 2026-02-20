@@ -38,6 +38,44 @@
   - 分析ワーカーが「処理成功ログを出しているのに DB 反映されない」状態を防ぎ、
     監視指標の欠落を可視化しつつ書き込み成功率を引き上げる。
 
+### 2026-02-20（追記）orders.db lock 連鎖と監査系タイムアウトを是正
+
+- 対象:
+  - `execution/order_manager.py`
+  - `scripts/maintain_logs.sh`
+  - `scripts/ops_v2_audit.py`
+  - `ops/env/quant-v2-runtime.env`
+  - `ops/env/quant-order-manager.env`
+  - `config/env.example.toml`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `order_manager._log_order` で `sqlite` 例外時に `rollback` と
+    `_reset_orders_con()` を徹底し、lock失敗後に同一接続が詰まり続ける経路を抑止。
+  - retry 待機の上限計算で fast-fail/通常設定を正しく使うよう修正。
+  - orders logger の運用値を強化:
+    - `ORDER_DB_BUSY_TIMEOUT_MS=5000`
+    - `ORDER_DB_LOG_RETRY_ATTEMPTS=8`
+    - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.05`
+    - `ORDER_DB_LOG_RETRY_BACKOFF=1.8`
+    - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=1.00`
+  - `maintain_logs.sh` の replay アーカイブを
+    `mv -> stage tar -> cleanup` 方式へ変更し、
+    live ディレクトリ削除レース（`Directory not empty`）で service fail しないよう修正。
+  - `ops_v2_audit.py` の `subprocess.run(timeout=...)` を安全化し、
+    `journalctl` タイムアウト時も監査ジョブが例外で落ちないよう修正。
+    併せて `OPS_V2_AUDIT_JOURNAL_TIMEOUT_SEC` を導入。
+- 背景（VM実測）:
+  - `quant-order-manager` で
+    `[ORDER][LOG] failed to persist orders log: database is locked`
+    が継続し、`orders.db` の最新時刻が実運用に追従しない区間が発生。
+  - `quant-maintain-logs.service` は
+    `rm: cannot remove .../logs/replay: Directory not empty` で失敗。
+  - `quant-v2-audit.service` は
+    `subprocess.TimeoutExpired(... journalctl ... timeout 15.0s)` で失敗。
+- 意図:
+  - 注文監査ログの欠落を減らしつつ、運用補助ジョブの失敗で
+    監視系が赤化し続ける状態を解消する。
+
 ### 2026-02-20（追記）内部リプレイ精度ゲートを backend 切替対応で標準化
 
 - 対象:
@@ -3524,6 +3562,32 @@
 - 目的:
   - service 起動時の env 上書き順による設定逆戻りを防ぎ、
     lock 耐性設定を本番実行値へ確実に反映する。
+
+### 2026-02-20（追記）`close_trade` の lock耐性強化（fast-fail order log）
+
+- 背景（VM実測）:
+  - `scalp_ping_5s_b_exit -> /order/close_trade` で
+    `exit_reason=take_profit` が発火しても、
+    `order_manager service call failed ... Read timed out (12s)` が発生し、
+    利確取り逃し後に `STOP_LOSS_ORDER` へ落ちるケースを確認。
+  - 同時刻に `quant-order-manager` 側で
+    `[ORDER][LOG] failed to persist orders log: database is locked`
+    が多発し、close 処理中の orders ログ書き込み待ちが tail latency を押し上げていた。
+- 実施:
+  - `execution/order_manager.py`
+    - `_log_order(..., fast_fail=True)` モードを追加。
+    - fast-fail 時は通常 retry budget ではなく `ORDER_DB_LOG_FAST_RETRY_*`
+      （既定 `attempts=1`）で短時間打ち切り。
+    - `close_trade()` の orders 監査ログ呼び出しを
+      `_log_close_order()`（fast-fail wrapper）へ切替。
+    - lock で打ち切った場合は warning ではなく
+      `"[ORDER][LOG] fast-fail dropped by lock"` を info で記録。
+  - テスト:
+    - `tests/execution/test_order_manager_log_retry.py`
+      に fast-fail retry budget の検証ケースを追加。
+- 目的:
+  - DB lock 時に「監査ログ待ちで close API が詰まる」経路を抑制し、
+    `take_profit` / `lock_floor` 等の exit 指示を OANDA へ先に通す。
 
 ### 2026-02-20（追記）replay_quality_gate_main の精度補正（intraday 既定OFF）
 

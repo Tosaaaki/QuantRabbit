@@ -111,6 +111,9 @@ _ORDER_MANAGER_SERVICE_TIMEOUT = float(_env_float("ORDER_MANAGER_SERVICE_TIMEOUT
 _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "ORDER_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
+_ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE = _env_bool(
+    "ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False
+)
 
 
 def _normalize_for_json(value: Any) -> Any:
@@ -221,6 +224,12 @@ async def _order_manager_service_request_async(
         if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
             raise
         return None
+
+
+def _should_persist_preservice_order_log() -> bool:
+    if _ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE:
+        return True
+    return not _order_manager_service_enabled()
 
 
 def _forecast_service_enabled() -> bool:
@@ -2686,6 +2695,18 @@ _ORDER_DB_LOG_RETRY_BACKOFF = max(
 _ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC = max(
     0.0, float(os.getenv("ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC", "0.20"))
 )
+_ORDER_DB_LOG_FAST_RETRY_ATTEMPTS = max(
+    1, int(os.getenv("ORDER_DB_LOG_FAST_RETRY_ATTEMPTS", "1"))
+)
+_ORDER_DB_LOG_FAST_RETRY_SLEEP_SEC = max(
+    0.0, float(os.getenv("ORDER_DB_LOG_FAST_RETRY_SLEEP_SEC", "0.0"))
+)
+_ORDER_DB_LOG_FAST_RETRY_BACKOFF = max(
+    1.0, float(os.getenv("ORDER_DB_LOG_FAST_RETRY_BACKOFF", "1.0"))
+)
+_ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC = max(
+    0.0, float(os.getenv("ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC", "0.0"))
+)
 _ORDERS_DB_WAL_PATH = _ORDERS_DB_PATH.with_suffix(_ORDERS_DB_PATH.suffix + "-wal")
 _LAST_ORDER_DB_CHECKPOINT = 0.0
 
@@ -2845,6 +2866,15 @@ def _reset_orders_con() -> None:
         pass
     try:
         del globals()["_ORDERS_CON"]
+    except Exception:
+        pass
+
+
+def _rollback_orders_con(con: Optional[sqlite3.Connection]) -> None:
+    if con is None:
+        return
+    try:
+        con.rollback()
     except Exception:
         pass
 
@@ -4427,6 +4457,7 @@ def _log_order(
     error_message: Optional[str] = None,
     request_payload: Optional[dict] = None,
     response_payload: Optional[dict] = None,
+    fast_fail: bool = False,
 ) -> None:
     ts = datetime.now(timezone.utc).isoformat()
     row_values = (
@@ -4449,8 +4480,29 @@ def _log_order(
         _safe_json(response_payload),
     )
 
-    sleep_sec = _ORDER_DB_LOG_RETRY_SLEEP_SEC
-    for attempt_idx in range(_ORDER_DB_LOG_RETRY_ATTEMPTS):
+    retry_attempts = (
+        _ORDER_DB_LOG_FAST_RETRY_ATTEMPTS
+        if fast_fail
+        else _ORDER_DB_LOG_RETRY_ATTEMPTS
+    )
+    retry_sleep_sec = (
+        _ORDER_DB_LOG_FAST_RETRY_SLEEP_SEC
+        if fast_fail
+        else _ORDER_DB_LOG_RETRY_SLEEP_SEC
+    )
+    retry_backoff = (
+        _ORDER_DB_LOG_FAST_RETRY_BACKOFF
+        if fast_fail
+        else _ORDER_DB_LOG_RETRY_BACKOFF
+    )
+    retry_max_sleep_sec = (
+        _ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC
+        if fast_fail
+        else _ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC
+    )
+
+    sleep_sec = retry_sleep_sec
+    for attempt_idx in range(retry_attempts):
         con: Optional[sqlite3.Connection] = None
         try:
             con = _orders_con()
@@ -4470,25 +4522,29 @@ def _log_order(
         except sqlite3.OperationalError as exc:
             if (
                 _is_sqlite_locked_error(exc)
-                and attempt_idx + 1 < _ORDER_DB_LOG_RETRY_ATTEMPTS
+                and attempt_idx + 1 < retry_attempts
             ):
-                if con is not None:
-                    try:
-                        con.rollback()
-                    except Exception:
-                        pass
+                _rollback_orders_con(con)
                 _reset_orders_con()
-                delay = min(sleep_sec, _ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC)
+                delay = min(sleep_sec, retry_max_sleep_sec)
                 if delay > 0:
                     time.sleep(delay)
                 sleep_sec = min(
-                    _ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC,
-                    sleep_sec * _ORDER_DB_LOG_RETRY_BACKOFF,
+                    retry_max_sleep_sec,
+                    sleep_sec * retry_backoff,
                 )
                 continue
-            logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+            _rollback_orders_con(con)
+            if _is_sqlite_locked_error(exc):
+                _reset_orders_con()
+            if fast_fail and _is_sqlite_locked_error(exc):
+                logging.info("[ORDER][LOG] fast-fail dropped by lock: %s", exc)
+            else:
+                logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
             return
         except Exception as exc:  # noqa: BLE001
+            _rollback_orders_con(con)
+            _reset_orders_con()
             logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
             return
 
@@ -5755,6 +5811,12 @@ async def close_trade(
         if exit_context:
             base["exit_context"] = exit_context
         return base
+
+    def _log_close_order(**kwargs: Any) -> None:
+        # Close path must prioritize broker round-trip over local audit logging.
+        # Use fast-fail logging to avoid blocking /order/close_trade on orders.db lock contention.
+        _log_order(fast_fail=True, **kwargs)
+
     # close 側も client_order_id を必須化。欠損かつ agent 管理外の建玉はスキップして無駄打ちを防ぐ。
     if not client_order_id:
         log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
@@ -5785,7 +5847,7 @@ async def close_trade(
             ticket_id=str(trade_id),
             note=note,
         )
-        _log_order(
+        _log_close_order(
             pocket=pocket,
             instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
             side=None,
@@ -5841,7 +5903,7 @@ async def close_trade(
                 ticket_id=str(trade_id),
                 note="missing_quote",
             )
-            _log_order(
+            _log_close_order(
                 pocket=pocket,
                 instrument=instrument,
                 side=None,
@@ -5905,7 +5967,7 @@ async def close_trade(
             ticket_id=str(trade_id),
             note=f"{gate}:end_reversal",
         )
-        _log_order(
+        _log_close_order(
             pocket=pocket,
             instrument=instrument,
             side=None,
@@ -5946,7 +6008,7 @@ async def close_trade(
                     ticket_id=str(trade_id),
                     note="profit_buffer",
                 )
-                _log_order(
+                _log_close_order(
                     pocket=pocket,
                     instrument=None,
                     side=None,
@@ -6016,7 +6078,7 @@ async def close_trade(
                                 ticket_id=str(trade_id),
                                 note="profit_ratio",
                             )
-                            _log_order(
+                            _log_close_order(
                                 pocket=pocket,
                                 instrument=instrument,
                                 side=None,
@@ -6103,7 +6165,7 @@ async def close_trade(
                     ticket_id=str(trade_id),
                     note="hold_until_profit",
                 )
-                _log_order(
+                _log_close_order(
                     pocket=pocket,
                     instrument=instrument,
                     side=None,
@@ -6185,7 +6247,7 @@ async def close_trade(
                     ticket_id=str(trade_id),
                     note="no_negative_close",
                 )
-                _log_order(
+                _log_close_order(
                     pocket=None,
                     instrument=None,
                     side=None,
@@ -6269,7 +6331,7 @@ async def close_trade(
         ticket_id=str(trade_id),
     )
     try:
-        _log_order(
+        _log_close_order(
             pocket=pocket,
             instrument=instrument,
             side=None,
@@ -6290,7 +6352,7 @@ async def close_trade(
             reason = reject.get("rejectReason") or reject.get("reason")
             reason_key = str(reason or "").upper() or "rejected"
             err_code = str(reject.get("errorCode") or reason_key)
-            _log_order(
+            _log_close_order(
                 pocket=pocket,
                 instrument=instrument,
                 side=None,
@@ -6324,7 +6386,7 @@ async def close_trade(
             return False
         fill = response.get("orderFillTransaction") or {}
         if not fill:
-            _log_order(
+            _log_close_order(
                 pocket=pocket,
                 instrument=instrument,
                 side=None,
@@ -6362,7 +6424,7 @@ async def close_trade(
                 executed_price = None
         _LAST_PROTECTIONS.pop(trade_id, None)
         _PARTIAL_STAGE.pop(trade_id, None)
-        _log_order(
+        _log_close_order(
             pocket=pocket,
             instrument=instrument,
             side=None,
@@ -6402,7 +6464,7 @@ async def close_trade(
             error_code or exc.code,
         )
         log_error_code = str(error_code) if error_code is not None else str(exc.code)
-        _log_order(
+        _log_close_order(
             pocket=pocket,
             instrument=instrument,
             side=None,
@@ -6453,7 +6515,7 @@ async def close_trade(
         logging.warning(
             "[ORDER] Failed to close trade %s units=%s: %s", trade_id, units, exc
         )
-        _log_order(
+        _log_close_order(
             pocket=pocket,
             instrument=instrument,
             side=None,
@@ -7269,23 +7331,24 @@ async def market_order(
                 client_order_id=client_order_id or "",
                 note=f"entry_probability:{reason_note}",
             )
-            _log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if units > 0 else "sell",
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="entry_probability_reject",
-                attempt=0,
-                request_payload={
-                    "entry_probability": entry_probability,
-                    "entry_thesis": entry_thesis,
-                    "meta": meta,
-                    "entry_probability_reject_reason": reason_note,
-                },
-            )
+            if _should_persist_preservice_order_log():
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="entry_probability_reject",
+                    attempt=0,
+                    request_payload={
+                        "entry_probability": entry_probability,
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                        "entry_probability_reject_reason": reason_note,
+                    },
+                )
             log_metric(
                 "order_probability_reject",
                 1.0,
@@ -7308,24 +7371,25 @@ async def market_order(
                 client_order_id=client_order_id,
                 note=f"probability_scale:{entry_probability:.3f}" if entry_probability is not None else "probability_scale",
             )
-            _log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if units > 0 else "sell",
-                units=scaled_units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="probability_scaled",
-                attempt=0,
-                request_payload={
-                    "entry_probability": entry_probability,
-                    "entry_thesis": entry_thesis,
-                    "meta": meta,
-                    "scaled_units": scaled_units,
-                    "raw_units": abs(units) if units else 0,
-                },
-            )
+            if _should_persist_preservice_order_log():
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=scaled_units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="probability_scaled",
+                    attempt=0,
+                    request_payload={
+                        "entry_probability": entry_probability,
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                        "scaled_units": scaled_units,
+                        "raw_units": abs(units) if units else 0,
+                    },
+                )
             log_metric(
                 "order_probability_scale",
                 max(
