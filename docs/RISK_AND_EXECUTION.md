@@ -95,8 +95,6 @@
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に
   `ORDER_DB_LOG_RETRY_*` の短時間 backoff 再試行を行う。
-- 最終失敗時も `rollback + connection reset` を行い、
-  lock例外後に同一接続が詰まったまま残る経路を回避する。
 - 既定運用値:
   - `ORDER_DB_BUSY_TIMEOUT_MS=5000`
   - `ORDER_DB_LOG_RETRY_ATTEMPTS=8`

@@ -32,10 +32,23 @@ rotate_pipeline() {
 archive_replay() {
   local src="$LOG_DIR/replay"
   if [[ -d "$src" ]]; then
+    local stage="$ARCHIVE_DIR/replay.${TS}.dir"
     local dst="$ARCHIVE_DIR/replay.${TS}.tgz"
+    echo "[archive] replay stage -> $stage"
+    if ! mv "$src" "$stage"; then
+      echo "[archive] replay move failed (skip)"
+      return
+    fi
+    # Keep the live path available for writers while we archive the staged snapshot.
+    mkdir -p "$src"
     echo "[archive] replay -> $dst"
-    tar -czf "$dst" -C "$LOG_DIR" replay
-    rm -rf "$src"
+    if tar -czf "$dst" -C "$ARCHIVE_DIR" "$(basename "$stage")"; then
+      if ! rm -rf "$stage"; then
+        echo "[archive] warning: staged replay cleanup failed: $stage"
+      fi
+    else
+      echo "[archive] warning: replay archive failed, preserving staged dir: $stage"
+    fi
   else
     echo "[archive] replay not found (skip)"
   fi

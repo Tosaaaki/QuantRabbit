@@ -26,6 +26,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+_JOURNAL_405_TIMEOUT_SEC = max(
+    5.0,
+    float(os.getenv("OPS_V2_AUDIT_JOURNAL_TIMEOUT_SEC", "45")),
+)
+
 
 @dataclass
 class Finding:
@@ -50,13 +55,21 @@ def _now_iso() -> str:
 
 
 def _run(cmd: list[str], *, timeout: float = 10.0) -> tuple[int, str, str]:
-    proc = subprocess.run(
-        cmd,
-        check=False,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = (exc.stdout or "").strip()
+        stderr = (exc.stderr or "").strip()
+        detail = f"timeout after {timeout:.1f}s"
+        if stderr:
+            detail = f"{detail}: {stderr}"
+        return 124, stdout, detail
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
@@ -140,8 +153,10 @@ def _journal_405_count(hours: int = 3) -> int:
         "--no-pager",
         "--output",
         "short-iso",
+        "--grep",
+        "open_positions|method not allowed|status\\s*=\\s*405",
     ]
-    rc, stdout, _ = _run(cmd, timeout=15.0)
+    rc, stdout, _ = _run(cmd, timeout=_JOURNAL_405_TIMEOUT_SEC)
     if rc != 0 or not stdout:
         return 0
     count = 0
