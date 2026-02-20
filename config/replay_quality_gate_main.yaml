@@ -17,6 +17,10 @@ replay:
   no_hard_tp: false
   exclude_end_of_replay: true
   realistic: true
+  # Per-file UTC intraday window (YYYYMMDD is derived from tick filename).
+  # Use explicit start/end to override these values when needed.
+  intraday_start_utc: "00:00:00"
+  intraday_end_utc: "06:00:00"
   fast_only: false
   sp_only: false
   sp_live_entry: false

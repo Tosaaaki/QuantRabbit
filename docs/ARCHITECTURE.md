@@ -117,6 +117,8 @@ class OrderIntent(BaseModel):
 - 実行: `scripts/replay_quality_gate.py` が backend 切替で以下を複数 tick ファイルに対して実行し、fold 単位で `train/test` を評価する。
   - `exit_workers_groups` → `scripts/replay_exit_workers_groups.py`
   - `exit_workers_main` → `scripts/replay_exit_workers.py`
+- `exit_workers_main` では `replay.intraday_start_utc` / `replay.intraday_end_utc` を指定すると、
+  ファイル名の日付（`YYYYMMDD`）に合わせて日内 UTC 窓を自動適用できる。
 - 判定指標: `trade_count`, `profit_factor`, `win_rate`, `total_pips`, `max_drawdown_pips`, `pf_stability_ratio`。
 - 閾値管理: `config/replay_quality_gate*.yaml`（`gates.default` + `gates.workers.<worker>`）。
 - 成果物:

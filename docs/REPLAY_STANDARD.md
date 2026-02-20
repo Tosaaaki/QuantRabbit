@@ -36,6 +36,8 @@ python scripts/replay_exit_workers_groups.py \
   - `exit_workers_main`（`scripts/replay_exit_workers.py`）
 - 標準フラグ（`--no-hard-sl` / `--exclude-end-of-replay`）を既定で適用する。
 - 閾値は `config/replay_quality_gate*.yaml` の `gates.default` と `gates.workers` で管理する。
+- `exit_workers_main` は `replay.intraday_start_utc` / `replay.intraday_end_utc` を指定すると、
+  tick ファイル名の日付（`YYYYMMDD`）に対して日内 UTC 時間帯を自動適用できる。
 
 ```bash
 python scripts/replay_quality_gate.py \

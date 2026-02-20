@@ -72,12 +72,14 @@ def test_load_worker_trades_main_filters_and_excludes_end_reason(tmp_path: Path)
 
 def test_build_replay_command_main_realistic_no_duplicate_flags() -> None:
     cmd = _module._build_replay_command_main(
-        ticks_path=Path("/tmp/ticks.jsonl"),
+        ticks_path=Path("/tmp/USD_JPY_ticks_20260210.jsonl"),
         out_path=Path("/tmp/out.json"),
         replay_cfg={
             "realistic": True,
             "fill_mode": "next_tick",
             "latency_ms": 250.0,
+            "intraday_start_utc": "00:00:00",
+            "intraday_end_utc": "06:00:00",
         },
     )
 
@@ -90,3 +92,21 @@ def test_build_replay_command_main_realistic_no_duplicate_flags() -> None:
     assert _arg_value(cmd, "--slip-spread-coef") == "0.15"
     assert _arg_value(cmd, "--slip-atr-coef") == "0.02"
     assert _arg_value(cmd, "--slip-latency-coef") == "0.0006"
+    assert _arg_value(cmd, "--start") == "2026-02-10T00:00:00+00:00"
+    assert _arg_value(cmd, "--end") == "2026-02-10T06:00:00+00:00"
+
+
+def test_build_replay_command_main_explicit_start_end_override_intraday() -> None:
+    cmd = _module._build_replay_command_main(
+        ticks_path=Path("/tmp/USD_JPY_ticks_20260210.jsonl"),
+        out_path=Path("/tmp/out.json"),
+        replay_cfg={
+            "start": "2026-02-10T01:00:00+00:00",
+            "end": "2026-02-10T02:00:00+00:00",
+            "intraday_start_utc": "00:00:00",
+            "intraday_end_utc": "06:00:00",
+        },
+    )
+
+    assert _arg_value(cmd, "--start") == "2026-02-10T01:00:00+00:00"
+    assert _arg_value(cmd, "--end") == "2026-02-10T02:00:00+00:00"

@@ -15,6 +15,7 @@ from glob import glob
 import json
 import math
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any, Mapping
@@ -194,6 +195,26 @@ def _build_replay_command_main(
         cmd.append("--disable-macro")
     if _to_bool(replay_cfg.get("no_main_strategies"), default=False):
         cmd.append("--no-main-strategies")
+    start = str(replay_cfg.get("start") or "").strip()
+    if start:
+        cmd.extend(["--start", start])
+    end = str(replay_cfg.get("end") or "").strip()
+    if end:
+        cmd.extend(["--end", end])
+    if not start and not end:
+        date_match = re.search(r"(20\d{6})", ticks_path.name)
+        if date_match:
+            ymd = date_match.group(1)
+            yyyy_mm_dd = f"{ymd[0:4]}-{ymd[4:6]}-{ymd[6:8]}"
+            intraday_start = str(replay_cfg.get("intraday_start_utc") or "").strip()
+            intraday_end = str(replay_cfg.get("intraday_end_utc") or "").strip()
+            if intraday_start:
+                cmd.extend(["--start", f"{yyyy_mm_dd}T{intraday_start}+00:00"])
+            if intraday_end:
+                cmd.extend(["--end", f"{yyyy_mm_dd}T{intraday_end}+00:00"])
+    instrument = str(replay_cfg.get("instrument") or "").strip()
+    if instrument:
+        cmd.extend(["--instrument", instrument])
 
     realistic = _to_bool(replay_cfg.get("realistic"), default=False)
     slip_values: dict[str, Any] = {}

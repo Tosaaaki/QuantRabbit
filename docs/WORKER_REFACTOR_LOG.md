@@ -26,6 +26,21 @@
 - 意図:
   - VM 側の worker 構成差分や再生データ差分に応じて、同一 walk-forward gate を backend 切替だけで再利用できる状態を維持する。
 
+### 2026-02-20（追記）`replay_quality_gate` に日内 UTC 窓適用を追加（main backend）
+
+- 対象:
+  - `scripts/replay_quality_gate.py`
+  - `config/replay_quality_gate_main.yaml`
+  - `tests/analysis/test_replay_quality_gate_script.py`
+  - `docs/REPLAY_STANDARD.md`
+- 変更:
+  - `exit_workers_main` 実行時に `replay.intraday_start_utc` / `replay.intraday_end_utc` を追加。
+  - tick ファイル名の `YYYYMMDD` から `--start/--end` を自動生成して、各日付で同一 UTC 時間帯を再生可能にした。
+  - 明示 `replay.start` / `replay.end` がある場合はそちらを優先する。
+  - コマンド生成テストを追加し、intraday 適用と明示 override の両方を固定化した。
+- 意図:
+  - walk-forward を実運用データで回しつつ、処理時間を制御して継続的な内部精度検証を成立させる。
+
 ### 2026-02-20（追記）`scalp_ping_5s_flow_live` の stale margin_closeout ブロックを短縮
 
 - 対象:
