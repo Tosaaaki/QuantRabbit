@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from google.api_core import exceptions as gexc
+from google.api_core.retry import Retry
 from google.cloud import bigquery
 
 _DB_DEFAULT = "logs/trades.db"
@@ -18,6 +19,12 @@ _BQ_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 _BQ_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 _BQ_TABLE = os.getenv("BQ_TRADES_TABLE", "trades_raw")
 _BQ_MAX_EXPORT = int(os.getenv("BQ_MAX_EXPORT", "5000"))
+_BQ_EXPORT_BATCH_SIZE = max(1, int(os.getenv("BQ_EXPORT_BATCH_SIZE", "500")))
+_BQ_INSERT_TIMEOUT_SEC = max(1.0, float(os.getenv("BQ_INSERT_TIMEOUT_SEC", "20.0")))
+_BQ_RETRY_TIMEOUT_SEC = max(5.0, float(os.getenv("BQ_RETRY_TIMEOUT_SEC", "90.0")))
+_BQ_RETRY_INITIAL_SEC = max(0.1, float(os.getenv("BQ_RETRY_INITIAL_SEC", "1.0")))
+_BQ_RETRY_MAX_SEC = max(_BQ_RETRY_INITIAL_SEC, float(os.getenv("BQ_RETRY_MAX_SEC", "10.0")))
+_BQ_RETRY_MULTIPLIER = max(1.0, float(os.getenv("BQ_RETRY_MULTIPLIER", "2.0")))
 
 
 @dataclass
@@ -42,6 +49,14 @@ class BigQueryExporter:
         self.project_id = project_id
         self.dataset_id = dataset_id
         self.table_id = table_id
+        self.batch_size = _BQ_EXPORT_BATCH_SIZE
+        self.insert_timeout_sec = _BQ_INSERT_TIMEOUT_SEC
+        self.insert_retry = Retry(
+            initial=_BQ_RETRY_INITIAL_SEC,
+            maximum=_BQ_RETRY_MAX_SEC,
+            multiplier=_BQ_RETRY_MULTIPLIER,
+            timeout=_BQ_RETRY_TIMEOUT_SEC,
+        )
         self.client = (
             bigquery.Client(project=self.project_id)
             if self.project_id
@@ -57,15 +72,33 @@ class BigQueryExporter:
             return ExportStats(exported=0, last_updated_at=self._get_last_cursor())
 
         table_ref = f"{self.client.project}.{self.dataset_id}.{self.table_id}"
-        logging.info("[BQ] %s 件を %s へ送信中...", len(rows), table_ref)
-        errors = self.client.insert_rows_json(table_ref, rows)
-        if errors:
-            raise RuntimeError(f"BigQuery insert failed: {errors}")
+        total_rows = len(rows)
+        exported = 0
+        last_updated: Optional[str] = None
+        logging.info("[BQ] %s 件を %s へ送信中... (batch=%s)", total_rows, table_ref, self.batch_size)
+        for offset in range(0, total_rows, self.batch_size):
+            chunk = rows[offset : offset + self.batch_size]
+            row_ids = [self._row_insert_id(row) for row in chunk]
+            errors = self.client.insert_rows_json(
+                table_ref,
+                chunk,
+                row_ids=row_ids,
+                retry=self.insert_retry,
+                timeout=self.insert_timeout_sec,
+            )
+            if errors:
+                raise RuntimeError(
+                    "BigQuery insert failed: "
+                    f"chunk_offset={offset} chunk_size={len(chunk)} errors={errors}"
+                )
+            exported += len(chunk)
+            last_updated = chunk[-1]["updated_at"]
 
-        last_updated = rows[-1]["updated_at"]
+        if last_updated is None:
+            return ExportStats(exported=0, last_updated_at=self._get_last_cursor())
         self._set_last_cursor(last_updated)
         logging.info("[BQ] export 完了 (last_updated=%s)", last_updated)
-        return ExportStats(exported=len(rows), last_updated_at=last_updated)
+        return ExportStats(exported=exported, last_updated_at=last_updated)
 
     # -------------------- internal helpers --------------------
 
@@ -212,6 +245,15 @@ LIMIT ?
     def _set_last_cursor(self, value: str) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps({"last_updated_at": value}, indent=2))
+
+    @staticmethod
+    def _row_insert_id(row: Dict[str, Any]) -> str:
+        ticket_id = str(row.get("ticket_id") or "")
+        updated_at = str(row.get("updated_at") or "")
+        tx = row.get("transaction_id")
+        if tx is None:
+            return f"{ticket_id}:{updated_at}"
+        return f"{ticket_id}:{updated_at}:{tx}"
 
     @staticmethod
     def _iso(value: Any) -> Optional[str]:

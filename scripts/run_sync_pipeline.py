@@ -42,17 +42,29 @@ ERROR_LOG_MAX_LINES = int(os.getenv("UI_ERROR_LOG_MAX_LINES", "10"))
 ERROR_LOG_MAX_BYTES = int(os.getenv("UI_ERROR_LOG_MAX_BYTES", "180000"))
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
+PIPELINE_DB_READ_TIMEOUT_SEC = max(0.5, _env_float("PIPELINE_DB_READ_TIMEOUT_SEC", 3.0))
+
+
 def _load_latest_metric(metric: str) -> Optional[float]:
     if not METRICS_DB.exists():
         return None
     try:
-        con = sqlite3.connect(METRICS_DB)
-        cur = con.execute(
-            "SELECT value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
-            (metric,),
-        )
-        row = cur.fetchone()
-        con.close()
+        with sqlite3.connect(METRICS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            cur = con.execute(
+                "SELECT value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+                (metric,),
+            )
+            row = cur.fetchone()
         if not row:
             return None
         return float(row[0])
@@ -288,17 +300,16 @@ def _load_last_orders(limit: int = 5) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(ORDERS_DB)
-        con.row_factory = sqlite3.Row
-        cur = con.execute(
-            "SELECT ts, pocket, side, units, status, client_order_id, "
-            "ticket_id, error_code, error_message, request_json "
-            "FROM orders ORDER BY ts DESC LIMIT ?",
-            (limit,),
-        )
-        rows = [dict(r) for r in cur.fetchall()]
-        results = _enrich_order_rows(rows, con)
-        con.close()
+        with sqlite3.connect(ORDERS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            con.row_factory = sqlite3.Row
+            cur = con.execute(
+                "SELECT ts, pocket, side, units, status, client_order_id, "
+                "ticket_id, error_code, error_message, request_json "
+                "FROM orders ORDER BY ts DESC LIMIT ?",
+                (limit,),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            results = _enrich_order_rows(rows, con)
         return results
     except Exception:
         return []
@@ -308,21 +319,20 @@ def _load_recent_order_errors(limit: int = 8, hours: int = 24) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(ORDERS_DB)
-        con.row_factory = sqlite3.Row
-        cur = con.execute(
-            "SELECT ts, pocket, side, units, status, client_order_id, "
-            "ticket_id, error_code, error_message, request_json "
-            "FROM orders "
-            "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
-            "AND (error_code IS NOT NULL AND error_code != '' "
-            "OR status LIKE 'error%' OR status LIKE 'reject%') "
-            "ORDER BY ts DESC LIMIT ?",
-            (f"-{int(hours)} hour", int(limit)),
-        )
-        rows = [dict(r) for r in cur.fetchall()]
-        results = _enrich_order_rows(rows, con)
-        con.close()
+        with sqlite3.connect(ORDERS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            con.row_factory = sqlite3.Row
+            cur = con.execute(
+                "SELECT ts, pocket, side, units, status, client_order_id, "
+                "ticket_id, error_code, error_message, request_json "
+                "FROM orders "
+                "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
+                "AND (error_code IS NOT NULL AND error_code != '' "
+                "OR status LIKE 'error%' OR status LIKE 'reject%') "
+                "ORDER BY ts DESC LIMIT ?",
+                (f"-{int(hours)} hour", int(limit)),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            results = _enrich_order_rows(rows, con)
         return results
     except Exception:
         return []
@@ -332,16 +342,15 @@ def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(ORDERS_DB)
-        con.row_factory = sqlite3.Row
-        cur = con.execute(
-            "SELECT status, count(*) AS count FROM orders "
-            "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
-            "GROUP BY status ORDER BY count DESC LIMIT ?",
-            (f"-{int(hours)} hour", int(limit)),
-        )
-        rows = [dict(r) for r in cur.fetchall()]
-        con.close()
+        with sqlite3.connect(ORDERS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            con.row_factory = sqlite3.Row
+            cur = con.execute(
+                "SELECT status, count(*) AS count FROM orders "
+                "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
+                "GROUP BY status ORDER BY count DESC LIMIT ?",
+                (f"-{int(hours)} hour", int(limit)),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
         return rows
     except Exception:
         return []
@@ -351,10 +360,9 @@ def _load_last_signal_ts_ms() -> Optional[int]:
     if not SIGNALS_DB.exists():
         return None
     try:
-        con = sqlite3.connect(SIGNALS_DB)
-        cur = con.execute("SELECT max(ts_ms) FROM signals")
-        row = cur.fetchone()
-        con.close()
+        with sqlite3.connect(SIGNALS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            cur = con.execute("SELECT max(ts_ms) FROM signals")
+            row = cur.fetchone()
         if not row:
             return None
         val = row[0]
@@ -367,31 +375,30 @@ def _load_recent_signals(limit: int = 5) -> list[dict]:
     if not SIGNALS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(SIGNALS_DB)
-        cur = con.execute(
-            "SELECT ts_ms, payload FROM signals ORDER BY ts_ms DESC LIMIT ?",
-            (int(limit),),
-        )
-        rows: list[dict] = []
-        for ts_ms, payload in cur.fetchall():
-            item: dict = {"ts_ms": ts_ms}
-            try:
-                data = json.loads(payload)
-            except Exception:
-                data = None
-            if isinstance(data, dict):
-                for key in (
-                    "pocket",
-                    "strategy",
-                    "confidence",
-                    "action",
-                    "client_order_id",
-                    "proposed_units",
-                ):
-                    if key in data:
-                        item[key] = data[key]
-            rows.append(item)
-        con.close()
+        with sqlite3.connect(SIGNALS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            cur = con.execute(
+                "SELECT ts_ms, payload FROM signals ORDER BY ts_ms DESC LIMIT ?",
+                (int(limit),),
+            )
+            rows: list[dict] = []
+            for ts_ms, payload in cur.fetchall():
+                item: dict = {"ts_ms": ts_ms}
+                try:
+                    data = json.loads(payload)
+                except Exception:
+                    data = None
+                if isinstance(data, dict):
+                    for key in (
+                        "pocket",
+                        "strategy",
+                        "confidence",
+                        "action",
+                        "client_order_id",
+                        "proposed_units",
+                    ):
+                        if key in data:
+                            item[key] = data[key]
+                rows.append(item)
         return rows
     except Exception:
         return []
@@ -401,13 +408,12 @@ def _load_last_metric_ts(metric: str) -> Optional[str]:
     if not METRICS_DB.exists():
         return None
     try:
-        con = sqlite3.connect(METRICS_DB)
-        cur = con.execute(
-            "SELECT ts FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
-            (metric,),
-        )
-        row = cur.fetchone()
-        con.close()
+        with sqlite3.connect(METRICS_DB, timeout=PIPELINE_DB_READ_TIMEOUT_SEC) as con:
+            cur = con.execute(
+                "SELECT ts FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+                (metric,),
+            )
+            row = cur.fetchone()
         if not row:
             return None
         return str(row[0]) if row[0] is not None else None

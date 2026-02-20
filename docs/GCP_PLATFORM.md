@@ -89,7 +89,11 @@ sudo systemctl daemon-reload
 ## 5. BigQuery / Firestore / UI
 - BigQuery 環境変数（`ops/env/quant-v2-runtime.env` 側で指定）
   - 必須: `BQ_PROJECT`（未設定時は `GOOGLE_CLOUD_PROJECT`）, `BQ_DATASET`, `BQ_TRADES_TABLE`, `BQ_LOCATION`
-  - 任意: `BQ_MAX_EXPORT`, `BQ_CANDLES_TABLE`, `BQ_REALTIME_METRICS_TABLE`, `BQ_RECOMMENDATION_TABLE`, `BQ_STRATEGY_MODEL`
+  - 任意: `BQ_MAX_EXPORT`, `BQ_EXPORT_BATCH_SIZE`, `BQ_INSERT_TIMEOUT_SEC`, `BQ_RETRY_TIMEOUT_SEC`, `BQ_RETRY_INITIAL_SEC`, `BQ_RETRY_MAX_SEC`, `BQ_RETRY_MULTIPLIER`, `PIPELINE_DB_READ_TIMEOUT_SEC`, `BQ_CANDLES_TABLE`, `BQ_REALTIME_METRICS_TABLE`, `BQ_RECOMMENDATION_TABLE`, `BQ_STRATEGY_MODEL`
+- `quant-bq-sync.service` は `scripts/run_sync_pipeline.py --limit 1200 --bq-interval 300` を既定とし、
+  BigQuery 送信は `analytics/bq_exporter.py` 側で `BQ_EXPORT_BATCH_SIZE` 単位に分割する。
+  VMで `insertAll` の `RetryError`（SSL EOF 等）が出る場合は、まず `BQ_EXPORT_BATCH_SIZE` と
+  `BQ_RETRY_TIMEOUT_SEC` を下げてハング時間を短縮する。
 - BQ ML を使う場合は `CREATE MODEL` 権限が必要（`analytics/strategy_optimizer_job.py`）
 - 同期パイプライン: `scripts/run_sync_pipeline.py`（`analytics/bq_exporter.py` が dataset/table を自動作成）
 - Looker/UI 初期化: `scripts/setup_looker_sources.sh`（UI 用 SA, bucket, dataset, view 作成）

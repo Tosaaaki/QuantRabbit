@@ -38,6 +38,36 @@
   - 分析ワーカーが「処理成功ログを出しているのに DB 反映されない」状態を防ぎ、
     監視指標の欠落を可視化しつつ書き込み成功率を引き上げる。
 
+### 2026-02-20（追記）`quant-bq-sync` の再発ハングを抑止（BQ送信分割 + stop短縮）
+
+- 対象:
+  - `analytics/bq_exporter.py`
+  - `scripts/run_sync_pipeline.py`
+  - `systemd/quant-bq-sync.service`
+  - `ops/env/quant-v2-runtime.env`
+  - `docs/GCP_PLATFORM.md`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - `bq_exporter` の `insert_rows_json` を一括送信からチャンク送信へ変更。
+    - `BQ_EXPORT_BATCH_SIZE`（既定 250〜500運用）
+    - `BQ_INSERT_TIMEOUT_SEC`
+    - `BQ_RETRY_TIMEOUT_SEC` / `BQ_RETRY_INITIAL_SEC` / `BQ_RETRY_MAX_SEC` / `BQ_RETRY_MULTIPLIER`
+  - BigQuery 行の `row_ids` を `ticket_id:updated_at(:transaction_id)` で固定し、
+    リトライ時の重複挿入を抑制。
+  - `run_sync_pipeline` の SQLite read を context manager 化し、
+    例外時でも接続を確実に close するよう修正（`PIPELINE_DB_READ_TIMEOUT_SEC` 追加）。
+  - `quant-bq-sync.service` の起動引数を
+    `scripts/run_sync_pipeline.py --interval 60 --bq-interval 300 --limit 1200` へ変更し、
+    `TimeoutStopSec=30` を追加。
+- 背景（VM実測）:
+  - `quant-bq-sync.service` で `insertAll` が `RetryError(timeout=600s, SSLEOFError)` を起こし、
+    停止時に `stop-sigterm timeout -> SIGKILL` が発生。
+  - 同時間帯に `run_sync_pipeline.py` が `D` 状態で残留し、`quant-forecast` 側の I/O待ち連鎖を誘発。
+- 意図:
+  - BigQuery 経路の失敗時に「長時間ぶら下がる」挙動を避け、
+    systemd の stop/restart を短時間で完了させる。
+  - 監視/UI補助クエリの接続リークを防ぎ、`orders.db` lock 圧力の再発を減らす。
+
 ### 2026-02-20（追記）orders.db lock 連鎖と監査系タイムアウトを是正
 
 - 対象:

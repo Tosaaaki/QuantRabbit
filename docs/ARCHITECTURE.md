@@ -31,6 +31,9 @@
 - `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
+- Background: `quant-bq-sync.service`（`scripts/run_sync_pipeline.py`）は
+  `--limit` と `BQ_EXPORT_BATCH_SIZE` で送信件数を上限化し、`BQ_RETRY_TIMEOUT_SEC`
+  を超える長時間 retry を避ける（停止/再起動時のハング回避）。
 
 ## 4. データスキーマと単位
 
