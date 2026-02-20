@@ -82,6 +82,11 @@
   「直近1日」の closeout のみで block 判定する。
 - これにより、古い closeout（2日以上前）で `OPEN_REJECT perf_block:margin_closeout_n=*`
   が継続し、flow 戦略の新規が長時間停止する経路を避ける。
+- `strategy_entry` / `order_manager` の `env_prefix` 推論は
+  `scalp_ping_5s_flow_* -> SCALP_PING_5S_FLOW` を優先し、
+  `SCALP_PING_5S` への丸め込みをしない。
+  - flowタグが `SCALP_PING_5S` に正規化されると、
+    flow専用 `PERF_GUARD_*` が効かず、意図せず stale closeout block が継続するため。
 
 ### scalp_macd_rsi_div 運用補足（legacy tag 互換）
 - `quant-scalp-macd-rsi-div-exit` は `SCALP_PRECISION_EXIT_TAGS=scalp_macd_rsi_div_live` で運用する。

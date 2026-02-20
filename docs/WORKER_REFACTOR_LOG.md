@@ -26,6 +26,26 @@
   - 直近の強制ロスカが再発した時だけ即時ブロックする挙動を維持し、
     stale 事象でエントリーが長時間停止する状態を解消する。
 
+### 2026-02-20（追記）`scalp_ping_5s_flow_live` の env_prefix 上書きバグ修正
+
+- 対象:
+  - `execution/strategy_entry.py`
+  - `execution/order_manager.py`
+  - `tests/execution/test_env_prefix_inference.py`
+- 変更:
+  - `strategy_tag=scalp_ping_5s_flow_*` を
+    `SCALP_PING_5S` ではなく `SCALP_PING_5S_FLOW` として推論する分岐を追加。
+  - `strategy_entry` と `order_manager` の両方で同一修正を適用。
+  - 回帰テストを追加。
+- 背景（VM実測）:
+  - flow worker は `SCALP_PING_5S_ENV_PREFIX=SCALP_PING_5S_FLOW` を保持していたが、
+    共通導線で strategy_tag 由来推論が `SCALP_PING_5S` に強制され、
+    `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` が無効化されていた。
+  - 結果として `OPEN_REJECT note=perf_block:margin_closeout_n=1 n=24` が継続した。
+- 意図:
+  - flow クローンの戦略別ガード設定を正しく適用し、
+    strategy tag 正規化で別系統設定が潰れる経路を防止する。
+
 ### 2026-02-20（追記）`scalp_ping_5s_b_live` 方向転換遅延と逆配分を是正（反応速度優先）
 
 - 対象:
