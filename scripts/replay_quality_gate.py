@@ -2,7 +2,9 @@
 """Run replay workers across multiple tick files and apply quality gates.
 
 This script standardizes internal replay validation using walk-forward folds.
-It reuses scripts/replay_exit_workers_groups.py as the execution backend.
+Supported execution backends:
+  - scripts/replay_exit_workers_groups.py (worker-group replay)
+  - scripts/replay_exit_workers.py (main replay)
 """
 
 from __future__ import annotations
@@ -113,7 +115,7 @@ def _build_threshold(
     )
 
 
-def _build_replay_command(
+def _build_replay_command_groups(
     *,
     ticks_path: Path,
     workers: list[str],
@@ -161,6 +163,75 @@ def _build_replay_command(
     return cmd
 
 
+def _build_replay_command_main(
+    *,
+    ticks_path: Path,
+    out_path: Path,
+    replay_cfg: Mapping[str, Any],
+) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "replay_exit_workers.py"),
+        "--ticks",
+        str(ticks_path),
+        "--out",
+        str(out_path),
+        "--no-stdout",
+    ]
+    if _to_bool(replay_cfg.get("no_hard_sl"), default=True):
+        cmd.append("--no-hard-sl")
+    if _to_bool(replay_cfg.get("no_hard_tp"), default=False):
+        cmd.append("--no-hard-tp")
+    if _to_bool(replay_cfg.get("exclude_end_of_replay"), default=True):
+        cmd.append("--exclude-end-of-replay")
+    if _to_bool(replay_cfg.get("fast_only"), default=False):
+        cmd.append("--fast-only")
+    if _to_bool(replay_cfg.get("sp_only"), default=False):
+        cmd.append("--sp-only")
+    if _to_bool(replay_cfg.get("sp_live_entry"), default=False):
+        cmd.append("--sp-live-entry")
+    if _to_bool(replay_cfg.get("disable_macro"), default=False):
+        cmd.append("--disable-macro")
+    if _to_bool(replay_cfg.get("no_main_strategies"), default=False):
+        cmd.append("--no-main-strategies")
+
+    realistic = _to_bool(replay_cfg.get("realistic"), default=False)
+    slip_values: dict[str, Any] = {}
+    if realistic:
+        slip_values.update(
+            {
+                "latency_ms": 180.0,
+                "slip_base_pips": 0.02,
+                "slip_spread_coef": 0.15,
+                "slip_atr_coef": 0.02,
+                "slip_latency_coef": 0.0006,
+            }
+        )
+    for key in (
+        "slip_base_pips",
+        "slip_spread_coef",
+        "slip_atr_coef",
+        "slip_latency_coef",
+        "latency_ms",
+    ):
+        if key in replay_cfg:
+            slip_values[key] = replay_cfg[key]
+    for key, flag in (
+        ("slip_base_pips", "--slip-base-pips"),
+        ("slip_spread_coef", "--slip-spread-coef"),
+        ("slip_atr_coef", "--slip-atr-coef"),
+        ("slip_latency_coef", "--slip-latency-coef"),
+        ("latency_ms", "--latency-ms"),
+    ):
+        if key in slip_values:
+            cmd.extend([flag, str(slip_values[key])])
+
+    fill_mode = str(replay_cfg.get("fill_mode") or ("next_tick" if realistic else "")).strip().lower()
+    if fill_mode in {"lko", "next_tick"}:
+        cmd.extend(["--fill-mode", fill_mode])
+    return cmd
+
+
 def _load_worker_trades(
     *,
     run_dir: Path,
@@ -186,6 +257,47 @@ def _load_worker_trades(
         if exclude_end_of_replay:
             typed_trades = [t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"]
         out[worker] = typed_trades
+    return out
+
+
+def _load_worker_trades_main(
+    *,
+    out_path: Path,
+    workers: list[str],
+    exclude_end_of_replay: bool,
+) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {w: [] for w in workers}
+    if not out_path.exists():
+        return out
+    try:
+        payload = json.loads(out_path.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+    trades = payload.get("trades") or []
+    if not isinstance(trades, list):
+        return out
+    typed_trades = [t for t in trades if isinstance(t, dict)]
+    if exclude_end_of_replay:
+        typed_trades = [t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"]
+
+    for worker in workers:
+        if worker == "__overall__":
+            out[worker] = list(typed_trades)
+            continue
+        if worker.startswith("pocket:"):
+            pocket = worker.split(":", 1)[1].strip().lower()
+            out[worker] = [t for t in typed_trades if str(t.get("pocket") or "").lower() == pocket]
+            continue
+        if worker.startswith("source:"):
+            source = worker.split(":", 1)[1].strip().lower()
+            out[worker] = [t for t in typed_trades if str(t.get("source") or "").lower() == source]
+            continue
+        key = worker.strip().lower()
+        out[worker] = [
+            t
+            for t in typed_trades
+            if str(t.get("strategy_tag") or "").lower() == key or str(t.get("strategy") or "").lower() == key
+        ]
     return out
 
 
@@ -232,6 +344,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--config", type=Path, default=Path("config/replay_quality_gate.yaml"))
     ap.add_argument("--ticks-glob", default=None, help="Glob pattern for replay tick JSONL files.")
     ap.add_argument("--workers", default=None, help="Comma separated worker names.")
+    ap.add_argument("--backend", default=None, choices=("exit_workers_groups", "exit_workers_main"))
     ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_quality_gate"))
     ap.add_argument("--train-files", type=int, default=None)
     ap.add_argument("--test-files", type=int, default=None)
@@ -285,6 +398,10 @@ def main() -> int:
         return 2
 
     replay_cfg = config.get("replay") if isinstance(config.get("replay"), dict) else {}
+    backend = str(args.backend or replay_cfg.get("backend") or "exit_workers_groups").strip().lower()
+    if backend not in {"exit_workers_groups", "exit_workers_main"}:
+        print(f"Unsupported replay backend: {backend}", file=sys.stderr)
+        return 2
     exclude_end = _to_bool(replay_cfg.get("exclude_end_of_replay"), default=True)
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -295,17 +412,26 @@ def main() -> int:
     commands_log: list[dict[str, Any]] = []
     trades_by_file: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
-    print(f"[INFO] replay quality gate start workers={','.join(workers)} files={len(tick_files)} folds={len(folds)}")
+    print(
+        f"[INFO] replay quality gate start backend={backend} workers={','.join(workers)} files={len(tick_files)} folds={len(folds)}"
+    )
     for idx, tick_path in enumerate(tick_files, start=1):
         run_dir = run_root / tick_path.stem
         run_dir.mkdir(parents=True, exist_ok=True)
-
-        cmd = _build_replay_command(
-            ticks_path=tick_path,
-            workers=workers,
-            out_dir=run_dir,
-            replay_cfg=replay_cfg,
-        )
+        main_out_path = run_dir / "replay_exit_workers.json"
+        if backend == "exit_workers_main":
+            cmd = _build_replay_command_main(
+                ticks_path=tick_path,
+                out_path=main_out_path,
+                replay_cfg=replay_cfg,
+            )
+        else:
+            cmd = _build_replay_command_groups(
+                ticks_path=tick_path,
+                workers=workers,
+                out_dir=run_dir,
+                replay_cfg=replay_cfg,
+            )
         print(f"[INFO] ({idx}/{len(tick_files)}) replay {tick_path.name}")
         proc = subprocess.run(
             cmd,
@@ -333,11 +459,18 @@ def main() -> int:
             )
             return proc.returncode
 
-        trades_by_file[tick_path.name] = _load_worker_trades(
-            run_dir=run_dir,
-            workers=workers,
-            exclude_end_of_replay=exclude_end,
-        )
+        if backend == "exit_workers_main":
+            trades_by_file[tick_path.name] = _load_worker_trades_main(
+                out_path=main_out_path,
+                workers=workers,
+                exclude_end_of_replay=exclude_end,
+            )
+        else:
+            trades_by_file[tick_path.name] = _load_worker_trades(
+                run_dir=run_dir,
+                workers=workers,
+                exclude_end_of_replay=exclude_end,
+            )
 
     (out_root / "commands.json").write_text(
         json.dumps(_sanitize_json(commands_log), ensure_ascii=False, indent=2),
@@ -396,6 +529,7 @@ def main() -> int:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "config_path": str(args.config),
             "ticks_glob": ticks_glob,
+            "backend": backend,
             "tick_file_count": len(tick_files),
             "workers": workers,
             "fold_count": len(folds),

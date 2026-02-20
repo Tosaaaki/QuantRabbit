@@ -114,9 +114,11 @@ class OrderIntent(BaseModel):
 ## 5. リプレイ品質ゲート（内部テスト）
 
 - 目的: 戦略ワーカーのリプレイ結果を walk-forward で評価し、過学習や不安定な調整を早期検知する。
-- 実行: `scripts/replay_quality_gate.py` が `scripts/replay_exit_workers_groups.py` を複数 tick ファイルに対して実行し、fold 単位で `train/test` を評価する。
+- 実行: `scripts/replay_quality_gate.py` が backend 切替で以下を複数 tick ファイルに対して実行し、fold 単位で `train/test` を評価する。
+  - `exit_workers_groups` → `scripts/replay_exit_workers_groups.py`
+  - `exit_workers_main` → `scripts/replay_exit_workers.py`
 - 判定指標: `trade_count`, `profit_factor`, `win_rate`, `total_pips`, `max_drawdown_pips`, `pf_stability_ratio`。
-- 閾値管理: `config/replay_quality_gate.yaml`（`gates.default` + `gates.workers.<worker>`）。
+- 閾値管理: `config/replay_quality_gate*.yaml`（`gates.default` + `gates.workers.<worker>`）。
 - 成果物:
   - `quality_gate_report.json`（fold 詳細 + pass/fail）
   - `quality_gate_report.md`（運用サマリ）

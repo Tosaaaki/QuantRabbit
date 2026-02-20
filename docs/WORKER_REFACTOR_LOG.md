@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-20（追記）内部リプレイ精度ゲートを backend 切替対応で標準化
+
+- 対象:
+  - `scripts/replay_quality_gate.py`
+  - `config/replay_quality_gate.yaml`
+  - `config/replay_quality_gate_main.yaml`
+  - `docs/REPLAY_STANDARD.md`
+  - `docs/ARCHITECTURE.md`
+  - `tests/analysis/test_replay_quality_gate_script.py`
+- 変更:
+  - `replay_quality_gate` が `exit_workers_groups` / `exit_workers_main` の 2 backend を選択可能に変更。
+  - `--backend` CLI override を追加し、config 側の backend 設定を実行時に上書き可能化。
+  - `exit_workers_main` 用の標準 config（`replay_quality_gate_main.yaml`）を追加。
+  - `realistic` 設定時の slippage/fill フラグ重複を排除し、明示 override が優先されるよう修正。
+  - main backend の worker 抽出（strategy/pocket/source）とコマンド組み立てをテストで固定化。
+- 意図:
+  - VM 側の worker 構成差分や再生データ差分に応じて、同一 walk-forward gate を backend 切替だけで再利用できる状態を維持する。
+
 ### 2026-02-20（追記）`scalp_ping_5s_flow_live` の stale margin_closeout ブロックを短縮
 
 - 対象:

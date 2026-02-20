@@ -1,19 +1,27 @@
-# Replay quality gate defaults for internal strategy validation.
-# Override from CLI when needed.
+# Replay quality gate defaults for scripts/replay_exit_workers.py backend.
+# Worker filters:
+#   - Strategy tag/name: TrendMA, BB_RSI, ...
+#   - __overall__
+#   - pocket:<name> (example: pocket:micro)
+#   - source:<name> (example: source:strategy)
 
 ticks_glob: "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
 
 workers:
-  - session_open
+  - TrendMA
+  - BB_RSI
 
 replay:
-  backend: exit_workers_groups
+  backend: exit_workers_main
   no_hard_sl: true
   no_hard_tp: false
   exclude_end_of_replay: true
   realistic: true
-  tune: false
-  resample_sec: 0
+  fast_only: false
+  sp_only: false
+  sp_live_entry: false
+  disable_macro: false
+  no_main_strategies: false
   fill_mode: next_tick
 
 gates:
@@ -26,10 +34,9 @@ gates:
     max_test_drawdown_pips: 45.0
     min_pf_stability_ratio: 0.60
   workers:
-    # Example per-worker override:
-    # pullback_s5:
-    #   min_test_pf: 0.95
-    #   max_test_drawdown_pips: 55.0
+    # Example:
+    # TrendMA:
+    #   min_test_pf: 1.05
 
 walk_forward:
   train_files: 4

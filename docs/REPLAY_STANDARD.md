@@ -31,12 +31,22 @@ python scripts/replay_exit_workers_groups.py \
 ## 内部精度ゲート（walk-forward）
 
 - リプレイ出力に対して in-sample / out-of-sample を自動判定する場合は `scripts/replay_quality_gate.py` を使う。
-- 実行バックエンドは `scripts/replay_exit_workers_groups.py` で、標準フラグ（`--no-hard-sl` / `--exclude-end-of-replay`）を既定で適用する。
-- 閾値は `config/replay_quality_gate.yaml` の `gates.default` と `gates.workers` で管理する。
+- 実行バックエンドは 2 種類:
+  - `exit_workers_groups`（`scripts/replay_exit_workers_groups.py`）
+  - `exit_workers_main`（`scripts/replay_exit_workers.py`）
+- 標準フラグ（`--no-hard-sl` / `--exclude-end-of-replay`）を既定で適用する。
+- 閾値は `config/replay_quality_gate*.yaml` の `gates.default` と `gates.workers` で管理する。
 
 ```bash
 python scripts/replay_quality_gate.py \
   --config config/replay_quality_gate.yaml \
+  --ticks-glob "logs/replay/USD_JPY/USD_JPY_ticks_202602*.jsonl" \
+  --strict
+```
+
+```bash
+python scripts/replay_quality_gate.py \
+  --config config/replay_quality_gate_main.yaml \
   --ticks-glob "logs/replay/USD_JPY/USD_JPY_ticks_202602*.jsonl" \
   --strict
 ```
