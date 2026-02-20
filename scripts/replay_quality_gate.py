@@ -88,6 +88,33 @@ def _sanitize_json(value: Any) -> Any:
     return value
 
 
+def _count_jsonl_lines(path: Path) -> int:
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    except Exception:
+        return 0
+
+
+def _filter_tick_files_by_min_lines(
+    tick_files: list[Path],
+    *,
+    min_lines: int,
+) -> tuple[list[Path], dict[str, int]]:
+    if min_lines <= 0:
+        return list(tick_files), {}
+
+    kept: list[Path] = []
+    dropped: dict[str, int] = {}
+    for path in tick_files:
+        line_count = _count_jsonl_lines(path)
+        if line_count >= min_lines:
+            kept.append(path)
+        else:
+            dropped[path.name] = line_count
+    return kept, dropped
+
+
 def _resolve_workers(config: Mapping[str, Any], cli_workers: str | None) -> list[str]:
     if cli_workers:
         return [w.strip() for w in cli_workers.split(",") if w.strip()]
@@ -373,6 +400,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--test-files", type=int, default=None)
     ap.add_argument("--step-files", type=int, default=None)
     ap.add_argument("--min-fold-pass-rate", type=float, default=None)
+    ap.add_argument("--min-tick-lines", type=int, default=None)
     ap.add_argument("--timeout-sec", type=int, default=1800)
     ap.add_argument("--strict", action="store_true", help="Return non-zero if gate fails.")
     return ap.parse_args()
@@ -393,8 +421,29 @@ def main() -> int:
         return 2
 
     tick_files = [Path(p) for p in sorted(glob(ticks_glob)) if Path(p).is_file()]
+    matched_tick_file_count = len(tick_files)
     if not tick_files:
         print(f"No tick files matched: {ticks_glob}", file=sys.stderr)
+        return 2
+
+    min_tick_lines = max(
+        0,
+        int(args.min_tick_lines if args.min_tick_lines is not None else config.get("min_tick_lines") or 0),
+    )
+    tick_files, filtered_out_files = _filter_tick_files_by_min_lines(
+        tick_files,
+        min_lines=min_tick_lines,
+    )
+    if filtered_out_files:
+        dropped = ", ".join(
+            f"{name}({rows})" for name, rows in sorted(filtered_out_files.items())
+        )
+        print(f"[INFO] filtered files below min_tick_lines={min_tick_lines}: {dropped}")
+    if not tick_files:
+        print(
+            f"No tick files after min_tick_lines filter: matched={matched_tick_file_count} min_tick_lines={min_tick_lines}",
+            file=sys.stderr,
+        )
         return 2
 
     wf_cfg = config.get("walk_forward") if isinstance(config.get("walk_forward"), dict) else {}
@@ -553,7 +602,10 @@ def main() -> int:
             "config_path": str(args.config),
             "ticks_glob": ticks_glob,
             "backend": backend,
+            "matched_tick_file_count": matched_tick_file_count,
             "tick_file_count": len(tick_files),
+            "min_tick_lines": min_tick_lines,
+            "filtered_out_files": filtered_out_files,
             "workers": workers,
             "fold_count": len(folds),
             "train_files": train_files,

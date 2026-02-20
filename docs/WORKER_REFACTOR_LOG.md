@@ -3714,3 +3714,29 @@
   - `git rev-parse HEAD == git rev-parse origin/main` を確認。
   - `quant-v2-audit.service` は `status=0/SUCCESS` で `warn=0` を確認。
   - `quant-maintain-logs.service` は最新実行で `status=0/SUCCESS` を確認。
+
+### 2026-02-20（追記）replay_quality_gate の低サンプル日フィルタ追加
+
+- 背景（VM実測）:
+  - walk-forward の test fold が `trade_count=0` 日
+    （例: `20260218`, `20260219`）に当たると、
+    `test_trade_count` / `pf_stability_ratio` で一律 fail し、
+    戦略品質より「データ量不足」を拾う判定になっていた。
+- 実施:
+  - `scripts/replay_quality_gate.py`
+    - `--min-tick-lines` を追加。
+    - config `min_tick_lines` を追加し、閾値未満の tick ファイルを
+      walk-forward 前に自動除外。
+    - report `meta` に `matched_tick_file_count` / `min_tick_lines` /
+      `filtered_out_files` を記録。
+  - `config/replay_quality_gate_main.yaml`
+    - `min_tick_lines: 50000` を追加。
+    - walk-forward 既定を `train_files=2 / test_files=1 / step_files=1` へ更新。
+  - テスト:
+    - `tests/analysis/test_replay_quality_gate_script.py`
+      に `min_tick_lines` フィルタの単体テストを追加。
+  - ドキュメント:
+    - `docs/REPLAY_STANDARD.md` / `docs/ARCHITECTURE.md` へ運用注意を追記。
+- 目的:
+  - 低サンプル日による偽陰性 fail を減らし、
+    内部テストを「戦略品質の判定」へ寄せる。

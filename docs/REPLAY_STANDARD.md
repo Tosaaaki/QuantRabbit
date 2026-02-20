@@ -40,6 +40,8 @@ python scripts/replay_exit_workers_groups.py \
   tick ファイル名の日付（`YYYYMMDD`）に対して日内 UTC 時間帯を自動適用できる。
 - `config/replay_quality_gate_main.yaml` の既定は intraday 無効（空文字）として扱い、
   フルデイ再生で品質ゲートを判定する。
+- `min_tick_lines`（main config 既定: `50000`）未満の tick ファイルは
+  walk-forward 対象から自動除外される。
 - `exclude_end_of_replay=true` のまま短い intraday 窓を使うと、
   close が `end_of_replay` のみになって `trade_count=0` に寄る場合がある。
   窓を使う場合はこの挙動を前提に評価する。
@@ -47,6 +49,8 @@ python scripts/replay_exit_workers_groups.py \
   TrendMA/BB_RSI の main 経路だけを再生し、scalp replay 経路を省略できる（高速化向け）。
 - `replay_exit_workers` は replay 実行時に `factor_cache` のディスク永続化を無効化する。
   これにより長時間リプレイ時の I/O 競合を避け、再生時間のばらつきを抑える。
+- `replay_quality_gate_main.yaml` の walk-forward 既定は
+  `train_files=2 / test_files=1 / step_files=1`。
 
 ```bash
 python scripts/replay_quality_gate.py \

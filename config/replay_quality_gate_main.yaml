@@ -6,6 +6,8 @@
 #   - source:<name> (example: source:strategy)
 
 ticks_glob: "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
+# Ignore low-sample/partial tick days to avoid false fold failures.
+min_tick_lines: 50000
 
 workers:
   - TrendMA
@@ -46,7 +48,7 @@ gates:
     #   min_test_pf: 1.05
 
 walk_forward:
-  train_files: 4
+  train_files: 2
   test_files: 1
   step_files: 1
   min_fold_pass_rate: 0.70

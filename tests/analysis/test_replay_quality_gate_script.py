@@ -112,3 +112,20 @@ def test_build_replay_command_main_explicit_start_end_override_intraday() -> Non
 
     assert _arg_value(cmd, "--start") == "2026-02-10T01:00:00+00:00"
     assert _arg_value(cmd, "--end") == "2026-02-10T02:00:00+00:00"
+
+
+def test_filter_tick_files_by_min_lines(tmp_path: Path) -> None:
+    p1 = tmp_path / "USD_JPY_ticks_1.jsonl"
+    p2 = tmp_path / "USD_JPY_ticks_2.jsonl"
+    p3 = tmp_path / "USD_JPY_ticks_3.jsonl"
+    p1.write_text("a\nb\nc\n", encoding="utf-8")
+    p2.write_text("a\n", encoding="utf-8")
+    p3.write_text("", encoding="utf-8")
+
+    kept, dropped = _module._filter_tick_files_by_min_lines(
+        [p1, p2, p3],
+        min_lines=2,
+    )
+
+    assert [p.name for p in kept] == [p1.name]
+    assert dropped == {p2.name: 1, p3.name: 0}
