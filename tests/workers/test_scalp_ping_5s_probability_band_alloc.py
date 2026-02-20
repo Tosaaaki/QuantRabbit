@@ -265,6 +265,191 @@ def test_probability_band_units_multiplier_uses_side_metrics_penalty(monkeypatch
     assert units_mult == pytest.approx(0.85, abs=1e-9)
 
 
+def _set_side_adverse_stack_config(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_LOOKBACK_TRADES",
+        36,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_CACHE_TTL_SEC",
+        1.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_TRADES",
+        8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_TARGET_TRADES",
+        6,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_SL_RATE",
+        0.56,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_SL_GAP",
+        0.16,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP",
+        0.08,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_ACTIVE_START",
+        3,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_STEP_MULT",
+        0.14,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_MULT",
+        0.24,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_DD_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_DD_START_PIPS",
+        0.60,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_DD_FULL_PIPS",
+        2.20,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_DD_MIN_MULT",
+        0.30,
+        raising=False,
+    )
+
+
+def test_side_adverse_stack_units_multiplier_scales_when_side_is_adverse(monkeypatch) -> None:
+    _set_side_adverse_stack_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker,
+        "_load_side_close_metrics",
+        lambda **_: scalp_worker.SideCloseMetrics(
+            long_sl_hits=9,
+            short_sl_hits=2,
+            long_market_plus=1,
+            short_market_plus=5,
+            long_trades=12,
+            short_trades=10,
+            sample=22,
+        ),
+        raising=False,
+    )
+
+    trap_state = scalp_worker.TrapState(
+        active=False,
+        long_units=12000.0,
+        short_units=1000.0,
+        net_ratio=0.85,
+        long_dd_pips=1.8,
+        short_dd_pips=0.1,
+        combined_dd_pips=1.9,
+        unrealized_pl=-2400.0,
+    )
+
+    units_mult, eval_info = scalp_worker._side_adverse_stack_units_multiplier(
+        side="long",
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        active_long=6,
+        active_short=1,
+        trap_state=trap_state,
+        now_mono=10.0,
+    )
+
+    assert eval_info.adverse is True
+    assert eval_info.reason.startswith("metrics_scale")
+    assert "dd_scale" in eval_info.reason
+    assert eval_info.active_same_side == 6
+    assert eval_info.current_sl_rate == pytest.approx(0.75, abs=1e-9)
+    assert eval_info.target_market_plus_rate == pytest.approx(0.5, abs=1e-9)
+    assert units_mult == pytest.approx(0.24, abs=1e-9)
+
+
+def test_side_adverse_stack_units_multiplier_stays_neutral_when_not_adverse(monkeypatch) -> None:
+    _set_side_adverse_stack_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker,
+        "_load_side_close_metrics",
+        lambda **_: scalp_worker.SideCloseMetrics(
+            long_sl_hits=2,
+            short_sl_hits=3,
+            long_market_plus=4,
+            short_market_plus=3,
+            long_trades=12,
+            short_trades=12,
+            sample=24,
+        ),
+        raising=False,
+    )
+
+    trap_state = scalp_worker.TrapState(
+        active=False,
+        long_units=2000.0,
+        short_units=2000.0,
+        net_ratio=0.0,
+        long_dd_pips=0.2,
+        short_dd_pips=0.3,
+        combined_dd_pips=0.5,
+        unrealized_pl=100.0,
+    )
+
+    units_mult, eval_info = scalp_worker._side_adverse_stack_units_multiplier(
+        side="short",
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        active_long=1,
+        active_short=2,
+        trap_state=trap_state,
+        now_mono=10.0,
+    )
+
+    assert eval_info.adverse is False
+    assert eval_info.reason == "metrics_not_adverse"
+    assert eval_info.side_mult == pytest.approx(1.0, abs=1e-9)
+    assert eval_info.dd_mult == pytest.approx(1.0, abs=1e-9)
+    assert units_mult == pytest.approx(1.0, abs=1e-9)
+
+
 def test_load_entry_probability_band_metrics_from_trades_db(monkeypatch, tmp_path: pathlib.Path) -> None:
     _set_band_alloc_config(monkeypatch)
     monkeypatch.setattr(

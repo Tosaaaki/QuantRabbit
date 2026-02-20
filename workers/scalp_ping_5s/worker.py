@@ -105,6 +105,10 @@ _SIDE_CLOSE_METRICS_FLIP_CACHE: dict[
     tuple[str, str],
     tuple[float, Optional["SideCloseMetrics"]],
 ] = {}
+_SIDE_CLOSE_METRICS_STACK_CACHE: dict[
+    tuple[str, str],
+    tuple[float, Optional["SideCloseMetrics"]],
+] = {}
 _ENTRY_PROB_BAND_METRICS_CACHE: dict[
     tuple[str, str, str],
     tuple[float, Optional["EntryProbabilityBandMetrics"]],
@@ -256,6 +260,26 @@ class SideMetricsFlipEval:
     target_sl_rate: float
     current_market_plus_rate: float
     target_market_plus_rate: float
+
+
+@dataclass(slots=True)
+class SideAdverseStackEval:
+    current_side: str
+    target_side: str
+    active_same_side: int
+    active_opposite_side: int
+    current_trades: int
+    target_trades: int
+    current_sl_rate: float
+    target_sl_rate: float
+    current_market_plus_rate: float
+    target_market_plus_rate: float
+    side_mult: float
+    dd_mult: float
+    units_mult: float
+    dd_pips: float
+    adverse: bool
+    reason: str
 
 
 @dataclass(slots=True)
@@ -3752,6 +3776,203 @@ def _maybe_side_metrics_direction_flip(
     return flipped, reason, eval_info
 
 
+def _side_adverse_stack_units_multiplier(
+    *,
+    side: str,
+    strategy_tag: str,
+    pocket: str,
+    active_long: int,
+    active_short: int,
+    trap_state: Optional[TrapState],
+    now_mono: float,
+) -> tuple[float, SideAdverseStackEval]:
+    side_key = str(side or "").strip().lower()
+    target_side = "short" if side_key == "long" else "long"
+    active_same_side = int(active_long) if side_key == "long" else int(active_short)
+    active_opposite_side = int(active_short) if side_key == "long" else int(active_long)
+    dd_pips = 0.0
+    if isinstance(trap_state, TrapState):
+        dd_pips = (
+            _safe_float(trap_state.long_dd_pips, 0.0)
+            if side_key == "long"
+            else _safe_float(trap_state.short_dd_pips, 0.0)
+        )
+    dd_pips = max(0.0, float(dd_pips))
+
+    default_eval = SideAdverseStackEval(
+        current_side=side_key,
+        target_side=target_side,
+        active_same_side=max(0, active_same_side),
+        active_opposite_side=max(0, active_opposite_side),
+        current_trades=0,
+        target_trades=0,
+        current_sl_rate=0.0,
+        target_sl_rate=0.0,
+        current_market_plus_rate=0.0,
+        target_market_plus_rate=0.0,
+        side_mult=1.0,
+        dd_mult=1.0,
+        units_mult=1.0,
+        dd_pips=dd_pips,
+        adverse=False,
+        reason="disabled",
+    )
+    if side_key not in {"long", "short"}:
+        default_eval.reason = "invalid_side"
+        return 1.0, default_eval
+
+    reason_parts: list[str] = []
+    side_mult = 1.0
+    dd_mult = 1.0
+    adverse = False
+    current_trades = 0
+    target_trades = 0
+    current_sl_rate = 0.0
+    target_sl_rate = 0.0
+    current_market_plus_rate = 0.0
+    target_market_plus_rate = 0.0
+
+    if config.SIDE_ADVERSE_STACK_UNITS_ENABLED:
+        metrics = _load_side_close_metrics(
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            lookback=max(4, int(config.SIDE_ADVERSE_STACK_UNITS_LOOKBACK_TRADES)),
+            cache_ttl_sec=max(
+                0.1,
+                float(config.SIDE_ADVERSE_STACK_UNITS_CACHE_TTL_SEC),
+            ),
+            now_mono=now_mono,
+            cache_store=_SIDE_CLOSE_METRICS_STACK_CACHE,
+        )
+        if metrics is None:
+            reason_parts.append("metrics_unavailable")
+        else:
+            current_trades = (
+                int(metrics.long_trades) if side_key == "long" else int(metrics.short_trades)
+            )
+            target_trades = (
+                int(metrics.short_trades) if side_key == "long" else int(metrics.long_trades)
+            )
+            current_sl_rate = _clamp(
+                float(metrics.sl_hits(side_key)) / float(max(1, current_trades)),
+                0.0,
+                1.0,
+            )
+            target_sl_rate = _clamp(
+                float(metrics.sl_hits(target_side)) / float(max(1, target_trades)),
+                0.0,
+                1.0,
+            )
+            current_market_plus_rate = _clamp(
+                float(metrics.market_plus(side_key)) / float(max(1, current_trades)),
+                0.0,
+                1.0,
+            )
+            target_market_plus_rate = _clamp(
+                float(metrics.market_plus(target_side)) / float(max(1, target_trades)),
+                0.0,
+                1.0,
+            )
+            min_current_trades = max(
+                1,
+                int(config.SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_TRADES),
+            )
+            min_target_trades = max(
+                1,
+                int(config.SIDE_ADVERSE_STACK_UNITS_MIN_TARGET_TRADES),
+            )
+            if current_trades < min_current_trades:
+                reason_parts.append("current_sample_weak")
+            elif target_trades < min_target_trades:
+                reason_parts.append("target_sample_weak")
+            else:
+                min_current_sl_rate = _clamp(
+                    float(config.SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_SL_RATE),
+                    0.0,
+                    1.0,
+                )
+                min_sl_gap = max(0.0, float(config.SIDE_ADVERSE_STACK_UNITS_MIN_SL_GAP))
+                min_market_plus_gap = max(
+                    0.0,
+                    float(config.SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP),
+                )
+                adverse = bool(
+                    current_sl_rate >= min_current_sl_rate
+                    and (current_sl_rate - target_sl_rate) >= min_sl_gap
+                    and (target_market_plus_rate - current_market_plus_rate)
+                    >= min_market_plus_gap
+                )
+                if adverse:
+                    active_start = max(1, int(config.SIDE_ADVERSE_STACK_UNITS_ACTIVE_START))
+                    if active_same_side >= active_start:
+                        extra = active_same_side - active_start + 1
+                        step_mult = _clamp(
+                            float(config.SIDE_ADVERSE_STACK_UNITS_STEP_MULT),
+                            0.0,
+                            0.9,
+                        )
+                        side_mult = max(
+                            float(config.SIDE_ADVERSE_STACK_UNITS_MIN_MULT),
+                            1.0 - float(extra) * step_mult,
+                        )
+                        reason_parts.append("metrics_scale")
+                    else:
+                        reason_parts.append("metrics_adverse_active_low")
+                else:
+                    reason_parts.append("metrics_not_adverse")
+    else:
+        reason_parts.append("metrics_disabled")
+
+    if config.SIDE_ADVERSE_STACK_DD_ENABLED:
+        active_start = max(1, int(config.SIDE_ADVERSE_STACK_UNITS_ACTIVE_START))
+        if active_same_side >= active_start and dd_pips > float(config.SIDE_ADVERSE_STACK_DD_START_PIPS):
+            dd_start = max(0.0, float(config.SIDE_ADVERSE_STACK_DD_START_PIPS))
+            dd_full = max(
+                dd_start + 0.05,
+                float(config.SIDE_ADVERSE_STACK_DD_FULL_PIPS),
+            )
+            dd_ratio = _clamp((dd_pips - dd_start) / max(1e-6, dd_full - dd_start), 0.0, 1.0)
+            dd_mult = 1.0 - (1.0 - float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT)) * dd_ratio
+            dd_mult = _clamp(
+                dd_mult,
+                float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT),
+                1.0,
+            )
+            reason_parts.append("dd_scale")
+    else:
+        reason_parts.append("dd_disabled")
+
+    min_floor = min(
+        float(config.SIDE_ADVERSE_STACK_UNITS_MIN_MULT),
+        float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT)
+        if config.SIDE_ADVERSE_STACK_DD_ENABLED
+        else 1.0,
+    )
+    units_mult = _clamp(side_mult * dd_mult, max(0.05, min_floor), 1.0)
+    if units_mult >= 0.999 and not reason_parts:
+        reason_parts.append("neutral")
+
+    eval_info = SideAdverseStackEval(
+        current_side=side_key,
+        target_side=target_side,
+        active_same_side=max(0, active_same_side),
+        active_opposite_side=max(0, active_opposite_side),
+        current_trades=max(0, current_trades),
+        target_trades=max(0, target_trades),
+        current_sl_rate=current_sl_rate,
+        target_sl_rate=target_sl_rate,
+        current_market_plus_rate=current_market_plus_rate,
+        target_market_plus_rate=target_market_plus_rate,
+        side_mult=side_mult,
+        dd_mult=dd_mult,
+        units_mult=units_mult,
+        dd_pips=dd_pips,
+        adverse=adverse,
+        reason="+".join(reason_parts) if reason_parts else "neutral",
+    )
+    return units_mult, eval_info
+
+
 def _range_pos_from_candles(
     *,
     tf: str,
@@ -5069,6 +5290,7 @@ async def scalp_ping_5s_worker() -> None:
     last_extrema_log_mono = 0.0
     last_sl_streak_log_mono = 0.0
     last_side_metrics_flip_log_mono = 0.0
+    last_side_adverse_stack_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
     last_loop_heartbeat_mono = 0.0
     entry_skip_reasons: dict[str, int] = {}
@@ -5759,6 +5981,20 @@ async def scalp_ping_5s_worker() -> None:
             side_metrics_flip_target_market_plus_rate = 0.0
             side_metrics_flip_current_trades = 0
             side_metrics_flip_target_trades = 0
+            side_adverse_stack_units_mult = 1.0
+            side_adverse_stack_reason = "disabled"
+            side_adverse_stack_metrics_adverse = False
+            side_adverse_stack_side_mult = 1.0
+            side_adverse_stack_dd_mult = 1.0
+            side_adverse_stack_dd_pips = 0.0
+            side_adverse_stack_current_trades = 0
+            side_adverse_stack_target_trades = 0
+            side_adverse_stack_current_sl_rate = 0.0
+            side_adverse_stack_target_sl_rate = 0.0
+            side_adverse_stack_current_market_plus_rate = 0.0
+            side_adverse_stack_target_market_plus_rate = 0.0
+            side_adverse_stack_active_same_side = 0
+            side_adverse_stack_active_opposite_side = 0
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
@@ -6244,6 +6480,58 @@ async def scalp_ping_5s_worker() -> None:
                     f"side=short active={active_short} cap={max_per_direction}",
                 )
                 continue
+            side_adverse_stack_units_mult, side_adverse_eval = _side_adverse_stack_units_multiplier(
+                side=signal.side,
+                strategy_tag=config.STRATEGY_TAG,
+                pocket=config.POCKET,
+                active_long=active_long,
+                active_short=active_short,
+                trap_state=trap_state,
+                now_mono=now_mono,
+            )
+            side_adverse_stack_reason = str(side_adverse_eval.reason)
+            side_adverse_stack_metrics_adverse = bool(side_adverse_eval.adverse)
+            side_adverse_stack_side_mult = float(side_adverse_eval.side_mult)
+            side_adverse_stack_dd_mult = float(side_adverse_eval.dd_mult)
+            side_adverse_stack_dd_pips = float(side_adverse_eval.dd_pips)
+            side_adverse_stack_current_trades = int(side_adverse_eval.current_trades)
+            side_adverse_stack_target_trades = int(side_adverse_eval.target_trades)
+            side_adverse_stack_current_sl_rate = float(side_adverse_eval.current_sl_rate)
+            side_adverse_stack_target_sl_rate = float(side_adverse_eval.target_sl_rate)
+            side_adverse_stack_current_market_plus_rate = float(
+                side_adverse_eval.current_market_plus_rate
+            )
+            side_adverse_stack_target_market_plus_rate = float(
+                side_adverse_eval.target_market_plus_rate
+            )
+            side_adverse_stack_active_same_side = int(side_adverse_eval.active_same_side)
+            side_adverse_stack_active_opposite_side = int(
+                side_adverse_eval.active_opposite_side
+            )
+            if (
+                side_adverse_stack_units_mult < 0.999
+                and now_mono - last_side_adverse_stack_log_mono
+                >= config.SIDE_ADVERSE_STACK_LOG_INTERVAL_SEC
+            ):
+                LOG.info(
+                    "%s side_adverse_stack side=%s reason=%s mult=%.2f(side=%.2f dd=%.2f) active=%d/%d dd=%.2fp sl=%.2f/%.2f mplus=%.2f/%.2f n=%d/%d",
+                    config.LOG_PREFIX,
+                    signal.side,
+                    side_adverse_stack_reason,
+                    side_adverse_stack_units_mult,
+                    side_adverse_stack_side_mult,
+                    side_adverse_stack_dd_mult,
+                    side_adverse_stack_active_same_side,
+                    side_adverse_stack_active_opposite_side,
+                    side_adverse_stack_dd_pips,
+                    side_adverse_stack_current_sl_rate,
+                    side_adverse_stack_target_sl_rate,
+                    side_adverse_stack_current_market_plus_rate,
+                    side_adverse_stack_target_market_plus_rate,
+                    side_adverse_stack_current_trades,
+                    side_adverse_stack_target_trades,
+                )
+                last_side_adverse_stack_log_mono = now_mono
 
             tp_profile = _load_tp_timing_profile(config.STRATEGY_TAG, config.POCKET)
             tp_pips, sl_pips = _compute_targets(
@@ -6358,6 +6646,7 @@ async def scalp_ping_5s_worker() -> None:
             units = int(round(units * extrema_units_mult))
             units = int(round(units * probability_units_mult))
             units = int(round(units * probability_band_units_mult))
+            units = int(round(units * side_adverse_stack_units_mult))
             snapshot_units_scale = _snapshot_stale_units_scale()
             if snapshot_units_scale < 1.0:
                 units = int(round(units * snapshot_units_scale))
@@ -6589,6 +6878,57 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "side_metrics_direction_flip_target_trades": int(
                     side_metrics_flip_target_trades
+                ),
+                "side_adverse_stack_units_enabled": bool(
+                    config.SIDE_ADVERSE_STACK_UNITS_ENABLED
+                ),
+                "side_adverse_stack_units_mult": round(
+                    side_adverse_stack_units_mult,
+                    3,
+                ),
+                "side_adverse_stack_reason": side_adverse_stack_reason,
+                "side_adverse_stack_metrics_adverse": bool(
+                    side_adverse_stack_metrics_adverse
+                ),
+                "side_adverse_stack_side_mult": round(
+                    side_adverse_stack_side_mult,
+                    3,
+                ),
+                "side_adverse_stack_dd_mult": round(
+                    side_adverse_stack_dd_mult,
+                    3,
+                ),
+                "side_adverse_stack_dd_pips": round(
+                    side_adverse_stack_dd_pips,
+                    3,
+                ),
+                "side_adverse_stack_active_same_side": int(
+                    side_adverse_stack_active_same_side
+                ),
+                "side_adverse_stack_active_opposite_side": int(
+                    side_adverse_stack_active_opposite_side
+                ),
+                "side_adverse_stack_current_trades": int(
+                    side_adverse_stack_current_trades
+                ),
+                "side_adverse_stack_target_trades": int(
+                    side_adverse_stack_target_trades
+                ),
+                "side_adverse_stack_current_sl_rate": round(
+                    side_adverse_stack_current_sl_rate,
+                    4,
+                ),
+                "side_adverse_stack_target_sl_rate": round(
+                    side_adverse_stack_target_sl_rate,
+                    4,
+                ),
+                "side_adverse_stack_current_market_plus_rate": round(
+                    side_adverse_stack_current_market_plus_rate,
+                    4,
+                ),
+                "side_adverse_stack_target_market_plus_rate": round(
+                    side_adverse_stack_target_market_plus_rate,
+                    4,
                 ),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),

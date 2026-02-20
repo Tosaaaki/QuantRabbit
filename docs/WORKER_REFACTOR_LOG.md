@@ -3284,3 +3284,27 @@
 - 目的:
   - 同方向同時建玉でのSLクラスターを抑え、ドローダウン加速を止める。
   - 連続SL時の転換ロジックを、実運用時間軸で失効しにくくする。
+
+### 2026-02-20（追記）`scalp_ping_5s_b_live` 逆行スタック抑制: 同方向含み損中のロット自動圧縮
+
+- 背景（VM実績, 直近40件）:
+  - `38/40` が long 側で、`SL率 89.5%`、`-391.9 JPY`。
+  - 同時刻 `STOP_LOSS_ORDER` クラスター（`n=8`, `n=5`）で損失が加速。
+  - 問題は「頻度不足」ではなく、方向不利局面で同方向ロットが維持されること。
+- 実施:
+  - `workers/scalp_ping_5s/worker.py`
+    - `SideAdverseStackEval` と `_side_adverse_stack_units_multiplier()` を追加。
+    - side別 close実績（`SL率` / `MARKET close +率`）と、同方向の
+      `active trades`、同方向の含み損DD（pips）を合成し、
+      逆行局面のみロット倍率を段階圧縮。
+    - エントリー可否は変えず、サイズのみ縮小（頻度維持）。
+    - `entry_thesis` に `side_adverse_stack_*` を記録。
+  - `workers/scalp_ping_5s/config.py`
+    - `SIDE_ADVERSE_STACK_*` 設定群を追加
+      （lookback, 閾値, active start, step, min multiplier, DD連動）。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_*` を追加して有効化。
+    - あわせて `FAST_DIRECTION_FLIP_*` の閾値を軽くし、反転遅延を短縮。
+- 目的:
+  - 方向ミス時の同方向積み増しをサイズで抑え、SLクラスターの損失勾配を下げる。
+  - 発注本数は維持しながら、悪い局面でだけ損失の厚みを削る。

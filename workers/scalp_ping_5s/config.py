@@ -605,6 +605,146 @@ SIDE_METRICS_DIRECTION_FLIP_LOG_INTERVAL_SEC: float = max(
         )
     ),
 )
+SIDE_ADVERSE_STACK_UNITS_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+SIDE_ADVERSE_STACK_UNITS_CACHE_TTL_SEC: float = max(
+    0.1,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_CACHE_TTL_SEC",
+            "1.0",
+        )
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_LOOKBACK_TRADES: int = max(
+    4,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_LOOKBACK_TRADES",
+                "36",
+            )
+        )
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_TRADES: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_TRADES",
+                "8",
+            )
+        )
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_TARGET_TRADES: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_TARGET_TRADES",
+                "6",
+            )
+        )
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_SL_RATE: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_SL_RATE",
+                "0.58",
+            )
+        ),
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_SL_GAP: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_SL_GAP",
+                "0.16",
+            )
+        ),
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP",
+                "0.08",
+            )
+        ),
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_ACTIVE_START: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_ACTIVE_START",
+                "3",
+            )
+        )
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_STEP_MULT: float = max(
+    0.0,
+    min(
+        0.9,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_STEP_MULT",
+                "0.14",
+            )
+        ),
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_MULT",
+                "0.24",
+            )
+        ),
+    ),
+)
+SIDE_ADVERSE_STACK_DD_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SIDE_ADVERSE_STACK_DD_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+SIDE_ADVERSE_STACK_DD_START_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_SIDE_ADVERSE_STACK_DD_START_PIPS", "0.60")),
+)
+SIDE_ADVERSE_STACK_DD_FULL_PIPS: float = max(
+    SIDE_ADVERSE_STACK_DD_START_PIPS + 0.05,
+    float(os.getenv("SCALP_PING_5S_SIDE_ADVERSE_STACK_DD_FULL_PIPS", "2.20")),
+)
+SIDE_ADVERSE_STACK_DD_MIN_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_SIDE_ADVERSE_STACK_DD_MIN_MULT", "0.30")),
+    ),
+)
+SIDE_ADVERSE_STACK_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_SIDE_ADVERSE_STACK_LOG_INTERVAL_SEC", "6.0")),
+)
 
 LOOKAHEAD_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_GATE_ENABLED", True)
 LOOKAHEAD_ALLOW_THIN_EDGE: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_ALLOW_THIN_EDGE", True)

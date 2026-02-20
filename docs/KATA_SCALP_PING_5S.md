@@ -328,3 +328,34 @@ DB:
   - `tech_route_reasons` に `side_metrics_flip`
 - 運用意図:
   - 頻度を落とさず、負けsideへの連続エントリーを短時間で打ち切る。
+
+## 18. 2026-02-20 更新（逆行スタック時のロット圧縮）
+
+- 背景:
+  - 同方向の建玉が短時間に積み上がる局面で、反転前に `STOP_LOSS_ORDER` が
+    クラスター化して損失が拡大するケースが残った。
+- 実装:
+  - `workers/scalp_ping_5s/worker.py`
+    - `_side_adverse_stack_units_multiplier()` を追加。
+    - 以下を同時に満たすときに、エントリーは維持したままロットだけ圧縮:
+      - 現在sideの `SL率` が高く、反対sideより劣後
+      - 反対sideの `MARKET_ORDER_TRADE_CLOSE(+PL)` 率が優位
+      - 同方向の open trades が閾値以上
+      - 同方向の含み損DD（pips）が閾値を超過
+    - `units` 計算チェーンに `side_adverse_stack_units_mult` を追加。
+  - `workers/scalp_ping_5s/config.py`
+    - `SIDE_ADVERSE_STACK_UNITS_*` / `SIDE_ADVERSE_STACK_DD_*` /
+      `SIDE_ADVERSE_STACK_LOG_INTERVAL_SEC` を追加。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_*` を有効化。
+- 監査キー（`entry_thesis`）:
+  - `side_adverse_stack_units_mult`
+  - `side_adverse_stack_reason`
+  - `side_adverse_stack_metrics_adverse`
+  - `side_adverse_stack_side_mult`
+  - `side_adverse_stack_dd_mult`
+  - `side_adverse_stack_dd_pips`
+  - `side_adverse_stack_active_same_side`
+  - `side_adverse_stack_current_sl_rate` / `...target_sl_rate`
+- 運用意図:
+  - エントリー頻度を落とさず、逆行局面の同方向ロット過多だけを抑える。
