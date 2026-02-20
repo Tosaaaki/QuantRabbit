@@ -52,7 +52,19 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`。
 - Alert: SLO 違反、`healthbeat` 欠損 5min 超、`order reject` 連続 3 件。
 
-## 7. マージン余力判定の落とし穴（2025-12-29 対応済み）
+## 7. metrics.db lock 運用ガード（2026-02-20）
+- `utils/metrics_logger.py` は lock 競合時に指数バックオフ付きで再試行する。
+- 調整キー（`ops/env/quant-v2-runtime.env`）:
+  - `METRICS_DB_BUSY_TIMEOUT_MS`
+  - `METRICS_DB_WRITE_RETRIES`
+  - `METRICS_DB_RETRY_BASE_SLEEP_SEC`
+  - `METRICS_DB_RETRY_MAX_SLEEP_SEC`
+- `scripts/publish_range_mode.py` は DB 反映失敗時に
+  `metric_write_failed metric=range_mode_active` を warning 出力する。
+- `logged active=...` があるのに `range_mode_active` が更新されない場合は、
+  まず上記 warning と `metrics_logger` の debug drop ログを確認する。
+
+## 8. マージン余力判定の落とし穴（2025-12-29 対応済み）
 - fast_scalp が shared_state 欠落時に余力0と誤判定し全シグナルをスキップした事象あり。
 - `workers/fast_scalp/worker.py` で `get_account_snapshot()` フォールバックを追加済み。
 - 再発時はログに `refreshed account snapshot equity=... margin_available=...` が出ることを確認。

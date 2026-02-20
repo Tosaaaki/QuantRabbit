@@ -13,6 +13,13 @@ from typing import Mapping, Optional
 
 _DB_PATH = Path("logs/metrics.db")
 _LOCK = threading.Lock()
+_DB_BUSY_TIMEOUT_MS = max(500, int(os.getenv("METRICS_DB_BUSY_TIMEOUT_MS", "5000")))
+_DB_WRITE_RETRIES = max(1, int(os.getenv("METRICS_DB_WRITE_RETRIES", "6")))
+_DB_RETRY_BASE_SLEEP_SEC = max(0.0, float(os.getenv("METRICS_DB_RETRY_BASE_SLEEP_SEC", "0.08")))
+_DB_RETRY_MAX_SLEEP_SEC = max(
+    _DB_RETRY_BASE_SLEEP_SEC,
+    float(os.getenv("METRICS_DB_RETRY_MAX_SLEEP_SEC", "0.60")),
+)
 
 
 def _parse_csv_env(name: str, default: str) -> set[str]:
@@ -114,13 +121,12 @@ def _resolve_agg_window(metric: str) -> float:
     return _AGG_WINDOW_SEC
 
 
-def _write_payload(payload: dict[str, object], metric: str) -> None:
-    attempts = 0
-    while attempts < 2:
-        attempts += 1
-        con = sqlite3.connect(_DB_PATH, timeout=1.5)
+def _write_payload(payload: dict[str, object], metric: str) -> bool:
+    for attempt in range(1, _DB_WRITE_RETRIES + 1):
+        con: sqlite3.Connection | None = None
         try:
-            con.execute("PRAGMA busy_timeout=1500;")
+            con = sqlite3.connect(str(_DB_PATH), timeout=max(1.0, _DB_BUSY_TIMEOUT_MS / 1000.0))
+            con.execute(f"PRAGMA busy_timeout={_DB_BUSY_TIMEOUT_MS};")
             con.execute("PRAGMA journal_mode=WAL;")
             _ensure_schema(con)
             con.execute(
@@ -128,15 +134,41 @@ def _write_payload(payload: dict[str, object], metric: str) -> None:
                 payload,
             )
             con.commit()
-            return
+            return True
         except sqlite3.OperationalError as exc:
-            if attempts >= 2:
-                logging.debug("[metrics] drop metric=%s due to lock: %s", metric, exc)
+            msg = str(exc).lower()
+            is_lock = "database is locked" in msg or "database table is locked" in msg
+            if is_lock and attempt < _DB_WRITE_RETRIES:
+                sleep_sec = min(
+                    _DB_RETRY_BASE_SLEEP_SEC * (2 ** (attempt - 1)),
+                    _DB_RETRY_MAX_SLEEP_SEC,
+                )
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+                continue
+            reason = "lock" if is_lock else "operational_error"
+            logging.debug(
+                "[metrics] drop metric=%s reason=%s attempts=%d db=%s err=%s",
+                metric,
+                reason,
+                attempt,
+                _DB_PATH,
+                exc,
+            )
+            return False
         except Exception as exc:  # pragma: no cover - defensive
-            logging.debug("[metrics] drop metric=%s due to error: %s", metric, exc)
-            return
+            logging.debug(
+                "[metrics] drop metric=%s reason=error attempts=%d db=%s err=%s",
+                metric,
+                attempt,
+                _DB_PATH,
+                exc,
+            )
+            return False
         finally:
-            con.close()
+            if con is not None:
+                con.close()
+    return False
 
 
 def log_metric(
@@ -145,7 +177,7 @@ def log_metric(
     *,
     tags: Optional[Mapping[str, object]] = None,
     ts: Optional[datetime] = None,
-) -> None:
+) -> bool:
     now_mono = time.monotonic()
     if metric in _AGG_METRICS or _match_prefix(metric, _AGG_PREFIXES):
         norm_tags = _normalize_tags(tags)
@@ -162,10 +194,10 @@ def log_metric(
             bucket.max_val = val if bucket.max_val is None else max(bucket.max_val, val)
             if bucket.last_flush == 0.0:
                 bucket.last_flush = now_mono
-                return
+                return True
             window_sec = bucket.window_sec or _AGG_WINDOW_SEC
             if now_mono - bucket.last_flush < window_sec:
-                return
+                return True
             flush_tags = dict(bucket.tags or {})
             flush_tags.update(
                 {
@@ -187,13 +219,12 @@ def log_metric(
             bucket.min_val = None
             bucket.max_val = None
             bucket.last_flush = now_mono
-            _write_payload(payload, metric)
-            return
+            return _write_payload(payload, metric)
 
     if metric in _SAMPLE_METRICS or _match_prefix(metric, _SAMPLE_PREFIXES):
         last = _LAST_SAMPLE_TS.get(metric)
         if last is not None and now_mono - last < _SAMPLE_EVERY_SEC:
-            return
+            return True
         _LAST_SAMPLE_TS[metric] = now_mono
 
     payload = {
@@ -203,4 +234,4 @@ def log_metric(
         "tags": json.dumps(tags or {}, ensure_ascii=True),
     }
     with _LOCK:
-        _write_payload(payload, metric)
+        return _write_payload(payload, metric)

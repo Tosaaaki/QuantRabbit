@@ -8,6 +8,34 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-20（追記）分析メトリクス書き込みの lock 耐性を強化
+
+- 対象:
+  - `utils/metrics_logger.py`
+  - `scripts/publish_range_mode.py`
+  - `ops/env/quant-v2-runtime.env`
+  - `config/env.example.toml`
+  - `docs/OBSERVABILITY.md`
+- 変更:
+  - `metrics_logger` の SQLite 書き込みを 2 回固定リトライから可変リトライへ拡張。
+    - `METRICS_DB_BUSY_TIMEOUT_MS`（既定 5000ms）
+    - `METRICS_DB_WRITE_RETRIES`（既定 6）
+    - `METRICS_DB_RETRY_BASE_SLEEP_SEC` / `...MAX_SLEEP_SEC`
+  - lock 時は指数バックオフで再試行し、最終失敗時は `metric/reason/attempts/db` を debug ログへ記録。
+  - `log_metric()` が書き込み可否を返すようにし、
+    `publish_range_mode` で write 失敗時は `logged active=...` を出さず
+    `metric_write_failed` を warning 記録するよう修正。
+  - runtime env に上記 `METRICS_DB_*` を追加して VM 既定値を固定。
+- 背景（VM実測）:
+  - `quant-range-metrics.service` は `logged active=...` を出力していたが、
+    `logs/metrics.db` の `range_mode_active` が `2026-02-20T08:01:40Z` で停滞。
+  - 同条件で手動実行すると
+    `DEBUG: [metrics] drop metric=range_mode_active due to lock: database is locked`
+    を再現。
+- 意図:
+  - 分析ワーカーが「処理成功ログを出しているのに DB 反映されない」状態を防ぎ、
+    監視指標の欠落を可視化しつつ書き込み成功率を引き上げる。
+
 ### 2026-02-20（追記）内部リプレイ精度ゲートを backend 切替対応で標準化
 
 - 対象:

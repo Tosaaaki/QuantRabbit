@@ -276,7 +276,13 @@ def main() -> None:
         tags["age_sec"] = int(age_sec)
     if stale_reason:
         tags["stale"] = stale_reason
-    log_metric("range_mode_active", 1.0 if range_ctx.active else 0.0, tags=tags, ts=now)
+    written = log_metric("range_mode_active", 1.0 if range_ctx.active else 0.0, tags=tags, ts=now)
+    if not written:
+        logging.warning(
+            "[range_metric] metric_write_failed metric=range_mode_active db=%s",
+            os.getenv("METRICS_DB_PATH", "logs/metrics.db"),
+        )
+        return
     logging.info(
         "[range_metric] logged active=%s source=%s reason=%s",
         range_ctx.active,
