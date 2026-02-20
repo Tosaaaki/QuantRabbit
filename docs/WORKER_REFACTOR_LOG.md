@@ -3610,3 +3610,28 @@
 - 目的:
   - 内部テストの「精度」を、戦略性能評価として意味のある条件
     （ゼロ件折り畳みを避けた条件）へ戻す。
+
+### 2026-02-20（追記）service mode worker の pre-service orders ログ抑止
+
+- 背景（VM実測）:
+  - `database is locked` は `quant-order-manager` 単体ではなく、
+    `quant-scalp-ping-5s-flow` / `quant-scalp-ping-5s-b` /
+    `quant-scalp-rangefader` など複数 worker から同時発生していた。
+  - 解析の結果、service mode worker でも `market_order` の
+    pre-service 段 (`entry_probability_reject` / `probability_scaled`) で
+    `orders.db` へ直接書き込みが走り、主ライターと競合していた。
+- 実施:
+  - `execution/order_manager.py`
+    - `ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE`（default: `0`）を追加。
+    - `_should_persist_preservice_order_log()` を追加し、
+      service mode (`ORDER_MANAGER_SERVICE_ENABLED=1` かつ service URL 有効) では
+      pre-service の `orders.db` 記録を既定で抑止。
+    - 対象: `entry_probability_reject` / `probability_scaled` の pre-service log。
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE=0` を明示。
+  - テスト:
+    - `tests/execution/test_order_manager_log_retry.py`
+      に service mode 時の pre-service ログ抑止ケースを追加。
+- 目的:
+  - `quant-order-manager` を `orders.db` の主ライターに寄せ、
+    複数 worker 同時書き込みによる lock 競合を低減する。
