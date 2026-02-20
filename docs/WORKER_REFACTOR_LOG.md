@@ -3524,3 +3524,25 @@
 - 目的:
   - service 起動時の env 上書き順による設定逆戻りを防ぎ、
     lock 耐性設定を本番実行値へ確実に反映する。
+
+### 2026-02-20（追記）replay_quality_gate_main の精度補正（intraday 既定OFF）
+
+- 背景（VM実測）:
+  - `config/replay_quality_gate_main.yaml` を既定の
+    `intraday_start_utc=00:00:00` / `intraday_end_utc=06:00:00`
+    で回すと、`exclude_end_of_replay=true` の影響で
+    close が `end_of_replay` 側へ寄り、`trade_count=0` fold が連発。
+  - 同一コードでもフルデイ再生では約定が出るケースが確認され、
+    判定の歪みは戦略品質ではなく評価窓設定に起因すると判断。
+- 実施:
+  - `config/replay_quality_gate_main.yaml`
+    - `intraday_start_utc` / `intraday_end_utc` の既定を空文字へ変更（既定OFF）。
+    - `main_only` 既定を `false` に変更し、主経路限定の見落としを回避。
+  - `docs/REPLAY_STANDARD.md`
+    - intraday 既定OFF方針と、
+      `exclude_end_of_replay` 併用時の `trade_count=0` リスクを明記。
+  - `docs/ARCHITECTURE.md`
+    - replay 品質ゲート節へ同注意点を反映。
+- 目的:
+  - 内部テストの「精度」を、戦略性能評価として意味のある条件
+    （ゼロ件折り畳みを避けた条件）へ戻す。

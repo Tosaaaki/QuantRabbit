@@ -119,6 +119,10 @@ class OrderIntent(BaseModel):
   - `exit_workers_main` → `scripts/replay_exit_workers.py`
 - `exit_workers_main` では `replay.intraday_start_utc` / `replay.intraday_end_utc` を指定すると、
   ファイル名の日付（`YYYYMMDD`）に合わせて日内 UTC 窓を自動適用できる。
+- `config/replay_quality_gate_main.yaml` はデフォルトで intraday 窓を無効化し、
+  フルデイ再生を品質ゲートの基準とする。
+- `exclude_end_of_replay=true` と短い intraday 窓の組み合わせは、
+  close の大半が `end_of_replay` となり `trade_count=0` を作りやすい点に注意。
 - `replay.main_only=true` で main 戦略（TrendMA/BB_RSI）経路の再生に限定できる。
 - 判定指標: `trade_count`, `profit_factor`, `win_rate`, `total_pips`, `max_drawdown_pips`, `pf_stability_ratio`。
 - 閾値管理: `config/replay_quality_gate*.yaml`（`gates.default` + `gates.workers.<worker>`）。

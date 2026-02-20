@@ -38,6 +38,11 @@ python scripts/replay_exit_workers_groups.py \
 - 閾値は `config/replay_quality_gate*.yaml` の `gates.default` と `gates.workers` で管理する。
 - `exit_workers_main` は `replay.intraday_start_utc` / `replay.intraday_end_utc` を指定すると、
   tick ファイル名の日付（`YYYYMMDD`）に対して日内 UTC 時間帯を自動適用できる。
+- `config/replay_quality_gate_main.yaml` の既定は intraday 無効（空文字）として扱い、
+  フルデイ再生で品質ゲートを判定する。
+- `exclude_end_of_replay=true` のまま短い intraday 窓を使うと、
+  close が `end_of_replay` のみになって `trade_count=0` に寄る場合がある。
+  窓を使う場合はこの挙動を前提に評価する。
 - `exit_workers_main` で `replay.main_only=true` を使うと、
   TrendMA/BB_RSI の main 経路だけを再生し、scalp replay 経路を省略できる（高速化向け）。
 - `replay_exit_workers` は replay 実行時に `factor_cache` のディスク永続化を無効化する。
