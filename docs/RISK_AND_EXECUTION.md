@@ -92,6 +92,18 @@
   - flowタグが `SCALP_PING_5S` に正規化されると、
     flow専用 `PERF_GUARD_*` が効かず、意図せず stale closeout block が継続するため。
 
+### orders.db ログ運用補足（lock耐性）
+- `execution/order_manager.py` の orders logger は lock 検知時に
+  `ORDER_DB_LOG_RETRY_*` の短時間 backoff 再試行を行う。
+- 既定運用値:
+  - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
+  - `ORDER_DB_LOG_RETRY_ATTEMPTS=3`
+  - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.03`
+  - `ORDER_DB_LOG_RETRY_BACKOFF=2.0`
+  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.20`
+- 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
+  発注可否ロジック（perf/risk/policy/coordination）には影響しない。
+
 ### scalp_macd_rsi_div 運用補足（legacy tag 互換）
 - `quant-scalp-macd-rsi-div-exit` は `SCALP_PRECISION_EXIT_TAGS=scalp_macd_rsi_div_live` で運用する。
 - `workers/scalp_macd_rsi_div.exit_worker` では

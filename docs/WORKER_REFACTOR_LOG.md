@@ -3380,3 +3380,29 @@
 - 目的:
   - service 経路と local fallback 経路で同一の perf_guard 判定を維持し、
     timeout 時だけ stale closeout 判定へ戻る不整合を排除する。
+
+### 2026-02-20（追記）orders.db ロック耐性の強化（order_manager）
+
+- 背景（VM実測）:
+  - `quant-order-manager` / strategy worker の双方で
+    `[ORDER][LOG] failed to persist orders log: database is locked` が散発。
+  - lock 発生時に orders ログが欠損し、service timeout 時の原因追跡が難化していた。
+- 実施:
+  - `execution/order_manager.py`
+    - orders logger の `busy_timeout` デフォルトを `250ms -> 1500ms` に変更。
+    - `database is locked/busy` を検知した場合のみ、短い backoff 付き再試行
+      （`ORDER_DB_LOG_RETRY_*`）を実装。
+    - lock 時は接続をリセットして再試行し、最終失敗時のみ warning を残す。
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
+    - `ORDER_DB_LOG_RETRY_ATTEMPTS=3`
+    - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.03`
+    - `ORDER_DB_LOG_RETRY_BACKOFF=2.0`
+    - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.20`
+  - テスト:
+    - `tests/execution/test_order_manager_log_retry.py` を追加。
+      - lock 1回で再試行成功
+      - retry 上限到達時に warning
+- 目的:
+  - 高頻度発注時の SQLite write 競合で orders 監査ログが落ちる経路を縮小し、
+    実運用での可観測性を維持する。

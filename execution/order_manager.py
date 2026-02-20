@@ -2656,9 +2656,8 @@ def _manual_net_units(positions: Optional[dict] = None) -> tuple[int, int]:
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
 _ORDER_DB_JOURNAL_MODE = os.getenv("ORDER_DB_JOURNAL_MODE", "WAL")
 _ORDER_DB_SYNCHRONOUS = os.getenv("ORDER_DB_SYNCHRONOUS", "NORMAL")
-# Keep order logging non-blocking in hot paths; long DB waits can cascade into
-# coordinate_entry_intent timeouts and delayed direction flips.
-_ORDER_DB_BUSY_TIMEOUT_MS = int(os.getenv("ORDER_DB_BUSY_TIMEOUT_MS", "250"))
+# Keep order logging responsive while tolerating short write contention bursts.
+_ORDER_DB_BUSY_TIMEOUT_MS = int(os.getenv("ORDER_DB_BUSY_TIMEOUT_MS", "1500"))
 _ORDER_DB_WAL_AUTOCHECKPOINT_PAGES = int(
     os.getenv("ORDER_DB_WAL_AUTOCHECKPOINT_PAGES", "500")
 )
@@ -2674,6 +2673,18 @@ _ORDER_DB_CHECKPOINT_INTERVAL_SEC = float(
 )
 _ORDER_DB_CHECKPOINT_MIN_WAL_BYTES = int(
     os.getenv("ORDER_DB_CHECKPOINT_MIN_WAL_BYTES", "33554432")
+)
+_ORDER_DB_LOG_RETRY_ATTEMPTS = max(
+    1, int(os.getenv("ORDER_DB_LOG_RETRY_ATTEMPTS", "3"))
+)
+_ORDER_DB_LOG_RETRY_SLEEP_SEC = max(
+    0.0, float(os.getenv("ORDER_DB_LOG_RETRY_SLEEP_SEC", "0.03"))
+)
+_ORDER_DB_LOG_RETRY_BACKOFF = max(
+    1.0, float(os.getenv("ORDER_DB_LOG_RETRY_BACKOFF", "2.0"))
+)
+_ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC = max(
+    0.0, float(os.getenv("ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC", "0.20"))
 )
 _ORDERS_DB_WAL_PATH = _ORDERS_DB_PATH.with_suffix(_ORDERS_DB_PATH.suffix + "-wal")
 _LAST_ORDER_DB_CHECKPOINT = 0.0
@@ -2822,6 +2833,27 @@ def _orders_con() -> sqlite3.Connection:
     except NameError:
         _ORDERS_CON = _ensure_orders_schema()
         return _ORDERS_CON
+
+
+def _reset_orders_con() -> None:
+    con = globals().get("_ORDERS_CON")
+    if con is None:
+        return
+    try:
+        con.close()
+    except Exception:
+        pass
+    try:
+        del globals()["_ORDERS_CON"]
+    except Exception:
+        pass
+
+
+def _is_sqlite_locked_error(exc: Exception) -> bool:
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    msg = str(exc).strip().lower()
+    return "locked" in msg or "busy" in msg
 
 
 def _ensure_utc(candidate: Optional[datetime]) -> datetime:
@@ -4396,41 +4428,69 @@ def _log_order(
     request_payload: Optional[dict] = None,
     response_payload: Optional[dict] = None,
 ) -> None:
-    try:
-        con = _orders_con()
-        ts = datetime.now(timezone.utc).isoformat()
-        con.execute(
-            """
-            INSERT INTO orders (
-              ts, pocket, instrument, side, units, sl_price, tp_price,
-              client_order_id, status, attempt, stage_index, ticket_id, executed_price,
-              error_code, error_message, request_json, response_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ts,
-                pocket,
-                instrument,
-                side,
-                int(units) if units is not None else None,
-                float(sl_price) if sl_price is not None else None,
-                float(tp_price) if tp_price is not None else None,
-                client_order_id,
-                status,
-                int(attempt),
-                int(stage_index) if stage_index is not None else None,
-                ticket_id,
-                float(executed_price) if executed_price is not None else None,
-                error_code,
-                error_message,
-                _safe_json(request_payload),
-                _safe_json(response_payload),
-            ),
-        )
-        con.commit()
-        _maybe_checkpoint_orders_db(con)
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+    ts = datetime.now(timezone.utc).isoformat()
+    row_values = (
+        ts,
+        pocket,
+        instrument,
+        side,
+        int(units) if units is not None else None,
+        float(sl_price) if sl_price is not None else None,
+        float(tp_price) if tp_price is not None else None,
+        client_order_id,
+        status,
+        int(attempt),
+        int(stage_index) if stage_index is not None else None,
+        ticket_id,
+        float(executed_price) if executed_price is not None else None,
+        error_code,
+        error_message,
+        _safe_json(request_payload),
+        _safe_json(response_payload),
+    )
+
+    sleep_sec = _ORDER_DB_LOG_RETRY_SLEEP_SEC
+    for attempt_idx in range(_ORDER_DB_LOG_RETRY_ATTEMPTS):
+        con: Optional[sqlite3.Connection] = None
+        try:
+            con = _orders_con()
+            con.execute(
+                """
+                INSERT INTO orders (
+                  ts, pocket, instrument, side, units, sl_price, tp_price,
+                  client_order_id, status, attempt, stage_index, ticket_id, executed_price,
+                  error_code, error_message, request_json, response_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row_values,
+            )
+            con.commit()
+            _maybe_checkpoint_orders_db(con)
+            return
+        except sqlite3.OperationalError as exc:
+            if (
+                _is_sqlite_locked_error(exc)
+                and attempt_idx + 1 < _ORDER_DB_LOG_RETRY_ATTEMPTS
+            ):
+                if con is not None:
+                    try:
+                        con.rollback()
+                    except Exception:
+                        pass
+                _reset_orders_con()
+                delay = min(sleep_sec, _ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC)
+                if delay > 0:
+                    time.sleep(delay)
+                sleep_sec = min(
+                    _ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC,
+                    sleep_sec * _ORDER_DB_LOG_RETRY_BACKOFF,
+                )
+                continue
+            logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+            return
 
 
 def get_last_order_status_by_client_id(
