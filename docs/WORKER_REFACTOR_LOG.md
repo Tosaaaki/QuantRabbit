@@ -58,6 +58,19 @@
 - 意図:
   - main 戦略の walk-forward 品質判定を、不要経路を省いた状態で繰り返し実行できるようにする。
 
+### 2026-02-20（追記）replay 時の `factor_cache` 永続化I/Oを無効化
+
+- 対象:
+  - `scripts/replay_exit_workers.py`
+  - `docs/REPLAY_STANDARD.md`
+- 変更:
+  - replay 初期化 (`_reset_replay_state`) で `factor_cache._persist_cache` /
+    `factor_cache._restore_cache` / `factor_cache.refresh_cache_from_disk` を no-op 化。
+  - replay 走行中に `logs/factor_cache.json` への書き込み/読み戻しを行わないようにした。
+- 意図:
+  - replay 実行時間を支配していたディスクI/Oを除去し、
+    quality gate の評価ランを安定実行できる状態にする。
+
 ### 2026-02-20（追記）`scalp_ping_5s_flow_live` の stale margin_closeout ブロックを短縮
 
 - 対象:

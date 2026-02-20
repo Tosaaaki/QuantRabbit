@@ -40,6 +40,8 @@ python scripts/replay_exit_workers_groups.py \
   tick ファイル名の日付（`YYYYMMDD`）に対して日内 UTC 時間帯を自動適用できる。
 - `exit_workers_main` で `replay.main_only=true` を使うと、
   TrendMA/BB_RSI の main 経路だけを再生し、scalp replay 経路を省略できる（高速化向け）。
+- `replay_exit_workers` は replay 実行時に `factor_cache` のディスク永続化を無効化する。
+  これにより長時間リプレイ時の I/O 競合を避け、再生時間のばらつきを抑える。
 
 ```bash
 python scripts/replay_quality_gate.py \

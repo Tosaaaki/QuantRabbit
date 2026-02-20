@@ -385,7 +385,11 @@ def _reset_replay_state(sim_clock: SimClock) -> None:
             factor_cache._CANDLES[tf].clear()  # type: ignore[index]
         factor_cache._FACTORS.clear()  # type: ignore[attr-defined]
         factor_cache._LAST_REGIME.clear()  # type: ignore[attr-defined]
-        # Use a per-process cache path so parallel replays don't trample each other.
+        # Replay mode must avoid factor_cache disk I/O to keep runs deterministic and fast.
+        factor_cache._persist_cache = lambda: None  # type: ignore[assignment]
+        factor_cache._restore_cache = lambda: False  # type: ignore[assignment]
+        factor_cache.refresh_cache_from_disk = lambda: False  # type: ignore[assignment]
+        # Keep a per-process cache path for any fallback access path.
         factor_cache._CACHE_PATH = Path(f"tmp/factor_cache_exit_replay_{os.getpid()}.json")  # type: ignore[attr-defined]
         factor_cache._LAST_RESTORE_MTIME = float("inf")  # type: ignore[attr-defined]
     except Exception:
