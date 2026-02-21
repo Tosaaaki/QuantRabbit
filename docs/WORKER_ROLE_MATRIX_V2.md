@@ -292,7 +292,7 @@
 - 運用整備（2026-02-21）
   - `execution/reentry_gate.py` の時間帯フィルタ運用として、
     `config/worker_reentry.yaml` に時間帯損失ガードを追加。
-  - `M1Scalper` は `block_jst_hours=[3,5,6]`、`scalp_ping_5s_b_live` は
+  - `M1Scalper` は `block_jst_hours=[3,5,6,20,21,22]`、`scalp_ping_5s_b_live` は
     `block_jst_hours=[3,5,6,20,21,22]` を適用し、
     V2導線を変えずに strategy-tag 単位でエントリー可否のみを制御する。
   - 目的は「共通一律の後付け判定」ではなく、

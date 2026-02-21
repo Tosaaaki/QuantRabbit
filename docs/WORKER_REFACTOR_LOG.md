@@ -3749,7 +3749,7 @@
   - 主因は `scalp_ping_5s_b_live`（20-22時帯）と `M1Scalper-M1`（03/05/06時帯）。
 - 実施:
   - `config/worker_reentry.yaml`
-    - `M1Scalper.block_jst_hours = [3, 5, 6]`
+    - `M1Scalper.block_jst_hours = [3, 5, 6, 20, 21, 22]`
     - `scalp_ping_5s_b_live.block_jst_hours = [3, 5, 6, 20, 21, 22]`
     - `scalp_ping_5s_b_live.return_wait_reason = hourly_pnl_guard_20260221`
 - 目的:
