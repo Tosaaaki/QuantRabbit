@@ -105,6 +105,28 @@
   - V2 構成で欠落していた SLO 観測値の連続性を回復し、
     `policy_guard` / UI スナップショットの判断材料を再び実データ追従に戻す。
 
+### 2026-02-21（追記）`policy_guard` に SLO メトリクス欠損/停滞ガードを追加
+
+- 背景:
+  - 旧実装は `decision_latency_ms` / `data_lag_ms` が lookback 内で欠損しても
+    `violations` に乗らず、guard が「正常」と判定する抜け道があった。
+  - V2 移行時の発行経路断で実際に欠損が起き、監視ガードの盲点が顕在化した。
+- 実施:
+  - `scripts/policy_guard.py`
+    - `collect_violations()` を導入し、違反判定を関数化。
+    - 市場オープン時のみ `decision_latency_ms` / `data_lag_ms` の
+      欠損（`*_missing`）と停滞（`*_stale`）を違反化。
+    - 追加キー:
+      - `POLICY_GUARD_REQUIRE_SLO_METRICS_WHEN_OPEN`（既定: 1）
+      - `POLICY_GUARD_SLO_METRICS_MAX_STALE_SEC`（既定: 900）
+  - `tests/scripts/test_policy_guard.py`
+    - 市場オープン時の欠損/停滞検知、クローズ時の非違反、既存閾値判定の回帰を追加。
+  - `config/env.example.toml`
+    - 新規 env キーを追記。
+- 意図:
+  - 「メトリクスが無いから違反が出ない」状態を解消し、
+    guard が観測欠損そのものを即時に運用リスクとして扱う。
+
 ### 2026-02-20（追記）分析メトリクス書き込みの lock 耐性を強化
 
 - 対象:

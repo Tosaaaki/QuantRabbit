@@ -18,6 +18,7 @@ if ROOT_DIR not in sys.path:
 from analytics.policy_apply import load_policy_snapshot, save_policy_snapshot
 from analytics.policy_ledger import PolicyLedger
 from analytics.policy_diff import utc_now_iso
+from utils.market_hours import is_market_open
 
 
 def _percentile(values: List[float], q: float) -> Optional[float]:
@@ -60,6 +61,30 @@ def _load_metric_values(db_path: Path, metric: str, since_iso: str) -> List[floa
         return values
     except Exception:
         return []
+
+
+def _load_metric_latest_ts(db_path: Path, metric: str) -> Optional[datetime]:
+    if not db_path.exists():
+        return None
+    try:
+        con = sqlite3.connect(db_path)
+        cur = con.execute(
+            "SELECT ts FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+            (metric,),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row or not row[0]:
+            return None
+        raw = str(row[0]).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 def _reject_streak(orders_db: Path, limit: int = 5) -> int:
@@ -110,8 +135,12 @@ def evaluate_slo(
     lookback_min: int,
 ) -> Dict[str, object]:
     since = (datetime.now(timezone.utc) - timedelta(minutes=lookback_min)).isoformat()
-    decision_latency = _percentile(_load_metric_values(metrics_db, "decision_latency_ms", since), 0.95)
-    data_lag = _percentile(_load_metric_values(metrics_db, "data_lag_ms", since), 0.95)
+    decision_latency_values = _load_metric_values(metrics_db, "decision_latency_ms", since)
+    data_lag_values = _load_metric_values(metrics_db, "data_lag_ms", since)
+    decision_latency = _percentile(decision_latency_values, 0.95)
+    data_lag = _percentile(data_lag_values, 0.95)
+    decision_latest_ts = _load_metric_latest_ts(metrics_db, "decision_latency_ms")
+    data_lag_latest_ts = _load_metric_latest_ts(metrics_db, "data_lag_ms")
     drawdown = _load_metric_values(metrics_db, "drawdown_pct", since)
     drawdown_max = max(drawdown) if drawdown else None
     order_success = _load_metric_values(metrics_db, "order_success_rate", since)
@@ -124,12 +153,82 @@ def evaluate_slo(
     return {
         "decision_latency_p95": decision_latency,
         "data_lag_p95": data_lag,
+        "decision_latency_count": len(decision_latency_values),
+        "data_lag_count": len(data_lag_values),
+        "decision_latency_latest_ts": decision_latest_ts.isoformat() if decision_latest_ts else None,
+        "data_lag_latest_ts": data_lag_latest_ts.isoformat() if data_lag_latest_ts else None,
         "drawdown_pct_max": drawdown_max,
         "order_success_min": order_success_min,
         "reject_rate_max": reject_rate_max,
         "gpt_timeout_rate_max": gpt_timeout_max,
         "reject_streak": reject_streak,
     }
+
+
+def _parse_metric_ts(raw: object) -> Optional[datetime]:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def collect_violations(
+    metrics: Dict[str, object],
+    *,
+    max_decision_ms: float,
+    max_data_lag_ms: float,
+    max_drawdown_pct: float,
+    min_order_success: float,
+    max_reject_rate: float,
+    max_gpt_timeout: float,
+    reject_streak_threshold: int,
+    require_slo_metrics_when_open: bool,
+    slo_metrics_max_stale_sec: float,
+    market_open: bool,
+    now_utc: Optional[datetime] = None,
+) -> List[str]:
+    violations: List[str] = []
+    if metrics.get("decision_latency_p95") and metrics["decision_latency_p95"] > max_decision_ms:
+        violations.append("decision_latency_p95")
+    if metrics.get("data_lag_p95") and metrics["data_lag_p95"] > max_data_lag_ms:
+        violations.append("data_lag_p95")
+    if metrics.get("drawdown_pct_max") and metrics["drawdown_pct_max"] > max_drawdown_pct:
+        violations.append("drawdown_pct_max")
+    if metrics.get("order_success_min") is not None and metrics["order_success_min"] < min_order_success:
+        violations.append("order_success_rate")
+    if metrics.get("reject_rate_max") and metrics["reject_rate_max"] > max_reject_rate:
+        violations.append("reject_rate_max")
+    if metrics.get("gpt_timeout_rate_max") and metrics["gpt_timeout_rate_max"] > max_gpt_timeout:
+        violations.append("gpt_timeout_rate_max")
+    if metrics.get("reject_streak", 0) >= reject_streak_threshold:
+        violations.append("reject_streak")
+
+    if require_slo_metrics_when_open and market_open:
+        if now_utc is None:
+            now_utc = datetime.now(timezone.utc)
+        for prefix in ("decision_latency", "data_lag"):
+            count = int(metrics.get(f"{prefix}_count") or 0)
+            latest_dt = _parse_metric_ts(metrics.get(f"{prefix}_latest_ts"))
+            if count <= 0:
+                violations.append(f"{prefix}_missing")
+                continue
+            if latest_dt is None:
+                violations.append(f"{prefix}_missing")
+                continue
+            age_sec = max(0.0, (now_utc - latest_dt).total_seconds())
+            if age_sec > slo_metrics_max_stale_sec:
+                violations.append(f"{prefix}_stale")
+    return violations
 
 
 def main() -> None:
@@ -149,6 +248,16 @@ def main() -> None:
     ap.add_argument("--max-reject-rate", type=float, default=float(os.getenv("POLICY_GUARD_MAX_REJECT_RATE", "0.01")))
     ap.add_argument("--max-gpt-timeout", type=float, default=float(os.getenv("POLICY_GUARD_MAX_GPT_TIMEOUT", "0.05")))
     ap.add_argument("--reject-streak", type=int, default=int(os.getenv("POLICY_GUARD_REJECT_STREAK", "3")))
+    ap.add_argument(
+        "--require-slo-metrics-when-open",
+        type=int,
+        default=int(os.getenv("POLICY_GUARD_REQUIRE_SLO_METRICS_WHEN_OPEN", "1")),
+    )
+    ap.add_argument(
+        "--slo-metrics-max-stale-sec",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_SLO_METRICS_MAX_STALE_SEC", "900")),
+    )
     ap.add_argument("--no-ledger", action="store_true")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
@@ -159,21 +268,19 @@ def main() -> None:
         orders_db=Path(args.orders_db),
         lookback_min=args.lookback_min,
     )
-    violations: List[str] = []
-    if metrics.get("decision_latency_p95") and metrics["decision_latency_p95"] > args.max_decision_ms:
-        violations.append("decision_latency_p95")
-    if metrics.get("data_lag_p95") and metrics["data_lag_p95"] > args.max_data_lag_ms:
-        violations.append("data_lag_p95")
-    if metrics.get("drawdown_pct_max") and metrics["drawdown_pct_max"] > args.max_drawdown_pct:
-        violations.append("drawdown_pct_max")
-    if metrics.get("order_success_min") is not None and metrics["order_success_min"] < args.min_order_success:
-        violations.append("order_success_rate")
-    if metrics.get("reject_rate_max") and metrics["reject_rate_max"] > args.max_reject_rate:
-        violations.append("reject_rate_max")
-    if metrics.get("gpt_timeout_rate_max") and metrics["gpt_timeout_rate_max"] > args.max_gpt_timeout:
-        violations.append("gpt_timeout_rate_max")
-    if metrics.get("reject_streak", 0) >= args.reject_streak:
-        violations.append("reject_streak")
+    violations = collect_violations(
+        metrics,
+        max_decision_ms=args.max_decision_ms,
+        max_data_lag_ms=args.max_data_lag_ms,
+        max_drawdown_pct=args.max_drawdown_pct,
+        min_order_success=args.min_order_success,
+        max_reject_rate=args.max_reject_rate,
+        max_gpt_timeout=args.max_gpt_timeout,
+        reject_streak_threshold=args.reject_streak,
+        require_slo_metrics_when_open=bool(args.require_slo_metrics_when_open),
+        slo_metrics_max_stale_sec=max(1.0, float(args.slo_metrics_max_stale_sec)),
+        market_open=is_market_open(),
+    )
 
     overlay_path = Path(args.overlay_path)
     stable_path = Path(args.stable_path)

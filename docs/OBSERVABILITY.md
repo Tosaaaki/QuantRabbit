@@ -54,6 +54,9 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - V2 実行系では `decision_latency_ms` / `data_lag_ms` は
   `quant-strategy-control`（`workers/strategy_control/worker.py`）が市場オープン時に定期発行する。
   発行間隔は `STRATEGY_CONTROL_SLO_METRICS_INTERVAL_SEC`（既定 10 秒）で調整する。
+- `scripts/policy_guard.py` は市場オープン時に SLO メトリクス欠損/停滞も違反扱いにする。
+  - `POLICY_GUARD_REQUIRE_SLO_METRICS_WHEN_OPEN=1`（既定）
+  - `POLICY_GUARD_SLO_METRICS_MAX_STALE_SEC=900`（既定）
 
 ## 7. metrics.db lock 運用ガード（2026-02-20）
 - `utils/metrics_logger.py` は lock 競合時に指数バックオフ付きで再試行する。
