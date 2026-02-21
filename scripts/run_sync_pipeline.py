@@ -53,6 +53,11 @@ def _env_float(name: str, default: float) -> float:
 
 
 PIPELINE_DB_READ_TIMEOUT_SEC = max(0.5, _env_float("PIPELINE_DB_READ_TIMEOUT_SEC", 3.0))
+BQ_FAILURE_BACKOFF_BASE_SEC = max(5.0, _env_float("BQ_FAILURE_BACKOFF_BASE_SEC", 120.0))
+BQ_FAILURE_BACKOFF_MAX_SEC = max(
+    BQ_FAILURE_BACKOFF_BASE_SEC,
+    _env_float("BQ_FAILURE_BACKOFF_MAX_SEC", 1800.0),
+)
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -630,6 +635,8 @@ def main() -> int:
     pm = PositionManager()
     stop_requested = False
     last_bq_export = 0.0
+    bq_failure_count = 0
+    bq_pause_until = 0.0
     bq_interval = args.bq_interval
     bq_on_new = not args.no_bq_on_new
     last_remote_sync = 0.0
@@ -668,21 +675,47 @@ def main() -> int:
                         run_bq = True
 
                 if run_bq and exporter:
-                    stats = exporter.export(limit=args.limit or _BQ_MAX_EXPORT)
-                    logging.info(
-                        "[PIPELINE] export done rows=%s last_updated=%s",
-                        stats.exported,
-                        stats.last_updated_at,
-                    )
-                    try:
-                        insights = analyzer.run()
-                        logging.info(
-                            "[PIPELINE] lot insights generated=%d",
-                            len(insights),
+                    if now < bq_pause_until:
+                        remaining = max(0.0, bq_pause_until - now)
+                        logging.warning(
+                            "[PIPELINE] BQ export cooldown active; skip for %.1fs (failures=%d)",
+                            remaining,
+                            bq_failure_count,
                         )
-                    except Exception as exc:  # noqa: BLE001
-                        logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
-                    last_bq_export = now
+                    else:
+                        try:
+                            stats = exporter.export(limit=args.limit or _BQ_MAX_EXPORT)
+                            bq_failure_count = 0
+                            bq_pause_until = 0.0
+                            logging.info(
+                                "[PIPELINE] export done rows=%s last_updated=%s",
+                                stats.exported,
+                                stats.last_updated_at,
+                            )
+                            try:
+                                insights = analyzer.run()
+                                logging.info(
+                                    "[PIPELINE] lot insights generated=%d",
+                                    len(insights),
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
+                            last_bq_export = now
+                        except Exception as exc:  # noqa: BLE001
+                            bq_failure_count += 1
+                            power = min(10, max(0, bq_failure_count - 1))
+                            cooldown = min(
+                                BQ_FAILURE_BACKOFF_MAX_SEC,
+                                BQ_FAILURE_BACKOFF_BASE_SEC * (2 ** power),
+                            )
+                            bq_pause_until = time.monotonic() + cooldown
+                            last_bq_export = now
+                            logging.exception(
+                                "[PIPELINE] BQ export failed (failures=%d cooldown=%.1fs): %s",
+                                bq_failure_count,
+                                cooldown,
+                                exc,
+                            )
             except Exception as exc:  # noqa: BLE001
                 logging.exception("[PIPELINE] サイクル失敗: %s", exc)
             if args.once or stop_requested:

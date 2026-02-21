@@ -48,6 +48,10 @@
       を設定し、予測系より低優先度で動作させるよう調整。
   - 変更: `ops/env/quant-v2-runtime.env`
     - `FORECAST_WATCHDOG_*` の運用キーを追加（enabled/timeout/max_fails/cooldown など）。
+    - `BQ_FAILURE_BACKOFF_BASE_SEC` / `BQ_FAILURE_BACKOFF_MAX_SEC` を追加。
+  - 変更: `scripts/run_sync_pipeline.py`
+    - BigQuery export 失敗時に指数バックオフの cooldown を導入し、
+      外部SSL失敗の連発時に `insert_rows_json` を毎サイクル叩かないように修正。
   - 変更: `scripts/deploy_via_metadata.sh`
     - metadata deploy 時の install 対象に forecast watchdog unit を追加。
 - 意図:

@@ -79,6 +79,8 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
   - `FORECAST_WATCHDOG_MAX_FAILS` 連続失敗で `quant-forecast.service` を再起動。
   - 再起動後も不健康なら `FORECAST_WATCHDOG_DISABLE_BQ_ON_ESCALATE=1` 時に
     `quant-bq-sync.service` を停止して forecast 優先で復旧。
+  - `quant-bq-sync` 側は `BQ_FAILURE_BACKOFF_BASE_SEC` / `BQ_FAILURE_BACKOFF_MAX_SEC`
+    で export 失敗時の cooldown を持ち、外部SSL失敗の連発時は自動的に再送を間引く。
 - 監査コマンド:
   - `systemctl status quant-forecast-watchdog.timer quant-forecast-watchdog.service`
   - `journalctl -u quant-forecast-watchdog.service -n 100 --no-pager`
