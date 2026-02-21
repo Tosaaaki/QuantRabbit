@@ -289,6 +289,14 @@
     非レンジ時の含み損向け `non_range_max_hold_sec` を追加。
   - 新ルールは `RANGEFADER_EXIT_NEW_POLICY_START_TS` 以降の新規建玉に限定し、
     既存建玉には適用しない。
+- 運用整備（2026-02-21）
+  - `execution/reentry_gate.py` の時間帯フィルタ運用として、
+    `config/worker_reentry.yaml` に時間帯損失ガードを追加。
+  - `M1Scalper` は `block_jst_hours=[3,5,6]`、`scalp_ping_5s_b_live` は
+    `block_jst_hours=[3,5,6,20,21,22]` を適用し、
+    V2導線を変えずに strategy-tag 単位でエントリー可否のみを制御する。
+  - 目的は「共通一律の後付け判定」ではなく、
+    既存ガード導線（order_manager preflight）内での時間帯リスク制御。
 
 ## 監査用更新プロトコル（毎回）
 

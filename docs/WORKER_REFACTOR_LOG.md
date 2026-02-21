@@ -3740,3 +3740,18 @@
 - 目的:
   - 低サンプル日による偽陰性 fail を減らし、
     内部テストを「戦略品質の判定」へ寄せる。
+
+### 2026-02-21（追記）時間帯損失の即時ブロック（worker_reentry）
+
+- 背景（VM実測, JST）:
+  - `2026-02-20 20:00/21:00/22:00` は合計 `-927.1 JPY`（`-259.0 pips`）。
+  - `2026-02-21 03:00/05:00/06:00` は合計 `-232.6 JPY`（`-34.7 pips`）。
+  - 主因は `scalp_ping_5s_b_live`（20-22時帯）と `M1Scalper-M1`（03/05/06時帯）。
+- 実施:
+  - `config/worker_reentry.yaml`
+    - `M1Scalper.block_jst_hours = [3, 5, 6]`
+    - `scalp_ping_5s_b_live.block_jst_hours = [3, 5, 6, 20, 21, 22]`
+    - `scalp_ping_5s_b_live.return_wait_reason = hourly_pnl_guard_20260221`
+- 目的:
+  - 直近で損失集中した JST 時間帯のエントリーを `reentry_gate` で停止し、
+    1時間あたり収益の下振れを即時抑制する。
