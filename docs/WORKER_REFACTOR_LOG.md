@@ -3777,3 +3777,36 @@
 - 目的:
   - 直近で損失集中した JST 時間帯のエントリーを `reentry_gate` で停止し、
     1時間あたり収益の下振れを即時抑制する。
+
+### 2026-02-21（追記）`scalp_ping_5s_b_live` 逆方向抑制（short厳格化）
+
+- 背景（VM実測, 直近7日）:
+  - `scalp_ping_5s_b_live` の side 別成績は
+    - `long`: `n=1979`, `pl_pips=-96.4`, `realized_pl=+1060.0`
+    - `short`: `n=1688`, `pl_pips=-4129.6`, `realized_pl=-34378.3`
+  - `extrema_reversal_applied=1` かつ `short` は
+    `n=136`, `pl_pips=-299.7`, `realized_pl=-2665.1` で、
+    `long->short` 反転の寄与が負側に偏っていた。
+- 実施:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=0`（B既定へ復帰）
+    - short 判定を厳格化:
+      - `SHORT_MIN_TICKS=4`
+      - `SHORT_MIN_SIGNAL_TICKS=4`
+      - `SHORT_MIN_TICK_RATE=0.62`
+      - `SHORT_MOMENTUM_TRIGGER_PIPS=0.11`
+    - 方向/逆行ガード強化:
+      - `DIRECTION_BIAS_BLOCK_SCORE=0.52`
+      - `DIRECTION_BIAS_OPPOSITE_UNITS_MULT=0.60`
+      - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.42`
+      - `SIDE_BIAS_SCALE_GAIN=0.50`
+      - `SIDE_BIAS_SCALE_FLOOR=0.18`
+      - `SIDE_BIAS_BLOCK_THRESHOLD=0.30`
+    - 確率整合ペナルティ強化:
+      - `ENTRY_PROBABILITY_ALIGN_PENALTY_MAX=0.55`
+      - `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.32`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER=0.24`
+      - `ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT=0.45`
+- 目的:
+  - 戦略自体は残しつつ、逆方向（特に short 側）の誤エントリー頻度と
+    逆行時の平均サイズを同時に抑える。

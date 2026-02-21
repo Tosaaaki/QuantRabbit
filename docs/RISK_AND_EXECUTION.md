@@ -67,6 +67,24 @@
   - extrema reversal は B既定で `long -> short` を無効化
     （`EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=0`）し、
     `long_top_soft_reverse` クラスタの誤反転を抑制する。
+- 2026-02-21 追記（逆方向抑制）:
+  - `short` 側の誤エントリー抑制を優先し、Bローカルで short 判定閾値を厳格化:
+    - `SHORT_MIN_TICKS=4`
+    - `SHORT_MIN_SIGNAL_TICKS=4`
+    - `SHORT_MIN_TICK_RATE=0.62`
+    - `SHORT_MOMENTUM_TRIGGER_PIPS=0.11`
+  - 方向逆行時のサイズ抑制を強化:
+    - `DIRECTION_BIAS_BLOCK_SCORE=0.52`
+    - `DIRECTION_BIAS_OPPOSITE_UNITS_MULT=0.60`
+    - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.42`
+    - `SIDE_BIAS_SCALE_GAIN=0.50`
+    - `SIDE_BIAS_SCALE_FLOOR=0.18`
+    - `SIDE_BIAS_BLOCK_THRESHOLD=0.30`
+  - `entry_probability` の counter 罰則を強め、counter 優勢局面のサイズを縮小:
+    - `ENTRY_PROBABILITY_ALIGN_PENALTY_MAX=0.55`
+    - `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.32`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER=0.24`
+    - `ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT=0.45`
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、
