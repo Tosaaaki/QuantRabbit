@@ -294,6 +294,19 @@ python3 scripts/eval_forecast_before_after.py \
 `1m` はほぼ同等を維持しつつ、`5m/10m` で `hit` と `MAE` を同時改善するため、
 運用値は上記に更新しています。
 
+同日 2026-02-21 の追加最適化（narrow grid, 96候補）で、上記 cand_c からさらに
+`5m/10m` を押し上げる候補（cand_d2）を採用しました。
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`（維持）
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`（維持）
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.26,10m=0.32`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.26`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`
+
+同一期間比較（`bars=8050`）:
+- `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+- `5m`: `hit_delta=+0.0025`, `mae_delta=-0.0006`, `range_cov_delta=+0.0000`
+- `10m`: `hit_delta=+0.0056`, `mae_delta=-0.0044`, `range_cov_delta=+0.0001`
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

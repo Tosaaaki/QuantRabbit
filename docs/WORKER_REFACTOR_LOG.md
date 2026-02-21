@@ -3992,3 +3992,29 @@
 - 判定:
   - `1m` の hit はほぼ同等（軽微マイナス）を維持しつつ、
     `5m/10m` で `hit` と `MAE` を同時改善したため採用。
+
+### 2026-02-21（追記）forecast 追加最適化（cand_d2, 96候補 narrow grid）
+
+- 背景:
+  - cand_c 適用後も `5m/10m` に上積み余地があるため、同一期間で
+    cand_c 周辺のみを再探索（narrow grid）した。
+- 実施:
+  - データ: `bars=8050`（`2026-01-07T02:54:00+00:00` ～ `2026-02-20T21:59:00+00:00`）
+  - 探索: `feature_gain / breakout_5m,10m / session_5m,10m / rebound_5m` の 96候補
+  - 出力:
+    - `logs/reports/forecast_improvement/forecast_tune_local_narrow_20260221T031535Z.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T031535Z_cand_d2.json`
+    - `logs/reports/forecast_improvement/report_20260221T031535Z_cand_d2.md`
+- 採用値（cand_d2）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.26,10m=0.32`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.26`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`
+- before/after（cand_d2）:
+  - `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+  - `5m`: `hit_delta=+0.0025`, `mae_delta=-0.0006`, `range_cov_delta=+0.0000`
+  - `10m`: `hit_delta=+0.0056`, `mae_delta=-0.0044`, `range_cov_delta=+0.0001`
+- 判定:
+  - cand_c 比で `5m/10m` の `hit` と `MAE` をさらに改善したため、
+    runtime 運用値を cand_d2 へ更新。
