@@ -4126,3 +4126,31 @@
 - 判定:
   - `5m/10m` で hit と MAE を同時改善し、帯域カバレッジも上振れしたため
     runtime 運用値を cand_e1 へ更新。
+
+### 2026-02-21（追記）forecast 1m専用ブースト（cand_e1_1mboost）
+
+- 背景:
+  - `cand_e1` で `5m/10m` は大きく改善した一方、`1m hit` はまだ `0.50` 未満だったため、
+    `1m` のみを追加改善する局所探索を実施。
+- 実施:
+  - 探索:
+    - `logs/reports/forecast_improvement/forecast_tune_1m_only_20260221T063329Z.json`
+    - `b1/rb1/s1` の 90候補（`step=1`）を比較。
+  - VM再検証:
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T064525Z_current_cand_e1.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T064525Z_cand_e1_1mboost.json`
+    - `logs/reports/forecast_improvement/report_20260221T064525Z_cand_e1_1mboost.md`
+- 採用値（cand_e1_1mboost）:
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.16,5m=0.24,10m=0.31`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.14,5m=0.01,10m=0.04`
+  - その他 `cand_e1` パラメータは維持。
+- VM同一期間 before/after（cand_e1_1mboost）:
+  - `1m`: `hit_delta=+0.0002`, `mae_delta=-0.0001`, `range_cov_delta=+0.0005`
+  - `5m`: `hit_delta=+0.0040`, `mae_delta=-0.0015`, `range_cov_delta=+0.0006`
+  - `10m`: `hit_delta=+0.0117`, `mae_delta=-0.0072`, `range_cov_delta=+0.0012`
+- `cand_e1` 比（after-after）:
+  - `1m`: `hit_after +0.0005`, `range_cov_after +0.0003`, `mae_after` はほぼ同等
+  - `5m/10m`: 同等（差分ほぼ 0）
+- 判定:
+  - `5m/10m` を維持したまま `1m` を改善できたため、
+    runtime 運用値を `cand_e1_1mboost` へ更新。

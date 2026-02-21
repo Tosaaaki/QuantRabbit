@@ -348,6 +348,23 @@ VM同一期間比較（`2026-01-07T02:54:00+00:00` ～ `2026-02-20T21:59:00+00:0
 - `5m`: `hit_after +0.0015`, `mae_after -0.0008`, `range_cov_after +0.0006`
 - `10m`: `hit_after +0.0062`, `mae_after -0.0026`, `range_cov_after +0.0009`
 
+同日 2026-02-21 の追加最適化（1m-only grid, 90候補）で、
+`cand_e1` の `5m/10m` を固定したまま `1m` 専用パラメータだけを再探索し、
+`cand_e1_1mboost` を採用しました。
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.16,5m=0.24,10m=0.31`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.14,5m=0.01,10m=0.04`
+- その他 `cand_e1` パラメータは維持
+
+VM同一期間比較（`bars=8050`）:
+- `1m`: `hit_delta=+0.0002`, `mae_delta=-0.0001`, `range_cov_delta=+0.0005`
+- `5m`: `hit_delta=+0.0040`, `mae_delta=-0.0015`, `range_cov_delta=+0.0006`
+- `10m`: `hit_delta=+0.0117`, `mae_delta=-0.0072`, `range_cov_delta=+0.0012`
+
+`cand_e1` 比の after-after 差分:
+- `1m`: `hit_after +0.0005`, `range_cov_after +0.0003`（`mae_after` はほぼ同等）
+- `5m`: 同等
+- `10m`: 同等
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
