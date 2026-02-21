@@ -15,6 +15,9 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from market_data import tick_window
+from utils.market_hours import is_market_open
+from utils.metrics_logger import log_metric
 from workers.common import strategy_control
 
 
@@ -43,6 +46,13 @@ def _env_int(name: str, default: int) -> int:
         return int(float(raw))
     except (TypeError, ValueError):
         return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "on", "yes"}
 
 
 def _snapshot() -> tuple[bool, bool, bool, int]:
@@ -92,9 +102,43 @@ def _sync_from_file(path: Path) -> None:
         )
 
 
+def _latest_tick_lag_ms() -> Optional[float]:
+    try:
+        ticks = tick_window.recent_ticks(seconds=120.0, limit=1)
+    except Exception:
+        return None
+    if not ticks:
+        return None
+    try:
+        epoch = float(ticks[-1].get("epoch"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return max(0.0, (time.time() - epoch) * 1000.0)
+
+
+def _emit_slo_metrics(loop_start_mono: float) -> tuple[Optional[float], float] | None:
+    if not is_market_open():
+        return None
+    data_lag_ms = _latest_tick_lag_ms()
+    if data_lag_ms is not None:
+        log_metric("data_lag_ms", data_lag_ms, tags={"mode": "strategy_control"})
+    decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
+    log_metric(
+        "decision_latency_ms",
+        decision_latency_ms,
+        tags={"mode": "strategy_control"},
+    )
+    return data_lag_ms, decision_latency_ms
+
+
 async def strategy_control_worker() -> None:
     poll_interval_sec = max(1.0, _env_float("STRATEGY_CONTROL_POLL_SEC", 5.0))
     heartbeat_sec = max(30.0, _env_float("STRATEGY_CONTROL_HEARTBEAT_SEC", 60.0))
+    slo_metrics_enabled = _env_bool("STRATEGY_CONTROL_SLO_METRICS_ENABLED", True)
+    slo_metrics_interval_sec = max(
+        poll_interval_sec,
+        _env_float("STRATEGY_CONTROL_SLO_METRICS_INTERVAL_SEC", 10.0),
+    )
     command_path = _env_str("STRATEGY_CONTROL_COMMAND_PATH", "")
     command_mtime: Optional[float] = None
 
@@ -102,8 +146,10 @@ async def strategy_control_worker() -> None:
         strategy_control.sync_env_overrides()
 
     last_heartbeat = time.monotonic() - heartbeat_sec
+    last_slo_metrics = time.monotonic() - slo_metrics_interval_sec
     while True:
-        now = time.monotonic()
+        loop_start = time.monotonic()
+        now = loop_start
         try:
             strategy_control.sync_env_overrides()
 
@@ -128,6 +174,16 @@ async def strategy_control_worker() -> None:
                     total,
                 )
                 last_heartbeat = now
+            if slo_metrics_enabled and now - last_slo_metrics >= slo_metrics_interval_sec:
+                emitted = _emit_slo_metrics(loop_start)
+                if emitted is not None:
+                    data_lag_ms, decision_latency_ms = emitted
+                    LOG.debug(
+                        "[STRATEGY_CONTROL] slo_metrics data_lag_ms=%s decision_latency_ms=%.2f",
+                        f"{data_lag_ms:.1f}" if data_lag_ms is not None else "na",
+                        decision_latency_ms,
+                    )
+                last_slo_metrics = now
         except Exception as exc:
             LOG.warning("[STRATEGY_CONTROL] sync loop error: %s", exc)
 

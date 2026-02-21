@@ -26,6 +26,8 @@
 ## 3. ライフサイクル
 - Startup: `env.toml` 読込 → Secrets 確認 → 各サービス起動。
 - 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+- `quant-strategy-control` は戦略フラグ同期に加えて、市場オープン時に
+  `data_lag_ms` / `decision_latency_ms` を `metrics.db` へ定期発行する（V2 SLO 観測の基準）。
 - `signal_bus` を使う場合は `SIGNAL_GATE_ENABLED=1` 時のみ、戦略ワーカー起点で `signal_bus` enqueue の運用を許可。
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で

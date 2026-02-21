@@ -29,6 +29,8 @@
 - `quant-strategy-control.service`
   - `global_entry_enabled` / `global_exit_enabled` / `global_lock` の集約
   - strategy slug 単位の `entry_enabled` / `exit_enabled` 配信
+  - 市場オープン時に `data_lag_ms` / `decision_latency_ms` を `metrics.db` へ定期発行し、
+    V2 の SLO 観測値を供給する
   - 各戦略のロジックには介入せず、実行可否のガード（`entry_enabled` / `exit_enabled` / `global_lock`）としてのみ働く
 
 ### 3) 戦略実行面（完全1:1）

@@ -57,6 +57,26 @@
 - 意図:
   - `quant-forecast` を本番優先で維持し、補助系（BQ同期）の不調で予測APIが巻き込まれる経路を短時間で自動回復する。
 
+### 2026-02-21（追記）SLOメトリクス発行を `quant-strategy-control` へ再配置
+
+- 背景（VM実測）:
+  - `logs/metrics.db` で `decision_latency_ms` / `data_lag_ms` の最終時刻が
+    2026-02-14 付近で停滞し、`reject_rate` など他指標のみ更新される状態だった。
+  - `main.py` 廃止後、旧 `worker_only_loop` が担っていた SLO 指標発行経路が
+    V2 常駐サービスに移管されていなかった。
+- 実施:
+  - `workers/strategy_control/worker.py`
+    - 市場オープン時のみ `data_lag_ms`（`tick_window` 基準）と
+      `decision_latency_ms`（control loop 処理時間）を定期発行する処理を追加。
+    - 追加キー:
+      - `STRATEGY_CONTROL_SLO_METRICS_ENABLED`（既定: 1）
+      - `STRATEGY_CONTROL_SLO_METRICS_INTERVAL_SEC`（既定: 10）
+  - `tests/workers/test_strategy_control_worker.py`
+    - `data_lag_ms` 算出と市場クローズ時スキップ、発行内容の回帰テストを追加。
+- 意図:
+  - V2 構成で欠落していた SLO 観測値の連続性を回復し、
+    `policy_guard` / UI スナップショットの判断材料を再び実データ追従に戻す。
+
 ### 2026-02-20（追記）分析メトリクス書き込みの lock 耐性を強化
 
 - 対象:

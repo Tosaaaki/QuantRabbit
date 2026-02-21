@@ -51,6 +51,9 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。
 - SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`。
 - Alert: SLO 違反、`healthbeat` 欠損 5min 超、`order reject` 連続 3 件。
+- V2 実行系では `decision_latency_ms` / `data_lag_ms` は
+  `quant-strategy-control`（`workers/strategy_control/worker.py`）が市場オープン時に定期発行する。
+  発行間隔は `STRATEGY_CONTROL_SLO_METRICS_INTERVAL_SEC`（既定 10 秒）で調整する。
 
 ## 7. metrics.db lock 運用ガード（2026-02-20）
 - `utils/metrics_logger.py` は lock 競合時に指数バックオフ付きで再試行する。
