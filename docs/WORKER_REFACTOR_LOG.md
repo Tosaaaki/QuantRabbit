@@ -4090,3 +4090,39 @@
   - `cand_d2` 比で `10m hit` は微減（`+0.0056 -> +0.0055`）だが、
     `10m mae` と `range_cov` を改善し、総合スコア `score_vs_current=+0.000083` を確認。
   - 僅差ながら上積みがあるため runtime を mid_253327 へ更新。
+
+### 2026-02-21（追記）forecast 再最適化（cand_e1, two-stage）
+
+- 背景:
+  - `mid_253327` は改善幅が小さく、`5m/10m` の hit 上積み余地が残っていた。
+  - IAP接続の揺らぎを避けるため、VM取得済みスナップショット（`bars=8050`）で
+    ローカル two-stage 探索（stage1=90候補, stage2=上位12候補）を実施。
+- 実施:
+  - 探索出力:
+    - `logs/reports/forecast_improvement/forecast_tune_two_stage_20260221T053704Z.json`
+  - VM実データ再検証:
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T054555Z_current_mid253327.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T054555Z_cand_e1.json`
+    - `logs/reports/forecast_improvement/report_20260221T054555Z_cand_e1.md`
+- 採用値（cand_e1）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`（維持）
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.24`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.24,10m=0.31`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=160`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=360`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.10`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.29`
+  - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=18`
+  - `FORECAST_TECH_SESSION_BIAS_LOOKBACK=900`
+  - `FORECAST_TECH_REBOUND_WEIGHT=0.07`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.04`
+- VM同一期間 before/after（cand_e1）:
+  - `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+  - `5m`: `hit_delta=+0.0040`, `mae_delta=-0.0015`, `range_cov_delta=+0.0006`
+  - `10m`: `hit_delta=+0.0117`, `mae_delta=-0.0072`, `range_cov_delta=+0.0012`
+- `mid_253327` 比（after-after）:
+  - `5m`: `hit_after +0.0015`, `mae_after -0.0008`, `range_cov_after +0.0006`
+  - `10m`: `hit_after +0.0062`, `mae_after -0.0026`, `range_cov_after +0.0009`
+- 判定:
+  - `5m/10m` で hit と MAE を同時改善し、帯域カバレッジも上振れしたため
+    runtime 運用値を cand_e1 へ更新。

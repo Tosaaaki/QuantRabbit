@@ -324,6 +324,30 @@ python3 scripts/eval_forecast_before_after.py \
 `10m mae`（`-0.0044 -> -0.0046`）と `10m range_cov`（`+0.0001 -> +0.0003`）が改善し、
 総合スコア（`score_vs_current=+0.000083`）で優位だったため runtime を更新。
 
+同日 2026-02-21 の再最適化（two-stage search, VM snapshot `bars=8050`）で、
+`mid_253327` から `5m/10m` の hit を優先して再探索し、`cand_e1` を採用しました。
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`（維持）
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.24`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.24,10m=0.31`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=160`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=360`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.10`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.20,10m=0.29`
+- `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=18`
+- `FORECAST_TECH_SESSION_BIAS_LOOKBACK=900`
+- `FORECAST_TECH_REBOUND_WEIGHT=0.07`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.04`
+
+VM同一期間比較（`2026-01-07T02:54:00+00:00` ～ `2026-02-20T21:59:00+00:00`）:
+- `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+- `5m`: `hit_delta=+0.0040`, `mae_delta=-0.0015`, `range_cov_delta=+0.0006`
+- `10m`: `hit_delta=+0.0117`, `mae_delta=-0.0072`, `range_cov_delta=+0.0012`
+
+`mid_253327` 比の after-after 差分:
+- `1m`: ほぼ同等
+- `5m`: `hit_after +0.0015`, `mae_after -0.0008`, `range_cov_after +0.0006`
+- `10m`: `hit_after +0.0062`, `mae_after -0.0026`, `range_cov_after +0.0009`
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
