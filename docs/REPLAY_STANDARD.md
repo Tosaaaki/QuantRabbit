@@ -86,6 +86,7 @@ python scripts/replay_quality_gate.py \
   - 実行履歴を `logs/replay_quality_gate_history.jsonl` に追記。
   - `tmp/replay_quality_gate/<timestamp>` は `REPLAY_QUALITY_GATE_KEEP_RUNS` 件だけ保持。
 - 主要設定は `ops/env/quant-replay-quality-gate.env` で管理する。
+  - 既定は `config/replay_quality_gate_main.yaml`（archive 併用の walk-forward）を使う。
   - `REPLAY_QUALITY_GATE_CONFIG`
   - `REPLAY_QUALITY_GATE_TIMEOUT_SEC`
   - `REPLAY_QUALITY_GATE_STRICT`
