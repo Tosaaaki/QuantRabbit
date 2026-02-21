@@ -128,6 +128,9 @@ class OrderIntent(BaseModel):
   ファイル名の日付（`YYYYMMDD`）に合わせて日内 UTC 窓を自動適用できる。
 - `config/replay_quality_gate_main.yaml` はデフォルトで intraday 窓を無効化し、
   フルデイ再生を品質ゲートの基準とする。
+- tick 入力は `ticks_globs`（config 配列）または `--ticks-glob` の
+  カンマ区切り複数指定に対応し、複数 root の同日ファイルは basename で重複排除する。
+  重複時はサイズが大きいファイルを優先して採用する。
 - `min_tick_lines` を指定すると、閾値未満の tick ファイルを
   walk-forward 対象から自動除外できる。
 - `exclude_end_of_replay=true` と短い intraday 窓の組み合わせは、

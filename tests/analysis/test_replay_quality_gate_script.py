@@ -129,3 +129,39 @@ def test_filter_tick_files_by_min_lines(tmp_path: Path) -> None:
 
     assert [p.name for p in kept] == [p1.name]
     assert dropped == {p2.name: 1, p3.name: 0}
+
+
+def test_collect_tick_files_deduplicates_by_basename_and_prefers_larger_file(tmp_path: Path) -> None:
+    d1 = tmp_path / "replay"
+    d2 = tmp_path / "archive"
+    d1.mkdir(parents=True, exist_ok=True)
+    d2.mkdir(parents=True, exist_ok=True)
+
+    # Same basename in two roots; archive copy is larger and should be preferred.
+    current = d1 / "USD_JPY_ticks_20260210.jsonl"
+    archive = d2 / "USD_JPY_ticks_20260210.jsonl"
+    other = d2 / "USD_JPY_ticks_20260211.jsonl"
+    current.write_text("a\n", encoding="utf-8")
+    archive.write_text("a\nb\nc\n", encoding="utf-8")
+    other.write_text("a\nb\n", encoding="utf-8")
+
+    tick_files, matched_count, duplicate_count = _module._collect_tick_files(
+        [str(d1 / "USD_JPY_ticks_*.jsonl"), str(d2 / "USD_JPY_ticks_*.jsonl")]
+    )
+
+    assert matched_count == 3
+    assert duplicate_count == 1
+    assert [p.name for p in tick_files] == [
+        "USD_JPY_ticks_20260210.jsonl",
+        "USD_JPY_ticks_20260211.jsonl",
+    ]
+    assert tick_files[0] == archive
+
+
+def test_resolve_ticks_globs_prefers_cli_then_list_then_legacy() -> None:
+    assert _module._resolve_ticks_globs({}, "a/*.jsonl, b/*.jsonl") == ["a/*.jsonl", "b/*.jsonl"]
+    assert _module._resolve_ticks_globs({"ticks_globs": ["x/*.jsonl", "y/*.jsonl"]}, None) == [
+        "x/*.jsonl",
+        "y/*.jsonl",
+    ]
+    assert _module._resolve_ticks_globs({"ticks_glob": "z/*.jsonl"}, None) == ["z/*.jsonl"]

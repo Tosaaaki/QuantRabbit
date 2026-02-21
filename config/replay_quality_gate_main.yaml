@@ -5,7 +5,10 @@
 #   - pocket:<name> (example: pocket:micro)
 #   - source:<name> (example: source:strategy)
 
-ticks_glob: "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
+# Multiple roots are supported; replay + archive are merged and de-duplicated by basename.
+ticks_globs:
+  - "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
+  - "logs/archive/replay.*.dir/USD_JPY/USD_JPY_ticks_*.jsonl"
 # Ignore low-sample/partial tick days to avoid false fold failures.
 min_tick_lines: 50000
 

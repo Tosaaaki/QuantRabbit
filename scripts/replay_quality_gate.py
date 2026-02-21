@@ -115,6 +115,58 @@ def _filter_tick_files_by_min_lines(
     return kept, dropped
 
 
+def _split_csv_patterns(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    return [token.strip() for token in str(raw_value).split(",") if token.strip()]
+
+
+def _resolve_ticks_globs(config: Mapping[str, Any], cli_ticks_glob: str | None) -> list[str]:
+    cli_patterns = _split_csv_patterns(cli_ticks_glob)
+    if cli_patterns:
+        return cli_patterns
+
+    raw_globs = config.get("ticks_globs")
+    if isinstance(raw_globs, list):
+        cfg_patterns = [str(v).strip() for v in raw_globs if str(v).strip()]
+        if cfg_patterns:
+            return cfg_patterns
+
+    legacy = str(config.get("ticks_glob") or "").strip()
+    return [legacy] if legacy else []
+
+
+def _stat_size(path: Path) -> int:
+    try:
+        return int(path.stat().st_size)
+    except Exception:
+        return -1
+
+
+def _collect_tick_files(
+    ticks_globs: list[str],
+) -> tuple[list[Path], int, int]:
+    matched: list[Path] = []
+    for pattern in ticks_globs:
+        matched.extend(Path(p) for p in sorted(glob(pattern)) if Path(p).is_file())
+
+    matched_tick_file_count = len(matched)
+    by_name: dict[str, Path] = {}
+    for path in matched:
+        current = by_name.get(path.name)
+        if current is None:
+            by_name[path.name] = path
+            continue
+        current_size = _stat_size(current)
+        candidate_size = _stat_size(path)
+        if candidate_size > current_size or (candidate_size == current_size and str(path) > str(current)):
+            by_name[path.name] = path
+
+    deduped_tick_files = [by_name[name] for name in sorted(by_name.keys())]
+    duplicate_tick_file_count = max(0, matched_tick_file_count - len(deduped_tick_files))
+    return deduped_tick_files, matched_tick_file_count, duplicate_tick_file_count
+
+
 def _resolve_workers(config: Mapping[str, Any], cli_workers: str | None) -> list[str]:
     if cli_workers:
         return [w.strip() for w in cli_workers.split(",") if w.strip()]
@@ -392,7 +444,11 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Replay walk-forward quality gate")
     ap.add_argument("--config", type=Path, default=Path("config/replay_quality_gate.yaml"))
-    ap.add_argument("--ticks-glob", default=None, help="Glob pattern for replay tick JSONL files.")
+    ap.add_argument(
+        "--ticks-glob",
+        default=None,
+        help="Glob pattern(s) for replay tick JSONL files. Use comma-separated patterns for multiple roots.",
+    )
     ap.add_argument("--workers", default=None, help="Comma separated worker names.")
     ap.add_argument("--backend", default=None, choices=("exit_workers_groups", "exit_workers_main"))
     ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_quality_gate"))
@@ -415,16 +471,17 @@ def main() -> int:
         print("No workers specified. Use --workers or config.replay_quality_gate.yaml:workers", file=sys.stderr)
         return 2
 
-    ticks_glob = args.ticks_glob or str(config.get("ticks_glob") or "")
-    if not ticks_glob:
-        print("No ticks_glob specified. Use --ticks-glob or config file.", file=sys.stderr)
+    ticks_globs = _resolve_ticks_globs(config, args.ticks_glob)
+    if not ticks_globs:
+        print("No ticks_glob(s) specified. Use --ticks-glob or config file.", file=sys.stderr)
         return 2
 
-    tick_files = [Path(p) for p in sorted(glob(ticks_glob)) if Path(p).is_file()]
-    matched_tick_file_count = len(tick_files)
+    tick_files, matched_tick_file_count, duplicate_tick_file_count = _collect_tick_files(ticks_globs)
     if not tick_files:
-        print(f"No tick files matched: {ticks_glob}", file=sys.stderr)
+        print(f"No tick files matched: {','.join(ticks_globs)}", file=sys.stderr)
         return 2
+    if duplicate_tick_file_count > 0:
+        print(f"[INFO] deduplicated tick files by basename: duplicates={duplicate_tick_file_count}")
 
     min_tick_lines = max(
         0,
@@ -600,9 +657,12 @@ def main() -> int:
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "config_path": str(args.config),
-            "ticks_glob": ticks_glob,
+            "ticks_glob": ",".join(ticks_globs),
+            "ticks_globs": list(ticks_globs),
             "backend": backend,
             "matched_tick_file_count": matched_tick_file_count,
+            "deduped_tick_file_count": len(tick_files) + len(filtered_out_files),
+            "duplicate_tick_file_count": duplicate_tick_file_count,
             "tick_file_count": len(tick_files),
             "min_tick_lines": min_tick_lines,
             "filtered_out_files": filtered_out_files,

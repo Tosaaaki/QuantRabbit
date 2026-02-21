@@ -40,6 +40,12 @@ python scripts/replay_exit_workers_groups.py \
   tick ファイル名の日付（`YYYYMMDD`）に対して日内 UTC 時間帯を自動適用できる。
 - `config/replay_quality_gate_main.yaml` の既定は intraday 無効（空文字）として扱い、
   フルデイ再生で品質ゲートを判定する。
+- `replay_quality_gate.py` は `ticks_globs`（config 配列）または
+  `--ticks-glob` のカンマ区切り複数指定を受け付ける。
+  複数 root を使う場合は basename（`USD_JPY_ticks_YYYYMMDD.jsonl`）で重複を解消し、
+  よりサイズが大きいファイルを優先する。
+- `replay_quality_gate_main.yaml` 既定は
+  `logs/replay` と `logs/archive/replay.*.dir` の両方を参照する。
 - `min_tick_lines`（main config 既定: `50000`）未満の tick ファイルは
   walk-forward 対象から自動除外される。
 - `exclude_end_of_replay=true` のまま短い intraday 窓を使うと、
@@ -62,7 +68,7 @@ python scripts/replay_quality_gate.py \
 ```bash
 python scripts/replay_quality_gate.py \
   --config config/replay_quality_gate_main.yaml \
-  --ticks-glob "logs/replay/USD_JPY/USD_JPY_ticks_202602*.jsonl" \
+  --ticks-glob "logs/replay/USD_JPY/USD_JPY_ticks_202602*.jsonl,logs/archive/replay.*.dir/USD_JPY/USD_JPY_ticks_202602*.jsonl" \
   --strict
 ```
 

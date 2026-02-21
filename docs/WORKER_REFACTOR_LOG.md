@@ -3767,6 +3767,33 @@
   - 低サンプル日による偽陰性 fail を減らし、
     内部テストを「戦略品質の判定」へ寄せる。
 
+### 2026-02-21（追記）replay_quality_gate の複数 root 自動収集（archive 含む）
+
+- 背景（VM実測）:
+  - `logs/replay` はログローテーション後に最新日しか残らないことがあり、
+    walk-forward が `fold=1` まで縮退しやすかった。
+  - 実際の評価では `logs/archive/replay.*.dir` に十分な日数が残っており、
+    手動で `--ticks-glob` を差し替える運用が必要になっていた。
+- 実施:
+  - `scripts/replay_quality_gate.py`
+    - `ticks_globs`（config配列）を追加し、`--ticks-glob` は
+      カンマ区切り複数 pattern に対応。
+    - 複数 root の同日ファイル（同 basename）は自動で重複排除し、
+      サイズが大きいファイルを優先。
+    - report `meta` に `ticks_globs` / `deduped_tick_file_count` /
+      `duplicate_tick_file_count` を追加。
+  - `config/replay_quality_gate_main.yaml`
+    - 既定 source を `logs/replay` + `logs/archive/replay.*.dir` の
+      2 root に更新。
+  - テスト:
+    - `tests/analysis/test_replay_quality_gate_script.py`
+      に重複解消（サイズ優先）と `ticks_globs` 解決順の単体テストを追加。
+  - ドキュメント:
+    - `docs/REPLAY_STANDARD.md` / `docs/ARCHITECTURE.md` を更新。
+- 目的:
+  - 運用時に手動で glob を差し替えずに、十分な fold 数を確保した
+    内部精度ゲートを継続実行できるようにする。
+
 ### 2026-02-21（追記）時間帯損失の即時ブロック（worker_reentry）
 
 - 背景（VM実測, JST）:
