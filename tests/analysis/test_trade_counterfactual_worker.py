@@ -23,6 +23,11 @@ def _cfg(tmp_path: Path, **kwargs: object) -> worker.ReviewConfig:
         boost_factor=0.3,
         jst_offset_hours=9,
         top_k=20,
+        oos_enabled=True,
+        oos_min_folds=2,
+        oos_min_action_match_ratio=0.6,
+        oos_min_positive_ratio=0.6,
+        oos_min_lb_uplift_pips=0.0,
     )
     return worker.ReviewConfig(**{**base.__dict__, **kwargs})
 
@@ -81,6 +86,34 @@ def test_recommendations_skip_low_fold_consistency(tmp_path: Path) -> None:
         _sample("2026-02-03", +1.0, ticket="b6"),
         _sample("2026-02-04", -1.0, ticket="b7"),
         _sample("2026-02-04", +1.0, ticket="b8"),
+    ]
+
+    recs = worker._build_recommendations(rows, cfg)
+    assert recs == []
+
+
+def test_recommendations_skip_when_oos_positive_ratio_low(tmp_path: Path) -> None:
+    cfg = _cfg(
+        tmp_path,
+        min_samples=4,
+        fold_count=4,
+        min_fold_samples=1,
+        min_fold_consistency=0.5,
+        oos_enabled=True,
+        oos_min_folds=3,
+        oos_min_action_match_ratio=0.5,
+        oos_min_positive_ratio=0.8,
+        oos_min_lb_uplift_pips=0.0,
+    )
+    rows = [
+        _sample("2026-02-01", -1.2, ticket="c1"),
+        _sample("2026-02-01", -0.8, ticket="c2"),
+        _sample("2026-02-02", -1.1, ticket="c3"),
+        _sample("2026-02-02", -0.9, ticket="c4"),
+        _sample("2026-02-03", +1.4, ticket="c5"),
+        _sample("2026-02-03", +1.1, ticket="c6"),
+        _sample("2026-02-04", -1.0, ticket="c7"),
+        _sample("2026-02-04", +0.9, ticket="c8"),
     ]
 
     recs = worker._build_recommendations(rows, cfg)

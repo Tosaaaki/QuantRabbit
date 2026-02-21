@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-21（追記）反実仮想レビューに疑似OOS確実性ゲートを追加
+
+- 対象:
+  - `analysis/trade_counterfactual_worker.py`
+  - `ops/env/quant-trade-counterfactual.env`
+  - `tests/analysis/test_trade_counterfactual_worker.py`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - 既存の `fold_consistency` + `lb95_pips` 判定に加え、fold 外の疑似 OOS 検証を追加。
+  - 各候補（feature/bucket/action）について、fold ごとに train→test で action を再推定し、
+    `oos_action_match_ratio` / `oos_positive_ratio` / `oos_lb95_uplift_pips` を算出。
+  - 閾値（`COUNTERFACTUAL_OOS_*`）未達の候補は提案から除外。
+  - レポートに OOS 指標を追加し、`certainty` に OOS 成分を反映。
+  - feature 軸に `hour_spread` / `hour_prob` を追加して多要因条件を拡張。
+- 意図:
+  - 「この時こうしておけばよかった」の提案を、
+    in-sample 偏りだけで採用しない運用に固定する。
+
 ### 2026-02-21（追記）実トレードの反実仮想レビューを定期ワーカー化
 
 - 対象:

@@ -194,6 +194,11 @@ class ReviewConfig:
     boost_factor: float
     jst_offset_hours: int
     top_k: int
+    oos_enabled: bool
+    oos_min_folds: int
+    oos_min_action_match_ratio: float
+    oos_min_positive_ratio: float
+    oos_min_lb_uplift_pips: float
 
 
 @dataclass(frozen=True)
@@ -376,6 +381,8 @@ def _make_feature_map(sample: TradeSample) -> dict[str, str]:
         "prob_bin": prob,
         "side_spread": f"{side}|{spread}",
         "side_prob": f"{side}|{prob}",
+        "hour_spread": f"{hour}|{spread}",
+        "hour_prob": f"{hour}|{prob}",
     }
 
 
@@ -386,11 +393,129 @@ def _certainty(
     fold_consistency: float,
     lower_bound: float,
     pivot: float,
+    oos_action_match_ratio: float = 1.0,
+    oos_positive_ratio: float = 1.0,
+    oos_lb_uplift_pips: float = 0.0,
 ) -> float:
     support = min(1.0, float(n) / float(max(1, min_samples * 2)))
     effect = min(1.0, abs(lower_bound) / max(0.05, abs(pivot)))
-    raw = support * max(0.0, min(1.0, fold_consistency)) * effect
+    oos_effect = min(1.0, max(0.0, oos_lb_uplift_pips) / 0.20)
+    raw = (
+        support
+        * max(0.0, min(1.0, fold_consistency))
+        * effect
+        * max(0.0, min(1.0, oos_action_match_ratio))
+        * max(0.0, min(1.0, oos_positive_ratio))
+        * oos_effect
+    )
     return round(max(0.0, min(1.0, raw)), 4)
+
+
+def _infer_action(rows: list[TradeSample], cfg: ReviewConfig) -> tuple[str, float, float, float] | None:
+    n = len(rows)
+    if n < cfg.min_samples:
+        return None
+    pips = [r.pl_pips for r in rows]
+    mean_pips, lb_pips, _ = _mean_ci95(pips)
+    sum_pips = sum(pips)
+
+    if lb_pips <= cfg.block_lb_pips:
+        action = "block"
+        expected_uplift = -sum_pips
+    elif mean_pips < 0.0:
+        action = "reduce"
+        expected_uplift = -(sum_pips * cfg.reduce_factor)
+    elif lb_pips >= cfg.boost_lb_pips:
+        action = "boost"
+        expected_uplift = sum_pips * cfg.boost_factor
+    else:
+        return None
+
+    if expected_uplift <= 0.0:
+        return None
+    return action, mean_pips, lb_pips, expected_uplift
+
+
+def _simulate_uplift(action: str, rows: list[TradeSample], cfg: ReviewConfig) -> float:
+    sum_pips = sum(r.pl_pips for r in rows)
+    if action == "block":
+        return -sum_pips
+    if action == "reduce":
+        return -(sum_pips * cfg.reduce_factor)
+    if action == "boost":
+        return sum_pips * cfg.boost_factor
+    return 0.0
+
+
+def _evaluate_oos(
+    *,
+    feature_name: str,
+    bucket: str,
+    all_samples: list[TradeSample],
+    cfg: ReviewConfig,
+    day_to_index: dict[str, int],
+    day_count: int,
+    fold_count: int,
+    candidate_action: str,
+) -> dict[str, float]:
+    fold_to_rows: dict[int, list[TradeSample]] = defaultdict(list)
+    for sample in all_samples:
+        fmap = _make_feature_map(sample)
+        if fmap.get(feature_name) != bucket:
+            continue
+        fold = _fold_index(sample.fold_day_key, day_to_index, day_count, fold_count)
+        fold_to_rows[fold].append(sample)
+
+    total_eval_folds = 0
+    matched_uplifts: list[float] = []
+    for fold in range(fold_count):
+        test_rows = fold_to_rows.get(fold, [])
+        if len(test_rows) < cfg.min_fold_samples:
+            continue
+        train_rows: list[TradeSample] = []
+        for other_fold, rows in fold_to_rows.items():
+            if other_fold == fold:
+                continue
+            train_rows.extend(rows)
+        if len(train_rows) < cfg.min_samples:
+            continue
+
+        total_eval_folds += 1
+        inferred = _infer_action(train_rows, cfg)
+        if inferred is None:
+            continue
+        inferred_action = inferred[0]
+        if inferred_action != candidate_action:
+            continue
+
+        uplift = _simulate_uplift(candidate_action, test_rows, cfg)
+        matched_uplifts.append(float(uplift))
+
+    action_match_ratio = (
+        float(len(matched_uplifts)) / float(total_eval_folds)
+        if total_eval_folds > 0
+        else 0.0
+    )
+    positive_ratio = (
+        sum(1 for u in matched_uplifts if u > 0.0) / float(len(matched_uplifts))
+        if matched_uplifts
+        else 0.0
+    )
+    mean_uplift = _mean(matched_uplifts) if matched_uplifts else 0.0
+    if len(matched_uplifts) >= 2:
+        _, lb95_uplift, _ = _mean_ci95(matched_uplifts)
+    elif matched_uplifts:
+        lb95_uplift = matched_uplifts[0]
+    else:
+        lb95_uplift = 0.0
+
+    return {
+        "oos_eval_folds": float(total_eval_folds),
+        "oos_action_match_ratio": float(action_match_ratio),
+        "oos_positive_ratio": float(positive_ratio),
+        "oos_mean_uplift_pips": float(mean_uplift),
+        "oos_lb95_uplift_pips": float(lb95_uplift),
+    }
 
 
 def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> list[dict[str, Any]]:
@@ -437,28 +562,39 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
         if fold_consistency < cfg.min_fold_consistency:
             continue
 
+        inferred = _infer_action(rows, cfg)
+        if inferred is None:
+            continue
+        action, _, _, expected_uplift = inferred
         sum_pips = sum(pips)
-        action = "hold"
-        expected_uplift = 0.0
-        pivot = cfg.block_lb_pips
+        pivot = cfg.boost_lb_pips if action == "boost" else cfg.block_lb_pips
 
-        if lb_pips <= cfg.block_lb_pips:
-            action = "block"
-            expected_uplift = -sum_pips
-            pivot = cfg.block_lb_pips
-        elif mean_pips < 0.0:
-            action = "reduce"
-            expected_uplift = -(sum_pips * cfg.reduce_factor)
-            pivot = cfg.block_lb_pips
-        elif lb_pips >= cfg.boost_lb_pips:
-            action = "boost"
-            expected_uplift = sum_pips * cfg.boost_factor
-            pivot = cfg.boost_lb_pips
-        else:
-            continue
-
-        if expected_uplift <= 0.0:
-            continue
+        oos = {
+            "oos_eval_folds": float(fold_count),
+            "oos_action_match_ratio": 1.0,
+            "oos_positive_ratio": 1.0,
+            "oos_mean_uplift_pips": expected_uplift,
+            "oos_lb95_uplift_pips": expected_uplift,
+        }
+        if cfg.oos_enabled:
+            oos = _evaluate_oos(
+                feature_name=feature_name,
+                bucket=bucket,
+                all_samples=samples,
+                cfg=cfg,
+                day_to_index=day_to_index,
+                day_count=day_count,
+                fold_count=fold_count,
+                candidate_action=action,
+            )
+            if int(oos["oos_eval_folds"]) < cfg.oos_min_folds:
+                continue
+            if float(oos["oos_action_match_ratio"]) < cfg.oos_min_action_match_ratio:
+                continue
+            if float(oos["oos_positive_ratio"]) < cfg.oos_min_positive_ratio:
+                continue
+            if float(oos["oos_lb95_uplift_pips"]) < cfg.oos_min_lb_uplift_pips:
+                continue
 
         certainty = _certainty(
             n=n,
@@ -466,6 +602,9 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
             fold_consistency=fold_consistency,
             lower_bound=lb_pips if action != "boost" else lb_pips,
             pivot=pivot,
+            oos_action_match_ratio=float(oos["oos_action_match_ratio"]),
+            oos_positive_ratio=float(oos["oos_positive_ratio"]),
+            oos_lb_uplift_pips=float(oos["oos_lb95_uplift_pips"]),
         )
         recs.append(
             {
@@ -481,6 +620,11 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
                 "fold_consistency": round(fold_consistency, 4),
                 "expected_uplift_pips": round(expected_uplift, 4),
                 "certainty": certainty,
+                "oos_eval_folds": int(oos["oos_eval_folds"]),
+                "oos_action_match_ratio": round(float(oos["oos_action_match_ratio"]), 4),
+                "oos_positive_ratio": round(float(oos["oos_positive_ratio"]), 4),
+                "oos_mean_uplift_pips": round(float(oos["oos_mean_uplift_pips"]), 4),
+                "oos_lb95_uplift_pips": round(float(oos["oos_lb95_uplift_pips"]), 4),
             }
         )
 
@@ -563,6 +707,11 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
             "boost_lb_pips": cfg.boost_lb_pips,
             "reduce_factor": cfg.reduce_factor,
             "boost_factor": cfg.boost_factor,
+            "oos_enabled": cfg.oos_enabled,
+            "oos_min_folds": cfg.oos_min_folds,
+            "oos_min_action_match_ratio": cfg.oos_min_action_match_ratio,
+            "oos_min_positive_ratio": cfg.oos_min_positive_ratio,
+            "oos_min_lb_uplift_pips": cfg.oos_min_lb_uplift_pips,
         },
         "policy_hints": hints,
         "recommendations": recs,
@@ -646,6 +795,31 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=_env_int("COUNTERFACTUAL_TOP_K", 24),
     )
+    ap.add_argument(
+        "--oos-enabled",
+        type=int,
+        default=_env_int("COUNTERFACTUAL_OOS_ENABLED", 1),
+    )
+    ap.add_argument(
+        "--oos-min-folds",
+        type=int,
+        default=_env_int("COUNTERFACTUAL_OOS_MIN_FOLDS", 3),
+    )
+    ap.add_argument(
+        "--oos-min-action-match-ratio",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_OOS_MIN_ACTION_MATCH_RATIO", 0.60),
+    )
+    ap.add_argument(
+        "--oos-min-positive-ratio",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_OOS_MIN_POSITIVE_RATIO", 0.60),
+    )
+    ap.add_argument(
+        "--oos-min-lb-uplift-pips",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_OOS_MIN_LB_UPLIFT_PIPS", 0.0),
+    )
     return ap.parse_args()
 
 
@@ -667,6 +841,11 @@ def _build_config(args: argparse.Namespace) -> ReviewConfig:
         boost_factor=max(0.0, min(2.0, float(args.boost_factor))),
         jst_offset_hours=int(args.jst_offset_hours),
         top_k=max(1, int(args.top_k)),
+        oos_enabled=bool(int(args.oos_enabled)),
+        oos_min_folds=max(1, int(args.oos_min_folds)),
+        oos_min_action_match_ratio=max(0.0, min(1.0, float(args.oos_min_action_match_ratio))),
+        oos_min_positive_ratio=max(0.0, min(1.0, float(args.oos_min_positive_ratio))),
+        oos_min_lb_uplift_pips=float(args.oos_min_lb_uplift_pips),
     )
 
 

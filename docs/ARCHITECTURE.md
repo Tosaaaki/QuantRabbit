@@ -159,6 +159,8 @@ class OrderIntent(BaseModel):
 - 実装: `analysis/trade_counterfactual_worker.py`
   - 入力: `logs/trades.db` + `logs/orders.db`
   - 解析: 5fold 一貫性 (`fold_consistency`) と 95%下限 (`lb95_pips`) を併用
+    し、さらに fold 外疑似 OOS 検証（action一致率/正の uplift 比率/`oos_lb95_uplift_pips`）
+    を満たした提案だけを採用
   - 出力: `logs/trade_counterfactual_latest.json` / `logs/trade_counterfactual_history.jsonl`
 - 定期ワーカー:
   - `quant-trade-counterfactual.service`（oneshot）+
