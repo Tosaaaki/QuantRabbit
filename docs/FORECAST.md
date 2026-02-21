@@ -277,6 +277,23 @@ python3 scripts/eval_forecast_before_after.py \
 短期窓（2h/4h）の MAE は微小悪化する一方、24h/72h で MAE 改善、
 72h の hit が上振れし、重み付き objective は `+0.01762` を確認しました。
 
+2026-02-21 の再評価（VM実データ, `bars=8050`）では、`型`（短期の trend/range 混在）で
+`5m` の MAE 劣化を抑えるため、short-list 候補比較を実施しました。
+採用値（cand_c）は次です。
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.24,10m=0.30`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.24`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.00,10m=0.02`
+
+同一期間比較（`2026-01-07T02:54:00+00:00` ～ `2026-02-20T21:59:00+00:00`）:
+- `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+- `5m`: `hit_delta=+0.0024`, `mae_delta=-0.0006`, `range_cov_delta=-0.0001`
+- `10m`: `hit_delta=+0.0052`, `mae_delta=-0.0041`, `range_cov_delta=+0.0003`
+
+`1m` はほぼ同等を維持しつつ、`5m/10m` で `hit` と `MAE` を同時改善するため、
+運用値は上記に更新しています。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

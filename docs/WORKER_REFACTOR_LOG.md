@@ -3914,3 +3914,31 @@
 - 目的:
   - 「上昇押し目局面の逆張りshort」「天井掴みlong」「同方向クラスター」の
     3系統を同時に抑え、劣化時は fail-fast で機械停止させる。
+
+### 2026-02-21（追記）forecast「型」寄り再調整（8,050 bars, short-list）
+
+- 背景:
+  - 直近運用値（`fg=0.03, b5=0.24, b10=0.30, s5=0.22, s10=0.30, rb5=0.01`）で、
+    `5m` の `mae_delta` がプラス寄りになる局面を再検出。
+  - 予測を「型」（trend/rangeの混在レジーム）で安定化させるため、
+    `feature/session/rebound` を short-list 候補で再評価。
+- 実施（VM実データ, 同一期間）:
+  - 比較期間: `2026-01-07T02:54:00+00:00` ～ `2026-02-20T21:59:00+00:00`
+  - サンプル: `max-bars=8050`, `steps=1,5,10`
+  - 出力:
+    - `logs/reports/forecast_improvement/forecast_tune_shortlist_20260221T021810Z.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T021810Z_cand_c.json`
+    - `logs/reports/forecast_improvement/report_20260221T021810Z_cand_c.md`
+- 採用候補（cand_c）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.24,10m=0.30`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.24`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.00,10m=0.02`
+- before/after（cand_c）:
+  - `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+  - `5m`: `hit_delta=+0.0024`, `mae_delta=-0.0006`, `range_cov_delta=-0.0001`
+  - `10m`: `hit_delta=+0.0052`, `mae_delta=-0.0041`, `range_cov_delta=+0.0003`
+- 判定:
+  - `1m` の hit はほぼ同等（軽微マイナス）を維持しつつ、
+    `5m/10m` で `hit` と `MAE` を同時改善したため採用。
