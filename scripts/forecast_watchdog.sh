@@ -18,7 +18,12 @@ if [[ "${ENABLED}" != "1" ]]; then
   exit 0
 fi
 
-if ! systemctl list-unit-files --type=service | grep -q "^${SERVICE}"; then
+unit_exists() {
+  local unit="$1"
+  systemctl cat "${unit}" >/dev/null 2>&1
+}
+
+if ! unit_exists "${SERVICE}"; then
   logger -t "${TAG}" "target service not found: ${SERVICE}"
   exit 0
 fi
@@ -89,7 +94,7 @@ if health_ok; then
   exit 0
 fi
 
-if [[ "${DISABLE_BQ_ON_ESCALATE}" == "1" ]] && systemctl list-unit-files --type=service | grep -q "^${BQ_SERVICE}"; then
+if [[ "${DISABLE_BQ_ON_ESCALATE}" == "1" ]] && unit_exists "${BQ_SERVICE}"; then
   if systemctl is-active --quiet "${BQ_SERVICE}"; then
     logger -t "${TAG}" "escalation: stopping ${BQ_SERVICE} to protect forecast stability"
     systemctl stop "${BQ_SERVICE}" || true
