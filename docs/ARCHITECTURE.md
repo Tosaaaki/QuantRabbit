@@ -151,3 +151,15 @@ class OrderIntent(BaseModel):
   - 監査出力:
     - `logs/replay_quality_gate_latest.json`
     - `logs/replay_quality_gate_history.jsonl`
+
+## 6. トレード反実仮想レビュー（事後判定）
+
+- 目的: 実トレード履歴から「この条件なら見送る/縮小/増額すべきだった」を
+  多要因（side/hour/spread/probability）で推定し、運用調整へ反映する。
+- 実装: `analysis/trade_counterfactual_worker.py`
+  - 入力: `logs/trades.db` + `logs/orders.db`
+  - 解析: 5fold 一貫性 (`fold_consistency`) と 95%下限 (`lb95_pips`) を併用
+  - 出力: `logs/trade_counterfactual_latest.json` / `logs/trade_counterfactual_history.jsonl`
+- 定期ワーカー:
+  - `quant-trade-counterfactual.service`（oneshot）+
+    `quant-trade-counterfactual.timer`（30min 周期）

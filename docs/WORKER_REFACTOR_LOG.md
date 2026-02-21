@@ -8,6 +8,31 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-21（追記）実トレードの反実仮想レビューを定期ワーカー化
+
+- 対象:
+  - `analysis/trade_counterfactual_worker.py`
+  - `systemd/quant-trade-counterfactual.service`
+  - `systemd/quant-trade-counterfactual.timer`
+  - `ops/env/quant-trade-counterfactual.env`
+  - `tests/analysis/test_trade_counterfactual_worker.py`
+  - `docs/ARCHITECTURE.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+- 変更:
+  - closed trades + filled order quote を読み取り、
+    `side/hour_jst/spread_bin/prob_bin` の多要因で反実仮想候補を算出する
+    `analysis/trade_counterfactual_worker.py` を追加。
+  - 判定は `lb95_pips`（平均pipsの95%下限）と
+    5fold の符号一貫性（`fold_consistency`）を併用し、
+    `block/reduce/boost` を提案。
+  - `logs/trade_counterfactual_latest.json`（最新）と
+    `logs/trade_counterfactual_history.jsonl`（履歴）を出力。
+  - `quant-trade-counterfactual.timer`（30min 周期）を追加し、
+    事後判定を定期バッチ化。
+- 意図:
+  - 「この時こうしておけばよかった」を定量化しつつ、
+    低サンプル/不安定条件の過学習を抑えて運用に反映する。
+
 ### 2026-02-21（追記）replay 品質ゲートを定期ワーカー化（service/timer + latest snapshot）
 
 - 対象:
