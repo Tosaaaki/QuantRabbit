@@ -194,7 +194,7 @@
 
 ### 7) 分析・監視面（データ管理）
 
-- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback` は分析/監視へ固定
+- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback`, `quant-replay-quality-gate` は分析/監視へ固定
 - 分析系が戦略判断本体と混ざる構造を禁ずる
 
 ## 禁止ルール（V2）
@@ -370,7 +370,7 @@ flowchart LR
   OEX --> PM
   PM --> DB["logs/trades.db, logs/orders.db"]
 
-  ANAL["analysis/services<br>quant-pattern-book, quant-range-metrics, quant-strategy-feedback, etc."] -->|feedback params / labels| SCW
+  ANAL["analysis/services<br>quant-pattern-book, quant-range-metrics, quant-strategy-feedback, quant-replay-quality-gate, etc."] -->|feedback params / labels| SCW
   ANAL -->|feedback params / labels| SWX
 
   UI["QuantRabbit UI<br>apps/autotune_ui.py"] --> SC

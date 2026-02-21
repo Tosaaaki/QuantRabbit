@@ -8,6 +8,34 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-21（追記）replay 品質ゲートを定期ワーカー化（service/timer + latest snapshot）
+
+- 対象:
+  - `analysis/replay_quality_gate_worker.py`
+  - `systemd/quant-replay-quality-gate.service`
+  - `systemd/quant-replay-quality-gate.timer`
+  - `ops/env/quant-replay-quality-gate.env`
+  - `tests/analysis/test_replay_quality_gate_worker.py`
+  - `docs/REPLAY_STANDARD.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+- 変更:
+  - `scripts/replay_quality_gate.py` の実行ラッパーとして
+    `analysis/replay_quality_gate_worker.py` を追加。
+  - worker は run ごとに `quality_gate_report.json` を検出し、
+    `logs/replay_quality_gate_latest.json`（最新）と
+    `logs/replay_quality_gate_history.jsonl`（履歴）を更新。
+  - `tmp/replay_quality_gate/<timestamp>` の古い run を
+    `REPLAY_QUALITY_GATE_KEEP_RUNS` 件に自動トリム。
+  - `quant-replay-quality-gate.service`（oneshot）と
+    `quant-replay-quality-gate.timer`（1h 周期）を追加。
+  - `ops/env/quant-replay-quality-gate.env` で
+    config/timeout/strict/keep_runs を外部設定化。
+  - worker の report 抽出/トリム/状態出力に対する回帰テストを追加。
+- 意図:
+  - 手動実行中心だった replay gate を定期実行へ移し、
+    内部テスト精度の劣化検知を運用フローへ固定する。
+
 ### 2026-02-20（追記）`position_manager` read timeout 連発を fail-fast + stale 優先へ再調整
 
 - 背景（VM実測）:

@@ -144,3 +144,10 @@ class OrderIntent(BaseModel):
   - `quality_gate_report.json`（fold 詳細 + pass/fail）
   - `quality_gate_report.md`（運用サマリ）
   - `commands.json`（再現用コマンドログ）
+- 定期ワーカー:
+  - `quant-replay-quality-gate.service`（oneshot）+
+    `quant-replay-quality-gate.timer`（1h 周期）
+  - 実装: `analysis/replay_quality_gate_worker.py`
+  - 監査出力:
+    - `logs/replay_quality_gate_latest.json`
+    - `logs/replay_quality_gate_history.jsonl`

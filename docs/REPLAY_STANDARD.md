@@ -76,3 +76,25 @@ python scripts/replay_quality_gate.py \
   - `tmp/replay_quality_gate/<UTC_TIMESTAMP>/quality_gate_report.json`
   - `tmp/replay_quality_gate/<UTC_TIMESTAMP>/quality_gate_report.md`
   - `tmp/replay_quality_gate/<UTC_TIMESTAMP>/commands.json`
+
+## ワーカー運用（systemd）
+
+- 定期実行は `quant-replay-quality-gate.service` + `quant-replay-quality-gate.timer` を使う。
+- worker 本体は `analysis/replay_quality_gate_worker.py`。
+  - `scripts/replay_quality_gate.py` を呼び出して walk-forward を実行。
+  - 最新スナップショットを `logs/replay_quality_gate_latest.json` に保存。
+  - 実行履歴を `logs/replay_quality_gate_history.jsonl` に追記。
+  - `tmp/replay_quality_gate/<timestamp>` は `REPLAY_QUALITY_GATE_KEEP_RUNS` 件だけ保持。
+- 主要設定は `ops/env/quant-replay-quality-gate.env` で管理する。
+  - `REPLAY_QUALITY_GATE_CONFIG`
+  - `REPLAY_QUALITY_GATE_TIMEOUT_SEC`
+  - `REPLAY_QUALITY_GATE_STRICT`
+  - `REPLAY_QUALITY_GATE_KEEP_RUNS`
+- 導入例:
+
+```bash
+sudo bash scripts/install_trading_services.sh \
+  --repo /home/tossaki/QuantRabbit \
+  --units "quant-replay-quality-gate.service quant-replay-quality-gate.timer"
+sudo systemctl enable --now quant-replay-quality-gate.timer
+```
