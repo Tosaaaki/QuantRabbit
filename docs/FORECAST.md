@@ -365,6 +365,35 @@ VM同一期間比較（`bars=8050`）:
 - `5m`: 同等
 - `10m`: 同等
 
+同日 2026-02-21 の追加最適化（6本同時比較, `bars=8050`）で、
+`cand_e1_1mboost` を基準に `feature/session/rebound` を再加速探索し、
+`candD` を採用しました。
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.03`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.28`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.16,5m=0.28,10m=0.34`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=360`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.12`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.24,10m=0.33`
+- `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=18`
+- `FORECAST_TECH_SESSION_BIAS_LOOKBACK=1080`
+- `FORECAST_TECH_REBOUND_WEIGHT=0.06`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.12,5m=0.01,10m=0.05`
+
+VM同一期間 before/after（`candD`）:
+- `1m`: `hit_delta=-0.0002`, `mae_delta=+0.0009`, `range_cov_delta=-0.0002`
+- `5m`: `hit_delta=+0.0054`, `mae_delta=-0.0020`, `range_cov_delta=-0.0004`
+- `10m`: `hit_delta=+0.0129`, `mae_delta=-0.0125`, `range_cov_delta=+0.0006`
+
+`cand_e1_1mboost` 比の after-after 差分:
+- `1m`: `hit_after -0.0003`, `mae_after +0.0010`, `range_cov_after -0.0006`
+- `5m`: `hit_after +0.0013`, `mae_after -0.0006`, `range_cov_after -0.0010`
+- `10m`: `hit_after +0.0012`, `mae_after -0.0053`, `range_cov_after -0.0006`
+
+判定:
+- `5m/10m` で `hit` と `MAE` の同時改善幅が最も大きく、総合スコアが最大だったため採用。
+- `1m` は軽微に悪化するが、`5m/10m` への寄与を優先する運用方針で許容。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

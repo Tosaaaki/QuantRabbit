@@ -4154,3 +4154,42 @@
 - 判定:
   - `5m/10m` を維持したまま `1m` を改善できたため、
     runtime 運用値を `cand_e1_1mboost` へ更新。
+
+### 2026-02-21（追記）forecast 再加速チューニング（candD, 6本同時比較）
+
+- 背景:
+  - `cand_e1_1mboost` は安定していたが、`5m/10m` の hit と MAE に追加の改善余地があったため、
+    aggressive 側の候補を同一期間で再比較した。
+- 実施:
+  - ローカル探索:
+    - `logs/reports/forecast_improvement/forecast_tune_balanced_breakthrough_20260221T222015Z.json`
+  - VM同一期間比較（`bars=8050`）:
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T222744Z_current.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T222744Z_candA.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T222744Z_candB.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T222744Z_candC.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T222744Z_candD.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T222744Z_candE.json`
+- 採用値（candD）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.03`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.28`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.16,5m=0.28,10m=0.34`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=360`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.12`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.24,10m=0.33`
+  - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=18`
+  - `FORECAST_TECH_SESSION_BIAS_LOOKBACK=1080`
+  - `FORECAST_TECH_REBOUND_WEIGHT=0.06`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.12,5m=0.01,10m=0.05`
+- VM同一期間 before/after（candD）:
+  - `1m`: `hit_delta=-0.0002`, `mae_delta=+0.0009`, `range_cov_delta=-0.0002`
+  - `5m`: `hit_delta=+0.0054`, `mae_delta=-0.0020`, `range_cov_delta=-0.0004`
+  - `10m`: `hit_delta=+0.0129`, `mae_delta=-0.0125`, `range_cov_delta=+0.0006`
+- `cand_e1_1mboost` 比（after-after）:
+  - `1m`: `hit_after -0.0003`, `mae_after +0.0010`, `range_cov_after -0.0006`
+  - `5m`: `hit_after +0.0013`, `mae_after -0.0006`, `range_cov_after -0.0010`
+  - `10m`: `hit_after +0.0012`, `mae_after -0.0053`, `range_cov_after -0.0006`
+- 判定:
+  - `5m/10m` の hit と MAE を同時に押し上げる総合スコアが最大だったため、
+    runtime 運用値を `candD` へ更新。
