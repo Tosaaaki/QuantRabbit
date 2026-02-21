@@ -4061,3 +4061,32 @@
 - 判定:
   - cand_c 比で `5m/10m` の `hit` と `MAE` をさらに改善したため、
     runtime 運用値を cand_d2 へ更新。
+
+### 2026-02-21（追記）forecast 微調整（mid_253327, 8050固定スナップショット）
+
+- 背景:
+  - cand_d2 と best_soft は `10m hit` と `10m mae/range_cov` がトレードオフで拮抗したため、
+    同一データ固定で中間値を再探索した。
+- 実施:
+  - 比較期間: `2026-01-07T02:54:00+00:00` ～ `2026-02-20T21:59:00+00:00`
+  - サンプル: `bars=8050`（固定スナップショット）
+  - 候補: `cand_d2/best_soft` + 中間6候補（合計8候補）
+  - 出力:
+    - `logs/reports/forecast_improvement/forecast_tune_midgrid_20260221T045844Z.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T045844Z_current_d2.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260221T045844Z_mid_253327.json`
+    - `logs/reports/forecast_improvement/report_20260221T045844Z_mid_253327.md`
+- 採用値（mid_253327）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`（維持）
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`（維持）
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.25,10m=0.33`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.27`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`（維持）
+- before/after（mid_253327）:
+  - `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+  - `5m`: `hit_delta=+0.0025`, `mae_delta=-0.0006`, `range_cov_delta=+0.0000`
+  - `10m`: `hit_delta=+0.0055`, `mae_delta=-0.0046`, `range_cov_delta=+0.0003`
+- 判定:
+  - `cand_d2` 比で `10m hit` は微減（`+0.0056 -> +0.0055`）だが、
+    `10m mae` と `range_cov` を改善し、総合スコア `score_vs_current=+0.000083` を確認。
+  - 僅差ながら上積みがあるため runtime を mid_253327 へ更新。

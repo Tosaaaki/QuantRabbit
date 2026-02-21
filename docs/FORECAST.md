@@ -307,6 +307,23 @@ python3 scripts/eval_forecast_before_after.py \
 - `5m`: `hit_delta=+0.0025`, `mae_delta=-0.0006`, `range_cov_delta=+0.0000`
 - `10m`: `hit_delta=+0.0056`, `mae_delta=-0.0044`, `range_cov_delta=+0.0001`
 
+同日 2026-02-21 のフォローアップ（mid grid, 同一 `bars=8050` 固定スナップショット）で、
+`cand_d2` と周辺7候補を再比較し、最小差分の上積み候補 `mid_253327` を採用:
+- `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.00`（維持）
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.12,5m=0.25,10m=0.33`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.27`
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`（維持）
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.10,5m=0.01,10m=0.02`（維持）
+
+同一期間の before/after（mid_253327）:
+- `1m`: `hit_delta=-0.0003`, `mae_delta=-0.0001`, `range_cov_delta=+0.0002`
+- `5m`: `hit_delta=+0.0025`, `mae_delta=-0.0006`, `range_cov_delta=+0.0000`
+- `10m`: `hit_delta=+0.0055`, `mae_delta=-0.0046`, `range_cov_delta=+0.0003`
+
+`cand_d2` 比では `10m hit` が微減（`+0.0056 -> +0.0055`）する一方、
+`10m mae`（`-0.0044 -> -0.0046`）と `10m range_cov`（`+0.0001 -> +0.0003`）が改善し、
+総合スコア（`score_vs_current=+0.000083`）で優位だったため runtime を更新。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
