@@ -31,6 +31,28 @@
   - `open_positions` を 6 秒以内で stale fallback へ寄せ、
     strategy 側の read timeout と `position_manager_timeout` skip を同時に低減する。
 
+### 2026-02-21（追記）forecast 安定化ガード追加（watchdog + bq-sync 低優先度化）
+
+- 背景（VM実測）:
+  - `quant-forecast.service` は `active` 表示でも `D` 状態で `/health` が応答しない区間が発生。
+  - 同時に `quant-bq-sync.service` の BigQuery 送信失敗（`RetryError`）が継続し、
+    予測系の復旧を妨げるケースがあった。
+- 実施:
+  - 追加: `scripts/forecast_watchdog.sh`
+    - `/health` 失敗を連続監視し、閾値超過時に `quant-forecast.service` を自動再起動。
+    - 再起動後も不健康な場合は `quant-bq-sync.service` を停止して forecast 優先で復旧。
+  - 追加: `systemd/quant-forecast-watchdog.service` / `systemd/quant-forecast-watchdog.timer`
+    - 1分周期で watchdog を起動。
+  - 変更: `systemd/quant-bq-sync.service`
+    - `Nice` / `IOScheduling*` / `CPUWeight` / `IOWeight` / `TasksMax` / `MemoryHigh` / `MemoryMax`
+      を設定し、予測系より低優先度で動作させるよう調整。
+  - 変更: `ops/env/quant-v2-runtime.env`
+    - `FORECAST_WATCHDOG_*` の運用キーを追加（enabled/timeout/max_fails/cooldown など）。
+  - 変更: `scripts/deploy_via_metadata.sh`
+    - metadata deploy 時の install 対象に forecast watchdog unit を追加。
+- 意図:
+  - `quant-forecast` を本番優先で維持し、補助系（BQ同期）の不調で予測APIが巻き込まれる経路を短時間で自動回復する。
+
 ### 2026-02-20（追記）分析メトリクス書き込みの lock 耐性を強化
 
 - 対象:

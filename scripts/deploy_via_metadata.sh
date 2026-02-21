@@ -302,7 +302,7 @@ PY
 fi
 
 if [[ -f "\$REPO_DIR/scripts/ssh_watchdog.sh" ]]; then
-  bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer quant-ui-snapshot.service quant-ui-snapshot.timer quant-bq-sync.service"
+  bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-forecast-watchdog.service quant-forecast-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer quant-ui-snapshot.service quant-ui-snapshot.timer quant-bq-sync.service"
 fi
 
 if [[ "\$INSTALL_DEPS" == "1" ]]; then

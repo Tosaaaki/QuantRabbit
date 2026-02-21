@@ -69,3 +69,17 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - `workers/fast_scalp/worker.py` で `get_account_snapshot()` フォールバックを追加済み。
 - 再発時はログに `refreshed account snapshot equity=... margin_available=...` が出ることを確認。
 - 0 判定が続く場合は OANDA snapshot 取得を先に疑う。
+
+## 9. Forecast 復旧監視（2026-02-21）
+- `quant-forecast-watchdog.timer` が 1 分周期で `scripts/forecast_watchdog.sh` を実行する。
+- 監視対象:
+  - `http://127.0.0.1:8302/health`
+  - `quant-forecast.service` の実応答可否（active 表示のみを信用しない）
+- 振る舞い:
+  - `FORECAST_WATCHDOG_MAX_FAILS` 連続失敗で `quant-forecast.service` を再起動。
+  - 再起動後も不健康なら `FORECAST_WATCHDOG_DISABLE_BQ_ON_ESCALATE=1` 時に
+    `quant-bq-sync.service` を停止して forecast 優先で復旧。
+- 監査コマンド:
+  - `systemctl status quant-forecast-watchdog.timer quant-forecast-watchdog.service`
+  - `journalctl -u quant-forecast-watchdog.service -n 100 --no-pager`
+  - `curl -sS http://127.0.0.1:8302/health`

@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit Forecast watchdog timer
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Unit=quant-forecast-watchdog.service
+
+[Install]
+WantedBy=timers.target

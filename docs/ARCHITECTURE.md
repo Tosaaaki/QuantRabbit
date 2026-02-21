@@ -34,6 +34,9 @@
 - Background: `quant-bq-sync.service`（`scripts/run_sync_pipeline.py`）は
   `--limit` と `BQ_EXPORT_BATCH_SIZE` で送信件数を上限化し、`BQ_RETRY_TIMEOUT_SEC`
   を超える長時間 retry を避ける（停止/再起動時のハング回避）。
+- Background: `quant-forecast-watchdog.timer` は `quant-forecast.service` の
+  `/health` を監視し、連続失敗時に forecast を再起動する。復旧不能時は
+  `quant-bq-sync.service` を停止して予測APIの可用性を優先する。
 
 ## 4. データスキーマと単位
 
