@@ -85,6 +85,42 @@
     - `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.32`
     - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER=0.24`
     - `ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT=0.45`
+- 2026-02-21 追記（ケース別総合チューニング）:
+  - `scalp_ping_5s_b_live` は単一要因ではなく
+    「上昇押し目局面の逆張り」「同方向クラスター」「劣化時間帯の継続稼働」が
+    重なって悪化しやすいため、strategy local + order_manager の両面で対処する。
+  - strategy local（`ops/env/scalp_ping_5s_b.env`）:
+    - 過剰エントリー抑制:
+      - `MAX_ACTIVE_TRADES=14`
+      - `MAX_PER_DIRECTION=8`
+      - `MAX_ORDERS_PER_MINUTE=10`
+      - `ENTRY_CHASE_MAX_PIPS=1.0`
+      - `MIN_TICKS=5`, `MIN_SIGNAL_TICKS=4`, `MIN_TICK_RATE=0.85`
+      - `IMBALANCE_MIN=0.55`
+    - 方向反転の品質改善:
+      - `FAST_DIRECTION_FLIP_*` は閾値を引き上げて誤反転を抑制
+      - `SL_STREAK_DIRECTION_FLIP_*` は `min_streak=2` と tech confirm 必須化
+      - `SIDE_METRICS_DIRECTION_FLIP_*` は sample/差分条件を緩和して、
+        side劣化時の反転追従を増やす
+    - 同方向逆行スタック抑制:
+      - `SIDE_ADVERSE_STACK_UNITS_ACTIVE_START=2`
+      - `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.20`
+      - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.18`
+      - `SIDE_ADVERSE_STACK_DD_START_PIPS=0.45`
+      - `SIDE_ADVERSE_STACK_DD_FULL_PIPS=1.60`
+      - `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.22`
+    - ケース追従:
+      - `SIGNAL_WINDOW_ADAPTIVE_ENABLED=1`
+      - `LOOKAHEAD_GATE_ENABLED=1`
+      - `LONG_MOMENTUM_TRIGGER_PIPS=0.12`
+      - `SHORT_MIN_TICK_RATE=0.72`
+      - `MOMENTUM_TRIGGER_PIPS=0.11`
+  - order manager（`ops/env/quant-order-manager.env`）:
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.48`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.65`
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=block` +
+      `PERF_GUARD_HOURLY=1` / `PERF_GUARD_SPLIT_DIRECTIONAL=1`
+      を有効にし、劣化ケースで fail-fast させる。
 - `RANGEFADER_EXIT_NEW_POLICY_START_TS` を `quant-scalp-ping-5s-b-exit` の環境で固定し、
   service再起動時も既存建玉が legacy 扱いで loss-cut 系ルールから外れないようにする。
   - `workers/scalp_ping_5s_b.exit_worker` は同キーを float として読むため、

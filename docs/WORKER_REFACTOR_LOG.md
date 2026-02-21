@@ -3861,3 +3861,56 @@
 - 目的:
   - 戦略自体は残しつつ、逆方向（特に short 側）の誤エントリー頻度と
     逆行時の平均サイズを同時に抑える。
+
+### 2026-02-21（追記）`scalp_ping_5s_b_live` ケース別デリスク強化（総合）
+
+- 背景（VM実測, 直近3日）:
+  - side別:
+    - `long`: `n=1530`, `pl_pips=-734.0`, `realized_pl=-5796.4`
+    - `short`: `n=1520`, `pl_pips=-3570.8`, `realized_pl=-23856.4`
+  - 問題時間帯（JST）では `dip_then_up`（下押し後に上で引け）局面が連発:
+    - `2026-02-20 20:00`: `co=+5.1p`, `lo=-5.3p`
+    - `2026-02-20 21:00`: `co=+2.2p`, `lo=-5.0p`
+    - `2026-02-20 22:00`: `co=+16.4p`, `lo=-20.2p`
+    - `2026-02-21 03:00`: `co=+2.6p`, `lo=-18.4p`
+  - 同方向積み上げ時の縮小発火が弱く、`side_adverse_stack_units_mult` が
+    実質 `1.0` のまま通るケースが多かった。
+- 実施:
+  - `ops/env/scalp_ping_5s_b.env`（strategy local）
+    - 過剰エントリー抑制:
+      - `MAX_ACTIVE_TRADES=14`, `MAX_PER_DIRECTION=8`, `MAX_ORDERS_PER_MINUTE=10`
+      - `ENTRY_CHASE_MAX_PIPS=1.0`
+      - `MIN_TICKS=5`, `MIN_SIGNAL_TICKS=4`, `MIN_TICK_RATE=0.85`
+      - `IMBALANCE_MIN=0.55`
+    - 方向/反転ガード:
+      - `FAST_DIRECTION_FLIP_*` 閾値を引き上げ（誤反転抑制）
+      - `SL_STREAK_DIRECTION_FLIP_*` を厳格化（`min_streak=2`, tech confirm 必須）
+      - `SIDE_METRICS_DIRECTION_FLIP_*` はサンプル閾値を緩和して
+        side劣化時の反転発火を増やす
+    - 逆行スタック縮小:
+      - `SIDE_ADVERSE_STACK_UNITS_ACTIVE_START=2`
+      - `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.20`
+      - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.18`
+      - `SIDE_ADVERSE_STACK_DD_START_PIPS=0.45`
+      - `SIDE_ADVERSE_STACK_DD_FULL_PIPS=1.60`
+      - `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.22`
+    - 確率/帯域補正:
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN=1.70`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.25`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=1.05`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT=0.40`
+    - ケース追従:
+      - `SIGNAL_WINDOW_ADAPTIVE_ENABLED=1`
+      - `LOOKAHEAD_GATE_ENABLED=1`
+      - `LONG_MOMENTUM_TRIGGER_PIPS=0.12`
+      - `SHORT_MIN_TICK_RATE=0.72`
+      - `MOMENTUM_TRIGGER_PIPS=0.11`
+    - order前ガード:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...=0.48`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE...=0.65`
+  - `ops/env/quant-order-manager.env`（service側）
+    - 上記 `ORDER_MANAGER_PRESERVE_INTENT_*` を同値に更新
+    - `SCALP_PING_5S_B_PERF_GUARD_*` を `block + hourly + split_directional` へ強化
+- 目的:
+  - 「上昇押し目局面の逆張りshort」「天井掴みlong」「同方向クラスター」の
+    3系統を同時に抑え、劣化時は fail-fast で機械停止させる。
