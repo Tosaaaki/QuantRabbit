@@ -4294,3 +4294,36 @@
 - 判定:
   - `5m` を維持したまま `10m` の `hit/MAE/range_cov` を同時改善できたため
     runtime 運用値を `cand_10m_hit_mae_boost` へ更新。
+
+### 2026-02-22（追記）forecast 可変重み化（dynamic_10m_weighting）
+
+- 背景:
+  - 固定 map（`b10=0.32`,`s10=0.37`）で `10m` は改善していたが、
+    相場状態ごとの最適点ズレを吸収するため、`10m` 限定で重み可変化を追加した。
+- 実装:
+  - `workers/common/forecast_gate.py`
+    - `FORECAST_TECH_DYNAMIC_WEIGHT_*` 系の env を追加。
+    - `breakout_skill/samples` と `trend_strength-range_pressure` から `breakout_weight` を動的補正。
+    - `session_bias/samples` から `session_bias_weight` を動的補正（`10m` 限定適用）。
+  - `scripts/eval_forecast_before_after.py`
+    - 同ロジックの CLI 引数を追加し、VM同一期間で dynamic ON/OFF を比較可能化。
+- 採用設定（runtime）:
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED=1`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=10m`
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.14`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.02`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.16`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.08`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.06`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.18`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
+- VM再検証（`bars=8050`）:
+  - `logs/reports/forecast_improvement/forecast_scan_dynamic_20260222T062849Z.json`
+  - `logs/reports/forecast_improvement/forecast_eval_20260222T062906Z_dynamic_off.json`
+  - `logs/reports/forecast_improvement/forecast_eval_20260222T062906Z_dynamic_on_candA.json`
+- `dynamic_off` 比（after-after）:
+  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+  - `10m`: `hit_after_delta=+0.000446`, `mae_after_delta=-0.002131`, `range_cov_after_delta=-0.000297`
+- 判定:
+  - `10m` の方向精度と誤差を同時に改善できるため、coverage 微減を許容して採用。

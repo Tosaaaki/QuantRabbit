@@ -437,6 +437,26 @@ VM同一期間比較（`cand_hit_nonneg_mae_up` 比, `bars=8050`）:
 判定:
 - `5m` を維持したまま `10m` の `hit/MAE/range_cov` を同時改善できたため採用。
 
+同日 2026-02-22 の追加改善（`dynamic_10m_weighting`）では、
+`10m` の breakout/session 重みを「固定値」から「相場状態連動（可変）」へ切り替えました。
+- `FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED=1`
+- `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=10m`
+- `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.14`
+- `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.02`
+- `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.16`
+- `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.08`
+- `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.06`
+- `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.18`
+- `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
+
+VM同一期間比較（`dynamic_off` 比, `bars=8050`）:
+- `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+- `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+- `10m`: `hit_after_delta=+0.000446`, `mae_after_delta=-0.002131`, `range_cov_after_delta=-0.000297`
+
+判定:
+- `10m` で `hit` と `MAE` を同時改善でき、coverage 低下は軽微なため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
