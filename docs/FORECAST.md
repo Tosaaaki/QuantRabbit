@@ -457,6 +457,28 @@ VM同一期間比較（`dynamic_off` 比, `bars=8050`）:
 判定:
 - `10m` で `hit` と `MAE` を同時改善でき、coverage 低下は軽微なため採用。
 
+同日 2026-02-22 の追加微調整（`dynamic_10m_weighting_stronger`）では、
+可変化を維持したまま `10m` の改善幅をもう一段押し上げるため、
+dynamic ゲインのみを局所比較しました（`bars=8050`）。
+- 比較ファイル:
+  - `logs/reports/forecast_improvement/forecast_eval_20260222T063520Z_dynamic_off.json`
+  - `logs/reports/forecast_improvement/forecast_eval_20260222T063520Z_dynamic_on.json`
+  - `logs/reports/forecast_improvement/forecast_dynamic_targeted_compare_20260222.json`
+- 運用反映値:
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=10m`（維持）
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.16`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.12`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.22`
+- 直前運用値（`max_delta=0.14,b_skill=0.16,b_regime=0.08,s_bias=0.18`）比:
+  - `1m`: 変化なし
+  - `5m`: 変化なし
+  - `10m`: `hit_after +0.000446`, `mae_after -0.000327`, `range_cov_after +0.000149`
+
+判定:
+- `5m` を維持したまま `10m` の `hit/MAE/range_cov` を同時改善できたため、
+  dynamic 強化版を runtime 採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

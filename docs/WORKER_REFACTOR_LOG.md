@@ -4327,3 +4327,27 @@
   - `10m`: `hit_after_delta=+0.000446`, `mae_after_delta=-0.002131`, `range_cov_after_delta=-0.000297`
 - 判定:
   - `10m` の方向精度と誤差を同時に改善できるため、coverage 微減を許容して採用。
+
+### 2026-02-22（追記）forecast 可変重みの強化（dynamic_10m_weighting_stronger）
+
+- 背景:
+  - `dynamic_10m_weighting` は有効だったが、`10m` の `hit/MAE` をもう一段押し上げる余地が残っていた。
+- 実施:
+  - VM同一期間比較（`bars=8050`）:
+    - `logs/reports/forecast_improvement/forecast_eval_20260222T063520Z_dynamic_off.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260222T063520Z_dynamic_on.json`
+  - 局所候補比較:
+    - `logs/reports/forecast_improvement/forecast_dynamic_targeted_compare_20260222.json`
+- 採用値（runtime）:
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=10m`（維持）
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.16`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.12`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.22`
+- 直前運用値（`max_delta=0.14,b_skill=0.16,b_regime=0.08,s_bias=0.18`）比:
+  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+  - `10m`: `hit_after_delta=+0.000446`, `mae_after_delta=-0.000327`, `range_cov_after_delta=+0.000149`
+- 判定:
+  - `5m` を維持しつつ `10m` の `hit/MAE/range_cov` を同時改善できたため、
+    dynamic 強化版を runtime 採用。
