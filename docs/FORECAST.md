@@ -408,6 +408,21 @@ VM同一期間比較（`candD` 比, `bars=8050`）:
 判定:
 - 方向精度（hit）を維持したまま `1m MAE` を僅かに改善できたため採用。
 
+同日 2026-02-22 の追加微調整（`cand_hit_nonneg_mae_up`）では、
+`candD_1m_mae_boost` のまま `hit` を落とさず `5m/10m MAE` をさらに削る制約で、
+`breakout/session` の 2 点だけを再探索しました。
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.27,10m=0.34`
+- `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.24,10m=0.35`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`（維持）
+
+VM同一期間比較（`candD_1m_mae_boost` 比, `bars=8050`）:
+- `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+- `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=-0.000003`, `range_cov_after_delta=+0.000000`
+- `10m`: `hit_after_delta=+0.000000`, `mae_after_delta=-0.000811`, `range_cov_after_delta=+0.000446`
+
+判定:
+- `hit` を全TFで維持したまま `5m/10m MAE` と `10m range_cov` を改善できたため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

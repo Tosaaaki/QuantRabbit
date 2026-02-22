@@ -4246,3 +4246,27 @@
 - 判定:
   - `5m/10m` を固定したまま `1m MAE` を微改善し、`hit` を維持できたため
     runtime 運用値を `candD_1m_mae_boost` へ更新。
+
+### 2026-02-22（追記）forecast 微調整（cand_hit_nonneg_mae_up）
+
+- 背景:
+  - `candD_1m_mae_boost` は `1m` の改善は達成できたが、`5m/10m` の MAE を
+    `hit` 非劣化制約付きでさらに詰める余地が残っていた。
+- 実施:
+  - 制約付きスキャン:
+    - `logs/reports/forecast_improvement/forecast_scan_hit_constraints_20260222T023311Z.json`
+  - VM再検証:
+    - `logs/reports/forecast_improvement/forecast_eval_20260222T023331Z_current_candD_1m_mae_boost.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260222T023331Z_cand_hit_nonneg_mae_up.json`
+- 採用値（cand_hit_nonneg_mae_up）:
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.27,10m=0.34`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.24,10m=0.35`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`（維持）
+  - そのほか `candD_1m_mae_boost` の値を維持。
+- `candD_1m_mae_boost` 比（after-after）:
+  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
+  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=-0.000003`, `range_cov_after_delta=+0.000000`
+  - `10m`: `hit_after_delta=+0.000000`, `mae_after_delta=-0.000811`, `range_cov_after_delta=+0.000446`
+- 判定:
+  - 全TFで `hit` を維持しつつ `5m/10m MAE` を改善、`10m range_cov` も改善できたため
+    runtime 運用値を `cand_hit_nonneg_mae_up` へ更新。
