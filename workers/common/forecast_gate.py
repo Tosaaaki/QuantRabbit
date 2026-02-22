@@ -151,6 +151,40 @@ _TECH_REBOUND_WEIGHT_MAP = _parse_horizon_weight_map(
     lo=0.0,
     hi=0.5,
 )
+_TECH_DYNAMIC_WEIGHT_ENABLED = _env_bool("FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED", False)
+_TECH_DYNAMIC_WEIGHT_HORIZONS = {
+    item.strip().lower()
+    for item in os.getenv("FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS", "10m").split(",")
+    if item.strip()
+}
+_TECH_DYNAMIC_MAX_SCALE_DELTA = max(
+    0.0,
+    min(0.6, _env_float("FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA", 0.25)),
+)
+_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER = max(
+    0.0,
+    min(0.5, _env_float("FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER", 0.02)),
+)
+_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN = max(
+    0.0,
+    min(1.0, _env_float("FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN", 0.28)),
+)
+_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN = max(
+    0.0,
+    min(1.0, _env_float("FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN", 0.18)),
+)
+_TECH_DYNAMIC_SESSION_BIAS_CENTER = max(
+    0.0,
+    min(0.5, _env_float("FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER", 0.06)),
+)
+_TECH_DYNAMIC_SESSION_BIAS_GAIN = max(
+    0.0,
+    min(1.0, _env_float("FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN", 0.24)),
+)
+_TECH_DYNAMIC_SESSION_REGIME_GAIN = max(
+    0.0,
+    min(1.0, _env_float("FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN", 0.16)),
+)
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -751,6 +785,82 @@ def _rebound_weight_for_horizon(horizon: str) -> float:
     if key in _TECH_REBOUND_WEIGHT_MAP:
         return float(_TECH_REBOUND_WEIGHT_MAP[key])
     return float(_TECH_REBOUND_WEIGHT)
+
+
+def _dynamic_weight_active(horizon: str) -> bool:
+    if not _TECH_DYNAMIC_WEIGHT_ENABLED:
+        return False
+    key = str(horizon or "").strip().lower()
+    if not key:
+        return False
+    if not _TECH_DYNAMIC_WEIGHT_HORIZONS:
+        return True
+    return key in _TECH_DYNAMIC_WEIGHT_HORIZONS
+
+
+def _adjust_dynamic_breakout_weight(
+    *,
+    base_weight: float,
+    horizon: str,
+    breakout_skill: float,
+    breakout_samples: int,
+    trend_strength: float,
+    range_pressure: float,
+) -> tuple[float, float]:
+    base = _clamp(float(base_weight), 0.0, 0.8)
+    if not _dynamic_weight_active(horizon):
+        return base, 0.0
+    center = max(1e-6, float(_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER))
+    skill_abs = abs(_safe_float(breakout_skill, 0.0))
+    skill_signal = _clamp((skill_abs - center) / center, -1.0, 1.0)
+    sample_conf = _clamp(
+        float(max(0, int(breakout_samples)))
+        / max(float(max(1, int(_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES)) * 2), 1.0),
+        0.0,
+        1.0,
+    )
+    regime_signal = _clamp(float(trend_strength) - float(range_pressure), -1.0, 1.0)
+    delta = (
+        float(_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN) * skill_signal * sample_conf
+        + float(_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN) * regime_signal
+    )
+    cap = _clamp(float(_TECH_DYNAMIC_MAX_SCALE_DELTA), 0.0, 0.6)
+    delta = _clamp(delta, -cap, cap)
+    return _clamp(base * (1.0 + delta), 0.0, 0.8), float(delta)
+
+
+def _adjust_dynamic_session_weight(
+    *,
+    base_weight: float,
+    horizon: str,
+    session_bias: float,
+    session_samples: int,
+    trend_strength: float,
+    range_pressure: float,
+) -> tuple[float, float]:
+    key = str(horizon or "").strip().lower()
+    if key == "1m":
+        return 0.0, 0.0
+    base = _clamp(float(base_weight), 0.0, 0.6)
+    if not _dynamic_weight_active(horizon):
+        return base, 0.0
+    center = max(1e-6, float(_TECH_DYNAMIC_SESSION_BIAS_CENTER))
+    bias_abs = abs(_safe_float(session_bias, 0.0))
+    bias_signal = _clamp((bias_abs - center) / center, -1.0, 1.0)
+    sample_conf = _clamp(
+        float(max(0, int(session_samples)))
+        / max(float(max(1, int(_TECH_SESSION_BIAS_MIN_SAMPLES)) * 3), 1.0),
+        0.0,
+        1.0,
+    )
+    regime_signal = _clamp(float(range_pressure) - float(trend_strength), -1.0, 1.0)
+    delta = (
+        float(_TECH_DYNAMIC_SESSION_BIAS_GAIN) * bias_signal * sample_conf
+        + float(_TECH_DYNAMIC_SESSION_REGIME_GAIN) * regime_signal
+    )
+    cap = _clamp(float(_TECH_DYNAMIC_MAX_SCALE_DELTA), 0.0, 0.6)
+    delta = _clamp(delta, -cap, cap)
+    return _clamp(base * (1.0 + delta), 0.0, 0.6), float(delta)
 
 
 def _sigmoid(x: float) -> float:
@@ -2032,8 +2142,29 @@ def _technical_prediction_for_horizon(
     )
 
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
-    breakout_weight = _breakout_adaptive_weight_for_horizon(horizon)
-    session_bias_weight = _session_bias_weight_for_horizon(horizon)
+    breakout_weight_base = _breakout_adaptive_weight_for_horizon(horizon)
+    session_bias_weight_base = _session_bias_weight_for_horizon(horizon)
+    breakout_weight = breakout_weight_base
+    session_bias_weight = session_bias_weight_base
+    breakout_weight_delta = 0.0
+    session_weight_delta = 0.0
+    if _TECH_DYNAMIC_WEIGHT_ENABLED:
+        breakout_weight, breakout_weight_delta = _adjust_dynamic_breakout_weight(
+            base_weight=breakout_weight_base,
+            horizon=horizon,
+            breakout_skill=breakout_skill,
+            breakout_samples=breakout_samples,
+            trend_strength=trend_strength,
+            range_pressure=range_pressure,
+        )
+        session_bias_weight, session_weight_delta = _adjust_dynamic_session_weight(
+            base_weight=session_bias_weight_base,
+            horizon=horizon,
+            session_bias=session_bias,
+            session_samples=session_samples,
+            trend_strength=trend_strength,
+            range_pressure=range_pressure,
+        )
     rebound_weight = 0.0
     rebound_signal = 0.0
     rebound_components: dict[str, float] = {
@@ -2114,8 +2245,12 @@ def _technical_prediction_for_horizon(
             "breakout_skill_20": round(float(breakout_skill), 6),
             "breakout_hit_rate_20": round(float(breakout_hit_rate), 6),
             "breakout_samples_20": int(breakout_samples),
+            "breakout_adaptive_weight_base": round(float(breakout_weight_base), 6),
+            "breakout_adaptive_weight_delta": round(float(breakout_weight_delta), 6),
             "breakout_adaptive_weight": round(float(breakout_weight), 6),
             "session_bias_jst": round(float(session_bias), 6),
+            "session_bias_weight_base": round(float(session_bias_weight_base), 6),
+            "session_bias_weight_delta": round(float(session_weight_delta), 6),
             "session_bias_weight": round(float(session_bias_weight), 6),
             "session_mean_pips_jst": round(float(session_mean_pips), 6),
             "session_samples_jst": int(session_samples),
