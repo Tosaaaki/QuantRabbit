@@ -394,6 +394,20 @@ VM同一期間 before/after（`candD`）:
 - `5m/10m` で `hit` と `MAE` の同時改善幅が最も大きく、総合スコアが最大だったため採用。
 - `1m` は軽微に悪化するが、`5m/10m` への寄与を優先する運用方針で許容。
 
+同日 2026-02-22 の微調整（`candD_1m_mae_boost`）では、
+`candD` の `5m/10m` を固定し、`1m` 専用重みのみを再探索しました。
+- `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.28,10m=0.34`
+- `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`
+- その他 `candD` パラメータは維持
+
+VM同一期間比較（`candD` 比, `bars=8050`）:
+- `1m`: `hit_after_delta=+0.0000`, `mae_after_delta=-0.000068`, `range_cov_after_delta=+0.0000`
+- `5m`: 差分なし
+- `10m`: 差分なし
+
+判定:
+- 方向精度（hit）を維持したまま `1m MAE` を僅かに改善できたため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

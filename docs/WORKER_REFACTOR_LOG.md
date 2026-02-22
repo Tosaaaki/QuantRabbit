@@ -8,6 +8,35 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-21（追記）`scalp_ping_5s_c_live` を新設（profit-first クローン）
+
+- 背景:
+  - `scalp_ping_5s_b_live` の replay/WFO で、主損失源が short 側に集中し時給収益目標を満たせない状態が継続。
+  - 既存Bを汚さず、強デリスク設定（short抑制・サイズ抑制・spread guard有効）を別ワーカーで検証する必要がある。
+- 実施:
+  - 追加: `workers/scalp_ping_5s_c/`（ENTRY/EXIT 一式を B から複製）
+    - `workers/scalp_ping_5s_c/worker.py` を `SCALP_PING_5S_C_*` プレフィックスへ切替。
+    - `workers/scalp_ping_5s_c/exit_worker.py` エントリポイントを `scalp_ping_5s_c_exit_worker()` へ変更。
+  - 追加: `systemd/quant-scalp-ping-5s-c.service`
+  - 追加: `systemd/quant-scalp-ping-5s-c-exit.service`
+  - 追加: `ops/env/quant-scalp-ping-5s-c.env`
+  - 追加: `ops/env/quant-scalp-ping-5s-c-exit.env`
+  - 追加: `ops/env/scalp_ping_5s_c.env`
+    - `SIDE_FILTER=long`
+    - `MAX_UNITS=2200`, `BASE_ENTRY_UNITS=800`
+    - short閾値強化（`SHORT_MIN_TICKS=8`, `SHORT_MIN_TICK_RATE=1.05` など）
+    - `SPREAD_GUARD_DISABLE=0`
+  - 変更: `workers/scalp_ping_5s/config.py`
+    - `ENV_PREFIX=SCALP_PING_5S_C` を B 同等の default 群として扱う（B/C 互換）。
+  - 変更: `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_c` / `scalp_ping_5s_c_live` を B/C 共通 `exit_profile` に接続。
+  - 変更: `scripts/replay_exit_workers.py`
+    - `SCALP_REPLAY_PING_VARIANT=B|C` で replay 対象を B/C 切替可能化。
+  - 変更: `ops/env/quant-order-manager.env`
+    - `scalp_ping_5s_c_live` 向けの preserve-intent/perf-guard キーを追加。
+- 意図:
+  - B運用を保持したまま C で「損失構造の先行除去」を検証し、実トレード投入前に replay/WFO で改善の有無を切り分ける。
+
 ### 2026-02-21（追記）反実仮想レビューに疑似OOS確実性ゲートを追加
 
 - 対象:
@@ -4193,3 +4222,27 @@
 - 判定:
   - `5m/10m` の hit と MAE を同時に押し上げる総合スコアが最大だったため、
     runtime 運用値を `candD` へ更新。
+
+### 2026-02-22（追記）forecast 微調整（candD_1m_mae_boost）
+
+- 背景:
+  - `candD` は `5m/10m` を最大化できたが、`1m` で僅かな改善余地が残っていたため、
+    `1m` 専用の `breakout/rebound` 重みだけを局所探索した。
+- 実施:
+  - スキャン:
+    - `tmp/qr_vm_hit_scan_b1_rb1.py`（`b1/rb1` の 16 組合せ）
+    - `tmp/qr_vm_hit_scan_fg_rb.py`（`fg/rb` の 9 組合せ）
+  - VM再検証:
+    - `logs/reports/forecast_improvement/forecast_eval_20260222T000006Z_current_candD.json`
+    - `logs/reports/forecast_improvement/forecast_eval_20260222T000006Z_candD_1m_mae_boost.json`
+- 採用値（candD_1m_mae_boost）:
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.28,10m=0.34`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`
+  - その他 `candD` パラメータは維持。
+- `candD` 比（after-after）:
+  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=-0.000068`, `range_cov_after_delta=+0.000000`
+  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`
+  - `10m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`
+- 判定:
+  - `5m/10m` を固定したまま `1m MAE` を微改善し、`hit` を維持できたため
+    runtime 運用値を `candD_1m_mae_boost` へ更新。
