@@ -4406,3 +4406,33 @@
   - `1m` は各窓で非劣化（hit維持、MAEは小幅改善）。
 - 判定:
   - `24h/72h/full` の全窓で `5m/10m` の `hit` と `MAE` を同時改善できたため採用。
+
+### 2026-02-22（追記）forecast 多窓最適化2（dynamic_h510_rnd161）
+
+- 背景:
+  - `dynamic_h510_rand028` で改善したが、`10m` の hit/MAE をさらに押し上げる余地があった。
+- 実施:
+  - 拡張多段探索（72hで261候補粗探索 → 上位24候補を24h/72h/fullで再評価）:
+    - `logs/reports/forecast_improvement/forecast_dyn_multistage_v2_20260222.json`
+- 採用値（runtime）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.02`（維持）
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.29,10m=0.34`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.26,10m=0.45`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`（維持）
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.22`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.015`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.22`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.16`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.34`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
+- 直前運用値（`dynamic_h510_rand028`）比:
+  - `24h`: `10m hit_after_delta=+0.003425`, `10m mae_after_delta=-0.003373`,
+    `5m mae_after_delta=-0.000260`
+  - `72h`: `10m hit_after_delta=+0.002286`, `10m mae_after_delta=-0.004327`,
+    `5m hit_after_delta=+0.000655`, `5m mae_after_delta=-0.000243`
+  - `full(8050 bars)`: `10m hit_after_delta=+0.001634`, `10m mae_after_delta=-0.002883`,
+    `5m mae_after_delta=-0.000217`
+  - `1m` は非劣化（同等）。
+- 判定:
+  - 3窓すべてで `10m` の `hit/MAE` を同時改善し、`5m` も非劣化〜改善のため採用。

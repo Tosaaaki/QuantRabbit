@@ -525,6 +525,32 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
 判定:
 - `24h/72h/full` の全窓で `5m/10m` の `hit` と `MAE` を同時改善できたため採用。
 
+同日 2026-02-22 の追加改善（`dynamic_h510_rnd161`）では、
+多窓ランダム探索を拡張（`261候補→上位24候補を再評価`）し、
+`10m` の方向一致と誤差をさらに押し上げる設定を採用しました。
+- 比較ファイル:
+  - `logs/reports/forecast_improvement/forecast_dyn_multistage_v2_20260222.json`
+- 運用反映値:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.02`（維持）
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.29,10m=0.34`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.26,10m=0.45`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`（維持）
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.22`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.015`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.22`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.16`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.34`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
+- 直前運用値（`dynamic_h510_rand028`）比:
+  - `24h`: `10m hit +0.003425 / mae -0.003373`, `5m mae -0.000260`
+  - `72h`: `10m hit +0.002286 / mae -0.004327`, `5m hit +0.000655 / mae -0.000243`
+  - `full`: `10m hit +0.001634 / mae -0.002883`, `5m mae -0.000217`
+  - `1m` は非劣化（同等）。
+
+判定:
+- 3窓すべてで `10m` の `hit/MAE` を同時改善し、`5m` も非劣化〜改善のため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
