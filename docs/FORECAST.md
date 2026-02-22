@@ -479,6 +479,26 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
 - `5m` を維持したまま `10m` の `hit/MAE/range_cov` を同時改善できたため、
   dynamic 強化版を runtime 採用。
 
+同日 2026-02-22 の追加改善（`dynamic_h510_aggr3`）では、
+`10m` 強化値を維持したまま `5m` にも可変重みを適用し、
+`5m/10m` を同時に改善する候補を採用しました。
+- 比較ファイル:
+  - `logs/reports/forecast_improvement/forecast_dynamic_candidates_20260222T2.json`
+  - `logs/reports/forecast_improvement/forecast_dynamic_h510_check_20260222.json`
+- 運用反映値:
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.20`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`（維持）
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.16`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.26`
+- 直前運用値（`horizons=10m,max_delta=0.16,b_regime=0.12,s_bias=0.22`）比:
+  - `1m`: 変化なし
+  - `5m`: `hit_after +0.000898`, `mae_after -0.000743`, `range_cov_after +0.000749`
+  - `10m`: `hit_after +0.000743`, `mae_after -0.000587`, `range_cov_after +0.000000`
+
+判定:
+- `5m/10m` で `hit` と `MAE` を同時改善できるため、`5m,10m` 可変化を採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`
