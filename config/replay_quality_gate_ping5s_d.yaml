@@ -1,0 +1,65 @@
+# Replay quality gate defaults for 5s scalp D (profit lock mode).
+# Goal: reject parameter sets unless out-of-sample folds are all net positive in JPY.
+
+ticks_globs:
+  - "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
+  - "logs/archive/replay.*.dir/USD_JPY/USD_JPY_ticks_*.jsonl"
+  - "tmp/vm_ticks/logs/archive/replay.*/USD_JPY/USD_JPY_ticks_*.jsonl"
+  - "local/market_data/usdjpy_20260123_20260128/USD_JPY_ticks_*.jsonl"
+
+# Skip partial/illiquid files that can distort fold checks.
+min_tick_lines: 50000
+
+workers:
+  - scalp_ping_5s_d_live
+
+replay:
+  backend: exit_workers_main
+  no_hard_sl: true
+  no_hard_tp: false
+  exclude_end_of_replay: false
+  realistic: true
+  no_main_strategies: true
+  fill_mode: next_tick
+  env:
+    SCALP_REPLAY_MODE: scalp_ping_5s_d
+    SCALP_REPLAY_ALLOWLIST: scalp_ping_5s_d
+    SCALP_REPLAY_PING_VARIANT: D
+    SCALP_REPLAY_BLOCK_JST_HOURS: 0,1,3,5,9,10,11,17,18,21,23
+    SCALP_PING_5S_D_ENABLED: 1
+    SCALP_PING_5S_D_SIDE_FILTER: long
+    SCALP_PING_5S_D_BASE_ENTRY_UNITS: 800
+    SCALP_PING_5S_D_MIN_UNITS: 100
+    SCALP_PING_5S_D_MAX_UNITS: 2200
+    SCALP_PING_5S_D_FORCE_EXIT_ENABLED: 1
+    SCALP_PING_5S_D_FORCE_EXIT_MAX_ACTIONS: 2
+    SCALP_PING_5S_D_FORCE_EXIT_MAX_HOLD_SEC: 70
+    SCALP_PING_5S_D_SHORT_FORCE_EXIT_MAX_HOLD_SEC: 50
+    SCALP_PING_5S_D_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: 1.9
+    SCALP_PING_5S_D_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: 1.5
+    SCALP_PING_5S_D_FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC: 4.0
+    SCALP_PING_5S_D_FORCE_EXIT_FLOATING_LOSS_MIN_PIPS: 0.6
+    SCALP_PING_5S_D_FORCE_EXIT_REASON: time_stop
+    SCALP_PING_5S_D_FORCE_EXIT_MAX_FLOATING_LOSS_REASON: max_floating_loss
+    SCALP_PING_5S_D_FORCE_EXIT_RECOVERY_REASON: no_recovery
+    SPREAD_GUARD_DISABLE: 1
+    SCALP_PING_5S_D_MAX_TICK_AGE_MS: 9999999999
+
+gates:
+  default:
+    min_train_trades: 10
+    min_test_trades: 2
+    min_test_pf: 1.0
+    min_test_win_rate: 0.50
+    min_test_total_pips: 0.0
+    min_test_total_jpy: 0.0
+    min_test_jpy_per_hour: 0.0
+    max_test_drawdown_pips: 45.0
+    max_test_drawdown_jpy: 5000.0
+    min_pf_stability_ratio: 0.60
+
+walk_forward:
+  train_files: 2
+  test_files: 1
+  step_files: 1
+  min_fold_pass_rate: 1.0

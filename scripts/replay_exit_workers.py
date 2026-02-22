@@ -15,13 +15,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import sys
 
@@ -131,6 +133,22 @@ def _env_set(name: str, default: str = "") -> set[str]:
     }
 
 
+def _env_hours(name: str) -> set[int]:
+    values: set[int] = set()
+    raw = os.getenv(name, "")
+    for item in (raw or "").split(","):
+        text = item.strip()
+        if not text:
+            continue
+        try:
+            hour = int(text)
+        except Exception:
+            continue
+        if 0 <= hour <= 23:
+            values.add(hour)
+    return values
+
+
 @dataclass(frozen=True)
 class ReplayScalpConfig:
     MODE: str
@@ -176,6 +194,255 @@ def _build_replay_scalp_config() -> ReplayScalpConfig:
 
 _SP_CFG = _build_replay_scalp_config()
 
+_PING5S_VARIANTS: dict[str, dict[str, str]] = {
+    "B": {
+        "mode": "scalp_ping_5s_b",
+        "fallback_tag": "scalp_ping_5s_b_live",
+        "log_prefix": "[SCALP_PING_5S_B]",
+        "alt_prefix": "SCALP_PING_5S_B",
+        "worker_module": "workers.scalp_ping_5s_b.worker",
+        "exit_module": "workers.scalp_ping_5s_b.exit_worker",
+    },
+    "C": {
+        "mode": "scalp_ping_5s_c",
+        "fallback_tag": "scalp_ping_5s_c_live",
+        "log_prefix": "[SCALP_PING_5S_C]",
+        "alt_prefix": "SCALP_PING_5S_C",
+        "worker_module": "workers.scalp_ping_5s_c.worker",
+        "exit_module": "workers.scalp_ping_5s_c.exit_worker",
+    },
+    "D": {
+        "mode": "scalp_ping_5s_d",
+        "fallback_tag": "scalp_ping_5s_d_live",
+        "log_prefix": "[SCALP_PING_5S_D]",
+        "alt_prefix": "SCALP_PING_5S_D",
+        "worker_module": "workers.scalp_ping_5s_d.worker",
+        "exit_module": "workers.scalp_ping_5s_d.exit_worker",
+    },
+}
+_PING5S_VARIANT = (str(os.getenv("SCALP_REPLAY_PING_VARIANT", "B")).strip().upper() or "B")
+if _PING5S_VARIANT not in _PING5S_VARIANTS:
+    _PING5S_VARIANT = "B"
+_PING5S_VARIANT_CFG = _PING5S_VARIANTS[_PING5S_VARIANT]
+_PING5S_MODE = _PING5S_VARIANT_CFG["mode"]
+_PING5S_RUNNER_NAME = _PING5S_MODE
+_PING5S_FALLBACK_TAG = _PING5S_VARIANT_CFG["fallback_tag"]
+_PING5S_LOG_PREFIX = _PING5S_VARIANT_CFG["log_prefix"]
+_PING5S_ALT_PREFIX = _PING5S_VARIANT_CFG["alt_prefix"]
+_PING5S_WORKER_MODULE = _PING5S_VARIANT_CFG["worker_module"]
+_PING5S_EXIT_MODULE = _PING5S_VARIANT_CFG["exit_module"]
+
+_PING5S_RUNTIME: Optional[tuple[Any, Any, Any]] = None
+_PING5S_RUNTIME_FAILED = False
+
+
+def _ping5s_force_exit_timeout_sec(ping_config: Any, *, side: str) -> float:
+    try:
+        if not bool(getattr(ping_config, "FORCE_EXIT_ENABLED", True)):
+            return 0.0
+    except Exception:
+        return 0.0
+    try:
+        max_actions = int(float(getattr(ping_config, "FORCE_EXIT_MAX_ACTIONS", 0)))
+    except Exception:
+        max_actions = 0
+    if max_actions <= 0:
+        return 0.0
+    hold_key = "SHORT_FORCE_EXIT_MAX_HOLD_SEC" if side == "short" else "FORCE_EXIT_MAX_HOLD_SEC"
+    try:
+        timeout_sec = float(getattr(ping_config, hold_key, 0.0) or 0.0)
+    except Exception:
+        timeout_sec = 0.0
+    if timeout_sec <= 0.0 and hold_key != "FORCE_EXIT_MAX_HOLD_SEC":
+        try:
+            timeout_sec = float(getattr(ping_config, "FORCE_EXIT_MAX_HOLD_SEC", 0.0) or 0.0)
+        except Exception:
+            timeout_sec = 0.0
+    return max(0.0, timeout_sec)
+
+
+def _ping5s_force_exit_reason(ping_config: Any) -> str:
+    reason = str(getattr(ping_config, "FORCE_EXIT_REASON", "time_stop") or "").strip()
+    return reason or "time_stop"
+
+
+def _ping5s_entry_units_intent(
+    ping_worker: Any,
+    ping_config: Any,
+    *,
+    confidence: int,
+) -> int:
+    try:
+        base_units = int(round(float(getattr(ping_config, "BASE_ENTRY_UNITS", 10000) or 10000.0)))
+    except Exception:
+        base_units = 10000
+    try:
+        min_units = int(round(float(getattr(ping_config, "MIN_UNITS", 100) or 100.0)))
+    except Exception:
+        min_units = 100
+    try:
+        max_units = int(round(float(getattr(ping_config, "MAX_UNITS", max(base_units, min_units)) or 0.0)))
+    except Exception:
+        max_units = max(base_units, min_units)
+
+    if max_units <= 0:
+        max_units = max(base_units, min_units, 1)
+    min_units = max(1, min(min_units, max_units))
+    base_units = max(min_units, min(base_units, max_units))
+
+    conf_mult = 1.0
+    try:
+        confidence_scale = getattr(ping_worker, "_confidence_scale", None)
+        if callable(confidence_scale):
+            conf_mult = float(confidence_scale(int(confidence)))
+    except Exception:
+        conf_mult = 1.0
+    if not math.isfinite(conf_mult) or conf_mult <= 0.0:
+        conf_mult = 1.0
+
+    units = int(round(base_units * conf_mult))
+    units = max(min_units, min(max_units, units))
+    return max(1, units)
+
+
+def _signal_signed_units(signal: Mapping[str, Any], *, direction: str) -> int:
+    for key in ("entry_units_intent", "units_intent", "units"):
+        raw = signal.get(key)
+        if raw is None:
+            continue
+        try:
+            units = int(round(abs(float(raw))))
+        except Exception:
+            continue
+        if units > 0:
+            return units if direction == "long" else -units
+    fallback = 10000
+    return fallback if direction == "long" else -fallback
+
+
+def _load_ping5s_runtime() -> Optional[tuple[Any, Any, Any]]:
+    global _PING5S_RUNTIME, _PING5S_RUNTIME_FAILED
+    if _PING5S_RUNTIME is not None:
+        return _PING5S_RUNTIME
+    if _PING5S_RUNTIME_FAILED:
+        return None
+    try:
+        ping_wrapper = importlib.import_module(_PING5S_WORKER_MODULE)
+        _apply_ping_env = getattr(ping_wrapper, "_apply_alt_env")
+        _apply_ping_env(
+            _PING5S_ALT_PREFIX,
+            fallback_tag=_PING5S_FALLBACK_TAG,
+            fallback_log_prefix=_PING5S_LOG_PREFIX,
+        )
+        import workers.scalp_ping_5s.worker as ping_worker
+        import workers.scalp_ping_5s.config as ping_config
+        ping_exit = importlib.import_module(_PING5S_EXIT_MODULE)
+
+        _PING5S_RUNTIME = (ping_worker, ping_config, ping_exit)
+        return _PING5S_RUNTIME
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "[replay] failed to load ping5s runtime variant=%s worker=%s exit=%s",
+            _PING5S_VARIANT,
+            _PING5S_WORKER_MODULE,
+            _PING5S_EXIT_MODULE,
+        )
+        _PING5S_RUNTIME_FAILED = True
+        return None
+
+
+def _signal_scalp_ping_5s_b(
+    _fac_m1: dict,
+    _fac_m5: dict,
+    _fac_h1: dict,
+    _range_ctx: object,
+    _now: datetime,
+) -> Optional[dict]:
+    runtime = _load_ping5s_runtime()
+    if runtime is None:
+        return None
+    ping_worker, ping_config, _ = runtime
+    try:
+        rows = tick_window.recent_ticks(float(getattr(ping_config, "WINDOW_SEC", 20.0)))
+    except Exception:
+        rows = []
+    if not rows:
+        return None
+
+    spread_pips = 0.0
+    try:
+        blocked, spread, *_ = spread_monitor.is_blocked()
+        if not blocked and spread is not None:
+            spread_pips = float(spread)
+    except Exception:
+        spread_pips = 0.0
+
+    signal, reason = ping_worker._build_tick_signal(rows, spread_pips)
+    if signal is None:
+        return None
+
+    regime = None
+    regime_gate = "mtf_unavailable"
+    try:
+        regime = ping_worker._build_mtf_regime(factor_cache.all_factors())
+        adjusted, regime_mult, regime_gate = ping_worker._apply_mtf_regime(signal, regime)
+        if adjusted is None or float(regime_mult) <= 0.0:
+            return None
+        signal = adjusted
+    except Exception:
+        regime_gate = "mtf_error"
+
+    try:
+        tp_profile = ping_worker._load_tp_timing_profile(
+            str(getattr(ping_config, "STRATEGY_TAG", _PING5S_FALLBACK_TAG)),
+            str(getattr(ping_config, "POCKET", "scalp_fast")),
+        )
+    except Exception:
+        tp_profile = ping_worker.TpTimingProfile()
+
+    try:
+        tp_pips, sl_pips = ping_worker._compute_targets(
+            spread_pips=float(signal.spread_pips),
+            momentum_pips=float(signal.momentum_pips),
+            side=str(signal.side),
+            tp_profile=tp_profile,
+            regime=regime,
+            signal_range_pips=float(signal.range_pips),
+            signal_instant_range_pips=float(signal.instant_range_pips),
+        )
+    except Exception:
+        tp_pips = max(0.2, abs(float(signal.momentum_pips)) * 0.4)
+        sl_pips = max(0.8, tp_pips * 2.0)
+
+    try:
+        tp_enabled = bool(getattr(ping_config, "TP_ENABLED", False))
+    except Exception:
+        tp_enabled = False
+    if not tp_enabled:
+        tp_pips = 0.0
+    timeout_sec = _ping5s_force_exit_timeout_sec(ping_config, side=str(signal.side))
+    force_exit_reason = _ping5s_force_exit_reason(ping_config)
+    entry_units_intent = _ping5s_entry_units_intent(
+        ping_worker,
+        ping_config,
+        confidence=int(signal.confidence),
+    )
+
+    return {
+        "action": "OPEN_LONG" if str(signal.side) == "long" else "OPEN_SHORT",
+        "confidence": int(signal.confidence),
+        "entry_units_intent": int(entry_units_intent),
+        "tp_pips": float(max(0.0, tp_pips)),
+        "sl_pips": float(max(0.1, sl_pips)),
+        "timeout_sec": float(timeout_sec),
+        "force_exit_reason": force_exit_reason,
+        "force_exit_max_hold_sec": float(timeout_sec),
+        "strategy_tag": str(getattr(ping_config, "STRATEGY_TAG", _PING5S_FALLBACK_TAG)),
+        "signal_mode": str(getattr(signal, "mode", "momentum")),
+        "signal_reason": str(reason),
+        "mtf_regime_gate": str(regime_gate),
+    }
+
 
 def _unsupported_signal(*_args: object, **_kwargs: object) -> None:
     return None
@@ -209,6 +476,7 @@ def _signal_map():
             range_ctx,
             tag="FalseBreakFade",
         ),
+        "ScalpPing5SB": _signal_scalp_ping_5s_b,
         "WickReversal": _unsupported_signal,
     }
 
@@ -416,6 +684,7 @@ _TAG_TO_MODE = {
     "SessionEdge": "session_edge",
     "SqueezePulseBreak": "squeeze_pulse_break",
     "FalseBreakFade": "false_break_fade",
+    "ScalpPing5SB": _PING5S_MODE,
 }
 
 
@@ -603,6 +872,7 @@ class SimBroker:
             "units": signed_units,
             "price": entry_price,
             "open_time": entry_time.isoformat(),
+            "open_epoch": float(entry_time.timestamp()),
             "client_order_id": client_id,
             "clientExtensions": {"id": client_id},
             "entry_thesis": thesis,
@@ -904,6 +1174,71 @@ class SimBroker:
         for trade_id, reason, price in closing:
             self.close_trade(trade_id, reason, exit_price_override=price)
 
+    @staticmethod
+    def _trade_timeout_sec(trade: dict) -> Optional[float]:
+        thesis = trade.get("entry_thesis")
+        candidates: list[object] = []
+        if isinstance(thesis, dict):
+            candidates.append(thesis.get("timeout_sec"))
+            candidates.append(thesis.get("force_exit_max_hold_sec"))
+        candidates.append(trade.get("timeout_sec"))
+        for raw in candidates:
+            try:
+                timeout_sec = float(raw) if raw is not None else 0.0
+            except Exception:
+                timeout_sec = 0.0
+            if timeout_sec > 0.0:
+                return timeout_sec
+        return None
+
+    @staticmethod
+    def _trade_timeout_reason(trade: dict) -> str:
+        thesis = trade.get("entry_thesis")
+        reason = ""
+        if isinstance(thesis, dict):
+            reason = str(thesis.get("force_exit_reason") or thesis.get("timeout_reason") or "").strip()
+        if not reason:
+            reason = "time_stop"
+        return reason
+
+    def check_timeouts(self, tick: TickRow) -> None:
+        timed_out: List[Tuple[str, str, float]] = []
+        for trade_id, trade in list(self.open_trades.items()):
+            timeout_sec = self._trade_timeout_sec(trade)
+            if timeout_sec is None:
+                continue
+            try:
+                opened_epoch = float(trade.get("open_epoch") or 0.0)
+            except Exception:
+                opened_epoch = 0.0
+            if opened_epoch <= 0.0:
+                open_time = str(trade.get("open_time") or "").strip()
+                if open_time:
+                    try:
+                        opened_epoch = datetime.fromisoformat(open_time).astimezone(timezone.utc).timestamp()
+                    except Exception:
+                        opened_epoch = 0.0
+            if opened_epoch <= 0.0:
+                continue
+            if (tick.epoch - opened_epoch) < timeout_sec:
+                continue
+            units = int(trade.get("units", 0) or 0)
+            if units == 0:
+                continue
+            reason = self._trade_timeout_reason(trade)
+            timeout_exit_price = tick.bid if units > 0 else tick.ask
+            timed_out.append((trade_id, reason, float(timeout_exit_price)))
+
+        for trade_id, reason, timeout_exit_price in timed_out:
+            closed = self.close_trade(trade_id, reason)
+            if closed:
+                continue
+            self.close_trade(
+                trade_id,
+                reason,
+                exit_price_override=timeout_exit_price,
+            )
+
     def get_open_positions(self) -> Dict[str, dict]:
         pockets: Dict[str, dict] = {}
         for tr in self.open_trades.values():
@@ -1048,7 +1383,8 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
             entry_time=tick.ts,
             tp_pips=tp_pips,
             sl_pips=sl_pips,
-            timeout_sec=None,
+            timeout_sec=float(thesis.get("timeout_sec") or thesis.get("force_exit_max_hold_sec") or 0.0)
+            or None,
             units=abs(units),
             source="scalp_replay",
             entry_thesis=thesis if thesis else None,
@@ -1087,6 +1423,17 @@ def _patch_exit_module(module, broker: SimBroker) -> None:
         return broker.close_trade(str(trade_id), exit_reason or "exit_worker")
 
     module.close_trade = _close_trade_stub
+
+    if hasattr(module, "set_trade_protections"):
+        async def _set_trade_protections_stub(
+            _trade_id: str,
+            *,
+            sl_price: float | None = None,
+            tp_price: float | None = None,
+        ) -> bool:
+            return True
+
+        module.set_trade_protections = _set_trade_protections_stub
 
 
 def _summarize(trades: List[dict]) -> dict:
@@ -1210,12 +1557,20 @@ class ScalpReplayEntryEngine:
         for mode in self._modes:
             self._state[mode] = {"last_entry": 0.0}
         self._last_eval_epoch: Optional[float] = None
+        self._jst_tz = timezone(timedelta(hours=9))
+        self._allow_jst_hours = _env_hours("SCALP_REPLAY_ALLOW_JST_HOURS")
+        self._block_jst_hours = _env_hours("SCALP_REPLAY_BLOCK_JST_HOURS")
 
     def on_tick(self, tick: TickRow) -> None:
         if self._last_eval_epoch is not None:
             if tick.epoch - self._last_eval_epoch < self._config.LOOP_INTERVAL_SEC:
                 return
         self._last_eval_epoch = tick.epoch
+        jst_hour = tick.ts.astimezone(self._jst_tz).hour
+        if self._allow_jst_hours and jst_hour not in self._allow_jst_hours:
+            return
+        if self._block_jst_hours and jst_hour in self._block_jst_hours:
+            return
         if self._live_entry:
             if not is_market_open(tick.ts):
                 return
@@ -1272,17 +1627,20 @@ class ScalpReplayEntryEngine:
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                 continue
             direction = "long" if action == "OPEN_LONG" else "short"
+            signed_units = _signal_signed_units(signal, direction=direction)
+            if signed_units == 0:
+                continue
+            entry_price = tick.ask if direction == "long" else tick.bid
+            strategy_tag = str(signal.get("strategy_tag") or mode)
             sl_pips = float(signal.get("sl_pips") or 0.0)
             tp_pips = float(signal.get("tp_pips") or 0.0)
+            timeout_sec = float(signal.get("timeout_sec") or 0.0) or None
             if sl_pips <= 0:
                 continue
             if self._live_entry:
                 if self._loop is None:
                     continue
                 conf = int(signal.get("confidence") or 0)
-                units = 10000
-                if direction == "short":
-                    units = -10000
                 sl_price = entry_price - sl_pips * PIP if direction == "long" else entry_price + sl_pips * PIP
                 tp_price = (
                     entry_price + tp_pips * PIP
@@ -1294,14 +1652,15 @@ class ScalpReplayEntryEngine:
                 order_id = self._loop.run_until_complete(
                     order_manager.market_order(
                         instrument="USD_JPY",
-                        units=units,
+                        units=signed_units,
                         sl_price=sl_price,
                         tp_price=tp_price,
                         pocket=self._config.POCKET,
-                        strategy_tag=mode,
+                        strategy_tag=strategy_tag,
                         entry_thesis={
                             "entry_probability": min(1.0, max(0.0, conf / 100.0)),
-                            "entry_units_intent": abs(units),
+                            "entry_units_intent": abs(signed_units),
+                            "timeout_sec": timeout_sec,
                             **signal,
                         },
                         confidence=conf,
@@ -1321,15 +1680,21 @@ class ScalpReplayEntryEngine:
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
             self._broker.open_trade(
                 pocket=self._config.POCKET,
-                strategy_tag=mode,
+                strategy_tag=strategy_tag,
                 direction=direction,
                 entry_price=entry_price,
                 entry_time=tick.ts,
                 tp_pips=tp_pips,
                 sl_pips=sl_pips,
-                timeout_sec=float(signal.get("timeout_sec") or 0.0) or None,
-                units=10000,
+                timeout_sec=timeout_sec,
+                units=abs(signed_units),
                 source="scalp_replay",
+                entry_thesis={
+                    "entry_probability": min(1.0, max(0.0, conf / 100.0)),
+                    "entry_units_intent": abs(signed_units),
+                    "timeout_sec": timeout_sec,
+                    **signal,
+                },
             )
             self._state[mode]["last_entry"] = tick.epoch
 
@@ -1494,7 +1859,7 @@ class ExitRunner:
             for tr in trades:
                 await self.worker._review_trade(tr, now, mid, rsi, range_active)
             return
-        if self.name in {"scalp_level_reject", "scalp_false_break_fade"}:
+        if self.name in {"scalp_level_reject", "scalp_false_break_fade", _PING5S_RUNNER_NAME}:
             mid, range_active = self.worker._context()
             if mid is None:
                 return
@@ -1649,9 +2014,14 @@ def main() -> None:
 
     if fast_exit is not None:
         _patch_exit_module(fast_exit, broker)
+    ping_exit_module = None
     if not args.fast_only and not args.main_only:
         _patch_exit_module(sp_level_reject_exit, broker)
         _patch_exit_module(sp_false_break_exit, broker)
+        ping_runtime = _load_ping5s_runtime()
+        if ping_runtime is not None:
+            ping_exit_module = ping_runtime[2]
+            _patch_exit_module(ping_exit_module, broker)
         if bbrsi_exit is not None:
             _patch_exit_module(bbrsi_exit, broker)
         if trendma_exit is not None:
@@ -1667,6 +2037,7 @@ def main() -> None:
         fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
     sp_level_reject_runner = None
     sp_false_break_runner = None
+    sp_ping5s_runner = None
     bbrsi_runner = None
     trend_runner = None
     if not args.fast_only and not args.main_only:
@@ -1682,6 +2053,13 @@ def main() -> None:
             sp_false_break_exit.RangeFaderExitWorker(),
             broker,
         )
+        if ping_exit_module is not None:
+            sp_ping5s_runner = ExitRunner(
+                _PING5S_RUNNER_NAME,
+                ping_exit_module,
+                ping_exit_module.RangeFaderExitWorker(),
+                broker,
+            )
         if bbrsi_exit is not None:
             bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
         if not args.disable_macro and trendma_exit is not None:
@@ -1735,11 +2113,13 @@ def main() -> None:
                 strat_entry.on_candle_close(tick)
 
         broker.check_sl_tp(tick)
+        broker.check_timeouts(tick)
         if fast_entry is not None:
             fast_entry.on_tick(tick)
         if sp_entry is not None:
             sp_entry.on_tick(tick)
         broker.check_sl_tp(tick)
+        broker.check_timeouts(tick)
 
         now_dt = tick.ts
         if not args.no_exit_worker:
@@ -1749,6 +2129,8 @@ def main() -> None:
                 loop.run_until_complete(sp_level_reject_runner.step(now_dt))
             if sp_false_break_runner is not None:
                 loop.run_until_complete(sp_false_break_runner.step(now_dt))
+            if sp_ping5s_runner is not None:
+                loop.run_until_complete(sp_ping5s_runner.step(now_dt))
             if bbrsi_runner is not None:
                 loop.run_until_complete(bbrsi_runner.step(now_dt))
             if trend_runner is not None:

@@ -36,6 +36,10 @@ python scripts/replay_exit_workers_groups.py \
   - `exit_workers_main`（`scripts/replay_exit_workers.py`）
 - 標準フラグ（`--no-hard-sl` / `--exclude-end-of-replay`）を既定で適用する。
 - 閾値は `config/replay_quality_gate*.yaml` の `gates.default` と `gates.workers` で管理する。
+- `replay.env`（config）で replay 実行時の環境変数を固定化できる。
+  - 例: `SCALP_REPLAY_PING_VARIANT=C|D`,
+    `SCALP_PING_5S_C_MAX_TICK_AGE_MS=9999999999`,
+    `SCALP_PING_5S_D_MAX_TICK_AGE_MS=9999999999`
 - `exit_workers_main` は `replay.intraday_start_utc` / `replay.intraday_end_utc` を指定すると、
   tick ファイル名の日付（`YYYYMMDD`）に対して日内 UTC 時間帯を自動適用できる。
 - `config/replay_quality_gate_main.yaml` の既定は intraday 無効（空文字）として扱い、
@@ -57,6 +61,10 @@ python scripts/replay_exit_workers_groups.py \
   これにより長時間リプレイ時の I/O 競合を避け、再生時間のばらつきを抑える。
 - `replay_quality_gate_main.yaml` の walk-forward 既定は
   `train_files=2 / test_files=1 / step_files=1`。
+- ゲート指標は `pips` 系に加え `JPY` 系にも対応している。
+  - `min_test_total_jpy`
+  - `min_test_jpy_per_hour`
+  - `max_test_drawdown_jpy`
 
 ```bash
 python scripts/replay_quality_gate.py \
@@ -70,6 +78,25 @@ python scripts/replay_quality_gate.py \
   --config config/replay_quality_gate_main.yaml \
   --ticks-glob "logs/replay/USD_JPY/USD_JPY_ticks_202602*.jsonl,logs/archive/replay.*.dir/USD_JPY/USD_JPY_ticks_202602*.jsonl" \
   --strict
+```
+
+```bash
+python scripts/replay_quality_gate.py \
+  --config config/replay_quality_gate_ping5s_c.yaml \
+  --strict
+```
+
+```bash
+python scripts/replay_quality_gate.py \
+  --config config/replay_quality_gate_ping5s_d.yaml \
+  --strict
+```
+
+```bash
+python scripts/replay_jpy_hour_sweep.py \
+  --report tmp/replay_quality_gate_ping5s_c_strict/<run>/quality_gate_report.json \
+  --thresholds "150,300,500,2000" \
+  --target-jpy-per-hour 2000
 ```
 
 - 出力:

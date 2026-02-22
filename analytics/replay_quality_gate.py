@@ -20,7 +20,10 @@ class GateThreshold:
     min_test_pf: float = 0.0
     min_test_win_rate: float = 0.0
     min_test_total_pips: float = -1.0e9
+    min_test_total_jpy: float = -1.0e12
+    min_test_jpy_per_hour: float = -1.0e12
     max_test_drawdown_pips: float = 1.0e9
+    max_test_drawdown_jpy: float = 1.0e12
     min_pf_stability_ratio: float = 0.0
 
 
@@ -70,7 +73,8 @@ def compute_trade_metrics(
     *,
     exclude_reason: str | None = None,
 ) -> dict[str, float]:
-    rows: list[tuple[float, int, float]] = []
+    rows: list[tuple[float, int, float, float]] = []
+    observed_ts: list[float] = []
 
     for idx, trade in enumerate(trades):
         if exclude_reason and str(trade.get("reason") or "") == exclude_reason:
@@ -78,21 +82,30 @@ def compute_trade_metrics(
         pnl = _safe_float(trade.get("pnl_pips"), default=math.nan)
         if math.isnan(pnl):
             continue
+        pnl_jpy = _safe_float(trade.get("pnl_jpy"), default=0.0)
         ts = _parse_iso8601(trade.get("exit_time")) or _parse_iso8601(trade.get("entry_time"))
         ts_key = ts.timestamp() if ts is not None else 0.0
-        rows.append((ts_key, idx, pnl))
+        if ts is not None:
+            observed_ts.append(ts_key)
+        rows.append((ts_key, idx, pnl, pnl_jpy))
 
     rows.sort(key=lambda item: (item[0], item[1]))
     pips = [item[2] for item in rows]
+    jpy = [item[3] for item in rows]
     n = len(pips)
     if n == 0:
         return {
             "trade_count": 0.0,
             "total_pips": 0.0,
             "avg_pips": 0.0,
+            "total_jpy": 0.0,
+            "avg_jpy": 0.0,
+            "jpy_per_hour": 0.0,
             "win_rate": 0.0,
             "profit_factor": 0.0,
             "max_drawdown_pips": 0.0,
+            "max_drawdown_jpy": 0.0,
+            "duration_hours": 0.0,
         }
 
     wins = [x for x in pips if x > 0.0]
@@ -105,14 +118,24 @@ def compute_trade_metrics(
         pf = float("inf")
     else:
         pf = 0.0
+    duration_hours = 0.0
+    if len(observed_ts) >= 2:
+        duration_hours = max(0.0, (max(observed_ts) - min(observed_ts)) / 3600.0)
+    total_jpy = float(sum(jpy))
+    jpy_per_hour = float(total_jpy / duration_hours) if duration_hours > 0.0 else 0.0
 
     return {
         "trade_count": float(n),
         "total_pips": float(sum(pips)),
         "avg_pips": float(sum(pips) / n),
+        "total_jpy": total_jpy,
+        "avg_jpy": float(total_jpy / n),
+        "jpy_per_hour": jpy_per_hour,
         "win_rate": float(len(wins) / n),
         "profit_factor": float(pf),
         "max_drawdown_pips": float(_drawdown_from_pips(pips)),
+        "max_drawdown_jpy": float(_drawdown_from_pips(jpy)),
+        "duration_hours": float(duration_hours),
     }
 
 
@@ -200,10 +223,25 @@ def evaluate_fold_gate(
             _safe_float(test_metrics.get("total_pips"), default=0.0),
             threshold.min_test_total_pips,
         ),
+        _check_ge(
+            "test_total_jpy",
+            _safe_float(test_metrics.get("total_jpy"), default=0.0),
+            threshold.min_test_total_jpy,
+        ),
+        _check_ge(
+            "test_jpy_per_hour",
+            _safe_float(test_metrics.get("jpy_per_hour"), default=0.0),
+            threshold.min_test_jpy_per_hour,
+        ),
         _check_le(
             "test_max_drawdown_pips",
             _safe_float(test_metrics.get("max_drawdown_pips"), default=0.0),
             threshold.max_test_drawdown_pips,
+        ),
+        _check_le(
+            "test_max_drawdown_jpy",
+            _safe_float(test_metrics.get("max_drawdown_jpy"), default=0.0),
+            threshold.max_test_drawdown_jpy,
         ),
         _check_ge("pf_stability_ratio", pf_stability_ratio, threshold.min_pf_stability_ratio),
     ]
@@ -241,6 +279,14 @@ def summarize_worker_folds(
         _safe_float(item.get("test_metrics", {}).get("max_drawdown_pips"), default=0.0)
         for item in evaluated
     ]
+    test_jpy_values = [
+        _safe_float(item.get("test_metrics", {}).get("total_jpy"), default=0.0)
+        for item in evaluated
+    ]
+    test_jpy_hour_values = [
+        _safe_float(item.get("test_metrics", {}).get("jpy_per_hour"), default=0.0)
+        for item in evaluated
+    ]
 
     return {
         "folds": total,
@@ -251,4 +297,6 @@ def summarize_worker_folds(
         "median_test_pf": float(median(test_pf_values)) if test_pf_values else 0.0,
         "median_test_win_rate": float(median(test_wr_values)) if test_wr_values else 0.0,
         "median_test_max_drawdown_pips": float(median(test_dd_values)) if test_dd_values else 0.0,
+        "median_test_total_jpy": float(median(test_jpy_values)) if test_jpy_values else 0.0,
+        "median_test_jpy_per_hour": float(median(test_jpy_hour_values)) if test_jpy_hour_values else 0.0,
     }

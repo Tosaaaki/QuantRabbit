@@ -138,8 +138,23 @@ class OrderIntent(BaseModel):
 - `exclude_end_of_replay=true` と短い intraday 窓の組み合わせは、
   close の大半が `end_of_replay` となり `trade_count=0` を作りやすい点に注意。
 - `replay.main_only=true` で main 戦略（TrendMA/BB_RSI）経路の再生に限定できる。
-- 判定指標: `trade_count`, `profit_factor`, `win_rate`, `total_pips`, `max_drawdown_pips`, `pf_stability_ratio`。
+- 判定指標: `trade_count`, `profit_factor`, `win_rate`, `total_pips`, `max_drawdown_pips`, `pf_stability_ratio`
+  に加え、`total_jpy`, `jpy_per_hour`, `max_drawdown_jpy` をサポート。
 - 閾値管理: `config/replay_quality_gate*.yaml`（`gates.default` + `gates.workers.<worker>`）。
+- `replay.env` で replay 子プロセスの環境変数を固定化できる（strategy variant 切替や replay 向け safety override をconfig管理）。
+- `config/replay_quality_gate_ping5s_c.yaml` / `config/replay_quality_gate_ping5s_d.yaml` は
+  それぞれ `scalp_ping_5s_c_live` / `scalp_ping_5s_d_live` 専用の
+  profit-lock プロファイルとして運用する
+  （`SCALP_REPLAY_PING_VARIANT=C|D`）。
+- `exit_workers_main` の `ScalpPing5SB` は replay 時に `FORCE_EXIT_*_MAX_HOLD_SEC` を `timeout_sec` として
+  signal/thesis へ伝播し、`SimBroker.check_timeouts()` が毎 tick で `time_stop` close を再現する。
+  これにより `end_of_replay` クローズ偏重を抑え、live の force-exit hold と replay の整合性を保つ。
+- `exit_workers_main` の `ScalpReplayEntryEngine` は
+  signal の `entry_units_intent` を優先して replay units を決定する。
+  `ScalpPing5SB` は `BASE_ENTRY_UNITS/MIN_UNITS/MAX_UNITS` と `confidence` を使って
+  `entry_units_intent` を生成するため、fixed `10000` entry にならず
+  C/D 運用ロット（`ops/env/scalp_ping_5s_c.env`, `ops/env/scalp_ping_5s_d.env`）を
+  replay 側でも再現できる。
 - 成果物:
   - `quality_gate_report.json`（fold 詳細 + pass/fail）
   - `quality_gate_report.md`（運用サマリ）

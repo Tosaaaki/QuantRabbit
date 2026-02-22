@@ -951,10 +951,10 @@ strategies:
         - take_profit
         - take_profit_zone
 
-  # B profile: keep direction logic but let profitable legs breathe longer.
+  # B/C profile: keep direction logic but let profitable legs breathe longer.
   scalp_ping_5s_b:
     <<: *SCALP_PING_5S_EXIT_PROFILE
-    exit_profile:
+    exit_profile: &SCALP_PING_5S_BC_EXIT_PROFILE
       profit_pips: 2.4
       trail_start_pips: 2.7
       trail_backoff_pips: 1.00
@@ -1008,56 +1008,23 @@ strategies:
 
   scalp_ping_5s_b_live:
     <<: *SCALP_PING_5S_EXIT_PROFILE
-    exit_profile:
-      profit_pips: 2.4
-      trail_start_pips: 2.7
-      trail_backoff_pips: 1.00
-      lock_buffer_pips: 0.75
-      lock_floor_min_hold_sec: 45
-      range_profit_pips: 1.8
-      range_trail_start_pips: 2.2
-      range_trail_backoff_pips: 0.85
-      range_lock_buffer_pips: 0.60
-      # 取り残し対策: 新規建玉のみを対象に、反転検知+時間上限で tail を抑える。
-      loss_cut_enabled: true
-      loss_cut_require_sl: false
-      # Soft は hidden hard-stop になりやすいため無効化し、方向反転シグナルを優先する。
-      loss_cut_soft_pips: 0.0
-      loss_cut_hard_pips: 6.0
-      loss_cut_hard_cap_pips: 6.2
-      loss_cut_max_hold_sec: 900
-      loss_cut_cooldown_sec: 5
-      # 非レンジの含み損を長時間放置しない（range_timeout 依存を回避）。
-      non_range_max_hold_sec: 780
-      # shortの長期逆行を抑える（b_liveにも明示適用）。
-      non_range_max_hold_sec_short: 240
-      direction_flip:
-        enabled: true
-        min_hold_sec: 75
-        min_adverse_pips: 1.5
-        # Suspicious phase: de-risk first, then full close only on stronger continuation.
-        de_risk_enabled: true
-        de_risk_threshold: 0.54
-        de_risk_fraction: 0.55
-        de_risk_min_units: 1000
-        de_risk_min_remaining: 1000
-        de_risk_cooldown_sec: 15
-        de_risk_reason: risk_reduce
-        score_threshold: 0.60
-        release_threshold: 0.44
-        confirm_hits: 2
-        confirm_window_sec: 20
-        cooldown_sec: 6
-        forecast_weight: 0.40
-        short_min_hold_sec: 30
-        short_min_adverse_pips: 0.8
-        short_score_threshold: 0.52
-        short_release_threshold: 0.38
-        short_confirm_hits: 2
-        short_confirm_window_sec: 14
-        short_de_risk_threshold: 0.46
-        short_forecast_weight: 0.50
-        reason: m1_structure_break
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+
+  scalp_ping_5s_c:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+
+  scalp_ping_5s_c_live:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+
+  scalp_ping_5s_d:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+
+  scalp_ping_5s_d_live:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
 
   fast_scalp:
     min_profit_ratio: 0.45

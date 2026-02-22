@@ -9,6 +9,7 @@ ENV_PREFIX = (
     os.getenv("SCALP_PING_5S_ENV_PREFIX", "SCALP_PING_5S").strip()
     or "SCALP_PING_5S"
 )
+_IS_B_OR_C_PREFIX = ENV_PREFIX in {"SCALP_PING_5S_B", "SCALP_PING_5S_C", "SCALP_PING_5S_D"}
 PIP_VALUE = 0.01
 
 
@@ -306,7 +307,7 @@ DIRECTION_BIAS_LOG_INTERVAL_SEC: float = max(
 )
 FAST_DIRECTION_FLIP_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_FAST_DIRECTION_FLIP_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN: float = max(
     DIRECTION_BIAS_NEUTRAL_SCORE,
@@ -374,7 +375,7 @@ FAST_DIRECTION_FLIP_REGIME_BLOCK_SCORE: float = max(
 )
 SL_STREAK_DIRECTION_FLIP_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SL_STREAK_DIRECTION_FLIP_MIN_STREAK: int = max(
     1,
@@ -414,7 +415,7 @@ SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS: int = max(
 )
 SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN: int = max(
     1,
@@ -422,7 +423,7 @@ SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN: int = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN",
-                "4" if ENV_PREFIX == "SCALP_PING_5S_B" else "8",
+                "4" if _IS_B_OR_C_PREFIX else "8",
             )
         )
     ),
@@ -434,7 +435,7 @@ SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN: float = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN",
-                "0.50" if ENV_PREFIX == "SCALP_PING_5S_B" else "0.60",
+                "0.50" if _IS_B_OR_C_PREFIX else "0.60",
             )
         ),
     ),
@@ -447,7 +448,7 @@ SL_STREAK_DIRECTION_FLIP_FORCE_STREAK: int = max(
                 "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_FORCE_STREAK",
                 (
                     "3"
-                    if ENV_PREFIX == "SCALP_PING_5S_B"
+                    if _IS_B_OR_C_PREFIX
                     else str(SL_STREAK_DIRECTION_FLIP_MIN_STREAK + 2)
                 ),
             )
@@ -464,11 +465,11 @@ SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC: float = max(
 )
 SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN: float = max(
     DIRECTION_BIAS_NEUTRAL_SCORE,
@@ -496,7 +497,7 @@ SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN: float = max(
 )
 SIDE_METRICS_DIRECTION_FLIP_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SIDE_METRICS_DIRECTION_FLIP_CACHE_TTL_SEC: float = max(
     0.1,
@@ -607,7 +608,7 @@ SIDE_METRICS_DIRECTION_FLIP_LOG_INTERVAL_SEC: float = max(
 )
 SIDE_ADVERSE_STACK_UNITS_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SIDE_ADVERSE_STACK_UNITS_CACHE_TTL_SEC: float = max(
     0.1,
@@ -724,7 +725,7 @@ SIDE_ADVERSE_STACK_UNITS_MIN_MULT: float = max(
 )
 SIDE_ADVERSE_STACK_DD_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SIDE_ADVERSE_STACK_DD_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 SIDE_ADVERSE_STACK_DD_START_PIPS: float = max(
     0.0,
@@ -1238,7 +1239,7 @@ EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT: float = max(
                 "SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT",
                 (
                     "0.42"
-                    if ENV_PREFIX == "SCALP_PING_5S_B"
+                    if _IS_B_OR_C_PREFIX
                     else "0.68"
                 ),
             )
@@ -1254,7 +1255,7 @@ EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT: float = max(
                 "SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_BALANCED_UNITS_MULT",
                 (
                     "0.30"
-                    if ENV_PREFIX == "SCALP_PING_5S_B"
+                    if _IS_B_OR_C_PREFIX
                     else str(EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT)
                 ),
             )
@@ -1282,7 +1283,7 @@ EXTREMA_REQUIRE_M1_M5_AGREE_LONG: bool = _bool_env(
 )
 EXTREMA_REQUIRE_M1_M5_AGREE_SHORT: bool = _bool_env(
     "SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else EXTREMA_REQUIRE_M1_M5_AGREE,
+    True if _IS_B_OR_C_PREFIX else EXTREMA_REQUIRE_M1_M5_AGREE,
 )
 EXTREMA_TECH_FILTER_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_EXTREMA_TECH_FILTER_ENABLED",
@@ -1322,18 +1323,18 @@ EXTREMA_LOG_INTERVAL_SEC: float = max(
 )
 EXTREMA_REVERSAL_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_EXTREMA_REVERSAL_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT: bool = _bool_env(
     "SCALP_PING_5S_EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT",
-    False if ENV_PREFIX == "SCALP_PING_5S_B" else True,
+    False if _IS_B_OR_C_PREFIX else True,
 )
 EXTREMA_REVERSAL_MIN_SCORE: float = max(
     0.1,
     float(
         os.getenv(
             "SCALP_PING_5S_EXTREMA_REVERSAL_MIN_SCORE",
-            "1.45" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.80",
+            "1.45" if _IS_B_OR_C_PREFIX else "1.80",
         )
     ),
 )
@@ -1342,7 +1343,7 @@ EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE: float = max(
     float(
         os.getenv(
             "SCALP_PING_5S_EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE",
-            "2.10" if ENV_PREFIX == "SCALP_PING_5S_B" else str(EXTREMA_REVERSAL_MIN_SCORE),
+            "2.10" if _IS_B_OR_C_PREFIX else str(EXTREMA_REVERSAL_MIN_SCORE),
         )
     ),
 )
@@ -1353,7 +1354,7 @@ EXTREMA_REVERSAL_UNITS_MULT: float = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_EXTREMA_REVERSAL_UNITS_MULT",
-                "1.00" if ENV_PREFIX == "SCALP_PING_5S_B" else "0.95",
+                "1.00" if _IS_B_OR_C_PREFIX else "0.95",
             )
         ),
     ),
@@ -1519,7 +1520,7 @@ CONFIDENCE_SCALE_MIN_MULT: float = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_CONF_SCALE_MIN_MULT",
-                "0.72" if ENV_PREFIX == "SCALP_PING_5S_B" else "0.65",
+                "0.72" if _IS_B_OR_C_PREFIX else "0.65",
             )
         ),
     ),
@@ -1531,14 +1532,14 @@ CONFIDENCE_SCALE_MAX_MULT: float = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_CONF_SCALE_MAX_MULT",
-                "1.00" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.15",
+                "1.00" if _IS_B_OR_C_PREFIX else "1.15",
             )
         ),
     ),
 )
 ENTRY_PROBABILITY_ALIGN_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 ENTRY_PROBABILITY_ALIGN_DIRECTION_WEIGHT: float = max(
     0.0,
@@ -1625,7 +1626,7 @@ ENTRY_PROBABILITY_ALIGN_FLOOR: float = max(
 )
 ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT: bool = _bool_env(
     "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER: float = max(
     0.0,
@@ -1634,14 +1635,14 @@ ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER: float = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER",
-                "0.30" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.00",
+                "0.30" if _IS_B_OR_C_PREFIX else "1.00",
             )
         ),
     ),
 )
 ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_ENTRY_PROBABILITY_ALIGN_UNITS_FOLLOW_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT: float = max(
     0.10,
@@ -1669,7 +1670,7 @@ ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT: float = max(
 )
 ENTRY_PROBABILITY_BAND_ALLOC_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_ENABLED",
-    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+    True if _IS_B_OR_C_PREFIX else False,
 )
 ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES: int = max(
     20,
@@ -2159,8 +2160,17 @@ FORCE_EXIT_BID_ASK_BUFFER_PIPS: float = max(
         )
     ),
 )
+_FORCE_EXIT_DEFAULT_MAX_ACTIONS = "2" if _IS_B_OR_C_PREFIX else "0"
 FORCE_EXIT_MAX_ACTIONS: int = max(
-    0, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "0")))
+    0,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS",
+                _FORCE_EXIT_DEFAULT_MAX_ACTIONS,
+            )
+        )
+    ),
 )
 FORCE_EXIT_REASON: str = (
     os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
@@ -2415,8 +2425,8 @@ FORCE_EXIT_ACTIVE: bool = FORCE_EXIT_ENABLED and FORCE_EXIT_MAX_ACTIONS > 0 and 
 )
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
-_IS_B_VARIANT: bool = STRATEGY_TAG.startswith("scalp_ping_5s_b")
-USE_SL: bool = _bool_env("SCALP_PING_5S_USE_SL", _IS_B_VARIANT)
+_IS_B_OR_C_VARIANT: bool = STRATEGY_TAG.startswith(("scalp_ping_5s_b", "scalp_ping_5s_c", "scalp_ping_5s_d"))
+USE_SL: bool = _bool_env("SCALP_PING_5S_USE_SL", _IS_B_OR_C_VARIANT)
 DISABLE_ENTRY_HARD_STOP: bool = _bool_env(
     "SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP", not USE_SL
 )

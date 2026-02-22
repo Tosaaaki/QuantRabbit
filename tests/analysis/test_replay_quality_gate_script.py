@@ -165,3 +165,41 @@ def test_resolve_ticks_globs_prefers_cli_then_list_then_legacy() -> None:
         "y/*.jsonl",
     ]
     assert _module._resolve_ticks_globs({"ticks_glob": "z/*.jsonl"}, None) == ["z/*.jsonl"]
+
+
+def test_build_replay_env_applies_overrides_and_bool_coercion(monkeypatch) -> None:
+    monkeypatch.setenv("EXISTING_KEY", "keep")
+    monkeypatch.setenv("REMOVE_ME", "x")
+    env, overrides = _module._build_replay_env(
+        {
+            "env": {
+                "SCALP_REPLAY_MODE": "scalp_ping_5s_c",
+                "FLAG_BOOL": True,
+                "REMOVE_ME": None,
+            }
+        }
+    )
+
+    assert env["EXISTING_KEY"] == "keep"
+    assert env["SCALP_REPLAY_MODE"] == "scalp_ping_5s_c"
+    assert env["FLAG_BOOL"] == "1"
+    assert "REMOVE_ME" not in env
+    assert overrides == {
+        "SCALP_REPLAY_MODE": "scalp_ping_5s_c",
+        "FLAG_BOOL": "1",
+    }
+
+
+def test_build_threshold_supports_jpy_fields() -> None:
+    threshold = _module._build_threshold(
+        base={
+            "min_test_total_jpy": 0.0,
+            "min_test_jpy_per_hour": 10.0,
+            "max_test_drawdown_jpy": 2500.0,
+        },
+        override={"min_test_total_jpy": 100.0},
+    )
+
+    assert threshold.min_test_total_jpy == 100.0
+    assert threshold.min_test_jpy_per_hour == 10.0
+    assert threshold.max_test_drawdown_jpy == 2500.0

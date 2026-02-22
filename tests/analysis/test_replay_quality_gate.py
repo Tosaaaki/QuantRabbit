@@ -37,20 +37,57 @@ def test_compute_trade_metrics_profit_factor_and_drawdown() -> None:
     assert round(metrics["max_drawdown_pips"], 6) == 3.0
 
 
+def test_compute_trade_metrics_includes_jpy_and_hourly_metrics() -> None:
+    trades = [
+        {
+            "pnl_pips": 1.0,
+            "pnl_jpy": 100.0,
+            "entry_time": "2026-02-01T00:00:00+00:00",
+            "exit_time": "2026-02-01T00:00:00+00:00",
+        },
+        {
+            "pnl_pips": -0.2,
+            "pnl_jpy": -20.0,
+            "entry_time": "2026-02-01T00:30:00+00:00",
+            "exit_time": "2026-02-01T00:30:00+00:00",
+        },
+        {
+            "pnl_pips": 0.4,
+            "pnl_jpy": 40.0,
+            "entry_time": "2026-02-01T01:00:00+00:00",
+            "exit_time": "2026-02-01T01:00:00+00:00",
+        },
+    ]
+
+    metrics = compute_trade_metrics(trades)
+
+    assert round(metrics["total_jpy"], 6) == 120.0
+    assert round(metrics["avg_jpy"], 6) == 40.0
+    assert round(metrics["max_drawdown_jpy"], 6) == 20.0
+    assert round(metrics["duration_hours"], 6) == 1.0
+    assert round(metrics["jpy_per_hour"], 6) == 120.0
+
+
 def test_evaluate_fold_gate_fail_on_multiple_checks() -> None:
     train = {
         "trade_count": 30.0,
         "profit_factor": 1.6,
         "win_rate": 0.58,
         "total_pips": 12.0,
+        "total_jpy": 2400.0,
+        "jpy_per_hour": 180.0,
         "max_drawdown_pips": 10.0,
+        "max_drawdown_jpy": 1200.0,
     }
     test = {
         "trade_count": 9.0,
         "profit_factor": 0.9,
         "win_rate": 0.45,
         "total_pips": -2.0,
+        "total_jpy": -200.0,
+        "jpy_per_hour": -20.0,
         "max_drawdown_pips": 55.0,
+        "max_drawdown_jpy": 5600.0,
     }
     threshold = GateThreshold(
         min_train_trades=20,
@@ -58,7 +95,10 @@ def test_evaluate_fold_gate_fail_on_multiple_checks() -> None:
         min_test_pf=1.0,
         min_test_win_rate=0.5,
         min_test_total_pips=0.0,
+        min_test_total_jpy=0.0,
+        min_test_jpy_per_hour=0.0,
         max_test_drawdown_pips=45.0,
+        max_test_drawdown_jpy=5000.0,
         min_pf_stability_ratio=0.6,
     )
 
@@ -69,14 +109,44 @@ def test_evaluate_fold_gate_fail_on_multiple_checks() -> None:
     assert "test_profit_factor" in gate["failed_checks"]
     assert "test_win_rate" in gate["failed_checks"]
     assert "test_total_pips" in gate["failed_checks"]
+    assert "test_total_jpy" in gate["failed_checks"]
+    assert "test_jpy_per_hour" in gate["failed_checks"]
     assert "test_max_drawdown_pips" in gate["failed_checks"]
+    assert "test_max_drawdown_jpy" in gate["failed_checks"]
 
 
 def test_summarize_worker_folds_pass_rate() -> None:
     fold_results = [
-        {"test_metrics": {"profit_factor": 1.2, "win_rate": 0.55, "max_drawdown_pips": 20.0}, "gate": {"passed": True}},
-        {"test_metrics": {"profit_factor": 0.95, "win_rate": 0.49, "max_drawdown_pips": 25.0}, "gate": {"passed": False}},
-        {"test_metrics": {"profit_factor": 1.1, "win_rate": 0.52, "max_drawdown_pips": 22.0}, "gate": {"passed": True}},
+        {
+            "test_metrics": {
+                "profit_factor": 1.2,
+                "win_rate": 0.55,
+                "max_drawdown_pips": 20.0,
+                "total_jpy": 1000.0,
+                "jpy_per_hour": 120.0,
+            },
+            "gate": {"passed": True},
+        },
+        {
+            "test_metrics": {
+                "profit_factor": 0.95,
+                "win_rate": 0.49,
+                "max_drawdown_pips": 25.0,
+                "total_jpy": -120.0,
+                "jpy_per_hour": -10.0,
+            },
+            "gate": {"passed": False},
+        },
+        {
+            "test_metrics": {
+                "profit_factor": 1.1,
+                "win_rate": 0.52,
+                "max_drawdown_pips": 22.0,
+                "total_jpy": 800.0,
+                "jpy_per_hour": 90.0,
+            },
+            "gate": {"passed": True},
+        },
     ]
 
     summary = summarize_worker_folds(fold_results, min_fold_pass_rate=0.66)
@@ -85,3 +155,5 @@ def test_summarize_worker_folds_pass_rate() -> None:
     assert summary["passed_folds"] == 2
     assert round(summary["pass_rate"], 6) == round(2 / 3, 6)
     assert summary["status"] == "pass"
+    assert summary["median_test_total_jpy"] == 800.0
+    assert summary["median_test_jpy_per_hour"] == 90.0

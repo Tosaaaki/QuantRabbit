@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from glob import glob
 import json
 import math
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -190,9 +191,34 @@ def _build_threshold(
         min_test_pf=_to_float(merged.get("min_test_pf"), 0.0),
         min_test_win_rate=_to_float(merged.get("min_test_win_rate"), 0.0),
         min_test_total_pips=_to_float(merged.get("min_test_total_pips"), -1.0e9),
+        min_test_total_jpy=_to_float(merged.get("min_test_total_jpy"), -1.0e12),
+        min_test_jpy_per_hour=_to_float(merged.get("min_test_jpy_per_hour"), -1.0e12),
         max_test_drawdown_pips=_to_float(merged.get("max_test_drawdown_pips"), 1.0e9),
+        max_test_drawdown_jpy=_to_float(merged.get("max_test_drawdown_jpy"), 1.0e12),
         min_pf_stability_ratio=_to_float(merged.get("min_pf_stability_ratio"), 0.0),
     )
+
+
+def _build_replay_env(replay_cfg: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    env = dict(os.environ)
+    overrides: dict[str, str] = {}
+    raw = replay_cfg.get("env")
+    if not isinstance(raw, Mapping):
+        return env, overrides
+    for key, value in raw.items():
+        name = str(key or "").strip()
+        if not name:
+            continue
+        if value is None:
+            env.pop(name, None)
+            continue
+        if isinstance(value, bool):
+            text = "1" if value else "0"
+        else:
+            text = str(value)
+        env[name] = text
+        overrides[name] = text
+    return env, overrides
 
 
 def _build_replay_command_groups(
@@ -527,6 +553,7 @@ def main() -> int:
         return 2
 
     replay_cfg = config.get("replay") if isinstance(config.get("replay"), dict) else {}
+    replay_env, replay_env_overrides = _build_replay_env(replay_cfg)
     backend = str(args.backend or replay_cfg.get("backend") or "exit_workers_groups").strip().lower()
     if backend not in {"exit_workers_groups", "exit_workers_main"}:
         print(f"Unsupported replay backend: {backend}", file=sys.stderr)
@@ -567,6 +594,7 @@ def main() -> int:
             cwd=str(REPO_ROOT),
             text=True,
             capture_output=True,
+            env=replay_env,
             timeout=max(30, int(args.timeout_sec)),
             check=False,
         )
@@ -672,6 +700,7 @@ def main() -> int:
             "test_files": test_files,
             "step_files": step_files,
             "min_fold_pass_rate": min_fold_pass_rate,
+            "replay_env_overrides": replay_env_overrides,
             "out_root": str(out_root),
         },
         "overall": {

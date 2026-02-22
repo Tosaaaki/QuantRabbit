@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import pathlib
 import sys
@@ -9,12 +10,20 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from workers.scalp_ping_5s_b import worker as b_worker
+from workers.scalp_ping_5s_c import worker as c_worker
+from workers.scalp_ping_5s_d import worker as d_worker
 
 
 def _clear_scalp_ping_env(monkeypatch) -> None:
     for key in list(os.environ):
         if key.startswith("SCALP_PING_5S"):
             monkeypatch.delenv(key, raising=False)
+
+
+def _reload_ping_config():
+    from workers.scalp_ping_5s import config as config_mod
+
+    return importlib.reload(config_mod)
 
 
 def test_apply_alt_env_forces_protected_entry_by_default(monkeypatch) -> None:
@@ -48,3 +57,71 @@ def test_apply_alt_env_keeps_unprotected_when_explicitly_enabled(monkeypatch) ->
 
     assert os.getenv("SCALP_PING_5S_USE_SL") == "0"
     assert os.getenv("SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP") == "1"
+
+
+def test_apply_alt_env_c_enables_force_exit_by_default(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")
+    monkeypatch.delenv("SCALP_PING_5S_C_FORCE_EXIT_MAX_ACTIONS", raising=False)
+
+    c_worker._apply_alt_env(
+        "SCALP_PING_5S_C",
+        fallback_tag="scalp_ping_5s_c_live",
+        fallback_log_prefix="[SCALP_PING_5S_C]",
+    )
+    cfg = _reload_ping_config()
+
+    assert cfg.ENV_PREFIX == "SCALP_PING_5S_C"
+    assert cfg.FORCE_EXIT_MAX_ACTIONS == 2
+    assert cfg.FORCE_EXIT_ACTIVE is True
+
+
+def test_apply_alt_env_c_can_disable_force_exit_with_explicit_zero(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_C_FORCE_EXIT_MAX_ACTIONS", "0")
+
+    c_worker._apply_alt_env(
+        "SCALP_PING_5S_C",
+        fallback_tag="scalp_ping_5s_c_live",
+        fallback_log_prefix="[SCALP_PING_5S_C]",
+    )
+    cfg = _reload_ping_config()
+
+    assert cfg.ENV_PREFIX == "SCALP_PING_5S_C"
+    assert cfg.FORCE_EXIT_MAX_ACTIONS == 0
+    assert cfg.FORCE_EXIT_ACTIVE is False
+
+
+def test_apply_alt_env_d_enables_force_exit_by_default(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_D_ENABLED", "1")
+    monkeypatch.delenv("SCALP_PING_5S_D_FORCE_EXIT_MAX_ACTIONS", raising=False)
+
+    d_worker._apply_alt_env(
+        "SCALP_PING_5S_D",
+        fallback_tag="scalp_ping_5s_d_live",
+        fallback_log_prefix="[SCALP_PING_5S_D]",
+    )
+    cfg = _reload_ping_config()
+
+    assert cfg.ENV_PREFIX == "SCALP_PING_5S_D"
+    assert cfg.FORCE_EXIT_MAX_ACTIONS == 2
+    assert cfg.FORCE_EXIT_ACTIVE is True
+
+
+def test_apply_alt_env_d_can_disable_force_exit_with_explicit_zero(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_D_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_D_FORCE_EXIT_MAX_ACTIONS", "0")
+
+    d_worker._apply_alt_env(
+        "SCALP_PING_5S_D",
+        fallback_tag="scalp_ping_5s_d_live",
+        fallback_log_prefix="[SCALP_PING_5S_D]",
+    )
+    cfg = _reload_ping_config()
+
+    assert cfg.ENV_PREFIX == "SCALP_PING_5S_D"
+    assert cfg.FORCE_EXIT_MAX_ACTIONS == 0
+    assert cfg.FORCE_EXIT_ACTIVE is False

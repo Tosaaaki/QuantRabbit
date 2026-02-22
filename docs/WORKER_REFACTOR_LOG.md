@@ -8,6 +8,69 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-22（追記）5秒スキャC replay のロット再現とWFO構造改善（継続）
+
+- 背景:
+  - `scripts/replay_exit_workers.py` の `ScalpReplayEntryEngine` が
+    replay entry で `units=10000` 固定だったため、
+    `scalp_ping_5s_c` の実運用ロット（`BASE_ENTRY_UNITS=800`, `MAX_UNITS=2200`）を
+    再現できず、time-stop 損失が過大化していた。
+- 変更:
+  - `scripts/replay_exit_workers.py`
+    - `ScalpPing5SB` signal に `entry_units_intent` を付与。
+    - replay entry の units 解決を `entry_units_intent` 優先へ変更（固定 10000 を廃止）。
+    - ping5s 用 helper を追加し、`BASE_ENTRY_UNITS/MIN_UNITS/MAX_UNITS` と
+      `confidence` から replay units を算出。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - units 解決ロジック（bounds/符号）の回帰テストを追加。
+  - `config/replay_quality_gate_ping5s_c.yaml`
+    - replay.env に C運用値（`BASE/MIN/MAX_UNITS`, `FORCE_EXIT_*`）を明示注入。
+    - 時間帯ブロックと gate 閾値を段階調整（loss cluster の除去優先）。
+- 検証:
+  - `20260222_071602`（units固定解除のみ）
+    - `achieved_jpy_per_hour: -74.47`（旧 `-78.90` から改善、ただし未達）
+  - `20260222_093855`（C env 注入 + hold短縮 + block 強化）
+    - `achieved_jpy_per_hour: -0.48` まで改善（ほぼ損益分岐）
+    - trade units は `642..800`、`time_stop` 平均損失は `-26.74 JPY/件`
+      （旧 `-609.64 JPY/件` から大幅改善）
+  - `20260222_100500`（追加 block + gate 低サンプル調整）
+    - `achieved_jpy_per_hour: +5.31`
+    - fold pass は `2/5`（`pass_rate=0.4`）で strict では fail 継続。
+- 留意:
+  - `+2000円/h` 目標は引き続き未達。
+  - 現runの逆算条件は
+    `required_trades_per_hour_at_current_ev ≈ 319.77` または
+    `required_jpy_per_trade_at_current_freq ≈ 2353.81` で、現行5秒スキャCの構造では乖離が大きい。
+
+### 2026-02-22（追記）`scalp_ping_5s_d_live` を追加（別ワーカーで独立検証）
+
+- 背景:
+  - 5秒スキャ改善を既存 `scalp_ping_5s_b/c` から分離し、設定差分を安全に検証するため
+    `D` 系ワーカーを追加。
+- 変更:
+  - 追加: `workers/scalp_ping_5s_d/`
+    - `worker.py` は `SCALP_PING_5S_D_*` プレフィックスを `SCALP_PING_5S_*` へ投影するラッパ。
+    - `exit_worker.py` は D env を適用し、C の exit 実装へ委譲する thin wrapper。
+  - 追加: `systemd/quant-scalp-ping-5s-d.service`
+  - 追加: `systemd/quant-scalp-ping-5s-d-exit.service`
+  - 追加: `ops/env/quant-scalp-ping-5s-d.env`
+  - 追加: `ops/env/quant-scalp-ping-5s-d-exit.env`
+  - 追加: `ops/env/scalp_ping_5s_d.env`
+  - 変更: `scripts/replay_exit_workers.py`
+    - `SCALP_REPLAY_PING_VARIANT=B|C|D` に拡張し、
+      `SCALP_REPLAY_MODE=scalp_ping_5s_d` で D replay を直接実行可能化。
+  - 追加: `config/replay_quality_gate_ping5s_d.yaml`
+    - `SCALP_REPLAY_PING_VARIANT=D` を固定し、D 用 replay gate を分離。
+  - 変更: `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_d` / `scalp_ping_5s_d_live` を B/C 共通 exit profile に接続。
+  - 変更: `config/worker_reentry.yaml`
+    - `scalp_ping_5s_d_live` の時間帯ブロックを追加。
+  - 変更: `ops/env/quant-order-manager.env`
+    - `scalp_ping_5s_d_live` 向け preserve-intent/perf-guard キーを追加。
+  - 変更: テスト
+    - `tests/workers/test_scalp_ping_5s_b_worker_env.py` に D env-prefix/force-exit default の回帰テスト追加。
+    - `tests/scripts/test_replay_exit_workers.py` に D variant module mapping テスト追加。
+
 ### 2026-02-21（追記）`scalp_ping_5s_c_live` を新設（profit-first クローン）
 
 - 背景:
@@ -36,6 +99,71 @@
     - `scalp_ping_5s_c_live` 向けの preserve-intent/perf-guard キーを追加。
 - 意図:
   - B運用を保持したまま C で「損失構造の先行除去」を検証し、実トレード投入前に replay/WFO で改善の有無を切り分ける。
+
+### 2026-02-22（追記）5秒スキャCの WFO profit-lock ゲートを強化
+
+- 対象:
+  - `analytics/replay_quality_gate.py`
+  - `scripts/replay_quality_gate.py`
+  - `config/replay_quality_gate_ping5s_c.yaml`
+  - `docs/REPLAY_STANDARD.md`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - replay quality gate の fold 指標へ `total_jpy` / `jpy_per_hour` / `max_drawdown_jpy` を追加。
+  - gate 閾値へ `min_test_total_jpy` / `min_test_jpy_per_hour` / `max_test_drawdown_jpy` を追加。
+  - `scripts/replay_quality_gate.py` に `replay.env` 注入機能を追加し、
+    config から `SCALP_REPLAY_PING_VARIANT=C` などを固定可能化。
+  - 5秒スキャC専用プロファイル `config/replay_quality_gate_ping5s_c.yaml` を追加。
+    - `exit_workers_main`
+    - `no_main_strategies=true`
+    - `exclude_end_of_replay=false`
+    - `SCALP_REPLAY_BLOCK_JST_HOURS=21`
+    - `min_tick_lines=50000`
+    - `min_fold_pass_rate=1.0`
+  - `scripts/replay_jpy_hour_sweep.py` を追加し、既存 WFO レポートから
+    `min_test_jpy_per_hour` 閾値スイープと目標時給の必要条件逆算を自動化。
+- 検証（ローカル replay, strict）:
+  - 旧設定（`min_tick_lines=30000`, hour blockなし）は fail
+    - `tmp/replay_quality_gate_ping5s_c_strict/20260222_020543/quality_gate_report.json`
+    - `pass_rate=0.4286 (3/7)`、`20260127` fold で `end_of_replay` の大損失を検出。
+  - 調整後（hour 21 block + sample filter強化）は pass
+    - `tmp/replay_quality_gate_ping5s_c_strict/20260222_022355/quality_gate_report.json`
+    - `pass_rate=1.0 (5/5)`、`min_test_total_jpy>0` を全foldで満たす。
+  - 追加評価（スイープ）:
+    - `tmp/replay_jpy_hour_sweep/20260222_from_022355.json`
+    - `min_test_jpy_per_hour=150` でも `pass_rate=0.2`（fail）
+    - `300/500/2000` は `pass_rate=0.0`（all fail）
+    - 目標 `+2000円/h` に対して現状 aggregate は
+      `achieved_jpy_per_hour=123.38`, `achieved_trades_per_hour=1.10`, `achieved_jpy_per_trade=111.98`。
+      必要条件は `required_trades_per_hour_at_current_ev=17.86` または
+      `required_jpy_per_trade_at_current_freq=1815.21`。
+- 留意:
+  - 本プロファイルで「プラス維持」は満たすが、`median_test_jpy_per_hour ≈ 120.38` で、
+    `+2000円/時` 目標には未達。
+
+### 2026-02-22（追記）5秒スキャCの force-exit 再現性を構造補強（live/replay整合）
+
+- 背景:
+  - `scalp_ping_5s_c` は `FORCE_EXIT_MAX_ACTIONS` 未設定時に 0 となり、
+    `FORCE_EXIT_ACTIVE` が無効化されるため、time-stop 系の保護が実質 OFF になるケースがあった。
+  - `scripts/replay_exit_workers.py` 側は `ScalpPing5SB` の `timeout_sec=0` 固定で、
+    実運用の force-exit hold を再現できず `end_of_replay` close に寄りやすかった。
+- 変更:
+  - `workers/scalp_ping_5s/config.py`
+    - `ENV_PREFIX=SCALP_PING_5S_B/C` では `SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS` の既定を `2` に変更し、
+      B/C variant の force-exit がデフォルトで有効になるよう修正。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_FORCE_EXIT_*` を明示追加
+      （`MAX_ACTIONS=2`, `MAX_HOLD_SEC=95`, `SHORT_MAX_HOLD_SEC=70`,
+      `MAX_FLOATING_LOSS_PIPS=1.9`, `SHORT_MAX_FLOATING_LOSS_PIPS=1.5` など）。
+  - `scripts/replay_exit_workers.py`
+    - ping5s signal で `FORCE_EXIT_MAX_HOLD_SEC` / `SHORT_FORCE_EXIT_MAX_HOLD_SEC` を `timeout_sec` として返却。
+    - `force_exit_reason` を signal/thesis に渡し、trade の timeout 判定を `SimBroker.check_timeouts()` で毎tick実行。
+    - timeout 到達時は通常 close を試行し、ガード拒否時のみ market 同値で強制 close して `end_of_replay` 依存を低減。
+    - replay 直エントリー（非 live-entry）でも `entry_thesis` に `timeout_sec` を注入し、timeout 判定の一貫性を確保。
+- 意図:
+  - 5秒スキャCの「実運用で効く時間切れ保護」を replay/WFO でも同じ入力で再現し、
+    チューニング時の評価誤差（end_of_replay 偏重）を削減する。
 
 ### 2026-02-21（追記）反実仮想レビューに疑似OOS確実性ゲートを追加
 
@@ -4270,169 +4398,3 @@
 - 判定:
   - 全TFで `hit` を維持しつつ `5m/10m MAE` を改善、`10m range_cov` も改善できたため
     runtime 運用値を `cand_hit_nonneg_mae_up` へ更新。
-
-### 2026-02-22（追記）forecast 微調整（cand_10m_hit_mae_boost）
-
-- 背景:
-  - `cand_hit_nonneg_mae_up` は `5m/10m MAE` 改善を達成できたが、
-    `10m hit` をもう一段押し上げる余地が残っていた。
-- 実施:
-  - 系統スキャン（1因子＋2因子の局所探索）:
-    - `logs/reports/forecast_improvement/forecast_scan_onefactor_20260222T050507Z.json`
-  - VM再検証:
-    - `logs/reports/forecast_improvement/forecast_eval_20260222T051101Z_current_hit_nonneg_mae_up.json`
-    - `logs/reports/forecast_improvement/forecast_eval_20260222T051101Z_cand_10m_hit_mae_boost.json`
-- 採用値（cand_10m_hit_mae_boost）:
-  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.27,10m=0.32`
-  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.24,10m=0.37`
-  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`（維持）
-  - そのほか `cand_hit_nonneg_mae_up` の値を維持。
-- `cand_hit_nonneg_mae_up` 比（after-after）:
-  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `10m`: `hit_after_delta=+0.000594`, `mae_after_delta=-0.000728`, `range_cov_after_delta=+0.000149`
-- 判定:
-  - `5m` を維持したまま `10m` の `hit/MAE/range_cov` を同時改善できたため
-    runtime 運用値を `cand_10m_hit_mae_boost` へ更新。
-
-### 2026-02-22（追記）forecast 可変重み化（dynamic_10m_weighting）
-
-- 背景:
-  - 固定 map（`b10=0.32`,`s10=0.37`）で `10m` は改善していたが、
-    相場状態ごとの最適点ズレを吸収するため、`10m` 限定で重み可変化を追加した。
-- 実装:
-  - `workers/common/forecast_gate.py`
-    - `FORECAST_TECH_DYNAMIC_WEIGHT_*` 系の env を追加。
-    - `breakout_skill/samples` と `trend_strength-range_pressure` から `breakout_weight` を動的補正。
-    - `session_bias/samples` から `session_bias_weight` を動的補正（`10m` 限定適用）。
-  - `scripts/eval_forecast_before_after.py`
-    - 同ロジックの CLI 引数を追加し、VM同一期間で dynamic ON/OFF を比較可能化。
-- 採用設定（runtime）:
-  - `FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED=1`
-  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=10m`
-  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.14`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.02`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.16`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.08`
-  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.06`
-  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.18`
-  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
-- VM再検証（`bars=8050`）:
-  - `logs/reports/forecast_improvement/forecast_scan_dynamic_20260222T062849Z.json`
-  - `logs/reports/forecast_improvement/forecast_eval_20260222T062906Z_dynamic_off.json`
-  - `logs/reports/forecast_improvement/forecast_eval_20260222T062906Z_dynamic_on_candA.json`
-- `dynamic_off` 比（after-after）:
-  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `10m`: `hit_after_delta=+0.000446`, `mae_after_delta=-0.002131`, `range_cov_after_delta=-0.000297`
-- 判定:
-  - `10m` の方向精度と誤差を同時に改善できるため、coverage 微減を許容して採用。
-
-### 2026-02-22（追記）forecast 可変重みの強化（dynamic_10m_weighting_stronger）
-
-- 背景:
-  - `dynamic_10m_weighting` は有効だったが、`10m` の `hit/MAE` をもう一段押し上げる余地が残っていた。
-- 実施:
-  - VM同一期間比較（`bars=8050`）:
-    - `logs/reports/forecast_improvement/forecast_eval_20260222T063520Z_dynamic_off.json`
-    - `logs/reports/forecast_improvement/forecast_eval_20260222T063520Z_dynamic_on.json`
-  - 局所候補比較:
-    - `logs/reports/forecast_improvement/forecast_dynamic_targeted_compare_20260222.json`
-- 採用値（runtime）:
-  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=10m`（維持）
-  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.16`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.12`
-  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.22`
-- 直前運用値（`max_delta=0.14,b_skill=0.16,b_regime=0.08,s_bias=0.18`）比:
-  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `5m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `10m`: `hit_after_delta=+0.000446`, `mae_after_delta=-0.000327`, `range_cov_after_delta=+0.000149`
-- 判定:
-  - `5m` を維持しつつ `10m` の `hit/MAE/range_cov` を同時改善できたため、
-    dynamic 強化版を runtime 採用。
-
-### 2026-02-22（追記）forecast 可変重みの拡張（dynamic_h510_aggr3）
-
-- 背景:
-  - `dynamic_10m_weighting_stronger` で `10m` は改善したが、`5m` は横ばいだったため
-    `5m` にも可変重みを拡張して同時改善を狙った。
-- 実施:
-  - 候補比較:
-    - `logs/reports/forecast_improvement/forecast_dynamic_candidates_20260222T2.json`
-  - 最終確認:
-    - `logs/reports/forecast_improvement/forecast_dynamic_h510_check_20260222.json`
-- 採用値（runtime）:
-  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`
-  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.20`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`（維持）
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.16`
-  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.26`
-- 直前運用値（`horizons=10m,max_delta=0.16,b_regime=0.12,s_bias=0.22`）比:
-  - `1m`: `hit_after_delta=+0.000000`, `mae_after_delta=+0.000000`, `range_cov_after_delta=+0.000000`
-  - `5m`: `hit_after_delta=+0.000898`, `mae_after_delta=-0.000743`, `range_cov_after_delta=+0.000749`
-  - `10m`: `hit_after_delta=+0.000743`, `mae_after_delta=-0.000587`, `range_cov_after_delta=+0.000000`
-- 判定:
-  - `5m/10m` で `hit` と `MAE` を同時改善できたため、`5m,10m` 可変化を採用。
-
-### 2026-02-22（追記）forecast 多窓最適化（dynamic_h510_rand028）
-
-- 背景:
-  - `dynamic_h510_aggr3` は有効だったが、短窓/中窓/全窓を同時に見ると
-    まだ `5m/10m` に改善余地が残っていた。
-- 実施:
-  - 多段探索（72h粗探索 → 24h/72h/full 再評価）:
-    - `logs/reports/forecast_improvement/forecast_dyn_multistage_20260222.json`
-  - 採用候補の同一データ最終確認:
-    - `logs/reports/forecast_improvement/forecast_dynamic_h510_check_20260222.json`
-- 採用値（runtime）:
-  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.02`
-  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.29,10m=0.30`
-  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.26,10m=0.41`
-  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.00,10m=0.05`
-  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`
-  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.18`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.18`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.10`
-  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.26`（維持）
-  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.04`
-- 直前運用値（`dynamic_h510_aggr3`）比:
-  - `24h`: `5m hit_after_delta=+0.001147`, `5m mae_after_delta=-0.000471`,
-    `10m hit_after_delta=+0.000000`, `10m mae_after_delta=-0.001657`
-  - `72h`: `5m hit_after_delta=+0.000983`, `5m mae_after_delta=-0.001357`,
-    `10m hit_after_delta=+0.001306`, `10m mae_after_delta=-0.003911`
-  - `full(8050 bars)`: `5m hit_after_delta=+0.000599`, `5m mae_after_delta=-0.000955`,
-    `10m hit_after_delta=+0.001486`, `10m mae_after_delta=-0.002445`
-  - `1m` は各窓で非劣化（hit維持、MAEは小幅改善）。
-- 判定:
-  - `24h/72h/full` の全窓で `5m/10m` の `hit` と `MAE` を同時改善できたため採用。
-
-### 2026-02-22（追記）forecast 多窓最適化2（dynamic_h510_rnd161）
-
-- 背景:
-  - `dynamic_h510_rand028` で改善したが、`10m` の hit/MAE をさらに押し上げる余地があった。
-- 実施:
-  - 拡張多段探索（72hで261候補粗探索 → 上位24候補を24h/72h/fullで再評価）:
-    - `logs/reports/forecast_improvement/forecast_dyn_multistage_v2_20260222.json`
-- 採用値（runtime）:
-  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.02`（維持）
-  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.29,10m=0.34`
-  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.26,10m=0.45`
-  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.01,10m=0.05`
-  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`（維持）
-  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.22`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.015`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.22`
-  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.16`
-  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.34`
-  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
-- 直前運用値（`dynamic_h510_rand028`）比:
-  - `24h`: `10m hit_after_delta=+0.003425`, `10m mae_after_delta=-0.003373`,
-    `5m mae_after_delta=-0.000260`
-  - `72h`: `10m hit_after_delta=+0.002286`, `10m mae_after_delta=-0.004327`,
-    `5m hit_after_delta=+0.000655`, `5m mae_after_delta=-0.000243`
-  - `full(8050 bars)`: `10m hit_after_delta=+0.001634`, `10m mae_after_delta=-0.002883`,
-    `5m mae_after_delta=-0.000217`
-  - `1m` は非劣化（同等）。
-- 判定:
-  - 3窓すべてで `10m` の `hit/MAE` を同時改善し、`5m` も非劣化〜改善のため採用。

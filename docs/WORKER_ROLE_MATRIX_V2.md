@@ -37,6 +37,8 @@
 
 - 戦略の ENTRY / EXIT はセットで1:1運用
 - `quant-scalp-ping-5s-b` + `quant-scalp-ping-5s-b-exit`
+- `quant-scalp-ping-5s-c` + `quant-scalp-ping-5s-c-exit`（profit-first 検証用）
+- `quant-scalp-ping-5s-d` + `quant-scalp-ping-5s-d-exit`（C分離の独立検証用）
 - `quant-scalp-macd-rsi-div` + `quant-scalp-macd-rsi-div-exit`
 - `quant-scalp-macd-rsi-div-b` + `quant-scalp-macd-rsi-div-b-exit`
 - `quant-scalp-tick-imbalance` + `quant-scalp-tick-imbalance-exit`
@@ -75,9 +77,11 @@
   - 各戦略が必要なら `entry_thesis["tech_policy"]` で
     `require_fib` / `require_nwave` / `require_candle` を明示する。
   - `strategy_entry` 側は `technical_context` の保存補完のみで、上記要求を強制的に追加しない。
-- 現行マッピング（`_STRATEGY_TECH_CONTEXT_REQUIREMENTS`）:
+  - 現行マッピング（`_STRATEGY_TECH_CONTEXT_REQUIREMENTS`）:
   - Scalp系
     - `scalp_ping_5s_b`
+    - `scalp_ping_5s_c`
+    - `scalp_ping_5s_d`
     - `scalp_m1scalper`
     - `scalp_tick_imbalance`/`scalp_tick_imbalance_rrplus` 系
     - `scalp_tick_wick_reversal`, `scalp_wick_reversal`, `scalp_wick_reversal_pro`, `scalp_wick_reversal_hf`, `scalp_tick_wick_reversal_hf`
@@ -212,7 +216,7 @@
   `order_manager` / `position_manager` は各ワーカー固定実行のため、service-mode の制御は専用 env でオーバーライド:
   - `ops/env/quant-order-manager.env`
   - `ops/env/quant-position-manager.env`
-- strategy 固有の追加設定は `ops/env/scalp_ping_5s_b.env` などの既存上書き env に加え、各ENTRY/EXIT戦略の基本設定を
+- strategy 固有の追加設定は `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_c.env` / `ops/env/scalp_ping_5s_d.env` などの既存上書き env に加え、各ENTRY/EXIT戦略の基本設定を
   `ops/env/quant-<service>.env` へ集約する。
 
 - この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
