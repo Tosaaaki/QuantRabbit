@@ -4427,3 +4427,37 @@
   - `1m`: `24h/full` は hit 同等 + MAE改善、`72h` は `hit_after_delta=-0.000340` だが MAE改善。
 - 判定:
   - `full` で `10m` の `hit/MAE` を同時改善し、`5m` は hit維持で MAE改善のため採用。
+
+### 2026-02-22（追記）forecast 多窓最適化4（dynamic_meta_rnd056）
+
+- 背景:
+  - `dynamic_h1510_rnd100` は有効だったが、`lookback/min_samples` を含む適応重み本体の再探索余地が残っていた。
+- 実施:
+  - `rnd100` を基準に `feature_gain` / adaptive global weight / `*_min_samples` / `*_lookback` /
+    dynamic gain を含む拡張探索を実施:
+    - `logs/reports/forecast_improvement/forecast_dyn_multistage_v5_20260222.json`
+- 採用値（runtime）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.015`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.30`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.31,10m=0.26`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=150`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=480`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.30,10m=0.53`
+  - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=12`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.015,10m=0.05`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.18`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.02`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.24`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.12`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.06`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.26`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.0`
+- 同一スナップショット比較（`rnd100` 比）:
+  - `24h`: `10m hit_delta=+0.001142`, `10m mae_delta=-0.011401`, `5m mae_delta=-0.004179`
+  - `72h`: `10m hit_delta=+0.007178`, `10m mae_delta=-0.002647`, `5m mae_delta=-0.001440`
+  - `full(8050 bars)`: `10m hit_delta=+0.007426`, `10m mae_delta=-0.003738`,
+    `5m hit_delta=-0.000300`, `5m mae_delta=-0.001179`
+  - `1m`: hit は改善だが、`full` の MAE は `+0.000085` の小幅悪化。
+- 判定:
+  - `10m` の方向一致改善幅が大きく、`5m` の MAE 改善を維持できるため採用。
