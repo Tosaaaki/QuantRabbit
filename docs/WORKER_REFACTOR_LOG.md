@@ -5139,6 +5139,25 @@
   - 新 block（23/0追加） + `reject_under=0.35`: `n=2153`, `sum_pips=-520.0`
   - 改善幅: `+1524.4 pips`（トレード数は同程度）。
 
+### 2026-02-24（追記）Bの hard block を最悪帯のみに縮小（要求対応）
+
+- 要求:
+  - hard block を `0,3,15,23` のみ残し、他時間帯は縮小運用へ。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BLOCK_HOURS_JST=0,3,15,23`
+    - `SCALP_PING_5S_B_PERF_GUARD_HOURLY_MIN_TRADES=10`（時間帯reduceを早める）
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_HOURLY_MIN_TRADES=10`（preflight側も同期）
+- 事前what-if（14d, `reject_under=0.35`）:
+  - 直前設定（hard block: `0,3,10,13,15,16,19,21,22,23`）:
+    - `n=2153`, `sum_pips=-520.0`
+  - 今回設定（hard block: `0,3,15,23`）:
+    - `n=3734`, `sum_pips=-1895.1`（`delta=-1375.1 pips`, `delta_n=+1581`）
+- 判定:
+  - 約定数は増えるが、pipsベースでは悪化リスクが高い。
+  - 要求どおり適用し、`perf_guard(reduce)` の実効を短サイクルで監視する。
+
 ### 2026-02-24（追記）損切り肥大の緊急抑制（B戦略SL圧縮 + MicroPullbackEMAのbroker SL有効化）
 
 - 背景（VM実測, `fx-trader-vm` / `logs/trades.db`）:
@@ -5173,3 +5192,70 @@
     「利確幅より損切り幅が極端に大きい」状態を先に止血する。
   - margin closeout を `broker SL` と `entry max SL cap` で構造的に減らし、
     DDの尻尾を短くする。
+
+### 2026-02-25（追記）scalp_ping_5s_b: DD後リカバリー待ち（戻り優先）プロファイル
+
+- 背景（本番、`2026-02-24 13:05 UTC` 反映後）:
+  - `scalp_ping_5s_b_live` は `closed=33`, `sum_pips=-52.0`。
+  - `STOP_LOSS_ORDER=26`、`avg_sl_pips=1.8` まで縮小できたが、
+    「DD後に戻る前にSLで落ちる」体感が残った。
+- 対応:
+  - `ops/env/scalp_ping_5s_b.env`
+    - broker SL 幅をやや拡張:
+      - `SL_BASE_PIPS=2.2`, `SL_MAX_PIPS=3.0`
+      - `SHORT_SL_BASE_PIPS=2.0`, `SHORT_SL_MAX_PIPS=2.8`
+    - force-exit を「即損切り」から「戻り待ち付き」へ:
+      - `FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC=20`
+      - `FORCE_EXIT_RECOVERY_WINDOW_SEC=75`
+      - `FORCE_EXIT_RECOVERABLE_LOSS_PIPS=1.05`
+      - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=2.6`
+      - `SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=2.2`
+    - 戻り後の再悪化を早めに畳む:
+      - `FORCE_EXIT_GIVEBACK_ENABLED=1`
+      - `FORCE_EXIT_GIVEBACK_ARM_PIPS=0.8`
+      - `FORCE_EXIT_GIVEBACK_BACKOFF_PIPS=0.7`
+      - `FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC=25`
+      - `FORCE_EXIT_GIVEBACK_PROTECT_PIPS=0.05`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE=2.6`
+      を追加し、entry時の broker SL 上限を戦略別で固定。
+- 目的:
+  - 「DDしても短時間の戻り余地があるケース」を残しつつ、
+    戻らない玉は recovery timeout で機械的にカットする。
+  - `SLヒット率` と `avg loss` を同時に抑えるための
+    中間プロファイル（hard-stop全廃はしない）。
+
+### 2026-02-24（追記）`scalp_ping_5s_d` narrow worker 化（allow_jst_hours 追加）
+
+- 背景:
+  - 5秒スキャ D の short-only で時間帯を絞ると損失時給が大きく改善し、
+    `allow_jst_hours=1,10` では day23/day26 ともプラスを確認。
+- 変更:
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_ALLOW_HOURS_JST` を追加。
+  - `workers/scalp_ping_5s/worker.py`
+    - `ALLOW_HOURS_JST` 判定を entry gate に追加。
+    - 許可時間外は `outside_allow_hour_jst` でスキップし、
+      従来の `BLOCK_HOURS_JST` と併用可能にした。
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_SIDE_FILTER=short`
+    - `SCALP_PING_5S_D_ALLOW_HOURS_JST=10`
+    - `SCALP_PING_5S_D_BLOCK_HOURS_JST=`（空）
+    - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=9000`
+    - `SCALP_PING_5S_D_MAX_UNITS=9000`
+    - `SCALP_PING_5S_D_MAX_ACTIVE_TRADES=1`
+    - `SCALP_PING_5S_D_MAX_PER_DIRECTION=1`
+  - `scripts/replay_exit_workers.py`
+    - `SCALP_REPLAY_ALLOW_JST_HOURS` / `SCALP_REPLAY_BLOCK_JST_HOURS` 未指定時に
+      `SCALP_PING_5S_D_ALLOW_HOURS_JST` / `SCALP_PING_5S_D_BLOCK_HOURS_JST`
+      を自動フォールバックし、replay 条件を live 設定へ揃えるよう修正。
+  - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+    - D プレフィックス時に `ALLOW_HOURS_JST` が base config へマップされる
+      回帰テストを追加。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - replay の時間帯フォールバック（`SCALP_PING_5S_D_*`）を検証するテストを追加。
+- 追加メモ:
+  - D単体（replay, `allow=10`, day26）: `+2104.70 JPY`, `42 trades`
+    - `jpy_per_hour(active)=+2079.16`
+    - `max_drawdown_jpy=2589.66`
+  - C/D ルーター混在では C 側配分で悪化しうるため、D narrow は単独導線で評価する。

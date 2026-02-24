@@ -149,6 +149,37 @@ def _env_hours(name: str) -> set[int]:
     return values
 
 
+def _replay_or_strategy_hours(replay_env_name: str, *, strategy_suffix: str) -> set[int]:
+    values = _env_hours(replay_env_name)
+    if values:
+        return values
+    fallback_key = f"{_PING5S_ALT_PREFIX}_{strategy_suffix}"
+    return _env_hours(fallback_key)
+
+
+def _normalize_regime_label(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"trend", "range", "breakout", "mixed", "event"}:
+        return text
+    return ""
+
+
+def _candidate_regime_route(macro_regime: object, micro_regime: object) -> str:
+    macro = _normalize_regime_label(macro_regime)
+    micro = _normalize_regime_label(micro_regime)
+    if not macro and not micro:
+        return "unknown"
+    if macro == "event" or micro == "event":
+        return "event"
+    if micro == "trend" and macro in {"trend", "breakout"}:
+        return "trend"
+    if micro == "breakout":
+        return "breakout"
+    if micro == "range" and macro in {"range", "mixed"}:
+        return "range"
+    return "mixed"
+
+
 @dataclass(frozen=True)
 class ReplayScalpConfig:
     MODE: str
@@ -391,6 +422,10 @@ def _signal_scalp_ping_5s_b(
         signal = adjusted
     except Exception:
         regime_gate = "mtf_error"
+
+    side_filter = str(getattr(ping_config, "SIDE_FILTER", "") or "").strip().lower()
+    if side_filter in {"long", "short"} and str(getattr(signal, "side", "")).strip().lower() != side_filter:
+        return None
 
     try:
         tp_profile = ping_worker._load_tp_timing_profile(
@@ -907,6 +942,7 @@ class SimBroker:
     ) -> dict:
         units = int(trade.get("units", 0) or 0)
         entry_price = float(trade.get("price") or 0.0)
+        thesis = trade.get("entry_thesis") if isinstance(trade.get("entry_thesis"), dict) else {}
         if exit_price_override is not None:
             exit_price = exit_price_override
         else:
@@ -938,6 +974,17 @@ class SimBroker:
         }
         if latency_ms is not None:
             record["exit_latency_ms"] = latency_ms
+        macro_regime = _normalize_regime_label(thesis.get("macro_regime"))
+        micro_regime = _normalize_regime_label(thesis.get("micro_regime"))
+        if macro_regime:
+            record["macro_regime"] = macro_regime
+        if micro_regime:
+            record["micro_regime"] = micro_regime
+        route = str(thesis.get("regime_route") or "").strip().lower()
+        if not route:
+            route = _candidate_regime_route(macro_regime, micro_regime)
+        if route:
+            record["regime_route"] = route
         self.closed_trades.append(record)
         if callable(self.on_close):
             self.on_close(trade)
@@ -1410,30 +1457,73 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
 
 
 def _patch_exit_module(module, broker: SimBroker) -> None:
-    module.PositionManager = lambda: SimPositionManager(broker)
+    patched_names: set[str] = set()
 
-    async def _close_trade_stub(
-        trade_id: str,
-        units: int | None = None,
-        client_order_id: str | None = None,
-        allow_negative: bool = False,
-        exit_reason: str | None = None,
-        **_kwargs,
-    ) -> bool:
-        return broker.close_trade(str(trade_id), exit_reason or "exit_worker")
+    def _apply(target: Any) -> None:
+        target_name = str(getattr(target, "__name__", ""))
+        if target_name and target_name in patched_names:
+            return
+        if target_name:
+            patched_names.add(target_name)
 
-    module.close_trade = _close_trade_stub
+        target.PositionManager = lambda: SimPositionManager(broker)
 
-    if hasattr(module, "set_trade_protections"):
-        async def _set_trade_protections_stub(
-            _trade_id: str,
-            *,
-            sl_price: float | None = None,
-            tp_price: float | None = None,
+        async def _close_trade_stub(
+            trade_id: str,
+            units: int | None = None,
+            client_order_id: str | None = None,
+            allow_negative: bool = False,
+            exit_reason: str | None = None,
+            **_kwargs,
         ) -> bool:
-            return True
+            return broker.close_trade(str(trade_id), exit_reason or "exit_worker")
 
-        module.set_trade_protections = _set_trade_protections_stub
+        target.close_trade = _close_trade_stub
+
+        if hasattr(target, "set_trade_protections"):
+            async def _set_trade_protections_stub(
+                _trade_id: str,
+                *,
+                sl_price: float | None = None,
+                tp_price: float | None = None,
+            ) -> bool:
+                return True
+
+            target.set_trade_protections = _set_trade_protections_stub
+
+    _apply(module)
+
+    # D variant wraps C exit worker. Patch delegated module as well, otherwise
+    # close paths may still call live strategy_entry helpers during replay.
+    worker_cls = getattr(module, "RangeFaderExitWorker", None)
+    delegate_name = str(getattr(worker_cls, "__module__", "") or "")
+    if delegate_name and delegate_name != str(getattr(module, "__name__", "")):
+        delegate = sys.modules.get(delegate_name)
+        if delegate is not None:
+            _apply(delegate)
+
+
+def _patch_module_clock(module: Any, sim_clock: SimClock) -> None:
+    module_time = getattr(module, "time", None)
+    if module_time is None:
+        return
+    try:
+        module_time.time = lambda: sim_clock.now
+    except Exception:
+        pass
+    try:
+        module_time.monotonic = lambda: sim_clock.now
+    except Exception:
+        pass
+
+
+def _patch_ping_runtime_clock(sim_clock: SimClock) -> None:
+    runtime = _load_ping5s_runtime()
+    if runtime is None:
+        return
+    ping_worker, _, ping_exit = runtime
+    _patch_module_clock(ping_worker, sim_clock)
+    _patch_module_clock(ping_exit, sim_clock)
 
 
 def _summarize(trades: List[dict]) -> dict:
@@ -1558,8 +1648,14 @@ class ScalpReplayEntryEngine:
             self._state[mode] = {"last_entry": 0.0}
         self._last_eval_epoch: Optional[float] = None
         self._jst_tz = timezone(timedelta(hours=9))
-        self._allow_jst_hours = _env_hours("SCALP_REPLAY_ALLOW_JST_HOURS")
-        self._block_jst_hours = _env_hours("SCALP_REPLAY_BLOCK_JST_HOURS")
+        self._allow_jst_hours = _replay_or_strategy_hours(
+            "SCALP_REPLAY_ALLOW_JST_HOURS",
+            strategy_suffix="ALLOW_HOURS_JST",
+        )
+        self._block_jst_hours = _replay_or_strategy_hours(
+            "SCALP_REPLAY_BLOCK_JST_HOURS",
+            strategy_suffix="BLOCK_HOURS_JST",
+        )
 
     def on_tick(self, tick: TickRow) -> None:
         if self._last_eval_epoch is not None:
@@ -1581,6 +1677,9 @@ class ScalpReplayEntryEngine:
         fac_m5 = factors.get("M5") or {}
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
+        macro_regime = _normalize_regime_label(classify(fac_h4, "H4"))
+        micro_regime = _normalize_regime_label(classify(fac_m1, "M1"))
+        regime_route = _candidate_regime_route(macro_regime, micro_regime)
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="scalp_replay")
         if self._live_entry and air.enabled and not air.allow_entry and not self._bypass_common_guard:
@@ -1661,6 +1760,9 @@ class ScalpReplayEntryEngine:
                             "entry_probability": min(1.0, max(0.0, conf / 100.0)),
                             "entry_units_intent": abs(signed_units),
                             "timeout_sec": timeout_sec,
+                            "macro_regime": macro_regime,
+                            "micro_regime": micro_regime,
+                            "regime_route": regime_route,
                             **signal,
                         },
                         confidence=conf,
@@ -1693,6 +1795,9 @@ class ScalpReplayEntryEngine:
                     "entry_probability": min(1.0, max(0.0, conf / 100.0)),
                     "entry_units_intent": abs(signed_units),
                     "timeout_sec": timeout_sec,
+                    "macro_regime": macro_regime,
+                    "micro_regime": micro_regime,
+                    "regime_route": regime_route,
                     **signal,
                 },
             )
@@ -1826,6 +1931,14 @@ class StrategyEntryEngine:
                 timeout_sec=timeout_sec,
                 units=abs(units),
                 source="strategy",
+                entry_thesis={
+                    "entry_probability": min(1.0, max(0.0, float(sig.get("confidence", 0) or 0) / 100.0)),
+                    "entry_units_intent": abs(units),
+                    "macro_regime": _normalize_regime_label(macro_regime),
+                    "micro_regime": _normalize_regime_label(micro_regime),
+                    "regime_route": _candidate_regime_route(macro_regime, micro_regime),
+                    "focus_tag": str(focus_tag),
+                },
             )
 
 
@@ -1957,6 +2070,8 @@ def main() -> None:
 
     sim_clock = SimClock()
     _reset_replay_state(sim_clock)
+    if not args.fast_only and not args.main_only:
+        _patch_ping_runtime_clock(sim_clock)
 
     broker = SimBroker(
         slip_base_pips=args.slip_base_pips,

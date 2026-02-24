@@ -100,6 +100,7 @@ DROP_FLOW_MAX_BOUNCE_PIPS: float = max(
     float(os.getenv("SCALP_PING_5S_DROP_FLOW_MAX_BOUNCE_PIPS", "0.05")),
 )
 BLOCK_HOURS_JST: tuple[int, ...] = _csv_int_env("SCALP_PING_5S_BLOCK_HOURS_JST")
+ALLOW_HOURS_JST: tuple[int, ...] = _csv_int_env("SCALP_PING_5S_ALLOW_HOURS_JST")
 
 LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))

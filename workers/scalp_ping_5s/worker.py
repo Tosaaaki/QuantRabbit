@@ -124,29 +124,50 @@ def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
     return f"{text[:head]}***{text[-tail:]}"
 
 
-def _entry_blocked_hour_jst(now_utc: datetime.datetime) -> Optional[int]:
-    block_hours_raw = getattr(config, "BLOCK_HOURS_JST", ())
-    block_hours: tuple[int, ...] = ()
-
+def _normalize_jst_hours(hours_raw: object) -> tuple[int, ...]:
     try:
-        if isinstance(block_hours_raw, int):
-            block_hours = (block_hours_raw,)
-        elif isinstance(block_hours_raw, str):
-            block_hours = tuple(
+        if isinstance(hours_raw, int):
+            parsed = (hours_raw,)
+        elif isinstance(hours_raw, str):
+            parsed = tuple(
                 int(item.strip())
-                for item in block_hours_raw.replace("\n", ",").split(",")
+                for item in hours_raw.replace("\n", ",").split(",")
                 if item.strip()
             )
         else:
-            parsed: list[int] = []
-            for value in block_hours_raw:
+            parsed = []
+            for value in hours_raw:
                 try:
                     parsed.append(int(str(value).strip()))
                 except (TypeError, ValueError):
                     continue
-            block_hours = tuple(parsed)
+            parsed = tuple(parsed)
     except Exception:
-        block_hours = ()
+        return ()
+
+    normalized: list[int] = []
+    for hour in parsed:
+        try:
+            normalized_hour = int(hour) % 24
+        except Exception:
+            continue
+        if normalized_hour not in normalized:
+            normalized.append(normalized_hour)
+    return tuple(normalized)
+
+
+def _entry_outside_allow_hour_jst(now_utc: datetime.datetime) -> Optional[int]:
+    allow_hours = _normalize_jst_hours(getattr(config, "ALLOW_HOURS_JST", ()))
+    if not allow_hours:
+        return None
+    jst_hour = now_utc.astimezone(_JST_TIMEZONE).hour
+    if jst_hour not in allow_hours:
+        return jst_hour
+    return None
+
+
+def _entry_blocked_hour_jst(now_utc: datetime.datetime) -> Optional[int]:
+    block_hours = _normalize_jst_hours(getattr(config, "BLOCK_HOURS_JST", ()))
 
     if not block_hours:
         return None
@@ -5726,6 +5747,14 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 continue
 
+            outside_allow_jst_hour = _entry_outside_allow_hour_jst(now_utc)
+            if outside_allow_jst_hour is not None:
+                _note_entry_skip(
+                    "outside_allow_hour_jst",
+                    f"hour={outside_allow_jst_hour}",
+                )
+                continue
+
             blocked_jst_hour = _entry_blocked_hour_jst(now_utc)
             if blocked_jst_hour is not None:
                 _note_entry_skip(
@@ -6370,6 +6399,17 @@ async def scalp_ping_5s_worker() -> None:
                         side_metrics_flip_target_trades,
                     )
                     last_side_metrics_flip_log_mono = now_mono
+
+            # Enforce side filter on the final routed signal as well.
+            # _build_tick_signal applies side filtering early, but later routing
+            # stages (MTF/flip handlers) can retarget side.
+            if config.SIDE_FILTER and signal.side != config.SIDE_FILTER:
+                _note_entry_skip(
+                    "side_filter_final_block",
+                    f"final={signal.side} filter={config.SIDE_FILTER}",
+                    side=signal.side,
+                )
+                continue
             decision_cooldown_sec = max(
                 config.ENTRY_COOLDOWN_SEC * config.INSTANT_COOLDOWN_SCALE_MIN,
                 config.ENTRY_COOLDOWN_SEC * decision_speed_scale,

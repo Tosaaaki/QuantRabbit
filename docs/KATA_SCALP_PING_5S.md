@@ -359,3 +359,57 @@ DB:
   - `side_adverse_stack_current_sl_rate` / `...target_sl_rate`
 - 運用意図:
   - エントリー頻度を落とさず、逆行局面の同方向ロット過多だけを抑える。
+
+## 19. 2026-02-24 更新（リプレイ stale 判定修正 + ルートWFO導線）
+
+- 背景:
+  - replay 実行時、`_build_tick_signal()` が `time.time()`（実時間）で tick age を判定するため、
+    過去日付ティックが `stale_tick` になり `trades=0` へ落ちる事象があった。
+- 修正:
+  - `scripts/replay_exit_workers.py`
+    - `sim_clock` を ping worker/exit module の `time.time` と `time.monotonic` へ注入する
+      パッチを追加（`_patch_module_clock`, `_patch_ping_runtime_clock`）。
+    - replay main 起動時に patch を適用し、過去ティックでも signal 判定が再現可能になるよう補正。
+- 追加導線:
+  - `scripts/replay_regime_router_wfo.py` を追加し、
+    `regime_route`（trend/breakout/range/mixed/event/unknown）ごとに
+    C/D の walk-forward マッピングを算出可能化。
+  - replay trade には `macro_regime` / `micro_regime` / `regime_route` を保持して
+    ルート別集計に接続。
+- 運用メモ:
+  - replay 実行時は `SCALP_REPLAY_MODE=scalp_ping_5s_[c|d]` と
+    `SCALP_REPLAY_ALLOWLIST=scalp_ping_5s_[c|d]` を明示し、
+    `spread_revert` 既定に落ちないようにする。
+
+## 20. 2026-02-24 更新（D narrow worker: short + allow_jst_hours）
+
+- 背景（実リプレイ, `--sp-live-entry --exclude-end-of-replay`）:
+  - `scalp_ping_5s_d` の全時間 short-only は依然マイナスだったが、
+    時間帯を `allow_jst_hours=1,10` へ絞ると day23/day26 ともプラスを確認。
+- 変更:
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_ALLOW_HOURS_JST` を追加。
+  - `workers/scalp_ping_5s/worker.py`
+    - `ALLOW_HOURS_JST` を entry gate に追加。
+    - `outside_allow_hour_jst` で許可時間外を skip する判定を実装。
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_SIDE_FILTER=short`
+    - `SCALP_PING_5S_D_ALLOW_HOURS_JST=10`
+    - `SCALP_PING_5S_D_BLOCK_HOURS_JST=`
+    - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=9000`
+    - `SCALP_PING_5S_D_MAX_UNITS=9000`
+    - `SCALP_PING_5S_D_MAX_ACTIVE_TRADES=1`
+    - `SCALP_PING_5S_D_MAX_PER_DIRECTION=1`
+  - `scripts/replay_exit_workers.py`
+    - `SCALP_REPLAY_ALLOW_JST_HOURS` / `SCALP_REPLAY_BLOCK_JST_HOURS` 未指定時は、
+      Dプレフィックス側（`SCALP_PING_5S_D_ALLOW_HOURS_JST` /
+      `SCALP_PING_5S_D_BLOCK_HOURS_JST`）をフォールバックして
+      replay と live の時間帯条件を一致させる。
+- 検証:
+  - `allow=10, units=9000`（day26）:
+    - `+2104.70 JPY` / `42 trades`
+    - `jpy_per_hour(active)=+2079.16`
+    - `max_drawdown_jpy=2589.66`
+- 注意:
+  - C/D ルーター混在では C 側寄り配分で悪化するため、
+    D narrow の評価は D 単独導線で実施する。

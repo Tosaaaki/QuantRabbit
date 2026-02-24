@@ -142,3 +142,20 @@ def test_apply_alt_env_b_maps_block_hours_jst(monkeypatch) -> None:
     assert cfg.ENV_PREFIX == "SCALP_PING_5S_B"
     # 25 is normalized to 1 and deduplicated.
     assert cfg.BLOCK_HOURS_JST == (1, 2, 3)
+
+
+def test_apply_alt_env_d_maps_allow_hours_jst(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_D_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_D_ALLOW_HOURS_JST", "1,10,25")
+
+    d_worker._apply_alt_env(
+        "SCALP_PING_5S_D",
+        fallback_tag="scalp_ping_5s_d_live",
+        fallback_log_prefix="[SCALP_PING_5S_D]",
+    )
+    cfg = _reload_ping_config()
+
+    assert cfg.ENV_PREFIX == "SCALP_PING_5S_D"
+    # 25 is normalized to 1 and deduplicated.
+    assert cfg.ALLOW_HOURS_JST == (1, 10)
