@@ -200,6 +200,8 @@
 
 - `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback`, `quant-replay-quality-gate`, `quant-trade-counterfactual` は分析/監視へ固定
 - 分析系が戦略判断本体と混ざる構造を禁ずる
+- `quant-dynamic-alloc` は strategy tag の一時サフィックス（例: `-l<hex>`）を正規化して集計し、
+  同一戦略の成績分断による配分劣化を防ぐ（2026-02-24 更新）。
 
 ## 禁止ルール（V2）
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -17,6 +18,22 @@ from typing import Dict, List, Tuple
 BASE_DIR = Path(__file__).resolve().parent.parent
 TRADES_DB = BASE_DIR / "logs" / "trades.db"
 OUTPUT_PATH = BASE_DIR / "config" / "dynamic_alloc.json"
+
+_EPHEMERAL_SUFFIX_PATTERNS = (
+    re.compile(r"^(?P<base>.+?)-l[0-9a-f]{8,}$", re.IGNORECASE),
+    re.compile(r"^(?P<base>.+?)-[0-9a-f]{8,}$", re.IGNORECASE),
+)
+
+
+def normalize_strategy_key(raw: str | None) -> str:
+    key = str(raw or "").strip() or "unknown"
+    for pattern in _EPHEMERAL_SUFFIX_PATTERNS:
+        matched = pattern.match(key)
+        if matched:
+            base = str(matched.group("base") or "").strip()
+            if base:
+                return base
+    return key
 
 
 def fetch_trades(limit: int, lookback_days: int) -> List[Tuple]:
@@ -51,7 +68,7 @@ def compute_scores(rows: List[Tuple], *, min_trades: int, pf_cap: float) -> Dict
     stats: Dict[str, Dict[str, float]] = {}
     pockets: Dict[str, Dict[str, int]] = {}
     for strat, pocket, pl_pips, _entry in rows:
-        strat = strat or "unknown"
+        strat = normalize_strategy_key(strat)
         pocket = pocket or "unknown"
         key = strat
         s = stats.setdefault(
@@ -101,11 +118,20 @@ def compute_scores(rows: List[Tuple], *, min_trades: int, pf_cap: float) -> Dict
         # Guardrail: strategies with poor payoff quality should not receive size-up even when
         # short-term win-rate looks high. Keep underperformers below neutral size.
         if pf < 1.0:
-            lot_multiplier = min(lot_multiplier, 0.95)
-        if pf < 0.7:
             lot_multiplier = min(lot_multiplier, 0.90)
+        if pf < 0.8:
+            lot_multiplier = min(lot_multiplier, 0.80)
+        if pf < 0.7:
+            lot_multiplier = min(lot_multiplier, 0.75)
+        if pf < 0.6:
+            lot_multiplier = min(lot_multiplier, 0.70)
+        if trades >= max(12, min_trades) and avg_pl <= -1.0:
+            lot_multiplier = min(lot_multiplier, 0.72)
+        if trades >= max(24, min_trades * 2) and sum_pips <= -80.0:
+            lot_multiplier = min(lot_multiplier, 0.68)
         if trades < max(1, min_trades):
             lot_multiplier = min(lot_multiplier, 1.00)
+        lot_multiplier = max(0.60, lot_multiplier)
         scores[strat] = {
             "pocket": pocket,
             "score": round(score, 3),

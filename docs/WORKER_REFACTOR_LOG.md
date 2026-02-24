@@ -26,6 +26,31 @@
   - `hold` 短縮（`45/35`）は `20260210` を `-12.5 JPY` まで悪化させたため不採用。
   - 運用・再現性の観点で、D系の品質判定は `3x2` を基準とする。
 
+### 2026-02-24（追記）dynamic_alloc のタグ汚染対策と損失戦略のサイズ抑制
+
+- 背景:
+  - `dynamic_alloc.json` に `scalp_ping_5s_b_live-lxxxx` の単発タグが多数混入し、
+    本来同一戦略の成績が分割集計されて lot 配分が鈍る状態だった。
+- 変更:
+  - `scripts/dynamic_alloc_worker.py`
+    - `normalize_strategy_key()` を追加し、
+      `-l[hex]` / `-[hex]` の末尾一時タグを戦略キーへ正規化。
+    - 低品質戦略の lot 上限ガードを強化:
+      - `pf < 1.0`: `<=0.90`
+      - `pf < 0.8`: `<=0.80`
+      - `pf < 0.7`: `<=0.75`
+      - `pf < 0.6`: `<=0.70`
+      - `avg_pips <= -1.0` かつ十分サンプル: `<=0.72`
+      - `sum_pips <= -80` かつ十分サンプル: `<=0.68`
+  - `systemd/quant-dynamic-alloc.service`
+    - `--limit 400 -> 2400`
+    - `--min-trades 12 -> 24`
+  - `tests/test_dynamic_alloc_worker.py`
+    - 正規化・集約・損失ペナルティの回帰テストを追加。
+- 意図:
+  - 損失主導戦略（直近では `scalp_ping_5s_b_live`）の資金消費を機械的に抑え、
+    利益戦略への配分効率を改善する。
+
 ### 2026-02-22（追記）5秒スキャC replay のロット再現とWFO構造改善（継続）
 
 - 背景:
