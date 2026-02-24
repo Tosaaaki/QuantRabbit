@@ -31,13 +31,16 @@
   `MIN_TICK_RATE` / `LOOKAHEAD_GATE_ENABLED` / `REVERT_MIN_TICK_RATE` を管理し、
   `SIDE_FILTER` / spread stale guard（`spread_guard_stale_*`）を含めて
   entry 密度を動的に調整する。
-  また B/C では `MIN_UNITS` と `ORDER_MIN_UNITS_*` を 50 まで緩和し、
+  また B/C では `MIN_UNITS` と `ORDER_MIN_UNITS_*` を 30 まで緩和し、
   `REVERT_WINDOW` 拡張と `REVERT_*` 閾値緩和で no-signal 偏りを抑える。
   さらに B は `SL_STREAK_DIRECTION_FLIP` / `SIDE_METRICS_DIRECTION_FLIP` を停止し、
-  `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を 0.30 へ引き下げて
+  `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を 0.24 へ引き下げて
   逆方向 short 化と確率reject連鎖を回避する。
-  C も strategy 別の reject/min-scale を `0.45/0.40` へ緩和し、
+  C も strategy 別の reject/min-scale を `0.35/0.40` へ緩和し、
   flow 偏重時の entry 取りこぼしを抑える。
+  続く運用調整として B/C の `PERF_GUARD_*` は sample 要件を引き上げ、
+  `MAX_ORDERS_PER_MINUTE` と `MIN_UNITS` を緩和して
+  `perf_block`/`rate_limited` 偏重の時間帯で entry 密度を回復させる。
 - `quant-regime-router`（有効化時）は `M1/H4` のレジームを定期評価し、
   `strategy_control` の strategy別 `entry_enabled` を上書きする。
   対象は `REGIME_ROUTER_MANAGED_STRATEGIES` で限定し、`exit_enabled` には介入しない。

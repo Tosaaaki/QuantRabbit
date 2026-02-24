@@ -185,6 +185,30 @@
   - C は profit-first の閾値を保ったまま reject 過多を緩和し、
     flow 偏重を減らす。
 
+### 2026-02-24（追記）5秒スキャ B/C の `perf_block` 偏重と `rate_limited` を緩和
+
+- 背景:
+  - VM 実測で `orders.db` の B/C 系 `status` が `entry_probability_reject` と
+    `perf_block` に集中し、エントリー意図は出ていても preflight で止まる時間帯が継続した。
+  - C は `entry-skip summary` に `rate_limited` が多発し、`MAX_ORDERS_PER_MINUTE=6`
+    がボトルネックになっていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE: 10 -> 14`
+    - `MIN_UNITS / ORDER_MIN_UNITS_*: 50 -> 30`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.30 -> 0.24`
+    - `PERF_GUARD_*` をサンプル増加時のみ強く効く値へ緩和
+      （`MIN_TRADES`/`HOURLY_MIN_TRADES`/`FAILFAST_MIN_TRADES` 引き上げ、
+      `PF/WIN` 閾値を緩和）。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 6 -> 14`
+    - `MIN_UNITS / ORDER_MIN_UNITS_*: 50 -> 30`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.45 -> 0.35`
+    - `PERF_GUARD_*` を同様に緩和（過剰 `perf_block` 回避）。
+- 意図:
+  - `perf_block` と `rate_limited` の同時多発を抑え、5秒スキャの実約定密度を回復する。
+  - 完全無効化ではなく、サンプルが積み上がった劣化局面では依然ブロックが効く形を維持する。
+
 ### 2026-02-24（追記）`quant-regime-router` を追加（5秒スキャのレジーム配分切替）
 
 - 背景:
@@ -5006,3 +5030,24 @@
   - range coverage は `10m` で `24h/full` 改善（`+0.002283/+0.000594`）、`72h` は同等。
 - 判定:
   - `1m` を維持しつつ `5m/10m` の hit と MAE を同時改善できるため採用。
+
+### 2026-02-24（追記）5秒スキャリプレイの stale 判定を修正（WFO再開）
+
+- 背景:
+  - `scripts/replay_exit_workers.py` で `scalp_ping_5s` の signal 判定が `time.time()`（実時間）基準のため、
+    過去日付ティックを再生すると `stale_tick` 扱いになり `trades=0` が続発していた。
+- 実装:
+  - `scripts/replay_exit_workers.py`
+    - `sim_clock` を `workers.scalp_ping_5s.*` の `time.time/monotonic` に注入する
+      `_patch_module_clock` / `_patch_ping_runtime_clock` を追加。
+    - replay main 起動時（`sp`経路）に上記パッチを適用。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - clock パッチの回帰テストを追加。
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py tests/scripts/test_replay_regime_router_wfo.py`
+    - `15 passed`
+  - 修正後リプレイ（`--sp-live-entry --exclude-end-of-replay`）:
+    - `tmp/replay_ping5s_c_regimewfo_20260123_live.json` `trades=43` `total_pnl_jpy=-4979.54`
+    - `tmp/replay_ping5s_d_regimewfo_20260123_live.json` `trades=43` `total_pnl_jpy=-4979.54`
+    - `tmp/replay_ping5s_c_regimewfo_20260126_live.json` `trades=39` `total_pnl_jpy=-1969.14`
+    - `tmp/replay_ping5s_d_regimewfo_20260126_live.json` `trades=39` `total_pnl_jpy=-1969.14`
