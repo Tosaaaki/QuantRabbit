@@ -5115,3 +5115,26 @@
   - `ops/env/quant-scalp-tick-imbalance.env`
     - TickImbalance の reentry 距離ゲートを撤廃
       （`LOOKBACK_SEC=0`, `MIN_PRICE_GAP_PIPS=0`, `REQUIRE_LAST_PROFIT=0`）。
+
+### 2026-02-24（追記）scalp_ping_5s_b の時間帯再学習 + 低確率帯しきい値を再調整
+
+- 背景（VM実測, `trades.db`, `strategy_tag=scalp_ping_5s_b_live`）:
+  - 14日: `n=4163`, `sum_pips=-4573.2`, `win_rate=0.494`
+  - 時間帯別で `JST 23時=-931.7 pips (n=168)`, `0時=-818.4 pips (n=62)` が突出悪化。
+  - 既存の `block_jst_hours=1,2,3,10,13,15,16,19,21,22` は 23/0 を未ブロックで、
+    逆に 1/2 は悪化寄与が相対的に小さかった。
+  - 低確率帯カットの閾値スイープ（14日）:
+    - `reject_under=0.24`: `-4573.2 pips`（基準）
+    - `reject_under=0.35`: `-4526.8 pips`（`+46.4` 改善）
+    - `reject_under=0.50`: `-4388.6 pips`（`+184.6` 改善, 約定減少が大きい）
+- 対応:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BLOCK_HOURS_JST` を
+      `0,3,10,13,15,16,19,21,22,23` へ更新（`1,2` を外し `23,0` を追加）。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE`
+      を `0.24 -> 0.35` へ更新（約定を維持しつつ低確率帯を追加カット）。
+- 変更前データでの what-if（同一14日, 既存 block 比）:
+  - 既存 block + `reject_under=0.24`: `n=2132`, `sum_pips=-2044.4`
+  - 新 block（23/0追加） + `reject_under=0.35`: `n=2153`, `sum_pips=-520.0`
+  - 改善幅: `+1524.4 pips`（トレード数は同程度）。

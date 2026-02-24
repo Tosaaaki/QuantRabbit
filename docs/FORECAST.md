@@ -809,6 +809,10 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
     JSTで直接ブロックできます。
   - 同時に `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE`
     を引き上げることで、低確率帯のエントリーを先に絞って forecast 連携の有効域を増やせます。
+  - 2026-02-24 の再調整では VM 実績に基づき、
+    `SCALP_PING_5S_B_BLOCK_HOURS_JST=0,3,10,13,15,16,19,21,22,23`、
+    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.35`
+    を採用（`23/0 JST` の劣化帯を優先ブロックしつつ、約定を極端に削らない設定）。
 - TPは `tp_pips_hint` がある場合に `tp_pips` へブレンドし（順方向時のみ）、
   SLは `sl_pips_cap` がある場合に `sl_pips` を上限でクリップします。
 
