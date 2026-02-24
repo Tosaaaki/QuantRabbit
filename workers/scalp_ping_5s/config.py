@@ -54,6 +54,25 @@ def _csv_float_env(name: str, default: str) -> tuple[float, ...]:
     return tuple(deduped)
 
 
+def _csv_int_env(name: str, default: str = "") -> tuple[int, ...]:
+    raw = str(os.getenv(name, default) or "").strip()
+    if not raw:
+        return ()
+    values: list[int] = []
+    for part in raw.replace("\n", ",").split(","):
+        token = str(part).strip()
+        if not token:
+            continue
+        try:
+            parsed = int(float(token))
+        except ValueError:
+            continue
+        parsed = parsed % 24
+        if parsed not in values:
+            values.append(parsed)
+    return tuple(values)
+
+
 def _normalize_side(raw: str) -> str:
     side = str(raw or "").strip().lower()
     if side in {"buy", "long", "open_long"}:
@@ -80,6 +99,7 @@ DROP_FLOW_MAX_BOUNCE_PIPS: float = max(
     0.0,
     float(os.getenv("SCALP_PING_5S_DROP_FLOW_MAX_BOUNCE_PIPS", "0.05")),
 )
+BLOCK_HOURS_JST: tuple[int, ...] = _csv_int_env("SCALP_PING_5S_BLOCK_HOURS_JST")
 
 LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))

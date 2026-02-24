@@ -135,6 +135,27 @@
   - 「強い逆行＝即拒否」の過剰抑制を外し、実績が悪い weak-contra のみ機械的に遮断する。
   - 方向意図の選別を forecast で過剰に行わず、既存の戦略ローカル判定 + weak-contra に寄せる。
 
+### 2026-02-24（追記）`scalp_ping_5s_b_live` の損失時間帯ブロック + 確率閾値引き上げ
+
+- 背景（VM実測, 直近14日）:
+  - `scalp_ping_5s_b_live` は `closed=2827` で `-1920.5 pips`。
+  - 逆算で `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を `0.50` に引き上げると
+    `+184.6 pips` 改善余地。
+  - 時間帯ブロック候補（JST `1,2,3,10,13,15,16,19,21,22`）は
+    `+1611.4 pips` 改善余地を確認。
+  - 直近3日でも同方針で `+236.1 pips` の改善余地を確認。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BLOCK_HOURS_JST=1,2,3,10,13,15,16,19,21,22`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE: 0.24 -> 0.50`
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_BLOCK_HOURS_JST` 読み取り（CSV int, 0-23正規化）を追加。
+  - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+    - Bプレフィックス経由で `BLOCK_HOURS_JST` が反映される回帰テストを追加。
+- 意図:
+  - B戦略の「負けが集中する時間帯」と「低確率エントリー」を先に削って、
+    取引密度を維持しつつ損失寄与を切り落とす。
+
 ### 2026-02-24（追記）`trade_counterfactual` に replay由来の「取り残し型」抽出を追加
 
 - 背景:

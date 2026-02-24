@@ -125,3 +125,20 @@ def test_apply_alt_env_d_can_disable_force_exit_with_explicit_zero(monkeypatch) 
     assert cfg.ENV_PREFIX == "SCALP_PING_5S_D"
     assert cfg.FORCE_EXIT_MAX_ACTIONS == 0
     assert cfg.FORCE_EXIT_ACTIVE is False
+
+
+def test_apply_alt_env_b_maps_block_hours_jst(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_B_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_B_BLOCK_HOURS_JST", "1,2,3,25")
+
+    b_worker._apply_alt_env(
+        "SCALP_PING_5S_B",
+        fallback_tag="scalp_ping_5s_b_live",
+        fallback_log_prefix="[SCALP_PING_5S_B]",
+    )
+    cfg = _reload_ping_config()
+
+    assert cfg.ENV_PREFIX == "SCALP_PING_5S_B"
+    # 25 is normalized to 1 and deduplicated.
+    assert cfg.BLOCK_HOURS_JST == (1, 2, 3)

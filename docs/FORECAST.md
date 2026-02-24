@@ -803,6 +803,12 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - 反映結果は `entry_thesis["forecast_fusion"]` に保存し、監査時に
   `units_before/after`, `entry_probability_before/after`, `units_scale`, `forecast_reason`,
   `tf_confluence_score`, `strong_contra_reject`, `weak_contra_reject` を追跡できます。
+- 2026-02-24 追記（`scalp_ping_5s_b_live`）:
+  - B ラッパは `SCALP_PING_5S_B_*` を `SCALP_PING_5S_*` に投影するため、
+    `SCALP_PING_5S_B_BLOCK_HOURS_JST` を設定すると、forecast前段のエントリー時間帯を
+    JSTで直接ブロックできます。
+  - 同時に `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE`
+    を引き上げることで、低確率帯のエントリーを先に絞って forecast 連携の有効域を増やせます。
 - TPは `tp_pips_hint` がある場合に `tp_pips` へブレンドし（順方向時のみ）、
   SLは `sl_pips_cap` がある場合に `sl_pips` を上限でクリップします。
 
