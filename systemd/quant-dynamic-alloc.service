@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
-ExecStart=/usr/bin/env python3 scripts/dynamic_alloc_worker.py --limit 2400 --lookback-days 7 --min-trades 24 --pf-cap 2.0 --target-use 0.88
+ExecStart=/usr/bin/env python3 scripts/dynamic_alloc_worker.py --limit 2400 --lookback-days 7 --min-trades 16 --pf-cap 2.0 --target-use 0.88
 Restart=on-failure
 RestartSec=10
 User=tossaki
