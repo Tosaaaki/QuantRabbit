@@ -688,7 +688,7 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
   - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=150`
   - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=720`
   - `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.18`
-  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.63`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.60`
   - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=3`
   - `FORECAST_TECH_SESSION_BIAS_LOOKBACK=1080`
   - `FORECAST_TECH_REBOUND_WEIGHT=0.04`
@@ -702,11 +702,11 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
   - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.22`
   - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.01`
 - 同一スナップショットでの `rnd090` 比:
-  - `24h`: `5m hit +0.005734 / mae -0.004041`, `10m hit +0.005708 / mae -0.012859`
-  - `72h`: `5m hit +0.003601 / mae -0.001324`, `10m hit +0.002285 / mae -0.004623`
-  - `full`: `5m hit +0.004041 / mae -0.001090`, `10m hit +0.002228 / mae -0.004359`
-  - `1m` は hit 同等で MAE 改善（`24h -0.000038 / 72h -0.000238 / full -0.000163`）。
-  - range coverage は `10m` で全窓改善（`24h +0.002283`, `72h +0.000326`, `full +0.000891`）。
+  - `24h`: `5m hit +0.005734 / mae -0.004041`, `10m hit +0.004566 / mae -0.009280`
+  - `72h`: `5m hit +0.003601 / mae -0.001168`, `10m hit +0.001306 / mae -0.002970`
+  - `full`: `5m hit +0.004041 / mae -0.001019`, `10m hit +0.001783 / mae -0.002777`
+  - `1m` は hit 同等で MAE 改善（`24h -0.000038 / 72h -0.000193 / full -0.000142`）。
+  - range coverage は `10m` で `24h/full` 改善（`+0.002283 / +0.000594`）、`72h` は同等。
 
 判定:
 - `1m` を維持しながら `5m/10m` の hit と MAE を同時改善できるため採用。
