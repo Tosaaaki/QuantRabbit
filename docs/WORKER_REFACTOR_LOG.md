@@ -102,6 +102,34 @@
   - `TickImbalance` は price-distance 依存で詰まらない運用へ切り替え、
     エントリー再開性を優先する。
 
+### 2026-02-24（追記）5秒スキャ B/C/D の entry 過抑制を緩和
+
+- 背景:
+  - VM 実ログで `quant-scalp-ping-5s-{b,c,d}.service` が稼働中にもかかわらず、
+    `entry-skip summary` の大半を `no_signal:revert_not_found` と
+    `lookahead_block` が占め、`[ORDER][OPEN_REQ]` がほぼ発生しない状態だった。
+  - 直近は `scalp_ping_5s_flow_live` のみが継続約定し、B/C/D は事実上休止状態だった。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MIN_SIGNAL_TICKS: 4 -> 3`
+    - `MIN_TICK_RATE: 0.85 -> 0.72`
+    - `LOOKAHEAD_GATE_ENABLED: 1 -> 0`
+    - `REVERT_MIN_TICK_RATE: 1.20 -> 0.90`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MIN_SIGNAL_TICKS: 4 -> 3`
+    - `MIN_TICK_RATE: 0.95 -> 0.80`
+    - `LOOKAHEAD_GATE_ENABLED: 1 -> 0`
+    - `REVERT_MIN_TICK_RATE: 1.20 -> 0.90`
+  - `ops/env/scalp_ping_5s_d.env`
+    - `MIN_SIGNAL_TICKS: 4 -> 3`
+    - `MIN_TICK_RATE: 0.95 -> 0.80`
+    - `LOOKAHEAD_GATE_ENABLED: 1 -> 0`
+    - `REVERT_MIN_TICK_RATE: 1.20 -> 0.90`
+- 意図:
+  - B/C/D の「シグナル成立はするがゲート過多で entry しない」状態を解消し、
+    5秒スキャの約定頻度を回復させる。
+  - C/D の `SIDE_FILTER=long` は維持し、方向リスクは抑えたまま entry 数のみ緩和する。
+
 ### 2026-02-24（追記）`scalp_ping_5s` の side filter を最終シグナルへ強制
 
 - 背景:
