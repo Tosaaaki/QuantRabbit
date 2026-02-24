@@ -733,6 +733,23 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
 判定:
 - `5m` を維持しつつ `10m` の hit/MAE を同時改善できるため採用。
 
+同日 2026-02-24 の追加改善（`session10_sweep`）では、
+`session_bias_cap_unlock` 後の `session_10=0.63` を基準に
+`0.60..0.70` を同一スナップショットでスイープ評価し、`0.70` が最良でした。
+- 比較ファイル:
+  - `logs/reports/forecast_improvement/forecast_session10_sweep_20260224.json`
+- 運用反映値:
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP=0.70`（維持）
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.70`
+- 同一スナップショットでの `0.63` 比（`10m` のみ）:
+  - `24h`: `hit +0.003425 / mae -0.007574 / cov +0.001142`
+  - `72h`: `hit +0.004569 / mae -0.002006 / cov +0.000653`
+  - `full`: `hit +0.003119 / mae -0.002780 / cov +0.000446`
+  - `1m/5m` は同等。
+
+判定:
+- `10m` の hit/MAE/range coverage を全窓で同時改善できるため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

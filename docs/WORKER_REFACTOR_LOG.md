@@ -8,6 +8,28 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）`scalp_ping_5s` の side filter を最終シグナルへ強制
+
+- 背景:
+  - `SCALP_PING_5S_*_SIDE_FILTER=long` を設定した replay/live-entry で、
+    `mtf_reversion_fade` 等の後段リルートにより short 約定が混入する経路があった。
+  - 原因は、`_build_tick_signal` での side filter 適用後に
+    `MTF/flip` 系ロジックが side を再書き換えること。
+- 変更:
+  - `workers/scalp_ping_5s/worker.py`
+    - ルーティング完了後（`fast_flip/sl_streak/side_metrics_flip` 後）に
+      `side_filter_final_block` を追加し、最終 side が filter と不一致なら entry を reject。
+  - `scripts/replay_exit_workers.py`
+    - `_signal_scalp_ping_5s_b` で `MTF` 調整後の `signal.side` に対しても
+      `SIDE_FILTER` を再評価し、不一致なら signal を破棄。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - `test_ping5s_signal_respects_post_regime_side_filter` を追加
+      （`_apply_mtf_regime` が short へ反転しても `SIDE_FILTER=long` で reject されることを検証）。
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` : `8 passed`
+  - replay 再実行（`SCALP_PING_5S_C_SIDE_FILTER=long`）で
+    short 約定は `0` 件になることを確認。
+
 ### 2026-02-24（追記）`scalp_ping_5s_d_live` WFO窓を `3x2` へ更新
 
 - 背景:
@@ -4622,6 +4644,24 @@
   - `1m/5m` は同等、`10m range coverage` は `72h/full` で小幅改善。
 - 判定:
   - `5m` を維持したまま `10m` の hit/MAE を同時改善できるため採用。
+
+### 2026-02-24（追記）forecast 多窓最適化9（session_10 sweep）
+
+- 背景:
+  - `session_bias cap` 可変化後の `session_10=0.63` は改善したが、10m の余地をさらに確認する必要があった。
+- 実施:
+  - `session_10` を `0.60..0.70` で同一スナップショット評価:
+    - `logs/reports/forecast_improvement/forecast_session10_sweep_20260224.json`
+- 採用値（runtime）:
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP=0.70`（維持）
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.70`
+- 同一スナップショット比較（`session_10=0.63` 比）:
+  - `24h`: `10m hit_delta=+0.003425`, `10m mae_delta=-0.007574`, `10m cov_delta=+0.001142`
+  - `72h`: `10m hit_delta=+0.004569`, `10m mae_delta=-0.002006`, `10m cov_delta=+0.000653`
+  - `full(8050 bars)`: `10m hit_delta=+0.003119`, `10m mae_delta=-0.002780`, `10m cov_delta=+0.000446`
+  - `1m/5m` は同等。
+- 判定:
+  - `10m` の hit/MAE/range coverage を全窓で同時改善できるため採用。
 
 ### 2026-02-24（追記）scalp_ping_5s_flow の EXIT残留対策を追加
 
