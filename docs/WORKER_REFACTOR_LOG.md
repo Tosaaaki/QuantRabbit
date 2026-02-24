@@ -8,6 +8,26 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
+
+- 背景（VM実測）:
+  - `orders.db` / `orders.db-wal` が数GB規模へ肥大した状態で、
+    `preflight_start -> submit_attempt` が `60s〜167s` の遅延を複数観測。
+  - `quant-order-manager` journal に `failed to persist orders log: database is locked` が連発し、
+    close系も `Read timed out` / `close_request` 停滞を伴った。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+  - `ops/env/quant-order-manager.env`
+  - `ORDER_DB_BUSY_TIMEOUT_MS: 5000 -> 250`
+  - `ORDER_DB_LOG_RETRY_ATTEMPTS: 8 -> 3`
+  - `ORDER_DB_LOG_RETRY_SLEEP_SEC: 0.05 -> 0.02`
+  - `ORDER_DB_LOG_RETRY_BACKOFF: 1.8 -> 1.5`
+  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC: 1.00 -> 0.10`
+- 意図:
+  - 発注導線の同期ログ書き込みがロック待ちで秒単位ブロックする状態を抑え、
+    `OPEN_SCALE -> OPEN_REQ` の遅延を先に縮める。
+  - ログ欠落よりも約定遅延リスクを優先して、低遅延側へ寄せる。
+
 ### 2026-02-24（追記）5秒スキャ B/C/D の「未エントリー」要因を追加緩和
 
 - 背景:

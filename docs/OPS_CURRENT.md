@@ -1,5 +1,23 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-6. 2026-02-24 UTC `order_manager` の発注遅延ホットフィックス（orders.db lock待機短縮）
+- 背景（VM実測）:
+  - `preflight_start -> submit_attempt` が `23s / 64s / 91s / 167s` の遅延を記録。
+  - 同時間帯に `quant-order-manager` で `failed to persist orders log: database is locked` が連発。
+  - `ops/env` で `ORDER_DB_BUSY_TIMEOUT_MS=5000` かつ `RETRY_ATTEMPTS=8` が有効で、
+    1回のログ書き込みが長時間ブロックし得る設定になっていた。
+- 反映:
+  - `ops/env/quant-v2-runtime.env`
+  - `ops/env/quant-order-manager.env`
+  - `ORDER_DB_BUSY_TIMEOUT_MS=250`
+  - `ORDER_DB_LOG_RETRY_ATTEMPTS=3`
+  - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.02`
+  - `ORDER_DB_LOG_RETRY_BACKOFF=1.5`
+  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.10`
+- 目的:
+  - ロック発生時の待機時間上限を縮めて、発注経路の詰まりを先に解消する。
+  - 監査ログ欠落より、約定遅延と取り残しの抑制を優先する。
+
 ## 0-5. 2026-02-19 UTC `scalp_ping_5s_b_live` 方向転換遅れ + 注文ログ詰まりの同時是正
 - 背景（VM実測）:
   - `sl_streak_direction_flip_reason` が `below_min_streak / streak_stale` に偏り、SL連敗後の反転が不発。
