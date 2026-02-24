@@ -125,6 +125,30 @@
   - replay で「悪い局面の型」を将棋の定跡のように収集し、
     `block_jst_hours` / `block_reasons` を運用調整へ直結させる。
 
+### 2026-02-24（追記）5秒スキャ B/C の確率rejectを緩和し、Bの逆方向flipを停止
+
+- 背景:
+  - VM 実測で `scalp_ping_5s_b_live` は `open mode=... route=sl_streak_flip/side_metrics_flip`
+    で short 化した後に `OPEN_SKIP note=entry_probability:entry_probability_reject_threshold`
+    が継続し、シグナルは出るが約定しない状態だった。
+  - `scalp_ping_5s_c_live` も strategy 別の reject 閾値が高く、
+    `flow` 比で entry 密度が落ちていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED: 1 -> 0`
+    - `SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED: 1 -> 0`
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_ENABLED: 1 -> 0`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE: 0.48 -> 0.30`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE: 0.65 -> 0.45`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE: 0.55 -> 0.45`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN/MAX_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE: 0.45/0.85 -> 0.40/0.90`
+- 意図:
+  - B の「逆方向flipで低確率化→order_manager reject」ループを切り、
+    5秒スキャの方向整合と約定回復を同時に狙う。
+  - C は profit-first の閾値を保ったまま reject 過多を緩和し、
+    flow 偏重を減らす。
+
 ### 2026-02-24（追記）`quant-regime-router` を追加（5秒スキャのレジーム配分切替）
 
 - 背景:

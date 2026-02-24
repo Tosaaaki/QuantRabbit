@@ -33,6 +33,11 @@
   entry 密度を動的に調整する。
   また B/C では `MIN_UNITS` と `ORDER_MIN_UNITS_*` を 50 まで緩和し、
   `REVERT_WINDOW` 拡張と `REVERT_*` 閾値緩和で no-signal 偏りを抑える。
+  さらに B は `SL_STREAK_DIRECTION_FLIP` / `SIDE_METRICS_DIRECTION_FLIP` を停止し、
+  `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を 0.30 へ引き下げて
+  逆方向 short 化と確率reject連鎖を回避する。
+  C も strategy 別の reject/min-scale を `0.45/0.40` へ緩和し、
+  flow 偏重時の entry 取りこぼしを抑える。
 - `quant-regime-router`（有効化時）は `M1/H4` のレジームを定期評価し、
   `strategy_control` の strategy別 `entry_enabled` を上書きする。
   対象は `REGIME_ROUTER_MANAGED_STRATEGIES` で限定し、`exit_enabled` には介入しない。
