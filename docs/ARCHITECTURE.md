@@ -41,6 +41,8 @@
   続く運用調整として B/C の `PERF_GUARD_*` は sample 要件を引き上げ、
   `MAX_ORDERS_PER_MINUTE` と `MIN_UNITS` を緩和して
   `perf_block`/`rate_limited` 偏重の時間帯で entry 密度を回復させる。
+  なお B は実運用観測で `perf_block` 連発が残ったため、
+  `PERF_GUARD_MODE=reduce` に切り替え、同ガードは警告運用とした。
 - `quant-regime-router`（有効化時）は `M1/H4` のレジームを定期評価し、
   `strategy_control` の strategy別 `entry_enabled` を上書きする。
   対象は `REGIME_ROUTER_MANAGED_STRATEGIES` で限定し、`exit_enabled` には介入しない。

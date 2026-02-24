@@ -209,6 +209,19 @@
   - `perf_block` と `rate_limited` の同時多発を抑え、5秒スキャの実約定密度を回復する。
   - 完全無効化ではなく、サンプルが積み上がった劣化局面では依然ブロックが効く形を維持する。
 
+### 2026-02-24（追記）5秒スキャ B の perf guard を `reduce` へ変更
+
+- 背景:
+  - 直近 VM 観測（09:29 UTC 以降）で `scalp_ping_5s_b_live` は
+    `entry_probability_reject` に加えて `perf_block` が連続し、
+    C が `filled` を回復する一方で B だけ回転が戻らなかった。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE: block -> reduce`
+- 意図:
+  - B は perf guard を「警告のみ」に落とし、preflight でのブロック停止を解除して
+    5秒スキャの実エントリー頻度を回復する。
+
 ### 2026-02-24（追記）`quant-regime-router` を追加（5秒スキャのレジーム配分切替）
 
 - 背景:
