@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）`scalp_ping_5s_d_live` WFO窓を `3x2` へ更新
+
+- 背景:
+  - `config/replay_quality_gate_ping5s_d.yaml` 既定の `train_files=2 / test_files=1`
+    は、1日単位のtestで `pf_stability_ratio` と `train_trade_count` の揺れが大きく、
+    同一データでも fold判定が不安定だった。
+- 変更:
+  - `config/replay_quality_gate_ping5s_d.yaml`
+    - `walk_forward.train_files: 2 -> 3`
+    - `walk_forward.test_files: 1 -> 2`
+- 検証（同一7日データ比較）:
+  - `2x1`（旧）: `pass_rate=0.40`, `median_test_jpy_per_hour=3.4848`
+  - `3x1`（補助評価）: `pass_rate=0.75`
+  - `3x2`（新）: `pass_rate=1.00`, `median_test_jpy_per_hour=2.5301`
+- 補足:
+  - `hold` 短縮（`45/35`）は `20260210` を `-12.5 JPY` まで悪化させたため不採用。
+  - 運用・再現性の観点で、D系の品質判定は `3x2` を基準とする。
+
 ### 2026-02-22（追記）5秒スキャC replay のロット再現とWFO構造改善（継続）
 
 - 背景:

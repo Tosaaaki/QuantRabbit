@@ -61,6 +61,8 @@ python scripts/replay_exit_workers_groups.py \
   これにより長時間リプレイ時の I/O 競合を避け、再生時間のばらつきを抑える。
 - `replay_quality_gate_main.yaml` の walk-forward 既定は
   `train_files=2 / test_files=1 / step_files=1`。
+- `replay_quality_gate_ping5s_d.yaml` の walk-forward 既定は
+  `train_files=3 / test_files=2 / step_files=1`（2026-02-24更新）。
 - ゲート指標は `pips` 系に加え `JPY` 系にも対応している。
   - `min_test_total_jpy`
   - `min_test_jpy_per_hour`

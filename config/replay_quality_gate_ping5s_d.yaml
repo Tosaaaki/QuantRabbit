@@ -59,7 +59,7 @@ gates:
     min_pf_stability_ratio: 0.60
 
 walk_forward:
-  train_files: 2
-  test_files: 1
+  train_files: 3
+  test_files: 2
   step_files: 1
   min_fold_pass_rate: 1.0
