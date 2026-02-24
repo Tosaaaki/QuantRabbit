@@ -229,3 +229,19 @@ class OrderIntent(BaseModel):
   `TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS=0` /
   `TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT=0` とし、
   strategy ローカルの reentry 距離ゲートを無効化した。
+
+## 8. 2026-02-24 運用補足（損切り肥大の抑制）
+
+- `execution/order_manager.py` は `stopLossOnFill` の判定で、
+  `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_<STRATEGY_TAG>` を最優先で評価する。
+  - 例: `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROPULLBACKEMA=1`
+  - global `ORDER_FIXED_SL_MODE` を変更せずに strategy 単位で broker SL attach を切り替えられる。
+- 同時に `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_<STRATEGY_TAG>` で
+  strategy 単位の entry SL 上限を制御する。
+  - 例: `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_MICROPULLBACKEMA=6.0`
+- `scalp_ping_5s_b` は `ops/env/scalp_ping_5s_b.env` で
+  `SL_BASE/SHORT_SL_BASE` と `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS` を圧縮し、
+  `PERF_GUARD_SL_LOSS_RATE_MAX` を `0.62` へ引き下げる。
+- `MicroPullbackEMA` は `ops/env/quant-micro-pullbackema.env` で
+  `MICRO_MULTI_BASE_UNITS` と `MICRO_MULTI_MAX_MARGIN_USAGE` を下げ、
+  margin closeout 尾部を抑制する。

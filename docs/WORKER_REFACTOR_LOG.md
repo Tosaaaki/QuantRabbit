@@ -5138,3 +5138,38 @@
   - 既存 block + `reject_under=0.24`: `n=2132`, `sum_pips=-2044.4`
   - 新 block（23/0追加） + `reject_under=0.35`: `n=2153`, `sum_pips=-520.0`
   - 改善幅: `+1524.4 pips`（トレード数は同程度）。
+
+### 2026-02-24（追記）損切り肥大の緊急抑制（B戦略SL圧縮 + MicroPullbackEMAのbroker SL有効化）
+
+- 背景（VM実測, `fx-trader-vm` / `logs/trades.db`）:
+  - 直近7日 `scalp_ping_5s_b_live`: `n=3715`, `sum_pips=-5041.7`,
+    `avg_sl_pips=2.496` に対して `avg_tp_pips=0.314`（`sl/tp size ratio=7.94`）。
+  - 直近48時間でも `STOP_LOSS_ORDER` が重く（`n=218`, `sum_pips=-533.5`）、
+    さらに `MARKET_ORDER_MARGIN_CLOSEOUT` が `n=4`, `sum_pips=-582.6` で損失を押し上げ。
+  - `MicroPullbackEMA` で `-145 pips` 級の margin closeout が連発し、
+    strategy単位の SL attach 不在が最大DDを拡大していた。
+- 対応:
+  - `execution/order_manager.py`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_<TAG>` の汎用 override を追加。
+    - 既存の `scalp_ping_5s_b` 例外は維持しつつ、非B戦略でも strategy単位で
+      `stopLossOnFill` を opt-in 可能にした。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROPULLBACKEMA=1`
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_MICROPULLBACKEMA=6.0`
+    - `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.62`（`0.70 -> 0.62`）
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SL_BASE_PIPS=1.8`（`2.4 -> 1.8`）, `SL_MIN_PIPS=0.9`, `SL_MAX_PIPS=2.8`
+    - `SHORT_SL_BASE_PIPS=1.6`, `SHORT_SL_MIN_PIPS=0.9`, `SHORT_SL_MAX_PIPS=2.4`
+    - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=2.2`,
+      `SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=1.8`
+    - `MAX_UNITS=2800`（`3500 -> 2800`）
+    - `PERF_GUARD_SL_LOSS_RATE_MAX=0.62`（`0.70 -> 0.62`）
+  - `ops/env/quant-micro-pullbackema.env`
+    - `MICRO_MULTI_BASE_UNITS=16000`（`28000 -> 16000`）
+    - `MICRO_MULTI_MAX_MARGIN_USAGE=0.86`（`0.92 -> 0.86`）
+    - `MICRO_MULTI_MAX_SIGNALS_PER_CYCLE=2`（`3 -> 2`）
+- 目的:
+  - 損切り幅の上限と保有ロットを同時に圧縮し、
+    「利確幅より損切り幅が極端に大きい」状態を先に止血する。
+  - margin closeout を `broker SL` と `entry max SL cap` で構造的に減らし、
+    DDの尻尾を短くする。

@@ -2075,6 +2075,13 @@ def _allow_stop_loss_on_fill(
     - unset: default OFF
     """
     tag = str(strategy_tag or "").strip().lower()
+    strategy_override = _strategy_env_int(
+        "ORDER_ALLOW_STOP_LOSS_ON_FILL",
+        strategy_tag,
+    )
+    if strategy_override is not None:
+        return strategy_override > 0
+
     mode = fixed_sl_mode()
     if mode is not None:
         if bool(mode):

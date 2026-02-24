@@ -23,6 +23,39 @@ def test_allow_stop_loss_on_fill_strategy_override_for_scalp_ping_5s_b(monkeypat
     )
 
 
+def test_allow_stop_loss_on_fill_generic_strategy_override(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: None)
+    monkeypatch.setenv(
+        "ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROPULLBACKEMA",
+        "1",
+    )
+
+    assert (
+        order_manager._allow_stop_loss_on_fill(
+            "micro",
+            strategy_tag="MicroPullbackEMA",
+        )
+        is True
+    )
+
+
+def test_allow_stop_loss_on_fill_generic_strategy_override_can_disable(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
+    monkeypatch.setenv(
+        "ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_PING_5S_B_LIVE",
+        "0",
+    )
+    monkeypatch.setenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", "1")
+
+    assert (
+        order_manager._allow_stop_loss_on_fill(
+            "scalp_fast",
+            strategy_tag="scalp_ping_5s_b_live",
+        )
+        is False
+    )
+
+
 def test_allow_stop_loss_on_fill_keeps_default_off_for_non_override(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: None)
     monkeypatch.delenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", raising=False)
