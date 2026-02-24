@@ -8,6 +8,62 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）`trade_counterfactual` に replay由来の「取り残し型」抽出を追加
+
+- 背景:
+  - 「ポジションが上下に取り残される」問題を replay から定量化し、
+    live 履歴だけでなく replay 出力でも同一ロジックで `block/reduce/boost` を
+    生成できるようにする必要があった。
+- 変更:
+  - `analysis/trade_counterfactual_worker.py`
+    - `COUNTERFACTUAL_REPLAY_JSON_GLOBS` を追加し、
+      `replay_exit_workers.json` の `trades[]` を直接入力可能化。
+    - `reason` / `hold_sec` / `source`（live|replay）をサンプル特徴へ追加。
+    - stuck 判定（`stuck_hold_sec`, `stuck_loss_pips`, `stuck_reasons`）を導入し、
+      `stuck_rate` を action 推定へ反映。
+    - policy hint に `block_reasons` / `reduce_reasons` を追加。
+  - `ops/env/quant-trade-counterfactual.env`
+    - replay入力と stuck 閾値の運用キーを追加。
+  - `tests/analysis/test_trade_counterfactual_worker.py`
+    - replay JSON 読み込みと stuck block 推奨の回帰テストを追加。
+  - `docs/REPLAY_STANDARD.md`
+    - replay 専用入力で counterfactual を回す標準コマンドを追記。
+  - `docs/ARCHITECTURE.md`
+    - trade counterfactual の replay入力/stuck判定仕様を追記。
+- 意図:
+  - replay で「悪い局面の型」を将棋の定跡のように収集し、
+    `block_jst_hours` / `block_reasons` を運用調整へ直結させる。
+
+### 2026-02-24（追記）`quant-regime-router` を追加（5秒スキャのレジーム配分切替）
+
+- 背景:
+  - 5秒スキャの B/C/D/FLOW を同時稼働したまま固定配分で回すと、
+    市況（trend/range/breakout）と戦略特性の不一致が継続しやすく、
+    同一時間帯での負け構造が残りやすかった。
+  - V2 導線を崩さず、`strategy_control` の `entry_enabled` だけを
+    レジームで動的切替する配分レイヤが必要だった。
+- 変更:
+  - 追加: `workers/regime_router/worker.py`
+    - `M1/H4` レジームを `workers.common.quality_gate.current_regime()` で取得し、
+      `trend/breakout/range/mixed/event/unknown` へルーティング。
+    - `REGIME_ROUTER_MIN_DWELL_SEC` による route 切替の最小滞在時間を導入。
+    - `REGIME_ROUTER_MANAGED_STRATEGIES` に含まれる戦略のみ
+      `strategy_control.set_strategy_flags(..., entry=...)` を更新。
+    - `exit_enabled` / `global_lock` は変更しない。
+    - 状態監査を `logs/regime_router_state.json` へ出力。
+  - 追加: `systemd/quant-regime-router.service`
+  - 追加: `ops/env/quant-regime-router.env`
+    - 初期値は `REGIME_ROUTER_ENABLED=0`（opt-in）
+    - 既定ルートは `trend/breakout -> scalp_ping_5s_d`,
+      `range/mixed/unknown -> scalp_ping_5s_c`。
+  - 追加: `tests/workers/test_regime_router_worker.py`
+    - route判定、dwell制御、entry plan更新の回帰テストを追加。
+- 意図:
+  - 戦略ロジック本体や order_manager のガード層を変更せず、
+    「どの戦略を entry 有効にするか」だけを独立ワーカーで調整する。
+  - 既存の V2 役割分離（data/control/order/position）を維持しながら、
+    5秒スキャ群の配分を市況連動で切替える。
+
 ### 2026-02-24（追記）`TickImbalance` の reentry `same_dir_mode` を `both` へ修正
 
 - 背景:

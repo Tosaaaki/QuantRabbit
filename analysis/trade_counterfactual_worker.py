@@ -11,10 +11,12 @@ import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import glob
 import json
 import math
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 from typing import Any
@@ -34,6 +36,13 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except Exception:
         return float(default)
+
+
+def _parse_csv(value: Any) -> tuple[str, ...]:
+    text = str(value or "").strip()
+    if not text:
+        return ()
+    return tuple(part.strip() for part in text.split(",") if part.strip())
 
 
 def _resolve_path(value: str) -> Path:
@@ -107,6 +116,15 @@ def _extract_entry_probability(thesis: dict[str, Any]) -> float | None:
         if out is not None:
             return out
     return None
+
+
+def _like_to_regex(pattern: str) -> re.Pattern[str]:
+    raw = str(pattern or "%").strip()
+    if not raw:
+        raw = "%"
+    escaped = re.escape(raw)
+    escaped = escaped.replace("%", ".*").replace("_", ".")
+    return re.compile(f"^{escaped}$")
 
 
 def _spread_bin(spread_pips: float | None) -> str:
@@ -199,6 +217,14 @@ class ReviewConfig:
     oos_min_action_match_ratio: float
     oos_min_positive_ratio: float
     oos_min_lb_uplift_pips: float
+    replay_json_globs: tuple[str, ...] = ()
+    include_live_trades: bool = True
+    stuck_hold_sec: float = 120.0
+    stuck_loss_pips: float = -0.30
+    stuck_reasons: tuple[str, ...] = ("time_stop", "no_recovery", "max_floating_loss", "end_of_replay")
+    block_stuck_rate: float = 0.45
+    reduce_stuck_rate: float = 0.30
+    boost_stuck_rate: float = 0.10
 
 
 @dataclass(frozen=True)
@@ -212,13 +238,45 @@ class TradeSample:
     pl_pips: float
     entry_probability: float | None
     spread_pips: float | None
+    reason: str = "unknown"
+    hold_sec: float | None = None
+    source: str = "live"
 
     @property
     def fold_day_key(self) -> str:
         return self.day_jst
 
 
-def _load_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
+def _normalize_reason(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw else "unknown"
+
+
+def _hold_bin(hold_sec: float | None) -> str:
+    if hold_sec is None:
+        return "unknown"
+    hold = max(0.0, float(hold_sec))
+    if hold <= 30.0:
+        return "h00_le_30s"
+    if hold <= 90.0:
+        return "h01_30_90s"
+    if hold <= 180.0:
+        return "h02_90_180s"
+    return "h03_gt_180s"
+
+
+def _is_stuck(sample: TradeSample, cfg: ReviewConfig) -> bool:
+    reason_hit = sample.reason in cfg.stuck_reasons
+    hold_hit = sample.hold_sec is not None and float(sample.hold_sec) >= float(cfg.stuck_hold_sec)
+    loss_hit = float(sample.pl_pips) <= float(cfg.stuck_loss_pips)
+    if reason_hit and loss_hit:
+        return True
+    if hold_hit and (reason_hit or loss_hit):
+        return True
+    return False
+
+
+def _load_live_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
     if not cfg.trades_db.exists():
         return []
 
@@ -289,8 +347,100 @@ def _load_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
                 pl_pips=float(pl_pips),
                 entry_probability=entry_probability,
                 spread_pips=None,
+                reason="unknown",
+                hold_sec=(
+                    max(0.0, (close_ts - entry_ts).total_seconds())
+                    if entry_ts is not None and close_ts is not None
+                    else None
+                ),
+                source="live",
             )
         )
+    return rows
+
+
+def _load_replay_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
+    if not cfg.replay_json_globs:
+        return []
+
+    matcher = _like_to_regex(cfg.strategy_like)
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, cfg.lookback_days))
+    files: set[Path] = set()
+    for pattern in cfg.replay_json_globs:
+        query = pattern if os.path.isabs(pattern) else str(REPO_ROOT / pattern)
+        for raw in glob.glob(query):
+            path = Path(raw).resolve()
+            if path.is_file():
+                files.add(path)
+
+    rows: list[TradeSample] = []
+    for replay_path in sorted(files):
+        try:
+            payload = json.loads(replay_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        trades = payload.get("trades")
+        if not isinstance(trades, list):
+            continue
+
+        for idx, item in enumerate(trades):
+            if not isinstance(item, dict):
+                continue
+            strategy_tag = str(
+                item.get("strategy_tag") or item.get("strategy") or item.get("tag") or ""
+            ).strip() or "unknown"
+            if not matcher.match(strategy_tag):
+                continue
+
+            entry_ts = _parse_iso(item.get("entry_time") or item.get("open_time"))
+            close_ts = _parse_iso(item.get("exit_time") or item.get("close_time"))
+            ref_ts = entry_ts or close_ts
+            if ref_ts is None or ref_ts < since:
+                continue
+            jst_ts = ref_ts + timedelta(hours=cfg.jst_offset_hours)
+
+            units_raw = _to_float(item.get("units"))
+            if units_raw is None or units_raw == 0.0:
+                continue
+            side = "long" if units_raw > 0 else "short"
+
+            pl_pips = _to_float(item.get("pnl_pips"))
+            if pl_pips is None:
+                pl_pips = _to_float(item.get("pl_pips"))
+            if pl_pips is None:
+                continue
+
+            hold_sec = _to_float(item.get("hold_sec"))
+            if hold_sec is None and entry_ts is not None and close_ts is not None:
+                hold_sec = max(0.0, (close_ts - entry_ts).total_seconds())
+
+            rows.append(
+                TradeSample(
+                    ticket_id=str(item.get("trade_id") or item.get("ticket_id") or f"replay-{idx}"),
+                    client_order_id=str(item.get("client_order_id") or "").strip(),
+                    strategy_tag=strategy_tag,
+                    side=side,
+                    hour_jst=int(jst_ts.hour),
+                    day_jst=jst_ts.date().isoformat(),
+                    pl_pips=float(pl_pips),
+                    entry_probability=_normalize_probability(item.get("entry_probability")),
+                    spread_pips=_to_float(item.get("spread_pips")),
+                    reason=_normalize_reason(item.get("reason")),
+                    hold_sec=hold_sec,
+                    source="replay",
+                )
+            )
+    return rows
+
+
+def _load_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
+    rows: list[TradeSample] = []
+    if cfg.include_live_trades:
+        rows.extend(_load_live_trade_rows(cfg))
+    rows.extend(_load_replay_trade_rows(cfg))
+    rows.sort(key=lambda row: (row.day_jst, row.hour_jst, row.ticket_id))
     return rows
 
 
@@ -352,6 +502,9 @@ def _inject_spread(samples: list[TradeSample], spread_map: dict[str, float]) -> 
                 pl_pips=sample.pl_pips,
                 entry_probability=sample.entry_probability,
                 spread_pips=spread,
+                reason=sample.reason,
+                hold_sec=sample.hold_sec,
+                source=sample.source,
             )
         )
     return updated
@@ -368,15 +521,24 @@ def _fold_index(day: str, day_to_index: dict[str, int], day_count: int, fold_cou
     return max(0, out)
 
 
-def _make_feature_map(sample: TradeSample) -> dict[str, str]:
+def _make_feature_map(sample: TradeSample, cfg: ReviewConfig) -> dict[str, str]:
     spread = _spread_bin(sample.spread_pips)
     prob = _prob_bin(sample.entry_probability)
     hour = f"h{sample.hour_jst:02d}"
     side = sample.side
+    reason = _normalize_reason(sample.reason)
+    hold = _hold_bin(sample.hold_sec)
+    stuck = "stuck" if _is_stuck(sample, cfg) else "normal"
     return {
         "side": side,
         "hour": hour,
+        "reason": reason,
+        "hold_bin": hold,
+        "stuck": stuck,
         "side_hour": f"{side}|{hour}",
+        "side_reason": f"{side}|{reason}",
+        "hour_reason": f"{hour}|{reason}",
+        "side_stuck": f"{side}|{stuck}",
         "spread_bin": spread,
         "prob_bin": prob,
         "side_spread": f"{side}|{spread}",
@@ -411,21 +573,30 @@ def _certainty(
     return round(max(0.0, min(1.0, raw)), 4)
 
 
-def _infer_action(rows: list[TradeSample], cfg: ReviewConfig) -> tuple[str, float, float, float] | None:
+def _infer_action(
+    rows: list[TradeSample], cfg: ReviewConfig
+) -> tuple[str, float, float, float, float] | None:
     n = len(rows)
     if n < cfg.min_samples:
         return None
     pips = [r.pl_pips for r in rows]
     mean_pips, lb_pips, _ = _mean_ci95(pips)
     sum_pips = sum(pips)
+    stuck_rate = sum(1 for row in rows if _is_stuck(row, cfg)) / float(max(1, n))
 
-    if lb_pips <= cfg.block_lb_pips:
+    if stuck_rate >= cfg.block_stuck_rate and (lb_pips <= cfg.block_lb_pips or mean_pips <= 0.0):
+        action = "block"
+        expected_uplift = -sum_pips
+    elif stuck_rate >= cfg.reduce_stuck_rate and mean_pips <= 0.05:
+        action = "reduce"
+        expected_uplift = -(sum_pips * cfg.reduce_factor)
+    elif lb_pips <= cfg.block_lb_pips:
         action = "block"
         expected_uplift = -sum_pips
     elif mean_pips < 0.0:
         action = "reduce"
         expected_uplift = -(sum_pips * cfg.reduce_factor)
-    elif lb_pips >= cfg.boost_lb_pips:
+    elif stuck_rate <= cfg.boost_stuck_rate and lb_pips >= cfg.boost_lb_pips:
         action = "boost"
         expected_uplift = sum_pips * cfg.boost_factor
     else:
@@ -433,7 +604,7 @@ def _infer_action(rows: list[TradeSample], cfg: ReviewConfig) -> tuple[str, floa
 
     if expected_uplift <= 0.0:
         return None
-    return action, mean_pips, lb_pips, expected_uplift
+    return action, mean_pips, lb_pips, expected_uplift, stuck_rate
 
 
 def _simulate_uplift(action: str, rows: list[TradeSample], cfg: ReviewConfig) -> float:
@@ -460,7 +631,7 @@ def _evaluate_oos(
 ) -> dict[str, float]:
     fold_to_rows: dict[int, list[TradeSample]] = defaultdict(list)
     for sample in all_samples:
-        fmap = _make_feature_map(sample)
+        fmap = _make_feature_map(sample, cfg)
         if fmap.get(feature_name) != bucket:
             continue
         fold = _fold_index(sample.fold_day_key, day_to_index, day_count, fold_count)
@@ -529,7 +700,7 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
 
     by_feature: dict[tuple[str, str], list[TradeSample]] = defaultdict(list)
     for sample in samples:
-        fmap = _make_feature_map(sample)
+        fmap = _make_feature_map(sample, cfg)
         for name, bucket in fmap.items():
             if bucket == "unknown":
                 continue
@@ -565,7 +736,7 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
         inferred = _infer_action(rows, cfg)
         if inferred is None:
             continue
-        action, _, _, expected_uplift = inferred
+        action, _, _, expected_uplift, stuck_rate = inferred
         sum_pips = sum(pips)
         pivot = cfg.boost_lb_pips if action == "boost" else cfg.block_lb_pips
 
@@ -618,6 +789,7 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
                 "ub95_pips": round(ub_pips, 4),
                 "win_rate": round(win_rate, 4),
                 "fold_consistency": round(fold_consistency, 4),
+                "stuck_rate": round(stuck_rate, 4),
                 "expected_uplift_pips": round(expected_uplift, 4),
                 "certainty": certainty,
                 "oos_eval_folds": int(oos["oos_eval_folds"]),
@@ -641,6 +813,8 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
 
 def _extract_policy_hints(recs: list[dict[str, Any]]) -> dict[str, Any]:
     block_hours: list[int] = []
+    block_reasons: list[str] = []
+    reduce_reasons: list[str] = []
     side_mode: dict[str, str] = {}
     for rec in recs:
         action = str(rec.get("action") or "")
@@ -655,12 +829,19 @@ def _extract_policy_hints(recs: list[dict[str, Any]]) -> dict[str, Any]:
                 block_hours.append(int(bucket[1:3]))
             except Exception:
                 pass
+        if feature == "reason" and bucket != "unknown":
+            if action == "block":
+                block_reasons.append(bucket)
+            if action == "reduce":
+                reduce_reasons.append(bucket)
         if feature == "side" and bucket in {"long", "short"}:
             side_mode[bucket] = action
 
     block_hours = sorted(set(v for v in block_hours if 0 <= v <= 23))
     return {
         "block_jst_hours": block_hours,
+        "block_reasons": sorted(set(block_reasons)),
+        "reduce_reasons": sorted(set(reduce_reasons)),
         "side_actions": side_mode,
     }
 
@@ -683,6 +864,16 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
     )
     with_spread = sum(1 for s in samples if s.spread_pips is not None)
     with_prob = sum(1 for s in samples if s.entry_probability is not None)
+    stuck_trades = sum(1 for s in samples if _is_stuck(s, cfg))
+    reason_counts: dict[str, int] = defaultdict(int)
+    source_counts: dict[str, int] = defaultdict(int)
+    for sample in samples:
+        reason_counts[_normalize_reason(sample.reason)] += 1
+        source_counts[str(sample.source or "unknown")] += 1
+    top_reasons = [
+        {"reason": reason, "trades": count}
+        for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+    ]
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -693,10 +884,14 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
             "sum_pips": round(sum_pips, 4),
             "mean_pips": round(mean_pips, 4),
             "win_rate": round(win_rate, 4),
+            "stuck_trades": stuck_trades,
+            "stuck_trade_ratio": round(stuck_trades / float(total_trades), 4) if total_trades else 0.0,
             "coverage": {
                 "with_spread_ratio": round(with_spread / float(total_trades), 4) if total_trades else 0.0,
                 "with_entry_probability_ratio": round(with_prob / float(total_trades), 4) if total_trades else 0.0,
+                "sources": dict(source_counts),
             },
+            "top_close_reasons": top_reasons,
         },
         "thresholds": {
             "min_samples": cfg.min_samples,
@@ -712,6 +907,14 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
             "oos_min_action_match_ratio": cfg.oos_min_action_match_ratio,
             "oos_min_positive_ratio": cfg.oos_min_positive_ratio,
             "oos_min_lb_uplift_pips": cfg.oos_min_lb_uplift_pips,
+            "include_live_trades": cfg.include_live_trades,
+            "replay_json_globs": list(cfg.replay_json_globs),
+            "stuck_hold_sec": cfg.stuck_hold_sec,
+            "stuck_loss_pips": cfg.stuck_loss_pips,
+            "stuck_reasons": list(cfg.stuck_reasons),
+            "block_stuck_rate": cfg.block_stuck_rate,
+            "reduce_stuck_rate": cfg.reduce_stuck_rate,
+            "boost_stuck_rate": cfg.boost_stuck_rate,
         },
         "policy_hints": hints,
         "recommendations": recs,
@@ -735,6 +938,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--history-path",
         default=os.getenv("COUNTERFACTUAL_HISTORY_PATH", "logs/trade_counterfactual_history.jsonl"),
+    )
+    ap.add_argument(
+        "--replay-json-globs",
+        default=os.getenv("COUNTERFACTUAL_REPLAY_JSON_GLOBS", ""),
+        help="Comma-separated replay JSON globs (ex: tmp/replay_quality_gate/*/runs/*/replay_exit_workers.json).",
+    )
+    ap.add_argument(
+        "--include-live-trades",
+        type=int,
+        default=_env_int("COUNTERFACTUAL_INCLUDE_LIVE_TRADES", 1),
     )
     ap.add_argument(
         "--strategy-like",
@@ -820,6 +1033,38 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=_env_float("COUNTERFACTUAL_OOS_MIN_LB_UPLIFT_PIPS", 0.0),
     )
+    ap.add_argument(
+        "--stuck-hold-sec",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_STUCK_HOLD_SEC", 120.0),
+    )
+    ap.add_argument(
+        "--stuck-loss-pips",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_STUCK_LOSS_PIPS", -0.30),
+    )
+    ap.add_argument(
+        "--stuck-reasons",
+        default=os.getenv(
+            "COUNTERFACTUAL_STUCK_REASONS",
+            "time_stop,no_recovery,max_floating_loss,end_of_replay",
+        ),
+    )
+    ap.add_argument(
+        "--block-stuck-rate",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_BLOCK_STUCK_RATE", 0.45),
+    )
+    ap.add_argument(
+        "--reduce-stuck-rate",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_REDUCE_STUCK_RATE", 0.30),
+    )
+    ap.add_argument(
+        "--boost-stuck-rate",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_BOOST_STUCK_RATE", 0.10),
+    )
     return ap.parse_args()
 
 
@@ -846,6 +1091,14 @@ def _build_config(args: argparse.Namespace) -> ReviewConfig:
         oos_min_action_match_ratio=max(0.0, min(1.0, float(args.oos_min_action_match_ratio))),
         oos_min_positive_ratio=max(0.0, min(1.0, float(args.oos_min_positive_ratio))),
         oos_min_lb_uplift_pips=float(args.oos_min_lb_uplift_pips),
+        replay_json_globs=_parse_csv(args.replay_json_globs),
+        include_live_trades=bool(int(args.include_live_trades)),
+        stuck_hold_sec=max(10.0, float(args.stuck_hold_sec)),
+        stuck_loss_pips=float(args.stuck_loss_pips),
+        stuck_reasons=tuple(_normalize_reason(v) for v in _parse_csv(args.stuck_reasons)),
+        block_stuck_rate=max(0.0, min(1.0, float(args.block_stuck_rate))),
+        reduce_stuck_rate=max(0.0, min(1.0, float(args.reduce_stuck_rate))),
+        boost_stuck_rate=max(0.0, min(1.0, float(args.boost_stuck_rate))),
     )
 
 
@@ -862,10 +1115,14 @@ def main() -> int:
     report = run_once(cfg)
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     recs = report.get("recommendations") if isinstance(report.get("recommendations"), list) else []
+    coverage = summary.get("coverage") if isinstance(summary.get("coverage"), dict) else {}
+    sources = coverage.get("sources") if isinstance(coverage.get("sources"), dict) else {}
     print(
         "[trade-counterfactual-worker] "
         f"trades={summary.get('trades', 0)} "
         f"mean_pips={summary.get('mean_pips', 0.0)} "
+        f"stuck_ratio={summary.get('stuck_trade_ratio', 0.0)} "
+        f"replay={sources.get('replay', 0)} "
         f"recs={len(recs)} "
         f"out={cfg.out_path}"
     )

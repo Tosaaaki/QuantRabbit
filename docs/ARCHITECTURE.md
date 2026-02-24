@@ -11,6 +11,7 @@
 | DataFetcher | `market_data/*` | Tick JSON, Candle dict |
 | IndicatorEngine | `indicators/*` | Candle deque → Factors dict {ma10, rsi, …} |
 | Regime & Focus | `analysis/regime_classifier.py` / `analysis/focus_decider.py` | Factors → macro/micro レジーム・`weight_macro` |
+| Regime Router (opt-in) | `workers/regime_router/worker.py` + `quant-regime-router.service` | macro/micro レジーム → `strategy_control` の strategy別 `entry_enabled` |
 | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
 | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
 | Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力 |
@@ -26,6 +27,9 @@
 ## 3. ライフサイクル
 - Startup: `env.toml` 読込 → Secrets 確認 → 各サービス起動。
 - 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+- `quant-regime-router`（有効化時）は `M1/H4` のレジームを定期評価し、
+  `strategy_control` の strategy別 `entry_enabled` を上書きする。
+  対象は `REGIME_ROUTER_MANAGED_STRATEGIES` で限定し、`exit_enabled` には介入しない。
 - `quant-strategy-control` は戦略フラグ同期に加えて、市場オープン時に
   `data_lag_ms` / `decision_latency_ms` を `metrics.db` へ定期発行する（V2 SLO 観測の基準）。
 - `signal_bus` を使う場合は `SIGNAL_GATE_ENABLED=1` 時のみ、戦略ワーカー起点で `signal_bus` enqueue の運用を許可。
@@ -173,9 +177,15 @@ class OrderIntent(BaseModel):
   多要因（side/hour/spread/probability）で推定し、運用調整へ反映する。
 - 実装: `analysis/trade_counterfactual_worker.py`
   - 入力: `logs/trades.db` + `logs/orders.db`
+    - 追加入力（任意）: `COUNTERFACTUAL_REPLAY_JSON_GLOBS` で replay 出力
+      （`replay_exit_workers.json`）を直接集計可能
   - 解析: 5fold 一貫性 (`fold_consistency`) と 95%下限 (`lb95_pips`) を併用
     し、さらに fold 外疑似 OOS 検証（action一致率/正の uplift 比率/`oos_lb95_uplift_pips`）
     を満たした提案だけを採用
+    - stuck 判定: `hold_sec >= COUNTERFACTUAL_STUCK_HOLD_SEC` かつ
+      `pl_pips <= COUNTERFACTUAL_STUCK_LOSS_PIPS` または
+      `reason in COUNTERFACTUAL_STUCK_REASONS`
+      を `stuck_rate` として評価し、`block/reduce` 判定へ反映
   - 出力: `logs/trade_counterfactual_latest.json` / `logs/trade_counterfactual_history.jsonl`
 - 定期ワーカー:
   - `quant-trade-counterfactual.service`（oneshot）+

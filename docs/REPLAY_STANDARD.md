@@ -106,6 +106,27 @@ python scripts/replay_jpy_hour_sweep.py \
   - `tmp/replay_quality_gate/<UTC_TIMESTAMP>/quality_gate_report.md`
   - `tmp/replay_quality_gate/<UTC_TIMESTAMP>/commands.json`
 
+## 取り残し（stuck）パターン抽出
+
+- replay の約定履歴から「取り残されやすい局面（hour/side/reason）」を抽出する場合は
+  `analysis/trade_counterfactual_worker.py` を replay 入力モードで使う。
+- `--include-live-trades 0` で replay 専用評価に固定できる。
+
+```bash
+python -m analysis.trade_counterfactual_worker \
+  --strategy-like "scalp_ping_5s_b_live%" \
+  --include-live-trades 0 \
+  --replay-json-globs "tmp/replay_quality_gate/*/runs/*/replay_exit_workers.json" \
+  --stuck-hold-sec 120 \
+  --stuck-loss-pips -0.30 \
+  --stuck-reasons "time_stop,no_recovery,max_floating_loss,end_of_replay"
+```
+
+- 出力:
+  - `logs/trade_counterfactual_latest.json` の `summary.stuck_trade_ratio`
+  - `policy_hints.block_jst_hours` / `policy_hints.block_reasons`
+  - `recommendations[*].stuck_rate`
+
 ## ワーカー運用（systemd）
 
 - 定期実行は `quant-replay-quality-gate.service` + `quant-replay-quality-gate.timer` を使う。

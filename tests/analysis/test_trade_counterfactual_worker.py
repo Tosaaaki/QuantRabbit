@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 
 from analysis import trade_counterfactual_worker as worker
@@ -118,3 +120,83 @@ def test_recommendations_skip_when_oos_positive_ratio_low(tmp_path: Path) -> Non
 
     recs = worker._build_recommendations(rows, cfg)
     assert recs == []
+
+
+def test_load_trade_rows_from_replay_json(tmp_path: Path) -> None:
+    now = datetime.now(timezone.utc)
+    replay_path = tmp_path / "replay.json"
+    replay_path.write_text(
+        json.dumps(
+            {
+                "trades": [
+                    {
+                        "trade_id": "sim-1",
+                        "strategy_tag": "scalp_ping_5s_b_live",
+                        "entry_time": now.isoformat(),
+                        "exit_time": (now + timedelta(seconds=160)).isoformat(),
+                        "units": 1200,
+                        "pnl_pips": -0.7,
+                        "reason": "time_stop",
+                    },
+                    {
+                        "trade_id": "sim-2",
+                        "strategy_tag": "other_strategy",
+                        "entry_time": now.isoformat(),
+                        "exit_time": (now + timedelta(seconds=90)).isoformat(),
+                        "units": -1000,
+                        "pnl_pips": 0.5,
+                        "reason": "tp_hit",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = _cfg(
+        tmp_path,
+        include_live_trades=False,
+        replay_json_globs=(str(replay_path),),
+        lookback_days=5,
+    )
+    rows = worker._load_trade_rows(cfg)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.source == "replay"
+    assert row.strategy_tag == "scalp_ping_5s_b_live"
+    assert row.reason == "time_stop"
+    assert row.hold_sec is not None and row.hold_sec >= 150.0
+
+
+def test_recommendations_include_stuck_block_signal(tmp_path: Path) -> None:
+    cfg = _cfg(
+        tmp_path,
+        min_samples=6,
+        min_fold_samples=1,
+        min_fold_consistency=0.5,
+        oos_enabled=False,
+        stuck_hold_sec=120.0,
+        stuck_loss_pips=-0.2,
+        block_stuck_rate=0.5,
+    )
+    rows = [
+        worker.TradeSample(
+            ticket_id=f"s{i}",
+            client_order_id=f"cid-s{i}",
+            strategy_tag="scalp_ping_5s_b_live",
+            side="long",
+            hour_jst=3,
+            day_jst=f"2026-02-0{1 + (i % 4)}",
+            pl_pips=-0.6,
+            entry_probability=0.52,
+            spread_pips=0.9,
+            reason="time_stop",
+            hold_sec=180.0,
+            source="replay",
+        )
+        for i in range(8)
+    ]
+    recs = worker._build_recommendations(rows, cfg)
+    stuck_rec = next((rec for rec in recs if rec["feature"] == "stuck" and rec["bucket"] == "stuck"), None)
+    assert stuck_rec is not None
+    assert stuck_rec["action"] == "block"
+    assert float(stuck_rec["stuck_rate"]) >= 0.5
