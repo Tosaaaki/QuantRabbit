@@ -751,6 +751,14 @@ class RangeFaderExitWorker:
             1.0,
             _float_env("SCALP_PRECISION_EXIT_OPEN_POSITIONS_FAIL_LOG_INTERVAL_SEC", 15.0),
         )
+        self._pos_manager_open_positions_retry_count = max(
+            0,
+            int(_float_env("SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_COUNT", 1)),
+        )
+        self._pos_manager_open_positions_retry_delay_sec = max(
+            0.0,
+            _float_env("SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_DELAY_SEC", 0.35),
+        )
         self._last_pos_manager_open_positions_err_mono = 0.0
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
@@ -1047,33 +1055,49 @@ class RangeFaderExitWorker:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
     async def _safe_get_open_positions(self) -> tuple[dict[str, dict], Optional[str]]:
+        retries = max(0, int(self._pos_manager_open_positions_retry_count))
+        attempts = 1 + retries
+        last_error: Optional[str] = None
         start = time.monotonic()
-        try:
-            payload = await asyncio.wait_for(
-                asyncio.to_thread(self._pos_manager.get_open_positions),
-                timeout=self._pos_manager_open_positions_timeout_sec,
-            )
-            if not isinstance(payload, dict):
-                return {}, "position_manager_invalid_payload"
-            return payload, None
-        except asyncio.TimeoutError:
-            now = time.monotonic()
-            if now - self._last_pos_manager_open_positions_err_mono >= self._pos_manager_open_positions_fail_interval_sec:
+        for attempt in range(1, attempts + 1):
+            try:
+                payload = await asyncio.wait_for(
+                    asyncio.to_thread(self._pos_manager.get_open_positions),
+                    timeout=self._pos_manager_open_positions_timeout_sec,
+                )
+                if not isinstance(payload, dict):
+                    last_error = "position_manager_invalid_payload"
+                else:
+                    return payload, None
+            except asyncio.TimeoutError:
+                last_error = "position_manager_timeout"
+            except Exception:
+                last_error = "position_manager_error"
+
+            if attempt < attempts and self._pos_manager_open_positions_retry_delay_sec > 0:
+                await asyncio.sleep(self._pos_manager_open_positions_retry_delay_sec)
+
+        now = time.monotonic()
+        if now - self._last_pos_manager_open_positions_err_mono >= self._pos_manager_open_positions_fail_interval_sec:
+            if last_error == "position_manager_timeout":
                 LOG.warning(
-                    "[exit-rangefader] position_manager.get_open_positions timeout after %.2fs",
+                    "[exit-rangefader] position_manager.get_open_positions timeout after %.2fs attempts=%d",
                     now - start,
+                    attempts,
                 )
-                self._last_pos_manager_open_positions_err_mono = now
-            return {}, "position_manager_timeout"
-        except Exception:
-            now = time.monotonic()
-            if now - self._last_pos_manager_open_positions_err_mono >= self._pos_manager_open_positions_fail_interval_sec:
-                LOG.exception(
-                    "[exit-rangefader] position_manager.get_open_positions failed after %.2fs",
+            elif last_error == "position_manager_invalid_payload":
+                LOG.warning(
+                    "[exit-rangefader] position_manager.get_open_positions returned invalid payload attempts=%d",
+                    attempts,
+                )
+            else:
+                LOG.warning(
+                    "[exit-rangefader] position_manager.get_open_positions failed after %.2fs attempts=%d",
                     now - start,
+                    attempts,
                 )
-                self._last_pos_manager_open_positions_err_mono = now
-            return {}, "position_manager_error"
+            self._last_pos_manager_open_positions_err_mono = now
+        return {}, last_error or "position_manager_error"
 
     async def _review_trade(self, trade: dict, now: datetime, mid: Optional[float], range_active: bool) -> None:
         trade_id = str(trade.get("trade_id"))

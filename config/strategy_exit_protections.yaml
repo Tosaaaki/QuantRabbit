@@ -1026,6 +1026,14 @@ strategies:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
 
+  scalp_ping_5s_flow:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+
+  scalp_ping_5s_flow_live:
+    <<: *SCALP_PING_5S_EXIT_PROFILE
+    exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+
   fast_scalp:
     min_profit_ratio: 0.45
     min_profit_ratio_min_tp_pips: 0.6

@@ -4599,3 +4599,25 @@
   - `1m`: hit は同等、`full mae_delta=-0.000185` の小幅改善。
 - 判定:
   - `1m` を維持しつつ `5m/10m` の hit と MAE を同時改善できるため採用。
+
+### 2026-02-24（追記）scalp_ping_5s_flow の EXIT残留対策を追加
+
+- 背景:
+  - `scalp_ping_5s_flow_live` が `config/strategy_exit_protections.yaml` に未定義のため、
+    default `exit_profile`（`loss_cut_enabled=false`）へフォールバックする経路があった。
+  - `RANGEFADER_EXIT_NEW_POLICY_START_TS` より前の legacy 建玉は
+    `workers/scalp_ping_5s_flow.exit_worker` 側で worker 既定値に戻す分岐があり、
+    既定値が無効だと含み損玉が長時間残留しやすかった。
+  - 併せて `position_manager` 応答が瞬断した際、`open_positions` 取得1回失敗で
+    EXITサイクルを丸ごと skip するケースが確認された。
+- 対応:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_flow` / `scalp_ping_5s_flow_live` を
+      `*SCALP_PING_5S_BC_EXIT_PROFILE` へ明示マップ。
+  - `ops/env/quant-scalp-ping-5s-flow-exit.env`
+    - legacy fallback 用に `RANGEFADER_EXIT_LOSS_CUT_*` を明示
+      （`enabled=1`, `require_sl=0`, `hard_pips=12`, `max_hold=900`）。
+    - `SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_*` を追加（1回再試行）。
+  - `workers/scalp_ping_5s_flow/exit_worker.py`
+    - `_safe_get_open_positions()` に短時間再試行を実装し、
+      一過性 timeout/error での EXIT 取りこぼしを緩和。

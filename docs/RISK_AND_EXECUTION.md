@@ -145,6 +145,18 @@
   `SCALP_PING_5S` への丸め込みをしない。
   - flowタグが `SCALP_PING_5S` に正規化されると、
     flow専用 `PERF_GUARD_*` が効かず、意図せず stale closeout block が継続するため。
+- `config/strategy_exit_protections.yaml` には
+  `scalp_ping_5s_flow` / `scalp_ping_5s_flow_live` を必ず定義し、
+  `exit_profile` が default（`loss_cut_enabled=false`）へ落ちないようにする。
+- `ops/env/quant-scalp-ping-5s-flow-exit.env` は次を運用値とする。
+  - `RANGEFADER_EXIT_LOSS_CUT_ENABLED=1`
+  - `RANGEFADER_EXIT_LOSS_CUT_REQUIRE_SL=0`
+  - `RANGEFADER_EXIT_LOSS_CUT_HARD_PIPS=12.0`
+  - `RANGEFADER_EXIT_LOSS_CUT_MAX_HOLD_SEC=900`
+  - `SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_COUNT=1`
+  - `SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_DELAY_SEC=0.35`
+- 目的は、legacy建玉でも loss-cut/time-stop が機能する状態を維持しつつ、
+  一過性の `position_manager` timeout で EXIT 判定サイクルが欠落する頻度を下げること。
 
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に
