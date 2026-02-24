@@ -129,6 +129,18 @@ _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN = max(
     0.0,
     min(1.0, _env_float("STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN", 0.65)),
 )
+_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED",
+    False,
+)
+_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX", 0.50)),
+)
+_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX", 0.30)),
+)
 _STRATEGY_FORECAST_FUSION_REBOUND_ENABLED = _env_bool(
     "STRATEGY_FORECAST_FUSION_REBOUND_ENABLED",
     True,
@@ -1738,7 +1750,14 @@ def _apply_forecast_fusion(
         and (allowed_flag is False or direction_bias < 0.0)
         and not rebound_override_strong_contra
     )
-    if strong_contra:
+    weak_contra = (
+        _STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED
+        and direction_prob <= _STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX
+        and edge_strength <= _STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX
+        and (allowed_flag is False or direction_bias < 0.0)
+        and not rebound_override_strong_contra
+    )
+    if strong_contra or weak_contra:
         adjusted_units = 0
         if adjusted_probability is not None:
             adjusted_probability = max(0.0, min(float(adjusted_probability), direction_prob))
@@ -1781,9 +1800,12 @@ def _apply_forecast_fusion(
         ),
         "tf_confluence_count": tf_confluence_count,
         "strong_contra_reject": bool(strong_contra),
+        "weak_contra_reject": bool(weak_contra),
     }
     if strong_contra:
         applied["reject_reason"] = "strong_contra_forecast"
+    elif weak_contra:
+        applied["reject_reason"] = "weak_contra_forecast"
 
     if isinstance(entry_thesis, dict):
         entry_thesis["forecast_fusion"] = applied

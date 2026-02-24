@@ -787,12 +787,19 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*` で、強い逆行予測は `units=0` として見送りできます。
   - 逆行強度は `edge_strength = abs(edge - 0.5) / 0.5` で評価します。
   - 例: `direction_prob<=0.22` かつ `edge_strength>=0.65`（`allowed=false` も条件）で reject。
+- `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_*` で、`direction_prob` は逆行でも
+  `edge_strength` が弱いケース（ノイズ逆行）を `units=0` で見送れます。
+  - 既定運用値（2026-02-24追記）:
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED=1`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX=0.50`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX=0.30`
+  - 例: `direction_prob<=0.50` かつ `edge_strength<=0.30`（`allowed=false` も条件）で reject。
 - 反発オーバーライド（`STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_*`）を有効にすると、
   `rebound_probability` が十分高い long については strong-contra reject を回避し、
   縮小サイズでの試行に切り替えます。
 - 反映結果は `entry_thesis["forecast_fusion"]` に保存し、監査時に
   `units_before/after`, `entry_probability_before/after`, `units_scale`, `forecast_reason`,
-  `tf_confluence_score`, `strong_contra_reject` を追跡できます。
+  `tf_confluence_score`, `strong_contra_reject`, `weak_contra_reject` を追跡できます。
 - TPは `tp_pips_hint` がある場合に `tp_pips` へブレンドし（順方向時のみ）、
   SLは `sl_pips_cap` がある場合に `sl_pips` を上限でクリップします。
 

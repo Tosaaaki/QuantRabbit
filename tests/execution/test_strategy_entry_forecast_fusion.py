@@ -110,6 +110,24 @@ def _set_default_fusion_knobs(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX",
+        0.50,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX",
+        0.30,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
         "_STRATEGY_FORECAST_FUSION_REBOUND_ENABLED",
         True,
         raising=False,
@@ -296,6 +314,66 @@ def test_forecast_fusion_rejects_strong_contra_on_bearish_edge(monkeypatch) -> N
     assert applied.get("reject_reason") == "strong_contra_forecast"
     assert thesis.get("tp_pips") == 1.8
     assert thesis.get("sl_pips") == 1.4
+
+
+def test_forecast_fusion_rejects_weak_contra_on_low_edge_strength(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED",
+        True,
+        raising=False,
+    )
+    thesis: dict[str, object] = {"tp_pips": 1.7, "sl_pips": 1.3}
+    units, prob, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1200,
+        entry_probability=0.61,
+        entry_thesis=thesis,
+        forecast_context={
+            "allowed": False,
+            "reason": "weak_contra",
+            "p_up": 0.44,
+            "edge": 0.54,
+        },
+    )
+
+    assert units == 0
+    assert prob is not None and 0.0 <= prob <= 0.44
+    assert applied.get("weak_contra_reject") is True
+    assert applied.get("strong_contra_reject") is False
+    assert applied.get("reject_reason") == "weak_contra_forecast"
+    assert thesis.get("tp_pips") == 1.7
+    assert thesis.get("sl_pips") == 1.3
+
+
+def test_forecast_fusion_keeps_high_edge_contra_when_weak_contra_enabled(monkeypatch) -> None:
+    _set_default_fusion_knobs(monkeypatch)
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED",
+        True,
+        raising=False,
+    )
+    units, prob, applied = strategy_entry._apply_forecast_fusion(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        units=1000,
+        entry_probability=0.60,
+        entry_thesis={},
+        forecast_context={
+            "allowed": False,
+            "reason": "contra_but_high_edge",
+            "p_up": 0.44,
+            "edge": 0.88,
+        },
+    )
+
+    assert units > 0
+    assert prob is not None and prob > 0.0
+    assert applied.get("weak_contra_reject") is False
+    assert applied.get("strong_contra_reject") is False
 
 
 def test_forecast_fusion_rebound_supports_contra_buy(monkeypatch) -> None:

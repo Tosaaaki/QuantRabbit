@@ -8,6 +8,35 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）`forecast_fusion` に weak-contra reject を追加（逆行ノイズの見送り）
+
+- 背景:
+  - VM実トレード監査（`logs/trades.db`）で、`direction_prob<0.5` の逆行群のうち
+    `edge_strength<0.30` が損失寄与の中心で、既存の `strong_contra_reject`
+    （高edge逆行のみ拒否）では防ぎ切れていなかった。
+  - 一方で `edge_strength>=0.30` の逆行群は必ずしも劣化せず、
+    「逆行=即拒否」ではなく「弱い逆行だけ拒否」が必要だった。
+- 変更:
+  - `execution/strategy_entry.py`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_*` を追加。
+    - 条件: `direction_prob<=prob_max` かつ `edge_strength<=edge_max` かつ
+      `allowed=false` または逆行方向のとき、`units=0` として reject。
+    - 監査ペイロードに `weak_contra_reject` と `reject_reason=weak_contra_forecast`
+      を追加。
+  - `ops/env/quant-v2-runtime.env`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED=1`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX=0.50`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX=0.30`
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    - weak-contra reject の発火ケースと、
+      高edge逆行を拒否しないケースの回帰テストを追加。
+  - `docs/FORECAST.md`
+    - weak-contra reject の仕様と運用キーを追記。
+- 意図:
+  - 方向確率は逆行でも「確信が弱い逆行（低edge）」だけを機械的に見送って、
+    逆行ノイズ由来の損失を抑える。
+  - 高edge逆行は一律拒否せず、既存の strong-contra / rebound 判定へ分離する。
+
 ### 2026-02-24（追記）`trade_counterfactual` に replay由来の「取り残し型」抽出を追加
 
 - 背景:
