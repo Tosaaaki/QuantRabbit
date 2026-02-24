@@ -5,6 +5,11 @@
 - ワーカー別の再エントリー条件（クールダウン/同方向再入場/低ボラ時間帯ブロック）を統一フォーマットで運用に落とす。
 - entry_thesis のフラグを確実にログへ残し、成功パターン差異の精度を上げる。
 
+## 運用更新メモ（2026-02-24）
+- `TickImbalance` は `same_dir_mode` 未指定だと defaults の `return` を継承し、価格が片側へ大きく離れた局面で
+  `reentry_gate:price_distance` により実質停止し得る。
+- `TickImbalance` は `same_dir_mode: both` を明示し、`return` 固定による片側拘束を避ける。
+
 ## 前提
 - 判定単位は pocket ではなくワーカー（strategy_tag の base）を主キーにする。
 - `trades.db` と M1 ローソクを用いて MFE/MAE/BE を算出する。

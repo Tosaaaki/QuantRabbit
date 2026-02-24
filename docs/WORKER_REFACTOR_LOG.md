@@ -8,6 +8,21 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）`TickImbalance` の reentry `same_dir_mode` を `both` へ修正
+
+- 背景:
+  - `TickImbalance` は `config/worker_reentry.yaml` の個別設定で `same_dir_mode` が未指定のため、
+    defaults の `same_dir_mode: return` を継承していた。
+  - その結果、直近クローズ価格から大きく乖離した相場で
+    `quant-order-manager` の `OPEN_SKIP note=reentry_gate:price_distance` が連発し、
+    実質的にエントリー再開不能な状態が発生していた。
+- 変更:
+  - `config/worker_reentry.yaml`
+    - `strategies.TickImbalance.same_dir_mode: both` を明示追加。
+- 意図:
+  - 戻り待ち限定の片側拘束を外し、`return/follow` の両方向で
+    reentry 判定を成立可能にして「reentry が機能する状態」へ復帰する。
+
 ### 2026-02-24（追記）`scalp_ping_5s` の side filter を最終シグナルへ強制
 
 - 背景:

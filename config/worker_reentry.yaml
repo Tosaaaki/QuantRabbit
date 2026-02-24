@@ -343,6 +343,7 @@ strategies:
     cooldown_win_sec: 30
     cooldown_loss_sec: 541
     same_dir_reentry_pips: 1.76
+    same_dir_mode: both
   VolSpikeRider:
     return_wait_bias: neutral
     return_wait_reason: low_sample
