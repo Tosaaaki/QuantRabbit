@@ -341,8 +341,8 @@ strategies:
     return_wait_reason: default
     block_jst_hours: []
     cooldown_win_sec: 30
-    cooldown_loss_sec: 541
-    same_dir_reentry_pips: 1.76
+    cooldown_loss_sec: 120
+    same_dir_reentry_pips: 0.0
     same_dir_mode: both
   VolSpikeRider:
     return_wait_bias: neutral

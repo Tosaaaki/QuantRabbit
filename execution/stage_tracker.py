@@ -987,12 +987,19 @@ class StageTracker:
                 int(row[2] or 0),
                 int(row[3] or 0),
             )
-        reentry_existing: Dict[Tuple[str, str], int] = {}
+        reentry_existing: Dict[Tuple[str, str], Tuple[int, Optional[datetime]]] = {}
         for row in self._con.execute(
-            "SELECT strategy, direction, last_trade_id FROM strategy_reentry_state"
+            "SELECT strategy, direction, last_trade_id, last_close_time FROM strategy_reentry_state"
         ):
             key = (row["strategy"], row["direction"])
-            reentry_existing[key] = int(row["last_trade_id"] or 0)
+            last_close_dt: Optional[datetime] = None
+            raw_last_close = row["last_close_time"]
+            if raw_last_close:
+                try:
+                    last_close_dt = _parse_timestamp(str(raw_last_close))
+                except Exception:
+                    last_close_dt = None
+            reentry_existing[key] = (int(row["last_trade_id"] or 0), last_close_dt)
 
         ts = now_dt.isoformat()
         reverse_window = _in_jst_reverse_window(now_dt)
@@ -1112,9 +1119,24 @@ class StageTracker:
                         )
                 if base_strategy:
                     reentry_key = (base_strategy, direction)
-                    last_reentry_id = reentry_existing.get(reentry_key, 0)
-                    if trade_id > last_reentry_id:
-                        close_time = row["close_time"] if "close_time" in row.keys() else None
+                    last_reentry_id, last_reentry_close = reentry_existing.get(reentry_key, (0, None))
+                    close_time = row["close_time"] if "close_time" in row.keys() else None
+                    close_time_dt: Optional[datetime] = None
+                    if close_time:
+                        try:
+                            close_time_dt = _parse_timestamp(str(close_time))
+                        except Exception:
+                            close_time_dt = None
+                    should_update_reentry = trade_id > last_reentry_id
+                    if (
+                        not should_update_reentry
+                        and close_time_dt is not None
+                        and last_reentry_close is not None
+                        and close_time_dt > (last_reentry_close + timedelta(seconds=1))
+                    ):
+                        # trades.db row ids can regress after restore/compaction; fall back to close_time recency.
+                        should_update_reentry = True
+                    if should_update_reentry:
                         try:
                             close_price = (
                                 float(row["close_price"])
@@ -1165,7 +1187,10 @@ class StageTracker:
                                 ts,
                             ),
                         )
-                        reentry_existing[reentry_key] = trade_id
+                        reentry_existing[reentry_key] = (
+                            trade_id,
+                            close_time_dt or last_reentry_close,
+                        )
         self._con.commit()
 
         fallback_cd = cooldown_seconds

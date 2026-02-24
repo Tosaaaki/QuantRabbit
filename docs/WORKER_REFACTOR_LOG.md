@@ -79,6 +79,29 @@
   - 戻り待ち限定の片側拘束を外し、`return/follow` の両方向で
     reentry 判定を成立可能にして「reentry が機能する状態」へ復帰する。
 
+### 2026-02-24（追記）`TickImbalance` reentry の stale state 耐性を追加し、price_distance を撤廃
+
+- 背景:
+  - VM 実データで `logs/stage_state.db.strategy_reentry_state` の `last_trade_id` が
+    `logs/trades.db` の現行 `id` より大きい状態が残り、`TickImbalance` の
+    `last_close_price` が 2026-02-12 の値で固定化していた。
+  - その結果、`note=reentry_gate:price_distance` が集中し、
+    reentry 判定が実質機能停止していた。
+- 変更:
+  - `execution/stage_tracker.py`
+    - `strategy_reentry_state` 更新条件を `trade_id` 単独比較から拡張し、
+      `trade_id` が巻き戻った場合でも `close_time` が新しければ更新する。
+  - `config/worker_reentry.yaml`
+    - `TickImbalance.cooldown_loss_sec: 541 -> 120`
+    - `TickImbalance.same_dir_reentry_pips: 1.76 -> 0.0`（price distance 実質撤廃）
+  - `tests/test_stage_tracker.py`
+    - `trade_id` 回帰ケースで `strategy_reentry_state` が更新される回帰テストを追加。
+- 意図:
+  - DB restore/世代切替などで `trades.id` 系列が不連続になっても、
+    reentry の基準状態を最新トレードへ追随させる。
+  - `TickImbalance` は price-distance 依存で詰まらない運用へ切り替え、
+    エントリー再開性を優先する。
+
 ### 2026-02-24（追記）`scalp_ping_5s` の side filter を最終シグナルへ強制
 
 - 背景:
