@@ -642,6 +642,40 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
 判定:
 - `5m/10m` の精度（hit+MAE）を同時改善できるため採用。
 
+同日 2026-02-24 の追加改善（`dynamic_meta_rnd090`）では、
+`rnd087` を基準に `1m` 劣化ペナルティ付きで局所探索（`106候補→上位20候補多窓再評価`）を行い、
+`5m/10m` の hit と MAE をさらに押し上げる設定を採用しました。
+- 比較ファイル:
+  - `logs/reports/forecast_improvement/forecast_dyn_multistage_v7_20260223.json`
+- 運用反映値:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.01`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.26`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.27,10m=0.20`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=720`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.16`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.38,10m=0.59`
+  - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=4`
+  - `FORECAST_TECH_SESSION_BIAS_LOOKBACK=1260`
+  - `FORECAST_TECH_REBOUND_WEIGHT=0.06`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.025,10m=0.05`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`（維持）
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.18`（維持）
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.016`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.12`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.06`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.24`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.02`（維持）
+- 同一スナップショットでの `rnd087` 比:
+  - `24h`: `5m hit +0.006881 / mae -0.006449`, `10m hit +0.023973 / mae -0.022077`
+  - `72h`: `5m hit +0.006219 / mae -0.002442`, `10m hit +0.011427 / mae -0.008303`
+  - `full`: `5m hit +0.003891 / mae -0.001912`, `10m hit +0.008765 / mae -0.007722`
+  - `1m` は hit同等で MAE 小幅改善（`full mae -0.000185`）。
+
+判定:
+- `1m` を維持しながら `5m/10m` の hit と MAE を同時改善できるため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

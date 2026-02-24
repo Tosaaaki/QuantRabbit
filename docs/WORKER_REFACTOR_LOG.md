@@ -4561,3 +4561,41 @@
       `client_order_id -> entry_thesis` 補完対象に必ず入れるよう条件を拡張。
   - これにより `orders.db` の `submit_attempt.request_json.entry_thesis` から
     canonicalタグ（例: `MicroPullbackEMA`）を復元し、exit_worker の tag allowlist と整合する。
+
+### 2026-02-24（追記）forecast 多窓最適化6（dynamic_meta_rnd090）
+
+- 背景:
+  - `dynamic_meta_rnd087` は改善したが、`5m/10m` をさらに同時改善できる余地があった。
+- 実施:
+  - `rnd087` を基準に `1m` 劣化ペナルティ付き局所探索（106候補→上位20候補多窓再評価）を実施:
+    - `logs/reports/forecast_improvement/forecast_dyn_multistage_v7_20260223.json`
+- 採用値（runtime）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.01`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.26`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.27,10m=0.20`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=120`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=720`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.16`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.38,10m=0.59`
+  - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=4`
+  - `FORECAST_TECH_SESSION_BIAS_LOOKBACK=1260`
+  - `FORECAST_TECH_REBOUND_WEIGHT=0.06`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.025,10m=0.05`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=5m,10m`（維持）
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.18`（維持）
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.016`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.20`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.12`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.06`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.24`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.02`（維持）
+- 同一スナップショット比較（`rnd087` 比）:
+  - `24h`: `5m hit_delta=+0.006881`, `5m mae_delta=-0.006449`,
+    `10m hit_delta=+0.023973`, `10m mae_delta=-0.022077`
+  - `72h`: `5m hit_delta=+0.006219`, `5m mae_delta=-0.002442`,
+    `10m hit_delta=+0.011427`, `10m mae_delta=-0.008303`
+  - `full(8050 bars)`: `5m hit_delta=+0.003891`, `5m mae_delta=-0.001912`,
+    `10m hit_delta=+0.008765`, `10m mae_delta=-0.007722`
+  - `1m`: hit は同等、`full mae_delta=-0.000185` の小幅改善。
+- 判定:
+  - `1m` を維持しつつ `5m/10m` の hit と MAE を同時改善できるため採用。
