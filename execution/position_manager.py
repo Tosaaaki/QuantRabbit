@@ -689,6 +689,15 @@ def _normalize_strategy_tag(tag: object | None) -> str | None:
     return tag_str
 
 
+def _is_canonical_strategy_tag(tag: object | None) -> bool:
+    if tag is None:
+        return False
+    tag_str = str(tag).strip()
+    if not tag_str:
+        return False
+    return tag_str.lower() in _CANONICAL_TAGS_LOWER
+
+
 def _normalize_regime(value: object | None) -> str | None:
     if value is None:
         return None
@@ -3027,8 +3036,11 @@ class PositionManager:
                     if _POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS:
                         entry_thesis_client_ids.add(client_id)
                     else:
+                        strategy_tag_val = trade_entry.get("strategy_tag")
+                        strategy_is_canonical = _is_canonical_strategy_tag(strategy_tag_val)
                         needs_entry_enrich = (
-                            not trade_entry.get("strategy_tag")
+                            not strategy_tag_val
+                            or not strategy_is_canonical
                             or not isinstance(trade_entry.get("entry_thesis"), dict)
                         )
                         if needs_entry_enrich:

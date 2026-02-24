@@ -263,6 +263,10 @@
     `PositionManager._last_positions` へフォールバックして `ok=true` 応答を優先。
   - `execution/position_manager.py` は `entry_thesis` 補完対象を不足 trade 中心へ絞り、
     `client_order_id -> entry_thesis` の TTL cache を導入して `orders.db` 再参照を削減。
+  - 2026-02-24 追記: `open_positions` で推定済み `strategy_tag` が非canonical
+    （短縮タグ/ハッシュ混在）な場合は補完対象へ強制昇格し、
+    `orders.db` の `entry_thesis` から canonical tag を再解決する。
+    これにより exit_worker の tag allowlist 不一致で未決済が取り残される経路を抑止する。
   - runtime は `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=4.0` /
     `...STALE_MAX_AGE_SEC=24.0` / `...OPEN_POSITIONS_TIMEOUT=8.0` に更新し、
     クライアント側の過密ポーリングを抑制。

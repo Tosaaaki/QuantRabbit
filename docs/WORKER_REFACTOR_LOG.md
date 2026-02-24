@@ -4541,3 +4541,23 @@
   - `1m` は hit が小幅悪化する窓があるが、MAE は概ね改善。
 - 判定:
   - `5m/10m` の hit と MAE を同時改善できるため採用。
+
+### 2026-02-24（追記）open_positions の非canonicalタグ補完を強化（底/天井ポジ残り対策）
+
+- 背景:
+  - VM実測で OANDA `openTrades` に未決済が残る一方、`open_positions` 側の `entry_thesis.strategy_tag` が
+    `micropul...` のような client_id 由来短縮タグへ退化するケースを確認。
+  - この状態だと各 exit_worker の `MICRO_MULTI_EXIT_TAG_ALLOWLIST`（例: `MicroPullbackEMA`）と一致せず、
+    EXIT 評価ループから除外され、含み損ポジションが長時間残る原因になっていた。
+- 原因:
+  - `execution/position_manager.py` の `open_positions` ホットパスで、
+    `client_id` からタグ推定できた場合は `orders.db` の `entry_thesis` 再解決を省略していた。
+  - 推定タグが非canonical（短縮/ハッシュ混在）でも「タグあり」と判定され、`entry_thesis` 補完対象から外れていた。
+- 対応:
+  - `execution/position_manager.py`
+    - `_is_canonical_strategy_tag()` を追加。
+    - `POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS=0` 運用時でも、
+      `strategy_tag` が非canonical、または `entry_thesis` 欠損時は
+      `client_order_id -> entry_thesis` 補完対象に必ず入れるよう条件を拡張。
+  - これにより `orders.db` の `submit_attempt.request_json.entry_thesis` から
+    canonicalタグ（例: `MicroPullbackEMA`）を復元し、exit_worker の tag allowlist と整合する。
