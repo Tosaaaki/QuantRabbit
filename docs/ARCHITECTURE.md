@@ -209,3 +209,18 @@ class OrderIntent(BaseModel):
 - 定期ワーカー:
   - `quant-trade-counterfactual.service`（oneshot）+
     `quant-trade-counterfactual.timer`（30min 周期）
+
+## 7. 2026-02-24 運用補足（ENTRY 詰まり解除）
+
+- `quant-order-manager` は `ops/env/quant-order-manager.env` のみを読むため、
+  5秒スキャ（B/C）の実効ガード値は worker env ではなく同ファイルを正とする。
+- 5秒スキャの preflight 詰まり解除として、B/C の
+  `ORDER_MANAGER_PRESERVE_INTENT_*` と `SCALP_PING_5S_*_PERF_GUARD_*`
+  を緩和し、`PERF_GUARD_MODE=reduce` に統一した。
+- `worker_reentry` の時間帯ブロックは、`scalp_ping_5s_b_live` /
+  `scalp_ping_5s_d_live` で `20/21/22 JST` を解除し、
+  深夜帯 `3/5/6 JST` のみ維持した。
+- TickImbalance は `TICK_IMB_REENTRY_LOOKBACK_SEC=0` /
+  `TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS=0` /
+  `TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT=0` とし、
+  strategy ローカルの reentry 距離ゲートを無効化した。

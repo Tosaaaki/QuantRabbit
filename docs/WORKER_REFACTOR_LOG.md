@@ -5064,3 +5064,27 @@
     - `tmp/replay_ping5s_d_regimewfo_20260123_live.json` `trades=43` `total_pnl_jpy=-4979.54`
     - `tmp/replay_ping5s_c_regimewfo_20260126_live.json` `trades=39` `total_pnl_jpy=-1969.14`
     - `tmp/replay_ping5s_d_regimewfo_20260126_live.json` `trades=39` `total_pnl_jpy=-1969.14`
+
+### 2026-02-24（追記）5秒スキャ ENTRY 詰まり解除と TickImbalance reentry 撤廃
+
+- 背景（VM実測）:
+  - `orders.db` で `scalp_ping_5s_b_live` の `reentry_block` が連発し、
+    `request_json.reentry_details` は `jst_hour=20/21` と
+    `block_jst_hours=[3,5,6,20,21,22]` を示していた。
+  - `quant-order-manager` の `OPEN_REJECT` は B/C とも
+    `note=perf_block:failfast` が支配的で、`B pf=0.46 win=0.39`,
+    `C pf=0.28 win=0.45` により連続拒否していた。
+  - 既存の緩和値が `ops/env/scalp_ping_5s_*.env` 側のみ更新され、
+    実際に preflight を担う `ops/env/quant-order-manager.env` と不整合になっていた。
+- 対応:
+  - `ops/env/quant-order-manager.env`
+    - B/C の `ORDER_MANAGER_PRESERVE_INTENT_*` を緩和値へ同期。
+    - B/C の `SCALP_PING_5S_*_PERF_GUARD_MODE=reduce` へ変更。
+    - B/C の `PERF_GUARD_*`（`MIN_TRADES/PF_MIN/WIN_MIN/FAILFAST_*`）を
+      実運用値へ同期。
+  - `config/worker_reentry.yaml`
+    - `scalp_ping_5s_b_live` / `scalp_ping_5s_d_live` の
+      `block_jst_hours` から `20/21/22` を削除（`3/5/6` は維持）。
+  - `ops/env/quant-scalp-tick-imbalance.env`
+    - TickImbalance の reentry 距離ゲートを撤廃
+      （`LOOKBACK_SEC=0`, `MIN_PRICE_GAP_PIPS=0`, `REQUIRE_LAST_PROFIT=0`）。

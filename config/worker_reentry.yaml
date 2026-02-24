@@ -161,18 +161,12 @@ strategies:
     - 3
     - 5
     - 6
-    - 20
-    - 21
-    - 22
   scalp_ping_5s_d_live:
     return_wait_reason: hourly_pnl_guard_20260222_d
     block_jst_hours:
     - 3
     - 5
     - 6
-    - 20
-    - 21
-    - 22
   TrendMA:
     cooldown_win_sec: 300
     cooldown_loss_sec: 60
