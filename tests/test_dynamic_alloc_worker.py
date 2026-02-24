@@ -6,6 +6,10 @@ from scripts.dynamic_alloc_worker import compute_scores, normalize_strategy_key
 def test_normalize_strategy_key_strips_ephemeral_suffix() -> None:
     assert normalize_strategy_key("scalp_ping_5s_b_live-l6ab7c614") == "scalp_ping_5s_b_live"
     assert normalize_strategy_key("scalp_ping_5s_flow_live-fe90be38") == "scalp_ping_5s_flow_live"
+    assert normalize_strategy_key("microranbcc01f5cc") == "MicroRangeBreak"
+    assert normalize_strategy_key("microtre584b929c1") == "MicroTrendRetest-long"
+    assert normalize_strategy_key("micropul9f1b2a3c") == "MicroPullbackEMA"
+    assert normalize_strategy_key("scalpmacdrsi69055fe0") == "scalp_macd_rsi_div_b_live"
     assert normalize_strategy_key("MicroTrendRetest-long") == "MicroTrendRetest-long"
 
 

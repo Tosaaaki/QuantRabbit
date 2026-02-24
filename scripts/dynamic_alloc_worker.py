@@ -23,10 +23,19 @@ _EPHEMERAL_SUFFIX_PATTERNS = (
     re.compile(r"^(?P<base>.+?)-l[0-9a-f]{8,}$", re.IGNORECASE),
     re.compile(r"^(?P<base>.+?)-[0-9a-f]{8,}$", re.IGNORECASE),
 )
+_PREFIX_ALIAS_PATTERNS = (
+    (re.compile(r"^micropul[0-9a-f]{8,}$", re.IGNORECASE), "MicroPullbackEMA"),
+    (re.compile(r"^microran[0-9a-f]{8,}$", re.IGNORECASE), "MicroRangeBreak"),
+    (re.compile(r"^microtre[0-9a-f]{8,}$", re.IGNORECASE), "MicroTrendRetest-long"),
+    (re.compile(r"^scalpmacdrsi[0-9a-f]{8,}$", re.IGNORECASE), "scalp_macd_rsi_div_b_live"),
+)
 
 
 def normalize_strategy_key(raw: str | None) -> str:
     key = str(raw or "").strip() or "unknown"
+    for pattern, alias in _PREFIX_ALIAS_PATTERNS:
+        if pattern.match(key):
+            return alias
     for pattern in _EPHEMERAL_SUFFIX_PATTERNS:
         matched = pattern.match(key)
         if matched:
