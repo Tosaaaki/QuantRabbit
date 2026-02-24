@@ -147,6 +147,7 @@
 - 変更:
   - `ops/env/scalp_ping_5s_b.env`
     - `SCALP_PING_5S_B_BLOCK_HOURS_JST=1,2,3,10,13,15,16,19,21,22`
+  - `ops/env/quant-order-manager.env`
     - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE: 0.24 -> 0.50`
   - `workers/scalp_ping_5s/config.py`
     - `SCALP_PING_5S_BLOCK_HOURS_JST` 読み取り（CSV int, 0-23正規化）を追加。
