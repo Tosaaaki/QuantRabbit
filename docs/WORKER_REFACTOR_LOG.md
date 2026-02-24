@@ -4600,6 +4600,29 @@
 - 判定:
   - `1m` を維持しつつ `5m/10m` の hit と MAE を同時改善できるため採用。
 
+### 2026-02-24（追記）forecast 多窓最適化8（session_bias cap 可変化）
+
+- 背景:
+  - `dynamic_meta_rnd081` 採用後に同条件で再探索（`forecast_dyn_multistage_v9_20260224.json`）を実施したが、
+    上積み候補は得られず現行値が局所最適だった。
+  - 一方で runtime 実装は `session_bias` を固定上限 `0.6` でクランプしており、
+    先行探索で有効だった `10m=0.63` が実効化されない状態だった。
+- 対応:
+  - `workers/common/forecast_gate.py`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP`（default `0.6`）を追加。
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT(_MAP)` の上限を可変化。
+    - dynamic session weight の clamp 上限も同 cap に統一。
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP=0.70`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.63`
+- 同一スナップショット比較（`session_10=0.60` 比）:
+  - `24h`: `10m hit_delta=+0.001142`, `10m mae_delta=-0.003579`
+  - `72h`: `10m hit_delta=+0.000326`, `10m mae_delta=-0.000884`
+  - `full(8050 bars)`: `10m hit_delta=+0.000149`, `10m mae_delta=-0.001232`
+  - `1m/5m` は同等、`10m range coverage` は `72h/full` で小幅改善。
+- 判定:
+  - `5m` を維持したまま `10m` の hit/MAE を同時改善できるため採用。
+
 ### 2026-02-24（追記）scalp_ping_5s_flow の EXIT残留対策を追加
 
 - 背景:

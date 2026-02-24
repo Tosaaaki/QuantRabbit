@@ -711,6 +711,28 @@ dynamic ゲインのみを局所比較しました（`bars=8050`）。
 判定:
 - `1m` を維持しながら `5m/10m` の hit と MAE を同時改善できるため採用。
 
+同日 2026-02-24 の追加調整（`session_bias_cap_unlock`）では、
+`rnd081` を基準に再探索（`forecast_dyn_multistage_v9_20260224.json`）を実施したところ、
+現行値が局所最適で上積み候補が得られませんでした。
+このため runtime 側の `session_bias` 上限クランプを可変化し、
+`10m` の `session_bias` を `0.60 -> 0.63` で実効反映できるようにしました。
+- 実装変更:
+  - `workers/common/forecast_gate.py`
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP`（default `0.6`）を追加。
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT(_MAP)` と dynamic session weight の上限を
+      固定 `0.6` から可変 cap に変更。
+- 運用反映値:
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP=0.70`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.63`
+- 同一スナップショットでの `0.60` 比（`10m session_bias` のみ変更）:
+  - `24h`: `10m hit +0.001142 / mae -0.003579`
+  - `72h`: `10m hit +0.000326 / mae -0.000884`
+  - `full`: `10m hit +0.000149 / mae -0.001232`
+  - `1m/5m` は同等、`10m range coverage` は `72h/full` で小幅改善。
+
+判定:
+- `5m` を維持しつつ `10m` の hit/MAE を同時改善できるため採用。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

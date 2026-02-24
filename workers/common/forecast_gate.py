@@ -124,14 +124,18 @@ _TECH_SESSION_BIAS_ENABLED = _env_bool(
     "FORECAST_TECH_SESSION_BIAS_ENABLED",
     True,
 )
+_TECH_SESSION_BIAS_WEIGHT_CAP = max(
+    0.2,
+    min(0.8, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT_CAP", 0.6)),
+)
 _TECH_SESSION_BIAS_WEIGHT = max(
     0.0,
-    min(0.6, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12)),
+    min(_TECH_SESSION_BIAS_WEIGHT_CAP, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12)),
 )
 _TECH_SESSION_BIAS_WEIGHT_MAP = _parse_horizon_weight_map(
     os.getenv("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP", "1m=0.0,5m=0.26,10m=0.38"),
     lo=0.0,
-    hi=0.6,
+    hi=_TECH_SESSION_BIAS_WEIGHT_CAP,
 )
 _TECH_SESSION_BIAS_MIN_SAMPLES = max(
     8,
@@ -841,7 +845,7 @@ def _adjust_dynamic_session_weight(
     key = str(horizon or "").strip().lower()
     if key == "1m":
         return 0.0, 0.0
-    base = _clamp(float(base_weight), 0.0, 0.6)
+    base = _clamp(float(base_weight), 0.0, float(_TECH_SESSION_BIAS_WEIGHT_CAP))
     if not _dynamic_weight_active(horizon):
         return base, 0.0
     center = max(1e-6, float(_TECH_DYNAMIC_SESSION_BIAS_CENTER))
@@ -860,7 +864,7 @@ def _adjust_dynamic_session_weight(
     )
     cap = _clamp(float(_TECH_DYNAMIC_MAX_SCALE_DELTA), 0.0, 0.6)
     delta = _clamp(delta, -cap, cap)
-    return _clamp(base * (1.0 + delta), 0.0, 0.6), float(delta)
+    return _clamp(base * (1.0 + delta), 0.0, float(_TECH_SESSION_BIAS_WEIGHT_CAP)), float(delta)
 
 
 def _sigmoid(x: float) -> float:
