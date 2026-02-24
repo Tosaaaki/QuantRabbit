@@ -5082,6 +5082,8 @@
     - B/C の `SCALP_PING_5S_*_PERF_GUARD_MODE=reduce` へ変更。
     - B/C の `PERF_GUARD_*`（`MIN_TRADES/PF_MIN/WIN_MIN/FAILFAST_*`）を
       実運用値へ同期。
+    - `scalp_ping_5s_c_live` は `env_prefix=SCALP_PING_5S` で preflight されるため、
+      `SCALP_PING_5S_PERF_GUARD_*`（共通プレフィクス）にも同値を追加。
   - `config/worker_reentry.yaml`
     - `scalp_ping_5s_b_live` / `scalp_ping_5s_d_live` の
       `block_jst_hours` から `20/21/22` を削除（`3/5/6` は維持）。

@@ -214,6 +214,8 @@ class OrderIntent(BaseModel):
 
 - `quant-order-manager` は `ops/env/quant-order-manager.env` のみを読むため、
   5秒スキャ（B/C）の実効ガード値は worker env ではなく同ファイルを正とする。
+- `scalp_ping_5s_c_live` は `meta.env_prefix=SCALP_PING_5S` で評価されるため、
+  `SCALP_PING_5S_C_*` だけでなく `SCALP_PING_5S_*` のガード値も整合させる。
 - 5秒スキャの preflight 詰まり解除として、B/C の
   `ORDER_MANAGER_PRESERVE_INTENT_*` と `SCALP_PING_5S_*_PERF_GUARD_*`
   を緩和し、`PERF_GUARD_MODE=reduce` に統一した。
