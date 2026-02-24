@@ -5106,6 +5106,9 @@
       実運用値へ同期。
     - `scalp_ping_5s_c_live` は `env_prefix=SCALP_PING_5S` で preflight されるため、
       `SCALP_PING_5S_PERF_GUARD_*`（共通プレフィクス）にも同値を追加。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ORDER_MANAGER_SERVICE_ENABLED=0` の local fallback 経路でも
+      同じ判定を使うため、`SCALP_PING_5S_PERF_GUARD_*` を同値で追加。
   - `config/worker_reentry.yaml`
     - `scalp_ping_5s_b_live` / `scalp_ping_5s_d_live` の
       `block_jst_hours` から `20/21/22` を削除（`3/5/6` は維持）。
