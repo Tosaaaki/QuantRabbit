@@ -29,7 +29,8 @@
 - 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
 - `scalp_ping_5s_{b,c,d}` は strategy local env（`ops/env/scalp_ping_5s_*.env`）で
   `MIN_TICK_RATE` / `LOOKAHEAD_GATE_ENABLED` / `REVERT_MIN_TICK_RATE` を管理し、
-  方向フィルタ（C/D は `SIDE_FILTER=long`）を維持したまま entry 密度を動的に調整する。
+  `SIDE_FILTER` / spread stale guard（`spread_guard_stale_*`）を含めて
+  entry 密度を動的に調整する。
 - `quant-regime-router`（有効化時）は `M1/H4` のレジームを定期評価し、
   `strategy_control` の strategy別 `entry_enabled` を上書きする。
   対象は `REGIME_ROUTER_MANAGED_STRATEGIES` で限定し、`exit_enabled` には介入しない。

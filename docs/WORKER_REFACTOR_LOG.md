@@ -8,6 +8,39 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-24（追記）5秒スキャ B/C/D の「未エントリー」要因を追加緩和
+
+- 背景:
+  - VM 実ログで `quant-scalp-ping-5s-b/c/d` は active だが、
+    B は `no_signal:revert_not_found` + `directional_bias_zero`、
+    C は `spread_blocked(reason=spread_stale)` が支配し、約定が停滞していた。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SIDE_BIAS_BLOCK_THRESHOLD: 0.30 -> 0.00`
+    - `REVERT_*` を flow 寄りへ緩和
+      (`REVERT_MIN_TICK_RATE: 0.90 -> 0.60`,
+      `RANGE/SWEEP/BOUNCE/CONFIRM: 0.45/0.35/0.10/0.58 -> 0.35/0.22/0.08/0.50`)
+    - short 判定の最小要件を緩和
+      (`SHORT_MIN_TICKS/SIGNAL_TICKS/TICK_RATE: 4/4/0.72 -> 3/3/0.60`)
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SIDE_FILTER: long -> (empty)`（両方向許可）
+    - `MAX_SPREAD_PIPS: 1.60 -> 2.00`
+    - `REVERT_*` と short 側閾値を緩和
+      (`SHORT_MIN_TICKS/SIGNAL_TICKS/TICK_RATE: 8/8/1.05 -> 4/4/0.72`,
+       `SHORT/LONG_MOMENTUM_TRIGGER: 0.22/0.12 -> 0.11/0.11`)
+    - stale spread による連続停止を抑止:
+      `spread_guard_stale_grace_sec=900`,
+      `spread_guard_stale_block_min_pips=1.80`
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SIDE_FILTER: long -> (empty)`（両方向許可）
+    - `MAX_SPREAD_PIPS: 1.60 -> 2.00`
+    - `SIDE_BIAS_BLOCK_THRESHOLD: 0.30 -> 0.10`
+    - `REVERT_*` と short 側閾値を C と同等に緩和
+    - stale spread 抑止の `spread_guard_stale_*` を C と同値で追加
+- 意図:
+  - 「戦略停止」ではなく「ゲート過多」で入らない状態をほどき、
+    B/C/D の約定再開と方向追従（long-only 固定の解除）を優先する。
+
 ### 2026-02-24（追記）`forecast_fusion` に weak-contra reject を追加（逆行ノイズの見送り）
 
 - 背景:
