@@ -31,6 +31,8 @@
   `MIN_TICK_RATE` / `LOOKAHEAD_GATE_ENABLED` / `REVERT_MIN_TICK_RATE` を管理し、
   `SIDE_FILTER` / spread stale guard（`spread_guard_stale_*`）を含めて
   entry 密度を動的に調整する。
+  また B/C では `MIN_UNITS` と `ORDER_MIN_UNITS_*` を 50 まで緩和し、
+  `REVERT_WINDOW` 拡張と `REVERT_*` 閾値緩和で no-signal 偏りを抑える。
 - `quant-regime-router`（有効化時）は `M1/H4` のレジームを定期評価し、
   `strategy_control` の strategy別 `entry_enabled` を上書きする。
   対象は `REGIME_ROUTER_MANAGED_STRATEGIES` で限定し、`exit_enabled` には介入しない。

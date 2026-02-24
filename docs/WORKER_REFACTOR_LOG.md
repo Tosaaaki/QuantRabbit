@@ -39,7 +39,36 @@
     - stale spread 抑止の `spread_guard_stale_*` を C と同値で追加
 - 意図:
   - 「戦略停止」ではなく「ゲート過多」で入らない状態をほどき、
-    B/C/D の約定再開と方向追従（long-only 固定の解除）を優先する。
+  B/C/D の約定再開と方向追従（long-only 固定の解除）を優先する。
+
+### 2026-02-24（追記）5秒スキャ B/C の no-signal 継続に対する第2段緩和
+
+- 背景:
+  - 第1段反映後、`spread_stale` は解消したが、B/C は
+    `no_signal:revert_not_found` と `units_below_min` が継続し、
+    `submit_attempt` が発生しない区間が残った。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MIN_UNITS: 100 -> 50` と `ORDER_MIN_UNITS_*: 100 -> 50`
+    - `MIN_TICK_RATE: 0.72 -> 0.50`、`SHORT_MIN_TICK_RATE: 0.60 -> 0.50`
+    - `REVERT_WINDOW/SHORT_WINDOW: 1.60/0.55 -> 2.20/0.75`
+    - `REVERT_MIN_TICK_RATE: 0.60 -> 0.50`
+    - `REVERT_RANGE/SWEEP/BOUNCE: 0.35/0.22/0.08 -> 0.20/0.12/0.05`
+    - `LONG/SHORT/MOMENTUM_TRIGGER_PIPS: 0.10` に統一
+    - `SIDE_ADVERSE_STACK_UNITS_ENABLED: 1 -> 0`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MIN_UNITS: 100 -> 50` と `ORDER_MIN_UNITS_*: 100 -> 50`
+    - `SIDE_BIAS_BLOCK_THRESHOLD: 0.30 -> 0.10`
+    - `MIN_TICK_RATE: 0.80 -> 0.50`、`SHORT_MIN_TICK_RATE: 0.72 -> 0.50`
+    - `REVERT_WINDOW/SHORT_WINDOW: 1.60/0.55 -> 2.20/0.75`
+    - `REVERT_MIN_TICK_RATE: 0.60 -> 0.50`
+    - `REVERT_RANGE/SWEEP/BOUNCE: 0.35/0.22/0.08 -> 0.20/0.12/0.05`
+    - `LONG/SHORT/MOMENTUM_TRIGGER_PIPS: 0.10` に統一
+    - `SIDE_ADVERSE_STACK_UNITS_ENABLED: 1 -> 0`
+- 意図:
+  - revert 判定の成立域を広げて no-signal を減らし、
+    多段縮小で `min_units` 未満へ落ちるケースを減らして
+    B/C の約定再開を狙う。
 
 ### 2026-02-24（追記）`forecast_fusion` に weak-contra reject を追加（逆行ノイズの見送り）
 
