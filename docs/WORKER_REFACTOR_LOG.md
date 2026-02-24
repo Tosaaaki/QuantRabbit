@@ -4621,3 +4621,43 @@
   - `workers/scalp_ping_5s_flow/exit_worker.py`
     - `_safe_get_open_positions()` に短時間再試行を実装し、
       一過性 timeout/error での EXIT 取りこぼしを緩和。
+
+### 2026-02-24（追記）forecast 多窓最適化7（dynamic_meta_rnd081）
+
+- 背景:
+  - `dynamic_meta_rnd090` は有効だったが、`5m/10m` の hit と MAE を同時にさらに押し上げる余地が残っていた。
+- 実施:
+  - `rnd090` を基準に `1m` 非劣化制約を維持した多窓探索（121候補→上位20候補再評価）を実施:
+    - `logs/reports/forecast_improvement/forecast_dyn_multistage_v8_20260224.json`
+- 採用値（runtime）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.006`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT=0.26`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.14,5m=0.27,10m=0.24`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES=150`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK=720`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT=0.18`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.42,10m=0.63`
+  - `FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES=3`
+  - `FORECAST_TECH_SESSION_BIAS_LOOKBACK=1080`
+  - `FORECAST_TECH_REBOUND_WEIGHT=0.04`
+  - `FORECAST_TECH_REBOUND_WEIGHT_MAP=1m=0.16,5m=0.02,10m=0.05`
+  - `FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS=1m,5m,10m`
+  - `FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA=0.18`（維持）
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER=0.012`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN=0.24`
+  - `FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN=0.10`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER=0.07`
+  - `FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN=0.22`
+  - `FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN=0.01`
+- 同一スナップショット比較（`rnd090` 比）:
+  - `24h`: `5m hit_delta=+0.005734`, `5m mae_delta=-0.004041`,
+    `10m hit_delta=+0.005708`, `10m mae_delta=-0.012859`
+  - `72h`: `5m hit_delta=+0.003601`, `5m mae_delta=-0.001324`,
+    `10m hit_delta=+0.002285`, `10m mae_delta=-0.004623`
+  - `full(8050 bars)`: `5m hit_delta=+0.004041`, `5m mae_delta=-0.001090`,
+    `10m hit_delta=+0.002228`, `10m mae_delta=-0.004359`
+  - `1m`: hit は同等で、`24h/72h/full` の MAE が
+    `-0.000038/-0.000238/-0.000163` 改善。
+  - range coverage は `10m` で全窓改善（`+0.002283/+0.000326/+0.000891`）。
+- 判定:
+  - `1m` を維持しつつ `5m/10m` の hit と MAE を同時改善できるため採用。
