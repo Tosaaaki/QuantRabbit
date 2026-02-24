@@ -111,20 +111,29 @@
   - 直近は `scalp_ping_5s_flow_live` のみが継続約定し、B/C/D は事実上休止状態だった。
 - 変更:
   - `ops/env/scalp_ping_5s_b.env`
+    - `MIN_TICKS: 5 -> 4`
     - `MIN_SIGNAL_TICKS: 4 -> 3`
     - `MIN_TICK_RATE: 0.85 -> 0.72`
+    - `IMBALANCE_MIN: 0.55 -> 0.50`
     - `LOOKAHEAD_GATE_ENABLED: 1 -> 0`
     - `REVERT_MIN_TICK_RATE: 1.20 -> 0.90`
+    - `EXTREMA_GATE_ENABLED: 1 -> 0`
   - `ops/env/scalp_ping_5s_c.env`
+    - `MIN_TICKS: 5 -> 4`
     - `MIN_SIGNAL_TICKS: 4 -> 3`
     - `MIN_TICK_RATE: 0.95 -> 0.80`
+    - `IMBALANCE_MIN: 0.55 -> 0.50`
     - `LOOKAHEAD_GATE_ENABLED: 1 -> 0`
     - `REVERT_MIN_TICK_RATE: 1.20 -> 0.90`
+    - `EXTREMA_GATE_ENABLED: 1 -> 0`
   - `ops/env/scalp_ping_5s_d.env`
+    - `MIN_TICKS: 5 -> 4`
     - `MIN_SIGNAL_TICKS: 4 -> 3`
     - `MIN_TICK_RATE: 0.95 -> 0.80`
+    - `IMBALANCE_MIN: 0.55 -> 0.50`
     - `LOOKAHEAD_GATE_ENABLED: 1 -> 0`
     - `REVERT_MIN_TICK_RATE: 1.20 -> 0.90`
+    - `EXTREMA_GATE_ENABLED: 1 -> 0`
 - 意図:
   - B/C/D の「シグナル成立はするがゲート過多で entry しない」状態を解消し、
     5秒スキャの約定頻度を回復させる。
