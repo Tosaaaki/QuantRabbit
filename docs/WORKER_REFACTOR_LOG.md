@@ -119,6 +119,22 @@
     逆行ノイズ由来の損失を抑える。
   - 高edge逆行は一律拒否せず、既存の strong-contra / rebound 判定へ分離する。
 
+### 2026-02-24（追記）`forecast_fusion` strong-contra reject を既定OFFへ切替
+
+- 背景（VM実測）:
+  - `logs/trades.db` × `logs/orders.db(request_json.entry_thesis)` を 14日で照合し、
+    `strong_contra` 条件（`direction_prob<=0.22 && edge_strength>=0.65`）に該当した
+    11件が合計 `+25.5 pips`（勝率 90.9%）で正寄与だった。
+  - 同期間の `weak_contra` 条件（`direction_prob<=0.50 && edge_strength<=0.30`）は
+    500件で `-857.3 pips` と明確な負寄与で、weak 側のみ reject を維持する方が
+    成績改善に有利だった。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED: 1 -> 0`
+- 意図:
+  - 「強い逆行＝即拒否」の過剰抑制を外し、実績が悪い weak-contra のみ機械的に遮断する。
+  - 方向意図の選別を forecast で過剰に行わず、既存の戦略ローカル判定 + weak-contra に寄せる。
+
 ### 2026-02-24（追記）`trade_counterfactual` に replay由来の「取り残し型」抽出を追加
 
 - 背景:

@@ -787,6 +787,9 @@ VM同一期間評価（`bars=8050`）では、`feature_expansion_gain=0.0` 基�
 - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_*` で、強い逆行予測は `units=0` として見送りできます。
   - 逆行強度は `edge_strength = abs(edge - 0.5) / 0.5` で評価します。
   - 例: `direction_prob<=0.22` かつ `edge_strength>=0.65`（`allowed=false` も条件）で reject。
+  - 既定運用値（2026-02-24更新）は `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=0`。
+    直近14日（`logs/trades.db`）の実測で strong bucket が `+25.5 pips`（11件）と正寄与だったため、
+    一律 reject を停止し、weak-contra のみ有効化。
 - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_*` で、`direction_prob` は逆行でも
   `edge_strength` が弱いケース（ノイズ逆行）を `units=0` で見送れます。
   - 既定運用値（2026-02-24追記）:
