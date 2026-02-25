@@ -181,6 +181,39 @@ python3 scripts/eval_forecast_before_after.py \
   `5m hit 0.4886 -> 0.4886`（同等）, `5m MAE 3.2707 -> 3.2707`（同等）,
   `10m hit 0.4878 -> 0.4900`, `10m MAE 4.8568 -> 4.8564` を確認。
 
+## 定期改善監査（自動）
+
+`vm_forecast_snapshot.py` と `eval_forecast_before_after.py` を 1 時間周期で実行する
+専用ワーカーを追加しました。
+
+- 実装: `analysis/forecast_improvement_worker.py`
+- unit: `systemd/quant-forecast-improvement-audit.service`
+- timer: `systemd/quant-forecast-improvement-audit.timer`
+- env: `ops/env/quant-forecast-improvement-audit.env`
+
+監査ワーカーは以下を毎回保存します。
+
+- 実行ディレクトリ: `logs/reports/forecast_improvement/<timestamp>/`
+- before/after JSON: `forecast_eval.json`
+- snapshot JSON: `snapshot.json`（取得できた場合）
+- レポート: `report.md`
+- 最新サマリ: `logs/reports/forecast_improvement/latest.md`
+- 実行状態: `logs/forecast_improvement_latest.json`
+- 実行履歴: `logs/forecast_improvement_history.jsonl`
+
+判定は `hit_delta / mae_delta / range_coverage_delta` の劣化閾値で
+`improved / mixed / degraded` を付与し、
+レポートに「改善したTF」「悪化したTF」「次の調整案（最大3件）」を必ず出力します。
+
+有効化手順（VM）:
+
+```bash
+sudo bash scripts/install_trading_services.sh \
+  --repo /home/tossaki/QuantRabbit \
+  --units "quant-forecast-improvement-audit.service quant-forecast-improvement-audit.timer"
+sudo systemctl enable --now quant-forecast-improvement-audit.timer
+```
+
 2026-02-18 の短期窓（2h/4h）では、`feature_expansion_gain=0.35` 構成で
 `1m/5m` の `hit_delta` がマイナスに寄る局面を確認したため、運用側の runtime env は次を明示設定:
 - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0`

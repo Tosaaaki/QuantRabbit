@@ -1,0 +1,12 @@
+[Unit]
+Description=Run quant-forecast-improvement-audit.service every hour
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+AccuracySec=2min
+RandomizedDelaySec=2min
+Unit=quant-forecast-improvement-audit.service
+
+[Install]
+WantedBy=timers.target
