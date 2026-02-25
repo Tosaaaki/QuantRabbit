@@ -5998,6 +5998,42 @@
   - EXIT経路を維持したまま、全戦略の新規ENTRYを止めてDD拡大を停止する。
   - B/M1個別停止だけでは止血できない状況を、global guardで確実に抑える。
 
+### 2026-02-25（追記）根本対策: 「停止」から品質ゲート運用へ復帰
+
+- 背景（VM実測, UTC 2026-02-25 12:44）:
+  - 直近6時間で `scalp_ping_5s_b_live / scalp_ping_5s_c_live / M1Scalper-M1` が
+    PF<0.5 まで悪化し、`reduce` モード運用では劣化局面のエントリーが継続した。
+  - 直近90分集計でも `STOP_LOSS_ORDER` と
+    `MARKET_ORDER_TRADE_CLOSE` の負けが主因。
+- 変更:
+  - `workers/common/perf_guard.py`
+    - `reduce` モードでも `margin_closeout / failfast / sl_loss_rate` は
+      **hard block** として必ず拒否するロジックを追加。
+    - 既定 `PERF_GUARD_RELAX_TAGS` から `M1Scalper` を除外
+      （既定は `ImpulseRetrace` のみ）。
+  - `ops/env/quant-v2-runtime.env`
+    - `STRATEGY_CONTROL_GLOBAL_ENTRY_ENABLED=1`（全停止解除）
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=1`
+    - `POLICY_HEURISTIC_PERF_BLOCK_ENABLED=1`
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_BLOCK_HOURS_ENABLED=0`（時間帯全停止を解除）
+    - `M1SCALP_PERF_GUARD_*` を明示し、PF/勝率 failfast で劣化時を拒否。
+    - `M1SCALP_PERF_GUARD_RELAX_TAGS=`（緩和無効）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `PERF_GUARD_MODE=block` へ変更。
+    - `failfast` / `sl_loss_rate` 閾値を引き上げ。
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を 0.48 へ引き上げ。
+  - `ops/env/scalp_ping_5s_d.env`
+    - `PERF_GUARD_MODE=block` へ変更。
+    - `BASE_ENTRY_UNITS` / `MAX_UNITS` を縮小し、過大ロットを抑制。
+    - 確率下限とスケール上限を厳格化。
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - 24h 強制ブロック（全時間帯 block）を削除。
+    - B専用の quality-first override（failfast/sl-loss-rate/units/probability）を追加。
+- 意図:
+  - 「新規を全部止める」運用をやめ、劣化条件だけを機械的に遮断する。
+  - 逆行予測・劣化PF・高SL率の局面を入口で除去し、トレード品質を上げる。
+
 ### 2026-02-25（追記）恒久対策: replay/cleanup の本番干渉を構造的に抑止
 
 - 症状（VM実測, UTC 2026-02-25 12:25-12:47）:

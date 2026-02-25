@@ -143,7 +143,7 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
 
     relax_raw = _strategy_env_get("PERF_GUARD_RELAX_TAGS", None, env_prefix=env_prefix)
     if relax_raw is None:
-        relax_raw = "M1Scalper,ImpulseRetrace"
+        relax_raw = "ImpulseRetrace"
     relax_tags = {tag.strip().lower() for tag in str(relax_raw).split(",") if tag.strip()}
     split_directional = _strategy_env_bool("PERF_GUARD_SPLIT_DIRECTIONAL", True, env_prefix=env_prefix)
 
@@ -426,6 +426,19 @@ def _sl_loss_rate_max(pocket: str, cfg: PerfGuardCfg) -> float:
     if p.startswith("scalp"):
         return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, 0.65, cfg)
     return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, cfg.sl_loss_rate_max_default, cfg)
+
+
+def _is_hard_block_reason(reason: str) -> bool:
+    """
+    Hard block reasons must reject entries even in reduce/warn mode.
+    This prevents prolonged drawdown when the strategy is clearly degraded.
+    """
+    text = str(reason or "").strip().lower()
+    return (
+        text.startswith("margin_closeout_n=")
+        or text.startswith("failfast:")
+        or text.startswith("sl_loss_rate=")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -923,12 +936,17 @@ def is_allowed(
         ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour, regime_label, cfg)
         if not ok_hour:
             reason_txt = f"hour{hour}:{reason_hour}"
-            allowed = ok_hour if cfg.mode == "block" else True
-            if cfg.mode != "block":
-                reason_txt = f"warn:{reason_txt}"
-            elif relaxed:
-                allowed = True
-                reason_txt = f"relaxed:{reason_txt}"
+            hard_block = _is_hard_block_reason(reason_hour)
+            if hard_block:
+                allowed = False
+                reason_txt = f"hard:{reason_txt}"
+            else:
+                allowed = ok_hour if cfg.mode == "block" else True
+                if cfg.mode != "block":
+                    reason_txt = f"warn:{reason_txt}"
+                elif relaxed:
+                    allowed = True
+                    reason_txt = f"relaxed:{reason_txt}"
             _cache[key] = (now, allowed, reason_txt, sample_hour)
             return PerfDecision(allowed, reason_txt, sample_hour)
 
@@ -944,22 +962,32 @@ def is_allowed(
         )
         if not ok_setup:
             reason_txt = setup_reason
-            allowed = ok_setup if cfg.mode == "block" else True
-            if cfg.mode != "block":
-                reason_txt = f"warn:{reason_txt}"
-            elif relaxed:
-                allowed = True
-                reason_txt = f"relaxed:{reason_txt}"
+            hard_block = _is_hard_block_reason(setup_reason)
+            if hard_block:
+                allowed = False
+                reason_txt = f"hard:{reason_txt}"
+            else:
+                allowed = ok_setup if cfg.mode == "block" else True
+                if cfg.mode != "block":
+                    reason_txt = f"warn:{reason_txt}"
+                elif relaxed:
+                    allowed = True
+                    reason_txt = f"relaxed:{reason_txt}"
             _cache[key] = (now, allowed, reason_txt, setup_sample)
             return PerfDecision(allowed, reason_txt, setup_sample)
 
     ok, reason, sample = _query_perf(tag, pocket, None, regime_label, cfg)
-    allowed = ok if cfg.mode == "block" else True
-    if not ok and cfg.mode == "block" and relaxed:
-        allowed = True
-        reason_txt = f"relaxed:{reason}"
+    hard_block = _is_hard_block_reason(reason)
+    if hard_block and not ok:
+        allowed = False
+        reason_txt = f"hard:{reason}"
     else:
-        reason_txt = reason if cfg.mode == "block" else f"warn:{reason}"
+        allowed = ok if cfg.mode == "block" else True
+        if not ok and cfg.mode == "block" and relaxed:
+            allowed = True
+            reason_txt = f"relaxed:{reason}"
+        else:
+            reason_txt = reason if cfg.mode == "block" else f"warn:{reason}"
     _cache[key] = (now, allowed, reason_txt, sample)
     return PerfDecision(allowed, reason_txt, sample)
 

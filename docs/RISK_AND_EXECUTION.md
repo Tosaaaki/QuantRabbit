@@ -421,22 +421,24 @@
 - `quant-dynamic-alloc.service` の `--target-use` は `0.88` を基準とし、
   `account.margin_usage_ratio` が高止まりする局面での margin block 連発を抑える。
 
-### 緊急止血運用（2026-02-25 追記）
-- 戦略別の短期成績が急悪化した場合は、`*_BLOCK_HOURS_*` を全時間帯へ拡張し、
-  新規ENTRYのみ即時停止する（EXITワーカーは停止しない）。
-- 2026-02-25 の運用では次を適用:
-  - `M1SCALP_BLOCK_HOURS_UTC=0-23`
-  - `SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23`（service override）
-  - `STRATEGY_CONTROL_GLOBAL_ENTRY_ENABLED=0`
+### ドローダウン恒久対策（2026-02-25 追記）
+- 方針:
+  - 「全停止」ではなく、低品質シグナルのみを機械的に拒否する。
+  - EXIT経路は常時維持し、ENTRYは `perf_guard` / forecast contra / strategy local guard で絞る。
+- 2026-02-25 以降の運用値:
+  - `STRATEGY_CONTROL_GLOBAL_ENTRY_ENABLED=1`
   - `STRATEGY_CONTROL_GLOBAL_EXIT_ENABLED=1`
   - `STRATEGY_CONTROL_GLOBAL_LOCK=0`
-- 注記:
-  - `UnsetEnvironment=SCALP_PING_5S_B_BLOCK_HOURS_JST` は最終環境から
-    変数を除去してしまうため採用しない。Bの強制ブロックは
-    `Environment=\"SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23\"` で上書きする。
+  - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=1`
+- `perf_guard` 運用補足:
+  - `mode=reduce` でも、`margin_closeout / failfast / sl_loss_rate` は hard block 扱い。
+  - 既定 `PERF_GUARD_RELAX_TAGS` から `M1Scalper` を除外し、
+    劣化時の bypass を防ぐ。
+  - `B/C/D/M1` は `PERF_GUARD_MODE=block` と failfast 閾値で運用し、
+    PF/勝率が崩れた戦略だけ自動停止する。
 - 再開条件:
-  - 直近ウィンドウで win rate / PF / SL率が閾値を回復し、
-    方向整合（`signal_side` vs `exec_side`）の逆行が解消していることを確認後に段階解除。
+  - 戦略ごとに直近ウィンドウで `PF>=1.0` かつ `win_rate>=0.50`
+    （または戦略固有閾値）へ回復し、failfast理由が解消したことを確認して解除する。
 
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。

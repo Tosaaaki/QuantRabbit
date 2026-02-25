@@ -10,8 +10,18 @@ WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 # Project-local overrides (repo copy for this clone's live tuning knobs).
 EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_b.env
-# Emergency hold (2026-02-25): keep service alive but block new ENTRY in all JST hours.
-Environment="SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23"
+# Quality-first override (2026-02-25): do not freeze entry, but hard-block degraded states.
+Environment="SCALP_PING_5S_B_PERF_GUARD_MODE=block"
+Environment="SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.80"
+Environment="SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.42"
+Environment="SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.55"
+Environment="SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED=1"
+Environment="SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED=1"
+Environment="SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ENABLED=1"
+Environment="SCALP_PING_5S_B_BASE_ENTRY_UNITS=800"
+Environment="SCALP_PING_5S_B_MAX_UNITS=1800"
+Environment="ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.58"
+Environment="ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.80"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker
 Restart=always
 RestartSec=5
