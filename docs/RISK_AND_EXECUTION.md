@@ -351,8 +351,20 @@
   - `Nice=15`
   - `IOSchedulingClass=idle`
   - `CPUWeight=20`
+- `analysis/replay_quality_gate_worker.py` は
+  `REPLAY_QUALITY_GATE_ENABLED=0` の場合、replay 本体を実行せず正常終了する。
+  本番既定は `ops/env/quant-replay-quality-gate.env` で `0` とし、
+  必要時のみ明示的に `1` へ切り替える。
 - 目的は replay 品質検証を継続しつつ、稼働中の strategy/order/position worker を
   CPU 競合で阻害しないこと。
+
+### cleanup 運用補足（hot DB 保護）
+- `scripts/cleanup_logs.sh` は hot DB（`orders.db` / `trades.db` / `metrics.db`）への
+  `VACUUM` を既定で実行しない。
+  - `DB_VACUUM_SKIP_FILES=orders.db trades.db metrics.db`
+  - `DB_VACUUM_ALLOW_HOT_DBS=0`
+- 上記 DB は `wal_checkpoint(TRUNCATE)` のみ実行し、
+  本番発注経路との lock 競合を避ける。
 
 ### position_manager タイムアウト運用補足（2026-02-20）
 - `open_positions` の read timeout 連発を避けるため、`quant-v2-runtime.env` は次を運用値とする。

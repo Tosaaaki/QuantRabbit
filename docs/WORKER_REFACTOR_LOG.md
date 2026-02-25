@@ -5997,3 +5997,32 @@
 - 意図:
   - EXIT経路を維持したまま、全戦略の新規ENTRYを止めてDD拡大を停止する。
   - B/M1個別停止だけでは止血できない状況を、global guardで確実に抑える。
+
+### 2026-02-25（追記）恒久対策: replay/cleanup の本番干渉を構造的に抑止
+
+- 症状（VM実測, UTC 2026-02-25 12:25-12:47）:
+  - `cleanup-qr-logs.service` が `orders.db VACUUM` を実行し続け、
+    `quant-order-manager` の `database is locked` が集中発生。
+  - `quant-replay-quality-gate.service` が高CPUで長時間走行し、
+    `decision_latency_ms` と `data_lag_ms` のスパイクを誘発。
+- 変更:
+  - `analysis/replay_quality_gate_worker.py`
+    - `REPLAY_QUALITY_GATE_ENABLED` を追加。
+    - `0` の場合は replay 実行を行わず、即時 `rc=0` で終了。
+  - `ops/env/quant-replay-quality-gate.env`
+    - `REPLAY_QUALITY_GATE_ENABLED=0`（本番VMの既定値）。
+  - `scripts/cleanup_logs.sh`（既存反映済み）:
+    - `DB_VACUUM_SKIP_FILES=orders.db trades.db metrics.db`
+    - `DB_VACUUM_ALLOW_HOT_DBS=0`
+    - hot DB は checkpoint のみ実施し、VACUUM を既定で抑止。
+  - `systemd/quant-replay-quality-gate.service`（既存反映済み）:
+    - `Nice=15`, `IOSchedulingClass=idle`, `CPUWeight=20`
+- VM反映確認:
+  - `git rev-parse HEAD == origin/main == 1159230e35addc3671f13826dddb8922974ffc03`
+  - 再起動後カウント（UTC 2026-02-25 12:31-）:
+    - `quant-order-manager`: `failed to persist orders log: database is locked` = 0
+    - `quant-position-manager`: `sync_trades timeout` = 0 / `position manager busy` = 0
+- 意図:
+  - 本番取引経路（market-data/strategy-control/order/position）と
+    replay・保守ジョブの競合を運用条件で切り離し、
+    DB lock/遅延スパイクの再発確率を下げる。
