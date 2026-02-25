@@ -392,6 +392,8 @@
   strategy worker 側の `position_manager_timeout` による entry skip を減らすこと。
 
 ### bq-sync 運用補足（performance summary 負荷平準化）
+- 本番既定は `PIPELINE_PERF_SUMMARY_ENABLED=0` とし、
+  `quant-bq-sync` の通常ループでは `pm.get_performance_summary()` を実行しない。
 - `scripts/run_sync_pipeline.py` は `PIPELINE_PERF_SUMMARY_REFRESH_SEC`（既定 180s）で
   `pm.get_performance_summary()` をTTLキャッシュする。
 - `PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC`（既定 900s）以内は、

@@ -52,7 +52,15 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 PIPELINE_DB_READ_TIMEOUT_SEC = max(0.5, _env_float("PIPELINE_DB_READ_TIMEOUT_SEC", 3.0))
+PIPELINE_PERF_SUMMARY_ENABLED = _env_bool("PIPELINE_PERF_SUMMARY_ENABLED", True)
 BQ_FAILURE_BACKOFF_BASE_SEC = max(5.0, _env_float("BQ_FAILURE_BACKOFF_BASE_SEC", 120.0))
 BQ_FAILURE_BACKOFF_MAX_SEC = max(
     BQ_FAILURE_BACKOFF_BASE_SEC,
@@ -73,6 +81,10 @@ _PIPELINE_PERF_SUMMARY_CACHE: dict[str, object] = {
 
 
 def _load_performance_summary(pm: PositionManager) -> dict:
+    if not PIPELINE_PERF_SUMMARY_ENABLED:
+        cached_value = _PIPELINE_PERF_SUMMARY_CACHE.get("value")
+        return dict(cached_value) if isinstance(cached_value, dict) else {}
+
     now = time.monotonic()
     cached_ts = float(_PIPELINE_PERF_SUMMARY_CACHE.get("ts") or 0.0)
     cached_value = _PIPELINE_PERF_SUMMARY_CACHE.get("value")

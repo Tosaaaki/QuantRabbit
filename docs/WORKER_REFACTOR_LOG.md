@@ -6082,11 +6082,13 @@
     - `/position/fetch_recent_trades` も timeout を明示化
       `fetch_recent_trades timeout (...)`。
   - `scripts/run_sync_pipeline.py`
+    - `PIPELINE_PERF_SUMMARY_ENABLED` を追加（`0` で集計呼び出し停止）。
     - `PIPELINE_PERF_SUMMARY_REFRESH_SEC`（既定 180s）を追加し、
       `performance_summary` をTTLキャッシュする。
     - `PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC`（既定 900s）内は
       取得失敗時に stale cache を使ってスナップショット継続。
   - `ops/env/quant-v2-runtime.env`
+    - `PIPELINE_PERF_SUMMARY_ENABLED=0`（本番ループでは重い集計を無効化）
     - `PIPELINE_PERF_SUMMARY_REFRESH_SEC=180`
     - `PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC=900`
     - `POSITION_MANAGER_SERVICE_PERFORMANCE_SUMMARY_TIMEOUT=25.0`
