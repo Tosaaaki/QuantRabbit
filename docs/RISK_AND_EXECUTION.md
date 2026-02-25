@@ -454,6 +454,21 @@
     これにより `warmup_n` 取りこぼしで劣化戦略が通過する経路を防ぐ。
   - `regime` フィルタ運用時でも、`margin_closeout / failfast / sl_loss_rate` は
     全体集計を併用して hard block 判定する（regime局所の良化で回避不可）。
+  - `MicroLevelReactor` は専用 env で局所絞り込みを行う。
+    - base units縮小、1サイクル信号数を1に制限、dyn alloc の loser block を早期適用、
+      failfast を `n>=4` で有効化して低品質局面を早めに遮断する。
+  - forecast gate は strategy別に品質閾値を持てる。
+    - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_<TAG>`
+    - `FORECAST_GATE_EXPECTED_PIPS_GUARD_ENABLED_STRATEGY_<TAG>`
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_<TAG>`
+    - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_<TAG>`
+    - `FORECAST_GATE_TARGET_REACH_GUARD_ENABLED_STRATEGY_<TAG>`
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_<TAG>`
+    - `<TAG>` は `SCALP_PING_5S_B_LIVE` のような underscore 形式でも指定可能。
+      （hash suffix 付き `-l<hex>` / `-s<hex>` は base tag 解決で同一扱い）
+  - 2026-02-25 時点の運用では、`FORECAST_GATE_STRATEGY_ALLOWLIST` を
+    `MicroRangeBreak,MicroVWAPBound,MicroLevelReactor,scalp_ping_5s_b_live,scalp_ping_5s_c_live,scalp_ping_5s_flow_live`
+    へ拡張し、毀損戦略の entry を「期待値・到達確率」基準で機械的に選別する。
 - 再開条件:
   - 戦略ごとに直近ウィンドウで `PF>=1.0` かつ `win_rate>=0.50`
     （または戦略固有閾値）へ回復し、failfast理由が解消したことを確認して解除する。

@@ -44,6 +44,35 @@
   - OrderManager の orders 永続化を安定化し、
     `database is locked` ノイズとログ欠落を抑止する。
 
+### 2026-02-25（追記）forecast 改善度の定期監査ワーカーを追加
+
+- 背景:
+  - `vm_forecast_snapshot.py` / `eval_forecast_before_after.py` は手動実行前提で、
+    定期的な before/after 改善判定（1m/5m/10m）が欠けていた。
+  - 予測式や重み調整の反映後に、劣化を自動検知できる定期監査が必要だった。
+- 変更:
+  - `analysis/forecast_improvement_worker.py` を追加。
+    - `scripts/vm_forecast_snapshot.py --json` と
+      `scripts/eval_forecast_before_after.py --json-out` を定期実行。
+    - `hit_delta/mae_delta/range_coverage_delta` の劣化閾値で
+      `improved/mixed/degraded` を判定。
+    - `logs/reports/forecast_improvement/<timestamp>/report.md` と
+      `logs/reports/forecast_improvement/latest.md` を更新し、
+      「改善TF/悪化TF/次の調整案（最大3件）」を出力。
+    - 状態・履歴を `logs/forecast_improvement_latest.json` /
+      `logs/forecast_improvement_history.jsonl` へ記録。
+  - `systemd/quant-forecast-improvement-audit.service` /
+    `systemd/quant-forecast-improvement-audit.timer` を追加（1h 周期）。
+  - `ops/env/quant-forecast-improvement-audit.env` を追加し、
+    監査の bars/閾値/保持本数を env で運用可能にした。
+  - 仕様ドキュメント更新:
+    - `docs/FORECAST.md`
+    - `docs/WORKER_ROLE_MATRIX_V2.md`
+    - `docs/ARCHITECTURE.md`
+- 意図:
+  - forecast 設定変更後の改善/劣化を定期的に可視化し、
+    劣化時の再調整を運用ルーチン化する。
+
 ### 2026-02-25（追記）cleanup / replay バックグラウンド負荷の本番干渉を抑制
 
 - 背景（VM実測）:
@@ -6121,3 +6150,60 @@
 - 意図:
   - 「劣化を検知できないために entry が通る」構造欠陥を塞ぎ、
     新規停止なしでも品質ゲートの実効性を維持する。
+
+### 2026-02-25（追記）品質維持: forecast実測監査 + MicroLevelReactor の局所絞り込み
+
+- 背景（VM実測, UTC 2026-02-25 14:12 前後）:
+  - forecast 導線は有効（`ORDER_MANAGER_FORECAST_GATE_ENABLED=1`,
+    `STRATEGY_FORECAST_FUSION_ENABLED=1`,
+    `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=1`）。
+  - runtime近似パラメータでの before/after 評価は `mixed`。
+    - 1m: `hit_delta=-0.0006`, `mae_delta=+0.0052`
+    - 5m: `hit_delta=+0.0105`, `mae_delta=+0.0135`
+    - 10m:`hit_delta=+0.0266`, `mae_delta=+0.0067`
+  - 一方で `microlevelreactor` は直近7日 `n=5, PF=0.274, win_rate=0.200` と弱く、
+    warmup条件のため新規が通りやすかった。
+- 変更:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_BASE_UNITS=14000`（28000→14000）
+    - `MICRO_MULTI_MAX_SIGNALS_PER_CYCLE=1`（3→1）
+    - `MICRO_MULTI_DYN_ALLOC_MIN_TRADES=4`（10→4）
+    - `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.45`（0.28→0.45）
+    - `PERF_GUARD_MODE=block`, `PERF_GUARD_MIN_TRADES=8`
+    - `PERF_GUARD_FAILFAST_MIN_TRADES=4`, `PERF_GUARD_FAILFAST_PF=0.90`,
+      `PERF_GUARD_FAILFAST_WIN=0.45`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.52`,
+      `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE=0.75`
+- 意図:
+  - 全体停止をせずに、弱い戦略だけ早く減速・遮断する。
+  - forecast は利用継続しつつ、低品質 strategy の warmup すり抜けを抑制する。
+
+### 2026-02-25（追記）根本対策: forecast gate の「通過条件」自体を品質基準へ更新
+
+- 背景（VM実測, UTC 2026-02-25 14:50 前後）:
+  - 直近2hで `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` / `MicroLevelReactor` が主な毀損源。
+  - `orders.db` では `perf_block` が効いている一方、forecast gate は
+    allowlist 制限により上記戦略に十分適用されていなかった。
+- 変更:
+  - `workers/common/forecast_gate.py`
+    - strategy別 override の env 解決を拡張。
+      - `..._STRATEGY_SCALP_PING_5S_B_LIVE` のような underscore 形式と、
+        既存の英数字正規化形式の両方を解決可能にした。
+    - `FORECAST_GATE_EDGE_BLOCK` の strategy別 override を追加。
+    - `expected_pips` を方向付き期待値に変換し、strategy別に
+      `expected_pips_contra` / `expected_pips_low` を block できるよう追加。
+    - `target_reach_prob` の strategy別下限ガードを追加
+      （`target_reach_prob_low` で block）。
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_GATE_STRATEGY_ALLOWLIST` を拡張:
+      `MicroLevelReactor`, `scalp_ping_5s_b_live`,
+      `scalp_ping_5s_c_live`, `scalp_ping_5s_flow_live` を追加。
+    - 上記戦略へ `edge_block` / `expected_pips` / `target_reach_prob` の
+      strategy別閾値を追加。
+  - `tests/workers/test_forecast_gate.py`
+    - underscore suffix の strategy別 override 回帰テストを追加。
+    - `expected_pips_low` / `target_reach_prob_low` block の回帰テストを追加。
+- 意図:
+  - ロットだけを落とす運用ではなく、エントリー通過条件そのものを
+    予測品質基準へ寄せる。
+  - 新規全停止を避けつつ、低期待値・到達確率不足のシグナルを入口で遮断する。

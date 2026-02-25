@@ -376,6 +376,107 @@ def test_decide_uses_strategy_specific_style_override(monkeypatch) -> None:
     assert decision.style == "range"
 
 
+def test_decide_uses_strategy_specific_edge_override_with_underscore_suffix(monkeypatch) -> None:
+    monkeypatch.setenv("FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_B_LIVE", "0.76")
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "1m": {
+                "p_up": 0.72,
+                "expected_pips": 0.3,
+                "source": "technical",
+                "trend_strength": 0.62,
+                "range_pressure": 0.38,
+            }
+        },
+    )
+    decision = forecast_gate.decide(
+        strategy_tag="scalp_ping_5s_b_live-labc123",
+        pocket="scalp_fast",
+        side="buy",
+        units=1_200,
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.reason == "edge_block"
+
+
+def test_decide_blocks_when_expected_pips_guard_fails(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "FORECAST_GATE_EXPECTED_PIPS_GUARD_ENABLED_STRATEGY_MICROLEVELREACTOR",
+        "1",
+    )
+    monkeypatch.setenv(
+        "FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_MICROLEVELREACTOR",
+        "0.18",
+    )
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "10m": {
+                "p_up": 0.79,
+                "expected_pips": 0.05,
+                "source": "technical",
+                "trend_strength": 0.40,
+                "range_pressure": 0.66,
+                "range_sigma_pips": 0.45,
+            }
+        },
+    )
+    decision = forecast_gate.decide(
+        strategy_tag="MicroLevelReactor-fade-upper",
+        pocket="micro",
+        side="buy",
+        units=3_000,
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.reason == "expected_pips_low"
+
+
+def test_decide_blocks_when_target_reach_guard_fails(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "FORECAST_GATE_TARGET_REACH_GUARD_ENABLED_STRATEGY_MICROLEVELREACTOR",
+        "1",
+    )
+    monkeypatch.setenv(
+        "FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROLEVELREACTOR",
+        "0.30",
+    )
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "10m": {
+                "p_up": 0.78,
+                "expected_pips": 0.6,
+                "source": "technical",
+                "trend_strength": 0.42,
+                "range_pressure": 0.64,
+                "range_sigma_pips": 0.55,
+                "tp_pips_hint": 2.6,
+            }
+        },
+    )
+    decision = forecast_gate.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=3_000,
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.reason == "target_reach_prob_low"
+
+
 def test_decide_projection_penalty_blocks_borderline_edge(monkeypatch) -> None:
     monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
     monkeypatch.setattr(

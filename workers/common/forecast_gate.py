@@ -215,6 +215,20 @@ _EDGE_PROJECTION_PENALTY = max(
     0.0,
     min(0.4, _env_float("FORECAST_GATE_PROJECTION_EDGE_PENALTY", 0.12)),
 )
+_EXPECTED_PIPS_GUARD_ENABLED = _env_bool(
+    "FORECAST_GATE_EXPECTED_PIPS_GUARD_ENABLED",
+    False,
+)
+_EXPECTED_PIPS_MIN = _env_float("FORECAST_GATE_EXPECTED_PIPS_MIN", 0.0)
+_EXPECTED_PIPS_CONTRA_MAX = _env_float("FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX", -0.05)
+_TARGET_REACH_GUARD_ENABLED = _env_bool(
+    "FORECAST_GATE_TARGET_REACH_GUARD_ENABLED",
+    False,
+)
+_TARGET_REACH_MIN = max(
+    0.0,
+    min(1.0, _env_float("FORECAST_GATE_TARGET_REACH_MIN", 0.0)),
+)
 _TF_CONFLUENCE_ENABLED = _env_bool("FORECAST_GATE_TF_CONFLUENCE_ENABLED", True)
 _TF_CONFLUENCE_BONUS = max(
     0.0,
@@ -1340,33 +1354,49 @@ def _strategy_style(strategy_tag: Optional[str]) -> Optional[str]:
 
 def _strategy_env_float(name: str, strategy_tag: Optional[str], default: float) -> float:
     value = _env_float(name, default)
-    base = _strategy_base(strategy_tag)
-    if not base:
-        return value
-    suffix = _normalize_strategy_key(base).upper()
-    if not suffix:
-        return value
-    raw = os.getenv(f"{name}_STRATEGY_{suffix}")
-    if raw is None:
-        return value
-    try:
-        return float(raw)
-    except Exception:
-        return value
+    for suffix in _strategy_env_suffixes(strategy_tag):
+        raw = os.getenv(f"{name}_STRATEGY_{suffix}")
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except Exception:
+            continue
+    return value
 
 
 def _strategy_env_bool(name: str, strategy_tag: Optional[str], default: bool) -> bool:
     value = _env_bool(name, default)
+    for suffix in _strategy_env_suffixes(strategy_tag):
+        raw = os.getenv(f"{name}_STRATEGY_{suffix}")
+        if raw is None:
+            continue
+        return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+    return value
+
+
+def _strategy_env_suffixes(strategy_tag: Optional[str]) -> tuple[str, ...]:
     base = _strategy_base(strategy_tag)
     if not base:
-        return value
-    suffix = _normalize_strategy_key(base).upper()
-    if not suffix:
-        return value
-    raw = os.getenv(f"{name}_STRATEGY_{suffix}")
-    if raw is None:
-        return value
-    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+        return tuple()
+    suffixes: list[str] = []
+    slug_chars: list[str] = []
+    prev_sep = False
+    for ch in str(base).strip():
+        if ch.isalnum():
+            slug_chars.append(ch.upper())
+            prev_sep = False
+        else:
+            if not prev_sep:
+                slug_chars.append("_")
+                prev_sep = True
+    slug = "".join(slug_chars).strip("_")
+    if slug:
+        suffixes.append(slug)
+    normalized = _normalize_strategy_key(base).upper()
+    if normalized and normalized not in suffixes:
+        suffixes.append(normalized)
+    return tuple(suffixes)
 
 
 def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
@@ -2698,7 +2728,200 @@ def decide(
             **regime_profile,
         )
 
-    edge_block = float(_EDGE_BLOCK)
+    expected_guard_enabled = _strategy_env_bool(
+        "FORECAST_GATE_EXPECTED_PIPS_GUARD_ENABLED",
+        strategy_tag,
+        _EXPECTED_PIPS_GUARD_ENABLED,
+    )
+    expected_pips_min = _strategy_env_float(
+        "FORECAST_GATE_EXPECTED_PIPS_MIN",
+        strategy_tag,
+        _EXPECTED_PIPS_MIN,
+    )
+    expected_pips_contra_max = _strategy_env_float(
+        "FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX",
+        strategy_tag,
+        _EXPECTED_PIPS_CONTRA_MAX,
+    )
+    expected_pips_value = _safe_optional_float(row.get("expected_pips"))
+    directional_expected_pips: Optional[float] = None
+    if expected_pips_value is not None:
+        side_sign = 1.0 if (side_key == "buy" or units > 0) else -1.0
+        directional_expected_pips = float(expected_pips_value) * side_sign
+
+    if expected_guard_enabled and directional_expected_pips is not None:
+        if directional_expected_pips <= expected_pips_contra_max:
+            log_metric(
+                "forecast_gate_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": str(strategy_tag or "unknown"),
+                    "horizon": horizon,
+                    "reason": "expected_pips_contra",
+                    "source": str(source or "unknown"),
+                    "style": style or "n/a",
+                    "threshold": f"{expected_pips_contra_max:.3f}",
+                },
+            )
+            return ForecastDecision(
+                allowed=False,
+                scale=0.0,
+                reason="expected_pips_contra",
+                horizon=horizon,
+                edge=edge,
+                p_up=p_up,
+                rebound_probability=rebound_probability,
+                expected_pips=row.get("expected_pips"),
+                anchor_price=row.get("anchor_price"),
+                target_price=row.get("target_price"),
+                range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+                range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+                range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+                range_low_price=_safe_optional_float(row.get("range_low_price")),
+                range_high_price=_safe_optional_float(row.get("range_high_price")),
+                tf_confluence_score=(
+                    round(float(tf_confluence_score), 6)
+                    if tf_confluence_score is not None
+                    else None
+                ),
+                tf_confluence_count=int(tf_confluence_count),
+                tf_confluence_horizons=tf_confluence_horizons or None,
+                tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                target_reach_prob=target_reach_prob,
+                sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+                rr_floor=_safe_optional_float(row.get("rr_floor")),
+                feature_ts=row.get("feature_ts"),
+                source=str(source) if source is not None else None,
+                style=style,
+                trend_strength=trend_strength,
+                range_pressure=range_pressure,
+                future_flow=future_flow,
+                **regime_profile,
+            )
+        if directional_expected_pips < expected_pips_min:
+            log_metric(
+                "forecast_gate_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": str(strategy_tag or "unknown"),
+                    "horizon": horizon,
+                    "reason": "expected_pips_low",
+                    "source": str(source or "unknown"),
+                    "style": style or "n/a",
+                    "threshold": f"{expected_pips_min:.3f}",
+                },
+            )
+            return ForecastDecision(
+                allowed=False,
+                scale=0.0,
+                reason="expected_pips_low",
+                horizon=horizon,
+                edge=edge,
+                p_up=p_up,
+                rebound_probability=rebound_probability,
+                expected_pips=row.get("expected_pips"),
+                anchor_price=row.get("anchor_price"),
+                target_price=row.get("target_price"),
+                range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+                range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+                range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+                range_low_price=_safe_optional_float(row.get("range_low_price")),
+                range_high_price=_safe_optional_float(row.get("range_high_price")),
+                tf_confluence_score=(
+                    round(float(tf_confluence_score), 6)
+                    if tf_confluence_score is not None
+                    else None
+                ),
+                tf_confluence_count=int(tf_confluence_count),
+                tf_confluence_horizons=tf_confluence_horizons or None,
+                tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                target_reach_prob=target_reach_prob,
+                sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+                rr_floor=_safe_optional_float(row.get("rr_floor")),
+                feature_ts=row.get("feature_ts"),
+                source=str(source) if source is not None else None,
+                style=style,
+                trend_strength=trend_strength,
+                range_pressure=range_pressure,
+                future_flow=future_flow,
+                **regime_profile,
+            )
+
+    target_reach_guard_enabled = _strategy_env_bool(
+        "FORECAST_GATE_TARGET_REACH_GUARD_ENABLED",
+        strategy_tag,
+        _TARGET_REACH_GUARD_ENABLED,
+    )
+    target_reach_min = _clamp(
+        _strategy_env_float(
+            "FORECAST_GATE_TARGET_REACH_MIN",
+            strategy_tag,
+            _TARGET_REACH_MIN,
+        ),
+        0.0,
+        1.0,
+    )
+    if (
+        target_reach_guard_enabled
+        and target_reach_prob is not None
+        and target_reach_prob < target_reach_min
+    ):
+        log_metric(
+            "forecast_gate_block",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": str(strategy_tag or "unknown"),
+                "horizon": horizon,
+                "reason": "target_reach_prob_low",
+                "source": str(source or "unknown"),
+                "style": style or "n/a",
+                "threshold": f"{target_reach_min:.3f}",
+            },
+        )
+        return ForecastDecision(
+            allowed=False,
+            scale=0.0,
+            reason="target_reach_prob_low",
+            horizon=horizon,
+            edge=edge,
+            p_up=p_up,
+            rebound_probability=rebound_probability,
+            expected_pips=row.get("expected_pips"),
+            anchor_price=row.get("anchor_price"),
+            target_price=row.get("target_price"),
+            range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+            range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+            range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+            range_low_price=_safe_optional_float(row.get("range_low_price")),
+            range_high_price=_safe_optional_float(row.get("range_high_price")),
+            tf_confluence_score=(
+                round(float(tf_confluence_score), 6)
+                if tf_confluence_score is not None
+                else None
+            ),
+            tf_confluence_count=int(tf_confluence_count),
+            tf_confluence_horizons=tf_confluence_horizons or None,
+            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            target_reach_prob=target_reach_prob,
+            sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+            rr_floor=_safe_optional_float(row.get("rr_floor")),
+            feature_ts=row.get("feature_ts"),
+            source=str(source) if source is not None else None,
+            style=style,
+            trend_strength=trend_strength,
+            range_pressure=range_pressure,
+            future_flow=future_flow,
+            **regime_profile,
+        )
+
+    edge_block = _clamp(
+        _strategy_env_float("FORECAST_GATE_EDGE_BLOCK", strategy_tag, _EDGE_BLOCK),
+        0.0,
+        1.0,
+    )
     if style == "trend":
         edge_block = max(edge_block, float(edge_block_trend))
     elif style == "range":
