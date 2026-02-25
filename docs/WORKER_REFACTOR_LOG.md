@@ -6018,7 +6018,7 @@
   - `systemd/quant-replay-quality-gate.service`（既存反映済み）:
     - `Nice=15`, `IOSchedulingClass=idle`, `CPUWeight=20`
 - VM反映確認:
-  - `git rev-parse HEAD == origin/main == 1159230e35addc3671f13826dddb8922974ffc03`
+  - `git rev-parse HEAD == origin/main == aeae2ac3a35976a9662619f5b3826f5ece8d661d`
   - 再起動後カウント（UTC 2026-02-25 12:31-）:
     - `quant-order-manager`: `failed to persist orders log: database is locked` = 0
     - `quant-position-manager`: `sync_trades timeout` = 0 / `position manager busy` = 0
