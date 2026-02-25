@@ -378,6 +378,8 @@
   - `POSITION_MANAGER_ORDERS_DB_READ_TIMEOUT_SEC=0.08`
   - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC=5.0`
   - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=8.0`
+  - `POSITION_MANAGER_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC=20.0`
+  - `POSITION_MANAGER_WORKER_FETCH_RECENT_TRADES_TIMEOUT_SEC=8.0`
   - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=60.0`
   - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=1000`
   - `POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC=2.0`
@@ -387,6 +389,14 @@
   - `POSITION_MANAGER_CLIENT_CACHE_MAX_ENTRIES=50000`
 - 目的は、`position_manager` が不調時でも stale cache へ早めにフォールバックし、
   strategy worker 側の `position_manager_timeout` による entry skip を減らすこと。
+
+### bq-sync 運用補足（performance summary 負荷平準化）
+- `scripts/run_sync_pipeline.py` は `PIPELINE_PERF_SUMMARY_REFRESH_SEC`（既定 180s）で
+  `pm.get_performance_summary()` をTTLキャッシュする。
+- `PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC`（既定 900s）以内は、
+  一時的な取得失敗時でも stale cache を使って GCS snapshot を継続する。
+- 目的は `quant-bq-sync` の重い集計呼び出し頻度を下げ、
+  `decision_latency_ms` / `data_lag_ms` への干渉を抑えること。
 
 ### scalp_macd_rsi_div 運用補足（legacy tag 互換）
 - `quant-scalp-macd-rsi-div-exit` は `SCALP_PRECISION_EXIT_TAGS=scalp_macd_rsi_div_live` で運用する。

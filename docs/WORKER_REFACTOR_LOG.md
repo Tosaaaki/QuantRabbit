@@ -6062,3 +6062,35 @@
   - 本番取引経路（market-data/strategy-control/order/position）と
     replay・保守ジョブの競合を運用条件で切り離し、
     DB lock/遅延スパイクの再発確率を下げる。
+
+### 2026-02-25（追記）恒久対策: `performance_summary` timeout による遅延スパイク抑止
+
+- 症状（VM実測, UTC 2026-02-25 13:15-13:30）:
+  - `quant-bq-sync` が毎サイクル `pm.get_performance_summary()` を呼び、
+    `quant-position-manager` の `/position/performance_summary` が
+    8秒タイムアウトで `unknown error` を返却。
+  - 直列で service失敗→local fallback が発生し、1サイクルあたり約20秒級の
+    既定処理時間（8秒 timeout + 約12秒 local 集計）になっていた。
+  - 実測: `/position/performance_summary` 応答時間は約 8030ms で失敗固定、
+    local 直接実行は約 12100ms。
+- 変更:
+  - `workers/position_manager/worker.py`
+    - `POSITION_MANAGER_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC` を追加
+      （既定 20s）。
+    - `/position/performance_summary` は timeout を明示エラー
+      `performance_summary timeout (...)` で返す。
+    - `/position/fetch_recent_trades` も timeout を明示化
+      `fetch_recent_trades timeout (...)`。
+  - `scripts/run_sync_pipeline.py`
+    - `PIPELINE_PERF_SUMMARY_REFRESH_SEC`（既定 180s）を追加し、
+      `performance_summary` をTTLキャッシュする。
+    - `PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC`（既定 900s）内は
+      取得失敗時に stale cache を使ってスナップショット継続。
+  - `ops/env/quant-v2-runtime.env`
+    - `PIPELINE_PERF_SUMMARY_REFRESH_SEC=180`
+    - `PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC=900`
+    - `POSITION_MANAGER_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC=20.0`
+    - `POSITION_MANAGER_WORKER_FETCH_RECENT_TRADES_TIMEOUT_SEC=8.0`
+- 意図:
+  - `unknown error` と service->local 二重計算による遅延スパイクを減らし、
+    `quant-bq-sync` が本番経路に与えるCPU/待ち時間の影響を常態化させない。

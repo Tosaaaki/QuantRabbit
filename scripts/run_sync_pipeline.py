@@ -58,6 +58,54 @@ BQ_FAILURE_BACKOFF_MAX_SEC = max(
     BQ_FAILURE_BACKOFF_BASE_SEC,
     _env_float("BQ_FAILURE_BACKOFF_MAX_SEC", 1800.0),
 )
+PIPELINE_PERF_SUMMARY_REFRESH_SEC = max(
+    0.0,
+    _env_float("PIPELINE_PERF_SUMMARY_REFRESH_SEC", 180.0),
+)
+PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC = max(
+    PIPELINE_PERF_SUMMARY_REFRESH_SEC,
+    _env_float("PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC", 900.0),
+)
+_PIPELINE_PERF_SUMMARY_CACHE: dict[str, object] = {
+    "ts": 0.0,
+    "value": {},
+}
+
+
+def _load_performance_summary(pm: PositionManager) -> dict:
+    now = time.monotonic()
+    cached_ts = float(_PIPELINE_PERF_SUMMARY_CACHE.get("ts") or 0.0)
+    cached_value = _PIPELINE_PERF_SUMMARY_CACHE.get("value")
+    if (
+        PIPELINE_PERF_SUMMARY_REFRESH_SEC > 0.0
+        and cached_ts > 0.0
+        and isinstance(cached_value, dict)
+        and (now - cached_ts) <= PIPELINE_PERF_SUMMARY_REFRESH_SEC
+    ):
+        return dict(cached_value)
+
+    try:
+        summary = pm.get_performance_summary()
+        if not isinstance(summary, dict):
+            raise RuntimeError("invalid performance_summary payload")
+        _PIPELINE_PERF_SUMMARY_CACHE["ts"] = now
+        _PIPELINE_PERF_SUMMARY_CACHE["value"] = dict(summary)
+        return dict(summary)
+    except Exception as exc:  # noqa: BLE001
+        if (
+            cached_ts > 0.0
+            and isinstance(cached_value, dict)
+            and (now - cached_ts) <= PIPELINE_PERF_SUMMARY_STALE_MAX_AGE_SEC
+        ):
+            age = max(0.0, now - cached_ts)
+            logging.warning(
+                "[PIPELINE] using stale performance_summary cache age=%.1fs err=%s",
+                age,
+                exc,
+            )
+            return dict(cached_value)
+        logging.exception("[PIPELINE] performance_summary 取得に失敗: %s", exc)
+        return {}
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -459,7 +507,7 @@ def _run_cycle(
             logging.exception("[PIPELINE] open positions 取得に失敗: %s", exc)
             open_positions = {}
         recent_trades = pm.fetch_recent_trades(limit=ui_recent)
-        metrics = pm.get_performance_summary()
+        metrics = _load_performance_summary(pm)
         if isinstance(metrics, dict):
             data_lag_ms = _load_latest_metric("data_lag_ms")
             decision_latency_ms = _load_latest_metric("decision_latency_ms")

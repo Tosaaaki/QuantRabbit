@@ -57,6 +57,17 @@ _WORKER_SYNC_TRADES_TIMEOUT_SEC = max(
     0.5,
     _env_float("POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC", 6.0),
 )
+_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC = max(
+    _WORKER_SYNC_TRADES_TIMEOUT_SEC,
+    _env_float("POSITION_MANAGER_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC", 20.0),
+)
+_WORKER_FETCH_RECENT_TRADES_TIMEOUT_SEC = max(
+    0.5,
+    _env_float(
+        "POSITION_MANAGER_WORKER_FETCH_RECENT_TRADES_TIMEOUT_SEC",
+        _WORKER_SYNC_TRADES_TIMEOUT_SEC,
+    ),
+)
 _WORKER_SYNC_TRADES_MAX_FETCH = max(
     1,
     int(_env_float("POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH", 1000)),
@@ -606,8 +617,13 @@ async def get_performance_summary(
         result = await _call_manager_with_timeout(
             request,
             "get_performance_summary",
-            timeout_sec=_WORKER_SYNC_TRADES_TIMEOUT_SEC,
+            timeout_sec=_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC,
             kwargs={"now": parsed_now},
+        )
+    except asyncio.TimeoutError:
+        return _failure(
+            "performance_summary timeout "
+            f"({_WORKER_PERFORMANCE_SUMMARY_TIMEOUT_SEC:.1f}s)"
         )
     except Exception as exc:
         return _failure(str(exc))
@@ -634,8 +650,13 @@ async def fetch_recent_trades(
         result = await _call_manager_with_timeout(
             request,
             "fetch_recent_trades",
-            timeout_sec=_WORKER_SYNC_TRADES_TIMEOUT_SEC,
+            timeout_sec=_WORKER_FETCH_RECENT_TRADES_TIMEOUT_SEC,
             kwargs={"limit": limit},
+        )
+    except asyncio.TimeoutError:
+        return _failure(
+            "fetch_recent_trades timeout "
+            f"({_WORKER_FETCH_RECENT_TRADES_TIMEOUT_SEC:.1f}s)"
         )
     except Exception as exc:
         return _failure(str(exc))
