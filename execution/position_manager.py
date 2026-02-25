@@ -250,6 +250,13 @@ _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT = max(
 )
 if _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT > _POSITION_MANAGER_SERVICE_TIMEOUT:
     _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT = _POSITION_MANAGER_SERVICE_TIMEOUT
+_POSITION_MANAGER_SERVICE_PERFORMANCE_SUMMARY_TIMEOUT = max(
+    _POSITION_MANAGER_SERVICE_TIMEOUT,
+    _env_float(
+        "POSITION_MANAGER_SERVICE_PERFORMANCE_SUMMARY_TIMEOUT",
+        max(_POSITION_MANAGER_SERVICE_TIMEOUT, 20.0),
+    ),
+)
 _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "POSITION_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
@@ -477,6 +484,13 @@ def _position_manager_service_call(path: str, payload: dict) -> object:
             url,
             params=normalized_payload,
             timeout=float(_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT),
+        )
+    elif normalized_path == "/position/performance_summary":
+        response = session.post(
+            url,
+            json=normalized_payload,
+            timeout=float(_POSITION_MANAGER_SERVICE_PERFORMANCE_SUMMARY_TIMEOUT),
+            headers={"Content-Type": "application/json"},
         )
     else:
         response = session.post(
