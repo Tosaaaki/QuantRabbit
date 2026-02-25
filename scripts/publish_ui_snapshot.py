@@ -60,6 +60,13 @@ INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lowe
     "true",
     "yes",
 }
+LITE_INCLUDE_POSITIONS = os.getenv(
+    "UI_SNAPSHOT_LITE_INCLUDE_POSITIONS", "0"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 ERROR_LOG_PATHS = [
     p.strip()
     for p in os.getenv(
@@ -663,7 +670,7 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 logging.warning("[UI] get_performance_summary failed: %s", exc)
                 metrics = {}
-            if (not LITE_SNAPSHOT_FAST) or INCLUDE_POSITIONS:
+            if LITE_INCLUDE_POSITIONS and ((not LITE_SNAPSHOT_FAST) or INCLUDE_POSITIONS):
                 try:
                     open_positions = pm.get_open_positions(include_unknown=True)
                 except Exception as exc:  # noqa: BLE001

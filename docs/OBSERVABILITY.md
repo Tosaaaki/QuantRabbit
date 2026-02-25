@@ -14,6 +14,9 @@
 - `scripts/publish_ui_snapshot.py --lite` は、既定では `sync_trades` を実行しない
   （`UI_SNAPSHOT_SYNC_TRADES_LITE=0` 既定）。`sync_trades` を有効化する場合のみ
   `UI_SNAPSHOT_SYNC_TRADES=1` と `UI_SNAPSHOT_SYNC_TRADES_LITE=1` を同時指定する。
+- `scripts/publish_ui_snapshot.py --lite` は、既定では open positions 取得も行わない
+  （`UI_SNAPSHOT_LITE_INCLUDE_POSITIONS=0` 既定）。建玉詳細を含める場合のみ
+  `UI_SNAPSHOT_LITE_INCLUDE_POSITIONS=1` を指定する。
 
 ## 2. ログの真偽と参照ルール
 - 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。

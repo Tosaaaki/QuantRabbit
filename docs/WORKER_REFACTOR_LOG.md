@@ -41,6 +41,19 @@
   - `--lite` の主目的（定期 publish の安定性）を優先し、
     PositionManager 側の遅延で snapshot publish が巻き添えになる状態を避ける。
 
+### 2026-02-25（追記）`publish_ui_snapshot --lite` の open positions 取得をデフォルト無効化
+
+- 背景（VM実測）:
+  - `sync_trades` 無効化後も、`fetch_recent_trades` / `performance_summary` の後段で
+    open positions 取得が長時間化し、`run_ui_snapshot.sh` の 90 秒 timeout に到達する周期が残った。
+- 変更:
+  - `scripts/publish_ui_snapshot.py`
+    - `UI_SNAPSHOT_LITE_INCLUDE_POSITIONS`（既定 `0`）を追加。
+    - `--lite` 実行時の `pm.get_open_positions()` は
+      `UI_SNAPSHOT_LITE_INCLUDE_POSITIONS=1` の場合のみ実行。
+- 意図:
+  - `--lite` で publish 到達率を最優先し、重い建玉参照は明示 opt-in へ分離する。
+
 ### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
 
 - 背景（VM実測）:
