@@ -312,6 +312,10 @@
   - 2026-02-25 再追記（service 経路の長時間ブロッキング抑止）:
     - `ORDER_SUBMIT_MAX_ATTEMPTS=1`（`quant-order-manager.env`）
     - `ORDER_PROTECTION_FALLBACK_MAX_RETRIES=0`（`quant-order-manager.env`）
+    - `quant-order-manager.env` 側の `ORDER_DB_LOG_RETRY_*` は
+      低遅延値（`busy_timeout=250ms`, `attempts=3`）を維持し、
+      service API の head-of-line blocking を避ける。
+      一方 `quant-v2-runtime.env` は `1500ms/6` を維持し、fallback 側の記録耐性を持たせる。
     - `execution/order_manager.py` は `ORDER_SUBMIT_MAX_ATTEMPTS=1` を許容する
       （最小値を 2 固定にしない）。
     - 目的: `/order/market_order` が protection retry で 20 秒超に膨らみ、
