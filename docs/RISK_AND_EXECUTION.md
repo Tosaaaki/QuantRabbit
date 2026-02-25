@@ -306,8 +306,9 @@
     - `ORDER_OANDA_REQUEST_TIMEOUT_SEC=8.0`
     - `ORDER_OANDA_REQUEST_POOL_CONNECTIONS=16`
     - `ORDER_OANDA_REQUEST_POOL_MAXSIZE=32`
-  - `quant-order-manager.env` は `ORDER_MANAGER_SERVICE_WORKERS=2` を運用値とし、
-    単一 worker 固着で `/health` まで停止する経路を抑える。
+  - `workers/order_manager/worker.py` は `ORDER_MANAGER_SERVICE_WORKERS` キーを解釈する。
+    ただし現行 unit 起動互換を優先し、`quant-order-manager.env` は
+    `ORDER_MANAGER_SERVICE_WORKERS=1` を運用値とする。
   - `execution/order_manager.py` の service 失敗ログは payload 要約のみを記録し、
     巨大 `entry_thesis` 全量出力で journald/CPU を圧迫しない。
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。

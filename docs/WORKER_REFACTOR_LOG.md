@@ -5730,7 +5730,9 @@
     - `ORDER_OANDA_REQUEST_POOL_CONNECTIONS=16`
     - `ORDER_OANDA_REQUEST_POOL_MAXSIZE=32`
   - `ops/env/quant-order-manager.env`
-    - `ORDER_MANAGER_SERVICE_WORKERS=2`
+    - `ORDER_MANAGER_SERVICE_WORKERS=1`
+    - 備考: `workers` キーは追加済みだが、現行 unit では
+      `python -m workers.order_manager.worker` 起動互換を優先して 1 固定で運用。
 - 意図:
   - service 導線を優先維持し、`timeout -> fallback -> orders.db lock` の連鎖を抑える。
   - 発注判断ロジック（strategy/local decision、risk/policy）は変更せず、
