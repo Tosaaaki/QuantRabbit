@@ -206,6 +206,9 @@
   `ops/env/quant-order-manager.env` も読むため、
   両ファイルで `ORDER_DB_*` を同値に揃える。
   `quant-order-manager.env` 側が runtime より後段で上書きされる点に注意する。
+  - 固定運用: `quant-order-manager.env` の
+    `ORDER_MANAGER_SERVICE_ENABLED=1` を維持する。
+    ここが `0` だと service unit は active 表示でも `:8300` が bind されない。
   - 同様に service-mode の最小ロット制御（`ORDER_MIN_UNITS_STRATEGY_*`）も
     `quant-order-manager.env` 側へ明示する。worker 個別 env のみで設定すると、
     order-manager サービスには反映されず、runtime 側の pocket 既定
@@ -222,6 +225,9 @@
 
 ### position_manager タイムアウト運用補足（2026-02-20）
 - `open_positions` の read timeout 連発を避けるため、`quant-v2-runtime.env` は次を運用値とする。
+  - 固定運用: `quant-position-manager.env` の
+    `POSITION_MANAGER_SERVICE_ENABLED=1` を維持する。
+    ここが `0` だと service unit は active 表示でも `:8301` が bind されない。
   - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=6.0`
   - `POSITION_MANAGER_HTTP_RETRY_TOTAL=0`
   - `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT=2.8`

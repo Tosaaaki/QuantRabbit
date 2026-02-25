@@ -8,6 +8,26 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
+
+- 背景（VM実測）:
+  - `quant-order-manager.service` / `quant-position-manager.service` は active でも、
+    `127.0.0.1:8300/8301` が listen せず、worker 側で
+    `order_manager service call failed` / `position_manager service call failed`
+    （timeout / connection refused）が継続。
+  - 原因は env 上書き不整合で、`ops/env/quant-v2-runtime.env` は
+    `ORDER_MANAGER_SERVICE_ENABLED=1` / `POSITION_MANAGER_SERVICE_ENABLED=1`
+    だが、service が読む `ops/env/quant-order-manager.env` /
+    `ops/env/quant-position-manager.env` が `0` になっていた。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_ENABLED: 0 -> 1`
+  - `ops/env/quant-position-manager.env`
+    - `POSITION_MANAGER_SERVICE_ENABLED: 0 -> 1`
+- 意図:
+  - V2 の固定導線（strategy -> order/position manager service）を復帰し、
+    `local fallback` 側へ落ちる不一致状態を解消する。
+
 ### 2026-02-25（追記）`scalp_extrema_reversal_live` を新設（高値ショート/安値ロングの両側反転）
 
 - 背景（VM実測）:
