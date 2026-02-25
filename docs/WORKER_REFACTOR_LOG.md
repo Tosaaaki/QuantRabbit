@@ -44,6 +44,25 @@
   - OrderManager の orders 永続化を安定化し、
     `database is locked` ノイズとログ欠落を抑止する。
 
+### 2026-02-25（追記）cleanup / replay バックグラウンド負荷の本番干渉を抑制
+
+- 背景（VM実測）:
+  - `cleanup-qr-logs.service` の `sqlite3 logs/orders.db VACUUM` が長時間継続し、
+    `quant-order-manager` 側で `orders.db file lock timeout` を連発。
+  - `quant-replay-quality-gate.service` が replay 実行中に CPU を大きく消費し、
+    本番ワーカー群の遅延悪化を助長していた。
+- 変更:
+  - `scripts/cleanup_logs.sh`
+    - `DB_VACUUM_SKIP_FILES`（既定: `orders.db trades.db metrics.db`）を追加。
+    - `DB_VACUUM_ALLOW_HOT_DBS=0` を既定化し、
+      稼働中ホットDBの `VACUUM` をデフォルト禁止（checkpoint のみ実施）。
+  - `systemd/quant-replay-quality-gate.service`
+    - `Nice=15`, `IOSchedulingClass=idle`, `CPUWeight=20` を追加し、
+      replay 品質検証を低優先度で実行。
+- 意図:
+  - 定期メンテ/検証ジョブが本番発注系 DB と CPU を奪う経路を塞ぎ、
+    発注遅延・ロックノイズの再発を防ぐ。
+
 ### 2026-02-25（追記）`quant-ui-snapshot` の長時間ハング対策を追加
 
 - 背景（VM実測）:

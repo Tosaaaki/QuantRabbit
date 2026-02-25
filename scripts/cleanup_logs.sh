@@ -28,6 +28,8 @@ DB_VACUUM_TRIGGER_MB="${DB_VACUUM_TRIGGER_MB:-300}"
 DB_VACUUM_MIN_AVAIL_MB="${DB_VACUUM_MIN_AVAIL_MB:-2048}"
 DB_VACUUM_BUSY_TIMEOUT_MS="${DB_VACUUM_BUSY_TIMEOUT_MS:-3000}"
 DB_TARGET_FILES="${DB_TARGET_FILES:-orders.db trades.db metrics.db trades_snapshot.db orders_snapshot_48h.db}"
+DB_VACUUM_SKIP_FILES="${DB_VACUUM_SKIP_FILES:-orders.db trades.db metrics.db}"
+DB_VACUUM_ALLOW_HOT_DBS="${DB_VACUUM_ALLOW_HOT_DBS:-0}"
 DB_FORCE_VACUUM="${DB_FORCE_VACUUM:-0}"
 DISK_BASED_LIGHTEN="${DISK_BASED_LIGHTEN:-1}" # 1 => tighten cleanup when disk is high
 DISK_ROOT_PATH="${DISK_ROOT_PATH:-/}"
@@ -141,9 +143,12 @@ db_maintenance() {
   local available_mb
   available_mb="$(get_avail_mb)"
   local db
+  local skip_db
   local db_path
   local size_bytes
   local size_mb
+  local should_vacuum
+  local skip_vacuum
 
   for db in "${db_files[@]}"; do
     db_path="${LOG_DIR}/${db}"
@@ -158,15 +163,35 @@ db_maintenance() {
       log "warn: DB checkpoint failed: ${db_path}"
       continue
     }
+    should_vacuum=0
     if [[ "$DB_FORCE_VACUUM" == "1" || "$size_mb" -ge "$DB_VACUUM_TRIGGER_MB" ]]; then
-      if (( available_mb < DB_VACUUM_MIN_AVAIL_MB )); then
-        log "warn: skip vacuum for ${db_path} (available MB=${available_mb} < threshold=${DB_VACUUM_MIN_AVAIL_MB})"
-        continue
-      fi
-      log "DB maintenance: VACUUM ${db_path}"
-      if ! sqlite3 "$db_path" "VACUUM;"; then
-        log "warn: DB vacuum failed: ${db_path}"
-      fi
+      should_vacuum=1
+    fi
+    if [[ "$should_vacuum" != "1" ]]; then
+      continue
+    fi
+
+    skip_vacuum=0
+    if [[ "$DB_VACUUM_ALLOW_HOT_DBS" != "1" ]]; then
+      for skip_db in $DB_VACUUM_SKIP_FILES; do
+        if [[ "$db" == "$skip_db" ]]; then
+          skip_vacuum=1
+          break
+        fi
+      done
+    fi
+    if [[ "$skip_vacuum" == "1" ]]; then
+      log "DB maintenance: skip VACUUM for hot DB ${db_path} (DB_VACUUM_ALLOW_HOT_DBS=0)"
+      continue
+    fi
+
+    if (( available_mb < DB_VACUUM_MIN_AVAIL_MB )); then
+      log "warn: skip vacuum for ${db_path} (available MB=${available_mb} < threshold=${DB_VACUUM_MIN_AVAIL_MB})"
+      continue
+    fi
+    log "DB maintenance: VACUUM ${db_path}"
+    if ! sqlite3 "$db_path" "VACUUM;"; then
+      log "warn: DB vacuum failed: ${db_path}"
     fi
   done
 }

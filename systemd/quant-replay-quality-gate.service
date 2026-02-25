@@ -8,6 +8,10 @@ WorkingDirectory=/home/tossaki/QuantRabbit
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
 EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-replay-quality-gate.env
+# Keep replay QA jobs from contending with live trading workers.
+Nice=15
+IOSchedulingClass=idle
+CPUWeight=20
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m analysis.replay_quality_gate_worker
 User=tossaki
 

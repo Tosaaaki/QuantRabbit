@@ -279,6 +279,9 @@
     `0.30s / 0.05s` で運用する。
   - さらに `execution/order_manager.py` は process 内 `RLock` を追加し、
     同一プロセス内同時ログ書き込みの自己競合を抑制する。
+  - `scripts/cleanup_logs.sh` は hot DB (`orders.db/trades.db/metrics.db`) の
+    `VACUUM` を既定で禁止し（checkpoint のみ）、
+    cleanup timer 実行中の lock 競合を回避する。
 - `ORDER_STATUS_CACHE_TTL_SEC`（既定 180）で
   `client_order_id` ごとの直近 status をメモリ保持する。
   - pre-service DB 記録を抑制する経路でも、
@@ -341,6 +344,15 @@
     巨大 `entry_thesis` 全量出力で journald/CPU を圧迫しない。
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
   発注可否ロジック（perf/risk/policy/coordination）には影響しない。
+
+### replay quality gate 運用補足（本番干渉抑制）
+- `quant-replay-quality-gate.service` は replay/backtest を本番VMで実行するため、
+  systemd で低優先度実行を固定する。
+  - `Nice=15`
+  - `IOSchedulingClass=idle`
+  - `CPUWeight=20`
+- 目的は replay 品質検証を継続しつつ、稼働中の strategy/order/position worker を
+  CPU 競合で阻害しないこと。
 
 ### position_manager タイムアウト運用補足（2026-02-20）
 - `open_positions` の read timeout 連発を避けるため、`quant-v2-runtime.env` は次を運用値とする。
