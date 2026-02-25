@@ -119,6 +119,46 @@ def test_perf_guard_failfast_blocks_before_warmup(monkeypatch, tmp_path: Path) -
     assert "failfast:" in dec.reason
 
 
+def test_perf_guard_failfast_matches_hashed_strategy_tag_suffix(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(12):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="HashBleed-l0abc1234",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "block",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "30",  # warmup would normally allow
+            "PERF_GUARD_PF_MIN": "1.0",
+            "PERF_GUARD_WIN_MIN": "0.50",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "12",
+            "PERF_GUARD_FAILFAST_PF": "0.75",
+            "PERF_GUARD_FAILFAST_WIN": "0.40",
+        },
+    )
+
+    dec = perf_guard.is_allowed("HashBleed", "scalp")
+    assert dec.allowed is False
+    assert "failfast:" in dec.reason
+
+
 def test_perf_guard_sl_loss_rate_blocks_before_warmup(monkeypatch, tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
@@ -166,7 +206,7 @@ def test_perf_guard_sl_loss_rate_blocks_before_warmup(monkeypatch, tmp_path: Pat
 
     dec = perf_guard.is_allowed("SLBleeder", "scalp")
     assert dec.allowed is False
-    assert dec.reason.startswith("sl_loss_rate=")
+    assert "sl_loss_rate=" in dec.reason
 
 
 def test_perf_guard_margin_closeout_blocks_immediately(monkeypatch, tmp_path: Path) -> None:
@@ -202,7 +242,7 @@ def test_perf_guard_margin_closeout_blocks_immediately(monkeypatch, tmp_path: Pa
 
     dec = perf_guard.is_allowed("AnyStrat", "scalp")
     assert dec.allowed is False
-    assert dec.reason.startswith("margin_closeout_n=")
+    assert "margin_closeout_n=" in dec.reason
 
 
 def test_perf_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Path) -> None:

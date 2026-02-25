@@ -6095,3 +6095,22 @@
 - 意図:
   - `unknown error` と service->local 二重計算による遅延スパイクを減らし、
     `quant-bq-sync` が本番経路に与えるCPU/待ち時間の影響を常態化させない。
+
+### 2026-02-25（追記）恒久対策: `strategy_tag` 断片化で perf_guard が効かない欠陥を修正
+
+- 背景（VM実測, UTC 2026-02-25 13:44-13:46）:
+  - `scalp_ping_5s_*_live` の `strategy_tag` が `-l<hex>` / `-s<hex>` 付きで記録されるケースで、
+    `perf_guard` の集計が exact match 偏重となり、劣化サンプルの一部を取りこぼしていた。
+  - その結果、実際は劣化している戦略でも `warmup_n` 判定になり、
+    failfast / sl_loss_rate block が遅れて新規エントリーが通る窓が発生した。
+- 変更:
+  - `workers/common/perf_guard.py`
+    - `strategy_tag` 照合を拡張し、`<tag>-l<hex>` / `<tag>-s<hex>` の
+      ハッシュ付きタグを `LOWER(...) GLOB` で同一戦略として集計する。
+    - 反映箇所: `_query_perf` / `_query_setup_perf` / `_query_perf_scale`。
+  - `tests/test_perf_guard_failfast.py`
+    - `HashBleed-l0abc1234` を使った回帰テストを追加し、
+      ハッシュ付きタグでも failfast が発火することを固定化。
+- 意図:
+  - 「劣化を検知できないために entry が通る」構造欠陥を塞ぎ、
+    新規停止なしでも品質ゲートの実効性を維持する。

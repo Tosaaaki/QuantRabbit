@@ -483,6 +483,27 @@ def _tag_variants(tag: str, *, split_directional: bool) -> Tuple[str, ...]:
     return (raw,)
 
 
+def _tag_match_clause(variants: Tuple[str, ...]) -> tuple[str, list[object]]:
+    """
+    Build a SQL clause for strategy_tag matching.
+    In addition to exact matches, include hashed live suffix forms such as:
+      <tag>-l<hex>, <tag>-s<hex>
+    """
+    clauses: list[str] = []
+    params: list[object] = []
+    for variant in variants:
+        key = str(variant or "").strip().lower()
+        if not key:
+            continue
+        clauses.append("LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) = ?")
+        params.append(key)
+        clauses.append("LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) GLOB ?")
+        params.append(f"{key}-[ls][0-9a-f]*")
+    if not clauses:
+        return "1=0", []
+    return "(" + " OR ".join(clauses) + ")", params
+
+
 def _is_relaxed(tag: str, cfg: PerfGuardCfg) -> bool:
     if not cfg.relax_tags:
         return False
@@ -588,9 +609,7 @@ def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, 
     variants = _tag_variants(tag, split_directional=cfg.split_directional)
     if not variants or variants == ("",):
         return 1.0, 0.0, 0.0, 0
-    placeholders = ",".join("?" for _ in variants)
-    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
-    params = list(variants)
+    tag_clause, params = _tag_match_clause(variants)
     params.extend([pocket, f"-{cfg.scale_lookback_days} day"])
     try:
         row = con.execute(
@@ -650,10 +669,9 @@ def _query_setup_perf(
             pass
         return True, "empty_tag", 0
 
-    placeholders = ",".join("?" for _ in variants)
-    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    tag_clause, tag_params = _tag_match_clause(variants)
     clauses = [tag_clause, "pocket = ?", "close_time >= datetime('now', ?)"]
-    params: list[object] = list(variants)
+    params: list[object] = list(tag_params)
     params.extend([pocket, f"-{cfg.lookback_days} day"])
 
     if hour is not None:
@@ -750,9 +768,7 @@ def _query_perf(
     variants = _tag_variants(tag, split_directional=cfg.split_directional)
     if not variants or variants == ("",):
         return True, "empty_tag", 0
-    placeholders = ",".join("?" for _ in variants)
-    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
-    params = list(variants)
+    tag_clause, params = _tag_match_clause(variants)
     try:
         row = None
         if regime_label:
