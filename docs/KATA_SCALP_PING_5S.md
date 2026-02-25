@@ -444,3 +444,17 @@ DB:
 - 併行措置:
   - `scalp_ping_5s_c_live` は直近90分で `-671.68 JPY` と悪化していたため、
     `SCALP_PING_5S_C_ENABLED=0` で entry を停止。
+
+### 20.3 2026-02-25 更新（Dのorder_manager二重縮小を解除）
+
+- 症状:
+  - 実運用ログで `entry_probability_below_min_units` → `order_manager_none` が発生し、
+    Dのエントリーがほぼ通らない状態が継続。
+- 対応:
+  - D専用の preserve-intent 係数を固定化（追加縮小なし）:
+    - `REJECT_UNDER=0.35`, `MIN_SCALE=1.00`, `MAX_SCALE=1.00`
+  - D専用 `ORDER_MIN_UNITS` を `30` へ引下げ。
+  - `scalp_ping_5s_d.env` と `quant-order-manager.env` の両方に同値を設定し、
+    worker fallback 経路と service 経路の判定差を解消。
+- 再生検証:
+  - `allow=11`, `side=both`, `units=15000` で `+316.87 JPY` を維持（悪化なし）。

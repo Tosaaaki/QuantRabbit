@@ -5384,3 +5384,26 @@
     - `SCALP_PING_5S_D_MAX_UNITS=15000`
 - 意図:
   - Cの損失リークを遮断し、11時窓で正の期待値を示した D に資本を寄せる。
+
+### 2026-02-25（追記）`order_manager_none` 対応（Dの二重縮小を解除）
+
+- 症状（VMログ）:
+  - `scalp_ping_5s_d_live` で `entry_probability_below_min_units` 後に
+    `order_manager_none` が発生し、エントリーがほぼ通らない。
+  - 例（JST 11:46）: `units=-108` が確率縮小で下限未満扱いとなり reject。
+- 原因:
+  - Dワーカー側でロットが既に縮小された後、order_manager 側の
+    preserve-intent 確率縮小（`reject_under=0.55`, `min_scale=0.45`, `max_scale=0.85`）
+    が重なり、`min_units` 判定で落ちる二重縮小状態。
+- 変更:
+  - `ops/env/scalp_ping_5s_d.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_D_LIVE=0.35`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_D_LIVE=1.00`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_D_LIVE=1.00`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_D_LIVE=30`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_D=30`
+  - `ops/env/quant-order-manager.env`
+    - 同じ D 専用キーを追加し、service 側でも同一判定に統一。
+- 検証（当日ティック replay, allow=11, side=both, units=15000）:
+  - 変更前: `+316.87 JPY`（`9 trades`, `PF_jpy=1.365`）
+  - 変更後: `+316.87 JPY`（同値、悪化なし）
