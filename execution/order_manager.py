@@ -17,8 +17,10 @@ import re
 from datetime import datetime, timezone, timedelta
 import os
 import math
+import threading
 from typing import Any, Literal, Optional, Tuple
 import requests
+from requests.adapters import HTTPAdapter
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
@@ -75,11 +77,6 @@ except KeyError:
 ENVIRONMENT = "practice" if PRACTICE_FLAG else "live"
 POSITION_FILL = "OPEN_ONLY" if HEDGING_ENABLED else "DEFAULT"
 
-api = API(access_token=TOKEN, environment=ENVIRONMENT)
-
-if HEDGING_ENABLED:
-    logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
-
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -104,16 +101,81 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+# --- OANDA client runtime ---
+_ORDER_OANDA_REQUEST_TIMEOUT_SEC = max(
+    1.0,
+    _env_float("ORDER_OANDA_REQUEST_TIMEOUT_SEC", 8.0),
+)
+_ORDER_OANDA_POOL_CONNECTIONS = max(
+    4,
+    _env_int("ORDER_OANDA_REQUEST_POOL_CONNECTIONS", 16),
+)
+_ORDER_OANDA_POOL_MAXSIZE = max(
+    _ORDER_OANDA_POOL_CONNECTIONS,
+    _env_int("ORDER_OANDA_REQUEST_POOL_MAXSIZE", 32),
+)
+
+api = API(
+    access_token=TOKEN,
+    environment=ENVIRONMENT,
+    request_params={"timeout": _ORDER_OANDA_REQUEST_TIMEOUT_SEC},
+)
+try:
+    _oanda_http_adapter = HTTPAdapter(
+        pool_connections=_ORDER_OANDA_POOL_CONNECTIONS,
+        pool_maxsize=_ORDER_OANDA_POOL_MAXSIZE,
+        max_retries=0,
+    )
+    api.client.mount("https://", _oanda_http_adapter)
+    api.client.mount("http://", _oanda_http_adapter)
+except Exception:
+    pass
+
+if HEDGING_ENABLED:
+    logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
+logging.info(
+    "[ORDER] OANDA client timeout=%.1fs pool=%d/%d env=%s",
+    _ORDER_OANDA_REQUEST_TIMEOUT_SEC,
+    _ORDER_OANDA_POOL_CONNECTIONS,
+    _ORDER_OANDA_POOL_MAXSIZE,
+    ENVIRONMENT,
+)
+
+
 # --- Service mode (quant-order-manager externalization) ---
 _ORDER_MANAGER_SERVICE_ENABLED = _env_bool("ORDER_MANAGER_SERVICE_ENABLED", False)
 _ORDER_MANAGER_SERVICE_URL = os.getenv("ORDER_MANAGER_SERVICE_URL", "")
-_ORDER_MANAGER_SERVICE_TIMEOUT = float(_env_float("ORDER_MANAGER_SERVICE_TIMEOUT", 5.0))
+_ORDER_MANAGER_SERVICE_TIMEOUT = max(
+    0.5,
+    float(_env_float("ORDER_MANAGER_SERVICE_TIMEOUT", 5.0)),
+)
+_ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT = max(
+    0.2,
+    float(
+        _env_float(
+            "ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT",
+            min(1.5, _ORDER_MANAGER_SERVICE_TIMEOUT),
+        )
+    ),
+)
+if _ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT > _ORDER_MANAGER_SERVICE_TIMEOUT:
+    _ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT = _ORDER_MANAGER_SERVICE_TIMEOUT
+_ORDER_MANAGER_SERVICE_POOL_CONNECTIONS = max(
+    2,
+    _env_int("ORDER_MANAGER_SERVICE_POOL_CONNECTIONS", 8),
+)
+_ORDER_MANAGER_SERVICE_POOL_MAXSIZE = max(
+    _ORDER_MANAGER_SERVICE_POOL_CONNECTIONS,
+    _env_int("ORDER_MANAGER_SERVICE_POOL_MAXSIZE", 32),
+)
 _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "ORDER_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
 _ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE = _env_bool(
     "ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False
 )
+_ORDER_MANAGER_SERVICE_SESSION: requests.Session | None = None
+_ORDER_MANAGER_SERVICE_SESSION_LOCK = threading.Lock()
 
 
 def _normalize_for_json(value: Any) -> Any:
@@ -149,15 +211,82 @@ def _order_manager_service_url(path: str) -> str:
     return f"{base}/{path.lstrip('/')}"
 
 
+def _order_manager_service_session() -> requests.Session:
+    global _ORDER_MANAGER_SERVICE_SESSION
+    session = _ORDER_MANAGER_SERVICE_SESSION
+    if session is not None:
+        return session
+    with _ORDER_MANAGER_SERVICE_SESSION_LOCK:
+        session = _ORDER_MANAGER_SERVICE_SESSION
+        if session is not None:
+            return session
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=_ORDER_MANAGER_SERVICE_POOL_CONNECTIONS,
+            pool_maxsize=_ORDER_MANAGER_SERVICE_POOL_MAXSIZE,
+            max_retries=0,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _ORDER_MANAGER_SERVICE_SESSION = session
+    return session
+
+
+def _order_manager_service_reset_session() -> None:
+    global _ORDER_MANAGER_SERVICE_SESSION
+    with _ORDER_MANAGER_SERVICE_SESSION_LOCK:
+        session = _ORDER_MANAGER_SERVICE_SESSION
+        _ORDER_MANAGER_SERVICE_SESSION = None
+    if session is not None:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def _order_manager_service_payload_summary(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {"payload_type": type(payload).__name__}
+    keys = (
+        "instrument",
+        "pocket",
+        "strategy_tag",
+        "side",
+        "units",
+        "raw_units",
+        "entry_probability",
+        "client_order_id",
+        "trade_id",
+        "order_id",
+        "min_units",
+    )
+    summary = {k: payload.get(k) for k in keys if k in payload}
+    if "entry_thesis" in payload and isinstance(payload.get("entry_thesis"), dict):
+        thesis = payload.get("entry_thesis") or {}
+        summary["entry_thesis_keys"] = sorted(list(thesis.keys()))[:20]
+    if "meta" in payload and isinstance(payload.get("meta"), dict):
+        meta = payload.get("meta") or {}
+        summary["meta_keys"] = sorted(list(meta.keys()))[:20]
+    return summary
+
+
 def _order_manager_service_call(path: str, payload: dict) -> dict:
     url = _order_manager_service_url(path)
     normalized_payload = _normalize_for_json(payload)
-    response = requests.post(
-        url,
-        json=normalized_payload,
-        timeout=float(_ORDER_MANAGER_SERVICE_TIMEOUT),
-        headers={"Content-Type": "application/json"},
-    )
+    session = _order_manager_service_session()
+    try:
+        response = session.post(
+            url,
+            json=normalized_payload,
+            timeout=(
+                float(_ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT),
+                float(_ORDER_MANAGER_SERVICE_TIMEOUT),
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+    except requests.RequestException:
+        _order_manager_service_reset_session()
+        raise
     response.raise_for_status()
     body = response.json()
     if isinstance(body, dict):
@@ -196,7 +325,7 @@ def _order_manager_service_request(
         logging.warning(
             "[ORDER] order_manager service call failed path=%s payload=%s err=%s",
             path,
-            payload,
+            _order_manager_service_payload_summary(payload),
             exc,
         )
         if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
@@ -218,7 +347,7 @@ async def _order_manager_service_request_async(
         logging.warning(
             "[ORDER] order_manager service call failed path=%s payload=%s err=%s",
             path,
-            payload,
+            _order_manager_service_payload_summary(payload),
             exc,
         )
         if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:

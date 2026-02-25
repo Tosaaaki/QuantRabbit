@@ -261,9 +261,16 @@ if __name__ == "__main__":
     _configure_logging()
     host = os.getenv("ORDER_MANAGER_SERVICE_HOST", "0.0.0.0")
     port = _to_int(os.getenv("ORDER_MANAGER_SERVICE_PORT"), 8300)
+    workers = max(1, _to_int(os.getenv("ORDER_MANAGER_SERVICE_WORKERS"), 1))
+    timeout_keep_alive = max(
+        1,
+        _to_int(os.getenv("ORDER_MANAGER_SERVICE_TIMEOUT_KEEP_ALIVE_SEC"), 5),
+    )
     uvicorn.run(
         "workers.order_manager.worker:app",
         host=host,
         port=port,
+        workers=workers,
+        timeout_keep_alive=timeout_keep_alive,
         log_config=None,
     )

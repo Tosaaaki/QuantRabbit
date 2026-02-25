@@ -5695,3 +5695,43 @@
   - 反映を自動化する場合のみ env で `PING5S_D_CANARY_APPLY=1` を明示。
 - 意図:
   - promote 条件成立待ちの監視を、手動起動に依存せず継続運転する。
+
+### 2026-02-25（追記）`order_manager_none` + `orders.db locked` 連鎖の安定化
+
+- 症状（VM実測）:
+  - strategy worker 側で `order_manager service call failed ... Read timed out (read timeout=12.0)` と
+    `order_manager_none` が断続し、local fallback 比率が上昇。
+  - 同時間帯に `orders.db` で `database is locked` 警告が増加し、
+    `orders.db` の追従が遅れる局面を確認。
+  - `quant-order-manager` の `:8300` は listen しているが、`/health` 応答がタイムアウトする状態を確認。
+- 原因:
+  - `quant-order-manager` が単一 worker で重い外部 I/O（OANDA API）を抱えた際に、
+    service リクエスト待ちが詰まり、strategy 側 `12s` timeout で fallback が多発。
+  - fallback 多発で `orders.db` への同時書き込み競合が増え、`database is locked` を誘発。
+- 変更:
+  - `execution/order_manager.py`
+    - OANDA client に `ORDER_OANDA_REQUEST_TIMEOUT_SEC`（既定 8.0s）を導入し、
+      無期限待ちを回避。
+    - OANDA/`order_manager` service 両方に HTTP session pool を導入
+      （`*_POOL_CONNECTIONS` / `*_POOL_MAXSIZE`）。
+    - `order_manager` service 呼び出しは connect/read timeout を分離
+      （`ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT` + `ORDER_MANAGER_SERVICE_TIMEOUT`）。
+    - service failure のログ payload を要約化し、巨大 payload 直書きによる
+      journald 負荷を抑制。
+  - `workers/order_manager/worker.py`
+    - `ORDER_MANAGER_SERVICE_WORKERS`（既定 1）を追加し、
+      systemd 側から複数 worker 起動を可能化。
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=20.0`
+    - `ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT=1.0`
+    - `ORDER_MANAGER_SERVICE_POOL_CONNECTIONS=8`
+    - `ORDER_MANAGER_SERVICE_POOL_MAXSIZE=32`
+    - `ORDER_OANDA_REQUEST_TIMEOUT_SEC=8.0`
+    - `ORDER_OANDA_REQUEST_POOL_CONNECTIONS=16`
+    - `ORDER_OANDA_REQUEST_POOL_MAXSIZE=32`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_WORKERS=2`
+- 意図:
+  - service 導線を優先維持し、`timeout -> fallback -> orders.db lock` の連鎖を抑える。
+  - 発注判断ロジック（strategy/local decision、risk/policy）は変更せず、
+    通路の安定化に限定。

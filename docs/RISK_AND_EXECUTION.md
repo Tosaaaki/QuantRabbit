@@ -297,6 +297,19 @@
   - order-manager service を主ライターに寄せて同時書き込み競合を抑える。
   - service call 失敗時の fallback は journald の
     `order_manager service call failed` で監査する。
+- 2026-02-25 追記（service timeout 連鎖の抑止）:
+  - `quant-v2-runtime.env` は次を運用値とする。
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=20.0`
+    - `ORDER_MANAGER_SERVICE_CONNECT_TIMEOUT=1.0`
+    - `ORDER_MANAGER_SERVICE_POOL_CONNECTIONS=8`
+    - `ORDER_MANAGER_SERVICE_POOL_MAXSIZE=32`
+    - `ORDER_OANDA_REQUEST_TIMEOUT_SEC=8.0`
+    - `ORDER_OANDA_REQUEST_POOL_CONNECTIONS=16`
+    - `ORDER_OANDA_REQUEST_POOL_MAXSIZE=32`
+  - `quant-order-manager.env` は `ORDER_MANAGER_SERVICE_WORKERS=2` を運用値とし、
+    単一 worker 固着で `/health` まで停止する経路を抑える。
+  - `execution/order_manager.py` の service 失敗ログは payload 要約のみを記録し、
+    巨大 `entry_thesis` 全量出力で journald/CPU を圧迫しない。
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
   発注可否ロジック（perf/risk/policy/coordination）には影響しない。
 
