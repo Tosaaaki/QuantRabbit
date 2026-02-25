@@ -5808,3 +5808,36 @@
   - service 導線を優先維持し、`timeout -> fallback -> orders.db lock` の連鎖を抑える。
   - 発注判断ロジック（strategy/local decision、risk/policy）は変更せず、
     通路の安定化に限定。
+
+### 2026-02-25（追記）`order_manager` 長時間応答の抑止（再試行予算の短縮）
+
+- 症状（VM実測, UTC 2026-02-25 08:50-09:08）:
+  - `quant-scalp-ping-5s-b/c` で
+    `order_manager service call failed ... Read timed out (read timeout=20.0)` が継続。
+  - その後 `order_manager_none` が発生し、local fallback で発注継続。
+  - 同時間帯に `orders.db` で `database is locked` が多発。
+- 原因:
+  - `market_order` の protection fallback / submit retry が残っている間、
+    service request が 20 秒を超えて詰まり、strategy 側 timeout を誘発。
+  - timeout 後の local fallback が `orders.db` 同時書き込みを増やし、lock 警告を増幅。
+- 変更:
+  - `execution/order_manager.py`
+    - `ORDER_SUBMIT_MAX_ATTEMPTS` の最小値を `2 -> 1` に変更し、
+      service 側で単発 submit を許可。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_SUBMIT_MAX_ATTEMPTS=1`
+    - `ORDER_PROTECTION_FALLBACK_MAX_RETRIES=0`
+    - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
+    - `ORDER_DB_LOG_RETRY_ATTEMPTS=6`
+    - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.04`
+    - `ORDER_DB_LOG_RETRY_BACKOFF=1.8`
+    - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.30`
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
+    - `ORDER_DB_LOG_RETRY_ATTEMPTS=6`
+    - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.04`
+    - `ORDER_DB_LOG_RETRY_BACKOFF=1.8`
+    - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.30`
+- 意図:
+  - service 経路の 20 秒超ブロッキングを避け、`order_manager_none` を減らす。
+  - `orders.db` への書き込み再試行予算を戻し、stale 化を抑える。

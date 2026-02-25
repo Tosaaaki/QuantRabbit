@@ -10605,7 +10605,8 @@ async def market_order(
     # Default behavior (2 attempts, 1 protection fallback) is kept unless overridden.
     # This is primarily used to reduce "TAKE_PROFIT_ON_FILL_LOSS"/"LOSING_TAKE_PROFIT"
     # opportunity loss on fast markets without changing sizing logic.
-    max_submit_attempts = max(2, int(os.getenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2") or 2))
+    # Allow operators to force single-attempt mode in service path to keep RPC latency bounded.
+    max_submit_attempts = max(1, int(os.getenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2") or 2))
     max_protection_fallbacks = max(
         0, int(os.getenv("ORDER_PROTECTION_FALLBACK_MAX_RETRIES", "1") or 1)
     )

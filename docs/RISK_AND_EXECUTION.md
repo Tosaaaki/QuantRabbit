@@ -265,11 +265,11 @@
 - `execution/order_manager.py` の orders logger は lock 検知時に
   `ORDER_DB_LOG_RETRY_*` の短時間 backoff 再試行を行う。
 - 既定運用値:
-  - `ORDER_DB_BUSY_TIMEOUT_MS=5000`
-  - `ORDER_DB_LOG_RETRY_ATTEMPTS=8`
-  - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.05`
+  - `ORDER_DB_BUSY_TIMEOUT_MS=1500`
+  - `ORDER_DB_LOG_RETRY_ATTEMPTS=6`
+  - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.04`
   - `ORDER_DB_LOG_RETRY_BACKOFF=1.8`
-  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=1.00`
+  - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.30`
 - `close_trade` 経路の orders 監査ログは fast-fail モードで記録する。
   - DB lock 中は `/order/close_trade` 応答遅延を避けることを優先し、
     ログ書き込みは短い retry budget で打ち切る。
@@ -309,6 +309,13 @@
   - `workers/order_manager/worker.py` は `ORDER_MANAGER_SERVICE_WORKERS` キーを解釈する。
     ただし現行 unit 起動互換を優先し、`quant-order-manager.env` は
     `ORDER_MANAGER_SERVICE_WORKERS=1` を運用値とする。
+  - 2026-02-25 再追記（service 経路の長時間ブロッキング抑止）:
+    - `ORDER_SUBMIT_MAX_ATTEMPTS=1`（`quant-order-manager.env`）
+    - `ORDER_PROTECTION_FALLBACK_MAX_RETRIES=0`（`quant-order-manager.env`）
+    - `execution/order_manager.py` は `ORDER_SUBMIT_MAX_ATTEMPTS=1` を許容する
+      （最小値を 2 固定にしない）。
+    - 目的: `/order/market_order` が protection retry で 20 秒超に膨らみ、
+      strategy 側の service timeout -> `order_manager_none` -> local fallback を連鎖させる経路を抑える。
   - `execution/order_manager.py` の service 失敗ログは payload 要約のみを記録し、
     巨大 `entry_thesis` 全量出力で journald/CPU を圧迫しない。
 - 目的は「発注判断を変えずに」orders 監査ログ欠損を減らすこと。
