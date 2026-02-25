@@ -353,8 +353,9 @@
   - `CPUWeight=20`
 - `analysis/replay_quality_gate_worker.py` は
   `REPLAY_QUALITY_GATE_ENABLED=0` の場合、replay 本体を実行せず正常終了する。
-  本番既定は `ops/env/quant-replay-quality-gate.env` で `0` とし、
-  必要時のみ明示的に `1` へ切り替える。
+  本番既定は `ops/env/quant-replay-quality-gate.env` で `1` とし、
+  replay 品質監査を 1h 周期で継続する。
+  一時的に本番負荷を抑える必要がある場合のみ、運用判断で `0` に切り替える。
 - 目的は replay 品質検証を継続しつつ、稼働中の strategy/order/position worker を
   CPU 競合で阻害しないこと。
 

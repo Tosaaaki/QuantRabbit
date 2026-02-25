@@ -8,6 +8,25 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-25（追記）replay quality gate を定期実行へ復帰（skip既定を解除）
+
+- 背景（VM実測, UTC 2026-02-25 16:24）:
+  - `quant-replay-quality-gate.timer` 自体は `enabled/active` だったが、
+    `quant-replay-quality-gate.service` は
+    `REPLAY_QUALITY_GATE_ENABLED=0` により
+    `skipped: REPLAY_QUALITY_GATE_ENABLED=0` で即終了していた。
+  - その結果、replay 品質監査が「定期起動はされるが実処理は走らない」状態だった。
+- 変更:
+  - `ops/env/quant-replay-quality-gate.env`
+    - `REPLAY_QUALITY_GATE_ENABLED=1` へ変更し、1h 周期 replay 監査を実行に戻した。
+  - `docs/RISK_AND_EXECUTION.md`
+    - replay quality gate 運用補足の本番既定値を `1` へ更新。
+- 意図:
+  - replay 改善劣化の検知を定期ワーカーで継続し、
+    手動実行依存を外して品質改善サイクルを維持する。
+  - 実行優先度は既存の `Nice=15` / `IOSchedulingClass=idle` / `CPUWeight=20` を維持し、
+    本番導線への干渉を最小化する。
+
 ### 2026-02-25（追記）position/order manager の遅延・ロック恒久対策
 
 - 背景（VM実測）:
