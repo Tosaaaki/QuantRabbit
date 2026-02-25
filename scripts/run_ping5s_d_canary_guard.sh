@@ -25,6 +25,8 @@ ORDERS_LOOKBACK_ROWS="${PING5S_D_CANARY_ORDERS_LOOKBACK_ROWS:-50000}"
 OUT_JSON="${PING5S_D_CANARY_OUT_JSON:-logs/ping5s_d_canary_guard_latest.json}"
 HISTORY_JSONL="${PING5S_D_CANARY_HISTORY_JSONL:-logs/ping5s_d_canary_guard_history.jsonl}"
 APPLY="${PING5S_D_CANARY_APPLY:-0}"
+RESTART_ON_CHANGE="${PING5S_D_CANARY_RESTART_ON_CHANGE:-1}"
+RESTART_UNITS="${PING5S_D_CANARY_RESTART_UNITS:-quant-scalp-ping-5s-d.service quant-scalp-ping-5s-d-exit.service}"
 
 cd "$REPO_DIR"
 mkdir -p logs
@@ -74,4 +76,36 @@ esac
 if [[ -s "$OUT_JSON" ]]; then
   tr -d '\n' < "$OUT_JSON" >> "$HISTORY_JSONL"
   printf '\n' >> "$HISTORY_JSONL"
+fi
+
+if [[ -s "$OUT_JSON" ]]; then
+  env_updated="$("$PY_BIN" - <<'PY'
+import json
+from pathlib import Path
+p = Path("logs/ping5s_d_canary_guard_latest.json")
+if not p.exists():
+    print("0")
+else:
+    d = json.loads(p.read_text())
+    v = d.get("decision", {}).get("env_updated", False)
+    print("1" if bool(v) else "0")
+PY
+)"
+
+  case "$RESTART_ON_CHANGE" in
+    1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn])
+      if [[ "$env_updated" == "1" ]]; then
+        echo "[ping5s_d_canary_guard] env updated, restarting units: $RESTART_UNITS"
+        for unit in $RESTART_UNITS; do
+          if sudo -n systemctl restart "$unit" >/dev/null 2>&1; then
+            echo "[ping5s_d_canary_guard] restarted $unit (sudo)"
+          elif systemctl restart "$unit" >/dev/null 2>&1; then
+            echo "[ping5s_d_canary_guard] restarted $unit"
+          else
+            echo "[ping5s_d_canary_guard] WARN: failed to restart $unit" >&2
+          fi
+        done
+      fi
+      ;;
+  esac
 fi

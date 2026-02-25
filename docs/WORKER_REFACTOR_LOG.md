@@ -5851,6 +5851,27 @@
 - 意図:
   - promote 条件成立待ちの監視を、手動起動に依存せず継続運転する。
 
+### 2026-02-25（追記）`scalp_ping_5s_d_live` バーンイン自動化を実反映モードへ更新
+
+- 背景:
+  - `SCALP_PING_5S_D_ALLOW_HOURS_JST=11` のため、`window=120m` では
+    非対象時間の実行がほぼ `trade_count=0` となり `hold` が継続。
+  - 既定 `PING5S_D_CANARY_APPLY=0` では判定のみで、units反映が起きない。
+- 変更:
+  - `ops/env/quant-ping5s-d-canary-guard.env`
+    - `PING5S_D_CANARY_APPLY=1`
+    - `PING5S_D_CANARY_WINDOW_MINUTES=1440`
+    - `PING5S_D_CANARY_MIN_TRADES_PER_HOUR=3`
+    - `PING5S_D_CANARY_MIN_OBSERVED_TRADES=24`
+    - `PING5S_D_CANARY_ROLLBACK_JPY_PER_HOUR=-20`
+    - `PING5S_D_CANARY_RESTART_ON_CHANGE=1`
+    - `PING5S_D_CANARY_RESTART_UNITS=quant-scalp-ping-5s-d.service quant-scalp-ping-5s-d-exit.service`
+  - `scripts/run_ping5s_d_canary_guard.sh`
+    - `decision.env_updated=true` 検知時に、上記 service を自動再起動。
+- 意図:
+  - 判定ロジックを「監視のみ」から「自動反映＋再起動」へ昇格し、
+    バーンインが実運用パラメータへ反映される導線を固定化する。
+
 ### 2026-02-25（追記）`order_manager_none` + `orders.db locked` 連鎖の安定化
 
 - 症状（VM実測）:

@@ -554,3 +554,24 @@ sudo bash scripts/install_trading_services.sh \
   --units "quant-ping5s-d-canary-guard.service quant-ping5s-d-canary-guard.timer"
 sudo systemctl enable --now quant-ping5s-d-canary-guard.timer
 ```
+
+### 20.8 2026-02-25 更新（Dバーンイン自動化を実運用向けに補強）
+
+- 背景:
+  - `ALLOW_HOURS_JST=11` の狭い時間帯運用では、
+    `window=120m` だと大半の実行で `trade_count=0` となり、
+    `hold` が続いてチューニングが実質停止していた。
+- 変更:
+  - `ops/env/quant-ping5s-d-canary-guard.env`
+    - `PING5S_D_CANARY_APPLY=1`（判定を自動反映）
+    - `PING5S_D_CANARY_WINDOW_MINUTES=1440`（24hで評価）
+    - `PING5S_D_CANARY_MIN_TRADES_PER_HOUR=3`
+    - `PING5S_D_CANARY_MIN_OBSERVED_TRADES=24`
+    - `PING5S_D_CANARY_ROLLBACK_JPY_PER_HOUR=-20`
+    - `PING5S_D_CANARY_RESTART_ON_CHANGE=1`
+    - `PING5S_D_CANARY_RESTART_UNITS=quant-scalp-ping-5s-d.service quant-scalp-ping-5s-d-exit.service`
+  - `scripts/run_ping5s_d_canary_guard.sh`
+    - `env_updated=true` のときに D entry/exit service を自動再起動。
+- 意図:
+  - 判定結果が env 更新に終わらず実稼働へ反映される状態を作り、
+    「判定だけ回ってサイズが変わらない」状態を解消する。
