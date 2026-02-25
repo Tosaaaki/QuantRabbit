@@ -28,6 +28,31 @@
   - V2 の固定導線（strategy -> order/position manager service）を復帰し、
     `local fallback` 側へ落ちる不一致状態を解消する。
 
+### 2026-02-25（追記）forecast 強化の段階導入（`cand1_mid` を micro 2戦略限定で適用）
+
+- 背景（VM実測）:
+  - `scripts/eval_forecast_before_after.py` を同一期間
+    （`2026-01-07T02:54:00Z` 〜 `2026-02-25T08:17:00Z`, `max-bars=8050`）
+    で比較した結果、強め設定（`feature_expansion_gain=0.35`）は
+    `10m` の `mae_delta=+0.0225` で劣化ガード（`> +0.020`）を超過。
+  - 一方で `cand1_mid`
+    （`feature_expansion_gain=0.20`,
+    `breakout_map=1m=0.16,5m=0.22,10m=0.24`,
+    `session_map=1m=0.0,5m=0.22,10m=0.28`）は
+    `1m/5m/10m` 全てでガード内に収まった。
+  - 監査レポート:
+    - `logs/reports/forecast_improvement/report_20260225T081315Z_viability.md`
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_GATE_STRATEGY_ALLOWLIST=MicroRangeBreak,MicroVWAPBound` を追加。
+    - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.20` へ更新。
+    - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.16,5m=0.22,10m=0.24` へ更新。
+    - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.28` へ更新。
+- 意図:
+  - 全戦略へ一括適用せず、`MicroRangeBreak` / `MicroVWAPBound` のみで
+    forecast 強化を段階検証する。
+  - 10m MAE 悪化の再発を防ぎつつ、hit 改善側の設定レンジを実運用で確認する。
+
 ### 2026-02-25（追記）`scalp_extrema_reversal_live` を新設（高値ショート/安値ロングの両側反転）
 
 - 背景（VM実測）:

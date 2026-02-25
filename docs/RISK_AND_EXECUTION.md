@@ -14,6 +14,21 @@
 - `execution/order_manager.py` で LLM 判断を実行し、**ALLOW/REDUCE/BLOCK** を返す。
 - `REDUCE` は units 縮小のみ（増加は禁止）。
 
+### Forecast 段階導入（2026-02-25）
+- forecast 強化パラメータは、いきなり全戦略へ適用せず
+  `FORECAST_GATE_STRATEGY_ALLOWLIST` で対象を限定して段階導入する。
+- 現行の段階導入対象:
+  - `MicroRangeBreak`
+  - `MicroVWAPBound`
+- `quant-v2-runtime.env` の運用値（cand1_mid）:
+  - `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.20`
+  - `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP=1m=0.16,5m=0.22,10m=0.24`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP=1m=0.0,5m=0.22,10m=0.28`
+- 受け入れガード（before/after 同一期間比較）:
+  - `hit_delta < -0.002` を悪化
+  - `mae_delta > +0.020` を悪化
+  - `range_coverage_delta < -0.030` を悪化
+
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
 - 例外は強制 DD / ヘルス / マージン使用率 / 余力 / 未実現DDの総合判定のみ。
