@@ -202,6 +202,27 @@
 - 意図:
   - 反転局面の取りこぼしは減らしつつ、低確率帯の過剰エントリーを抑える。
 
+### 2026-02-25（追記）`scalp_ping_5s_c` preserve-intent を forecast-first aggressive へ再適用
+
+- 背景（VM実測）:
+  - `quant-order-manager.service` の journal で、`scalp_ping_5s_c_live` は
+    `2026-02-25 02:28:13Z` / `02:28:41Z` の `sell` 候補が
+    `OPEN_SKIP note=entry_probability:entry_probability_below_min_units`
+    で未約定になっていた。
+  - `orders.db` でも `2026-02-25T04:01:21Z` の `sell -121` は通過した一方、
+    直前帯（`02:15Z〜02:19Z`）に `entry_probability_reject -> perf_block`
+    が連続し、予測方向の取りこぼしが残っていた。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.25 -> 0.18`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.70 -> 0.80`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE): 1.00 -> 1.15`
+    - `ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.80 -> 0.65`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20` は維持。
+- 意図:
+  - 予測優勢側（とくに下落側）の方向意図を order preflight で潰しにくくし、
+    `entry_probability` 起因の skip/reject を減らす。
+
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
 - 背景（VM実測）:

@@ -190,6 +190,19 @@
     - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20` は維持
   - 目的は、低確率帯の過通過を抑えつつ
     `entry_probability_below_min_units` 由来の取りこぼしを減らすこと。
+- 2026-02-25 追記（preserve-intent aggressive 再適用）:
+  - VM 実測で `scalp_ping_5s_c_live` の `sell` 候補が
+    `OPEN_SKIP note=entry_probability:entry_probability_below_min_units`
+    （`02:28:13Z`, `02:28:41Z`）で落ちるケースを再確認したため、
+    C の preserve-intent を再び forecast-first 側へ寄せた。
+  - `quant-order-manager` の運用値:
+    - `REJECT_UNDER=0.18`
+    - `MIN_SCALE=0.80`
+    - `MAX_SCALE=1.15`
+    - `BOOST_PROBABILITY=0.65`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20` は維持
+  - 目的は、下落/上昇どちらでも予測優勢側の意図を通しやすくし、
+    `entry_probability_reject` と `below_min_units` を同時に減らすこと。
 
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で
