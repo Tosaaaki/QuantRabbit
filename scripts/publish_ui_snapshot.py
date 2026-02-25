@@ -40,6 +40,13 @@ SYNC_TRADES_ENABLED = os.getenv("UI_SNAPSHOT_SYNC_TRADES", "1").strip().lower() 
     "true",
     "yes",
 }
+SYNC_TRADES_LITE_ENABLED = os.getenv(
+    "UI_SNAPSHOT_SYNC_TRADES_LITE", "0"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 SYNC_TRADES_TTL_SEC = float(os.getenv("UI_SNAPSHOT_SYNC_TTL_SEC", "60"))
 SYNC_TRADES_MARKER = Path(
     os.getenv("UI_SNAPSHOT_SYNC_MARKER", "logs/ui_snapshot_sync.json")
@@ -645,7 +652,7 @@ def main() -> int:
     if pm is not None:
         if args.lite:
             try:
-                if _should_sync_trades():
+                if SYNC_TRADES_ENABLED and SYNC_TRADES_LITE_ENABLED and _should_sync_trades():
                     try:
                         synced = pm.sync_trades()
                         _mark_sync_trades(len(synced or []))

@@ -11,6 +11,9 @@
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、
   次の timer 周期で自動再試行する。
+- `scripts/publish_ui_snapshot.py --lite` は、既定では `sync_trades` を実行しない
+  （`UI_SNAPSHOT_SYNC_TRADES_LITE=0` 既定）。`sync_trades` を有効化する場合のみ
+  `UI_SNAPSHOT_SYNC_TRADES=1` と `UI_SNAPSHOT_SYNC_TRADES_LITE=1` を同時指定する。
 
 ## 2. ログの真偽と参照ルール
 - 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。

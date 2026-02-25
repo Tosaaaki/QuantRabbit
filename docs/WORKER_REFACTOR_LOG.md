@@ -26,6 +26,21 @@
   - one-shot の単発ハングで timer 連鎖全体が停止する状態を回避し、
     UI スナップショット更新を自動復帰可能にする。
 
+### 2026-02-25（追記）`publish_ui_snapshot --lite` の `sync_trades` をデフォルト無効化
+
+- 背景（VM実測）:
+  - ハング上限を入れた後も、`quant-ui-snapshot.service`（`--lite`）で
+    `sync_trades timeout` が継続し、90 秒 timeout で終了する周期が連発した。
+  - timer 停止は解消したが、publish 到達率が下がり、UI 更新間隔が不安定だった。
+- 変更:
+  - `scripts/publish_ui_snapshot.py`
+    - `UI_SNAPSHOT_SYNC_TRADES_LITE`（既定 `0`）を追加。
+    - `--lite` 実行時の `sync_trades` は
+      `UI_SNAPSHOT_SYNC_TRADES=1` かつ `UI_SNAPSHOT_SYNC_TRADES_LITE=1` の場合のみ実行。
+- 意図:
+  - `--lite` の主目的（定期 publish の安定性）を優先し、
+    PositionManager 側の遅延で snapshot publish が巻き添えになる状態を避ける。
+
 ### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
 
 - 背景（VM実測）:
