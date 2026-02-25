@@ -37,6 +37,15 @@
 ## 3. ログ永続化とバックアップ
 - GCS 自動退避: `GCS_BACKUP_BUCKET` を `ops/env/quant-v2-runtime.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。
 - 保存先: `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar`
+- 2026-02-25 UTC 事象メモ:
+  - `tar` が `orders.db-wal` を長時間保持すると `wal_checkpoint(TRUNCATE)` が進まず、
+    `orders.db` stale と `database is locked` を誘発する。
+  - `orders.db-wal` が異常肥大（数GB）した場合は、まず `lsof` で保持プロセスを特定して停止後、
+    checkpoint を実行する。
+  - 監査コマンド:
+    - `sudo lsof /home/tossaki/QuantRabbit/logs/orders.db*`
+    - `sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'PRAGMA wal_checkpoint(PASSIVE);'`
+    - `sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'PRAGMA wal_checkpoint(TRUNCATE);'`
 
 ### Storage から読むとき（VM 上）
 - 一覧: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core list`

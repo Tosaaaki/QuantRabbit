@@ -1,5 +1,43 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-7. 2026-02-25 UTC `order_manager_none` + `orders.db stale` 事象（原因確定）
+- 症状（VM実測, UTC 2026-02-25 09:24-09:47）:
+  - strategy worker で `order_manager service call failed ... Read timed out (read timeout=20.0)` と
+    `order_manager_none` が断続。
+  - `orders.db` が `MAX(ts)=2026-02-25T04:17:20+00:00` で停止したように見え、
+    `orders.db-wal` が `8.6GB` まで肥大。
+  - `quant-order-manager` で `failed to persist orders log: database is locked` が多発。
+- 原因:
+  - 発注導線の lock競合:
+    - service/fallback/aux worker が `orders.db` へ同時書き込みし、
+      `SQLITE_BUSY` が連鎖。
+    - `entry_intent_board` の不要 write（参照前 delete）も競合を増幅。
+  - 運用側プロセスの残留:
+    - `sqlite3 VACUUM` と `cron` の `tar` が `orders.db(-wal/-shm)` を長時間保持し、
+      checkpoint/truncate が進まず stale 化を助長。
+  - 可観測性の欠陥:
+    - `ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE=0` の経路では
+      local reject が DB に残らず、strategy 側で `order_manager_none` と見えていた。
+- 恒久対応（main反映済み）:
+  - `execution/order_manager.py`
+    - `orders.db.lock` の `flock` で write を直列化。
+    - `entry_intent_board` の purge/record に rollback/reset を追加。
+    - `coordinate_entry_intent` の重複削除 write を廃止。
+    - `ORDER_STATUS_CACHE_TTL_SEC` を追加し、DB未記録経路でも
+      `entry_probability_reject*` を返せるようにした。
+  - env:
+    - `ORDER_DB_FILE_LOCK_*` / `ORDER_STATUS_CACHE_TTL_SEC` を
+      `quant-order-manager.env` と `quant-v2-runtime.env` に追加。
+- 復旧手順（実施済み）:
+  - 残留 `sqlite3` / `tar` を停止して FD を解放。
+  - `PRAGMA wal_checkpoint(TRUNCATE)` で WAL を縮退（`8.6GB -> 0` 確認）。
+  - `orders.db` 最新時刻追従を再確認。
+- 監視の即時チェック:
+  - `ls -lh /home/tossaki/QuantRabbit/logs/orders.db*`
+  - `sqlite3 ... 'SELECT id,ts,status FROM orders ORDER BY id DESC LIMIT 5;'`
+  - `journalctl ... | grep -E 'order_manager service call failed|database is locked|order_manager_none'`
+  - `sudo lsof /home/tossaki/QuantRabbit/logs/orders.db*`
+
 ## 0-6. 2026-02-24 UTC `order_manager` の発注遅延ホットフィックス（orders.db lock待機短縮）
 - 背景（VM実測）:
   - `preflight_start -> submit_attempt` が `23s / 64s / 91s / 167s` の遅延を記録。
