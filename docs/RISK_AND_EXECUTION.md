@@ -415,6 +415,13 @@
 - 2026-02-25 の運用では次を適用:
   - `M1SCALP_BLOCK_HOURS_UTC=0-23`
   - `SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23`（service override）
+  - `STRATEGY_CONTROL_GLOBAL_ENTRY_ENABLED=0`
+  - `STRATEGY_CONTROL_GLOBAL_EXIT_ENABLED=1`
+  - `STRATEGY_CONTROL_GLOBAL_LOCK=0`
+- 注記:
+  - `UnsetEnvironment=SCALP_PING_5S_B_BLOCK_HOURS_JST` は最終環境から
+    変数を除去してしまうため採用しない。Bの強制ブロックは
+    `Environment=\"SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23\"` で上書きする。
 - 再開条件:
   - 直近ウィンドウで win rate / PF / SL率が閾値を回復し、
     方向整合（`signal_side` vs `exec_side`）の逆行が解消していることを確認後に段階解除。

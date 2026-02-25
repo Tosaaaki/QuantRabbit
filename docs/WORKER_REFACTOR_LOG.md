@@ -5972,3 +5972,28 @@
   - EXITワーカーは維持したまま、`B` と `M1` の新規ENTRYのみを即時停止して
     ドローダウン拡大を止血する。
   - 予測/方向整合の再検証が終わるまで、再開しない運用に固定する。
+
+### 2026-02-25（追記）緊急止血: 全戦略ENTRY一時停止（strategy-control global）
+
+- 背景（VM実測, UTC 2026-02-25 12:35 前後）:
+  - `quant-scalp-ping-5s-b` / `quant-m1scalper` 停止後も
+    `scalp_ping_5s_c_live` の新規発注（`orders.db: filled`）を確認。
+  - `systemd/quant-scalp-ping-5s-b.service` の
+    `UnsetEnvironment=SCALP_PING_5S_B_BLOCK_HOURS_JST` により、
+    実行プロセスで `SCALP_PING_5S_B_BLOCK_HOURS_JST` が消失していた。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `STRATEGY_CONTROL_GLOBAL_ENTRY_ENABLED=0`
+    - `STRATEGY_CONTROL_GLOBAL_EXIT_ENABLED=1`
+    - `STRATEGY_CONTROL_GLOBAL_LOCK=0`
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - `UnsetEnvironment=SCALP_PING_5S_B_BLOCK_HOURS_JST` を削除
+    - `Environment=\"SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23\"` を維持
+      （Bの全時間帯ブロックを有効化）
+  - VM運用反映（即時）:
+    - `strategy_control.set_global_flags(entry=False, exit=True, lock=False)` を適用。
+    - 反映後の `orders.db` で
+      `status=strategy_control_entry_disabled` を確認（新規ENTRY拒否）。
+- 意図:
+  - EXIT経路を維持したまま、全戦略の新規ENTRYを止めてDD拡大を停止する。
+  - B/M1個別停止だけでは止血できない状況を、global guardで確実に抑える。
