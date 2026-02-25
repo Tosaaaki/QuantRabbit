@@ -2863,6 +2863,7 @@ _ORDER_STATUS_CACHE_TTL_SEC = max(
 _LAST_ORDER_DB_CHECKPOINT = 0.0
 _ORDER_STATUS_CACHE_LOCK = threading.Lock()
 _ORDER_STATUS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
+_ORDER_DB_LOCAL_WRITE_LOCK = threading.RLock()
 
 _DEFAULT_MIN_HOLD_SEC = {
     "macro": 360.0,
@@ -4784,20 +4785,23 @@ def _log_order(
     for attempt_idx in range(retry_attempts):
         con: Optional[sqlite3.Connection] = None
         try:
-            with _order_db_file_lock(fast_fail=fast_fail):
-                con = _orders_con()
-                con.execute(
-                    """
-                    INSERT INTO orders (
-                      ts, pocket, instrument, side, units, sl_price, tp_price,
-                      client_order_id, status, attempt, stage_index, ticket_id, executed_price,
-                      error_code, error_message, request_json, response_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    row_values,
-                )
-                con.commit()
-                _maybe_checkpoint_orders_db(con)
+            # Serialize in-process writes first, then hold a short cross-process lock.
+            # This avoids self-contention on flock() when many async requests log at once.
+            with _ORDER_DB_LOCAL_WRITE_LOCK:
+                with _order_db_file_lock(fast_fail=fast_fail):
+                    con = _orders_con()
+                    con.execute(
+                        """
+                        INSERT INTO orders (
+                          ts, pocket, instrument, side, units, sl_price, tp_price,
+                          client_order_id, status, attempt, stage_index, ticket_id, executed_price,
+                          error_code, error_message, request_json, response_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        row_values,
+                    )
+                    con.commit()
+                    _maybe_checkpoint_orders_db(con)
             return
         except sqlite3.OperationalError as exc:
             if (

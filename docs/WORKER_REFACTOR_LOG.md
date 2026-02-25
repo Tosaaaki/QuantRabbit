@@ -8,6 +8,42 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-25（追記）position/order manager の遅延・ロック恒久対策
+
+- 背景（VM実測）:
+  - `quant-position-manager.service` で `sync_trades timeout (8.0s)` /
+    `position manager busy` が継続し、同時刻にプロセス CPU 使用率が高止まりしていた。
+  - `quant-order-manager.service` では
+    `[ORDER][LOG] failed to persist orders log: database is locked` が連発し、
+    `orders.db` ログ永続化でのロック競合が発生していた。
+- 変更:
+  - `execution/position_manager.py`
+    - `sync_trades` に最小ポーリング間隔
+      （`POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC`）を導入し、
+      短周期の重複同期を抑制。
+    - `sync_trades` のキャッシュ即時返却を強化し、
+      lock 競合時も直近キャッシュを優先返却。
+    - 無制限だった `entry/pocket/client` キャッシュに上限を導入
+      （`POSITION_MANAGER_*_CACHE_MAX_ENTRIES`）。
+  - `workers/position_manager/worker.py`
+    - `sync_trades` キャッシュを `max_fetch` 非依存の単一キーへ統一し、
+      要求値の差で同一同期が多重実行される経路を解消。
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH` で fetch 上限を固定。
+    - 空エラーメッセージを `unknown error` へ正規化して監査性を改善。
+  - `execution/order_manager.py`
+    - `orders.db` 書き込みに process 内 `RLock` を追加し、
+      同一プロセス内同時書き込みによる flock 自己競合を抑制。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_DB_*`（busy_timeout / retry / file lock timeout）を
+      実運用値へ引き上げ（`250ms/0.12s` 系から `1500ms/0.30s` 系へ）。
+  - `ops/env/quant-v2-runtime.env`
+    - `POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC` ほか cache 上限・stale age を追加。
+- 意図:
+  - PositionManager の過剰同期とメモリ膨張を抑え、
+    `sync_trades timeout` 由来の上流遅延を恒久的に減らす。
+  - OrderManager の orders 永続化を安定化し、
+    `database is locked` ノイズとログ欠落を抑止する。
+
 ### 2026-02-25（追記）`quant-ui-snapshot` の長時間ハング対策を追加
 
 - 背景（VM実測）:

@@ -57,6 +57,10 @@ _WORKER_SYNC_TRADES_TIMEOUT_SEC = max(
     0.5,
     _env_float("POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC", 6.0),
 )
+_WORKER_SYNC_TRADES_MAX_FETCH = max(
+    1,
+    int(_env_float("POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH", 1000)),
+)
 _WORKER_SYNC_TRADES_CACHE_TTL_SEC = max(
     0.0,
     _env_float("POSITION_MANAGER_WORKER_SYNC_TRADES_CACHE_TTL_SEC", 1.0),
@@ -73,6 +77,7 @@ _WORKER_BUSY_LOG_INTERVAL_SEC = max(
     1.0,
     _env_float("POSITION_MANAGER_WORKER_BUSY_LOG_INTERVAL_SEC", 30.0),
 )
+_SYNC_TRADES_CACHE_KEY = "sync_trades"
 _FAILURE_LAST_LOG_TS: dict[str, float] = {}
 _FAILURE_LOG_LOCK = threading.Lock()
 
@@ -113,7 +118,7 @@ async def _lifespan(app: FastAPI):
     app.state.position_manager_open_positions_call_lock = threading.Lock()
     app.state.position_manager_db_call_lock = threading.Lock()
     app.state.open_positions_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
-    app.state.sync_trades_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+    app.state.sync_trades_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
     if pm is not None:
         for include_unknown in (False, True):
             try:
@@ -202,7 +207,7 @@ def _success(result: Any) -> dict[str, Any]:
 
 
 def _failure(message: str) -> dict[str, Any]:
-    text = str(message)
+    text = str(message).strip() or "unknown error"
     key = text.strip().lower() or "unknown"
     interval = (
         _WORKER_BUSY_LOG_INTERVAL_SEC
@@ -486,19 +491,21 @@ async def sync_trades(
     request: Request, payload: dict[str, Any] = Body(default={})
 ) -> dict[str, Any]:
     body = _as_dict(payload)
-    max_fetch = max(1, _to_int(body.get("max_fetch"), 1000))
-    key = int(max_fetch)
+    max_fetch = min(
+        _WORKER_SYNC_TRADES_MAX_FETCH,
+        max(1, _to_int(body.get("max_fetch"), _WORKER_SYNC_TRADES_MAX_FETCH)),
+    )
     cache = request.app.state.sync_trades_cache
 
     cached = _cache_lookup(
         cache,
-        key,
+        _SYNC_TRADES_CACHE_KEY,
         max_age_sec=_WORKER_SYNC_TRADES_CACHE_TTL_SEC,
     )
     if cached is not None:
         result, _ = cached
         if isinstance(result, list):
-            return _success(result)
+            return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
 
     if not _try_acquire_call_lock(
         request,
@@ -506,13 +513,13 @@ async def sync_trades(
     ):
         stale = _cache_lookup(
             cache,
-            key,
+            _SYNC_TRADES_CACHE_KEY,
             max_age_sec=_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC,
         )
         if stale is not None:
             result, _ = stale
             if isinstance(result, list):
-                return _success(result)
+                return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
         return _failure("position manager busy")
 
     try:
@@ -526,26 +533,26 @@ async def sync_trades(
         except asyncio.TimeoutError:
             stale = _cache_lookup(
                 cache,
-                key,
+                _SYNC_TRADES_CACHE_KEY,
                 max_age_sec=_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC,
             )
             if stale is not None:
                 result, _ = stale
                 if isinstance(result, list):
-                    return _success(result)
+                    return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
             return _failure(
                 f"sync_trades timeout ({_WORKER_SYNC_TRADES_TIMEOUT_SEC:.1f}s)"
             )
         except Exception as exc:
             stale = _cache_lookup(
                 cache,
-                key,
+                _SYNC_TRADES_CACHE_KEY,
                 max_age_sec=_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC,
             )
             if stale is not None:
                 result, _ = stale
                 if isinstance(result, list):
-                    return _success(result)
+                    return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
             return _failure(str(exc))
 
         if isinstance(raw, list):
@@ -554,8 +561,8 @@ async def sync_trades(
             result = list(raw.values()) if raw else []
         else:
             return _failure("unexpected response type")
-        _cache_store(cache, key, result)
-        return _success(result)
+        _cache_store(cache, _SYNC_TRADES_CACHE_KEY, result)
+        return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
     finally:
         _release_call_lock(request, "position_manager_db_call_lock")
 

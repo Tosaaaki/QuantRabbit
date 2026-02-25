@@ -55,6 +55,10 @@ _ORDERS_DB = pathlib.Path("logs/orders.db")
 _METRICS_DB = pathlib.Path("logs/metrics.db")
 _CHUNK_SIZE = 100
 _MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
+_POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC = max(
+    0.1,
+    _env_float("POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC", 2.0),
+)
 _REQUEST_TIMEOUT = float(os.getenv("POSITION_MANAGER_HTTP_TIMEOUT", "7.0"))
 _OPEN_TRADES_REQUEST_TIMEOUT = max(
     0.5,
@@ -288,10 +292,47 @@ _POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES = max(
     128,
     int(os.getenv("POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES", "4096")),
 )
+_POSITION_MANAGER_ENTRY_META_CACHE_MAX_ENTRIES = max(
+    512,
+    int(os.getenv("POSITION_MANAGER_ENTRY_META_CACHE_MAX_ENTRIES", "20000")),
+)
+_POSITION_MANAGER_POCKET_CACHE_MAX_ENTRIES = max(
+    1024,
+    int(os.getenv("POSITION_MANAGER_POCKET_CACHE_MAX_ENTRIES", "50000")),
+)
+_POSITION_MANAGER_CLIENT_CACHE_MAX_ENTRIES = max(
+    1024,
+    int(os.getenv("POSITION_MANAGER_CLIENT_CACHE_MAX_ENTRIES", "50000")),
+)
+_POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC = max(
+    0.2,
+    _env_float("POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC", 1.2),
+)
 _POSITION_MANAGER_SERVICE_SESSION: requests.Session | None = None
 _POSITION_MANAGER_SERVICE_SESSION_LOCK = threading.Lock()
 _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE: dict[bool, tuple[float, object]] = {}
 _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_LOCK = threading.Lock()
+
+
+def _bounded_cache_put(
+    cache: dict[str, object],
+    key: str | None,
+    value: object,
+    *,
+    max_entries: int,
+) -> None:
+    if not key:
+        return
+    key_text = str(key)
+    cache.pop(key_text, None)
+    cache[key_text] = value
+    overflow = len(cache) - int(max_entries)
+    for _ in range(max(0, overflow)):
+        try:
+            oldest = next(iter(cache))
+        except StopIteration:
+            break
+        cache.pop(oldest, None)
 
 
 def _position_manager_service_enabled() -> bool:
@@ -1447,7 +1488,8 @@ class PositionManager:
         self._sync_trades_lock = threading.Lock()
         self._last_sync_cache: list[dict] = []
         self._last_sync_cache_ts: float = 0.0
-        self._last_sync_cache_window_sec: float = 1.2
+        self._last_sync_cache_window_sec: float = _POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC
+        self._last_sync_poll_ts: float = 0.0
         self._last_positions_meta: dict | None = None
         self._entry_meta_cache: dict[str, dict] = {}
         self._entry_thesis_cache: dict[str, tuple[float, dict | None]] = {}
@@ -2400,7 +2442,12 @@ class PositionManager:
         if details:
             if not details.get("details_source"):
                 details["details_source"] = "orders"
-            self._entry_meta_cache[trade_id] = details
+            _bounded_cache_put(
+                self._entry_meta_cache,
+                str(trade_id),
+                details,
+                max_entries=_POSITION_MANAGER_ENTRY_META_CACHE_MAX_ENTRIES,
+            )
         return details
 
     def _parse_and_save_trades(self, transactions: list[dict]):
@@ -2595,7 +2642,12 @@ class PositionManager:
                     }
                 )
                 if details["pocket"]:
-                    self._pocket_cache[trade_id] = details["pocket"]
+                    _bounded_cache_put(
+                        self._pocket_cache,
+                        str(trade_id),
+                        details["pocket"],
+                        max_entries=_POSITION_MANAGER_POCKET_CACHE_MAX_ENTRIES,
+                    )
 
                 processed_tx_ids.add(tx_id)
 
@@ -2697,6 +2749,23 @@ class PositionManager:
             max_fetch_int = int(max_fetch)
         except (TypeError, ValueError):
             max_fetch_int = _MAX_FETCH
+        if max_fetch_int <= 0:
+            max_fetch_int = _MAX_FETCH
+        max_fetch_int = min(max_fetch_int, _MAX_FETCH)
+
+        now = time.monotonic()
+        cache_age = max(0.0, now - self._last_sync_cache_ts)
+        if self._last_sync_cache_ts > 0.0 and cache_age <= self._last_sync_cache_window_sec:
+            if max_fetch_int > 0:
+                return self._last_sync_cache[-max_fetch_int:]
+            return list(self._last_sync_cache)
+        if (
+            self._last_sync_poll_ts > 0.0
+            and now - self._last_sync_poll_ts < _POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC
+        ):
+            if max_fetch_int > 0:
+                return self._last_sync_cache[-max_fetch_int:]
+            return list(self._last_sync_cache)
 
         service_result = _position_manager_service_request(
             "/position/sync_trades", {"max_fetch": max_fetch_int}
@@ -2712,15 +2781,17 @@ class PositionManager:
 
         if not self._sync_trades_lock.acquire(blocking=False):
             now = time.monotonic()
-            if self._last_sync_cache and (
-                now - self._last_sync_cache_ts
-            ) <= self._last_sync_cache_window_sec:
+            if (
+                self._last_sync_cache_ts > 0.0
+                and (now - self._last_sync_cache_ts) <= self._last_sync_cache_window_sec
+            ):
                 if max_fetch_int > 0:
                     return self._last_sync_cache[-max_fetch_int:]
                 return list(self._last_sync_cache)
             return []
 
         try:
+            self._last_sync_poll_ts = time.monotonic()
             sync_start = time.monotonic()
             transactions = self._fetch_closed_trades()
             fetch_meta = dict(self._last_sync_fetch_meta or {})
@@ -2789,9 +2860,19 @@ class PositionManager:
 
     def register_open_trade(self, trade_id: str, pocket: str, client_id: str | None = None):
         if trade_id and pocket:
-            self._pocket_cache[str(trade_id)] = pocket
+            _bounded_cache_put(
+                self._pocket_cache,
+                str(trade_id),
+                pocket,
+                max_entries=_POSITION_MANAGER_POCKET_CACHE_MAX_ENTRIES,
+            )
         if client_id and trade_id:
-            self._client_cache[client_id] = trade_id
+            _bounded_cache_put(
+                self._client_cache,
+                str(client_id),
+                str(trade_id),
+                max_entries=_POSITION_MANAGER_CLIENT_CACHE_MAX_ENTRIES,
+            )
 
     def get_open_positions(self, include_unknown: bool = False) -> dict[str, dict]:
         """現在の保有ポジションを pocket 単位で集計して返す"""

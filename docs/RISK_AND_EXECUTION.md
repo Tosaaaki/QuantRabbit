@@ -275,9 +275,10 @@
   - `ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC=0.05`
 - `execution/order_manager.py` は `orders.db.lock` (`flock`) で
   cross-process write を直列化する。
-  - service（`quant-order-manager.env`）は低遅延値
-    `0.12s / 0.02s`、fallback（`quant-v2-runtime.env`）は
-    記録重視の `0.30s / 0.05s` を運用値とする。
+  - 2026-02-25 以降は service/fallback を同値
+    `0.30s / 0.05s` で運用する。
+  - さらに `execution/order_manager.py` は process 内 `RLock` を追加し、
+    同一プロセス内同時ログ書き込みの自己競合を抑制する。
 - `ORDER_STATUS_CACHE_TTL_SEC`（既定 180）で
   `client_order_id` ごとの直近 status をメモリ保持する。
   - pre-service DB 記録を抑制する経路でも、
@@ -325,10 +326,10 @@
   - 2026-02-25 再追記（service 経路の長時間ブロッキング抑止）:
     - `ORDER_SUBMIT_MAX_ATTEMPTS=1`（`quant-order-manager.env`）
     - `ORDER_PROTECTION_FALLBACK_MAX_RETRIES=0`（`quant-order-manager.env`）
-    - `quant-order-manager.env` 側の `ORDER_DB_LOG_RETRY_*` は
-      低遅延値（`busy_timeout=250ms`, `attempts=3`）を維持し、
-      service API の head-of-line blocking を避ける。
-      一方 `quant-v2-runtime.env` は `1500ms/6` を維持し、fallback 側の記録耐性を持たせる。
+    - `quant-order-manager.env` と `quant-v2-runtime.env` の
+      `ORDER_DB_LOG_RETRY_*` / `ORDER_DB_BUSY_TIMEOUT_MS` / `ORDER_DB_FILE_LOCK_*`
+      は同値（`1500ms/6`, `0.30s/0.05s`）へ統一する。
+      service/fallback 間の lock 耐性差で監査ログ品質が揺れないようにする。
     - `coordinate_entry_intent` は同一 `client_order_id` の事前削除 write を行わず、
       board 参照前の不要 write を減らして lock競合を抑える。
       `entry_intent_board` の整理は purge + expire 窓で行う。
@@ -353,7 +354,13 @@
   - `POSITION_MANAGER_ORDERS_DB_READ_TIMEOUT_SEC=0.08`
   - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC=5.0`
   - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=8.0`
-  - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=20.0`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=60.0`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=1000`
+  - `POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC=2.0`
+  - `POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC=1.5`
+  - `POSITION_MANAGER_ENTRY_META_CACHE_MAX_ENTRIES=20000`
+  - `POSITION_MANAGER_POCKET_CACHE_MAX_ENTRIES=50000`
+  - `POSITION_MANAGER_CLIENT_CACHE_MAX_ENTRIES=50000`
 - 目的は、`position_manager` が不調時でも stale cache へ早めにフォールバックし、
   strategy worker 側の `position_manager_timeout` による entry skip を減らすこと。
 
