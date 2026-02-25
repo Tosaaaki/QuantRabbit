@@ -5523,3 +5523,28 @@
 - 意図:
   - replay の優位（`+316.87 JPY`）を崩さず、live の
     `units_below_min` / `perf_block` 由来の取りこぼしを減らす。
+
+### 2026-02-25（追記）`scalp_ping_5s_d_live` WFO比較で 11時固定を維持し units を 20%増
+
+- 3日比較（`USD_JPY_ticks_20260213/19/25`, `--sp-live-entry --sp-only --no-hard-sl --exclude-end-of-replay`）:
+  - `h11_both`: `+316.87 JPY`（`9 trades`, `PF_jpy=1.365`）
+  - `h11_short`: `+255.00 JPY`
+  - `h11_long`: `-1547.86 JPY`
+  - `h10,11_both`: `-5522.09 JPY`
+  - `h9,11_both`: `-7999.04 JPY`
+  - `h10,11_short`: `-4426.87 JPY`
+- 判定:
+  - 10時/9時を含む拡張は再現負けが大きく不採用。
+  - 方向は `both` 維持（`short-only` より総益が高い）。
+- units スイープ（2/25, `h11_both`）:
+  - `15000`: `+316.87 JPY`
+  - `18000`: `+380.24 JPY`
+  - `22000`: `+464.74 JPY`
+  - `30000`: `+633.73 JPY`
+- 反映:
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=18000`
+    - `SCALP_PING_5S_D_MAX_UNITS=18000`
+- 意図:
+  - 条件は固定し、再生で悪化を出さない範囲で
+    期待値を段階的に引き上げる。
