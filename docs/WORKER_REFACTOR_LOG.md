@@ -8,6 +8,38 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-25（追記）`scalp_ping_5s_c_live` のクラスター損失に対する動的抑制を追加
+
+- 背景（VM実測）:
+  - `scalp_ping_5s_c_live` は同分内の同方向クラスター建てで損失が集中し、
+    `MARKET_ORDER_TRADE_CLOSE` / `max_adverse` の連鎖で日次損益を押し下げた。
+  - `quant-scalp-ping-5s-c-exit` は `workers/scalp_ping_5s_c/exit_worker.py` を使用しており、
+    base 実装側で有効な `short_*` / `non_range_max_hold_sec_short` の side override が
+    C 側に反映されていなかった。
+- 変更:
+  - `workers/scalp_ping_5s/worker.py`
+    - `direction_bias + horizon + side_adverse_stack` を使って
+      同方向 cap を自動縮小する `dynamic_direction_cap` 判定を追加。
+    - 判定後の `dynamic cap` で `direction_cap` を評価し、弱一致/逆行圧時の
+      同方向積み増しを抑制。
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_*` を追加（opt-in型）。
+  - `workers/scalp_ping_5s_c/exit_worker.py`
+    - `non_range_max_hold_sec_<side>` と
+      `direction_flip.short_* / long_*` の side override 適用を追加し、
+      base と同一挙動へ整合。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SIDE_ADVERSE_STACK_UNITS_ENABLED=1` へ戻し、
+      `DYNAMIC_DIRECTION_CAP_*` を有効化。
+  - テスト:
+    - `tests/workers/test_scalp_ping_5s_worker.py` に dynamic cap 判定を追加。
+    - `tests/workers/test_scalp_ping_5s_c_exit_worker.py` を追加し、
+      C exit の side override 適用を回帰テスト化。
+- 意図:
+  - 「固定cap」ではなく市況・方向一致・逆行圧に応じて同方向上限を縮め、
+    クラスター由来の尾を先に削る。
+  - C exit の side別保護を実際の service 実装へ反映し、設定と実装の乖離を解消する。
+
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
 - 背景（VM実測）:

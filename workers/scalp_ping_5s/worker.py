@@ -4912,6 +4912,63 @@ def _resolve_active_caps(
     return total_cap, side_cap, True
 
 
+def _resolve_dynamic_direction_cap(
+    *,
+    side: str,
+    base_cap: int,
+    side_adverse_eval: SideAdverseStackEval,
+    direction_bias: Optional[DirectionBias],
+    horizon: Optional[HorizonBias],
+) -> tuple[int, str]:
+    cap = max(1, int(base_cap))
+    if cap <= config.DYNAMIC_DIRECTION_CAP_MIN:
+        return cap, "min_cap"
+    if not config.DYNAMIC_DIRECTION_CAP_ENABLED:
+        return cap, "disabled"
+
+    side_key = str(side or "").strip().lower()
+    if side_key not in {"long", "short"}:
+        return cap, "invalid_side"
+
+    reduced_cap = cap
+    reasons: list[str] = []
+
+    bias_side = str(getattr(direction_bias, "side", "") or "").strip().lower()
+    bias_score = abs(_safe_float(getattr(direction_bias, "score", 0.0), 0.0))
+    horizon_side = str(getattr(horizon, "composite_side", "") or "").strip().lower()
+    horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
+
+    weak_bias = (not bias_side) or bias_side != side_key or bias_score < config.DYNAMIC_DIRECTION_CAP_WEAK_BIAS_SCORE
+    weak_horizon = (
+        (not horizon_side)
+        or horizon_side != side_key
+        or horizon_score < config.DYNAMIC_DIRECTION_CAP_WEAK_HORIZON_SCORE
+    )
+    if weak_bias and weak_horizon:
+        reduced_cap = min(reduced_cap, int(config.DYNAMIC_DIRECTION_CAP_WEAK_CAP))
+        reasons.append("weak_alignment")
+
+    active_same_side = max(0, int(getattr(side_adverse_eval, "active_same_side", 0)))
+    dd_pips = max(0.0, _safe_float(getattr(side_adverse_eval, "dd_pips", 0.0), 0.0))
+    if (
+        active_same_side >= int(config.DYNAMIC_DIRECTION_CAP_ADVERSE_ACTIVE_START)
+        and dd_pips >= float(config.DYNAMIC_DIRECTION_CAP_ADVERSE_DD_PIPS)
+    ):
+        reduced_cap = min(reduced_cap, int(config.DYNAMIC_DIRECTION_CAP_ADVERSE_CAP))
+        reasons.append("adverse_dd")
+
+    if bool(getattr(side_adverse_eval, "adverse", False)):
+        reduced_cap = min(
+            reduced_cap, int(config.DYNAMIC_DIRECTION_CAP_METRICS_ADVERSE_CAP)
+        )
+        reasons.append("metrics_adverse")
+
+    reduced_cap = max(config.DYNAMIC_DIRECTION_CAP_MIN, min(cap, reduced_cap))
+    if not reasons:
+        return cap, "base"
+    return reduced_cap, "+".join(dict.fromkeys(reasons))
+
+
 def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
     if not isinstance(positions, dict):
         return TrapState(False, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
@@ -5312,6 +5369,7 @@ async def scalp_ping_5s_worker() -> None:
     last_sl_streak_log_mono = 0.0
     last_side_metrics_flip_log_mono = 0.0
     last_side_adverse_stack_log_mono = 0.0
+    last_dynamic_direction_cap_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
     last_loop_heartbeat_mono = 0.0
     entry_skip_reasons: dict[str, int] = {}
@@ -6478,6 +6536,62 @@ async def scalp_ping_5s_worker() -> None:
                 free_ratio=free_ratio,
                 margin_available=margin_available,
             )
+            side_adverse_stack_units_mult, side_adverse_eval = _side_adverse_stack_units_multiplier(
+                side=signal.side,
+                strategy_tag=config.STRATEGY_TAG,
+                pocket=config.POCKET,
+                active_long=active_long,
+                active_short=active_short,
+                trap_state=trap_state,
+                now_mono=now_mono,
+            )
+            side_adverse_stack_reason = str(side_adverse_eval.reason)
+            side_adverse_stack_metrics_adverse = bool(side_adverse_eval.adverse)
+            side_adverse_stack_side_mult = float(side_adverse_eval.side_mult)
+            side_adverse_stack_dd_mult = float(side_adverse_eval.dd_mult)
+            side_adverse_stack_dd_pips = float(side_adverse_eval.dd_pips)
+            side_adverse_stack_current_trades = int(side_adverse_eval.current_trades)
+            side_adverse_stack_target_trades = int(side_adverse_eval.target_trades)
+            side_adverse_stack_current_sl_rate = float(side_adverse_eval.current_sl_rate)
+            side_adverse_stack_target_sl_rate = float(side_adverse_eval.target_sl_rate)
+            side_adverse_stack_current_market_plus_rate = float(
+                side_adverse_eval.current_market_plus_rate
+            )
+            side_adverse_stack_target_market_plus_rate = float(
+                side_adverse_eval.target_market_plus_rate
+            )
+            side_adverse_stack_active_same_side = int(side_adverse_eval.active_same_side)
+            side_adverse_stack_active_opposite_side = int(
+                side_adverse_eval.active_opposite_side
+            )
+            dynamic_per_direction_cap, dynamic_cap_reason = _resolve_dynamic_direction_cap(
+                side=signal.side,
+                base_cap=max_per_direction,
+                side_adverse_eval=side_adverse_eval,
+                direction_bias=direction_bias,
+                horizon=horizon,
+            )
+            if (
+                dynamic_per_direction_cap < max_per_direction
+                and now_mono - last_dynamic_direction_cap_log_mono
+                >= config.DYNAMIC_DIRECTION_CAP_LOG_INTERVAL_SEC
+            ):
+                LOG.info(
+                    "%s direction_cap dynamic side=%s base=%d dynamic=%d reason=%s active=%d/%d dd=%.2fp bias=%s/%.2f hz=%s/%.2f",
+                    config.LOG_PREFIX,
+                    signal.side,
+                    max_per_direction,
+                    dynamic_per_direction_cap,
+                    dynamic_cap_reason,
+                    side_adverse_stack_active_same_side,
+                    side_adverse_stack_active_opposite_side,
+                    side_adverse_stack_dd_pips,
+                    (direction_bias.side if direction_bias is not None else "none"),
+                    _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
+                    (horizon.composite_side if horizon is not None else "none"),
+                    _safe_float(getattr(horizon, "composite_score", 0.0), 0.0),
+                )
+                last_dynamic_direction_cap_log_mono = now_mono
             if not _allow_signal_when_max_active(
                 side=signal.side,
                 active_total=active_total,
@@ -6508,46 +6622,18 @@ async def scalp_ping_5s_worker() -> None:
                     margin_available,
                 )
                 last_max_active_bypass_log_mono = now_mono
-            if signal.side == "long" and active_long >= max_per_direction:
+            if signal.side == "long" and active_long >= dynamic_per_direction_cap:
                 _note_entry_skip(
                     "direction_cap",
-                    f"side=long active={active_long} cap={max_per_direction}",
+                    f"side=long active={active_long} cap={dynamic_per_direction_cap} base_cap={max_per_direction} reason={dynamic_cap_reason}",
                 )
                 continue
-            if signal.side == "short" and active_short >= max_per_direction:
+            if signal.side == "short" and active_short >= dynamic_per_direction_cap:
                 _note_entry_skip(
                     "direction_cap",
-                    f"side=short active={active_short} cap={max_per_direction}",
+                    f"side=short active={active_short} cap={dynamic_per_direction_cap} base_cap={max_per_direction} reason={dynamic_cap_reason}",
                 )
                 continue
-            side_adverse_stack_units_mult, side_adverse_eval = _side_adverse_stack_units_multiplier(
-                side=signal.side,
-                strategy_tag=config.STRATEGY_TAG,
-                pocket=config.POCKET,
-                active_long=active_long,
-                active_short=active_short,
-                trap_state=trap_state,
-                now_mono=now_mono,
-            )
-            side_adverse_stack_reason = str(side_adverse_eval.reason)
-            side_adverse_stack_metrics_adverse = bool(side_adverse_eval.adverse)
-            side_adverse_stack_side_mult = float(side_adverse_eval.side_mult)
-            side_adverse_stack_dd_mult = float(side_adverse_eval.dd_mult)
-            side_adverse_stack_dd_pips = float(side_adverse_eval.dd_pips)
-            side_adverse_stack_current_trades = int(side_adverse_eval.current_trades)
-            side_adverse_stack_target_trades = int(side_adverse_eval.target_trades)
-            side_adverse_stack_current_sl_rate = float(side_adverse_eval.current_sl_rate)
-            side_adverse_stack_target_sl_rate = float(side_adverse_eval.target_sl_rate)
-            side_adverse_stack_current_market_plus_rate = float(
-                side_adverse_eval.current_market_plus_rate
-            )
-            side_adverse_stack_target_market_plus_rate = float(
-                side_adverse_eval.target_market_plus_rate
-            )
-            side_adverse_stack_active_same_side = int(side_adverse_eval.active_same_side)
-            side_adverse_stack_active_opposite_side = int(
-                side_adverse_eval.active_opposite_side
-            )
             if (
                 side_adverse_stack_units_mult < 0.999
                 and now_mono - last_side_adverse_stack_log_mono

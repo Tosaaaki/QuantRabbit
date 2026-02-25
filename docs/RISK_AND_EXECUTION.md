@@ -129,6 +129,32 @@
   `scalp_ping_5s_b_live: *SCALP_PING_5S_EXIT_PROFILE` を維持し、
   `ALLOWED_TAGS=scalp_ping_5s_b_live` の建玉が default EXITプロファイルへ落ちないようにする。
 
+### scalp_ping_5s（C/D 含む）side filter 運用補足
+- `SCALP_PING_5S_*_SIDE_FILTER` は初期シグナルだけでなく、
+  MTF/flip など後段ルーティング後の最終シグナルにも強制適用する。
+- 最終 side が filter と不一致の場合は
+  `side_filter_final_block` として entry を拒否する。
+- replay 経路（`scripts/replay_exit_workers.py`）でも同様に、
+  `MTF` 調整後の side で再判定して不一致を破棄する。
+- 目的は、`SIDE_FILTER=long` 運用時に `mtf_reversion_fade` 等で
+  short が混入する経路をなくし、実運用と検証の整合性を保つこと。
+
+### scalp_ping_5s_c 運用補足（動的同方向cap + side別EXIT）
+- `workers/scalp_ping_5s.worker` は `SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_*` を使い、
+  `direction_bias` / `horizon` / `side_adverse_stack` が弱い・逆行圧のときだけ
+  同方向 cap を自動縮小する。
+  - 既定（C運用）:
+    - `SCALP_PING_5S_C_DYNAMIC_DIRECTION_CAP_ENABLED=1`
+    - `...WEAK_CAP=2`
+    - `...ADVERSE_CAP=2`
+    - `...METRICS_ADVERSE_CAP=1`
+- `quant-scalp-ping-5s-c-exit`（`workers/scalp_ping_5s_c.exit_worker`）は
+  `config/strategy_exit_protections.yaml` の side別キーを適用する。
+  - `non_range_max_hold_sec_short`
+  - `direction_flip.short_*` / `direction_flip.long_*`
+- これにより C 系は「高確度局面の建玉維持」と
+  「弱一致局面のクラスター抑制」を同一戦略内で両立する。
+
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で
   `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を運用する。

@@ -1119,6 +1119,11 @@ class RangeFaderExitWorker:
         non_range_max_hold_sec = max(
             0.0, _pick_float(exit_profile.get("non_range_max_hold_sec"), 0.0)
         )
+        side_non_range_key = f"non_range_max_hold_sec_{side}"
+        non_range_max_hold_sec = max(
+            0.0,
+            _pick_float(exit_profile.get(side_non_range_key), non_range_max_hold_sec),
+        )
         direction_flip_cfg = exit_profile.get("direction_flip")
         if not isinstance(direction_flip_cfg, dict):
             direction_flip_cfg = {}
@@ -1187,6 +1192,82 @@ class RangeFaderExitWorker:
         direction_flip_de_risk_reason = (
             str(direction_flip_cfg.get("de_risk_reason") or "risk_reduce").strip()
             or "risk_reduce"
+        )
+        side_prefix = f"{side}_"
+        direction_flip_min_hold_sec = max(
+            0.0,
+            _pick_float(
+                direction_flip_cfg.get(f"{side_prefix}min_hold_sec"),
+                direction_flip_min_hold_sec,
+            ),
+        )
+        direction_flip_min_adverse_pips = max(
+            0.0,
+            _pick_float(
+                direction_flip_cfg.get(f"{side_prefix}min_adverse_pips"),
+                direction_flip_min_adverse_pips,
+            ),
+        )
+        direction_flip_score_threshold = max(
+            0.0,
+            min(
+                1.0,
+                _pick_float(
+                    direction_flip_cfg.get(f"{side_prefix}score_threshold"),
+                    direction_flip_score_threshold,
+                ),
+            ),
+        )
+        direction_flip_score_release = max(
+            0.0,
+            min(
+                direction_flip_score_threshold,
+                _pick_float(
+                    direction_flip_cfg.get(f"{side_prefix}release_threshold"),
+                    direction_flip_score_release,
+                ),
+            ),
+        )
+        direction_flip_confirm_hits = max(
+            1,
+            _pick_int(
+                direction_flip_cfg.get(f"{side_prefix}confirm_hits"),
+                direction_flip_confirm_hits,
+            ),
+        )
+        direction_flip_confirm_window_sec = max(
+            0.0,
+            _pick_float(
+                direction_flip_cfg.get(f"{side_prefix}confirm_window_sec"),
+                direction_flip_confirm_window_sec,
+            ),
+        )
+        direction_flip_cooldown_sec = max(
+            0.0,
+            _pick_float(
+                direction_flip_cfg.get(f"{side_prefix}cooldown_sec"),
+                direction_flip_cooldown_sec,
+            ),
+        )
+        direction_flip_forecast_weight = max(
+            0.0,
+            min(
+                1.0,
+                _pick_float(
+                    direction_flip_cfg.get(f"{side_prefix}forecast_weight"),
+                    direction_flip_forecast_weight,
+                ),
+            ),
+        )
+        direction_flip_de_risk_threshold = max(
+            0.0,
+            min(
+                direction_flip_score_threshold,
+                _pick_float(
+                    direction_flip_cfg.get(f"{side_prefix}de_risk_threshold"),
+                    direction_flip_de_risk_threshold,
+                ),
+            ),
         )
         base_tag_lower = str(base_tag or strategy_tag or "").strip().lower()
         # User safety requirement: legacy/open positions must keep legacy behavior.

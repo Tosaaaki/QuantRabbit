@@ -446,6 +446,116 @@ def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch)
     assert side_cap == 12
 
 
+def test_resolve_dynamic_direction_cap_tightens_to_min_on_adverse_cluster(monkeypatch) -> None:
+    monkeypatch.setenv("oanda_token", "dummy")
+    monkeypatch.setenv("oanda_account_id", "dummy")
+    monkeypatch.setenv("oanda_practice", "true")
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_MIN", 1)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_WEAK_CAP", 2)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_WEAK_BIAS_SCORE", 0.52)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_WEAK_HORIZON_SCORE", 0.56)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_ADVERSE_ACTIVE_START", 2)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_ADVERSE_DD_PIPS", 0.45)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_ADVERSE_CAP", 2)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_METRICS_ADVERSE_CAP", 1)
+
+    eval_info = worker.SideAdverseStackEval(
+        current_side="long",
+        target_side="short",
+        active_same_side=3,
+        active_opposite_side=0,
+        current_trades=12,
+        target_trades=7,
+        current_sl_rate=0.62,
+        target_sl_rate=0.31,
+        current_market_plus_rate=0.14,
+        target_market_plus_rate=0.39,
+        side_mult=0.72,
+        dd_mult=0.64,
+        units_mult=0.46,
+        dd_pips=0.82,
+        adverse=True,
+        reason="metrics_adverse+dd_scale",
+    )
+    direction_bias = worker.DirectionBias(
+        side="short",
+        score=0.22,
+        momentum_pips=-0.2,
+        flow=-0.4,
+        range_pips=0.6,
+        vol_norm=0.3,
+        tick_rate=0.9,
+        span_sec=2.0,
+    )
+    horizon = worker.HorizonBias(
+        long_side="short",
+        long_score=0.24,
+        mid_side="short",
+        mid_score=0.20,
+        short_side="short",
+        short_score=0.18,
+        micro_side="short",
+        micro_score=0.16,
+        composite_side="short",
+        composite_score=0.22,
+        agreement=1,
+    )
+
+    cap, reason = worker._resolve_dynamic_direction_cap(
+        side="long",
+        base_cap=4,
+        side_adverse_eval=eval_info,
+        direction_bias=direction_bias,
+        horizon=horizon,
+    )
+
+    assert cap == 1
+    assert "metrics_adverse" in reason
+
+
+def test_resolve_dynamic_direction_cap_returns_base_when_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("oanda_token", "dummy")
+    monkeypatch.setenv("oanda_account_id", "dummy")
+    monkeypatch.setenv("oanda_practice", "true")
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_ENABLED", False)
+    monkeypatch.setattr(worker.config, "DYNAMIC_DIRECTION_CAP_MIN", 1)
+
+    eval_info = worker.SideAdverseStackEval(
+        current_side="long",
+        target_side="short",
+        active_same_side=4,
+        active_opposite_side=0,
+        current_trades=9,
+        target_trades=7,
+        current_sl_rate=0.60,
+        target_sl_rate=0.28,
+        current_market_plus_rate=0.12,
+        target_market_plus_rate=0.35,
+        side_mult=0.70,
+        dd_mult=0.62,
+        units_mult=0.44,
+        dd_pips=0.90,
+        adverse=True,
+        reason="metrics_adverse+dd_scale",
+    )
+
+    cap, reason = worker._resolve_dynamic_direction_cap(
+        side="long",
+        base_cap=4,
+        side_adverse_eval=eval_info,
+        direction_bias=None,
+        horizon=None,
+    )
+
+    assert cap == 4
+    assert reason == "disabled"
+
+
 def test_enforce_new_entry_time_stop_uses_entry_thesis_hold_override(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

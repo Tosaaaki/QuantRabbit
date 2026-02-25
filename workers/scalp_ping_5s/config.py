@@ -1476,6 +1476,74 @@ MAX_ACTIVE_TRADES: int = max(
 MAX_PER_DIRECTION: int = max(
     1, int(float(os.getenv("SCALP_PING_5S_MAX_PER_DIRECTION", "1")))
 )
+#
+# Dynamic same-side cap:
+# Tighten only when side alignment is weak or adverse stacking is building.
+# This preserves high-conviction runs while reducing same-minute cluster risk.
+DYNAMIC_DIRECTION_CAP_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_ENABLED",
+    True if _IS_B_OR_C_PREFIX else False,
+)
+DYNAMIC_DIRECTION_CAP_MIN: int = max(
+    1, int(float(os.getenv("SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_MIN", "1")))
+)
+DYNAMIC_DIRECTION_CAP_WEAK_CAP: int = max(
+    DYNAMIC_DIRECTION_CAP_MIN,
+    int(float(os.getenv("SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_WEAK_CAP", "2"))),
+)
+DYNAMIC_DIRECTION_CAP_WEAK_BIAS_SCORE: float = max(
+    0.0,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_WEAK_BIAS_SCORE", "0.52")),
+    ),
+)
+DYNAMIC_DIRECTION_CAP_WEAK_HORIZON_SCORE: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_WEAK_HORIZON_SCORE",
+                "0.56",
+            )
+        ),
+    ),
+)
+DYNAMIC_DIRECTION_CAP_ADVERSE_ACTIVE_START: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_ADVERSE_ACTIVE_START",
+                "2",
+            )
+        )
+    ),
+)
+DYNAMIC_DIRECTION_CAP_ADVERSE_DD_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_ADVERSE_DD_PIPS", "0.45")),
+)
+DYNAMIC_DIRECTION_CAP_ADVERSE_CAP: int = max(
+    DYNAMIC_DIRECTION_CAP_MIN,
+    int(float(os.getenv("SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_ADVERSE_CAP", "2"))),
+)
+DYNAMIC_DIRECTION_CAP_METRICS_ADVERSE_CAP: int = max(
+    DYNAMIC_DIRECTION_CAP_MIN,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_METRICS_ADVERSE_CAP",
+                "1",
+            )
+        )
+    ),
+)
+DYNAMIC_DIRECTION_CAP_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_LOG_INTERVAL_SEC", "8.0")),
+)
 ALLOW_OPPOSITE_WHEN_MAX_ACTIVE: bool = _bool_env(
     "SCALP_PING_5S_ALLOW_OPPOSITE_WHEN_MAX_ACTIVE",
     True,
