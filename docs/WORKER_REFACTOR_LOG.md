@@ -83,6 +83,20 @@
   - GCS 側の応答停滞で snapshot publish パス全体が停止する状態を避け、
     timer 周期での再試行性を確保する。
 
+### 2026-02-25（追記）`publish_ui_snapshot --lite` で PositionManager を既定無効化
+
+- 背景（VM実測）:
+  - `sync_trades` / open positions / 拡張メトリクスを既定無効化後も、
+    `PositionManager` 初期化経路で `performance_summary` の遅延が残り、
+    90 秒 timeout を継続していた。
+- 変更:
+  - `scripts/publish_ui_snapshot.py`
+    - `UI_SNAPSHOT_LITE_USE_POSITION_MANAGER`（既定 `0`）を追加。
+    - `--lite` 実行時は、同フラグが有効な場合のみ `PositionManager` を初期化。
+- 意図:
+  - `--lite` の既定動作を「ローカルDBベースの publish 優先」に固定し、
+    position service 側遅延の巻き込みを回避する。
+
 ### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
 
 - 背景（VM実測）:

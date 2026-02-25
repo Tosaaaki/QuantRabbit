@@ -62,6 +62,13 @@ LITE_INCLUDE_EXTENDED_METRICS = os.getenv(
     "true",
     "yes",
 }
+LITE_USE_POSITION_MANAGER = os.getenv(
+    "UI_SNAPSHOT_LITE_USE_POSITION_MANAGER", "0"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lower() in {
     "1",
     "true",
@@ -662,7 +669,9 @@ def main() -> int:
     new_trades: list = []
     recent_trades = _load_recent_trades(limit=int(args.recent))
     open_positions: dict = {}
-    pm = _init_position_manager()
+    pm = None
+    if not args.lite or LITE_USE_POSITION_MANAGER:
+        pm = _init_position_manager()
     if pm is not None:
         if args.lite:
             try:

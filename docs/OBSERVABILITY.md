@@ -21,6 +21,10 @@
   （`orders_last` / `orders_status_1h` / `signals_recent` など）も収集しない
   （`UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS=0` 既定）。
   拡張項目が必要な場合のみ `UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS=1` を指定する。
+- `scripts/publish_ui_snapshot.py --lite` は、既定では `PositionManager` を初期化しない
+  （`UI_SNAPSHOT_LITE_USE_POSITION_MANAGER=0` 既定）。
+  OANDA/position service 連携が必要な場合のみ
+  `UI_SNAPSHOT_LITE_USE_POSITION_MANAGER=1` を指定する。
 - GCS publish は `analytics/gcs_publisher.py` で
   `UI_SNAPSHOT_GCS_UPLOAD_TIMEOUT_SEC`（default: `8` 秒）の timeout を持つ。
   timeout 超過時は warning を出して、CLI/metadata 経路へフォールバックを試行する。
