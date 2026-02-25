@@ -458,3 +458,24 @@ DB:
     worker fallback 経路と service 経路の判定差を解消。
 - 再生検証:
   - `allow=11`, `side=both`, `units=15000` で `+316.87 JPY` を維持（悪化なし）。
+
+### 20.4 2026-02-25 更新（Dの詰まり解消: min_units + perf_guard mode）
+
+- 背景（VM実績, 直近1h）:
+  - `scalp_ping_5s_c_live`: `35 trades`, `-671.7 JPY`
+  - `scalp_ping_5s_d_live`: `3 trades`, `-28.5 JPY`
+  - D は `units_below_min` / `perf_block` で通過件数が不足。
+- 検証（当日ティック replay, allow=11, side=both, units=15000）:
+  - baseline: `+316.87 JPY`（`9 trades`, `PF_jpy=1.365`）
+  - 候補A（`MIN_UNITS=30`, `PERF_GUARD_MODE=reduce`）: `+316.87 JPY`（同値）
+  - 候補B（上記 + `MIN_TICKS=3`, `MIN_SIGNAL_TICKS=2`, `SHORT_MIN_SIGNAL_TICKS=3`）:
+    `+181.87 JPY`（悪化）→ 不採用
+- 採用:
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_MIN_UNITS=30`
+    - `SCALP_PING_5S_D_PERF_GUARD_MODE=reduce`
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_D_PERF_GUARD_MODE=reduce`
+- 意図:
+  - replay の優位性を維持しつつ、live での `units_below_min` と
+    `perf_block` 起因の取りこぼしを減らす。

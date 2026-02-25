@@ -5407,3 +5407,27 @@
 - 検証（当日ティック replay, allow=11, side=both, units=15000）:
   - 変更前: `+316.87 JPY`（`9 trades`, `PF_jpy=1.365`）
   - 変更後: `+316.87 JPY`（同値、悪化なし）
+
+### 2026-02-25（追記）`scalp_ping_5s_d_live` 詰まり解消（min_units + perf_guard）
+
+- 背景（VM直近1h）:
+  - `scalp_ping_5s_c_live`: `35 trades`, `-671.7 JPY`
+  - `scalp_ping_5s_d_live`: `3 trades`, `-28.5 JPY`
+  - Dは `units_below_min` と `perf_block` が多く、通過件数が不足。
+- 当日ティック replay 比較（`USD_JPY_ticks_20260225.jsonl`、
+  `--sp-live-entry --sp-only --no-hard-sl --exclude-end-of-replay`）:
+  - baseline: `+316.87 JPY`（`9 trades`, `PF_jpy=1.365`）
+  - 候補A（`MIN_UNITS=30` + `PERF_GUARD_MODE=reduce`）:
+    `+316.87 JPY`（同値）
+  - 候補B（候補A + `MIN_TICKS=3`, `MIN_SIGNAL_TICKS=2`,
+    `SHORT_MIN_SIGNAL_TICKS=3`）:
+    `+181.87 JPY`（悪化）→ 不採用
+- 反映:
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_MIN_UNITS=30`
+    - `SCALP_PING_5S_D_PERF_GUARD_MODE=reduce`
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_D_PERF_GUARD_MODE=reduce`
+- 意図:
+  - replay の優位（`+316.87 JPY`）を崩さず、live の
+    `units_below_min` / `perf_block` 由来の取りこぼしを減らす。
