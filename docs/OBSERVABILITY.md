@@ -7,6 +7,10 @@
 - UI snapshot（`apps/autotune_ui.py`）は `generated_at` の鮮度を評価し、
   `UI_SNAPSHOT_MAX_AGE_SEC`（default: `max(120, UI_AUTO_REFRESH_SEC*4)`）を超えた stale 候補は
   `remote/gcs/local` の優先採用対象から除外する。全候補 stale の場合のみ最新時刻を採用する。
+- `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
+  `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
+  上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、
+  次の timer 周期で自動再試行する。
 
 ## 2. ログの真偽と参照ルール
 - 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。

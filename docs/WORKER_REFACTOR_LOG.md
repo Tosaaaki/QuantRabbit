@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-25（追記）`quant-ui-snapshot` の長時間ハング対策を追加
+
+- 背景（VM実測）:
+  - `quant-autotune-ui.service` は active だが、
+    `quant-ui-snapshot.service` が `activating` のまま 1 時間超継続し、
+    `quant-ui-snapshot.timer` の次回実行が詰まって UI 更新が停止した。
+  - 直近では `2026-02-25 07:18:59 UTC` 開始の one-shot 実行が戻らず、
+    UI 側で stale 監視が継続していた。
+- 変更:
+  - `scripts/run_ui_snapshot.sh`
+    - `UI_SNAPSHOT_MAX_RUNTIME_SEC`（既定 `90` 秒）を追加。
+    - `timeout --signal=TERM --kill-after=10s` で
+      `publish_ui_snapshot.py` 実行時間を上限管理。
+    - timeout 時は `exit 0` でその周期のみスキップし、次周期の timer 実行を継続。
+- 意図:
+  - one-shot の単発ハングで timer 連鎖全体が停止する状態を回避し、
+    UI スナップショット更新を自動復帰可能にする。
+
 ### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
 
 - 背景（VM実測）:
