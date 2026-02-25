@@ -239,10 +239,12 @@
   `quant-scalp-ping-5s-flow` worker 環境
   （`ops/env/quant-scalp-ping-5s-flow.env` と `ops/env/scalp_ping_5s_flow.env`）
   にも同じ `SCALP_PING_5S_FLOW_PERF_GUARD_LOOKBACK_DAYS=1` を設定する。
-- `margin_closeout_n>0` の緊急ブロック条件自体は維持し、
-  「直近1日」の closeout のみで block 判定する。
-- これにより、古い closeout（2日以上前）で `OPEN_REJECT perf_block:margin_closeout_n=*`
-  が継続し、flow 戦略の新規が長時間停止する経路を避ける。
+- `margin_closeout` は `hard/soft` の二段判定で扱う。
+  - hard: `PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES` 未満の小標本、
+    または `PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE` 超過（かつ min count 条件成立）。
+  - soft: closeout が存在しても hard 条件を満たさない場合。
+- `PERF_GUARD_MODE=reduce` 戦略では soft 判定を `warn` として通し、
+  stale closeout だけで長時間全停止する経路を避ける。
 - `strategy_entry` / `order_manager` の `env_prefix` 推論は
   `scalp_ping_5s_flow_* -> SCALP_PING_5S_FLOW` を優先し、
   `SCALP_PING_5S` への丸め込みをしない。
@@ -445,7 +447,18 @@
   - `STRATEGY_CONTROL_GLOBAL_LOCK=0`
   - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=1`
 - `perf_guard` 運用補足:
-  - `mode=reduce` でも、`margin_closeout / failfast / sl_loss_rate` は hard block 扱い。
+  - `mode=reduce` でも `sl_loss_rate` は hard block 扱い。
+  - `margin_closeout` は hard/soft を分離し、
+    hard 以外は `warn:margin_closeout_soft_*` として通す。
+    - hard しきい値:
+      `PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES` /
+      `PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE` /
+      `PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT`
+  - `failfast` も hard/soft を分離し、
+    hard 以外は `warn:failfast_soft:*` として通す。
+    - hard しきい値:
+      `PERF_GUARD_FAILFAST_HARD_PF` /
+      `PERF_GUARD_FAILFAST_HARD_REQUIRE_BOTH`
   - 既定 `PERF_GUARD_RELAX_TAGS` から `M1Scalper` を除外し、
     劣化時の bypass を防ぐ。
   - `B/C/D/M1` は `PERF_GUARD_MODE=block` と failfast 閾値で運用し、

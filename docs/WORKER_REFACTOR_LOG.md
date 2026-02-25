@@ -6247,3 +6247,40 @@
   - ロットだけを落とす運用ではなく、エントリー通過条件そのものを
     予測品質基準へ寄せる。
   - 新規全停止を避けつつ、低期待値・到達確率不足のシグナルを入口で遮断する。
+
+### 2026-02-25（追記）根本対策: `perf_guard` hard/soft 判定で過剰全停止を抑制
+
+- 背景（VM実測, UTC 2026-02-25 16:24 前後）:
+  - `orders.db` で `preflight_start` は継続している一方、
+    `perf_block` が支配的で `filled` が極少（2件）になっていた。
+  - 主因は `reduce` モード戦略でも `hard:margin_closeout_n=*` /
+    `hard:failfast:*` が一律 reject となり、
+    stale closeout や片側指標劣化で entry が止まる経路だった。
+- 変更:
+  - `workers/common/perf_guard.py`
+    - `margin_closeout` 判定を hard/soft に分離。
+      - hard 条件:
+        `PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES` 未満、
+        または `PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE` 超過
+        （`..._HARD_MIN_COUNT` 以上）。
+      - soft 条件は `margin_closeout_soft_n=...` を返し、
+        `PERF_GUARD_MODE=reduce` では `warn` 通過させる。
+    - `failfast` も hard/soft を分離。
+      - hard 条件:
+        `PERF_GUARD_FAILFAST_HARD_PF` 未満、
+        または `PERF_GUARD_FAILFAST_HARD_REQUIRE_BOTH=1` で
+        PF/勝率の同時悪化。
+      - hard 以外は `failfast_soft:*` を返し、
+        `reduce` では reject せず継続判定へ回す。
+  - `tests/test_perf_guard_failfast.py`
+    - `test_perf_guard_failfast_soft_in_reduce_mode` を追加。
+    - `test_perf_guard_margin_closeout_soft_in_reduce_mode` を追加。
+    - 既存 hard block テスト（margin closeout / regime hard bypass 禁止）は維持。
+  - 仕様更新:
+    - `docs/RISK_AND_EXECUTION.md` に
+      hard/soft 判定と新規 env キーを追記。
+- 意図:
+  - 「劣化戦略は止める」性質を保ったまま、
+    `reduce` モードの機会損失を生む過剰 hard block を除去する。
+  - 一律ロット半減ではなく、入口判定の質を上げて
+    エントリー可否を戦略状態に応じて切り替える。

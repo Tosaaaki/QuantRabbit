@@ -55,6 +55,12 @@ class PerfGuardCfg:
     failfast_min_trades: int
     failfast_pf: float
     failfast_win: float
+    failfast_hard_pf_floor: float
+    failfast_hard_require_both: bool
+
+    margin_closeout_hard_min_trades: int
+    margin_closeout_hard_rate: float
+    margin_closeout_hard_min_count: int
 
     sl_loss_rate_min_trades: int
     sl_loss_rate_max_default: float
@@ -162,6 +168,25 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
     failfast_min_trades = max(0, _strategy_env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, env_prefix=env_prefix))
     failfast_pf = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_PF", 0.75, env_prefix=env_prefix))
     failfast_win = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_WIN", 0.40, env_prefix=env_prefix))
+    failfast_hard_pf_floor = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_HARD_PF", 0.30, env_prefix=env_prefix))
+    failfast_hard_require_both = _strategy_env_bool(
+        "PERF_GUARD_FAILFAST_HARD_REQUIRE_BOTH",
+        True,
+        env_prefix=env_prefix,
+    )
+
+    margin_closeout_hard_min_trades = max(
+        1,
+        _strategy_env_int("PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES", 24, env_prefix=env_prefix),
+    )
+    margin_closeout_hard_rate = max(
+        0.0,
+        _strategy_env_float("PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE", 0.03, env_prefix=env_prefix),
+    )
+    margin_closeout_hard_min_count = max(
+        1,
+        _strategy_env_int("PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT", 1, env_prefix=env_prefix),
+    )
 
     sl_loss_rate_min_trades = max(0, _strategy_env_int("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, env_prefix=env_prefix))
     sl_loss_rate_max_default = _strategy_env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, env_prefix=env_prefix)
@@ -209,6 +234,11 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         failfast_min_trades=failfast_min_trades,
         failfast_pf=failfast_pf,
         failfast_win=failfast_win,
+        failfast_hard_pf_floor=failfast_hard_pf_floor,
+        failfast_hard_require_both=failfast_hard_require_both,
+        margin_closeout_hard_min_trades=margin_closeout_hard_min_trades,
+        margin_closeout_hard_rate=margin_closeout_hard_rate,
+        margin_closeout_hard_min_count=margin_closeout_hard_min_count,
         sl_loss_rate_min_trades=sl_loss_rate_min_trades,
         sl_loss_rate_max_default=sl_loss_rate_max_default,
         pocket_enabled=pocket_enabled,
@@ -830,14 +860,30 @@ def _query_perf(
 
     # Emergency block: broker forced liquidation observed in this window.
     if margin_closeout_n > 0:
-        return False, f"margin_closeout_n={margin_closeout_n} n={hard_n}", hard_n
+        closeout_rate = (float(margin_closeout_n) / float(hard_n)) if hard_n > 0 else 1.0
+        hard_closeout = hard_n < cfg.margin_closeout_hard_min_trades or (
+            margin_closeout_n >= cfg.margin_closeout_hard_min_count
+            and closeout_rate >= cfg.margin_closeout_hard_rate
+        )
+        if hard_closeout:
+            return False, f"margin_closeout_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}", hard_n
+        return False, f"margin_closeout_soft_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}", hard_n
 
     # Fail-fast (before warmup) when stats are clearly bad.
     if cfg.failfast_min_trades > 0 and hard_n >= cfg.failfast_min_trades:
-        if (cfg.failfast_pf > 0 and hard_pf < cfg.failfast_pf) or (
-            cfg.failfast_win > 0 and hard_win_rate < cfg.failfast_win
-        ):
-            return False, f"failfast:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}", hard_n
+        failfast_pf_hit = cfg.failfast_pf > 0 and hard_pf < cfg.failfast_pf
+        failfast_win_hit = cfg.failfast_win > 0 and hard_win_rate < cfg.failfast_win
+        if failfast_pf_hit or failfast_win_hit:
+            hard_failfast = False
+            if cfg.failfast_hard_pf_floor > 0 and hard_pf < cfg.failfast_hard_pf_floor:
+                hard_failfast = True
+            elif cfg.failfast_hard_require_both:
+                hard_failfast = failfast_pf_hit and failfast_win_hit
+            else:
+                hard_failfast = failfast_pf_hit or failfast_win_hit
+            if hard_failfast:
+                return False, f"failfast:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}", hard_n
+            return False, f"failfast_soft:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}", hard_n
 
     # Stop-loss (loss) rate guard (before warmup). Only apply when PF < 1.0 (already losing).
     sl_rate_max = _sl_loss_rate_max(pocket, cfg)
