@@ -162,6 +162,24 @@
     - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20`
   - 目的は `entry_probability_below_min_units` による未約定連発を減らし、
     反転局面で小ロットでも約定させること。
+- 2026-02-25 追記（forecast-first 再稼働）:
+  - `quant-scalp-ping-5s-c` は次を運用値とする。
+    - `SCALP_PING_5S_C_ENABLED=1`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_C_CONF_FLOOR=68`
+  - `entry_probability` 再補正を予測優勢側へ寄せる。
+    - `ENTRY_PROBABILITY_ALIGN_DIRECTION/HORIZON/M1_WEIGHT=0.20/0.70/0.10`
+    - `ENTRY_PROBABILITY_ALIGN_BOOST_MAX=0.14`
+    - `ENTRY_PROBABILITY_ALIGN_PENALTY_MAX=0.42`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN/FLOOR=0.62/0.48`
+    - `ENTRY_PROBABILITY_ALIGN_UNITS_MIN/MAX_MULT=0.65/1.20`
+  - `quant-order-manager` の C preserve-intent はさらに通過寄りへ更新する。
+    - `REJECT_UNDER=0.18`
+    - `MIN_SCALE=0.80`
+    - `MAX_SCALE=1.15`
+    - `BOOST_PROBABILITY=0.65`
+  - 目的は、予測優勢局面で「入らない/小さすぎる」を抑え、
+    strategy local の方向判断をより直接に発注へ反映すること。
 
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で

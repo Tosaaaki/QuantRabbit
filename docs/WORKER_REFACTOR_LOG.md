@@ -154,6 +154,36 @@
   - C 戦略の低〜中確率帯を「即reject」ではなく「小さめで通す」側へ寄せ、
     反転ポイントでの取りこぼしを減らす。
 
+### 2026-02-25（追記）`scalp_ping_5s_c_live` を forecast-first で再稼働
+
+- 背景（VM実測）:
+  - `quant-scalp-ping-5s-c.service` の実環境が
+    `SCALP_PING_5S_C_ENABLED=0` + `SCALP_PING_5S_C_PERF_GUARD_MODE=block`
+    になっており、予測が優勢でも C 導線が実行されにくい状態だった。
+  - 同時に C の `entry_probability` 再補正が保守寄りで、
+    forecast優勢局面でもロットが伸びず取りこぼしが残っていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ENABLED=1`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_C_CONF_FLOOR: 74 -> 68`
+    - `SCALP_PING_5S_C_DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: 0.20 -> 0.45`
+    - `ENTRY_PROBABILITY_ALIGN_*` を forecast寄りへ調整
+      （`BOOST_MAX` 引き上げ / `PENALTY_MAX` 引き下げ /
+      `FLOOR_RAW_MIN` と `FLOOR` 緩和 / `UNITS_MAX_MULT` 引き上げ）。
+    - `ENTRY_PROBABILITY_BAND_ALLOC_*` を中確率帯で通しやすい閾値へ変更
+      （`LOW/HIGH=0.62/0.82`、`HIGH_REDUCE_MAX` 緩和、`LOW_BOOST_MAX` 引き上げ）。
+  - `ops/env/quant-order-manager.env`
+    - C 向け preserve-intent をさらに通過寄りへ更新:
+      - `REJECT_UNDER: 0.25 -> 0.18`
+      - `MIN_SCALE: 0.70 -> 0.80`
+      - `MAX_SCALE: 1.00 -> 1.15`
+      - `BOOST_PROBABILITY=0.65` を strategy override で追加。
+- 意図:
+  - 「予測が強いときは入る・伸ばす」を C 導線で明示し、
+    `entry_probability` 起因の未約定と過小ロットを同時に減らす。
+  - `perf_guard` は止める運用から縮小運用へ寄せ、機会損失を抑える。
+
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
 - 背景（VM実測）:
