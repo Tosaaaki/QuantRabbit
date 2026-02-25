@@ -5566,3 +5566,25 @@
 - 意図:
   - 条件は固定し、再生で悪化を出さない範囲で
     期待値を段階的に引き上げる。
+
+### 2026-02-25（追記）`scalp_ping_5s_d_live` バーンイン判定を自動化
+
+- 追加:
+  - `scripts/ping5s_d_canary_guard.py`
+- 概要:
+  - `trades.db` / `orders.db` の直近窓を集計し、
+    `jpy_per_hour`, `trades_per_hour`, `margin_reject_count` で
+    `promote / hold / rollback` を返す。
+  - 既定閾値:
+    - `min_jpy_per_hour=0`
+    - `min_trades_per_hour=6`
+    - `max_margin_reject=0`
+    - `rollback_jpy_per_hour=-200`
+  - 既定ターゲット:
+    - promote: `22000`
+    - rollback: `15000`
+- 出力:
+  - `logs/ping5s_d_canary_guard_latest.json`
+- 意図:
+  - 口頭判断を排除し、`u=18000` からの昇格/降格を
+    同一基準で再現可能にする。

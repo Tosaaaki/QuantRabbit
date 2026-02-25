@@ -503,3 +503,28 @@ DB:
 - 意図:
   - 条件（11時/both）は固定し、過去再生で悪化を出さずに
     期待値を拡張できる最小増分として +20% を適用。
+
+### 20.6 2026-02-25 更新（Dバーンイン自動判定ガード）
+
+- 目的:
+  - `u=18000` 運用中の 1-2h バーンイン判定を定型化し、
+    `promote / hold / rollback` を機械的に返す。
+- 実装:
+  - `scripts/ping5s_d_canary_guard.py`
+  - 入力:
+    - `logs/trades.db` / `logs/orders.db`
+    - `ops/env/scalp_ping_5s_d.env`
+  - 判定指標（既定）:
+    - `jpy_per_hour > 0`
+    - `trades_per_hour >= 6`
+    - `margin_reject_count == 0`
+  - 分岐:
+    - `promote` -> `target_units=22000`
+    - `hold` -> 現行維持
+    - `rollback` -> `target_units=15000`
+- 例:
+```bash
+.venv/bin/python scripts/ping5s_d_canary_guard.py \
+  --window-minutes 120 \
+  --out logs/ping5s_d_canary_guard_latest.json
+```
