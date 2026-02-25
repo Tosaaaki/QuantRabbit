@@ -70,6 +70,19 @@
   - `--lite` の処理時間を短く保ち、`quant-ui-snapshot.timer` 周期で
     確実に publish を回すことを優先する。
 
+### 2026-02-25（追記）UI snapshot の GCS upload timeout を導入
+
+- 背景（VM実測）:
+  - `--lite` で取得項目を削減後も、`quant-ui-snapshot.service` が
+    90 秒 timeout に到達する周期が残り、I/O 待ち由来の長時間ブロックが疑われた。
+- 変更:
+  - `analytics/gcs_publisher.py`
+    - `UI_SNAPSHOT_GCS_UPLOAD_TIMEOUT_SEC`（既定 `8` 秒）を追加。
+    - `blob.upload_from_string(..., timeout=...)` で upload 上限時間を明示。
+- 意図:
+  - GCS 側の応答停滞で snapshot publish パス全体が停止する状態を避け、
+    timer 周期での再試行性を確保する。
+
 ### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
 
 - 背景（VM実測）:

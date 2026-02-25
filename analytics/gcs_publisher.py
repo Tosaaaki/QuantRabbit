@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -17,6 +18,9 @@ from utils.gcs_uploader import metadata_available, upload_json_via_metadata
 
 _DEFAULT_OBJECT = "realtime/ui_state.json"
 _DEFAULT_BUCKET_KEYS = ("ui_bucket_name", "GCS_BACKUP_BUCKET")
+_UPLOAD_TIMEOUT_SEC = max(
+    1.0, float(os.getenv("UI_SNAPSHOT_GCS_UPLOAD_TIMEOUT_SEC", "8.0"))
+)
 
 
 def _is_placeholder(value: str) -> bool:
@@ -152,7 +156,11 @@ class GCSRealtimePublisher:
             try:
                 blob = self._bucket.blob(self._object_path)
                 blob.cache_control = "no-cache"
-                blob.upload_from_string(serialized, content_type="application/json")
+                blob.upload_from_string(
+                    serialized,
+                    content_type="application/json",
+                    timeout=_UPLOAD_TIMEOUT_SEC,
+                )
                 logging.info(
                     "[GCS] realtime snapshot uploaded: trades=%d recent=%d",
                     len(payload["new_trades"]),
