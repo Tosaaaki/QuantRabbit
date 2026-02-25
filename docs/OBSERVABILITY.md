@@ -17,6 +17,10 @@
 - `scripts/publish_ui_snapshot.py --lite` は、既定では open positions 取得も行わない
   （`UI_SNAPSHOT_LITE_INCLUDE_POSITIONS=0` 既定）。建玉詳細を含める場合のみ
   `UI_SNAPSHOT_LITE_INCLUDE_POSITIONS=1` を指定する。
+- `scripts/publish_ui_snapshot.py --lite` は、既定では拡張メトリクス
+  （`orders_last` / `orders_status_1h` / `signals_recent` など）も収集しない
+  （`UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS=0` 既定）。
+  拡張項目が必要な場合のみ `UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS=1` を指定する。
 
 ## 2. ログの真偽と参照ルール
 - 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。

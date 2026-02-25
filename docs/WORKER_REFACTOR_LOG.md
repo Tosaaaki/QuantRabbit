@@ -54,6 +54,22 @@
 - 意図:
   - `--lite` で publish 到達率を最優先し、重い建玉参照は明示 opt-in へ分離する。
 
+### 2026-02-25（追記）`publish_ui_snapshot --lite` の拡張メトリクス収集をデフォルト無効化
+
+- 背景（VM実測）:
+  - `sync_trades` / open positions を既定無効化した後も、`--lite` 実行で
+    90 秒 timeout が残存し、publish 完了率が安定しなかった。
+  - 原因切り分け上、`orders/signals` 系の拡張メトリクス収集を
+    `--lite` 既定動作から外して publish 優先に寄せる必要があった。
+- 変更:
+  - `scripts/publish_ui_snapshot.py`
+    - `UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS`（既定 `0`）を追加。
+    - `--lite` 実行時は、同フラグを有効化した場合のみ
+      `orders_last` / `orders_status_1h` / `signals_recent` 等を収集する。
+- 意図:
+  - `--lite` の処理時間を短く保ち、`quant-ui-snapshot.timer` 周期で
+    確実に publish を回すことを優先する。
+
 ### 2026-02-25（追記）`quant-order-manager` / `quant-position-manager` の service 有効化不整合を修正
 
 - 背景（VM実測）:

@@ -55,6 +55,13 @@ LITE_SNAPSHOT_FAST = (
     os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
     in {"fast", "minimal"}
 )
+LITE_INCLUDE_EXTENDED_METRICS = os.getenv(
+    "UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS", "0"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lower() in {
     "1",
     "true",
@@ -719,7 +726,8 @@ def main() -> int:
             metrics["health_snapshot"] = health_snapshot
         healthbeat_ts = _load_last_metric_ts("healthbeat")
         metrics["healthbeat_ts"] = healthbeat_ts
-        if not (args.lite and LITE_SNAPSHOT_FAST):
+        include_extended_metrics = (not args.lite) or LITE_INCLUDE_EXTENDED_METRICS
+        if include_extended_metrics and not (args.lite and LITE_SNAPSHOT_FAST):
             last_orders = _load_last_orders()
             metrics["orders_last"] = last_orders
             status_counts = _load_order_status_counts()
