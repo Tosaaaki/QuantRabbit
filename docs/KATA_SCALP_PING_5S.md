@@ -413,3 +413,20 @@ DB:
 - 注意:
   - C/D ルーター混在では C 側寄り配分で悪化するため、
     D narrow の評価は D 単独導線で実施する。
+
+### 20.1 2026-02-25 更新（当日ティック再最適化）
+
+- 対象:
+  - `logs/replay/USD_JPY/USD_JPY_ticks_20260225.jsonl`（VM実ログを取得）
+- 条件:
+  - `--sp-live-entry --sp-only --no-hard-sl --exclude-end-of-replay`
+- 単体窓の結果（D）:
+  - `short_allow9`: `-1974.52 JPY`
+  - `short_allow10`: `-2809.12 JPY`
+  - `short_allow11`: `+153.00 JPY`
+  - `long_allow10`: `-1168.54 JPY`
+  - `both_allow11`: `+190.12 JPY`（最良）
+- 反映方針:
+  - `SCALP_PING_5S_D_ALLOW_HOURS_JST=11`
+  - `SCALP_PING_5S_D_SIDE_FILTER=`（両方向）
+  - `10時(JST)` は当日損失源として除外。

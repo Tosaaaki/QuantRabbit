@@ -8,6 +8,40 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-25（追記）`scalp_extrema_reversal_live` を新設（高値ショート/安値ロングの両側反転）
+
+- 背景（VM実測）:
+  - 高値帯・安値帯の反転局面で、既存 5秒スキャ系は
+    `entry_probability_below_min_units` / `perf_block` / `reentry_block`
+    により最終発注まで到達しないケースが連続した。
+  - 特に「高値で売れない」「安値で買えない」の対称的な取りこぼしがあり、
+    方向別の後段ゲート依存を下げた専用導線が必要だった。
+- 変更:
+  - 追加: `workers/scalp_extrema_reversal/worker.py`
+    - `M1` の極値帯（range snapshot 上下端 + 直近 tick 極値）近傍で、
+      `tick_reversal` 確認後のみ `OPEN_SHORT/OPEN_LONG` を出す専用 ENTRY ワーカーを実装。
+    - `entry_thesis` に `entry_probability` / `entry_units_intent` を必須注入し、
+      `entry_probability_raw` と `extrema` 文脈を監査用に付与。
+  - 追加: `workers/scalp_extrema_reversal/exit_worker.py`
+    - `scalp_level_reject` の exit 実装を env マッピングで再利用するラッパーを追加。
+  - 追加: `systemd/quant-scalp-extrema-reversal.service`
+  - 追加: `systemd/quant-scalp-extrema-reversal-exit.service`
+  - 追加: `ops/env/quant-scalp-extrema-reversal.env`
+  - 追加: `ops/env/quant-scalp-extrema-reversal-exit.env`
+  - 更新: `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_*` と `ORDER_MIN_UNITS_*` を
+      `SCALP_EXTREMA_REVERSAL_LIVE` 向けに追加（`min_units=30`）。
+    - `SCALP_EXTREMA_REVERSAL_PERF_GUARD_MODE=warn` を追加。
+  - 更新: `ops/env/quant-v2-runtime.env`
+    - local fallback 一貫性のため同 strategy 向けの
+      `ORDER_MANAGER_PRESERVE_INTENT_*` / `ORDER_MIN_UNITS_*` を追記。
+  - 更新: `scripts/ops_v2_audit.py`
+    - `quant-scalp-extrema-reversal*.service` を optional pair として監査対象へ追加。
+- 意図:
+  - 高値ショート/安値ロングの反転機会を、既存戦略の過剰な同一導線抑制から分離して確保する。
+  - V2 の役割分離（strategy local decision + order_manager preflight）を維持しつつ、
+    両方向の取りこぼしを同時に減らす。
+
 ### 2026-02-25（追記）`scalp_ping_5s_c_live` のクラスター損失に対する動的抑制を追加
 
 - 背景（VM実測）:
@@ -39,6 +73,24 @@
   - 「固定cap」ではなく市況・方向一致・逆行圧に応じて同方向上限を縮め、
     クラスター由来の尾を先に削る。
   - C exit の side別保護を実際の service 実装へ反映し、設定と実装の乖離を解消する。
+
+### 2026-02-25（追記）reentry 判定を V2 導線で無効化
+
+- 背景:
+  - `execution/reentry_gate.py`（order-manager preflight）の `reentry_block` が
+    strategy local 判定とは別軸で ENTRY 密度を抑制するケースがあり、
+    運用方針「戦略ローカル優先」と乖離しやすかった。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `REENTRY_GATE_ENABLED=0`
+    - `REENTRY_ENABLE_ALL=0`
+  - `ops/env/quant-order-manager.env`
+    - `REENTRY_GATE_ENABLED=0`
+    - `REENTRY_ENABLE_ALL=0`
+- 意図:
+  - `order_manager` の reentry preflight を no-op 化し、
+    ENTRY 可否は strategy ローカル判定 + 既存ガード/リスク判定へ集約する。
+  - `config/worker_reentry.yaml` は監査・再開用の履歴として保持し、再開時のみ env を戻して使う。
 
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
@@ -5291,3 +5343,23 @@
     - `jpy_per_hour(active)=+2079.16`
     - `max_drawdown_jpy=2589.66`
   - C/D ルーター混在では C 側配分で悪化しうるため、D narrow は単独導線で評価する。
+
+### 2026-02-25（追記）`scalp_ping_5s_d` 当日ティック再最適化（allow=11 / side=both）
+
+- 背景（VM実績, 直近6h・補正集計）:
+  - `scalp_ping_5s_d_live`: `2 trades`, `-30.28 JPY`
+  - `scalp_ping_5s_c_live`: `59 trades`, `-216.43 JPY`
+  - Dの `short + allow=10` が当日地合いで逆行したため、当日ティックで再探索を実施。
+- 当日リプレイ（`USD_JPY_ticks_20260225.jsonl`, `--sp-live-entry --sp-only --no-hard-sl --exclude-end-of-replay`）:
+  - `short_allow9`: `-1974.52 JPY`
+  - `short_allow10`: `-2809.12 JPY`
+  - `short_allow11`: `+153.00 JPY`
+  - `long_allow10`: `-1168.54 JPY`
+  - `both_allow11`: `+190.12 JPY`（`PF_jpy=1.365`）
+- 反映:
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_SIDE_FILTER=`（両方向）
+    - `SCALP_PING_5S_D_ALLOW_HOURS_JST=11`
+- 意図:
+  - 日内で損失源だった `10時(JST)` を除外し、
+    当日再生で唯一正だった `11時(JST)` 窓へ集約する。
