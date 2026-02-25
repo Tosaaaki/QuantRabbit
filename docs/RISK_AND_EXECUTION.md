@@ -390,6 +390,16 @@
 - `quant-dynamic-alloc.service` の `--target-use` は `0.88` を基準とし、
   `account.margin_usage_ratio` が高止まりする局面での margin block 連発を抑える。
 
+### 緊急止血運用（2026-02-25 追記）
+- 戦略別の短期成績が急悪化した場合は、`*_BLOCK_HOURS_*` を全時間帯へ拡張し、
+  新規ENTRYのみ即時停止する（EXITワーカーは停止しない）。
+- 2026-02-25 の運用では次を適用:
+  - `M1SCALP_BLOCK_HOURS_UTC=0-23`
+  - `SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23`（service override）
+- 再開条件:
+  - 直近ウィンドウで win rate / PF / SL率が閾値を回復し、
+    方向整合（`signal_side` vs `exec_side`）の逆行が解消していることを確認後に段階解除。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

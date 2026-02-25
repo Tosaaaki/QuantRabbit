@@ -5899,3 +5899,20 @@
 - 意図:
   - `order_manager_none` を「通信失敗」と混同しないようにし、
     local reject 理由（`entry_probability_reject*`）を可視化する。
+
+### 2026-02-25（追記）緊急止血: `scalp_ping_5s_b` / `M1Scalper-M1` の新規ENTRY停止
+
+- 背景（VM実測, UTC 2026-02-25 11:49 前後）:
+  - 直近90分の実現損益が `-2821.69`。
+  - 内訳は `scalp_ping_5s_b_live=-1525.31`, `M1Scalper-M1=-1309.33` が主因。
+  - `STOP_LOSS_ORDER` が損失主成分（同期間 `-2287.41`）。
+- 変更:
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_BLOCK_HOURS_UTC=0-23`（全時間帯ブロック）
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - `Environment="SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23"` を追記
+      （`scalp_ping_5s_b.env` の既存設定を上書きし、全時間帯ブロック）
+- 意図:
+  - EXITワーカーは維持したまま、`B` と `M1` の新規ENTRYのみを即時停止して
+    ドローダウン拡大を止血する。
+  - 予測/方向整合の再検証が終わるまで、再開しない運用に固定する。

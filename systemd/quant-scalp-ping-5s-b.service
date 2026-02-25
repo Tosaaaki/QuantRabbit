@@ -10,6 +10,8 @@ WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 # Project-local overrides (repo copy for this clone's live tuning knobs).
 EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_b.env
+# Emergency hold (2026-02-25): keep service alive but block new ENTRY in all JST hours.
+Environment="SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker
 Restart=always
 RestartSec=5
