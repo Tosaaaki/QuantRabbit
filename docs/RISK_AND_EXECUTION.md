@@ -278,6 +278,11 @@
   - service（`quant-order-manager.env`）は低遅延値
     `0.12s / 0.02s`、fallback（`quant-v2-runtime.env`）は
     記録重視の `0.30s / 0.05s` を運用値とする。
+- `ORDER_STATUS_CACHE_TTL_SEC`（既定 180）で
+  `client_order_id` ごとの直近 status をメモリ保持する。
+  - pre-service DB 記録を抑制する経路でも、
+    `get_last_order_status_by_client_id` が local reject 理由を返せる。
+  - `order_manager_none` の過剰表示を避け、実際の reject reason を優先する。
 - `close_trade` 経路の orders 監査ログは fast-fail モードで記録する。
   - DB lock 中は `/order/close_trade` 応答遅延を避けることを優先し、
     ログ書き込みは短い retry budget で打ち切る。

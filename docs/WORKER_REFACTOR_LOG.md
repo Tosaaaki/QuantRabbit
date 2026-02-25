@@ -5875,3 +5875,27 @@
     `orders.db is locked` 警告と stale 進行を抑える。
   - `coordinate_entry_intent` の遅延要因を減らし、
     strategy 側 timeout 連鎖を止める。
+
+### 2026-02-25（追記）`order_manager_none` 誤分類の抑止（status cache）
+
+- 症状（VM実測, UTC 2026-02-25 09:47）:
+  - service timeout が収束した後も、
+    `scalp_ping_5s_b` の short で `order_manager_none` が残る。
+  - 実際は `OPEN_SKIP note=entry_probability:entry_probability_reject_threshold`
+    で、service障害ではなく local reject。
+- 変更:
+  - `execution/order_manager.py`
+    - `ORDER_STATUS_CACHE_TTL_SEC`（既定 180s）を追加し、
+      `client_order_id` ごとの直近 status をメモリ保持。
+    - `_log_order` 実行時に DB 成否に依存せず status cache を更新。
+    - `get_last_order_status_by_client_id` は DB 未取得時に
+      status cache を返す。
+    - `entry_probability_reject` で pre-service DB 記録を抑制する経路でも
+      status cache へ reject reason を記録。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_STATUS_CACHE_TTL_SEC=180`
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_STATUS_CACHE_TTL_SEC=180`
+- 意図:
+  - `order_manager_none` を「通信失敗」と混同しないようにし、
+    local reject 理由（`entry_probability_reject*`）を可視化する。

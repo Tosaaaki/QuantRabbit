@@ -2857,7 +2857,12 @@ _ORDER_DB_FILE_LOCK_TIMEOUT_SEC = max(
 _ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC = max(
     0.0, float(os.getenv("ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC", "0.03"))
 )
+_ORDER_STATUS_CACHE_TTL_SEC = max(
+    5.0, float(os.getenv("ORDER_STATUS_CACHE_TTL_SEC", "180.0"))
+)
 _LAST_ORDER_DB_CHECKPOINT = 0.0
+_ORDER_STATUS_CACHE_LOCK = threading.Lock()
+_ORDER_STATUS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
 
 _DEFAULT_MIN_HOLD_SEC = {
     "macro": 360.0,
@@ -3083,6 +3088,69 @@ def _is_sqlite_locked_error(exc: Exception) -> bool:
         return False
     msg = str(exc).strip().lower()
     return "locked" in msg or "busy" in msg
+
+
+def _cache_order_status(
+    *,
+    ts: str,
+    client_order_id: Optional[str],
+    status: Optional[str],
+    attempt: Optional[int],
+    side: Optional[str] = None,
+    units: Optional[int] = None,
+    error_code: Optional[str] = None,
+    error_message: Optional[str] = None,
+    request_payload: Optional[dict] = None,
+    response_payload: Optional[dict] = None,
+) -> None:
+    if not client_order_id:
+        return
+    now_mono = time.monotonic()
+    payload: dict[str, object] = {
+        "ts": ts,
+        "status": status,
+        "attempt": attempt,
+        "side": side,
+        "units": units,
+        "error_code": error_code,
+        "error_message": error_message,
+        "request_json": _safe_json(request_payload),
+        "response_json": _safe_json(response_payload),
+    }
+    with _ORDER_STATUS_CACHE_LOCK:
+        _ORDER_STATUS_CACHE[str(client_order_id)] = (now_mono, payload)
+        if len(_ORDER_STATUS_CACHE) <= 2048:
+            return
+        stale_keys = [
+            key
+            for key, (updated, _) in _ORDER_STATUS_CACHE.items()
+            if now_mono - updated > _ORDER_STATUS_CACHE_TTL_SEC
+        ]
+        for key in stale_keys:
+            _ORDER_STATUS_CACHE.pop(key, None)
+        if len(_ORDER_STATUS_CACHE) > 2048:
+            oldest = sorted(
+                _ORDER_STATUS_CACHE.items(),
+                key=lambda item: item[1][0],
+            )
+            drop_n = len(_ORDER_STATUS_CACHE) - 2048
+            for key, _ in oldest[:drop_n]:
+                _ORDER_STATUS_CACHE.pop(key, None)
+
+
+def _cached_order_status(client_order_id: Optional[str]) -> Optional[dict[str, object]]:
+    if not client_order_id:
+        return None
+    now_mono = time.monotonic()
+    with _ORDER_STATUS_CACHE_LOCK:
+        entry = _ORDER_STATUS_CACHE.get(str(client_order_id))
+        if entry is None:
+            return None
+        updated, payload = entry
+        if now_mono - updated > _ORDER_STATUS_CACHE_TTL_SEC:
+            _ORDER_STATUS_CACHE.pop(str(client_order_id), None)
+            return None
+        return dict(payload)
 
 
 def _ensure_utc(candidate: Optional[datetime]) -> datetime:
@@ -4659,6 +4727,18 @@ def _log_order(
     fast_fail: bool = False,
 ) -> None:
     ts = datetime.now(timezone.utc).isoformat()
+    _cache_order_status(
+        ts=ts,
+        client_order_id=client_order_id,
+        status=status,
+        attempt=attempt,
+        side=side,
+        units=units,
+        error_code=error_code,
+        error_message=error_message,
+        request_payload=request_payload,
+        response_payload=response_payload,
+    )
     row_values = (
         ts,
         pocket,
@@ -4761,7 +4841,7 @@ def get_last_order_status_by_client_id(
     try:
         con = _orders_con()
     except Exception:
-        return None
+        return _cached_order_status(client_order_id)
     try:
         row = con.execute(
             """
@@ -4783,9 +4863,9 @@ def get_last_order_status_by_client_id(
             (str(client_order_id),),
         ).fetchone()
     except Exception:
-        return None
+        return _cached_order_status(client_order_id)
     if not row:
-        return None
+        return _cached_order_status(client_order_id)
     try:
         ts, status, attempt, side, units, error_code, error_message, request_json, response_json = row
         req = None
@@ -4812,7 +4892,7 @@ def get_last_order_status_by_client_id(
             "response": res,
         }
     except Exception:
-        return None
+        return _cached_order_status(client_order_id)
 
 
 def _console_order_log(
@@ -7542,6 +7622,22 @@ async def market_order(
                     client_order_id=client_order_id,
                     status="entry_probability_reject",
                     attempt=0,
+                    request_payload={
+                        "entry_probability": entry_probability,
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                        "entry_probability_reject_reason": reason_note,
+                    },
+                )
+            else:
+                _cache_order_status(
+                    ts=datetime.now(timezone.utc).isoformat(),
+                    client_order_id=client_order_id,
+                    status="entry_probability_reject",
+                    attempt=0,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    error_message=reason_note,
                     request_payload={
                         "entry_probability": entry_probability,
                         "entry_thesis": entry_thesis,
