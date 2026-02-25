@@ -430,3 +430,17 @@ DB:
   - `SCALP_PING_5S_D_ALLOW_HOURS_JST=11`
   - `SCALP_PING_5S_D_SIDE_FILTER=`（両方向）
   - `10時(JST)` は当日損失源として除外。
+
+### 20.2 2026-02-25 更新（11時窓での units sweep + C停止）
+
+- 追加検証（同日ティック）:
+  - `allow=11`, `side=both`, `--sp-live-entry --sp-only --no-hard-sl --exclude-end-of-replay`
+  - `base/max=9000`: `+190.12 JPY`
+  - `base/max=12000`: `+253.49 JPY`
+  - `base/max=15000`: `+316.87 JPY`
+- 採用:
+  - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=15000`
+  - `SCALP_PING_5S_D_MAX_UNITS=15000`
+- 併行措置:
+  - `scalp_ping_5s_c_live` は直近90分で `-671.68 JPY` と悪化していたため、
+    `SCALP_PING_5S_C_ENABLED=0` で entry を停止。

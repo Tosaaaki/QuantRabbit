@@ -5363,3 +5363,24 @@
 - 意図:
   - 日内で損失源だった `10時(JST)` を除外し、
     当日再生で唯一正だった `11時(JST)` 窓へ集約する。
+
+### 2026-02-25（追記）`scalp_ping_5s_c` 停止 + `scalp_ping_5s_d` サイズ増分（11時窓）
+
+- 背景（VM実績, 直近90分）:
+  - `scalp_ping_5s_c_live`: `35 trades`, `-671.68 JPY`
+  - `scalp_ping_5s_d_live`: `3 trades`, `-28.54 JPY`
+  - 直近の主損失源は C と判定。
+- 当日ティック再生（`USD_JPY_ticks_20260225.jsonl`）:
+  - 条件: `allow=11`, `side=both`, `--sp-live-entry --sp-only --no-hard-sl --exclude-end-of-replay`
+  - units sweep:
+    - `base/max=9000`: `+190.12 JPY`（`9 trades`, `PF_jpy=1.365`）
+    - `base/max=12000`: `+253.49 JPY`（`9 trades`, `PF_jpy=1.365`）
+    - `base/max=15000`: `+316.87 JPY`（`9 trades`, `PF_jpy=1.365`）
+- 反映:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ENABLED=0`（C entry停止）
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=15000`
+    - `SCALP_PING_5S_D_MAX_UNITS=15000`
+- 意図:
+  - Cの損失リークを遮断し、11時窓で正の期待値を示した D に資本を寄せる。
