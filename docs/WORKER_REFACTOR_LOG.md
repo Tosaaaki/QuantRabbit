@@ -5606,6 +5606,10 @@
     - rollback: `15000`
 - 出力:
   - `logs/ping5s_d_canary_guard_latest.json`
+- 実装メモ:
+  - `orders/trades` は DB 全掃引を避け、`id` の直近行数
+    （既定 `orders=50000`, `trades=20000`）へ先に絞ってから
+    `window_minutes` で判定する。
 - 意図:
   - 口頭判断を排除し、`u=18000` からの昇格/降格を
     同一基準で再現可能にする。

@@ -80,26 +80,48 @@ def _read_trade_metrics(
     *,
     strategy_tag: str,
     window_minutes: int,
+    lookback_rows: int,
 ) -> TradeMetrics:
     if not db_path.exists():
         return TradeMetrics(0, 0.0, 0.0, 0.0, 0.0, None, None)
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
     con.row_factory = sqlite3.Row
     try:
-        row = con.execute(
-            """
-            SELECT
-              COUNT(*) AS n,
-              COALESCE(SUM(realized_pl), 0.0) AS sum_jpy,
-              COALESCE(SUM(pl_pips), 0.0) AS sum_pips,
-              MIN(COALESCE(close_time, entry_time)) AS first_ts,
-              MAX(COALESCE(close_time, entry_time)) AS last_ts
-            FROM trades
-            WHERE strategy_tag = ?
-              AND datetime(substr(COALESCE(close_time, entry_time), 1, 19)) >= datetime('now', ?)
-            """,
-            (strategy_tag, f"-{int(window_minutes)} minutes"),
-        ).fetchone()
+        try:
+            row = con.execute(
+                """
+                WITH recent AS (
+                  SELECT id, strategy_tag, realized_pl, pl_pips, close_time, entry_time
+                  FROM trades
+                  WHERE id > (SELECT COALESCE(MAX(id) - ?, 0) FROM trades)
+                )
+                SELECT
+                  COUNT(*) AS n,
+                  COALESCE(SUM(realized_pl), 0.0) AS sum_jpy,
+                  COALESCE(SUM(pl_pips), 0.0) AS sum_pips,
+                  MIN(COALESCE(close_time, entry_time)) AS first_ts,
+                  MAX(COALESCE(close_time, entry_time)) AS last_ts
+                FROM recent
+                WHERE strategy_tag = ?
+                  AND datetime(substr(COALESCE(close_time, entry_time), 1, 19)) >= datetime('now', ?)
+                """,
+                (max(100, int(lookback_rows)), strategy_tag, f"-{int(window_minutes)} minutes"),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = con.execute(
+                """
+                SELECT
+                  COUNT(*) AS n,
+                  COALESCE(SUM(realized_pl), 0.0) AS sum_jpy,
+                  COALESCE(SUM(pl_pips), 0.0) AS sum_pips,
+                  MIN(COALESCE(close_time, entry_time)) AS first_ts,
+                  MAX(COALESCE(close_time, entry_time)) AS last_ts
+                FROM trades
+                WHERE strategy_tag = ?
+                  AND datetime(substr(COALESCE(close_time, entry_time), 1, 19)) >= datetime('now', ?)
+                """,
+                (strategy_tag, f"-{int(window_minutes)} minutes"),
+            ).fetchone()
     finally:
         con.close()
 
@@ -123,54 +145,114 @@ def _read_order_metrics(
     *,
     strategy_tag: str,
     window_minutes: int,
+    lookback_rows: int,
 ) -> OrderMetrics:
     if not db_path.exists():
         return OrderMetrics(0, 0, 0, 0, 0, 0, 0)
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
     con.row_factory = sqlite3.Row
     try:
-        row = con.execute(
-            """
-            WITH recent AS (
-              SELECT
-                status,
-                COALESCE(error_code, '') AS ec,
-                COALESCE(error_message, '') AS em,
-                COALESCE(
-                  json_extract(request_json, '$.entry_thesis.strategy_tag'),
-                  json_extract(request_json, '$.strategy_tag'),
-                  ''
-                ) AS tag
-              FROM orders
-              WHERE datetime(substr(ts, 1, 19)) >= datetime('now', ?)
-            )
-            SELECT
-              COUNT(*) AS total_n,
-              SUM(CASE WHEN lower(status) = 'filled' THEN 1 ELSE 0 END) AS filled_n,
-              SUM(CASE WHEN lower(status) = 'submit_attempt' THEN 1 ELSE 0 END) AS submit_n,
-              SUM(CASE WHEN lower(status) = 'entry_probability_reject' THEN 1 ELSE 0 END) AS prob_reject_n,
-              SUM(CASE WHEN lower(status) = 'perf_block' THEN 1 ELSE 0 END) AS perf_block_n,
-              SUM(
-                CASE
-                  WHEN lower(status) IN ('rejected', 'failed', 'error', 'cancelled') THEN 1
-                  ELSE 0
-                END
-              ) AS hard_reject_n,
-              SUM(
-                CASE
-                  WHEN (
-                    lower(status || ' ' || ec || ' ' || em) LIKE '%margin%'
-                    OR lower(status || ' ' || ec || ' ' || em) LIKE '%closeout%'
-                    OR lower(status || ' ' || ec || ' ' || em) LIKE '%insufficient%'
-                  ) THEN 1
-                  ELSE 0
-                END
-              ) AS margin_reject_n
-            FROM recent
-            WHERE tag = ?
-            """,
-            (f"-{int(window_minutes)} minutes", strategy_tag),
-        ).fetchone()
+        try:
+            row = con.execute(
+                """
+                WITH recent AS (
+                  SELECT
+                    id,
+                    ts,
+                    status,
+                    COALESCE(error_code, '') AS ec,
+                    COALESCE(error_message, '') AS em,
+                    request_json
+                  FROM orders
+                  WHERE id > (SELECT COALESCE(MAX(id) - ?, 0) FROM orders)
+                ),
+                filtered AS (
+                  SELECT
+                    status,
+                    ec,
+                    em,
+                    COALESCE(
+                      json_extract(request_json, '$.entry_thesis.strategy_tag'),
+                      json_extract(request_json, '$.strategy_tag'),
+                      ''
+                    ) AS tag
+                  FROM recent
+                  WHERE datetime(substr(ts, 1, 19)) >= datetime('now', ?)
+                )
+                SELECT
+                  COUNT(*) AS total_n,
+                  SUM(CASE WHEN lower(status) = 'filled' THEN 1 ELSE 0 END) AS filled_n,
+                  SUM(CASE WHEN lower(status) = 'submit_attempt' THEN 1 ELSE 0 END) AS submit_n,
+                  SUM(CASE WHEN lower(status) = 'entry_probability_reject' THEN 1 ELSE 0 END) AS prob_reject_n,
+                  SUM(CASE WHEN lower(status) = 'perf_block' THEN 1 ELSE 0 END) AS perf_block_n,
+                  SUM(
+                    CASE
+                      WHEN lower(status) IN ('rejected', 'failed', 'error', 'cancelled') THEN 1
+                      ELSE 0
+                    END
+                  ) AS hard_reject_n,
+                  SUM(
+                    CASE
+                      WHEN (
+                        lower(status || ' ' || ec || ' ' || em) LIKE '%margin%'
+                        OR lower(status || ' ' || ec || ' ' || em) LIKE '%closeout%'
+                        OR lower(status || ' ' || ec || ' ' || em) LIKE '%insufficient%'
+                      ) THEN 1
+                      ELSE 0
+                    END
+                  ) AS margin_reject_n
+                FROM filtered
+                WHERE tag = ?
+                """,
+                (
+                    max(500, int(lookback_rows)),
+                    f"-{int(window_minutes)} minutes",
+                    strategy_tag,
+                ),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = con.execute(
+                """
+                WITH recent AS (
+                  SELECT
+                    status,
+                    COALESCE(error_code, '') AS ec,
+                    COALESCE(error_message, '') AS em,
+                    COALESCE(
+                      json_extract(request_json, '$.entry_thesis.strategy_tag'),
+                      json_extract(request_json, '$.strategy_tag'),
+                      ''
+                    ) AS tag
+                  FROM orders
+                  WHERE datetime(substr(ts, 1, 19)) >= datetime('now', ?)
+                )
+                SELECT
+                  COUNT(*) AS total_n,
+                  SUM(CASE WHEN lower(status) = 'filled' THEN 1 ELSE 0 END) AS filled_n,
+                  SUM(CASE WHEN lower(status) = 'submit_attempt' THEN 1 ELSE 0 END) AS submit_n,
+                  SUM(CASE WHEN lower(status) = 'entry_probability_reject' THEN 1 ELSE 0 END) AS prob_reject_n,
+                  SUM(CASE WHEN lower(status) = 'perf_block' THEN 1 ELSE 0 END) AS perf_block_n,
+                  SUM(
+                    CASE
+                      WHEN lower(status) IN ('rejected', 'failed', 'error', 'cancelled') THEN 1
+                      ELSE 0
+                    END
+                  ) AS hard_reject_n,
+                  SUM(
+                    CASE
+                      WHEN (
+                        lower(status || ' ' || ec || ' ' || em) LIKE '%margin%'
+                        OR lower(status || ' ' || ec || ' ' || em) LIKE '%closeout%'
+                        OR lower(status || ' ' || ec || ' ' || em) LIKE '%insufficient%'
+                      ) THEN 1
+                      ELSE 0
+                    END
+                  ) AS margin_reject_n
+                FROM recent
+                WHERE tag = ?
+                """,
+                (f"-{int(window_minutes)} minutes", strategy_tag),
+            ).fetchone()
     finally:
         con.close()
 
@@ -300,6 +382,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--env-file", type=Path, default=Path("ops/env/scalp_ping_5s_d.env"))
     ap.add_argument("--strategy-tag", default="scalp_ping_5s_d_live")
     ap.add_argument("--window-minutes", type=int, default=120)
+    ap.add_argument("--trades-lookback-rows", type=int, default=20000)
+    ap.add_argument("--orders-lookback-rows", type=int, default=50000)
     ap.add_argument("--min-jpy-per-hour", type=float, default=0.0)
     ap.add_argument("--min-trades-per-hour", type=float, default=6.0)
     ap.add_argument("--min-observed-trades", type=int, default=6)
@@ -326,11 +410,13 @@ def main() -> int:
         args.trades_db,
         strategy_tag=str(args.strategy_tag),
         window_minutes=max(1, int(args.window_minutes)),
+        lookback_rows=max(100, int(args.trades_lookback_rows)),
     )
     order_metrics = _read_order_metrics(
         args.orders_db,
         strategy_tag=str(args.strategy_tag),
         window_minutes=max(1, int(args.window_minutes)),
+        lookback_rows=max(500, int(args.orders_lookback_rows)),
     )
 
     decision = _decide(
@@ -370,6 +456,8 @@ def main() -> int:
                 "rollback_jpy_per_hour": float(args.rollback_jpy_per_hour),
                 "promote_units": int(args.promote_units),
                 "rollback_units": int(args.rollback_units),
+                "trades_lookback_rows": int(args.trades_lookback_rows),
+                "orders_lookback_rows": int(args.orders_lookback_rows),
             },
         },
         "metrics": {

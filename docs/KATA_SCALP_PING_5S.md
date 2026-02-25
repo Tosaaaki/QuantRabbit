@@ -514,6 +514,8 @@ DB:
   - 入力:
     - `logs/trades.db` / `logs/orders.db`
     - `ops/env/scalp_ping_5s_d.env`
+  - 速度最適化:
+    - `orders` / `trades` は既定で直近 `id` 範囲（`50000` / `20000` rows）を先に絞って集計。
   - 判定指標（既定）:
     - `jpy_per_hour > 0`
     - `trades_per_hour >= 6`
