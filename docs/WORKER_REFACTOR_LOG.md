@@ -184,6 +184,24 @@
     `entry_probability` 起因の未約定と過小ロットを同時に減らす。
   - `perf_guard` は止める運用から縮小運用へ寄せ、機会損失を抑える。
 
+### 2026-02-25（追記）`scalp_ping_5s_c` preserve-intent を中立寄りへ再調整
+
+- 背景:
+  - `quant-order-manager.env` が並行作業で C 向け aggressive 値
+    （`REJECT_UNDER=0.18`, `MIN_SCALE=0.80`, `MAX_SCALE=1.15`）へ更新され、
+    低確率帯の通過が増えやすい状態になっていた。
+  - 当日調査の主目的は「`entry_probability_below_min_units` の連発解消」であり、
+    低確率帯の過通過まで狙っていないため、運用意図とずれがあった。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.18 -> 0.25`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.80 -> 0.70`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE): 1.15 -> 1.00`
+    - `ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.65 -> 0.80`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20` は維持。
+- 意図:
+  - 反転局面の取りこぼしは減らしつつ、低確率帯の過剰エントリーを抑える。
+
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
 - 背景（VM実測）:

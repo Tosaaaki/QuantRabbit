@@ -180,6 +180,16 @@
     - `BOOST_PROBABILITY=0.65`
   - 目的は、予測優勢局面で「入らない/小さすぎる」を抑え、
     strategy local の方向判断をより直接に発注へ反映すること。
+- 2026-02-25 追記（preserve-intent 再調整）:
+  - 並行調整で aggressive に寄った C preserve-intent を、
+    反転取りこぼし解消を主目的とした中立値へ戻す。
+    - `REJECT_UNDER=0.25`
+    - `MIN_SCALE=0.70`
+    - `MAX_SCALE=1.00`
+    - `BOOST_PROBABILITY=0.80`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20` は維持
+  - 目的は、低確率帯の過通過を抑えつつ
+    `entry_probability_below_min_units` 由来の取りこぼしを減らすこと。
 
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で
