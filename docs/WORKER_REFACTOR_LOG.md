@@ -5842,3 +5842,36 @@
 - 意図:
   - service 経路の 20 秒超ブロッキングを避け、`order_manager_none` を減らす。
   - `orders.db` への書き込み再試行予算を戻し、stale 化を抑える。
+
+### 2026-02-25（追記）`orders.db` ロック残留抑止（file lock + coordination write削減）
+
+- 症状（VM実測, UTC 2026-02-25 09:xx）:
+  - `order_manager_none` と `database is locked` が継続し、
+    `orders.db` / `entry_intent_board` の更新が遅延。
+  - `quant-order-manager` は稼働中でも `/order/coordinate_entry_intent` が
+    lock系エラーを返す局面を確認。
+- 変更:
+  - `execution/order_manager.py`
+    - `orders.db` write 前に cross-process `flock` を取得する
+      `_order_db_file_lock` を追加（`orders.db.lock`）。
+    - `_log_order` / `entry_intent_board` の `purge` と `record` を
+      file lock 配下で実行し、write競合を直列化。
+    - lock timeout は `sqlite3.OperationalError("database is locked ...")`
+      として扱い、既存 retry/rollback 経路へ統合。
+    - `entry_intent_board` の read前重複削除を削除し、
+      `coordinate_entry_intent` 経路の不要 write を削減。
+    - `entry_intent_board` write 失敗時に `rollback/reset` を追加し、
+      lock発生後のトランザクション残留を防止。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_DB_FILE_LOCK_ENABLED=1`
+    - `ORDER_DB_FILE_LOCK_TIMEOUT_SEC=0.12`
+    - `ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC=0.02`
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_DB_FILE_LOCK_ENABLED=1`
+    - `ORDER_DB_FILE_LOCK_TIMEOUT_SEC=0.30`
+    - `ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC=0.05`
+- 意図:
+  - service と fallback の同時書き込みを lock-step 化し、
+    `orders.db is locked` 警告と stale 進行を抑える。
+  - `coordinate_entry_intent` の遅延要因を減らし、
+    strategy 側 timeout 連鎖を止める。

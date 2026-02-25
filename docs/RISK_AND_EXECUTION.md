@@ -270,6 +270,14 @@
   - `ORDER_DB_LOG_RETRY_SLEEP_SEC=0.04`
   - `ORDER_DB_LOG_RETRY_BACKOFF=1.8`
   - `ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC=0.30`
+  - `ORDER_DB_FILE_LOCK_ENABLED=1`
+  - `ORDER_DB_FILE_LOCK_TIMEOUT_SEC=0.30`
+  - `ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC=0.05`
+- `execution/order_manager.py` は `orders.db.lock` (`flock`) で
+  cross-process write を直列化する。
+  - service（`quant-order-manager.env`）は低遅延値
+    `0.12s / 0.02s`、fallback（`quant-v2-runtime.env`）は
+    記録重視の `0.30s / 0.05s` を運用値とする。
 - `close_trade` 経路の orders 監査ログは fast-fail モードで記録する。
   - DB lock 中は `/order/close_trade` 応答遅延を避けることを優先し、
     ログ書き込みは短い retry budget で打ち切る。
@@ -316,6 +324,9 @@
       低遅延値（`busy_timeout=250ms`, `attempts=3`）を維持し、
       service API の head-of-line blocking を避ける。
       一方 `quant-v2-runtime.env` は `1500ms/6` を維持し、fallback 側の記録耐性を持たせる。
+    - `coordinate_entry_intent` は同一 `client_order_id` の事前削除 write を行わず、
+      board 参照前の不要 write を減らして lock競合を抑える。
+      `entry_intent_board` の整理は purge + expire 窓で行う。
     - `execution/order_manager.py` は `ORDER_SUBMIT_MAX_ATTEMPTS=1` を許容する
       （最小値を 2 固定にしない）。
     - 目的: `/order/market_order` が protection retry で 20 秒超に膨らみ、

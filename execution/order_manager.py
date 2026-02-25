@@ -14,6 +14,7 @@ import logging
 import sqlite3
 import pathlib
 import re
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import os
 import math
@@ -21,6 +22,10 @@ import threading
 from typing import Any, Literal, Optional, Tuple
 import requests
 from requests.adapters import HTTPAdapter
+try:
+    import fcntl
+except Exception:  # pragma: no cover - non-posix fallback
+    fcntl = None
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
@@ -2844,6 +2849,14 @@ _ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC = max(
     0.0, float(os.getenv("ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC", "0.0"))
 )
 _ORDERS_DB_WAL_PATH = _ORDERS_DB_PATH.with_suffix(_ORDERS_DB_PATH.suffix + "-wal")
+_ORDERS_DB_LOCK_PATH = _ORDERS_DB_PATH.with_suffix(_ORDERS_DB_PATH.suffix + ".lock")
+_ORDER_DB_FILE_LOCK_ENABLED = _env_bool("ORDER_DB_FILE_LOCK_ENABLED", True)
+_ORDER_DB_FILE_LOCK_TIMEOUT_SEC = max(
+    0.0, float(os.getenv("ORDER_DB_FILE_LOCK_TIMEOUT_SEC", "0.25"))
+)
+_ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC = max(
+    0.0, float(os.getenv("ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC", "0.03"))
+)
 _LAST_ORDER_DB_CHECKPOINT = 0.0
 
 _DEFAULT_MIN_HOLD_SEC = {
@@ -2851,6 +2864,56 @@ _DEFAULT_MIN_HOLD_SEC = {
     "micro": 150.0,
     "scalp": 75.0,
 }
+
+
+@contextmanager
+def _order_db_file_lock(*, fast_fail: bool = False):
+    """
+    Cross-process write lock for orders.db access.
+
+    WAL mode tolerates concurrent readers, but many writers from strategy/service
+    processes can still thrash on SQLITE_BUSY. A short flock window serializes
+    write attempts and avoids hot lock retry loops.
+    """
+    if not _ORDER_DB_FILE_LOCK_ENABLED or fcntl is None:
+        yield
+        return
+    timeout_sec = (
+        _ORDER_DB_FILE_LOCK_FAST_TIMEOUT_SEC
+        if fast_fail
+        else _ORDER_DB_FILE_LOCK_TIMEOUT_SEC
+    )
+    _ORDERS_DB_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_fp = open(_ORDERS_DB_LOCK_PATH, "a+")
+    locked = False
+    start = time.monotonic()
+    try:
+        while True:
+            try:
+                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                if timeout_sec <= 0.0:
+                    raise sqlite3.OperationalError(
+                        "database is locked (orders.db file lock busy)"
+                    )
+                if time.monotonic() - start >= timeout_sec:
+                    raise sqlite3.OperationalError(
+                        "database is locked (orders.db file lock timeout)"
+                    )
+                time.sleep(0.005)
+        yield
+    finally:
+        try:
+            if locked:
+                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        try:
+            lock_fp.close()
+        except Exception:
+            pass
 
 
 def _configure_orders_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
@@ -3255,14 +3318,19 @@ def _entry_intent_board_purge(now_epoch: float | None = None) -> None:
         return
     if now_epoch is None:
         now_epoch = time.time()
+    con: Optional[sqlite3.Connection] = None
     try:
-        con = _orders_con()
-        con.execute(
-            "DELETE FROM entry_intent_board WHERE expires_at < ?",
-            (float(now_epoch),),
-        )
-        con.commit()
+        with _order_db_file_lock(fast_fail=True):
+            con = _orders_con()
+            con.execute(
+                "DELETE FROM entry_intent_board WHERE expires_at < ?",
+                (float(now_epoch),),
+            )
+            con.commit()
     except Exception as exc:
+        _rollback_orders_con(con)
+        if _is_sqlite_locked_error(exc):
+            _reset_orders_con()
         logging.debug("[ORDER][INTENT] purge failed: %s", exc)
 
 
@@ -3284,35 +3352,40 @@ def _entry_intent_board_record(
     now_epoch = time.time()
     ts = datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat()
     payload = request_payload if isinstance(request_payload, dict) else {}
+    con: Optional[sqlite3.Connection] = None
     try:
-        con = _orders_con()
-        con.execute(
-            """
-            INSERT INTO entry_intent_board (
-              ts, pocket, instrument, strategy_tag, side, raw_units, final_units,
-              entry_probability, client_order_id, status, reason, request_json,
-              ts_epoch, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ts,
-                pocket,
-                instrument,
-                strategy_tag,
-                int(side),
-                int(abs(raw_units)) if raw_units is not None else 0,
-                int(abs(final_units)) if final_units is not None else 0,
-                _normalize_intent_probability(entry_probability),
-                client_order_id,
-                status,
-                str(reason) if reason else None,
-                _safe_json(payload),
-                float(now_epoch),
-                float(now_epoch + _ORDER_INTENT_COORDINATION_WINDOW_SEC),
-            ),
-        )
-        con.commit()
+        with _order_db_file_lock(fast_fail=True):
+            con = _orders_con()
+            con.execute(
+                """
+                INSERT INTO entry_intent_board (
+                  ts, pocket, instrument, strategy_tag, side, raw_units, final_units,
+                  entry_probability, client_order_id, status, reason, request_json,
+                  ts_epoch, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    pocket,
+                    instrument,
+                    strategy_tag,
+                    int(side),
+                    int(abs(raw_units)) if raw_units is not None else 0,
+                    int(abs(final_units)) if final_units is not None else 0,
+                    _normalize_intent_probability(entry_probability),
+                    client_order_id,
+                    status,
+                    str(reason) if reason else None,
+                    _safe_json(payload),
+                    float(now_epoch),
+                    float(now_epoch + _ORDER_INTENT_COORDINATION_WINDOW_SEC),
+                ),
+            )
+            con.commit()
     except Exception as exc:
+        _rollback_orders_con(con)
+        if _is_sqlite_locked_error(exc):
+            _reset_orders_con()
         logging.debug("[ORDER][INTENT] record failed: %s", exc)
 
 
@@ -3358,16 +3431,6 @@ def _coordinate_entry_intent(
 
     try:
         con = _orders_con()
-        if client_order_id:
-            con.execute(
-                """
-                DELETE FROM entry_intent_board
-                WHERE client_order_id = ?
-                  AND instrument = ?
-                  AND strategy_tag = ?
-                """,
-                (str(client_order_id), instrument, str(strategy_tag)),
-            )
         window_start = now_epoch - _ORDER_INTENT_COORDINATION_WINDOW_SEC
         rows = con.execute(
             """
@@ -4641,19 +4704,20 @@ def _log_order(
     for attempt_idx in range(retry_attempts):
         con: Optional[sqlite3.Connection] = None
         try:
-            con = _orders_con()
-            con.execute(
-                """
-                INSERT INTO orders (
-                  ts, pocket, instrument, side, units, sl_price, tp_price,
-                  client_order_id, status, attempt, stage_index, ticket_id, executed_price,
-                  error_code, error_message, request_json, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                row_values,
-            )
-            con.commit()
-            _maybe_checkpoint_orders_db(con)
+            with _order_db_file_lock(fast_fail=fast_fail):
+                con = _orders_con()
+                con.execute(
+                    """
+                    INSERT INTO orders (
+                      ts, pocket, instrument, side, units, sl_price, tp_price,
+                      client_order_id, status, attempt, stage_index, ticket_id, executed_price,
+                      error_code, error_message, request_json, response_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    row_values,
+                )
+                con.commit()
+                _maybe_checkpoint_orders_db(con)
             return
         except sqlite3.OperationalError as exc:
             if (
