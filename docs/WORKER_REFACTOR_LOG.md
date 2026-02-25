@@ -223,6 +223,27 @@
   - 予測優勢側（とくに下落側）の方向意図を order preflight で潰しにくくし、
     `entry_probability` 起因の skip/reject を減らす。
 
+### 2026-02-25（追記）`scalp_ping_5s_c` の逆向きショート抑制を強化
+
+- 背景（VM実測）:
+  - `orders.db` の `client_order_id=qr-1771991927466-scalp_ping_5s_c_live-s6e04304b`
+    （`2026-02-25 04:01:37Z`）は `sell` で約定したが、
+    `entry_thesis` では `horizon_composite_side=long`（`score=0.411`）に対し
+    `mtf_regime_side=short` が優先されて通過していた。
+  - 同レコードの確率補正は `raw=0.92 -> adjusted=0.654939`
+    （`counter=0.478655`, `support=0.0`, `penalty=0.309804`）で、
+    予測は反映されているが「減点のみ」で拒否までは到達していなかった。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_HORIZON_BLOCK_SCORE=0.38`（逆向き side を block 側へ寄せる）
+    - `SCALP_PING_5S_C_HORIZON_OPPOSITE_UNITS_MULT=0.28`
+    - `SCALP_PING_5S_C_HORIZON_OPPOSITE_BLOCK_MIN_MULT=0.08`
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_PENALTY_MAX: 0.42 -> 0.55`
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX: 0.20 -> 0.35`
+- 意図:
+  - 予測（horizon）と逆向きのショートが raw 勢いだけで通る経路を減らし、
+    C の「forecast-first」方針を実発注で強める。
+
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
 - 背景（VM実測）:

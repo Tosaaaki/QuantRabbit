@@ -203,6 +203,19 @@
     - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20` は維持
   - 目的は、下落/上昇どちらでも予測優勢側の意図を通しやすくし、
     `entry_probability_reject` と `below_min_units` を同時に減らすこと。
+- 2026-02-25 追記（逆向きショート抑制）:
+  - VM 実測で `scalp_ping_5s_c_live` の `sell` 約定
+    （`2026-02-25 04:01:37Z`, `client_order_id=...s6e04304b`）が
+    `horizon_composite_side=long` の局面でも通過していたため、
+    C ローカルで horizon 逆向き抑制を強化した。
+  - `ops/env/scalp_ping_5s_c.env` の運用値:
+    - `SCALP_PING_5S_C_HORIZON_BLOCK_SCORE=0.38`
+    - `SCALP_PING_5S_C_HORIZON_OPPOSITE_UNITS_MULT=0.28`
+    - `SCALP_PING_5S_C_HORIZON_OPPOSITE_BLOCK_MIN_MULT=0.08`
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_PENALTY_MAX=0.55`
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.35`
+  - 目的は「予測は使っているが減点止まり」で通っていた逆向きショートを、
+    `block/scaled` 側に寄せて実発注を抑えること。
 
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で
