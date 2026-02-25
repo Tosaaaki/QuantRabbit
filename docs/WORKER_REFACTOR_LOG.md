@@ -5634,3 +5634,21 @@
 - 意図:
   - 口頭判断を排除し、`u=18000` からの昇格/降格を
     同一基準で再現可能にする。
+
+### 2026-02-25（追記）`scalp_ping_5s_d_live` バーンイン判定を60分timer化
+
+- 追加:
+  - `scripts/run_ping5s_d_canary_guard.sh`
+  - `ops/env/quant-ping5s-d-canary-guard.env`
+  - `systemd/quant-ping5s-d-canary-guard.service`
+  - `systemd/quant-ping5s-d-canary-guard.timer`
+- 構成:
+  - `quant-ping5s-d-canary-guard.timer`: `OnUnitActiveSec=1h`, `Persistent=true`
+  - `quant-ping5s-d-canary-guard.service`: oneshot で wrapper を実行
+  - wrapper は `flock` で多重起動を抑止し、
+    実行結果を `latest.json` と `history.jsonl` へ保存
+- 既定運用:
+  - `PING5S_D_CANARY_APPLY=0`（判定のみ）
+  - 反映を自動化する場合のみ env で `PING5S_D_CANARY_APPLY=1` を明示。
+- 意図:
+  - promote 条件成立待ちの監視を、手動起動に依存せず継続運転する。

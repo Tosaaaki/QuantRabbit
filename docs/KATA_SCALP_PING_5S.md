@@ -530,3 +530,27 @@ DB:
   --window-minutes 120 \
   --out logs/ping5s_d_canary_guard_latest.json
 ```
+
+### 20.7 2026-02-25 更新（Dバーンイン判定を60分timer化）
+
+- 目的:
+  - `promote / hold / rollback` 判定を手動実行から定期化し、
+    条件成立まで同一基準で監視し続ける。
+- 追加:
+  - `scripts/run_ping5s_d_canary_guard.sh`
+  - `ops/env/quant-ping5s-d-canary-guard.env`
+  - `systemd/quant-ping5s-d-canary-guard.service`
+  - `systemd/quant-ping5s-d-canary-guard.timer`
+- 運用:
+  - timer は `OnUnitActiveSec=1h` で実行。
+  - 既定は `PING5S_D_CANARY_APPLY=0`（判定のみ、units自動反映なし）。
+  - 出力:
+    - 最新: `logs/ping5s_d_canary_guard_latest.json`
+    - 履歴: `logs/ping5s_d_canary_guard_history.jsonl`
+- 有効化（VM）:
+```bash
+sudo bash scripts/install_trading_services.sh \
+  --repo /home/tossaki/QuantRabbit \
+  --units "quant-ping5s-d-canary-guard.service quant-ping5s-d-canary-guard.timer"
+sudo systemctl enable --now quant-ping5s-d-canary-guard.timer
+```
