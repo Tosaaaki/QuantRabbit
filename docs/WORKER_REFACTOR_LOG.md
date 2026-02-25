@@ -5910,8 +5910,9 @@
   - `ops/env/quant-m1scalper.env`
     - `M1SCALP_BLOCK_HOURS_UTC=0-23`（全時間帯ブロック）
   - `systemd/quant-scalp-ping-5s-b.service`
+    - `UnsetEnvironment=SCALP_PING_5S_B_BLOCK_HOURS_JST` を追加
     - `Environment="SCALP_PING_5S_B_BLOCK_HOURS_JST=0,1,...,23"` を追記
-      （`scalp_ping_5s_b.env` の既存設定を上書きし、全時間帯ブロック）
+      （`scalp_ping_5s_b.env` の既存設定を強制上書きし、全時間帯ブロック）
 - 意図:
   - EXITワーカーは維持したまま、`B` と `M1` の新規ENTRYのみを即時停止して
     ドローダウン拡大を止血する。
