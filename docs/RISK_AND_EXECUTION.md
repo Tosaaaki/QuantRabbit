@@ -206,6 +206,10 @@
   `ops/env/quant-order-manager.env` も読むため、
   両ファイルで `ORDER_DB_*` を同値に揃える。
   `quant-order-manager.env` 側が runtime より後段で上書きされる点に注意する。
+  - 同様に service-mode の最小ロット制御（`ORDER_MIN_UNITS_STRATEGY_*`）も
+    `quant-order-manager.env` 側へ明示する。worker 個別 env のみで設定すると、
+    order-manager サービスには反映されず、runtime 側の pocket 既定
+    （例: `ORDER_MIN_UNITS_SCALP=900`）へフォールバックする。
 - `ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE=0` を維持し、
   service mode worker（`ORDER_MANAGER_SERVICE_ENABLED=1`）では
   `entry_probability_reject` / `probability_scaled` など

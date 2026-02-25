@@ -42,6 +42,29 @@
   - V2 の役割分離（strategy local decision + order_manager preflight）を維持しつつ、
     両方向の取りこぼしを同時に減らす。
 
+### 2026-02-25（追記）`quant-order-manager` の B/C 最小ロット上書きを service env へ移管
+
+- 背景（VM実測）:
+  - 直近監査で `scalp_ping_5s_c_live` の sell は `preflight_start` が出ている一方、
+    `entry_probability_reject` / `perf_block` が連続し、
+    `OPEN_SKIP note=entry_probability:entry_probability_below_min_units` が主因だった。
+  - `quant-order-manager.service` は
+    `ops/env/quant-v2-runtime.env` + `ops/env/quant-order-manager.env` のみを読むため、
+    worker 側 `ops/env/scalp_ping_5s_{b,c}.env` に置いた
+    `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_*_LIVE` は service-mode preflight に反映されていなかった。
+  - 同時に runtime 側 `ORDER_MIN_UNITS_SCALP=900` が有効なため、
+    B/C の縮小後ユニットが `min_units` 未満として reject されやすい状態だった。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE=30`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B=30`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C_LIVE=30`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C=30`
+- 意図:
+  - service-mode の preflight でも B/C の strategy 最小ロットを 30 に固定し、
+    `ORDER_MIN_UNITS_SCALP=900` へのフォールバックで発生する
+    `entry_probability_below_min_units` 連発を抑止する。
+
 ### 2026-02-25（追記）`scalp_ping_5s_c_live` のクラスター損失に対する動的抑制を追加
 
 - 背景（VM実測）:
