@@ -154,6 +154,14 @@
   - `direction_flip.short_*` / `direction_flip.long_*`
 - これにより C 系は「高確度局面の建玉維持」と
   「弱一致局面のクラスター抑制」を同一戦略内で両立する。
+- 2026-02-25 追記（entry_probability reject 緩和）:
+  - `quant-order-manager` で C の preserve-intent を次に更新した。
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.25`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.70`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE)=1.00`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=20`
+  - 目的は `entry_probability_below_min_units` による未約定連発を減らし、
+    反転局面で小ロットでも約定させること。
 
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で

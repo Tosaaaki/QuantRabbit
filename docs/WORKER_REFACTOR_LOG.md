@@ -135,6 +135,25 @@
     ENTRY 可否は strategy ローカル判定 + 既存ガード/リスク判定へ集約する。
   - `config/worker_reentry.yaml` は監査・再開用の履歴として保持し、再開時のみ env を戻して使う。
 
+### 2026-02-25（追記）`scalp_ping_5s_c_live` の entry-probability 拒否を緩和
+
+- 背景（VM実測）:
+  - `orders.db` と `quant-order-manager.service` で
+    `entry_probability_reject -> perf_block` が短時間に連続し、
+    `OPEN_SKIP note=entry_probability:entry_probability_below_min_units` が
+    高値/安値反転局面の未約定要因になっていた。
+  - 例: `2026-02-25 02:04:52Z` と `02:05:34Z` の sell 候補は
+    `entry_probability=0.4871/0.6304` でも `below_min_units` で skip。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.35 -> 0.25`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.40 -> 0.70`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.90 -> 1.00`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE): 30 -> 20`
+- 意図:
+  - C 戦略の低〜中確率帯を「即reject」ではなく「小さめで通す」側へ寄せ、
+    反転ポイントでの取りこぼしを減らす。
+
 ### 2026-02-24（追記）`order_manager` の orders.db ロック待機を低遅延寄りに再調整
 
 - 背景（VM実測）:
