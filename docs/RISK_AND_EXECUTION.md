@@ -452,6 +452,8 @@
   - `strategy_tag` が `-l<hex>` / `-s<hex>` 付きで保存される場合でも、
     `perf_guard` は同一戦略として集計する（hash suffix 互換）。
     これにより `warmup_n` 取りこぼしで劣化戦略が通過する経路を防ぐ。
+  - `regime` フィルタ運用時でも、`margin_closeout / failfast / sl_loss_rate` は
+    全体集計を併用して hard block 判定する（regime局所の良化で回避不可）。
 - 再開条件:
   - 戦略ごとに直近ウィンドウで `PF>=1.0` かつ `win_rate>=0.50`
     （または戦略固有閾値）へ回復し、failfast理由が解消したことを確認して解除する。

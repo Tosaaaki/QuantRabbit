@@ -245,6 +245,59 @@ def test_perf_guard_margin_closeout_blocks_immediately(monkeypatch, tmp_path: Pa
     assert "margin_closeout_n=" in dec.reason
 
 
+def test_perf_guard_regime_slice_cannot_bypass_global_hard_block(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # Good performance in live regime slice.
+    for _ in range(25):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="RegimeLeak",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=1.0,
+            close_time=now,
+            micro_regime="trend",
+        )
+    # One forced liquidation outside the current regime must still hard-block.
+    _insert_trade(
+        db_path,
+        pocket="scalp",
+        strategy_tag="RegimeLeak",
+        close_reason="MARKET_ORDER_MARGIN_CLOSEOUT",
+        pl_pips=-10.0,
+        close_time=now,
+        micro_regime="range",
+    )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "block",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "10",
+            "PERF_GUARD_PF_MIN": "0.5",
+            "PERF_GUARD_WIN_MIN": "0.5",
+            "PERF_GUARD_REGIME_FILTER": "1",
+            "PERF_GUARD_REGIME_MIN_TRADES": "20",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+        },
+    )
+    monkeypatch.setattr(perf_guard, "current_regime", lambda tf, event_mode=False: "trend")
+
+    dec = perf_guard.is_allowed("RegimeLeak", "scalp")
+    assert dec.allowed is False
+    assert "margin_closeout_n=" in dec.reason
+
+
 def test_perf_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)

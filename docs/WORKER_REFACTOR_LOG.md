@@ -6110,9 +6110,14 @@
     - `strategy_tag` 照合を拡張し、`<tag>-l<hex>` / `<tag>-s<hex>` の
       ハッシュ付きタグを `LOWER(...) GLOB` で同一戦略として集計する。
     - 反映箇所: `_query_perf` / `_query_setup_perf` / `_query_perf_scale`。
+    - `regime` スライスが成立していても、`margin_closeout` / `failfast` /
+      `sl_loss_rate` の hard block は全体集計（non-regime）で再判定するよう変更。
+      局所 regime の良化だけで severe 劣化をすり抜けないようにした。
   - `tests/test_perf_guard_failfast.py`
     - `HashBleed-l0abc1234` を使った回帰テストを追加し、
       ハッシュ付きタグでも failfast が発火することを固定化。
+    - `test_perf_guard_regime_slice_cannot_bypass_global_hard_block` を追加し、
+      regime スライス優先時でも global hard block が必ず効くことを固定化。
 - 意図:
   - 「劣化を検知できないために entry が通る」構造欠陥を塞ぎ、
     新規停止なしでも品質ゲートの実効性を維持する。

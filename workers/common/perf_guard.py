@@ -770,9 +770,10 @@ def _query_perf(
         return True, "empty_tag", 0
     tag_clause, params = _tag_match_clause(variants)
     try:
-        row = None
+        row_regime = None
+        row_global = None
         if regime_label:
-            row = _query_perf_row(
+            row_regime = _query_perf_row(
                 con=con,
                 tag=tag,
                 tag_clause=tag_clause,
@@ -782,21 +783,21 @@ def _query_perf(
                 regime_label=regime_label,
                 cfg=cfg,
             )
-            if row is not None:
-                n = int(row["n"] or 0)
-                if n < cfg.regime_min_trades:
-                    row = None
-        if row is None:
-            row = _query_perf_row(
-                con=con,
-                tag=tag,
-                tag_clause=tag_clause,
-                params=list(params),
-                pocket=pocket,
-                hour=hour,
-                regime_label=None,
-                cfg=cfg,
-            )
+            if row_regime is not None:
+                n_regime = int(row_regime["n"] or 0)
+                if n_regime < cfg.regime_min_trades:
+                    row_regime = None
+        row_global = _query_perf_row(
+            con=con,
+            tag=tag,
+            tag_clause=tag_clause,
+            params=list(params),
+            pocket=pocket,
+            hour=hour,
+            regime_label=None,
+            cfg=cfg,
+        )
+        row = row_regime if row_regime is not None else row_global
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
         return True, "query_failed", 0
@@ -812,31 +813,43 @@ def _query_perf(
     profit = float(row["profit"] or 0.0)
     loss = float(row["loss"] or 0.0)
     win = float(row["win"] or 0.0)
-    sl_loss_n = int(row["sl_loss_n"] or 0)
-    margin_closeout_n = int(row["margin_closeout_n"] or 0)
+
+    # Hard-block reasons must be checked on aggregate as well.
+    # This prevents regime-filtered slices from bypassing severe degradation.
+    hard_row = row_global if row_global is not None else row
+    hard_n = int(hard_row["n"] or 0)
+    hard_profit = float(hard_row["profit"] or 0.0)
+    hard_loss = float(hard_row["loss"] or 0.0)
+    hard_win = float(hard_row["win"] or 0.0)
+    sl_loss_n = int(hard_row["sl_loss_n"] or 0)
+    margin_closeout_n = int(hard_row["margin_closeout_n"] or 0)
     pf = profit / loss if loss > 0 else float("inf")
     win_rate = win / n if n > 0 else 0.0
+    hard_pf = hard_profit / hard_loss if hard_loss > 0 else float("inf")
+    hard_win_rate = hard_win / hard_n if hard_n > 0 else 0.0
 
     # Emergency block: broker forced liquidation observed in this window.
     if margin_closeout_n > 0:
-        return False, f"margin_closeout_n={margin_closeout_n} n={n}", n
+        return False, f"margin_closeout_n={margin_closeout_n} n={hard_n}", hard_n
 
     # Fail-fast (before warmup) when stats are clearly bad.
-    if cfg.failfast_min_trades > 0 and n >= cfg.failfast_min_trades:
-        if (cfg.failfast_pf > 0 and pf < cfg.failfast_pf) or (cfg.failfast_win > 0 and win_rate < cfg.failfast_win):
-            return False, f"failfast:pf={pf:.2f} win={win_rate:.2f} n={n}", n
+    if cfg.failfast_min_trades > 0 and hard_n >= cfg.failfast_min_trades:
+        if (cfg.failfast_pf > 0 and hard_pf < cfg.failfast_pf) or (
+            cfg.failfast_win > 0 and hard_win_rate < cfg.failfast_win
+        ):
+            return False, f"failfast:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}", hard_n
 
     # Stop-loss (loss) rate guard (before warmup). Only apply when PF < 1.0 (already losing).
     sl_rate_max = _sl_loss_rate_max(pocket, cfg)
     if (
         sl_rate_max > 0
         and cfg.sl_loss_rate_min_trades > 0
-        and n >= cfg.sl_loss_rate_min_trades
-        and pf < 1.0
+        and hard_n >= cfg.sl_loss_rate_min_trades
+        and hard_pf < 1.0
     ):
-        sl_rate = (float(sl_loss_n) / float(n)) if n > 0 else 0.0
+        sl_rate = (float(sl_loss_n) / float(hard_n)) if hard_n > 0 else 0.0
         if sl_rate >= sl_rate_max:
-            return False, f"sl_loss_rate={sl_rate:.2f} pf={pf:.2f} n={n}", n
+            return False, f"sl_loss_rate={sl_rate:.2f} pf={hard_pf:.2f} n={hard_n}", hard_n
 
     min_trades_default = cfg.hourly_min_trades if hour is not None else cfg.min_trades
     min_trades_key = "PERF_GUARD_HOURLY_MIN_TRADES" if hour is not None else "PERF_GUARD_MIN_TRADES"
