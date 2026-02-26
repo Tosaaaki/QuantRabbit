@@ -1148,6 +1148,9 @@
   - `slo_block(data_lag_p95_exceeded)` が連続したため、
     `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=9000` へ緩和して遅延スパイク時の過剰拒否を抑制。
   - `M1Scalper` は 直近で損失勾配が縮小したため、`M1SCALP_BASE_UNITS=4500` へ増量して寄与を引き上げ。
+  - 24h 実損の下位（B/C）は `BASE/MAX_UNITS` を圧縮し、上位（MomentumBurst/MicroVWAPRevert）は
+    `MICRO_MULTI_BASE_UNITS` を増量して利益寄与側へ配分を寄せる。
+  - `MicroVWAPRevert` は `MICRO_MULTI_LOOP_INTERVAL_SEC=4.0` へ短縮して、機会検知を増やす。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
     `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。

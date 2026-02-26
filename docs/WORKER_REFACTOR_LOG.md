@@ -7875,3 +7875,24 @@
 - 意図:
   - no-stop のまま、インフラ遅延スパイクでの過剰拒否を減らして通過率を回復。
   - ほぼ横ばいまで戻した M1 を増量し、短期の利益寄与を取りに行く。
+
+### 2026-02-26（追記）負け源圧縮 + 勝ち源増量（即効配分）
+
+- 背景（VM実測, 2026-02-26 12:00 UTC, trades.db 24h）:
+  - 下位: `scalp_ping_5s_c_live -5477.6`, `scalp_ping_5s_b_live -1047.5`
+  - 上位: `MomentumBurst +117.9`, `MicroVWAPRevert +43.1`, `TickImbalance +39.9`
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=700`（from `900`）
+    - `SCALP_PING_5S_B_MAX_UNITS=1400`（from `1800`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=140`（from `220`）
+    - `SCALP_PING_5S_C_MAX_UNITS=320`（from `500`）
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_BASE_UNITS=62000`（from `52000`）
+  - `ops/env/quant-micro-vwaprevert.env`
+    - `MICRO_MULTI_BASE_UNITS=52000`（from `42000`）
+    - `MICRO_MULTI_LOOP_INTERVAL_SEC=4.0`（from `6.0`）
+- 意図:
+  - no-stop を維持しつつ、負け戦略の損失勾配を即時に低下。
+  - 勝ち寄与が出ている micro を厚くし、約定1件あたりの期待利益を引き上げる。
