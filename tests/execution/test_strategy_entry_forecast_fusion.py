@@ -458,3 +458,75 @@ def test_forecast_fusion_tf_confluence_cuts_units(monkeypatch) -> None:
     assert prob is not None and prob < 0.60
     assert applied.get("tf_confluence_score") == -0.85
     assert applied.get("tf_confluence_count") == 3
+
+
+def test_entry_leading_profile_boosts_probability_with_strategy_prefix(monkeypatch) -> None:
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_ENABLED", "1")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.18")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.05")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.5")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.3")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.2")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_UNITS_MIN_MULT", "0.90")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_UNITS_MAX_MULT", "1.20")
+    thesis: dict[str, object] = {
+        "env_prefix": "SCALP_TEST",
+        "tech_score": 0.72,
+        "range_score": 0.82,
+    }
+
+    units, prob, applied = strategy_entry._apply_strategy_leading_profile(
+        strategy_tag="scalp_test_live",
+        pocket="scalp",
+        units=1000,
+        entry_probability=0.55,
+        entry_thesis=thesis,
+        forecast_context={"p_up": 0.84},
+        meta={},
+    )
+
+    assert units > 1000
+    assert prob is not None and prob > 0.55
+    assert applied.get("reject") is False
+    assert isinstance(thesis.get("entry_probability_leading_profile"), dict)
+    assert thesis.get("entry_probability") == prob
+
+
+def test_entry_leading_profile_rejects_under_strategy_threshold(monkeypatch) -> None:
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_ENABLED", "1")
+    monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_REJECT_BELOW", "0.70")
+    thesis: dict[str, object] = {"env_prefix": "SCALP_TEST"}
+
+    units, prob, applied = strategy_entry._apply_strategy_leading_profile(
+        strategy_tag="scalp_test_live",
+        pocket="scalp",
+        units=-900,
+        entry_probability=0.62,
+        entry_thesis=thesis,
+        forecast_context={"p_up": 0.58},
+        meta={},
+    )
+
+    assert units == 0
+    assert prob is not None and prob < 0.70
+    assert applied.get("reject") is True
+    assert applied.get("reason") == "entry_leading_profile_reject"
+
+
+def test_entry_leading_profile_skips_manual_pocket(monkeypatch) -> None:
+    monkeypatch.setenv("STRATEGY_ENTRY_LEADING_PROFILE_ENABLED", "1")
+    thesis: dict[str, object] = {"env_prefix": "MANUAL_TEST"}
+
+    units, prob, applied = strategy_entry._apply_strategy_leading_profile(
+        strategy_tag="manual_test_live",
+        pocket="manual",
+        units=700,
+        entry_probability=0.51,
+        entry_thesis=thesis,
+        forecast_context={"p_up": 0.99},
+        meta={},
+    )
+
+    assert units == 700
+    assert prob == 0.51
+    assert applied == {}

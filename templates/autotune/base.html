@@ -774,7 +774,10 @@
     window.qrInitTabs = (() => {
       const init = () => {
         const containers = document.querySelectorAll("[data-tabs]");
-        if (!containers.length) return;
+        if (!containers.length) {
+          document.body.classList.remove("tabs-ready");
+          return;
+        }
         document.body.classList.add("tabs-ready");
 
         containers.forEach((container, index) => {
@@ -895,6 +898,19 @@
         countdownId: null,
         refreshInFlight: false,
         visibilityBound: false,
+        nextAt: 0,
+      };
+
+      const clearScheduledJobs = () => {
+        if (state.timerId) {
+          clearTimeout(state.timerId);
+          state.timerId = null;
+        }
+        if (state.countdownId) {
+          clearInterval(state.countdownId);
+          state.countdownId = null;
+        }
+        state.nextAt = 0;
       };
 
       const assignAnchors = () => {
@@ -1074,115 +1090,108 @@
         }
       };
 
-      const init = () => {
-        const refreshRoot = document.querySelector("[data-auto-refresh]");
-        if (!refreshRoot) return;
-
-        const intervalSec = parseInt(refreshRoot.dataset.autoRefreshSec || "15", 10);
-        const mode = (refreshRoot.dataset.autoRefreshMode || "soft").toLowerCase();
-
-        if (state.timerId) {
-          clearTimeout(state.timerId);
-          state.timerId = null;
+      const markHardRefresh = () => {
+        try {
+          sessionStorage.setItem("qr_refreshing", "1");
+        } catch (err) {
+          // ignore storage errors
         }
-        if (state.countdownId) {
-          clearInterval(state.countdownId);
-          state.countdownId = null;
+      };
+
+      const updateCountdown = (statusEl, nextAt) => {
+        if (!statusEl || !nextAt) return;
+        const remaining = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+        statusEl.textContent = `次の更新 ${remaining}s`;
+      };
+
+      const runRefresh = async (mode, statusEl) => {
+        if (state.refreshInFlight) return;
+        clearScheduledJobs();
+        if (statusEl) statusEl.textContent = "更新中...";
+        const scrollState = captureScrollState();
+        const url = buildRefreshUrl();
+        if (mode === "hard") {
+          markHardRefresh();
+          window.location.assign(url);
+          return;
+        }
+        state.refreshInFlight = true;
+        try {
+          await softRefresh(url, scrollState);
+        } catch (err) {
+          markHardRefresh();
+          window.location.assign(url);
+        } finally {
+          state.refreshInFlight = false;
+        }
+      };
+
+      const schedule = (refreshRoot, intervalSec, mode) => {
+        clearScheduledJobs();
+        if (!refreshRoot || !refreshRoot.isConnected) return;
+        const statusEl = refreshRoot.querySelector("[data-refresh-status]");
+        const refreshButton = refreshRoot.querySelector("[data-refresh-now]");
+        state.nextAt = Date.now() + intervalSec * 1000;
+        updateCountdown(statusEl, state.nextAt);
+
+        if (refreshButton) {
+          refreshButton.onclick = () => {
+            void runRefresh(mode, statusEl);
+          };
         }
 
-        const updateCountdown = (statusEl, nextAt) => {
-          if (!statusEl || !nextAt) return;
-          const remaining = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
-          statusEl.textContent = `次の更新 ${remaining}s`;
-        };
-
-        const schedule = () => {
-          const statusEl = refreshRoot.querySelector("[data-refresh-status]");
-          const refreshButton = refreshRoot.querySelector("[data-refresh-now]");
-          const nextAt = Date.now() + intervalSec * 1000;
-          updateCountdown(statusEl, nextAt);
-
-          if (refreshButton) {
-            refreshButton.onclick = async () => {
-              if (state.refreshInFlight) return;
-              if (statusEl) statusEl.textContent = "更新中...";
-              const scrollState = captureScrollState();
-              const url = buildRefreshUrl();
-              if (mode === "hard") {
-                try {
-                  sessionStorage.setItem("qr_refreshing", "1");
-                } catch (err) {
-                  // ignore storage errors
-                }
-                window.location.assign(url);
-                return;
-              }
-              state.refreshInFlight = true;
-              try {
-                await softRefresh(url, scrollState);
-              } catch (err) {
-                try {
-                  sessionStorage.setItem("qr_refreshing", "1");
-                } catch (e) {
-                  // ignore storage errors
-                }
-                window.location.assign(url);
-              } finally {
-                state.refreshInFlight = false;
-              }
-            };
+        state.timerId = window.setTimeout(() => {
+          if (document.hidden || isEditing()) {
+            schedule(refreshRoot, intervalSec, mode);
+            return;
           }
+          void runRefresh(mode, statusEl);
+        }, intervalSec * 1000);
 
-          state.timerId = window.setTimeout(async () => {
-            if (document.hidden || isEditing()) {
-              schedule();
-              return;
-            }
-            if (statusEl) statusEl.textContent = "更新中...";
-            const scrollState = captureScrollState();
-            const url = buildRefreshUrl();
-            if (mode === "hard") {
-              try {
-                sessionStorage.setItem("qr_refreshing", "1");
-              } catch (err) {
-                // ignore storage errors
-              }
-              window.location.assign(url);
-              return;
-            }
-            state.refreshInFlight = true;
-            try {
-              await softRefresh(url, scrollState);
-            } catch (err) {
-              try {
-                sessionStorage.setItem("qr_refreshing", "1");
-              } catch (e) {
-                // ignore storage errors
-              }
-              window.location.assign(url);
-            } finally {
-              state.refreshInFlight = false;
-            }
-          }, intervalSec * 1000);
+        state.countdownId = window.setInterval(() => {
+          if (!refreshRoot.isConnected) {
+            clearScheduledJobs();
+            return;
+          }
+          updateCountdown(
+            refreshRoot.querySelector("[data-refresh-status]"),
+            state.nextAt
+          );
+        }, 1000);
+      };
 
-          state.countdownId = window.setInterval(() => {
-            updateCountdown(
-              refreshRoot.querySelector("[data-refresh-status]"),
-              nextAt
-            );
-          }, 1000);
-        };
+      const readRefreshConfig = () => {
+        const refreshRoot = document.querySelector("[data-auto-refresh]");
+        if (!refreshRoot) return null;
+        const rawInterval = parseInt(refreshRoot.dataset.autoRefreshSec || "15", 10);
+        const intervalSec = Number.isFinite(rawInterval) ? Math.max(5, rawInterval) : 15;
+        const mode = (refreshRoot.dataset.autoRefreshMode || "soft").toLowerCase();
+        return { refreshRoot, intervalSec, mode };
+      };
+
+      const init = () => {
+        const config = readRefreshConfig();
+        if (!config) {
+          clearScheduledJobs();
+          return;
+        }
 
         restoreScrollFromStorage();
-        schedule();
+        schedule(config.refreshRoot, config.intervalSec, config.mode);
 
         if (!state.visibilityBound) {
           document.addEventListener("visibilitychange", () => {
             if (document.hidden) {
-              if (state.timerId) clearTimeout(state.timerId);
-            } else {
-              schedule();
+              clearScheduledJobs();
+              return;
             }
+            if (state.refreshInFlight) return;
+            const latest = readRefreshConfig();
+            if (!latest) {
+              clearScheduledJobs();
+              return;
+            }
+            schedule(latest.refreshRoot, latest.intervalSec, latest.mode);
           });
           state.visibilityBound = true;
         }

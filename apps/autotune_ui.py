@@ -148,6 +148,9 @@ _RECENT_TRADES_DISPLAY = max(
     10, min(int(os.getenv("UI_RECENT_TRADES_DISPLAY", "30")), _RECENT_TRADES_LIMIT)
 )
 _HOURLY_TRADES_LOOKBACK = max(6, int(os.getenv("UI_HOURLY_LOOKBACK_HOURS", "24")))
+_HOURLY_FALLBACK_SCAN_LIMIT = max(
+    200, int(os.getenv("UI_HOURLY_FALLBACK_SCAN_LIMIT", "5000"))
+)
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 _OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
 _OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
@@ -1678,6 +1681,29 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
         return []
 
 
+def _load_hourly_fallback_trades() -> list[dict]:
+    if not TRADES_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(TRADES_DB, timeout=_DB_READ_TIMEOUT_SEC)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            """
+            SELECT pocket, pl_pips, realized_pl, close_time
+            FROM trades
+            WHERE close_time IS NOT NULL
+            ORDER BY close_time DESC
+            LIMIT ?
+            """,
+            (int(_HOURLY_FALLBACK_SCAN_LIMIT),),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
 def _build_hourly_fallback(trades: list[dict]) -> dict:
     now = datetime.now(timezone.utc)
     jst = timezone(timedelta(hours=9))
@@ -1689,7 +1715,8 @@ def _build_hourly_fallback(trades: list[dict]) -> dict:
         hour = now_hour - timedelta(hours=i)
         buckets[hour] = {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0}
 
-    for item in trades or []:
+    source_trades = _load_hourly_fallback_trades() or list(trades or [])
+    for item in source_trades:
         pocket = (item.get("pocket") or "").lower()
         if pocket == "manual":
             continue

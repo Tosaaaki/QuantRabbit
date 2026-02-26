@@ -7,6 +7,13 @@
 - UI snapshot（`apps/autotune_ui.py`）は `generated_at` の鮮度を評価し、
   `UI_SNAPSHOT_MAX_AGE_SEC`（default: `max(120, UI_AUTO_REFRESH_SEC*4)`）を超えた stale 候補は
   `remote/gcs/local` の優先採用対象から除外する。全候補 stale の場合のみ最新時刻を採用する。
+- dashboard フロント（`templates/autotune/base.html`）の自動更新は
+  timer/interval を単一インスタンスで管理し、`visibilitychange`・再スケジュール時に
+  既存タイマーを必ず解放する。`data-auto-refresh` が無い画面では timer を保持しない。
+- `hourly_trades` の fallback（`apps/autotune_ui.py`）は
+  `snapshot.recent_trades` の件数上限ではなく `trades.db` の close 履歴を
+  lookback 窓で再集計する。走査上限は
+  `UI_HOURLY_FALLBACK_SCAN_LIMIT`（default: `5000`）。
 - `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、

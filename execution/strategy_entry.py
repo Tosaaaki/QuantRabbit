@@ -661,6 +661,369 @@ def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
     return max(0.0, min(1.0, probability / 100.0))
 
 
+def _strategy_tag_to_env_prefix(strategy_tag: Optional[str]) -> Optional[str]:
+    raw = str(strategy_tag or "").strip().upper()
+    if not raw:
+        return None
+    chars: list[str] = []
+    prev_sep = False
+    for ch in raw:
+        if ch.isalnum():
+            chars.append(ch)
+            prev_sep = False
+            continue
+        if not prev_sep:
+            chars.append("_")
+            prev_sep = True
+    prefix = "".join(chars).strip("_")
+    if not prefix:
+        return None
+    for suffix in ("_LIVE", "_PAPER", "_DEMO", "_WORKER"):
+        if prefix.endswith(suffix) and len(prefix) > len(suffix):
+            prefix = prefix[: -len(suffix)]
+            break
+    prefix = prefix.strip("_")
+    return prefix or None
+
+
+def _strategy_env_prefix_candidates(
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> list[str]:
+    candidates: list[str] = []
+    for candidate in (
+        _coalesce_env_prefix(entry_thesis, meta, strategy_tag),
+        _strategy_tag_to_env_prefix(strategy_tag),
+    ):
+        normalized = _normalize_env_prefix(candidate)
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
+
+
+def _strategy_env_raw(prefixes: list[str], suffix: str) -> Optional[str]:
+    for prefix in prefixes:
+        raw = os.getenv(f"{prefix}_{suffix}")
+        if raw is not None:
+            return raw
+    return os.getenv(f"STRATEGY_{suffix}")
+
+
+def _strategy_env_bool(prefixes: list[str], suffix: str, default: bool) -> bool:
+    raw = _strategy_env_raw(prefixes, suffix)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _strategy_env_float(prefixes: list[str], suffix: str, default: float) -> float:
+    raw = _strategy_env_raw(prefixes, suffix)
+    if raw is None:
+        return float(default)
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+    if math.isnan(parsed) or math.isinf(parsed):
+        return float(default)
+    return float(parsed)
+
+
+def _signed_component_from_probability(
+    raw_probability: object,
+    *,
+    side_sign: int,
+) -> Optional[float]:
+    parsed = _to_float(raw_probability)
+    if parsed is None:
+        return None
+    probability = _entry_probability_value(parsed)
+    if probability is None:
+        return None
+    side_probability = probability if side_sign >= 0 else (1.0 - probability)
+    return max(-1.0, min(1.0, (side_probability - 0.5) * 2.0))
+
+
+def _signed_component_from_score(
+    raw_value: object,
+    *,
+    zero_to_one_as_probability: bool = False,
+) -> Optional[float]:
+    value = _to_float(raw_value)
+    if value is None:
+        return None
+    if zero_to_one_as_probability and 0.0 <= value <= 1.0:
+        return max(-1.0, min(1.0, (value - 0.5) * 2.0))
+    if -1.0 <= value <= 1.0:
+        return max(-1.0, min(1.0, value))
+    if zero_to_one_as_probability and 0.0 <= value <= 100.0:
+        return max(-1.0, min(1.0, ((value / 100.0) - 0.5) * 2.0))
+    if -100.0 <= value <= 100.0:
+        return max(-1.0, min(1.0, value / 100.0))
+    return max(-1.0, min(1.0, math.tanh(value)))
+
+
+def _pattern_quality_component(entry_thesis: Optional[dict]) -> Optional[float]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    gate = entry_thesis.get("pattern_gate")
+    if not isinstance(gate, dict):
+        return None
+    quality = str(gate.get("quality") or "").strip().lower()
+    if not quality:
+        return None
+    if quality in {"avoid", "bad", "reject", "blocked"}:
+        return -1.0
+    if quality in {"good", "prefer", "boost"}:
+        return 0.55
+    if quality in {"strong", "excellent"}:
+        return 0.8
+    return None
+
+
+def _leading_components(
+    *,
+    side_sign: int,
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+) -> dict[str, float]:
+    components: dict[str, float] = {}
+
+    forecast_comp: Optional[float] = None
+    if isinstance(forecast_context, dict):
+        forecast_comp = _signed_component_from_probability(
+            forecast_context.get("p_up"),
+            side_sign=side_sign,
+        )
+        if forecast_comp is None:
+            forecast_comp = _signed_component_from_score(
+                forecast_context.get("direction_bias"),
+                zero_to_one_as_probability=False,
+            )
+    if forecast_comp is None and isinstance(entry_thesis, dict):
+        fusion = entry_thesis.get("forecast_fusion")
+        if isinstance(fusion, dict):
+            forecast_comp = _signed_component_from_probability(
+                fusion.get("direction_prob"),
+                side_sign=side_sign,
+            )
+            if forecast_comp is None:
+                forecast_comp = _signed_component_from_score(
+                    fusion.get("direction_bias"),
+                    zero_to_one_as_probability=False,
+                )
+        if forecast_comp is None:
+            forecast_comp = _signed_component_from_probability(
+                entry_thesis.get("projection_probability"),
+                side_sign=side_sign,
+            )
+    if forecast_comp is not None:
+        components["forecast"] = float(forecast_comp)
+
+    if isinstance(entry_thesis, dict):
+        tech_comp = _signed_component_from_score(
+            entry_thesis.get("tech_score"),
+            zero_to_one_as_probability=False,
+        )
+        if tech_comp is None:
+            tech_ctx = entry_thesis.get("technical_context")
+            if isinstance(tech_ctx, dict):
+                tech_result = tech_ctx.get("result")
+                if isinstance(tech_result, dict):
+                    tech_comp = _signed_component_from_score(
+                        tech_result.get("score"),
+                        zero_to_one_as_probability=False,
+                    )
+        if tech_comp is not None:
+            components["tech"] = float(tech_comp)
+
+        range_comp = _signed_component_from_score(
+            entry_thesis.get("range_score"),
+            zero_to_one_as_probability=True,
+        )
+        if range_comp is not None:
+            components["range"] = float(range_comp)
+
+        micro_comp = _signed_component_from_score(
+            entry_thesis.get("air_score"),
+            zero_to_one_as_probability=True,
+        )
+        if micro_comp is None:
+            extrema = entry_thesis.get("extrema")
+            if isinstance(extrema, dict):
+                micro_comp = _signed_component_from_score(
+                    extrema.get("tick_strength"),
+                    zero_to_one_as_probability=False,
+                )
+        if micro_comp is not None:
+            components["micro"] = float(micro_comp)
+
+        pattern_comp = _pattern_quality_component(entry_thesis)
+        if pattern_comp is not None:
+            components["pattern"] = float(pattern_comp)
+
+    return components
+
+
+def _apply_strategy_leading_profile(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+    meta: Optional[dict] = None,
+) -> tuple[int, Optional[float], dict[str, object]]:
+    if not units:
+        return units, entry_probability, {}
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, {}
+
+    prefixes = _strategy_env_prefix_candidates(strategy_tag, entry_thesis, meta)
+    if not _strategy_env_bool(prefixes, "ENTRY_LEADING_PROFILE_ENABLED", True):
+        return units, entry_probability, {}
+
+    raw_probability = entry_probability
+    if raw_probability is None and isinstance(entry_thesis, dict):
+        raw_probability = _resolve_entry_probability(entry_thesis, None)
+    if raw_probability is None:
+        return units, entry_probability, {}
+    base_probability = max(0.0, min(1.0, float(raw_probability)))
+
+    side_sign = 1 if units > 0 else -1
+    side_key = "LONG" if side_sign > 0 else "SHORT"
+    reject_below = _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_REJECT_BELOW", 0.0)
+    reject_below = _strategy_env_float(
+        prefixes,
+        f"ENTRY_LEADING_PROFILE_REJECT_BELOW_{side_key}",
+        reject_below,
+    )
+    reject_below = max(0.0, min(1.0, reject_below))
+    floor = _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_FLOOR", 0.0)
+    ceil = _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_CEIL", 1.0)
+    floor = max(0.0, min(1.0, floor))
+    ceil = max(floor, min(1.0, ceil))
+    boost_max = max(
+        0.0,
+        min(0.5, _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_BOOST_MAX", 0.10)),
+    )
+    penalty_max = max(
+        0.0,
+        min(0.7, _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_PENALTY_MAX", 0.16)),
+    )
+    units_min_mult = max(
+        0.1,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_UNITS_MIN_MULT", 1.0),
+    )
+    units_max_mult = max(
+        units_min_mult,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_UNITS_MAX_MULT", 1.0),
+    )
+    weight_forecast = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", 0.45),
+    )
+    weight_tech = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_TECH", 0.25),
+    )
+    weight_range = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_RANGE", 0.15),
+    )
+    weight_micro = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_MICRO", 0.10),
+    )
+    weight_pattern = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_PATTERN", 0.05),
+    )
+    weights: dict[str, float] = {
+        "forecast": weight_forecast,
+        "tech": weight_tech,
+        "range": weight_range,
+        "micro": weight_micro,
+        "pattern": weight_pattern,
+    }
+
+    components = _leading_components(
+        side_sign=side_sign,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
+    total_weight = sum(weights.get(name, 0.0) for name in components)
+    support = 0.0
+    contra = 0.0
+    if total_weight > 0.0:
+        support = sum(
+            max(0.0, components[name]) * weights.get(name, 0.0)
+            for name in components
+        ) / total_weight
+        contra = sum(
+            max(0.0, -components[name]) * weights.get(name, 0.0)
+            for name in components
+        ) / total_weight
+    probability_delta = support * boost_max - contra * penalty_max
+    adjusted_probability = max(
+        floor,
+        min(ceil, base_probability + probability_delta),
+    )
+
+    reject = bool(reject_below > 0.0 and adjusted_probability < reject_below)
+    adjusted_units = int(units)
+    units_multiplier = 1.0
+    if reject:
+        adjusted_units = 0
+    elif adjusted_units:
+        scale_floor = max(floor, reject_below)
+        scale_ceiling = max(scale_floor, ceil)
+        if scale_ceiling <= scale_floor:
+            ratio = 1.0 if adjusted_probability >= scale_floor else 0.0
+        else:
+            ratio = (adjusted_probability - scale_floor) / (scale_ceiling - scale_floor)
+        ratio = max(0.0, min(1.0, ratio))
+        units_multiplier = units_min_mult + (units_max_mult - units_min_mult) * ratio
+        scaled_units = int(round(abs(adjusted_units) * units_multiplier))
+        if scaled_units <= 0:
+            adjusted_units = 0
+        else:
+            adjusted_units = (1 if side_sign > 0 else -1) * scaled_units
+
+    applied: dict[str, object] = {
+        "strategy_tag": str(strategy_tag or ""),
+        "env_prefixes": prefixes,
+        "units_before": int(units),
+        "units_after": int(adjusted_units),
+        "entry_probability_before": round(float(base_probability), 6),
+        "entry_probability_after": round(float(adjusted_probability), 6),
+        "entry_probability_delta": round(float(probability_delta), 6),
+        "reject_below": round(float(reject_below), 6),
+        "reject": reject,
+        "units_multiplier": round(float(units_multiplier), 6),
+        "components": {k: round(float(v), 6) for k, v in components.items()},
+        "weights": {k: round(float(v), 6) for k, v in weights.items() if v > 0.0},
+        "support": round(float(support), 6),
+        "contra": round(float(contra), 6),
+        "floor": round(float(floor), 6),
+        "ceil": round(float(ceil), 6),
+    }
+    if reject:
+        applied["reason"] = "entry_leading_profile_reject"
+    elif adjusted_units != units:
+        applied["reason"] = "entry_leading_profile_scaled"
+    else:
+        applied["reason"] = "entry_leading_profile_passthrough"
+
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_probability"] = adjusted_probability
+        entry_thesis["entry_probability_leading_profile"] = applied
+
+    return adjusted_units, adjusted_probability, applied
+
+
 def _to_float(value: object) -> Optional[float]:
     try:
         parsed = float(value)
@@ -1974,6 +2337,15 @@ async def market_order(
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
+    units, entry_probability, _ = _apply_strategy_leading_profile(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -2069,8 +2441,15 @@ async def limit_order(
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
-    if isinstance(entry_thesis, dict):
-        entry_thesis["entry_units_intent"] = abs(int(units))
+    units, entry_probability, _ = _apply_strategy_leading_profile(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -2087,6 +2466,8 @@ async def limit_order(
         return None, None
     if coordinated_units != units:
         units = coordinated_units
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_units_intent"] = abs(int(units))
     return await order_manager.limit_order(
         instrument=instrument,
         units=units,

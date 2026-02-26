@@ -1506,6 +1506,20 @@
         .replace(/>/g, "&gt;")
         .replace(/\"/g, "&quot;")
         .replace(/'/g, "&#39;");
+      const safeSessionGet = (key) => {
+        try {
+          return sessionStorage.getItem(key);
+        } catch (err) {
+          return null;
+        }
+      };
+      const safeSessionSet = (key, value) => {
+        try {
+          sessionStorage.setItem(key, value);
+        } catch (err) {
+          // ignore storage errors
+        }
+      };
       const formatTs = (ts) => {
         const dt = new Date(ts);
         if (Number.isNaN(dt.getTime())) return "-";
@@ -2059,7 +2073,7 @@
         if (!container) return;
         const buttons = Array.from(container.querySelectorAll(".range-button"));
         if (!buttons.length) return;
-        const saved = sessionStorage.getItem(storageKey);
+        const saved = safeSessionGet(storageKey);
         const initial = saved && buttons.some((btn) => btn.dataset.range === saved)
           ? saved
           : defaultKey || buttons[0].dataset.range;
@@ -2069,7 +2083,7 @@
           btn.addEventListener("click", () => {
             const key = btn.dataset.range;
             if (!key) return;
-            sessionStorage.setItem(storageKey, key);
+            safeSessionSet(storageKey, key);
             setActiveButton(container, key);
             renderFn(key);
           });
@@ -2094,10 +2108,10 @@
         btn.addEventListener("click", () => {
           const target = btn.dataset.tabTarget;
           if (!target) return;
-          sessionStorage.setItem("qr_chart_mode", target);
+          safeSessionSet("qr_chart_mode", target);
         });
       });
-      const chartMode = sessionStorage.getItem("qr_chart_mode");
+      const chartMode = safeSessionGet("qr_chart_mode");
       if (chartMode) {
         const chartTab = document.querySelector('[data-chart-tabs] [data-tab-button][data-tab-target="' + chartMode + '"]');
         if (chartTab) {
