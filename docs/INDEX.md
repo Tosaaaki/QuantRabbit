@@ -31,6 +31,7 @@
 
 ## タスク / 変更管理
 - `docs/TASKS.md`: リポジトリ全体タスク台帳
+- `docs/TRADE_FINDINGS.md`: 改善/敗因の単一台帳（全担当者がここへ追記）
 
 ## その他
 - `docs/README_GCP_MULTI.md`: 別プロジェクトで動かすための手順書
