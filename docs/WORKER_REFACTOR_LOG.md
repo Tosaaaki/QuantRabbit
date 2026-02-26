@@ -6497,3 +6497,34 @@
 - 意図:
   - 「止まる」原因を hard 時間帯ゲートから切り離し、
     取引継続性を維持しながら品質（確率・信頼度・ロット）で制御する。
+
+### 2026-02-26（追記）時間帯依存を廃止し、常時運転へ固定（`+2000円/h` 方針）
+
+- 背景（VM実測, UTC 2026-02-26）:
+  - 直近24h:
+    - `scalp_ping_5s_c_live buy`: `339 trades / +4985.32 JPY`
+    - `scalp_ping_5s_c_live sell`: `97 trades / -939.95 JPY`
+    - `M1Scalper-M1 buy`: `25 trades / +356.46 JPY`
+    - `M1Scalper-M1 sell`: `73 trades / -1450.49 JPY`
+  - 7日集計でも `sell` 側（C/M1）が継続して負寄与。
+  - `logs/trades.db` の open は `0`（反映前にフラット確認）。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=`（空）
+    - `SCALP_PING_5S_C_ALLOW_HOURS_SOFT_ENABLED=0`
+    - `SCALP_PING_5S_C_SIDE_FILTER=long` を維持
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=6000`
+    - `SCALP_PING_5S_C_MAX_UNITS=15000`
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_ENABLED=1`
+    - `M1SCALP_BLOCK_HOURS_ENABLED=0`
+    - `M1SCALP_SIDE_FILTER=long`
+  - `ops/env/quant-v2-runtime.env`
+    - `FORECAST_GATE_STRATEGY_ALLOWLIST=MicroRangeBreak,MicroTrendRetest,MicroVWAPBound,MicroLevelReactor,M1Scalper-M1,scalp_ping_5s_c_live`
+  - `ops/env/quant-micro-pullbackema.env`
+    - `MICRO_MULTI_ENABLED=0`（大幅負寄与戦略の停止維持）
+- 意図:
+  - 「勝ち時間だけを開ける」設計をやめ、常時稼働のまま
+    `方向フィルタ + strategy別 gate + perf_guard` で負け筋を削る。
+  - 時間帯は gating 条件から除外し、`+2000円/h` のために
+    取引機会を全時間帯で取りに行く。

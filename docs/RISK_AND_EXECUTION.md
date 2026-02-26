@@ -584,6 +584,25 @@
   - `entry_thesis.allow_hour_*` が保存され、`outside_allow_hour_jst` 単独で
     全停止しないことを確認する。
 
+### 常時運転プロファイル（2026-02-26 更新）
+- 方針:
+  - 時間帯を entry 条件に使わず、全時間帯で稼働する。
+  - 方向選別は戦略ローカルの `SIDE_FILTER` と `perf_guard/forecast` で行う。
+- 運用値（`scalp_ping_5s_c_live`）:
+  - `SCALP_PING_5S_C_ALLOW_HOURS_JST=`（空）
+  - `SCALP_PING_5S_C_ALLOW_HOURS_SOFT_ENABLED=0`
+  - `SCALP_PING_5S_C_SIDE_FILTER=long`
+  - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=6000`
+  - `SCALP_PING_5S_C_MAX_UNITS=15000`
+- 運用値（`M1Scalper-M1`）:
+  - `M1SCALP_ENABLED=1`
+  - `M1SCALP_BLOCK_HOURS_ENABLED=0`
+  - `M1SCALP_BLOCK_HOURS_UTC=`
+  - `M1SCALP_SIDE_FILTER=long`
+- 監査:
+  - `orders.db` で `outside_allow_hour_jst` が entry-stop 理由の主因になっていないこと。
+  - `trades.db` で `C/M1 sell` の比率と損益が縮小していること。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
