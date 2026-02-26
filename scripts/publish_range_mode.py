@@ -56,6 +56,24 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.utcnow()
 
 
+def _macro_tf_seconds() -> int:
+    tf = str(MACRO_TF or "").upper()
+    if tf == "H1":
+        return 3600
+    if tf == "H4":
+        return 4 * 3600
+    return max(DEFAULT_MAX_DATA_AGE_SEC, 900)
+
+
+def _macro_max_data_age_sec() -> int:
+    explicit = _parse_int(os.getenv("RANGE_MODE_PUBLISH_MACRO_MAX_DATA_AGE_SEC", "0"), 0)
+    if explicit > 0:
+        return explicit
+    # Macro candles are inherently older than M1 ticks; allow up to 135% of one macro bar.
+    auto_limit = int(_macro_tf_seconds() * 1.35)
+    return max(DEFAULT_MAX_DATA_AGE_SEC, auto_limit)
+
+
 def _parse_ts(value: Any) -> Optional[dt.datetime]:
     if value is None:
         return None
@@ -117,6 +135,12 @@ def _latest_candle_ts(candles: list[dict]) -> Optional[dt.datetime]:
     return _parse_ts(last.get("time") or last.get("timestamp") or last.get("ts"))
 
 
+def _age_seconds(now: dt.datetime, ts: Optional[dt.datetime]) -> Optional[float]:
+    if ts is None:
+        return None
+    return max(0.0, (now - ts).total_seconds())
+
+
 def _candles_to_factors(candles: list[dict]) -> Optional[Dict[str, float]]:
     rows = []
     for c in candles:
@@ -175,14 +199,21 @@ def _resolve_factors() -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, f
     return fac_m1, fac_macro, "candles", ts_m1, ts_macro
 
 
-def _data_age_sec(now: dt.datetime, ts_m1: Optional[dt.datetime], ts_macro: Optional[dt.datetime]) -> Optional[float]:
-    age_sec = None
-    if ts_m1:
-        age_sec = (now - ts_m1).total_seconds()
-    if ts_macro:
-        macro_age = (now - ts_macro).total_seconds()
-        age_sec = macro_age if age_sec is None else max(age_sec, macro_age)
-    return age_sec
+def _freshness_state(
+    now: dt.datetime,
+    ts_m1: Optional[dt.datetime],
+    ts_macro: Optional[dt.datetime],
+) -> tuple[bool, Optional[float], Optional[float], int]:
+    m1_age_sec = _age_seconds(now, ts_m1)
+    macro_age_sec = _age_seconds(now, ts_macro)
+    macro_limit_sec = _macro_max_data_age_sec()
+
+    stale = False
+    if m1_age_sec is not None and m1_age_sec > DEFAULT_MAX_DATA_AGE_SEC:
+        stale = True
+    if macro_age_sec is not None and macro_age_sec > macro_limit_sec:
+        stale = True
+    return stale, m1_age_sec, macro_age_sec, macro_limit_sec
 
 
 def _refresh_candles() -> bool:
@@ -243,25 +274,35 @@ def main() -> None:
             return
 
     fac_m1, fac_macro, source, ts_m1, ts_macro = _resolve_factors()
-    age_sec = _data_age_sec(now, ts_m1, ts_macro)
+    stale_data, m1_age_sec, macro_age_sec, macro_limit_sec = _freshness_state(now, ts_m1, ts_macro)
     needs_refresh = (
         not fac_m1
         or not fac_macro
-        or (age_sec is not None and age_sec > DEFAULT_MAX_DATA_AGE_SEC)
+        or stale_data
     )
     if needs_refresh and _refresh_candles():
         fac_m1, fac_macro, source, ts_m1, ts_macro = _resolve_factors()
-        age_sec = _data_age_sec(now, ts_m1, ts_macro)
+        stale_data, m1_age_sec, macro_age_sec, macro_limit_sec = _freshness_state(
+            now,
+            ts_m1,
+            ts_macro,
+        )
 
     if not fac_m1 or not fac_macro:
         logging.warning("[range_metric] missing factors (source=%s)", source)
         return
     stale_reason = None
-    if age_sec is not None and age_sec > DEFAULT_MAX_DATA_AGE_SEC:
+    if stale_data:
         if ALLOW_CLOSED_STALE and not is_market_open(now):
             stale_reason = "market_closed"
         else:
-            logging.warning("[range_metric] data too old (age=%.1fs)", age_sec)
+            logging.warning(
+                "[range_metric] data too old (m1_age=%.1fs macro_age=%.1fs m1_limit=%ss macro_limit=%ss)",
+                -1.0 if m1_age_sec is None else m1_age_sec,
+                -1.0 if macro_age_sec is None else macro_age_sec,
+                DEFAULT_MAX_DATA_AGE_SEC,
+                macro_limit_sec,
+            )
             return
 
     range_ctx = detect_range_mode(fac_m1, fac_macro, env_tf="M1", macro_tf=MACRO_TF)
@@ -271,9 +312,14 @@ def main() -> None:
         "source": source,
         "env_tf": "M1",
         "macro_tf": MACRO_TF,
+        "m1_limit_sec": DEFAULT_MAX_DATA_AGE_SEC,
+        "macro_limit_sec": macro_limit_sec,
     }
-    if age_sec is not None:
-        tags["age_sec"] = int(age_sec)
+    if m1_age_sec is not None:
+        tags["age_sec"] = int(m1_age_sec)
+        tags["m1_age_sec"] = int(m1_age_sec)
+    if macro_age_sec is not None:
+        tags["macro_age_sec"] = int(macro_age_sec)
     if stale_reason:
         tags["stale"] = stale_reason
     written = log_metric("range_mode_active", 1.0 if range_ctx.active else 0.0, tags=tags, ts=now)

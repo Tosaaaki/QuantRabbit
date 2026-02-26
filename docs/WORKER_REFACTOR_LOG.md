@@ -54,6 +54,29 @@
   - 直近で損失主因だった `scalp_fast` の低期待値エントリーを preflight で早期遮断する。
   - 「レンジで死ぬ」状態を、レンジ戦略へ流し直しつつ低EV scalp を抑える方向へ修正する。
 
+### 2026-02-26（追記）`quant-range-metrics` の stale 誤判定を修正（H4/H1 の鮮度閾値を分離）
+
+- 背景（VM実測, UTC 2026-02-26 07:26）:
+  - `quant-range-metrics.service` は timer で起動していたが、
+    `WARNING: [range_metric] data too old (age=12392.6s)` が継続し、
+    `range_mode_active` の更新が止まる時間帯が発生していた。
+  - 原因は `scripts/publish_range_mode.py` の鮮度判定が
+    `max(M1_age, macro_age)` を `RANGE_MODE_PUBLISH_MAX_DATA_AGE_SEC=900` で一律評価していたこと。
+    H4運用では macro 足が 15 分超になるのは通常で、営業中でも stale 扱いになっていた。
+- 変更:
+  - `scripts/publish_range_mode.py`
+    - M1 と macro(H1/H4) の鮮度判定を分離。
+    - macro 側は `RANGE_MODE_PUBLISH_MACRO_MAX_DATA_AGE_SEC` を追加し、
+      未設定時は `macro_bar_sec * 1.35`（H4=19440秒, H1=4860秒）を自動採用。
+    - `range_mode_active` タグへ `m1_age_sec` / `macro_age_sec` /
+      `m1_limit_sec` / `macro_limit_sec` を追加して監査可能化。
+  - `tests/scripts/test_publish_range_mode.py`
+    - H4 intra-bar（macro age 約3.4h）で stale にならない回帰テストを追加。
+    - macro 限界超過時に stale 判定へ入るテストを追加。
+- 意図:
+  - `quant-range-metrics` を営業時間中に継続発行可能な状態へ戻し、
+    `range_mode_active` が分析ワーカーとして実際に戦略判断へ使える監視信号になるよう復旧する。
+
 ### 2026-02-26（追記）SL運用の曖昧さを解消（baseline明示 + override契約を仕様化）
 
 - 背景:

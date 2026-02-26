@@ -121,6 +121,12 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
   `metric_write_failed metric=range_mode_active` を warning 出力する。
 - `logged active=...` があるのに `range_mode_active` が更新されない場合は、
   まず上記 warning と `metrics_logger` の debug drop ログを確認する。
+- `scripts/publish_range_mode.py` の鮮度判定は
+  `M1` と `macro(H1/H4)` を別閾値で評価する。
+  - `RANGE_MODE_PUBLISH_MAX_DATA_AGE_SEC`（M1 側、既定 900 秒）
+  - `RANGE_MODE_PUBLISH_MACRO_MAX_DATA_AGE_SEC`（macro 側、未設定時は TF から自動算出）
+  - `range_mode_active` の tags で `m1_age_sec` / `macro_age_sec` /
+    `m1_limit_sec` / `macro_limit_sec` を確認する。
 
 ## 8. マージン余力判定の落とし穴（2025-12-29 対応済み）
 - fast_scalp が shared_state 欠落時に余力0と誤判定し全シグナルをスキップした事象あり。
