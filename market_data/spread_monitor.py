@@ -468,6 +468,21 @@ def get_state() -> Optional[dict]:
         return _normalize_for_disabled_spread_guard(_state_from_tick_cache(now))
 
     age_ms = int(max(0.0, (now - _snapshot.monotonic_ts) * 1000))
+    if age_ms > MAX_AGE_MS and TICK_CACHE_FALLBACK_ENABLED:
+        # Recover from stale in-process snapshot by preferring fresher shared
+        # tick cache data when available.
+        fallback_state = _state_from_tick_cache(now)
+        if fallback_state:
+            try:
+                fallback_age_ms = int(float(fallback_state.get("age_ms") or 0.0))
+            except Exception:
+                fallback_age_ms = MAX_AGE_MS + 1
+            fallback_stale = bool(fallback_state.get("stale"))
+            if (not fallback_stale) or (fallback_age_ms < age_ms):
+                _stale_since = None
+                merged = dict(fallback_state)
+                merged["snapshot_age_ms"] = age_ms
+                return _normalize_for_disabled_spread_guard(merged)
 
     values = [val for _, val in _history] or [_snapshot.spread_pips]
     max_spread = max(values)

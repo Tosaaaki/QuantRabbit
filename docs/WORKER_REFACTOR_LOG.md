@@ -6310,3 +6310,27 @@
 - 意図:
   - 「設定しているのにSLが効かない」実装不整合を解消し、
     C/D の損失を market-close 偏重から hard-stop 管理へ戻す。
+
+### 2026-02-26（追記）`spread_monitor` の stale ロックを解消（entry 停止の根本バグ修正）
+
+- 背景（VM実測, UTC 2026-02-26 00:39 前後）:
+  - `quant-scalp-ping-5s-flow` が `spread_stale age=... > max=4000ms` で連続ブロック。
+  - 同時刻の `logs/tick_cache.json` は数秒以内の更新と 0.8p 前後の spread を保持しており、
+    in-process snapshot stale と共有 tick cache の真値が乖離していた。
+- 原因:
+  - `market_data/spread_monitor.py:get_state()` は `_snapshot` が存在すると
+    stale 時でも snapshot 優先で返し、tick cache fallback を使わない実装だった。
+  - その結果、いったん stale snapshot に入ると `is_blocked()` が stale を維持し、
+    entry ループで解除されないロック状態が継続した。
+- 変更:
+  - `market_data/spread_monitor.py`
+    - snapshot が `MAX_AGE_MS` 超過時、tick cache fallback を評価し、
+      非 stale または snapshot より新しい場合は fallback state を優先採用するよう修正。
+    - fallback 採用時に `snapshot_age_ms` を state に付与し監査可能化。
+  - `tests/test_spread_monitor_hot_fallback.py`
+    - stale snapshot 存在時に fresh tick cache へフォールバックする回帰テストを追加。
+  - テスト結果:
+    - `pytest -q tests/test_spread_monitor_hot_fallback.py tests/test_spread_ok_tick_cache_fallback.py` で pass。
+- 意図:
+  - スプレッド真値が更新されているのに stale 判定で新規エントリーが止まり続ける
+    偽ブロックを除去し、`scalp_fast` 系の停止要因を「実スプレッド条件」に限定する。

@@ -271,6 +271,15 @@
   - `RANGEFADER_EXIT_LOSS_CUT_MAX_HOLD_SEC=900`
   - `SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_COUNT=1`
   - `SCALP_PRECISION_EXIT_OPEN_POSITIONS_RETRY_DELAY_SEC=0.35`
+- 2026-02-26 追記（entry stale lock 修正）:
+  - `market_data/spread_monitor.py:get_state()` は、
+    in-process snapshot が `MAX_AGE_MS` を超えた場合に
+    `tick_cache` fallback を優先評価する。
+  - fallback が非 stale（または snapshot より新しい）なら
+    fallback state を採用し、`snapshot_age_ms` を監査用に付与する。
+  - これにより、`spread_stale age=...` が継続して
+    `entry-skip summary ... spread_blocked=...` に張り付く
+    偽ブロック経路を回避する。
 - 目的は、legacy建玉でも loss-cut/time-stop が機能する状態を維持しつつ、
   一過性の `position_manager` timeout で EXIT 判定サイクルが欠落する頻度を下げること。
 

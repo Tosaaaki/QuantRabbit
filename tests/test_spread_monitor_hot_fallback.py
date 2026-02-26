@@ -4,6 +4,8 @@ import os
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 
 os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
 
@@ -105,3 +107,35 @@ def test_update_from_tick_triggers_hot_guard_fast(monkeypatch):
     assert state is not None
     assert state.get("source") == "snapshot"
     assert "hot_spread" in reason
+
+
+def test_get_state_prefers_fresh_tick_cache_when_snapshot_stale(monkeypatch):
+    from market_data import spread_monitor
+
+    _reset_state(spread_monitor)
+    monkeypatch.setattr(spread_monitor, "DISABLE_SPREAD_GUARD", False)
+    monkeypatch.setattr(spread_monitor, "TICK_CACHE_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(spread_monitor.time, "time", lambda: 200.0)
+    monkeypatch.setattr(spread_monitor.time, "monotonic", lambda: 20.0)
+    spread_monitor._snapshot = spread_monitor._Snapshot(
+        monotonic_ts=1.0,
+        tick_epoch=100.0,
+        bid=150.0,
+        ask=150.011,
+        spread_pips=1.1,
+    )
+    monkeypatch.setattr(
+        spread_monitor.tick_window,
+        "recent_ticks",
+        lambda seconds=0.0, limit=None: [
+            {"epoch": 199.8, "bid": 150.000, "ask": 150.008, "mid": 150.004},
+            {"epoch": 200.0, "bid": 150.001, "ask": 150.009, "mid": 150.005},
+        ],
+    )
+
+    state = spread_monitor.get_state()
+    assert state is not None
+    assert state.get("source") == "tick_cache"
+    assert bool(state.get("stale")) is False
+    assert float(state.get("spread_pips") or 0.0) == pytest.approx(0.8, abs=1e-6)
+    assert int(state.get("snapshot_age_ms") or 0) >= 19000
