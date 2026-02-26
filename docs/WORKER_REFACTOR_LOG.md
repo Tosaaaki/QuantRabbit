@@ -7384,3 +7384,69 @@
 - 意図:
   - 時間帯封鎖で成績を見かけ上維持する運用を避け、改善ループを主導線に固定する。
   - メンテ時間（JST7〜8）は例外として除外し、それ以外は動的改善で運用する。
+
+### 2026-02-26（追記）B/C「停止なし」改善チューニング（VM 24h 実測ベース）
+
+- 背景（VM実測, UTC 2026-02-26 集計）:
+  - `scalp_ping_5s_b_live`: `481 trades / -3144.3 JPY / -414.7 pips / win 24.9% / PF 0.359`
+  - `scalp_ping_5s_c_live`: `587 trades / -7025.8 JPY / -749.1 pips / win 53.2% / PF 0.434`
+  - `B` は確率帯 `0.85-0.92` の long が主劣化（`228 trades / -2332.4 JPY / PF 0.377`）。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ENABLED=1`（停止運用をやめて常時稼働）
+    - 取引密度とサイズを縮小:
+      - `MAX_ACTIVE_TRADES=10`
+      - `MAX_PER_DIRECTION=6`
+      - `MAX_ORDERS_PER_MINUTE=6`
+      - `BASE_ENTRY_UNITS=520`
+      - `MAX_UNITS=900`
+    - 静的時間帯ブロックを解除:
+      - `BLOCK_HOURS_JST=`（空）
+    - `PERF_GUARD_MODE=reduce` に変更（停止ではなく縮小）
+    - 確率・配分ガードを厳格化:
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.54`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER=0.20`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD=0.85`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX=0.12`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MAX_MULT=1.00`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_ENABLED=1`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN=1.10`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.30`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.95`
+    - side逆風時の自動縮小を有効化:
+      - `SL_STREAK_DIRECTION_FLIP_ENABLED=1`
+      - `SIDE_METRICS_DIRECTION_FLIP_ENABLED=1`
+      - `SIDE_ADVERSE_STACK_UNITS_ENABLED=1`
+      - `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.25`
+      - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.15`
+    - order intent の通過条件を厳格化:
+      - `REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.68`
+      - `MIN_SCALE...=0.25`
+      - `MAX_SCALE...=0.55`
+    - leading-profile しきい値を引き上げ:
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.62`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.68`
+      - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.80`
+  - `ops/env/scalp_ping_5s_c.env` / `ops/env/quant-scalp-ping-5s-c.env`
+    - `SCALP_PING_5S_C_ENABLED=1`（停止運用から復帰）
+    - `BASE_ENTRY_UNITS=260`, `MAX_UNITS=420` に縮小
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - fallback も `SCALP_PING_5S_PERF_GUARD_MODE=reduce`
+  - `ops/env/quant-order-manager.env`
+    - B preserve-intent を env 同値へ更新（`0.68/0.25/0.55`）
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - forecast gate allowlist に B を復帰:
+      - `FORECAST_GATE_STRATEGY_ALLOWLIST=...scalp_ping_5s_b_live,scalp_ping_5s_c_live`
+    - B/C forecast しきい値を引き上げ:
+      - `B edge=0.72 / expected_pips_min=0.24 / target_reach_min=0.34`
+      - `C edge=0.74 / expected_pips_min=0.24 / target_reach_min=0.34`
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - unit override も `PERF_GUARD_MODE=reduce` へ統一
+    - `BASE_ENTRY_UNITS=520`, `MAX_UNITS=900` を固定
+    - `ORDER_MANAGER_PRESERVE_INTENT_*` を `0.68/0.25/0.55` へ統一
+- 意図:
+  - 「止める」のではなく、`B` は低EV通過率を下げつつ縮小連続運転に寄せる。
+  - `C` は小ロット再稼働で、勝ちスパイク再現余地を残しながら尾損失を抑える。
+  - forecast gate allowlist の B 欠落を解消し、preflight の実効性を回復する。

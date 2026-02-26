@@ -57,6 +57,23 @@
 - 運用意図:
   - レンジ専用戦略の入口復帰と、`scalp_fast` の損失主導エントリー抑制を同時に行う。
 
+### B/C no-stop 改善チューニング（2026-02-26）
+- 背景（VM 直近24h）:
+  - `scalp_ping_5s_b_live`: `481 trades / -3144.3 JPY / PF 0.359`
+  - `scalp_ping_5s_c_live`: `587 trades / -7025.8 JPY / PF 0.434`
+  - `B` は `entry_probability=0.85-0.92` 帯の long で劣化が集中。
+- 実装方針:
+  - 戦略停止ではなく `PERF_GUARD_MODE=reduce` を基本にし、hard条件のみ拒否する。
+  - `B` は `preserve-intent` / `forecast-gate` / `probability-band` を同時に tighten し、
+    通過時ロットも `MAX_SCALE` と `MAX_UNITS` で圧縮する。
+  - `C` は再有効化するが、`BASE_ENTRY_UNITS` と `MAX_UNITS` を抑えた縮小運転にする。
+- 主要パラメータ（反映先: `ops/env/scalp_ping_5s_{b,c}.env`, `ops/env/quant-order-manager.env`）:
+  - `B`: `REJECT_UNDER=0.68`, `MIN/MAX_SCALE=0.25/0.55`, `MAX_UNITS=900`
+  - `B`: `FORECAST_GATE_EDGE_BLOCK=0.72`, `EXPECTED_PIPS_MIN=0.24`, `TARGET_REACH_MIN=0.34`
+  - `C`: `ENABLED=1`, `BASE_ENTRY_UNITS=260`, `MAX_UNITS=420`
+  - `C`: `PERF_GUARD_MODE=reduce`
+  - `FORECAST_GATE_STRATEGY_ALLOWLIST` に `scalp_ping_5s_b_live` を追加し、B の forecast preflight を実効化。
+
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
 - 例外は強制 DD / ヘルス / マージン使用率 / 余力 / 未実現DDの総合判定のみ。

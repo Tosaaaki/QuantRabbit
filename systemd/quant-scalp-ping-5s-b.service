@@ -10,18 +10,19 @@ WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 # Project-local overrides (repo copy for this clone's live tuning knobs).
 EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_b.env
-# Quality-first override (2026-02-25): do not freeze entry, but hard-block degraded states.
-Environment="SCALP_PING_5S_B_PERF_GUARD_MODE=block"
+# Quality-first override (2026-02-26): no-stop operation with reduced sizing on degraded states.
+Environment="SCALP_PING_5S_B_PERF_GUARD_MODE=reduce"
 Environment="SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.88"
 Environment="SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.48"
 Environment="SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.52"
 Environment="SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED=1"
 Environment="SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED=1"
 Environment="SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ENABLED=1"
-Environment="SCALP_PING_5S_B_BASE_ENTRY_UNITS=600"
-Environment="SCALP_PING_5S_B_MAX_UNITS=1200"
-Environment="ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64"
-Environment="ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.65"
+Environment="SCALP_PING_5S_B_BASE_ENTRY_UNITS=520"
+Environment="SCALP_PING_5S_B_MAX_UNITS=900"
+Environment="ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.68"
+Environment="ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.25"
+Environment="ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.55"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker
 Restart=always
 RestartSec=5
