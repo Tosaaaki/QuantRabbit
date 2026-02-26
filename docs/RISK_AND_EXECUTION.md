@@ -1107,6 +1107,17 @@
 - Timeout: OANDA REST 5s 再試行。
 - Healthbeat は `main.py` から 5min ping。
 
+### manual margin guard（2026-02-26 no-stop プロファイル）
+- 適用箇所: `execution/order_manager.py` preflight（manual exposure 併走時の新規抑制）
+- 有効化: `ORDER_MANUAL_MARGIN_GUARD_ENABLED=1`（維持）
+- 反映値（`ops/env/quant-order-manager.env`）:
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.01`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.02`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=500`
+- 目的:
+  - guard を外さず、`manual_margin_pressure` の全面停止を避けて小ロットを通す。
+  - closeout近傍は引き続き拒否し、`margin_usage_projected_cap` と併用して破綻側を防ぐ。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

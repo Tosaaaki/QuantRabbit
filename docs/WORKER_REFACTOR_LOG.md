@@ -7716,3 +7716,19 @@
   - 時間帯停止や恒久停止を使わず、`hard failfast` での全面停止を回避しつつ
     方向固定バイアスを外して約定機会を確保する。
   - 失速時は `reduce` と `ORDER_MANAGER_PRESERVE_INTENT_*` の縮小でリスクを抑制する。
+
+### 2026-02-26（追記）manual margin guard 再調整（B最終ボトルネック解消）
+
+- 背景（VM実測, 2026-02-26 11:02 UTC）:
+  - `orders.db` 直近15分で `scalp_ping_5s_b_live` の `manual_margin_pressure=3`。
+  - 同窓の B は `preflight_start=6`, `probability_scaled=3` で、通過意図が
+    margin guard で止まる状態に収束。
+  - 口座は手動ショート `USD_JPY -8500` 併走（`margin_available=4,942.48`）。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.01`（from `0.05`）
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.02`（from `0.07`）
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=500`（from `3000`）
+- 意図:
+  - guard を無効化せず、near-closeout を避けながら小ロットの再開余地を残す。
+  - 停止ではなく縮小・継続運用（no-stop）を維持する。
