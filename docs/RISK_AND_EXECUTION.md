@@ -37,6 +37,26 @@
   - `mae_delta > +0.020` を悪化
   - `range_coverage_delta < -0.030` を悪化
 
+### Forecast/Perf 再配線（2026-02-26）
+- 目的:
+  - レンジ局面での「range専用戦略が止まり、scalp_fast が低EVで通る」偏りを補正する。
+- 変更要点:
+  - `quant-v2-runtime.env`:
+    - `RangeFader` / `MicroLevelReactor` / `MicroVWAP{Revert,Bound}` の
+      `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_*` を `0.40` へ緩和。
+    - `RangeFader` の `FORECAST_GATE_EDGE_BLOCK_*` を `0.32` へ緩和。
+    - `MicroLevelReactor` の expected/target しきい値を
+      `0.20/-0.02/0.28` -> `0.12/-0.03/0.22` へ調整。
+  - `quant-order-manager.env`:
+    - `scalp_ping_5s_{b,c,flow}_live` の
+      `FORECAST_GATE_EDGE_BLOCK` / `EXPECTED_PIPS_MIN` / `EXPECTED_PIPS_CONTRA_MAX` /
+      `TARGET_REACH_MIN` を引き上げ、
+      低EVエントリーを preflight で追加遮断。
+    - `scalp_ping_5s_{b,c}` の preserve-intent / perf-guard
+      （`REJECT_UNDER`, `MAX_SCALE`, `FAILFAST_*`, `SL_LOSS_RATE_MAX`）を tighten。
+- 運用意図:
+  - レンジ専用戦略の入口復帰と、`scalp_fast` の損失主導エントリー抑制を同時に行う。
+
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
 - 例外は強制 DD / ヘルス / マージン使用率 / 余力 / 未実現DDの総合判定のみ。

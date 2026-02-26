@@ -8,6 +8,52 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）レンジ不全対策: forecast/perf の向きを「range復帰 + 低EV抑制」へ再配線
+
+- 背景（VM実測, 直近7日）:
+  - `Range` は `-1671.5 pips`、`scalp_fast` は `-2298.2 pips` で主損失。
+  - `forecast_gate_block=12641` のうち
+    `style_mismatch_range=1854`（`RangeFader`/`MicroLevelReactor` 集中）、
+    `edge_block=9899` が観測された。
+  - `order_perf_block=24517` と `order_probability_reject=18032` が併発し、
+    戦略間で「通るべきレンジ戦略が止まり、通った scalp_fast が負ける」偏りが出ていた。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `MicroLevelReactor` の forecast 閾値を緩和:
+      - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_MICROLEVELREACTOR=0.12`
+      - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_MICROLEVELREACTOR=-0.03`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROLEVELREACTOR=0.22`
+      - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROLEVELREACTOR=0.40`
+    - range 系 style guard 緩和:
+      - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_RANGEFADER=0.32`
+      - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_RANGEFADER=0.40`
+      - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROVWAPREVERT=0.40`
+      - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROVWAPBOUND=0.40`
+  - `ops/env/quant-order-manager.env`
+    - `scalp_ping_5s_b/c` の preserve/perf を tighten:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.50`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.80`
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.64`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=0.70`
+      - `SCALP_PING_5S_B/C_*_PERF_GUARD_FAILFAST_*` と `SL_LOSS_RATE_MAX` を引き上げ/引き締め。
+    - order_manager preflight で scalp_fast 低EVを追加抑制:
+      - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_B_LIVE=0.68`
+      - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_B_LIVE=0.18`
+      - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_SCALP_PING_5S_B_LIVE=-0.01`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_B_LIVE=0.28`
+      - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_C_LIVE=0.70`
+      - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_C_LIVE=0.20`
+      - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_SCALP_PING_5S_C_LIVE=-0.01`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_C_LIVE=0.30`
+      - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_FLOW_LIVE=0.72`
+      - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_FLOW_LIVE=0.22`
+      - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_SCALP_PING_5S_FLOW_LIVE=-0.01`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_FLOW_LIVE=0.32`
+- 意図:
+  - レンジ専用戦略の `style_mismatch_range` 側の過剰拒否を下げる。
+  - 直近で損失主因だった `scalp_fast` の低期待値エントリーを preflight で早期遮断する。
+  - 「レンジで死ぬ」状態を、レンジ戦略へ流し直しつつ低EV scalp を抑える方向へ修正する。
+
 ### 2026-02-26（追記）SL運用の曖昧さを解消（baseline明示 + override契約を仕様化）
 
 - 背景:
