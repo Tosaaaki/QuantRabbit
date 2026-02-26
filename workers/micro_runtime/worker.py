@@ -1175,7 +1175,8 @@ async def micro_multi_worker() -> None:
                     path=config.DYN_ALLOC_PATH,
                     ttl_sec=config.DYN_ALLOC_TTL_SEC,
                 )
-                if config.DYN_ALLOC_LOSER_BLOCK and bool(dyn_profile.get("found")):
+                dyn_allow_loser_block = bool(dyn_profile.get("allow_loser_block", True))
+                if config.DYN_ALLOC_LOSER_BLOCK and dyn_allow_loser_block and bool(dyn_profile.get("found")):
                     dyn_trades = int(dyn_profile.get("trades", 0) or 0)
                     dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
                     if (
@@ -1224,7 +1225,14 @@ async def micro_multi_worker() -> None:
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         max_signals = max(1, int(config.MAX_SIGNALS_PER_CYCLE))
         selected = candidates[:max_signals]
-        if config.DYN_ALLOC_ENABLED and config.DYN_ALLOC_WINNER_ONLY:
+        dyn_allow_winner_only = True
+        if config.DYN_ALLOC_ENABLED:
+            for item in candidates:
+                profile = item[4]
+                if bool(profile.get("found")):
+                    dyn_allow_winner_only = bool(profile.get("allow_winner_only", True))
+                    break
+        if config.DYN_ALLOC_ENABLED and config.DYN_ALLOC_WINNER_ONLY and dyn_allow_winner_only:
             winners = [
                 item
                 for item in candidates

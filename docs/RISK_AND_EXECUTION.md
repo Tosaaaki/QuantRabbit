@@ -498,6 +498,15 @@
   サンプル不足での過剰増量を防ぐ。
 - `quant-dynamic-alloc.service` の `--target-use` は `0.88` を基準とし、
   `account.margin_usage_ratio` が高止まりする局面での margin block 連発を抑える。
+- 2026-02-26 以降は `allocation_policy.soft_participation=true` を既定とし、
+  `dynamic_alloc.json` から worker へ `allow_loser_block=false` /
+  `allow_winner_only=false` を配布する。
+  - 目的: 低品質戦略を hard stop せず、`lot_multiplier` の縮小で継続稼働させる。
+  - `workers/common/dynamic_alloc.load_strategy_profile()` は
+    `allocation_policy` を読み込み、`allow_loser_block` /
+    `allow_winner_only` / `soft_participation` を返す。
+  - `micro_runtime` / `M1Scalper` / `scalp_macd_rsi_div` は
+    上記フラグを優先し、dyn alloc 由来の hard block を抑制する。
 
 ### ドローダウン恒久対策（2026-02-25 追記）
 - 方針:

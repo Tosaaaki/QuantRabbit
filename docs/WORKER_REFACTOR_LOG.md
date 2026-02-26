@@ -6664,6 +6664,36 @@
     「外部secret往復」「大きなDB走査＋JSON parse」をTTL内で再利用し、
     UI更新の体感遅延をさらに圧縮する。
 
+### 2026-02-26（追記）dynamic_alloc を soft participation 既定へ変更（停止回避）
+
+- 背景:
+  - VM実績で `STOP_LOSS_ORDER` 偏重時に、`dyn_alloc loser_block / winner_only` が
+    戦略停止に寄り、取引機会が局所化していた。
+  - 要件として「全戦略を止めず、サイズ調整で収益改善」を優先する必要がある。
+- 変更:
+  - `scripts/dynamic_alloc_worker.py`
+    - recency weighted（half-life）スコアへ更新。
+    - `sl_rate` / `downside_share` を score/lot 計算へ反映。
+    - `allocation_policy` を `dynamic_alloc.json` へ出力
+      (`soft_participation`, `allow_loser_block`, `allow_winner_only`,
+      `min_lot_multiplier`, `max_lot_multiplier`)。
+    - 既定を `soft_participation=1`（`allow_loser_block=0`, `allow_winner_only=0`）へ変更。
+  - `workers/common/dynamic_alloc.py`
+    - `allocation_policy` を読んで `load_strategy_profile()` の戻り値へ
+      `allow_loser_block` / `allow_winner_only` / `soft_participation` を追加。
+  - `workers/micro_runtime/worker.py`
+    - dyn alloc hard block を profile 側 `allow_loser_block` で制御。
+    - winner-only 絞り込みを profile 側 `allow_winner_only` で制御。
+  - `workers/scalp_m1scalper/worker.py`
+  - `workers/scalp_macd_rsi_div/worker.py`
+    - dyn alloc hard block を profile 側 `allow_loser_block` で制御。
+  - テスト:
+    - `tests/test_dynamic_alloc_worker.py`
+    - `tests/workers/common/test_dynamic_alloc.py`（新規）
+- 意図:
+  - hard stop ではなく「負け戦略は細く、勝ち戦略は太く」を徹底し、
+    全戦略を稼働させたまま資金配分で改善する。
+
 ### 2026-02-26（追記）`scalp_ping_5s_c_live` tail-loss 抑制（大口約定の縮小 + 確率ゲート強化）
 
 - 背景（VM 実測, UTC 05:15-06:15）:
