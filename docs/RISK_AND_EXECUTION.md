@@ -1124,6 +1124,8 @@
   - `scalp_ping_5s_b/c` と `M1Scalper` は `base/max units` と同時保有・発注頻度を縮小。
   - `scalp_ping_5s_b` は縮小後の通過維持のため `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=20` を適用。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
+  - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
+    `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。
   - `RangeFader` は `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=300` を追加し、
     `entry_probability_below_min_units` での連続 reject を抑制。
 - 監視指標:

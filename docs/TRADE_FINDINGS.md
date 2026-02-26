@@ -147,6 +147,9 @@ Improvement:
      （縮小後の確率スケールで `below_min_units` 連発したため）
 3. 勝ち源の増量:
    - `MicroRangeBreak` と `MomentumBurstMicro` の `MICRO_MULTI_BASE_UNITS 42000->52000`
+   - 上記2戦略の breakout 発火閾値を緩和:
+     - `MIN_ADX 20.0->16.0`, `MIN_RANGE_SCORE 0.42->0.34`, `MIN_ATR 1.2->0.9`
+     - `LOOP_INTERVAL_SEC 4.0->3.0`
    - `RangeFader` は過大化を避けるため `RANGEFADER_BASE_UNITS 13000->11000`
 
 Verification:

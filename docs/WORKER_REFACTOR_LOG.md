@@ -7759,8 +7759,16 @@
     - `M1SCALP_MAX_OPEN_TRADES=1`（from `2`）
   - `ops/env/quant-micro-rangebreak.env`
     - `MICRO_MULTI_BASE_UNITS=52000`（from `42000`）
+    - `MICRO_MULTI_LOOP_INTERVAL_SEC=3.0`（from `4.0`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_ADX=16.0`（from `20.0`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE=0.34`（from `0.42`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_ATR=0.9`（from `1.2`）
   - `ops/env/quant-micro-momentumburst.env`
     - `MICRO_MULTI_BASE_UNITS=52000`（from `42000`）
+    - `MICRO_MULTI_LOOP_INTERVAL_SEC=3.0`（from `4.0`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_ADX=16.0`（from `20.0`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE=0.34`（from `0.42`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_ATR=0.9`（from `1.2`）
   - `ops/env/quant-scalp-rangefader.env`
     - `RANGEFADER_BASE_UNITS=11000`（from `13000`）
 - 意図:
