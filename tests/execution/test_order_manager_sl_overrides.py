@@ -134,6 +134,22 @@ def test_entry_sl_disabled_for_c_variant_stays_disabled_without_override(monkeyp
     )
 
 
+def test_entry_sl_disabled_for_generic_strategy_can_be_reenabled(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
+    monkeypatch.setenv(
+        "ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROPULLBACKEMA",
+        "1",
+    )
+
+    assert (
+        order_manager._entry_sl_disabled_for_strategy(
+            "micro",
+            strategy_tag="MicroPullbackEMA",
+        )
+        is False
+    )
+
+
 def test_disable_hard_stop_b_variant_enabled_by_default(monkeypatch) -> None:
     monkeypatch.delenv("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B", raising=False)
     assert (

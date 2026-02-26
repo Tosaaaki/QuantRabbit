@@ -8,6 +8,33 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）SL運用の曖昧さを解消（baseline明示 + override契約を仕様化）
+
+- 背景:
+  - 運用問い合わせで「SLを付ける/付けない」の判定根拠が
+    `docs/SL_POLICY.md` と実装/環境の説明で不一致だった。
+  - 実装は strategy override を許可しているが、
+    ドキュメント上は `ORDER_FIXED_SL_MODE` 単独判定に見える箇所が残っていた。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_FIXED_SL_MODE=0` を明示追加（未設定依存を排除）。
+  - `execution/order_manager.py`
+    - `_allow_stop_loss_on_fill()` の docstring を
+      「strategy override → family override → global baseline」の順序へ更新。
+  - `docs/SL_POLICY.md`
+    - `stopLossOnFill` の最終判定を
+      `_entry_sl_disabled_for_strategy()` / `_allow_stop_loss_on_fill()` ベースへ修正。
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_<TAG>` と
+      `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_[B|C|D]` を
+      正式な運用キーとして明記。
+  - `tests/execution/test_order_manager_sl_overrides.py`
+    - `MicroPullbackEMA` の generic strategy override で
+      fixed-mode OFF でも `sl_disabled=False` になる回帰テストを追加。
+- 意図:
+  - 実挙動を変えずに運用判定を一本化し、
+    「baselineはOFF/ONどちらか、必要戦略だけoverrideで再有効化」
+    という契約を明確化する。
+
 ### 2026-02-25（追記）replay quality gate を定期実行へ復帰（skip既定を解除）
 
 - 背景（VM実測, UTC 2026-02-25 16:24）:

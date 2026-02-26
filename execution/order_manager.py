@@ -2207,10 +2207,10 @@ def _allow_stop_loss_on_fill(
 ) -> bool:
     """Return whether broker stopLossOnFill can be attached for entries.
 
-    V1 behavior: only ORDER_FIXED_SL_MODE decides attachment:
-    - 1: always attach
-    - 0: never attach
-    - unset: default OFF
+    Decision order:
+    1) strategy-specific override (`ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_<TAG>`)
+    2) family override for ping variants (B/C/D)
+    3) global baseline (`ORDER_FIXED_SL_MODE`; unset == OFF)
     """
     tag = str(strategy_tag or "").strip().lower()
     strategy_override = _strategy_env_int(

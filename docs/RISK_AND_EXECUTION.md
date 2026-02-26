@@ -647,6 +647,10 @@
     `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_{B,C,D}` が true の戦略では
     `sl_disabled` を解除して `stopLossOnFill` を有効化する。
     （fixed-mode OFF 時に strategy override が無視される不整合を防止）
+  - 現行 runtime baseline は `ops/env/quant-v2-runtime.env` の
+    `ORDER_FIXED_SL_MODE=0`（global OFF）で固定し、
+    実運用の attach 可否は `ops/env/quant-order-manager.env` の
+    strategy/family override で明示的に管理する。
   - `margin_closeout_soft_warmup_n=*` を運用監査し、停止ではなく縮小継続へ遷移させる。
 
 ### C tail-loss clamp（2026-02-26 追加）
