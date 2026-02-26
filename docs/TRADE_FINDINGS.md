@@ -142,9 +142,12 @@ Improvement:
 2. 負け源の即時圧縮（B/C/M1 を継続稼働のまま減速）:
    - B: `BASE 1800->900`, `MAX 3600->1800`, `MAX_ORDERS_PER_MINUTE 6->4`, `CONF_FLOOR 74->78`
    - C: `BASE 400->220`, `MAX 900->500`, `MAX_ORDERS_PER_MINUTE 2->1`, `CONF_FLOOR 82->86`
-   - M1: `BASE 10000->6000`, `MAX_OPEN_TRADES 2->1`
+   - M1: `BASE 10000->6000->3000`, `MAX_OPEN_TRADES 2->1`
    - B 追加ホットフィックス: `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE) 30->20`
      （縮小後の確率スケールで `below_min_units` 連発したため）
+   - B/M1 追加ホットフィックス: `hard:failfast` 連続拒否を避けるため
+     `PERF_GUARD_FAILFAST_*` を soft 警告側へ再設定（Bは `FAILFAST_PF=0.10`, `HARD_PF=0.00`。
+     M1は `MODE=reduce`, `FAILFAST_PF/WIN=0.30/0.35`, `HARD_PF=0.20`）。
 3. 勝ち源の増量:
    - `MicroRangeBreak` と `MomentumBurstMicro` の `MICRO_MULTI_BASE_UNITS 42000->52000`
    - 上記2戦略の breakout 発火閾値を緩和:

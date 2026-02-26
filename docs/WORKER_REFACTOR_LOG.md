@@ -7749,14 +7749,24 @@
     - `MAX_ORDERS_PER_MINUTE=4`（from `6`）
     - `CONF_FLOOR=78`（from `74`）
     - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=20`（from `30`）
+    - `PERF_GUARD_FAILFAST_PF=0.10`（from `0.58`）
+    - `PERF_GUARD_FAILFAST_HARD_PF=0.00`（新規）
   - `ops/env/scalp_ping_5s_c.env`
     - `BASE_ENTRY_UNITS=220`（from `400`）
     - `MAX_UNITS=500`（from `900`）
     - `MAX_ORDERS_PER_MINUTE=1`（from `2`）
     - `CONF_FLOOR=86`（from `82`）
   - `ops/env/quant-m1scalper.env`
-    - `M1SCALP_BASE_UNITS=6000`（from `10000`）
+    - `M1SCALP_BASE_UNITS=3000`（from `10000`）
     - `M1SCALP_MAX_OPEN_TRADES=1`（from `2`）
+    - `M1SCALP_PERF_GUARD_MODE=reduce`（from `block`）
+    - `M1SCALP_PERF_GUARD_FAILFAST_PF/WIN=0.30/0.35`（from `0.82/0.44`）
+    - `M1SCALP_PERF_GUARD_FAILFAST_HARD_PF=0.20`（新規）
+  - `ops/env/quant-order-manager.env`
+    - `PERF_GUARD_MODE_STRATEGY_M1SCALPER_M1=reduce`
+    - `PERF_GUARD_FAILFAST_PF/WIN_STRATEGY_M1SCALPER_M1=0.30/0.35`
+    - `PERF_GUARD_FAILFAST_HARD_PF_STRATEGY_M1SCALPER_M1=0.20`
+    - `M1SCALP_PERF_GUARD_*` 同値を order-manager 側にも併記
   - `ops/env/quant-micro-rangebreak.env`
     - `MICRO_MULTI_BASE_UNITS=52000`（from `42000`）
     - `MICRO_MULTI_LOOP_INTERVAL_SEC=3.0`（from `4.0`）
