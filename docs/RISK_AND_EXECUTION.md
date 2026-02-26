@@ -1052,6 +1052,8 @@
   `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を `B=0.48`, `C=0.62` へ緩和。
   併せて `strategy_entry` 側の forecast 逆行一律拒否を解除するため、
   `STRATEGY_FORECAST_FUSION_STRONG/WEAK_CONTRA_REJECT_ENABLED=0` を適用。
+  加えて `SCALP_PING_5S_B/C_ENTRY_LEADING_PROFILE_ENABLED=0` とし、
+  strategy_entry の二重拒否（leading profile 起点）を無効化。
   - 反映先: `ops/env/quant-order-manager.env`, `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`, `ops/env/quant-v2-runtime.env`
 - 方向固定での機会損失を減らすため、`scalp_ping_5s_b/c` の `SIDE_FILTER=buy` を解除。
   - 反映先: `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`

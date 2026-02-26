@@ -112,6 +112,10 @@ Improvement:
    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=0`
    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED=0`
    - 反映先: `ops/env/quant-v2-runtime.env`
+4. B/C の strategy_entry leading profile 拒否を解除:
+   - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_ENABLED=0`
+   - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_ENABLED=0`
+   - 反映先: `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
 
 Verification:
 1. `orders.db` 30分窓で `scalp_ping_5s_b_live` の `perf_block` 比率が低下すること。
