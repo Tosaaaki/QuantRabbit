@@ -77,6 +77,43 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 10:31 UTC / 2026-02-26 19:31 JST - Bがhard failfastで全面停止して約定不足
+Period:
+- `datetime(ts) >= now - 30 minutes`
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `journalctl -u quant-order-manager.service`
+
+Fact:
+- 直近30分の `orders.db`:
+  - `scalp_ping_5s_b_live`: `perf_block=32`
+  - `scalp_ping_5s_c_live`: `perf_block=4`
+  - `RangeFader-sell-fade`: `entry_probability_reject=23`
+- `quant-order-manager` 拒否ログ（B）:
+  - `perf_block:hard:hour10:failfast:pf=0.62 win=0.29 n=191` が連続発生
+- 口座状態:
+  - open trades はフラット（新規約定不足）
+
+Failure Cause:
+1. `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF/WIN` が現状実績より高く、`reduce` 設定でも hard 理由で新規を全面拒否。
+2. `SCALP_PING_5S_B_SIDE_FILTER=buy` / `SCALP_PING_5S_C_SIDE_FILTER=buy` で方向固定が残り、相場方向とのズレ時に機会損失が拡大。
+
+Improvement:
+1. Bの hard failfast 閾値を実績連動に下げる:
+   - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF: 0.88 -> 0.58`
+   - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN: 0.48 -> 0.27`
+   - 反映先: `ops/env/quant-order-manager.env` と `ops/env/scalp_ping_5s_b.env`
+2. B/C の方向固定を解除:
+   - `SCALP_PING_5S_B_SIDE_FILTER=`
+   - `SCALP_PING_5S_C_SIDE_FILTER=`
+   - 反映先: `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+
+Verification:
+1. `orders.db` 30分窓で `scalp_ping_5s_b_live` の `perf_block` 比率が低下すること。
+2. 同窓で `submit_attempt` / `filled` が再出現すること。
+3. `trades.db` の当日 `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` 実現JPYが改善方向に転じること。
+
+Status:
+- in_progress
+
 ## 2026-02-26 10:06 UTC / 2026-02-26 19:06 JST - 即日止血（C停止 + strategy_control 衝突解消）
 Period:
 - Snapshot: `2026-02-26 09:52` ～ `10:06` UTC（`18:52` ～ `19:06` JST）

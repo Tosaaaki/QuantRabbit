@@ -7682,3 +7682,25 @@
 - 意図:
   - CとMicroCompressionRevertの負け寄与を先に止血しつつ、Bの利益時間帯と
     Micro勝ち寄与戦略へ当日中の期待値とロットを寄せる。
+
+### 2026-02-26（追記）B hard failfast解除 + B/C 方向固定解除（停止回避）
+
+- 背景（VM実測, 2026-02-26 10:27-10:31 UTC）:
+  - `orders.db` 直近30分で `scalp_ping_5s_b_live` は `perf_block=32` 件。
+  - `quant-order-manager` journal の拒否理由は
+    `perf_block:hard:hour10:failfast:pf=0.62 win=0.29 n=191` が連続。
+  - `scalp_ping_5s_c_live` は同窓で `perf_block=4`、`strategy_control_entry_disabled=1`。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.58`
+    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.27`
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=`（buy固定解除）
+    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.58`
+    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.27`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=`（buy固定解除）
+- 意図:
+  - 時間帯停止や恒久停止を使わず、`hard failfast` での全面停止を回避しつつ
+    方向固定バイアスを外して約定機会を確保する。
+  - 失速時は `reduce` と `ORDER_MANAGER_PRESERVE_INTENT_*` の縮小でリスクを抑制する。

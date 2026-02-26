@@ -1041,6 +1041,15 @@
 - 運用意図:
   - 低期待値フローを block/reduce で先に切り、同日中は高寄与フローへサイズを寄せる。
 
+### no-stop再調整（2026-02-26 追記）
+- `scalp_ping_5s_b` の `hard failfast` 連発で新規が全面拒否される状態を回避するため、
+  `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF/WIN` を `0.58/0.27` へ更新。
+  - 反映先: `ops/env/quant-order-manager.env`, `ops/env/scalp_ping_5s_b.env`
+- 方向固定での機会損失を減らすため、`scalp_ping_5s_b/c` の `SIDE_FILTER=buy` を解除。
+  - 反映先: `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+- 目的:
+  - 時間帯停止なし・恒久停止なしのまま、`reduce` 運用で約定回復と方向適応を両立する。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
