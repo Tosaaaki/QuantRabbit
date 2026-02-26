@@ -756,6 +756,21 @@
   - C は no-block 方針で EXIT 機動性を優先し、
     no-negative ガードによる引っ張り損失を抑制する。
 
+### C emergency stop + wildcard reasonless close（2026-02-26 追記）
+- 背景（VM実測）:
+  - `scalp_ping_5s_c_live` は `perf_block` が大量発生する一方で `filled` も継続し、
+    直近24hで `close_reject_no_negative` が 50 件超発生。
+  - `orders.db` には `close_reject_no_negative` で `error_code` が空のケースが多く、
+    `exit_reason` 欠損時に `neg_exit.allow_reasons=["*"]` の意図が反映されない経路が残っていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`, `ops/env/quant-scalp-ping-5s-c.env`:
+    - `SCALP_PING_5S_C_ENABLED=0`（緊急停止）。
+  - `execution/order_manager.py`:
+    - `_reason_matches_tokens()` を修正し、token が `*` の場合は `exit_reason` 欠損時も一致扱いに変更。
+- 意図:
+  - 最大損失源のエントリーを即停止して流出を止める。
+  - reason欠損での `close_reject_no_negative` を減らし、含み損ポジションの解放を優先する。
+
 ### C lot overrun clamp（2026-02-26 追加）
 - 背景:
   - VM 実測で `SCALP_PING_5S_C_MAX_UNITS=4500` 設定下でも、

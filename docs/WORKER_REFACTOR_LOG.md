@@ -7252,3 +7252,22 @@
 - 意図:
   - 静的時間帯ブロックではなく、
     直近実績の `hour×side×regime` 組み合わせで preflight を動的選別する。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` を緊急停止 + `close_reject_no_negative` 欠損reason救済
+
+- 背景（VM 実測, UTC 2026-02-26 07:40 前後）:
+  - 直近14日ワースト: `scalp_ping_5s_b_live -41,156 JPY`, `scalp_ping_5s_c_live -10,554 JPY`。
+  - 直近24h（orders）で `scalp_ping_5s_c_live` は `filled=580 / perf_block=7435 / close_reject_no_negative=52`。
+  - 口座は `marginAvailable ~400 JPY`, `marginUsed ~56,200 JPY`, `openTradeCount=1`（`-9000` の無タグ open trade）で、
+    margin圧迫による reject/cooldown が継続。
+  - `quant-market-data-feed.service` は当日中に短周期 restart が多発し、`decision_latency_ms/data_lag_ms` が悪化。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`: `SCALP_PING_5S_C_ENABLED=0`
+  - `ops/env/quant-scalp-ping-5s-c.env`: `SCALP_PING_5S_C_ENABLED=0`
+  - `execution/order_manager.py`:
+    - `_reason_matches_tokens()` を修正。
+    - `allow_reasons=["*"]` を持つ戦略では `exit_reason` 欠損時も wildcard を一致扱いにし、
+      `close_reject_no_negative` の不必要な拒否を抑制。
+- 意図:
+  - まず最大ドローダウン源の C を即時停止して資金流出を止める。
+  - つぎに `exit_reason` 未注入での負け持ち越しを機械的に減らし、margin 解放速度を上げる。

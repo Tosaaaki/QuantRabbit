@@ -96,3 +96,20 @@ def test_neg_exit_policy_strict_allows_explicit_override_reason() -> None:
     )
     assert near_be is False
     assert allowed is True
+
+
+def test_neg_exit_policy_wildcard_allows_when_reason_missing() -> None:
+    allowed, near_be = _neg_exit_decision(
+        exit_reason=None,
+        est_pips=-1.2,
+        emergency_allow=False,
+        reason_allow=False,
+        worker_allow=False,
+        neg_policy={
+            "enabled": True,
+            "allow_reasons": ["*"],
+            "deny_reasons": [],
+        },
+    )
+    assert near_be is False
+    assert allowed is True

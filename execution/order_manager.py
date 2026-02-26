@@ -1034,15 +1034,16 @@ def _reject_exit_by_control(
 
 
 def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> bool:
-    if not exit_reason:
-        return False
-    reason_key = str(exit_reason).strip().lower()
+    reason_key = str(exit_reason).strip().lower() if exit_reason else ""
     if not reason_key:
-        return False
+        # Wildcard policy ("*") must still work when worker omitted exit_reason.
+        return any(str(token).strip() == "*" for token in tokens)
     for token in tokens:
         t = str(token).strip().lower()
         if not t:
             continue
+        if t == "*":
+            return True
         if t.endswith("*"):
             if reason_key.startswith(t[:-1]):
                 return True

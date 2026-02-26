@@ -24,7 +24,15 @@ defaults:
       - max_hold
       - max_adverse
       - lock_floor
+      - take_profit
+      - take_profit_zone
+      - range_timeout
+      - candle_*
+      - partial_take
+      - be_stop
       - time_stop
+      - no_recovery
+      - max_floating_loss
       - timeout
       - mtf_reversal
       - trend_failure
