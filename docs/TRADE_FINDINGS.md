@@ -101,7 +101,8 @@ Improvement:
    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF: 0.88 -> 0.58`
    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN: 0.48 -> 0.27`
    - `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX: 0.52 -> 0.75`
-   - 反映先: `ops/env/quant-order-manager.env` と `ops/env/scalp_ping_5s_b.env`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER(B/C): 0.64/0.76 -> 0.48/0.62`
+   - 反映先: `ops/env/quant-order-manager.env`, `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
 2. B/C の方向固定を解除:
    - `SCALP_PING_5S_B_SIDE_FILTER=`
    - `SCALP_PING_5S_C_SIDE_FILTER=`
