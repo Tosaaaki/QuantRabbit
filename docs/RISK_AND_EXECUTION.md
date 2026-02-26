@@ -873,6 +873,26 @@
   - 静的時間帯ブロックに頼らず、`hour×side×regime` の直近実績で
     preflight を動的に選別する。
 
+### B short隔離 + C一時停止（2026-02-26 追加）
+- 背景（VM実測, UTC 2026-02-26 08:05）:
+  - 直近日次:
+    - `scalp_ping_5s_c_live`: 2/24 `-1574.2JPY`, 2/25 `-3628.7JPY`, 2/26 `-5351.1JPY`
+    - `scalp_ping_5s_b_live`: 2/24 `-2246.6JPY`, 2/25 `-3716.2JPY`, 2/26 `-615.9JPY`
+  - 90日（実データ範囲）:
+    - `B`: `4978 trades / -41156.5JPY / -5288.6pips / PF 0.427`
+    - `C`: `855 trades / -10554.0JPY / -1006.7pips / PF 0.440`
+  - B の短期悪化クラスター（JST x short）:
+    - `00: n=62, EV=-13.2pips`
+    - `23: n=125, EV=-8.1888pips`
+    - `15: n=47, EV=-7.2915pips`
+- 変更値:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=buy`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ENABLED=0`（再検証まで一時停止）
+- 意図:
+  - 負けの主因フローを先に隔離し、エッジ確認済み導線へ資源を戻す。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

@@ -7281,6 +7281,31 @@
   - 静的時間帯ブロックではなく、
     直近実績の `hour×side×regime` 組み合わせで preflight を動的選別する。
 
+### 2026-02-26（追記）根本隔離: `B long-only` + `C一時停止`
+
+- 背景（VM実測, 2026-02-26 UTC 08:05 集計）:
+  - 直近14日の日次:
+    - `scalp_ping_5s_c_live`: 2/24 `-1574.2JPY`、2/25 `-3628.7JPY`、2/26 `-5351.1JPY`
+    - `scalp_ping_5s_b_live`: 2/24 `-2246.6JPY`、2/25 `-3716.2JPY`、2/26 `-615.9JPY`
+  - 90日（実データ範囲）:
+    - `scalp_ping_5s_b_live`: `4978 trades / -41156.5JPY / -5288.6pips / PF 0.427`
+    - `scalp_ping_5s_c_live`: `855 trades / -10554.0JPY / -1006.7pips / PF 0.440`
+  - 時間帯×方向で B の short が構造的に悪化:
+    - `JST00 short`: `n=62, EV=-13.2 pips`
+    - `JST23 short`: `n=125, EV=-8.19 pips`
+    - `JST15 short`: `n=47, EV=-7.29 pips`
+  - close reason:
+    - B は `STOP_LOSS_ORDER` が主因（`1912件 / -4387.9pips`）
+    - C は `MARKET_ORDER_TRADE_CLOSE` が主因（`778件 / -964.8pips`）
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=buy` を追加（B short を停止）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ENABLED=0` を維持し、一時停止方針を明記
+- 意図:
+  - 負けの主要ドライバ（B short / C全体）を先に隔離し、
+    期待値が確認できる導線だけで再検証する。
+
 ### 2026-02-26（追記）`scalp_ping_5s_c_live` を緊急停止 + `close_reject_no_negative` 欠損reason救済
 
 - 背景（VM 実測, UTC 2026-02-26 07:40 前後）:
