@@ -7587,3 +7587,50 @@
   - `tests/workers/test_slo_guard.py` 新規追加（disable/scope/latest/p95/healthy）。
   - `tests/analysis/test_replay_quality_gate_worker.py` の auto-improve 適用テストを
     クールダウン状態に依存しない形へ補強。
+
+### 2026-02-26（追記）intraday利益寄せ（負け筋遮断 + 勝ち筋サイズ寄せ）
+
+- 背景（VM実測, JST 2026-02-26 18時台）:
+  - 当日実現: `-6642 JPY / -459.4 pips`。
+  - 当日マイナス寄与の中心:
+    - `scalp_ping_5s_c_live: -5351 JPY`
+    - `scalp_ping_5s_b_live: -616 JPY`
+    - `MicroCompressionRevert-short: -216 JPY`
+  - 14日では `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` が継続マイナス。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ALLOW_HOURS_JST=17,18`（16/23を除外）
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=1800`
+    - `SCALP_PING_5S_B_MAX_UNITS=3600`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=19,22`（18を除外）
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=400`
+    - `SCALP_PING_5S_C_MAX_UNITS=900`
+    - `SCALP_PING_5S_C_CONF_FLOOR=82`
+  - `ops/env/quant-order-manager.env`
+    - B通過率は利益時間帯での約定回復を優先しやや緩和:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
+      - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_B_LIVE=0.70`
+      - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_B_LIVE=0.20`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_B_LIVE=0.30`
+    - Cは低EV通過を遮断するため厳格化:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.76`
+      - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_C_LIVE=0.78`
+      - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_C_LIVE=0.32`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_C_LIVE=0.42`
+  - `ops/env/quant-micro-compressionrevert.env`
+    - `MICRO_MULTI_ENABLED=0`（当日/14日マイナス寄与を遮断）
+  - `ops/env/quant-micro-vwaprevert.env`
+    - `MICRO_MULTI_BASE_UNITS=42000`（勝ち寄与のサイズ増）
+  - `ops/env/quant-micro-rangebreak.env`
+    - `MICRO_MULTI_LOOP_INTERVAL_SEC=4.0`
+    - `MICRO_MULTI_BASE_UNITS=42000`
+  - `ops/env/quant-micro-trendretest.env`
+    - `MICRO_MULTI_LOOP_INTERVAL_SEC=4.0`
+    - `MICRO_MULTI_BASE_UNITS=42000`
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_LOOP_INTERVAL_SEC=4.0`
+    - `MICRO_MULTI_BASE_UNITS=42000`
+- 意図:
+  - CとMicroCompressionRevertの負け寄与を先に止血しつつ、Bの利益時間帯と
+    Micro勝ち寄与戦略へ当日中の期待値とロットを寄せる。

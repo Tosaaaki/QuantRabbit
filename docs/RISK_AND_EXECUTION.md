@@ -988,6 +988,30 @@
   - replay/counterfactual の重処理と実トレード導線（market-data / strategy / order-manager）
     の資源競合を避け、preflight latency 劣化を抑える。
 
+### intraday攻め設定（2026-02-26 追加）
+- 目的:
+  - `scalp_ping_5s_c_live` と `MicroCompressionRevert-short` の当日負け寄与を縮小し、
+    利益寄与のある時間帯/戦略へロットを再配分する。
+- エントリー制御:
+  - `scalp_ping_5s_b`
+    - 稼働時間を `JST 17,18` に限定（`ALLOW_HOURS_JST=17,18`）
+    - `BASE_ENTRY_UNITS=1800`, `MAX_UNITS=3600`
+    - order-manager 側は通過閾値を `0.64` へ緩和し、利益時間帯で約定回復を優先。
+  - `scalp_ping_5s_c`
+    - 稼働時間を `JST 19,22` に限定（`ALLOW_HOURS_JST=19,22`）
+    - `BASE_ENTRY_UNITS=400`, `MAX_UNITS=900`, `CONF_FLOOR=82`
+    - order-manager 側は低EV通過を厳格化:
+      - `REJECT_UNDER=0.76`
+      - `EDGE_BLOCK=0.78`
+      - `EXPECTED_PIPS_MIN=0.32`
+      - `TARGET_REACH_MIN=0.42`
+- micro配分:
+  - `MicroCompressionRevert` 専用workerは `MICRO_MULTI_ENABLED=0` で停止。
+  - `MicroVWAPRevert` / `MicroRangeBreak` / `MicroTrendRetest` / `MomentumBurstMicro` は
+    `MICRO_MULTI_BASE_UNITS=42000` へ増量（rangebreak/trendretest/momentumburst は loop 4.0s）。
+- 運用意図:
+  - 低期待値フローを block/reduce で先に切り、同日中は高寄与フローへサイズを寄せる。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
