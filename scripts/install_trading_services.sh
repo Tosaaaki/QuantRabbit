@@ -185,6 +185,8 @@ ENABLE_QUEUE=()
 install_unit "$MAIN_UNIT_SRC"
 install_unit "systemd/cleanup-qr-logs.service"
 install_unit "systemd/cleanup-qr-logs.timer"
+install_unit "systemd/quant-core-backup.service"
+install_unit "systemd/quant-core-backup.timer"
 
 if [[ $INSTALL_ALL -eq 1 ]]; then
   for unit in systemd/*.service systemd/*.timer; do

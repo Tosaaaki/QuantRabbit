@@ -60,7 +60,9 @@
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
-- Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
+- Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ +
+  `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）による
+  guarded GCS 退避（低優先度 + 負荷ガード、legacy `cron.hourly` は無効化）。
 - Background: `quant-bq-sync.service`（`scripts/run_sync_pipeline.py`）は
   `--limit` と `BQ_EXPORT_BATCH_SIZE` で送信件数を上限化し、`BQ_RETRY_TIMEOUT_SEC`
   を超える長時間 retry を避ける（停止/再起動時のハング回避）。

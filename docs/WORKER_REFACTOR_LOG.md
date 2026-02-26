@@ -8,6 +8,34 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）VM高負荷の恒久対策: core backup を `cron.hourly` から guarded timer へ移行
+
+- 背景（VM実測, UTC 2026-02-26 08:33 前後）:
+  - `load average` が 60 超、`Swap 2.0GiB/2.0GiB`、`wa` 90% 近傍で高止まり。
+  - `ssh.service` 配下の長時間 `sqlite3` と
+    `cron.hourly` の `qr-gcs-backup-core`（`tar ... orders.db(-wal/-shm)`）が
+    I/O wait を増幅し、`decision_latency_ms` 劣化を誘発していた。
+- 変更:
+  - 追加: `scripts/qr_gcs_backup_core.sh`
+    - low-impact 方針の guarded backup 実装。
+    - `load1` / `D-state` / `MemAvailable` / `SwapUsed` のガードにより高負荷時は即 `skip`。
+    - SQLite は live WAL を直接 tar せず `.backup` スナップショット経由で退避。
+    - 既定は hot DB（`orders.db` / `metrics.db`）を除外し、
+      `trades/signals/snapshot/pipeline` を中心に退避。
+  - 追加: `systemd/quant-core-backup.service`, `systemd/quant-core-backup.timer`
+    - `Nice=19`, `IOSchedulingClass=idle`, `CPUWeight=10` で本番トレード導線より低優先。
+  - 追加: `ops/env/quant-core-backup.env`
+    - guard/対象ファイル/timeout の運用キーを分離。
+  - 追加: `scripts/install_core_backup_service.sh`
+    - `/usr/local/bin/qr-gcs-backup-core` と新 timer を導入し、
+      legacy `/etc/cron.hourly/qr-gcs-backup-core` を無効化するインストーラ。
+  - 更新: `scripts/install_trading_services.sh`
+    - `quant-core-backup.service/.timer` を標準インストール対象へ追加。
+- 意図:
+  - バックアップ起因の I/O 詰まりを恒久的に抑止し、
+    トレード導線（market-data/strategy-control/order-manager）の遅延悪化を避ける。
+  - バックアップ失敗よりも「本番売買の継続性」を優先する運用へ固定する。
+
 ### 2026-02-26（追記）負け筋遮断: manual余力圧迫ガード + 恒常赤字ワーカーの全時間ブロック
 
 - 背景（VM実測, UTC 2026-02-26 08:20 前後）:

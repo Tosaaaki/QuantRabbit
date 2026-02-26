@@ -57,8 +57,15 @@
 - 運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行う。
 
 ## 3. ログ永続化とバックアップ
-- GCS 自動退避: `GCS_BACKUP_BUCKET` を `ops/env/quant-v2-runtime.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。
-- 保存先: `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar`
+- GCS 自動退避（guarded）:
+  - `GCS_BACKUP_BUCKET` を `ops/env/quant-v2-runtime.env` に設定し、
+    `quant-core-backup.timer` が `/usr/local/bin/qr-gcs-backup-core` を毎時実行する。
+  - 既定で low-priority（`Nice=19`, `IOSchedulingClass=idle`）かつ
+    `ops/env/quant-core-backup.env` の `load/D-state/mem/swap` ガードを満たさない場合は
+    自動 `skip` する（トレード導線優先）。
+  - SQLite は live `*.db-wal` を直接 tar せず、`.backup` で一時スナップショット化してから退避する。
+  - legacy `/etc/cron.hourly/qr-gcs-backup-core` は `scripts/install_core_backup_service.sh` で無効化する。
+- 保存先: `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar.gz`
 - 2026-02-25 UTC 事象メモ:
   - `tar` が `orders.db-wal` を長時間保持すると `wal_checkpoint(TRUNCATE)` が進まず、
     `orders.db` stale と `database is locked` を誘発する。
@@ -72,7 +79,7 @@
 ### Storage から読むとき（VM 上）
 - 一覧: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core list`
 - 最新を展開: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core latest /tmp/qr_gcs_restore`
-- 指定取得: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core get gs://<bucket>/qr-logs/<host>/core_YYYYmmddTHHMMSSZ.tar /tmp/qr_gcs_restore`
+- 指定取得: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core get gs://<bucket>/qr-logs/<host>/core_YYYYmmddTHHMMSSZ.tar.gz /tmp/qr_gcs_restore`
 - 参照時の補助: `QR_BACKUP_HOST=<hostname>` を指定すると別ホストの退避も読める。
 
 ## 4. 例: 日次集計 / 直近オーダー

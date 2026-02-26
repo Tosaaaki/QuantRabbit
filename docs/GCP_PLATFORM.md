@@ -77,7 +77,10 @@ sudo systemctl daemon-reload
   - env マップ: `GCS_UI_BUCKET`（= `ui_bucket_name`）, `GCS_ANALYTICS_BUCKET`（= `analytics_bucket_name`）
 - バックアップ
   - 日次: `utils/backup_to_gcs.sh`
-  - 定時: `/etc/cron.hourly/qr-gcs-backup-core`
+  - 定時: `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）
+    - `ops/env/quant-core-backup.env` の load/D-state/mem/swap ガードにより
+      高負荷時は自動 skip（トレード導線優先）
+    - legacy `/etc/cron.hourly/qr-gcs-backup-core` は無効化して運用する
   - 軽量整理: `scripts/cleanup_logs.sh`（`systemd/cleanup-qr-logs.timer`）
 - UI スナップショット: `analytics/gcs_publisher.py` → `ui_state_object_path`（既定 `realtime/ui_state.json`）
 - ロットインサイト: `analytics/lot_pattern_analyzer.py` → `analytics/lot_insights.json`（analytics bucket か UI bucket）
