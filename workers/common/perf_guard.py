@@ -577,6 +577,27 @@ def _trades_columns(con: sqlite3.Connection) -> set[str]:
     return cols
 
 
+def _perf_value_column(*, cfg: PerfGuardCfg, cols: set[str]) -> str:
+    raw = env_get(
+        "PERF_GUARD_VALUE_COLUMN",
+        "realized_pl",
+        prefix=cfg.env_prefix,
+        allow_global_fallback=False,
+    )
+    preferred = str(raw or "realized_pl").strip().lower()
+    if preferred not in {"realized_pl", "pl_pips"}:
+        preferred = "realized_pl"
+    for candidate in (preferred, "realized_pl", "pl_pips"):
+        if candidate in cols:
+            return candidate
+    return "pl_pips"
+
+
+def _perf_metric_expr(*, cfg: PerfGuardCfg, cols: set[str]) -> str:
+    value_col = _perf_value_column(cfg=cfg, cols=cols)
+    return f"COALESCE({value_col}, 0.0)"
+
+
 def _query_perf_row(
     *,
     con: sqlite3.Connection,
@@ -586,6 +607,7 @@ def _query_perf_row(
     pocket: str,
     hour: Optional[int],
     regime_label: Optional[str],
+    metric_expr: str,
     cfg: PerfGuardCfg,
 ) -> Optional[sqlite3.Row]:
     regime_clause = ""
@@ -606,12 +628,12 @@ def _query_perf_row(
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(CASE WHEN {metric_expr} > 0 THEN {metric_expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {metric_expr} < 0 THEN ABS({metric_expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {metric_expr} > 0 THEN 1 ELSE 0 END) AS win,
               SUM(pl_pips) AS sum_pips,
               -- Stop-loss exits that actually realized a loss (exclude BE/lock SL profits).
-              SUM(CASE WHEN close_reason = 'STOP_LOSS_ORDER' AND pl_pips < 0 THEN 1 ELSE 0 END) AS sl_loss_n,
+              SUM(CASE WHEN close_reason = 'STOP_LOSS_ORDER' AND {metric_expr} < 0 THEN 1 ELSE 0 END) AS sl_loss_n,
               -- Emergency: broker forced liquidation.
               SUM(CASE WHEN close_reason = 'MARKET_ORDER_MARGIN_CLOSEOUT' THEN 1 ELSE 0 END) AS margin_closeout_n
             FROM trades
@@ -638,17 +660,22 @@ def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, 
         return 1.0, 0.0, 0.0, 0
     variants = _tag_variants(tag, split_directional=cfg.split_directional)
     if not variants or variants == ("",):
+        try:
+            con.close()
+        except Exception:
+            pass
         return 1.0, 0.0, 0.0, 0
     tag_clause, params = _tag_match_clause(variants)
+    metric_expr = _perf_metric_expr(cfg=cfg, cols=_trades_columns(con))
     params.extend([pocket, f"-{cfg.scale_lookback_days} day"])
     try:
         row = con.execute(
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(CASE WHEN {metric_expr} > 0 THEN {metric_expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {metric_expr} < 0 THEN ABS({metric_expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {metric_expr} > 0 THEN 1 ELSE 0 END) AS win,
               SUM(pl_pips) AS sum_pips
             FROM trades
             WHERE {tag_clause}
@@ -660,6 +687,11 @@ def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, 
     except Exception as exc:
         LOG.debug("[PERF_SCALE] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
         return 1.0, 0.0, 0.0, 0
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
     n = int(row["n"] or 0) if row else 0
     if n <= 0:
         return 1.0, 0.0, 0.0, 0
@@ -723,14 +755,15 @@ def _query_setup_perf(
             clauses.append("units < 0")
 
     where_sql = " AND ".join(clauses)
+    metric_expr = _perf_metric_expr(cfg=cfg, cols=columns)
     try:
         row = con.execute(
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(CASE WHEN {metric_expr} > 0 THEN {metric_expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {metric_expr} < 0 THEN ABS({metric_expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {metric_expr} > 0 THEN 1 ELSE 0 END) AS win,
               SUM(pl_pips) AS sum_pips
             FROM trades
             WHERE {where_sql}
@@ -797,8 +830,13 @@ def _query_perf(
         return True, "db_open_failed", 0
     variants = _tag_variants(tag, split_directional=cfg.split_directional)
     if not variants or variants == ("",):
+        try:
+            con.close()
+        except Exception:
+            pass
         return True, "empty_tag", 0
     tag_clause, params = _tag_match_clause(variants)
+    metric_expr = _perf_metric_expr(cfg=cfg, cols=_trades_columns(con))
     try:
         row_regime = None
         row_global = None
@@ -811,6 +849,7 @@ def _query_perf(
                 pocket=pocket,
                 hour=hour,
                 regime_label=regime_label,
+                metric_expr=metric_expr,
                 cfg=cfg,
             )
             if row_regime is not None:
@@ -825,6 +864,7 @@ def _query_perf(
             pocket=pocket,
             hour=hour,
             regime_label=None,
+            metric_expr=metric_expr,
             cfg=cfg,
         )
         row = row_regime if row_regime is not None else row_global
@@ -936,13 +976,14 @@ def _query_pocket_perf(pocket: str, cfg: PerfGuardCfg) -> Tuple[bool, str, int]:
     except Exception:
         return True, "db_open_failed", 0
     try:
+        metric_expr = _perf_metric_expr(cfg=cfg, cols=_trades_columns(con))
         row = con.execute(
-            """
+            f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+              SUM(CASE WHEN {metric_expr} > 0 THEN {metric_expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {metric_expr} < 0 THEN ABS({metric_expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {metric_expr} > 0 THEN 1 ELSE 0 END) AS win
             FROM trades
             WHERE pocket = ?
               AND close_time >= datetime('now', ?)

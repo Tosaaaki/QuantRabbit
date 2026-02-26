@@ -6919,3 +6919,26 @@
 - 意図:
   - C の no-block 運用では EXIT の機動性を優先し、
     `close_reject_no_negative` 起因の含み損拡大を防ぐ。
+
+### 2026-02-26（追記）円換算（JPY）優先のリスク判定へ修正
+
+- 背景:
+  - リスク判定で `pips` と `JPY` が混在し、ロット差を含む実損益と
+    ガード判定軸がずれるケースがあった。
+- 変更:
+  - `execution/risk_guard.py`
+    - `check_global_drawdown()` を `realized_pl`（JPY）優先に変更。
+      - 既定: `GLOBAL_DD_LOOKBACK_DAYS` 日の `net_pl` を
+        `GLOBAL_DD_EQUITY_BASE_JPY` または `update_dd_context()` の
+        口座 equity ヒントで割って DD 比率を算出。
+      - `realized_pl` が無いDBのみ `pl_pips` 系へフォールバック。
+    - `loss_cooldown_status()` の連敗判定を `realized_pl` 優先に変更
+      （`LOSS_COOLDOWN_MIN_ABS_JPY` で微小損益のノイズ除外可）。
+  - `workers/common/perf_guard.py`
+    - PF/勝率判定の集計列を `PERF_GUARD_VALUE_COLUMN` で選択可能にし、
+      既定を `realized_pl` 優先に変更（`pl_pips` フォールバックあり）。
+    - 既存の `avg_pips` 閾値系は互換維持のためそのまま残し、
+      値幅評価（補助）と実損益評価（主軸）を分離。
+- 意図:
+  - エントリー抑制・連敗クールダウン・全体DD監視を「円換算基準」で揃え、
+    口座ダメージに直結する軸でリスクを管理する。

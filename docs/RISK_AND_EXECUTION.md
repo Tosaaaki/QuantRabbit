@@ -728,6 +728,16 @@
 - 最小ロット下限: macro 0.1, micro 0.0, scalp 0.05（env で上書き可）
 - `clamp_sl_tp(price, sl, tp, side)` で 0.001 丸め、SL/TP 逆転時は 0.1 バッファ
 
+### 円換算優先の判定軸（2026-02-26）
+- `execution/risk_guard.py`:
+  - `check_global_drawdown()` は `realized_pl`（JPY）を優先して DD 比率を計算する。
+  - DD母数は `GLOBAL_DD_EQUITY_BASE_JPY` または `update_dd_context()` で更新した口座 equity ヒントを使う。
+  - 集計窓は `GLOBAL_DD_LOOKBACK_DAYS`（既定 7 日）。
+  - `loss_cooldown_status()` の連敗判定も `realized_pl` 優先（`LOSS_COOLDOWN_MIN_ABS_JPY` で微小ノイズを除外可能）。
+- `workers/common/perf_guard.py`:
+  - PF/勝率の集計列は `PERF_GUARD_VALUE_COLUMN` で選択可能（既定は `realized_pl` 優先、`pl_pips` はフォールバック）。
+  - `avg_pips` は値幅品質の補助指標として維持し、資金管理の主軸には使わない。
+
 ## 3. OANDA API マッピング
 
 | Strategy action | REST 注文 | units 符号 | SL/TP | 備考 |

@@ -48,6 +48,14 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
+_GLOBAL_DD_LOOKBACK_DAYS = max(
+    1,
+    int(float(os.getenv("GLOBAL_DD_LOOKBACK_DAYS", str(_LOOKBACK_DAYS)) or _LOOKBACK_DAYS)),
+)
+_LOSS_COOLDOWN_MIN_ABS_JPY = max(
+    0.0,
+    float(os.getenv("LOSS_COOLDOWN_MIN_ABS_JPY", "0.0") or 0.0),
+)
 MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.85"))
 MAX_MARGIN_USAGE_HARD = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.90"))
 
@@ -116,8 +124,32 @@ except Exception:
 _POCKET_EQUITY_HINT: Dict[str, float] = {
     pocket: _DEFAULT_BASE_EQUITY[pocket] for pocket in _DEFAULT_BASE_EQUITY
 }
+_ACCOUNT_EQUITY_HINT = max(
+    1.0,
+    float(
+        os.getenv(
+            "GLOBAL_DD_EQUITY_BASE_JPY",
+            os.getenv("RISK_ACCOUNT_EQUITY_HINT_JPY", "12000"),
+        )
+        or 12000
+    ),
+)
 
 _LOSS_COOLDOWN_CACHE: Dict[str, float] = {}
+
+
+def _trades_columns(con: sqlite3.Connection) -> set[str]:
+    try:
+        rows = con.execute("PRAGMA table_info(trades)").fetchall()
+    except Exception:
+        return set()
+    cols: set[str] = set()
+    for row in rows:
+        try:
+            cols.add(str(row[1]).strip().lower())
+        except Exception:
+            continue
+    return cols
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -696,8 +728,10 @@ def update_dd_context(
     perf_hint: Optional[dict] = None,
 ) -> None:
     """最新の口座残高とポケット配分ヒントを共有し、DD 判定の母数を更新する。"""
+    global _ACCOUNT_EQUITY_HINT
     if account_equity <= 0:
         return
+    _ACCOUNT_EQUITY_HINT = max(1.0, float(account_equity))
 
     macro_cap = POCKET_MAX_RATIOS["macro"]
     micro_cap = POCKET_MAX_RATIOS["micro"]
@@ -836,24 +870,59 @@ def check_global_drawdown() -> bool:
     if con is None:
         return False
     try:
-        # 全ての取引の損益合計を取得
-        rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
+        cols = _trades_columns(con)
+        metric_name = "pl_pips_fallback"
+        metric_expr = "COALESCE(pl_pips, 0.0)"
+        if "realized_pl" in cols:
+            metric_name = "realized_pl_jpy"
+            metric_expr = "COALESCE(realized_pl, 0.0)"
+        elif "pl_pips" in cols and ("closed_units" in cols or "units" in cols):
+            metric_name = "derived_jpy_from_pips"
+            units_expr = (
+                "COALESCE(closed_units, units, 0.0)"
+                if "closed_units" in cols
+                else "COALESCE(units, 0.0)"
+            )
+            metric_expr = f"COALESCE(pl_pips, 0.0) * ABS({units_expr}) * 0.01"
+
+        row = con.execute(
+            f"""
+            SELECT
+              COALESCE(SUM({metric_expr}), 0.0) AS net_pl,
+              COALESCE(
+                SUM(CASE WHEN {metric_expr} < 0 THEN {metric_expr} ELSE 0 END),
+                0.0
+              ) AS loss_only
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND datetime(close_time) >= datetime('now', ?)
+            """,
+            (f"-{_GLOBAL_DD_LOOKBACK_DAYS} day",),
+        ).fetchone()
     finally:
         try:
             con.close()
         except Exception:
             pass
-    # 全ての取引の損益合計を取得
-    total_pl_pips = rows[0] or 0.0
 
-    # 損失の場合のみドローダウンとして計算
-    if total_pl_pips >= 0:
-        return False  # 利益が出ているか、損失がない場合はドローダウンなし
+    net_pl = float((row["net_pl"] if row is not None and "net_pl" in row.keys() else 0.0) or 0.0)
+    if net_pl >= 0:
+        return False
 
-    # 10万pips = 100% equity と近似してドローダウン率を計算
-    drawdown_percentage = abs(total_pl_pips) / 100000.0
-    print(
-        f"[RISK] Global Drawdown: {drawdown_percentage:.2%} (Limit: {GLOBAL_DD_LIMIT:.2%})"
+    base_equity = max(
+        1.0,
+        float(os.getenv("GLOBAL_DD_EQUITY_BASE_JPY", "0") or 0.0),
+        float(_ACCOUNT_EQUITY_HINT or 0.0),
+    )
+    drawdown_percentage = abs(net_pl) / base_equity
+    logging.info(
+        "[RISK] Global Drawdown metric=%s net=%.1f dd=%.2f%% base=%.1f lookback=%dd limit=%.2f%%",
+        metric_name,
+        net_pl,
+        drawdown_percentage * 100.0,
+        base_equity,
+        _GLOBAL_DD_LOOKBACK_DAYS,
+        GLOBAL_DD_LIMIT * 100.0,
     )
     return drawdown_percentage >= GLOBAL_DD_LIMIT
 
@@ -1394,9 +1463,15 @@ def loss_cooldown_status(
     if con is None:
         return False, 0.0
     try:
+        cols = _trades_columns(con)
+        value_expr = "COALESCE(pl_pips, 0.0)"
+        using_realized_pl = False
+        if "realized_pl" in cols:
+            value_expr = "COALESCE(realized_pl, 0.0)"
+            using_realized_pl = True
         rows = con.execute(
-            """
-            SELECT pl_pips, close_time
+            f"""
+            SELECT {value_expr} AS perf_value, close_time
             FROM trades
             WHERE pocket = ?
               AND close_time IS NOT NULL
@@ -1419,8 +1494,10 @@ def loss_cooldown_status(
     latest_raw: str | None = None
     for row in rows:
         try:
-            pl = float(row["pl_pips"] or 0.0)
+            pl = float(row["perf_value"] or 0.0)
         except Exception:
+            pl = 0.0
+        if using_realized_pl and _LOSS_COOLDOWN_MIN_ABS_JPY > 0.0 and abs(pl) < _LOSS_COOLDOWN_MIN_ABS_JPY:
             pl = 0.0
         if pl < 0:
             streak += 1
