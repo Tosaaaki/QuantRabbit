@@ -7058,3 +7058,53 @@
 - 意図:
   - 時間帯での機械停止を外し、効果が計測しやすい
     `entry_probability / flip / risk` 系ガードに制御責務を戻す。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` 連続悪化の緊急デリスク（VM実測ベース）
+
+- 背景（VM実測, UTC 2026-02-26 07:24 集計）:
+  - 直近24hで
+    - `scalp_ping_5s_c_live`: `587 trades / -7025.8 JPY / -749.1 pips / win 53.2% / PF 0.434`
+    - `scalp_ping_5s_b_live`: `481 trades / -3144.3 JPY / -414.7 pips / win 24.9% / PF 0.359`
+  - 直近6hでは `scalp_ping_5s_c_live long` が
+    `188 trades / -3258.0 JPY / -231.4 pips / win 38.3%` と悪化継続。
+  - `close_reason` は
+    `scalp_ping_5s_c_live: MARKET_ORDER_TRADE_CLOSE=543件/-6335.9JPY`、
+    `scalp_ping_5s_b_live: STOP_LOSS_ORDER=346件/-4681.5JPY` が主因。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - 約定密度とサイズを追加圧縮:
+      - `MAX_ORDERS_PER_MINUTE=2`
+      - `BASE_ENTRY_UNITS=450`
+      - `MAX_UNITS=700`
+    - entry品質ゲートを引き上げ:
+      - `CONF_FLOOR=78`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.70`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER=0.24`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.52`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.60`
+      - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.85`
+    - failfast を前倒し:
+      - `PERF_GUARD_FAILFAST_MIN_TRADES=6`
+      - `PERF_GUARD_FAILFAST_PF=0.90`
+      - `PERF_GUARD_FAILFAST_WIN=0.48`
+      - `PERF_GUARD_SL_LOSS_RATE_MAX=0.55`
+  - `ops/env/quant-order-manager.env`
+    - C の preserve-intent を追加厳格化:
+      - `REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.72`
+      - `MIN_SCALE...=0.30`
+      - `MAX_SCALE...=0.55`
+    - B の preserve-intent も再悪化防止:
+      - `REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.62`
+      - `MIN_SCALE...=0.35`
+      - `MAX_SCALE...=0.65`
+    - fallback 側 perf_guard を `reduce -> block` に統一し、
+      `FAILFAST` を `min_trades=8 / PF=0.90 / win=0.48` へ引き上げ。
+  - `ops/env/scalp_ping_5s_b.env` / `systemd/quant-scalp-ping-5s-b.service`
+    - B の実効ロット上限を追加圧縮:
+      - `BASE_ENTRY_UNITS=600`
+      - `MAX_UNITS=1200`
+      - `MAX_ORDERS_PER_MINUTE=8`
+    - unit override でも同値に固定し、再起動後のズレを防止。
+- 意図:
+  - `C` の直近悪化帯で「通過率とロット上限」を同時に落として下方分散を先に止める。
+  - `B` はすでに取引量が落ちているため、再悪化しないよう上限をさらに抑える。

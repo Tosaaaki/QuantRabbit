@@ -768,6 +768,47 @@
   - 戦略が出したサイズ意図を「最大値」として扱い、
     協調/補正レイヤ由来の上振れでリスクが膨らむ経路を遮断する。
 
+### C/B emergency de-risk（2026-02-26 追加）
+- 背景（VM実測, UTC 07:24 集計）:
+  - 直近24h:
+    - `scalp_ping_5s_c_live`: `587 trades / -7025.8 JPY / -749.1 pips / win 53.2% / PF 0.434`
+    - `scalp_ping_5s_b_live`: `481 trades / -3144.3 JPY / -414.7 pips / win 24.9% / PF 0.359`
+  - 直近6h: `scalp_ping_5s_c_live long` が `188 trades / -3258.0 JPY / -231.4 pips`。
+- 変更値（`ops/env/scalp_ping_5s_c.env`）:
+  - 取引密度/サイズ圧縮:
+    - `MAX_ORDERS_PER_MINUTE=2`
+    - `BASE_ENTRY_UNITS=450`
+    - `MAX_UNITS=700`
+  - entry品質:
+    - `CONF_FLOOR=78`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.70`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.52`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.60`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.85`
+  - failfast:
+    - `PERF_GUARD_FAILFAST_MIN_TRADES=6`
+    - `PERF_GUARD_FAILFAST_PF=0.90`
+    - `PERF_GUARD_FAILFAST_WIN=0.48`
+    - `PERF_GUARD_SL_LOSS_RATE_MAX=0.55`
+- 変更値（`ops/env/quant-order-manager.env`）:
+  - C preserve-intent:
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.72`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.30`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.55`
+  - B preserve-intent:
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.62`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.35`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.65`
+  - fallback `perf_guard` は `SCALP_PING_5S*` / `SCALP_PING_5S_C*` とも `block` に統一。
+- 変更値（`systemd/quant-scalp-ping-5s-b.service`）:
+  - `BASE_ENTRY_UNITS=600`
+  - `MAX_UNITS=1200`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.65`
+- 意図:
+  - C の悪化帯では「件数×ロット」を同時に落として尾損失を抑制する。
+  - B は再悪化防止を優先し、実効ロット上限を unit override 側でも固定する。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
