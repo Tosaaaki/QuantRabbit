@@ -689,6 +689,18 @@
   - 停止/時間帯ブロックなしで、低品質エントリー通過とロット上振れを抑制し、
     通過注文の尾損失を縮小する。
 
+### C negative-close policy（2026-02-26 追加）
+- 背景:
+  - `scalp_ping_5s_c_live` で `close_reject_no_negative` が多発し、
+    EXIT シグナル後も負けを保持し続けるケースが確認された。
+- 変更:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_c` / `scalp_ping_5s_c_live` に
+      `neg_exit.allow_reasons: ["*"]` を追加。
+- 意図:
+  - C は no-block 方針で EXIT 機動性を優先し、
+    no-negative ガードによる引っ張り損失を抑制する。
+
 ### C lot overrun clamp（2026-02-26 追加）
 - 背景:
   - VM 実測で `SCALP_PING_5S_C_MAX_UNITS=4500` 設定下でも、

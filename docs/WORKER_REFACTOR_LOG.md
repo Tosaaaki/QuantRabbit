@@ -6904,3 +6904,18 @@
 - 意図:
   - ブロックに頼らず、低品質エントリー通過率とロット上振れを抑え、
     `MARKET_ORDER_TRADE_CLOSE` 側の尾損失を縮小する。
+
+### 2026-02-26（追記）`scalp_ping_5s_c(_live)` の negative-close 解放（引っ張り損失の抑止）
+
+- 背景（VM実測, JST 15時台）:
+  - `orders.db` で C 戦略に `close_reject_no_negative` が多発し、
+    その時間帯の `pl_pips` が継続してマイナスだった。
+  - reject 時の `exit_reason` は `take_profit`, `range_timeout`, `candle_*` が中心で、
+    「EXIT シグナルは出ているが、損益符号ガードで閉じられない」状態だった。
+- 変更:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_c` / `scalp_ping_5s_c_live` に
+      `neg_exit.allow_reasons: ["*"]` を追加。
+- 意図:
+  - C の no-block 運用では EXIT の機動性を優先し、
+    `close_reject_no_negative` 起因の含み損拡大を防ぐ。
