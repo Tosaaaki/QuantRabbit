@@ -1,5 +1,22 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-10. 2026-02-26 UTC `scalp_ping_5s_c_live` 時間帯停止を解除（実証不足のため）
+- 背景（VM実測, UTC 2026-02-26 07:16 集計）:
+  - 直近14日 `scalp_ping_5s_c_live` のJST時間帯別はばらつきが大きく、
+    許可時間帯にしていた `18` 時は `34 trades / -698.8 JPY / -280.9 pips` と悪化。
+  - 許可バケット（`18/19/22`）合算は `181 trades / -325.3 JPY` だが、
+    これは観測集計であり、時間帯ブロック自体の因果効果（A/B）を示すものではない。
+  - `journalctl -u quant-scalp-ping-5s-c.service` では
+    `entry-skip ... outside_allow_hour_jst` が継続し、
+    時間帯フィルタでエントリーを止める状態が常態化していた。
+- 対応:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=`
+    - 時間帯ブロックを解除し、戦略ローカル判定（forecast/perf/risk）で常時運転へ戻す。
+- 意図:
+  - 実証不足のフィルタでエントリー機会を機械的に落とさず、
+    効果が定量確認できるガード（確率・flip・risk）に責務を戻す。
+
 ## 0-9. 2026-02-26 UTC `scalp_ping_5s_c_live` 方向転換デリスク（SL連発帯の過発火抑制）
 - 背景（VM実測, UTC 2026-02-26 07:05 前後）:
   - `ui_state` 直近60件で `flip_any=19`（`fast=14 / sl=2 / side=3`）、
