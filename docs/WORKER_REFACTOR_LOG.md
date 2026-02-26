@@ -7692,6 +7692,7 @@
   - `scalp_ping_5s_c_live` は同窓で `perf_block=4`、`strategy_control_entry_disabled=1`。
 - 変更:
   - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_ENABLED=0`（service内の自己HTTP再入を停止）
     - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.58`
     - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.27`
     - `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.75`

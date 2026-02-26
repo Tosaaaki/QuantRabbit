@@ -1043,6 +1043,8 @@
 
 ### no-stop再調整（2026-02-26 追記）
 - `scalp_ping_5s_b` の `hard failfast` 連発で新規が全面拒否される状態を回避するため、
+  `quant-order-manager` 自身の `ORDER_MANAGER_SERVICE_ENABLED=0` に戻し、
+  service内の自己HTTP再入を停止。
   `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF/WIN` を `0.58/0.27` へ更新。
   併せて `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX` を `0.75` へ更新し、
   `sl_loss_rate` 理由での hard stop 常態化を回避。
