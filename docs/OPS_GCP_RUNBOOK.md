@@ -8,8 +8,8 @@
 
 ### クイックコマンド（proj/zone/inst は適宜置換）
 ```bash
-# Doctor（一括検診 + 鍵登録）
-scripts/gcloud_doctor.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
+# Doctor（一括検診 + 鍵登録 + OS Login メタデータ競合是正）
+scripts/gcloud_doctor.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -E -S -G -O -t -k ~/.ssh/gcp_oslogin_qr -c
 
 # デプロイ（venv 依存更新付き/IAP）
 scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p quantrabbit
@@ -19,6 +19,9 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
   --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
   --command 'journalctl -u quantrabbit.service -f'
 ```
+
+- `gcloud_doctor.sh` の `-O` は instance metadata を `enable-oslogin=TRUE, block-project-ssh-keys=TRUE` に固定して、project metadata との競合を除去する。
+- `gcloud_doctor.sh` の `-T` は `-S` 実行時の OS Login 鍵 TTL を制御する（既定 `none`=無期限。例: `-T 30d`）。
 
 ### フォールバック（vm.sh が失敗する場合の直書き）
 1) 

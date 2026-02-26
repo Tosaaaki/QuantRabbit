@@ -2,7 +2,7 @@
 # gcloud doctor: preflight checks for deployment via gcloud/Compute Engine.
 #
 # Usage:
-#   scripts/gcloud_doctor.sh [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k SSH_KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E] [-S] [-G]
+#   scripts/gcloud_doctor.sh [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k SSH_KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E] [-S] [-G] [-O] [-T KEY_TTL]
 #
 # Options:
 #   -p PROJECT   GCP project (default: gcloud config get-value project)
@@ -16,10 +16,14 @@
 #   -E           Enable required APIs automatically (compute.googleapis.com)
 #   -S           Ensure OS Login has the provided public key (adds if missing)
 #   -G           Generate SSH key pair at default path if missing (~/.ssh/gcp_oslogin_qr)
+#   -O           Enforce instance metadata (enable-oslogin=TRUE, block-project-ssh-keys=TRUE)
+#   -T KEY_TTL   TTL for OS Login key registration when -S is used (default: none; example: 30d)
 
 set -euo pipefail
 
 has() { command -v "$1" >/dev/null 2>&1; }
+upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 red() { printf "\033[31m%s\033[0m\n" "$*"; }
 grn() { printf "\033[32m%s\033[0m\n" "$*"; }
 ylw() { printf "\033[33m%s\033[0m\n" "$*"; }
@@ -48,12 +52,15 @@ ensure_gcloud_in_path() {
 PROJECT=""; ZONE="asia-northeast1-a"; INSTANCE="fx-trader-vm"; USE_IAP=0; SSH_KEYFILE=""; CHECK_SSH=0
 SA_KEYFILE=""; SA_IMPERSONATE=""; ENABLE_APIS=0
 ENSURE_OSLOGIN_KEY=0; GENERATE_KEY=0
-while getopts ":p:z:m:k:tcK:A:ESG" opt; do
+ENFORCE_INSTANCE_OSLOGIN=0
+OSLOGIN_KEY_TTL="none"
+while getopts ":p:z:m:k:T:tcK:A:ESGO" opt; do
   case "$opt" in
     p) PROJECT="$OPTARG" ;;
     z) ZONE="$OPTARG" ;;
     m) INSTANCE="$OPTARG" ;;
     k) SSH_KEYFILE="$OPTARG" ;;
+    T) OSLOGIN_KEY_TTL="$OPTARG" ;;
     t) USE_IAP=1 ;;
     c) CHECK_SSH=1 ;;
     K) SA_KEYFILE="$OPTARG" ;;
@@ -61,7 +68,8 @@ while getopts ":p:z:m:k:tcK:A:ESG" opt; do
     E) ENABLE_APIS=1 ;;
     S) ENSURE_OSLOGIN_KEY=1 ;;
     G) GENERATE_KEY=1 ;;
-    *) echo "Usage: $0 [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E]" >&2; exit 2 ;;
+    O) ENFORCE_INSTANCE_OSLOGIN=1 ;;
+    *) echo "Usage: $0 [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E] [-S] [-G] [-O] [-T KEY_TTL]" >&2; exit 2 ;;
   esac
 done
 
@@ -119,27 +127,79 @@ if [[ "$PUBKEYFILE" != *.pub ]]; then
   PUBKEYFILE="${SSH_KEYFILE}.pub"
 fi
 
-step "Checking APIs enabled (compute.googleapis.com)"
-if ! g services list --enabled --project "$PROJECT" --format="value(config.name)" | grep -q '^compute.googleapis.com$'; then
-  if [[ $ENABLE_APIS -eq 1 ]]; then
-    ylw "Compute Engine API を有効化します..."
-    if g services enable compute.googleapis.com --project "$PROJECT" >/dev/null; then
-      grn "Compute API: enabled"
+step "Checking required APIs"
+REQUIRED_APIS=("compute.googleapis.com")
+if [[ $USE_IAP -eq 1 ]]; then
+  REQUIRED_APIS+=("iap.googleapis.com")
+fi
+
+for api in "${REQUIRED_APIS[@]}"; do
+  if ! g services list --enabled --project "$PROJECT" --format="value(config.name)" | grep -q "^${api}$"; then
+    if [[ $ENABLE_APIS -eq 1 ]]; then
+      ylw "${api} を有効化します..."
+      if g services enable "$api" --project "$PROJECT" >/dev/null; then
+        grn "${api}: enabled"
+      else
+        fail "${api} の有効化に失敗しました。権限を確認してください（roles/serviceusage.serviceUsageAdmin など）。"
+      fi
     else
-      fail "Compute API の有効化に失敗しました。権限を確認してください（roles/serviceusage.serviceUsageAdmin など）。"
+      warn "${api} が有効化されていません。以下を実行してください:\n  gcloud services enable ${api} --project ${PROJECT}"
     fi
   else
-    warn "Compute Engine API が有効化されていません。以下を実行してください:\n  gcloud services enable compute.googleapis.com --project $PROJECT"
+    grn "${api}: enabled"
   fi
-else
-  grn "Compute API: enabled"
-fi
+done
 
 step "Checking instance existence"
 if ! g compute instances describe "$INSTANCE" --zone "$ZONE" --project "$PROJECT" >/dev/null 2>&1; then
   fail "インスタンス '$INSTANCE' (zone=$ZONE) が見つかりません。ゾーン/名前/プロジェクトを確認してください。"
 fi
 grn "Instance: found ($INSTANCE)"
+
+step "Checking instance metadata for OS Login"
+INSTANCE_OSLOGIN=$(
+  g compute instances describe "$INSTANCE" --zone "$ZONE" --project "$PROJECT" \
+    --flatten="metadata.items[]" \
+    --filter="metadata.items.key=enable-oslogin" \
+    --format="value(metadata.items.value)" 2>/dev/null || true
+)
+INSTANCE_BLOCK_SSH=$(
+  g compute instances describe "$INSTANCE" --zone "$ZONE" --project "$PROJECT" \
+    --flatten="metadata.items[]" \
+    --filter="metadata.items.key=block-project-ssh-keys" \
+    --format="value(metadata.items.value)" 2>/dev/null || true
+)
+
+if [[ $ENFORCE_INSTANCE_OSLOGIN -eq 1 ]]; then
+  ylw "instance metadata を OS Login 固定値へ更新します (enable-oslogin=TRUE, block-project-ssh-keys=TRUE)"
+  if g compute instances add-metadata "$INSTANCE" --zone "$ZONE" --project "$PROJECT" \
+    --metadata enable-oslogin=TRUE,block-project-ssh-keys=TRUE >/dev/null; then
+    grn "Instance metadata updated for OS Login"
+    INSTANCE_OSLOGIN="TRUE"
+    INSTANCE_BLOCK_SSH="TRUE"
+  else
+    fail "instance metadata の更新に失敗しました。権限を確認してください。"
+  fi
+fi
+
+INSTANCE_OSLOGIN_UPPER="$(upper "$INSTANCE_OSLOGIN")"
+INSTANCE_BLOCK_SSH_UPPER="$(upper "$INSTANCE_BLOCK_SSH")"
+
+if [[ -z "$INSTANCE_OSLOGIN" ]]; then
+  warn "instance metadata に enable-oslogin が未設定です（project metadata を継承）。"
+elif [[ "$INSTANCE_OSLOGIN_UPPER" != "TRUE" ]]; then
+  warn "instance metadata enable-oslogin=${INSTANCE_OSLOGIN}。project 側 TRUE を上書きして SSH 不安定化の原因になります。-O で修復してください。"
+else
+  grn "Instance metadata enable-oslogin=TRUE"
+fi
+
+if [[ -z "$INSTANCE_BLOCK_SSH" ]]; then
+  warn "instance metadata に block-project-ssh-keys が未設定です。OS Login 運用では TRUE 推奨です。"
+elif [[ "$INSTANCE_BLOCK_SSH_UPPER" != "TRUE" ]]; then
+  warn "instance metadata block-project-ssh-keys=${INSTANCE_BLOCK_SSH}。OS Login 一貫運用のため TRUE を推奨します。"
+else
+  grn "Instance metadata block-project-ssh-keys=TRUE"
+fi
 
 step "Checking OS Login profile"
 if ! g compute os-login describe-profile --project "$PROJECT" >/dev/null 2>&1; then
@@ -177,8 +237,18 @@ if [[ $ENSURE_OSLOGIN_KEY -eq 1 ]]; then
       fail "公開鍵が見つかりません: $PUBKEYFILE（'-G' で鍵を生成します）"
     fi
   fi
-  if g compute os-login ssh-keys add --key-file "$PUBKEYFILE" --ttl 30d >/dev/null 2>&1; then
+  KEY_REGISTER_ARGS=(compute os-login ssh-keys add --key-file "$PUBKEYFILE")
+  TTL_NORM="$(lower "$OSLOGIN_KEY_TTL")"
+  if [[ -n "$TTL_NORM" && "$TTL_NORM" != "none" ]]; then
+    KEY_REGISTER_ARGS+=(--ttl "$OSLOGIN_KEY_TTL")
+  fi
+  if g "${KEY_REGISTER_ARGS[@]}" >/dev/null 2>&1; then
     grn "OS Login key registered for principal"
+    if [[ -n "$TTL_NORM" && "$TTL_NORM" != "none" ]]; then
+      grn "OS Login key TTL: $OSLOGIN_KEY_TTL"
+    else
+      grn "OS Login key TTL: none (non-expiring)"
+    fi
   else
     fail "OS Login への鍵登録に失敗しました。権限（roles/compute.osLogin）と IAP/プロジェクト設定を確認してください。"
   fi
