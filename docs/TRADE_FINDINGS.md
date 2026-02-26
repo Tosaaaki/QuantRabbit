@@ -42,6 +42,98 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-26 12:09 UTC / 2026-02-26 21:09 JST - B側の `units_below_min` 残りを削るため最小ロット閾値を再調整
+Period:
+- Snapshot: `2026-02-26 12:06:59` ～ `12:08:10` UTC（`21:06:59` ～ `21:08:10` JST）
+- Source: VM `journalctl -u quant-scalp-ping-5s-{b,c}.service`, `/home/tossaki/QuantRabbit/ops/env/{scalp_ping_5s_b.env,quant-order-manager.env}`
+
+Fact:
+- 12:06:59 UTC 再起動後、`C` は `units_below_min=0` まで低下。
+- 同条件で `B` は `entry-skip summary side=short total=4 units_below_min=4` が残存。
+- `RISK multiplier` は引き続き `mult=0.40` で、縮小局面の最終ユニットが閾値を割り込みやすい。
+
+Failure Cause:
+1. Bは strategy 側と order-manager 側の min units が `20` で揃っており、縮小ロットの通過余地が不足していた。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_MIN_UNITS: 20 -> 10`
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE: 20 -> 10`
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B: 20 -> 10`
+2. `ops/env/quant-order-manager.env`
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE: 20 -> 10`
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B: 20 -> 10`
+
+Verification:
+1. 反映後15分で `journalctl -u quant-scalp-ping-5s-b.service` の `units_below_min` が 0 になること。
+2. `orders.db` で `scalp_ping_5s_b_live` の `submit_attempt` / `filled` が再出現すること。
+3. `manual_margin_pressure` / `slo_block` が再増加しないこと。
+
+Status:
+- in_progress
+
+## 2026-02-26 12:06 UTC / 2026-02-26 21:06 JST - 損失主因の再監査（執行品質より制御異常が支配）
+Period:
+- 24h監査: `orders.db` / `trades.db` / `metrics.db`（`datetime(ts/close_time) >= now - 24 hours`）
+- 事故窓監査: `2026-02-24 02:20:16` ～ `09:13:14` UTC（`11:20:16` ～ `18:13:14` JST）
+- Source: VM `systemd`, `journalctl`, `/home/tossaki/QuantRabbit/logs/{orders,trades,metrics}.db`, `oanda_*_live.json`
+
+Fact:
+- V2主導線は稼働中（`quant-market-data-feed/order-manager/position-manager/strategy-control` は active/running）。
+- 直近24hの `orders`:
+  - `preflight_start=18629`, `perf_block=16971`, `probability_scaled=7719`, `submit_attempt=1221`, `filled=1202`
+  - `rejected=18`, `slo_block=12`, `margin_usage_projected_cap=190`, `manual_margin_pressure=36`
+- 直近24hの `trades`: `1283件`, `-4417.54 JPY`。
+  - close reason: `STOP_LOSS_ORDER=390件/-5232.48 JPY`, `MARKET_ORDER_MARGIN_CLOSEOUT=3件/-2163.76 JPY`
+  - 戦略別下位: `scalp_ping_5s_c_live=-7025.83 JPY`, `scalp_ping_5s_b_live=-3144.31 JPY`
+- 執行品質（`analyze_entry_precision.py --limit 1200`）:
+  - `slip p95=0.300 pips`, `cost_vs_mid p95=0.700 pips`, `submit latency p95=276.9 ms`, `missing quote=0`
+- レイテンシ/SLO:
+  - `data_lag_ms p95=4485.9`, `decision_latency_ms p95=8835.9`
+  - 閾値超過率: `data_lag_ms>1500ms = 22.8%`, `decision_latency_ms>2000ms = 10.71%`
+  - `journalctl quant-order-manager` に `slo_block:data_lag_p95_exceeded` を確認（2026-02-26 11:42～11:45 UTC）
+- 事故窓の確定事実:
+  - `strategy_control_exit_disabled=10277`（2026-02-24 JST日単位）
+  - `micro-micropul*` 4注文で各 `2044～2045` 回の exit disabled 後、`MARKET_ORDER_MARGIN_CLOSEOUT`
+  - 上記4件合計 `-16837.43 JPY`
+- 直近口座スナップショット（2026-02-26 12:00:35 UTC）:
+  - `nav=56970.299`, `margin_used=53060.740`, `margin_available=3943.559`, `health_buffer=0.06918`
+  - `USD_JPY short_units=8500`
+- `entry_thesis` 必須欠損:
+  - 直近24hで `entry_probability/entry_units_intent` 欠損 `80/1283` 件（主に `scalp_ping_5s_*` 派生タグ行）
+
+Failure Cause:
+1. 大損の一次原因は、戦略予測精度より `exit不能（strategy_control_exit_disabled）` と `margin closeout tail` のシステム異常。
+2. manual併走を含む高マージン使用状態で、`margin_*` ガードと closeout が発火しやすい口座状態が継続。
+3. `data_lag_ms` スパイクにより `slo_block` が増え、良い局面のエントリーが欠落して収益回復を阻害。
+4. `entry_thesis` 欠損により、意図協調/監査の完全性が崩れ、異常時の切り分けと制御精度を落としている。
+5. B/Cは執行コスト劣化より `STOP_LOSS_ORDER` と手仕舞い設計由来の期待値悪化が支配的。
+
+Improvement:
+1. `strategy_control` ガード強化:
+   - `entry=1 & exit=0` を検知即時で自動修正（`entry=0 & exit=1`）し、監査ログとアラートを必須化。
+2. exit不能の再発防止:
+   - `strategy_control_exit_disabled` が同一 `client_order_id` で閾値超過したら強制エスカレーション（exit優先モード）。
+3. マージン防衛:
+   - manual玉込みで `health_buffer` / `margin_available` 連動の新規抑制を強化し、先に建玉縮退を実行。
+4. SLO復旧:
+   - `data_lag_ms` スパイク時間帯の `market-data-feed` / DB遅延要因を切り分け、`slo_block` は hard reject 連打ではなく段階縮小中心へ。
+5. `entry_thesis` スキーマ強制:
+   - 非manual注文は `entry_probability` と `entry_units_intent` 欠損時に reject（`status=missing_entry_thesis_fields`）。
+6. 収益回復の優先順:
+   - B/Cは方向・手仕舞いロジックを再調整し、`STOP_LOSS_ORDER` 依存を減らす。
+
+Verification:
+1. `orders.db` で `strategy_control_exit_disabled` が 24h連続 `0`。
+2. `trades.db` で `MARKET_ORDER_MARGIN_CLOSEOUT` が 7日連続 `0`。
+3. `metrics.db` で `data_lag_ms p95 < 1500`, `decision_latency_ms p95 < 2000` を継続達成。
+4. `orders.db` で `slo_block` の連続発火（同一時間帯クラスタ）が解消。
+5. `trades.db` で `entry_thesis` 必須2項目の欠損が `0`。
+6. B/Cの 24h `jpy` と `PF` が改善方向（少なくとも連続悪化が停止）。
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:02 UTC / 2026-02-26 21:02 JST - B/C sell限定運用で `units_below_min` が主因化し、発注ゼロ化したため最小ロット閾値を緩和
 Period:
 - Snapshot: `2026-02-26 11:59:57` ～ `12:01:39` UTC（`20:59:57` ～ `21:01:39` JST）

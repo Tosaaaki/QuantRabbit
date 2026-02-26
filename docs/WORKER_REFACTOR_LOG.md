@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）B の縮小ロット失効を更に抑えるため最小ロット閾値を再調整
+
+- 背景（VM実測, 2026-02-26 12:08 UTC / 21:08 JST）:
+  - 12:06:59 UTC の再起動後、`scalp_ping_5s_c` の `units_below_min` は解消した一方、
+    `scalp_ping_5s_b` では `entry-skip summary side=short total=4 units_below_min=4` が残存。
+  - `RISK multiplier=0.40` の縮小局面で、Bの最終ユニットが still `min_units=20` を割り込むケースがあった。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MIN_UNITS: 20 -> 10`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE: 20 -> 10`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B: 20 -> 10`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE: 20 -> 10`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B: 20 -> 10`
+- 意図:
+  - side filter（sell限定）を維持したまま、Bの短期縮小ロットを発注可能域へ残す。
+  - `units_below_min` 起因の失効を減らし、`submit_attempt/filled` への遷移回復を狙う。
+
 ### 2026-02-26（追記）B/C sell限定で `units_below_min` が主因化したため、最小ロット閾値を緩和
 
 - 背景（VM実測, 2026-02-26 12:00 UTC / 21:00 JST）:
