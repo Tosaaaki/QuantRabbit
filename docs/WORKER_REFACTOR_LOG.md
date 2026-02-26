@@ -8112,6 +8112,11 @@
     - ロット計算を「途中段階ごとの整数丸め」から
       「倍率を合算して最終段のみ丸め」へ変更。
       `units_below_min` での 0 化を抑えてシグナル消失を減らす。
+    - `_maybe_rescue_min_units()` を追加し、
+      `entry_probability/confidence/risk_cap` を満たす場合のみ
+      `MIN_UNITS` へ救済して `units_below_min` を削減。
+  - `workers/scalp_ping_5s/config.py`
+    - `MIN_UNITS_RESCUE_*` パラメータを追加（B/C既定ON）。
   - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
     - C の no-side-filter override を許容しない期待値へ更新。
   - `tests/workers/test_scalp_ping_5s_worker.py`
@@ -8119,6 +8124,23 @@
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_SIDE_FILTER=sell`
     - `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=0`
+    - `SCALP_PING_5S_C_MIN_UNITS_RESCUE_*` を明示設定。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MIN_UNITS_RESCUE_*` を明示設定。
 - 意図:
   - 方向精度の再崩れ要因をコード・envの両面で閉じる。
   - side_filter を厳格維持しつつ、後段反転でのシグナル消失を減らして約定導線を維持する。
+
+### 2026-02-26（追記）`stage_state.db` ロックで market_order が落ちる問題の修正
+
+- 背景（VM実測）:
+  - `quant-order-manager` で `request failed: database is locked` が断続発生。
+  - `orders.db` は `preflight_start/probability_scaled` が増える一方、`trades.db` の新規 entry が止まる状態を確認。
+- 変更:
+  - `execution/strategy_guard.py`
+    - DB接続を `busy_timeout` + `WAL` + `check_same_thread=False` + `isolation_level=None` に変更。
+    - lock競合時リトライ（`STRATEGY_GUARD_DB_LOCK_RETRY*`）を追加。
+    - `set_block` / `is_blocked` / `clear_expired` で lock発生時に fail-open で継続し、例外を上位へ伝播しないように変更。
+- 意図:
+  - `stage_state.db` 共有アクセス競合で `market_order` が中断される経路を遮断し、
+    エントリー導線を停止なしで維持する。

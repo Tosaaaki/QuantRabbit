@@ -1230,6 +1230,20 @@
   - 時間帯停止・恒久停止を使わず、発注通路を再開するための最小通過ユニットとシグナル閾値を補正。
   - hard block を減らしつつ、単位当たりリスクは `MIN_UNITS`/bias scale で抑えたまま再稼働させる。
 
+### `strategy_guard` の DBロック耐性（2026-02-26 追記）
+- 背景:
+  - `market_order` preflight 後に `database is locked` で落ちるケースが発生し、
+    実約定まで進めない事象を確認。
+  - 主要経路は `execution/strategy_guard.py` の `stage_state.db` 参照（`strategy_cooldown` 判定）。
+- 実装:
+  - `STRATEGY_GUARD_DB_BUSY_TIMEOUT_MS` / lock retry を追加。
+  - 接続PRAGMAを `WAL` + `busy_timeout` に設定し、接続を autocommit 化。
+  - `set_block` / `is_blocked` / `clear_expired` で lock時は fail-open して
+    order-manager 上位へ `OperationalError` を伝播しない。
+- 運用意図:
+  - `stage_state.db` 共有アクセス競合を理由にエントリー導線を止めない。
+  - 停止ではなく改善優先方針を維持しつつ、発注可否は戦略ローカル + リスクガードで判定する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

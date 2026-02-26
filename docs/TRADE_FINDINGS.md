@@ -119,6 +119,8 @@ Improvement:
 3. 運用envを `SCALP_PING_5S_C_SIDE_FILTER=sell`, `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=0` に固定。
 4. ロット計算は途中丸めを廃止して最終丸めへ統一し、
    `units_below_min` による 0 化でシグナルが消える経路を縮小。
+5. `MIN_UNITS_RESCUE`（確率/信頼度/リスクcap条件付き）を導入し、
+   最終段だけ 1unit 救済して実約定導線を維持。
 
 Verification:
 1. 対象テスト（10件）:
@@ -874,6 +876,35 @@ Verification:
 2. `trades.db` で `MARKET_ORDER_MARGIN_CLOSEOUT` が 7日連続 0 件。
 3. `scalp_ping_5s_c_live` の 24h `ev_jpy >= 0` かつ `avg_loss_jpy` の絶対値縮小。
 4. 日次反事実で `exclude C` が不要な状態（実績 `all_24h` が単独でプラス）へ移行。
+
+Status:
+- in_progress
+
+## 2026-02-26 12:58 UTC / 2026-02-26 21:58 JST - `stage_state.db` ロックで market_order が失敗しエントリー停止
+Period:
+- Window: `2026-02-26 11:42` ～ `12:56` UTC
+- Source: VM `journalctl -u quant-order-manager.service`, `logs/orders.db`, `logs/trades.db`
+
+Fact:
+- `quant-order-manager` は active だが、`[ORDER_MANAGER_WORKER] request failed: database is locked` が連続発生。
+- `orders.db` 直近2h: `preflight_start=237`, `probability_scaled=99`, `perf_block=78`, `entry_probability_reject=19`, `slo_block=11`。
+- `trades.db` 直近2h の新規 `entry_time` は `0` 件、open trades も `0` 件。
+- 失敗直前ログは `OPEN_SCALE` / `projected margin scale` まで進み、その後に `database is locked` で abort している。
+
+Failure Cause:
+1. `execution/strategy_guard.py` が `logs/stage_state.db` に対してロック耐性なし（busy_timeout/retryなし）でアクセス。
+2. 同DBを `stage_tracker` 系と共有するため、短時間の書き込み競合で `sqlite OperationalError: database is locked` が発生。
+3. 例外が `market_order` 経路まで伝播し、preflight通過後でも発注まで到達しない。
+
+Improvement:
+1. `strategy_guard` に busy_timeout + WAL + lock retry を追加。
+2. lock時は fail-open（`is_blocked=False`）で返し、エントリーを DB 競合で止めない。
+3. `set_block` / `clear_expired` / expired削除も lock耐性化して例外伝播を防止。
+
+Verification:
+1. `pytest -q tests/test_stage_tracker.py` pass（3 passed）。
+2. デプロイ後、`journalctl -u quant-order-manager.service` で `request failed: database is locked` が再発しないこと。
+3. `orders.db` で `preflight_start` のみ増える状態が解消し、`filled` が復帰すること。
 
 Status:
 - in_progress
