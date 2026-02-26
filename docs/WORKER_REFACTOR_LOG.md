@@ -6855,3 +6855,52 @@
 - 意図:
   - 戦略ローカルで設計したユニット意図を上限として厳守し、
     予期しない上振れロットによる tail-loss を再発させない。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` no-block 改善（確率/サイズ/退出の再チューニング）
+
+- 背景（VM 実測, JST 15:16 時点）:
+  - 日次 `scalp_ping_5s_c_live` が `311 trades / -4572.0 JPY / -284.5 pips` で悪化継続。
+  - 勝率は約 51% でも、平均勝ち `+1.71 pips` に対して平均負け `-3.68 pips` と
+    損失幅が勝ち幅を上回っていた。
+- 方針:
+  - 停止・時間帯ブロックは行わず、通過注文の期待値を改善する。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - 取引密度/同時保有の抑制:
+      - `MAX_ACTIVE_TRADES=4`
+      - `MAX_ORDERS_PER_MINUTE=10`
+      - `BASE_ENTRY_UNITS=1600`
+      - `MAX_UNITS=3000`
+    - no-block運用の統一:
+      - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`
+      - `SCALP_PING_5S_C_PERF_SCALE_ENABLED=0`
+      - `SCALP_PING_5S_PERF_SCALE_ENABLED=0`
+    - tail-loss抑制:
+      - `FORCE_EXIT_MAX_HOLD_SEC=75`
+      - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=1.0`
+      - `FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC=2.5`
+      - `FORCE_EXIT_FLOATING_LOSS_MIN_PIPS=0.45`
+    - entry品質ガード強化:
+      - `CONF_FLOOR=72`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.76`
+      - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.62`
+      - `ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT=1.00`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MAX_MULT=1.00`
+      - `ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX=0.20`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.40`
+      - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=1.00`
+    - local fallback経路の preserve-intent 調整:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.55`
+      - `...MIN_SCALE...=0.55`
+      - `...MAX_SCALE...=1.00`
+      - `...BOOST_PROBABILITY...=0.85`
+  - `ops/env/quant-order-manager.env`
+    - service経路と同値化:
+      - `REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.55`
+      - `MIN_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.55`
+      - `MAX_SCALE_STRATEGY_SCALP_PING_5S_C(_LIVE)=1.00`
+      - `BOOST_PROBABILITY_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.85`
+      - `SCALP_PING_5S(_C)_PERF_SCALE_ENABLED=0`
+- 意図:
+  - ブロックに頼らず、低品質エントリー通過率とロット上振れを抑え、
+    `MARKET_ORDER_TRADE_CLOSE` 側の尾損失を縮小する。
