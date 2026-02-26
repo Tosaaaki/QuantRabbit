@@ -4275,20 +4275,28 @@ def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
 def _strategy_tag_from_client_id(client_order_id: Optional[str]) -> Optional[str]:
     if not client_order_id:
         return None
-    cid = str(client_order_id)
+    cid = str(client_order_id).strip()
     if not cid:
         return None
     if cid.startswith("qr-fast-"):
         return "fast_scalp"
     if cid.startswith("qr-pullback-s5-"):
         return "pullback_s5"
-    parts = cid.split("-")
+    parts = [p for p in cid.split("-") if p]
     if len(parts) < 3:
         return None
 
-    # Newer IDs: qr-<ts>-<pocket>-<tag>-<digest>
-    if parts[1].isdigit() and len(parts) >= 4:
-        tag = "-".join(parts[3:-1]) or "-".join(parts[3:])
+    # Worker IDs can be either:
+    # - qr-<ts>-<strategy_tag>-<digest>
+    # - qr-<ts>-<pocket>-<strategy_tag>-<digest>
+    if parts[0] == "qr" and parts[1].isdigit():
+        body = parts[2:-1] if len(parts) >= 4 else parts[2:]
+        if not body:
+            return None
+        known_pockets = {"micro", "macro", "scalp", "scalp_fast", "manual"}
+        if body[0].lower() in known_pockets and len(body) > 1:
+            body = body[1:]
+        tag = "-".join(body).strip()
         return tag or None
 
     # Legacy / fallback IDs: qr-<focus>-<tag>-<digest>

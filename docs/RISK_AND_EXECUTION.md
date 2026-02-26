@@ -628,6 +628,10 @@
     `ops/env/quant-v2-runtime.env` にも同値を置いて preflight 判定へ反映する。
   - 互換運用として `SCALP_PING_5S_PERF_GUARD_MARGIN_CLOSEOUT_HARD_*` も同値化し、
     旧 prefix 解決経路が残っても hard reject へ偏らないようにする。
+  - `client_order_id` 解析は
+    `qr-<ts>-<strategy_tag>-<digest>` / `qr-<ts>-<pocket>-<strategy_tag>-<digest>`
+    の両形式を許容し、`strategy_tag` 解決失敗で strategy 個別しきい値が
+    無効化されないようにする。
   - `margin_closeout_soft_warmup_n=*` を運用監査し、停止ではなく縮小継続へ遷移させる。
 
 ### C tail-loss clamp（2026-02-26 追加）

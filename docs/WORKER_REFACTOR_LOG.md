@@ -6688,3 +6688,29 @@
     - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=0.80 -> 0.55`
     - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=1.15 -> 1.00`
     - `ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY_STRATEGY_SCALP_PING_5S_C_LIVE=0.65 -> 0.90`
+- 意図:
+  - 低確率帯の entry 通過を減らし、同時保有/大口約定による尾損失を抑制する。
+
+### 2026-02-26（追記）`client_order_id` 由来 `strategy_tag` 解決バグを修正（C 確率ゲートの恒久化）
+
+- 背景（VM実測, UTC 05:25-06:00）:
+  - `orders.db` で `scalp_ping_5s_c_live` の `filled` に
+    `entry_probability < 0.60` が多数残っていた。
+  - 原因は `execution/order_manager.py` の
+    `_strategy_tag_from_client_id()` が
+    `qr-<ts>-<strategy_tag>-<digest>` 形式を誤解釈し、
+    digest 片を `strategy_tag` として返していたこと。
+  - その結果、`ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_*`
+    など strategy 個別しきい値が適用されない経路が存在した。
+- 変更:
+  - `execution/order_manager.py`
+    - `_strategy_tag_from_client_id()` を修正し、
+      - `qr-<ts>-<strategy_tag>-<digest>`
+      - `qr-<ts>-<pocket>-<strategy_tag>-<digest>`
+      の両形式を正しく解釈するようにした。
+  - `tests/execution/test_env_prefix_inference.py`
+    - 上記2形式の回帰テストを追加。
+- 意図:
+  - C 戦略に設定した確率拒否・ロット縮小・perf ガード等の
+    strategy 固有制約を常に有効化し、低品質エントリーの通過を防ぐ。
+  - 収益の安定化を優先し、`+2000円/h` へ向けた負け筋の先行除去を行う。

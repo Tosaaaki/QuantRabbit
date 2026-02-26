@@ -37,3 +37,13 @@ def test_strategy_entry_prefers_c_prefix() -> None:
         strategy_entry._infer_env_prefix_from_strategy_tag("scalp_ping_5s_c_live")
         == "SCALP_PING_5S_C"
     )
+
+
+def test_order_manager_parses_strategy_tag_from_current_client_id_format() -> None:
+    cid = "qr-1772085540130-scalp_ping_5s_c_live-ldf982734"
+    assert order_manager._strategy_tag_from_client_id(cid) == "scalp_ping_5s_c_live"
+
+
+def test_order_manager_parses_strategy_tag_from_pocket_client_id_format() -> None:
+    cid = "qr-1772085540130-scalp_fast-scalp_ping_5s_c_live-ldf982734"
+    assert order_manager._strategy_tag_from_client_id(cid) == "scalp_ping_5s_c_live"
