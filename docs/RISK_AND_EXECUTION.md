@@ -1111,12 +1111,12 @@
 - 適用箇所: `execution/order_manager.py` preflight（manual exposure 併走時の新規抑制）
 - 有効化: `ORDER_MANUAL_MARGIN_GUARD_ENABLED=1`（維持）
 - 反映値（`ops/env/quant-order-manager.env`）:
-  - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.01`
-  - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.02`
-  - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=500`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.00`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.00`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
 - 目的:
-  - guard を外さず、`manual_margin_pressure` の全面停止を避けて小ロットを通す。
-  - closeout近傍は引き続き拒否し、`margin_usage_projected_cap` と併用して破綻側を防ぐ。
+  - no-stop運用で `manual_margin_pressure` の連続 reject を抑制し、strategy 側の通過を優先する。
+  - 強制ブロックは `margin_usage_projected_cap` / `order_margin_block` 系に集約して破綻側を防ぐ。
 
 ### no-stop 配分再調整（2026-02-26）
 - 目的: サービス停止なしで、負け寄与戦略のサイズを即圧縮し、勝ち寄与戦略へ配分を寄せる。
@@ -1125,6 +1125,7 @@
   - `scalp_ping_5s_b` は縮小後の通過維持のため `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=20` を適用。
   - `scalp_ping_5s_b` / `M1Scalper` は `hard:failfast` 固着を避けるため、
     no-stop 向けに `PERF_GUARD_FAILFAST_*` を soft 警告側へ再調整。
+  - それでも `perf_block` が連発したため、B/M1 は `PERF_GUARD_ENABLED=0`（prefix: `SCALP_PING_5S_B`, `M1SCALP`）で hard reject ループを解除。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
     `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。

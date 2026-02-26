@@ -77,6 +77,50 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 11:30 UTC / 2026-02-26 20:30 JST - no-stop阻害点を `perf_block` + `manual_margin_pressure` に限定して除去
+Period:
+- 15m: `datetime(ts) >= now - 15 minutes`
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, live account snapshot via `execution.order_manager.get_account_snapshot()`
+
+Fact:
+- 直近15分の status 集計:
+  - `preflight_start=68`
+  - `perf_block=52`
+  - `probability_scaled=33`
+  - `manual_margin_pressure=8`
+  - `entry_probability_reject=4`
+  - `slo_block=1`
+- strategy別（同窓）:
+  - `M1Scalper-M1 | perf_block=25`
+  - `scalp_ping_5s_b_live | perf_block=24`
+  - `scalp_ping_5s_b_live | manual_margin_pressure=10`
+- 口座スナップショット:
+  - `nav=57,556.799`, `margin_used=53,037.280`, `margin_available=4,553.519`, `health_buffer=0.07907`
+  - manual 建玉: `-8500 units`, `1 trade`
+
+Failure Cause:
+1. no-stop向けに failfast を緩めても、`perf_guard` の hard reason 判定で B/M1 が preflight reject を継続。
+2. manual 併走時の `manual_margin_guard` が小ロット再開局面でも `manual_margin_pressure` を発火させ、B の通過を削る。
+
+Improvement:
+1. `ops/env/quant-order-manager.env`:
+   - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.00`
+   - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.00`
+   - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
+   - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+   - `M1SCALP_PERF_GUARD_ENABLED=0`
+2. 戦略env側も整合:
+   - `ops/env/scalp_ping_5s_b.env`: `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+   - `ops/env/quant-m1scalper.env`: `M1SCALP_PERF_GUARD_ENABLED=0`
+
+Verification:
+1. `orders.db` 15分窓で `status in ('perf_block','manual_margin_pressure')` が B/M1 で減少すること。
+2. 同窓で `filled` と `probability_scaled` の増加が確認できること。
+3. `MARKET_ORDER_MARGIN_CLOSEOUT` が増えないこと（24h監査継続）。
+
+Status:
+- in_progress
+
 ## 2026-02-26 11:02 UTC / 2026-02-26 20:02 JST - `manual_margin_pressure` が B エントリー再開の最終ボトルネック
 Period:
 - Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, OANDA account snapshot/openTrades

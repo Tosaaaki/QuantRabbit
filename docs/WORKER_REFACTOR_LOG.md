@@ -7784,3 +7784,24 @@
 - 意図:
   - 全停止なしで負け源のサイズを抑え、勝ち寄与が出ている micro へ配分を寄せる。
   - `rangefader` は reject 連打を解消して「動いて勝てるか」を再評価可能な状態に戻す。
+
+### 2026-02-26（追記）no-stop 継続の最終ボトルネック除去（B/M1 perf_block + B manual_margin_pressure）
+
+- 背景（VM実測, 2026-02-26 11:30 UTC）:
+  - 直近15分 `orders.db`: `perf_block=52`, `manual_margin_pressure=8`。
+  - strategy別は `M1Scalper-M1 perf_block=25`, `scalp_ping_5s_b_live perf_block=24`, `scalp_ping_5s_b_live manual_margin_pressure=10`。
+  - 口座は manual `-8500` 併走で、`margin_available=4553.5`, `health_buffer=0.079`。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.00`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.00`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
+    - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+    - `M1SCALP_PERF_GUARD_ENABLED=0`
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_PERF_GUARD_ENABLED=0`
+- 意図:
+  - 時間帯停止やサービス停止を使わず、B/M1 の hard reject を外して常時稼働の注文通過率を回復。
+  - manual 併走時の追加ブロックは `manual_margin_guard` ではなく既存の `margin_usage_projected_cap` 系で管理する。
