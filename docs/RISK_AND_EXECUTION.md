@@ -277,11 +277,45 @@
     `tick_cache` fallback を優先評価する。
   - fallback が非 stale（または snapshot より新しい）なら
     fallback state を採用し、`snapshot_age_ms` を監査用に付与する。
+  - stale cooldown 中でも fallback が fresh なら
+    `is_blocked()` で `spread_stale` ブロックを即時解除する。
+  - `workers/scalp_ping_5s/worker.py` は
+    `spread_stale` 判定中に `continue` する前に snapshot fallback を再取得し、
+    復帰できた場合は同サイクルで entry 判定へ戻す。
   - これにより、`spread_stale age=...` が継続して
     `entry-skip summary ... spread_blocked=...` に張り付く
     偽ブロック経路を回避する。
 - 目的は、legacy建玉でも loss-cut/time-stop が機能する状態を維持しつつ、
   一過性の `position_manager` timeout で EXIT 判定サイクルが欠落する頻度を下げること。
+
+### strategy_entry 先行プロファイル（2026-02-26）
+- `execution/strategy_entry.py` は `market_order` / `limit_order` の共通経路で、
+  黒板協調（`coordinate_entry_intent`）の直前に
+  `entry_probability` の戦略ローカル再計算を行う。
+- 計算は `entry_thesis.env_prefix`（または strategy_tag 正規化）をキーに
+  `*_ENTRY_LEADING_PROFILE_*` 環境変数を参照する。
+  - 主キー:
+    - `ENTRY_LEADING_PROFILE_ENABLED`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW(_LONG/_SHORT)`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX` / `...PENALTY_MAX`
+    - `ENTRY_LEADING_PROFILE_WEIGHT_FORECAST/TECH/RANGE/MICRO/PATTERN`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT` / `...MAX_MULT`
+- 方向判定は strategy local の `entry_probability` を基準に、
+  forecast/tech/range/micro/pattern の成分で補正する。
+  共通レイヤは戦略の方向意図を反転させず、最終拒否は `REJECT_BELOW` 設定時のみ。
+- 補正結果は `entry_thesis.entry_probability_leading_profile` に監査記録する。
+- `limit_order` 経路でも黒板協調後の最終 `units` で
+  `entry_thesis.entry_units_intent` を再同期する。
+- 運用は `quant-v2-runtime.env` で
+  `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0` を既定にし、
+  各 worker env のみで `*_ENTRY_LEADING_PROFILE_ENABLED=1` を設定する。
+  （全戦略一括有効化はしない）
+- 初期導入の strategy-local 設定先:
+  - `ops/env/scalp_ping_5s_{b,c,d,flow}.env`
+  - `ops/env/quant-m1scalper.env`
+  - `ops/env/quant-scalp-{macd-rsi-div,rangefader,level-reject,false-break-fade,extrema-reversal}.env`
+  - `ops/env/quant-scalp-{wick-reversal-blend,wick-reversal-pro,squeeze-pulse-break,tick-imbalance}.env`
+  - `ops/env/quant-micro-rangebreak.env`
 
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に
@@ -506,6 +540,31 @@
 - 再開条件:
   - 戦略ごとに直近ウィンドウで `PF>=1.0` かつ `win_rate>=0.50`
     （または戦略固有閾値）へ回復し、failfast理由が解消したことを確認して解除する。
+
+### `+2000円/h` 目標向け scalp_fast 再配線（2026-02-26）
+- 方針:
+  - 損失寄与が継続する戦略を機械停止し、`scalp_ping_5s_c_live` の
+    勝ち時間・勝ち方向へロットを集中する。
+- 運用値:
+  - 停止:
+    - `SCALP_PING_5S_B_ENABLED=0`
+    - `SCALP_PING_5S_D_ENABLED=0`
+    - `M1SCALP_BLOCK_HOURS_ENABLED=1`
+    - `M1SCALP_BLOCK_HOURS_UTC=0-23`
+  - 集中:
+    - `SCALP_PING_5S_C_SIDE_FILTER=long`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=3000`
+    - `SCALP_PING_5S_C_MAX_UNITS=7500`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.35`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=1.00`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=1.20`
+- 監査:
+  - 反映後は `orders.db` の `strategy_tag/status` で
+    `scalp_ping_5s_b_live` / `scalp_ping_5s_d_live` / `M1Scalper-M1` の
+    新規 `filled` が止まっていることを確認する。
+  - `scalp_ping_5s_c_live` は `JST 18,19,22` 以外の `filled` が無いことを確認する。
 
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。

@@ -27,6 +27,36 @@
   - 実行優先度は既存の `Nice=15` / `IOSchedulingClass=idle` / `CPUWeight=20` を維持し、
     本番導線への干渉を最小化する。
 
+### 2026-02-26（追記）Autotune UI の再発性フロント不具合を恒久対策
+
+- 背景:
+  - dashboard の自動更新で、`visibilitychange` や `isEditing` 再スケジュール時に
+    既存の `setInterval/setTimeout` が取り切れず、多重タイマー化する経路があった。
+  - これにより、長時間表示で更新表示の不安定化（カウントダウンの多重更新・リフレッシュ挙動の揺れ）が再発しうる状態だった。
+  - 併せて chart タブ側は `sessionStorage` 直接アクセスで、ブラウザ制約時に script 全体が失敗する余地があった。
+- 変更:
+  - `templates/autotune/base.html`
+    - `qrInitAutoRefresh` に `clearScheduledJobs()` を導入し、再スケジュール時の単一タイマー保証へ変更。
+    - refresh 実行は `runRefresh()` に一本化し、hard refresh fallback を共通化。
+    - `visibilitychange` 時に hidden 側で timer/interval を必ず解放し、visible 復帰時のみ最新DOMから再初期化。
+    - `data-auto-refresh` が無い画面へ切り替わった場合も timer を残さないようガードを追加。
+    - `qrInitTabs` は tab コンテナ不在時に `tabs-ready` を除去し、画面遷移時の表示状態リークを防止。
+  - `templates/autotune/dashboard.html`
+    - chart スクリプトに `safeSessionGet/safeSessionSet` を追加し、
+      `sessionStorage` 制約環境での JS 例外起点を遮断。
+  - `apps/autotune_ui.py`
+    - `hourly_trades` fallback を `snapshot.recent_trades` 依存から切り離し、
+      `trades.db` の close 済み履歴を lookback 窓で直接読む方式へ変更。
+    - `UI_HOURLY_FALLBACK_SCAN_LIMIT`（default: `5000`）を追加し、
+      fallback 集計で走査する最大件数を env で調整可能にした。
+  - `tests/apps/test_autotune_ui_template_guards.py`
+    - 自動更新タイマー解放ガード・tabs ready リセット・safe storage 利用を回帰テスト化。
+  - `tests/apps/test_autotune_ui_hourly_fallback.py`
+    - fallback が DB窓を優先して夜間帯履歴を取りこぼさないことをテスト化。
+- 意図:
+  - UI を「長時間開いた時に壊れにくい」状態へ寄せ、
+    snapshot 配信の揺れと独立にフロント側の再発要因（多重タイマー/storage例外）を除去する。
+
 ### 2026-02-25（追記）position/order manager の遅延・ロック恒久対策
 
 - 背景（VM実測）:
@@ -6311,6 +6341,56 @@
   - 「設定しているのにSLが効かない」実装不整合を解消し、
     C/D の損失を market-close 偏重から hard-stop 管理へ戻す。
 
+### 2026-02-26（追記）strategy_entry に戦略ローカル先行プロファイルを搭載
+
+- 背景:
+  - `entry_probability` の計算品質に戦略ごとの差があり、
+    「各戦略で先行指標を計算して閾値管理する」導線を
+    `strategy_entry` 共通経路へ統一する必要があった。
+- 変更:
+  - `execution/strategy_entry.py`
+    - `market_order` / `limit_order` で黒板協調直前に
+      `_apply_strategy_leading_profile(...)` を追加。
+    - `entry_thesis.env_prefix`（未指定時は strategy_tag 正規化）単位で
+      `*_ENTRY_LEADING_PROFILE_*` を参照し、
+      `entry_probability` を forecast/tech/range/micro/pattern 成分で再補正。
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW(_LONG/_SHORT)` による
+      戦略別 reject を追加（未設定時は reject 無効）。
+    - `entry_thesis.entry_probability_leading_profile` に補正内容を監査記録。
+    - `limit_order` でも黒板協調後の最終 units を
+      `entry_thesis.entry_units_intent` へ再同期。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    - 先行プロファイルの boost / threshold reject / manual pocket bypass テストを追加。
+    - 既存 forecast fusion テストと合わせて pass を確認。
+  - `docs/RISK_AND_EXECUTION.md`
+    - 先行プロファイルの運用キーと責務を追記。
+- 意図:
+  - 黒板は意図協調のみを維持しつつ、
+    先行指標による確率補正と閾値判断を戦略ローカル設定で運用できる状態にする。
+
+### 2026-02-26（追記）先行プロファイルを戦略別 env に展開（global off + per-strategy opt-in）
+
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0` を追加し、
+      共通デフォルトは無効化。
+  - 各 strategy worker env に `*_ENTRY_LEADING_PROFILE_*` を追加し、
+    戦略別に `REJECT_BELOW` / `BOOST_MAX` / `PENALTY_MAX` /
+    `UNITS_MIN/MAX_MULT` / `WEIGHT_*` を明示。
+    - `scalp_ping_5s_{b,c,d,flow}`
+    - `M1SCALP`
+    - `RANGEFADER`
+    - `SCALP_LEVEL_REJECT`
+    - `SCALP_FALSE_BREAK_FADE`
+    - `SCALP_EXTREMA_REVERSAL`
+    - `SCALP_PRECISION`（macd/wick/squeeze/tick 各unit）
+    - `MICRO_MULTI`（MicroRangeBreak unit）
+  - `docs/RISK_AND_EXECUTION.md`
+    - global off + per-strategy opt-in の運用方針を追記。
+- 意図:
+  - 先行指標ロジック自体は共通化しつつ、閾値と重みは戦略ローカルで管理し、
+    「各戦略に専用閾値」の運用を担保する。
+
 ### 2026-02-26（追記）`spread_monitor` の stale ロックを解消（entry 停止の根本バグ修正）
 
 - 背景（VM実測, UTC 2026-02-26 00:39 前後）:
@@ -6327,10 +6407,57 @@
     - snapshot が `MAX_AGE_MS` 超過時、tick cache fallback を評価し、
       非 stale または snapshot より新しい場合は fallback state を優先採用するよう修正。
     - fallback 採用時に `snapshot_age_ms` を state に付与し監査可能化。
+    - fallback 採用時に snapshot/histories を再水和して、
+      stale 判定の再発ループを防止。
+    - stale cooldown 中でも fallback が fresh なら、
+      `spread_stale` ブロックを即時解除する。
+  - `workers/scalp_ping_5s/worker.py`
+    - `spread_stale` ブロック検知時、`continue` する前に
+      snapshot fallback を再取得して再判定する導線を追加。
+    - 復帰できた場合は同サイクルで entry 判定へ復帰する。
   - `tests/test_spread_monitor_hot_fallback.py`
     - stale snapshot 存在時に fresh tick cache へフォールバックする回帰テストを追加。
+    - stale cooldown が fresh tick cache で解除される回帰テストを追加。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    - `spread_stale` 判定ヘルパの回帰テストを追加。
   - テスト結果:
-    - `pytest -q tests/test_spread_monitor_hot_fallback.py tests/test_spread_ok_tick_cache_fallback.py` で pass。
+    - `pytest -q tests/test_spread_monitor_hot_fallback.py tests/test_spread_ok_tick_cache_fallback.py tests/workers/test_scalp_ping_5s_worker.py -k 'is_spread_stale_block or clears_stale_cooldown or prefers_fresh_tick_cache'` で pass。
 - 意図:
   - スプレッド真値が更新されているのに stale 判定で新規エントリーが止まり続ける
     偽ブロックを除去し、`scalp_fast` 系の停止要因を「実スプレッド条件」に限定する。
+
+### 2026-02-26（追記）`+2000円/h` 目標向けに scalp_fast を再配線（B/D/M1 stop, C narrow long）
+
+- 背景（VM実測, UTC 2026-02-26 00:35 前後）:
+  - 直近24h aggregate は `-589.34 JPY`（`1070 trades`）。
+  - 直近6h aggregate は `-2758.59 JPY`（`187 trades`）。
+  - 7日集計で `scalp_ping_5s_b_live=-16798.8 JPY`, `M1Scalper=-1618.66 JPY`,
+    `scalp_ping_5s_d_live=-1626.13 JPY` が主損失源。
+  - 一方 `scalp_ping_5s_c_live` は時間帯依存が強く、`JST 18時` は
+    `68 trades / +6475.56 JPY`（`+95.23 JPY/trade`）で突出。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ENABLED=0`
+  - `ops/env/quant-scalp-ping-5s-b.env`
+    - `SCALP_PING_5S_B_ENABLED=0`
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_ENABLED=0`
+  - `ops/env/quant-scalp-ping-5s-d.env`
+    - `SCALP_PING_5S_D_ENABLED=0`
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_BLOCK_HOURS_ENABLED=1`
+    - `M1SCALP_BLOCK_HOURS_UTC=0-23`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=long`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
+    - `SCALP_PING_5S_C_BLOCK_HOURS_JST=`（空）
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=3000`
+    - `SCALP_PING_5S_C_MAX_UNITS=7500`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `ORDER_MANAGER_PRESERVE_INTENT_*_SCALP_PING_5S_C_LIVE` を
+      `reject_under=0.35 / min_scale=1.00 / max_scale=1.20` に更新。
+  - `ops/env/quant-ping5s-d-canary-guard.env`
+    - `PING5S_D_CANARY_APPLY=0`（D停止中の自動units反映を無効化）
+- 意図:
+  - 「損失源を止める」と「勝ち時間へ資本集中」を同時に実施し、
+    `+2000円/h` 到達のための入口品質とサイズ効率を優先する。
