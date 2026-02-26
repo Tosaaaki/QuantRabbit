@@ -82,6 +82,19 @@ def test_allow_stop_loss_on_fill_b_variant_can_override_global_off(monkeypatch) 
     )
 
 
+def test_allow_stop_loss_on_fill_c_variant_respects_family_override(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: None)
+    monkeypatch.setenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C", "1")
+
+    assert (
+        order_manager._allow_stop_loss_on_fill(
+            "scalp_fast",
+            strategy_tag="scalp_ping_5s_c_live",
+        )
+        is True
+    )
+
+
 def test_disable_hard_stop_b_variant_enabled_by_default(monkeypatch) -> None:
     monkeypatch.delenv("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B", raising=False)
     assert (
@@ -108,6 +121,26 @@ def test_disable_hard_stop_legacy_ping_keeps_default_disabled(monkeypatch) -> No
     assert (
         order_manager._disable_hard_stop_by_strategy(
             "scalp_ping_5s_live", "scalp_fast", {}
+        )
+        is True
+    )
+
+
+def test_disable_hard_stop_c_variant_can_enable_hard_stop(monkeypatch) -> None:
+    monkeypatch.setenv("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C", "0")
+    assert (
+        order_manager._disable_hard_stop_by_strategy(
+            "scalp_ping_5s_c_live", "scalp_fast", {}
+        )
+        is False
+    )
+
+
+def test_disable_hard_stop_c_variant_default_is_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C", raising=False)
+    assert (
+        order_manager._disable_hard_stop_by_strategy(
+            "scalp_ping_5s_c_live", "scalp_fast", {}
         )
         is True
     )

@@ -6284,3 +6284,29 @@
     `reduce` モードの機会損失を生む過剰 hard block を除去する。
   - 一律ロット半減ではなく、入口判定の質を上げて
     エントリー可否を戦略状態に応じて切り替える。
+
+### 2026-02-26（追記）根本対策: `scalp_ping_5s_c/d` の hard-stop 設定が反映されない欠陥を修正
+
+- 背景（VM実測, UTC 2026-02-26 00:29 前後）:
+  - 直近24hで `scalp_ping_5s_c_live` は
+    `MARKET_ORDER_TRADE_CLOSE=383` / `STOP_LOSS_ORDER=0`、
+    `-3741.1 JPY` と損失が偏っていた。
+  - `ops/env/quant-order-manager.env` には
+    `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C=1` と
+    `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C=0` があるのに、
+    `order_manager` 実装が B 系以外を legacy 分岐へ落としていた。
+- 変更:
+  - `execution/order_manager.py`
+    - `_allow_stop_loss_on_fill` を修正し、
+      `scalp_ping_5s_c*` / `scalp_ping_5s_d*` の family override を参照するよう更新。
+    - `_disable_hard_stop_by_strategy` を修正し、
+      `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C/D` を優先評価するよう更新。
+  - `tests/execution/test_order_manager_sl_overrides.py`
+    - C variant の `stopLossOnFill` 反映テストを追加。
+    - C variant の hard-stop disable/enabled 判定テストを追加。
+    - 合計 11 テスト pass を確認。
+  - 仕様更新:
+    - `docs/RISK_AND_EXECUTION.md` に C/D family override の参照仕様を追記。
+- 意図:
+  - 「設定しているのにSLが効かない」実装不整合を解消し、
+    C/D の損失を market-close 偏重から hard-stop 管理へ戻す。

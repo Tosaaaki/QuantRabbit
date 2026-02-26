@@ -231,6 +231,17 @@
     - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.35`
   - 目的は「予測は使っているが減点止まり」で通っていた逆向きショートを、
     `block/scaled` 側に寄せて実発注を抑えること。
+- 2026-02-26 追記（SL反映の根本修正）:
+  - `execution/order_manager.py` の family判定を修正し、
+    `scalp_ping_5s_c(_live)` / `scalp_ping_5s_d(_live)` でも
+    次の env を正しく参照するようにした。
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C`
+    - `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_D`
+    - `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_D`
+  - 従来は B 以外が legacy 判定へ落ち、
+    C で `MARKET_ORDER_TRADE_CLOSE` 偏重（`STOP_LOSS_ORDER` 不在）になる経路が残っていた。
+  - 本修正で C/D も strategy別 hard-stop 方針を `order_manager` preflight へ反映する。
 
 ### scalp_ping_5s_flow 運用補足（stale closeout 抑止）
 - `quant-order-manager` 環境で

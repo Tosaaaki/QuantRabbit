@@ -2216,17 +2216,28 @@ def _allow_stop_loss_on_fill(
     if strategy_override is not None:
         return strategy_override > 0
 
+    def _ping_5s_variant_default_allow(tag_text: str) -> Optional[bool]:
+        if tag_text.startswith("scalp_ping_5s_b"):
+            return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", True)
+        if tag_text.startswith("scalp_ping_5s_c"):
+            return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C", False)
+        if tag_text.startswith("scalp_ping_5s_d"):
+            return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_D", False)
+        return None
+
     mode = fixed_sl_mode()
     if mode is not None:
         if bool(mode):
             return True
-        # Keep B variant protected even when global fixed-mode is OFF unless
-        # explicitly disabled per strategy.
-        if tag.startswith("scalp_ping_5s_b"):
-            return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", True)
+        # Keep strategy-specific 5s variants configurable even when global
+        # fixed-mode is OFF unless explicitly disabled per strategy.
+        family_override = _ping_5s_variant_default_allow(tag)
+        if family_override is not None:
+            return family_override
         return False
-    if tag.startswith("scalp_ping_5s_b"):
-        return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", True)
+    family_override = _ping_5s_variant_default_allow(tag)
+    if family_override is not None:
+        return family_override
     return False
 
 
@@ -2246,9 +2257,13 @@ def _disable_hard_stop_by_strategy(
     if isinstance(entry_thesis, dict):
         if "disable_entry_hard_stop" in entry_thesis:
             return _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False)
-    # B variant: enable hard-stop by default unless explicitly disabled.
+    # 5s variants: keep per-variant defaults while allowing explicit overrides.
     if base_tag.startswith("scalp_ping_5s_b"):
         return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_B", False)
+    if base_tag.startswith("scalp_ping_5s_c"):
+        return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C", True)
+    if base_tag.startswith("scalp_ping_5s_d"):
+        return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_D", True)
     # Legacy 5s ping family keeps previous default (disabled) unless overridden.
     if base_tag.startswith("scalp_ping_5"):
         return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5", True)
