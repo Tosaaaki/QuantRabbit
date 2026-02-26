@@ -575,3 +575,24 @@ sudo systemctl enable --now quant-ping5s-d-canary-guard.timer
 - 意図:
   - 判定結果が env 更新に終わらず実稼働へ反映される状態を作り、
     「判定だけ回ってサイズが変わらない」状態を解消する。
+
+### 20.9 2026-02-26 更新（Cの損失時間帯遮断 + failfast block）
+
+- 背景（VM実測）:
+  - 2026-02-26 JST 16:01 時点で `scalp_ping_5s_c_live` が
+    直近1時間 `184 trades / -3227.3 JPY` と悪化。
+  - 累計時間帯実績では `JST 18/19/22` が相対的に優位で、
+    それ以外の時間帯は負け越しが継続。
+- 反映:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_SOFT_ENABLED=0`（許可外 hard block）
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=block`
+    - `SCALP_PING_5S_C_PERF_GUARD_HOURLY_MIN_TRADES=8`
+    - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_MIN_TRADES=8`
+    - `SCALP_PING_5S_C_MAX_ACTIVE_TRADES=1`
+    - `SCALP_PING_5S_C_MAX_PER_DIRECTION=1`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=900`
+- 意図:
+  - C の throughput を維持しつつ、悪化時間帯の連続エントリーを抑えて
+    時間あたり損益の下振れを即時停止する。

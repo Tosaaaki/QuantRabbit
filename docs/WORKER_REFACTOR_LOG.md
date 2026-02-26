@@ -6942,3 +6942,22 @@
 - 意図:
   - エントリー抑制・連敗クールダウン・全体DD監視を「円換算基準」で揃え、
     口座ダメージに直結する軸でリスクを管理する。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` を利益時間帯限定 + failfast block 化
+
+- 背景（VM実測, 2026-02-26 JST 16:01 時点）:
+  - 直近 1h: `193 trades / -3650.8 JPY`（自動戦略のみ）
+  - 主因: `scalp_ping_5s_c_live` が `184 trades / -3227.3 JPY`
+  - 時間帯別（累計）では C は `JST 18/19/22` 以外で負け越しが目立った。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_SOFT_ENABLED=0`（許可外は hard block）
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=block`
+    - `SCALP_PING_5S_C_PERF_GUARD_HOURLY_MIN_TRADES: 14 -> 8`
+    - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_MIN_TRADES: 14 -> 8`
+    - fallback 経路の `SCALP_PING_5S_PERF_GUARD_MODE` も `block` へ統一
+    - 連打抑制として `MAX_ACTIVE_TRADES/MAX_PER_DIRECTION=1`、`BASE_ENTRY_UNITS=900`
+- 意図:
+  - C 戦略の「負け時間帯での高頻度連打」を止め、
+    収益が出ている時間帯へ約定密度を寄せる。
