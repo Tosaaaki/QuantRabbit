@@ -7798,10 +7798,17 @@
     - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
     - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
     - `M1SCALP_PERF_GUARD_ENABLED=0`
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.00`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.00`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
+    - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+    - `M1SCALP_PERF_GUARD_ENABLED=0`
   - `ops/env/scalp_ping_5s_b.env`
     - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
   - `ops/env/quant-m1scalper.env`
     - `M1SCALP_PERF_GUARD_ENABLED=0`
 - 意図:
   - 時間帯停止やサービス停止を使わず、B/M1 の hard reject を外して常時稼働の注文通過率を回復。
+  - worker local `order_manager` 経路でも同値を使うため、runtime env 側を正本として同期する。
   - manual 併走時の追加ブロックは `manual_margin_guard` ではなく既存の `margin_usage_projected_cap` 系で管理する。

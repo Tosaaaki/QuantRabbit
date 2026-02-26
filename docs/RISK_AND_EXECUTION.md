@@ -1110,7 +1110,7 @@
 ### manual margin guard（2026-02-26 no-stop プロファイル）
 - 適用箇所: `execution/order_manager.py` preflight（manual exposure 併走時の新規抑制）
 - 有効化: `ORDER_MANUAL_MARGIN_GUARD_ENABLED=1`（維持）
-- 反映値（`ops/env/quant-order-manager.env`）:
+- 反映値（`ops/env/quant-v2-runtime.env` と `ops/env/quant-order-manager.env` を同値同期）:
   - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.00`
   - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.00`
   - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
@@ -1126,6 +1126,7 @@
   - `scalp_ping_5s_b` / `M1Scalper` は `hard:failfast` 固着を避けるため、
     no-stop 向けに `PERF_GUARD_FAILFAST_*` を soft 警告側へ再調整。
   - それでも `perf_block` が連発したため、B/M1 は `PERF_GUARD_ENABLED=0`（prefix: `SCALP_PING_5S_B`, `M1SCALP`）で hard reject ループを解除。
+  - 同値は `quant-v2-runtime.env` にも置き、worker local `order_manager` 経路へ確実に反映する。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
     `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。

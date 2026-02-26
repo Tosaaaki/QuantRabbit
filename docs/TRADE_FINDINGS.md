@@ -109,7 +109,13 @@ Improvement:
    - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
    - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
    - `M1SCALP_PERF_GUARD_ENABLED=0`
-2. 戦略env側も整合:
+2. `ops/env/quant-v2-runtime.env`（worker local `order_manager` 経路へ実効反映）:
+   - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO=0.00`
+   - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER=0.00`
+   - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY=0`
+   - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+   - `M1SCALP_PERF_GUARD_ENABLED=0`
+3. 戦略env側も整合:
    - `ops/env/scalp_ping_5s_b.env`: `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
    - `ops/env/quant-m1scalper.env`: `M1SCALP_PERF_GUARD_ENABLED=0`
 
