@@ -53,3 +53,45 @@ def test_pick_snapshot_falls_back_to_latest_when_all_stale(monkeypatch):
 
     assert picked is not None
     assert picked[0] == "gcs"
+
+
+def test_collect_snapshot_candidates_skips_local_when_gcs_is_fresh(monkeypatch):
+    monkeypatch.setattr(ui, "_SNAPSHOT_STALE_MAX_AGE_SEC", 120)
+    monkeypatch.setattr(ui, "_fetch_remote_snapshot_with_status", lambda key: (None, f"{key} missing"))
+    monkeypatch.setattr(ui, "_fetch_gcs_snapshot", lambda: (_snapshot(minutes_ago=0), None))
+
+    local_called = {"count": 0}
+
+    def _local_stub():
+        local_called["count"] += 1
+        return _snapshot(minutes_ago=0), None
+
+    monkeypatch.setattr(ui, "_build_local_snapshot_with_status", _local_stub)
+
+    candidates, attempts = ui._collect_snapshot_candidates()
+
+    assert local_called["count"] == 0
+    assert [source for source, _ in candidates] == ["gcs"]
+    assert attempts[-1]["source"] == "local"
+    assert attempts[-1]["status"] == "skip"
+
+
+def test_collect_snapshot_candidates_uses_local_when_only_gcs_is_stale(monkeypatch):
+    monkeypatch.setattr(ui, "_SNAPSHOT_STALE_MAX_AGE_SEC", 30)
+    monkeypatch.setattr(ui, "_fetch_remote_snapshot_with_status", lambda key: (None, f"{key} missing"))
+    monkeypatch.setattr(ui, "_fetch_gcs_snapshot", lambda: (_snapshot(minutes_ago=10), None))
+
+    local_called = {"count": 0}
+
+    def _local_stub():
+        local_called["count"] += 1
+        return _snapshot(minutes_ago=0), None
+
+    monkeypatch.setattr(ui, "_build_local_snapshot_with_status", _local_stub)
+
+    candidates, attempts = ui._collect_snapshot_candidates()
+
+    assert local_called["count"] == 1
+    assert [source for source, _ in candidates] == ["gcs", "local"]
+    assert attempts[-1]["source"] == "local"
+    assert attempts[-1]["status"] == "ok"

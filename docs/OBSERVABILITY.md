@@ -18,6 +18,10 @@
   `POSITION_MANAGER_SERVICE_*TIMEOUT` を短く（1.2〜2.0s）設定して
   fail-fast 運用する。`POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` により
   heavy fallback を避け、軽量 snapshot へ降格する。
+- `apps/autotune_ui.py` の dashboard 取得は、`remote/gcs` が fresh かつ
+  metrics 有効なら `local` snapshot 構築を省略する。
+  `fetch_attempts` には `local: skip (remote/gcs snapshot is already fresh)` を記録し、
+  遅延が出る場合は `local` が本当に呼ばれているかをまず確認する。
 - `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、

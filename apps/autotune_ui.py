@@ -1079,6 +1079,17 @@ def _pick_latest_snapshot(candidates: list[tuple[str, dict]]) -> Optional[tuple[
     return max(candidates, key=lambda item: _snapshot_sort_key(item[0], item[1]))
 
 
+def _has_fresh_candidate(
+    candidates: list[tuple[str, dict]], allowed_sources: set[str]
+) -> bool:
+    for source, snapshot in candidates:
+        if source not in allowed_sources:
+            continue
+        if _snapshot_metric_count(snapshot) > 0 and _is_snapshot_fresh(snapshot):
+            return True
+    return False
+
+
 def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[str, Any]]]:
     candidates: list[tuple[str, dict]] = []
     fetch_attempts: list[dict[str, Any]] = []
@@ -1113,6 +1124,17 @@ def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[st
             "error": gcs_error,
         }
     )
+
+    # remote/gcs が新鮮で十分な場合、重い local スナップショットは省略する。
+    if _has_fresh_candidate(candidates, {"remote", "gcs"}):
+        fetch_attempts.append(
+            {
+                "source": "local",
+                "status": "skip",
+                "error": "remote/gcs snapshot is already fresh",
+            }
+        )
+        return candidates, fetch_attempts
 
     local_snapshot, local_error = _build_local_snapshot_with_status()
     if local_snapshot:

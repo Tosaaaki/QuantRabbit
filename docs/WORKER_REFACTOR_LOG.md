@@ -6550,3 +6550,24 @@
     `方向フィルタ + strategy別 gate + perf_guard` で負け筋を削る。
   - 時間帯は gating 条件から除外し、`+2000円/h` のために
     取引機会を全時間帯で取りに行く。
+
+### 2026-02-26（追記）`quant-autotune-ui` の更新遅延を修正（snapshot candidate の短絡化）
+
+- 背景（VM実測, UTC 2026-02-26 01:34）:
+  - `/dashboard` 応答が `14〜17s` で遅延。
+  - `apps/autotune_ui.py` の `_collect_snapshot_candidates()` が
+    `gcs` snapshot が fresh でも毎回 `local` snapshot（`_build_local_snapshot_with_status()`）を
+    実行していた。
+  - 実測で `fetch_gcs ~= 0.145s` に対して `build_local_with_status ~= 13.8s`。
+- 変更:
+  - `apps/autotune_ui.py`
+    - `_has_fresh_candidate()` を追加。
+    - `remote/gcs` に fresh かつ metrics 有効な snapshot がある場合、
+      `local` snapshot の構築を `skip` して即 return するよう変更。
+    - `fetch_attempts` に `local: skip (remote/gcs snapshot is already fresh)` を記録。
+  - `tests/apps/test_autotune_ui_snapshot_selection.py`
+    - fresh な `gcs` 時に `local` が呼ばれないテストを追加。
+    - stale な `gcs` 時は `local` を継続して呼ぶ回帰テストを追加。
+- 意図:
+  - UI応答を `snapshot source = gcs/remote` の通常ケースで高速化し、
+    `local` fallback は本当に必要なケース（stale/欠損時）のみ実行する。
