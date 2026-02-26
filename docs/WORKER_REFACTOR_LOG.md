@@ -15,7 +15,7 @@
     30分集計で reject 偏重になる時間帯があった。
   - preflight 中に quote が欠落/異常（cross/wide）でも注文を継続する経路があり、
     「崩れた quote に当たる」余地が残っていた。
-- 変更:
+  - 変更:
   - `execution/order_manager.py`
     - quote 健全性判定 `_quote_is_usable()` を追加（cross/負spread/過大spreadを除外）。
     - `_fetch_quote_with_retry()` を追加し、初回 quote 取得と reject 後再取得で再利用。
@@ -23,10 +23,17 @@
       non-manual 新規で quote 不健全なら `quote_unavailable` で skip。
     - `OFF_QUOTES` など quote 系 reject で
       `status=quote_retry` を残しつつ再クォートして再送する経路を追加。
+    - `market_order` に加えて `limit_order` でも同経路を適用し、
+      `ORDER_SUBMIT_MAX_ATTEMPTS=1` 運用時でも quote retry だけは動作するよう補強。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_QUOTE_*` と `ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY` を明示し、
+      実運用の quote retry/健全性判定を runtime env で固定化。
   - テスト:
     - `tests/execution/test_order_manager_preflight.py`
       - quote 健全性判定（cross/wide spread）
       - transient 失敗後の quote 再取得成功
+    - `tests/execution/test_order_manager_log_retry.py`
+      - `limit_order` が `ORDER_SUBMIT_MAX_ATTEMPTS=1` でも `OFF_QUOTES` 後に再送できることを追加検証。
 - 意図:
   - quote 崩れ局面での無駄な reject 連鎖を減らし、
     正常 quote へ乗り換えて執行を継続する。

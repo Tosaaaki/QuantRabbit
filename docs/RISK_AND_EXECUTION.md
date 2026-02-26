@@ -147,6 +147,8 @@
   健全 quote が取得できない場合 `status=quote_unavailable` で skip する。
 - quote 系 reject（`OFF_QUOTES` 等）では、`ORDER_QUOTE_RETRY_*` 設定に従い
   再クォートして再送する（`status=quote_retry`）。
+  - `ORDER_SUBMIT_MAX_ATTEMPTS=1` 運用でも、quote 系 reject に限っては
+    retry 予算を別枠で確保し、`market_order` / `limit_order` の両方で再送する。
 - 主要運用キー（`ops/env/quant-order-manager.env`）:
   - `ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY`
   - `ORDER_QUOTE_MAX_SPREAD_PIPS`

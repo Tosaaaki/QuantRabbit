@@ -11098,7 +11098,11 @@ async def market_order(
     # This is primarily used to reduce "TAKE_PROFIT_ON_FILL_LOSS"/"LOSING_TAKE_PROFIT"
     # opportunity loss on fast markets without changing sizing logic.
     # Allow operators to force single-attempt mode in service path to keep RPC latency bounded.
-    max_submit_attempts = max(1, int(os.getenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2") or 2))
+    base_submit_attempts = max(1, int(os.getenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2") or 2))
+    max_submit_attempts = max(
+        base_submit_attempts,
+        1 + int(max(0, _ORDER_QUOTE_RETRY_MAX_RETRIES)),
+    )
     max_protection_fallbacks = max(
         0, int(os.getenv("ORDER_PROTECTION_FALLBACK_MAX_RETRIES", "1") or 1)
     )
@@ -11266,7 +11270,7 @@ async def market_order(
                     )
                     continue
                 if (
-                    attempt < max_submit_attempts - 1
+                    attempt < base_submit_attempts - 1
                     and not reduce_only
                     and protection_fallbacks < max_protection_fallbacks
                     and reason_key in _PROTECTION_RETRY_REASONS
@@ -11357,7 +11361,7 @@ async def market_order(
                             max_protection_fallbacks,
                         )
                         continue
-                if attempt < max_submit_attempts - 1 and abs(units_to_send) >= 2000:
+                if attempt < base_submit_attempts - 1 and abs(units_to_send) >= 2000:
                     units_to_send = int(units_to_send * 0.5)
                     if units_to_send == 0:
                         break
@@ -11539,7 +11543,7 @@ async def market_order(
             )
 
             if (
-                attempt == 0
+                attempt < base_submit_attempts - 1
                 and abs(units_to_send) >= 2000
                 and pocket != "scalp_fast"
             ):
@@ -12360,6 +12364,50 @@ async def limit_order(
                 )
                 return None, None
 
+    limit_quote: Optional[dict] = None
+    if (
+        not reduce_only
+        and (pocket or "").lower() != "manual"
+        and _ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY
+    ):
+        limit_quote = _fetch_quote_with_retry(instrument)
+        if not _quote_is_usable(limit_quote):
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=str(strategy_tag or "unknown"),
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note="quote_unavailable",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="quote_unavailable",
+                attempt=0,
+                request_payload={
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "order_quote_unavailable",
+                1.0,
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                },
+            )
+            return None, None
+
     ttl_sec = max(0.0, ttl_ms / 1000.0)
     # OANDA GTD granularity is seconds; clamp sub-second TTL up to 1s instead
     # of accidentally leaving a GTC limit order around.
@@ -12407,185 +12455,248 @@ async def limit_order(
     if tp_price is not None:
         payload["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
 
-    attempt_payload: dict = {"oanda": payload}
-    if entry_thesis is not None:
-        attempt_payload["entry_thesis"] = entry_thesis
-        attempt_payload["entry_probability"] = entry_probability
-    if meta is not None:
-        attempt_payload["meta"] = meta
-
-    _log_order(
-        pocket=pocket,
-        instrument=instrument,
-        side="buy" if units > 0 else "sell",
-        units=units,
-        sl_price=sl_price,
-        tp_price=tp_price,
-        client_order_id=client_order_id,
-        status="submit_attempt",
-        attempt=1,
-        request_payload=attempt_payload,
+    side_label = "buy" if units > 0 else "sell"
+    base_submit_attempts = max(1, int(os.getenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2") or 2))
+    max_submit_attempts = max(
+        base_submit_attempts,
+        1 + int(max(0, _ORDER_QUOTE_RETRY_MAX_RETRIES)),
     )
+    quote_retries = 0
 
-    endpoint = OrderCreate(accountID=ACCOUNT, data=payload)
-    try:
-        api.request(endpoint)
-    except V20Error as exc:
-        logging.error("[ORDER] Limit order error: %s", exc)
+    for attempt in range(max_submit_attempts):
+        attempt_payload: dict = {"oanda": payload}
+        if entry_thesis is not None:
+            attempt_payload["entry_thesis"] = entry_thesis
+            attempt_payload["entry_probability"] = entry_probability
+        if meta is not None:
+            attempt_payload["meta"] = meta
+        if limit_quote is not None:
+            attempt_payload["quote"] = limit_quote
+
         _log_order(
             pocket=pocket,
             instrument=instrument,
-            side="buy" if units > 0 else "sell",
+            side=side_label,
             units=units,
             sl_price=sl_price,
             tp_price=tp_price,
             client_order_id=client_order_id,
-            status="api_error",
-            attempt=1,
-            error_code=getattr(exc, "code", None),
-            error_message=str(exc),
+            status="submit_attempt",
+            attempt=attempt + 1,
             request_payload=attempt_payload,
         )
-        log_metric(
-            "order_success_rate",
-            0.0,
-            tags={
-                "pocket": pocket,
-                "strategy": strategy_tag or "unknown",
-                "reason": "api_error",
-            },
-        )
-        log_metric(
-            "reject_rate",
-            1.0,
-            tags={
-                "pocket": pocket,
-                "strategy": strategy_tag or "unknown",
-                "reason": "api_error",
-            },
-        )
-        return None, None
-    except Exception as exc:  # noqa: BLE001
-        logging.exception("[ORDER] Limit order unexpected error: %s", exc)
-        _log_order(
-            pocket=pocket,
-            instrument=instrument,
-            side="buy" if units > 0 else "sell",
-            units=units,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            client_order_id=client_order_id,
-            status="unexpected_error",
-            attempt=1,
-            error_message=str(exc),
-            request_payload=attempt_payload,
-        )
-        log_metric(
-            "order_success_rate",
-            0.0,
-            tags={
-                "pocket": pocket,
-                "strategy": strategy_tag or "unknown",
-                "reason": "unexpected_error",
-            },
-        )
-        log_metric(
-            "reject_rate",
-            1.0,
-            tags={
-                "pocket": pocket,
-                "strategy": strategy_tag or "unknown",
-                "reason": "unexpected_error",
-            },
-        )
-        return None, None
 
-    response = endpoint.response
-    reject = response.get("orderRejectTransaction")
-    if reject:
-        reason = reject.get("rejectReason") or reject.get("reason")
-        reason_key = str(reason or "").lower() or "rejected"
-        logging.error("[ORDER] Limit order rejected: %s", reason)
+        endpoint = OrderCreate(accountID=ACCOUNT, data=payload)
+        try:
+            api.request(endpoint)
+        except V20Error as exc:
+            logging.error("[ORDER] Limit order error: %s", exc)
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="api_error",
+                attempt=attempt + 1,
+                error_code=getattr(exc, "code", None),
+                error_message=str(exc),
+                request_payload=attempt_payload,
+            )
+            log_metric(
+                "order_success_rate",
+                0.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "api_error",
+                },
+            )
+            log_metric(
+                "reject_rate",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "api_error",
+                },
+            )
+            return None, None
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("[ORDER] Limit order unexpected error: %s", exc)
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="unexpected_error",
+                attempt=attempt + 1,
+                error_message=str(exc),
+                request_payload=attempt_payload,
+            )
+            log_metric(
+                "order_success_rate",
+                0.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "unexpected_error",
+                },
+            )
+            log_metric(
+                "reject_rate",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "unexpected_error",
+                },
+            )
+            return None, None
+
+        response = endpoint.response
+        reject = response.get("orderRejectTransaction") or response.get(
+            "orderCancelTransaction"
+        )
+        if reject:
+            reason = (
+                reject.get("rejectReason")
+                or reject.get("reason")
+                or reject.get("errorCode")
+            )
+            reason_key_upper = str(reason or "").upper() or "REJECTED"
+            reason_key = reason_key_upper.lower()
+            logging.error("[ORDER] Limit order rejected: %s", reason)
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="rejected",
+                attempt=attempt + 1,
+                error_code=reject.get("errorCode"),
+                error_message=reject.get("errorMessage") or reason,
+                response_payload=response,
+            )
+            log_metric(
+                "order_success_rate",
+                0.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason_key,
+                },
+            )
+            log_metric(
+                "reject_rate",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason_key,
+                },
+            )
+            if (
+                attempt < max_submit_attempts - 1
+                and quote_retries < _ORDER_QUOTE_RETRY_MAX_RETRIES
+                and reason_key_upper in _ORDER_QUOTE_RETRY_REASONS
+            ):
+                quote_retries += 1
+                sleep_sec = min(
+                    _ORDER_QUOTE_RETRY_MAX_SLEEP_SEC,
+                    _ORDER_QUOTE_RETRY_SLEEP_SEC
+                    * (_ORDER_QUOTE_RETRY_SLEEP_BACKOFF ** max(0, quote_retries - 1)),
+                )
+                if sleep_sec > 0.0:
+                    time.sleep(sleep_sec)
+                retry_quote = _fetch_quote_with_retry(instrument, attempts=1)
+                if retry_quote:
+                    limit_quote = retry_quote
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="quote_retry",
+                    attempt=attempt + 1,
+                    request_payload={
+                        "reason": reason_key_upper,
+                        "quote_retry": quote_retries,
+                        "quote": limit_quote,
+                        "sleep_sec": sleep_sec,
+                    },
+                )
+                log_metric(
+                    "order_quote_retry",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": reason_key,
+                        "retry": str(quote_retries),
+                    },
+                )
+                continue
+            return None, None
+
+        trade_id = _extract_trade_id(response)
+        executed_price = None
+        if response.get("orderFillTransaction") and response["orderFillTransaction"].get(
+            "price"
+        ):
+            try:
+                executed_price = float(response["orderFillTransaction"]["price"])
+            except Exception:
+                executed_price = None
+
+        order_id = None
+        create_tx = response.get("orderCreateTransaction")
+        if create_tx and create_tx.get("id") is not None:
+            order_id = str(create_tx["id"])
+
+        status = "submitted"
+        if trade_id:
+            status = "filled"
+
         _log_order(
             pocket=pocket,
             instrument=instrument,
-            side="buy" if units > 0 else "sell",
+            side=side_label,
             units=units,
             sl_price=sl_price,
             tp_price=tp_price,
             client_order_id=client_order_id,
-            status="rejected",
-            attempt=1,
-            error_code=reject.get("errorCode"),
-            error_message=reject.get("errorMessage") or reason,
+            status=status,
+            attempt=attempt + 1,
+            ticket_id=trade_id,
+            executed_price=executed_price,
+            request_payload=attempt_payload,
             response_payload=response,
         )
         log_metric(
             "order_success_rate",
-            0.0,
-            tags={
-                "pocket": pocket,
-                "strategy": strategy_tag or "unknown",
-                "reason": reason_key,
-            },
+            1.0,
+            tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
         )
         log_metric(
             "reject_rate",
-            1.0,
-            tags={
-                "pocket": pocket,
-                "strategy": strategy_tag or "unknown",
-                "reason": reason_key,
-            },
+            0.0,
+            tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
         )
-        return None, None
 
-    trade_id = _extract_trade_id(response)
-    executed_price = None
-    if response.get("orderFillTransaction") and response["orderFillTransaction"].get(
-        "price"
-    ):
-        try:
-            executed_price = float(response["orderFillTransaction"]["price"])
-        except Exception:
-            executed_price = None
+        if trade_id:
+            return trade_id, order_id
+        return None, order_id
 
-    order_id = None
-    create_tx = response.get("orderCreateTransaction")
-    if create_tx and create_tx.get("id") is not None:
-        order_id = str(create_tx["id"])
-
-    status = "submitted"
-    if trade_id:
-        status = "filled"
-
-    _log_order(
-        pocket=pocket,
-        instrument=instrument,
-        side="buy" if units > 0 else "sell",
-        units=units,
-        sl_price=sl_price,
-        tp_price=tp_price,
-        client_order_id=client_order_id,
-        status=status,
-        attempt=1,
-        ticket_id=trade_id,
-        executed_price=executed_price,
-        request_payload=attempt_payload,
-        response_payload=response,
-    )
-    log_metric(
-        "order_success_rate",
-        1.0,
-        tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
-    )
-    log_metric(
-        "reject_rate",
-        0.0,
-        tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
-    )
-
-    if trade_id:
-        return trade_id, order_id
-
-    return None, order_id
+    return None, None

@@ -30,6 +30,13 @@ class _FakeConnection:
         return None
 
 
+class _LimitSnapshot:
+    def __init__(self) -> None:
+        self.nav = 1_000_000.0
+        self.margin_used = 20_000.0
+        self.margin_rate = 0.04
+
+
 def _invoke_log_order(*, fast_fail: bool = False) -> None:
     order_manager._log_order(
         pocket="scalp_fast",
@@ -243,3 +250,78 @@ def test_limit_order_service_none_result_does_not_fallback_local(monkeypatch) ->
 
     assert trade_id is None
     assert order_id is None
+
+
+def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    submit_calls = {"count": 0}
+    statuses: list[str] = []
+
+    def _fake_api_request(endpoint) -> None:
+        submit_calls["count"] += 1
+        if submit_calls["count"] == 1:
+            endpoint.response = {
+                "orderRejectTransaction": {
+                    "rejectReason": "OFF_QUOTES",
+                    "errorCode": "OFF_QUOTES",
+                    "errorMessage": "off quotes",
+                }
+            }
+            return
+        endpoint.response = {
+            "orderCreateTransaction": {"id": "OID-1001"},
+        }
+
+    monkeypatch.setenv("ORDER_SUBMIT_MAX_ATTEMPTS", "1")
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 1)
+    monkeypatch.setattr(order_manager.time, "sleep", lambda _sec: None)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (1000, None))
+    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager,
+        "_augment_entry_thesis_policy_generation",
+        lambda thesis, reduce_only=False: thesis,
+    )
+    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+    monkeypatch.setattr(order_manager, "_is_passive_price", lambda **_k: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_fetch_quote_with_retry",
+        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
+    monkeypatch.setattr("utils.oanda_account.get_account_snapshot", lambda cache_ttl_sec=1.0: _LimitSnapshot())
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+
+    trade_id, order_id = asyncio.run(
+        order_manager.limit_order(
+            instrument="USD_JPY",
+            units=1000,
+            price=150.000,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp",
+            client_order_id="cid-limit-quote-retry",
+            entry_thesis={"entry_probability": 0.95, "entry_units_intent": 1000},
+            confidence=95,
+        )
+    )
+
+    assert submit_calls["count"] == 2
+    assert trade_id is None
+    assert order_id == "OID-1001"
+    assert "quote_retry" in statuses
