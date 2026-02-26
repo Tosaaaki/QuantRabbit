@@ -378,6 +378,9 @@
   - order-manager service を主ライターに寄せて同時書き込み競合を抑える。
   - service call 失敗時の fallback は journald の
     `order_manager service call failed` で監査する。
+  - service応答の `result=null` は「正規の reject/skip」として扱い、
+    local fallback を行わない（`_ORDER_MANAGER_SERVICE_UNHANDLED` sentinel）。
+    これにより `OPEN_SKIP` 後の同一 `client_order_id` 再発注を防止する。
 - 2026-02-25 追記（service timeout 連鎖の抑止）:
   - `quant-v2-runtime.env` は次を運用値とする。
     - `ORDER_MANAGER_SERVICE_TIMEOUT=20.0`

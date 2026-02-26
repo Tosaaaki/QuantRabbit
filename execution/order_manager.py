@@ -179,6 +179,7 @@ _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
 _ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE = _env_bool(
     "ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False
 )
+_ORDER_MANAGER_SERVICE_UNHANDLED = object()
 _ORDER_MANAGER_SERVICE_SESSION: requests.Session | None = None
 _ORDER_MANAGER_SERVICE_SESSION_LOCK = threading.Lock()
 
@@ -323,7 +324,7 @@ def _order_manager_service_request(
     payload: dict,
 ) -> Any:
     if not _order_manager_service_enabled():
-        return None
+        return _ORDER_MANAGER_SERVICE_UNHANDLED
     try:
         return _extract_service_payload(path, _order_manager_service_call(path, payload))
     except Exception as exc:
@@ -335,7 +336,7 @@ def _order_manager_service_request(
         )
         if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
             raise
-        return None
+        return _ORDER_MANAGER_SERVICE_UNHANDLED
 
 
 async def _order_manager_service_request_async(
@@ -343,7 +344,7 @@ async def _order_manager_service_request_async(
     payload: dict,
 ) -> Any:
     if not _order_manager_service_enabled():
-        return None
+        return _ORDER_MANAGER_SERVICE_UNHANDLED
     try:
         return _extract_service_payload(
             path, await asyncio.to_thread(_order_manager_service_call, path, payload)
@@ -357,7 +358,7 @@ async def _order_manager_service_request_async(
         )
         if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
             raise
-        return None
+        return _ORDER_MANAGER_SERVICE_UNHANDLED
 
 
 def _should_persist_preservice_order_log() -> bool:
@@ -3722,7 +3723,7 @@ async def coordinate_entry_intent(
         "/order/coordinate_entry_intent",
         payload,
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
         if isinstance(service_result, dict):
             final_units = service_result.get("final_units")
             reason = service_result.get("reason")
@@ -5770,7 +5771,7 @@ def _cancel_order_sync(
             "reason": reason,
         },
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
         return bool(service_result)
 
     try:
@@ -5814,7 +5815,7 @@ async def cancel_order(
             "reason": reason,
         },
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
         return bool(service_result)
 
     return _cancel_order_sync(
@@ -6125,7 +6126,7 @@ async def close_trade(
             "exit_reason": exit_reason,
         },
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
         return bool(service_result)
 
     data: Optional[dict[str, str]] = None
@@ -7410,7 +7411,7 @@ async def set_trade_protections(
             "tp_price": tp_price,
         },
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
         return bool(service_result)
 
     if not TRAILING_SL_ALLOWED and sl_price is not None:
@@ -7770,7 +7771,7 @@ async def market_order(
             "arbiter_final": arbiter_final,
         },
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
         if service_result is None:
             return None
         return str(service_result) if service_result is not None else None
@@ -11366,7 +11367,9 @@ async def limit_order(
             "entry_probability": entry_probability,
         },
     )
-    if service_result is not None:
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
+        if service_result is None:
+            return None, None
         if isinstance(service_result, dict):
             trade_id = service_result.get("trade_id")
             order_id = service_result.get("order_id")

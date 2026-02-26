@@ -6803,6 +6803,38 @@
   - C 戦略の「エントリー時 hard SL 欠損」を解消し、
     逆行時の放置損失と `direction_cap` 長時間拘束の再発を防ぐ。
 
+### 2026-02-26（追記）`OPEN_SKIP` 後の同一client約定を修正（service null 応答の誤fallback）
+
+- 背景（VM実測, UTC 06:37-06:41）:
+  - `quant-order-manager` journal で `OPEN_SKIP (entry_probability_reject_threshold)` が
+    出ている同一 `client_order_id` について、`orders.db` には
+    直後の `preflight_start -> submit_attempt -> filled` が残るケースが発生。
+  - 実害として、service 側 reject 判定と local 経路の発注結果が競合し、
+    判定一貫性と hard SL 添付の一貫性が崩れていた。
+- 原因:
+  - `execution/order_manager.py` の service橋渡しが
+    「`service result = null`（= 正規の reject/skip）」と
+    「service未使用/通信失敗」を同じ `None` で表現していた。
+  - `market_order` / `limit_order` で `None` を
+    「未処理」と誤認して local 処理にフォールバックし、
+    reject 後の再発注が起き得た。
+- 変更:
+  - `execution/order_manager.py`
+    - `_ORDER_MANAGER_SERVICE_UNHANDLED` sentinel を導入。
+    - `_order_manager_service_request*` は
+      - service未使用/通信失敗(fallback時) => sentinel
+      - service処理済み（`result` が `None` 含む）=> 実値
+      を返すよう分離。
+    - `coordinate_entry_intent / cancel_order / close_trade /
+      set_trade_protections / market_order / limit_order` の
+      呼び出し側判定を sentinel 対応へ更新。
+  - `tests/execution/test_order_manager_log_retry.py`
+    - serviceが `None` を返したときに local fallback を実行しない
+      回帰テスト（`market_order`, `limit_order`）を追加。
+- 意図:
+  - service判定（reject/skip）と local 発注経路の競合を防ぎ、
+    `client_order_id` 単位での判定・発注整合性を恒久的に担保する。
+
 ### 2026-02-26（追記）`scalp_ping_5s_c_live` のロット上振れを抑止（最終送信前クランプ）
 
 - 背景（VM実測, UTC 06:29-06:31）:

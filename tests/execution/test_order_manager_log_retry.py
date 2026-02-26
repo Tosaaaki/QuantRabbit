@@ -163,3 +163,83 @@ def test_market_order_skips_preservice_db_log_when_service_mode(monkeypatch) -> 
 
     assert ticket == "TICKET-1"
     assert logged_statuses == []
+
+
+def test_market_order_service_none_result_does_not_fallback_local(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict) -> None:
+        return None
+
+    monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False)
+    monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_probability_scaled_units",
+        lambda *_args, **_kwargs: (1000, None),
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("local_fallback_called")),
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=1000,
+            sl_price=None,
+            tp_price=155.2,
+            pocket="scalp_fast",
+            client_order_id="cid-service-none",
+            strategy_tag="scalp_ping_5s_c_live",
+            entry_thesis={"entry_probability": 0.40, "entry_units_intent": 1000},
+            confidence=40,
+        )
+    )
+
+    assert ticket is None
+
+
+def test_limit_order_service_none_result_does_not_fallback_local(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict) -> None:
+        return None
+
+    monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_probability_scaled_units",
+        lambda *_args, **_kwargs: (1000, None),
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("local_fallback_called")),
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+
+    trade_id, order_id = asyncio.run(
+        order_manager.limit_order(
+            instrument="USD_JPY",
+            units=1000,
+            price=156.000,
+            sl_price=155.900,
+            tp_price=None,
+            pocket="scalp_fast",
+            client_order_id="cid-limit-service-none",
+            entry_thesis={"entry_probability": 0.95, "entry_units_intent": 1000},
+            confidence=95,
+        )
+    )
+
+    assert trade_id is None
+    assert order_id is None
