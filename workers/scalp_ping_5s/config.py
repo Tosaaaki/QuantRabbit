@@ -609,6 +609,15 @@ SIDE_METRICS_DIRECTION_FLIP_MIN_MARKET_PLUS_GAP: float = max(
         ),
     ),
 )
+SIDE_METRICS_DIRECTION_FLIP_MIN_MEAN_PIPS_GAP: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIDE_METRICS_DIRECTION_FLIP_MIN_MEAN_PIPS_GAP",
+            "0.22" if _IS_B_OR_C_PREFIX else "0.0",
+        )
+    ),
+)
 SIDE_METRICS_DIRECTION_FLIP_CONFIDENCE_ADD: int = max(
     0,
     int(
@@ -718,6 +727,15 @@ SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP: float = max(
                 "0.08",
             )
         ),
+    ),
+)
+SIDE_ADVERSE_STACK_UNITS_MIN_MEAN_PIPS_GAP: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIDE_ADVERSE_STACK_UNITS_MIN_MEAN_PIPS_GAP",
+            "0.18" if _IS_B_OR_C_PREFIX else "0.0",
+        )
     ),
 )
 SIDE_ADVERSE_STACK_UNITS_ACTIVE_START: int = max(
@@ -1953,12 +1971,41 @@ ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_CACHE_TTL_SEC: float = max(
         )
     ),
 )
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_TRADES: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_TRADES",
+                "12",
+            )
+        )
+    ),
+)
 ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN: float = max(
     0.0,
     float(
         os.getenv(
             "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN",
             "0.30",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF: float = max(
+    0.05,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF",
+            "1.00",
+        )
+    ),
+)
+ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN",
+            "0.18" if _IS_B_OR_C_PREFIX else "0.12",
         )
     ),
 )

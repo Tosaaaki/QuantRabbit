@@ -119,6 +119,24 @@ def _set_band_alloc_config(monkeypatch) -> None:
         False,
         raising=False,
     )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_TRADES",
+        12,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF",
+        1.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN",
+        0.12,
+        raising=False,
+    )
 
 
 def test_probability_band_units_multiplier_reduces_high_prob_size(monkeypatch) -> None:
@@ -265,6 +283,94 @@ def test_probability_band_units_multiplier_uses_side_metrics_penalty(monkeypatch
     assert units_mult == pytest.approx(0.85, abs=1e-9)
 
 
+def test_probability_band_units_multiplier_uses_side_mean_pips_penalty(monkeypatch) -> None:
+    _set_band_alloc_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF",
+        1.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN",
+        0.20,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT",
+        0.80,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT",
+        1.10,
+        raising=False,
+    )
+
+    neutral_metrics = scalp_worker.EntryProbabilityBandMetrics(
+        side="short",
+        sample=80,
+        high_sample=40,
+        high_mean_pips=-0.20,
+        high_win_rate=0.50,
+        high_sl_rate=0.40,
+        low_sample=32,
+        low_mean_pips=-0.20,
+        low_win_rate=0.50,
+        low_sl_rate=0.40,
+    )
+    monkeypatch.setattr(
+        scalp_worker,
+        "_load_entry_probability_band_metrics",
+        lambda **_: neutral_metrics,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker,
+        "_load_recent_side_close_metrics_for_allocation",
+        lambda **_: scalp_worker.SideCloseMetrics(
+            long_sl_hits=0,
+            short_sl_hits=2,
+            long_market_plus=0,
+            short_market_plus=2,
+            long_trades=8,
+            short_trades=20,
+            sample=28,
+            long_mean_pips=0.1,
+            short_mean_pips=-1.6,
+        ),
+        raising=False,
+    )
+
+    units_mult, meta = scalp_worker._entry_probability_band_units_multiplier(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="short",
+        entry_probability=0.85,
+        now_mono=10.0,
+    )
+
+    assert meta["reason"] == "ok"
+    assert meta["side_mean_pips"] == pytest.approx(-1.6, abs=1e-9)
+    assert meta["side_pips_balance"] == pytest.approx(-1.0, abs=1e-9)
+    assert units_mult == pytest.approx(0.80, abs=1e-9)
+
+
 def _set_side_adverse_stack_config(monkeypatch) -> None:
     monkeypatch.setattr(
         scalp_worker.config,
@@ -312,6 +418,12 @@ def _set_side_adverse_stack_config(monkeypatch) -> None:
         scalp_worker.config,
         "SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP",
         0.08,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_MEAN_PIPS_GAP",
+        0.0,
         raising=False,
     )
     monkeypatch.setattr(
@@ -448,6 +560,144 @@ def test_side_adverse_stack_units_multiplier_stays_neutral_when_not_adverse(monk
     assert eval_info.side_mult == pytest.approx(1.0, abs=1e-9)
     assert eval_info.dd_mult == pytest.approx(1.0, abs=1e-9)
     assert units_mult == pytest.approx(1.0, abs=1e-9)
+
+
+def test_side_adverse_stack_units_multiplier_blocks_on_mean_gap_weak(monkeypatch) -> None:
+    _set_side_adverse_stack_config(monkeypatch)
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_ADVERSE_STACK_UNITS_MIN_MEAN_PIPS_GAP",
+        0.40,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker,
+        "_load_side_close_metrics",
+        lambda **_: scalp_worker.SideCloseMetrics(
+            long_sl_hits=9,
+            short_sl_hits=2,
+            long_market_plus=1,
+            short_market_plus=5,
+            long_trades=12,
+            short_trades=10,
+            sample=22,
+            long_mean_pips=-0.40,
+            short_mean_pips=-0.10,
+        ),
+        raising=False,
+    )
+
+    trap_state = scalp_worker.TrapState(
+        active=False,
+        long_units=12000.0,
+        short_units=1000.0,
+        net_ratio=0.85,
+        long_dd_pips=0.2,
+        short_dd_pips=0.1,
+        combined_dd_pips=0.3,
+        unrealized_pl=-400.0,
+    )
+
+    units_mult, eval_info = scalp_worker._side_adverse_stack_units_multiplier(
+        side="long",
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        active_long=6,
+        active_short=1,
+        trap_state=trap_state,
+        now_mono=10.0,
+    )
+
+    assert eval_info.adverse is False
+    assert "mean_gap_weak" in eval_info.reason
+    assert eval_info.mean_gap_pips == pytest.approx(0.3, abs=1e-9)
+    assert units_mult == pytest.approx(1.0, abs=1e-9)
+
+
+def test_side_metrics_direction_flip_requires_mean_pips_gap(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_COOLDOWN_SEC",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES",
+        8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_MIN_TARGET_TRADES",
+        6,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_SL_RATE",
+        0.60,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_MIN_SL_GAP",
+        0.20,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_MIN_MARKET_PLUS_GAP",
+        0.10,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "SIDE_METRICS_DIRECTION_FLIP_MIN_MEAN_PIPS_GAP",
+        0.45,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker,
+        "_LAST_SIDE_METRICS_FLIP_MONO",
+        0.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker,
+        "_load_side_close_metrics",
+        lambda **_: scalp_worker.SideCloseMetrics(
+            long_sl_hits=9,
+            short_sl_hits=2,
+            long_market_plus=1,
+            short_market_plus=5,
+            long_trades=12,
+            short_trades=10,
+            sample=22,
+            long_mean_pips=-0.45,
+            short_mean_pips=-0.10,
+        ),
+        raising=False,
+    )
+
+    signal = _sample_signal_for_prob(side="long")
+    flipped, reason, eval_info = scalp_worker._maybe_side_metrics_direction_flip(
+        signal,
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        now_mono=10.0,
+    )
+
+    assert flipped is None
+    assert reason == "mean_pips_gap_weak"
+    assert eval_info.current_mean_pips == pytest.approx(-0.45, abs=1e-9)
+    assert eval_info.target_mean_pips == pytest.approx(-0.10, abs=1e-9)
 
 
 def test_load_entry_probability_band_metrics_from_trades_db(monkeypatch, tmp_path: pathlib.Path) -> None:

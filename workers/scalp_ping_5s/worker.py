@@ -240,6 +240,8 @@ class SideCloseMetrics:
     long_trades: int
     short_trades: int
     sample: int
+    long_mean_pips: float = 0.0
+    short_mean_pips: float = 0.0
 
     def sl_hits(self, side: str) -> int:
         key = str(side or "").strip().lower()
@@ -256,6 +258,14 @@ class SideCloseMetrics:
         if key == "short":
             return int(self.short_market_plus)
         return 0
+
+    def mean_pips(self, side: str) -> float:
+        key = str(side or "").strip().lower()
+        if key == "long":
+            return float(self.long_mean_pips)
+        if key == "short":
+            return float(self.short_mean_pips)
+        return 0.0
 
 
 @dataclass(slots=True)
@@ -291,6 +301,8 @@ class SideMetricsFlipEval:
     target_sl_rate: float
     current_market_plus_rate: float
     target_market_plus_rate: float
+    current_mean_pips: float = 0.0
+    target_mean_pips: float = 0.0
 
 
 @dataclass(slots=True)
@@ -311,6 +323,9 @@ class SideAdverseStackEval:
     dd_pips: float
     adverse: bool
     reason: str
+    current_mean_pips: float = 0.0
+    target_mean_pips: float = 0.0
+    mean_gap_pips: float = 0.0
 
 
 @dataclass(slots=True)
@@ -3384,28 +3399,57 @@ def _load_side_close_metrics(
         row = None
         try:
             con = sqlite3.connect(_TRADES_DB)
-            row = con.execute(
-                """
-                SELECT
-                  COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
-                  COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
-                  COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
-                  COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
-                  COALESCE(SUM(CASE WHEN units > 0 THEN 1 ELSE 0 END), 0),
-                  COALESCE(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END), 0),
-                  COUNT(*)
-                FROM (
-                  SELECT units, close_reason, realized_pl
-                  FROM trades
-                  WHERE close_time IS NOT NULL
-                    AND lower(coalesce(strategy_tag, '')) = ?
-                    AND lower(coalesce(pocket, '')) = ?
-                  ORDER BY datetime(close_time) DESC
-                  LIMIT ?
-                )
-                """,
-                (cache_key[0], cache_key[1], bounded_lookback),
-            ).fetchone()
+            try:
+                row = con.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units > 0 THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END), 0),
+                      COUNT(*),
+                      COALESCE(AVG(CASE WHEN units > 0 THEN COALESCE(pl_pips, 0.0) END), 0.0),
+                      COALESCE(AVG(CASE WHEN units < 0 THEN COALESCE(pl_pips, 0.0) END), 0.0)
+                    FROM (
+                      SELECT units, close_reason, realized_pl, pl_pips
+                      FROM trades
+                      WHERE close_time IS NOT NULL
+                        AND lower(coalesce(strategy_tag, '')) = ?
+                        AND lower(coalesce(pocket, '')) = ?
+                      ORDER BY datetime(close_time) DESC
+                      LIMIT ?
+                    )
+                    """,
+                    (cache_key[0], cache_key[1], bounded_lookback),
+                ).fetchone()
+            except Exception:
+                # Backward-compat fallback for older trades schema without pl_pips.
+                row = con.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units > 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units < 0 AND upper(coalesce(close_reason, '')) = 'MARKET_ORDER_TRADE_CLOSE' AND COALESCE(realized_pl, 0) > 0 THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units > 0 THEN 1 ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END), 0),
+                      COUNT(*),
+                      0.0,
+                      0.0
+                    FROM (
+                      SELECT units, close_reason, realized_pl
+                      FROM trades
+                      WHERE close_time IS NOT NULL
+                        AND lower(coalesce(strategy_tag, '')) = ?
+                        AND lower(coalesce(pocket, '')) = ?
+                      ORDER BY datetime(close_time) DESC
+                      LIMIT ?
+                    )
+                    """,
+                    (cache_key[0], cache_key[1], bounded_lookback),
+                ).fetchone()
         except Exception:
             row = None
         finally:
@@ -3424,6 +3468,8 @@ def _load_side_close_metrics(
                 long_trades=int(_safe_float(row[4], 0.0)),
                 short_trades=int(_safe_float(row[5], 0.0)),
                 sample=int(_safe_float(row[6], 0.0)),
+                long_mean_pips=float(_safe_float(row[7], 0.0)),
+                short_mean_pips=float(_safe_float(row[8], 0.0)),
             )
 
     cache_store[cache_key] = (now_mono, metrics)
@@ -3775,6 +3821,8 @@ def _maybe_side_metrics_direction_flip(
         target_sl_rate=0.0,
         current_market_plus_rate=0.0,
         target_market_plus_rate=0.0,
+        current_mean_pips=0.0,
+        target_mean_pips=0.0,
     )
     if not config.SIDE_METRICS_DIRECTION_FLIP_ENABLED:
         return None, "disabled", empty_eval
@@ -3822,6 +3870,8 @@ def _maybe_side_metrics_direction_flip(
         0.0,
         1.0,
     )
+    current_mean_pips = float(metrics.mean_pips(current_side))
+    target_mean_pips = float(metrics.mean_pips(target_side))
     eval_info = SideMetricsFlipEval(
         current_side=current_side,
         target_side=target_side,
@@ -3831,6 +3881,8 @@ def _maybe_side_metrics_direction_flip(
         target_sl_rate=target_sl_rate,
         current_market_plus_rate=current_market_plus_rate,
         target_market_plus_rate=target_market_plus_rate,
+        current_mean_pips=current_mean_pips,
+        target_mean_pips=target_mean_pips,
     )
 
     min_current_trades = max(1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES))
@@ -3858,6 +3910,12 @@ def _maybe_side_metrics_direction_flip(
     )
     if (target_market_plus_rate - current_market_plus_rate) < min_market_plus_gap:
         return None, "market_plus_gap_weak", eval_info
+    min_mean_pips_gap = max(
+        0.0,
+        float(config.SIDE_METRICS_DIRECTION_FLIP_MIN_MEAN_PIPS_GAP),
+    )
+    if (target_mean_pips - current_mean_pips) < min_mean_pips_gap:
+        return None, "mean_pips_gap_weak", eval_info
 
     flipped = _retarget_signal(
         signal,
@@ -3870,6 +3928,7 @@ def _maybe_side_metrics_direction_flip(
         f"{current_side}->{target_side}:"
         f"sl={current_sl_rate:.2f}/{target_sl_rate:.2f},"
         f"mplus={current_market_plus_rate:.2f}/{target_market_plus_rate:.2f},"
+        f"mean={current_mean_pips:.2f}/{target_mean_pips:.2f},"
         f"n={current_trades}/{target_trades}"
     )
     return flipped, reason, eval_info
@@ -3915,6 +3974,9 @@ def _side_adverse_stack_units_multiplier(
         dd_pips=dd_pips,
         adverse=False,
         reason="disabled",
+        current_mean_pips=0.0,
+        target_mean_pips=0.0,
+        mean_gap_pips=0.0,
     )
     if side_key not in {"long", "short"}:
         default_eval.reason = "invalid_side"
@@ -3930,6 +3992,9 @@ def _side_adverse_stack_units_multiplier(
     target_sl_rate = 0.0
     current_market_plus_rate = 0.0
     target_market_plus_rate = 0.0
+    current_mean_pips = 0.0
+    target_mean_pips = 0.0
+    mean_gap_pips = 0.0
 
     if config.SIDE_ADVERSE_STACK_UNITS_ENABLED:
         metrics = _load_side_close_metrics(
@@ -3972,6 +4037,9 @@ def _side_adverse_stack_units_multiplier(
                 0.0,
                 1.0,
             )
+            current_mean_pips = float(metrics.mean_pips(side_key))
+            target_mean_pips = float(metrics.mean_pips(target_side))
+            mean_gap_pips = float(target_mean_pips - current_mean_pips)
             min_current_trades = max(
                 1,
                 int(config.SIDE_ADVERSE_STACK_UNITS_MIN_CURRENT_TRADES),
@@ -3995,13 +4063,20 @@ def _side_adverse_stack_units_multiplier(
                     0.0,
                     float(config.SIDE_ADVERSE_STACK_UNITS_MIN_MARKET_PLUS_GAP),
                 )
-                adverse = bool(
+                min_mean_pips_gap = max(
+                    0.0,
+                    float(config.SIDE_ADVERSE_STACK_UNITS_MIN_MEAN_PIPS_GAP),
+                )
+                metrics_adverse = bool(
                     current_sl_rate >= min_current_sl_rate
                     and (current_sl_rate - target_sl_rate) >= min_sl_gap
                     and (target_market_plus_rate - current_market_plus_rate)
                     >= min_market_plus_gap
                 )
-                if adverse:
+                if metrics_adverse and mean_gap_pips < min_mean_pips_gap:
+                    reason_parts.append("mean_gap_weak")
+                elif metrics_adverse:
+                    adverse = True
                     active_start = max(1, int(config.SIDE_ADVERSE_STACK_UNITS_ACTIVE_START))
                     if active_same_side >= active_start:
                         extra = active_same_side - active_start + 1
@@ -4068,6 +4143,9 @@ def _side_adverse_stack_units_multiplier(
         dd_pips=dd_pips,
         adverse=adverse,
         reason="+".join(reason_parts) if reason_parts else "neutral",
+        current_mean_pips=current_mean_pips,
+        target_mean_pips=target_mean_pips,
+        mean_gap_pips=mean_gap_pips,
     )
     return units_mult, eval_info
 
@@ -4661,6 +4739,9 @@ def _entry_probability_band_units_multiplier(
         "side_market_plus": 0,
         "side_sl_rate": 0.0,
         "side_market_plus_rate": 0.0,
+        "side_mean_pips": 0.0,
+        "side_rate_balance": 0.0,
+        "side_pips_balance": 0.0,
         "reason": "disabled",
     }
     if not config.ENTRY_PROBABILITY_BAND_ALLOC_ENABLED:
@@ -4772,7 +4853,11 @@ def _entry_probability_band_units_multiplier(
                 if side_key == "long"
                 else int(side_metrics.short_trades)
             )
-            if side_trades > 0:
+            min_side_trades = max(
+                1,
+                int(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_TRADES),
+            )
+            if side_trades >= min_side_trades:
                 side_sl_hits = int(side_metrics.sl_hits(side_key))
                 side_market_plus = int(side_metrics.market_plus(side_key))
                 side_sl_rate = _clamp(side_sl_hits / float(side_trades), 0.0, 1.0)
@@ -4781,15 +4866,31 @@ def _entry_probability_band_units_multiplier(
                     0.0,
                     1.0,
                 )
-                side_balance = side_market_plus_rate - side_sl_rate
-                side_mult = _clamp(
-                    1.0 + (
-                        side_balance
-                        * max(
-                            0.0,
-                            float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN),
-                        )
+                side_mean_pips = float(side_metrics.mean_pips(side_key))
+                side_rate_balance = side_market_plus_rate - side_sl_rate
+                side_pips_balance = _clamp(
+                    side_mean_pips
+                    / max(
+                        0.05,
+                        float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF),
                     ),
+                    -1.0,
+                    1.0,
+                )
+                side_balance = (
+                    side_rate_balance
+                    * max(
+                        0.0,
+                        float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN),
+                    )
+                    + side_pips_balance
+                    * max(
+                        0.0,
+                        float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN),
+                    )
+                )
+                side_mult = _clamp(
+                    1.0 + side_balance,
                     float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT),
                     float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT),
                 )
@@ -4800,6 +4901,9 @@ def _entry_probability_band_units_multiplier(
                         "side_market_plus": side_market_plus,
                         "side_sl_rate": round(side_sl_rate, 6),
                         "side_market_plus_rate": round(side_market_plus_rate, 6),
+                        "side_mean_pips": round(side_mean_pips, 6),
+                        "side_rate_balance": round(side_rate_balance, 6),
+                        "side_pips_balance": round(side_pips_balance, 6),
                     }
                 )
 
@@ -6162,6 +6266,8 @@ async def scalp_ping_5s_worker() -> None:
             side_metrics_flip_target_sl_rate = 0.0
             side_metrics_flip_current_market_plus_rate = 0.0
             side_metrics_flip_target_market_plus_rate = 0.0
+            side_metrics_flip_current_mean_pips = 0.0
+            side_metrics_flip_target_mean_pips = 0.0
             side_metrics_flip_current_trades = 0
             side_metrics_flip_target_trades = 0
             side_adverse_stack_units_mult = 1.0
@@ -6176,6 +6282,9 @@ async def scalp_ping_5s_worker() -> None:
             side_adverse_stack_target_sl_rate = 0.0
             side_adverse_stack_current_market_plus_rate = 0.0
             side_adverse_stack_target_market_plus_rate = 0.0
+            side_adverse_stack_current_mean_pips = 0.0
+            side_adverse_stack_target_mean_pips = 0.0
+            side_adverse_stack_mean_gap_pips = 0.0
             side_adverse_stack_active_same_side = 0
             side_adverse_stack_active_opposite_side = 0
             bias_units_mult, bias_gate = _direction_units_multiplier(
@@ -6508,6 +6617,8 @@ async def scalp_ping_5s_worker() -> None:
             side_metrics_flip_target_market_plus_rate = float(
                 side_metrics_eval.target_market_plus_rate
             )
+            side_metrics_flip_current_mean_pips = float(side_metrics_eval.current_mean_pips)
+            side_metrics_flip_target_mean_pips = float(side_metrics_eval.target_mean_pips)
             side_metrics_flip_current_trades = int(side_metrics_eval.current_trades)
             side_metrics_flip_target_trades = int(side_metrics_eval.target_trades)
             if side_metrics_flip_signal is not None:
@@ -6541,7 +6652,7 @@ async def scalp_ping_5s_worker() -> None:
                     >= config.SIDE_METRICS_DIRECTION_FLIP_LOG_INTERVAL_SEC
                 ):
                     LOG.info(
-                        "%s side_metrics_flip side=%s reason=%s sl=%.2f/%.2f mplus=%.2f/%.2f n=%d/%d",
+                        "%s side_metrics_flip side=%s reason=%s sl=%.2f/%.2f mplus=%.2f/%.2f mean=%.2f/%.2f n=%d/%d",
                         config.LOG_PREFIX,
                         signal.side,
                         side_metrics_flip_reason,
@@ -6549,6 +6660,8 @@ async def scalp_ping_5s_worker() -> None:
                         side_metrics_flip_target_sl_rate,
                         side_metrics_flip_current_market_plus_rate,
                         side_metrics_flip_target_market_plus_rate,
+                        side_metrics_flip_current_mean_pips,
+                        side_metrics_flip_target_mean_pips,
                         side_metrics_flip_current_trades,
                         side_metrics_flip_target_trades,
                     )
@@ -6669,6 +6782,9 @@ async def scalp_ping_5s_worker() -> None:
             side_adverse_stack_target_market_plus_rate = float(
                 side_adverse_eval.target_market_plus_rate
             )
+            side_adverse_stack_current_mean_pips = float(side_adverse_eval.current_mean_pips)
+            side_adverse_stack_target_mean_pips = float(side_adverse_eval.target_mean_pips)
+            side_adverse_stack_mean_gap_pips = float(side_adverse_eval.mean_gap_pips)
             side_adverse_stack_active_same_side = int(side_adverse_eval.active_same_side)
             side_adverse_stack_active_opposite_side = int(
                 side_adverse_eval.active_opposite_side
@@ -6749,7 +6865,7 @@ async def scalp_ping_5s_worker() -> None:
                 >= config.SIDE_ADVERSE_STACK_LOG_INTERVAL_SEC
             ):
                 LOG.info(
-                    "%s side_adverse_stack side=%s reason=%s mult=%.2f(side=%.2f dd=%.2f) active=%d/%d dd=%.2fp sl=%.2f/%.2f mplus=%.2f/%.2f n=%d/%d",
+                    "%s side_adverse_stack side=%s reason=%s mult=%.2f(side=%.2f dd=%.2f) active=%d/%d dd=%.2fp sl=%.2f/%.2f mplus=%.2f/%.2f mean=%.2f/%.2f n=%d/%d",
                     config.LOG_PREFIX,
                     signal.side,
                     side_adverse_stack_reason,
@@ -6763,6 +6879,8 @@ async def scalp_ping_5s_worker() -> None:
                     side_adverse_stack_target_sl_rate,
                     side_adverse_stack_current_market_plus_rate,
                     side_adverse_stack_target_market_plus_rate,
+                    side_adverse_stack_current_mean_pips,
+                    side_adverse_stack_target_mean_pips,
                     side_adverse_stack_current_trades,
                     side_adverse_stack_target_trades,
                 )
@@ -7139,6 +7257,14 @@ async def scalp_ping_5s_worker() -> None:
                     side_metrics_flip_target_market_plus_rate,
                     4,
                 ),
+                "side_metrics_direction_flip_current_mean_pips": round(
+                    side_metrics_flip_current_mean_pips,
+                    4,
+                ),
+                "side_metrics_direction_flip_target_mean_pips": round(
+                    side_metrics_flip_target_mean_pips,
+                    4,
+                ),
                 "side_metrics_direction_flip_current_trades": int(
                     side_metrics_flip_current_trades
                 ),
@@ -7194,6 +7320,18 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "side_adverse_stack_target_market_plus_rate": round(
                     side_adverse_stack_target_market_plus_rate,
+                    4,
+                ),
+                "side_adverse_stack_current_mean_pips": round(
+                    side_adverse_stack_current_mean_pips,
+                    4,
+                ),
+                "side_adverse_stack_target_mean_pips": round(
+                    side_adverse_stack_target_mean_pips,
+                    4,
+                ),
+                "side_adverse_stack_mean_gap_pips": round(
+                    side_adverse_stack_mean_gap_pips,
                     4,
                 ),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
@@ -7285,6 +7423,18 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "side_market_plus_rate": round(
                     _safe_float(probability_band_meta.get("side_market_plus_rate"), 0.0),
+                    6,
+                ),
+                "side_mean_pips": round(
+                    _safe_float(probability_band_meta.get("side_mean_pips"), 0.0),
+                    6,
+                ),
+                "side_rate_balance": round(
+                    _safe_float(probability_band_meta.get("side_rate_balance"), 0.0),
+                    6,
+                ),
+                "side_pips_balance": round(
+                    _safe_float(probability_band_meta.get("side_pips_balance"), 0.0),
                     6,
                 ),
             }
