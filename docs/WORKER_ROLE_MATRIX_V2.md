@@ -32,6 +32,12 @@
   - 市場オープン時に `data_lag_ms` / `decision_latency_ms` を `metrics.db` へ定期発行し、
     V2 の SLO 観測値を供給する
   - 各戦略のロジックには介入せず、実行可否のガード（`entry_enabled` / `exit_enabled` / `global_lock`）としてのみ働く
+- `quant-regime-router.service`（opt-in）
+  - `M1/H4` レジームを定期評価し、`REGIME_ROUTER_MANAGED_STRATEGIES` で指定した戦略だけ
+    `entry_enabled` を動的に切替える。
+  - `exit_enabled` / `global_lock` には介入しない。
+  - 既存の V2 導線（strategy worker → strategy_control → order_manager）を維持したまま、
+    戦略間の entry 割当を切替える分析・配分レイヤとして扱う。
 
 ### 3) 戦略実行面（完全1:1）
 
@@ -198,10 +204,17 @@
 
 ### 7) 分析・監視面（データ管理）
 
-- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback`, `quant-replay-quality-gate`, `quant-trade-counterfactual` は分析/監視へ固定
+- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback`, `quant-replay-quality-gate`, `quant-trade-counterfactual`, `quant-regime-router`, `quant-forecast-improvement-audit` は分析/監視へ固定
 - 分析系が戦略判断本体と混ざる構造を禁ずる
 - `quant-dynamic-alloc` は strategy tag の一時サフィックス（例: `-l<hex>`）を正規化して集計し、
   同一戦略の成績分断による配分劣化を防ぐ（2026-02-24 更新）。
+- `quant-replay-quality-gate` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
+  replay run 出力を `analysis.trade_counterfactual_worker` へ連結し、
+  `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映できる。
+  `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS` を超える候補は反映しない。
+  `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` 内は
+  `worker_reentry` 反映をスキップし、解析のみ継続する。
+  反映可否は `logs/replay_quality_gate_latest.json.auto_improve` を監査正本とする。
 
 ## 禁止ルール（V2）
 
@@ -355,6 +368,7 @@ flowchart LR
   OANDA["OANDA API"] --> MD["quant-market-data-feed<br>/workers/market_data_feed/worker.py"]
   MD --> TW["market_data.tick_window.record"]
   MD --> FC["indicators.factor_cache.on_candle / on_candle_live"]
+  FC --> RR["quant-regime-router<br>/workers/regime_router/worker.py"]
 
   subgraph "戦略サイド（並行）"
     SCW[ "strategy ENTRY workers<br>/workers/*/worker.py" ]
@@ -363,6 +377,7 @@ flowchart LR
 
   SC["quant-strategy-control<br>/workers/strategy_control/worker.py<br>/workers/common/strategy_control.py"] -->|entry/exit flags| SCW
   SC -->|entry/exit flags| SWX
+  RR -->|strategy entry flags| SC
   TW --> SCW
   FC --> SCW
   TW --> SWX

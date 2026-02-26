@@ -157,6 +157,13 @@ flowchart LR
   - close/exit 判断は各 strategy の exit_worker と該当ワーカー側ルールを主とし、`quant-order-manager`/`quant-position-manager` は通路と参照窓口として扱う。
   - `entry_probability` と `entry_units_intent` を `entry_thesis` で必須維持。
   - `quantrabbit.service` を本番主導線にしない。
+  - `quant-replay-quality-gate` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` のとき、
+    replay run 出力を `analysis.trade_counterfactual_worker` へ連結し、
+    `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映してよい。
+    ただし `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS` を超える候補は採用しない。
+    `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` の間隔内は
+    解析のみ行い、`worker_reentry` 反映は抑制する。
+    監査は `logs/replay_quality_gate_latest.json` の `auto_improve` を正本とする。
 - 実VM監査（実行）
   - running 状態（V2固定群）
   ```bash

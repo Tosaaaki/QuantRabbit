@@ -1,11 +1,11 @@
 [Unit]
-Description=Run quant-replay-quality-gate.service every hour
+Description=Run quant-replay-quality-gate.service every 3 hours
 
 [Timer]
 OnBootSec=12min
-OnUnitActiveSec=1h
+OnUnitActiveSec=3h
 AccuracySec=2min
-RandomizedDelaySec=2min
+RandomizedDelaySec=5min
 Unit=quant-replay-quality-gate.service
 
 [Install]

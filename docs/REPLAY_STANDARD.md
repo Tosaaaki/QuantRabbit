@@ -134,13 +134,32 @@ python -m analysis.trade_counterfactual_worker \
   - `scripts/replay_quality_gate.py` を呼び出して walk-forward を実行。
   - 最新スナップショットを `logs/replay_quality_gate_latest.json` に保存。
   - 実行履歴を `logs/replay_quality_gate_history.jsonl` に追記。
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` のときは、
+    replay 完了後に `analysis.trade_counterfactual_worker` を戦略ごとに連鎖実行し、
+    `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映する。
+    - 対象戦略は既定で `failing_workers`（`REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE=failing`）。
+    - replay入力は既定で当該 run の `runs/*/replay_exit_workers.json` と
+      `runs/*/replay_exit_*_base.json` を自動探索する。
+    - 反映内容と採用/非採用理由は `logs/replay_quality_gate_latest.json`
+      の `auto_improve` に監査記録される。
   - `tmp/replay_quality_gate/<timestamp>` は `REPLAY_QUALITY_GATE_KEEP_RUNS` 件だけ保持。
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC`（既定 10800秒）で
+    `worker_reentry` 反映の最小間隔を制御する。間隔内は
+    `reentry_apply_cooldown` として解析のみ実施し、反映はスキップする。
 - 主要設定は `ops/env/quant-replay-quality-gate.env` で管理する。
   - 既定は `config/replay_quality_gate_main.yaml`（archive 併用の walk-forward）を使う。
   - `REPLAY_QUALITY_GATE_CONFIG`
   - `REPLAY_QUALITY_GATE_TIMEOUT_SEC`
   - `REPLAY_QUALITY_GATE_STRICT`
   - `REPLAY_QUALITY_GATE_KEEP_RUNS`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_INCLUDE_LIVE_TRADES`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_TRADES`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_STATE_PATH`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_REENTRY`
 - 導入例:
 
 ```bash

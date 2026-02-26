@@ -19,7 +19,7 @@
 - 変更:
   - `workers/common/forecast_gate.py`
     - `scale >= 0.999` を no-op ではなく
-      `ForecastDecision(allowed=True, scale=1.0, reason="edge_allow")` で返すよう修正。
+      `ForecastDecision(allowed=True, scale=1.0, reason=\"edge_allow\")` で返すよう修正。
     - `p_up` / `edge` / `expected_pips` / `target_reach_prob` などの監査メタを
       常に `strategy_entry` へ伝播できるよう統一。
   - テスト:
@@ -31,6 +31,54 @@
   - 予測が「ブロック/縮小しない局面」でも forecast を有効シグナルとして使い、
     `forecast_fusion` の実適用率を引き上げる。
 
+### 2026-02-26（追記）分析班×リプレイ班を直結し、自動改善ループを常設化
+
+- 背景:
+  - `quant-replay-quality-gate` はこれまで replay の pass/fail 監査で終了し、
+    replay の悪化要因を `worker_reentry` へ反映する工程が手動だった。
+  - `analysis.trade_counterfactual_worker` は replay JSON を読める実装済みだったが、
+    定期 replay run との自動連鎖が未接続だった。
+- 変更:
+  - `analysis/replay_quality_gate_worker.py`
+    - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_*` を追加し、
+      replay 完了後に `analysis.trade_counterfactual_worker` を戦略単位で自動実行。
+    - `policy_hints.block_jst_hours` を抽出し、
+      `config/worker_reentry.yaml` の `strategies.<strategy>.block_jst_hours` へ自動反映。
+    - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS`（既定 8）を超える候補は
+      `skipped_too_many_block_hours` として採用しない。
+    - 採用/非採用理由・コマンド・stderr tail を
+      `logs/replay_quality_gate_latest.json` の `auto_improve` に記録。
+  - `ops/env/quant-replay-quality-gate.env`
+    - auto-improve を本番既定で有効化（`REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1`）。
+  - 回帰テスト:
+    - `tests/analysis/test_replay_quality_gate_worker.py`
+      - 戦略選定フィルタ
+      - `worker_reentry` 反映
+      - `run_once` 連鎖反映
+- 意図:
+  - replay 監査と分析改善の断絶を解消し、
+    「replay 失敗戦略の時間帯ブロック更新」までを定期ワーカー単体で完結させる。
+
+### 2026-02-26（追記）常時ループをレート制限付きへ調整（軽分析高頻度 / replay低頻度）
+
+- 背景:
+  - 固定費VMでも CPU/IO は有限で、replay を高頻度で回し続けると
+    本番ワーカーへの干渉と過剰チューニング（設定振動）のリスクがある。
+- 変更:
+  - `systemd/quant-replay-quality-gate.timer`
+    - `OnUnitActiveSec=1h` → `3h`（重い replay は低頻度）
+  - `systemd/quant-trade-counterfactual.timer`
+    - `OnUnitActiveSec=30min` → `20min`（軽い分析は高頻度）
+  - `analysis/replay_quality_gate_worker.py`
+    - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` と
+      `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_STATE_PATH` を追加。
+    - 反映クールダウン内は `reentry_apply_cooldown` として
+      `worker_reentry` 反映をスキップし、解析のみ継続。
+  - `ops/env/quant-replay-quality-gate.env`
+    - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC=10800` を追加。
+- 意図:
+  - 「分析→replay→改善」の常時ループは維持しつつ、
+    本番干渉と設定の過敏反応を抑えた持続運用にする。
 
 ### 2026-02-26（追記）レンジ不全対策: forecast/perf の向きを「range復帰 + 低EV抑制」へ再配線
 

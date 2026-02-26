@@ -441,7 +441,9 @@
 - `analysis/replay_quality_gate_worker.py` は
   `REPLAY_QUALITY_GATE_ENABLED=0` の場合、replay 本体を実行せず正常終了する。
   本番既定は `ops/env/quant-replay-quality-gate.env` で `1` とし、
-  replay 品質監査を 1h 周期で継続する。
+  replay 品質監査を 3h 周期で継続する。
+  `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC`（既定 10800）により、
+  `worker_reentry` 反映は最小間隔を守って実施する（間隔内は解析のみ）。
   一時的に本番負荷を抑える必要がある場合のみ、運用判断で `0` に切り替える。
 - 目的は replay 品質検証を継続しつつ、稼働中の strategy/order/position worker を
   CPU 競合で阻害しないこと。

@@ -2,7 +2,8 @@
 """Scheduled worker wrapper for replay quality gate runs.
 
 This worker executes `scripts/replay_quality_gate.py`, stores the latest status
-snapshot, appends run history, and trims old run artifacts.
+snapshot, appends run history, trims old run artifacts, and can connect replay
+output to analysis feedback for automatic tuning updates.
 """
 
 from __future__ import annotations
@@ -13,13 +14,21 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from typing import Any, Callable
 
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional dependency during local tests
+    yaml = None
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+_AUTO_IMPROVE_SCOPE_VALUES = {"failing", "all"}
+_AUTO_IMPROVE_WORKER_SKIP_PREFIXES = ("pocket:", "source:")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -41,6 +50,59 @@ def _resolve_path(text: str, *, base_dir: Path) -> Path:
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
+
+
+def _split_csv(text: str | None) -> list[str]:
+    if not text:
+        return []
+    return [part.strip() for part in str(text).split(",") if part.strip()]
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return int(default)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _normalize_hours(raw: Any) -> list[int]:
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for value in raw:
+        hour = _safe_int(value, default=-1)
+        if 0 <= hour <= 23 and hour not in out:
+            out.append(hour)
+    out.sort()
+    return out
+
+
+def _safe_filename(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    text = re.sub(r"[^0-9A-Za-z_.-]+", "_", text)
+    text = re.sub(r"_+", "_", text)
+    text = text.strip("_")
+    return text or "unknown"
 
 
 def _tail(text: str | None, *, limit: int = 12000) -> str:
@@ -143,9 +205,25 @@ class WorkerConfig:
     ticks_glob: str
     workers: str
     backend: str
+    auto_improve_enabled: bool = False
+    auto_improve_scope: str = "failing"
+    auto_improve_strategies: str = ""
+    auto_improve_include_live_trades: bool = False
+    auto_improve_replay_json_globs: str = ""
+    auto_improve_counterfactual_timeout_sec: int = 600
+    auto_improve_counterfactual_out_dir: Path = (REPO_ROOT / "logs" / "replay_auto_improve").resolve()
+    auto_improve_min_trades: int = 40
+    auto_improve_max_block_hours: int = 8
+    auto_improve_min_apply_interval_sec: int = 10800
+    auto_improve_apply_state_path: Path = (REPO_ROOT / "logs" / "replay_auto_improve_state.json").resolve()
+    auto_improve_reentry_config_path: Path = (REPO_ROOT / "config" / "worker_reentry.yaml").resolve()
+    auto_improve_apply_reentry: bool = True
 
 
 def _default_config() -> WorkerConfig:
+    scope = str(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE", "failing")).strip().lower()
+    if scope not in _AUTO_IMPROVE_SCOPE_VALUES:
+        scope = "failing"
     return WorkerConfig(
         config_path=_resolve_path(
             os.getenv("REPLAY_QUALITY_GATE_CONFIG", "config/replay_quality_gate.yaml"),
@@ -169,6 +247,48 @@ def _default_config() -> WorkerConfig:
         ticks_glob=str(os.getenv("REPLAY_QUALITY_GATE_TICKS_GLOB", "")).strip(),
         workers=str(os.getenv("REPLAY_QUALITY_GATE_WORKERS", "")).strip(),
         backend=str(os.getenv("REPLAY_QUALITY_GATE_BACKEND", "")).strip(),
+        auto_improve_enabled=_env_bool("REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED", False),
+        auto_improve_scope=scope,
+        auto_improve_strategies=str(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_STRATEGIES", "")).strip(),
+        auto_improve_include_live_trades=_env_bool(
+            "REPLAY_QUALITY_GATE_AUTO_IMPROVE_INCLUDE_LIVE_TRADES",
+            False,
+        ),
+        auto_improve_replay_json_globs=str(
+            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_REPLAY_JSON_GLOBS", "")
+        ).strip(),
+        auto_improve_counterfactual_timeout_sec=max(
+            60,
+            _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_COUNTERFACTUAL_TIMEOUT_SEC", 600),
+        ),
+        auto_improve_counterfactual_out_dir=_resolve_path(
+            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_COUNTERFACTUAL_OUT_DIR", "logs/replay_auto_improve"),
+            base_dir=REPO_ROOT,
+        ),
+        auto_improve_min_trades=max(
+            1,
+            _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_TRADES", 40),
+        ),
+        auto_improve_max_block_hours=max(
+            1,
+            _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS", 8),
+        ),
+        auto_improve_min_apply_interval_sec=max(
+            0,
+            _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC", 10800),
+        ),
+        auto_improve_apply_state_path=_resolve_path(
+            os.getenv(
+                "REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_STATE_PATH",
+                "logs/replay_auto_improve_state.json",
+            ),
+            base_dir=REPO_ROOT,
+        ),
+        auto_improve_reentry_config_path=_resolve_path(
+            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_REENTRY_CONFIG_PATH", "config/worker_reentry.yaml"),
+            base_dir=REPO_ROOT,
+        ),
+        auto_improve_apply_reentry=_env_bool("REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_REENTRY", True),
     )
 
 
@@ -188,6 +308,58 @@ def parse_args() -> argparse.Namespace:
         "--backend",
         choices=("exit_workers_groups", "exit_workers_main", ""),
         default=default.backend,
+    )
+    ap.add_argument(
+        "--auto-improve-enabled",
+        type=int,
+        choices=(0, 1),
+        default=1 if default.auto_improve_enabled else 0,
+    )
+    ap.add_argument(
+        "--auto-improve-scope",
+        choices=("failing", "all"),
+        default=default.auto_improve_scope,
+    )
+    ap.add_argument("--auto-improve-strategies", default=default.auto_improve_strategies)
+    ap.add_argument(
+        "--auto-improve-include-live-trades",
+        type=int,
+        choices=(0, 1),
+        default=1 if default.auto_improve_include_live_trades else 0,
+    )
+    ap.add_argument("--auto-improve-replay-json-globs", default=default.auto_improve_replay_json_globs)
+    ap.add_argument(
+        "--auto-improve-counterfactual-timeout-sec",
+        type=int,
+        default=default.auto_improve_counterfactual_timeout_sec,
+    )
+    ap.add_argument(
+        "--auto-improve-counterfactual-out-dir",
+        type=Path,
+        default=default.auto_improve_counterfactual_out_dir,
+    )
+    ap.add_argument("--auto-improve-min-trades", type=int, default=default.auto_improve_min_trades)
+    ap.add_argument(
+        "--auto-improve-reentry-config-path",
+        type=Path,
+        default=default.auto_improve_reentry_config_path,
+    )
+    ap.add_argument("--auto-improve-max-block-hours", type=int, default=default.auto_improve_max_block_hours)
+    ap.add_argument(
+        "--auto-improve-min-apply-interval-sec",
+        type=int,
+        default=default.auto_improve_min_apply_interval_sec,
+    )
+    ap.add_argument(
+        "--auto-improve-apply-state-path",
+        type=Path,
+        default=default.auto_improve_apply_state_path,
+    )
+    ap.add_argument(
+        "--auto-improve-apply-reentry",
+        type=int,
+        choices=(0, 1),
+        default=1 if default.auto_improve_apply_reentry else 0,
     )
     return ap.parse_args()
 
@@ -249,6 +421,9 @@ def _summarize_report(report_payload: dict[str, Any] | None) -> tuple[str, list[
 
 
 def _build_config_from_args(args: argparse.Namespace) -> WorkerConfig:
+    scope = str(args.auto_improve_scope or "").strip().lower()
+    if scope not in _AUTO_IMPROVE_SCOPE_VALUES:
+        scope = "failing"
     return WorkerConfig(
         config_path=Path(args.config).resolve(),
         out_dir=Path(args.out_dir).resolve(),
@@ -260,13 +435,383 @@ def _build_config_from_args(args: argparse.Namespace) -> WorkerConfig:
         ticks_glob=str(args.ticks_glob or "").strip(),
         workers=str(args.workers or "").strip(),
         backend=str(args.backend or "").strip(),
+        auto_improve_enabled=bool(int(args.auto_improve_enabled)),
+        auto_improve_scope=scope,
+        auto_improve_strategies=str(args.auto_improve_strategies or "").strip(),
+        auto_improve_include_live_trades=bool(int(args.auto_improve_include_live_trades)),
+        auto_improve_replay_json_globs=str(args.auto_improve_replay_json_globs or "").strip(),
+        auto_improve_counterfactual_timeout_sec=max(60, int(args.auto_improve_counterfactual_timeout_sec)),
+        auto_improve_counterfactual_out_dir=Path(args.auto_improve_counterfactual_out_dir).resolve(),
+        auto_improve_min_trades=max(1, int(args.auto_improve_min_trades)),
+        auto_improve_max_block_hours=max(1, int(args.auto_improve_max_block_hours)),
+        auto_improve_min_apply_interval_sec=max(0, int(args.auto_improve_min_apply_interval_sec)),
+        auto_improve_apply_state_path=Path(args.auto_improve_apply_state_path).resolve(),
+        auto_improve_reentry_config_path=Path(args.auto_improve_reentry_config_path).resolve(),
+        auto_improve_apply_reentry=bool(int(args.auto_improve_apply_reentry)),
     )
+
+
+def _collect_auto_improve_strategies(
+    report_payload: dict[str, Any] | None,
+    cfg: WorkerConfig,
+) -> list[str]:
+    explicit = _dedupe_keep_order(_split_csv(cfg.auto_improve_strategies))
+    if explicit:
+        return explicit
+    if not isinstance(report_payload, dict):
+        return []
+    meta = report_payload.get("meta") if isinstance(report_payload.get("meta"), dict) else {}
+    overall = report_payload.get("overall") if isinstance(report_payload.get("overall"), dict) else {}
+    workers = meta.get("workers") if isinstance(meta.get("workers"), list) else []
+    failing_workers = overall.get("failing_workers") if isinstance(overall.get("failing_workers"), list) else []
+    selected = failing_workers if cfg.auto_improve_scope == "failing" else workers
+    candidates = [str(worker).strip() for worker in selected if str(worker).strip()]
+    out: list[str] = []
+    for candidate in candidates:
+        lower = candidate.lower()
+        if lower == "__overall__":
+            continue
+        if lower.startswith(_AUTO_IMPROVE_WORKER_SKIP_PREFIXES):
+            continue
+        out.append(candidate)
+    return _dedupe_keep_order(out)
+
+
+def _resolve_auto_improve_replay_globs(
+    cfg: WorkerConfig,
+    report_path: Path | None,
+) -> list[str]:
+    override = _dedupe_keep_order(_split_csv(cfg.auto_improve_replay_json_globs))
+    if override:
+        return [str(_resolve_path(pattern, base_dir=REPO_ROOT)) for pattern in override]
+    if report_path is None:
+        return []
+    run_root = report_path.parent / "runs"
+    return [
+        str(run_root / "*" / "replay_exit_workers.json"),
+        str(run_root / "*" / "replay_exit_*_base.json"),
+    ]
+
+
+def _build_counterfactual_command(
+    *,
+    strategy_like: str,
+    replay_json_globs: list[str],
+    out_path: Path,
+    history_path: Path,
+    include_live_trades: bool,
+) -> list[str]:
+    cmd = [
+        sys.executable,
+        "-m",
+        "analysis.trade_counterfactual_worker",
+        "--strategy-like",
+        strategy_like,
+        "--include-live-trades",
+        "1" if include_live_trades else "0",
+        "--replay-json-globs",
+        ",".join(replay_json_globs),
+        "--out-path",
+        str(out_path),
+        "--history-path",
+        str(history_path),
+    ]
+    return cmd
+
+
+def _load_yaml_dict(path: Path) -> dict[str, Any]:
+    if yaml is None or not path.exists():
+        return {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_yaml_atomic(path: Path, payload: dict[str, Any]) -> None:
+    if yaml is None:  # pragma: no cover - guarded by caller
+        raise RuntimeError("PyYAML is not available")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        delete=False,
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    ) as fh:
+        yaml.safe_dump(payload, fh, sort_keys=False)
+        tmp_path = Path(fh.name)
+    tmp_path.replace(path)
+
+
+def _parse_iso8601(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    text = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _read_apply_state(path: Path) -> dict[str, Any]:
+    payload = _read_json(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_apply_state(
+    *,
+    path: Path,
+    applied_at: datetime,
+    updates: dict[str, list[int]],
+) -> None:
+    payload = {
+        "applied_at": applied_at.isoformat(),
+        "updates": updates,
+    }
+    _write_json_atomic(path, payload)
+
+
+def _apply_reentry_updates(
+    *,
+    reentry_path: Path,
+    strategy_hours: dict[str, list[int]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "path": str(reentry_path),
+        "requested_updates": strategy_hours,
+        "applied": False,
+        "changed": [],
+        "reason": "",
+    }
+    if yaml is None:
+        result["reason"] = "yaml_unavailable"
+        return result
+    if not strategy_hours:
+        result["reason"] = "no_strategy_updates"
+        return result
+
+    base = _load_yaml_dict(reentry_path)
+    strategies = base.get("strategies")
+    if not isinstance(strategies, dict):
+        strategies = {}
+        base["strategies"] = strategies
+
+    changed: list[dict[str, Any]] = []
+    for strategy, raw_hours in strategy_hours.items():
+        hours = _normalize_hours(raw_hours)
+        if not hours:
+            continue
+        row = strategies.get(strategy)
+        if not isinstance(row, dict):
+            row = {}
+            strategies[strategy] = row
+        current_hours = _normalize_hours(row.get("block_jst_hours"))
+        if current_hours == hours:
+            continue
+        row["block_jst_hours"] = hours
+        changed.append(
+            {
+                "strategy": strategy,
+                "before": current_hours,
+                "after": hours,
+            }
+        )
+
+    if not changed:
+        result["reason"] = "no_diff"
+        return result
+
+    _write_yaml_atomic(reentry_path, base)
+    result["applied"] = True
+    result["changed"] = changed
+    result["reason"] = "applied"
+    return result
+
+
+def _run_auto_improve(
+    cfg: WorkerConfig,
+    *,
+    replay_returncode: int,
+    report_payload: dict[str, Any] | None,
+    report_path: Path | None,
+    counterfactual_runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "enabled": bool(cfg.auto_improve_enabled),
+        "status": "disabled",
+        "reason": "",
+        "scope": cfg.auto_improve_scope,
+        "replay_json_globs": [],
+        "strategies": [],
+        "strategy_runs": [],
+        "accepted_updates": {},
+        "reentry_apply": {},
+    }
+    if not cfg.auto_improve_enabled:
+        result["reason"] = "feature_disabled"
+        return result
+    if replay_returncode != 0:
+        result["status"] = "skipped"
+        result["reason"] = "replay_failed"
+        return result
+    if report_path is None:
+        result["status"] = "skipped"
+        result["reason"] = "report_missing"
+        return result
+
+    strategies = _collect_auto_improve_strategies(report_payload, cfg)
+    result["strategies"] = list(strategies)
+    if not strategies:
+        result["status"] = "skipped"
+        result["reason"] = "no_target_strategies"
+        return result
+
+    replay_json_globs = _resolve_auto_improve_replay_globs(cfg, report_path)
+    result["replay_json_globs"] = list(replay_json_globs)
+    if not replay_json_globs:
+        result["status"] = "skipped"
+        result["reason"] = "replay_json_globs_empty"
+        return result
+
+    out_root = (cfg.auto_improve_counterfactual_out_dir / report_path.parent.name).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    executor = counterfactual_runner or (
+        lambda c: _run_subprocess(
+            c,
+            cwd=REPO_ROOT,
+            timeout_sec=cfg.auto_improve_counterfactual_timeout_sec,
+        )
+    )
+    accepted_updates: dict[str, list[int]] = {}
+    strategy_runs: list[dict[str, Any]] = []
+
+    for strategy in strategies:
+        stem = _safe_filename(strategy)
+        out_path = out_root / f"{stem}.json"
+        history_path = out_root / f"{stem}.history.jsonl"
+        cmd = _build_counterfactual_command(
+            strategy_like=strategy,
+            replay_json_globs=replay_json_globs,
+            out_path=out_path,
+            history_path=history_path,
+            include_live_trades=cfg.auto_improve_include_live_trades,
+        )
+        proc = executor(cmd)
+        row: dict[str, Any] = {
+            "strategy": strategy,
+            "status": "",
+            "returncode": int(proc.returncode),
+            "counterfactual_out_path": str(out_path),
+            "counterfactual_history_path": str(history_path),
+            "command": cmd,
+            "stdout_tail": _tail(proc.stdout),
+            "stderr_tail": _tail(proc.stderr),
+        }
+        if proc.returncode != 0:
+            row["status"] = "counterfactual_error"
+            strategy_runs.append(row)
+            continue
+
+        payload = _read_json(out_path)
+        if not isinstance(payload, dict):
+            row["status"] = "counterfactual_output_missing"
+            strategy_runs.append(row)
+            continue
+
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        hints = payload.get("policy_hints") if isinstance(payload.get("policy_hints"), dict) else {}
+        trades = _safe_int(summary.get("trades"), default=0)
+        block_hours = _normalize_hours(hints.get("block_jst_hours"))
+        stuck_ratio = _safe_float(summary.get("stuck_trade_ratio"), default=0.0)
+
+        row["trades"] = trades
+        row["stuck_trade_ratio"] = stuck_ratio
+        row["block_jst_hours"] = block_hours
+
+        if trades < cfg.auto_improve_min_trades:
+            row["status"] = "skipped_min_trades"
+            row["min_trades"] = int(cfg.auto_improve_min_trades)
+            strategy_runs.append(row)
+            continue
+        if not block_hours:
+            row["status"] = "skipped_no_block_hours"
+            strategy_runs.append(row)
+            continue
+        if len(block_hours) > int(cfg.auto_improve_max_block_hours):
+            row["status"] = "skipped_too_many_block_hours"
+            row["max_block_hours"] = int(cfg.auto_improve_max_block_hours)
+            strategy_runs.append(row)
+            continue
+
+        accepted_updates[strategy] = block_hours
+        row["status"] = "accepted"
+        strategy_runs.append(row)
+
+    result["strategy_runs"] = strategy_runs
+    result["accepted_updates"] = accepted_updates
+
+    if not accepted_updates:
+        result["status"] = "analyzed"
+        result["reason"] = "no_accepted_updates"
+        return result
+
+    if not cfg.auto_improve_apply_reentry:
+        result["status"] = "analyzed"
+        result["reason"] = "reentry_apply_disabled"
+        return result
+
+    if int(cfg.auto_improve_min_apply_interval_sec) > 0:
+        now_utc = datetime.now(timezone.utc)
+        apply_state = _read_apply_state(cfg.auto_improve_apply_state_path)
+        last_applied_at = _parse_iso8601(apply_state.get("applied_at"))
+        if last_applied_at is not None:
+            elapsed_sec = max(0, int((now_utc - last_applied_at).total_seconds()))
+            if elapsed_sec < int(cfg.auto_improve_min_apply_interval_sec):
+                result["status"] = "analyzed"
+                result["reason"] = "reentry_apply_cooldown"
+                result["reentry_apply"] = {
+                    "applied": False,
+                    "path": str(cfg.auto_improve_reentry_config_path),
+                    "state_path": str(cfg.auto_improve_apply_state_path),
+                    "last_applied_at": last_applied_at.isoformat(),
+                    "elapsed_sec": elapsed_sec,
+                    "min_apply_interval_sec": int(cfg.auto_improve_min_apply_interval_sec),
+                    "remaining_sec": int(cfg.auto_improve_min_apply_interval_sec) - elapsed_sec,
+                }
+                return result
+
+    apply_result = _apply_reentry_updates(
+        reentry_path=cfg.auto_improve_reentry_config_path,
+        strategy_hours=accepted_updates,
+    )
+    result["reentry_apply"] = apply_result
+    if bool(apply_result.get("applied")):
+        _write_apply_state(
+            path=cfg.auto_improve_apply_state_path,
+            applied_at=datetime.now(timezone.utc),
+            updates=accepted_updates,
+        )
+        result["status"] = "applied"
+        result["reason"] = "reentry_updated"
+    else:
+        result["status"] = "analyzed"
+        result["reason"] = str(apply_result.get("reason") or "reentry_not_updated")
+    return result
 
 
 def run_once(
     cfg: WorkerConfig,
     *,
     runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    counterfactual_runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
 ) -> int:
     started = datetime.now(timezone.utc)
     cmd = _build_command(cfg)
@@ -278,6 +823,13 @@ def run_once(
     report_payload = _read_json(report_path) if report_path is not None else None
     gate_status, failing_workers, fold_count = _summarize_report(report_payload)
     md_path = report_path.with_name("quality_gate_report.md") if report_path else None
+    auto_improve = _run_auto_improve(
+        cfg,
+        replay_returncode=int(proc.returncode),
+        report_payload=report_payload,
+        report_path=report_path,
+        counterfactual_runner=counterfactual_runner,
+    )
     removed_dirs = _cleanup_old_runs(cfg.out_dir, keep_runs=cfg.keep_runs, protected=report_path)
 
     payload = {
@@ -299,13 +851,14 @@ def run_once(
         "command": cmd,
         "stdout_tail": _tail(proc.stdout),
         "stderr_tail": _tail(proc.stderr),
+        "auto_improve": auto_improve,
     }
     _write_json_atomic(cfg.state_path, payload)
     _append_jsonl(cfg.history_path, payload)
 
     print(
         f"[replay-quality-gate-worker] rc={proc.returncode} gate_status={gate_status} "
-        f"report={payload['report_json_path'] or '-'}"
+        f"report={payload['report_json_path'] or '-'} auto_improve={auto_improve.get('status', 'disabled')}"
     )
     return int(proc.returncode)
 

@@ -27,6 +27,11 @@
 ## 3. ライフサイクル
 - Startup: `env.toml` 読込 → Secrets 確認 → 各サービス起動。
 - 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+- `quant-scalp-extrema-reversal` は `workers/scalp_extrema_reversal/worker.py` で
+  高値/安値の極値帯（M1レンジ上端/下端）+ tick 反転を同時に満たしたときのみ
+  両方向（short/long）を出す専用ワーカーとして運用する。
+  `entry_thesis` には `entry_probability_raw` と `extrema` 文脈を記録し、
+  最終許可/縮小/拒否は `quant-order-manager` 側 preflight に委譲する。
 - `scalp_ping_5s_{b,c,d}` は strategy local env（`ops/env/scalp_ping_5s_*.env`）で
   `MIN_TICK_RATE` / `LOOKAHEAD_GATE_ENABLED` / `REVERT_MIN_TICK_RATE` を管理し、
   `SIDE_FILTER` / spread stale guard（`spread_guard_stale_*`）を含めて
@@ -63,6 +68,9 @@
 - Background: `quant-forecast-watchdog.timer` は `quant-forecast.service` の
   `/health` を監視し、連続失敗時に forecast を再起動する。復旧不能時は
   `quant-bq-sync.service` を停止して予測APIの可用性を優先する。
+- Background: `quant-forecast-improvement-audit.timer` は `vm_forecast_snapshot.py` と
+  `eval_forecast_before_after.py` を定期実行し、`logs/reports/forecast_improvement/latest.md`
+  と `logs/forecast_improvement_latest.json` へ before/after 判定を保存する。
 
 ## 4. データスキーマと単位
 
@@ -184,8 +192,16 @@ class OrderIntent(BaseModel):
   - `commands.json`（再現用コマンドログ）
 - 定期ワーカー:
   - `quant-replay-quality-gate.service`（oneshot）+
-    `quant-replay-quality-gate.timer`（1h 周期）
+    `quant-replay-quality-gate.timer`（3h 周期）
   - 実装: `analysis/replay_quality_gate_worker.py`
+  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
+    replay 直後に `analysis.trade_counterfactual_worker` を戦略単位で実行し、
+    `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映する。
+    過剰ブロック防止として `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS`
+    を超える候補は自動反映しない。
+    `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` を使い、
+    反映間隔をレート制限する（間隔内は解析のみ）。
+    反映の成否・理由は `replay_quality_gate_latest.json.auto_improve` に格納する。
   - 監査出力:
     - `logs/replay_quality_gate_latest.json`
     - `logs/replay_quality_gate_history.jsonl`
@@ -208,7 +224,9 @@ class OrderIntent(BaseModel):
   - 出力: `logs/trade_counterfactual_latest.json` / `logs/trade_counterfactual_history.jsonl`
 - 定期ワーカー:
   - `quant-trade-counterfactual.service`（oneshot）+
-    `quant-trade-counterfactual.timer`（30min 周期）
+    `quant-trade-counterfactual.timer`（20min 周期）
+  - replay quality gate 側の auto-improve でも同 worker を再利用し、
+    replay run 固有 JSON (`runs/*/replay_exit_workers.json` 等) を入力に実行できる。
 
 ## 7. 2026-02-24 運用補足（ENTRY 詰まり解除）
 
@@ -245,3 +263,9 @@ class OrderIntent(BaseModel):
 - `MicroPullbackEMA` は `ops/env/quant-micro-pullbackema.env` で
   `MICRO_MULTI_BASE_UNITS` と `MICRO_MULTI_MAX_MARGIN_USAGE` を下げ、
   margin closeout 尾部を抑制する。
+- `scalp_ping_5s_b` は `ops/env/scalp_ping_5s_b.env` で
+  `FORCE_EXIT_RECOVERY_WINDOW_SEC` / `FORCE_EXIT_RECOVERABLE_LOSS_PIPS` /
+  `FORCE_EXIT_GIVEBACK_*` を使った
+  「DD後リカバリー待ち -> 戻らなければカット」運用を許可する。
+  broker SL は `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE`
+  で上限管理し、hard-stop を無効化せずに戻り余地のみを拡張する。

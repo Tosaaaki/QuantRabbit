@@ -1,9 +1,9 @@
 [Unit]
-Description=Run quant-trade-counterfactual.service every 30 minutes
+Description=Run quant-trade-counterfactual.service every 20 minutes
 
 [Timer]
 OnBootSec=15min
-OnUnitActiveSec=30min
+OnUnitActiveSec=20min
 AccuracySec=2min
 RandomizedDelaySec=2min
 Unit=quant-trade-counterfactual.service
