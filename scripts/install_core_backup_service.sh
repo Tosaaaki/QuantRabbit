@@ -45,7 +45,11 @@ done
 install -m 0755 "$SCRIPT_SRC" /usr/local/bin/qr-gcs-backup-core
 install -m 0644 "$SERVICE_SRC" /etc/systemd/system/quant-core-backup.service
 install -m 0644 "$TIMER_SRC" /etc/systemd/system/quant-core-backup.timer
-install -m 0644 "$ENV_SRC" /home/tossaki/QuantRabbit/ops/env/quant-core-backup.env
+
+ENV_DEST="/home/tossaki/QuantRabbit/ops/env/quant-core-backup.env"
+if [[ "$(realpath "$ENV_SRC")" != "$(realpath "$ENV_DEST" 2>/dev/null || echo "$ENV_DEST")" ]]; then
+  install -m 0644 "$ENV_SRC" "$ENV_DEST"
+fi
 
 if [[ -f /etc/cron.hourly/qr-gcs-backup-core ]]; then
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
