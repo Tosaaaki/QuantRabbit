@@ -84,6 +84,48 @@ def test_apply_alt_env_b_keeps_valid_explicit_side_filter(monkeypatch) -> None:
     assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "buy"
 
 
+def test_apply_alt_env_c_forces_side_filter_sell_when_missing(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")
+    monkeypatch.delenv("SCALP_PING_5S_C_SIDE_FILTER", raising=False)
+
+    c_worker._apply_alt_env(
+        "SCALP_PING_5S_C",
+        fallback_tag="scalp_ping_5s_c_live",
+        fallback_log_prefix="[SCALP_PING_5S_C]",
+    )
+
+    assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "sell"
+
+
+def test_apply_alt_env_c_forces_side_filter_sell_when_invalid(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_C_SIDE_FILTER", "invalid")
+
+    c_worker._apply_alt_env(
+        "SCALP_PING_5S_C",
+        fallback_tag="scalp_ping_5s_c_live",
+        fallback_log_prefix="[SCALP_PING_5S_C]",
+    )
+
+    assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "sell"
+
+
+def test_apply_alt_env_c_keeps_valid_explicit_side_filter(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_C_SIDE_FILTER", "buy")
+
+    c_worker._apply_alt_env(
+        "SCALP_PING_5S_C",
+        fallback_tag="scalp_ping_5s_c_live",
+        fallback_log_prefix="[SCALP_PING_5S_C]",
+    )
+
+    assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "buy"
+
+
 def test_apply_alt_env_keeps_unprotected_when_explicitly_enabled(monkeypatch) -> None:
     _clear_scalp_ping_env(monkeypatch)
     monkeypatch.setenv("SCALP_PING_5S_B_ENABLED", "1")

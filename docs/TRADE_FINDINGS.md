@@ -42,7 +42,6 @@ Status:
 - open | in_progress | done
 ```
 
-## 2026-02-26 12:09 UTC / 2026-02-26 21:09 JST - B側の `units_below_min` 残りを削るため最小ロット閾値を再調整
 ## 2026-02-26 12:19 UTC / 2026-02-26 21:19 JST - PDCA深掘り（`perf_block` 固定化 + `orders.db` ロック + SLO劣化の重畳）
 Period:
 - 監査期間: 直近24h（`2026-02-25 12:11` ～ `2026-02-26 12:19` UTC）
@@ -53,13 +52,16 @@ Fact:
 - `orders.db` 24h集計（`rows=44862`）:
   - `preflight_start=17121`, `perf_block=16389`, `probability_scaled=7348`, `entry_probability_reject=594`
   - `submit_attempt=545`, `filled=541`（filled/submit `=99.3%`）
+  - 戦略別 `perf_block`: `scalp_ping_5s_c_live=7032`, `scalp_ping_5s_b_live=4577`, `scalp_ping_5s_flow_live=3577`, `M1Scalper-M1=577`
 - `perf_block` の実ログ内訳（`[ORDER][OPEN_REJECT]` 行）:
   - 合計 `191`
   - `scalp_ping_5s_b_live=157`, `M1Scalper-M1=34`
   - 主因ノート: `perf_block:hard:hour9:failfast:pf=0.56`（88件）, `hour11:failfast:pf=0.15`（36件）, `failfast:pf=0.38`（34件）
 - `entry_probability` skip は `RangeFader` 系中心（sell/buy/neutral 合計74件）、`scalp_ping_5s_c_live=5`, `scalp_ping_5s_b_live=2`。
 - `database is locked` は 24hで `83` 件。発生分は `35` 分に集中し、最多は `11:31/11:34`（各5件）。
+- lock集中分（例 `11:26-11:42`）は `submit_attempt/filled=0` かつ `manual_margin_pressure` 併発分が多く、発注可否判定の再試行だけが増える形になっていた。
 - 同時点で `lsof /home/tossaki/QuantRabbit/logs/orders.db` は PID `3400`（`run_sync_pipeline.py --interval 60 --bq-interval 300 --limit 1200`）が `40+` FD を保持。加えて戦略ワーカー PID `682/706` が保持。
+- `orders.db` 自体は `6.7G` / `921,528 rows`（`2025-12-29` ～ `2026-02-26`）まで増大。
 - `quant-bq-sync.service` は 60秒周期で常時 `sync_trades start`。env は `POSITION_MANAGER_SERVICE_ENABLED=1`, `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1`, `PIPELINE_DB_READ_TIMEOUT_SEC=2.0`。
 - `quant-position-manager.service` は 24hで timeout/busy 警告が複数（`fetch_recent_trades timeout`, `sync_trades timeout`, `position manager busy`）。
 - `metrics.db` 24h:
@@ -93,7 +95,7 @@ Verification:
 Status:
 - in_progress
 
-## 2026-02-26 12:20 UTC / 2026-02-26 21:20 JST - `scalp_ping_5s_b_live` 方向劣化の再発防止（side filter fail-closed）
+## 2026-02-26 12:20 UTC / 2026-02-26 21:20 JST - `scalp_ping_5s_b_live/c_live` 方向劣化の再発防止（side filter fail-closed）
 Period:
 - Direction audit window: `datetime(close_time) >= now - 24 hours`
 - Runtime env check: `quant-scalp-ping-5s-b.service` MainPID/child PID
@@ -109,18 +111,18 @@ Fact:
 - ただし過去履歴には buy 発注が残るため、env 欠落/不正時に再発しうる。
 
 Failure Cause:
-1. B variant の方向制御が env 設定依存で、設定欠落時に fail-open になり得る。
+1. B/C variant の方向制御が env 設定依存で、設定欠落時に fail-open になり得る。
 2. 高確率帯 buy の実績悪化と整合しない方向シグナルが通過した履歴が存在する。
 
 Improvement:
-1. `workers/scalp_ping_5s_b/worker.py` で side filter を fail-closed 化。
+1. `workers/scalp_ping_5s_b/worker.py` と `workers/scalp_ping_5s_c/worker.py` で side filter を fail-closed 化。
 2. `SCALP_PING_5S_SIDE_FILTER` が未設定/不正値なら `sell` を強制。
 3. 起動ログへ `side_filter` を明示出力し、監査を容易化。
 4. `tests/workers/test_scalp_ping_5s_b_worker_env.py` に
-   `missing/invalid/valid` ケースを追加。
+   B/C それぞれの `missing/invalid/valid` ケースを追加。
 
 Verification:
-1. `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py` が全緑（11 passed）。
+1. `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py` が全緑（14 passed）。
 2. VMで `quant-scalp-ping-5s-b` の子プロセス環境に
    `SCALP_PING_5S_SIDE_FILTER=sell` が存在することを確認。
 
