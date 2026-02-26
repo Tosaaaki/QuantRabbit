@@ -343,6 +343,57 @@ def test_perf_guard_margin_closeout_soft_in_reduce_mode(monkeypatch, tmp_path: P
     assert "margin_closeout_soft_n=" in dec.reason
 
 
+def test_perf_guard_margin_closeout_warmup_soft_in_reduce_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(4):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="SoftCloseoutWarmup",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=0.8,
+            close_time=now,
+        )
+    for _ in range(2):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="SoftCloseoutWarmup",
+            close_reason="MARKET_ORDER_MARGIN_CLOSEOUT",
+            pl_pips=-4.0,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "reduce",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "10",
+            "PERF_GUARD_PF_MIN": "0.5",
+            "PERF_GUARD_WIN_MIN": "0.10",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+            "PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES": "24",
+            "PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE": "0.03",
+            "PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT": "1",
+        },
+    )
+
+    dec = perf_guard.is_allowed("SoftCloseoutWarmup", "scalp")
+    assert dec.allowed is True
+    assert "margin_closeout_soft_warmup_n=" in dec.reason
+
+
 def test_perf_guard_regime_slice_cannot_bypass_global_hard_block(
     monkeypatch, tmp_path: Path
 ) -> None:

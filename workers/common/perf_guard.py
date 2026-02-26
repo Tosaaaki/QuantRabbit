@@ -861,10 +861,18 @@ def _query_perf(
     # Emergency block: broker forced liquidation observed in this window.
     if margin_closeout_n > 0:
         closeout_rate = (float(margin_closeout_n) / float(hard_n)) if hard_n > 0 else 1.0
-        hard_closeout = hard_n < cfg.margin_closeout_hard_min_trades or (
+        warmup_closeout = hard_n < cfg.margin_closeout_hard_min_trades
+        if warmup_closeout and cfg.mode != "block":
+            return (
+                False,
+                f"margin_closeout_soft_warmup_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}",
+                hard_n,
+            )
+        threshold_closeout = (
             margin_closeout_n >= cfg.margin_closeout_hard_min_count
             and closeout_rate >= cfg.margin_closeout_hard_rate
         )
+        hard_closeout = warmup_closeout or threshold_closeout
         if hard_closeout:
             return False, f"margin_closeout_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}", hard_n
         return False, f"margin_closeout_soft_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}", hard_n

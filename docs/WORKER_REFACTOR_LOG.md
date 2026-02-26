@@ -6536,6 +6536,32 @@
   - 「止まる」原因を hard 時間帯ゲートから切り離し、
     取引継続性を維持しながら品質（確率・信頼度・ロット）で制御する。
 
+### 2026-02-26（追記）`perf_guard` の margin closeout hard-block を reduce mode で恒久緩和
+
+- 背景（VM実測）:
+  - `quant-order-manager` で `scalp_ping_5s_c_live` が
+    `perf_block:hard:hour4:margin_closeout_n=2 rate=0.333 n=6` により
+    新規拒否を連発し、戦略が実質停止した。
+  - C worker 側は `PERF_GUARD_MODE=reduce` だが、margin closeout 判定は
+    warmup（小標本）でも hard 扱いになり、reduce の意図が効いていなかった。
+- 変更:
+  - `workers/common/perf_guard.py`
+    - margin closeout 判定を改修し、`mode=reduce/warn` では
+      warmup由来の closeout を `margin_closeout_soft_warmup_*` として扱う。
+    - block mode かつ hard閾値超過時のみ `margin_closeout_n=*` の hard block を維持。
+  - `tests/test_perf_guard_failfast.py`
+    - `test_perf_guard_margin_closeout_warmup_soft_in_reduce_mode` を追加し、
+      小標本 closeout が reduce mode で hard block にならないことを回帰固定。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.60`
+      （C の低確率エントリーを抑制）
+    - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT=3`
+    - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE=0.50`
+    - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES=1`
+- 意図:
+  - 「軽微な closeout で長時間停止する」問題を解消しつつ、
+    低確率エントリーを削って C 戦略の実行品質を上げる。
+
 ### 2026-02-26（追記）時間帯依存を廃止し、常時運転へ固定（`+2000円/h` 方針）
 
 - 背景（VM実測, UTC 2026-02-26）:

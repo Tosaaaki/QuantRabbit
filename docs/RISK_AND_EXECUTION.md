@@ -567,7 +567,7 @@
     - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=3000`
     - `SCALP_PING_5S_C_MAX_UNITS=7500`
     - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
-    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.35`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.60`
     - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=1.00`
     - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=1.20`
 - 監査:
@@ -622,6 +622,7 @@
 - 目的:
   - `mode=reduce` 戦略で軽微な closeout 履歴を soft 扱いにし、
     `perf_block:hard:margin_closeout_n=*` の過剰発生を防ぐ。
+  - `margin_closeout_soft_warmup_n=*` を運用監査し、停止ではなく縮小継続へ遷移させる。
 
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
