@@ -6790,6 +6790,9 @@
     - `market_order` 送信直前に最終セーフティクランプを追加し、送信ユニットの上振れを防止。
   - `execution/strategy_entry.py`
     - `_coordinate_entry_units()` で `final_units` を strategy 要求量（`abs(units)`）以下に制限。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=long` を解除し、方向は
+      forecast/horizon を含む strategy ローカル判定へ委譲。
 - 意図:
   - 戦略ローカルで設計したユニット意図を上限として厳守し、
     予期しない上振れロットによる tail-loss を再発させない。
