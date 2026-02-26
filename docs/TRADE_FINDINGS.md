@@ -175,6 +175,10 @@ Improvement:
    - `SCALP_PING_5S_C_PERF_GUARD_ENABLED=0`
    - `SCALP_PING_5S_PERF_GUARD_ENABLED=0`
    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.46`（from `0.52`）
+   - `ops/env/quant-order-manager.env` の C上書き値を同値同期
+     - `REJECT_UNDER=0.46`, `MIN/MAX_SCALE=0.40/0.85`, `BOOST_PROBABILITY=0.85`
+     - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=1`
+     - `SCALP_PING_5S(_C)_PERF_GUARD_MODE=off`, `SCALP_PING_5S(_C)_PERF_GUARD_ENABLED=0`
 
 Verification:
 1. 反映後 30分で `orders.db` の `preflight_start` と `filled` が再出現すること。
