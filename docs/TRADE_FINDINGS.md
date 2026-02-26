@@ -95,6 +95,38 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 13:05 UTC / 2026-02-26 22:05 JST - 方向精度再崩れの根本対策（C no-side-filter封鎖 + side-filter復元）
+Period:
+- Analysis/patch window: `2026-02-26 12:40` ～ `13:05` UTC
+- Source: repository `workers/scalp_ping_5s*`, `ops/env/scalp_ping_5s_c.env`, unit tests
+
+Fact:
+- `workers/scalp_ping_5s_c/worker.py` には `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1` かつ `SIDE_FILTER=none` で
+  side filter を未設定扱いにできる分岐が存在した。
+- `ops/env/scalp_ping_5s_c.env` は実際に `SCALP_PING_5S_C_SIDE_FILTER=none`,
+  `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1` だった。
+- `workers/scalp_ping_5s/worker.py` は初段で side_filter を通した後に
+  ルーティングで side が反転した場合、最終 `side_filter_final_block` で no-entry になる設計だった。
+
+Failure Cause:
+1. C に no-side-filter 例外があり、方向固定の前提が運用設定で破れる。
+2. side_filter を通過したシグナルでも、後段flipで反転すると発注前に消失し、エントリー密度が不安定化する。
+
+Improvement:
+1. C ラッパーで no-side-filter 例外を廃止し、invalid/missing を常に `sell` へ fail-closed。
+2. 本体ワーカーへ `_resolve_final_signal_for_side_filter()` を追加し、
+   後段反転時は初段の side-filter 適合シグナルへ復元して発注経路を維持。
+3. 運用envを `SCALP_PING_5S_C_SIDE_FILTER=sell`, `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=0` に固定。
+
+Verification:
+1. 対象テスト（10件）:
+   - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+   - `tests/workers/test_scalp_ping_5s_worker.py -k resolve_final_signal_for_side_filter`
+2. 結果: `10 passed`
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:35 UTC / 2026-02-26 21:35 JST - quote 問題の実測再監査と執行層ハードニング
 Period:
 - 直近24h / 7d（VM実DB）

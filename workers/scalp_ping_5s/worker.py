@@ -2725,6 +2725,26 @@ def _retarget_signal(signal: TickSignal, *, side: str, mode: Optional[str] = Non
         )
 
 
+def _resolve_final_signal_for_side_filter(
+    *,
+    routed_signal: TickSignal,
+    anchor_signal: Optional[TickSignal],
+) -> tuple[Optional[TickSignal], str]:
+    side_filter = str(getattr(config, "SIDE_FILTER", "") or "").strip().lower()
+    if side_filter not in {"long", "short"}:
+        return routed_signal, "side_filter_inactive"
+    if routed_signal.side == side_filter:
+        return routed_signal, "side_filter_aligned"
+    if anchor_signal is not None and anchor_signal.side == side_filter:
+        restored = _retarget_signal(
+            anchor_signal,
+            side=anchor_signal.side,
+            mode=f"{anchor_signal.mode}_sidefilter",
+        )
+        return restored, f"side_filter_fallback:{routed_signal.side}->{restored.side}"
+    return None, f"side_filter_final_block:{routed_signal.side}"
+
+
 def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[Optional[TickSignal], float, str]:
     if regime is None:
         return signal, 1.0, "regime_unavailable"
@@ -6128,6 +6148,11 @@ async def scalp_ping_5s_worker() -> None:
                 spread_pips=signal.spread_pips,
                 base_signal=signal,
             )
+            side_filter_anchor_signal = (
+                signal
+                if config.SIDE_FILTER and signal.side == config.SIDE_FILTER
+                else None
+            )
 
             now_mono = time.monotonic()
             try:
@@ -6670,13 +6695,25 @@ async def scalp_ping_5s_worker() -> None:
             # Enforce side filter on the final routed signal as well.
             # _build_tick_signal applies side filtering early, but later routing
             # stages (MTF/flip handlers) can retarget side.
-            if config.SIDE_FILTER and signal.side != config.SIDE_FILTER:
+            signal, side_filter_routing = _resolve_final_signal_for_side_filter(
+                routed_signal=signal,
+                anchor_signal=side_filter_anchor_signal,
+            )
+            if signal is None:
                 _note_entry_skip(
                     "side_filter_final_block",
-                    f"final={signal.side} filter={config.SIDE_FILTER}",
-                    side=signal.side,
+                    f"{side_filter_routing} filter={config.SIDE_FILTER}",
                 )
                 continue
+            if side_filter_routing.startswith("side_filter_fallback:"):
+                tech_route_reasons.append("side_filter_fallback")
+                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                    LOG.info(
+                        "%s %s",
+                        config.LOG_PREFIX,
+                        side_filter_routing,
+                    )
+                    last_bias_log_mono = now_mono
             if (
                 allow_hour_policy.soft_mode
                 and signal.confidence < allow_hour_policy.min_confidence

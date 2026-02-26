@@ -8090,3 +8090,32 @@
 - 意図:
   - メイン判定ロジックは変えず、瞬間的な quote 揺れを `order_manager` の pre-submit 層で吸収する。
   - `ORDER_SUBMIT_MAX_ATTEMPTS=1` を維持しつつ、quote 専用リトライだけ厚くして取り逃しを抑える。
+
+### 2026-02-26（追記）方向精度の再崩れ対策（C no-side-filter封鎖 + side_filterフォールバック）
+
+- 背景:
+  - `scalp_ping_5s_c` で `SCALP_PING_5S_C_SIDE_FILTER=none` と
+    `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1` の組み合わせが許可される経路が残り、
+    C が再び両方向エントリーに戻る再発点があった。
+  - `workers/scalp_ping_5s` 本体では、初段で side_filter を通過しても、
+    後段ルーティング（fast/sl/metrics flip 等）で side が反転すると
+    `side_filter_final_block` で最終的に no-entry になるケースが発生しうる。
+- 変更:
+  - `workers/scalp_ping_5s_c/worker.py`
+    - `ALLOW_NO_SIDE_FILTER` の no-filter 例外を廃止。
+    - `SIDE_FILTER` が未設定/不正値のときは常に `sell` へ fail-closed。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_resolve_final_signal_for_side_filter()` を追加。
+    - 後段ルーティングで side が filter と不一致になった場合、
+      初段の side-filter 適合シグナル（anchor）へ復元して発注経路を維持。
+    - anchor が無い場合のみ `side_filter_final_block` で拒否。
+  - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+    - C の no-side-filter override を許容しない期待値へ更新。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    - side_filter 最終解決の `aligned/fallback/block` を追加検証。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=sell`
+    - `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=0`
+- 意図:
+  - 方向精度の再崩れ要因をコード・envの両面で閉じる。
+  - side_filter を厳格維持しつつ、後段反転でのシグナル消失を減らして約定導線を維持する。

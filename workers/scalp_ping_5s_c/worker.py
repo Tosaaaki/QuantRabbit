@@ -75,28 +75,18 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         "long",
         "open_long",
     }
-    allow_no_side_filter = _env_truthy(f"{prefix}_ALLOW_NO_SIDE_FILTER", False)
-    no_filter_tokens = {"", "none", "off", "disable", "disabled", "any", "both", "all"}
     mapped_side_filter = str(os.getenv(mapped_side_filter_key, "")).strip().lower()
     if mapped_side_filter not in allowed_side_filters:
         source_side_filter = str(os.getenv(f"{prefix}_SIDE_FILTER", "")).strip().lower()
-        if allow_no_side_filter and source_side_filter in no_filter_tokens:
-            os.environ.pop(mapped_side_filter_key, None)
-            logger.warning(
-                "[SCALP5S_C] allowing %s unset (explicit no-side-filter override)",
-                mapped_side_filter_key,
-            )
-            mapped_side_filter = ""
-        else:
-            if source_side_filter not in allowed_side_filters:
-                source_side_filter = "sell"
-            os.environ[mapped_side_filter_key] = source_side_filter
-            logger.warning(
-                "[SCALP5S_C] forcing %s=%s (fail-closed direction guard)",
-                mapped_side_filter_key,
-                source_side_filter,
-            )
-            mapped_side_filter = source_side_filter
+        if source_side_filter not in allowed_side_filters:
+            source_side_filter = "sell"
+        os.environ[mapped_side_filter_key] = source_side_filter
+        logger.warning(
+            "[SCALP5S_C] forcing %s=%s (fail-closed direction guard)",
+            mapped_side_filter_key,
+            source_side_filter,
+        )
+        mapped_side_filter = source_side_filter
 
     # Safety baseline for C variant: keep entry protection on by default.
     # Explicitly opt out only for temporary experiments.

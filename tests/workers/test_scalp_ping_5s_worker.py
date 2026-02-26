@@ -14,6 +14,32 @@ def _tick(epoch: float, bid: float, ask: float, mid: float) -> dict[str, float]:
     return {"epoch": epoch, "bid": bid, "ask": ask, "mid": mid}
 
 
+def _sample_signal(side: str, *, mode: str = "momentum"):
+    from workers.scalp_ping_5s import worker
+
+    return worker.TickSignal(
+        side=side,
+        mode=mode,
+        mode_score=1.0,
+        momentum_score=1.0,
+        revert_score=0.0,
+        confidence=80,
+        momentum_pips=0.4,
+        trigger_pips=0.2,
+        imbalance=0.7,
+        tick_rate=8.0,
+        span_sec=1.2,
+        tick_age_ms=10.0,
+        spread_pips=0.2,
+        bid=150.0,
+        ask=150.02,
+        mid=150.01,
+        range_pips=0.6,
+        instant_range_pips=0.5,
+        signal_window_sec=1.2,
+    )
+
+
 def test_build_tick_signal_detects_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
@@ -123,6 +149,55 @@ def test_resolve_allow_hour_entry_policy_soft_mode_outside(monkeypatch) -> None:
     assert policy.units_mult == pytest.approx(0.58, abs=1e-9)
     assert policy.min_confidence == 74
     assert policy.min_entry_probability == pytest.approx(0.67, abs=1e-9)
+
+
+def test_resolve_final_signal_for_side_filter_keeps_aligned_signal(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIDE_FILTER", "short")
+    routed = _sample_signal("short", mode="revert")
+    anchor = _sample_signal("short", mode="momentum")
+
+    final_signal, reason = worker._resolve_final_signal_for_side_filter(
+        routed_signal=routed,
+        anchor_signal=anchor,
+    )
+
+    assert final_signal is routed
+    assert reason == "side_filter_aligned"
+
+
+def test_resolve_final_signal_for_side_filter_restores_anchor_after_flip(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIDE_FILTER", "short")
+    routed = _sample_signal("long", mode="momentum_fflip")
+    anchor = _sample_signal("short", mode="momentum")
+
+    final_signal, reason = worker._resolve_final_signal_for_side_filter(
+        routed_signal=routed,
+        anchor_signal=anchor,
+    )
+
+    assert final_signal is not None
+    assert final_signal.side == "short"
+    assert final_signal.mode == "momentum_sidefilter"
+    assert reason == "side_filter_fallback:long->short"
+
+
+def test_resolve_final_signal_for_side_filter_blocks_without_anchor(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIDE_FILTER", "short")
+    routed = _sample_signal("long", mode="momentum_fflip")
+
+    final_signal, reason = worker._resolve_final_signal_for_side_filter(
+        routed_signal=routed,
+        anchor_signal=None,
+    )
+
+    assert final_signal is None
+    assert reason == "side_filter_final_block:long"
 
 
 def test_build_tick_signal_rejects_chasing_long(monkeypatch) -> None:
