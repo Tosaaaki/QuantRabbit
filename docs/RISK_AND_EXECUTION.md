@@ -809,6 +809,53 @@
   - C の悪化帯では「件数×ロット」を同時に落として尾損失を抑制する。
   - B は再悪化防止を優先し、実効ロット上限を unit override 側でも固定する。
 
+### C/B setup-perf gate 強化（2026-02-26 追加）
+- 背景（VM実測, UTC 2026-02-26 08:47 集計）:
+  - 直近1h（時刻正規化後）:
+    - `scalp_ping_5s_c_live`: `28 trades / -143.4 JPY / -19.4 pips`
+  - 同時間帯の `orders.db` で `perf_block` と `filled` が併存し、
+    failfast 単体では劣化クラスター停止が遅れる局面が残存。
+- 変更値（`ops/env/scalp_ping_5s_c.env`）:
+  - 取引密度/サイズ:
+    - `MAX_ORDERS_PER_MINUTE=1`
+    - `BASE_ENTRY_UNITS=320`
+    - `MAX_UNITS=520`
+  - `PERF_GUARD` の短期反応化:
+    - `LOOKBACK_DAYS=1`
+    - `MIN_TRADES=16`
+    - `PF_MIN=0.90`
+    - `WIN_MIN=0.47`
+    - `HOURLY_MIN_TRADES=6`
+    - `REGIME_FILTER=1`
+    - `REGIME_MIN_TRADES=10`
+  - setup 判定（hour×side×regime）:
+    - `SETUP_ENABLED=1`
+    - `SETUP_USE_HOUR=1`
+    - `SETUP_USE_DIRECTION=1`
+    - `SETUP_USE_REGIME=1`
+    - `SETUP_MIN_TRADES=6`
+    - `SETUP_PF_MIN=0.95`
+    - `SETUP_WIN_MIN=0.50`
+    - `SETUP_AVG_PIPS_MIN=0.00`
+  - fallback prefix `SCALP_PING_5S_*` へ同値を併記。
+- 変更値（`ops/env/scalp_ping_5s_b.env`）:
+  - `LOOKBACK_DAYS=1`
+  - `MIN_TRADES=20`
+  - `PF_MIN=0.88`
+  - `WIN_MIN=0.46`
+  - `HOURLY_MIN_TRADES=6`
+  - setup 判定:
+    - `SETUP_MIN_TRADES=6`
+    - `SETUP_PF_MIN=0.92`
+    - `SETUP_WIN_MIN=0.48`
+    - `SETUP_AVG_PIPS_MIN=0.00`
+- 変更値（`ops/env/quant-order-manager.env`）:
+  - `SCALP_PING_5S_B_*` / `SCALP_PING_5S_C_*` / `SCALP_PING_5S_*`
+    の `PERF_GUARD` と setup しきい値を上記へ同値化。
+- 意図:
+  - 静的時間帯ブロックに頼らず、`hour×side×regime` の直近実績で
+    preflight を動的に選別する。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

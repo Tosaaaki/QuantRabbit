@@ -7155,3 +7155,52 @@
 - 意図:
   - `C` の直近悪化帯で「通過率とロット上限」を同時に落として下方分散を先に止める。
   - `B` はすでに取引量が落ちているため、再悪化しないよう上限をさらに抑える。
+
+### 2026-02-26（追記）`scalp_ping_5s_b/c` setup-perf gate を有効化（hour×side×regime）
+
+- 背景（VM実測, UTC 2026-02-26 08:47 集計）:
+  - 直近1h（時刻正規化後）:
+    - `scalp_ping_5s_c_live`: `28 trades / -143.4 JPY / -19.4 pips`
+  - `orders.db` では同期間に `perf_block` と `filled` が併存し、
+    failfast だけでは劣化クラスター停止が遅延。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - 取引密度/サイズを追加圧縮:
+      - `MAX_ORDERS_PER_MINUTE=1`
+      - `BASE_ENTRY_UNITS=320`
+      - `MAX_UNITS=520`
+    - `PERF_GUARD` を短期反応へ:
+      - `LOOKBACK_DAYS=1`
+      - `MIN_TRADES=16`
+      - `PF_MIN=0.90`
+      - `WIN_MIN=0.47`
+      - `HOURLY_MIN_TRADES=6`
+    - `REGIME_FILTER=1` / `REGIME_MIN_TRADES=10` を明示。
+    - setup 判定を有効化:
+      - `SETUP_ENABLED=1`
+      - `SETUP_USE_HOUR=1`
+      - `SETUP_USE_DIRECTION=1`
+      - `SETUP_USE_REGIME=1`
+      - `SETUP_MIN_TRADES=6`
+      - `SETUP_PF_MIN=0.95`
+      - `SETUP_WIN_MIN=0.50`
+      - `SETUP_AVG_PIPS_MIN=0.00`
+    - fallback prefix (`SCALP_PING_5S_*`) にも同値を併記。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `PERF_GUARD` を短期反応へ:
+      - `LOOKBACK_DAYS=1`
+      - `MIN_TRADES=20`
+      - `PF_MIN=0.88`
+      - `WIN_MIN=0.46`
+      - `HOURLY_MIN_TRADES=6`
+    - setup 判定を有効化:
+      - `SETUP_MIN_TRADES=6`
+      - `SETUP_PF_MIN=0.92`
+      - `SETUP_WIN_MIN=0.48`
+      - `SETUP_AVG_PIPS_MIN=0.00`
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_B_*` / `SCALP_PING_5S_C_*` / `SCALP_PING_5S_*`
+      すべてに上記 `PERF_GUARD` と setup 判定のしきい値を同値反映。
+- 意図:
+  - 静的時間帯ブロックではなく、
+    直近実績の `hour×side×regime` 組み合わせで preflight を動的選別する。
