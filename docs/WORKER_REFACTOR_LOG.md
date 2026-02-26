@@ -8,6 +8,30 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）forecast_context 欠落対策: `edge_allow` を明示返却
+
+- 背景（VM実測）:
+  - `strategy_entry` の `entry_thesis.forecast.reason=not_applicable` が多発し、
+    `forecast_fusion` が `p_up` 欠損で早期 return するケースが継続していた。
+  - 原因は `workers/common/forecast_gate.py` で
+    `scale >= 0.999` の場合に `None` を返していたため、
+    「縮小不要だが予測は有効」な局面でも forecast 文脈が落ちていたこと。
+- 変更:
+  - `workers/common/forecast_gate.py`
+    - `scale >= 0.999` を no-op ではなく
+      `ForecastDecision(allowed=True, scale=1.0, reason="edge_allow")` で返すよう修正。
+    - `p_up` / `edge` / `expected_pips` / `target_reach_prob` などの監査メタを
+      常に `strategy_entry` へ伝播できるよう統一。
+  - テスト:
+    - `tests/workers/test_forecast_gate.py`
+      - `test_decide_returns_explicit_allow_when_scale_is_full` を追加。
+    - `tests/execution/test_strategy_entry_forecast_fusion.py`
+      - `test_inject_entry_forecast_context_keeps_allow_decision` を追加。
+- 意図:
+  - 予測が「ブロック/縮小しない局面」でも forecast を有効シグナルとして使い、
+    `forecast_fusion` の実適用率を引き上げる。
+
+
 ### 2026-02-26（追記）レンジ不全対策: forecast/perf の向きを「range復帰 + 低EV抑制」へ再配線
 
 - 背景（VM実測, 直近7日）:

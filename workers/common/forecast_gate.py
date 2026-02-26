@@ -3037,24 +3037,29 @@ def decide(
             pass
 
     scale = _scale_from_edge(edge)
+    reason = "edge_scale"
     if scale >= 0.999:
-        return None
-    log_metric(
-        "forecast_gate_scale",
-        1.0,
-        tags={
-            "pocket": pocket,
-            "strategy": str(strategy_tag or "unknown"),
-            "horizon": horizon,
-            "reason": "edge_scale",
-            "source": str(source or "unknown"),
-            "style": style or "n/a",
-        },
-    )
+        # Keep the forecast context (p_up/edge/expected_pips/etc.) even when no
+        # downscale is needed so strategy-side fusion can always consume it.
+        scale = 1.0
+        reason = "edge_allow"
+    else:
+        log_metric(
+            "forecast_gate_scale",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": str(strategy_tag or "unknown"),
+                "horizon": horizon,
+                "reason": "edge_scale",
+                "source": str(source or "unknown"),
+                "style": style or "n/a",
+            },
+        )
     return ForecastDecision(
         allowed=True,
         scale=scale,
-        reason="edge_scale",
+        reason=reason,
         horizon=horizon,
         edge=edge,
         p_up=p_up,

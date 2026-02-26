@@ -15,6 +15,9 @@
 - bundle がない場合: テクニカル指標ベースの deterministic 予測（M5/H1/D1）
 - `FORECAST_GATE_SOURCE=auto` の場合: bundle と technical をブレンド
 - 戦略スタイル（trend/range）と予測コンテキスト（trend_strength/range_pressure）が不一致ならブロック
+- `scale >= 0.999`（縮小不要）でも `decide()` は `edge_allow` を返し、
+  `strategy_entry` 側で `p_up/edge/expected_pips` を欠損させない
+  （`not_applicable` へのフォールバックを避ける）
 
 ## 予測特徴量（2026-02-17 更新）
 - 回帰系: `ret_pips_*`, `ma_gap_pips_10_20`, `close_ma*`, `atr_pips_14`, `vol_pips_20`, `rsi_14`

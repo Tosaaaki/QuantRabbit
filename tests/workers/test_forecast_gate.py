@@ -318,6 +318,44 @@ def test_decide_blocks_range_style_mismatch(monkeypatch) -> None:
     assert decision.style == "range"
 
 
+def test_decide_returns_explicit_allow_when_scale_is_full(monkeypatch) -> None:
+    monkeypatch.setattr(forecast_gate, "_ENABLED", True)
+    monkeypatch.setattr(forecast_gate, "_POCKET_ALLOWLIST", set())
+    monkeypatch.setattr(forecast_gate, "_STRATEGY_ALLOWLIST", set())
+    monkeypatch.setattr(forecast_gate, "_EDGE_BAD", 0.45)
+    monkeypatch.setattr(forecast_gate, "_EDGE_REF", 0.55)
+    monkeypatch.setattr(forecast_gate, "_SCALE_MIN", 0.5)
+    monkeypatch.setattr(forecast_gate, "_EXPECTED_PIPS_GUARD_ENABLED", False)
+    monkeypatch.setattr(forecast_gate, "_TARGET_REACH_GUARD_ENABLED", False)
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "1m": {
+                "p_up": 0.86,
+                "expected_pips": 1.1,
+                "source": "technical",
+                "trend_strength": 0.66,
+                "range_pressure": 0.34,
+            }
+        },
+    )
+
+    decision = forecast_gate.decide(
+        strategy_tag="scalp_ping_5s_c_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=1_200,
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is True
+    assert decision.scale == 1.0
+    assert decision.reason == "edge_allow"
+    assert decision.p_up == 0.86
+
+
 def test_decide_uses_strategy_specific_edge_override(monkeypatch) -> None:
     monkeypatch.setenv("FORECAST_GATE_EDGE_BLOCK_TREND_STRATEGY_TRENDMA", "0.80")
     monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)

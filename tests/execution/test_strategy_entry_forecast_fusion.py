@@ -170,6 +170,43 @@ def _set_default_fusion_knobs(monkeypatch) -> None:
     )
 
 
+def test_inject_entry_forecast_context_keeps_allow_decision(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_FORECAST_CONTEXT_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "_build_entry_forecast_profile",
+        lambda *args, **kwargs: {},
+        raising=False,
+    )
+    decision = strategy_entry.forecast_gate.ForecastDecision(
+        allowed=True,
+        scale=1.0,
+        reason="edge_allow",
+        horizon="1m",
+        edge=0.81,
+        p_up=0.81,
+        expected_pips=1.4,
+        source="technical",
+    )
+    monkeypatch.setattr(strategy_entry.forecast_gate, "decide", lambda **_: decision)
+
+    thesis, context = strategy_entry._inject_entry_forecast_context(
+        instrument="USD_JPY",
+        strategy_tag="scalp_ping_5s_c_live",
+        pocket="scalp_fast",
+        units=1200,
+        entry_thesis={},
+        meta=None,
+    )
+    assert context is not None
+    assert context.get("reason") == "edge_allow"
+    assert context.get("p_up") == 0.81
+    assert isinstance(thesis, dict)
+    assert isinstance(thesis.get("forecast"), dict)
+    assert thesis["forecast"].get("reason") == "edge_allow"
+    assert thesis["forecast"].get("p_up") == 0.81
+
+
 def test_forecast_fusion_scales_down_on_mismatch(monkeypatch) -> None:
     _set_default_fusion_knobs(monkeypatch)
     thesis: dict[str, object] = {"tp_pips": 1.5}
