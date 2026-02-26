@@ -7850,3 +7850,21 @@
 - 意図:
   - no-stop を維持したまま、実損優位側（long）を止めて short 側へ方向適応する。
   - 時間帯封鎖ではなく、戦略ローカルの方向制御で損失勾配を即座に下げる。
+
+### 2026-02-26（追記）SLO data-lag ブロック緩和 + M1配分増
+
+- 背景（VM実測, 2026-02-26 11:50 UTC）:
+  - 30分窓 `orders.db`: `slo_block=10`（latest `11:45:09Z`）
+  - `slo_block.reason` は `data_lag_p95_exceeded` に集中し、`data_lag_p95_ms≈7152`。
+  - 閾値は `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=5000` のため、scalp_fast が連続reject。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=9000`（from `5000`）
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_SLO_GUARD_*` を明示追加
+    - `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=9000`
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_BASE_UNITS=4500`（from `3000`）
+- 意図:
+  - no-stop のまま、インフラ遅延スパイクでの過剰拒否を減らして通過率を回復。
+  - ほぼ横ばいまで戻した M1 を増量し、短期の利益寄与を取りに行く。

@@ -1143,6 +1143,9 @@
   - 同値は `quant-v2-runtime.env` にも置き、worker local `order_manager` 経路へ確実に反映する。
   - 24h 実損で B/C とも long 側の負け寄与が卓越したため、
     `SCALP_PING_5S_B_SIDE_FILTER=sell`, `SCALP_PING_5S_C_SIDE_FILTER=sell` を適用して方向逆風を遮断。
+  - `slo_block(data_lag_p95_exceeded)` が連続したため、
+    `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=9000` へ緩和して遅延スパイク時の過剰拒否を抑制。
+  - `M1Scalper` は 直近で損失勾配が縮小したため、`M1SCALP_BASE_UNITS=4500` へ増量して寄与を引き上げ。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
     `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。
