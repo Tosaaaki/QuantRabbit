@@ -6744,3 +6744,34 @@
   - C 戦略に設定した確率拒否・ロット縮小・perf ガード等の
     strategy 固有制約を常に有効化し、低品質エントリーの通過を防ぐ。
   - 収益の安定化を優先し、`+2000円/h` へ向けた負け筋の先行除去を行う。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` の hard SL 未添付を恒久修正（fixed-mode優先の解除）
+
+- 背景（VM実測, UTC 06:29-06:31）:
+  - `orders.db` の `filled` request payload で `virtual_sl_price` は存在する一方、
+    OANDA送信 `order` に `stopLossOnFill` が含まれず、
+    `openTrades` も `stopLoss=null` が継続していた。
+  - `ops/env/quant-order-manager.env` では
+    `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C=1` /
+    `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C=0` が有効であり、
+    env と実挙動が不一致だった。
+- 原因:
+  - `execution/order_manager.py` で `sl_disabled` を
+    `stop_loss_disabled_for_pocket()`（`ORDER_FIXED_SL_MODE`）優先で評価しており、
+    B 以外の戦略（C/D含む）で
+    `ORDER_ALLOW_STOP_LOSS_ON_FILL_*` による再有効化が反映されなかった。
+- 変更:
+  - `execution/order_manager.py`
+    - `_entry_sl_disabled_for_strategy()` を追加。
+    - `market_order` / `limit_order` の `sl_disabled` 判定を
+      新ヘルパーに置換し、
+      strategy別 `ORDER_ALLOW_STOP_LOSS_ON_FILL_*` が true の場合は
+      `ORDER_FIXED_SL_MODE` が OFF でも hard SL を有効化するよう統一。
+  - `tests/execution/test_order_manager_sl_overrides.py`
+    - C/B 両戦略で「fixed-mode OFF でも strategy override で
+      `sl_disabled=False` になる」回帰テストを追加。
+    - C 戦略で override 未設定時は従来どおり `sl_disabled=True` となる
+      ガードテストを追加。
+- 意図:
+  - C 戦略の「エントリー時 hard SL 欠損」を解消し、
+    逆行時の放置損失と `direction_cap` 長時間拘束の再発を防ぐ。

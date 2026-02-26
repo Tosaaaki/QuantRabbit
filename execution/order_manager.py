@@ -2245,6 +2245,23 @@ def _allow_stop_loss_on_fill(
     return False
 
 
+def _entry_sl_disabled_for_strategy(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+) -> bool:
+    """Resolve effective entry SL disable flag with strategy-level overrides.
+
+    Global fixed-mode remains the baseline, but strategy-specific
+    ORDER_ALLOW_STOP_LOSS_ON_FILL_* overrides can explicitly re-enable
+    hard SL attachment.
+    """
+    disabled = stop_loss_disabled_for_pocket(pocket)
+    if disabled and _allow_stop_loss_on_fill(pocket, strategy_tag=strategy_tag):
+        return False
+    return disabled
+
+
 def _disable_hard_stop_by_strategy(
     strategy_tag: Optional[str],
     pocket: Optional[str],
@@ -7758,19 +7775,16 @@ async def market_order(
             return None
         return str(service_result) if service_result is not None else None
 
-    sl_disabled = stop_loss_disabled_for_pocket(pocket)
     if strategy_tag is not None:
         strategy_tag = str(strategy_tag)
         if not strategy_tag:
             strategy_tag = None
     else:
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
-    if (
-        sl_disabled
-        and isinstance(strategy_tag, str)
-        and strategy_tag.strip().lower().startswith("scalp_ping_5s_b")
-    ):
-        sl_disabled = False
+    sl_disabled = _entry_sl_disabled_for_strategy(
+        pocket,
+        strategy_tag=strategy_tag,
+    )
     thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
         strategy_tag,
         pocket,
@@ -11362,13 +11376,10 @@ async def limit_order(
             )
         return None, None
 
-    sl_disabled = stop_loss_disabled_for_pocket(pocket)
-    if (
-        sl_disabled
-        and isinstance(strategy_tag, str)
-        and strategy_tag.strip().lower().startswith("scalp_ping_5s_b")
-    ):
-        sl_disabled = False
+    sl_disabled = _entry_sl_disabled_for_strategy(
+        pocket,
+        strategy_tag=strategy_tag,
+    )
     thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
         strategy_tag,
         pocket,

@@ -641,6 +641,12 @@
     `qr-<ts>-<strategy_tag>-<digest>` / `qr-<ts>-<pocket>-<strategy_tag>-<digest>`
     の両形式を許容し、`strategy_tag` 解決失敗で strategy 個別しきい値が
     無効化されないようにする。
+  - `market_order` / `limit_order` の hard SL 判定は
+    `ORDER_FIXED_SL_MODE` を基準にしつつも、
+    `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_*` と
+    `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_{B,C,D}` が true の戦略では
+    `sl_disabled` を解除して `stopLossOnFill` を有効化する。
+    （fixed-mode OFF 時に strategy override が無視される不整合を防止）
   - `margin_closeout_soft_warmup_n=*` を運用監査し、停止ではなく縮小継続へ遷移させる。
 
 ### C tail-loss clamp（2026-02-26 追加）
