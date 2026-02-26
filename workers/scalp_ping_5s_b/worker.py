@@ -66,6 +66,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     # Fail closed for B variant direction guard:
     # if side filter is missing/invalid, enforce sell-only so the worker does not
     # drift into unintended long entries on stale env composition.
+    allow_no_side_filter = _env_truthy(f"{prefix}_ALLOW_NO_SIDE_FILTER", False)
     mapped_side_filter_key = f"{base_prefix}_SIDE_FILTER"
     allowed_side_filters = {
         "sell",
@@ -75,18 +76,45 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         "long",
         "open_long",
     }
+    no_side_filter_aliases = {"", "none", "off", "disabled"}
+
+    def _normalize_side_filter(raw: str) -> str | None:
+        normalized = str(raw).strip().lower()
+        if normalized in allowed_side_filters:
+            return normalized
+        if allow_no_side_filter and normalized in no_side_filter_aliases:
+            return ""
+        return None
+
     mapped_side_filter = str(os.getenv(mapped_side_filter_key, "")).strip().lower()
-    if mapped_side_filter not in allowed_side_filters:
+    normalized_side_filter = _normalize_side_filter(mapped_side_filter)
+    if normalized_side_filter is None:
         source_side_filter = str(os.getenv(f"{prefix}_SIDE_FILTER", "")).strip().lower()
-        if source_side_filter not in allowed_side_filters:
-            source_side_filter = "sell"
-        os.environ[mapped_side_filter_key] = source_side_filter
-        logger.warning(
-            "[SCALP5S_B] forcing %s=%s (fail-closed direction guard)",
-            mapped_side_filter_key,
-            source_side_filter,
-        )
-        mapped_side_filter = source_side_filter
+        normalized_side_filter = _normalize_side_filter(source_side_filter)
+        if normalized_side_filter is None:
+            normalized_side_filter = "sell"
+        os.environ[mapped_side_filter_key] = normalized_side_filter
+        if normalized_side_filter == "":
+            logger.warning(
+                "[SCALP5S_B] allowing %s to be empty (%s_ALLOW_NO_SIDE_FILTER=1)",
+                mapped_side_filter_key,
+                prefix,
+            )
+        else:
+            logger.warning(
+                "[SCALP5S_B] forcing %s=%s (fail-closed direction guard)",
+                mapped_side_filter_key,
+                normalized_side_filter,
+            )
+    else:
+        os.environ[mapped_side_filter_key] = normalized_side_filter
+        if normalized_side_filter == "":
+            logger.warning(
+                "[SCALP5S_B] allowing %s to be empty (%s_ALLOW_NO_SIDE_FILTER=1)",
+                mapped_side_filter_key,
+                prefix,
+            )
+    mapped_side_filter = normalized_side_filter
 
     # Safety baseline for B variant: keep entry protection on by default.
     # Explicitly opt out only for temporary experiments.

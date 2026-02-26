@@ -8171,3 +8171,26 @@
 - 意図:
   - no-signal の主要因（revert 固着）を外し、B/C の market_order 到達率を回復する。
   - 停止を使わず、低ロット救済と両方向運用でエントリー密度を引き上げる。
+
+### 2026-02-26（追記）`SIDE_FILTER=none` の wrapper 上書き不整合を修正（B/C）
+
+- 背景:
+  - `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_c.env` で `SIDE_FILTER=none` を設定しても、
+    `workers/scalp_ping_5s_b/worker.py` と `workers/scalp_ping_5s_c/worker.py` が
+    invalid 値として `sell` へ fail-closed 上書きしていた。
+  - その結果、`ALLOW_NO_SIDE_FILTER=1` が実効せず `side_filter_block` が継続した。
+- 変更:
+  - `workers/scalp_ping_5s_b/worker.py`
+  - `workers/scalp_ping_5s_c/worker.py`
+    - `ALLOW_NO_SIDE_FILTER=1` を有効化し、
+      `SIDE_FILTER in {"", "none", "off", "disabled"}` を空フィルタとして許容。
+    - それ以外の不正値は従来どおり `sell` へ fail-closed。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` を追加。
+  - `ops/env/scalp_ping_5s_c.env`
+    - 運用コメントを実装に合わせて更新（no-side-filter を wrapper opt-in として明示）。
+  - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+    - B/C の no-side-filter opt-in ケースを更新・追加。
+- 検証:
+  - `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py -k "side_filter"`: `8 passed`
+  - `python3 -m py_compile workers/scalp_ping_5s_b/worker.py workers/scalp_ping_5s_c/worker.py`: pass

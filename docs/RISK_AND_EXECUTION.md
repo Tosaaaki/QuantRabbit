@@ -1256,6 +1256,23 @@
   - 時間帯停止なしで発注密度を回復し、実取引ログで改善を再評価できる状態を作る。
   - 主要ブロックは `order_manager` 側の margin/probability/risk guard に集約して制御する。
 
+### B/C `SIDE_FILTER` wrapper 正規化（2026-02-26 追記）
+- 背景:
+  - `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_c.env` で
+    `SIDE_FILTER=none` を指定しても、wrapper の fail-closed により `sell` へ上書きされ、
+    `ALLOW_NO_SIDE_FILTER=1` が実効していなかった。
+- 実装:
+  - `workers/scalp_ping_5s_b/worker.py`
+  - `workers/scalp_ping_5s_c/worker.py`
+    - `ALLOW_NO_SIDE_FILTER=1` かつ `SIDE_FILTER in {"", "none", "off", "disabled"}` の場合は
+      `SCALP_PING_5S_SIDE_FILTER=""` を許可。
+    - それ以外の未設定/不正値は従来どおり `sell` へ fail-closed。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` を追加。
+- 運用意図:
+  - 無効化したい時だけ明示 opt-in で side filter を外し、
+    デフォルトは fail-closed を維持して意図しない方向ドリフトを防ぐ。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

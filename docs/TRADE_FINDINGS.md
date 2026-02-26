@@ -95,6 +95,40 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 13:30 UTC / 2026-02-26 22:30 JST - `SIDE_FILTER=none` が wrapper で `sell` 強制され、B/C entry が詰まる問題を修正
+Period:
+- Analysis/patch window: `2026-02-26 13:12` ～ `13:30` UTC
+- Source: `workers/scalp_ping_5s_b/worker.py`, `workers/scalp_ping_5s_c/worker.py`, `tests/workers/test_scalp_ping_5s_b_worker_env.py`, `ops/env/scalp_ping_5s_{b,c}.env`
+
+Fact:
+- `ops/env/scalp_ping_5s_b.env` は `SCALP_PING_5S_B_SIDE_FILTER=none` だったが、
+  wrapper 側の fail-closed 実装により不正値扱いで `sell` に上書きされていた。
+- `ops/env/scalp_ping_5s_c.env` の `SCALP_PING_5S_C_SIDE_FILTER=none` と
+  `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1` も同様に `sell` へ上書きされていた。
+- このため `SIDE_FILTER=none` を設定しても実効せず、`side_filter_block` が残る状態だった。
+
+Failure Cause:
+1. wrapper で `ALLOW_NO_SIDE_FILTER` が実装されておらず、`none` が常に invalid 扱いだった。
+2. env の意図値と実効値が乖離し、skip要因の切り分けを難しくしていた。
+
+Improvement:
+1. `workers/scalp_ping_5s_b/worker.py`, `workers/scalp_ping_5s_c/worker.py`
+   - `ALLOW_NO_SIDE_FILTER=1` かつ `SIDE_FILTER in {"", "none", "off", "disabled"}` のとき、
+     `SCALP_PING_5S_SIDE_FILTER=""` を許可する正規化を追加。
+   - 上記以外の未設定/不正値は従来どおり `sell` へ fail-closed。
+2. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` を追加。
+3. `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+   - B/C の `ALLOW_NO_SIDE_FILTER=1` で空 side filter が通る検証を追加/更新。
+
+Verification:
+1. `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py -k "side_filter"` → `8 passed`
+2. `python3 -m py_compile workers/scalp_ping_5s_b/worker.py workers/scalp_ping_5s_c/worker.py` → pass
+3. VM 反映後に `entry-skip summary` の `side_filter_block` 比率が低下することを確認する。
+
+Status:
+- in_progress
+
 ## 2026-02-26 13:05 UTC / 2026-02-26 22:05 JST - 方向精度再崩れの根本対策（C no-side-filter封鎖 + side-filter復元）
 Period:
 - Analysis/patch window: `2026-02-26 12:40` ～ `13:05` UTC
