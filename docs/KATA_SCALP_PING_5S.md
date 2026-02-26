@@ -113,6 +113,18 @@ deep（`analysis/pattern_deep.py`）は以下の目的で動きます。
 - `weak` などの品質では「縮小寄り」に倒す（`ORDER_PATTERN_GATE_REDUCE_FALLBACK_SCALE`）
 - ドリフト悪化時は縮小上限を下げる（`ORDER_PATTERN_GATE_DRIFT_*`）
 
+フォールバック一致（2026-02-26 追加）:
+- exact `pattern_id` 不一致時に、`ORDER_PATTERN_GATE_FALLBACK_ENABLED=1` なら
+  次の順序で近傍一致を試す:
+  1. `drop_pt`（`pt` を無視）
+  2. `drop_rg`（`rg` を無視）
+  3. `drop_pt_rg`（`pt` と `rg` を無視）
+- フォールバック一致時は payload に `match_mode` と `requested_pattern_id` を残す。
+- 既定では `ORDER_PATTERN_GATE_FALLBACK_DISABLE_BLOCK=1` のため、
+  fallback 一致は block せず、縮小/据え置き中心で扱う（過剰拒否を防ぐ）。
+- fallback の倍率は `ORDER_PATTERN_GATE_FALLBACK_SCALE_MIN/MAX`
+  （既定 `0.85/1.05`）へ収めて急変を抑える。
+
 無効化（即時ロールバック）:
 - `ORDER_PATTERN_GATE_ENABLED=0` または `SCALP_PING_5S_PATTERN_GATE_OPT_IN=0`
 - 既存ポジを勝手に決済することはない（エントリー前ゲートのみ）

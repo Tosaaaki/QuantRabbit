@@ -145,6 +145,11 @@ def _reload_gate(monkeypatch, db_path: Path):
     monkeypatch.setenv("ORDER_PATTERN_GATE_MIN_SCALE_DELTA", "0.01")
     monkeypatch.setenv("ORDER_PATTERN_GATE_ALLOW_BOOST", "1")
     monkeypatch.setenv("ORDER_PATTERN_GATE_POCKET_ALLOWLIST", "scalp_fast")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_FALLBACK_ENABLED", "1")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_FALLBACK_DISABLE_BLOCK", "1")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_FALLBACK_ALLOW_BOOST", "0")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_FALLBACK_SCALE_MIN", "0.85")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_FALLBACK_SCALE_MAX", "1.05")
     import workers.common.pattern_gate as pattern_gate
 
     return importlib.reload(pattern_gate)
@@ -299,3 +304,98 @@ def test_pattern_gate_no_opt_in_returns_none(monkeypatch, tmp_path: Path) -> Non
         entry_thesis=entry,
     )
     assert decision is None
+
+
+def test_pattern_gate_fallback_matches_when_range_bucket_differs(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "patterns.db"
+    _create_pattern_db(db_path)
+    base_entry = _entry_thesis_for_pattern()
+    base_pid = build_pattern_id(
+        entry_thesis=base_entry,
+        units=-1800,
+        pocket="scalp_fast",
+        strategy_tag_fallback="scalp_ping_5s_live",
+    )
+    _insert_score(
+        db_path,
+        pattern_id=base_pid,
+        trades=120,
+        quality="weak",
+        suggested_multiplier=0.72,
+        robust_score=-0.7,
+        p_value=0.12,
+    )
+    gate = _reload_gate(monkeypatch, db_path)
+
+    entry = _entry_thesis_for_pattern()
+    entry["entry_ref"] = 153.20
+    entry["pattern_tag"] = "new_pattern_tag"
+    fallback_pid = build_pattern_id(
+        entry_thesis=entry,
+        units=-1800,
+        pocket="scalp_fast",
+        strategy_tag_fallback="scalp_ping_5s_live",
+    )
+    assert fallback_pid != base_pid
+
+    decision = gate.decide(
+        strategy_tag="scalp_ping_5s_live",
+        pocket="scalp_fast",
+        side="sell",
+        units=-1800,
+        entry_thesis=entry,
+    )
+    assert decision is not None
+    assert decision.match_mode != "exact"
+    assert decision.action == "scale"
+    assert decision.reason == "pattern_fallback_reduce"
+    assert decision.scale == 0.85
+    assert decision.pattern_id == base_pid
+    assert decision.requested_pattern_id == fallback_pid
+
+
+def test_pattern_gate_fallback_does_not_block_avoid_by_default(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "patterns.db"
+    _create_pattern_db(db_path)
+    base_entry = _entry_thesis_for_pattern()
+    base_pid = build_pattern_id(
+        entry_thesis=base_entry,
+        units=-1600,
+        pocket="scalp_fast",
+        strategy_tag_fallback="scalp_ping_5s_live",
+    )
+    _insert_score(
+        db_path,
+        pattern_id=base_pid,
+        trades=180,
+        quality="avoid",
+        suggested_multiplier=0.70,
+        robust_score=-1.4,
+        p_value=0.01,
+    )
+    gate = _reload_gate(monkeypatch, db_path)
+
+    entry = _entry_thesis_for_pattern()
+    entry["entry_ref"] = 153.19
+    entry["pattern_tag"] = "fallback_case"
+    requested_pid = build_pattern_id(
+        entry_thesis=entry,
+        units=-1600,
+        pocket="scalp_fast",
+        strategy_tag_fallback="scalp_ping_5s_live",
+    )
+    assert requested_pid != base_pid
+
+    decision = gate.decide(
+        strategy_tag="scalp_ping_5s_live",
+        pocket="scalp_fast",
+        side="sell",
+        units=-1600,
+        entry_thesis=entry,
+    )
+    assert decision is not None
+    assert decision.allowed is True
+    assert decision.action == "scale"
+    assert decision.reason == "pattern_fallback_reduce"
+    assert decision.match_mode != "exact"
+    assert decision.pattern_id == base_pid

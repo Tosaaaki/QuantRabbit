@@ -149,6 +149,34 @@
   - `quant-range-metrics` を営業時間中に継続発行可能な状態へ戻し、
     `range_mode_active` が分析ワーカーとして実際に戦略判断へ使える監視信号になるよう復旧する。
 
+### 2026-02-26（追記）Pattern Gate の一致率改善: `pt/rg` フォールバック一致を追加
+
+- 背景（VM実測, UTC 2026-02-26 07:52, 直近サンプル3000行）:
+  - `pattern_gate_opt_in` 付き 1633 件のうち、exact `pattern_id` 一致は 1037 件、
+    非一致が 596 件（約 36.5%）だった。
+  - 同サンプルで `drop_rg` まで許容すると一致 1598 件、
+    `drop_pt_rg` まで許容すると一致 1616 件まで回復した。
+  - 実運用では `scalp_ping_5s_c_live`（`scalp_fast`）で `rg` 差分による不一致が多数を占め、
+    pattern book 更新済みでも gate が no-op になる局面が発生していた。
+- 変更:
+  - `workers/common/pattern_gate.py`
+    - exact 不一致時に `drop_pt -> drop_rg -> drop_pt_rg` の順で近傍一致を探索。
+    - fallback 一致時は `match_mode` を保持し、
+      `requested_pattern_id`（要求ID）と `pattern_id`（採用ID）を payload へ記録。
+    - 既定で `ORDER_PATTERN_GATE_FALLBACK_DISABLE_BLOCK=1` とし、
+      fallback 一致では block せず縮小/据え置き中心に運用。
+    - fallback 適用時の倍率を `ORDER_PATTERN_GATE_FALLBACK_SCALE_MIN/MAX`
+      （既定 `0.85/1.05`）でクランプし、過剰なサイズ変動を抑制。
+  - `config/env.example.toml`
+    - `ORDER_PATTERN_GATE_FALLBACK_*` の運用キーを追記。
+  - `tests/workers/test_pattern_gate.py`
+    - `rg/pt` 差分時に fallback 一致できる回帰テストを追加。
+    - fallback 一致では `avoid` でも block しない（既定）回帰テストを追加。
+- 意図:
+  - Pattern Gate を「opt-in しているのに効かない」状態から外し、
+    方向意図を壊さずに縮小判断を継続適用できる運用へ戻す。
+  - fallback 由来の誤 block を避けつつ、分析ワーカーの実効寄与を上げる。
+
 ### 2026-02-26（追記）SL運用の曖昧さを解消（baseline明示 + override契約を仕様化）
 
 - 背景:

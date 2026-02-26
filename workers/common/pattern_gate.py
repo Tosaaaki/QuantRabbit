@@ -122,6 +122,20 @@ def _is_generic_pattern_id(pattern_id: str) -> bool:
     return informative == 0
 
 
+_PATTERN_TOKEN_ORDER: tuple[str, ...] = ("st", "pk", "sd", "sg", "mtf", "hz", "ex", "rg", "pt")
+
+
+def _tokens_key(tokens: dict[str, str], include_keys: tuple[str, ...]) -> str:
+    return "|".join(f"{key}:{str(tokens.get(key, 'na') or 'na').strip().lower()}" for key in include_keys)
+
+
+def _row_rank(row: dict[str, Any]) -> tuple[int, float]:
+    return (
+        _safe_int(row.get("trades"), 0),
+        abs(_safe_float(row.get("robust_score"), 0.0)),
+    )
+
+
 _ENABLED = _env_bool("ORDER_PATTERN_GATE_ENABLED", True)
 _TTL_SEC = max(2.0, _env_float("ORDER_PATTERN_GATE_TTL_SEC", 20.0))
 _DB_PATH = Path(os.getenv("ORDER_PATTERN_GATE_DB_PATH", "logs/patterns.db"))
@@ -155,6 +169,17 @@ _DRIFT_SOFT_DETERIORATION_SCALE = max(
     0.2, min(1.0, _env_float("ORDER_PATTERN_GATE_DRIFT_SOFT_DETERIORATION_SCALE", 0.90))
 )
 
+_FALLBACK_ENABLED = _env_bool("ORDER_PATTERN_GATE_FALLBACK_ENABLED", True)
+_FALLBACK_DISABLE_BLOCK = _env_bool("ORDER_PATTERN_GATE_FALLBACK_DISABLE_BLOCK", True)
+_FALLBACK_ALLOW_BOOST = _env_bool("ORDER_PATTERN_GATE_FALLBACK_ALLOW_BOOST", False)
+_FALLBACK_SCALE_MIN = max(0.1, _env_float("ORDER_PATTERN_GATE_FALLBACK_SCALE_MIN", 0.85))
+_FALLBACK_SCALE_MAX = max(1.0, _env_float("ORDER_PATTERN_GATE_FALLBACK_SCALE_MAX", 1.05))
+_FALLBACK_MATCH_ORDER: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("drop_pt", ("st", "pk", "sd", "sg", "mtf", "hz", "ex", "rg")),
+    ("drop_rg", ("st", "pk", "sd", "sg", "mtf", "hz", "ex", "pt")),
+    ("drop_pt_rg", ("st", "pk", "sd", "sg", "mtf", "hz", "ex")),
+)
+
 
 @dataclass(frozen=True)
 class PatternGateDecision:
@@ -170,6 +195,8 @@ class PatternGateDecision:
     p_value: float
     source: str
     drift_state: Optional[str] = None
+    match_mode: str = "exact"
+    requested_pattern_id: Optional[str] = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -185,6 +212,12 @@ class PatternGateDecision:
             "p_value": round(float(self.p_value), 6),
             "source": str(self.source),
             "drift_state": str(self.drift_state) if self.drift_state else None,
+            "match_mode": str(self.match_mode or "exact"),
+            "requested_pattern_id": (
+                str(self.requested_pattern_id)
+                if self.requested_pattern_id and self.requested_pattern_id != self.pattern_id
+                else None
+            ),
         }
 
 
@@ -192,6 +225,7 @@ _CACHE_TS = 0.0
 _CACHE_ROWS: dict[str, dict[str, Any]] = {}
 _CACHE_DRIFT: dict[str, dict[str, Any]] = {}
 _CACHE_SOURCE = "none"
+_CACHE_FALLBACK_INDEX: dict[str, dict[str, str]] = {}
 
 
 def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
@@ -379,11 +413,33 @@ def _load_from_json() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, An
     return rows, drift, "json"
 
 
-def _load_cache() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str]:
-    global _CACHE_TS, _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE
+def _build_fallback_index(rows: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
+    indexes: dict[str, dict[str, str]] = {mode: {} for mode, _ in _FALLBACK_MATCH_ORDER}
+    if not rows:
+        return indexes
+    for pid, row in rows.items():
+        tokens = _parse_pattern_tokens(pid)
+        if not tokens:
+            continue
+        for mode, keys in _FALLBACK_MATCH_ORDER:
+            key = _tokens_key(tokens, keys)
+            if not key:
+                continue
+            current_pid = indexes[mode].get(key)
+            if current_pid is None:
+                indexes[mode][key] = pid
+                continue
+            current_row = rows.get(current_pid) or {}
+            if _row_rank(row) > _row_rank(current_row):
+                indexes[mode][key] = pid
+    return indexes
+
+
+def _load_cache() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str, dict[str, dict[str, str]]]:
+    global _CACHE_TS, _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE, _CACHE_FALLBACK_INDEX
     now = time.monotonic()
     if _CACHE_ROWS and (now - _CACHE_TS) <= _TTL_SEC:
-        return _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE
+        return _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE, _CACHE_FALLBACK_INDEX
 
     rows, drift, source = _load_from_db()
     if not rows:
@@ -393,7 +449,36 @@ def _load_cache() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]],
     _CACHE_ROWS = rows
     _CACHE_DRIFT = drift
     _CACHE_SOURCE = source
-    return _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE
+    _CACHE_FALLBACK_INDEX = _build_fallback_index(rows)
+    return _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE, _CACHE_FALLBACK_INDEX
+
+
+def _resolve_pattern_row(
+    *,
+    requested_pattern_id: str,
+    rows: dict[str, dict[str, Any]],
+    drift_map: dict[str, dict[str, Any]],
+    fallback_index: dict[str, dict[str, str]],
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], Optional[str], str]:
+    row = rows.get(requested_pattern_id)
+    if row:
+        return row, drift_map.get(requested_pattern_id), requested_pattern_id, "exact"
+    if not _FALLBACK_ENABLED:
+        return None, None, None, "none"
+    tokens = _parse_pattern_tokens(requested_pattern_id)
+    if not tokens:
+        return None, None, None, "none"
+    for mode, keys in _FALLBACK_MATCH_ORDER:
+        lookup = fallback_index.get(mode) or {}
+        key = _tokens_key(tokens, keys)
+        pid = lookup.get(key)
+        if not pid:
+            continue
+        found = rows.get(pid)
+        if not found:
+            continue
+        return found, drift_map.get(pid), pid, mode
+    return None, None, None, "none"
 
 
 def _resolve_scale(row: dict[str, Any], drift_row: Optional[dict[str, Any]]) -> float:
@@ -422,6 +507,16 @@ def _resolve_scale(row: dict[str, Any], drift_row: Optional[dict[str, Any]]) -> 
     return mult
 
 
+def _apply_fallback_scale(scale: float) -> float:
+    scaled = float(scale)
+    if not _FALLBACK_ALLOW_BOOST and scaled > 1.0:
+        scaled = 1.0
+    scaled = max(_FALLBACK_SCALE_MIN, min(_FALLBACK_SCALE_MAX, scaled))
+    if abs(scaled - 1.0) < _MIN_SCALE_DELTA:
+        return 1.0
+    return scaled
+
+
 def decide(
     *,
     strategy_tag: Optional[str],
@@ -447,18 +542,23 @@ def decide(
     strategy_fallback = str(strategy_tag or entry_thesis.get("strategy_tag") or "").strip()
     if not strategy_fallback:
         return None
-    pattern_id = build_pattern_id(
+    requested_pattern_id = build_pattern_id(
         entry_thesis=entry_thesis,
         units=units,
         pocket=str(pocket or ""),
         strategy_tag_fallback=strategy_fallback,
     )
     allow_generic = _allow_generic(entry_thesis, meta)
-    if not pattern_id or (_is_generic_pattern_id(pattern_id) and not allow_generic):
+    if not requested_pattern_id or (_is_generic_pattern_id(requested_pattern_id) and not allow_generic):
         return None
 
-    rows, drift_map, source = _load_cache()
-    row = rows.get(pattern_id)
+    rows, drift_map, source, fallback_index = _load_cache()
+    row, drift_row, matched_pattern_id, match_mode = _resolve_pattern_row(
+        requested_pattern_id=requested_pattern_id,
+        rows=rows,
+        drift_map=drift_map,
+        fallback_index=fallback_index,
+    )
     if not row:
         return None
 
@@ -467,7 +567,6 @@ def decide(
     suggested = _safe_float(row.get("suggested_multiplier"), 1.0)
     robust_score = _safe_float(row.get("robust_score"), 0.0)
     p_value = _safe_float(row.get("p_value"), 1.0)
-    drift_row = drift_map.get(pattern_id)
     drift_state = (
         str(drift_row.get("drift_state")).strip().lower()
         if isinstance(drift_row, dict) and drift_row.get("drift_state")
@@ -475,6 +574,8 @@ def decide(
     )
 
     if (
+        (match_mode == "exact" or not _FALLBACK_DISABLE_BLOCK)
+        and
         quality in _BLOCK_QUALITIES
         and trades >= _BLOCK_MIN_TRADES
         and robust_score <= _BLOCK_MAX_SCORE
@@ -485,7 +586,7 @@ def decide(
             scale=0.0,
             reason="pattern_avoid",
             action="block",
-            pattern_id=pattern_id,
+            pattern_id=str(matched_pattern_id or requested_pattern_id),
             quality=quality,
             trades=trades,
             suggested_multiplier=suggested,
@@ -493,16 +594,20 @@ def decide(
             p_value=p_value,
             source=source,
             drift_state=drift_state,
+            match_mode=match_mode,
+            requested_pattern_id=requested_pattern_id,
         )
 
     scale = _resolve_scale(row, drift_row)
+    if match_mode != "exact":
+        scale = _apply_fallback_scale(scale)
     if scale == 1.0:
         return PatternGateDecision(
             allowed=True,
             scale=1.0,
-            reason="pattern_neutral",
+            reason="pattern_neutral" if match_mode == "exact" else "pattern_fallback_neutral",
             action="pass",
-            pattern_id=pattern_id,
+            pattern_id=str(matched_pattern_id or requested_pattern_id),
             quality=quality,
             trades=trades,
             suggested_multiplier=suggested,
@@ -510,15 +615,20 @@ def decide(
             p_value=p_value,
             source=source,
             drift_state=drift_state,
+            match_mode=match_mode,
+            requested_pattern_id=requested_pattern_id,
         )
 
-    reason = "pattern_reduce" if scale < 1.0 else "pattern_boost"
+    if match_mode == "exact":
+        reason = "pattern_reduce" if scale < 1.0 else "pattern_boost"
+    else:
+        reason = "pattern_fallback_reduce" if scale < 1.0 else "pattern_fallback_boost"
     return PatternGateDecision(
         allowed=True,
         scale=scale,
         reason=reason,
         action="scale",
-        pattern_id=pattern_id,
+        pattern_id=str(matched_pattern_id or requested_pattern_id),
         quality=quality,
         trades=trades,
         suggested_multiplier=suggested,
@@ -526,4 +636,6 @@ def decide(
         p_value=p_value,
         source=source,
         drift_state=drift_state,
+        match_mode=match_mode,
+        requested_pattern_id=requested_pattern_id,
     )
