@@ -6445,6 +6445,7 @@
   - `ops/env/quant-scalp-ping-5s-d.env`
     - `SCALP_PING_5S_D_ENABLED=0`
   - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_ENABLED=0`
     - `M1SCALP_BLOCK_HOURS_ENABLED=1`
     - `M1SCALP_BLOCK_HOURS_UTC=0-23`
   - `ops/env/scalp_ping_5s_flow.env`
