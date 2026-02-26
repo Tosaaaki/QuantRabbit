@@ -672,6 +672,20 @@
 - 意図:
   - 低確率エントリーの通過率を下げ、同時保有と1発あたりの損失上限を抑制する。
 
+### C lot overrun clamp（2026-02-26 追加）
+- 背景:
+  - VM 実測で `SCALP_PING_5S_C_MAX_UNITS=4500` 設定下でも、
+    `scalp_ping_5s_c_live` の実送信ユニットが 4500 超に上振れするケースがあった。
+- 実装:
+  - `workers/scalp_ping_5s/worker.py`
+    - TECH sizing 適用後と `market_order` 送信直前の 2 点で
+      `units_risk` / `MAX_UNITS` / `MIN_UNITS` クランプを強制。
+  - `execution/strategy_entry.py`
+    - 協調後 `final_units` が strategy 要求量（raw `units`）を超えないよう上限化。
+- 運用意図:
+  - 戦略が出したサイズ意図を「最大値」として扱い、
+    協調/補正レイヤ由来の上振れでリスクが膨らむ経路を遮断する。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

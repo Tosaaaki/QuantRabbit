@@ -6775,3 +6775,21 @@
 - 意図:
   - C 戦略の「エントリー時 hard SL 欠損」を解消し、
     逆行時の放置損失と `direction_cap` 長時間拘束の再発を防ぐ。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` のロット上振れを抑止（最終送信前クランプ）
+
+- 背景（VM実測, UTC 06:29-06:31）:
+  - `SCALP_PING_5S_C_MAX_UNITS=4500` で運用しているにもかかわらず、
+    `orders.db` / worker ログに `units=5737` / `units=4872` が記録された。
+  - 原因は 2 段で、
+    - `workers/scalp_ping_5s/worker.py` の TECH sizing 適用後に再クランプが無い。
+    - `execution/strategy_entry.py` の協調後ユニットが strategy 要求量を上回り得る。
+- 変更:
+  - `workers/scalp_ping_5s/worker.py`
+    - `tech_decision.size_mult` 適用後に `units_risk` / `MAX_UNITS` / `MIN_UNITS` で再クランプ。
+    - `market_order` 送信直前に最終セーフティクランプを追加し、送信ユニットの上振れを防止。
+  - `execution/strategy_entry.py`
+    - `_coordinate_entry_units()` で `final_units` を strategy 要求量（`abs(units)`）以下に制限。
+- 意図:
+  - 戦略ローカルで設計したユニット意図を上限として厳守し、
+    予期しない上振れロットによる tail-loss を再発させない。

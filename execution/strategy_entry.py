@@ -2234,6 +2234,7 @@ async def _coordinate_entry_units(
 ) -> int:
     if not units:
         return units
+    requested_abs_units = abs(int(units))
     if reduce_only:
         return units
     if not strategy_tag:
@@ -2281,7 +2282,16 @@ async def _coordinate_entry_units(
     )
     if not final_units and reason in {"reject", "scaled", "rejected", None}:
         return 0
-    return int(final_units)
+    final_units_int = int(final_units)
+    # Keep strategy-side intent as the upper bound. Coordination may reduce or
+    # reject, but should not amplify beyond the strategy's requested size.
+    if (
+        requested_abs_units > 0
+        and final_units_int
+        and abs(final_units_int) > requested_abs_units
+    ):
+        final_units_int = requested_abs_units if final_units_int > 0 else -requested_abs_units
+    return final_units_int
 
 
 async def market_order(

@@ -7517,6 +7517,15 @@ async def scalp_ping_5s_worker() -> None:
                 _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
                 if _tech_units <= 0:
                     continue
+                # Keep final TECH_ROUTER sizing inside the same hard caps used in
+                # the main sizing path.
+                _risk_cap_units = max(0, int(abs(units_risk)))
+                _hard_cap_units = max(0, int(abs(config.MAX_UNITS)))
+                _tech_cap_units = min(_risk_cap_units, _hard_cap_units)
+                if _tech_cap_units > 0:
+                    _tech_units = min(_tech_units, _tech_cap_units)
+                if _tech_units < config.MIN_UNITS:
+                    continue
                 units = _tech_units if _tech_side == "long" else -_tech_units
                 entry_thesis_ctx["entry_units_intent"] = abs(int(units))
 
@@ -7532,6 +7541,16 @@ async def scalp_ping_5s_worker() -> None:
 
             _meta = {"env_prefix": config.ENV_PREFIX, "ENV_PREFIX": config.ENV_PREFIX}
 
+            # Final safety net: never send an order above configured/risk caps.
+            _abs_units = abs(int(units))
+            _risk_cap_units = max(0, int(abs(units_risk)))
+            _hard_cap_units = max(0, int(abs(config.MAX_UNITS)))
+            _send_cap_units = min(_risk_cap_units, _hard_cap_units)
+            if _send_cap_units > 0 and _abs_units > _send_cap_units:
+                _abs_units = _send_cap_units
+                if _abs_units < config.MIN_UNITS:
+                    continue
+                units = _abs_units if units > 0 else -_abs_units
 
             result = await market_order(
                 instrument="USD_JPY",
