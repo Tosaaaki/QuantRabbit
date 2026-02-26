@@ -2745,6 +2745,31 @@ def _resolve_final_signal_for_side_filter(
     return None, f"side_filter_final_block:{routed_signal.side}"
 
 
+def _maybe_rescue_min_units(
+    *,
+    units: int,
+    base_units: int,
+    units_risk: int,
+    entry_probability: float,
+    confidence: int,
+) -> tuple[int, str]:
+    if units >= config.MIN_UNITS:
+        return units, "sufficient"
+    if not config.MIN_UNITS_RESCUE_ENABLED:
+        return units, "disabled"
+    if config.MIN_UNITS <= 0:
+        return units, "invalid_min_units"
+    if base_units < config.MIN_UNITS:
+        return units, "base_below_min"
+    if units_risk < config.MIN_UNITS:
+        return units, "risk_cap_below_min"
+    if entry_probability < config.MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY:
+        return units, "probability_below_rescue_floor"
+    if confidence < config.MIN_UNITS_RESCUE_MIN_CONFIDENCE:
+        return units, "confidence_below_rescue_floor"
+    return config.MIN_UNITS, "rescued"
+
+
 def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[Optional[TickSignal], float, str]:
     if regime is None:
         return signal, 1.0, "regime_unavailable"
@@ -5572,6 +5597,7 @@ async def scalp_ping_5s_worker() -> None:
     last_side_metrics_flip_log_mono = 0.0
     last_side_adverse_stack_log_mono = 0.0
     last_dynamic_direction_cap_log_mono = 0.0
+    last_min_units_rescue_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
     last_loop_heartbeat_mono = 0.0
     entry_skip_reasons: dict[str, int] = {}
@@ -7092,10 +7118,32 @@ async def scalp_ping_5s_worker() -> None:
                 bias_meta["raw_scale"] = raw_side_bias
                 bias_meta["mode_adjusted_scale"] = float(bias_scale)
             units = int(round(units * bias_scale))
+            units, min_units_status = _maybe_rescue_min_units(
+                units=units,
+                base_units=base_units,
+                units_risk=units_risk,
+                entry_probability=entry_probability,
+                confidence=int(signal.confidence),
+            )
+            if min_units_status == "rescued":
+                tech_route_reasons.append("min_units_rescue")
+                if (
+                    now_mono - last_min_units_rescue_log_mono
+                    >= config.MIN_UNITS_RESCUE_LOG_INTERVAL_SEC
+                ):
+                    LOG.info(
+                        "%s min_units_rescue applied units=%d prob=%.3f conf=%d risk_cap=%d",
+                        config.LOG_PREFIX,
+                        units,
+                        entry_probability,
+                        int(signal.confidence),
+                        int(units_risk),
+                    )
+                    last_min_units_rescue_log_mono = now_mono
             if units < config.MIN_UNITS:
                 _note_entry_skip(
                     "units_below_min",
-                    f"units={units} min={config.MIN_UNITS}",
+                    f"units={units} min={config.MIN_UNITS} reason={min_units_status}",
                 )
                 continue
             units = abs(units)

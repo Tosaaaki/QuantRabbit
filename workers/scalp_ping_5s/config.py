@@ -1655,6 +1655,40 @@ CONFIDENCE_SCALE_MAX_MULT: float = max(
         ),
     ),
 )
+MIN_UNITS_RESCUE_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_MIN_UNITS_RESCUE_ENABLED",
+    True if _IS_B_OR_C_PREFIX else False,
+)
+MIN_UNITS_RESCUE_MIN_CONFIDENCE: int = max(
+    CONFIDENCE_FLOOR,
+    min(
+        CONFIDENCE_CEIL,
+        int(
+            float(
+                os.getenv(
+                    "SCALP_PING_5S_MIN_UNITS_RESCUE_MIN_CONFIDENCE",
+                    str(CONFIDENCE_FLOOR),
+                )
+            )
+        ),
+    ),
+)
+MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY",
+                "0.58" if _IS_B_OR_C_PREFIX else "0.62",
+            )
+        ),
+    ),
+)
+MIN_UNITS_RESCUE_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_MIN_UNITS_RESCUE_LOG_INTERVAL_SEC", "8.0")),
+)
 ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE: int = max(
     CONFIDENCE_FLOOR,
     min(

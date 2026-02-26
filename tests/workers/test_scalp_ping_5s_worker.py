@@ -200,6 +200,46 @@ def test_resolve_final_signal_for_side_filter_blocks_without_anchor(monkeypatch)
     assert reason == "side_filter_final_block:long"
 
 
+def test_maybe_rescue_min_units_applies_when_thresholds_met(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MIN_UNITS", 1)
+    monkeypatch.setattr(worker.config, "MIN_UNITS_RESCUE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY", 0.58)
+    monkeypatch.setattr(worker.config, "MIN_UNITS_RESCUE_MIN_CONFIDENCE", 70)
+
+    units, reason = worker._maybe_rescue_min_units(
+        units=0,
+        base_units=180,
+        units_risk=120,
+        entry_probability=0.72,
+        confidence=83,
+    )
+
+    assert units == 1
+    assert reason == "rescued"
+
+
+def test_maybe_rescue_min_units_skips_when_probability_is_low(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MIN_UNITS", 1)
+    monkeypatch.setattr(worker.config, "MIN_UNITS_RESCUE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY", 0.60)
+    monkeypatch.setattr(worker.config, "MIN_UNITS_RESCUE_MIN_CONFIDENCE", 70)
+
+    units, reason = worker._maybe_rescue_min_units(
+        units=0,
+        base_units=180,
+        units_risk=120,
+        entry_probability=0.55,
+        confidence=83,
+    )
+
+    assert units == 0
+    assert reason == "probability_below_rescue_floor"
+
+
 def test_build_tick_signal_rejects_chasing_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
