@@ -7707,6 +7707,9 @@
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_SIDE_FILTER=`（buy固定解除）
     - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.62`
+  - `ops/env/quant-v2-runtime.env`
+    - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=0`
+    - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED=0`
 - 意図:
   - 時間帯停止や恒久停止を使わず、`hard failfast` での全面停止を回避しつつ
     方向固定バイアスを外して約定機会を確保する。

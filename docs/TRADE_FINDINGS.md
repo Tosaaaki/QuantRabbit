@@ -108,6 +108,10 @@ Improvement:
    - `SCALP_PING_5S_B_SIDE_FILTER=`
    - `SCALP_PING_5S_C_SIDE_FILTER=`
    - 反映先: `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+3. strategy_entry の forecast 逆行一律拒否を解除:
+   - `STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED=0`
+   - `STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED=0`
+   - 反映先: `ops/env/quant-v2-runtime.env`
 
 Verification:
 1. `orders.db` 30分窓で `scalp_ping_5s_b_live` の `perf_block` 比率が低下すること。
