@@ -105,6 +105,30 @@
   - dynamic allocation が `pips` 偏重で負け筋を過大評価する経路を防ぎ、
     実現損益ベースでロット縮小を強制する。
 
+### 2026-02-26（追記）当日回収モード: guard緩和 + b/c 許可時間内ロット増
+
+- 背景:
+  - 手動建玉残存時に `ORDER_MANUAL_MARGIN_GUARD_*` が厳しすぎると、
+    有望時間帯でも新規エントリーが実質停止する。
+  - 本日の回収優先運用として、`guard=ON` は維持しつつ
+    「完全停止しない閾値」へ一時調整が必要。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO: 0.12 -> 0.05`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER: 0.18 -> 0.07`
+    - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY: 8000 -> 3000`
+  - `ops/env/scalp_ping_5s_b.env`
+    - `BASE_ENTRY_UNITS: 520 -> 1200`
+    - `MAX_UNITS: 900 -> 2400`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 1 -> 2`
+    - `BASE_ENTRY_UNITS: 260 -> 700`
+    - `MAX_UNITS: 420 -> 1600`
+- 意図:
+  - 方向/時間帯制限（buy + allow hours）は維持したまま、
+    当日中の期待収益を引き上げる。
+  - margin guard は残して margin closeout 再発だけは避ける。
+
 ### 2026-02-26（追記）forecast_context 欠落対策: `edge_allow` を明示返却
 
 - 背景（VM実測）:

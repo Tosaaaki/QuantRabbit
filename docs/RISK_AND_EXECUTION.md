@@ -91,6 +91,11 @@
   env差し替え時でも損失時間帯へ再流入しないよう固定。
 - `scripts/dynamic_alloc_worker.py` は `margin_closeout_rate` と
   `realized_jpy` 悪化への罰則を追加し、`lot_multiplier` を早期縮小する。
+- 当日回収モード（2026-02-26）:
+  - `ORDER_MANUAL_MARGIN_GUARD_*` は `ENABLED=1` を維持したまま、
+    `0.05 / 0.07 / 3000` へ緩和して「手動玉1本で全停止」を回避。
+  - `b/c` は `buy + allow_hours` 制約を維持しつつ
+    `BASE_ENTRY_UNITS` / `MAX_UNITS` / `MAX_ORDERS_PER_MINUTE` を引き上げる。
 
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
