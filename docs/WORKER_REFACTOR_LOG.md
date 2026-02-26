@@ -7948,3 +7948,50 @@
 - 意図:
   - 勝ち寄与が確認できている戦略の発火条件を緩和し、約定機会を増やす。
   - 停止なしのまま、利益速度を上げるための「頻度側」チューニングを優先する。
+
+### 2026-02-26（追記）B/C short-only後の無約定解消（revert緩和 + short最小通過ロット引下げ）
+
+- 背景（VM実測, 2026-02-26 12:00-12:16 UTC）:
+  - `quant-order-manager` 側の reject は沈静化した一方、B/C は約定が枯渇。
+  - `entry-skip summary` は `no_signal:revert_not_found` が最多で、
+    short 側は `units_below_min` が継続（B: 3-17/30秒, C: 1-6/30秒）。
+  - `SCALP_PING_5S_[B/C]_SIDE_FILTER=sell` 自体は機能（long は継続遮断）。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MIN_UNITS=5`（from `10`）
+    - `REVERT_SHORT_WINDOW_SEC=1.20`（from `0.75`）
+    - `REVERT_RANGE/SWEEP/BOUNCE/CONFIRM_RATIO=0.12/0.06/0.02/0.30`（from `0.20/0.12/0.05/0.50`）
+    - `FAST_DIRECTION_FLIP_*` を short変換寄りに緩和
+      - `DIRECTION_SCORE_MIN=0.42`（from `0.50`）
+      - `HORIZON_SCORE_MIN=0.22`（from `0.30`）
+      - `HORIZON_AGREE_MIN=1`（from `2`）
+      - `NEUTRAL_HORIZON_BIAS_SCORE_MIN=0.62`（from `0.76`）
+      - `MOMENTUM_MIN_PIPS=0.05`（from `0.08`）
+    - `EXTREMA_GATE_ENABLED=1`（from `0`）
+    - `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=1`（from `0`）
+    - `EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE=1.45`（from `2.10`）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=5`（from `10`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=180`（from `140`）
+    - `SCALP_PING_5S_C_MIN_UNITS=5`（from `20`）
+    - `REVERT_SHORT_WINDOW_SEC=1.20`（from `0.75`）
+    - `REVERT_RANGE/SWEEP/BOUNCE/CONFIRM_RATIO=0.12/0.06/0.02/0.30`（from `0.20/0.12/0.05/0.50`）
+    - `SHORT_MIN_TICKS=3`（from `4`）, `SHORT_MIN_SIGNAL_TICKS=3`（from `4`）
+    - `FAST_DIRECTION_FLIP_*` を緩和
+      - `DIRECTION_SCORE_MIN=0.46`（from `0.58`）
+      - `HORIZON_SCORE_MIN=0.26`（from `0.38`）
+      - `HORIZON_AGREE_MIN=1`（from `3`）
+      - `NEUTRAL_HORIZON_BIAS_SCORE_MIN=0.64`（from `0.82`）
+      - `MOMENTUM_MIN_PIPS=0.08`（from `0.16`）
+    - `SIDE_METRICS_DIRECTION_FLIP_ENABLED=1`（from `0`）
+    - `EXTREMA_GATE_ENABLED=1`（from `0`）
+    - `EXTREMA_REQUIRE_M1_M5_AGREE_SHORT=0`（from `1`）
+    - `EXTREMA_SHORT_BOTTOM_BLOCK_POS=0.10`（from `0.18`）
+    - `EXTREMA_SHORT_BOTTOM_SOFT_POS=0.18`（from `0.24`）
+    - `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=1`（from `0`）
+    - `EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE=1.50`（from `2.10`）
+    - `EXTREMA_TECH_FILTER_SHORT_BOTTOM_RSI_MIN=54.0`（from `58.0`）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=5`（from `20`）
+- 意図:
+  - long遮断は維持しつつ、short側の「発火不足」と「最小ロット未満」を同時に解消する。
+  - 時間帯停止なしで、B/C を short適応の実運転へ戻す。

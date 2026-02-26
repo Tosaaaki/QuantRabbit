@@ -1163,6 +1163,20 @@
   - `orders.db`: `entry_probability_reject`（rangefader の内訳）と `filled` 増減。
   - `trades.db`: `realized_pl` の strategy 別増分（B/C/M1 の下振れ勾配、MicroRangeBreak/MomentumBurst の上振れ確認）。
 
+### no-stop short発火補正（2026-02-26 追記）
+- 背景:
+  - `SIDE_FILTER=sell` 適用後、longは遮断できたが `revert_not_found` と `short units_below_min` が支配的となり B/C の約定が枯渇。
+- 変更点（B/C 共通方針）:
+  - short最小通過ロットを引き下げ（`SCALP_PING_5S_{B,C}_MIN_UNITS=5`、`ORDER_MIN_UNITS_STRATEGY_* = 5`）。
+  - `revert` 判定を緩和（`REVERT_RANGE/SWEEP/BOUNCE/CONFIRM_RATIO` 緩和、`REVERT_SHORT_WINDOW_SEC=1.20`）。
+  - long→short 変換の導線を有効化（`EXTREMA_GATE_ENABLED=1`、`EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=1`）。
+- C 固有の補正:
+  - `BASE_ENTRY_UNITS=180` へ増量し、縮小後でも short が最小ロットを割り込みにくい設計へ変更。
+  - `SHORT_MIN_TICKS/SHORT_MIN_SIGNAL_TICKS=3`、`FAST_DIRECTION_FLIP_*` 緩和、`SIDE_METRICS_DIRECTION_FLIP_ENABLED=1`。
+  - extrema short側ブロックの過剰抑制を緩和（`SHORT_BOTTOM_BLOCK_POS/SOFT_POS`, `TECH_FILTER_SHORT_BOTTOM_RSI_MIN`）。
+- 期待効果:
+  - long遮断を維持したまま short 約定密度を回復し、`orders.db filled` を再増加させる。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

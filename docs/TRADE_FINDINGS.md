@@ -72,6 +72,37 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 12:20 UTC / 2026-02-26 21:20 JST - short-only後の無約定ボトルネック（revert_not_found + short units_below_min）
+Period:
+- Observation window: `2026-02-26 12:00:00` 以降（VM journal）
+- Source: `journalctl -u quant-scalp-ping-5s-b.service`, `journalctl -u quant-scalp-ping-5s-c.service`, `journalctl -u quant-order-manager.service`
+
+Fact:
+- `SCALP_PING_5S_B/C_SIDE_FILTER=sell` は機能し、long は `no_signal:side_filter_block` / `side_filter_final_block` で継続遮断。
+- 一方で約定が止まり、`quant-order-manager` の `OPEN_REJECT/OPEN_FILLED` は同窓で実質発生なし。
+- B/C の skip 内訳は `no_signal:revert_not_found` が最大（各30秒集計で概ね `40-94` 件）。
+- short 側は `units_below_min` が継続（B: `3-17`, C: `1-6` / 30秒集計）。
+
+Failure Cause:
+1. short-only化後、短期反転検知（revert）が成立せず `revert_not_found` に集中。
+2. 成立した short シグナルも、動的縮小後ユニットが最小ロット未満になり通過不能。
+3. long遮断は効いているが、short化の再配線が不足し、取引密度が0近傍に落ちた。
+
+Improvement:
+1. B/C の `revert` 閾値を同時緩和（`REVERT_RANGE/SWEEP/BOUNCE/CONFIRM_RATIO`, `REVERT_SHORT_WINDOW`）。
+2. short 最小通過ロットを引き下げ（`SCALP_PING_5S_{B,C}_MIN_UNITS`, `ORDER_MIN_UNITS_STRATEGY_*` を `5`）。
+3. C は short 発火側を追加緩和（`SHORT_MIN_TICKS`, `SHORT_MIN_SIGNAL_TICKS`）。
+4. long→short 変換を有効化（B/C `EXTREMA_GATE_ENABLED=1`, `EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT=1`, `LONG_TO_SHORT_MIN_SCORE` 緩和）。
+5. C は flip系を再稼働（`SIDE_METRICS_DIRECTION_FLIP_ENABLED=1`）し、short側への再配線を強化。
+
+Verification:
+1. 反映後30分で `entry-skip summary side=short` の `units_below_min` 比率が低下すること。
+2. `orders.db` で `filled` が再発し、`strategy in {scalp_ping_5s_b_live, scalp_ping_5s_c_live}` の short約定が出ること。
+3. `trades.db` で B/C の新規closeにおける `realized_pl` の負勾配が反転または鈍化すること。
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:06 UTC / 2026-02-26 21:06 JST - 損失主因の再監査（執行品質より制御異常が支配）
 Period:
 - 24h監査: `orders.db` / `trades.db` / `metrics.db`（`datetime(ts/close_time) >= now - 24 hours`）
