@@ -101,6 +101,17 @@ DROP_FLOW_MAX_BOUNCE_PIPS: float = max(
 )
 BLOCK_HOURS_JST: tuple[int, ...] = _csv_int_env("SCALP_PING_5S_BLOCK_HOURS_JST")
 ALLOW_HOURS_JST: tuple[int, ...] = _csv_int_env("SCALP_PING_5S_ALLOW_HOURS_JST")
+ALLOW_HOURS_SOFT_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_ALLOW_HOURS_SOFT_ENABLED",
+    True if ENV_PREFIX in {"SCALP_PING_5S_C", "SCALP_PING_5S_D"} else False,
+)
+ALLOW_HOURS_OUTSIDE_UNITS_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_ALLOW_HOURS_OUTSIDE_UNITS_MULT", "0.55")),
+    ),
+)
 
 LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))
@@ -1622,6 +1633,25 @@ CONFIDENCE_SCALE_MAX_MULT: float = max(
             os.getenv(
                 "SCALP_PING_5S_CONF_SCALE_MAX_MULT",
                 "1.00" if _IS_B_OR_C_PREFIX else "1.15",
+            )
+        ),
+    ),
+)
+ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE: int = max(
+    CONFIDENCE_FLOOR,
+    min(
+        CONFIDENCE_CEIL,
+        int(float(os.getenv("SCALP_PING_5S_ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE", "72"))),
+    ),
+)
+ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY",
+                "0.62",
             )
         ),
     ),

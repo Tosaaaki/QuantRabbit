@@ -178,6 +178,16 @@ def _entry_blocked_hour_jst(now_utc: datetime.datetime) -> Optional[int]:
 
 
 @dataclass(slots=True)
+class AllowHourEntryPolicy:
+    outside_hour_jst: Optional[int]
+    hard_block: bool
+    soft_mode: bool
+    units_mult: float
+    min_confidence: int
+    min_entry_probability: float
+
+
+@dataclass(slots=True)
 class TickSignal:
     side: str
     mode: str
@@ -472,6 +482,61 @@ def _norm01(value: float, low: float, high: float) -> float:
     if high <= low:
         return 0.0
     return _clamp((value - low) / (high - low), 0.0, 1.0)
+
+
+def _resolve_allow_hour_entry_policy(now_utc: datetime.datetime) -> AllowHourEntryPolicy:
+    outside_hour_jst = _entry_outside_allow_hour_jst(now_utc)
+    if outside_hour_jst is None:
+        return AllowHourEntryPolicy(
+            outside_hour_jst=None,
+            hard_block=False,
+            soft_mode=False,
+            units_mult=1.0,
+            min_confidence=config.CONFIDENCE_FLOOR,
+            min_entry_probability=0.0,
+        )
+
+    soft_mode = bool(getattr(config, "ALLOW_HOURS_SOFT_ENABLED", False))
+    if not soft_mode:
+        return AllowHourEntryPolicy(
+            outside_hour_jst=outside_hour_jst,
+            hard_block=True,
+            soft_mode=False,
+            units_mult=1.0,
+            min_confidence=config.CONFIDENCE_FLOOR,
+            min_entry_probability=0.0,
+        )
+
+    units_mult = _clamp(
+        _safe_float(getattr(config, "ALLOW_HOURS_OUTSIDE_UNITS_MULT", 0.55), 0.55),
+        0.05,
+        1.0,
+    )
+    min_confidence = int(
+        round(
+            _safe_float(
+                getattr(config, "ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE", config.CONFIDENCE_FLOOR),
+                float(config.CONFIDENCE_FLOOR),
+            )
+        )
+    )
+    min_confidence = max(config.CONFIDENCE_FLOOR, min(config.CONFIDENCE_CEIL, min_confidence))
+    min_entry_probability = _clamp(
+        _safe_float(
+            getattr(config, "ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY", 0.62),
+            0.62,
+        ),
+        0.0,
+        1.0,
+    )
+    return AllowHourEntryPolicy(
+        outside_hour_jst=outside_hour_jst,
+        hard_block=False,
+        soft_mode=True,
+        units_mult=units_mult,
+        min_confidence=min_confidence,
+        min_entry_probability=min_entry_probability,
+    )
 
 
 def _signal_window_bucket(window_sec: float) -> float:
@@ -5835,8 +5900,9 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 continue
 
-            outside_allow_jst_hour = _entry_outside_allow_hour_jst(now_utc)
-            if outside_allow_jst_hour is not None:
+            allow_hour_policy = _resolve_allow_hour_entry_policy(now_utc)
+            outside_allow_jst_hour = allow_hour_policy.outside_hour_jst
+            if allow_hour_policy.hard_block:
                 _note_entry_skip(
                     "outside_allow_hour_jst",
                     f"hour={outside_allow_jst_hour}",
@@ -6498,6 +6564,19 @@ async def scalp_ping_5s_worker() -> None:
                     side=signal.side,
                 )
                 continue
+            if (
+                allow_hour_policy.soft_mode
+                and signal.confidence < allow_hour_policy.min_confidence
+            ):
+                _note_entry_skip(
+                    "outside_allow_soft_confidence",
+                    (
+                        f"hour={outside_allow_jst_hour} "
+                        f"conf={signal.confidence} min={allow_hour_policy.min_confidence}"
+                    ),
+                    side=signal.side,
+                )
+                continue
             decision_cooldown_sec = max(
                 config.ENTRY_COOLDOWN_SEC * config.INSTANT_COOLDOWN_SCALE_MIN,
                 config.ENTRY_COOLDOWN_SEC * decision_speed_scale,
@@ -6777,6 +6856,20 @@ async def scalp_ping_5s_worker() -> None:
                 entry_probability=entry_probability,
                 now_mono=now_mono,
             )
+            if (
+                allow_hour_policy.soft_mode
+                and entry_probability < allow_hour_policy.min_entry_probability
+            ):
+                _note_entry_skip(
+                    "outside_allow_soft_probability",
+                    (
+                        f"hour={outside_allow_jst_hour} "
+                        f"prob={entry_probability:.3f} "
+                        f"min={allow_hour_policy.min_entry_probability:.3f}"
+                    ),
+                    side=signal.side,
+                )
+                continue
 
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
@@ -6806,6 +6899,11 @@ async def scalp_ping_5s_worker() -> None:
             snapshot_units_scale = _snapshot_stale_units_scale()
             if snapshot_units_scale < 1.0:
                 units = int(round(units * snapshot_units_scale))
+            allow_hour_units_mult = 1.0
+            if allow_hour_policy.soft_mode:
+                allow_hour_units_mult = allow_hour_policy.units_mult
+                if allow_hour_units_mult < 0.999:
+                    units = int(round(units * allow_hour_units_mult))
 
             lot = allowed_lot(
                 nav,
@@ -6953,6 +7051,18 @@ async def scalp_ping_5s_worker() -> None:
                 "snapshot_fetch_failures": int(_SNAPSHOT_FETCH_FAILURES),
                 "snapshot_age_limit_ms": round(snapshot_age_limit_ms, 1),
                 "snapshot_stale_units_scale": round(float(snapshot_units_scale), 3),
+                "allow_hour_soft_mode": bool(allow_hour_policy.soft_mode),
+                "allow_hour_outside_jst": (
+                    int(outside_allow_jst_hour)
+                    if outside_allow_jst_hour is not None
+                    else None
+                ),
+                "allow_hour_units_mult": round(float(allow_hour_units_mult), 3),
+                "allow_hour_min_confidence": int(allow_hour_policy.min_confidence),
+                "allow_hour_min_entry_probability": round(
+                    float(allow_hour_policy.min_entry_probability),
+                    3,
+                ),
                 "vol_bucket_source": "signal_range_then_regime",
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
@@ -7484,7 +7594,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open mode=%s side=%s units=%s conf=%d prob=%.3f->%.3f p_mult=%.2f p_band=%.2f mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d prob=%.3f->%.3f p_mult=%.2f p_band=%.2f mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s allow_hr=%s soft=%s ah_mult=%.2f",
                 config.LOG_PREFIX,
                 signal.mode,
                 signal.side,
@@ -7532,6 +7642,9 @@ async def scalp_ping_5s_worker() -> None:
                 dynamic_max_hold_sec,
                 dynamic_hard_loss_pips,
                 result or "none",
+                str(outside_allow_jst_hour) if outside_allow_jst_hour is not None else "-",
+                int(allow_hour_policy.soft_mode),
+                allow_hour_units_mult,
             )
 
     except asyncio.CancelledError:

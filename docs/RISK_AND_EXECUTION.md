@@ -568,6 +568,22 @@
     新規 `filled` が止まっていることを確認する。
   - `scalp_ping_5s_c_live` は `JST 18,19,22` 以外の `filled` が無いことを確認する。
 
+### `ALLOW_HOURS` soft-mode 運用（2026-02-26）
+- 方針:
+  - 時間帯優先（`ALLOW_HOURS_JST`）は維持しつつ、許可時間外を hard stop せず、
+    strategy local の確率・信頼度・ロット縮小で継続稼働させる。
+- 運用値:
+  - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
+  - `SCALP_PING_5S_C_ALLOW_HOURS_SOFT_ENABLED=1`（C/D prefix は既定有効）
+  - `SCALP_PING_5S_C_ALLOW_HOURS_OUTSIDE_UNITS_MULT=0.55`（既定）
+  - `SCALP_PING_5S_C_ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE=72`（既定）
+  - `SCALP_PING_5S_C_ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY=0.62`（既定）
+- 監査:
+  - `orders.db` に `outside_allow_soft_confidence` /
+    `outside_allow_soft_probability` が記録されること。
+  - `entry_thesis.allow_hour_*` が保存され、`outside_allow_hour_jst` 単独で
+    全停止しないことを確認する。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

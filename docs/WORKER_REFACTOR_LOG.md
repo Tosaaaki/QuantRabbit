@@ -6466,3 +6466,34 @@
 - 意図:
   - 「損失源を止める」と「勝ち時間へ資本集中」を同時に実施し、
     `+2000円/h` 到達のための入口品質とサイズ効率を優先する。
+
+### 2026-02-26（追記）`allow_hours` に soft-mode を追加し「停止」を恒久回避
+
+- 背景（VM実測, UTC 2026-02-26 00:50〜01:10）:
+  - `scalp_ping_5s_c_live` が `entry-skip summary ... outside_allow_hour_jst=*` で
+    連続スキップし、スプレッド復旧後も新規が止まる時間帯が発生。
+  - 既存実装は `ALLOW_HOURS_JST` を hard block しており、許可外時間は
+    シグナル品質に関係なく新規を全面停止していた。
+- 変更:
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_ALLOW_HOURS_SOFT_ENABLED` を追加（既定: `0`, C/D prefix は `1`）。
+    - 許可時間外の soft 運用パラメータを追加:
+      - `SCALP_PING_5S_ALLOW_HOURS_OUTSIDE_UNITS_MULT`
+      - `SCALP_PING_5S_ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE`
+      - `SCALP_PING_5S_ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY`
+  - `workers/scalp_ping_5s/worker.py`
+    - `AllowHourEntryPolicy` / `_resolve_allow_hour_entry_policy()` を追加。
+    - `ALLOW_HOURS` 判定を `hard block` または `soft gate` に分離。
+    - soft mode 時は
+      - `confidence` 下限
+      - `entry_probability` 下限
+      - `units_mult` 縮小
+      を適用し、全面停止ではなく高品質シグナルのみ通す。
+    - 監査用に `entry_thesis` と open log へ allow-hour policy を記録。
+    - `ENV_PREFIX=SCALP_PING_5S_C` / `SCALP_PING_5S_D` では soft-mode を既定有効化し、
+      既存 `ALLOW_HOURS_JST` 設定が hard stop にならないようにした。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    - allow-hours policy（許可内/許可外hard/許可外soft）の回帰テストを追加。
+- 意図:
+  - 「止まる」原因を hard 時間帯ゲートから切り離し、
+    取引継続性を維持しながら品質（確率・信頼度・ロット）で制御する。

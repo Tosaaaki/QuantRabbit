@@ -73,6 +73,58 @@ def test_is_spread_stale_block_skips_when_not_blocked() -> None:
     ) is False
 
 
+def test_resolve_allow_hour_entry_policy_inside_allow_hours(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_JST", (10, 11))
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_SOFT_ENABLED", False)
+
+    # 01:05 UTC -> 10:05 JST
+    now_utc = datetime.datetime(2026, 2, 26, 1, 5, tzinfo=datetime.timezone.utc)
+    policy = worker._resolve_allow_hour_entry_policy(now_utc)
+    assert policy.outside_hour_jst is None
+    assert policy.hard_block is False
+    assert policy.soft_mode is False
+    assert policy.units_mult == pytest.approx(1.0, abs=1e-9)
+
+
+def test_resolve_allow_hour_entry_policy_hard_block_outside(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_JST", (18, 19, 22))
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_SOFT_ENABLED", False)
+
+    # 01:05 UTC -> 10:05 JST (outside allow window)
+    now_utc = datetime.datetime(2026, 2, 26, 1, 5, tzinfo=datetime.timezone.utc)
+    policy = worker._resolve_allow_hour_entry_policy(now_utc)
+    assert policy.outside_hour_jst == 10
+    assert policy.hard_block is True
+    assert policy.soft_mode is False
+    assert policy.units_mult == pytest.approx(1.0, abs=1e-9)
+
+
+def test_resolve_allow_hour_entry_policy_soft_mode_outside(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_JST", (18, 19, 22))
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_SOFT_ENABLED", True)
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_OUTSIDE_UNITS_MULT", 0.58)
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE", 74)
+    monkeypatch.setattr(worker.config, "ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY", 0.67)
+    monkeypatch.setattr(worker.config, "CONFIDENCE_FLOOR", 58)
+    monkeypatch.setattr(worker.config, "CONFIDENCE_CEIL", 92)
+
+    # 01:05 UTC -> 10:05 JST (outside allow window)
+    now_utc = datetime.datetime(2026, 2, 26, 1, 5, tzinfo=datetime.timezone.utc)
+    policy = worker._resolve_allow_hour_entry_policy(now_utc)
+    assert policy.outside_hour_jst == 10
+    assert policy.hard_block is False
+    assert policy.soft_mode is True
+    assert policy.units_mult == pytest.approx(0.58, abs=1e-9)
+    assert policy.min_confidence == 74
+    assert policy.min_entry_probability == pytest.approx(0.67, abs=1e-9)
+
+
 def test_build_tick_signal_rejects_chasing_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
