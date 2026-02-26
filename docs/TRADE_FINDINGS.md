@@ -95,6 +95,49 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 12:25 UTC / 2026-02-26 21:25 JST - no-stop維持で「無約定化」を解消する再配線
+Period:
+- Incident window: `2026-02-26 11:40` ～ `12:25` UTC
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/logs/trades.db`, `journalctl -u quant-scalp-ping-5s-{b,c}.service`
+
+Fact:
+- `orders.db` の `orders` は直近30分で `0 rows`（`datetime(substr(ts,1,19)) >= now-30m`）。
+- `quant-order-manager` は `coordinate_entry_intent` 受信を継続しているが、`preflight_start` 以降の新規発注イベントが停止。
+- `entry_intent_board` の直近45分は `1件` のみで、`scalp_extrema_reversal_live` が `below_min_units_after_scale`（`raw=45`, `min_units=1000`）で reject。
+- B/C ワーカーは稼働継続しているが、`entry-skip summary` は
+  `no_signal:revert_not_found` が最多、次点で `no_signal:side_filter_block` / `units_below_min` が継続。
+
+Failure Cause:
+1. no-stop方針の下で `SIDE_FILTER=sell` と逆風ドリフト縮小が重なり、B/C が local 判定段階で枯渇。
+2. 共通 `POLICY_HEURISTIC_PERF_BLOCK` が有効のままで、他戦略側の再起動余地も狭い。
+3. 最小ロット閾値が小口シグナルの通過率を削り、intent が `order_manager` まで届かない局面が残る。
+
+Improvement:
+1. 共通 hard reject の解除:
+   - `ops/env/quant-v2-runtime.env`
+   - `POLICY_HEURISTIC_PERF_BLOCK_ENABLED=0`（from `1`）
+2. B の通過率回復:
+   - `SCALP_PING_5S_B_MIN_UNITS=1`（from `5`）
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=1`（from `5`）
+   - `SHORT_MOMENTUM_TRIGGER_PIPS=0.08`（from `0.10`）
+   - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.58`（from `0.42`）
+   - `SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`（from `0.50/0.18`）
+3. C の無約定解消（停止ではなく両方向縮小運転）:
+   - `SCALP_PING_5S_C_SIDE_FILTER=`（from `sell`）
+   - `SCALP_PING_5S_C_MIN_UNITS=1`（from `5`）
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=1`（from `5`）
+   - `SHORT/LONG_MOMENTUM_TRIGGER_PIPS=0.08/0.18`（from `0.10/0.10`）
+   - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.62`（from `0.45`）
+   - `SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`（from `0.50/0.18`）
+
+Verification:
+1. 反映後 30分で `orders.db` の `preflight_start` と `filled` が再出現すること。
+2. `entry-skip summary` の `units_below_min` 比率が低下すること。
+3. 反映後 60分で `trades.db` の `realized_pl` 増分が `scalp_ping_5s_c_live` 単独で急悪化しないこと（損失勾配監視）。
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:20 UTC / 2026-02-26 21:20 JST - `scalp_ping_5s_b_live/c_live` 方向劣化の再発防止（side filter fail-closed）
 Period:
 - Direction audit window: `datetime(close_time) >= now - 24 hours`

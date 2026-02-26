@@ -1177,6 +1177,32 @@
 - 期待効果:
   - long遮断を維持したまま short 約定密度を回復し、`orders.db filled` を再増加させる。
 
+### no-stop 無約定化の通過率補正（2026-02-26 追記）
+- 背景:
+  - `orders.db` で直近30分の発注イベントが枯渇し、B/C は local 判定で `revert_not_found` と `units_below_min` が残存。
+  - 共通 `POLICY_HEURISTIC_PERF_BLOCK_ENABLED=1` により、他戦略側も hard reject が再燃しやすい状態だった。
+- 実装:
+  - `ops/env/quant-v2-runtime.env`
+    - `POLICY_HEURISTIC_PERF_BLOCK_ENABLED=0`
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MIN_UNITS=1`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=1`
+    - `SHORT_MOMENTUM_TRIGGER_PIPS=0.08`
+    - `MOMENTUM_TRIGGER_PIPS=0.08`
+    - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.58`
+    - `SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SIDE_FILTER=`（片側固定を解除）
+    - `MIN_UNITS=1`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=1`
+    - `SHORT/LONG_MOMENTUM_TRIGGER_PIPS=0.08/0.18`
+    - `MOMENTUM_TRIGGER_PIPS=0.08`
+    - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.62`
+    - `SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`
+- 運用意図:
+  - 時間帯停止・恒久停止を使わず、発注通路を再開するための最小通過ユニットとシグナル閾値を補正。
+  - hard block を減らしつつ、単位当たりリスクは `MIN_UNITS`/bias scale で抑えたまま再稼働させる。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

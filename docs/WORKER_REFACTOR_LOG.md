@@ -8018,3 +8018,32 @@
 - 意図:
   - env 取り回し崩れがあっても B/C worker が意図せず long 側へ流れないようにする。
   - direction 制御を env 前提だけにせず、ワーカー起動時に fail-closed を保証する。
+
+### 2026-02-26（追記）no-stop 無約定化の解消（B/C通過率回復 + 共通perf block解除）
+
+- 背景（VM実測, 2026-02-26 12:25 UTC）:
+  - `orders.db` 直近30分で `orders` が `0 rows`（`datetime(substr(ts,1,19))` 基準）。
+  - B/C ワーカーは alive だが `entry-skip` の主因が `no_signal:revert_not_found` と `units_below_min` に集中。
+  - `entry_intent_board` 直近45分は `1件` のみで、`below_min_units_after_scale` が発生。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `POLICY_HEURISTIC_PERF_BLOCK_ENABLED=0`（from `1`）
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MIN_UNITS=1`（from `5`）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=1`（from `5`）
+    - `SCALP_PING_5S_B_SHORT_MOMENTUM_TRIGGER_PIPS=0.08`（from `0.10`）
+    - `SCALP_PING_5S_B_MOMENTUM_TRIGGER_PIPS=0.08`（from `0.10`）
+    - `SCALP_PING_5S_B_DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.58`（from `0.42`）
+    - `SCALP_PING_5S_B_SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`（from `0.50/0.18`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=`（from `sell`）
+    - `SCALP_PING_5S_C_MIN_UNITS=1`（from `5`）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=1`（from `5`）
+    - `SCALP_PING_5S_C_SHORT_MOMENTUM_TRIGGER_PIPS=0.08`（from `0.10`）
+    - `SCALP_PING_5S_C_LONG_MOMENTUM_TRIGGER_PIPS=0.18`（from `0.10`）
+    - `SCALP_PING_5S_C_MOMENTUM_TRIGGER_PIPS=0.08`（from `0.10`）
+    - `SCALP_PING_5S_C_DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.62`（from `0.45`）
+    - `SCALP_PING_5S_C_SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`（from `0.50/0.18`）
+- 意図:
+  - 停止なしのまま、B/C のローカル判定段階での枯渇を緩和し order-manager まで intent を通す。
+  - 共通 `perf_block` での hard reject 常態を解き、戦略ローカル最適化での復帰余地を確保する。
