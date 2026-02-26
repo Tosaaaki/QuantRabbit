@@ -7694,10 +7694,12 @@
   - `ops/env/quant-order-manager.env`
     - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.58`
     - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.27`
+    - `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.75`
   - `ops/env/scalp_ping_5s_b.env`
     - `SCALP_PING_5S_B_SIDE_FILTER=`（buy固定解除）
     - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.58`
     - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.27`
+    - `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.75`
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_SIDE_FILTER=`（buy固定解除）
 - 意図:

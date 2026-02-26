@@ -100,6 +100,7 @@ Improvement:
 1. Bの hard failfast 閾値を実績連動に下げる:
    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF: 0.88 -> 0.58`
    - `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN: 0.48 -> 0.27`
+   - `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX: 0.52 -> 0.75`
    - 反映先: `ops/env/quant-order-manager.env` と `ops/env/scalp_ping_5s_b.env`
 2. B/C の方向固定を解除:
    - `SCALP_PING_5S_B_SIDE_FILTER=`

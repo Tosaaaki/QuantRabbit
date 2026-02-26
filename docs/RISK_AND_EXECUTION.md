@@ -1044,6 +1044,8 @@
 ### no-stop再調整（2026-02-26 追記）
 - `scalp_ping_5s_b` の `hard failfast` 連発で新規が全面拒否される状態を回避するため、
   `SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF/WIN` を `0.58/0.27` へ更新。
+  併せて `SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX` を `0.75` へ更新し、
+  `sl_loss_rate` 理由での hard stop 常態化を回避。
   - 反映先: `ops/env/quant-order-manager.env`, `ops/env/scalp_ping_5s_b.env`
 - 方向固定での機会損失を減らすため、`scalp_ping_5s_b/c` の `SIDE_FILTER=buy` を解除。
   - 反映先: `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
