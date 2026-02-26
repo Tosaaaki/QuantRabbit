@@ -374,12 +374,34 @@ class AddonLiveBroker:
                 break
 
         pocket = str(order.get("pocket") or self.pocket or "micro").lower()
-        strategy_tag = str(
-            meta.get("worker_id")
-            or meta.get("strategy")
-            or order.get("strategy")
-            or self.worker_id
+
+        def _first_text(*values: object) -> Optional[str]:
+            for value in values:
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    return text
+            return None
+
+        strategy_tag = _first_text(
+            order.get("strategy_tag"),
+            order.get("tag"),
+            intent.get("strategy_tag"),
+            intent.get("tag"),
+            meta.get("strategy_tag"),
+            meta.get("worker_id"),
+            meta.get("strategy"),
+            order.get("strategy"),
+            self.worker_id,
         )
+        if not strategy_tag:
+            self.log.info(
+                "addon_live: skip order (missing strategy_tag) worker=%s symbol=%s",
+                self.worker_id,
+                symbol,
+            )
+            return None
         sl_pips, tp_pips, atr_pips = self._resolve_exits(symbol, intent)
         if sl_pips <= 0.0:
             self.log.info(
@@ -396,8 +418,6 @@ class AddonLiveBroker:
 
         risk_pct = self._risk_pct(order)
         snap = get_account_snapshot()
-        strategy_tag_raw = order.get("strategy_tag") or order.get("tag") or ""
-        strategy_tag = str(strategy_tag_raw).strip() or None
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}

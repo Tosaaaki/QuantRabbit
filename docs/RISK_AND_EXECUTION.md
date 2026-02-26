@@ -14,6 +14,14 @@
 - `execution/order_manager.py` で LLM 判断を実行し、**ALLOW/REDUCE/BLOCK** を返す。
 - `REDUCE` は units 縮小のみ（増加は禁止）。
 
+### AddonLive 経路の strategy_tag 契約（2026-02-26）
+- `workers/common/addon_live.py` は `strategy_tag` を必須で解決し、
+  `order -> intent -> meta -> worker_id` の順で補完する。
+- `strategy_tag` を解決できない注文は送信前に skip し、
+  `missing_strategy_tag` 注文を `order_manager` へ流さない。
+- `entry_thesis.strategy_tag` と `client_order_id` は同一戦略タグ由来で揃える
+  （EXITルーティング、監査、集計整合性の維持）。
+
 ### Forecast 段階導入（2026-02-25）
 - forecast 強化パラメータは、いきなり全戦略へ適用せず
   `FORECAST_GATE_STRATEGY_ALLOWLIST` で対象を限定して段階導入する。

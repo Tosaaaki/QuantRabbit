@@ -6489,6 +6489,22 @@
   - 「損失源を止める」と「勝ち時間へ資本集中」を同時に実施し、
     `+2000円/h` 到達のための入口品質とサイズ効率を優先する。
 
+### 2026-02-26（追記）AddonLive 経路の `strategy_tag` 欠損を恒久修正
+
+- 背景:
+  - `workers/common/addon_live.py` で、解決済みの `strategy_tag` を
+    後段で `order.strategy_tag/order.tag` のみで再代入して欠損させる経路があった。
+  - 欠損時は `entry_thesis.strategy_tag` と `client_order_id` の戦略識別が崩れ、
+    `missing_strategy_tag` 系の拒否/監査断絶につながる。
+- 変更:
+  - `strategy_tag` 解決順を `order -> intent -> meta -> worker_id` に統一し、
+    一度解決した値を再上書きしないよう修正。
+  - 解決不能な注文は送信前に skip して、欠損注文を order_manager へ流さない。
+  - 回帰テスト `tests/addons/test_addon_live_broker_strategy_tag.py` を追加。
+- 意図:
+  - AddonLive でも V2 契約（`strategy_tag` 必須）を担保し、
+    ENTRY/EXIT/監査の戦略整合性を維持する。
+
 ### 2026-02-26（追記）`allow_hours` に soft-mode を追加し「停止」を恒久回避
 
 - 背景（VM実測, UTC 2026-02-26 00:50〜01:10）:
