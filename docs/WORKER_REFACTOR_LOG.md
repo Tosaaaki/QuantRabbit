@@ -7442,6 +7442,11 @@
     - B/C forecast しきい値を引き上げ:
       - `B edge=0.72 / expected_pips_min=0.24 / target_reach_min=0.34`
       - `C edge=0.74 / expected_pips_min=0.24 / target_reach_min=0.34`
+  - `ops/env/quant-v2-runtime.env`
+    - worker runtime の forecast 設定も order-manager と同値へ統一:
+      - `FORECAST_GATE_STRATEGY_ALLOWLIST` に `scalp_ping_5s_b_live` を追加
+      - `B edge=0.72 / expected_pips_min=0.24 / target_reach_min=0.34`
+      - `C edge=0.74 / expected_pips_min=0.24 / target_reach_min=0.34`
   - `systemd/quant-scalp-ping-5s-b.service`
     - unit override も `PERF_GUARD_MODE=reduce` へ統一
     - `BASE_ENTRY_UNITS=520`, `MAX_UNITS=900` を固定

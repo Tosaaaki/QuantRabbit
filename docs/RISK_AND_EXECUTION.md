@@ -73,6 +73,8 @@
   - `C`: `ENABLED=1`, `BASE_ENTRY_UNITS=260`, `MAX_UNITS=420`
   - `C`: `PERF_GUARD_MODE=reduce`
   - `FORECAST_GATE_STRATEGY_ALLOWLIST` に `scalp_ping_5s_b_live` を追加し、B の forecast preflight を実効化。
+  - `quant-v2-runtime` 側の `FORECAST_GATE_*_SCALP_PING_5S_{B,C}_LIVE` もしきい値を同値化し、
+    worker runtime と order-manager preflight の判定差を縮小。
 
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
