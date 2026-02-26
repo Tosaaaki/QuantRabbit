@@ -155,7 +155,8 @@ Improvement:
    - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.58`（from `0.42`）
    - `SIDE_BIAS_SCALE_GAIN/FLOOR=0.35/0.28`（from `0.50/0.18`）
 3. C の無約定解消（停止ではなく両方向縮小運転）:
-   - `SCALP_PING_5S_C_SIDE_FILTER=`（from `sell`）
+   - `SCALP_PING_5S_C_SIDE_FILTER=none`（from `sell`）
+   - `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1`
    - `SCALP_PING_5S_C_MIN_UNITS=1`（from `5`）
    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=1`（from `5`）
    - `SHORT/LONG_MOMENTUM_TRIGGER_PIPS=0.08/0.18`（from `0.10/0.10`）
