@@ -1127,6 +1127,8 @@
     no-stop 向けに `PERF_GUARD_FAILFAST_*` を soft 警告側へ再調整。
   - それでも `perf_block` が連発したため、B/M1 は `PERF_GUARD_ENABLED=0`（prefix: `SCALP_PING_5S_B`, `M1SCALP`）で hard reject ループを解除。
   - 同値は `quant-v2-runtime.env` にも置き、worker local `order_manager` 経路へ確実に反映する。
+  - 24h 実損で B/C とも long 側の負け寄与が卓越したため、
+    `SCALP_PING_5S_B_SIDE_FILTER=sell`, `SCALP_PING_5S_C_SIDE_FILTER=sell` を適用して方向逆風を遮断。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
     `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。

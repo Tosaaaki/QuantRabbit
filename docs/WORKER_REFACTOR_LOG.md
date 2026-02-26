@@ -7812,3 +7812,18 @@
   - 時間帯停止やサービス停止を使わず、B/M1 の hard reject を外して常時稼働の注文通過率を回復。
   - worker local `order_manager` 経路でも同値を使うため、runtime env 側を正本として同期する。
   - manual 併走時の追加ブロックは `manual_margin_guard` ではなく既存の `margin_usage_projected_cap` 系で管理する。
+
+### 2026-02-26（追記）B/C 方向バイアス是正（long 逆風遮断）
+
+- 背景（VM実測, 2026-02-26 11:45 UTC, trades.db 24h）:
+  - `scalp_ping_5s_c_live`: long `347/-5380.5 JPY`, short `75/-88.8 JPY`
+  - `scalp_ping_5s_b_live`: long `128/-1300.8 JPY`, short `26/-7.7 JPY`
+  - 損失の大半が long 側に偏在。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=sell`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=sell`
+- 意図:
+  - no-stop を維持したまま、実損優位側（long）を止めて short 側へ方向適応する。
+  - 時間帯封鎖ではなく、戦略ローカルの方向制御で損失勾配を即座に下げる。

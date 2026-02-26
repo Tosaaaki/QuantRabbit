@@ -77,6 +77,38 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 11:45 UTC / 2026-02-26 20:45 JST - B/C の side 偏りを実損で是正（long 逆風遮断）
+Period:
+- 24h: `datetime(close_time) >= now - 24 hours`
+- Source: VM `/home/tossaki/QuantRabbit/logs/trades.db`
+
+Fact:
+- `scalp_ping_5s_c_live`:
+  - long `347 trades / -5380.5 JPY / -353.4 pips`
+  - short `75 trades / -88.8 JPY / -52.2 pips`
+- `scalp_ping_5s_b_live`:
+  - long `128 trades / -1300.8 JPY / -141.3 pips`
+  - short `26 trades / -7.7 JPY / -0.5 pips`
+- 直近損失の主因は B/C ともに long 側へ偏在。
+
+Failure Cause:
+1. no-stop 継続を優先して `SIDE_FILTER` を空に戻したことで、逆風側（long）の負けが継続拡大。
+2. B/C の短期ローカル判定は機能しているが、方向バイアスの切替が遅く実損に追随できていない。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_SIDE_FILTER=sell`
+2. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_SIDE_FILTER=sell`
+
+Verification:
+1. 反映後 30m で `trades.db` の B/C long 新規クローズ件数が 0 であること。
+2. B/C の short 側 `avg_lose_jpy` と `total_jpy` が long 全開時より改善すること。
+3. `orders.db` の `preflight_start -> probability_scaled/filled` の遷移を継続確認し、`perf_block` 再発がないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-26 11:30 UTC / 2026-02-26 20:30 JST - no-stop阻害点を `perf_block` + `manual_margin_pressure` に限定して除去
 Period:
 - 15m: `datetime(ts) >= now - 15 minutes`
