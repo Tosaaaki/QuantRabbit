@@ -7602,11 +7602,15 @@
     - `SCALP_PING_5S_B_ALLOW_HOURS_JST=17,18`（16/23を除外）
     - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=1800`
     - `SCALP_PING_5S_B_MAX_UNITS=3600`
+    - local fallback 経路の整合:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_ALLOW_HOURS_JST=19,22`（18を除外）
     - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=400`
     - `SCALP_PING_5S_C_MAX_UNITS=900`
     - `SCALP_PING_5S_C_CONF_FLOOR=82`
+    - local fallback 経路の整合:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.76`
   - `ops/env/quant-order-manager.env`
     - B通過率は利益時間帯での約定回復を優先しやや緩和:
       - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
@@ -7620,6 +7624,10 @@
       - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_C_LIVE=0.42`
   - `ops/env/quant-micro-compressionrevert.env`
     - `MICRO_MULTI_ENABLED=0`（当日/14日マイナス寄与を遮断）
+  - `ops/env/quant-v2-runtime.env`
+    - worker側 forecast gate も order-manager と同値化:
+      - `B edge=0.70 / expected_pips_min=0.20 / target_reach_min=0.30`
+      - `C edge=0.78 / expected_pips_min=0.32 / target_reach_min=0.42`
   - `ops/env/quant-micro-vwaprevert.env`
     - `MICRO_MULTI_BASE_UNITS=42000`（勝ち寄与のサイズ増）
   - `ops/env/quant-micro-rangebreak.env`

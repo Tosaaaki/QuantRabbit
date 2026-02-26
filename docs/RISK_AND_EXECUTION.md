@@ -996,15 +996,21 @@
   - `scalp_ping_5s_b`
     - 稼働時間を `JST 17,18` に限定（`ALLOW_HOURS_JST=17,18`）
     - `BASE_ENTRY_UNITS=1800`, `MAX_UNITS=3600`
+    - local fallback 整合: `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...B_LIVE=0.64`
     - order-manager 側は通過閾値を `0.64` へ緩和し、利益時間帯で約定回復を優先。
   - `scalp_ping_5s_c`
     - 稼働時間を `JST 19,22` に限定（`ALLOW_HOURS_JST=19,22`）
     - `BASE_ENTRY_UNITS=400`, `MAX_UNITS=900`, `CONF_FLOOR=82`
+    - local fallback 整合: `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...C_LIVE=0.76`
     - order-manager 側は低EV通過を厳格化:
       - `REJECT_UNDER=0.76`
       - `EDGE_BLOCK=0.78`
       - `EXPECTED_PIPS_MIN=0.32`
       - `TARGET_REACH_MIN=0.42`
+- 共通runtime整合:
+  - `ops/env/quant-v2-runtime.env` の forecast gate も同値へ更新。
+    - B: `0.70 / 0.20 / 0.30`
+    - C: `0.78 / 0.32 / 0.42`
 - micro配分:
   - `MicroCompressionRevert` 専用workerは `MICRO_MULTI_ENABLED=0` で停止。
   - `MicroVWAPRevert` / `MicroRangeBreak` / `MicroTrendRetest` / `MomentumBurstMicro` は
