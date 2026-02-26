@@ -7298,13 +7298,25 @@
     - B は `STOP_LOSS_ORDER` が主因（`1912件 / -4387.9pips`）
     - C は `MARKET_ORDER_TRADE_CLOSE` が主因（`778件 / -964.8pips`）
 - 変更:
-  - `ops/env/scalp_ping_5s_b.env`
-    - `SCALP_PING_5S_B_SIDE_FILTER=buy` を追加（B short を停止）
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_ENABLED=0` を維持し、一時停止方針を明記
 - 意図:
   - 負けの主要ドライバ（B short / C全体）を先に隔離し、
     期待値が確認できる導線だけで再検証する。
+
+### 2026-02-26（追記）固定サイド制約の撤回（市況依存へ統一）
+
+- 背景:
+  - 固定 `long-only/short-only` は相場変化に追従しづらく、
+    恒常運用の方針として不適切。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER` を削除。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER` を削除。
+- 方針:
+  - 方向判定は `PERF_GUARD_SETUP (hour×side×regime)` +
+    `DIRECTION_BIAS` + `HORIZON_BIAS` で動的に選別する。
 
 ### 2026-02-26（追記）`scalp_ping_5s_c_live` を緊急停止 + `close_reject_no_negative` 欠損reason救済
 

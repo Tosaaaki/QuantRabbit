@@ -886,12 +886,23 @@
     - `23: n=125, EV=-8.1888pips`
     - `15: n=47, EV=-7.2915pips`
 - 変更値:
-  - `ops/env/scalp_ping_5s_b.env`
-    - `SCALP_PING_5S_B_SIDE_FILTER=buy`
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_ENABLED=0`（再検証まで一時停止）
 - 意図:
   - 負けの主因フローを先に隔離し、エッジ確認済み導線へ資源を戻す。
+
+### サイド固定撤回（2026-02-26 追加）
+- 背景:
+  - 固定 `long-only/short-only` は応急停止としては有効でも、
+    市況依存の運用設計としては不十分。
+- 変更値:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER` を削除。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER` を削除（C停止解除時の固定方向化を防止）。
+- 以後の方針:
+  - 方向選別は `PERF_GUARD_SETUP`（`USE_HOUR=1/USE_DIRECTION=1/USE_REGIME=1`）、
+    `DIRECTION_BIAS`、`HORIZON_BIAS` で動的に行う。
 
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
