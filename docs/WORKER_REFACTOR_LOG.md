@@ -6663,3 +6663,28 @@
   - dashboard の毎リクエストで発生していた
     「外部secret往復」「大きなDB走査＋JSON parse」をTTL内で再利用し、
     UI更新の体感遅延をさらに圧縮する。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` tail-loss 抑制（大口約定の縮小 + 確率ゲート強化）
+
+- 背景（VM 実測, UTC 05:15-06:15）:
+  - `trades.db` で `scalp_ping_5s_c_live` は勝率が高い一方、
+    `MARKET_ORDER_TRADE_CLOSE` の大口（7k〜8k units）が
+    `-6〜-9 pips` を複数回出し、1時間集計がマイナスに傾いた。
+  - `orders.db` では `entry_probability_reject` の記録後でも
+    同一 `client_order_id` が最終 `filled` になるケースがあり、
+    低品質帯の通過余地が残っていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_MAX_ACTIVE_TRADES=8 -> 5`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=6000 -> 2200`
+    - `SCALP_PING_5S_C_MAX_UNITS=15000 -> 4500`
+    - `SCALP_PING_5S_C_SL_BASE_PIPS=2.4 -> 1.3`
+    - `SCALP_PING_5S_C_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=1.9 -> 1.2`
+    - `SCALP_PING_5S_C_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=1.5 -> 1.0`
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.62 -> 0.70`
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_FLOOR=0.48 -> 0.56`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.60 -> 0.70`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=0.80 -> 0.55`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C_LIVE=1.15 -> 1.00`
+    - `ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY_STRATEGY_SCALP_PING_5S_C_LIVE=0.65 -> 0.90`
