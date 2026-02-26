@@ -200,3 +200,14 @@ def test_recommendations_include_stuck_block_signal(tmp_path: Path) -> None:
     assert stuck_rec is not None
     assert stuck_rec["action"] == "block"
     assert float(stuck_rec["stuck_rate"]) >= 0.5
+
+
+def test_main_skips_when_market_open(monkeypatch) -> None:
+    monkeypatch.setenv("COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN", "1")
+    monkeypatch.setattr(worker, "is_market_open", lambda: True)
+
+    def _fail_parse_args():
+        raise AssertionError("parse_args should not be called when market-open skip is active")
+
+    monkeypatch.setattr(worker, "parse_args", _fail_parse_args)
+    assert worker.main() == 0

@@ -55,6 +55,7 @@ from workers.common import (
     brain,
     forecast_gate,
     pattern_gate,
+    slo_guard,
     strategy_control,
 )
 from workers.common.quality_gate import current_regime
@@ -8136,6 +8137,54 @@ async def market_order(
             tags={"pocket": pocket, "strategy": strategy_tag, "action": "entry"},
         )
         return None
+
+    if not reduce_only and pocket != "manual":
+        slo_decision = slo_guard.decide(pocket=pocket, strategy_tag=strategy_tag)
+        if not slo_decision.allowed:
+            reason = str(slo_decision.reason or "slo_block")
+            note = f"slo_block:{reason}"
+            _console_order_log(
+                "OPEN_REJECT",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=note,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="slo_block",
+                attempt=0,
+                request_payload={
+                    "reason": reason,
+                    "slo_sample": int(slo_decision.sample),
+                    "data_lag_latest_ms": slo_decision.data_lag_latest_ms,
+                    "data_lag_p95_ms": slo_decision.data_lag_p95_ms,
+                    "decision_latency_latest_ms": slo_decision.decision_latency_latest_ms,
+                    "decision_latency_p95_ms": slo_decision.decision_latency_p95_ms,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "order_slo_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason,
+                },
+            )
+            return None
 
     if not reduce_only and pocket != "manual":
         policy_allowed, policy_reason, policy_details = _policy_gate_allows_entry(

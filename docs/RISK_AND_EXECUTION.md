@@ -939,6 +939,34 @@
   - 方向選別は `PERF_GUARD_SETUP`（`USE_HOUR=1/USE_DIRECTION=1/USE_REGIME=1`）、
     `DIRECTION_BIAS`、`HORIZON_BIAS` で動的に行う。
 
+### order preflight SLO ガード（2026-02-26）
+- 目的:
+  - 実行遅延（`data_lag_ms` / `decision_latency_ms`）が悪化した局面で新規 entry を止め、
+    `MARKET_ORDER_MARGIN_CLOSEOUT` の連鎖を抑える。
+- 実装:
+  - `execution/order_manager.py` preflight に `workers/common/slo_guard.py` を追加。
+  - 判定は `metrics.db` の mode=`strategy_control` を対象に、latest + p95 を評価する。
+  - reject 時は `status=slo_block` で orders 監査に残し、
+    `order_slo_block` metric を必須送信する。
+- 運用キー（`ops/env/quant-order-manager.env`）:
+  - `ORDER_SLO_GUARD_ENABLED=1`
+  - `ORDER_SLO_GUARD_APPLY_POCKETS=scalp_fast,scalp,micro`
+  - `ORDER_SLO_GUARD_LOOKBACK_SEC=180`
+  - `ORDER_SLO_GUARD_SAMPLE_MIN=8`
+  - `ORDER_SLO_GUARD_DATA_LAG_MAX_MS=3500`
+  - `ORDER_SLO_GUARD_DECISION_LATENCY_MAX_MS=2500`
+  - `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=5000`
+  - `ORDER_SLO_GUARD_DECISION_LATENCY_P95_MAX_MS=4000`
+
+### 市場時間中の重処理スキップ（2026-02-26）
+- `analysis/replay_quality_gate_worker.py`:
+  - `REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN=1` のとき market open 中は skip。
+- `analysis/trade_counterfactual_worker.py`:
+  - `COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN=1` のとき market open 中は skip。
+- 意図:
+  - replay/counterfactual の重処理と実トレード導線（market-data / strategy / order-manager）
+    の資源競合を避け、preflight latency 劣化を抑える。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 

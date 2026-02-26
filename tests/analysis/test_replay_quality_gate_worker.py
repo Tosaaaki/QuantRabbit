@@ -156,6 +156,8 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
         auto_improve_counterfactual_out_dir=tmp_path / "cf_out",
         auto_improve_reentry_config_path=reentry_path,
         auto_improve_apply_reentry=True,
+        auto_improve_min_apply_interval_sec=0,
+        auto_improve_apply_state_path=tmp_path / "replay_auto_improve_state.json",
     )
 
     def fake_runner(_cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -244,3 +246,15 @@ def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:
     assert auto.get("reason") == "reentry_apply_cooldown"
     payload = worker._load_yaml_dict(reentry_path)
     assert payload.get("strategies", {}).get("session_open", {}).get("block_jst_hours") == [1]
+
+
+def test_main_skips_when_market_open(monkeypatch) -> None:
+    monkeypatch.setenv("REPLAY_QUALITY_GATE_ENABLED", "1")
+    monkeypatch.setenv("REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN", "1")
+    monkeypatch.setattr(worker, "is_market_open", lambda: True)
+
+    def _fail_parse_args():
+        raise AssertionError("parse_args should not be called when market-open skip is active")
+
+    monkeypatch.setattr(worker, "parse_args", _fail_parse_args)
+    assert worker.main() == 0

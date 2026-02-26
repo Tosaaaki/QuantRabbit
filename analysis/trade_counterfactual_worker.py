@@ -21,6 +21,8 @@ import sqlite3
 import tempfile
 from typing import Any
 
+from utils.market_hours import is_market_open
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,6 +38,13 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except Exception:
         return float(default)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parse_csv(value: Any) -> tuple[str, ...]:
@@ -1110,6 +1119,9 @@ def run_once(cfg: ReviewConfig) -> dict[str, Any]:
 
 
 def main() -> int:
+    if _env_bool("COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN", False) and is_market_open():
+        print("[trade-counterfactual-worker] skipped: market_open")
+        return 0
     args = parse_args()
     cfg = _build_config(args)
     report = run_once(cfg)

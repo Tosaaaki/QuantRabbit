@@ -7455,3 +7455,35 @@
   - 「止める」のではなく、`B` は低EV通過率を下げつつ縮小連続運転に寄せる。
   - `C` は小ロット再稼働で、勝ちスパイク再現余地を残しながら尾損失を抑える。
   - forecast gate allowlist の B 欠落を解消し、preflight の実効性を回復する。
+
+### 2026-02-26（追記）order preflight SLO ガード + 分析ワーカーの市場時間スキップ
+
+- 背景（VM運用観測）:
+  - `decision_latency_ms` / `data_lag_ms` の悪化局面と、`MARKET_ORDER_MARGIN_CLOSEOUT` の連動が確認された。
+  - replay/counterfactual の重い処理が市場時間中に稼働し、実行遅延と競合する時間帯があった。
+- 変更:
+  - `workers/common/slo_guard.py` を新設。
+    - `metrics.db` の `data_lag_ms` / `decision_latency_ms`（mode=`strategy_control`）を
+      latest + p95 で評価し、閾値超過時は entry を拒否。
+    - キャッシュTTL (`ORDER_SLO_GUARD_TTL_SEC`) 付きで preflight 負荷を抑制。
+  - `execution/order_manager.py`
+    - preflight に `slo_guard.decide()` を追加。
+    - 拒否時は `status=slo_block`、`order_slo_block` metric、`OPEN_REJECT` ログを必須記録。
+  - `analysis/replay_quality_gate_worker.py`
+    - `REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN=1` のとき market open 中は skip。
+  - `analysis/trade_counterfactual_worker.py`
+    - `COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN=1` のとき market open 中は skip。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_SLO_GUARD_*` を有効化（lookback 180s, sample min 8, lag/latencyのlatest+p95しきい値）。
+    - closeout hard を strategy別に前倒し:
+      - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_* = 6 / 2 / 0.20`
+      - `SCALP_PING_5S_D_PERF_GUARD_MARGIN_CLOSEOUT_HARD_* = 6 / 1 / 0.12`
+      - `PERF_GUARD_MARGIN_CLOSEOUT_HARD_*_STRATEGY_MICROPULLBACKEMA = 4 / 1 / 0.20`
+  - `ops/env/quant-replay-quality-gate.env`
+    - `REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN=1`
+  - `ops/env/quant-trade-counterfactual.env`
+    - `COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN=1`
+- テスト:
+  - `tests/workers/test_slo_guard.py` 新規追加（disable/scope/latest/p95/healthy）。
+  - `tests/analysis/test_replay_quality_gate_worker.py` の auto-improve 適用テストを
+    クールダウン状態に依存しない形へ補強。

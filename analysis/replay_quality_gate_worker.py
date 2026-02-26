@@ -21,6 +21,8 @@ import sys
 import tempfile
 from typing import Any, Callable
 
+from utils.market_hours import is_market_open
+
 try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - optional dependency during local tests
@@ -866,6 +868,9 @@ def run_once(
 def main() -> int:
     if not _env_bool("REPLAY_QUALITY_GATE_ENABLED", True):
         print("[replay-quality-gate-worker] skipped: REPLAY_QUALITY_GATE_ENABLED=0")
+        return 0
+    if _env_bool("REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN", False) and is_market_open():
+        print("[replay-quality-gate-worker] skipped: market_open")
         return 0
     args = parse_args()
     cfg = _build_config_from_args(args)
