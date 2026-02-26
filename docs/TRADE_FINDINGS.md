@@ -110,6 +110,51 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 11:12 UTC / 2026-02-26 20:12 JST - no-stop 維持のまま「負け源圧縮 + 勝ち源増量」へ再配分
+Period:
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/logs/trades.db`
+- Window:
+  - 拒否分析: `datetime(ts) >= now - 30 minutes`
+  - 損益分析: `datetime(close_time) >= now - 7 days`（補助で 6h）
+
+Fact:
+- 直近30分の拒否内訳:
+  - `entry_probability_reject=21`（全件 `rangefader`）
+  - `preflight_start=7`, `probability_scaled=3`, `manual_margin_pressure=3`, `perf_block=1`
+- `rangefader` 拒否理由は `entry_probability_below_min_units` に収束。
+  - 直近サンプルの `entry_probability` は約 `0.40`
+  - 確率スケール後ユニットが pocket 最小ユニット未満で落ちる状態。
+- 7日損益（strategy別、主なもの）:
+  - `MomentumBurst`: `+1613.7 JPY`（n=7）
+  - `MicroRangeBreak`: `+662.3 JPY`（n=32, PF=3.05）
+  - `scalp_ping_5s_b_live`: `-9475.8 JPY`（n=2422, PF=0.43）
+  - `scalp_ping_5s_c_live`: `-2735.5 JPY`（n=894, PF=0.86）
+  - `M1Scalper-M1`: `-1627.3 JPY`（n=284, PF=0.64）
+- 直近6hでも `scalp_ping_5s_c_live` は `-1859.9 JPY`（n=125）。
+
+Failure Cause:
+1. 発注経路は稼働しているが、`rangefader` が最小ユニット条件で連続 reject され、約定機会が失われた。
+2. B/C と M1 が数量面で重く、no-stop 運用時に損失寄与が勝ち寄与を上回る配分になっていた。
+
+Improvement:
+1. `RangeFader` の通過回復（停止ではなく通過条件調整）:
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=300` を `quant-order-manager` に追加。
+2. 負け源の即時圧縮（B/C/M1 を継続稼働のまま減速）:
+   - B: `BASE 1800->900`, `MAX 3600->1800`, `MAX_ORDERS_PER_MINUTE 6->4`, `CONF_FLOOR 74->78`
+   - C: `BASE 400->220`, `MAX 900->500`, `MAX_ORDERS_PER_MINUTE 2->1`, `CONF_FLOOR 82->86`
+   - M1: `BASE 10000->6000`, `MAX_OPEN_TRADES 2->1`
+3. 勝ち源の増量:
+   - `MicroRangeBreak` と `MomentumBurstMicro` の `MICRO_MULTI_BASE_UNITS 42000->52000`
+   - `RangeFader` は過大化を避けるため `RANGEFADER_BASE_UNITS 13000->11000`
+
+Verification:
+1. 反映後30分で `rangefader` の `entry_probability_below_min_units` が減少し、`submit_attempt/filled` が発生すること。
+2. 反映後2時間で B/C/M1 の `realized_pl` ドローダウン勾配が低下すること。
+3. 同時に `MicroRangeBreak` / `MomentumBurst` の filled 数と `realized_pl` を増分監視すること。
+
+Status:
+- in_progress
+
 ## 2026-02-26 10:31 UTC / 2026-02-26 19:31 JST - Bがhard failfastで全面停止して約定不足
 Period:
 - `datetime(ts) >= now - 30 minutes`

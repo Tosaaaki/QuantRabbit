@@ -1118,6 +1118,17 @@
   - guard を外さず、`manual_margin_pressure` の全面停止を避けて小ロットを通す。
   - closeout近傍は引き続き拒否し、`margin_usage_projected_cap` と併用して破綻側を防ぐ。
 
+### no-stop 配分再調整（2026-02-26）
+- 目的: サービス停止なしで、負け寄与戦略のサイズを即圧縮し、勝ち寄与戦略へ配分を寄せる。
+- 実装:
+  - `scalp_ping_5s_b/c` と `M1Scalper` は `base/max units` と同時保有・発注頻度を縮小。
+  - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
+  - `RangeFader` は `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=300` を追加し、
+    `entry_probability_below_min_units` での連続 reject を抑制。
+- 監視指標:
+  - `orders.db`: `entry_probability_reject`（rangefader の内訳）と `filled` 増減。
+  - `trades.db`: `realized_pl` の strategy 別増分（B/C/M1 の下振れ勾配、MicroRangeBreak/MomentumBurst の上振れ確認）。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

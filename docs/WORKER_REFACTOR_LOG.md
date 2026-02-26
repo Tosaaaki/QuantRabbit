@@ -7732,3 +7732,36 @@
 - 意図:
   - guard を無効化せず、near-closeout を避けながら小ロットの再開余地を残す。
   - 停止ではなく縮小・継続運用（no-stop）を維持する。
+
+### 2026-02-26（追記）no-stop 再配分: B/C/M1 圧縮 + RangeFader 通過回復 + Micro勝ち源増量
+
+- 背景（VM実測, 2026-02-26 11:12 UTC）:
+  - 直近30分の `orders.db` で `entry_probability_reject=21` は全件 `rangefader`。
+  - reject reason は `entry_probability_below_min_units`（`entry_probability≈0.40`）に集中。
+  - 7日損益は `MicroRangeBreak +662.3 (PF 3.05)`、`MomentumBurst +1613.7` に対し、
+    `scalp_ping_5s_b_live -9475.8`, `scalp_ping_5s_c_live -2735.5`, `M1Scalper-M1 -1627.3`。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=300` を追加（rangefader の below-min reject を減らす）
+  - `ops/env/scalp_ping_5s_b.env`
+    - `BASE_ENTRY_UNITS=900`（from `1800`）
+    - `MAX_UNITS=1800`（from `3600`）
+    - `MAX_ORDERS_PER_MINUTE=4`（from `6`）
+    - `CONF_FLOOR=78`（from `74`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `BASE_ENTRY_UNITS=220`（from `400`）
+    - `MAX_UNITS=500`（from `900`）
+    - `MAX_ORDERS_PER_MINUTE=1`（from `2`）
+    - `CONF_FLOOR=86`（from `82`）
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_BASE_UNITS=6000`（from `10000`）
+    - `M1SCALP_MAX_OPEN_TRADES=1`（from `2`）
+  - `ops/env/quant-micro-rangebreak.env`
+    - `MICRO_MULTI_BASE_UNITS=52000`（from `42000`）
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_BASE_UNITS=52000`（from `42000`）
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_BASE_UNITS=11000`（from `13000`）
+- 意図:
+  - 全停止なしで負け源のサイズを抑え、勝ち寄与が出ている micro へ配分を寄せる。
+  - `rangefader` は reject 連打を解消して「動いて勝てるか」を再評価可能な状態に戻す。
