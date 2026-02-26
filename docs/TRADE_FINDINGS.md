@@ -42,6 +42,85 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-26 12:02 UTC / 2026-02-26 21:02 JST - B/C sell限定運用で `units_below_min` が主因化し、発注ゼロ化したため最小ロット閾値を緩和
+Period:
+- Snapshot: `2026-02-26 11:59:57` ～ `12:01:39` UTC（`20:59:57` ～ `21:01:39` JST）
+- Source: VM `journalctl -u quant-scalp-ping-5s-{b,c}.service`, `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_{b,c}.env`
+
+Fact:
+- `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` は `11:59:57 UTC` に再起動済み（active/running）。
+- しかし `orders.db` は `ts >= 2026-02-26T11:59:57Z` で `0件`（新規発注フロー未到達）。
+- ワーカーログで共通して以下を確認:
+  - `SCALP_PING_5S_{B,C}_SIDE_FILTER=sell` により long 候補が `side_filter_block`。
+  - short 候補は `units_below_min` が発生（B: `10件`, C: `8件`）。
+  - `RISK multiplier` は `mult=0.40` で推移し、縮小後ユニットが閾値未満へ落ちやすい。
+
+Failure Cause:
+1. long を遮断する side filter 自体は意図どおりだが、short 側の最終ユニットが `min_units=30` を下回り、注文生成まで到達できない。
+2. strategy 側 min units と order 側 min units の閾値差（Cは 30 固定）が、縮小運転時の失効を助長している。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_MIN_UNITS: 30 -> 20`
+2. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_MIN_UNITS: 30 -> 20`
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C_LIVE: 30 -> 20`
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C: 30 -> 20`
+
+Verification:
+1. 反映後30分で `orders.db` に `submit_attempt` / `filled` が B/C で再出現すること。
+2. `journalctl -u quant-scalp-ping-5s-{b,c}.service` の `units_below_min` 件数が減少すること。
+3. `orders.db` で `manual_margin_pressure` / `slo_block` の再悪化がないこと。
+
+Status:
+- in_progress
+
+## 2026-02-26 11:50 UTC / 2026-02-26 20:50 JST - PDCA導線の実運用監査（稼働中だが改善ループに断点あり）
+Period:
+- Snapshot: `2026-02-26 11:39` ～ `11:50` UTC（`20:39` ～ `20:50` JST）
+- Source: VM `systemd`, `journalctl`, `/home/tossaki/QuantRabbit/logs/{orders,trades,metrics}.db`, `/home/tossaki/QuantRabbit/logs/*_latest.json`, OANDA account summary/open positions
+
+Fact:
+- V2主導線は稼働中:
+  - `quant-market-data-feed`, `quant-strategy-control`, `quant-order-manager`, `quant-position-manager`, `quant-forecast` は `active(running)`。
+  - `quantrabbit.service` は存在せず、VMリポジトリは `HEAD == origin/main == 0c0caae2c05295cbccd7113454fb24cb7f8afda3`。
+- 分析/改善タイマーは起動:
+  - `quant-pattern-book`, `quant-dynamic-alloc`, `quant-policy-guard`, `quant-replay-quality-gate`, `quant-trade-counterfactual`, `quant-forecast-improvement-audit` が schedule され実行履歴あり。
+- ただし改善ループは市場オープン中に停止:
+  - `quant-replay-quality-gate.service` は `skipped: market_open` を連続出力。
+  - `quant-trade-counterfactual.service` も `skipped: market_open` を連続出力。
+- 発注導線の品質劣化:
+  - `quant-order-manager` 直近1時間で `database is locked` が `67` 回。
+- 24hの orders 状態:
+  - `preflight_start=18629`, `submit_attempt=1221`, `filled=1202`, `perf_block=16971`, `entry_probability_reject=1101`。
+- 監査ログ差分:
+  - `logs/ops_v2_audit_latest.json` で `POLICY_HEURISTIC_PERF_BLOCK_ENABLED expected=0 actual=1` の `warn`。
+
+Failure Cause:
+1. `replay` と `counterfactual` が market open 時に止まるため、改善施策の入力が日中に更新されない。
+2. replay quality gate の対象が `TrendMA/BB_RSI` 中心で、現行の主要 scalp/micro 群を十分に監査できていない。
+3. auto-improve が `block_jst_hours` を `worker_reentry.yaml` へ自動反映する設定で、方針「停止より改善優先」と衝突しやすい。
+4. `orders.db` lock 競合が残り、preflight->submit の実効通過率を毀損している。
+5. pattern gate の実効キー (`ORDER_MANAGER_PATTERN_GATE_ENABLED`) と運用キー (`ORDER_PATTERN_GATE_ENABLED`) が分岐し、設定意図と実動作がずれる余地がある。
+
+Improvement:
+1. `orders.db` 競合の再抑制を最優先（busy timeout/retry/lock制御と write 経路の再点検）。
+2. `REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN=0` と `COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN=0` へ変更し、改善ループを 24/7 化。
+3. `config/replay_quality_gate_main.yaml` の `workers` を現行稼働戦略へ拡張し、PDCA対象を本番導線へ合わせる。
+4. `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_REENTRY=0` にして、自動時間帯ブロック反映を停止（提案のみ運用）。
+5. pattern gate の env キーを一本化し、order-manager 側の参照名に統一。
+6. `POLICY_HEURISTIC_PERF_BLOCK_ENABLED` の期待値と実運用値を監査基準に合わせる。
+
+Verification:
+1. `journalctl -u quant-order-manager` の `database is locked` が 1h あたり 0 件へ収束。
+2. `replay_quality_gate_latest.json` と `trade_counterfactual_latest.json` の `generated_at` が市場オープン中も更新される。
+3. replay report の対象戦略に、稼働中 scalp/micro 群が含まれる。
+4. `worker_reentry.yaml` への自動 `block_jst_hours` 書き換えが停止し、改善提案だけが残る。
+5. `orders.db` の `preflight_start -> submit_attempt -> filled` の通過率が改善する。
+
+Status:
+- in_progress
+
 ## 2026-02-26 10:12 UTC / 2026-02-26 19:12 JST - 停止なし・時間帯停止なし運用へ再構成
 Period:
 - Snapshot: `2026-02-26 09:52` ～ `10:12` UTC（`18:52` ～ `19:12` JST）
@@ -73,6 +152,43 @@ Verification:
 2. `orders.db` で `close_reject_no_negative` が `scalp_ping_5s_c_live` で減少すること。
 3. 24hで `B/C` の `jpy PF` が改善方向（`>=1.0` へ接近）すること。
 4. `worker_reentry` 由来の時間帯ブロック理由で待機しないこと。
+
+Status:
+- in_progress
+
+## 2026-02-26 11:50 UTC / 2026-02-26 20:50 JST - `slo_block(data_lag_p95_exceeded)` を緩和し、M1配分を引き上げ
+Period:
+- 30m: `datetime(ts) >= now - 30 minutes`
+- 24h: `datetime(close_time) >= now - 24 hours`
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/logs/trades.db`
+
+Fact:
+- 30m `orders.db`:
+  - `preflight_start=110`, `probability_scaled=33`
+  - `slo_block=10`（latest `2026-02-26T11:45:09Z`）
+  - `manual_margin_pressure=25`（ただし latest `2026-02-26T11:34:06Z` で新規発生停止）
+- `slo_block` の reason は全件 `data_lag_p95_exceeded`。
+  - `data_lag_p95_ms` は `~7152ms`、現行閾値 `5000ms` を超過。
+- 24h損益:
+  - `M1Scalper-M1` は直近で `-3.1 JPY`（ほぼ横ばい、下振れ縮小）
+  - B/C は side_filter=sell 反映後、B/C の `buy` 注文は 0 件。
+
+Failure Cause:
+1. strategy-control 側の data lag p95 スパイクが SLO 閾値を超え、scalp_fast が連続 reject。
+2. M1 は止めずに残しているが、配分が低く利益寄与の伸びが不足。
+
+Improvement:
+1. `ops/env/quant-order-manager.env`
+   - `ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS: 5000 -> 9000`
+2. `ops/env/quant-v2-runtime.env`（worker local `order_manager` 経路）
+   - `ORDER_SLO_GUARD_*` を明示追加し、`ORDER_SLO_GUARD_DATA_LAG_P95_MAX_MS=9000`
+3. `ops/env/quant-m1scalper.env`
+   - `M1SCALP_BASE_UNITS: 3000 -> 4500`
+
+Verification:
+1. 反映後 30m で `slo_block` 最新時刻が更新されないこと（再発停止）。
+2. `orders.db` の `preflight_start -> probability_scaled/filled` の遷移比率が改善すること。
+3. `M1Scalper-M1` の 6h / 24h `realized_pl` が正方向へ改善すること。
 
 Status:
 - in_progress

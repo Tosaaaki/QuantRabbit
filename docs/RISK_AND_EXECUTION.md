@@ -1151,6 +1151,9 @@
   - 24h 実損の下位（B/C）は `BASE/MAX_UNITS` を圧縮し、上位（MomentumBurst/MicroVWAPRevert）は
     `MICRO_MULTI_BASE_UNITS` を増量して利益寄与側へ配分を寄せる。
   - `MicroVWAPRevert` は `MICRO_MULTI_LOOP_INTERVAL_SEC=4.0` へ短縮して、機会検知を増やす。
+  - `MicroVWAPRevert` は breakout 発火閾値（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）を
+    MomentumBurst 相当まで緩和し、約定頻度を引き上げる。
+  - `TickImbalance` は `SCALP_PRECISION_COOLDOWN_SEC=120` に短縮し、連続機会の取りこぼしを減らす。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - 同2戦略の breakout 発火閾値を緩和（`MIN_ADX`, `MIN_RANGE_SCORE`, `MIN_ATR`）し、
     `LOOP_INTERVAL_SEC=3.0` で検知頻度を引き上げる。

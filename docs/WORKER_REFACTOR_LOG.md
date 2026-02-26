@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）B/C sell限定で `units_below_min` が主因化したため、最小ロット閾値を緩和
+
+- 背景（VM実測, 2026-02-26 12:00 UTC / 21:00 JST）:
+  - `quant-scalp-ping-5s-{b,c}.service` 再起動後、`orders.db` は `2026-02-26T11:59:57Z` 以降の新規レコードが 0。
+  - ワーカーログでは `SCALP_PING_5S_{B,C}_SIDE_FILTER=sell` により long が `side_filter_block` で抑制され、
+    short 側は `units_below_min` が多発（B:10件, C:8件）。
+  - 同時に `RISK multiplier` は `mult=0.40` で継続しており、短期縮小ロットが min units 未満へ落ちやすい状態だった。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MIN_UNITS: 30 -> 20`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_MIN_UNITS: 30 -> 20`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C_LIVE: 30 -> 20`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C: 30 -> 20`
+- 意図:
+  - side filter（sell限定）は維持したまま、縮小ロットの失効を減らして
+    `preflight -> submit_attempt -> filled` の遷移を回復する。
+
 ### 2026-02-26（追記）クォート崩れ耐性を `order_manager` で強化（再クォート + 健全性判定）
 
 - 背景（運用課題）:
@@ -7896,3 +7914,19 @@
 - 意図:
   - no-stop を維持しつつ、負け戦略の損失勾配を即時に低下。
   - 勝ち寄与が出ている micro を厚くし、約定1件あたりの期待利益を引き上げる。
+
+### 2026-02-26（追記）勝ち源の発火頻度を引き上げ（VWAPRevert/TickImbalance）
+
+- 背景（VM実測, 2026-02-26 12:05 UTC）:
+  - B/C short-only 反映後、`slo_block`/`manual_margin_pressure` は再発せず、reject 側は沈静化。
+  - ただし直近の注文生成が薄く、利益速度が不足。
+- 変更:
+  - `ops/env/quant-micro-vwaprevert.env`
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_ADX=16.0`（from `20.0`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE=0.34`（from `0.42`）
+    - `MICRO_RANGEBREAK_BREAKOUT_MIN_ATR=0.9`（from `1.2`）
+  - `ops/env/quant-scalp-tick-imbalance.env`
+    - `SCALP_PRECISION_COOLDOWN_SEC=120`（from `180`）
+- 意図:
+  - 勝ち寄与が確認できている戦略の発火条件を緩和し、約定機会を増やす。
+  - 停止なしのまま、利益速度を上げるための「頻度側」チューニングを優先する。
