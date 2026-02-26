@@ -63,6 +63,31 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
 
     logger = logging.getLogger(__name__)
 
+    # Fail closed for B variant direction guard:
+    # if side filter is missing/invalid, enforce sell-only so the worker does not
+    # drift into unintended long entries on stale env composition.
+    mapped_side_filter_key = f"{base_prefix}_SIDE_FILTER"
+    allowed_side_filters = {
+        "sell",
+        "short",
+        "open_short",
+        "buy",
+        "long",
+        "open_long",
+    }
+    mapped_side_filter = str(os.getenv(mapped_side_filter_key, "")).strip().lower()
+    if mapped_side_filter not in allowed_side_filters:
+        source_side_filter = str(os.getenv(f"{prefix}_SIDE_FILTER", "")).strip().lower()
+        if source_side_filter not in allowed_side_filters:
+            source_side_filter = "sell"
+        os.environ[mapped_side_filter_key] = source_side_filter
+        logger.warning(
+            "[SCALP5S_B] forcing %s=%s (fail-closed direction guard)",
+            mapped_side_filter_key,
+            source_side_filter,
+        )
+        mapped_side_filter = source_side_filter
+
     # Safety baseline for B variant: keep entry protection on by default.
     # Explicitly opt out only for temporary experiments.
     allow_unprotected = _env_truthy(f"{prefix}_ALLOW_UNPROTECTED_ENTRY", False)
@@ -93,7 +118,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     base_strategy = os.getenv(f"{base_prefix}_STRATEGY_TAG", fallback_tag)
     base_log_prefix = os.getenv(f"{base_prefix}_LOG_PREFIX", fallback_log_prefix)
     logger.info(
-        "[SCALP5S_B] env mapped: source=%s mapped_prefix=%s enabled=%s revert_enabled=%s env_prefix=%s strategy=%s log_prefix=%s",
+        "[SCALP5S_B] env mapped: source=%s mapped_prefix=%s enabled=%s revert_enabled=%s env_prefix=%s strategy=%s log_prefix=%s side_filter=%s",
         prefix,
         base_prefix,
         base_enabled,
@@ -101,6 +126,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         base_env_prefix,
         base_strategy,
         base_log_prefix,
+        mapped_side_filter or "(unset)",
     )
     if str(base_env_prefix).strip().upper() != prefix:
         logger.warning(

@@ -7995,3 +7995,22 @@
 - 意図:
   - long遮断は維持しつつ、short側の「発火不足」と「最小ロット未満」を同時に解消する。
   - 時間帯停止なしで、B/C を short適応の実運転へ戻す。
+
+### 2026-02-26（追記）`scalp_ping_5s_b` side filter の fail-closed 化
+
+- 背景（VM実測, 2026-02-26 12:10 UTC 以降）:
+  - `quant-scalp-ping-5s-b.service` 実行環境に
+    `SCALP_PING_5S_B_SIDE_FILTER=sell` と
+    `SCALP_PING_5S_SIDE_FILTER=sell` が存在することを確認。
+  - ただし過去約定（`orders.db`）では `b_live` の buy 発注履歴が残り、
+    side filter 欠落時の再発余地を排除する必要がある。
+- 変更:
+  - `workers/scalp_ping_5s_b/worker.py`
+    - `_apply_alt_env()` に B専用 fail-closed を追加。
+    - `SCALP_PING_5S_SIDE_FILTER` が未設定/不正値のときは `sell` を強制。
+    - 起動ログに `side_filter` を追加して監査可能化。
+  - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+    - side filter `missing/invalid/valid` の3ケースを追加。
+- 意図:
+  - env 取り回し崩れがあっても B worker が意図せず long 側へ流れないようにする。
+  - direction 制御を env 前提だけにせず、ワーカー起動時に fail-closed を保証する。

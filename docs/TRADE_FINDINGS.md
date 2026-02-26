@@ -43,6 +43,91 @@ Status:
 ```
 
 ## 2026-02-26 12:09 UTC / 2026-02-26 21:09 JST - B側の `units_below_min` 残りを削るため最小ロット閾値を再調整
+## 2026-02-26 12:19 UTC / 2026-02-26 21:19 JST - PDCA深掘り（`perf_block` 固定化 + `orders.db` ロック + SLO劣化の重畳）
+Period:
+- 監査期間: 直近24h（`2026-02-25 12:11` ～ `2026-02-26 12:19` UTC）
+- ロック集中窓: `2026-02-26 11:26` ～ `11:46` UTC（`20:26` ～ `20:46` JST）
+- Source: VM `journalctl -u quant-order-manager.service`, `journalctl -u quant-bq-sync.service`, `journalctl -u quant-position-manager.service`, `/home/tossaki/QuantRabbit/logs/{orders,metrics}.db`, `lsof`, `systemctl cat quant-bq-sync.service`
+
+Fact:
+- `orders.db` 24h集計（`rows=44862`）:
+  - `preflight_start=17121`, `perf_block=16389`, `probability_scaled=7348`, `entry_probability_reject=594`
+  - `submit_attempt=545`, `filled=541`（filled/submit `=99.3%`）
+- `perf_block` の実ログ内訳（`[ORDER][OPEN_REJECT]` 行）:
+  - 合計 `191`
+  - `scalp_ping_5s_b_live=157`, `M1Scalper-M1=34`
+  - 主因ノート: `perf_block:hard:hour9:failfast:pf=0.56`（88件）, `hour11:failfast:pf=0.15`（36件）, `failfast:pf=0.38`（34件）
+- `entry_probability` skip は `RangeFader` 系中心（sell/buy/neutral 合計74件）、`scalp_ping_5s_c_live=5`, `scalp_ping_5s_b_live=2`。
+- `database is locked` は 24hで `83` 件。発生分は `35` 分に集中し、最多は `11:31/11:34`（各5件）。
+- 同時点で `lsof /home/tossaki/QuantRabbit/logs/orders.db` は PID `3400`（`run_sync_pipeline.py --interval 60 --bq-interval 300 --limit 1200`）が `40+` FD を保持。加えて戦略ワーカー PID `682/706` が保持。
+- `quant-bq-sync.service` は 60秒周期で常時 `sync_trades start`。env は `POSITION_MANAGER_SERVICE_ENABLED=1`, `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1`, `PIPELINE_DB_READ_TIMEOUT_SEC=2.0`。
+- `quant-position-manager.service` は 24hで timeout/busy 警告が複数（`fetch_recent_trades timeout`, `sync_trades timeout`, `position manager busy`）。
+- `metrics.db` 24h:
+  - `data_lag_ms`: `p50=768.9`, `p90=1958.7`, `p95=3603.5`, `p99=13325.1`, `max=225164.5`、閾値超過（`>1500ms`）`16.21%`
+  - `decision_latency_ms`: `p50=24.4`, `p90=99.4`, `p95=678.8`, `p99=11947.6`, `max=37865.4`、閾値超過（`>1200ms`）`3.98%`
+- `manual_margin_pressure=36` 件（24h）で、`scalp_ping_5s_b_live=29`, `scalp_ping_5s_c_live=7`。サンプルに `manual_net_units=-8500`, `margin_available_jpy=4677.279` を確認。
+
+Failure Cause:
+1. `perf_block` は一時的ノイズではなく、`scalp_ping_5s_b_live` と `M1Scalper-M1` の failfast 判定が時間帯別に固定化している。
+2. `orders.db` への高頻度書き込み（order-manager）と、高頻度読み取り（bq-sync + position-manager fallback local）が重なり、ロック競合を増幅している。
+3. `data_lag_ms` のテール悪化と `manual_margin_pressure` が同時に存在し、通るべき注文の密度を下げて改善ループが遅れる。
+
+Hypothesis:
+- `run_sync_pipeline.py` の orders 参照導線（毎分複数クエリ）と `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1` の併用で、`orders.db` ハンドル保持が増えやすく、ロック競合を誘発している可能性が高い（A/B確認が必要）。
+- `preflight_start` 行の `request_json` が `{"note":"preflight_start",...}` のみで戦略情報を持たず、ボトルネック時間帯の戦略別分解を難化させている。
+
+Improvement:
+1. P0: `quant-bq-sync` の `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL` を無効化し、service timeout 時は stale キャッシュ優先でローカルDBフォールバックを抑制する。
+2. P0: `orders.db` へ `preflight_start/perf_block` 記録時の `strategy_tag` と `reject_note` 永続化を必須化する（監査盲点の解消）。
+3. P1: `run_sync_pipeline.py` の SQLite 読み取りを明示 close に統一し、read-only URI（`mode=ro`）・短timeout・接続数上限を導入する。
+4. P1: `replay_quality_gate` / `trade_counterfactual` の worker 対象を `TrendMA/BB_RSI` 以外（`scalp_ping_5s_b_live`, `M1Scalper-M1` など）へ拡張し、failfast固定化へ直接フィードバックする。
+5. P1: `manual_margin_pressure` 発火時の段階的建玉縮退（manual併走含む）を優先し、`margin_available_jpy` の下限回復を先に実行する。
+
+Verification:
+1. `journalctl -u quant-order-manager.service --since "1 hour ago" | grep -c "database is locked"` が `<=5`。
+2. `lsof /home/tossaki/QuantRabbit/logs/orders.db` で PID `3400` の FD 本数が `<=10` に低下。
+3. `metrics.db` で `data_lag_ms p95 < 1500`, `decision_latency_ms p95 < 1200` を継続達成。
+4. `perf_block` 主因（`hour9/hour11 failfast`）の件数が日次で逓減し、`submit_attempt`/`filled` 密度が回復する。
+5. `manual_margin_pressure` が 24h 連続で `0`（または明確な逓減）になる。
+
+Status:
+- in_progress
+
+## 2026-02-26 12:20 UTC / 2026-02-26 21:20 JST - `scalp_ping_5s_b_live` 方向劣化の再発防止（side filter fail-closed）
+Period:
+- Direction audit window: `datetime(close_time) >= now - 24 hours`
+- Runtime env check: `quant-scalp-ping-5s-b.service` MainPID/child PID
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/logs/trades.db`, systemd process env
+
+Fact:
+- 24h集計（`trades.db`）で `scalp_ping_5s_b_live` の buy 側が劣化:
+  - buy `72 trades`, win rate `20.83%`, avg `-0.936 pips`
+  - `entry_probability>=0.75` の buy でも win rate `18.84%`, avg `-1.051 pips`
+- 実行中プロセス（起動 `2026-02-26 12:10:55 UTC`）では
+  `SCALP_PING_5S_B_SIDE_FILTER=sell` と
+  `SCALP_PING_5S_SIDE_FILTER=sell` が有効。
+- ただし過去履歴には buy 発注が残るため、env 欠落/不正時に再発しうる。
+
+Failure Cause:
+1. B variant の方向制御が env 設定依存で、設定欠落時に fail-open になり得る。
+2. 高確率帯 buy の実績悪化と整合しない方向シグナルが通過した履歴が存在する。
+
+Improvement:
+1. `workers/scalp_ping_5s_b/worker.py` で side filter を fail-closed 化。
+2. `SCALP_PING_5S_SIDE_FILTER` が未設定/不正値なら `sell` を強制。
+3. 起動ログへ `side_filter` を明示出力し、監査を容易化。
+4. `tests/workers/test_scalp_ping_5s_b_worker_env.py` に
+   `missing/invalid/valid` ケースを追加。
+
+Verification:
+1. `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py` が全緑（11 passed）。
+2. VMで `quant-scalp-ping-5s-b` の子プロセス環境に
+   `SCALP_PING_5S_SIDE_FILTER=sell` が存在することを確認。
+
+Status:
+- in_progress
+
+## 2026-02-26 12:09 UTC / 2026-02-26 21:09 JST - B側の `units_below_min` 残りを削るため最小ロット閾値を再調整
 Period:
 - Snapshot: `2026-02-26 12:06:59` ～ `12:08:10` UTC（`21:06:59` ～ `21:08:10` JST）
 - Source: VM `journalctl -u quant-scalp-ping-5s-{b,c}.service`, `/home/tossaki/QuantRabbit/ops/env/{scalp_ping_5s_b.env,quant-order-manager.env}`
