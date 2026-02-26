@@ -6567,6 +6567,29 @@
   - 時間帯は gating 条件から除外し、`+2000円/h` のために
     取引機会を全時間帯で取りに行く。
 
+### 2026-02-26（追記）C系 `env_prefix` 解決を修正し、誤った `perf_block` を抑制
+
+- 背景（VM実測）:
+  - `scalp_ping_5s_c_live` の preflight で
+    `perf_block:hard:hour4:margin_closeout_n=2 rate=0.333 n=6` が多発。
+  - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce` を設定していても、
+    `strategy_tag=scalp_ping_5s_c_live` が `SCALP_PING_5S` と解決され、
+    C専用閾値が使われない経路があった。
+- 変更:
+  - `execution/order_manager.py` / `execution/strategy_entry.py`
+    - `_infer_env_prefix_from_strategy_tag()` に
+      `SCALP_PING_5S_C` / `SCALP_PING_5S_D` を追加。
+    - `scalp_ping_5s_c_live` が base prefix へ落ちる誤判定を解消。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES=1`
+    - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT=3`
+    - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE=0.50`
+  - `tests/execution/test_env_prefix_inference.py`
+    - C prefix 推論の回帰テストを追加。
+- 意図:
+  - C戦略で `reduce` 運用を正しく適用し、
+    軽微な margin closeout 履歴だけで hard reject 連発する状態を解消する。
+
 ### 2026-02-26（追記）`quant-autotune-ui` の更新遅延を修正（snapshot candidate の短絡化）
 
 - 背景（VM実測, UTC 2026-02-26 01:34）:

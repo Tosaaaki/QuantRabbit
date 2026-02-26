@@ -23,3 +23,17 @@ def test_order_manager_prefers_flow_prefix() -> None:
         order_manager._infer_env_prefix_from_strategy_tag("scalp_ping_5s_flow_live")
         == "SCALP_PING_5S_FLOW"
     )
+
+
+def test_order_manager_prefers_c_prefix() -> None:
+    assert (
+        order_manager._infer_env_prefix_from_strategy_tag("scalp_ping_5s_c_live")
+        == "SCALP_PING_5S_C"
+    )
+
+
+def test_strategy_entry_prefers_c_prefix() -> None:
+    assert (
+        strategy_entry._infer_env_prefix_from_strategy_tag("scalp_ping_5s_c_live")
+        == "SCALP_PING_5S_C"
+    )

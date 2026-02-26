@@ -601,6 +601,10 @@ def _infer_env_prefix_from_strategy_tag(strategy_tag: Optional[str]) -> Optional
         return "SCALP_PING_5S_FLOW"
     if tag.startswith("SCALP_PING_5S_B"):
         return "SCALP_PING_5S_B"
+    if tag.startswith("SCALP_PING_5S_C"):
+        return "SCALP_PING_5S_C"
+    if tag.startswith("SCALP_PING_5S_D"):
+        return "SCALP_PING_5S_D"
     if tag.startswith("SCALP_PING_5S"):
         return "SCALP_PING_5S"
     return None

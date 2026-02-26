@@ -611,6 +611,18 @@
   - `orders.db` で `outside_allow_hour_jst` が entry-stop 理由の主因になっていないこと。
   - `trades.db` で `C/M1 sell` の比率と損益が縮小していること。
 
+### C系 `env_prefix` / perf_guard 運用補足（2026-02-26）
+- `scalp_ping_5s_c_live` / `scalp_ping_5s_d_live` は、
+  `order_manager` preflight 時に `SCALP_PING_5S_C` / `SCALP_PING_5S_D`
+  prefix として解決する（`SCALP_PING_5S` へのフォールバック誤判定を禁止）。
+- `scalp_ping_5s_c_live` の margin closeout hard しきい値:
+  - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES=1`
+  - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT=3`
+  - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE=0.50`
+- 目的:
+  - `mode=reduce` 戦略で軽微な closeout 履歴を soft 扱いにし、
+    `perf_block:hard:margin_closeout_n=*` の過剰発生を防ぐ。
+
 ### Release gate
 - PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 
