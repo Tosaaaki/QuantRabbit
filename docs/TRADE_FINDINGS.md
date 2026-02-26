@@ -143,6 +143,8 @@ Improvement:
    - B: `BASE 1800->900`, `MAX 3600->1800`, `MAX_ORDERS_PER_MINUTE 6->4`, `CONF_FLOOR 74->78`
    - C: `BASE 400->220`, `MAX 900->500`, `MAX_ORDERS_PER_MINUTE 2->1`, `CONF_FLOOR 82->86`
    - M1: `BASE 10000->6000`, `MAX_OPEN_TRADES 2->1`
+   - B 追加ホットフィックス: `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE) 30->20`
+     （縮小後の確率スケールで `below_min_units` 連発したため）
 3. 勝ち源の増量:
    - `MicroRangeBreak` と `MomentumBurstMicro` の `MICRO_MULTI_BASE_UNITS 42000->52000`
    - `RangeFader` は過大化を避けるため `RANGEFADER_BASE_UNITS 13000->11000`

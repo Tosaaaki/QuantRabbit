@@ -7748,6 +7748,7 @@
     - `MAX_UNITS=1800`（from `3600`）
     - `MAX_ORDERS_PER_MINUTE=4`（from `6`）
     - `CONF_FLOOR=78`（from `74`）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=20`（from `30`）
   - `ops/env/scalp_ping_5s_c.env`
     - `BASE_ENTRY_UNITS=220`（from `400`）
     - `MAX_UNITS=500`（from `900`）

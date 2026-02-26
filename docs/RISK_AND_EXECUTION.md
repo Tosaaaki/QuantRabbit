@@ -1122,6 +1122,7 @@
 - 目的: サービス停止なしで、負け寄与戦略のサイズを即圧縮し、勝ち寄与戦略へ配分を寄せる。
 - 実装:
   - `scalp_ping_5s_b/c` と `M1Scalper` は `base/max units` と同時保有・発注頻度を縮小。
+  - `scalp_ping_5s_b` は縮小後の通過維持のため `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=20` を適用。
   - `MicroRangeBreak` / `MomentumBurstMicro` は `MICRO_MULTI_BASE_UNITS` を増量。
   - `RangeFader` は `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=300` を追加し、
     `entry_probability_below_min_units` での連続 reject を抑制。
