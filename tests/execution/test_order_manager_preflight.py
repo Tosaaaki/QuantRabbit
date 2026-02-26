@@ -339,6 +339,36 @@ def test_entry_quality_microstructure_gate_blocks_on_low_density(monkeypatch):
     assert details.get("tick_count") == 10
 
 
+def test_quote_is_usable_blocks_crossed_and_wide_spread(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_MAX_SPREAD_PIPS", 2.0)
+
+    assert order_manager._quote_is_usable({"bid": 150.0, "ask": 150.01, "spread_pips": 1.0}) is True
+    assert order_manager._quote_is_usable({"bid": 150.01, "ask": 150.00, "spread_pips": -1.0}) is False
+    assert order_manager._quote_is_usable({"bid": 150.0, "ask": 150.05, "spread_pips": 5.0}) is False
+
+
+def test_fetch_quote_with_retry_recovers_after_transient_failure(monkeypatch) -> None:
+    attempts = [
+        None,
+        {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+    ]
+
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_FETCH_ATTEMPTS", 2)
+    monkeypatch.setattr(order_manager.time, "sleep", lambda _sec: None)
+
+    def _fake_fetch(_instrument: str):
+        if attempts:
+            return attempts.pop(0)
+        return None
+
+    monkeypatch.setattr(order_manager, "_fetch_quote", _fake_fetch)
+
+    quote = order_manager._fetch_quote_with_retry("USD_JPY")
+
+    assert quote is not None
+    assert quote["spread_pips"] == 1.0
+
+
 def test_loss_cap_units_from_sl_uses_jpy_per_pip_formula() -> None:
     units = _loss_cap_units_from_sl(loss_cap_jpy=150.0, sl_pips=2.5)
     assert units == 6000

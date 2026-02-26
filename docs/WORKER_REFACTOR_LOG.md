@@ -8,6 +8,29 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）クォート崩れ耐性を `order_manager` で強化（再クォート + 健全性判定）
+
+- 背景（運用課題）:
+  - `OFF_QUOTES` 系 reject が出る局面で、同一 payload を即再送しても再rejectしやすく、
+    30分集計で reject 偏重になる時間帯があった。
+  - preflight 中に quote が欠落/異常（cross/wide）でも注文を継続する経路があり、
+    「崩れた quote に当たる」余地が残っていた。
+- 変更:
+  - `execution/order_manager.py`
+    - quote 健全性判定 `_quote_is_usable()` を追加（cross/負spread/過大spreadを除外）。
+    - `_fetch_quote_with_retry()` を追加し、初回 quote 取得と reject 後再取得で再利用。
+    - `ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY=1`（既定）時は、
+      non-manual 新規で quote 不健全なら `quote_unavailable` で skip。
+    - `OFF_QUOTES` など quote 系 reject で
+      `status=quote_retry` を残しつつ再クォートして再送する経路を追加。
+  - テスト:
+    - `tests/execution/test_order_manager_preflight.py`
+      - quote 健全性判定（cross/wide spread）
+      - transient 失敗後の quote 再取得成功
+- 意図:
+  - quote 崩れ局面での無駄な reject 連鎖を減らし、
+    正常 quote へ乗り換えて執行を継続する。
+
 ### 2026-02-26（追記）運用方針を「停止なし・時間帯停止なし」へ再固定
 
 - 背景（VM実測）:

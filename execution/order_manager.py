@@ -2539,6 +2539,33 @@ _PROTECTION_RETRY_REASONS = {
     # Observed from OANDA as a take-profit protection reject when price moved past TP.
     "LOSING_TAKE_PROFIT",
 }
+_ORDER_QUOTE_RETRY_REASONS = {
+    "OFF_QUOTES",
+    "PRICE_BOUND_EXCEEDED",
+    "PRICE_DISTANCE_MAXIMUM_EXCEEDED",
+    "PRICE_DISTANCE_MINIMUM_NOT_MET",
+    "PRICE_INVALID",
+    "PRICE_UNKNOWN",
+    "INSTRUMENT_BID_HALTED",
+    "INSTRUMENT_ASK_HALTED",
+}
+_ORDER_QUOTE_RETRY_MAX_RETRIES = max(0, _env_int("ORDER_QUOTE_RETRY_MAX_RETRIES", 1))
+_ORDER_QUOTE_RETRY_SLEEP_SEC = max(0.0, _env_float("ORDER_QUOTE_RETRY_SLEEP_SEC", 0.30))
+_ORDER_QUOTE_RETRY_SLEEP_BACKOFF = max(
+    1.0, _env_float("ORDER_QUOTE_RETRY_SLEEP_BACKOFF", 1.6)
+)
+_ORDER_QUOTE_RETRY_MAX_SLEEP_SEC = max(
+    0.0, _env_float("ORDER_QUOTE_RETRY_MAX_SLEEP_SEC", 1.0)
+)
+_ORDER_QUOTE_FETCH_ATTEMPTS = max(1, _env_int("ORDER_QUOTE_FETCH_ATTEMPTS", 2))
+_ORDER_QUOTE_FETCH_SLEEP_SEC = max(0.0, _env_float("ORDER_QUOTE_FETCH_SLEEP_SEC", 0.08))
+_ORDER_QUOTE_FETCH_MAX_SLEEP_SEC = max(
+    0.0, _env_float("ORDER_QUOTE_FETCH_MAX_SLEEP_SEC", 0.30)
+)
+_ORDER_QUOTE_MAX_SPREAD_PIPS = max(0.0, _env_float("ORDER_QUOTE_MAX_SPREAD_PIPS", 4.0))
+_ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY = _env_bool(
+    "ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY", True
+)
 _PARTIAL_CLOSE_RETRY_CODES = {
     "CLOSE_TRADE_UNITS_EXCEED_TRADE_SIZE",
     "POSITION_TO_REDUCE_TOO_SMALL",
@@ -4689,6 +4716,41 @@ def _apply_directional_cap(
     return units
 
 
+def _quote_is_usable(quote: Optional[dict]) -> bool:
+    if not isinstance(quote, dict):
+        return False
+    bid = _as_float(quote.get("bid"))
+    ask = _as_float(quote.get("ask"))
+    spread_pips = _as_float(quote.get("spread_pips"))
+    if bid is None or ask is None:
+        return False
+    if bid <= 0.0 or ask <= 0.0 or ask <= bid:
+        return False
+    if spread_pips is None:
+        spread_pips = (ask - bid) / 0.01
+    if spread_pips <= 0.0:
+        return False
+    if _ORDER_QUOTE_MAX_SPREAD_PIPS > 0.0 and spread_pips > _ORDER_QUOTE_MAX_SPREAD_PIPS:
+        return False
+    return True
+
+
+def _fetch_quote_with_retry(instrument: str, *, attempts: Optional[int] = None) -> dict[str, float] | None:
+    max_attempts = max(1, int(attempts or _ORDER_QUOTE_FETCH_ATTEMPTS))
+    delay_sec = _ORDER_QUOTE_FETCH_SLEEP_SEC
+    for idx in range(max_attempts):
+        quote = _fetch_quote(instrument)
+        if _quote_is_usable(quote):
+            return quote
+        if idx < max_attempts - 1 and delay_sec > 0.0:
+            time.sleep(min(_ORDER_QUOTE_FETCH_MAX_SLEEP_SEC, delay_sec))
+            delay_sec = min(
+                _ORDER_QUOTE_FETCH_MAX_SLEEP_SEC,
+                max(_ORDER_QUOTE_FETCH_SLEEP_SEC, delay_sec * 1.8),
+            )
+    return None
+
+
 def _fetch_quote(instrument: str) -> dict[str, float] | None:
     """Fetch a single pricing snapshot to derive bid/ask/spread."""
     # Prefer tick_window (shared disk cache) to avoid per-order REST calls.
@@ -4712,13 +4774,15 @@ def _fetch_quote(instrument: str) -> dict[str, float] | None:
                         ts_iso = datetime.fromtimestamp(
                             float(epoch) if epoch is not None else now, tz=timezone.utc
                         ).isoformat()
-                        return {
+                        quote_payload = {
                             "bid": bid,
                             "ask": ask,
                             "mid": mid if mid is not None else (bid + ask) / 2.0,
                             "spread_pips": spread_pips,
                             "ts": ts_iso,
                         }
+                        if _quote_is_usable(quote_payload):
+                            return quote_payload
         except Exception:
             # tick_window is best-effort; ignore and fall back to REST.
             pass
@@ -4740,13 +4804,16 @@ def _fetch_quote(instrument: str) -> dict[str, float] | None:
         if bid is None or ask is None:
             return None
         spread_pips = (ask - bid) / 0.01
-        return {
+        quote_payload = {
             "bid": bid,
             "ask": ask,
             "mid": (bid + ask) / 2.0,
             "spread_pips": spread_pips,
             "ts": price.get("time") or datetime.now(timezone.utc).isoformat(),
         }
+        if _quote_is_usable(quote_payload):
+            return quote_payload
+        return None
     except Exception:
         return None
 
@@ -9986,7 +10053,49 @@ async def market_order(
             )
             return None
 
-    quote = _fetch_quote(instrument)
+    quote = _fetch_quote_with_retry(instrument)
+    if (
+        not reduce_only
+        and (pocket or "").lower() != "manual"
+        and _ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY
+        and not _quote_is_usable(quote)
+    ):
+        _console_order_log(
+            "OPEN_SKIP",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            note="quote_unavailable",
+        )
+        log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="quote_unavailable",
+            attempt=0,
+            stage_index=stage_index,
+            request_payload={
+                "entry_thesis": entry_thesis,
+                "meta": meta,
+            },
+        )
+        log_metric(
+            "order_quote_unavailable",
+            1.0,
+            tags={
+                "pocket": pocket or "unknown",
+                "strategy": strategy_tag or "unknown",
+            },
+        )
+        return None
     if (
         quote
         and quote.get("spread_pips") is not None
@@ -10994,6 +11103,7 @@ async def market_order(
         0, int(os.getenv("ORDER_PROTECTION_FALLBACK_MAX_RETRIES", "1") or 1)
     )
     protection_fallbacks = 0
+    quote_retries = 0
 
     for attempt in range(max_submit_attempts):
         payload = order_data.copy()
@@ -11027,7 +11137,11 @@ async def market_order(
                 "orderCancelTransaction"
             )
             if reject:
-                reason = reject.get("rejectReason") or reject.get("reason")
+                reason = (
+                    reject.get("rejectReason")
+                    or reject.get("reason")
+                    or reject.get("errorCode")
+                )
                 reason_key = str(reason or "").upper()
                 logging.error(
                     "OANDA order rejected (attempt %d) pocket=%s units=%s reason=%s",
@@ -11075,6 +11189,85 @@ async def market_order(
                 if (
                     attempt < max_submit_attempts - 1
                     and not reduce_only
+                    and quote_retries < _ORDER_QUOTE_RETRY_MAX_RETRIES
+                    and reason_key in _ORDER_QUOTE_RETRY_REASONS
+                ):
+                    quote_retries += 1
+                    sleep_sec = min(
+                        _ORDER_QUOTE_RETRY_MAX_SLEEP_SEC,
+                        _ORDER_QUOTE_RETRY_SLEEP_SEC
+                        * (_ORDER_QUOTE_RETRY_SLEEP_BACKOFF ** max(0, quote_retries - 1)),
+                    )
+                    if sleep_sec > 0.0:
+                        time.sleep(sleep_sec)
+                    retry_quote = _fetch_quote_with_retry(instrument, attempts=1)
+                    if retry_quote:
+                        quote = retry_quote
+                    retry_basis: Optional[float] = None
+                    if retry_quote:
+                        retry_basis = (
+                            _as_float(retry_quote.get("ask"))
+                            if units_to_send > 0
+                            else _as_float(retry_quote.get("bid"))
+                        )
+                    if retry_basis is not None:
+                        entry_basis = retry_basis
+                        estimated_entry = retry_basis
+                        if thesis_sl_pips is not None:
+                            sl_price = _sl_price_from_pips(
+                                retry_basis, units_to_send, thesis_sl_pips
+                            )
+                        if thesis_tp_pips is not None:
+                            if units_to_send > 0:
+                                tp_price = round(retry_basis + thesis_tp_pips * 0.01, 3)
+                            else:
+                                tp_price = round(retry_basis - thesis_tp_pips * 0.01, 3)
+                    if (
+                        not sl_disabled
+                        and not reduce_only
+                        and not thesis_disable_hard_stop
+                        and sl_price is not None
+                        and _allow_stop_loss_on_fill(pocket, strategy_tag=strategy_tag)
+                    ):
+                        order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
+                    elif "stopLossOnFill" in order_data["order"]:
+                        order_data["order"].pop("stopLossOnFill", None)
+                    if tp_price is not None:
+                        order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
+                    elif "takeProfitOnFill" in order_data["order"]:
+                        order_data["order"].pop("takeProfitOnFill", None)
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side,
+                        units=units_to_send,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="quote_retry",
+                        attempt=attempt + 1,
+                        stage_index=stage_index,
+                        request_payload={
+                            "reason": reason_key,
+                            "quote_retry": quote_retries,
+                            "quote": quote,
+                            "sleep_sec": sleep_sec,
+                        },
+                    )
+                    log_metric(
+                        "order_quote_retry",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                            "reason": reason_key.lower() if reason_key else "rejected",
+                            "retry": str(quote_retries),
+                        },
+                    )
+                    continue
+                if (
+                    attempt < max_submit_attempts - 1
+                    and not reduce_only
                     and protection_fallbacks < max_protection_fallbacks
                     and reason_key in _PROTECTION_RETRY_REASONS
                     and (sl_price is not None or tp_price is not None)
@@ -11085,7 +11278,7 @@ async def market_order(
                     )
                     # Widen the fallback gap each time to handle continued price movement.
                     fallback_gap_price = float(base_gap_price) * (1.0 + float(protection_fallbacks))
-                    retry_quote = _fetch_quote(instrument)
+                    retry_quote = _fetch_quote_with_retry(instrument)
                     if retry_quote:
                         quote = retry_quote
                     retry_basis: Optional[float] = None

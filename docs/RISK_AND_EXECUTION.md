@@ -139,6 +139,20 @@
   - 手動建玉が余力を占有する局面で戦略建玉を積み増ししない。
   - `MARKET_ORDER_MARGIN_CLOSEOUT` 連鎖を入口側で遮断する。
 
+### Quote Stability Guard（2026-02-26）
+- `execution/order_manager.py` は quote を `order_manager` 側で健全性チェックしてから利用する。
+  - cross（`ask<=bid`）、負/ゼロ spread、異常に広い spread は不健全として破棄。
+  - `ORDER_QUOTE_MAX_SPREAD_PIPS`（既定 `4.0`）で異常 spread 上限を制御する。
+- 新規ENTRYでは `ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY=1`（既定）時に、
+  健全 quote が取得できない場合 `status=quote_unavailable` で skip する。
+- quote 系 reject（`OFF_QUOTES` 等）では、`ORDER_QUOTE_RETRY_*` 設定に従い
+  再クォートして再送する（`status=quote_retry`）。
+- 主要運用キー（`ops/env/quant-order-manager.env`）:
+  - `ORDER_REQUIRE_HEALTHY_QUOTE_FOR_ENTRY`
+  - `ORDER_QUOTE_MAX_SPREAD_PIPS`
+  - `ORDER_QUOTE_FETCH_ATTEMPTS`, `ORDER_QUOTE_FETCH_SLEEP_SEC`
+  - `ORDER_QUOTE_RETRY_MAX_RETRIES`, `ORDER_QUOTE_RETRY_SLEEP_SEC`
+
 ### scalp_ping_5s_b 運用補足（取り残し抑制）
 - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE` を
   `quant-order-manager` の環境で運用し、低確率シグナルを `order_manager` 側で reject する。
