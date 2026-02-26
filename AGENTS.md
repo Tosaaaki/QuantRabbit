@@ -8,7 +8,7 @@
 - VM 上で常時ログ・オーダーを監視。
 - トレード判断・ロット・利確/損切り・保有調整は固定値運用を避け、市場状態に応じて常時動的に更新する。
 - 手動玉を含めたエクスポージャを高水準で維持。
-- PF/勝率が悪化した戦略・時間帯を自動ブロック。
+- PF/勝率が悪化した戦略は、時間帯ブロックで抑えるのではなく、原因分析と改善を優先する（ただし JST 7〜8時のメンテ時間は運用対象外）。
 - マージン拒否やタグ欠損を検知したら即パラメータ更新＆デプロイ。
 - ユーザ手動トレードと併走し、ポジション総量を管理。
 - 最優先ゴールは「資産を劇的に増やす」。必要なリスクテイクと調整を即断・即実行。
@@ -40,6 +40,7 @@
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。
 - 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。
 - 運用方針は「全て動的トレード」。静的な固定パラメータに依存せず、戦略ごとのローカル判定とリスク制御で都度更新する。
+- **戦略は停止より改善を優先する**。成績悪化時は原因分析→パラメータ/執行品質の改善→再検証を先に実行し、恒久的な時間帯制限で回避しない。**JST 7〜8時（メンテ時間帯想定）は除外**し、停止は安全確保のための一時的な緊急措置に限定する。
 - **重要**: 本番稼働は VM。運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行い、ローカルの `logs/*.db` やスナップショット/コード差分だけで断定しない。
 - 変更は必ず `git commit` → `git push` → VM 反映（`scripts/vm.sh ... deploy -i -t` 推奨）で行う。未コミット状態やローカル差し替えでの運用は不可。
 - 変更点は必ず AGENTS と実装仕様側へ同時記録すること。少なくとも `docs/WORKER_REFACTOR_LOG.md` と関連仕様（`docs/WORKER_ROLE_MATRIX_V2.md`/`docs/ARCHITECTURE.md` 等）へ追記し、追跡可能な監査ログを残す。
@@ -158,8 +159,9 @@ flowchart LR
   - `entry_probability` と `entry_units_intent` を `entry_thesis` で必須維持。
   - `quantrabbit.service` を本番主導線にしない。
   - `quant-replay-quality-gate` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` のとき、
-    replay run 出力を `analysis.trade_counterfactual_worker` へ連結し、
-    `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映してよい。
+    replay run 出力を `analysis.trade_counterfactual_worker` へ連結する。
+    `policy_hints.block_jst_hours` は `config/worker_reentry.yaml` へ自動反映しない（時間帯封鎖ではなく改善提案として扱う）。
+    JST 7〜8時はメンテ時間として除外し、それ以外の時間帯に対する恒久的な時間帯除外を禁止する。
     ただし `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS` を超える候補は採用しない。
     `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` の間隔内は
     解析のみ行い、`worker_reentry` 反映は抑制する。
