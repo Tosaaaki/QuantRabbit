@@ -54,3 +54,23 @@ def test_load_strategy_profile_defaults_keep_block_behavior_without_policy(tmp_p
     assert profile["soft_participation"] is False
     assert profile["allow_loser_block"] is True
     assert profile["allow_winner_only"] is True
+
+
+def test_load_strategy_profile_falls_back_to_case_insensitive_key(tmp_path: Path) -> None:
+    payload = {
+        "strategies": {
+            "m1scalper-m1": {
+                "pocket": "scalp",
+                "score": 0.41,
+                "lot_multiplier": 0.74,
+                "trades": 48,
+            }
+        },
+    }
+    path = tmp_path / "dynamic_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    profile = load_strategy_profile("M1Scalper-M1", "scalp", path=path)
+    assert profile["found"] is True
+    assert profile["strategy_key"] == "m1scalper-m1"
+    assert profile["lot_multiplier"] == 0.74

@@ -76,6 +76,22 @@
   - `quant-v2-runtime` 側の `FORECAST_GATE_*_SCALP_PING_5S_{B,C}_LIVE` もしきい値を同値化し、
     worker runtime と order-manager preflight の判定差を縮小。
 
+### B/C 負け筋遮断（2026-02-26 追加）
+- 14日集計で `scalp_ping_5s_b_live` と `scalp_ping_5s_c_live` の赤字継続を確認し、
+  全時間稼働を中止して「勝っている条件のみ稼働」へ変更。
+- `ops/env/scalp_ping_5s_b.env`:
+  - `SIDE_FILTER=buy`
+  - `ALLOW_HOURS_JST=16,17,18,23`
+  - `PERF_GUARD_MODE=block`
+- `ops/env/scalp_ping_5s_c.env`:
+  - `SIDE_FILTER=buy`
+  - `ALLOW_HOURS_JST=18,19,22`
+  - `PERF_GUARD_MODE=block`
+- `config/worker_reentry.yaml` でも同条件を block リストで二重化し、
+  env差し替え時でも損失時間帯へ再流入しないよう固定。
+- `scripts/dynamic_alloc_worker.py` は `margin_closeout_rate` と
+  `realized_jpy` 悪化への罰則を追加し、`lot_multiplier` を早期縮小する。
+
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
 - 例外は強制 DD / ヘルス / マージン使用率 / 余力 / 未実現DDの総合判定のみ。

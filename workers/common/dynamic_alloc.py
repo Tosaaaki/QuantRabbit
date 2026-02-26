@@ -120,8 +120,22 @@ def load_strategy_profile(
     base["soft_participation"] = policy_soft_participation
 
     pocket_l = str(pocket or "").strip().lower()
+    lower_key_map: Dict[str, str] = {}
+    for raw_key in strategies.keys():
+        if not isinstance(raw_key, str):
+            continue
+        norm_key = raw_key.strip().lower()
+        if norm_key and norm_key not in lower_key_map:
+            lower_key_map[norm_key] = raw_key
+
     for key in _candidate_keys(strategy):
-        item = strategies.get(key)
+        lookup_key = key
+        item = strategies.get(lookup_key)
+        if not isinstance(item, dict):
+            mapped_key = lower_key_map.get(str(key).strip().lower())
+            if mapped_key:
+                lookup_key = mapped_key
+                item = strategies.get(lookup_key)
         if not isinstance(item, dict):
             continue
         item_pocket = str(item.get("pocket") or "").strip().lower()
@@ -141,7 +155,7 @@ def load_strategy_profile(
         allow_winner_only = _safe_bool(item.get("allow_winner_only"), policy_allow_winner_only)
         return {
             "found": True,
-            "strategy_key": key,
+            "strategy_key": str(lookup_key),
             "score": score,
             "lot_multiplier": mult,
             "trades": _safe_int(item.get("trades"), 0),

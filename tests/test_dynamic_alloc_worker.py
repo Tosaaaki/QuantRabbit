@@ -70,3 +70,24 @@ def test_compute_scores_caps_size_when_realized_jpy_is_negative() -> None:
     assert prof["sum_pips"] > 0
     assert prof["sum_realized_jpy"] < 0
     assert prof["lot_multiplier"] <= 0.7
+
+
+def test_compute_scores_caps_size_when_margin_closeout_rate_is_high() -> None:
+    rows = []
+    for i in range(30):
+        rows.append(
+            (
+                "scalp_ping_5s_c_live",
+                "scalp_fast",
+                2.5,
+                f"2026-02-24T00:{i:02d}:00Z",
+                "MARKET_ORDER_MARGIN_CLOSEOUT",
+                -30.0,
+                1500,
+            )
+        )
+
+    scores = compute_scores(rows, min_trades=12, pf_cap=2.0)
+    prof = scores["scalp_ping_5s_c_live"]
+    assert prof["margin_closeout_rate"] >= 0.9
+    assert prof["lot_multiplier"] <= 0.5

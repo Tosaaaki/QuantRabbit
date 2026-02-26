@@ -42,6 +42,41 @@
   - 恒常赤字ワーカーの再流入を `reentry` 層で遮断し、
     正の期待値ワーカーへの資本配分を維持する。
 
+### 2026-02-26（追記）`scalp_ping_5s_{b,c}` の「勝ち時間帯×方向」限定 + dynamic_alloc 罰則強化
+
+- 背景（VM実測, 14日集計）:
+  - `scalp_ping_5s_b_live`: `-41,022 JPY`（`4,976 trades`, PF `0.425`）
+  - `scalp_ping_5s_c_live`: `-10,554 JPY`（`855 trades`, PF `0.475`）
+  - Bは `sell` 側損失が卓越（`sell -35,865 JPY` / `buy -5,156 JPY`）。
+  - Cは `buy` でも全時間運転だと赤字だが、時間帯分解で
+    `18/19/22 JST` が相対優位（`buy` 限定時に損失帯を回避可能）。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=buy`
+    - `SCALP_PING_5S_B_ALLOW_HOURS_JST=16,17,18,23`
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=block`（reduce -> block）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=buy`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=block`（reduce -> block）
+    - 共通prefix経路（`SCALP_PING_5S_PERF_GUARD_*`）も同値に更新。
+  - `config/worker_reentry.yaml`
+    - `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` の `block_jst_hours` を
+      上記許可時間帯以外へ更新（worker env と二重化）。
+  - `scripts/dynamic_alloc_worker.py`
+    - lookback抽出を `julianday(close_time)` 基準へ修正。
+    - `margin_closeout_rate` を導入し、`MARKET_ORDER_MARGIN_CLOSEOUT` 多発戦略の
+      `lot_multiplier` を追加で抑制。
+    - 実現損益（JPY）悪化に対する段階的 cap を追加（`-2500/-5000 JPY`）。
+  - `workers/common/dynamic_alloc.py`
+    - `strategy_key` 解決を case-insensitive fallback 対応にし、
+      戦略名の大小文字揺れでプロファイル未適用になる漏れを削減。
+- 意図:
+  - 「停止ではなく全時間稼働」から「勝っている条件だけ稼働」へ切り替え、
+    scalp_fast の継続赤字を抑える。
+  - dynamic allocation が `pips` 偏重で負け筋を過大評価する経路を防ぎ、
+    実現損益ベースでロット縮小を強制する。
+
 ### 2026-02-26（追記）forecast_context 欠落対策: `edge_allow` を明示返却
 
 - 背景（VM実測）:

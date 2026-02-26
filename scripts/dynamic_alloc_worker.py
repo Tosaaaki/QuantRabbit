@@ -93,7 +93,7 @@ def fetch_trades(limit: int, lookback_days: int) -> List[Tuple]:
               units
             FROM trades
             WHERE close_time IS NOT NULL
-              AND close_time >= datetime('now', ?)
+              AND julianday(close_time) >= julianday('now', ?)
             ORDER BY close_time DESC
             LIMIT ?
             """,
@@ -130,6 +130,7 @@ def compute_scores(
         key = strat
         weight = _recency_weight(close_time, now_utc=now_utc, half_life_hours=half_life_hours)
         sl_like = close_reason in {"STOP_LOSS_ORDER", "MARKET_ORDER_MARGIN_CLOSEOUT"}
+        margin_closeout = close_reason == "MARKET_ORDER_MARGIN_CLOSEOUT"
         s = stats.setdefault(
             key,
             {
@@ -150,6 +151,7 @@ def compute_scores(
                 "w_loss_realized_jpy": 0.0,
                 "w_abs_units": 0.0,
                 "w_sl_like": 0.0,
+                "w_margin_closeout": 0.0,
             },
         )
         pockets.setdefault(key, {})
@@ -183,6 +185,8 @@ def compute_scores(
                 s["w_loss_realized_jpy"] += abs(realized_jpy) * weight
         if sl_like:
             s["w_sl_like"] += weight
+        if margin_closeout:
+            s["w_margin_closeout"] += weight
     scores: Dict[str, Dict[str, float]] = {}
     for strat, s in stats.items():
         wins = int(s["wins"])
@@ -199,6 +203,7 @@ def compute_scores(
         w_loss_realized_jpy = float(s.get("w_loss_realized_jpy", 0.0))
         w_abs_units = float(s.get("w_abs_units", 0.0))
         w_sl_like = float(s.get("w_sl_like", 0.0))
+        w_margin_closeout = float(s.get("w_margin_closeout", 0.0))
 
         wr = wins / max(1, trades)
         weighted_wr = w_wins / max(1e-9, w_trades)
@@ -220,6 +225,7 @@ def compute_scores(
             1e-9, w_win_realized_jpy + w_loss_realized_jpy
         )
         sl_rate = w_sl_like / max(1e-9, w_trades)
+        margin_closeout_rate = w_margin_closeout / max(1e-9, w_trades)
 
         # Risk-adjusted normalization.
         wr_norm = _clamp((weighted_wr - 0.42) / 0.26, 0.0, 1.0)
@@ -230,6 +236,7 @@ def compute_scores(
         downside_penalty = _clamp((downside_share - 0.50) / 0.35, 0.0, 1.0)
         jpy_downside_penalty = _clamp((jpy_downside_share - 0.50) / 0.35, 0.0, 1.0)
         sl_penalty = _clamp((sl_rate - 0.38) / 0.40, 0.0, 1.0)
+        margin_closeout_penalty = _clamp((margin_closeout_rate - 0.01) / 0.10, 0.0, 1.0)
 
         base_score = (
             0.28 * pf_norm
@@ -240,6 +247,7 @@ def compute_scores(
             - 0.18 * downside_penalty
             - 0.15 * jpy_downside_penalty
             - 0.16 * sl_penalty
+            - 0.22 * margin_closeout_penalty
         )
         base_score = _clamp(base_score, 0.0, 1.0)
         sample_scale = min(1.0, trades / max(1, min_trades))
@@ -272,12 +280,27 @@ def compute_scores(
         if trades >= max(24, min_trades) and sum_realized_jpy <= -1500.0:
             lot_multiplier = min(lot_multiplier, 0.70)
             effective_min_mult = min(effective_min_mult, 0.30)
+        if trades >= max(24, min_trades) and sum_realized_jpy <= -2500.0:
+            lot_multiplier = min(lot_multiplier, 0.60)
+            effective_min_mult = min(effective_min_mult, 0.24)
         if trades >= max(32, min_trades * 2) and sum_realized_jpy <= -4000.0:
             lot_multiplier = min(lot_multiplier, 0.55)
             effective_min_mult = min(effective_min_mult, 0.22)
+        if trades >= max(40, min_trades * 2) and sum_realized_jpy <= -5000.0:
+            lot_multiplier = min(lot_multiplier, 0.50)
+            effective_min_mult = min(effective_min_mult, 0.20)
         if trades >= max(12, min_trades) and realized_jpy_per_1k_units <= -8.0:
             lot_multiplier = min(lot_multiplier, 0.62)
             effective_min_mult = min(effective_min_mult, 0.25)
+        if trades >= max(12, min_trades) and realized_jpy_per_1k_units <= -5.0:
+            lot_multiplier = min(lot_multiplier, 0.58)
+            effective_min_mult = min(effective_min_mult, 0.24)
+        if trades >= max(10, min_trades // 2) and margin_closeout_rate >= 0.05:
+            lot_multiplier = min(lot_multiplier, 0.58)
+            effective_min_mult = min(effective_min_mult, 0.22)
+        if trades >= max(20, min_trades) and margin_closeout_rate >= 0.10:
+            lot_multiplier = min(lot_multiplier, 0.50)
+            effective_min_mult = min(effective_min_mult, 0.18)
         if trades < max(1, min_trades):
             lot_multiplier = min(lot_multiplier, 1.00)
         lot_multiplier = _clamp(lot_multiplier, effective_min_mult, max_mult)
@@ -298,6 +321,7 @@ def compute_scores(
             "sum_realized_jpy": round(sum_realized_jpy, 2),
             "realized_jpy_per_1k_units": round(realized_jpy_per_1k_units, 3),
             "sl_rate": round(sl_rate, 3),
+            "margin_closeout_rate": round(margin_closeout_rate, 3),
             "downside_share": round(downside_share, 3),
             "jpy_downside_share": round(jpy_downside_share, 3),
             "allow_loser_block": bool(allow_loser_block),
