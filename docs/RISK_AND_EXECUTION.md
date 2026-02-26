@@ -622,6 +622,10 @@
 - 目的:
   - `mode=reduce` 戦略で軽微な closeout 履歴を soft 扱いにし、
     `perf_block:hard:margin_closeout_n=*` の過剰発生を防ぐ。
+- 実装補足:
+  - `quant-order-manager.service` では worker 個別 env が読まれないため、
+    C戦略の `SCALP_PING_5S_C_PERF_GUARD_*` は
+    `ops/env/quant-v2-runtime.env` にも同値を置いて preflight 判定へ反映する。
   - `margin_closeout_soft_warmup_n=*` を運用監査し、停止ではなく縮小継続へ遷移させる。
 
 ### Release gate

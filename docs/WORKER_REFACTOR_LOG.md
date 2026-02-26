@@ -6612,6 +6612,9 @@
     - `SCALP_PING_5S_C_PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE=0.50`
   - `tests/execution/test_env_prefix_inference.py`
     - C prefix 推論の回帰テストを追加。
+  - `ops/env/quant-v2-runtime.env`
+    - `SCALP_PING_5S_C_PERF_GUARD_*` を order-manager service 側へ明示追加し、
+      worker env だけに定義されていた C 閾値を preflight 判定で確実に参照。
 - 意図:
   - C戦略で `reduce` 運用を正しく適用し、
     軽微な margin closeout 履歴だけで hard reject 連発する状態を解消する。
