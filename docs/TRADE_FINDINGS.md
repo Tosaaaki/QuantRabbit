@@ -909,6 +909,36 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 13:10 UTC / 2026-02-26 22:10 JST - B/C エントリー枯渇に対する no-signal 緩和（revert依存解除 + side filter開放）
+Period:
+- Window: `2026-02-26 13:08` ～ `13:10` UTC
+- Source: VM `journalctl -u quant-scalp-ping-5s-b.service`, `quant-scalp-ping-5s-c.service`
+
+Fact:
+- `quant-order-manager` の lockエラーは再発していないが、B/C ワーカーは `entry-skip` が継続。
+- 主因は `no_signal:revert_not_found` と `units_below_min`（B/C とも short 側で 8〜15件/集計周期）。
+- `side_filter_block` も残り、sell固定のままでは通過率が伸びにくい。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SIDE_FILTER=none`, `REVERT_ENABLED=0`
+   - `MAX_ORDERS_PER_MINUTE=6`, `BASE_ENTRY_UNITS=900`
+   - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.45`, `MIN_UNITS_RESCUE_MIN_CONFIDENCE=65`
+   - `CONF_FLOOR=72`
+2. `ops/env/scalp_ping_5s_c.env`
+   - `SIDE_FILTER=none`, `ALLOW_NO_SIDE_FILTER=1`, `REVERT_ENABLED=0`
+   - `MAX_ORDERS_PER_MINUTE=6`, `BASE_ENTRY_UNITS=260`
+   - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.45`, `MIN_UNITS_RESCUE_MIN_CONFIDENCE=70`
+   - `CONF_FLOOR=74`
+
+Verification:
+1. デプロイ後 10〜20 分で `orders.db` の `preflight_start` だけでなく `filled` が増えること。
+2. `entry-skip summary` の `revert_not_found` 比率が低下すること。
+3. `units_below_min` が `min_units_rescue` に置換され、0件へ収束すること。
+
+Status:
+- in_progress
+
 ## 2026-02-26 09:15 UTC / 2026-02-26 18:15 JST - EXIT封鎖とSL未実装の複合で margin closeout が連鎖
 Period:
 - Incident window: `2026-02-24 02:20:16` ～ `09:13:14` UTC（`2026-02-24 11:20:16` ～ `18:13:14` JST）

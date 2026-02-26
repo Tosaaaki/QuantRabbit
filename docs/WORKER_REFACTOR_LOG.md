@@ -8144,3 +8144,30 @@
 - 意図:
   - `stage_state.db` 共有アクセス競合で `market_order` が中断される経路を遮断し、
     エントリー導線を停止なしで維持する。
+
+### 2026-02-26（追記）B/C no-signal 緩和（revert依存解除 + side filter開放）
+
+- 背景（VM実測）:
+  - `order-manager` lock 解消後も B/C は `entry-skip` が継続。
+  - skip 主因は `revert_not_found` と `units_below_min`、加えて `side_filter_block` が残存。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=none`
+    - `SCALP_PING_5S_B_REVERT_ENABLED=0`
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=6`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=900`
+    - `SCALP_PING_5S_B_MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.45`
+    - `SCALP_PING_5S_B_MIN_UNITS_RESCUE_MIN_CONFIDENCE=65`
+    - `SCALP_PING_5S_B_CONF_FLOOR=72`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=none`
+    - `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1`
+    - `SCALP_PING_5S_C_REVERT_ENABLED=0`
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=6`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=260`
+    - `SCALP_PING_5S_C_MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.45`
+    - `SCALP_PING_5S_C_MIN_UNITS_RESCUE_MIN_CONFIDENCE=70`
+    - `SCALP_PING_5S_C_CONF_FLOOR=74`
+- 意図:
+  - no-signal の主要因（revert 固着）を外し、B/C の market_order 到達率を回復する。
+  - 停止を使わず、低ロット救済と両方向運用でエントリー密度を引き上げる。

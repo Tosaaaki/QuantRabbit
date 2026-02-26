@@ -1244,6 +1244,18 @@
   - `stage_state.db` 共有アクセス競合を理由にエントリー導線を止めない。
   - 停止ではなく改善優先方針を維持しつつ、発注可否は戦略ローカル + リスクガードで判定する。
 
+### B/C no-signal 緩和（2026-02-26 追記）
+- 背景:
+  - lock障害解消後、B/C は `revert_not_found` / `units_below_min` で entry が詰まりやすい状態を確認。
+- 実装:
+  - B/C とも `SIDE_FILTER=none` へ変更（C は `ALLOW_NO_SIDE_FILTER=1`）。
+  - B/C とも `REVERT_ENABLED=0` で revert 依存を外し、momentum主導の通過を優先。
+  - `MAX_ORDERS_PER_MINUTE` / `BASE_ENTRY_UNITS` を引き上げ、`MIN_UNITS_RESCUE` の閾値を緩和。
+  - `CONF_FLOOR` を下げ、低頻度化しすぎる条件を緩和。
+- 運用意図:
+  - 時間帯停止なしで発注密度を回復し、実取引ログで改善を再評価できる状態を作る。
+  - 主要ブロックは `order_manager` 側の margin/probability/risk guard に集約して制御する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |
