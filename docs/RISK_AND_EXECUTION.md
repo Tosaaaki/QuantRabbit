@@ -1215,6 +1215,8 @@
     - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.52`
     - `PERF_GUARD_FAILFAST_MIN_TRADES=30`（C prefix / base prefix 両方）
     - `PERF_GUARD_FAILFAST_PF/WIN=0.20/0.20`（C prefix / base prefix 両方）
+    - `PERF_GUARD_ENABLED=0`（C prefix / base prefix 両方）
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.46`
 - 運用意図:
   - 時間帯停止・恒久停止を使わず、発注通路を再開するための最小通過ユニットとシグナル閾値を補正。
   - hard block を減らしつつ、単位当たりリスクは `MIN_UNITS`/bias scale で抑えたまま再稼働させる。

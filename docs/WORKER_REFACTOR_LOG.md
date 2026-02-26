@@ -8054,6 +8054,9 @@
     - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_PF/WIN=0.20/0.20`（from `0.90/0.48`）
     - `SCALP_PING_5S_PERF_GUARD_FAILFAST_MIN_TRADES=30`（from `6`）
     - `SCALP_PING_5S_PERF_GUARD_FAILFAST_PF/WIN=0.20/0.20`（from `0.90/0.48`）
+    - `SCALP_PING_5S_C_PERF_GUARD_ENABLED=0`
+    - `SCALP_PING_5S_PERF_GUARD_ENABLED=0`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.46`（from `0.52`）
 - 意図:
   - 停止なしのまま、B/C のローカル判定段階での枯渇を緩和し order-manager まで intent を通す。
   - 共通 `perf_block` での hard reject 常態を解き、戦略ローカル最適化での復帰余地を確保する。
