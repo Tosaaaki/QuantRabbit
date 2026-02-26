@@ -1023,16 +1023,20 @@ strategies:
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
     neg_exit:
       # C は no-block 運用で EXIT を機動的に通し、負けの引っ張りを避ける。
+      strict_no_negative: false
       allow_reasons:
         - "*"
+      deny_reasons: []
 
   scalp_ping_5s_c_live:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
     neg_exit:
       # live tag でも同一方針を適用。
+      strict_no_negative: false
       allow_reasons:
         - "*"
+      deny_reasons: []
 
   scalp_ping_5s_d:
     <<: *SCALP_PING_5S_EXIT_PROFILE

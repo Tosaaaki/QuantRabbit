@@ -97,6 +97,26 @@
   - `b/c` は `buy + allow_hours` 制約を維持しつつ
     `BASE_ENTRY_UNITS` / `MAX_UNITS` / `MAX_ORDERS_PER_MINUTE` を引き上げる。
 
+### 停止なし・時間帯停止なしへの再構成（2026-02-26 追加）
+- 運用方針を「常時動的トレード」に戻し、停止/時間帯ブロック前提の設定を解除。
+- 反映点:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_ALLOW_HOURS_JST=`（時間帯制約解除）
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=reduce`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ALLOW_HOURS_JST=`（時間帯制約解除）
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`（fallback経路同値）
+  - `config/worker_reentry.yaml`
+    - `M1Scalper`, `MicroPullbackEMA`, `MicroLevelReactor`,
+      `scalp_ping_5s_{b,c,d}_live` の `block_jst_hours` を `[]` へ更新。
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_{c,c_live}.neg_exit` に
+      `strict_no_negative: false`, `allow_reasons: ['*']`, `deny_reasons: []` を明示。
+- 意図:
+  - 時間帯で止めず、strategyローカル判定 + preflightリスクでサイズ/通過を動的制御する。
+  - `close_reject_no_negative` による EXIT 詰まりを減らし、損失玉滞留を避ける。
+
 ### Exit
 - 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則。
 - 例外は強制 DD / ヘルス / マージン使用率 / 余力 / 未実現DDの総合判定のみ。
@@ -994,13 +1014,16 @@
     利益寄与のある時間帯/戦略へロットを再配分する。
 - エントリー制御:
   - `scalp_ping_5s_b`
-    - 稼働時間を `JST 17,18` に限定（`ALLOW_HOURS_JST=17,18`）
+    - 稼働時間制限は使わず常時稼働（`ALLOW_HOURS_JST=`）
     - `BASE_ENTRY_UNITS=1800`, `MAX_UNITS=3600`
+    - `PERF_GUARD_MODE=reduce`（停止ではなく縮小運転）
     - local fallback 整合: `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...B_LIVE=0.64`
     - order-manager 側は通過閾値を `0.64` へ緩和し、利益時間帯で約定回復を優先。
   - `scalp_ping_5s_c`
-    - 稼働時間を `JST 19,22` に限定（`ALLOW_HOURS_JST=19,22`）
+    - 稼働時間制限は使わず常時稼働（`ALLOW_HOURS_JST=`）
     - `BASE_ENTRY_UNITS=400`, `MAX_UNITS=900`, `CONF_FLOOR=82`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`（fallback整合）
     - local fallback 整合: `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...C_LIVE=0.76`
     - order-manager 側は低EV通過を厳格化:
       - `REJECT_UNDER=0.76`
@@ -1012,7 +1035,7 @@
     - B: `0.70 / 0.20 / 0.30`
     - C: `0.78 / 0.32 / 0.42`
 - micro配分:
-  - `MicroCompressionRevert` 専用workerは `MICRO_MULTI_ENABLED=0` で停止。
+  - `MicroCompressionRevert` 専用workerは停止せず、縮小配分で継続運転。
   - `MicroVWAPRevert` / `MicroRangeBreak` / `MicroTrendRetest` / `MomentumBurstMicro` は
     `MICRO_MULTI_BASE_UNITS=42000` へ増量（rangebreak/trendretest/momentumburst は loop 4.0s）。
 - 運用意図:

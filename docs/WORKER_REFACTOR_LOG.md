@@ -8,6 +8,43 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）運用方針を「停止なし・時間帯停止なし」へ再固定
+
+- 背景（VM実測）:
+  - 直近24hで `scalp_ping_5s_b/c` の負寄与が継続し、停止・時間帯限定に寄せた運用が混在していた。
+  - `strategy_control` と `worker_reentry` に停止相当設定（`entry=0` / `block_jst_hours`）が残り、
+    「常時動的トレード」方針と不整合が発生していた。
+- 変更:
+  - `ops/env/scalp_ping_5s_{b,c}.env`
+    - `ALLOW_HOURS_JST=`（時間帯制約解除）
+    - `PERF_GUARD_MODE=reduce`（blockではなく縮小）
+  - `config/worker_reentry.yaml`
+    - `M1Scalper`, `MicroPullbackEMA`, `MicroLevelReactor`,
+      `scalp_ping_5s_{b,c,d}_live` の `block_jst_hours` を `[]` へ変更。
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_{c,c_live}` の `neg_exit` を no-block 化
+      （`strict_no_negative: false`, `deny_reasons: []`）。
+- 意図:
+  - 停止/時間帯ブロックではなく、戦略ローカル判定と preflight リスクで
+    常時運転しながら損失側を圧縮する運用へ戻す。
+
+### 2026-02-26（追記）改善点台帳更新: EXIT封鎖/SL未実装の再発防止項目を追加
+
+- 背景（VM/OANDA 実測）:
+  - `strategy_control_exit_disabled` が `2026-02-24 02:20:16` ～ `09:13:14` UTC に `10,277` 件発生。
+  - `MicroPullbackEMA` の4 ticket（`384420/384425/384430/384435`）で
+    各 `2,044～2,045` 回の close 拒否後に `MARKET_ORDER_MARGIN_CLOSEOUT`（合計 `-16,837.4 JPY`）。
+  - 該当 ticket は broker 側 `stopLossOnFill` 未設定（TPのみ設定）を確認。
+- 変更:
+  - 改善/敗因の単一台帳 `docs/TRADE_FINDINGS.md` に
+    「2026-02-26 09:15 UTC / 18:15 JST - EXIT封鎖とSL未実装の複合で margin closeout が連鎖」
+    を追記。
+  - 再発防止項目（`entry=1 & exit=0` 禁止、broker `stopLossOnFill` 必須化、
+    stale flag 解消、検証KPI）を同エントリへ明示。
+- 意図:
+  - 同種事故の原因と改善項目を単一台帳へ固定し、
+    実装・運用・検証を同じチェックリストで回せる状態にする。
+
 ### 2026-02-26（追記）改善/敗因記録の単一台帳を `docs/TRADE_FINDINGS.md` に統一
 
 - 背景:
@@ -7602,6 +7639,7 @@
     - `SCALP_PING_5S_B_ALLOW_HOURS_JST=17,18`（16/23を除外）
     - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=1800`
     - `SCALP_PING_5S_B_MAX_UNITS=3600`
+    - `SCALP_PING_5S_B_PERF_GUARD_MODE=reduce`
     - local fallback 経路の整合:
       - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
   - `ops/env/scalp_ping_5s_c.env`
@@ -7609,6 +7647,8 @@
     - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=400`
     - `SCALP_PING_5S_C_MAX_UNITS=900`
     - `SCALP_PING_5S_C_CONF_FLOOR=82`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`
+    - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`（fallback整合）
     - local fallback 経路の整合:
       - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.76`
   - `ops/env/quant-order-manager.env`
