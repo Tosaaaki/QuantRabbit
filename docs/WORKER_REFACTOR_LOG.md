@@ -6447,6 +6447,10 @@
   - `ops/env/quant-m1scalper.env`
     - `M1SCALP_BLOCK_HOURS_ENABLED=1`
     - `M1SCALP_BLOCK_HOURS_UTC=0-23`
+  - `ops/env/scalp_ping_5s_flow.env`
+    - `SCALP_PING_5S_FLOW_ENABLED=0`
+  - `ops/env/quant-scalp-ping-5s-flow.env`
+    - `SCALP_PING_5S_FLOW_ENABLED=0`
   - `ops/env/scalp_ping_5s_c.env`
     - `SCALP_PING_5S_C_SIDE_FILTER=long`
     - `SCALP_PING_5S_C_ALLOW_HOURS_JST=18,19,22`
