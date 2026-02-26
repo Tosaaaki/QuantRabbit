@@ -626,6 +626,8 @@
   - `quant-order-manager.service` では worker 個別 env が読まれないため、
     C戦略の `SCALP_PING_5S_C_PERF_GUARD_*` は
     `ops/env/quant-v2-runtime.env` にも同値を置いて preflight 判定へ反映する。
+  - 互換運用として `SCALP_PING_5S_PERF_GUARD_MARGIN_CLOSEOUT_HARD_*` も同値化し、
+    旧 prefix 解決経路が残っても hard reject へ偏らないようにする。
   - `margin_closeout_soft_warmup_n=*` を運用監査し、停止ではなく縮小継続へ遷移させる。
 
 ### Release gate
