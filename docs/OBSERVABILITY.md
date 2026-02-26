@@ -14,6 +14,10 @@
   `snapshot.recent_trades` の件数上限ではなく `trades.db` の close 履歴を
   lookback 窓で再集計する。走査上限は
   `UI_HOURLY_FALLBACK_SCAN_LIMIT`（default: `5000`）。
+- `quant-autotune-ui.service` は UI 応答を優先し、
+  `POSITION_MANAGER_SERVICE_*TIMEOUT` を短く（1.2〜2.0s）設定して
+  fail-fast 運用する。`POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` により
+  heavy fallback を避け、軽量 snapshot へ降格する。
 - `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、

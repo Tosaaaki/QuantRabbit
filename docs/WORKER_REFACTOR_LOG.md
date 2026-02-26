@@ -57,6 +57,28 @@
   - UI を「長時間開いた時に壊れにくい」状態へ寄せ、
     snapshot 配信の揺れと独立にフロント側の再発要因（多重タイマー/storage例外）を除去する。
 
+### 2026-02-26（追記）Autotune UI 遅延対策: position_manager 呼び出しを fail-fast 化
+
+- 背景（VM実測）:
+  - `quant-autotune-ui.service` の `/dashboard` 応答が 20〜30 秒に達し、
+    体感で「更新が遅い」状態になっていた。
+  - `journalctl` でも
+    `position_manager service error ... performance_summary timeout (20.0s)` が確認され、
+    UI 側の snapshot 生成が position_manager 応答待ちに引きずられていた。
+- 変更:
+  - `systemd/quant-autotune-ui.service`
+    - `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0`
+    - `POSITION_MANAGER_SERVICE_TIMEOUT=1.5`
+    - `POSITION_MANAGER_SERVICE_PERFORMANCE_SUMMARY_TIMEOUT=2.0`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=1.2`
+    - `POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC=2.0`
+    - `POSITION_MANAGER_SERVICE_FAIL_BACKOFF_MAX_SEC=10.0`
+  - UI プロセスのみで fail-fast 設定を適用し、
+    position_manager が高負荷時でも軽量 fallback（local trades/metrics）で応答を維持する。
+- 意図:
+  - 精密メトリクスより表示応答性を優先し、
+    ダッシュボード更新の待ち時間を秒単位へ戻す。
+
 ### 2026-02-25（追記）position/order manager の遅延・ロック恒久対策
 
 - 背景（VM実測）:
