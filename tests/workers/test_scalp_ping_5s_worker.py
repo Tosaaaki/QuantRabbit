@@ -43,6 +43,36 @@ def test_build_tick_signal_detects_long(monkeypatch) -> None:
     assert sig.confidence >= worker.config.CONFIDENCE_FLOOR
 
 
+def test_is_spread_stale_block_detects_state_stale() -> None:
+    from workers.scalp_ping_5s import worker
+
+    assert worker._is_spread_stale_block(
+        blocked=True,
+        spread_state={"stale": True},
+        spread_reason="",
+    ) is True
+
+
+def test_is_spread_stale_block_detects_reason_only() -> None:
+    from workers.scalp_ping_5s import worker
+
+    assert worker._is_spread_stale_block(
+        blocked=True,
+        spread_state={"stale": False},
+        spread_reason="spread_stale age=9000ms > max=4000ms",
+    ) is True
+
+
+def test_is_spread_stale_block_skips_when_not_blocked() -> None:
+    from workers.scalp_ping_5s import worker
+
+    assert worker._is_spread_stale_block(
+        blocked=False,
+        spread_state={"stale": True},
+        spread_reason="spread_stale",
+    ) is False
+
+
 def test_build_tick_signal_rejects_chasing_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

@@ -292,6 +292,46 @@ def _state_from_tick_cache(now_monotonic: float) -> Optional[dict]:
     return state
 
 
+def _hydrate_snapshot_from_state(state: dict, *, now_monotonic: float) -> None:
+    global _snapshot, _stale_since
+
+    try:
+        bid = float(state.get("bid") or 0.0)
+        ask = float(state.get("ask") or 0.0)
+    except Exception:
+        return
+    if bid <= 0.0 or ask <= 0.0 or ask < bid:
+        return
+
+    try:
+        age_ms = max(0.0, float(state.get("age_ms") or 0.0))
+    except Exception:
+        age_ms = 0.0
+    tick_epoch = max(0.0, time.time() - (age_ms / 1000.0))
+    spread_pips = (ask - bid) / PIP_VALUE
+
+    _snapshot = _Snapshot(
+        monotonic_ts=now_monotonic,
+        tick_epoch=tick_epoch,
+        bid=bid,
+        ask=ask,
+        spread_pips=spread_pips,
+    )
+    _stale_since = None
+
+    _history.append((now_monotonic, spread_pips))
+    while _history and now_monotonic - _history[0][0] > WINDOW_SECONDS:
+        _history.popleft()
+
+    _hot_history.append((now_monotonic, spread_pips))
+    while _hot_history and now_monotonic - _hot_history[0][0] > HOT_WINDOW_SECONDS:
+        _hot_history.popleft()
+
+    _baseline_history.append((now_monotonic, spread_pips))
+    while _baseline_history and now_monotonic - _baseline_history[0][0] > BASELINE_WINDOW_SECONDS:
+        _baseline_history.popleft()
+
+
 def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     """
     Tick からスプレッド情報を更新する。tick は market_data.tick_fetcher.Tick 型想定。
@@ -480,8 +520,10 @@ def get_state() -> Optional[dict]:
             fallback_stale = bool(fallback_state.get("stale"))
             if (not fallback_stale) or (fallback_age_ms < age_ms):
                 _stale_since = None
+                _hydrate_snapshot_from_state(fallback_state, now_monotonic=now)
                 merged = dict(fallback_state)
                 merged["snapshot_age_ms"] = age_ms
+                merged["snapshot_refreshed"] = True
                 return _normalize_for_disabled_spread_guard(merged)
 
     values = [val for _, val in _history] or [_snapshot.spread_pips]
@@ -564,6 +606,15 @@ def is_blocked() -> Tuple[bool, int, Optional[dict], str]:
 
     now = time.monotonic()
     remain = int(max(0.0, _blocked_until - now))
+    if remain > 0 and state and _blocked_reason.startswith("spread_stale"):
+        try:
+            spread_now = float(state.get("spread_pips") or 0.0)
+        except Exception:
+            spread_now = MAX_SPREAD_PIPS + 1.0
+        if (not bool(state.get("stale"))) and spread_now <= MAX_SPREAD_PIPS:
+            _blocked_until = now
+            _blocked_reason = ""
+            remain = 0
     if remain <= 0 and state:
         try:
             spread_now = float(state.get("spread_pips") or 0.0)

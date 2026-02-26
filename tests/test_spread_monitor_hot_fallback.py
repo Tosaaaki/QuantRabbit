@@ -137,5 +137,36 @@ def test_get_state_prefers_fresh_tick_cache_when_snapshot_stale(monkeypatch):
     assert state is not None
     assert state.get("source") == "tick_cache"
     assert bool(state.get("stale")) is False
+    assert bool(state.get("snapshot_refreshed")) is True
     assert float(state.get("spread_pips") or 0.0) == pytest.approx(0.8, abs=1e-6)
     assert int(state.get("snapshot_age_ms") or 0) >= 19000
+    assert spread_monitor._snapshot is not None
+    assert spread_monitor._snapshot.monotonic_ts == pytest.approx(20.0, abs=1e-6)
+    assert spread_monitor._snapshot.ask == pytest.approx(150.009, abs=1e-6)
+
+
+def test_is_blocked_clears_stale_cooldown_when_cache_is_fresh(monkeypatch):
+    from market_data import spread_monitor
+
+    _reset_state(spread_monitor)
+    monkeypatch.setattr(spread_monitor, "DISABLE_SPREAD_GUARD", False)
+    monkeypatch.setattr(spread_monitor, "TICK_CACHE_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(spread_monitor.time, "time", lambda: 300.0)
+    monkeypatch.setattr(spread_monitor.time, "monotonic", lambda: 30.0)
+    spread_monitor._blocked_until = 35.0
+    spread_monitor._blocked_reason = "spread_stale age=9000ms > max=4000ms"
+    monkeypatch.setattr(
+        spread_monitor.tick_window,
+        "recent_ticks",
+        lambda seconds=0.0, limit=None: [
+            {"epoch": 299.9, "bid": 151.000, "ask": 151.008, "mid": 151.004},
+            {"epoch": 300.0, "bid": 151.001, "ask": 151.009, "mid": 151.005},
+        ],
+    )
+
+    blocked, remain, state, reason = spread_monitor.is_blocked()
+    assert blocked is False
+    assert remain == 0
+    assert reason == ""
+    assert state is not None
+    assert state.get("source") == "tick_cache"

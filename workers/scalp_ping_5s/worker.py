@@ -1963,6 +1963,19 @@ def _latest_tick_age_ms(rows: Sequence[dict]) -> float:
     return max(0.0, (time.time() - latest_epoch) * 1000.0)
 
 
+def _is_spread_stale_block(
+    *,
+    blocked: bool,
+    spread_state: Optional[dict],
+    spread_reason: str,
+) -> bool:
+    if not blocked:
+        return False
+    if bool((spread_state or {}).get("stale")):
+        return True
+    return "spread_stale" in str(spread_reason or "").lower()
+
+
 def _tick_density(rows: Sequence[dict], window_sec: float) -> float:
     if window_sec <= 0.0 or not rows:
         return 0.0
@@ -5790,6 +5803,23 @@ async def scalp_ping_5s_worker() -> None:
 
             blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)
+            if _is_spread_stale_block(
+                blocked=blocked,
+                spread_state=spread_state,
+                spread_reason=spread_reason,
+            ) and config.SNAPSHOT_FALLBACK_ENABLED:
+                now_mono = time.monotonic()
+                if now_mono - last_snapshot_fetch >= config.SNAPSHOT_MIN_INTERVAL_SEC:
+                    if await _fetch_price_snapshot(LOG):
+                        last_snapshot_fetch = now_mono
+                        blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
+                        spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)
+                        if not blocked and spread_pips <= config.MAX_SPREAD_PIPS:
+                            LOG.info(
+                                "%s spread stale recovered via snapshot fallback spread=%.2fp",
+                                config.LOG_PREFIX,
+                                spread_pips,
+                            )
             if blocked or spread_pips > config.MAX_SPREAD_PIPS:
                 if blocked and remain > 0 and remain % 5 == 0:
                     LOG.info(
