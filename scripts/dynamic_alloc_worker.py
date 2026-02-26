@@ -88,7 +88,9 @@ def fetch_trades(limit: int, lookback_days: int) -> List[Tuple]:
               pocket,
               pl_pips,
               close_time,
-              close_reason
+              close_reason,
+              realized_pl,
+              units
             FROM trades
             WHERE close_time IS NOT NULL
               AND close_time >= datetime('now', ?)
@@ -135,20 +137,30 @@ def compute_scores(
                 "losses": 0,
                 "trades": 0,
                 "sum_pips": 0.0,
+                "sum_realized_jpy": 0.0,
                 "win_pips": 0.0,
                 "loss_pips": 0.0,
                 "w_trades": 0.0,
                 "w_wins": 0.0,
                 "w_sum_pips": 0.0,
+                "w_sum_realized_jpy": 0.0,
                 "w_win_pips": 0.0,
                 "w_loss_pips": 0.0,
+                "w_win_realized_jpy": 0.0,
+                "w_loss_realized_jpy": 0.0,
+                "w_abs_units": 0.0,
                 "w_sl_like": 0.0,
             },
         )
         pockets.setdefault(key, {})
         pockets[key][pocket] = pockets[key].get(pocket, 0) + 1
         pl = float(pl_pips or 0.0)
+        realized_jpy = float(row[5] or 0.0) if len(row) > 5 else pl
+        abs_units = abs(float(row[6] or 0.0)) if len(row) > 6 else 1000.0
+        if abs_units <= 0.0:
+            abs_units = 1000.0
         s["sum_pips"] += pl
+        s["sum_realized_jpy"] += realized_jpy
         s["trades"] += 1
         if pl > 0:
             s["wins"] += 1
@@ -158,11 +170,17 @@ def compute_scores(
             s["loss_pips"] += abs(pl)
         s["w_trades"] += weight
         s["w_sum_pips"] += pl * weight
+        s["w_sum_realized_jpy"] += realized_jpy * weight
+        s["w_abs_units"] += abs_units * weight
         if pl > 0:
             s["w_wins"] += weight
             s["w_win_pips"] += pl * weight
+            if realized_jpy > 0.0:
+                s["w_win_realized_jpy"] += realized_jpy * weight
         elif pl < 0:
             s["w_loss_pips"] += abs(pl) * weight
+            if realized_jpy < 0.0:
+                s["w_loss_realized_jpy"] += abs(realized_jpy) * weight
         if sl_like:
             s["w_sl_like"] += weight
     scores: Dict[str, Dict[str, float]] = {}
@@ -170,34 +188,58 @@ def compute_scores(
         wins = int(s["wins"])
         trades = int(s["trades"])
         sum_pips = float(s["sum_pips"])
+        sum_realized_jpy = float(s["sum_realized_jpy"])
         w_trades = float(s.get("w_trades", 0.0))
         w_wins = float(s.get("w_wins", 0.0))
         w_sum_pips = float(s.get("w_sum_pips", 0.0))
+        w_sum_realized_jpy = float(s.get("w_sum_realized_jpy", 0.0))
         w_win_pips = float(s.get("w_win_pips", 0.0))
         w_loss_pips = float(s.get("w_loss_pips", 0.0))
+        w_win_realized_jpy = float(s.get("w_win_realized_jpy", 0.0))
+        w_loss_realized_jpy = float(s.get("w_loss_realized_jpy", 0.0))
+        w_abs_units = float(s.get("w_abs_units", 0.0))
         w_sl_like = float(s.get("w_sl_like", 0.0))
 
         wr = wins / max(1, trades)
         weighted_wr = w_wins / max(1e-9, w_trades)
         avg_pl = w_sum_pips / max(1e-9, w_trades)
+        avg_realized_jpy = w_sum_realized_jpy / max(1e-9, w_trades)
+        realized_jpy_per_1k_units = (
+            1000.0 * w_sum_realized_jpy / max(1.0, w_abs_units)
+        )
         pf = w_win_pips / w_loss_pips if w_loss_pips > 0 else (w_win_pips if w_win_pips > 0 else 0.0)
         pf = min(pf, max(0.1, pf_cap))
+        jpy_pf = (
+            w_win_realized_jpy / w_loss_realized_jpy
+            if w_loss_realized_jpy > 0
+            else (w_win_realized_jpy if w_win_realized_jpy > 0 else 0.0)
+        )
+        jpy_pf = min(jpy_pf, max(0.1, pf_cap))
         downside_share = w_loss_pips / max(1e-9, w_win_pips + w_loss_pips)
+        jpy_downside_share = w_loss_realized_jpy / max(
+            1e-9, w_win_realized_jpy + w_loss_realized_jpy
+        )
         sl_rate = w_sl_like / max(1e-9, w_trades)
 
         # Risk-adjusted normalization.
         wr_norm = _clamp((weighted_wr - 0.42) / 0.26, 0.0, 1.0)
         pf_norm = _clamp((pf - 0.60) / max(0.10, (pf_cap - 0.60)), 0.0, 1.0)
+        jpy_pf_norm = _clamp((jpy_pf - 0.60) / max(0.10, (pf_cap - 0.60)), 0.0, 1.0)
         avg_norm = _clamp((avg_pl + 1.80) / 4.20, 0.0, 1.0)
+        jpy_avg_norm = _clamp((realized_jpy_per_1k_units + 8.0) / 16.0, 0.0, 1.0)
         downside_penalty = _clamp((downside_share - 0.50) / 0.35, 0.0, 1.0)
+        jpy_downside_penalty = _clamp((jpy_downside_share - 0.50) / 0.35, 0.0, 1.0)
         sl_penalty = _clamp((sl_rate - 0.38) / 0.40, 0.0, 1.0)
 
         base_score = (
-            0.42 * pf_norm
-            + 0.34 * wr_norm
-            + 0.24 * avg_norm
-            - 0.28 * downside_penalty
-            - 0.20 * sl_penalty
+            0.28 * pf_norm
+            + 0.25 * wr_norm
+            + 0.16 * avg_norm
+            + 0.14 * jpy_pf_norm
+            + 0.17 * jpy_avg_norm
+            - 0.18 * downside_penalty
+            - 0.15 * jpy_downside_penalty
+            - 0.16 * sl_penalty
         )
         base_score = _clamp(base_score, 0.0, 1.0)
         sample_scale = min(1.0, trades / max(1, min_trades))
@@ -206,6 +248,7 @@ def compute_scores(
         pocket = max(pocket_counts, key=pocket_counts.get) if pocket_counts else "unknown"
 
         min_mult = _clamp(float(min_lot_multiplier), 0.10, 1.00)
+        effective_min_mult = min_mult
         max_mult = max(min_mult, float(max_lot_multiplier))
         lot_multiplier = min_mult + (max_mult - min_mult) * score
 
@@ -224,22 +267,39 @@ def compute_scores(
             lot_multiplier = min(lot_multiplier, 0.66)
         if trades >= max(12, min_trades) and sl_rate >= 0.60:
             lot_multiplier = min(lot_multiplier, 0.66)
+        if trades >= max(8, min_trades // 2) and sum_realized_jpy < 0.0:
+            lot_multiplier = min(lot_multiplier, 0.88)
+        if trades >= max(24, min_trades) and sum_realized_jpy <= -1500.0:
+            lot_multiplier = min(lot_multiplier, 0.70)
+            effective_min_mult = min(effective_min_mult, 0.30)
+        if trades >= max(32, min_trades * 2) and sum_realized_jpy <= -4000.0:
+            lot_multiplier = min(lot_multiplier, 0.55)
+            effective_min_mult = min(effective_min_mult, 0.22)
+        if trades >= max(12, min_trades) and realized_jpy_per_1k_units <= -8.0:
+            lot_multiplier = min(lot_multiplier, 0.62)
+            effective_min_mult = min(effective_min_mult, 0.25)
         if trades < max(1, min_trades):
             lot_multiplier = min(lot_multiplier, 1.00)
-        lot_multiplier = _clamp(lot_multiplier, min_mult, max_mult)
+        lot_multiplier = _clamp(lot_multiplier, effective_min_mult, max_mult)
 
         scores[strat] = {
             "pocket": pocket,
             "score": round(score, 3),
             "lot_multiplier": round(lot_multiplier, 3),
+            "effective_min_lot_multiplier": round(effective_min_mult, 3),
             "trades": trades,
             "win_rate": round(wr, 3),
             "weighted_win_rate": round(weighted_wr, 3),
             "pf": round(pf, 3),
+            "jpy_pf": round(jpy_pf, 3),
             "avg_pips": round(avg_pl, 3),
             "sum_pips": round(sum_pips, 2),
+            "avg_realized_jpy": round(avg_realized_jpy, 3),
+            "sum_realized_jpy": round(sum_realized_jpy, 2),
+            "realized_jpy_per_1k_units": round(realized_jpy_per_1k_units, 3),
             "sl_rate": round(sl_rate, 3),
             "downside_share": round(downside_share, 3),
+            "jpy_downside_share": round(jpy_downside_share, 3),
             "allow_loser_block": bool(allow_loser_block),
             "allow_winner_only": bool(allow_winner_only),
         }

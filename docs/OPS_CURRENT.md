@@ -1,5 +1,31 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-8. 2026-02-26 UTC EV反転ホットフィックス（`scalp_ping_5s_c_live` + `dynamic_alloc`）
+- 背景（VM実測, UTC 2026-02-26 06:46 前後）:
+  - 直近24hの戦略別で `scalp_ping_5s_c_live` が `559 trades / -729.7 pips / -6,882 JPY`。
+  - 直近7dでは `scalp_ping_5s_c_live` が `+918.7 pips` でも `-2,592 JPY` となり、
+    pips基準配分が実損益と乖離していた。
+  - `config/dynamic_alloc.json` で同戦略に `lot_multiplier=1.201` が配分され、
+    実損益悪化時にもサイズが維持される状態だった。
+- 対応:
+  - `scripts/dynamic_alloc_worker.py`
+    - `realized_pl` と `units` を集計対象に追加。
+    - `realized_jpy_per_1k_units` / `jpy_pf` / `jpy_downside_share` を導入し、
+      スコアと lot multiplier に反映。
+    - `sum_realized_jpy` が一定以上マイナスの戦略へ段階的 cap
+      （`0.88 -> 0.70 -> 0.55`）を適用。
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SIDE_FILTER=buy`
+    - `MAX_ACTIVE_TRADES=2`, `MAX_PER_DIRECTION=2`
+    - `MAX_ORDERS_PER_MINUTE=6`
+    - `BASE_ENTRY_UNITS=1200`, `MAX_UNITS=1800`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]=0.60`
+    - `MIN_SCALE=0.40`, `MAX_SCALE=0.85`
+- 意図:
+  - 「pipsは勝っているがJPYで負ける」逆配分を止める。
+  - C戦略の同方向クラスターと低確率通過を先に削り、ドローダウンの傾きを下げる。
+
 ## 0-7. 2026-02-25 UTC `order_manager_none` + `orders.db stale` 事象（原因確定）
 - 症状（VM実測, UTC 2026-02-25 09:24-09:47）:
   - strategy worker で `order_manager service call failed ... Read timed out (read timeout=20.0)` と

@@ -48,3 +48,25 @@ def test_compute_scores_stronger_loss_penalty_applies() -> None:
     assert good["pf"] == 2.0
     assert good["allow_loser_block"] is False
     assert good["allow_winner_only"] is False
+
+
+def test_compute_scores_caps_size_when_realized_jpy_is_negative() -> None:
+    rows = []
+    # Positive pips with negative realized JPY should still be down-ranked.
+    for i in range(40):
+        rows.append(
+            (
+                "scalp_ping_5s_c_live",
+                "scalp_fast",
+                4.0,
+                f"2026-02-24T00:{i:02d}:00Z",
+                "TAKE_PROFIT_ORDER",
+                -80.0,
+                2000,
+            )
+        )
+    scores = compute_scores(rows, min_trades=16, pf_cap=2.0)
+    prof = scores["scalp_ping_5s_c_live"]
+    assert prof["sum_pips"] > 0
+    assert prof["sum_realized_jpy"] < 0
+    assert prof["lot_multiplier"] <= 0.7
