@@ -689,6 +689,37 @@
   - 停止/時間帯ブロックなしで、低品質エントリー通過とロット上振れを抑制し、
     通過注文の尾損失を縮小する。
 
+### C flip de-risk（2026-02-26 追加）
+- 背景（VM実測, UTC 07:05 前後）:
+  - `scalp_ping_5s_c_live` の直近60件で `flip_any=19`（fast/sl/side）、
+    反転あり平均 `pl_pips=-3.12` と反転なし（`-0.84`）より劣後。
+  - `STOP_LOSS_ORDER` が直近12件で11件とクラスター化。
+- 運用値（`ops/env/scalp_ping_5s_c.env`）:
+  - fast flip を厳格化:
+    - `FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN=0.58`
+    - `FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN=0.38`
+    - `FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN=3`
+    - `FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN=0.82`
+    - `FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS=0.16`
+    - `FAST_DIRECTION_FLIP_COOLDOWN_SEC=1.2`
+    - `FAST_DIRECTION_FLIP_CONFIDENCE_ADD=1`
+  - sl-streak flip を厳格化:
+    - `SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS=3`
+    - `SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS=2`
+    - `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK=4`
+    - `SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED=0`
+    - `SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN=0.55`
+    - `SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN=0.42`
+  - `SIDE_METRICS_DIRECTION_FLIP_ENABLED=0`（Cは停止）
+  - 併せてロット/密度を圧縮:
+    - `MAX_ORDERS_PER_MINUTE=4`
+    - `BASE_ENTRY_UNITS=700`
+    - `MAX_UNITS=1200`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.60`
+    - `...MIN_SCALE...=0.40`, `...MAX_SCALE...=0.85`
+- 意図:
+  - 反転ロジックは維持しつつ、SL連発帯での反転起点エントリーと過大ロットを抑える。
+
 ### C negative-close policy（2026-02-26 追加）
 - 背景:
   - `scalp_ping_5s_c_live` で `close_reject_no_negative` が多発し、

@@ -6961,3 +6961,38 @@
 - 意図:
   - C 戦略の「負け時間帯での高頻度連打」を止め、
     収益が出ている時間帯へ約定密度を寄せる。
+
+### 2026-02-26（追記）`scalp_ping_5s_c_live` flip 過発火デリスク（SL連発帯の反転抑制）
+
+- 背景（VM 実測, UTC 2026-02-26 07:05 前後）:
+  - `ui_state` 直近60件で `flip_any=19`（`fast=14 / sl=2 / side=3`）かつ
+    全て `short->long` 偏重。
+  - 同期間の平均 `pl_pips` は `flipあり=-3.12`、`flipなし=-0.84`。
+  - 直近12件で `STOP_LOSS_ORDER=11` と SL クラスターが継続。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - fast flip の閾値/クールダウンを引き上げ:
+      - `DIRECTION_SCORE_MIN=0.58`
+      - `HORIZON_SCORE_MIN=0.38`
+      - `HORIZON_AGREE_MIN=3`
+      - `NEUTRAL_HORIZON_BIAS_SCORE_MIN=0.82`
+      - `MOMENTUM_MIN_PIPS=0.16`
+      - `COOLDOWN_SEC=1.2`
+      - `CONFIDENCE_ADD=1`
+    - sl-streak flip の発火条件を厳格化:
+      - `MIN_SIDE_SL_HITS=3`
+      - `MIN_TARGET_MARKET_PLUS=2`
+      - `FORCE_STREAK=4`
+      - `METRICS_OVERRIDE_ENABLED=0`
+      - `DIRECTION_SCORE_MIN=0.55`
+      - `HORIZON_SCORE_MIN=0.42`
+    - `SIDE_METRICS_DIRECTION_FLIP_ENABLED=0`（C では一時停止）。
+    - ロット/通過抑制:
+      - `MAX_ORDERS_PER_MINUTE=4`
+      - `BASE_ENTRY_UNITS=700`
+      - `MAX_UNITS=1200`
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...=0.60`
+      - `...MIN_SCALE...=0.40`
+      - `...MAX_SCALE...=0.85`
+- 意図:
+  - 方向転換機構を残したまま、SL連発局面での反転由来エントリーとロット上振れを先に抑える。

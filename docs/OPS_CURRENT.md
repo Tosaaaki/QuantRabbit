@@ -1,5 +1,40 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-9. 2026-02-26 UTC `scalp_ping_5s_c_live` 方向転換デリスク（SL連発帯の過発火抑制）
+- 背景（VM実測, UTC 2026-02-26 07:05 前後）:
+  - `ui_state` 直近60件で `flip_any=19`（`fast=14 / sl=2 / side=3`）、
+    かつ全て `short->long` 偏重だった。
+  - 同期間の平均 `pl_pips` は `flipあり=-3.12` / `flipなし=-0.84` で、
+    反転経路の損失寄与が上回っていた。
+  - 直近12件では `STOP_LOSS_ORDER=11` と SL 連発帯が継続。
+- 対応（`ops/env/scalp_ping_5s_c.env`）:
+  - 発火の絞り込み:
+    - `FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN: 0.50 -> 0.58`
+    - `FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN: 0.30 -> 0.38`
+    - `FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN: 2 -> 3`
+    - `FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN: 0.76 -> 0.82`
+    - `FAST_DIRECTION_FLIP_MOMENTUM_MIN_PIPS: 0.08 -> 0.16`
+    - `FAST_DIRECTION_FLIP_COOLDOWN_SEC: 0.6 -> 1.2`
+    - `FAST_DIRECTION_FLIP_CONFIDENCE_ADD: 3 -> 1`
+  - `SL streak` 反転の過剰許可を抑制:
+    - `MIN_SIDE_SL_HITS: 2 -> 3`
+    - `MIN_TARGET_MARKET_PLUS: 1 -> 2`
+    - `FORCE_STREAK: 3 -> 4`
+    - `METRICS_OVERRIDE_ENABLED: 1 -> 0`
+    - `DIRECTION_SCORE_MIN: 0.48 -> 0.55`
+    - `HORIZON_SCORE_MIN: 0.30 -> 0.42`
+  - `side_metrics` 反転を停止:
+    - `SIDE_METRICS_DIRECTION_FLIP_ENABLED: 1 -> 0`
+  - 同時にロット/通過も圧縮:
+    - `MAX_ORDERS_PER_MINUTE: 6 -> 4`
+    - `BASE_ENTRY_UNITS: 900 -> 700`
+    - `MAX_UNITS: 1800 -> 1200`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...: 0.55 -> 0.60`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE...: 0.55 -> 0.40`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE...: 1.00 -> 0.85`
+- 意図:
+  - 方向転換ロジック自体は維持しつつ、SL連発局面での「反転起点の過大ロット連打」を先に止める。
+
 ## 0-8. 2026-02-26 UTC EV反転ホットフィックス（`scalp_ping_5s_c_live` + `dynamic_alloc`）
 - 背景（VM実測, UTC 2026-02-26 06:46 前後）:
   - 直近24hの戦略別で `scalp_ping_5s_c_live` が `559 trades / -729.7 pips / -6,882 JPY`。
