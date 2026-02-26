@@ -8047,3 +8047,23 @@
 - 意図:
   - 停止なしのまま、B/C のローカル判定段階での枯渇を緩和し order-manager まで intent を通す。
   - 共通 `perf_block` での hard reject 常態を解き、戦略ローカル最適化での復帰余地を確保する。
+
+### 2026-02-26（追記）quote 再取得耐性の強化（order-manager）
+
+- 背景（VM実測, 2026-02-26 12:35 UTC）:
+  - `orders.db` 直近24hは `50365` 件で、`quote_unavailable`/`quote_retry`/`OFF_QUOTES`/`PRICE_*` は 0 件。
+  - reject 主因は `perf_block=16971`, `probability_scaled=7719`, `entry_probability_reject=1101`。
+  - ただし実運用では瞬間的な再クオート要求が発生しうるため、`order_manager` 側の quote リトライ余力を増やす。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_TICK_QUOTE_MAX_AGE_SEC=1.2`（新規）
+    - `ORDER_QUOTE_FETCH_ATTEMPTS=4`（from `2`）
+    - `ORDER_QUOTE_FETCH_SLEEP_SEC=0.10`（from `0.08`）
+    - `ORDER_QUOTE_FETCH_MAX_SLEEP_SEC=0.50`（from `0.30`）
+    - `ORDER_QUOTE_RETRY_MAX_RETRIES=2`（from `1`）
+    - `ORDER_QUOTE_RETRY_SLEEP_SEC=0.45`（from `0.30`）
+    - `ORDER_QUOTE_RETRY_SLEEP_BACKOFF=1.8`（from `1.6`）
+    - `ORDER_QUOTE_RETRY_MAX_SLEEP_SEC=1.5`（from `1.0`）
+- 意図:
+  - メイン判定ロジックは変えず、瞬間的な quote 揺れを `order_manager` の pre-submit 層で吸収する。
+  - `ORDER_SUBMIT_MAX_ATTEMPTS=1` を維持しつつ、quote 専用リトライだけ厚くして取り逃しを抑える。

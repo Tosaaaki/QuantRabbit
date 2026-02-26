@@ -95,6 +95,38 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 12:35 UTC / 2026-02-26 21:35 JST - quote 問題の実測再監査と執行層ハードニング
+Period:
+- 直近24h / 7d（VM実DB）
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `journalctl -u quant-order-manager.service`
+
+Fact:
+- 24h `orders` 合計: `50365`
+- 24h status 上位:
+  - `preflight_start=18629`
+  - `perf_block=16971`
+  - `probability_scaled=7719`
+  - `entry_probability_reject=1101`
+- 24h error:
+  - `TRADE_DOESNT_EXIST=8`、`OFF_QUOTES/PRICE_*` は 0
+- 7d `quant-order-manager` journal でも `quote_unavailable`/`quote_retry`/`OFF_QUOTES`/`PRICE_*` は 0
+
+Failure Cause:
+1. 現在の損失・機会損失の主因は quote 不足ではなく、`perf_block` と確率/余力ガード側。
+2. ただし再クオート要求が急増する局面では既定 `FETCH=2 + RETRY=1` が薄く、将来的な取り逃しリスクは残る。
+
+Improvement:
+1. `ops/env/quant-order-manager.env` で quote 再取得耐性を強化。
+2. `ORDER_SUBMIT_MAX_ATTEMPTS=1` は維持し、quote 専用リトライだけ増やして戦略判定を汚さない。
+
+Verification:
+1. 反映後24hで `quote_unavailable`/`quote_retry`/`OFF_QUOTES`/`PRICE_*` の件数を再計測。
+2. 同期間で `filled / submit_attempt` 比率の悪化がないことを確認。
+3. `perf_block` が依然主因なら quote ではなく戦略側改善を優先継続。
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:25 UTC / 2026-02-26 21:25 JST - no-stop維持で「無約定化」を解消する再配線
 Period:
 - Incident window: `2026-02-26 11:40` ～ `12:25` UTC
