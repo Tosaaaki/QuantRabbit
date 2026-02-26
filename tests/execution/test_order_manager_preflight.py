@@ -17,6 +17,7 @@ from execution.order_manager import (
     _entry_quality_regime_gate_decision,
     _fallback_protections,
     _loss_cap_units_from_sl,
+    _manual_margin_pressure_details,
     _min_rr_adjust_mode_for,
     _order_spread_block_pips,
     _preflight_units,
@@ -36,6 +37,13 @@ class _NavSnapshot:
     def __init__(self, nav: float, balance: float):
         self.nav = nav
         self.balance = balance
+
+
+class _ManualPressureSnapshot:
+    def __init__(self, margin_available: float, free_margin_ratio: float, health_buffer: float):
+        self.margin_available = margin_available
+        self.free_margin_ratio = free_margin_ratio
+        self.health_buffer = health_buffer
 
 
 def test_preflight_allows_margin_reduction_on_hedge(monkeypatch):
@@ -67,6 +75,54 @@ def test_preflight_scales_down_with_budget(monkeypatch):
     budget = snap.margin_used + snap.margin_available * 0.92
     assert req_margin == abs(net_after) * per_unit_margin
     assert req_margin <= budget + 1.0  # small slack for rounding
+
+
+def test_manual_margin_pressure_details_blocks_when_manual_exposure_and_margin_tight(monkeypatch):
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES", 1)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO", 0.12)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER", 0.18)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY", 8000.0)
+
+    snap = _ManualPressureSnapshot(
+        margin_available=4000.0,
+        free_margin_ratio=0.07,
+        health_buffer=0.09,
+    )
+    details = _manual_margin_pressure_details(
+        pocket="micro",
+        reduce_only=False,
+        snap=snap,
+        manual_net=-8500,
+        manual_trades=1,
+    )
+
+    assert details is not None
+    assert details.get("manual_trades") == 1
+    assert float(details.get("free_margin_ratio") or 0.0) == 0.07
+
+
+def test_manual_margin_pressure_details_skips_when_no_manual_exposure(monkeypatch):
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES", 1)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO", 0.12)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER", 0.18)
+    monkeypatch.setattr(order_manager, "_ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY", 8000.0)
+
+    snap = _ManualPressureSnapshot(
+        margin_available=4000.0,
+        free_margin_ratio=0.07,
+        health_buffer=0.09,
+    )
+    details = _manual_margin_pressure_details(
+        pocket="micro",
+        reduce_only=False,
+        snap=snap,
+        manual_net=0,
+        manual_trades=0,
+    )
+
+    assert details is None
 
 
 def test_projected_usage_with_netting_allows_reduction(monkeypatch):

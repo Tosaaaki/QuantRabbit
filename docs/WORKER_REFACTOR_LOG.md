@@ -8,6 +8,40 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-26（追記）負け筋遮断: manual余力圧迫ガード + 恒常赤字ワーカーの全時間ブロック
+
+- 背景（VM実測, UTC 2026-02-26 08:20 前後）:
+  - `openTrades` は手動建玉 1 本（`USD_JPY -8500`, `clientExtensions={}`, SL/TPなし）を保持。
+  - 口座スナップショットは `NAV 57,017 JPY` / `margin_used 53,049 JPY` /
+    `margin_available 4,001 JPY` / `free_margin_ratio 0.070`。
+  - 直近14日で `MARKET_ORDER_MARGIN_CLOSEOUT` の損失が集中:
+    - `MicroPullbackEMA`: `-16,837 JPY`
+    - `scalp_ping_5s_b_live`: `-12,778 JPY`
+    - `scalp_ping_5s_flow_live`: `-2,797 JPY`
+- 変更:
+  - `execution/order_manager.py`
+    - 新規ガード `_manual_margin_pressure_details()` を追加。
+    - 条件:
+      - `manual/unknown` 建玉が存在
+      - かつ `free_margin_ratio` / `health_buffer` / `margin_available` が閾値未達
+    - 発動時は新規ENTRYを `manual_margin_pressure` で拒否し、
+      `order_manual_margin_block` メトリクスを記録。
+    - `market_order` と `limit_order` 両経路に適用。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANUAL_MARGIN_GUARD_*` を運用値として追加。
+  - `config/worker_reentry.yaml`
+    - `MicroPullbackEMA` / `MicroLevelReactor` / `M1Scalper` を
+      `block_jst_hours=0..23` に更新（全時間ブロック）。
+  - テスト:
+    - `tests/execution/test_order_manager_preflight.py`
+      - manual建玉+低余力でガード発動するケース
+      - manual建玉なしでは発動しないケース
+- 意図:
+  - 手動建玉が余力を占有している局面での追加エントリーを止め、
+    `margin closeout` 連鎖を防止する。
+  - 恒常赤字ワーカーの再流入を `reentry` 層で遮断し、
+    正の期待値ワーカーへの資本配分を維持する。
+
 ### 2026-02-26（追記）forecast_context 欠落対策: `edge_allow` を明示返却
 
 - 背景（VM実測）:

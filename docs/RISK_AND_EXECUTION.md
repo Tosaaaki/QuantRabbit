@@ -63,6 +63,22 @@
 - 共通 `execution/exit_manager.py` は常に空を返す互換スタブ。
 - `execution/stage_tracker` がクールダウンと方向別ブロックを管理。
 
+### Manual Margin Pressure Guard（2026-02-26）
+- `execution/order_manager.py` は、`manual/unknown` 建玉が残っている状態で
+  口座余力が閾値未達の場合、非manualの新規ENTRYを `manual_margin_pressure` で拒否する。
+- 判定キー（`ops/env/quant-order-manager.env`）:
+  - `ORDER_MANUAL_MARGIN_GUARD_ENABLED`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER`
+  - `ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY`
+- 監査:
+  - `orders.db` の `status=manual_margin_pressure`
+  - メトリクス `order_manual_margin_block`
+- 運用意図:
+  - 手動建玉が余力を占有する局面で戦略建玉を積み増ししない。
+  - `MARKET_ORDER_MARGIN_CLOSEOUT` 連鎖を入口側で遮断する。
+
 ### scalp_ping_5s_b 運用補足（取り残し抑制）
 - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE` を
   `quant-order-manager` の環境で運用し、低確率シグナルを `order_manager` 側で reject する。

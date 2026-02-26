@@ -2695,6 +2695,17 @@ _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
 _DIR_CAP_CACHE: Optional[PositionManager] = None
 _BLOCK_MANUAL_NETTING = _env_bool("BLOCK_MANUAL_NETTING", True)
+_ORDER_MANUAL_MARGIN_GUARD_ENABLED = _env_bool("ORDER_MANUAL_MARGIN_GUARD_ENABLED", True)
+_ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES = max(1, _env_int("ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES", 1))
+_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO = max(0.0, _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO", 0.12))
+_ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER = max(
+    0.0,
+    _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER", 0.18),
+)
+_ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY = max(
+    0.0,
+    _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY", 8000.0),
+)
 _DIR_CAP_ADVERSE_ENABLE = _env_bool("DIR_CAP_ADVERSE_ENABLE", True)
 _DIR_CAP_ADVERSE_LOOKBACK_MIN = max(5, min(120, _env_int("DIR_CAP_ADVERSE_LOOKBACK_MIN", 20)))
 _DIR_CAP_ADVERSE_START_PIPS = max(0.0, _env_float("DIR_CAP_ADVERSE_START_PIPS", 6.0))
@@ -2839,6 +2850,77 @@ def _manual_net_units(positions: Optional[dict] = None) -> tuple[int, int]:
     except (TypeError, ValueError):
         pass
     return net_units, trade_count
+
+
+def _manual_margin_pressure_details(
+    *,
+    pocket: Optional[str],
+    reduce_only: bool,
+    snap: object,
+    manual_net: Optional[int] = None,
+    manual_trades: Optional[int] = None,
+) -> Optional[dict[str, float | int]]:
+    """
+    Return guard details when manual exposure + low margin should block new entries.
+
+    This applies only to non-manual ENTRY requests and prevents strategy orders from
+    stacking on top of large manual exposure when free margin is already tight.
+    """
+    if not _ORDER_MANUAL_MARGIN_GUARD_ENABLED or reduce_only:
+        return None
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key in {"", "manual", "unknown"}:
+        return None
+    if snap is None:
+        return None
+
+    if manual_net is None or manual_trades is None:
+        manual_net, manual_trades = _manual_net_units()
+    manual_net_i = int(manual_net or 0)
+    manual_trades_i = int(manual_trades or 0)
+    if manual_trades_i < _ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES and manual_net_i == 0:
+        return None
+
+    margin_available = float(_as_float(getattr(snap, "margin_available", None), 0.0) or 0.0)
+    free_ratio = _as_float(getattr(snap, "free_margin_ratio", None), None)
+    health_buffer = _as_float(getattr(snap, "health_buffer", None), None)
+
+    triggered: dict[str, float] = {}
+    if (
+        _ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO > 0.0
+        and free_ratio is not None
+        and free_ratio < _ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO
+    ):
+        triggered["free_margin_ratio"] = float(free_ratio)
+    if (
+        _ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER > 0.0
+        and health_buffer is not None
+        and health_buffer < _ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER
+    ):
+        triggered["health_buffer"] = float(health_buffer)
+    if (
+        _ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY > 0.0
+        and margin_available < _ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY
+    ):
+        triggered["margin_available_jpy"] = float(margin_available)
+    if not triggered:
+        return None
+
+    details: dict[str, float | int] = {
+        "manual_net_units": manual_net_i,
+        "manual_trades": manual_trades_i,
+        "margin_available_jpy": round(margin_available, 3),
+        "min_free_margin_ratio": round(_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO, 4),
+        "min_health_buffer": round(_ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER, 4),
+        "min_margin_available_jpy": round(_ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY, 3),
+        "trigger_count": len(triggered),
+    }
+    if free_ratio is not None:
+        details["free_margin_ratio"] = round(float(free_ratio), 4)
+    if health_buffer is not None:
+        details["health_buffer"] = round(float(health_buffer), 4)
+    return details
+
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -9088,6 +9170,51 @@ async def market_order(
                 )
                 return None
             try:
+                manual_pressure = _manual_margin_pressure_details(
+                    pocket=pocket,
+                    reduce_only=reduce_only,
+                    snap=snap,
+                )
+                if manual_pressure is not None:
+                    note = "manual_margin_pressure"
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status=note,
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "manual_margin_guard": manual_pressure,
+                        },
+                    )
+                    log_metric(
+                        "order_manual_margin_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                        },
+                    )
+                    return None
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
@@ -11637,6 +11764,50 @@ async def limit_order(
                 )
                 return None, None
             try:
+                manual_pressure = _manual_margin_pressure_details(
+                    pocket=pocket,
+                    reduce_only=reduce_only,
+                    snap=snap,
+                )
+                if manual_pressure is not None:
+                    note = "manual_margin_pressure"
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    _log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status=note,
+                        attempt=0,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "manual_margin_guard": manual_pressure,
+                        },
+                    )
+                    log_metric(
+                        "order_manual_margin_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                        },
+                    )
+                    return None, None
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
