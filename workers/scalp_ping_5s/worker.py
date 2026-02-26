@@ -7043,22 +7043,26 @@ async def scalp_ping_5s_worker() -> None:
                     )
                 )
             )
-            units = int(round(base_units * conf_mult * strength_mult * bias_units_mult * lookahead_units_mult))
-            units = int(round(units * regime_units_mult))
-            units = int(round(units * horizon_units_mult))
-            units = int(round(units * m1_trend_units_mult))
-            units = int(round(units * extrema_units_mult))
-            units = int(round(units * probability_units_mult))
-            units = int(round(units * probability_band_units_mult))
-            units = int(round(units * side_adverse_stack_units_mult))
+            units_mult_total = (
+                conf_mult
+                * strength_mult
+                * bias_units_mult
+                * lookahead_units_mult
+                * regime_units_mult
+                * horizon_units_mult
+                * m1_trend_units_mult
+                * extrema_units_mult
+                * probability_units_mult
+                * probability_band_units_mult
+                * side_adverse_stack_units_mult
+            )
             snapshot_units_scale = _snapshot_stale_units_scale()
-            if snapshot_units_scale < 1.0:
-                units = int(round(units * snapshot_units_scale))
             allow_hour_units_mult = 1.0
             if allow_hour_policy.soft_mode:
                 allow_hour_units_mult = allow_hour_policy.units_mult
-                if allow_hour_units_mult < 0.999:
-                    units = int(round(units * allow_hour_units_mult))
+            units_mult_total *= snapshot_units_scale
+            units_mult_total *= allow_hour_units_mult
+            units = int(round(float(base_units) * max(0.0, units_mult_total)))
 
             lot = allowed_lot(
                 nav,

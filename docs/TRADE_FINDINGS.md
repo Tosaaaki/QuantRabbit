@@ -117,6 +117,8 @@ Improvement:
 2. 本体ワーカーへ `_resolve_final_signal_for_side_filter()` を追加し、
    後段反転時は初段の side-filter 適合シグナルへ復元して発注経路を維持。
 3. 運用envを `SCALP_PING_5S_C_SIDE_FILTER=sell`, `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=0` に固定。
+4. ロット計算は途中丸めを廃止して最終丸めへ統一し、
+   `units_below_min` による 0 化でシグナルが消える経路を縮小。
 
 Verification:
 1. 対象テスト（10件）:

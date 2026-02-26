@@ -8109,6 +8109,9 @@
     - 後段ルーティングで side が filter と不一致になった場合、
       初段の side-filter 適合シグナル（anchor）へ復元して発注経路を維持。
     - anchor が無い場合のみ `side_filter_final_block` で拒否。
+    - ロット計算を「途中段階ごとの整数丸め」から
+      「倍率を合算して最終段のみ丸め」へ変更。
+      `units_below_min` での 0 化を抑えてシグナル消失を減らす。
   - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
     - C の no-side-filter override を許容しない期待値へ更新。
   - `tests/workers/test_scalp_ping_5s_worker.py`
