@@ -22,6 +22,13 @@
   metrics 有効なら `local` snapshot 構築を省略する。
   `fetch_attempts` には `local: skip (remote/gcs snapshot is already fresh)` を記録し、
   遅延が出る場合は `local` が本当に呼ばれているかをまず確認する。
+- `apps/autotune_ui.py` は secret を `UI_SECRET_CACHE_TTL_SEC`（default: 60）秒で
+  TTLキャッシュし、未設定キーも負キャッシュする。
+  Secret Manager 往復が遅い環境では、TTL切れ時のみ再取得が発生する。
+- `apps/autotune_ui.py` は strategy control 状態を
+  `UI_STRATEGY_CONTROL_CACHE_TTL_SEC`（default: 30）秒でTTLキャッシュする。
+  `trades/signals/orders` 走査はTTL切れ時のみ実行されるため、
+  dashboard の再描画遅延を抑えられる。
 - `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、

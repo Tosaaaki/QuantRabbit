@@ -6571,3 +6571,26 @@
 - 意図:
   - UI応答を `snapshot source = gcs/remote` の通常ケースで高速化し、
     `local` fallback は本当に必要なケース（stale/欠損時）のみ実行する。
+
+### 2026-02-26（追記）`quant-autotune-ui` 追加高速化（secret / strategy_control のTTLキャッシュ）
+
+- 背景（VM profile, UTC 2026-02-26 01:40）:
+  - `_load_dashboard_data` の p95 がまだ 2s 台。
+  - プロファイル内訳:
+    - `_load_strategy_control_state` ≒ 1.75s/req
+    - Secret Manager 経由の `_get_secret_optional` ≒ 1.70s/req
+  - いずれも毎リクエスト再取得/再集計されていた。
+- 変更:
+  - `apps/autotune_ui.py`
+    - `UI_SECRET_CACHE_TTL_SEC`（default: 60s）で secret 値をTTLキャッシュ化
+      （未設定キーも `None` として負キャッシュ）。
+    - `UI_STRATEGY_CONTROL_CACHE_TTL_SEC`（default: 30s）で
+      `strategy_control` 状態をTTLキャッシュ化。
+    - `strategy_control` キャッシュ返却は deep copy で行い、
+      呼び出し側の破壊的変更がキャッシュ本体へ波及しないようにした。
+  - `tests/apps/test_autotune_ui_caching.py`
+    - secret cache（命中/未設定）と strategy_control cache の回帰テストを追加。
+- 意図:
+  - dashboard の毎リクエストで発生していた
+    「外部secret往復」「大きなDB走査＋JSON parse」をTTL内で再利用し、
+    UI更新の体感遅延をさらに圧縮する。

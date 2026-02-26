@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import importlib.util
@@ -171,12 +172,21 @@ _LITE_SYNC_TTL_SEC = float(os.getenv("UI_SNAPSHOT_SYNC_TTL_SEC", "60"))
 _LITE_SYNC_MARKER = Path(
     os.getenv("UI_SNAPSHOT_SYNC_MARKER", "logs/ui_snapshot_sync.json")
 )
+_SECRET_CACHE_TTL_SEC = max(1.0, float(os.getenv("UI_SECRET_CACHE_TTL_SEC", "60")))
+_STRATEGY_CONTROL_CACHE_TTL_SEC = max(
+    1.0, float(os.getenv("UI_STRATEGY_CONTROL_CACHE_TTL_SEC", "30"))
+)
 _live_snapshot_lock = threading.Lock()
 _live_snapshot_cache: dict[str, Any] | None = None
 _live_snapshot_ts: float = 0.0
 _lite_snapshot_lock = threading.Lock()
 _lite_snapshot_cache: dict[str, Any] | None = None
 _lite_snapshot_ts: float = 0.0
+_secret_cache_lock = threading.Lock()
+_secret_cache: dict[str, tuple[float, Optional[str]]] = {}
+_strategy_control_cache_lock = threading.Lock()
+_strategy_control_cache: dict[str, Any] | None = None
+_strategy_control_cache_ts: float = 0.0
 
 app = FastAPI(title="QuantRabbit UI")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -774,7 +784,7 @@ def _load_strategy_candidates_from_trades() -> set[str]:
     return candidates
 
 
-def _load_strategy_control_state() -> dict[str, Any]:
+def _compute_strategy_control_state() -> dict[str, Any]:
     state: dict[str, Any] = {
         "global": {
             "entry_enabled": True,
@@ -825,6 +835,28 @@ def _load_strategy_control_state() -> dict[str, Any]:
 
     state["strategies"] = [rows[key] for key in sorted(rows)]
     return state
+
+
+def _load_strategy_control_state() -> dict[str, Any]:
+    global _strategy_control_cache, _strategy_control_cache_ts
+    now_mono = time.monotonic()
+    if (
+        _strategy_control_cache is not None
+        and (now_mono - _strategy_control_cache_ts) < _STRATEGY_CONTROL_CACHE_TTL_SEC
+    ):
+        return copy.deepcopy(_strategy_control_cache)
+
+    with _strategy_control_cache_lock:
+        now_mono = time.monotonic()
+        if (
+            _strategy_control_cache is not None
+            and (now_mono - _strategy_control_cache_ts) < _STRATEGY_CONTROL_CACHE_TTL_SEC
+        ):
+            return copy.deepcopy(_strategy_control_cache)
+        state = _compute_strategy_control_state()
+        _strategy_control_cache = state
+        _strategy_control_cache_ts = now_mono
+        return copy.deepcopy(state)
 
 
 def _safe_float(value: Any) -> float:
@@ -972,12 +1004,23 @@ def _shorten(text: Any, limit: int = 20) -> str:
 
 
 def _get_secret_optional(key: str) -> Optional[str]:
+    now_mono = time.monotonic()
+    with _secret_cache_lock:
+        cached = _secret_cache.get(key)
+        if cached and (now_mono - cached[0]) < _SECRET_CACHE_TTL_SEC:
+            return cached[1]
+
     try:
         value = get_secret(key)
     except KeyError:
+        with _secret_cache_lock:
+            _secret_cache[key] = (now_mono, None)
         return None
     value = str(value).strip()
-    return value or None
+    result = value or None
+    with _secret_cache_lock:
+        _secret_cache[key] = (now_mono, result)
+    return result
 
 
 def _load_health_snapshot_local() -> Optional[dict]:
