@@ -107,6 +107,38 @@ def test_summarise_snapshot_repairs_zero_win_loss_when_rollup_unavailable(monkey
     assert perf["win_rate_percent"] == 50.0
 
 
+def test_summarise_snapshot_repairs_daily_zero_metrics_when_recent_trades_exist(monkeypatch):
+    monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
+    monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
+
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "recent_trades": [
+            _trade_row(ticket="1", hours_ago=0.5, pl_pips=-10.0),
+            _trade_row(ticket="2", hours_ago=1.5, pl_pips=8.0),
+        ],
+        "open_positions": {},
+        "metrics": {
+            "daily": {"pips": 0.0, "jpy": 0.0, "trades": 2},
+            "weekly": {"pips": 0.0, "jpy": 0.0, "trades": 2},
+            "total": {"pips": 0.0, "jpy": 0.0, "wins": 0, "losses": 0, "win_rate": 0.0, "trades": 2},
+            "daily_change": {"pips": 0.0, "jpy": 0.0, "jpy_pct": 0.0, "equity_nav": 50000.0},
+        },
+    }
+
+    result = ui._summarise_snapshot(snapshot)
+    perf = result["performance"]
+
+    assert perf["daily_pl_pips"] == -2.0
+    assert perf["daily_pl_jpy"] == -200.0
+    assert perf["weekly_pl_pips"] == -2.0
+    assert perf["wins"] == 1
+    assert perf["losses"] == 1
+    assert perf["win_rate_percent"] == 50.0
+    assert perf["daily_change_pips"] == -2.0
+    assert perf["daily_change_jpy"] == -200.0
+
+
 def test_load_trade_rollup_jst_aggregates_windows(tmp_path, monkeypatch):
     db_path = tmp_path / "trades.db"
     con = sqlite3.connect(db_path)

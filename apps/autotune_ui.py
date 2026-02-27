@@ -2480,6 +2480,22 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         for t in closed_trades
         if t.get("close_time_jst") and t["close_time_jst"] >= week_cutoff
     )
+    today_closed_trades = [
+        t
+        for t in closed_trades
+        if t.get("close_time_jst") and t["close_time_jst"].date() == today_date
+    ]
+    yesterday_date = today_date - timedelta(days=1)
+    yesterday_closed_trades = [
+        t
+        for t in closed_trades
+        if t.get("close_time_jst") and t["close_time_jst"].date() == yesterday_date
+    ]
+    weekly_closed_trades = [
+        t
+        for t in closed_trades
+        if t.get("close_time_jst") and t["close_time_jst"] >= week_cutoff
+    ]
     if perf.get("recent_closed", 0) == 0:
         perf["recent_closed"] = weekly_closed_from_snapshot or len(closed_trades)
     if perf.get("total_trades") in (None, 0):
@@ -2487,7 +2503,33 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     if (perf.get("total_trades") or 0) < (perf.get("recent_closed") or 0):
         perf["total_trades"] = perf.get("recent_closed") or 0
 
-    if perf.get("daily_pl_pips") is None:
+    today_pips_from_trades = round(sum(t["pl_pips"] for t in today_closed_trades), 2)
+    today_jpy_from_trades = round(sum(t["pl_jpy"] for t in today_closed_trades), 2)
+    yesterday_pips_from_trades = round(sum(t["pl_pips"] for t in yesterday_closed_trades), 2)
+    yesterday_jpy_from_trades = round(sum(t["pl_jpy"] for t in yesterday_closed_trades), 2)
+    weekly_pips_from_trades = round(sum(t["pl_pips"] for t in weekly_closed_trades), 2)
+    weekly_jpy_from_trades = round(sum(t["pl_jpy"] for t in weekly_closed_trades), 2)
+
+    daily_stale_zero = (
+        not rollup_applied
+        and _safe_float(perf.get("daily_pl_pips")) == 0.0
+        and _safe_float(perf.get("daily_pl_jpy")) == 0.0
+        and (abs(today_pips_from_trades) > 0.01 or abs(today_jpy_from_trades) > 0.5)
+    )
+    yesterday_stale_zero = (
+        not rollup_applied
+        and _safe_float(perf.get("yesterday_pl_pips")) == 0.0
+        and _safe_float(perf.get("yesterday_pl_jpy")) == 0.0
+        and (abs(yesterday_pips_from_trades) > 0.01 or abs(yesterday_jpy_from_trades) > 0.5)
+    )
+    weekly_stale_zero = (
+        not rollup_applied
+        and _safe_float(perf.get("weekly_pl_pips")) == 0.0
+        and _safe_float(perf.get("weekly_pl_jpy")) == 0.0
+        and (abs(weekly_pips_from_trades) > 0.01 or abs(weekly_jpy_from_trades) > 0.5)
+    )
+
+    if perf.get("daily_pl_pips") is None or daily_stale_zero:
         perf["daily_pl_pips"] = round(
             _sum_if(
                 lambda t: t.get("close_time_jst")
@@ -2495,7 +2537,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             ),
             2,
         ) if closed_trades else 0.0
-    if perf.get("daily_pl_jpy") is None:
+    if perf.get("daily_pl_jpy") is None or daily_stale_zero:
         perf["daily_pl_jpy"] = round(
             _sum_jpy(
                 lambda t: t.get("close_time_jst")
@@ -2503,7 +2545,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             ),
             2,
         ) if closed_trades else 0.0
-    if perf.get("weekly_pl_pips") is None:
+    if perf.get("weekly_pl_pips") is None or weekly_stale_zero:
         perf["weekly_pl_pips"] = round(
             _sum_if(
                 lambda t: t.get("close_time_jst")
@@ -2511,7 +2553,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             ),
             2,
         ) if closed_trades else 0.0
-    if perf.get("weekly_pl_jpy") is None:
+    if perf.get("weekly_pl_jpy") is None or weekly_stale_zero:
         perf["weekly_pl_jpy"] = round(
             _sum_jpy(
                 lambda t: t.get("close_time_jst")
@@ -2520,8 +2562,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             2,
         ) if closed_trades else 0.0
 
-    if metrics_snapshot.get("yesterday") is None:
-        yesterday_date = today_date - timedelta(days=1)
+    if metrics_snapshot.get("yesterday") is None or yesterday_stale_zero:
         perf["yesterday_pl_pips"] = round(
             _sum_if(
                 lambda t: t.get("close_time_jst")
@@ -2545,11 +2586,24 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     perf["weekly_pl_eq1l"] = round((perf.get("weekly_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
     perf["total_eq1l"] = round((perf.get("total_jpy", 0.0) or 0.0) / 1000.0, 2)
 
-    if rollup_applied or metrics_snapshot.get("daily_change") is None or perf.get("daily_change_pct") is None:
-        today_pips = perf.get("daily_pl_pips", 0.0) or 0.0
-        yest_pips = perf.get("yesterday_pl_pips", 0.0) or 0.0
-        today_jpy = perf.get("daily_pl_jpy", 0.0) or 0.0
-        yest_jpy = perf.get("yesterday_pl_jpy", 0.0) or 0.0
+    today_pips = perf.get("daily_pl_pips", 0.0) or 0.0
+    yest_pips = perf.get("yesterday_pl_pips", 0.0) or 0.0
+    today_jpy = perf.get("daily_pl_jpy", 0.0) or 0.0
+    yest_jpy = perf.get("yesterday_pl_jpy", 0.0) or 0.0
+    daily_change_pips_val = _safe_float(perf.get("daily_change_pips"))
+    daily_change_jpy_val = _safe_float(perf.get("daily_change_jpy"))
+    daily_change_mismatch = (
+        daily_change_pips_val is None
+        or daily_change_jpy_val is None
+        or abs((today_pips - yest_pips) - daily_change_pips_val) > 0.05
+        or abs((today_jpy - yest_jpy) - daily_change_jpy_val) > 1.0
+    )
+    if (
+        rollup_applied
+        or metrics_snapshot.get("daily_change") is None
+        or perf.get("daily_change_pct") is None
+        or daily_change_mismatch
+    ):
         perf["daily_change_pips"] = round(today_pips - yest_pips, 2)
         perf["daily_change_jpy"] = round(today_jpy - yest_jpy, 2)
         equity_val = perf.get("daily_change_equity")
@@ -2571,17 +2625,15 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     wins_val = perf.get("wins")
     losses_val = perf.get("losses")
+    wins_total = int(wins_val or 0) + int(losses_val or 0)
     wins_inconsistent = (
         not rollup_applied
-        and (perf.get("recent_closed") or 0) > 0
-        and int(wins_val or 0) + int(losses_val or 0) == 0
+        and (
+            ((perf.get("recent_closed") or 0) > 0 and wins_total == 0)
+            or ((perf.get("recent_closed") or 0) > 0 and wins_total > int(perf.get("recent_closed") or 0))
+        )
     )
     if wins_val is None or losses_val is None or wins_inconsistent:
-        weekly_closed_trades = [
-            t
-            for t in closed_trades
-            if t.get("close_time_jst") and t["close_time_jst"] >= week_cutoff
-        ]
         wins = sum(1 for t in weekly_closed_trades if t["pl_pips"] > 0)
         losses = sum(1 for t in weekly_closed_trades if t["pl_pips"] < 0)
         perf["wins"] = wins

@@ -8690,10 +8690,13 @@
       「決済件数>0 なのに 0勝0敗」の不整合が出ないように修正。
     - `daily/weekly` P/L も同ローカル集計を優先し、時間帯表とサマリーカードの
       表示値を一致させるよう補正。
+    - ローカル DB が無い環境（Cloud Run）向けに、snapshot `daily/weekly` が
+      0 固定でも `recent_trades` から非ゼロ実績を検知した場合は
+      日次/週次/前日比を再計算して 0 固定表示を回避。
   - テスト追加/更新:
     - `tests/apps/test_autotune_ui_dashboard_local_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_source_guard.py`
     - `tests/apps/test_autotune_ui_summary_consistency.py`
 - 検証:
-  - `pytest -q tests/apps` で `27 passed` を確認。
+  - `pytest -q tests/apps` で `28 passed` を確認。
