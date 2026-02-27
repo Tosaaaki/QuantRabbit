@@ -8579,6 +8579,47 @@
   - 実測遅延の上側（~49秒）を timeout 閾値で吸収し、
     `Read timed out` 起点の不要 fallback を減らす。
 
+### 2026-02-27（追記）B/C の負け寄与を圧縮し、Wick 優位へ再配分
+
+- 背景（VM実測, 24h）:
+  - `scalp_ping_5s_c_live`: `493 trades / -1984.2 JPY`
+  - `scalp_ping_5s_b_live`: `415 trades / -588.6 JPY`
+  - `WickReversalBlend`: `7 trades / +332.3 JPY`
+  - `orders.db` では B/C の `submit_attempt` が高水準（`b=600`, `c=608`）で、
+    高頻度運転のまま期待値マイナスを積み上げる状態だった。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=12`（from `24`）
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=380`（from `450`）
+    - `SCALP_PING_5S_B_CONF_FLOOR=77`（from `75`）
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.76`（from `0.74`）
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR=0.63`（from `0.60`）
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.68`（from `0.64`）
+    - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.68`（from `0.64`）
+    - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.74`（from `0.70`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=12`（from `24`）
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=140`（from `170`）
+    - `SCALP_PING_5S_C_CONF_FLOOR=76`（from `74`）
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.70`（from `0.68`）
+    - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_FLOOR=0.61`（from `0.58`）
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.66`（from `0.62`）
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.66`（from `0.62`）
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.72`（from `0.68`）
+  - `ops/env/quant-order-manager.env`
+    - B/C preserve-intent reject を同値へ同期（`B=0.68`, `C=0.66`）
+    - preserve-intent max scale を縮小（`B: 0.55->0.50`, `C: 0.85->0.78`）
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=420`（from `520`）
+    - `SCALP_PING_5S_B_MAX_UNITS=780`（from `900`）
+    - preserve-intent 閾値/scale を env 同値へ同期。
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `SCALP_PRECISION_UNIT_BASE_UNITS=10200`（from `9500`）
+    - `SCALP_PRECISION_COOLDOWN_SEC=7`（from `8`）
+- 意図:
+  - B/C は停止せず稼働を維持しつつ、低EV通過・過剰頻度・過剰サイズを同時に圧縮する。
+  - 優位戦略（Wick）へ配分を寄せ、合算期待値を引き上げる。
+
 ### 2026-02-27（追記）Autotune UI の時間帯履歴欠落を再発防止
 
 - 背景:

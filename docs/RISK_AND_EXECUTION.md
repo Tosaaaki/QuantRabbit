@@ -1463,6 +1463,30 @@
   - 実測レンジに合わせて timeout 閾値を再設定し、
     不要な `Read timed out` / fallback を削減する。
 
+### B/C 期待値圧縮 + Wick 再配分（2026-02-27 追記）
+- 背景:
+  - 24h 実測で `scalp_ping_5s_c_live=-1984.2 JPY`, `scalp_ping_5s_b_live=-588.6 JPY` に対し、
+    `WickReversalBlend=+332.3 JPY` と寄与が分離。
+  - B/C は `submit_attempt` が高水準（`b=600`, `c=608`）で、
+    no-stop 方針下でも頻度・サイズを絞る余地が明確だった。
+- 実装:
+  - `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE` を `24 -> 12` に圧縮。
+    - `BASE_ENTRY_UNITS` を圧縮（B: `450->380`, C: `170->140`）。
+    - `CONF_FLOOR` / `ENTRY_PROBABILITY_ALIGN_FLOOR*` / `ENTRY_LEADING_PROFILE_REJECT_BELOW*`
+      を引き上げ、低品質通過を削減。
+    - preserve-intent reject を引き上げ（B: `0.68`, C: `0.66`）。
+  - `ops/env/quant-order-manager.env`
+    - B/C preserve-intent の reject/scale を worker 側と同値へ同期。
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - B の service override を同値へ修正（`BASE_ENTRY_UNITS=420`, `MAX_UNITS=780`）。
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `SCALP_PRECISION_UNIT_BASE_UNITS=10200`（from `9500`）
+    - `SCALP_PRECISION_COOLDOWN_SEC=7`（from `8`）
+- 運用意図:
+  - B/C を停止せず、負け寄与を「頻度・サイズ・通過率」の3軸で同時に圧縮する。
+  - 勝ち寄与戦略へ小幅増量し、短期合算 P/L を押し上げる。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

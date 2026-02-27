@@ -86,6 +86,49 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 05:20 UTC / 2026-02-27 14:20 JST - B/C負け寄与の即圧縮 + Wick再配分
+Period:
+- Analysis window: 24h (`datetime(close_time) >= now - 24 hours`)
+- Source: VM `trades.db`, `orders.db`, worker env/systemd overrides
+
+Fact:
+- 24h realized P/L:
+  - `scalp_ping_5s_c_live`: `493 trades / -1984.2 JPY`
+  - `scalp_ping_5s_b_live`: `415 trades / -588.6 JPY`
+  - `WickReversalBlend`: `7 trades / +332.3 JPY`
+- `orders.db` 24h では B/C の試行が高く、`submit_attempt` は
+  `b=600`, `c=608`。高頻度・低EVの積み上げが継続していた。
+
+Failure Cause:
+1. B/C が no-stop のまま高頻度運転（`MAX_ORDERS_PER_MINUTE=24`）で負け寄与を増幅。
+2. preserve-intent / leading-profile の閾値が緩く、低品質通過が残存。
+3. B は systemd override（`BASE_ENTRY_UNITS=520`）が env より強く、圧縮意図とズレていた。
+
+Improvement:
+1. B/Cの頻度・サイズを即圧縮:
+   - `MAX_ORDERS_PER_MINUTE: 24 -> 12`
+   - `BASE_ENTRY_UNITS: B 450->380, C 170->140`
+2. B/Cの通過閾値を引き上げ:
+   - preserve-intent reject: `B 0.68`, `C 0.66`
+   - leading profile reject: `B 0.68/0.74`, `C 0.66/0.72`
+   - confidence / align floor も引き上げ。
+3. B service override を同値化:
+   - `BASE_ENTRY_UNITS=420`, `MAX_UNITS=780`,
+     `ORDER_MANAGER_PRESERVE_INTENT_*` を env 同値へ同期。
+4. 勝ち寄与へ小幅再配分:
+   - `WickReversalBlend` base units `9500 -> 10200`
+   - cooldown `8 -> 7`
+
+Verification:
+1. デプロイ後に `HEAD == origin/main` と各 service `active` を確認。
+2. 10-30分窓で以下を比較:
+   - B/C `submit_attempt` と `filled` の絶対数（過剰頻度が落ちること）
+   - B/C realized P/L の損失勾配
+   - `WickReversalBlend` の約定寄与
+
+Status:
+- in_progress
+
 ## 2026-02-27 03:20 UTC / 2026-02-27 12:20 JST - order-manager API の event-loop 詰まり対策
 Period:
 - Analysis window: 直近の `Read timed out (45.0)` 多発区間（`2026-02-27` UTC）
