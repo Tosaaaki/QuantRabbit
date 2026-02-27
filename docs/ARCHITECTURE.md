@@ -66,6 +66,8 @@
   を運用レビュー用に出力する。
   判定手順は `主因特定 → 壊れる点特定 → A/B/C シナリオ化 → 条件式` の固定フローとし、
   参照元は `factor_cache / trades.db / orders.db / policy_overlay / market_events / macro_snapshot / optional external snapshot` に限定する。
+  外部市況の自動取得は `scripts/fetch_market_snapshot.py` で実行し、
+  `market_external_snapshot`（価格・DXY・米日10年）と `market_events`（主要イベント）を更新する。
   手動メモの取り込みは `scripts/import_market_brief.py` で `market_external_snapshot` と `market_events` へ変換し、
   `scripts/build_market_context.py` で `market_context` を再生成してからレポートへ反映する。
   `--policy` 導線は no-change diff の記録に限定し、自動で売買ポリシーを適用しない。

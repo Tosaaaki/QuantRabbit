@@ -111,6 +111,27 @@
   - 市況メモ→`market_context`→`gpt_ops_report` の入力連鎖がCLIで再現可能になった。
   - 発注経路・strategy worker の判定ロジックは非変更。
 
+### 2026-02-27（追記）外部市況の自動取得（価格/金利/イベント）を追加
+
+- 目的:
+  - 手入力なしで「調査→分析」を回せるようにし、`gpt_ops_report` の入力を自動更新する。
+- 変更:
+  - `scripts/fetch_market_snapshot.py`
+    - Stooq から `USD/JPY, EUR/USD, AUD/JPY, EUR/JPY, DXY` を取得し、
+      日中変化率（open→close）を算出。
+    - TradingEconomics から `US10Y, JP10Y` を抽出。
+    - TradingEconomics calendar HTML から主要国イベント（US/JP/EU/DE/UK/AU/CN）を抽出し、
+      `impact`（`calendar-date-1/2/3`）と `time_utc/time_jst/minutes_to_event` を付与。
+    - 出力:
+      - `logs/market_external_snapshot.json`
+      - `logs/market_events.json`
+  - `tests/scripts/test_fetch_market_snapshot.py`
+    - CSV parse / bond value抽出 / calendar抽出の回帰テストを追加。
+- 影響範囲:
+  - `fetch_market_snapshot.py` → `build_market_context.py` → `gpt_ops_report.py` の
+    一連フローで、短期/スイングの分析材料を自動生成可能になった。
+  - 発注・ポジション管理・strategy worker の実行ロジックは非変更。
+
 ### 2026-02-27（追記）M1シナリオ3戦略を「プロセス独立」から「ロジック独立」へ移行
 
 - 背景:

@@ -76,6 +76,9 @@
       「主因→壊れる点→A/B/C→条件式」を定型化。`scripts/build_market_context.py` で入力文脈を単独更新可能にした。
     - 2026-02-27: `scripts/import_market_brief.py` を追加し、市況メモ本文から
       `market_external_snapshot` / `market_events` を生成できるようにした（文章→運用入力の変換導線）。
+    - 2026-02-27: `scripts/fetch_market_snapshot.py` を追加し、
+      Stooq + TradingEconomics から価格/金利/主要イベントを取得して
+      `market_external_snapshot` / `market_events` を自動更新できるようにした。
 
 - [ ] ID: T-20260123-002
   Title: GPT運用レポートに時間帯×レジーム×ボラの勝率/PFマトリクスを追加
