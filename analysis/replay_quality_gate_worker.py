@@ -85,6 +85,14 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
 def _normalize_hours(raw: Any) -> list[int]:
     if not isinstance(raw, list):
         return []
@@ -216,6 +224,9 @@ class WorkerConfig:
     auto_improve_counterfactual_out_dir: Path = (REPO_ROOT / "logs" / "replay_auto_improve").resolve()
     auto_improve_min_trades: int = 40
     auto_improve_max_block_hours: int = 8
+    auto_improve_apply_block_hours: bool = False
+    auto_improve_min_reentry_confidence: float = 0.70
+    auto_improve_min_reentry_lcb_uplift_pips: float = 0.20
     auto_improve_min_apply_interval_sec: int = 10800
     auto_improve_apply_state_path: Path = (REPO_ROOT / "logs" / "replay_auto_improve_state.json").resolve()
     auto_improve_reentry_config_path: Path = (REPO_ROOT / "config" / "worker_reentry.yaml").resolve()
@@ -274,6 +285,19 @@ def _default_config() -> WorkerConfig:
         auto_improve_max_block_hours=max(
             1,
             _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS", 8),
+        ),
+        auto_improve_apply_block_hours=_env_bool(
+            "REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_BLOCK_HOURS",
+            False,
+        ),
+        auto_improve_min_reentry_confidence=_clamp(
+            _safe_float(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_CONFIDENCE"), 0.70),
+            0.0,
+            1.0,
+        ),
+        auto_improve_min_reentry_lcb_uplift_pips=_safe_float(
+            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_LCB_UPLIFT_PIPS"),
+            0.20,
         ),
         auto_improve_min_apply_interval_sec=max(
             0,
@@ -347,6 +371,22 @@ def parse_args() -> argparse.Namespace:
         default=default.auto_improve_reentry_config_path,
     )
     ap.add_argument("--auto-improve-max-block-hours", type=int, default=default.auto_improve_max_block_hours)
+    ap.add_argument(
+        "--auto-improve-apply-block-hours",
+        type=int,
+        choices=(0, 1),
+        default=1 if default.auto_improve_apply_block_hours else 0,
+    )
+    ap.add_argument(
+        "--auto-improve-min-reentry-confidence",
+        type=float,
+        default=default.auto_improve_min_reentry_confidence,
+    )
+    ap.add_argument(
+        "--auto-improve-min-reentry-lcb-uplift-pips",
+        type=float,
+        default=default.auto_improve_min_reentry_lcb_uplift_pips,
+    )
     ap.add_argument(
         "--auto-improve-min-apply-interval-sec",
         type=int,
@@ -446,6 +486,13 @@ def _build_config_from_args(args: argparse.Namespace) -> WorkerConfig:
         auto_improve_counterfactual_out_dir=Path(args.auto_improve_counterfactual_out_dir).resolve(),
         auto_improve_min_trades=max(1, int(args.auto_improve_min_trades)),
         auto_improve_max_block_hours=max(1, int(args.auto_improve_max_block_hours)),
+        auto_improve_apply_block_hours=bool(int(args.auto_improve_apply_block_hours)),
+        auto_improve_min_reentry_confidence=_clamp(
+            float(args.auto_improve_min_reentry_confidence),
+            0.0,
+            1.0,
+        ),
+        auto_improve_min_reentry_lcb_uplift_pips=float(args.auto_improve_min_reentry_lcb_uplift_pips),
         auto_improve_min_apply_interval_sec=max(0, int(args.auto_improve_min_apply_interval_sec)),
         auto_improve_apply_state_path=Path(args.auto_improve_apply_state_path).resolve(),
         auto_improve_reentry_config_path=Path(args.auto_improve_reentry_config_path).resolve(),
@@ -571,7 +618,7 @@ def _write_apply_state(
     *,
     path: Path,
     applied_at: datetime,
-    updates: dict[str, list[int]],
+    updates: dict[str, Any],
 ) -> None:
     payload = {
         "applied_at": applied_at.isoformat(),
@@ -580,14 +627,29 @@ def _write_apply_state(
     _write_json_atomic(path, payload)
 
 
+def _normalize_bias(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"favor", "avoid", "neutral"}:
+        return text
+    return "neutral"
+
+
+def _safe_positive_int(value: Any, default: int) -> int:
+    parsed = _safe_int(value, default=default)
+    if parsed <= 0:
+        return int(default)
+    return int(parsed)
+
+
 def _apply_reentry_updates(
     *,
     reentry_path: Path,
-    strategy_hours: dict[str, list[int]],
+    strategy_updates: dict[str, dict[str, Any]],
+    apply_block_hours: bool = False,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "path": str(reentry_path),
-        "requested_updates": strategy_hours,
+        "requested_updates": strategy_updates,
         "applied": False,
         "changed": [],
         "reason": "",
@@ -595,36 +657,131 @@ def _apply_reentry_updates(
     if yaml is None:
         result["reason"] = "yaml_unavailable"
         return result
-    if not strategy_hours:
+    if not strategy_updates:
         result["reason"] = "no_strategy_updates"
         return result
 
     base = _load_yaml_dict(reentry_path)
+    defaults = base.get("defaults")
+    if not isinstance(defaults, dict):
+        defaults = {}
     strategies = base.get("strategies")
     if not isinstance(strategies, dict):
         strategies = {}
         base["strategies"] = strategies
 
     changed: list[dict[str, Any]] = []
-    for strategy, raw_hours in strategy_hours.items():
-        hours = _normalize_hours(raw_hours)
-        if not hours:
+    for strategy, update in strategy_updates.items():
+        if not isinstance(update, dict):
             continue
         row = strategies.get(strategy)
         if not isinstance(row, dict):
             row = {}
             strategies[strategy] = row
-        current_hours = _normalize_hours(row.get("block_jst_hours"))
-        if current_hours == hours:
+        row_changes: list[dict[str, Any]] = []
+
+        if apply_block_hours:
+            hours = _normalize_hours(update.get("block_jst_hours"))
+            if hours:
+                current_hours = _normalize_hours(row.get("block_jst_hours"))
+                if current_hours != hours:
+                    row["block_jst_hours"] = hours
+                    row_changes.append(
+                        {
+                            "key": "block_jst_hours",
+                            "before": current_hours,
+                            "after": hours,
+                        }
+                    )
+
+        hint = update.get("reentry_overrides")
+        if not isinstance(hint, dict):
+            if row_changes:
+                changed.append({"strategy": strategy, "changes": row_changes})
             continue
-        row["block_jst_hours"] = hours
-        changed.append(
-            {
-                "strategy": strategy,
-                "before": current_hours,
-                "after": hours,
-            }
+
+        mode = str(hint.get("mode") or "").strip().lower()
+        if mode not in {"tighten", "loosen"}:
+            if row_changes:
+                changed.append({"strategy": strategy, "changes": row_changes})
+            continue
+
+        current_cooldown_loss = _safe_positive_int(
+            row.get("cooldown_loss_sec", defaults.get("cooldown_loss_sec", 180)),
+            180,
         )
+        current_cooldown_win = _safe_positive_int(
+            row.get("cooldown_win_sec", defaults.get("cooldown_win_sec", 60)),
+            60,
+        )
+        current_reentry_pips = abs(
+            _safe_float(
+                row.get("same_dir_reentry_pips", defaults.get("same_dir_reentry_pips", 1.8)),
+                1.8,
+            )
+        )
+        if current_reentry_pips <= 0.0:
+            current_reentry_pips = 1.8
+
+        cooldown_loss_mult = _clamp(_safe_float(hint.get("cooldown_loss_mult"), 1.0), 0.60, 1.80)
+        cooldown_win_mult = _clamp(_safe_float(hint.get("cooldown_win_mult"), 1.0), 0.70, 1.50)
+        reentry_pips_mult = _clamp(
+            _safe_float(hint.get("same_dir_reentry_pips_mult"), 1.0),
+            0.70,
+            1.60,
+        )
+        target_bias = _normalize_bias(
+            hint.get("return_wait_bias") or ("avoid" if mode == "tighten" else "favor")
+        )
+
+        target_cooldown_loss = int(round(current_cooldown_loss * cooldown_loss_mult))
+        target_cooldown_win = int(round(current_cooldown_win * cooldown_win_mult))
+        target_reentry_pips = current_reentry_pips * reentry_pips_mult
+        target_cooldown_loss = max(10, min(3600, target_cooldown_loss))
+        target_cooldown_win = max(5, min(1800, target_cooldown_win))
+        target_reentry_pips = _clamp(target_reentry_pips, 0.05, 25.0)
+
+        if target_cooldown_loss != current_cooldown_loss:
+            row["cooldown_loss_sec"] = target_cooldown_loss
+            row_changes.append(
+                {
+                    "key": "cooldown_loss_sec",
+                    "before": current_cooldown_loss,
+                    "after": target_cooldown_loss,
+                }
+            )
+        if target_cooldown_win != current_cooldown_win:
+            row["cooldown_win_sec"] = target_cooldown_win
+            row_changes.append(
+                {
+                    "key": "cooldown_win_sec",
+                    "before": current_cooldown_win,
+                    "after": target_cooldown_win,
+                }
+            )
+        if abs(target_reentry_pips - current_reentry_pips) >= 1e-4:
+            target_reentry_rounded = round(target_reentry_pips, 3)
+            row["same_dir_reentry_pips"] = target_reentry_rounded
+            row_changes.append(
+                {
+                    "key": "same_dir_reentry_pips",
+                    "before": round(current_reentry_pips, 3),
+                    "after": target_reentry_rounded,
+                }
+            )
+        current_bias = _normalize_bias(row.get("return_wait_bias", defaults.get("return_wait_bias", "neutral")))
+        if target_bias != current_bias:
+            row["return_wait_bias"] = target_bias
+            row_changes.append(
+                {
+                    "key": "return_wait_bias",
+                    "before": current_bias,
+                    "after": target_bias,
+                }
+            )
+
+        if row_changes:
+            changed.append({"strategy": strategy, "changes": row_changes})
 
     if not changed:
         result["reason"] = "no_diff"
@@ -692,7 +849,7 @@ def _run_auto_improve(
             timeout_sec=cfg.auto_improve_counterfactual_timeout_sec,
         )
     )
-    accepted_updates: dict[str, list[int]] = {}
+    accepted_updates: dict[str, dict[str, Any]] = {}
     strategy_runs: list[dict[str, Any]] = []
 
     for strategy in strategies:
@@ -733,27 +890,70 @@ def _run_auto_improve(
         trades = _safe_int(summary.get("trades"), default=0)
         block_hours = _normalize_hours(hints.get("block_jst_hours"))
         stuck_ratio = _safe_float(summary.get("stuck_trade_ratio"), default=0.0)
+        reentry_hint = hints.get("reentry_overrides") if isinstance(hints.get("reentry_overrides"), dict) else {}
+        reentry_mode = str(reentry_hint.get("mode") or "").strip().lower()
+        reentry_confidence = _clamp(_safe_float(reentry_hint.get("confidence"), 0.0), 0.0, 1.0)
+        reentry_lcb = max(0.0, _safe_float(reentry_hint.get("lcb_uplift_pips"), 0.0))
 
         row["trades"] = trades
         row["stuck_trade_ratio"] = stuck_ratio
         row["block_jst_hours"] = block_hours
+        row["reentry_mode"] = reentry_mode or "unknown"
+        row["reentry_confidence"] = round(reentry_confidence, 4)
+        row["reentry_lcb_uplift_pips"] = round(reentry_lcb, 4)
 
         if trades < cfg.auto_improve_min_trades:
             row["status"] = "skipped_min_trades"
             row["min_trades"] = int(cfg.auto_improve_min_trades)
             strategy_runs.append(row)
             continue
-        if not block_hours:
-            row["status"] = "skipped_no_block_hours"
-            strategy_runs.append(row)
-            continue
-        if len(block_hours) > int(cfg.auto_improve_max_block_hours):
-            row["status"] = "skipped_too_many_block_hours"
-            row["max_block_hours"] = int(cfg.auto_improve_max_block_hours)
+
+        strategy_update: dict[str, Any] = {}
+        if reentry_mode in {"tighten", "loosen"}:
+            if reentry_confidence < cfg.auto_improve_min_reentry_confidence:
+                row["status"] = "skipped_low_reentry_confidence"
+                row["min_reentry_confidence"] = round(cfg.auto_improve_min_reentry_confidence, 4)
+            elif reentry_lcb < cfg.auto_improve_min_reentry_lcb_uplift_pips:
+                row["status"] = "skipped_low_reentry_lcb"
+                row["min_reentry_lcb_uplift_pips"] = round(cfg.auto_improve_min_reentry_lcb_uplift_pips, 4)
+            else:
+                strategy_update["reentry_overrides"] = {
+                    "mode": reentry_mode,
+                    "confidence": reentry_confidence,
+                    "lcb_uplift_pips": reentry_lcb,
+                    "cooldown_loss_mult": _clamp(
+                        _safe_float(reentry_hint.get("cooldown_loss_mult"), 1.0), 0.60, 1.80
+                    ),
+                    "cooldown_win_mult": _clamp(
+                        _safe_float(reentry_hint.get("cooldown_win_mult"), 1.0), 0.70, 1.50
+                    ),
+                    "same_dir_reentry_pips_mult": _clamp(
+                        _safe_float(reentry_hint.get("same_dir_reentry_pips_mult"), 1.0),
+                        0.70,
+                        1.60,
+                    ),
+                    "return_wait_bias": _normalize_bias(reentry_hint.get("return_wait_bias")),
+                    "source": str(reentry_hint.get("source") or "counterfactual"),
+                }
+
+        if cfg.auto_improve_apply_block_hours:
+            if block_hours:
+                if len(block_hours) <= int(cfg.auto_improve_max_block_hours):
+                    strategy_update["block_jst_hours"] = block_hours
+                else:
+                    row["block_hours_status"] = "ignored_too_many_block_hours"
+                    row["max_block_hours"] = int(cfg.auto_improve_max_block_hours)
+            else:
+                row["block_hours_status"] = "ignored_no_block_hours"
+
+        if not strategy_update:
+            if not row.get("status"):
+                row["status"] = "skipped_no_reentry_overrides"
             strategy_runs.append(row)
             continue
 
-        accepted_updates[strategy] = block_hours
+        accepted_updates[strategy] = strategy_update
+        row["accepted_update"] = strategy_update
         row["status"] = "accepted"
         strategy_runs.append(row)
 
@@ -792,7 +992,8 @@ def _run_auto_improve(
 
     apply_result = _apply_reentry_updates(
         reentry_path=cfg.auto_improve_reentry_config_path,
-        strategy_hours=accepted_updates,
+        strategy_updates=accepted_updates,
+        apply_block_hours=cfg.auto_improve_apply_block_hours,
     )
     result["reentry_apply"] = apply_result
     if bool(apply_result.get("applied")):

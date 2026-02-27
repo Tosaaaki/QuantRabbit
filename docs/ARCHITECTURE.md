@@ -213,9 +213,12 @@ class OrderIntent(BaseModel):
   - 実装: `analysis/replay_quality_gate_worker.py`
   - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
     replay 直後に `analysis.trade_counterfactual_worker` を戦略単位で実行し、
-    `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映する。
-    過剰ブロック防止として `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS`
-    を超える候補は自動反映しない。
+    `policy_hints.reentry_overrides`（`cooldown_* / same_dir_reentry_pips / return_wait_bias`）
+    を `config/worker_reentry.yaml` へ自動反映する。
+    `block_jst_hours` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_BLOCK_HOURS=1`
+    を明示した場合のみ反映する（既定は 0）。
+    `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_CONFIDENCE` と
+    `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_LCB_UPLIFT_PIPS` を下回る候補は解析のみで不採用とする。
     `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` を使い、
     反映間隔をレート制限する（間隔内は解析のみ）。
     反映の成否・理由は `replay_quality_gate_latest.json.auto_improve` に格納する。
@@ -231,13 +234,19 @@ class OrderIntent(BaseModel):
   - 入力: `logs/trades.db` + `logs/orders.db`
     - 追加入力（任意）: `COUNTERFACTUAL_REPLAY_JSON_GLOBS` で replay 出力
       （`replay_exit_workers.json`）を直接集計可能
-  - 解析: 5fold 一貫性 (`fold_consistency`) と 95%下限 (`lb95_pips`) を併用
+- 解析: 5fold 一貫性 (`fold_consistency`) と 95%下限 (`lb95_pips`) を併用
     し、さらに fold 外疑似 OOS 検証（action一致率/正の uplift 比率/`oos_lb95_uplift_pips`）
     を満たした提案だけを採用
     - stuck 判定: `hold_sec >= COUNTERFACTUAL_STUCK_HOLD_SEC` かつ
       `pl_pips <= COUNTERFACTUAL_STUCK_LOSS_PIPS` または
       `reason in COUNTERFACTUAL_STUCK_REASONS`
       を `stuck_rate` として評価し、`block/reduce` 判定へ反映
+    - ノイズ補正: spread カバレッジ・spread 超過・stuck 率・OOS 不確実性を
+      `noise_penalty` として uplift から控除し、`noise_lcb_uplift_pips` で保守判定する。
+    - 過去パターン統合: `config/pattern_book_deep.json`（`top_robust`/`top_weak`）を
+      strategy+side の事前確率として合成し、`pattern_adjusted_lcb_uplift_pips` を算出する。
+    - 政策ヒント: `reentry_overrides`（tighten/loosen + multiplier）を出力し、
+      replay auto-improve が `worker_reentry` の非時間帯パラメータへ反映する。
   - 出力: `logs/trade_counterfactual_latest.json` / `logs/trade_counterfactual_history.jsonl`
 - 定期ワーカー:
   - `quant-trade-counterfactual.service`（oneshot）+

@@ -8,6 +8,34 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）replay auto-improve を時間帯ブロック依存から reentry 動的調整へ移行
+
+- 背景:
+  - `analysis.replay_quality_gate_worker` の auto-improve は
+    `policy_hints.block_jst_hours` を `worker_reentry` へ反映していたため、
+    時間帯封鎖に寄りやすく、ノイズ時に「停止で回避」へ偏るリスクがあった。
+  - 実運用方針（JST7-8保守帯を除き恒久ブロックを避ける）と整合させるため、
+    反映対象を reentry の動的パラメータへ変更した。
+- 変更:
+  - `analysis/trade_counterfactual_worker.py`
+    - `pattern_book_deep` を事前確率として統合（strategy+side）。
+    - spread/stuck/OOS を `noise_penalty` 化し、
+      `noise_lcb_uplift_pips` と `quality_score` で候補を再ランキング。
+    - `policy_hints.reentry_overrides`（`tighten/loosen` + multiplier）を出力。
+  - `analysis/replay_quality_gate_worker.py`
+    - auto-improve の採用条件を
+      `reentry_overrides.confidence` と `lcb_uplift_pips` ベースへ変更。
+    - `worker_reentry.yaml` へ `cooldown_win_sec` / `cooldown_loss_sec` /
+      `same_dir_reentry_pips` / `return_wait_bias` を反映。
+    - `block_jst_hours` 自動適用は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_BLOCK_HOURS=1`
+      指定時のみ有効（既定は無効）。
+  - `ops/env/quant-trade-counterfactual.env` /
+    `ops/env/quant-replay-quality-gate.env`
+    - pattern/noise/reentry gate 用の運用パラメータを追加。
+- 意図:
+  - 「高速探索 + 厳格昇格」を維持しつつ、
+    時間帯封鎖ではなく reentry 品質（再突入距離/待機時間/バイアス）で改善を回す。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の preflight 閾値を `quant-order-manager` 実効envへ同期
 
 - 背景（VM実測）:

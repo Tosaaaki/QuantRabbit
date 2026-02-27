@@ -117,7 +117,8 @@ def test_apply_reentry_updates_sets_block_hours(tmp_path: Path) -> None:
 
     result = worker._apply_reentry_updates(
         reentry_path=reentry_path,
-        strategy_hours={"session_open": [5, 2, 5, 31, -1]},
+        strategy_updates={"session_open": {"block_jst_hours": [5, 2, 5, 31, -1]}},
+        apply_block_hours=True,
     )
 
     assert result["applied"] is True
@@ -167,7 +168,7 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
         out_path = Path(cmd[cmd.index("--out-path") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
-            '{"summary":{"trades":12,"stuck_trade_ratio":0.5},"policy_hints":{"block_jst_hours":[3,6]}}',
+            '{"summary":{"trades":12,"stuck_trade_ratio":0.5},"policy_hints":{"reentry_overrides":{"mode":"tighten","confidence":0.88,"lcb_uplift_pips":1.6,"cooldown_loss_mult":1.20,"cooldown_win_mult":1.10,"same_dir_reentry_pips_mult":1.15,"return_wait_bias":"avoid"}}}',
             encoding="utf-8",
         )
         return _completed(stdout=str(out_path), returncode=0)
@@ -181,7 +182,10 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
     assert isinstance(auto, dict)
     assert auto.get("status") == "applied"
     payload = worker._load_yaml_dict(reentry_path)
-    assert payload.get("strategies", {}).get("session_open", {}).get("block_jst_hours") == [3, 6]
+    session_cfg = payload.get("strategies", {}).get("session_open", {})
+    assert session_cfg.get("cooldown_loss_sec", 0) > 180
+    assert session_cfg.get("same_dir_reentry_pips", 0.0) > 1.8
+    assert session_cfg.get("return_wait_bias") == "avoid"
 
 
 def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:
@@ -230,7 +234,7 @@ def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:
         out_path = Path(cmd[cmd.index("--out-path") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
-            '{"summary":{"trades":12,"stuck_trade_ratio":0.5},"policy_hints":{"block_jst_hours":[3,6]}}',
+            '{"summary":{"trades":12,"stuck_trade_ratio":0.5},"policy_hints":{"reentry_overrides":{"mode":"tighten","confidence":0.82,"lcb_uplift_pips":1.2,"cooldown_loss_mult":1.15,"cooldown_win_mult":1.08,"same_dir_reentry_pips_mult":1.10,"return_wait_bias":"avoid"}}}',
             encoding="utf-8",
         )
         return _completed(stdout=str(out_path), returncode=0)

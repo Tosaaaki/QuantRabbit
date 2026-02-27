@@ -180,6 +180,14 @@ def _mean_ci95(values: list[float]) -> tuple[float, float, float]:
     return m, m - delta, m + delta
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -234,6 +242,15 @@ class ReviewConfig:
     block_stuck_rate: float = 0.45
     reduce_stuck_rate: float = 0.30
     boost_stuck_rate: float = 0.10
+    pattern_prior_enabled: bool = True
+    pattern_book_path: Path = (REPO_ROOT / "config" / "pattern_book_deep.json").resolve()
+    pattern_prior_weight: float = 0.35
+    noise_spread_weight: float = 0.65
+    noise_stuck_weight: float = 0.50
+    noise_oos_weight: float = 0.45
+    noise_min_spread_coverage: float = 0.40
+    reentry_hint_min_confidence: float = 0.70
+    reentry_hint_min_lcb_uplift_pips: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -557,6 +574,130 @@ def _make_feature_map(sample: TradeSample, cfg: ReviewConfig) -> dict[str, str]:
     }
 
 
+def _extract_pattern_strategy_token(row: dict[str, Any]) -> str:
+    strategy = str(row.get("strategy_tag") or "").strip()
+    if strategy:
+        return strategy
+    pattern_id = str(row.get("pattern_id") or "")
+    if "st:" not in pattern_id:
+        return ""
+    for token in pattern_id.split("|"):
+        if token.startswith("st:"):
+            return token[3:]
+    return ""
+
+
+def _load_pattern_prior(cfg: ReviewConfig) -> tuple[dict[str, float], dict[str, Any]]:
+    empty_meta = {
+        "enabled": bool(cfg.pattern_prior_enabled),
+        "path": str(cfg.pattern_book_path),
+        "matched_rows": 0,
+        "used_rows": 0,
+    }
+    if not cfg.pattern_prior_enabled:
+        return {}, empty_meta
+    if not cfg.pattern_book_path.exists():
+        empty_meta["missing"] = True
+        return {}, empty_meta
+
+    try:
+        payload = json.loads(cfg.pattern_book_path.read_text(encoding="utf-8"))
+    except Exception:
+        empty_meta["parse_error"] = True
+        return {}, empty_meta
+    if not isinstance(payload, dict):
+        empty_meta["parse_error"] = True
+        return {}, empty_meta
+
+    matcher = _like_to_regex(cfg.strategy_like.lower())
+    rows: list[dict[str, Any]] = []
+    for key in ("top_robust", "top_weak"):
+        raw = payload.get(key)
+        if isinstance(raw, list):
+            rows.extend(item for item in raw if isinstance(item, dict))
+
+    scores: dict[str, list[float]] = defaultdict(list)
+    used_rows = 0
+    matched_rows = 0
+    for row in rows:
+        strategy = _extract_pattern_strategy_token(row)
+        if not strategy or not matcher.match(strategy.lower()):
+            continue
+        matched_rows += 1
+        side = str(row.get("direction") or "unknown").strip().lower()
+        if side not in {"long", "short"}:
+            side = "unknown"
+
+        robust_score = _to_float(row.get("robust_score"))
+        trades = int(_to_float(row.get("trades")) or 0)
+        if robust_score is None:
+            continue
+        quality = str(row.get("quality") or "").strip().lower()
+        score = _clamp(float(robust_score) / 4.0, -1.0, 1.0)
+        if quality == "avoid" and score > 0.0:
+            score = -score
+        if quality in {"robust", "candidate"} and score < 0.0:
+            score = abs(score)
+        if quality in {"learn_only", "neutral"}:
+            score *= 0.5
+        weight = _clamp(math.log10(max(2, trades + 1)) / 2.0, 0.15, 1.0)
+        weighted_score = score * weight
+        scores[side].append(weighted_score)
+        scores["__overall__"].append(weighted_score)
+        used_rows += 1
+
+    prior = {
+        side: round(_clamp(_mean(values), -1.0, 1.0), 6)
+        for side, values in scores.items()
+        if values
+    }
+    meta = {
+        "enabled": bool(cfg.pattern_prior_enabled),
+        "path": str(cfg.pattern_book_path),
+        "matched_rows": matched_rows,
+        "used_rows": used_rows,
+        "prior": prior,
+    }
+    return prior, meta
+
+
+def _candidate_noise_metrics(
+    *,
+    rows: list[TradeSample],
+    cfg: ReviewConfig,
+    expected_uplift: float,
+    stuck_rate: float,
+    oos_action_match_ratio: float,
+    oos_positive_ratio: float,
+) -> dict[str, float]:
+    n = len(rows)
+    spread_values = [float(row.spread_pips) for row in rows if row.spread_pips is not None]
+    spread_coverage = (len(spread_values) / float(n)) if n > 0 else 0.0
+    mean_spread = _mean(spread_values) if spread_values else 0.0
+    spread_excess = max(0.0, mean_spread - 0.40)
+    spread_penalty = spread_excess * float(n) * max(0.0, cfg.noise_spread_weight)
+    coverage_penalty = (
+        max(0.0, cfg.noise_min_spread_coverage - spread_coverage)
+        * abs(expected_uplift)
+        * max(0.0, cfg.noise_spread_weight)
+    )
+    stuck_penalty = (
+        max(0.0, stuck_rate) * float(n) * max(0.0, cfg.noise_stuck_weight)
+    )
+    oos_conf = _clamp(0.5 * oos_action_match_ratio + 0.5 * oos_positive_ratio, 0.0, 1.0)
+    oos_penalty = (1.0 - oos_conf) * abs(expected_uplift) * max(0.0, cfg.noise_oos_weight)
+    total_penalty = spread_penalty + coverage_penalty + stuck_penalty + oos_penalty
+    return {
+        "spread_coverage_ratio": round(spread_coverage, 6),
+        "spread_mean_pips": round(mean_spread, 6),
+        "noise_penalty_pips": round(total_penalty, 6),
+        "noise_penalty_spread_pips": round(spread_penalty, 6),
+        "noise_penalty_coverage_pips": round(coverage_penalty, 6),
+        "noise_penalty_stuck_pips": round(stuck_penalty, 6),
+        "noise_penalty_oos_pips": round(oos_penalty, 6),
+    }
+
+
 def _certainty(
     *,
     n: int,
@@ -698,9 +839,15 @@ def _evaluate_oos(
     }
 
 
-def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> list[dict[str, Any]]:
+def _build_recommendations(
+    samples: list[TradeSample],
+    cfg: ReviewConfig,
+    *,
+    pattern_prior: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
     if not samples:
         return []
+    prior = pattern_prior or {}
 
     days = sorted({s.fold_day_key for s in samples})
     day_to_index = {d: i for i, d in enumerate(days)}
@@ -786,6 +933,37 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
             oos_positive_ratio=float(oos["oos_positive_ratio"]),
             oos_lb_uplift_pips=float(oos["oos_lb95_uplift_pips"]),
         )
+        noise = _candidate_noise_metrics(
+            rows=rows,
+            cfg=cfg,
+            expected_uplift=expected_uplift,
+            stuck_rate=stuck_rate,
+            oos_action_match_ratio=float(oos["oos_action_match_ratio"]),
+            oos_positive_ratio=float(oos["oos_positive_ratio"]),
+        )
+        noise_adjusted_uplift = expected_uplift - float(noise["noise_penalty_pips"])
+        noise_lcb_uplift = min(noise_adjusted_uplift, float(oos["oos_lb95_uplift_pips"]))
+
+        long_count = sum(1 for row in rows if row.side == "long")
+        short_count = sum(1 for row in rows if row.side == "short")
+        if feature_name == "side" and bucket in {"long", "short"}:
+            prior_side = bucket
+        elif long_count > short_count:
+            prior_side = "long"
+        elif short_count > long_count:
+            prior_side = "short"
+        else:
+            prior_side = "unknown"
+        pattern_prior_score = float(prior.get(prior_side, prior.get("__overall__", 0.0)))
+        signed_prior = pattern_prior_score if action == "boost" else -pattern_prior_score
+        pattern_multiplier = 1.0 + _clamp(
+            signed_prior * max(0.0, cfg.pattern_prior_weight),
+            -0.35,
+            0.35,
+        )
+        pattern_adjusted_lcb = noise_lcb_uplift * pattern_multiplier
+        quality_score = pattern_adjusted_lcb * max(0.0, certainty)
+
         recs.append(
             {
                 "feature": feature_name,
@@ -806,12 +984,21 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
                 "oos_positive_ratio": round(float(oos["oos_positive_ratio"]), 4),
                 "oos_mean_uplift_pips": round(float(oos["oos_mean_uplift_pips"]), 4),
                 "oos_lb95_uplift_pips": round(float(oos["oos_lb95_uplift_pips"]), 4),
+                "noise_adjusted_uplift_pips": round(noise_adjusted_uplift, 4),
+                "noise_lcb_uplift_pips": round(noise_lcb_uplift, 4),
+                "quality_score": round(quality_score, 6),
+                "pattern_prior_side": prior_side,
+                "pattern_prior_score": round(pattern_prior_score, 6),
+                "pattern_prior_multiplier": round(pattern_multiplier, 6),
+                "pattern_adjusted_lcb_uplift_pips": round(pattern_adjusted_lcb, 4),
+                "noise": noise,
             }
         )
 
     recs.sort(
         key=lambda r: (
-            float(r.get("expected_uplift_pips", 0.0)),
+            float(r.get("quality_score", 0.0)),
+            float(r.get("noise_lcb_uplift_pips", 0.0)),
             float(r.get("certainty", 0.0)),
             int(r.get("trades", 0)),
         ),
@@ -820,15 +1007,19 @@ def _build_recommendations(samples: list[TradeSample], cfg: ReviewConfig) -> lis
     return recs[: max(1, cfg.top_k)]
 
 
-def _extract_policy_hints(recs: list[dict[str, Any]]) -> dict[str, Any]:
+def _extract_policy_hints(recs: list[dict[str, Any]], cfg: ReviewConfig) -> dict[str, Any]:
     block_hours: list[int] = []
     block_reasons: list[str] = []
     reduce_reasons: list[str] = []
     side_mode: dict[str, str] = {}
+    actionable: list[dict[str, Any]] = []
     for rec in recs:
         action = str(rec.get("action") or "")
         certainty = float(rec.get("certainty") or 0.0)
-        if action not in {"block", "reduce", "boost"} or certainty < 0.65:
+        noise_lcb = float(rec.get("noise_lcb_uplift_pips") or 0.0)
+        if action not in {"block", "reduce", "boost"}:
+            continue
+        if certainty < max(0.50, cfg.reentry_hint_min_confidence * 0.85):
             continue
 
         feature = str(rec.get("feature") or "")
@@ -845,13 +1036,88 @@ def _extract_policy_hints(recs: list[dict[str, Any]]) -> dict[str, Any]:
                 reduce_reasons.append(bucket)
         if feature == "side" and bucket in {"long", "short"}:
             side_mode[bucket] = action
+        if (
+            certainty >= cfg.reentry_hint_min_confidence
+            and noise_lcb >= cfg.reentry_hint_min_lcb_uplift_pips
+        ):
+            actionable.append(rec)
 
     block_hours = sorted(set(v for v in block_hours if 0 <= v <= 23))
+    tighten_score = 0.0
+    loosen_score = 0.0
+    tighten_lcb = 0.0
+    loosen_lcb = 0.0
+    max_certainty = 0.0
+    for rec in actionable:
+        action = str(rec.get("action") or "")
+        score = max(0.0, float(rec.get("quality_score") or 0.0))
+        lcb = max(0.0, float(rec.get("noise_lcb_uplift_pips") or 0.0))
+        certainty = max(0.0, float(rec.get("certainty") or 0.0))
+        max_certainty = max(max_certainty, certainty)
+        if action in {"block", "reduce"}:
+            tighten_score += score
+            tighten_lcb += lcb
+        elif action == "boost":
+            loosen_score += score
+            loosen_lcb += lcb
+
+    mode = "neutral"
+    confidence = 0.0
+    uplift_lcb = 0.0
+    cooldown_loss_mult = 1.0
+    cooldown_win_mult = 1.0
+    same_dir_reentry_pips_mult = 1.0
+    return_wait_bias = "neutral"
+
+    total_score = tighten_score + loosen_score
+    if total_score > 0.0:
+        net_score = tighten_score - loosen_score
+        severity = _clamp(abs(net_score) / total_score, 0.0, 1.0)
+        confidence = _clamp(0.6 * severity + 0.4 * max_certainty, 0.0, 1.0)
+        if net_score > 0.0:
+            mode = "tighten"
+            uplift_lcb = max(0.0, tighten_lcb - loosen_lcb)
+            cooldown_loss_mult = 1.0 + 0.55 * severity
+            cooldown_win_mult = 1.0 + 0.25 * severity
+            same_dir_reentry_pips_mult = 1.0 + 0.35 * severity
+            return_wait_bias = "avoid"
+        elif net_score < 0.0:
+            mode = "loosen"
+            uplift_lcb = max(0.0, loosen_lcb - tighten_lcb)
+            cooldown_loss_mult = 1.0 - 0.28 * severity
+            cooldown_win_mult = 1.0 - 0.16 * severity
+            same_dir_reentry_pips_mult = 1.0 - 0.22 * severity
+            return_wait_bias = "favor"
+
+    top_candidates = [
+        {
+            "feature": str(rec.get("feature") or ""),
+            "bucket": str(rec.get("bucket") or ""),
+            "action": str(rec.get("action") or ""),
+            "quality_score": round(float(rec.get("quality_score") or 0.0), 6),
+            "certainty": round(float(rec.get("certainty") or 0.0), 4),
+            "noise_lcb_uplift_pips": round(float(rec.get("noise_lcb_uplift_pips") or 0.0), 4),
+        }
+        for rec in actionable[:5]
+    ]
     return {
         "block_jst_hours": block_hours,
         "block_reasons": sorted(set(block_reasons)),
         "reduce_reasons": sorted(set(reduce_reasons)),
         "side_actions": side_mode,
+        "reentry_overrides": {
+            "mode": mode,
+            "confidence": round(confidence, 4),
+            "lcb_uplift_pips": round(uplift_lcb, 4),
+            "cooldown_loss_mult": round(_clamp(cooldown_loss_mult, 0.60, 1.80), 4),
+            "cooldown_win_mult": round(_clamp(cooldown_win_mult, 0.70, 1.50), 4),
+            "same_dir_reentry_pips_mult": round(
+                _clamp(same_dir_reentry_pips_mult, 0.70, 1.60), 4
+            ),
+            "return_wait_bias": return_wait_bias,
+            "source": "counterfactual_noise_lcb_pattern_prior",
+        },
+        "top_reentry_candidates": top_candidates,
     }
 
 
@@ -860,8 +1126,9 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
     client_ids = [s.client_order_id for s in samples if s.client_order_id]
     spread_map = _load_spread_map(cfg, client_ids)
     samples = _inject_spread(samples, spread_map)
-    recs = _build_recommendations(samples, cfg)
-    hints = _extract_policy_hints(recs)
+    pattern_prior, pattern_meta = _load_pattern_prior(cfg)
+    recs = _build_recommendations(samples, cfg, pattern_prior=pattern_prior)
+    hints = _extract_policy_hints(recs, cfg)
 
     total_trades = len(samples)
     mean_pips = _mean([s.pl_pips for s in samples]) if samples else 0.0
@@ -901,6 +1168,7 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
                 "sources": dict(source_counts),
             },
             "top_close_reasons": top_reasons,
+            "pattern_prior": pattern_meta,
         },
         "thresholds": {
             "min_samples": cfg.min_samples,
@@ -924,6 +1192,15 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
             "block_stuck_rate": cfg.block_stuck_rate,
             "reduce_stuck_rate": cfg.reduce_stuck_rate,
             "boost_stuck_rate": cfg.boost_stuck_rate,
+            "pattern_prior_enabled": cfg.pattern_prior_enabled,
+            "pattern_book_path": str(cfg.pattern_book_path),
+            "pattern_prior_weight": cfg.pattern_prior_weight,
+            "noise_spread_weight": cfg.noise_spread_weight,
+            "noise_stuck_weight": cfg.noise_stuck_weight,
+            "noise_oos_weight": cfg.noise_oos_weight,
+            "noise_min_spread_coverage": cfg.noise_min_spread_coverage,
+            "reentry_hint_min_confidence": cfg.reentry_hint_min_confidence,
+            "reentry_hint_min_lcb_uplift_pips": cfg.reentry_hint_min_lcb_uplift_pips,
         },
         "policy_hints": hints,
         "recommendations": recs,
@@ -1074,6 +1351,51 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=_env_float("COUNTERFACTUAL_BOOST_STUCK_RATE", 0.10),
     )
+    ap.add_argument(
+        "--pattern-prior-enabled",
+        type=int,
+        choices=(0, 1),
+        default=_env_int("COUNTERFACTUAL_PATTERN_PRIOR_ENABLED", 1),
+    )
+    ap.add_argument(
+        "--pattern-book-path",
+        default=os.getenv("COUNTERFACTUAL_PATTERN_BOOK_PATH", "config/pattern_book_deep.json"),
+    )
+    ap.add_argument(
+        "--pattern-prior-weight",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_PATTERN_PRIOR_WEIGHT", 0.35),
+    )
+    ap.add_argument(
+        "--noise-spread-weight",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_NOISE_SPREAD_WEIGHT", 0.65),
+    )
+    ap.add_argument(
+        "--noise-stuck-weight",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_NOISE_STUCK_WEIGHT", 0.50),
+    )
+    ap.add_argument(
+        "--noise-oos-weight",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_NOISE_OOS_WEIGHT", 0.45),
+    )
+    ap.add_argument(
+        "--noise-min-spread-coverage",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_NOISE_MIN_SPREAD_COVERAGE", 0.40),
+    )
+    ap.add_argument(
+        "--reentry-hint-min-confidence",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_REENTRY_HINT_MIN_CONFIDENCE", 0.70),
+    )
+    ap.add_argument(
+        "--reentry-hint-min-lcb-uplift-pips",
+        type=float,
+        default=_env_float("COUNTERFACTUAL_REENTRY_HINT_MIN_LCB_UPLIFT_PIPS", 0.20),
+    )
     return ap.parse_args()
 
 
@@ -1108,6 +1430,15 @@ def _build_config(args: argparse.Namespace) -> ReviewConfig:
         block_stuck_rate=max(0.0, min(1.0, float(args.block_stuck_rate))),
         reduce_stuck_rate=max(0.0, min(1.0, float(args.reduce_stuck_rate))),
         boost_stuck_rate=max(0.0, min(1.0, float(args.boost_stuck_rate))),
+        pattern_prior_enabled=bool(int(args.pattern_prior_enabled)),
+        pattern_book_path=_resolve_path(args.pattern_book_path),
+        pattern_prior_weight=max(0.0, min(1.0, float(args.pattern_prior_weight))),
+        noise_spread_weight=max(0.0, min(2.0, float(args.noise_spread_weight))),
+        noise_stuck_weight=max(0.0, min(2.0, float(args.noise_stuck_weight))),
+        noise_oos_weight=max(0.0, min(2.0, float(args.noise_oos_weight))),
+        noise_min_spread_coverage=max(0.0, min(1.0, float(args.noise_min_spread_coverage))),
+        reentry_hint_min_confidence=max(0.0, min(1.0, float(args.reentry_hint_min_confidence))),
+        reentry_hint_min_lcb_uplift_pips=float(args.reentry_hint_min_lcb_uplift_pips),
     )
 
 

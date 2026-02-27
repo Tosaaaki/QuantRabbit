@@ -42,6 +42,47 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 17:10 UTC / 2026-02-28 02:10 JST - Counterfactual auto-improve を noise+pattern LCB で昇格判定
+Period:
+- 実装/テスト: 2026-02-27（ローカル）
+
+Source:
+- `analysis/trade_counterfactual_worker.py`
+- `analysis/replay_quality_gate_worker.py`
+- `tests/analysis/test_trade_counterfactual_worker.py`
+- `tests/analysis/test_replay_quality_gate_worker.py`
+
+Fact:
+- 既存 auto-improve は `policy_hints.block_jst_hours` のみを採用条件にしており、
+  ノイズ局面で時間帯ブロックへ寄る導線だった。
+- replay→counterfactual の昇格判定に spread/stuck/OOS のノイズ補正と
+  pattern book 事前確率が未統合だった。
+
+Failure Cause:
+1. 採用条件が時間帯ブロック中心で、reentry 品質の調整（cooldown/reentry距離）へ接続されていなかった。
+2. 候補ランクが期待値中心で、ノイズ耐性（LCB）と pattern prior が弱かった。
+
+Improvement:
+1. `trade_counterfactual_worker` に `noise_penalty`（spread/stuck/OOS）と
+  `pattern_book_deep` 事前確率を統合し、`quality_score` で候補を再ランキング。
+2. `policy_hints.reentry_overrides`（tighten/loosen, multiplier, confidence, lcb_uplift）を追加。
+3. `replay_quality_gate_worker` は `reentry_overrides` の
+  `confidence`/`lcb_uplift_pips` をゲートにして
+  `worker_reentry.yaml` の `cooldown_* / same_dir_reentry_pips / return_wait_bias` を更新。
+4. `block_jst_hours` の自動適用は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_BLOCK_HOURS=1`
+  を明示した場合のみ許可（既定 0）。
+
+Verification:
+1. `pytest -q tests/analysis/test_trade_counterfactual_worker.py tests/analysis/test_replay_quality_gate_worker.py`
+   で回帰テストが通過すること。
+2. auto-improve 実行後の `logs/replay_quality_gate_latest.json.auto_improve.strategy_runs[*]` で
+   `reentry_mode/confidence/lcb` と `accepted_update.reentry_overrides` が記録されること。
+3. `worker_reentry.yaml` の更新が時間帯ブロックでなく
+   `cooldown_* / same_dir_reentry_pips / return_wait_bias` 中心であること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 14:20 UTC / 2026-02-27 23:20 JST - `scalp_extrema_reversal_live` の取り残し（SL欠損 + loss_cut未発火）対策
 Period:
 - 直近7日（orders/trades 集計）

@@ -202,6 +202,36 @@ def test_recommendations_include_stuck_block_signal(tmp_path: Path) -> None:
     assert float(stuck_rec["stuck_rate"]) >= 0.5
 
 
+def test_policy_hints_emit_reentry_overrides(tmp_path: Path) -> None:
+    cfg = _cfg(
+        tmp_path,
+        min_samples=6,
+        min_fold_samples=1,
+        min_fold_consistency=0.5,
+        oos_enabled=False,
+        reentry_hint_min_confidence=0.30,
+        reentry_hint_min_lcb_uplift_pips=0.01,
+    )
+    rows = [
+        _sample("2026-02-01", -1.2, ticket="p1"),
+        _sample("2026-02-01", -1.0, ticket="p2"),
+        _sample("2026-02-02", -0.9, ticket="p3"),
+        _sample("2026-02-02", -1.1, ticket="p4"),
+        _sample("2026-02-03", -0.8, ticket="p5"),
+        _sample("2026-02-03", -0.7, ticket="p6"),
+        _sample("2026-02-04", -0.9, ticket="p7"),
+    ]
+
+    recs = worker._build_recommendations(rows, cfg, pattern_prior={"short": -0.4})
+    hints = worker._extract_policy_hints(recs, cfg)
+    overrides = hints.get("reentry_overrides")
+    assert isinstance(overrides, dict)
+    assert overrides.get("mode") == "tighten"
+    assert float(overrides.get("confidence", 0.0)) > 0.0
+    assert float(overrides.get("cooldown_loss_mult", 1.0)) > 1.0
+    assert overrides.get("return_wait_bias") == "avoid"
+
+
 def test_main_skips_when_market_open(monkeypatch) -> None:
     monkeypatch.setenv("COUNTERFACTUAL_SKIP_WHEN_MARKET_OPEN", "1")
     monkeypatch.setattr(worker, "is_market_open", lambda: True)
