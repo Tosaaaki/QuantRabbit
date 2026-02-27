@@ -446,6 +446,14 @@
   - 推奨運用値:
     - split worker: `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=0`
     - `quant-m1scalper`: `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=1`（`SPREAD_GUARD_DISABLE=1` 前提）
+- 2026-02-27 追記（split nwave early-entry tuning）:
+  - `strategies/scalping/m1_scalper.py` の nwave tolerance は、
+    次の env で worker 単位に上書きできる。
+    - `M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS`
+    - `M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS`
+  - split 3 worker は `0.50 / 0.62` を設定し、
+    `skip_nwave_*_late` の抑制を優先する。
+  - `quant-m1scalper` は未設定のため既存 tolerance（設定JSON + 既定値）を維持。
 - 目的は、legacy建玉でも loss-cut/time-stop が機能する状態を維持しつつ、
   一過性の `position_manager` timeout で EXIT 判定サイクルが欠落する頻度を下げること。
 

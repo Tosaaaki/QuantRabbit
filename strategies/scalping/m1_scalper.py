@@ -196,6 +196,12 @@ def _cfg_float(section: Dict, key: str, default: float) -> float:
     return default if val is None else val
 
 
+_NWAVE_ENV_FLOAT_OVERRIDES = {
+    "tolerance_default": "M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS",
+    "tolerance_tactical": "M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS",
+}
+
+
 def _shock_guard(candles: list[dict], atr_pips: Optional[float]) -> bool:
     if not _env_bool("M1SCALP_SHOCK_GUARD_ENABLED", True):
         return True
@@ -777,6 +783,11 @@ class M1Scalper:
             return _cfg_float(fallback_cfg, key, default)
 
         def _nwave_float(key: str, default: float) -> float:
+            env_name = _NWAVE_ENV_FLOAT_OVERRIDES.get(key)
+            if env_name:
+                env_val = _to_float(os.getenv(env_name))
+                if env_val is not None and env_val > 0.0:
+                    return env_val
             return _cfg_float(nwave_cfg, key, default)
 
         candles = fac.get("candles") or []

@@ -9287,3 +9287,29 @@
 - 影響範囲:
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル判定のみ。
   - V2導線（`quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager`）の責務分離は不変。
+
+### 2026-02-27（追記）split M1Scalper の nwave 早入り許容を env で戦略限定
+
+- 目的:
+  - split 3戦略（Trend/Pullback/FailedBreak）で `skip_nwave_*_late` を減らし、
+    早入りを小幅に許容する。
+- 変更:
+  - `strategies/scalping/m1_scalper.py`
+    - `nwave` の `tolerance_default/tolerance_tactical` に
+      env override を追加。
+      - `M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS`
+      - `M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS`
+    - 未設定時は既存ロジック（`scalp_active_params.json` + 既定値）を維持。
+  - split 3 worker env:
+    - `ops/env/quant-scalp-trend-breakout.env`
+    - `ops/env/quant-scalp-pullback-continuation.env`
+    - `ops/env/quant-scalp-failed-break-reverse.env`
+    - 追加:
+      - `M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS=0.50`
+      - `M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS=0.62`
+  - テスト:
+    - `tests/workers/test_m1scalper_nwave_tolerance_override.py`
+      - env override 未設定/設定時で `nwave` long-late 判定が切り替わることを確認。
+- 影響範囲:
+  - 既定では split 3 worker のみ（env設定済み）。
+  - `quant-m1scalper` は env 未設定のため従来挙動を維持。
