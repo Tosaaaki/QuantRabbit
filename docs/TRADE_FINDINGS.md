@@ -42,6 +42,43 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 15:00 UTC / 2026-02-28 00:00 JST - `scalp_ping_5s_c` 第13ラウンド（failfast hard block の下限を調整）
+
+Period:
+- Round12 反映直後（`2026-02-27T14:59:55+00:00` 以降）
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- Repo/VM `ops/env/scalp_ping_5s_c.env`, `ops/env/quant-order-manager.env`
+
+Fact:
+- Round12 後も C は `perf_block` が残存（直近で `perf_block=1` を確認）。
+- C ログで reject 原因が明示:
+  - `note=perf_block:hard:hour15:failfast:pf=0.12 win=0.28 n=43`
+- 同時間帯で B は `submit_attempt=2`, `filled=2` と継続約定。
+
+Failure Cause:
+1. setup guard は緩和できたが、C の hour15 failfast（PF 下限 0.20）が先に発火。
+2. C は `mapped_prefix=SCALP_PING_5S` を使うため、fallback failfast も同時に満たす必要がある。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env`:
+  - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_PF: 0.20 -> 0.10`
+  - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_WIN: 0.20 -> 0.25`
+  - `SCALP_PING_5S_PERF_GUARD_FAILFAST_PF: 0.20 -> 0.10`
+  - `SCALP_PING_5S_PERF_GUARD_FAILFAST_WIN: 0.20 -> 0.25`
+2. `ops/env/quant-order-manager.env`:
+  - 上記 C/fallback failfast 値を同値へ同期。
+
+Verification:
+1. 反映後 30 分で C の `order_reject:perf_block` が減少し、`submit_attempt/filled` が再出現すること。
+2. `failfast:pf=...` 理由の reject が連続しないこと。
+3. 24hで C の `sum(realized_pl)` が急悪化しないこと（setup/SL系ガードは維持）。
+
+Status:
+- in_progress
+
 ## 2026-02-27 14:58 UTC / 2026-02-27 23:58 JST - `scalp_ping_5s_c` 第12ラウンド（setup perf guard を failfast中心へ寄せる）
 
 Period:

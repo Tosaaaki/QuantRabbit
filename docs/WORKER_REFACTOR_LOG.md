@@ -9549,6 +9549,25 @@
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 通過判定に限定。
   - TP/SL や order_manager/position_manager/strategy_control の V2責務分離は非変更。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` 第13ラウンド（failfast hard block の下限調整）
+
+- 背景（VM, Round12反映直後）:
+  - C は setup 緩和後も `perf_block` が残存。
+  - C ログで拒否理由を確認:
+    - `perf_block:hard:hour15:failfast:pf=0.12 win=0.28 n=43`
+  - B は同時間帯に `submit_attempt/filled` が継続しており、ボトルネックは C failfast に限定。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_PF: 0.20 -> 0.10`
+    - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_WIN: 0.20 -> 0.25`
+    - `SCALP_PING_5S_PERF_GUARD_FAILFAST_PF: 0.20 -> 0.10`
+    - `SCALP_PING_5S_PERF_GUARD_FAILFAST_WIN: 0.20 -> 0.25`
+  - `ops/env/quant-order-manager.env`
+    - C/fallback failfast 閾値を同値へ同期。
+- 影響範囲:
+  - C の failfast 判定に限定（setup/SL系ガード、B設定、V2導線責務分離は維持）。
+  - 目標は「hard block 常態化の緩和」であり、無制限化ではない（PF 下限 0.10 は維持）。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` 第12ラウンド（setup perf guard を failfast中心へ寄せる）
 
 - 背景（VM, Round11反映直後）:
