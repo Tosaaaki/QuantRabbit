@@ -9868,3 +9868,19 @@
 - 影響範囲:
   - `quant-ops-policy` の policy生成/反映導線のみ。
   - 各戦略 worker のローカル判定・EXIT判断・V2責務分離は非変更。
+
+### 2026-02-27（追記）order_manager policy gate を本番ON（`ORDER_POLICY_GATE_ENABLED=1`）
+
+- 背景:
+  - VM 監査で `quant-ops-policy` は `policy_diff_ops.json` を定期更新し `applied=True` まで到達していたが、
+    `execution/order_manager.py` の `_POLICY_GATE_ENABLED` は
+    `ORDER_POLICY_GATE_ENABLED`（未設定時 default false）依存のため、執行側では gate 非適用だった。
+- 変更:
+  - `ops/env/quant-order-manager.env` に `ORDER_POLICY_GATE_ENABLED=1` を追加。
+- 意図:
+  - `policy_overlay` の `pockets.*.entry_gates.allow_new` と `bias` を
+    order_manager preflight（`policy_allow_new_false` / `policy_bias_*`）へ反映し、
+    プレイブック判断を実エントリー制御へ接続する。
+- 影響範囲:
+  - `quant-order-manager.service` の entry preflight gate のみ。
+  - strategy worker の entry/exit ロジックと V2責務分離は非変更。

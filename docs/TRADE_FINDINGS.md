@@ -150,6 +150,40 @@ Verification:
 Status:
 - done
 
+## 2026-02-27 15:50 UTC / 2026-02-28 00:50 JST - policy適用は回っていたが order_manager gate がOFFだったため本番ON
+
+Period:
+- 監査: 2026-02-27 15:42-15:49 UTC
+
+Source:
+- VM `journalctl -u quant-ops-policy.service`
+- VM `/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env`
+- VM `/home/tossaki/QuantRabbit/ops/env/quant-order-manager.env`
+- VM `execution/order_manager.py`（`_POLICY_GATE_ENABLED`）
+
+Fact:
+- `quant-ops-policy.service` は `applied=True` で `policy_overlay` を更新（15:42 UTC時点で確認）。
+- ただし runtime/order-manager env に `ORDER_POLICY_GATE_ENABLED` が存在せず、
+  order_manager の policy gate が default false のまま。
+- 直近 orders サマリでも `policy_*` 系 reject は観測されず、
+  preflight 適用が実運用に接続されていない状態だった。
+
+Failure Cause:
+1. プレイブック→overlay 導線の実装後、order_manager 側の有効化フラグを本番envでONにしていなかった。
+
+Improvement:
+1. `ops/env/quant-order-manager.env` に `ORDER_POLICY_GATE_ENABLED=1` を追加。
+2. `quant-order-manager.service` 再起動後、process env と journal で有効化を確認する。
+
+Verification:
+1. VMで `systemctl restart quant-order-manager.service` 後、`/proc/<pid>/environ` に
+   `ORDER_POLICY_GATE_ENABLED=1` が存在すること。
+2. `quant-ops-policy.service` の次回 `applied=True` 更新後、order_manager が同overlayを読み込むこと。
+3. 直近 orders で `policy_allow_new_false` / `policy_bias_*` が必要局面で発生することを継続監視。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:24 UTC / 2026-02-28 00:24 JST - `scalp_ping_5s_c_live` の `entry_leading_profile_reject` 過多を C専用で緩和
 Period:
 - 観測: 2026-02-27 15:20-15:24 UTC（再起動直後）
