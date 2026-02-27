@@ -52,9 +52,9 @@
 - `quant-scalp-wick-reversal-blend` + `quant-scalp-wick-reversal-blend-exit`
 - `quant-scalp-wick-reversal-pro` + `quant-scalp-wick-reversal-pro-exit`
 - `quant-m1scalper` + `quant-m1scalper-exit`
-- `quant-scalp-trend-breakout` + `quant-scalp-trend-breakout-exit`（stage導入、初期は disabled）
-- `quant-scalp-pullback-continuation` + `quant-scalp-pullback-continuation-exit`（stage導入、初期は disabled）
-- `quant-scalp-failed-break-reverse` + `quant-scalp-failed-break-reverse-exit`（stage導入、初期は disabled）
+- `quant-scalp-trend-breakout` + `quant-scalp-trend-breakout-exit`（entry/exitロジック独立化済み、初期は disabled）
+- `quant-scalp-pullback-continuation` + `quant-scalp-pullback-continuation-exit`（entry/exitロジック独立化済み、初期は disabled）
+- `quant-scalp-failed-break-reverse` + `quant-scalp-failed-break-reverse-exit`（entry/exitロジック独立化済み、初期は disabled）
 - `quant-micro-rangebreak` + `quant-micro-rangebreak-exit`
 - `quant-micro-levelreactor` + `quant-micro-levelreactor-exit`
 - `quant-micro-vwapbound` + `quant-micro-vwapbound-exit`

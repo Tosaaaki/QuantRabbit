@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib
-import os
 import sys
+from pathlib import Path
 
 
 def _reload(module_name: str):
@@ -11,49 +11,55 @@ def _reload(module_name: str):
     return importlib.import_module(module_name)
 
 
-def test_trend_breakout_worker_sets_entry_defaults(monkeypatch):
+def _module_source(module_name: str) -> str:
+    module = _reload(module_name)
+    return Path(str(module.__file__)).read_text(encoding="utf-8")
+
+
+def test_scenario_workers_do_not_import_m1scalper_entry_engine():
+    assert "workers.scalp_m1scalper" not in _module_source("workers.scalp_trend_breakout.worker")
+    assert "workers.scalp_m1scalper" not in _module_source("workers.scalp_pullback_continuation.worker")
+    assert "workers.scalp_m1scalper" not in _module_source("workers.scalp_failed_break_reverse.worker")
+
+
+def test_scenario_configs_have_strategy_specific_defaults(monkeypatch):
+    monkeypatch.setenv("QUANTRABBIT_ENV_FILE", "/tmp/does-not-exist-qr-env")
     monkeypatch.delenv("M1SCALP_SIGNAL_TAG_CONTAINS", raising=False)
     monkeypatch.delenv("M1SCALP_STRATEGY_TAG_OVERRIDE", raising=False)
     monkeypatch.delenv("M1SCALP_ALLOW_REVERSION", raising=False)
     monkeypatch.delenv("M1SCALP_ALLOW_TREND", raising=False)
 
-    _reload("workers.scalp_trend_breakout.worker")
+    trend = _reload("workers.scalp_trend_breakout.config")
+    assert trend.LOG_PREFIX == "[TrendBreakout]"
+    assert trend.SIGNAL_TAG_CONTAINS == {"breakout-retest"}
+    assert trend.STRATEGY_TAG_OVERRIDE == "TrendBreakout"
+    assert trend.ALLOW_REVERSION is False
+    assert trend.ALLOW_TREND is True
 
-    assert os.getenv("M1SCALP_SIGNAL_TAG_CONTAINS") == "breakout-retest"
-    assert os.getenv("M1SCALP_STRATEGY_TAG_OVERRIDE") == "TrendBreakout"
-    assert os.getenv("M1SCALP_ALLOW_REVERSION") == "0"
-    assert os.getenv("M1SCALP_ALLOW_TREND") == "1"
+    pullback = _reload("workers.scalp_pullback_continuation.config")
+    assert pullback.LOG_PREFIX == "[PullbackContinuation]"
+    assert pullback.SIGNAL_TAG_CONTAINS == {"buy-dip", "sell-rally"}
+    assert pullback.STRATEGY_TAG_OVERRIDE == "PullbackContinuation"
+    assert pullback.ALLOW_REVERSION is True
+    assert pullback.ALLOW_TREND is True
 
-
-def test_pullback_continuation_worker_sets_entry_defaults(monkeypatch):
-    monkeypatch.delenv("M1SCALP_SIGNAL_TAG_CONTAINS", raising=False)
-    monkeypatch.delenv("M1SCALP_STRATEGY_TAG_OVERRIDE", raising=False)
-
-    _reload("workers.scalp_pullback_continuation.worker")
-
-    assert os.getenv("M1SCALP_SIGNAL_TAG_CONTAINS") == "buy-dip,sell-rally"
-    assert os.getenv("M1SCALP_STRATEGY_TAG_OVERRIDE") == "PullbackContinuation"
-
-
-def test_failed_break_reverse_worker_sets_entry_defaults(monkeypatch):
-    monkeypatch.delenv("M1SCALP_SIGNAL_TAG_CONTAINS", raising=False)
-    monkeypatch.delenv("M1SCALP_STRATEGY_TAG_OVERRIDE", raising=False)
-    monkeypatch.delenv("M1SCALP_ALLOW_TREND", raising=False)
-
-    _reload("workers.scalp_failed_break_reverse.worker")
-
-    assert os.getenv("M1SCALP_SIGNAL_TAG_CONTAINS") == "vshape-rebound"
-    assert os.getenv("M1SCALP_STRATEGY_TAG_OVERRIDE") == "FailedBreakReverse"
-    assert os.getenv("M1SCALP_ALLOW_TREND") == "0"
+    failed = _reload("workers.scalp_failed_break_reverse.config")
+    assert failed.LOG_PREFIX == "[FailedBreakReverse]"
+    assert failed.SIGNAL_TAG_CONTAINS == {"vshape-rebound"}
+    assert failed.STRATEGY_TAG_OVERRIDE == "FailedBreakReverse"
+    assert failed.ALLOW_REVERSION is True
+    assert failed.ALLOW_TREND is False
 
 
-def test_m1scalper_exit_allowlist_can_be_overridden(monkeypatch):
-    monkeypatch.setenv("M1SCALP_EXIT_TAG_ALLOWLIST", "TrendBreakout,PullbackContinuation")
-    mod = _reload("workers.scalp_m1scalper.exit_worker")
-    assert mod.ALLOWED_TAGS == {"TrendBreakout", "PullbackContinuation"}
-
-
-def test_trend_breakout_exit_wrapper_sets_tag_allowlist(monkeypatch):
+def test_scenario_exit_workers_have_strategy_specific_default_allowlists(monkeypatch):
     monkeypatch.delenv("M1SCALP_EXIT_TAG_ALLOWLIST", raising=False)
-    _reload("workers.scalp_trend_breakout.exit_worker")
-    assert os.getenv("M1SCALP_EXIT_TAG_ALLOWLIST") == "TrendBreakout"
+    trend_exit = _reload("workers.scalp_trend_breakout.exit_worker")
+    assert trend_exit.ALLOWED_TAGS == {"TrendBreakout"}
+
+    monkeypatch.delenv("M1SCALP_EXIT_TAG_ALLOWLIST", raising=False)
+    pullback_exit = _reload("workers.scalp_pullback_continuation.exit_worker")
+    assert pullback_exit.ALLOWED_TAGS == {"PullbackContinuation"}
+
+    monkeypatch.delenv("M1SCALP_EXIT_TAG_ALLOWLIST", raising=False)
+    failed_exit = _reload("workers.scalp_failed_break_reverse.exit_worker")
+    assert failed_exit.ALLOWED_TAGS == {"FailedBreakReverse"}

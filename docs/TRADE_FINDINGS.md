@@ -42,6 +42,33 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 08:40 UTC / 2026-02-27 17:40 JST - M1シナリオ3戦略の独立性をロジック単位まで引き上げ
+Period:
+- Implementation window: `2026-02-27 17:20` ～ `17:40` JST
+- Source: `workers/scalp_{trend_breakout,pullback_continuation,failed_break_reverse}/*`, `tests/workers/test_m1scalper_split_workers.py`
+
+Fact:
+- 先行版は service 分離済みでも、entry/exit ロジック本体が `workers.scalp_m1scalper` 依存のラッパー構成だった。
+- そのため、`m1scalper` の単一変更が3戦略へ同時波及する構造だった。
+
+Failure Cause:
+1. 「独立ワーカー」の定義が process 分離止まりで、ロジック独立まで達していなかった。
+2. 戦略別のデフォルト（タグ・allowlist）が wrapper の `os.environ.setdefault` に依存していた。
+
+Improvement:
+1. 3戦略へ `m1scalper` の entry/exit 実体モジュールを複製し、パッケージ内で完結させた。
+2. 各戦略 `config.py` に戦略別 default（tag/side policy）を埋め込み、wrapper依存を削除。
+3. 各戦略 `exit_worker.py` の `_DEFAULT_ALLOWED_TAGS` を専用タグへ変更。
+4. テストを更新し、`workers.scalp_m1scalper` 直importなし・戦略別 default 反映を検証。
+
+Verification:
+1. `pytest -q tests/workers/test_m1scalper_split_workers.py tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py`
+2. `rg \"workers\\.scalp_m1scalper\" workers/scalp_trend_breakout workers/scalp_pullback_continuation workers/scalp_failed_break_reverse`
+3. `python3 -m py_compile` で新規/更新モジュールを検証。
+
+Status:
+- in_progress
+
 ## 2026-02-27 05:35 UTC / 2026-02-27 14:35 JST - 全体監査で B/C 損失源を再圧縮し、勝ち筋へ再配分（timeout 再劣化の再発防止込み）
 Period:
 - VM実測: `2026-02-26 17:35 UTC` 〜 `2026-02-27 05:35 UTC`（直近12h）

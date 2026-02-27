@@ -8,6 +8,28 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）M1シナリオ3戦略を「プロセス独立」から「ロジック独立」へ移行
+
+- 背景:
+  - 先行実装では `quant-scalp-{trend-breakout,pullback-continuation,failed-break-reverse}` が
+    別 service で起動していても、実体は `workers.scalp_m1scalper.worker`/`exit_worker` のラッパー呼び出しだった。
+  - そのため、`m1scalper` 本体変更が3戦略へ同時波及し、「戦略ごとに別進化」の要求に対して独立性が不足していた。
+- 変更:
+  - `workers/scalp_trend_breakout/*` を `scalp_m1scalper` からフル複製し、entry/exit本体を自戦略パッケージへ内包。
+  - `workers/scalp_pullback_continuation/*` を同様にフル複製し、entry/exit本体を独立。
+  - `workers/scalp_failed_break_reverse/*` を同様にフル複製し、entry/exit本体を独立。
+  - 各 `config.py` で戦略別の既定値を明示:
+    - `LOG_PREFIX`
+    - `ALLOW_REVERSION` / `ALLOW_TREND`
+    - `SIGNAL_TAG_CONTAINS` の default
+    - `STRATEGY_TAG_OVERRIDE` の default
+  - 各 `exit_worker.py` の `_DEFAULT_ALLOWED_TAGS` を戦略名へ変更し、EXIT閉域を既定化。
+  - 回帰テストを `tests/workers/test_m1scalper_split_workers.py` で更新し、
+    `workers.scalp_m1scalper` 直importが無いことと、戦略別 default を監査。
+- 意図:
+  - 3戦略を本当に別ワーカーとして運用し、個別改善時の波及を最小化する。
+  - 既存 `quant-m1scalper` と並行運用しても、戦略単位で差分検証できる状態を作る。
+
 ### 2026-02-27（追記）全体監査で B/C を再圧縮し、Wick/Extrema へ再配分（service timeout 再劣化も補正）
 
 - 背景（VM実測, UTC 2026-02-27 05:35 時点）:
