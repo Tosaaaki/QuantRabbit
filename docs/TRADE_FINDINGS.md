@@ -95,6 +95,47 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 00:33 UTC / 2026-02-27 09:33 JST - 勝ち筋寄せ再配分（WickBlend増量 + B/C縮小）
+Period:
+- Snapshot window: `2026-02-27 00:30` ～ `00:33` UTC
+- Source: VM `/home/tossaki/QuantRabbit/logs/trades.db`
+
+Fact:
+- 自動戦略24h（strategy_tag あり）:
+  - `WickReversalBlend`: `3 trades / +114.7 JPY`
+  - `scalp_ping_5s_b_live`: `292 trades / -540.2 JPY`
+  - `scalp_ping_5s_c_live`: `466 trades / -3403.0 JPY`
+- 直近15分（自動のみ）は `-91.9 JPY` で、依然マイナス。
+
+Failure Cause:
+1. 損失寄与の大きい B/C の約定量が、勝ち筋に対して過大。
+2. WickBlend は勝っているが発火頻度と配分が低く、寄与不足。
+
+Improvement:
+1. `ops/env/quant-scalp-wick-reversal-blend.env`
+   - `SCALP_PRECISION_UNIT_BASE_UNITS=9500`（from `7000`）
+   - `SCALP_PRECISION_UNIT_CAP_MAX=0.65`（from `0.55`）
+   - `SCALP_PRECISION_COOLDOWN_SEC=8`（from `12`）
+   - `SCALP_PRECISION_MAX_OPEN_TRADES=2`（from `1`）
+   - `WICK_BLEND_RANGE_SCORE_MIN=0.40`（from `0.45`）
+   - `WICK_BLEND_ADX_MIN/MAX=14/28`（from `16/24`）
+   - `WICK_BLEND_BB_TOUCH_RATIO=0.18`（from `0.22`）
+   - `WICK_BLEND_TICK_MIN_STRENGTH=0.30`（from `0.40`）
+2. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=600`（from `720`）
+   - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=5`（from `6`）
+3. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=220`（from `260`）
+   - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=5`（from `6`）
+
+Verification:
+1. 反映後10分で `WickReversalBlend` の `filled` 件数が増えること。
+2. 反映後15分で自動損益（strategy_tagあり）が 0 以上へ改善すること。
+3. 同窓で B/C の損失寄与（JPY）が縮小すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:05 UTC / 2026-02-27 10:05 JST - `margin_usage_projected_cap` 誤拒否（side cap と net-reducing の不整合）
 Period:
 - VM `journalctl -u quant-order-manager.service`（00:11〜00:20 UTC）

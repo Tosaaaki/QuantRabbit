@@ -1286,6 +1286,30 @@
   - 停止なし方針を維持したまま、B の低品質エントリーを抑制し損失勾配を圧縮する。
   - 低品質シグナルの通過率を下げ、`filled` 継続下で1トレード期待値の改善を狙う。
 
+### 勝ち筋寄せ再配分（2026-02-27 追記）
+- 背景:
+  - 24h 実績で `WickReversalBlend` が唯一のプラス寄与、B/C が大幅マイナス寄与だった。
+  - 直近15分の自動損益もマイナスが継続し、勝ち戦略の寄与不足が明確だった。
+- 実装:
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `SCALP_PRECISION_UNIT_BASE_UNITS=9500`（from `7000`）
+    - `SCALP_PRECISION_UNIT_CAP_MAX=0.65`（from `0.55`）
+    - `SCALP_PRECISION_COOLDOWN_SEC=8`（from `12`）
+    - `SCALP_PRECISION_MAX_OPEN_TRADES=2`（from `1`）
+    - `WICK_BLEND_RANGE_SCORE_MIN=0.40`（from `0.45`）
+    - `WICK_BLEND_ADX_MIN/MAX=14.0/28.0`（from `16.0/24.0`）
+    - `WICK_BLEND_BB_TOUCH_RATIO=0.18`（from `0.22`）
+    - `WICK_BLEND_TICK_MIN_STRENGTH=0.30`（from `0.40`）
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=600`（from `720`）
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=5`（from `6`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=220`（from `260`）
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=5`（from `6`）
+- 運用意図:
+  - 停止なしで運転を維持しつつ、利益寄与戦略へ配分を寄せる。
+  - B/C は「継続稼働」前提のまま、サイズと頻度の上限を圧縮して損失勾配を下げる。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |
