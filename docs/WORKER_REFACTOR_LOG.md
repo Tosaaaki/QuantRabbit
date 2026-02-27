@@ -8,6 +8,19 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）M1系4ワーカーの spread 上限を 1.00 へ統一
+
+- 背景:
+  - 分離3ワーカーで `M1SCALP_MAX_SPREAD_PIPS=0.35/0.40/0.45` を設定しており、
+    実スプレッド `0.80p` 局面で entry 以前に `blocked by spread` が連続した。
+- 変更:
+  - `ops/env/quant-scalp-trend-breakout.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00`
+  - `ops/env/quant-scalp-pullback-continuation.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00`
+  - `ops/env/quant-scalp-failed-break-reverse.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00`
+  - `ops/env/quant-m1scalper.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00` を明示追加
+- 意図:
+  - M1系の spread 判定を一律化し、設定ばらつきでの機会損失を防ぐ。
+
 ### 2026-02-27（追記）`gpt_ops_report` を deterministic 市況プレイブックへ更新
 
 - 目的:

@@ -42,6 +42,30 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 08:52 UTC / 2026-02-27 17:52 JST - M1系 spread 閾値を 1.00 に統一
+Period:
+- Adjustment window: `2026-02-27 17:46` ～ `17:52` JST
+- Source: VM `journalctl`, `ops/env/quant-*.env`
+
+Fact:
+- 新規3戦略ログで `blocked by spread spread=0.80p` が連続。
+- 分離3戦略の spread 上限は `0.35/0.40/0.45` と不統一だった。
+
+Failure Cause:
+1. ワーカー追加時の個別チューニングで spread 上限が規定運用から外れた。
+2. 実勢スプレッドに対して閾値が低すぎ、entry判定まで進まなかった。
+
+Improvement:
+1. M1系4ワーカー（既存M1 + 分離3戦略）を `M1SCALP_MAX_SPREAD_PIPS=1.00` に統一。
+2. 既存 `quant-m1scalper.env` に spread 上限を明示し、暗黙 default 依存を排除。
+
+Verification:
+1. VM反映後に `printenv/EnvironmentFile` と `journalctl` で実効 spread 上限を確認。
+2. `blocked by spread` の頻度低下と、`preflight_start -> submit_attempt` 遷移を比較。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:45 UTC / 2026-02-27 17:45 JST - 3分離戦略を既存M1と同時起動へ切替
 Period:
 - Activation window: `2026-02-27 17:40` ～ `17:45` JST
