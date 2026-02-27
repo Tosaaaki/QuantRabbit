@@ -93,6 +93,24 @@
   - `quant-ops-policy.service` の既存起動コマンドで動作し、追加フィールドが JSON/Markdown に出力される。
   - 自動ポリシー適用は従来どおり無効（no-change diff のみ）。
 
+### 2026-02-27（追記）市場メモ（文章）を運用入力へ変換する導線を追加
+
+- 目的:
+  - 手動で作った市況メモ（価格・金利・イベント時刻）をそのまま
+    `gpt_ops_report` の入力へ落とし、判断フレームを実運用へ接続する。
+- 変更:
+  - `scripts/import_market_brief.py`
+    - 市況メモの本文から `USD/JPY, EUR/USD, AUD/JPY, EUR/JPY, DXY, US10Y, JP10Y` を抽出。
+    - Markdown表の「東京時間（JST）」列をパースし、`logs/market_events.json` 互換のイベント JSON を生成。
+    - 出力:
+      - `logs/market_external_snapshot.json`（または任意パス）
+      - `logs/market_events.json`（または任意パス）
+  - `tests/scripts/test_import_market_brief.py`
+    - 価格/金利抽出と、翌日イベント時刻（`翌0:00`）の変換を回帰テスト化。
+- 影響範囲:
+  - 市況メモ→`market_context`→`gpt_ops_report` の入力連鎖がCLIで再現可能になった。
+  - 発注経路・strategy worker の判定ロジックは非変更。
+
 ### 2026-02-27（追記）M1シナリオ3戦略を「プロセス独立」から「ロジック独立」へ移行
 
 - 背景:
@@ -9317,21 +9335,3 @@
 - 影響範囲:
   - 既定では split 3 worker のみ（env設定済み）。
   - `quant-m1scalper` は env 未設定のため従来挙動を維持。
-
-### 2026-02-27（追記）`scalp_ping_5s_b/c` 反映後の無約定化補正（revert + rate-limit）
-
-- 背景（VM）:
-  - 反映後の `entry-skip` 主因が `no_signal:revert_not_found` と `rate_limited` に集中。
-  - B/C とも通過機会が不足し、long側の units 回復が進まない。
-- 変更:
-  - `ops/env/scalp_ping_5s_b.env`
-    - `MAX_ORDERS_PER_MINUTE` 引き上げ（4→6）
-    - `REVERT_*` 閾値を緩和
-    - `SIDE_METRICS_*` と `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE` を上方修正
-  - `ops/env/scalp_ping_5s_c.env`
-    - `MAX_ORDERS_PER_MINUTE` 引き上げ（4→6）
-    - `REVERT_*` 閾値を緩和
-    - `SIDE_METRICS_*` と `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE` を上方修正
-- 影響範囲:
-  - B/C の戦略ローカル ENTRY 条件に限定。
-  - V2共通導線（order_manager/position_manager/strategy_control）の責務分離は不変。

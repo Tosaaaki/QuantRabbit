@@ -74,6 +74,8 @@
     - 2026-02-27: `gpt_ops_report.py` を deterministic 市況プレイブックへ更新（short_term/swing/scenarios/risk_protocol を JSON + MD 生成）。
     - 2026-02-27: `market_context` / `driver_breakdown` / `break_points` / `if_then_rules` を追加し、
       「主因→壊れる点→A/B/C→条件式」を定型化。`scripts/build_market_context.py` で入力文脈を単独更新可能にした。
+    - 2026-02-27: `scripts/import_market_brief.py` を追加し、市況メモ本文から
+      `market_external_snapshot` / `market_events` を生成できるようにした（文章→運用入力の変換導線）。
 
 - [ ] ID: T-20260123-002
   Title: GPT運用レポートに時間帯×レジーム×ボラの勝率/PFマトリクスを追加
