@@ -1323,6 +1323,21 @@
 - 運用意図:
   - 勝ち筋戦略の起動失敗を防ぎ、停止なし運用での導線断をなくす。
 
+### `StageTracker` 起動DDL最小化（2026-02-27 追記）
+- 背景:
+  - lock retry 追加後も `StageTracker.__init__` の `CREATE TABLE IF NOT EXISTS` 実行時に
+    `database is locked` が再発した。
+  - 共有 `stage_state.db` に対して「既存テーブルでも毎回DDL」を投げる設計が、
+    起動時のスキーマロック競合を残していた。
+- 実装:
+  - `execution/stage_tracker.py`
+    - `_table_exists` / `_column_exists` を追加。
+    - `_ensure_table` / `_ensure_column` を追加し、
+      テーブル/列が不足している時のみ DDL を実行。
+    - 既存スキーマ環境では起動時DDLを書き込みしない導線へ変更。
+- 運用意図:
+  - 共有DBロックの瞬間風速で勝ち寄与ワーカーが停止する経路を削減する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

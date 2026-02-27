@@ -8274,6 +8274,24 @@
   - `python3 -m py_compile execution/stage_tracker.py`: pass
   - `pytest -q tests/test_stage_tracker.py`: `3 passed`
 
+### 2026-02-27（追記）`StageTracker` 起動DDLの最小化（ロック再発対策）
+
+- 背景（VM実測, UTC 2026-02-27 00:50）:
+  - 上記ロック耐性追加後も、`quant-scalp-wick-reversal-blend.service` が
+    `StageTracker.__init__` の初期DDL実行で `database is locked` を再発。
+  - `stage_state.db` は複数 worker 共有のため、起動時の「毎回DDL」が競合点として残っていた。
+- 変更:
+  - `execution/stage_tracker.py`
+    - `_safe_identifier`, `_table_exists`, `_column_exists`,
+      `_ensure_table`, `_ensure_column` を追加。
+    - `CREATE TABLE IF NOT EXISTS ...` を毎回発行する実装から、
+      「テーブル未存在時のみ DDL 実行」へ変更。
+    - `ALTER TABLE clamp_guard_state ADD COLUMN clamp_score ...` も
+      列未存在時のみ実行。
+- 意図:
+  - 既存スキーマ環境では起動時DDLを書き込まないことで、
+    スキーマロック競合で勝ち筋 worker が落ちる経路を閉じる。
+
 ### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
 
 - 背景:

@@ -95,6 +95,34 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:00 UTC / 2026-02-27 10:00 JST - `StageTracker` 起動時ロック再発をテーブル存在確認で抑止
+Period:
+- VM実測: `2026-02-27 00:46-00:50 UTC`
+- Source: `journalctl -u quant-scalp-wick-reversal-blend.service`, `logs/stage_state.db`
+
+Fact:
+- `quant-scalp-wick-reversal-blend.service` が起動直後に
+  `sqlite3.OperationalError: database is locked` で連続停止。
+- 例外位置は `execution/stage_tracker.py` の初期DDL（`CREATE TABLE IF NOT EXISTS ...`）。
+- 同時に `stage_state.db` は複数 worker (`order_manager`, `scalp_ping_5s`, `tick_imbalance` 等) が共有。
+
+Failure Cause:
+1. `StageTracker.__init__` が毎回スキーマDDLを書き込み実行し、共有DBのスキーマロック競合時に起動失敗する。
+2. 既存テーブルでも DDL/ALTER を実行するため、起動時ロック競合の露出面が広い。
+
+Improvement:
+1. `execution/stage_tracker.py` に `_table_exists` / `_column_exists` を追加。
+2. DDLは `_ensure_table` / `_ensure_column` 経由で「不足時のみ」実行へ変更。
+3. 既存テーブル環境では起動時DDLを書き込まないため、スキーマロック競合を回避。
+
+Verification:
+1. `python3 -m py_compile execution/stage_tracker.py` が pass。
+2. `pytest -q tests/test_stage_tracker.py` が `3 passed`。
+3. VM反映後に `quant-scalp-wick-reversal-blend.service` の `Application started!` と連続稼働を確認する。
+
+Status:
+- in_progress
+
 ## 2026-02-27 00:48 UTC / 2026-02-27 09:48 JST - `WickReversalBlend` が `stage_tracker` ロックで停止する障害を修正
 Period:
 - Incident window: `2026-02-27 00:46` ～ `00:48` UTC

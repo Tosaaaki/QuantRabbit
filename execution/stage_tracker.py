@@ -10,6 +10,7 @@ import logging
 import os
 import sqlite3
 import time
+import re
 from dataclasses import dataclass
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -149,6 +150,59 @@ def _execute_with_lock_retry(
     raise sqlite3.OperationalError("database is locked")
 
 
+def _safe_identifier(name: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError(f"invalid sqlite identifier: {name!r}")
+    return name
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = _execute_with_lock_retry(
+        conn,
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def _column_exists(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    table_ident = _safe_identifier(table_name)
+    column = str(column_name)
+    for row in _execute_with_lock_retry(conn, f"PRAGMA table_info({table_ident})").fetchall():
+        if str(row[1]) == column:
+            return True
+    return False
+
+
+def _ensure_table(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    create_sql: str,
+) -> None:
+    if _table_exists(conn, table_name):
+        return
+    _execute_with_lock_retry(conn, create_sql)
+    if not _table_exists(conn, table_name):
+        raise sqlite3.OperationalError(f"table create did not take effect: {table_name}")
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    column_name: str,
+    alter_sql: str,
+) -> None:
+    if _column_exists(conn, table_name, column_name):
+        return
+    _execute_with_lock_retry(conn, alter_sql)
+    if not _column_exists(conn, table_name, column_name):
+        raise sqlite3.OperationalError(
+            f"column add did not take effect: {table_name}.{column_name}"
+        )
+
+
 @dataclass(slots=True)
 class CooldownInfo:
     pocket: str
@@ -176,9 +230,10 @@ class StageTracker:
             self._con.execute("PRAGMA journal_mode=WAL")
         except sqlite3.Error:
             pass
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="stage_cooldown",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS stage_cooldown (
                 pocket TEXT NOT NULL,
                 direction TEXT NOT NULL,
@@ -188,9 +243,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="stage_state",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS stage_state (
                 pocket TEXT NOT NULL,
                 direction TEXT NOT NULL,
@@ -200,9 +256,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="stage_history",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS stage_history (
                 pocket TEXT NOT NULL,
                 direction TEXT NOT NULL,
@@ -214,9 +271,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="strategy_cooldown",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS strategy_cooldown (
                 strategy TEXT PRIMARY KEY,
                 reason TEXT,
@@ -224,9 +282,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="strategy_history",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS strategy_history (
                 strategy TEXT PRIMARY KEY,
                 last_trade_id INTEGER DEFAULT 0,
@@ -236,9 +295,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="strategy_reentry_state",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS strategy_reentry_state (
                 strategy TEXT NOT NULL,
                 direction TEXT NOT NULL,
@@ -252,9 +312,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="clamp_guard_state",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS clamp_guard_state (
                 id INTEGER PRIMARY KEY CHECK (id=1),
                 level INTEGER DEFAULT 0,
@@ -267,16 +328,16 @@ class StageTracker:
             )
             """,
         )
-        try:
-            _execute_with_lock_retry(
-                self._con,
-                "ALTER TABLE clamp_guard_state ADD COLUMN clamp_score REAL DEFAULT 0",
-            )
-        except sqlite3.OperationalError:
-            pass
-        _execute_with_lock_retry(
+        _ensure_column(
             self._con,
-            """
+            table_name="clamp_guard_state",
+            column_name="clamp_score",
+            alter_sql="ALTER TABLE clamp_guard_state ADD COLUMN clamp_score REAL DEFAULT 0",
+        )
+        _ensure_table(
+            self._con,
+            table_name="hold_violation_log",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS hold_violation_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
@@ -288,9 +349,10 @@ class StageTracker:
             )
             """,
         )
-        _execute_with_lock_retry(
+        _ensure_table(
             self._con,
-            """
+            table_name="pocket_loss_window",
+            create_sql="""
             CREATE TABLE IF NOT EXISTS pocket_loss_window (
                 pocket TEXT NOT NULL,
                 trade_id INTEGER NOT NULL,
