@@ -42,6 +42,41 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 14:03 UTC / 2026-02-27 23:03 JST - `scalp_ping_5s_c` 第10ラウンド（約定再開後のロット底上げ）
+
+Period:
+- Round8b 反映直後: `2026-02-27T14:00:00+00:00` 以降
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+
+Fact:
+- Round8b 後に `perf_block` は解消し、`orders.db` で `submit_attempt=3`, `filled=3` を確認。
+- 一方で再開直後の約定は `buy` 偏重かつ `avg_units=1.3`（min=1, max=2）と小口化。
+- `filled` 行の `entry_thesis.entry_units_intent` も `1-2` が中心で、long 露出不足が継続。
+
+Failure Cause:
+1. C worker の `BASE_ENTRY_UNITS=80` / `MIN_UNITS=1` が、現行の多段縮小下で実効 1-2 units へ収束。
+2. `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.85` と `ALLOW_HOURS_OUTSIDE_UNITS_MULT=0.55` がロット回復を抑制。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env`
+  - `BASE_ENTRY_UNITS 80 -> 140`
+  - `MIN_UNITS 1 -> 5`
+  - `MAX_UNITS 160 -> 260`
+  - `ALLOW_HOURS_OUTSIDE_UNITS_MULT 0.55 -> 0.70`
+  - `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT 0.58 -> 0.72`
+  - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT 0.85 -> 1.00`
+
+Verification:
+1. 反映後30分で C `filled` の `avg(abs(units))` が `>=5` へ上昇すること。
+2. `filled` 継続（ゼロ化しない）を維持しつつ、`perf_block` が再燃しないこと。
+3. 24hで C long の `sum(realized_pl)` と `avg_units` を併記し、収益立ち上がりを評価すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 13:56 UTC / 2026-02-27 22:56 JST - `scalp_ping_5s_b/c` 第9ラウンド（revert/leading の過剰拒否を小幅緩和）
 
 Period:

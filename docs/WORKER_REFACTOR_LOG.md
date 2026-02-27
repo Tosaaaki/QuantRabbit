@@ -29,6 +29,22 @@
   - V2分離の責務に合わせ、order-manager preflight 判定を worker 運用値と一致させる。
   - 同一戦略が worker 経路と order-manager 経路で異なる閾値を読む状態を解消する。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` の実効ロット下限を引き上げ（約定再開後）
+
+- 背景（VM実測）:
+  - preflight hard block 解消後に `filled` は再開したが、`entry_units_intent` が `1-2` に偏り、
+    long 側の露出不足が継続。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `BASE_ENTRY_UNITS=140`
+    - `MIN_UNITS=5`
+    - `MAX_UNITS=260`
+    - `ALLOW_HOURS_OUTSIDE_UNITS_MULT=0.70`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT=0.72`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=1.00`
+- 意図:
+  - 通過率を維持しつつ、再開後の極小ロット約定を減らして収益寄与を改善する。
+
 ### 2026-02-27（追記）VM systemd の `EnvironmentFile` 重複読込を自動是正
 
 - 背景（VM実測）:

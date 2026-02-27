@@ -1,5 +1,21 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-13. 2026-02-27 UTC `scalp_ping_5s_c` 第9ラウンド（約定再開後のロット底上げ）
+- 背景（VM実測, UTC 2026-02-27 14:00-14:02）:
+  - Round8b 後、`perf_block` は解消し `orders.db` で `filled` が再開。
+  - ただし再開直後の C 約定は `buy 5 fills` で `avg_units=1.3`（min=1, max=2）と小口に偏った。
+  - `entry_thesis.entry_units_intent` も `1-2` が中心で、long 露出が不足していた。
+- 対応（`ops/env/scalp_ping_5s_c.env`）:
+  - `BASE_ENTRY_UNITS: 80 -> 140`
+  - `MIN_UNITS: 1 -> 5`
+  - `MAX_UNITS: 160 -> 260`
+  - `ALLOW_HOURS_OUTSIDE_UNITS_MULT: 0.55 -> 0.70`
+  - `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT: 0.58 -> 0.72`
+  - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT: 0.85 -> 1.00`
+- 意図:
+  - 通過再開を維持したまま、long の実効ロット下限を引き上げる。
+  - 低ロット連打による収益立ち上がり遅延を縮める。
+
 ## 0-12. 2026-02-27 UTC `scalp_ping_5s_c` 第8ラウンド（order-manager env同期で hard perf block を解除）
 - 背景（VM実測, UTC 2026-02-27 13:47-13:52）:
   - Round7反映後の `orders.db`（`scalp_ping_5s_c_live`）は
