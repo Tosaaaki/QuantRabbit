@@ -40,6 +40,13 @@ REJECT_STATUSES = {
     "quote_retry_failed",
 }
 
+PAIR_ALIASES = {
+    "USD_JPY": {"USD_JPY", "USDJPY"},
+    "EUR_USD": {"EUR_USD", "EURUSD"},
+    "AUD_JPY": {"AUD_JPY", "AUDJPY"},
+    "EUR_JPY": {"EUR_JPY", "EURJPY"},
+}
+
 
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
@@ -137,6 +144,253 @@ def _read_json(path: Path) -> Optional[dict[str, Any]]:
         return None
     if not isinstance(payload, dict):
         return None
+    return payload
+
+
+def _safe_float_or_none(value: object) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(out):
+        return None
+    return out
+
+
+def _canonical_pair_key(raw: object) -> str:
+    token = str(raw or "").strip().upper().replace("-", "_")
+    if not token:
+        return ""
+    if "_" not in token and len(token) == 6 and token.isalpha():
+        token = f"{token[:3]}_{token[3:]}"
+    for canonical, aliases in PAIR_ALIASES.items():
+        if token in aliases:
+            return canonical
+    return token
+
+
+def _find_number(row: dict[str, Any], keys: tuple[str, ...]) -> Optional[float]:
+    for key in keys:
+        if key not in row:
+            continue
+        value = _safe_float_or_none(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_pair_entry(payload: dict[str, Any], pair: str) -> dict[str, Any]:
+    aliases = {pair, pair.replace("_", ""), pair.lower(), pair.replace("_", "").lower()}
+    pairs_raw = payload.get("pairs") if isinstance(payload.get("pairs"), dict) else {}
+    candidate: object = None
+
+    for key in aliases:
+        if isinstance(pairs_raw, dict) and key in pairs_raw:
+            candidate = pairs_raw.get(key)
+            break
+        if key in payload:
+            candidate = payload.get(key)
+            break
+    if candidate is None and isinstance(pairs_raw, dict):
+        for key, value in pairs_raw.items():
+            if _canonical_pair_key(key) == pair:
+                candidate = value
+                break
+
+    price = None
+    change_pct_24h = None
+    if isinstance(candidate, dict):
+        price = _find_number(candidate, ("price", "close", "value", "rate", "last"))
+        change_pct_24h = _find_number(
+            candidate,
+            (
+                "change_pct_24h",
+                "change_24h_pct",
+                "change_pct",
+                "pct_change",
+                "change24h",
+            ),
+        )
+    else:
+        price = _safe_float_or_none(candidate)
+
+    return {
+        "price": round(price, 6) if isinstance(price, (int, float)) else None,
+        "change_pct_24h": round(change_pct_24h, 6) if isinstance(change_pct_24h, (int, float)) else None,
+    }
+
+
+def _extract_rate_entry(payload: dict[str, Any], aliases: tuple[str, ...]) -> Optional[float]:
+    rates = payload.get("rates") if isinstance(payload.get("rates"), dict) else {}
+    for key in aliases:
+        if key in rates:
+            value = _safe_float_or_none(rates.get(key))
+            if value is not None:
+                return value
+        if key in payload:
+            value = _safe_float_or_none(payload.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _extract_risk_entry(payload: dict[str, Any], aliases: tuple[str, ...]) -> Optional[float]:
+    risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
+    for key in aliases:
+        if key in risk:
+            value = _safe_float_or_none(risk.get(key))
+            if value is not None:
+                return value
+        if key in payload:
+            value = _safe_float_or_none(payload.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _load_macro_snapshot(path: Path) -> dict[str, Any]:
+    payload = _read_json(path)
+    return payload if payload is not None else {}
+
+
+def _infer_risk_mode(*, vix: Optional[float], us500_change_pct: Optional[float]) -> str:
+    if vix is not None and vix >= 23.0:
+        return "risk_off"
+    if us500_change_pct is not None and us500_change_pct <= -0.6:
+        return "risk_off"
+    if vix is not None and vix <= 17.0 and us500_change_pct is not None and us500_change_pct >= 0.4:
+        return "risk_on"
+    if vix is not None or us500_change_pct is not None:
+        return "neutral"
+    return "unknown"
+
+
+def _build_market_context(
+    *,
+    factors: dict[str, dict[str, Any]],
+    events: list[dict[str, Any]],
+    now_utc: datetime,
+    external_snapshot: dict[str, Any],
+    macro_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    fac_m1 = factors.get("M1") or {}
+
+    pairs: dict[str, dict[str, Any]] = {}
+    for pair in ("USD_JPY", "EUR_USD", "AUD_JPY", "EUR_JPY"):
+        row = _extract_pair_entry(external_snapshot, pair)
+        source = "external"
+        if pair == "USD_JPY" and row.get("price") is None:
+            m1_price = _safe_float_or_none(fac_m1.get("close"))
+            if m1_price is not None and m1_price > 0.0:
+                row["price"] = round(m1_price, 6)
+                source = "factor_cache"
+        if row.get("price") is None:
+            source = "missing"
+        row["source"] = source
+        pairs[pair.lower()] = row
+
+    dxy_external = _extract_risk_entry(external_snapshot, ("dxy", "DXY"))
+    dxy_change = _extract_risk_entry(
+        external_snapshot,
+        ("dxy_change_pct_24h", "dxy_change_pct", "dxy_24h_change_pct", "dxy_change"),
+    )
+    dxy_macro = _safe_float_or_none(macro_snapshot.get("dxy"))
+    dxy = dxy_external if dxy_external is not None else dxy_macro
+    dxy_source = "external" if dxy_external is not None else ("macro_snapshot" if dxy_macro is not None else "missing")
+
+    us10y = _extract_rate_entry(external_snapshot, ("US10Y", "US_10Y", "UST10Y", "us10y", "us_10y"))
+    jp10y = _extract_rate_entry(external_snapshot, ("JP10Y", "JP_10Y", "JGB10Y", "jp10y", "jp_10y"))
+    us_jp_10y_spread = (us10y - jp10y) if us10y is not None and jp10y is not None else None
+
+    macro_yield = macro_snapshot.get("yield2y") if isinstance(macro_snapshot.get("yield2y"), dict) else {}
+    usd2y_proxy = _safe_float_or_none(macro_yield.get("USD"))
+    jpy2y_proxy = _safe_float_or_none(macro_yield.get("JPY"))
+    us_jp_2y_proxy_spread = (
+        (usd2y_proxy - jpy2y_proxy)
+        if usd2y_proxy is not None and jpy2y_proxy is not None
+        else None
+    )
+
+    vix_external = _extract_risk_entry(external_snapshot, ("vix", "VIX"))
+    vix_macro = _safe_float_or_none(macro_snapshot.get("vix"))
+    vix = vix_external if vix_external is not None else vix_macro
+    vix_source = "external" if vix_external is not None else ("macro_snapshot" if vix_macro is not None else "missing")
+
+    us500_change_pct = _extract_risk_entry(
+        external_snapshot,
+        ("us500_change_pct", "spx_change_pct", "sp500_change_pct", "us_equity_change_pct"),
+    )
+    risk_mode = _infer_risk_mode(vix=vix, us500_change_pct=us500_change_pct)
+
+    high_impact = [e for e in events if str(e.get("impact") or "").lower() in {"high", "red"}]
+    next_event = None
+    for event in events:
+        minutes = _safe_int(event.get("minutes_to_event"), 999999)
+        if minutes >= 0:
+            next_event = event
+            break
+
+    return {
+        "generated_at": _to_iso(now_utc),
+        "pairs": pairs,
+        "dollar": {
+            "dxy": round(dxy, 6) if isinstance(dxy, (int, float)) else None,
+            "dxy_change_pct_24h": round(dxy_change, 6) if isinstance(dxy_change, (int, float)) else None,
+            "source": dxy_source,
+        },
+        "rates": {
+            "us10y": round(us10y, 6) if isinstance(us10y, (int, float)) else None,
+            "jp10y": round(jp10y, 6) if isinstance(jp10y, (int, float)) else None,
+            "us_jp_10y_spread": round(us_jp_10y_spread, 6) if isinstance(us_jp_10y_spread, (int, float)) else None,
+            "usd2y_proxy": round(usd2y_proxy, 6) if isinstance(usd2y_proxy, (int, float)) else None,
+            "jpy2y_proxy": round(jpy2y_proxy, 6) if isinstance(jpy2y_proxy, (int, float)) else None,
+            "us_jp_2y_proxy_spread": round(us_jp_2y_proxy_spread, 6)
+            if isinstance(us_jp_2y_proxy_spread, (int, float))
+            else None,
+        },
+        "risk": {
+            "vix": round(vix, 6) if isinstance(vix, (int, float)) else None,
+            "vix_source": vix_source,
+            "us500_change_pct": round(us500_change_pct, 6)
+            if isinstance(us500_change_pct, (int, float))
+            else None,
+            "mode": risk_mode,
+        },
+        "events_summary": {
+            "total_events": len(events),
+            "high_impact_events": len(high_impact),
+            "next_event": next_event,
+        },
+        "source_flags": {
+            "external_snapshot": bool(external_snapshot),
+            "macro_snapshot": bool(macro_snapshot),
+            "factor_cache": bool(fac_m1),
+            "events": bool(events),
+        },
+    }
+
+
+def _load_or_build_market_context(
+    *,
+    context_path: Path,
+    factors: dict[str, dict[str, Any]],
+    events: list[dict[str, Any]],
+    now_utc: datetime,
+    external_path: Path,
+    macro_snapshot_path: Path,
+) -> dict[str, Any]:
+    external_snapshot = _read_json(external_path) or {}
+    macro_snapshot = _load_macro_snapshot(macro_snapshot_path)
+    payload = _build_market_context(
+        factors=factors,
+        events=events,
+        now_utc=now_utc,
+        external_snapshot=external_snapshot,
+        macro_snapshot=macro_snapshot,
+    )
+    _write_json(context_path, payload)
     return payload
 
 
@@ -590,6 +844,257 @@ def _event_context(*, events: list[dict[str, Any]], policy: dict[str, Any]) -> d
     }
 
 
+def _avg(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / float(len(values))
+
+
+def _get_pair_metric(
+    market_context: dict[str, Any], pair: str, field: str, default: float = 0.0
+) -> float:
+    pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
+    row = pairs.get(pair.lower()) if isinstance(pairs, dict) else None
+    if not isinstance(row, dict):
+        return default
+    return _safe_float(row.get(field), default)
+
+
+def _build_driver_breakdown(
+    *,
+    market_context: dict[str, Any],
+    event_ctx: dict[str, Any],
+) -> dict[str, Any]:
+    rates = market_context.get("rates") if isinstance(market_context.get("rates"), dict) else {}
+    risk = market_context.get("risk") if isinstance(market_context.get("risk"), dict) else {}
+    dollar = market_context.get("dollar") if isinstance(market_context.get("dollar"), dict) else {}
+
+    spread_10y = _safe_float_or_none(rates.get("us_jp_10y_spread"))
+    spread_2y = _safe_float_or_none(rates.get("us_jp_2y_proxy_spread"))
+
+    rate_score = 0.0
+    rate_detail = "missing"
+    if spread_10y is not None:
+        rate_score = math.tanh((spread_10y - 1.8) / 1.1)
+        rate_detail = f"us_jp_10y_spread={spread_10y:.3f}"
+    elif spread_2y is not None:
+        rate_score = math.tanh((spread_2y - 0.2) / 0.25)
+        rate_detail = f"us_jp_2y_proxy_spread={spread_2y:.3f}"
+
+    jpy_cross_changes = [
+        _get_pair_metric(market_context, "USD_JPY", "change_pct_24h", 0.0),
+        _get_pair_metric(market_context, "AUD_JPY", "change_pct_24h", 0.0),
+        _get_pair_metric(market_context, "EUR_JPY", "change_pct_24h", 0.0),
+    ]
+    jpy_cross_changes = [x for x in jpy_cross_changes if abs(x) > 1e-9]
+    yen_flow = _avg(jpy_cross_changes)
+
+    dxy_change = _safe_float_or_none(dollar.get("dxy_change_pct_24h"))
+    eurusd_change = _get_pair_metric(market_context, "EUR_USD", "change_pct_24h", 0.0)
+    dollar_signals: list[float] = []
+    if dxy_change is not None:
+        dollar_signals.append(dxy_change)
+    if abs(eurusd_change) > 1e-9:
+        dollar_signals.append(-eurusd_change)
+    dollar_flow = _avg(dollar_signals)
+
+    contradiction = yen_flow - dollar_flow
+    yen_structural = 0.0
+    if not jpy_cross_changes:
+        usdjpy = _get_pair_metric(market_context, "USD_JPY", "price", 0.0)
+        dxy_level = _safe_float_or_none(dollar.get("dxy"))
+        if usdjpy >= 154.0 and dxy_level is not None and dxy_level <= 100.0:
+            yen_structural = 0.25
+    yen_flow_score = _clamp(0.55 * math.tanh(yen_flow / 0.8) + 0.45 * math.tanh(contradiction / 0.8) + yen_structural, -1.0, 1.0)
+
+    risk_mode = str(risk.get("mode") or "unknown").lower()
+    us500_change = _safe_float_or_none(risk.get("us500_change_pct"))
+    risk_score = 0.0
+    if risk_mode == "risk_off":
+        risk_score = -0.7
+    elif risk_mode == "risk_on":
+        risk_score = 0.35
+    elif us500_change is not None:
+        risk_score = math.tanh(us500_change / 1.0) * 0.35
+
+    if event_ctx.get("event_soon"):
+        risk_score *= 0.7
+
+    components = {
+        "rate_diff": 0.44 * rate_score,
+        "yen_flow": 0.36 * yen_flow_score,
+        "risk_sentiment": 0.20 * risk_score,
+    }
+    net_score = _clamp(sum(components.values()), -1.0, 1.0)
+    dominant_key = max(components, key=lambda key: abs(components[key]))
+    dominant_sign = "bullish_usd_jpy" if components[dominant_key] >= 0.0 else "bearish_usd_jpy"
+
+    available_count = 0
+    if spread_10y is not None or spread_2y is not None:
+        available_count += 1
+    if jpy_cross_changes or dxy_change is not None or abs(eurusd_change) > 1e-9:
+        available_count += 1
+    if risk_mode != "unknown" or us500_change is not None:
+        available_count += 1
+    confidence = round(_clamp(0.35 + 0.22 * available_count, 0.2, 1.0), 3)
+
+    return {
+        "dominant_driver": dominant_key,
+        "dominant_sign": dominant_sign,
+        "net_score": round(net_score, 4),
+        "confidence": confidence,
+        "components": {k: round(v, 4) for k, v in components.items()},
+        "notes": {
+            "rate_detail": rate_detail,
+            "yen_flow_avg_pct": round(yen_flow, 4),
+            "dollar_flow_avg_pct": round(dollar_flow, 4),
+            "contradiction_score": round(contradiction, 4),
+            "risk_mode": risk_mode,
+        },
+    }
+
+
+def _blend_direction_score(*, base_score: float, driver: dict[str, Any]) -> float:
+    net = _safe_float(driver.get("net_score"), 0.0)
+    confidence = _safe_float(driver.get("confidence"), 0.0)
+    blend_weight = _clamp(0.16 + 0.24 * confidence, 0.12, 0.40)
+    return _clamp((1.0 - blend_weight) * base_score + blend_weight * net, -1.0, 1.0)
+
+
+def _build_break_points(
+    *,
+    snapshot: dict[str, Any],
+    event_ctx: dict[str, Any],
+    market_context: dict[str, Any],
+    driver: dict[str, Any],
+    order_stats: dict[str, Any],
+) -> list[dict[str, Any]]:
+    support = _safe_float(snapshot.get("support_price"), 0.0)
+    resistance = _safe_float(snapshot.get("resistance_price"), 0.0)
+    rates = market_context.get("rates") if isinstance(market_context.get("rates"), dict) else {}
+    spread_10y = _safe_float_or_none(rates.get("us_jp_10y_spread"))
+    spread_2y = _safe_float_or_none(rates.get("us_jp_2y_proxy_spread"))
+    reject_rate = _safe_float(order_stats.get("reject_rate"), 0.0)
+
+    out: list[dict[str, Any]] = []
+    if support > 0.0:
+        out.append(
+            {
+                "key": "support_failure",
+                "condition": f"5m close below support {support:.3f}",
+                "impact": "invalidate_long_bias",
+            }
+        )
+    if resistance > 0.0:
+        out.append(
+            {
+                "key": "resistance_break",
+                "condition": f"5m close above resistance {resistance:.3f}",
+                "impact": "invalidate_short_bias",
+            }
+        )
+    if spread_10y is not None:
+        out.append(
+            {
+                "key": "rate_spread_flip",
+                "condition": f"US-JP 10Y spread drops below {max(0.0, spread_10y - 0.35):.3f}",
+                "impact": "carry_tailwind_weakens",
+            }
+        )
+    elif spread_2y is not None:
+        out.append(
+            {
+                "key": "rate_proxy_flip",
+                "condition": f"US-JP 2Y proxy spread drops below {max(0.0, spread_2y - 0.08):.3f}",
+                "impact": "macro_tailwind_weakens",
+            }
+        )
+    if reject_rate >= 0.12:
+        out.append(
+            {
+                "key": "execution_degrade",
+                "condition": f"reject_rate >= {reject_rate:.3f}",
+                "impact": "reduce_size_or_standby",
+            }
+        )
+    next_event = event_ctx.get("next_event") if isinstance(event_ctx.get("next_event"), dict) else {}
+    minutes = _safe_int(next_event.get("minutes_to_event"), 999999) if next_event else 999999
+    if next_event and minutes <= 180:
+        out.append(
+            {
+                "key": "event_window",
+                "condition": f"{next_event.get('name')} in {minutes}m",
+                "impact": "avoid_first_spike",
+            }
+        )
+
+    dominant = str(driver.get("dominant_driver") or "")
+    if dominant:
+        out.append(
+            {
+                "key": "driver_shift",
+                "condition": f"dominant_driver changes from {dominant}",
+                "impact": "rebuild_scenarios",
+            }
+        )
+    return out
+
+
+def _build_if_then_rules(
+    *,
+    scenarios: list[dict[str, Any]],
+    snapshot: dict[str, Any],
+    event_ctx: dict[str, Any],
+    driver: dict[str, Any],
+    break_points: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    primary = max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0)) if scenarios else {}
+    primary_bias = str(primary.get("bias") or "neutral")
+    support = _safe_float(snapshot.get("support_price"), 0.0)
+    resistance = _safe_float(snapshot.get("resistance_price"), 0.0)
+    dominant_driver = str(driver.get("dominant_driver") or "unknown")
+    event_soon = bool(event_ctx.get("event_soon"))
+
+    event_rule = "wait_for_post_spike_confirmation"
+    if not event_soon:
+        event_rule = "normal_execution"
+
+    bp_key_text = ",".join(str(row.get("key")) for row in break_points[:3] if isinstance(row, dict))
+
+    return [
+        {
+            "id": "st_event_mode",
+            "horizon": "short_term",
+            "if": f"event_soon={str(event_soon).lower()}",
+            "then": event_rule,
+        },
+        {
+            "id": "st_primary_follow",
+            "horizon": "short_term",
+            "if": f"primary_bias={primary_bias} and 5m close confirms level",
+            "then": "enter_in_primary_direction_with_split_take_profit",
+        },
+        {
+            "id": "st_fail_fast",
+            "horizon": "short_term",
+            "if": f"any_break_point_hit ({bp_key_text or 'none'})",
+            "then": "cut_position_and_recompute",
+        },
+        {
+            "id": "sw_driver_hold",
+            "horizon": "swing",
+            "if": f"dominant_driver={dominant_driver} persists and H4 structure holds",
+            "then": "keep_bias_and_add_on_pullback_only",
+        },
+        {
+            "id": "sw_level_flip",
+            "horizon": "swing",
+            "if": f"support {support:.3f} or resistance {resistance:.3f} is structurally broken",
+            "then": "reduce_or_flip_swing_bias",
+        },
+    ]
+
+
 def _build_scenarios(
     *,
     direction_score: float,
@@ -772,6 +1277,7 @@ def build_ops_report(
     order_stats: dict[str, Any],
     policy: dict[str, Any],
     events: list[dict[str, Any]],
+    market_context: Optional[dict[str, Any]] = None,
     now_utc: Optional[datetime] = None,
 ) -> dict[str, Any]:
     now_utc = now_utc or _utcnow()
@@ -785,6 +1291,16 @@ def build_ops_report(
         policy=policy,
     )
     event_ctx = _event_context(events=events, policy=policy)
+    if not isinstance(market_context, dict):
+        market_context = _build_market_context(
+            factors=factors,
+            events=events,
+            now_utc=now_utc,
+            external_snapshot={},
+            macro_snapshot={},
+        )
+    driver_breakdown = _build_driver_breakdown(market_context=market_context, event_ctx=event_ctx)
+    direction_score = _blend_direction_score(base_score=direction_score, driver=driver_breakdown)
     scenarios = _build_scenarios(
         direction_score=direction_score,
         snapshot=snapshot,
@@ -792,6 +1308,20 @@ def build_ops_report(
         performance=performance,
         order_stats=order_stats,
         event_ctx=event_ctx,
+    )
+    break_points = _build_break_points(
+        snapshot=snapshot,
+        event_ctx=event_ctx,
+        market_context=market_context,
+        driver=driver_breakdown,
+        order_stats=order_stats,
+    )
+    if_then_rules = _build_if_then_rules(
+        scenarios=scenarios,
+        snapshot=snapshot,
+        event_ctx=event_ctx,
+        driver=driver_breakdown,
+        break_points=break_points,
     )
     short_term = _build_short_term_playbook(
         scenarios=scenarios,
@@ -805,7 +1335,9 @@ def build_ops_report(
     )
     risk_protocol = _build_risk_protocol(event_ctx=event_ctx, order_stats=order_stats)
 
-    confidence = round((1.0 - _clamp(1.0 - abs(direction_score), 0.0, 1.0)) * 100.0, 1)
+    base_conf = 1.0 - _clamp(1.0 - abs(direction_score), 0.0, 1.0)
+    driver_conf = _safe_float(driver_breakdown.get("confidence"), 0.0)
+    confidence = round(_clamp(base_conf * 0.72 + driver_conf * 0.28, 0.0, 1.0) * 100.0, 1)
     if event_ctx.get("event_soon"):
         confidence = max(20.0, round(confidence - 18.0, 1))
 
@@ -813,18 +1345,22 @@ def build_ops_report(
         "generated_at": _to_iso(now_utc),
         "llm_disabled": True,
         "hours": round(float(hours), 3),
-        "playbook_version": 1,
-        "note": "Deterministic market playbook generated from local factors + DB metrics.",
+        "playbook_version": 2,
+        "note": "Deterministic market playbook (driver -> breakpoints -> scenarios -> if-then).",
         "direction_score": round(direction_score, 4),
         "direction_confidence_pct": confidence,
+        "market_context": market_context,
+        "driver_breakdown": driver_breakdown,
         "snapshot": snapshot,
         "forecast": forecast,
         "performance": performance,
         "order_quality": order_stats,
         "event_context": event_ctx,
+        "break_points": break_points,
         "short_term": short_term,
         "swing": swing,
         "scenarios": scenarios,
+        "if_then_rules": if_then_rules,
         "risk_protocol": risk_protocol,
         "data_sources": {
             "factors_ready": bool(fac_m1) and bool(fac_h4),
@@ -832,16 +1368,21 @@ def build_ops_report(
             "orders_window_count": _safe_int(order_stats.get("total_orders"), 0),
             "events_count": len(events),
             "policy_overlay_present": bool(policy),
+            "market_context_ready": bool(market_context.get("pairs")) if isinstance(market_context, dict) else False,
         },
     }
     return report
 
 
 def _render_markdown(report: dict[str, Any]) -> str:
+    market_context = report.get("market_context") if isinstance(report.get("market_context"), dict) else {}
+    driver = report.get("driver_breakdown") if isinstance(report.get("driver_breakdown"), dict) else {}
     snapshot = report.get("snapshot") if isinstance(report.get("snapshot"), dict) else {}
     short_term = report.get("short_term") if isinstance(report.get("short_term"), dict) else {}
     swing = report.get("swing") if isinstance(report.get("swing"), dict) else {}
     scenarios = report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
+    break_points = report.get("break_points") if isinstance(report.get("break_points"), list) else []
+    if_then_rules = report.get("if_then_rules") if isinstance(report.get("if_then_rules"), list) else []
     risk = report.get("risk_protocol") if isinstance(report.get("risk_protocol"), dict) else {}
     event_ctx = report.get("event_context") if isinstance(report.get("event_context"), dict) else {}
     perf = report.get("performance") if isinstance(report.get("performance"), dict) else {}
@@ -861,6 +1402,37 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- range_24h_pips: {snapshot.get('range_24h_pips')}")
     lines.append(f"- macro_regime/micro_regime: {snapshot.get('macro_regime')} / {snapshot.get('micro_regime')}")
     lines.append(f"- support/resistance: {snapshot.get('support_price')} / {snapshot.get('resistance_price')}")
+    pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
+    usdjpy = pairs.get("usd_jpy") if isinstance(pairs.get("usd_jpy"), dict) else {}
+    eurusd = pairs.get("eur_usd") if isinstance(pairs.get("eur_usd"), dict) else {}
+    audjpy = pairs.get("aud_jpy") if isinstance(pairs.get("aud_jpy"), dict) else {}
+    eurjpy = pairs.get("eur_jpy") if isinstance(pairs.get("eur_jpy"), dict) else {}
+    lines.append(
+        "- pairs(USD/JPY EUR/USD AUD/JPY EUR/JPY): "
+        f"{usdjpy.get('price')} / {eurusd.get('price')} / {audjpy.get('price')} / {eurjpy.get('price')}"
+    )
+    dollar = market_context.get("dollar") if isinstance(market_context.get("dollar"), dict) else {}
+    rates = market_context.get("rates") if isinstance(market_context.get("rates"), dict) else {}
+    lines.append(f"- dxy: {dollar.get('dxy')} ({dollar.get('source')})")
+    lines.append(
+        "- rates(US10Y/JP10Y/spread): "
+        f"{rates.get('us10y')} / {rates.get('jp10y')} / {rates.get('us_jp_10y_spread')}"
+    )
+    lines.append("")
+    lines.append("## Driver")
+    lines.append(f"- dominant_driver: {driver.get('dominant_driver')}")
+    lines.append(f"- dominant_sign: {driver.get('dominant_sign')}")
+    lines.append(f"- net_score: {driver.get('net_score')}")
+    comp = driver.get("components") if isinstance(driver.get("components"), dict) else {}
+    lines.append(
+        "- components(rate/yen_flow/risk): "
+        f"{comp.get('rate_diff')} / {comp.get('yen_flow')} / {comp.get('risk_sentiment')}"
+    )
+    notes = driver.get("notes") if isinstance(driver.get("notes"), dict) else {}
+    lines.append(
+        "- contradiction(yen_flow - dollar_flow): "
+        f"{notes.get('yen_flow_avg_pct')} - {notes.get('dollar_flow_avg_pct')} = {notes.get('contradiction_score')}"
+    )
     lines.append("")
     lines.append("## Short-Term (now-72h)")
     lines.append(f"- bias: {short_term.get('bias')}")
@@ -887,6 +1459,24 @@ def _render_markdown(report: dict[str, Any]) -> str:
         triggers = row.get("triggers") if isinstance(row.get("triggers"), list) else []
         if triggers:
             lines.append(f"  - trigger: {triggers[0]}")
+    lines.append("")
+    lines.append("## Break Points")
+    if not break_points:
+        lines.append("- none")
+    else:
+        for row in break_points[:6]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- {row.get('key')}: {row.get('condition')} -> {row.get('impact')}")
+    lines.append("")
+    lines.append("## If-Then Rules")
+    if not if_then_rules:
+        lines.append("- none")
+    else:
+        for row in if_then_rules[:8]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- [{row.get('horizon')}] if {row.get('if')} then {row.get('then')}")
     lines.append("")
     lines.append("## Risk Protocol")
     lines.append(f"- max_loss_per_trade_pct: {risk.get('max_loss_per_trade_pct')}")
@@ -924,6 +1514,18 @@ def main() -> int:
     ap.add_argument("--orders-db", default=os.getenv("OPS_PLAYBOOK_ORDERS_DB", "logs/orders.db"))
     ap.add_argument("--overlay-path", default=os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"))
     ap.add_argument("--events-path", default=os.getenv("OPS_PLAYBOOK_EVENTS_PATH", "logs/market_events.json"))
+    ap.add_argument(
+        "--market-context-path",
+        default=os.getenv("OPS_PLAYBOOK_MARKET_CONTEXT_PATH", "logs/market_context_latest.json"),
+    )
+    ap.add_argument(
+        "--market-external-path",
+        default=os.getenv("OPS_PLAYBOOK_EXTERNAL_SNAPSHOT_PATH", "logs/market_external_snapshot.json"),
+    )
+    ap.add_argument(
+        "--macro-snapshot-path",
+        default=os.getenv("OPS_PLAYBOOK_MACRO_SNAPSHOT_PATH", "fixtures/macro_snapshots/latest.json"),
+    )
     ap.add_argument("--forecast-strategy-tag", default=os.getenv("OPS_PLAYBOOK_FORECAST_STRATEGY_TAG", "scalp_ping_5s_b_live"))
     ap.add_argument("--forecast-pocket", default=os.getenv("OPS_PLAYBOOK_FORECAST_POCKET", "scalp"))
     ap.add_argument("--forecast-units", type=int, default=_safe_int(os.getenv("OPS_PLAYBOOK_FORECAST_UNITS", "10000"), 10000))
@@ -953,6 +1555,14 @@ def main() -> int:
     order_stats = _summarize_orders(Path(args.orders_db), hours=max(0.1, float(args.hours)))
     policy = _load_policy_overlay(Path(args.overlay_path))
     events = _load_events(Path(args.events_path), now_utc=now_utc)
+    market_context = _load_or_build_market_context(
+        context_path=Path(args.market_context_path),
+        factors=factors,
+        events=events,
+        now_utc=now_utc,
+        external_path=Path(args.market_external_path),
+        macro_snapshot_path=Path(args.macro_snapshot_path),
+    )
 
     payload = build_ops_report(
         hours=max(0.1, float(args.hours)),
@@ -962,6 +1572,7 @@ def main() -> int:
         order_stats=order_stats,
         policy=policy,
         events=events,
+        market_context=market_context,
         now_utc=now_utc,
     )
 

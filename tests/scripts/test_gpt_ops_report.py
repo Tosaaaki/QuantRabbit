@@ -43,6 +43,51 @@ def test_build_scenarios_probabilities_sum_to_hundred() -> None:
     assert primary["key"] == "continuation_up"
 
 
+def test_build_market_context_uses_external_snapshot_for_crosses() -> None:
+    context = gpt_ops_report._build_market_context(
+        factors={"M1": {"close": 156.12}},
+        events=[],
+        now_utc=datetime(2026, 2, 27, 10, 0, tzinfo=timezone.utc),
+        external_snapshot={
+            "pairs": {
+                "EUR_USD": {"price": 1.1812, "change_pct_24h": 0.23},
+                "AUD_JPY": {"price": 111.04, "change_pct_24h": 0.61},
+                "EUR_JPY": {"price": 184.22, "change_pct_24h": 0.48},
+            },
+            "dxy": 97.72,
+            "dxy_change_pct_24h": -0.21,
+            "rates": {"US10Y": 4.01, "JP10Y": 2.12},
+        },
+        macro_snapshot={"vix": 18.4, "dxy": 0.0, "yield2y": {"USD": 0.62, "JPY": 0.41}},
+    )
+
+    assert context["pairs"]["usd_jpy"]["price"] == 156.12
+    assert context["pairs"]["eur_usd"]["price"] == 1.1812
+    assert context["dollar"]["dxy"] == 97.72
+    assert context["rates"]["us_jp_10y_spread"] == 1.89
+
+
+def test_build_driver_breakdown_detects_yen_flow_dominance() -> None:
+    context = {
+        "pairs": {
+            "usd_jpy": {"price": 156.0, "change_pct_24h": 0.9},
+            "aud_jpy": {"price": 111.0, "change_pct_24h": 1.1},
+            "eur_jpy": {"price": 184.0, "change_pct_24h": 0.8},
+            "eur_usd": {"price": 1.18, "change_pct_24h": 0.2},
+        },
+        "dollar": {"dxy": 97.7, "dxy_change_pct_24h": -0.3, "source": "external"},
+        "rates": {"us_jp_10y_spread": 1.5},
+        "risk": {"mode": "neutral"},
+    }
+    driver = gpt_ops_report._build_driver_breakdown(
+        market_context=context,
+        event_ctx={"event_soon": False},
+    )
+
+    assert driver["dominant_driver"] == "yen_flow"
+    assert driver["net_score"] > 0.0
+
+
 def test_build_ops_report_handles_minimal_inputs() -> None:
     payload = gpt_ops_report.build_ops_report(
         hours=24.0,
@@ -56,8 +101,12 @@ def test_build_ops_report_handles_minimal_inputs() -> None:
     )
 
     assert payload["llm_disabled"] is True
-    assert payload["playbook_version"] == 1
+    assert payload["playbook_version"] == 2
     assert isinstance(payload["snapshot"], dict)
+    assert isinstance(payload["market_context"], dict)
+    assert isinstance(payload["driver_breakdown"], dict)
+    assert isinstance(payload["break_points"], list)
+    assert isinstance(payload["if_then_rules"], list)
     assert isinstance(payload["short_term"], dict)
     assert isinstance(payload["swing"], dict)
     assert isinstance(payload["scenarios"], list)

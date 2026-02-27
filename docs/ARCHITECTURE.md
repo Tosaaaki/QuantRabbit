@@ -62,7 +62,10 @@
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
 - Background: `quant-ops-policy.service`（`scripts/gpt_ops_report.py`）は
   LLMを使わない deterministic 集計で `logs/gpt_ops_report.json`（+任意 Markdown）を生成し、
-  `snapshot / short_term / swing / scenarios / risk_protocol` を運用レビュー用に出力する。
+  `market_context / driver_breakdown / break_points / scenarios / if_then_rules / risk_protocol`
+  を運用レビュー用に出力する。
+  判定手順は `主因特定 → 壊れる点特定 → A/B/C シナリオ化 → 条件式` の固定フローとし、
+  参照元は `factor_cache / trades.db / orders.db / policy_overlay / market_events / macro_snapshot / optional external snapshot` に限定する。
   `--policy` 導線は no-change diff の記録に限定し、自動で売買ポリシーを適用しない。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ +
   `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）による

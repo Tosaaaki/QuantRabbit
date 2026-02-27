@@ -42,6 +42,28 @@
   - `quant-ops-policy.service` が生成する `logs/gpt_ops_report.json` の内容が拡張される。
   - 取引執行経路（strategy worker / order_manager / position_manager）の判定ロジックは非変更。
 
+### 2026-02-27（追記）`gpt_ops_report` を「主因→壊れる点→A/B/C→If-Then」へ拡張
+
+- 目的:
+  - 市況整理を「こねくり回さない」固定手順へ寄せ、運用者が同じ順序で検証できる状態にする。
+- 変更:
+  - `scripts/gpt_ops_report.py`
+    - `market_context`（pairs / DXY / rates / risk / events_summary）を追加。
+    - `driver_breakdown`（`rate_diff` / `yen_flow` / `risk_sentiment`）を追加し、
+      `dominant_driver` と `net_score` を機械算出。
+    - `break_points`（壊れる条件）と `if_then_rules`（条件式）を追加。
+    - 生成バージョンを `playbook_version=2` に更新。
+    - `--market-context-path`, `--market-external-path`,
+      `--macro-snapshot-path` を追加し、データ入力を明示化。
+  - `scripts/build_market_context.py`
+    - `market_context_latest.json` を単体で生成するCLIを追加。
+  - `tests/scripts/test_gpt_ops_report.py`
+    - `market_context` 生成、`driver_breakdown` の優勢判定、
+      v2 出力構造を回帰テストへ追加。
+- 影響範囲:
+  - `quant-ops-policy.service` の既存起動コマンドで動作し、追加フィールドが JSON/Markdown に出力される。
+  - 自動ポリシー適用は従来どおり無効（no-change diff のみ）。
+
 ### 2026-02-27（追記）M1シナリオ3戦略を「プロセス独立」から「ロジック独立」へ移行
 
 - 背景:

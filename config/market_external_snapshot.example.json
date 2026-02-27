@@ -1,0 +1,18 @@
+{
+  "pairs": {
+    "EUR_USD": {"price": 1.1800, "change_pct_24h": 0.20},
+    "AUD_JPY": {"price": 111.0000, "change_pct_24h": 0.70},
+    "EUR_JPY": {"price": 184.0000, "change_pct_24h": 0.55}
+  },
+  "dxy": 97.7000,
+  "dxy_change_pct_24h": -0.20,
+  "rates": {
+    "US10Y": 4.0000,
+    "JP10Y": 2.1200
+  },
+  "risk": {
+    "vix": 18.0000,
+    "us500_change_pct": 0.10
+  },
+  "events": []
+}
