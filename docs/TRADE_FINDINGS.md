@@ -92,9 +92,14 @@ Improvement:
    - `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: 0.72 -> 0.62`
    - `SIDE_BIAS_BLOCK_THRESHOLD: 0.10 -> 0.16`
    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT: 1.00 -> 0.88`
+   - fallback local 整合:
+     `ORDER_MANAGER_PRESERVE_INTENT_(REJECT_UNDER/MIN_SCALE/MAX_SCALE)` を
+     `0.68/0.35/0.72` へ同期
 3. 共通 preflight 圧縮（`ops/env/quant-order-manager.env`）:
    - B: `REJECT_UNDER 0.68 -> 0.72`, `MAX_SCALE 0.50 -> 0.42`
    - C: `REJECT_UNDER 0.66 -> 0.68`, `MIN_SCALE 0.40 -> 0.35`, `MAX_SCALE 0.78 -> 0.72`
+   - `ops/env/scalp_ping_5s_b.env` 側の fallback local 値も
+     `REJECT_UNDER 0.68 -> 0.72`, `MAX_SCALE 0.55 -> 0.42` へ同期
 4. service timeout 再発防止（`ops/env/quant-v2-runtime.env`）:
    - `ORDER_MANAGER_SERVICE_TIMEOUT: 60.0 -> 12.0`
    - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC: 10.0 -> 4.0`

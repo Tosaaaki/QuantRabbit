@@ -24,9 +24,14 @@
     - 頻度・サイズと side metrics 上限を追加圧縮
       (`MAX_ORDERS_PER_MINUTE=6`, `BASE_ENTRY_UNITS=110`, `MAX_UNITS=240`,
       `SIDE_BIAS_BLOCK_THRESHOLD=0.16`, `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.88`)。
+    - fallback local 用の `ORDER_MANAGER_PRESERVE_INTENT_*` を
+      `0.68/0.35/0.72` へ同期。
   - `ops/env/quant-order-manager.env`
     - B/C の preserve-intent しきい値を厳格化
       （`REJECT_UNDER` 引き上げ、`MAX_SCALE` 引き下げ）。
+  - `ops/env/scalp_ping_5s_b.env`
+    - fallback local の preserve-intent 値を
+      `0.72/0.25/0.42` へ同期。
   - `ops/env/quant-v2-runtime.env`
     - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0`
     - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC=4.0`
