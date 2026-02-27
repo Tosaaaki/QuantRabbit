@@ -71,6 +71,26 @@
   - Cの long bias 運用に合わせ、long 側の hard reject を止めて約定再開を優先。
   - short 側は従来閾値を維持し、逆方向エクスポージャの過多は抑える。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` の preserve-intent 確率閾値を 0.58 へ再緩和
+
+- 背景（VM実測）:
+  - long leading reject 無効化後（15:34:41 UTC 以降）、
+    `entry_probability_reject_threshold` が主拒否理由に遷移。
+  - Cログで `prob=0.81〜0.89` 帯のシグナルでも reject が連発し、
+    Cの約定回復が不足した。
+  - `quant-order-manager` 実効envは
+    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]=0.72`。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE: 0.72 -> 0.58`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE: 0.72 -> 0.58`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C: 0.72 -> 0.58`
+- 意図:
+  - leading profile 緩和後の新ボトルネック（probability reject）を解消し、
+    Cの送出再開を狙う。
+  - worker/order-manager 間で確率閾値を同期し、経路差による拒否ブレを抑える。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の preflight 閾値を `quant-order-manager` 実効envへ同期
 
 - 背景（VM実測）:

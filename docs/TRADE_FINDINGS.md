@@ -42,6 +42,42 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 15:38 UTC / 2026-02-28 00:38 JST - `scalp_ping_5s_c_live` の `entry_probability_reject` 閾値を再緩和
+Period:
+- 観測: 2026-02-27 15:34:41-15:37:20 UTC（long leading reject 無効化後）
+
+Fact:
+- `REJECT_BELOW=0.00` 反映後、long 側 `entry_leading_profile_reject` は減少した一方、
+  `entry_probability_reject` が主因化。
+- Cログは `prob=0.81〜0.89` のシグナルでも
+  `err=entry_probability_reject_threshold` を連発。
+- 同期間の C は `orders.db` 上で送出が細く、露出回復が不足。
+- `quant-order-manager` 実効envは
+  `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]=0.72`。
+
+Failure Cause:
+1. leading reject を外した後も preserve-intent 側の確率閾値 `0.72` が高く、
+   C の実効確率帯（0.8前後）で閾値下振れが起きやすい。
+2. C worker と order-manager の reject_under が同水準で、同時に拒否寄りへ働いた。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env` の
+   `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE`
+   を `0.72 -> 0.58`。
+2. `ops/env/quant-order-manager.env` の
+   `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]`
+   を `0.72 -> 0.58` へ同期。
+
+Verification:
+1. 再デプロイ後 15 分で C の
+   `market_order rejected ... entry_probability_reject` 件数が減少すること。
+2. 同期間 `orders.db` で `scalp_ping_5s_c_live` の
+   `submit_attempt`/`filled` が再開・増加すること。
+3. `metrics.db` の `order_perf_block` hard reason 再発がないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:29 UTC / 2026-02-28 00:29 JST - `scalp_ping_5s_c_live` long 側 leading reject を無効化（short維持）
 Period:
 - 観測: 2026-02-27 15:25:36-15:28:54 UTC（前回緩和反映後）
