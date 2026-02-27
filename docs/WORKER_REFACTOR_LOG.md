@@ -9359,3 +9359,21 @@
 - 影響範囲:
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定・ロット・仮想TP/SLのみ。
   - V2固定導線（order_manager / position_manager / strategy_control / market-data-feed）は非変更。
+
+### 2026-02-27（追記）`quant-order-manager` の orders.db スレッド競合是正 + duplicate復旧強化
+
+- 目的:
+  - `CLIENT_TRADE_ID_ALREADY_EXISTS` 発生時の復旧率を上げ、不要 reject を減らす。
+  - `orders.db` 書き込み時の `SQLite objects created in a thread` 警告を解消する。
+- 変更:
+  - `execution/order_manager.py`
+    - `orders.db` 接続を global singleton から thread-local 管理へ変更。
+    - `_cache_order_status` に `ticket_id` を追加（duplicate復旧でキャッシュから trade_id 回収可能化）。
+    - `_latest_filled_trade_id_by_client_id` に `trades.db` フォールバックを追加。
+      - 優先順: `orders.db(filled)` -> `order_status_cache` -> `trades.db(client_order_id)`.
+- 背景根拠（VM）:
+  - `journalctl -u quant-order-manager.service` で同一警告が連続発生。
+  - 24h `orders.db` で `status='rejected'` の主因が `CLIENT_TRADE_ID_ALREADY_EXISTS`（294件）。
+- 影響範囲:
+  - `quant-order-manager.service` の注文ログ永続化/duplicate回復経路のみ。
+  - 戦略ロジック・entry/exit判定・V2導線分離は非変更。

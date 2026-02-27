@@ -67,6 +67,45 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 13:07 UTC / 2026-02-27 22:07 JST - `order_manager` の duplicate回復失敗と orders.db スレッド競合を是正（VM実測）
+
+Period:
+- 直近24h（`2026-02-26 13:07 UTC` 以降）
+
+Source:
+- VM `systemctl status quant-order-manager.service`
+- VM `journalctl -u quant-order-manager.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `scripts/oanda_open_trades.py`
+
+Fact:
+- 24h損益は `1296 trades / -851.8 pips / -3285.14 JPY`。
+- 大きな下押しは `scalp_ping_5s_c_live (-3431.03 JPY)` と `scalp_ping_5s_b_live (-696.34 JPY)`。
+- orders最終状態（client_order_id単位）で `perf_block=1535`, `margin_usage_projected_cap=514`, `filled=491`, `entry_probability_reject=392`, `rejected=190`。
+- `status='rejected'` の内訳は `CLIENT_TRADE_ID_ALREADY_EXISTS=294`, `LOSING_TAKE_PROFIT=14`, `STOP_LOSS_ON_FILL_LOSS=6`, `TAKE_PROFIT_ON_FILL_LOSS=1`。
+- `quant-order-manager` で `SQLite objects created in a thread can only be used in that same thread` が継続発生し、ordersログ永続化が断続的に失敗。
+
+Failure Cause:
+1. `orders.db` 接続がプロセス内で単一接続共有になっており、複数スレッド利用で SQLite thread affinity 例外が発生。
+2. duplicate復旧（`CLIENT_TRADE_ID_ALREADY_EXISTS`）は `orders.db` の filled レコード依存で、書き込み失敗時に復旧できず reject 化。
+3. duplicate復旧のキャッシュ情報に `ticket_id` が保持されず、DB失敗時の回復余地が狭い。
+
+Improvement:
+1. `execution/order_manager.py`
+   - `orders.db` 接続を global singleton から thread-local へ変更。
+   - `_cache_order_status` に `ticket_id` を保持。
+   - duplicate復旧で `orders.db` → cache → `trades.db` の順で trade_id を回収するフォールバックを追加。
+
+Verification:
+1. `python3 -m py_compile execution/order_manager.py` が成功すること。
+2. 反映後VMで `journalctl -u quant-order-manager.service` の SQLite thread例外が減少/消失すること。
+3. `orders.db` で `status='rejected' AND error_message='CLIENT_TRADE_ID_ALREADY_EXISTS'` が減少し、`duplicate_recovered` が増えること。
+4. 24hで `reject_rate` と `scalp_ping_5s_b/c` の実効約定品質（filled比率）が改善方向になること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 13:10 UTC / 2026-02-27 22:10 JST - `scalp_ping_5s_b/c` 第3ラウンド（RR再補正 + longロット押上げ）
 
 Period:

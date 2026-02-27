@@ -3134,6 +3134,7 @@ _LAST_ORDER_DB_CHECKPOINT = 0.0
 _ORDER_STATUS_CACHE_LOCK = threading.Lock()
 _ORDER_STATUS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
 _ORDER_DB_LOCAL_WRITE_LOCK = threading.RLock()
+_ORDER_DB_CONNECTION_LOCAL = threading.local()
 
 _DEFAULT_MIN_HOLD_SEC = {
     "macro": 360.0,
@@ -3322,17 +3323,17 @@ def _ensure_orders_schema() -> sqlite3.Connection:
 
 
 def _orders_con() -> sqlite3.Connection:
-    # Singleton-ish connection
-    global _ORDERS_CON
-    try:
-        return _ORDERS_CON
-    except NameError:
-        _ORDERS_CON = _ensure_orders_schema()
-        return _ORDERS_CON
+    # Keep SQLite connections thread-local; shared cross-thread connections
+    # trigger "SQLite objects created in a thread" errors under worker load.
+    con = getattr(_ORDER_DB_CONNECTION_LOCAL, "con", None)
+    if con is None:
+        con = _ensure_orders_schema()
+        _ORDER_DB_CONNECTION_LOCAL.con = con
+    return con
 
 
 def _reset_orders_con() -> None:
-    con = globals().get("_ORDERS_CON")
+    con = getattr(_ORDER_DB_CONNECTION_LOCAL, "con", None)
     if con is None:
         return
     try:
@@ -3340,7 +3341,7 @@ def _reset_orders_con() -> None:
     except Exception:
         pass
     try:
-        del globals()["_ORDERS_CON"]
+        delattr(_ORDER_DB_CONNECTION_LOCAL, "con")
     except Exception:
         pass
 
@@ -3367,6 +3368,7 @@ def _cache_order_status(
     client_order_id: Optional[str],
     status: Optional[str],
     attempt: Optional[int],
+    ticket_id: Optional[str] = None,
     side: Optional[str] = None,
     units: Optional[int] = None,
     error_code: Optional[str] = None,
@@ -3381,6 +3383,7 @@ def _cache_order_status(
         "ts": ts,
         "status": status,
         "attempt": attempt,
+        "ticket_id": ticket_id,
         "side": side,
         "units": units,
         "error_code": error_code,
@@ -5080,6 +5083,7 @@ def _log_order(
         client_order_id=client_order_id,
         status=status,
         attempt=attempt,
+        ticket_id=ticket_id,
         side=side,
         units=units,
         error_code=error_code,
@@ -5309,21 +5313,55 @@ def _latest_filled_trade_id_by_client_id(client_order_id: Optional[str]) -> Opti
                         return str(trade_id)
 
     cached = _cached_order_status(cid)
-    if not isinstance(cached, dict):
-        return None
-    if str(cached.get("status") or "").lower() != "filled":
-        return None
-    response_json = cached.get("response_json")
-    if not response_json:
-        return None
+    if isinstance(cached, dict):
+        cached_ticket = cached.get("ticket_id")
+        if cached_ticket:
+            return str(cached_ticket)
+        if str(cached.get("status") or "").lower() == "filled":
+            response_json = cached.get("response_json")
+            if response_json:
+                try:
+                    parsed_cached = json.loads(str(response_json))
+                except Exception:
+                    parsed_cached = None
+                if isinstance(parsed_cached, dict):
+                    trade_id = _extract_trade_id(parsed_cached)
+                    if trade_id:
+                        return str(trade_id)
+
+    # Fallback: if orders.db write path was dropped under contention, trades.db can
+    # still have the executed trade keyed by client_order_id.
     try:
-        parsed_cached = json.loads(str(response_json))
+        db_path = _ENTRY_QUALITY_STRAT_DB_PATH
+        con_trades = sqlite3.connect(
+            f"file:{db_path}?mode=ro",
+            uri=True,
+            timeout=max(0.5, _DB_READ_TIMEOUT_SEC),
+        )
     except Exception:
-        return None
-    if not isinstance(parsed_cached, dict):
-        return None
-    trade_id = _extract_trade_id(parsed_cached)
-    return str(trade_id) if trade_id else None
+        con_trades = None
+    if con_trades is not None:
+        try:
+            row = con_trades.execute(
+                """
+                SELECT ticket_id
+                FROM trades
+                WHERE client_order_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (cid,),
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
+        except Exception:
+            pass
+        finally:
+            try:
+                con_trades.close()
+            except Exception:
+                pass
+    return None
 
 
 def _rotate_client_order_id(
