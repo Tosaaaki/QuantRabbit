@@ -1935,7 +1935,71 @@ def _build_hourly_fallback(trades: list[dict]) -> dict:
     }
 
 
-def _hourly_trades_is_usable(payload: Any) -> bool:
+def _hourly_window_anchor(reference_now: Optional[datetime] = None) -> datetime:
+    now = reference_now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(_JST).replace(minute=0, second=0, microsecond=0)
+
+
+def _parse_hourly_label_as_jst_hour(label: Any, *, reference_now: Optional[datetime] = None) -> Optional[str]:
+    if not isinstance(label, str):
+        return None
+    text = label.strip()
+    if not text:
+        return None
+    anchor = _hourly_window_anchor(reference_now)
+    try:
+        parsed = datetime.strptime(text, "%m/%d %H:%M")
+    except ValueError:
+        return None
+    try:
+        candidate = datetime(
+            anchor.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            tzinfo=_JST,
+        )
+    except ValueError:
+        return None
+    # Support year boundaries when labels don't include the year.
+    if candidate > anchor + timedelta(hours=1):
+        candidate = candidate.replace(year=candidate.year - 1)
+    return candidate.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:00:00")
+
+
+def _canonical_hourly_row_key(row: Any, *, reference_now: Optional[datetime] = None) -> Optional[str]:
+    if not isinstance(row, dict):
+        return None
+    key = row.get("key")
+    dt = _parse_dt(key)
+    if dt is None and isinstance(key, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                parsed = datetime.strptime(key.strip(), fmt).replace(tzinfo=_JST)
+                dt = parsed.astimezone(timezone.utc)
+                break
+            except Exception:
+                continue
+    if dt is None:
+        label_key = _parse_hourly_label_as_jst_hour(row.get("label"), reference_now=reference_now)
+        if label_key:
+            return label_key
+        return None
+    return dt.astimezone(_JST).replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:00:00")
+
+
+def _expected_hourly_row_keys(reference_now: Optional[datetime] = None) -> set[str]:
+    anchor = _hourly_window_anchor(reference_now)
+    return {
+        (anchor - timedelta(hours=i)).strftime("%Y-%m-%d %H:00:00")
+        for i in range(_HOURLY_TRADES_LOOKBACK)
+    }
+
+
+def _hourly_trades_is_usable(payload: Any, *, reference_now: Optional[datetime] = None) -> bool:
     if not isinstance(payload, dict):
         return False
     rows = payload.get("hours")
@@ -1947,7 +2011,21 @@ def _hourly_trades_is_usable(payload: Any) -> bool:
         lookback = 0
     if lookback < _HOURLY_TRADES_LOOKBACK:
         return False
-    return len(rows) >= _HOURLY_TRADES_LOOKBACK
+    if len(rows) < _HOURLY_TRADES_LOOKBACK:
+        return False
+    timezone_name = str(payload.get("timezone") or "").strip().upper()
+    if timezone_name and timezone_name != "JST":
+        return False
+    expected_keys = _expected_hourly_row_keys(reference_now=reference_now)
+    actual_keys = {
+        key
+        for key in (
+            _canonical_hourly_row_key(row, reference_now=reference_now)
+            for row in rows
+        )
+        if key
+    }
+    return expected_keys.issubset(actual_keys)
 
 
 def _build_live_snapshot() -> dict:
@@ -2250,8 +2328,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         )
     base["recent_trades"] = recent_trades_display
 
+    snapshot_ref = _parse_dt(snapshot.get("generated_at")) or now
     hourly_trades = metrics_snapshot.get("hourly_trades")
-    if _hourly_trades_is_usable(hourly_trades):
+    if _hourly_trades_is_usable(hourly_trades, reference_now=snapshot_ref):
         base["hourly_trades"] = hourly_trades
     else:
         base["hourly_trades"] = _build_hourly_fallback(trades_raw)
@@ -2796,21 +2875,27 @@ def _load_dashboard_data() -> Dict[str, Any]:
             base["snapshot"]["fetch_error"] = "snapshot.metrics が空です（取得元を確認してください）"
         return base
 
-    base["snapshot"]["fetch_attempts"] = fetch_attempts
-    base["snapshot"]["fetch_error"] = "スナップショットを取得できませんでした"
+    fallback_error = "スナップショットを取得できませんでした"
     reasons = [item["error"] for item in fetch_attempts if item["error"]]
     if reasons:
-        base["snapshot"]["fetch_error"] = " / ".join(reasons[:3])
-        base["error"] = reasons[0]
-    else:
-        base["error"] = "スナップショットを取得できませんでした"
-    if "strategy_control" not in base:
-        try:
-            base["strategy_control"] = _load_strategy_control_state()
-        except Exception as exc:  # pragma: no cover - defensive
-            state = _dashboard_defaults()["strategy_control"]
-            state["error"] = str(exc)
-            base["strategy_control"] = state
+        fallback_error = " / ".join(reasons[:3])
+    local_fallback_snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "new_trades": [],
+        "recent_trades": _load_recent_trades(limit=max(_RECENT_TRADES_LIMIT, 200)),
+        "open_positions": {},
+        "metrics": {},
+        "snapshot_mode": "local-fallback",
+        "snapshot_source": "local-fallback",
+    }
+    base = _summarise_snapshot(local_fallback_snapshot)
+    base.setdefault("snapshot", {})["source"] = "local-fallback"
+    base.setdefault("snapshot", {})["mode"] = "local-fallback"
+    base.setdefault("snapshot", {})["fetch_attempts"] = fetch_attempts
+    base.setdefault("snapshot", {})["fetch_error"] = fallback_error
+    base["snapshot"]["metrics_available"] = False
+    base["snapshot"]["metric_count"] = 0
+    base["error"] = reasons[0] if reasons else fallback_error
     return base
 
 

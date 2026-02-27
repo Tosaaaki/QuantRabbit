@@ -19,6 +19,26 @@ def _total_trades(payload: dict) -> int:
     return sum(int(row.get("trades", 0)) for row in payload.get("hours", []))
 
 
+def _hourly_rows_for_reference(*, lookback: int, reference_now: datetime) -> list[dict]:
+    anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
+    rows: list[dict] = []
+    for i in range(lookback):
+        hour = anchor - timedelta(hours=i)
+        rows.append(
+            {
+                "key": hour.isoformat(),
+                "label": hour.strftime("%m/%d %H:%M"),
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+            }
+        )
+    return rows
+
+
 def test_build_hourly_fallback_prefers_db_window_over_limited_snapshot(monkeypatch):
     monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 6)
     monkeypatch.setattr(ui, "_load_hourly_fallback_aggregates", lambda _start: None)
@@ -73,8 +93,28 @@ def test_build_hourly_fallback_uses_aggregate_query_when_available(monkeypatch):
 
 
 def test_hourly_trades_usable_requires_full_lookback(monkeypatch):
-    monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 24)
+    monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 6)
+    reference_now = datetime(2026, 2, 27, 3, 30, tzinfo=timezone.utc)
+    full_rows = _hourly_rows_for_reference(lookback=6, reference_now=reference_now)
 
-    assert ui._hourly_trades_is_usable({"lookback_hours": 24, "hours": [{}] * 24}) is True
-    assert ui._hourly_trades_is_usable({"lookback_hours": 12, "hours": [{}] * 12}) is False
-    assert ui._hourly_trades_is_usable({"lookback_hours": 24, "hours": [{}] * 10}) is False
+    assert (
+        ui._hourly_trades_is_usable(
+            {"timezone": "JST", "lookback_hours": 6, "hours": full_rows},
+            reference_now=reference_now,
+        )
+        is True
+    )
+    assert (
+        ui._hourly_trades_is_usable(
+            {"timezone": "JST", "lookback_hours": 6, "hours": full_rows[1:]},
+            reference_now=reference_now,
+        )
+        is False
+    )
+    assert (
+        ui._hourly_trades_is_usable(
+            {"timezone": "UTC", "lookback_hours": 6, "hours": full_rows},
+            reference_now=reference_now,
+        )
+        is False
+    )

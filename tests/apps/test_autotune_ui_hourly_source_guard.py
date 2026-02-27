@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import apps.autotune_ui as ui
 
@@ -30,6 +30,26 @@ def _strategy_control_stub() -> dict:
         "error": None,
         "discovered_count": 0,
     }
+
+
+def _hourly_rows(lookback: int, *, reference_now: datetime, label: str) -> list[dict]:
+    anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
+    rows: list[dict] = []
+    for i in range(lookback):
+        hour = anchor - timedelta(hours=i)
+        rows.append(
+            {
+                "key": hour.isoformat(),
+                "label": label,
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 1,
+                "wins": 1,
+                "losses": 0,
+                "win_rate": 1.0,
+            }
+        )
+    return rows
 
 
 def test_summarise_snapshot_falls_back_when_hourly_trades_is_incomplete(monkeypatch):
@@ -77,8 +97,9 @@ def test_summarise_snapshot_keeps_hourly_trades_when_complete(monkeypatch):
         },
     )
 
+    now = datetime.now(timezone.utc)
     snapshot = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": now.isoformat(),
         "recent_trades": [_trade_row()],
         "open_positions": {},
         "metrics": {
@@ -86,7 +107,7 @@ def test_summarise_snapshot_keeps_hourly_trades_when_complete(monkeypatch):
                 "timezone": "JST",
                 "lookback_hours": 24,
                 "exclude_manual": True,
-                "hours": [{"label": "snapshot", "trades": 1}] * 24,
+                "hours": _hourly_rows(24, reference_now=now, label="snapshot"),
             }
         },
     }
@@ -94,4 +115,3 @@ def test_summarise_snapshot_keeps_hourly_trades_when_complete(monkeypatch):
     result = ui._summarise_snapshot(snapshot)
 
     assert result["hourly_trades"]["hours"][0]["label"] == "snapshot"
-

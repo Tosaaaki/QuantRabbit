@@ -8564,3 +8564,25 @@
 - 意図:
   - service worker の event loop 占有を避け、同時 RPC の頭詰まりを低減する。
   - `Read timed out` 起点の fallback 連鎖を抑え、約定取りこぼしを減らす。
+
+### 2026-02-27（追記）Autotune UI の時間帯履歴欠落を再発防止
+
+- 背景:
+  - `hourly_trades` が不完全でも「lookback件数だけ満たしていれば」採用されるケースがあり、
+    深夜帯（JST 00:00-06:00）を含む24時間枠が欠ける表示が発生し得た。
+  - snapshot 取得失敗時は `_dashboard_defaults()` の空配列がそのまま表示され、
+    「時間帯ごとの表が出ない」状態になり得た。
+- 変更:
+  - `apps/autotune_ui.py`
+    - `hourly_trades` 採用判定を厳格化:
+      - JST 固定チェック
+      - 期待24時間ウィンドウ（生成時刻基準）のキー完全一致チェック
+      - ラベル/キー正規化（年跨ぎ考慮）を追加
+    - snapshot 取得失敗時でも `recent_trades` + `hourly_fallback` を使う
+      `local-fallback` サマリを生成するよう変更。
+  - テスト追加/更新:
+    - `tests/apps/test_autotune_ui_dashboard_local_fallback.py`
+    - `tests/apps/test_autotune_ui_hourly_fallback.py`
+    - `tests/apps/test_autotune_ui_hourly_source_guard.py`
+- 検証:
+  - `pytest -q tests/apps` で `24 passed` を確認。
