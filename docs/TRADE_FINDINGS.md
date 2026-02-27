@@ -110,8 +110,11 @@ Fact:
 Improvement:
 1. `execution/order_manager.py`
    - `CLIENT_TRADE_ID_ALREADY_EXISTS` 発生時に、同一 `client_order_id` の既存 `filled` 行を `orders.db` から逆引きし、`trade_id` を回収して `duplicate_recovered` として成功返却する導線を追加。
+   - service timeout 後の local fallback 前に同一CIDの `orders.db` 状態を最大10秒ポーリングし、`filled/rejected` など終端状態を先に回収して二重送信を抑止。
 2. `ops/env/quant-v2-runtime.env`
    - `ORDER_MANAGER_SERVICE_TIMEOUT=45.0`（from `8.0`）
+   - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC=10.0`
+   - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_POLL_SEC=0.5`
 3. `ops/env/quant-order-manager.env`
    - `ORDER_MANAGER_SERVICE_WORKERS=6`（from `4`）
 

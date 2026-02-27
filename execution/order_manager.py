@@ -177,6 +177,14 @@ _ORDER_MANAGER_SERVICE_POOL_MAXSIZE = max(
 _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "ORDER_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
+_ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC = max(
+    0.0,
+    float(_env_float("ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC", 8.0)),
+)
+_ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_POLL_SEC = max(
+    0.1,
+    float(_env_float("ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_POLL_SEC", 0.5)),
+)
 _ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE = _env_bool(
     "ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False
 )
@@ -5049,6 +5057,7 @@ def get_last_order_status_by_client_id(
               ts,
               status,
               attempt,
+              ticket_id,
               side,
               units,
               error_code,
@@ -5067,7 +5076,18 @@ def get_last_order_status_by_client_id(
     if not row:
         return _cached_order_status(client_order_id)
     try:
-        ts, status, attempt, side, units, error_code, error_message, request_json, response_json = row
+        (
+            ts,
+            status,
+            attempt,
+            ticket_id,
+            side,
+            units,
+            error_code,
+            error_message,
+            request_json,
+            response_json,
+        ) = row
         req = None
         res = None
         if request_json:
@@ -5084,6 +5104,7 @@ def get_last_order_status_by_client_id(
             "ts": ts,
             "status": status,
             "attempt": attempt,
+            "ticket_id": ticket_id,
             "side": side,
             "units": units,
             "error_code": error_code,
@@ -5160,6 +5181,58 @@ def _latest_filled_trade_id_by_client_id(client_order_id: Optional[str]) -> Opti
         return None
     trade_id = _extract_trade_id(parsed_cached)
     return str(trade_id) if trade_id else None
+
+
+def _order_status_trade_id(order_status: Optional[dict[str, object]]) -> Optional[str]:
+    if not isinstance(order_status, dict):
+        return None
+    ticket_id = order_status.get("ticket_id")
+    if ticket_id:
+        return str(ticket_id)
+    response_payload = order_status.get("response")
+    if isinstance(response_payload, dict):
+        trade_id = _extract_trade_id(response_payload)
+        if trade_id:
+            return str(trade_id)
+    response_json = order_status.get("response_json")
+    if response_json:
+        try:
+            parsed = json.loads(str(response_json))
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            trade_id = _extract_trade_id(parsed)
+            if trade_id:
+                return str(trade_id)
+    return None
+
+
+def _await_terminal_service_order_status(
+    client_order_id: Optional[str],
+) -> Optional[dict[str, object]]:
+    if not client_order_id:
+        return None
+    wait_sec = float(_ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC)
+    if wait_sec <= 0.0:
+        return None
+
+    non_terminal_statuses = {
+        "preflight_start",
+        "probability_scaled",
+        "submit_attempt",
+        "quote_retry",
+    }
+    deadline = time.monotonic() + wait_sec
+    last_seen: Optional[dict[str, object]] = None
+    while time.monotonic() <= deadline:
+        status_payload = get_last_order_status_by_client_id(client_order_id)
+        if isinstance(status_payload, dict):
+            last_seen = status_payload
+            status = str(status_payload.get("status") or "").strip().lower()
+            if status and status not in non_terminal_statuses:
+                return status_payload
+        time.sleep(_ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_POLL_SEC)
+    return last_seen
 
 
 def _console_order_log(
@@ -8012,6 +8085,32 @@ async def market_order(
         if service_result is None:
             return None
         return str(service_result) if service_result is not None else None
+
+    if _order_manager_service_enabled() and _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
+        recovered_status = _await_terminal_service_order_status(client_order_id)
+        if isinstance(recovered_status, dict):
+            recovered_trade_id = _order_status_trade_id(recovered_status)
+            recovered_state = str(recovered_status.get("status") or "").strip().lower()
+            if recovered_trade_id:
+                logging.info(
+                    "[ORDER] service-timeout recovered existing fill client=%s trade=%s status=%s",
+                    client_order_id or "-",
+                    recovered_trade_id,
+                    recovered_state or "-",
+                )
+                return recovered_trade_id
+            if recovered_state and recovered_state not in {
+                "preflight_start",
+                "probability_scaled",
+                "submit_attempt",
+                "quote_retry",
+            }:
+                logging.info(
+                    "[ORDER] service-timeout recovered terminal status client=%s status=%s (skip local fallback)",
+                    client_order_id or "-",
+                    recovered_state,
+                )
+                return None
 
     if strategy_tag is not None:
         strategy_tag = str(strategy_tag)

@@ -8500,8 +8500,13 @@
     - `market_order` の reject reason が `CLIENT_TRADE_ID_ALREADY_EXISTS` のとき、
       既存 `filled` 行から `trade_id` を回収し
       `status=duplicate_recovered` で成功返却する導線を追加。
+    - service timeout で fallback する前に、
+      同一CIDの `orders.db` 状態を最大10秒ポーリングして
+      `filled/rejected` の終端状態を先に回収する導線を追加。
   - `ops/env/quant-v2-runtime.env`
     - `ORDER_MANAGER_SERVICE_TIMEOUT=45.0`（from `8.0`）
+    - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC=10.0`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_POLL_SEC=0.5`
   - `ops/env/quant-order-manager.env`
     - `ORDER_MANAGER_SERVICE_WORKERS=6`（from `4`）
 - 意図:
