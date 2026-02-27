@@ -8743,6 +8743,9 @@
     - Cloud Run（ローカル `trades.db` なし）では、snapshot 側 summary が
       非ゼロでも `recent_trades` 由来と不整合なら、日次/週次/前日比/
       勝敗/勝率/7d件数を `recent_trades` 由来へ正規化するよう補正。
+    - `scripts/publish_ui_snapshot.py` 側で `metrics.hourly_trades` を
+      `trades.db` の直近24h集計から常時注入するよう変更し、
+      Cloud Run 側が DB なしでも時間帯別（夜間含む）を欠落なく表示できるよう修正。
     - `tab=architecture` の図表に `quant-order-manager` /
       `quant-position-manager` が欠けていたため、V2 実導線に沿って図を更新。
   - テスト追加/更新:
@@ -8755,8 +8758,11 @@
       - DBなし環境で snapshot 非ゼロ値が stale な場合に `recent_trades` へ
         正規化される回帰ケースを追加
     - `tests/apps/test_autotune_ui_template_guards.py`
+    - `tests/scripts/test_publish_ui_snapshot.py`
+      - GCS公開スナップショット用の hourly 集計（manual除外 / lookback固定）を追加検証
 - 検証:
   - `pytest -q tests/apps` で `32 passed` を確認。
+  - `pytest -q tests/apps tests/scripts/test_publish_ui_snapshot.py` で `34 passed` を確認。
 
 ### 2026-02-27（追記）B/C 収益監査に基づく追加チューニング（損失幅圧縮）
 

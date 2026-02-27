@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Optional
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -96,6 +96,8 @@ SKIP_OANDA = os.getenv("UI_SNAPSHOT_SKIP_OANDA", "").strip().lower() in {
     "true",
     "yes",
 }
+HOURLY_LOOKBACK_HOURS = max(1, int(os.getenv("UI_HOURLY_LOOKBACK_HOURS", "24")))
+JST = timezone(timedelta(hours=9))
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -194,6 +196,93 @@ def _load_last_metric_ts(metric: str) -> Optional[str]:
         return str(row[0]) if row[0] is not None else None
     except Exception:
         return None
+
+
+def _build_hourly_trades_from_db(now: Optional[datetime] = None) -> Optional[dict]:
+    if not TRADES_DB.exists():
+        return None
+    now_dt = now or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    now_jst = now_dt.astimezone(JST)
+    now_hour = now_jst.replace(minute=0, second=0, microsecond=0)
+    start_hour = now_hour - timedelta(hours=HOURLY_LOOKBACK_HOURS - 1)
+    start_hour_utc = start_hour.astimezone(timezone.utc).isoformat()
+
+    buckets: dict[datetime, dict[str, float | int]] = {}
+    for i in range(HOURLY_LOOKBACK_HOURS):
+        hour = now_hour - timedelta(hours=i)
+        buckets[hour] = {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0}
+
+    db_uri = f"file:{TRADES_DB}?mode=ro"
+    try:
+        con = sqlite3.connect(db_uri, uri=True, timeout=DB_READ_TIMEOUT_SEC)
+        con.row_factory = sqlite3.Row
+        con.execute(f"PRAGMA busy_timeout={int(DB_READ_TIMEOUT_SEC * 1000)}")
+        cur = con.execute(
+            """
+            SELECT
+              strftime('%Y-%m-%d %H:00:00', datetime(close_time, '+9 hours')) AS hour_jst,
+              SUM(COALESCE(pl_pips, 0.0)) AS pips,
+              SUM(COALESCE(realized_pl, 0.0)) AS jpy,
+              COUNT(*) AS trades,
+              SUM(CASE WHEN COALESCE(pl_pips, 0.0) > 0 THEN 1 ELSE 0 END) AS wins,
+              SUM(CASE WHEN COALESCE(pl_pips, 0.0) < 0 THEN 1 ELSE 0 END) AS losses
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND COALESCE(lower(pocket), '') != 'manual'
+              AND close_time >= ?
+            GROUP BY hour_jst
+            """,
+            (start_hour_utc,),
+        )
+        rows = cur.fetchall()
+        con.close()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[UI] hourly_trades query failed: %s", exc)
+        return None
+
+    for row in rows:
+        key = str(row["hour_jst"] or "").strip()
+        if not key:
+            continue
+        try:
+            hour = datetime.strptime(key, "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST)
+        except Exception:
+            continue
+        bucket = buckets.get(hour)
+        if bucket is None:
+            continue
+        bucket["pips"] += float(row["pips"] or 0.0)
+        bucket["jpy"] += float(row["jpy"] or 0.0)
+        bucket["trades"] += int(row["trades"] or 0)
+        bucket["wins"] += int(row["wins"] or 0)
+        bucket["losses"] += int(row["losses"] or 0)
+
+    hourly_rows: list[dict] = []
+    for hour in sorted(buckets.keys(), reverse=True):
+        data = buckets[hour]
+        trades = int(data["trades"])
+        win_rate = (int(data["wins"]) / trades) if trades else 0.0
+        hourly_rows.append(
+            {
+                "key": hour.isoformat(),
+                "label": hour.strftime("%m/%d %H:00"),
+                "pips": round(float(data["pips"]), 2),
+                "jpy": round(float(data["jpy"]), 2),
+                "trades": trades,
+                "wins": int(data["wins"]),
+                "losses": int(data["losses"]),
+                "win_rate": win_rate,
+            }
+        )
+
+    return {
+        "timezone": "JST",
+        "lookback_hours": HOURLY_LOOKBACK_HOURS,
+        "exclude_manual": True,
+        "hours": hourly_rows,
+    }
 
 
 def _extract_order_meta(payload: dict) -> dict:
@@ -714,6 +803,9 @@ def main() -> int:
                 logging.warning("[UI] get_performance_summary failed: %s", exc)
                 metrics = {}
     if isinstance(metrics, dict):
+        hourly_trades = _build_hourly_trades_from_db()
+        if hourly_trades:
+            metrics["hourly_trades"] = hourly_trades
         data_lag_ms = _load_latest_metric("data_lag_ms")
         decision_latency_ms = _load_latest_metric("decision_latency_ms")
         if data_lag_ms is not None:
