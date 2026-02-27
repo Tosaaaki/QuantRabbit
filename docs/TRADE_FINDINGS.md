@@ -3300,3 +3300,60 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-02-27 16:03 UTC / 2026-02-28 01:03 JST - `scalp_ping_5s_b/c` 収益悪化に対する高確度化（VM実測）
+
+Period:
+- 直近24h（`close_time >= datetime('now','-24 hour')`）
+- 直近7d（`close_time >= datetime('now','-7 day')`）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `journalctl -u quant-order-manager.service`
+- OANDA openTrades (`scripts/oanda_open_trades.py`)
+
+Fact:
+- 24h合計: `-3023.8 JPY / -983.5 pips / 1433 trades`
+- 7d合計: `-22169.4 JPY / -2031.4 pips / 4310 trades`
+- 24h戦略別:
+  - `scalp_ping_5s_c_live`: `605 trades / -3444.2 JPY / -575.1 pips`
+  - `scalp_ping_5s_b_live`: `677 trades / -756.8 JPY / -420.4 pips`
+- side別（24h）:
+  - `B long`: `547 trades / -666.3 JPY / avg_win=1.159 / avg_loss=1.863`
+  - `B short`: `130 trades / -93.1 JPY / avg_win=1.156 / avg_loss=2.031`
+  - `C long`: `493 trades / -3389.2 JPY / avg_win=1.419 / avg_loss=2.300`
+  - `C short`: `112 trades / -54.9 JPY / avg_win=0.946 / avg_loss=1.858`
+- `orders.db` 24h status:
+  - `perf_block=2943`, `entry_probability_reject=683`, `rejected=317`, `filled=1422`
+  - `STOP_LOSS_ON_FILL_LOSS` reject が継続。
+
+Failure Cause:
+1. `scalp_ping_5s_c_live` は `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.00` で低品質シグナル通過が過多。
+2. B/C とも `avg_loss_pips > avg_win_pips` が続き、高回転で負けを積み上げる構造。
+3. B は同時保有・発注回転が高く、逆行局面で負け玉を増幅。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.00 -> 0.74`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE: 0.58 -> 0.66`
+   - `SCALP_PING_5S_C_CONF_FLOOR: 80 -> 83`
+   - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE: 16 -> 10`
+   - `SCALP_PING_5S_C_BASE_ENTRY_UNITS: 140 -> 110`
+2. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.67 -> 0.72`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE: 0.76 -> 0.80`
+   - `SCALP_PING_5S_B_CONF_FLOOR: 80 -> 82`
+   - `SCALP_PING_5S_B_MAX_ACTIVE_TRADES: 6 -> 4`
+   - `SCALP_PING_5S_B_MAX_PER_DIRECTION: 4 -> 3`
+   - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE: 8 -> 6`
+   - `SCALP_PING_5S_B_BASE_ENTRY_UNITS: 300 -> 260`
+
+Verification:
+1. 反映後2h/24hで `scalp_ping_5s_b/c` の `sum(realized_pl)` が改善方向へ転じること。
+2. `orders.db` で `filled` を維持しつつ `rejected` と `STOP_LOSS_ON_FILL_LOSS` が減ること。
+3. 24h side別で `avg_loss_pips` が `avg_win_pips` に接近または逆転すること。
+4. `MARKET_ORDER_MARGIN_CLOSEOUT` が増えないこと（特に micro系 tail 監視を継続）。
+
+Status:
+- in_progress

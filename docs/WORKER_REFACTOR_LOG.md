@@ -9938,3 +9938,4 @@
 - 影響範囲:
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカルentryパラメータのみ。
   - `execution/order_manager.py` / `execution/strategy_entry.py` の契約（`entry_probability`, `entry_units_intent`）とV2責務分離は非変更。
+  - 反映手順は `main` へ push 後、`scripts/vm.sh ... deploy -b main --restart quant-scalp-ping-5s-{b,c}.service -t` を実施する。
