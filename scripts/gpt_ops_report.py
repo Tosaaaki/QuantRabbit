@@ -46,6 +46,7 @@ PAIR_ALIASES = {
     "AUD_JPY": {"AUD_JPY", "AUDJPY"},
     "EUR_JPY": {"EUR_JPY", "EURJPY"},
 }
+_PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT = 900.0
 
 
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -55,6 +56,12 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+_PLAYBOOK_FACTOR_MAX_AGE_SEC = max(
+    30.0,
+    _safe_float(os.getenv("OPS_PLAYBOOK_FACTOR_MAX_AGE_SEC", str(_PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT)), _PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT),
+)
 
 
 def _safe_int(value: object, default: int = 0) -> int:
@@ -541,6 +548,42 @@ def _load_chart_story(fac_m1: dict[str, Any], fac_h4: dict[str, Any]) -> dict[st
     return out
 
 
+def _extract_market_pair_price(market_context: Optional[dict[str, Any]], pair: str) -> Optional[float]:
+    if not isinstance(market_context, dict):
+        return None
+    pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
+    row = pairs.get(pair.lower()) if isinstance(pairs, dict) else None
+    if not isinstance(row, dict):
+        return None
+    return _safe_float_or_none(row.get("price"))
+
+
+def _factor_timestamp_from_row(row: dict[str, Any]) -> Optional[datetime]:
+    for key in ("timestamp", "ts", "time", "datetime", "asof"):
+        if key not in row:
+            continue
+        parsed = _parse_iso_datetime(row.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _build_factor_freshness(fac_m1: dict[str, Any], *, now_utc: datetime) -> dict[str, Any]:
+    ts = _factor_timestamp_from_row(fac_m1)
+    age_sec: Optional[float]
+    if ts is None:
+        age_sec = None
+    else:
+        age_sec = max(0.0, (now_utc - ts).total_seconds())
+    stale = bool(not fac_m1) or age_sec is None or age_sec > _PLAYBOOK_FACTOR_MAX_AGE_SEC
+    return {
+        "stale": stale,
+        "age_sec": round(age_sec, 3) if isinstance(age_sec, (int, float)) else None,
+        "timestamp_utc": _to_iso(ts) if ts is not None else None,
+        "max_age_sec": _PLAYBOOK_FACTOR_MAX_AGE_SEC,
+    }
+
+
 def _extract_candle_ranges(candles: list[dict[str, Any]], bars: int) -> tuple[float, float]:
     if not candles:
         return 0.0, 0.0
@@ -563,66 +606,103 @@ def _extract_price_snapshot(
     story: dict[str, Any],
     forecast: dict[str, Any],
     policy: dict[str, Any],
+    market_context: Optional[dict[str, Any]],
+    factor_freshness: dict[str, Any],
 ) -> tuple[dict[str, Any], float]:
     fac_m1 = factors.get("M1") or {}
     fac_h4 = factors.get("H4") or {}
 
-    current_price = _safe_float(fac_m1.get("close"), 0.0)
-    atr_pips = max(0.0, _safe_float(fac_m1.get("atr_pips"), 0.0))
-    m1_gap_pips = (_safe_float(fac_m1.get("ma10")) - _safe_float(fac_m1.get("ma20"))) / 0.01
-    h4_gap_pips = (_safe_float(fac_h4.get("ma10")) - _safe_float(fac_h4.get("ma20"))) / 0.01
-    vol_5m = _safe_float(fac_m1.get("vol_5m"), 0.0)
+    factor_stale = bool(factor_freshness.get("stale"))
+    factor_age_sec = _safe_float_or_none(factor_freshness.get("age_sec"))
+    factor_timestamp_utc = str(factor_freshness.get("timestamp_utc") or "")
+    max_factor_age_sec = _safe_float(factor_freshness.get("max_age_sec"), _PLAYBOOK_FACTOR_MAX_AGE_SEC)
 
-    m1_candles = fac_m1.get("candles") if isinstance(fac_m1.get("candles"), list) else []
+    factor_close = _safe_float_or_none(fac_m1.get("close"))
+    market_close = _extract_market_pair_price(market_context, "USD_JPY")
+    use_market_price = bool(
+        isinstance(market_close, (int, float))
+        and market_close > 0.0
+        and (factor_stale or not isinstance(factor_close, (int, float)) or factor_close <= 0.0)
+    )
+    current_price = float(market_close) if use_market_price else _safe_float(fac_m1.get("close"), 0.0)
+    current_price_source = "external_snapshot" if use_market_price else ("factor_cache" if current_price > 0 else "missing")
+
+    atr_pips = max(0.0, _safe_float(fac_m1.get("atr_pips"), 0.0)) if not factor_stale else 0.0
+    m1_gap_pips = (
+        (_safe_float(fac_m1.get("ma10")) - _safe_float(fac_m1.get("ma20"))) / 0.01
+        if not factor_stale
+        else 0.0
+    )
+    h4_gap_pips = (
+        (_safe_float(fac_h4.get("ma10")) - _safe_float(fac_h4.get("ma20"))) / 0.01
+        if not factor_stale
+        else 0.0
+    )
+    vol_5m = _safe_float(fac_m1.get("vol_5m"), 0.0) if not factor_stale else 0.0
+
+    m1_candles = fac_m1.get("candles") if (not factor_stale and isinstance(fac_m1.get("candles"), list)) else []
     high_3h, low_3h = _extract_candle_ranges(m1_candles, bars=180)
     high_24h, low_24h = _extract_candle_ranges(m1_candles, bars=1440)
     range_3h_pips = max(0.0, (high_3h - low_3h) / 0.01) if high_3h and low_3h else 0.0
     range_24h_pips = max(0.0, (high_24h - low_24h) / 0.01) if high_24h and low_24h else 0.0
 
-    support_price, resistance_price = _extract_levels(story, current_price) if current_price > 0 else (0.0, 0.0)
+    support_price, resistance_price = _extract_levels(story, current_price) if (current_price > 0 and not factor_stale) else (0.0, 0.0)
+    if current_price > 0 and (support_price <= 0.0 or resistance_price <= 0.0):
+        support_price = round(current_price - 0.15, 3)
+        resistance_price = round(current_price + 0.15, 3)
 
     forecast_ref = forecast.get("reference") if isinstance(forecast.get("reference"), dict) else {}
     p_up = _safe_float(forecast_ref.get("p_up"), 0.5)
     edge = _safe_float(forecast_ref.get("edge"), 0.0)
 
-    base_trend = (
-        0.80 * math.tanh(h4_gap_pips / max(4.0, atr_pips * 1.8, 4.0))
-        + 0.50 * math.tanh(m1_gap_pips / max(2.0, atr_pips, 2.0))
-    )
-    if forecast_ref:
+    base_trend = 0.0
+    if not factor_stale:
+        base_trend = (
+            0.80 * math.tanh(h4_gap_pips / max(4.0, atr_pips * 1.8, 4.0))
+            + 0.50 * math.tanh(m1_gap_pips / max(2.0, atr_pips, 2.0))
+        )
+    if forecast_ref and not factor_stale:
         forecast_bias = (p_up - 0.5) * 2.0
         edge_scale = 0.5 + 0.5 * _clamp(edge, 0.0, 1.0)
         direction_score = 0.55 * base_trend + 0.45 * forecast_bias * edge_scale
+    elif forecast_ref:
+        forecast_bias = (p_up - 0.5) * 2.0
+        direction_score = 0.20 * forecast_bias
     else:
         direction_score = base_trend
     direction_score = _clamp(direction_score, -1.0, 1.0)
 
     range_position = 0.5
-    if current_price > 0 and high_24h > low_24h:
+    if current_price > 0 and high_24h > low_24h and not factor_stale:
         range_position = _clamp((current_price - low_24h) / (high_24h - low_24h), 0.0, 1.0)
 
-    volatility_state = "high" if atr_pips >= 8.5 else ("low" if atr_pips <= 3.5 else "normal")
-    if vol_5m >= 1.45 and volatility_state != "high":
+    volatility_state = "unknown" if factor_stale else ("high" if atr_pips >= 8.5 else ("low" if atr_pips <= 3.5 else "normal"))
+    if not factor_stale and vol_5m >= 1.45 and volatility_state != "high":
         volatility_state = "high"
 
     snapshot = {
         "instrument": "USD_JPY",
         "current_price": round(current_price, 3) if current_price > 0 else None,
+        "current_price_source": current_price_source,
         "atr_pips": round(atr_pips, 3),
         "range_3h_pips": round(range_3h_pips, 3),
         "range_24h_pips": round(range_24h_pips, 3),
         "range_position_24h": round(range_position, 3),
-        "micro_regime": str(fac_m1.get("regime") or ""),
-        "macro_regime": str(fac_h4.get("regime") or ""),
-        "micro_rsi": round(_safe_float(fac_m1.get("rsi"), 0.0), 3),
-        "micro_adx": round(_safe_float(fac_m1.get("adx"), 0.0), 3),
-        "macro_adx": round(_safe_float(fac_h4.get("adx"), 0.0), 3),
+        "micro_regime": str(fac_m1.get("regime") or "stale"),
+        "macro_regime": str(fac_h4.get("regime") or "stale"),
+        "micro_rsi": round(_safe_float(fac_m1.get("rsi"), 0.0), 3) if not factor_stale else None,
+        "micro_adx": round(_safe_float(fac_m1.get("adx"), 0.0), 3) if not factor_stale else None,
+        "macro_adx": round(_safe_float(fac_h4.get("adx"), 0.0), 3) if not factor_stale else None,
         "ma_gap_m1_pips": round(m1_gap_pips, 3),
         "ma_gap_h4_pips": round(h4_gap_pips, 3),
         "volatility_state": volatility_state,
         "vol_5m": round(vol_5m, 3),
         "support_price": support_price if support_price > 0 else None,
         "resistance_price": resistance_price if resistance_price > 0 else None,
+        "factor_stale": factor_stale,
+        "factor_age_m1_sec": round(factor_age_sec, 1) if isinstance(factor_age_sec, (int, float)) else None,
+        "factor_timestamp_utc": factor_timestamp_utc or None,
+        "factor_max_age_sec": round(max_factor_age_sec, 1),
         "policy_event_lock": bool(policy.get("event_lock", False)),
         "policy_range_mode": bool(policy.get("range_mode", False)),
     }
@@ -1037,6 +1117,14 @@ def _build_break_points(
                 "impact": "rebuild_scenarios",
             }
         )
+    if bool(snapshot.get("factor_stale")):
+        out.append(
+            {
+                "key": "factor_stale",
+                "condition": "M1 factor cache is stale or missing",
+                "impact": "reduce_size_or_wait_for_data_refresh",
+            }
+        )
     return out
 
 
@@ -1054,6 +1142,7 @@ def _build_if_then_rules(
     resistance = _safe_float(snapshot.get("resistance_price"), 0.0)
     dominant_driver = str(driver.get("dominant_driver") or "unknown")
     event_soon = bool(event_ctx.get("event_soon"))
+    factor_stale = bool(snapshot.get("factor_stale"))
 
     event_rule = "wait_for_post_spike_confirmation"
     if not event_soon:
@@ -1062,6 +1151,12 @@ def _build_if_then_rules(
     bp_key_text = ",".join(str(row.get("key")) for row in break_points[:3] if isinstance(row, dict))
 
     return [
+        {
+            "id": "st_data_freshness",
+            "horizon": "short_term",
+            "if": f"factor_stale={str(factor_stale).lower()}",
+            "then": "reduce_size_or_wait_for_fresh_factor",
+        },
         {
             "id": "st_event_mode",
             "horizon": "short_term",
@@ -1109,6 +1204,8 @@ def _build_scenarios(
     uncertainty += min(0.25, _safe_float(order_stats.get("reject_rate"), 0.0) * 0.8)
     if event_ctx.get("event_soon"):
         uncertainty += 0.20
+    if bool(snapshot.get("factor_stale")):
+        uncertainty += 0.24
     uncertainty = _clamp(uncertainty, 0.0, 1.0)
 
     two_way_prob = _clamp(0.16 + uncertainty * 0.42, 0.12, 0.62)
@@ -1283,13 +1380,6 @@ def build_ops_report(
     now_utc = now_utc or _utcnow()
     fac_m1 = factors.get("M1") or {}
     fac_h4 = factors.get("H4") or {}
-    story = _load_chart_story(fac_m1, fac_h4)
-    snapshot, direction_score = _extract_price_snapshot(
-        factors=factors,
-        story=story,
-        forecast=forecast,
-        policy=policy,
-    )
     event_ctx = _event_context(events=events, policy=policy)
     if not isinstance(market_context, dict):
         market_context = _build_market_context(
@@ -1299,6 +1389,18 @@ def build_ops_report(
             external_snapshot={},
             macro_snapshot={},
         )
+    story = _load_chart_story(fac_m1, fac_h4)
+    factor_freshness = _build_factor_freshness(fac_m1, now_utc=now_utc)
+    snapshot, direction_score = _extract_price_snapshot(
+        factors=factors,
+        story=story,
+        forecast=forecast,
+        policy=policy,
+        market_context=market_context,
+        factor_freshness=factor_freshness,
+    )
+    if bool(snapshot.get("factor_stale")):
+        direction_score *= 0.45
     driver_breakdown = _build_driver_breakdown(market_context=market_context, event_ctx=event_ctx)
     direction_score = _blend_direction_score(base_score=direction_score, driver=driver_breakdown)
     scenarios = _build_scenarios(
@@ -1340,6 +1442,8 @@ def build_ops_report(
     confidence = round(_clamp(base_conf * 0.72 + driver_conf * 0.28, 0.0, 1.0) * 100.0, 1)
     if event_ctx.get("event_soon"):
         confidence = max(20.0, round(confidence - 18.0, 1))
+    if bool(snapshot.get("factor_stale")):
+        confidence = max(15.0, round(confidence - 22.0, 1))
 
     report = {
         "generated_at": _to_iso(now_utc),
@@ -1364,6 +1468,8 @@ def build_ops_report(
         "risk_protocol": risk_protocol,
         "data_sources": {
             "factors_ready": bool(fac_m1) and bool(fac_h4),
+            "factors_m1_stale": bool(snapshot.get("factor_stale")),
+            "factors_m1_age_sec": snapshot.get("factor_age_m1_sec"),
             "trades_window_count": _safe_int((performance.get("overall") or {}).get("trade_count"), 0),
             "orders_window_count": _safe_int(order_stats.get("total_orders"), 0),
             "events_count": len(events),
@@ -1398,9 +1504,12 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append("## Snapshot")
     lines.append(f"- instrument: {snapshot.get('instrument')}")
     lines.append(f"- current_price: {snapshot.get('current_price')}")
+    lines.append(f"- current_price_source: {snapshot.get('current_price_source')}")
     lines.append(f"- atr_pips: {snapshot.get('atr_pips')}")
     lines.append(f"- range_24h_pips: {snapshot.get('range_24h_pips')}")
     lines.append(f"- macro_regime/micro_regime: {snapshot.get('macro_regime')} / {snapshot.get('micro_regime')}")
+    lines.append(f"- factor_stale: {snapshot.get('factor_stale')}")
+    lines.append(f"- factor_age_m1_sec: {snapshot.get('factor_age_m1_sec')}")
     lines.append(f"- support/resistance: {snapshot.get('support_price')} / {snapshot.get('resistance_price')}")
     pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
     usdjpy = pairs.get("usd_jpy") if isinstance(pairs.get("usd_jpy"), dict) else {}

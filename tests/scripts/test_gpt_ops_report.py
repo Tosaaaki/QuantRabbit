@@ -111,3 +111,76 @@ def test_build_ops_report_handles_minimal_inputs() -> None:
     assert isinstance(payload["swing"], dict)
     assert isinstance(payload["scenarios"], list)
     assert payload["data_sources"]["factors_ready"] is False
+
+
+def test_build_ops_report_falls_back_to_external_price_when_factor_is_stale() -> None:
+    now_utc = datetime(2026, 2, 27, 10, 0, tzinfo=timezone.utc)
+    payload = gpt_ops_report.build_ops_report(
+        hours=24.0,
+        factors={
+            "M1": {"close": 152.727, "ts": "2025-10-29T23:58:00+00:00"},
+            "H4": {"ma10": 152.90, "ma20": 152.80},
+        },
+        forecast={"enabled": False, "reference": None},
+        performance={"window_hours": 24.0, "overall": {}, "by_pocket": {}},
+        order_stats={"window_hours": 24.0, "total_orders": 0, "reject_rate": 0.0},
+        policy={},
+        events=[],
+        market_context={
+            "pairs": {
+                "usd_jpy": {"price": 156.0985, "change_pct_24h": 0.1},
+                "eur_usd": {"price": 1.18, "change_pct_24h": 0.0},
+                "aud_jpy": {"price": 111.0, "change_pct_24h": 0.0},
+                "eur_jpy": {"price": 184.0, "change_pct_24h": 0.0},
+            },
+            "dollar": {"dxy": 97.7, "dxy_change_pct_24h": 0.0, "source": "external"},
+            "rates": {"us_jp_10y_spread": 1.9},
+            "risk": {"mode": "neutral"},
+        },
+        now_utc=now_utc,
+    )
+
+    assert payload["snapshot"]["factor_stale"] is True
+    assert payload["snapshot"]["current_price_source"] == "external_snapshot"
+    assert payload["snapshot"]["current_price"] == 156.099
+    assert payload["data_sources"]["factors_m1_stale"] is True
+
+
+def test_build_ops_report_uses_factor_price_when_factor_is_fresh() -> None:
+    now_utc = datetime(2026, 2, 27, 10, 0, tzinfo=timezone.utc)
+    payload = gpt_ops_report.build_ops_report(
+        hours=24.0,
+        factors={
+            "M1": {
+                "close": 155.4321,
+                "timestamp": "2026-02-27T09:59:30+00:00",
+                "ma10": 155.45,
+                "ma20": 155.40,
+                "atr_pips": 2.2,
+                "candles": [{"high": 155.45, "low": 155.40}],
+            },
+            "H4": {"ma10": 155.60, "ma20": 155.30, "regime": "Mixed"},
+        },
+        forecast={"enabled": False, "reference": None},
+        performance={"window_hours": 24.0, "overall": {}, "by_pocket": {}},
+        order_stats={"window_hours": 24.0, "total_orders": 0, "reject_rate": 0.0},
+        policy={},
+        events=[],
+        market_context={
+            "pairs": {
+                "usd_jpy": {"price": 156.0, "change_pct_24h": 0.1},
+                "eur_usd": {"price": 1.18, "change_pct_24h": 0.0},
+                "aud_jpy": {"price": 111.0, "change_pct_24h": 0.0},
+                "eur_jpy": {"price": 184.0, "change_pct_24h": 0.0},
+            },
+            "dollar": {"dxy": 97.7, "dxy_change_pct_24h": 0.0, "source": "external"},
+            "rates": {"us_jp_10y_spread": 1.9},
+            "risk": {"mode": "neutral"},
+        },
+        now_utc=now_utc,
+    )
+
+    assert payload["snapshot"]["factor_stale"] is False
+    assert payload["snapshot"]["current_price_source"] == "factor_cache"
+    assert payload["snapshot"]["current_price"] == 155.432
+    assert payload["data_sources"]["factors_m1_stale"] is False

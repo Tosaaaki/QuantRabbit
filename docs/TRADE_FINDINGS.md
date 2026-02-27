@@ -86,6 +86,40 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 15:05 UTC / 2026-02-28 00:05 JST - 市況プレイブックの stale factor 誤判定を是正（外部価格フォールバック）
+
+Period:
+- ローカル再現（`run_market_playbook_cycle.py --force`）
+
+Source:
+- `tmp/gpt_ops_report_user_now.json`
+- `scripts/gpt_ops_report.py`
+- `tests/scripts/test_gpt_ops_report.py`
+
+Fact:
+- `factor_cache` M1 の時刻が `2025-10-29T23:58:00+00:00` の stale 条件でも、
+  従来の `gpt_ops_report` は `snapshot.current_price` と方向スコアに stale 値を直接利用していた。
+- 同時に `market_context.pairs.usd_jpy` は外部取得値（当日値）で更新されるため、
+  `snapshot` と `market_context` の価格整合が崩れるケースが発生していた。
+
+Failure Cause:
+1. `gpt_ops_report` に factor 鮮度判定が無く、`M1 close` を無条件採用していた。
+2. stale 時の信頼度減衰ルールがなく、シナリオ確率が過信方向に寄る余地があった。
+
+Improvement:
+1. `OPS_PLAYBOOK_FACTOR_MAX_AGE_SEC`（default 900s）で M1 factor 鮮度を判定。
+2. stale 時は `snapshot.current_price` を外部 `USD/JPY` にフォールバック。
+3. `snapshot.factor_stale/factor_age_m1_sec/current_price_source` を追加し、判定根拠を可視化。
+4. stale 時に `direction_score` と `direction_confidence_pct` を減衰し、`break_points/if_then_rules` に鮮度ガードを追加。
+
+Verification:
+1. `pytest -q tests/scripts/test_gpt_ops_report.py tests/scripts/test_run_market_playbook_cycle.py` で `11 passed`。
+2. 再実行で `factor_stale=true` の場合 `current_price_source=external_snapshot` を確認。
+3. 同ケースで `direction_confidence_pct` が自動で低下（過信抑制）することを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:00 UTC / 2026-02-28 00:00 JST - `scalp_ping_5s_c` 第13ラウンド（failfast hard block の下限を調整）
 
 Period:

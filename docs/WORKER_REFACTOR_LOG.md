@@ -9699,3 +9699,25 @@
 - 影響範囲:
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY/units/virtual TP/SL に限定。
   - `execution/order_manager.py` / `execution/strategy_entry.py` の契約（`entry_probability`, `entry_units_intent`）および V2 導線責務分離は非変更。
+
+
+### 2026-02-27（追記）`gpt_ops_report` の factor 鮮度ガード追加（外部価格フォールバック）
+
+- 目的:
+  - `factor_cache` が stale のままでも市況プレイブックが古い価格で方向判定しないようにする。
+  - `snapshot.current_price` と `market_context.pairs.usd_jpy` の乖離を自動検出し、誤ったシナリオ確信度を抑える。
+- 変更:
+  - `scripts/gpt_ops_report.py`
+    - `OPS_PLAYBOOK_FACTOR_MAX_AGE_SEC`（default: 900 sec）で M1 factor 鮮度を判定。
+    - factor stale 時は `snapshot.current_price` を `market_context` の外部 `USD/JPY` へフォールバック。
+    - `snapshot` に `current_price_source/factor_stale/factor_age_m1_sec/factor_timestamp_utc` を追加。
+    - stale 時は `direction_score` と `direction_confidence_pct` を減衰し、`if_then_rules` と `break_points` に鮮度ガードを追加。
+    - `data_sources` に `factors_m1_stale/factors_m1_age_sec` を追加。
+  - `tests/scripts/test_gpt_ops_report.py`
+    - stale/fresh の 2 ケースを追加し、価格ソース切替と stale フラグを検証。
+- 検証:
+  - `pytest -q tests/scripts/test_gpt_ops_report.py tests/scripts/test_run_market_playbook_cycle.py` -> `11 passed`
+  - ローカル再現で `factor_timestamp_utc=2025-10-29...` の stale 条件時、`current_price_source=external_snapshot` を確認。
+- 影響範囲:
+  - `quant-ops-policy` のプレイブック生成品質（分析/運用判断）に限定。
+  - strategy worker の ENTRY/EXIT 実装、V2分離導線、`order_manager` ガード契約は非変更。

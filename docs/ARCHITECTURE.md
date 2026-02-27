@@ -70,6 +70,8 @@
   平常15分・指標前後5分・アクティブ1分の可変周期を `logs/ops_playbook_cycle_state.json` で管理する。
   外部市況の自動取得は `scripts/fetch_market_snapshot.py` で実行し、
   `market_external_snapshot`（価格・DXY・米日10年）と `market_events`（主要イベント）を更新する。
+  `gpt_ops_report` は `OPS_PLAYBOOK_FACTOR_MAX_AGE_SEC` を超える stale `factor_cache` を検知した場合、
+  `snapshot.current_price` を外部 `USD/JPY` へフォールバックし、`direction_confidence_pct` を減衰する。
   手動メモの取り込みは `scripts/import_market_brief.py` で `market_external_snapshot` と `market_events` へ変換し、
   `scripts/build_market_context.py` で `market_context` を再生成してからレポートへ反映する。
   `--policy` 導線は no-change diff の記録に限定し、自動で売買ポリシーを適用しない。
