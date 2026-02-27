@@ -8,6 +8,25 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）UI戦略制御の即時反映バグを修正（cache invalidation）
+
+- 背景:
+  - `apps/autotune_ui.py` の strategy control state に TTL キャッシュ
+    （`UI_STRATEGY_CONTROL_CACHE_TTL_SEC`）を導入後、
+    `/ops/strategy-control` 実行直後でも旧キャッシュが残り、
+    dashboard の toggle 状態が最大 TTL 秒だけ古いまま表示されることを確認。
+- 変更:
+  - `apps/autotune_ui.py`
+    - `_invalidate_strategy_control_cache()` を追加。
+    - `_handle_strategy_control_action()` の `set_global_flags` /
+      `set_strategy_flags` 成功後にキャッシュを必ず無効化。
+  - `tests/apps/test_autotune_ui_caching.py`
+    - global 更新と strategy 更新の両経路で
+      `strategy_control` キャッシュが即時クリアされる回帰テストを追加。
+- 意図:
+  - Ops タブでの Entry/Exit/Lock 更新結果を dashboard に即時反映し、
+    「更新成功なのに表示が戻る」誤認を防止する。
+
 ### 2026-02-26（追記）B の縮小ロット失効を更に抑えるため最小ロット閾値を再調整
 
 - 背景（VM実測, 2026-02-26 12:08 UTC / 21:08 JST）:

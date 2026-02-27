@@ -859,6 +859,13 @@ def _load_strategy_control_state() -> dict[str, Any]:
         return copy.deepcopy(state)
 
 
+def _invalidate_strategy_control_cache() -> None:
+    global _strategy_control_cache, _strategy_control_cache_ts
+    with _strategy_control_cache_lock:
+        _strategy_control_cache = None
+        _strategy_control_cache_ts = 0.0
+
+
 def _safe_float(value: Any) -> float:
     try:
         if value is None:
@@ -1356,6 +1363,7 @@ def _handle_strategy_control_action(
             lock=lock,
             note=note_text,
         )
+        _invalidate_strategy_control_cache()
         return {
             "ok": True,
             "scope": "global",
@@ -1377,6 +1385,7 @@ def _handle_strategy_control_action(
         lock=lock,
         note=note_text,
     )
+    _invalidate_strategy_control_cache()
     return {
         "ok": True,
         "scope": "strategy",

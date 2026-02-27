@@ -29,6 +29,8 @@
   `UI_STRATEGY_CONTROL_CACHE_TTL_SEC`（default: 30）秒でTTLキャッシュする。
   `trades/signals/orders` 走査はTTL切れ時のみ実行されるため、
   dashboard の再描画遅延を抑えられる。
+  `/ops/strategy-control` / `/api/strategy-control` の更新成功時は
+  キャッシュを即時無効化し、次回描画で最新状態を再読み込みする。
 - `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、
