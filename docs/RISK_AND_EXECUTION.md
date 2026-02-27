@@ -1310,6 +1310,19 @@
   - 停止なしで運転を維持しつつ、利益寄与戦略へ配分を寄せる。
   - B/C は「継続稼働」前提のまま、サイズと頻度の上限を圧縮して損失勾配を下げる。
 
+### `StageTracker` ロック耐性（2026-02-27 追記）
+- 背景:
+  - `quant-scalp-wick-reversal-blend` が起動時に
+    `execution/stage_tracker.py` の DB初期化で `database is locked` となり停止した。
+- 実装:
+  - `execution/stage_tracker.py`
+    - `STAGE_DB_BUSY_TIMEOUT_MS` / `STAGE_DB_LOCK_RETRY` /
+      `STAGE_DB_LOCK_RETRY_SLEEP_SEC` を追加。
+    - `stage_state.db` 接続で `busy_timeout` / `journal_mode=WAL` を適用。
+    - schema作成を lock retry 付き実行へ変更し、起動時ロックを吸収。
+- 運用意図:
+  - 勝ち筋戦略の起動失敗を防ぎ、停止なし運用での導線断をなくす。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

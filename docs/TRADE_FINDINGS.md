@@ -95,6 +95,36 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 00:48 UTC / 2026-02-27 09:48 JST - `WickReversalBlend` が `stage_tracker` ロックで停止する障害を修正
+Period:
+- Incident window: `2026-02-27 00:46` ～ `00:48` UTC
+- Source: VM `journalctl -u quant-scalp-wick-reversal-blend.service`, repo `execution/stage_tracker.py`
+
+Fact:
+- `quant-scalp-wick-reversal-blend.service` が起動直後に `failed` へ遷移。
+- 直近ログで `execution/stage_tracker.py` 初期化中に
+  `sqlite3.OperationalError: database is locked` を確認。
+- 同時に B/C ワーカーは稼働継続しており、勝ち筋戦略だけが停止していた。
+
+Failure Cause:
+1. `StageTracker.__init__` の schema 作成が単発 `execute` で、ロック競合時に即例外終了していた。
+2. `stage_state.db` に `busy_timeout` / `WAL` / retry の耐性が不足していた。
+
+Improvement:
+1. `execution/stage_tracker.py`
+   - `STAGE_DB_BUSY_TIMEOUT_MS` / `STAGE_DB_LOCK_RETRY` /
+     `STAGE_DB_LOCK_RETRY_SLEEP_SEC` を追加。
+   - 接続を `busy_timeout + WAL + autocommit` で初期化。
+   - schema作成 SQL を lock retry 付き `_execute_with_lock_retry()` 経由へ変更。
+
+Verification:
+1. `python3 -m py_compile execution/stage_tracker.py` が pass。
+2. `pytest -q tests/test_stage_tracker.py` が pass（`3 passed`）。
+3. 反映後 `quant-scalp-wick-reversal-blend.service` が `active` を維持すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 00:33 UTC / 2026-02-27 09:33 JST - 勝ち筋寄せ再配分（WickBlend増量 + B/C縮小）
 Period:
 - Snapshot window: `2026-02-27 00:30` ～ `00:33` UTC

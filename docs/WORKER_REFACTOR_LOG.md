@@ -8257,6 +8257,23 @@
   - 停止なしを維持したまま、勝ち戦略の寄与を増やし、負け戦略の単位時間損失を圧縮する。
   - B/C の発火は維持しつつ、サイズと頻度の上限を絞って損失勾配を下げる。
 
+### 2026-02-27（追記）`StageTracker` ロック耐性を追加（WickBlend起動失敗の解消）
+
+- 背景（VM実測, UTC 2026-02-27 00:46）:
+  - `quant-scalp-wick-reversal-blend.service` が起動直後に
+    `sqlite3.OperationalError: database is locked`（`execution/stage_tracker.py`）で停止。
+  - B/C は稼働しており、勝ち寄与側ワーカーだけが止まる状態だった。
+- 変更:
+  - `execution/stage_tracker.py`
+    - `STAGE_DB_BUSY_TIMEOUT_MS` / `STAGE_DB_LOCK_RETRY` /
+      `STAGE_DB_LOCK_RETRY_SLEEP_SEC` を追加。
+    - 接続に `busy_timeout` と `journal_mode=WAL` を設定し、autocommit化。
+    - schema作成 SQL を `_execute_with_lock_retry()` 経由へ変更し、
+      lock競合時に再試行して起動を継続。
+- 検証:
+  - `python3 -m py_compile execution/stage_tracker.py`: pass
+  - `pytest -q tests/test_stage_tracker.py`: `3 passed`
+
 ### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
 
 - 背景:

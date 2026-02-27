@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 from dataclasses import dataclass
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -61,6 +62,11 @@ _TRADES_JOURNAL_MODE = os.getenv("STAGE_TRADES_JOURNAL_MODE", "WAL")
 _TRADES_SYNCHRONOUS = os.getenv("STAGE_TRADES_SYNCHRONOUS", "NORMAL")
 _TRADES_TEMP_STORE = os.getenv("STAGE_TRADES_TEMP_STORE", "MEMORY")
 _TRADES_URI_TMPL = "file:{path}?mode=ro"
+_STAGE_DB_BUSY_TIMEOUT_MS = int(os.getenv("STAGE_DB_BUSY_TIMEOUT_MS", "12000"))
+_STAGE_DB_LOCK_RETRY = max(1, int(os.getenv("STAGE_DB_LOCK_RETRY", "4")))
+_STAGE_DB_LOCK_RETRY_SLEEP_SEC = max(
+    0.0, float(os.getenv("STAGE_DB_LOCK_RETRY_SLEEP_SEC", "0.10"))
+)
 _STRATEGY_ALIAS_BASE = {
     "mlr": "MicroLevelReactor",
     "trendma": "TrendMA",
@@ -119,6 +125,30 @@ def _ensure_row_factory(conn: sqlite3.Connection) -> None:
     conn.row_factory = sqlite3.Row
 
 
+def _is_db_locked(exc: sqlite3.OperationalError) -> bool:
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database table is locked" in msg
+
+
+def _execute_with_lock_retry(
+    conn: sqlite3.Connection,
+    sql: str,
+    params: Tuple[object, ...] = (),
+) -> sqlite3.Cursor:
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(_STAGE_DB_LOCK_RETRY):
+        try:
+            return conn.execute(sql, params)
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if not _is_db_locked(exc) or attempt >= _STAGE_DB_LOCK_RETRY - 1:
+                raise
+            time.sleep(_STAGE_DB_LOCK_RETRY_SLEEP_SEC * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
+    raise sqlite3.OperationalError("database is locked")
+
+
 @dataclass(slots=True)
 class CooldownInfo:
     pocket: str
@@ -131,9 +161,23 @@ class StageTracker:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _DB_PATH
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(self._path, timeout=5.0, check_same_thread=False)
+        self._con = sqlite3.connect(
+            self._path,
+            timeout=_STAGE_DB_BUSY_TIMEOUT_MS / 1000.0,
+            check_same_thread=False,
+            isolation_level=None,
+        )
         _ensure_row_factory(self._con)
-        self._con.execute(
+        try:
+            self._con.execute(f"PRAGMA busy_timeout={_STAGE_DB_BUSY_TIMEOUT_MS}")
+        except sqlite3.Error:
+            pass
+        try:
+            self._con.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            pass
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS stage_cooldown (
                 pocket TEXT NOT NULL,
@@ -142,9 +186,10 @@ class StageTracker:
                 cooldown_until TEXT NOT NULL,
                 PRIMARY KEY (pocket, direction)
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS stage_state (
                 pocket TEXT NOT NULL,
@@ -153,9 +198,10 @@ class StageTracker:
                 updated_at TEXT,
                 PRIMARY KEY (pocket, direction)
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS stage_history (
                 pocket TEXT NOT NULL,
@@ -166,18 +212,20 @@ class StageTracker:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (pocket, direction)
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS strategy_cooldown (
                 strategy TEXT PRIMARY KEY,
                 reason TEXT,
                 cooldown_until TEXT NOT NULL
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS strategy_history (
                 strategy TEXT PRIMARY KEY,
@@ -186,9 +234,10 @@ class StageTracker:
                 win_streak INTEGER DEFAULT 0,
                 updated_at TEXT
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS strategy_reentry_state (
                 strategy TEXT NOT NULL,
@@ -201,9 +250,10 @@ class StageTracker:
                 updated_at TEXT,
                 PRIMARY KEY (strategy, direction)
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS clamp_guard_state (
                 id INTEGER PRIMARY KEY CHECK (id=1),
@@ -215,13 +265,17 @@ class StageTracker:
                 clamp_until TEXT,
                 impulse_stop_until TEXT
             )
-            """
+            """,
         )
         try:
-            self._con.execute("ALTER TABLE clamp_guard_state ADD COLUMN clamp_score REAL DEFAULT 0")
+            _execute_with_lock_retry(
+                self._con,
+                "ALTER TABLE clamp_guard_state ADD COLUMN clamp_score REAL DEFAULT 0",
+            )
         except sqlite3.OperationalError:
             pass
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS hold_violation_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,9 +286,10 @@ class StageTracker:
                 actual_sec REAL,
                 reason TEXT
             )
-            """
+            """,
         )
-        self._con.execute(
+        _execute_with_lock_retry(
+            self._con,
             """
             CREATE TABLE IF NOT EXISTS pocket_loss_window (
                 pocket TEXT NOT NULL,
@@ -244,9 +299,8 @@ class StageTracker:
                 loss_pips REAL NOT NULL,
                 PRIMARY KEY (pocket, trade_id)
             )
-            """
+            """,
         )
-        self._con.commit()
         self._loss_window_minutes = int(
             os.getenv("LOSS_CLUSTER_WINDOW_MIN", str(_LOSS_WINDOW_MINUTES)) or _LOSS_WINDOW_MINUTES
         )
