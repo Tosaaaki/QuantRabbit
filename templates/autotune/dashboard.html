@@ -94,30 +94,26 @@
 └──────────┬───────────┘
            ▼
 ┌───────────────────────────────────┐
-│ quant-market-data-feed             │
-│ - tick/aggregated candle ingest     │
-│ - tick_window / factor_cache 更新  │
+│ quant-market-data-feed            │
+│ - tick/candle ingest              │
+│ - tick_window / factor_cache      │
 └──────────────┬────────────────────┘
                │
                ▼
-       ┌────────────────┐
-       │ strategy data   │
-       └───────┬────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────┐
-│ quant-strategy-control                     │
-│ - global / strategy flags                  │
-│ - can_enter / can_exit / lock checks        │
-└───────┬───────┬─────────┬───────┬─────────┘
-        │       │         │       │
-        ▼       ▼         ▼       ▼
-  quant-scalp-ping-5s-b      quant-scalp-macd-rsi-div
-  quant-scalp-ping-5s-b-exit  quant-scalp-macd-rsi-div-exit
-  quant-scalp-tick-imbalance  quant-scalp-tick-imbalance-exit
-  quant-scalp-squeeze-pulse-break ... etc
-        ...    ...       ...     ...
-        それぞれが ENTRY/EXIT 1対1
+┌───────────────────────────────────┐
+│ quant-strategy-control            │
+│ - global/strategy lock            │
+│ - can_enter / can_exit            │
+└───────┬───────────────────────────┘
+        │
+        ▼
+strategy workers (ENTRY/EXIT 1:1)
+  - scalp/micro/s5 workers
+  - entry_thesis(entry_probability/units_intent)
+        │
+        ├──── ENTRY ───▶ quant-order-manager ───▶ OANDA Order API
+        │
+        └──── EXIT  ───▶ quant-position-manager ─▶ positions/trades DB
         </pre>
       </div>
     </section>

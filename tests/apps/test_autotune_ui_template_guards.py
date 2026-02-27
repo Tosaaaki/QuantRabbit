@@ -46,3 +46,9 @@ def test_strategy_control_forms_require_ops_token() -> None:
     assert 'id="ops-global-token"' in source
     assert 'id="ops-strategy-token"' in source
     assert 'id="ops-row-token-{{ loop.index }}"' in source
+
+
+def test_architecture_tab_mentions_order_and_position_manager() -> None:
+    source = _read(DASHBOARD_TEMPLATE)
+    assert "quant-order-manager" in source
+    assert "quant-position-manager" in source
