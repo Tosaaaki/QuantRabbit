@@ -9939,3 +9939,66 @@
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカルentryパラメータのみ。
   - `execution/order_manager.py` / `execution/strategy_entry.py` の契約（`entry_probability`, `entry_units_intent`）とV2責務分離は非変更。
   - 反映手順は `main` へ push 後、`scripts/vm.sh ... deploy -b main --restart quant-scalp-ping-5s-{b,c}.service -t` を実施する。
+
+### 2026-02-27（追記）`scalp_ping_5s_b/c` + `MicroPullbackEMA` 収益勾配クランプ（第7ラウンド）
+
+- 目的:
+  - 直近24hで継続赤字の `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` を、停止せず高確度化＋縮小で改善する。
+  - `MARKET_ORDER_MARGIN_CLOSEOUT` を起点にした大損（特に `MicroPullbackEMA`）の再発確率を下げる。
+- 仮説:
+  - ping 5s B/C は「低品質帯の通過 + 過大回転」が主因で、期待値が負のまま件数で損失を積んでいる。
+  - `MicroPullbackEMA` は base units と margin 使用上限が高く、急変時に closeout tail を作る。
+- 実測根拠（VM, 2026-02-27 16:13 UTC / 2026-02-28 01:13 JST）:
+  - 24h戦略別:
+    - `scalp_ping_5s_c_live`: `618 trades / -590.2 pips / -3452 JPY`
+    - `scalp_ping_5s_b_live`: `682 trades / -431.7 pips / -769 JPY`
+  - 7d close reason:
+    - `MARKET_ORDER_MARGIN_CLOSEOUT`: `18 trades / -621.5 pips / -19125 JPY`
+  - 7d戦略別:
+    - `MicroPullbackEMA`: `46 trades / -520.3 pips / -15527 JPY`
+  - OANDA summary:
+    - `marginCloseoutPercent=0.90854`, `marginAvailable=5339.6956`
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ACTIVE_TRADES: 4 -> 3`
+    - `MAX_PER_DIRECTION: 3 -> 2`
+    - `BASE_ENTRY_UNITS: 260 -> 180`
+    - `MAX_UNITS: 1000 -> 700`
+    - `CONF_FLOOR: 82 -> 85`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR: 0.67 -> 0.73`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.72 -> 0.78`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT: 0.80 -> 0.85`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.80 -> 0.84`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE: 0.42 -> 0.36`
+    - `SPREAD_GUARD_DISABLE: 1 -> 0`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 10 -> 6`
+    - `BASE_ENTRY_UNITS: 110 -> 75`
+    - `MAX_UNITS: 260 -> 170`
+    - `CONF_FLOOR: 83 -> 86`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR: 0.70 -> 0.76`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX: 0.55 -> 0.45`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX: 0.20 -> 0.10`
+    - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: 0.6 -> 0.45`
+    - `SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: 0.6 -> 0.45`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.74 -> 0.80`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT: 0.80 -> 0.86`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.66 -> 0.72`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.34 -> 0.30`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE: 0.56 -> 0.48`
+  - `ops/env/quant-micro-pullbackema.env`
+    - `MICRO_MULTI_BASE_UNITS: 16000 -> 9000`
+    - `MICRO_MULTI_MAX_MARGIN_USAGE: 0.86 -> 0.72`
+    - `MICRO_MULTI_MAX_SIGNALS_PER_CYCLE: 2 -> 1`
+    - `MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE: 0.70 -> 0.50`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_MICROPULLBACKEMA: 6.0 -> 4.0`
+    - B/C の `ORDER_MANAGER_PRESERVE_INTENT_*` を上記値へ同期
+- 影響範囲:
+  - strategy worker の entry sizing / probability gate / force-exit 閾値と、
+    order-manager preflight の strategy別 preserve-intent 閾値のみ。
+  - `entry_thesis` 契約、黒板協調経路、V2責務分離（data/control/order/position）は非変更。
+- 検証計画:
+  - 反映後2h/24hで `scalp_ping_5s_b/c` の `sum(realized_pl)` と `avg_pips` の改善有無を確認。
+  - `MARKET_ORDER_MARGIN_CLOSEOUT` の新規発生有無と `MicroPullbackEMA` の tail loss 再発有無を確認。
+  - `orders.db` で `filled` を維持しつつ `entry_probability_reject` / `perf_block` の極端な悪化が無いことを確認。

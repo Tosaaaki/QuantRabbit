@@ -1653,3 +1653,18 @@
   `TAKE_PROFIT_ORDER(+1p)` 偏重と `STOP_LOSS_ORDER(-2p)` 偏重のギャップを縮小する。
 - 同時に `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_UNITS_MAX_MULT` を緩和し、
   良化局面の過小サイズを抑制する。
+
+### 2026-02-28 Runtime Risk Clamp（ping B/C + MicroPullbackEMA）
+- 背景:
+  - VM実測（2026-02-27 16:13 UTC）で `scalp_ping_5s_b/c` が24h継続赤字、
+    `MARKET_ORDER_MARGIN_CLOSEOUT` が7dで `-19125 JPY` を計上。
+  - `MicroPullbackEMA` は7dで `-15527 JPY`、かつ OANDA `marginCloseoutPercent=0.90854` と高止まり。
+- 実装方針:
+  - 停止ではなく、B/C は entry品質閾値を引き上げつつロット/回転を縮小する。
+  - `MicroPullbackEMA` は `base_units` と `max_margin_usage` を縮小し、同時シグナルを 1 に制限する。
+  - `quant-order-manager` 側の strategy別 preserve-intent 閾値を worker 側と同期し、
+    `MicroPullbackEMA` の許容SL幅を `4.0 pips` へ圧縮する。
+- 影響範囲:
+  - strategyローカルの sizing / probability / force-exit と、
+    order-manager preflight の strategy閾値のみ。
+  - V2責務分離、`entry_thesis` 契約、blackboard協調の判定要件は変更しない。

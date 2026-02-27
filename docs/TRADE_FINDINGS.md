@@ -78,6 +78,54 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 16:13 UTC / 2026-02-28 01:13 JST - `scalp_ping_5s_b/c` 継続赤字 + `MicroPullbackEMA` closeout tail の同時是正
+
+Period:
+- 直近24h / 7d（`trades.db`, `orders.db`, `metrics.db`）
+- 取得時刻: 2026-02-27 16:13 UTC / 2026-02-28 01:13 JST
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/metrics.db`
+- VM `scripts/oanda_open_trades.py`
+- OANDA account summary（VMからAPI照会）
+
+Fact:
+- 24h戦略別:
+  - `scalp_ping_5s_c_live`: `618 trades / -590.2 pips / -3452 JPY`
+  - `scalp_ping_5s_b_live`: `682 trades / -431.7 pips / -769 JPY`
+- 7d戦略別:
+  - `scalp_ping_5s_b_live`: `2226 trades / -1868.5 pips / -8502 JPY`
+  - `scalp_ping_5s_c_live`: `1273 trades / -1348.6 pips / -10722 JPY`
+  - `MicroPullbackEMA`: `46 trades / -520.3 pips / -15527 JPY`
+- 7d close reason:
+  - `MARKET_ORDER_MARGIN_CLOSEOUT`: `18 trades / -621.5 pips / -19125 JPY`
+- OANDA口座状態:
+  - `marginCloseoutPercent=0.90854`
+  - `marginUsed=53043.4000`, `marginAvailable=5339.6956`
+  - `openTradeCount=1`（`USD_JPY`, `currentUnits=-8500`, SL/TP なし）
+
+Failure Cause:
+1. `scalp_ping_5s_b/c` は低品質帯通過と高回転が重なり、期待値が負のまま損失を積み上げている。
+2. `MicroPullbackEMA` は base units と margin 使用上限が高く、急変時に margin closeout tail を作りやすい。
+3. 口座の `marginCloseoutPercent` が高止まり（0.90超）し、一発損失の再発余地が大きい。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env` を高確度・低回転へ再設定（件数/ロット/確率閾値/intent縮小/spread guard有効化）。
+2. `ops/env/scalp_ping_5s_c.env` を高確度・低回転へ再設定（件数/ロット/force-exit損失上限/確率閾値/intent縮小）。
+3. `ops/env/quant-micro-pullbackema.env` で `BASE_UNITS` と `MAX_MARGIN_USAGE` を大幅に縮小し、同時シグナル数を1へ制限。
+4. `ops/env/quant-order-manager.env` で B/C preserve-intent 閾値を worker 側へ同期し、`MicroPullbackEMA` の許容SL幅を `6.0 -> 4.0` へ縮小。
+
+Verification:
+1. 反映後2h/24hで `scalp_ping_5s_b/c` の `sum(realized_pl)` と `avg_pips` が改善方向へ転じること。
+2. `MARKET_ORDER_MARGIN_CLOSEOUT` の新規発生が抑制されること（特に `MicroPullbackEMA`）。
+3. OANDA summary の `marginCloseoutPercent` が低下方向へ向かうこと。
+4. `orders.db` で `filled` を維持しつつ `entry_probability_reject` / `perf_block` の異常増がないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:29 UTC / 2026-02-28 00:29 JST - `scalp_ping_5s_c_live` long 側 leading reject を無効化（short維持）
 Period:
 - 観測: 2026-02-27 15:25:36-15:28:54 UTC（前回緩和反映後）
