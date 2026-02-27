@@ -1815,7 +1815,7 @@ def _load_hourly_fallback_trades() -> list[dict]:
 
 def _load_hourly_fallback_aggregates(start_hour_utc: datetime) -> Optional[dict[str, dict[str, float | int]]]:
     if not TRADES_DB.exists():
-        return {}
+        return None
     db_uri = f"file:{TRADES_DB}?mode=ro"
     try:
         con = sqlite3.connect(db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC)
@@ -1869,7 +1869,7 @@ def _build_hourly_fallback(trades: list[dict]) -> dict:
         buckets[hour] = {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0}
 
     aggregate = _load_hourly_fallback_aggregates(start_hour_utc)
-    if aggregate is not None:
+    if aggregate:
         for hour_key, values in aggregate.items():
             try:
                 hour = datetime.strptime(hour_key, "%Y-%m-%d %H:%M:%S").replace(tzinfo=jst)

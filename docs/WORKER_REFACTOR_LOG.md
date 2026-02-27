@@ -8696,14 +8696,18 @@
     - `hourly_trades` が「24行そろっているが全ゼロ」の stale snapshot でも、
       `recent_trades` のクローズ実績を検知したら fallback 再集計へ切り替える
       判定（`_hourly_trades_is_stale`）を追加。
+    - `_build_hourly_fallback` で DB 集計が `None/{}` の場合は
+      `recent_trades` 起点の再集計に必ず退避するよう修正
+      （Cloud Run 環境での「fallback しても全ゼロ」再発を防止）。
     - `tab=architecture` の図表に `quant-order-manager` /
       `quant-position-manager` が欠けていたため、V2 実導線に沿って図を更新。
   - テスト追加/更新:
     - `tests/apps/test_autotune_ui_dashboard_local_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_fallback.py`
+      - DB集計 `{}` のとき snapshot trades へ退避する回帰ケースを追加
     - `tests/apps/test_autotune_ui_hourly_source_guard.py`
       - 全ゼロ stale snapshot の fallback 強制ケースを追加
     - `tests/apps/test_autotune_ui_summary_consistency.py`
     - `tests/apps/test_autotune_ui_template_guards.py`
 - 検証:
-  - `pytest -q tests/apps` で `30 passed` を確認。
+  - `pytest -q tests/apps` で `31 passed` を確認。
