@@ -9498,6 +9498,38 @@
   - `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 通過率に限定。
   - B 戦略設定および V2固定導線は非変更。
 
+### 2026-02-27（追記）`scalp_ping_5s_b/c` 第9ラウンド（revert/leading の過剰拒否を小幅緩和）
+
+- 背景（VM, Round8反映後）:
+  - 24h 集計は依然マイナス。
+    - `scalp_ping_5s_b_live`: `582 trades / -670.8 JPY / avg_win=1.165 / avg_loss=1.994`
+    - `scalp_ping_5s_c_live`: `359 trades / -139.1 JPY / avg_win=1.090 / avg_loss=1.849`
+  - 直近120分 `orders.db` は `perf_block` 偏重。
+    - B: `perf_block=50`
+    - C: `perf_block=110`
+  - worker ログは B/C とも `revert_not_found` が主因として残存し、C は `entry_leading_profile_reject` も高頻度。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE: 7 -> 8`
+    - `REVERT_MIN_TICK_RATE: 0.50 -> 0.45`
+    - `REVERT_RANGE_MIN_PIPS: 0.05 -> 0.04`
+    - `REVERT_BOUNCE_MIN_PIPS: 0.008 -> 0.006`
+    - `REVERT_CONFIRM_RATIO_MIN: 0.18 -> 0.15`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.77 -> 0.76`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.68 -> 0.67`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR: 0.72 -> 0.70`
+    - `REVERT_MIN_TICK_RATE: 0.50 -> 0.45`
+    - `REVERT_RANGE_MIN_PIPS: 0.05 -> 0.04`
+    - `REVERT_BOUNCE_MIN_PIPS: 0.008 -> 0.006`
+    - `REVERT_CONFIRM_RATIO_MIN: 0.18 -> 0.15`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.74 -> 0.72`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.66 -> 0.64`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT: 0.82 -> 0.80`
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 通過判定に限定。
+  - TP/SL や order_manager/position_manager/strategy_control の V2責務分離は非変更。
+
 ### 2026-02-27（追記）`quant-order-manager` の orders.db スレッド競合是正 + duplicate復旧強化
 
 - 目的:

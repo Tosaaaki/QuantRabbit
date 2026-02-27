@@ -42,6 +42,61 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 13:56 UTC / 2026-02-27 22:56 JST - `scalp_ping_5s_b/c` 第9ラウンド（revert/leading の過剰拒否を小幅緩和）
+
+Period:
+- Round8 反映後（直近 120 分）
+- 24h 集計（`julianday(close_time) >= julianday('now','-24 hours')`）
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-b.service`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+
+Fact:
+- 24h は依然マイナス:
+  - `scalp_ping_5s_b_live`: `582 trades / -670.8 JPY / -352.3 pips / avg_win=1.165 / avg_loss=1.994`
+  - `scalp_ping_5s_c_live`: `359 trades / -139.1 JPY / -284.7 pips / avg_win=1.090 / avg_loss=1.849`
+- 直近 120 分 `orders.db`（strategy tag filter）は `perf_block` 偏重:
+  - B: `perf_block=50`
+  - C: `perf_block=110`
+- worker ログの skip 主因:
+  - B（13:54:26 UTC）: `total=92`, `revert_not_found=32`, `rate_limited=21`, `entry_probability_reject=3`
+  - C（13:54:36 UTC）: `total=108`, `revert_not_found=41`, `rate_limited=10`, `entry_leading_profile_reject=9`
+
+Failure Cause:
+1. `revert_not_found` が B/C 共通で高止まりし、シグナル段階での取りこぼしが継続。
+2. C は `entry_leading_profile_reject` と `entry_probability` 側の閾値が重なり、送信前 reject が多い。
+3. B は第5ラウンドで絞った `MAX_ORDERS_PER_MINUTE` の影響が残り、`rate_limited` が高め。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `MAX_ORDERS_PER_MINUTE: 7 -> 8`
+   - `REVERT_MIN_TICK_RATE: 0.50 -> 0.45`
+   - `REVERT_RANGE_MIN_PIPS: 0.05 -> 0.04`
+   - `REVERT_BOUNCE_MIN_PIPS: 0.008 -> 0.006`
+   - `REVERT_CONFIRM_RATIO_MIN: 0.18 -> 0.15`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.77 -> 0.76`
+   - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.68 -> 0.67`
+2. `ops/env/scalp_ping_5s_c.env`
+   - `ENTRY_PROBABILITY_ALIGN_FLOOR: 0.72 -> 0.70`
+   - `REVERT_MIN_TICK_RATE: 0.50 -> 0.45`
+   - `REVERT_RANGE_MIN_PIPS: 0.05 -> 0.04`
+   - `REVERT_BOUNCE_MIN_PIPS: 0.008 -> 0.006`
+   - `REVERT_CONFIRM_RATIO_MIN: 0.18 -> 0.15`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.74 -> 0.72`
+   - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.66 -> 0.64`
+   - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT: 0.82 -> 0.80`
+
+Verification:
+1. 反映後 30 分/2h で `entry-skip summary` の `revert_not_found` 比率が B/C とも低下すること。
+2. C で `entry_leading_profile_reject` が減り、`orders.db` の `submit_attempt/filled` が再出現すること。
+3. 24h で B/C の `sum(realized_pl)` が悪化せず、`avg_loss_pips` の再拡大がないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 13:54 UTC / 2026-02-27 22:54 JST - `scalp_ping_5s_c` 第8ラウンド（order-manager env乖離の是正）
 
 Period:
