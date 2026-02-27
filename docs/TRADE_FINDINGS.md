@@ -42,6 +42,58 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 14:53 UTC / 2026-02-27 23:53 JST - `quant-order-manager` 第11ラウンド（B/C 閾値ドリフト同期）
+
+Period:
+- Round10 後の直近 120 分
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `journalctl -u quant-scalp-ping-5s-b.service`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- Repo/VM `ops/env/quant-order-manager.env`, `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+
+Fact:
+- `orders.db` 直近120分（B/C strategy tag）は `perf_block` のみ:
+  - `scalp_ping_5s_b_live: 57`
+  - `scalp_ping_5s_c_live: 131`
+- worker ログ主因:
+  - B（14:51:23 UTC）: `no_signal:revert_not_found=17`, `extrema_block=15`, `rate_limited=22`, `order_reject:perf_block=1`
+  - C（14:51:43 UTC）: `no_signal:revert_not_found=32`, `extrema_block=18`, `order_reject:entry_leading_profile_reject=7`
+- `quant-order-manager.env` が worker env より厳しいまま残存:
+  - B preserve-intent: `0.78/0.20/0.32`（worker `0.76/0.40/0.42`）
+  - B min units: `10`（worker `1`）
+  - B/C setup/hourly guard の `min_trades=6` や `setup pf/win=0.95/0.50` が worker より strict
+
+Failure Cause:
+1. order-manager 側 env ドリフトが worker 側緩和を上書きし、`perf_block` が過多。
+2. B の `ORDER_MIN_UNITS=10` が縮小後通過を阻害し、送信機会を削減。
+3. C/common perf guard の setup/hourly 閾値が高く、短期窓で block 判定が先行。
+
+Improvement:
+1. `ops/env/quant-order-manager.env` を worker 現行値へ同期。
+2. B 同期:
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.76`
+  - `MIN_SCALE/MAX_SCALE=0.40/0.42`
+  - `ORDER_MIN_UNITS=1`
+  - `PERF_GUARD_HOURLY_MIN_TRADES=10`, `SETUP_MIN_TRADES=10`
+  - `SETUP_PF/WIN=0.88/0.44`, `FAILFAST_PF/WIN=0.10/0.27`
+3. C + fallback 同期:
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.72`
+  - `SCALP_PING_5S[_C]_PERF_GUARD_HOURLY_MIN_TRADES=16`
+  - `SCALP_PING_5S[_C]_PERF_GUARD_SETUP_MIN_TRADES=16`
+  - `SCALP_PING_5S[_C]_PERF_GUARD_SETUP_PF/WIN=0.90/0.45`
+  - `SCALP_PING_5S[_C]_PERF_GUARD_PF/WIN_MIN=0.92/0.49`
+  - `SCALP_PING_5S[_C]_PERF_GUARD_SL_LOSS_RATE_MAX=0.55`
+
+Verification:
+1. 反映後 30 分/2h で `orders.db` が `perf_block only` から脱し、`submit_attempt/filled` が再出現すること。
+2. `entry-skip summary` の `order_reject:perf_block` 比率が低下すること。
+3. 24h で B/C の `sum(realized_pl)` が悪化せず、`avg_loss_pips` 再拡大がないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 14:03 UTC / 2026-02-27 23:03 JST - `scalp_ping_5s_c` 第10ラウンド（約定再開後のロット底上げ）
 
 Period:

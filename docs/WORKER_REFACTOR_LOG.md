@@ -9549,6 +9549,39 @@
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 通過判定に限定。
   - TP/SL や order_manager/position_manager/strategy_control の V2責務分離は非変更。
 
+### 2026-02-27（追記）`quant-order-manager` 第11ラウンド（B/C 閾値ドリフト同期）
+
+- 背景（VM, Round10後）:
+  - 直近120分 `orders.db`（B/C strategy tag）は `perf_block` のみ。
+    - B: `57`
+    - C: `131`
+  - worker ログは `revert_not_found` / `extrema_block` / `entry_leading_profile_reject` が優位で、
+    その上に `order_reject:perf_block` が重なって通過率を悪化。
+  - `quant-order-manager.env` が worker env より strict（B preserve-intent/min_units、B/C setup/hourly guard）で、
+    worker 側緩和の効果を上書きしていた。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - B preserve-intent/min-units 同期:
+      - `REJECT_UNDER 0.78 -> 0.76`
+      - `MIN/MAX_SCALE 0.20/0.32 -> 0.40/0.42`
+      - `ORDER_MIN_UNITS 10 -> 1`
+    - B perf guard 同期:
+      - `HOURLY_MIN_TRADES 6 -> 10`
+      - `SETUP_MIN_TRADES 6 -> 10`
+      - `SETUP_PF/WIN 0.92/0.48 -> 0.88/0.44`
+      - `FAILFAST_PF/WIN 0.70/0.42 -> 0.10/0.27`
+      - `SL_LOSS_RATE_MAX 0.68 -> 0.75`
+    - C + fallback perf guard 同期:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER 0.74 -> 0.72`
+      - `SCALP_PING_5S[_C]_PERF_GUARD_HOURLY_MIN_TRADES 6 -> 16`
+      - `SCALP_PING_5S[_C]_PERF_GUARD_SETUP_MIN_TRADES 6 -> 16`
+      - `SCALP_PING_5S[_C]_PERF_GUARD_SETUP_PF/WIN 0.95/0.50 -> 0.90/0.45`
+      - `SCALP_PING_5S[_C]_PERF_GUARD_PF/WIN_MIN 0.90/0.47, 0.93/0.50 -> 0.92/0.49`
+      - `SCALP_PING_5S[_C]_PERF_GUARD_SL_LOSS_RATE_MAX 0.68 -> 0.55`
+- 影響範囲:
+  - `quant-order-manager.service` preflight の B/C 関連ガード閾値に限定。
+  - 戦略ロジック本体（signal生成/TP/SL）および V2導線責務分離は非変更。
+
 ### 2026-02-27（追記）`quant-order-manager` の orders.db スレッド競合是正 + duplicate復旧強化
 
 - 目的:
