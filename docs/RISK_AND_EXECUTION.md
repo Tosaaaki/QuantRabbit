@@ -1273,6 +1273,19 @@
   - 無効化したい時だけ明示 opt-in で side filter を外し、
     デフォルトは fail-closed を維持して意図しない方向ドリフトを防ぐ。
 
+### B `profit-first` 即効デリスク（2026-02-27 追記）
+- 背景:
+  - VM 実測で直近15分の全体損益はプラスでも、自動戦略のみではマイナスが残存。
+  - `scalp_ping_5s_b_live` の long 側で stop 系損失が先行し、当日損失寄与の主因となっていた。
+- 実装（`ops/env/scalp_ping_5s_b.env`）:
+  - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=720`（from `900`）
+  - `SCALP_PING_5S_B_CONF_FLOOR=75`（from `72`）
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.74`（from `0.70`）
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR=0.60`（from `0.54`）
+- 運用意図:
+  - 停止なし方針を維持したまま、B の低品質エントリーを抑制し損失勾配を圧縮する。
+  - 低品質シグナルの通過率を下げ、`filled` 継続下で1トレード期待値の改善を狙う。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

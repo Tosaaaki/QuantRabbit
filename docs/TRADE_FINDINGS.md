@@ -95,6 +95,48 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 00:25 UTC / 2026-02-27 09:25 JST - 自動損益の実測確認と `scalp_ping_5s_b_live` 即効デリスク
+Period:
+- Snapshot window: `2026-02-27 00:22` ～ `00:25` UTC
+- Source: VM `/home/tossaki/QuantRabbit/logs/trades.db`, `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- 直近15分:
+  - 全体: `17 trades / +1311.9 JPY`
+  - 自動のみ（`strategy_tag != null`）: `16 trades / -65.1 JPY`
+  - `scalp_ping_5s_b_live + scalp_ping_5s_c_live`: `14 trades / +6.9 JPY`
+- JST当日（`2026-02-27 00:00 JST` 以降）:
+  - 全体: `455 trades / +731.4 JPY`
+  - 自動のみ: `454 trades / -645.6 JPY`
+  - B/C 内訳:
+    - `scalp_ping_5s_b_live`: `244 trades / -428.1 JPY`
+    - `scalp_ping_5s_c_live`: `204 trades / -97.4 JPY`
+- 全体プラスの主因は `strategy_tag=null` の単発決済
+  （ticket `400470`, `+1377.0 JPY`, `MARKET_ORDER_TRADE_CLOSE`）。
+- 直近2時間の B は long 側損失偏重:
+  - long `34 trades / -41.1 JPY`
+  - short `3 trades / -6.2 JPY`
+
+Failure Cause:
+1. 「全体損益」は手動/タグ欠損の単発利益に引っ張られ、自動戦略の実態が見えにくい。
+2. B は long 側で低品質エントリーが残り、stop 系損失が先行している。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env` を即時デリスク:
+   - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=720`（from `900`）
+   - `SCALP_PING_5S_B_CONF_FLOOR=75`（from `72`）
+   - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.74`（from `0.70`）
+   - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR=0.60`（from `0.54`）
+2. 停止なし方針を維持しつつ、B の低確度 long 発火を抑制して損失勾配を圧縮する。
+
+Verification:
+1. 反映後30分で `scalp_ping_5s_b_live` の `realized_pl` がゼロ超へ改善すること。
+2. `orders.db` で B の `probability_scaled` / `rejected` 比率が低下すること。
+3. JST当日の自動損益（`strategy_tag != null`）がマイナス幅縮小に転じること。
+
+Status:
+- in_progress
+
 ## 2026-02-26 13:30 UTC / 2026-02-26 22:30 JST - `SIDE_FILTER=none` が wrapper で `sell` 強制され、B/C entry が詰まる問題を修正
 Period:
 - Analysis/patch window: `2026-02-26 13:12` ～ `13:30` UTC

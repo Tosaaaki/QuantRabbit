@@ -8195,6 +8195,23 @@
   - `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py -k "side_filter"`: `8 passed`
   - `python3 -m py_compile workers/scalp_ping_5s_b/worker.py workers/scalp_ping_5s_c/worker.py`: pass
 
+### 2026-02-27（追記）B即効デリスク（サイズ圧縮 + 確率floor引き上げ）
+
+- 背景（VM実測, UTC 2026-02-27 00:22 前後）:
+  - 直近15分は全体 `+1311.9 JPY` だが、自動戦略のみで見ると `-65.1 JPY`。
+  - JST当日（00:00以降）の自動損益は `-645.6 JPY`。
+  - `scalp_ping_5s_b_live` が `-428.1 JPY` で主損失寄与。
+  - 直近2h の B は long 側が `34 trades / -41.1 JPY` と偏っていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=720`（from `900`）
+    - `SCALP_PING_5S_B_CONF_FLOOR=75`（from `72`）
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.74`（from `0.70`）
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_FLOOR=0.60`（from `0.54`）
+- 意図:
+  - 停止なしを維持しつつ、B の低品質 long 発火を圧縮して当日の損失勾配を下げる。
+  - エントリーは継続し、`filled` を維持したまま 1トレードあたりの毀損を抑える。
+
 ### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
 
 - 背景:
