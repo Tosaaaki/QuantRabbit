@@ -1536,3 +1536,11 @@
 | `MICRO_STOP` | `micro` pocket DD ≥5% | `micro` 決済のみ、`macro` 継続 |
 | `GLOBAL_STOP` | Global DD ≥20% または `healthbeat` 欠損>10min | 全取引停止、プロセス終了 |
 | `RECOVERY` | DD が閾値の 80% 未満、24h 経過 | 新規建玉再開前に `main.py` ドライラン |
+
+### 2026-02-27 Runtime ENV 競合整理（実効値優先）
+
+- service の `Environment=` と `EnvironmentFile` が同一キーで重複する場合は、
+  process env 実効値（`/proc/<pid>/environ`）を正とし、実効しない override は unit から削除する。
+- `ORDER_DB_BUSY_TIMEOUT_MS` は strategy 間での不要な乖離を避けるため、
+  `scalp_ping_5s_{b,c,d}.env` を `1500ms` に統一する。
+- 本変更は preflight 判定ロジックの変更ではなく、runtime 環境の整合性維持を目的とする。

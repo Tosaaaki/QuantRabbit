@@ -12,9 +12,6 @@ Environment="PYTHONUNBUFFERED=1"
 EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_b.env
 # Quality-first override (2026-02-26): no-stop operation with reduced sizing on degraded states.
 Environment="SCALP_PING_5S_B_PERF_GUARD_MODE=reduce"
-Environment="SCALP_PING_5S_B_PERF_GUARD_FAILFAST_PF=0.88"
-Environment="SCALP_PING_5S_B_PERF_GUARD_FAILFAST_WIN=0.48"
-Environment="SCALP_PING_5S_B_PERF_GUARD_SL_LOSS_RATE_MAX=0.52"
 Environment="SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED=1"
 Environment="SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED=1"
 Environment="SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ENABLED=1"

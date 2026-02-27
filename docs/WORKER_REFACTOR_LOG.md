@@ -8811,3 +8811,25 @@
 - 検証手順:
   1. デプロイ後に `quant-order-manager` の `/proc/<pid>/environ` を確認。
   2. `orders.db` の B/C reject内訳（`entry_probability_reject`, `margin_usage_*`）を前後比較。
+
+### 2026-02-27（追記）実効競合ENVの整理（service override / DB timeout）
+
+- 目的:
+  - 「重複しているだけで実効しない値」と「実際に process env で競合していた値」を分離し、実在競合のみを解消する。
+- 実測根拠（VM）:
+  - `quant-scalp-ping-5s-b.service` と `quant-autotune-ui.service` の inline `Environment=` は、
+    いずれも process env では後段 `EnvironmentFile` 値に上書きされ、実効していなかった。
+  - `ORDER_DB_BUSY_TIMEOUT_MS` は B/C/D で `250`、共通runtime系で `1500` が併存し、
+    process env でも strategy ごとに乖離していた。
+- 変更ファイル:
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - 実効しない fail-fast 3キー（PF/WIN/SL_LOSS_RATE）を削除。
+  - `systemd/quant-autotune-ui.service`
+    - 実効しない `POSITION_MANAGER_SERVICE_*` 6キーを削除。
+  - `ops/env/scalp_ping_5s_b.env`
+  - `ops/env/scalp_ping_5s_c.env`
+  - `ops/env/scalp_ping_5s_d.env`
+    - `ORDER_DB_BUSY_TIMEOUT_MS=1500` に統一。
+- 影響範囲:
+  - `quant-scalp-ping-5s-{b,c,d}.service` と `quant-autotune-ui.service` の環境解決のみ。
+  - エントリー/EXIT 判定ロジックや V2 導線の制御仕様は変更なし。
