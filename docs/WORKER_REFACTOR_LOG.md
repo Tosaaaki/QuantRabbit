@@ -8653,6 +8653,23 @@
   - 負け寄与（B/C）は頻度をさらに削って損失勾配を圧縮。
   - 利益寄与候補（Wick/Extrema）は発火条件を緩和し、約定機会を増やして即時寄与を狙う。
 
+### 2026-02-27（追記）発火不足対策: Wick/Extrema の監視サイクルを短縮
+
+- 背景:
+  - 反映直後の短期窓で、B/C 損失は抑制できた一方で Wick/Extrema の約定が薄かった。
+- 変更:
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_LOOP_INTERVAL_SEC=1.5`（from `2.0`）
+    - `SCALP_EXTREMA_REVERSAL_COOLDOWN_SEC=35`（from `45`）
+    - `SCALP_EXTREMA_REVERSAL_LOOKBACK=24`（from `32`）
+    - `SCALP_EXTREMA_REVERSAL_HIGH/LOW_BAND_PIPS=0.9`（from `1.0`）
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `SCALP_PRECISION_LOOP_INTERVAL_SEC=2.0`（from `3.0`）
+    - `SCALP_PRECISION_COOLDOWN_SEC=4`（from `5`）
+    - `WICK_BLEND_BBW_MAX=0.0018`（from `0.0014`）
+- 意図:
+  - 収益側戦略の信号取りこぼしを減らし、短時間での約定回転を引き上げる。
+
 ### 2026-02-27（追記）Autotune UI の時間帯履歴欠落を再発防止
 
 - 背景:

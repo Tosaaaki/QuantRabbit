@@ -1509,6 +1509,24 @@
   - B/C の損失勾配をさらに抑えつつ、Wick/Extrema の約定機会を増やして
     短期収益の立ち上がりを優先する。
 
+### 発火頻度の追加改善（2026-02-27 追記）
+- 背景:
+  - 追加圧縮後の短期窓で timeout/none は 0 まで低下した一方、
+    Wick/Extrema の発火が薄い時間帯があった。
+- 実装:
+  - `quant-scalp-extrema-reversal.env`
+    - `LOOP_INTERVAL_SEC=1.5`（from `2.0`）
+    - `COOLDOWN_SEC=35`（from `45`）
+    - `LOOKBACK=24`（from `32`）
+    - `HIGH/LOW_BAND_PIPS=0.9`（from `1.0`）
+  - `quant-scalp-wick-reversal-blend.env`
+    - `LOOP_INTERVAL_SEC=2.0`（from `3.0`）
+    - `COOLDOWN_SEC=4`（from `5`）
+    - `WICK_BLEND_BBW_MAX=0.0018`（from `0.0014`）
+- 運用意図:
+  - 収益寄与戦略の観測・判定サイクルを速め、
+    短期窓での約定機会不足を改善する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

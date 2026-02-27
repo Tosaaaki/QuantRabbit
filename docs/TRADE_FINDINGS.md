@@ -86,6 +86,36 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 05:55 UTC / 2026-02-27 14:55 JST - 発火頻度不足の補正
+Period:
+- Post-adjust short window: `2026-02-27 05:06` 以降
+- Source: VM `orders.db`, `journalctl`
+
+Fact:
+- B/C の圧縮後、timeout/none は 0 を維持。
+- 一方で短時間窓の約定が薄く、Wick/Extrema の寄与立ち上がりが不足。
+
+Failure Cause:
+1. 収益側戦略の監視間隔/クールダウンが相対的に長く、短期機会を拾い切れていない。
+
+Improvement:
+1. Extrema:
+   - `LOOP_INTERVAL_SEC=1.5`
+   - `COOLDOWN_SEC=35`
+   - `LOOKBACK=24`
+   - `HIGH/LOW_BAND_PIPS=0.9`
+2. Wick:
+   - `LOOP_INTERVAL_SEC=2.0`
+   - `COOLDOWN_SEC=4`
+   - `WICK_BLEND_BBW_MAX=0.0018`
+
+Verification:
+1. 再反映後 10-20 分窓で Wick/Extrema の `submit_attempt` と `filled` 増加を確認。
+2. 同窓で timeout/none が再増加していないことを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 05:40 UTC / 2026-02-27 14:40 JST - 即時収益寄せの第2段（発火不足解消）
 Period:
 - Analysis window: 直近60分（VM `trades.db` / `orders.db`）
