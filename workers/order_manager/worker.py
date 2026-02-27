@@ -6,8 +6,10 @@ control plane and internally delegating to ``execution.order_manager``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 from fastapi import Body, FastAPI
@@ -62,6 +64,12 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
         return default
 
 
+_SLOW_REQUEST_WARN_SEC = max(
+    0.0,
+    _to_float(os.getenv("ORDER_MANAGER_SERVICE_SLOW_REQUEST_WARN_SEC"), 8.0) or 8.0,
+)
+
+
 def _as_dict(payload: dict[str, Any] | None) -> dict[str, Any]:
     if payload is None:
         return {}
@@ -79,6 +87,28 @@ def _failure(message: str) -> dict[str, Any]:
     return {"ok": False, "error": message}
 
 
+async def _run_order_manager_call(
+    op_name: str,
+    target: Any,
+    **kwargs: Any,
+) -> Any:
+    started = time.monotonic()
+    try:
+        return await asyncio.to_thread(_run_order_manager_call_sync, target, kwargs)
+    finally:
+        elapsed = time.monotonic() - started
+        if elapsed >= _SLOW_REQUEST_WARN_SEC:
+            LOG.warning(
+                "[ORDER_MANAGER_WORKER] slow_request op=%s elapsed=%.3fs",
+                op_name,
+                elapsed,
+            )
+
+
+def _run_order_manager_call_sync(target: Any, kwargs: dict[str, Any]) -> Any:
+    return asyncio.run(target(**kwargs))
+
+
 @app.post("/order/cancel_order")
 async def cancel_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     body = _as_dict(payload)
@@ -86,7 +116,9 @@ async def cancel_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     if not order_id:
         return _failure("order_id is required")
     try:
-        result = await order_manager.cancel_order(
+        result = await _run_order_manager_call(
+            "cancel_order",
+            order_manager.cancel_order,
             order_id=order_id,
             pocket=body.get("pocket"),
             client_order_id=body.get("client_order_id"),
@@ -104,7 +136,9 @@ async def close_trade(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     if not trade_id:
         return _failure("trade_id is required")
     try:
-        result = await order_manager.close_trade(
+        result = await _run_order_manager_call(
+            "close_trade",
+            order_manager.close_trade,
             trade_id=trade_id,
             units=_to_int(body.get("units"), 0) if body.get("units") is not None else None,
             client_order_id=body.get("client_order_id"),
@@ -125,7 +159,9 @@ async def set_trade_protections(payload: dict[str, Any] = Body(...)) -> dict[str
     try:
         sl = _to_float(body.get("sl_price"))
         tp = _to_float(body.get("tp_price"))
-        result = await order_manager.set_trade_protections(
+        result = await _run_order_manager_call(
+            "set_trade_protections",
+            order_manager.set_trade_protections,
             trade_id=trade_id,
             sl_price=sl,
             tp_price=tp,
@@ -146,7 +182,9 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return _failure("units must be non-zero")
 
     try:
-        result = await order_manager.market_order(
+        result = await _run_order_manager_call(
+            "market_order",
+            order_manager.market_order,
             instrument=instrument,
             units=units,
             sl_price=_to_float(body.get("sl_price")),
@@ -158,7 +196,7 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             entry_thesis=body.get("entry_thesis"),
             meta=body.get("meta"),
             confidence=_to_int(body.get("confidence"), 0) if body.get("confidence") is not None else None,
-            stage_index= _to_int(body.get("stage_index"), 0) if body.get("stage_index") is not None else None,
+            stage_index=_to_int(body.get("stage_index"), 0) if body.get("stage_index") is not None else None,
             arbiter_final=_to_bool(body.get("arbiter_final"), False),
         )
     except Exception as exc:
@@ -178,7 +216,9 @@ async def coordinate_entry_intent(payload: dict[str, Any] = Body(...)) -> dict[s
         return _failure("pocket is required")
 
     try:
-        result = await order_manager.coordinate_entry_intent(
+        result = await _run_order_manager_call(
+            "coordinate_entry_intent",
+            order_manager.coordinate_entry_intent,
             instrument=instrument,
             pocket=pocket,
             strategy_tag=body.get("strategy_tag"),
@@ -217,7 +257,9 @@ async def limit_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return _failure("price is required")
 
     try:
-        trade_id, order_id = await order_manager.limit_order(
+        trade_id, order_id = await _run_order_manager_call(
+            "limit_order",
+            order_manager.limit_order,
             instrument=instrument,
             units=units,
             price=price,

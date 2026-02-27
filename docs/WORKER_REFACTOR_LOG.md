@@ -8542,3 +8542,25 @@
 - 意図:
   - 「何で entry が落ちたか」を strategy段で明示し、精度劣化の根因を即時再調整可能にする。
   - C の過度な short 優位を緩和し、sell 固定化を避ける。
+
+### 2026-02-27（追記）`quant-order-manager` API の event-loop ブロッキングを解消
+
+- 背景:
+  - `quant-scalp-ping-5s-b/c` で `order_manager service call failed ... Read timed out (45.0)` が継続し、
+    service worker 並列を 6 に増やした後も timeout 警告が残った。
+  - `workers/order_manager/worker.py` の FastAPI endpoint は `async def` で
+    `execution.order_manager.*` を直接 await していたが、
+    実処理は OANDA API / SQLite I/O を多用する同期ブロックを含むため、
+    worker event loop を長時間占有しやすい構造だった。
+- 変更:
+  - `workers/order_manager/worker.py`
+    - `_run_order_manager_call` / `_run_order_manager_call_sync` を追加。
+    - `cancel_order` / `close_trade` / `set_trade_protections` /
+      `market_order` / `coordinate_entry_intent` / `limit_order`
+      の各 endpoint で `execution.order_manager.*` 呼び出しを
+      `asyncio.to_thread(... asyncio.run(...))` 経由へ変更。
+    - `ORDER_MANAGER_SERVICE_SLOW_REQUEST_WARN_SEC`（default `8.0`）を追加し、
+      遅延リクエストを `slow_request` 警告で監査可能にした。
+- 意図:
+  - service worker の event loop 占有を避け、同時 RPC の頭詰まりを低減する。
+  - `Read timed out` 起点の fallback 連鎖を抑え、約定取りこぼしを減らす。

@@ -86,6 +86,43 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 03:20 UTC / 2026-02-27 12:20 JST - order-manager API の event-loop 詰まり対策
+Period:
+- Analysis window: 直近の `Read timed out (45.0)` 多発区間（`2026-02-27` UTC）
+- Source: `workers/order_manager/worker.py`, `execution/order_manager.py`, `orders.db` 集計ログ
+
+Fact:
+- strategy worker 側で `order_manager service call failed ... Read timed out (45.0)` が継続。
+- `ORDER_MANAGER_SERVICE_WORKERS=6` に増やした後も timeout 警告が残った。
+- `workers/order_manager/worker.py` は `async def` endpoint で
+  `execution.order_manager.*` を直接 await していた。
+- `execution.order_manager` の実処理は OANDA API / SQLite への同期I/Oを含むため、
+  endpoint event loop 占有が発生しやすい。
+
+Failure Cause:
+1. service worker の event loop が同期I/O処理を抱え、同時リクエスト時に head-of-line blocking が起きる。
+2. RPC 応答遅延が client 側 timeout（45秒）を引き起こし、fallback/再送連鎖のトリガーになる。
+
+Improvement:
+1. `workers/order_manager/worker.py` に `_run_order_manager_call` を追加し、
+   `execution.order_manager.*` の実行を `asyncio.to_thread(... asyncio.run(...))` に統一。
+2. `cancel_order / close_trade / set_trade_protections / market_order / coordinate_entry_intent / limit_order`
+   の全 endpoint を同ヘルパー経由へ切替。
+3. `ORDER_MANAGER_SERVICE_SLOW_REQUEST_WARN_SEC`（default 8秒）を追加し、
+   遅いリクエストを `slow_request` ログで監査可能化。
+
+Verification:
+1. ローカル回帰:
+   - `python3 -m py_compile workers/order_manager/worker.py`（OK）
+   - `pytest -q tests/execution/test_order_manager_safe_json.py tests/execution/test_order_manager_preflight.py`（29 passed）
+2. VM確認（実施予定）:
+   - `quant-order-manager.service` 再起動後 10分窓で
+     `Read timed out` 件数と `order_manager_none` 件数の減少を確認。
+   - `orders.db` の `filled/rejected/duplicate_recovered` 比率を同一窓で比較。
+
+Status:
+- in_progress（この時点では VM SSH が `Permission denied (publickey)` で未検証）
+
 ## 2026-02-27 03:25 UTC / 2026-02-27 12:25 JST - `coordination_reject` 誤ラベルと短期 sell 偏重の同時是正
 Period:
 - VM確認: `2026-02-27 02:55` ～ `03:20` UTC

@@ -1430,6 +1430,26 @@
 - 運用意図:
   - timeout起点の重複CID rejectを減らし、既存約定の取りこぼしを抑制する。
 
+### `quant-order-manager` API event-loop 非ブロッキング化（2026-02-27 追記）
+- 背景:
+  - `ORDER_MANAGER_SERVICE_WORKERS=6` 運用後も、
+    strategy worker 側で `order_manager service call failed ... Read timed out (45.0)` が継続。
+  - `workers/order_manager/worker.py` の endpoint は `async def` だが、
+    `execution.order_manager` 内部は OANDA API / SQLite の同期I/Oを含むため、
+    request 処理中に event loop が占有される時間が長かった。
+- 実装:
+  - `workers/order_manager/worker.py`
+    - `execution.order_manager.*` 呼び出しを
+      `asyncio.to_thread(... asyncio.run(...))` へ統一し、
+      endpoint event loop から分離。
+    - 遅延監査キーを追加:
+      - `ORDER_MANAGER_SERVICE_SLOW_REQUEST_WARN_SEC`（default `8.0`）
+      - 閾値超過時に `slow_request op=... elapsed=...` を journald へ出力。
+- 運用意図:
+  - service worker の同時処理で head-of-line blocking を減らし、
+    localhost API timeout と fallback 発生率を下げる。
+  - 停止なし方針のまま、order-manager 経路の執行遅延を縮小する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |
