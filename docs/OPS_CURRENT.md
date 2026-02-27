@@ -22,6 +22,10 @@
     - `SCALP_PING_5S[_C]_PERF_GUARD_FAILFAST_MIN_TRADES: 8 -> 30`
     - `..._FAILFAST_PF: 0.90 -> 0.20`
     - `..._FAILFAST_WIN: 0.48 -> 0.20`
+  - 再起動後に `hard:sl_loss_rate=0.50 pf=0.32 n=22` が主因化したため、
+    C `SL_LOSS_RATE` ガードも warmup 寄りへ同期:
+    - `SCALP_PING_5S[_C]_PERF_GUARD_SL_LOSS_RATE_MIN_TRADES: 16 -> 30`
+    - `SCALP_PING_5S[_C]_PERF_GUARD_SL_LOSS_RATE_MAX: 0.55/0.50 -> 0.68`
 - 意図:
   - order-manager preflight の hard failfast を解除し、long の送信・約定再開を優先する。
   - 閾値ソースを worker と揃えて、同一戦略が経路差で別挙動になる状態を解消する。

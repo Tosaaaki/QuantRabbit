@@ -22,6 +22,9 @@
       `reject_under=0.74 / min_scale=0.34 / max_scale=0.56` へ更新。
     - `SCALP_PING_5S[_C]_PERF_GUARD_FAILFAST_*` を
       `min_trades=30 / pf=0.20 / win=0.20` へ更新。
+    - 反映後に `hard:sl_loss_rate` が主因化したため、
+      `SCALP_PING_5S[_C]_PERF_GUARD_SL_LOSS_RATE_*` も
+      `min_trades=30 / max=0.68` へ更新。
 - 意図:
   - V2分離の責務に合わせ、order-manager preflight 判定を worker 運用値と一致させる。
   - 同一戦略が worker 経路と order-manager 経路で異なる閾値を読む状態を解消する。

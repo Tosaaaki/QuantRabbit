@@ -115,6 +115,8 @@ Fact:
     `allowed=False`, `reason='hard:hour13:failfast:pf=0.32 win=0.36 n=22'`
   - worker env（`scalp_ping_5s_c.env`）も加えると  
     `allowed=True`, `reason='warn:margin_closeout_soft...'`
+- failfast 同期後の再計測では reject 理由が  
+  `hard:sl_loss_rate=0.50 pf=0.32 n=22` へ移行し、`perf_block` は継続。
 
 Failure Cause:
 1. `quant-order-manager.service` が読む env 側で C failfast 閾値が旧値（`min_trades=8`, `pf=0.90`, `win=0.48`）のまま残存し、hard block 化。
@@ -129,6 +131,9 @@ Improvement:
   - `MIN_TRADES 8 -> 30`
   - `PF 0.90 -> 0.20`
   - `WIN 0.48 -> 0.20`
+3. `ops/env/quant-order-manager.env` の `SCALP_PING_5S[_C]_PERF_GUARD_SL_LOSS_RATE_*` を warmup寄りへ更新:
+  - `MIN_TRADES 16 -> 30`
+  - `MAX 0.55/0.50 -> 0.68`
 
 Verification:
 1. 再起動後の `perf_guard.is_allowed(..., env_prefix=SCALP_PING_5S_C)` が `allowed=True` となること。
