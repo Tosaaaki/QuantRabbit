@@ -2157,3 +2157,48 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-02-27 08:28 UTC / 2026-02-27 17:28 JST - `WickReversalBlend` の成功例へ寄せる閾値更新（entry probability + exit buffer）
+
+Period:
+- Analysis window: 24h / 7d / 14d（`trades.db`）
+- Tick validate window: 2026-02-27 UTC（`USD_JPY_ticks_20260227.jsonl`）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/replay/USD_JPY/USD_JPY_ticks_20260227.jsonl`
+- `~/.codex/skills/qr-tick-entry-validate/scripts/tick_entry_validate.py`
+
+Fact:
+- `WickReversalBlend` 24h は `16 trades / +403.5 JPY`、14d は `24 trades / +255.8 JPY`。
+- `entry_probability` 閾値シミュレーション:
+  - 現状相当（`>=0.70`）: `24h +403.5 JPY`, `14d +362.8 JPY`
+  - `>=0.78`: `24h +497.8 JPY`, `14d +457.1 JPY`（件数は `16 -> 12` / `20 -> 16`）
+  - `>=0.80`: `24h +490.9 JPY`, `14d +450.2 JPY`
+- 24h の損失 3件はいずれも `MARKET_ORDER_TRADE_CLOSE` で、`hold_sec=349/446/794` と長期化。
+- `orders.db` 実測:
+  - `ticket 408599` で `close_reject_profit_buffer`（`est_pips=0.5 < min_profit_pips=0.6`）が発生後、`max_adverse` で `-322.0 JPY` へ拡大。
+- Tick照合（同ticket）:
+  - `sl_hit_s=132`、`hold_sec=794`、`MAE_300s=3.9 pips` と逆行継続。
+
+Failure Cause:
+1. `entry_probability 0.75-0.80` 帯の期待値が悪く、勝ちパターンへの集中度が不足。
+2. `min_profit_pips=0.6` が lock系 close を弾き、`max_adverse` まで保持して損失が拡大。
+3. `loss_cut_max_hold_sec=900` が長く、逆行ポジの解放が遅い。
+
+Improvement:
+1. `ops/env/quant-scalp-wick-reversal-blend.env`
+   - `SCALP_PRECISION_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.78`（from `0.46`）
+2. `config/strategy_exit_protections.yaml`（`WickReversalBlend`）
+   - `min_profit_pips: 0.45`（from `0.6`）
+   - `loss_cut_max_hold_sec: 420`（from `900`）
+
+Verification:
+1. 反映後 2h/24h で `WickReversalBlend` の `entry_probability` 分布が `>=0.78` に収束すること。
+2. `orders.db` の `close_reject_profit_buffer`（WickReversalBlend）が減少すること。
+3. `trades.db` で `hold_sec>=420` かつ負けの件数が減ること。
+4. `WickReversalBlend` の 24h `sum(realized_pl)` が改善または維持されること。
+
+Status:
+- in_progress

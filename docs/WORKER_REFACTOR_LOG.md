@@ -9099,3 +9099,27 @@
   - EXIT は各 strategy_tag の allowlist で分離し、重複クローズを防ぐ。
 - 検証:
   - `python3 -m py_compile` とユニットテストで import/設定分岐の回帰を確認（詳細は次項）。
+
+### 2026-02-27（追記）`WickReversalBlend` を成功パターンへ寄せる閾値更新（VM実測ベース）
+
+- 目的:
+  - `WickReversalBlend` の勝ち筋（高 `entry_probability` + 早期解放）へ約定を寄せ、`max_adverse` テールを圧縮する。
+- 実測根拠（VM）:
+  - 24h: `16 trades / +403.5 JPY`、14d: `24 trades / +255.8 JPY`。
+  - `entry_probability` 閾値シミュレーションで `>=0.78` が 24h/14d とも改善（`24h +497.8 JPY`, `14d +457.1 JPY`）。
+  - `orders.db` で `WickReversalBlend` の `close_reject_profit_buffer` を確認。
+    - 例: `ticket 408599` は `est_pips=0.5` が `min_profit_pips=0.6` を下回って reject され、後段 `max_adverse` で `-322.0 JPY`。
+- 変更:
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `SCALP_PRECISION_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.46 -> 0.78`
+  - `config/strategy_exit_protections.yaml`（`WickReversalBlend`）
+    - `min_profit_pips: 0.6 -> 0.45`
+    - `loss_cut_max_hold_sec: 900 -> 420`
+- 影響範囲:
+  - `quant-scalp-wick-reversal-blend.service` の entry preflight 縮小/拒否閾値。
+  - `quant-scalp-wick-reversal-blend-exit.service` が参照する strategy exit protection（WickReversalBlendタグのみ）。
+  - order_manager/position_manager/strategy_control の共通導線仕様は変更なし。
+- 検証観点:
+  1. 反映後 2h/24h で `WickReversalBlend` の `entry_probability>=0.78` への収束。
+  2. `orders.db` の `close_reject_profit_buffer`（WickReversalBlend）減少。
+  3. `trades.db` の `hold_sec>=420` かつ負けトレード件数の低下。
