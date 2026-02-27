@@ -111,6 +111,8 @@ Improvement:
 2. stale 時は `snapshot.current_price` を外部 `USD/JPY` にフォールバック。
 3. `snapshot.factor_stale/factor_age_m1_sec/current_price_source` を追加し、判定根拠を可視化。
 4. stale 時に `direction_score` と `direction_confidence_pct` を減衰し、`break_points/if_then_rules` に鮮度ガードを追加。
+5. `execution/order_manager._factor_age_seconds()` で `timestamp/ts/time` を受理し、
+   `ENTRY_FACTOR_MAX_AGE_SEC` の stale block が ts系 factor でも確実に発火するよう補正。
 
 Verification:
 1. `pytest -q tests/scripts/test_gpt_ops_report.py tests/scripts/test_run_market_playbook_cycle.py` で `11 passed`。

@@ -1553,7 +1553,7 @@ def _factor_age_seconds(tf: str = "M1") -> float | None:
         fac = (all_factors().get(tf.upper()) or {})
     except Exception:
         return None
-    ts_raw = fac.get("timestamp")
+    ts_raw = fac.get("timestamp") or fac.get("ts") or fac.get("time")
     if not ts_raw:
         return None
     try:

@@ -9715,6 +9715,9 @@
     - `data_sources` に `factors_m1_stale/factors_m1_age_sec` を追加。
   - `tests/scripts/test_gpt_ops_report.py`
     - stale/fresh の 2 ケースを追加し、価格ソース切替と stale フラグを検証。
+  - `execution/order_manager.py`
+    - `_factor_age_seconds()` が `timestamp` に加えて `ts/time` も参照するよう修正。
+    - `ENTRY_FACTOR_MAX_AGE_SEC` による preflight stale block が、ts系キーでも有効化される。
 - 検証:
   - `pytest -q tests/scripts/test_gpt_ops_report.py tests/scripts/test_run_market_playbook_cycle.py` -> `11 passed`
   - ローカル再現で `factor_timestamp_utc=2025-10-29...` の stale 条件時、`current_price_source=external_snapshot` を確認。
