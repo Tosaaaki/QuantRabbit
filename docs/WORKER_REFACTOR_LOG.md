@@ -8331,6 +8331,19 @@
   - localhost API の同時処理能力を引き上げ、entry/close の service timeout 発生率を下げる。
   - 連続 timeout 起点の重複 request/reject（`CLIENT_TRADE_ID_ALREADY_EXISTS`）を抑制する。
 
+### 2026-02-27（追記）WickBlend `StageTracker` 失敗時の fail-open（noop fallback）
+
+- 背景（VM実測, UTC 2026-02-27 00:59）:
+  - `quant-scalp-wick-reversal-blend.service` が `StageTracker()` 初期化の
+    `database is locked` 例外で再停止。
+- 変更:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_NoopStageTracker` を追加。
+    - `StageTracker()` 初期化を `try/except` 化し、失敗時に noop へフォールバック。
+- 意図:
+  - DBロック瞬間風速で WickBlend worker 全体が停止する経路を遮断し、
+    エントリー導線を維持する。
+
 ### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
 
 - 背景:

@@ -95,6 +95,30 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:12 UTC / 2026-02-27 10:12 JST - WickBlendを`StageTracker`初期化失敗時も継続稼働に変更
+Period:
+- VM実測: `2026-02-27 00:59 UTC` で `quant-scalp-wick-reversal-blend.service` が再停止
+- Source: `journalctl -u quant-scalp-wick-reversal-blend.service`
+
+Fact:
+- `stage_tracker` の `sqlite3.OperationalError: database is locked` が再発し、WickBlend が `failed`。
+- 例外は `StageTracker()` 初期化時に発生し、worker プロセス自体が終了していた。
+
+Failure Cause:
+1. `stage_state.db` のロック競合が強い瞬間に、`StageTracker` 初期化例外がプロセス致命化していた。
+
+Improvement:
+1. `workers/scalp_wick_reversal_blend/worker.py`
+   - `StageTracker()` を `try/except` 化。
+   - 初期化失敗時は `_NoopStageTracker` にフォールバックし、worker 本体は稼働継続。
+
+Verification:
+1. `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py` が pass。
+2. VM反映後に `quant-scalp-wick-reversal-blend.service` の `active` と `Application started!` 継続を確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:10 UTC / 2026-02-27 10:10 JST - order_manager API詰まり緩和（service workerを2並列化）
 Period:
 - VM実測: `2026-02-27 00:57-00:58 UTC`

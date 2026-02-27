@@ -560,6 +560,21 @@ TICK_WICK_MIN_UNITS_CLAMP_RATIO = _env_float("TICK_WICK_MIN_UNITS_CLAMP_RATIO", 
 _LAST_TICK_WICK_PLACE_DIAG_TS = 0.0
 _LAST_WICK_BLEND_DIAG_TS = 0.0
 
+
+class _NoopStageTracker:
+    def update_loss_streaks(self, *args, **kwargs) -> None:
+        return None
+
+    def is_strategy_blocked(self, *args, **kwargs):
+        return False, 0.0, ""
+
+    def is_blocked(self, *args, **kwargs):
+        return False, 0.0, ""
+
+    def close(self) -> None:
+        return None
+
+
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
 LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
 LSR_RECLAIM_PIPS = _env_float("LSR_RECLAIM_PIPS", 0.1)
@@ -3534,7 +3549,15 @@ async def scalp_wick_reversal_blend_worker() -> None:
     LOG.info("%s worker start (interval=%.1fs mode=%s)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC, config.MODE)
     LOG.info("Application started!")
     pos_manager = PositionManager()
-    stage_tracker = StageTracker()
+    try:
+        stage_tracker = StageTracker()
+    except Exception as exc:
+        LOG.warning(
+            "%s stage_tracker init failed; fallback=noop err=%s",
+            config.LOG_PREFIX,
+            exc,
+        )
+        stage_tracker = _NoopStageTracker()
     last_entry_ts = 0.0
     last_perf_sync = 0.0
     last_stage_sync = 0.0

@@ -1350,6 +1350,16 @@
   - order_manager の同時処理能力を上げ、localhost API timeout を減らす。
   - timeout由来の重複リクエストと reject ノイズを抑制する。
 
+### WickBlend `StageTracker` fail-open（2026-02-27 追記）
+- 背景:
+  - `StageTracker` 初期化時の `database is locked` が再発し、
+    `quant-scalp-wick-reversal-blend` がプロセス終了していた。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `StageTracker()` を `try/except` で包み、初期化失敗時は `_NoopStageTracker` を使用。
+- 運用意図:
+  - shared DBロックの瞬間的な競合で、勝ち寄与 worker が停止し続ける状態を防ぐ。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |
