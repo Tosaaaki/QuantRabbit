@@ -57,6 +57,7 @@ def test_load_dashboard_data_uses_local_fallback_when_snapshots_unavailable(monk
         },
     )
     monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
+    monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
 
     result = ui._load_dashboard_data()
 

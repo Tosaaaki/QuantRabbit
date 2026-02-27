@@ -54,6 +54,7 @@ def _hourly_rows(lookback: int, *, reference_now: datetime, label: str) -> list[
 
 def test_summarise_snapshot_falls_back_when_hourly_trades_is_incomplete(monkeypatch):
     monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
+    monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
     monkeypatch.setattr(
         ui,
         "_build_hourly_fallback",
@@ -86,6 +87,7 @@ def test_summarise_snapshot_falls_back_when_hourly_trades_is_incomplete(monkeypa
 
 def test_summarise_snapshot_keeps_hourly_trades_when_complete(monkeypatch):
     monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
+    monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
     monkeypatch.setattr(
         ui,
         "_build_hourly_fallback",

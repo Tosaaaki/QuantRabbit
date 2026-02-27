@@ -2028,6 +2028,80 @@ def _hourly_trades_is_usable(payload: Any, *, reference_now: Optional[datetime] 
     return expected_keys.issubset(actual_keys)
 
 
+def _load_trade_rollup_jst(reference_now: datetime) -> Optional[dict[str, float | int]]:
+    if not TRADES_DB.exists():
+        return None
+    now = reference_now if reference_now.tzinfo else reference_now.replace(tzinfo=timezone.utc)
+    now_jst = now.astimezone(_JST)
+    today_start_jst = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start_jst = today_start_jst - timedelta(days=1)
+    week_cutoff_jst = now_jst - timedelta(days=7)
+    today_start_utc = today_start_jst.astimezone(timezone.utc).isoformat()
+    yesterday_start_utc = yesterday_start_jst.astimezone(timezone.utc).isoformat()
+    week_cutoff_utc = week_cutoff_jst.astimezone(timezone.utc).isoformat()
+    db_uri = f"file:{TRADES_DB}?mode=ro"
+    try:
+        con = sqlite3.connect(db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC)
+        con.row_factory = sqlite3.Row
+        con.execute(f"PRAGMA busy_timeout={int(_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC * 1000)}")
+        cur = con.execute(
+            """
+            SELECT
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) THEN COALESCE(pl_pips, 0.0) ELSE 0.0 END) AS daily_pips,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) THEN COALESCE(realized_pl, 0.0) ELSE 0.0 END) AS daily_jpy,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) THEN 1 ELSE 0 END) AS daily_trades,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) AND julianday(close_time) < julianday(?) THEN COALESCE(pl_pips, 0.0) ELSE 0.0 END) AS yesterday_pips,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) AND julianday(close_time) < julianday(?) THEN COALESCE(realized_pl, 0.0) ELSE 0.0 END) AS yesterday_jpy,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) AND julianday(close_time) < julianday(?) THEN 1 ELSE 0 END) AS yesterday_trades,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) THEN COALESCE(pl_pips, 0.0) ELSE 0.0 END) AS weekly_pips,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) THEN COALESCE(realized_pl, 0.0) ELSE 0.0 END) AS weekly_jpy,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) THEN 1 ELSE 0 END) AS weekly_trades,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) AND COALESCE(pl_pips, 0.0) > 0 THEN 1 ELSE 0 END) AS wins_7d,
+              SUM(CASE WHEN julianday(close_time) >= julianday(?) AND COALESCE(pl_pips, 0.0) < 0 THEN 1 ELSE 0 END) AS losses_7d
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND COALESCE(lower(pocket), '') != 'manual'
+              AND julianday(close_time) >= julianday(?)
+            """,
+            (
+                today_start_utc,
+                today_start_utc,
+                today_start_utc,
+                yesterday_start_utc,
+                today_start_utc,
+                yesterday_start_utc,
+                today_start_utc,
+                yesterday_start_utc,
+                today_start_utc,
+                week_cutoff_utc,
+                week_cutoff_utc,
+                week_cutoff_utc,
+                week_cutoff_utc,
+                week_cutoff_utc,
+                week_cutoff_utc,
+            ),
+        )
+        row = cur.fetchone()
+        con.close()
+        if row is None:
+            return None
+        return {
+            "daily_pips": _safe_float(row["daily_pips"]),
+            "daily_jpy": _safe_float(row["daily_jpy"]),
+            "daily_trades": int(row["daily_trades"] or 0),
+            "yesterday_pips": _safe_float(row["yesterday_pips"]),
+            "yesterday_jpy": _safe_float(row["yesterday_jpy"]),
+            "yesterday_trades": int(row["yesterday_trades"] or 0),
+            "weekly_pips": _safe_float(row["weekly_pips"]),
+            "weekly_jpy": _safe_float(row["weekly_jpy"]),
+            "weekly_trades": int(row["weekly_trades"] or 0),
+            "wins_7d": int(row["wins_7d"] or 0),
+            "losses_7d": int(row["losses_7d"] or 0),
+        }
+    except Exception:
+        return None
+
+
 def _build_live_snapshot() -> dict:
     try:
         from execution.position_manager import PositionManager
@@ -2384,10 +2458,34 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     _apply_metrics(metrics_snapshot.get("weekly"), target="weekly")
     _apply_metrics(metrics_snapshot.get("total"), target="total")
 
+    rollup = _load_trade_rollup_jst(now)
+    rollup_applied = False
+    if isinstance(rollup, dict):
+        perf["daily_pl_pips"] = round(_safe_float(rollup.get("daily_pips")), 2)
+        perf["daily_pl_jpy"] = round(_safe_float(rollup.get("daily_jpy")), 2)
+        perf["yesterday_pl_pips"] = round(_safe_float(rollup.get("yesterday_pips")), 2)
+        perf["yesterday_pl_jpy"] = round(_safe_float(rollup.get("yesterday_jpy")), 2)
+        perf["weekly_pl_pips"] = round(_safe_float(rollup.get("weekly_pips")), 2)
+        perf["weekly_pl_jpy"] = round(_safe_float(rollup.get("weekly_jpy")), 2)
+        perf["recent_closed"] = int(rollup.get("weekly_trades") or 0)
+        perf["wins"] = int(rollup.get("wins_7d") or 0)
+        perf["losses"] = int(rollup.get("losses_7d") or 0)
+        wl_total = perf["wins"] + perf["losses"]
+        perf["win_rate"] = (perf["wins"] / wl_total) if wl_total else 0.0
+        perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
+        rollup_applied = True
+
+    weekly_closed_from_snapshot = sum(
+        1
+        for t in closed_trades
+        if t.get("close_time_jst") and t["close_time_jst"] >= week_cutoff
+    )
     if perf.get("recent_closed", 0) == 0:
-        perf["recent_closed"] = len(closed_trades)
+        perf["recent_closed"] = weekly_closed_from_snapshot or len(closed_trades)
     if perf.get("total_trades") in (None, 0):
         perf["total_trades"] = len(parsed_trades)
+    if (perf.get("total_trades") or 0) < (perf.get("recent_closed") or 0):
+        perf["total_trades"] = perf.get("recent_closed") or 0
 
     if perf.get("daily_pl_pips") is None:
         perf["daily_pl_pips"] = round(
@@ -2447,7 +2545,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     perf["weekly_pl_eq1l"] = round((perf.get("weekly_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
     perf["total_eq1l"] = round((perf.get("total_jpy", 0.0) or 0.0) / 1000.0, 2)
 
-    if metrics_snapshot.get("daily_change") is None or perf.get("daily_change_pct") is None:
+    if rollup_applied or metrics_snapshot.get("daily_change") is None or perf.get("daily_change_pct") is None:
         today_pips = perf.get("daily_pl_pips", 0.0) or 0.0
         yest_pips = perf.get("yesterday_pl_pips", 0.0) or 0.0
         today_jpy = perf.get("daily_pl_jpy", 0.0) or 0.0
@@ -2471,12 +2569,28 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         else:
             perf["daily_change_pct"] = None
 
-    if perf.get("wins") is None or perf.get("losses") is None:
-        wins = sum(1 for t in closed_trades if t["pl_pips"] > 0)
-        losses = sum(1 for t in closed_trades if t["pl_pips"] < 0)
+    wins_val = perf.get("wins")
+    losses_val = perf.get("losses")
+    wins_inconsistent = (
+        not rollup_applied
+        and (perf.get("recent_closed") or 0) > 0
+        and int(wins_val or 0) + int(losses_val or 0) == 0
+    )
+    if wins_val is None or losses_val is None or wins_inconsistent:
+        weekly_closed_trades = [
+            t
+            for t in closed_trades
+            if t.get("close_time_jst") and t["close_time_jst"] >= week_cutoff
+        ]
+        wins = sum(1 for t in weekly_closed_trades if t["pl_pips"] > 0)
+        losses = sum(1 for t in weekly_closed_trades if t["pl_pips"] < 0)
         perf["wins"] = wins
         perf["losses"] = losses
-        perf["win_rate"] = (wins / perf["recent_closed"]) if perf["recent_closed"] else 0.0
+        wl_total = wins + losses
+        if wl_total:
+            perf["win_rate"] = wins / wl_total
+        else:
+            perf["win_rate"] = 0.0
         perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
 
     if perf.get("last_trade_at") is None:

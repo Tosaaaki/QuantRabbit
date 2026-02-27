@@ -8635,9 +8635,15 @@
       - ラベル/キー正規化（年跨ぎ考慮）を追加
     - snapshot 取得失敗時でも `recent_trades` + `hourly_fallback` を使う
       `local-fallback` サマリを生成するよう変更。
+    - 7日集計（`wins/losses/win_rate/recent_closed`）をローカル `trades.db` の
+      JST 窓集計で補正し、snapshot 側 `total` メトリクスが 0 固定でも
+      「決済件数>0 なのに 0勝0敗」の不整合が出ないように修正。
+    - `daily/weekly` P/L も同ローカル集計を優先し、時間帯表とサマリーカードの
+      表示値を一致させるよう補正。
   - テスト追加/更新:
     - `tests/apps/test_autotune_ui_dashboard_local_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_source_guard.py`
+    - `tests/apps/test_autotune_ui_summary_consistency.py`
 - 検証:
-  - `pytest -q tests/apps` で `24 passed` を確認。
+  - `pytest -q tests/apps` で `27 passed` を確認。
