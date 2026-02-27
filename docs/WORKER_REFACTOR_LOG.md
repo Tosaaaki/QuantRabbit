@@ -35,6 +35,11 @@
   - `ops/env/quant-scalp-extrema-reversal.env`
     - `COOLDOWN_SEC=30`, `MAX_OPEN_TRADES=3`, `BASE_UNITS=13000`,
       `MIN_ENTRY_CONF=54`。
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - unit直書きの `SCALP_PING_5S_B_BASE_ENTRY_UNITS` /
+      `SCALP_PING_5S_B_MAX_UNITS` /
+      `ORDER_MANAGER_PRESERVE_INTENT_*` を削除し、
+      repo側 env ファイルを実効値の唯一ソースへ統一。
 - 意図:
   - B/C の損失寄与を機械的に圧縮しつつ、勝ち寄与戦略へ回転と配分を寄せる。
   - order-manager 遅延時の長時間ブロックを縮め、取りこぼしの再発を抑える。

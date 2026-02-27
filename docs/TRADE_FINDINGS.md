@@ -107,6 +107,10 @@ Improvement:
      - `MAX_OPEN_TRADES: 2 -> 3`
      - `BASE_UNITS: 12000 -> 13000`
      - `MIN_ENTRY_CONF: 57 -> 54`
+6. B unit override 競合を解消（`systemd/quant-scalp-ping-5s-b.service`）:
+   - unit直書きの `BASE_ENTRY_UNITS` / `MAX_UNITS` /
+     `ORDER_MANAGER_PRESERVE_INTENT_*` を削除し、
+     `ops/env/scalp_ping_5s_b.env` と `ops/env/quant-order-manager.env` を唯一の実効値に統一。
 
 Verification:
 1. デプロイ後、VMで `HEAD == origin/main` と `quant-order-manager`, `quant-scalp-ping-5s-{b,c}`, `quant-scalp-{wick-reversal-blend,extrema-reversal}` の再起動完了を確認。
