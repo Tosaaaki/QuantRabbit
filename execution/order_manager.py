@@ -5824,6 +5824,25 @@ def _projected_usage_with_netting(
     return projected_used / nav
 
 
+def _is_net_reducing_usage(
+    *,
+    net_reducing: bool,
+    usage_total: float | None,
+    projected_usage_total: float | None,
+) -> bool:
+    """
+    True when this order reduces total account margin usage.
+
+    Keep this check based on total net exposure, even when side-cap mode
+    evaluates per-side usage for concentration control.
+    """
+    if not net_reducing:
+        return False
+    if usage_total is None or projected_usage_total is None:
+        return False
+    return projected_usage_total < usage_total
+
+
 def _is_passive_price(
     *,
     units: int,
@@ -9370,6 +9389,12 @@ async def market_order(
                         margin_used=margin_used,
                         meta=meta,
                     )
+                    projected_usage_total = projected_usage
+                    net_reducing_usage = _is_net_reducing_usage(
+                        net_reducing=net_reducing,
+                        usage_total=usage_total,
+                        projected_usage_total=projected_usage_total,
+                    )
                     usage_for_cap = projected_usage if projected_usage is not None else usage
                     side_units = None
                     side_usage = None
@@ -9386,16 +9411,7 @@ async def market_order(
                             usage = side_usage
                             projected_usage = side_projected
                             usage_for_cap = side_projected
-                            net_reducing = False
-                    if (
-                        usage_for_cap >= hard_cap * 0.995
-                        and not (
-                            net_reducing
-                            and projected_usage is not None
-                            and usage is not None
-                            and projected_usage < usage
-                        )
-                    ):
+                    if usage_for_cap >= hard_cap * 0.995 and not net_reducing_usage:
                         price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
                         scaled_units = 0
                         cap_target = hard_cap * 0.99
@@ -9472,17 +9488,11 @@ async def market_order(
                                 },
                             )
                             return None
-                    if (
-                        usage_for_cap >= hard_cap * 0.995
-                        and net_reducing
-                        and projected_usage is not None
-                        and usage is not None
-                        and projected_usage < usage
-                    ):
+                    if usage_for_cap >= hard_cap * 0.995 and net_reducing_usage:
                         logging.info(
                             "[ORDER] allow net-reducing order usage=%.3f->%.3f cap=%.3f units=%d",
-                            usage,
-                            projected_usage,
+                            usage_total,
+                            projected_usage_total,
                             hard_cap,
                             units,
                         )
@@ -9512,7 +9522,7 @@ async def market_order(
                 if (
                     projected_usage is not None
                     and projected_usage >= cap
-                    and not (net_reducing and usage is not None and projected_usage < usage)
+                    and not net_reducing_usage
                 ):
                     price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
                     scaled_units = 0
@@ -9575,6 +9585,10 @@ async def market_order(
                                 "meta": meta,
                                 "entry_thesis": entry_thesis,
                                 "projected_usage": projected_usage,
+                                "projected_usage_total": projected_usage_total,
+                                "margin_usage_total": usage_total,
+                                "side_usage": side_usage,
+                                "side_projected": side_projected,
                                 "cap": cap,
                             },
                         )
@@ -9591,14 +9605,12 @@ async def market_order(
                 if (
                     projected_usage is not None
                     and projected_usage >= cap
-                    and net_reducing
-                    and usage is not None
-                    and projected_usage < usage
+                    and net_reducing_usage
                 ):
                     logging.info(
                         "[ORDER] allow net-reducing projected usage=%.3f->%.3f cap=%.3f units=%d",
-                        usage,
-                        projected_usage,
+                        usage_total,
+                        projected_usage_total,
                         cap,
                         units,
                     )
@@ -12093,6 +12105,12 @@ async def limit_order(
                         margin_used=margin_used,
                         meta=meta_guard,
                     )
+                    projected_usage_total = projected_usage
+                    net_reducing_usage = _is_net_reducing_usage(
+                        net_reducing=net_reducing,
+                        usage_total=usage_total,
+                        projected_usage_total=projected_usage_total,
+                    )
                     usage_for_cap = projected_usage if projected_usage is not None else usage
                     side_units = None
                     side_usage = None
@@ -12109,16 +12127,7 @@ async def limit_order(
                             usage = side_usage
                             projected_usage = side_projected
                             usage_for_cap = side_projected
-                            net_reducing = False
-                    if (
-                        usage_for_cap >= hard_cap * 0.995
-                        and not (
-                            net_reducing
-                            and projected_usage is not None
-                            and usage is not None
-                            and projected_usage < usage
-                        )
-                    ):
+                    if usage_for_cap >= hard_cap * 0.995 and not net_reducing_usage:
                         price_hint = _estimate_price(meta_guard) or _latest_mid_price() or 0.0
                         scaled_units = 0
                         cap_target = hard_cap * 0.99
@@ -12194,17 +12203,11 @@ async def limit_order(
                                 },
                             )
                             return None, None
-                    if (
-                        usage_for_cap >= hard_cap * 0.995
-                        and net_reducing
-                        and projected_usage is not None
-                        and usage is not None
-                        and projected_usage < usage
-                    ):
+                    if usage_for_cap >= hard_cap * 0.995 and net_reducing_usage:
                         logging.info(
                             "[ORDER] allow net-reducing order usage=%.3f->%.3f cap=%.3f units=%d",
-                            usage,
-                            projected_usage,
+                            usage_total,
+                            projected_usage_total,
                             hard_cap,
                             units,
                         )
@@ -12233,7 +12236,7 @@ async def limit_order(
                 if (
                     projected_usage is not None
                     and projected_usage >= cap
-                    and not (net_reducing and usage is not None and projected_usage < usage)
+                    and not net_reducing_usage
                 ):
                     price_hint = _estimate_price(meta_guard) or _latest_mid_price() or 0.0
                     scaled_units = 0
@@ -12295,6 +12298,10 @@ async def limit_order(
                                 "meta": meta,
                                 "entry_thesis": entry_thesis,
                                 "projected_usage": projected_usage,
+                                "projected_usage_total": projected_usage_total,
+                                "margin_usage_total": usage_total,
+                                "side_usage": side_usage,
+                                "side_projected": side_projected,
                                 "cap": cap,
                             },
                         )
@@ -12311,14 +12318,12 @@ async def limit_order(
                 if (
                     projected_usage is not None
                     and projected_usage >= cap
-                    and net_reducing
-                    and usage is not None
-                    and projected_usage < usage
+                    and net_reducing_usage
                 ):
                     logging.info(
                         "[ORDER] allow net-reducing projected usage=%.3f->%.3f cap=%.3f units=%d",
-                        usage,
-                        projected_usage,
+                        usage_total,
+                        projected_usage_total,
                         cap,
                         units,
                     )

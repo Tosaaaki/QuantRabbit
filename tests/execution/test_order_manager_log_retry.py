@@ -37,6 +37,14 @@ class _LimitSnapshot:
         self.margin_rate = 0.04
 
 
+class _SideCapSnapshot:
+    def __init__(self) -> None:
+        # usage_total ~= 3.2%
+        self.nav = 58_000.0
+        self.margin_used = 1_860.0
+        self.margin_rate = 0.04
+
+
 def _invoke_log_order(*, fast_fail: bool = False) -> None:
     order_manager._log_order(
         pocket="scalp_fast",
@@ -325,3 +333,82 @@ def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(monkeypat
     assert trade_id is None
     assert order_id == "OID-1001"
     assert "quote_retry" in statuses
+
+
+def test_limit_order_allows_net_reducing_under_side_cap(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    submit_calls = {"count": 0}
+    statuses: list[str] = []
+
+    def _fake_api_request(endpoint) -> None:
+        submit_calls["count"] += 1
+        endpoint.response = {
+            "orderCreateTransaction": {"id": "OID-SIDECAP-1"},
+        }
+
+    monkeypatch.setenv("MARGIN_SIDE_CAP_ENABLED", "1")
+    monkeypatch.setenv("MAX_MARGIN_USAGE", "0.92")
+    monkeypatch.setenv("MAX_MARGIN_USAGE_HARD", "0.96")
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
+    monkeypatch.setattr(order_manager.time, "sleep", lambda _sec: None)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (-180, None))
+    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager,
+        "_augment_entry_thesis_policy_generation",
+        lambda thesis, reduce_only=False: thesis,
+    )
+    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+    monkeypatch.setattr(order_manager, "_is_passive_price", lambda **_k: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_fetch_quote_with_retry",
+        lambda *_a, **_k: {"bid": 155.000, "ask": 155.010, "mid": 155.005, "spread_pips": 1.0},
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot",
+        lambda cache_ttl_sec=1.0: _SideCapSnapshot(),
+    )
+    # Long/short both large (hedged) but net is small:
+    # sell -180 reduces net exposure while side_cap would appear high.
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (8900.0, 8700.0))
+
+    trade_id, order_id = asyncio.run(
+        order_manager.limit_order(
+            instrument="USD_JPY",
+            units=-180,
+            price=155.000,
+            sl_price=155.200,
+            tp_price=154.900,
+            pocket="scalp",
+            client_order_id="cid-limit-net-reducing-side-cap",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.95,
+                "entry_units_intent": 180,
+            },
+            meta={"entry_price": 155.000},
+            confidence=95,
+        )
+    )
+
+    assert submit_calls["count"] == 1
+    assert trade_id is None
+    assert order_id == "OID-SIDECAP-1"
+    assert "margin_usage_projected_cap" not in statuses
+    assert "margin_usage_exceeds_cap" not in statuses

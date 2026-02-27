@@ -16,6 +16,7 @@ from execution.order_manager import (
     _entry_quality_microstructure_gate_decision,
     _entry_quality_regime_gate_decision,
     _fallback_protections,
+    _is_net_reducing_usage,
     _loss_cap_units_from_sl,
     _manual_margin_pressure_details,
     _min_rr_adjust_mode_for,
@@ -145,6 +146,28 @@ def test_projected_usage_with_netting_allows_reduction(monkeypatch):
     # margin_used after hedge ≈ 30k * 156.8 * 0.04
     expected_usage = (30_000 * 156.8 * margin_rate) / nav
     assert abs(usage - expected_usage) < 1e-6
+
+
+def test_is_net_reducing_usage_true_when_projected_total_drops() -> None:
+    assert (
+        _is_net_reducing_usage(
+            net_reducing=True,
+            usage_total=0.082,
+            projected_usage_total=0.041,
+        )
+        is True
+    )
+
+
+def test_is_net_reducing_usage_false_without_total_drop() -> None:
+    assert (
+        _is_net_reducing_usage(
+            net_reducing=True,
+            usage_total=0.041,
+            projected_usage_total=0.082,
+        )
+        is False
+    )
 
 
 def test_dynamic_entry_sl_target_pips_reflects_market_volatility(monkeypatch) -> None:

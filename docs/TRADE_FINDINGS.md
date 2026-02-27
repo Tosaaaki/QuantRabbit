@@ -95,6 +95,40 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:05 UTC / 2026-02-27 10:05 JST - `margin_usage_projected_cap` 誤拒否（side cap と net-reducing の不整合）
+Period:
+- VM `journalctl -u quant-order-manager.service`（00:11〜00:20 UTC）
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`（`margin_usage_projected_cap` 行）
+
+Fact:
+- `quant-order-manager` で `margin_usage_projected_cap` が連発し、B/C の `sell` シグナルが約定前に落ちていた。
+- 同時刻ログに `projected margin scale ... usage=0.921~0.946` が記録され、cap 付近として扱われていた。
+- 一方で口座スナップショット（同VM実測）は `usage_total` が低位（例: 約 `0.03` 台）で、総ネット余力とは乖離していた。
+- 乖離は「総ネット使用率」は低いが「同方向 side 使用率」だけが高い局面で顕在化した。
+
+Failure Cause:
+1. `MARGIN_SIDE_CAP_ENABLED=1` 経路で `usage/projected_usage` を side ベースへ上書きした後、net-reducing 例外も同じ side 値で判定していた。
+2. そのため「総ネット使用率を下げる注文」でも `projected_usage < usage` 条件を満たせず、`margin_usage_projected_cap` として誤拒否されていた。
+3. 拒否ログに total/side の両指標が十分残っておらず、現場切り分けコストが高かった。
+
+Improvement:
+1. `execution/order_manager.py` に `_is_net_reducing_usage(...)` を追加し、例外判定を常に total usage（netting）基準へ固定。
+2. side-cap 経路で `usage/projected_usage` を side 用に使っても、拒否可否は `usage_total` と `projected_usage_total` で評価するよう修正（market/limit 両経路）。
+3. `margin_usage_projected_cap` ログ payload に `projected_usage_total / margin_usage_total / side_usage / side_projected` を追加し、再発時の即時判別を可能化。
+
+Verification:
+1. ローカル回帰:
+   - `pytest -q tests/execution/test_order_manager_preflight.py tests/execution/test_order_manager_log_retry.py`
+   - `35 passed`
+2. 新規テスト:
+   - `test_is_net_reducing_usage_*`（純粋判定）
+   - `test_limit_order_allows_net_reducing_under_side_cap`（side cap 高負荷でも net-reducing を許可）
+3. VM検証（次段）:
+   - 反映後 `margin_usage_projected_cap` の連発が収束し、同条件シグナルで `filled/submitted` が再開することを確認。
+
+Status:
+- implemented_local_verified
+
 ## 2026-02-27 00:25 UTC / 2026-02-27 09:25 JST - 自動損益の実測確認と `scalp_ping_5s_b_live` 即効デリスク
 Period:
 - Snapshot window: `2026-02-27 00:22` ～ `00:25` UTC
