@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import sys
 
@@ -567,3 +568,203 @@ def test_entry_leading_profile_skips_manual_pocket(monkeypatch) -> None:
     assert units == 700
     assert prob == 0.51
     assert applied == {}
+
+
+def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None:
+    cached: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_strategy_tag",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "scalp_ping_5s_b_live",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_technical_context",
+        lambda **kwargs: kwargs.get("entry_thesis") or {},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_entry_probability",
+        lambda entry_thesis, confidence: 0.64,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_forecast_context",
+        lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": False, "p_up": 0.08, "edge": 0.92}),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_feedback",
+        lambda *args, **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            kwargs.get("sl_price"),
+            kwargs.get("tp_price"),
+            {},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_forecast_fusion",
+        lambda **kwargs: (
+            0,
+            kwargs.get("entry_probability"),
+            {"reject_reason": "strong_contra_forecast"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_env_prefix_context",
+        lambda entry_thesis, meta, strategy_tag: (entry_thesis, meta),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_leading_profile",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("leading profile should not run")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "_cache_order_status",
+        lambda **kwargs: cached.append(dict(kwargs)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "market_order",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("order dispatch should not run")),
+        raising=False,
+    )
+
+    result = asyncio.run(
+        strategy_entry.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=150.0,
+            tp_price=151.0,
+            pocket="scalp",
+            client_order_id="test-forecast-reject",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={},
+        )
+    )
+
+    assert result is None
+    assert len(cached) == 1
+    assert cached[0]["status"] == "strong_contra_forecast"
+    assert cached[0]["side"] == "buy"
+    assert cached[0]["units"] == 0
+
+
+def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -> None:
+    cached: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_strategy_tag",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "scalp_ping_5s_c_live",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_technical_context",
+        lambda **kwargs: kwargs.get("entry_thesis") or {},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_entry_probability",
+        lambda entry_thesis, confidence: 0.58,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_forecast_context",
+        lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": True, "p_up": 0.62, "edge": 0.71}),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_feedback",
+        lambda *args, **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            kwargs.get("sl_price"),
+            kwargs.get("tp_price"),
+            {},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_forecast_fusion",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            {},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_env_prefix_context",
+        lambda entry_thesis, meta, strategy_tag: (entry_thesis, meta),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_leading_profile",
+        lambda **kwargs: (
+            0,
+            kwargs.get("entry_probability"),
+            {"reason": "entry_leading_profile_reject"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_coordinate_entry_units",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("coordination should not run")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "_cache_order_status",
+        lambda **kwargs: cached.append(dict(kwargs)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "limit_order",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("order dispatch should not run")),
+        raising=False,
+    )
+
+    order_id, rejected_reason = asyncio.run(
+        strategy_entry.limit_order(
+            instrument="USD_JPY",
+            units=-180,
+            price=149.8,
+            sl_price=150.1,
+            tp_price=149.2,
+            pocket="scalp",
+            client_order_id="test-leading-reject",
+            strategy_tag="scalp_ping_5s_c_live",
+            entry_thesis={},
+        )
+    )
+
+    assert order_id is None
+    assert rejected_reason is None
+    assert len(cached) == 1
+    assert cached[0]["status"] == "entry_leading_profile_reject"
+    assert cached[0]["side"] == "sell"
+    assert cached[0]["units"] == 0

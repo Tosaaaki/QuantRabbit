@@ -8512,3 +8512,33 @@
 - 意図:
   - timeout起点の重複再送を reject 終了させず、既存約定へ収束させる。
   - service待ちの詰まりを緩和し、`order_manager_none` と CID重複rejectを低減する。
+
+### 2026-02-27（追記）`strategy_entry` の拒否理由伝播を修正（coordination誤ラベル解消）
+
+- 背景（VM実測）:
+  - `quant-scalp-ping-5s-b/c` で `order_reject:coordination_reject` が多発する一方、
+    `orders.db` では同時刻の `rejected` が乖離し、前段拒否と coordination拒否の切り分けが困難だった。
+  - `strategy_entry` は `forecast_fusion` / `entry_leading_profile` で `units=0` になっても
+    coordination 呼び出しへ進むため、結果的に `coordination_reject` へ潰れる経路があった。
+
+- 変更:
+  - `execution/strategy_entry.py`
+    - `_normalized_reject_reason`, `_cache_entry_reject_status` を追加。
+    - `market_order` / `limit_order` で以下を追加:
+      - `strategy_feedback` 後 `units=0` → `analysis_feedback_zero_units` で reject記録
+      - `forecast_fusion` 後 `units=0` → `reject_reason`（例: `strong_contra_forecast`）で reject記録
+      - `entry_leading_profile` 後 `units=0` → `entry_leading_profile_reject` で reject記録
+    - `coordination` 拒否時も共通 helper 経由で記録し、side は requested units 基準へ統一。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    - 上記理由伝播の回帰テストを2件追加（forecast reject / leading reject）。
+
+- 変更（方向バイアス緩和の運用値）:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SHORT_MOMENTUM_TRIGGER_PIPS=0.09`（from `0.08`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SHORT_MOMENTUM_TRIGGER_PIPS=0.10`（from `0.08`）
+    - `SCALP_PING_5S_C_LONG_MOMENTUM_TRIGGER_PIPS=0.12`（from `0.18`）
+
+- 意図:
+  - 「何で entry が落ちたか」を strategy段で明示し、精度劣化の根因を即時再調整可能にする。
+  - C の過度な short 優位を緩和し、sell 固定化を避ける。

@@ -86,6 +86,39 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 03:25 UTC / 2026-02-27 12:25 JST - `coordination_reject` 誤ラベルと短期 sell 偏重の同時是正
+Period:
+- VM確認: `2026-02-27 02:55` ～ `03:20` UTC
+- Source: VM `orders.db` / `trades.db` / `journalctl` (`quant-scalp-ping-5s-b/c`, `quant-order-manager`)
+
+Fact:
+- 直近30分の `orders.db` では `scalp_ping_5s_b/c` は `sell` 約定のみ（`filled=23`）だったが、2時間窓では `buy/sell` 両側の約定履歴あり。
+- `journalctl` 側では `order_reject:coordination_reject` が多発していた一方、`orders.db` には同時刻の `rejected` が乖離しており、拒否理由の可観測性にズレがあった。
+- `strategy_entry.market_order/limit_order` は `forecast_fusion` / `entry_leading_profile` で `units=0` になっても coordination へ進み、最終的に `coordination_reject` として記録されうる実装だった。
+
+Failure Cause:
+1. 前段拒否（forecast/leading/feedback）と coordination拒否の原因ラベルが混線し、実際の方向判定失敗点が見えない。
+2. C の momentum trigger が `long=0.18 / short=0.08` と非対称で、短期的に sell 偏重へ寄りやすい設定だった。
+
+Improvement:
+1. `execution/strategy_entry.py`
+   - `units=0` を前段で検知した時点で即 return し、`strong_contra_forecast` / `entry_leading_profile_reject` などの実理由を `_cache_order_status` へ記録。
+   - side 記録を `units==0` 時でも要求方向（requested units）基準に統一。
+   - coordination拒否と前段拒否を分離し、`coordination_reject` の過大計上を抑制。
+2. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_SHORT_MOMENTUM_TRIGGER_PIPS=0.09`（from `0.08`）
+3. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_SHORT_MOMENTUM_TRIGGER_PIPS=0.10`（from `0.08`）
+   - `SCALP_PING_5S_C_LONG_MOMENTUM_TRIGGER_PIPS=0.12`（from `0.18`）
+
+Verification:
+1. Unit test: `pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`（17 passed）
+2. VM反映後、`journalctl` の `order_reject:*` が `strong_contra_forecast` / `entry_leading_profile_reject` などに分解されること。
+3. 反映後30～60分で B/C の side 分布（buy/sell）と `pl_pips` 偏りを再集計し、sell固定化が緩和しているか監査する。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:35 UTC / 2026-02-27 10:35 JST - order_manager timeout起点の重複CIDを回収し、エントリー取りこぼしを削減
 Period:
 - 調査窓: `2026-02-27 01:00` ～ `01:33` UTC（`10:00` ～ `10:33` JST）

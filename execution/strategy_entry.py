@@ -2308,6 +2308,52 @@ async def _coordinate_entry_units(
     return final_units_int, None
 
 
+def _normalized_reject_reason(reason: object, fallback: str) -> str:
+    text = str(reason or "").strip().lower()
+    if not text:
+        return fallback
+    compact = (
+        text.replace(":", "_")
+        .replace("/", "_")
+        .replace(" ", "_")
+    )
+    safe = "".join(ch for ch in compact if ch.isalnum() or ch in {"_", "-", "."})
+    safe = safe.strip("._-")
+    return safe or fallback
+
+
+def _cache_entry_reject_status(
+    *,
+    client_order_id: Optional[str],
+    reason: str,
+    requested_units: int,
+    units: int,
+    strategy_tag: Optional[str],
+    pocket: str,
+    entry_probability: Optional[float],
+) -> None:
+    if not client_order_id:
+        return
+    side_units = units if units else requested_units
+    side = "buy" if side_units > 0 else "sell"
+    reason_token = _normalized_reject_reason(reason, "entry_reject")
+    order_manager._cache_order_status(
+        ts=datetime.now(timezone.utc).isoformat(),
+        client_order_id=client_order_id,
+        status=reason_token,
+        attempt=0,
+        side=side,
+        units=int(units),
+        error_code=reason_token,
+        error_message=reason_token,
+        request_payload={
+            "strategy_tag": strategy_tag,
+            "pocket": pocket,
+            "entry_probability": entry_probability,
+        },
+    )
+
+
 async def market_order(
     instrument: str,
     units: int,
@@ -2324,6 +2370,7 @@ async def market_order(
     stage_index: Optional[int] = None,
     arbiter_final: bool = False,
 ) -> Optional[str]:
+    requested_units = int(units)
     resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
     if entry_thesis is None:
         entry_thesis = {}
@@ -2344,7 +2391,7 @@ async def market_order(
         entry_thesis=entry_thesis,
         meta=meta,
     )
-    units, entry_probability, sl_price, tp_price, _ = _apply_strategy_feedback(
+    units, entry_probability, sl_price, tp_price, feedback_applied = _apply_strategy_feedback(
         resolved_strategy_tag,
         pocket=pocket,
         units=units,
@@ -2354,7 +2401,24 @@ async def market_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
-    units, entry_probability, _ = _apply_forecast_fusion(
+    if not units:
+        feedback_reason = "analysis_feedback_zero_units"
+        if isinstance(feedback_applied, dict):
+            feedback_reason = _normalized_reject_reason(
+                feedback_applied.get("reason"),
+                feedback_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=feedback_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        return None
+    units, entry_probability, forecast_applied = _apply_forecast_fusion(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
         units=units,
@@ -2362,10 +2426,30 @@ async def market_order(
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
     )
+    if not units:
+        forecast_reason = "forecast_fusion_reject"
+        if isinstance(forecast_applied, dict):
+            reject_reason = forecast_applied.get("reject_reason")
+            if isinstance(reject_reason, str) and reject_reason.strip():
+                forecast_reason = reject_reason.strip()
+            else:
+                raw_reason = forecast_applied.get("forecast_reason")
+                if isinstance(raw_reason, str) and raw_reason.strip():
+                    forecast_reason = f"forecast_{raw_reason.strip()}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=forecast_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        return None
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
-    units, entry_probability, _ = _apply_strategy_leading_profile(
+    units, entry_probability, leading_applied = _apply_strategy_leading_profile(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
         units=units,
@@ -2374,6 +2458,23 @@ async def market_order(
         forecast_context=forecast_context,
         meta=meta,
     )
+    if not units:
+        leading_reason = "entry_leading_profile_reject"
+        if isinstance(leading_applied, dict):
+            leading_reason = _normalized_reject_reason(
+                leading_applied.get("reason"),
+                leading_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=leading_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        return None
     coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -2387,23 +2488,15 @@ async def market_order(
         forecast_context=forecast_context,
     )
     if not coordinated_units:
-        if client_order_id:
-            reason = str(coordination_reason or "coordination_reject")
-            order_manager._cache_order_status(
-                ts=datetime.now(timezone.utc).isoformat(),
-                client_order_id=client_order_id,
-                status=reason,
-                attempt=0,
-                side="buy" if units > 0 else "sell",
-                units=int(units),
-                error_code=reason,
-                error_message=reason,
-                request_payload={
-                    "strategy_tag": resolved_strategy_tag,
-                    "pocket": pocket,
-                    "entry_probability": entry_probability,
-                },
-            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=str(coordination_reason or "coordination_reject"),
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
         return None
     if coordinated_units != units:
         units = coordinated_units
@@ -2445,6 +2538,7 @@ async def limit_order(
     confidence: Optional[int] = None,
     meta: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
+    requested_units = int(units)
     resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
     if entry_thesis is None:
         entry_thesis = {}
@@ -2465,7 +2559,7 @@ async def limit_order(
         entry_thesis=entry_thesis,
         meta=meta,
     )
-    units, entry_probability, sl_price, tp_price, _ = _apply_strategy_feedback(
+    units, entry_probability, sl_price, tp_price, feedback_applied = _apply_strategy_feedback(
         resolved_strategy_tag,
         pocket=pocket,
         units=units,
@@ -2475,7 +2569,24 @@ async def limit_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
-    units, entry_probability, _ = _apply_forecast_fusion(
+    if not units:
+        feedback_reason = "analysis_feedback_zero_units"
+        if isinstance(feedback_applied, dict):
+            feedback_reason = _normalized_reject_reason(
+                feedback_applied.get("reason"),
+                feedback_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=feedback_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        return None, None
+    units, entry_probability, forecast_applied = _apply_forecast_fusion(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
         units=units,
@@ -2483,10 +2594,30 @@ async def limit_order(
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
     )
+    if not units:
+        forecast_reason = "forecast_fusion_reject"
+        if isinstance(forecast_applied, dict):
+            reject_reason = forecast_applied.get("reject_reason")
+            if isinstance(reject_reason, str) and reject_reason.strip():
+                forecast_reason = reject_reason.strip()
+            else:
+                raw_reason = forecast_applied.get("forecast_reason")
+                if isinstance(raw_reason, str) and raw_reason.strip():
+                    forecast_reason = f"forecast_{raw_reason.strip()}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=forecast_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        return None, None
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
-    units, entry_probability, _ = _apply_strategy_leading_profile(
+    units, entry_probability, leading_applied = _apply_strategy_leading_profile(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
         units=units,
@@ -2495,6 +2626,23 @@ async def limit_order(
         forecast_context=forecast_context,
         meta=meta,
     )
+    if not units:
+        leading_reason = "entry_leading_profile_reject"
+        if isinstance(leading_applied, dict):
+            leading_reason = _normalized_reject_reason(
+                leading_applied.get("reason"),
+                leading_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=leading_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        return None, None
     coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -2508,23 +2656,15 @@ async def limit_order(
         forecast_context=forecast_context,
     )
     if not coordinated_units:
-        if client_order_id:
-            reason = str(coordination_reason or "coordination_reject")
-            order_manager._cache_order_status(
-                ts=datetime.now(timezone.utc).isoformat(),
-                client_order_id=client_order_id,
-                status=reason,
-                attempt=0,
-                side="buy" if units > 0 else "sell",
-                units=int(units),
-                error_code=reason,
-                error_message=reason,
-                request_payload={
-                    "strategy_tag": resolved_strategy_tag,
-                    "pocket": pocket,
-                    "entry_probability": entry_probability,
-                },
-            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=str(coordination_reason or "coordination_reject"),
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
         return None, None
     if coordinated_units != units:
         units = coordinated_units
