@@ -36,13 +36,14 @@ def test_nwave_tolerance_default_can_be_overridden_by_env(monkeypatch):
             quality=1.0,
         ),
     )
+    monkeypatch.delenv("M1SCALP_NWAVE_TOL_DEF_PIPS", raising=False)
     monkeypatch.delenv("M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS", raising=False)
 
     # close is 0.45p above entry. default tolerance floor is 0.42p, so this is skipped as late.
     signal = strategy.M1Scalper.check(_fac(close=156.0045))
     assert signal is None
 
-    monkeypatch.setenv("M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS", "0.50")
+    monkeypatch.setenv("M1SCALP_NWAVE_TOL_DEF_PIPS", "0.50")
     signal = strategy.M1Scalper.check(_fac(close=156.0045))
     assert isinstance(signal, dict)
     assert signal.get("action") == "OPEN_LONG"

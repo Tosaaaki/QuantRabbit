@@ -197,8 +197,15 @@ def _cfg_float(section: Dict, key: str, default: float) -> float:
 
 
 _NWAVE_ENV_FLOAT_OVERRIDES = {
-    "tolerance_default": "M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS",
-    "tolerance_tactical": "M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS",
+    # Keep legacy long keys for compatibility, but prefer short keys in service env.
+    "tolerance_default": (
+        "M1SCALP_NWAVE_TOL_DEF_PIPS",
+        "M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS",
+    ),
+    "tolerance_tactical": (
+        "M1SCALP_NWAVE_TOL_TAC_PIPS",
+        "M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS",
+    ),
 }
 
 
@@ -783,8 +790,8 @@ class M1Scalper:
             return _cfg_float(fallback_cfg, key, default)
 
         def _nwave_float(key: str, default: float) -> float:
-            env_name = _NWAVE_ENV_FLOAT_OVERRIDES.get(key)
-            if env_name:
+            env_names = _NWAVE_ENV_FLOAT_OVERRIDES.get(key) or ()
+            for env_name in env_names:
                 env_val = _to_float(os.getenv(env_name))
                 if env_val is not None and env_val > 0.0:
                     return env_val

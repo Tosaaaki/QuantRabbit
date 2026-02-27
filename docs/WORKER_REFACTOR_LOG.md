@@ -9297,16 +9297,20 @@
   - `strategies/scalping/m1_scalper.py`
     - `nwave` の `tolerance_default/tolerance_tactical` に
       env override を追加。
-      - `M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS`
-      - `M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS`
+      - 推奨（短縮キー）:
+        - `M1SCALP_NWAVE_TOL_DEF_PIPS`
+        - `M1SCALP_NWAVE_TOL_TAC_PIPS`
+      - 互換（従来キー）:
+        - `M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS`
+        - `M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS`
     - 未設定時は既存ロジック（`scalp_active_params.json` + 既定値）を維持。
   - split 3 worker env:
     - `ops/env/quant-scalp-trend-breakout.env`
     - `ops/env/quant-scalp-pullback-continuation.env`
     - `ops/env/quant-scalp-failed-break-reverse.env`
     - 追加:
-      - `M1SCALP_NWAVE_TOLERANCE_DEFAULT_PIPS=0.50`
-      - `M1SCALP_NWAVE_TOLERANCE_TACTICAL_PIPS=0.62`
+      - `M1SCALP_NWAVE_TOL_DEF_PIPS=0.50`
+      - `M1SCALP_NWAVE_TOL_TAC_PIPS=0.62`
   - テスト:
     - `tests/workers/test_m1scalper_nwave_tolerance_override.py`
       - env override 未設定/設定時で `nwave` long-late 判定が切り替わることを確認。
