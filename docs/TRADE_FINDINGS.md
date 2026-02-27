@@ -132,6 +132,42 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 13:40 UTC / 2026-02-27 22:40 JST - `scalp_ping_5s_c` spread guard が約定阻害（第5ラウンド）
+
+Period:
+- Round4 反映後: `2026-02-27T13:29:51+00:00` 以降
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- C の反映後ログで skip 主因が `spread_blocked` に集中:
+  - `13:30:35 UTC`: `entry-skip summary total=143, spread_blocked=134`
+  - `13:31:05 UTC`: `entry-skip summary total=110, spread_blocked=64`
+- ガード理由は `spread_med ... >= limit 1.00p` で、実勢例は `med=0.85p, p95=1.16p, max=1.20p`。
+- 同期間は `orders.db` で C の `filled` を確認できず、通過不足が継続。
+
+Failure Cause:
+1. C の spread guard 閾値 `limit=1.00p` が現行マーケット実勢より低く、入口で継続ブロックされる。
+2. `hot_spread_now` と `spread_med` の連鎖でクールダウンが重なり、エントリー機会が枯渇する。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env` に C 専用 `spread_guard_*` を追加:
+   - `spread_guard_max_pips=1.30`
+   - `spread_guard_release_pips=1.05`
+   - `spread_guard_hot_trigger_pips=1.50`
+   - `spread_guard_hot_cooldown_sec=6`
+2. B は `SPREAD_GUARD_DISABLE=1` 運用を維持し、今回の調整対象外とする。
+
+Verification:
+1. 反映後30分/2hで C の `entry-skip summary` における `spread_blocked` 比率が低下すること。
+2. C の `orders.db status=filled` が再開すること。
+3. `spread block remain` ログの連続発生が短縮/減少すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:52 UTC / 2026-02-27 17:52 JST - M1系 spread 閾値を 1.00 に統一
 Period:
 - Adjustment window: `2026-02-27 17:46` ～ `17:52` JST

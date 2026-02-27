@@ -601,3 +601,23 @@ quant-manual-swing-exit.service
   1. 反映後30分/2hで `entry-skip summary` の `rate_limited` と `revert_not_found` 比率が低下すること。
   2. C の `filled` が再開し、B/C long の `avg_units` が上昇すること。
   3. `perf_block` が急増せず、`tp/sl` 改善方向を維持すること。
+
+## 0-15. 2026-02-27 UTC `scalp_ping_5s_c` spread guard 上限緩和（第5ラウンド）
+- 目的:
+  - C の `spread_blocked` 連発を解消して、約定通過率を回復する。
+- 仮説（VM, UTC 2026-02-27 13:30 前後）:
+  - C の skip 主因が `spread_guard` に集中し、`entry-skip summary total=143` 中 `spread_blocked=134` を観測。
+  - ガード理由は `spread_med ... >= limit 1.00p` で、実勢 `p95=1.16p` が現行閾値を上回る。
+- 対応:
+  - `ops/env/scalp_ping_5s_c.env` に C 専用 `spread_guard_*` を追加:
+    - `spread_guard_max_pips=1.30`
+    - `spread_guard_release_pips=1.05`
+    - `spread_guard_hot_trigger_pips=1.50`
+    - `spread_guard_hot_cooldown_sec=6`
+- 影響範囲:
+  - `quant-scalp-ping-5s-c.service` の spread guard 判定のみ（C 戦略ローカル）。
+  - B と V2 共通導線（order_manager/position_manager/strategy_control）は非変更。
+- 検証:
+  1. 反映後30分で C の `entry-skip summary` に占める `spread_blocked` 比率が低下すること。
+  2. C の `filled` 再開と `avg_units(long)` 回復を確認すること。
+  3. `hot_spread_now` の発生頻度が抑制されること。

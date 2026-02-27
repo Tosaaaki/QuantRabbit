@@ -9407,6 +9407,21 @@
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 条件・ロット算出に限定。
   - V2固定導線（order_manager / position_manager / strategy_control / market-data-feed）は非変更。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` spread guard 閾値の実勢追従化（第5ラウンド）
+
+- 背景（VM, Round4反映後）:
+  - C の `entry-skip summary` が `spread_blocked` に偏重（例: `total=143, spread_blocked=134`）。
+  - `spread_med ... >= limit 1.00p` が主因で、実勢 `p95=1.16p` を吸収できていない。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `spread_guard_max_pips=1.30`
+    - `spread_guard_release_pips=1.05`
+    - `spread_guard_hot_trigger_pips=1.50`
+    - `spread_guard_hot_cooldown_sec=6`
+- 影響範囲:
+  - `quant-scalp-ping-5s-c.service` の spread guard 判定に限定。
+  - B 戦略設定および V2固定導線（order_manager / position_manager / strategy_control / market-data-feed）は非変更。
+
 ### 2026-02-27（追記）`quant-order-manager` の orders.db スレッド競合是正 + duplicate復旧強化
 
 - 目的:
