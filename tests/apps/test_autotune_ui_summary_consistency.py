@@ -243,6 +243,41 @@ def test_summarise_snapshot_keeps_snapshot_metrics_when_hourly_snapshot_is_usabl
     assert perf["win_rate_percent"] == 100.0
 
 
+def test_summarise_snapshot_repairs_summary_when_hourly_is_usable_but_rollups_missing(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
+    monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
+    monkeypatch.setattr(ui, "TRADES_DB", tmp_path / "missing-trades.db")
+
+    now = datetime.now(timezone.utc)
+    snapshot = {
+        "generated_at": now.isoformat(),
+        "recent_trades": [
+            _trade_row(ticket="1", hours_ago=0.5, pl_pips=-3.0),
+            _trade_row(ticket="2", hours_ago=1.0, pl_pips=1.0),
+        ],
+        "open_positions": {},
+        "metrics": {
+            "hourly_trades": {
+                "timezone": "JST",
+                "lookback_hours": 24,
+                "exclude_manual": True,
+                "hours": _hourly_rows(24, reference_now=now, trades=1),
+            },
+        },
+    }
+
+    result = ui._summarise_snapshot(snapshot)
+    perf = result["performance"]
+
+    assert perf["daily_pl_pips"] == -2.0
+    assert perf["daily_pl_jpy"] == -200.0
+    assert perf["weekly_pl_pips"] == -2.0
+    assert perf["weekly_pl_jpy"] == -200.0
+
+
 def test_load_trade_rollup_jst_aggregates_windows(tmp_path, monkeypatch):
     db_path = tmp_path / "trades.db"
     con = sqlite3.connect(db_path)

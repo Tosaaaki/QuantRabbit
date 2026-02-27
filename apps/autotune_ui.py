@@ -1150,12 +1150,23 @@ def _snapshot_metric_count(snapshot: Optional[dict]) -> int:
 
 def _snapshot_sort_key(source: str, snapshot: dict) -> tuple[int, int, float, int]:
     metric_count = _snapshot_metric_count(snapshot)
-    metric_score = 1 if metric_count else 0
     fresh_score = 1 if _is_snapshot_fresh(snapshot) else 0
     dt = _parse_dt(snapshot.get("generated_at"))
     ts = dt.timestamp() if dt else 0.0
     priority = {"local": 0, "gcs": 1, "remote": 2}.get(source, 0)
-    return (metric_score, fresh_score, ts, priority)
+    return (metric_count, fresh_score, ts, priority)
+
+
+def _snapshot_quality_key(source: str, snapshot: dict) -> tuple[int, int, int, float]:
+    metric_count = _snapshot_metric_count(snapshot)
+    metrics_snapshot = snapshot.get("metrics")
+    hourly = metrics_snapshot.get("hourly_trades") if isinstance(metrics_snapshot, dict) else None
+    reference_now = _parse_dt(snapshot.get("generated_at"))
+    hourly_score = 1 if _hourly_trades_is_usable(hourly, reference_now=reference_now) else 0
+    priority = {"local": 0, "gcs": 1, "remote": 2}.get(source, 0)
+    dt = _parse_dt(snapshot.get("generated_at"))
+    ts = dt.timestamp() if dt else 0.0
+    return (hourly_score, metric_count, priority, ts)
 
 
 def _pick_latest_snapshot(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
@@ -1235,12 +1246,16 @@ def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[st
 
 
 def _pick_snapshot_by_preference(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
-    source_preference = ["remote", "gcs", "local"]
-    source_snapshot_map = {source: snapshot for source, snapshot in candidates}
-    for source in source_preference:
-        snapshot = source_snapshot_map.get(source)
-        if snapshot and _snapshot_metric_count(snapshot) > 0 and _is_snapshot_fresh(snapshot):
-            return source, snapshot
+    fresh_candidates = [
+        (source, snapshot)
+        for source, snapshot in candidates
+        if _snapshot_metric_count(snapshot) > 0 and _is_snapshot_fresh(snapshot)
+    ]
+    if fresh_candidates:
+        return max(
+            fresh_candidates,
+            key=lambda item: _snapshot_quality_key(item[0], item[1]),
+        )
     return _pick_latest_snapshot(candidates)
 
 
@@ -2579,11 +2594,15 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     yesterday_jpy_from_trades = round(sum(t["pl_jpy"] for t in yesterday_closed_trades), 2)
     weekly_pips_from_trades = round(sum(t["pl_pips"] for t in weekly_closed_trades), 2)
     weekly_jpy_from_trades = round(sum(t["pl_jpy"] for t in weekly_closed_trades), 2)
+    snapshot_rollup_present = all(
+        isinstance(metrics_snapshot.get(key), dict) and bool(metrics_snapshot.get(key))
+        for key in ("daily", "yesterday", "weekly", "total")
+    )
     reconcile_from_recent_trades = (
         not rollup_applied
         and not TRADES_DB.exists()
         and bool(closed_trades)
-        and not hourly_from_snapshot
+        and (not hourly_from_snapshot or not snapshot_rollup_present)
     )
     if reconcile_from_recent_trades:
         perf["daily_pl_pips"] = today_pips_from_trades

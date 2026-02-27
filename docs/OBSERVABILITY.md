@@ -18,6 +18,11 @@
   fallback 再集計へ切り替える。fallback の主経路は
   `julianday(close_time)` を使った時間窓 SQL 集計で、
   `UI_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC`（default: `1.5`）の timeout を用いる。
+- `scripts/publish_ui_snapshot.py` は `hourly_trades` を DB 走査で生成し、
+  `UI_HOURLY_DB_TIMEOUT_SEC`（default: `1.5`）と
+  `UI_HOURLY_DB_RETRY_COUNT`（default: `3`）で再試行する。
+  DB集計が失敗した周期でも `recent_trades` から hourly payload を補完して
+  `metrics.hourly_trades` の欠落を回避する。
 - `quant-autotune-ui.service` は UI 応答を優先し、
   `POSITION_MANAGER_SERVICE_*TIMEOUT` を短く（1.2〜2.0s）設定して
   fail-fast 運用する。`POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` により
@@ -26,6 +31,9 @@
   metrics 有効なら `local` snapshot 構築を省略する。
   `fetch_attempts` には `local: skip (remote/gcs snapshot is already fresh)` を記録し、
   遅延が出る場合は `local` が本当に呼ばれているかをまず確認する。
+- snapshot 採用は `remote > gcs > local` の固定順ではなく、fresh 候補の
+  `hourly_trades` 有効性と metrics 充足数を優先して選択する。
+  fresh な remote が軽量（hourly欠損）で gcs が完全な場合は gcs を優先する。
 - `apps/autotune_ui.py` は secret を `UI_SECRET_CACHE_TTL_SEC`（default: 60）秒で
   TTLキャッシュし、未設定キーも負キャッシュする。
   Secret Manager 往復が遅い環境では、TTL切れ時のみ再取得が発生する。

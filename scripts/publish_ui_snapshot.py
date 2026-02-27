@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -97,6 +97,11 @@ SKIP_OANDA = os.getenv("UI_SNAPSHOT_SKIP_OANDA", "").strip().lower() in {
     "yes",
 }
 HOURLY_LOOKBACK_HOURS = max(1, int(os.getenv("UI_HOURLY_LOOKBACK_HOURS", "24")))
+HOURLY_DB_TIMEOUT_SEC = max(
+    DB_READ_TIMEOUT_SEC, float(os.getenv("UI_HOURLY_DB_TIMEOUT_SEC", "1.5"))
+)
+HOURLY_DB_RETRY_COUNT = max(1, int(os.getenv("UI_HOURLY_DB_RETRY_COUNT", "3")))
+HOURLY_SCAN_LIMIT = max(200, int(os.getenv("UI_HOURLY_SCAN_LIMIT", "5000")))
 JST = timezone(timedelta(hours=9))
 
 
@@ -198,66 +203,78 @@ def _load_last_metric_ts(metric: str) -> Optional[str]:
         return None
 
 
-def _build_hourly_trades_from_db(now: Optional[datetime] = None) -> Optional[dict]:
-    if not TRADES_DB.exists():
+def _parse_dt(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
         return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except Exception:
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+        ):
+            try:
+                dt = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+                break
+            except Exception:
+                continue
+        else:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _build_hourly_trades_from_rows(
+    rows: list[dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+) -> dict:
     now_dt = now or datetime.now(timezone.utc)
     if now_dt.tzinfo is None:
         now_dt = now_dt.replace(tzinfo=timezone.utc)
     now_jst = now_dt.astimezone(JST)
     now_hour = now_jst.replace(minute=0, second=0, microsecond=0)
     start_hour = now_hour - timedelta(hours=HOURLY_LOOKBACK_HOURS - 1)
-    start_hour_utc = start_hour.astimezone(timezone.utc).isoformat()
 
     buckets: dict[datetime, dict[str, float | int]] = {}
     for i in range(HOURLY_LOOKBACK_HOURS):
         hour = now_hour - timedelta(hours=i)
         buckets[hour] = {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0}
 
-    db_uri = f"file:{TRADES_DB}?mode=ro"
-    try:
-        con = sqlite3.connect(db_uri, uri=True, timeout=DB_READ_TIMEOUT_SEC)
-        con.row_factory = sqlite3.Row
-        con.execute(f"PRAGMA busy_timeout={int(DB_READ_TIMEOUT_SEC * 1000)}")
-        cur = con.execute(
-            """
-            SELECT
-              strftime('%Y-%m-%d %H:00:00', datetime(close_time, '+9 hours')) AS hour_jst,
-              SUM(COALESCE(pl_pips, 0.0)) AS pips,
-              SUM(COALESCE(realized_pl, 0.0)) AS jpy,
-              COUNT(*) AS trades,
-              SUM(CASE WHEN COALESCE(pl_pips, 0.0) > 0 THEN 1 ELSE 0 END) AS wins,
-              SUM(CASE WHEN COALESCE(pl_pips, 0.0) < 0 THEN 1 ELSE 0 END) AS losses
-            FROM trades
-            WHERE close_time IS NOT NULL
-              AND COALESCE(lower(pocket), '') != 'manual'
-              AND close_time >= ?
-            GROUP BY hour_jst
-            """,
-            (start_hour_utc,),
-        )
-        rows = cur.fetchall()
-        con.close()
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("[UI] hourly_trades query failed: %s", exc)
-        return None
-
     for row in rows:
-        key = str(row["hour_jst"] or "").strip()
-        if not key:
+        pocket = str(row.get("pocket") or "").strip().lower()
+        if pocket == "manual":
             continue
-        try:
-            hour = datetime.strptime(key, "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST)
-        except Exception:
+        close_dt = _parse_dt(row.get("close_time"))
+        if not close_dt:
             continue
-        bucket = buckets.get(hour)
+        close_hour = close_dt.astimezone(JST).replace(minute=0, second=0, microsecond=0)
+        if close_hour < start_hour or close_hour > now_hour:
+            continue
+        bucket = buckets.get(close_hour)
         if bucket is None:
             continue
-        bucket["pips"] += float(row["pips"] or 0.0)
-        bucket["jpy"] += float(row["jpy"] or 0.0)
-        bucket["trades"] += int(row["trades"] or 0)
-        bucket["wins"] += int(row["wins"] or 0)
-        bucket["losses"] += int(row["losses"] or 0)
+        pips = float(row.get("pl_pips") or 0.0)
+        jpy = float(row.get("realized_pl") or 0.0)
+        bucket["pips"] += pips
+        bucket["jpy"] += jpy
+        bucket["trades"] += 1
+        if pips > 0:
+            bucket["wins"] += 1
+        elif pips < 0:
+            bucket["losses"] += 1
 
     hourly_rows: list[dict] = []
     for hour in sorted(buckets.keys(), reverse=True):
@@ -283,6 +300,77 @@ def _build_hourly_trades_from_db(now: Optional[datetime] = None) -> Optional[dic
         "exclude_manual": True,
         "hours": hourly_rows,
     }
+
+
+def _load_recent_trade_rows_for_hourly(start_hour_utc: datetime) -> Optional[list[dict[str, Any]]]:
+    if not TRADES_DB.exists():
+        return None
+    sql_variants: list[tuple[str, tuple[Any, ...]]] = [
+        (
+            """
+            SELECT close_time, pocket, pl_pips, realized_pl
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND close_time >= ?
+            ORDER BY close_time DESC
+            LIMIT ?
+            """,
+            (start_hour_utc.isoformat(), int(HOURLY_SCAN_LIMIT)),
+        ),
+        (
+            """
+            SELECT close_time, pocket, pl_pips, realized_pl
+            FROM trades
+            WHERE close_time IS NOT NULL
+            ORDER BY close_time DESC
+            LIMIT ?
+            """,
+            (int(HOURLY_SCAN_LIMIT),),
+        ),
+    ]
+    last_error: Optional[Exception] = None
+    db_uri = f"file:{TRADES_DB}?mode=ro"
+    for sql, params in sql_variants:
+        for _ in range(HOURLY_DB_RETRY_COUNT):
+            try:
+                con = sqlite3.connect(db_uri, uri=True, timeout=HOURLY_DB_TIMEOUT_SEC)
+                con.row_factory = sqlite3.Row
+                con.execute(f"PRAGMA busy_timeout={int(HOURLY_DB_TIMEOUT_SEC * 1000)}")
+                cur = con.execute(sql, params)
+                rows = [dict(r) for r in cur.fetchall()]
+                con.close()
+                if rows:
+                    return rows
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                time.sleep(0.1)
+    if last_error:
+        logging.warning("[UI] hourly_trades query failed: %s", last_error)
+    return []
+
+
+def _build_hourly_trades_from_db(now: Optional[datetime] = None) -> Optional[dict]:
+    if not TRADES_DB.exists():
+        return None
+    now_dt = now or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    now_jst = now_dt.astimezone(JST)
+    now_hour = now_jst.replace(minute=0, second=0, microsecond=0)
+    start_hour = now_hour - timedelta(hours=HOURLY_LOOKBACK_HOURS - 1)
+    rows = _load_recent_trade_rows_for_hourly(start_hour.astimezone(timezone.utc))
+    if rows is None:
+        return None
+    return _build_hourly_trades_from_rows(rows, now=now_dt)
+
+
+def _build_hourly_trades_from_recent_trades(
+    trades: list[dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+) -> dict:
+    return _build_hourly_trades_from_rows(list(trades or []), now=now)
 
 
 def _extract_order_meta(payload: dict) -> dict:
@@ -804,6 +892,10 @@ def main() -> int:
                 metrics = {}
     if isinstance(metrics, dict):
         hourly_trades = _build_hourly_trades_from_db()
+        if not hourly_trades:
+            hourly_trades = _build_hourly_trades_from_recent_trades(
+                list(recent_trades or []),
+            )
         if hourly_trades:
             metrics["hourly_trades"] = hourly_trades
         data_lag_ms = _load_latest_metric("data_lag_ms")

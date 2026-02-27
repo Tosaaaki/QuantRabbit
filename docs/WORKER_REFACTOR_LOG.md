@@ -8886,3 +8886,35 @@
 - 意図:
   - 停止ではなく、低品質シグナルの通過率と通過ロットを同時に下げて損失幅を圧縮する。
   - M1/MACD は「単発大損の回避」を最優先に、方向/品質ゲートとサイズを同時に厳格化。
+
+### 2026-02-27（追記）UI時間帯テーブル欠損の恒久対策（snapshot生成 + 採用ロジック）
+
+- 目的:
+  - historyタブの「1時間ごとのトレード」で夜間帯を含む24h行が欠損しない状態へ固定する。
+  - summaryカードとhistory集計の不整合（`+0` 固着）を、snapshot欠損時でも自動補正する。
+- 仮説:
+  - `metrics.hourly_trades` 欠損周期があると、UIが `recent_trades` 限定fallbackへ降格して
+    時間帯集計が欠落する。
+  - fresh判定のみで snapshot source を選ぶと、軽量 remote が完全 gcs を上書きしうる。
+- 変更ファイル:
+  - `scripts/publish_ui_snapshot.py`
+    - `hourly_trades` を DB row走査で生成する経路へ変更（ISO/非ISO時刻をPythonで吸収）。
+    - `UI_HOURLY_DB_TIMEOUT_SEC` / `UI_HOURLY_DB_RETRY_COUNT` / `UI_HOURLY_SCAN_LIMIT` を追加。
+    - DB集計失敗時でも `recent_trades` から hourly payload を生成して `metrics.hourly_trades` 欠落を防止。
+  - `apps/autotune_ui.py`
+    - fresh snapshot 選択を「固定順」から「hourly有効性 + metrics充足数」優先へ更新。
+    - `hourly` が有効でも `daily/yesterday/weekly/total` が欠損時は `recent_trades` で summary を再構成。
+  - `tests/scripts/test_publish_ui_snapshot.py`
+    - DB欠損時 fallback（recent_trades由来 hourly 生成）を追加検証。
+  - `tests/apps/test_autotune_ui_snapshot_selection.py`
+    - fresh remote よりも充足度の高い gcs を優先する回帰テストを追加。
+  - `tests/apps/test_autotune_ui_summary_consistency.py`
+    - hourly有効 + rollup欠損時の summary 再構成テストを追加。
+- 影響範囲:
+  - UIスナップショット生成 (`quant-ui-snapshot.service`) と dashboard 描画ロジックのみ。
+  - 取引導線（entry/exit/risk/order-manager/position-manager）の判定仕様には変更なし。
+- 検証:
+  - `pytest -q tests/scripts/test_publish_ui_snapshot.py tests/apps/test_autotune_ui_snapshot_selection.py tests/apps/test_autotune_ui_summary_consistency.py tests/apps/test_autotune_ui_hourly_source_guard.py tests/apps/test_autotune_ui_hourly_fallback.py`
+    - `24 passed`
+  - `pytest -q tests/apps tests/scripts/test_publish_ui_snapshot.py`
+    - `38 passed`

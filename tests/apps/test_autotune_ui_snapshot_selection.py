@@ -15,6 +15,26 @@ def _snapshot(minutes_ago: int) -> dict:
     }
 
 
+def _hourly_rows(reference_now: datetime, lookback: int = 24) -> list[dict]:
+    anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
+    rows: list[dict] = []
+    for i in range(lookback):
+        hour = anchor - timedelta(hours=i)
+        rows.append(
+            {
+                "key": hour.isoformat(),
+                "label": hour.strftime("%m/%d %H:%M"),
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 1,
+                "wins": 1,
+                "losses": 0,
+                "win_rate": 1.0,
+            }
+        )
+    return rows
+
+
 def test_pick_snapshot_prefers_fresh_when_remote_is_stale(monkeypatch):
     monkeypatch.setattr(ui, "_SNAPSHOT_STALE_MAX_AGE_SEC", 120)
     candidates = [
@@ -39,6 +59,33 @@ def test_pick_snapshot_keeps_remote_preference_when_fresh(monkeypatch):
 
     assert picked is not None
     assert picked[0] == "remote"
+
+
+def test_pick_snapshot_prefers_richer_fresh_snapshot_over_remote_when_hourly_available(monkeypatch):
+    monkeypatch.setattr(ui, "_SNAPSHOT_STALE_MAX_AGE_SEC", 3600)
+    now = datetime.now(timezone.utc)
+    remote = _snapshot(minutes_ago=1)
+    gcs = {
+        "generated_at": now.isoformat(),
+        "metrics": {
+            "daily": {"pips": 1.0, "jpy": 100.0, "trades": 1, "wins": 1, "losses": 0},
+            "yesterday": {"pips": 0.0, "jpy": 0.0, "trades": 0},
+            "weekly": {"pips": 1.0, "jpy": 100.0, "trades": 1},
+            "total": {"pips": 1.0, "jpy": 100.0, "wins": 1, "losses": 0, "win_rate": 1.0, "trades": 1},
+            "hourly_trades": {
+                "timezone": "JST",
+                "lookback_hours": 24,
+                "exclude_manual": True,
+                "hours": _hourly_rows(now),
+            },
+        },
+    }
+    candidates = [("remote", remote), ("gcs", gcs)]
+
+    picked = ui._pick_snapshot_by_preference(candidates)
+
+    assert picked is not None
+    assert picked[0] == "gcs"
 
 
 def test_pick_snapshot_falls_back_to_latest_when_all_stale(monkeypatch):

@@ -60,3 +60,35 @@ def test_build_hourly_trades_from_db_returns_none_when_db_missing(tmp_path, monk
     )
 
     assert payload is None
+
+
+def test_build_hourly_trades_from_recent_trades_fallback_works_without_db(monkeypatch) -> None:
+    now = datetime(2026, 2, 27, 6, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(publish_ui_snapshot, "HOURLY_LOOKBACK_HOURS", 6)
+    payload = publish_ui_snapshot._build_hourly_trades_from_recent_trades(
+        [
+            {
+                "close_time": (now - timedelta(hours=1)).isoformat(),
+                "pocket": "scalp_fast",
+                "pl_pips": 1.2,
+                "realized_pl": 120.0,
+            },
+            {
+                "close_time": (now - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                "pocket": "micro",
+                "pl_pips": -0.4,
+                "realized_pl": -40.0,
+            },
+            {
+                "close_time": (now - timedelta(hours=3)).isoformat(),
+                "pocket": "manual",
+                "pl_pips": 9.0,
+                "realized_pl": 900.0,
+            },
+        ],
+        now=now,
+    )
+
+    assert payload["lookback_hours"] == 6
+    assert len(payload["hours"]) == 6
+    assert sum(int(row["trades"]) for row in payload["hours"]) == 2
