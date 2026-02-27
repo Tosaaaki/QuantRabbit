@@ -9254,3 +9254,22 @@
       - split config の `LOCAL_SPREAD_CAP_ENABLED` 既定/上書きの回帰テストを追加。
 - 影響範囲:
   - spread 入口判定に限定。order_manager/position_manager/strategy_control の共通導線仕様は非変更。
+
+### 2026-02-27（追記）`scalp_ping_5s_b/c` long-side RR改善 + lot圧縮緩和（VM実測対応）
+
+- 背景（VM 24h）:
+  - `scalp_ping_5s_b_live long`: `avg_sl=2.03 pips`, `avg_tp=0.99 pips`, `tp/sl=0.49`, `sum_realized_pl=-565.8 JPY`
+  - `scalp_ping_5s_c_live long`: `avg_sl=1.30 pips`, `avg_tp=0.90 pips`, `tp/sl=0.69`, `sum_realized_pl=-117.8 JPY`
+  - side合算で `long avg_units=185.8 < short avg_units=338.9`。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - longの `SL` 短縮 + `TP` 拡張（shortは `SHORT_*` で従来維持）
+    - `BASE_ENTRY_UNITS/MAX_UNITS` と `ENTRY_LEADING_PROFILE_UNITS_*` を小幅引き上げ
+    - `ORDER_MANAGER_PRESERVE_INTENT_*` の max/min scale を緩和
+  - `ops/env/scalp_ping_5s_c.env`
+    - longの `SL` 短縮 + `TP` 拡張（shortは `SHORT_*` を明示して維持）
+    - `BASE_ENTRY_UNITS/MAX_UNITS` と `ENTRY_LEADING_PROFILE_UNITS_*` を小幅引き上げ
+    - `ORDER_MANAGER_PRESERVE_INTENT_*` の max/min scale を緩和
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル判定のみ。
+  - V2導線（`quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager`）の責務分離は不変。

@@ -2318,3 +2318,48 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-02-27 09:20 UTC / 2026-02-27 18:20 JST - `scalp_ping_5s_b/c` の「SL過大・利幅不足・long lot圧縮」是正（VM実測ベース）
+
+Period:
+- 直近24h（`julianday(now, '-24 hours')`）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- side別（24h）:
+  - `long`: `755 trades / -416.9 pips / -730.1 JPY / avg_units=185.8`
+  - `short`: `277 trades / -129.5 pips / +1448.6 JPY / avg_units=338.9`
+- `scalp_ping_5s_b_live`:
+  - `long`: `426 trades / -565.8 JPY / avg_win=1.165 pips / avg_loss=2.035 pips / sl_reason_rate=0.507`
+  - `filled long` の実効距離: `avg_sl=2.03 pips`, `avg_tp=0.99 pips`, `tp/sl=0.49`
+- `scalp_ping_5s_c_live`:
+  - `long`: `266 trades / -117.8 JPY / avg_win=1.159 pips / avg_loss=1.857 pips / sl_reason_rate=0.444`
+  - `filled long` の実効距離: `avg_sl=1.30 pips`, `avg_tp=0.90 pips`, `tp/sl=0.69`
+
+Failure Cause:
+1. B/C とも long 側で `avg_loss_pips > avg_win_pips` が継続し、RR が負け越し。
+2. B/C の lot 圧縮（base units + preserve-intent max scale + leading profile units上限）が重なり、収益復元が遅延。
+3. `TP_ENABLED=0` 運用下でも virtual target が短く、実効 `tp/sl` が 1.0 未満に張り付く局面が多い。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - long RR改善: `SL_BASE 1.6 -> 1.35`, `SL_MAX 2.4 -> 2.0`, `TP_BASE 0.35 -> 0.55`, `TP_MAX 1.4 -> 1.9`, `TP_NET_MIN 0.35 -> 0.45`
+   - short維持: `SHORT_TP_BASE=0.35`, `SHORT_TP_MAX=1.4` を明示
+   - lot復元: `BASE_ENTRY_UNITS 220 -> 260`, `MAX_UNITS 750 -> 900`
+   - 圧縮緩和: `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE 0.32 -> 0.42`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT 0.80 -> 0.95`
+2. `ops/env/scalp_ping_5s_c.env`
+   - long RR改善: `SL_BASE 1.3 -> 1.15`, `SL_MIN=0.85`, `SL_MAX=1.9`, `TP_BASE 0.20 -> 0.45`, `TP_MAX 1.0 -> 1.5`, `TP_NET_MIN 0.25 -> 0.40`
+   - short維持: `SHORT_TP_BASE=0.20`, `SHORT_TP_MAX=1.0`, `SHORT_SL_BASE=1.30`, `SHORT_SL_MIN=0.95`, `SHORT_SL_MAX=2.0`
+   - lot復元: `BASE_ENTRY_UNITS 70 -> 95`, `MAX_UNITS 160 -> 220`
+   - 圧縮緩和: `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE 0.50 -> 0.62`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT 0.75 -> 0.90`
+
+Verification:
+1. 反映後2h/24hで `scalp_ping_5s_b/c long` の `avg_loss_pips` が低下し、`tp/sl` が改善すること。
+2. `orders.db` で `scalp_ping_5s_b/c` の `filled avg_units` が増加しつつ、`perf_block` と `rejected` が急増しないこと。
+3. 24hで `long` 側 `sum(realized_pl)` が改善方向へ転じること。
+
+Status:
+- in_progress

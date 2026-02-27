@@ -1,5 +1,32 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-11. 2026-02-27 UTC `scalp_ping_5s_b/c` long-side RR改善 + lot圧縮緩和
+- 背景（VM実測, UTC 2026-02-27 09:20 集計）:
+  - 24h side集計で `long` は `755 trades / -730.1 JPY / avg_units=185.8`、
+    `short` は `277 trades / +1448.6 JPY / avg_units=338.9`。
+  - `scalp_ping_5s_b_live long` は `avg_sl=2.03 pips` に対し `avg_tp=0.99 pips`
+    （`tp/sl=0.49`）で、`-565.8 JPY`。
+  - `scalp_ping_5s_c_live long` は `avg_sl=1.30 pips` に対し `avg_tp=0.90 pips`
+    （`tp/sl=0.69`）で、`-117.8 JPY`。
+- 対応:
+  - `ops/env/scalp_ping_5s_b.env`
+    - long RR補正: `SL_BASE 1.6 -> 1.35`, `SL_MAX 2.4 -> 2.0`,
+      `TP_BASE 0.35 -> 0.55`, `TP_MAX 1.4 -> 1.9`, `TP_NET_MIN 0.35 -> 0.45`
+    - short据え置き: `SHORT_TP_BASE/SHORT_TP_MAX` を明示
+    - lot圧縮緩和: `BASE_ENTRY_UNITS 220 -> 260`, `MAX_UNITS 750 -> 900`,
+      `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT 0.80 -> 0.95`,
+      `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE 0.32 -> 0.42`
+  - `ops/env/scalp_ping_5s_c.env`
+    - long RR補正: `SL_BASE 1.3 -> 1.15`, `SL_MIN=0.85`, `SL_MAX=1.9`,
+      `TP_BASE 0.20 -> 0.45`, `TP_MAX 1.0 -> 1.5`, `TP_NET_MIN 0.25 -> 0.40`
+    - short据え置き: `SHORT_TP_*` / `SHORT_SL_*` を明示
+    - lot圧縮緩和: `BASE_ENTRY_UNITS 70 -> 95`, `MAX_UNITS 160 -> 220`,
+      `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT 0.75 -> 0.90`,
+      `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE 0.50 -> 0.62`
+- 意図:
+  - long側の「SL広い/利幅小さい」を是正して `avg_win/avg_loss` を改善しつつ、
+    過度に潰れていた units を小幅復元する。
+
 ## 0-10. 2026-02-26 UTC `scalp_ping_5s_c_live` 時間帯停止を解除（実証不足のため）
 - 背景（VM実測, UTC 2026-02-26 07:16 集計）:
   - 直近14日 `scalp_ping_5s_c_live` のJST時間帯別はばらつきが大きく、
