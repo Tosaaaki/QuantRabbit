@@ -57,6 +57,24 @@
   - 戦略ローカル判定は維持したまま、共通層ではガード・リスク拒否だけを追加する。
   - デフォルトOFFで安全導入し、VM実測で閾値キャリブレーション後に段階有効化する。
 
+### 2026-02-27（追記）`order_manager` net-edge ガードを `scalp_ping_5s_b_live` で canary 有効化
+
+- 背景:
+  - 実装済みガードを本番で検証するため、全戦略一斉有効化は避けて
+    `scalp_fast` pocket内の B_live のみに実質閾値を適用する段階導入を実施。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ENTRY_NET_EDGE_GATE_ENABLED=1`
+    - `ORDER_ENTRY_NET_EDGE_POCKETS=scalp_fast`
+    - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_SCALP_FAST=-5.00`（B以外は実質パス）
+    - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE=0.02`
+    - `ORDER_ENTRY_NET_EDGE_SLIPPAGE_PIPS_SCALP_FAST=0.05`
+    - `ORDER_ENTRY_NET_EDGE_REJECT_COST_PIPS_SCALP_FAST=0.02`
+    - `ORDER_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_SCALP_FAST=0.20`
+- 意図:
+  - `entry_net_edge_negative` の reject を B_live で先行観測し、
+    他戦略への波及前に閾値とコスト見積りをキャリブレーションする。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の leading profile reject を C専用で緩和
 
 - 背景（VM実測）:

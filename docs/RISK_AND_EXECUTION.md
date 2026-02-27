@@ -1689,3 +1689,13 @@
   - `ORDER_ENTRY_NET_EDGE_REJECT_COST_PIPS*`
   - `ORDER_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS*`
   - `*` は pocket/strategy override 対応。
+
+### 2026-02-27 Net-Edge Canary（B_live only）
+- `ops/env/quant-order-manager.env` で canary 有効化:
+  - `ORDER_ENTRY_NET_EDGE_GATE_ENABLED=1`
+  - `ORDER_ENTRY_NET_EDGE_POCKETS=scalp_fast`
+  - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_SCALP_FAST=-5.00`
+  - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE=0.02`
+- 運用意図:
+  - `scalp_fast` 全体を hard block しないよう pocket 既定を緩くし、
+    B_live だけ実質閾値を適用して reject 分布を先行観測する。
