@@ -123,6 +123,36 @@ Verification:
 Status:
 - in_progress（この時点では VM SSH が `Permission denied (publickey)` で未検証）
 
+## 2026-02-27 04:55 UTC / 2026-02-27 13:55 JST - timeout 閾値を実測遅延に合わせて再調整
+Period:
+- Post-deploy check: `2026-02-27 04:47` ～ `04:55` UTC
+- Source: VM `quant-order-manager.service` journald, `orders.db`, strategy worker logs
+
+Fact:
+- `quant-order-manager.service` 再起動後に
+  `slow_request op=market_order elapsed=49.047s` を確認。
+- 同時点で strategy worker 側に
+  `order_manager service call failed ... Read timed out` が短時間で残存。
+
+Failure Cause:
+1. service client timeout `45.0s` が、49秒級の正常処理を timeout 扱いしていた。
+2. timeout 判定が local fallback/再送を誘発し、reject ノイズと遅延を増幅しうる。
+
+Improvement:
+1. `ops/env/quant-v2-runtime.env` で
+   `ORDER_MANAGER_SERVICE_TIMEOUT=60.0`（from `45.0`）へ更新。
+2. `slow_request` 監査ログは継続し、閾値超過の実数を追跡する。
+
+Verification:
+1. デプロイ後に `quant-order-manager.service` 再起動と health 応答 (`/health=200`) を確認。
+2. `orders.db` 直近窓で `filled` 継続・`rejected` 0 を確認（短時間窓）。
+3. 次の監視ポイント:
+   - `Read timed out` 件数の減少
+   - `duplicate_recovered` / `rejected` 比率の改善
+
+Status:
+- in_progress
+
 ## 2026-02-27 03:25 UTC / 2026-02-27 12:25 JST - `coordination_reject` 誤ラベルと短期 sell 偏重の同時是正
 Period:
 - VM確認: `2026-02-27 02:55` ～ `03:20` UTC

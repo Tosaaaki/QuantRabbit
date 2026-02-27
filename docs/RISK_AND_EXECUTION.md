@@ -1450,6 +1450,19 @@
     localhost API timeout と fallback 発生率を下げる。
   - 停止なし方針のまま、order-manager 経路の執行遅延を縮小する。
 
+### `ORDER_MANAGER_SERVICE_TIMEOUT` 再調整（2026-02-27 追記）
+- 背景:
+  - 非ブロッキング化後の VM 実測で
+    `slow_request op=market_order elapsed=49.047s` が発生。
+  - service client timeout が `45.0s` のままだと、長めの正常処理を timeout 扱いして
+    fallback 連鎖を再発させるリスクが残る。
+- 実装:
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=60.0`（from `45.0`）
+- 運用意図:
+  - 実測レンジに合わせて timeout 閾値を再設定し、
+    不要な `Read timed out` / fallback を削減する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

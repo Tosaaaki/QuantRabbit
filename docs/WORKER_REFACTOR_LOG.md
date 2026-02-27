@@ -8565,6 +8565,20 @@
   - service worker の event loop 占有を避け、同時 RPC の頭詰まりを低減する。
   - `Read timed out` 起点の fallback 連鎖を抑え、約定取りこぼしを減らす。
 
+### 2026-02-27（追記）service timeout を 60s へ再調整（slow_request 実測対応）
+
+- 背景:
+  - event-loop 非ブロッキング化後の VM 監査で、
+    `quant-order-manager.service` に `slow_request op=market_order elapsed=49.047s` を確認。
+  - strategy worker 側の service timeout は `45.0s` のため、
+    49秒級の遅延が timeout 扱いになる余地が残った。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=60.0`（from `45.0`）
+- 意図:
+  - 実測遅延の上側（~49秒）を timeout 閾値で吸収し、
+    `Read timed out` 起点の不要 fallback を減らす。
+
 ### 2026-02-27（追記）Autotune UI の時間帯履歴欠落を再発防止
 
 - 背景:
