@@ -42,6 +42,38 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 15:29 UTC / 2026-02-28 00:29 JST - `scalp_ping_5s_c_live` long 側 leading reject を無効化（short維持）
+Period:
+- 観測: 2026-02-27 15:25:36-15:28:54 UTC（前回緩和反映後）
+
+Fact:
+- 前回緩和後も `journalctl` で long 側の `entry_leading_profile_reject` が継続し、
+  `open mode=...` の直後に reject が多発。
+- 直近ログでも `side=long` の reject が連続し、C の露出回復が不十分。
+- 同時に `orders.db` では反映直後に `scalp_ping_5s_c_live` の `submit_attempt=3 / filled=3` まで再開しており、
+  方向性としては「hard reject をさらに減らせば約定回復が進む」状態。
+
+Failure Cause:
+1. `REJECT_BELOW=0.56` でも long 側の `adjusted_probability` が閾値を下回る局面が多く、hard reject が継続。
+2. C は long bias 運用なのに long 側も hard reject で止まり、機会損失が残った。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env` の
+   `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW` を `0.56 -> 0.00` へ変更し、
+   long 側 hard reject を無効化。
+2. `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.80` は維持し、
+   short 側は従来どおり強く抑制。
+3. 既存の `PENALTY_MAX=0.14` / `UNITS_MIN_MULT=0.58` / `entry_probability` ガードで
+   低品質シグナルは縮小・拒否を継続。
+
+Verification:
+1. 再デプロイ後 15 分で `journalctl` の `market_order rejected ... entry_leading_profile_reject`（long）が大幅減少すること。
+2. 同期間 `orders.db` で `scalp_ping_5s_c_live` の `submit_attempt`/`filled` が前回より増加すること。
+3. `metrics.db` で `order_perf_block` hard reason（failfast/sl_loss_rate）が再発しないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:24 UTC / 2026-02-28 00:24 JST - `scalp_ping_5s_c_live` の `entry_leading_profile_reject` 過多を C専用で緩和
 Period:
 - 観測: 2026-02-27 15:20-15:24 UTC（再起動直後）

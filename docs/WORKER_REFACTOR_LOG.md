@@ -55,6 +55,22 @@
   - hard reject を減らし、低確度帯はゼロ化ではなく縮小ロットで通す。
   - C戦略のエントリー再開余地を作りつつ、`UNITS_MIN_MULT` を下げてリスク急拡大を回避する。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` long 側の leading hard reject を無効化
+
+- 背景（VM実測）:
+  - 上記緩和反映後も `2026-02-27 15:25:36-15:28:54 UTC` のログで
+    `market_order rejected ... reason=entry_leading_profile_reject` が
+    主に `side=long` で継続。
+  - `orders.db` では `submit_attempt=3 / filled=3` の再開は確認したが、
+    long reject 連発により露出回復が不足。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.56 -> 0.00`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.80` は維持。
+- 意図:
+  - Cの long bias 運用に合わせ、long 側の hard reject を止めて約定再開を優先。
+  - short 側は従来閾値を維持し、逆方向エクスポージャの過多は抑える。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の preflight 閾値を `quant-order-manager` 実効envへ同期
 
 - 背景（VM実測）:
