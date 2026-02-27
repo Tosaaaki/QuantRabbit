@@ -74,7 +74,10 @@
   `snapshot.current_price` を外部 `USD/JPY` へフォールバックし、`direction_confidence_pct` を減衰する。
   手動メモの取り込みは `scripts/import_market_brief.py` で `market_external_snapshot` と `market_events` へ変換し、
   `scripts/build_market_context.py` で `market_context` を再生成してからレポートへ反映する。
-  `--policy` 導線は no-change diff の記録に限定し、自動で売買ポリシーを適用しない。
+  `--policy` 導線はプレイブック結果（bias/confidence/event/factor freshness/reject_rate）を
+  `policy_diff`（`entry_gates.allow_new` / pocket `bias` / `range_mode` / `uncertainty`）へ自動変換する。
+  `--apply-policy` 指定時は `analytics.policy_apply.apply_policy_diff_to_paths` で
+  `policy_overlay` へ反映し、同一状態は `no_change` 判定で version 連番更新を抑止する。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ +
   `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）による
   guarded GCS 退避（低優先度 + 負荷ガード、legacy `cron.hourly` は無効化）。

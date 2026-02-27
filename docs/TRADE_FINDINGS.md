@@ -74,6 +74,46 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 15:35 UTC / 2026-02-28 00:35 JST - 市況プレイブックを policy_overlay へ自動適用（no-delta抑止付き）
+
+Period:
+- 実装時点（単発検証）
+
+Source:
+- `scripts/gpt_ops_report.py`
+- `analytics/policy_apply.py`
+- `tests/scripts/test_gpt_ops_report.py`
+
+Fact:
+- 既存の `gpt_ops_report --policy` は `deterministic_playbook_only` の `no_change` を常に出力し、
+  `--apply-policy` でも overlay へ実反映しない実装だった。
+- これにより、プレイブックの A/B/C シナリオと `order_manager` の entry gate が接続されず、
+  「分析は更新されるが執行条件は固定」の状態になっていた。
+
+Failure Cause:
+1. policy diff 生成がスタブ固定（`no_change=true`）で、方向バイアス/イベント/データ鮮度が反映されない。
+2. `--apply-policy` でも `apply_policy_diff_to_paths` を呼んでいないため、導線が未接続。
+3. 同値判定がないため、将来 patch 適用を追加しても毎サイクル version 増加ノイズが発生しやすい。
+
+Improvement:
+1. `gpt_ops_report` に deterministic translator を追加し、`short_term.bias`、`direction_confidence_pct`、
+   scenario gap、`event_soon/event_active_window`、`factor_stale`、`reject_rate` から
+   pocket別 `entry_gates.allow_new` / `bias` / `confidence` を生成。
+2. `--apply-policy` で `apply_policy_diff_to_paths` を実行し、
+   `policy_overlay` / `policy_latest` / `policy_history` を更新。
+3. 現在 overlay と patch の deep-subset 比較で no-delta 判定を入れ、
+   同値時は `no_change=true` として不要な version 連番更新を回避。
+
+Verification:
+1. `pytest -q tests/scripts/test_gpt_ops_report.py tests/scripts/test_run_market_playbook_cycle.py` -> `13 passed`
+2. ローカル実行:
+   - `python3 scripts/gpt_ops_report.py ... --policy --apply-policy ...`
+   - `INFO [OPS_POLICY] applied=True ...` を確認。
+3. no-delta再計算時に `no_change=true` になるユニットテストを追加済み。
+
+Status:
+- done
+
 ## 2026-02-27 15:24 UTC / 2026-02-28 00:24 JST - `scalp_ping_5s_c_live` の `entry_leading_profile_reject` 過多を C専用で緩和
 Period:
 - 観測: 2026-02-27 15:20-15:24 UTC（再起動直後）

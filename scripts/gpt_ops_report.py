@@ -26,7 +26,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from analytics.policy_diff import normalize_policy_diff
+from analytics.policy_apply import apply_policy_diff_to_paths
+from analytics.policy_diff import normalize_policy_diff, validate_policy_diff
 
 UTC = timezone.utc
 JST = timezone(timedelta(hours=9))
@@ -1614,6 +1615,204 @@ def _render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _short_term_bias_to_policy_bias(raw_bias: object) -> str:
+    token = str(raw_bias or "").strip().lower()
+    if token in {"long_usd_jpy", "long", "buy"}:
+        return "long"
+    if token in {"short_usd_jpy", "short", "sell"}:
+        return "short"
+    return "neutral"
+
+
+def _scenario_probability_map(scenarios: list[dict[str, Any]]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for row in scenarios:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key") or "").strip().lower()
+        if not key:
+            continue
+        out[key] = round(_clamp(_safe_float(row.get("probability_pct"), 0.0), 0.0, 100.0), 3)
+    return out
+
+
+def _deep_subset_equal(base: object, patch: object) -> bool:
+    if isinstance(patch, dict):
+        if not isinstance(base, dict):
+            return False
+        return all(_deep_subset_equal(base.get(key), value) for key, value in patch.items())
+    if isinstance(patch, (int, float)) and isinstance(base, (int, float)):
+        return abs(float(base) - float(patch)) <= 1e-9
+    return base == patch
+
+
+def _build_policy_diff_from_report(
+    *,
+    report: dict[str, Any],
+    current_policy: dict[str, Any],
+    now_utc: datetime,
+) -> dict[str, Any]:
+    short_term = report.get("short_term") if isinstance(report.get("short_term"), dict) else {}
+    event_ctx = report.get("event_context") if isinstance(report.get("event_context"), dict) else {}
+    snapshot = report.get("snapshot") if isinstance(report.get("snapshot"), dict) else {}
+    performance = report.get("performance") if isinstance(report.get("performance"), dict) else {}
+    order_quality = report.get("order_quality") if isinstance(report.get("order_quality"), dict) else {}
+    scenarios = report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
+
+    direction_score = round(_clamp(_safe_float(report.get("direction_score"), 0.0), -1.0, 1.0), 4)
+    direction_conf_pct = round(_clamp(_safe_float(report.get("direction_confidence_pct"), 0.0), 0.0, 100.0), 2)
+    scenario_probs = _scenario_probability_map(scenarios)
+    sorted_probs = sorted(scenario_probs.values(), reverse=True)
+    primary_prob = sorted_probs[0] if sorted_probs else 0.0
+    secondary_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0.0
+    prob_gap = round(max(0.0, primary_prob - secondary_prob), 3)
+
+    event_soon = bool(event_ctx.get("event_soon"))
+    event_active = bool(event_ctx.get("event_active_window"))
+    factor_stale = bool(snapshot.get("factor_stale"))
+    reject_rate = _clamp(_safe_float(order_quality.get("reject_rate"), 0.0), 0.0, 1.0)
+    total_pf = _safe_float_or_none(((performance.get("overall") or {}).get("profit_factor")))
+
+    min_conf_pct = _clamp(
+        _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_MIN_CONF_PCT", "58"), 58.0),
+        0.0,
+        100.0,
+    )
+    min_prob_gap_pct = _clamp(
+        _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_MIN_PROB_GAP_PCT", "10"), 10.0),
+        0.0,
+        100.0,
+    )
+    reject_warn_threshold = _clamp(
+        _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_REJECT_WARN_THRESHOLD", "0.12"), 0.12),
+        0.01,
+        0.9,
+    )
+    reject_block_threshold = _clamp(
+        _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_REJECT_BLOCK_THRESHOLD", "0.28"), 0.28),
+        reject_warn_threshold,
+        0.95,
+    )
+
+    scenario_two_way = _clamp(_safe_float(scenario_probs.get("event_two_way"), 0.0) / 100.0, 0.0, 1.0)
+    uncertainty = _clamp(
+        max(
+            scenario_two_way,
+            1.0 - direction_conf_pct / 100.0,
+            min(1.0, reject_rate * 1.6),
+            0.25 if factor_stale else 0.0,
+            0.18 if event_soon else 0.0,
+        ),
+        0.0,
+        1.0,
+    )
+
+    raw_bias = _short_term_bias_to_policy_bias(short_term.get("bias"))
+    directional_bias_allowed = (
+        raw_bias in {"long", "short"}
+        and direction_conf_pct >= min_conf_pct
+        and prob_gap >= min_prob_gap_pct
+        and not event_soon
+        and not factor_stale
+    )
+    policy_bias = raw_bias if directional_bias_allowed else "neutral"
+    if isinstance(total_pf, (int, float)) and total_pf < 0.80:
+        policy_bias = "neutral"
+
+    allow_new = not (event_active or factor_stale or reject_rate >= reject_block_threshold)
+    require_retest = bool(event_soon or uncertainty >= 0.55)
+    spread_ok = reject_rate < reject_warn_threshold
+    drift_ok = not factor_stale
+
+    pocket_confidence = _clamp(direction_conf_pct / 100.0, 0.05, 0.98)
+    if policy_bias == "neutral":
+        pocket_confidence = _clamp(pocket_confidence * 0.78, 0.05, 0.98)
+    if isinstance(total_pf, (int, float)) and total_pf < 0.95:
+        pocket_confidence = _clamp(pocket_confidence * 0.88, 0.05, 0.98)
+        require_retest = True
+    pocket_confidence = round(pocket_confidence, 4)
+
+    micro_regime = str(snapshot.get("micro_regime") or "").strip().lower()
+    range_mode = bool(
+        "range" in micro_regime or policy_bias == "neutral" and uncertainty >= 0.50 or event_soon
+    )
+
+    pocket_patch: dict[str, dict[str, Any]] = {}
+    for pocket in ("macro", "micro", "scalp"):
+        pocket_bias = policy_bias if pocket in {"micro", "scalp"} else "neutral"
+        pocket_patch[pocket] = {
+            "enabled": True,
+            "bias": pocket_bias,
+            "confidence": pocket_confidence,
+            "entry_gates": {
+                "allow_new": allow_new,
+                "require_retest": require_retest,
+                "spread_ok": spread_ok,
+                "drift_ok": drift_ok,
+            },
+        }
+
+    patch = {
+        "air_score": direction_score,
+        "uncertainty": round(uncertainty, 4),
+        "event_lock": bool(event_active),
+        "range_mode": range_mode,
+        "pockets": pocket_patch,
+    }
+
+    no_change = _deep_subset_equal(current_policy, patch)
+    if no_change:
+        reason = "playbook_no_delta"
+    elif not allow_new:
+        reason = "playbook_temporal_lock"
+    elif policy_bias == "neutral":
+        reason = "playbook_neutral_bias"
+    else:
+        reason = "playbook_directional_bias"
+
+    diff_input: dict[str, Any] = {
+        "source": "ops_playbook",
+        "no_change": no_change,
+        "reason": reason,
+        "notes": {
+            "generated_at": report.get("generated_at"),
+            "computed_at": _to_iso(now_utc),
+            "playbook_version": report.get("playbook_version"),
+            "primary_scenario": short_term.get("primary_scenario"),
+            "short_term_bias": short_term.get("bias"),
+            "policy_bias": policy_bias,
+            "direction_confidence_pct": direction_conf_pct,
+            "scenario_probabilities_pct": scenario_probs,
+            "scenario_primary_gap_pct": prob_gap,
+            "event_soon": event_soon,
+            "event_active_window": event_active,
+            "factor_stale": factor_stale,
+            "reject_rate": round(reject_rate, 4),
+            "profit_factor": total_pf,
+        },
+    }
+    if not no_change:
+        diff_input["patch"] = patch
+
+    diff = normalize_policy_diff(diff_input, source="ops_playbook")
+    errors = validate_policy_diff(diff)
+    if errors:
+        logging.error("[OPS_POLICY] invalid generated policy diff: %s", ", ".join(errors))
+        return normalize_policy_diff(
+            {
+                "source": "ops_playbook",
+                "no_change": True,
+                "reason": "generated_diff_invalid",
+                "notes": {
+                    "generated_at": report.get("generated_at"),
+                    "errors": errors,
+                },
+            },
+            source="ops_playbook",
+        )
+    return diff
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Ops report (deterministic playbook, LLM disabled)")
     ap.add_argument("--hours", type=float, default=24.0)
@@ -1641,6 +1840,8 @@ def main() -> int:
     ap.add_argument("--policy", action="store_true")
     ap.add_argument("--policy-output", default="logs/policy_diff_ops.json")
     ap.add_argument("--apply-policy", action="store_true")
+    ap.add_argument("--policy-history-dir", default=os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"))
+    ap.add_argument("--policy-latest-path", default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
     ap.add_argument("--gpt", action="store_true")
     ap.add_argument("--log-level", default="INFO")
     args, _ = ap.parse_known_args()
@@ -1696,26 +1897,28 @@ def main() -> int:
         logging.info("[OPS_REPORT] wrote %s", md_path)
 
     if args.policy or args.apply_policy:
-        primary = payload.get("short_term", {}).get("primary_scenario")
-        bias = payload.get("short_term", {}).get("bias")
-        diff = normalize_policy_diff(
-            {
-                "no_change": True,
-                "source": "ops_playbook",
-                "reason": "deterministic_playbook_only",
-                "notes": {
-                    "generated_at": payload.get("generated_at"),
-                    "primary_scenario": primary,
-                    "bias": bias,
-                },
-            },
-            source="ops_playbook",
+        diff = _build_policy_diff_from_report(
+            report=payload,
+            current_policy=policy if isinstance(policy, dict) else {},
+            now_utc=now_utc,
         )
         policy_path = Path(args.policy_output)
         _write_json(policy_path, diff)
         logging.info("[OPS_POLICY] wrote %s", policy_path)
         if args.apply_policy:
-            logging.info("[OPS_POLICY] apply requested, but deterministic playbook does not auto-apply policy.")
+            _, changed, flags = apply_policy_diff_to_paths(
+                diff,
+                overlay_path=Path(args.overlay_path),
+                history_dir=Path(args.policy_history_dir),
+                latest_path=Path(args.policy_latest_path),
+            )
+            logging.info(
+                "[OPS_POLICY] applied=%s reentry=%s tuning=%s overlay=%s",
+                changed,
+                flags.get("reentry"),
+                flags.get("tuning"),
+                args.overlay_path,
+            )
 
     return 0
 

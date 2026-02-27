@@ -184,3 +184,95 @@ def test_build_ops_report_uses_factor_price_when_factor_is_fresh() -> None:
     assert payload["snapshot"]["current_price_source"] == "factor_cache"
     assert payload["snapshot"]["current_price"] == 155.432
     assert payload["data_sources"]["factors_m1_stale"] is False
+
+
+def test_build_policy_diff_from_report_sets_directional_bias() -> None:
+    now_utc = datetime(2026, 2, 27, 10, 0, tzinfo=timezone.utc)
+    report = {
+        "generated_at": "2026-02-27T10:00:00+00:00",
+        "playbook_version": 2,
+        "direction_score": 0.64,
+        "direction_confidence_pct": 72.0,
+        "short_term": {
+            "bias": "long_usd_jpy",
+            "primary_scenario": "A. USD/JPY continuation higher",
+        },
+        "event_context": {
+            "event_soon": False,
+            "event_active_window": False,
+        },
+        "snapshot": {
+            "factor_stale": False,
+            "micro_regime": "trend",
+        },
+        "order_quality": {
+            "reject_rate": 0.04,
+        },
+        "performance": {"overall": {"profit_factor": 1.08}},
+        "scenarios": [
+            {"key": "continuation_up", "probability_pct": 62.0},
+            {"key": "reversal_down", "probability_pct": 21.0},
+            {"key": "event_two_way", "probability_pct": 17.0},
+        ],
+    }
+
+    diff = gpt_ops_report._build_policy_diff_from_report(
+        report=report,
+        current_policy={},
+        now_utc=now_utc,
+    )
+
+    assert diff["no_change"] is False
+    patch = diff["patch"]
+    assert patch["pockets"]["scalp"]["bias"] == "long"
+    assert patch["pockets"]["micro"]["bias"] == "long"
+    assert patch["pockets"]["scalp"]["entry_gates"]["allow_new"] is True
+    assert patch["event_lock"] is False
+
+
+def test_build_policy_diff_from_report_detects_no_delta() -> None:
+    now_utc = datetime(2026, 2, 27, 10, 0, tzinfo=timezone.utc)
+    report = {
+        "generated_at": "2026-02-27T10:00:00+00:00",
+        "playbook_version": 2,
+        "direction_score": 0.12,
+        "direction_confidence_pct": 28.0,
+        "short_term": {
+            "bias": "two_way_wait_for_confirmation",
+            "primary_scenario": "C. Event-driven two-way volatility",
+        },
+        "event_context": {
+            "event_soon": True,
+            "event_active_window": True,
+        },
+        "snapshot": {
+            "factor_stale": True,
+            "micro_regime": "range",
+        },
+        "order_quality": {
+            "reject_rate": 0.32,
+        },
+        "performance": {"overall": {"profit_factor": 0.86}},
+        "scenarios": [
+            {"key": "continuation_up", "probability_pct": 20.0},
+            {"key": "reversal_down", "probability_pct": 18.0},
+            {"key": "event_two_way", "probability_pct": 62.0},
+        ],
+    }
+
+    first = gpt_ops_report._build_policy_diff_from_report(
+        report=report,
+        current_policy={},
+        now_utc=now_utc,
+    )
+    assert first["no_change"] is False
+    assert first["patch"]["pockets"]["scalp"]["entry_gates"]["allow_new"] is False
+    assert first["patch"]["pockets"]["scalp"]["bias"] == "neutral"
+
+    second = gpt_ops_report._build_policy_diff_from_report(
+        report=report,
+        current_policy=first["patch"],
+        now_utc=now_utc,
+    )
+    assert second["no_change"] is True
+    assert "patch" not in second

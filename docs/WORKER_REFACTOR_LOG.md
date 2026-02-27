@@ -9819,3 +9819,32 @@
 - 影響範囲:
   - `quant-ops-policy` の市場スナップショット取得経路のみ。
   - 戦略 worker / order_manager / position_manager の売買ロジックは非変更。
+
+### 2026-02-27（追記）`gpt_ops_report --apply-policy` の自動反映を有効化（deterministic translator）
+
+- 目的:
+  - 市況プレイブックを「レビュー用レポート」で止めず、`policy_overlay` へ機械適用して
+    `order_manager` の entry gate（`allow_new` / `bias`）に即時反映する。
+  - 同じ状態で overlay の version が毎回増える問題を抑止する（`no_change` 判定）。
+- 変更:
+  - `scripts/gpt_ops_report.py`
+    - `_build_policy_diff_from_report()` を追加し、以下を `policy_diff.patch` へ変換:
+      - `short_term.bias` / `direction_confidence_pct` / scenario gap
+      - `event_context.event_soon/event_active_window`
+      - `snapshot.factor_stale`
+      - `order_quality.reject_rate`
+    - pocket別 (`macro/micro/scalp`) に `enabled/bias/confidence/entry_gates` を生成。
+    - `--apply-policy` 時は `analytics.policy_apply.apply_policy_diff_to_paths` を呼び出して
+      `overlay/history/latest` を更新。
+    - 現在 overlay と patch を deep-subset 比較し、同値なら `no_change=true` で反映スキップ。
+    - 生成 diff は `validate_policy_diff()` で検証し、異常時は `generated_diff_invalid` として fail-safe。
+  - `tests/scripts/test_gpt_ops_report.py`
+    - directional bias 付与ケースと no-delta ケースを追加。
+- 検証:
+  - `pytest -q tests/scripts/test_gpt_ops_report.py tests/scripts/test_run_market_playbook_cycle.py` -> `13 passed`
+  - ローカル dry-run:
+    - `python3 scripts/gpt_ops_report.py ... --policy --apply-policy ...`
+    - `INFO [OPS_POLICY] applied=True ...` を確認。
+- 影響範囲:
+  - `quant-ops-policy` の policy生成/反映導線のみ。
+  - 各戦略 worker のローカル判定・EXIT判断・V2責務分離は非変更。
