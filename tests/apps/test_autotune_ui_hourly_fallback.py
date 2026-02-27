@@ -21,6 +21,7 @@ def _total_trades(payload: dict) -> int:
 
 def test_build_hourly_fallback_prefers_db_window_over_limited_snapshot(monkeypatch):
     monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 6)
+    monkeypatch.setattr(ui, "_load_hourly_fallback_aggregates", lambda _start: None)
     monkeypatch.setattr(
         ui,
         "_load_hourly_fallback_trades",
@@ -34,6 +35,7 @@ def test_build_hourly_fallback_prefers_db_window_over_limited_snapshot(monkeypat
 
 def test_build_hourly_fallback_uses_snapshot_trades_when_db_unavailable(monkeypatch):
     monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 6)
+    monkeypatch.setattr(ui, "_load_hourly_fallback_aggregates", lambda _start: None)
     monkeypatch.setattr(ui, "_load_hourly_fallback_trades", lambda: [])
 
     result = ui._build_hourly_fallback(
@@ -46,3 +48,33 @@ def test_build_hourly_fallback_uses_snapshot_trades_when_db_unavailable(monkeypa
     )
 
     assert _total_trades(result) == 2
+
+
+def test_build_hourly_fallback_uses_aggregate_query_when_available(monkeypatch):
+    monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 6)
+    monkeypatch.setattr(
+        ui,
+        "_load_hourly_fallback_aggregates",
+        lambda _start: {
+            "2099-01-01 01:00:00": {
+                "pips": 3.0,
+                "jpy": 300.0,
+                "trades": 2,
+                "wins": 2,
+                "losses": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(ui, "_load_hourly_fallback_trades", lambda: [_trade(1.0)])
+
+    result = ui._build_hourly_fallback([])
+
+    assert _total_trades(result) == 0
+
+
+def test_hourly_trades_usable_requires_full_lookback(monkeypatch):
+    monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 24)
+
+    assert ui._hourly_trades_is_usable({"lookback_hours": 24, "hours": [{}] * 24}) is True
+    assert ui._hourly_trades_is_usable({"lookback_hours": 12, "hours": [{}] * 12}) is False
+    assert ui._hourly_trades_is_usable({"lookback_hours": 24, "hours": [{}] * 10}) is False

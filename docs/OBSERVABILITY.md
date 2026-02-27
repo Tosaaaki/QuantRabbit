@@ -14,6 +14,10 @@
   `snapshot.recent_trades` の件数上限ではなく `trades.db` の close 履歴を
   lookback 窓で再集計する。走査上限は
   `UI_HOURLY_FALLBACK_SCAN_LIMIT`（default: `5000`）。
+  snapshot 側の `hourly_trades` は lookback/行数が不足する場合に採用せず、
+  fallback 再集計へ切り替える。fallback の主経路は
+  `julianday(close_time)` を使った時間窓 SQL 集計で、
+  `UI_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC`（default: `1.5`）の timeout を用いる。
 - `quant-autotune-ui.service` は UI 応答を優先し、
   `POSITION_MANAGER_SERVICE_*TIMEOUT` を短く（1.2〜2.0s）設定して
   fail-fast 運用する。`POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` により

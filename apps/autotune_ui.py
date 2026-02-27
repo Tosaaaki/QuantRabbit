@@ -153,6 +153,9 @@ _HOURLY_FALLBACK_SCAN_LIMIT = max(
     200, int(os.getenv("UI_HOURLY_FALLBACK_SCAN_LIMIT", "5000"))
 )
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
+_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC = max(
+    _DB_READ_TIMEOUT_SEC, float(os.getenv("UI_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC", "1.5"))
+)
 _OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
 _OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
 _DEFAULT_UI_STATE_OBJECT = "realtime/ui_state.json"
@@ -1810,42 +1813,102 @@ def _load_hourly_fallback_trades() -> list[dict]:
         return []
 
 
+def _load_hourly_fallback_aggregates(start_hour_utc: datetime) -> Optional[dict[str, dict[str, float | int]]]:
+    if not TRADES_DB.exists():
+        return {}
+    db_uri = f"file:{TRADES_DB}?mode=ro"
+    try:
+        con = sqlite3.connect(db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC)
+        con.row_factory = sqlite3.Row
+        con.execute(f"PRAGMA busy_timeout={int(_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC * 1000)}")
+        cur = con.execute(
+            """
+            SELECT
+              strftime('%Y-%m-%d %H:00:00', datetime(close_time, '+9 hours')) AS hour_jst,
+              SUM(COALESCE(pl_pips, 0.0)) AS pips,
+              SUM(COALESCE(realized_pl, 0.0)) AS jpy,
+              COUNT(*) AS trades,
+              SUM(CASE WHEN COALESCE(pl_pips, 0.0) > 0 THEN 1 ELSE 0 END) AS wins,
+              SUM(CASE WHEN COALESCE(pl_pips, 0.0) < 0 THEN 1 ELSE 0 END) AS losses
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND LOWER(COALESCE(pocket, '')) != 'manual'
+              AND julianday(close_time) >= julianday(?)
+            GROUP BY hour_jst
+            """,
+            (start_hour_utc.isoformat(),),
+        )
+        out: dict[str, dict[str, float | int]] = {}
+        for row in cur.fetchall():
+            key = str(row["hour_jst"] or "").strip()
+            if not key:
+                continue
+            out[key] = {
+                "pips": _safe_float(row["pips"]),
+                "jpy": _safe_float(row["jpy"]),
+                "trades": int(row["trades"] or 0),
+                "wins": int(row["wins"] or 0),
+                "losses": int(row["losses"] or 0),
+            }
+        con.close()
+        return out
+    except Exception:
+        return None
+
+
 def _build_hourly_fallback(trades: list[dict]) -> dict:
     now = datetime.now(timezone.utc)
     jst = timezone(timedelta(hours=9))
     now_jst = now.astimezone(jst)
     now_hour = now_jst.replace(minute=0, second=0, microsecond=0)
     start_hour = now_hour - timedelta(hours=_HOURLY_TRADES_LOOKBACK - 1)
+    start_hour_utc = start_hour.astimezone(timezone.utc)
     buckets: dict[datetime, dict[str, float | int]] = {}
     for i in range(_HOURLY_TRADES_LOOKBACK):
         hour = now_hour - timedelta(hours=i)
         buckets[hour] = {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0}
 
-    source_trades = _load_hourly_fallback_trades() or list(trades or [])
-    for item in source_trades:
-        pocket = (item.get("pocket") or "").lower()
-        if pocket == "manual":
-            continue
-        # 1時間ごとの損益は確定クローズのみを集計する
-        close_dt = _parse_dt(item.get("close_time"))
-        if not close_dt:
-            continue
-        close_jst = close_dt.astimezone(jst)
-        if close_jst < start_hour:
-            continue
-        hour_key = close_jst.replace(minute=0, second=0, microsecond=0)
-        bucket = buckets.get(hour_key)
-        if not bucket:
-            continue
-        pl_pips = _safe_float(item.get("pl_pips"))
-        pl_jpy = _safe_float(item.get("realized_pl"))
-        bucket["pips"] += pl_pips
-        bucket["jpy"] += pl_jpy
-        bucket["trades"] += 1
-        if pl_pips > 0:
-            bucket["wins"] += 1
-        elif pl_pips < 0:
-            bucket["losses"] += 1
+    aggregate = _load_hourly_fallback_aggregates(start_hour_utc)
+    if aggregate is not None:
+        for hour_key, values in aggregate.items():
+            try:
+                hour = datetime.strptime(hour_key, "%Y-%m-%d %H:%M:%S").replace(tzinfo=jst)
+            except Exception:
+                continue
+            bucket = buckets.get(hour)
+            if not bucket:
+                continue
+            bucket["pips"] += _safe_float(values.get("pips"))
+            bucket["jpy"] += _safe_float(values.get("jpy"))
+            bucket["trades"] += int(values.get("trades") or 0)
+            bucket["wins"] += int(values.get("wins") or 0)
+            bucket["losses"] += int(values.get("losses") or 0)
+    else:
+        source_trades = _load_hourly_fallback_trades() or list(trades or [])
+        for item in source_trades:
+            pocket = (item.get("pocket") or "").lower()
+            if pocket == "manual":
+                continue
+            # 1時間ごとの損益は確定クローズのみを集計する
+            close_dt = _parse_dt(item.get("close_time"))
+            if not close_dt:
+                continue
+            close_jst = close_dt.astimezone(jst)
+            if close_jst < start_hour:
+                continue
+            hour_key = close_jst.replace(minute=0, second=0, microsecond=0)
+            bucket = buckets.get(hour_key)
+            if not bucket:
+                continue
+            pl_pips = _safe_float(item.get("pl_pips"))
+            pl_jpy = _safe_float(item.get("realized_pl"))
+            bucket["pips"] += pl_pips
+            bucket["jpy"] += pl_jpy
+            bucket["trades"] += 1
+            if pl_pips > 0:
+                bucket["wins"] += 1
+            elif pl_pips < 0:
+                bucket["losses"] += 1
 
     rows: list[dict] = []
     for hour in sorted(buckets.keys(), reverse=True):
@@ -1870,6 +1933,21 @@ def _build_hourly_fallback(trades: list[dict]) -> dict:
         "exclude_manual": True,
         "hours": rows,
     }
+
+
+def _hourly_trades_is_usable(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    rows = payload.get("hours")
+    if not isinstance(rows, list):
+        return False
+    try:
+        lookback = int(payload.get("lookback_hours") or 0)
+    except Exception:
+        lookback = 0
+    if lookback < _HOURLY_TRADES_LOOKBACK:
+        return False
+    return len(rows) >= _HOURLY_TRADES_LOOKBACK
 
 
 def _build_live_snapshot() -> dict:
@@ -2173,7 +2251,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     base["recent_trades"] = recent_trades_display
 
     hourly_trades = metrics_snapshot.get("hourly_trades")
-    if isinstance(hourly_trades, dict):
+    if _hourly_trades_is_usable(hourly_trades):
         base["hourly_trades"] = hourly_trades
     else:
         base["hourly_trades"] = _build_hourly_fallback(trades_raw)

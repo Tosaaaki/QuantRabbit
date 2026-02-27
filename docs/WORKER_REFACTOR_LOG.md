@@ -54,6 +54,32 @@
   - 戦略制御UIの「見えているのに操作できない」状態を排除し、
     外部更新を含む表示不一致の再発確率を下げる。
 
+### 2026-02-27（追記）夜間の時間別履歴欠落を防ぐため hourly 集計ソースを強化
+
+- 背景:
+  - dashboard の `hourly_trades` が不完全なスナップショット（lookback不足）を含む場合、
+    夜間帯（00〜06 JST など）が表に出ないケースがあった。
+  - fallback 側も DB 読み取り失敗時に `recent_trades` 限定データへ退避するため、
+    高頻度時間帯のみ表示される偏りが出る余地があった。
+- 変更:
+  - `apps/autotune_ui.py`
+    - `_hourly_trades_is_usable()` を追加し、
+      snapshot の `hourly_trades` が lookback/行数不足なら採用しない。
+    - `_summarise_snapshot()` で不完全 snapshot 時は
+      `_build_hourly_fallback()` に必ず切り替える。
+    - `_build_hourly_fallback()` は時間窓付き SQL 集計
+      （`julianday(close_time)` + JST時間丸め）を優先し、
+      夜間帯を含む lookback 全体を再集計する。
+  - テスト:
+    - `tests/apps/test_autotune_ui_hourly_source_guard.py`
+      - 不完全 snapshot で fallback 強制、
+        完全 snapshot で既存値維持を検証。
+    - `tests/apps/test_autotune_ui_hourly_fallback.py`
+      - 集計クエリ優先動作と `hourly_trades` 採用条件の回帰を追加。
+- 意図:
+  - 「夜中の履歴が抜ける」表示欠陥を防ぎ、
+    時間帯別評価の一貫性を維持する。
+
 ### 2026-02-26（追記）B の縮小ロット失効を更に抑えるため最小ロット閾値を再調整
 
 - 背景（VM実測, 2026-02-26 12:08 UTC / 21:08 JST）:
