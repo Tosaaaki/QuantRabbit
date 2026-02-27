@@ -36,6 +36,25 @@
   - 「高速探索 + 厳格昇格」を維持しつつ、
     時間帯封鎖ではなく reentry 品質（再突入距離/待機時間/バイアス）で改善を回す。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` の leading profile reject を C専用で緩和
+
+- 背景（VM実測）:
+  - `quant-scalp-ping-5s-c.service` 再起動後（`2026-02-27 15:19:59 UTC`）の
+    15:20-15:24 UTC で、ログ集計は `open=59` に対して
+    `entry_leading_profile_reject=56`。
+  - 同時間帯 `orders.db` では `scalp_ping_5s_c_live` の
+    `submit_attempt/filled` が 0 件で、実質エントリー停止状態。
+  - `metrics.db` では `order_perf_block` が 15:18 UTC 以降 0 件のため、
+    主阻害は perf guard ではなく strategy_entry 側の leading profile reject。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.64 -> 0.56`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_PENALTY_MAX: 0.20 -> 0.14`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_UNITS_MIN_MULT: 0.72 -> 0.58`
+- 意図:
+  - hard reject を減らし、低確度帯はゼロ化ではなく縮小ロットで通す。
+  - C戦略のエントリー再開余地を作りつつ、`UNITS_MIN_MULT` を下げてリスク急拡大を回避する。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の preflight 閾値を `quant-order-manager` 実効envへ同期
 
 - 背景（VM実測）:

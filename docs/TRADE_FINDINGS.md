@@ -42,6 +42,33 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 15:24 UTC / 2026-02-28 00:24 JST - `scalp_ping_5s_c_live` の `entry_leading_profile_reject` 過多を C専用で緩和
+Period:
+- 観測: 2026-02-27 15:20-15:24 UTC（再起動直後）
+
+Fact:
+- `quant-scalp-ping-5s-c.service` は `2026-02-27 15:19:59 UTC` に再起動後 active。
+- 同期間ログ集計で `open=59` に対し `entry_leading_profile_reject=56`。
+- 同期間 `orders.db` では `scalp_ping_5s_c_live` の `submit_attempt/filled` が 0 件。
+- 一方で `metrics.db` の `order_perf_block` は 15:18 UTC 以降 0 件で、主阻害要因が `perf_block` から `entry_leading_profile_reject` へ移行。
+
+Failure Cause:
+1. C の leading profile が `REJECT_BELOW=0.64` + `PENALTY_MAX=0.20` で逆風時にゼロ化しやすく、`entry_leading_profile_reject` が多発。
+2. reject 条件が先に成立して `order_manager` 送出前に止まり、約定再開に繋がらなかった。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env` の `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW` を `0.64 -> 0.56` へ緩和。
+2. `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_PENALTY_MAX` を `0.20 -> 0.14` へ緩和。
+3. reject 回避後のリスク抑制として `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_UNITS_MIN_MULT` を `0.72 -> 0.58` に下げ、低確度帯は縮小で通す。
+
+Verification:
+1. デプロイ後 15 分で `journalctl` 集計の `entry_leading_profile_reject/open` 比率が低下すること。
+2. 同期間 `orders.db` で `scalp_ping_5s_c_live` の `submit_attempt` と `filled` が再開すること。
+3. `metrics.db` で `order_perf_block` の hard `failfast/sl_loss_rate` 再発がないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:15 UTC / 2026-02-28 00:15 JST - `scalp_ping_5s_c_live` の hard `perf_block` 主因を failfast/sl_loss_rate と特定して緩和
 Period:
 - 集計: 2026-02-27 14:12-15:12 UTC（直近60分）
