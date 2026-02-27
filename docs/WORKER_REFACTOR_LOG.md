@@ -9335,3 +9335,27 @@
 - 影響範囲:
   - 既定では split 3 worker のみ（env設定済み）。
   - `quant-m1scalper` は env 未設定のため従来挙動を維持。
+
+### 2026-02-27（追記）`scalp_ping_5s_b/c` 第3ラウンド調整（RR再補正 + longロット押上げ）
+
+- 背景（VM, 直近6h）:
+  - Round2 後は `rate_limited` / `revert_not_found` ではなく `entry_leading_profile_reject` が主因へ移行。
+  - B/C long の `tp/sl` が 1 未満のまま（B `0.54`, C `0.74`）で、long側実効 units も short比で不足。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `BASE_ENTRY_UNITS=300`, `MAX_UNITS=1000`
+    - `TP_BASE/MAX=0.75/2.2`, `SL_BASE/MAX=1.20/1.8`
+    - `TP_NET_MIN=0.65`, `TP_TIME_MULT_MIN=0.72`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.34`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.68`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN/MAX=0.70/1.00`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `BASE_ENTRY_UNITS=120`, `MAX_UNITS=260`
+    - `TP_BASE/MAX=0.60/1.8`, `SL_BASE/MAX=1.05/1.7`
+    - `TP_NET_MIN=0.55`, `TP_TIME_MULT_MIN=0.70`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.38`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.68`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN/MAX=0.68/0.95`
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定・ロット・仮想TP/SLのみ。
+  - V2固定導線（order_manager / position_manager / strategy_control / market-data-feed）は非変更。

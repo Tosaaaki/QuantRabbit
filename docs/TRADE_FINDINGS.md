@@ -67,6 +67,57 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 13:10 UTC / 2026-02-27 22:10 JST - `scalp_ping_5s_b/c` 第3ラウンド（RR再補正 + longロット押上げ）
+
+Period:
+- 直近6h（`datetime(ts) >= now - 6 hours`）を主観測
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `journalctl -u quant-scalp-ping-5s-b.service`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+
+Fact:
+- Round2 後の skip 主因は `entry_leading_profile_reject` に移行し、`rate_limited` と `revert_not_found` は直近集計で優位でない。
+  - B: `entry_leading_profile_reject=39`, `entry_probability_reject=5`（直近800行）
+  - C: `entry_leading_profile_reject=40`, `entry_probability_reject=3`（直近800行）
+- 直近6h `orders.db`（filled）:
+  - `scalp_ping_5s_b_live long`: `203 fills`, `avg_units=78.8`, `avg_sl=1.84 pips`, `avg_tp=0.99 pips`, `tp/sl=0.54`
+  - `scalp_ping_5s_b_live short`: `117 fills`, `avg_units=130.4`
+  - `scalp_ping_5s_c_live long`: `46 fills`, `avg_units=31.5`, `avg_sl=1.31 pips`, `avg_tp=0.96 pips`, `tp/sl=0.74`
+  - `scalp_ping_5s_c_live short`: `88 fills`, `avg_units=37.2`
+- 直近6h `trades.db`:
+  - `B long`: `203 trades`, `sum_realized_pl=-97.4 JPY`, `avg_win=1.017 pips`, `avg_loss=1.859 pips`
+  - `C long`: `46 trades`, `sum_realized_pl=-12.1 JPY`, `avg_win=0.859 pips`, `avg_loss=1.952 pips`
+
+Failure Cause:
+1. `rate_limit/revert` 問題はほぼ解消した一方、`entry_leading_profile_reject` が強く、long通過ロットが依然不足。
+2. B/C long とも `tp/sl < 1` が継続し、`avg_loss_pips > avg_win_pips` の負け非対称が残存。
+3. preserve-intent と leading profile の下限設定が、long側のサイズ回復を抑制している。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - long RR補正: `TP_BASE/MAX 0.55/1.9 -> 0.75/2.2`, `SL_BASE/MAX 1.35/2.0 -> 1.20/1.8`
+   - net最小利幅引上げ: `TP_NET_MIN 0.45 -> 0.65`, `TP_TIME_MULT_MIN 0.55 -> 0.72`
+   - lot押上げ: `BASE_ENTRY_UNITS 260 -> 300`, `MAX_UNITS 900 -> 1000`
+   - 通過下限緩和: `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE 0.30 -> 0.34`
+   - leading profile: `REJECT_BELOW 0.70 -> 0.68`, `UNITS_MIN/MAX 0.64/0.95 -> 0.70/1.00`
+2. `ops/env/scalp_ping_5s_c.env`
+   - long RR補正: `TP_BASE/MAX 0.45/1.5 -> 0.60/1.8`, `SL_BASE/MAX 1.15/1.9 -> 1.05/1.7`
+   - net最小利幅引上げ: `TP_NET_MIN 0.40 -> 0.55`, `TP_TIME_MULT_MIN 0.55 -> 0.70`
+   - lot押上げ: `BASE_ENTRY_UNITS 95 -> 120`, `MAX_UNITS 220 -> 260`
+   - 通過下限緩和: `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE 0.34 -> 0.38`
+   - leading profile: `REJECT_BELOW 0.70 -> 0.68`, `UNITS_MIN/MAX 0.62/0.90 -> 0.68/0.95`
+
+Verification:
+1. 反映後2h/24hで B/C long の `avg_tp/avg_sl` が上昇し、`tp/sl` が改善すること。
+2. 反映後2h/24hで `avg_units(long)` が増加し、`entry_leading_profile_reject` の件数比率が低下すること。
+3. 24hで `scalp_ping_5s_b/c long` の `sum(realized_pl)` が改善方向へ向かうこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 09:06 UTC / 2026-02-27 18:06 JST - split worker の spread 二重判定を解消（single-source化）
 
 Period:

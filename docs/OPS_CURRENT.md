@@ -534,3 +534,39 @@ quant-manual-swing-exit.service
       `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.28 -> 0.34`
 - 意図:
   - `signal不成立` と `rate-limit` 起因の無約定を減らし、long側の実効units回復を優先する。
+
+## 0-13. 2026-02-27 UTC `scalp_ping_5s_b/c` RR再補正 + longロット押上げ（第3ラウンド）
+- 目的:
+  - `SLが大きい / TPが小さい` 非対称を縮め、long側の実効ロット不足を解消する。
+- 仮説（VM, UTC 2026-02-27 13:05 前後）:
+  - Round2 で `rate_limited` / `revert_not_found` は沈静化し、現ボトルネックは
+    `entry_leading_profile_reject` と long側 `TP/SL<1` に移った。
+  - 直近6h（`orders.db` filled）:
+    - B long: `avg_units=78.8`, `avg_sl=1.84 pips`, `avg_tp=0.99 pips`, `tp/sl=0.54`
+    - B short: `avg_units=130.4`
+    - C long: `avg_units=31.5`, `avg_sl=1.31 pips`, `avg_tp=0.96 pips`, `tp/sl=0.74`
+    - C short: `avg_units=37.2`
+- 対応:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `BASE_ENTRY_UNITS: 260 -> 300`, `MAX_UNITS: 900 -> 1000`
+    - `TP_BASE/MAX: 0.55/1.9 -> 0.75/2.2`
+    - `SL_BASE/MAX: 1.35/2.0 -> 1.20/1.8`
+    - `TP_NET_MIN: 0.45 -> 0.65`, `TP_TIME_MULT_MIN: 0.55 -> 0.72`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.30 -> 0.34`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.70 -> 0.68`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN/MAX: 0.64/0.95 -> 0.70/1.00`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `BASE_ENTRY_UNITS: 95 -> 120`, `MAX_UNITS: 220 -> 260`
+    - `TP_BASE/MAX: 0.45/1.5 -> 0.60/1.8`
+    - `SL_BASE/MAX: 1.15/1.9 -> 1.05/1.7`
+    - `TP_NET_MIN: 0.40 -> 0.55`, `TP_TIME_MULT_MIN: 0.55 -> 0.70`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.34 -> 0.38`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.70 -> 0.68`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN/MAX: 0.62/0.90 -> 0.68/0.95`
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル判定とロット算出のみ。
+  - V2 共通導線（`quant-order-manager` / `quant-position-manager` / `quant-strategy-control`）の責務分離は不変。
+- 検証:
+  1. 反映後2h/24hで B/C long の `avg_tp/avg_sl` が上昇し、`tp/sl` が改善すること。
+  2. 反映後2h/24hで `avg_units(long)` が増加し、`entry_leading_profile_reject` 比率が低下すること。
+  3. 24hで `scalp_ping_5s_b/c long` の `sum(realized_pl)` が改善方向へ向かうこと。
