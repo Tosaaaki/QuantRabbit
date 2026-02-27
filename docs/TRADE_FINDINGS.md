@@ -86,6 +86,41 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 05:40 UTC / 2026-02-27 14:40 JST - 即時収益寄せの第2段（発火不足解消）
+Period:
+- Analysis window: 直近60分（VM `trades.db` / `orders.db`）
+- Source: `trades.db`, `orders.db`, `quant-scalp-{ping_5s_b,ping_5s_c,wick,extrema}` env
+
+Fact:
+- 直近60分:
+  - `scalp_ping_5s_b_live`: `39 trades / -20.7 JPY`
+  - `scalp_ping_5s_c_live`: `21 trades / -11.0 JPY`
+- Wick/Extrema は稼働中だが、直近窓で新規寄与が薄く、利益側の回転不足。
+
+Failure Cause:
+1. B/C の頻度がまだ高く、短期の負け寄与を削り切れていない。
+2. Wick/Extrema の閾値・クールダウンが相対的に厳しく、相場適合時の発火数が不足。
+
+Improvement:
+1. B/C 頻度を追加圧縮:
+   - `MAX_ORDERS_PER_MINUTE: 12 -> 8`（B/C）
+2. Extrema 発火緩和:
+   - `COOLDOWN_SEC=45`, `MAX_OPEN_TRADES=2`, `MIN_ENTRY_CONF=57`
+   - spread/range/rsi/leading-profile 閾値を緩和。
+3. Wick 発火緩和:
+   - `COOLDOWN_SEC=5`, `MAX_OPEN_TRADES=3`
+   - range/adx/tick/leading-profile 閾値を緩和。
+
+Verification:
+1. デプロイ後 10-30 分窓で
+   - B/C の `submit_attempt` 減少
+   - Wick/Extrema の `submit_attempt` / `filled` 増加
+   - 合算 realized P/L の改善
+2. timeout 系 (`Read timed out`, `order_manager_none`) が増えていないことを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 05:20 UTC / 2026-02-27 14:20 JST - B/C負け寄与の即圧縮 + Wick再配分
 Period:
 - Analysis window: 24h (`datetime(close_time) >= now - 24 hours`)

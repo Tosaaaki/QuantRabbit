@@ -8620,6 +8620,39 @@
   - B/C は停止せず稼働を維持しつつ、低EV通過・過剰頻度・過剰サイズを同時に圧縮する。
   - 優位戦略（Wick）へ配分を寄せ、合算期待値を引き上げる。
 
+### 2026-02-27（追記）即時収益寄せ: B/C 追加圧縮 + Wick/Extrema 発火緩和
+
+- 背景（VM実測, 直近60分）:
+  - `scalp_ping_5s_b_live`: `39 trades / -20.7 JPY`
+  - `scalp_ping_5s_c_live`: `21 trades / -11.0 JPY`
+  - 直近窓で Wick/Extrema の新規寄与が薄く、利益側の回転不足が継続。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=8`（from `12`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=8`（from `12`）
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_COOLDOWN_SEC=45`（from `75`）
+    - `SCALP_EXTREMA_REVERSAL_MAX_OPEN_TRADES=2`（from `1`）
+    - `SCALP_EXTREMA_REVERSAL_MAX_SPREAD_PIPS=1.6`（from `1.3`）
+    - `SCALP_EXTREMA_REVERSAL_MIN_ENTRY_CONF=57`（from `60`）
+    - `SCALP_EXTREMA_REVERSAL_HIGH/LOW_BAND_PIPS=1.0`（from `1.2`）
+    - `SCALP_EXTREMA_REVERSAL_RSI_LONG_MAX=46.0`（from `44.0`）
+    - `SCALP_EXTREMA_REVERSAL_RSI_SHORT_MIN=54.0`（from `56.0`）
+    - `SCALP_EXTREMA_REVERSAL_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.48`（from `0.52`）
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `SCALP_PRECISION_COOLDOWN_SEC=5`（from `7`）
+    - `SCALP_PRECISION_MAX_OPEN_TRADES=3`（from `2`）
+    - `WICK_BLEND_RANGE_SCORE_MIN=0.34`（from `0.40`）
+    - `WICK_BLEND_ADX_MIN/MAX=12.0/32.0`（from `14.0/28.0`）
+    - `WICK_BLEND_BB_TOUCH_RATIO=0.15`（from `0.18`）
+    - `WICK_BLEND_TICK_MIN_TICKS=4`（from `6`）
+    - `WICK_BLEND_TICK_MIN_STRENGTH=0.22`（from `0.30`）
+    - `SCALP_PRECISION_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.46`（from `0.50`）
+- 意図:
+  - 負け寄与（B/C）は頻度をさらに削って損失勾配を圧縮。
+  - 利益寄与候補（Wick/Extrema）は発火条件を緩和し、約定機会を増やして即時寄与を狙う。
+
 ### 2026-02-27（追記）Autotune UI の時間帯履歴欠落を再発防止
 
 - 背景:

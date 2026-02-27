@@ -1487,6 +1487,28 @@
   - B/C を停止せず、負け寄与を「頻度・サイズ・通過率」の3軸で同時に圧縮する。
   - 勝ち寄与戦略へ小幅増量し、短期合算 P/L を押し上げる。
 
+### 追加の即時収益寄せ（2026-02-27 追記）
+- 背景:
+  - 直近60分で B/C が継続マイナス（`B=-20.7`, `C=-11.0` JPY）。
+  - 同窓で Wick/Extrema の新規寄与が薄く、利益側の回転不足が確認された。
+- 実装:
+  - B/C 追加圧縮:
+    - `SCALP_PING_5S_{B,C}_MAX_ORDERS_PER_MINUTE=8`（from `12`）
+  - Extrema 発火緩和:
+    - `COOLDOWN_SEC=45`（from `75`）, `MAX_OPEN_TRADES=2`（from `1`）
+    - `MAX_SPREAD_PIPS=1.6`（from `1.3`）, `MIN_ENTRY_CONF=57`（from `60`）
+    - `HIGH/LOW_BAND_PIPS=1.0`（from `1.2`）, `RSI_LONG_MAX=46`, `RSI_SHORT_MIN=54`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.48`（from `0.52`）
+  - Wick 発火緩和:
+    - `COOLDOWN_SEC=5`（from `7`）, `MAX_OPEN_TRADES=3`（from `2`）
+    - `RANGE_SCORE_MIN=0.34`（from `0.40`）, `ADX_MIN/MAX=12/32`（from `14/28`）
+    - `BB_TOUCH_RATIO=0.15`（from `0.18`）
+    - `TICK_MIN_TICKS=4`（from `6`）, `TICK_MIN_STRENGTH=0.22`（from `0.30`）
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.46`（from `0.50`）
+- 運用意図:
+  - B/C の損失勾配をさらに抑えつつ、Wick/Extrema の約定機会を増やして
+    短期収益の立ち上がりを優先する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |
