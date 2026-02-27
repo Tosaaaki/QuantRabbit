@@ -9549,6 +9549,28 @@
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 通過判定に限定。
   - TP/SL や order_manager/position_manager/strategy_control の V2責務分離は非変更。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` 第12ラウンド（setup perf guard を failfast中心へ寄せる）
+
+- 背景（VM, Round11反映直後）:
+  - B は `submit_attempt=4 / filled=4` まで回復した一方、C は `perf_block=12` が残存。
+  - C の `entry-skip summary` 例（14:57:40 UTC）:
+    - `total=31`, `order_reject:perf_block=10`
+  - C の `RISK multiplier` は `pf=0.47, win=0.48` で、setup guard の `PF_MIN=0.90` が主因で遮断。
+  - C worker は `mapped_prefix=SCALP_PING_5S` を使用するため、fallback 側の setup 閾値も同時に効く。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_PERF_GUARD_SETUP_MIN_TRADES: 16 -> 24`
+    - `SCALP_PING_5S_C_PERF_GUARD_SETUP_PF_MIN: 0.90 -> 0.45`
+    - `SCALP_PING_5S_C_PERF_GUARD_SETUP_WIN_MIN: 0.45 -> 0.40`
+    - `SCALP_PING_5S_PERF_GUARD_SETUP_MIN_TRADES: 16 -> 24`
+    - `SCALP_PING_5S_PERF_GUARD_SETUP_PF_MIN: 0.90 -> 0.45`
+    - `SCALP_PING_5S_PERF_GUARD_SETUP_WIN_MIN: 0.45 -> 0.40`
+  - `ops/env/quant-order-manager.env`
+    - 上記 C/fallback setup 閾値を同値へ同期。
+- 影響範囲:
+  - C 系の perf guard setup 判定に限定（B の failfast, TP/SL, V2導線責務分離は維持）。
+  - `failfast` と `SL_LOSS_RATE` は据え置きで、急悪化時の防波堤は維持。
+
 ### 2026-02-27（追記）`quant-order-manager` 第11ラウンド（B/C 閾値ドリフト同期）
 
 - 背景（VM, Round10後）:

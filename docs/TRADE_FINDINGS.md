@@ -42,6 +42,46 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 14:58 UTC / 2026-02-27 23:58 JST - `scalp_ping_5s_c` 第12ラウンド（setup perf guard を failfast中心へ寄せる）
+
+Period:
+- Round11 反映直後（`2026-02-27T14:56:53+00:00` 以降）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- Repo/VM `ops/env/scalp_ping_5s_c.env`, `ops/env/quant-order-manager.env`
+
+Fact:
+- Round11 後、B は約定再開:
+  - `submit_attempt=4`, `filled=4`, `avg_units=121.5`
+- C は `perf_block` が残存:
+  - `perf_block=12`, `slo_block=1`（同期間、strategy tag 抽出）
+  - 例: `14:57:40 UTC` の C `entry-skip summary total=31` で `order_reject:perf_block=10`
+- C の `RISK multiplier` は `pf=0.47 / win=0.48` で、setup guard の `PF_MIN=0.90` が主にボトルネック。
+
+Failure Cause:
+1. C の setup guard が現在性能帯（PF 0.47 前後）より高すぎ、`perf_block` が継続。
+2. C は `mapped_prefix=SCALP_PING_5S` を使うため、`SCALP_PING_5S_*` fallback も同時に厳しいとブロックが残る。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env`（C + fallback）:
+  - `SETUP_MIN_TRADES: 16 -> 24`
+  - `SETUP_PF_MIN: 0.90 -> 0.45`
+  - `SETUP_WIN_MIN: 0.45 -> 0.40`
+2. `ops/env/quant-order-manager.env`（C + fallback）:
+  - `SETUP_MIN_TRADES: 16 -> 24`
+  - `SETUP_PF_MIN: 0.90 -> 0.45`
+  - `SETUP_WIN_MIN: 0.45 -> 0.40`
+
+Verification:
+1. 反映後 30 分で C の `order_reject:perf_block` 比率が低下すること。
+2. `orders.db` で C の `submit_attempt/filled` が再出現すること。
+3. 24h で C の `sum(realized_pl)` が急悪化しないこと（failfastは維持）。
+
+Status:
+- in_progress
+
 ## 2026-02-27 14:53 UTC / 2026-02-27 23:53 JST - `quant-order-manager` 第11ラウンド（B/C 閾値ドリフト同期）
 
 Period:
