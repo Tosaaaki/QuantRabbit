@@ -9424,3 +9424,37 @@
 - 影響範囲:
   - `quant-order-manager.service` の注文ログ永続化/duplicate回復経路のみ。
   - 戦略ロジック・entry/exit判定・V2導線分離は非変更。
+
+### 2026-02-27（追記）`scalp_ping_5s_b/c` 第5ラウンド調整（損失側圧縮 + 低品質約定抑制）
+
+- 目的:
+  - B/C の `avg_loss_pips > avg_win_pips` を是正し、24h損失の縮小を優先する。
+  - C で発生していた小ロット churn を抑え、低品質通過を減らす。
+- 実測根拠（VM, 24h）:
+  - `scalp_ping_5s_b_live`: `587 trades / -679.0 JPY / avg_win=1.158 / avg_loss=1.998`
+  - `scalp_ping_5s_c_live`: `372 trades / -146.5 JPY / avg_win=1.075 / avg_loss=1.844`
+  - B の `STOP_LOSS_ORDER` は `310 trades / -1094.6 JPY`。
+  - 最新 `orders.db` は B/C とも `perf_block` が上位で、C は `units=2-5` の小ロット通過が中心。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE: 10 -> 5`
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY: 0.54 -> 0.58`
+    - `MIN_UNITS_RESCUE_MIN_CONFIDENCE: 75 -> 78`
+    - `TP_BASE/MAX: 0.75/2.2 -> 0.90/2.6`
+    - `SL_BASE/MAX: 1.20/1.8 -> 1.00/1.5`
+    - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: 1.5 -> 1.2`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.74 -> 0.80`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.64 -> 0.70`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 10 -> 6`
+    - `BASE_ENTRY_UNITS/MAX_UNITS: 120/260 -> 80/160`
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY: 0.56 -> 0.60`
+    - `MIN_UNITS_RESCUE_MIN_CONFIDENCE: 78 -> 82`
+    - `TP_BASE/MAX: 0.60/1.8 -> 0.85/2.3`
+    - `SL_BASE/MAX: 1.05/1.7 -> 0.90/1.4`
+    - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: 0.8 -> 0.6`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.72 -> 0.82`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.64 -> 0.74`
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY/units/virtual TP/SL に限定。
+  - `execution/order_manager.py` / `execution/strategy_entry.py` の契約（`entry_probability`, `entry_units_intent`）および V2 導線責務分離は非変更。

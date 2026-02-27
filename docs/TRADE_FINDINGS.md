@@ -88,6 +88,50 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 13:32 UTC / 2026-02-27 22:32 JST - `scalp_ping_5s_b/c` 第5ラウンド調整（損失側圧縮 + 低品質約定の抑制）
+
+Period:
+- 直近24h（`julianday(close_time) >= julianday('now','-24 hours')`）
+- 直近注文ログ（`orders.db` 最新30件）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- 24h 戦略別:
+  - `scalp_ping_5s_b_live`: `587 trades / -679.0 JPY / -358.8 pips / avg_win=1.158 / avg_loss=1.998 / avg_units=106.1`
+  - `scalp_ping_5s_c_live`: `372 trades / -146.5 JPY / -294.6 pips / avg_win=1.075 / avg_loss=1.844 / avg_units=26.7`
+- close reason（24h）:
+  - B: `STOP_LOSS_ORDER 310 trades / -1094.6 JPY`, `TAKE_PROFIT_ORDER 190 / +336.8 JPY`, `MARKET_ORDER_TRADE_CLOSE 87 / +78.8 JPY`
+  - C: `STOP_LOSS_ORDER 175 / -113.5 JPY`, `MARKET_ORDER_TRADE_CLOSE 111 / -89.3 JPY`, `TAKE_PROFIT_ORDER 86 / +56.2 JPY`
+- 最新注文ログは `perf_block` が上位で、Cは `units=2-5` の小ロット通過が中心。
+
+Failure Cause:
+1. B/C とも `avg_loss_pips > avg_win_pips` が継続し、RR が負のまま。
+2. B は `STOP_LOSS_ORDER` 側損失が過大で、勝ちトレードで吸収できていない。
+3. C は通過時ユニットが小さく、低品質約定の churn で収益復元が遅い。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - 通過頻度抑制: `MAX_ORDERS_PER_MINUTE 10 -> 5`
+   - 入口品質を引き上げ: `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY 0.54 -> 0.58`, `MIN_UNITS_RESCUE_MIN_CONFIDENCE 75 -> 78`
+   - RR再設計: `TP_BASE/MAX 0.75/2.2 -> 0.90/2.6`, `SL_BASE/MAX 1.20/1.8 -> 1.00/1.5`, `FORCE_EXIT_MAX_FLOATING_LOSS 1.5 -> 1.2`
+   - preserve-intent/leading-profile を厳格化: `REJECT_UNDER 0.74 -> 0.80`, `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.64 -> 0.70`
+2. `ops/env/scalp_ping_5s_c.env`
+   - 絶対エクスポージャ抑制: `BASE_ENTRY_UNITS/MAX_UNITS 120/260 -> 80/160`, `MAX_ORDERS_PER_MINUTE 10 -> 6`
+   - 入口品質を引き上げ: `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY 0.56 -> 0.60`, `MIN_UNITS_RESCUE_MIN_CONFIDENCE 78 -> 82`
+   - RR再設計: `TP_BASE/MAX 0.60/1.8 -> 0.85/2.3`, `SL_BASE/MAX 1.05/1.7 -> 0.90/1.4`, `FORCE_EXIT_MAX_FLOATING_LOSS 0.8 -> 0.6`
+   - preserve-intent/leading-profile を厳格化: `REJECT_UNDER 0.72 -> 0.82`, `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.64 -> 0.74`
+
+Verification:
+1. 反映後2h/24hで B/C の `avg_loss_pips` と `STOP_LOSS_ORDER` の `sum(realized_pl)` が低下すること。
+2. `orders.db` で B/C の `perf_block` 比率が維持されつつ、`filled` がゼロ化しないこと。
+3. 24hで B/C の `sum(realized_pl)` が改善方向（損失縮小）へ転じること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:52 UTC / 2026-02-27 17:52 JST - M1系 spread 閾値を 1.00 に統一
 Period:
 - Adjustment window: `2026-02-27 17:46` ～ `17:52` JST
