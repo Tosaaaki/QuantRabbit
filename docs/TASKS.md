@@ -79,6 +79,8 @@
     - 2026-02-27: `scripts/fetch_market_snapshot.py` を追加し、
       Stooq + TradingEconomics から価格/金利/主要イベントを取得して
       `market_external_snapshot` / `market_events` を自動更新できるようにした。
+    - 2026-02-27: `scripts/run_market_playbook_cycle.py` を追加し、
+      `quant-ops-policy` を可変周期（通常15分 / 指標前後5分 / アクティブ1分）で実行する構成へ更新。
 
 - [ ] ID: T-20260123-002
   Title: GPT運用レポートに時間帯×レジーム×ボラの勝率/PFマトリクスを追加

@@ -132,6 +132,29 @@
     一連フローで、短期/スイングの分析材料を自動生成可能になった。
   - 発注・ポジション管理・strategy worker の実行ロジックは非変更。
 
+### 2026-02-27（追記）`quant-ops-policy` の実行周期をイベント連動で可変化
+
+- 目的:
+  - 平常時は低頻度、指標前後のみ高頻度で更新し、運用負荷と鮮度を両立する。
+- 変更:
+  - `scripts/run_market_playbook_cycle.py` を追加。
+    - `fetch_market_snapshot.py` と `gpt_ops_report.py` を1サイクルで実行。
+    - `logs/ops_playbook_cycle_state.json` で次回実行時刻を管理。
+    - 既定周期:
+      - 通常: 15分
+      - 指標前60分: 5分
+      - 指標アクティブ（-10分〜+30分）: 1分
+      - 指標後（〜120分）: 5分
+  - `systemd/quant-ops-policy.service`
+    - `ExecStart` を `run_market_playbook_cycle.py --policy --apply-policy` へ変更。
+  - `systemd/quant-ops-policy.timer`
+    - 起動は1分間隔に変更し、実行間隔の最終判断は cycle スクリプト側へ委譲。
+  - `tests/scripts/test_run_market_playbook_cycle.py`
+    - 周期選択（normal/pre/active/post）の回帰テストを追加。
+- 影響範囲:
+  - `quant-ops-policy` の更新タイミングが固定30分から可変へ移行。
+  - 発注導線は変更せず、分析レポート生成周期のみ変更。
+
 ### 2026-02-27（追記）M1シナリオ3戦略を「プロセス独立」から「ロジック独立」へ移行
 
 - 背景:
