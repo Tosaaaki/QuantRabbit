@@ -168,6 +168,44 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 13:46 UTC / 2026-02-27 22:46 JST - `scalp_ping_5s_c` 第6ラウンド（rate-limit/perf_block 縮小）
+
+Period:
+- 第5ラウンド反映後: `2026-02-27T13:39:35+00:00` 以降
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- 第5ラウンド後、`spread_blocked` はほぼ消失した一方で skip 主因が移行:
+  - `13:40:24 UTC`: `total=110`, `revert_not_found=38`, `rate_limited=24`, `perf_block=5`
+  - `13:40:54 UTC`: `total=118`, `rate_limited=53`, `revert_not_found=27`
+- `orders.db`（同期間）は `perf_block` と `probability_scaled` のみで `filled=0`。
+
+Failure Cause:
+1. `MAX_ORDERS_PER_MINUTE=6` で高頻度区間に飽和し、`rate_limited` が先に上位化。
+2. perf guard の `*_MIN_TRADES=10` が短期ノイズで発火し、`perf_block` が継続。
+3. C の通過閾値（preserve-intent / leading profile）が厳しめで、注文送信まで届きにくい。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env`
+   - `MAX_ORDERS_PER_MINUTE 6 -> 10`
+   - `SCALP_PING_5S_C_PERF_GUARD_HOURLY_MIN_TRADES 10 -> 16`
+   - `SCALP_PING_5S_C_PERF_GUARD_SETUP_MIN_TRADES 10 -> 16`
+   - fallback `SCALP_PING_5S_PERF_GUARD_HOURLY_MIN_TRADES 10 -> 16`
+   - fallback `SCALP_PING_5S_PERF_GUARD_SETUP_MIN_TRADES 10 -> 16`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER 0.82 -> 0.78`
+   - `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.74 -> 0.70`
+
+Verification:
+1. 反映後30分/2hで `rate_limited` 比率が低下すること。
+2. C の `orders.db status=filled` が再開すること。
+3. `perf_block` が優位理由でなくなること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:52 UTC / 2026-02-27 17:52 JST - M1系 spread 閾値を 1.00 に統一
 Period:
 - Adjustment window: `2026-02-27 17:46` ～ `17:52` JST

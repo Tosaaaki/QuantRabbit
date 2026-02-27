@@ -621,3 +621,28 @@ quant-manual-swing-exit.service
   1. 反映後30分で C の `entry-skip summary` に占める `spread_blocked` 比率が低下すること。
   2. C の `filled` 再開と `avg_units(long)` 回復を確認すること。
   3. `hot_spread_now` の発生頻度が抑制されること。
+
+## 0-16. 2026-02-27 UTC `scalp_ping_5s_c` 通過率再補正（第6ラウンド）
+- 目的:
+  - 第5ラウンド後に残った `rate_limited` / `perf_block` を低減し、C の約定再開を優先する。
+- 仮説（VM, UTC 2026-02-27 13:40 前後）:
+  - `spread_blocked` は解消したが、C の skip 主因が `rate_limited` と `revert_not_found` に移行。
+  - `orders.db` は `perf_block` と `probability_scaled` のみで `filled=0` が継続。
+- 対応:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 6 -> 10`
+    - perf guard の過早ブロック抑制:
+      - `SCALP_PING_5S_C_PERF_GUARD_HOURLY_MIN_TRADES: 10 -> 16`
+      - `SCALP_PING_5S_C_PERF_GUARD_SETUP_MIN_TRADES: 10 -> 16`
+      - fallback `SCALP_PING_5S_PERF_GUARD_HOURLY_MIN_TRADES: 10 -> 16`
+      - fallback `SCALP_PING_5S_PERF_GUARD_SETUP_MIN_TRADES: 10 -> 16`
+    - 通過ゲート緩和:
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.82 -> 0.78`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.74 -> 0.70`
+- 影響範囲:
+  - `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定のみ。
+  - B および V2 共通導線は非変更。
+- 検証:
+  1. 反映後30分/2hで C の `rate_limited` 比率が低下すること。
+  2. `orders.db` で C の `filled` が再開すること。
+  3. `perf_block` が優位理由でなくなること。
