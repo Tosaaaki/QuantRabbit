@@ -9771,3 +9771,16 @@
 - 影響範囲:
   - `quant-ops-policy` のプレイブック生成品質（分析/運用判断）に限定。
   - strategy worker の ENTRY/EXIT 実装、V2分離導線、`order_manager` ガード契約は非変更。
+
+### 2026-02-27（追記）`quant-ops-policy.service` 新導線の依存補完（bs4）
+
+- 背景:
+  - VM で `quant-ops-policy.service` を `run_market_playbook_cycle.py` へ更新後、
+    `ModuleNotFoundError: No module named 'bs4'` で起動失敗。
+  - 原因は `scripts/fetch_market_snapshot.py` の BeautifulSoup 依存が
+    `requirements.txt` に未記載だったこと。
+- 変更:
+  - `requirements.txt` に `beautifulsoup4==4.12.3` を追加。
+- 影響範囲:
+  - `quant-ops-policy` の市場スナップショット取得経路のみ。
+  - 戦略 worker / order_manager / position_manager の売買ロジックは非変更。

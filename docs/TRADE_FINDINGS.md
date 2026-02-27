@@ -191,6 +191,35 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 15:20 UTC / 2026-02-28 00:20 JST - `quant-ops-policy` 新導線の依存欠損（bs4）復旧
+
+Period:
+- VM 反映直後（`quant-ops-policy.service` 更新後）
+
+Source:
+- VM `journalctl -u quant-ops-policy.service`
+- `scripts/fetch_market_snapshot.py`
+- `requirements.txt`
+
+Fact:
+- `quant-ops-policy.service` を `run_market_playbook_cycle.py` 実行に切り替えた直後、
+  `ModuleNotFoundError: No module named 'bs4'` で service が失敗した。
+
+Failure Cause:
+1. `fetch_market_snapshot.py` が `from bs4 import BeautifulSoup` を使用。
+2. `requirements.txt` に `beautifulsoup4` が未定義で、VM venv へ導入されていなかった。
+
+Improvement:
+1. `requirements.txt` に `beautifulsoup4==4.12.3` を追加。
+2. VM で venv へ依存を導入後、`quant-ops-policy.service` を再起動して復旧する。
+
+Verification:
+1. `quant-ops-policy.service` が失敗せず完走すること。
+2. `logs/gpt_ops_report.json` が更新され、`snapshot.factor_stale` と `current_price_source` が出力されること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:00 UTC / 2026-02-28 00:00 JST - `scalp_ping_5s_c` 第13ラウンド（failfast hard block の下限を調整）
 
 Period:
