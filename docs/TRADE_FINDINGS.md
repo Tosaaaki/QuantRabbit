@@ -126,6 +126,124 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 05:55 UTC / 14:55 JST - B/C 継続赤字に対する追加圧縮（損失幅優先）
+Period:
+- Audit window: 24h / 6h（VM `trades.db` / `orders.db` / `metrics.db`）
+- Post-deploy spot check: `2026-02-27T05:46:00+00:00` 以降（`fe400c8` 反映後）
+
+Purpose:
+- B/C を停止せず稼働継続したまま、期待値の主因である「平均損失過大」をまず縮小する。
+
+Hypothesis:
+1. 執行コスト（spread/slip/submit latency）は許容範囲で、主因は entry 品質と損切り幅。
+2. B は `avg_win < avg_loss` が明確なので、SL/force-exit の縮小でマイナス勾配を圧縮できる。
+3. C は低品質エントリー通過が残っているため、prob/conf floor と頻度を絞ると赤字を抑えられる。
+
+Fact:
+- 24h realized:
+  - `scalp_ping_5s_c_live`: `453 trades / -1077.6`
+  - `scalp_ping_5s_b_live`: `454 trades / -607.3`
+  - `WickReversalBlend`: `7 trades / +332.3`
+  - `scalp_extrema_reversal_live`: `14 trades / +30.9`
+- 6h realized:
+  - `scalp_ping_5s_b_live`: `199 trades / -121.6`（`avg_win=+1.28`, `avg_loss=-2.52`）
+  - `scalp_ping_5s_c_live`: `124 trades / -36.0`（`avg_win=+0.40`, `avg_loss=-0.68`）
+- 24h orders status:
+  - `margin_usage_projected_cap=548`, `margin_usage_exceeds_cap=368`, `rejected=314`, `entry_probability_reject=233`, `slo_block=136`
+- execution precision（`analyze_entry_precision.py`）:
+  - `spread_pips mean ≈ 0.80`, `slip p95 ≈ 0.20`, `latency_submit p50 ≈ 203-206ms`
+  - コストよりも strategy-side の期待値設計がボトルネック。
+- post-deploy spot（`05:46+00:00` 以降）:
+  - B fill 3件で `avg_preflight_ms=125`, `avg_submit_to_fill_ms=213`（timeout起因の長遅延は未再発）
+
+Failure Cause:
+1. B/C とも pay-off が負（特に B は損失幅が利益幅を大きく上回る）。
+2. B/C の margin cap 多発は「意図サイズ過大」を示し、期待値の低い試行が多い。
+3. B/C の perf guard が disable のままで、悪化局面の縮小が効いていない。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_MAX_ACTIVE_TRADES=6`（from `10`）
+   - `SCALP_PING_5S_B_MAX_PER_DIRECTION=4`（from `6`）
+   - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=1`（from `0`）
+   - `SCALP_PING_5S_B_SL_BASE_PIPS=1.8`（from `2.2`）
+   - `SCALP_PING_5S_B_SL_MAX_PIPS=2.4`（from `3.0`）
+   - `SCALP_PING_5S_B_SHORT_SL_BASE_PIPS=1.7`（from `2.0`）
+   - `SCALP_PING_5S_B_SHORT_SL_MAX_PIPS=2.2`（from `2.8`）
+   - `SCALP_PING_5S_B_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=2.0`（from `2.6`）
+   - `SCALP_PING_5S_B_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=1.8`（from `2.2`）
+   - `SCALP_PING_5S_B_FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC=14`（from `20`）
+   - `SCALP_PING_5S_B_FORCE_EXIT_RECOVERY_WINDOW_SEC=55`（from `75`）
+   - `SCALP_PING_5S_B_FORCE_EXIT_RECOVERABLE_LOSS_PIPS=0.80`（from `1.05`）
+2. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=5`（from `6`）
+   - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=90`（from `110`）
+   - `SCALP_PING_5S_C_MAX_UNITS=200`（from `240`）
+   - `SCALP_PING_5S_C_PERF_GUARD_ENABLED=1`（from `0`）
+   - `SCALP_PING_5S_PERF_GUARD_ENABLED=1`（from `0`、fallback local同期）
+   - `SCALP_PING_5S_C_CONF_FLOOR=78`（from `76`）
+   - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.74`（from `0.70`）
+   - `SCALP_PING_5S_C_ENTRY_PROBABILITY_ALIGN_FLOOR=0.64`（from `0.61`）
+
+Impact Scope:
+- 対象: `quant-scalp-ping-5s-b.service`, `quant-scalp-ping-5s-c.service`
+- 非対象: V2導線（order-manager/position-manager/strategy-control）の共通ロジック変更なし。
+
+Verification:
+1. VMで env 反映確認（`/proc/<pid>/environ`）:
+   - B/C の `PERF_GUARD_ENABLED=1`, `B SL/force-exit`, `C units/prob floor` を確認。
+2. 反映後 2h/6h 監査:
+   - B/C の `avg_loss` 縮小（B目標 `>-2.0`, C目標 `>-0.60`）
+   - B/C の `realized_pl` 勾配改善（赤字幅の縮小）
+   - `margin_usage_projected_cap`, `margin_usage_exceeds_cap` の件数低下
+3. 執行品質監査:
+   - `analyze_entry_precision.py` で `spread/slip/latency_submit` が悪化していないことを確認。
+
+Status:
+- in_progress
+
+## 2026-02-27 06:05 UTC / 15:05 JST - order-manager 実効設定ズレ是正（B/C perf guard 未適用の修正）
+Period:
+- Audit window: deploy後 spot check（`2026-02-27T05:57:00+00:00` 以降）
+- Source: VM `/proc/<order-manager-pid>/environ`, `orders.db`, `trades.db`
+
+Purpose:
+- 直近チューニングが service 経路で実効化されていることを保証し、B/C の悪化局面で縮小運転を確実に発火させる。
+
+Hypothesis:
+1. `quant-order-manager` 側の `PERF_GUARD_ENABLED=0` が残っていると、worker側で有効化しても実際の preflight で効かない。
+2. preserve-intent 閾値を service 側と worker 側で同値にしないと、経路差で通過品質がブレる。
+
+Fact:
+- VM 実測（`quant-order-manager` process env）で以下を確認:
+  - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=0`
+  - `SCALP_PING_5S_C_PERF_GUARD_ENABLED=0`
+  - `SCALP_PING_5S_PERF_GUARD_ENABLED=0`
+  - preserve-intent も旧閾値（B `0.72/0.25/0.42`, C `0.68/0.35/0.72`）が残存
+- 一方で worker env では `PERF_GUARD_ENABLED=1` へ更新済みで、service/local で実効値が不一致だった。
+
+Improvement:
+1. `ops/env/quant-order-manager.env`
+   - B preserve-intent: `REJECT_UNDER=0.74`, `MAX_SCALE=0.38`
+   - C preserve-intent: `REJECT_UNDER=0.72`, `MIN_SCALE=0.30`, `MAX_SCALE=0.64`
+   - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=1`
+   - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`, `SCALP_PING_5S_C_PERF_GUARD_ENABLED=1`
+   - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`, `SCALP_PING_5S_PERF_GUARD_ENABLED=1`
+2. `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_c.env`
+   - preserve-intent 閾値を service 側と同値に同期（B `0.74/0.25/0.38`, C `0.72/0.30/0.64`）
+
+Impact Scope:
+- 対象: `quant-order-manager.service` preflight（B/C）
+- 非対象: 共通導線仕様（V2役割分離）は変更なし
+
+Verification:
+1. デプロイ後 `quant-order-manager` の `/proc/<pid>/environ` で上記キーを確認。
+2. `orders.db` で B/C の `entry_probability_reject` 増加と `margin_usage_*cap` 減少傾向を確認。
+3. 2h/6h の B/C `avg_loss` が改善することを継続監査。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:30 UTC / 2026-02-27 10:30 JST - B/C 非エントリーの直接因子を解除（revert復帰 + rate limit緩和 + service timeout短縮）
 Period:
 - VM実測: `2026-02-27 00:56-01:26 UTC`

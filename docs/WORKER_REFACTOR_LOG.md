@@ -8757,3 +8757,57 @@
     - `tests/apps/test_autotune_ui_template_guards.py`
 - 検証:
   - `pytest -q tests/apps` で `32 passed` を確認。
+
+### 2026-02-27（追記）B/C 収益監査に基づく追加チューニング（損失幅圧縮）
+
+- 目的:
+  - VM実測で継続していた B/C 赤字を、停止せずに縮小運転で改善する。
+- 仮説:
+  - 執行品質ではなく strategy pay-off が主因のため、B は SL/force-exit 圧縮、C は品質ゲート強化で改善余地がある。
+- 変更ファイル:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ACTIVE_TRADES=6`, `MAX_PER_DIRECTION=4`
+    - `PERF_GUARD_ENABLED=1`
+    - `SL_BASE/SHORT_BASE=1.8/1.7`, `SL_MAX/SHORT_MAX=2.4/2.2`
+    - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=2.0`（short `1.8`）
+    - `FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC=14`
+    - `FORCE_EXIT_RECOVERY_WINDOW_SEC=55`
+    - `FORCE_EXIT_RECOVERABLE_LOSS_PIPS=0.80`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE=5`
+    - `BASE_ENTRY_UNITS=90`, `MAX_UNITS=200`
+    - `SCALP_PING_5S_C_PERF_GUARD_ENABLED=1`
+    - `SCALP_PING_5S_PERF_GUARD_ENABLED=1`（fallback local 同期）
+    - `CONF_FLOOR=78`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.74`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.64`
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service`, `quant-scalp-ping-5s-c.service` のみ。
+  - V2 共通導線（`quant-order-manager` / `quant-position-manager` / `quant-strategy-control`）の仕様変更なし。
+- 検証手順:
+  1. `main` push 後、VMへ反映して B/C サービス再起動。
+  2. `/proc/<pid>/environ` で上記キー反映を確認。
+  3. 2h/6hで `avg_loss`, `realized_pl`, `margin_usage_* cap` を前回値と比較。
+
+### 2026-02-27（追記）order-manager service 実効設定ズレの修正
+
+- 目的:
+  - B/C の perf guard と preserve-intent が service 経路でも確実に有効になる状態へ統一。
+- 仮説:
+  - `quant-order-manager` の env が旧値のままだと、worker側更新だけでは preflight 判定が改善しない。
+- 変更ファイル:
+  - `ops/env/quant-order-manager.env`
+    - B preserve-intent: `REJECT_UNDER=0.74`, `MAX_SCALE=0.38`
+    - C preserve-intent: `REJECT_UNDER=0.72`, `MIN_SCALE=0.30`, `MAX_SCALE=0.64`
+    - `SCALP_PING_5S_B_PERF_GUARD_ENABLED=1`
+    - `SCALP_PING_5S_C_PERF_GUARD_MODE=reduce`, `SCALP_PING_5S_C_PERF_GUARD_ENABLED=1`
+    - `SCALP_PING_5S_PERF_GUARD_MODE=reduce`, `SCALP_PING_5S_PERF_GUARD_ENABLED=1`
+  - `ops/env/scalp_ping_5s_b.env`
+    - preserve-intent: `0.74 / 0.25 / 0.38` に同期
+  - `ops/env/scalp_ping_5s_c.env`
+    - preserve-intent: `0.72 / 0.30 / 0.64` に同期
+- 影響範囲:
+  - `quant-order-manager.service` の B/C preflight 判定に限定。
+- 検証手順:
+  1. デプロイ後に `quant-order-manager` の `/proc/<pid>/environ` を確認。
+  2. `orders.db` の B/C reject内訳（`entry_probability_reject`, `margin_usage_*`）を前後比較。
