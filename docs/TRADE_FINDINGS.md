@@ -126,6 +126,52 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 06:41 UTC / 2026-02-27 15:41 JST - 方向精度劣化（B/C）+ 単発大損（M1/MACD）を同時圧縮
+Period:
+- 集計時刻: `2026-02-27 06:41 UTC`（`15:41 JST`）
+- 期間: 直近 `6h` / `24h`
+- Source: VM `fx-trader-vm` (`/home/tossaki/QuantRabbit/logs/trades.db`, `orders.db`, `metrics.db`) + `scripts/oanda_open_trades.py`
+
+Fact:
+- 24h（主要赤字）:
+  - `scalp_ping_5s_c_live`: `444 trades`, `-3394.6 JPY`, `-434.7 pips`
+  - `scalp_ping_5s_b_live`: `264 trades`, `-519.9 JPY`, `-186.5 pips`
+- 6h（主要赤字）:
+  - `scalp_macd_rsi_div_live`: `1 trade`, `-279.4 JPY`, `-6.4 pips`
+  - `scalp_ping_5s_b_live`: `223 trades`, `-129.2 JPY`, `-115.9 pips`
+  - `M1Scalper-M1`: `20 trades`, `-90.1 JPY`, `-10.1 pips`
+  - `scalp_ping_5s_c_live`: `122 trades`, `-36.1 JPY`, `-99.7 pips`
+- close reason（6h）:
+  - B: `STOP_LOSS_ORDER 112 trades / -265.1 JPY`、`TAKE_PROFIT_ORDER 94 / +116.5 JPY`
+  - C: `STOP_LOSS_ORDER 64 / -28.7 JPY`、`MARKET_ORDER_TRADE_CLOSE 25 / -20.9 JPY`
+  - M1: `MARKET_ORDER_TRADE_CLOSE 20 / -90.1 JPY`
+  - MACD: `MARKET_ORDER_TRADE_CLOSE 1 / -279.4 JPY`
+- 執行系:
+  - `order_success_rate(avg)=0.952`, `reject_rate(avg)=0.048`
+  - `decision_latency_ms(avg)=194.357`, `data_lag_ms(avg)=2032.046`
+- open trades:
+  - extrema short 3本のみ（`-1122/-187/-433 units`）、3本とも `stopLoss=null`。
+
+Failure Cause:
+1. B/C は勝ち負け混在でも `SL側の損失幅` が優位で、方向ミス時のpayoff非対称が継続。
+2. M1（long固定）とMACD（大ロット）の単発逆行で、短時間に資産毀損を増幅。
+3. preflight は動作しているが、低品質エントリーの通過ロットがなお大きい。
+
+Improvement:
+1. B: `max orders/min`, `base/max units`, `conf floor`, `entry_probability_align floor`, `preserve-intent` を厳格化。
+2. C: 同様に `頻度/ロット/確率閾値` を引き上げ、`force-exit hold/loss` を短縮・厳格化。
+3. order-manager: B/C の `preserve-intent` と `forecast gate` を強化し、service実効値を同期。
+4. M1: `SIDE_FILTER=none` に戻しつつ `PERF_GUARD_ENABLED=1`、`base/min units` を圧縮。
+5. MACD: `range必須化`, `divergence閾値強化`, `spread上限厳格化`, `base/min units` を縮小。
+
+Verification:
+1. デプロイ後 `quant-order-manager` / B / C / M1 / MACD 各serviceの実効envを `/proc/<pid>/environ` で照合。
+2. 直近2h/6hで B/C の `STOP_LOSS_ORDER 比率` と `avg_loss_jpy` が低下するか確認。
+3. M1/MACD の単発損失（`realized_pl`）が縮小し、`-200 JPY` 超級の再発頻度が下がるか監査。
+
+Status:
+- in_progress
+
 ## 2026-02-27 05:55 UTC / 14:55 JST - B/C 継続赤字に対する追加圧縮（損失幅優先）
 Period:
 - Audit window: 24h / 6h（VM `trades.db` / `orders.db` / `metrics.db`）

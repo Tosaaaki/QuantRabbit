@@ -8839,3 +8839,47 @@
 - 影響範囲:
   - `quant-scalp-ping-5s-{b,c,d}.service` と `quant-autotune-ui.service` の環境解決のみ。
   - エントリー/EXIT 判定ロジックや V2 導線の制御仕様は変更なし。
+
+### 2026-02-27（追記）B/C方向精度の再引き締め + M1/MACD単発損失圧縮
+
+- 背景（VM実測 `2026-02-27 06:41 UTC`）:
+  - 24h: `scalp_ping_5s_c_live=-3394.6 JPY`, `scalp_ping_5s_b_live=-519.9 JPY`
+  - 6h: `scalp_macd_rsi_div_live=-279.4 JPY`, `M1Scalper-M1=-90.1 JPY`, `B=-129.2 JPY`, `C=-36.1 JPY`
+  - Bは `STOP_LOSS_ORDER` が `112 trades / -265.1 JPY` と損失主因。
+- 変更ファイル:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE=4`（from `6`）
+    - `BASE_ENTRY_UNITS=220`（from `300`）
+    - `MAX_UNITS=750`（from `1100`）
+    - `CONF_FLOOR=80`（from `77`）
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.79` / `FLOOR=0.67`
+    - preserve-intent `REJECT_UNDER/MIN/MAX=0.78/0.20/0.32`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE=4`（from `5`）
+    - `BASE_ENTRY_UNITS=70`（from `90`）
+    - `MAX_UNITS=160`（from `200`）
+    - `FORCE_EXIT_MAX_HOLD_SEC=60`（short `55`）
+    - `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.8`（short `0.8`）
+    - `CONF_FLOOR=80`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.78` / `FLOOR=0.68`
+    - preserve-intent `REJECT_UNDER/MIN/MAX=0.76/0.24/0.50`
+  - `ops/env/quant-order-manager.env`
+    - B/C preserve-intent を上記値に同期
+    - B perf guard しきい値を引き上げ（PF/WIN/SL-loss-rate）
+    - `M1SCALP_PERF_GUARD_ENABLED=1`
+    - B/C forecast gate（edge/expected_pips/target_reach）を引き上げ
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_SIDE_FILTER=none`（from `long`）
+    - `M1SCALP_PERF_GUARD_ENABLED=1`（from `0`）
+    - `M1SCALP_BASE_UNITS=3000`（from `4500`）
+    - `M1SCALP_MIN_UNITS=250`（from `350`）
+    - `M1SCALP_CONFIDENCE_FLOOR=50`（from `45`）
+  - `ops/env/quant-scalp-macd-rsi-div.env`
+    - `MACDRSIDIV_REQUIRE_RANGE_ACTIVE=1`（from `0`）
+    - `MACDRSIDIV_MIN_DIV_SCORE=0.12` / `MIN_DIV_STRENGTH=0.18`
+    - `MACDRSIDIV_BASE_ENTRY_UNITS=3000`（from `7000`）
+    - `MACDRSIDIV_MIN_UNITS=600`（from `1200`）
+    - `MACDRSIDIV_COOLDOWN_SEC=120`、`MAX_SPREAD_PIPS=0.9`、`CAP_MAX=0.55`
+- 意図:
+  - 停止ではなく、低品質シグナルの通過率と通過ロットを同時に下げて損失幅を圧縮する。
+  - M1/MACD は「単発大損の回避」を最優先に、方向/品質ゲートとサイズを同時に厳格化。
