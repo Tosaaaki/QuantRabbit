@@ -8,6 +8,26 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）B/C 非エントリー主因の設定を解除（revert + order/min + service timeout）
+
+- 背景（VM実測, UTC 2026-02-27 00:56-01:26）:
+  - `quant-scalp-ping-5s-{b,c}` で `SCALP_PING_5S_REVERT_ENABLED is OFF` を確認。
+  - skip要因に `revert_disabled` と `rate_limited` が高頻度で混在。
+  - `quant-v2-runtime.env` の `ORDER_MANAGER_SERVICE_TIMEOUT=20.0` で、
+    service遅延時に `order_manager_none` が重なる状態だった。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_REVERT_ENABLED=1`（from `0`）
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=24`（from `4`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_REVERT_ENABLED=1`（from `0`）
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=24`（from `4`）
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=8.0`（from `20.0`）
+- 意図:
+  - `no_signal:revert_disabled` と `rate_limited` の過抑制を外し、B/C のシグナル通過率を回復。
+  - order-manager service固着時の待ち時間を短縮し、`order_manager_none` 起点のエントリー空転を減らす。
+
 ### 2026-02-27（追記）UI戦略制御の即時反映バグを修正（cache invalidation）
 
 - 背景:

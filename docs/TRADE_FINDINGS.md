@@ -42,6 +42,45 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 01:30 UTC / 2026-02-27 10:30 JST - B/C 非エントリーの直接因子を解除（revert復帰 + rate limit緩和 + service timeout短縮）
+Period:
+- VM実測: `2026-02-27 00:56-01:26 UTC`
+- Source: `journalctl -u quant-scalp-ping-5s-{b,c}.service`, `journalctl -u quant-order-manager.service`, `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/ops/env/*.env`
+
+Fact:
+- B/C worker の startup ログで `SCALP_PING_5S_REVERT_ENABLED is OFF` が継続。
+- `ops/env/scalp_ping_5s_{b,c}.env` の実値が
+  - `SCALP_PING_5S_{B,C}_REVERT_ENABLED=0`
+  - `SCALP_PING_5S_{B,C}_MAX_ORDERS_PER_MINUTE=4`
+- 直近10分ログカウント:
+  - B: `order_manager_none=39`, `revert_disabled=17`, `rate_limited=39`
+  - C: `order_manager_none=49`, `revert_disabled=27`, `rate_limited=46`
+- `quant-v2-runtime.env` で `ORDER_MANAGER_SERVICE_TIMEOUT=20.0`（fallback local有効）を確認。
+
+Failure Cause:
+1. `REVERT_ENABLED=0` により `no_signal:revert_disabled` が恒常化し、シグナル生成が大きく欠損。
+2. `MAX_ORDERS_PER_MINUTE=4` が過抑制となり、候補シグナルの大半が `rate_limited` で棄却。
+3. order-manager service timeout が長く、応答遅延時に `order_manager_none` を誘発してエントリー密度をさらに低下。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_REVERT_ENABLED: 0 -> 1`
+   - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE: 4 -> 24`
+2. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_REVERT_ENABLED: 0 -> 1`
+   - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE: 4 -> 24`
+3. `ops/env/quant-v2-runtime.env`
+   - `ORDER_MANAGER_SERVICE_TIMEOUT: 20.0 -> 8.0`
+
+Verification:
+1. デプロイ後ログで `revert_enabled=1` を確認し、`revert_disabled` 件数が減少していること。
+2. 直近10分の `rate_limited` 件数が B/C ともに低下していること。
+3. `orders.db` で `submit_attempt` と `filled` の発生密度が維持/改善していること。
+4. `order_manager_none` と `CLIENT_TRADE_ID_ALREADY_EXISTS` が逓減していること。
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:19 UTC / 2026-02-26 21:19 JST - PDCA深掘り（`perf_block` 固定化 + `orders.db` ロック + SLO劣化の重畳）
 Period:
 - 監査期間: 直近24h（`2026-02-25 12:11` ～ `2026-02-26 12:19` UTC）
