@@ -9360,6 +9360,32 @@
   - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定・ロット・仮想TP/SLのみ。
   - V2固定導線（order_manager / position_manager / strategy_control / market-data-feed）は非変更。
 
+### 2026-02-27（追記）`scalp_ping_5s_b/c` 第4ラウンド調整（rate-limit/revert/perf 同時緩和）
+
+- 背景（VM, Round3反映後 13:21-13:26 UTC）:
+  - `entry-skip summary` 上位が `rate_limited` と `no_signal:revert_not_found` のまま残存。
+  - C は約定再開が弱く、long 側通過率の回復が不足。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE=10`
+    - `REVERT_*` 追加緩和（`range/sweep/bounce/confirm_ratio`）
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.64`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT=0.76`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.74`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.40`
+    - `PERF_GUARD_SETUP/HOURLY` の min_trades と閾値を緩和
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE=10`
+    - `REVERT_*` 追加緩和（B と同値）
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.64`
+    - `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT=0.74`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.72`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.44`
+    - `PERF_GUARD_SETUP/HOURLY` を `SCALP_PING_5S_C_*` と fallback `SCALP_PING_5S_*` の両方で緩和
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 条件・ロット算出に限定。
+  - V2固定導線（order_manager / position_manager / strategy_control / market-data-feed）は非変更。
+
 ### 2026-02-27（追記）`quant-order-manager` の orders.db スレッド競合是正 + duplicate復旧強化
 
 - 目的:

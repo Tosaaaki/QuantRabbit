@@ -42,6 +42,52 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 13:30 UTC / 2026-02-27 22:30 JST - `scalp_ping_5s_b/c` 第4ラウンド（rate-limit/revert/perf同時緩和）
+
+Period:
+- Round3 反映後: `2026-02-27T13:07:28+00:00` 以降（主に `13:21-13:26 UTC`）
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-b.service`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+
+Fact:
+- Round3 反映後も `entry-skip summary` の上位は `rate_limited` と `no_signal:revert_not_found`。
+  - B 例（13:25:30 UTC）: `total=82`, `rate_limited=49`, `revert_not_found=14`
+  - C 例（13:25:18 UTC）: `total=106`, `rate_limited=48`, `revert_not_found=25`
+- `entry_leading_profile_reject` は依然 long 側にも発生（B/C とも継続）。
+- 反映後直近（約 19 分）で `orders.db` は B long のみ約定:
+  - `7 fills`, `avg_units=57.9`, `avg_sl=1.23 pips`, `avg_tp=1.17 pips`, `tp/sl=0.95`
+  - C は同期間で `filled` が確認できず、long ロット回復が不十分。
+
+Failure Cause:
+1. `MAX_ORDERS_PER_MINUTE=6` が高頻度シグナル区間で飽和し、長短とも通過機会を失っている。
+2. `REVERT_*` がまだ厳しく、`revert_not_found` による no-signal 落ちが継続。
+3. long 側の `entry_leading_profile` / `preserve-intent` / setup perf guard が重なり、C で特に通過率が低い。
+
+Improvement:
+1. B/C 共通で `MAX_ORDERS_PER_MINUTE` を `10` へ引き上げ。
+2. B/C 共通で `REVERT_*` を追加緩和:
+   - `RANGE_MIN 0.08->0.05`, `SWEEP_MIN 0.04->0.02`, `BOUNCE_MIN 0.01->0.008`, `CONFIRM_RATIO_MIN 0.22->0.18`
+3. long 通過率とサイズ下限を追加緩和:
+   - B: `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.68->0.64`, `UNITS_MIN_MULT 0.70->0.76`,
+     `PRESERVE_INTENT_REJECT_UNDER 0.78->0.74`, `MIN_SCALE 0.34->0.40`
+   - C: `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.68->0.64`, `UNITS_MIN_MULT 0.68->0.74`,
+     `PRESERVE_INTENT_REJECT_UNDER 0.76->0.72`, `MIN_SCALE 0.38->0.44`
+4. setup perf guard の早期ブロックを緩和（B/C + Cのfallbackキー）:
+   - `HOURLY_MIN_TRADES 6->10`, `SETUP_MIN_TRADES 6->10`, `SETUP_PF_MIN`/`WIN_MIN` を小幅緩和
+5. `MIN_UNITS_RESCUE` 閾値を引き下げ、long の極小ロット化を抑制。
+
+Verification:
+1. 反映後30分/2hで `entry-skip summary` の `rate_limited` と `revert_not_found` 比率が低下すること。
+2. C の `filled` 再開と、B/C long の `avg_units` 上昇を確認すること。
+3. `perf_block` の過剰増加がないことを確認しつつ、`tp/sl` 改善方向を維持すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:52 UTC / 2026-02-27 17:52 JST - M1系 spread 閾値を 1.00 に統一
 Period:
 - Adjustment window: `2026-02-27 17:46` ～ `17:52` JST

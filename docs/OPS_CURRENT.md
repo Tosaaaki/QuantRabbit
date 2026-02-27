@@ -570,3 +570,34 @@ quant-manual-swing-exit.service
   1. 反映後2h/24hで B/C long の `avg_tp/avg_sl` が上昇し、`tp/sl` が改善すること。
   2. 反映後2h/24hで `avg_units(long)` が増加し、`entry_leading_profile_reject` 比率が低下すること。
   3. 24hで `scalp_ping_5s_b/c long` の `sum(realized_pl)` が改善方向へ向かうこと。
+
+## 0-14. 2026-02-27 UTC `scalp_ping_5s_b/c` 通過不足の再解消（第4ラウンド）
+- 目的:
+  - long の実効ロット不足を、`rate_limited` / `revert_not_found` / `perf_block` の同時多発を抑えて解消する。
+- 仮説（VM, UTC 2026-02-27 13:21-13:26）:
+  - Round3 後も `entry-skip summary` の上位が `rate_limited` と `no_signal:revert_not_found`。
+  - C は反映後の約定がほぼ出ず、long 側の通過率改善が不足している。
+- 対応:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE: 6 -> 10`
+    - `REVERT_*` 緩和（`RANGE_MIN 0.08->0.05`, `SWEEP_MIN 0.04->0.02`, `BOUNCE_MIN 0.01->0.008`, `CONFIRM_RATIO_MIN 0.22->0.18`）
+    - long通過緩和: `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.68->0.64`
+    - longロット下限押上げ: `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT 0.70->0.76`
+    - preserve-intent 緩和: `REJECT_UNDER 0.78->0.74`, `MIN_SCALE 0.34->0.40`
+    - `MIN_UNITS_RESCUE` 緩和: `prob 0.58->0.54`, `conf 78->75`
+    - perf setup の過剰早期ブロック抑制: `HOURLY_MIN_TRADES 6->10`, `SETUP_MIN_TRADES 6->10`, `SETUP_PF_MIN 0.92->0.88`, `SETUP_WIN_MIN 0.48->0.44`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 6 -> 10`
+    - `REVERT_*` 緩和（B と同値）
+    - long通過緩和: `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.68->0.64`
+    - longロット下限押上げ: `ENTRY_LEADING_PROFILE_UNITS_MIN_MULT 0.68->0.74`
+    - preserve-intent 緩和: `REJECT_UNDER 0.76->0.72`, `MIN_SCALE 0.38->0.44`
+    - `MIN_UNITS_RESCUE` 緩和: `prob 0.60->0.56`, `conf 82->78`
+    - perf setup 緩和（`SCALP_PING_5S_C_*` と fallback の `SCALP_PING_5S_*` を両方更新）
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定・ロット算出のみ。
+  - V2 共通導線（`quant-order-manager` / `quant-position-manager` / `quant-strategy-control`）は非変更。
+- 検証:
+  1. 反映後30分/2hで `entry-skip summary` の `rate_limited` と `revert_not_found` 比率が低下すること。
+  2. C の `filled` が再開し、B/C long の `avg_units` が上昇すること。
+  3. `perf_block` が急増せず、`tp/sl` 改善方向を維持すること。
