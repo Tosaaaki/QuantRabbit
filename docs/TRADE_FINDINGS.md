@@ -973,6 +973,31 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-26 13:20 UTC / 2026-02-26 22:20 JST - B/C side filter を sell 再固定（精度優先）
+Period:
+- Analysis/retune window: `2026-02-26 13:10` ～ `13:20` UTC
+- Source: repository `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+
+Fact:
+- 最新 `main` では B/C とも `SIDE_FILTER=none` + `ALLOW_NO_SIDE_FILTER=1` になっていた。
+- 同時に `MIN_UNITS_RESCUE` は導入済みで、no-entry 側は rescue で緩和可能な状態だった。
+
+Failure Cause:
+1. side filter 開放により、方向精度劣化の再発リスク（buy 再流入）を残していた。
+
+Improvement:
+1. B/C を `SIDE_FILTER=sell`, `ALLOW_NO_SIDE_FILTER=0` へ再固定。
+2. `MIN_UNITS_RESCUE` は維持しつつ閾値を再引き上げ
+   - B: `prob>=0.58`, `conf>=78`
+   - C: `prob>=0.60`, `conf>=82`
+
+Verification:
+1. デプロイ後ログで `env mapped ... side_filter=sell` を確認。
+2. restart 後の B/C journal で `side_filter_fallback:long->short` が継続して出ることを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-26 09:15 UTC / 2026-02-26 18:15 JST - EXIT封鎖とSL未実装の複合で margin closeout が連鎖
 Period:
 - Incident window: `2026-02-24 02:20:16` ～ `09:13:14` UTC（`2026-02-24 11:20:16` ～ `18:13:14` JST）

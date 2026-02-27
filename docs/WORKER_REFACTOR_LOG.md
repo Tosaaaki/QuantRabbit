@@ -8194,3 +8194,26 @@
 - 検証:
   - `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py -k "side_filter"`: `8 passed`
   - `python3 -m py_compile workers/scalp_ping_5s_b/worker.py workers/scalp_ping_5s_c/worker.py`: pass
+
+### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
+
+- 背景:
+  - 直近の env 緩和で `SCALP_PING_5S_{B,C}_SIDE_FILTER=none` と
+    `ALLOW_NO_SIDE_FILTER=1` が有効化され、buy 系意図が再流入しうる状態だった。
+  - 一方で no-entry 側は `MIN_UNITS_RESCUE` 実装で緩和済みのため、
+    side filter を開放しなくても導線改善余地がある。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=sell`
+    - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=0`
+    - `SCALP_PING_5S_B_MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.58`
+    - `SCALP_PING_5S_B_MIN_UNITS_RESCUE_MIN_CONFIDENCE=78`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=sell`
+    - `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=0`
+    - `SCALP_PING_5S_C_MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.60`
+    - `SCALP_PING_5S_C_MIN_UNITS_RESCUE_MIN_CONFIDENCE=82`
+- 意図:
+  - 方向精度を優先して B/C の売り方向ガードを固定。
+  - `MIN_UNITS_RESCUE` は維持し、厳格 side filter 下でも
+    `units_below_min` によるシグナル消失を抑制する。
