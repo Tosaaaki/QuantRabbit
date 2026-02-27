@@ -9440,6 +9440,23 @@
   - `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定のみ。
   - B 戦略設定および V2固定導線は非変更。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` 第7ラウンド（rate_limited 優位への追加緩和）
+
+- 背景（VM, 第6ラウンド反映後）:
+  - `spread_blocked` は縮小したが、`rate_limited` が主因で残存（例: `total=107, rate_limited=65`）。
+  - `orders.db` で `filled` 再開が未確認。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ENTRY_COOLDOWN_SEC=1.2`
+    - `MAX_ORDERS_PER_MINUTE=16`
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.56`
+    - `MIN_UNITS_RESCUE_MIN_CONFIDENCE=78`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.74`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.66`
+- 影響範囲:
+  - `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 通過率に限定。
+  - B 戦略設定および V2固定導線は非変更。
+
 ### 2026-02-27（追記）`quant-order-manager` の orders.db スレッド競合是正 + duplicate復旧強化
 
 - 目的:

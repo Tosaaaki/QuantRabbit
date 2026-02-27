@@ -206,6 +206,43 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 13:49 UTC / 2026-02-27 22:49 JST - `scalp_ping_5s_c` 第7ラウンド（rate_limited 優位の追加緩和）
+
+Period:
+- 第6ラウンド反映後: `2026-02-27T13:43:11+00:00` 以降
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- 第6ラウンド後、`spread_blocked` は実質解消したが `rate_limited` が主因で残存:
+  - `13:45:22 UTC`: `entry-skip summary total=107, rate_limited=65`
+  - 近接窓で `revert_not_found` も継続（`12-42`程度）
+- `orders.db`（同期間）は `perf_block/probability_scaled` のみで `filled=0`。
+
+Failure Cause:
+1. C の `MAX_ORDERS_PER_MINUTE=10` と `ENTRY_COOLDOWN_SEC=1.6` が高頻度局面で依然ボトルネック。
+2. preserve-intent / leading profile の閾値が高く、レート制限解除後も通過率が伸びにくい。
+3. `min_units_rescue` 閾値が高めで、long 側の極小シグナル救済が不足。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_c.env`
+   - `ENTRY_COOLDOWN_SEC 1.6 -> 1.2`
+   - `MAX_ORDERS_PER_MINUTE 10 -> 16`
+   - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY 0.60 -> 0.56`
+   - `MIN_UNITS_RESCUE_MIN_CONFIDENCE 82 -> 78`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER 0.78 -> 0.74`
+   - `ENTRY_LEADING_PROFILE_REJECT_BELOW 0.70 -> 0.66`
+
+Verification:
+1. 反映後30分/2hで `rate_limited` 比率が低下すること。
+2. C の `orders.db status=filled` が再開すること。
+3. `entry_probability_reject` と `entry_leading_profile_reject` が急増しないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:52 UTC / 2026-02-27 17:52 JST - M1系 spread 閾値を 1.00 に統一
 Period:
 - Adjustment window: `2026-02-27 17:46` ～ `17:52` JST

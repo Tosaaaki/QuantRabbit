@@ -646,3 +646,25 @@ quant-manual-swing-exit.service
   1. 反映後30分/2hで C の `rate_limited` 比率が低下すること。
   2. `orders.db` で C の `filled` が再開すること。
   3. `perf_block` が優位理由でなくなること。
+
+## 0-17. 2026-02-27 UTC `scalp_ping_5s_c` レート制限主因への追加対応（第7ラウンド）
+- 目的:
+  - C の `rate_limited` 優位を下げ、実発注まで到達させる。
+- 仮説（VM, UTC 2026-02-27 13:43-13:45）:
+  - 第6ラウンド後も `entry-skip summary` で `rate_limited` が最大（例: `total=107, rate_limited=65`）。
+  - `spread_blocked` は解消済みで、次ボトルネックはレート上限と通過閾値。
+- 対応:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ENTRY_COOLDOWN_SEC: 1.6 -> 1.2`
+    - `MAX_ORDERS_PER_MINUTE: 10 -> 16`
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY: 0.60 -> 0.56`
+    - `MIN_UNITS_RESCUE_MIN_CONFIDENCE: 82 -> 78`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.78 -> 0.74`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.70 -> 0.66`
+- 影響範囲:
+  - `quant-scalp-ping-5s-c.service` の戦略ローカル ENTRY 判定・通過率のみ。
+  - B および V2 共通導線は非変更。
+- 検証:
+  1. 反映後30分/2hで C の `rate_limited` 比率が低下すること。
+  2. `orders.db` で C の `filled` が再開すること。
+  3. `entry_probability_reject` / `entry_leading_profile_reject` が過度に増えないこと。
