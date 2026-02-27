@@ -3,9 +3,8 @@ set -euo pipefail
 
 # Install and enable QuantRabbit systemd units so they survive VM reboots.
 # Usage:
-#   sudo bash scripts/install_trading_services.sh [--repo /home/tossaki/QuantRabbit] [--all] [--units "quant-impulse-break-s5.service quant-impulse-break-s5-exit.service"]
-# Defaults: installs/enables the main gate `quantrabbit.service`
-# and the log-cleanup unit set.
+#   sudo bash scripts/install_trading_services.sh [--repo /home/tossaki/QuantRabbit] [--all] [--units "quant-market-data-feed.service quant-order-manager.service"]
+# Defaults: installs/enables V2 core services + maintenance units.
 
 REPO_DIR="/home/tossaki/QuantRabbit"
 INSTALL_ALL=0
@@ -66,8 +65,6 @@ fi
 cd "$REPO_DIR"
 
 SYSTEMD_DEST="/etc/systemd/system"
-MAIN_UNIT_SRC="ops/systemd/quantrabbit.service"
-MAIN_UNIT_DEST="$SYSTEMD_DEST/quantrabbit.service"
 
 install_unit() {
   local src="$1"
@@ -181,8 +178,11 @@ remove_known_broken_units() {
 
 ENABLE_QUEUE=()
 
-# Always install the main gate service
-install_unit "$MAIN_UNIT_SRC"
+# Always install V2 core services + maintenance units
+install_unit "systemd/quant-market-data-feed.service"
+install_unit "systemd/quant-strategy-control.service"
+install_unit "systemd/quant-order-manager.service"
+install_unit "systemd/quant-position-manager.service"
 install_unit "systemd/cleanup-qr-logs.service"
 install_unit "systemd/cleanup-qr-logs.timer"
 install_unit "systemd/quant-core-backup.service"

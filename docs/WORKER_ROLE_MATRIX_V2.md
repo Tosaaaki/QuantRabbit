@@ -364,6 +364,14 @@
   `systemctl start --no-block` で起動要求する運用へ変更。
 - `--all` 実行の完了性を担保し、V2監査/運用サービスの再起動ループを維持する状態に更新。
 
+### 2026-02-27（追記）運用スクリプト既定値を V2 導線へ統一
+
+- `scripts/install_trading_services.sh` の既定インストール対象を
+  `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` /
+  `quant-position-manager` + 保守系に変更し、`quantrabbit.service` 前提を除去。
+- `scripts/vm.sh` / `scripts/deploy_to_vm.sh` の既定 service を
+  `quant-market-data-feed.service` に更新し、V2 運用時の誤再起動・誤ログ監視を防止。
+
 ## V2 反映図（最上位・並行）
 
 ```mermaid

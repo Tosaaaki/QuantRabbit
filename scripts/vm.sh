@@ -22,7 +22,7 @@ set -euo pipefail
 #     Run arbitrary command on VM
 #
 #   tail [-s SERVICE] [-n N]
-#     Tail systemd logs for SERVICE (default: quantrabbit.service), last N lines (default: 300)
+#     Tail systemd logs for SERVICE (default: quant-market-data-feed.service), last N lines (default: 300)
 #
 #   pull-logs [-r REMOTE_LOG_DIR] [-o OUT_DIR] [--pattern GLOB]
 #     Copy logs/ artifacts from VM (default REMOTE_LOG_DIR: ~/QuantRabbit/logs, OUT_DIR: ./remote_logs)
@@ -38,7 +38,7 @@ set -euo pipefail
 #
 # Examples:
 #   scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -b main -i -t
-#   scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm tail -s quantrabbit.service -t
+#   scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm tail -s quant-market-data-feed.service -t
 #   scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm pull-logs -o ./remote_logs -t
 #   scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -q "SELECT COUNT(*) FROM trades;" -t
 
@@ -179,7 +179,7 @@ EOF
     ;;
 
   tail)
-    SERVICE="quantrabbit.service"
+    SERVICE="quant-market-data-feed.service"
     N=300
     GREP=""
     while [[ $# -gt 0 ]]; do

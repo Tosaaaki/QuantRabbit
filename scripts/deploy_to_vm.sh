@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy helper: Local git push -> VM git pull -> service restart
+# Deploy helper: local git push -> VM git sync -> service restart
 #
 # Usage:
 #   scripts/deploy_to_vm.sh [-b BRANCH] [-i] [-p PROJECT] [-z ZONE] [-m INSTANCE] [-d REPO_DIR] [-s SERVICE] \
@@ -12,7 +12,7 @@
 #   -z ZONE      GCE zone (default: asia-northeast1-a)
 #   -m INSTANCE  VM instance name (default: fx-trader-vm)
 #   -d REPO_DIR  Repo path on VM (default: /home/tossaki/QuantRabbit)
-#   -s SERVICE   systemd service name (default: quantrabbit.service)
+#   -s SERVICE   systemd service name (default: quant-market-data-feed.service)
 #   -k SSH_KEYFILE  SSH private key for OS Login (optional)
 #   -t           Use IAP tunnel
 #   -K SA_KEYFILE Service Account JSON key; auto-activate if no active account
@@ -38,13 +38,13 @@ if ! command -v gcloud >/dev/null 2>&1; then
   exit 2
 fi
 
-BRANCH=""
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
 INSTALL_DEPS=0
 PROJECT="$(gcloud config get-value project 2>/dev/null || echo "")"
 ZONE="asia-northeast1-a"
 INSTANCE="fx-trader-vm"
 REPO_DIR="/home/tossaki/QuantRabbit"
-SERVICE="quantrabbit.service"
+SERVICE="quant-market-data-feed.service"
 
 USE_IAP=0
 SSH_KEYFILE=""
@@ -52,28 +52,28 @@ SA_KEYFILE=""
 SA_IMPERSONATE=""
 while getopts ":b:ip:z:m:d:s:k:tK:A:" opt; do
   case "$opt" in
+    b) BRANCH="$OPTARG" ;;
+    i) INSTALL_DEPS=1 ;;
     p) PROJECT="$OPTARG" ;;
     z) ZONE="$OPTARG" ;;
     m) INSTANCE="$OPTARG" ;;
-    A) ACCOUNT="$OPTARG" ;;
-    k) KEYFILE="$OPTARG" ;;
+    d) REPO_DIR="$OPTARG" ;;
+    s) SERVICE="$OPTARG" ;;
+    k) SSH_KEYFILE="$OPTARG" ;;
     t) USE_IAP=1 ;;
     K) SA_KEYFILE="$OPTARG" ;;
     A) SA_IMPERSONATE="$OPTARG" ;;
-    *) echo "Usage: $0 [-b BRANCH] [-i] [-p PROJECT] [-z ZONE] [-m INSTANCE] [-d REPO_DIR] [-s SERVICE]" >&2; exit 2 ;;
+    *)
+      echo "Usage: $0 [-b BRANCH] [-i] [-p PROJECT] [-z ZONE] [-m INSTANCE] [-d REPO_DIR] [-s SERVICE]" >&2
+      exit 2
+      ;;
   esac
 done
 
-FLAGS=( -p "${PROJECT}" -z "${ZONE}" -m "${INSTANCE}" )
-[[ -n "$ACCOUNT" ]] && FLAGS+=( -A "$ACCOUNT" )
-[[ -n "$KEYFILE" ]] && FLAGS+=( -k "$KEYFILE" )
-[[ -n "$USE_IAP" ]] && FLAGS+=( -t )
-[[ -n "$REMOTE_DIR" ]] && FLAGS+=( -d "$REMOTE_DIR" )
-
-DEPLOY_ARGS=( deploy )
-[[ -n "$BRANCH" ]] && DEPLOY_ARGS+=( -b "$BRANCH" )
-[[ -n "$INSTALL" ]] && DEPLOY_ARGS+=( -i )
-[[ -n "$SERVICE" ]] && DEPLOY_ARGS+=( --restart "$SERVICE" )
+if [[ -z "$PROJECT" ]]; then
+  echo "[deploy] GCP project が未設定です。-p で指定するか 'gcloud config set project <PROJECT>' を実行してください。" >&2
+  exit 2
+fi
 
 # If no active account and SA keyfile provided, activate
 ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' || true)
@@ -82,21 +82,28 @@ if [[ -z "$ACTIVE_ACCOUNT" && -n "$SA_KEYFILE" ]]; then
   gcloud auth activate-service-account --key-file "$SA_KEYFILE"
 fi
 
-# gcloud common args (impersonation)
-GCLOUD_ARGS=()
-if [[ -n "$SA_IMPERSONATE" ]]; then
-  GCLOUD_ARGS+=("--impersonate-service-account=$SA_IMPERSONATE")
-fi
-
 # Run doctor for early failure (non-destructive, no SSH attempt here)
 if [[ -x scripts/gcloud_doctor.sh ]]; then
-  scripts/gcloud_doctor.sh -p "$PROJECT" -z "$ZONE" -m "$INSTANCE" ${SA_KEYFILE:+-K "$SA_KEYFILE"} ${SA_IMPERSONATE:+-A "$SA_IMPERSONATE"} || {
+  doctor_args=(-p "$PROJECT" -z "$ZONE" -m "$INSTANCE")
+  if [[ $USE_IAP -eq 1 ]]; then
+    doctor_args+=(-t)
+  fi
+  if [[ -n "$SSH_KEYFILE" ]]; then
+    doctor_args+=(-k "$SSH_KEYFILE")
+  fi
+  if [[ -n "$SA_KEYFILE" ]]; then
+    doctor_args+=(-K "$SA_KEYFILE")
+  fi
+  if [[ -n "$SA_IMPERSONATE" ]]; then
+    doctor_args+=(-A "$SA_IMPERSONATE")
+  fi
+  scripts/gcloud_doctor.sh "${doctor_args[@]}" || {
     echo "[deploy] gcloud preflight failed. See messages above." >&2
     exit 2
   }
 fi
 
-echo "[deploy] Project=$PROJECT Zone=$ZONE Instance=$INSTANCE Branch=$BRANCH"
+echo "[deploy] Project=$PROJECT Zone=$ZONE Instance=$INSTANCE Branch=$BRANCH Service=$SERVICE"
 echo "[deploy] Pushing local branch to origin..."
 
 # Ensure there is a remote
@@ -114,8 +121,8 @@ echo "[deploy] Connecting to VM and updating repo..."
 REPO_OWNER="$(basename "$(dirname "$REPO_DIR")")"
 
 ssh_args=("--project" "$PROJECT" "--zone" "$ZONE")
-if [[ ${#GCLOUD_ARGS[@]} -gt 0 ]]; then
-  ssh_args+=("${GCLOUD_ARGS[@]}")
+if [[ -n "$SA_IMPERSONATE" ]]; then
+  ssh_args+=("--impersonate-service-account=$SA_IMPERSONATE")
 fi
 if [[ -n "$SSH_KEYFILE" ]]; then
   ssh_args+=("--ssh-key-file" "$SSH_KEYFILE")
@@ -136,7 +143,7 @@ fi
 
 # 3) Restart service
 gcloud compute ssh "$INSTANCE" "${ssh_args[@]}" \
-  --command "sudo systemctl restart '$SERVICE' && sleep 2 && systemctl is-active '$SERVICE' && echo '[vm] service restarted OK'"
+  --command "sudo systemctl daemon-reload && sudo systemctl restart '$SERVICE' && sleep 2 && systemctl is-active '$SERVICE' && echo '[vm] service restarted OK'"
 
 echo "[deploy] Done. Tail logs with:"
 echo "  gcloud compute ssh $INSTANCE --project $PROJECT --zone $ZONE --command 'journalctl -u $SERVICE -f'"

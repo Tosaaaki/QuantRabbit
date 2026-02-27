@@ -9884,3 +9884,57 @@
 - 影響範囲:
   - `quant-order-manager.service` の entry preflight gate のみ。
   - strategy worker の entry/exit ロジックと V2責務分離は非変更。
+
+### 2026-02-27（追記）未使用導線の棚卸しに伴う V2 既定値整理
+
+- 背景:
+  - 運用スクリプトの既定値に `quantrabbit.service` 前提が残っており、
+    V2 常用構成（分離サービス群）と齟齬があった。
+  - `ops/env/quant-v2-runtime.env` の `OPS_V2_ALLOWED_LEGACY_SERVICES` には、
+    リポジトリ上に実体 unit が無い legacy 名が残っていた。
+- 変更:
+  - `scripts/install_trading_services.sh`
+    - 既定インストール対象を V2 core
+      （`quant-market-data-feed` / `quant-strategy-control` /
+      `quant-order-manager` / `quant-position-manager`）へ統一。
+    - `quantrabbit.service` 前提の既定導線を除去。
+  - `scripts/vm.sh`
+    - `tail` サブコマンドの既定サービスを `quant-market-data-feed.service` へ更新。
+    - ヘルプ例の `quantrabbit.service` 表記を置換。
+  - `scripts/deploy_to_vm.sh`
+    - 既定サービスを `quant-market-data-feed.service` へ変更。
+    - 引数処理の不整合（`-b/-i/-d/-s` 未反映、`-A` 重複定義、変数名不一致）を修正。
+  - `ops/env/quant-v2-runtime.env`
+    - `OPS_V2_ALLOWED_LEGACY_SERVICES` を空にし、legacy 常駐許可を明示的に解除。
+- 意図:
+  - V2 本番運用時に「誤った既定値」で再起動/監視/反映判断を誤る経路を先に潰す。
+  - 監査ノイズを減らし、実際に使っている導線のみを追跡できる状態へ寄せる。
+
+### 2026-02-27（追記）`scalp_ping_5s_b/c` 第6ラウンド調整（低品質通過の遮断 + 過剰回転抑制）
+
+- 目的:
+  - 直近24hで赤字主因となった `scalp_ping_5s_c_live` / `scalp_ping_5s_b_live` の期待値を改善する。
+  - 戦略停止ではなく、entry品質と回転密度を上げ下げして改善する。
+- 実測根拠（VM, 24h）:
+  - `scalp_ping_5s_c_live`: `605 trades / -3444.2 JPY / -575.1 pips`
+  - `scalp_ping_5s_b_live`: `677 trades / -756.8 JPY / -420.4 pips`
+  - C設定で `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.00` が残っており、低品質通過が多い。
+  - B/C とも side別で `avg_loss_pips > avg_win_pips` が継続。
+- 変更:
+  - `ops/env/scalp_ping_5s_c.env`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.00 -> 0.74`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.58 -> 0.66`
+    - `CONF_FLOOR: 80 -> 83`
+    - `MAX_ORDERS_PER_MINUTE: 16 -> 10`
+    - `BASE_ENTRY_UNITS: 140 -> 110`
+  - `ops/env/scalp_ping_5s_b.env`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.67 -> 0.72`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.76 -> 0.80`
+    - `CONF_FLOOR: 80 -> 82`
+    - `MAX_ACTIVE_TRADES: 6 -> 4`
+    - `MAX_PER_DIRECTION: 4 -> 3`
+    - `MAX_ORDERS_PER_MINUTE: 8 -> 6`
+    - `BASE_ENTRY_UNITS: 300 -> 260`
+- 影響範囲:
+  - `quant-scalp-ping-5s-b.service` / `quant-scalp-ping-5s-c.service` の戦略ローカルentryパラメータのみ。
+  - `execution/order_manager.py` / `execution/strategy_entry.py` の契約（`entry_probability`, `entry_units_intent`）とV2責務分離は非変更。
