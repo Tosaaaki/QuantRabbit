@@ -878,6 +878,20 @@
   - C は no-block 方針で EXIT 機動性を優先し、
     no-negative ガードによる引っ張り損失を抑制する。
 
+### B negative-close policy（2026-02-27 追加）
+- 背景（VM実測）:
+  - `orders.db` 24h 集計で `close_reject_no_negative=37`、うち
+    `scalp_ping_5s_b_live` 由来が `35` 件だった。
+  - `exit_reason=candle_* / take_profit` が `strict_no_negative` と衝突し、
+    B の負け玉解放が遅れる経路が残っていた。
+- 変更:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_b` / `scalp_ping_5s_b_live` に
+      `neg_exit.strict_no_negative=false`, `allow_reasons=["*"]`, `deny_reasons=[]` を追加。
+- 意図:
+  - B も no-block 方針へ統一し、`close_reject_no_negative` 連発による
+    EXIT 詰まりを抑止する。
+
 ### C emergency stop + wildcard reasonless close（2026-02-26 追記）
 - 背景（VM実測）:
   - `scalp_ping_5s_c_live` は `perf_block` が大量発生する一方で `filled` も継続し、

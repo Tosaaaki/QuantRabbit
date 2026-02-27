@@ -126,6 +126,48 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 07:33 UTC / 2026-02-27 16:33 JST - `scalp_ping_5s_b_live` の `close_reject_no_negative` 連発停止
+Period:
+- 24h: `datetime(ts) >= datetime('now','-24 hours')`
+- 6h: `datetime(ts) >= datetime('now','-6 hours')`
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/logs/strategy_control.db`, `journalctl -u quant-strategy-control.service`
+
+Fact:
+- 稼働状態:
+  - `quant-strategy-control`, `quant-order-manager`, `quant-position-manager`, `quant-market-data-feed` は全て `active`。
+  - `journalctl` heartbeat は `global(entry=True, exit=True, lock=False)` を継続。
+- `strategy_control.db`:
+  - `strategy_control_flags` は全行 `entry_enabled=1` かつ `exit_enabled=1`（`entry=1 & exit=0` は 0 件）。
+- `orders.db`（24h）:
+  - `close_reject_no_negative=37`
+  - `strategy_control_exit_disabled=0`（ステータス上位に非出現）
+  - `client_order_id LIKE '%scalp_ping_5s_b_live%'` が `35` 件、`wick` 系が `2` 件。
+- 直近拒否サンプルでは `exit_reason=candle_*` / `take_profit` で
+  `status=close_reject_no_negative` が反復し、EXITシグナルが通過していない。
+
+Failure Cause:
+1. `scalp_ping_5s_b(_live)` が `scalp_ping_5s` の `neg_exit.strict_no_negative=true` を継承していた。
+2. B系の exit_reason（`candle_*`, `take_profit`）が strict allow と整合せず、
+   no-negative ガードが実運用で EXIT 詰まりを発生させた。
+3. `strategy_control_exit_disabled` は解消済みで、今回の主因は strategy-control ではなく `neg_exit` ポリシー側。
+
+Improvement:
+1. `config/strategy_exit_protections.yaml`:
+   - `scalp_ping_5s_b` / `scalp_ping_5s_b_live` に
+     `neg_exit.strict_no_negative=false`
+     `neg_exit.allow_reasons=["*"]`
+     `neg_exit.deny_reasons=[]`
+     を追加し、B系を no-block 運用へ統一。
+
+Verification:
+1. デプロイ後、`orders.db` 1h/6h で `close_reject_no_negative` の総数と
+   `LIKE '%scalp_ping_5s_b_live%'` 件数が連続減少すること。
+2. `close_ok` が維持され、`strategy_control_exit_disabled` が 0 を維持すること。
+3. 24hで B系の負け玉平均保有時間（close遅延）が短縮すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 06:41 UTC / 2026-02-27 15:41 JST - 方向精度劣化（B/C）+ 単発大損（M1/MACD）を同時圧縮
 Period:
 - 集計時刻: `2026-02-27 06:41 UTC`（`15:41 JST`）

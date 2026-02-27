@@ -1013,10 +1013,22 @@ strategies:
         short_de_risk_threshold: 0.46
         short_forecast_weight: 0.50
         reason: m1_structure_break
+    neg_exit:
+      # B も no-block 運用へ寄せ、close_reject_no_negative の再発を防ぐ。
+      strict_no_negative: false
+      allow_reasons:
+        - "*"
+      deny_reasons: []
 
   scalp_ping_5s_b_live:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+    neg_exit:
+      # live tag でも同一方針を適用。
+      strict_no_negative: false
+      allow_reasons:
+        - "*"
+      deny_reasons: []
 
   scalp_ping_5s_c:
     <<: *SCALP_PING_5S_EXIT_PROFILE

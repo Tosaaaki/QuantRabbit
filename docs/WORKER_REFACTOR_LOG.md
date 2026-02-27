@@ -8923,3 +8923,44 @@
     - `24 passed`
   - `pytest -q tests/apps tests/scripts/test_publish_ui_snapshot.py`
     - `38 passed`
+
+### 2026-02-27（追記）`scalp_ping_5s_b_live` EXIT詰まりの即時解消（neg_exit no-block化）
+- 目的:
+  - `close_reject_no_negative` 連発を止め、B系の EXIT 機動性を回復する。
+- 仮説:
+  - `scalp_ping_5s_b(_live)` が `scalp_ping_5s` 共通の
+    `neg_exit.strict_no_negative=true` を継承し、`candle_*` 系 EXIT と衝突している。
+- 実測根拠（VM）:
+  - `strategy_control_flags` は全戦略 `entry=1 & exit=1`（`entry=1 & exit=0` は 0 件）。
+  - `orders.db` 24h: `close_reject_no_negative=37`、うち
+    `client_order_id LIKE '%scalp_ping_5s_b_live%'` が `35` 件。
+  - 6h でも `close_reject_no_negative=9` が継続。
+- 変更ファイル:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_b` / `scalp_ping_5s_b_live`
+      `neg_exit.strict_no_negative=false`
+      `neg_exit.allow_reasons=["*"]`
+      `neg_exit.deny_reasons=[]`
+- 影響範囲:
+  - B系タグの close preflight（`execution/order_manager.py` の negative-close 判定）に限定。
+  - entry 判定・サイズ決定・V2導線（worker分離）は非変更。
+- 検証手順:
+  1. 本番反映後 1h/6h で `orders.db` の `close_reject_no_negative` を再集計。
+  2. `client_order_id LIKE '%scalp_ping_5s_b_live%'` の同ステータスが減少することを確認。
+  3. `strategy_control_flags` が引き続き `entry=1 & exit=1` を維持することを確認。
+
+### 2026-02-27（追記）dashboard history「1時間ごとのトレード」をカード内スクロール化
+- 目的:
+  - history タブの「1時間ごとのトレード」を、最近のトレード表と同様にカード内スクロールで閲覧できるようにする。
+- 仮説:
+  - 当該テーブルのみ `table-wrap` で描画されており、縦スクロール制御 (`table-wrap-scroll`) が未適用。
+- 変更ファイル:
+  - `templates/autotune/dashboard.html`
+    - history タブの hourly table wrapper を
+      `class="table-wrap"` から `class="table-wrap table-wrap-scroll"` へ変更。
+- 影響範囲:
+  - dashboard 表示レイヤ（history タブの hourly テーブル）に限定。
+  - 取引ロジック、snapshot 生成、order/position/worker 導線への影響なし。
+- 検証:
+  - `run.app` の `/dashboard?tab=history` HTML を直接確認し、`tab-history` セクションの
+    wrapper class が `table-wrap table-wrap-scroll` であることを検証。
