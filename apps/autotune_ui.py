@@ -2471,11 +2471,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     snapshot_ref = _parse_dt(snapshot.get("generated_at")) or now
     hourly_trades = metrics_snapshot.get("hourly_trades")
-    if not _hourly_trades_is_stale(
-        hourly_trades,
-        trades_raw,
-        reference_now=snapshot_ref,
-    ):
+    hourly_from_snapshot = not _hourly_trades_is_stale(
+        hourly_trades, trades_raw, reference_now=snapshot_ref
+    )
+    if hourly_from_snapshot:
         base["hourly_trades"] = hourly_trades
     else:
         base["hourly_trades"] = _build_hourly_fallback(trades_raw)
@@ -2584,6 +2583,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         not rollup_applied
         and not TRADES_DB.exists()
         and bool(closed_trades)
+        and not hourly_from_snapshot
     )
     if reconcile_from_recent_trades:
         perf["daily_pl_pips"] = today_pips_from_trades

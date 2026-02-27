@@ -8760,9 +8760,12 @@
     - `tests/apps/test_autotune_ui_template_guards.py`
     - `tests/scripts/test_publish_ui_snapshot.py`
       - GCS公開スナップショット用の hourly 集計（manual除外 / lookback固定）を追加検証
+    - `tests/apps/test_autotune_ui_summary_consistency.py`
+      - Cloud Run（DBなし）でも、snapshot の `hourly_trades` が有効な場合は
+        summary を `recent_trades` で上書きしない回帰ケースを追加
 - 検証:
   - `pytest -q tests/apps` で `32 passed` を確認。
-  - `pytest -q tests/apps tests/scripts/test_publish_ui_snapshot.py` で `34 passed` を確認。
+  - `pytest -q tests/apps tests/scripts/test_publish_ui_snapshot.py` で `35 passed` を確認。
 
 ### 2026-02-27（追記）B/C 収益監査に基づく追加チューニング（損失幅圧縮）
 
