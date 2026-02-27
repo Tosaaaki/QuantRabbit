@@ -29,6 +29,31 @@
   - V2分離の責務に合わせ、order-manager preflight 判定を worker 運用値と一致させる。
   - 同一戦略が worker 経路と order-manager 経路で異なる閾値を読む状態を解消する。
 
+### 2026-02-27（追記）`scalp_extrema_reversal_live` の「取り残し」防止を実装
+
+- 背景（VM実測）:
+  - `orders.db` 直近7日で `scalp_extrema_reversal_live` の `filled=47` に対し、
+    `stopLossOnFill` 付きは `4`（約8.5%）に留まっていた。
+  - 同時点 open trade は `scalp_extrema_reversal_live` が `3/3` で、
+    いずれも broker-side SL なし（TPのみ）。
+  - `trade_id=408076` は `-49.5 pips` まで逆行して保持され、
+    「SLなし + loss_cut未発火」で取り残しが発生していた。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_EXTREMA_REVERSAL_LIVE=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_EXTREMA_REVERSAL=1`
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_extrema_reversal_live.exit_profile` を追加:
+      - `loss_cut_enabled=true`
+      - `loss_cut_require_sl=false`
+      - `loss_cut_hard_pips=7.0`
+      - `loss_cut_reason_hard=m1_structure_break`
+      - `loss_cut_max_hold_sec=900`
+      - `loss_cut_cooldown_sec=4`
+- 意図:
+  - エントリー時に broker-side SL を優先付与し、まず「無防備建玉」を減らす。
+  - 仮にSL未付与で建っても、EXIT worker の deterministic loss-cut で取り残しを回避する。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の実効ロット下限を引き上げ（約定再開後）
 
 - 背景（VM実測）:

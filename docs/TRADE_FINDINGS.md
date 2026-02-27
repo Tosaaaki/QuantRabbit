@@ -42,6 +42,50 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 14:20 UTC / 2026-02-27 23:20 JST - `scalp_extrema_reversal_live` の取り残し（SL欠損 + loss_cut未発火）対策
+Period:
+- 直近7日（orders/trades 集計）
+- 2026-02-27 13:49 UTC 時点の open trade
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `PositionManager.get_open_positions()`
+- Repo/VM `ops/env/quant-order-manager.env`, `config/strategy_exit_protections.yaml`
+
+Fact:
+- `scalp_extrema_reversal_live` の直近7日 `filled=47` のうち、
+  `stopLossOnFill` 付きは `4`（約 `8.5%`）。
+- 同時点 open trade は `3件` すべて `scalp_extrema_reversal_live` で、
+  `stop_loss=null`（TPのみ）。
+- `trade_id=408076` は `hold≈526min / -49.5pips` まで逆行保持。
+
+Failure Cause:
+1. `quant-order-manager` 実効envで `scalp_extrema_reversal_live` の
+   `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_*` が未設定だった。
+2. `strategy_exit_protections` に `scalp_extrema_reversal_live` の個別 `exit_profile` がなく、
+   defaults（`loss_cut_enabled=false`, `loss_cut_require_sl=true`）へフォールバックしていた。
+3. その結果「SLなしで建つと、負け側を deterministic に閉じる条件が弱い」状態が発生した。
+
+Improvement:
+1. `ops/env/quant-order-manager.env`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_EXTREMA_REVERSAL_LIVE=1`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_EXTREMA_REVERSAL=1`
+2. `config/strategy_exit_protections.yaml`
+  - `scalp_extrema_reversal_live.exit_profile` を追加:
+    `loss_cut_enabled=true`, `loss_cut_require_sl=false`,
+    `loss_cut_hard_pips=7.0`, `loss_cut_reason_hard=m1_structure_break`,
+    `loss_cut_max_hold_sec=900`, `loss_cut_cooldown_sec=4`
+
+Verification:
+1. 反映後 24h で `scalp_extrema_reversal_live` の `filled` について
+   `stopLossOnFill` 付与率が改善していること（目標: `>=0.90`）。
+2. open trade 監査で `scalp_extrema_reversal_live` の `stop_loss=null` が常態化しないこと。
+3. 逆行保持（例: `-20pips` 超かつ `hold>20min`）の滞留件数が低下すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:00 UTC / 2026-02-28 00:00 JST - `scalp_ping_5s_c` 第13ラウンド（failfast hard block の下限を調整）
 
 Period:

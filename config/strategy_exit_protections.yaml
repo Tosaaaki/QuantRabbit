@@ -781,6 +781,21 @@ strategies:
       loss_cut_max_hold_sec: 300
       loss_cut_cooldown_sec: 4
 
+  scalp_extrema_reversal_live:
+    min_profit_pips: 0.6
+    min_profit_ratio: 0.20
+    exit_profile:
+      # ExtremaReversal can reverse hard after sweep failure; keep deterministic
+      # tail cap active even when broker-side SL is missing.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      # Keep soft cut disabled to avoid hidden hard-stop behavior.
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 7.0
+      loss_cut_reason_hard: m1_structure_break
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 4
+
   scalp_macd_rsi_div_live:
     min_profit_pips: 0.2
     min_profit_ratio: 0.0

@@ -223,6 +223,27 @@
     - 連敗数が `SL_STREAK_DIRECTION_FLIP_FORCE_STREAK` 以上のときは、
       `MIN_TARGET_MARKET_PLUS` 条件のみをバイパス可能にして反転遅延を抑える
       （`direction_bias/horizon` の tech 一致要件は維持）。
+
+### scalp_extrema_reversal_live 取り残し抑制（2026-02-27）
+- 背景:
+  - `scalp_extrema_reversal_live` で `stopLossOnFill` 未付与のエントリーが多く、
+    逆行時に `loss_cut` が発火せず保持が長期化するケースを確認した。
+- 対応（必須運用キー）:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_EXTREMA_REVERSAL_LIVE=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_EXTREMA_REVERSAL=1`
+  - `config/strategy_exit_protections.yaml`
+    - `strategies.scalp_extrema_reversal_live.exit_profile`
+      - `loss_cut_enabled=true`
+      - `loss_cut_require_sl=false`
+      - `loss_cut_hard_pips=7.0`
+      - `loss_cut_reason_hard=m1_structure_break`
+      - `loss_cut_max_hold_sec=900`
+      - `loss_cut_cooldown_sec=4`
+- 運用意図:
+  - entry 時は broker-side SL を優先付与して「無保護建玉」を抑制する。
+  - SL が付かずに建った場合でも EXIT worker 側で deterministic loss-cut を維持し、
+    取り残しを防止する。
 - `scalp_ping_5s_b*` の extrema は 2026-02-19 以降、ショート側のみ非対称チューニング。
   - `short_bottom_soft` は専用倍率
     `EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT`（B既定 0.42）で縮小。
