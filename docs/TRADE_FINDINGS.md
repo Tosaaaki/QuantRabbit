@@ -110,7 +110,7 @@ Failure Cause:
 2. strategy worker 側の service timeout 到達で request 経路が不安定化し、重複リクエストが発生しやすい。
 
 Improvement:
-1. `ops/env/quant-order-manager.env` の `ORDER_MANAGER_SERVICE_WORKERS` を `1 -> 2` へ変更。
+1. `ops/env/quant-order-manager.env` の `ORDER_MANAGER_SERVICE_WORKERS` を `1 -> 4` へ段階引き上げ。
 2. order_manager の同時処理能力を増やし、localhost API timeout と reject の発生頻度を下げる。
 
 Verification:

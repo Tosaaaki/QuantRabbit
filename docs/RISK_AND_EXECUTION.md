@@ -1345,7 +1345,7 @@
   - `quant-order-manager` は稼働中だったが、`ORDER_MANAGER_SERVICE_WORKERS=1` の単一並列だった。
 - 実装:
   - `ops/env/quant-order-manager.env`
-    - `ORDER_MANAGER_SERVICE_WORKERS=2`（from `1`）
+    - `ORDER_MANAGER_SERVICE_WORKERS=4`（from `1`, staged `2 -> 4`）
 - 運用意図:
   - order_manager の同時処理能力を上げ、localhost API timeout を減らす。
   - timeout由来の重複リクエストと reject ノイズを抑制する。

@@ -8326,7 +8326,7 @@
   - order_manager は active だが service worker 数が `1` で、OANDA待ち重複時に応答遅延が生じていた。
 - 変更:
   - `ops/env/quant-order-manager.env`
-    - `ORDER_MANAGER_SERVICE_WORKERS=2`（from `1`）
+    - `ORDER_MANAGER_SERVICE_WORKERS=4`（from `1`, staged `2 -> 4`）
 - 意図:
   - localhost API の同時処理能力を引き上げ、entry/close の service timeout 発生率を下げる。
   - 連続 timeout 起点の重複 request/reject（`CLIENT_TRADE_ID_ALREADY_EXISTS`）を抑制する。
