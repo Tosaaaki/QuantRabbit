@@ -71,6 +71,7 @@
     - アイディア: 日次/週次運用要約、時間帯/ボラ別の勝率/PF整理、注文失敗/拒否の監査、UI向け一行サマリ
     - タスク: scripts/gpt_ops_report.py を運用→必要なら cron/systemd 化、手動レビューで PERF_GUARD_* / *_STRATEGY_ALLOWLIST を調整、必要なら BQ 推薦へ接続
     - コマンド例: . .venv/bin/activate && python scripts/gpt_ops_report.py --hours 24 --output logs/gpt_ops_report.json（--gpt で要約）
+    - 2026-02-27: `gpt_ops_report.py` を deterministic 市況プレイブックへ更新（short_term/swing/scenarios/risk_protocol を JSON + MD 生成）。
 
 - [ ] ID: T-20260123-002
   Title: GPT運用レポートに時間帯×レジーム×ボラの勝率/PFマトリクスを追加

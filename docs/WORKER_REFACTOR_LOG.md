@@ -8,6 +8,26 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）`gpt_ops_report` を deterministic 市況プレイブックへ更新
+
+- 目的:
+  - 手動で作っていた「短期/スイング + 3シナリオ + リスク手順」の整理を、
+    LLMなし・定期実行で自動生成する。
+- 変更:
+  - `scripts/gpt_ops_report.py`
+    - 旧 stub（`llm_disabled` の最小 JSON）を廃止し、
+      `factor_cache(M1/H4)`・`forecast_gate`・`trades/orders`・`policy_overlay` を統合した
+      deterministic レポートを生成する実装へ差し替え。
+    - 出力に `snapshot`, `short_term`, `swing`, `scenarios(3本)`, `risk_protocol`,
+      `event_context`, `order_quality`, `performance` を追加。
+    - 既存の `--policy/--apply-policy` 導線は維持（自動適用は行わず no-change diff を出力）。
+    - Markdown 出力（`--markdown-output`）を追加し、運用レビュー用の可読テキストを自動生成。
+  - `tests/scripts/test_gpt_ops_report.py` を追加し、
+    PF計算、シナリオ確率合計、最小入力時の出力構造を回帰テスト化。
+- 影響範囲:
+  - `quant-ops-policy.service` が生成する `logs/gpt_ops_report.json` の内容が拡張される。
+  - 取引執行経路（strategy worker / order_manager / position_manager）の判定ロジックは非変更。
+
 ### 2026-02-27（追記）M1シナリオ3戦略を「プロセス独立」から「ロジック独立」へ移行
 
 - 背景:

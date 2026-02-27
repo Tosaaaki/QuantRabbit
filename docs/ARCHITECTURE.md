@@ -60,6 +60,10 @@
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
+- Background: `quant-ops-policy.service`（`scripts/gpt_ops_report.py`）は
+  LLMを使わない deterministic 集計で `logs/gpt_ops_report.json`（+任意 Markdown）を生成し、
+  `snapshot / short_term / swing / scenarios / risk_protocol` を運用レビュー用に出力する。
+  `--policy` 導線は no-change diff の記録に限定し、自動で売買ポリシーを適用しない。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ +
   `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）による
   guarded GCS 退避（低優先度 + 負荷ガード、legacy `cron.hourly` は無効化）。
