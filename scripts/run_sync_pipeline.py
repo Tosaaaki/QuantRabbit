@@ -23,6 +23,7 @@ from analytics.bq_exporter import BigQueryExporter, _BQ_MAX_EXPORT
 from analytics.gcs_publisher import GCSRealtimePublisher
 from analytics.lot_pattern_analyzer import LotPatternAnalyzer
 from execution.position_manager import PositionManager
+from scripts import publish_ui_snapshot as ui_snapshot_builder
 
 LOGS_DIR = Path("logs")
 LOG_FILE = Path("logs/pipeline.log")
@@ -521,6 +522,13 @@ def _run_cycle(
         recent_trades = pm.fetch_recent_trades(limit=ui_recent)
         metrics = _load_performance_summary(pm)
         if isinstance(metrics, dict):
+            hourly_trades = ui_snapshot_builder._build_hourly_trades_from_db()
+            if not hourly_trades:
+                hourly_trades = ui_snapshot_builder._build_hourly_trades_from_recent_trades(
+                    list(recent_trades or []),
+                )
+            if hourly_trades:
+                metrics["hourly_trades"] = hourly_trades
             data_lag_ms = _load_latest_metric("data_lag_ms")
             decision_latency_ms = _load_latest_metric("decision_latency_ms")
             if data_lag_ms is not None:
@@ -640,7 +648,7 @@ def main() -> int:
     parser.add_argument(
         "--ui-recent",
         type=int,
-        default=50,
+        default=int(os.getenv("UI_RECENT_TRADES_LIMIT", "200")),
         help="UI スナップショットに含める直近トレード件数。",
     )
     parser.add_argument(

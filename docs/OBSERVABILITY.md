@@ -23,6 +23,10 @@
   `UI_HOURLY_DB_RETRY_COUNT`（default: `3`）で再試行する。
   DB集計が失敗した周期でも `recent_trades` から hourly payload を補完して
   `metrics.hourly_trades` の欠落を回避する。
+- `scripts/run_sync_pipeline.py` も同じ hourly 生成ロジックを使って
+  GCS `realtime/ui_state.json` を更新する。`--ui-recent` 既定は
+  `UI_RECENT_TRADES_LIMIT`（default: `200`）に揃え、別経路更新でも
+  history タブの集計窓を破壊しない。
 - `quant-autotune-ui.service` は UI 応答を優先し、
   `POSITION_MANAGER_SERVICE_*TIMEOUT` を短く（1.2〜2.0s）設定して
   fail-fast 運用する。`POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` により

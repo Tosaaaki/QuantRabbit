@@ -8896,11 +8896,16 @@
   - `metrics.hourly_trades` 欠損周期があると、UIが `recent_trades` 限定fallbackへ降格して
     時間帯集計が欠落する。
   - fresh判定のみで snapshot source を選ぶと、軽量 remote が完全 gcs を上書きしうる。
+  - `scripts/run_sync_pipeline.py` も同一 GCS object を更新しており、
+    `ui_recent=50 / hourly未付与` の payload で最新 object を上書きしていた。
 - 変更ファイル:
   - `scripts/publish_ui_snapshot.py`
     - `hourly_trades` を DB row走査で生成する経路へ変更（ISO/非ISO時刻をPythonで吸収）。
     - `UI_HOURLY_DB_TIMEOUT_SEC` / `UI_HOURLY_DB_RETRY_COUNT` / `UI_HOURLY_SCAN_LIMIT` を追加。
     - DB集計失敗時でも `recent_trades` から hourly payload を生成して `metrics.hourly_trades` 欠落を防止。
+  - `scripts/run_sync_pipeline.py`
+    - GCS publish 前に `hourly_trades` を必ず付与（DB→recent_trades fallback）。
+    - `--ui-recent` の既定値を `UI_RECENT_TRADES_LIMIT`（default `200`）へ統一。
   - `apps/autotune_ui.py`
     - fresh snapshot 選択を「固定順」から「hourly有効性 + metrics充足数」優先へ更新。
     - `hourly` が有効でも `daily/yesterday/weekly/total` が欠損時は `recent_trades` で summary を再構成。
