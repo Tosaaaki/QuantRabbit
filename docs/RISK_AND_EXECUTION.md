@@ -1668,3 +1668,24 @@
   - strategyローカルの sizing / probability / force-exit と、
     order-manager preflight の strategy閾値のみ。
   - V2責務分離、`entry_thesis` 契約、blackboard協調の判定要件は変更しない。
+
+### 2026-02-27 Entry Net-Edge Guard（order_manager preflight）
+- 背景:
+  - `entry_probability` は存在しても、`TP/SL` と実行コストを同時に見た純期待値の
+    最終チェックが preflight に無かった。
+- 実装:
+  - `execution/order_manager.py` の `entry_intent_guard` に
+    `entry_net_edge_negative` を追加。
+  - 判定式:
+    - `net_edge = p*TP - (1-p)*SL - spread - slippage - reject_cost`
+    - `net_edge < ORDER_ENTRY_NET_EDGE_MIN_PIPS*` のとき reject。
+  - `spread` は `entry_thesis` または `technical_context.ticks.spread_pips` を優先。
+  - 判定詳細は `entry_thesis["net_edge"]` に格納して `orders.db` 監査へ残す。
+- 主要 ENV キー（デフォルトは安全側で OFF）:
+  - `ORDER_ENTRY_NET_EDGE_GATE_ENABLED=0`
+  - `ORDER_ENTRY_NET_EDGE_POCKETS=micro,macro,scalp,scalp_fast`
+  - `ORDER_ENTRY_NET_EDGE_MIN_PIPS*`
+  - `ORDER_ENTRY_NET_EDGE_SLIPPAGE_PIPS*`
+  - `ORDER_ENTRY_NET_EDGE_REJECT_COST_PIPS*`
+  - `ORDER_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS*`
+  - `*` は pocket/strategy override 対応。

@@ -2625,6 +2625,21 @@ _ENTRY_QUALITY_STRAT_DB_PATH = pathlib.Path(
 _ENTRY_QUALITY_STRAT_CACHE: dict[
     tuple[str, str], tuple[float, dict[str, float]]
 ] = {}
+_ENTRY_NET_EDGE_GATE_ENABLED = _env_bool("ORDER_ENTRY_NET_EDGE_GATE_ENABLED", False)
+_ENTRY_NET_EDGE_POCKETS = _env_csv_set(
+    "ORDER_ENTRY_NET_EDGE_POCKETS",
+    "micro,macro,scalp,scalp_fast",
+)
+_ENTRY_NET_EDGE_MIN_PIPS_DEFAULT = _env_float("ORDER_ENTRY_NET_EDGE_MIN_PIPS", 0.0)
+_ENTRY_NET_EDGE_SLIPPAGE_PIPS_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_NET_EDGE_SLIPPAGE_PIPS", 0.05)
+)
+_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_NET_EDGE_REJECT_COST_PIPS", 0.02)
+)
+_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS", 0.0)
+)
 
 _LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
 _LAST_ROLLOVER_SL_STRIP_TS: dict[str, float] = {}
@@ -4043,7 +4058,184 @@ def _entry_intent_guard_reason(
     if _ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY and entry_probability is None:
         return "missing_entry_probability"
 
+    net_edge_allowed, net_edge_reason, net_edge_meta = _entry_net_edge_gate_decision(
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_probability=entry_probability,
+    )
+    if isinstance(entry_thesis, dict):
+        entry_thesis["net_edge"] = net_edge_meta
+    if not net_edge_allowed and net_edge_reason:
+        return net_edge_reason
+
     return None
+
+
+def _entry_net_edge_env_float(
+    name: str,
+    *,
+    pocket: Optional[str],
+    strategy_tag: Optional[str],
+    default: float,
+) -> float:
+    strategy_override = _strategy_env_float(name, strategy_tag)
+    if strategy_override is not None and math.isfinite(strategy_override):
+        return float(strategy_override)
+    return _pocket_env_float(name, pocket, default)
+
+
+def _entry_thesis_sl_tp_pips(
+    entry_thesis: Optional[dict],
+) -> tuple[Optional[float], Optional[float]]:
+    if not isinstance(entry_thesis, dict):
+        return None, None
+
+    sl_pips = _as_float(entry_thesis.get("sl_pips"))
+    if sl_pips is None:
+        for key in ("profile_sl_pips", "loss_guard_pips", "loss_guard", "hard_stop_pips"):
+            value = _as_float(entry_thesis.get(key))
+            if value is not None and value > 0.0:
+                sl_pips = value
+                break
+
+    tp_pips = _as_float(entry_thesis.get("tp_pips"))
+    if tp_pips is None:
+        for key in ("profile_tp_pips", "target_tp_pips"):
+            value = _as_float(entry_thesis.get(key))
+            if value is not None and value > 0.0:
+                tp_pips = value
+                break
+
+    forecast = entry_thesis.get("forecast")
+    if isinstance(forecast, dict):
+        if tp_pips is None:
+            value = _as_float(forecast.get("tp_pips_hint"))
+            if value is not None and value > 0.0:
+                tp_pips = value
+        if sl_pips is None:
+            value = _as_float(forecast.get("sl_pips_cap"))
+            if value is not None and value > 0.0:
+                sl_pips = value
+
+    if sl_pips is not None and sl_pips <= 0.0:
+        sl_pips = None
+    if tp_pips is not None and tp_pips <= 0.0:
+        tp_pips = None
+    return sl_pips, tp_pips
+
+
+def _entry_thesis_spread_pips(entry_thesis: Optional[dict]) -> Optional[float]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    for key in ("spread_pips", "entry_spread_pips", "spread"):
+        value = _as_float(entry_thesis.get(key))
+        if value is not None and value >= 0.0:
+            return float(value)
+
+    technical_context = entry_thesis.get("technical_context")
+    if not isinstance(technical_context, dict):
+        return None
+
+    ticks = technical_context.get("ticks")
+    if isinstance(ticks, dict):
+        value = _as_float(ticks.get("spread_pips"))
+        if value is not None and value >= 0.0:
+            return float(value)
+
+    for key in ("spread_pips", "entry_spread_pips"):
+        value = _as_float(technical_context.get(key))
+        if value is not None and value >= 0.0:
+            return float(value)
+
+    return None
+
+
+def _entry_net_edge_gate_decision(
+    *,
+    pocket: Optional[str],
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    entry_probability: Optional[float],
+) -> tuple[bool, Optional[str], dict[str, float | str | None]]:
+    pocket_key = str(pocket or "").strip().lower()
+    if not _ENTRY_NET_EDGE_GATE_ENABLED or pocket_key not in _ENTRY_NET_EDGE_POCKETS:
+        return True, None, {"enabled": 0.0}
+
+    probability = _entry_probability_value(entry_probability, entry_thesis)
+    sl_pips, tp_pips = _entry_thesis_sl_tp_pips(entry_thesis)
+    spread_pips = _entry_thesis_spread_pips(entry_thesis)
+    spread_source = "thesis"
+    if spread_pips is None:
+        spread_source = "fallback"
+        spread_pips = _entry_net_edge_env_float(
+            "ORDER_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            default=_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_DEFAULT,
+        )
+    spread_pips = max(0.0, float(spread_pips or 0.0))
+
+    slippage_pips = _entry_net_edge_env_float(
+        "ORDER_ENTRY_NET_EDGE_SLIPPAGE_PIPS",
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        default=_ENTRY_NET_EDGE_SLIPPAGE_PIPS_DEFAULT,
+    )
+    reject_cost_pips = _entry_net_edge_env_float(
+        "ORDER_ENTRY_NET_EDGE_REJECT_COST_PIPS",
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        default=_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT,
+    )
+    slippage_pips = max(0.0, float(slippage_pips))
+    reject_cost_pips = max(0.0, float(reject_cost_pips))
+
+    min_edge_pips = _entry_net_edge_env_float(
+        "ORDER_ENTRY_NET_EDGE_MIN_PIPS",
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        default=_ENTRY_NET_EDGE_MIN_PIPS_DEFAULT,
+    )
+    min_edge_pips = float(min_edge_pips)
+
+    details: dict[str, float | str | None] = {
+        "enabled": 1.0,
+        "entry_probability": probability,
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "spread_pips": spread_pips,
+        "spread_source": spread_source,
+        "slippage_pips": slippage_pips,
+        "reject_cost_pips": reject_cost_pips,
+        "min_edge_pips": min_edge_pips,
+    }
+
+    if probability is None:
+        details["reason"] = "missing_probability"
+        return True, None, details
+    if sl_pips is None or tp_pips is None:
+        details["reason"] = "missing_tp_sl"
+        return True, None, details
+
+    probability = max(0.0, min(1.0, float(probability)))
+    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(sl_pips)
+    cost_pips = spread_pips + slippage_pips + reject_cost_pips
+    net_edge_pips = gross_edge_pips - cost_pips
+    details.update(
+        {
+            "gross_edge_pips": round(float(gross_edge_pips), 6),
+            "cost_pips": round(float(cost_pips), 6),
+            "net_edge_pips": round(float(net_edge_pips), 6),
+        }
+    )
+
+    if net_edge_pips + 1e-9 < min_edge_pips:
+        details["reason"] = "negative"
+        return False, "entry_net_edge_negative", details
+
+    details["reason"] = "pass"
+    return True, None, details
 
 
 def _entry_market_snapshot(

@@ -11,6 +11,7 @@ import execution.order_manager as order_manager
 from execution.order_manager import (
     _augment_entry_thesis_policy_generation,
     _dynamic_entry_sl_target_pips,
+    _entry_intent_guard_reason,
     _entry_loss_cap_jpy,
     _entry_quality_gate,
     _entry_quality_microstructure_gate_decision,
@@ -310,6 +311,67 @@ def test_entry_quality_gate_strategy_penalty_skips_warmup(monkeypatch) -> None:
     assert allowed is True
     assert reason is None
     assert float(details.get("strategy_penalty") or 0.0) == 0.0
+
+
+def test_entry_intent_guard_rejects_negative_net_edge(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ENTRY_NET_EDGE_GATE_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ENTRY_NET_EDGE_POCKETS", {"micro"})
+
+    entry_thesis = {
+        "strategy_tag": "MicroRangeBreak",
+        "entry_probability": 0.52,
+        "entry_units_intent": 1200,
+        "tp_pips": 1.1,
+        "sl_pips": 1.8,
+        "technical_context": {"ticks": {"spread_pips": 0.42}},
+        "slippage_pips": 0.12,
+        "reject_cost_pips": 0.08,
+    }
+    reason = _entry_intent_guard_reason(
+        pocket="micro",
+        reduce_only=False,
+        strategy_tag="MicroRangeBreak",
+        entry_thesis=entry_thesis,
+        entry_probability=0.52,
+    )
+
+    assert reason == "entry_net_edge_negative"
+    net_edge = entry_thesis.get("net_edge")
+    assert isinstance(net_edge, dict)
+    assert float(net_edge.get("net_edge_pips") or 0.0) < float(
+        net_edge.get("min_edge_pips") or 0.0
+    )
+
+
+def test_entry_intent_guard_allows_positive_net_edge(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ENTRY_NET_EDGE_GATE_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ENTRY_NET_EDGE_POCKETS", {"scalp"})
+
+    entry_thesis = {
+        "strategy_tag": "scalp_ping_5s_b_live",
+        "entry_probability": 0.74,
+        "entry_units_intent": 1000,
+        "tp_pips": 4.2,
+        "sl_pips": 1.3,
+        "technical_context": {"ticks": {"spread_pips": 0.18}},
+        "slippage_pips": 0.03,
+        "reject_cost_pips": 0.02,
+    }
+    reason = _entry_intent_guard_reason(
+        pocket="scalp",
+        reduce_only=False,
+        strategy_tag="scalp_ping_5s_b_live",
+        entry_thesis=entry_thesis,
+        entry_probability=0.74,
+    )
+
+    assert reason is None
+    net_edge = entry_thesis.get("net_edge")
+    assert isinstance(net_edge, dict)
+    assert float(net_edge.get("net_edge_pips") or 0.0) >= float(
+        net_edge.get("min_edge_pips") or 0.0
+    )
+
 
 def test_entry_quality_regime_gate_blocks_on_mismatch_low_conf(monkeypatch):
     monkeypatch.setenv("ORDER_ENTRY_QUALITY_REGIME_PENALTY_ENABLED", "1")

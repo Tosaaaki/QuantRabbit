@@ -36,6 +36,27 @@
   - 「高速探索 + 厳格昇格」を維持しつつ、
     時間帯封鎖ではなく reentry 品質（再突入距離/待機時間/バイアス）で改善を回す。
 
+### 2026-02-27（追記）`order_manager` preflight に net-edge ガードを追加（デフォルトOFF）
+
+- 背景:
+  - `entry_probability` と `entry_units_intent` は契約で担保済みだが、
+    送出直前に `p*TP - (1-p)*SL - 実行コスト` を明示評価するガードが無かった。
+  - spread/slippage/reject コストを加味した純期待値が負の注文を、共通 preflight で
+    早期拒否できる導線を追加する必要があった。
+- 変更:
+  - `execution/order_manager.py`
+    - `ORDER_ENTRY_NET_EDGE_*` 環境変数を追加（pocket/strategy override対応）。
+    - `entry_thesis` から `tp_pips/sl_pips/spread_pips` を抽出し、
+      `net_edge = p*TP - (1-p)*SL - spread - slippage - reject_cost` を算出。
+    - `entry_intent_guard` に `entry_net_edge_negative` 拒否を追加し、
+      判定詳細を `entry_thesis["net_edge"]` へ記録。
+  - テスト:
+    - `tests/execution/test_order_manager_preflight.py` に
+      negative/positive の両ケースを追加。
+- 意図:
+  - 戦略ローカル判定は維持したまま、共通層ではガード・リスク拒否だけを追加する。
+  - デフォルトOFFで安全導入し、VM実測で閾値キャリブレーション後に段階有効化する。
+
 ### 2026-02-27（追記）`scalp_ping_5s_c` の leading profile reject を C専用で緩和
 
 - 背景（VM実測）:
