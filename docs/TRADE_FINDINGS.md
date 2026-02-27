@@ -42,6 +42,32 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 08:45 UTC / 2026-02-27 17:45 JST - 3分離戦略を既存M1と同時起動へ切替
+Period:
+- Activation window: `2026-02-27 17:40` ～ `17:45` JST
+- Source: `ops/env/quant-scalp-*.env`, VM `systemctl` / `journalctl`
+
+Fact:
+- 直前のVM状態は、`quant-m1scalper*` のみ active、新規3戦略は disabled/inactive。
+- ユーザー指定は「既存停止なしで全部起動」。
+
+Failure Cause:
+1. 新規3戦略は `M1SCALP_ENABLED=0` の安全初期値のまま。
+2. unit は導入済みでも enable/start 未実施だった。
+
+Improvement:
+1. 3戦略envの `M1SCALP_ENABLED=1` に更新。
+2. `quant-scalp-{trend-breakout,pullback-continuation,failed-break-reverse}` と各 exit の計6 unit を `enable --now`。
+3. 既存 `quant-m1scalper*` は停止せず同時稼働を維持。
+
+Verification:
+1. `systemctl is-active` で既存M1 + 新規6unit が `active`。
+2. `systemctl is-enabled` で新規6unit が `enabled`。
+3. `journalctl -u quant-scalp-*-*.service` で起動直後ログを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:40 UTC / 2026-02-27 17:40 JST - M1シナリオ3戦略の独立性をロジック単位まで引き上げ
 Period:
 - Implementation window: `2026-02-27 17:20` ～ `17:40` JST

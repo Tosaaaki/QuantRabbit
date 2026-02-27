@@ -50,6 +50,18 @@
   - 3戦略を本当に別ワーカーとして運用し、個別改善時の波及を最小化する。
   - 既存 `quant-m1scalper` と並行運用しても、戦略単位で差分検証できる状態を作る。
 
+### 2026-02-27（追記）M1シナリオ3戦略を既存M1と同時運用で有効化
+
+- 背景:
+  - ユーザー指定で「既存を止めず、全ユニット起動」を優先。
+  - 直前は新規3戦略 unit を standby（disabled/inactive）で保持していた。
+- 変更:
+  - `ops/env/quant-scalp-{trend-breakout,pullback-continuation,failed-break-reverse}.env` の `M1SCALP_ENABLED=1` を確定。
+  - VM で対象6 unit（ENTRY/EXIT）を `enable --now`。
+  - 既存 `quant-m1scalper.service` / `quant-m1scalper-exit.service` は継続稼働のまま維持。
+- 意図:
+  - 運用停止を入れずに、分離戦略の同時稼働データを即時取得する。
+
 ### 2026-02-27（追記）全体監査で B/C を再圧縮し、Wick/Extrema へ再配分（service timeout 再劣化も補正）
 
 - 背景（VM実測, UTC 2026-02-27 05:35 時点）:
