@@ -57,7 +57,8 @@ Failure Cause:
 
 Improvement:
 1. M1系4ワーカー（既存M1 + 分離3戦略）を `M1SCALP_MAX_SPREAD_PIPS=1.00` に統一。
-2. 既存 `quant-m1scalper.env` に spread 上限を明示し、暗黙 default 依存を排除。
+2. 分離3戦略に `spread_guard_max_pips=1.00` を追加し、`spread_monitor` 側のガード閾値も同一化。
+3. 既存 `quant-m1scalper.env` に spread 上限を明示し、暗黙 default 依存を排除。
 
 Verification:
 1. VM反映後に `printenv/EnvironmentFile` と `journalctl` で実効 spread 上限を確認。

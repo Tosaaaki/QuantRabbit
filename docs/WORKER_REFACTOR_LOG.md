@@ -17,6 +17,7 @@
   - `ops/env/quant-scalp-trend-breakout.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00`
   - `ops/env/quant-scalp-pullback-continuation.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00`
   - `ops/env/quant-scalp-failed-break-reverse.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00`
+  - 分離3ワーカーに `spread_guard_max_pips=1.00` を追加（`spread_monitor` 側上限も統一）
   - `ops/env/quant-m1scalper.env`: `M1SCALP_MAX_SPREAD_PIPS=1.00` を明示追加
 - 意図:
   - M1系の spread 判定を一律化し、設定ばらつきでの機会損失を防ぐ。
