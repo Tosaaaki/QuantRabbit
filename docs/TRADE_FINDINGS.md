@@ -95,6 +95,51 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:20 UTC / 2026-02-27 10:20 JST - B/C 方向精度リセット（sell固定解除 + 低確率遮断強化）
+Period:
+- 直近24h（`close_time >= now-24h`）
+- post-check（`close_time >= 2026-02-27T00:36:34Z`）
+- Source: VM `/home/tossaki/QuantRabbit/logs/orders.db`, `/home/tossaki/QuantRabbit/logs/trades.db`
+
+Fact:
+- post-check で `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` は実質 `sell` のみ。
+  - `B sell: 27 trades / acc 37.0% / -11.8 pips`
+  - `C sell: 22 trades / acc 40.9% / -10.3 pips`
+- 24h の `entry_probability` 帯別では、低確率帯が大量通過して負け寄与。
+  - `B [0.55,0.60): 57 trades / acc 40.4% / -46.4 pips`
+  - `C [0.00,0.55): 185 trades / acc 38.4% / -129.9 pips`
+  - `C [0.55,0.60): 38 trades / acc 28.9% / -56.2 pips`
+- 稼働中プロセス環境（`/proc/<pid>/environ`）で
+  `SCALP_PING_5S_{B,C}_SIDE_FILTER=sell`,
+  `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` が
+  `B=0.48 / C=0.46` だった。
+
+Failure Cause:
+1. B/C の side が `sell` 固定になっており、方向選択の自由度を失っていた。
+2. `REJECT_UNDER` が緩く、低 edge の entry が継続通過していた。
+3. `entry_leading_profile` が無効で、strategy_entry 側の追加フィルタが働いていなかった。
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+   - `SIDE_FILTER=none`
+   - `ALLOW_NO_SIDE_FILTER=1`
+2. 低確率遮断を引き上げ
+   - `B: ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...=0.64`
+   - `C: ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER...=0.62`
+   - 反映先を `scalp_ping_5s_{b,c}.env` と `quant-order-manager.env` の両方で同値化
+3. strategy_entry の追加ゲート有効化
+   - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_ENABLED=1`
+   - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_ENABLED=1`
+   - `REJECT_BELOW` を B/C で引き上げ（B: `0.64/0.70`, C: `0.62/0.68`）
+
+Verification:
+1. VM反映後に `/proc/<pid>/environ` で上記キーが新値へ更新されていること。
+2. `orders.db` の `entry_probability_reject` 件数が増え、`probability_scaled` の低帯通過が減ること。
+3. post-check で `buy/sell` の両方向が再出現し、B/C の方向一致率が `>50%` へ回復すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:12 UTC / 2026-02-27 10:12 JST - WickBlendを`StageTracker`初期化失敗時も継続稼働に変更
 Period:
 - VM実測: `2026-02-27 00:59 UTC` で `quant-scalp-wick-reversal-blend.service` が再停止

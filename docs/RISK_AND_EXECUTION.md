@@ -76,6 +76,27 @@
   - `quant-v2-runtime` 側の `FORECAST_GATE_*_SCALP_PING_5S_{B,C}_LIVE` もしきい値を同値化し、
     worker runtime と order-manager preflight の判定差を縮小。
 
+### B/C 方向精度リセット（2026-02-27）
+- 背景（VM実測）:
+  - post-check で B/C 約定が `sell` 偏重となり、方向一致率が 50% を下回った。
+  - `entry_probability` 低帯の通過が継続し、B/C の pips がマイナス寄与。
+- 反映先:
+  - `ops/env/scalp_ping_5s_b.env`
+  - `ops/env/scalp_ping_5s_c.env`
+  - `ops/env/quant-order-manager.env`
+  - `systemd/quant-scalp-ping-5s-b.service`
+- 変更要点:
+  - `SCALP_PING_5S_{B,C}_SIDE_FILTER=none`
+  - `SCALP_PING_5S_{B,C}_ALLOW_NO_SIDE_FILTER=1`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` を
+    `B=0.64`, `C=0.62` へ引き上げ
+  - `SCALP_PING_5S_{B,C}_ENTRY_LEADING_PROFILE_ENABLED=1`
+  - leading profile の `REJECT_BELOW` を
+    `B=0.64/0.70(short)`, `C=0.62/0.68(short)` へ引き上げ
+- 運用意図:
+  - side固定を解除して方向選択を戦略ローカル判定へ戻す。
+  - 低 edge エントリーは preserve-intent と leading profile の二段で遮断する。
+
 ### B/C 負け筋遮断（2026-02-26 追加）
 - 14日集計で `scalp_ping_5s_b_live` と `scalp_ping_5s_c_live` の赤字継続を確認し、
   全時間稼働を中止して「勝っている条件のみ稼働」へ変更。

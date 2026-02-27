@@ -8366,3 +8366,41 @@
   - 方向精度を優先して B/C の売り方向ガードを固定。
   - `MIN_UNITS_RESCUE` は維持し、厳格 side filter 下でも
     `units_below_min` によるシグナル消失を抑制する。
+
+### 2026-02-27（追記）B/C の sell 固定を解除し、確率ゲートを再強化
+
+- 背景（VM実測, UTC 2026-02-27 01:20 前後）:
+  - post-check（`2026-02-27T00:36:34Z` 以降）で B/C の約定はほぼ `sell` 側のみ。
+    - `B sell: 27 trades / acc 37.0% / -11.8 pips`
+    - `C sell: 22 trades / acc 40.9% / -10.3 pips`
+  - `orders.db` 24h 集計で低 `entry_probability` 帯の通過が継続し、負け寄与が集中。
+  - 稼働プロセス環境で
+    `SCALP_PING_5S_{B,C}_SIDE_FILTER=sell`,
+    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` が
+    `B=0.48 / C=0.46` だった。
+
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_FILTER=none`
+    - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
+    - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.64`
+    - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.70`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_SIDE_FILTER=none`
+    - `SCALP_PING_5S_C_ALLOW_NO_SIDE_FILTER=1`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.62`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.62`
+    - `SCALP_PING_5S_C_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.68`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.62`
+  - `systemd/quant-scalp-ping-5s-b.service`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.64`
+      へ同値化（envとの不整合防止）。
+
+- 意図:
+  - side固定による方向ミスマッチを解消し、戦略ローカル判定へ方向選択を戻す。
+  - 低確率帯の通過を機械的に削り、B/C のエントリー精度を先に回復させる。
