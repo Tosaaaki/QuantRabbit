@@ -8964,3 +8964,42 @@
 - 検証:
   - `run.app` の `/dashboard?tab=history` HTML を直接確認し、`tab-history` セクションの
     wrapper class が `table-wrap table-wrap-scroll` であることを検証。
+
+### 2026-02-27（追記）V2発注/EXIT 安全化（entry-intent必須化 + duplicate CID再採番 + exit failopen）
+- 目的:
+  - `entry_thesis` 欠損由来の低品質エントリーを遮断し、発注意図の監査一貫性を回復する。
+  - `CLIENT_TRADE_ID_ALREADY_EXISTS` の連鎖で再拒否が続く経路を、再採番リトライで自己回復させる。
+  - `strategy_control_exit_disabled` が連続した際の EXIT 詰まりを、緊急時のみ fail-open で解消する。
+- 仮説:
+  - VM実測で `strategy_control_exit_disabled` と duplicate CID が収益悪化/強制クローズの直接要因になっている。
+  - order_manager で preflight ガードを追加すれば、戦略意図を変えずに事故系 reject を減らせる。
+- 変更ファイル:
+  - `execution/order_manager.py`
+    - `_entry_probability_value` の不正候補処理を修正（未定義変数参照防止）。
+    - 非 manual / 非 reduce-only の entry に `entry_intent_guard` を追加。
+      - `strategy_tag` / `entry_units_intent` / `entry_probability` 欠損を `entry_intent_guard_reject` で拒否。
+    - `CLIENT_TRADE_ID_ALREADY_EXISTS` 発生時:
+      - 既存 filled の逆引き復元を継続。
+      - 復元不可時は client id を再採番して再送（market/limit 両経路）。
+    - reject ログへ `request_payload` を必須付与し、原因追跡を可能化。
+    - `strategy_control_exit_disabled` 連続時の fail-open 判定を追加
+      - 既定は emergency 条件付きのみ。
+      - close 成功/benign success 時に連続ブロック状態をクリア。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_client_order_id` に `monotonic_ns` nonce を導入して同ms衝突耐性を強化。
+  - `ops/env/quant-v2-runtime.env`
+    - entry-intent 必須ガードと strategy-control exit fail-open 関連キーを明示追加。
+  - テスト:
+    - `tests/execution/test_order_manager_log_retry.py`
+    - `tests/execution/test_order_manager_exit_policy.py`
+    - `tests/workers/test_scalp_ping_5s_worker.py`
+- 影響範囲:
+  - V2 の order/close preflight と `scalp_ping_5s` の CID 生成に限定。
+  - 戦略ロジック（シグナル方向・forecast/brain/pattern gate 判定式）は非変更。
+- 検証:
+  - 追加テストで以下を回帰確認:
+    - `entry_probability` 非数値時の安全処理
+    - entry-intent 必須ガードの reject
+    - duplicate CID 再採番リトライ（limit path）
+    - strategy_control exit fail-open 条件分岐
+    - `scalp_ping_5s` CID 同ms重複回避

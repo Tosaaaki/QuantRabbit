@@ -1558,3 +1558,35 @@
 - `ORDER_DB_BUSY_TIMEOUT_MS` は strategy 間での不要な乖離を避けるため、
   `scalp_ping_5s_{b,c,d}.env` を `1500ms` に統一する。
 - 本変更は preflight 判定ロジックの変更ではなく、runtime 環境の整合性維持を目的とする。
+
+### entry-intent 必須ガード + duplicate CID 再採番 + strategy-control EXIT fail-open（2026-02-27 追記）
+- 背景:
+  - VM実測で `strategy_control_exit_disabled` の連続 reject と
+    `CLIENT_TRADE_ID_ALREADY_EXISTS` の連鎖が同時発生し、保有解消遅延と reject ループを招いた。
+  - 一部経路で `entry_thesis` の必須意図項目が欠損しても order-manager が通していた。
+- 実装:
+  - `execution/order_manager.py`:
+    - `entry_intent_guard` を market/limit preflight に追加。
+      - 非 `manual` かつ非 `reduce_only` で、
+        `strategy_tag` / `entry_units_intent` / `entry_probability` 欠損時は
+        `entry_intent_guard_reject` として拒否。
+    - `CLIENT_TRADE_ID_ALREADY_EXISTS` 時の挙動を強化:
+      - 既存 filled 逆引きで復元不可の場合は、`build_client_order_id(...)` で CID を再採番して再送。
+      - `duplicate_client_id_retry` を orders 監査ログに記録。
+    - reject ログに `request_payload` を付与し、`attempt` 毎の再現性を確保。
+    - close preflight に strategy-control fail-open 判定を追加:
+      - `strategy_control_exit_disabled` 連続時に、既定では emergency 条件を満たした場合のみ bypass。
+      - bypass 状態は `close_bypassed_strategy_control` メトリクスで監査。
+- 主要 ENV キー:
+  - `ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS=1`
+  - `ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY=1`
+  - `ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY=1`
+  - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED=1`
+  - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD=6`
+  - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC=90`
+  - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC=300`
+  - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY=1`
+- 運用意図:
+  - 戦略意図を order-manager が上書きせずに必須性のみ検証し、欠損トレードを入口で止める。
+  - duplicate CID を自己回復させ、timeout/retry由来の reject 連鎖を短絡する。
+  - strategy-control の誤設定や滞留時でも、緊急局面では EXIT 側を先に通す。

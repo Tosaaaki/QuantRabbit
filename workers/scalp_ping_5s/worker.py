@@ -5264,14 +5264,15 @@ def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
 
 def _client_order_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
+    nonce_ns = time.monotonic_ns()
     tag = str(config.STRATEGY_TAG or "scalp_ping_5s").strip() or "scalp_ping_5s"
     sanitized_tag = "".join(
         ch.lower() for ch in tag if (ch.isalnum() or ch in {"-", "_"})
     )
     sanitized_tag = sanitized_tag[:24] or "scalp_ping_5s"
     digest = hashlib.sha1(
-        f"{sanitized_tag}-{side}-{ts_ms}".encode("utf-8")
-    ).hexdigest()[:8]
+        f"{sanitized_tag}-{side}-{ts_ms}-{nonce_ns}".encode("utf-8")
+    ).hexdigest()[:10]
     return f"qr-{ts_ms}-{sanitized_tag}-{side[0]}{digest}"
 
 

@@ -412,3 +412,131 @@ def test_limit_order_allows_net_reducing_under_side_cap(monkeypatch) -> None:
     assert order_id == "OID-SIDECAP-1"
     assert "margin_usage_projected_cap" not in statuses
     assert "margin_usage_exceeds_cap" not in statuses
+
+
+def test_entry_probability_value_returns_none_when_candidates_are_non_numeric() -> None:
+    prob = order_manager._entry_probability_value(
+        confidence=None,
+        entry_thesis={"entry_probability": "nan-text", "confidence": object()},
+    )
+    assert prob is None
+
+
+def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch) -> None:
+    async def _unexpected_service_call(_path: str, _payload: dict) -> None:
+        raise AssertionError("service should not be called when entry intent guard rejects")
+
+    statuses: list[str] = []
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS", True)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY", True)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
+    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=1200,
+            sl_price=None,
+            tp_price=155.2,
+            pocket="scalp_fast",
+            client_order_id="cid-entry-intent-guard",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={"entry_units_intent": 1200},
+            confidence=None,
+        )
+    )
+
+    assert ticket is None
+    assert "entry_intent_guard_reject" in statuses
+
+
+def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    submit_client_ids: list[str] = []
+    statuses: list[str] = []
+
+    def _fake_api_request(endpoint) -> None:
+        submit_client_ids.append(str(endpoint.data["order"]["clientExtensions"].get("id") or ""))
+        if len(submit_client_ids) == 1:
+            endpoint.response = {
+                "orderRejectTransaction": {
+                    "rejectReason": "CLIENT_TRADE_ID_ALREADY_EXISTS",
+                    "errorCode": "CLIENT_TRADE_ID_ALREADY_EXISTS",
+                    "errorMessage": "duplicate client id",
+                }
+            }
+            return
+        endpoint.response = {
+            "orderCreateTransaction": {"id": "OID-DUP-2"},
+        }
+
+    monkeypatch.setenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2")
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (1000, None))
+    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager,
+        "_augment_entry_thesis_policy_generation",
+        lambda thesis, reduce_only=False: thesis,
+    )
+    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+    monkeypatch.setattr(order_manager, "_is_passive_price", lambda **_k: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_fetch_quote_with_retry",
+        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+    )
+    monkeypatch.setattr(order_manager, "_latest_filled_trade_id_by_client_id", lambda _cid: None)
+    monkeypatch.setattr(
+        order_manager,
+        "_rotate_client_order_id",
+        lambda _cid, *, pocket, strategy_tag: f"qr-rotated-{pocket}-{strategy_tag}",
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
+    monkeypatch.setattr("utils.oanda_account.get_account_snapshot", lambda cache_ttl_sec=1.0: _LimitSnapshot())
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+
+    trade_id, order_id = asyncio.run(
+        order_manager.limit_order(
+            instrument="USD_JPY",
+            units=1000,
+            price=150.000,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp",
+            client_order_id="cid-limit-dup-retry",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 1000,
+            },
+            confidence=88,
+        )
+    )
+
+    assert trade_id is None
+    assert order_id == "OID-DUP-2"
+    assert len(submit_client_ids) == 2
+    assert submit_client_ids[0] == "cid-limit-dup-retry"
+    assert submit_client_ids[1] != submit_client_ids[0]
+    assert submit_client_ids[1].startswith("qr-rotated-scalp-")
+    assert "duplicate_client_id_retry" in statuses

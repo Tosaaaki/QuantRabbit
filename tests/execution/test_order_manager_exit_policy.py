@@ -7,6 +7,7 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import execution.order_manager as order_manager
 from execution.order_manager import _neg_exit_decision
 
 
@@ -113,3 +114,59 @@ def test_neg_exit_policy_wildcard_allows_when_reason_missing() -> None:
     )
     assert near_be is False
     assert allowed is True
+
+
+def test_strategy_control_exit_failopen_threshold_path(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD", 3)
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC", 60.0)
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY", False)
+
+    assert (
+        order_manager._strategy_control_exit_failopen_reason(
+            block_count=2,
+            block_age_sec=90.0,
+            emergency_allow=False,
+        )
+        is None
+    )
+    assert (
+        order_manager._strategy_control_exit_failopen_reason(
+            block_count=3,
+            block_age_sec=10.0,
+            emergency_allow=False,
+        )
+        is None
+    )
+    assert (
+        order_manager._strategy_control_exit_failopen_reason(
+            block_count=3,
+            block_age_sec=90.0,
+            emergency_allow=False,
+        )
+        == "strategy_control_exit_failopen_threshold"
+    )
+
+
+def test_strategy_control_exit_failopen_emergency_only(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD", 2)
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC", 30.0)
+    monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY", True)
+
+    assert (
+        order_manager._strategy_control_exit_failopen_reason(
+            block_count=2,
+            block_age_sec=45.0,
+            emergency_allow=False,
+        )
+        is None
+    )
+    assert (
+        order_manager._strategy_control_exit_failopen_reason(
+            block_count=2,
+            block_age_sec=45.0,
+            emergency_allow=True,
+        )
+        == "strategy_control_exit_failopen_emergency"
+    )

@@ -126,6 +126,40 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 14:20 UTC / 2026-02-27 23:20 JST - duplicate CID + exit disable 連鎖の実装対策（order_manager）
+Period:
+- Analysis window: `2026-02-20` ～ `2026-02-27`
+- Source: VM `orders.db`, `trades.db`, `strategy_control.db`
+
+Fact:
+- `strategy_control_exit_disabled` が短時間に集中し、同一 trade/client で close reject が連鎖。
+- `CLIENT_TRADE_ID_ALREADY_EXISTS` が多発し、filled 復元不能時に同一CID再送の再拒否ループが残っていた。
+- `entry_probability` が欠損/不正な entry_thesis 経路でも、order-manager 側で reject せず通る余地があった。
+
+Failure Cause:
+1. close preflight で `strategy_control` 拒否が続くと、緊急状態でも fail-open 経路が無かった。
+2. duplicate CID reject 時、filled 復元不可のケースで CID を更新せず次の reject を誘発。
+3. `entry_thesis` の必須意図項目（`entry_probability`, `entry_units_intent`, `strategy_tag`）の order-manager 側検証が弱い。
+
+Improvement:
+1. `order_manager.close_trade` に連続ブロック監視 + emergency fail-open 条件を追加。
+2. market/limit の duplicate CID reject で再採番リトライを追加（filled復元不可時）。
+3. entry-intent guard を追加し、必須項目欠損を `entry_intent_guard_reject` で拒否。
+4. reject ログへ `request_payload` を必須付与して追跡精度を上げた。
+
+Verification:
+1. ユニットテスト:
+   - `tests/execution/test_order_manager_log_retry.py`
+   - `tests/execution/test_order_manager_exit_policy.py`
+   - `tests/workers/test_scalp_ping_5s_worker.py`
+2. 反映後VM監査（予定）:
+   - `orders.status='strategy_control_exit_disabled'` と `close_bypassed_strategy_control` の推移
+   - `orders.status='rejected' and error_code='CLIENT_TRADE_ID_ALREADY_EXISTS'` の再発率
+   - `orders.status='entry_intent_guard_reject'` の戦略別件数
+
+Status:
+- in_progress
+
 ## 2026-02-27 07:33 UTC / 2026-02-27 16:33 JST - `scalp_ping_5s_b_live` の `close_reject_no_negative` 連発停止
 Period:
 - 24h: `datetime(ts) >= datetime('now','-24 hours')`

@@ -1042,6 +1042,91 @@ def _reject_exit_by_control(
     return not strategy_control.can_exit(strategy_tag, default=True)
 
 
+def _strategy_control_exit_block_key(
+    *,
+    strategy_tag: Optional[str],
+    client_order_id: Optional[str],
+    trade_id: Optional[str],
+) -> str:
+    strategy = str(strategy_tag or "").strip().lower() or "unknown"
+    client = str(client_order_id or "").strip().lower()
+    trade = str(trade_id or "").strip().lower()
+    if client:
+        return f"{strategy}:{client}"
+    if trade:
+        return f"{strategy}:trade:{trade}"
+    return strategy
+
+
+def _register_strategy_control_exit_block(
+    *,
+    strategy_tag: Optional[str],
+    client_order_id: Optional[str],
+    trade_id: Optional[str],
+) -> dict[str, float | int | str]:
+    now = time.monotonic()
+    key = _strategy_control_exit_block_key(
+        strategy_tag=strategy_tag,
+        client_order_id=client_order_id,
+        trade_id=trade_id,
+    )
+    with _STRATEGY_CONTROL_EXIT_BLOCKS_LOCK:
+        first_seen, last_seen, count = _STRATEGY_CONTROL_EXIT_BLOCKS.get(key, (now, now, 0))
+        if now - last_seen > _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC:
+            first_seen, count = now, 0
+        count += 1
+        _STRATEGY_CONTROL_EXIT_BLOCKS[key] = (first_seen, now, count)
+        if len(_STRATEGY_CONTROL_EXIT_BLOCKS) > 4096:
+            expired_keys = [
+                item_key
+                for item_key, (_first, item_last, _count) in _STRATEGY_CONTROL_EXIT_BLOCKS.items()
+                if now - item_last > _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC
+            ]
+            for item_key in expired_keys[:2048]:
+                _STRATEGY_CONTROL_EXIT_BLOCKS.pop(item_key, None)
+    return {
+        "key": key,
+        "count": int(count),
+        "first_seen_sec": float(first_seen),
+        "last_seen_sec": float(now),
+        "age_sec": max(0.0, float(now - first_seen)),
+    }
+
+
+def _clear_strategy_control_exit_block(
+    *,
+    strategy_tag: Optional[str],
+    client_order_id: Optional[str],
+    trade_id: Optional[str],
+) -> None:
+    key = _strategy_control_exit_block_key(
+        strategy_tag=strategy_tag,
+        client_order_id=client_order_id,
+        trade_id=trade_id,
+    )
+    with _STRATEGY_CONTROL_EXIT_BLOCKS_LOCK:
+        _STRATEGY_CONTROL_EXIT_BLOCKS.pop(key, None)
+
+
+def _strategy_control_exit_failopen_reason(
+    *,
+    block_count: int,
+    block_age_sec: float,
+    emergency_allow: bool,
+) -> Optional[str]:
+    if not _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED:
+        return None
+    if block_count < _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD:
+        return None
+    if block_age_sec < _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC:
+        return None
+    if _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY and not emergency_allow:
+        return None
+    if emergency_allow:
+        return "strategy_control_exit_failopen_emergency"
+    return "strategy_control_exit_failopen_threshold"
+
+
 def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> bool:
     reason_key = str(exit_reason).strip().lower() if exit_reason else ""
     if not reason_key:
@@ -2333,6 +2418,26 @@ _EXIT_EMERGENCY_CACHE_TTL_SEC = max(
     0.5, float(os.getenv("EXIT_EMERGENCY_CACHE_TTL_SEC", "2.0"))
 )
 _LAST_EMERGENCY_LOG_TS: float = 0.0
+_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED = _env_bool(
+    "ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED", True
+)
+_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC = max(
+    1.0,
+    float(os.getenv("ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC", "90.0")),
+)
+_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC = max(
+    _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC,
+    float(os.getenv("ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC", "300.0")),
+)
+_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD = max(
+    1,
+    int(float(os.getenv("ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD", "6"))),
+)
+_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY = _env_bool(
+    "ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY", True
+)
+_STRATEGY_CONTROL_EXIT_BLOCKS_LOCK = threading.Lock()
+_STRATEGY_CONTROL_EXIT_BLOCKS: dict[str, tuple[float, float, int]] = {}
 
 _DYNAMIC_SL_ENABLE = os.getenv("ORDER_DYNAMIC_SL_ENABLE", "true").lower() in {
     "1",
@@ -2368,6 +2473,15 @@ _ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE = _env_float(
 )
 _ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY = _env_float(
     "ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY", 0.80
+)
+_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS = _env_bool(
+    "ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS", True
+)
+_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY = _env_bool(
+    "ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY", True
+)
+_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY = _env_bool(
+    "ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True
 )
 
 
@@ -3460,8 +3574,8 @@ def _entry_probability_value(
             return 0.0
         if prob <= 1.0:
             return min(1.0, max(0.0, prob))
-    if prob <= 100.0:
-        return min(1.0, max(0.0, prob / 100.0))
+        if prob <= 100.0:
+            return min(1.0, max(0.0, prob / 100.0))
     return None
 
 
@@ -3898,6 +4012,35 @@ def _ensure_entry_intent_payload(
             thesis["entry_probability"] = prob
 
     return thesis
+
+
+def _entry_intent_guard_reason(
+    *,
+    pocket: Optional[str],
+    reduce_only: bool,
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    entry_probability: Optional[float],
+) -> Optional[str]:
+    if reduce_only:
+        return None
+    if str(pocket or "").strip().lower() == "manual":
+        return None
+
+    if _ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY and not str(strategy_tag or "").strip():
+        return "missing_strategy_tag"
+
+    if _ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS:
+        if not isinstance(entry_thesis, dict):
+            return "missing_entry_thesis"
+        units_intent = _as_float(entry_thesis.get("entry_units_intent"), None)
+        if units_intent is None or abs(float(units_intent)) < 1.0:
+            return "missing_entry_units_intent"
+
+    if _ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY and entry_probability is None:
+        return "missing_entry_probability"
+
+    return None
 
 
 def _entry_market_snapshot(
@@ -5181,6 +5324,27 @@ def _latest_filled_trade_id_by_client_id(client_order_id: Optional[str]) -> Opti
         return None
     trade_id = _extract_trade_id(parsed_cached)
     return str(trade_id) if trade_id else None
+
+
+def _rotate_client_order_id(
+    current_client_order_id: Optional[str],
+    *,
+    pocket: Optional[str],
+    strategy_tag: Optional[str],
+) -> Optional[str]:
+    current = str(current_client_order_id or "").strip()
+    if not current:
+        return current_client_order_id
+    focus_tag = str(pocket or "retry").strip().lower()[:6] or "retry"
+    resolved_strategy = (
+        str(strategy_tag or "").strip()
+        or _strategy_tag_from_client_id(current)
+        or "order"
+    )
+    rotated = build_client_order_id(focus_tag, resolved_strategy)
+    if rotated == current:
+        rotated = f"{rotated}-r"
+    return rotated
 
 
 def _order_status_trade_id(order_status: Optional[dict[str, object]]) -> Optional[str]:
@@ -6472,42 +6636,103 @@ async def close_trade(
     if not strategy_tag:
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
 
-    if _reject_exit_by_control(strategy_tag, pocket=str(pocket or "")):
-        note = "strategy_control_exit_disabled"
-        _console_order_log(
-            "CLOSE_REJECT",
-            pocket=pocket,
-            strategy_tag=strategy_tag,
-            side=None,
-            units=units,
-            sl_price=None,
-            tp_price=None,
-            client_order_id=client_order_id,
-            ticket_id=str(trade_id),
-            note=note,
-        )
-        _log_close_order(
-            pocket=pocket,
-            instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
-            side=None,
-            units=units,
-            sl_price=None,
-            tp_price=None,
-            client_order_id=client_order_id,
-            status=note,
-            attempt=0,
-            ticket_id=str(trade_id),
-            executed_price=None,
-            request_payload={"trade_id": str(trade_id), "strategy_tag": strategy_tag},
-        )
-        log_metric(
-            "close_blocked_by_strategy_control",
-            1.0,
-            tags={"pocket": str(pocket or "unknown"), "strategy": str(strategy_tag or "unknown"), "action": "exit"},
-        )
-        return False
-
     emergency_allow: Optional[bool] = None
+    if _reject_exit_by_control(strategy_tag, pocket=str(pocket or "")):
+        block_state = _register_strategy_control_exit_block(
+            strategy_tag=strategy_tag,
+            client_order_id=client_order_id,
+            trade_id=str(trade_id),
+        )
+        emergency_allow = _should_allow_negative_close(client_order_id)
+        failopen_reason = _strategy_control_exit_failopen_reason(
+            block_count=int(block_state.get("count") or 0),
+            block_age_sec=float(block_state.get("age_sec") or 0.0),
+            emergency_allow=bool(emergency_allow),
+        )
+        if failopen_reason:
+            _console_order_log(
+                "CLOSE_BYPASS",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note=failopen_reason,
+            )
+            _log_close_order(
+                pocket=pocket,
+                instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status=failopen_reason,
+                attempt=0,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                request_payload={
+                    "trade_id": str(trade_id),
+                    "strategy_tag": strategy_tag,
+                    "block_state": block_state,
+                },
+            )
+            log_metric(
+                "close_bypassed_strategy_control",
+                1.0,
+                tags={
+                    "pocket": str(pocket or "unknown"),
+                    "strategy": str(strategy_tag or "unknown"),
+                    "action": "exit",
+                    "reason": failopen_reason,
+                },
+            )
+        else:
+            note = "strategy_control_exit_disabled"
+            _console_order_log(
+                "CLOSE_REJECT",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note=note,
+            )
+            _log_close_order(
+                pocket=pocket,
+                instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status=note,
+                attempt=0,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                request_payload={
+                    "trade_id": str(trade_id),
+                    "strategy_tag": strategy_tag,
+                    "block_state": block_state,
+                },
+            )
+            log_metric(
+                "close_blocked_by_strategy_control",
+                1.0,
+                tags={
+                    "pocket": str(pocket or "unknown"),
+                    "strategy": str(strategy_tag or "unknown"),
+                    "action": "exit",
+                },
+            )
+            return False
+
     entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
     units_ctx = int((ctx or {}).get("units") or 0)
     instrument = (ctx or {}).get("instrument") if isinstance(ctx, dict) else None
@@ -6908,12 +7133,22 @@ async def close_trade(
     else:
         rounded_units = int(units)
         if rounded_units == 0:
+            _clear_strategy_control_exit_block(
+                strategy_tag=strategy_tag,
+                client_order_id=client_order_id,
+                trade_id=str(trade_id),
+            )
             return True
         target_units = abs(rounded_units)
         actual_units = _current_trade_units(trade_id)
         if actual_units is not None:
             if actual_units <= 0:
                 logging.info("[ORDER] Close skipped trade=%s already flat.", trade_id)
+                _clear_strategy_control_exit_block(
+                    strategy_tag=strategy_tag,
+                    client_order_id=client_order_id,
+                    trade_id=str(trade_id),
+                )
                 return True
             if target_units > actual_units:
                 logging.info(
@@ -7088,6 +7323,11 @@ async def close_trade(
             client_order_id=client_order_id,
             ticket_id=str(trade_id),
         )
+        _clear_strategy_control_exit_block(
+            strategy_tag=strategy_tag,
+            client_order_id=client_order_id,
+            trade_id=str(trade_id),
+        )
         return True
     except V20Error as exc:
         error_payload = {}
@@ -7134,6 +7374,11 @@ async def close_trade(
         )
         if (log_error_code or "").upper() in _PARTIAL_CLOSE_RETRY_CODES:
             if _retry_close_with_actual_units(trade_id, units):
+                _clear_strategy_control_exit_block(
+                    strategy_tag=strategy_tag,
+                    client_order_id=client_order_id,
+                    trade_id=str(trade_id),
+                )
                 return True
         # OANDA returns a few variants for missing/closed trades; treat as idempotent success
         benign_missing = {
@@ -7147,6 +7392,11 @@ async def close_trade(
                 "[ORDER] Close benign rejection for trade %s (code=%s) – treating as success.",
                 trade_id,
                 error_code,
+            )
+            _clear_strategy_control_exit_block(
+                strategy_tag=strategy_tag,
+                client_order_id=client_order_id,
+                trade_id=str(trade_id),
             )
             return True
         return False
@@ -7945,6 +8195,67 @@ async def market_order(
     entry_probability = _entry_probability_value(confidence, entry_thesis)
     if not strategy_tag and isinstance(entry_thesis, dict):
         strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+    entry_intent_guard_reason = _entry_intent_guard_reason(
+        pocket=pocket,
+        reduce_only=reduce_only,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_probability=entry_probability,
+    )
+    if entry_intent_guard_reason is not None:
+        side_label = "buy" if units > 0 else "sell"
+        _console_order_log(
+            "OPEN_SKIP",
+            pocket=pocket,
+            strategy_tag=strategy_tag or "unknown",
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            note=f"entry_intent_guard:{entry_intent_guard_reason}",
+        )
+        guard_payload = {
+            "entry_intent_guard_reason": entry_intent_guard_reason,
+            "strategy_tag": strategy_tag,
+            "entry_probability": entry_probability,
+            "entry_thesis": entry_thesis,
+            "meta": meta,
+        }
+        if _should_persist_preservice_order_log():
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="entry_intent_guard_reject",
+                attempt=0,
+                request_payload=guard_payload,
+            )
+        else:
+            _cache_order_status(
+                ts=datetime.now(timezone.utc).isoformat(),
+                client_order_id=client_order_id,
+                status="entry_intent_guard_reject",
+                attempt=0,
+                side=side_label,
+                units=units,
+                error_message=entry_intent_guard_reason,
+                request_payload=guard_payload,
+            )
+        log_metric(
+            "order_entry_intent_guard_reject",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": entry_intent_guard_reason,
+            },
+        )
+        return None
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -11382,6 +11693,45 @@ async def market_order(
                             note=f"duplicate_recovered attempt={attempt+1}",
                         )
                         return duplicate_trade_id
+                    if attempt < max_submit_attempts - 1:
+                        rotated_client_order_id = _rotate_client_order_id(
+                            client_order_id,
+                            pocket=pocket,
+                            strategy_tag=strategy_tag,
+                        )
+                        if rotated_client_order_id and rotated_client_order_id != client_order_id:
+                            prev_client_order_id = client_order_id
+                            client_order_id = rotated_client_order_id
+                            order_data["order"]["clientExtensions"]["id"] = client_order_id
+                            order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
+                            logging.warning(
+                                "[ORDER] duplicate client_id retry rotate %s -> %s attempt=%d",
+                                prev_client_order_id or "-",
+                                client_order_id,
+                                attempt + 1,
+                            )
+                            log_order(
+                                pocket=pocket,
+                                instrument=instrument,
+                                side=side,
+                                units=units_to_send,
+                                sl_price=sl_price,
+                                tp_price=tp_price,
+                                client_order_id=client_order_id,
+                                status="duplicate_client_id_retry",
+                                attempt=attempt + 1,
+                                stage_index=stage_index,
+                                error_code=reject.get("errorCode"),
+                                error_message=reject.get("errorMessage") or reason,
+                                request_payload={
+                                    "reason": reason_key,
+                                    "previous_client_order_id": prev_client_order_id,
+                                    "rotated_client_order_id": client_order_id,
+                                    "attempt_payload": attempt_payload,
+                                },
+                                response_payload=response,
+                            )
+                            continue
                 logging.error(
                     "OANDA order rejected (attempt %d) pocket=%s units=%s reason=%s",
                     attempt + 1,
@@ -11403,6 +11753,7 @@ async def market_order(
                     stage_index=stage_index,
                     error_code=reject.get("errorCode"),
                     error_message=reject.get("errorMessage") or reason,
+                    request_payload=attempt_payload,
                     response_payload=response,
                 )
                 log_metric(
@@ -11855,6 +12206,54 @@ async def limit_order(
         entry_thesis=entry_thesis,
     )
     entry_probability = _entry_probability_value(confidence, entry_thesis)
+    entry_intent_guard_reason = _entry_intent_guard_reason(
+        pocket=pocket,
+        reduce_only=reduce_only,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_probability=entry_probability,
+    )
+    if entry_intent_guard_reason is not None:
+        side_label = "buy" if units > 0 else "sell"
+        _console_order_log(
+            "OPEN_SKIP",
+            pocket=pocket,
+            strategy_tag=strategy_tag or "unknown",
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            note=f"entry_intent_guard:{entry_intent_guard_reason}",
+        )
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="entry_intent_guard_reject",
+            attempt=0,
+            request_payload={
+                "entry_intent_guard_reason": entry_intent_guard_reason,
+                "strategy_tag": strategy_tag,
+                "entry_probability": entry_probability,
+                "entry_thesis": entry_thesis,
+                "meta": meta,
+            },
+        )
+        log_metric(
+            "order_entry_intent_guard_reject",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": entry_intent_guard_reason,
+            },
+        )
+        return None, None
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -12799,6 +13198,76 @@ async def limit_order(
             )
             reason_key_upper = str(reason or "").upper() or "REJECTED"
             reason_key = reason_key_upper.lower()
+            if reason_key_upper == "CLIENT_TRADE_ID_ALREADY_EXISTS":
+                duplicate_trade_id = _latest_filled_trade_id_by_client_id(client_order_id)
+                if duplicate_trade_id:
+                    _log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="duplicate_recovered",
+                        attempt=attempt + 1,
+                        ticket_id=duplicate_trade_id,
+                        error_code=reject.get("errorCode"),
+                        error_message=reject.get("errorMessage") or reason,
+                        request_payload=attempt_payload,
+                        response_payload=response,
+                    )
+                    log_metric(
+                        "order_success_rate",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                            "reason": "duplicate_recovered",
+                        },
+                    )
+                    log_metric(
+                        "reject_rate",
+                        0.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                            "reason": "duplicate_recovered",
+                        },
+                    )
+                    return duplicate_trade_id, None
+                if attempt < max_submit_attempts - 1:
+                    rotated_client_order_id = _rotate_client_order_id(
+                        client_order_id,
+                        pocket=pocket,
+                        strategy_tag=strategy_tag,
+                    )
+                    if rotated_client_order_id and rotated_client_order_id != client_order_id:
+                        prev_client_order_id = client_order_id
+                        client_order_id = rotated_client_order_id
+                        payload["order"]["clientExtensions"]["id"] = client_order_id
+                        payload["order"]["tradeClientExtensions"]["id"] = client_order_id
+                        _log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status="duplicate_client_id_retry",
+                            attempt=attempt + 1,
+                            error_code=reject.get("errorCode"),
+                            error_message=reject.get("errorMessage") or reason,
+                            request_payload={
+                                "reason": reason_key_upper,
+                                "previous_client_order_id": prev_client_order_id,
+                                "rotated_client_order_id": client_order_id,
+                                "attempt_payload": attempt_payload,
+                            },
+                            response_payload=response,
+                        )
+                        continue
             logging.error("[ORDER] Limit order rejected: %s", reason)
             _log_order(
                 pocket=pocket,
@@ -12812,6 +13281,7 @@ async def limit_order(
                 attempt=attempt + 1,
                 error_code=reject.get("errorCode"),
                 error_message=reject.get("errorMessage") or reason,
+                request_payload=attempt_payload,
                 response_payload=response,
             )
             log_metric(

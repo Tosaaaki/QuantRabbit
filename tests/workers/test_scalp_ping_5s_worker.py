@@ -69,6 +69,23 @@ def test_build_tick_signal_detects_long(monkeypatch) -> None:
     assert sig.confidence >= worker.config.CONFIDENCE_FLOOR
 
 
+def test_client_order_id_is_unique_with_same_millisecond(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    mono_values = iter([101, 102])
+
+    monkeypatch.setattr(worker.time, "time", lambda: 1_700_000_000.123)
+    monkeypatch.setattr(worker.time, "monotonic_ns", lambda: next(mono_values))
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_b_live")
+
+    cid1 = worker._client_order_id("long")
+    cid2 = worker._client_order_id("long")
+
+    assert cid1 != cid2
+    assert cid1.startswith("qr-")
+    assert cid2.startswith("qr-")
+
+
 def test_is_spread_stale_block_detects_state_stale() -> None:
     from workers.scalp_ping_5s import worker
 
