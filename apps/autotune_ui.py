@@ -2028,6 +2028,73 @@ def _hourly_trades_is_usable(payload: Any, *, reference_now: Optional[datetime] 
     return expected_keys.issubset(actual_keys)
 
 
+def _hourly_payload_activity(payload: Any, *, reference_now: Optional[datetime] = None) -> dict[str, float | int]:
+    stats: dict[str, float | int] = {"trades": 0, "pips": 0.0, "jpy": 0.0}
+    if not isinstance(payload, dict):
+        return stats
+    rows = payload.get("hours")
+    if not isinstance(rows, list):
+        return stats
+    expected_keys = _expected_hourly_row_keys(reference_now=reference_now)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_key = _canonical_hourly_row_key(row, reference_now=reference_now)
+        if row_key not in expected_keys:
+            continue
+        trades = int(_safe_float(row.get("trades")) or 0.0)
+        stats["trades"] += max(trades, 0)
+        stats["pips"] += _safe_float(row.get("pips"))
+        stats["jpy"] += _safe_float(row.get("jpy"))
+    return stats
+
+
+def _hourly_recent_trade_activity(
+    trades: list[dict] | None,
+    *,
+    reference_now: Optional[datetime] = None,
+) -> dict[str, float | int]:
+    stats: dict[str, float | int] = {"trades": 0, "pips": 0.0, "jpy": 0.0}
+    if not trades:
+        return stats
+    anchor = _hourly_window_anchor(reference_now)
+    start_hour = anchor - timedelta(hours=_HOURLY_TRADES_LOOKBACK - 1)
+    for item in trades:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("pocket") or "").strip().lower() == "manual":
+            continue
+        close_dt = _parse_dt(item.get("close_time"))
+        if not close_dt:
+            continue
+        close_jst_hour = close_dt.astimezone(_JST).replace(minute=0, second=0, microsecond=0)
+        if close_jst_hour < start_hour or close_jst_hour > anchor:
+            continue
+        stats["trades"] += 1
+        stats["pips"] += _safe_float(item.get("pl_pips"))
+        stats["jpy"] += _safe_float(item.get("realized_pl"))
+    return stats
+
+
+def _hourly_trades_is_stale(
+    payload: Any,
+    trades: list[dict] | None,
+    *,
+    reference_now: Optional[datetime] = None,
+) -> bool:
+    if not _hourly_trades_is_usable(payload, reference_now=reference_now):
+        return True
+    snapshot_activity = _hourly_payload_activity(payload, reference_now=reference_now)
+    recent_activity = _hourly_recent_trade_activity(trades, reference_now=reference_now)
+    snapshot_empty = (
+        int(snapshot_activity.get("trades") or 0) == 0
+        and abs(_safe_float(snapshot_activity.get("pips"))) <= 0.01
+        and abs(_safe_float(snapshot_activity.get("jpy"))) <= 0.5
+    )
+    recent_has_closed = int(recent_activity.get("trades") or 0) > 0
+    return snapshot_empty and recent_has_closed
+
+
 def _load_trade_rollup_jst(reference_now: datetime) -> Optional[dict[str, float | int]]:
     if not TRADES_DB.exists():
         return None
@@ -2404,7 +2471,11 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     snapshot_ref = _parse_dt(snapshot.get("generated_at")) or now
     hourly_trades = metrics_snapshot.get("hourly_trades")
-    if _hourly_trades_is_usable(hourly_trades, reference_now=snapshot_ref):
+    if not _hourly_trades_is_stale(
+        hourly_trades,
+        trades_raw,
+        reference_now=snapshot_ref,
+    ):
         base["hourly_trades"] = hourly_trades
     else:
         base["hourly_trades"] = _build_hourly_fallback(trades_raw)

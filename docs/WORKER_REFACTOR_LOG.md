@@ -8693,13 +8693,17 @@
     - ローカル DB が無い環境（Cloud Run）向けに、snapshot `daily/weekly` が
       0 固定でも `recent_trades` から非ゼロ実績を検知した場合は
       日次/週次/前日比を再計算して 0 固定表示を回避。
+    - `hourly_trades` が「24行そろっているが全ゼロ」の stale snapshot でも、
+      `recent_trades` のクローズ実績を検知したら fallback 再集計へ切り替える
+      判定（`_hourly_trades_is_stale`）を追加。
     - `tab=architecture` の図表に `quant-order-manager` /
       `quant-position-manager` が欠けていたため、V2 実導線に沿って図を更新。
   - テスト追加/更新:
     - `tests/apps/test_autotune_ui_dashboard_local_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_fallback.py`
     - `tests/apps/test_autotune_ui_hourly_source_guard.py`
+      - 全ゼロ stale snapshot の fallback 強制ケースを追加
     - `tests/apps/test_autotune_ui_summary_consistency.py`
     - `tests/apps/test_autotune_ui_template_guards.py`
 - 検証:
-  - `pytest -q tests/apps` で `29 passed` を確認。
+  - `pytest -q tests/apps` で `30 passed` を確認。

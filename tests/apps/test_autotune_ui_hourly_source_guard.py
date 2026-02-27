@@ -32,7 +32,13 @@ def _strategy_control_stub() -> dict:
     }
 
 
-def _hourly_rows(lookback: int, *, reference_now: datetime, label: str) -> list[dict]:
+def _hourly_rows(
+    lookback: int,
+    *,
+    reference_now: datetime,
+    label: str,
+    trades: int = 1,
+) -> list[dict]:
     anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
     rows: list[dict] = []
     for i in range(lookback):
@@ -43,10 +49,10 @@ def _hourly_rows(lookback: int, *, reference_now: datetime, label: str) -> list[
                 "label": label,
                 "pips": 0.0,
                 "jpy": 0.0,
-                "trades": 1,
-                "wins": 1,
+                "trades": trades,
+                "wins": 1 if trades else 0,
                 "losses": 0,
-                "win_rate": 1.0,
+                "win_rate": 1.0 if trades else 0.0,
             }
         )
     return rows
@@ -117,3 +123,37 @@ def test_summarise_snapshot_keeps_hourly_trades_when_complete(monkeypatch):
     result = ui._summarise_snapshot(snapshot)
 
     assert result["hourly_trades"]["hours"][0]["label"] == "snapshot"
+
+
+def test_summarise_snapshot_falls_back_when_hourly_trades_is_stale_zero(monkeypatch):
+    monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
+    monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
+    monkeypatch.setattr(
+        ui,
+        "_build_hourly_fallback",
+        lambda _trades: {
+            "timezone": "JST",
+            "lookback_hours": 24,
+            "exclude_manual": True,
+            "hours": [{"label": "fallback-stale", "trades": 1}],
+        },
+    )
+
+    now = datetime.now(timezone.utc)
+    snapshot = {
+        "generated_at": now.isoformat(),
+        "recent_trades": [_trade_row()],
+        "open_positions": {},
+        "metrics": {
+            "hourly_trades": {
+                "timezone": "JST",
+                "lookback_hours": 24,
+                "exclude_manual": True,
+                "hours": _hourly_rows(24, reference_now=now, label="snapshot-zero", trades=0),
+            }
+        },
+    }
+
+    result = ui._summarise_snapshot(snapshot)
+
+    assert result["hourly_trades"]["hours"][0]["label"] == "fallback-stale"
