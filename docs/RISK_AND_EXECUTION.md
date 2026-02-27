@@ -1410,6 +1410,22 @@
 - 運用意図:
   - 停止なしで稼働を維持しつつ、B/C の損失勾配を追加で低減する。
 
+### duplicate CID 回収 + order-manager RPC詰まり緩和（2026-02-27 追記）
+- 背景:
+  - `order_manager service call failed ... Read timed out (20.0)` 後に
+    同一 `client_order_id` 再送が発生し、`CLIENT_TRADE_ID_ALREADY_EXISTS` が連鎖。
+  - `orders.db` では同一CIDに `filled` と `rejected` が並ぶケースを確認。
+- 実装:
+  - `execution/order_manager.py`
+    - `CLIENT_TRADE_ID_ALREADY_EXISTS` 発生時に同一CIDの最新 `filled` を逆引きし、
+      `trade_id` を回収できた場合は `status=duplicate_recovered` として成功返却。
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=45.0`（from `8.0`）
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_WORKERS=6`（from `4`）
+- 運用意図:
+  - timeout起点の重複CID rejectを減らし、既存約定の取りこぼしを抑制する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

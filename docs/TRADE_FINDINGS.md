@@ -81,6 +81,47 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:35 UTC / 2026-02-27 10:35 JST - order_manager timeout起点の重複CIDを回収し、エントリー取りこぼしを削減
+Period:
+- 調査窓: `2026-02-27 01:00` ～ `01:33` UTC（`10:00` ～ `10:33` JST）
+- Source: VM `journalctl`（`quant-order-manager`, `quant-scalp-ping-5s-b/c`, `quant-scalp-extrema-reversal`）, `orders.db`, `trades.db`
+
+目的:
+- `Read timed out (20s)` で service call が落ち、同一 `client_order_id` 再送から
+  `CLIENT_TRADE_ID_ALREADY_EXISTS` が連鎖する経路を解消する。
+
+仮説:
+1. 20秒RPC timeout が短く、order_manager 側で実際に約定済みでも caller が失敗扱いして再送している。
+2. 同一CIDの「filled済み」を再送側で回収できれば、reject扱いを成功に変換できる。
+
+Fact:
+- 直近30分 `orders.db` の `rejected=11` は全て `CLIENT_TRADE_ID_ALREADY_EXISTS`。
+- 同一CIDで `filled` の後に `rejected` が発生する実例を確認:
+  - `qr-1772155441497-scalp_ping_5s_c_live-l4d5f062d`
+    - `01:24:51 filled ticket=406075`
+    - `01:25:11 rejected CLIENT_TRADE_ID_ALREADY_EXISTS`
+- B/C/Extrema で `order_manager service call failed ... Read timed out. (read timeout=20.0)` を継続観測。
+
+Improvement:
+1. `execution/order_manager.py`
+   - `CLIENT_TRADE_ID_ALREADY_EXISTS` 発生時に、同一 `client_order_id` の既存 `filled` 行を `orders.db` から逆引きし、`trade_id` を回収して `duplicate_recovered` として成功返却する導線を追加。
+2. `ops/env/quant-v2-runtime.env`
+   - `ORDER_MANAGER_SERVICE_TIMEOUT=45.0`（from `8.0`）
+3. `ops/env/quant-order-manager.env`
+   - `ORDER_MANAGER_SERVICE_WORKERS=6`（from `4`）
+
+影響範囲:
+- order_manager の新規注文導線（`market_order`）のみ。
+- EXIT共通ロジックや戦略ローカル判定には非侵襲。
+
+検証手順:
+1. デプロイ後15分で `orders.db` の `status='rejected'` うち `CLIENT_TRADE_ID_ALREADY_EXISTS` 件数を前窓比較。
+2. 同一CIDに `filled + rejected` が残っても、worker側で `order_manager_none` が減ることを journal で確認。
+3. 30分窓で `scalp_ping_5s_b/c` の `realized_pl` と `filled/submit_attempt` を再集計して改善有無を確認。
+
+Status:
+- in_progress
+
 ## 2026-02-26 12:19 UTC / 2026-02-26 21:19 JST - PDCA深掘り（`perf_block` 固定化 + `orders.db` ロック + SLO劣化の重畳）
 Period:
 - 監査期間: 直近24h（`2026-02-25 12:11` ～ `2026-02-26 12:19` UTC）

@@ -5095,6 +5095,73 @@ def get_last_order_status_by_client_id(
         return _cached_order_status(client_order_id)
 
 
+def _latest_filled_trade_id_by_client_id(client_order_id: Optional[str]) -> Optional[str]:
+    """
+    Resolve a previously-filled trade id for a client order id.
+
+    This is used to recover idempotency when the caller times out, retries the
+    same client id, and OANDA returns CLIENT_TRADE_ID_ALREADY_EXISTS.
+    """
+    if not client_order_id:
+        return None
+    cid = str(client_order_id).strip()
+    if not cid:
+        return None
+
+    try:
+        con = _orders_con()
+    except Exception:
+        con = None
+
+    if con is not None:
+        try:
+            row = con.execute(
+                """
+                SELECT
+                  ticket_id,
+                  response_json
+                FROM orders
+                WHERE client_order_id = ?
+                  AND status = 'filled'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (cid,),
+            ).fetchone()
+        except Exception:
+            row = None
+        if row:
+            ticket_id, response_json = row
+            if ticket_id:
+                return str(ticket_id)
+            if response_json:
+                try:
+                    parsed = json.loads(response_json)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    trade_id = _extract_trade_id(parsed)
+                    if trade_id:
+                        return str(trade_id)
+
+    cached = _cached_order_status(cid)
+    if not isinstance(cached, dict):
+        return None
+    if str(cached.get("status") or "").lower() != "filled":
+        return None
+    response_json = cached.get("response_json")
+    if not response_json:
+        return None
+    try:
+        parsed_cached = json.loads(str(response_json))
+    except Exception:
+        return None
+    if not isinstance(parsed_cached, dict):
+        return None
+    trade_id = _extract_trade_id(parsed_cached)
+    return str(trade_id) if trade_id else None
+
+
 def _console_order_log(
     event: str,
     *,
@@ -11159,6 +11226,63 @@ async def market_order(
                     or reject.get("errorCode")
                 )
                 reason_key = str(reason or "").upper()
+                if reason_key == "CLIENT_TRADE_ID_ALREADY_EXISTS":
+                    duplicate_trade_id = _latest_filled_trade_id_by_client_id(client_order_id)
+                    if duplicate_trade_id:
+                        logging.warning(
+                            "[ORDER] duplicate client_id recovered as filled client=%s trade=%s attempt=%d",
+                            client_order_id or "-",
+                            duplicate_trade_id,
+                            attempt + 1,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side,
+                            units=units_to_send,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status="duplicate_recovered",
+                            attempt=attempt + 1,
+                            stage_index=stage_index,
+                            ticket_id=duplicate_trade_id,
+                            error_code=reject.get("errorCode"),
+                            error_message=reject.get("errorMessage") or reason,
+                            request_payload=attempt_payload,
+                            response_payload=response,
+                        )
+                        log_metric(
+                            "order_success_rate",
+                            1.0,
+                            tags={
+                                "pocket": pocket,
+                                "strategy": strategy_tag or "unknown",
+                                "reason": "duplicate_recovered",
+                            },
+                        )
+                        log_metric(
+                            "reject_rate",
+                            0.0,
+                            tags={
+                                "pocket": pocket,
+                                "strategy": strategy_tag or "unknown",
+                                "reason": "duplicate_recovered",
+                            },
+                        )
+                        _console_order_log(
+                            "OPEN_FILLED",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag,
+                            side=side,
+                            units=units_to_send,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            ticket_id=duplicate_trade_id,
+                            note=f"duplicate_recovered attempt={attempt+1}",
+                        )
+                        return duplicate_trade_id
                 logging.error(
                     "OANDA order rejected (attempt %d) pocket=%s units=%s reason=%s",
                     attempt + 1,

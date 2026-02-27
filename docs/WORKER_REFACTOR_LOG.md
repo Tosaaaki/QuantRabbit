@@ -8482,3 +8482,24 @@
 - 意図:
   - side固定による方向ミスマッチを解消し、戦略ローカル判定へ方向選択を戻す。
   - 低確率帯の通過を機械的に削り、B/C のエントリー精度を先に回復させる。
+
+### 2026-02-27（追記）duplicate CID 回収と order-manager RPC詰まり緩和
+
+- 背景（VM実測, UTC 2026-02-27 01:00-01:33）:
+  - `quant-scalp-ping-5s-b/c` と `quant-scalp-extrema-reversal` で
+    `order_manager service call failed ... Read timed out (20.0)` が継続。
+  - `orders.db` 30分窓の `rejected` は `CLIENT_TRADE_ID_ALREADY_EXISTS` が大半で、
+    同一CIDに `filled -> rejected` が並ぶケースを確認。
+- 変更:
+  - `execution/order_manager.py`
+    - `_latest_filled_trade_id_by_client_id` を追加。
+    - `market_order` の reject reason が `CLIENT_TRADE_ID_ALREADY_EXISTS` のとき、
+      既存 `filled` 行から `trade_id` を回収し
+      `status=duplicate_recovered` で成功返却する導線を追加。
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=45.0`（from `8.0`）
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_WORKERS=6`（from `4`）
+- 意図:
+  - timeout起点の重複再送を reject 終了させず、既存約定へ収束させる。
+  - service待ちの詰まりを緩和し、`order_manager_none` と CID重複rejectを低減する。
