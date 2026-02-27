@@ -51,6 +51,26 @@ def test_scenario_configs_have_strategy_specific_defaults(monkeypatch):
     assert failed.ALLOW_TREND is False
 
 
+def test_scenario_configs_default_to_single_spread_guard(monkeypatch):
+    monkeypatch.setenv("QUANTRABBIT_ENV_FILE", "/tmp/does-not-exist-qr-env")
+    monkeypatch.delenv("M1SCALP_LOCAL_SPREAD_CAP_ENABLED", raising=False)
+
+    trend = _reload("workers.scalp_trend_breakout.config")
+    pullback = _reload("workers.scalp_pullback_continuation.config")
+    failed = _reload("workers.scalp_failed_break_reverse.config")
+    assert trend.LOCAL_SPREAD_CAP_ENABLED is False
+    assert pullback.LOCAL_SPREAD_CAP_ENABLED is False
+    assert failed.LOCAL_SPREAD_CAP_ENABLED is False
+
+    monkeypatch.setenv("M1SCALP_LOCAL_SPREAD_CAP_ENABLED", "1")
+    trend = _reload("workers.scalp_trend_breakout.config")
+    pullback = _reload("workers.scalp_pullback_continuation.config")
+    failed = _reload("workers.scalp_failed_break_reverse.config")
+    assert trend.LOCAL_SPREAD_CAP_ENABLED is True
+    assert pullback.LOCAL_SPREAD_CAP_ENABLED is True
+    assert failed.LOCAL_SPREAD_CAP_ENABLED is True
+
+
 def test_scenario_exit_workers_have_strategy_specific_default_allowlists(monkeypatch):
     monkeypatch.delenv("M1SCALP_EXIT_TAG_ALLOWLIST", raising=False)
     trend_exit = _reload("workers.scalp_trend_breakout.exit_worker")

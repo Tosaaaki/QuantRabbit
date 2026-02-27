@@ -435,6 +435,17 @@
   - これにより、`spread_stale age=...` が継続して
     `entry-skip summary ... spread_blocked=...` に張り付く
     偽ブロック経路を回避する。
+- 2026-02-27 追記（M1 split spread single-source）:
+  - `workers/scalp_{trend_breakout,pullback_continuation,failed_break_reverse}` は、
+    既定で `spread_monitor.is_blocked()` を spread 判定の単一ソースとして扱う。
+  - `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=1` のときのみ、
+    `M1SCALP_MAX_SPREAD_PIPS` によるワーカー内ローカル上限を追加適用する。
+  - `SPREAD_GUARD_DISABLE=1` の運用では、
+    `M1SCALP_LOCAL_SPREAD_CAP_ENABLED` または自動 fallback により
+    ローカル上限を有効にして無制限エントリーを防ぐ。
+  - 推奨運用値:
+    - split worker: `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=0`
+    - `quant-m1scalper`: `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=1`（`SPREAD_GUARD_DISABLE=1` 前提）
 - 目的は、legacy建玉でも loss-cut/time-stop が機能する状態を維持しつつ、
   一過性の `position_manager` timeout で EXIT 判定サイクルが欠落する頻度を下げること。
 

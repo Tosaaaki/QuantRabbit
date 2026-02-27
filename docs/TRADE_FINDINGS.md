@@ -67,6 +67,44 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 09:06 UTC / 2026-02-27 18:06 JST - split worker の spread 二重判定を解消（single-source化）
+
+Period:
+- Log validation window: 2026-02-27 08:45 UTC - 09:06 UTC
+
+Source:
+- VM `journalctl -u quant-scalp-{trend-breakout,pullback-continuation,failed-break-reverse}.service`
+- VM `/home/tossaki/QuantRabbit/ops/env/quant-scalp-*.env`
+- Repo `workers/scalp_*_*/worker.py`, `market_data/spread_monitor.py`
+
+Fact:
+- 08:45-08:55 UTC に split 3 worker で
+  `blocked by spread spread=0.80p reason=guard_active` が連続発生。
+- env は `M1SCALP_MAX_SPREAD_PIPS=1.00` / `spread_guard_max_pips=1.00` に揃っていたが、
+  worker 側に `spread_pips > M1SCALP_MAX_SPREAD_PIPS` の別判定があり、
+  設定ズレ時に entry skip が再発しうる構造だった。
+- 08:57 UTC 以降の直近ブロック要因は spread ではなく
+  `skip_nwave_long_late` / `tag_filter_block` / `reversion_range_block`。
+
+Failure Cause:
+1. spread 入口判定が worker と spread_monitor で重複し、構成差分時の挙動が不透明化。
+2. 判定 reason の一元性が不足し、監査時に「どちらで止まったか」を切り分けにくい。
+
+Improvement:
+1. split/m1 worker で spread 判定を整理し、既定は `spread_monitor` を単一ソース化。
+2. `M1SCALP_LOCAL_SPREAD_CAP_ENABLED` を追加し、
+   必要時のみ local cap を有効化する運用へ変更。
+3. `SPREAD_GUARD_DISABLE=1` 運用（quant-m1scalper）は local cap を自動fallbackで維持。
+4. runtime env へ `M1SCALP_LOCAL_SPREAD_CAP_ENABLED` を明示し、新規worker追加時のズレを防止。
+
+Verification:
+1. split 3 worker で `blocked by spread` の件数を反映後 2h/24h で監視。
+2. 同期間の block reason 内訳で spread 以外（tag/range/timing）へ収束することを確認。
+3. `M1SCALP_LOCAL_SPREAD_CAP_ENABLED` が split=0 / m1=1 でロードされていることを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 08:45 UTC / 2026-02-27 17:45 JST - 3分離戦略を既存M1と同時起動へ切替
 Period:
 - Activation window: `2026-02-27 17:40` ～ `17:45` JST

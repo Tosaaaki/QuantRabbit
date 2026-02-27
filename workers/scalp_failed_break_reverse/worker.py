@@ -997,16 +997,23 @@ async def scalp_m1_worker() -> None:
         spread_guard_disabled = bool(getattr(spread_monitor, "DISABLE_SPREAD_GUARD", False))
         spread_pips = float(spread_state.get("spread_pips") or 0.0) if spread_state else 0.0
         spread_stale = bool(spread_state.get("stale")) if spread_state else False
-        if (blocked or spread_pips > config.MAX_SPREAD_PIPS or (spread_stale and not spread_guard_disabled)):
+        local_spread_cap_active = bool(config.LOCAL_SPREAD_CAP_ENABLED or spread_guard_disabled)
+        local_spread_blocked = bool(local_spread_cap_active and spread_pips > config.MAX_SPREAD_PIPS)
+        spread_blocked = bool(blocked or local_spread_blocked or (spread_stale and not spread_guard_disabled))
+        if spread_blocked:
             now_mono = time.monotonic()
             if now_mono - last_spread_log > 60.0:
+                block_reason = (
+                    spread_reason
+                    or ("local_cap" if local_spread_blocked else "guard_active")
+                )
                 LOG.info(
                     "%s blocked by spread spread=%.2fp stale=%s remain=%ss reason=%s",
                     config.LOG_PREFIX,
                     spread_pips,
                     spread_stale,
                     remain,
-                    spread_reason or "guard_active",
+                    block_reason,
                 )
                 last_spread_log = now_mono
             continue

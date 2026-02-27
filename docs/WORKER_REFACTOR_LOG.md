@@ -9228,3 +9228,29 @@
   1. 反映後 2h/24h で `WickReversalBlend` の `entry_probability>=0.78` への収束。
   2. `orders.db` の `close_reject_profit_buffer`（WickReversalBlend）減少。
   3. `trades.db` の `hold_sec>=420` かつ負けトレード件数の低下。
+
+### 2026-02-27（追記）split M1Scalper の spread 判定を単一ソース運用へ統一
+
+- 目的:
+  - `spread_monitor` とワーカー内 `MAX_SPREAD_PIPS` の重複判定による設定不一致を解消し、
+    split worker の entry skip 要因を一本化する。
+- 変更:
+  - `workers/scalp_{trend_breakout,pullback_continuation,failed_break_reverse,m1scalper}/config.py`
+    - `M1SCALP_LOCAL_SPREAD_CAP_ENABLED` を追加（既定 `0`）。
+  - `workers/scalp_{trend_breakout,pullback_continuation,failed_break_reverse,m1scalper}/worker.py`
+    - spread block 判定を整理:
+      - 既定は `spread_monitor.is_blocked()` を単一ソースとして採用。
+      - `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=1` または `SPREAD_GUARD_DISABLE=1` の時のみ
+        `M1SCALP_MAX_SPREAD_PIPS` をローカル fallback として有効化。
+      - ログ reason に `local_cap` を追加。
+  - env 固定:
+    - `ops/env/quant-v2-runtime.env` に
+      `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=0` を追加（全体デフォルト固定）。
+    - split 3 worker env にも `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=0` を明示。
+    - `ops/env/quant-m1scalper.env` は `SPREAD_GUARD_DISABLE=1` 運用維持のため
+      `M1SCALP_LOCAL_SPREAD_CAP_ENABLED=1` を明示。
+  - テスト:
+    - `tests/workers/test_m1scalper_split_workers.py`
+      - split config の `LOCAL_SPREAD_CAP_ENABLED` 既定/上書きの回帰テストを追加。
+- 影響範囲:
+  - spread 入口判定に限定。order_manager/position_manager/strategy_control の共通導線仕様は非変更。

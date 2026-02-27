@@ -106,6 +106,9 @@ MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.9"))
 MIN_FREE_MARGIN_RATIO_HARD = _env_float("M1SCALP_MIN_FREE_MARGIN_RATIO_HARD", 0.08)
 MARGIN_USAGE_HARD = _env_float("M1SCALP_MARGIN_USAGE_HARD", 0.93)
 MAX_SPREAD_PIPS = float(os.getenv("M1SCALP_MAX_SPREAD_PIPS", "1.4"))
+# Default: rely on spread_monitor as the single spread guard source.
+# Keep local cap available as an explicit fallback (or when guard is disabled).
+LOCAL_SPREAD_CAP_ENABLED = _env_bool("M1SCALP_LOCAL_SPREAD_CAP_ENABLED", False)
 AUTOTUNE_ENABLED = _env_bool("SCALP_AUTOTUNE_ENABLED", False)
 ENTRY_GUARD_BYPASS = _env_bool("M1SCALP_ENTRY_GUARD_BYPASS", False)
 
