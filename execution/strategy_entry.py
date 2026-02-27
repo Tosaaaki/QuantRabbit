@@ -2231,16 +2231,16 @@ async def _coordinate_entry_units(
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
     forecast_context: Optional[dict[str, object]] = None,
-) -> int:
+) -> tuple[int, Optional[str]]:
     if not units:
-        return units
+        return units, None
     requested_abs_units = abs(int(units))
     if reduce_only:
-        return units
+        return units, None
     if not strategy_tag:
         if (pocket or "").lower() != "manual":
-            return 0
-        return units
+            return 0, "missing_strategy_tag"
+        return units, None
     min_units = order_manager.min_units_for_strategy(strategy_tag, pocket=pocket)
     if _STRATEGY_PATTERN_GATE_ENABLED and not reduce_only and pocket != "manual":
         if isinstance(entry_thesis, dict):
@@ -2259,17 +2259,17 @@ async def _coordinate_entry_units(
             if pattern_decision is not None:
                 entry_thesis["pattern_gate"] = pattern_decision.to_payload()
                 if not pattern_decision.allowed:
-                    return 0
+                    return 0, "pattern_gate_block"
                 if pattern_decision.scale != 1.0:
                     scaled_units = int(round(abs(units) * pattern_decision.scale))
                     if scaled_units < min_units:
                         if _ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS and min_units > 0:
                             scaled_units = min_units
                         else:
-                            return 0
+                            return 0, "pattern_gate_below_min"
                     if scaled_units > 0:
                         units = int((1 if units > 0 else -1) * scaled_units)
-    final_units, reason, _ = await order_manager.coordinate_entry_intent(
+    final_units, reason, details = await order_manager.coordinate_entry_intent(
         instrument=instrument,
         pocket=pocket,
         strategy_tag=strategy_tag,
@@ -2281,7 +2281,21 @@ async def _coordinate_entry_units(
         forecast_context=forecast_context,
     )
     if not final_units and reason in {"reject", "scaled", "rejected", None}:
-        return 0
+        reject_reason: Optional[str] = None
+        if isinstance(details, dict):
+            coord_error = details.get("coordination_error")
+            if isinstance(coord_error, str) and coord_error.strip():
+                reject_reason = f"coordination_{coord_error.strip()}"
+            else:
+                decision = details.get("decision")
+                if isinstance(decision, str) and decision.strip():
+                    reject_reason = f"coordination_{decision.strip()}"
+        if not reject_reason:
+            if reason:
+                reject_reason = f"coordination_{str(reason).strip()}"
+            else:
+                reject_reason = "coordination_reject"
+        return 0, reject_reason
     final_units_int = int(final_units)
     # Keep strategy-side intent as the upper bound. Coordination may reduce or
     # reject, but should not amplify beyond the strategy's requested size.
@@ -2291,7 +2305,7 @@ async def _coordinate_entry_units(
         and abs(final_units_int) > requested_abs_units
     ):
         final_units_int = requested_abs_units if final_units_int > 0 else -requested_abs_units
-    return final_units_int
+    return final_units_int, None
 
 
 async def market_order(
@@ -2360,7 +2374,7 @@ async def market_order(
         forecast_context=forecast_context,
         meta=meta,
     )
-    coordinated_units = await _coordinate_entry_units(
+    coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
         strategy_tag=resolved_strategy_tag,
@@ -2373,6 +2387,23 @@ async def market_order(
         forecast_context=forecast_context,
     )
     if not coordinated_units:
+        if client_order_id:
+            reason = str(coordination_reason or "coordination_reject")
+            order_manager._cache_order_status(
+                ts=datetime.now(timezone.utc).isoformat(),
+                client_order_id=client_order_id,
+                status=reason,
+                attempt=0,
+                side="buy" if units > 0 else "sell",
+                units=int(units),
+                error_code=reason,
+                error_message=reason,
+                request_payload={
+                    "strategy_tag": resolved_strategy_tag,
+                    "pocket": pocket,
+                    "entry_probability": entry_probability,
+                },
+            )
         return None
     if coordinated_units != units:
         units = coordinated_units
@@ -2464,7 +2495,7 @@ async def limit_order(
         forecast_context=forecast_context,
         meta=meta,
     )
-    coordinated_units = await _coordinate_entry_units(
+    coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
         strategy_tag=resolved_strategy_tag,
@@ -2477,6 +2508,23 @@ async def limit_order(
         forecast_context=forecast_context,
     )
     if not coordinated_units:
+        if client_order_id:
+            reason = str(coordination_reason or "coordination_reject")
+            order_manager._cache_order_status(
+                ts=datetime.now(timezone.utc).isoformat(),
+                client_order_id=client_order_id,
+                status=reason,
+                attempt=0,
+                side="buy" if units > 0 else "sell",
+                units=int(units),
+                error_code=reason,
+                error_message=reason,
+                request_payload={
+                    "strategy_tag": resolved_strategy_tag,
+                    "pocket": pocket,
+                    "entry_probability": entry_probability,
+                },
+            )
         return None, None
     if coordinated_units != units:
         units = coordinated_units

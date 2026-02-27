@@ -71,12 +71,17 @@ Improvement:
    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE: 4 -> 24`
 3. `ops/env/quant-v2-runtime.env`
    - `ORDER_MANAGER_SERVICE_TIMEOUT: 20.0 -> 8.0`
+4. `execution/strategy_entry.py`
+   - 協調/パターンゲートで `coordinated_units=0` になった場合に、
+     `client_order_id` へ reject理由を `order_status` キャッシュ記録するよう変更。
+   - `order_manager_none` に潰れていた reject 内訳（`coordination_*` / `pattern_gate_*`）を可視化。
 
 Verification:
 1. デプロイ後ログで `revert_enabled=1` を確認し、`revert_disabled` 件数が減少していること。
 2. 直近10分の `rate_limited` 件数が B/C ともに低下していること。
 3. `orders.db` で `submit_attempt` と `filled` の発生密度が維持/改善していること。
 4. `order_manager_none` と `CLIENT_TRADE_ID_ALREADY_EXISTS` が逓減していること。
+5. B/C ログの reject reason が `order_manager_none` から実理由（`coordination_*` 等）へ置換されること。
 
 Status:
 - in_progress

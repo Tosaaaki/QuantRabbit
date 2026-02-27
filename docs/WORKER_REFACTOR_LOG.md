@@ -24,6 +24,10 @@
     - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=24`（from `4`）
   - `ops/env/quant-v2-runtime.env`
     - `ORDER_MANAGER_SERVICE_TIMEOUT=8.0`（from `20.0`）
+  - `execution/strategy_entry.py`
+    - 事前協調/パターンゲートで `coordinated_units=0` の場合、
+      `client_order_id` に reject理由をキャッシュ記録。
+    - worker側で `order_manager_none` に潰れていた reject内訳を観測可能化。
 - 意図:
   - `no_signal:revert_disabled` と `rate_limited` の過抑制を外し、B/C のシグナル通過率を回復。
   - order-manager service固着時の待ち時間を短縮し、`order_manager_none` 起点のエントリー空転を減らす。
