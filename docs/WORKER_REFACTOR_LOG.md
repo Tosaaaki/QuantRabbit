@@ -23,6 +23,20 @@
 - 意図:
   - V2 運用で env 読み込み経路を単純化し、`systemctl cat` 監査結果の可読性を維持する。
 
+### 2026-02-27（追記）ops系 unit の `/etc/quantrabbit.env` 注入を除去可能化
+
+- 背景（VM実測）:
+  - `quant-autotune-ui.service` / `quant-bq-sync.service` などで、
+    `quant-v2-runtime.env` に加えて `/etc/quantrabbit.env` が drop-in で追加され、
+    `FORECAST_GATE_*` 系の衝突を生んでいた。
+- 変更:
+  - `scripts/dedupe_systemd_envfiles.py` に `--remove-envfile` を追加。
+    - 指定した env パスを `/etc/systemd/system/*.service.d/*.conf` から安全に除去可能。
+    - fragment unit は編集しない。
+  - `scripts/ops_v2_audit.py` に、ops系 unit へ `/etc/quantrabbit.env` が残っている場合の warn を追加。
+- 意図:
+  - 監査ノイズを減らし、ops系 unit の設定責務を `quant-v2-runtime.env` 側へ寄せる。
+
 ### 2026-02-27（追記）M1系4ワーカーの spread 上限を 1.00 へ統一
 
 - 背景:
