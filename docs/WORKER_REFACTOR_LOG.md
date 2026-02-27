@@ -8,6 +8,37 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）全体監査で B/C を再圧縮し、Wick/Extrema へ再配分（service timeout 再劣化も補正）
+
+- 背景（VM実測, UTC 2026-02-27 05:35 時点）:
+  - 直近24hの realized P/L で `scalp_ping_5s_c_live=-1455.4 JPY`, `scalp_ping_5s_b_live=-592.3 JPY` が主損失源。
+  - 同期間で `WickReversalBlend=+332.3 JPY`, `scalp_extrema_reversal_live=+30.9 JPY` は正寄与。
+  - 直近12hの B/C ログに `order_manager service call failed ... Read timed out (45.0)` が `165件` 発生。
+  - 実効 runtime 設定が `ORDER_MANAGER_SERVICE_TIMEOUT=60.0` へ戻っていた。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - 頻度・サイズ・逆行側倍率を追加圧縮
+      (`MAX_ORDERS_PER_MINUTE=6`, `BASE_ENTRY_UNITS=300`, `MAX_UNITS=1100`,
+      `DIRECTION_BIAS_*_OPPOSITE_UNITS_MULT` 引き下げ、`SIDE_BIAS_BLOCK_THRESHOLD` 引き上げ)。
+  - `ops/env/scalp_ping_5s_c.env`
+    - 頻度・サイズと side metrics 上限を追加圧縮
+      (`MAX_ORDERS_PER_MINUTE=6`, `BASE_ENTRY_UNITS=110`, `MAX_UNITS=240`,
+      `SIDE_BIAS_BLOCK_THRESHOLD=0.16`, `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.88`)。
+  - `ops/env/quant-order-manager.env`
+    - B/C の preserve-intent しきい値を厳格化
+      （`REJECT_UNDER` 引き上げ、`MAX_SCALE` 引き下げ）。
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC=4.0`
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `MAX_OPEN_TRADES=4`, `UNIT_BASE_UNITS=11200`。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `COOLDOWN_SEC=30`, `MAX_OPEN_TRADES=3`, `BASE_UNITS=13000`,
+      `MIN_ENTRY_CONF=54`。
+- 意図:
+  - B/C の損失寄与を機械的に圧縮しつつ、勝ち寄与戦略へ回転と配分を寄せる。
+  - order-manager 遅延時の長時間ブロックを縮め、取りこぼしの再発を抑える。
+
 ### 2026-02-27（追記）B/C 非エントリー主因の設定を解除（revert + order/min + service timeout）
 
 - 背景（VM実測, UTC 2026-02-27 00:56-01:26）:

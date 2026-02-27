@@ -42,6 +42,81 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 05:35 UTC / 2026-02-27 14:35 JST - 全体監査で B/C 損失源を再圧縮し、勝ち筋へ再配分（timeout 再劣化の再発防止込み）
+Period:
+- VM実測: `2026-02-26 17:35 UTC` 〜 `2026-02-27 05:35 UTC`（直近12h）
+- 参考窓: 24h（`julianday(close_time) >= julianday('now','-24 hours')`）
+- Source: `trades.db`, `orders.db`, `metrics.db`, `journalctl -u quant-scalp-ping-5s-{b,c}.service`, `journalctl -u quant-order-manager.service`, `scripts/oanda_open_trades.py`
+
+Fact:
+- 24h realized P/L:
+  - `scalp_ping_5s_c_live`: `473 trades / -1455.4 JPY`
+  - `scalp_ping_5s_b_live`: `425 trades / -592.3 JPY`
+  - `WickReversalBlend`: `7 trades / +332.3 JPY`
+  - `scalp_extrema_reversal_live`: `14 trades / +30.9 JPY`
+- 12h side別（`b_live/c_live`）:
+  - `b_live buy`: `189 trades / -309.7 JPY`
+  - `b_live sell`: `111 trades / -71.3 JPY`
+  - `c_live buy`: `136 trades / -34.3 JPY`
+  - `c_live sell`: `88 trades / -24.3 JPY`
+- 12h orders（`scalp_fast/scalp/micro`）では、`filled=565` に対して
+  `margin_usage_exceeds_cap=217`, `margin_usage_projected_cap=210`, `slo_block=109` が同時多発。
+- `quant-v2-runtime.env` の実効値は `ORDER_MANAGER_SERVICE_TIMEOUT=60.0`。
+  同期間の B/C ログには `order_manager service call failed ... Read timed out (45.0)` が `165件/12h`（`85件/2h`）発生。
+- 直近稼働中の open trade でも、`B/C` と `Extrema` が混在し、損失源と勝ち筋の配分最適化余地が継続。
+
+Failure Cause:
+1. `b_live` が高頻度・高比率で負け寄与を継続（特に buy 側）。
+2. `c_live` はサイズが小さい一方で頻度が高く、合算で負けを積み上げる構造が残存。
+3. service timeout が長いため、order-manager 遅延時に worker が長時間ブロックされ、取りこぼしと偏りを増幅。
+4. 正寄与戦略（Wick/Extrema）の配分が相対的に不足。
+
+Hypothesis:
+- B/C の頻度・上限倍率を追加圧縮し、Wick/Extrema の発火枠を増やすことで、
+  `STOP_LOSS_ORDER` 優位の負け勾配を下げつつ、純益の期待値を上げられる。
+
+Improvement:
+1. B 圧縮（`ops/env/scalp_ping_5s_b.env`）:
+   - `MAX_ORDERS_PER_MINUTE: 8 -> 6`
+   - `BASE_ENTRY_UNITS: 380 -> 300`
+   - `MAX_UNITS: 1400 -> 1100`
+   - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: 0.58 -> 0.45`
+   - `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: 0.68 -> 0.55`
+   - `SIDE_BIAS_BLOCK_THRESHOLD: 0.00 -> 0.12`
+   - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT: 0.95 -> 0.82`
+2. C 圧縮（`ops/env/scalp_ping_5s_c.env`）:
+   - `MAX_ORDERS_PER_MINUTE: 8 -> 6`
+   - `BASE_ENTRY_UNITS: 140 -> 110`
+   - `MAX_UNITS: 320 -> 240`
+   - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: 0.62 -> 0.56`
+   - `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: 0.72 -> 0.62`
+   - `SIDE_BIAS_BLOCK_THRESHOLD: 0.10 -> 0.16`
+   - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT: 1.00 -> 0.88`
+3. 共通 preflight 圧縮（`ops/env/quant-order-manager.env`）:
+   - B: `REJECT_UNDER 0.68 -> 0.72`, `MAX_SCALE 0.50 -> 0.42`
+   - C: `REJECT_UNDER 0.66 -> 0.68`, `MIN_SCALE 0.40 -> 0.35`, `MAX_SCALE 0.78 -> 0.72`
+4. service timeout 再発防止（`ops/env/quant-v2-runtime.env`）:
+   - `ORDER_MANAGER_SERVICE_TIMEOUT: 60.0 -> 12.0`
+   - `ORDER_MANAGER_SERVICE_TIMEOUT_RECOVERY_WAIT_SEC: 10.0 -> 4.0`
+5. 勝ち筋再配分:
+   - `ops/env/quant-scalp-wick-reversal-blend.env`
+     - `MAX_OPEN_TRADES: 3 -> 4`
+     - `UNIT_BASE_UNITS: 10200 -> 11200`
+   - `ops/env/quant-scalp-extrema-reversal.env`
+     - `COOLDOWN_SEC: 35 -> 30`
+     - `MAX_OPEN_TRADES: 2 -> 3`
+     - `BASE_UNITS: 12000 -> 13000`
+     - `MIN_ENTRY_CONF: 57 -> 54`
+
+Verification:
+1. デプロイ後、VMで `HEAD == origin/main` と `quant-order-manager`, `quant-scalp-ping-5s-{b,c}`, `quant-scalp-{wick-reversal-blend,extrema-reversal}` の再起動完了を確認。
+2. 30-120分窓で `b_live/c_live` の `realized_pl`、`STOP_LOSS_ORDER` 比率、`filled`/`submit_attempt` を反映前と比較。
+3. 同窓で `order_manager service call failed` と `slow_request` の再発有無を監査。
+4. 同窓で Wick/Extrema の `filled` と `realized_pl` が増加/維持し、全体損益勾配が改善することを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:30 UTC / 2026-02-27 10:30 JST - B/C 非エントリーの直接因子を解除（revert復帰 + rate limit緩和 + service timeout短縮）
 Period:
 - VM実測: `2026-02-27 00:56-01:26 UTC`
