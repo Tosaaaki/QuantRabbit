@@ -1381,6 +1381,19 @@
 - 運用意図:
   - shared DBロックの瞬間的な競合で、勝ち寄与 worker が停止し続ける状態を防ぐ。
 
+### B/C 追加圧縮（2026-02-27 追記）
+- 背景:
+  - 直近窓で `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` の負け寄与が継続。
+- 実装:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=450`（from `600`）
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=4`（from `5`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=170`（from `220`）
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=4`（from `5`）
+- 運用意図:
+  - 停止なしで稼働を維持しつつ、B/C の損失勾配を追加で低減する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

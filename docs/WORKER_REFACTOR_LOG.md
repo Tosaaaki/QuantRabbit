@@ -8344,6 +8344,20 @@
   - DBロック瞬間風速で WickBlend worker 全体が停止する経路を遮断し、
     エントリー導線を維持する。
 
+### 2026-02-27（追記）B/C 追加圧縮（units・頻度を一段低下）
+
+- 背景（VM実測, 直近30分）:
+  - `scalp_ping_5s_b_live=-35.7 JPY`, `scalp_ping_5s_c_live=-18.4 JPY` と負け寄与が継続。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=450`（from `600`）
+    - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=4`（from `5`）
+  - `ops/env/scalp_ping_5s_c.env`
+    - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=170`（from `220`）
+    - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=4`（from `5`）
+- 意図:
+  - 停止なしを維持したまま、B/C の単位時間損失をさらに圧縮する。
+
 ### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
 
 - 背景:

@@ -95,6 +95,26 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:15 UTC / 2026-02-27 10:15 JST - B/Cを追加圧縮（停止なしで損失勾配をさらに低減）
+Period:
+- VM実測: 直近30分 `scalp_ping_5s_b_live=-35.7 JPY`, `scalp_ping_5s_c_live=-18.4 JPY`
+- Source: `logs/trades.db`
+
+Improvement:
+1. `ops/env/scalp_ping_5s_b.env`
+   - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=450`（from `600`）
+   - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE=4`（from `5`）
+2. `ops/env/scalp_ping_5s_c.env`
+   - `SCALP_PING_5S_C_BASE_ENTRY_UNITS=170`（from `220`）
+   - `SCALP_PING_5S_C_MAX_ORDERS_PER_MINUTE=4`（from `5`）
+
+Verification:
+1. 反映後15分の strategy_tag 付き損益で B/C 合算損失が前窓より縮小すること。
+2. `filled` 件数を維持しつつ `rejected` 比率が悪化しないこと。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:20 UTC / 2026-02-27 10:20 JST - B/C 方向精度リセット（sell固定解除 + 低確率遮断強化）
 Period:
 - 直近24h（`close_time >= now-24h`）
