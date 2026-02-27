@@ -1590,3 +1590,22 @@
   - 戦略意図を order-manager が上書きせずに必須性のみ検証し、欠損トレードを入口で止める。
   - duplicate CID を自己回復させ、timeout/retry由来の reject 連鎖を短絡する。
   - strategy-control の誤設定や滞留時でも、緊急局面では EXIT 側を先に通す。
+
+### M1Scalper Exit Tuning Knobs（2026-02-27）
+- `workers/scalp_m1scalper/exit_worker.py` は以下 env を受けて lock/trail の早期クローズ挙動を調整できる。
+  - `M1SCALP_EXIT_PROFIT_TAKE_PIPS`
+  - `M1SCALP_EXIT_TRAIL_START_PIPS`
+  - `M1SCALP_EXIT_TRAIL_BACKOFF_PIPS`
+  - `M1SCALP_EXIT_LOCK_BUFFER_PIPS`
+  - `M1SCALP_EXIT_TRAIL_FROM_TP_RATIO`
+  - `M1SCALP_EXIT_LOCK_FROM_TP_RATIO`
+  - `M1SCALP_EXIT_LOCK_TRIGGER_FROM_TP_RATIO`
+  - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS`
+- 既定挙動は従来互換（env 未設定時は旧デフォルト値）だが、`quant-m1scalper-exit.env` 側で上書きすると
+  `lock_floor` の早期発火を抑制できる。
+
+### B Strategy Payoff Tuning（2026-02-27）
+- `ops/env/scalp_ping_5s_b.env` で TP/SL と force-exit loss を調整し、
+  `TAKE_PROFIT_ORDER(+1p)` 偏重と `STOP_LOSS_ORDER(-2p)` 偏重のギャップを縮小する。
+- 同時に `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_UNITS_MAX_MULT` を緩和し、
+  良化局面の過小サイズを抑制する。

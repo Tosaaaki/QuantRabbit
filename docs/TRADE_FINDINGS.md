@@ -126,6 +126,86 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 17:35 JST - M1Scalper quickshot（M5 breakout + M1 pullback + 100円逆算）を導入
+Period:
+- Design/implementation window: `2026-02-27 16:55` ～ `17:35` JST
+- Source: `workers/scalp_m1scalper/*`, `ops/env/quant-m1scalper.env`
+
+Fact:
+- 既存 `M1Scalper` は `breakout_retest` シグナルを持つが、最終執行側で
+  「100円目標のロット逆算」や「JSTメンテ時間の quickshot block」は持っていなかった。
+- `entry_probability` / `entry_units_intent` 契約は既に worker 側で維持されている。
+
+Failure Cause:
+1. シグナル品質が良くても、ロットが目標利益に対して過大/過小になりやすかった。
+2. 即時トレード用の追加条件（spread上限、M5方向一致、pullback成立）が統合されていなかった。
+
+Improvement:
+1. `M1SCALP_USDJPY_QUICKSHOT_*` を追加し、`M5 breakout + M1 pullback` を機械判定化。
+2. `tp/sl` を ATR 連動で決定し、`target_jpy` を `tp_pips` で逆算した `target_units` を採用。
+3. `entry_thesis.usdjpy_quickshot` に `setup_score/entry_probability/target_units` を保存し、監査可能化。
+
+Verification:
+1. ユニットテストで allow/block（JST7時/side mismatch）を確認。
+2. VM反映後に `orders.db` の `entry_thesis.usdjpy_quickshot` と block 理由を集計。
+3. 24h 集計で `avg_win_jpy` / `avg_loss_jpy` のバランス悪化がないことを確認。
+
+Status:
+- in_progress
+
+## 2026-02-27 07:46 UTC / 2026-02-27 16:46 JST - 早利確/ロット偏りの深掘り（M1 lock_floor + B payoff是正）
+Period:
+- 直近48h/2h（VM live `logs/trades.db`, `logs/orders.db`）
+- Source: VM `fx-trader-vm`（`sudo -u tossaki` で直接照会）
+
+Fact:
+- `scalp_ping_5s_b_live`（48h）:
+  - long: `win avg_units=436.2`, `loss avg_units=632.5`（勝ち側のロットが相対的に小さい）
+  - close reason別:
+    - `long TAKE_PROFIT_ORDER win=118 avg_pips=+0.888 avg_units=216.2`
+    - `long STOP_LOSS_ORDER loss=438 avg_pips=-2.025 avg_units=642.1`
+  - 直近2hでも `STOP_LOSS_ORDER loss=119 avg_pips=-2.102` に対し
+    `TAKE_PROFIT_ORDER win=99 avg_pips=+1.033` で、Rが負側に偏る。
+- `M1Scalper-M1`（直近2h）:
+  - `MARKET_ORDER_TRADE_CLOSE`: `loss=11 avg_pips=-1.936`, `win=9 avg_pips=+1.244`
+  - `tp_pips` 比率（`pl_pips/tp_pips`）は勝ちでも `0.218` と低く、TP到達前のクローズが主体。
+  - `orders.db` の `close_request.exit_reason` は `lock_floor`/`m1_rsi_fade` が主。
+    - `lock_floor win=6 avg_pips=+0.983`
+    - `m1_rsi_fade loss=8 avg_pips=-1.25`
+- 直近2hの B/M1 発注では `filled/preflight_start` は大差なし
+  （B: win `0.888`, loss `0.899`; M1: win/loss とも `1.0`）。
+
+Failure Cause:
+1. `M1Scalper` は `lock_floor` 発火が早く、`tp_hint` まで伸ばす前に利を確定しやすい。
+2. `M1Scalper` の `m1_rsi_fade` が逆行初期で多発し、反発余地のある局面も早期クローズする。
+3. `scalp_ping_5s_b_live` は TPが浅く（+1p台）SL側が重い（-2p台）ため、勝率が維持されても期待値が伸びにくい。
+
+Improvement:
+1. `workers/scalp_m1scalper/exit_worker.py`
+  - lock/trail 関連を env で調整可能化:
+    - `M1SCALP_EXIT_LOCK_TRIGGER_FROM_TP_RATIO`
+    - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS`
+    - 既存 hard-coded の `profit_take/trail/lock` も env 化。
+2. `ops/env/quant-m1scalper-exit.env`
+  - `M1SCALP_EXIT_RSI_FADE_LONG=40`
+  - `M1SCALP_EXIT_RSI_FADE_SHORT=60`
+  - `M1SCALP_EXIT_LOCK_FROM_TP_RATIO=0.70`
+  - `M1SCALP_EXIT_LOCK_TRIGGER_FROM_TP_RATIO=0.55`
+  - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS=1.00`
+3. `ops/env/scalp_ping_5s_b.env`
+  - TP/SL再調整: `TP_BASE/TP_MAX` を上げ、`SL_BASE` と force-exit loss を圧縮。
+  - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT` を `0.72 -> 0.80` に引き上げ、良化局面の過小サイズを緩和。
+
+Verification:
+1. 反映後 2h/24h で `M1Scalper-M1` の `exit_reason` 分布を再集計し、
+   `lock_floor` 比率低下と `take_profit` 比率上昇を確認。
+2. 反映後 2h/24h で `scalp_ping_5s_b_live` の
+   `avg_win_pips / avg_loss_pips` と `TAKE_PROFIT_ORDER` 平均pipsを前窓比較。
+3. `orders.db` で B/M1 の `filled/preflight_start` 比率を監視し、約定率の悪化がないことを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 14:20 UTC / 2026-02-27 23:20 JST - duplicate CID + exit disable 連鎖の実装対策（order_manager）
 Period:
 - Analysis window: `2026-02-20` ～ `2026-02-27`

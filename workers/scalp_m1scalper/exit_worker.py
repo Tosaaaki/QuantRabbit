@@ -422,6 +422,8 @@ async def _run_exit_loop(
     max_adverse_pips: float,
     trail_from_tp_ratio: float,
     lock_from_tp_ratio: float,
+    lock_trigger_from_tp_ratio: float,
+    lock_trigger_min_pips: float,
     loop_interval: float,
 ) -> None:
     pos_manager = PositionManager()
@@ -659,7 +661,7 @@ async def _run_exit_loop(
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
             return
 
-        lock_trigger = max(0.6, tp * 0.35)
+        lock_trigger = max(lock_trigger_min_pips, tp * lock_trigger_from_tp_ratio)
         if (
             state.lock_floor is not None
             and state.peak >= lock_trigger
@@ -876,18 +878,34 @@ async def m1_scalper_exit_worker() -> None:
     min_hold_sec = 10.0
     max_hold_sec = max(min_hold_sec + 1.0, _float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 12 * 60))
     max_adverse_pips = max(0.0, _float_env("M1SCALP_EXIT_MAX_ADVERSE_PIPS", 6.0))
+    profit_take = max(0.5, _float_env("M1SCALP_EXIT_PROFIT_TAKE_PIPS", 2.2))
+    trail_start = max(0.5, _float_env("M1SCALP_EXIT_TRAIL_START_PIPS", 2.8))
+    trail_backoff = max(0.05, _float_env("M1SCALP_EXIT_TRAIL_BACKOFF_PIPS", 0.9))
+    lock_buffer = max(0.05, _float_env("M1SCALP_EXIT_LOCK_BUFFER_PIPS", 0.5))
+    trail_from_tp_ratio = max(0.1, _float_env("M1SCALP_EXIT_TRAIL_FROM_TP_RATIO", 0.82))
+    lock_from_tp_ratio = max(0.1, _float_env("M1SCALP_EXIT_LOCK_FROM_TP_RATIO", 0.45))
+    lock_trigger_from_tp_ratio = max(
+        0.05,
+        _float_env("M1SCALP_EXIT_LOCK_TRIGGER_FROM_TP_RATIO", 0.35),
+    )
+    lock_trigger_min_pips = max(
+        0.05,
+        _float_env("M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS", 0.6),
+    )
     await _run_exit_loop(
         pocket="scalp",
         tags=ALLOWED_TAGS,
-        profit_take=2.2,
-        trail_start=2.8,
-        trail_backoff=0.9,
-        lock_buffer=0.5,
+        profit_take=profit_take,
+        trail_start=trail_start,
+        trail_backoff=trail_backoff,
+        lock_buffer=lock_buffer,
         min_hold_sec=min_hold_sec,
         max_hold_sec=max_hold_sec,
         max_adverse_pips=max_adverse_pips,
-        trail_from_tp_ratio=0.82,
-        lock_from_tp_ratio=0.45,
+        trail_from_tp_ratio=trail_from_tp_ratio,
+        lock_from_tp_ratio=lock_from_tp_ratio,
+        lock_trigger_from_tp_ratio=lock_trigger_from_tp_ratio,
+        lock_trigger_min_pips=lock_trigger_min_pips,
         loop_interval=0.8,
     )
 

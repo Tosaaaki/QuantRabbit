@@ -9003,3 +9003,57 @@
     - duplicate CID 再採番リトライ（limit path）
     - strategy_control exit fail-open 条件分岐
     - `scalp_ping_5s` CID 同ms重複回避
+
+### 2026-02-27（追記）M1Scalperに quickshot 判定を追加（M5 breakout + M1 pullback + 100円逆算）
+
+- 目的:
+  - 「今すぐ1回で100円前後を狙う」判断を裁量依存ではなく、`M1Scalper` の機械判定として再現可能にする。
+  - spread/メンテ時間/方向不一致を先に弾き、TP/SLとロットを同一ロジックで決める。
+- 仮説:
+  - `breakout_retest` に限定した上で `M5 breakout + M1 pullback` を追加すれば、追いかけエントリーを減らせる。
+  - `target_jpy` を `tp_pips` で逆算して `entry_units_intent` を決めることで、過大ロットを抑制しつつ再現性が上がる。
+- 変更ファイル:
+  - `workers/scalp_m1scalper/config.py`
+    - `M1SCALP_USDJPY_QUICKSHOT_*` 設定群を追加（spread上限、JSTブロック、ATR連動TP/SL、target_jpy等）。
+  - `workers/scalp_m1scalper/worker.py`
+    - `_detect_usdjpy_quickshot_plan(...)` を追加。
+    - quickshot allow 時に `tp_pips/sl_pips/entry_probability/target_units` を適用。
+    - `entry_thesis["usdjpy_quickshot"]` へ監査情報を保存。
+  - `ops/env/quant-m1scalper.env`
+    - quickshot を有効化し、運用初期値を設定。
+  - テスト:
+    - `tests/workers/test_m1scalper_config.py`
+    - `tests/workers/test_m1scalper_quickshot.py`（新規）
+- 影響範囲:
+  - `M1Scalper` の entry 判定・サイズ決定に限定。
+  - order_manager / position_manager / strategy_entry 契約（`entry_probability`, `entry_units_intent`）は維持。
+- 検証手順:
+  1. `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py`
+  2. VM反映後、`orders.db` で `entry_thesis.usdjpy_quickshot` の付与率と `quickshot_*` block 理由を集計。
+  3. 24h で `avg_win_jpy` / `avg_loss_jpy` と `entry_units_intent` 分布を確認し、過大ロット再発がないことを確認。
+
+### M1/B 早利確・ペイオフ是正（2026-02-27 追記）
+- 背景（VM live）:
+  - `M1Scalper-M1` は `close_request.exit_reason` で `lock_floor` / `m1_rsi_fade` が多く、
+    勝ちでも `tp_ratio(pl_pips/tp_pips)` が低い。
+  - `scalp_ping_5s_b_live` は `TAKE_PROFIT_ORDER` が +1p 台、`STOP_LOSS_ORDER` が -2p 台で
+    期待値が伸びづらい。
+- 実装:
+  - `workers/scalp_m1scalper/exit_worker.py`
+    - `lock_trigger` 関連を env 化:
+      - `M1SCALP_EXIT_LOCK_TRIGGER_FROM_TP_RATIO`
+      - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS`
+    - 既存の `profit_take/trail/lock` 固定値を env から上書き可能化。
+  - `ops/env/quant-m1scalper-exit.env`
+    - `M1SCALP_EXIT_RSI_FADE_LONG=40`
+    - `M1SCALP_EXIT_RSI_FADE_SHORT=60`
+    - `M1SCALP_EXIT_LOCK_FROM_TP_RATIO=0.70`
+    - `M1SCALP_EXIT_LOCK_TRIGGER_FROM_TP_RATIO=0.55`
+    - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS=1.00`
+  - `ops/env/scalp_ping_5s_b.env`
+    - `TP_BASE/TP_MAX` 引き上げ、`SL_BASE` / force-exit loss 圧縮。
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT` を `0.80` へ緩和。
+- 影響範囲:
+  - `quant-m1scalper-exit.service` の EXIT 閾値と
+    `quant-scalp-ping-5s-b.service` の戦略ローカル TP/SL/units 設定に限定。
+  - 共通 order_manager/strategy_control の判定仕様は非変更。
