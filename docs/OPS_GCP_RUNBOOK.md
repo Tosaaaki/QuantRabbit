@@ -87,6 +87,12 @@ sudo systemctl enable --now quant-v2-audit.timer
   - `journalctl -u quant-v2-audit.service -n 200 --no-pager`
   - `cat /home/tossaki/QuantRabbit/logs/ops_v2_audit_latest.json`
 
+- `EnvironmentFile` の同一パス重複を即時是正（drop-in のみ編集）:
+```bash
+sudo -u tossaki -H python3 /home/tossaki/QuantRabbit/scripts/dedupe_systemd_envfiles.py --apply --services "quant-*.service"
+sudo systemctl daemon-reload
+```
+
 ## 5. OS Login 権限不足・VM 運用ルール
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。
 - 本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。

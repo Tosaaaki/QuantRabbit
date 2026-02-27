@@ -212,6 +212,12 @@ fi
 remove_legacy_qr_units
 remove_known_broken_units
 
+# Remove redundant EnvironmentFile duplicates introduced by stacked drop-ins.
+# This only deletes exact duplicate paths and does not alter override precedence.
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$REPO_DIR/scripts/dedupe_systemd_envfiles.py" --apply --services "quant-*.service" || true
+fi
+
 systemctl daemon-reload
 
 for unit in "${ENABLE_QUEUE[@]}"; do

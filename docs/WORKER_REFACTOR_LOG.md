@@ -8,6 +8,21 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）VM systemd の `EnvironmentFile` 重複読込を自動是正
+
+- 背景（VM実測）:
+  - `quant-online-tuner.service` などで `/etc/quantrabbit.env` の二重読込（同一パス重複）が残存。
+  - 実害は小さいが、監査ノイズと設定経路の不透明化を招くため除去対象とした。
+- 変更:
+  - `scripts/dedupe_systemd_envfiles.py` を追加。
+    - `systemctl show` の FragmentPath/DropInPaths を使って読み込み順を解析。
+    - **同一パスの `EnvironmentFile` 重複のみ**を `/etc/systemd/system/*.service.d/*.conf` から削除。
+    - fragment unit は編集しない（drop-in のみ編集）。
+  - `scripts/install_trading_services.sh` に上記スクリプトの自動実行（`--apply`）を追加。
+  - `scripts/ops_v2_audit.py` に `EnvironmentFile` 重複検知（warn）を追加。
+- 意図:
+  - V2 運用で env 読み込み経路を単純化し、`systemctl cat` 監査結果の可読性を維持する。
+
 ### 2026-02-27（追記）M1系4ワーカーの spread 上限を 1.00 へ統一
 
 - 背景:

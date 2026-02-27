@@ -21,6 +21,7 @@ import os
 import re
 import socket
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -366,7 +367,21 @@ def main() -> int:
         if not _unit_file_exists(service):
             continue
         unit_content = _cat_unit(service)
-        env_files = set(_extract_environment_files(unit_content))
+        env_files_ordered = _extract_environment_files(unit_content)
+        env_files = set(env_files_ordered)
+        dup_env_files = {
+            path: count
+            for path, count in Counter(env_files_ordered).items()
+            if count > 1
+        }
+        if dup_env_files:
+            _add_finding(
+                findings,
+                level="warn",
+                component="systemd-env",
+                message="Duplicate EnvironmentFile entry detected",
+                details={"service": service, "duplicates": dup_env_files},
+            )
 
         for required in required_files:
             if required not in env_files:
