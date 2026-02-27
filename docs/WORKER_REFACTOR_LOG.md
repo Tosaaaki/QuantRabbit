@@ -9317,3 +9317,21 @@
 - 影響範囲:
   - 既定では split 3 worker のみ（env設定済み）。
   - `quant-m1scalper` は env 未設定のため従来挙動を維持。
+
+### 2026-02-27（追記）`scalp_ping_5s_b/c` 反映後の無約定化補正（revert + rate-limit）
+
+- 背景（VM）:
+  - 反映後の `entry-skip` 主因が `no_signal:revert_not_found` と `rate_limited` に集中。
+  - B/C とも通過機会が不足し、long側の units 回復が進まない。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE` 引き上げ（4→6）
+    - `REVERT_*` 閾値を緩和
+    - `SIDE_METRICS_*` と `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE` を上方修正
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE` 引き上げ（4→6）
+    - `REVERT_*` 閾値を緩和
+    - `SIDE_METRICS_*` と `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE` を上方修正
+- 影響範囲:
+  - B/C の戦略ローカル ENTRY 条件に限定。
+  - V2共通導線（order_manager/position_manager/strategy_control）の責務分離は不変。

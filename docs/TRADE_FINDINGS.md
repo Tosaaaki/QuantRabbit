@@ -2363,3 +2363,37 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-02-27 10:50 UTC / 2026-02-27 19:50 JST - `scalp_ping_5s_b/c` 反映後の無約定化を追加補正（VMログ）
+
+Period:
+- 反映後（`>= 2026-02-27T09:29:00+00:00`）
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-b.service`
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- 反映後ログ主因（直近300行）:
+  - B: `no_signal:revert_not_found=278`, `rate_limited=123`
+  - C: `no_signal:revert_not_found=289`, `rate_limited=92`
+- 反映後注文は C long の小ロット約定が散発（`units=18`）で、Bの約定密度が戻っていない。
+
+Failure Cause:
+1. `revert` 判定が厳しすぎて signal 化前に落ちる。
+2. `MAX_ORDERS_PER_MINUTE=4` でレート制限が先に効き、通過機会を失う。
+3. long側は side-metrics と preserve-intent の下限が低く、最終unitsが縮み過ぎる。
+
+Improvement:
+1. B/C 共通で `MAX_ORDERS_PER_MINUTE` を `6` へ引き上げ。
+2. B/C 共通で `REVERT_*` 閾値を小幅緩和（`MIN_TICKS=1`, `RANGE/SWEEP/BOUNCE` 最小幅を低減）。
+3. B/C 共通で long圧縮下限を引き上げ（`SIDE_METRICS_MIN_MULT` と `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE` を上方修正）。
+
+Verification:
+1. 反映後2hで `entry-skip` に占める `revert_not_found` と `rate_limited` の比率が低下すること。
+2. `orders.db` で `scalp_ping_5s_b/c` の `filled` 件数と `avg_units(long)` が回復すること。
+3. 24hで `scalp_ping_5s_b/c long` の `sum(realized_pl)` が改善方向へ向かうこと。
+
+Status:
+- in_progress

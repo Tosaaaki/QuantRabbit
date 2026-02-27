@@ -514,3 +514,23 @@ quant-manual-swing-exit.service
 
 - 2026-02-06 JST: `quant-m1scalper*.service` は一度 VM からアンインストール（ユニット削除）。
 - 2026-02-11 JST: `quant-m1scalper.service` は再導入され、`enabled/active` を確認。
+
+## 0-12. 2026-02-27 UTC `scalp_ping_5s_b/c` 無約定化対策（revert + rate-limit 緩和）
+- 背景（VM実測, UTC 2026-02-27 10:50 前後）:
+  - 反映後ログで `entry-skip` 主因が `no_signal:revert_not_found` と `rate_limited` に集中。
+  - 直近300行集計:
+    - B: `summary_total=757`, `revert_not_found=278`, `rate_limited=123`
+    - C: `summary_total=724`, `revert_not_found=289`, `rate_limited=92`
+- 対応:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `MAX_ORDERS_PER_MINUTE: 4 -> 6`
+    - `REVERT_*` を緩和（`MIN_TICKS=1`, `RANGE_MIN=0.08`, `SWEEP_MIN=0.04`, `BOUNCE_MIN=0.01`, `CONFIRM_RATIO_MIN=0.22`）
+    - long圧縮緩和: `SIDE_METRICS_MIN_MULT: 0.30 -> 0.42`, `MAX_MULT: 0.82 -> 0.95`,
+      `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.24 -> 0.30`
+  - `ops/env/scalp_ping_5s_c.env`
+    - `MAX_ORDERS_PER_MINUTE: 4 -> 6`
+    - `REVERT_*` を緩和（`MIN_TICKS=1`, `RANGE_MIN=0.08`, `SWEEP_MIN=0.04`, `BOUNCE_MIN=0.01`, `CONFIRM_RATIO_MIN=0.22`）
+    - long圧縮緩和: `SIDE_METRICS_MIN_MULT: 0.25 -> 0.38`, `MAX_MULT: 0.88 -> 1.00`,
+      `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.28 -> 0.34`
+- 意図:
+  - `signal不成立` と `rate-limit` 起因の無約定を減らし、long側の実効units回復を優先する。
