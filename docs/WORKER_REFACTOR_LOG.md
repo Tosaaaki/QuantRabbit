@@ -8,6 +8,24 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-27（追記）`scalp_ping_5s_c` の preflight 閾値を `quant-order-manager` 実効envへ同期
+
+- 背景（VM実測）:
+  - `quant-order-manager.service` は `quant-v2-runtime.env` と `quant-order-manager.env` のみを読む。
+  - C worker 側（`scalp_ping_5s_c.env`）で緩和した `PERF_GUARD_FAILFAST_*` / `PRESERVE_INTENT_*` が
+    order-manager 側へ未同期で、`perf_block` と `entry_probability_reject` が継続していた。
+  - `perf_guard.is_allowed(..., env_prefix=SCALP_PING_5S_C)` を VM で再現すると、
+    order-manager 実効envでは `hard:hour13:failfast:pf=0.32 win=0.36 n=22` を返却。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_*_STRATEGY_SCALP_PING_5S_C[_LIVE]` を
+      `reject_under=0.74 / min_scale=0.34 / max_scale=0.56` へ更新。
+    - `SCALP_PING_5S[_C]_PERF_GUARD_FAILFAST_*` を
+      `min_trades=30 / pf=0.20 / win=0.20` へ更新。
+- 意図:
+  - V2分離の責務に合わせ、order-manager preflight 判定を worker 運用値と一致させる。
+  - 同一戦略が worker 経路と order-manager 経路で異なる閾値を読む状態を解消する。
+
 ### 2026-02-27（追記）VM systemd の `EnvironmentFile` 重複読込を自動是正
 
 - 背景（VM実測）:

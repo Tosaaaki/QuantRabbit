@@ -42,6 +42,47 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 13:54 UTC / 2026-02-27 22:54 JST - `scalp_ping_5s_c` 第8ラウンド（order-manager env乖離の是正）
+
+Period:
+- Round7 反映後: `2026-02-27T13:47:22+00:00` 以降
+
+Source:
+- VM `journalctl -u quant-scalp-ping-5s-c.service`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM python 実測（`workers.common.perf_guard.is_allowed`）
+
+Fact:
+- Round7 後の C 注文状態（strategy tag filter）は `perf_block=39`, `entry_probability_reject=11`, `probability_scaled=9`, `filled=0`。
+- ログは `market_order rejected ... reason=perf_block` が連続し、long の送信前段で停止。
+- 同時点の `perf_guard` 実測:
+  - order-manager 実効env（`quant-v2-runtime` + `quant-order-manager`）では  
+    `allowed=False`, `reason='hard:hour13:failfast:pf=0.32 win=0.36 n=22'`
+  - worker env（`scalp_ping_5s_c.env`）も加えると  
+    `allowed=True`, `reason='warn:margin_closeout_soft...'`
+
+Failure Cause:
+1. `quant-order-manager.service` が読む env 側で C failfast 閾値が旧値（`min_trades=8`, `pf=0.90`, `win=0.48`）のまま残存し、hard block 化。
+2. worker 側で緩めた preserve-intent 閾値（`reject_under=0.74`）が order-manager 側へ未同期で、`entry_probability_reject` が過多。
+
+Improvement:
+1. `ops/env/quant-order-manager.env` の C preserve-intent を worker 側と同期:
+  - `REJECT_UNDER 0.76 -> 0.74`
+  - `MIN_SCALE 0.24 -> 0.34`
+  - `MAX_SCALE 0.50 -> 0.56`
+2. `ops/env/quant-order-manager.env` の `SCALP_PING_5S[_C]_PERF_GUARD_FAILFAST_*` を worker 側と同期:
+  - `MIN_TRADES 8 -> 30`
+  - `PF 0.90 -> 0.20`
+  - `WIN 0.48 -> 0.20`
+
+Verification:
+1. 再起動後の `perf_guard.is_allowed(..., env_prefix=SCALP_PING_5S_C)` が `allowed=True` となること。
+2. 反映後30分で `orders.db` の C `submit_attempt/filled` が再出現すること。
+3. `entry-skip summary` の `order_reject:perf_block` 比率が低下すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 13:30 UTC / 2026-02-27 22:30 JST - `scalp_ping_5s_b/c` 第4ラウンド（rate-limit/revert/perf同時緩和）
 
 Period:

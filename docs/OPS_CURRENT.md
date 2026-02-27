@@ -1,5 +1,31 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-12. 2026-02-27 UTC `scalp_ping_5s_c` 第8ラウンド（order-manager env同期で hard perf block を解除）
+- 背景（VM実測, UTC 2026-02-27 13:47-13:52）:
+  - Round7反映後の `orders.db`（`scalp_ping_5s_c_live`）は
+    `perf_block=39`, `entry_probability_reject=11`, `probability_scaled=9`, `filled=0`。
+  - `quant-scalp-ping-5s-c` の reject は `reason=perf_block` が連続し、
+    送信フェーズへ到達しない状態だった。
+  - VM上で `perf_guard.is_allowed(...)` を実測すると:
+    - `quant-order-manager.env` + `quant-v2-runtime.env` 読込:  
+      `allowed=False, reason='hard:hour13:failfast:pf=0.32 win=0.36 n=22'`
+    - そこへ `scalp_ping_5s_c.env` を追加読込:  
+      `allowed=True, reason='warn:margin_closeout_soft...'`
+  - つまり order-manager サービスが読む env と worker 側 env が乖離し、
+    C の failfast が order-manager 側だけ過緊縮で hard block 化していた。
+- 対応（`ops/env/quant-order-manager.env`）:
+  - C preserve-intent を worker 側運用値へ同期:
+    - `REJECT_UNDER: 0.76 -> 0.74`
+    - `MIN_SCALE: 0.24 -> 0.34`
+    - `MAX_SCALE: 0.50 -> 0.56`
+  - C failfast（+fallback）を worker 側運用値へ同期:
+    - `SCALP_PING_5S[_C]_PERF_GUARD_FAILFAST_MIN_TRADES: 8 -> 30`
+    - `..._FAILFAST_PF: 0.90 -> 0.20`
+    - `..._FAILFAST_WIN: 0.48 -> 0.20`
+- 意図:
+  - order-manager preflight の hard failfast を解除し、long の送信・約定再開を優先する。
+  - 閾値ソースを worker と揃えて、同一戦略が経路差で別挙動になる状態を解消する。
+
 ## 0-11. 2026-02-27 UTC `scalp_ping_5s_b/c` long-side RR改善 + lot圧縮緩和
 - 背景（VM実測, UTC 2026-02-27 09:20 集計）:
   - 24h side集計で `long` は `755 trades / -730.1 JPY / avg_units=185.8`、
