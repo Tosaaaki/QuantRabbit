@@ -126,6 +126,26 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 17:50 JST - quickshot 判定のローカル回帰テストを追加
+Period:
+- Validation window: `2026-02-27 17:40` ～ `17:50` JST
+- Source: `tests/workers/test_m1scalper_config.py`, `tests/workers/test_m1scalper_quickshot.py`
+
+Fact:
+- quickshot 判定の主要分岐（allow / JSTメンテ時間 block / side mismatch block）をユニットテスト化した。
+- quickshot 設定値（`M1SCALP_USDJPY_QUICKSHOT_*`）の env 読込を config テストで監査可能にした。
+
+Improvement:
+1. 判定ロジックの改修時に、回帰で「誤って全拒否/全通過」になるリスクを抑制。
+2. `target_jpy` 逆算ロジックの単位崩れ（pips換算）をテストで即検出できる状態へ固定。
+
+Verification:
+1. `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py`
+   - `7 passed`
+
+Status:
+- done (local)
+
 ## 2026-02-27 17:35 JST - M1Scalper quickshot（M5 breakout + M1 pullback + 100円逆算）を導入
 Period:
 - Design/implementation window: `2026-02-27 16:55` ～ `17:35` JST

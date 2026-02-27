@@ -9057,3 +9057,13 @@
   - `quant-m1scalper-exit.service` の EXIT 閾値と
     `quant-scalp-ping-5s-b.service` の戦略ローカル TP/SL/units 設定に限定。
   - 共通 order_manager/strategy_control の判定仕様は非変更。
+
+### 2026-02-27（追記）quickshot 実装の回帰テスト追加
+
+- 目的:
+  - `M1Scalper` quickshot 判定が将来変更で崩れないよう、allow/block 条件を固定テスト化する。
+- 変更ファイル:
+  - `tests/workers/test_m1scalper_quickshot.py`（新規）
+  - `tests/workers/test_m1scalper_config.py`（quickshot env 読込の回帰）
+- 検証:
+  - `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py`（7 passed）

@@ -180,3 +180,39 @@ Gate が発注に反映されているか（orders.db の pattern_gate payload �
 - `orders.db` の `entry-skip` 理由に `entry_probability_below_min_units` が増えないか
 - `signal` ノートに `notes.mode` が入り、`signal` で採点が継続的に上振れしているか
 - 直近 `nwave`、`fallback` の比率が極端に下がらないこと
+
+### 8.3 戦略C: 即時100円ターゲット quickshot（`quickshot_breakout_pullback`）
+
+エントリー前提:
+- `M1Scalper` の `breakout_retest` シグナルと整合（`M1SCALP_USDJPY_QUICKSHOT_REQUIRE_BREAKOUT_RETEST=1`）。
+- `M5` 直近レンジの breakout を確認し、`M1` の pullback/rebound が成立したときのみ通す。
+- spread 上限と JST メンテ時間（既定 `7時`）を先にブロックする。
+
+実装キー:
+- `workers/scalp_m1scalper/worker.py`
+  - `_detect_usdjpy_quickshot_plan(...)`
+  - `_recent_high(...)`
+  - `entry_thesis["usdjpy_quickshot"]` への監査情報注入
+
+サイズ/利確損切り:
+- `tp/sl` は固定値ではなく `atr_pips` から動的算出。
+  - `tp_pips = clamp(atr_pips * TP_ATR_MULT, TP_PIPS_MIN, TP_PIPS_MAX)`
+  - `sl_pips = clamp(tp_pips * SL_TP_RATIO, SL_PIPS_MIN, SL_PIPS_MAX)`
+- `target_jpy`（既定100円）を `tp_pips` で逆算して `target_units` を計算し、
+  `risk_cap` 内で最終ユニットを決定する。
+
+主な設定:
+- `M1SCALP_USDJPY_QUICKSHOT_ENABLED`
+- `M1SCALP_USDJPY_QUICKSHOT_TARGET_JPY`
+- `M1SCALP_USDJPY_QUICKSHOT_MAX_SPREAD_PIPS`
+- `M1SCALP_USDJPY_QUICKSHOT_BREAK_LOOKBACK_M5`
+- `M1SCALP_USDJPY_QUICKSHOT_PULLBACK_BAND_PIPS`
+- `M1SCALP_USDJPY_QUICKSHOT_TP_ATR_MULT`
+- `M1SCALP_USDJPY_QUICKSHOT_SL_TP_RATIO`
+- `M1SCALP_USDJPY_QUICKSHOT_BLOCK_JST_HOURS`
+
+運用時の観測ポイント:
+- `orders.db` の reject 理由に `quickshot_*` が集中していないか（spread/hour/mode/side）。
+- `entry_thesis.usdjpy_quickshot` の `setup_score / target_units / entry_probability` が
+  極端値（常時0.95固定など）になっていないか。
+- `target_jpy=100` 付近で `avg_win_jpy` と `avg_loss_jpy` の乖離が悪化していないか。

@@ -13,6 +13,7 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import math
 import time
 from typing import Dict, Optional, Tuple
 
@@ -327,6 +328,167 @@ def _recent_low(candles, lookback: int) -> Optional[float]:
     if not lows:
         return None
     return min(lows)
+
+
+def _recent_high(candles, lookback: int) -> Optional[float]:
+    if not candles or lookback <= 0:
+        return None
+    try:
+        n = max(2, int(lookback))
+    except (TypeError, ValueError):
+        n = 2
+    window = list(candles)[-n:] if len(candles) > n else list(candles)
+    if not window:
+        return None
+    highs: list[float] = []
+    for candle in window:
+        high = _candle_float(candle, "h", "high")
+        if high is None:
+            continue
+        highs.append(high)
+    if not highs:
+        return None
+    return max(highs)
+
+
+def _signal_mode(signal: dict) -> str:
+    notes = signal.get("notes")
+    if isinstance(notes, dict):
+        mode = str(notes.get("mode") or "").strip().lower()
+        if mode:
+            return mode
+    tag = str(signal.get("tag") or "").strip().lower()
+    if "breakout-retest" in tag:
+        return "breakout_retest"
+    return ""
+
+
+def _detect_usdjpy_quickshot_plan(
+    *,
+    signal_side: str,
+    signal: dict,
+    price: float,
+    spread_pips: float,
+    atr_pips: float,
+    now_utc: datetime.datetime,
+) -> tuple[bool, str, dict]:
+    if not config.USDJPY_QUICKSHOT_ENABLED:
+        return True, "quickshot_disabled", {}
+    side = str(signal_side or "").strip().lower()
+    if side not in {"long", "short"}:
+        return False, "quickshot_invalid_side", {"side": side}
+    if price <= 0.0 or price <= 100.0:
+        return False, "quickshot_invalid_price", {"price": round(price, 5)}
+
+    spread_cap = max(0.01, float(config.USDJPY_QUICKSHOT_MAX_SPREAD_PIPS))
+    if spread_pips > spread_cap:
+        return False, "quickshot_spread_wide", {"spread_pips": round(spread_pips, 3), "max_spread_pips": round(spread_cap, 3)}
+
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=datetime.timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(datetime.timezone.utc)
+    now_jst = now_utc.astimezone(datetime.timezone(datetime.timedelta(hours=9)))
+    if config.USDJPY_QUICKSHOT_BLOCK_JST_HOURS and now_jst.hour in config.USDJPY_QUICKSHOT_BLOCK_JST_HOURS:
+        return False, "quickshot_maintenance_hour", {"jst_hour": int(now_jst.hour)}
+
+    mode = _signal_mode(signal)
+    if config.USDJPY_QUICKSHOT_REQUIRE_BREAKOUT_RETEST and mode != "breakout_retest":
+        return False, "quickshot_mode_mismatch", {"mode": mode or "none"}
+
+    lookback_m5 = max(4, int(config.USDJPY_QUICKSHOT_BREAK_LOOKBACK_M5))
+    m5_candles = get_candles_snapshot("M5", limit=lookback_m5 + 3)
+    if not m5_candles or len(m5_candles) < lookback_m5 + 1:
+        return False, "quickshot_m5_data_short", {"m5_len": len(m5_candles or []), "lookback_m5": lookback_m5}
+    m5_recent = list(m5_candles)[-(lookback_m5 + 1) :]
+    m5_hist = m5_recent[:-1]
+    m5_curr = m5_recent[-1]
+    hist_highs = [_candle_float(c, "h", "high") for c in m5_hist]
+    hist_lows = [_candle_float(c, "l", "low") for c in m5_hist]
+    highs = [v for v in hist_highs if v is not None]
+    lows = [v for v in hist_lows if v is not None]
+    if not highs or not lows:
+        return False, "quickshot_m5_levels_missing", {}
+    m5_break_high = max(highs)
+    m5_break_low = min(lows)
+    m5_close = _candle_float(m5_curr, "c", "close")
+    if m5_close is None:
+        m5_close = price
+    break_margin = max(0.0, float(config.USDJPY_QUICKSHOT_BREAK_MARGIN_PIPS)) * _BB_PIP
+    long_break = m5_close >= (m5_break_high + break_margin)
+    short_break = m5_close <= (m5_break_low - break_margin)
+    if not (long_break or short_break):
+        return False, "quickshot_no_m5_breakout", {
+            "m5_close": round(m5_close, 3),
+            "break_high": round(m5_break_high, 3),
+            "break_low": round(m5_break_low, 3),
+        }
+    anchor_side = "long" if long_break and not short_break else "short" if short_break and not long_break else side
+    if anchor_side != side:
+        return False, "quickshot_side_mismatch", {"signal_side": side, "m5_anchor_side": anchor_side}
+    break_level = m5_break_high if side == "long" else m5_break_low
+
+    m1_candles = get_candles_snapshot("M1", limit=12)
+    if not m1_candles or len(m1_candles) < 4:
+        return False, "quickshot_m1_data_short", {"m1_len": len(m1_candles or [])}
+    pullback_band = max(0.2, float(config.USDJPY_QUICKSHOT_PULLBACK_BAND_PIPS))
+    retrace_min = max(0.05, float(config.USDJPY_QUICKSHOT_RETRACE_MIN_PIPS))
+    pullback_gap = abs(price - break_level) / _BB_PIP
+    recent_low = _recent_low(m1_candles, 6)
+    recent_high = _recent_high(m1_candles, 6)
+    if side == "long":
+        touched = recent_low is not None and recent_low <= (break_level + pullback_band * _BB_PIP)
+        bounce_pips = ((price - recent_low) / _BB_PIP) if recent_low is not None else 0.0
+    else:
+        touched = recent_high is not None and recent_high >= (break_level - pullback_band * _BB_PIP)
+        bounce_pips = ((recent_high - price) / _BB_PIP) if recent_high is not None else 0.0
+    if (not touched) or pullback_gap > pullback_band or bounce_pips < retrace_min:
+        return False, "quickshot_pullback_not_ready", {
+            "pullback_gap_pips": round(pullback_gap, 3),
+            "pullback_band_pips": round(pullback_band, 3),
+            "bounce_pips": round(bounce_pips, 3),
+            "retrace_min_pips": round(retrace_min, 3),
+        }
+
+    atr_eff = max(0.8, float(atr_pips or 0.0))
+    tp_pips = atr_eff * max(0.2, float(config.USDJPY_QUICKSHOT_TP_ATR_MULT))
+    tp_pips = max(float(config.USDJPY_QUICKSHOT_TP_PIPS_MIN), min(float(config.USDJPY_QUICKSHOT_TP_PIPS_MAX), tp_pips))
+    sl_pips = tp_pips * max(0.2, float(config.USDJPY_QUICKSHOT_SL_TP_RATIO))
+    sl_pips = max(float(config.USDJPY_QUICKSHOT_SL_PIPS_MIN), min(float(config.USDJPY_QUICKSHOT_SL_PIPS_MAX), sl_pips))
+
+    gross_target_jpy = max(1.0, float(config.USDJPY_QUICKSHOT_TARGET_JPY) + max(0.0, float(config.USDJPY_QUICKSHOT_EST_COST_JPY)))
+    units_target = int(math.ceil(gross_target_jpy / max(1e-6, tp_pips * _BB_PIP)))
+
+    break_dist = abs(m5_close - break_level) / _BB_PIP
+    break_quality = min(1.0, break_dist / max(0.5, atr_eff * 0.55))
+    pull_quality = max(0.0, 1.0 - min(1.0, pullback_gap / max(0.5, pullback_band)))
+    bounce_quality = min(1.0, bounce_pips / max(0.1, retrace_min))
+    spread_quality = max(0.0, 1.0 - min(1.0, spread_pips / spread_cap))
+    setup_score = max(
+        0.0,
+        min(1.0, 0.35 * pull_quality + 0.25 * bounce_quality + 0.25 * break_quality + 0.15 * spread_quality),
+    )
+    min_prob = max(0.0, min(0.95, float(config.USDJPY_QUICKSHOT_MIN_ENTRY_PROBABILITY)))
+    entry_probability = max(min_prob, min(0.95, min_prob + setup_score * (0.95 - min_prob)))
+    size_mult = max(0.65, min(1.30, 0.82 + 0.48 * setup_score))
+
+    return True, "allow", {
+        "mode": "quickshot_breakout_pullback",
+        "side": side,
+        "break_level": round(break_level, 3),
+        "m5_close": round(m5_close, 3),
+        "break_dist_pips": round(break_dist, 3),
+        "pullback_gap_pips": round(pullback_gap, 3),
+        "bounce_pips": round(bounce_pips, 3),
+        "setup_score": round(setup_score, 4),
+        "entry_probability": round(entry_probability, 4),
+        "tp_pips": round(tp_pips, 3),
+        "sl_pips": round(sl_pips, 3),
+        "target_units": int(max(1, units_target)),
+        "size_mult": round(size_mult, 4),
+        "target_jpy": round(float(config.USDJPY_QUICKSHOT_TARGET_JPY), 2),
+        "cost_jpy": round(float(config.USDJPY_QUICKSHOT_EST_COST_JPY), 2),
+    }
 
 
 def _detect_usdjpy_setup_mode(side: str, price: float, fac_m1: dict) -> tuple[Optional[str], dict]:
@@ -1258,10 +1420,51 @@ async def scalp_m1_worker() -> None:
             proj_detail.setdefault("entry_size_scale", round(entry_size_scale, 3))
             proj_detail["bb_detail"] = bb_detail
 
+        quickshot_plan: dict = {}
+        quickshot_entry_probability: Optional[float] = None
+        quickshot_target_units: Optional[int] = None
+        quickshot_size_mult = 1.0
+        if config.USDJPY_QUICKSHOT_ENABLED:
+            quickshot_allow, quickshot_reason, quickshot_detail = _detect_usdjpy_quickshot_plan(
+                signal_side=side,
+                signal=signal if isinstance(signal, dict) else {},
+                price=price,
+                spread_pips=spread_pips,
+                atr_pips=atr_pips,
+                now_utc=now,
+            )
+            if not quickshot_allow:
+                now_mono = time.monotonic()
+                if now_mono - last_block_log > 90.0:
+                    LOG.info(
+                        "%s quickshot_block side=%s tag=%s reason=%s detail=%s",
+                        config.LOG_PREFIX,
+                        side,
+                        signal_tag,
+                        quickshot_reason,
+                        quickshot_detail or {},
+                    )
+                    last_block_log = now_mono
+                continue
+            if isinstance(quickshot_detail, dict):
+                quickshot_plan = dict(quickshot_detail)
+                quickshot_size_mult = max(0.5, min(1.6, float(quickshot_plan.get("size_mult", 1.0) or 1.0)))
+                target_units_raw = quickshot_plan.get("target_units")
+                if isinstance(target_units_raw, (int, float)) and float(target_units_raw) > 0:
+                    quickshot_target_units = int(round(float(target_units_raw)))
+                quickshot_entry_probability = _to_probability(quickshot_plan.get("entry_probability"), 0.0)
+                tp_from_plan = _bb_float(quickshot_plan.get("tp_pips"))
+                sl_from_plan = _bb_float(quickshot_plan.get("sl_pips"))
+                if tp_from_plan is not None and tp_from_plan > 0.0:
+                    tp_pips = float(tp_from_plan)
+                if sl_from_plan is not None and sl_from_plan > 0.0:
+                    sl_pips = float(sl_from_plan)
+                quickshot_plan["reason"] = quickshot_reason
+
         usdjpy_setup_mode: Optional[str] = None
         usdjpy_setup_detail: dict = {}
         usdjpy_setup_mult = 1.0
-        if config.USDJPY_SETUP_GATING and side == "short":
+        if (not config.USDJPY_QUICKSHOT_ENABLED) and config.USDJPY_SETUP_GATING and side == "short":
             usdjpy_setup_mode, usdjpy_setup_detail = _detect_usdjpy_setup_mode(side, price, fac_m1)
             if not usdjpy_setup_mode:
                 now_mono = time.monotonic()
@@ -1355,6 +1558,8 @@ async def scalp_m1_worker() -> None:
         units = min(units, units_risk)
         units = int(round(units * cap))
         setup_size_mult = usdjpy_setup_mult
+        setup_label = usdjpy_setup_mode or str(quickshot_plan.get("mode") or "none")
+        applied_setup_mult = setup_size_mult * quickshot_size_mult
         dyn_mult = 1.0
         dyn_score = 0.0
         dyn_trades = 0
@@ -1363,12 +1568,16 @@ async def scalp_m1_worker() -> None:
             dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
             dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
             dyn_trades = int(dyn_profile.get("trades", 0) or 0)
-        total_size_mult = dyn_mult * setup_size_mult
+        total_size_mult = dyn_mult * applied_setup_mult
         if total_size_mult != 1.0:
             units = int(round(units * total_size_mult))
         units = int(round(units * entry_size_scale))
         if side == "short":
             units = -abs(units)
+        if quickshot_target_units is not None and quickshot_target_units > 0:
+            risk_cap_units = max(1, abs(int(units_risk)))
+            target_units = max(1, min(risk_cap_units, int(quickshot_target_units)))
+            units = target_units if side == "long" else -target_units
 
         if side == "long":
             sl_price = round(entry_ref_price - sl_pips * 0.01, 3)
@@ -1384,6 +1593,9 @@ async def scalp_m1_worker() -> None:
             is_buy=side == "long",
         )
         client_id = _client_order_id(strategy_tag)
+        entry_probability = _to_probability(signal.get("entry_probability"), conf_val / 100.0)
+        if quickshot_entry_probability is not None:
+            entry_probability = max(entry_probability, quickshot_entry_probability)
         entry_thesis = {
             "strategy_tag": strategy_tag,
             "source_signal_tag": signal_tag,
@@ -1392,10 +1604,7 @@ async def scalp_m1_worker() -> None:
             "signal_side": signal_side,
             "exec_side": side,
             "confidence": conf_val,
-            "entry_probability": round(
-                _to_probability(signal.get("entry_probability"), conf_val / 100.0),
-                3,
-            ),
+            "entry_probability": round(entry_probability, 3),
             "sl_pips": round(sl_pips, 2),
             "tp_pips": round(tp_pips, 2),
             "hard_stop_pips": round(sl_pips, 2),
@@ -1413,7 +1622,10 @@ async def scalp_m1_worker() -> None:
             entry_thesis["usdjpy_setup_mode"] = usdjpy_setup_mode
             if usdjpy_setup_detail:
                 entry_thesis["usdjpy_setup_detail"] = usdjpy_setup_detail
-            entry_thesis["setup_mult"] = round(setup_size_mult, 4)
+            entry_thesis["setup_mult"] = round(applied_setup_mult, 4)
+        if quickshot_plan:
+            entry_thesis["usdjpy_quickshot"] = dict(quickshot_plan)
+            entry_thesis["setup_mult"] = round(applied_setup_mult, 4)
         if derive_pattern_signature is not None and isinstance(entry_thesis, dict):
             pattern_tag, pattern_meta = derive_pattern_signature(
                 fac_m1, action="OPEN_LONG" if units > 0 else "OPEN_SHORT"
@@ -1703,8 +1915,8 @@ async def scalp_m1_worker() -> None:
                     conf_val,
                     cap,
                     dyn_mult,
-                    usdjpy_setup_mode or "none",
-                    setup_size_mult,
+                    setup_label,
+                    applied_setup_mult,
                     dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
@@ -1917,8 +2129,8 @@ async def scalp_m1_worker() -> None:
                 conf_val,
                 cap,
                 dyn_mult,
-                usdjpy_setup_mode or "none",
-                setup_size_mult,
+                setup_label,
+                applied_setup_mult,
                 dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
