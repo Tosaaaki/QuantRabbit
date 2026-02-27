@@ -57,6 +57,25 @@
   - V2分離の責務に合わせ、order-manager preflight 判定を worker 運用値と一致させる。
   - 同一戦略が worker 経路と order-manager 経路で異なる閾値を読む状態を解消する。
 
+### 2026-02-27（追記）`scalp_ping_5s_c_live` の hard `perf_block` を failfast/sl_loss_rate 起因で緩和
+
+- 背景（VM実測）:
+  - `logs/metrics.db`（直近60分）で `order_perf_block=134`、うち `scalp_ping_5s_c_live=119`。
+  - 主理由は `hard:hour14:sl_loss_rate=0.68 pf=0.39 n=41`（94件）と
+    `hard:hour15:failfast:pf=0.12 win=0.28 n=43`（25件）。
+  - `logs/orders.db` でも同時間帯で C は `filled=4 / perf_block=119` と、B（`filled=24 / perf_block=15`）より hard block 依存が強い状態。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_HARD_PF=0.00` を追加。
+    - fallback `SCALP_PING_5S_PERF_GUARD_FAILFAST_HARD_PF=0.00` も追加。
+    - `SCALP_PING_5S_C_PERF_GUARD_SL_LOSS_RATE_MAX` を `0.55 -> 0.70`。
+    - fallback `SCALP_PING_5S_PERF_GUARD_SL_LOSS_RATE_MAX` を `0.55 -> 0.70`。
+  - `ops/env/scalp_ping_5s_c.env`
+    - 同値（`FAILFAST_HARD_PF=0.00`, `SL_LOSS_RATE_MAX=0.70`）を C + fallback の両プレフィクスへ同期。
+- 意図:
+  - `reduce` 運用のまま hard failfast 既定床（PF floor）で即停止する挙動を抑え、連続エントリーの再開余地を残す。
+  - `sl_loss_rate` hard block を hour14 の実測値に対して過剰拒否しない水準へ調整し、改善ループを継続させる。
+
 ### 2026-02-27（追記）`scalp_extrema_reversal_live` の「取り残し」防止を実装
 
 - 背景（VM実測）:

@@ -42,6 +42,34 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-27 15:15 UTC / 2026-02-28 00:15 JST - `scalp_ping_5s_c_live` の hard `perf_block` 主因を failfast/sl_loss_rate と特定して緩和
+Period:
+- 集計: 2026-02-27 14:12-15:12 UTC（直近60分）
+
+Fact:
+- VM `logs/metrics.db` の `order_perf_block` は 134 件。
+- 内訳は `scalp_ping_5s_c_live` が 119 件で、理由は
+  `hard:hour14:sl_loss_rate=0.68 pf=0.39 n=41` が 94 件、
+  `hard:hour15:failfast:pf=0.12 win=0.28 n=43` が 25 件。
+- 同時間帯の `orders.db` では C は `filled=4 / perf_block=119` で、B は `filled=24 / perf_block=15`。
+
+Failure Cause:
+1. `PERF_GUARD_FAILFAST_PF/WIN` を下げても、`PERF_GUARD_FAILFAST_HARD_PF` の既定値で hard block が継続していた。
+2. `PERF_GUARD_SL_LOSS_RATE_MAX=0.55` が C の時間帯成績（sl_loss_rate=0.68）に対して厳しすぎ、hour14 で hard block が連発した。
+
+Improvement:
+1. `ops/env/quant-order-manager.env` と `ops/env/scalp_ping_5s_c.env` に
+   `SCALP_PING_5S_C_PERF_GUARD_FAILFAST_HARD_PF=0.00` を追加（fallback `SCALP_PING_5S_*` も同時設定）。
+2. 同2ファイルで `SCALP_PING_5S_C_PERF_GUARD_SL_LOSS_RATE_MAX` を `0.55 -> 0.70` へ緩和
+   （fallback `SCALP_PING_5S_*` も同時に `0.70` へ更新）。
+
+Verification:
+1. デプロイ後、`metrics.db` の `order_perf_block` を15分監視し、Cの `hard:hour*:failfast` / `hard:hour*:sl_loss_rate` が再発しないことを確認。
+2. 同期間で `orders.db` の C `filled/perf_block` 比率が改善（`filled` 増・`perf_block` 減）することを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 17:10 UTC / 2026-02-28 02:10 JST - Counterfactual auto-improve を noise+pattern LCB で昇格判定
 Period:
 - 実装/テスト: 2026-02-27（ローカル）
