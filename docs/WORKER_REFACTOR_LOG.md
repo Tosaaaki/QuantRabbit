@@ -8735,6 +8735,9 @@
     - `_build_hourly_fallback` で DB 集計が `None/{}` の場合は
       `recent_trades` 起点の再集計に必ず退避するよう修正
       （Cloud Run 環境での「fallback しても全ゼロ」再発を防止）。
+    - Cloud Run（ローカル `trades.db` なし）では、snapshot 側 summary が
+      非ゼロでも `recent_trades` 由来と不整合なら、日次/週次/前日比/
+      勝敗/勝率/7d件数を `recent_trades` 由来へ正規化するよう補正。
     - `tab=architecture` の図表に `quant-order-manager` /
       `quant-position-manager` が欠けていたため、V2 実導線に沿って図を更新。
   - テスト追加/更新:
@@ -8744,6 +8747,8 @@
     - `tests/apps/test_autotune_ui_hourly_source_guard.py`
       - 全ゼロ stale snapshot の fallback 強制ケースを追加
     - `tests/apps/test_autotune_ui_summary_consistency.py`
+      - DBなし環境で snapshot 非ゼロ値が stale な場合に `recent_trades` へ
+        正規化される回帰ケースを追加
     - `tests/apps/test_autotune_ui_template_guards.py`
 - 検証:
-  - `pytest -q tests/apps` で `31 passed` を確認。
+  - `pytest -q tests/apps` で `32 passed` を確認。

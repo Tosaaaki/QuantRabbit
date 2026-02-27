@@ -2580,6 +2580,28 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     yesterday_jpy_from_trades = round(sum(t["pl_jpy"] for t in yesterday_closed_trades), 2)
     weekly_pips_from_trades = round(sum(t["pl_pips"] for t in weekly_closed_trades), 2)
     weekly_jpy_from_trades = round(sum(t["pl_jpy"] for t in weekly_closed_trades), 2)
+    reconcile_from_recent_trades = (
+        not rollup_applied
+        and not TRADES_DB.exists()
+        and bool(closed_trades)
+    )
+    if reconcile_from_recent_trades:
+        perf["daily_pl_pips"] = today_pips_from_trades
+        perf["daily_pl_jpy"] = today_jpy_from_trades
+        perf["yesterday_pl_pips"] = yesterday_pips_from_trades
+        perf["yesterday_pl_jpy"] = yesterday_jpy_from_trades
+        perf["weekly_pl_pips"] = weekly_pips_from_trades
+        perf["weekly_pl_jpy"] = weekly_jpy_from_trades
+        perf["recent_closed"] = len(weekly_closed_trades)
+        wins = sum(1 for t in weekly_closed_trades if t["pl_pips"] > 0)
+        losses = sum(1 for t in weekly_closed_trades if t["pl_pips"] < 0)
+        perf["wins"] = wins
+        perf["losses"] = losses
+        wl_total = wins + losses
+        perf["win_rate"] = (wins / wl_total) if wl_total else 0.0
+        perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
+        if (perf.get("total_trades") or 0) < (perf.get("recent_closed") or 0):
+            perf["total_trades"] = max(len(parsed_trades), int(perf.get("recent_closed") or 0))
 
     daily_stale_zero = (
         not rollup_applied
