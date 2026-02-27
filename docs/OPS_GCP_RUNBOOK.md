@@ -93,6 +93,16 @@ sudo -u tossaki -H python3 /home/tossaki/QuantRabbit/scripts/dedupe_systemd_envf
 sudo systemctl daemon-reload
 ```
 
+- ops系 unit から legacy `/etc/quantrabbit.env` 注入を除去:
+```bash
+sudo python3 /home/tossaki/QuantRabbit/scripts/dedupe_systemd_envfiles.py --apply \
+  --services "quant-online-tuner.service" "quant-autotune-ui.service" "quant-bq-sync.service" \
+             "quant-health-snapshot.service" "quant-level-map.service" \
+             "quant-strategy-optimizer.service" "quant-ui-snapshot.service" \
+  --remove-envfile "/etc/quantrabbit.env"
+sudo systemctl daemon-reload
+```
+
 ## 5. OS Login 権限不足・VM 運用ルール
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。
 - 本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。

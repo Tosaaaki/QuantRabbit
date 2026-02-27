@@ -272,6 +272,15 @@ def main() -> int:
     }
 
     forbidden_env_file = "/etc/quantrabbit.env"
+    forbidden_env_services = {
+        "quant-online-tuner.service",
+        "quant-autotune-ui.service",
+        "quant-bq-sync.service",
+        "quant-health-snapshot.service",
+        "quant-level-map.service",
+        "quant-strategy-optimizer.service",
+        "quant-ui-snapshot.service",
+    }
 
     disallowed_services = [
         "quantrabbit.service",
@@ -423,6 +432,20 @@ def main() -> int:
                 level="warn",
                 component="systemd-env",
                 message="Legacy EnvironmentFile is still referenced",
+                details={"service": service, "environment_file": forbidden_env_file},
+            )
+
+    for service in sorted(forbidden_env_services):
+        if not _unit_file_exists(service):
+            continue
+        unit_content = _cat_unit(service)
+        env_files = set(_extract_environment_files(unit_content))
+        if forbidden_env_file in env_files:
+            _add_finding(
+                findings,
+                level="warn",
+                component="systemd-env",
+                message="Legacy EnvironmentFile should be removed for ops service",
                 details={"service": service, "environment_file": forbidden_env_file},
             )
 

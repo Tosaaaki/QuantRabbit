@@ -96,9 +96,15 @@ def _is_editable_dropin(path: Path) -> bool:
     return str(path).startswith("/etc/systemd/system/") and ".service.d/" in str(path)
 
 
-def dedupe_service(service: str, *, apply: bool) -> tuple[int, int, list[str]]:
+def dedupe_service(
+    service: str,
+    *,
+    apply: bool,
+    remove_envfiles: set[str],
+) -> tuple[int, int, int, list[str]]:
     seen_paths: set[str] = set()
     duplicates_to_remove: dict[Path, list[int]] = defaultdict(list)
+    explicit_to_remove: dict[Path, list[int]] = defaultdict(list)
     notes: list[str] = []
 
     for unit_file in _service_line_order(service):
@@ -112,6 +118,13 @@ def dedupe_service(service: str, *, apply: bool) -> tuple[int, int, list[str]]:
             env_path = _extract_envfile_path(line)
             if env_path is None:
                 continue
+            if env_path in remove_envfiles:
+                if _is_editable_dropin(unit_file):
+                    explicit_to_remove[unit_file].append(idx)
+                    continue
+                notes.append(
+                    f"remove_target_in_non_editable file={unit_file} line={idx} env={env_path}"
+                )
             if env_path in seen_paths:
                 if _is_editable_dropin(unit_file):
                     duplicates_to_remove[unit_file].append(idx)
@@ -123,14 +136,18 @@ def dedupe_service(service: str, *, apply: bool) -> tuple[int, int, list[str]]:
                 seen_paths.add(env_path)
 
     duplicate_count = sum(len(v) for v in duplicates_to_remove.values())
-    if not apply or duplicate_count == 0:
-        return duplicate_count, 0, notes
+    explicit_remove_count = sum(len(v) for v in explicit_to_remove.values())
+    if not apply or (duplicate_count == 0 and explicit_remove_count == 0):
+        return duplicate_count, explicit_remove_count, 0, notes
 
     changed_files = 0
-    for path, line_numbers in duplicates_to_remove.items():
-        remove_set = set(line_numbers)
+    targets = set(duplicates_to_remove) | set(explicit_to_remove)
+    for path in targets:
+        remove_set = set(duplicates_to_remove.get(path, []))
+        remove_set.update(explicit_to_remove.get(path, []))
         try:
-            original = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            original_text = path.read_text(encoding="utf-8", errors="ignore")
+            original = original_text.splitlines()
         except OSError as exc:
             notes.append(f"read_error file={path} err={exc}")
             continue
@@ -138,7 +155,7 @@ def dedupe_service(service: str, *, apply: bool) -> tuple[int, int, list[str]]:
         if updated == original:
             continue
         text = "\n".join(updated)
-        if original and path.read_text(encoding="utf-8", errors="ignore").endswith("\n"):
+        if original and original_text.endswith("\n"):
             text += "\n"
         try:
             path.write_text(text, encoding="utf-8")
@@ -146,7 +163,7 @@ def dedupe_service(service: str, *, apply: bool) -> tuple[int, int, list[str]]:
         except OSError as exc:
             notes.append(f"write_error file={path} err={exc}")
 
-    return duplicate_count, changed_files, notes
+    return duplicate_count, explicit_remove_count, changed_files, notes
 
 
 def main() -> int:
@@ -164,6 +181,15 @@ def main() -> int:
         action="store_true",
         help="Write changes to drop-in files (default: dry-run).",
     )
+    parser.add_argument(
+        "--remove-envfile",
+        action="append",
+        default=[],
+        help=(
+            "Remove matching EnvironmentFile entries from editable drop-ins. "
+            "Can be specified multiple times."
+        ),
+    )
     args = parser.parse_args()
 
     services = _list_services(args.services)
@@ -171,18 +197,26 @@ def main() -> int:
         print("No matching services found.")
         return 0
 
+    remove_envfiles = {_normalize_envfile(item) for item in args.remove_envfile if item.strip()}
     total_duplicates = 0
+    total_explicit_removed = 0
     total_changed_files = 0
     services_with_duplicates = 0
 
     for service in services:
-        duplicate_count, changed_files, notes = dedupe_service(service, apply=args.apply)
-        if duplicate_count > 0:
+        duplicate_count, explicit_remove_count, changed_files, notes = dedupe_service(
+            service,
+            apply=args.apply,
+            remove_envfiles=remove_envfiles,
+        )
+        if duplicate_count > 0 or explicit_remove_count > 0:
             services_with_duplicates += 1
             total_duplicates += duplicate_count
+            total_explicit_removed += explicit_remove_count
             total_changed_files += changed_files
             print(
                 f"[{service}] duplicate_envfile_lines={duplicate_count} "
+                f"remove_target_lines={explicit_remove_count} "
                 f"changed_dropins={changed_files}"
             )
             for note in notes:
@@ -192,7 +226,9 @@ def main() -> int:
     print(
         f"mode={mode} services_scanned={len(services)} "
         f"services_with_duplicates={services_with_duplicates} "
-        f"duplicate_lines={total_duplicates} changed_dropins={total_changed_files}"
+        f"duplicate_lines={total_duplicates} "
+        f"remove_target_lines={total_explicit_removed} "
+        f"changed_dropins={total_changed_files}"
     )
     return 0
 
