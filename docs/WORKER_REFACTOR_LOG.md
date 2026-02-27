@@ -9067,3 +9067,35 @@
   - `tests/workers/test_m1scalper_config.py`（quickshot env 読込の回帰）
 - 検証:
   - `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py`（7 passed）
+
+### 2026-02-27（追記）場面別3戦略を専用ワーカーへ分離（Trend/Pullback/FailedBreak）
+
+- 目的:
+  - 「場面ごとに戦略を切り替える」運用を、既存ワーカーと競合しない形で V2 の ENTRY/EXIT 分離へ実装する。
+- 方針:
+  - 共通実装は `workers.scalp_m1scalper` を再利用し、ラッパーで signal/tag を固定。
+  - 既存導線との衝突回避のため、各専用 env は `M1SCALP_ENABLED=0`（デフォルト無効）。
+  - EXIT は `M1SCALP_EXIT_TAG_ALLOWLIST` で strategy_tag ごとに閉域化。
+- 変更ファイル:
+  - 追加（ENTRY/EXIT ラッパー）:
+    - `workers/scalp_trend_breakout/*`
+    - `workers/scalp_pullback_continuation/*`
+    - `workers/scalp_failed_break_reverse/*`
+  - 追加（systemd）:
+    - `systemd/quant-scalp-trend-breakout*.service`
+    - `systemd/quant-scalp-pullback-continuation*.service`
+    - `systemd/quant-scalp-failed-break-reverse*.service`
+  - 追加（env）:
+    - `ops/env/quant-scalp-trend-breakout*.env`
+    - `ops/env/quant-scalp-pullback-continuation*.env`
+    - `ops/env/quant-scalp-failed-break-reverse*.env`
+  - 既存更新:
+    - `workers/scalp_m1scalper/exit_worker.py`（`M1SCALP_EXIT_TAG_ALLOWLIST` を追加）
+    - `docs/WORKER_ROLE_MATRIX_V2.md`（stage 導入ユニットを追記）
+- 競合回避仕様:
+  - `TrendBreakout` は `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest`、strategy_tag を `TrendBreakout` 固定。
+  - `PullbackContinuation` は `buy-dip,sell-rally` のみ許可、strategy_tag を `PullbackContinuation` 固定。
+  - `FailedBreakReverse` は `vshape-rebound` のみ許可、strategy_tag を `FailedBreakReverse` 固定。
+  - EXIT は各 strategy_tag の allowlist で分離し、重複クローズを防ぐ。
+- 検証:
+  - `python3 -m py_compile` とユニットテストで import/設定分岐の回帰を確認（詳細は次項）。

@@ -1,0 +1,18 @@
+[Unit]
+Description=QuantRabbit FailedBreakReverse Exit Worker
+After=network.target
+
+[Service]
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-scalp-failed-break-reverse-exit.env
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_failed_break_reverse.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
+

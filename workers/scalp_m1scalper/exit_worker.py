@@ -321,7 +321,18 @@ def _log_reentry_decision(*, decision: str, tags: dict) -> None:
 BB_STYLE = "scalp"
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS = {"M1Scalper", "m1scalper", "m1_scalper"}
+_DEFAULT_ALLOWED_TAGS = "M1Scalper,m1scalper,m1_scalper"
+
+
+def _parse_tag_allowlist(raw: Optional[str]) -> Set[str]:
+    source = str(raw or _DEFAULT_ALLOWED_TAGS)
+    tags = {token.strip() for token in source.split(",") if token.strip()}
+    if not tags:
+        tags = {token.strip() for token in _DEFAULT_ALLOWED_TAGS.split(",") if token.strip()}
+    return tags
+
+
+ALLOWED_TAGS = _parse_tag_allowlist(os.getenv("M1SCALP_EXIT_TAG_ALLOWLIST", ""))
 _REASON_RSI_FADE = "m1_rsi_fade"
 _REASON_VWAP_CUT = "m1_vwap_cut"
 _REASON_STRUCTURE_BREAK = "m1_structure_break"

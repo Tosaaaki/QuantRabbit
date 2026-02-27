@@ -146,6 +146,28 @@ Verification:
 Status:
 - done (local)
 
+## 2026-02-27 18:20 JST - 場面別3戦略（Trend/Pullback/FailedBreak）を専用ワーカーへ分離
+Period:
+- Design window: `2026-02-27 18:00` ～ `18:20` JST
+- Source: `workers/scalp_*`, `systemd/quant-scalp-*.service`, `ops/env/quant-scalp-*.env`
+
+Fact:
+- 既存 `M1Scalper` は single worker 内で複数シグナルを扱うため、戦略単位で on/off・監査・exit閉域化が難しかった。
+- EXIT 側は固定 allowlist（`M1Scalper,m1scalper,m1_scalper`）で、strategy_tag分離に追従できなかった。
+
+Improvement:
+1. `TrendBreakout` / `PullbackContinuation` / `FailedBreakReverse` を ENTRY/EXIT ペアで新設。
+2. 各 ENTRY は signal タグを固定し、strategy_tag を専用名へ分離。
+3. EXIT は `M1SCALP_EXIT_TAG_ALLOWLIST` で対象タグを閉域化。
+4. 既存ワーカーとの競合回避のため、新規 env は `M1SCALP_ENABLED=0` を初期値にした。
+
+Verification:
+1. 新規ラッパー module の import と env 固定化をユニットテストで確認。
+2. `M1SCALP_EXIT_TAG_ALLOWLIST` の反映をユニットテストで確認。
+
+Status:
+- in_progress
+
 ## 2026-02-27 17:35 JST - M1Scalper quickshot（M5 breakout + M1 pullback + 100円逆算）を導入
 Period:
 - Design/implementation window: `2026-02-27 16:55` ～ `17:35` JST
