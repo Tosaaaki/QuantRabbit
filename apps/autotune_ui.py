@@ -187,6 +187,7 @@ _secret_cache: dict[str, tuple[float, Optional[str]]] = {}
 _strategy_control_cache_lock = threading.Lock()
 _strategy_control_cache: dict[str, Any] | None = None
 _strategy_control_cache_ts: float = 0.0
+_strategy_control_cache_sig: tuple[Optional[int], Optional[int], Optional[int], Optional[int]] | None = None
 
 app = FastAPI(title="QuantRabbit UI")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -784,6 +785,31 @@ def _load_strategy_candidates_from_trades() -> set[str]:
     return candidates
 
 
+def _path_mtime_ns(path: Path) -> Optional[int]:
+    try:
+        return path.stat().st_mtime_ns
+    except Exception:
+        return None
+
+
+def _strategy_control_db_path() -> Path:
+    raw = getattr(strategy_control, "_DB_PATH", None)
+    if isinstance(raw, Path):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        return Path(raw.strip())
+    return Path(os.getenv("STRATEGY_CONTROL_DB_PATH", "logs/strategy_control.db"))
+
+
+def _strategy_control_cache_signature() -> tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
+    return (
+        _path_mtime_ns(_strategy_control_db_path()),
+        _path_mtime_ns(TRADES_DB),
+        _path_mtime_ns(SIGNALS_DB),
+        _path_mtime_ns(ORDERS_DB),
+    )
+
+
 def _compute_strategy_control_state() -> dict[str, Any]:
     state: dict[str, Any] = {
         "global": {
@@ -838,32 +864,38 @@ def _compute_strategy_control_state() -> dict[str, Any]:
 
 
 def _load_strategy_control_state() -> dict[str, Any]:
-    global _strategy_control_cache, _strategy_control_cache_ts
+    global _strategy_control_cache, _strategy_control_cache_ts, _strategy_control_cache_sig
     now_mono = time.monotonic()
+    current_sig = _strategy_control_cache_signature()
     if (
         _strategy_control_cache is not None
         and (now_mono - _strategy_control_cache_ts) < _STRATEGY_CONTROL_CACHE_TTL_SEC
+        and _strategy_control_cache_sig == current_sig
     ):
         return copy.deepcopy(_strategy_control_cache)
 
     with _strategy_control_cache_lock:
         now_mono = time.monotonic()
+        current_sig = _strategy_control_cache_signature()
         if (
             _strategy_control_cache is not None
             and (now_mono - _strategy_control_cache_ts) < _STRATEGY_CONTROL_CACHE_TTL_SEC
+            and _strategy_control_cache_sig == current_sig
         ):
             return copy.deepcopy(_strategy_control_cache)
         state = _compute_strategy_control_state()
         _strategy_control_cache = state
         _strategy_control_cache_ts = now_mono
+        _strategy_control_cache_sig = current_sig
         return copy.deepcopy(state)
 
 
 def _invalidate_strategy_control_cache() -> None:
-    global _strategy_control_cache, _strategy_control_cache_ts
+    global _strategy_control_cache, _strategy_control_cache_ts, _strategy_control_cache_sig
     with _strategy_control_cache_lock:
         _strategy_control_cache = None
         _strategy_control_cache_ts = 0.0
+        _strategy_control_cache_sig = None
 
 
 def _safe_float(value: Any) -> float:

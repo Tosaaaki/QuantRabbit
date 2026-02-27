@@ -836,6 +836,8 @@
             <div class="field-grid" style="margin-top:0.6rem;">
               <label class="field-label" for="ops-global-note">備考</label>
               <input id="ops-global-note" class="input-compact" name="note" type="text" maxlength="255" placeholder="memo">
+              <label class="field-label" for="ops-global-token">Ops トークン</label>
+              <input id="ops-global-token" class="input-compact" name="ops_token" type="password" placeholder="ui_ops_token" autocomplete="off" required>
             </div>
             <div class="buttons" style="margin-top:0.75rem;">
               <button type="submit" class="btn-ghost">更新</button>
@@ -864,6 +866,8 @@
                 </label>
                 <label class="field-label" for="ops-strategy-note">備考</label>
                 <input id="ops-strategy-note" class="input-compact" name="note" type="text" maxlength="255" placeholder="memo">
+                <label class="field-label" for="ops-strategy-token">Ops トークン</label>
+                <input id="ops-strategy-token" class="input-compact" name="ops_token" type="password" placeholder="ui_ops_token" autocomplete="off" required>
               </div>
               <div class="buttons" style="margin-top:0.75rem;">
                 <button type="submit">追加 / 更新</button>
@@ -896,6 +900,8 @@
                   <div class="field-grid" style="margin-top:0.6rem;">
                     <label class="field-label" for="ops-row-note-{{ loop.index }}">備考</label>
                     <input id="ops-row-note-{{ loop.index }}" class="input-compact" name="note" type="text" maxlength="255" value="{{ row.note or '' }}">
+                    <label class="field-label" for="ops-row-token-{{ loop.index }}">Ops トークン</label>
+                    <input id="ops-row-token-{{ loop.index }}" class="input-compact" name="ops_token" type="password" placeholder="ui_ops_token" autocomplete="off" required>
                   </div>
                   <div class="buttons" style="margin-top:0.75rem;">
                     <button type="submit">更新</button>

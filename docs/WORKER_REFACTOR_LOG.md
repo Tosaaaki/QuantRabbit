@@ -27,6 +27,33 @@
   - Ops タブでの Entry/Exit/Lock 更新結果を dashboard に即時反映し、
     「更新成功なのに表示が戻る」誤認を防止する。
 
+### 2026-02-27（追記）UI戦略制御フォームの認証漏れを修正 + 外部更新検知キャッシュを追加
+
+- 背景:
+  - `ops/strategy-control` は `ops_token` 認証が必須だが、
+    dashboard の戦略制御フォーム群に `ops_token` 入力が無く、
+    `ui_ops_token` 設定環境では更新操作が `Unauthorized` になる経路があった。
+  - strategy control 状態は TTL キャッシュのみだったため、
+    UI 以外の経路で `strategy_control.db` が更新された場合に
+    TTL 期間中の表示遅延が残る余地があった。
+- 変更:
+  - `templates/autotune/dashboard.html`
+    - `/ops/strategy-control` の global/strategy/row すべてのフォームに
+      `ops_token` 入力を追加（required）。
+  - `apps/autotune_ui.py`
+    - strategy control キャッシュに
+      `strategy_control.db + trades/signals/orders` の mtime シグネチャを導入。
+    - TTL 内でもシグネチャ変化時は即時再計算するよう更新。
+  - `tests/apps/test_autotune_ui_strategy_control_auth.py`
+    - token なし拒否 / token あり成功を endpoint レベルで追加検証。
+  - `tests/apps/test_autotune_ui_template_guards.py`
+    - 戦略制御フォームに `ops_token` が存在する回帰ガードを追加。
+  - `tests/apps/test_autotune_ui_caching.py`
+    - シグネチャ変化でキャッシュ再読込される回帰テストを追加。
+- 意図:
+  - 戦略制御UIの「見えているのに操作できない」状態を排除し、
+    外部更新を含む表示不一致の再発確率を下げる。
+
 ### 2026-02-26（追記）B の縮小ロット失効を更に抑えるため最小ロット閾値を再調整
 
 - 背景（VM実測, 2026-02-26 12:08 UTC / 21:08 JST）:

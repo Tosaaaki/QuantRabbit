@@ -37,3 +37,12 @@ def test_dashboard_chart_storage_access_is_guarded() -> None:
     assert "const safeSessionSet = (key, value) => {" in source
     assert "const saved = safeSessionGet(storageKey);" in source
     assert 'const chartMode = safeSessionGet("qr_chart_mode");' in source
+
+
+def test_strategy_control_forms_require_ops_token() -> None:
+    source = _read(DASHBOARD_TEMPLATE)
+    assert source.count('action="/ops/strategy-control"') >= 3
+    assert source.count('name="ops_token"') >= 3
+    assert 'id="ops-global-token"' in source
+    assert 'id="ops-strategy-token"' in source
+    assert 'id="ops-row-token-{{ loop.index }}"' in source

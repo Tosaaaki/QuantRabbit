@@ -31,6 +31,8 @@
   dashboard の再描画遅延を抑えられる。
   `/ops/strategy-control` / `/api/strategy-control` の更新成功時は
   キャッシュを即時無効化し、次回描画で最新状態を再読み込みする。
+  さらに `strategy_control.db` と `trades/signals/orders` の mtime を
+  シグネチャとして比較し、TTL内でも外部更新を検知したら再計算する。
 - `quant-ui-snapshot.service` 実行は `scripts/run_ui_snapshot.sh` で
   `UI_SNAPSHOT_MAX_RUNTIME_SEC`（default: `90`）の上限を持つ。
   上限超過時は `"[ui-snapshot] timed out ..."` を出して当該周期を打ち切り、
