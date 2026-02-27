@@ -95,6 +95,36 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:25 UTC / 2026-02-27 10:25 JST - `position_manager sync_trades` 過負荷を設定で緩和
+Period:
+- VM実測: `2026-02-27 00:55-01:20 UTC`
+- Source: `journalctl -u quant-position-manager.service`, `journalctl -u quant-scalp-wick-reversal-blend.service`
+
+Fact:
+- `position_manager` で `sync_trades timeout (8.0s)` / `position manager busy` が高頻度発生。
+- WickBlend 側にも `/position/sync_trades` 失敗警告が継続し、処理遅延を誘発。
+
+Failure Cause:
+1. `sync_trades` の取得上限・呼び出し間隔・キャッシュ窓が短く、負荷集中時に timeout 連鎖していた。
+
+Improvement:
+1. `ops/env/quant-v2-runtime.env`
+   - `POSITION_MANAGER_MAX_FETCH=600`（new）
+   - `POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC=4.0`（from `2.0`）
+   - `POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC=4.0`（from `1.5`）
+   - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=12.0`（from `8.0`）
+   - `POSITION_MANAGER_WORKER_SYNC_TRADES_CACHE_TTL_SEC=3.0`（new）
+   - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=120.0`（from `60.0`）
+   - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=600`（from `1000`）
+
+Verification:
+1. 再起動後に `quant-position-manager` の `sync_trades timeout` / `position manager busy` 件数が減少。
+2. WickBlend の `position_manager service call failed path=/position/sync_trades` が減少。
+3. `orders.db` の `submit_attempt -> filled` 変換率が維持/改善。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:15 UTC / 2026-02-27 10:15 JST - B/Cを追加圧縮（停止なしで損失勾配をさらに低減）
 Period:
 - VM実測: 直近30分 `scalp_ping_5s_b_live=-35.7 JPY`, `scalp_ping_5s_c_live=-18.4 JPY`

@@ -8370,6 +8370,24 @@
   - DBロック瞬間風速で WickBlend worker 全体が停止する経路を遮断し、
     エントリー導線を維持する。
 
+### 2026-02-27（追記）`position_manager sync_trades` 負荷緩和（runtime tuning）
+
+- 背景（VM実測）:
+  - `quant-position-manager.service` で
+    `sync_trades timeout (8.0s)` / `position manager busy` が連続発生。
+  - WickBlend などの strategy worker で `/position/sync_trades` 失敗が継続。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `POSITION_MANAGER_MAX_FETCH=600`（new）
+    - `POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC=4.0`（from `2.0`）
+    - `POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC=4.0`（from `1.5`）
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=12.0`（from `8.0`）
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_CACHE_TTL_SEC=3.0`（new）
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=120.0`（from `60.0`）
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=600`（from `1000`）
+- 意図:
+  - sync処理の過負荷ループを抑え、position manager 起点の遅延/拒否を減らす。
+
 ### 2026-02-27（追記）B/C 追加圧縮（units・頻度を一段低下）
 
 - 背景（VM実測, 直近30分）:

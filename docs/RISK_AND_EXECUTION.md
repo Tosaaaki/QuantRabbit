@@ -1381,6 +1381,22 @@
 - 運用意図:
   - shared DBロックの瞬間的な競合で、勝ち寄与 worker が停止し続ける状態を防ぐ。
 
+### `position_manager sync_trades` runtime tuning（2026-02-27 追記）
+- 背景:
+  - `quant-position-manager` で `sync_trades timeout` と `position manager busy` が高頻度発生し、
+    strategy 側のポジ同期呼び出しが不安定化していた。
+- 実装:
+  - `ops/env/quant-v2-runtime.env`
+    - `POSITION_MANAGER_MAX_FETCH=600`
+    - `POSITION_MANAGER_SYNC_MIN_INTERVAL_SEC=4.0`
+    - `POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC=4.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=12.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_CACHE_TTL_SEC=3.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_STALE_MAX_AGE_SEC=120.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=600`
+- 運用意図:
+  - sync負荷を平準化し、position manager 起点の timeout 連鎖を抑制する。
+
 ### B/C 追加圧縮（2026-02-27 追記）
 - 背景:
   - 直近窓で `scalp_ping_5s_b_live` / `scalp_ping_5s_c_live` の負け寄与が継続。
