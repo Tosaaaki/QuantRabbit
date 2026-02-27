@@ -1338,6 +1338,18 @@
 - 運用意図:
   - 共有DBロックの瞬間風速で勝ち寄与ワーカーが停止する経路を削減する。
 
+### `quant-order-manager` service worker 増強（2026-02-27 追記）
+- 背景:
+  - strategy worker 側で `order_manager service call failed ... Read timed out (20s)` が発生し、
+    service応答待ち起点で entry/close の遅延が出ていた。
+  - `quant-order-manager` は稼働中だったが、`ORDER_MANAGER_SERVICE_WORKERS=1` の単一並列だった。
+- 実装:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_WORKERS=2`（from `1`）
+- 運用意図:
+  - order_manager の同時処理能力を上げ、localhost API timeout を減らす。
+  - timeout由来の重複リクエストと reject ノイズを抑制する。
+
 ### 状態遷移
 
 | 状態 | 遷移条件 | 動作 |

@@ -8292,6 +8292,18 @@
   - 既存スキーマ環境では起動時DDLを書き込まないことで、
     スキーマロック競合で勝ち筋 worker が落ちる経路を閉じる。
 
+### 2026-02-27（追記）`quant-order-manager` 並列度の増強（timeout緩和）
+
+- 背景（VM実測, UTC 2026-02-27 00:57-00:58）:
+  - B/C worker で `order_manager service call failed ... Read timed out (20s)` が発生。
+  - order_manager は active だが service worker 数が `1` で、OANDA待ち重複時に応答遅延が生じていた。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_WORKERS=2`（from `1`）
+- 意図:
+  - localhost API の同時処理能力を引き上げ、entry/close の service timeout 発生率を下げる。
+  - 連続 timeout 起点の重複 request/reject（`CLIENT_TRADE_ID_ALREADY_EXISTS`）を抑制する。
+
 ### 2026-02-26（追記）B/C を sell 固定へ再ピン留め（方向精度優先 + rescue維持）
 
 - 背景:

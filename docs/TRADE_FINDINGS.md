@@ -95,6 +95,32 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-27 01:10 UTC / 2026-02-27 10:10 JST - order_manager API詰まり緩和（service workerを2並列化）
+Period:
+- VM実測: `2026-02-27 00:57-00:58 UTC`
+- Source: `journalctl -u quant-scalp-ping-5s-b.service`, `journalctl -u quant-scalp-ping-5s-c.service`, `journalctl -u quant-order-manager.service`
+
+Fact:
+- B/C worker で `order_manager service call failed ... Read timed out (read timeout=20.0)` が発生。
+- 同時間帯の `quant-order-manager` は active だが、`ORDER_MANAGER_SERVICE_WORKERS=1` で単一処理。
+- timeout 後の再試行で `CLIENT_TRADE_ID_ALREADY_EXISTS` reject が混在し、約定効率が低下。
+
+Failure Cause:
+1. order_manager が単一workerのため、OANDA API待ちが重なると localhost API 応答が遅延。
+2. strategy worker 側の service timeout 到達で request 経路が不安定化し、重複リクエストが発生しやすい。
+
+Improvement:
+1. `ops/env/quant-order-manager.env` の `ORDER_MANAGER_SERVICE_WORKERS` を `1 -> 2` へ変更。
+2. order_manager の同時処理能力を増やし、localhost API timeout と reject の発生頻度を下げる。
+
+Verification:
+1. `quant-order-manager.service` 再起動後に active 維持。
+2. 直後ウィンドウで `Read timed out` 警告件数が減少することを `journalctl` で確認。
+3. `orders.db` の `filled/submit_attempt` 比率をデプロイ前後で比較する。
+
+Status:
+- in_progress
+
 ## 2026-02-27 01:00 UTC / 2026-02-27 10:00 JST - `StageTracker` 起動時ロック再発をテーブル存在確認で抑止
 Period:
 - VM実測: `2026-02-27 00:46-00:50 UTC`
