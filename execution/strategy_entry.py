@@ -48,6 +48,20 @@ _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS = _env_bool(
     "ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS",
     False,
 )
+
+
+def _env_csv(name: str, default: str) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = default
+    out: list[str] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if token:
+            out.append(token.upper())
+    return out
+
+
 _STRATEGY_PATTERN_GATE_ENABLED = _env_bool("STRATEGY_PATTERN_GATE_ENABLED", True)
 _STRATEGY_PATTERN_GATE_AUTO_OPT_IN = _env_bool(
     "STRATEGY_PATTERN_GATE_AUTO_OPT_IN",
@@ -197,20 +211,6 @@ _STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT = _env_float(
     0.02,
 )
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
-
-
-def _env_csv(name: str, default: str) -> list[str]:
-    raw = os.getenv(name)
-    if raw is None:
-        raw = default
-    out: list[str] = []
-    for token in raw.split(","):
-        token = token.strip()
-        if token:
-            out.append(token.upper())
-    return out
-
-
 _TECH_DEFAULT_TFS_BY_POCKET = {
     "macro": ("D1", "H4", "H1", "M5", "M1"),
     "micro": ("H4", "H1", "M5", "M1"),

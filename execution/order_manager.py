@@ -8481,6 +8481,36 @@ async def market_order(
         entry_thesis=entry_thesis,
     )
     entry_probability = _entry_probability_value(confidence, entry_thesis)
+
+    def _inject_entry_payload(payload: Optional[dict] = None) -> dict:
+        req: dict = {}
+        if isinstance(payload, dict):
+            req.update(payload)
+        if strategy_tag is not None:
+            req.setdefault("strategy_tag", strategy_tag)
+        if meta is not None:
+            req.setdefault("meta", meta)
+        if isinstance(entry_thesis, dict):
+            req.setdefault("entry_thesis", entry_thesis)
+            if "entry_units_intent" not in req:
+                req["entry_units_intent"] = entry_thesis.get("entry_units_intent")
+            if "entry_probability" not in req:
+                req["entry_probability"] = entry_thesis.get("entry_probability")
+        if entry_probability is not None:
+            req["entry_probability"] = entry_probability
+        return req
+
+    _log_order_impl = _log_order
+    _cache_order_status_impl = _cache_order_status
+
+    def _log_order(**kwargs):
+        kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
+        return _log_order_impl(**kwargs)
+
+    def _cache_order_status(**kwargs):
+        kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
+        return _cache_order_status_impl(**kwargs)
+
     if not strategy_tag and isinstance(entry_thesis, dict):
         strategy_tag = _strategy_tag_from_thesis(entry_thesis)
     entry_intent_guard_reason = _entry_intent_guard_reason(
@@ -12494,6 +12524,31 @@ async def limit_order(
         entry_thesis=entry_thesis,
     )
     entry_probability = _entry_probability_value(confidence, entry_thesis)
+
+    def _inject_entry_payload(payload: Optional[dict] = None) -> dict:
+        req: dict = {}
+        if isinstance(payload, dict):
+            req.update(payload)
+        if strategy_tag is not None:
+            req.setdefault("strategy_tag", strategy_tag)
+        if meta is not None:
+            req.setdefault("meta", meta)
+        if isinstance(entry_thesis, dict):
+            req.setdefault("entry_thesis", entry_thesis)
+            if "entry_units_intent" not in req:
+                req["entry_units_intent"] = entry_thesis.get("entry_units_intent")
+            if "entry_probability" not in req:
+                req["entry_probability"] = entry_thesis.get("entry_probability")
+        if entry_probability is not None:
+            req["entry_probability"] = entry_probability
+        return req
+
+    _log_order_impl = _log_order
+
+    def _log_order(**kwargs):
+        kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
+        return _log_order_impl(**kwargs)
+
     entry_intent_guard_reason = _entry_intent_guard_reason(
         pocket=pocket,
         reduce_only=reduce_only,

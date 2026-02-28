@@ -23,6 +23,18 @@
 - 共通 preflight を「全戦略一律上書き」ではなく、意図の最終制御点（strategy_entry）側で明示化し、
   ロールバック時の監査可能性を高める。
 
+### 2026-02-28（追記）保護系EXIT監査でENTRY意図値を欠損させない
+
+- `execution/strategy_entry.py`
+  - `_env_csv` の重複定義を整理し、環境変数読込ヘルパを一意化。
+- `execution/order_manager.py`
+  - `market_order` / `limit_order` でログ・監査 payload を組み立てる際に、
+    `entry_thesis` / `entry_units_intent` / `entry_probability` を必ず透過させるようにし、
+    `strategy_tag` と `meta` を同一 payload に揃える処理を追加。
+- 期待効果:
+  - `ENTRY` 側の意図と `ORDER` 側の拒否理由・保護判定が突き合わせ可能になり、`close_blocked_*` と併せて
+    異常拒否の特定速度を上げる。
+
 ## 方針（最終確定）
 
 - 各戦略は `ENTRY/EXIT` を1対1で持つ。
