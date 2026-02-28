@@ -89,6 +89,42 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-28 22:50 UTC / 2026-02-28 07:50 JST - `scalp_ping_5s_b/_c` の neg_exit で `allow_reasons` ワイルドカードを廃止
+
+Period:
+- 事象確認: 2026-02-28 22:00 UTC 時点の運用設定監査
+- 対象: `config/strategy_exit_protections.yaml`, `execution/order_manager.py`
+
+Fact:
+- `scalp_ping_5s_b(_live)` / `scalp_ping_5s_c(_live)` の
+  `neg_exit.allow_reasons` が `"*"` 指定の構成が残存。
+- `order_manager._strategy_neg_exit_policy()` でも戦略 override の `allow_reasons` を
+  そのまま上書きしていたため、既定保護へのフォールバック条件が不安定。
+
+Failure Cause:
+1. strategy override の `allow_reasons="*"` により、実運用の明示許可ロジックが
+   想定より広くなり、`close_reject_no_negative` 期待動作のブレを誘発。
+2. 同一設定セットの読み分けが戦略側/共通側で非対称だったため、
+   原因切分がしにくく、保護過大設定の実害検知が遅れていた。
+
+Improvement:
+1. `execution/order_manager.py`:
+   - `_normalize_reason_tokens()` を追加し、`allow_reasons=["*"]` 時は
+     `neg_defaults.allow_reasons` を自動採用する。
+   - `_strategy_neg_exit_policy()` で strategy override 反映時に上記を適用。
+2. `config/strategy_exit_protections.yaml`:
+   - `scalp_ping_5s_no_block_neg_exit_allow_reasons` を追加。
+   - `scalp_ping_5s_b(_live)` / `scalp_ping_5s_c(_live)` を共通 anchor 参照へ変更。
+3. 実装監査を `docs/WORKER_REFACTOR_LOG.md` へ追記。
+
+Verification:
+1. 設定監査で対象4戦略の `allow_reasons="*"` が除去され、wildcard 共有アンカーへ統一されていることを確認。
+2. `order_manager` の `allow_reasons` 決定経路に fallback が入ることをコード差分で確認。
+3. 反映後、VM で `close_reject_no_negative` 連鎖が減るかを `orders/metrics` で追跡。
+
+Status:
+- in_progress
+
 ## 2026-02-27 15:38 UTC / 2026-02-28 00:38 JST - `scalp_ping_5s_c_live` の `entry_probability_reject` 閾値を再緩和
 Period:
 - 観測: 2026-02-27 15:34:41-15:37:20 UTC（long leading reject 無効化後）

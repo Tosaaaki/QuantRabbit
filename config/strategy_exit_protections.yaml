@@ -156,6 +156,53 @@ defaults:
     min_hold_sec: 203
     max_hold_sec: 1760
 
+scalp_ping_5s_no_block_neg_exit_allow_reasons: &SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
+  - hard_stop
+  - tech_hard_stop
+  - tech_return_fail
+  - tech_reversal_combo
+  - tech_candle_reversal
+  - tech_nwave_flip
+  - rsi_fade
+  - m1_rsi_fade
+  - vwap_cut
+  - m1_vwap_cut
+  - atr_spike
+  - m1_atr_spike
+  - structure_break
+  - m1_structure_break
+  - reentry_reset
+  - max_hold
+  - max_adverse
+  - lock_floor
+  - take_profit
+  - take_profit_zone
+  - range_timeout
+  - candle_*
+  - partial_take
+  - be_stop
+  - time_stop
+  - no_recovery
+  - max_floating_loss
+  - timeout
+  - mtf_reversal
+  - trend_failure
+  - trend_exhaust
+  - drawdown
+  - max_drawdown
+  - health_exit
+  - hazard_exit
+  - margin_health
+  - free_margin_low
+  - margin_usage_high
+  - profit_bank_release
+  - giveback_lock
+  - risk_reduce
+  - negative_exit
+  - trail_lock
+  - near_be
+  - lock_trail
+
 hold_until_profit:
   # TEMP (2026-02-07 JST): user requested "do not close" for specific scalp trades.
   # This blocks bot-initiated closes until the trade exceeds min_profit_pips.
@@ -1043,8 +1090,7 @@ strategies:
     neg_exit:
       # B も no-block 運用へ寄せ、close_reject_no_negative の再発を防ぐ。
       strict_no_negative: false
-      allow_reasons:
-        - "*"
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
       deny_reasons: []
 
   scalp_ping_5s_b_live:
@@ -1053,8 +1099,7 @@ strategies:
     neg_exit:
       # live tag でも同一方針を適用。
       strict_no_negative: false
-      allow_reasons:
-        - "*"
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
       deny_reasons: []
 
   scalp_ping_5s_c:
@@ -1063,8 +1108,7 @@ strategies:
     neg_exit:
       # C は no-block 運用で EXIT を機動的に通し、負けの引っ張りを避ける。
       strict_no_negative: false
-      allow_reasons:
-        - "*"
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
       deny_reasons: []
 
   scalp_ping_5s_c_live:
@@ -1073,8 +1117,7 @@ strategies:
     neg_exit:
       # live tag でも同一方針を適用。
       strict_no_negative: false
-      allow_reasons:
-        - "*"
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
       deny_reasons: []
 
   scalp_ping_5s_d:

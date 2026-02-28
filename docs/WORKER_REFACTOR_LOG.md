@@ -8,6 +8,28 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-28（追記）scalp ping B/C の負値回避拒否を明示許可設定で固定
+
+- 背景（2026-02-28 以前）:
+  - `strategy_exit_protections.yaml` の `scalp_ping_5s_b(_live)` / `scalp_ping_5s_c(_live)` の
+    `neg_exit.allow_reasons` に `"*"` が残存しており、
+    `scalp_ping_5s` 系の strategy override が
+    `strict_no_negative` 以前のローカル拒否論理を実質上書きする危険があった。
+  - 併せて、実装側 `order_manager` では `allow_reasons` 上書き時の
+    `"*"` 解釈が明示化されておらず、`defaults` へフォールバックしづらい状態だった。
+- 変更:
+  - `execution/order_manager.py`
+    - `_normalize_reason_tokens()` を追加し、`allow_reasons: ["*"]` 時は
+      `defaults.neg_exit.allow_reasons` をフォールバック採用するようにした。
+    - `_strategy_neg_exit_policy()` で `allow_reasons` を上記正規化経路で確定。
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_no_block_neg_exit_allow_reasons` 共通アンカーを追加。
+    - `scalp_ping_5s_b(_live)` / `scalp_ping_5s_c(_live)` の
+      `allow_reasons` を `*` から共通アンカー参照へ置換。
+- 意図:
+  - B/C の negative close 制御を、明示許可集合だけで運用し、
+    想定外の一律許可による `close_reject_no_negative` 回避機能の空洞化を防ぐ。
+
 ### 2026-02-28（追記）`perf_guard` の hard 拒否を戦略prefixで制御可能化し、不確実帯を「縮小継続」へ寄せた
 
 - 背景（VM実測）:

@@ -1160,6 +1160,28 @@ def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> boo
     return False
 
 
+def _normalize_reason_tokens(
+    tokens_value: object, fallback_tokens: Optional[object] = None
+) -> list[str]:
+    def _coerce(raw_tokens: object) -> list[str]:
+        if raw_tokens is None:
+            return []
+        if isinstance(raw_tokens, (list, tuple, set)):
+            return [str(token).strip() for token in raw_tokens if str(token).strip()]
+        token = str(raw_tokens).strip()
+        if not token:
+            return []
+        return [token]
+
+    tokens = _coerce(tokens_value)
+    if len(tokens) == 1 and tokens[0] == "*":
+        fallback = _coerce(fallback_tokens)
+        if fallback:
+            return fallback
+        return ["*"]
+    return tokens
+
+
 def _allow_negative_near_be(exit_reason: Optional[str], est_pips: Optional[float]) -> bool:
     if _EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS <= 0:
         return False
@@ -1184,6 +1206,13 @@ def _strategy_neg_exit_policy(strategy_tag: Optional[str]) -> dict:
     neg_override = override.get("neg_exit") if isinstance(override, dict) else None
     if isinstance(neg_override, dict):
         merged.update(neg_override)
+        if "allow_reasons" in neg_override:
+            merged["allow_reasons"] = _normalize_reason_tokens(
+                neg_override.get("allow_reasons"),
+                fallback_tokens=(
+                    neg_defaults.get("allow_reasons") if isinstance(neg_defaults, dict) else None
+                ),
+            )
     return merged
 
 
