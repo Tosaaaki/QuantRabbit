@@ -692,6 +692,28 @@ def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
     return max(0.0, min(1.0, probability / 100.0))
 
 
+def _inject_entry_intent_contract(
+    entry_thesis: Optional[dict],
+    units: int,
+    entry_probability: Optional[float],
+) -> tuple[Optional[dict], float]:
+    normalized_probability = _entry_probability_value(entry_probability)
+    if normalized_probability is None and isinstance(entry_thesis, dict):
+        normalized_probability = _entry_probability_value(
+            entry_thesis.get("entry_probability")
+        )
+        if normalized_probability is None:
+            normalized_probability = _entry_probability_value(entry_thesis.get("confidence"))
+    if normalized_probability is None:
+        normalized_probability = 1.0
+    if not isinstance(entry_thesis, dict):
+        return None, normalized_probability
+    thesis = dict(entry_thesis)
+    thesis["entry_probability"] = normalized_probability
+    thesis["entry_units_intent"] = abs(int(units))
+    return thesis, normalized_probability
+
+
 def _strategy_tag_to_env_prefix(strategy_tag: Optional[str]) -> Optional[str]:
     raw = str(strategy_tag or "").strip().upper()
     if not raw:
@@ -2681,8 +2703,11 @@ async def market_order(
         return None
     if coordinated_units != units:
         units = coordinated_units
-    if isinstance(entry_thesis, dict):
-        entry_thesis["entry_units_intent"] = abs(int(units))
+    entry_thesis, entry_probability = _inject_entry_intent_contract(
+        entry_thesis=entry_thesis,
+        units=units,
+        entry_probability=entry_probability,
+    )
     return await order_manager.market_order(
         instrument=instrument,
         units=units,
@@ -2879,8 +2904,11 @@ async def limit_order(
         return None, None
     if coordinated_units != units:
         units = coordinated_units
-    if isinstance(entry_thesis, dict):
-        entry_thesis["entry_units_intent"] = abs(int(units))
+    entry_thesis, entry_probability = _inject_entry_intent_contract(
+        entry_thesis=entry_thesis,
+        units=units,
+        entry_probability=entry_probability,
+    )
     return await order_manager.limit_order(
         instrument=instrument,
         units=units,
