@@ -74,6 +74,13 @@
   - `AddonLiveBroker` 経路（`session_open` など）でも上記2値を `entry_thesis` に渡し、order manager はそれを前提にガード/リスク判定のみを行う。
   - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
   - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
+- `execution/strategy_entry.py` では、`analysis_feedback` / `forecast_fusion` / `strategy_net_edge_gate` / `leading_profile` / `coordinate_entry_intent`
+  の順に戦略ローカルの意図整形を確定し、最終的に `entry_intent_board` を経由して `order_manager` 側へ送る。
+  - `strategy_net_edge_gate` は `STRATEGY_ENTRY_NET_EDGE_*` を参照して、
+    `entry_probability` / `TP` / `SL` / `spread` / (`slippage` + `reject_cost`) を使って `entry_net_edge`/`entry_net_edge_gate` を生成し、
+    `entry_probability_reject` 以前に戦略側で `entry_net_edge_negative` 判定を付加する。
+    - 対象 pocket は `STRATEGY_ENTRY_NET_EDGE_POCKETS` で制御し、`ENTRY_NET_EDGE` の戦略別設定は
+    `SCALP_PING_5S_B_ENTRY_NET_EDGE_MIN_PIPS` / `SCALP_PING_5S_C_ENTRY_NET_EDGE_MIN_PIPS` を含む `env` で分離可能。
 - 各戦略ENTRYでは `entry_thesis["technical_context"]` に技術入力断面（`indicators`/`ticks`/要求TF）を保持する。  
 - N波/フィボ/ローソクを含む技術判定は、各戦略ワーカー側のローカルロジックで実施する。  
 - 各戦略ENTRYは、戦略タグ別の `forecast_profile`（`timeframe`/`step_bars`）を `entry_thesis` へ持ち、

@@ -169,6 +169,33 @@ _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX = max(
     0.0,
     min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX", 0.18)),
 )
+_STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED = _env_bool(
+    "STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED",
+    False,
+)
+_STRATEGY_ENTRY_NET_EDGE_POCKETS = _env_csv(
+    "STRATEGY_ENTRY_NET_EDGE_POCKETS",
+    "scalp_fast",
+)
+_STRATEGY_ENTRY_NET_EDGE_POCKETS = {
+    p.lower().strip() for p in _STRATEGY_ENTRY_NET_EDGE_POCKETS if p
+}
+_STRATEGY_ENTRY_NET_EDGE_MIN_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_MIN_PIPS",
+    0.0,
+)
+_STRATEGY_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS",
+    0.20,
+)
+_STRATEGY_ENTRY_NET_EDGE_SLIPPAGE_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_SLIPPAGE_PIPS",
+    0.05,
+)
+_STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS",
+    0.02,
+)
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 
 
@@ -2219,6 +2246,126 @@ def _apply_forecast_fusion(
     return adjusted_units, adjusted_probability, applied
 
 
+def _apply_strategy_net_edge_gate(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+    meta: Optional[dict] = None,
+) -> tuple[int, Optional[float], dict[str, object]]:
+    if not _STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED:
+        return units, entry_probability, {"enabled": 0.0}
+    if not units:
+        return units, entry_probability, {"enabled": 0.0}
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, {"enabled": 0.0}
+
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key and pocket_key not in _STRATEGY_ENTRY_NET_EDGE_POCKETS:
+        return units, entry_probability, {
+            "enabled": 0.0,
+            "pocket": pocket_key,
+        }
+
+    prefixes = _strategy_env_prefix_candidates(strategy_tag, entry_thesis, meta)
+    probability = _entry_probability_value(entry_probability)
+    sl_pips, tp_pips = order_manager._entry_thesis_sl_tp_pips(entry_thesis)
+    spread_pips = order_manager._entry_thesis_spread_pips(entry_thesis)
+    spread_source = "thesis"
+    if spread_pips is None:
+        spread_source = "fallback"
+        spread_pips = _strategy_env_float(
+            prefixes,
+            "ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS",
+            _STRATEGY_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_DEFAULT,
+        )
+    spread_pips = max(0.0, float(spread_pips or 0.0))
+
+    slippage_pips = max(
+        0.0,
+        float(
+            _strategy_env_float(
+                prefixes,
+                "ENTRY_NET_EDGE_SLIPPAGE_PIPS",
+                _STRATEGY_ENTRY_NET_EDGE_SLIPPAGE_PIPS_DEFAULT,
+            )
+        ),
+    )
+    reject_cost_pips = max(
+        0.0,
+        float(
+            _strategy_env_float(
+                prefixes,
+                "ENTRY_NET_EDGE_REJECT_COST_PIPS",
+                _STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT,
+            )
+        ),
+    )
+    min_edge_pips = float(
+        _strategy_env_float(
+            prefixes,
+            "ENTRY_NET_EDGE_MIN_PIPS",
+            _STRATEGY_ENTRY_NET_EDGE_MIN_PIPS_DEFAULT,
+        )
+    )
+    details: dict[str, object] = {
+        "enabled": 1.0,
+        "entry_probability": probability,
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "spread_pips": spread_pips,
+        "spread_source": spread_source,
+        "slippage_pips": slippage_pips,
+        "reject_cost_pips": reject_cost_pips,
+        "min_edge_pips": min_edge_pips,
+        "strategy_tag": strategy_tag,
+        "pocket": pocket,
+        "forecast_context_present": bool(forecast_context is not None),
+    }
+
+    if probability is None:
+        details["reason"] = "missing_probability"
+        if isinstance(entry_thesis, dict):
+            entry_thesis["entry_net_edge_gate"] = details
+        return units, entry_probability, details
+
+    if sl_pips is None or tp_pips is None:
+        details["reason"] = "missing_tp_sl"
+        if isinstance(entry_thesis, dict):
+            entry_thesis["entry_net_edge_gate"] = details
+        return units, entry_probability, details
+
+    probability = max(0.0, min(1.0, float(probability)))
+    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(sl_pips)
+    cost_pips = float(spread_pips) + slippage_pips + reject_cost_pips
+    net_edge_pips = gross_edge_pips - cost_pips
+    details.update(
+        {
+            "gross_edge_pips": round(float(gross_edge_pips), 6),
+            "cost_pips": round(float(cost_pips), 6),
+            "net_edge_pips": round(float(net_edge_pips), 6),
+        }
+    )
+
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_net_edge"] = round(float(net_edge_pips), 6)
+        entry_thesis["entry_net_edge_gate"] = details
+
+    if net_edge_pips + 1e-9 < min_edge_pips:
+        details["reason"] = "negative"
+        if isinstance(entry_thesis, dict):
+            entry_thesis["entry_net_edge_gate"] = details
+        return 0, entry_probability, details
+
+    details["reason"] = "pass"
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_net_edge_gate"] = details
+    return units, entry_probability, details
+
+
 async def _coordinate_entry_units(
     *,
     instrument: str,
@@ -2331,12 +2478,20 @@ def _cache_entry_reject_status(
     strategy_tag: Optional[str],
     pocket: str,
     entry_probability: Optional[float],
+    extra_payload: Optional[dict[str, object]] = None,
 ) -> None:
     if not client_order_id:
         return
     side_units = units if units else requested_units
     side = "buy" if side_units > 0 else "sell"
     reason_token = _normalized_reject_reason(reason, "entry_reject")
+    request_payload: dict[str, object] = {
+        "strategy_tag": strategy_tag,
+        "pocket": pocket,
+        "entry_probability": entry_probability,
+    }
+    if isinstance(extra_payload, dict):
+        request_payload["extra_payload"] = extra_payload
     order_manager._cache_order_status(
         ts=datetime.now(timezone.utc).isoformat(),
         client_order_id=client_order_id,
@@ -2346,11 +2501,7 @@ def _cache_entry_reject_status(
         units=int(units),
         error_code=reason_token,
         error_message=reason_token,
-        request_payload={
-            "strategy_tag": strategy_tag,
-            "pocket": pocket,
-            "entry_probability": entry_probability,
-        },
+        request_payload=request_payload,
     )
 
 
@@ -2446,6 +2597,35 @@ async def market_order(
             entry_probability=entry_probability,
         )
         return None
+    units, entry_probability, net_edge_applied = _apply_strategy_net_edge_gate(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
+    if not units:
+        net_edge_reason = "entry_net_edge_gate"
+        if isinstance(net_edge_applied, dict):
+            gate_reason = net_edge_applied.get("reason")
+            if isinstance(gate_reason, str) and gate_reason.strip():
+                if gate_reason == "negative":
+                    net_edge_reason = "entry_net_edge_negative"
+                else:
+                    net_edge_reason = f"entry_net_edge_{gate_reason}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=net_edge_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            extra_payload=net_edge_applied,
+        )
+        return None
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
@@ -2473,6 +2653,7 @@ async def market_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            extra_payload=leading_applied,
         )
         return None
     coordinated_units, coordination_reason = await _coordinate_entry_units(
@@ -2614,6 +2795,35 @@ async def limit_order(
             entry_probability=entry_probability,
         )
         return None, None
+    units, entry_probability, net_edge_applied = _apply_strategy_net_edge_gate(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
+    if not units:
+        net_edge_reason = "entry_net_edge_gate"
+        if isinstance(net_edge_applied, dict):
+            gate_reason = net_edge_applied.get("reason")
+            if isinstance(gate_reason, str) and gate_reason.strip():
+                if gate_reason == "negative":
+                    net_edge_reason = "entry_net_edge_negative"
+                else:
+                    net_edge_reason = f"entry_net_edge_{gate_reason}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=net_edge_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            extra_payload=net_edge_applied,
+        )
+        return None, None
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
@@ -2641,6 +2851,7 @@ async def limit_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            extra_payload=leading_applied,
         )
         return None, None
     coordinated_units, coordination_reason = await _coordinate_entry_units(

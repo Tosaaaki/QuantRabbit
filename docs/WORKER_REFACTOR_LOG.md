@@ -1,5 +1,28 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-02-28（追記）strategy_entry で strategy-side net-edge gate を追加
+
+- `execution/strategy_entry.py`
+  - `STRATEGY_ENTRY_NET_EDGE_*` で strategy-side の期待値ゲートを実装。
+  - `market_order` / `limit_order` フローで
+    `analysis_feedback -> forecast_fusion -> strategy_net_edge_gate -> leading_profile -> coordinate_entry_intent`
+    の順で判定し、負期待値時は `entry_net_edge_negative` で即拒否。
+  - `_cache_entry_reject_status` を拡張し、strategy側拒否に `entry_net_edge_gate` の評価結果を監査 payload として格納。
+- `execution/strategy_entry.py`
+  - `entry_thesis` に `entry_net_edge` と `entry_net_edge_gate` を透過保存。
+- `ops/env/quant-v2-runtime.env`
+  - `STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED=1` を有効化。
+  - `STRATEGY_ENTRY_NET_EDGE_POCKETS=scalp_fast` と B/C strategy の
+    `SCALP_PING_5S_B/C_ENTRY_NET_EDGE_MIN_PIPS` を `0.10/0.12` に整備。
+- `docs/ARCHITECTURE.md`
+  - Strategy Plugin フローを更新し、`strategy_entry` 側期待値ゲートを明記。
+
+意図:
+- order_manager 側 guard を補完し、戦略ローカル判定で低期待値帯を先行排除して
+  低品質約定を減らす。
+- 共通 preflight を「全戦略一律上書き」ではなく、意図の最終制御点（strategy_entry）側で明示化し、
+  ロールバック時の監査可能性を高める。
+
 ## 方針（最終確定）
 
 - 各戦略は `ENTRY/EXIT` を1対1で持つ。

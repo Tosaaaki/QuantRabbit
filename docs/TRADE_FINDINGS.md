@@ -89,6 +89,43 @@ Status:
 - open | in_progress | done
 ```
 
+## 2026-02-28 23:10 UTC / 2026-02-29 08:10 JST - strategy_entry で strategy-side net-edge gate を導入
+
+Period:
+- 直近実測ログと env 監査
+- 対象: `orders.db` / `trades.db` / `metrics.db` と `execution/strategy_entry.py`,
+  `ops/env/quant-v2-runtime.env`
+
+Fact:
+- strategy_entry に `STRATEGY_ENTRY_NET_EDGE_*` を使う local gate を追加し、
+  `market_order` / `limit_order` の main path で
+  `analysis_feedback -> forecast_fusion -> strategy_net_edge_gate -> leading_profile -> coordinate_entry_intent`
+  の順に通過する実装を入れた。
+- `entry_net_edge` と `entry_net_edge_gate` を `entry_thesis` / キャッシュ payload に残す形で監査経路を拡張。
+- `ops/env/quant-v2-runtime.env` に  
+  `STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED=1`、
+  `SCALP_PING_5S_B_ENTRY_NET_EDGE_MIN_PIPS=0.10`、
+  `SCALP_PING_5S_C_ENTRY_NET_EDGE_MIN_PIPS=0.12` を追加。
+
+Failure Cause:
+1. 戦略ローカルの期待値除外が preflight 前段で体系化されておらず、戦略別最終意図（probability/intent）との整合トレースが弱かった。
+2. 単価・スプレッド・見積コストを含む EV 判定が strategy_entry で未集約だったため、拒否理由分析が散在していた。
+
+Improvement:
+1. `execution/strategy_entry.py` に `_apply_strategy_net_edge_gate` を追加し、
+  pocket ごとの適用可否・strategy prefix 優先 env 解決を実装。
+2. net-edge 失格時に `entry_net_edge_gate` を cache status payload に残し、
+  coordination 前で確定拒否するフローを追加。
+3. `docs/WORKER_REFACTOR_LOG.md` と `docs/ARCHITECTURE.md` へ設計更新を追記。
+
+Verification:
+1. 反映後 24h で `entry_net_edge_negative` 系拒否の比率と `coordination_reject` の変化を比較。
+2. 同時に `orders.db` の `entry_probability_reject` / `entry_probability_below_min_units` の偏重化有無を検証。
+3. 戦略別サンプル 24h で `entry_net_edge_gate` 情報が `entry_thesis` / order status キャッシュに残ることを確認。
+
+Status:
+- in_progress
+
 ## 2026-02-28 22:50 UTC / 2026-02-28 07:50 JST - `scalp_ping_5s_b/_c` の neg_exit で `allow_reasons` ワイルドカードを廃止
 
 Period:

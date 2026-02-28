@@ -2,6 +2,7 @@
 
 ## 1. システム概要とフロー
 - データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → strategy control 制約 → Strategy Plugins（ENTRY/EXIT ワーカー別）→ Risk Guard → `quant-order-manager` → ログ。
+- 追加: Strategy Plugin 側では `ENTRY` 直前に `strategy_entry net-edge gate`（`ENTRY_PROBABILITY` / `TP/SL` / `spread` / コスト算出）を通し、期待値が閾値未満なら strategy 側で拒否理由を残して協調盤へ進まずに遮断。
 - V2 では monolithic 主制御（`main.py`起動）を本番から外し、`quantrabbit.service` は廃止対象。
 
 ## 2. コンポーネントと I/O
