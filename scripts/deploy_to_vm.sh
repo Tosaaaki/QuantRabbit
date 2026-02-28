@@ -23,6 +23,7 @@
 #   - VM repo remote 'origin' is reachable (public GitHub OK)
 
 set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Ensure gcloud is reachable even in non-interactive shells
 if ! command -v gcloud >/dev/null 2>&1; then
@@ -97,10 +98,39 @@ if [[ -x scripts/gcloud_doctor.sh ]]; then
   if [[ -n "$SA_IMPERSONATE" ]]; then
     doctor_args+=(-A "$SA_IMPERSONATE")
   fi
-  scripts/gcloud_doctor.sh "${doctor_args[@]}" || {
-    echo "[deploy] gcloud preflight failed. See messages above." >&2
-    exit 2
+
+  run_doctor() {
+    "$SCRIPT_DIR/gcloud_doctor.sh" "${doctor_args[@]}"
   }
+
+  if ! run_doctor; then
+    echo "[deploy] gcloud preflight failed. Attempting IAP SSH recovery path..." >&2
+    if [[ $USE_IAP -eq 1 && -x "$SCRIPT_DIR/recover_iap_ssh_auth.sh" ]]; then
+      recovery_args=(-p "$PROJECT" -z "$ZONE" -m "$INSTANCE" -r 6 -s 3)
+      if [[ -n "$SSH_KEYFILE" ]]; then
+        recovery_args+=(-k "$SSH_KEYFILE")
+      fi
+      if [[ -n "$SA_KEYFILE" ]]; then
+        recovery_args+=(-K "$SA_KEYFILE")
+      fi
+      if [[ -n "$SA_IMPERSONATE" ]]; then
+        recovery_args+=(-A "$SA_IMPERSONATE")
+      fi
+      "$SCRIPT_DIR/recover_iap_ssh_auth.sh" "${recovery_args[@]}" || {
+        echo "[deploy] IAP SSH recovery failed." >&2
+        echo "[deploy] Fallback: scripts/deploy_via_metadata.sh -p ${PROJECT} -z ${ZONE} -m ${INSTANCE} -b ${BRANCH} -i" >&2
+        exit 2
+      }
+      echo "[deploy] Recovery completed. Retrying preflight..."
+      run_doctor || {
+        echo "[deploy] gcloud preflight still failed after recovery. See messages above." >&2
+        exit 2
+      }
+    else
+      echo "[deploy] gcloud preflight failed. See messages above." >&2
+      exit 2
+    fi
+  fi
 fi
 
 echo "[deploy] Project=$PROJECT Zone=$ZONE Instance=$INSTANCE Branch=$BRANCH Service=$SERVICE"

@@ -23,6 +23,20 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
 - `gcloud_doctor.sh` の `-O` は instance metadata を `enable-oslogin=TRUE, block-project-ssh-keys=TRUE` に固定して、project metadata との競合を除去する。
 - `gcloud_doctor.sh` の `-T` は `-S` 実行時の OS Login 鍵 TTL を制御する（既定 `none`=無期限。例: `-T 30d`）。
 
+### IAP 鍵認証が繰り返し失敗する時の標準手順（最優先）
+```bash
+scripts/recover_iap_ssh_auth.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -k ~/.ssh/gcp_oslogin_quantrabbit -r 6 -s 3
+```
+
+- 成功時はそのまま通常デプロイへ戻る:
+  - `scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_quantrabbit -p quantrabbit`
+- 失敗時は fallback で metadata デプロイ:
+  - `scripts/deploy_via_metadata.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -b main -i`
+
+再試行ロジック:
+- `scripts/gcloud_doctor.sh` を IAP + OS Login 強制（`-t -S -G -O`）で 6回繰り返し実行
+- `Permission denied (publickey)` を受けた場合は鍵再登録を行い再試行
+
 ### フォールバック（vm.sh が失敗する場合の直書き）
 1) 
 ```bash

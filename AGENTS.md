@@ -54,6 +54,7 @@
 - **本番ブランチ運用**: 本番 VM は原則 `main` のみを稼働ブランチにする。`codex/*` など作業ブランチを本番常駐させない。
 - **本番反映の固定手順**: `main` へ統合（merge/rebase）→ `git push origin main` → `scripts/vm.sh ... deploy -b main -i --restart <target-unit> -t` を必須化する。`<target-unit>` は起動中の systemd ユニット（最低でもデータ/制御を含む `quant-market-data-feed.service` 等）を明示する（`pull` のみ禁止）。
 - **反映確認の必須チェック**: デプロイ後に VM で `git rev-parse HEAD` と `git rev-parse origin/main` の一致を確認し、対象ユニットの `journalctl -u <target-unit>` で直近 `Application started!` がデプロイ後であることを確認する。`git pull` 後に再起動が無い場合は「未反映」と見なす。
+- IAP（OS Login）SSH 認証が繰り返し失敗する場合は、まず `scripts/recover_iap_ssh_auth.sh` を実行する。ここで収束しない場合は `scripts/deploy_to_vm.sh` 実行前に `scripts/deploy_via_metadata.sh` フォールバックへ移行する。
 - ログ退避の本番導線は `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）を正とし、`/etc/cron.hourly/qr-gcs-backup-core` は恒久的に無効化する。バックアップは low-priority + 負荷ガード（load/D-state/mem/swap）で、トレード導線を阻害しないことを優先する。
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 

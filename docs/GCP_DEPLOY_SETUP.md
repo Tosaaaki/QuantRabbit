@@ -76,6 +76,23 @@ gcloud compute ssh fx-trader-vm \
 - IAP 経由で失敗: `roles/iap.tunnelResourceAccessor` 付与、`--tunnel-through-iap` とファイアウォールの許可
 - インスタンスが見つからない: 名前/ゾーン/プロジェクトを確認（`gcloud compute instances list`）
 
+### 6.1 IAP 鍵認証の再発防止手順（推奨）
+
+以下を 1 コマンドで実行し、1回で収束しない場合は metadata デプロイへ切り替えます。
+
+```bash
+scripts/recover_iap_ssh_auth.sh \
+  -p <PROJECT_ID> \
+  -z asia-northeast1-a \
+  -m fx-trader-vm \
+  -k ~/.ssh/gcp_oslogin_qr \
+  -r 6 \
+  -s 3
+```
+
+成功したら通常のデプロイに戻ります。失敗時は `docs/OPS_GCP_RUNBOOK.md` の
+「IAP 鍵認証が繰り返し失敗する時の標準手順（最優先）」を実行してから再投入してください。
+
 ## 7. 補足
 
 - `scripts/deploy_to_vm.sh` は内部で `scripts/gcloud_doctor.sh` を呼び出し、前提が崩れていれば早期に失敗・案内します。
