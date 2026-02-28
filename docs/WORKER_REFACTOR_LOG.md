@@ -10089,3 +10089,21 @@
   - `strategy_control_exit_disabled` の新規増加が無いこと（`orders.db` 日次監査）。
   - `MARKET_ORDER_MARGIN_CLOSEOUT` が 0 維持、または 7d 比で有意減少すること。
   - `MicroPullbackEMA` / `scalp_macd_rsi_div_b_live` の `avg_loss_jpy` と `net_jpy` が改善方向へ向かうこと。
+
+### 2026-02-28（追記）全戦略共通: strategy-control EXIT lock 即時バイパスを order-manager に実装
+
+- 目的:
+  - `strategy_control_exit_disabled` の連続時でも、戦略ワーカーが発火した保護系 EXIT（`max_adverse` / `time_stop` など）を初動から通す。
+  - 共通層による後付け戦略判定は増やさず、V2の「workerがEXIT判定、order-managerは通路/ガード」の責務分離を維持する。
+- 実装:
+  - `execution/order_manager.py`
+    - `ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS` を追加。
+    - close preflight で `strategy_control.can_exit=false` の場合、
+      上記理由一致時は `strategy_control_exit_immediate_reason` として即時 `CLOSE_BYPASS`。
+    - 理由不一致の場合のみ既存 `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_*`（閾値到達型）を継続適用。
+- テスト:
+  - `tests/execution/test_order_manager_exit_policy.py`
+    - 即時バイパス理由の `match/no-match` ケースを追加。
+- 影響範囲:
+  - 変更は `quant-order-manager` close preflight のみ。
+  - strategy worker の entry/exit ロジック、`entry_thesis` 契約、黒板協調、V2 service topology は非変更。

@@ -170,3 +170,33 @@ def test_strategy_control_exit_failopen_emergency_only(monkeypatch) -> None:
         )
         == "strategy_control_exit_failopen_emergency"
     )
+
+
+def test_strategy_control_exit_immediate_bypass_reason_match(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS",
+        {"max_adverse", "time_stop"},
+    )
+
+    assert (
+        order_manager._strategy_control_exit_immediate_bypass_reason(
+            exit_reason="max_adverse",
+        )
+        == "strategy_control_exit_immediate_reason"
+    )
+
+
+def test_strategy_control_exit_immediate_bypass_reason_no_match(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS",
+        {"max_adverse", "time_stop"},
+    )
+
+    assert (
+        order_manager._strategy_control_exit_immediate_bypass_reason(
+            exit_reason="trail_lock",
+        )
+        is None
+    )

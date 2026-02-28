@@ -78,6 +78,40 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-28 04:25 UTC / 2026-02-28 13:25 JST - 全戦略共通: strategy-control EXITロック詰まりの恒久対策
+
+Period:
+- incident確認窓: 2026-02-24 07:00-07:07 UTC（JST 16:00-16:07）
+- 劣化確認窓: 直近24h / 7d（2026-02-28時点）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- `execution/order_manager.py` close preflight 実装
+
+Fact:
+- `strategy_control_exit_disabled` が同一 trade に対して連続発生し、`MicroPullbackEMA` の close 要求が滞留。
+- close_reason/exit_reason 集計では、赤字寄与の多くが `STOP_LOSS_ORDER` または `max_adverse/time_stop` 系クローズ由来。
+- 既存 fail-open は block回数/経過秒に依存し、保護系 exit reason でも初動で詰まる経路が残っていた。
+
+Failure Cause:
+1. `strategy_control.can_exit=false` 時、保護系理由（`max_adverse` / `time_stop` 等）でも即時通過できない。
+2. fail-open が閾値到達型のため、急変局面で EXIT 遅延が先に発生する。
+
+Improvement:
+1. `execution/order_manager.py` に `ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS` を追加。
+2. close preflight で `strategy_control` ブロック時に、上記理由一致なら即時 `CLOSE_BYPASS` で通過。
+3. 既存 fail-open（閾値到達後のバイパス）は維持し、理由一致時のみ先回りで詰まりを回避。
+
+Verification:
+1. `orders.db` で `status='strategy_control_exit_disabled'` の新規増加と連続回数が低下すること。
+2. `close_bypassed_strategy_control` メトリクスで `reason='strategy_control_exit_immediate_reason'` が観測されること。
+3. `MARKET_ORDER_MARGIN_CLOSEOUT` の再発率が 7d 比で悪化しないこと。
+4. テスト: `tests/execution/test_order_manager_exit_policy.py` の即時バイパスケースを含め pass すること。
+
+Status:
+- deployed_pending
+
 ## 2026-02-28 03:55 UTC / 2026-02-28 12:55 JST - 「全然稼げてない」RCA（VM実測, 24h + 7d）
 
 Period:

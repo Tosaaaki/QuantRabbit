@@ -1635,6 +1635,22 @@
   - duplicate CID を自己回復させ、timeout/retry由来の reject 連鎖を短絡する。
   - strategy-control の誤設定や滞留時でも、緊急局面では EXIT 側を先に通す。
 
+### strategy-control EXIT 即時バイパス（2026-02-28 追記）
+- 背景:
+  - 閾値到達型 fail-open だけでは、急変局面で `max_adverse/time_stop` の保護系 EXIT が初動で詰まる余地があった。
+- 実装:
+  - `execution/order_manager.py` close preflight に
+    `ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS` を追加。
+  - `strategy_control.can_exit=false` でも、`exit_reason` が上記集合に一致する場合は
+    `strategy_control_exit_immediate_reason` として即時 `CLOSE_BYPASS`。
+  - 一致しない場合は従来どおり
+    `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_*`（block回数/経過秒）で判定する。
+- 既定の即時バイパス対象:
+  - `max_adverse,time_stop,no_recovery,max_floating_loss,hard_stop,tech_hard_stop,drawdown,max_drawdown,health_exit,hazard_exit,margin_health,free_margin_low,margin_usage_high`
+- 監査:
+  - `orders.db` status: `strategy_control_exit_disabled` / `strategy_control_exit_immediate_reason`
+  - metric: `close_bypassed_strategy_control{reason=strategy_control_exit_immediate_reason}`
+
 ### M1Scalper Exit Tuning Knobs（2026-02-27）
 - `workers/scalp_m1scalper/exit_worker.py` は以下 env を受けて lock/trail の早期クローズ挙動を調整できる。
   - `M1SCALP_EXIT_PROFIT_TAKE_PIPS`

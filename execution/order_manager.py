@@ -1127,6 +1127,20 @@ def _strategy_control_exit_failopen_reason(
     return "strategy_control_exit_failopen_threshold"
 
 
+def _strategy_control_exit_immediate_bypass_reason(
+    *,
+    exit_reason: Optional[str],
+) -> Optional[str]:
+    """Return bypass reason when EXIT lock should be skipped immediately."""
+
+    tokens = list(_ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS)
+    if not tokens:
+        return None
+    if _reason_matches_tokens(exit_reason, tokens):
+        return "strategy_control_exit_immediate_reason"
+    return None
+
+
 def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> bool:
     reason_key = str(exit_reason).strip().lower() if exit_reason else ""
     if not reason_key:
@@ -2435,6 +2449,11 @@ _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD = max(
 )
 _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY = _env_bool(
     "ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY", True
+)
+_ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS = _env_csv_set(
+    "ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS",
+    "max_adverse,time_stop,no_recovery,max_floating_loss,hard_stop,tech_hard_stop,"
+    "drawdown,max_drawdown,health_exit,hazard_exit,margin_health,free_margin_low,margin_usage_high",
 )
 _STRATEGY_CONTROL_EXIT_BLOCKS_LOCK = threading.Lock()
 _STRATEGY_CONTROL_EXIT_BLOCKS: dict[str, tuple[float, float, int]] = {}
@@ -6867,19 +6886,33 @@ async def close_trade(
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
 
     emergency_allow: Optional[bool] = None
+    immediate_bypass_reason = _strategy_control_exit_immediate_bypass_reason(
+        exit_reason=exit_reason
+    )
     if _reject_exit_by_control(strategy_tag, pocket=str(pocket or "")):
-        block_state = _register_strategy_control_exit_block(
-            strategy_tag=strategy_tag,
-            client_order_id=client_order_id,
-            trade_id=str(trade_id),
-        )
-        emergency_allow = _should_allow_negative_close(client_order_id)
-        failopen_reason = _strategy_control_exit_failopen_reason(
-            block_count=int(block_state.get("count") or 0),
-            block_age_sec=float(block_state.get("age_sec") or 0.0),
-            emergency_allow=bool(emergency_allow),
-        )
+        block_state: dict[str, float | int | str] | None = None
+        failopen_reason = immediate_bypass_reason
+        if failopen_reason is None:
+            block_state = _register_strategy_control_exit_block(
+                strategy_tag=strategy_tag,
+                client_order_id=client_order_id,
+                trade_id=str(trade_id),
+            )
+            emergency_allow = _should_allow_negative_close(client_order_id)
+            failopen_reason = _strategy_control_exit_failopen_reason(
+                block_count=int(block_state.get("count") or 0),
+                block_age_sec=float(block_state.get("age_sec") or 0.0),
+                emergency_allow=bool(emergency_allow),
+            )
         if failopen_reason:
+            bypass_payload = {
+                "trade_id": str(trade_id),
+                "strategy_tag": strategy_tag,
+            }
+            if block_state is not None:
+                bypass_payload["block_state"] = block_state
+            if immediate_bypass_reason:
+                bypass_payload["immediate_bypass_reason"] = immediate_bypass_reason
             _console_order_log(
                 "CLOSE_BYPASS",
                 pocket=pocket,
@@ -6904,11 +6937,7 @@ async def close_trade(
                 attempt=0,
                 ticket_id=str(trade_id),
                 executed_price=None,
-                request_payload={
-                    "trade_id": str(trade_id),
-                    "strategy_tag": strategy_tag,
-                    "block_state": block_state,
-                },
+                request_payload=bypass_payload,
             )
             log_metric(
                 "close_bypassed_strategy_control",
@@ -6949,7 +6978,7 @@ async def close_trade(
                 request_payload={
                     "trade_id": str(trade_id),
                     "strategy_tag": strategy_tag,
-                    "block_state": block_state,
+                    "block_state": block_state or {},
                 },
             )
             log_metric(
