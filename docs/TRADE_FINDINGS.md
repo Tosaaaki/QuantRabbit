@@ -78,6 +78,75 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-28 03:55 UTC / 2026-02-28 12:55 JST - 「全然稼げてない」RCA（VM実測, 24h + 7d）
+
+Period:
+- 24h: `close_time >= datetime('now','-24 hours')`
+- 比較窓: 直前7日（`close_time >= datetime('now','-8 days') and < datetime('now','-24 hours')`）
+- 参考: last 7d 全体
+
+Source:
+- VM `systemctl` / `journalctl`（V2導線稼働確認）
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/metrics.db`
+- OANDA summary/open trades (`scripts/check_oanda_summary.py`, `scripts/oanda_open_trades.py`)
+
+Fact:
+- 稼働状態:
+  - `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` は `active/running`。
+  - 直近時点の open trades は `0`（週末クローズ帯: 2026-02-28 JST）。
+- 24h損益（manual除外）:
+  - `836 trades / win_rate=0.4234 / PF=0.727 / expectancy=-0.9 JPY / net=-737.0 JPY`
+- 直前7日比較（manual除外）:
+  - `3591 trades / win_rate=0.4152 / PF=0.55 / avg_daily=-4248.5 JPY`
+- 7d全体寄与（manual除外）:
+  - 総計 `-31346.5 JPY`
+  - `MicroPullbackEMA=-15527.3 JPY`, `scalp_ping_5s_c_live=-10732.8 JPY`, `scalp_ping_5s_b_live=-7342.0 JPY`
+  - 3戦略除外シミュレーション: `+2255.6 JPY`（`exclude_MicroPullbackEMA_ping_b_c`）
+- 拒否/ブロック（orders final status, 24h）:
+  - `entry_probability_reject=614 (26.44%)`
+  - `perf_block=588 (25.32%)`
+  - `filled=589 (25.37%)`
+- EXIT詰まり痕跡（last 7d）:
+  - `strategy_control_exit_disabled=10277`（全件 2026-02-24 JST）
+  - 内訳: `MicroPullbackEMA-short=8177`, `MicroTrendRetest-long=2068`
+- Closeout損失:
+  - `MARKET_ORDER_MARGIN_CLOSEOUT` のうち `MicroPullbackEMA=4 trades / -16837.4 JPY`
+
+Failure Cause:
+1. `strategy_control_exit_disabled` が長時間連続し、EXIT fail-open が遅く `MicroPullbackEMA` の margin closeout を許容した。
+2. `MicroPullbackEMA` は 7d 主因（`-15527.3 JPY`）で、base units / margin utilization が高く tail loss が大きい。
+3. `scalp_ping_5s_b/c` の高回転低EVが継続し、24h/7dともに負寄与を積み上げた（特に C）。
+
+Improvement:
+1. `ops/env/quant-v2-runtime.env`
+   - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD: 6 -> 3`
+   - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC: 90 -> 20`
+   - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC: 300 -> 180`
+   - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY: 1 -> 0`
+2. `ops/env/quant-order-manager.env`
+   - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_MICROPULLBACKEMA: 4.0 -> 3.0`
+   - `PERF_GUARD_MODE_STRATEGY_MICROPULLBACKEMA=block`（明示）
+   - `PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES_STRATEGY_MICROPULLBACKEMA: 4 -> 1`
+   - `PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE_STRATEGY_MICROPULLBACKEMA: 0.20 -> 0.05`
+3. `ops/env/quant-micro-pullbackema.env`
+   - `MICRO_MULTI_BASE_UNITS: 9000 -> 3500`
+   - `MICRO_MULTI_MAX_MARGIN_USAGE: 0.72 -> 0.50`
+   - `MICRO_MULTI_TARGET_MARGIN_USAGE=0.55`（追加）
+   - `MICRO_MULTI_CAP_MAX=0.65`（追加）
+4. `ops/env/quant-scalp-macd-rsi-div-b.env`
+   - divergence閾値強化 + size縮小（`BASE_ENTRY_UNITS: 5000 -> 3200` など）
+
+Verification:
+1. 次回市場オープン後の first 24h で `strategy_control_exit_disabled` の新規累積が `0` に近いこと。
+2. `MARKET_ORDER_MARGIN_CLOSEOUT` の件数/損失が 7d 比で有意に減ること（目標: `MicroPullbackEMA` closeout 0件）。
+3. `MicroPullbackEMA` / `scalp_macd_rsi_div_b_live` の `net_jpy` と `avg_loss_jpy` が改善すること。
+4. `scalp_ping_5s_b/c` は停止せず、`filled` を維持したまま `net_jpy` 改善傾向を確認すること。
+
+Status:
+- in_progress
+
 ## 2026-02-27 16:13 UTC / 2026-02-28 01:13 JST - `scalp_ping_5s_b/c` 継続赤字 + `MicroPullbackEMA` closeout tail の同時是正
 
 Period:

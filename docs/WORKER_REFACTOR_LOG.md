@@ -10041,3 +10041,51 @@
   - 反映後2h/24hで `scalp_ping_5s_b/c` の `sum(realized_pl)` と `avg_pips` の改善有無を確認。
   - `MARKET_ORDER_MARGIN_CLOSEOUT` の新規発生有無と `MicroPullbackEMA` の tail loss 再発有無を確認。
   - `orders.db` で `filled` を維持しつつ `entry_probability_reject` / `perf_block` の極端な悪化が無いことを確認。
+
+### 2026-02-28（追記）`strategy_control` EXITブロック再発防止 + `MicroPullbackEMA` / `scalp_macd_rsi_div_b` リスク再配分
+
+- 目的:
+  - `strategy_control_exit_disabled` が連続した際の EXIT 詰まりを短時間で fail-open させ、margin closeout 連鎖を再発させない。
+  - `MicroPullbackEMA` の tail risk を縮小しつつ戦略は停止せず継続改善する。
+  - `scalp_macd_rsi_div_b_live` の単発大損を抑えるため、entry条件とサイズを再圧縮する。
+- 実測根拠（VM, 2026-02-28 03:30-03:55 UTC / 12:30-12:55 JST）:
+  - `orders.db`（last 7d）: `strategy_control_exit_disabled=10277`（全て 2026-02-24 JST）。
+  - `strategy_control_exit_disabled` 内訳:
+    - `MicroPullbackEMA-short=8177`
+    - `MicroTrendRetest-long=2068`
+    - `scalp_ping_5s_flow_live=32`
+  - `trades.db`（last 7d）:
+    - `MicroPullbackEMA=46 trades / -15527.3 JPY`
+    - `MARKET_ORDER_MARGIN_CLOSEOUT` 中 `MicroPullbackEMA=4 trades / -16837.4 JPY`
+  - `trades.db`（last 24h）:
+    - `scalp_macd_rsi_div_b_live=2 trades / -525.3 JPY`
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD: 6 -> 3`
+    - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_WINDOW_SEC: 90 -> 20`
+    - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC: 300 -> 180`
+    - `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY: 1 -> 0`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_MICROPULLBACKEMA: 4.0 -> 3.0`
+    - `PERF_GUARD_MODE_STRATEGY_MICROPULLBACKEMA=block`（明示）
+    - `PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES_STRATEGY_MICROPULLBACKEMA: 4 -> 1`
+    - `PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE_STRATEGY_MICROPULLBACKEMA: 0.20 -> 0.05`
+  - `ops/env/quant-micro-pullbackema.env`
+    - `MICRO_MULTI_BASE_UNITS: 9000 -> 3500`
+    - `MICRO_MULTI_MAX_MARGIN_USAGE: 0.72 -> 0.50`
+    - `MICRO_MULTI_TARGET_MARGIN_USAGE=0.55`（追加）
+    - `MICRO_MULTI_CAP_MAX=0.65`（追加）
+  - `ops/env/quant-scalp-macd-rsi-div-b.env`
+    - `SCALP_MACD_RSI_DIV_B_MIN_DIV_SCORE: 0.08 -> 0.11`
+    - `SCALP_MACD_RSI_DIV_B_MIN_DIV_STRENGTH: 0.12 -> 0.16`
+    - `SCALP_MACD_RSI_DIV_B_MARGIN_USAGE_HARD: 0.93 -> 0.90`
+    - `SCALP_MACD_RSI_DIV_B_BASE_ENTRY_UNITS: 5000 -> 3200`
+    - `SCALP_MACD_RSI_DIV_B_CAP_MAX: 0.85 -> 0.70`
+    - `SCALP_MACD_RSI_DIV_B_RANGE_MIN_SCORE: 0.35 -> 0.42`
+- 影響範囲:
+  - V2 の責務分離（market-data/control/order/position）と `entry_thesis` 契約は非変更。
+  - 変更は worker/env と order_manager preflight の閾値のみ。
+- 検証計画:
+  - `strategy_control_exit_disabled` の新規増加が無いこと（`orders.db` 日次監査）。
+  - `MARKET_ORDER_MARGIN_CLOSEOUT` が 0 維持、または 7d 比で有意減少すること。
+  - `MicroPullbackEMA` / `scalp_macd_rsi_div_b_live` の `avg_loss_jpy` と `net_jpy` が改善方向へ向かうこと。
