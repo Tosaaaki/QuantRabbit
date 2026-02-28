@@ -1251,6 +1251,24 @@
   - `orders.db`: `entry_probability_reject`（rangefader の内訳）と `filled` 増減。
   - `trades.db`: `realized_pl` の strategy 別増分（B/C/M1 の下振れ勾配、MicroRangeBreak/MomentumBurst の上振れ確認）。
 
+### 不確実帯の hard reject 抑制（2026-02-28 追記）
+- 背景:
+  - 直近24hで `entry_probability_reject` / `perf_block` が `filled` と同程度以上まで増え、
+    市況追従より停止寄りに偏った。
+- 実装:
+  - `workers/common/perf_guard.py` に
+    `PERF_GUARD_HARD_FAILFAST_ENABLED` /
+    `PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED` /
+    `PERF_GUARD_HARD_MARGIN_CLOSEOUT_ENABLED` を追加。
+  - `quant-order-manager.env` で `scalp_ping_5s_b/c` の
+    hard `failfast/sl_loss_rate` を無効化し、`mode=reduce` の `warn+縮小` を優先。
+  - `scalp_extrema_reversal_live` は `PERF_GUARD_MODE=reduce` へ切り替え。
+  - `RangeFader` は `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` を 120 に下げ、
+    `entry_probability_below_min_units` の連発を抑制。
+- 運用意図:
+  - 不確実性が高い局面でも「拒否一択」ではなく、縮小ロットで意図を通し続ける。
+  - 破綻系（`margin_closeout`）の hard ブロックは維持して安全側を確保する。
+
 ### no-stop short発火補正（2026-02-26 追記）
 - 背景:
   - `SIDE_FILTER=sell` 適用後、longは遮断できたが `revert_not_found` と `short units_below_min` が支配的となり B/C の約定が枯渇。

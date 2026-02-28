@@ -57,13 +57,16 @@ class PerfGuardCfg:
     failfast_win: float
     failfast_hard_pf_floor: float
     failfast_hard_require_both: bool
+    hard_failfast_enabled: bool
 
     margin_closeout_hard_min_trades: int
     margin_closeout_hard_rate: float
     margin_closeout_hard_min_count: int
+    hard_margin_closeout_enabled: bool
 
     sl_loss_rate_min_trades: int
     sl_loss_rate_max_default: float
+    hard_sl_loss_rate_enabled: bool
 
     pocket_enabled: bool
     pocket_lookback_days: int
@@ -174,6 +177,11 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         True,
         env_prefix=env_prefix,
     )
+    hard_failfast_enabled = _strategy_env_bool(
+        "PERF_GUARD_HARD_FAILFAST_ENABLED",
+        True,
+        env_prefix=env_prefix,
+    )
 
     margin_closeout_hard_min_trades = max(
         1,
@@ -187,9 +195,19 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         1,
         _strategy_env_int("PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT", 1, env_prefix=env_prefix),
     )
+    hard_margin_closeout_enabled = _strategy_env_bool(
+        "PERF_GUARD_HARD_MARGIN_CLOSEOUT_ENABLED",
+        True,
+        env_prefix=env_prefix,
+    )
 
     sl_loss_rate_min_trades = max(0, _strategy_env_int("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, env_prefix=env_prefix))
     sl_loss_rate_max_default = _strategy_env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, env_prefix=env_prefix)
+    hard_sl_loss_rate_enabled = _strategy_env_bool(
+        "PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED",
+        True,
+        env_prefix=env_prefix,
+    )
 
     pocket_enabled = _strategy_env_bool("POCKET_PERF_GUARD_ENABLED", False, env_prefix=env_prefix)
     pocket_lookback_days = max(1, _strategy_env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, env_prefix=env_prefix))
@@ -236,11 +254,14 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         failfast_win=failfast_win,
         failfast_hard_pf_floor=failfast_hard_pf_floor,
         failfast_hard_require_both=failfast_hard_require_both,
+        hard_failfast_enabled=hard_failfast_enabled,
         margin_closeout_hard_min_trades=margin_closeout_hard_min_trades,
         margin_closeout_hard_rate=margin_closeout_hard_rate,
         margin_closeout_hard_min_count=margin_closeout_hard_min_count,
+        hard_margin_closeout_enabled=hard_margin_closeout_enabled,
         sl_loss_rate_min_trades=sl_loss_rate_min_trades,
         sl_loss_rate_max_default=sl_loss_rate_max_default,
+        hard_sl_loss_rate_enabled=hard_sl_loss_rate_enabled,
         pocket_enabled=pocket_enabled,
         pocket_lookback_days=pocket_lookback_days,
         pocket_min_trades=pocket_min_trades,
@@ -458,16 +479,19 @@ def _sl_loss_rate_max(pocket: str, cfg: PerfGuardCfg) -> float:
     return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, cfg.sl_loss_rate_max_default, cfg)
 
 
-def _is_hard_block_reason(reason: str) -> bool:
+def _is_hard_block_reason(reason: str, cfg: Optional[PerfGuardCfg] = None) -> bool:
     """
     Hard block reasons must reject entries even in reduce/warn mode.
     This prevents prolonged drawdown when the strategy is clearly degraded.
     """
     text = str(reason or "").strip().lower()
+    margin_hard = True if cfg is None else bool(cfg.hard_margin_closeout_enabled)
+    failfast_hard = True if cfg is None else bool(cfg.hard_failfast_enabled)
+    sl_hard = True if cfg is None else bool(cfg.hard_sl_loss_rate_enabled)
     return (
-        text.startswith("margin_closeout_n=")
-        or text.startswith("failfast:")
-        or text.startswith("sl_loss_rate=")
+        (margin_hard and text.startswith("margin_closeout_n="))
+        or (failfast_hard and text.startswith("failfast:"))
+        or (sl_hard and text.startswith("sl_loss_rate="))
     )
 
 
@@ -1060,7 +1084,7 @@ def is_allowed(
         ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour, regime_label, cfg)
         if not ok_hour:
             reason_txt = f"hour{hour}:{reason_hour}"
-            hard_block = _is_hard_block_reason(reason_hour)
+            hard_block = _is_hard_block_reason(reason_hour, cfg)
             if hard_block:
                 allowed = False
                 reason_txt = f"hard:{reason_txt}"
@@ -1086,7 +1110,7 @@ def is_allowed(
         )
         if not ok_setup:
             reason_txt = setup_reason
-            hard_block = _is_hard_block_reason(setup_reason)
+            hard_block = _is_hard_block_reason(setup_reason, cfg)
             if hard_block:
                 allowed = False
                 reason_txt = f"hard:{reason_txt}"
@@ -1101,7 +1125,7 @@ def is_allowed(
             return PerfDecision(allowed, reason_txt, setup_sample)
 
     ok, reason, sample = _query_perf(tag, pocket, None, regime_label, cfg)
-    hard_block = _is_hard_block_reason(reason)
+    hard_block = _is_hard_block_reason(reason, cfg)
     if hard_block and not ok:
         allowed = False
         reason_txt = f"hard:{reason}"

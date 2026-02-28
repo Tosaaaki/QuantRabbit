@@ -8,6 +8,37 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-28（追記）`perf_guard` の hard 拒否を戦略prefixで制御可能化し、不確実帯を「縮小継続」へ寄せた
+
+- 背景（VM実測）:
+  - 直近24hの `orders.db`（client_order_id単位）で
+    `entry_probability_reject=614`, `perf_block=588`, `filled=589` と、
+    reject が filled を上回る時間帯が継続。
+  - `order_perf_block` の主因は
+    `hard:hour*:failfast` / `hard:hour*:sl_loss_rate` で、
+    `mode=reduce` でも hard 判定により送出が停止する局面があった。
+  - `RangeFader-*` は `entry_probability_below_min_units` が支配的で、
+    確率縮小後に最小ロット閾値を割るケースが集中。
+- 変更:
+  - `workers/common/perf_guard.py`
+    - `PERF_GUARD_HARD_FAILFAST_ENABLED`
+    - `PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED`
+    - `PERF_GUARD_HARD_MARGIN_CLOSEOUT_ENABLED`
+    を追加し、hard理由の判定を prefix ごとに制御可能化。
+  - `ops/env/quant-order-manager.env`
+    - `SCALP_PING_5S_B_PERF_GUARD_HARD_FAILFAST_ENABLED=0`
+    - `SCALP_PING_5S_B_PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED=0`
+    - `SCALP_PING_5S_C_PERF_GUARD_HARD_FAILFAST_ENABLED=0`
+    - `SCALP_PING_5S_C_PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED=0`
+    - `SCALP_EXTREMA_REVERSAL_PERF_GUARD_MODE=reduce`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` と preserve-intent 閾値を追加・緩和。
+  - `ops/env/quant-scalp-rangefader.env`
+    - leading profile の `reject/weights` を range 優先へ再配分。
+- 意図:
+  - 不確実帯を「hard stop」ではなく「warn + 縮小ロット」で通し、
+    市況変化に対する追従性を維持しながら露出密度を確保する。
+  - ただし `margin_closeout` hard は既定維持として破綻防止を優先する。
+
 ### 2026-02-27（追記）replay auto-improve を時間帯ブロック依存から reentry 動的調整へ移行
 
 - 背景:

@@ -19,6 +19,53 @@
 
 ## Entry Template
 ```
+
+## 2026-02-28 05:05 UTC / 2026-02-28 14:05 JST - 市況不確実帯での hard reject 偏重を是正（RangeFader + ping5s + extrema）
+Period:
+- 観測: 2026-02-27 21:57 UTC までの直近24h（VM `orders.db` / `trades.db` / `metrics.db`）
+- 改善対象: `entry_probability_reject` と `perf_block` の過多
+
+Fact:
+- 戦略最終ステータス（client_order_id単位）で
+  `entry_probability_reject=614 (26.44%)`、`perf_block=588 (25.32%)`、`filled=589 (25.37%)`。
+- `entry_probability_reject` の内訳は
+  `entry_probability_below_min_units=596` が支配的。
+- `perf_block` は
+  `scalp_ping_5s_c_live=288`, `scalp_extrema_reversal_live=178`, `scalp_ping_5s_b_live=109`。
+- `order_perf_block` reason は
+  `hard:hour*:failfast` / `hard:hour*:sl_loss_rate` が主因で、`reduce` 設定でも hard 拒否に寄っていた。
+
+Failure Cause:
+1. 不確実帯での preflight が「縮小」ではなく hard reject に倒れ、約定密度を落としていた。
+2. `RangeFader` は `entry_probability_below_min_units` が主因で、確率縮小後にロットが最小閾値を割っていた。
+3. `scalp_extrema_reversal_live` は PF/win の軽度劣化でも `block` モードで停止しやすかった。
+
+Improvement:
+1. `workers/common/perf_guard.py`
+   - `PERF_GUARD_HARD_FAILFAST_ENABLED`
+   - `PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED`
+   - `PERF_GUARD_HARD_MARGIN_CLOSEOUT_ENABLED`
+   を追加し、hard判定を戦略prefixで制御可能化。
+2. `ops/env/quant-order-manager.env`
+   - `SCALP_PING_5S_[B/C]_PERF_GUARD_HARD_FAILFAST_ENABLED=0`
+   - `SCALP_PING_5S_[B/C]_PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED=0`
+   - `SCALP_EXTREMA_REVERSAL_PERF_GUARD_MODE=reduce`
+   - `RangeFader` 向け `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` を `120` へ新設し、
+     preserve-intent 閾値を緩和。
+3. `ops/env/quant-scalp-rangefader.env`
+   - `ENTRY_LEADING_PROFILE_REJECT_BELOW` 緩和、`WEIGHT_RANGE` 引き上げ、
+     `WEIGHT_MICRO` 引き下げで range 判定重視へ再配分。
+
+Verification:
+1. 反映後30-60分で `orders.db` の
+   `entry_probability_reject(entry_probability_below_min_units)` と
+   `perf_block` 比率が低下すること。
+2. 同期間で `filled` が維持または増加し、`rejected` が急増しないこと。
+3. `metrics.db` の `order_perf_block` reason が `hard:failfast/sl_loss_rate`
+   から `warn:*` へ遷移すること。
+
+Status:
+- in_progress
 ## YYYY-MM-DD HH:MM UTC / YYYY-MM-DD HH:MM JST - <short title>
 Period:
 - ...

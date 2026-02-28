@@ -295,6 +295,107 @@ def test_perf_guard_failfast_soft_in_reduce_mode(monkeypatch, tmp_path: Path) ->
     assert "failfast_soft:" in dec.reason
 
 
+def test_perf_guard_failfast_hard_can_be_disabled(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(8):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="HardOffFail",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=0.4,
+            close_time=now,
+        )
+    for _ in range(4):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="HardOffFail",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-2.0,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "reduce",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "30",
+            "PERF_GUARD_PF_MIN": "1.0",
+            "PERF_GUARD_WIN_MIN": "0.50",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "12",
+            "PERF_GUARD_FAILFAST_PF": "0.75",
+            "PERF_GUARD_FAILFAST_WIN": "0.40",
+            "PERF_GUARD_FAILFAST_HARD_PF": "0.30",
+            "PERF_GUARD_FAILFAST_HARD_REQUIRE_BOTH": "1",
+            "PERF_GUARD_HARD_FAILFAST_ENABLED": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+        },
+    )
+
+    dec = perf_guard.is_allowed("HardOffFail", "scalp")
+    assert dec.allowed is True
+    assert "warn:failfast_soft:" in dec.reason
+
+
+def test_perf_guard_sl_loss_rate_hard_can_be_disabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(9):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="HardOffSL",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+        )
+    for _ in range(3):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="HardOffSL",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=0.5,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "reduce",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "30",
+            "PERF_GUARD_PF_MIN": "1.0",
+            "PERF_GUARD_WIN_MIN": "0.50",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MIN_TRADES": "12",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0.65",
+            "PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED": "0",
+        },
+    )
+
+    dec = perf_guard.is_allowed("HardOffSL", "scalp")
+    assert dec.allowed is True
+    assert "warn:sl_loss_rate=" in dec.reason
+
+
 def test_perf_guard_margin_closeout_soft_in_reduce_mode(monkeypatch, tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
