@@ -20,6 +20,45 @@
 ## Entry Template
 ```
 
+## 2026-02-28 22:50 UTC / 2026-02-28 07:50 JST - `close_blocked_negative` と `hold_until_profit` の過剰保護を縮小
+
+Period:
+- VM直近実データ（`orders.db` / `trades.db` / `metrics.db`）に基づく、`close_blocked_negative` 原因別再審査。
+
+Source:
+- VM `logs/metrics.db`（`metric='close_blocked_negative'`, `metric='close_blocked_hold_profit'`）
+- VM `logs/orders.db`（`status` と `exit_request` 検索）
+- VM `systemctl` / unit稼働状態
+
+Fact:
+- `close_blocked_negative` の上位は
+  `max_adverse`（`22556`）> `no_recovery`（`9772`）> `m1_rsi_fade`（`6805`）> `max_hold`（`5842`）> `reentry_reset`（`5693`）> `m1_structure_break`（`3006`）で、`__de_risk__` や `time_cut` 由来の件数も増加傾向。
+- `close_blocked_hold_profit` では `min_profit_pips=9999.0` + `strict=true` の組み合わせが `20663` 件観測され、事実上の強制保有化に近い挙動。
+- `scalp_ping_5s_no_block_neg_exit_allow_reasons` に `time_cut/__de_risk__/momentum_stop_loss/max_hold_loss` が欠けていたため、実績上想定された保護解除が拒否されるケースがあった。
+
+Failure Cause:
+1. `close_blocked_negative` の許可集合に対し、運用上顕在化している保護理由の一部が未登録だった。
+2. `hold_until_profit` の固定 `trade_ids` + `min_profit_pips: 9999.0` + `strict=true` が、暫定目的を逸脱して常時解消抑止を発生させていた。
+
+Improvement:
+1. `config/strategy_exit_protections.yaml`
+   - `scalp_ping_5s_no_block_neg_exit_allow_reasons` を拡張：
+     - `time_cut`
+     - `__de_risk__`
+     - `momentum_stop_loss`
+     - `max_hold_loss`
+   - `hold_until_profit` を無効化寄りに更新し、`trade_ids: []`, `min_profit_pips: 0.0`, `strict: false`。
+2. `docs/WORKER_REFACTOR_LOG.md` に同変更内容を追記し、変更履歴を監査可能化。
+
+Verification:
+1. 反映後24hで `metrics.db` 上の `close_blocked_negative` 上位理由分布と `close_reject_no_negative` の変化を再集計し、
+   追加した理由の受理率が改善されること。
+2. `close_blocked_hold_profit` の `9999.0`/`strict=true` 相当件数が収束し、`trade_id` 固定ブロックが消滅すること。
+3. VMで `quant-order-manager` / `quant-scalp-ping-5s-*` の起動監査、`journalctl` の `Application started!` が最新化されること。
+
+Status:
+- in_progress
+
 ## 2026-02-28 05:05 UTC / 2026-02-28 14:05 JST - 市況不確実帯での hard reject 偏重を是正（RangeFader + ping5s + extrema）
 Period:
 - 観測: 2026-02-27 21:57 UTC までの直近24h（VM `orders.db` / `trades.db` / `metrics.db`）

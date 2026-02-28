@@ -202,17 +202,16 @@ scalp_ping_5s_no_block_neg_exit_allow_reasons: &SCALP_PING_5S_NO_BLOCK_NEG_EXIT_
   - trail_lock
   - near_be
   - lock_trail
+  - time_cut
+  - __de_risk__
+  - momentum_stop_loss
+  - max_hold_loss
 
 hold_until_profit:
-  # TEMP (2026-02-07 JST): user requested "do not close" for specific scalp trades.
-  # This blocks bot-initiated closes until the trade exceeds min_profit_pips.
-  # Note: broker-side takeProfit/stopLoss can still close independently.
-  trade_ids:
-    - "313425"  # scalp LevelReject short opened 2026-02-07 06:40 JST
-    - "313411"  # scalp WickReversal short opened 2026-02-07 06:25 JST
-  min_profit_pips: 9999.0
-  # strict=true blocks closes even for emergency / margin-relief reasons.
-  strict: true
+  # TEMP hold lock disabled (2026-02-28): keep key for compatibility.
+  trade_ids: []
+  min_profit_pips: 0.0
+  strict: false
 
 strategies:
   TrendMA:

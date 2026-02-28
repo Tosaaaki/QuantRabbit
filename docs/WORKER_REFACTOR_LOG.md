@@ -53,6 +53,25 @@
   - B/C の negative close 制御を、明示許可集合だけで運用し、
     想定外の一律許可による `close_reject_no_negative` 回避機能の空洞化を防ぐ。
 
+### 2026-02-28（追記）保護系 `close_blocked_negative` 理由の過大拒否を軽減（TEMP保留ロック解除）
+
+- 背景（2026-02-28 直近 VM 集計）:
+  - `metrics.db` の `close_blocked_negative` は `max_adverse` が最多（`22556`）、`no_recovery`（`9772`）、`m1_rsi_fade`（`6805`）が次いだ。
+  - `close_blocked_hold_profit` は `trade_id` 固定ホールド（`trade_ids`）と `min_profit_pips: 9999.0` / `strict: true` が多発（`20663` 件）し、実質的に正常な解消要因も遮断。
+  - `hold_until_profit` の手動指定 2 trade ブロックは期限切れの暫定対策に見え、現在の保守的運用に逆行。
+- 変更:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_no_block_neg_exit_allow_reasons` を `time_cut` / `__de_risk__` / `momentum_stop_loss` / `max_hold_loss` 追加。
+    - `hold_until_profit` を空設定に変更し、`trade_ids: []`, `min_profit_pips: 0.0`, `strict: false` にして
+      TEMPロックの恒久化を防止。
+- 影響範囲:
+  - `scalp_ping_5s` 系（共通 no-block anchor を参照する戦略）を中心に、保護由来のネガティブ close 拒否を縮小。
+  - `scalp_ping_5s` 以外の固定 `hold_until_profit` 常時ブロックにも効くため、意図せぬ長期保有解禁を監視対象化。
+- 確認項目:
+  - `metrics.db` で `close_blocked_negative` の `__de_risk__` / `time_cut` / `max_hold_loss` / `momentum_stop_loss` が
+    `strategy-specific` にどう再配分されるかを監視。
+  - `close_blocked_hold_profit` の `min_profit_pips=9999.0` 集約が解消し、`trade_id` 固定ブロックイベントが `0` に向かうこと。
+
 ### 2026-02-28（追記）`perf_guard` の hard 拒否を戦略prefixで制御可能化し、不確実帯を「縮小継続」へ寄せた
 
 - 背景（VM実測）:
