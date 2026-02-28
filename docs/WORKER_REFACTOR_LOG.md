@@ -10107,3 +10107,60 @@
 - 影響範囲:
   - 変更は `quant-order-manager` close preflight のみ。
   - strategy worker の entry/exit ロジック、`entry_thesis` 契約、黒板協調、V2 service topology は非変更。
+
+### 2026-02-28（追記）期待値改善加速: ping B/C preflight 強化 + MACD RSI div 単発損失クランプ
+
+- 目的:
+  - `expectancy` を負値域から早期に引き上げるため、低エッジ高回転（ping B/C）と単発大損（macd_rsi_div）を同時に圧縮する。
+- 仮説:
+  - `FORECAST_GATE/NET_EDGE` の閾値を引き上げ、`ORDER_MIN_UNITS` を上げることで、B/C のノイズ約定が減り平均損益が改善する。
+  - macd_rsi_div は strategy単位の `SL上限` + `exit hard cut` + `entry strict化` の三層クランプで tail loss が縮小する。
+- 実測根拠（VM, 2026-02-28 04:39 UTC / 13:39 JST）:
+  - 24h vs 前日24h: `expectancy_jpy -1.5 -> -2.8` 比較で `+1.3 JPY/trade` 改善中だが未だ負値。
+  - 24h負け寄与:
+    - `scalp_ping_5s_b_live`: `292 trades / -180.4 JPY / PF 0.303`
+    - `scalp_ping_5s_c_live`: `109 trades / -35.3 JPY / PF 0.166`
+  - 24h単発大損:
+    - `scalp_macd_rsi_div_b_live` + `scalp_macd_rsi_div_live`: `4 trades / -729.9 JPY`
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE: 0.84 -> 0.86`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE: 0.36 -> 0.30`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]: 0.72 -> 0.78`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_C[_LIVE]: 0.48 -> 0.38`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B[_LIVE]: 1 -> 30`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C[_LIVE]: 1 -> 30`
+    - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE: 0.02 -> 0.10`
+    - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_C_LIVE=0.12`（追加）
+    - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_B_LIVE: 0.74 -> 0.80`
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_B_LIVE: 0.25 -> 0.40`
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_B_LIVE: 0.36 -> 0.50`
+    - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_C_LIVE: 0.82 -> 0.88`
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_SCALP_PING_5S_C_LIVE: 0.38 -> 0.55`
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_SCALP_PING_5S_C_LIVE: 0.48 -> 0.62`
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_MACD_RSI_DIV_LIVE=2.8`（追加）
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_MACD_RSI_DIV_B_LIVE=2.4`（追加）
+  - `ops/env/quant-scalp-macd-rsi-div.env`
+    - `BASE_ENTRY_UNITS: 3000 -> 1500`, `MIN_UNITS: 600 -> 300`
+    - `RANGE_MIN_SCORE: 0.18 -> 0.28`
+    - `MIN_DIV_SCORE: 0.12 -> 0.18`, `MIN_DIV_STRENGTH: 0.18 -> 0.24`
+    - `MAX_DIV_AGE_BARS: 10 -> 8`
+    - `SL_ATR_MULT: 0.85 -> 0.65`, `TP_ATR_MULT: 1.10 -> 1.00`
+  - `ops/env/quant-scalp-macd-rsi-div-b.env`
+    - `COOLDOWN_SEC: 45 -> 90`
+    - `BASE_ENTRY_UNITS: 3200 -> 1600`, `MIN_UNITS: 1000 -> 400`
+    - `CAP_MAX: 0.70 -> 0.55`, `RANGE_MIN_SCORE: 0.42 -> 0.50`
+    - `MIN_DIV_SCORE: 0.11 -> 0.16`, `MIN_DIV_STRENGTH: 0.16 -> 0.22`
+    - `MAX_DIV_AGE_BARS: 24 -> 12`
+    - `SL_ATR_MULT: 0.85 -> 0.65`, `TP_ATR_MULT: 1.15 -> 1.05`
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_macd_rsi_div_live.loss_cut_hard_pips: 7.0 -> 2.6`
+    - `scalp_macd_rsi_div_live.loss_cut_max_hold_sec: 1800 -> 900`
+    - `scalp_macd_rsi_div_b_live` を新設（`loss_cut_hard_pips=2.3`, `loss_cut_max_hold_sec=720`）
+- 影響範囲:
+  - worker entry条件・sizing・strategy別SL上限・exit hard-cut の閾値のみ。
+  - V2分離（market-data / strategy-control / order-manager / position-manager）、黒板協調、`entry_thesis` 契約は非変更。
+- 検証手順:
+  - 反映後24hで `trades.db` の `expectancy_jpy`・`PF`・`net_jpy` を前日同窓と比較。
+  - `scalp_ping_5s_b/c` の `filled` 件数を維持しつつ合算 `net_jpy` が改善すること。
+  - `scalp_macd_rsi_div*` の `avg_loss_jpy/max_loss_jpy` が縮小すること。

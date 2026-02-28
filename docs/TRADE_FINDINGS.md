@@ -78,6 +78,61 @@ Verification:
 Status:
 - in_progress
 
+## 2026-02-28 04:40 UTC / 13:40 JST - 期待値改善を加速するための即時クランプ（ping B/C + MACD RSI div）
+
+Period:
+- 直近24h / 直前24h 比較（`datetime(close_time)` 正規化）
+- 直近7d（戦略別寄与）
+
+Source:
+- VM `/home/tossaki/QuantRabbit/logs/trades.db`
+- VM `/home/tossaki/QuantRabbit/logs/orders.db`
+
+Fact:
+- 全体期待値は改善中だが未だ負値:
+  - `last24h expectancy=-1.5 JPY` vs `prev24h=-2.8 JPY`（`+1.3 JPY/trade`）
+- 直近24hの負け寄与（非manual）:
+  - `scalp_ping_5s_b_live`: `292 trades / -180.4 JPY / PF 0.303`
+  - `scalp_ping_5s_c_live`: `109 trades / -35.3 JPY / PF 0.166`
+- 少数大損:
+  - `scalp_macd_rsi_div_b_live` + `scalp_macd_rsi_div_live` は `4 trades / -729.9 JPY`
+
+Failure Cause:
+1. `scalp_ping_5s_b/c` で低エッジ約定が残り、回転で負けを積み上げる。
+2. `scalp_macd_rsi_div*` で単発大損が期待値を崩す。
+3. order-manager の `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_[B/C]_LIVE=1` がノイズ約定を許している。
+
+Improvement:
+1. `ops/env/quant-order-manager.env`
+   - `FORECAST_GATE_*` を B/C で引き上げ（expected/target/edge block）。
+   - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE: 0.02 -> 0.10`
+   - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_C_LIVE=0.12` を追加。
+   - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_[B/C]_LIVE: 1 -> 30`
+   - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER/MAX_SCALE` を B/C で強化。
+   - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_MACD_RSI_DIV_LIVE=2.8`
+   - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_MACD_RSI_DIV_B_LIVE=2.4`
+2. `ops/env/quant-scalp-macd-rsi-div.env`
+   - `BASE_ENTRY_UNITS: 3000 -> 1500`, `MIN_UNITS: 600 -> 300`
+   - `MIN_DIV_SCORE/STRENGTH` を引き上げ、`MAX_DIV_AGE_BARS` を短縮。
+   - `SL_ATR_MULT: 0.85 -> 0.65`, `TP_ATR_MULT: 1.10 -> 1.00`
+3. `ops/env/quant-scalp-macd-rsi-div-b.env`
+   - `BASE_ENTRY_UNITS: 3200 -> 1600`, `MIN_UNITS: 1000 -> 400`
+   - `COOLDOWN_SEC: 45 -> 90`
+   - `MIN_DIV_SCORE/STRENGTH` 引き上げ、`MAX_DIV_AGE_BARS` 短縮、`RANGE_MIN_SCORE` 引き上げ。
+   - `SL_ATR_MULT: 0.85 -> 0.65`, `TP_ATR_MULT: 1.15 -> 1.05`
+4. `config/strategy_exit_protections.yaml`
+   - `scalp_macd_rsi_div_live` の `loss_cut_hard_pips: 7.0 -> 2.6`
+   - `scalp_macd_rsi_div_b_live` を追加し `loss_cut_hard_pips=2.3`
+
+Verification:
+1. 反映後24hで `expectancy_jpy` が `> 0` へ近づく（最低でも `-1.5` から改善）。
+2. `scalp_ping_5s_b/c` の合算 `net_jpy` が前日比で改善し、`filled` がゼロにならない。
+3. `scalp_macd_rsi_div*` の `avg_loss_jpy` と `max_loss_jpy` が明確に低下する。
+4. `orders.db` で `entry_probability_reject`/`perf_block` の増加が、`net_jpy` 改善を上回る副作用になっていないことを確認する。
+
+Status:
+- applied
+
 ## 2026-02-28 04:25 UTC / 2026-02-28 13:25 JST - 全戦略共通: strategy-control EXITロック詰まりの恒久対策
 
 Period:

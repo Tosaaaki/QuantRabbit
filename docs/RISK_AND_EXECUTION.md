@@ -1715,3 +1715,22 @@
 - 運用意図:
   - `scalp_fast` 全体を hard block しないよう pocket 既定を緩くし、
     B_live だけ実質閾値を適用して reject 分布を先行観測する。
+
+### 2026-02-28 期待値改善クランプ（ping B/C + MACD RSI div）
+- 背景:
+  - 24h期待値は改善方向（`-2.8 -> -1.5 JPY/trade`）だが、まだ負値。
+  - `scalp_ping_5s_b/c` の低エッジ高回転と、`scalp_macd_rsi_div*` の単発大損が主因。
+- 実装:
+  - `quant-order-manager` preflight を strategy別に追加強化:
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN` / `FORECAST_GATE_TARGET_REACH_MIN` / `FORECAST_GATE_EDGE_BLOCK` を B/C で引き上げ。
+    - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE=0.10`
+    - `ORDER_ENTRY_NET_EDGE_MIN_PIPS_STRATEGY_SCALP_PING_5S_C_LIVE=0.12`（追加）
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_[B/C]_LIVE=30`
+  - macd_rsi_div の tail loss 抑制:
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_MACD_RSI_DIV_LIVE=2.8`
+    - `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_MACD_RSI_DIV_B_LIVE=2.4`
+    - `strategy_exit_protections` で `scalp_macd_rsi_div_live` の `loss_cut_hard_pips` を `2.6` へ圧縮し、
+      `scalp_macd_rsi_div_b_live` に同等の hard-cut プロファイルを追加。
+- 運用意図:
+  - 戦略停止ではなく「低品質シグナルの通過削減 + 単発損失の上限圧縮」で期待値改善を加速する。
+  - 共通層は引き続き guard/risk 判定に限定し、戦略選別ロジックの後付け追加は行わない。
