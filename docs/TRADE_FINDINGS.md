@@ -20,6 +20,41 @@
 ## Entry Template
 ```
 
+## 2026-02-28 23:10 UTC / 2026-02-29 08:10 JST - `close_reject_no_negative` の保護理由集合を収斂
+
+Period:
+- VM直近実データ（`orders.db`）に基づき、`close_reject_no_negative` の `exit_reason` 上位を再審査。
+- 同時に `quant-order-manager` の `order_manager.py` 設定値を照合し、allow/force/bypass セットの整合性を確認。
+
+Fact:
+- `close_reject_no_negative` の主要原因は `max_adverse` / `no_recovery` / `time_stop` 系が大きく、同時に `fast_cut_time` が上位帯に入り、  
+  allow/force/immediate の理由集合で運用上の想定と実際トリガが一致しない箇所が存在していた。
+- `fast_cut_time` は保護的な exit reason であるにもかかわらず、共通 allow 集合に欠落する設定が残っていた。
+
+Failure Cause:
+1. `ORDER_ALLOW_NEGATIVE_REASONS` / `EXIT_FORCE_ALLOW_REASONS` / `ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS` が
+   意図的に保護すべき理由と実時点の reason 仕様でズレており、拒否/通過の一貫性が崩れていた。
+2. `config/strategy_exit_protections.yaml` の `defaults` / no-block anchor に `fast_cut_time` が未登録で、
+   戦略別許可の下位互換上、`close_reject_no_negative` 化しにくい経路が生じていた。
+
+Improvement:
+1. `execution/order_manager.py`
+   - 保護系理由の既定トークンを整理し、実運用保護理由（`hard_stop`,`tech_hard_stop`,`max_adverse`,`time_stop`,`no_recovery`,`max_floating_loss`,`fast_cut_time`,`time_cut`,`tech_return_fail`,`tech_reversal_combo`,`tech_candle_reversal`,`tech_nwave_flip`）へ明示集中。
+   - `drawdown`,`max_drawdown`,`health_exit`,`hazard_exit`,`margin_health`,`free_margin_low`,`margin_usage_high` を
+     `ORDER_ALLOW_NEGATIVE_REASONS` / `EXIT_FORCE_ALLOW_REASONS` / `ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS` 既定から削除。
+2. `config/strategy_exit_protections.yaml`
+   - `defaults.neg_exit.allow_reasons` と `scalp_ping_5s_no_block_neg_exit_allow_reasons` に `fast_cut_time` を追加。
+3. `docs/WORKER_REFACTOR_LOG.md` に同内容を追記。
+
+Verification:
+1. 反映後24hで `orders.db` を再集計し、`close_reject_no_negative` の上位理由における
+   `fast_cut_time` の即時通過率が改善すること。
+2. `close_reject_no_negative` で想定外のトリガが増加しないことを確認。
+3. VM反映後、`quant-order-manager` の起動監査（`Application started!`）と設定有効性を確認。
+
+Status:
+- in_progress
+
 ## 2026-02-28 22:50 UTC / 2026-02-28 07:50 JST - `close_blocked_negative` と `hold_until_profit` の過剰保護を縮小
 
 Period:

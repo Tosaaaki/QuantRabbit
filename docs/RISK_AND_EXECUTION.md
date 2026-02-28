@@ -1664,7 +1664,7 @@
   - 一致しない場合は従来どおり
     `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_*`（block回数/経過秒）で判定する。
 - 既定の即時バイパス対象:
-  - `max_adverse,time_stop,no_recovery,max_floating_loss,hard_stop,tech_hard_stop,drawdown,max_drawdown,health_exit,hazard_exit,margin_health,free_margin_low,margin_usage_high`
+  - `hard_stop,tech_hard_stop,max_adverse,time_stop,no_recovery,max_floating_loss,fast_cut_time,time_cut,tech_return_fail,tech_reversal_combo,tech_candle_reversal,tech_nwave_flip`
 - 監査:
   - `orders.db` status: `strategy_control_exit_disabled` / `strategy_control_exit_immediate_reason`
   - metric: `close_bypassed_strategy_control{reason=strategy_control_exit_immediate_reason}`

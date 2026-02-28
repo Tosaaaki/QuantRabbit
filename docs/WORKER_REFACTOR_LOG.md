@@ -35,6 +35,26 @@
   - `ENTRY` 側の意図と `ORDER` 側の拒否理由・保護判定が突き合わせ可能になり、`close_blocked_*` と併せて
     異常拒否の特定速度を上げる。
 
+### 2026-02-28（追記）保護 EXIT 理由集合の過剰許可と取りこぼしを整理
+
+- 背景（VM実測）:
+  - `close_reject_no_negative` 系の拒否は継続しており、原因上位で
+    `max_adverse` / `no_recovery` / `time_stop` 系が突出。
+  - 一方で `fast_cut_time` が上位を占める事象も観測され、保護理由マトリクス上で
+    `allow/force/immediate` の集合が一致していないため解消が遅延していた。
+- 変更:
+  - `execution/order_manager.py`
+    - `ORDER_ALLOW_NEGATIVE_REASONS` / `EXIT_FORCE_ALLOW_REASONS` / `ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS` を
+      実運用保護 reason セットへ再調整。
+    - `drawdown` / `max_drawdown` / `health_exit` / `hazard_exit` / `margin_health` / `free_margin_low` / `margin_usage_high` を
+      allow/force/bypass 既定から外し、`hard_stop` / `tech_hard_stop` / `max_adverse` / `time_stop` / `no_recovery` / `max_floating_loss` /
+      `fast_cut_time` / `time_cut` / `tech_return_fail` / `tech_reversal_combo` / `tech_candle_reversal` / `tech_nwave_flip` へ明示寄せ。
+  - `config/strategy_exit_protections.yaml`
+    - `defaults.neg_exit.allow_reasons` と `scalp_ping_5s_no_block_neg_exit_allow_reasons` に
+      `fast_cut_time` を追加。
+- 監査意図:
+  - 仕様差異を縮小し、保護 reason の過剰通過と非保護的 reason の取りこぼしを同時に低減。
+
 ## 方針（最終確定）
 
 - 各戦略は `ENTRY/EXIT` を1対1で持つ。

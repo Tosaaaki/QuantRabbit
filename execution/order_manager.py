@@ -2303,8 +2303,9 @@ _EXIT_ALLOW_NEGATIVE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
         "EXIT_ALLOW_NEGATIVE_REASONS",
-        "hard_stop,tech_hard_stop,drawdown,max_drawdown,health_exit,hazard_exit,"
-        "margin_health,free_margin_low,margin_usage_high",
+        "hard_stop,tech_hard_stop,max_adverse,time_stop,no_recovery,max_floating_loss,"
+        "fast_cut_time,time_cut,tech_return_fail,tech_reversal_combo,tech_candle_reversal,"
+        "tech_nwave_flip",
     ).split(",")
     if token.strip()
 }
@@ -2327,7 +2328,9 @@ _EXIT_FORCE_ALLOW_REASONS = {
     token.strip().lower()
     for token in os.getenv(
         "EXIT_FORCE_ALLOW_REASONS",
-        "drawdown,max_drawdown,health_exit,hazard_exit,margin_health,free_margin_low,margin_usage_high",
+        "hard_stop,tech_hard_stop,max_adverse,time_stop,no_recovery,max_floating_loss,"
+        "fast_cut_time,time_cut,tech_return_fail,tech_reversal_combo,tech_candle_reversal,"
+        "tech_nwave_flip",
     ).split(",")
     if token.strip()
 }
@@ -2481,8 +2484,9 @@ _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_EMERGENCY_ONLY = _env_bool(
 )
 _ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS = _env_csv_set(
     "ORDER_STRATEGY_CONTROL_EXIT_IMMEDIATE_BYPASS_REASONS",
-    "max_adverse,time_stop,no_recovery,max_floating_loss,hard_stop,tech_hard_stop,"
-    "drawdown,max_drawdown,health_exit,hazard_exit,margin_health,free_margin_low,margin_usage_high",
+    "hard_stop,tech_hard_stop,max_adverse,time_stop,no_recovery,max_floating_loss,"
+    "fast_cut_time,time_cut,tech_return_fail,tech_reversal_combo,tech_candle_reversal,"
+    "tech_nwave_flip",
 )
 _STRATEGY_CONTROL_EXIT_BLOCKS_LOCK = threading.Lock()
 _STRATEGY_CONTROL_EXIT_BLOCKS: dict[str, tuple[float, float, int]] = {}

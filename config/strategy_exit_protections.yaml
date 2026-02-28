@@ -23,6 +23,7 @@ defaults:
       - reentry_reset
       - max_hold
       - max_adverse
+      - fast_cut_time
       - lock_floor
       - take_profit
       - take_profit_zone
@@ -174,6 +175,7 @@ scalp_ping_5s_no_block_neg_exit_allow_reasons: &SCALP_PING_5S_NO_BLOCK_NEG_EXIT_
   - reentry_reset
   - max_hold
   - max_adverse
+  - fast_cut_time
   - lock_floor
   - take_profit
   - take_profit_zone
