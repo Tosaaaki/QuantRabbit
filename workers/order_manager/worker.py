@@ -64,6 +64,13 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
         return default
 
 
+def _resolve_entry_confidence(body: dict[str, Any]) -> float | None:
+    conf = _to_float(body.get("entry_probability"))
+    if conf is not None:
+        return conf
+    return _to_float(body.get("confidence"))
+
+
 _SLOW_REQUEST_WARN_SEC = max(
     0.0,
     _to_float(os.getenv("ORDER_MANAGER_SERVICE_SLOW_REQUEST_WARN_SEC"), 8.0) or 8.0,
@@ -180,6 +187,7 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return _failure("instrument is required")
     if units == 0:
         return _failure("units must be non-zero")
+    resolved_confidence = _resolve_entry_confidence(body)
 
     try:
         result = await _run_order_manager_call(
@@ -195,7 +203,7 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             reduce_only=_to_bool(body.get("reduce_only"), False),
             entry_thesis=body.get("entry_thesis"),
             meta=body.get("meta"),
-            confidence=_to_int(body.get("confidence"), 0) if body.get("confidence") is not None else None,
+            confidence=resolved_confidence,
             stage_index=_to_int(body.get("stage_index"), 0) if body.get("stage_index") is not None else None,
             arbiter_final=_to_bool(body.get("arbiter_final"), False),
         )
@@ -216,6 +224,7 @@ async def coordinate_entry_intent(payload: dict[str, Any] = Body(...)) -> dict[s
         return _failure("pocket is required")
 
     try:
+        resolved_confidence = _resolve_entry_confidence(body)
         result = await _run_order_manager_call(
             "coordinate_entry_intent",
             order_manager.coordinate_entry_intent,
@@ -224,7 +233,7 @@ async def coordinate_entry_intent(payload: dict[str, Any] = Body(...)) -> dict[s
             strategy_tag=body.get("strategy_tag"),
             side=_to_int(body.get("side"), 1),
             raw_units=_to_int(body.get("raw_units"), 0),
-            entry_probability=body.get("entry_probability"),
+            entry_probability=resolved_confidence,
             client_order_id=body.get("client_order_id"),
             min_units=_to_int(body.get("min_units"), 0),
             forecast_context=body.get("forecast_context"),
@@ -255,6 +264,7 @@ async def limit_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return _failure("units must be non-zero")
     if price is None:
         return _failure("price is required")
+    resolved_confidence = _resolve_entry_confidence(body)
 
     try:
         trade_id, order_id = await _run_order_manager_call(
@@ -273,7 +283,7 @@ async def limit_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             reduce_only=_to_bool(body.get("reduce_only"), False),
             ttl_ms=_to_float(body.get("ttl_ms"), 800.0) or 800.0,
             entry_thesis=body.get("entry_thesis"),
-            confidence=_to_int(body.get("confidence"), 0) if body.get("confidence") is not None else None,
+            confidence=resolved_confidence,
             meta=body.get("meta"),
         )
     except Exception as exc:
