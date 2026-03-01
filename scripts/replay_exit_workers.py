@@ -865,7 +865,11 @@ class SimBroker:
     ) -> dict:
         trade_id = trade_id or self._next_id()
         signed_units = units if direction == "long" else -units
-        client_id = f"sim-{trade_id}"
+        normalized_trade_id = str(trade_id).strip()
+        if normalized_trade_id.startswith("sim-"):
+            client_id = normalized_trade_id
+        else:
+            client_id = f"sim-{normalized_trade_id}"
         slip_pips = 0.0
         if source != "fast_scalp":
             slip_pips = self._calc_slip_pips(slip_tick)

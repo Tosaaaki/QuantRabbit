@@ -774,6 +774,52 @@ def _extract_regime(thesis: dict | None) -> tuple[Optional[str], Optional[str]]:
     return _normalize_regime(macro), _normalize_regime(micro)
 
 
+def _normalize_entry_contract_fields(
+    thesis: dict | None,
+    payload: dict | None,
+    *,
+    fallback_units: Optional[float] = None,
+) -> dict | None:
+    if thesis is None or not isinstance(thesis, dict):
+        thesis = {}
+    else:
+        thesis = dict(thesis)
+
+    if not isinstance(payload, dict):
+        return thesis
+
+    entry_prob = _coerce_float(payload.get("entry_probability"))
+    if entry_prob is not None and thesis.get("entry_probability") is None:
+        if 0.0 <= float(entry_prob) <= 1.0:
+            thesis["entry_probability"] = float(entry_prob)
+
+    if thesis.get("entry_units_intent") is None:
+        entry_units = _coerce_float(payload.get("entry_units_intent"))
+        if entry_units is None:
+            entry_units = _coerce_float(payload.get("entry_units"))
+        if entry_units is None:
+            entry_units = _coerce_float(payload.get("units"))
+        if entry_units is None:
+            oanda_payload = payload.get("oanda")
+            if isinstance(oanda_payload, dict):
+                order_payload = oanda_payload.get("order")
+                if isinstance(order_payload, dict):
+                    entry_units = _coerce_float(order_payload.get("units"))
+        if entry_units is None and fallback_units is not None:
+            entry_units = _coerce_float(fallback_units)
+        if entry_units is not None:
+            try:
+                thesis["entry_units_intent"] = abs(int(entry_units))
+            except (TypeError, ValueError):
+                pass
+
+    if thesis.get("entry_probability") is None:
+        # Keep contract shape even if probability is absent in legacy rows.
+        thesis["entry_probability"] = 1.0
+
+    return thesis
+
+
 def _apply_strategy_tag_normalization(thesis: dict | None, raw_tag: object | None) -> tuple[dict | None, str | None]:
     """Ensure thesis carries normalized strategy_tag while preserving raw tag."""
     norm = _normalize_strategy_tag(raw_tag)
@@ -2329,6 +2375,16 @@ class PositionManager:
             macro_regime, micro_regime = _extract_regime(details.get("entry_thesis"))
             details["macro_regime"] = macro_regime
             details["micro_regime"] = micro_regime
+            details["entry_thesis"] = _normalize_entry_contract_fields(
+                details.get("entry_thesis"),
+                {
+                    "entry_probability": None,
+                    "entry_units_intent": None,
+                    **(details if isinstance(details, dict) else {}),
+                    "entry_thesis": details.get("entry_thesis"),
+                },
+                fallback_units=details.get("units"),
+            )
             return details
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
@@ -2408,7 +2464,14 @@ class PositionManager:
                 if att and att["request_json"]:
                     try:
                         payload = json.loads(att["request_json"]) or {}
-                        thesis_obj = payload.get("entry_thesis") or {}
+                        thesis_obj = payload.get("entry_thesis")
+                        if not isinstance(thesis_obj, dict):
+                            thesis_obj = (payload.get("meta") or {}).get("entry_thesis")
+                        thesis_obj = _normalize_entry_contract_fields(
+                            thesis_obj,
+                            payload,
+                            fallback_units=row["units"],
+                        )
                         if isinstance(thesis_obj, dict):
                             strategy_tag = thesis_obj.get("strategy_tag")
                     except Exception:
@@ -2431,6 +2494,16 @@ class PositionManager:
         thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
         if norm_tag:
             strategy_tag = norm_tag
+        thesis_obj = _normalize_entry_contract_fields(
+            thesis_obj,
+            {
+                "entry_probability": None,
+                "entry_units_intent": None,
+                "oanda": {"order": {"units": row["units"]}},
+                "entry_thesis": thesis_obj,
+            },
+            fallback_units=row["units"],
+        )
         pocket = _resolve_pocket(row["pocket"], strategy_tag, client_id)
         macro_regime, micro_regime = _extract_regime(thesis_obj)
         return {
@@ -2594,6 +2667,16 @@ class PositionManager:
                         macro_regime = macro_fallback
                     if not micro_regime:
                         micro_regime = micro_fallback
+                details["entry_thesis"] = _normalize_entry_contract_fields(
+                    details.get("entry_thesis"),
+                    {
+                        "entry_probability": None,
+                        "entry_units_intent": None,
+                        **(details if isinstance(details, dict) else {}),
+                        "entry_thesis": details.get("entry_thesis"),
+                    },
+                    fallback_units=details.get("units"),
+                )
 
                 record_tuple = (
                     transaction_id,
@@ -3127,6 +3210,11 @@ class PositionManager:
                     trade_entry["entry_thesis"] = thesis_obj
                 if norm_tag:
                     trade_entry["strategy_tag"] = norm_tag
+                trade_entry["entry_thesis"] = _normalize_entry_contract_fields(
+                    trade_entry.get("entry_thesis"),
+                    trade_entry,
+                    fallback_units=trade_entry.get("units"),
+                )
                 if client_id:
                     if _POSITION_MANAGER_OPEN_POSITIONS_ENRICH_ALL_CLIENTS:
                         entry_thesis_client_ids.add(client_id)
@@ -3215,6 +3303,11 @@ class PositionManager:
                             thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
                             if thesis_obj is not None:
                                 trade["entry_thesis"] = thesis_obj
+                                trade["entry_thesis"] = _normalize_entry_contract_fields(
+                                    thesis_obj,
+                                    trade,
+                                    fallback_units=trade.get("units"),
+                                )
                             if norm_tag:
                                 trade["strategy_tag"] = norm_tag
 
@@ -3373,7 +3466,7 @@ class PositionManager:
         try:
             rows = con.execute(
                 f"""
-                SELECT client_order_id, request_json
+                SELECT client_order_id, request_json, units
                 FROM orders
                 WHERE client_order_id IN ({placeholders})
                   AND status='submit_attempt'
@@ -3404,14 +3497,16 @@ class PositionManager:
             except json.JSONDecodeError:
                 fetched[cid] = None
                 continue
-            thesis = (
-                payload.get("entry_thesis")
-                or (payload.get("meta") or {}).get("entry_thesis")
-                or {}
+            thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+            if not isinstance(thesis, dict):
+                thesis = None
+            thesis_obj = _normalize_entry_contract_fields(
+                thesis,
+                payload,
+                fallback_units=row["units"],
             )
-            if isinstance(thesis, dict) and thesis:
-                thesis_obj = dict(thesis)
-                fetched[cid] = thesis_obj
+            if isinstance(thesis_obj, dict) and thesis_obj:
+                fetched[cid] = dict(thesis_obj)
                 result[cid] = dict(thesis_obj)
             else:
                 fetched[cid] = None

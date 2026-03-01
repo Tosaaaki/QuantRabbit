@@ -603,6 +603,18 @@ def _coerce_env_prefix(value: object) -> Optional[str]:
     return value or None
 
 
+def _is_valid_live_trade_id(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    text = str(value).strip()
+    if not text or not text.isdigit():
+        return False
+    try:
+        return int(text) > 0
+    except Exception:
+        return False
+
+
 def _infer_env_prefix_from_strategy_tag(strategy_tag: Optional[str]) -> Optional[str]:
     tag = str(strategy_tag or "").strip().upper()
     if not tag:
@@ -1037,6 +1049,9 @@ def _reject_exit_by_control(
 ) -> bool:
     if str(pocket).strip().lower() == "manual":
         return False
+    _, global_exit_enabled, global_lock = strategy_control.get_global_flags()
+    if global_lock or not global_exit_enabled:
+        return True
     if not strategy_tag:
         return False
     return not strategy_control.can_exit(strategy_tag, default=True)
@@ -1049,12 +1064,12 @@ def _strategy_control_exit_block_key(
     trade_id: Optional[str],
 ) -> str:
     strategy = str(strategy_tag or "").strip().lower() or "unknown"
-    client = str(client_order_id or "").strip().lower()
     trade = str(trade_id or "").strip().lower()
-    if client:
-        return f"{strategy}:{client}"
     if trade:
         return f"{strategy}:trade:{trade}"
+    client = str(client_order_id or "").strip().lower()
+    if client:
+        return f"{strategy}:client:{client}"
     return strategy
 
 
@@ -2531,6 +2546,9 @@ _ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS = _env_bool(
 )
 _ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY = _env_bool(
     "ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY", True
+)
+_ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT = _env_float(
+    "ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT", 1.0
 )
 _ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY = _env_bool(
     "ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True
@@ -4078,8 +4096,11 @@ def _ensure_entry_intent_payload(
 
     prob = _entry_probability_value(confidence, thesis)
     if prob is not None:
-        if thesis.get("entry_probability") != prob:
-            thesis["entry_probability"] = prob
+        thesis["entry_probability"] = prob
+    elif "entry_probability" not in thesis:
+        thesis["entry_probability"] = _ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT
+    elif _as_float(thesis.get("entry_probability"), None) is None:
+        thesis["entry_probability"] = _ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT
 
     return thesis
 
@@ -6897,6 +6918,50 @@ async def close_trade(
             base["exit_context"] = exit_context
         return base
 
+    trade_id = str(trade_id or "").strip()
+    strategy_tag = None
+    if client_order_id:
+        strategy_tag = _strategy_tag_from_client_id(client_order_id)
+    if not _is_valid_live_trade_id(trade_id):
+        log_metric(
+            "close_reject_invalid_trade_id",
+            1.0,
+            tags={"trade_id": trade_id or "missing"},
+        )
+        _console_order_log(
+            "CLOSE_REJECT",
+            pocket=None,
+            strategy_tag=strategy_tag,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            ticket_id=trade_id,
+            note="invalid_trade_id",
+        )
+        _log_close_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            status="close_reject_invalid_trade_id",
+            attempt=0,
+            ticket_id=trade_id,
+            executed_price=None,
+            request_payload=_with_exit_reason({"trade_id": trade_id}),
+        )
+        logging.warning(
+            "[ORDER] skip close invalid trade_id=%s client_id=%s strategy=%s",
+            trade_id or "-",
+            client_order_id or "-",
+            strategy_tag or "unknown",
+        )
+        return False
+
     def _log_close_order(**kwargs: Any) -> None:
         # Close path must prioritize broker round-trip over local audit logging.
         # Use fast-fail logging to avoid blocking /order/close_trade on orders.db lock contention.
@@ -6918,6 +6983,44 @@ async def close_trade(
     if not strategy_tag:
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
 
+    if not strategy_tag:
+        _console_order_log(
+            "CLOSE_REJECT",
+            pocket=pocket,
+            strategy_tag="missing",
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            ticket_id=str(trade_id),
+            note="missing_strategy_tag",
+        )
+        _log_close_order(
+            pocket=pocket,
+            instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            status="close_reject_missing_strategy_tag",
+            attempt=0,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            request_payload=_with_exit_reason({"trade_id": str(trade_id)}),
+        )
+        log_metric(
+            "close_reject_missing_strategy_tag",
+            1.0,
+            tags={"trade_id": str(trade_id)},
+        )
+        logging.info(
+            "[ORDER] skip close trade=%s missing strategy_tag strategy=%s",
+            trade_id,
+            "missing",
+        )
+        return False
     emergency_allow: Optional[bool] = None
     immediate_bypass_reason = _strategy_control_exit_immediate_bypass_reason(
         exit_reason=exit_reason

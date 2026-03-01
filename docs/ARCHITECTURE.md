@@ -3,6 +3,9 @@
 ## 1. システム概要とフロー
 - データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → strategy control 制約 → Strategy Plugins（ENTRY/EXIT ワーカー別）→ Risk Guard → `quant-order-manager` → ログ。
 - 追加: Strategy Plugin 側では `ENTRY` 直前に `strategy_entry net-edge gate`（`ENTRY_PROBABILITY` / `TP/SL` / `spread` / コスト算出）を通し、期待値が閾値未満なら strategy 側で拒否理由を残して協調盤へ進まずに遮断。
+- `quant-order-manager` の `strategy_control` 再試行抑止は `trade_id` を主軸に集約し、同一建玉の短時間内連続 `strategy_control_exit_disabled` を一括して失敗カウンタ化することで、同一tradeのフェイルオープン評価が client_id 変化で分断されない設計とする。
+- `trades.db` 補完時は `position_manager` が `orders.db` の `request_json` を再解析し、`entry_probability` / `entry_units_intent` が欠ける場合は
+  既定値または `oanda.order.units` / `orders.units` から復元して監査可観測性を維持する。
 - V2 では monolithic 主制御（`main.py`起動）を本番から外し、`quantrabbit.service` は廃止対象。
 
 ## 2. コンポーネントと I/O

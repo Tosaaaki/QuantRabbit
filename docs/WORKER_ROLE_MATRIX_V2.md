@@ -74,6 +74,8 @@
   - `AddonLiveBroker` 経路（`session_open` など）でも上記2値を `entry_thesis` に渡し、order manager はそれを前提にガード/リスク判定のみを行う。
   - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
   - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
+  - 補足（ポジ/監査系）: `execution/position_manager.py` 再構成処理は `request_json` / `oanda.order.units` / `orders.units` を使って
+    `entry_probability` / `entry_units_intent` の欠損復元を試み、trades 再保存時の監査再現性を補う。
 - `execution/strategy_entry.py` では、`analysis_feedback` / `forecast_fusion` / `strategy_net_edge_gate` / `leading_profile` / `coordinate_entry_intent`
   の順に戦略ローカルの意図整形を確定し、最終的に `entry_intent_board` を経由して `order_manager` 側へ送る。
   - `strategy_net_edge_gate` は `STRATEGY_ENTRY_NET_EDGE_*` を参照して、
