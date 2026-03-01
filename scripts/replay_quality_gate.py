@@ -122,6 +122,56 @@ def _split_csv_patterns(raw_value: str | None) -> list[str]:
     return [token.strip() for token in str(raw_value).split(",") if token.strip()]
 
 
+def _normalize_csv_list(raw_value: object) -> list[str]:
+    if raw_value is None:
+        return []
+    if isinstance(raw_value, (list, tuple)):
+        values = raw_value
+    else:
+        values = str(raw_value).split(",")
+    seen: list[str] = []
+    for value in values:
+        token = str(value).strip().lower().replace("-", "_")
+        if token and token not in seen:
+            seen.append(token)
+    return seen
+
+
+SCENARIO_OPTIONS: set[str] = {
+    "all",
+    "wide_spread",
+    "tight_spread",
+    "high_vol",
+    "low_vol",
+    "trend",
+    "range",
+}
+
+
+def _resolve_scenario_names(
+    *,
+    raw_scenarios: object,
+    backend: str,
+) -> tuple[list[str], list[str], str | None]:
+    scenario_names = _normalize_csv_list(raw_scenarios)
+    if not scenario_names:
+        return ["all"], [], None
+
+    if backend == "exit_workers_main":
+        if scenario_names != ["all"]:
+            return (
+                ["all"],
+                ["[WARN] scenario filtering is only supported by exit_workers_groups; using all baseline data only."],
+                None,
+            )
+        return scenario_names, [], None
+
+    invalid = [name for name in scenario_names if name not in SCENARIO_OPTIONS]
+    if invalid:
+        return scenario_names, [], f"unknown scenario(s): {','.join(invalid)}"
+    return scenario_names, [], None
+
+
 def _resolve_ticks_globs(config: Mapping[str, Any], cli_ticks_glob: str | None) -> list[str]:
     cli_patterns = _split_csv_patterns(cli_ticks_glob)
     if cli_patterns:
@@ -227,6 +277,7 @@ def _build_replay_command_groups(
     workers: list[str],
     out_dir: Path,
     replay_cfg: Mapping[str, Any],
+    scenarios: list[str] | None = None,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -248,6 +299,8 @@ def _build_replay_command_groups(
         cmd.append("--tune")
     if _to_bool(replay_cfg.get("realistic"), default=False):
         cmd.append("--realistic")
+    if scenarios:
+        cmd.extend(["--scenarios", ",".join(scenarios)])
 
     resample_sec = _to_float(replay_cfg.get("resample_sec"), 0.0)
     if resample_sec > 0:
@@ -365,26 +418,41 @@ def _load_worker_trades(
     run_dir: Path,
     workers: list[str],
     exclude_end_of_replay: bool,
-) -> dict[str, list[dict[str, Any]]]:
-    out: dict[str, list[dict[str, Any]]] = {}
+    scenarios: list[str] | None = None,
+) -> dict[str, dict[str, dict[str, list[dict[str, Any]]]]]:
+    scenario_names = [s for s in (scenarios or ["all"]) if s]
+    if "all" not in scenario_names:
+        scenario_names = ["all"] + scenario_names
+    out: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
     for worker in workers:
-        path = run_dir / f"replay_exit_{worker}_base.json"
-        if not path.exists():
-            out[worker] = []
-            continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            out[worker] = []
-            continue
-        trades = payload.get("trades") or []
-        if not isinstance(trades, list):
-            out[worker] = []
-            continue
-        typed_trades = [t for t in trades if isinstance(t, dict)]
-        if exclude_end_of_replay:
-            typed_trades = [t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"]
-        out[worker] = typed_trades
+        worker_trades_by_scenario: dict[str, list[dict[str, Any]]] = {}
+
+        for scenario in scenario_names:
+            if scenario == "all":
+                path = run_dir / f"replay_exit_{worker}_base.json"
+            else:
+                path = run_dir / f"replay_exit_{worker}_base_{scenario}.json"
+
+            if not path.exists():
+                worker_trades_by_scenario[scenario] = []
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                worker_trades_by_scenario[scenario] = []
+                continue
+            trades = payload.get("trades") or []
+            if not isinstance(trades, list):
+                worker_trades_by_scenario[scenario] = []
+                continue
+            typed_trades = [t for t in trades if isinstance(t, dict)]
+            if exclude_end_of_replay:
+                typed_trades = [
+                    t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"
+                ]
+            worker_trades_by_scenario[scenario] = typed_trades
+
+        out[worker] = worker_trades_by_scenario
     return out
 
 
@@ -464,6 +532,36 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
             )
         )
 
+    scenario_rows: list[str] = []
+    for worker in sorted(worker_results.keys()):
+        scenario_results = (worker_results[worker] or {}).get("scenarios") or {}
+        if not scenario_results:
+            continue
+        for scenario in sorted(scenario_results.keys()):
+            summary = scenario_results.get(scenario) or {}
+            scenario_rows.append(
+                "| {worker} | {scenario} | {folds} | {passed} | {pass_rate:.2f} | {pf:.3f} | {wr:.3f} | {status} |".format(
+                    worker=worker,
+                    scenario=scenario,
+                    folds=int(summary.get("folds") or 0),
+                    passed=int(summary.get("passed_folds") or 0),
+                    pass_rate=float(summary.get("pass_rate") or 0.0),
+                    pf=float(summary.get("median_test_pf") or 0.0),
+                    wr=float(summary.get("median_test_win_rate") or 0.0),
+                    status=str(summary.get("status") or "fail"),
+                )
+            )
+    if scenario_rows:
+        lines.extend(
+            [
+                "",
+                "## Scenario Results",
+                "| worker | scenario | folds | passed | pass_rate | median_pf | median_win_rate | status |",
+                "|---|---|---:|---:|---:|---:|---:|---|",
+            ]
+        )
+        lines.extend(scenario_rows)
+
     return "\n".join(lines) + "\n"
 
 
@@ -477,6 +575,11 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--workers", default=None, help="Comma separated worker names.")
     ap.add_argument("--backend", default=None, choices=("exit_workers_groups", "exit_workers_main"))
+    ap.add_argument(
+        "--scenarios",
+        default=None,
+        help="Comma separated scenario names for group replay (forwarded to replay_exit_workers_groups.py).",
+    )
     ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_quality_gate"))
     ap.add_argument("--train-files", type=int, default=None)
     ap.add_argument("--test-files", type=int, default=None)
@@ -553,8 +656,18 @@ def main() -> int:
         return 2
 
     replay_cfg = config.get("replay") if isinstance(config.get("replay"), dict) else {}
-    replay_env, replay_env_overrides = _build_replay_env(replay_cfg)
     backend = str(args.backend or replay_cfg.get("backend") or "exit_workers_groups").strip().lower()
+    scenario_names, scenario_warnings, scenario_error = _resolve_scenario_names(
+        raw_scenarios=args.scenarios if args.scenarios is not None else replay_cfg.get("scenarios"),
+        backend=backend,
+    )
+    if scenario_error:
+        print(f"[ERROR] {scenario_error}", file=sys.stderr)
+        print(f"[ERROR] supported scenarios: {','.join(sorted(SCENARIO_OPTIONS))}", file=sys.stderr)
+        return 2
+    for message in scenario_warnings:
+        print(message)
+    replay_env, replay_env_overrides = _build_replay_env(replay_cfg)
     if backend not in {"exit_workers_groups", "exit_workers_main"}:
         print(f"Unsupported replay backend: {backend}", file=sys.stderr)
         return 2
@@ -566,7 +679,7 @@ def main() -> int:
     run_root.mkdir(parents=True, exist_ok=True)
 
     commands_log: list[dict[str, Any]] = []
-    trades_by_file: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    trades_by_file: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
 
     print(
         f"[INFO] replay quality gate start backend={backend} workers={','.join(workers)} files={len(tick_files)} folds={len(folds)}"
@@ -587,6 +700,7 @@ def main() -> int:
                 workers=workers,
                 out_dir=run_dir,
                 replay_cfg=replay_cfg,
+                scenarios=scenario_names,
             )
         print(f"[INFO] ({idx}/{len(tick_files)}) replay {tick_path.name}")
         proc = subprocess.run(
@@ -617,16 +731,20 @@ def main() -> int:
             return proc.returncode
 
         if backend == "exit_workers_main":
-            trades_by_file[tick_path.name] = _load_worker_trades_main(
+            main_worker_trades = _load_worker_trades_main(
                 out_path=main_out_path,
                 workers=workers,
                 exclude_end_of_replay=exclude_end,
             )
+            trades_by_file[tick_path.name] = {
+                worker: {"all": trades} for worker, trades in main_worker_trades.items()
+            }
         else:
             trades_by_file[tick_path.name] = _load_worker_trades(
                 run_dir=run_dir,
                 workers=workers,
                 exclude_end_of_replay=exclude_end,
+                scenarios=scenario_names,
             )
 
     (out_root / "commands.json").write_text(
@@ -646,38 +764,56 @@ def main() -> int:
             base=default_gate,
             override=worker_gates.get(worker) if isinstance(worker_gates.get(worker), dict) else None,
         )
-        fold_records: list[dict[str, Any]] = []
+        scenarios_to_eval = [s for s in (scenario_names or ["all"]) if s]
+        if "all" not in scenarios_to_eval:
+            scenarios_to_eval = ["all"] + scenarios_to_eval
+        worker_scenario_folds: dict[str, list[dict[str, Any]]] = {}
+        worker_scenario_summaries: dict[str, Any] = {}
+        for scenario in scenarios_to_eval:
+            fold_records: list[dict[str, Any]] = []
+            for fold_idx, fold in enumerate(folds, start=1):
+                train_trades: list[dict[str, Any]] = []
+                test_trades: list[dict[str, Any]] = []
+                for key in fold["train"]:
+                    train_trades.extend(
+                        trades_by_file.get(key, {}).get(worker, {}).get(scenario, [])
+                    )
+                for key in fold["test"]:
+                    test_trades.extend(
+                        trades_by_file.get(key, {}).get(worker, {}).get(scenario, [])
+                    )
 
-        for fold_idx, fold in enumerate(folds, start=1):
-            train_trades: list[dict[str, Any]] = []
-            test_trades: list[dict[str, Any]] = []
-            for key in fold["train"]:
-                train_trades.extend(trades_by_file.get(key, {}).get(worker, []))
-            for key in fold["test"]:
-                test_trades.extend(trades_by_file.get(key, {}).get(worker, []))
+                train_metrics = compute_trade_metrics(train_trades)
+                test_metrics = compute_trade_metrics(test_trades)
+                gate = evaluate_fold_gate(train_metrics, test_metrics, threshold)
 
-            train_metrics = compute_trade_metrics(train_trades)
-            test_metrics = compute_trade_metrics(test_trades)
-            gate = evaluate_fold_gate(train_metrics, test_metrics, threshold)
+                fold_records.append(
+                    {
+                        "fold_id": fold_idx,
+                        "scenario": scenario,
+                        "train_files": list(fold["train"]),
+                        "test_files": list(fold["test"]),
+                        "train_metrics": train_metrics,
+                        "test_metrics": test_metrics,
+                        "gate": gate,
+                    }
+                )
 
-            fold_records.append(
-                {
-                    "fold_id": fold_idx,
-                    "train_files": list(fold["train"]),
-                    "test_files": list(fold["test"]),
-                    "train_metrics": train_metrics,
-                    "test_metrics": test_metrics,
-                    "gate": gate,
-                }
-            )
+            summary = summarize_worker_folds(fold_records, min_fold_pass_rate=min_fold_pass_rate)
+            worker_scenario_folds[scenario] = fold_records
+            worker_scenario_summaries[scenario] = summary
 
-        summary = summarize_worker_folds(fold_records, min_fold_pass_rate=min_fold_pass_rate)
+        default_summary = worker_scenario_summaries.get(
+            "all",
+            worker_scenario_summaries.get(scenarios_to_eval[0], {}),
+        )
         worker_results[worker] = {
             "threshold": threshold.__dict__,
-            "summary": summary,
-            "folds": fold_records,
+            "summary": default_summary,
+            "scenarios": worker_scenario_summaries,
+            "folds_by_scenario": worker_scenario_folds,
         }
-        if summary.get("status") != "pass":
+        if default_summary.get("status") != "pass":
             failing_workers.append(worker)
 
     overall_status = "pass" if not failing_workers else "fail"
@@ -701,6 +837,7 @@ def main() -> int:
             "step_files": step_files,
             "min_fold_pass_rate": min_fold_pass_rate,
             "replay_env_overrides": replay_env_overrides,
+            "scenario_names": scenario_names,
             "out_root": str(out_root),
         },
         "overall": {

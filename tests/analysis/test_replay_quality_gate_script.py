@@ -114,6 +114,98 @@ def test_build_replay_command_main_explicit_start_end_override_intraday() -> Non
     assert _arg_value(cmd, "--end") == "2026-02-10T02:00:00+00:00"
 
 
+def test_build_replay_command_groups_includes_scenarios() -> None:
+    cmd = _module._build_replay_command_groups(
+        ticks_path=Path("/tmp/USD_JPY_ticks_20260210.jsonl"),
+        workers=["session_open", "scalp_ping_5s_b"],
+        out_dir=Path("/tmp/out"),
+        replay_cfg={"realistic": True},
+        scenarios=["wide_spread", "trend"],
+    )
+
+    assert _arg_value(cmd, "--scenarios") == "wide_spread,trend"
+
+
+def test_resolve_scenario_names_main_forces_all_and_warn() -> None:
+    scenario_names, warnings, error = _module._resolve_scenario_names(
+        raw_scenarios=["wide_spread", "trend"],
+        backend="exit_workers_main",
+    )
+
+    assert scenario_names == ["all"]
+    assert error is None
+    assert warnings == [
+        "[WARN] scenario filtering is only supported by exit_workers_groups; using all baseline data only."
+    ]
+
+
+def test_resolve_scenario_names_main_keeps_all_without_warning() -> None:
+    scenario_names, warnings, error = _module._resolve_scenario_names(
+        raw_scenarios="all",
+        backend="exit_workers_main",
+    )
+
+    assert scenario_names == ["all"]
+    assert warnings == []
+    assert error is None
+
+
+def test_resolve_scenario_names_validates_supported_grouped_scenarios() -> None:
+    scenario_names, warnings, error = _module._resolve_scenario_names(
+        raw_scenarios="all,wide_spread,trend",
+        backend="exit_workers_groups",
+    )
+
+    assert scenario_names == ["all", "wide_spread", "trend"]
+    assert warnings == []
+    assert error is None
+
+
+def test_resolve_scenario_names_rejects_unknown_for_groups() -> None:
+    scenario_names, warnings, error = _module._resolve_scenario_names(
+        raw_scenarios="all,wide_spread,bad",
+        backend="exit_workers_groups",
+    )
+
+    assert scenario_names == ["all", "wide_spread", "bad"]
+    assert warnings == []
+    assert error == "unknown scenario(s): bad"
+
+
+def test_load_worker_trades_with_scenario_outputs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "replay_run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "replay_exit_session_open_base.json").write_text(
+        json.dumps(
+            {
+                "trades": [
+                    {"pnl_pips": 1.0, "reason": "tp_hit"},
+                    {"pnl_pips": 2.0, "reason": "end_of_replay"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "replay_exit_session_open_base_wide_spread.json").write_text(
+        json.dumps({"trades": [{"pnl_pips": 3.0, "reason": "market_close"}]}),
+        encoding="utf-8",
+    )
+
+    grouped = _module._load_worker_trades(
+        run_dir=run_dir,
+        workers=["session_open", "missing"],
+        exclude_end_of_replay=True,
+        scenarios=["wide_spread"],
+    )
+
+    assert len(grouped["session_open"]["all"]) == 1
+    assert grouped["session_open"]["all"][0]["pnl_pips"] == 1.0
+    assert len(grouped["session_open"]["wide_spread"]) == 1
+    assert grouped["session_open"]["wide_spread"][0]["pnl_pips"] == 3.0
+    assert grouped["missing"]["all"] == []
+    assert grouped["missing"]["wide_spread"] == []
+
+
 def test_filter_tick_files_by_min_lines(tmp_path: Path) -> None:
     p1 = tmp_path / "USD_JPY_ticks_1.jsonl"
     p2 = tmp_path / "USD_JPY_ticks_2.jsonl"

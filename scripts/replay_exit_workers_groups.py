@@ -14,11 +14,13 @@ import json
 import logging
 import os
 import importlib
+from bisect import bisect_right
 from importlib import import_module
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from collections import deque
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import sys
 
@@ -218,6 +220,259 @@ def _tuning_env(worker: str) -> Dict[str, str]:
         return base
     base.update(tuned)
     return base
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except Exception:
+        return float(default)
+    if out != out:
+        return float(default)
+    return out
+
+
+def _parse_scenarios(raw: str) -> list[str]:
+    default = ["all"]
+    parsed = [s.strip().lower().replace("-", "_") for s in (raw or "").split(",") if s.strip()]
+    if not parsed:
+        return default
+    seen: list[str] = []
+    for item in parsed:
+        if item not in seen:
+            seen.append(item)
+    return seen
+
+
+SCENARIO_OPTIONS: set[str] = {
+    "all",
+    "wide_spread",
+    "tight_spread",
+    "high_vol",
+    "low_vol",
+    "trend",
+    "range",
+}
+
+
+def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
+    List[datetime],
+    Dict[str, List[bool]],
+    Dict[str, object],
+]:
+    times: List[datetime] = []
+    spreads: List[float] = []
+    if not ticks:
+        return [], {"all": []}, {
+            "count": 0,
+            "spread_percentiles": {"q20": 0.0, "q80": 0.0},
+            "minute_rows": 0,
+            "counts": {"all": 0},
+        }
+    for tick in ticks:
+        ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
+        if ts is None:
+            continue
+        times.append(ts)
+        spread = max(0.0, getattr(tick, "ask", 0.0) - getattr(tick, "bid", 0.0))
+        spreads.append(spread / PIP)
+    total = len(times)
+    if total == 0:
+        return [], {"all": []}, {
+            "count": 0,
+            "spread_percentiles": {"q20": 0.0, "q80": 0.0},
+            "minute_rows": 0,
+            "counts": {"all": 0},
+        }
+
+    sorted_spreads = sorted(spreads)
+    if sorted_spreads:
+        q_low_idx = int(round((len(sorted_spreads) - 1) * 0.2))
+        q_high_idx = int(round((len(sorted_spreads) - 1) * 0.8))
+        q_low_idx = max(0, min(len(sorted_spreads) - 1, q_low_idx))
+        q_high_idx = max(0, min(len(sorted_spreads) - 1, q_high_idx))
+        q_low = sorted_spreads[q_low_idx]
+        q_high = sorted_spreads[q_high_idx]
+    else:
+        q_low = 0.0
+        q_high = 0.0
+
+    minute_rows: List[Dict[str, float]] = []
+    minute_for_tick: List[int] = []
+    first_tick_with_ts: rw.Tick | None = None
+    current_minute_start: Optional[datetime] = None
+    open_price: float = 0.0
+    high_price: float = 0.0
+    low_price: float = 0.0
+    close_price: float = 0.0
+    current_minute_index: int = -1
+
+    def _close_minute() -> None:
+        nonlocal minute_rows, open_price, high_price, low_price, close_price
+        if current_minute_start is None:
+            return
+        minute_rows.append(
+            {
+                "start": current_minute_start,
+                "open": open_price,
+                "high": high_price,
+                "low": low_price,
+                "close": close_price,
+            }
+        )
+
+    for tick in ticks:
+        ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
+        if ts is None:
+            continue
+        if first_tick_with_ts is None:
+            first_tick_with_ts = tick
+        row_start = ts.replace(second=0, microsecond=0)
+        try:
+            price = float(getattr(tick, "mid", 0.0))
+        except Exception:
+            price = 0.0
+        if current_minute_start is None:
+            current_minute_start = row_start
+            current_minute_index = len(minute_rows)
+            open_price = float(price)
+            high_price = float(price)
+            low_price = float(price)
+            close_price = float(price)
+        elif row_start != current_minute_start:
+            _close_minute()
+            current_minute_start = row_start
+            current_minute_index = len(minute_rows)
+            open_price = float(price)
+            high_price = float(price)
+            low_price = float(price)
+            close_price = float(price)
+        else:
+            high_price = max(high_price, float(price))
+            low_price = min(low_price, float(price))
+            close_price = float(price)
+        minute_for_tick.append(current_minute_index)
+        if len(minute_for_tick) == total:
+            break
+
+    for _ in range(len(minute_for_tick), total):
+        minute_for_tick.append(current_minute_index if current_minute_index >= 0 else 0)
+
+    if current_minute_start is not None:
+        _close_minute()
+
+    if not minute_rows and total > 0:
+        fallback_tick = first_tick_with_ts or ticks[0]
+        minute_rows.append(
+            {
+                "start": getattr(fallback_tick, "ts", times[0]).replace(second=0, microsecond=0),
+                "open": float(getattr(fallback_tick, "mid", 0.0)),
+                "high": float(getattr(fallback_tick, "mid", 0.0)),
+                "low": float(getattr(fallback_tick, "mid", 0.0)),
+                "close": float(getattr(fallback_tick, "mid", 0.0)),
+            }
+        )
+
+    minute_flags: List[Set[str]] = []
+    range_window = max(2, len(minute_rows) // 20) if minute_rows else 2
+    recent_ranges: deque[float] = deque(maxlen=range_window)
+    recent_deltas: deque[float] = deque(maxlen=range_window)
+    prev_close = 0.0
+    for idx, row in enumerate(minute_rows):
+        close = _safe_float(row.get("close"), 0.0)
+        high = _safe_float(row.get("high"), 0.0)
+        low = _safe_float(row.get("low"), 0.0)
+        open_price = _safe_float(row.get("open"), close)
+        range_pips = max(0.0, (high - low) / PIP)
+        body_pips = abs(close - open_price) / PIP
+
+        if idx > 0:
+            delta_pips = abs(close - prev_close) / PIP
+            recent_deltas.append(delta_pips)
+        if recent_ranges:
+            avg_range = sum(recent_ranges) / len(recent_ranges)
+            avg_delta = sum(recent_deltas) / len(recent_deltas) if recent_deltas else avg_range
+            flags: Set[str] = set()
+            if avg_range > 0:
+                if range_pips >= avg_range * 1.6:
+                    flags.add("high_vol")
+                if range_pips <= avg_range * 0.5:
+                    flags.add("low_vol")
+            if avg_delta > 0:
+                if body_pips >= avg_delta * 1.2:
+                    flags.add("trend")
+                if body_pips <= avg_delta * 0.4:
+                    flags.add("range")
+            minute_flags.append(flags)
+        else:
+            minute_flags.append(set())
+
+        recent_ranges.append(range_pips)
+        prev_close = close
+
+    scenario_flags: Dict[str, List[bool]] = {
+        "all": [True] * total,
+        "wide_spread": [],
+        "tight_spread": [],
+        "high_vol": [],
+        "low_vol": [],
+        "trend": [],
+        "range": [],
+    }
+    for idx in range(total):
+        minute_idx = minute_for_tick[idx] if minute_for_tick else -1
+        base_flags = {"all"}
+        if minute_idx >= 0 and minute_idx < len(minute_flags):
+            base_flags.update(minute_flags[minute_idx])
+        if spreads[idx] >= q_high:
+            base_flags.add("wide_spread")
+        if spreads[idx] <= q_low:
+            base_flags.add("tight_spread")
+        for name in scenario_flags:
+            if name == "all":
+                continue
+            scenario_flags[name].append(name in base_flags)
+
+    meta: Dict[str, object] = {
+        "count": total,
+        "spread_percentiles": {
+            "q20": q_low,
+            "q80": q_high,
+        },
+        "minute_rows": len(minute_rows),
+        "counts": {},
+    }
+    for name, flags in scenario_flags.items():
+        meta["counts"][name] = sum(1 for v in flags if v)
+    return times, scenario_flags, meta
+
+
+def _filter_entries_for_scenario(
+    *,
+    entries: List[EntryEvent],
+    scenario: str,
+    times: List[datetime],
+    scenario_flags: Dict[str, List[bool]],
+) -> tuple[List[EntryEvent], Dict[str, int]]:
+    if scenario == "all":
+        return list(entries), {"requested": len(entries), "applied": len(entries), "excluded": 0}
+    active = scenario_flags.get(scenario)
+    if active is None or not times:
+        return [], {"requested": len(entries), "applied": 0, "excluded": len(entries)}
+    selected: List[EntryEvent] = []
+    excluded = 0
+    for ent in entries:
+        idx = bisect_right(times, ent.ts) - 1
+        if idx < 0 or not active[idx]:
+            excluded += 1
+            continue
+        selected.append(ent)
+    return selected, {"requested": len(entries), "applied": len(selected), "excluded": excluded}
+
+
+def _scenario_output_path(out_dir: Path, worker: str, mode: str, scenario: str) -> Path:
+    suffix = "" if scenario == "all" else f"_{scenario}"
+    return out_dir / f"replay_exit_{worker}_{mode}{suffix}.json"
 
 
 class GenericExitRunner:
@@ -539,6 +794,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--tune", action="store_true")
     ap.add_argument("--resample-sec", type=float, default=0.0, help="Optional downsample interval in seconds.")
     ap.add_argument("--realistic", action="store_true", help="Apply realistic latency/slippage defaults.")
+    ap.add_argument(
+        "--scenarios",
+        default="all",
+        help="Comma separated replay scenarios: all,wide_spread,tight_spread,high_vol,low_vol,trend,range",
+    )
     ap.add_argument("--slip-base-pips", type=float, default=0.0)
     ap.add_argument("--slip-spread-coef", type=float, default=0.0)
     ap.add_argument("--slip-atr-coef", type=float, default=0.0)
@@ -617,9 +877,15 @@ def main() -> None:
         closed = h4_prefeed_builder.update(tick.dt, tick.mid, 1)
         if closed:
             prefeed_h4.append(closed)
+    scenario_names = _parse_scenarios(args.scenarios)
+    invalid_scenarios = [name for name in scenario_names if name not in SCENARIO_OPTIONS]
+    if invalid_scenarios:
+        raise SystemExit(f"unknown scenario(s): {','.join(invalid_scenarios)}")
+    tick_times, scenario_flags, scenario_meta = _build_tick_scenarios(replay_ticks)
+    if "all" not in scenario_names:
+        scenario_names = ["all"] + scenario_names
 
     for worker in runnable_workers:
-        base_out = args.out_dir / f"replay_exit_{worker}_base.json"
         replay_out = args.out_dir / f"replay_workers_{worker}_base.json"
         _run_replay_workers(
             worker=worker,
@@ -628,52 +894,22 @@ def main() -> None:
             ticks_cache=replay_ticks,
         )
         entries = _load_entries_from_replay(replay_out)
-        if not entries:
-            empty_summary = rew._summarize([])
-            base_out.write_text(
-                json.dumps({"summary": empty_summary, "trades": []}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            results[worker] = {"base": empty_summary}
-            continue
-        base_summary = _simulate(
-            ticks_path=args.ticks,
-            ticks_cache=replay_ticks,
-            entries=entries,
-            worker=worker,
-            out_path=base_out,
-            no_hard_sl=args.no_hard_sl,
-            no_hard_tp=args.no_hard_tp,
-            exclude_end_of_replay=args.exclude_end_of_replay,
-            prefeed_h4=prefeed_h4,
-            latency_ms=args.latency_ms,
-            slip_base_pips=args.slip_base_pips,
-            slip_spread_coef=args.slip_spread_coef,
-            slip_atr_coef=args.slip_atr_coef,
-            slip_latency_coef=args.slip_latency_coef,
-            fill_mode=args.fill_mode,
-        )
-        results[worker] = {"base": base_summary}
-
-        if args.tune and base_summary.get("total_pnl_pips", 0.0) <= 0:
-            tuned_env = os.environ.copy()
-            tuned_env.update(_tuning_env(worker))
-            replay_tuned_out = args.out_dir / f"replay_workers_{worker}_tuned.json"
-            tuned_out = args.out_dir / f"replay_exit_{worker}_tuned.json"
-            _run_replay_workers(
-                worker=worker,
-                ticks_path=args.ticks,
-                out_path=replay_tuned_out,
-                env=tuned_env,
-                ticks_cache=replay_ticks,
-            )
-            entries = _load_entries_from_replay(replay_tuned_out)
-            tuned_summary = _simulate(
-                ticks_path=args.ticks,
-                ticks_cache=replay_ticks,
+        has_entries = bool(entries)
+        base_scenarios: Dict[str, dict] = {}
+        for scenario in scenario_names:
+            filtered_entries, selection = _filter_entries_for_scenario(
                 entries=entries,
+                scenario=scenario,
+                times=tick_times,
+                scenario_flags=scenario_flags,
+            )
+            base_out = _scenario_output_path(args.out_dir, worker, "base", scenario)
+            base_summary = _simulate(
+                ticks_path=args.ticks,
+                ticks_cache=replay_ticks,
+                entries=filtered_entries,
                 worker=worker,
-                out_path=tuned_out,
+                out_path=base_out,
                 no_hard_sl=args.no_hard_sl,
                 no_hard_tp=args.no_hard_tp,
                 exclude_end_of_replay=args.exclude_end_of_replay,
@@ -685,7 +921,68 @@ def main() -> None:
                 slip_latency_coef=args.slip_latency_coef,
                 fill_mode=args.fill_mode,
             )
-            results[worker]["tuned"] = tuned_summary
+            base_scenarios[scenario] = {
+                "summary": base_summary,
+                "selection": selection,
+                "out_path": str(base_out),
+                "tick_count": len(scenario_flags.get(scenario, [])),
+                "tick_meta": scenario_meta,
+            }
+        base_summary = base_scenarios.get("all", {}).get("summary", rew._summarize([]))
+        results[worker] = {
+            "base": base_summary,
+            "base_scenarios": base_scenarios,
+        }
+
+        if args.tune and has_entries and base_summary.get("total_pnl_pips", 0.0) <= 0:
+            tuned_env = os.environ.copy()
+            tuned_env.update(_tuning_env(worker))
+            replay_tuned_out = args.out_dir / f"replay_workers_{worker}_tuned.json"
+            _run_replay_workers(
+                worker=worker,
+                ticks_path=args.ticks,
+                out_path=replay_tuned_out,
+                env=tuned_env,
+                ticks_cache=replay_ticks,
+            )
+            entries = _load_entries_from_replay(replay_tuned_out)
+            tuned_scenarios: Dict[str, dict] = {}
+            for scenario in scenario_names:
+                filtered_entries, selection = _filter_entries_for_scenario(
+                    entries=entries,
+                    scenario=scenario,
+                    times=tick_times,
+                    scenario_flags=scenario_flags,
+                )
+                tuned_out = _scenario_output_path(args.out_dir, worker, "tuned", scenario)
+                tuned_summary = _simulate(
+                    ticks_path=args.ticks,
+                    ticks_cache=replay_ticks,
+                    entries=filtered_entries,
+                    worker=worker,
+                    out_path=tuned_out,
+                    no_hard_sl=args.no_hard_sl,
+                    no_hard_tp=args.no_hard_tp,
+                    exclude_end_of_replay=args.exclude_end_of_replay,
+                    prefeed_h4=prefeed_h4,
+                    latency_ms=args.latency_ms,
+                    slip_base_pips=args.slip_base_pips,
+                    slip_spread_coef=args.slip_spread_coef,
+                    slip_atr_coef=args.slip_atr_coef,
+                    slip_latency_coef=args.slip_latency_coef,
+                    fill_mode=args.fill_mode,
+                )
+                tuned_scenarios[scenario] = {
+                    "summary": tuned_summary,
+                    "selection": selection,
+                    "out_path": str(tuned_out),
+                    "tick_count": len(scenario_flags.get(scenario, [])),
+                    "tick_meta": scenario_meta,
+                }
+            tuned_summary = tuned_scenarios.get("all", {}).get("summary")
+            if tuned_summary is not None:
+                results[worker]["tuned"] = tuned_summary
+            results[worker]["tuned_scenarios"] = tuned_scenarios
 
     summary_path = args.out_dir / "summary_all.json"
     summary_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -10,6 +10,8 @@
 - `end_of_replay` 強制決済は除外する（`--exclude-end-of-replay`）。
 - ワーカーは **毎回 `--workers` で選択**する。
 - 出力は `summary_all.json` を採用する。
+- シナリオ同時再生を行う場合は `--scenarios` を追加する。既定は `all` で、既存運用と同一。
+- `summary_all.json` は `base_scenarios` / `tuned_scenarios` にシナリオ別要約を持つ（後述）。
 
 ## 例
 
@@ -21,6 +23,28 @@ python scripts/replay_exit_workers_groups.py \
   --exclude-end-of-replay \
   --out-dir tmp/replay_exit_workers_groups_YYYYMM_all
 ```
+
+```bash
+python scripts/replay_exit_workers_groups.py \
+  --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
+  --workers scalp_ping_5s_b,session_open \
+  --scenarios all,wide_spread,high_vol,trend \
+  --no-hard-sl \
+  --exclude-end-of-replay \
+  --out-dir tmp/replay_exit_workers_groups_YYYYMM_scenarios
+```
+
+### `summary_all.json` のシナリオ追跡
+
+- 追加されるキー:
+  - `base_scenarios[scenario].summary`
+  - `base_scenarios[scenario].selection` (`requested` / `applied` / `excluded`)
+  - `base_scenarios[scenario].tick_count` / `tick_meta`
+  - `tuned_scenarios[...]`（`--tune` 時）
+- 出力ファイル命名:
+  - `replay_exit_<worker>_base_<scenario>.json`
+  - `replay_exit_<worker>_tuned_<scenario>.json`
+- `scenario == all` は従来互換として、`replay_exit_<worker>_base.json` / `replay_exit_<worker>_tuned.json` も併存する。
 
 ## 補足
 - `--ticks` は bid/ask を含む JSONL を前提にする。
@@ -74,6 +98,10 @@ python scripts/replay_quality_gate.py \
   --ticks-glob "logs/replay/USD_JPY/USD_JPY_ticks_202602*.jsonl" \
   --strict
 ```
+
+`replay_quality_gate.py` でもシナリオ指定は可能です。  
+`--scenarios` で直接指定するか、`config/*.yaml` の `replay.scenarios` に同等のリスト/CSVを記載します。  
+`backend=exit_workers_groups` 時のみ `replay_exit_workers_groups.py` のシナリオ出力を使い、レポート `worker_results[worker]["scenarios"][<scenario>]` にシナリオ別要約が入り、`summary` は `all` シナリオを軸に既存互換で保持されます。
 
 ```bash
 python scripts/replay_quality_gate.py \
