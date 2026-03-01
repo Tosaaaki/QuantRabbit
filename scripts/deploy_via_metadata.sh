@@ -309,8 +309,16 @@ if [[ "\$INSTALL_DEPS" == "1" ]]; then
   sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && if [ -d .venv ]; then . .venv/bin/activate && pip install -r requirements.txt; else echo '[startup] venv not found, skipping pip install'; fi"
 fi
 
-systemctl restart "\$SERVICE"
-systemctl is-active "\$SERVICE" || systemctl status --no-pager -l "\$SERVICE" || true
+if systemctl list-unit-files --type=service | grep -F -q "^\$SERVICE"; then
+  if ! systemctl restart "\$SERVICE"; then
+    echo "[startup] restart failed: \$SERVICE"
+  fi
+  if ! systemctl is-active "\$SERVICE"; then
+    systemctl status --no-pager -l "\$SERVICE" || true
+  fi
+else
+  echo "[startup] target service not found, skip restart: \$SERVICE"
+fi
 
 if ! systemctl list-unit-files --type=service | grep -q '^ssh\\.service\\|^sshd\\.service'; then
   if command -v apt-get >/dev/null 2>&1; then
