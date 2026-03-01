@@ -17,8 +17,464 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-01 00:30 UTC / 2026-03-01 09:30 JST - 収益阻害Top3（prob/perf/intent reject）に対する縮小継続チューニング適用
+
+Period:
+- 監査対象:
+  - VM実データ `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `journalctl`
+  - 期間: 24h / 72h / 168h（JST 7-8時はメンテ時間として評価除外）
+
+Fact:
+- 24h収益は `PF=0.727`, `net=-737 JPY`。
+- 168hでは `net=-31,346.5 JPY`、赤字寄与上位は `MicroPullbackEMA`, `scalp_ping_5s_c_live`, `scalp_ping_5s_b_live`。
+- 直近5000 ordersで reject/guard 偏在:
+  - `entry_probability_reject=609 (12.18%)`
+  - `perf_block=588 (11.76%)`
+  - `entry_intent_guard_reject=200 (4.00%)`
+- `latency_preflight` の長い尾（p95級）と `fetch_recent_trades timeout(8s)`、`order-manager child died` を同時観測。
+
+Failure Cause:
+1. B/C戦略の `entry_probability` / perf guard / preserve-intent の閾値が重なり、同一経路で reject が常態化。
+2. `scalp_ping_5s_b_live` の preserve-intent scale 範囲に逆転値（`MIN_SCALE > MAX_SCALE`）が存在し、縮小ロジックの意図維持を阻害。
+3. V2 runtime に `WORKER_ONLY_MODE=true` と `MAIN_TRADING_ENABLED=1` が同居し、導線方針に矛盾。
+4. position/order 周辺 timeout が長く、preflight遅延時の fail-fast が弱い。
+
+Improvement:
+- `ops/env/quant-v2-runtime.env`
+  - `MAIN_TRADING_ENABLED=0`、`ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=0`、`POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0`。
+  - order/position timeout を fail-fast 側へ調整。
+  - B/C の forecast/net-edge/perf 閾値を 1 段緩和し、`hard block` 常態化を抑制。
+- `ops/env/quant-order-manager.env`
+  - `ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=0`。
+  - B の `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE` を `0.30 -> 0.85` へ修正（逆転解消）。
+  - B/C の `reject_under`, `min_units`, perf/forecast 閾値を再調整。
+- `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+  - B/C の base units を軽く抑え、probability floor/perf guard 閾値を再調整。
+
+Verification:
+- デプロイ後24hで以下を同条件再監査:
+  - `orders.db` 直近5000件で
+    - `entry_probability_reject <= 5%`
+    - `perf_block <= 5%`
+    - `entry_intent_guard_reject <= 1%`
+  - `metrics.db` で `latency_preflight p95 < 2000ms`（取得可能な同等指標で代替可）
+  - `trades.db`（non-manual）で `PF > 1.00`, `net_jpy > 0`
+
+Status:
+- in_progress
+
 ## Entry Template
 ```
+
+## 2026-02-28 23:55 UTC / 2026-02-29 08:55 JST - EXIT共通制御で strategy_tag 欠損建玉が制御外を通過しうる事象を確認（2/24 追跡）
+
+Period:
+- 監査対象:
+  - VM実データ `logs/orders.db`, `logs/trades.db`（2026-02-24 UTC中心）
+  - `execution/order_manager.py` の実装査読・監査スクリプト再計算
+
+Fact:
+- `orders.db` で `status="strategy_control_exit_disabled"` が 10,277 件確認（主として2/24 UTC 02:00-07:00）。
+- 同期間で閉鎖されていない/反復失敗 trade の主要 13件（`384420`,`384425`,`384430`,`384435`,`384797`,`384807`,`384812`,`384920`,`385300`,`385303`,`385332`,`385337`,`385390`）を確認。
+- 各tradeの `close_request`→`close_ok` 移行が遅延し、長時間同一建玉の再試行が連続。
+- `close` パスには `strategy_tag` 必須拒否が無く、欠損時は `strategy_control` が事実上スキップされる経路が残存。
+Failure Cause:
+1. `order_manager._reject_exit_by_control` が `strategy_tag` 未定義時に即時許可していたため、共通 EXIT ガードが欠損建玉で適用されない。
+2. 2/24の阻害再発は、該当戦略の `strategy_control_exit_disabled` 連打と、閉鎖遅延の長期化を伴って発生。
+Improvement:
+- `execution/order_manager.py` の `_reject_exit_by_control` を、`global_exit`/`global_lock` を先頭で適用する形へ修正。
+- `close_trade` に `strategy_tag` 欠損時の明示 `close_reject_missing_strategy_tag` を追加。
+Verification:
+- VM `orders.db` で `close_reject_missing_strategy_tag` の新規件数を監視。
+- VM側で同一期間を再実行し、`close_request=close_reject` の主要 13取引が strategy_control への制御で停止し続けないことを確認。
+- `strategy_control_exit_disabled` 連打抑制（閾値到達時の failopen / bypass）導線が再開することを確認。
+Status:
+- in_progress
+
+## 2026-02-28 23:40 UTC / 2026-02-29 08:40 JST - `orders_snapshot_48h.db` の鮮度差起因監査崩れに対する同梱/監査ロジック同時修正
+
+Period:
+- 対象:
+  - `scripts/collect_gcs_status.py`
+  - `ops/env/quant-core-backup.env`
+  - `execution/position_manager.py`
+  - `remote_logs_current/core_extract` 同一時点抽出
+
+Fact:
+- `core` バックアップ運用は、`QR_CORE_BACKUP_INCLUDE_ORDERS_DB=0` のため監査に `orders.db` が同梱されず、代替の
+  `orders_snapshot_48h.db` が長期更新滞留して `trades` 時系列と `orders` 時系列のズレが発生。
+- 追加実装で `collect_gcs_status` は `core_*` ファイル名（`.tar`/`.tar.gz`）対応を維持しつつ、`orders_db_source` と
+  `orders_snapshot_age_vs_trades_h` / `orders_snapshot_freshness` を出力し、監査時に鮮度劣化を数値化できる状態に変更。
+- `execution/position_manager.py` の `_normalize_entry_contract_fields` は、`payload.units` を含む経路を追加。
+
+Failure Cause:
+1. 監査再現では注文DB更新タイムラインを `trades` と同居させる同梱方針が不足していた。
+2. 過去世代 `entry_thesis` 再構成では payload 欠損が混在し、監査キー注入が不十分な経路が残っていた。
+
+Improvement:
+- `ops/env/quant-core-backup.env` を更新し、`QR_CORE_BACKUP_INCLUDE_ORDERS_DB=1` へ固定。
+- `collect_gcs_status.py` に注文DB鮮度の警告分類（`warning` / `critical`）を追加。
+- `position_manager` の `entry_units_intent` 補完に `payload.units` を追加し、`fallback_units` 経路を維持。
+
+Verification:
+- VM同時取得された `core_*.tar(.gz)` を前提に、`collect_gcs_status` が `orders_db_source`、`orders_snapshot_freshness` を返すことを確認。
+- `collect_gcs_status` の判定基準:
+  - `orders_snapshot_freshness != critical` かつ `orders_db_source` が `orders.db` の場合に監査結果を採用。
+
+Status:
+- in_progress
+
+## 2026-02-28 22:10 UTC / 2026-02-29 07:10 JST - リプレイID `sim-*` の閉鎖失敗を Exit 共通拒否ではなく入力ID不正で遮断へ変更
+
+Period:
+- 監査対象:
+  - `logs/orders.db`（close 関連ログ）
+  - `scripts/replay_exit_workers.py` / `execution/order_manager.py`
+
+Fact:
+- close 系の再現ログで `trade_id` が `sim-40`,`sim-8`,`sim-37`,`sim-4` のみを対象に `close_request` と `close_failed` が連続。
+- 失敗コードは `oanda::rest::core::InvalidParameterException`、`Invalid value specified for 'tradeID'`。
+- 同期間の close は共通拒否系（`close_blocked_by_strategy_control`/`close_reject_*`）の増加が確認されず、リプレイ起因の ID 形式不整合が主因と判断。
+
+Failure Cause:
+- リプレイ側で `trade_id` が `sim-*` 形式のまま `order_manager.close_trade` に渡され、`client_order_id` が `sim-sim-*` まで二重化されるケースが残存。
+
+Improvement:
+- `execution/order_manager.py` に live tradeID 形式バリデーションを追加し、`close_trade` で `sim-*` 等の非数値 ID を `close_reject_invalid_trade_id` で即時停止。
+- `scripts/replay_exit_workers.py` で `sim-` 再付与を抑止（既に `sim-*` の場合はそのまま利用）して `client_order_id` の `sim-sim-*` 化を防止。
+
+Verification:
+- 直近時点の `orders.db` では `close_reject_invalid_trade_id` 件数と `trade_id` 非数値拒否ログの出現を確認し、`sim-*` への CLOSE_REQUEST が消失しているかを観測。
+- 併せて V2 上で `quant-order-manager` 側が同変更を採用した後、同等条件で close が再度失敗しないかを VM 実行で確認。
+
+Status:
+- in_progress
+
+## 2026-02-28 21:10 UTC / 2026-02-29 06:10 JST - ローカルDB再集計で契約欠損は `entry`/`trade` の同世代不一致が主因と判定
+
+Period:
+- 対象:
+  - `logs/trades.db`
+  - `logs/orders.db`
+  - `tmp/vm_audit_20260226/trades.db`
+  - `tmp/vm_audit_20260226/orders.db` (開封不可; malformed)
+
+Fact:
+- `logs/trades.db` を `open_time` 基準で再集計（`entry_probability`,`entry_units_intent` の必須キー）:
+  - 24h: `rows=101 / missing_any=101`
+  - 48h: `rows=168 / missing_any=168`
+  - 240h: `rows=275 / missing_any=275`
+  - いずれも `entry_thesis` 自体は存在しているが、対象キーは未挿入。
+- `logs/orders.db` 時系列:
+  - `ts` 範囲: 2025-05-30 ～ 2026-02-24
+  - 2026-02-24 時点以降は `close_request/close_failed` が中心で、`submit_attempt` の `side/instrument/request` エントリー路線は含まれず、`trades` 側 2/27 の新規エントリーと非整合。
+  - `submit_attempt` (`n=2907`) 内訳:
+    - `entry_thesis` あり: 1840件（`entry_probability` と `entry_units_intent` は 1840 件とも欠損）
+    - `entry_thesis` なし: 1067件
+- `tmp/vm_audit_20260226/orders.db` は開封時点で `sqlite_error: database disk image is malformed`。
+
+Failure Cause:
+1. `trades` の監査対象窓と `orders` の有効窓が同世代化されておらず、再構成が成立しない。
+2. 2026-02-24 以降の `orders` 側は close 系に偏り、entry 系の同窓口が欠落。
+3. VM への接続が `Connection timed out during banner exchange` / `port 65535` で停止し、最新同世代ログを再取得できない。
+
+Improvement:
+- `orders.db` と `trades.db` の同世代再取得が先決条件であることを明文化し、`entry_thesis` 欠損の再評価はそれ後に再実行。
+- `entry_thesis` は `logs` 側では `entry_probability:1.0` / `entry_units_intent:abs(units)` で補完再構成可能だった領域と、`request_json` 未持ち込み等で不可の領域を分離して監査継続。
+
+Verification:
+- ローカル再現コマンド:
+  - `python3 - <<'PY'` で `logs/trades.db` の `open_time` 窓別欠損集計を再計測。
+  - `python3 - <<'PY'` で `logs/orders.db` の `status/request_json/entry_thesis` 欠損別分解を再計測。
+- 本番側同世代再取得成功後:
+  - `gcloud compute ssh fx-trader-vm --tunnel-through-iap --command "echo ok"`
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --window-hours 240 --limit 20000 --json ...`
+
+Status:
+- in_progress
+
+## 2026-02-28 18:55 UTC / 2026-02-28 03:55 JST - `entry_thesis` 監査は同世代再取得未達で確定
+
+Period:
+- 再検証対象:
+  - `logs/trades.db` / `logs/orders.db`
+  - `tmp/vm_audit_20260226/trades.db` / `tmp/vm_audit_20260226/orders.db`
+  - `remote_tmp/trades.db` / `remote_tmp/orders.db`
+  - `remote_logs_current/core_extract/trades.db` / `remote_logs_current/core_extract/orders.db`
+- コマンド:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --window-hours 240 --limit 20000 --json --trades-db ... --orders-db ...`
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --window-hours 48 --limit 20000 --json --trades-db logs/trades.db --orders-db logs/orders.db`
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --window-hours 24 --limit 20000 --json --trades-db logs/trades.db --orders-db logs/orders.db`
+
+Fact:
+- `logs/trades.db`:
+  - `window=240h`: `rows_missing_any=274`、`sampled_rows_in_window=275`
+  - `window=48h`: `rows_missing_any=100`、`sampled_rows_in_window=101`
+  - `window=24h`: `trades_no_samples_in_window`
+  - `orders` 側は `window=240h` で `sampled_rows_in_window=344` なのに `evaluated_rows=0`（`submit_attempt` 参照で再構成不能）
+- `tmp/vm_audit_20260226`:
+  - `trades`: `rows_missing_any=2740`（`window=240h`）
+  - `orders`: `sqlite_error: database disk image is malformed`
+- `remote_tmp`: `no sample in requested window`
+- `remote_logs_current/core_extract`: `trades`/`orders` のどちらも対象窓に未到達（`no samples in window`）
+- 追加観測:
+  - `df` 空き不足（`df` 結果が 100% 過負荷状態）で `gcloud` 実行やコピー前にクリーンアップが必要
+  - VM 接続:
+    - `Permission denied (publickey)` が継続
+    - `Connection closed by UNKNOWN port 65535`（鍵指定実行でも再現）
+    - シリアル出力で `sshd` と Python が OOM kill される痕跡を確認
+
+Failure Cause:
+1. `orders` / `trades` の同一時刻同一世代ペアが取れないため、監査の比較軸がずれている。
+2. VM への SSH/OAuth 経路（OS Login / key）と VM 側資源状態（sshd OOM/再起動）が不安定で、同時データ取得不能。
+3. ローカル側ディスク空き不足（`No space left on device`）で作業環境ノイズが混入。
+
+Improvement:
+- VM 接続安定化（OS Login/SSH 鍵経路、sshd メモリ負荷の是正）を優先して同一時刻 `trades.db` + `orders.db` を再取得し、現地同時監査に入る。
+- 監査は `raw_missing` と `recoverable_missing` を分離して記録し続ける運用を維持し、同世代再取得後に `rows_missing_contract_fields=0` 到達を再確認。
+
+Verification:
+- 同一世代取得が可能になった時点で以下を実行:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --trades-db logs/trades.db --orders-db orders.db --window-hours 240 --limit 20000 --json`
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --trades-db logs/trades.db --orders-db orders.db --window-hours 24 --limit 20000 --json`
+- VM 障害確認:
+  - `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "echo ok"`
+  - `gcloud compute instances get-serial-port-output fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --port=1`
+
+Status:
+- in_progress
+
+## 2026-02-28 20:40 UTC / 2026-02-29 05:40 JST - 過去DB再現で `entry_probability` / `entry_units_intent` は補完で吸収、欠損自体は主に旧世代要因
+
+Period:
+- 対象DB（`--window-hours 240`, `--window-hours 100000`, `--limit 20000~30000`）:
+  - `logs/trades.db` / `logs/orders.db`
+  - `remote_logs_current/core_extract/trades.db` / `remote_logs_current/core_extract/orders.db`
+  - `tmp/vm_audit_20260226/trades.db` / `tmp/vm_audit_20260226/orders.db`
+  - `tmp/qr_gcs_restore/core_20260227T062401Z/trades.db`
+  - `tmp/qr_gcs_restore/multi/core_20260227T054231Z/trades.db`
+  - `tmp/qr_gcs_restore/multi/core_20260227T050329Z/trades.db`
+  - `tmp/qr_gcs_restore/multi/core_20260227T060325Z/trades.db`
+
+Fact:
+- `check_entry_thesis_contract`（厳密監査）での集計:
+  - `logs/trades.db` (`240h`) `trades_missing_contract_fields=274`
+  - `logs/trades.db` (`100000h`) `trades_missing=12049`, `orders_missing=3350`
+  - `remote_logs_current/core_extract` (`100000h`) `trades_missing=6576`, `orders_missing=20392`（`orders` 側は 287,835 件をサンプリング）
+  - `tmp/vm_audit_20260226` (`100000h`) `trades_missing=4739`
+  - `tmp/qr_gcs_restore/*` (`100000h`) `trades_missing=4740`（`orders` は同DBに未同梱）
+- 補完シミュレーション（`entry_probability=1.0`、`entry_units_intent=abs(units)`）を適用すると、上記 `trades` 群はほぼ `raw_missing` から回収可能（`recoverable` 化）と確認。
+- `orders` 側は `request_json` 欠損/不完全が支配的で、`remote_logs_current` では `raw_missing 278,814` に対し `recovered 8,813`（`unrecoverable 270,001`）と再現。
+
+Failure Cause:
+1. 過去世代の `trades` は、保存時点で必須キー注入がなかったため監査で欠損扱い。
+2. `orders` は世代差分や `request_json` 欠損の影響が大きく、再構成で contract 欠損を回収できない行が多数。
+
+Improvement:
+- `execution/position_manager.py` の保存前補完ロジック自体は新規データの再発抑制効果が高いため、現行運用は同実装を前提に継続。
+- 監査運用として、`raw_missing` と `recoverable_missing` の分離レポートを採用し、真に改善対象が残る行だけを精査。
+- 旧世代 `logs` ではなく VM 同期新世代（`logs/trades.db` + `logs/orders.db` 同時更新）で再監査し、監査差分の消失を確認。
+
+Verification:
+- 厳密監査:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --trades-db ... --orders-db ... --window-hours 240 --limit 20000 --json`
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --trades-db ... --orders-db ... --window-hours 100000 --limit 30000 --json`
+- 補完シミュレーション（レガシーデータ検証）を実行済み。
+
+Status:
+- done
+
+## 2026-02-28 19:00 UTC / 2026-02-29 04:00 JST - `position_manager` の監査復元で `entry_thesis` 欠損を縮小する対策
+
+Period:
+- ローカルVM `logs/orders.db` / `logs/trades.db`
+- 検証ウィンドウ: `--window-hours 240`
+
+Fact:
+- 直近再検証:
+  - `trades` 直近 275 行中 274 行が `entry_probability` / `entry_units_intent` 欠損。
+  - `orders` 直近 344 行中、`sampled_rows_in_window` は 344、`evaluated_rows=0`（`submit_attempt` が同窓口に存在せず再構成不能）。
+  - `sqlite3 ...` の `ATTACH` 照合では `trades` 直近 `client_order_id` 274 件の `orders` 参照一致は 0。
+- `gcloud compute ssh fx-trader-vm --tunnel-through-iap` は依然として `Permission denied (publickey)`。
+
+Failure Cause:
+1. `position_manager` の `entry_thesis` は、`orders` 由来の再構成に失敗した経路では永続化時にデフォルト補完が十分に入らず、監査レベルで `trades` が欠損扱いになる構成だった。
+2. VM 側 `orders.db` 側の同一世代 `submit_attempt` がローカル窓に入らず、監査再構成が成立しない。
+
+Improvement:
+- `execution/position_manager.py`:
+  - `_get_trade_details_from_orders` 取得後、`_normalize_entry_contract_fields` を通して `entry_probability` / `entry_units_intent` を補完。
+  - `_get_trade_details`（OANDAフォールバック）と `open_positions` 形成経路でも同補完を適用し、保存・監査で最終 `entry_thesis` を契約形に寄せる。
+- 併せて、監査再計算対象の指針を `TRADE_FINDINGS` に 1 箇所集約。
+
+Verification:
+- 追加後に以下を実行済み:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --repo-root . --window-hours 240 --limit 20000 --json`
+  - `sqlite3 logs/orders.db` / `sqlite3 logs/trades.db` で `client_order_id` 相互照合（`ATTACH`）
+- 完全再現は VM 側同一世代取得ができた時点で `rows_missing_any=0` 目標で再確認。
+
+Status:
+- in_progress
+
+## 2026-02-28 19:15 UTC / 2026-02-29 04:15 JST - `position_manager` 永続保存時に `entry_thesis` を保存前補完
+
+Period:
+- ローカルVM `logs/trades.db` / `logs/orders.db`
+- 検証: `--window-hours 240`, `--window-hours 100000`（`check_entry_thesis_contract`）
+- 追加検証: トレード行を `entry_probability`/`entry_units_intent` を
+  `_normalize_entry_contract_fields` 的規則で再構成した場合のシミュレーション
+
+Fact:
+- 変更前後で `execution/position_manager.py` の `_parse_and_save_trades` と `_get_trade_details` に
+  保存前補完を追加。
+- 追加直後に再実行したスクリプト:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --repo-root . --window-hours 240 --limit 20000 --json`
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --repo-root . --window-hours 100000 --limit 20000 --json`
+  いずれも既存DBが旧世代であるため `trades_missing_contract_fields` は継続し、`orders` 側も `entry_...` 欠損を保持。
+- ただし、`trades` 生データ（12000件）を上記再構成規則で再評価した結果、`entry_probability`/`entry_units_intent` 欠損は 0 件に収束（将来保存レコードの再発防止効果を示唆）。
+
+Failure Cause:
+- 直近ローカル `trades.db` は `entry_thesis` 自体が監査前提キーを欠いた履歴を持ち、`orders.db` との同一世代参照が不十分。
+- したがって本番実行データの「保存時点」での補完を追加しても、過去データの監査結果は同時に変わらない。
+
+Improvement:
+- `execution/position_manager.py`
+  - `trades` 永続化ループ内で `details["entry_thesis"]` を契約正規化。
+  - OANDAフォールバック取得 (`_get_trade_details`) でも再正規化し、上流入力が不足していても保存前に契約形へ寄せる。
+- VM 取得データが更新された後は、同スクリプトで `trades_missing_contract_fields=0` 到達を再確認することを最終目標として追跡。
+
+Verification:
+- 同一ファイル内 `saved_records` 生成前後で保存行 `json.dumps(details["entry_thesis"])` が必ず契約キーを含む形になることをローカル確認。
+- 運用上は次の `checks` 再実行時（VM新世代）にて `trades_missing_contract_fields` が解消されるかを監視。
+
+Status:
+- in_progress
+
+## 2026-02-28 09:02 UTC / 2026-02-28 18:02 JST - `entry_thesis` 欠損監査: ローカル世代断絶と過去断面の全面欠損を再確認
+
+Period:
+- ローカルVM `logs/orders.db` / `logs/trades.db`（`--window-hours 240`）
+- 過去スナップショット `remote_logs_current/core_extract/orders.db` / `remote_logs_current/core_extract/trades.db`（`--window-hours 100000`、`check_entry_thesis_contract`）
+
+Fact:
+- `check_entry_thesis_contract`（ローカル）:
+  - `overall=fail`
+  - `trades_missing_contract_fields:274`
+  - `trades` `evaluated_rows=274`（`sampled_rows_in_window=275`）
+  - `orders` `sampled_rows_in_window=344` のうち `evaluated_rows=0`（`orders` 側は `submit_attempt` がローカル内で `window` に入る世代が `trades` と照合不可）
+- ローカル `logs/orders.db` と `logs/trades.db` の `client_order_id` 再構成:
+  - `client_order_id` を `qr-` で集約した `trades` 全体一致（`105/...`）はありうる一方、`240h` 窓での `submit_attempt` への一致は `0/255`（一致なし）。
+  - `logs/orders.db` の `MAX(ts)` は `2026-02-24T02:09:44Z`、`logs/trades.db` の `MAX(open_time)` は `2026-02-27T00:23:46Z` で、3日超の世代ズレ。
+- `remote_logs_current/core_extract`（過去断面）を同スクリプトで検証:
+  - `trades_missing_contract_fields:6576 / 6576`
+  - `orders_missing_contract_fields:22180 / 40000(対象)`
+  - `orders` 側 `top_strategies` 上位多数で `entry_probability` / `entry_units_intent` 不在、`entry_...` 欠損は運用開始初期断面の系統的欠落と一致。
+
+Hypothesis:
+1. 直近 240h のローカル監査失敗は `trades` 側の新規世代と `orders` 側断面の世代切替が崩れたことが主因で、検証条件として再構成不能。
+2. `remote_logs_current/core_extract` が示す長期 `100000h` 断面では `entry_probability` / `entry_units_intent` が未注入状態で生成されており、欠損自体は「新規機能未反映」の履歴的傾向も確認済み。
+
+Failure Cause:
+- `entry_thesis` 必須フィールド注入前の断面が複数存在。
+- ローカル `orders.db`/`trades.db` が同期世代を跨いでいるため、`trades` → `request_json` 再構成導線で `orders` を使う監査が成立しない。
+
+Improvement:
+- 今回の検証結果は、現時点のローカル断面では「監査基準を満たす再構成不能」扱いとし、VM 側で同一世代を取り直した上で再測定する前提で運用に反映。
+- `order_manager` / `position_manager` 側の補完ロジックは維持し、`orders` 側が新世代で欠損が続く場合は追加にて全呼び出し経路の `entry_thesis` 注入箇所を再監査する。
+
+Verification:
+- 直近実行:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --repo-root . --window-hours 240 --limit 20000 --json`
+  - `sqlite3 logs/orders.db` / `sqlite3 logs/trades.db` の `client_order_id` 世代一致率集計（`ATTACH` で相互照合）
+  - 過去断面再現:
+    - 上記リポジトリを一時ディレクトリでリンクし、
+    `worker` / `execution` と `remote_logs_current/core_extract` を使って同スクリプト再実行
+
+Status:
+- done
+
+## 2026-02-28 17:50 UTC / 2026-02-29 02:50 JST - `entry_thesis` 欠損監査: logs 世代不整合確認
+
+Period:
+- ローカルVM `logs/orders.db` / `logs/trades.db`（`window_hours=240`）
+- 補助検証: `remote_logs_current/core_extract/orders.db` / `remote_logs_current/core_extract/trades.db`
+
+Fact:
+- `qr-entry-thesis-contract-check`（`--window-hours 240`）で `trades_missing_contract_fields=274` を再現。
+- `logs/trades.db` は `qr-177215...` 世代（2026-02-27付近）を持つ一方、`logs/orders.db` の `qr-` 世代は `qr-176...`（2025-12-10まで）で世代がずれている。
+- `logs/orders.db` で `entry_probability`/`entry_units_intent` 同居は 0 件。`remote_logs_current` でも同条件 0 件。
+
+Failure Cause:
+1. `orders.db` / `trades.db` の時系列同期ズレにより、trade側再構成の照合対象が欠落。
+2. 該当 logs は旧仕様断面で、`entry_thesis` 必須フィールドが履歴に未付与。
+3. VM再取得確認は `Permission denied (publickey)` と `GlobalPerProjectConnectivityTests` クォータ上限で遅延。
+
+Improvement:
+- まず VM 側で同一世代の `orders.db` / `trades.db` を取得し、同仕様の断面で監査を再実行。
+- 本変更分の `order_manager` / `position_manager` 反映後、`rows_missing_any=0` 到達を目標に再計測。
+
+Verification:
+- 再監査コマンド:
+  - `python3 ~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py --repo-root . --window-hours 240 --limit 20000 --json`
+  - `gcloud compute ssh fx-trader-vm --tunnel-through-iap --command "..."`（認証確認後）
+
+Status:
+- in_progress
+
+## 2026-02-28 08:50 UTC / 2026-02-28 17:50 JST - `entry_thesis` 欠損補完フェイルセーフを拡張（order/position）
+
+Period:
+- ローカルVM `logs/orders.db` / `logs/trades.db`（`window_hours=240`）
+- 対象: `entry_probability` / `entry_units_intent` 未補完件
+
+Fact:
+- `execution/order_manager.py` で `ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT` を追加し、`_ensure_entry_intent_payload` に `entry_probability` 補完を追加。
+- `execution/position_manager.py` に `entry_thesis` 欠損時復元ヘルパーを追加し、`request_json.entry_probability`、`request_json.entry_units_intent`、`request_json.oanda.order.units`、`orders.units` を順に補完。
+- 直近240h監査で `trades` 側の欠損は 274 件。`orders` 側は同 window で `submit_attempt` が存在するが（`MAX(ts)=2026-02-24 02:09:44`）、`trades` 連携先 `client_order_id` 参照で `rows_missing` が解消されず再構成不能の状態を確認。
+
+Failure Cause:
+- `trades` の多くは `client_order_id` 解決しても当該 `submit_attempt` ログが window 内に存在せず、履歴補完の再構成ソース欠損。
+
+Improvement:
+- `order_manager`/`position_manager` の双方でフェイルセーフ補完を追加し、将来の約定履歴に対して `entry_thesis` 要件を持ち越す。
+- 監査は VM 実データで `submit_attempt` を再現できる周期へ遷移させ、欠損率を再測定する前提で再実行する。
+
+Verification:
+- `python3 -m py_compile execution/order_manager.py execution/position_manager.py` 通過。
+- `check_entry_thesis_contract.py --window-hours 240` は現在のローカル再現データ上では `trades_missing_contract_fields=274` を返却。`orders.db` の `submit_attempt` が `2025-11-25` までで、再構成不能区間を含むため、VM 時系列再確認が必要。
+- 併せて `gcloud compute ssh fx-trader-vm --tunnel-through-iap --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db ..."` で VM 側 `submit_attempt` の時系列を再確認する。
+
+Status:
+- in_progress
+
+## 2026-02-28 23:42 UTC / 2026-02-29 08:42 JST - `strategy_control_exit` 同一建玉の再試行キーを `trade_id` 優先へ固定
+
+Period:
+- VM実測（`logs/orders.db` / `logs/trades.db`）の 2026-02-24 01:00 UTC〜10:00 UTC を再監査。
+- 併せて `execution/order_manager.py` の `strategy_control` 失効導線を確認。
+
+Fact:
+- `orders` で `status='strategy_control_exit_disabled'` が 10,277 件確認。
+- 集約は 4 つの `trade_id`（`384420`,`384425`,`384430`,`384435`）が中心で、各 `2,044`〜`2,045` 件の連続阻害が発生。
+- 同時間帯の `close_request=0` が 11 取引で、阻害後の `close_ok` 取得がほぼ無く、`close_bypassed_strategy_control` / `strategy_control_exit_failopen*` が出力されなかった。
+- VM `ops/env/quant-v2-runtime.env` では `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_*` は有効（threshold=3, window=20, reset=180, emergency_only=0）。
+
+Failure Cause:
+1. `order_manager.py` の再試行キーが `client_order_id` 優先だったため、同一建玉でも client_id が変化した場合に同一阻害として集約されず、フェイルオープン閾値到達判定が崩れる可能性があった。
+2. 連続阻害のキー粒度不足により、`strategy_control_exit_failopen` へ遷移せずに同一tradeのリトライだけが増幅し、損失持続を招いた。
+
+Improvement:
+1. `execution/order_manager.py` の `_strategy_control_exit_block_key` を `trade_id` 優先キーに変更し、同一建玉の阻害を 1 つのキーで集約。
+2. `request_json` に渡す `block_state` と既存ログ `strategy_tag` / `trade_id` を用いて、後続監査でキー再解釈ができる状態を維持。
+
+Verification:
+1. VM反映後に `orders.db` で同一 `trade_id` に対する `strategy_control_exit_disabled` の連続数を再集計し、  
+   `strategy_control_exit_failopen_*` か `close_bypassed_strategy_control` が threshold 近傍で登場することを確認。
+2. 直近 24h で同一tradeの `close_request=1, close_ok=1` 到達率が維持され、`close_request=0` が集中する trade の再発がないことを確認。
+3. 併せて `logs/ops_v2_audit_latest.json` / `journalctl -u quant-order-manager.service` の起動後再起動有無を監査。
+
+Status:
+- in_progress
 
 ## 2026-02-28 23:10 UTC / 2026-02-29 08:10 JST - `close_reject_no_negative` の保護理由集合を収斂
 
@@ -3754,6 +4210,49 @@ Verification:
 2. `orders.db` で `filled` を維持しつつ `rejected` と `STOP_LOSS_ON_FILL_LOSS` が減ること。
 3. 24h side別で `avg_loss_pips` が `avg_win_pips` に接近または逆転すること。
 4. `MARKET_ORDER_MARGIN_CLOSEOUT` が増えないこと（特に micro系 tail 監視を継続）。
+
+Status:
+- in_progress
+
+## 2026-02-28  (UTC) / 2026-02-28 09:00 JST - EXIT阻害原因分解（trade_id整合性）
+
+Period:
+- 本調査対象: `logs/orders.db`（ローカル）
+- 補助: `logs/trades.db`（ローカル）
+- 補足: VM直読はIAP SSHでコマンドが確立しないため保留（ローカル実DBで継続監査）
+
+Source:
+- `logs/orders.db`
+- `logs/trades.db`
+- `execution/order_manager.py`
+- `scripts/replay_exit_workers.py`
+
+Fact:
+- `orders` のEXIT関連は `close_request=1598`, `close_ok=1399`, `close_failed=199`。
+- `close_failed` 内訳:
+  - `oanda::rest::core::InvalidParameterException / Invalid value specified for 'tradeID'` = `172`
+  - `TRADE_DOESNT_EXIST / The Trade specified does not exist` = `24`
+  - `CLOSE_TRADE_UNITS_EXCEED_TRADE_SIZE` = `3`
+- `close_failed` の `172` 件は `ticket_id` が `sim-*`。
+  - うち `sim-40:65`, `sim-8:63`, `sim-37:43`, `sim-4:1`
+  - 時間帯: `2026-02-24T02:07:21.605365+00:00`〜`2026-02-24T02:09:44.063590+00:00` の集中発生
+- `close_failed` 172件の `ticket_id` が同じ `sim-` 系で、`sim-sim-` という client/order-id由来の疑い（`client_order_id` も同系統）を示唆。
+- 同期間の `close_request`/`close_failed` 差分 `199` は、共通一律EXITガード系の拒否ステータス（`close_reject_*` 相当）ではなく、OANDA API拒否での `InvalidParameterException` が主因。
+
+Failure Cause:
+1. `order_manager.close_trade` が受けた `ticket_id` が実トレードIDではなく `sim-` 系の擬似ID（最終的に `sim-sim-*`）になったことによる `tradeID` 形式不正。
+2. 追加で `TRADE_DOESNT_EXIST` が少数残るため、既に決済済み/不整合建玉に対する遅延closeの再送も混在。
+
+Action (already partially applied):
+1. `scripts/replay_exit_workers.py` の `_create_trade` を `sim-` 重複付与なしで正規化。
+   - `trade_id` が既に `sim-` で始まる場合は再付与しない。
+   - `client_order_id`/`clientExtensions.id` へ `sim-<id>` を一貫投入。
+2. `execution/order_manager.py` の `close_trade()` は `_is_valid_live_trade_id` で数値ID以外を早期拒否し、`log_metric("close_reject_invalid_trade_id")` で観測可能化。
+
+Verification:
+1. `close_failed` の `InvalidParameterException` が減衰し、`close_reject_invalid_trade_id` へ寄与遷移するかをVM `orders.db` で要再確認。
+2. VM `orders.db` で `ticket_id LIKE 'sim-%'` の `close_failed` 再集計。
+3. `close_request` から `close_ok` への通過率、`strategy_control` 拒否系の有無を同期間で再監査。
 
 Status:
 - in_progress

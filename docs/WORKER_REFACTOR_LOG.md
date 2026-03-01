@@ -1,5 +1,145 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-01（追記）収益阻害上位（prob/perf/intent reject）とV2凍結矛盾を同時是正
+
+- 根拠（VM監査, 2026-02-28 UTC / JST）:
+  - `entry_probability_reject=609/5000 (12.18%)`
+  - `perf_block=588/5000 (11.76%)`
+  - `entry_intent_guard_reject=200/5000 (4.00%)`
+  - 24h収益: `PF=0.727`, `net=-737 JPY`
+  - `latency_preflight` は p95 が長い尾を持ち、`fetch_recent_trades timeout(8s)` と `order-manager child died` が同時観測。
+- 変更:
+  - `ops/env/quant-v2-runtime.env`
+    - `MAIN_TRADING_ENABLED=0` へ戻し、`WORKER_ONLY_MODE=true` と整合化。
+    - `ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=0` / `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` へ変更し、V2分離導線のローカル退避を禁止。
+    - order/position timeout を fail-fast 側へ調整（service/open_positions/sync_trades/fetch_recent_trades）。
+    - `scalp_ping_5s_b/c` の forecast/net-edge/perf 閾値を 1 段緩和し、`hard stop` ではなく縮小継続の余地を確保。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=0`。
+    - `scalp_ping_5s_b_live` の `preserve_intent` で `MIN_SCALE=0.40` / `MAX_SCALE=0.30` の逆転を是正（`MAX_SCALE=0.85`）。
+    - B/C の `reject_under` と `min_units` を調整し、`below_min_units_after_scale` 系拒否の偏りを緩和。
+    - B/C の perf/forecast 閾値を 1 段緩和し、`perf_block` 常態化を抑制。
+  - `ops/env/scalp_ping_5s_b.env`, `ops/env/scalp_ping_5s_c.env`
+    - `BASE_ENTRY_UNITS` を軽く抑制（B: `180->140`, C: `75->65`）。
+    - `entry_probability` floor と perf guard 閾値を実測 reject 分布に合わせて再調整。
+- 意図:
+  - 戦略停止ではなく、reject 集中を崩しつつ意図サイズを維持する「縮小継続」へ寄せる。
+  - V2方針（service分離・worker導線固定）に反する runtime 矛盾を解消する。
+- 再検証条件（デプロイ後24h）:
+  - `entry_probability_reject <= 5%`、`perf_block <= 5%`、`entry_intent_guard_reject <= 1%`
+  - `latency_preflight p95 < 2000ms`
+  - `PF > 1.00` かつ `net_jpy > 0`（non-manual）
+
+### 2026-02-28（追記）`close` 経路でstrategy_tag欠損を明示拒否し、EXIT共通制御を意図通り適用
+
+- `execution/order_manager.py` の `_reject_exit_by_control` を、`manual` 例外を除き先に `global_exit` / `global_lock` を評価する形へ修正。
+- `close_trade` で `strategy_tag` を決定できない場合は `close_reject_missing_strategy_tag` を返す経路を追加し、共通制御の監査抜けを防止。
+- 効果観点: 2/24発生の `strategy_control_exit_disabled` の長時間連打が、`strategy_tag` 欠損経路で静かに再現しない構成を目標。
+
+### 2026-02-28（追記）GCSコアバックアップの監査再現性を上げるため`orders.db`同梱を有効化
+
+- 根因再検証で、`collect_gcs_status.py`が参照する`core_*.tar(.gz)`内に
+  `orders_snapshot_48h.db`のみが混入し`orders.db`が欠落、`trades`更新との差分再現で
+  `orders`由来の`entry_thesis`検証が崩れる状態を確認。
+- `ops/env/quant-core-backup.env`を更新し、`QR_CORE_BACKUP_INCLUDE_ORDERS_DB=1`へ変更。
+- `scripts/collect_gcs_status.py`を更新し、`orders_db_source`と
+  `orders_snapshot_age_vs_trades_h` / `orders_snapshot_freshness`を記録して
+  監査結果に鮮度判定を明示できるように。
+- 併せて`position_manager._normalize_entry_contract_fields`のユニット補完経路を拡張し、
+  `entry_units_intent`の復元率向上（`payload.units`/`entry_units_intent`/`oanda.order.units`＋fallback）を反映。
+
+### 2026-02-28（追記）ローカル再集計で同世代不一致を再確認
+
+- `logs/trades.db` を `open_time` ベースでローカル再集計（`entry_probability` / `entry_units_intent` 欠損キー必須）:
+  - `24h`: `rows=101 / missing=101`
+  - `48h`: `rows=168 / missing=168`
+  - `240h`: `rows=275 / missing=275`
+- `logs/orders.db` を `ts` ベースで再計測:
+  - `count=14869` のうち、2026-02-24 以降は `close_request`/`close_failed` 優勢で、`submit_attempt` 系の同窓口エントリが確認できず。
+  - `submit_attempt` 全体 (`n=2907`) の `entry_thesis` 内訳:
+    - `entry_thesis`あり 1840件（両キーとも不足）
+    - `entry_thesis`なし 1067件
+  - `entries` 再構成に必要な `request_json` のキー欠損が、`trades` 側監査と整合しない最大要因として再確認。
+- `tmp/vm_audit_20260226/orders.db` は同一世代監査前提で破損（`sqlite_error: database disk image is malformed`）。
+- VM監査連動:
+  - `gcloud compute ssh ... --command "echo ok"` は 2026-02-28 現在 `Connection timed out during banner exchange` / `Connection closed by UNKNOWN port 65535`。
+  - `get-serial-port-output` で `sshd` / `python3` の OOM kill ログが継続確認され、メモリ圧迫系の接続断が残存。
+- 判定:
+  - 本件は「契約キー未注入」以前に「同世代データ欠損」に起因する再監査不能が上位要因であり、VM 側 `orders.db` の最新同時取得再実施が最優先。
+
+### 2026-02-28（追記）VM同時監査再取得の接続障害を確認
+
+- `scripts/vm.sh` 経由での VM 同期再取得（`pull-logs` / `exec`）で、接続障害が継続していることを確認。
+  - `gcloud compute ssh` 系の `Permission denied (publickey)` が継続。
+  - 代替キー指定 (`-k`) でも `Connection closed by UNKNOWN port 65535` が発生し、認証経路だけでは収束しない。
+- `gcloud compute instances describe fx-trader-vm --zone asia-northeast1-a` で `enable-oslogin=TRUE` と `block-project-ssh-keys=TRUE` を確認。
+- 代替診断として `gcloud compute instances get-serial-port-output --port=1` を取得した結果、
+  - `sshd` 系プロセスと `python3` の OOM kill ログが複数確認され、SSH 接続不安定の副要因として **メモリ圧迫/プロセス終了** の可能性を確認。
+  - これにより、現時点では VM 側で同世代 `logs/trades.db` + `logs/orders.db` を再取得・突合し、最終監査（`rows_missing_contract_fields=0`）を確認できない状態。
+- 補足: `gcloud` 実行や大量コピー時に `No space left on device` が発生したため、ローカル側 `df` 空き確保が必要。
+
+### 2026-02-28（追記）再監査結果を VM 同期前提から整理
+
+- `logs/trades.db`（240h）: `trades_missing_contract_fields=274` / `evaluated_rows=274` / `sampled_rows_in_window=275`（主因は同世代注文照合不可）
+- `logs/trades.db`（48h）: `trades_missing_contract_fields=100` / `sampled_rows_in_window=101`
+- `logs/trades.db`（24h）: `trades_no_samples_in_window`
+- `tmp/vm_audit_20260226/trades.db`（240h）: `trades_missing_contract_fields=2740`
+- `tmp/vm_audit_20260226/orders.db`: `sqlite_error: database disk image is malformed`
+- `remote_tmp` / `remote_logs_current/core_extract` は時点ずれで、`trades`/`orders` 窓口の同時再現に不一致あり。
+- これにより現時点では、監査差分の実体は「同世代未取得＋OS Login/接続断＋I/O/空き不足」に起因している可能性が高い。
+
+### 2026-02-28（追記）`trades` 永続化時の `entry_thesis` 補完を最終保存前で固定
+
+- `execution/position_manager.py`
+  - `_get_trade_details` の OANDA フォールバック経路終了時に `_normalize_entry_contract_fields(...)` を再投入し、
+    `entry_probability` が欠損していても `1.0` 補完、`entry_units_intent` を `units` 由来で補完。
+  - `_parse_and_save_trades` のクローズ/部分約定保存ループでも、`record_tuple` 作成前に `details["entry_thesis"]` を同ヘルパーで再正規化。
+  - これにより、`submit_attempt` や `orders` 再構成が不可でも、新規保存時の `trades` 行に契約項目を残す方向へ寄せる。
+- 運用評価意図:
+  - `check_entry_thesis_contract` が `trades` 側欠損を長期的に積み上げる構造を、保存時に吸収する。
+- ただし VM の同世代 `orders.db` が不足している現況データでは、既存履歴の再評価値自体は変わらないため、VM再取得で最終確認。
+
+### 2026-02-28（追記）過去世代監査の再現性向上（欠損は「生再現」と「補完再現」を分離）
+
+- 監査手順を `~/.codex/skills/qr-entry-thesis-contract-check/scripts/check_entry_thesis_contract.py` で再実施し、
+  `logs/`, `remote_logs_current/`, `tmp/qr_gcs_restore/` の複数世代で同一条件評価。
+- その結果、`trades` 側の過去欠損は `entry_probability=1.0`、`entry_units_intent=abs(units)` の
+  仕様再現（legacy row の補完再構成）で吸収可能な件数が非常に多い一方、`orders` 側は `request_json` 欠損/不完全由来の
+  不可補完（unrecoverable）が残ることを確認。
+- 方針更新:
+  - 今後の監査は、`trades`/`orders` の「生値欠損」と「補完可能欠損」を分離して評価し、
+    真に運用不良が疑われる unrecoverable 領域にのみ改善施策を集中する。
+  - VM同時更新の `trades.db` + `orders.db` で同一世代再監査し、`rows_missing_contract_fields=0` を最終目標にする。
+- 追記意図:
+  - 仕様変更（保存前補完）と履歴差分（旧世代欠損）の因果を切り分け、実装効果と再現検証を混同しない。
+
+### 2026-02-28（追記）position_manager の `entry_thesis` 永続化時補完を強化
+
+- `execution/position_manager.py`
+  - `_get_trade_details_from_orders` の `thesis_obj` 復元後に `_normalize_entry_contract_fields` を適用し、
+    `entry_probability` が欠損時でも `1.0` を付与、`entry_units_intent` を `units` 由来で補完。
+  - `_get_trade_details`（OANDAフェールバック）と `open_positions` 組み立て経路でも
+    `trade_entry / details` を同一ヘルパーで正規化して、監査保存時の `entry_thesis` 欠損を抑止する。
+- 追加目的:
+  - `orders.db` の再構成が不十分な窓口で `trades` 側監査が壊れるケースを潰す。
+  - `entry_thesis.entry_probability` / `entry_units_intent` の監査可観測性を保つ。
+
+### 2026-02-28（追記）entry_thesis 契約欠損のフェイルセーフを order/position で統一強化
+
+- `execution/order_manager.py`
+  - `ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT` を追加し、`_ensure_entry_intent_payload()` で `entry_probability` を
+    常時フェイルセーフ補完。
+  - `entry_thesis` の欠損チェック時、`entry_probability` を上書き可能な値として扱うようガードを調整。
+- `execution/position_manager.py`
+  - `orders` / `submit_attempt` の `request_json` から `entry_probability`・`entry_units_intent` を復元するヘルパーを追加。
+  - 未指定時は `request_json.oanda.order.units` や `orders.units` を使って `entry_units_intent` を復元。
+  - `open_positions`・`_load_entry_thesis`・`_get_trade_details_from_orders` 経路で補完結果を保存して `entry_thesis` を再構成。
+- `trades` 側監査（240h）で `entry_probability`/`entry_units_intent` 欠損 274件を検出（`submit_attempt` が対象窓外）という実測結果も同時記録。
+
+意図:
+- `entry_thesis` の契約要件を戦略実装に再委ねる構成を維持しつつ、ログ再構成時の欠損で監査が潰れる事態を減らす。
+- 将来観測分では `trades` 側監査の欠損再発率を抑制し、監査と運用改善の再現性を上げる。
+
 ### 2026-02-28（追記）strategy_entry で strategy-side net-edge gate を追加
 
 - `execution/strategy_entry.py`
@@ -22,6 +162,20 @@
   低品質約定を減らす。
 - 共通 preflight を「全戦略一律上書き」ではなく、意図の最終制御点（strategy_entry）側で明示化し、
   ロールバック時の監査可能性を高める。
+
+### 2026-02-28（追記）strategy_control 共通EXIT阻害の同一建玉キーを安定化
+
+- `execution/order_manager.py`
+  - `_strategy_control_exit_block_key()` を `trade_id` 優先に変更（`strategy:trade:<trade_id>`）。
+  - `client_order_id` が変化する経路でも同一建玉の連続阻害カウンタを維持できるようにし、
+    `ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_*` の閾値（例: threshold=3/20s）が効かない構造的分断を解消。
+- `docs/TRADE_FINDINGS.md`
+  - 2/24 VM再監査（`strategy_control_exit_disabled=10277`、`close_request=0` 集中）を反映し、
+    同一trade再試行の監査条件を明文化。
+
+意図:
+- 共通EXITガードの「同一建玉再試行」に対する観測性を上げ、フェイルオープン閾値到達前に
+  分断リセットされる状態を抑止し、実損失拡大の連鎖を緩和する。
 
 ### 2026-02-28（追記）保護系EXIT監査でENTRY意図値を欠損させない
 
