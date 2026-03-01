@@ -110,6 +110,16 @@ BUNDLE_GCS="$BUNDLE_GCS"
 REPO_OWNER="\$(basename "\$(dirname "\$REPO_DIR")")"
 STAMP_DIR="/var/lib/quantrabbit"
 STAMP_FILE="\$STAMP_DIR/deploy_id"
+if [[ -d "\$REPO_DIR" ]]; then
+  REPO_OWNER="\$(stat -c '%U' "\$REPO_DIR" 2>/dev/null || true)"
+fi
+if [[ -z "\$REPO_OWNER" ]]; then
+  REPO_OWNER="\$(basename "\$(dirname "\$REPO_DIR")")"
+fi
+if ! id -u "\$REPO_OWNER" >/dev/null 2>&1; then
+  echo "[startup] repo owner missing or invalid: \$REPO_OWNER, fallback root"
+  REPO_OWNER="root"
+fi
 
 echo "[startup] deploy_id=\$DEPLOY_ID branch=\$BRANCH repo=\$REPO_DIR service=\$SERVICE"
 MARKER_BUCKET=""
@@ -216,7 +226,9 @@ if ! sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git pull --ff-only
   echo "[startup] git pull failed"
   git_ok=0
 fi
-sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && echo \"[startup] git_rev=\$(git rev-parse --short HEAD 2>/dev/null || echo unknown)\""
+if ! sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && echo \"[startup] git_rev=\$(git rev-parse --short HEAD 2>/dev/null || echo unknown)\""; then
+  echo "[startup] git_rev lookup failed"
+fi
 if [[ "\$git_ok" -ne 1 ]]; then
   echo "[startup] git update failed; continuing with existing code"
 fi

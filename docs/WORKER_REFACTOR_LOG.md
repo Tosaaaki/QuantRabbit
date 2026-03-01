@@ -1,5 +1,17 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-01（追記）`deploy_via_metadata.sh` の起動ユーザー解決を耐障害化
+
+- `scripts/deploy_via_metadata.sh` の startup-script を修正し、起動時の `REPO_OWNER` 解決を以下に変更。
+  - `REPO_DIR` が存在する場合は `stat -c '%U' "$REPO_DIR"` で実ユーザーを採用。
+  - 取得失敗時は `basename "$(dirname "$REPO_DIR")"` をフォールバック。
+  - 取得ユーザーが未登録の場合は `root` を最終 fallback として採用し、`sudo -u` 失敗で startup が即落ちるリスクを低減。
+- `git rev-parse` ログ出力をガード付きに変更し、`startup-script` が `exit status 1` で終了するパスを防止。
+- 変更意図: VM 起動時 `startup-script` の `set -euo pipefail` 条件下で
+  `git` 参照前提が満たされず即終了することで、デプロイ導線（`deploy_via_metadata`）が
+  機能しない事象を回避し、`deploy_id` の継続的な進行と service 再起動確認を可能にする。
+- この変更は deploy 経路の安定化目的であり、戦略判定ロジック本体には影響しない。
+
 ### 2026-03-01（追記）収益阻害上位（prob/perf/intent reject）とV2凍結矛盾を同時是正
 
 - 根拠（VM監査, 2026-02-28 UTC / JST）:
