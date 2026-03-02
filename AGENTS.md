@@ -16,6 +16,10 @@
 
 ## 2. 非交渉ルール（必ず守る）
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
+- 作業前にはUSD/JPYの市況確認を必須化する。
+  - 確認対象: 現在価格帯、スプレッド、直近ATR/レンジ推移、約定・拒否の直近実績、OANDA APIの応答品質。
+  - 確認手段: VM上の `logs/*.db` + OANDA API、該当戦略 worker/position_manager 的ログ、必要に応じて直近チャート。
+  - 判定: 市況が通常レンジ外・流動性悪化時は、作業は保留し `docs/TRADE_FINDINGS.md` と運用ログへその理由を残す。
 - LLM（Vertex）は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
 - Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す（default: disabled）。
 - Brain 有効化は `BRAIN_ENABLED=1` と Vertex 認証（`VERTEX_PROJECT_ID` / `VERTEX_LOCATION` 等）が必須。
