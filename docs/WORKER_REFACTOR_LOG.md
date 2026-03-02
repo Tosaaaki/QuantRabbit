@@ -7,6 +7,13 @@
 - `replay_quality_gate` から `exit_workers_groups` 経由で実行した場合でも、`wide` / `uptrend` など旧記述がそのまま使える運用を担保。
 - `tests/analysis/test_replay_quality_gate_script.py` に同義語含めた検証を追加。
 
+### 2026-03-02（追記）`workers/strategy_control/worker.py` の env overrides 同期を強制化
+
+- `STRATEGY_CONTROL_COMMAND_PATH` が未設定でも `STRATEGY_CONTROL_SEED_STRATEGIES` / `STRATEGY_CONTROL_ENTRY_*` 系を反映できるよう、`strategy_control_worker` のループ開始時に `strategy_control.sync_env_overrides()` を常時実行するよう変更。
+- 併せて、起動時のみでなく継続的にシード・制御フラグ更新を反映し、`strategy_control` の `strategies=0` ループを回避する目的で対処。
+- 監査観点: 本修正の効果は VM 側 `quant-strategy-control.service` 再起動後に
+  `journalctl -u quant-strategy-control.service` の `strategies=` ログと `logs/strategy_control.db` 件数で確認する。
+
 ### 2026-03-01（追記）`replay_exit_workers_groups` のシナリオ分類強化（トレンド方向・ギャップ・stale）
 
 - `scripts/replay_exit_workers_groups.py` の `_parse_scenarios` と `_build_tick_scenarios` を拡張し、以下を受理。

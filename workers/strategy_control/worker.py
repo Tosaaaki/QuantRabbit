@@ -142,8 +142,7 @@ async def strategy_control_worker() -> None:
     command_path = _env_str("STRATEGY_CONTROL_COMMAND_PATH", "")
     command_mtime: Optional[float] = None
 
-    if command_path:
-        strategy_control.sync_env_overrides()
+    strategy_control.sync_env_overrides()
 
     last_heartbeat = time.monotonic() - heartbeat_sec
     last_slo_metrics = time.monotonic() - slo_metrics_interval_sec
