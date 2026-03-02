@@ -17,6 +17,133 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-01 01:40 UTC / 2026-03-01 10:40 JST - `replay_quality_gate.py` のシナリオ同義語互換を `exit_workers_groups` と統一
+
+Period:
+- 対象:
+  - `scripts/replay_quality_gate.py`
+  - `tests/analysis/test_replay_quality_gate_script.py`
+- 対象データ:
+  - ユニットテスト観測（シナリオ名正規化）
+
+Fact:
+- `replay_quality_gate.py` 側で受理シナリオが旧仕様のままだと、`replay_exit_workers_groups.py` が新規対応した
+  `trend_up` / `trend_down` / `gap` / `stale` などを指定できず、品質ゲート運用に分断が発生していた。
+- `wide` / `uptrend` / `gapdown` / `stale_ticks` といった実運用で使われる別名が
+  `replay_quality_gate.py` でも正規化されることで、シナリオ指定の往復が一貫化した。
+
+Failure Cause:
+- リプレイ品質評価（walk-forward）とシナリオ分類エンジンの許容名が不一致で、`--scenarios` の実運用運用系が断絶していた。
+
+Improvement:
+- `replay_quality_gate.py` のシナリオ正規化を拡張し、`SCENARIO_OPTIONS` を exit 側と同等に更新。
+- 受理対象に `trend_up` / `trend_down` / `gap_*` / `stale` を追加。
+- 同義語を一元変換する補助関数を追加。
+
+Verification:
+- `tests/analysis/test_replay_quality_gate_script.py::test_resolve_scenario_names_validates_supported_grouped_scenarios`
+  で同義語を含む指定が期待 canonical 名へ変換されることを固定化。
+
+Status:
+- done
+
+## 2026-03-01 01:25 UTC / 2026-03-01 10:25 JST - `replay_exit_workers_groups` のシナリオ網羅性を拡張（trend/gap/stale）
+
+Period:
+- 対象:
+  - `scripts/replay_exit_workers_groups.py` の `_parse_scenarios`, `_build_tick_scenarios`
+  - `tests/scripts/test_replay_exit_workers_groups.py`
+- 対象データ:
+  - スクリプト内ユニット合成データ（シナリオ分類の観測固定）
+
+Fact:
+- 従来の `wide_spread/tight_spread/high_vol/low_vol/trend/range` に加え、
+  - `trend_up`/`trend_down`（方向別トレンド）、
+  - `gap`/`gap_up`/`gap_down`（tick間急変）、
+  - `stale`（tick間時間遅延）
+  を付与できるように分類ロジックが拡張された。
+- 同時に `uptrend`/`downtrend`/`stale_ticks`/`high_volatility` といった同義語がシナリオCLIへ反映される実装を追加。
+
+Failure Cause:
+- 先行のシナリオ選別が上下トレンド・価格ギャップ・欠落ティックに弱く、再現シナリオを運用的に増やしにくい状態だった。
+
+Improvement:
+- `_parse_scenarios` に同義語正規化を追加し、既存 `SCENARIO_OPTIONS` の拡張シナリオを受理。
+- `_build_tick_scenarios` で tick ミリ単位のギャップ/遅延判定を導入し、方向別トレンドの分類を追加。
+- `all + 指定シナリオ` でシナリオごとのフィルタ対象を維持したまま再実行可能にし、検証の粒度を上げる。
+
+Verification:
+- `tests/scripts/test_replay_exit_workers_groups.py` にシナリオ同義語展開と拡張フラグ分類の固定テストを追加。
+
+Status:
+- done
+
+## 2026-03-01 01:05 UTC / 2026-03-01 10:05 JST - `replay_exit_workers_groups` のスキーマ拡張対応（`OPEN_*`, `signals`, `created_at`）
+
+Period:
+- 対象:
+  - `scripts/replay_exit_workers_groups.py` の `_load_entries_from_replay`
+- 根拠データ:
+  - `tests/scripts/test_replay_exit_workers_groups.py` 追加シナリオ
+
+Fact:
+- `action` が `OPEN_LONG` / `OPEN_SHORT` 形式、または `signals` / `entries` 配下に格納される形式で、または
+  `created_at` / `entry` / `entry_px` / `units_signed` / `target_pips` を用いた形式の
+  リプレイ行が観測された。
+- `trades` 固定キー前提のままだと、旧実装で取りこぼし増加と不要なスキップが発生しうる。
+
+Failure Cause:
+- リプレイ生成経路やバージョン差分により、`entry` フィールド名・方向文字列・時間キーが揺れるのに対し
+  受け口側の許容幅が不足していた。
+
+Improvement:
+- `_load_entries_from_replay` で受け口を拡張。
+  - `trades` 未定義時に `entries`/`signals`/`actions`/`data` を探索。
+  - `OPEN_*` 系アクションを方向として解釈。
+  - `created_at`, `entry`, `entry_px`, `units_signed`, `take_profit`, `stop_loss`, `tp_distance`, `sl_distance`, `target_pips` を受理。
+- 既存 `tp_price`/`sl_price` 優先順序と `tp_pips`/`sl_pips` 補完の方針を維持したまま、別名キーへの後方互換を追加。
+- `units_signed` が負数でも `abs` 変換後に受理する前提を明記。方向キーとの整合で、符号付き数量由来のエントリー拒否を回避。
+
+Verification:
+- 追加テストで `OPEN_LONG` / `signals` / `created_at` / `units_signed` ケースを通過したことを確認。
+
+Status:
+- done
+
+## 2026-03-01 00:45 UTC / 2026-03-01 09:45 JST - `replay_exit_workers_groups` の入力パース脆弱性是正（壊れたレコードでリプレイ停止を防止）
+
+Period:
+- 対象:
+  - `scripts/replay_exit_workers_groups.py` の `replay_workers_*` 出力パース
+- 根拠データ:
+  - スキーマ揺れ（`entry_time`/`open_time`/`time`/`ts`/`timestamp`、`direction`/`side`/`action`）を含むローカル再現ログ
+  - `tests/scripts/test_replay_exit_workers_groups.py` に追加した再現データ
+
+Fact:
+- `replay_workers_*_*.json` が 1 件の不正行を含むと、旧ローダーは `ValueError` で全件停止しやすく、再現レポートが生成不能になる状態を確認。
+- 同じ入力で、`entry` スキーマのキー差分を吸収しない trade が混在しても、妥当行は継続して読み込めるようになった。
+- `_parse_dt` が文字列エポック値と `ms` 単位数値にも対応し、時刻欠損行をスキップしながら継続処理できることを確認。
+
+Failure Cause:
+- `entry` 取得時に `entry_time` と `direction` と `entry_price` を固定キー前提で扱っていたため、仕様差分や欠損行で即停止する設計だった。
+
+Improvement:
+- `_load_entries_from_replay` を以下の方針に修正:
+  - JSON パース失敗は空配列で継続。
+  - `trades` を dict/list どちらでも受ける。
+  - `entry` フィールドキーを `entry_time`/`open_time`/`time`/`ts`/`timestamp` 等へ拡張。
+  - 方向/価格/数量の異形キーへ柔軟対応し、必須判定を保ちながら不正行をスキップ継続。
+  - `tp_price`/`sl_price` と `tp_pips`/`sl_pips` を併用可能にし、`entry` 受理を阻害しない。
+  - 時刻を UTC 正規化し、文字列/数値エポック（ms含む）を許容。
+- `tests/scripts/test_replay_exit_workers_groups.py` を新規追加し、壊れた入力での継続挙動を固定化。
+
+Verification:
+- `pytest -q tests/scripts/test_replay_exit_workers_groups.py`
+- 同期間の replay パイプラインで `summary_all.json` の生成中断件数が減少することを確認（運用環境再実行時に比較）。
+
+Status:
+- done
+
 ## 2026-03-01 00:30 UTC / 2026-03-01 09:30 JST - 収益阻害Top3（prob/perf/intent reject）に対する縮小継続チューニング適用
 
 Period:
@@ -61,8 +188,6 @@ Verification:
   - `trades.db`（non-manual）で `PF > 1.00`, `net_jpy > 0`
 
 Status:
-- in_progress
-
 ## Entry Template
 ```
 
@@ -4253,6 +4378,50 @@ Verification:
 1. `close_failed` の `InvalidParameterException` が減衰し、`close_reject_invalid_trade_id` へ寄与遷移するかをVM `orders.db` で要再確認。
 2. VM `orders.db` で `ticket_id LIKE 'sim-%'` の `close_failed` 再集計。
 3. `close_request` から `close_ok` への通過率、`strategy_control` 拒否系の有無を同期間で再監査。
+
+Status:
+- in_progress
+
+## 2026-03-02  (UTC) / 2026-03-02 06:00 JST - 5秒スキャッパー D/Flow 総力復帰
+
+Source:
+- local config audit (`ops/env/scalp_ping_5s_d.env`, `ops/env/scalp_ping_5s_flow.env`)
+- preflight/env audit (`ops/env/quant-order-manager.env`)
+
+Hypothesis:
+- `scalp_ping_5s_d` が `SCALP_PING_5S_D_ENABLED=0` のままで、`scalp_ping_5s_flow` も停止状態だったことが、シグナル欠落の主要因。
+- D/Flow 起動後は、`scalp_ping_5s_d` 側の過剰ブロック（ticks/align/leading_profile）を緩和し、`order_manager` の D/Flow 下限を緩く設定してエントリー量を回復させる。
+
+Action:
+- `ops/env/scalp_ping_5s_d.env`
+  - `SCALP_PING_5S_D_ENABLED: 0 -> 1`
+  - `SCALP_PING_5S_D_MAX_ORDERS_PER_MINUTE: 6 -> 12`
+  - `SCALP_PING_5S_D_MIN_TICKS: 4 -> 3`
+  - `SCALP_PING_5S_D_MIN_SIGNAL_TICKS: 3 -> 2`
+  - `SCALP_PING_5S_D_CONF_FLOOR: 74 -> 72`
+  - `SCALP_PING_5S_D_ENTRY_PROBABILITY_ALIGN_PENALTY_MAX: 0.55 -> 0.24`
+  - `SCALP_PING_5S_D_ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN: 0.70 -> 0.64`
+  - `SCALP_PING_5S_D_ENTRY_LEADING_PROFILE_REJECT_BELOW(_SHORT): 0.50/0.62 -> 0.44/0.54`
+- `ops/env/scalp_ping_5s_flow.env`
+  - `SCALP_PING_5S_FLOW_ENABLED: 0 -> 1`
+  - `SCALP_PING_5S_FLOW_MIN_TICKS: 4 -> 3`
+  - `SCALP_PING_5S_FLOW_MIN_SIGNAL_TICKS: 3 -> 2`
+  - `SCALP_PING_5S_FLOW_SHORT_MIN_TICKS: 3 -> 2`
+  - `SCALP_PING_5S_FLOW_SHORT_MIN_SIGNAL_TICKS: 3 -> 2`
+  - `SCALP_PING_5S_FLOW_MIN_TICK_RATE: 0.50 -> 0.45`
+  - `SCALP_PING_5S_FLOW_SHORT_MIN_TICK_RATE: 0.50 -> 0.45`
+  - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_ENABLED: 0 -> 1`
+  - `SCALP_PING_5S_FLOW_ENTRY_LEADING_PROFILE_REJECT_BELOW(_SHORT): 0.45/0.55 -> 0.40/0.52`
+- `ops/env/quant-order-manager.env`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_D_LIVE: 1.00 -> 0.80`
+  - Flow 用の `ORDER_MANAGER_PRESERVE_INTENT_*` / `ORDER_MIN_UNITS` 設定を新規追加。
+- `ops/env/quant-scalp-ping-5s-d.env`, `ops/env/quant-scalp-ping-5s-flow.env`
+  - 各戦略のサービス共通 `SCALP_PING_5S_*_ENABLED` を `1` に更新
+
+Verification:
+1. VM反映後2時間で `scalp_ping_5s_d_live` と `scalp_ping_5s_flow_live` の `filled` が 0 以外に戻ること。
+2. `orders.db` の `entry_probability_reject + rate_limited + revert_not_found` 比率を比較し、合計が前日比で低下すること。
+3. `filled` と `stop_loss` の増加バランスが極端化しない（短期で `MARKET_ORDER_MARGIN_CLOSEOUT` が増加しない）こと。
 
 Status:
 - in_progress

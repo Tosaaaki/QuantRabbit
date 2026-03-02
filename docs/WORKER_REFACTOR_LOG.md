@@ -1,5 +1,38 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-01（追記）`replay_quality_gate.py` のシナリオ入力を `replay_exit_workers_groups.py` と同義語・拡張セットで統一
+
+- `scripts/replay_quality_gate.py` の `SCENARIO_OPTIONS` を `trend_up` / `trend_down` / `gap` / `gap_up` / `gap_down` / `stale` に拡張。
+- `_resolve_scenario_names()` で `high/low/high_volatility/stale_tick/stale_ticks/uptrend/downtrend/gapup/gapdown/tight` 等の同義語を正規化して受理するよう変更。
+- `replay_quality_gate` から `exit_workers_groups` 経由で実行した場合でも、`wide` / `uptrend` など旧記述がそのまま使える運用を担保。
+- `tests/analysis/test_replay_quality_gate_script.py` に同義語含めた検証を追加。
+
+### 2026-03-01（追記）`replay_exit_workers_groups` のシナリオ分類強化（トレンド方向・ギャップ・stale）
+
+- `scripts/replay_exit_workers_groups.py` の `_parse_scenarios` と `_build_tick_scenarios` を拡張し、以下を受理。
+  - シナリオ別名の正規化（`wide`/`tight`、`uptrend`/`downtrend`、`high_volatility`、`stale_ticks` 等）。
+  - 既存 `trend` を上下方向に分解する `trend_up` / `trend_down` を追加。
+  - tick 間の急変を検知する `gap` / `gap_up` / `gap_down`、欠け/遅延を検知する `stale` を追加。
+  - 2 つのシグナルセット（`all` + 指定シナリオ）でフィルタ時、再現対象を条件分解して再実行可能に変更。
+- `tests/scripts/test_replay_exit_workers_groups.py` にシナリオ同義語展開と拡張フラグ生成の固定テストを追加。
+
+### 2026-03-01（追記）`replay_exit_workers_groups` の入力ローダー耐障害化
+
+- `scripts/replay_exit_workers_groups.py` の `_load_entries_from_replay` を堅牢化し、実運用リプレイで壊れた行を原因に全件停止しない設計に変更。
+  - `entry_time`/`direction`/`entry_price` の取得キーを `entry_time`/`open_time`/`time`/`ts`/`timestamp`、
+    `direction`/`side`/`action`、`entry_price`/`price`/`open_price` として拡張。
+  - `tp_price`/`sl_price` を最優先、未提供時は `tp_pips`/`sl_pips` を補完し、数値不正は拒否対象外（スキップせず None 取扱い）へ変更。
+  - 時刻を `datetime` で受ける経路をUTC正規化し、数値/文字列エポック（ms 単位）も許容。
+  - `trades` 欠落やJSON不正は即中断ではなく監査行数報告のもと空配列として継続。
+- 検証: `tests/scripts/test_replay_exit_workers_groups.py` を新規追加し、壊れた行混在時のスキップ挙動と複数スキーマの読込を固定化。
+
+- 追加追記（`2026-03-01`）:
+  - ローダー対象を `trades` のみでなく `signals` / `entries` / `actions` / `data` も採用。
+  - `OPEN_LONG` / `OPEN_SHORT` / `open-long` などの `action` 表記、`created_at`、`entry`/`entry_px`、`units_signed` を受理。
+  - `units_signed` が負数のまま入る形式も `abs` 前提で受理（短期側の符号付き数量を維持しつつ、量が0のケースのみ除外）。
+  - `tp/ sl` は `take_profit`, `stop_loss`, `sl_distance`, `tp_distance`, `target_pips` といった別名にも対応。
+  - 不正値は `invalid_tp_sl` として観測記録し、エントリー判定自体は継続。
+
 ### 2026-03-01（追記）`deploy_via_metadata.sh` の起動ユーザー解決を耐障害化
 
 - `scripts/deploy_via_metadata.sh` の startup-script を修正し、起動時の `REPO_OWNER` 解決を以下に変更。
@@ -10457,3 +10490,19 @@
   - 反映後24hで `trades.db` の `expectancy_jpy`・`PF`・`net_jpy` を前日同窓と比較。
   - `scalp_ping_5s_b/c` の `filled` 件数を維持しつつ合算 `net_jpy` が改善すること。
   - `scalp_macd_rsi_div*` の `avg_loss_jpy/max_loss_jpy` が縮小すること。
+
+## 2026-03-02（追記）総力復帰: D/Flow を停止解除して低遅延エントリーラインへ再投入
+
+- 目的
+  - `scalp_ping_5s_d` / `scalp_ping_5s_flow` が戦略側で停止中だったために発生していた取引取りこぼしを解消。
+- 実装
+  - `ops/env/scalp_ping_5s_d.env` と `ops/env/scalp_ping_5s_flow.env` の `*_ENABLED` を `1` に変更。
+  - D/Flow の最小条件（ticks/lead-profile/alignペナルティ）を現行B/C相当寄りに緩和。
+  - `ops/env/quant-order-manager.env` に D の最小縮小幅を微調整し、Flow の `ORDER_MANAGER_PRESERVE_INTENT_*` / `ORDER_MIN_UNITS` を新規追加。
+  - 生成用 overlay `ops/env/quant-scalp-ping-5s-d.env` と `ops/env/quant-scalp-ping-5s-flow.env` の `ENABLED` を `1` に同期。
+- 影響
+  - entry/exit 戦略ロジックは変更せず、V2分離構成（worker=entry/exit, order-manager=ガード/通路）を維持。
+  - 全体の収益改善は VM 反映後の実測（`orders.db` / `trades.db` / journal）で検証。
+- 検証
+  - 反映後2時間: `scalp_ping_5s_d_live` / `scalp_ping_5s_flow_live` の `filled>0` と `rejected` 変化を監査。
+  - 24時間: `net_jpy` と `PF` の改善、`MARKET_ORDER_MARGIN_CLOSEOUT` 増加有無を監視。
