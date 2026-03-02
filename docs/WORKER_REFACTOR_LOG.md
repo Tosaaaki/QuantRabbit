@@ -14,6 +14,14 @@
 - 監査観点: 本修正の効果は VM 側 `quant-strategy-control.service` 再起動後に
   `journalctl -u quant-strategy-control.service` の `strategies=` ログと `logs/strategy_control.db` 件数で確認する。
 
+### 2026-03-02（追記）`scripts/deploy_via_metadata.sh` の起動時権限回復を追加
+
+- VM 起動時に `startup-script` 側で `/home/tossaki/QuantRabbit/logs` / `config` の所有者/権限を
+  `REPO_OWNER` 前提へ復旧する処理を追加。
+- 目的: `Permission denied: 'logs'` / `Permission denied: '/home/tossaki/QuantRabbit/config/dynamic_alloc.json'` により
+  `strategy_control` を含むワーカーの DB 書込・設定反映が止まる状態を解消し、シード反映と制御判定を再稼働可能にする。
+- 併せて、デプロイ後の再起動時に DB/ログ系サービスの初期起動失敗が継続しないことを監査する。
+
 ### 2026-03-01（追記）`replay_exit_workers_groups` のシナリオ分類強化（トレンド方向・ギャップ・stale）
 
 - `scripts/replay_exit_workers_groups.py` の `_parse_scenarios` と `_build_tick_scenarios` を拡張し、以下を受理。

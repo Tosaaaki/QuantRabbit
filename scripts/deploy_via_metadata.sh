@@ -111,6 +111,11 @@ REPO_OWNER="\$(basename "\$(dirname "\$REPO_DIR")")"
 STAMP_DIR="/var/lib/quantrabbit"
 STAMP_FILE="\$STAMP_DIR/deploy_id"
 if [[ -d "\$REPO_DIR" ]]; then
+  mkdir -p "\$REPO_DIR/logs" "\$REPO_DIR/config"
+  chown -R "\$REPO_OWNER":"\$REPO_OWNER" "\$REPO_DIR/logs" "\$REPO_DIR/config" || true
+  chmod -R u+rwX "\$REPO_DIR/logs" "\$REPO_DIR/config" || true
+fi
+if [[ -d "\$REPO_DIR" ]]; then
   REPO_OWNER="\$(stat -c '%U' "\$REPO_DIR" 2>/dev/null || true)"
 fi
 if [[ -z "\$REPO_OWNER" ]]; then
