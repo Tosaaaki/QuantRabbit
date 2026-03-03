@@ -2520,6 +2520,9 @@ _DYNAMIC_SL_RATIO = float(os.getenv("ORDER_DYNAMIC_SL_RATIO", "1.2"))
 _DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
 _ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True)
 _ORDER_MANAGER_BRAIN_GATE_ENABLED = _env_bool("ORDER_MANAGER_BRAIN_GATE_ENABLED", False)
+_ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT = _env_bool(
+    "ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT", False
+)
 _ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
 _FORECAST_SERVICE_ENABLED = _env_bool("FORECAST_SERVICE_ENABLED", False)
 _FORECAST_SERVICE_URL = os.getenv("FORECAST_SERVICE_URL", "http://127.0.0.1:8302").strip()
@@ -9435,8 +9438,11 @@ async def market_order(
     if (
         not reduce_only
         and pocket != "manual"
-        and not preserve_strategy_intent
         and _ORDER_MANAGER_BRAIN_GATE_ENABLED
+        and (
+            not preserve_strategy_intent
+            or _ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT
+        )
     ):
         try:
             brain_decision = brain.decide(
