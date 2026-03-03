@@ -4425,3 +4425,48 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-03-03 (JST) / bot entry再開対応（manualポジ非干渉）
+
+Source:
+- OANDA summary (`scripts/check_oanda_summary.py`): `openTradeCount=1`（manualのみ継続）
+- VM serial (`gcloud compute instances get-serial-port-output`): 戦略起動後も新規約定増加なし
+- config audit (`ops/env/quant-v2-runtime.env`, `ops/env/quant-order-manager.env`, `ops/env/scalp_ping_5s_{b,c,d,flow}.env`)
+
+Hypothesis:
+1. ping5s系のローカル閾値（`CONF_FLOOR` / `ENTRY_PROBABILITY_ALIGN_FLOOR` / reject_under）が高すぎ、`market_order` 呼び出し前に skip される。
+2. `BLOCK_MANUAL_NETTING` が有効だと手動建玉と逆方向のbot entryが抑止されるため、明示的に無効化して manual 非干渉を担保する。
+
+Action:
+- `ops/env/quant-v2-runtime.env`
+  - `BLOCK_MANUAL_NETTING=0` を追加
+- `ops/env/quant-order-manager.env`
+  - `BLOCK_MANUAL_NETTING=0` を追加
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B(_LIVE)=0.15`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.15`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_D(_LIVE)=0.12`
+- `ops/env/scalp_ping_5s_b.env`
+  - `CONF_FLOOR=60`
+  - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.35`
+  - `ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT=0`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B_LIVE=0.15`
+- `ops/env/scalp_ping_5s_c.env`
+  - `CONF_FLOOR=60`
+  - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.35`
+  - `ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT=0`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE=0.15`
+- `ops/env/scalp_ping_5s_d.env`
+  - `PERF_GUARD_MODE=reduce`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_D_LIVE=0.12`
+
+Impact:
+- manualポジション自体の操作・クローズ処理は未変更（botのENTRY通過条件のみ緩和）。
+- V2導線（strategy worker → order_manager）と `entry_thesis` 契約は非変更。
+
+Verification (post-deploy):
+1. OANDA `lastTransactionID` が更新され、`openTradeCount` が manual分以外で増えること。
+2. `orders.db` の ping5s系 `entry_probability_reject` 比率が低下し、`filled` が復帰すること。
+3. `manual_netting_block` ステータス増加がないこと（manual非干渉の維持確認）。
+
+Status:
+- in_progress

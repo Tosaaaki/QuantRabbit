@@ -10521,3 +10521,39 @@
 - 検証
   - 反映後2時間: `scalp_ping_5s_d_live` / `scalp_ping_5s_flow_live` の `filled>0` と `rejected` 変化を監査。
   - 24時間: `net_jpy` と `PF` の改善、`MARKET_ORDER_MARGIN_CLOSEOUT` 増加有無を監視。
+
+### 2026-03-02（追記）position_manager open_positions の短時間タイムアウト解消
+
+- 目的
+  - `position_manager` の `/position/open_positions` 呼び出しが 4〜6.5 秒で切れてエントリー/EXITの進行が止まる現象を抑制し、稼働率を回復する。
+- 仮説
+  - `quant-v2-runtime.env` の position-manager 系 timeout を再調整すると、service-call 周りのタイムアウト率と fallback 発火が低下する。
+- 実装
+  - `ops/env/quant-v2-runtime.env`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT: 4.0 -> 8.0`
+    - `POSITION_MANAGER_HTTP_TIMEOUT: 5.0 -> 8.0`
+    - `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT: 2.8 -> 8.0`
+    - `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC: 4.0 -> 10.0`
+- 影響
+  - service timeout 上限の引上げにより、開閉前判定処理の待ち時間増加リスクを一時吸収。
+- 検証
+  - VM反映後、`journal` の `position_manager service call failed` が減るか、`scalp_*` の `open_positions` 呼び出しログ頻度が回復するかを確認。
+
+## 2026-03-03 JST - ping5s entry unblock tuning (manual非干渉)
+
+- 背景:
+  - 手動建玉は維持される一方、bot entry が継続的に発生しない事象を確認。
+- 変更対象:
+  - `ops/env/quant-v2-runtime.env`
+  - `ops/env/quant-order-manager.env`
+  - `ops/env/scalp_ping_5s_b.env`
+  - `ops/env/scalp_ping_5s_c.env`
+  - `ops/env/scalp_ping_5s_d.env`
+- 変更要点:
+  1. `BLOCK_MANUAL_NETTING=0` を runtime/order-manager に明示し、manual建玉とbot entryの分離を固定化。
+  2. ping5s B/C/D の `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_*` を引き下げ（B/C=0.15, D=0.12）。
+  3. B/C の `CONF_FLOOR` と `ENTRY_PROBABILITY_ALIGN_FLOOR(_REQUIRE_SUPPORT)` を緩和。
+  4. D の `PERF_GUARD_MODE` を `block` から `reduce` へ変更。
+- 導線への影響:
+  - V2分離構成（entry/exit worker, order-manager, position-manager）は不変。
+  - 共通レイヤでの戦略選別ロジックは追加していない。
