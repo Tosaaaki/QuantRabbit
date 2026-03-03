@@ -113,7 +113,7 @@ def _load_local_lane(
             client_id = str(row.get("client_id") or "").strip()
             if not client_id and trade_id:
                 client_id = trade_to_client.get(trade_id, "")
-            if local_prefix and not client_id.startswith(local_prefix):
+            if local_prefix and client_id and not client_id.startswith(local_prefix):
                 continue
 
             # `realized_jpy` in codex log is cumulative, so per-trade P/L must use `pl`.
@@ -177,7 +177,21 @@ def _load_vm_lane(
     return summary
 
 
-def _winner(local_lane: dict[str, float | int], vm_lane: dict[str, float | int]) -> dict[str, object]:
+def _winner(
+    local_lane: dict[str, float | int],
+    vm_lane: dict[str, float | int],
+    *,
+    min_trades: int,
+) -> dict[str, object]:
+    local_trades = _as_int(local_lane.get("trades"), 0)
+    vm_trades = _as_int(vm_lane.get("trades"), 0)
+    if local_trades < min_trades and vm_trades < min_trades:
+        return {"lane": "insufficient_data", "metric": "min_trades"}
+    if local_trades < min_trades <= vm_trades:
+        return {"lane": "vm", "metric": "min_trades"}
+    if vm_trades < min_trades <= local_trades:
+        return {"lane": "local", "metric": "min_trades"}
+
     local_net = _as_float(local_lane.get("net_jpy"), 0.0)
     vm_net = _as_float(vm_lane.get("net_jpy"), 0.0)
     if local_net > vm_net:
@@ -201,6 +215,7 @@ def main() -> int:
     ap.add_argument("--hours", type=float, default=24.0)
     ap.add_argument("--vm-prefix", default="qr-")
     ap.add_argument("--local-prefix", default="codexlhf_")
+    ap.add_argument("--min-trades", type=int, default=5)
     args = ap.parse_args()
 
     now_epoch = time.time()
@@ -220,11 +235,12 @@ def main() -> int:
 
     result = {
         "window_hours": max(0.0, float(args.hours)),
+        "min_trades": max(1, int(args.min_trades)),
         "lanes": {
             "local": local_summary,
             "vm": vm_summary,
         },
-        "winner": _winner(local_summary, vm_summary),
+        "winner": _winner(local_summary, vm_summary, min_trades=max(1, int(args.min_trades))),
     }
     print(json.dumps(result, ensure_ascii=False))
     return 0
