@@ -12,6 +12,7 @@
 - `docs/GCP_DEPLOY_SETUP.md`: OS Login/IAP/gcloud セットアップ
 - `docs/OPS_CURRENT.md`: 時限の運用設定（攻め設定・mask 済み unit など）
 - `docs/OPS_SKILLS.md`: 日次運用スキルの使い方
+- `docs/LOCAL_LANE_SPLIT.md`: VM本番repoとローカル実売買repoを分離する運用手順
 
 ## アーキテクチャ / 仕様
 - `docs/ARCHITECTURE.md`: システム全体フロー、コンポーネント、データスキーマ
