@@ -1752,3 +1752,20 @@
 - 運用意図:
   - 戦略停止ではなく「低品質シグナルの通過削減 + 単発損失の上限圧縮」で期待値改善を加速する。
   - 共通層は引き続き guard/risk 判定に限定し、戦略選別ロジックの後付け追加は行わない。
+
+### 2026-03-03 Entry Unblock Profile（manual position untouched）
+- 目的:
+  - 手動ポジションを操作せず、botエントリーのみを復帰する。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_POLICY_GATE_ENABLED=0`
+    - `ORDER_SLO_GUARD_ENABLED=0`
+    - `MAX_MARGIN_USAGE=0.95`
+    - `MAX_MARGIN_USAGE_HARD=0.98`
+  - `ops/env/quant-v2-runtime.env` に同値を同期。
+- 意図:
+  - policy/slo の共通停止を一時解除し、manual建玉併走時の entry 停止確率を下げる。
+  - margin cap は完全解除せず 0.95/0.98 に留め、過剰レバレッジを避ける。
+- 非変更:
+  - manual margin guard 方針（閾値ゼロ運用）
+  - close/exit ロジック、`entry_thesis` 契約、V2 service topology
