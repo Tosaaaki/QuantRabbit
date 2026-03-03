@@ -1762,6 +1762,11 @@
     - `ORDER_SLO_GUARD_ENABLED=0`
     - `MAX_MARGIN_USAGE=0.95`
     - `MAX_MARGIN_USAGE_HARD=0.98`
+    - `ORDER_MIN_UNITS_DEFAULT=100`
+    - `ORDER_MIN_UNITS_SCALP_FAST=100`
+    - `ORDER_MIN_UNITS_SCALP=100`
+    - `ORDER_MIN_UNITS_MICRO=100`
+    - `ORDER_MIN_UNITS_MACRO=200`
   - `ops/env/quant-v2-runtime.env` に同値を同期。
 - 意図:
   - policy/slo の共通停止を一時解除し、manual建玉併走時の entry 停止確率を下げる。
