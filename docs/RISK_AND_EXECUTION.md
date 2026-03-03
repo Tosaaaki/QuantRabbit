@@ -1762,14 +1762,25 @@
     - `ORDER_SLO_GUARD_ENABLED=0`
     - `MAX_MARGIN_USAGE=0.95`
     - `MAX_MARGIN_USAGE_HARD=0.98`
+    - `ORDER_ENTRY_NET_EDGE_GATE_ENABLED=0`
+    - `PERF_GUARD_GLOBAL_ENABLED=0`
+    - `PROFIT_GUARD_ENABLED=0`
+    - `ORDER_MANAGER_FORECAST_GATE_ENABLED=0`
+    - `FORECAST_GATE_ENABLED=0`
     - `ORDER_MIN_UNITS_DEFAULT=100`
     - `ORDER_MIN_UNITS_SCALP_FAST=100`
     - `ORDER_MIN_UNITS_SCALP=100`
     - `ORDER_MIN_UNITS_MICRO=100`
     - `ORDER_MIN_UNITS_MACRO=200`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_[B/C/D/FLOW]_LIVE=0.20`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_[B/C/D/FLOW]_LIVE=0.20`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_[B/C/D/FLOW]_LIVE=1.00`
+    - `SCALP_PING_5S_*_PERF_GUARD_ENABLED=0`, `M1SCALP_PERF_GUARD_ENABLED=0`
   - `ops/env/quant-v2-runtime.env` に同値を同期。
+    - `STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED=0`
 - 意図:
   - policy/slo の共通停止を一時解除し、manual建玉併走時の entry 停止確率を下げる。
+  - `entry_probability_reject` / `perf_block` 優勢時に no-entry が続くため、共通ゲートの拒否閾値を暫定で緩和する。
   - margin cap は完全解除せず 0.95/0.98 に留め、過剰レバレッジを避ける。
 - 非変更:
   - manual margin guard 方針（閾値ゼロ運用）
