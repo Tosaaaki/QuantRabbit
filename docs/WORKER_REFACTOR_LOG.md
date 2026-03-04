@@ -1,5 +1,55 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-04（追記）`scalp_ping_5s_b_live` lookaheadゲート第2段調整（ローカル parity）
+
+- 対象:
+  - `ops/env/scalp_ping_5s_b.env`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - `logs/local_vm_parity/quant-scalp-ping-5s-b.log` 直近集計で
+    `lookahead block` が `edge_negative_block` に 100% 収束（short 偏重）。
+  - `pred_move_pips` が `cost_pips` を一貫して下回り、entry復帰率が低下。
+- 変更:
+  - 方向安全弁（時限）:
+    - `SIDE_FILTER=sell`
+    - `ALLOW_NO_SIDE_FILTER=0`
+  - lookahead予測側を強化:
+    - `LOOKAHEAD_HORIZON_SEC=2.80`
+    - `LOOKAHEAD_MOMENTUM_WEIGHT=1.15`
+    - `LOOKAHEAD_FLOW_WEIGHT=0.50`
+    - `LOOKAHEAD_TRIGGER_WEIGHT=0.45`
+    - `LOOKAHEAD_BIAS_WEIGHT=0.42`（新規明示）
+    - `LOOKAHEAD_COUNTER_PENALTY=0.30`
+  - cost見積りを緩和:
+    - `LOOKAHEAD_SLIP_BASE_PIPS=0.04`（新規明示）
+    - `LOOKAHEAD_SLIP_SPREAD_MULT=0.10`
+    - `LOOKAHEAD_SLIP_RANGE_MULT=0.06`
+  - long過大ロット抑制を追加:
+    - `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.08`
+    - `ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT=0.94`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.96`
+    - `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.34`
+- 意図:
+  - ゲート自体は維持したまま（`LOOKAHEAD_GATE_ENABLED=1`）、
+    過剰blockを緩和して entry 変換率を戻しつつ、long 側の損失増幅を抑える。
+  - long 側は再開条件を満たすまで時限的に遮断し、短期の損失流入を止める。
+
+### 2026-03-04（追記）`local_v2_stack` × `local_vm_parity_supervisor` の重複起動再発防止
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+- 変更:
+  - `local_v2_stack.sh` に競合ガードを追加し、`up/down/restart` 実行時に次を検出した場合は既定拒否:
+    - `screen` セッション `qr-local-parity`
+    - `scripts/local_vm_parity_supervisor.py`（repo配下）実行プロセス
+  - 拒否時メッセージで `scripts/local_vm_parity_stack.sh stop` を案内。
+  - 明示フラグ `--force-conflict` 指定時のみバイパス可能化（`status/logs` は従来どおり実行可）。
+  - `OPS_LOCAL_RUNBOOK` に「`local_v2_stack` と `local_vm_parity_stack` は排他」の運用手順を追記。
+- 意図:
+  - parity supervisor と local_v2 worker 群の併用による worker 重複起動、
+    ならびに 8300/8301 競合の再発を防止する。
+
 ### 2026-03-04（追記）`scalp_ping_5s_b_live` 収益悪化への即時デリスク（品質選別+サイズ抑制）
 
 - 対象: `ops/env/scalp_ping_5s_b.env`

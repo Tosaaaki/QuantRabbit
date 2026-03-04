@@ -17,6 +17,82 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-04 13:30 UTC / 2026-03-04 22:30 JST - `scalp_ping_5s_b_live` 第2段チューニング（lookahead過剰block緩和 + long過大ロット抑制）
+
+Period:
+- 調査時刻: 2026-03-04 13:20〜13:30 UTC（22:20〜22:30 JST）
+- 対象: ローカル parity ログ `logs/local_vm_parity/quant-scalp-ping-5s-b.log` と `ops/env/scalp_ping_5s_b.env`
+
+Fact:
+- 直近 lookahead block は `edge_negative_block` のみ（`241/241 = 100%`）。
+- side内訳は `short=207`, `long=34`（short 偏重）。
+- blockサンプルは `pred ~0.10-0.31p` に対し `cost ~1.12-1.19p` で、`edge` が恒常的にマイナス。
+- `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=1` のため、`edge <= 0` は即 block（thin-edge 設定では回避不可）。
+
+Failure Cause:
+- spread + slippage 見積りに対して短期予測値（pred）が不足し、lookahead が常時 `edge_negative_block` へ収束。
+- 一方で long 側は過去の負け寄与が大きく、entry 復帰時のロット上振れを抑える安全弁が不足。
+
+Improvement:
+- `ops/env/scalp_ping_5s_b.env` を第2段で更新:
+  - 方向安全弁（時限）: `SIDE_FILTER=sell`, `ALLOW_NO_SIDE_FILTER=0`（long側の即時遮断）
+  - lookahead の予測項を引き上げ: `HORIZON_SEC=2.80`, `MOMENTUM_WEIGHT=1.15`, `FLOW_WEIGHT=0.50`, `TRIGGER_WEIGHT=0.45`, `BIAS_WEIGHT=0.42`, `COUNTER_PENALTY=0.30`
+  - cost見積りを過剰保守から緩和: `SLIP_BASE_PIPS=0.04`, `SLIP_SPREAD_MULT=0.10`, `SLIP_RANGE_MULT=0.06`
+  - long過大ロット抑制: `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.08`,
+    `ENTRY_PROBABILITY_ALIGN_UNITS_MAX_MULT=0.94`,
+    `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.96`,
+    `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.34`
+- 既存の `LOOKAHEAD_GATE_ENABLED=1` は維持し、無条件エントリー化は行わない。
+- long再開は時限条件付き（long単独で `PF>1` かつ `avg_pips>=0` を一定件数で確認後）。
+
+Verification:
+- parity 再起動後、30分/120分で以下を確認する。
+  - `lookahead block` 件数と `edge_negative_block` 比率が低下すること
+  - `filled` / `preflight_start` 比率の回復
+  - `PF`, `win_rate`, `STOP_LOSS_ORDER 比率` が第1段より悪化しないこと
+  - long/short の平均 units が再び long 側へ偏りすぎないこと
+
+Status:
+- in_progress
+
+## 2026-03-04 13:23 UTC / 2026-03-04 22:23 JST - `local_v2_stack` と parity supervisor 競合による ENTRY 減少の再発防止
+
+Period:
+- 調査時刻: 2026-03-04 12:40〜13:23 UTC（21:40〜22:23 JST）
+- 対象: ローカルV2導線（`scripts/local_v2_stack.sh`）と parity 導線（`scripts/local_vm_parity_supervisor.py`）
+
+Fact:
+- `ps` の親子関係で、`workers.position_manager.worker` / `workers.order_manager.worker` は
+  `local_vm_parity_supervisor.py`（`screen: qr-local-parity`）配下で稼働。
+- `lsof` で `:8300` と `:8301` は parity 側の worker が LISTEN。
+- 同時に `local_v2_stack.sh up` を実行すると、`quant-order-manager.log` /
+  `quant-position-manager.log` で `Errno 48 (address already in use)` が発生し、
+  worker が不安定化して ENTRY 停滞が発生。
+
+Failure Cause:
+- 同一 repo で「`local_v2_stack` と parity supervisor を同時運転」し、
+  同じ worker と同じ固定ポート（8300/8301）を奪い合う運用競合が発生していた。
+
+Improvement:
+- `scripts/local_v2_stack.sh` に排他ガードを追加。
+  - `up/down/restart` 実行時に次を検出したら既定拒否:
+    - `screen` セッション `qr-local-parity`
+    - `scripts/local_vm_parity_supervisor.py` プロセス（repo配下）
+  - 案内: `scripts/local_vm_parity_stack.sh stop` を表示。
+  - 例外: 意図的な実行時のみ `--force-conflict` でバイパス可能。
+- `docs/OPS_LOCAL_RUNBOOK.md` に「`local_v2_stack` と parity は排他運用」を明記。
+- `docs/WORKER_REFACTOR_LOG.md` に監査ログ追記。
+
+Verification:
+- `scripts/local_v2_stack.sh up --services quant-position-manager --env ops/env/local-v2-stack.env`
+  が parity 稼働中に `EXIT:3` で拒否されること。
+- `scripts/local_v2_stack.sh up --services quant-position-manager --env ops/env/local-v2-stack.env --force-conflict`
+  でガードがバイパスされること（その後の成否は環境依存）。
+- `scripts/local_v2_stack.sh status` / `logs` が parity 稼働中でも実行できること。
+
+Status:
+- done
+
 ## 2026-03-04 12:40 UTC / 2026-03-04 21:40 JST - `scalp_ping_5s_b_live` 緊急収益改善（品質閾値+サイズ圧縮）
 
 Period:
