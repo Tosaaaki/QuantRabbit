@@ -19,6 +19,7 @@ VERBOSE="${QR_LOCAL_V2_AUTORECOVER_VERBOSE:-0}"
 RESUME_GAP_SEC="${QR_LOCAL_V2_RESUME_GAP_SEC:-90}"
 NET_RECOVERY_RESTART_MARKET_DATA="${QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA:-1}"
 NET_RECOVERY_RESTART_COOLDOWN_SEC="${QR_LOCAL_V2_NET_RECOVERY_RESTART_COOLDOWN_SEC:-60}"
+STALE_RECOVERY_ENABLED="${QR_LOCAL_V2_STALE_RECOVERY_ENABLED:-0}"
 
 usage() {
   cat <<'USAGE'
@@ -272,7 +273,10 @@ if [[ ${status_rc} -ne 0 ]]; then
   exit 0
 fi
 
-if ! printf '%s\n' "${status_out}" | grep -Eq '^\[(stopped|stale)\]'; then
+stopped_lines="$(printf '%s\n' "${status_out}" | grep -E '^\[stopped\]' || true)"
+stale_lines="$(printf '%s\n' "${status_out}" | grep -E '^\[stale\]' || true)"
+
+if [[ -z "${stopped_lines}" && -z "${stale_lines}" ]]; then
   if [[ "${VERBOSE}" == "1" ]]; then
     log "[ok] stack healthy profile=${PROFILE}"
   fi
@@ -281,6 +285,13 @@ fi
 
 if [[ "${network_state}" != "up" ]]; then
   log "[wait] network unavailable host=${NETWORK_HOST}:${NETWORK_PORT}; defer recovery"
+  exit 0
+fi
+
+if [[ -z "${stopped_lines}" && -n "${stale_lines}" ]] && ! is_truthy "${STALE_RECOVERY_ENABLED}"; then
+  if [[ "${VERBOSE}" == "1" ]]; then
+    log "[skip] stale services detected but stale recovery disabled: ${stale_lines//$'\n'/ ; }"
+  fi
   exit 0
 fi
 
