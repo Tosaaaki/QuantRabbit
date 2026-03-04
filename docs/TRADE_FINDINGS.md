@@ -23,6 +23,115 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-05 00:50 JST / ローカル収益RCA第4段 + 停止耐性（watchdog/launchd）固定
+
+Period:
+- 分析窓: 直近24h（`logs/trades.db`, `logs/orders.db`, `logs/metrics.db`）
+- 実装/検証: 2026-03-05 00:20〜00:50 JST（ローカルV2導線）
+
+Fact:
+- 市況（ローカル実測）:
+  - `USD/JPY bid=157.266 ask=157.274 spread=0.8 pips`
+  - `ATR14(M1)=5.057 pips`, `range60(M1)=17.4 pips`
+  - pricing応答 `avg=255ms, p95=276ms`
+- 収益分解（`scalp_ping_5s_b_live`）:
+  - `n=608`, `net=-175.605`, `win_rate=19.6%`, `PF=0.416`
+  - `STOP_LOSS_ORDER=470 / net=-280.685`
+  - side別: `buy n=412 net=-177.957` / `sell n=196 net=+2.352`
+  - 保有秒バケット: `<5s net=-78.525`, `5-15s net=-64.523`, `15-30s net=-50.495`（短期偏損）
+- 反実仮想:
+  - `sell_only` では `net=+2.352`、`sell_no_momentum_hz` では `net=+2.812`
+
+Failure Cause:
+- 損失主因は buy側（特に `momentum*` 系）の逆選別。
+- 30秒未満の超短期エントリーでSL偏重が発生し、期待値を継続的に毀損。
+- 停止耐性は「起動コマンド依存」の運用余地が残り、ネット断/スリープ復帰時の再開確実性が不足。
+
+Improvement:
+- 収益改善（`ops/env/scalp_ping_5s_b.env`）:
+  - `SIGNAL_MODE_BLOCKLIST=momentum_sidefilter,momentum_hz,momentum_hz_slflip_smflip_hz`
+  - `ENTRY_COOLDOWN_SEC=4.5`, `MAX_ORDERS_PER_MINUTE=2`
+  - `CONF_FLOOR=82`, `LOOKAHEAD_EDGE_MIN_PIPS=0.30`, `LOOKAHEAD_SAFETY_MARGIN_PIPS=0.18`
+  - `MAX_SPREAD_PIPS=0.80`
+  - `MIN_TICKS=5`, `MIN_SIGNAL_TICKS=4`, `SHORT_MIN_TICKS=5`, `SHORT_MIN_SIGNAL_TICKS=4`
+  - `LOOKAHEAD_ALLOW_THIN_EDGE=0`
+  - `REVERT_MIN_TICKS=3`, `REVERT_CONFIRM_TICKS=2`, `REVERT_MIN_TICK_RATE=0.60`
+  - force-exit損失側を早期化（`MAX_FLOATING_LOSS_PIPS=0.65`, `MIN_HOLD_SEC=1` など）
+- 停止耐性（手動起動不要化）:
+  - `scripts/local_v2_watchdog.sh` を新設（`start/run/once/stop/status`）
+  - `scripts/local_v2_stack.sh` に `watchdog/watchdog-stop/watchdog-status` を追加
+  - `scripts/local_v2_autorecover_once.sh` に state管理を追加（polling gap検知 + network down/up検知）
+  - network復帰時に `quant-market-data-feed` を自動再起動（既定ON, cooldown付き）
+  - `scripts/install_local_v2_launchd.sh` を watchdog導線へ更新（既定10秒間隔）
+
+Verification:
+- テスト:
+  - `pytest -q tests/workers/test_scalp_ping_5s_worker.py -k "signal_mode_blocked or resolve_final_signal_for_side_filter"` → `6 passed`
+- スクリプト構文:
+  - `bash -n scripts/local_v2_stack.sh scripts/local_v2_watchdog.sh scripts/local_v2_autorecover_once.sh scripts/install_local_v2_launchd.sh`
+- watchdog実動:
+  - `local_v2_stack.sh watchdog --daemon` → `watchdog-status` で `running`、`watchdog-stop` で `stopped`
+- launchd反映:
+  - `install_local_v2_launchd.sh --interval-sec 10 ...` 実行後、`status_local_v2_launchd.sh` で `run interval = 10 seconds` と env 注入（`QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA=1`）を確認
+- 稼働確認:
+  - `local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で8サービス `running`
+
+Status:
+- in_progress（直近 30〜90 分で `STOP_LOSS_ORDER 比率` と `scalp_ping_5s_b_live net` を追跡）
+
+## 2026-03-05 00:34 JST / Hourly RCA HOLD（API名前解決失敗 + 約定DB更新停止）
+
+Period:
+- 調査時刻: 2026-03-05 00:29〜00:34 JST
+- 対象: `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `logs/tick_cache.json`, `logs/factor_cache.json`, `scripts/check_oanda_summary.py`
+
+Fact:
+- DB更新時刻:
+  - `orders.db`: `2026-03-04 23:03:15 JST`（調査時点で約91分経過）
+  - `trades.db`: `2026-03-05 00:04:08 JST`（調査時点で約30分経過）
+  - `metrics.db`: `2026-03-05 00:32:09 JST`（最新）
+- `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` は
+  `quant-order-manager port=8300 remains occupied (start aborted for safety)` で完了不可。
+- API疎通:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` は
+    `api-fxtrade.oanda.com` の `NameResolutionError` で失敗（DNS解決不可）。
+- 市況（ローカル実測）:
+  - `USD/JPY bid=157.234 ask=157.242 mid=157.238`, `spread=0.8 pips`
+  - `ATR(M1)=3.664 pips`, `ATR(M5)=7.979 pips`
+  - `range(15m)=13.0 pips`, `range(60m)=19.0 pips`
+- 約定・拒否実績:
+  - `orders` 直近2h: `115` 件、`rejected=2`
+  - reject上位（直近24h）: `error_code=(none) 28件`
+- 応答品質（`metrics.db` 直近2h）:
+  - `data_lag_ms last=1206.68 / p95=1366022.22`
+  - `decision_latency_ms last=12.24 / p95=96.70`
+
+Failure Cause:
+- OANDA APIのDNS解決失敗により、live APIベースの確認が不能。
+- `orders.db` と `trades.db` の更新が停止/遅延しており、直近2時間PnL分解の前提データ品質を満たせない。
+- `local_v2_stack up` もポート競合で完了せず、即時復旧を確認できない。
+
+Improvement:
+- 本時間帯のRCAは `HOLD` とし、PnL分解（strategy別/時間帯別/拒否理由別/実行コスト別）は保留。
+- 次アクション（優先順）:
+  1. `8300` 占有PIDの解消後に `local_v2_stack up` を再実行し、`orders/trades` 更新再開を確認。
+  2. `check_oanda_summary.py` の再試行で API 名前解決復旧を確認。
+  3. 復旧後に直近2h PnL分解を再実施して通常RCAへ戻す。
+
+Verification:
+- `orders.db/trades.db` の最終更新が `now-10m` 以内に戻ること。
+- `check_oanda_summary.py` が成功し、`pricing/account summary` を取得できること。
+- 上記2条件を満たした時点で、2時間PnL分解を再開すること。
+
+Status:
+- in_progress（HOLD）
+
+## Hourly RCA 改善案バックログ（automation: qr-hourly-rca）
+
+- `[status=in_progress]` API到達性と約定DB鮮度の復旧確認（`check_oanda_summary` 成功 + `orders/trades` 更新 `<=10m`）
+- `[status=open]` 復旧後の直近2h PnL分解（strategy別・時間帯別・拒否理由別・実行コスト別）を再実施
+- `[status=done]` 本ランでのHOLD判定記録を `TRADE_FINDINGS.md` 単一台帳へ追記
+
 ## 2026-03-04 14:22 UTC / 2026-03-04 23:22 JST - `SCALP_PING_5S_B_SIDE_FILTER` の fail-closed 強化（空許可の誤適用防止）
 
 Period:

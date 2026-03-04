@@ -7,6 +7,7 @@ LOG_DIR="${ROOT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/local_v2_autorecover.log"
 LOCK_DIR="${LOG_DIR}/local_v2_autorecover.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
+STATE_FILE="${LOG_DIR}/local_v2_autorecover.state"
 
 PROFILE="${QR_LOCAL_V2_PROFILE:-trade_min}"
 ENV_FILE="${QR_LOCAL_V2_ENV_FILE:-${ROOT_DIR}/ops/env/local-v2-stack.env}"
@@ -15,6 +16,9 @@ NETWORK_HOST="${QR_LOCAL_V2_NET_CHECK_HOST:-api-fxtrade.oanda.com}"
 NETWORK_PORT="${QR_LOCAL_V2_NET_CHECK_PORT:-443}"
 NETWORK_TIMEOUT_SEC="${QR_LOCAL_V2_NET_TIMEOUT_SEC:-2.0}"
 VERBOSE="${QR_LOCAL_V2_AUTORECOVER_VERBOSE:-0}"
+RESUME_GAP_SEC="${QR_LOCAL_V2_RESUME_GAP_SEC:-90}"
+NET_RECOVERY_RESTART_MARKET_DATA="${QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA:-1}"
+NET_RECOVERY_RESTART_COOLDOWN_SEC="${QR_LOCAL_V2_NET_RECOVERY_RESTART_COOLDOWN_SEC:-60}"
 
 usage() {
   cat <<'USAGE'
@@ -33,6 +37,54 @@ log() {
   local msg="$1"
   mkdir -p "${LOG_DIR}"
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "${msg}" >>"${LOG_FILE}"
+}
+
+as_positive_int() {
+  local value="${1:-}"
+  local default="$2"
+  if [[ "${value}" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+  printf '%s\n' "${default}"
+}
+
+is_truthy() {
+  local raw="${1:-}"
+  case "$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+load_state() {
+  PREV_EPOCH=""
+  PREV_NETWORK=""
+  PREV_NET_RECOVERY_RESTART_EPOCH=""
+  if [[ ! -f "${STATE_FILE}" ]]; then
+    return 0
+  fi
+
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      last_epoch) PREV_EPOCH="${value}" ;;
+      last_network) PREV_NETWORK="${value}" ;;
+      last_net_recovery_restart_epoch) PREV_NET_RECOVERY_RESTART_EPOCH="${value}" ;;
+    esac
+  done <"${STATE_FILE}"
+}
+
+persist_state() {
+  local now_epoch="$1"
+  local network_state="$2"
+  local last_restart_epoch="$3"
+  local tmp
+
+  tmp="${STATE_FILE}.tmp.$$"
+  printf 'last_epoch=%s\n' "${now_epoch}" >"${tmp}"
+  printf 'last_network=%s\n' "${network_state}" >>"${tmp}"
+  printf 'last_net_recovery_restart_epoch=%s\n' "${last_restart_epoch}" >>"${tmp}"
+  mv "${tmp}" "${STATE_FILE}"
 }
 
 acquire_lock() {
@@ -80,6 +132,9 @@ run_stack() {
   fi
   if [[ -n "${SERVICES}" ]]; then
     args+=("--services" "${SERVICES}")
+  fi
+  if [[ $# -gt 0 ]]; then
+    args+=("$@")
   fi
   "${args[@]}"
 }
@@ -160,6 +215,54 @@ if ! acquire_lock; then
 fi
 trap release_lock EXIT INT TERM
 
+now_epoch="$(date +%s)"
+resume_gap_sec="$(as_positive_int "${RESUME_GAP_SEC}" "90")"
+restart_cooldown_sec="$(as_positive_int "${NET_RECOVERY_RESTART_COOLDOWN_SEC}" "60")"
+load_state
+if [[ -n "${PREV_EPOCH}" ]] && [[ "${PREV_EPOCH}" =~ ^[0-9]+$ ]] && (( PREV_EPOCH >= 946684800 )) && (( now_epoch > PREV_EPOCH )); then
+  gap_sec=$((now_epoch - PREV_EPOCH))
+  if (( gap_sec >= resume_gap_sec )); then
+    log "[resume] detected polling gap=${gap_sec}s threshold=${resume_gap_sec}s"
+  fi
+fi
+
+network_state="down"
+if network_ready; then
+  network_state="up"
+fi
+
+if [[ "${PREV_NETWORK}" == "down" && "${network_state}" == "up" ]]; then
+  log "[resume] network recovered host=${NETWORK_HOST}:${NETWORK_PORT}"
+elif [[ "${PREV_NETWORK}" == "up" && "${network_state}" == "down" ]]; then
+  log "[wait] network became unavailable host=${NETWORK_HOST}:${NETWORK_PORT}"
+fi
+
+last_restart_epoch="0"
+if [[ -n "${PREV_NET_RECOVERY_RESTART_EPOCH}" ]] && [[ "${PREV_NET_RECOVERY_RESTART_EPOCH}" =~ ^[0-9]+$ ]]; then
+  last_restart_epoch="${PREV_NET_RECOVERY_RESTART_EPOCH}"
+fi
+
+if [[ "${PREV_NETWORK}" == "down" && "${network_state}" == "up" ]] && is_truthy "${NET_RECOVERY_RESTART_MARKET_DATA}"; then
+  if (( now_epoch - last_restart_epoch >= restart_cooldown_sec )); then
+    set +e
+    restart_out="$(run_stack restart --services quant-market-data-feed 2>&1)"
+    restart_rc=$?
+    set -e
+    if [[ ${restart_rc} -eq 0 ]]; then
+      last_restart_epoch="${now_epoch}"
+      log "[recover] network recovered -> restarted quant-market-data-feed"
+    elif [[ ${restart_rc} -eq 3 ]]; then
+      log "[skip] parity conflict; skip market-data-feed restart on network recovery"
+    else
+      log "[warn] market-data-feed restart on network recovery failed rc=${restart_rc}: ${restart_out//$'\n'/ ; }"
+    fi
+  else
+    log "[skip] market-data-feed restart cooldown active (${restart_cooldown_sec}s)"
+  fi
+fi
+
+persist_state "${now_epoch}" "${network_state}" "${last_restart_epoch}"
+
 set +e
 status_out="$(run_stack status 2>&1)"
 status_rc=$?
@@ -176,7 +279,7 @@ if ! printf '%s\n' "${status_out}" | grep -Eq '^\[(stopped|stale)\]'; then
   exit 0
 fi
 
-if ! network_ready; then
+if [[ "${network_state}" != "up" ]]; then
   log "[wait] network unavailable host=${NETWORK_HOST}:${NETWORK_PORT}; defer recovery"
   exit 0
 fi

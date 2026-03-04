@@ -85,12 +85,27 @@ scripts/local_v2_stack.sh down --profile trade_min --env ops/env/local-v2-stack.
 ローカルPCの再起動・ログイン後・ネット復帰後に `local_v2_stack` を自動で回復させるには、
 macOS `launchd` の LaunchAgent を使う。
 
+まず手元で watchdog を常駐起動（launchd を使わない運用）:
+```bash
+scripts/local_v2_stack.sh watchdog --daemon \
+  --profile trade_min \
+  --env ops/env/local-v2-stack.env \
+  --interval-sec 10
+```
+
+状態確認 / 停止:
+```bash
+scripts/local_v2_stack.sh watchdog-status
+scripts/local_v2_stack.sh watchdog-stop
+```
+
 インストール:
 ```bash
 scripts/install_local_v2_launchd.sh \
   --profile trade_min \
   --env ops/env/local-v2-stack.env \
-  --interval-sec 20
+  --interval-sec 10 \
+  --resume-gap-sec 90
 ```
 
 状態確認:
@@ -105,12 +120,15 @@ scripts/uninstall_local_v2_launchd.sh
 
 補足:
 - 自動復帰本体: `scripts/local_v2_autorecover_once.sh`
+- watchdog ループ本体: `scripts/local_v2_watchdog.sh`
 - 監視ログ: `logs/local_v2_autorecover.log`
+- watchdog daemon ログ: `logs/local_v2_stack/watchdog.log`
+- network down→up 復帰時は `quant-market-data-feed` を自動再起動（既定ON）して再接続を強制する。
 - `local_vm_parity` 競合時は既存ガードに従って自動復帰をスキップする。
 - `launchd` は `~/Documents` 配下の実ファイル読み取りで `Operation not permitted` になる場合がある。
   現行はリポジトリ実体を `/Users/tossaki/App/QuantRabbit` に置き、
   `/Users/tossaki/Documents/App/QuantRabbit` は互換用シンボリックリンクとして運用する。
-- `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開する。
+- `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開し、sleep/wake 相当のポーリングギャップと network down→up をログ記録する。
 
 ## 1.1 ローカルVMパリティスタック（V2 + 予測/分析/黒板）
 - 制御スクリプト: `scripts/local_vm_parity_stack.sh`

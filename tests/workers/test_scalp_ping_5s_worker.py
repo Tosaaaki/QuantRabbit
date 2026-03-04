@@ -217,6 +217,39 @@ def test_resolve_final_signal_for_side_filter_blocks_without_anchor(monkeypatch)
     assert reason == "side_filter_final_block:long"
 
 
+def test_is_signal_mode_blocked_disabled_by_default(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIGNAL_MODE_BLOCKLIST", ())
+
+    blocked, token = worker._is_signal_mode_blocked("revert_hz")
+
+    assert blocked is False
+    assert token is None
+
+
+def test_is_signal_mode_blocked_with_prefix_match(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIGNAL_MODE_BLOCKLIST", ("revert",))
+
+    blocked, token = worker._is_signal_mode_blocked("revert_smflip")
+
+    assert blocked is True
+    assert token == "revert"
+
+
+def test_is_signal_mode_blocked_exact_match(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIGNAL_MODE_BLOCKLIST", ("momentum_hz",))
+
+    blocked, token = worker._is_signal_mode_blocked("momentum_hz")
+
+    assert blocked is True
+    assert token == "momentum_hz"
+
+
 def test_maybe_rescue_min_units_applies_when_thresholds_met(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

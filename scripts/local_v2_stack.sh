@@ -11,6 +11,8 @@ DEFAULT_PROFILE="core"
 DEFAULT_HEALTH_WAIT_SEC=25
 DEFAULT_HEALTH_POLL_SEC=1
 DEFAULT_PORT_RELEASE_WAIT_SEC=8
+DEFAULT_WATCHDOG_INTERVAL_SEC=10
+DEFAULT_WATCHDOG_RESUME_GAP_SEC=90
 LOCAL_PARITY_SESSION_NAME="qr-local-parity"
 LOCAL_PARITY_SUPERVISOR_REL="scripts/local_vm_parity_supervisor.py"
 
@@ -46,7 +48,7 @@ PROFILE_trade_min=(
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/local_v2_stack.sh <up|down|restart|status|logs> [options]
+  scripts/local_v2_stack.sh <up|down|restart|status|logs|watchdog|watchdog-stop|watchdog-status> [options]
 
 Options:
   --profile <core|trade_min>   Service profile (default: core)
@@ -56,6 +58,11 @@ Options:
   --tail <n>                   Tail lines for logs command (default: 120)
   --follow                     Follow logs (for logs command)
   --service <name>             Single service target for logs command
+  --daemon                     Run watchdog command as daemon (watchdog command only)
+  --once                       Run single watchdog recovery cycle (watchdog command only)
+  --interval-sec <sec>         Watchdog polling interval (default: 10)
+  --resume-gap-sec <sec>       Sleep/wake gap threshold for watchdog logs (default: 90)
+  --verbose                    Verbose watchdog logs (watchdog command only)
   --force-conflict             Bypass local parity conflict guard (up/down/restart only)
   -h, --help                   Show help
 
@@ -66,6 +73,9 @@ Examples:
   scripts/local_v2_stack.sh down --services "quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit"
   scripts/local_v2_stack.sh up --services quant-position-manager --force-conflict
   scripts/local_v2_stack.sh up --services "quant-order-manager,quant-position-manager" --env ops/env/local-v2-sidecar-ports.env --force-conflict
+  scripts/local_v2_stack.sh watchdog --daemon --profile trade_min --env ops/env/local-v2-stack.env --interval-sec 10
+  scripts/local_v2_stack.sh watchdog-status
+  scripts/local_v2_stack.sh watchdog-stop
 USAGE
 }
 
@@ -375,6 +385,33 @@ python_bin() {
   fi
   echo "[error] python not found (.venv/bin/python or python3)" >&2
   exit 1
+}
+
+watchdog_script_path() {
+  printf '%s\n' "${ROOT_DIR}/scripts/local_v2_watchdog.sh"
+}
+
+run_watchdog_action() {
+  local action="$1"
+  local script args
+
+  script="$(watchdog_script_path)"
+  if [[ ! -x "${script}" ]]; then
+    echo "[error] watchdog script not executable: ${script}" >&2
+    exit 1
+  fi
+
+  args=("${script}" "${action}" "--profile" "${PROFILE}" "--interval-sec" "${WATCHDOG_INTERVAL_SEC}" "--resume-gap-sec" "${WATCHDOG_RESUME_GAP_SEC}")
+  if [[ -n "${OVERRIDE_ENV}" ]]; then
+    args+=("--env" "${OVERRIDE_ENV}")
+  fi
+  if [[ -n "${SERVICES_RAW}" ]]; then
+    args+=("--services" "${SERVICES_RAW}")
+  fi
+  if [[ "${WATCHDOG_VERBOSE}" == "1" ]]; then
+    args+=("--verbose")
+  fi
+  "${args[@]}"
 }
 
 module_patterns_for_service() {
@@ -776,6 +813,11 @@ FOLLOW=0
 LOG_SERVICE=""
 FORCE_CONFLICT=0
 CONFLICT_SAFE_MODE=0
+WATCHDOG_DAEMON=0
+WATCHDOG_ONCE=0
+WATCHDOG_VERBOSE=0
+WATCHDOG_INTERVAL_SEC="${DEFAULT_WATCHDOG_INTERVAL_SEC}"
+WATCHDOG_RESUME_GAP_SEC="${DEFAULT_WATCHDOG_RESUME_GAP_SEC}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -806,6 +848,26 @@ while [[ $# -gt 0 ]]; do
     --service)
       LOG_SERVICE="$(normalize_service_name "$2")"
       shift 2
+      ;;
+    --daemon)
+      WATCHDOG_DAEMON=1
+      shift
+      ;;
+    --once)
+      WATCHDOG_ONCE=1
+      shift
+      ;;
+    --interval-sec)
+      WATCHDOG_INTERVAL_SEC="$2"
+      shift 2
+      ;;
+    --resume-gap-sec)
+      WATCHDOG_RESUME_GAP_SEC="$2"
+      shift 2
+      ;;
+    --verbose)
+      WATCHDOG_VERBOSE=1
+      shift
       ;;
     --force-conflict)
       FORCE_CONFLICT=1
@@ -876,6 +938,25 @@ case "${CMD}" in
         done
       fi
     fi
+    ;;
+  watchdog)
+    if [[ "${WATCHDOG_DAEMON}" == "1" && "${WATCHDOG_ONCE}" == "1" ]]; then
+      echo "[error] watchdog cannot use --daemon and --once together" >&2
+      exit 2
+    fi
+    if [[ "${WATCHDOG_ONCE}" == "1" ]]; then
+      run_watchdog_action "once"
+    elif [[ "${WATCHDOG_DAEMON}" == "1" ]]; then
+      run_watchdog_action "start"
+    else
+      run_watchdog_action "run"
+    fi
+    ;;
+  watchdog-stop)
+    run_watchdog_action "stop"
+    ;;
+  watchdog-status)
+    run_watchdog_action "status"
     ;;
   *)
     echo "[error] unknown command: ${CMD}" >&2

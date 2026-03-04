@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Reference template for QuantRabbit local V2 auto-recovery.
+    Use scripts/install_local_v2_launchd.sh to generate user-specific LaunchAgents plist.
+  -->
+  <key>Label</key>
+  <string>com.quantrabbit.local-v2-autorecover</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd / &amp;&amp; exec /ABS/PATH/TO/QuantRabbit/scripts/local_v2_stack.sh watchdog --once --profile trade_min --env /ABS/PATH/TO/QuantRabbit/ops/env/local-v2-stack.env --interval-sec 10 --resume-gap-sec 90</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>QR_LOCAL_V2_NET_CHECK_HOST</key>
+    <string>api-fxtrade.oanda.com</string>
+    <key>QR_LOCAL_V2_NET_CHECK_PORT</key>
+    <string>443</string>
+    <key>QR_LOCAL_V2_NET_TIMEOUT_SEC</key>
+    <string>2.0</string>
+    <key>QR_LOCAL_V2_RESUME_GAP_SEC</key>
+    <string>90</string>
+    <key>QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA</key>
+    <string>1</string>
+    <key>QR_LOCAL_V2_NET_RECOVERY_RESTART_COOLDOWN_SEC</key>
+    <string>60</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>AbandonProcessGroup</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>10</integer>
+  <key>KeepAlive</key>
+  <dict>
+    <key>NetworkState</key>
+    <true/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/ABS/PATH/TO/QuantRabbit/logs/local_v2_autorecover.launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/ABS/PATH/TO/QuantRabbit/logs/local_v2_autorecover.launchd.err</string>
+</dict>
+</plist>

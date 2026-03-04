@@ -5,6 +5,38 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-05（追記）ローカル自動復旧を watchdog + launchd で固定（手動再起動不要化）
+
+- 対象:
+  - `scripts/local_v2_watchdog.sh`（新規）
+  - `scripts/local_v2_stack.sh`
+  - `scripts/local_v2_autorecover_once.sh`
+  - `scripts/install_local_v2_launchd.sh`
+  - `ops/launchd/com.quantrabbit.local-v2-autorecover.plist`（新規）
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+- 変更:
+  - `local_v2_stack` に `watchdog/watchdog-stop/watchdog-status` を追加し、常駐監視と単発復旧を統一導線化。
+  - `local_v2_autorecover_once.sh` に state ファイル管理を追加し、sleep/wake 相当の polling gap と network down/up を記録。
+  - network 復帰時は `quant-market-data-feed` を自動再起動（`QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA=1` 既定）。
+  - `install_local_v2_launchd.sh` は watchdog one-shot を `StartInterval=10s` で実行する構成へ更新。
+- 意図:
+  - プロセス停止、ネット断復帰、ノートPCスリープ復帰の各ケースで「ユーザー手動起動なし」の再開導線を担保する。
+
+### 2026-03-05（追記）`scalp_ping_5s_b` に signal_mode blocklist を導入（低品質モード遮断）
+
+- 対象:
+  - `workers/scalp_ping_5s/config.py`
+  - `workers/scalp_ping_5s/worker.py`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `ops/env/scalp_ping_5s_b.env`
+- 変更:
+  - `SCALP_PING_5S_SIGNAL_MODE_BLOCKLIST` を追加し、`signal.mode` に対して `exact/prefix` で entry 前遮断を実装。
+  - B運用では `momentum_hz` 系を blocklist へ投入し、short-hold の SL 偏重モードを優先抑止。
+  - 関連テスト（default/partial/exact）を追加。
+  - あわせて B env の品質閾値（ticks/spread/lookahead/revert）を引き締め。
+- 意図:
+  - 戦略停止ではなく、損失寄与が高いモードだけを局所的に除外して PF 改善余地を確保する。
+
 ### 2026-03-04（追記）`scalp_ping_5s_b` side filter の fail-closed を強化（空許可の誤適用防止）
 
 - 対象:

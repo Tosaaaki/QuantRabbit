@@ -2745,6 +2745,26 @@ def _resolve_final_signal_for_side_filter(
     return None, f"side_filter_final_block:{routed_signal.side}"
 
 
+def _normalize_signal_mode_key(mode: str) -> str:
+    return str(mode or "").strip().lower()
+
+
+def _is_signal_mode_blocked(mode: str) -> tuple[bool, Optional[str]]:
+    normalized_mode = _normalize_signal_mode_key(mode)
+    if not normalized_mode:
+        return False, None
+    blocklist = tuple(
+        _normalize_signal_mode_key(token)
+        for token in getattr(config, "SIGNAL_MODE_BLOCKLIST", ())
+    )
+    for token in blocklist:
+        if not token:
+            continue
+        if normalized_mode == token or normalized_mode.startswith(f"{token}_"):
+            return True, token
+    return False, None
+
+
 def _maybe_rescue_min_units(
     *,
     units: int,
@@ -6753,6 +6773,14 @@ async def scalp_ping_5s_worker() -> None:
                         side_filter_routing,
                     )
                     last_bias_log_mono = now_mono
+            signal_mode_blocked, signal_mode_block_token = _is_signal_mode_blocked(signal.mode)
+            if signal_mode_blocked:
+                _note_entry_skip(
+                    "signal_mode_blocked",
+                    f"mode={signal.mode} token={signal_mode_block_token}",
+                    side=signal.side,
+                )
+                continue
             if (
                 allow_hour_policy.soft_mode
                 and signal.confidence < allow_hour_policy.min_confidence

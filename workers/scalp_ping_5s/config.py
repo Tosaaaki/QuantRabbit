@@ -32,6 +32,15 @@ def _csv_env(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(tokens))
 
 
+def _csv_lower_env(name: str) -> tuple[str, ...]:
+    values = []
+    for token in _csv_env(name):
+        normalized = str(token).strip().lower()
+        if normalized:
+            values.append(normalized)
+    return tuple(dict.fromkeys(values))
+
+
 def _csv_float_env(name: str, default: str) -> tuple[float, ...]:
     raw = str(os.getenv(name, default) or "").strip()
     if not raw:
@@ -91,6 +100,9 @@ STRATEGY_TAG: str = (
 LOG_PREFIX: str = os.getenv("SCALP_PING_5S_LOG_PREFIX", "[SCALP_PING_5S]")
 PATTERN_GATE_OPT_IN: bool = _bool_env("SCALP_PING_5S_PATTERN_GATE_OPT_IN", True)
 SIDE_FILTER: str = _normalize_side(os.getenv("SCALP_PING_5S_SIDE_FILTER", ""))
+SIGNAL_MODE_BLOCKLIST: tuple[str, ...] = _csv_lower_env(
+    "SCALP_PING_5S_SIGNAL_MODE_BLOCKLIST"
+)
 DROP_FLOW_ONLY: bool = _bool_env("SCALP_PING_5S_DROP_FLOW_ONLY", False)
 DROP_FLOW_WINDOW_SEC: float = max(0.5, float(os.getenv("SCALP_PING_5S_DROP_FLOW_WINDOW_SEC", "15.0")))
 DROP_FLOW_MIN_PIPS: float = max(0.05, float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_PIPS", "0.30")))

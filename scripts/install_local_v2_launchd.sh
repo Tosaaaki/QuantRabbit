@@ -2,16 +2,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AUTORECOVER_SCRIPT="${ROOT_DIR}/scripts/local_v2_autorecover_once.sh"
+STACK_SCRIPT="${ROOT_DIR}/scripts/local_v2_stack.sh"
 
 LABEL="com.quantrabbit.local-v2-autorecover"
 PROFILE="trade_min"
 ENV_FILE="${ROOT_DIR}/ops/env/local-v2-stack.env"
 SERVICES=""
-INTERVAL_SEC=20
+INTERVAL_SEC=10
+RESUME_GAP_SEC=90
 NET_HOST="api-fxtrade.oanda.com"
 NET_PORT="443"
 NET_TIMEOUT_SEC="2.0"
+NET_RECOVERY_RESTART_MARKET_DATA="1"
+NET_RECOVERY_RESTART_COOLDOWN_SEC="60"
 
 usage() {
   cat <<'USAGE'
@@ -23,7 +26,12 @@ Options:
   --profile <profile>     local_v2_stack profile (default: trade_min)
   --env <file>            override env path (default: ops/env/local-v2-stack.env)
   --services <csv>        optional explicit service list
-  --interval-sec <sec>    health/recovery check interval (default: 20)
+  --interval-sec <sec>    health/recovery check interval (default: 10)
+  --resume-gap-sec <sec>  sleep/wake gap threshold sec for resume marker (default: 90)
+  --net-recovery-restart-market-data <0|1>
+                           restart quant-market-data-feed when network recovers (default: 1)
+  --net-recovery-restart-cooldown-sec <sec>
+                           min interval between network-recovery restarts (default: 60)
   --net-host <host>       network reachability host (default: api-fxtrade.oanda.com)
   --net-port <port>       network reachability port (default: 443)
   --net-timeout <sec>     network check timeout sec (default: 2.0)
@@ -67,6 +75,18 @@ while [[ $# -gt 0 ]]; do
       INTERVAL_SEC="$2"
       shift 2
       ;;
+    --resume-gap-sec)
+      RESUME_GAP_SEC="$2"
+      shift 2
+      ;;
+    --net-recovery-restart-market-data)
+      NET_RECOVERY_RESTART_MARKET_DATA="$2"
+      shift 2
+      ;;
+    --net-recovery-restart-cooldown-sec)
+      NET_RECOVERY_RESTART_COOLDOWN_SEC="$2"
+      shift 2
+      ;;
     --net-host)
       NET_HOST="$2"
       shift 2
@@ -96,8 +116,8 @@ case "${ENV_FILE}" in
   *) ENV_FILE="${ROOT_DIR}/${ENV_FILE}" ;;
 esac
 
-if [[ ! -x "${AUTORECOVER_SCRIPT}" ]]; then
-  echo "[error] autorecover script not executable: ${AUTORECOVER_SCRIPT}" >&2
+if [[ ! -x "${STACK_SCRIPT}" ]]; then
+  echo "[error] local_v2_stack script not executable: ${STACK_SCRIPT}" >&2
   exit 1
 fi
 if [[ ! -f "${ENV_FILE}" ]]; then
@@ -106,6 +126,18 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 fi
 if ! [[ "${INTERVAL_SEC}" =~ ^[0-9]+$ ]] || [[ "${INTERVAL_SEC}" -lt 5 ]]; then
   echo "[error] --interval-sec must be integer >= 5" >&2
+  exit 1
+fi
+if ! [[ "${RESUME_GAP_SEC}" =~ ^[0-9]+$ ]] || [[ "${RESUME_GAP_SEC}" -lt 10 ]]; then
+  echo "[error] --resume-gap-sec must be integer >= 10" >&2
+  exit 1
+fi
+if ! [[ "${NET_RECOVERY_RESTART_MARKET_DATA}" =~ ^(0|1)$ ]]; then
+  echo "[error] --net-recovery-restart-market-data must be 0 or 1" >&2
+  exit 1
+fi
+if ! [[ "${NET_RECOVERY_RESTART_COOLDOWN_SEC}" =~ ^[0-9]+$ ]] || [[ "${NET_RECOVERY_RESTART_COOLDOWN_SEC}" -lt 10 ]]; then
+  echo "[error] --net-recovery-restart-cooldown-sec must be integer >= 10" >&2
   exit 1
 fi
 if ! [[ "${NET_PORT}" =~ ^[0-9]+$ ]]; then
@@ -118,7 +150,7 @@ PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
 mkdir -p "${PLIST_DIR}" "${ROOT_DIR}/logs"
 
 SERVICES_XML=""
-AUTORECOVER_CMD="cd / && exec $(shell_single_quote "${AUTORECOVER_SCRIPT}") --profile $(shell_single_quote "${PROFILE}") --env $(shell_single_quote "${ENV_FILE}")"
+AUTORECOVER_CMD="cd / && exec $(shell_single_quote "${STACK_SCRIPT}") watchdog --once --profile $(shell_single_quote "${PROFILE}") --env $(shell_single_quote "${ENV_FILE}") --interval-sec $(shell_single_quote "${INTERVAL_SEC}") --resume-gap-sec $(shell_single_quote "${RESUME_GAP_SEC}")"
 if [[ -n "${SERVICES}" ]]; then
   AUTORECOVER_CMD="${AUTORECOVER_CMD} --services $(shell_single_quote "${SERVICES}")"
 fi
@@ -146,6 +178,12 @@ cat >"${PLIST_PATH}" <<PLIST
     <string>$(xml_escape "${NET_PORT}")</string>
     <key>QR_LOCAL_V2_NET_TIMEOUT_SEC</key>
     <string>$(xml_escape "${NET_TIMEOUT_SEC}")</string>
+    <key>QR_LOCAL_V2_RESUME_GAP_SEC</key>
+    <string>$(xml_escape "${RESUME_GAP_SEC}")</string>
+    <key>QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA</key>
+    <string>$(xml_escape "${NET_RECOVERY_RESTART_MARKET_DATA}")</string>
+    <key>QR_LOCAL_V2_NET_RECOVERY_RESTART_COOLDOWN_SEC</key>
+    <string>$(xml_escape "${NET_RECOVERY_RESTART_COOLDOWN_SEC}")</string>
   </dict>
 
   <key>RunAtLoad</key>
