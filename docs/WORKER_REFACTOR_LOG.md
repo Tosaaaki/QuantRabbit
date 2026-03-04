@@ -10793,3 +10793,23 @@
     - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_DD_MIN_MULT: 0.92 -> 0.78`
 - 補足（実発注確認）:
   - OANDA RESTで `REDUCE_ONLY 1 unit` を実行し `orderFillTransaction=417418` を確認（`tradeID=413001` を1unit縮小）。
+
+## 2026-03-04 JST 21:43 - `scalp_ping_5s_b` lookahead gate再有効化とside-adverse縮小強化（ローカル）
+
+- 目的:
+  - `scalp_ping_5s_b_live` の long偏損が継続しているため、entry品質ゲートとロット縮小を強める。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED: 0 -> 1`
+    - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE: (new) 0`
+    - `SCALP_PING_5S_B_LOOKAHEAD_EDGE_MIN_PIPS: (new) 0.14`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ACTIVE_START: 4 -> 3`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_STEP_MULT: 0.22 -> 0.28`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_MIN_MULT: 0.60 -> 0.45`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_DD_MIN_MULT: 0.65 -> 0.55`
+- 根拠:
+  - `logs/trades.db` 24hで `scalp_ping_5s_b_live` は `PF=0.387`、side別 `long PF=0.347` / `short PF=0.514`。
+  - `logs/orders.db` 24hで `STOP_LOSS_ON_FILL_LOSS=23` を観測。
+- 期待効果:
+  - 薄いエントリーの抑制（lookahead）
+  - 不利側サイド連打時のサイズ圧縮を前倒しし、ドローダウン増幅を抑える。

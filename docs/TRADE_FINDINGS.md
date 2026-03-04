@@ -5073,3 +5073,28 @@ Recheck KPIs (next 60-90 min):
   - `long STOP_LOSS_ORDER` 件数/損失寄与の低下
   - `scalp_ping_5s_b_live` の `PF` 改善（0.428 -> 0.8+ を目標）
   - `buy/sell` の fillバランス維持（short優位を殺さないこと）
+
+## 2026-03-04 21:43 JST / ローカル運用: lookahead有効化 + side-adverse強化
+
+- 市況チェック（OANDA live, USD/JPY）:
+  - `bid=157.206` `ask=157.214` `spread=0.8 pips`
+  - `ATR14=3.2 pips`, `ATR60=3.083 pips`, `range_60m=20.2 pips`
+  - pricing応答 `5/5`, 平均レイテンシ `283ms`（p95近似 `294ms`）
+- 直近実績（local `logs/*.db`）:
+  - `scalp_ping_5s_b_live` 24h: `n=546`, `PF=0.387`, `winrate=20.3%`, `avg=-0.721 pips`
+  - side別: `long PF=0.347` / `short PF=0.514`（long側の悪化が主因）
+  - `orders.db` 24h reject: `STOP_LOSS_ON_FILL_LOSS=23`, `api_error(502)=1`
+- 実発注確認（本番キー・最小往復）:
+  - OANDA REST で `USD_JPY -1 unit` を約定→3秒後に全決済
+  - `trade_id=417472`, `open=157.158`, `close=157.174`, `realized=-0.0160`
+- 反映（`ops/env/scalp_ping_5s_b.env`）:
+  - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=1`
+  - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=0`
+  - `SCALP_PING_5S_B_LOOKAHEAD_EDGE_MIN_PIPS=0.14`
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ACTIVE_START=3`（`4 -> 3`）
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.28`（`0.22 -> 0.28`）
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.45`（`0.60 -> 0.45`）
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_DD_MIN_MULT=0.55`（`0.65 -> 0.55`）
+- 目的:
+  - 薄いエッジのエントリーを lookahead で遮断
+  - 損失側サイドが続く局面でロット縮小を早期/強度高めに適用
