@@ -5523,3 +5523,35 @@ Recheck KPIs (next 60-90 min):
   - `scripts/status_local_v2_launchd.sh` で `last exit code=0` を確認。
   - `local_v2_stack down` 後、20〜30秒で `recover` 実行と全8サービス `running` を確認。
   - `quant-micro-rangebreak` を手動 kill 後、約25秒で自動再起動（PID更新）を確認。
+
+## 2026-03-04 17:07 UTC / 2026-03-05 02:07 JST - no-entry緩和（`scalp_ping_5s_b` / `micro_rangebreak`）
+
+- 目的:
+  - `entry-skip` 偏重を緩和し、`scalp_ping_5s_b` と `micro_rangebreak` の約定再開余地を増やす。
+- 仮説:
+  - `scalp_ping_5s_b` の `lookahead_block` / `no_signal:revert_not_found` と、`micro_rangebreak` の trend-flip 偏重を局所緩和すると no-entry を減らせる。
+- 変更値:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=1`
+    - `SCALP_PING_5S_B_LOOKAHEAD_COUNTER_PENALTY=0.24`
+    - `SCALP_PING_5S_B_REVERT_MIN_TICKS=2`
+    - `SCALP_PING_5S_B_REVERT_CONFIRM_RATIO_MIN=0.07`
+    - `SCALP_PING_5S_B_SHORT_MIN_SIGNAL_TICKS=3`
+  - `ops/env/quant-micro-rangebreak.env`
+    - `MICRO_MULTI_TREND_FLIP_STRATEGY_BLOCKLIST=MicroLevelReactor,MicroCompressionRevert,MicroRangeBreak`
+    - `MICRO_RANGEBREAK_ENTRY_RATIO=0.38`
+    - `MICRO_RANGEBREAK_MIN_RANGE_SCORE=0.32`
+    - `MICRO_RANGEBREAK_REVERSION_MAX_ADX=27.0`
+    - `MICRO_MULTI_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.38`
+    - `MICRO_MULTI_MIN_UNITS=500`
+    - `MICRO_MULTI_MAX_MARGIN_USAGE=0.95`
+- 作業前市況チェック（ローカルV2 + OANDA API）:
+  - `USD_JPY bid=156.930 ask=156.938 spread=0.8p`
+  - `ATR14=2.764p / ATR60=2.997p / range60=22.0p`
+  - `orders.db` 直近24h: `filled=662`, `reject_like=29`
+  - OANDA API応答: pricing 平均 `228.5ms`（max `232.3ms`）、candles `217.3ms`
+- 検証手順（ローカルV2）:
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+  - `tail -n 120 logs/local_v2_stack/quant-scalp-ping-5s-b.log`
+  - `tail -n 120 logs/local_v2_stack/quant-micro-rangebreak.log`

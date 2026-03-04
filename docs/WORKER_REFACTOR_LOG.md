@@ -11070,3 +11070,29 @@
 - 検証:
   - `local_v2_stack down` 後に launchd 周期で `up` が走り、全8サービス `running` を確認。
   - 任意ワーカー kill (`quant-micro-rangebreak`) 後、次周期で自動復帰を確認。
+
+## 2026-03-04 17:07 UTC / 2026-03-05 02:07 JST - no-entry緩和のenv更新（B + MicroRangeBreak）
+
+- 目的:
+  - V2導線の worker 分離は維持したまま、entry閾値の局所緩和で no-entry を減らす。
+- 仮説:
+  - `scalp_ping_5s_b` の `lookahead_block` / `revert_not_found` を緩和し、`micro_rangebreak` の trend-flip 偏重とエントリー条件を緩めると、skip偏重を抑制できる。
+- 変更値:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE: 0 -> 1`
+    - `SCALP_PING_5S_B_LOOKAHEAD_COUNTER_PENALTY: 0.30 -> 0.24`
+    - `SCALP_PING_5S_B_REVERT_MIN_TICKS: 3 -> 2`
+    - `SCALP_PING_5S_B_REVERT_CONFIRM_RATIO_MIN: 0.10 -> 0.07`
+    - `SCALP_PING_5S_B_SHORT_MIN_SIGNAL_TICKS: 4 -> 3`
+  - `ops/env/quant-micro-rangebreak.env`
+    - `MICRO_MULTI_TREND_FLIP_STRATEGY_BLOCKLIST: (未設定) -> MicroLevelReactor,MicroCompressionRevert,MicroRangeBreak`
+    - `MICRO_RANGEBREAK_ENTRY_RATIO: (未設定) -> 0.38`
+    - `MICRO_RANGEBREAK_MIN_RANGE_SCORE: (未設定=既定0.45) -> 0.32`
+    - `MICRO_RANGEBREAK_REVERSION_MAX_ADX: (未設定=既定23.0) -> 27.0`
+    - `MICRO_MULTI_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.43 -> 0.38`
+    - `MICRO_MULTI_MIN_UNITS: 800 -> 500`
+    - `MICRO_MULTI_MAX_MARGIN_USAGE: 0.92 -> 0.95`
+- 検証手順（ローカルV2）:
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+  - `logs/local_v2_stack/quant-scalp-ping-5s-b.log` と `logs/local_v2_stack/quant-micro-rangebreak.log` を tail し、起動継続と skip傾向を確認
