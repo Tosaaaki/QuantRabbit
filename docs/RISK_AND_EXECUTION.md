@@ -2,6 +2,32 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### `scalp_ping_5s_b_live` 収益悪化RCA反映（2026-03-04 第3段）
+- 背景:
+  - 直近24hで `PF=0.416`, `win_rate=19.57%`, `net=-175.6 JPY`。
+  - `STOP_LOSS_ORDER` が `470/608`（約77%）で損失主因。
+  - side別では `buy=-178.0 JPY`、`sell=+2.4 JPY`。
+- 運用反映（`ops/env/scalp_ping_5s_b.env`）:
+  - 品質閾値引き上げ:
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.62`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.58`
+    - `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.28`
+  - side実績連動ロット圧縮:
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.45`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.78`
+    - `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.22`
+    - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.28`
+    - `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.40`
+  - 低エッジ流入抑制:
+    - `LOOKAHEAD_EDGE_MIN_PIPS=0.16`
+    - `LOOKAHEAD_SAFETY_MARGIN_PIPS=0.08`
+    - `MAX_SPREAD_PIPS=0.90`
+  - `STOP_LOSS_ON_FILL_LOSS` 低減:
+    - `SL_MIN_PIPS=1.00`
+    - `SHORT_SL_MIN_PIPS=1.00`
+- 意図:
+  - 戦略停止ではなく、SL偏重局面の低品質エントリーを削減し、PF回復を優先する。
+
 ### Strategy フロー
 - Focus/Local decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。
 - `None` はノートレード。

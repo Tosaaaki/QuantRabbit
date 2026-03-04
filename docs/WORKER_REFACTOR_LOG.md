@@ -1,5 +1,36 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-04（追記）`scalp_ping_5s_b_live` 第3段デリスク（SL偏重・buy逆選別の圧縮）
+
+- 対象:
+  - `ops/env/scalp_ping_5s_b.env`
+  - `docs/TRADE_FINDINGS.md`
+- 背景（実データ）:
+  - 直近24hで `scalp_ping_5s_b_live` は `n=608 / win_rate=19.57% / PF=0.416 / net=-175.6 JPY`。
+  - `STOP_LOSS_ORDER=470`（約77%）が損失主因。
+  - side別では `buy=-178.0 JPY`、`sell=+2.4 JPY` で、buy側の逆選別が顕著。
+- 変更:
+  - 品質閾値を引き上げ:
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.62`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR=0.58`
+    - `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.28`
+  - side実績連動のロット圧縮を強化:
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.45`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MAX_MULT=0.78`
+    - `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.22`
+    - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.28`
+    - `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.40`
+  - 低エッジ流入の抑制:
+    - `LOOKAHEAD_EDGE_MIN_PIPS=0.16`
+    - `LOOKAHEAD_SAFETY_MARGIN_PIPS=0.08`
+    - `MAX_SPREAD_PIPS=0.90`
+  - `STOP_LOSS_ON_FILL_LOSS` 拒否低減:
+    - `SL_MIN_PIPS=1.00`
+    - `SHORT_SL_MIN_PIPS=1.00`
+- 意図:
+  - 戦略停止ではなく、SL偏重局面の低品質エントリー流入を即時に圧縮し、
+    sell優位の局面で損失速度を下げながらPF回復余地を作る。
+
 ### 2026-03-04（追記）`quant-position-manager` の service port を env 化（sidecar 18301 を有効化）
 
 - 対象:

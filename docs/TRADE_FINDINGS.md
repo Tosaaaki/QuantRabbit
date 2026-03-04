@@ -17,6 +17,51 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-04 14:08 UTC / 2026-03-04 23:08 JST - `scalp_ping_5s_b_live` 収益悪化RCA第3段（SL偏重の即時圧縮）
+
+Period:
+- 集計窓: 直近24h（`logs/orders.db`, `logs/trades.db`, `logs/metrics.db`）
+- 市況確認: OANDA API（`USD_JPY` pricing/candles/openTrades）
+- 監査時刻: 2026-03-04 13:54〜14:08 UTC（22:54〜23:08 JST）
+
+Fact:
+- 市況は稼働可能:
+  - `bid/ask=157.302/157.310`、`spread=0.8 pips`
+  - `ATR14(M1)=3.393 pips`、`range_60m=18.8 pips`
+  - API応答: pricing `mean=262ms`、candles `408ms`、openTrades取得成功
+- 戦略収益（`scalp_fast / scalp_ping_5s_b_live`）:
+  - `n=608`, `win_rate=19.57%`, `PF=0.416`, `expectancy=-0.752 pips`, `net=-175.6 JPY`
+  - `close_reason`: `STOP_LOSS_ORDER=470 (net=-280.7 JPY, avg=-1.421 pips)` /
+    `MARKET_ORDER_TRADE_CLOSE=138 (net=+105.1 JPY, avg=+1.527 pips)`
+  - side別: `buy n=412 net=-178.0 JPY`、`sell n=196 net=+2.4 JPY`
+  - `entry_probability>=0.85` の buy が `n=310 net=-142.4 JPY` で、高確率帯でも逆選別が発生
+
+Failure Cause:
+- 低品質エントリーがSLへ偏る構造が主因（約77%がSL終了）。
+- 特に buy 側で確率校正が崩れ、`high-probability` 帯でも損失寄与が継続。
+- spread/latencyの実行品質は致命劣化ではなく（spread平均0.802p, submit p50≈202ms）、
+  エントリー品質とside配分の問題が優勢。
+
+Improvement:
+- `ops/env/scalp_ping_5s_b.env` を第3段調整（停止ではなく品質圧縮）:
+  - エントリー厳格化: `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.62`, `ENTRY_PROBABILITY_ALIGN_FLOOR=0.58`
+  - カウンター抑制: `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.28`
+  - side実績連動ロット圧縮: `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.45`,
+    `...MAX_MULT=0.78`, `SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.22`,
+    `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.28`, `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.40`
+  - lookaheadの最低エッジ強化: `LOOKAHEAD_EDGE_MIN_PIPS=0.16`, `LOOKAHEAD_SAFETY_MARGIN_PIPS=0.08`
+  - コスト耐性: `MAX_SPREAD_PIPS=0.90`、SL reject低減で `SL_MIN_PIPS=1.00` / `SHORT_SL_MIN_PIPS=1.00`
+
+Verification:
+- 反映後 60分/240分で次を確認:
+  - `STOP_LOSS_ORDER 比率 <= 70%`
+  - `buy` の net寄与がマイナス拡大しない（直近窓で `net_buy >= -20 JPY` を目安）
+  - `PF >= 0.85` への回復傾向（最低でも `expectancy_pips > -0.20`）
+  - `rejected:STOP_LOSS_ON_FILL_LOSS` の件数低下
+
+Status:
+- in_progress
+
 ## 2026-03-04 13:31 UTC / 2026-03-04 22:31 JST - sidecar `POSITION_MANAGER_SERVICE_PORT` 未反映の修正（18301運用を有効化）
 
 Period:
