@@ -708,12 +708,17 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
+def _service_port() -> int:
+    return _to_int(os.getenv("POSITION_MANAGER_SERVICE_PORT"), 8301)
+
+
 if __name__ == "__main__":
     _configure_logging()
+    port = _service_port()
     uvicorn.run(
         "workers.position_manager.worker:app",
         host="0.0.0.0",
-        port=8301,
+        port=port,
         log_config=None,
         access_log=_env_bool("POSITION_MANAGER_ACCESS_LOG", False),
     )

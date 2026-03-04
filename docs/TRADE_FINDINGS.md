@@ -17,6 +17,37 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-04 13:31 UTC / 2026-03-04 22:31 JST - sidecar `POSITION_MANAGER_SERVICE_PORT` 未反映の修正（18301運用を有効化）
+
+Period:
+- 調査時刻: 2026-03-04 13:29〜13:31 UTC（22:29〜22:31 JST）
+- 対象: `workers/position_manager/worker.py`, `ops/env/local-v2-sidecar-ports.env`, `scripts/local_v2_stack.sh`
+
+Fact:
+- `local_v2_stack.sh` 側は `POSITION_MANAGER_SERVICE_PORT` を参照していたが、
+  `workers.position_manager.worker` の `uvicorn.run` は `port=8301` 固定だった。
+- この不整合により、`--env ops/env/local-v2-sidecar-ports.env` 指定時でも
+  sidecar 起動は `8301` bind を試行し、parity と競合して失敗していた。
+
+Failure Cause:
+- ポート設定の責務分離が不完全で、起動スクリプトの env 設計と worker 実装が一致していなかった。
+
+Improvement:
+- `workers/position_manager/worker.py` に `_service_port()` を追加し、
+  `POSITION_MANAGER_SERVICE_PORT`（未設定時 `8301`）を読む実装へ変更。
+- `tests/workers/test_position_manager_worker_env.py` を追加し、
+  default (`8301`) と env override（例: `9315`）の両方を検証。
+
+Verification:
+- `pytest -q tests/workers/test_position_manager_worker_env.py` が `2 passed`。
+- parity 稼働中に
+  `scripts/local_v2_stack.sh up --services quant-position-manager --env ops/env/local-v2-sidecar-ports.env --force-conflict`
+  を実行し、`http://127.0.0.1:18301/health` 応答を確認。
+- 同コマンドで `down` まで完了し、conflict-safe mode で parity 側を巻き込まず停止できることを確認。
+
+Status:
+- done
+
 ## 2026-03-04 13:30 UTC / 2026-03-04 22:30 JST - `scalp_ping_5s_b_live` 第2段チューニング（lookahead過剰block緩和 + long過大ロット抑制）
 
 Period:

@@ -1,5 +1,23 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-04（追記）`quant-position-manager` の service port を env 化（sidecar 18301 を有効化）
+
+- 対象:
+  - `workers/position_manager/worker.py`
+  - `tests/workers/test_position_manager_worker_env.py`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - `local_v2_stack` は `POSITION_MANAGER_SERVICE_PORT` を参照していたが、
+    `workers.position_manager.worker` は `uvicorn port=8301` 固定で起動していた。
+  - そのため sidecar 用 env（`ops/env/local-v2-sidecar-ports.env`）を指定しても
+    parity 稼働中は 8301 競合を回避できなかった。
+- 変更:
+  - `_service_port()` を追加し、`POSITION_MANAGER_SERVICE_PORT`（default 8301）を読んで起動する実装へ変更。
+  - env 解決の最小テストを追加（default / override）。
+- 意図:
+  - `local_v2_stack` の conflict-safe + sidecar 運用を実際に成立させ、
+    parity 併走時の port 競合を構成上で回避できるようにする。
+
 ### 2026-03-04（追記）`scalp_ping_5s_b_live` lookaheadゲート第2段調整（ローカル parity）
 
 - 対象:
