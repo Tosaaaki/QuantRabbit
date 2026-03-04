@@ -5362,3 +5362,55 @@ Recheck KPIs (next 60-90 min):
   - `buy` の `preflight_start/submit_attempt/filled` が 0 を維持すること。
   - `STOP_LOSS_ON_FILL_LOSS` 比率の低下。
   - `sell` の `expectancy_jpy > 0` への復帰、および `PF > 1.0`。
+
+## 2026-03-04 23:46 JST / ローカル自動復帰（launchd）導入
+
+- 目的:
+  - PC再起動/ログイン後、スリープ復帰後、ネット復帰後に `local_v2_stack` を自動再開し、
+    手動起動なしで運用継続できるようにする。
+- 作業前市況確認（OANDA API）:
+  - `bid=157.304`, `ask=157.312`, `spread=0.8 pips`
+  - `ATR14(M1)=4.5 pips`, `range60(M1)=23.1 pips`
+  - pricing応答: 平均 `230.28ms`, max `246.18ms`
+  - 作業継続判定: 通常レンジ内として実施
+- 実装:
+  - `scripts/local_v2_autorecover_once.sh`（新規）
+    - `local_v2_stack status` で `stopped/stale` 検知時のみ `up` を実行
+    - ネット未接続時は待機（`api-fxtrade.oanda.com:443` 到達確認）
+    - `parity` 競合（exit code `3`）時は安全にスキップ
+    - 重複実行防止のロック (`logs/local_v2_autorecover.lock`)
+  - `scripts/install_local_v2_launchd.sh`（新規）
+    - LaunchAgent を `~/Library/LaunchAgents` に生成・`bootstrap`
+    - `RunAtLoad + StartInterval + KeepAlive(NetworkState)` を設定
+  - `scripts/uninstall_local_v2_launchd.sh`（新規）
+  - `scripts/status_local_v2_launchd.sh`（新規）
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+    - 自動復帰セクション（install/status/uninstall、ログ位置）を追加
+- 監視ログ:
+  - `logs/local_v2_autorecover.log`
+  - `logs/local_v2_autorecover.launchd.out`
+  - `logs/local_v2_autorecover.launchd.err`
+
+## 2026-03-05 00:06 JST / 自動復帰の実働安定化（launchd 126/子プロセス回収/lock詰まり修正）
+
+- 症状:
+  - LaunchAgent の `last exit code=126`（`Operation not permitted`）で自動復帰が動作しない。
+  - `up` 実行直後にワーカーが落ちる（launchd が子プロセスを回収）。
+  - ロックディレクトリ残骸で autorecover が無反応になる。
+- 根因:
+  - macOS `launchd` から `~/Documents` 実体へのスクリプト読み取り制約。
+  - plist に `AbandonProcessGroup` 未設定で、ジョブ終了時に spawned worker が終了。
+  - ロックが `mkdir` のみで stale 判定が無い。
+- 対応:
+  - リポジトリ実体を `/Users/tossaki/App/QuantRabbit` へ移動し、
+    `/Users/tossaki/Documents/App/QuantRabbit` は互換 symlink 化。
+  - `scripts/install_local_v2_launchd.sh`
+    - 実行コマンドを絶対パス化し `bash -lc` 経由へ統一。
+    - `AbandonProcessGroup=true` を付与。
+  - `scripts/local_v2_autorecover_once.sh`
+    - lock に owner PID を保存。
+    - stale lock 自動除去と再取得を実装。
+- 検証（ローカル実測）:
+  - `scripts/status_local_v2_launchd.sh` で `last exit code=0` を確認。
+  - `local_v2_stack down` 後、20〜30秒で `recover` 実行と全8サービス `running` を確認。
+  - `quant-micro-rangebreak` を手動 kill 後、約25秒で自動再起動（PID更新）を確認。

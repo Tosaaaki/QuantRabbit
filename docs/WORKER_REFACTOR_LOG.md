@@ -11004,3 +11004,37 @@
 - 影響範囲:
   - `scalp_ping_5s` strategy workerのロット救済とBローカルenvのみ。
   - `order_manager` / `position_manager` / blackboard協調 / 共通ガード契約は非変更。
+
+## 2026-03-04 JST 23:46 - ローカルV2自動復帰（launchd + autorecover）追加
+
+- 目的:
+  - ローカル運用で「停止したら自動再起動」「ネット復帰で自動再開」「ログイン後自動起動」を実現する。
+- 実装:
+  - `scripts/local_v2_autorecover_once.sh` を追加。
+    - `status` で `stopped/stale` 検知時のみ `up` を実行。
+    - `api-fxtrade.oanda.com:443` 到達不可時は回復処理を保留。
+    - parity競合 (`local_v2_stack` exit code `3`) はスキップし、誤起動を回避。
+    - ロックディレクトリで多重実行を防止。
+  - `scripts/install_local_v2_launchd.sh` を追加。
+    - LaunchAgent `com.quantrabbit.local-v2-autorecover` を生成し、`bootstrap`/`kickstart` で即時有効化。
+    - `RunAtLoad`, `StartInterval`, `KeepAlive(NetworkState)` を設定。
+  - `scripts/uninstall_local_v2_launchd.sh` / `scripts/status_local_v2_launchd.sh` を追加。
+  - `docs/OPS_LOCAL_RUNBOOK.md` に運用手順を追加。
+- 影響範囲:
+  - ローカル運用導線のみ（`local_v2_stack` 呼び出し周辺）。
+  - strategy判定・order_manager preflight・position_manager API仕様は非変更。
+
+## 2026-03-05 JST 00:06 - ローカルV2自動復帰の安定化（launchd実行基盤修正）
+
+- 変更:
+  - `scripts/install_local_v2_launchd.sh`
+    - `ProgramArguments` を絶対パス + `/bin/bash -lc` 実行へ統一。
+    - `AbandonProcessGroup=true` を追加し、`local_v2_stack up` が起動した worker を launchd 終了時に巻き込まないよう修正。
+  - `scripts/local_v2_autorecover_once.sh`
+    - lock owner PID を保持し、stale lock 自動除去を追加。
+  - 実行基盤:
+    - repo実体を `/Users/tossaki/App/QuantRabbit` へ移し、
+      `/Users/tossaki/Documents/App/QuantRabbit` は互換 symlink 化（launchdの `~/Documents` 制約回避）。
+- 検証:
+  - `local_v2_stack down` 後に launchd 周期で `up` が走り、全8サービス `running` を確認。
+  - 任意ワーカー kill (`quant-micro-rangebreak`) 後、次周期で自動復帰を確認。

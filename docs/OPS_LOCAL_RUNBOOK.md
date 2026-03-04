@@ -81,6 +81,37 @@ scripts/local_v2_stack.sh down --profile trade_min --env ops/env/local-v2-stack.
 - ログ: `logs/local_v2_stack/*.log`
 - PID: `logs/local_v2_stack/pids/*.pid`
 
+### 自動復帰（推奨）
+ローカルPCの再起動・ログイン後・ネット復帰後に `local_v2_stack` を自動で回復させるには、
+macOS `launchd` の LaunchAgent を使う。
+
+インストール:
+```bash
+scripts/install_local_v2_launchd.sh \
+  --profile trade_min \
+  --env ops/env/local-v2-stack.env \
+  --interval-sec 20
+```
+
+状態確認:
+```bash
+scripts/status_local_v2_launchd.sh
+```
+
+アンインストール:
+```bash
+scripts/uninstall_local_v2_launchd.sh
+```
+
+補足:
+- 自動復帰本体: `scripts/local_v2_autorecover_once.sh`
+- 監視ログ: `logs/local_v2_autorecover.log`
+- `local_vm_parity` 競合時は既存ガードに従って自動復帰をスキップする。
+- `launchd` は `~/Documents` 配下の実ファイル読み取りで `Operation not permitted` になる場合がある。
+  現行はリポジトリ実体を `/Users/tossaki/App/QuantRabbit` に置き、
+  `/Users/tossaki/Documents/App/QuantRabbit` は互換用シンボリックリンクとして運用する。
+- `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開する。
+
 ## 1.1 ローカルVMパリティスタック（V2 + 予測/分析/黒板）
 - 制御スクリプト: `scripts/local_vm_parity_stack.sh`
 - 既定上書きenv: `ops/env/local-v2-full.env`
