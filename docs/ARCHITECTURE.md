@@ -19,7 +19,7 @@
 | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
 | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
 | Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力 |
-| Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block |
+| Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block（`BRAIN_BACKEND=vertex/ollama`, `BRAIN_FAIL_POLICY=allow/reduce/block`） |
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
 | Forecast Service | `workers/forecast/worker.py` / `workers/common/forecast_gate.py` / `quant-forecast.service` | `strategy_tag/pocket/side/units` を入力として予測判定（allow/reduce/block）を返却。回帰系に加えてトレンドライン傾き（20/50）とサポレジ/ブレイク圧力（`sr_balance` / `breakout_bias` / `squeeze`）を予測因子へ統合し、`breakout_bias` は直近一致スキルで適応重み化。`expected_pips` + `anchor/target` + 分位レンジ上下帯（`range_low/high_pips`, `range_low/high_price`）+ `tp/sl/rr` を `order_manager`/`entry_intent_board` へ連携。戦略ごとの主TFに対して補助TF整合（`tf_confluence_*`）も監査メタとして返し、`entry_thesis` 欠損時は `strategy_tag` から主TFを補完する |
 | Strategy Control | `workers/common/strategy_control.py` / `workers/strategy_control/worker.py` | 戦略 `entry/exit` 可否、`global_lock`、環境変数上書き |
@@ -217,13 +217,12 @@ class OrderIntent(BaseModel):
 - 定期ワーカー:
   - `quant-replay-quality-gate.service`（oneshot）+
     `quant-replay-quality-gate.timer`（3h 周期）
-  - 実装: `analysis/replay_quality_gate_worker.py`
-  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
+- 実装: `analysis/replay_quality_gate_worker.py`
+- `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
     replay 直後に `analysis.trade_counterfactual_worker` を戦略単位で実行し、
     `policy_hints.reentry_overrides`（`cooldown_* / same_dir_reentry_pips / return_wait_bias`）
-    を `config/worker_reentry.yaml` へ自動反映する。
-    `block_jst_hours` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_BLOCK_HOURS=1`
-    を明示した場合のみ反映する（既定は 0）。
+    を `config/worker_reentry.yaml` へ自動反映する。`policy_hints.block_jst_hours` は
+    自動反映せず、改善提案としてのみ監査ログへ残す。
     `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_CONFIDENCE` と
     `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_LCB_UPLIFT_PIPS` を下回る候補は解析のみで不採用とする。
     `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` を使い、

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 from collections import Counter
@@ -201,6 +202,34 @@ def _add_finding(results: list[Finding], *, level: str, component: str, message:
 def main() -> int:
     repo_dir = _repo_dir()
     log_dir = _logs_dir(repo_dir)
+
+    if shutil.which("systemctl") is None:
+        result = {
+            "generated_at": _now_iso(),
+            "hostname": socket.gethostname(),
+            "repository": str(repo_dir),
+            "summary": {
+                "critical": 0,
+                "warn": 0,
+                "info": 1,
+                "total": 1,
+            },
+            "findings": [
+                {
+                    "level": "info",
+                    "component": "systemd",
+                    "message": "systemctl is not available; audit skipped on non-systemd host",
+                    "details": {},
+                }
+            ],
+        }
+        latest_report = log_dir / "ops_v2_audit_latest.json"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        archive_report = log_dir / f"ops_v2_audit_{timestamp}.json"
+        latest_report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        archive_report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("[ops-v2-audit] skipped: systemctl not available on this host")
+        return 0
 
     env_dir = repo_dir / "ops" / "env"
     runtime_env = env_dir / "quant-v2-runtime.env"

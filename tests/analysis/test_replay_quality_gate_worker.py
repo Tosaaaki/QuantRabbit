@@ -168,7 +168,7 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
         out_path = Path(cmd[cmd.index("--out-path") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
-            '{"summary":{"trades":12,"stuck_trade_ratio":0.5},"policy_hints":{"reentry_overrides":{"mode":"tighten","confidence":0.88,"lcb_uplift_pips":1.6,"cooldown_loss_mult":1.20,"cooldown_win_mult":1.10,"same_dir_reentry_pips_mult":1.15,"return_wait_bias":"avoid"}}}',
+            '{"summary":{"trades":12,"stuck_trade_ratio":0.5},"policy_hints":{"block_jst_hours":[22, 4],"reentry_overrides":{"mode":"tighten","confidence":0.88,"lcb_uplift_pips":1.6,"cooldown_loss_mult":1.20,"cooldown_win_mult":1.10,"same_dir_reentry_pips_mult":1.15,"return_wait_bias":"avoid"}}}',
             encoding="utf-8",
         )
         return _completed(stdout=str(out_path), returncode=0)
@@ -186,6 +186,12 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
     assert session_cfg.get("cooldown_loss_sec", 0) > 180
     assert session_cfg.get("same_dir_reentry_pips", 0.0) > 1.8
     assert session_cfg.get("return_wait_bias") == "avoid"
+    assert "block_jst_hours" not in session_cfg
+    strategy_runs = auto.get("strategy_runs", [])
+    assert isinstance(strategy_runs, list) and strategy_runs
+    run = next((row for row in strategy_runs if row.get("strategy") == "session_open"), {})
+    assert run.get("block_jst_hours") == [4, 22]
+    assert run.get("block_hours_status") == "ignored_by_policy"
 
 
 def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:

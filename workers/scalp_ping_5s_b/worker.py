@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -180,11 +179,13 @@ def _run_worker() -> None:
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(repo_root) if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
     logging.getLogger(__name__).info("Application started!")
-    subprocess.run(
+    # Replace this wrapper process with the actual worker so stack stop/start
+    # controls a single PID and does not leave child workers orphaned.
+    os.chdir(str(repo_root))
+    os.execvpe(
+        sys.executable,
         [sys.executable, "-m", "workers.scalp_ping_5s.worker"],
-        check=True,
-        cwd=str(repo_root),
-        env=env,
+        env,
     )
 
 

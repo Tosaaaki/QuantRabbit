@@ -67,6 +67,11 @@ BQ_FAILURE_BACKOFF_MAX_SEC = max(
     BQ_FAILURE_BACKOFF_BASE_SEC,
     _env_float("BQ_FAILURE_BACKOFF_MAX_SEC", 1800.0),
 )
+PIPELINE_LOT_INSIGHTS_ENABLED = _env_bool("PIPELINE_LOT_INSIGHTS_ENABLED", True)
+PIPELINE_LOT_INSIGHTS_INTERVAL_SEC = max(
+    0.0,
+    _env_float("PIPELINE_LOT_INSIGHTS_INTERVAL_SEC", 3600.0),
+)
 PIPELINE_PERF_SUMMARY_REFRESH_SEC = max(
     0.0,
     _env_float("PIPELINE_PERF_SUMMARY_REFRESH_SEC", 180.0),
@@ -641,6 +646,12 @@ def main() -> int:
         help="BigQuery へのエクスポート実行間隔（秒）。0 以下で新規トレード発生時のみ。",
     )
     parser.add_argument(
+        "--lot-insights-interval",
+        type=float,
+        default=PIPELINE_LOT_INSIGHTS_INTERVAL_SEC,
+        help="Lot insights 実行間隔（秒）。0 以下は各 BQ export 時に毎回実行。",
+    )
+    parser.add_argument(
         "--no-bq-on-new",
         action="store_true",
         help="新規トレードがあっても即時 BigQuery export を行わない。",
@@ -682,27 +693,31 @@ def main() -> int:
     _setup_logging(args.verbose)
     remote_dir = args.remote_dir.expanduser() if args.remote_dir else None
 
+    exporter = None
     if args.disable_bq:
-        logging.error("[PIPELINE] --disable-bq is not supported (BigQuery required).")
-        return 2
-    if args.disable_lot_insights:
-        logging.error("[PIPELINE] --disable-lot-insights is not supported (BigQuery required).")
-        return 2
-
-    try:
-        exporter = BigQueryExporter()
-    except Exception as exc:  # pragma: no cover - defensive
-        logging.error("[PIPELINE] BigQuery exporter init failed: %s", exc)
-        return 2
+        logging.info("[PIPELINE] BigQuery export disabled by --disable-bq")
+    else:
+        try:
+            exporter = BigQueryExporter()
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.error("[PIPELINE] BigQuery exporter init failed: %s", exc)
+            return 2
     gcs_publisher = None if args.disable_gcs else GCSRealtimePublisher()
-    try:
-        analyzer = LotPatternAnalyzer()
-    except Exception as exc:  # pragma: no cover - defensive
-        logging.error("[PIPELINE] Lot insights init failed: %s", exc)
-        return 2
+    analyzer = None
+    lot_insights_enabled = (
+        PIPELINE_LOT_INSIGHTS_ENABLED
+        and not args.disable_lot_insights
+        and not args.disable_bq
+    )
+    if lot_insights_enabled:
+        try:
+            analyzer = LotPatternAnalyzer()
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning("[PIPELINE] Lot insights init skipped: %s", exc)
     pm = PositionManager()
     stop_requested = False
     last_bq_export = 0.0
+    last_lot_insights = 0.0
     bq_failure_count = 0
     bq_pause_until = 0.0
     bq_interval = args.bq_interval
@@ -760,14 +775,18 @@ def main() -> int:
                                 stats.exported,
                                 stats.last_updated_at,
                             )
-                            try:
-                                insights = analyzer.run()
-                                logging.info(
-                                    "[PIPELINE] lot insights generated=%d",
-                                    len(insights),
-                                )
-                            except Exception as exc:  # noqa: BLE001
-                                logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
+                            if analyzer is not None and stats.exported > 0:
+                                lot_interval = max(0.0, args.lot_insights_interval)
+                                if lot_interval <= 0.0 or now - last_lot_insights >= lot_interval:
+                                    try:
+                                        insights = analyzer.run()
+                                        logging.info(
+                                            "[PIPELINE] lot insights generated=%d",
+                                            len(insights),
+                                        )
+                                        last_lot_insights = now
+                                    except Exception as exc:  # noqa: BLE001
+                                        logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
                             last_bq_export = now
                         except Exception as exc:  # noqa: BLE001
                             bq_failure_count += 1

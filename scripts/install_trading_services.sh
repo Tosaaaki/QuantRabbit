@@ -16,6 +16,10 @@ V2_DISALLOWED_UNITS=(
   "quant-micro-adaptive-revert-exit.service"
   "quant-trend-reclaim-long.service"
   "quant-trend-reclaim-long-exit.service"
+  "quant-boot-sync.service"
+  "quant-boot-sync.timer"
+  "quant-ssh-watchdog.service"
+  "quant-ssh-watchdog.timer"
 )
 KNOWN_BROKEN_UNITS=(
   "quant-impulse-retest-s5.service"

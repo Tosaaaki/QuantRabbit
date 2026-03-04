@@ -8610,8 +8610,8 @@ async def market_order(
             req["entry_probability"] = entry_probability
         return req
 
-    _log_order_impl = _log_order
-    _cache_order_status_impl = _cache_order_status
+    _log_order_impl = globals()["_log_order"]
+    _cache_order_status_impl = globals()["_cache_order_status"]
 
     def _log_order(**kwargs):
         kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
@@ -12656,7 +12656,7 @@ async def limit_order(
             req["entry_probability"] = entry_probability
         return req
 
-    _log_order_impl = _log_order
+    _log_order_impl = globals()["_log_order"]
 
     def _log_order(**kwargs):
         kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))

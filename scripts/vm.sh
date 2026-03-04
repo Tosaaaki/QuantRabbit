@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # QuantRabbit VM helper (no default gcloud config required)
 #
@@ -49,6 +50,8 @@ ACCOUNT=""
 KEYFILE=""
 USE_IAP=""
 REMOTE_DIR="~/QuantRabbit"
+SINGLE_VM_PREFIX="fx-trader"
+SINGLE_VM_GUARD="$SCRIPT_DIR/ensure_single_trading_vm.sh"
 
 die() { echo "[vm.sh] $*" >&2; exit 1; }
 
@@ -135,6 +138,12 @@ case "$SUBCMD" in
       fi
     fi
     echo "[vm.sh] Deploying branch '$BRANCH' to $INSTANCE ($PROJECT/$ZONE)"
+    "$SINGLE_VM_GUARD" \
+      -p "$PROJECT" \
+      -m "$INSTANCE" \
+      -P "$SINGLE_VM_PREFIX" \
+      -A "$ACCOUNT" \
+      --strict
     
     # Build remote command
     read -r -d '' REMOTE <<EOF || true

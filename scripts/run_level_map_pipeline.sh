@@ -19,10 +19,16 @@ GCS_BUCKET="${GCS_BUCKET:-${LEVEL_MAP_BUCKET:-}}"
 GCS_OBJECT="${GCS_OBJECT:-analytics/level_map.json}"
 JSON_OUT="${JSON_OUT:-/tmp/level_map.json}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+LEVEL_MAP_DISABLED="${LEVEL_MAP_DISABLED:-0}"
 
 log() {
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
 }
+
+if [[ "${LEVEL_MAP_DISABLED}" == "1" ]]; then
+  log "LEVEL_MAP_DISABLED=1 -> skip level-map pipeline"
+  exit 0
+fi
 
 if [[ -z "${PROJECT}" ]]; then
   echo "PROJECT is required (set PROJECT or BQ_PROJECT or GOOGLE_CLOUD_PROJECT)" >&2

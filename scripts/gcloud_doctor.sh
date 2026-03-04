@@ -227,6 +227,32 @@ if [[ $CHECK_SSH -eq 1 ]]; then
   fi
 fi
 
+step "Checking single running trading VM status"
+if running_vms="$(gcloud compute instances list --project "$PROJECT" --filter 'status=RUNNING' --format='value(name)' 2>/dev/null || true)"; then
+  _running_vm_list=()
+  while IFS= read -r _vm_name; do
+    [[ -n "$_vm_name" ]] && _running_vm_list+=("$_vm_name")
+  done <<< "$running_vms"
+  _single_prefix="fx-trader"
+  _single_filtered=()
+  for vm in "${_running_vm_list[@]}"; do
+    [[ -z "$vm" ]] && continue
+    if [[ "$vm" == "${_single_prefix}"* ]]; then
+      _single_filtered+=("$vm")
+    fi
+  done
+  if (( ${#_single_filtered[@]} == 0 )); then
+    warn "No running VM matches prefix='${_single_prefix}'"
+  elif (( ${#_single_filtered[@]} == 1 )); then
+    grn "Single trading VM check OK: ${_single_filtered[*]}"
+  else
+    warn "Multiple trading VMs active under '${_single_prefix}*': ${_single_filtered[*]}"
+  fi
+  unset _running_vm_list _single_filtered _single_prefix
+else
+  warn "Failed to enumerate running instances for single-VM check."
+fi
+
 if [[ $ENSURE_OSLOGIN_KEY -eq 1 ]]; then
   step "Ensuring OS Login public key registered"
   if [[ ! -f "$PUBKEYFILE" ]]; then

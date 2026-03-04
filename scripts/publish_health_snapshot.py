@@ -388,6 +388,20 @@ def _write_local(snapshot: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    snapshot = _build_snapshot()
+    _write_local(snapshot)
+    payload = json.dumps(snapshot, ensure_ascii=True, separators=(",", ":"))
+
+    upload_disabled = os.getenv("HEALTH_UPLOAD_DISABLE", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if upload_disabled:
+        logging.info("[HEALTH] upload disabled by HEALTH_UPLOAD_DISABLE")
+        return
+
     bucket_name = _load_bucket_name()
     if not bucket_name:
         logging.warning("[HEALTH] bucket not configured; skip upload")
@@ -400,10 +414,6 @@ def main() -> None:
     object_path = os.getenv("HEALTH_OBJECT_PATH")
     if not object_path:
         object_path = f"realtime/health_{socket.gethostname()}.json"
-
-    snapshot = _build_snapshot()
-    _write_local(snapshot)
-    payload = json.dumps(snapshot, ensure_ascii=True, separators=(",", ":"))
     try:
         if storage is None:
             raise RuntimeError("google-cloud-storage not available")

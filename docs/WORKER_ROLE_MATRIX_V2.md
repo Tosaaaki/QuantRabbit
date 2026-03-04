@@ -222,7 +222,9 @@
   同一戦略の成績分断による配分劣化を防ぐ（2026-02-24 更新）。
 - `quant-replay-quality-gate` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
   replay run 出力を `analysis.trade_counterfactual_worker` へ連結し、
-  `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映できる。
+  `policy_hints.block_jst_hours` は改善提案として監査ログに記録し、
+  反映は自動実施しない。`policy_hints.reentry_overrides` は
+  `config/worker_reentry.yaml` へ反映対象とする。
   `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS` を超える候補は反映しない。
   `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` 内は
   `worker_reentry` 反映をスキップし、解析のみ継続する。

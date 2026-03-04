@@ -2,6 +2,8 @@
 set -euo pipefail
 
 TAG="qr-ssh-watchdog"
+SSH_CFG="/etc/ssh/sshd_config"
+SSH_CFG_BAK="/etc/ssh/sshd_config.bak"
 
 SSH_UNIT=""
 if systemctl list-unit-files --type=service | grep -q '^ssh\.service'; then
@@ -10,7 +12,30 @@ elif systemctl list-unit-files --type=service | grep -q '^sshd\.service'; then
   SSH_UNIT="sshd"
 fi
 
+repair_sshd_config() {
+  local cfg="$SSH_CFG"
+  local bak="$SSH_CFG_BAK"
+
+  if [[ ! -f "$cfg" ]] && [[ -f "$bak" ]]; then
+    cp -f "$bak" "$cfg"
+    logger -t "$TAG" "repaired sshd_config by restoring backup"
+    return
+  fi
+
+  if [[ -f "$cfg" ]] && command -v sshd >/dev/null 2>&1; then
+    if ! sshd -t -f "$cfg" >/dev/null 2>&1; then
+      if [[ -f "$bak" ]] && sshd -t -f "$bak" >/dev/null 2>&1; then
+        cp -f "$bak" "$cfg"
+        logger -t "$TAG" "repaired invalid sshd_config from backup"
+      else
+        logger -t "$TAG" "sshd_config invalid and backup not usable"
+      fi
+    fi
+  fi
+}
+
 if [[ -n "$SSH_UNIT" ]]; then
+  repair_sshd_config
   if ! systemctl is-active --quiet "$SSH_UNIT"; then
     logger -t "$TAG" "$SSH_UNIT inactive; restarting"
     systemctl restart "$SSH_UNIT" || true

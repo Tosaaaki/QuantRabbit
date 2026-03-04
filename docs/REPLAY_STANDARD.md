@@ -28,13 +28,24 @@ python scripts/replay_exit_workers_groups.py \
 python scripts/replay_exit_workers_groups.py \
   --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
   --workers scalp_ping_5s_b,session_open \
-  --scenarios all,wide_spread,high_vol,trend \
+  --scenarios all,wide_spread,high_vol,trend_up,trend_down,gap,stale \
   --no-hard-sl \
   --exclude-end-of-replay \
   --out-dir tmp/replay_exit_workers_groups_YYYYMM_scenarios
 ```
 
 ### `summary_all.json` のシナリオ追跡
+
+- `--scenarios` は `replay_exit_workers_groups.py` が受理する以下の値を使用します（小文字・`_` 区切り）。  
+  - `all`
+  - `wide_spread`, `tight_spread`
+  - `high_vol`, `low_vol`
+  - `trend`, `trend_up`, `trend_down`
+  - `range`
+  - `gap`, `gap_up`, `gap_down`
+  - `stale`
+- 同義語は `high/low/high_volatility/low_volatility` や `uptrend/downtrend`、
+  `gapup/gapdown`、`stale_tick/stale_ticks` などが受理され、内部で正規化されます。
 
 - 追加されるキー:
   - `base_scenarios[scenario].summary`
@@ -162,12 +173,12 @@ python -m analysis.trade_counterfactual_worker \
   - `scripts/replay_quality_gate.py` を呼び出して walk-forward を実行。
   - 最新スナップショットを `logs/replay_quality_gate_latest.json` に保存。
   - 実行履歴を `logs/replay_quality_gate_history.jsonl` に追記。
-  - `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` のときは、
-    replay 完了後に `analysis.trade_counterfactual_worker` を戦略ごとに連鎖実行し、
-    `policy_hints.block_jst_hours` を `config/worker_reentry.yaml` へ自動反映する。
-    - 対象戦略は既定で `failing_workers`（`REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE=failing`）。
-    - replay入力は既定で当該 run の `runs/*/replay_exit_workers.json` と
-      `runs/*/replay_exit_*_base.json` を自動探索する。
+- `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` のときは、
+  replay 完了後に `analysis.trade_counterfactual_worker` を戦略ごとに連鎖実行し、
+  `policy_hints.block_jst_hours` は監査対象として収集し、反映方針の検討用提案として記録する。
+  - 対象戦略は既定で `failing_workers`（`REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE=failing`）。
+  - replay入力は既定で当該 run の `runs/*/replay_exit_workers.json` と
+    `runs/*/replay_exit_*_base.json` を自動探索する。
     - 反映内容と採用/非採用理由は `logs/replay_quality_gate_latest.json`
       の `auto_improve` に監査記録される。
   - `tmp/replay_quality_gate/<timestamp>` は `REPLAY_QUALITY_GATE_KEEP_RUNS` 件だけ保持。

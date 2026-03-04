@@ -4,6 +4,8 @@
 
 ## 運用 / Runbook
 - `AGENTS.md`: エージェント運用の最重要ルール（要約）
+- `docs/OPS_VM_RUNBOOK.md`: VM 本番運用手順（起動/停止/デプロイ/反映確認/ログ退避）
+- `docs/OPS_LOCAL_RUNBOOK.md`: ローカル運用手順（local_v2_stack / local LLM lane / ログ配置）
 - `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用の統合ランブック（IAP/SSH 復旧や metadata deploy 含む）
 - `docs/GCP_PLATFORM.md`: GCP 基盤/IAM/Storage/BQ/Secret の詳細
 - `docs/DEPLOYMENT.md`: デプロイ手順（gcloud デフォルト不要）

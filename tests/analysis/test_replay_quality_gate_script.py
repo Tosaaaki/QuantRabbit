@@ -152,11 +152,11 @@ def test_resolve_scenario_names_main_keeps_all_without_warning() -> None:
 
 def test_resolve_scenario_names_validates_supported_grouped_scenarios() -> None:
     scenario_names, warnings, error = _module._resolve_scenario_names(
-        raw_scenarios="all,wide_spread,trend",
+        raw_scenarios="all,wide,uptrend,gapdown,stale_ticks",
         backend="exit_workers_groups",
     )
 
-    assert scenario_names == ["all", "wide_spread", "trend"]
+    assert scenario_names == ["all", "wide_spread", "trend_up", "gap_down", "stale"]
     assert warnings == []
     assert error is None
 

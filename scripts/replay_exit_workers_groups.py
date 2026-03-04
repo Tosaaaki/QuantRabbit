@@ -114,48 +114,282 @@ def _parse_iso(ts: str) -> datetime:
     return rew.parse_iso8601(ts)
 
 
-def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
-    payload = json.loads(path.read_text())
-    trades = payload.get("trades") or []
-    entries: List[EntryEvent] = []
-    for tr in trades:
-        entry_time = tr.get("entry_time")
-        direction = tr.get("direction")
-        entry_price = tr.get("entry_price")
-        if not entry_time or not direction or entry_price is None:
-            continue
+def _safe_float_value(value: object, default: float | None = None) -> float | None:
+    try:
+        if isinstance(value, bool):
+            return None if default is None else float(default)
+        out = float(value)
+    except Exception:
+        if default is None:
+            return None
+        return float(default)
+    if out != out:
+        return None if default is None else float(default)
+    return out
+
+
+def _safe_int_value(value: object, default: int | None = None) -> int | None:
+    try:
+        if isinstance(value, bool):
+            return None if default is None else int(default)
+        return int(float(value))
+    except Exception:
+        if default is None:
+            return None
+        return int(default)
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        txt = value.strip()
+        if not txt:
+            return None
         try:
-            entry_price = float(entry_price)
+            return _parse_iso(txt)
         except Exception:
+            try:
+                parsed = datetime.fromisoformat(txt.replace("Z", "+00:00"))
+            except Exception:
+                try:
+                    stamp = float(txt)
+                except Exception:
+                    return None
+                if stamp > 1.0e12:
+                    stamp = stamp / 1000.0
+                return datetime.fromtimestamp(stamp, tz=timezone.utc)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+    try:
+        if isinstance(value, (int, float)):
+            if isinstance(value, bool):
+                return None
+            stamp = float(value)
+            if stamp > 1.0e12:
+                stamp = stamp / 1000.0
+            return datetime.fromtimestamp(stamp, tz=timezone.utc)
+    except Exception:
+        return None
+    return None
+
+
+def _first_present(mapping: dict, keys: list[str]) -> object | None:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _parse_side(value: object) -> str | None:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {
+            "long",
+            "buy",
+            "up",
+            "bull",
+            "1",
+            "true",
+            "t",
+            "l",
+            "open_long",
+            "openlong",
+            "open-long",
+            "open long",
+        }:
+            return "long"
+        if text in {
+            "short",
+            "sell",
+            "down",
+            "bear",
+            "-1",
+            "false",
+            "f",
+            "s",
+            "open_short",
+            "openshort",
+            "open-short",
+            "open short",
+        }:
+            return "short"
+        if text.startswith("open_") and text.endswith("_long"):
+            return "long"
+        if text.startswith("open_") and text.endswith("_short"):
+            return "short"
+        if text.startswith("open-") and text.endswith("-long"):
+            return "long"
+        if text.startswith("open-") and text.endswith("-short"):
+            return "short"
+        try:
+            num = float(text)
+        except Exception:
+            return None
+        if num > 0:
+            return "long"
+        if num < 0:
+            return "short"
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        num = float(value)
+        if num > 0:
+            return "long"
+        if num < 0:
+            return "short"
+    return None
+
+
+def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        print(f"[replay_exit_workers_groups] failed to parse json: {path}")
+        return []
+
+    if isinstance(payload, dict):
+        trades = payload.get("trades")
+        if trades is None:
+            for key in ("entries", "signals", "actions", "data", "record", "records", "entry"):
+                candidate = payload.get(key)
+                if candidate is not None:
+                    if isinstance(candidate, dict):
+                        trades = [candidate]
+                    else:
+                        trades = candidate
+                    break
+    else:
+        trades = payload
+    raw_count = 0
+    accepted_count = 0
+    entries: List[EntryEvent] = []
+    issues: dict[str, int] = {
+        "missing_payload": 0,
+        "non_dict_trade": 0,
+        "missing_required": 0,
+        "invalid_datetime": 0,
+        "invalid_direction": 0,
+        "invalid_entry_price": 0,
+        "invalid_units": 0,
+        "invalid_tp_sl": 0,
+    }
+    if not isinstance(trades, list):
+        issues["missing_payload"] += 1
+        print(
+            f"[replay_exit_workers_groups] parsed_entries={accepted_count}/{raw_count} "
+            + ",".join(f"{k}={v}" for k, v in issues.items() if v > 0)
+        )
+        return entries
+
+    for tr in trades:
+        raw_count += 1
+        if not isinstance(tr, dict):
+            issues["non_dict_trade"] += 1
             continue
-        tp_price = tr.get("tp_price")
-        sl_price = tr.get("sl_price")
+        entry_time = _first_present(
+            tr,
+            ["entry_time", "open_time", "time", "ts", "timestamp", "created_at", "open_epoch", "epoch"],
+        )
+        direction = _first_present(tr, ["direction", "side", "action"])
+        entry_price = _first_present(tr, ["entry_price", "price", "open_price", "entry", "entry_px"])
+        if entry_time is None or direction is None:
+            issues["missing_required"] += 1
+            continue
+        if entry_price is None:
+            issues["missing_required"] += 1
+            continue
+
+        parsed_time = _parse_dt(entry_time)
+        if parsed_time is None:
+            issues["invalid_datetime"] += 1
+            continue
+
+        side = _parse_side(direction)
+        if side is None:
+            issues["invalid_direction"] += 1
+            continue
+
+        entry_price_value = _safe_float_value(entry_price)
+        if entry_price_value is None:
+            issues["invalid_entry_price"] += 1
+            continue
+
         tp_pips = None
         sl_pips = None
-        try:
-            if tp_price is not None:
-                tp_pips = abs(float(tp_price) - entry_price) / PIP
-        except Exception:
-            tp_pips = None
-        try:
-            if sl_price is not None:
-                sl_pips = abs(float(sl_price) - entry_price) / PIP
-        except Exception:
-            sl_pips = None
-        units = int(tr.get("units") or 10000)
-        strategy_tag = tr.get("strategy_tag") or tr.get("strategy") or tr.get("tag")
+        tp_price = _first_present(tr, ["tp_price", "tp_price_val", "take_profit_price", "take_profit"])
+        if tp_price is not None:
+            tp_price_value = _safe_float_value(tp_price)
+            if tp_price_value is not None:
+                tp_pips = abs(tp_price_value - entry_price_value) / PIP
+            else:
+                issues["invalid_tp_sl"] += 1
+        else:
+            tp_pips_raw = _first_present(tr, ["tp_pips", "target_pips", "tp", "tp_distance"])
+            tp_pips_value = _safe_float_value(tp_pips_raw)
+            if tp_pips_raw is not None and tp_pips_value is not None:
+                tp_pips = abs(tp_pips_value)
+            elif tp_pips_raw is not None and tp_pips_value is None:
+                issues["invalid_tp_sl"] += 1
+
+        sl_price = _first_present(tr, ["sl_price", "sl_price_val", "stop_loss_price", "stop_loss"])
+        if sl_price is not None:
+            sl_price_value = _safe_float_value(sl_price)
+            if sl_price_value is not None:
+                sl_pips = abs(sl_price_value - entry_price_value) / PIP
+            else:
+                issues["invalid_tp_sl"] += 1
+        else:
+            sl_pips_raw = _first_present(tr, ["sl_pips", "sl_distance"])
+            sl_pips_value = _safe_float_value(sl_pips_raw)
+            if sl_pips_raw is not None and sl_pips_value is not None:
+                sl_pips = abs(sl_pips_value)
+            elif sl_pips_raw is not None and sl_pips_value is None:
+                issues["invalid_tp_sl"] += 1
+
+        units = _first_present(
+            tr,
+            ["units", "size", "quantity", "units_int", "units_float", "units_signed"],
+        )
+        if units is None:
+            units = 10000
+        units_value = _safe_int_value(units)
+        if units_value is None or units_value == 0:
+            issues["invalid_units"] += 1
+            continue
+
+        strategy_tag = tr.get("strategy_tag") or tr.get("strategy") or tr.get("tag") or tr.get("name")
         entries.append(
             EntryEvent(
-                ts=_parse_iso(str(entry_time)),
-                direction=str(direction),
-                entry_price=entry_price,
+                ts=parsed_time,
+                direction=side,
+                entry_price=float(entry_price_value),
                 tp_pips=tp_pips,
                 sl_pips=sl_pips,
-                units=abs(units),
+                units=abs(units_value),
                 strategy_tag=str(strategy_tag) if strategy_tag else None,
             )
         )
+        accepted_count += 1
     entries.sort(key=lambda e: e.ts)
+
+    if (
+        issues["missing_required"]
+        or issues["invalid_datetime"]
+        or issues["invalid_direction"]
+        or issues["invalid_entry_price"]
+        or issues["invalid_units"]
+        or issues["invalid_tp_sl"]
+    ):
+        print(
+            f"[replay_exit_workers_groups] parsed_entries={accepted_count}/{raw_count} "
+            + ",".join(f"{k}={v}" for k, v in issues.items() if v > 0)
+        )
+
     return entries
 
 
@@ -234,13 +468,54 @@ def _safe_float(value: object, default: float = 0.0) -> float:
 
 def _parse_scenarios(raw: str) -> list[str]:
     default = ["all"]
-    parsed = [s.strip().lower().replace("-", "_") for s in (raw or "").split(",") if s.strip()]
-    if not parsed:
+    normalized = [
+        s.strip().lower().replace("-", "_").replace(" ", "_")
+        for s in (raw or "").split(",")
+        if s.strip()
+    ]
+    if not normalized:
         return default
+
+    alias = {
+        "all": "all",
+        "wide": "wide_spread",
+        "wide_spread": "wide_spread",
+        "tight": "tight_spread",
+        "tight_spread": "tight_spread",
+        "high": "high_vol",
+        "high_vol": "high_vol",
+        "highvol": "high_vol",
+        "high_volatility": "high_vol",
+        "low": "low_vol",
+        "low_vol": "low_vol",
+        "lowvol": "low_vol",
+        "low_volatility": "low_vol",
+        "trend": "trend",
+        "trend_up": "trend_up",
+        "trendup": "trend_up",
+        "uptrend": "trend_up",
+        "trend_down": "trend_down",
+        "trenddown": "trend_down",
+        "downtrend": "trend_down",
+        "range": "range",
+        "rangebound": "range",
+        "range_bound": "range",
+        "gap": "gap",
+        "gap_up": "gap_up",
+        "gapup": "gap_up",
+        "gap_down": "gap_down",
+        "gapdown": "gap_down",
+        "stale": "stale",
+        "stale_tick": "stale",
+        "stale_ticks": "stale",
+    }
+
     seen: list[str] = []
-    for item in parsed:
-        if item not in seen:
-            seen.append(item)
+    for item in normalized:
+        canonical = alias.get(item, item)
+        if canonical in seen:
+            continue
+        seen.append(canonical)
     return seen
 
 
@@ -251,7 +526,13 @@ SCENARIO_OPTIONS: set[str] = {
     "high_vol",
     "low_vol",
     "trend",
+    "trend_up",
+    "trend_down",
     "range",
+    "gap",
+    "gap_up",
+    "gap_down",
+    "stale",
 }
 
 
@@ -262,6 +543,7 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
 ]:
     times: List[datetime] = []
     spreads: List[float] = []
+    mid_values: List[float] = []
     if not ticks:
         return [], {"all": []}, {
             "count": 0,
@@ -276,6 +558,10 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
         times.append(ts)
         spread = max(0.0, getattr(tick, "ask", 0.0) - getattr(tick, "bid", 0.0))
         spreads.append(spread / PIP)
+        try:
+            mid_values.append(float(getattr(tick, "mid", 0.0)))
+        except Exception:
+            mid_values.append(0.0)
     total = len(times)
     if total == 0:
         return [], {"all": []}, {
@@ -401,6 +687,10 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
             if avg_delta > 0:
                 if body_pips >= avg_delta * 1.2:
                     flags.add("trend")
+                    if close >= open_price:
+                        flags.add("trend_up")
+                    else:
+                        flags.add("trend_down")
                 if body_pips <= avg_delta * 0.4:
                     flags.add("range")
             minute_flags.append(flags)
@@ -418,7 +708,36 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
         "low_vol": [],
         "trend": [],
         "range": [],
+        "trend_up": [],
+        "trend_down": [],
+        "gap": [],
+        "gap_up": [],
+        "gap_down": [],
+        "stale": [],
     }
+
+    def _percentile(values: list[float], ratio: float) -> float:
+        if not values:
+            return 0.0
+        sorted_values = sorted(values)
+        idx = int(round((len(sorted_values) - 1) * ratio))
+        idx = max(0, min(len(sorted_values) - 1, idx))
+        return sorted_values[idx]
+
+    gap_candidates = [
+        abs(curr - prev) / PIP
+        for prev, curr in zip(mid_values[:-1], mid_values[1:])
+        if curr == curr and prev == prev
+    ]
+    time_candidates = [
+        (curr - prev).total_seconds()
+        for prev, curr in zip(times[:-1], times[1:])
+        if curr >= prev and (curr - prev).total_seconds() >= 0
+    ]
+    # Use median-based sensitivity for jump detection to keep sparse data robust.
+    gap_threshold = max(3.0, _percentile(gap_candidates, 0.50) * 1.8)
+    stale_threshold = max(2.0, _percentile(time_candidates, 0.5) * 3.0, 1.0)
+
     for idx in range(total):
         minute_idx = minute_for_tick[idx] if minute_for_tick else -1
         base_flags = {"all"}
@@ -428,6 +747,17 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
             base_flags.add("wide_spread")
         if spreads[idx] <= q_low:
             base_flags.add("tight_spread")
+        if idx > 0:
+            delta_mid = abs(mid_values[idx] - mid_values[idx - 1]) / PIP
+            if delta_mid >= gap_threshold:
+                base_flags.add("gap")
+                if mid_values[idx] >= mid_values[idx - 1]:
+                    base_flags.add("gap_up")
+                else:
+                    base_flags.add("gap_down")
+            dt_sec = (times[idx] - times[idx - 1]).total_seconds()
+            if dt_sec >= stale_threshold:
+                base_flags.add("stale")
         for name in scenario_flags:
             if name == "all":
                 continue
@@ -797,7 +1127,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--scenarios",
         default="all",
-        help="Comma separated replay scenarios: all,wide_spread,tight_spread,high_vol,low_vol,trend,range",
+        help=(
+            "Comma separated replay scenarios: "
+            "all, wide_spread, tight_spread, high_vol, low_vol, "
+            "trend, trend_up, trend_down, range, gap, gap_up, gap_down, stale"
+        ),
     )
     ap.add_argument("--slip-base-pips", type=float, default=0.0)
     ap.add_argument("--slip-spread-coef", type=float, default=0.0)

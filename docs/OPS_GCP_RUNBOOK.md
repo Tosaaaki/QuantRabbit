@@ -22,6 +22,9 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
 
 - `gcloud_doctor.sh` の `-O` は instance metadata を `enable-oslogin=TRUE, block-project-ssh-keys=TRUE` に固定して、project metadata との競合を除去する。
 - `gcloud_doctor.sh` の `-T` は `-S` 実行時の OS Login 鍵 TTL を制御する（既定 `none`=無期限。例: `-T 30d`）。
+- `scripts/deploy_to_vm.sh` / `scripts/vm.sh deploy` / `scripts/deploy_via_metadata.sh` は、デプロイ実行前に `fx-trader*` で起動中の不要 VM を停止する「single-VMガード」を実行する。  
+  運用上は原則このタイミングで常時1台運用を維持する想定。
+- `scripts/ensure_single_trading_vm.sh` を共通化し、`--strict` 時は停止失敗時に中断する。`gcloud_doctor` では起動中の `fx-trader*` 台数を監査し、複数検知時に警告する。
 
 ### IAP 鍵認証が繰り返し失敗する時の標準手順（最優先）
 ```bash

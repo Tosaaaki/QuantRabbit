@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
-ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/run_sync_pipeline.py --interval 60 --bq-interval 300 --limit 1200
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/run_sync_pipeline.py --interval 60 --bq-interval 900 --limit 1200 --disable-lot-insights
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30

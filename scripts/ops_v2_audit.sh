@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="${OPS_AUDIT_REPO:-/home/tossaki/QuantRabbit}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="${OPS_AUDIT_REPO:-$DEFAULT_REPO_DIR}"
 PYTHON_BIN="${OPS_AUDIT_PYTHON:-$REPO_DIR/.venv/bin/python}"
+
+# Ensure ops_v2_audit.py resolves the same repo path when launched via subprocess.
+export OPS_AUDIT_REPO="$REPO_DIR"
+export OPS_AUDIT_PYTHON="$PYTHON_BIN"
 
 if [[ ! -d "$REPO_DIR" ]]; then
   echo "[ops-v2-audit] repo not found: $REPO_DIR" >&2

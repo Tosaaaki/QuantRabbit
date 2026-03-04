@@ -31,6 +31,8 @@ except Exception:  # pragma: no cover - optional dependency during local tests
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _AUTO_IMPROVE_SCOPE_VALUES = {"failing", "all"}
 _AUTO_IMPROVE_WORKER_SKIP_PREFIXES = ("pocket:", "source:")
+# Policy: block-hour recommendations are audit-only for auto-improve; do not auto-apply to reentry.
+_AUTO_IMPROVE_APPLY_BLOCK_HOURS_POLICY = False
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -286,10 +288,7 @@ def _default_config() -> WorkerConfig:
             1,
             _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS", 8),
         ),
-        auto_improve_apply_block_hours=_env_bool(
-            "REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_BLOCK_HOURS",
-            False,
-        ),
+        auto_improve_apply_block_hours=False,
         auto_improve_min_reentry_confidence=_clamp(
             _safe_float(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_CONFIDENCE"), 0.70),
             0.0,
@@ -375,7 +374,7 @@ def parse_args() -> argparse.Namespace:
         "--auto-improve-apply-block-hours",
         type=int,
         choices=(0, 1),
-        default=1 if default.auto_improve_apply_block_hours else 0,
+        default=0,
     )
     ap.add_argument(
         "--auto-improve-min-reentry-confidence",
@@ -486,7 +485,7 @@ def _build_config_from_args(args: argparse.Namespace) -> WorkerConfig:
         auto_improve_counterfactual_out_dir=Path(args.auto_improve_counterfactual_out_dir).resolve(),
         auto_improve_min_trades=max(1, int(args.auto_improve_min_trades)),
         auto_improve_max_block_hours=max(1, int(args.auto_improve_max_block_hours)),
-        auto_improve_apply_block_hours=bool(int(args.auto_improve_apply_block_hours)),
+        auto_improve_apply_block_hours=_AUTO_IMPROVE_APPLY_BLOCK_HOURS_POLICY,
         auto_improve_min_reentry_confidence=_clamp(
             float(args.auto_improve_min_reentry_confidence),
             0.0,
@@ -936,15 +935,16 @@ def _run_auto_improve(
                     "source": str(reentry_hint.get("source") or "counterfactual"),
                 }
 
-        if cfg.auto_improve_apply_block_hours:
-            if block_hours:
-                if len(block_hours) <= int(cfg.auto_improve_max_block_hours):
-                    strategy_update["block_jst_hours"] = block_hours
-                else:
-                    row["block_hours_status"] = "ignored_too_many_block_hours"
-                    row["max_block_hours"] = int(cfg.auto_improve_max_block_hours)
+        if block_hours:
+            row["block_jst_hours"] = block_hours
+            max_block_hours = int(cfg.auto_improve_max_block_hours)
+            if max_block_hours >= 0 and len(block_hours) > max_block_hours:
+                row["block_hours_status"] = "ignored_too_many_block_hours"
+                row["max_block_hours"] = max_block_hours
             else:
-                row["block_hours_status"] = "ignored_no_block_hours"
+                row["block_hours_status"] = "ignored_by_policy"
+        elif cfg.auto_improve_apply_block_hours:
+            row["block_hours_status"] = "ignored_no_block_hours"
 
         if not strategy_update:
             if not row.get("status"):
@@ -993,7 +993,7 @@ def _run_auto_improve(
     apply_result = _apply_reentry_updates(
         reentry_path=cfg.auto_improve_reentry_config_path,
         strategy_updates=accepted_updates,
-        apply_block_hours=cfg.auto_improve_apply_block_hours,
+        apply_block_hours=_AUTO_IMPROVE_APPLY_BLOCK_HOURS_POLICY,
     )
     result["reentry_apply"] = apply_result
     if bool(apply_result.get("applied")):

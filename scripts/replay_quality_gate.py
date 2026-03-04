@@ -137,6 +137,44 @@ def _normalize_csv_list(raw_value: object) -> list[str]:
     return seen
 
 
+def _normalize_scenario_name(raw: str) -> str:
+    token = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "all": "all",
+        "wide": "wide_spread",
+        "wide_spread": "wide_spread",
+        "tight": "tight_spread",
+        "tight_spread": "tight_spread",
+        "high": "high_vol",
+        "high_vol": "high_vol",
+        "highvol": "high_vol",
+        "high_volatility": "high_vol",
+        "low": "low_vol",
+        "low_vol": "low_vol",
+        "lowvol": "low_vol",
+        "low_volatility": "low_vol",
+        "trend": "trend",
+        "trend_up": "trend_up",
+        "trendup": "trend_up",
+        "uptrend": "trend_up",
+        "trend_down": "trend_down",
+        "trenddown": "trend_down",
+        "downtrend": "trend_down",
+        "range": "range",
+        "rangebound": "range",
+        "range_bound": "range",
+        "gap": "gap",
+        "gap_up": "gap_up",
+        "gapup": "gap_up",
+        "gap_down": "gap_down",
+        "gapdown": "gap_down",
+        "stale": "stale",
+        "stale_tick": "stale",
+        "stale_ticks": "stale",
+    }
+    return aliases.get(token, token)
+
+
 SCENARIO_OPTIONS: set[str] = {
     "all",
     "wide_spread",
@@ -144,7 +182,13 @@ SCENARIO_OPTIONS: set[str] = {
     "high_vol",
     "low_vol",
     "trend",
+    "trend_up",
+    "trend_down",
     "range",
+    "gap",
+    "gap_up",
+    "gap_down",
+    "stale",
 }
 
 
@@ -153,7 +197,15 @@ def _resolve_scenario_names(
     raw_scenarios: object,
     backend: str,
 ) -> tuple[list[str], list[str], str | None]:
-    scenario_names = _normalize_csv_list(raw_scenarios)
+    normalized = []
+    for token in _normalize_csv_list(raw_scenarios):
+        normalized.append(_normalize_scenario_name(token))
+    # Preserve user order while avoiding duplicates.
+    scenario_names: list[str] = []
+    for token in normalized:
+        if token not in scenario_names:
+            scenario_names.append(token)
+
     if not scenario_names:
         return ["all"], [], None
 

@@ -46,11 +46,14 @@ ZONE="asia-northeast1-a"
 INSTANCE="fx-trader-vm"
 REPO_DIR="/home/tossaki/QuantRabbit"
 SERVICE="quant-market-data-feed.service"
+SINGLE_VM_PREFIX="fx-trader"
+SINGLE_VM_GUARD="$SCRIPT_DIR/ensure_single_trading_vm.sh"
 
 USE_IAP=0
 SSH_KEYFILE=""
 SA_KEYFILE=""
 SA_IMPERSONATE=""
+IMPERSONATE_ARG=""
 while getopts ":b:ip:z:m:d:s:k:tK:A:" opt; do
   case "$opt" in
     b) BRANCH="$OPTARG" ;;
@@ -81,6 +84,9 @@ ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format='value(account
 if [[ -z "$ACTIVE_ACCOUNT" && -n "$SA_KEYFILE" ]]; then
   echo "[deploy] No active account; activating service account from key: $SA_KEYFILE"
   gcloud auth activate-service-account --key-file "$SA_KEYFILE"
+fi
+if [[ -n "$SA_IMPERSONATE" ]]; then
+  IMPERSONATE_ARG="--impersonate-service-account=$SA_IMPERSONATE"
 fi
 
 # Run doctor for early failure (non-destructive, no SSH attempt here)
@@ -131,6 +137,17 @@ if [[ -x scripts/gcloud_doctor.sh ]]; then
       exit 2
     fi
   fi
+fi
+
+if ! gcloud compute instances describe "$INSTANCE" --project "$PROJECT" --zone "$ZONE" >/dev/null 2>&1; then
+  echo "[deploy] Warning: target instance '$INSTANCE' not found in $PROJECT/$ZONE."
+else
+  "$SINGLE_VM_GUARD" \
+    -p "$PROJECT" \
+    -m "$INSTANCE" \
+    -P "$SINGLE_VM_PREFIX" \
+    -A "$SA_IMPERSONATE" \
+    --strict
 fi
 
 echo "[deploy] Project=$PROJECT Zone=$ZONE Instance=$INSTANCE Branch=$BRANCH Service=$SERVICE"

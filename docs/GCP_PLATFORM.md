@@ -93,8 +93,10 @@ sudo systemctl daemon-reload
 - BigQuery 環境変数（`ops/env/quant-v2-runtime.env` 側で指定）
   - 必須: `BQ_PROJECT`（未設定時は `GOOGLE_CLOUD_PROJECT`）, `BQ_DATASET`, `BQ_TRADES_TABLE`, `BQ_LOCATION`
   - 任意: `BQ_MAX_EXPORT`, `BQ_EXPORT_BATCH_SIZE`, `BQ_INSERT_TIMEOUT_SEC`, `BQ_RETRY_TIMEOUT_SEC`, `BQ_RETRY_INITIAL_SEC`, `BQ_RETRY_MAX_SEC`, `BQ_RETRY_MULTIPLIER`, `PIPELINE_DB_READ_TIMEOUT_SEC`, `BQ_CANDLES_TABLE`, `BQ_REALTIME_METRICS_TABLE`, `BQ_RECOMMENDATION_TABLE`, `BQ_STRATEGY_MODEL`
-- `quant-bq-sync.service` は `scripts/run_sync_pipeline.py --limit 1200 --bq-interval 300` を既定とし、
+- `quant-bq-sync.service` は `scripts/run_sync_pipeline.py --interval 60 --bq-interval 900 --limit 1200 --disable-lot-insights` を既定とし、
   BigQuery 送信は `analytics/bq_exporter.py` 側で `BQ_EXPORT_BATCH_SIZE` 単位に分割する。
+  ロットインサイト生成は `--disable-lot-insights` により既定停止で、必要時に
+  `--lot-insights-interval` / `PIPELINE_LOT_INSIGHTS_ENABLED` で再有効化する。
   VMで `insertAll` の `RetryError`（SSL EOF 等）が出る場合は、まず `BQ_EXPORT_BATCH_SIZE` と
   `BQ_RETRY_TIMEOUT_SEC` を下げてハング時間を短縮する。
 - BQ ML を使う場合は `CREATE MODEL` 権限が必要（`analytics/strategy_optimizer_job.py`）

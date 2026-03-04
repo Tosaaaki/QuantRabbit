@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="${1:-/home/tossaki/QuantRabbit}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="${1:-${HEALTH_SNAPSHOT_REPO:-$DEFAULT_REPO_DIR}}"
 
 if [[ ! -d "$REPO_DIR" ]]; then
   echo "[health-snapshot] repo not found: $REPO_DIR" >&2

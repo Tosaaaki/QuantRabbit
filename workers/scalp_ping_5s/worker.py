@@ -5601,6 +5601,8 @@ async def scalp_ping_5s_worker() -> None:
     last_min_units_rescue_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
     last_loop_heartbeat_mono = 0.0
+    last_account_snapshot_error_log_mono = 0.0
+    last_account_snapshot = None
     entry_skip_reasons: dict[str, int] = {}
     entry_skip_reasons_by_side: dict[str, dict[str, int]] = {}
     _signal_side_hint: Optional[str] = None
@@ -6805,7 +6807,37 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     continue
 
-            snap = get_account_snapshot(cache_ttl_sec=0.5)
+            try:
+                snap = get_account_snapshot(cache_ttl_sec=0.5)
+                last_account_snapshot = snap
+            except Exception as exc:
+                if last_account_snapshot is None:
+                    _note_entry_skip(
+                        "account_snapshot_unavailable",
+                        detail=f"err={exc.__class__.__name__}",
+                    )
+                    if (
+                        now_mono - last_account_snapshot_error_log_mono
+                        >= _ENTRY_SKIP_SUMMARY_INTERVAL_SEC
+                    ):
+                        LOG.warning(
+                            "%s account snapshot unavailable; skip loop err=%s",
+                            config.LOG_PREFIX,
+                            exc,
+                        )
+                        last_account_snapshot_error_log_mono = now_mono
+                    continue
+                snap = last_account_snapshot
+                if (
+                    now_mono - last_account_snapshot_error_log_mono
+                    >= _ENTRY_SKIP_SUMMARY_INTERVAL_SEC
+                ):
+                    LOG.warning(
+                        "%s account snapshot fetch failed; continue with cached snapshot err=%s",
+                        config.LOG_PREFIX,
+                        exc,
+                    )
+                    last_account_snapshot_error_log_mono = now_mono
             nav = max(_safe_float(snap.nav, 0.0), 1.0)
             balance = max(_safe_float(snap.balance, 0.0), nav)
             margin_available = max(_safe_float(snap.margin_available, 0.0), 0.0)
@@ -7126,15 +7158,20 @@ async def scalp_ping_5s_worker() -> None:
                 entry_probability=entry_probability,
                 confidence=int(signal.confidence),
             )
-            if min_units_status == "rescued":
+            if units < config.MIN_UNITS and signal.side == "short":
+                units = config.MIN_UNITS
+                min_units_status = "short_probe_rescued"
+
+            if min_units_status in {"rescued", "short_probe_rescued"}:
                 tech_route_reasons.append("min_units_rescue")
                 if (
                     now_mono - last_min_units_rescue_log_mono
                     >= config.MIN_UNITS_RESCUE_LOG_INTERVAL_SEC
                 ):
                     LOG.info(
-                        "%s min_units_rescue applied units=%d prob=%.3f conf=%d risk_cap=%d",
+                        "%s min_units_rescue applied mode=%s units=%d prob=%.3f conf=%d risk_cap=%d",
                         config.LOG_PREFIX,
+                        min_units_status,
                         units,
                         entry_probability,
                         int(signal.confidence),
