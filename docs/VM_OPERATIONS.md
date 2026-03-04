@@ -1,6 +1,11 @@
-VM Operations Without Default gcloud Config
+# VM Operations（廃止済みアーカイブ）
 
-This doc shows how to deploy and inspect the VM without setting a default gcloud project/account. Use `scripts/vm.sh` with explicit flags.
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- `scripts/vm.sh` / `gcloud compute *` は現行運用で実行しない。
+- 本書は過去の運用履歴としてのみ保持する。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
 
 Prerequisites
 - You have `gcloud` installed and authenticated for the given `-A <ACCOUNT>` (or have an active account already). To add an account: `gcloud auth login <ACCOUNT>`.

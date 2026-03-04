@@ -1,4 +1,12 @@
-# GCP Deploy Setup – gcloud 前提のゼロトラブル手順
+# GCP Deploy Setup – 廃止済みアーカイブ
+
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- `gcloud`/SSH/デプロイ手順は現行運用の対象外。
+- 本書は過去のセットアップ履歴としてのみ保持する。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
+
 
 gcloud 未導入・設定不備・IAP/OS Login/Compute API の典型エラーを潰すための実践手順です。初回セットアップとトラブル時の再診断に使用します。新規 VM 作成の流れは `docs/VM_BOOTSTRAP.md` を参照してください。
 

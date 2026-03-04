@@ -1,11 +1,18 @@
 # AGENTS.md – QuantRabbit Agent Specification（整理版）
 
+## 追記（最上位制約）
+- 2026-03-04以降の現行運用として、実運用はローカルV2導線のみとする。
+- VM/GCP/Cloud Run は現行運用に存在しない前提とし、関連コマンドは実行しない。
+- この追記はAGENTSの既存項目より優先し、以後の実務方針を上書きする。
+- 現在の前提: GCP上の運用資産（`fx-trader-vm` 系を含む）は存在しない。
+
+
 ## 1. ミッション / 役割
 > 狙い: USD/JPY で 資産の10%増を狙う 24/7 無裁量トレーディング・エージェント。  
 > 凄腕のプロトレーダーのトレードを再現するシステム。  
 > 境界: 発注・リスクは機械的、曖昧判断はローカルルール（LLMは任意のゲートのみ）。
 
-- 現行運用（2026-03-04 以降）はローカル優先。VM は原則使わず、必要時のみ起動して確認する。
+- 現行運用（2026-03-04 以降）はローカル専用。VM/GCP/Cloud Run は運用対象外とする。
 - トレード判断・ロット・利確/損切り・保有調整は固定値運用を避け、市場状態に応じて常時動的に更新する。
 - 手動玉を含めたエクスポージャを高水準で維持。
 - PF/勝率が悪化した戦略は、時間帯ブロックで抑えるのではなく、原因分析と改善を優先する（ただし JST 7〜8時のメンテ時間は運用対象外）。
@@ -16,10 +23,10 @@
 
 ## 2. 非交渉ルール（必ず守る）
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
-- **現行の最優先運用モード（2026-03-04 以降）**: 実装・検証・PDCA はローカル導線を正とし、VM 前提の手順は通常タスクでは適用しない（明示指示がある場合のみ VM を使う）。
+- **現行の最優先運用モード（2026-03-04 以降）**: 実装・検証・PDCA はローカル導線を正とし、VM/GCP 前提の手順は実行しない。
 - 作業前にはUSD/JPYの市況確認を必須化する。
   - 確認対象: 現在価格帯、スプレッド、直近ATR/レンジ推移、約定・拒否の直近実績、OANDA APIの応答品質。
-  - 確認手段: VM上の `logs/*.db` + OANDA API、該当戦略 worker/position_manager 的ログ、必要に応じて直近チャート。
+  - 確認手段: ローカル `logs/*.db` + OANDA API、該当戦略 worker/position_manager 的ログ、必要に応じて直近チャート。
   - 判定: 市況が通常レンジ外・流動性悪化時は、作業は保留し `docs/TRADE_FINDINGS.md` と運用ログへその理由を残す。
 - 各タスク開始時は、着手前チェックとして `docs/AGENT_COLLAB_HUB.md` の「運用手順」を必ず読む。最低限 `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し、現行手順を確認してから作業に入る。
 - LLM（Vertex）は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
@@ -47,23 +54,22 @@
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。
 - 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。
 - 運用方針は「全て動的トレード」。静的な固定パラメータに依存せず、戦略ごとのローカル判定とリスク制御で都度更新する。
-- **浅い検討で進めない**。変更前に必ず「目的 / 仮説 / 影響範囲 / 検証手順」を明確化し、実データ（VMログ・DB・API応答）で根拠を確認してから実装・報告する。
+- **浅い検討で進めない**。変更前に必ず「目的 / 仮説 / 影響範囲 / 検証手順」を明確化し、実データ（ローカルログ/DB・API応答）で根拠を確認してから実装・報告する。
 - **戦略は停止より改善を優先する**。成績悪化時は原因分析→パラメータ/執行品質の改善→再検証を先に実行し、恒久的な時間帯制限で回避しない。**JST 7〜8時（メンテ時間帯想定）は除外**し、停止は安全確保のための一時的な緊急措置に限定する。
-- **重要**: 本番稼働は VM。運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行い、ローカルの `logs/*.db` やスナップショット/コード差分だけで断定しない。
-- 変更は必ず `git commit` → `git push` → VM 反映（`scripts/vm.sh ... deploy -i -t` 推奨）で行う。未コミット状態やローカル差し替えでの運用は不可。
+- **重要**: 運用上の指摘・報告・判断はローカルV2導線（`logs/*.db` + OANDA API）の実測のみで行う。
+- 変更は `git commit` → `git push` → ローカル反映（`scripts/local_v2_stack.sh` ベース）で行う。未コミット状態やローカル差し替えでの運用は避ける。
 - 変更点は必ず AGENTS と実装仕様側へ同時記録すること。少なくとも `docs/WORKER_REFACTOR_LOG.md` と関連仕様（`docs/WORKER_ROLE_MATRIX_V2.md`/`docs/ARCHITECTURE.md` 等）へ追記し、追跡可能な監査ログを残す。
 - 改善/敗因の運用記録は **`docs/TRADE_FINDINGS.md` の1箇所に集約** する。新しい分析を行ったら必ず同ファイルへ追記し、同種の分散メモを新規作成しない。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。
 - その差分は「他者/他タスクの作業中変更」を前提に、関連ファイルを読んで意図を把握したうえで今回タスクを継続する（差分の存在だけで作業停止・続行確認を挟まない）。
 - **並行タスク時のGit運用を厳守**: 作業開始前/コミット前に `git status --short` と `git diff --name-only` を確認し、ステージは自分が変更したファイルのみに限定する。タスク単位でコミットを分離し、他タスク差分を混在・巻き戻ししない。
-- commit/push→VM反映は **自分が変更したファイルだけ** をステージして行う（他の差分は混ぜない・勝手に戻さない）。
-- **コミット/反映は自律完遂を必須化**: 変更ごとにコミットメッセージを自分で判断して `git commit`・`git push`・VMデプロイ・VM上の反映確認（`HEAD == origin/main` と `Application started!`）まで連続実行する。反映確認が終わるまで「完了報告」しない。
-- **本番ブランチ運用**: 本番 VM は原則 `main` のみを稼働ブランチにする。`codex/*` など作業ブランチを本番常駐させない。
-- **本番反映の固定手順**: `main` へ統合（merge/rebase）→ `git push origin main` → `scripts/vm.sh ... deploy -b main -i --restart <target-unit> -t` を必須化する。`<target-unit>` は起動中の systemd ユニット（最低でもデータ/制御を含む `quant-market-data-feed.service` 等）を明示する（`pull` のみ禁止）。
-- **反映確認の必須チェック**: デプロイ後に VM で `git rev-parse HEAD` と `git rev-parse origin/main` の一致を確認し、対象ユニットの `journalctl -u <target-unit>` で直近 `Application started!` がデプロイ後であることを確認する。`git pull` 後に再起動が無い場合は「未反映」と見なす。
-- IAP（OS Login）SSH 認証が繰り返し失敗する場合は、まず `scripts/recover_iap_ssh_auth.sh` を実行する。ここで収束しない場合は `scripts/deploy_to_vm.sh` 実行前に `scripts/deploy_via_metadata.sh` フォールバックへ移行する。
+- commit/push→ローカル反映は **自分が変更したファイルだけ** をステージして行う（他の差分は混ぜない・勝手に戻さない）。
+- **コミット/反映は自律完遂を必須化**: 変更ごとにコミットメッセージを自分で判断して `git commit`・`git push`・`scripts/local_v2_stack.sh up|restart ...` による反映確認（`status` と主要サービスログの最終更新）まで連続実行する。反映確認が終わるまで「完了報告」しない。
+- **本番ブランチ運用**: 本番ラインは `main` のみで統一し、`codex/*` など作業ブランチを本番常駐させない。
+- **本番反映の固定手順**: `main` へ統合（merge/rebase）→ `git push origin main` → `scripts/local_v2_stack.sh up|restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager` を必須化する。`pull` のみでの反映は不可。
+- **反映確認の必須チェック**: デプロイ後、`scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager` で起動状態を確認し、`logs/local_v2_stack/*.log` と主要戦略ログの時刻が最新であることを確認する。
 - ログ退避の本番導線は `quant-core-backup.timer`（`/usr/local/bin/qr-gcs-backup-core`）を正とし、`/etc/cron.hourly/qr-gcs-backup-core` は恒久的に無効化する。バックアップは low-priority + 負荷ガード（load/D-state/mem/swap）で、トレード導線を阻害しないことを優先する。
-- VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
+- `scripts/vm.sh` / `scripts/deploy_to_vm.sh` / `scripts/deploy_via_metadata.sh` / `gcloud compute *` は実行禁止とする。
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
@@ -78,8 +84,7 @@
   - parity 実行中は `up/down/restart` を既定で拒否し、`--force-conflict` は競合を理解した限定用途でのみ利用する。
   - sidecar ポート設定は `ops/env/local-v2-sidecar-ports.env` を正とし、`18300/18301` を使用する。
   - `position-manager` は `POSITION_MANAGER_SERVICE_PORT` を参照し、既定値は `8301` とする。
-  - VMは削除せず停止維持を基本とし、通常は使わない（必要時のみ起動して確認する）。
-  - VM由来ログ/DBの退避先は `remote_logs_current/vm_gcs_mirror_*` と `remote_logs_current/vm_latest_core_*` を正とする。
+  - `remote_logs_current/vm_gcs_mirror_*` と `remote_logs_current/vm_latest_core_*` は過去履歴スナップショットとしてのみ扱う。
 
 ## 4. 仕様ドキュメント索引
 - `docs/INDEX.md`: ドキュメントの起点。
@@ -87,14 +92,16 @@
 - `docs/RISK_AND_EXECUTION.md`: エントリー/EXIT/リスク制御、OANDA マッピング。
 - `docs/OBSERVABILITY.md`: データ鮮度、ログ、SLO/アラート、検証パイプライン。
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニング運用。
-- `docs/OPS_VM_RUNBOOK.md`: VM 本番運用手順（起動/停止/デプロイ/反映確認/ログ退避）。
+- `docs/AGENT_COLLAB_HUB.md`: タスク開始前の必須確認手順（本体）。
 - `docs/OPS_LOCAL_RUNBOOK.md`: ローカル運用手順（local_v2_stack / local LLM lane / ログ配置）。
-- `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用ランブック。
+- `docs/OPS_GCP_RUNBOOK.md`: 廃止済みクラウド運用の履歴アーカイブ（実行対象外）。
+- `docs/VM_OPERATIONS.md`: 廃止済みVM操作手順の履歴アーカイブ（実行対象外）。
+- `docs/VM_BOOTSTRAP.md`: 廃止済みVM構築手順の履歴アーカイブ（実行対象外）。
 - `docs/OPS_SKILLS.md`: 日次運用スキル運用。
 - `docs/KATA_SCALP_PING_5S.md`: 5秒スキャB（`scalp_ping_5s_b`）の型（Kata）設計・運用。
 - `docs/KATA_SCALP_M1SCALPER.md`: M1スキャ（`scalp_m1scalper`）の型（Kata）設計・運用。
 - `docs/KATA_MICRO_RANGEBREAK.md`: micro（`MicroRangeBreak`）の型（Kata）設計・運用。
-- `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（VMスナップショット/展開計画）。
+- `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（ローカル検証ログ/展開計画）。
 - `docs/WORKER_REFACTOR_LOG.md`: ワーカー再編（データ供給・制御・ENTRY/EXIT分離）の確定記録。
 - `docs/TRADE_FINDINGS.md`: 改善/敗因の単一台帳（全担当者共通）。
 
@@ -161,7 +168,7 @@ flowchart LR
 - **他タスクへ持ち越しルール**: これまでマルチエージェントを経ずに実施された作業は、次回タスク開始時に必ず当該タスクとして再棚卸しし、同一方針（分析＋実装）で追跡可能な形に戻す。  
 - 分析は `spawn_agent`（`agent_type=explorer`）で要件・影響範囲・既存実装を確認。  
 - 実装は `spawn_agent`（`agent_type=worker`）で担当。  
-- 検証・監査は必要に応じて追加エージェントへ分担し、最終判断は実データ（VM/ログ/DB）確認で行う。  
+- 検証・監査は必要に応じて追加エージェントへ分担し、最終判断はローカル実データ（`logs/*.db` / OANDA API）で行う。  
 - 小規模な1ファイル修正などの軽微タスクでも、可能なら2系統（実施/確認）で並走し、変更意図と差分内容を相互に突合する。
 
 ## 7. 型（Pattern Book）運用ルール
@@ -187,7 +194,7 @@ flowchart LR
 - `scalp_m1scalper`: `SCALP_M1SCALPER_PATTERN_GATE_OPT_IN=1`
 - `TickImbalance`（`workers/scalp_precision`）: `TICK_IMB_PATTERN_GATE_OPT_IN=1`（+必要なら `TICK_IMB_PATTERN_GATE_ALLOW_GENERIC=1`）
 - `MicroRangeBreak`（`workers/micro_multistrat`）: `MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN=1`（+必要なら `MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC=1`）
-- 運用判断は必ずVM実データで行う。`patterns.db` / `pattern_book*.json` の時刻・件数・quality分布を確認してから閾値調整する。
+- 運用判断はローカル実データ（`logs/*.db`）と `patterns.db` / `pattern_book*.json` を基準にする。
 
 ## 8. V2導線フリーズ運用（env/systemd監査）
 
@@ -206,63 +213,13 @@ flowchart LR
     `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` の間隔内は
     解析のみ行い、`worker_reentry` 反映は抑制する。
     監査は `logs/replay_quality_gate_latest.json` の `auto_improve` を正本とする。
-- 実VM監査（実行）
-  - running 状態（V2固定群）
-  ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "systemctl list-units --type=service --state=running --no-pager | grep -E 'quant-(market-data-feed|strategy-control|order-manager|position-manager|scalp|micro|pattern|range|dynamic|policy)'"
-  ```
-  - unit enable 状態（主要群）
-  ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "systemctl list-unit-files --type=service | grep -E 'quant-market-data-feed|quant-order-manager|quant-position-manager|quant-strategy-control|quant-scalp-.*|quant-micro-.*'"
-  ```
-  - runtime env `ops/env/quant-v2-runtime.env` の監査キー
-  ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for k in WORKER_ONLY_MODE MAIN_TRADING_ENABLED SIGNAL_GATE_ENABLED ORDER_FORWARD_TO_SIGNAL_GATE EXIT_MANAGER_DISABLED ORDER_MANAGER_SERVICE_ENABLED ORDER_MANAGER_SERVICE_FALLBACK_LOCAL POSITION_MANAGER_SERVICE_ENABLED POSITION_MANAGER_SERVICE_FALLBACK_LOCAL ORDER_PATTERN_GATE_ENABLED ORDER_PATTERN_GATE_GLOBAL_OPT_IN BRAIN_ENABLED ORDER_MANAGER_BRAIN_GATE_ENABLED ORDER_MANAGER_FORECAST_GATE_ENABLED POLICY_HEURISTIC_PERF_BLOCK_ENABLED ENTRY_GUARD_ENABLED ENTRY_TECH_ENABLED; do v=$(grep -E \"^${k}=\\\"?\" /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env | head -n 1); echo \"${k}=${v:-<MISSING>}\"; done"
-  ```
-  - 主要 unit の env/起動引数（照合）
-  ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for u in quant-order-manager.service quant-position-manager.service quant-strategy-control.service quant-market-data-feed.service quant-scalp-ping-5s-b.service quant-scalp-ping-5s-b-exit.service quant-micro-multi.service quant-micro-multi-exit.service quant-scalp-macd-rsi-div.service quant-scalp-macd-rsi-div-exit.service; do if systemctl cat \"$u\" >/dev/null 2>&1; then echo \"---$u---\"; systemctl cat \"$u\" | sed -n '1,130p'; fi; done"
-  ```
-  - `main` 側自動監査（service化）:
-  ```bash
-  sudo bash scripts/install_trading_services.sh --repo /home/tossaki/QuantRabbit --units quant-v2-audit.service quant-v2-audit.timer
-  sudo systemctl enable --now quant-v2-audit.timer
-  ```
-  - 監査報告:
-  - `logs/ops_v2_audit_latest.json`
-  - `journalctl -u quant-v2-audit.service -n 200 --no-pager`
-  - 戦略workerの運用ルール（監査用）
-  - `systemctl cat` で `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` と
-    `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-<worker>.env` の両方が存在することを確認する。
-    - 例: `quant-scalp-ping-5s-b*.service` は上記2つ＋戦略オーバーライドenv (`scalp_ping_5s_b.env`) を持つ。
-    - `quant-order-manager.service` / `quant-position-manager.service` は
-      `ops/env/quant-order-manager.env` / `ops/env/quant-position-manager.env` を持つことを確認する。
-- 判定のゴール
-  - 上位導線群が active/running し、`quantrabbit.service` が主導線になっていない。
-  - 上記監査キーがフリーズ方針に一致し、service 側の `EnvironmentFile` が一本化されている。
+- ローカル監査（現行唯一導線）
+  - 通常監査は `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env` と `scripts/collect_local_health.sh` で実施。
+  - 判定のゴール
+    - ローカル導線の `quant-market-data-feed / quant-strategy-control / quant-order-manager / quant-position-manager` が active/running。
+    - `quantrabbit.service` が主導線に立っていないこと。
 
-## 9. 1台化・原価抑制運用（BQ含む）
+## 9. コスト最適化（現行）
 
-- 本番トレード導線の `fx-trader*` は原則として同時RUNNINGを1台に固定する。  
-  - `gcloud compute instances` で 2台以上 `fx-trader` がRUNNINGになっている状態は、コスト増と監視重複のため即時収束対象とする。  
-  - `scripts/ensure_single_trading_vm.sh` をデプロイ・再起動前の必須前提条件にし、運用時も `--dry-run`/`--strict` を使って定期監査する。  
-  - 収束対象外の補助VM（復旧/保守用途）は trading 運転時間外に限定し、常時RUNNINGは原則しない。  
-- `BigQuery`（BQ）費用効率ルールを明文化する。  
-  - BQは「再現性のある分析に必要な最小スキャン」以外の全量・対話クエリを禁じる。  
-  - `dry-run` と `maxBytesBilled` を標準運用に組み込み、誤検知スキャンと重複計算を防ぐ。  
-  - 参照表のライフサイクルは `partition/clustering/TTL` を前提化し、使わなくなった中間テーブル・古いスナップショットを消化する。  
-- `logs`/`metrics` 側で BQ 実行回数・スキャン量・失敗率を監査し、実行コストを下げても運用改善が薄いジョブは停止または簡略化する。  
-- `ensure_single_trading_vm.sh` を単体だけでなく、`runbook` と `deploy` 前提手順として必須化する。  
-  - 確認コマンド: `./scripts/ensure_single_trading_vm.sh -p quantrabbit -m fx-trader-vm-es1a -P fx-trader --dry-run`  
-  - 実施コマンド: `./scripts/ensure_single_trading_vm.sh -p quantrabbit -m fx-trader-vm-es1a -P fx-trader --strict --wait --wait-timeout 600`  
-  - 運用基準: `RUNNING` の `fx-trader*` は 1 台のみ、`STOPPING` は5分以内に `TERMINATED` へ移行すること。
-
-- `quant-bq-sync` の初期実行は `--interval 60 --bq-interval 900 --disable-lot-insights` を前提とし、`lot insights` は環境変数で明示的に再有効化（`PIPELINE_LOT_INSIGHTS_ENABLED=1`）する。`quant-policy-cycle.timer` は 60分周期へ固定して、policy 連続再実行の同時負荷を抑える。
-- 1か月コスト（約23,000円想定）の想定主因は次の3点:
-  - `fx-trader*` 同時稼働（CPU/メモリとディスク/IP重複コスト）
-  - 停止後も残る未使用リソース（未整理の静的IP、未停止インスタンス、未マスク古い timer/service）
-  - BQを常時最大解像度で回していた期間（既に `--bq-interval 900` + `--disable-lot-insights` で平準化済み）
-- 対応原則:
-  - 1) まず `fx-trader*` の `RUNNING` 台数を 1 に固定。
-  - 2) 検証可能な範囲で BQ は `dry-run`/`maxBytesBilled` + `partition/clustering/TTL` 併用。
-  - 3) `quant-bq-sync` の重い集計は本番ピーク帯の抑制対象に据える（`--bq-interval`、`--disable-lot-insights`）。
+- 現行はローカル運用のみのため、クラウド起因コスト（VM/BQ/Cloud Run）は考慮対象外。
+- 負荷最適化はローカル実行系（worker数、ログ肥大、DBメンテ）に限定して行う。

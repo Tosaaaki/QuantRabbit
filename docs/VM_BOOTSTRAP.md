@@ -1,6 +1,11 @@
-# VM Bootstrap (New Instance)
+# VM Bootstrap（廃止済みアーカイブ）
 
-新しい VM を作っても「すぐ動く」状態にするための最短手順です。既存 VM の運用は `docs/DEPLOYMENT.md` / `docs/VM_OPERATIONS.md` を参照してください。
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- VM の新規作成・再構築は現行運用の対象外。
+- 本書は過去の構築履歴としてのみ保持する。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
 
 ## 0) 先に決めること
 - **ユーザー**: 既定は `tossaki`（`startup_script.sh` もこれを前提に準備）

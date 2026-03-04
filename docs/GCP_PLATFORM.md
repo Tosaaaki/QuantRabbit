@@ -1,9 +1,18 @@
 # GCP Platform Details
 
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- GCP基盤は現行運用の対象外。
+- 本書は過去の基盤設計履歴としてのみ保持する。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
+
+
 このドキュメントは GCP 側の基盤・サービス構成（API/IAM/Storage/BQ/Secret など）をまとめた補助資料です。
 
 ## 1. GCP 基盤/VM（API・IAM・ネットワーク）
 - 有効化 API: `compute.googleapis.com` / `storage.googleapis.com` / `secretmanager.googleapis.com` / `logging.googleapis.com`
+  - 現在の運用環境が VM 無しのため、ここで列挙している内容は再構築前提の補助設計として扱います。
   - 任意: `bigquery.googleapis.com`、Firestore 使用時は Firestore API
 - IAM ロール（運用者/SA）
   - OS Login/IAP: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, `roles/iap.tunnelResourceAccessor`（IAP 経由時）
@@ -34,7 +43,7 @@
 - `systemd/quant-autotune-ui.service` は 8088/TCP で待受け。外部公開する場合は FW/IAP 前提で設計
 - `systemd/*.service` / `ops/systemd/quantrabbit.service` は `User=tossaki` と `/home/tossaki/QuantRabbit` 前提のため、VM ユーザが異なる場合は編集する
 - `ops/env/quant-v2-runtime.env` と `config/env.toml` は内容を一致させる（systemd とアプリの参照元が異なる）
-- `scripts/vm.sh` を使う場合は `scripts/vm.env` に PROJECT/ZONE/INSTANCE を固定
+- `scripts/vm.sh` は補助 VM 運用時のみ使用し、使う場合は `scripts/vm.env` に PROJECT/ZONE/INSTANCE を固定
 - `startup_script.sh` は OANDA の最小キーと `TUNER_*` を `ops/env/quant-v2-runtime.env` に固定で書き込むため、GCS/BQ/リスク系は手動追記が必要
 
 ### VM 内ブートストラップ（最小）

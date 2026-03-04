@@ -1,17 +1,23 @@
 # Docs Index
 
+## ローカル運用方針（現行）
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- VM/GCP/Cloud Run は現行運用に存在しない前提で、関連コマンドは実行対象外。
+- 旧VM/GCP資料は履歴アーカイブとしてのみ保持する。
+
+
 本リポジトリの主要ドキュメントの位置を整理した索引です。迷ったらここから辿ってください。
 
 ## 運用 / Runbook
 - `AGENTS.md`: エージェント運用の最重要ルール（要約）
-- `docs/OPS_VM_RUNBOOK.md`: VM 本番運用手順（起動/停止/デプロイ/反映確認/ログ退避）
+- `docs/AGENT_COLLAB_HUB.md`: タスク開始前の運用チェック手順（本体）
 - `docs/OPS_LOCAL_RUNBOOK.md`: ローカル運用手順（local_v2_stack / local LLM lane / ログ配置）
-- `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用の統合ランブック（IAP/SSH 復旧や metadata deploy 含む）
-- `docs/GCP_PLATFORM.md`: GCP 基盤/IAM/Storage/BQ/Secret の詳細
-- `docs/DEPLOYMENT.md`: デプロイ手順（gcloud デフォルト不要）
-- `docs/VM_OPERATIONS.md`: VM 操作コマンドまとめ
-- `docs/VM_BOOTSTRAP.md`: 新規 VM ブートストラップ
-- `docs/GCP_DEPLOY_SETUP.md`: OS Login/IAP/gcloud セットアップ
+- `docs/OPS_GCP_RUNBOOK.md`: 廃止済みクラウド運用の履歴アーカイブ（実行対象外）
+- `docs/VM_OPERATIONS.md`: 廃止済みVM操作手順の履歴アーカイブ（実行対象外）
+- `docs/VM_BOOTSTRAP.md`: 廃止済みVM構築手順の履歴アーカイブ（実行対象外）
+- `docs/GCP_PLATFORM.md`: 廃止済みGCP基盤情報の履歴アーカイブ（実行対象外）
+- `docs/DEPLOYMENT.md`: 廃止済みVM/GCPデプロイ手順の履歴アーカイブ（実行対象外）
+- `docs/GCP_DEPLOY_SETUP.md`: 廃止済みgcloudセットアップ手順の履歴アーカイブ（実行対象外）
 - `docs/OPS_CURRENT.md`: 時限の運用設定（攻め設定・mask 済み unit など）
 - `docs/OPS_SKILLS.md`: 日次運用スキルの使い方
 - `docs/LOCAL_LANE_SPLIT.md`: VM本番repoとローカル実売買repoを分離する運用手順
@@ -21,7 +27,7 @@
 - `docs/RISK_AND_EXECUTION.md`: エントリー/EXIT/リスク制御、状態遷移、OANDA マッピング
 - `docs/WORKER_REFACTOR_LOG.md`: ワーカー再編（データ供給・制御・ENTRY/EXIT分離）の確定仕様
 - `docs/WORKER_ROLE_MATRIX_V2.md`: V2 役割分離方針（データ/制御/戦略/注文/ポジション）
-- `docs/SL_POLICY.md`: SL（損切り）決定フロー、環境変数、VMでの確認手順
+- `docs/SL_POLICY.md`: SL（損切り）決定フロー、環境変数、反映後確認手順（ローカル優先）
 - `docs/OBSERVABILITY.md`: データ鮮度、ログ、SLO/アラート、検証パイプライン
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニングの運用要点
 

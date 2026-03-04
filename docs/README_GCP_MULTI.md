@@ -1,6 +1,11 @@
-# GCP マルチ環境 手順書
+# GCP マルチ環境 手順書（廃止済みアーカイブ）
 
-「別プロジェクトの GCP で QuantRabbit を動かす」ための最短手順です。新規 VM 作成の流れは `docs/VM_BOOTSTRAP.md` に集約しています。詳細は `AGENTS.md`, `docs/OPS_GCP_RUNBOOK.md`, `docs/GCP_DEPLOY_SETUP.md`, `README.md` を参照してください。
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- GCP マルチ環境運用は現行の対象外。
+- 本書は過去の環境構築履歴としてのみ保持する。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
 
 ## 0. 前提ロール
 - デプロイ/運用: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, `roles/iap.tunnelResourceAccessor`（IAP 経由なら）
@@ -44,8 +49,8 @@ scripts/gcloud_doctor.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> -t -k ~/.ssh/gcp_o
 scripts/deploy_to_vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> -i -t -k ~/.ssh/gcp_oslogin_qr \
   [-K <SA_KEY> -A <SA_EMAIL>]
 ```
-- `quantrabbit.service` が稼働していれば再起動されます。初回は `config/env.toml` が必要。
-- ログ確認: `scripts/tail_vm_logs.sh -c "sudo journalctl -u quantrabbit.service -f"`。
+- 旧 `quantrabbit.service` 運用が残っている VM では本稿の再起動対象になり得ます。初回は `config/env.toml` が必要。  
+- ログ確認: `scripts/tail_vm_logs.sh -c "sudo journalctl -u quantrabbit.service -f"`（補助用途）。
 
 ## 5. 定常ジョブ
 - バックアップ（GCS）: `utils/backup_to_gcs.sh` を cron/systemd で毎日。`GCS_BACKUP_BUCKET` が必要。  
@@ -53,13 +58,13 @@ scripts/deploy_to_vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> -i -t -k ~/.ssh/gcp
 - オートチューナ（任意）: `scripts/run_online_tuner.py` を 5–15 分間隔で。既定はシャドウモード。
 
 ## 6. ワーカー/構成の要点
-- メイン 60 秒ループ: `main.py`（regime/focus/GPT → strategy → risk_guard → order_manager）。  
+- メイン 60 秒ループ: `main.py` ベースの補助構成（主に旧/移行時）。  
 - ワーカー: core は廃止済み。各戦略ごとの専用ワーカー（`workers/<strategy>/`）を `*_ENABLED` と systemd で制御。  
 - グループスイッチ: `SCALP_WORKERS_ENABLED`, `MICRO_WORKERS_ENABLED`, `MACRO_WORKERS_ENABLED`, `MICRO_DELEGATE_TO_WORKER`（専用 micro_* へ委譲）。
 
 ## 7. 動作確認クイックチェック
-- systemd: `sudo systemctl status quantrabbit.service`  
-- ログ tail: `journalctl -u quantrabbit.service -n 200 -f`  
+- systemd: `sudo systemctl status quant-order-manager.service` または `quant-strategy-control.service`  
+- ログ tail: `journalctl -u quant-order-manager.service -n 200 -f`  
 - 今日の損益: `sqlite3 logs/trades.db "select date(close_time), count(*), round(sum(pl_pips),2) from trades where date(close_time)=date('now') group by 1;"`  
 - BigQuery 反映確認: `bq head -n 5 <PROJECT>:<DATASET>.trades_raw`
 

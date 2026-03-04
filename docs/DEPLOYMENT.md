@@ -1,5 +1,12 @@
 デプロイ手順（更新版 / gcloud デフォルト不要）
 
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- 本書の VM/GCP デプロイ手順は履歴アーカイブであり、実行対象外。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
+
+
 この手順は gcloud の「アクティブなアカウント/プロジェクト」を設定せずに、その都度 `--project`/`--zone`/`--account` を明示して実行します。新規 VM 作成は `docs/VM_BOOTSTRAP.md` を参照してください。
 
 前提
@@ -30,7 +37,7 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
   deploy -b main -i --restart quantrabbit.service -t
 ```
 
-4) VM ログ/DB の取得
+4) VM ログ/DB の取得（VM が存在する場合のみ）
 - まとめて取得（DB と `logs/replay`）
 ```
 scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \

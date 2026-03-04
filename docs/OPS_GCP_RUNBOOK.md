@@ -1,6 +1,11 @@
-# GCP / VM Operations Runbook
+# GCP / VM Operations Runbook（廃止済みアーカイブ）
 
-このドキュメントは GCP/VM 運用に関する統合ランブックです。詳細なデプロイ手順は `docs/DEPLOYMENT.md`、OS Login/IAP のセットアップは `docs/GCP_DEPLOY_SETUP.md` を優先参照してください。
+## 現行運用
+- 本番運用はローカルV2導線（`scripts/local_v2_stack.sh`）のみ。
+- GCP/VM 運用資産は存在しない前提のため、本書のコマンドは実行対象外。
+- 本書は過去の運用履歴としてのみ保持する。
+
+> 以降の章は履歴記録であり、現行運用で実行しないこと。
 
 ## 1. デプロイ / GCP アクセス
 - 原則 OS Login + IAP。
@@ -40,7 +45,7 @@ scripts/recover_iap_ssh_auth.sh -p quantrabbit -z asia-northeast1-a -m fx-trader
 - `scripts/gcloud_doctor.sh` を IAP + OS Login 強制（`-t -S -G -O`）で 6回繰り返し実行
 - `Permission denied (publickey)` を受けた場合は鍵再登録を行い再試行
 
-### フォールバック（vm.sh が失敗する場合の直書き）
+### 旧手順（履歴）
 1) 
 ```bash
 gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
@@ -86,7 +91,7 @@ sudo bash scripts/install_trading_services.sh --units "quant-ssh-watchdog.servic
 - 目的: trades/signal の最終時刻を GCS に書き出し、外部から即確認。
 - 監視: `systemd/quant-health-snapshot.timer`（1分間隔）→ `scripts/publish_health_snapshot.py`
 - 出力先: `ui_bucket_name` 優先、未設定なら `GCS_BACKUP_BUCKET`（`HEALTH_OBJECT_PATH` で上書き）
-- アップロード: `google-cloud-storage` → `gcloud/gsutil` → metadata REST の順にフォールバック。
+- アップロード: `google-cloud-storage` → `gcloud/gsutil` → metadata REST の順に切替（履歴）。
 - ローカル集約（IAP 不要）:
 ```bash
 scripts/collect_gcs_status.py --ui-bucket fx-ui-realtime --backup-bucket quantrabbit-logs --host fx-trader-vm --project quantrabbit
@@ -122,7 +127,7 @@ sudo systemctl daemon-reload
 
 ## 5. OS Login 権限不足・VM 運用ルール
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。
-- 本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。
+- 旧 VM `fx-trader-vm` は履歴上 `main` ブランチ運用を維持していた。
 - スタッシュ/未コミットはブランチ切替前に解消。
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 
