@@ -99,6 +99,21 @@ def test_apply_alt_env_b_allows_no_side_filter_override_when_enabled(monkeypatch
     assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == ""
 
 
+def test_apply_alt_env_b_missing_side_filter_still_fails_closed_when_allow_enabled(monkeypatch) -> None:
+    _clear_scalp_ping_env(monkeypatch)
+    monkeypatch.setenv("SCALP_PING_5S_B_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER", "1")
+    monkeypatch.delenv("SCALP_PING_5S_B_SIDE_FILTER", raising=False)
+
+    b_worker._apply_alt_env(
+        "SCALP_PING_5S_B",
+        fallback_tag="scalp_ping_5s_b_live",
+        fallback_log_prefix="[SCALP_PING_5S_B]",
+    )
+
+    assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "sell"
+
+
 def test_apply_alt_env_c_forces_side_filter_sell_when_missing(monkeypatch) -> None:
     _clear_scalp_ping_env(monkeypatch)
     monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")

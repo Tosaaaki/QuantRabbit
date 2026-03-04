@@ -1,5 +1,30 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+## GCP/VM運用の廃止方針（現行運用）
+- GCP/VMを前提とする本番運用は廃止。VMの起動・デプロイ・停止手順は履歴参照または障害時のみ利用する。
+- 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
+- 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
+
+### 2026-03-04（追記）`scalp_ping_5s_b` side filter の fail-closed を強化（空許可の誤適用防止）
+
+- 対象:
+  - `workers/scalp_ping_5s_b/worker.py`
+  - `tests/workers/test_scalp_ping_5s_b_worker_env.py`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - 過去ログで `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` 混入時に
+    `side_filter=(unset)` で起動した履歴があった。
+  - ローカル収益改善中は `sell` 固定を安全弁にしているため、未設定時の空side許容はリスク。
+- 変更:
+  - `ALLOW_NO_SIDE_FILTER=1` 時でも、`SIDE_FILTER` が明示設定された場合のみ
+    空side（none/off/disabled）を許容する仕様へ変更。
+  - `SIDE_FILTER` 未設定時は常に `sell` を強制するよう fail-closed を固定。
+  - 再発防止テスト（`ALLOW=1 + SIDE_FILTER未設定 -> sell`）を追加。
+- 意図:
+  - 環境変数混入や未設定で方向ガードが解除される事故を防止し、
+    収益改善中の方向制御を確実に維持する。
+
+
 ### 2026-03-04（追記）ローカル運用タスクで VM/GCP 導線を実行した運用ミスの是正
 
 - 対象:

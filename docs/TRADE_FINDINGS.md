@@ -1,5 +1,11 @@
 # Trade Findings Ledger (Single Source of Truth)
 
+## GCP/VM運用の廃止方針（現行運用）
+- GCP/VMを前提とする本番運用は廃止。VMの起動・デプロイ・停止手順は履歴参照または障害時のみ利用する。
+- 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
+- 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
+
+
 このファイルは、QuantRabbit の「改善記録」と「敗因記録」の単一台帳です。
 以後、同種の記録は必ずここに追記し、他の分散ファイルは作らないこと。
 
@@ -16,6 +22,35 @@
   - `Improvement`（改善施策）
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
+
+## 2026-03-04 14:22 UTC / 2026-03-04 23:22 JST - `SCALP_PING_5S_B_SIDE_FILTER` の fail-closed 強化（空許可の誤適用防止）
+
+Period:
+- 調査時刻: 2026-03-04 14:18〜14:22 UTC（23:18〜23:22 JST）
+- 対象: `workers/scalp_ping_5s_b/worker.py` の環境変数マッピング
+
+Fact:
+- 起動ログで過去に `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` が混入した際、
+  `side_filter=(unset)` で起動していた履歴があった。
+- 直近起動では `side_filter=sell` を確認したが、未設定時に空sideを許容し得る分岐が残っていた。
+
+Failure Cause:
+- `ALLOW_NO_SIDE_FILTER=1` のとき、`SIDE_FILTER` が未設定でも空値を許容する実装だったため、
+  意図しない no-filter 起動が起きる余地があった。
+
+Improvement:
+- `workers/scalp_ping_5s_b/worker.py` を修正し、
+  `ALLOW_NO_SIDE_FILTER=1` でも **`SIDE_FILTER` が明示設定された場合のみ** 空sideを許容するよう変更。
+- `SIDE_FILTER` 未設定時は常に `sell` へ fail-closed するよう固定。
+- `tests/workers/test_scalp_ping_5s_b_worker_env.py` に再発防止テストを追加。
+
+Verification:
+- `pytest -q tests/workers/test_scalp_ping_5s_b_worker_env.py` が `17 passed`。
+- `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` かつ `SCALP_PING_5S_B_SIDE_FILTER` 未設定でも
+  `SCALP_PING_5S_SIDE_FILTER=sell` になることをテストで確認。
+
+Status:
+- done
 
 ## 2026-03-04 14:15 UTC / 2026-03-04 23:15 JST - ローカル運用タスクでの VM 導線実行ミスの是正
 

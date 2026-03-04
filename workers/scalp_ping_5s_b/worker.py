@@ -77,19 +77,30 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     }
     no_side_filter_aliases = {"", "none", "off", "disabled"}
 
-    def _normalize_side_filter(raw: str) -> str | None:
+    def _normalize_side_filter(raw: str, *, explicit: bool) -> str | None:
         normalized = str(raw).strip().lower()
         if normalized in allowed_side_filters:
             return normalized
-        if allow_no_side_filter and normalized in no_side_filter_aliases:
+        # Allow empty/no side filter only when it is explicitly configured.
+        # Missing keys must fail closed to avoid accidental long re-enable.
+        if allow_no_side_filter and explicit and normalized in no_side_filter_aliases:
             return ""
         return None
 
+    mapped_side_filter_explicit = mapped_side_filter_key in os.environ
     mapped_side_filter = str(os.getenv(mapped_side_filter_key, "")).strip().lower()
-    normalized_side_filter = _normalize_side_filter(mapped_side_filter)
+    normalized_side_filter = _normalize_side_filter(
+        mapped_side_filter,
+        explicit=mapped_side_filter_explicit,
+    )
     if normalized_side_filter is None:
-        source_side_filter = str(os.getenv(f"{prefix}_SIDE_FILTER", "")).strip().lower()
-        normalized_side_filter = _normalize_side_filter(source_side_filter)
+        source_side_filter_key = f"{prefix}_SIDE_FILTER"
+        source_side_filter_explicit = source_side_filter_key in os.environ
+        source_side_filter = str(os.getenv(source_side_filter_key, "")).strip().lower()
+        normalized_side_filter = _normalize_side_filter(
+            source_side_filter,
+            explicit=source_side_filter_explicit,
+        )
         if normalized_side_filter is None:
             normalized_side_filter = "sell"
         os.environ[mapped_side_filter_key] = normalized_side_filter

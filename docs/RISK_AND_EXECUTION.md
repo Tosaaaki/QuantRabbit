@@ -1,5 +1,11 @@
 # Risk & Execution
 
+## GCP/VM運用の廃止方針（現行運用）
+- GCP/VMを前提とする本番運用は廃止。VMの起動・デプロイ・停止手順は履歴参照または障害時のみ利用する。
+- 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
+- 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
+
+
 ## 1. エントリー/EXIT/リスク制御
 
 ### `scalp_ping_5s_b_live` 収益悪化RCA反映（2026-03-04 第3段）
@@ -27,6 +33,8 @@
     - `SHORT_SL_MIN_PIPS=1.00`
 - 意図:
   - 戦略停止ではなく、SL偏重局面の低品質エントリーを削減し、PF回復を優先する。
+  - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1` が混入しても、
+    `SCALP_PING_5S_B_SIDE_FILTER` 未設定時は `sell` を強制する fail-closed を維持する。
 
 ### Strategy フロー
 - Focus/Local decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。
