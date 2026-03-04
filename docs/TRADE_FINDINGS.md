@@ -5098,3 +5098,26 @@ Recheck KPIs (next 60-90 min):
 - 目的:
   - 薄いエッジのエントリーを lookahead で遮断
   - 損失側サイドが続く局面でロット縮小を早期/強度高めに適用
+
+## 2026-03-04 22:05 JST / `scalp_ping_5s_b` 逆行耐性とpreserve_intentレンジ再調整
+
+- 根因:
+  - `scalp_ping_5s_b` は逆行時の早期 `force_exit` と対向トレンド側の縮小不足が重なり、ノイズ帯で損失確定が先行。
+  - 併せて `preserve_intent` 下限が低く、意図ロットが過小化しやすい局面が残存。
+- 変更値（2026-03-04）:
+  - `SCALP_PING_5S_B_SL_BASE_PIPS=1.15`
+  - `SCALP_PING_5S_B_SHORT_SL_BASE_PIPS=1.30`
+  - `SCALP_PING_5S_B_SL_MAX_PIPS=2.00`
+  - `SCALP_PING_5S_B_SHORT_SL_MAX_PIPS=2.10`
+  - `SCALP_PING_5S_B_FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC=3`
+  - `SCALP_PING_5S_B_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.75`
+  - `SCALP_PING_5S_B_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.70`
+  - `SCALP_PING_5S_B_M1_TREND_OPPOSITE_UNITS_MULT=0.70`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.18`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT=0.88`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.60`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
+- 検証KPI:
+  - `30m`: `STOP_LOSS_ORDER` 件数、`force_exit` 理由内訳、`OPEN_REQ -> OPEN_FILLED` 成功率。
+  - `2h`: `scalp_ping_5s_b_live` の side別 PF/勝率、平均保持秒、平均実効units。
+  - `24h`: 総合 PF・実現損益・最大DD、`STOP_LOSS_ON_FILL_LOSS` reject率、entry sideバランス。

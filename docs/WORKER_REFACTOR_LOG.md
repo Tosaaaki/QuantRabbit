@@ -10813,3 +10813,30 @@
 - 期待効果:
   - 薄いエントリーの抑制（lookahead）
   - 不利側サイド連打時のサイズ圧縮を前倒しし、ドローダウン増幅を抑える。
+
+## 2026-03-04 JST 22:05 - `scalp_ping_5s_b` 逆行時制御とpreserve_intentレンジ更新
+
+- 根因:
+  - B戦略で逆行時の早期損失確定と対向トレンド時のロット抑制不足が重なり、短周期で損失寄与が先行。
+  - `order_manager` 側の `preserve_intent` 下限が低く、戦略意図ロットが必要以上に縮小される余地があった。
+- 変更（envのみ、実装コード非変更）:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SL_BASE_PIPS=1.15`
+    - `SCALP_PING_5S_B_SHORT_SL_BASE_PIPS=1.30`
+    - `SCALP_PING_5S_B_SL_MAX_PIPS=2.00`
+    - `SCALP_PING_5S_B_SHORT_SL_MAX_PIPS=2.10`
+    - `SCALP_PING_5S_B_FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC=3`
+    - `SCALP_PING_5S_B_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.75`
+    - `SCALP_PING_5S_B_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.70`
+    - `SCALP_PING_5S_B_M1_TREND_OPPOSITE_UNITS_MULT=0.70`
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX=0.18`
+    - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT=0.88`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.60`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.60`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
+- 検証KPI（30m/2h/24h）:
+  - `30m`: `OPEN_REQ->OPEN_FILLED` 成功率、`force_exit` 件数、`STOP_LOSS_ORDER` 比率。
+  - `2h`: side別 PF/勝率、平均実効units、`entry_probability` 帯別の約定偏り。
+  - `24h`: 総合 PF、実現損益、reject率（特に `STOP_LOSS_ON_FILL_LOSS`）とDD推移。
