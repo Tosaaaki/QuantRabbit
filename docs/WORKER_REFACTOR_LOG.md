@@ -10978,3 +10978,29 @@
   - `30m`: `OPEN_REQ->OPEN_FILLED` 成功率、`force_exit` 件数、`STOP_LOSS_ORDER` 比率。
   - `2h`: side別 PF/勝率、平均実効units、`entry_probability` 帯別の約定偏り。
   - `24h`: 総合 PF、実現損益、reject率（特に `STOP_LOSS_ON_FILL_LOSS`）とDD推移。
+
+## 2026-03-04 JST 23:42 - `scalp_ping_5s_b` short強制最小ロットの可変化 + ローカルPDCA閾値更新
+
+- 目的:
+  - `buy` 偏損の再発を抑えつつ、`sell` 側の薄利エントリーを削減する。
+  - short の `MIN_UNITS` 強制救済を常時ONにしないようにして、低品質な1unit連打を抑える。
+- 実装:
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_SHORT_PROBE_RESCUE_ENABLED` を追加（default: `True`）。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_maybe_rescue_short_probe(...)` を新設。
+    - エントリーサイズ算出で short救済をこの関数経由に変更し、envで無効化可能に。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    - short救済ON/OFFの単体テストを追加。
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SHORT_PROBE_RESCUE_ENABLED=0` を設定。
+    - `MAX_SPREAD`, `LOOKAHEAD`, `SL`, `ENTRY_PROBABILITY_BAND_ALLOC` 系を収益分解結果に合わせて更新。
+  - `ops/env/local-v2-stack.env`
+    - 欠落していたローカル上書きファイルを新規追加（runbook導線の実体化）。
+- 根拠（ローカルRCA）:
+  - 24hで `buy n=412 net=-178.0`、`sell n=196 net=+2.4`。
+  - `STOP_LOSS_ORDER n=470 net=-280.7` が主損失源。
+  - `buy` の平均unitsが `62.9` と過大で損失寄与が集中。
+- 影響範囲:
+  - `scalp_ping_5s` strategy workerのロット救済とBローカルenvのみ。
+  - `order_manager` / `position_manager` / blackboard協調 / 共通ガード契約は非変更。

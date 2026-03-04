@@ -257,6 +257,30 @@ def test_maybe_rescue_min_units_skips_when_probability_is_low(monkeypatch) -> No
     assert reason == "probability_below_rescue_floor"
 
 
+def test_maybe_rescue_short_probe_applies_when_enabled(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MIN_UNITS", 1)
+    monkeypatch.setattr(worker.config, "SHORT_PROBE_RESCUE_ENABLED", True)
+
+    units, reason = worker._maybe_rescue_short_probe(units=0, side="short")
+
+    assert units == 1
+    assert reason == "short_probe_rescued"
+
+
+def test_maybe_rescue_short_probe_skips_when_disabled(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MIN_UNITS", 1)
+    monkeypatch.setattr(worker.config, "SHORT_PROBE_RESCUE_ENABLED", False)
+
+    units, reason = worker._maybe_rescue_short_probe(units=0, side="short")
+
+    assert units == 0
+    assert reason == "short_probe_disabled"
+
+
 def test_build_tick_signal_rejects_chasing_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

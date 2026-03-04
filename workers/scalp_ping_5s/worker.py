@@ -2770,6 +2770,16 @@ def _maybe_rescue_min_units(
     return config.MIN_UNITS, "rescued"
 
 
+def _maybe_rescue_short_probe(*, units: int, side: str) -> tuple[int, str]:
+    if side != "short":
+        return units, "inactive"
+    if units >= config.MIN_UNITS:
+        return units, "sufficient"
+    if not bool(getattr(config, "SHORT_PROBE_RESCUE_ENABLED", True)):
+        return units, "short_probe_disabled"
+    return config.MIN_UNITS, "short_probe_rescued"
+
+
 def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[Optional[TickSignal], float, str]:
     if regime is None:
         return signal, 1.0, "regime_unavailable"
@@ -7158,9 +7168,13 @@ async def scalp_ping_5s_worker() -> None:
                 entry_probability=entry_probability,
                 confidence=int(signal.confidence),
             )
-            if units < config.MIN_UNITS and signal.side == "short":
-                units = config.MIN_UNITS
-                min_units_status = "short_probe_rescued"
+            if units < config.MIN_UNITS:
+                units, short_probe_status = _maybe_rescue_short_probe(
+                    units=units,
+                    side=signal.side,
+                )
+                if short_probe_status == "short_probe_rescued":
+                    min_units_status = short_probe_status
 
             if min_units_status in {"rescued", "short_probe_rescued"}:
                 tech_route_reasons.append("min_units_rescue")

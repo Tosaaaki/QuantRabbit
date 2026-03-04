@@ -5333,3 +5333,32 @@ Recheck KPIs (next 60-90 min):
   - `30m`: `STOP_LOSS_ORDER` 件数、`force_exit` 理由内訳、`OPEN_REQ -> OPEN_FILLED` 成功率。
   - `2h`: `scalp_ping_5s_b_live` の side別 PF/勝率、平均保持秒、平均実効units。
   - `24h`: 総合 PF・実現損益・最大DD、`STOP_LOSS_ON_FILL_LOSS` reject率、entry sideバランス。
+
+## 2026-03-04 23:42 JST / ローカルRCA再実施とB戦略の再調整（buy偏損再発防止）
+
+- 市況実測（OANDA API, USD/JPY）:
+  - `bid=157.294`, `ask=157.302`, `spread=0.8 pips`
+  - `ATR14(M1)=3.336 pips`, `range60(M1)=26.8 pips`
+  - pricing API 応答: 平均 `466.82ms`（max `1385.88ms`）
+- 収益分解（`logs/trades.db`, 直近24h, `strategy_tag=scalp_ping_5s_b_live`）:
+  - 総計: `n=608`, `net_jpy=-175.6`, `win_rate=19.6%`, `PF=0.416`
+  - side別: `buy n=412 net=-178.0 avg_units=62.9`, `sell n=196 net=+2.4 avg_units=1.65`
+  - close_reason別: `STOP_LOSS_ORDER n=470 net=-280.7`, `MARKET_ORDER_TRADE_CLOSE n=138 net=+105.1`
+- 根因:
+  - 損失のほぼ全量が `buy + STOP_LOSS_ORDER`（`n=317 net=-277.6`）に集中。
+  - `sell` はほぼ建て値圏だが、`spread 0.8` に対して薄いエッジのエントリーが残り、微損を積む。
+- 反映（`ops/env/scalp_ping_5s_b.env`）:
+  - sell固定維持: `SCALP_PING_5S_B_SIDE_FILTER=sell`, `...ALLOW_NO_SIDE_FILTER=0`
+  - 薄利エントリー抑制: `MAX_SPREAD_PIPS=0.85`, `LOOKAHEAD_EDGE_MIN_PIPS=0.22`, `LOOKAHEAD_SAFETY_MARGIN_PIPS=0.12`
+  - SL拒否低減: `SL_BASE/MIN=1.25/1.20`, `SHORT_SL_BASE/MIN/MAX=1.45/1.20/2.20`
+  - 確率帯ロット再配分: `LOW/HIGH_THRESHOLD=0.65/0.80`, `HIGH_REDUCE_MAX=0.70`, `LOW_BOOST_MAX=0.16`, `UNITS_MIN_MULT=0.55`
+  - shortの強制最小ロット停止: `SCALP_PING_5S_B_SHORT_PROBE_RESCUE_ENABLED=0`
+- 実装追補:
+  - `workers/scalp_ping_5s/config.py` に `SCALP_PING_5S_SHORT_PROBE_RESCUE_ENABLED` を追加。
+  - `workers/scalp_ping_5s/worker.py` で short救済を関数化し、envでON/OFF可能化。
+- 追加監査:
+  - `close_failed` の大半は `ticket_id=sim-*` 由来（直近12000件中 `172/182`）で、実運用ノイズとして分離。
+- 再検証KPI（次の30-90分）:
+  - `buy` の `preflight_start/submit_attempt/filled` が 0 を維持すること。
+  - `STOP_LOSS_ON_FILL_LOSS` 比率の低下。
+  - `sell` の `expectancy_jpy > 0` への復帰、および `PF > 1.0`。
