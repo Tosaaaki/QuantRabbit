@@ -1,5 +1,78 @@
 # ワーカー再編の確定ログ（2026-02-13）
 
+### 2026-03-04（追記）`scalp_ping_5s_b_live` 収益悪化への即時デリスク（品質選別+サイズ抑制）
+
+- 対象: `ops/env/scalp_ping_5s_b.env`
+- 背景（実データ）:
+  - 直近24hで `scalp_ping_5s_b_live` が `win_rate=20.3% / PF=0.43 / net=-164.864 JPY`。
+  - `STOP_LOSS_ORDER` 比率が `77.09%` と高止まり。
+  - OANDA側の spread/API は正常（`spread~0.8 pips`, API error 0）で、市況異常より戦略品質劣化が主因。
+- 変更:
+  - 発注密度を圧縮: `MAX_ACTIVE_TRADES=1`, `MAX_ORDERS_PER_MINUTE=4`
+  - ロット上限を圧縮: `BASE_ENTRY_UNITS=45`, `MAX_UNITS=180`
+  - 品質閾値を引き上げ: `CONF_FLOOR=78`, `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.82`, `ENTRY_PROBABILITY_ALIGN_FLOOR=0.50`
+  - 高確率帯過大評価の補正を強化: `ENTRY_PROBABILITY_ALIGN_PENALTY_MAX=0.28`, `...COUNTER_EXTRA_PENALTY_MAX=0.30`, `...HIGH_REDUCE_MAX=0.82`
+  - adverse side時の縮小を強化: `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.60`, `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.65`
+  - spread guardを実勢値へ調整: `spread_guard_max_pips=1.00`, `...release=0.85`, `...hot_trigger=1.10`, `...hot_cooldown=8`
+- 意図:
+  - 戦略停止ではなく、低品質エントリーと過大ロットの流入を即時抑制し、負け幅を先に圧縮する。
+  - 次段で `PF/勝率` の回復を確認し、必要なら段階的に再拡張する。
+
+### 2026-03-04（追記）ローカルV2の常駐安定化と `scalp_ping_5s_b` デリスク反映
+
+- `workers/scalp_ping_5s_b/worker.py`
+  - Bラッパー起動を `subprocess.run(...)` から `os.execvpe(...)` へ変更。
+  - 目的: ラッパーPID配下に子workerが残る重複起動を防止し、`local_v2_stack` の stop/restart で単一PID制御を維持。
+
+- `scripts/local_vm_parity_stack.sh`
+  - プロセスクリーンアップを repo 配下コマンドに限定（広域 `pkill` を縮小）。
+  - `stop()` で stale PID file を確実に削除、`status()` で `running / stale:*` を明示。
+  - 目的: 他タスク/他repoプロセスを巻き込まずに parity 停止・状態監査を可能化。
+
+- `ops/env/scalp_ping_5s_b.env` / `ops/env/local-v2-full.env`
+  - `sell` 固定のまま、`entry_quality` を優先する閾値へ再調整。
+  - 主変更:
+    - `MAX_ORDERS_PER_MINUTE=8`
+    - `BASE_ENTRY_UNITS=90`
+    - `CONF_FLOOR=72`
+    - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY=0.68`
+    - `ENTRY_NET_EDGE_MIN_PIPS=0.20`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN=0.74`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX=0.65`
+  - 目的: low-edge/low-quality entry の流入を抑え、SL偏重局面での損失速度を下げる。
+
+- `config/dynamic_alloc.json`
+  - 再計算（`scripts/dynamic_alloc_worker.py`）で `scalp_ping_5s_b_live` の `lot_multiplier=0.45` を確認。
+  - 攻め設定には戻さず、縮小運転を維持。
+
+### 2026-03-02（追記）`ensure_single_trading_vm` で同時稼働を即時収束
+
+- `scripts/ensure_single_trading_vm.sh` を即時実行し、`fx-trader-vm-es1a` 以外の `RUNNING` `fx-trader*` を停止対象化した。
+- `--dry-run` で再確認し、`fx-trader-vm-es1a` のみが実行中である状態を監査ログに記録する運用を追加。
+- 併せて `AGENTS.md` のセクション9に
+  - `RUNNING 1台固定`
+  - `STOPPING > 5分` の場合は再監査
+  - BQ運用は `--bq-interval` / `--disable-lot-insights` の原価抑制方針を前提化
+  を明文化。
+
+関連: 本方針は月間コスト約23,000円想定ケースの抑制（複数同時VM起動、不要リソース残存、過密BQ同期の重複）に対する直接対応。
+
+### 2026-03-02（追記）`quant-bq-sync` / `quant-policy-cycle` の BigQuery 負荷抑制を先行実装
+
+- `scripts/run_sync_pipeline.py`
+  - `--disable-lot-insights` を実行フラグとして有効化し、BigQuery export は維持したままロットインサイトを停止可能にした。
+  - `PIPELINE_LOT_INSIGHTS_ENABLED` / `PIPELINE_LOT_INSIGHTS_INTERVAL_SEC` を追加し、環境変数側でインサイト実行頻度を制御可能化。
+  - ロットインサイトは「BQ export 成功時かつ前回実行から間隔満了時のみ」実行するよう変更。
+- `systemd/quant-bq-sync.service`
+  - `--bq-interval 300 -> 900` に変更し、同期周期を1時間あたり4回から2回へ低減。
+  - `--disable-lot-insights` を追加して、運用中の定常BQスキャンを間引き。
+- `systemd/quant-policy-cycle.timer`
+  - `OnUnitActiveSec=15min -> 60min` へ延長（policy_mart 集約の重いBQクエリ周期を低減）。
+
+意図:
+- 近時検知した「高コストの繰返しBigQueryジョブ」を優先的に抑制し、監視・収益判断のための最低限同期を保ったまま
+  月間コストを圧縮する。
+
 ### 2026-03-01（追記）`replay_quality_gate.py` のシナリオ入力を `replay_exit_workers_groups.py` と同義語・拡張セットで統一
 
 - `scripts/replay_quality_gate.py` の `SCENARIO_OPTIONS` を `trend_up` / `trend_down` / `gap` / `gap_up` / `gap_down` / `stale` に拡張。
@@ -21,6 +94,35 @@
 - 目的: `Permission denied: 'logs'` / `Permission denied: '/home/tossaki/QuantRabbit/config/dynamic_alloc.json'` により
   `strategy_control` を含むワーカーの DB 書込・設定反映が止まる状態を解消し、シード反映と制御判定を再稼働可能にする。
 - 併せて、デプロイ後の再起動時に DB/ログ系サービスの初期起動失敗が継続しないことを監査する。
+
+### 2026-03-02（追記）`scripts/deploy_via_metadata.sh` と `scripts/ssh_watchdog.sh` の SSH 自己修復を追加
+
+- `deploy_via_metadata.sh` の生成 startup-script に `sshd_config` 破損検知を導入し、`sshd_config` が
+  欠損・壊れた場合は `/etc/ssh/sshd_config.bak` を優先復旧するように変更。
+- 同時に `sshd` ユニットと 22/tcp リスンを再評価し、起動失敗時は再起動を再試行するフローを追加。
+- `scripts/ssh_watchdog.sh` に `sshd_config` の integrity check (`sshd -t`) を追加し、無効化検知時は backup から復元する監視を追加。
+- 改善の検証観点: 修復後 VM 再起動時に `systemctl is-active ssh|sshd` と
+  `ss -ltn` の `:22` リスン、`/var/log/quantrabbit-startup.log` の復旧ログを確認する。
+
+### 2026-03-02（追記）単一VMガードを共通化しデプロイ導線へ厳格化
+
+- `scripts/ensure_single_trading_vm.sh` を新規追加し、`deploy_to_vm.sh` / `deploy_via_metadata.sh` / `vm.sh deploy` の
+  余剰 `fx-trader*` 起動インスタンス停止を一元化。
+- 新ガードは、停止対象の列挙・`--async` 停止の実行ログを統一し、`--strict` 指定時は停止失敗で
+  デプロイを中断する仕様へ変更。
+- `scripts/gcloud_doctor.sh` に起動中 `fx-trader*` 台数監査を追加し、複数稼働時は警告を出すよう変更。
+- 追跡観点: デプロイ後に
+  `gcloud compute instances list --filter='status=RUNNING' --format='value(name)'` で `fx-trader*` が
+  1台のみであることを監査ログに保持する。
+
+### 2026-03-02（追記）デプロイ時の単一VM運用ガードを追加
+
+- `scripts/deploy_to_vm.sh` / `scripts/deploy_via_metadata.sh` / `scripts/vm.sh deploy` に  
+  `fx-trader*` 系の起動中 VM を事前監査し、デプロイターゲット以外を `gcloud compute instances stop --async` で停止するガードを追加。
+- 目的: 複数VMが同時稼働する状態を解消し、反映・検証対象を1台化して運用ノイズを抑制する。
+- 監査観点: 1回デプロイ後に
+  `gcloud compute instances list --filter='status=RUNNING' --zones <ZONE> --format='value(name)'`
+  で `fx-trader*` がデプロイターゲット1件のみになっていることを確認。
 
 ### 2026-03-01（追記）`replay_exit_workers_groups` のシナリオ分類強化（トレンド方向・ギャップ・stale）
 
@@ -10557,3 +10659,137 @@
 - 導線への影響:
   - V2分離構成（entry/exit worker, order-manager, position-manager）は不変。
   - 共通レイヤでの戦略選別ロジックは追加していない。
+
+## 2026-03-03 JST - order-manager再緩和（no-entry継続対策）
+
+- 目的:
+  - ping5s B/C/D の `submit_attempt` 到達率を上げ、manual建玉を触らずに bot entry を再開させる。
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_SUBMIT_MAX_ATTEMPTS=2`
+    - `ORDER_PROTECTION_FALLBACK_MAX_RETRIES=1`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B(_LIVE)=0.10`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE)=0.10`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_D(_LIVE)=0.10`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=10`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=10`
+- 監査ログ:
+  - OANDA summary（`2026-03-03T10:45:54Z`）で `lastTransactionID=413002` 据え置き・`openTradeCount=1`（manualのみ）を確認。
+  - VM serial で `quant-scalp-false-break-fade.service` の `oom-kill` 痕跡を確認（`2026-03-03 10:17:54Z`）。
+- 方針適合:
+  - V2導線（strategy -> order_manager -> OANDA）を変更しない。
+  - manualポジションを直接操作しない。
+
+## 2026-03-03 JST - BrainローカルLLM導線 + 2レーン比較の実装
+
+- 目的:
+  - VMレーンとローカルレーンの並行実売買で、成績の良い導線を定量比較できる状態を作る。
+  - Brainゲートで Vertex 依存を解消し、ローカルLLM（Ollama）を選択可能にする。
+- 変更:
+  - `workers/common/brain.py`
+    - `BRAIN_BACKEND=vertex|ollama` を追加（default: `vertex`）。
+    - `BRAIN_OLLAMA_MODEL` / `BRAIN_OLLAMA_URL` を追加。
+    - `BRAIN_FAIL_POLICY=allow|reduce|block` を追加（default: `allow`）。
+    - Brainメトリクスに `backend` タグを付与。
+  - `utils/ollama_client.py`（新規）
+    - Ollama `/api/chat` を叩き、JSON応答を抽出する最小クライアントを追加。
+  - `execution/order_manager.py`
+    - `ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT` を追加（default: `0`）。
+    - preserve intent運用でも必要時のみ Brain適用を許可できるように変更。
+  - `scripts/compare_live_lanes.py`（新規）
+    - local log（`trade_closed`）と vm trades.db（`client_order_id` prefix）を同一窓で比較。
+    - `net_jpy` 優先、同値時 `expectancy_pips` で winner 判定。
+  - `tests/workers/test_brain_ollama_backend.py`（新規）
+    - ollama backend経路と `BRAIN_FAIL_POLICY=reduce` の挙動を検証。
+- 互換性:
+  - デフォルト設定では既存挙動を維持（Vertex + preserve時Brain未適用）。
+  - V2導線（strategy worker -> order_manager -> OANDA）を変更しない。
+- 検証:
+  - `pytest -q tests/workers/test_brain_ollama_backend.py` で 2件pass。
+  - `python scripts/compare_live_lanes.py --hours 24` で比較JSON出力を確認。
+
+## 2026-03-03 JST - 2レーン勝敗判定の安定化
+
+- 目的:
+  - 並行運用（VM/Local）でサンプル不足の誤判定を防ぐ。
+- 変更:
+  - `scripts/compare_live_lanes.py`
+    - `--min-trades` を追加し、閾値未満では `winner=insufficient_data` を返却。
+    - local log 側は `client_id` 欠損時でも `trade_opened` の対応付けで lane 判定を継続。
+  - `scripts/watch_lane_winner.sh`（新規）
+    - 比較結果を `logs/lane_winner_latest.json` / `logs/lane_winner_history.jsonl` へ保存。
+  - `ops/env/local-llm-lane.env`（新規）
+    - ローカルLLMレーン用の推奨envテンプレートを追加。
+
+## 2026-03-04 JST - ローカルV2スタック起動導線（高速PDCA用）
+
+- 目的:
+  - VM本番導線を変更せず、ローカルでV2ワーカー構成を素早く再起動・監視できる開発導線を追加する。
+- 変更:
+  - `scripts/local_v2_stack.sh`（新規）
+    - `up/down/restart/status/logs` を提供。
+    - `ops/env/quant-v2-runtime.env` を基準に読み込み、`--env <override>` でローカル上書きを追加可能。
+    - 対応サービス:
+      - core: `quant-market-data-feed`, `quant-strategy-control`, `quant-order-manager`, `quant-position-manager`
+      - strategy pair: `quant-scalp-ping-5s-b(+exit)`, `quant-micro-rangebreak(+exit)`
+    - profile: `core` / `trade_min`、または `--services` で個別指定。
+  - `ops/env/local-v2-stack.env`（新規）
+    - ローカルPDCAの上書きテンプレート（Brain local LLM有効化のコメント付き）を追加。
+- 影響範囲:
+  - ローカル開発補助のみ。VMのsystemdユニット・本番導線・発注ロジックは非変更。
+
+## 2026-03-04 JST - `scalp_ping_5s_b` short最小ロット救済（worker局所）
+
+- 目的:
+  - `short units_below_min` 高止まりにより short 発注が枯れる状態を、共通レイヤを変えず strategy worker 内で局所是正する。
+- 変更:
+  - `workers/scalp_ping_5s/worker.py`
+    - `MIN_UNITS` 未満かつ `signal.side == "short"` のとき、以下を満たす場合のみ `short_probe_rescued` で `MIN_UNITS` を許可。
+      - `fast_flip_applied` / `sl_streak_flip_applied` / `side_metrics_flip_applied`、または `direction_bias.side == short` かつ十分スコア。
+      - `units_risk >= MIN_UNITS`
+      - 緩和した確率/信頼度閾値（既存 `MIN_UNITS_RESCUE_*` からオフセット）を満たす。
+    - ログに `min_units_rescue mode=short_probe_rescued` を追加し監査可能化。
+- 影響範囲:
+  - `scalp_ping_5s` 系 worker のエントリーサイズ算出のみ。order_manager / position_manager / 共通ゲートは非変更。
+
+### 追記（2026-03-04 JST 20:22）
+- 初回条件では `short_probe_rescued` が未発火だったため、発火条件を「short + relaxed prob/conf + risk_cap充足」へ簡素化。
+- 目的は short 側の `units_below_min` 抑制を優先し、buy-only偏重の是正スピードを上げること。
+
+### 追記（2026-03-04 JST 20:28）
+- short救済を worker 側で有効化しても、`order_manager` の戦略別 `ORDER_MIN_UNITS` が 4 のままだと downstream 拒否になり得るため、
+  `ops/env/quant-order-manager.env` の `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)` を 1 へ整合。
+
+### 追記（2026-03-04 JST 20:36）
+- `short_probe_rescued` が未発火だったため、`signal.side == short` かつ `units < MIN_UNITS` は `MIN_UNITS` へ強制救済する運用に変更。
+- 目的は短側の 0lot 消滅経路を即時に塞ぎ、発注実績を回復してから品質調整を続けること。
+
+## 2026-03-04 JST 21:35 - local-v2 `scalp_ping_5s_b` 初回SL拒否低減（env局所）
+
+- 目的:
+  - `orders.db` で観測される `STOP_LOSS_ON_FILL_LOSS`（初回 reject 後に2回目 filled）を減らし、初回約定率と執行レイテンシを改善する。
+- 変更:
+  - `ops/env/local-v2-stack.env`
+  - `ops/env/local-v2-full.env`
+    - `SCALP_PING_5S_B_SL_MAX_PIPS=1.60`
+    - `SCALP_PING_5S_B_SHORT_SL_MAX_PIPS=1.80`
+- 影響範囲:
+  - ローカル `scripts/local_v2_stack.sh --env ops/env/local-v2-stack.env` の B 戦略のみ。
+  - 共通ガード・order_manager ロジック・VM本番設定は未変更。
+
+## 2026-03-04 JST 21:34 - `scalp_ping_5s_b` long偏損に対する side-adverse 制御強化
+
+- 目的:
+  - `scalp_ping_5s_b_live` の直近実績で long 側 `STOP_LOSS_ORDER` が損失の主因となっているため、strategy worker の side-adverse 縮小/反転を強化し、損失インパクトを抑える。
+- 実データ根拠（ローカル退避VMログ + OANDA API）:
+  - `trades.db` 24h: long `n=399 sum=-170.11 PF=0.412`、short `n=147 sum=+2.87 PF=2.155`。
+  - OANDA pricing: spread `0.8 pips`, `ATR14=3.2 pips` で流動性異常は顕著でない。
+- 変更:
+  - `ops/env/scalp_ping_5s_b.env`
+    - `SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_SL_RATE: 0.52 -> 0.48`
+    - `SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_CONFIDENCE_ADD: 4 -> 6`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_STEP_MULT: 0.12 -> 0.22`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_MIN_MULT: 0.95 -> 0.72`
+    - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_DD_MIN_MULT: 0.92 -> 0.78`
+- 補足（実発注確認）:
+  - OANDA RESTで `REDUCE_ONLY 1 unit` を実行し `orderFillTransaction=417418` を確認（`tradeID=413001` を1unit縮小）。

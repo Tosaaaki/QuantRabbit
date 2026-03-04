@@ -17,6 +17,380 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-04 12:40 UTC / 2026-03-04 21:40 JST - `scalp_ping_5s_b_live` 緊急収益改善（品質閾値+サイズ圧縮）
+
+Period:
+- 集計窓: 直近24h（`logs/trades.db`, `logs/orders.db`, `logs/metrics.db`）
+- 市況確認: OANDA API 直近取得（`USD/JPY`）
+
+Fact:
+- 市況は稼働可能レンジ:
+  - `bid/ask=157.214/157.222`, `spread=0.8 pips`
+  - `ATR14(M1)=3.3429 pips`, `range15m=19.1 pips`, `range60m=20.2 pips`
+  - API応答 `avg=246ms`, error `0`
+- 戦略収益（`pocket <> manual`）:
+  - `n=537`, `win_rate=20.3%`, `PF=0.43`, `expectancy=-0.721 pips`, `net=-164.864 JPY`
+  - `close_reason`: `STOP_LOSS_ORDER=414 (77.09%, net=-270.768 JPY)`, `MARKET_ORDER_TRADE_CLOSE=123 (net=+105.904 JPY)`
+- side寄与:
+  - `long: n=397, avg_units=63.4, net=-169.127 JPY`
+  - `short: n=146, avg_units=1.9, net=+2.882 JPY`
+- entry_probability帯:
+  - `0.80-0.90` が最大赤字（`n=297, net=-118.285 JPY, exp=-0.969 pips`）
+- 直近24hの注文:
+  - `filled=593`, `entry_probability_reject=383`, `rejected=22`
+  - reject理由は `STOP_LOSS_ON_FILL_LOSS` が全件
+
+Failure Cause:
+- `scalp_ping_5s_b_live` が高頻度エントリーのまま SL 偏重（勝率20%台）で、ロング側の実効サイズが過大。
+- 高確率帯（0.80-0.90）で期待値が崩れており、既存の確率補正/帯別配分が過大評価を抑え切れていない。
+
+Improvement:
+- `ops/env/scalp_ping_5s_b.env` を即時更新（停止ではなく品質選別を強化）:
+  - 取引密度: `MAX_ACTIVE_TRADES 2->1`, `MAX_ORDERS_PER_MINUTE 6->4`
+  - ロット上限: `BASE_ENTRY_UNITS 70->45`, `MAX_UNITS 700->180`
+  - spread閾値: `MAX_SPREAD_PIPS 2.00->1.00`
+  - entry品質: `CONF_FLOOR 72->78`, `CONF_SCALE_MIN_MULT 0.92->0.80`
+  - 方向過大化抑制: `DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX 0.08->0.03`, `SIDE_BIAS_BLOCK_THRESHOLD 0.08->0.12`
+  - 確率補正強化:
+    - `ENTRY_PROBABILITY_ALIGN_PENALTY_MAX 0.20->0.28`
+    - `ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX 0.22->0.30`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN 0.74->0.82`
+    - `ENTRY_PROBABILITY_ALIGN_FLOOR 0.35->0.50`
+  - 確率帯配分を縮小側へ:
+    - `ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX 0.65->0.82`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT 0.82->0.65`
+    - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT 0.82->0.68`
+  - adverse stackの縮小強化:
+    - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT 0.72->0.60`
+    - `SIDE_ADVERSE_STACK_DD_MIN_MULT 0.78->0.65`
+  - spread guard実値:
+    - `spread_guard_max_pips=1.00`
+    - `spread_guard_release_pips=0.85`
+    - `spread_guard_hot_trigger_pips=1.10`
+    - `spread_guard_hot_cooldown_sec=8`
+
+Verification:
+- 適用後 60分/180分で以下を確認する。
+  - `PF >= 0.80`（まずは負け幅圧縮）
+  - `win_rate >= 30%`
+  - `STOP_LOSS_ORDER 比率 <= 65%`
+  - `net_pips` の時間帯連続悪化（3連続マイナス）解消
+  - `rejected` が `STOP_LOSS_ON_FILL_LOSS` 偏重のまま増加しないこと
+
+Status:
+- in_progress
+
+## 2026-03-04 08:49 UTC / 2026-03-04 17:49 JST - `scalp_ping_5s_b` 第2段調整（long偏重SL抑制）
+
+Period:
+- 変更時刻: 2026-03-04 08:49 UTC / 17:49 JST
+- 対象: `ops/env/scalp_ping_5s_b.env`, `ops/env/quant-order-manager.env`
+
+Fact:
+- `STOP_LOSS_ORDER` が long 側へ集中し、同方向の連続損切りが収益を圧迫。
+- `direction_cap` 判定が優勢な局面で long の過密継続が残存。
+- short 側の通過率は維持されており、sell-only 固定へ戻さず long 側の連打のみを抑制する方針が妥当。
+
+Failure Cause:
+- エントリー間隔・方向反転クールダウン・long 側モメンタム閾値が浅く、連続longの抑制が不足。
+
+Improvement:
+- `ops/env/scalp_ping_5s_b.env`:
+  - `ENTRY_COOLDOWN_SEC: 2.8 -> 4.0`
+  - `FAST_DIRECTION_FLIP_COOLDOWN_SEC: 0.6 -> 1.2`
+  - `BASE_ENTRY_UNITS: 120 -> 90`
+  - `LONG_MOMENTUM_TRIGGER_PIPS: 0.14 -> 0.20`
+  - `DIRECTION_BIAS_BLOCK_SCORE: 0.52 -> 0.60`
+  - `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: 0.28 -> 0.20`
+- `ops/env/quant-order-manager.env`:
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE): 6 -> 4`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B(_LIVE): 0.10 -> 0.15`
+
+Verification:
+- 15分窓で `STOP_LOSS_ORDER(long)` 件数を追跡。
+- 15分窓で `submit/filled` の side 比（long:short）を追跡。
+- 15分窓で `net_jpy` と `pf` を追跡。
+
+Status:
+- in_progress
+
+## 2026-03-04 08:42 UTC / 2026-03-04 17:42 JST - `scalp_ping_5s_b` の過剰エントリー抑制（sell-only化なし）
+
+Period:
+- 変更時刻: 2026-03-04 08:42 UTC / 17:42 JST
+- 対象: `ops/env/scalp_ping_5s_b.env`
+
+Fact:
+- 直前設定では `ENTRY_COOLDOWN_SEC=2.2`, `MAX_ORDERS_PER_MINUTE=6` で、過密エントリー継続時に SL 連打が再発しやすい構成。
+- `SCALP_PING_5S_B_SIDE_FILTER=none` は維持されており、sell-only 固定ではない。
+
+Failure Cause:
+- エントリー間隔・分間発注上限・方向別圧縮下限がタイトで、短時間に同質シグナルが重なった際の連続損切りを抑え切れていない。
+
+Improvement:
+- `ops/env/scalp_ping_5s_b.env` を更新（重複キーなし、各キーは単一値で整理）。
+  - `SCALP_PING_5S_B_ENTRY_COOLDOWN_SEC: 2.2 -> 2.8`
+  - `SCALP_PING_5S_B_MAX_ORDERS_PER_MINUTE: 6 -> 4`
+  - `SCALP_PING_5S_B_MAX_ACTIVE_TRADES: 2 -> 2`（据え置き明示）
+  - `SCALP_PING_5S_B_MAX_ACTIVE_PER_DIRECTION: (未定義) -> 1`（明示追加）
+  - `SCALP_PING_5S_B_DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: 0.95 -> 1.00`
+  - `SCALP_PING_5S_B_SIDE_BIAS_SCALE_FLOOR: 0.55 -> 0.45`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT: 0.60 -> 0.65`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT: 0.55 -> 0.60`
+
+Verification:
+- `rg` で対象8キーの最終値を確認し、同一キー重複がないことを確認する。
+- `SIDE_FILTER=none` が維持され、sell-only 化していないことを確認する。
+
+Status:
+- in_progress
+
+## 2026-03-04 04:30 UTC / 2026-03-04 13:30 JST - ローカルV2で `scalp_ping_5s_b_live` の敗因集中をデリスク（sell-only継続＋品質閾値引き上げ）
+
+Period:
+- 集計窓: 直近24h（`logs/trades.db`, `logs/orders.db`）
+- 市況確認: `logs/tick_cache.json`（直近約38分）
+
+Fact:
+- 24h（`pocket <> manual`）: `n=80`, `net=-45.456 JPY`, `net_pips=-82.6`, `win_rate=16.25%`, `PF=0.3262`。
+- 戦略寄与: `scalp_ping_5s_b_live` が同期間の実トレード全損益を占有（`n=80`, `net=-45.456 JPY`）。
+- 注文内訳（24h）: `entry_probability_reject=376`, `filled=83`, `rejected=2`（`STOP_LOSS_ON_FILL_LOSS`）。
+- 市況（直近tick）: `USD/JPY mid=157.333`, `spread_avg=0.8 pips`, `range(5m)=2.7 pips`, `range(15m)=9.2 pips`, `range(30m)=23.9 pips`。
+- 実行品質（metrics直近1000点）: `decision_latency_ms p50=27.0 / p95=48.9`、`data_lag_ms p50=630.6 / p95=1566.2`（外れ値あり）。
+- OANDA応答品質: workerログで pricing API `HTTP 200` 継続、`oanda.positions.error` は直近発生なし（最終 2026-02-21）。
+
+Failure Cause:
+- `scalp_ping_5s_b_live` の long 側でSLヒット連鎖が発生し、低エッジ・低品質シグナルの流入で期待値が崩れた。
+- 併せてローカル起動導線でワーカープロセス重複/残骸が出る経路があり、実行品質の不安定化要因になっていた。
+
+Improvement:
+- `workers/scalp_ping_5s_b/worker.py`: `subprocess.run` 経路を `os.execvpe` に変更し、ラッパー子プロセス残骸を抑止。
+- `scripts/local_vm_parity_stack.sh`: 広すぎる `pkill` を repo 配下限定へ縮小、`stop/status` の stale PID 判定を明確化。
+- `ops/env/scalp_ping_5s_b.env`:
+  - `MAX_ORDERS_PER_MINUTE 12 -> 8`
+  - `BASE_ENTRY_UNITS 140 -> 90`
+  - `MIN_UNITS_RESCUE_MIN_ENTRY_PROBABILITY 0.60 -> 0.68`
+  - `CONF_FLOOR 60 -> 72`
+  - `ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN 0.68 -> 0.74`
+  - `ENTRY_PROBABILITY_BAND_ALLOC_HIGH_REDUCE_MAX 0.78 -> 0.65`
+  - `ENTRY_NET_EDGE_MIN_PIPS 0.12 -> 0.20`
+- `ops/env/local-v2-full.env`: parity系にも同方針（sell-only + 閾値強化 + サイズ縮小）を反映。
+- `scripts/dynamic_alloc_worker.py` 再計算で `scalp_ping_5s_b_live lot_multiplier=0.45` を維持（攻めず縮小継続）。
+
+Verification:
+- 実プロセス環境で `SCALP_PING_5S_B_*` の新値反映を確認（`ENTRY_NET_EDGE_MIN_PIPS=0.20`, `CONF_FLOOR=72`, `SIDE_FILTER=sell` など）。
+- `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` でV2群が `running`。
+- 直近ログで `entry-skip summary` の long 側は `side_filter_block` が継続し、不要long流入を遮断していることを確認。
+- 次判定条件（再評価）:
+  - 24hで `PF >= 1.0` かつ `net_jpy > 0`
+  - `entry_probability_reject` 比率の過剰偏り緩和（目安 `< 45%`）
+  - `data_lag_ms p95 < 1200` を維持
+
+Status:
+- in_progress
+
+## 2026-03-02 02:35 UTC / 2026-03-02 11:35 JST - `fx-trader*` 同時稼働の一時的収束
+
+Period:
+- 監査時点: 2026-03-02 02:00–02:35 UTC
+- 対象コマンド: `scripts/ensure_single_trading_vm.sh`
+
+Fact:
+- `fx-trader*` 系の稼働インスタンスが `fx-trader-vm-es1a`, `fx-trader-c-repair`, `fx-trader-vm-es1c` で
+  重複していた状態を確認。
+- `--target=fx-trader-vm-es1a` で `ensure_single_trading_vm.sh` を実行し、非対象の稼働/起動中インスタンスを停止指示。
+- 再確認時点（`--dry-run`）で `fx-trader-vm-es1a` のみが `RUNNING` と判定。
+- `fx-trader-c-repair` は `TERMINATED`、`fx-trader-vm-es1c` は `STOPPING` -> `TERMINATED` へ移行中（運用監視対象）。
+
+Failure Cause:
+- 同時稼働を放置した状態が、compute 料金・I/O競合・復元監査ノイズを増加させ、月間コスト（約23,000円規模）悪化要因になり得る。
+- BQ面はこの時点の主要原因ではなく、過去監査と合わせて「同時稼働 + 不要リソース残存」が主軸。
+
+Improvement:
+- `AGENTS.md` のセクション9を更新し、1台運用（RUNNING 1台）を運用条項化。
+- 併せて `quant-bq-sync` の `--bq-interval 900`/`--disable-lot-insights` 方針と
+  `ensure_single_trading_vm.sh --dry-run` を監査手順として固定化。
+
+Verification:
+- `gcloud compute instances list --filter='name~^fx-trader' --format='value(name,status,zone)'` で
+  `RUNNING` が1件のみ。
+- `./scripts/ensure_single_trading_vm.sh -p quantrabbit -m fx-trader-vm-es1a -P fx-trader --dry-run`
+  が `OK` を返すこと。
+
+Status:
+- done
+
+## 2026-03-04 (JST) / scalp_ping_5s_b を「売り限定解除 + 両方向適応」へ再調整（ローカルV2）
+
+Source:
+- `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
+- `logs/orders.db`
+- `logs/trades.db`
+- `curl http://127.0.0.1:8301/position/sync_trades`
+
+Findings:
+- `SCALP_PING_5S_B_SIDE_FILTER=none` + `ALLOW_NO_SIDE_FILTER=1` で固定sideは解除済み。
+- 直近ログで `short` 候補はあるが `units_below_min` 比率が高く、実約定は long 偏重。
+- 直近クローズでは `STOP_LOSS_ORDER` が連続し、反転局面で long 連打が残る。
+
+Action:
+- `ops/env/scalp_ping_5s_b.env` を更新（ローカル）
+  - `ENTRY_COOLDOWN_SEC=2.2`（連打抑制）
+  - `MAX_ORDERS_PER_MINUTE=6`（過剰回転抑制）
+  - `CONF_SCALE_MIN_MULT=0.92`
+  - `DIRECTION_BIAS_OPPOSITE_UNITS_MULT=0.68`
+  - `DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT=0.95`
+  - `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.28`
+  - `SIDE_BIAS_SCALE_FLOOR=0.40`
+  - `ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MIN_MULT=0.60`
+  - `FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN=0.58`
+  - `FAST_DIRECTION_FLIP_HORIZON_SCORE_MIN=0.35`
+  - `FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN=2`
+  - `SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.60`
+  - `SIDE_ADVERSE_STACK_DD_MIN_MULT=0.65`
+- `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` で反映。
+
+Verification:
+- `orders.db` では `submit_attempt/filled` が継続して発生（エントリー導線は稼働）。
+- ただし `short` 側の `units_below_min` は残存し、追加観測が必要。
+- `position_manager` が断続的に再起動する時間帯があり、短時間で `open_positions` 呼び出し失敗が発生することを確認。
+
+Next:
+- `position_manager` の起動安定化を先に固定。
+- その後 20〜30分窓で `short fill件数 / units_below_min比率 / PF` を再測定して再調整する。
+
+## 2026-03-02 02:20 UTC / 2026-03-02 11:20 JST - `quant-bq-sync` / `quant-policy-cycle` で BQ 負荷を先回り抑制
+
+Period:
+- 対象:
+  - `systemd/quant-bq-sync.service`
+  - `systemd/quant-policy-cycle.timer`
+  - `scripts/run_sync_pipeline.py`
+  - `AGENTS.md` / `docs/GCP_PLATFORM.md`
+- 根拠データ:
+  - 過去監査での `quant-bq-sync` 実引数 (`--interval 60 --bq-interval 300 --limit 1200`) と
+    `quant-policy-cycle.timer` (`15min`) の設定差分
+
+Fact:
+- 事後監査で、`quant-bq-sync` の BQ 同期が 5 分刻み（`--bq-interval 300`）で回る運用を確認し、`lot insights` 解析も毎サイクル有効な状態だった。
+- `systemd/quant-bq-sync.service` を `--bq-interval 900 --disable-lot-insights` へ変更し、現在は
+  - BQ エクスポートを 15 分間隔ベースまで緩和
+  - ロットインサイトの毎回生成を停止
+  - 既定で `--limit 1200` による送信上限を維持
+  する運用へ更新した。
+- `systemd/quant-policy-cycle.timer` を `15min` から `60min` に変更し、policy-cycle の重複実行圧を低下。
+- `AGENTS.md` に 1 台運用・BQ 原価抑制の運用規則を明文化し、月間約 23,000 円要因が「同時 RUNNING VM」や未使用リソース固定化と合致する運用根拠へ寄せた。
+
+Failure Cause:
+- コスト上振れの主因は `BQ` 単独より、`run_sync` の高頻度実行と `fx-trader*` 複数台起動が重なった状態である可能性が高い。
+- lot insights と policy-cycle の同時高頻度化により、DB I/O 競合・再処理量増大を誘発していた。
+
+Improvement:
+- `quant-bq-sync` の実行を `--bq-interval 900` / `--disable-lot-insights` へ変更。
+- `scripts/run_sync_pipeline.py` を lot insights 無効時でも継続稼働できるガード実装へ修正。
+- `quant-policy-cycle.timer` を 60 分周期化。
+- 運用文書（`AGENTS.md`/`GCP_PLATFORM.md`）へ1台化・BQ抑制設定を反映。
+
+Verification:
+- 運用反映後に `systemd/quant-bq-sync.service` の `ExecStart`、`systemd/quant-policy-cycle.timer` の `OnUnitActiveSec` を確認。
+- `gcloud compute instances list --filter='name~^fx-trader' --format='value(name,status)'` で RUNNING の `fx-trader*` が 1 台のみであることを確認。
+- `systemctl cat quant-bq-sync.service` と `systemctl cat quant-policy-cycle.timer` を `ops` 監査ログへ保存。
+- 24h 程度で `logs/{orders,metrics}.db` の拒否率と `B/Q` 再実行率（`run_sync_pipeline`/`googleapis`）を比較し、悪化がないことを確認。
+
+Status:
+- in_progress
+
+## 2026-03-03 (JST) / 並行2レーン判定の運用化（min-trades導入）
+
+Source:
+- `scripts/compare_live_lanes.py`
+- `scripts/watch_lane_winner.sh`
+- `ops/env/local-llm-lane.env`
+
+Fact:
+1. 比較ロジックに `--min-trades` を追加し、サンプル不足時は `winner=insufficient_data` を返すよう変更。
+2. ローカルレーンは `ops/env/local-llm-lane.env` をロードして local LLM（Ollama）前提で運用可能化。
+3. `watch_lane_winner.sh` で比較結果を `logs/lane_winner_latest.json` と履歴へ出力可能。
+
+Verification:
+1. `python scripts/compare_live_lanes.py --hours 24 --min-trades 5`
+2. `scripts/watch_lane_winner.sh`
+
+Status:
+- in_progress
+
+## 2026-03-03 (JST) / ローカルLLM並行売買レーン導入（VM+Local 比較運用）
+
+Source:
+- OANDA API 実測（`scripts/check_oanda_summary.py` + 20回サンプリング）
+- OANDA pricing/candles 実測（USD/JPY）
+- VM health snapshot（`gs://fx-ui-realtime/realtime/health_fx-trader-vm-es1c.json`）
+- VM serial（`gcloud compute instances get-serial-port-output fx-trader-vm-es1c`）
+- local live log（`logs/codex_long_autotrade.log`）
+
+Market Check (2026-03-03 22:00 JST 台):
+1. USD/JPY: mid `157.756`, spread `0.8 pips`
+2. M1 ATR14: `3.236 pips`
+3. 直近レンジ推移: `last15m=50.2 pips`, `prev15m=54.5 pips`（比率 `0.921`）
+4. OANDA API応答品質: 20/20 成功, `p95=315ms`, `max=345ms`
+5. OANDA openTrades: manual short `-7000` のみ（bot open なし）
+
+Fact:
+1. VM側 health snapshot は `2026-03-02T09:10:55Z` で更新停止気味、bot lane の約定が薄い。
+2. serial に `oom-kill`（`quant-scalp-false-break-fade` 系 python）を確認。
+3. local lane は `codex_long_autotrade.log` で実売買中、`gpt-oss:20b` 判定は1回 `~27s` と高遅延。
+4. 直近24h比較:
+   - local lane: `1 trade / net -7.316 JPY / -5.4 pips`
+   - vm lane: `0 trades`
+
+Action:
+1. BrainゲートへローカルLLM backend を追加（`BRAIN_BACKEND=ollama`）。
+2. Brain失敗時ポリシーを `BRAIN_FAIL_POLICY=allow|reduce|block` で制御可能化。
+3. `ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT` を追加し、必要時のみ preserve intent と Brain の併用を許可。
+4. 2系統比較スクリプト `scripts/compare_live_lanes.py` を追加（local log + vm trades.db）。
+5. まず `local lane` を実運用継続し、`vm lane` は OOM/SSH不安定解消後に再評価する方針へ。
+
+Verification:
+1. `python scripts/compare_live_lanes.py --hours 24` を定期実行し、`winner` を監視。
+2. Brainをollamaで有効化する場合は `brain_latency_ms` と `order_brain_block` の比率を同時監査。
+3. VM側は OOM 解消（unit整理/メモリ圧迫タスク抑制）後に `filled` 復帰を再確認。
+
+Status:
+- in_progress
+
+## 2026-03-03 (JST) / no-entry継続への追加対応（ping5s閾値再緩和 + OOM要因記録）
+
+Source:
+- OANDA account summary (`2026-03-03T10:45:54Z`): `openTradeCount=1`, `lastTransactionID=413002`（manualのみ、bot新規約定なし）
+- OANDA pricing/candles (`2026-03-03T10:23:56Z`): `USD/JPY bid=157.730 ask=157.738 spread=0.008`, `ATR14(M5)=0.0765`, `range_last_60m=0.313`, API latency `~220-250ms`
+- VM serial (`gcloud compute instances get-serial-port-output`): `quant-scalp-false-break-fade.service` の `oom-kill` 発生（`2026-03-03 10:17:54Z` 付近）
+
+Hypothesis:
+1. ping5s B/C/D の `reject_under` と `min_units` が still strict で、`submit_attempt` に到達しないケースが残っている。
+2. OOMイベントが発生した時間帯では、worker群の安定稼働が崩れて entry チャンスを取りこぼす。
+
+Action:
+- `ops/env/quant-order-manager.env`
+  - `ORDER_SUBMIT_MAX_ATTEMPTS: 1 -> 2`
+  - `ORDER_PROTECTION_FALLBACK_MAX_RETRIES: 0 -> 1`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_B(_LIVE): 0.15 -> 0.10`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C(_LIVE): 0.15 -> 0.10`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_D(_LIVE): 0.12 -> 0.10`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE): 20 -> 10`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE): 20 -> 10`
+
+Impact:
+- manual建玉操作は未実施（`BLOCK_MANUAL_NETTING=0` 方針維持）。
+- 変更は order_manager 側の preflight 緩和のみで、V2導線・entry_thesis契約は不変。
+
+Verification (post-deploy):
+1. OANDA `lastTransactionID` が `413002` から更新し、manual以外の新規open tradeが増えること。
+2. `orders.db` で ping5s系の `submit_attempt_count` / `filled` が 0 から復帰すること。
+3. OOM再発の有無（`quant-scalp-false-break-fade.service` の `oom-kill`）を serial/journal で監視すること。
+
+Status:
+- in_progress
+
 ## 2026-03-01 01:40 UTC / 2026-03-01 10:40 JST - `replay_quality_gate.py` のシナリオ同義語互換を `exit_workers_groups` と統一
 
 Period:
@@ -215,6 +589,28 @@ Verification:
 - `strategy_control_exit_disabled` 連打抑制（閾値到達時の failopen / bypass）導線が再開することを確認。
 Status:
 - in_progress
+
+### 2026-03-02（追記）position_manager open_positions タイムアウトの再発抑止
+
+Source:
+- `logs/journal`（VM）
+- `execution/position_manager.py`
+- `ops/env/quant-v2-runtime.env`
+
+Fact:
+- `open_positions` の呼び出しで `Read timed out`（`read timeout=4.0/6.5`）が継続観測され、シグナルを拾い続ける前提が崩れていた。
+
+Failure Cause:
+- タイムアウト設定が `open_positions` 経路で短く、`position_manager` からの応答前に上位が切り戻されるループが発生していた。
+
+Action:
+- `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT: 4.0 -> 8.0`
+- `POSITION_MANAGER_HTTP_TIMEOUT: 5.0 -> 8.0`
+- `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT: 2.8 -> 8.0`
+- `POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC: 4.0 -> 10.0`
+
+Next check:
+- VM 反映後 15〜30 分で `position_manager service call failed` のログ頻度、`entry_probability_reject` 以外の拒否率変化、`trades.db` の filled 再開状況を確認。
 
 ## 2026-02-28 23:40 UTC / 2026-02-29 08:40 JST - `orders_snapshot_48h.db` の鮮度差起因監査崩れに対する同梱/監査ロジック同時修正
 
@@ -4470,3 +4866,210 @@ Verification (post-deploy):
 
 Status:
 - in_progress
+
+## 2026-03-04 (JST) / ローカルV2 PDCA導線追加前の市況確認
+
+Source:
+- OANDA v3 Pricing (`USD_JPY`) and Candles (`M1`, 80本) をローカル実行で取得。
+
+Snapshot (2026-03-04 JST):
+- bid/ask: `157.668 / 157.676`（mid `157.672`）
+- spread: `0.8 pips`
+- ATR14 (M1): `5.29 pips`
+- 直近20本 M1 平均レンジ: `4.96 pips`
+- OANDA API応答遅延（3サンプル）: `min 303.6ms / max 336.0ms / avg 318.4ms`
+
+Interpretation:
+- スプレッド・短期レンジ・API遅延はいずれも極端な悪化は観測せず、ローカル開発導線追加作業は継続可能と判断。
+
+Action:
+- `scripts/local_v2_stack.sh` を追加し、V2サービスをローカルで `up/down/restart/status/logs` 管理できるようにした。
+- `ops/env/local-v2-stack.env` を追加し、ローカル上書きテンプレート（local LLMゲート設定例付き）を用意した。
+
+Status:
+- done
+
+## 2026-03-04 (JST) / scalp_ping_5s_b 売り側復帰 + ローカルV2安定化
+
+Source:
+- `logs/orders.db` / `logs/trades.db` / `logs/metrics.db`
+- `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
+- `logs/local_v2_stack/quant-order-manager.log`
+- `logs/local_v2_stack/quant-position-manager.log`
+
+Hypothesis:
+1. 売り限定ではなく両方向判定は有効だが、short 側は `units_below_min` で事実上失注していた。
+2. `position-manager`/`order-manager` の起動・停止の不安定さが、entry/exit 評価の連続性を壊していた。
+
+Action:
+- `ops/env/scalp_ping_5s_b.env`
+  - `SCALP_PING_5S_B_SIDE_BIAS_SCALE_FLOOR: 0.40 -> 0.55`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX: 0.32 -> 0.22`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_ALIGN_UNITS_MIN_MULT: 0.45 -> 0.60`
+  - `SCALP_PING_5S_B_ENTRY_PROBABILITY_BAND_ALLOC_UNITS_MIN_MULT: 0.40 -> 0.55`
+  - `SCALP_PING_5S_B_SHORT_MIN_SIGNAL_TICKS: 3 -> 2`
+  - `SCALP_PING_5S_B_SHORT_MIN_TICK_RATE: 0.50 -> 0.42`
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_MIN_MULT: 0.60 -> 0.75`
+- `ops/env/quant-order-manager.env`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE): 10 -> 6`
+- `scripts/local_v2_stack.sh`
+  - `quant-scalp-ping-5s-b` のPID照合パターンに `workers.scalp_ping_5s.worker` を追加し、`status/down` の誤判定を抑制。
+
+Verification (post-tune, 2026-03-04 16:03 JST 以降):
+- `orders.db`（`status in preflight_start/filled/rejected`）
+  - `buy: attempts=15 / filled=15 / rejected=0`
+  - `sell: attempts=5 / filled=5 / rejected=0`
+- `quant-scalp-ping-5s-b.log`
+  - short open が復帰（例: `units=-100, -94, -85, -42`）
+  - short skip 理由の主成分が `units_below_min` から `rate_limited/cooldown/max_active_cap` へ移行
+- `metrics.db`（`account.nav`）
+  - `07:03:34 UTC -> 07:09:48 UTC` で `+812.554`（含み評価）
+
+Interpretation:
+- 売り限定化は解消し、short 実約定は再開した。
+- ただし直後は open ポジションが残る時間帯があり、`realized_pl` の評価窓はもう少し必要。
+
+Next:
+1. 同設定で 30-60分連続観測し、`close_reason` 別の実現損益（PF/勝率）を再評価。
+2. `rate_limited` が過多なら `ENTRY_COOLDOWN_SEC` / `MAX_ORDERS_PER_MINUTE` を微調整。
+3. `risk_mult_total=0.4` 固定が続く場合は、劣化要因（SL連打区間）を切り分けて別途改善。
+
+Status:
+- in_progress
+
+### 追記: 2026-03-04 16:20 JST / OANDA ReadTimeoutでのworker停止対策
+
+Issue:
+- `scalp_ping_5s_b` が `requests.exceptions.ReadTimeout`（`get_account_snapshot`）でプロセス終了する事象を確認。
+
+Action:
+- `workers/scalp_ping_5s/worker.py`
+  - `get_account_snapshot(cache_ttl_sec=0.5)` を `try/except` で包み、
+    - キャッシュ済み snapshot があればそれを継続利用
+    - キャッシュが無い場合は `account_snapshot_unavailable` として当該ループのみ skip
+  - 例外で worker 全体が落ちないように変更。
+
+Verification:
+- `python3 -m py_compile workers/scalp_ping_5s/worker.py` : OK
+- patch反映後に `quant-scalp-ping-5s-b` を再起動し、`status` で running を確認。
+- 直近2分観測で新規 `Traceback/ReadTimeout` 出力なし（既存ログの旧トレースは除外）。
+
+Status:
+- in_progress
+
+## 2026-03-04 18:21 JST / scalp_ping_5s_b short参加拡大 + long損失抑制チューニング
+
+Evidence summary (直近3h):
+- fill は long 側優勢で偏り、`buy/sell fill ratio` が高止まり。
+- 損失は `STOP_LOSS_ORDER` に集中し、long 側のマイナス寄与が目立つ。
+- `units_below_min` は short 側で多発し、売り参加率を押し下げた。
+
+Hypothesis:
+- `BASE_ENTRY_UNITS` と各 `*_UNITS_MIN_MULT` の引き上げで short の `units_below_min` を減らし、`SIDE_BIAS_*`/`DIRECTION_BIAS_*`/`*_MOMENTUM_TRIGGER_PIPS`/`ENTRY_CHASE_MAX_PIPS` の再配分で long の逆風局面エントリーを抑制すれば、短期PFの毀損を抑えつつ売り参加を回復できる。
+
+Recheck KPIs (next 60-90 min):
+- `buy/sell fill ratio <= 5.0`
+- `STOP_LOSS_ORDER share <= 60%`
+- `PF >= 0.90`
+- `short units_below_min` を現状比 `>=30%` 削減
+
+## 2026-03-04 18:31 JST / restart後フォローアップ（long過大抑制）
+
+- 再起動直後の事実: fill は buy-only、`STOP_LOSS_ORDER` は1件、short 側 `units_below_min` は依然高止まり。
+- 施策意図: 両方向ロジックは維持しつつ、long の過大ロット増幅を抑えて long 損失寄与を下げる。
+- 45-60分後の再確認KPI: `avg filled buy units` 前run比低下、`STOP_LOSS_ORDER share` 低下、`net_jpy` 改善、short `units_below_min` トレンド非増加。
+
+## 2026-03-04 19:42 JST / short `units_below_min` 第2チューニング
+
+- 再起動直後の事実: short 側 `units_below_min` は高止まりのままで、初期 fill は buy-only だった。
+- 第2チューニング仮説: opposite-side 時のロット縮退（lot collapse）を抑え、動的トレードを維持したまま short 参加を回復させる。
+- 30-60分の再確認KPI: short fill 増加、short `units_below_min` を現状比 `>=30%` 削減、`buy/sell fill ratio` のトレンド改善。
+
+## 2026-03-04 20:02 JST / short `units_below_min` 第3チューニング
+
+- 第2段反映後の3分窓で `short units_below_min=75`、fill は依然 buy-only だったため、counter-side の縮退下限を追加で引き上げた。
+- 変更方針: `MIN_UNITS_RESCUE` 条件緩和、`MTF/HORIZON/M1` の opposite 側ユニット下限引き上げ、`band_alloc` の最小倍率底上げ、同時に long 閾値（`LONG_MOMENTUM_TRIGGER_PIPS`）を上げて long 過多を抑制。
+- 再確認KPI（30-60分）: `short fills > 0`、`short units_below_min` を第2段比でさらに `>=30%` 減、`buy/sell fill ratio` の改善継続。
+
+## 2026-03-04 20:08 JST / 実行詰まり（cooldown/rate_limit）緩和
+
+- 第3段後の集計で short 側は `rate_limited` / `cooldown` が主要スキップに浮上し、`OPEN_REQ` は buy のみだった。
+- 追加対策: `ENTRY_COOLDOWN_SEC` を短縮し、`MAX_ORDERS_PER_MINUTE` を引き上げて short の通過機会を回復させる。
+- 再確認KPI（30-45分）: short `OPEN_REQ` 発生、`rate_limited(short)` の減少、`buy/sell fill ratio` の改善。
+
+## 2026-03-04 20:16 JST / short最小ロット救済ロジック追加
+
+- env調整後も `short units_below_min` が高止まりし、short fill 未発生の窓が継続した。
+- 追加実装: `workers/scalp_ping_5s/worker.py` に short 側限定の `short_probe_rescued` を追加し、`fast/sl_streak/side_metrics` の反転根拠がある場合のみ、緩和閾値で `MIN_UNITS` 救済を許可。
+- 期待効果: 動的判定を維持したまま、counter-side の 0lot 化を抑制して short の実発注化率を改善する。
+- 再確認KPI（30-60分）: short `OPEN_REQ` / `OPEN_FILLED` 発生、`short units_below_min` 低下、`buy/sell fill ratio` 改善。
+
+## 2026-03-04 20:22 JST / short救済条件の再緩和
+
+- 初回実装後の観測で `short_probe_rescued` が未発火だったため、条件を「shortかつprob/conf/risk_cap充足」へ簡素化。
+- 目的: short 側の `units_below_min` を直接減らし、buy-only状態からの離脱を優先する。
+- 再確認KPI（30-45分）: `short_probe_rescued` ログ発生、short `OPEN_REQ` 発生、`short units_below_min` 低下。
+
+## 2026-03-04 20:28 JST / short救済の最終整合（worker + order_manager）
+
+- 判明事項: worker 側で short を `MIN_UNITS` まで救済しても、`ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B(_LIVE)=4` により order_manager 側で拒否され得る。
+- 修正:
+  - `workers/scalp_ping_5s/worker.py`: short `units_below_min` は `units_risk >= MIN_UNITS` を満たす限り `short_probe_rescued` で `MIN_UNITS` へ救済。
+  - `ops/env/quant-order-manager.env`: `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE=1`, `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B=1` に変更。
+- 再確認KPI（30-45分）: `short OPEN_REQ/OPEN_FILLED` 発生、`entry_probability_below_min_units` 減少、`buy/sell fill ratio` 改善。
+
+## 2026-03-04 20:36 JST / short救済を強制発火へ変更
+
+- 観測で `short_probe_rescued` 未発火が継続したため、short の `units < MIN_UNITS` は `MIN_UNITS` へ強制救済する実装に更新。
+- 意図: counter-side のシグナルが0lotで消える経路を遮断し、まず short 発注を発生させる。
+- 監視: `short_probe_rescued` ログ件数、short `OPEN_REQ/OPEN_FILLED`、短期 `STOP_LOSS_ORDER` 増加有無を同時監視。
+
+## 2026-03-04 20:44 JST / short復帰確認後のlongサイズ圧縮
+
+- 観測結果: short は `OPEN_REQ/OPEN_FILLED` が発生し復帰したが、buy 平均ユニットが大きく（約160）短期損失寄与が拡大。
+- 追加対策: `SCALP_PING_5S_B_BASE_ENTRY_UNITS` を `120 -> 70` に圧縮し、long 側の損失インパクトを即時低減。
+- 再確認KPI（30-45分）: buy 平均ユニット低下、short fill 維持、短期 net_jpy 改善。
+
+## 2026-03-04 21:35 JST / local-v2 `STOP_LOSS_ON_FILL_LOSS` 初回拒否低減（scalp_ping_5s_b）
+
+- Evidence（`logs/orders.db` 直近24h）:
+  - `status='rejected' and error_message='STOP_LOSS_ON_FILL_LOSS'` は 23 件。
+  - 同一 `client_order_id` 追跡で、ほぼ全件が `attempt=1 rejected -> attempt=2 filled` の回復パターン。
+  - `attempt=1` の `stopLossOnFill` ギャップは概ね `1.3~1.5 pips`。
+- Hypothesis:
+  - `scalp_ping_5s_b` の SL 上限がタイトで、短時間の価格変位時に初回 `stopLossOnFill` が拒否されやすい。
+- Action（ローカル運用上書き）:
+  - `ops/env/local-v2-stack.env` と `ops/env/local-v2-full.env` に以下を追加。
+  - `SCALP_PING_5S_B_SL_MAX_PIPS=1.60`
+  - `SCALP_PING_5S_B_SHORT_SL_MAX_PIPS=1.80`
+- Recheck KPI（次の60分）:
+  - `STOP_LOSS_ON_FILL_LOSS` の `attempt=1` 発生率低下。
+  - `submit_attempt(1) -> filled` までの中央値レイテンシ短縮。
+  - `STOP_LOSS_ORDER` 比率が急増していないことを同時確認。
+
+## 2026-03-04 21:34 JST / OANDA実発注確認 + `scalp_ping_5s_b` long偏損対策
+
+- OANDA API実測（`USD_JPY`）:
+  - 価格/流動性: `bid=157.196` `ask=157.204` `spread=0.8 pips`
+  - ボラ: `ATR14=3.2 pips`, `ATR60=3.083 pips`, `range_60m=20.2 pips`
+  - API品質: pricing ping `5/5` 成功, 平均 `269ms`
+- 実発注トレース:
+  - `order_manager.market_order` 経路（manual最小試験）は内部スケールで `units=-986` となり `INSUFFICIENT_MARGIN` reject。
+  - 直接 OANDA REST で `REDUCE_ONLY 1 unit` を実行し約定を確認。
+    - `orderCreateTransaction=417417`
+    - `orderFillTransaction=417418`
+    - `tradeReduced.tradeID=413001`, `realizedPL=+0.1720`
+- 直近24hの収益悪化ポイント（`trades.db`, `strategy_tag=scalp_ping_5s_b_live`）:
+  - 全体: `n=543`, `PF=0.428`, `winrate=20.3%`, `realized=-166.25`
+  - side別: `long n=399 sum=-170.11 PF=0.412` / `short n=147 sum=+2.87 PF=2.155`
+  - `STOP_LOSS_ORDER` が損失の大半（特に long 側）
+- 反映（long偏損時の縮小/反転を強化）:
+  - `SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_SL_RATE=0.48` (from `0.52`)
+  - `SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_CONFIDENCE_ADD=6` (from `4`)
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_STEP_MULT=0.22` (from `0.12`)
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_MIN_MULT=0.72` (from `0.95`)
+  - `SCALP_PING_5S_B_SIDE_ADVERSE_STACK_DD_MIN_MULT=0.78` (from `0.92`)
+- 監視KPI（次の30-90分）:
+  - `long STOP_LOSS_ORDER` 件数/損失寄与の低下
+  - `scalp_ping_5s_b_live` の `PF` 改善（0.428 -> 0.8+ を目標）
+  - `buy/sell` の fillバランス維持（short優位を殺さないこと）
