@@ -5,7 +5,7 @@
 > 凄腕のプロトレーダーのトレードを再現するシステム。  
 > 境界: 発注・リスクは機械的、曖昧判断はローカルルール（LLMは任意のゲートのみ）。
 
-- VM 上で常時ログ・オーダーを監視。
+- 現行運用（2026-03-04 以降）はローカル優先。VM は原則使わず、必要時のみ起動して確認する。
 - トレード判断・ロット・利確/損切り・保有調整は固定値運用を避け、市場状態に応じて常時動的に更新する。
 - 手動玉を含めたエクスポージャを高水準で維持。
 - PF/勝率が悪化した戦略は、時間帯ブロックで抑えるのではなく、原因分析と改善を優先する（ただし JST 7〜8時のメンテ時間は運用対象外）。
@@ -16,10 +16,12 @@
 
 ## 2. 非交渉ルール（必ず守る）
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
+- **現行の最優先運用モード（2026-03-04 以降）**: 実装・検証・PDCA はローカル導線を正とし、VM 前提の手順は通常タスクでは適用しない（明示指示がある場合のみ VM を使う）。
 - 作業前にはUSD/JPYの市況確認を必須化する。
   - 確認対象: 現在価格帯、スプレッド、直近ATR/レンジ推移、約定・拒否の直近実績、OANDA APIの応答品質。
   - 確認手段: VM上の `logs/*.db` + OANDA API、該当戦略 worker/position_manager 的ログ、必要に応じて直近チャート。
   - 判定: 市況が通常レンジ外・流動性悪化時は、作業は保留し `docs/TRADE_FINDINGS.md` と運用ログへその理由を残す。
+- 各タスク開始時は、着手前チェックとして `docs/AGENT_COLLAB_HUB.md` の「運用手順」を必ず読む。最低限 `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し、現行手順を確認してから作業に入る。
 - LLM（Vertex）は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
 - Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す（default: disabled）。
 - Brain 有効化は `BRAIN_ENABLED=1` と Vertex 認証（`VERTEX_PROJECT_ID` / `VERTEX_LOCATION` 等）が必須。
@@ -69,6 +71,15 @@
   `range-only` + divergence 閾値強化のプロファイルへ更新。
   運用値は `ops/env/quant-scalp-macd-rsi-div-b.env`、監査ログは
   `docs/WORKER_REFACTOR_LOG.md` と `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-04 追記（現行運用モード）:
+  - 実装/検証/PDCA はローカル開発を優先して進める。
+  - ローカルV2検証導線は `scripts/local_v2_stack.sh` + `ops/env/local-v2-stack.env` を正とする。
+  - `local_v2_stack` と `local_vm_parity_stack` は排他運用とし、同時起動しない。
+  - parity 実行中は `up/down/restart` を既定で拒否し、`--force-conflict` は競合を理解した限定用途でのみ利用する。
+  - sidecar ポート設定は `ops/env/local-v2-sidecar-ports.env` を正とし、`18300/18301` を使用する。
+  - `position-manager` は `POSITION_MANAGER_SERVICE_PORT` を参照し、既定値は `8301` とする。
+  - VMは削除せず停止維持を基本とし、通常は使わない（必要時のみ起動して確認する）。
+  - VM由来ログ/DBの退避先は `remote_logs_current/vm_gcs_mirror_*` と `remote_logs_current/vm_latest_core_*` を正とする。
 
 ## 4. 仕様ドキュメント索引
 - `docs/INDEX.md`: ドキュメントの起点。
@@ -76,6 +87,8 @@
 - `docs/RISK_AND_EXECUTION.md`: エントリー/EXIT/リスク制御、OANDA マッピング。
 - `docs/OBSERVABILITY.md`: データ鮮度、ログ、SLO/アラート、検証パイプライン。
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニング運用。
+- `docs/OPS_VM_RUNBOOK.md`: VM 本番運用手順（起動/停止/デプロイ/反映確認/ログ退避）。
+- `docs/OPS_LOCAL_RUNBOOK.md`: ローカル運用手順（local_v2_stack / local LLM lane / ログ配置）。
 - `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用ランブック。
 - `docs/OPS_SKILLS.md`: 日次運用スキル運用。
 - `docs/KATA_SCALP_PING_5S.md`: 5秒スキャB（`scalp_ping_5s_b`）の型（Kata）設計・運用。
@@ -227,3 +240,29 @@ flowchart LR
 - 判定のゴール
   - 上位導線群が active/running し、`quantrabbit.service` が主導線になっていない。
   - 上記監査キーがフリーズ方針に一致し、service 側の `EnvironmentFile` が一本化されている。
+
+## 9. 1台化・原価抑制運用（BQ含む）
+
+- 本番トレード導線の `fx-trader*` は原則として同時RUNNINGを1台に固定する。  
+  - `gcloud compute instances` で 2台以上 `fx-trader` がRUNNINGになっている状態は、コスト増と監視重複のため即時収束対象とする。  
+  - `scripts/ensure_single_trading_vm.sh` をデプロイ・再起動前の必須前提条件にし、運用時も `--dry-run`/`--strict` を使って定期監査する。  
+  - 収束対象外の補助VM（復旧/保守用途）は trading 運転時間外に限定し、常時RUNNINGは原則しない。  
+- `BigQuery`（BQ）費用効率ルールを明文化する。  
+  - BQは「再現性のある分析に必要な最小スキャン」以外の全量・対話クエリを禁じる。  
+  - `dry-run` と `maxBytesBilled` を標準運用に組み込み、誤検知スキャンと重複計算を防ぐ。  
+  - 参照表のライフサイクルは `partition/clustering/TTL` を前提化し、使わなくなった中間テーブル・古いスナップショットを消化する。  
+- `logs`/`metrics` 側で BQ 実行回数・スキャン量・失敗率を監査し、実行コストを下げても運用改善が薄いジョブは停止または簡略化する。  
+- `ensure_single_trading_vm.sh` を単体だけでなく、`runbook` と `deploy` 前提手順として必須化する。  
+  - 確認コマンド: `./scripts/ensure_single_trading_vm.sh -p quantrabbit -m fx-trader-vm-es1a -P fx-trader --dry-run`  
+  - 実施コマンド: `./scripts/ensure_single_trading_vm.sh -p quantrabbit -m fx-trader-vm-es1a -P fx-trader --strict --wait --wait-timeout 600`  
+  - 運用基準: `RUNNING` の `fx-trader*` は 1 台のみ、`STOPPING` は5分以内に `TERMINATED` へ移行すること。
+
+- `quant-bq-sync` の初期実行は `--interval 60 --bq-interval 900 --disable-lot-insights` を前提とし、`lot insights` は環境変数で明示的に再有効化（`PIPELINE_LOT_INSIGHTS_ENABLED=1`）する。`quant-policy-cycle.timer` は 60分周期へ固定して、policy 連続再実行の同時負荷を抑える。
+- 1か月コスト（約23,000円想定）の想定主因は次の3点:
+  - `fx-trader*` 同時稼働（CPU/メモリとディスク/IP重複コスト）
+  - 停止後も残る未使用リソース（未整理の静的IP、未停止インスタンス、未マスク古い timer/service）
+  - BQを常時最大解像度で回していた期間（既に `--bq-interval 900` + `--disable-lot-insights` で平準化済み）
+- 対応原則:
+  - 1) まず `fx-trader*` の `RUNNING` 台数を 1 に固定。
+  - 2) 検証可能な範囲で BQ は `dry-run`/`maxBytesBilled` + `partition/clustering/TTL` 併用。
+  - 3) `quant-bq-sync` の重い集計は本番ピーク帯の抑制対象に据える（`--bq-interval`、`--disable-lot-insights`）。
