@@ -1,7 +1,7 @@
 {
-  "as_of": "2026-03-04T13:46:41+00:00",
-  "rows_total": 12725,
-  "patterns_scored": 2087,
+  "as_of": "2026-03-04T13:51:46+00:00",
+  "rows_total": 12731,
+  "patterns_scored": 2090,
   "drift_rows": 0,
   "cluster_count": 8,
   "cluster_meta": {
@@ -11,7 +11,7 @@
   "quality_counts": {
     "avoid": 7,
     "candidate": 3,
-    "learn_only": 2051,
+    "learn_only": 2054,
     "neutral": 10,
     "robust": 15,
     "weak": 1
@@ -31,8 +31,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 1.2322093023,
-      "boot_ci_high": 1.8513953488
+      "boot_ci_low": 1.2103488372,
+      "boot_ci_high": 1.8801162791
     },
     {
       "pattern_id": "st:m1scalper_trend_long|pk:scalp|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -48,8 +48,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 3.945060241,
-      "boot_ci_high": 5.4478313253
+      "boot_ci_low": 4.2025301205,
+      "boot_ci_high": 5.5687951807
     },
     {
       "pattern_id": "st:rangefader|pk:scalp|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -65,8 +65,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 0.274537037,
-      "boot_ci_high": 1.052962963
+      "boot_ci_low": 0.3312037037,
+      "boot_ci_high": 1.0364814815
     },
     {
       "pattern_id": "st:fast_scalp|pk:scalp_fast|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:neutral",
@@ -82,8 +82,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 0.5878873239,
-      "boot_ci_high": 1.0043661972
+      "boot_ci_low": 0.5785915493,
+      "boot_ci_high": 0.9718309859
     },
     {
       "pattern_id": "st:trendma|pk:macro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -99,8 +99,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 4.2435714286,
-      "boot_ci_high": 6.0153571429
+      "boot_ci_low": 4.2485714286,
+      "boot_ci_high": 6.1035714286
     },
     {
       "pattern_id": "st:m1scalper|pk:scalp|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:low|pt:na",
@@ -116,8 +116,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 2.9942592593,
-      "boot_ci_high": 3.7887037037
+      "boot_ci_low": 3.022037037,
+      "boot_ci_high": 3.8259259259
     },
     {
       "pattern_id": "st:trendma|pk:macro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:low|pt:na",
@@ -133,8 +133,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 5.3996226415,
-      "boot_ci_high": 7.4135849057
+      "boot_ci_low": 5.4167924528,
+      "boot_ci_high": 7.4162264151
     },
     {
       "pattern_id": "st:m1scalper|pk:scalp|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:mid|pt:na",
@@ -184,8 +184,8 @@
       "robust_score": 3.7857427427,
       "suggested_multiplier": 1.3344680495,
       "quality": "robust",
-      "boot_ci_low": 4.5394366197,
-      "boot_ci_high": 7.2594366197
+      "boot_ci_low": 4.6214084507,
+      "boot_ci_high": 6.9766197183
     },
     {
       "pattern_id": "st:levelreject|pk:scalp|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -201,8 +201,8 @@
       "robust_score": 3.3999511972,
       "suggested_multiplier": 1.327392107,
       "quality": "robust",
-      "boot_ci_low": 0.2415865385,
-      "boot_ci_high": 0.85875
+      "boot_ci_low": 0.2175480769,
+      "boot_ci_high": 0.8262019231
     },
     {
       "pattern_id": "st:microcompressionrevert_long|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_balanced_tr_4a1b0741",
@@ -303,8 +303,8 @@
       "robust_score": 2.9002979571,
       "suggested_multiplier": 1.3135028148,
       "quality": "robust",
-      "boot_ci_low": 2.7443333333,
-      "boot_ci_high": 3.7916666667
+      "boot_ci_low": 2.686,
+      "boot_ci_high": 3.8283333333
     },
     {
       "pattern_id": "st:microvwaprevert|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -439,8 +439,8 @@
       "robust_score": 2.2250568437,
       "suggested_multiplier": 1.2817340162,
       "quality": "robust",
-      "boot_ci_low": 0.4432989691,
-      "boot_ci_high": 1.5878350515
+      "boot_ci_low": 0.2140206186,
+      "boot_ci_high": 1.6207216495
     },
     {
       "pattern_id": "st:volcompressionbreak_long|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -484,14 +484,14 @@
       "trades": 41,
       "win_rate": 0.7073170732,
       "avg_pips": 0.8097560976,
-      "shrink_avg_pips": 0.4633754305,
+      "shrink_avg_pips": 0.4604195804,
       "profit_factor": 3.3055555556,
-      "p_value": 7.39365e-05,
-      "robust_score": 2.0213347579,
-      "suggested_multiplier": 1.2681132688,
+      "p_value": 7.02177e-05,
+      "robust_score": 2.0385914623,
+      "suggested_multiplier": 1.2693528347,
       "quality": "robust",
-      "boot_ci_low": 0.5136585366,
-      "boot_ci_high": 1.087804878
+      "boot_ci_low": 0.5341463415,
+      "boot_ci_high": 1.1002439024
     },
     {
       "pattern_id": "st:fast_scalp|pk:scalp_fast|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:impulse_up",
@@ -649,10 +649,10 @@
       "trades": 5,
       "win_rate": 0.0,
       "avg_pips": -1.36,
-      "shrink_avg_pips": -0.3407102419,
+      "shrink_avg_pips": -0.3473354232,
       "profit_factor": 0.0,
-      "p_value": 0.1642408355,
-      "robust_score": -2.0503370381,
+      "p_value": 0.1640429251,
+      "robust_score": -2.0374926243,
       "suggested_multiplier": 1.0,
       "quality": "learn_only",
       "chase_risk_rate": 0.0
@@ -697,10 +697,10 @@
       "trades": 7,
       "win_rate": 0.0,
       "avg_pips": -1.3428571429,
-      "shrink_avg_pips": -0.4025999037,
+      "shrink_avg_pips": -0.408797654,
       "profit_factor": 0.0,
-      "p_value": 0.0473526574,
-      "robust_score": -1.6246498039,
+      "p_value": 0.0478209796,
+      "robust_score": -1.6163333915,
       "suggested_multiplier": 1.0,
       "quality": "learn_only",
       "chase_risk_rate": 1.0
@@ -754,22 +754,6 @@
       "chase_risk_rate": 1.0
     },
     {
-      "pattern_id": "st:scalp_ping_5s_b_live|pk:scalp_fast|sd:short|sg:momentum|mtf:mtf_reversion_no_setup|hz:horizon_neutral|ex:disabled|rg:top|pt:na",
-      "strategy_tag": "scalp_ping_5s_b_live",
-      "pocket": "scalp_fast",
-      "direction": "short",
-      "trades": 6,
-      "win_rate": 0.0,
-      "avg_pips": -1.4166666667,
-      "shrink_avg_pips": -0.3860199005,
-      "profit_factor": 0.0,
-      "p_value": 0.0877883566,
-      "robust_score": -1.2182496321,
-      "suggested_multiplier": 1.0,
-      "quality": "learn_only",
-      "chase_risk_rate": 0.0
-    },
-    {
       "pattern_id": "st:wickreversalhf|pk:scalp|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
       "strategy_tag": "WickReversalHF",
       "pocket": "scalp",
@@ -781,6 +765,22 @@
       "profit_factor": 0.0,
       "p_value": 0.0032089154,
       "robust_score": -1.2133767435,
+      "suggested_multiplier": 1.0,
+      "quality": "learn_only",
+      "chase_risk_rate": 0.0
+    },
+    {
+      "pattern_id": "st:scalp_ping_5s_b_live|pk:scalp_fast|sd:short|sg:momentum|mtf:mtf_reversion_no_setup|hz:horizon_neutral|ex:disabled|rg:top|pt:na",
+      "strategy_tag": "scalp_ping_5s_b_live",
+      "pocket": "scalp_fast",
+      "direction": "short",
+      "trades": 6,
+      "win_rate": 0.0,
+      "avg_pips": -1.4166666667,
+      "shrink_avg_pips": -0.3924242424,
+      "profit_factor": 0.0,
+      "p_value": 0.0880587326,
+      "robust_score": -1.2103207029,
       "suggested_multiplier": 1.0,
       "quality": "learn_only",
       "chase_risk_rate": 0.0
@@ -809,10 +809,10 @@
       "trades": 3,
       "win_rate": 0.0,
       "avg_pips": -1.3666666667,
-      "shrink_avg_pips": -0.2659480376,
+      "shrink_avg_pips": -0.2730639731,
       "profit_factor": 0.0,
-      "p_value": 0.2836890176,
-      "robust_score": -1.0909253545,
+      "p_value": 0.2862806477,
+      "robust_score": -1.0844780026,
       "suggested_multiplier": 1.0,
       "quality": "learn_only",
       "chase_risk_rate": 1.0
@@ -825,10 +825,10 @@
       "trades": 3,
       "win_rate": 0.0,
       "avg_pips": -1.3666666667,
-      "shrink_avg_pips": -0.2659480376,
+      "shrink_avg_pips": -0.2730639731,
       "profit_factor": 0.0,
-      "p_value": 0.2836890176,
-      "robust_score": -1.0909253545,
+      "p_value": 0.2862806477,
+      "robust_score": -1.0844780026,
       "suggested_multiplier": 1.0,
       "quality": "learn_only",
       "chase_risk_rate": 1.0
@@ -866,22 +866,6 @@
       "chase_risk_rate": 1.0
     },
     {
-      "pattern_id": "st:scalp_ping_5s_b_live|pk:scalp_fast|sd:short|sg:momentum_hz|mtf:mtf_reversion_no_setup|hz:horizon_align|ex:disabled|rg:low|pt:na",
-      "strategy_tag": "scalp_ping_5s_b_live",
-      "pocket": "scalp_fast",
-      "direction": "short",
-      "trades": 4,
-      "win_rate": 0.0,
-      "avg_pips": -1.35,
-      "shrink_avg_pips": -0.3028784648,
-      "profit_factor": 0.0,
-      "p_value": 0.1589412287,
-      "robust_score": -1.0225231382,
-      "suggested_multiplier": 1.0,
-      "quality": "learn_only",
-      "chase_risk_rate": 1.0
-    },
-    {
       "pattern_id": "st:mirror_spike_tight|pk:scalp|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
       "strategy_tag": "mirror_spike_tight",
       "pocket": "scalp",
@@ -896,6 +880,22 @@
       "suggested_multiplier": 0.8357306163,
       "quality": "avoid",
       "chase_risk_rate": 0.0
+    },
+    {
+      "pattern_id": "st:scalp_ping_5s_b_live|pk:scalp_fast|sd:short|sg:momentum_hz|mtf:mtf_reversion_no_setup|hz:horizon_align|ex:disabled|rg:low|pt:na",
+      "strategy_tag": "scalp_ping_5s_b_live",
+      "pocket": "scalp_fast",
+      "direction": "short",
+      "trades": 4,
+      "win_rate": 0.0,
+      "avg_pips": -1.35,
+      "shrink_avg_pips": -0.3097402597,
+      "profit_factor": 0.0,
+      "p_value": 0.1615731556,
+      "robust_score": -1.0169915325,
+      "suggested_multiplier": 1.0,
+      "quality": "learn_only",
+      "chase_risk_rate": 1.0
     },
     {
       "pattern_id": "st:scalp_ping_5s_b_live|pk:scalp_fast|sd:long|sg:momentum_hz|mtf:mtf_balanced|hz:horizon_align|ex:disabled|rg:top|pt:na",
@@ -921,10 +921,10 @@
       "trades": 11,
       "win_rate": 0.0909090909,
       "avg_pips": -1.1181818182,
-      "shrink_avg_pips": -0.439445629,
+      "shrink_avg_pips": -0.4449350649,
       "profit_factor": 0.102189781,
-      "p_value": 0.0595760559,
-      "robust_score": -0.9425910139,
+      "p_value": 0.0598451252,
+      "robust_score": -0.9384672723,
       "suggested_multiplier": 1.0,
       "quality": "learn_only",
       "chase_risk_rate": 1.0
@@ -1039,7 +1039,7 @@
       "mean_win_rate": 0.7324813627,
       "mean_avg_pips": 0.9544350917,
       "mean_pf": 5.971031746,
-      "mean_score": 2.3307453326,
+      "mean_score": 2.3374888465,
       "quality_mix": "{\"robust\": 2, \"learn_only\": 2}"
     },
     {
@@ -1059,7 +1059,7 @@
       "mean_win_rate": 0.7472665836,
       "mean_avg_pips": 0.913155203,
       "mean_pf": 2.3904377681,
-      "mean_score": 0.9125188296,
+      "mean_score": 0.9129018244,
       "quality_mix": "{\"robust\": 5, \"learn_only\": 3, \"neutral\": 3, \"candidate\": 2}"
     },
     {
