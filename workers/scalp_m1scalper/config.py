@@ -2,31 +2,13 @@ from __future__ import annotations
 
 import os
 
-_ENV_CACHE: dict | None = None
+from utils.env_utils import load_env_file_hot
+
 ENV_PREFIX = "M1SCALP"
 
 
 def _load_env_file() -> dict:
-    global _ENV_CACHE
-    if _ENV_CACHE is not None:
-        return _ENV_CACHE
-    data: dict = {}
-    path = os.getenv(
-        "QUANTRABBIT_ENV_FILE",
-        "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env",
-    )
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                data[key.strip()] = val.strip().strip('"').strip("'")
-    except OSError:
-        pass
-    _ENV_CACHE = data
-    return data
+    return load_env_file_hot()
 
 
 def _env_bool(name: str, default: bool) -> bool:

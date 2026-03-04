@@ -1,7 +1,8 @@
+import logging
 import os
+import threading
 import toml
 import pathlib
-from functools import lru_cache
 from typing import Optional
 
 # NOTE:
@@ -31,11 +32,49 @@ ENV_MAP = {
     "analytics_bucket_name": "GCS_ANALYTICS_BUCKET",
 }
 
-@lru_cache()
+
+# ---------------------------------------------------------------------------
+# Hot-reload TOML cache: re-read config/env.toml when the file's mtime
+# changes, so autotune writes are picked up without a systemd restart.
+# Thread-safe via a lightweight lock.
+# ---------------------------------------------------------------------------
+_toml_cache: dict = {}
+_toml_mtime: float = 0.0
+_toml_lock = threading.Lock()
+
+
 def _load_toml() -> dict:
-    if _ENV_PATH.exists():
-        return toml.loads(_ENV_PATH.read_text())
-    return {}
+    """Return cached TOML dict, automatically reloading when file changes."""
+    global _toml_cache, _toml_mtime
+    if not _ENV_PATH.exists():
+        return {}
+    try:
+        current_mtime = _ENV_PATH.stat().st_mtime
+    except OSError:
+        return _toml_cache or {}
+    if current_mtime != _toml_mtime or not _toml_cache:
+        with _toml_lock:
+            # Double-check after acquiring the lock
+            try:
+                current_mtime = _ENV_PATH.stat().st_mtime
+            except OSError:
+                return _toml_cache or {}
+            if current_mtime != _toml_mtime or not _toml_cache:
+                try:
+                    _toml_cache = toml.loads(_ENV_PATH.read_text())
+                    old_mtime = _toml_mtime
+                    _toml_mtime = current_mtime
+                    if old_mtime != 0.0 and old_mtime != current_mtime:
+                        logging.info(
+                            "[secrets] hot-reloaded %s (mtime %.0f -> %.0f)",
+                            _ENV_PATH,
+                            old_mtime,
+                            current_mtime,
+                        )
+                except Exception:
+                    pass
+    return _toml_cache
+
 
 def _from_env(key: str) -> Optional[str]:
     # 1. 直接一致（大文字）

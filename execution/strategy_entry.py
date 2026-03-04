@@ -1114,7 +1114,7 @@ def _parse_horizon_minutes(value: object) -> Optional[int]:
     raw = text[:-1]
     try:
         n = int(raw)
-    except Exception:
+    except (TypeError, ValueError):
         return None
     if n <= 0:
         return None
@@ -1262,7 +1262,7 @@ def _build_entry_forecast_profile(
     if not horizon:
         try:
             horizon = forecast_gate._infer_horizon_from_profile(profile)  # noqa: SLF001
-        except Exception:
+        except (AttributeError, TypeError, KeyError):
             horizon = None
     if not horizon:
         return None
@@ -1272,7 +1272,7 @@ def _build_entry_forecast_profile(
     default_meta = {}
     try:
         default_meta = dict(forecast_gate._HORIZON_META)
-    except Exception:
+    except (AttributeError, TypeError):
         default_meta = {}
     default_meta = default_meta.get(horizon_text) if isinstance(default_meta, dict) else None
     if isinstance(default_meta, dict):
@@ -1493,12 +1493,12 @@ def _collect_strategy_tick_context(
         return {}
     try:
         from market_data import tick_window
-    except Exception:
+    except ImportError:
         return {}
     latest = {}
     try:
         latest = tick_window.summarize(seconds=4.0) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - tick_window can fail many ways
         return {}
     out: dict[str, object] = {}
     for key in requested_fields:
@@ -1601,7 +1601,7 @@ def _resolve_entry_price(
                 return value
     try:
         from market_data import tick_window
-    except Exception:
+    except ImportError:
         return None
     try:
         latest = tick_window.summarize(seconds=2.5)
@@ -1616,7 +1616,7 @@ def _resolve_entry_price(
         if value is not None and value > 0:
             return value
         return _to_float(latest.get("latest_mid"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - tick_window can fail many ways
         return None
 
 
@@ -1751,7 +1751,7 @@ def _inject_entry_forecast_context(
             meta=forecast_meta,
         )
         forecast_context = _format_forecast_context(decision)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - forecast gate can fail many ways
         forecast_context = {
             "forecast_source": "strategy_entry",
             "enabled": True,
@@ -1846,7 +1846,7 @@ def _inject_entry_technical_context(
             context["debug"] = {
                 "strategy_local_only": True,
             }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - technical eval can fail many ways
         context["debug"] = {"error": str(exc)}
         context["result"] = {
             "allowed": True,
@@ -1878,7 +1878,7 @@ def _apply_strategy_feedback(
 ) -> tuple[int, Optional[float], Optional[float], Optional[float], dict[str, object]]:
     try:
         advice = strategy_feedback.current_advice(strategy_tag, pocket=pocket)
-    except Exception:
+    except Exception:  # noqa: BLE001 - strategy_feedback can fail many ways
         return units, entry_probability, sl_price, tp_price, {}
     if not advice:
         return units, entry_probability, sl_price, tp_price, {}
@@ -2423,7 +2423,7 @@ async def _coordinate_entry_units(
                     entry_thesis=entry_thesis,
                     meta=gate_meta,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - pattern_gate.decide can fail many ways
                 pattern_decision = None
             if pattern_decision is not None:
                 entry_thesis["pattern_gate"] = pattern_decision.to_payload()

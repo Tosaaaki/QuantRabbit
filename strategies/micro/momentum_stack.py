@@ -15,6 +15,8 @@ class MicroMomentumStack:
     _MAX_PULLBACK = 1.05
     _MAX_SKEW = 0.35
     _MIN_ATR = 0.8
+    _SPREAD_PIPS_MAX = 1.2  # hard cap on spread
+    _SPREAD_ATR_RATIO_MAX = 0.30  # spread must not exceed 30% of ATR
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -31,6 +33,20 @@ class MicroMomentumStack:
             ema20 = float(ema20)
         except (TypeError, ValueError):
             return None
+
+        # Spread filter: skip when spread eats into expected profit
+        try:
+            spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            spread_pips = 0.0
+        try:
+            atr_check = float(fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0)
+        except (TypeError, ValueError):
+            atr_check = 0.0
+        if spread_pips > 0 and atr_check > 0:
+            spread_cap = max(MicroMomentumStack._SPREAD_PIPS_MAX, atr_check * MicroMomentumStack._SPREAD_ATR_RATIO_MAX)
+            if spread_pips > spread_cap:
+                return None
 
         try:
             gap_dyn = float(fac.get("trend_gap_dynamic") or 0.0)
@@ -100,8 +116,10 @@ class MicroMomentumStack:
         if dist < pullback_req * 0.35:
             return None
 
-        sl_pips = max(0.95, atr * 0.58)
-        tp_pips = max(sl_pips * 1.45, sl_pips + atr * 0.85)
+        # Previous: sl = max(0.95, atr * 0.58) was ~1.2-2.3p -- too tight.
+        # Momentum stack adds to existing trend positions; SL must survive normal retracements.
+        sl_pips = max(2.2, atr * 1.0)
+        tp_pips = max(sl_pips * 1.55, sl_pips + atr * 0.9)
 
         vol = fac.get("vol_5m")
         try:

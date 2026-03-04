@@ -269,47 +269,55 @@ class SessionOpenExitWorker:
     def __init__(self) -> None:
         self.loop_interval = max(
             0.5,
-            _float_env("SESSION_OPEN_EXIT_LOOP_INTERVAL_SEC", 1.0),
+            _float_env("SESSION_OPEN_EXIT_LOOP_INTERVAL_SEC", 2.0),
         )
+        # Macro-appropriate minimum hold: default 5 minutes (300s) instead of 25s.
+        # This prevents premature market-order closes that cause the bulk of macro losses.
         self.min_hold_sec = max(
-            5.0,
-            _float_env("SESSION_OPEN_EXIT_MIN_HOLD_SEC", 25.0),
+            60.0,
+            _float_env("SESSION_OPEN_EXIT_MIN_HOLD_SEC", 300.0),
         )
+        # Wider profit take for macro: need room for trends to develop.
         self.profit_take = max(
-            0.5,
-            _float_env("SESSION_OPEN_EXIT_PROFIT_PIPS", 2.0),
+            2.0,
+            _float_env("SESSION_OPEN_EXIT_PROFIT_PIPS", 6.0),
         )
         self.trail_start = max(
-            0.5,
-            _float_env("SESSION_OPEN_EXIT_TRAIL_START_PIPS", 2.6),
+            2.0,
+            _float_env("SESSION_OPEN_EXIT_TRAIL_START_PIPS", 8.0),
         )
         self.trail_backoff = max(
-            0.1,
-            _float_env("SESSION_OPEN_EXIT_TRAIL_BACKOFF_PIPS", 0.8),
+            0.5,
+            _float_env("SESSION_OPEN_EXIT_TRAIL_BACKOFF_PIPS", 3.0),
         )
         self.lock_buffer = max(
-            0.05,
-            _float_env("SESSION_OPEN_EXIT_LOCK_BUFFER_PIPS", 0.5),
+            0.5,
+            _float_env("SESSION_OPEN_EXIT_LOCK_BUFFER_PIPS", 2.0),
         )
         self.range_profit_take = max(
-            0.4,
-            _float_env("SESSION_OPEN_EXIT_RANGE_PROFIT_PIPS", 1.6),
+            1.5,
+            _float_env("SESSION_OPEN_EXIT_RANGE_PROFIT_PIPS", 4.0),
         )
         self.range_trail_start = max(
-            0.4,
-            _float_env("SESSION_OPEN_EXIT_RANGE_TRAIL_START_PIPS", 2.0),
+            2.0,
+            _float_env("SESSION_OPEN_EXIT_RANGE_TRAIL_START_PIPS", 5.5),
         )
         self.range_trail_backoff = max(
-            0.1,
-            _float_env("SESSION_OPEN_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 0.6),
+            0.5,
+            _float_env("SESSION_OPEN_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 2.0),
         )
         self.range_lock_buffer = max(
-            0.05,
-            _float_env("SESSION_OPEN_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.35),
+            0.3,
+            _float_env("SESSION_OPEN_EXIT_RANGE_LOCK_BUFFER_PIPS", 1.5),
         )
         self.range_max_hold_sec = max(
-            60.0,
-            _float_env("SESSION_OPEN_EXIT_RANGE_MAX_HOLD_SEC", 2400.0),
+            600.0,
+            _float_env("SESSION_OPEN_EXIT_RANGE_MAX_HOLD_SEC", 7200.0),
+        )
+        # Macro-specific: minimum hold before allowing reentry/loss-cut decisions
+        self.loss_cut_min_hold_sec = max(
+            120.0,
+            _float_env("SESSION_OPEN_EXIT_LOSS_CUT_MIN_HOLD_SEC", 600.0),
         )
 
 
@@ -388,8 +396,10 @@ class SessionOpenExitWorker:
         if hold_sec < self.min_hold_sec:
             return
 
-        # Strategy-level "loss-cut" (disabled by default): once beyond the point of return, exit and redeploy.
-        if pnl <= 0:
+        # Strategy-level "loss-cut": once beyond the point of return, exit and redeploy.
+        # For macro trades, require longer hold before considering loss-cut to avoid
+        # premature exits that cause the bulk of market-order close losses.
+        if pnl <= 0 and hold_sec >= self.loss_cut_min_hold_sec:
             strategy_tag = (
                 thesis.get("strategy_tag")
                 or thesis.get("strategy_tag_raw")
@@ -440,8 +450,10 @@ class SessionOpenExitWorker:
                 await self._close(trade_id, -units, reason, pnl, client_id, allow_negative=True)
                 self._states.pop(trade_id, None)
                 return
+        # Candle reversal detection: only exit on reversal if we have held long enough
+        # and have profit. For macro, require min_hold_sec before candle-based exits.
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
-        if candle_reason and pnl >= 0:
+        if candle_reason and pnl >= 0 and hold_sec >= self.min_hold_sec:
             candle_client_id = trade.get("client_order_id")
             if not candle_client_id:
                 client_ext = trade.get("clientExtensions")
@@ -452,7 +464,10 @@ class SessionOpenExitWorker:
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
                 return
-        if pnl <= 0:
+        # Reentry decider: only consider reentry/exit on underwater trades after
+        # sufficient hold time. For macro, this prevents the 9.9min avg hold problem
+        # by letting trends breathe through pullbacks.
+        if pnl <= 0 and hold_sec >= self.loss_cut_min_hold_sec:
             fac_m1 = all_factors().get("M1") or {}
             rsi = _bb_float(fac_m1.get("rsi"))
             adx = _bb_float(fac_m1.get("adx"))
@@ -493,10 +508,10 @@ class SessionOpenExitWorker:
             trail_backoff=trail_backoff,
             lock_buffer=lock_buffer,
             adjustment=forecast_adj,
-            profit_take_floor=0.5,
-            trail_start_floor=0.5,
-            trail_backoff_floor=0.05,
-            lock_buffer_floor=0.05,
+            profit_take_floor=2.0,
+            trail_start_floor=3.0,
+            trail_backoff_floor=0.5,
+            lock_buffer_floor=0.5,
         )
 
         state = self._states.get(trade_id)
@@ -585,7 +600,7 @@ _CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __fi
 
 def _candle_tf_for_worker() -> str:
     name = _CANDLE_WORKER_NAME
-    if "macro" in name or "trend_h1" in name or "manual" in name:
+    if "macro" in name or "trend_h1" in name or "manual" in name or "session_open" in name:
         return "H1"
     if "scalp" in name or "s5" in name or "fast" in name:
         return "M1"

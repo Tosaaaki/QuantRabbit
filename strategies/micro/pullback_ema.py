@@ -13,6 +13,8 @@ class MicroPullbackEMA:
     _MIN_ADX = 20.0
     _PULLBACK_MIN = 0.35
     _PULLBACK_MAX = 1.25
+    _SPREAD_PIPS_MAX = 1.2
+    _SPREAD_ATR_RATIO_MAX = 0.30
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -22,6 +24,21 @@ class MicroPullbackEMA:
         ema20 = fac.get("ema20") or ma20
         if price is None or ma10 is None or ma20 is None or ema20 is None:
             return None
+
+        # Spread filter: skip when spread is wide relative to ATR
+        try:
+            spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            spread_pips = 0.0
+        try:
+            atr_check = float(fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0)
+        except (TypeError, ValueError):
+            atr_check = 0.0
+        if spread_pips > 0 and atr_check > 0:
+            spread_cap = max(MicroPullbackEMA._SPREAD_PIPS_MAX, atr_check * MicroPullbackEMA._SPREAD_ATR_RATIO_MAX)
+            if spread_pips > spread_cap:
+                return None
+
         try:
             price = float(price)
             ma10 = float(ma10)
@@ -67,8 +84,11 @@ class MicroPullbackEMA:
         except (TypeError, ValueError):
             atr_hint = 5.0
         atr_hint = max(1.2, min(atr_hint, 10.0))
-        sl_pips = max(1.0, atr_hint * 0.6)
-        tp_pips = max(sl_pips * 1.5, sl_pips + atr_hint * 0.85)
+        # Previous: sl = max(1.0, atr * 0.6) was ~1.2-2.4p -- too tight for pullback entries
+        # that need room for the pullback to complete before trending.
+        # New: ATR-based with higher floor and multiplier.
+        sl_pips = max(2.5, atr_hint * 1.05)
+        tp_pips = max(sl_pips * 1.6, sl_pips + atr_hint * 0.95)
 
         rsi = fac.get("rsi")
         try:

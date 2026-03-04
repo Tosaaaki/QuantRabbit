@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -12,8 +13,10 @@ from utils.metrics_logger import log_metric
 from workers.common.exit_emergency import should_allow_negative_close
 try:  # optional in offline/backtest
     from market_data import tick_window
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     tick_window = None
+
+LOG = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ExitCompositeCfg:
@@ -78,7 +81,8 @@ def _latest_bid_ask_mid() -> Tuple[Optional[float], Optional[float], Optional[fl
         return None, None, None
     try:
         ticks = tick_window.recent_ticks(seconds=3.0, limit=1)
-    except Exception:
+    except Exception:  # noqa: BLE001 - tick_window can raise many types
+        LOG.debug("tick_window.recent_ticks failed", exc_info=True)
         return None, None, None
     if not ticks:
         return None, None, None
@@ -149,7 +153,8 @@ def _composite_exit_allowed(
     side = "long" if close_units < 0 else "short"
     try:
         fac = (all_factors().get("M1") or {})
-    except Exception:
+    except Exception:  # noqa: BLE001 - all_factors can raise many types
+        LOG.debug("all_factors lookup failed for composite exit", exc_info=True)
         fac = {}
     if not fac:
         return cfg.failopen

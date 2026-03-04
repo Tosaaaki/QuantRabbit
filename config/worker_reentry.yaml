@@ -159,18 +159,18 @@ strategies:
     return_wait_reason: hourly_pnl_guard_20260222_d
     block_jst_hours: []
   TrendMA:
-    cooldown_win_sec: 300
-    cooldown_loss_sec: 60
-    same_dir_reentry_pips: 3.0
+    cooldown_win_sec: 600
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 5.0
     same_dir_mode: both
     max_open_trades: 1
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
   H1Momentum:
-    cooldown_win_sec: 300
-    cooldown_loss_sec: 60
-    same_dir_reentry_pips: 3.0
+    cooldown_win_sec: 600
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 5.0
     same_dir_mode: both
     max_open_trades: 1
     return_wait_bias: avoid
@@ -267,12 +267,14 @@ strategies:
     cooldown_loss_sec: 60
     same_dir_reentry_pips: 0.8
   Donchian55:
-    return_wait_bias: neutral
-    return_wait_reason: default
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
-    cooldown_win_sec: 300
-    cooldown_loss_sec: 368
-    same_dir_reentry_pips: 2.78
+    cooldown_win_sec: 900
+    cooldown_loss_sec: 1800
+    same_dir_reentry_pips: 8.0
+    max_open_trades: 1
+    max_open_adverse_pips: 40.0
   HedgeBalancer:
     return_wait_bias: neutral
     return_wait_reason: low_sample

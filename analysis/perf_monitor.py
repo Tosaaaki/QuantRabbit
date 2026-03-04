@@ -42,6 +42,22 @@ _HOURLY_TTL_SEC = max(0.0, float(os.getenv("PERF_HOURLY_TTL_SEC", "600") or 600.
 _HOURLY_LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_HOURLY_LOOKBACK_DAYS", "14") or 14)))
 
 
+def invalidate_cache() -> None:
+    """
+    Force all perf caches to expire so the next snapshot() call
+    re-queries the DB.  Call this after writing new trade records
+    (e.g. on trade close) to get near-instant perf updates instead
+    of waiting up to TTL_SEC (default 300 s).
+    """
+    _CACHE_SNAPSHOT["ts"] = 0.0
+    _CACHE_SNAPSHOT["data"] = None
+    _CACHE_SNAPSHOT_YEN["ts"] = 0.0
+    _CACHE_SNAPSHOT_YEN["data"] = None
+    _CACHE_STRATEGY.clear()
+    _CACHE_HOURLY["ts"] = 0.0
+    _CACHE_HOURLY["data"] = None
+
+
 def _connect(readonly: bool = False) -> sqlite3.Connection:
     """
     Get SQLite connection.

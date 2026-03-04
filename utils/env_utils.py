@@ -1,9 +1,74 @@
 from __future__ import annotations
 
+import logging
 import os
+import threading
+from pathlib import Path
 from typing import Optional
 
 _FALSEY = {"", "0", "false", "no", "off"}
+
+# ---------------------------------------------------------------------------
+# Hot-reload .env file loader: automatically re-reads the file when its
+# mtime changes so that autotune / config writes are picked up without a
+# systemd restart.
+# ---------------------------------------------------------------------------
+_env_file_cache: dict[str, dict] = {}
+_env_file_mtime: dict[str, float] = {}
+_env_file_lock = threading.Lock()
+
+
+def load_env_file_hot(path: str | Path | None = None) -> dict:
+    """
+    Parse a KEY=VALUE .env file into a dict, automatically reloading
+    when the file's modification timestamp changes.  Thread-safe.
+
+    If *path* is None, falls back to QUANTRABBIT_ENV_FILE or the
+    default production path.
+    """
+    if path is None:
+        path = os.getenv(
+            "QUANTRABBIT_ENV_FILE",
+            "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env",
+        )
+    key = str(path)
+    p = Path(key)
+    if not p.exists():
+        return _env_file_cache.get(key, {})
+    try:
+        current_mtime = p.stat().st_mtime
+    except OSError:
+        return _env_file_cache.get(key, {})
+    cached_mtime = _env_file_mtime.get(key, 0.0)
+    if current_mtime != cached_mtime or key not in _env_file_cache:
+        with _env_file_lock:
+            try:
+                current_mtime = p.stat().st_mtime
+            except OSError:
+                return _env_file_cache.get(key, {})
+            if current_mtime != _env_file_mtime.get(key, 0.0) or key not in _env_file_cache:
+                data: dict = {}
+                try:
+                    content = p.read_text(encoding="utf-8")
+                except OSError:
+                    content = ""
+                for raw in content.splitlines():
+                    line = raw.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, val = line.split("=", 1)
+                    data[k.strip()] = val.strip().strip('"').strip("'")
+                old_mtime = _env_file_mtime.get(key, 0.0)
+                _env_file_cache[key] = data
+                _env_file_mtime[key] = current_mtime
+                if old_mtime != 0.0 and old_mtime != current_mtime:
+                    logging.info(
+                        "[env_utils] hot-reloaded %s (mtime %.0f -> %.0f)",
+                        key,
+                        old_mtime,
+                        current_mtime,
+                    )
+    return _env_file_cache.get(key, {})
 
 
 def env_get(

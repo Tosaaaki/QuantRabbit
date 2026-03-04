@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from typing import Any, Optional, Tuple
 from indicators.factor_cache import all_factors
 from utils.metrics_logger import log_metric
 from utils.env_utils import env_get, env_float, env_bool
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,7 +48,7 @@ def apply_tp_virtual_floor(
     tp_hint_val = None
     try:
         tp_hint_val = float(getattr(state, "tp_hint", None))
-    except Exception:
+    except (TypeError, ValueError):
         tp_hint_val = None
 
     if tp_hint_val is not None:
@@ -209,7 +212,8 @@ def momentum_scale(
     fac = {}
     try:
         fac = (all_factors().get(tf) or {}) if tf else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - all_factors can raise many types
+        LOG.debug("all_factors lookup failed for momentum scale (tf=%s)", tf, exc_info=True)
         fac = {}
 
     adx = _safe_float(fac.get("adx"))

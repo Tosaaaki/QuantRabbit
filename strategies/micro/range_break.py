@@ -36,6 +36,10 @@ class MicroRangeBreak:
     _BREAKOUT_BAND_RATIO = _to_float(os.getenv("MICRO_RANGEBREAK_BREAKOUT_BAND_RATIO", "0.22"), 0.22)
     _BREAKOUT_MIN_ATR = _to_float(os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_ATR", "1.2"), 1.2)
 
+    # Spread filter: skip entry when spread eats too much of expected profit
+    _MAX_SPREAD_PIPS = _to_float(os.getenv("MICRO_RANGEBREAK_MAX_SPREAD_PIPS", "1.0"), 1.0)
+    _MAX_SPREAD_ATR_RATIO = _to_float(os.getenv("MICRO_RANGEBREAK_MAX_SPREAD_ATR_RATIO", "0.30"), 0.30)
+
     @staticmethod
     def check(fac: Dict) -> Dict | None:
         range_score = fac.get("range_score") or 0.0
@@ -71,6 +75,12 @@ class MicroRangeBreak:
         breakout_long = price >= upper + breakout_margin
         breakout_short = price <= lower - breakout_margin
 
+        # Spread filter for breakout entries
+        try:
+            _spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            _spread_pips = 0.0
+
         if MicroRangeBreak._BREAKOUT_ENABLED and (
             range_score >= MicroRangeBreak._BREAKOUT_MIN_RANGE_SCORE
         ) and (adx >= MicroRangeBreak._BREAKOUT_MIN_ADX):
@@ -80,6 +90,11 @@ class MicroRangeBreak:
             except (TypeError, ValueError):
                 atr_hint = 0.0
             atr_hint = max(MicroRangeBreak._BREAKOUT_MIN_ATR, min(atr_hint, 12.0))
+            # Skip breakout if spread is too wide
+            if _spread_pips > 0:
+                breakout_spread_cap = max(MicroRangeBreak._MAX_SPREAD_PIPS, atr_hint * MicroRangeBreak._MAX_SPREAD_ATR_RATIO)
+                if _spread_pips > breakout_spread_cap:
+                    return None
             if breakout_long:
                 sl_pips = max(atr_hint * 0.82, 1.5)
                 tp_pips = max(sl_pips * 1.8, sl_pips + atr_hint * 1.05)
@@ -118,6 +133,23 @@ class MicroRangeBreak:
         if range_score < MicroRangeBreak._MIN_RANGE_SCORE or adx > MicroRangeBreak._MAX_ADX:
             return None
 
+        # Spread filter: reject entry when spread is wide relative to ATR
+        spread_pips = 0.0
+        try:
+            spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            spread_pips = 0.0
+        atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 4.0
+        try:
+            atr_hint = float(atr_hint)
+        except (TypeError, ValueError):
+            atr_hint = 4.0
+        atr_hint = max(1.0, min(atr_hint, 8.0))
+        if spread_pips > 0:
+            spread_cap = max(MicroRangeBreak._MAX_SPREAD_PIPS, atr_hint * MicroRangeBreak._MAX_SPREAD_ATR_RATIO)
+            if spread_pips > spread_cap:
+                return None
+
         distance_top = (upper - price) / band_width
         distance_bottom = (price - lower) / band_width
         action = None
@@ -133,17 +165,14 @@ class MicroRangeBreak:
         if distance_ratio > MicroRangeBreak._MAX_DISTANCE_RATIO:
             return None
 
-        atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 4.0
-        try:
-            atr_hint = float(atr_hint)
-        except (TypeError, ValueError):
-            atr_hint = 4.0
-        atr_hint = max(1.0, min(atr_hint, 8.0))
-        sl_pips = max(0.8, atr_hint * 0.65)
-        tp_pips = max(sl_pips * 1.35, sl_pips + atr_hint * 0.7)
+        # SL widened: ATR-based with higher floor to survive normal noise.
+        # Previous: sl = max(0.8, atr * 0.65) which was ~1.3-2.6p -- too tight.
+        # New: sl = max(2.2, atr * 1.05) giving ~2.2-4.2p -- room to breathe.
+        sl_pips = max(2.2, atr_hint * 1.05)
+        tp_pips = max(sl_pips * 1.5, sl_pips + atr_hint * 0.9)
         if action == "OPEN_SHORT":
-            sl_pips = max(0.85, atr_hint * 0.7)
-            tp_pips = max(sl_pips * 1.4, sl_pips + atr_hint * 0.75)
+            sl_pips = max(2.4, atr_hint * 1.10)
+            tp_pips = max(sl_pips * 1.5, sl_pips + atr_hint * 0.95)
 
         confidence = int(55 + range_score * 35 - distance_ratio * 20)
         confidence = max(40, min(94, confidence))

@@ -17,6 +17,8 @@ class MicroTrendRetest:
     _RETEST_BUFFER_PIPS = 0.8
     _BREAKOUT_BUFFER_PIPS = 0.3
     _MAX_RETEST_DIST_PIPS = 3.2
+    _SPREAD_PIPS_MAX = 1.2
+    _SPREAD_ATR_RATIO_MAX = 0.30
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -45,6 +47,14 @@ class MicroTrendRetest:
         ma20 = MicroTrendRetest._to_float(fac.get("ma20"))
         if price is None or ma10 is None or ma20 is None:
             return None
+
+        # Spread filter
+        spread_pips = MicroTrendRetest._to_float(fac.get("spread_pips"), 0.0) or 0.0
+        atr_check = MicroTrendRetest._to_float(fac.get("atr_pips"), 0.0) or 0.0
+        if spread_pips > 0 and atr_check > 0:
+            spread_cap = max(MicroTrendRetest._SPREAD_PIPS_MAX, atr_check * MicroTrendRetest._SPREAD_ATR_RATIO_MAX)
+            if spread_pips > spread_cap:
+                return None
 
         try:
             adx = float(fac.get("adx") or 0.0)
@@ -113,8 +123,10 @@ class MicroTrendRetest:
         except (TypeError, ValueError):
             atr_hint = 5.0
         atr_hint = max(1.2, min(atr_hint, 10.0))
-        sl_pips = max(1.2, atr_hint * 0.7)
-        tp_pips = max(sl_pips * 1.35, sl_pips + atr_hint * 0.8)
+        # Previous: sl = max(1.2, atr * 0.7) was ~1.4-2.8p -- too tight for retest entries
+        # that need to survive the retest probe before continuation.
+        sl_pips = max(2.5, atr_hint * 1.10)
+        tp_pips = max(sl_pips * 1.5, sl_pips + atr_hint * 0.95)
 
         rsi = MicroTrendRetest._to_float(fac.get("rsi"), 50.0) or 50.0
         confidence = 58 + int(min(16.0, abs(gap)) + min(10.0, max(0.0, adx - MicroTrendRetest._MIN_ADX)))

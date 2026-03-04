@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 try:  # pragma: no cover - ExitManager may be missing in lightweight runs
     from execution.exit_manager import ExitManager as _ExitManagerBase
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     _ExitManagerBase = None  # type: ignore[assignment]
 
 
@@ -36,9 +36,9 @@ def build_exit_manager(exit_cfg: Optional[dict[str, Any]]) -> Optional[Any]:
         # Some implementations might be signature-based instead of dict-based.
         try:
             candidate = _ExitManagerBase(**exit_cfg)  # type: ignore[arg-type]
-        except Exception:
+        except (TypeError, ValueError):
             candidate = None
-    except Exception:
+    except (ValueError, RuntimeError):
         candidate = None
 
     if candidate is not None and hasattr(candidate, "attach"):

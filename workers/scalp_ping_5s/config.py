@@ -2166,9 +2166,10 @@ ENTRY_CHASE_MAX_PIPS: float = max(
     0.1, float(os.getenv("SCALP_PING_5S_ENTRY_CHASE_MAX_PIPS", "1.4"))
 )
 
-SL_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_BASE_PIPS", "1.40")))
-SL_MIN_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_MIN_PIPS", "1.00")))
-SL_MAX_PIPS: float = max(SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS", "4.20")))
+# SL defaults tightened: 4.20 max was far too wide for 5s scalp (TP 0.3-0.8p).
+SL_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_BASE_PIPS", "1.20")))
+SL_MIN_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_MIN_PIPS", "0.80")))
+SL_MAX_PIPS: float = max(SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS", "2.50")))
 SL_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_MULT", "1.2")))
 SL_SPREAD_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_BUFFER_PIPS", "0.30"))
@@ -2295,11 +2296,12 @@ SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO: float = max(
 )
 
 FORCE_EXIT_ENABLED: bool = _bool_env("SCALP_PING_5S_FORCE_EXIT_ENABLED", True)
+# Force exit defaults tightened: 150s/3.5p was too generous for 5s scalp.
 FORCE_EXIT_MAX_HOLD_SEC: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "150"))
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "80"))
 )
 FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "3.5"))
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "1.5"))
 )
 FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", "0.0"))

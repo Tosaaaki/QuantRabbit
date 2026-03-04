@@ -19,6 +19,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from utils.secrets import get_secret
+from analysis import perf_monitor as _perf_monitor
 
 
 def _env_float(name: str, default: float) -> float:
@@ -162,7 +163,7 @@ def _normalize_worker_tag(tag: object | str | None) -> str | None:
 # ロック頻発に備えてデフォルトを広めに取る
 _DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "20000"))
 _DB_LOCK_RETRY = int(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY", "6"))
-_DB_LOCK_RETRY_SLEEP = float(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY_SLEEP", "0.5"))
+_DB_LOCK_RETRY_SLEEP = float(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY_SLEEP", "0.05"))
 # PRAGMA values
 _DB_JOURNAL_MODE = os.getenv("POSITION_MANAGER_DB_JOURNAL_MODE", "WAL")
 _DB_SYNCHRONOUS = os.getenv("POSITION_MANAGER_DB_SYNCHRONOUS", "NORMAL")
@@ -944,7 +945,7 @@ def _file_lock(path: pathlib.Path, timeout: float = _DB_FILE_LOCK_TIMEOUT):
             except BlockingIOError:
                 if time.monotonic() - start > timeout:
                     raise TimeoutError(f"Timed out acquiring file lock: {path}")
-                time.sleep(0.1)
+                time.sleep(0.01)
         try:
             yield
         finally:
@@ -2790,6 +2791,12 @@ class PositionManager:
                     )
                     self._commit_with_retry()
                 db_ms = max(0.0, (time.monotonic() - db_start) * 1000.0)
+                # Invalidate perf caches so next snapshot() re-queries
+                # immediately after trade close (no more 5-min stale window).
+                try:
+                    _perf_monitor.invalidate_cache()
+                except Exception:
+                    pass
             except TimeoutError:
                 logging.warning(
                     "[PositionManager] file lock busy; defer saving %d trades",

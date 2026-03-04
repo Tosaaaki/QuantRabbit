@@ -259,7 +259,14 @@ class MicroVWAPRevert:
         if vol_5m is not None and vol_5m > 1.1:
             return None
 
+        # Spread filter: skip when spread eats into the narrow VWAP revert target
+        spread_pips = to_float(fac.get("spread_pips"), 0.0) or 0.0
         atr = atr_pips(fac)
+        if spread_pips > 0 and atr > 0:
+            spread_cap = max(0.8, atr * 0.30)
+            if spread_pips > spread_cap:
+                return None
+
         if atr <= 0.5 or atr > 2.8:
             return None
         if bbw is not None and bbw > 0.30:
@@ -371,8 +378,12 @@ class MicroVWAPRevert:
             )
         )
 
-        sl = clamp(atr * 1.18, 1.2, 2.4)
-        tp = clamp(sl * 0.9, 0.9, 2.2)
+        # Previous: sl = clamp(atr*1.18, 1.2, 2.4), tp = clamp(sl*0.9, 0.9, 2.2)
+        # CRITICAL BUG: tp = sl * 0.9 means TP is always smaller than SL (negative R:R).
+        # This guarantees long-term loss even with >50% win rate.
+        # Fix: Widen SL for reversion breathing room, ensure TP > SL for positive expectancy.
+        sl = clamp(atr * 1.35, 1.8, 3.5)
+        tp = clamp(sl * 1.35, 2.0, 4.5)
 
         tag_suffix = "long" if direction == "OPEN_LONG" else "short"
         return {

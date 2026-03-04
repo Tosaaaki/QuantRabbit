@@ -45,7 +45,7 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
     try:
         return float(raw)
-    except Exception:
+    except (TypeError, ValueError):
         return float(default)
 
 
@@ -55,7 +55,7 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
     try:
         return int(float(raw))
-    except Exception:
+    except (TypeError, ValueError):
         return int(default)
 
 
@@ -67,14 +67,14 @@ def _env_set(name: str, default_csv: str = "") -> set[str]:
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         return float(default)
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
-    except Exception:
+    except (TypeError, ValueError):
         return int(default)
 
 
@@ -356,13 +356,13 @@ def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]
                     }
             except sqlite3.OperationalError:
                 rows = {}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - db operations can fail many ways
         LOG.debug("[PATTERN_GATE] db load failed: %s", exc)
         return {}, {}, "db_error"
     finally:
         try:
             con.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - cleanup must not raise
             pass
     return rows, drift, "db"
 
@@ -372,7 +372,7 @@ def _load_from_json() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, An
         return {}, {}, "json_missing"
     try:
         payload = json.loads(_JSON_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - json/io can fail many ways
         LOG.debug("[PATTERN_GATE] json load failed: %s", exc)
         return {}, {}, "json_error"
 

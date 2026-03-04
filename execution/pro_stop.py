@@ -183,12 +183,12 @@ _GLOBAL_MAX_HOLD = _env_float("PRO_STOP_MAX_HOLD_SEC", 1760.0)
 _GLOBAL_SOFT_ATR_MULT = _env_float("PRO_STOP_SOFT_ATR_MULT", 1.0)
 _GLOBAL_HARD_ATR_MULT = _env_float("PRO_STOP_HARD_ATR_MULT", 1.2)
 
-_SOFT_DEFAULTS = {"macro": 6.5, "micro": 2.2, "scalp": 1.2}
-_HARD_DEFAULTS = {"macro": 9.5, "micro": 3.6, "scalp": 2.0}
-_MIN_HOLD_DEFAULTS = {"macro": 120.0, "micro": 40.0, "scalp": 20.0}
-_MAX_HOLD_DEFAULTS = {"macro": 1800.0, "micro": 600.0, "scalp": 180.0}
-_SOFT_ATR_MULT = {"macro": 1.1, "micro": 0.9, "scalp": 0.7}
-_HARD_ATR_MULT = {"macro": 1.45, "micro": 1.15, "scalp": 0.9}
+_SOFT_DEFAULTS = {"macro": 10.0, "micro": 2.2, "scalp": 1.2}
+_HARD_DEFAULTS = {"macro": 30.0, "micro": 3.6, "scalp": 2.0}
+_MIN_HOLD_DEFAULTS = {"macro": 600.0, "micro": 40.0, "scalp": 20.0}
+_MAX_HOLD_DEFAULTS = {"macro": 14400.0, "micro": 600.0, "scalp": 180.0}
+_SOFT_ATR_MULT = {"macro": 1.2, "micro": 0.9, "scalp": 0.7}
+_HARD_ATR_MULT = {"macro": 2.0, "micro": 1.15, "scalp": 0.9}
 
 _RSI_FADE_LONG = _env_float("PRO_STOP_RSI_FADE_LONG", 44.0)
 _RSI_FADE_SHORT = _env_float("PRO_STOP_RSI_FADE_SHORT", 56.0)

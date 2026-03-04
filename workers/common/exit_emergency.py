@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 
 from utils.metrics_logger import log_metric
 from utils.oanda_account import get_account_snapshot
+
+LOG = logging.getLogger(__name__)
 
 _ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
     "",
@@ -43,7 +46,8 @@ def should_allow_negative_close() -> bool:
         nav = snapshot.nav or 0.0
         margin_used = snapshot.margin_used
         unrealized = snapshot.unrealized_pl
-    except Exception:
+    except Exception:  # noqa: BLE001 - account snapshot can fail many ways
+        LOG.warning("account snapshot failed for emergency exit check", exc_info=True)
         if _LAST_ALLOW and _LAST_CHECK_TS is not None and now - _LAST_CHECK_TS < _STALE_GRACE_SEC:
             return True
         return False

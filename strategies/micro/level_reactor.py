@@ -61,8 +61,20 @@ class MicroLevelReactor:
         price = cls._as_float(fac.get("close"), None)
         if price is None:
             return None
-        rsi = cls._as_float(fac.get("rsi"), 50.0)
+
+        # Spread filter: skip when spread eats into expected profit
+        spread_pips = cls._as_float(fac.get("spread_pips"), 0.0)
         atr_pips = cls._as_float(fac.get("atr_pips"), 2.0)
+        if spread_pips > 0:
+            spread_cap = max(1.0, atr_pips * 0.30)
+            if spread_pips > spread_cap:
+                return None
+
+        # Volatility floor: skip if ATR is too low (noise-dominated market)
+        if atr_pips < 1.0:
+            return None
+
+        rsi = cls._as_float(fac.get("rsi"), 50.0)
         # Dynamic levels must be anchored to a slower-moving reference (not the current price),
         # otherwise they would never be crossed.
         anchor = cls._as_float(

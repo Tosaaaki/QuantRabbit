@@ -47,6 +47,14 @@ class MomentumPulse:
         atr = atr_pips(fac)
         if atr <= 0.6 or atr >= 4.8:
             return None
+
+        # Spread filter: skip when spread is wide relative to ATR
+        spread_pips = to_float(fac.get("spread_pips"), 0.0) or 0.0
+        if spread_pips > 0 and atr > 0:
+            spread_cap = max(1.0, atr * 0.30)
+            if spread_pips > spread_cap:
+                return None
+
         if vol_5m is not None and vol_5m > 1.25:
             return None
         if bbw is not None and bbw > 0.30:
@@ -95,8 +103,11 @@ class MomentumPulse:
         base_conf = 52.0 + clamp(abs(mom_pips), 0.0, 2.4) * 3.2 + vol_term * 14.0 + slope_term
         conf = int(clamp(base_conf - bias_penalty, 44.0, 88.0))
 
-        sl = clamp(atr * 1.05, 1.3, 2.7)
-        tp = clamp(sl * 0.92, 0.9, 2.4)
+        # Previous: sl = clamp(atr*1.05, 1.3, 2.7), tp = clamp(sl*0.92, 0.9, 2.4)
+        # CRITICAL BUG: tp = sl * 0.92 means TP is always smaller than SL (negative R:R).
+        # Fix: widen SL for pulse momentum, ensure TP > SL.
+        sl = clamp(atr * 1.20, 1.8, 3.5)
+        tp = clamp(sl * 1.40, 2.2, 4.8)
         min_conf = _min_conf_threshold()
         if min_conf is not None and conf < min_conf:
             return None

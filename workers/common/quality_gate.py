@@ -39,7 +39,7 @@ def current_regime(tf: str = "M1", *, event_mode: bool = False) -> Optional[str]
     if fac:
         try:
             regime = str(fac.get("regime") or "")
-        except Exception:
+        except (TypeError, AttributeError):
             regime = None
         if not regime:
             try:

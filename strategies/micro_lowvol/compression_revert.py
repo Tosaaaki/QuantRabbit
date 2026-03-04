@@ -50,6 +50,14 @@ class MicroCompressionRevert:
         adx = to_float(fac.get("adx"), 99.0) or 99.0
         bbw = to_float(fac.get("bbw"), 1.0) or 1.0
         atr = atr_pips(fac, default=2.0)
+
+        # Spread filter: skip when spread eats into the narrow compression target
+        spread_pips = to_float(fac.get("spread_pips"), 0.0) or 0.0
+        if spread_pips > 0 and atr > 0:
+            spread_cap = max(0.8, atr * 0.30)
+            if spread_pips > spread_cap:
+                return None
+
         if adx > MicroCompressionRevert._ADX_MAX:
             return None
         if bbw > MicroCompressionRevert._BBW_MAX:
@@ -91,8 +99,10 @@ class MicroCompressionRevert:
             if mid_gap_pips <= -MicroCompressionRevert._MID_GAP_BLOCK_PIPS:
                 return None
 
-        sl_pips = max(1.0, min(2.2, atr * 0.70))
-        tp_pips = max(1.2, min(2.6, atr * 0.90))
+        # Previous: sl = max(1.0, min(2.2, atr*0.70)) was ~1.0-2.2p -- tight for compression fades.
+        # Compression reversion needs room for the band to expand before reverting.
+        sl_pips = max(1.8, min(3.5, atr * 1.10))
+        tp_pips = max(sl_pips * 1.3, min(4.5, atr * 1.50))
 
         compression_score = max(0.0, min(1.0, (MicroCompressionRevert._BBW_MAX - bbw) / max(MicroCompressionRevert._BBW_MAX, 1e-6)))
         confidence = 56 + int(min(18.0, compression_score * 24.0 + max(0.0, (MicroCompressionRevert._ATR_MAX - atr)) * 1.6))

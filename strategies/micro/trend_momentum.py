@@ -17,6 +17,8 @@ class TrendMomentumMicro:
     _MAX_PULLBACK = 1.2
     _MIN_ATR_PIPS = 0.9  # quietでも拾う
     _MIN_BBW = 0.10      # バンドが締まりすぎなら見送り
+    _SPREAD_PIPS_MAX = 1.2
+    _SPREAD_ATR_RATIO_MAX = 0.30
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -27,6 +29,20 @@ class TrendMomentumMicro:
         ema20 = fac.get("ema20") or ma20
         if price is None or ma10 is None or ma20 is None or ema20 is None:
             return None
+
+        # Spread filter: skip when spread eats into expected profit
+        try:
+            spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            spread_pips = 0.0
+        try:
+            atr_check = float(fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0)
+        except (TypeError, ValueError):
+            atr_check = 0.0
+        if spread_pips > 0 and atr_check > 0:
+            spread_cap = max(TrendMomentumMicro._SPREAD_PIPS_MAX, atr_check * TrendMomentumMicro._SPREAD_ATR_RATIO_MAX)
+            if spread_pips > spread_cap:
+                return None
         try:
             adx = float(adx_raw)
         except (TypeError, ValueError):

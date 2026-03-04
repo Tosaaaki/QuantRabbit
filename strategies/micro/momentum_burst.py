@@ -173,8 +173,11 @@ class MomentumBurstMicro:
 
         def _build_signal(action: str, bias_pips: float) -> Dict:
             strength = abs(gap_pips)
-            sl = max(0.9, min(atr_pips * 1.05, 0.45 * strength + 0.75))
-            tp = max(sl * 1.45, min(atr_pips * 2.2, sl + strength * 0.6))
+            # Previous: sl = max(0.9, min(atr * 1.05, 0.45*strength+0.75)) -- the min() cap
+            # crushed SL to ~1p when strength was low, causing 83% stop-outs.
+            # New: ATR-anchored SL with a meaningful floor; no more strength-based cap.
+            sl = max(2.0, atr_pips * 1.10)
+            tp = max(sl * 1.6, sl + atr_pips * 0.85)
             confidence = int(
                 max(
                     55.0,
