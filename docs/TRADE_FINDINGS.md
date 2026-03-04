@@ -17,6 +17,31 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-04 14:15 UTC / 2026-03-04 23:15 JST - ローカル運用タスクでの VM 導線実行ミスの是正
+
+Period:
+- 発生時刻: 2026-03-04 13:54〜14:14 UTC（22:54〜23:14 JST）
+- 対象: 運用手順の適用判断（ローカル運用タスク）
+
+Fact:
+- ユーザー依頼はローカル運用改善だったが、VM/GCP 導線（`scripts/vm.sh` / `deploy_to_vm.sh`）を実行した。
+- 実行結果は IAM 権限不足で失敗し、ローカル改善タスクの進行を阻害した。
+
+Failure Cause:
+- ローカル運用モードの例外条件（「VMは明示指示時のみ」）を、実行前判断で徹底できなかった。
+
+Improvement:
+- `docs/OPS_LOCAL_RUNBOOK.md` の運用原則に、
+  「ローカル運用タスクでは VM/GCP コマンドを実行しない。例外は明示依頼のみ」を追記。
+- 以後の本タスクはローカルDB + OANDA API のみに限定して実施する。
+
+Verification:
+- 以後同種タスクで `scripts/vm.sh` / `deploy_to_vm.sh` / `gcloud compute *` を使わずに完了できること。
+- 変更はローカル導線（`local_v2_stack` / `logs/*.db` / OANDA API）でのみ再現確認すること。
+
+Status:
+- done
+
 ## 2026-03-04 14:08 UTC / 2026-03-04 23:08 JST - `scalp_ping_5s_b_live` 収益悪化RCA第3段（SL偏重の即時圧縮）
 
 Period:
