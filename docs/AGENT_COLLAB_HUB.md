@@ -45,12 +45,18 @@
 ## 共有ホワイトボード（MVP / local-only）
 - 保存先DB: `logs/agent_whiteboard.db`（SQLite）
 - CLI: `python3 scripts/agent_whiteboard.py`
-- サポート操作: `post` / `list` / `watch` / `resolve` / `archive-task` / `purge-task`
+- サポート操作: `post` / `list` / `watch` / `resolve` / `archive-task` / `purge-task` / `note` / `event` / `events` / `auto-session`
+- 標準運用（ユーザー操作不要）:
+  - 各AIエージェントは作業コマンドを `auto-session` で実行し、開始/進捗/完了を自動記録する。
+  - 成功時は `resolve + archive` を自動実行。失敗時は `open` のまま `error` event を残す。
 - 例:
   ```bash
   python3 scripts/agent_whiteboard.py post --task "worker実装開始" --body "担当: worker" --author "$USER"
   python3 scripts/agent_whiteboard.py list --status open --limit 20
   python3 scripts/agent_whiteboard.py watch --status all --interval-sec 2
+  python3 scripts/agent_whiteboard.py note 1 --body "検証ケースを追加" --author "$USER"
+  python3 scripts/agent_whiteboard.py events --task-id 1 --limit 50
+  python3 scripts/agent_whiteboard.py auto-session --task "worker実装" --author "$USER" -- python3 -m pytest tests/workers/test_scalp_ping_5s_worker.py
   python3 scripts/agent_whiteboard.py resolve 1
   python3 scripts/agent_whiteboard.py archive-task 1
   python3 scripts/agent_whiteboard.py purge-task 1 --yes

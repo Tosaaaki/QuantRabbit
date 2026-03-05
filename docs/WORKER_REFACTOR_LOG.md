@@ -20,6 +20,20 @@
 - 意図:
   - 並行タスク時の受け渡しをローカル単一SQLiteに集約し、低依存で壊れにくい協調導線を確保する。
 
+### 2026-03-05（追記）共有ホワイトボード自動化（event stream / auto-session）
+
+- 対象:
+  - `workers/common/agent_whiteboard.py`
+  - `scripts/agent_whiteboard.py`
+  - `docs/AGENT_COLLAB_HUB.md`
+- 変更:
+  - `agent_whiteboard_events` / `agent_whiteboard_activity` を追加し、task単位の思考メモ・疑問・状態遷移を時系列で追跡可能にした。
+  - `watch` は activity stream（task更新 + event追記）を返すよう拡張し、同一taskへの追記もリアルタイム共有できるようにした。
+  - CLI に `note` / `event` / `events` / `auto-session` を追加。
+  - `auto-session` は開始時にtask+start eventを作成し、成功時は `resolve + archive` を自動実行、失敗時は `open` 維持 + `error` event 自動記録。
+- 意図:
+  - ユーザーが手で白板を操作しなくても、エージェント作業の開始/検討/完了が自動で集約される運用を標準化する。
+
 ### 2026-03-05（追記）local-v2 runtime tuning: `scalp_ping_5s_b_live` 約定停止対策
 
 - 対象:
