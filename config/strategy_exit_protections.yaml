@@ -1407,18 +1407,38 @@ strategies:
   scalp_ping_5s_d:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+    neg_exit:
+      # D も no-block 運用へ寄せ、close_reject_no_negative の再発を防ぐ。
+      strict_no_negative: false
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
+      deny_reasons: []
 
   scalp_ping_5s_d_live:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+    neg_exit:
+      # live tag でも同一方針を適用。
+      strict_no_negative: false
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
+      deny_reasons: []
 
   scalp_ping_5s_flow:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+    neg_exit:
+      # flow も no-block 運用へ寄せ、close_reject_no_negative の再発を防ぐ。
+      strict_no_negative: false
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
+      deny_reasons: []
 
   scalp_ping_5s_flow_live:
     <<: *SCALP_PING_5S_EXIT_PROFILE
     exit_profile: *SCALP_PING_5S_BC_EXIT_PROFILE
+    neg_exit:
+      # live tag でも同一方針を適用。
+      strict_no_negative: false
+      allow_reasons: *SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS
+      deny_reasons: []
 
   fast_scalp:
     min_profit_ratio: 0.45

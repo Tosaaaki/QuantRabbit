@@ -60,6 +60,36 @@ _FAIL_POLICY = (os.getenv("BRAIN_FAIL_POLICY", "allow") or "allow").strip().lowe
 if _FAIL_POLICY not in {"allow", "reduce", "block"}:
     _FAIL_POLICY = "allow"
 
+
+def _timeout_sec_for_pocket(pocket: str) -> float:
+    # Keep default behavior unless an override is explicitly provided.
+    # fast/micro can opt into shorter timeouts to avoid stalling high-frequency entries.
+    raw = ""
+    if pocket == "micro":
+        raw = os.getenv("BRAIN_TIMEOUT_SEC_MICRO", "").strip()
+    elif pocket == "scalp_fast":
+        raw = os.getenv("BRAIN_TIMEOUT_SEC_SCALP_FAST", "").strip()
+    if not raw:
+        return _TIMEOUT_SEC
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _TIMEOUT_SEC
+    return max(0.5, value)
+
+
+def _fail_policy_for_pocket(pocket: str) -> str:
+    raw = ""
+    if pocket == "micro":
+        raw = os.getenv("BRAIN_FAIL_POLICY_MICRO", "").strip().lower()
+    elif pocket == "scalp_fast":
+        raw = os.getenv("BRAIN_FAIL_POLICY_SCALP_FAST", "").strip().lower()
+    if not raw:
+        return _FAIL_POLICY
+    if raw not in {"allow", "reduce", "block"}:
+        return _FAIL_POLICY
+    return raw
+
 _PERSONA_ENABLED = os.getenv("BRAIN_PERSONA_ENABLED", "1").strip().lower() not in {
     "",
     "0",
@@ -2265,10 +2295,15 @@ def _parse_response(text: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def _llm_failure_decision(*, memory: Optional[str], allow_reason: str) -> BrainDecision:
-    if _FAIL_POLICY == "block":
+def _llm_failure_decision(
+    *,
+    memory: Optional[str],
+    allow_reason: str,
+    fail_policy: str,
+) -> BrainDecision:
+    if fail_policy == "block":
         return BrainDecision(False, 0.0, "no_llm_block", "BLOCK", memory=memory)
-    if _FAIL_POLICY == "reduce":
+    if fail_policy == "reduce":
         fail_scale = min(0.5, max(_MIN_SCALE, 0.5))
         return BrainDecision(True, float(fail_scale), "no_llm_reduce", "REDUCE", memory=memory)
     return BrainDecision(True, 1.0, allow_reason, "ALLOW", memory=memory)
@@ -2291,6 +2326,8 @@ def decide(
         return BrainDecision(True, 1.0, "disabled", "ALLOW")
     tag = str(strategy_tag).strip()
     pocket_key = str(pocket).strip().lower()
+    timeout_sec = _timeout_sec_for_pocket(pocket_key)
+    fail_policy = _fail_policy_for_pocket(pocket_key)
     cache_key = (tag, pocket_key)
     profile_version = _profile_version(_load_prompt_profile())
     runtime_profile = _load_runtime_param_profile()
@@ -2360,7 +2397,7 @@ def decide(
             prompt,
             model=_OLLAMA_MODEL,
             url=_OLLAMA_URL,
-            timeout_sec=_TIMEOUT_SEC,
+            timeout_sec=timeout_sec,
             temperature=_TEMP,
             max_tokens=_MAX_TOKENS,
         )
@@ -2371,7 +2408,7 @@ def decide(
             model=_VERTEX_MODEL,
             temperature=_TEMP,
             max_tokens=_MAX_TOKENS,
-            timeout_sec=_TIMEOUT_SEC,
+            timeout_sec=timeout_sec,
             response_mime_type="application/json",
         )
         llm_text_available = bool(vertex_resp and vertex_resp.text)
@@ -2393,7 +2430,11 @@ def decide(
         pass
     if payload is None:
         allow_reason = "bad_response" if llm_text_available else "no_llm"
-        decision = _llm_failure_decision(memory=memory_before, allow_reason=allow_reason)
+        decision = _llm_failure_decision(
+            memory=memory_before,
+            allow_reason=allow_reason,
+            fail_policy=fail_policy,
+        )
         decision, runtime_guard = _apply_runtime_param_guard(
             strategy_tag=tag,
             pocket=pocket_key,
