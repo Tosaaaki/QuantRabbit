@@ -11564,3 +11564,24 @@
     - `SCALP_PING_5S_FLOW_SIGNAL_MODE_BLOCKLIST=momentum_mtf_revert_hz`
   - flow:
     - `SCALP_PING_5S_FLOW_USE_SL=1`（`workers/scalp_ping_5s/config.py` の `USE_SL` default が flow で False になるため明示的に復帰）
+
+## 2026-03-05 JST - trade_all 起動安定化（ping5s C/D/flow wrapper 1プロセス化）
+
+- `workers/scalp_ping_5s_c/worker.py` / `workers/scalp_ping_5s_d/worker.py` / `workers/scalp_ping_5s_flow/worker.py`
+  - `subprocess.run(check=True)` で `workers.scalp_ping_5s.worker` を子プロセス起動していたのを廃止。
+  - wrapper プロセス内で `workers.scalp_ping_5s.worker:scalp_ping_5s_worker()` を `asyncio.run()` で直接実行する方式に変更（1プロセス化）。
+  - 目的: `local_v2_stack` の process cleanup が ping5s-b（汎用 module pattern 含む）経由で子プロセスを巻き込み SIGTERM → wrapper が落ちる問題を根絶。
+  - main commit: `dc7751f2`
+
+## 2026-03-05 JST - TrendBreakout クラッシュ修正（M1Scalper _log kwargs）
+
+- `strategies/scalping/m1_scalper.py`
+  - `_log(reason, **kwargs)` 呼び出しに `reason=` kwargs を渡して `TypeError` になっていたのを修正（`flip_reason=` へ変更）。
+  - main commit: `105b15f2`
+
+## 2026-03-05 JST - micro runtime クラッシュ修正（bb_style 未初期化）
+
+- `workers/micro_runtime/worker.py`
+  - `bb_style` が未代入のまま `_bb_entry_allowed(...)` に渡されるパスがあり `UnboundLocalError` で worker が落ちる問題を修正。
+  - `bb_style` を `reversion` で初期化し、`_TREND_STRATEGIES` を `trend` 判定に追加。
+  - main commit: `71b9dbd2`

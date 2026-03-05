@@ -6538,3 +6538,30 @@ Status:
   - `sqlite3 logs/orders.db 'select count(*) from orders where status=\"rejected\" and error_message=\"STOP_LOSS_ON_FILL_LOSS\" and datetime(ts) >= datetime(\"now\",\"-1 day\") and client_order_id like \"%scalp_ping_5s_b%\";'` が減る
   - `sqlite3 logs/orders.db 'with o as (select executed_price, sl_price from orders where status=\"filled\" and datetime(ts) >= datetime(\"now\",\"-1 day\") and client_order_id like \"%scalp_ping_5s_b%\" and executed_price is not null and sl_price is not null) select sum(case when abs(executed_price - sl_price)/0.01 >= 8.0 then 1 else 0 end), count(*) from o;'` の `>=8p` 比率が下がる
   - flow を走らせた場合: `sqlite3 logs/trades.db 'select json_extract(entry_thesis,\"$.sl_pips\"), json_extract(entry_thesis,\"$.disable_entry_hard_stop\") from trades where strategy_tag like \"scalp_ping_5s_flow_live%\" order by close_time desc limit 5;'` で `sl_pips` が埋まる
+
+## 2026-03-05 22:45 JST / trade_all 起動不全の主要クラッシュ修正（ping5s C/D/flow wrapper・TrendBreakout・micro runtime）
+
+- 作業前市況（ローカル実測 / OANDA pricing, 2026-03-05 22:12 JST）:
+  - `USD/JPY bid=157.516 ask=157.524 spread=0.8p`
+  - `pricing latency=243ms`
+  - `ATR(M1)=2.358p`（直近120本の complete M1）
+
+- 症状（local V2）:
+  - `scripts/local_v2_stack.sh up --profile trade_all --env ops/env/local-v2-stack.env` が失敗しやすく、`status` で `stale_pid_file` が多数出て「戦略が走っていない」状態になる。
+  - ping5s C/D/flow: `logs/local_v2_stack/quant-scalp-ping-5s-*.log` に `CalledProcessError ... died with SIGTERM`（wrapperが子プロセス死亡で終了）。
+  - TrendBreakout: `logs/local_v2_stack/quant-scalp-trend-breakout.log` で `TypeError: _log() got multiple values for argument 'reason'`。
+  - micro: `logs/local_v2_stack/quant-micro-momentumburst.log` で `UnboundLocalError: bb_style referenced before assignment`。
+
+- 原因:
+  - ping5s C/D/flow wrapper が `workers.scalp_ping_5s.worker` を `subprocess.run(check=True)` で起動しており、`local_v2_stack` 側の cleanup（ping5s-b が汎用 module を pattern に含める）で子プロセスが巻き込み SIGTERM → wrapper が例外で落ちる。
+  - `strategies/scalping/m1_scalper.py` の `_log(reason, **kwargs)` に対して `reason=` を kwargs で渡していた（TrendBreakoutが M1Scalper を参照するため worker ごと落ちる）。
+  - `workers/micro_runtime/worker.py` の `bb_style` が未初期化のまま `_bb_entry_allowed(...)` に渡され得る。
+
+- 対応（main反映）:
+  - ping5s C/D/flow: wrapper を **1プロセス**に変更し、`workers.scalp_ping_5s.worker:scalp_ping_5s_worker()` を `asyncio.run()` で直接実行（commit=`dc7751f2`）。
+  - M1Scalper: `_log` の kwargs `reason` を `flip_reason` へ変更（commit=`105b15f2`）。
+  - micro runtime: `bb_style` を `reversion` で初期化し、`_TREND_STRATEGIES` を `trend` 判定に追加（commit=`71b9dbd2`）。
+
+- 検証:
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_config.py`
+  - `scripts/collect_local_health.sh` で `orders_last_ts` が更新され続けること（例: `filled` が直近1hで継続）
