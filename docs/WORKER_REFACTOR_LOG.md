@@ -5,6 +5,21 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-05（追記）MicroPullbackEMA: ATRスケール化 + M5/H1確認ゲート + strategy_control hard stop解除（local V2）
+
+- 対象:
+  - `strategies/micro/pullback_ema.py`
+  - `workers/micro_runtime/worker.py`
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - MicroPullbackEMA の entry 条件を「ATR連動 + DI整合 + 深いpullback抑制」に更新し、弱トレンド/低vol/レンジ寄りの誤爆を削減。
+  - micro_runtime 側で MicroPullbackEMA に限り M5/H1 の MA-gap+ADX 確認ゲートを追加し、counter-trend を遮断。
+  - `STRATEGY_CONTROL_ENTRY_*` を `1` に戻して hard stop を解除（Brain gate は `LOCAL_V2_EXTRA_ENV_FILES=` のまま無効）。
+- 背景:
+  - `MicroPullbackEMA` が higher-TF 逆行で long 側に損失集中し、PF/勝率が崩れていた（詳細は `docs/TRADE_FINDINGS.md`）。
+- 意図:
+  - 「停止で逃げない」方針で、戦略ローカルの品質フィルタ強化により再稼働可能な状態へ戻す。
+
 ### 2026-03-05（同日追記）Brainゲートをデフォルト無効化（ローカルV2）+ strategy_control env override 修正
 
 - 対象:

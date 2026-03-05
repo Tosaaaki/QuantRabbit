@@ -262,6 +262,62 @@ def _trend_snapshot(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict):
     return None
 
 
+_PULLBACK_MTF_M5_GAP_MIN_PIPS = 0.55
+_PULLBACK_MTF_M5_ADX_MIN = 17.0
+_PULLBACK_MTF_H1_GAP_NEUTRAL_PIPS = 1.2
+_PULLBACK_MTF_H1_ADX_MIN = 18.0
+
+
+def _ma_gap_pips(fac: Dict) -> Optional[float]:
+    if not fac:
+        return None
+    ma_fast = _bb_float(fac.get("ma10")) or _bb_float(fac.get("ema10"))
+    ma_slow = _bb_float(fac.get("ma20")) or _bb_float(fac.get("ema20"))
+    if ma_fast is None or ma_slow is None:
+        return None
+    return (ma_fast - ma_slow) / _BB_PIP
+
+
+def _pullback_mtf_confirm(action: str, fac_m5: Dict, fac_h1: Dict) -> tuple[bool, Dict[str, object]]:
+    side = "long" if action == "OPEN_LONG" else "short"
+    m5_gap = _ma_gap_pips(fac_m5)
+    h1_gap = _ma_gap_pips(fac_h1)
+    m5_adx = _bb_float(fac_m5.get("adx")) or 0.0
+    h1_adx = _bb_float(fac_h1.get("adx")) or 0.0
+
+    diag: Dict[str, object] = {
+        "side": side,
+        "m5_gap_pips": round(float(m5_gap), 3) if m5_gap is not None else None,
+        "m5_adx": round(float(m5_adx), 2),
+        "h1_gap_pips": round(float(h1_gap), 3) if h1_gap is not None else None,
+        "h1_adx": round(float(h1_adx), 2),
+    }
+
+    if m5_gap is not None:
+        if side == "long":
+            m5_ok = m5_gap >= _PULLBACK_MTF_M5_GAP_MIN_PIPS
+        else:
+            m5_ok = m5_gap <= -_PULLBACK_MTF_M5_GAP_MIN_PIPS
+        if not m5_ok:
+            diag["reason"] = "m5_gap_opposite_or_weak"
+            return False, diag
+        if m5_adx < _PULLBACK_MTF_M5_ADX_MIN:
+            diag["reason"] = "m5_adx_low"
+            return False, diag
+
+    if h1_gap is not None:
+        if abs(h1_gap) >= _PULLBACK_MTF_H1_GAP_NEUTRAL_PIPS and h1_adx >= _PULLBACK_MTF_H1_ADX_MIN:
+            if side == "long" and h1_gap < 0:
+                diag["reason"] = "h1_counter_trend"
+                return False, diag
+            if side == "short" and h1_gap > 0:
+                diag["reason"] = "h1_counter_trend"
+                return False, diag
+
+    diag["reason"] = "ok"
+    return True, diag
+
+
 def _apply_trend_flip(
     side: str,
     signal_tag: str,
@@ -992,6 +1048,7 @@ async def micro_multi_worker() -> None:
     last_stale_scale_log = 0.0
     last_perf_block_log = 0.0
     last_mlr_block_log = 0.0
+    last_pullback_mtf_block_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -1155,6 +1212,23 @@ async def micro_multi_worker() -> None:
             cand = strat.check(fac_m1)
             if not cand:
                 continue
+            if strategy_name == MicroPullbackEMA.name:
+                mtf_ok, mtf_diag = _pullback_mtf_confirm(str(cand.get("action") or ""), fac_m5, fac_h1)
+                if not mtf_ok:
+                    now_mono = time.monotonic()
+                    if now_mono - last_pullback_mtf_block_log > 120.0:
+                        LOG.info(
+                            "%s pullback_mtf_block side=%s m5_gap=%s m5_adx=%.2f h1_gap=%s h1_adx=%.2f reason=%s",
+                            config.LOG_PREFIX,
+                            mtf_diag.get("side"),
+                            mtf_diag.get("m5_gap_pips"),
+                            float(mtf_diag.get("m5_adx") or 0.0),
+                            mtf_diag.get("h1_gap_pips"),
+                            float(mtf_diag.get("h1_adx") or 0.0),
+                            mtf_diag.get("reason"),
+                        )
+                        last_pullback_mtf_block_log = now_mono
+                    continue
             perf_decision = perf_guard.is_allowed(strategy_name, config.POCKET, env_prefix=config.ENV_PREFIX)
             if not perf_decision.allowed:
                 now_mono = time.monotonic()

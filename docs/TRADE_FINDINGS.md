@@ -23,6 +23,49 @@
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-05 15:40 JST / local-v2: MicroPullbackEMAの勝率改善（ATRスケール+M5/H1確認）+ strategy_control hard stop解除
+
+Period:
+- 対応: 2026-03-05 15:34〜15:40 JST（UTC 06:34〜06:40）
+- 市況確認: 2026-03-05 15:34 JST（UTC 06:34）
+- 対象: `strategies/micro/pullback_ema.py`, `workers/micro_runtime/worker.py`, `ops/env/local-v2-stack.env`
+
+Fact:
+- 市況（local tick/factor + OANDA, UTC 06:34 / JST 15:34）:
+  - USD/JPY spread(avg/p95)=0.8p（tick直近500）/ mid_last=157.134
+  - `ATR14(M1)=2.17p`, `ATR14(M5)=5.71p`, `ATR14(H1)=18.02p`
+  - M1 `regime=Range`, `ADX=19.97` / H1 `regime=Trend`, `ADX=35.61`
+- 直近7d（manual除外, `trades.db`, micro pocket）:
+  - `MicroPullbackEMA n=25`, **all long**, `win_rate=0.28`, `PF=0.062`, `net_pips=-45.6`
+- 運用設定（対応前）:
+  - `STRATEGY_CONTROL_ENTRY_* =0` により entry を hard stop（停止済み戦略の注文試行が `strategy_control_entry_disabled` になりノイズ化）。
+
+Failure Cause:
+- MicroPullbackEMA が M1のみで方向決定し、M5/H1の逆行トレンドで long 側が連続損失。
+- pullback/ma-gap が固定幅で、低ATR/弱gapで深いpullbackを許容しやすく、レンジ寄りで stop hit が増加。
+
+Improvement:
+- MicroPullbackEMA（strategy）:
+  - gap/pullback を ATR スケール化（弱トレンド/低vol の誤爆を抑止）
+  - `plus_di/minus_di` で方向整合を追加
+  - `abs(pullback) <= abs(gap) + buffer(ATR連動)` で深い pullback を抑制
+  - range_bias 時は ADX 閾値を上げる
+- micro_runtime worker:
+  - MicroPullbackEMA に M5/H1 の MA-gap+ADX 確認ゲートを追加（counter-trend を遮断）
+- local-v2 env:
+  - `STRATEGY_CONTROL_ENTRY_*` を 1 に戻し、停止ではなくフィルタでリスク制御へ
+  - `LOCAL_V2_EXTRA_ENV_FILES=` を維持（Brain gate無効のまま）
+
+Verification:
+- deploy後（〜2h）:
+  - `orders.db` 新規の `strategy_control_entry_disabled` が増えない（矛盾/ノイズ解消）
+  - MicroPullbackEMA の `win_rate/PF` が改善（最低でも `PF>1.0` / `expectancy>0` を目標、`n>=30` で再評価）
+  - M5/H1 逆行時に `pullback_mtf_block` ログが出ていること
+  - Brain gate が無効のまま（order_managerで `BRAIN_ENABLED=0` 維持）
+
+Status:
+- in_progress
+
 ## 2026-03-05 15:00 JST / local-v2: trade_all常駐の解消（watchdog監視対象の縮退）+ dyn alloc sampling bias修正
 
 Period:
