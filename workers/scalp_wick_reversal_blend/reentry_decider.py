@@ -20,6 +20,24 @@ class ReentryConfig:
     min_adverse_atr: float
     log_interval_sec: float
     name: str
+    atr_low_pips: float
+    atr_high_pips: float
+    revert_min_low_atr: float
+    revert_min_high_atr: float
+    trend_min_low_atr: float
+    trend_min_high_atr: float
+    trend_max_low_atr: float
+    trend_max_high_atr: float
+    edge_min_low_atr: float
+    edge_min_high_atr: float
+    range_revert_bonus_low_atr: float
+    range_revert_bonus_high_atr: float
+    range_trend_penalty_low_atr: float
+    range_trend_penalty_high_atr: float
+    revert_weights_low_atr: Tuple[float, float, float, float]
+    revert_weights_high_atr: Tuple[float, float, float, float]
+    trend_weights_low_atr: Tuple[float, float, float, float]
+    trend_weights_high_atr: Tuple[float, float, float, float]
 
 @dataclass
 class ReentryDecision:
@@ -79,6 +97,29 @@ def _norm(value: Optional[float], low: float, high: float) -> Optional[float]:
     return _clamp01((float(value) - low) / (high - low))
 
 
+def _mix(low: float, high: float, ratio: float) -> float:
+    return float(low) + (float(high) - float(low)) * float(ratio)
+
+
+def _atr_ratio(*, atr_pips: Optional[float], atr_low_pips: float, atr_high_pips: float) -> float:
+    ratio = _norm(atr_pips, atr_low_pips, atr_high_pips)
+    if ratio is None:
+        return 0.5
+    return float(ratio)
+
+
+def _blend_by_atr(
+    *,
+    atr_pips: Optional[float],
+    atr_low_pips: float,
+    atr_high_pips: float,
+    low_value: float,
+    high_value: float,
+) -> float:
+    ratio = _atr_ratio(atr_pips=atr_pips, atr_low_pips=atr_low_pips, atr_high_pips=atr_high_pips)
+    return _mix(low_value, high_value, ratio)
+
+
 def _weighted_score(items: Sequence[tuple[Optional[float], float]]) -> Optional[float]:
     total = 0.0
     weight = 0.0
@@ -102,9 +143,15 @@ def _reentry_scores(
     vwap_gap: Optional[float],
     ma_pair: Optional[Tuple[float, float]],
     range_active: bool,
+    cfg: ReentryConfig,
 ) -> tuple[Optional[float], Optional[float]]:
     side_key = str(side).lower()
     is_short = side_key in {"short", "sell"}
+    atr_ratio = _atr_ratio(
+        atr_pips=atr_pips,
+        atr_low_pips=cfg.atr_low_pips,
+        atr_high_pips=cfg.atr_high_pips,
+    )
 
     rsi_score = None
     if rsi is not None:
@@ -121,12 +168,19 @@ def _reentry_scores(
         gap = vwap_gap if is_short else -vwap_gap
         vwap_revert = _norm(gap, 0.6, 2.4)
 
+    revert_weights = (
+        _mix(cfg.revert_weights_low_atr[0], cfg.revert_weights_high_atr[0], atr_ratio),
+        _mix(cfg.revert_weights_low_atr[1], cfg.revert_weights_high_atr[1], atr_ratio),
+        _mix(cfg.revert_weights_low_atr[2], cfg.revert_weights_high_atr[2], atr_ratio),
+        _mix(cfg.revert_weights_low_atr[3], cfg.revert_weights_high_atr[3], atr_ratio),
+    )
+
     revert_score = _weighted_score(
         [
-            (rsi_score, 0.35),
-            (adx_revert, 0.25),
-            (bbw_revert, 0.25),
-            (vwap_revert, 0.15),
+            (rsi_score, revert_weights[0]),
+            (adx_revert, revert_weights[1]),
+            (bbw_revert, revert_weights[2]),
+            (vwap_revert, revert_weights[3]),
         ]
     )
 
@@ -144,20 +198,37 @@ def _reentry_scores(
         gap = vwap_gap if is_short else -vwap_gap
         vwap_trend = _norm(gap, 0.6, 2.6)
 
+    trend_weights = (
+        _mix(cfg.trend_weights_low_atr[0], cfg.trend_weights_high_atr[0], atr_ratio),
+        _mix(cfg.trend_weights_low_atr[1], cfg.trend_weights_high_atr[1], atr_ratio),
+        _mix(cfg.trend_weights_low_atr[2], cfg.trend_weights_high_atr[2], atr_ratio),
+        _mix(cfg.trend_weights_low_atr[3], cfg.trend_weights_high_atr[3], atr_ratio),
+    )
+
     trend_score = _weighted_score(
         [
-            (adx_trend, 0.35),
-            (atr_trend, 0.30),
-            (ma_trend, 0.25),
-            (vwap_trend, 0.10),
+            (adx_trend, trend_weights[0]),
+            (atr_trend, trend_weights[1]),
+            (ma_trend, trend_weights[2]),
+            (vwap_trend, trend_weights[3]),
         ]
     )
 
     if range_active:
+        revert_bonus = _mix(
+            cfg.range_revert_bonus_low_atr,
+            cfg.range_revert_bonus_high_atr,
+            atr_ratio,
+        )
+        trend_penalty = _mix(
+            cfg.range_trend_penalty_low_atr,
+            cfg.range_trend_penalty_high_atr,
+            atr_ratio,
+        )
         if revert_score is not None:
-            revert_score = _clamp01(revert_score + 0.15)
+            revert_score = _clamp01(revert_score + revert_bonus)
         if trend_score is not None:
-            trend_score = _clamp01(trend_score - 0.15)
+            trend_score = _clamp01(trend_score - trend_penalty)
 
     return revert_score, trend_score
 
@@ -179,17 +250,69 @@ def _load_config(prefix: str) -> ReentryConfig:
         shadow = _env_bool_opt("REENTRY_SHADOW_ALL")
     if shadow is None:
         shadow = True
+    base_revert_min = _env_float(f"{name}_REENTRY_REVERT_MIN", 0.65)
+    base_trend_min = _env_float(f"{name}_REENTRY_TREND_MIN", 0.60)
+    base_trend_max = _env_float(f"{name}_REENTRY_TREND_MAX", 0.45)
+    base_edge_min = _env_float(f"{name}_REENTRY_EDGE_MIN", 0.55)
+
+    def _prefixed_float(var: str, default: float) -> float:
+        raw = os.getenv(f"{name}_{var}")
+        if raw is not None:
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        return _env_float(var, default)
+
     return ReentryConfig(
         enabled=enabled,
         shadow=shadow,
-        revert_min=_env_float(f"{name}_REENTRY_REVERT_MIN", 0.65),
-        trend_min=_env_float(f"{name}_REENTRY_TREND_MIN", 0.60),
-        trend_max=_env_float(f"{name}_REENTRY_TREND_MAX", 0.45),
-        edge_min=_env_float(f"{name}_REENTRY_EDGE_MIN", 0.55),
+        revert_min=base_revert_min,
+        trend_min=base_trend_min,
+        trend_max=base_trend_max,
+        edge_min=base_edge_min,
         min_adverse_pips=_env_float(f"{name}_REENTRY_MIN_ADVERSE_PIPS", 2.5),
         min_adverse_atr=_env_float(f"{name}_REENTRY_MIN_ADVERSE_ATR", 1.0),
         log_interval_sec=_env_float(f"{name}_REENTRY_LOG_INTERVAL_SEC", 8.0),
         name=name,
+        atr_low_pips=_prefixed_float("REENTRY_ATR_LOW_PIPS", 6.0),
+        atr_high_pips=_prefixed_float("REENTRY_ATR_HIGH_PIPS", 14.0),
+        revert_min_low_atr=_prefixed_float("REENTRY_REVERT_MIN_ATR_LOW", base_revert_min),
+        revert_min_high_atr=_prefixed_float("REENTRY_REVERT_MIN_ATR_HIGH", base_revert_min),
+        trend_min_low_atr=_prefixed_float("REENTRY_TREND_MIN_ATR_LOW", base_trend_min),
+        trend_min_high_atr=_prefixed_float("REENTRY_TREND_MIN_ATR_HIGH", base_trend_min),
+        trend_max_low_atr=_prefixed_float("REENTRY_TREND_MAX_ATR_LOW", base_trend_max),
+        trend_max_high_atr=_prefixed_float("REENTRY_TREND_MAX_ATR_HIGH", base_trend_max),
+        edge_min_low_atr=_prefixed_float("REENTRY_EDGE_MIN_ATR_LOW", base_edge_min),
+        edge_min_high_atr=_prefixed_float("REENTRY_EDGE_MIN_ATR_HIGH", base_edge_min),
+        range_revert_bonus_low_atr=_prefixed_float("REENTRY_RANGE_REVERT_BONUS_LOW_ATR", 0.15),
+        range_revert_bonus_high_atr=_prefixed_float("REENTRY_RANGE_REVERT_BONUS_HIGH_ATR", 0.15),
+        range_trend_penalty_low_atr=_prefixed_float("REENTRY_RANGE_TREND_PENALTY_LOW_ATR", 0.15),
+        range_trend_penalty_high_atr=_prefixed_float("REENTRY_RANGE_TREND_PENALTY_HIGH_ATR", 0.15),
+        revert_weights_low_atr=(
+            _prefixed_float("REENTRY_REVERT_WEIGHT_RSI_LOW_ATR", 0.35),
+            _prefixed_float("REENTRY_REVERT_WEIGHT_ADX_LOW_ATR", 0.25),
+            _prefixed_float("REENTRY_REVERT_WEIGHT_BBW_LOW_ATR", 0.25),
+            _prefixed_float("REENTRY_REVERT_WEIGHT_VWAP_LOW_ATR", 0.15),
+        ),
+        revert_weights_high_atr=(
+            _prefixed_float("REENTRY_REVERT_WEIGHT_RSI_HIGH_ATR", 0.35),
+            _prefixed_float("REENTRY_REVERT_WEIGHT_ADX_HIGH_ATR", 0.25),
+            _prefixed_float("REENTRY_REVERT_WEIGHT_BBW_HIGH_ATR", 0.25),
+            _prefixed_float("REENTRY_REVERT_WEIGHT_VWAP_HIGH_ATR", 0.15),
+        ),
+        trend_weights_low_atr=(
+            _prefixed_float("REENTRY_TREND_WEIGHT_ADX_LOW_ATR", 0.35),
+            _prefixed_float("REENTRY_TREND_WEIGHT_ATR_LOW_ATR", 0.30),
+            _prefixed_float("REENTRY_TREND_WEIGHT_MA_LOW_ATR", 0.25),
+            _prefixed_float("REENTRY_TREND_WEIGHT_VWAP_LOW_ATR", 0.10),
+        ),
+        trend_weights_high_atr=(
+            _prefixed_float("REENTRY_TREND_WEIGHT_ADX_HIGH_ATR", 0.35),
+            _prefixed_float("REENTRY_TREND_WEIGHT_ATR_HIGH_ATR", 0.30),
+            _prefixed_float("REENTRY_TREND_WEIGHT_MA_HIGH_ATR", 0.25),
+            _prefixed_float("REENTRY_TREND_WEIGHT_VWAP_HIGH_ATR", 0.10),
+        ),
     )
 
 def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -> None:
@@ -286,14 +409,43 @@ def decide_reentry(
         vwap_gap=vwap_gap,
         ma_pair=ma_pair,
         range_active=range_active,
+        cfg=cfg,
     )
     edge = _reentry_edge(adverse_pips, atr_pips)
+    revert_min = _blend_by_atr(
+        atr_pips=atr_pips,
+        atr_low_pips=cfg.atr_low_pips,
+        atr_high_pips=cfg.atr_high_pips,
+        low_value=cfg.revert_min_low_atr,
+        high_value=cfg.revert_min_high_atr,
+    )
+    trend_min = _blend_by_atr(
+        atr_pips=atr_pips,
+        atr_low_pips=cfg.atr_low_pips,
+        atr_high_pips=cfg.atr_high_pips,
+        low_value=cfg.trend_min_low_atr,
+        high_value=cfg.trend_min_high_atr,
+    )
+    trend_max = _blend_by_atr(
+        atr_pips=atr_pips,
+        atr_low_pips=cfg.atr_low_pips,
+        atr_high_pips=cfg.atr_high_pips,
+        low_value=cfg.trend_max_low_atr,
+        high_value=cfg.trend_max_high_atr,
+    )
+    edge_min = _blend_by_atr(
+        atr_pips=atr_pips,
+        atr_low_pips=cfg.atr_low_pips,
+        atr_high_pips=cfg.atr_high_pips,
+        low_value=cfg.edge_min_low_atr,
+        high_value=cfg.edge_min_high_atr,
+    )
 
     action = None
     if revert_score is not None and trend_score is not None:
-        if revert_score >= cfg.revert_min and trend_score <= cfg.trend_max:
+        if revert_score >= revert_min and trend_score <= trend_max:
             action = "hold"
-        elif trend_score >= cfg.trend_min and edge >= cfg.edge_min:
+        elif trend_score >= trend_min and edge >= edge_min:
             action = "exit_reentry"
 
     if action:
@@ -303,6 +455,10 @@ def decide_reentry(
             "trend": f"{trend_score:.2f}" if trend_score is not None else "na",
             "edge": f"{edge:.2f}",
             "pnl": f"{pnl_pips:.2f}",
+            "revert_min": f"{revert_min:.2f}",
+            "trend_min": f"{trend_min:.2f}",
+            "trend_max": f"{trend_max:.2f}",
+            "edge_min": f"{edge_min:.2f}",
         }
         if log_tags:
             tags.update(log_tags)

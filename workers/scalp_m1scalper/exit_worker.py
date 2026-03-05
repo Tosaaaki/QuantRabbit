@@ -23,6 +23,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
+from workers.common.reentry_decider import decide_reentry as decide_common_reentry
 from .pro_stop import maybe_close_pro_stop
 
 
@@ -705,10 +706,10 @@ async def _run_exit_loop(
                 except Exception:
                     range_active = False
 
-                adverse_pips = abs(float(pnl))
-                edge = _reentry_edge(adverse_pips, atr_pips)
-                revert_score, trend_score = _reentry_scores(
+                reentry = decide_common_reentry(
+                    prefix="M1SCALP",
                     side=side,
+                    pnl_pips=pnl,
                     rsi=rsi,
                     adx=adx,
                     atr_pips=atr_pips,
@@ -716,44 +717,21 @@ async def _run_exit_loop(
                     vwap_gap=vwap_gap,
                     ma_pair=ma_pair,
                     range_active=range_active,
+                    log_tags={"trade": trade_id},
                 )
-
-                min_adverse = _REENTRY_MIN_ADVERSE_PIPS
-                if atr_pips is not None:
-                    min_adverse = max(min_adverse, atr_pips * _REENTRY_MIN_ADVERSE_ATR)
-
-                decision = None
-                if adverse_pips >= min_adverse and revert_score is not None and trend_score is not None:
-                    if revert_score >= _REENTRY_REVERT_MIN and trend_score <= _REENTRY_TREND_MAX:
-                        decision = "hold"
-                    elif trend_score >= _REENTRY_TREND_MIN and edge >= _REENTRY_EDGE_MIN:
-                        decision = "exit_reentry"
-
-                if decision:
-                    _log_reentry_decision(
-                        decision=decision,
-                        tags={
-                            "side": side,
-                            "revert": f"{revert_score:.2f}" if revert_score is not None else "na",
-                            "trend": f"{trend_score:.2f}" if trend_score is not None else "na",
-                            "edge": f"{edge:.2f}",
-                            "pnl": f"{pnl:.2f}",
-                        },
+                if reentry.action == "hold":
+                    skip_soft = True
+                elif reentry.action == "exit_reentry" and not reentry.shadow:
+                    ok = await _close(
+                        trade_id,
+                        -units,
+                        "reentry_reset",
+                        client_id,
+                        allow_negative=True,
                     )
-                    if decision == "hold":
-                        skip_soft = True
-                    elif decision == "exit_reentry":
-                        if not _REENTRY_SHADOW:
-                            ok = await _close(
-                                trade_id,
-                                -units,
-                                "reentry_reset",
-                                client_id,
-                                allow_negative=True,
-                            )
-                            if ok:
-                                states.pop(trade_id, None)
-                                return
+                    if ok:
+                        states.pop(trade_id, None)
+                        return
 
             if not skip_soft:
                 soft_failed = False
