@@ -1100,11 +1100,21 @@ async def scalp_m1_worker() -> None:
                 )
                 last_conf_log = now_mono
             continue
-        is_reversion = (
-            "buy-dip" in signal_tag_l
-            or "sell-rally" in signal_tag_l
-            or "reversion" in signal_tag_l
-        )
+        is_buy_dip = "buy-dip" in signal_tag_l
+        is_sell_rally = "sell-rally" in signal_tag_l
+        is_reversion = is_buy_dip or is_sell_rally or ("reversion" in signal_tag_l)
+        if is_buy_dip:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s buy_dip_block tag=%s conf=%s pf=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    conf_val,
+                    pf,
+                )
+                last_block_log = now_mono
+            continue
         if is_reversion and config.REVERSION_REQUIRE_STRONG_RANGE:
             range_mode = str(range_ctx.mode or "").strip().lower()
             range_mode_ok = (
@@ -1380,6 +1390,24 @@ async def scalp_m1_worker() -> None:
                     side,
                     config.SIDE_FILTER,
                     signal_tag,
+                )
+                last_block_log = now_mono
+            continue
+        if is_sell_rally and side == signal_side:
+            proj_score = 0.0
+            try:
+                proj_score = float((proj_detail or {}).get("score", 0.0))
+            except Exception:
+                proj_score = 0.0
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s sell_rally_no_flip_block tag=%s conf=%s proj_score=%.3f pf=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    conf_val,
+                    proj_score,
+                    pf,
                 )
                 last_block_log = now_mono
             continue

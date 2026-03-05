@@ -11636,3 +11636,13 @@
     - pocket別に timeout と fail-policy を上書きできる env を追加（`BRAIN_TIMEOUT_SEC_MICRO`, `BRAIN_TIMEOUT_SEC_SCALP_FAST`, `BRAIN_FAIL_POLICY_MICRO`, `BRAIN_FAIL_POLICY_SCALP_FAST`）。
 
 - main commit: `48716111`
+
+## 2026-03-06 JST - M1Scalper: buy-dip ブロック + sell-rally は projection flip 時のみ許可（strategy-local）
+
+- `workers/scalp_m1scalper/worker.py`
+  - `buy-dip`（`M1Scalper-buy-dip`）は継続的に逆期待値のため、戦略ローカルでブロック（`buy_dip_block`）。
+  - `sell-rally`（`M1Scalper-sell-rally`）は `projection` による side flip（`side != signal_side`）時のみ許可し、非flipはブロック（`sell_rally_no_flip_block`）。
+  - 共通レイヤ/時間帯ブロックは追加せず、戦略ワーカー内の条件分岐のみで対処。
+
+- 検証:
+  - `pytest tests/workers/test_m1scalper_split_workers.py` passed

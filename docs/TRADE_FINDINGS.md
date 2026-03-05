@@ -6650,3 +6650,33 @@ Status:
     - flow_live: `n=4 / net_jpy=+61.840`
   - メモ:
     - `trades.db` が `orders.db` より遅延するため、必要に応じて `/position/sync_trades` を叩いて追いつかせてから評価する（例: `trades_last_close` が `13:30 UTC` → `16:26 UTC` へ更新）。
+
+## 2026-03-05 18:30 UTC / 2026-03-06 03:30 JST - M1Scalper: buy-dip 停止（戦略内ブロック） + sell-rally は projection flip 時のみ許可
+
+- 市況スナップショット（OANDA pricing / candles, 03:29 JST）:
+  - `USD/JPY mid=157.818 spread=0.8p`
+  - `ATR14(M1)=2.94p / 60m range=26.5p`
+  - `pricing latency=226ms / candles latency=300ms`
+
+- 事実（ローカル実測: `logs/trades.db`）:
+  - 直近24h（M1Scalper signal別）:
+    - `M1Scalper-buy-dip`: `n=64 / net_jpy=-372.9`（継続的に負け寄与）
+    - `M1Scalper-sell-rally`: `n=209 / net_jpy=+633.5`
+    - `M1Scalper-trend-long`: `n=73 / net_jpy=+251.9`
+  - 直近24h（sell-rally の exec_side 別）:
+    - `exec_side=long`: `n=169 / net_jpy=+1097.1 / win_rate=0.941`
+    - `exec_side=short`: `n=40 / net_jpy=-463.6 / win_rate=0.125`
+
+- 仮説:
+  - `buy-dip` は現行の市場状態で逆期待値になっており、継続稼働は資産減少を誘発する。
+  - `sell-rally` は「projection による side flip（signal_side と逆）」のときのみ強い期待値があり、signal_side のまま（short）実行すると大きく負ける。
+
+- 対応（main反映予定）:
+  - `workers/scalp_m1scalper/worker.py`:
+    - `buy-dip` は戦略内でブロック（`buy_dip_block` ログ）。
+    - `sell-rally` は projection 適用後に `side != signal_side`（flip）を満たすときのみ許可し、非flipはブロック（`sell_rally_no_flip_block` ログ）。
+
+- 検証観点（反映後 1-3h）:
+  1. `trades.db`: `source_signal_tag='M1Scalper-buy-dip'` が 0 件に収束すること。
+  2. `trades.db`: `source_signal_tag='M1Scalper-sell-rally'` の `exec_side='short'` が 0 件に収束すること。
+  3. `trades.db`: `M1Scalper-M1` の直近1h `net_jpy` / `PF` が改善方向で安定すること。
