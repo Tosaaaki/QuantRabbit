@@ -29,9 +29,9 @@
   - 確認手段: ローカル `logs/*.db` + OANDA API、該当戦略 worker/position_manager 的ログ、必要に応じて直近チャート。
   - 判定: 市況が通常レンジ外・流動性悪化時は、作業は保留し `docs/TRADE_FINDINGS.md` と運用ログへその理由を残す。
 - 各タスク開始時は、着手前チェックとして `docs/AGENT_COLLAB_HUB.md` の「運用手順」を必ず読む。最低限 `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し、現行手順を確認してから作業に入る。
-- LLM（ローカルLLM/Ollama）は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
+- LLM（Vertex）は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
 - Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す（default: disabled）。
-- Brain 有効化は `BRAIN_ENABLED=1` とローカルLLM（Ollama: `BRAIN_OLLAMA_URL` / `BRAIN_OLLAMA_MODEL`）の稼働が必須。
+- Brain 有効化は `BRAIN_ENABLED=1` と Vertex 認証（`VERTEX_PROJECT_ID` / `VERTEX_LOCATION` 等）が必須。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - **後付けの一律EXIT判定は作らない**。exit判断は各戦略ワーカー/専用 `exit_worker` のみが行う。`quant-strategy-control` は `entry/exit/global_lock` のガードのみで、全戦略に対する共通ロジックの事後的拒否/抑止を追加しない。
 - 各戦略は `entry_thesis` に「`entry_probability`」と「`entry_units_intent`」を必須で渡して、`order_manager` はここを受けるのみとする。`session_open` を含む `AddonLiveBroker` 経路でも、order 送出時にこの2値を確実に注入する。確率閾値・サイズ設計は戦略ローカルで行い、共通レイヤは強制的に戦略を選別しない（ガード・リスク系の拒否のみ）。

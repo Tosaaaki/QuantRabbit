@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from utils.ollama_client import call_ollama_chat_json
+from utils.vertex_client import call_vertex_text
 from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
@@ -36,11 +37,16 @@ _TTL_SEC = max(5.0, float(os.getenv("BRAIN_TTL_SEC", "90") or 90.0))
 _MEMORY_TTL_H = max(1.0, float(os.getenv("BRAIN_MEMORY_TTL_H", "72") or 72.0))
 _MAX_CONTEXT_CHARS = max(200, int(float(os.getenv("BRAIN_MAX_CONTEXT_CHARS", "1200") or 1200)))
 _MIN_SCALE = max(0.05, float(os.getenv("BRAIN_MIN_SCALE", "0.2") or 0.2))
-_BACKEND = (os.getenv("BRAIN_BACKEND", "ollama") or "ollama").strip().lower()
-if _BACKEND != "ollama":
-    # API-backed LLMs (Vertex, etc.) are intentionally disabled in local V2 operations.
-    LOG.warning("[BRAIN] unsupported backend=%s; forcing ollama", _BACKEND)
-    _BACKEND = "ollama"
+_BACKEND = (os.getenv("BRAIN_BACKEND", "vertex") or "vertex").strip().lower()
+if _BACKEND not in {"vertex", "ollama"}:
+    _BACKEND = "vertex"
+
+_VERTEX_MODEL = (
+    os.getenv("BRAIN_VERTEX_MODEL", "")
+    or os.getenv("VERTEX_DECIDER_MODEL")
+    or os.getenv("VERTEX_MODEL")
+    or "gemini-2.0-flash"
+)
 _OLLAMA_MODEL = (os.getenv("BRAIN_OLLAMA_MODEL", "gpt-oss:20b") or "gpt-oss:20b").strip()
 _OLLAMA_URL = (
     os.getenv("BRAIN_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
@@ -2346,15 +2352,31 @@ def decide(
 
     prompt = _build_prompt(context)
     call_start = time.monotonic()
-    payload: Optional[dict[str, Any]] = call_ollama_chat_json(
-        prompt,
-        model=_OLLAMA_MODEL,
-        url=_OLLAMA_URL,
-        timeout_sec=_TIMEOUT_SEC,
-        temperature=_TEMP,
-        max_tokens=_MAX_TOKENS,
-    )
-    llm_text_available = bool(payload)
+    vertex_resp = None
+    payload: Optional[dict[str, Any]] = None
+    llm_text_available = False
+    if _BACKEND == "ollama":
+        payload = call_ollama_chat_json(
+            prompt,
+            model=_OLLAMA_MODEL,
+            url=_OLLAMA_URL,
+            timeout_sec=_TIMEOUT_SEC,
+            temperature=_TEMP,
+            max_tokens=_MAX_TOKENS,
+        )
+        llm_text_available = bool(payload)
+    else:
+        vertex_resp = call_vertex_text(
+            prompt,
+            model=_VERTEX_MODEL,
+            temperature=_TEMP,
+            max_tokens=_MAX_TOKENS,
+            timeout_sec=_TIMEOUT_SEC,
+            response_mime_type="application/json",
+        )
+        llm_text_available = bool(vertex_resp and vertex_resp.text)
+        if llm_text_available:
+            payload = _parse_response(vertex_resp.text)
     call_ms = max(0.0, (time.monotonic() - call_start) * 1000.0)
     try:
         log_metric(
@@ -2413,6 +2435,36 @@ def decide(
         except Exception:
             pass
         return decision
+
+    if vertex_resp is not None:
+        try:
+            log_metric(
+                "brain_tokens_prompt",
+                float(vertex_resp.prompt_tokens or 0),
+                tags={"strategy": tag, "pocket": pocket_key, "backend": _BACKEND},
+            )
+            log_metric(
+                "brain_tokens_output",
+                float(vertex_resp.output_tokens or 0),
+                tags={"strategy": tag, "pocket": pocket_key, "backend": _BACKEND},
+            )
+            log_metric(
+                "brain_tokens_total",
+                float(vertex_resp.total_tokens or 0),
+                tags={"strategy": tag, "pocket": pocket_key, "backend": _BACKEND},
+            )
+            if _COST_INPUT_PER_1K > 0 or _COST_OUTPUT_PER_1K > 0:
+                est_cost = (
+                    (float(vertex_resp.prompt_tokens or 0) / 1000.0) * _COST_INPUT_PER_1K
+                    + (float(vertex_resp.output_tokens or 0) / 1000.0) * _COST_OUTPUT_PER_1K
+                )
+                log_metric(
+                    "brain_cost_est",
+                    float(est_cost),
+                    tags={"strategy": tag, "pocket": pocket_key, "backend": _BACKEND},
+                )
+        except Exception:
+            pass
 
     action = str(payload.get("action") or "ALLOW").strip().upper()
     reason = str(payload.get("reason") or "").strip()
