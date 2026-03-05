@@ -52,12 +52,15 @@ from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 from workers.common import (
     perf_guard,
     profit_guard,
-    brain,
     forecast_gate,
     pattern_gate,
     slo_guard,
     strategy_control,
 )
+try:
+    from workers.common import brain  # type: ignore
+except Exception:  # pragma: no cover - optional dependency / lane
+    brain = None
 from workers.common.quality_gate import current_regime
 from indicators.factor_cache import get_last_regime
 from utils import signal_bus
@@ -2523,6 +2526,11 @@ _ORDER_MANAGER_BRAIN_GATE_ENABLED = _env_bool("ORDER_MANAGER_BRAIN_GATE_ENABLED"
 _ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT = _env_bool(
     "ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT", False
 )
+_ORDER_MANAGER_BRAIN_GATE_MISSING_LOG_INTERVAL_SEC = max(
+    5.0,
+    float(os.getenv("ORDER_MANAGER_BRAIN_GATE_MISSING_LOG_INTERVAL_SEC", "90.0")),
+)
+_ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO = 0.0
 _ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
 _FORECAST_SERVICE_ENABLED = _env_bool("FORECAST_SERVICE_ENABLED", False)
 _FORECAST_SERVICE_URL = os.getenv("FORECAST_SERVICE_URL", "http://127.0.0.1:8302").strip()
@@ -9444,22 +9452,42 @@ async def market_order(
             or _ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT
         )
     ):
-        try:
-            brain_decision = brain.decide(
-                strategy_tag=strategy_tag,
-                pocket=pocket,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
-                meta=meta if isinstance(meta, dict) else None,
-                confidence=confidence,
-                client_order_id=client_order_id,
+        brain_decision = None
+        if brain is None:
+            global _ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO
+            now_mono = time.monotonic()
+            if (
+                now_mono - _ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO
+                >= _ORDER_MANAGER_BRAIN_GATE_MISSING_LOG_INTERVAL_SEC
+            ):
+                logging.warning(
+                    "[BRAIN] module unavailable; skipping brain gate (fail-open) pocket=%s strategy=%s",
+                    pocket,
+                    strategy_tag,
+                )
+                _ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO = now_mono
+            log_metric(
+                "order_brain_unavailable",
+                1.0,
+                tags={"pocket": pocket, "strategy": str(strategy_tag or "unknown")},
             )
-        except Exception as exc:
-            brain_decision = None
-            logging.debug("[BRAIN] decision failed: %s", exc)
+        else:
+            try:
+                brain_decision = brain.decide(
+                    strategy_tag=strategy_tag,
+                    pocket=pocket,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                    meta=meta if isinstance(meta, dict) else None,
+                    confidence=confidence,
+                    client_order_id=client_order_id,
+                )
+            except Exception as exc:
+                brain_decision = None
+                logging.debug("[BRAIN] decision failed: %s", exc)
         if brain_decision is not None:
             if not brain_decision.allowed:
                 note = f"brain_block:{brain_decision.reason}"

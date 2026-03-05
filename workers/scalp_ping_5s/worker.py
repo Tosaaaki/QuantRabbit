@@ -34,6 +34,7 @@ from utils.market_hours import is_market_open, seconds_until_open
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from workers.common.exit_utils import close_trade
+from workers.common.dynamic_alloc import load_strategy_profile
 from workers.common.rate_limiter import SlidingWindowRateLimiter
 from workers.common.size_utils import scale_base_units
 from workers.common.tick_lookahead_edge import decide_tick_lookahead_edge
@@ -7140,6 +7141,24 @@ async def scalp_ping_5s_worker() -> None:
                     )
                 )
             )
+            dyn_profile: dict = {}
+            dyn_mult = 1.0
+            dyn_score = 0.0
+            dyn_trades = 0
+            if config.DYN_ALLOC_ENABLED:
+                dyn_profile = load_strategy_profile(
+                    config.STRATEGY_TAG,
+                    pocket=config.POCKET,
+                    path=config.DYN_ALLOC_PATH,
+                    ttl_sec=config.DYN_ALLOC_TTL_SEC,
+                )
+                dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
+                dyn_mult = max(
+                    config.DYN_ALLOC_MULT_MIN,
+                    min(config.DYN_ALLOC_MULT_MAX, dyn_mult),
+                )
+                dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
+                dyn_trades = int(dyn_profile.get("trades", 0) or 0)
             units_mult_total = (
                 conf_mult
                 * strength_mult
@@ -7160,6 +7179,8 @@ async def scalp_ping_5s_worker() -> None:
             units_mult_total *= snapshot_units_scale
             units_mult_total *= allow_hour_units_mult
             units = int(round(float(base_units) * max(0.0, units_mult_total)))
+            if dyn_mult != 1.0:
+                units = int(round(units * dyn_mult))
 
             lot = allowed_lot(
                 nav,
@@ -7695,6 +7716,13 @@ async def scalp_ping_5s_worker() -> None:
                         "trap_unrealized_pl": round(trap_state.unrealized_pl, 1),
                     }
                 )
+            if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
+                entry_thesis["dynamic_alloc"] = {
+                    "strategy_key": dyn_profile.get("strategy_key"),
+                    "score": round(float(dyn_score), 3),
+                    "trades": int(dyn_trades),
+                    "lot_multiplier": round(float(dyn_mult), 3),
+                }
 
             client_order_id = _client_order_id(signal.side)
             entry_thesis_ctx = None

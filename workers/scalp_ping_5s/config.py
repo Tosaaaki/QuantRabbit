@@ -99,6 +99,14 @@ STRATEGY_TAG: str = (
 )
 LOG_PREFIX: str = os.getenv("SCALP_PING_5S_LOG_PREFIX", "[SCALP_PING_5S]")
 PATTERN_GATE_OPT_IN: bool = _bool_env("SCALP_PING_5S_PATTERN_GATE_OPT_IN", True)
+DYN_ALLOC_ENABLED: bool = _bool_env("SCALP_PING_5S_DYN_ALLOC_ENABLED", True)
+DYN_ALLOC_PATH: str = (
+    os.getenv("SCALP_PING_5S_DYN_ALLOC_PATH", "config/dynamic_alloc.json").strip()
+    or "config/dynamic_alloc.json"
+)
+DYN_ALLOC_TTL_SEC: float = max(1.0, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_TTL_SEC", "20")))
+DYN_ALLOC_MULT_MIN: float = max(0.05, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_MULT_MIN", "0.25")))
+DYN_ALLOC_MULT_MAX: float = max(DYN_ALLOC_MULT_MIN, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_MULT_MAX", "1.65")))
 SIDE_FILTER: str = _normalize_side(os.getenv("SCALP_PING_5S_SIDE_FILTER", ""))
 SIGNAL_MODE_BLOCKLIST: tuple[str, ...] = _csv_lower_env(
     "SCALP_PING_5S_SIGNAL_MODE_BLOCKLIST"

@@ -6438,3 +6438,26 @@ Status:
   - `logs/local_v2_stack/quant-m1scalper.log` に `range_flip_to_trend_*` または `entry_guard_bypass` が出て、preflight が流れること
   - `logs/local_v2_stack/quant-micro-rangebreak.log` の `hist_block` 頻度が減り、entry が流れること
   - `orders.db` で `error_code=INSUFFICIENT_MARGIN` / `margin_*` 系の拒否が急増しないこと（増えるならロット縮小へ即応）
+
+## 2026-03-05 21:34 JST / ping5s の dyn alloc sizing 適用 + dyn alloc soft-participation 安全化 + order-manager Brain import fail-open
+
+- 作業前市況（ローカル実測 / OANDA API, 2026-03-05 21:29 JST）:
+  - `USD/JPY bid=157.388 ask=157.396 spread=0.8p`
+  - `ATR(M1)=2.388p`, `ATR(M5)=5.170p`
+  - 判定: 通常レンジ、流動性悪化は顕著でないため作業継続。
+
+- 狙い / 仮説:
+  - `trade_all` 等で「未観測 strategy が dyn alloc 未適用のまま full size」になると損益・マージンが悪化しやすい → soft-participation では未観測も `min_lot_multiplier` へ寄せる。
+  - ping5s 系（B/C/D/flow）は `config/dynamic_alloc.json` の score/lot_multiplier を sizing に取り込めておらず、悪化戦略の縮小が効かない → dyn alloc multiplier を entry の `units` へ反映する。
+  - Brain ゲートは default disabled だが、依存 import 失敗で `quant-order-manager` が起動不能になると no-trade を再発する → import を fail-open にして起動継続。
+
+- 対応（main反映 / local V2）:
+  - `execution/order_manager.py`: `workers.common.brain` を optional import に変更し、Brain gate enabled でも module 不在時は warning+metric を出して skip（fail-open）。
+  - `workers/common/dynamic_alloc.py`: `allocation_policy.soft_participation=true` のとき、`dynamic_alloc.json` に無い strategy は `min_lot_multiplier` をデフォルト適用（1.0固定を回避）。
+  - `workers/scalp_ping_5s/config.py` / `workers/scalp_ping_5s/worker.py`: dyn alloc profile を読み、`lot_multiplier` を entry `units` に反映。`entry_thesis.dynamic_alloc` を付与（found時）。
+
+- 検証手順:
+  - `python3 -m compileall execution/order_manager.py workers/common/dynamic_alloc.py workers/scalp_ping_5s/config.py workers/scalp_ping_5s/worker.py`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit`
+  - `logs/local_v2_stack/quant-scalp-ping-5s-b.log` で `dynamic_alloc` が `entry_thesis` に付与されていること（found時）

@@ -11507,3 +11507,16 @@
   - `MICRO_MULTI_HIST_SKIP_SCORE=0.20`（`hist_block` の hard skip を緩和）
   - `MICRO_MULTI_HIST_LOT_MIN=0.25`（低スコア時は縮小運転）
   - `M1SCALP_ENTRY_GUARD_BYPASS=1` は暫定維持（BB/projection reject の可視化/復旧用。常態化したら撤去して閾値側へ戻す）
+
+## 2026-03-05 JST - ping5s dyn alloc sizing 適用 + dyn alloc soft-participation 安全化 + order-manager Brain import fail-open
+
+- `execution/order_manager.py`
+  - `workers.common.brain` を optional import に変更し、Brain gate enabled でも module 不在時は warning+metric を出して skip（fail-open）。
+  - 目的: Brain 依存の import 失敗で `quant-order-manager` が起動不能→no-trade になる事故を避ける。
+
+- `workers/common/dynamic_alloc.py`
+  - `allocation_policy.soft_participation=true` のとき、`dynamic_alloc.json` に無い strategy は `min_lot_multiplier` をデフォルト適用（未観測戦略の full size を抑制）。
+
+- `workers/scalp_ping_5s/config.py` / `workers/scalp_ping_5s/worker.py`
+  - dyn alloc profile（`config/dynamic_alloc.json`）の `lot_multiplier` を entry `units` に反映し、ping5s 系（B/C/D/flow）の縮小/拡大が dyn alloc で効くようにした。
+  - found時は `entry_thesis.dynamic_alloc` を付与（他戦略と同形式）。

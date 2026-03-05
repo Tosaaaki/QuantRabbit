@@ -118,6 +118,8 @@ def load_strategy_profile(
     base["allow_loser_block"] = policy_allow_loser_block
     base["allow_winner_only"] = policy_allow_winner_only
     base["soft_participation"] = policy_soft_participation
+    if policy_soft_participation and policy_min_mult > 0.0:
+        base["lot_multiplier"] = max(0.0, float(policy_min_mult))
 
     pocket_l = str(pocket or "").strip().lower()
     lower_key_map: Dict[str, str] = {}
