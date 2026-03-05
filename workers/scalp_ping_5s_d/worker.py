@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 _FALSEY = {"", "0", "false", "no", "off"}
@@ -122,16 +121,11 @@ def _run_worker() -> None:
         fallback_log_prefix="[SCALP_PING_5S_D]",
     )
     repo_root = Path(__file__).resolve().parents[2]
-    env = os.environ.copy()
-    existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = str(repo_root) if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
     logging.getLogger(__name__).info("Application started!")
-    subprocess.run(
-        [sys.executable, "-m", "workers.scalp_ping_5s.worker"],
-        check=True,
-        cwd=str(repo_root),
-        env=env,
-    )
+    os.chdir(str(repo_root))
+    from workers.scalp_ping_5s.worker import scalp_ping_5s_worker
+
+    asyncio.run(scalp_ping_5s_worker())
 
 
 def _configure_logging() -> None:
