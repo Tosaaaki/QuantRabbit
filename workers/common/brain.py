@@ -11,6 +11,7 @@ import os
 import pathlib
 import random
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,7 +23,8 @@ from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
-_DB_PATH = pathlib.Path("logs/brain_state.db")
+_DB_PATH = pathlib.Path(os.getenv("BRAIN_DB_PATH", "logs/brain_state.db"))
+_TRADES_DB_PATH = pathlib.Path(os.getenv("BRAIN_TRADES_DB_PATH", "logs/trades.db"))
 _DB_TIMEOUT = float(os.getenv("BRAIN_DB_TIMEOUT_SEC", "3.0"))
 
 _ENABLED = os.getenv("BRAIN_ENABLED", "0").strip().lower() not in {"", "0", "false", "no", "off"}
@@ -121,7 +123,60 @@ _PERSONA_PRESETS = {
 _COST_INPUT_PER_1K = float(os.getenv("BRAIN_COST_INPUT_PER_1K", "0") or 0.0)
 _COST_OUTPUT_PER_1K = float(os.getenv("BRAIN_COST_OUTPUT_PER_1K", "0") or 0.0)
 
+_PROMPT_PROFILE_PATH = pathlib.Path(
+    os.getenv("BRAIN_PROMPT_PROFILE_PATH", "config/brain_prompt_profile.json")
+)
+_PROMPT_PROFILE_TTL_SEC = max(
+    5.0, float(os.getenv("BRAIN_PROMPT_PROFILE_TTL_SEC", "30") or 30.0)
+)
+_PROMPT_EXTRA_RULES_MAX = max(
+    1, int(float(os.getenv("BRAIN_PROMPT_EXTRA_RULES_MAX", "8") or 8))
+)
+_PROMPT_EXTRA_RULE_LEN = max(
+    24, int(float(os.getenv("BRAIN_PROMPT_EXTRA_RULE_LEN", "160") or 160))
+)
+
+_PROMPT_AUTOTUNE_ENABLED = os.getenv("BRAIN_PROMPT_AUTO_TUNE_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+_PROMPT_AUTOTUNE_INTERVAL_SEC = max(
+    60.0, float(os.getenv("BRAIN_PROMPT_AUTO_TUNE_INTERVAL_SEC", "1800") or 1800.0)
+)
+_PROMPT_AUTOTUNE_MIN_DECISIONS = max(
+    10, int(float(os.getenv("BRAIN_PROMPT_AUTO_TUNE_MIN_DECISIONS", "120") or 120))
+)
+_PROMPT_AUTOTUNE_LOOKBACK_HOURS = max(
+    1.0, float(os.getenv("BRAIN_PROMPT_AUTO_TUNE_LOOKBACK_HOURS", "24") or 24.0)
+)
+_PROMPT_AUTOTUNE_TIMEOUT_SEC = max(
+    1.0, float(os.getenv("BRAIN_PROMPT_AUTO_TUNE_TIMEOUT_SEC", "5") or 5.0)
+)
+_PROMPT_AUTOTUNE_TEMP = max(
+    0.0, min(1.0, float(os.getenv("BRAIN_PROMPT_AUTO_TUNE_TEMP", "0.1") or 0.1))
+)
+_PROMPT_AUTOTUNE_MAX_TOKENS = max(
+    128, int(float(os.getenv("BRAIN_PROMPT_AUTO_TUNE_MAX_TOKENS", "512") or 512))
+)
+_PROMPT_AUTOTUNE_MODEL = (
+    os.getenv("BRAIN_PROMPT_AUTO_TUNE_MODEL", "")
+    or os.getenv("BRAIN_OLLAMA_MODEL", "")
+    or _OLLAMA_MODEL
+).strip()
+_PROMPT_AUTOTUNE_URL = (
+    os.getenv("BRAIN_PROMPT_AUTO_TUNE_URL", "")
+    or os.getenv("BRAIN_OLLAMA_URL", "")
+    or _OLLAMA_URL
+).strip()
+
 _CACHE: dict[tuple[str, str], tuple[float, "BrainDecision"]] = {}
+_PROMPT_PROFILE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
+_PROMPT_PROFILE_LOCK = threading.Lock()
+_PROMPT_AUTOTUNE_LOCK = threading.Lock()
+_LAST_PROMPT_AUTOTUNE_TS = 0.0
 
 
 @dataclass(frozen=True)
@@ -158,6 +213,67 @@ def _ensure_schema() -> None:
         )
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_brain_memory_updated ON brain_memory(updated_at)"
+        )
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brain_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                ts_epoch REAL NOT NULL,
+                strategy_tag TEXT NOT NULL,
+                pocket TEXT NOT NULL,
+                side TEXT,
+                units INTEGER,
+                sl_price REAL,
+                tp_price REAL,
+                confidence REAL,
+                client_order_id TEXT,
+                backend TEXT,
+                source TEXT,
+                llm_ok INTEGER NOT NULL,
+                latency_ms REAL,
+                action TEXT,
+                allowed INTEGER,
+                scale REAL,
+                reason TEXT,
+                memory_before TEXT,
+                memory_after TEXT,
+                profile_version TEXT,
+                context_json TEXT,
+                response_json TEXT,
+                error TEXT
+            )
+            """
+        )
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brain_prompt_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                ts_epoch REAL NOT NULL,
+                lookback_hours REAL NOT NULL,
+                decision_count INTEGER NOT NULL,
+                model TEXT,
+                url TEXT,
+                applied INTEGER NOT NULL,
+                profile_version TEXT,
+                summary_json TEXT,
+                response_json TEXT,
+                error TEXT
+            )
+            """
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brain_decisions_ts ON brain_decisions(ts_epoch)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brain_decisions_strategy ON brain_decisions(strategy_tag, pocket, ts_epoch)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brain_decisions_client ON brain_decisions(client_order_id, ts_epoch)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brain_prompt_runs_ts ON brain_prompt_runs(ts_epoch)"
         )
         con.commit()
     finally:
@@ -280,6 +396,467 @@ def _stringify(obj: Any, limit: int) -> str:
     return text
 
 
+def _coerce_prompt_profile(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    rules: list[str] = []
+    for item in raw.get("extra_rules", []) or []:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if len(text) > _PROMPT_EXTRA_RULE_LEN:
+            text = text[:_PROMPT_EXTRA_RULE_LEN].rstrip() + "..."
+        rules.append(text)
+        if len(rules) >= _PROMPT_EXTRA_RULES_MAX:
+            break
+    profile: dict[str, Any] = {
+        "version": str(raw.get("version") or "").strip() or "v1",
+        "updated_at": str(raw.get("updated_at") or "").strip() or _now_iso(),
+        "extra_rules": rules,
+    }
+    focus = str(raw.get("focus") or "").strip()
+    if focus:
+        profile["focus"] = focus[:_PROMPT_EXTRA_RULE_LEN]
+    risk_bias = str(raw.get("risk_bias") or "").strip()
+    if risk_bias:
+        profile["risk_bias"] = risk_bias[:_PROMPT_EXTRA_RULE_LEN]
+    return profile
+
+
+def _profile_version(profile: Optional[dict[str, Any]]) -> str:
+    if not isinstance(profile, dict):
+        return "none"
+    text = str(profile.get("version") or "").strip()
+    return text or "none"
+
+
+def _load_prompt_profile(force: bool = False) -> dict[str, Any]:
+    global _PROMPT_PROFILE_CACHE
+    now = time.monotonic()
+    with _PROMPT_PROFILE_LOCK:
+        cached_ts, cached = _PROMPT_PROFILE_CACHE
+        if (
+            not force
+            and cached
+            and now - cached_ts <= _PROMPT_PROFILE_TTL_SEC
+        ):
+            return dict(cached)
+        profile: dict[str, Any] = {}
+        if _PROMPT_PROFILE_PATH.exists():
+            try:
+                raw = json.loads(_PROMPT_PROFILE_PATH.read_text(encoding="utf-8"))
+                profile = _coerce_prompt_profile(raw)
+            except Exception:
+                profile = {}
+        _PROMPT_PROFILE_CACHE = (now, profile)
+        return dict(profile)
+
+
+def _format_prompt_profile(profile: dict[str, Any]) -> str:
+    parts: list[str] = []
+    rules = profile.get("extra_rules") or []
+    if isinstance(rules, list) and rules:
+        parts.append("Adaptive rules (recent live outcomes):")
+        for item in rules:
+            text = str(item or "").strip()
+            if text:
+                parts.append(f"- {text}")
+    focus = str(profile.get("focus") or "").strip()
+    if focus:
+        parts.append(f"Focus: {focus}")
+    risk_bias = str(profile.get("risk_bias") or "").strip()
+    if risk_bias:
+        parts.append(f"Risk bias: {risk_bias}")
+    if not parts:
+        return ""
+    return "\n".join(parts)
+
+
+def _log_decision_row(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    side: str,
+    units: int,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    confidence: Optional[int],
+    client_order_id: Optional[str],
+    backend: str,
+    source: str,
+    llm_ok: bool,
+    latency_ms: float,
+    decision: BrainDecision,
+    memory_before: Optional[str],
+    memory_after: Optional[str],
+    profile_version: str,
+    context: Optional[dict[str, Any]],
+    payload: Optional[dict[str, Any]],
+    error: Optional[str] = None,
+) -> None:
+    _ensure_schema()
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        con.execute(
+            """
+            INSERT INTO brain_decisions(
+                ts, ts_epoch, strategy_tag, pocket, side, units, sl_price, tp_price,
+                confidence, client_order_id, backend, source, llm_ok, latency_ms,
+                action, allowed, scale, reason, memory_before, memory_after,
+                profile_version, context_json, response_json, error
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                _now_iso(),
+                float(time.time()),
+                strategy_tag,
+                pocket,
+                side,
+                int(units),
+                sl_price,
+                tp_price,
+                float(confidence) if confidence is not None else None,
+                str(client_order_id or "").strip() or None,
+                backend,
+                source,
+                1 if llm_ok else 0,
+                float(latency_ms),
+                decision.action,
+                1 if decision.allowed else 0,
+                float(decision.scale),
+                decision.reason,
+                memory_before,
+                memory_after,
+                profile_version,
+                _stringify(context or {}, 4000),
+                _stringify(payload or {}, 4000),
+                str(error or "").strip() or None,
+            ),
+        )
+        con.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
+    cutoff_epoch = time.time() - (max(1.0, lookback_hours) * 3600.0)
+    summary: dict[str, Any] = {
+        "lookback_hours": float(lookback_hours),
+        "decision_count": 0,
+        "action_counts": {},
+        "source_counts": {},
+        "strategy_action_counts": [],
+        "reason_counts": [],
+        "filled_trade_outcome": {},
+    }
+    if not _DB_PATH.exists():
+        return summary
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        row = con.execute(
+            "SELECT COUNT(*) FROM brain_decisions WHERE ts_epoch >= ?",
+            (cutoff_epoch,),
+        ).fetchone()
+        summary["decision_count"] = int(row[0] or 0) if row else 0
+        for action, count in con.execute(
+            """
+            SELECT COALESCE(action, 'UNKNOWN') AS action, COUNT(*) AS c
+            FROM brain_decisions
+            WHERE ts_epoch >= ?
+            GROUP BY action
+            ORDER BY c DESC
+            """,
+            (cutoff_epoch,),
+        ).fetchall():
+            summary["action_counts"][str(action)] = int(count or 0)
+        for source, count in con.execute(
+            """
+            SELECT COALESCE(source, 'unknown') AS source, COUNT(*) AS c
+            FROM brain_decisions
+            WHERE ts_epoch >= ?
+            GROUP BY source
+            ORDER BY c DESC
+            """,
+            (cutoff_epoch,),
+        ).fetchall():
+            summary["source_counts"][str(source)] = int(count or 0)
+        for strat, pocket, action, count in con.execute(
+            """
+            SELECT strategy_tag, pocket, COALESCE(action, 'UNKNOWN') AS action, COUNT(*) AS c
+            FROM brain_decisions
+            WHERE ts_epoch >= ?
+            GROUP BY strategy_tag, pocket, action
+            ORDER BY c DESC
+            LIMIT 30
+            """,
+            (cutoff_epoch,),
+        ).fetchall():
+            summary["strategy_action_counts"].append(
+                {
+                    "strategy_tag": str(strat or ""),
+                    "pocket": str(pocket or ""),
+                    "action": str(action or "UNKNOWN"),
+                    "count": int(count or 0),
+                }
+            )
+        for action, reason, count in con.execute(
+            """
+            SELECT COALESCE(action, 'UNKNOWN') AS action, COALESCE(reason, '') AS reason, COUNT(*) AS c
+            FROM brain_decisions
+            WHERE ts_epoch >= ?
+            GROUP BY action, reason
+            ORDER BY c DESC
+            LIMIT 40
+            """,
+            (cutoff_epoch,),
+        ).fetchall():
+            summary["reason_counts"].append(
+                {
+                    "action": str(action or "UNKNOWN"),
+                    "reason": str(reason or ""),
+                    "count": int(count or 0),
+                }
+            )
+    except Exception:
+        return summary
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if not _TRADES_DB_PATH.exists():
+        return summary
+
+    uri = f"file:{_TRADES_DB_PATH}?mode=ro"
+    tcon = sqlite3.connect(uri, uri=True, timeout=_DB_TIMEOUT)
+    try:
+        cur = tcon.execute(
+            """
+            SELECT
+              d.action,
+              COUNT(*) AS trades,
+              SUM(CASE WHEN t.realized_pl > 0 THEN 1 ELSE 0 END) AS wins,
+              AVG(t.pl_pips) AS avg_pips,
+              AVG(t.realized_pl) AS avg_realized,
+              SUM(CASE WHEN t.realized_pl > 0 THEN t.realized_pl ELSE 0 END) AS gross_win,
+              SUM(CASE WHEN t.realized_pl < 0 THEN -t.realized_pl ELSE 0 END) AS gross_loss
+            FROM brain_decisions d
+            JOIN trades t
+              ON t.client_order_id = d.client_order_id
+            WHERE d.ts_epoch >= ?
+              AND d.action IN ('ALLOW','REDUCE')
+              AND t.close_time IS NOT NULL
+            GROUP BY d.action
+            """,
+            (cutoff_epoch,),
+        )
+        for action, trades, wins, avg_pips, avg_realized, gross_win, gross_loss in cur.fetchall():
+            trades_n = int(trades or 0)
+            wins_n = int(wins or 0)
+            gross_win_f = float(gross_win or 0.0)
+            gross_loss_f = float(gross_loss or 0.0)
+            pf = (
+                gross_win_f / gross_loss_f
+                if gross_loss_f > 1e-9
+                else (gross_win_f if gross_win_f > 0 else 0.0)
+            )
+            summary["filled_trade_outcome"][str(action)] = {
+                "trades": trades_n,
+                "wins": wins_n,
+                "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
+                "avg_pips": round(float(avg_pips or 0.0), 4),
+                "avg_realized": round(float(avg_realized or 0.0), 6),
+                "profit_factor": round(float(pf), 4),
+            }
+    except Exception:
+        pass
+    finally:
+        try:
+            tcon.close()
+        except Exception:
+            pass
+    return summary
+
+
+def _record_prompt_run(
+    *,
+    lookback_hours: float,
+    decision_count: int,
+    applied: bool,
+    profile_version: str,
+    summary: dict[str, Any],
+    response: Optional[dict[str, Any]],
+    error: Optional[str] = None,
+) -> None:
+    _ensure_schema()
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        con.execute(
+            """
+            INSERT INTO brain_prompt_runs(
+                ts, ts_epoch, lookback_hours, decision_count, model, url, applied,
+                profile_version, summary_json, response_json, error
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                _now_iso(),
+                float(time.time()),
+                float(lookback_hours),
+                int(decision_count),
+                _PROMPT_AUTOTUNE_MODEL,
+                _PROMPT_AUTOTUNE_URL,
+                1 if applied else 0,
+                profile_version,
+                _stringify(summary, 10000),
+                _stringify(response or {}, 10000),
+                str(error or "").strip() or None,
+            ),
+        )
+        con.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _write_prompt_profile(profile_payload: dict[str, Any]) -> dict[str, Any]:
+    global _PROMPT_PROFILE_CACHE
+    _PROMPT_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    merged = _load_prompt_profile(force=True)
+    merged.update(_coerce_prompt_profile(profile_payload))
+    merged["updated_at"] = _now_iso()
+    version = str(merged.get("version") or "").strip() or "v1"
+    merged["version"] = version
+    tmp_path = _PROMPT_PROFILE_PATH.with_suffix(_PROMPT_PROFILE_PATH.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(merged, ensure_ascii=True, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(_PROMPT_PROFILE_PATH)
+    with _PROMPT_PROFILE_LOCK:
+        _PROMPT_PROFILE_CACHE = (time.monotonic(), dict(merged))
+    return merged
+
+
+def _maybe_autotune_prompt_profile() -> None:
+    global _LAST_PROMPT_AUTOTUNE_TS
+    if not _PROMPT_AUTOTUNE_ENABLED:
+        return
+    now_epoch = time.time()
+    if now_epoch - _LAST_PROMPT_AUTOTUNE_TS < _PROMPT_AUTOTUNE_INTERVAL_SEC:
+        return
+    if not _PROMPT_AUTOTUNE_LOCK.acquire(blocking=False):
+        return
+    try:
+        now_epoch = time.time()
+        if now_epoch - _LAST_PROMPT_AUTOTUNE_TS < _PROMPT_AUTOTUNE_INTERVAL_SEC:
+            return
+        # Throttle checks even when summary is insufficient to avoid scanning every decision.
+        _LAST_PROMPT_AUTOTUNE_TS = now_epoch
+        summary = _collect_autotune_summary(_PROMPT_AUTOTUNE_LOOKBACK_HOURS)
+        decision_count = int(summary.get("decision_count") or 0)
+        if decision_count < _PROMPT_AUTOTUNE_MIN_DECISIONS:
+            return
+        current_profile = _load_prompt_profile(force=True)
+        prompt = (
+            "You optimize an FX decision gate prompt for USD/JPY scalping.\n"
+            "Given recent live decision statistics and outcomes, update the prompt profile.\n"
+            "Return JSON only with schema:\n"
+            "{\n"
+            '  "version": "v2",\n'
+            '  "focus": "one short sentence",\n'
+            '  "risk_bias": "one short sentence",\n'
+            '  "extra_rules": ["rule1", "rule2"]\n'
+            "}\n"
+            "Constraints:\n"
+            "- extra_rules must be imperative, concrete, and <=160 chars each.\n"
+            "- keep 3-8 rules.\n"
+            "- prioritize protecting downside and reducing low-edge entries.\n"
+            "- do not include markdown.\n\n"
+            f"Current profile: {_stringify(current_profile, 6000)}\n"
+            f"Recent summary: {_stringify(summary, 9000)}\n"
+        )
+        response = call_ollama_chat_json(
+            prompt,
+            model=_PROMPT_AUTOTUNE_MODEL,
+            url=_PROMPT_AUTOTUNE_URL,
+            timeout_sec=_PROMPT_AUTOTUNE_TIMEOUT_SEC,
+            temperature=_PROMPT_AUTOTUNE_TEMP,
+            max_tokens=_PROMPT_AUTOTUNE_MAX_TOKENS,
+        )
+        if not isinstance(response, dict):
+            _record_prompt_run(
+                lookback_hours=_PROMPT_AUTOTUNE_LOOKBACK_HOURS,
+                decision_count=decision_count,
+                applied=False,
+                profile_version=_profile_version(current_profile),
+                summary=summary,
+                response=None,
+                error="no_response",
+            )
+            return
+        merged = _write_prompt_profile(response)
+        _record_prompt_run(
+            lookback_hours=_PROMPT_AUTOTUNE_LOOKBACK_HOURS,
+            decision_count=decision_count,
+            applied=True,
+            profile_version=_profile_version(merged),
+            summary=summary,
+            response=response,
+            error=None,
+        )
+        try:
+            log_metric(
+                "brain_prompt_autotune_applied",
+                1.0,
+                tags={
+                    "version": _profile_version(merged),
+                    "decisions": str(decision_count),
+                },
+            )
+        except Exception:
+            pass
+    except Exception as exc:
+        _record_prompt_run(
+            lookback_hours=_PROMPT_AUTOTUNE_LOOKBACK_HOURS,
+            decision_count=0,
+            applied=False,
+            profile_version="none",
+            summary={},
+            response=None,
+            error=f"exception:{exc}",
+        )
+    finally:
+        try:
+            _PROMPT_AUTOTUNE_LOCK.release()
+        except Exception:
+            pass
+
+
+def _maybe_autotune_prompt_profile_async() -> None:
+    if not _PROMPT_AUTOTUNE_ENABLED:
+        return
+    if time.time() - _LAST_PROMPT_AUTOTUNE_TS < _PROMPT_AUTOTUNE_INTERVAL_SEC:
+        return
+    thread = threading.Thread(
+        target=_maybe_autotune_prompt_profile,
+        name="brain-prompt-autotune",
+        daemon=True,
+    )
+    thread.start()
+
+
 def _load_persona_overrides() -> dict[str, Any]:
     if not _RAW_PERSONA_OVERRIDES:
         return {}
@@ -362,12 +939,16 @@ def _build_prompt(context: dict[str, Any]) -> str:
     strategy_tag = str(context.get("strategy_tag") or "")
     pocket = str(context.get("pocket") or "")
     persona = _persona_text(strategy_tag, pocket)
+    profile = _load_prompt_profile()
+    profile_text = _format_prompt_profile(profile)
     ctx_text = _stringify(context, _MAX_CONTEXT_CHARS)
+    profile_block = f"{profile_text}\n\n" if profile_text else ""
     return (
         "You are the decision brain for an automated USD/JPY trading worker. "
         "Decide whether to allow, reduce, or block a single entry candidate. "
         "Respond with JSON only.\n\n"
         f"Persona: {persona}\n\n"
+        f"{profile_block}"
         "Rules:\n"
         "- action must be one of: ALLOW, REDUCE, BLOCK.\n"
         "- scale must be between 0.2 and 1.0 (never > 1.0). Use 1.0 for ALLOW.\n"
@@ -424,18 +1005,15 @@ def decide(
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
     confidence: Optional[int] = None,
+    client_order_id: Optional[str] = None,
 ) -> BrainDecision:
     if not _should_use(strategy_tag, pocket):
         return BrainDecision(True, 1.0, "disabled", "ALLOW")
     tag = str(strategy_tag).strip()
     pocket_key = str(pocket).strip().lower()
     cache_key = (tag, pocket_key)
-    now = time.monotonic()
-    cached = _CACHE.get(cache_key)
-    if cached and now - cached[0] <= _TTL_SEC:
-        return cached[1]
-
-    memory = _load_memory(tag, pocket_key)
+    profile_version = _profile_version(_load_prompt_profile())
+    memory_before = _load_memory(tag, pocket_key)
     context = {
         "ts": _now_iso(),
         "strategy_tag": tag,
@@ -445,10 +1023,41 @@ def decide(
         "sl_price": sl_price,
         "tp_price": tp_price,
         "confidence": confidence,
-        "memory": memory or "",
+        "memory": memory_before or "",
         "entry_thesis": entry_thesis or {},
         "meta": meta or {},
     }
+    now = time.monotonic()
+    cached = _CACHE.get(cache_key)
+    if cached and now - cached[0] <= _TTL_SEC:
+        decision = cached[1]
+        _log_decision_row(
+            strategy_tag=tag,
+            pocket=pocket_key,
+            side=side,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            confidence=confidence,
+            client_order_id=client_order_id,
+            backend=_BACKEND,
+            source="cache",
+            llm_ok=True,
+            latency_ms=0.0,
+            decision=decision,
+            memory_before=memory_before,
+            memory_after=decision.memory,
+            profile_version=profile_version,
+            context=context,
+            payload={"cached": True},
+            error=None,
+        )
+        try:
+            _maybe_autotune_prompt_profile_async()
+        except Exception:
+            pass
+        return decision
+
     prompt = _build_prompt(context)
     call_start = time.monotonic()
     vertex_resp = None
@@ -492,8 +1101,37 @@ def decide(
         pass
     if payload is None:
         allow_reason = "bad_response" if llm_text_available else "no_llm"
-        decision = _llm_failure_decision(memory=memory, allow_reason=allow_reason)
+        decision = _llm_failure_decision(memory=memory_before, allow_reason=allow_reason)
+        try:
+            _save_memory(tag, pocket_key, memory=decision.memory, decision=decision)
+        except Exception:
+            pass
         _CACHE[cache_key] = (now, decision)
+        _log_decision_row(
+            strategy_tag=tag,
+            pocket=pocket_key,
+            side=side,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            confidence=confidence,
+            client_order_id=client_order_id,
+            backend=_BACKEND,
+            source="llm_fail",
+            llm_ok=False,
+            latency_ms=call_ms,
+            decision=decision,
+            memory_before=memory_before,
+            memory_after=decision.memory,
+            profile_version=profile_version,
+            context=context,
+            payload=payload,
+            error=allow_reason,
+        )
+        try:
+            _maybe_autotune_prompt_profile_async()
+        except Exception:
+            pass
         return decision
 
     if vertex_resp is not None:
@@ -549,19 +1187,47 @@ def decide(
             action = "REDUCE"
 
     memory_update = str(payload.get("memory_update") or "").strip()
+    memory_after = memory_before
     if memory_update:
         if len(memory_update) > 200:
             memory_update = memory_update[:200] + "..."
-        memory = memory_update
+        memory_after = memory_update
+    elif memory_before:
+        memory_after = memory_before
 
-    decision = BrainDecision(allowed, scale, reason, action, memory=memory)
+    decision = BrainDecision(allowed, scale, reason, action, memory=memory_after)
     if memory_update:
-        _save_memory(tag, pocket_key, memory=memory, decision=decision)
+        _save_memory(tag, pocket_key, memory=memory_after, decision=decision)
     else:
         # still persist decision metadata for observability
-        _save_memory(tag, pocket_key, memory=memory, decision=decision)
+        _save_memory(tag, pocket_key, memory=memory_after, decision=decision)
 
     _CACHE[cache_key] = (now, decision)
+    _log_decision_row(
+        strategy_tag=tag,
+        pocket=pocket_key,
+        side=side,
+        units=units,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        confidence=confidence,
+        client_order_id=client_order_id,
+        backend=_BACKEND,
+        source="llm",
+        llm_ok=True,
+        latency_ms=call_ms,
+        decision=decision,
+        memory_before=memory_before,
+        memory_after=memory_after,
+        profile_version=profile_version,
+        context=context,
+        payload=payload,
+        error=None,
+    )
+    try:
+        _maybe_autotune_prompt_profile_async()
+    except Exception:
+        pass
     return decision
 
 

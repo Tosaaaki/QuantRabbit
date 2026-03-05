@@ -9455,6 +9455,7 @@ async def market_order(
                 entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
                 meta=meta if isinstance(meta, dict) else None,
                 confidence=confidence,
+                client_order_id=client_order_id,
             )
         except Exception as exc:
             brain_decision = None
