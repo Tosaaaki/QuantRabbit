@@ -9970,10 +9970,11 @@ async def market_order(
                 )
 
     # Pattern gate (pattern_book-driven block/scale; strategy worker opt-in)
+    # NOTE: pattern_gate は opt-in のため、preserve_strategy_intent 下でも評価してよい
+    # （共通レイヤでの一律選別ではなく、戦略側の明示 opt-in が前提）。
     if (
         not reduce_only
         and pocket != "manual"
-        and not preserve_strategy_intent
         and _ORDER_MANAGER_PATTERN_GATE_ENABLED
     ):
         try:

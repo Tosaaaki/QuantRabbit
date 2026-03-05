@@ -36,6 +36,22 @@
 - 意図:
   - ローカルV2の既定導線を「低レイテンシ + 明示opt-in」で固定し、収益/品質のPDCAを安定させる。
 
+### 2026-03-05（追記）OrderManager Pattern Gate 復活（preserve_strategy_intent下でも評価）+ 運用キー明示 + entry_thesis backfill導線
+
+- 対象:
+  - `execution/order_manager.py`
+  - `ops/env/local-v2-stack.env`
+  - `scripts/backfill_entry_thesis_from_orders.py`（新規）
+- 変更:
+  - order_manager の Pattern Gate 実行条件から `not preserve_strategy_intent` を除去し、preserve_intent 下でも評価できるようにした（pattern_gate自体は opt-in）。
+  - local-v2 env に `ORDER_MANAGER_PATTERN_GATE_ENABLED=1` を追加し、実運用導線で Pattern Gate を有効化した。
+  - `trades.db` の過去 `entry_thesis` 契約欠損（`entry_probability/entry_units_intent`）を `orders.db submit_attempt.request_json` から復元する backfill スクリプトを追加（ロック+バックアップ付）。
+- 背景:
+  - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）により Pattern Gate が常にスキップされ、
+    `logs/patterns.db` に avoid/weak が存在しても発注前の block/scale が反映されない状態だった。
+- 意図:
+  - opt-in 戦略に限り pattern book の avoid/weak を発注前に反映し、scalp_fast の SL 支配を減らす。
+
 ### 2026-03-05（追記）共有ホワイトボードMVP（local-only SQLite）
 
 - 対象:

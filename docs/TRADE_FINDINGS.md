@@ -23,6 +23,57 @@
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-05 17:30 JST / local-v2: Pattern Gateが実質無効化されていた問題を修正（preserve_strategy_intent下でも評価）+ 運用キー整理 + trades.entry_thesis backfill 追加
+
+Period:
+- 調査: 2026-03-05 16:55〜17:30 JST（UTC 07:55〜08:30）
+- 市況確認: 2026-03-05 17:00 JST（UTC 08:00）
+- 対象（実測）: `logs/trades.db`, `logs/orders.db`, `logs/patterns.db`, `logs/tick_cache.json`, `logs/oanda/candles_*_latest.json`
+- 対象（実装）: `execution/order_manager.py`, `ops/env/local-v2-stack.env`, `scripts/backfill_entry_thesis_from_orders.py`
+
+Fact:
+- 市況（local tick/candles, UTC 08:00 / JST 17:00）:
+  - USD/JPY `bid=157.343 / ask=157.351 / spread=0.8p`（tick直近200: min/median/p90/max=0.8p）
+  - `ATR14_pips(M1)=2.04` / `range_60m_pips(M1)=11.0`
+  - `ATR14_pips(H1)=12.69` / `ATR14_pips(H4)=31.82`
+- 直近7d（観測メモ, manual含む）:
+  - `net=-7291` / `PF=0.21`
+  - 最大損失: manual pocket `2026-03-02` の `MARKET_ORDER_MARGIN_CLOSEOUT (-7696)`
+  - OANDA openTrades: `-6998 units` の巨大shortが残存し、`margin_usage_ratio~0.88 / health_buffer~0.12`
+- scalp_fast（観測メモ, 直近24h）:
+  - `scalp_ping_5s_b_live` の long 側 `504 trades net=-183`、short 側 `201 trades net=+1.8`
+  - close_reason は `SL 539件 (avg -1.42pips)` が支配
+  - ただし `ops/env/local-v2-stack.env` で `SCALP_PING_5S_B_SIDE_FILTER=sell` に切替後は long close が 0（設定ドリフト起因の偏損が濃厚）
+- Pattern Gate が “死んでいた” 根拠（コード+DB）:
+  - `execution/order_manager.py` の Pattern Gate は `not preserve_strategy_intent` 条件で常にスキップされ得る。
+  - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）かつ `ORDER_MANAGER_PATTERN_GATE_ENABLED` 未設定（既定false）だと、orders.db に `pattern_block/pattern_scale_*` が出ない。
+  - 一方 `logs/patterns.db` には `st:scalp_ping_5s_b_live...` 等のスコアが大量に存在し、avoid/weak の識別が可能。
+
+Failure Cause:
+- Pattern Gate の運用キーが二重（`ORDER_PATTERN_GATE_ENABLED` と `ORDER_MANAGER_PATTERN_GATE_ENABLED`）かつ、
+  order_manager側の実行条件が `preserve_strategy_intent` に依存していたため、**opt-in戦略でも gate が実行されない**状態になっていた。
+
+Improvement:
+- Pattern Gate を preserve_strategy_intent 下でも評価する:
+  - `execution/order_manager.py`: `Pattern gate` 条件から `and not preserve_strategy_intent` を除去（pattern_gate自体はopt-inなので仕様整合）。
+- ローカルV2導線で Pattern Gate を有効化:
+  - `ops/env/local-v2-stack.env`: `ORDER_MANAGER_PATTERN_GATE_ENABLED=1`
+- （任意/母集団浄化）過去 trades の entry_thesis 契約欠損を backfill:
+  - `scripts/backfill_entry_thesis_from_orders.py` を追加し、`orders.db submit_attempt.request_json` から `entry_thesis` を復元して `trades.db` を更新（バックアップ/ロック付）。
+
+Verification:
+- Pattern Gate の作動確認:
+  - `orders.db` に `status='pattern_block'` / `status='pattern_scale_below_min'` が出ること（該当戦略の opt-in 前提）。
+  - `request_json.entry_thesis.pattern_gate` が payload を持つこと（allowed/scale/reason/pattern_id）。
+- backfill（dry-run→適用）:
+  - `python scripts/backfill_entry_thesis_from_orders.py --dry-run`
+  - `python scripts/backfill_entry_thesis_from_orders.py --until-utc 2026-02-27T23:59:59+00:00`
+- 収益の再評価:
+  - scalp_fast の `SL率/avg_pips` が改善方向か、`PF/expectancy` が悪化しないこと（n>=300 の短期判定→14dで再評価）。
+
+Status:
+- in_progress
+
 ## 2026-03-05 15:50 JST / local-v2: PF悪化RCA（scalp_ping_5s_b寄与大）+ Brain autopdca既定OFF(=opt-in)化
 
 Period:
