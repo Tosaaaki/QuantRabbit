@@ -39,14 +39,46 @@
 - 対象:
   - `ops/env/local-v2-stack.env`
   - 戦略: `scalp_ping_5s_b_live`
-- 変更:
+- 変更（即効パラメータ）:
   - `SCALP_PING_5S_B_SIDE_FILTER=none`
   - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1`
   - `SCALP_PING_5S_B_DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.35`
   - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_SPREAD_MULT=0.18`
   - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_RANGE_MULT=0.08`
   - `SCALP_PING_5S_B_LOOKAHEAD_LATENCY_PENALTY_PIPS=0.01`
+- 背景:
+  - `side_filter=short` 固定で long 側が `side_filter_block` に偏在し、short 側は `lookahead_block` 高止まりで約定が停止。
+- 意図:
+  - side固定を解除して約定再開を優先しつつ、lookahead のコスト過大評価を緩和。
+  - 同時に `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.35` で過度な逆張りエクスポージャを抑制。
 
+### 2026-03-05（同日追記）`scalp_ping_5s_b` lookahead gate temporary off
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+- 変更（追加）:
+  - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0`
+- 背景:
+  - side_filter 解除後も `side_filter=(unset)` は反映された一方、`lookahead edge_negative_block` が主遮断で `orders` 更新が止まった。
+- 意図:
+  - 即時の約定再開を優先するため、`scalp_ping_5s_b` の lookahead gate を一時的に無効化。
+
+### 2026-03-05（追記）local V2 env/runtime hardening（低リスク運用強化）
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `scripts/local_v2_autorecover_once.sh`
+  - `scripts/local_v2_watchdog.sh`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+- 変更:
+  - `status_service` を `pid file + module pattern pid + port listener` の統合判定へ更新。
+  - ステータスを `running / running_by_pattern / stale_pid_file / port_conflict / stopped` で明示。
+  - `stale pid file + pattern pidが1件` の場合、pid file を自動修復して `running_by_pattern` を返す。
+  - `stale pid file` かつ pattern/listener 実体が0件のケースは `stopped` 扱いへ寄せ、復旧判定と整合させた。
+  - env 読み込みで `--env` / `LOCAL_V2_EXTRA_ENV_FILES` を絶対パス正規化 + 重複排除し、サービス起動時に chain 順を1回ログ出力。
+  - env guard を追加（存在/regular/readable必須、world-writable は warn）。
+- 意図:
+  - ローカルV2の状態判定と再起動判断の一貫性を高め、env 事故を早期検知する。
 
 ### 2026-03-05（追記）ローカル自動復旧を watchdog + launchd で固定（手動再起動不要化）
 
@@ -11140,16 +11172,65 @@
   - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
   - `logs/local_v2_stack/quant-scalp-ping-5s-b.log` と `logs/local_v2_stack/quant-micro-rangebreak.log` を tail し、起動継続と skip傾向を確認
 
-### 2026-03-05 11:30 JST / `scalp_ping_5s_b` lookahead gate temporary off（local-v2）
+### 2026-03-05 09:10 JST / scalp_ping_5s_b runtime loss-suppression tuning (local V2)
+- Scope: `ops/env/scalp_ping_5s_b.env` only (no code path change).
+- Changes:
+  - enforce short-only (`SCALP_PING_5S_B_SIDE_FILTER=sell`, `ALLOW_NO_SIDE_FILTER=0`)
+  - tighten entry quality (`MAX_SPREAD_PIPS=0.90`, `LOOKAHEAD_ALLOW_THIN_EDGE=0`, `LOOKAHEAD_EDGE_MIN_PIPS=0.35`, `LOOKAHEAD_SAFETY_MARGIN_PIPS=0.16`, `ENTRY_NET_EDGE_MIN_PIPS=0.35`)
+  - reduce sizing (`BASE_ENTRY_UNITS=24`)
+- Rationale: 24h realized loss concentrated on long side in `scalp_ping_5s_b_live`; adjust runtime guardrails while keeping V2 split architecture unchanged.
 
-- 対象:
-  - `ops/env/local-v2-stack.env`
+## 2026-03-05 JST - local-v2 env layering整理（Brain profile分離）
+
+- 目的:
+  - `quant-v2-runtime` / service env / local override の役割を明確化し、実効envの追跡コストを下げる。
+  - Brain local LLM設定を再利用可能なプロファイルへ分離する。
 - 変更:
-  - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0`
-- 背景:
-  - side_filter解除（`SCALP_PING_5S_B_SIDE_FILTER=none`）後も `lookahead edge_negative_block` が主遮断で、約定再開に至らなかった。
-- 意図:
-  - 約定再開を最優先し、lookahead gate の過剰遮断を一時的に外して実取引データを再取得する。
+  - `ops/env/profiles/brain-ollama.env` を新規追加。
+    - `BRAIN_ENABLED=1`
+    - `ORDER_MANAGER_BRAIN_GATE_ENABLED=1`
+    - `ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT=1`
+    - `BRAIN_BACKEND=ollama`
+    - `BRAIN_OLLAMA_URL=http://127.0.0.1:11434/api/chat`
+    - `BRAIN_OLLAMA_MODEL=gpt-oss:20b`
+    - `BRAIN_SAMPLE_RATE=1.0`
+    - `BRAIN_TTL_SEC=5`
+    - `BRAIN_FAIL_POLICY=reduce`
+  - `ops/env/local-v2-stack.env` から Brainキーを撤去し、
+    `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama.env` でプロファイル合成へ変更。
+  - `scripts/local_v2_stack.sh`
+    - `--env` に複数ファイル（comma-separated）を許可。
+    - `LOCAL_V2_EXTRA_ENV_FILES` を読み込み、`base/service/override` 後に追加envを合成。
+    - `quant-order-manager` 起動時に Brain実効キーをログ出力（`[env] ...`）。
+- 影響範囲:
+  - ローカルV2起動時のenv解決順のみ。
+  - order preflightロジック（Brain本体/strategy entry/blackboard/position manager API）は非変更。
+
+## 2026-03-05 JST - ローカルヘルス収集導線の互換ラッパー追加
+
+- 目的:
+  - ローカル運用のヘルスチェック導線を `scripts/collect_local_health.sh` に統一し、既存 `run_health_snapshot.sh` 互換を維持する。
+- 実装:
+  - `scripts/collect_local_health.sh` を追加（`set -euo pipefail`）。
+  - `HEALTH_UPLOAD_DISABLE` 未指定時は `1` を既定適用し、引数は `run_health_snapshot.sh` へ透過。
+  - `run_health_snapshot.sh` は `bash` 経由で起動し、実行権限の有無に依存しないようにした。
+  - 成功時に `logs/health_snapshot.json` の出力先と `updated=yes/no` を表示。
+  - `docs/AGENT_COLLAB_HUB.md` と `docs/OPS_LOCAL_RUNBOOK.md` の手順を同ラッパー導線へ更新。
+- 影響範囲:
+  - ローカル運用オペレーション手順とヘルススナップショット実行導線のみ。
+  - strategy判定、order_manager/position_manager の挙動は非変更。
+
+## 2026-03-05 JST - collect_local_health のスナップショット鮮度表示を追加
+
+- 目的:
+  - 既存のヘルス収集結果に、`health_snapshot.json` の鮮度（経過秒）を即時確認できる最小情報を追加。
+- 実装:
+  - `scripts/collect_local_health.sh` に `HEALTH_SNAPSHOT_STALE_SEC`（既定 `300`）を追加。
+  - `run_health_snapshot.sh` 実行後に `snapshot_age_sec` を算出し、
+    `[collect-local-health] snapshot_age_sec=<n> stale_warn=<yes|no> threshold_sec=<t>` を出力。
+  - `stale_warn` は `snapshot_age_sec > HEALTH_SNAPSHOT_STALE_SEC` のとき `yes`。
+- 互換性:
+  - 既存の `ok ... updated=yes/no` 行と終了コードの意味は変更なし。
 
 ### 2026-03-05 11:35 JST / `scalp_ping_5s_b` no-signal緩和（local-v2 可変パラメータ）
 
@@ -11178,3 +11259,43 @@
   - `units_below_min` が継続し、entry 変換のボトルネックになっていた。
 - 意図:
   - 実発注可能な最終ユニットを確保し、約定再開を促進する。
+
+## 2026-03-05 JST - Brain local-LLM quality benchmarkツール追加（ローカルV2導線）
+
+- 目的:
+  - Brainゲート用ローカルLLMの品質/知能を、ローカルDB文脈で再現評価し、モデル/プロンプト差を比較可能にする。
+- 追加:
+  - `scripts/benchmark_brain_local_llm.py`
+    - サンプル抽出: `logs/brain_state.db`（`brain_decisions`）または `logs/orders.db`（`preflight_start`）
+    - 比較軸: 複数 `--variant`（model/prompt）
+    - レポート: `parse pass/fail`, `ALLOW/REDUCE/BLOCK mix`, `latency`, `outcome alignment`（`logs/trades.db` join）
+  - `tests/scripts/test_benchmark_brain_local_llm.py`
+    - orders由来サンプル抽出、決定正規化、alignment集計を固定化。
+- 影響範囲:
+  - 観測/評価ツールの追加のみ。`quant-order-manager` / `quant-position-manager` / 各strategy workerの実行導線は非変更。
+
+## 2026-03-05 JST / local_v2 trade_all: 全戦略ワーカー可変調整 + 停止復旧
+
+- 前提:
+  - ローカルV2導線のみで運用（`trade_all`）。
+  - `quant-position-manager` 不安定時に exit worker が連鎖停止する事象を解消対象とした。
+
+- 実装/設定:
+  - 追加: `workers/scalp_macd_rsi_div_b/exit_worker.py`
+    - `SCALP_MACD_RSI_DIV_B_*` -> `SCALP_PRECISION_*` マップを適用して B exit worker 起動欠損を補完。
+  - 変更: `ops/env/local-v2-stack.env`
+    - `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1`
+    - `POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC=1.0`
+    - `POSITION_MANAGER_SERVICE_FAIL_BACKOFF_MAX_SEC=6.0`
+    - B/C/D/Flow の可変しきい値・units・spread・lookahead をローカル上書き（詳細は TRADE_FINDINGS 参照）。
+
+- 反映手順（実施済み）:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-c,quant-scalp-ping-5s-d,quant-scalp-ping-5s-flow`
+  - `scripts/local_v2_stack.sh up --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+
+- 検証結果:
+  - `status --profile trade_all` で core4 + 全戦略 worker が running。
+  - 60秒持続確認でも core4/B/C/D/Flow は running 維持。
+  - `local_v2_autorecover.log` は `profile=trade_all` で復旧成功を記録。
+  - `collect_local_health.sh` 成功、`logs/health_snapshot.json` 更新を確認。
+

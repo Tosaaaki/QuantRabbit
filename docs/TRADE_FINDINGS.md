@@ -27,21 +27,294 @@
 
 Period:
 - 調査時刻: 2026-03-05 11:06〜11:16 JST
+- 対象: `ops/env/local-v2-stack.env`, `logs/orders.db`, `logs/trades.db`, `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
 
 Fact:
-- `orders` 最終約定: `2026-03-05 09:10:20 JST`（`2026-03-05T00:10:20.711262+00:00`）
-- `trades` 最終クローズ: `2026-03-04 22:54:44 JST`（`2026-03-04T13:54:44.442316+00:00`、前日）
-- `side_filter=short` 固定で `side=long` が `no_signal:side_filter_block` に偏在、`side=short` は `lookahead_block` 高止まり。
+- 着手前手順:
+  - `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し、ローカルV2運用手順を確認。
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で主要サービスが `running` を確認。
+- 市況/執行プロキシ（JST 11時台）:
+  - 価格帯 proxy（`orders.filled.executed_price` 直近20件）: `156.846 - 157.078`
+  - spread/range proxy（`scalp_ping_5s_b` lookaheadログ）: `cost_pips ≒ 1.096-1.132`, `range ≒ 0.1-0.8p`
+  - OANDA API応答品質: `quant-scalp-ping-5s-b.log` で `/v3/accounts/.../pricing` の `HTTP 200` 継続を確認。
+- 約定停止の事実（JST明記）:
+  - `orders` 最終約定: `2026-03-05 09:10:20 JST`（`2026-03-05T00:10:20.711262+00:00`）
+  - `trades` 最終クローズ: `2026-03-04 22:54:44 JST`（`2026-03-04T13:54:44.442316+00:00`、前日）
+- skip内訳（`quant-scalp-ping-5s-b.log`）:
+  - `entry-skip summary side=long total=14 no_signal:side_filter_block=14`
+  - `entry-skip summary side=short total=23 lookahead_block=23`
+  - side_filter解除後の実測: `side_filter=(unset)` は反映されたが、`lookahead edge_negative_block` が主遮断で `orders` 更新なし。
+
+Failure Cause:
+- 主因1: `SCALP_PING_5S_B_SIDE_FILTER=short` 固定で long 側が実質停止し、シグナルが `side_filter_block` に集中。
+- 主因2: short 側は `lookahead_block` 比率が高止まりし、entry 変換率が低下したまま約定停止へ遷移。
 
 Improvement:
-- `ops/env/local-v2-stack.env` に以下を適用。
+- `ops/env/local-v2-stack.env` を local-v2 即効チューニングとして更新:
   - `SCALP_PING_5S_B_SIDE_FILTER=none`
   - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1`
   - `SCALP_PING_5S_B_DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.35`
+  - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0`
   - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_SPREAD_MULT=0.18`
   - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_RANGE_MULT=0.08`
   - `SCALP_PING_5S_B_LOOKAHEAD_LATENCY_PENALTY_PIPS=0.01`
+- 追加施策: `LOOKAHEAD_GATE_ENABLED=0` を適用し、`edge_negative_block` 主遮断を一時的に外して即時の約定再開を優先。
+- 狙い:
+  - 約定再開（long側の `side_filter_block` 解消）
+  - short側 lookahead の過剰遮断を緩和しつつ、`DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.35` で過度な逆張りを抑制。
 
+Verification:
+- 反映後に `orders.filled` が再開し、最終約定時刻が更新されること。
+- `entry-skip summary` で `side_filter_block`（long）と `lookahead_block`（short）の比率が低下すること。
+- `HTTP 200` 継続と `rejected=0`（orders）を維持すること。
+
+Status:
+- in_progress
+
+## 2026-03-05 06:35 JST / Hourly RCA HOLD（trade_min停止 + trades stale + OANDA DNS失敗）
+
+Period:
+- 調査時刻: 2026-03-05 06:29〜06:35 JST
+- 対象: `docs/AGENT_COLLAB_HUB.md`, `docs/OPS_LOCAL_RUNBOOK.md`, `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `scripts/local_v2_stack.sh`, `scripts/check_oanda_summary.py`
+
+Fact:
+- 着手前手順:
+  - `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し運用手順を確認。
+  - `sed -n '/^## 運用原則/,/^## /p' docs/OPS_LOCAL_RUNBOOK.md` を実行（該当見出し抽出は空出力）。
+- DB鮮度（最終再確認, JST）:
+  - `orders.db=05:22:04 (age 72.4分)`, `trades.db=02:26:29 (age 248.6分)`, `metrics.db=06:35:11 (age 0.3分)`
+  - 30分超 stale 条件該当のため `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` を実行し、120秒待機後に再確認。
+- スタック状態:
+  - `up` は `quant-order-manager port=8300 remains occupied` で失敗（占有PID: `38068,38234,38235,38236,38238,38239,38240`）。
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` は対象サービスが全て `stopped`。
+- OANDA API確認:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` は `NameResolutionError(api-fxtrade.oanda.com)` で失敗。
+  - secret欠損エラーではないため `refresh_env_from_gcp.py` 条件には非該当。
+- 市況/執行プロキシ（直近2h, `logs/*.db` 実測）:
+  - 価格帯（filled）: `157.002 - 157.094`、mid帯（entry_thesis）: `156.998 - 157.089`
+  - spread: `avg/min/max = 0.8 / 0.8 / 0.8 pips`
+  - ATR/range proxy: `atr_m1_pips avg=1.58`, `signal_range_pips avg=0.59`
+  - 約定/拒否: `filled=10`, `submit_attempt=10`, `close_ok=2`, `reject=0`
+  - 応答品質 proxy: `data_lag_ms avg=838.452 (max=2457.185)`, `decision_latency_ms avg=32.899 (max=98.952)`
+- 直近2h PnL分解:
+  - `trades.db` 実績 `0件`（strategy別/時間帯別/拒否理由別とも集計不可）。
+  - 実行コスト proxy: `slippage vs ideal_entry = +0.15 pips`, `spread avg=0.8 pips`
+
+Failure Cause:
+- 利益阻害 Top3（数値根拠）:
+  1. `trades.db` が `248.6分` stale で、2h PnLの一次データが欠損（`trades=0`）。
+  2. `check_oanda_summary.py` が `NameResolutionError` で `1/1失敗`、API品質の正常判定が不能。
+  3. `quant-order-manager` の `8300` 競合により `trade_min` 復旧失敗、`status` は主要サービス `stopped`。
+
+Improvement:
+- 本時間帯の Hourly RCA は `HOLD`。
+- 次の1アクション:
+  - `8300` 占有プロセス解消で `local_v2_stack up --profile trade_min` を成功させ、
+    `orders/trades <=10分` と `check_oanda_summary.py` 成功を同時達成した次ランで
+    2h PnL本分解（strategy別/時間帯別/拒否理由別/実行コスト別）を再開する。
+
+Verification:
+- `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で主要サービスが `running`。
+- `logs/orders.db` と `logs/trades.db` の最終更新が `now-10m` 以内。
+- `PYTHONPATH=. python3 scripts/check_oanda_summary.py` が成功終了。
+
+Status:
+- in_progress（HOLD）
+
+## 2026-03-05 05:36 JST / Hourly RCA HOLD（trades stale継続 + Summary API DNS失敗）
+
+Period:
+- 調査時刻: 2026-03-05 05:29〜05:36 JST
+- 対象: `docs/AGENT_COLLAB_HUB.md`, `docs/OPS_LOCAL_RUNBOOK.md`, `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `scripts/local_v2_stack.sh`, `scripts/check_oanda_summary.py`
+
+Fact:
+- 着手前手順:
+  - `docs/AGENT_COLLAB_HUB.md` の「運用手順」を確認（runbook準拠）。
+  - `docs/OPS_LOCAL_RUNBOOK.md` の「運用原則」は該当見出しの抽出実行のみ（出力なし）。
+- DB鮮度（最終再確認, JST）:
+  - `orders.db=05:22:04 (age 13.35分)`, `trades.db=02:26:29 (age 188.93分)`, `metrics.db=05:35:18 (age 0.13分)`
+  - 初回鮮度チェックで `trades.db` が30分超 stale のため、
+    `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` を実行。
+- スタック起動結果:
+  - `quant-order-manager port=8300 remains occupied (start aborted for safety)` で `up` は失敗（120秒待機後も改善なし）。
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` は対象サービス `stopped`。
+- OANDA API確認:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` は
+    `NameResolutionError(api-fxtrade.oanda.com)` で失敗（secret/env欠損ではない）。
+- 市況/執行プロキシ（直近2h, `logs/*.db` 実測）:
+  - 価格帯（`orders.filled.executed_price`）: `157.002 - 157.131`（range `12.9 pips`）
+  - spread（`preflight_start.entry_thesis.spread_pips`）: `avg=0.8 pips`（min/max `0.8/0.8`）
+  - ATR proxy（`preflight_start.entry_thesis`）:
+    - `mtf_regime_atr_m1 avg=1.639 pips`（`1.502-1.873`）
+    - `mtf_regime_atr_m5 avg=4.823 pips`（`4.526-5.175`）
+  - range proxy（`signal_range_pips`）: `avg=0.760 pips`（`0.3-1.3`）
+  - 約定/拒否（orders 2h）: `total=58`, `filled=15`, `close_ok=4`, `reject_like=0`, `order_success_rate avg=1.0`, `reject_rate avg=0.0`
+  - API応答品質 proxy（metrics 2h）:
+    - `data_lag_ms avg=858.79, p95=1776.41, max=2794.15`
+    - `decision_latency_ms avg=34.14, p95=62.34, max=98.95`
+- 直近2h PnL分解:
+  - `trades.db` ベース実績: `trades=0`, `realized_pnl=0`（strategy/hour/reject/execution cost いずれも実績ゼロ）
+  - `orders.db` 代理集計（filled↔close_ok CID対応）:
+    - strategy別: `scalp_ping_5s_b_live trades=4, net_pips=+0.20, net_unit_pips=+27.0`
+    - hour別: `03:00JST +2.0p`, `04:00JST -0.8p`, `05:00JST -1.0p`
+    - reject理由別: `0件`
+    - execution cost proxy: `closed=4`, `avg_hold_sec=200.83`, `loss_count=3`, `avg_loss=-0.60p`, `avg_win=+2.00p`
+
+Failure Cause:
+- 利益阻害 Top3（数値根拠）:
+  1. `trades.db` stale (`188.93分`) により、2h realized PnL分解が `0件` となり本来のRCA軸が欠損。
+  2. `check_oanda_summary.py` が `NameResolutionError` で `1/1失敗`、API正常性を確認不能。
+  3. `quant-order-manager` の `8300` 競合で `local_v2_stack up` が失敗し、復旧オペレーションが閉塞。
+
+Improvement:
+- 次の1アクション（復旧ゲート）:
+  - `8300` 占有元を解消して `local_v2_stack up --profile trade_min` を成功させ、
+    `trades.db age <= 10分` と `check_oanda_summary.py` 成功を同時達成した次ランで
+    2h PnL本分解（strategy/hour/reject/execution cost）を再開する。
+
+Verification:
+- `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で主要サービスが `running`。
+- `logs/trades.db` 最終更新が `now-10m` 以内。
+- `PYTHONPATH=. python3 scripts/check_oanda_summary.py` が成功終了。
+
+Status:
+- in_progress（HOLD）
+
+## 2026-03-05 04:34 JST / Hourly RCA HOLD（OANDA Summary API DNS失敗継続）
+
+Period:
+- 調査時刻: 2026-03-05 04:29〜04:34 JST
+- 対象: `docs/OPS_LOCAL_RUNBOOK.md`, `docs/AGENT_COLLAB_HUB.md`, `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `scripts/local_v2_stack.sh`, `scripts/check_oanda_summary.py`
+
+Fact:
+- 着手前手順:
+  - `docs/OPS_LOCAL_RUNBOOK.md` の運用原則、および `docs/AGENT_COLLAB_HUB.md` の運用手順を確認。
+- DB鮮度（初回確認, JST）:
+  - `orders.db=03:50:07`, `trades.db=02:26:29`, `metrics.db=04:29:45`
+  - `trades.db` が30分超 stale のため、指示どおり `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` を実行。
+- スタック起動結果:
+  - `quant-order-manager port=8300 remains occupied (start aborted for safety)` で `up` は完了せず（feed/control のみ起動ログあり）。
+  - 120秒待機後の再確認でも `trades.db=02:26:29 JST` のまま更新なし。
+- OANDA API確認:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` を2回実行し、2/2で `NameResolutionError(api-fxtrade.oanda.com)`。
+  - secret欠損ではなく DNS 解決失敗。
+- 市況/執行プロキシ（`logs/*.db` 直近2h, window UTC `17:34:42-19:34:42`）:
+  - 価格帯（`filled.executed_price` + `close_ok.exit_context.mid`）: `156.988 - 157.156`
+  - spread: `avg 0.8 pips`
+  - ATR proxy: `mtf_regime_atr_m1 avg 1.899 pips`, `mtf_regime_atr_m5 avg 5.408 pips`
+  - range proxy: `signal_range_pips avg 0.94 pips`
+  - 約定/拒否: `orders=37`, `filled=10`, `reject_like=0`, `order_success_rate_avg=1.0`, `reject_rate_avg=0.0`
+  - API応答品質 proxy（strategy_control）: `data_lag_ms avg=894.061 / max=20850.001`, `decision_latency_ms avg=34.566 / max=195.601`
+  - `trades_2h=0`, `net_pnl=0`（`trades.db`最終更新が約340分 stale）
+
+Failure Cause:
+- ローカル市況/執行プロキシ自体は極端悪化ではないが、`check_oanda_summary.py` が継続してDNS失敗し、
+  API応答品質を「正常」と判定できない。
+- さらに `trades.db` が長時間 stale のままで、PnL分解の入力品質を満たさない。
+
+Improvement:
+- 本時間帯の Hourly RCA は `HOLD` とし、通常の2h PnL分解（strategy別/時間帯別/拒否理由別/実行コスト別）は実施しない。
+- 次の1アクション（再開ゲート）:
+  - `check_oanda_summary.py` 成功（DNS復旧）かつ `orders.db/trades.db` 更新が `<=10分` に戻るまで復旧対応を優先し、達成後ランでRCA本体を再開する。
+
+Verification:
+- `PYTHONPATH=. python3 scripts/check_oanda_summary.py` が成功終了すること。
+- `logs/orders.db` と `logs/trades.db` の最終更新が `now-10m` 以内になること。
+- 条件成立後にのみ、直近2h PnL分解（strategy/hour/reject/execution cost）を再開すること。
+
+Status:
+- in_progress（HOLD）
+
+## 2026-03-05 02:35 JST / Hourly RCA HOLD（OANDA DNS劣化でAPI品質異常）
+
+Period:
+- 調査時刻: 2026-03-05 02:29〜02:35 JST
+- 対象: `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `logs/tick_cache.json`, `logs/factor_cache.json`, `scripts/check_oanda_summary.py`
+
+Fact:
+- DB鮮度（`age_min`）:
+  - `orders.db=2.77分`, `trades.db=3.55分`, `metrics.db=0.01分`（30分以内のため `local_v2_stack up` は未実行）
+- OANDA API確認:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` は
+    `api-fxtrade.oanda.com` の `NameResolutionError` で失敗（secret欠損ではない）
+- 市況（ローカル実測）:
+  - `tick_cache` 最新: `bid/ask/mid=156.976/156.984/156.980`、`spread=0.8 pips`
+  - 直近15分バンド: `156.926-157.038`（`range=11.2 pips`）
+  - 直近60分バンド: `156.884-157.038`（`range=15.4 pips`）
+  - `factor_cache` ATR: `M1=2.633 pips`, `M5=6.753 pips`
+- 約定・拒否実績（直近2h）:
+  - `orders` ステータス: `filled=4`, `submit_attempt=4`, `preflight_start=4`, `close_ok=2`, `rejected=0`
+  - `trades` close件数: `0`、`realized_pl=0`
+- 実行/応答品質（直近2h）:
+  - `data_lag_ms`: `avg=1462.76`, `max=42302.97`（`n=717`）
+  - `decision_latency_ms`: `avg=38.33`, `max=378.20`（`n=717`）
+
+Failure Cause:
+- ローカル価格レンジ/スプレッド自体は異常なしだが、OANDA account summary API のDNS解決失敗が継続し、
+  API品質を「通常」と判定できない。
+- API品質異常時に2h RCA（strategy別/時間帯別/拒否理由別/execution cost別）を進めると、
+  市況前提の欠損を含む誤判定リスクが高い。
+
+Improvement:
+- 本時間帯の Hourly RCA は `HOLD` とし、PnL分解は実施しない。
+- 次の単一アクション（数値ゲート付き）:
+  - `check_oanda_summary.py` が成功するまでネットワーク/DNSを復旧し、
+    復旧後ランで `API成功` かつ `orders/trades 更新 <=10分` を満たした時点でRCA本体を再開する。
+
+Verification:
+- `PYTHONPATH=. python3 scripts/check_oanda_summary.py` が成功終了すること。
+- `logs/orders.db` / `logs/trades.db` の最終更新が `now-10m` 以内であること。
+- 上記成立後にのみ、直近2hのPnL分解（strategy/hour/reject/execution cost）を再実施する。
+
+Status:
+- in_progress（HOLD）
+
+## 2026-03-05 01:36 JST / Hourly RCA HOLD（API DNS失敗継続 + 約定DB更新停止）
+
+Period:
+- 調査時刻: 2026-03-05 01:29〜01:36 JST
+- 対象: `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `logs/orderbook_snapshot.json`, `logs/factor_cache.json`, `scripts/check_oanda_summary.py`
+
+Fact:
+- DB最終更新（JST）:
+  - `orders.db`: `2026-03-04 23:03:15`（約152.7分 stale）
+  - `trades.db`: `2026-03-05 00:04:08`（約91.9分 stale）
+  - `metrics.db`: `2026-03-05 01:35:56`（fresh）
+- 指示どおり `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` を実行したが、
+  `quant-order-manager port=8300 remains occupied (start aborted for safety)` で再起動不可。
+- OANDA API確認:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` は
+    `api-fxtrade.oanda.com` の `NameResolutionError` で失敗（DNS解決不可）。
+- 市況確認（ローカル実測）:
+  - `orderbook_snapshot`: `bid=156.960 / ask=156.968 / spread=0.8 pips`
+  - `factor_cache(M1)`: `close=156.998`, `ATR=2.908 pips`, `range15=7.7 pips`, `range60=33.7 pips`
+  - 時刻: `2026-03-04T16:34:59Z`（約定DBより新しいが、注文/約定記録は停止）
+- 約定・拒否実績（直近2h, `datetime(ts)` 基準）:
+  - `orders=0`, `rejected=0`, `filled=0`
+  - `trades=0`, `realized_pl=0`
+- 応答品質（直近2h, `metrics.db`）:
+  - `data_lag_ms`: `last=579.137`, `p95=2502.624`（`n=557`）
+  - `decision_latency_ms`: `last=44.872`, `p95=63.332`（`n=557`）
+
+Failure Cause:
+- OANDA account summary API が DNS 解決できず、live API品質確認が不能。
+- `orders.db` / `trades.db` が90分超 stale で、RCA本体（直近2h PnL分解）の入力が欠損。
+- `quant-order-manager` ポート競合で `trade_min` 再起動が完了しないため、復旧確認に進めない。
+
+Improvement:
+- 本時間帯の Hourly RCA は `HOLD` とし、通常の「strategy別/時間帯別/拒否理由別/実行コスト別」PnL分解は実施しない。
+- 次の1アクション（数値ゲート）:
+  1. `8300` 競合を解消し `local_v2_stack up` を成功させ、`orders.db` と `trades.db` の更新を `<=10分` に戻す。
+  2. `check_oanda_summary.py` のDNS解決復旧を確認し、成功レスポンスを取得する。
+  3. 上記2条件達成後、直近2hのPnL分解を再開する。
+
+Verification:
+- `orders.db/trades.db` の最終更新が `now-10m` 以内。
+- `PYTHONPATH=. python3 scripts/check_oanda_summary.py` 成功。
+- 条件達成後にのみ Hourly RCA本体（PnL分解）を再開。
+
+Status:
+- in_progress（HOLD）
 
 ## 2026-03-05 00:50 JST / ローカル収益RCA第4段 + 停止耐性（watchdog/launchd）固定
 
@@ -146,11 +419,66 @@ Verification:
 Status:
 - in_progress（HOLD）
 
+## 2026-03-05 03:34 JST / Hourly RCA HOLD（API DNS失敗継続 + order/trade更新停止）
+
+Period:
+- 調査時刻: 2026-03-05 03:27〜03:34 JST
+- 対象: `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`, `scripts/local_v2_stack.sh`, `scripts/check_oanda_summary.py`
+
+Fact:
+- DB更新時刻:
+  - `orders.db`: `2026-03-05 02:27:16 JST`（約67.5分 stale）
+  - `trades.db`: `2026-03-05 02:26:29 JST`（約68.3分 stale）
+  - `metrics.db`: `2026-03-05 03:34:44 JST`（更新継続）
+- スタック再起動:
+  - `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env` は
+    `quant-order-manager port=8300 remains occupied` で失敗（`120s` 待機後も改善なし）。
+- API疎通:
+  - `PYTHONPATH=. python3 scripts/check_oanda_summary.py` を2回実行し、両方 `NameResolutionError(api-fxtrade.oanda.com)`。
+- 市況プロキシ（`orders.db` 直近2h、`preflight_start`）:
+  - spread: `avg=0.801 pips`（min `0.8`, max `1.0`）
+  - ATR proxy: `mtf_regime_atr_m1=3.429`, `mtf_regime_atr_m5=9.525`
+  - range proxy: `signal_range_pips=0.51`
+  - 価格帯 proxy（`filled/close_ok`）: `156.884 - 157.594`（range `0.710`）
+- 約定/拒否実績（直近2h）:
+  - `orders=2843`, `filled=671`, `reject_like=412`
+  - `trades=704`, `net_pnl=-299.270`
+  - reject上位: `entry_probability_reject=383`, `STOP_LOSS_ON_FILL_LOSS=27`, `api_error(502)=1`
+- API応答品質 proxy（`metrics.db` 直近2h）:
+  - `data_lag_ms avg=6,534,745.994`（max `3,385,784,138.449`）
+  - `decision_latency_ms avg=39.121`（max `3025.991`）
+
+Failure Cause:
+- 利益阻害トップ3（数値根拠）:
+  1. API品質異常: `check_oanda_summary` 2/2失敗（DNS解決不可）。
+  2. 執行導線停止: `orders/trades` が `67-68分` stale、`local_v2_stack up` も `port 8300` 競合で復旧失敗。
+  3. 成績劣化: 直近2h `net_pnl=-299.270`、かつ `reject_like=412/2843 (14.5%)`、主要拒否は `entry_probability_reject=383`。
+
+Improvement:
+- 本時間帯のRCAは `HOLD` とし、通常の2h分解（strategy別・時間帯別・拒否理由別・実行コスト別）は保留。
+- 次の1アクション:
+  - `8300` 占有プロセス（`PID: 38068, 38234, 38235, 38236, 38238, 38239, 38240`）の整理を最優先し、
+    `local_v2_stack up` 成功と `orders/trades <=10m` 回復を確認してからRCA再開する。
+
+Verification:
+- `orders.db/trades.db` の最終更新が `now-10m` 以内に戻ること。
+- `PYTHONPATH=. python3 scripts/check_oanda_summary.py` が成功すること。
+- 上記2条件を満たした次ランで、直近2h PnLの4軸分解を再実行すること。
+
+Status:
+- in_progress（HOLD）
+
 ## Hourly RCA 改善案バックログ（automation: qr-hourly-rca）
 
 - `[status=in_progress]` API到達性と約定DB鮮度の復旧確認（`check_oanda_summary` 成功 + `orders/trades` 更新 `<=10m`）
+- `[status=in_progress]` 8300競合（`quant-order-manager`）の占有元特定と競合解消手順の固定化（PID群まで確認済み）
 - `[status=open]` 復旧後の直近2h PnL分解（strategy別・時間帯別・拒否理由別・実行コスト別）を再実施
-- `[status=done]` 本ランでのHOLD判定記録を `TRADE_FINDINGS.md` 単一台帳へ追記
+- `[status=done]` 2026-03-05 06:35 JST ランのHOLD判定を台帳へ追記（trade_min停止 + trades stale + DNS失敗）
+- `[status=done]` 2026-03-05 05:36 JST ランのHOLD判定を台帳へ追記（trades stale + DNS失敗 + 8300競合）
+- `[status=done]` 2026-03-05 03:34 JST ランのHOLD判定を台帳へ追記（DNS失敗 + 8300競合継続）
+- `[status=done]` 2026-03-05 02:35 JST ランのHOLD判定を台帳へ追記（API DNS失敗継続）
+- `[status=done]` 2026-03-05 01:36 JST ランのHOLD判定を台帳へ追記
+- `[status=done]` 2026-03-05 04:34 JST ランのHOLD判定を台帳へ追記（Summary API DNS失敗 + trades stale）
 
 ## 2026-03-04 14:22 UTC / 2026-03-04 23:22 JST - `SCALP_PING_5S_B_SIDE_FILTER` の fail-closed 強化（空許可の誤適用防止）
 
@@ -5576,27 +5904,35 @@ Recheck KPIs (next 60-90 min):
   - `tail -n 120 logs/local_v2_stack/quant-scalp-ping-5s-b.log`
   - `tail -n 120 logs/local_v2_stack/quant-micro-rangebreak.log`
 
-## 2026-03-05 11:30 JST / scalp_ping_5s_b lookahead gate temporary off（約定再開優先）
+## 2026-03-05 09:10 JST / `scalp_ping_5s_b` 逆期待値抑制（sell固定 + 薄エッジ遮断）
 
-Period:
-- 調査時刻: 2026-03-05 11:20〜11:30 JST
-- 対象: `ops/env/local-v2-stack.env`, `logs/orders.db`, `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
-
-Fact:
-- `SCALP_PING_5S_B_SIDE_FILTER=none` 反映後も、`orders.db` 最終約定時刻が更新されず約定停止が継続。
-- `quant-scalp-ping-5s-b.log` で `lookahead edge_negative_block` が主遮断として継続。
-
-Failure Cause:
-- side_filter解除だけでは、lookahead gate による遮断が強く、entry変換率が回復しなかった。
-
-Improvement:
-- `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0` を local-v2 実運用envへ追加し、即時の約定再開を優先。
-
-Verification:
-- 再起動後に `orders.filled` の最終時刻更新と、`submit_attempt -> filled` の再開を確認する。
-
-Status:
-- in_progress
+- 目的:
+  - 「全然稼げてない」状態に対し、`scalp_ping_5s_b_live` の逆期待値エントリーを即時抑制する。
+- 市況実測（作業前チェック, ローカルV2 + OANDA API）:
+  - `USD/JPY mid=156.977`
+  - `spread`（tick_cache直近300）`avg=0.8 pips / p95=0.8 pips`
+  - `ATR14(M1)=1.743 pips`, `range60=14.2 pips`
+  - OANDA summary API 応答: 平均 `218.46ms`（max `238.77ms`, 3/3 success）
+- 収益分解（`logs/trades.db`, 直近24h, `strategy_tag=scalp_ping_5s_b_live`）:
+  - 総計: `n=611`, `net_realized=-175.658`, `PF=0.416`
+  - side別: `buy n=412 net=-177.957`, `sell n=199 net=+2.299`
+  - `STOP_LOSS_ORDER` 偏重で損失が集中。
+- 原因:
+  - 実運用値が緩和モード（`SCALP_PING_5S_B_SIDE_FILTER=none`）のままで、buy側逆期待値を通していた。
+  - lookahead/net-edge 閾値が実コスト（`cost_vs_mid ~0.4p`, spread ~`0.8p`）に対して低かった。
+- 反映（`ops/env/scalp_ping_5s_b.env`）:
+  - `SCALP_PING_5S_B_SIDE_FILTER=sell`
+  - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=0`
+  - `SCALP_PING_5S_B_MAX_SPREAD_PIPS=0.90`（1.15→0.90）
+  - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=0`
+  - `SCALP_PING_5S_B_LOOKAHEAD_EDGE_MIN_PIPS=0.35`（0.10→0.35）
+  - `SCALP_PING_5S_B_LOOKAHEAD_SAFETY_MARGIN_PIPS=0.16`（0.08→0.16）
+  - `SCALP_PING_5S_B_ENTRY_NET_EDGE_MIN_PIPS=0.35`（0.20→0.35）
+  - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=24`（35→24）
+- 再検証KPI（30m / 2h / 24h）:
+  - 30m: `buy` の `submit_attempt/filled` が 0 維持、`rejected/api_error` 増加なし。
+  - 2h: `scalp_ping_5s_b_live` の `PF >= 0.8`、`expectancy_realized` の改善。
+  - 24h: `strategy_tag=scalp_ping_5s_b_live` の `net_realized` 改善、`STOP_LOSS_ORDER` 比率低下。
 
 ## 2026-03-05 11:35 JST / scalp_ping_5s_b no-signal緩和（可変パラメータ拡張）
 
@@ -5641,3 +5977,43 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-03-05 13:05 JST / 全戦略ワーカー可変調整 + 停止系復旧（local_v2 trade_all）
+
+- 目的:
+  - 「全戦略ワーカーの停止解消」と「収益悪化戦略の即時可変チューニング」を同時実施し、trade_all を安定稼働へ戻す。
+- 作業前市況（ローカル実測 / OANDA API）:
+  - `USD/JPY bid=156.990 ask=156.998 spread=0.8p`
+  - `ATR14(M1)=2.921p`, `range60=19.3p`
+  - API遅延（pricing 6サンプル）: `avg=251.42ms`, `p95=260.10ms`, `max=271.72ms`
+- 停止要因（ログ根拠）:
+  - `quant-position-manager(8301)` への `Connection refused` が exit worker で連鎖。
+  - `local_v2_autorecover` の旧 `trade_min` 復旧履歴が残り、core restart連鎖を誘発。
+- 実施変更:
+  - `workers/scalp_macd_rsi_div_b/exit_worker.py` を追加（B exit import欠損解消）。
+  - `ops/env/local-v2-stack.env` を可変調整:
+    - B: `SIDE_FILTER=sell`, `ALLOW_NO_SIDE_FILTER=0`, `MAX_ACTIVE_TRADES=4`, `MAX_PER_DIRECTION=2`,
+      `MIN/LONG/SHORT_MIN_SIGNAL_TICKS=5`, `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.80/0.86`,
+      `ENTRY_PROBABILITY_ALIGN_FLOOR=0.62`, `BASE_ENTRY_UNITS=18`。
+    - C: `LOOKAHEAD_GATE_ENABLED=1`, `MIN_SIGNAL_TICKS=3`,
+      `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.74/0.80`, `ENTRY_PROBABILITY_ALIGN_FLOOR=0.52`, `MAX_SPREAD_PIPS=1.20`。
+    - D: `LOOKAHEAD_GATE_ENABLED=1`, `MIN_SIGNAL_TICKS=3`,
+      `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.66/0.74`, `ENTRY_PROBABILITY_ALIGN_FLOOR=0.55`,
+      `BASE_ENTRY_UNITS=4200`, `MAX_ACTIVE_TRADES=1`, `MAX_PER_DIRECTION=1`,
+      `DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.30`,
+      `FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.65`, `SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS=0.55`, `MAX_SPREAD_PIPS=1.20`。
+    - Flow: `LOOKAHEAD_GATE_ENABLED=1`, `MIN_SIGNAL_TICKS=3`,
+      `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.40/0.52`, `BASE_ENTRY_UNITS=700`,
+      `MAX_ACTIVE_TRADES=6`, `MAX_PER_DIRECTION=3`。
+- 反映:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-c,quant-scalp-ping-5s-d,quant-scalp-ping-5s-flow`
+  - 直後に `up --services core4` を再実行して PID/health を再確定。
+- 検証:
+  - `scripts/local_v2_stack.sh status --profile trade_all --env ops/env/local-v2-stack.env` で `stopped=0`。
+  - 60秒後再確認でも core + B/C/D/Flow はすべて `running` 維持。
+  - `logs/local_v2_autorecover.log` 最新で `2026-03-05 13:01:51 JST [recover] ... profile=trade_all` を確認。
+  - `scripts/collect_local_health.sh` 成功（`logs/health_snapshot.json` 更新）。
+- 反映後の初期観測（`datetime(close_time) >= 2026-03-05 04:01:00 UTC`）:
+  - closed trades: `1`, realized `+0.21`, win_rate `1.0`（サンプル小）。
+  - order status は B/C/D/Flow で `lookahead block` / `entry_probability_reject` / `strategy_cooldown` が主となり、逆期待値シグナルの通過が抑制。
+
