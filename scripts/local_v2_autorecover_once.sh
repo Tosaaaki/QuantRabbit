@@ -20,7 +20,8 @@ RESUME_GAP_SEC="${QR_LOCAL_V2_RESUME_GAP_SEC:-90}"
 NET_RECOVERY_RESTART_MARKET_DATA="${QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA:-1}"
 NET_RECOVERY_RESTART_COOLDOWN_SEC="${QR_LOCAL_V2_NET_RECOVERY_RESTART_COOLDOWN_SEC:-60}"
 STALE_RECOVERY_ENABLED="${QR_LOCAL_V2_STALE_RECOVERY_ENABLED:-0}"
-BRAIN_AUTOPDCA_ENABLED="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED:-1}"
+BRAIN_AUTOPDCA_ENABLED="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED:-0}"
+BRAIN_AUTOPDCA_ALLOW_RESTART="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ALLOW_RESTART:-0}"
 BRAIN_AUTOPDCA_INTERVAL_SEC="${QR_LOCAL_V2_BRAIN_AUTOPDCA_INTERVAL_SEC:-${QR_LOCAL_V2_BRAIN_PDCA_INTERVAL_SEC:-1800}}"
 
 usage() {
@@ -184,7 +185,11 @@ run_brain_autopdca_async() {
   fi
   local interval_sec
   interval_sec="$(as_positive_int "${BRAIN_AUTOPDCA_INTERVAL_SEC}" "1800")"
-  ("${cycle_script}" --interval-sec "${interval_sec}" >>"${LOG_FILE}" 2>&1) &
+  local args=("${cycle_script}" --interval-sec "${interval_sec}")
+  if ! is_truthy "${BRAIN_AUTOPDCA_ALLOW_RESTART}"; then
+    args+=(--dry-run)
+  fi
+  ("${args[@]}" >>"${LOG_FILE}" 2>&1) &
 }
 
 network_ready() {

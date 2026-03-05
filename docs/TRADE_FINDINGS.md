@@ -19,9 +19,54 @@
   - `Period`（集計期間）
   - `Fact`（数値）
   - `Failure Cause`（敗因）
-  - `Improvement`（改善施策）
+- `Improvement`（改善施策）
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
+
+## 2026-03-05 15:50 JST / local-v2: PF悪化RCA（scalp_ping_5s_b寄与大）+ Brain autopdca既定OFF(=opt-in)化
+
+Period:
+- 集計: 2026-03-04 15:46:50〜2026-03-05 15:46:50 JST（UTC 06:46:50）
+- 市況確認: 2026-03-05 15:40 JST（UTC 06:40）
+- 対象: `logs/trades.db`, `logs/factor_cache.json`, `logs/health_snapshot.json`, `scripts/local_v2_autorecover_once.sh`, `scripts/local_v2_stack.sh`
+
+Fact:
+- 市況（OANDA実測 + local factor, UTC 06:40 / JST 15:40）:
+  - USD/JPY `bid=157.106 / ask=157.114 / spread=0.8p`
+  - pricing latency `avg=255ms`（samples `[247,266,251]`）
+  - `ATR14_pips(M1)=2.64`, `ATR14_pips(M5)=5.87`, `ATR14_pips(H1)=18.02`
+- 直近24h（manual除外, `trades.db`, realized_pl）:
+  - `n=706`, `win_rate=0.218`, `PF=0.423`, `expectancy=-0.73 JPY/trade`
+  - `net=-518.5 JPY`, `net_pips=-567.1`
+- 負け寄与上位（`pocket|strategy_tag`, count>=5, net昇順）:
+  - `micro|MicroPullbackEMA n=25 net=-133.9 PF=0.111`
+  - `scalp_fast|scalp_ping_5s_b_live n=606 net=-133.2 PF=0.436`
+- 直近14d（count>=10, net上位）:
+  - `scalp|M1Scalper-M1 n=16 net=+413.3 PF=4.092`
+  - `micro|MicroRangeBreak n=27 net=+6.4 PF=1.035`
+
+Failure Cause:
+- `scalp_ping_5s_b` が **高頻度かつ期待値マイナス**のため、取引回数の大半を占有しPF/期待値を押し下げた。
+- `MicroPullbackEMA` が micro pocket 内で大きなマイナス寄与（PF=0.111）。
+- （運用リスク）`local_v2_autorecover_once.sh` の Brain autopdca が既定ONだと、意図せず cycle/restart が走り得る（opt-in運用と不整合）。
+
+Improvement:
+- `trade_min` の構成を **core + MicroRangeBreak(+exit) + M1Scalper(+exit)** に寄せ、`scalp_ping_5s_b(+exit)` を除外（stack側で反映）。
+- Brain autopdca を **既定OFF（opt-inのみ）**へ変更:
+  - `QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED` 既定 `0`
+  - `QR_LOCAL_V2_BRAIN_AUTOPDCA_ALLOW_RESTART` 既定 `0`（未指定時は `--dry-run` で実行し restart しない）
+
+Verification:
+- profile反映後:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で想定workerのみが `running` であること（`scalp_ping_5s_b` が起動していない）。
+- 次の再評価（まず24h、次に14d）:
+  - 同一集計で `PF>1.0` / `expectancy>0` を目標（`n>=300` で判定、未達なら更にRCA）。
+- Brain autopdca:
+  - デフォルトで `local_v2_autorecover.log` に autopdca cycle が出ないこと。
+  - opt-in時（`QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED=1`）でも、`QR_LOCAL_V2_BRAIN_AUTOPDCA_ALLOW_RESTART=1` を明示しない限り restart されないこと（cycle output の `dry_run=true`）。
+
+Status:
+- in_progress
 
 ## 2026-03-05 15:40 JST / local-v2: MicroPullbackEMAの勝率改善（ATRスケール+M5/H1確認）+ strategy_control hard stop解除
 
