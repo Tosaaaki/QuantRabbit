@@ -6340,9 +6340,10 @@ Status:
   - 判定: spreadは通常、レンジは拡大気味だが流動性悪化（スプレッド拡大/応答劣化）は見られないため作業継続。
 
 - 直近の損益分解（`logs/trades.db`, pocket<>manual, close_time>=now-24h）:
-  - `n=805`, `win_rate=0.2137`, `PF=0.418`, `expectancy_jpy=-0.7`, `net_jpy=-566.7`
+  - NOTE: `close_time` は `2026-03-05T05:13:34+00:00` のようなISO文字列のため、時間窓のSQLは `datetime(substr(close_time,1,19))` で正規化して集計する。
+  - `n=618`, `win_rate=0.2104`, `PF=0.407`, `expectancy_jpy=-0.8`, `net_jpy=-489.2`
   - 寄与（pocket×strategy, net_jpy上位の赤字）:
-    - `scalp_fast / scalp_ping_5s_b_live`: `n=705`, `net=-181.4`, `win_rate=0.199`
+    - `scalp_fast / scalp_ping_5s_b_live`: `n=518`, `net=-103.9`, `win_rate=0.189`
     - `micro / MicroPullbackEMA`: `n=25`, `net=-133.9`, `win_rate=0.28`
 
 - 口座リスク（OANDA, 2026-03-05 17:39 JST）:
