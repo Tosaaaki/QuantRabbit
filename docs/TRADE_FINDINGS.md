@@ -6369,3 +6369,21 @@ Status:
 - 次に見るKPI（再検証条件）:
   - 直近60m/24hの `M1Scalper-M1` と `MicroRangeBreak` の `PF>1.0`、`expectancy>=0` へ回復すること
   - `health_buffer>=0.10` を維持（下回る場合は「自動戦略追加で押さない」方向へ即時縮小）
+
+## 2026-03-05 18:20 JST / Pattern Gate マッチ率改善（MicroRangeBreak canonical tag）+ entry_thesis backfill診断強化
+
+- 背景:
+  - `orders.db` の `MicroRangeBreak-*` 注文は `entry_thesis.strategy_tag` も suffix 付きのままで、
+    Pattern book 側（`logs/patterns.db`）の `st:microrangebreak` と一致せず gate が no-op になりうる。
+  - `scripts/backfill_entry_thesis_from_orders.py` は `submit_attempt.request_json` 前提だが、
+    過去世代は `orders` 行が存在しても `request_json` が残っていないケースがあり、復元不能が混在する。
+
+- 変更:
+  - `workers/micro_runtime/worker.py`
+    - `MicroRangeBreak`/`MicroVWAPBound` の `entry_thesis.strategy_tag` を base tag へ正規化し、raw は `strategy_tag_raw` へ退避。
+  - `scripts/backfill_entry_thesis_from_orders.py`
+    - `orders.db` を `ATTACH` して参照し、`submit_attempt -> preflight_start -> other` 優先で `request_json` を拾う方式へ更新。
+    - `orders_matched / orders_with_request / recovered_from_orders` を出力して「一致はするが復元ソース無し」を判別可能にした。
+
+- 再検証:
+  - Pattern book 更新後（`scripts/pattern_book_worker.py`）、`MicroRangeBreak` の新規注文で `orders.status IN ('pattern_scaled','pattern_block','pattern_scale_below_min')` が出ること。

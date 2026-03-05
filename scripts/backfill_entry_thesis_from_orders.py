@@ -206,9 +206,8 @@ def main() -> int:
 
         tcon = sqlite3.connect(str(trades_db), timeout=20.0)
         tcon.row_factory = sqlite3.Row
-        ocon = sqlite3.connect(str(orders_db), timeout=10.0)
-        ocon.row_factory = sqlite3.Row
         try:
+            tcon.execute("ATTACH DATABASE ? AS ordersdb", (str(orders_db),))
             where = [
                 "pocket IS NOT NULL",
                 "LOWER(pocket) NOT IN ('manual', 'unknown')",
@@ -231,10 +230,49 @@ def main() -> int:
 
             rows = tcon.execute(
                 f"""
-                SELECT id, pocket, units, client_order_id, strategy_tag, entry_thesis, close_time
-                FROM trades
+                WITH orders_exists AS (
+                  SELECT DISTINCT client_order_id
+                  FROM ordersdb.orders
+                  WHERE client_order_id IS NOT NULL AND client_order_id != ''
+                ),
+                best_orders AS (
+                  SELECT client_order_id,
+                         status AS order_status,
+                         request_json,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY client_order_id
+                           ORDER BY
+                             CASE status
+                               WHEN 'submit_attempt' THEN 0
+                               WHEN 'preflight_start' THEN 1
+                               ELSE 2
+                             END,
+                             id ASC
+                         ) AS rn
+                  FROM ordersdb.orders
+                  WHERE client_order_id IS NOT NULL
+                    AND client_order_id != ''
+                    AND request_json IS NOT NULL
+                    AND LENGTH(request_json) > 2
+                )
+                SELECT
+                  t.id,
+                  t.pocket,
+                  t.units,
+                  t.client_order_id,
+                  t.strategy_tag,
+                  t.entry_thesis,
+                  t.close_time,
+                  CASE WHEN oe.client_order_id IS NULL THEN 0 ELSE 1 END AS has_order_row,
+                  bo.order_status,
+                  bo.request_json
+                FROM trades t
+                LEFT JOIN orders_exists oe
+                  ON oe.client_order_id = t.client_order_id
+                LEFT JOIN best_orders bo
+                  ON bo.client_order_id = t.client_order_id AND bo.rn = 1
                 WHERE {' AND '.join(where)}
-                ORDER BY id ASC
+                ORDER BY t.id ASC
                 {limit_sql}
                 """,
                 tuple(params),
@@ -245,6 +283,8 @@ def main() -> int:
                 return 0
 
             updates: list[tuple[str, int]] = []
+            orders_matched = 0
+            orders_with_request = 0
             recovered = 0
             fallback_only = 0
             sample_printed = 0
@@ -254,23 +294,16 @@ def main() -> int:
                 client_id = str(row["client_order_id"] or "").strip()
                 trade_units = row["units"]
                 strategy_tag = str(row["strategy_tag"] or "").strip()
+                has_order_row = bool(int(row["has_order_row"] or 0))
+                if client_id and has_order_row:
+                    orders_matched += 1
 
                 existing = _safe_json_obj(row["entry_thesis"]) or {}
 
                 recovered_thesis: dict[str, Any] | None = None
-                if client_id:
-                    attempt = ocon.execute(
-                        """
-                        SELECT request_json
-                        FROM orders
-                        WHERE client_order_id = ? AND status = 'submit_attempt'
-                        ORDER BY id ASC
-                        LIMIT 1
-                        """,
-                        (client_id,),
-                    ).fetchone()
-                    if attempt and attempt["request_json"]:
-                        recovered_thesis = _extract_thesis_from_request(attempt["request_json"])
+                if client_id and row["request_json"]:
+                    orders_with_request += 1
+                    recovered_thesis = _extract_thesis_from_request(row["request_json"])
 
                 if isinstance(recovered_thesis, dict):
                     recovered += 1
@@ -299,12 +332,15 @@ def main() -> int:
 
                 if sample_printed < int(args.print_samples or 0):
                     print(
-                        "[sample] id=%s pocket=%s client=%s close_time=%s old=%s new=%s"
+                        "[sample] id=%s pocket=%s client=%s close_time=%s orders=%s/%s(%s) old=%s new=%s"
                         % (
                             trade_id,
                             row["pocket"],
                             client_id or "-",
                             row["close_time"] or "-",
+                            int(has_order_row),
+                            int(bool(row["request_json"])),
+                            str(row["order_status"] or "-"),
                             json.dumps(existing, ensure_ascii=False, sort_keys=True)[:160],
                             new_json[:160],
                         )
@@ -312,8 +348,8 @@ def main() -> int:
                     sample_printed += 1
 
             print(
-                "[backfill] updates=%d recovered_from_orders=%d fallback_only=%d"
-                % (len(updates), recovered, fallback_only)
+                "[backfill] updates=%d orders_matched=%d orders_with_request=%d recovered_from_orders=%d fallback_only=%d"
+                % (len(updates), orders_matched, orders_with_request, recovered, fallback_only)
             )
 
             if args.dry_run or not updates:
@@ -328,7 +364,7 @@ def main() -> int:
             return 0
         finally:
             try:
-                ocon.close()
+                tcon.execute("DETACH DATABASE ordersdb")
             except Exception:
                 pass
             try:

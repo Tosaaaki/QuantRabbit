@@ -11462,3 +11462,13 @@
     「ファイル全文JSON」ではなく「末尾JSON行優先 + 全文fallback」へ修正。
   - これにより、警告行混在時でも `market_snapshot` が `null` にならず、
     `market_sanity_guard` 判定が実測値で行われるようになった。
+
+## 2026-03-05 JST - Pattern Gate マッチ率改善（MicroRangeBreak canonical tag）+ entry_thesis backfill診断強化
+
+- `workers/micro_runtime/worker.py`
+  - `MicroRangeBreak`/`MicroVWAPBound` の `entry_thesis.strategy_tag` を base tag に正規化し、`strategy_tag_raw` に元値を保持。
+  - Pattern book の `pattern_id`（`st:*`）と一致しない suffix 付きタグで gate が no-op になりうる問題を緩和。
+
+- `scripts/backfill_entry_thesis_from_orders.py`
+  - `orders.db` を `ATTACH` して参照し、`submit_attempt` を優先して `request_json` を取得する方式へ更新。
+  - 診断用に `orders_matched / orders_with_request / recovered_from_orders` を追加し、復元不能の理由を出力できるようにした。

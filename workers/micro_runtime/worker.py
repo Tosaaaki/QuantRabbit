@@ -1569,8 +1569,13 @@ async def micro_multi_worker() -> None:
             )
             client_id = _client_order_id(signal_tag)
             signal_conf = _to_confidence_0_100(signal.get("confidence", 0))
+            base_tag = str(signal_tag or "").split("-", 1)[0]
+            strategy_tag = signal_tag
+            # Pattern book uses canonical strategy tags; keep raw tag for observability.
+            if base_tag in {"MicroRangeBreak", "MicroVWAPBound"} and base_tag:
+                strategy_tag = base_tag
             entry_thesis: Dict[str, object] = {
-                "strategy_tag": signal_tag,
+                "strategy_tag": strategy_tag,
                 "signal_action": orig_action,
                 "signal_side": orig_side,
                 "exec_action": signal_action,
@@ -1590,7 +1595,8 @@ async def micro_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
-            base_tag = str(signal_tag or "").split("-", 1)[0]
+            if strategy_tag != signal_tag:
+                entry_thesis["strategy_tag_raw"] = signal_tag
             if base_tag == "MicroRangeBreak":
                 entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN)
                 if _MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC:
