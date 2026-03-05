@@ -5597,3 +5597,47 @@ Verification:
 
 Status:
 - in_progress
+
+## 2026-03-05 11:35 JST / scalp_ping_5s_b no-signal緩和（可変パラメータ拡張）
+
+Period:
+- 調査時刻: 2026-03-05 11:30〜11:35 JST
+- 対象: `ops/env/local-v2-stack.env`, `logs/local_v2_stack/quant-scalp-ping-5s-b.log`, `logs/orders.db`
+
+Fact:
+- `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0` は実効反映済み（process env確認）。
+- ただし最新 skip は `no_signal:revert_not_found` / `no_signal:momentum_tail_failed` が主因で、`filled` 最終時刻は `2026-03-05T02:22:07+00:00` のまま更新停滞。
+
+Improvement:
+- `ops/env/local-v2-stack.env` へ以下を追加し、シグナル生成を可変で緩和。
+  - `SCALP_PING_5S_B_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_LONG_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_SHORT_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_SIGNAL_MODE_BLOCKLIST=`
+  - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.72`
+  - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.78`
+
+Verification:
+- 再起動後に `entry-skip summary` の `signal_mode_blocked` と `momentum_tail_failed` 比率が低下すること。
+- `orders.db` の `submit_attempt/filled` 最終時刻が更新されること。
+
+Status:
+- in_progress
+
+## 2026-03-05 11:40 JST / units_below_min対策（risk floor + base units）
+
+Fact:
+- `entry-skip summary` は `units_below_min` が継続（short側で 4〜10 件）。
+- `orders` 最終 `filled` は `2026-03-05T02:22:07+00:00` で更新停滞。
+
+Improvement:
+- `ops/env/local-v2-stack.env` へ追加。
+  - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=32`
+  - `RISK_PERF_MIN_MULT=0.55`
+
+Verification:
+- 再起動後に `entry-skip summary` の `units_below_min` 比率が低下すること。
+- `orders.db` の `submit_attempt` / `filled` 最終時刻が更新されること。
+
+Status:
+- in_progress

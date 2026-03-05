@@ -11136,3 +11136,31 @@
   - side_filter解除（`SCALP_PING_5S_B_SIDE_FILTER=none`）後も `lookahead edge_negative_block` が主遮断で、約定再開に至らなかった。
 - 意図:
   - 約定再開を最優先し、lookahead gate の過剰遮断を一時的に外して実取引データを再取得する。
+
+### 2026-03-05 11:35 JST / `scalp_ping_5s_b` no-signal緩和（local-v2 可変パラメータ）
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `SCALP_PING_5S_B_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_LONG_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_SHORT_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_SIGNAL_MODE_BLOCKLIST=`
+  - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.72`
+  - `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.78`
+- 背景:
+  - lookahead gate無効化後、主遮断は `no_signal`（`revert_not_found` / `momentum_tail_failed`）へ遷移した。
+- 意図:
+  - エントリー生成率を上げ、`orders` の更新停滞を解消する。
+
+### 2026-03-05 11:40 JST / `scalp_ping_5s_b` size floor引き上げ（local-v2）
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `SCALP_PING_5S_B_BASE_ENTRY_UNITS=32`
+  - `RISK_PERF_MIN_MULT=0.55`
+- 背景:
+  - `units_below_min` が継続し、entry 変換のボトルネックになっていた。
+- 意図:
+  - 実発注可能な最終ユニットを確保し、約定再開を促進する。
