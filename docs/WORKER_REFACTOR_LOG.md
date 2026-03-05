@@ -11606,3 +11606,11 @@
   1. `orders.db`: `status='close_reject_no_negative'` 件数と reason 内訳（`reentry_reset` / `__de_risk__`）の減少。
   2. `trades.db`: flow系 `avg(pl_pips)` の改善。
   3. `metrics.db`: `account.margin_usage_ratio` の高止まり緩和（平均・最大の改善）。
+
+## 2026-03-05 15:30 UTC / 2026-03-06 00:30 JST - ping5s(flow系): strict no-negative の許可reason追補 + close_reject観測性改善
+
+- `config/strategy_exit_protections.yaml`
+  - `scalp_ping_5s` の `neg_exit.strict_allow_reasons/allow_reasons` に `reentry_reset` / `__de_risk__` を追補し、`close_reject_no_negative` 連鎖を抑制（main commit: `efd2f83e`）。
+
+- `execution/order_manager.py`
+  - `close_reject_no_negative` の orders.db ログに `pocket/instrument/strategy_tag` を含め、`est_pips` も記録して棚卸し可能性を回復（main commit: `efd2f83e`）。

@@ -6585,3 +6585,20 @@ Status:
   1. `orders.db` の `status='close_reject_no_negative'` 件数が減少すること（総数と reason 内訳）。
   2. `trades.db` の flow系 `avg(pl_pips)` が改善すること。
   3. `metrics.db` の `account.margin_usage_ratio` が高止まりせず、`max` が改善方向に向かうこと。
+
+## 2026-03-05 15:30 UTC / 2026-03-06 00:30 JST - flow系: `close_reject_no_negative` 再発防止（strict neg_exit allow + closeログ改善）
+
+- 追加確認（ローカル実測: `logs/orders.db`）:
+  - `close_reject_no_negative` の request_json に `exit_reason=__de_risk__/reentry_reset` が含まれている。
+  - `strategy_exit_protections.yaml` の `scalp_ping_5s` は `neg_exit.strict_no_negative=true` のため、未許可 reason は worker 側 `allow_negative=true` でも close が拒否され得る。
+  - `close_reject_no_negative` を orders.db で棚卸しする際に `pocket/instrument` が欠けており、戦略別の集計がしづらい。
+
+- 対応（main反映）:
+  - `config/strategy_exit_protections.yaml`（`scalp_ping_5s`）:
+    - `neg_exit.strict_allow_reasons` / `allow_reasons` に `reentry_reset` / `__de_risk__` を追補（commit=`efd2f83e`）。
+  - `execution/order_manager.py`:
+    - `close_reject_no_negative` の orders.db ログに `pocket/instrument/strategy_tag` を付与し、`est_pips` も記録（commit=`efd2f83e`）。
+
+- 検証観点（反映後 1-3h）:
+  1. `orders.db`: `status='close_reject_no_negative'` が `reentry_reset/__de_risk__` で反復しないこと。
+  2. `orders.db`: `close_reject_no_negative` 行に `pocket/instrument` が入ること（戦略別に集計できること）。
