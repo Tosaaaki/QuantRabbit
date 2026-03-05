@@ -99,10 +99,10 @@ PROFILE_trade_min=(
   "quant-strategy-control"
   "quant-order-manager"
   "quant-position-manager"
-  "quant-scalp-ping-5s-b"
-  "quant-scalp-ping-5s-b-exit"
   "quant-micro-rangebreak"
   "quant-micro-rangebreak-exit"
+  "quant-m1scalper"
+  "quant-m1scalper-exit"
 )
 
 PROFILE_trade_all=(
