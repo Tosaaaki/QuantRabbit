@@ -11472,3 +11472,12 @@
 - `scripts/backfill_entry_thesis_from_orders.py`
   - `orders.db` を `ATTACH` して参照し、`submit_attempt` を優先して `request_json` を取得する方式へ更新。
   - 診断用に `orders_matched / orders_with_request / recovered_from_orders` を追加し、復元不能の理由を出力できるようにした。
+
+## 2026-03-05 JST - M1Scalper quickshot hard-gate を env で無効化可能に（local V2）
+
+- `workers/scalp_m1scalper/config.py`
+  - `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE`（default=1）を追加し、`USDJPY_QUICKSHOT_HARD_GATE` として参照可能にした。
+- `workers/scalp_m1scalper/worker.py`
+  - quickshot 判定で `quickshot_allow=False` のとき、hard-gate が有効な場合のみ `continue`（無効時は quickshot plan 無しで通常の entry ロジックへ継続）。
+- `ops/env/local-v2-stack.env`
+  - `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE=0` / `M1SCALP_USDJPY_QUICKSHOT_MAX_SPREAD_PIPS=1.20`（retest 要件は維持）

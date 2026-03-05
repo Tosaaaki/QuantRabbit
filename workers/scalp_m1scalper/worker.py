@@ -1452,8 +1452,9 @@ async def scalp_m1_worker() -> None:
                         quickshot_detail or {},
                     )
                     last_block_log = now_mono
-                continue
-            if isinstance(quickshot_detail, dict):
+                if config.USDJPY_QUICKSHOT_HARD_GATE:
+                    continue
+            if quickshot_allow and isinstance(quickshot_detail, dict):
                 quickshot_plan = dict(quickshot_detail)
                 quickshot_size_mult = max(0.5, min(1.6, float(quickshot_plan.get("size_mult", 1.0) or 1.0)))
                 target_units_raw = quickshot_plan.get("target_units")
