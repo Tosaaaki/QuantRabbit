@@ -11552,3 +11552,15 @@
 
 - `tests/workers/common/test_dynamic_alloc.py` / `tests/execution/test_strategy_entry_dynamic_alloc_trim.py`
   - soft-participation の fallback と、strategy_entry 側 trim の unit test を追加。
+
+## 2026-03-05 JST - ping5s: scalp_fast protection fallback 縮小 + mode blocklist + flow SL復帰（local V2）
+
+- `ops/env/local-v2-stack.env`
+  - `ORDER_PROTECTION_FALLBACK_PIPS_SCALP_FAST=0.02`
+    - `STOP_LOSS_ON_FILL_LOSS` 後の protection fallback で SL が約12pに拡張されるケースがあり、scalp_fastでは tail loss を作りやすい。
+  - ping5s:
+    - `SCALP_PING_5S_B_SIGNAL_MODE_BLOCKLIST=momentum_hz,momentum_sidefilter,momentum_hz_slflip_smflip_hz`
+    - `SCALP_PING_5S_D_SIGNAL_MODE_BLOCKLIST=momentum_mtf_fade_hz,momentum_hz`
+    - `SCALP_PING_5S_FLOW_SIGNAL_MODE_BLOCKLIST=momentum_mtf_revert_hz`
+  - flow:
+    - `SCALP_PING_5S_FLOW_USE_SL=1`（`workers/scalp_ping_5s/config.py` の `USE_SL` default が flow で False になるため明示的に復帰）

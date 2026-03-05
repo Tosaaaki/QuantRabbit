@@ -6520,3 +6520,21 @@ Status:
     - `logs/health_snapshot.json` の `git_rev` が `a296316d` で、`orders_last_ts` が更新され続けること。
   - 監査:
     - `orders.db` の `request_json.entry_thesis.dynamic_alloc.source=strategy_entry` が（dyn alloc 未実装戦略で）付与されること。
+
+## 2026-03-05 22:18 JST / ping5s: scalp_fast protection fallback 縮小 + mode blocklist + flow SL有効化（local V2）
+
+- 背景（ローカル実測 / `logs/trades.db` + `logs/orders.db`）:
+  - `scalp_ping_5s_b_live` の損失は `Trend + long` に集中（直近3日 `n=444 / -182.1 JPY`）。
+  - ping5s B は `STOP_LOSS_ON_FILL_LOSS` の reject 後に protection fallback が走り、SL gap が `8p+` になる filled が存在（直近3日 `28/761`）。
+  - `scalp_ping_5s_flow_live` は `entry_thesis.sl_pips=null` かつ `disable_entry_hard_stop=1` のまま取引が入り、平均損失pipsが大きくなりやすい（例: avg win `+0.83p` vs avg loss `-4.82p`）。
+
+- 対応（local override / commit=`45a5fb18`）:
+  - `ops/env/local-v2-stack.env`
+    - `ORDER_PROTECTION_FALLBACK_PIPS_SCALP_FAST=0.02`（USDJPYで約2p。既定 `0.12` は12p相当でscalp_fastに広すぎ）
+    - ping5s B/D/flow の `*_SIGNAL_MODE_BLOCKLIST` を設定（直近負けモードを遮断）
+    - `SCALP_PING_5S_FLOW_USE_SL=1`（flowのSL/entry hard stop を復帰）
+
+- 検証（再起動後）:
+  - `sqlite3 logs/orders.db 'select count(*) from orders where status=\"rejected\" and error_message=\"STOP_LOSS_ON_FILL_LOSS\" and datetime(ts) >= datetime(\"now\",\"-1 day\") and client_order_id like \"%scalp_ping_5s_b%\";'` が減る
+  - `sqlite3 logs/orders.db 'with o as (select executed_price, sl_price from orders where status=\"filled\" and datetime(ts) >= datetime(\"now\",\"-1 day\") and client_order_id like \"%scalp_ping_5s_b%\" and executed_price is not null and sl_price is not null) select sum(case when abs(executed_price - sl_price)/0.01 >= 8.0 then 1 else 0 end), count(*) from o;'` の `>=8p` 比率が下がる
+  - flow を走らせた場合: `sqlite3 logs/trades.db 'select json_extract(entry_thesis,\"$.sl_pips\"), json_extract(entry_thesis,\"$.disable_entry_hard_stop\") from trades where strategy_tag like \"scalp_ping_5s_flow_live%\" order by close_time desc limit 5;'` で `sl_pips` が埋まる
