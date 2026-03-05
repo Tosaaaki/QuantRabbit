@@ -1122,7 +1122,7 @@ class M1Scalper:
                             trend="down",
                             range_score=round(range_score, 3),
                             mode=range_mode or "-",
-                            reason="strong_down",
+                            flip_reason="strong_down",
                         )
                     # 強い下落トレンドでは順張りショートに切替
                     action = "OPEN_SHORT"
@@ -1200,7 +1200,7 @@ class M1Scalper:
                             trend="up",
                             range_score=round(range_score, 3),
                             mode=range_mode or "-",
-                            reason="strong_up",
+                            flip_reason="strong_up",
                         )
                     # 強い上昇トレンドでは順張りロングに切替
                     action = "OPEN_LONG"
