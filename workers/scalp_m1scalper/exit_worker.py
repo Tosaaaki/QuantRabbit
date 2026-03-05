@@ -837,9 +837,21 @@ async def _run_exit_loop(
         float(rollout_start_ts or 0.0),
     )
     try:
+        last_positions_error_ts = 0.0
         while True:
             await asyncio.sleep(loop_interval)
-            positions = pos_manager.get_open_positions()
+            try:
+                positions = pos_manager.get_open_positions()
+            except Exception as exc:
+                now_ts = time.monotonic()
+                if now_ts - last_positions_error_ts > 30.0:
+                    LOG.warning(
+                        "[EXIT-%s] open_positions fetch failed; skipping iteration err=%s",
+                        pocket,
+                        exc,
+                    )
+                    last_positions_error_ts = now_ts
+                continue
             pocket_info = positions.get(pocket) or {}
             trades = pocket_info.get("open_trades") or []
             trades = _filter_trades(trades, tags)

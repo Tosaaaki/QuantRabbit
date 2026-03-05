@@ -6327,3 +6327,44 @@ Status:
   - 初回実運用で `market_snapshot: null` を検知。原因は market取得出力に警告行が混在し、JSON全文パースが失敗していたこと。
   - `run_brain_autopdca_cycle.sh` を修正し、末尾JSON行を優先抽出する方式に変更。
   - 確認: `logs/brain_autopdca_cycle_latest.json` で `market_snapshot.status=ok` と実測 spread/ATR/reject-rate が記録されることを確認。
+
+## 2026-03-05 17:40 JST / trade_min を `M1Scalper + MicroRangeBreak` に固定（ping5s停止）+ launchd追随（local V2）
+
+- 目的:
+  - `scalp_ping_5s_b_live` の「取引数だけ増えてSLで負ける」状態から脱し、trade_min を `M1Scalper + MicroRangeBreak` に寄せて収益性を回復する。
+
+- 作業前市況（ローカル実測 / OANDA API, 2026-03-05 17:17 JST）:
+  - `USD/JPY bid=157.281 ask=157.289 spread=0.8p`
+  - `ATR14(M1)=3.700p`, `ATR14(M5)=7.193p`, `range60=42.2p`
+  - API遅延: `pricing=241ms`, `candles(M1)=253ms`, `candles(M5)=271ms`, `summary=244ms`
+  - 判定: spreadは通常、レンジは拡大気味だが流動性悪化（スプレッド拡大/応答劣化）は見られないため作業継続。
+
+- 直近の損益分解（`logs/trades.db`, pocket<>manual, close_time>=now-24h）:
+  - `n=805`, `win_rate=0.2137`, `PF=0.418`, `expectancy_jpy=-0.7`, `net_jpy=-566.7`
+  - 寄与（pocket×strategy, net_jpy上位の赤字）:
+    - `scalp_fast / scalp_ping_5s_b_live`: `n=705`, `net=-181.4`, `win_rate=0.199`
+    - `micro / MicroPullbackEMA`: `n=25`, `net=-133.9`, `win_rate=0.28`
+
+- 口座リスク（OANDA, 2026-03-05 17:39 JST）:
+  - NAV `49,928.68 JPY`, margin_used `44,768.80`, margin_available `5,188.10`, health_buffer `0.1038`
+  - openTrades: `USD_JPY -6998`（2026-03-02 open, clientExtensionsなし）, `USD_JPY -120`（tag=codex_bi_hf）
+  - 直近の重大損失: `pocket=manual` の `MARKET_ORDER_MARGIN_CLOSEOUT`（2026-03-02, ticket `412993`, realized `-7696`）
+
+- 実施（ローカルV2導線のみ）:
+  - `scripts/local_v2_stack.sh` の `PROFILE_trade_min` を更新（`scalp_ping_5s_b(+exit)` を外し、`quant-m1scalper(+exit)` を追加）。
+    - commit: `5fb475eb chore(local_v2): trade_min add m1scalper`
+  - 既存の launchd が `--services` 固定（core+microのみ）で動いており、profile更新が反映されず `quant-m1scalper` が起動しない状態だった。
+    - `scripts/install_local_v2_launchd.sh --interval-sec 20 --profile trade_min --env ops/env/local-v2-stack.env` を再実行し、launchd を「profile追随（--services無し）」へ戻した。
+
+- 反映確認:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    - `quant-m1scalper` / `quant-m1scalper-exit` が `running`（ppid=1）で常駐することを確認。
+
+- Pattern Gate（opt-in）確認:
+  - `ops/env/local-v2-stack.env`: `ORDER_MANAGER_PATTERN_GATE_ENABLED=1`
+  - `ops/env/quant-v2-runtime.env`: `ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0`（全戦略強制はしない）
+  - `orders.db` 直近2hで `request_json LIKE '%pattern_gate%'` の行が `1210`（pattern gate payload が request に注入されていることを確認）
+
+- 次に見るKPI（再検証条件）:
+  - 直近60m/24hの `M1Scalper-M1` と `MicroRangeBreak` の `PF>1.0`、`expectancy>=0` へ回復すること
+  - `health_buffer>=0.10` を維持（下回る場合は「自動戦略追加で押さない」方向へ即時縮小）

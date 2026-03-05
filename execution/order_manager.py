@@ -10038,7 +10038,8 @@ async def market_order(
                 return None
 
             if pattern_decision.scale != 1.0:
-                scaled_units = int(round(abs(units) * pattern_decision.scale))
+                raw_units_abs = abs(units)
+                scaled_units = int(round(raw_units_abs * pattern_decision.scale))
                 min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 pattern_scale_floored = False
                 if scaled_units < min_allowed:
@@ -10093,12 +10094,47 @@ async def market_order(
                             },
                         )
                         return None
-                if scaled_units > 0 and scaled_units != abs(units):
+                if scaled_units > 0 and scaled_units != raw_units_abs:
                     sign = 1 if units > 0 else -1
-                    units = int(sign * scaled_units)
+                    scaled_signed_units = int(sign * scaled_units)
+                    note = f"pattern_scale:{pattern_decision.reason}"
+                    _console_order_log(
+                        "OPEN_SCALE",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side=side_label,
+                        units=scaled_signed_units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=scaled_signed_units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="pattern_scaled",
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "pattern_gate": pattern_decision.to_payload(),
+                            "scaled_units": scaled_units,
+                            "raw_units": raw_units_abs,
+                            "min_units": min_allowed,
+                            "floor_to_min": bool(pattern_scale_floored),
+                        },
+                    )
+                    units = scaled_signed_units
                     log_metric(
                         "order_pattern_scale",
-                        float(abs(scaled_units) / abs(units)) if abs(units) > 0 else 1.0,
+                        float(scaled_units / raw_units_abs) if raw_units_abs > 0 else 1.0,
                         tags={
                             "pocket": pocket,
                             "strategy": str(strategy_tag or "unknown"),

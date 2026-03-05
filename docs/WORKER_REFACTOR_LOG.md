@@ -45,12 +45,49 @@
 - 変更:
   - order_manager の Pattern Gate 実行条件から `not preserve_strategy_intent` を除去し、preserve_intent 下でも評価できるようにした（pattern_gate自体は opt-in）。
   - local-v2 env に `ORDER_MANAGER_PATTERN_GATE_ENABLED=1` を追加し、実運用導線で Pattern Gate を有効化した。
+  - Pattern Gate の scale 適用時に `orders.db` へ `pattern_scaled` を記録し、`order_pattern_scale` の比率計算が常に1.0になる不具合を修正（raw_units基準へ）。
   - `trades.db` の過去 `entry_thesis` 契約欠損（`entry_probability/entry_units_intent`）を `orders.db submit_attempt.request_json` から復元する backfill スクリプトを追加（ロック+バックアップ付）。
 - 背景:
   - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）により Pattern Gate が常にスキップされ、
     `logs/patterns.db` に avoid/weak が存在しても発注前の block/scale が反映されない状態だった。
 - 意図:
   - opt-in 戦略に限り pattern book の avoid/weak を発注前に反映し、scalp_fast の SL 支配を減らす。
+
+### 2026-03-05（追記）local_v2 trade_min を `M1Scalper + MicroRangeBreak` に寄せる（ping5s_b外し）+ launchd profile追随へ復帰
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `scripts/install_local_v2_launchd.sh`
+  - 運用: `~/Library/LaunchAgents/com.quantrabbit.local-v2-autorecover.plist`
+- 変更:
+  - `PROFILE_trade_min` から `quant-scalp-ping-5s-b(+exit)` を外し、`quant-m1scalper(+exit)` を追加。
+    - 目的は「高頻度SL偏重の scalp_fast を常駐させない最小構成」へ寄せること。
+  - launchd が `--services` で固定されていると、profile更新が反映されず trade_min の変更が効かない。
+    - `scripts/install_local_v2_launchd.sh --profile trade_min --env ops/env/local-v2-stack.env` を `--services` 無しで再実行し、
+      「profile追随」に戻す運用を明示（trade_min の構成変更がそのまま常駐へ反映される）。
+- 背景:
+  - `scalp_ping_5s_b_live` が取引数を支配しつつ期待値が負けており、最小常駐プロファイルを改善優先で組み替える必要があった（根拠は `docs/TRADE_FINDINGS.md`）。
+- 意図:
+  - ローカルV2の常駐導線を「最小 + 改善優先 + 自動復旧（launchd）」で固定し、収益悪化時も停止ではなく構成/条件改善で回せる状態にする。
+
+### 2026-03-05（追記）local_v2_stack: macOS の `ps` 出力で stale pid 検出が壊れるのを修正
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+- 変更:
+  - `ps -axo pid=,command=` の pid 列が macOS で先頭空白を含むため、`pid="${line%% *}"` の分割が空になり得る。
+  - regex 抽出（`^[[:space:]]*([0-9]+)[[:space:]]+(.*)$`）へ変更し、pid/command の抽出を安定化。
+- 意図:
+  - `service_process_pids` の誤判定を減らし、stale pid cleanup / status 表示の整合を保つ。
+
+### 2026-03-05（追記）`quant-m1scalper-exit`: position_manager 例外で即死しない（skip継続）
+
+- 対象:
+  - `workers/scalp_m1scalper/exit_worker.py`
+- 変更:
+  - `pos_manager.get_open_positions()` の例外時に exit worker が落ちてしまうため、例外を捕捉して iteration を skip（ログは30秒に1回まで）。
+- 意図:
+  - `quant-position-manager` の瞬断（起動直後/再起動直後）で exit 導線が連鎖停止しないようにする。
 
 ### 2026-03-05（追記）共有ホワイトボードMVP（local-only SQLite）
 

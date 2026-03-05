@@ -991,9 +991,14 @@ EOF_PATTERNS
 
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
-    pid="${line%% *}"
-    cmd="${line#* }"
-    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    # `ps -axo pid=,command=` includes leading spaces in the pid column on macOS.
+    # Normalize by extracting pid/command via regex instead of naive splitting.
+    if [[ "${line}" =~ ^[[:space:]]*([0-9]+)[[:space:]]+(.*)$ ]]; then
+      pid="${BASH_REMATCH[1]}"
+      cmd="${BASH_REMATCH[2]}"
+    else
+      continue
+    fi
     for pattern in "${pattern_list[@]}"; do
       if [[ "${cmd}" == *"${pattern}"* ]]; then
         printf '%s\n' "${pid}"
