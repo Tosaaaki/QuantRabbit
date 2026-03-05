@@ -5,6 +5,21 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-05（追記）共有ホワイトボードMVP（local-only SQLite）
+
+- 対象:
+  - `workers/common/agent_whiteboard.py`（新規）
+  - `scripts/agent_whiteboard.py`（新規）
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/INDEX.md`
+- 変更:
+  - ローカル専用DB `logs/agent_whiteboard.db` を新設し、`open/resolved/archived` の状態管理を追加。
+  - whiteboard操作として `post/list/watch/resolve/archive-task/purge-task` を実装。
+  - `purge-task` は `--yes` 必須の安全弁付きにし、誤削除を抑止。
+  - 運用導線を `docs/AGENT_COLLAB_HUB.md` と `docs/INDEX.md` に追記。
+- 意図:
+  - 並行タスク時の受け渡しをローカル単一SQLiteに集約し、低依存で壊れにくい協調導線を確保する。
+
 ### 2026-03-05（追記）local-v2 runtime tuning: `scalp_ping_5s_b_live` 約定停止対策
 
 - 対象:

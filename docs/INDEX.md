@@ -21,6 +21,8 @@
 - `docs/OPS_CURRENT.md`: 時限の運用設定（攻め設定・mask 済み unit など）
 - `docs/OPS_SKILLS.md`: 日次運用スキルの使い方
 - `docs/LOCAL_LANE_SPLIT.md`: VM本番repoとローカル実売買repoを分離する運用手順
+- `scripts/agent_whiteboard.py`: 共有ホワイトボードCLI（local-only / `logs/agent_whiteboard.db`）
+- `workers/common/agent_whiteboard.py`: 共有ホワイトボード永続化ロジック（SQLite）
 
 ## アーキテクチャ / 仕様
 - `docs/ARCHITECTURE.md`: システム全体フロー、コンポーネント、データスキーマ

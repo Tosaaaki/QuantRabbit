@@ -41,3 +41,17 @@
   - `docs/TRADE_FINDINGS.md`
   - `docs/WORKER_REFACTOR_LOG.md`
   - `docs/INDEX.md` の参照同期
+
+## 共有ホワイトボード（MVP / local-only）
+- 保存先DB: `logs/agent_whiteboard.db`（SQLite）
+- CLI: `python3 scripts/agent_whiteboard.py`
+- サポート操作: `post` / `list` / `watch` / `resolve` / `archive-task` / `purge-task`
+- 例:
+  ```bash
+  python3 scripts/agent_whiteboard.py post --task "worker実装開始" --body "担当: worker" --author "$USER"
+  python3 scripts/agent_whiteboard.py list --status open --limit 20
+  python3 scripts/agent_whiteboard.py watch --status all --interval-sec 2
+  python3 scripts/agent_whiteboard.py resolve 1
+  python3 scripts/agent_whiteboard.py archive-task 1
+  python3 scripts/agent_whiteboard.py purge-task 1 --yes
+  ```
