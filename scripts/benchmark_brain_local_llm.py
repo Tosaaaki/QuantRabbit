@@ -89,6 +89,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lookback-hours", type=float, default=24.0)
     parser.add_argument("--max-samples", type=int, default=120)
     parser.add_argument("--sample-mode", choices=("recent", "random"), default="recent")
+    parser.add_argument(
+        "--outcome-sample-policy",
+        choices=("any", "prioritize", "require"),
+        default="prioritize",
+        help="How to treat realized-outcome samples during selection.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--variant",
@@ -105,6 +111,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--default-temperature", type=float, default=0.2)
     parser.add_argument("--default-max-tokens", type=int, default=2048)
     parser.add_argument("--default-timeout-sec", type=float, default=70.0)
+    parser.add_argument(
+        "--ranking-min-outcome-samples",
+        type=int,
+        default=20,
+        help="Minimum scored-trade count before outcome score affects ranking.",
+    )
     parser.add_argument(
         "--disable-alignment",
         action="store_true",
@@ -882,6 +894,7 @@ def _select_samples(
     max_samples: int,
     sample_mode: str,
     seed: int,
+    outcome_sample_policy: str,
 ) -> tuple[str, list[Sample], dict[str, Any]]:
     outcomes = _load_trade_outcomes(trades_db)
 
@@ -894,40 +907,127 @@ def _select_samples(
 
     selected_source = source
     samples: list[Sample] = []
+    candidate_max_samples = int(max(1, max_samples))
+    if outcome_sample_policy in {"prioritize", "require"}:
+        candidate_max_samples = max(candidate_max_samples, int(max_samples) * 8)
 
+    brain_samples: list[Sample] = []
     if source in {"auto", "brain"}:
         brain_samples = _load_samples_from_brain(
             brain_db,
             lookback_hours=lookback_hours,
-            max_samples=max_samples,
+            max_samples=candidate_max_samples,
             outcomes=outcomes,
         )
         load_meta["brain_samples"] = len(brain_samples)
-        if source == "brain" or (source == "auto" and brain_samples):
+        if source == "brain":
             selected_source = "brain"
             samples = brain_samples
 
-    if not samples and source in {"auto", "orders"}:
+    order_samples: list[Sample] = []
+    should_load_orders = source == "orders" or source == "auto" or not samples
+    if should_load_orders and source in {"auto", "orders"}:
         order_samples = _load_samples_from_orders(
             orders_db,
             lookback_hours=lookback_hours,
-            max_samples=max_samples,
+            max_samples=candidate_max_samples,
             outcomes=outcomes,
         )
         load_meta["order_samples"] = len(order_samples)
-        if source == "orders" or source == "auto":
+        if source == "orders":
             selected_source = "orders"
             samples = order_samples
+    elif source == "auto":
+        load_meta["order_samples"] = 0
+
+    if source == "auto":
+        brain_outcomes = sum(1 for sample in brain_samples if sample.realized_pl is not None)
+        order_outcomes = sum(1 for sample in order_samples if sample.realized_pl is not None)
+        load_meta["brain_outcome_samples"] = int(brain_outcomes)
+        load_meta["order_outcome_samples"] = int(order_outcomes)
+        if outcome_sample_policy in {"prioritize", "require"}:
+            if order_outcomes > brain_outcomes:
+                selected_source = "orders"
+                samples = order_samples
+                load_meta["auto_source_reason"] = "orders_higher_outcome_coverage"
+            elif brain_outcomes > order_outcomes:
+                selected_source = "brain"
+                samples = brain_samples
+                load_meta["auto_source_reason"] = "brain_higher_outcome_coverage"
+            else:
+                if len(order_samples) > len(brain_samples):
+                    selected_source = "orders"
+                    samples = order_samples
+                    load_meta["auto_source_reason"] = "orders_more_candidates_tie"
+                else:
+                    selected_source = "brain"
+                    samples = brain_samples
+                    load_meta["auto_source_reason"] = "brain_more_candidates_or_tie"
+        else:
+            if brain_samples:
+                selected_source = "brain"
+                samples = brain_samples
+                load_meta["auto_source_reason"] = "brain_default"
+            else:
+                selected_source = "orders"
+                samples = order_samples
+                load_meta["auto_source_reason"] = "orders_fallback"
 
     if sample_mode == "random" and len(samples) > 1:
         rng = random.Random(seed)
         rng.shuffle(samples)
-    samples = samples[: max(0, int(max_samples))]
+
+    outcome_samples = [sample for sample in samples if sample.realized_pl is not None]
+    non_outcome_samples = [sample for sample in samples if sample.realized_pl is None]
+    outcome_insufficient_reason = ""
+    requested_samples = max(0, int(max_samples))
+
+    if outcome_sample_policy == "prioritize":
+        samples = outcome_samples + non_outcome_samples
+        if len(outcome_samples) < requested_samples:
+            outcome_insufficient_reason = (
+                f"insufficient_realized_outcome_samples:{len(outcome_samples)}/{requested_samples}"
+            )
+    elif outcome_sample_policy == "require":
+        samples = outcome_samples
+        if len(outcome_samples) == 0:
+            outcome_insufficient_reason = "outcome_required_but_no_realized_outcome_samples"
+        elif len(outcome_samples) < requested_samples:
+            outcome_insufficient_reason = (
+                f"required_realized_outcomes_below_requested:{len(outcome_samples)}/{requested_samples}"
+            )
+    else:
+        if len(outcome_samples) == 0:
+            outcome_insufficient_reason = "no_realized_outcome_samples"
+
+    samples = samples[:requested_samples]
+    selected_outcomes = sum(1 for sample in samples if sample.realized_pl is not None)
+    selected_total = len(samples)
+    outcome_policy_meta: dict[str, Any] = {
+        "policy": str(outcome_sample_policy),
+        "candidate_total_samples": int(len(outcome_samples) + len(non_outcome_samples)),
+        "candidate_with_trade_outcome": int(len(outcome_samples)),
+        "candidate_without_trade_outcome": int(len(non_outcome_samples)),
+        "selected_total_samples": int(selected_total),
+        "selected_with_trade_outcome": int(selected_outcomes),
+        "selected_without_trade_outcome": int(selected_total - selected_outcomes),
+        "selected_coverage_ratio": (
+            round(selected_outcomes / selected_total, 4) if selected_total > 0 else 0.0
+        ),
+    }
+    if outcome_insufficient_reason:
+        outcome_policy_meta["insufficient_data_reason"] = outcome_insufficient_reason
+    load_meta["outcome_policy"] = outcome_policy_meta
     return selected_source, samples, load_meta
 
 
-def _rank_variants(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _rank_variants(
+    results: list[dict[str, Any]],
+    *,
+    min_outcome_samples: int,
+) -> list[dict[str, Any]]:
     ranking_rows: list[dict[str, Any]] = []
+    required_scored = max(1, int(min_outcome_samples))
     for item in results:
         variant = item.get("variant", {})
         parse_info = item.get("parse", {})
@@ -936,8 +1036,19 @@ def _rank_variants(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         score = float(parse_info.get("pass_rate") or 0.0)
         align_score = align.get("score_mean")
-        if isinstance(align_score, (int, float)):
-            score += 0.35 * float(align_score)
+        scored_trades = int(align.get("scored_trades") or 0)
+        sample_count = max(1, int(item.get("sample_count") or 0))
+        alignment_coverage = round(min(1.0, scored_trades / sample_count), 4)
+        outcome_score_used = False
+        outcome_score_reason = ""
+        if isinstance(align_score, (int, float)) and scored_trades >= required_scored:
+            score += 0.35 * float(align_score) * float(alignment_coverage)
+            outcome_score_used = True
+            outcome_score_reason = "used"
+        elif not isinstance(align_score, (int, float)):
+            outcome_score_reason = "outcome_score_unavailable"
+        else:
+            outcome_score_reason = f"insufficient_scored_trades:{scored_trades}<{required_scored}"
 
         p95 = float(latency_info.get("p95") or 0.0)
         ranking_rows.append(
@@ -947,6 +1058,11 @@ def _rank_variants(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "score": round(score, 6),
                 "parse_pass_rate": float(parse_info.get("pass_rate") or 0.0),
                 "alignment_score_mean": align_score,
+                "alignment_coverage": alignment_coverage,
+                "outcome_scored_trades": scored_trades,
+                "outcome_score": (float(align_score) * float(alignment_coverage) if outcome_score_used else None),
+                "outcome_score_used": outcome_score_used,
+                "outcome_score_reason": outcome_score_reason,
                 "latency_p95_ms": p95,
             }
         )
@@ -976,9 +1092,11 @@ def main() -> int:
         max_samples=int(args.max_samples),
         sample_mode=str(args.sample_mode),
         seed=int(args.seed),
+        outcome_sample_policy=str(args.outcome_sample_policy),
     )
 
     if not samples:
+        outcome_meta = load_meta.get("outcome_policy") if isinstance(load_meta.get("outcome_policy"), dict) else {}
         report = {
             "generated_at": _iso_now(),
             "status": "no_samples",
@@ -991,8 +1109,19 @@ def main() -> int:
                 "lookback_hours": float(args.lookback_hours),
                 "max_samples": int(args.max_samples),
                 "sample_mode": args.sample_mode,
+                "outcome_sample_policy": str(args.outcome_sample_policy),
+                "ranking_min_outcome_samples": int(args.ranking_min_outcome_samples),
             },
             "load_meta": load_meta,
+            "sample_summary": {
+                "total_samples": 0,
+                "outcome_coverage": outcome_meta,
+                "insufficient_data_reason": (
+                    str(outcome_meta.get("insufficient_data_reason"))
+                    if outcome_meta.get("insufficient_data_reason")
+                    else "no_samples_after_source_selection"
+                ),
+            },
             "variants": [
                 {
                     "name": spec.name,
@@ -1033,6 +1162,8 @@ def main() -> int:
             "max_samples": int(args.max_samples),
             "sample_mode": args.sample_mode,
             "seed": int(args.seed),
+            "outcome_sample_policy": str(args.outcome_sample_policy),
+            "ranking_min_outcome_samples": int(args.ranking_min_outcome_samples),
             "disable_alignment": bool(args.disable_alignment),
             "include_sample_details": bool(args.include_sample_details),
         },
@@ -1044,11 +1175,19 @@ def main() -> int:
                 "orders_preflight": sum(1 for s in samples if s.source == "orders_preflight"),
             },
             "with_trade_outcome": sum(1 for s in samples if s.realized_pl is not None),
+            "outcome_coverage": {},
             "strategy_counts": {},
             "pocket_counts": {},
         },
         "variants": variant_results,
-        "ranking": _rank_variants(variant_results),
+        "ranking": _rank_variants(
+            variant_results,
+            min_outcome_samples=int(args.ranking_min_outcome_samples),
+        ),
+        "ranking_meta": {
+            "outcome_weight": 0.35,
+            "min_outcome_samples": max(1, int(args.ranking_min_outcome_samples)),
+        },
         "runtime": {
             "elapsed_sec": round(elapsed_sec, 3),
             "variant_count": len(variants),
@@ -1065,6 +1204,13 @@ def main() -> int:
     )
     report["sample_summary"]["pocket_counts"] = dict(
         sorted(pocket_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    outcome_meta = load_meta.get("outcome_policy") if isinstance(load_meta.get("outcome_policy"), dict) else {}
+    report["sample_summary"]["outcome_coverage"] = outcome_meta
+    report["sample_summary"]["insufficient_data_reason"] = (
+        str(outcome_meta.get("insufficient_data_reason"))
+        if outcome_meta.get("insufficient_data_reason")
+        else None
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
