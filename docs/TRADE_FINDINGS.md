@@ -23,6 +23,47 @@
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-05 15:00 JST / local-v2: trade_all常駐の解消（watchdog監視対象の縮退）+ dyn alloc sampling bias修正
+
+Period:
+- 対応: 2026-03-05 14:53〜15:00 JST（UTC 05:53〜06:00）
+- 市況確認: 2026-03-05 14:43 JST（UTC 05:43）
+- 対象: `scripts/local_v2_stack.sh`, `scripts/install_local_v2_launchd.sh`, `~/Library/LaunchAgents/com.quantrabbit.local-v2-autorecover.plist`, `scripts/dynamic_alloc_worker.py`, `config/dynamic_alloc.json`
+
+Fact:
+- 市況（OANDA実測, UTC 05:43 / JST 14:43）:
+  - USD/JPY `bid=157.039 / ask=157.047 / spread=0.8p`
+  - `ATR14(M5)=6.712p(Wilder)`, `range_60m=21.4p`
+  - pricing latency `350ms`, candles(M5) latency `318ms`
+- local-v2稼働状況（対応直前）:
+  - `scripts/local_v2_stack.sh status --profile trade_all --env ops/env/local-v2-stack.env` で多数workerが `running` のまま残存していた（trade_min前提の運用と不整合）。
+  - `orders.db` 直近では `strategy_control_entry_disabled` が連続し、entry停止済み戦略が注文試行を継続していた（ノイズ/負荷）。
+- sizing:
+  - `scripts/dynamic_alloc_worker.py` が `--limit 300` 固定だと、高頻度戦略（例: `scalp_ping_5s_b_live`）の直近取引だけで埋まり、
+    低頻度/別ポケット戦略（例: `MicroRangeBreak`）が `config/dynamic_alloc.json` に出ないことがあった。
+
+Failure Cause:
+- trade_min想定でも trade_all worker が常駐し、entry停止しても「注文試行/ログ/CPU負荷」が積み上がる。
+- dyn alloc のサンプルが「直近N件」偏重で、戦略間の比較・ロット配分が歪む（高頻度が全枠を占有）。
+
+Improvement:
+- watchdog/launchd の監視対象を明示縮退:
+  - `scripts/install_local_v2_launchd.sh` を `--services "quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-rangebreak,quant-micro-rangebreak-exit"` で再インストール（`StartInterval=20s`）。
+- trade_all 常駐の解消:
+  - `scripts/local_v2_stack.sh down --profile trade_all --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh up --services "quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-rangebreak,quant-micro-rangebreak-exit" --env ops/env/local-v2-stack.env`
+- dyn alloc sampling bias修正:
+  - `scripts/dynamic_alloc_worker.py` の `--limit` を既定 `5000` に拡張し、`--limit 0` で full lookback を許可。
+  - `--limit 0 --min-trades 24` で再生成し、`MicroRangeBreak` が alloc に含まれることを確認（例: `lot_multiplier=0.681`, `jpy_pf=1.033`）。
+
+Verification:
+- `scripts/local_v2_stack.sh status --profile trade_all --env ops/env/local-v2-stack.env` で `running` が縮退サービスのみになる。
+- `config/dynamic_alloc.json` に `MicroRangeBreak` が出力され、`lot_multiplier` が floor (`0.45`) に貼り付かない。
+- `orders.db` で停止済み戦略由来の `strategy_control_entry_disabled` が新規に増えない（stop後は `orders_last_ts` が更新されない/必要戦略のみ更新される）。
+
+Status:
+- in_progress（縮退後の損益・約定・負荷の前後比較が必要）
+
 ## 2026-03-05 14:05 JST / Brain(ollama)タイムアウト起因のpreflight遅延を除去 + strategy_control env override修正 + 赤字戦略のentry停止
 
 Period:
@@ -6063,3 +6104,55 @@ Status:
 - 反映後の初期観測（`datetime(close_time) >= 2026-03-05 04:01:00 UTC`）:
   - closed trades: `1`, realized `+0.21`, win_rate `1.0`（サンプル小）。
   - order status は B/C/D/Flow で `lookahead block` / `entry_probability_reject` / `strategy_cooldown` が主となり、逆期待値シグナルの通過が抑制。
+
+## 2026-03-05 14:40 JST / ローカルLLM常時運用化（停止回避→改善優先）
+
+- 目的:
+  - 「トレード停止」ではなく、ローカルLLMで判定改善・パラメータ改善を回しながらエントリーを維持する。
+
+- 作業前市況チェック（ローカル実測）:
+  - 取得元: `logs/orders.db`, `logs/brain_state.db`, `logs/local_v2_stack/quant-market-data-feed.log`, `logs/health_snapshot.json`
+  - 直近90分 `orders.db`:
+    - `mid range: 156.980 - 157.164`
+    - `spread avg/min/max: 0.801 / 0.8 / 1.0 pips`
+    - `atr_m1 avg: 2.346 pips`, `atr_m5 avg: 5.738 pips`
+  - OANDA API品質:
+    - `quant-market-data-feed.log` 直近800行のHTTP集計: `HTTP/1.1 200 = 129`, `non-200 = 0`
+  - 実行品質:
+    - `health_snapshot`: `data_lag_ms ~403`, `decision_latency_ms ~21`
+    - 直近90分 `orders.db`: `filled=162`, `rejected=2`（STOP_LOSS_ON_FILL_LOSS）
+  - 判定:
+    - 通常レンジ内として作業継続（保留条件には非該当）。
+
+- ローカルLLM比較ベンチ（2026-03-05）:
+  - レポート:
+    - `logs/brain_local_llm_benchmark_multimodel_20260305.json`
+    - `logs/brain_local_llm_benchmark_multimodel_4way_20260305.json`
+  - 4モデル比較（10 samples, outcome prioritize）:
+    - `gpt-oss:20b` score `1.245`, parse `1.0`, p95 `27791ms`
+    - `qwen2.5:7b` score `1.231`, parse `1.0`, p95 `3641ms`
+    - `llama3.1:8b` score `1.217`, parse `1.0`, p95 `4250ms`
+    - `gemma3:4b` score `1.182`, parse `1.0`, p95 `2682ms`
+  - 運用選定:
+    - preflightは遅延制約を優先して `qwen2.5:7b`
+    - async autotuneは品質優先で `gpt-oss:20b`
+
+- 反映内容:
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_CONTROL_ENTRY_*` を再有効化（B/C/D/Flow/MicroPullbackEMA/MicroTrendRetest = 1）
+    - `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama.env`
+  - `ops/env/profiles/brain-ollama.env`
+    - `BRAIN_OLLAMA_MODEL=qwen2.5:7b`
+    - `BRAIN_TIMEOUT_SEC=8`
+    - `BRAIN_PROMPT_AUTO_TUNE_MODEL=gpt-oss:20b`
+    - `BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL=gpt-oss:20b`
+  - `config/brain_prompt_profile.json`
+    - 初期プロファイルを `REDUCE優先・参加率維持` 方針へ更新
+  - `config/brain_runtime_param_profile.json`
+    - `activity_rate_floor=0.55`, `block_rate_soft_limit=0.78` 等へ更新
+
+- 次の監視KPI:
+  - `strategy_control_entry_disabled` の減少
+  - `filled / submit_attempt` 比率の回復
+  - `brain_prompt_autotune_latest.json`, `brain_runtime_param_autotune_latest.json` の更新継続
+  - `block_rate` と `activity_rate` が `runtime_profile` の目標帯に収束すること

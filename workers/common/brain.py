@@ -544,15 +544,15 @@ def _default_runtime_param_profile() -> dict[str, Any]:
         "version": "rp-v1",
         "updated_at": _now_iso(),
         "min_scale": round(_clamp_float(_MIN_SCALE, _MIN_SCALE, 0.05, 0.95), 4),
-        "block_rate_soft_limit": 0.62,
-        "activity_rate_floor": 0.35,
-        "block_to_reduce_scale": round(max(_MIN_SCALE, 0.35), 4),
-        "guard_window_decisions": 120,
+        "block_rate_soft_limit": 0.76,
+        "activity_rate_floor": 0.5,
+        "block_to_reduce_scale": round(max(_MIN_SCALE, 0.5), 4),
+        "guard_window_decisions": 160,
         "min_guard_samples": 30,
-        "max_block_streak": 4,
+        "max_block_streak": 8,
         "outcome_min_trades": 8,
-        "outcome_positive_pf_floor": 1.05,
-        "outcome_positive_win_rate_floor": 0.5,
+        "outcome_positive_pf_floor": 1.02,
+        "outcome_positive_win_rate_floor": 0.47,
         "notes": [],
     }
 
@@ -1817,7 +1817,8 @@ def _maybe_autotune_prompt_profile() -> None:
             "Constraints:\n"
             "- extra_rules must be imperative, concrete, and <=160 chars each.\n"
             "- keep 3-8 rules.\n"
-            "- prioritize protecting downside and reducing low-edge entries.\n"
+            "- prioritize improving realized expectancy while preserving trade activity.\n"
+            "- prefer REDUCE before BLOCK unless execution quality degrades sharply.\n"
             "- do not include markdown.\n\n"
             f"Current profile: {_stringify(current_profile, 6000)}\n"
             f"Recent summary: {_stringify(summary, 9000)}\n"
@@ -2060,6 +2061,8 @@ def _maybe_autotune_runtime_param_profile() -> None:
             "- outcome_min_trades: 1-200\n"
             "- outcome_positive_pf_floor: 0.20-8.0\n"
             "- outcome_positive_win_rate_floor: 0.10-0.99\n"
+            "- prefer REDUCE over BLOCK unless spread/reject/latency conditions deteriorate.\n"
+            "- keep participation healthy when market quality is normal and outcomes are stable.\n"
             "- Keep notes short and concrete.\n\n"
             f"Current runtime profile: {_stringify(current_profile, 6000)}\n"
             f"Recent runtime summary: {_stringify(summary, 9000)}\n"

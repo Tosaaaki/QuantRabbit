@@ -1,0 +1,18 @@
+{
+  "version": "rp-v3-trade-improve",
+  "updated_at": "2026-03-05T14:02:00+09:00",
+  "min_scale": 0.28,
+  "block_rate_soft_limit": 0.78,
+  "activity_rate_floor": 0.55,
+  "block_to_reduce_scale": 0.52,
+  "guard_window_decisions": 180,
+  "min_guard_samples": 40,
+  "max_block_streak": 10,
+  "outcome_min_trades": 12,
+  "outcome_positive_pf_floor": 1.02,
+  "outcome_positive_win_rate_floor": 0.47,
+  "notes": [
+    "Prefer throughput with controlled scaling instead of hard blocking.",
+    "Use BLOCK mainly when execution quality metrics degrade together."
+  ]
+}

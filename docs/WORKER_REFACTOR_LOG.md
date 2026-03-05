@@ -113,6 +113,16 @@
 - 意図:
   - プロセス停止、ネット断復帰、ノートPCスリープ復帰の各ケースで「ユーザー手動起動なし」の再開導線を担保する。
 
+### 2026-03-05（追記）dyn alloc sampling bias修正（高頻度戦略の直近N件支配を回避）
+
+- 対象:
+  - `scripts/dynamic_alloc_worker.py`
+- 変更:
+  - `--limit` の既定を `5000` に拡張し、`--limit 0` で lookback期間の全件を評価できるようにした。
+  - 目的は「高頻度スキャルプが直近300件を占有して、micro/macro戦略が alloc から消える」偏りを解消すること。
+- 意図:
+  - pocket/戦略の参加が歪まない状態でロット配分（`lot_multiplier`）を算出し、勝てる戦略のサイズを上げる余地を残す。
+
 ### 2026-03-05（追記）`scalp_ping_5s_b` に signal_mode blocklist を導入（低品質モード遮断）
 
 - 対象:
@@ -11314,3 +11324,41 @@
   - 60秒持続確認でも core4/B/C/D/Flow は running 維持。
   - `local_v2_autorecover.log` は `profile=trade_all` で復旧成功を記録。
   - `collect_local_health.sh` 成功、`logs/health_snapshot.json` 更新を確認。
+
+## 2026-03-05 JST - ローカルLLM常時運用化 + モデル自動選定導線
+
+- 背景:
+  - 2026-03-05時点の local-v2 で `strategy_control_entry_disabled` が多発し、エントリー停止寄りの運用になっていた。
+  - Brain導線は `ops/env/local-v2-stack.env` 既定では `LOCAL_V2_EXTRA_ENV_FILES=` のため常時有効化されていなかった。
+
+- 変更:
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_B/C/D/FLOW=1`
+    - `STRATEGY_CONTROL_ENTRY_MICROPULLBACKEMA=1`
+    - `STRATEGY_CONTROL_ENTRY_MICROTRENDRETEST=1`
+    - `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama.env`
+  - `ops/env/profiles/brain-ollama.env`
+    - preflight model: `BRAIN_OLLAMA_MODEL=qwen2.5:7b`
+    - preflight timeout: `BRAIN_TIMEOUT_SEC=8`
+    - async tuner model: `BRAIN_PROMPT_AUTO_TUNE_MODEL=gpt-oss:20b`
+    - async tuner model: `BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL=gpt-oss:20b`
+  - `workers/common/brain.py`
+    - runtime defaultを「停止抑制→改善優先」へ調整
+      - `block_rate_soft_limit 0.76`
+      - `activity_rate_floor 0.5`
+      - `block_to_reduce_scale 0.5`
+      - `guard_window_decisions 160`
+      - `max_block_streak 8`
+      - `outcome_positive_pf_floor 1.02`
+      - `outcome_positive_win_rate_floor 0.47`
+    - prompt/runtime autotune指示を、`REDUCE優先・参加率維持`方針へ更新。
+  - 追加:
+    - `scripts/apply_brain_model_selection.py`
+      - `benchmark_brain_local_llm.py` のJSON結果から `preflight/autotune` モデルを自動選定。
+      - `ops/env/profiles/brain-ollama.env` の `BRAIN_OLLAMA_MODEL` / `BRAIN_*_AUTO_TUNE_MODEL` / `BRAIN_TIMEOUT_SEC` を更新。
+      - 出力: `logs/brain_model_selection_latest.json`
+    - `tests/scripts/test_apply_brain_model_selection.py`
+
+- 意図:
+  - ローカルLLMを「任意実験」ではなく常時導線へ戻し、
+    履歴分析→プロンプト/パラメータ改善→モデル選定までをローカル完結で継続可能にする。
