@@ -5,6 +5,22 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-05（同日追記）Brainゲートをデフォルト無効化（ローカルV2）+ strategy_control env override 修正
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `workers/common/strategy_control.py`
+  - `tests/workers/test_strategy_control_env_overrides.py`
+- 変更:
+  - `LOCAL_V2_EXTRA_ENV_FILES` を空にして、BrainゲートをローカルV2のデフォルト導線から外した（明示指定時のみ有効化）。
+  - `STRATEGY_CONTROL_ENTRY_*` の per-strategy env override が効かない不具合を修正（`_env_bool(value)` → `_env_bool(key)`）。
+  - `STRATEGY_CONTROL_ENTRY_*` で赤字戦略の entry を抑止し、exit は維持できるようにした（運用は `docs/TRADE_FINDINGS.md` を正本）。
+- 背景:
+  - Brain(ollama)のタイムアウトにより order_manager の preflight が秒単位で劣化し、スキャルプの約定品質/応答品質が崩れていた。
+  - per-strategy の entry/exit/lock を env で制御できず、局所改善・段階復帰が困難だった。
+- 意図:
+  - ローカルV2の既定導線を「低レイテンシ + 明示opt-in」で固定し、収益/品質のPDCAを安定させる。
+
 ### 2026-03-05（追記）共有ホワイトボードMVP（local-only SQLite）
 
 - 対象:
@@ -11298,4 +11314,3 @@
   - 60秒持続確認でも core4/B/C/D/Flow は running 維持。
   - `local_v2_autorecover.log` は `profile=trade_all` で復旧成功を記録。
   - `collect_local_health.sh` 成功、`logs/health_snapshot.json` 更新を確認。
-

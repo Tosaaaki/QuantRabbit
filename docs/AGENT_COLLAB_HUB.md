@@ -9,7 +9,7 @@
 - AGENTS へ準拠するため、まず以下を実行:
   ```bash
   sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md
-  sed -n '/^## 運用原則/,/^## /p' docs/OPS_LOCAL_RUNBOOK.md
+  sed -n '/^## 0\\. 運用原則/,/^## /p' docs/OPS_LOCAL_RUNBOOK.md
   ```
 - AGENTS 本体の本日運用方針（`GCP/VM廃止前提`）を再確認する。
 
@@ -24,7 +24,10 @@
 
 ### 3) ローカル導線起動・監視
 - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
-- `scripts/collect_local_health.sh`
+- `scripts/collect_local_health.sh`（標準ヘルスチェック導線）
+  - 互換ラッパー: 内部で `scripts/run_health_snapshot.sh` を実行
+  - 既定: `HEALTH_UPLOAD_DISABLE=1`（ローカル保存のみ）
+  - 出力: `logs/health_snapshot.json`
 - `scripts/local_v2_stack.sh logs --service quant-order-manager --tail 200`
 - 必要なら `screen` や `runtime_ui` で実行状態を確認
 

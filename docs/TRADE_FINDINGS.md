@@ -21,7 +21,54 @@
   - `Failure Cause`（敗因）
   - `Improvement`（改善施策）
   - `Verification`（確認方法/判定基準）
-  - `Status`（open/in_progress/done）
+- `Status`（open/in_progress/done）
+
+## 2026-03-05 14:05 JST / Brain(ollama)タイムアウト起因のpreflight遅延を除去 + strategy_control env override修正 + 赤字戦略のentry停止
+
+Period:
+- 調査/反映: 2026-03-05 13:38〜14:05 JST（UTC 04:38〜05:05）
+- 対象: `ops/env/local-v2-stack.env`, `logs/orders.db`, `logs/trades.db`, `logs/brain_state.db`, `logs/strategy_control.db`, `logs/local_v2_stack/quant-order-manager.log`
+
+Fact:
+- 市況（OANDA実測, UTC 04:38 / JST 13:38）:
+  - USD/JPY `bid=157.112 / ask=157.120 / spread=0.8p`
+  - `ATR14(M5)=6.383p(EMA)`, `range_60m=25.9p`
+  - pricing latency `avg=285ms (max=337ms)`, openTrades latency `216ms`
+- 直近24hの収益（`trades.db`, manual除外）:
+  - `n=797`, `win_rate=0.2095`, `PF=0.421`, `net_jpy=-545.863`, `net_pips=-649.2`
+  - 赤字寄与上位: `scalp_ping_5s_b_live(-181.408)`, `MicroPullbackEMA(-112.892)`, `MicroTrendRetest-long(-91.344)`, `scalp_ping_5s_d_live(-84.1)`, `scalp_ping_5s_flow_live(-79.128)`
+- 実行品質（`scripts/analyze_entry_precision.py`, filled entry 直近1113）:
+  - `spread_pips p95=0.8`, `latency_submit p95=303ms`
+  - **`latency_preflight p95=7509ms`**（スキャルプに致命的）
+- Brain決定（`brain_state.db`, 直近24h）:
+  - `source=llm_fail` が多発し、`avg_latency ≒ 6.0s`（例: `scalp_ping_5s_b_live n=104 avg=5994ms`）
+  - order_manager 側で `slow_request elapsed=8〜14s` が連発し、strategy 側で `order_manager Read timed out (8s)` が発生していた。
+
+Failure Cause:
+- `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama.env` により Brainゲートが常時有効化され、
+  ollama呼び出しが `BRAIN_TIMEOUT_SEC=6` で連続失敗 → preflight遅延 + market_order応答タイムアウト → stale entry/損失増大。
+
+Improvement:
+- BrainゲートをローカルV2のデフォルト導線から外す:
+  - `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES` を空に変更。
+  - `quant-order-manager` を `--env ops/env/local-v2-stack.env` で再起動し、ログで `BRAIN_ENABLED=0 / ORDER_MANAGER_BRAIN_GATE_ENABLED=0` を確認。
+  - `brain_decisions` は直近30秒で `0件`（新規 `llm_fail` 停止）。
+  - `order/market_order` は reject でも `~70ms` で応答（preflightがタイムアウトしないことを確認）。
+- 入口制御の再発防止:
+  - `workers/common/strategy_control.py` の env override が `value` を参照しており無効だったため修正（`_env_bool(key)`）。
+  - `STRATEGY_CONTROL_ENTRY_*` で赤字戦略（`scalp_ping_5s_{b,c,d,flow}`, `micropullbackema`, `microtrendretest`）の entry を停止し、
+    `strategy_control.db` で `entry_enabled=0` を確認（exitは維持）。
+
+Verification:
+- 短期（〜1h）:
+  - `brain_decisions` の新規 `llm_fail=0` を維持。
+  - strategy 側の `order_manager Read timed out` が再発しない。
+  - `orders.db` の `brain_scale_below_min` が新規に増えない（Brain無効化の確認）。
+- 中期（1〜3h）:
+  - 稼働中戦略の `PF>1.0` / `expectancy>0` が確認できたものから順次有効範囲を広げる（停止戦略は原因分析→改善→段階復帰）。
+
+Status:
+- in_progress（稼働後の損益前後比較が必要）
 
 ## 2026-03-05 11:16 JST / scalp_ping_5s_b 約定停止の即効チューニング（side_filter解除 + lookahead遮断緩和）
 
@@ -6016,4 +6063,3 @@ Status:
 - 反映後の初期観測（`datetime(close_time) >= 2026-03-05 04:01:00 UTC`）:
   - closed trades: `1`, realized `+0.21`, win_rate `1.0`（サンプル小）。
   - order status は B/C/D/Flow で `lookahead block` / `entry_probability_reject` / `strategy_cooldown` が主となり、逆期待値シグナルの通過が抑制。
-

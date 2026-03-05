@@ -279,7 +279,7 @@ def sync_env_overrides() -> None:
         strategy = normalize_strategy_slug(strategy)
         if not strategy:
             continue
-        flag = _env_bool(value)
+        flag = _env_bool(key)
         if flag is not None:
             set_strategy_flags(strategy, entry=flag)
 
@@ -290,7 +290,7 @@ def sync_env_overrides() -> None:
         strategy = normalize_strategy_slug(strategy)
         if not strategy:
             continue
-        flag = _env_bool(value)
+        flag = _env_bool(key)
         if flag is not None:
             set_strategy_flags(strategy, exit=flag)
 
@@ -301,7 +301,7 @@ def sync_env_overrides() -> None:
         strategy = normalize_strategy_slug(strategy)
         if not strategy:
             continue
-        flag = _env_bool(value)
+        flag = _env_bool(key)
         if flag is not None:
             set_strategy_flags(strategy, lock=flag)
 
