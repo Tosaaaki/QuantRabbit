@@ -6602,3 +6602,33 @@ Status:
 - 検証観点（反映後 1-3h）:
   1. `orders.db`: `status='close_reject_no_negative'` が `reentry_reset/__de_risk__` で反復しないこと。
   2. `orders.db`: `close_reject_no_negative` 行に `pocket/instrument` が入ること（戦略別に集計できること）。
+
+## 2026-03-05 15:45 UTC / 2026-03-06 00:45 JST - MicroRangeBreak: reversion 全敗の強レンジ絞り込み + ping5s D/flow neg_exit no-block + Brain fast/micro の stall 対策
+
+- 事実（ローカル実測: `logs/trades.db` / `logs/orders.db`）:
+  - 直近6h `trades.db`（MicroRangeBreak）: `n=32`, `wins=0`, `avg_pips=-1.2531`, `sum_jpy=-32.9`（全敗）。
+  - entry_thesis: `signal_mode=reversion (range_scalp)` に偏り、`range_score=0.356..0.382` と「弱レンジ」でも short リバが走っている。`trend_snapshot(H4).adx≈24.9` でも同様。
+  - 直近6h `orders.db`: `close_reject_no_negative=475`（`exit_reason='__de_risk__'` 等が起点になり得る）。
+
+- 市況スナップショット（ローカル実測: `logs/tick_cache.json` / `logs/factor_cache.json`）:
+  - `USD/JPY bid=157.676 ask=157.684 spread=0.8p`
+  - `ATR(M1)=2.81p` / `ADX(H4)=24.87`
+
+- 仮説:
+  - MicroRangeBreak の reversion が「弱レンジ」でも発火し、トレンド寄り局面で `m1_structure_break` / `max_adverse` 由来の早期損切りが連発している。
+  - ping5s D/flow は B/C と neg_exit 設定が非対称で、`__de_risk__` / `reentry_reset` が `close_reject_no_negative` になりやすい。
+  - Brain は過去に `brain_latency_ms` が平均 ~6s に張り付いた時間帯があり、将来有効化しても fast/micro を stall させない設計が必要。
+
+- 対応（main反映 / commit=`48716111`）:
+  - MicroRangeBreak（reversionを“強いレンジ”へ絞る）:
+    - `MICRO_RANGEBREAK_MIN_RANGE_SCORE=0.44`（`0.32` → `0.44`）
+    - `MICRO_RANGEBREAK_REVERSION_MAX_ADX=23.0`（`27.0` → `23.0`）
+    - `MICRO_RANGEBREAK_ENTRY_RATIO=0.25`（`0.38` → `0.25`）
+    - ※ `local_v2_stack` は base env → service env の順で上書きされるため、`ops/env/quant-micro-rangebreak.env` も同値へ更新。
+  - ping5s D/flow: `config/strategy_exit_protections.yaml` に `neg_exit` を付与し、B/C と同じ `no-block` 方針へ（`strict_no_negative=false`, `allow_reasons=*SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS`）。
+  - Brain（有効化時のみ）: `workers/common/brain.py` に pocket別 override を追加（`BRAIN_TIMEOUT_SEC_MICRO` / `BRAIN_TIMEOUT_SEC_SCALP_FAST` / `BRAIN_FAIL_POLICY_MICRO` / `BRAIN_FAIL_POLICY_SCALP_FAST`）。
+
+- 検証観点（反映後 3-6h）:
+  1. `trades.db`: MicroRangeBreak の `signal_mode=reversion` が `range_score>=0.44` 帯に寄り、全敗が止まること。
+  2. `orders.db`: ping5s D/flow の `close_reject_no_negative` が `__de_risk__/reentry_reset` 起点で減ること。
+  3. Brain 有効化時: micro/scalp_fast のエントリーが timeout で stall しないこと（fail-open）。

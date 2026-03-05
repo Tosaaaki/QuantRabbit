@@ -11614,3 +11614,25 @@
 
 - `execution/order_manager.py`
   - `close_reject_no_negative` の orders.db ログに `pocket/instrument/strategy_tag` を含め、`est_pips` も記録して棚卸し可能性を回復（main commit: `efd2f83e`）。
+
+## 2026-03-06 JST - MicroRangeBreak reversion 絞り込み + ping5s D/flow neg_exit no-block + Brain fast/micro の stall 対策
+
+- MicroRangeBreak（reversionを“強いレンジ”へ絞る）:
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_RANGEBREAK_MIN_RANGE_SCORE=0.44`
+    - `MICRO_RANGEBREAK_REVERSION_MAX_ADX=23.0`
+    - `MICRO_RANGEBREAK_ENTRY_RATIO=0.25`
+  - `ops/env/quant-micro-rangebreak.env`
+    - `MICRO_RANGEBREAK_MIN_RANGE_SCORE=0.44`
+    - `MICRO_RANGEBREAK_REVERSION_MAX_ADX=23.0`
+    - `MICRO_RANGEBREAK_ENTRY_RATIO=0.25`
+
+- ping5s D/flow:
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_d(_live)` / `scalp_ping_5s_flow(_live)` に `neg_exit` を付与（`strict_no_negative=false`, `allow_reasons=*SCALP_PING_5S_NO_BLOCK_NEG_EXIT_ALLOW_REASONS`）。
+
+- Brain（有効化時のみ / fast/microを stall させない）:
+  - `workers/common/brain.py`
+    - pocket別に timeout と fail-policy を上書きできる env を追加（`BRAIN_TIMEOUT_SEC_MICRO`, `BRAIN_TIMEOUT_SEC_SCALP_FAST`, `BRAIN_FAIL_POLICY_MICRO`, `BRAIN_FAIL_POLICY_SCALP_FAST`）。
+
+- main commit: `48716111`
