@@ -6632,3 +6632,21 @@ Status:
   1. `trades.db`: MicroRangeBreak の `signal_mode=reversion` が `range_score>=0.44` 帯に寄り、全敗が止まること。
   2. `orders.db`: ping5s D/flow の `close_reject_no_negative` が `__de_risk__/reentry_reset` 起点で減ること。
   3. Brain 有効化時: micro/scalp_fast のエントリーが timeout で stall しないこと（fail-open）。
+
+- 反映後実測（local V2, 2026-03-06 01:25〜01:30 JST）:
+  - 市況（OANDA pricing / candles, 01:03 JST）:
+    - `USD/JPY mid=157.552 spread=0.80p pricing latency=303ms`
+    - `ATR14(M1)=3.76p / 60m range=38.0p candles latency=203ms`
+  - 反映:
+    - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-micro-rangebreak,quant-micro-rangebreak-exit,quant-order-manager,quant-position-manager`
+  - ping5s flow_live の close_reject_no_negative（直近30分 / `orders.db`）:
+    - `close_reject_no_negative=0`
+    - `close_ok=7`（`exit_reason`: `max_adverse=5`, `__de_risk__=2`）
+  - 建玉:
+    - `position-manager` の `open_positions` で `scalp_fast` が空（flow_live の含み損玉が解消されている）
+    - MicroRangeBreak の open positions は無し
+  - 収益（直近30分 / `trades.db`）:
+    - 全体: `n=76 / PF=2.449 / net_jpy=+185.187`
+    - flow_live: `n=4 / net_jpy=+61.840`
+  - メモ:
+    - `trades.db` が `orders.db` より遅延するため、必要に応じて `/position/sync_trades` を叩いて追いつかせてから評価する（例: `trades_last_close` が `13:30 UTC` → `16:26 UTC` へ更新）。
