@@ -18,9 +18,12 @@ def _reload_brain_module():
 def _prepare_brain(monkeypatch, tmp_path: Path):
     db_path = tmp_path / "brain_state.db"
     profile_path = tmp_path / "brain_prompt_profile.json"
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
     trades_path = tmp_path / "trades.db"
     report_latest_path = tmp_path / "brain_prompt_autotune_latest.json"
     report_history_path = tmp_path / "brain_prompt_autotune_history.jsonl"
+    runtime_report_latest_path = tmp_path / "brain_runtime_param_autotune_latest.json"
+    runtime_report_history_path = tmp_path / "brain_runtime_param_autotune_history.jsonl"
 
     monkeypatch.setenv("BRAIN_ENABLED", "1")
     monkeypatch.setenv("BRAIN_BACKEND", "ollama")
@@ -29,6 +32,10 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("BRAIN_PROMPT_PROFILE_PATH", str(profile_path))
     monkeypatch.setenv("BRAIN_PROMPT_REPORT_LATEST_PATH", str(report_latest_path))
     monkeypatch.setenv("BRAIN_PROMPT_REPORT_HISTORY_PATH", str(report_history_path))
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_PROFILE_PATH", str(runtime_profile_path))
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED", "0")
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_REPORT_LATEST_PATH", str(runtime_report_latest_path))
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_REPORT_HISTORY_PATH", str(runtime_report_history_path))
 
     brain = _reload_brain_module()
     monkeypatch.setattr(brain, "_DB_PATH", db_path)
@@ -36,6 +43,8 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(brain, "log_metric", lambda *_args, **_kwargs: True)
     brain._CACHE.clear()
     brain._PROMPT_PROFILE_CACHE = (0.0, {})
+    brain._RUNTIME_PARAM_PROFILE_CACHE = (0.0, {})
+    brain._LAST_RUNTIME_PARAM_AUTOTUNE_TS = 0.0
     return brain, db_path, profile_path, report_latest_path, report_history_path
 
 
@@ -280,6 +289,248 @@ def _insert_trade_row(trades_db_path: Path, client_order_id: str, realized_pl: f
         con.commit()
     finally:
         con.close()
+
+
+def _insert_brain_decision_row(
+    brain,
+    *,
+    strategy_tag: str,
+    pocket: str,
+    action: str,
+    reason: str = "seed",
+) -> None:
+    scale = 0.0 if action == "BLOCK" else (0.5 if action == "REDUCE" else 1.0)
+    decision = brain.BrainDecision(
+        allowed=action != "BLOCK",
+        scale=scale,
+        reason=reason,
+        action=action,
+        memory=None,
+    )
+    brain._log_decision_row(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        side="buy",
+        units=100,
+        sl_price=None,
+        tp_price=None,
+        confidence=70,
+        client_order_id=f"seed-{action}-{time.time_ns()}",
+        backend="ollama",
+        source="seed",
+        llm_ok=True,
+        latency_ms=0.0,
+        decision=decision,
+        memory_before=None,
+        memory_after=None,
+        profile_version="v1",
+        context={"entry_thesis": {"spread_pips": 0.8, "atr_pips": 2.1}, "meta": {}},
+        payload={"seed": True},
+        error=None,
+    )
+
+
+def test_runtime_profile_min_scale_is_applied(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v2",
+                "min_scale": 0.44,
+                "block_rate_soft_limit": 0.7,
+                "activity_rate_floor": 0.2,
+                "block_to_reduce_scale": 0.5,
+                "guard_window_decisions": 60,
+                "min_guard_samples": 20,
+                "max_block_streak": 5,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "REDUCE",
+            "scale": 0.12,
+            "reason": "weak_edge",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=65,
+        client_order_id="runtime-min-scale-1",
+    )
+    assert decision.action == "REDUCE"
+    assert decision.allowed is True
+    assert decision.scale == 0.44
+
+
+def test_runtime_guard_biases_block_to_reduce_on_overblocking(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v3",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.45,
+                "activity_rate_floor": 0.4,
+                "block_to_reduce_scale": 0.37,
+                "guard_window_decisions": 20,
+                "min_guard_samples": 5,
+                "max_block_streak": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for _ in range(10):
+        _insert_brain_decision_row(
+            brain,
+            strategy_tag="scalp_ping_5s_b_live",
+            pocket="scalp_fast",
+            action="BLOCK",
+            reason="seed_block",
+        )
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "BLOCK",
+            "scale": 0.0,
+            "reason": "uncertain_setup",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=63,
+        client_order_id="runtime-bias-1",
+    )
+    assert decision.action == "REDUCE"
+    assert decision.allowed is True
+    assert decision.scale >= 0.37
+    assert "no_trade_bias_reduce" in decision.reason
+
+
+def test_runtime_autotune_updates_runtime_profile(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED", "1")
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL", "gpt-oss:test")
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_URL", "http://127.0.0.1:11434/api/chat")
+    brain, db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_report_latest_path = tmp_path / "brain_runtime_param_autotune_latest.json"
+    monkeypatch.setattr(brain, "_RUNTIME_PARAM_AUTOTUNE_ENABLED", True)
+    monkeypatch.setattr(brain, "_RUNTIME_PARAM_AUTOTUNE_MIN_DECISIONS", 1)
+    monkeypatch.setattr(brain, "_RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC", 60.0)
+    monkeypatch.setattr(brain, "_RUNTIME_PARAM_AUTOTUNE_MODEL", "gpt-oss:test")
+    monkeypatch.setattr(brain, "_RUNTIME_PARAM_AUTOTUNE_URL", "http://127.0.0.1:11434/api/chat")
+    monkeypatch.setattr(brain, "_maybe_autotune_runtime_param_profile_async", lambda: None)
+    brain._LAST_RUNTIME_PARAM_AUTOTUNE_TS = 0.0
+
+    def _fake_ollama(prompt: str, **_kwargs):
+        if "You optimize runtime risk parameters for an FX decision gate" in prompt:
+            return {
+                "version": "rp-v4",
+                "min_scale": 0.31,
+                "block_rate_soft_limit": 0.56,
+                "activity_rate_floor": 0.38,
+                "block_to_reduce_scale": 0.41,
+                "guard_window_decisions": 140,
+                "min_guard_samples": 28,
+                "max_block_streak": 4,
+                "notes": ["push block decisions to reduce when activity drops"],
+            }
+        return {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "clean_setup",
+            "memory_update": "",
+        }
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=71,
+        client_order_id="runtime-auto-1",
+        entry_thesis={"spread_pips": 0.8, "atr_pips": 2.2},
+    )
+
+    brain._LAST_RUNTIME_PARAM_AUTOTUNE_TS = 0.0
+    brain._maybe_autotune_runtime_param_profile()
+
+    payload = json.loads(runtime_profile_path.read_text(encoding="utf-8"))
+    assert payload["version"] == "rp-v4"
+    assert payload["min_scale"] == 0.31
+    assert payload["block_to_reduce_scale"] == 0.41
+
+    con = sqlite3.connect(db_path)
+    try:
+        row = con.execute(
+            """
+            SELECT applied, profile_version
+            FROM brain_runtime_param_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        con.close()
+    assert row is not None
+    assert int(row[0]) == 1
+    assert row[1] == "rp-v4"
+    assert runtime_report_latest_path.exists()
+
+
+def test_collect_runtime_autotune_summary_includes_market_metrics(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "clean_setup",
+            "memory_update": "",
+        },
+    )
+
+    brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=72,
+        client_order_id="runtime-summary-1",
+        entry_thesis={
+            "spread_pips": 0.8,
+            "factors": {"M1": {"atr_pips": 2.25}},
+        },
+    )
+
+    summary = brain._collect_runtime_autotune_summary(24.0)
+    market = summary.get("market_summary", {})
+    assert market["spread_pips"]["count"] >= 1
+    assert market["atr_pips"]["count"] >= 1
+    assert market["confidence"]["count"] >= 1
 
 
 def test_prompt_report_writes_before_after_comparison(monkeypatch, tmp_path: Path) -> None:

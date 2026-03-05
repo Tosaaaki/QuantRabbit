@@ -178,11 +178,67 @@ _PROMPT_REPORT_HISTORY_PATH = pathlib.Path(
     os.getenv("BRAIN_PROMPT_REPORT_HISTORY_PATH", "logs/brain_prompt_autotune_history.jsonl")
 )
 
+_RUNTIME_PARAM_PROFILE_PATH = pathlib.Path(
+    os.getenv("BRAIN_RUNTIME_PARAM_PROFILE_PATH", "config/brain_runtime_param_profile.json")
+)
+_RUNTIME_PARAM_PROFILE_TTL_SEC = max(
+    5.0, float(os.getenv("BRAIN_RUNTIME_PARAM_PROFILE_TTL_SEC", "30") or 30.0)
+)
+_RUNTIME_PARAM_AUTOTUNE_ENABLED = os.getenv(
+    "BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED", "0"
+).strip().lower() not in {"", "0", "false", "no", "off"}
+_RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC = max(
+    60.0,
+    float(os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_INTERVAL_SEC", "900") or 900.0),
+)
+_RUNTIME_PARAM_AUTOTUNE_MIN_DECISIONS = max(
+    10, int(float(os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_MIN_DECISIONS", "40") or 40))
+)
+_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS = max(
+    1.0,
+    float(os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_LOOKBACK_HOURS", "24") or 24.0),
+)
+_RUNTIME_PARAM_AUTOTUNE_TIMEOUT_SEC = max(
+    1.0,
+    float(os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_TIMEOUT_SEC", "5") or 5.0),
+)
+_RUNTIME_PARAM_AUTOTUNE_TEMP = max(
+    0.0,
+    min(1.0, float(os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_TEMP", "0.1") or 0.1)),
+)
+_RUNTIME_PARAM_AUTOTUNE_MAX_TOKENS = max(
+    128,
+    int(float(os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_MAX_TOKENS", "512") or 512)),
+)
+_RUNTIME_PARAM_AUTOTUNE_MODEL = (
+    os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL", "")
+    or os.getenv("BRAIN_OLLAMA_MODEL", "")
+    or _OLLAMA_MODEL
+).strip()
+_RUNTIME_PARAM_AUTOTUNE_URL = (
+    os.getenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_URL", "")
+    or os.getenv("BRAIN_OLLAMA_URL", "")
+    or _OLLAMA_URL
+).strip()
+_RUNTIME_PARAM_REPORT_LATEST_PATH = pathlib.Path(
+    os.getenv("BRAIN_RUNTIME_PARAM_REPORT_LATEST_PATH", "logs/brain_runtime_param_autotune_latest.json")
+)
+_RUNTIME_PARAM_REPORT_HISTORY_PATH = pathlib.Path(
+    os.getenv(
+        "BRAIN_RUNTIME_PARAM_REPORT_HISTORY_PATH",
+        "logs/brain_runtime_param_autotune_history.jsonl",
+    )
+)
+
 _CACHE: dict[tuple[str, str], tuple[float, "BrainDecision"]] = {}
 _PROMPT_PROFILE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
 _PROMPT_PROFILE_LOCK = threading.Lock()
 _PROMPT_AUTOTUNE_LOCK = threading.Lock()
 _LAST_PROMPT_AUTOTUNE_TS = 0.0
+_RUNTIME_PARAM_PROFILE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
+_RUNTIME_PARAM_PROFILE_LOCK = threading.Lock()
+_RUNTIME_PARAM_AUTOTUNE_LOCK = threading.Lock()
+_LAST_RUNTIME_PARAM_AUTOTUNE_TS = 0.0
 
 
 @dataclass(frozen=True)
@@ -270,6 +326,24 @@ def _ensure_schema() -> None:
             """
         )
         con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brain_runtime_param_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                ts_epoch REAL NOT NULL,
+                lookback_hours REAL NOT NULL,
+                decision_count INTEGER NOT NULL,
+                model TEXT,
+                url TEXT,
+                applied INTEGER NOT NULL,
+                profile_version TEXT,
+                summary_json TEXT,
+                response_json TEXT,
+                error TEXT
+            )
+            """
+        )
+        con.execute(
             "CREATE INDEX IF NOT EXISTS idx_brain_decisions_ts ON brain_decisions(ts_epoch)"
         )
         con.execute(
@@ -280,6 +354,9 @@ def _ensure_schema() -> None:
         )
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_brain_prompt_runs_ts ON brain_prompt_runs(ts_epoch)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brain_runtime_param_runs_ts ON brain_runtime_param_runs(ts_epoch)"
         )
         con.commit()
     finally:
@@ -434,6 +511,137 @@ def _profile_version(profile: Optional[dict[str, Any]]) -> str:
         return "none"
     text = str(profile.get("version") or "").strip()
     return text or "none"
+
+
+def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except Exception:
+        number = float(default)
+    return max(float(minimum), min(float(maximum), number))
+
+
+def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(float(value))
+    except Exception:
+        number = int(default)
+    return max(int(minimum), min(int(maximum), number))
+
+
+def _default_runtime_param_profile() -> dict[str, Any]:
+    return {
+        "version": "rp-v1",
+        "updated_at": _now_iso(),
+        "min_scale": round(_clamp_float(_MIN_SCALE, _MIN_SCALE, 0.05, 0.95), 4),
+        "block_rate_soft_limit": 0.62,
+        "activity_rate_floor": 0.35,
+        "block_to_reduce_scale": round(max(_MIN_SCALE, 0.35), 4),
+        "guard_window_decisions": 120,
+        "min_guard_samples": 30,
+        "max_block_streak": 4,
+        "notes": [],
+    }
+
+
+def _coerce_runtime_param_profile(raw: Any) -> dict[str, Any]:
+    defaults = _default_runtime_param_profile()
+    if isinstance(raw, dict):
+        merged = dict(defaults)
+        merged.update(raw)
+    else:
+        merged = dict(defaults)
+    notes: list[str] = []
+    for item in merged.get("notes", []) or []:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if len(text) > _PROMPT_EXTRA_RULE_LEN:
+            text = text[:_PROMPT_EXTRA_RULE_LEN].rstrip() + "..."
+        notes.append(text)
+        if len(notes) >= _PROMPT_EXTRA_RULES_MAX:
+            break
+    return {
+        "version": str(merged.get("version") or "").strip() or str(defaults["version"]),
+        "updated_at": str(merged.get("updated_at") or "").strip() or _now_iso(),
+        "min_scale": round(
+            _clamp_float(merged.get("min_scale"), float(defaults["min_scale"]), 0.05, 0.95),
+            4,
+        ),
+        "block_rate_soft_limit": round(
+            _clamp_float(
+                merged.get("block_rate_soft_limit"),
+                float(defaults["block_rate_soft_limit"]),
+                0.1,
+                0.98,
+            ),
+            4,
+        ),
+        "activity_rate_floor": round(
+            _clamp_float(
+                merged.get("activity_rate_floor"),
+                float(defaults["activity_rate_floor"]),
+                0.05,
+                0.95,
+            ),
+            4,
+        ),
+        "block_to_reduce_scale": round(
+            _clamp_float(
+                merged.get("block_to_reduce_scale"),
+                float(defaults["block_to_reduce_scale"]),
+                0.05,
+                1.0,
+            ),
+            4,
+        ),
+        "guard_window_decisions": _clamp_int(
+            merged.get("guard_window_decisions"),
+            int(defaults["guard_window_decisions"]),
+            20,
+            2000,
+        ),
+        "min_guard_samples": _clamp_int(
+            merged.get("min_guard_samples"),
+            int(defaults["min_guard_samples"]),
+            10,
+            500,
+        ),
+        "max_block_streak": _clamp_int(
+            merged.get("max_block_streak"),
+            int(defaults["max_block_streak"]),
+            2,
+            50,
+        ),
+        "notes": notes,
+    }
+
+
+def _runtime_profile_version(profile: Optional[dict[str, Any]]) -> str:
+    if not isinstance(profile, dict):
+        return "none"
+    text = str(profile.get("version") or "").strip()
+    return text or "none"
+
+
+def _load_runtime_param_profile(force: bool = False) -> dict[str, Any]:
+    global _RUNTIME_PARAM_PROFILE_CACHE
+    now = time.monotonic()
+    with _RUNTIME_PARAM_PROFILE_LOCK:
+        cached_ts, cached = _RUNTIME_PARAM_PROFILE_CACHE
+        if not force and cached and now - cached_ts <= _RUNTIME_PARAM_PROFILE_TTL_SEC:
+            return dict(cached)
+        profile: dict[str, Any]
+        if _RUNTIME_PARAM_PROFILE_PATH.exists():
+            try:
+                raw = json.loads(_RUNTIME_PARAM_PROFILE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                raw = {}
+            profile = _coerce_runtime_param_profile(raw)
+        else:
+            profile = _coerce_runtime_param_profile({})
+        _RUNTIME_PARAM_PROFILE_CACHE = (now, profile)
+        return dict(profile)
 
 
 def _load_prompt_profile(force: bool = False) -> dict[str, Any]:
@@ -892,6 +1100,289 @@ def _write_prompt_profile(profile_payload: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _write_runtime_param_profile(profile_payload: dict[str, Any]) -> dict[str, Any]:
+    global _RUNTIME_PARAM_PROFILE_CACHE
+    _RUNTIME_PARAM_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    merged = _load_runtime_param_profile(force=True)
+    if isinstance(profile_payload, dict):
+        merged.update(profile_payload)
+    merged = _coerce_runtime_param_profile(merged)
+    merged["updated_at"] = _now_iso()
+    tmp_path = _RUNTIME_PARAM_PROFILE_PATH.with_suffix(_RUNTIME_PARAM_PROFILE_PATH.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(merged, ensure_ascii=True, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(_RUNTIME_PARAM_PROFILE_PATH)
+    with _RUNTIME_PARAM_PROFILE_LOCK:
+        _RUNTIME_PARAM_PROFILE_CACHE = (time.monotonic(), dict(merged))
+    return merged
+
+
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float]]:
+    entry = _safe_dict(context.get("entry_thesis"))
+    meta = _safe_dict(context.get("meta"))
+    factors = _safe_dict(entry.get("factors"))
+    m1_factors = _safe_dict(factors.get("M1"))
+
+    spread_candidates = [
+        entry.get("spread_pips"),
+        meta.get("spread_pips"),
+        _safe_dict(context.get("ticks")).get("spread_pips"),
+    ]
+    atr_candidates = [
+        entry.get("atr_pips"),
+        m1_factors.get("atr_pips"),
+        meta.get("atr_pips"),
+    ]
+    confidence_candidates = [
+        context.get("confidence"),
+        entry.get("confidence"),
+        entry.get("entry_probability"),
+    ]
+
+    def _first_valid(candidates: list[Any], *, low: float, high: float) -> Optional[float]:
+        for item in candidates:
+            try:
+                number = float(item)
+            except Exception:
+                continue
+            if low <= number <= high:
+                return number
+        return None
+
+    return {
+        "spread_pips": _first_valid(spread_candidates, low=0.0, high=100.0),
+        "atr_pips": _first_valid(atr_candidates, low=0.0, high=200.0),
+        "confidence": _first_valid(confidence_candidates, low=0.0, high=100.0),
+    }
+
+
+def _stats(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"count": 0, "mean": 0.0, "p95": 0.0}
+    ordered = sorted(values)
+    idx = max(0, min(len(ordered) - 1, int((len(ordered) - 1) * 0.95)))
+    return {
+        "count": len(values),
+        "mean": round(sum(values) / len(values), 4),
+        "p95": round(float(ordered[idx]), 4),
+    }
+
+
+def _collect_market_summary(lookback_hours: float) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "spread_pips": {"count": 0, "mean": 0.0, "p95": 0.0},
+        "atr_pips": {"count": 0, "mean": 0.0, "p95": 0.0},
+        "confidence": {"count": 0, "mean": 0.0, "p95": 0.0},
+    }
+    if not _DB_PATH.exists():
+        return summary
+    cutoff_epoch = time.time() - (max(1.0, lookback_hours) * 3600.0)
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    spreads: list[float] = []
+    atrs: list[float] = []
+    confidences: list[float] = []
+    try:
+        rows = con.execute(
+            """
+            SELECT context_json
+            FROM brain_decisions
+            WHERE ts_epoch >= ?
+            ORDER BY ts_epoch DESC
+            LIMIT 400
+            """,
+            (cutoff_epoch,),
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    for (raw_context,) in rows:
+        if not raw_context:
+            continue
+        try:
+            context = json.loads(str(raw_context))
+        except Exception:
+            continue
+        metrics = _extract_market_metrics(_safe_dict(context))
+        spread = metrics.get("spread_pips")
+        atr = metrics.get("atr_pips")
+        confidence = metrics.get("confidence")
+        if spread is not None:
+            spreads.append(float(spread))
+        if atr is not None:
+            atrs.append(float(atr))
+        if confidence is not None:
+            confidences.append(float(confidence))
+    summary["spread_pips"] = _stats(spreads)
+    summary["atr_pips"] = _stats(atrs)
+    summary["confidence"] = _stats(confidences)
+    return summary
+
+
+def _collect_recent_activity_stats(
+    strategy_tag: str,
+    pocket: str,
+    *,
+    window_decisions: int,
+) -> dict[str, float]:
+    stats = {
+        "samples": 0,
+        "allow": 0,
+        "reduce": 0,
+        "block": 0,
+        "allow_rate": 0.0,
+        "reduce_rate": 0.0,
+        "block_rate": 0.0,
+        "activity_rate": 0.0,
+        "block_streak": 0,
+    }
+    if not _DB_PATH.exists():
+        return stats
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        rows = con.execute(
+            """
+            SELECT COALESCE(action, 'UNKNOWN')
+            FROM brain_decisions
+            WHERE strategy_tag = ? AND pocket = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (strategy_tag, pocket, max(1, int(window_decisions))),
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not rows:
+        return stats
+    actions = [str(row[0] or "").strip().upper() for row in rows]
+    allow = sum(1 for action in actions if action == "ALLOW")
+    reduce = sum(1 for action in actions if action == "REDUCE")
+    block = sum(1 for action in actions if action == "BLOCK")
+    samples = len(actions)
+    streak = 0
+    for action in actions:
+        if action == "BLOCK":
+            streak += 1
+            continue
+        break
+    stats["samples"] = samples
+    stats["allow"] = allow
+    stats["reduce"] = reduce
+    stats["block"] = block
+    stats["allow_rate"] = round(allow / samples, 4)
+    stats["reduce_rate"] = round(reduce / samples, 4)
+    stats["block_rate"] = round(block / samples, 4)
+    stats["activity_rate"] = round((allow + reduce) / samples, 4)
+    stats["block_streak"] = streak
+    return stats
+
+
+def _apply_runtime_param_guard(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    decision: BrainDecision,
+    runtime_profile: dict[str, Any],
+) -> tuple[BrainDecision, dict[str, Any]]:
+    min_scale = _clamp_float(runtime_profile.get("min_scale"), _MIN_SCALE, 0.05, 0.95)
+    block_to_reduce_scale = _clamp_float(
+        runtime_profile.get("block_to_reduce_scale"),
+        max(_MIN_SCALE, 0.35),
+        0.05,
+        1.0,
+    )
+    block_rate_soft_limit = _clamp_float(
+        runtime_profile.get("block_rate_soft_limit"),
+        0.62,
+        0.1,
+        0.98,
+    )
+    activity_rate_floor = _clamp_float(
+        runtime_profile.get("activity_rate_floor"),
+        0.35,
+        0.05,
+        0.95,
+    )
+    guard_window_decisions = _clamp_int(
+        runtime_profile.get("guard_window_decisions"),
+        120,
+        20,
+        2000,
+    )
+    min_guard_samples = _clamp_int(runtime_profile.get("min_guard_samples"), 30, 10, 500)
+    max_block_streak = _clamp_int(runtime_profile.get("max_block_streak"), 4, 2, 50)
+    stats = _collect_recent_activity_stats(
+        strategy_tag,
+        pocket,
+        window_decisions=guard_window_decisions,
+    )
+
+    action = str(decision.action or "ALLOW").strip().upper()
+    allowed = bool(decision.allowed)
+    scale = float(decision.scale)
+    reason = str(decision.reason or "llm_decision").strip()
+    overrides: list[str] = []
+
+    if allowed and scale > 0.0 and scale < min_scale:
+        scale = min_scale
+        if action == "ALLOW" and scale < 1.0:
+            action = "REDUCE"
+        overrides.append("raise_min_scale")
+
+    enough_samples = int(stats.get("samples") or 0) >= min_guard_samples
+    over_block_rate = bool(float(stats.get("block_rate") or 0.0) > block_rate_soft_limit)
+    under_activity = bool(float(stats.get("activity_rate") or 1.0) < activity_rate_floor)
+    over_block_streak = bool(int(stats.get("block_streak") or 0) >= max_block_streak)
+
+    if action == "BLOCK" and enough_samples and (over_block_rate or under_activity or over_block_streak):
+        action = "REDUCE"
+        allowed = True
+        scale = max(min_scale, block_to_reduce_scale)
+        overrides.append("block_to_reduce_bias")
+        reason = f"{reason}|no_trade_bias_reduce"
+
+    if action == "BLOCK":
+        allowed = False
+        scale = 0.0
+    elif action == "REDUCE":
+        allowed = True
+        scale = max(min_scale, min(scale, 1.0))
+    else:
+        allowed = True
+        scale = 1.0 if scale >= 1.0 else max(min_scale, min(scale, 1.0))
+        if scale < 1.0:
+            action = "REDUCE"
+
+    adjusted = BrainDecision(allowed, float(scale), reason, action, memory=decision.memory)
+    guard_info = {
+        "runtime_profile_version": _runtime_profile_version(runtime_profile),
+        "min_scale": round(min_scale, 4),
+        "block_to_reduce_scale": round(block_to_reduce_scale, 4),
+        "block_rate_soft_limit": round(block_rate_soft_limit, 4),
+        "activity_rate_floor": round(activity_rate_floor, 4),
+        "guard_window_decisions": guard_window_decisions,
+        "min_guard_samples": min_guard_samples,
+        "max_block_streak": max_block_streak,
+        "stats": stats,
+        "overrides": overrides,
+    }
+    return adjusted, guard_info
+
+
 def _maybe_autotune_prompt_profile() -> None:
     global _LAST_PROMPT_AUTOTUNE_TS
     if not _PROMPT_AUTOTUNE_ENABLED:
@@ -1004,6 +1495,233 @@ def _maybe_autotune_prompt_profile_async() -> None:
     thread = threading.Thread(
         target=_maybe_autotune_prompt_profile,
         name="brain-prompt-autotune",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _write_runtime_param_report(report: dict[str, Any]) -> None:
+    try:
+        _RUNTIME_PARAM_REPORT_LATEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_latest = _RUNTIME_PARAM_REPORT_LATEST_PATH.with_suffix(
+            _RUNTIME_PARAM_REPORT_LATEST_PATH.suffix + ".tmp"
+        )
+        tmp_latest.write_text(
+            json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+        tmp_latest.replace(_RUNTIME_PARAM_REPORT_LATEST_PATH)
+    except Exception:
+        pass
+
+    try:
+        _RUNTIME_PARAM_REPORT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _RUNTIME_PARAM_REPORT_HISTORY_PATH.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(report, ensure_ascii=True, sort_keys=True))
+            fp.write("\n")
+    except Exception:
+        pass
+
+
+def _collect_runtime_autotune_summary(lookback_hours: float) -> dict[str, Any]:
+    summary = _collect_autotune_summary(lookback_hours)
+    decision_count = int(summary.get("decision_count") or 0)
+    action_counts = summary.get("action_counts") if isinstance(summary, dict) else {}
+    action_counts = action_counts if isinstance(action_counts, dict) else {}
+    allow_n = int(action_counts.get("ALLOW") or 0)
+    reduce_n = int(action_counts.get("REDUCE") or 0)
+    block_n = int(action_counts.get("BLOCK") or 0)
+    total_n = max(0, decision_count)
+    summary["decision_mix"] = {
+        "allow": allow_n,
+        "reduce": reduce_n,
+        "block": block_n,
+        "block_rate": round(block_n / total_n, 4) if total_n > 0 else 0.0,
+        "activity_rate": round((allow_n + reduce_n) / total_n, 4) if total_n > 0 else 0.0,
+    }
+    summary["market_summary"] = _collect_market_summary(lookback_hours)
+    summary["runtime_profile"] = _load_runtime_param_profile(force=True)
+    return summary
+
+
+def _record_runtime_param_run(
+    *,
+    lookback_hours: float,
+    decision_count: int,
+    applied: bool,
+    profile_version: str,
+    summary: dict[str, Any],
+    response: Optional[dict[str, Any]],
+    error: Optional[str] = None,
+) -> None:
+    _ensure_schema()
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        con.execute(
+            """
+            INSERT INTO brain_runtime_param_runs(
+                ts, ts_epoch, lookback_hours, decision_count, model, url, applied,
+                profile_version, summary_json, response_json, error
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                _now_iso(),
+                float(time.time()),
+                float(lookback_hours),
+                int(decision_count),
+                _RUNTIME_PARAM_AUTOTUNE_MODEL,
+                _RUNTIME_PARAM_AUTOTUNE_URL,
+                1 if applied else 0,
+                profile_version,
+                _stringify(summary, 10000),
+                _stringify(response or {}, 10000),
+                str(error or "").strip() or None,
+            ),
+        )
+        con.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    report = {
+        "generated_at": _now_iso(),
+        "lookback_hours": float(lookback_hours),
+        "decision_count": int(decision_count),
+        "applied": bool(applied),
+        "status": "applied" if applied else "skipped",
+        "error": str(error or "").strip() or None,
+        "profile_version": str(profile_version or "").strip() or "none",
+        "decision_mix": _safe_dict(summary.get("decision_mix")),
+        "market_summary": _safe_dict(summary.get("market_summary")),
+    }
+    _write_runtime_param_report(report)
+
+
+def _maybe_autotune_runtime_param_profile() -> None:
+    global _LAST_RUNTIME_PARAM_AUTOTUNE_TS
+    if not _RUNTIME_PARAM_AUTOTUNE_ENABLED:
+        return
+    now_epoch = time.time()
+    if now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
+        return
+    if not _RUNTIME_PARAM_AUTOTUNE_LOCK.acquire(blocking=False):
+        return
+    try:
+        now_epoch = time.time()
+        if now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
+            return
+        _LAST_RUNTIME_PARAM_AUTOTUNE_TS = now_epoch
+        summary = _collect_runtime_autotune_summary(_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS)
+        decision_count = int(summary.get("decision_count") or 0)
+        current_profile = _load_runtime_param_profile(force=True)
+        if decision_count < _RUNTIME_PARAM_AUTOTUNE_MIN_DECISIONS:
+            _record_runtime_param_run(
+                lookback_hours=_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS,
+                decision_count=decision_count,
+                applied=False,
+                profile_version=_runtime_profile_version(current_profile),
+                summary=summary,
+                response=None,
+                error="insufficient_decisions",
+            )
+            return
+        prompt = (
+            "You optimize runtime risk parameters for an FX decision gate (USD/JPY).\n"
+            "Use performance and market summary to avoid no-trade bias while controlling downside.\n"
+            "Return JSON only with schema:\n"
+            "{\n"
+            '  "version": "rp-v2",\n'
+            '  "min_scale": 0.25,\n'
+            '  "block_rate_soft_limit": 0.6,\n'
+            '  "activity_rate_floor": 0.35,\n'
+            '  "block_to_reduce_scale": 0.38,\n'
+            '  "guard_window_decisions": 120,\n'
+            '  "min_guard_samples": 30,\n'
+            '  "max_block_streak": 4,\n'
+            '  "notes": ["optional short rule"]\n'
+            "}\n"
+            "Constraints:\n"
+            "- min_scale: 0.05-0.95\n"
+            "- block_rate_soft_limit: 0.10-0.98\n"
+            "- activity_rate_floor: 0.05-0.95\n"
+            "- block_to_reduce_scale: 0.05-1.0\n"
+            "- guard_window_decisions: 20-2000\n"
+            "- min_guard_samples: 10-500\n"
+            "- max_block_streak: 2-50\n"
+            "- Keep notes short and concrete.\n\n"
+            f"Current runtime profile: {_stringify(current_profile, 6000)}\n"
+            f"Recent runtime summary: {_stringify(summary, 9000)}\n"
+        )
+        response = call_ollama_chat_json(
+            prompt,
+            model=_RUNTIME_PARAM_AUTOTUNE_MODEL,
+            url=_RUNTIME_PARAM_AUTOTUNE_URL,
+            timeout_sec=_RUNTIME_PARAM_AUTOTUNE_TIMEOUT_SEC,
+            temperature=_RUNTIME_PARAM_AUTOTUNE_TEMP,
+            max_tokens=_RUNTIME_PARAM_AUTOTUNE_MAX_TOKENS,
+        )
+        if not isinstance(response, dict):
+            _record_runtime_param_run(
+                lookback_hours=_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS,
+                decision_count=decision_count,
+                applied=False,
+                profile_version=_runtime_profile_version(current_profile),
+                summary=summary,
+                response=None,
+                error="no_response",
+            )
+            return
+        merged = _write_runtime_param_profile(response)
+        _record_runtime_param_run(
+            lookback_hours=_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS,
+            decision_count=decision_count,
+            applied=True,
+            profile_version=_runtime_profile_version(merged),
+            summary=summary,
+            response=response,
+            error=None,
+        )
+        try:
+            log_metric(
+                "brain_runtime_param_autotune_applied",
+                1.0,
+                tags={
+                    "version": _runtime_profile_version(merged),
+                    "decisions": str(decision_count),
+                },
+            )
+        except Exception:
+            pass
+    except Exception as exc:
+        _record_runtime_param_run(
+            lookback_hours=_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS,
+            decision_count=0,
+            applied=False,
+            profile_version="none",
+            summary={},
+            response=None,
+            error=f"exception:{exc}",
+        )
+    finally:
+        try:
+            _RUNTIME_PARAM_AUTOTUNE_LOCK.release()
+        except Exception:
+            pass
+
+
+def _maybe_autotune_runtime_param_profile_async() -> None:
+    if not _RUNTIME_PARAM_AUTOTUNE_ENABLED:
+        return
+    if time.time() - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
+        return
+    thread = threading.Thread(
+        target=_maybe_autotune_runtime_param_profile,
+        name="brain-runtime-param-autotune",
         daemon=True,
     )
     thread.start()
@@ -1165,6 +1883,8 @@ def decide(
     pocket_key = str(pocket).strip().lower()
     cache_key = (tag, pocket_key)
     profile_version = _profile_version(_load_prompt_profile())
+    runtime_profile = _load_runtime_param_profile()
+    runtime_profile_version = _runtime_profile_version(runtime_profile)
     memory_before = _load_memory(tag, pocket_key)
     context = {
         "ts": _now_iso(),
@@ -1178,11 +1898,17 @@ def decide(
         "memory": memory_before or "",
         "entry_thesis": entry_thesis or {},
         "meta": meta or {},
+        "runtime_param_profile_version": runtime_profile_version,
     }
     now = time.monotonic()
     cached = _CACHE.get(cache_key)
     if cached and now - cached[0] <= _TTL_SEC:
-        decision = cached[1]
+        decision, runtime_guard = _apply_runtime_param_guard(
+            strategy_tag=tag,
+            pocket=pocket_key,
+            decision=cached[1],
+            runtime_profile=runtime_profile,
+        )
         _log_decision_row(
             strategy_tag=tag,
             pocket=pocket_key,
@@ -1201,11 +1927,15 @@ def decide(
             memory_after=decision.memory,
             profile_version=profile_version,
             context=context,
-            payload={"cached": True},
+            payload={"cached": True, "runtime_guard": runtime_guard},
             error=None,
         )
         try:
             _maybe_autotune_prompt_profile_async()
+        except Exception:
+            pass
+        try:
+            _maybe_autotune_runtime_param_profile_async()
         except Exception:
             pass
         return decision
@@ -1254,6 +1984,12 @@ def decide(
     if payload is None:
         allow_reason = "bad_response" if llm_text_available else "no_llm"
         decision = _llm_failure_decision(memory=memory_before, allow_reason=allow_reason)
+        decision, runtime_guard = _apply_runtime_param_guard(
+            strategy_tag=tag,
+            pocket=pocket_key,
+            decision=decision,
+            runtime_profile=runtime_profile,
+        )
         try:
             _save_memory(tag, pocket_key, memory=decision.memory, decision=decision)
         except Exception:
@@ -1277,11 +2013,15 @@ def decide(
             memory_after=decision.memory,
             profile_version=profile_version,
             context=context,
-            payload=payload,
+            payload={"response": payload, "runtime_guard": runtime_guard},
             error=allow_reason,
         )
         try:
             _maybe_autotune_prompt_profile_async()
+        except Exception:
+            pass
+        try:
+            _maybe_autotune_runtime_param_profile_async()
         except Exception:
             pass
         return decision
@@ -1348,6 +2088,12 @@ def decide(
         memory_after = memory_before
 
     decision = BrainDecision(allowed, scale, reason, action, memory=memory_after)
+    decision, runtime_guard = _apply_runtime_param_guard(
+        strategy_tag=tag,
+        pocket=pocket_key,
+        decision=decision,
+        runtime_profile=runtime_profile,
+    )
     if memory_update:
         _save_memory(tag, pocket_key, memory=memory_after, decision=decision)
     else:
@@ -1373,11 +2119,15 @@ def decide(
         memory_after=memory_after,
         profile_version=profile_version,
         context=context,
-        payload=payload,
+        payload={"response": payload, "runtime_guard": runtime_guard},
         error=None,
     )
     try:
         _maybe_autotune_prompt_profile_async()
+    except Exception:
+        pass
+    try:
+        _maybe_autotune_runtime_param_profile_async()
     except Exception:
         pass
     return decision

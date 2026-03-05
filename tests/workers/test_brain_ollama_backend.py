@@ -17,6 +17,7 @@ def _reload_brain_module():
 def _prepare_brain(monkeypatch, tmp_path: Path):
     db_path = tmp_path / "brain_state.db"
     profile_path = tmp_path / "brain_prompt_profile.json"
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
     trades_path = tmp_path / "trades.db"
 
     monkeypatch.setenv("BRAIN_ENABLED", "1")
@@ -24,6 +25,8 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("BRAIN_SAMPLE_RATE", "1.0")
     monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_ENABLED", "0")
     monkeypatch.setenv("BRAIN_PROMPT_PROFILE_PATH", str(profile_path))
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_PROFILE_PATH", str(runtime_profile_path))
+    monkeypatch.setenv("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED", "0")
     brain = _reload_brain_module()
     monkeypatch.setattr(brain, "_DB_PATH", db_path)
     monkeypatch.setattr(brain, "_TRADES_DB_PATH", trades_path)
@@ -32,6 +35,7 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(brain, "log_metric", lambda *_args, **_kwargs: True)
     brain._CACHE.clear()
     brain._PROMPT_PROFILE_CACHE = (0.0, {})
+    brain._RUNTIME_PARAM_PROFILE_CACHE = (0.0, {})
     return brain
 
 
