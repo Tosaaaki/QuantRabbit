@@ -26,7 +26,7 @@
 ## 2026-03-05 15:50 JST / local-v2: PF悪化RCA（scalp_ping_5s_b寄与大）+ Brain autopdca既定OFF(=opt-in)化
 
 Period:
-- 集計: 2026-03-04 15:46:50〜2026-03-05 15:46:50 JST（UTC 06:46:50）
+- 集計: 2026-03-04 15:46:50〜2026-03-05 15:46:50 JST（UTC 2026-03-04 06:46:50〜2026-03-05 06:46:50）
 - 市況確認: 2026-03-05 15:40 JST（UTC 06:40）
 - 対象: `logs/trades.db`, `logs/factor_cache.json`, `logs/health_snapshot.json`, `scripts/local_v2_autorecover_once.sh`, `scripts/local_v2_stack.sh`
 
