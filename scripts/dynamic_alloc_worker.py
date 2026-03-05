@@ -81,8 +81,7 @@ def fetch_trades(limit: int, lookback_days: int) -> List[Tuple]:
     conn = sqlite3.connect(uri, uri=True, timeout=10.0, isolation_level=None)
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
+        sql = """
             SELECT
               COALESCE(NULLIF(strategy_tag, ''), strategy) AS strategy,
               pocket,
@@ -95,10 +94,12 @@ def fetch_trades(limit: int, lookback_days: int) -> List[Tuple]:
             WHERE close_time IS NOT NULL
               AND julianday(close_time) >= julianday('now', ?)
             ORDER BY close_time DESC
-            LIMIT ?
-            """,
-            (f"-{int(lookback_days)} day", limit),
-        )
+        """
+        params = [f"-{int(lookback_days)} day"]
+        if int(limit) > 0:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        cur.execute(sql, params)
         return cur.fetchall()
     finally:
         conn.close()
@@ -332,7 +333,12 @@ def compute_scores(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=300, help="Number of recent trades to use")
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=5000,
+        help="Number of recent trades to use (0 to disable LIMIT and use full lookback window)",
+    )
     ap.add_argument("--lookback-days", type=int, default=7, help="Lookback window in days")
     ap.add_argument("--min-trades", type=int, default=12, help="Min trades for full score weight")
     ap.add_argument("--pf-cap", type=float, default=2.0, help="Profit factor cap for normalization")
