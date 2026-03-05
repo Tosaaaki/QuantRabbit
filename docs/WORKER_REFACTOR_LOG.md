@@ -11362,3 +11362,29 @@
 - 意図:
   - ローカルLLMを「任意実験」ではなく常時導線へ戻し、
     履歴分析→プロンプト/パラメータ改善→モデル選定までをローカル完結で継続可能にする。
+
+## 2026-03-05 JST - Brain autoPDCAサイクルの実行保証（interval/lock/再起動条件）
+
+- 背景:
+  - `local_v2_autorecover_once.sh` は `run_brain_autopdca_cycle.sh --interval-sec ...` を呼ぶが、
+    受け側が `--interval-sec` 非対応だったため、autopdca が実行されず停止していた。
+  - `env_changed` 判定は stdout 全文の JSON 抽出に依存しており、ログ混在時に再起動判定が崩れる余地があった。
+
+- 変更:
+  - `scripts/run_brain_autopdca_cycle.sh`
+    - `--interval-sec` / `--force` を追加。
+    - `logs/brain_autopdca.lock` + `logs/brain_autopdca.state` による多重起動/短周期連打防止を追加。
+    - `selection_output` 優先 + stdout 最終行フォールバックで `env_changed` を判定する方式へ変更。
+    - 市況スナップショット（OANDA API + `logs/orders.db`）を取得し、
+      spread/reject-rate が閾値外のときは `market_sanity_guard` で skip（`--force` で上書き）。
+    - レポートを `logs/brain_autopdca_cycle_latest.json` と `logs/brain_autopdca_cycle_history.jsonl` へ出力。
+  - `scripts/local_v2_autorecover_once.sh`
+    - 既存の `--interval-sec` 呼び出しを有効化する形で整合。
+  - `tests/scripts/test_run_brain_autopdca_cycle.py`
+    - `env_changed` 契約を満たすフィクスチャへ修正。
+    - interval 未経過時の `status=skipped, reason=interval_not_elapsed` を追加検証。
+
+- 検証:
+  - `bash -n scripts/run_brain_autopdca_cycle.sh scripts/local_v2_autorecover_once.sh`
+  - `pytest -q tests/scripts/test_apply_brain_model_selection.py tests/scripts/test_run_brain_autopdca_cycle.py`
+  - 結果: `5 passed`

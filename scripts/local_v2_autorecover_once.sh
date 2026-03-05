@@ -20,6 +20,8 @@ RESUME_GAP_SEC="${QR_LOCAL_V2_RESUME_GAP_SEC:-90}"
 NET_RECOVERY_RESTART_MARKET_DATA="${QR_LOCAL_V2_NET_RECOVERY_RESTART_MARKET_DATA:-1}"
 NET_RECOVERY_RESTART_COOLDOWN_SEC="${QR_LOCAL_V2_NET_RECOVERY_RESTART_COOLDOWN_SEC:-60}"
 STALE_RECOVERY_ENABLED="${QR_LOCAL_V2_STALE_RECOVERY_ENABLED:-0}"
+BRAIN_AUTOPDCA_ENABLED="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED:-1}"
+BRAIN_AUTOPDCA_INTERVAL_SEC="${QR_LOCAL_V2_BRAIN_AUTOPDCA_INTERVAL_SEC:-${QR_LOCAL_V2_BRAIN_PDCA_INTERVAL_SEC:-1800}}"
 
 usage() {
   cat <<'USAGE'
@@ -169,6 +171,22 @@ run_stack() {
   "${args[@]}"
 }
 
+run_brain_autopdca_async() {
+  if ! is_truthy "${BRAIN_AUTOPDCA_ENABLED}"; then
+    return 0
+  fi
+  local cycle_script="${ROOT_DIR}/scripts/run_brain_autopdca_cycle.sh"
+  if [[ ! -x "${cycle_script}" ]]; then
+    if [[ "${VERBOSE}" == "1" ]]; then
+      log "[warn] brain autopdca script not executable: ${cycle_script}"
+    fi
+    return 0
+  fi
+  local interval_sec
+  interval_sec="$(as_positive_int "${BRAIN_AUTOPDCA_INTERVAL_SEC}" "1800")"
+  ("${cycle_script}" --interval-sec "${interval_sec}" >>"${LOG_FILE}" 2>&1) &
+}
+
 network_ready() {
   local py_exec=""
   if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
@@ -308,6 +326,7 @@ if [[ -z "${stopped_lines}" && -z "${stale_lines}" ]]; then
   if [[ "${VERBOSE}" == "1" ]]; then
     log "[ok] stack healthy profile=${PROFILE}"
   fi
+  run_brain_autopdca_async
   exit 0
 fi
 
@@ -330,6 +349,7 @@ set -e
 
 if [[ ${up_rc} -eq 0 ]]; then
   log "[recover] stack up succeeded profile=${PROFILE} services=${SERVICES:-<profile>}"
+  run_brain_autopdca_async
   exit 0
 fi
 

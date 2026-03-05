@@ -100,6 +100,13 @@ def test_apply_brain_model_selection_updates_env_and_report(tmp_path: Path) -> N
     assert report["preflight_model"] == "qwen2.5:7b"
     assert report["autotune_model"] == "gpt-oss:20b"
     assert int(report["preflight_timeout_sec"]) == 8
+    assert report["env_changed"] is True
+    assert set(report["changed_keys"]) == {
+        "BRAIN_OLLAMA_MODEL",
+        "BRAIN_PROMPT_AUTO_TUNE_MODEL",
+        "BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL",
+        "BRAIN_TIMEOUT_SEC",
+    }
 
 
 def test_apply_brain_model_selection_dry_run_keeps_env(tmp_path: Path) -> None:
@@ -143,3 +150,68 @@ def test_apply_brain_model_selection_dry_run_keeps_env(tmp_path: Path) -> None:
     assert not output_path.exists()
     stdout = json.loads(proc.stdout)
     assert stdout["dry_run"] is True
+    assert stdout["env_changed"] is True
+
+
+def test_apply_brain_model_selection_reports_no_change(tmp_path: Path) -> None:
+    benchmark_path = tmp_path / "benchmark.json"
+    env_path = tmp_path / "brain-ollama.env"
+    output_path = tmp_path / "selection.json"
+
+    benchmark_path.write_text(
+        json.dumps(
+            {
+                "ranking": [
+                    {
+                        "rank": 1,
+                        "name": "qwen2.5-7b",
+                        "model": "qwen2.5:7b",
+                        "score": 1.0,
+                        "parse_pass_rate": 1.0,
+                        "alignment_coverage": 1.0,
+                        "latency_p95_ms": 3000.0,
+                        "outcome_score": 0.6,
+                        "outcome_scored_trades": 10,
+                    },
+                    {
+                        "rank": 2,
+                        "name": "gpt-oss20b",
+                        "model": "gpt-oss:20b",
+                        "score": 1.2,
+                        "parse_pass_rate": 1.0,
+                        "alignment_coverage": 1.0,
+                        "latency_p95_ms": 25000.0,
+                        "outcome_score": 0.7,
+                        "outcome_scored_trades": 10,
+                    },
+                ]
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    env_path.write_text(
+        "\n".join(
+            [
+                "BRAIN_OLLAMA_MODEL=qwen2.5:7b",
+                "BRAIN_PROMPT_AUTO_TUNE_MODEL=gpt-oss:20b",
+                "BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL=gpt-oss:20b",
+                "BRAIN_TIMEOUT_SEC=6",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _run(
+        "--benchmark",
+        str(benchmark_path),
+        "--env-profile",
+        str(env_path),
+        "--output",
+        str(output_path),
+    )
+
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["env_changed"] is False
+    assert report["changed_keys"] == []

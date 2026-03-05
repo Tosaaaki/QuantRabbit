@@ -167,6 +167,17 @@ def _apply_env_updates(existing_text: str, updates: dict[str, str]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _parse_env_values(text: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = raw_line.split("=", 1)
+        result[key.strip()] = value.strip()
+    return result
+
+
 def _write_atomic(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -197,6 +208,9 @@ def main() -> int:
 
     env_before = args.env_profile.read_text(encoding="utf-8") if args.env_profile.exists() else ""
     env_after = _apply_env_updates(env_before, updates)
+    env_before_values = _parse_env_values(env_before)
+    changed_keys = sorted([key for key, value in updates.items() if env_before_values.get(key) != value])
+    env_changed = bool(changed_keys)
 
     result = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -214,11 +228,14 @@ def main() -> int:
         "benchmark_generated_at": benchmark.get("generated_at"),
         "selected_source": benchmark.get("selected_source"),
         "updated_keys": updates,
+        "changed_keys": changed_keys,
+        "env_changed": env_changed,
         "dry_run": bool(args.dry_run),
     }
 
     if not args.dry_run:
-        _write_atomic(args.env_profile, env_after)
+        if env_after != env_before:
+            _write_atomic(args.env_profile, env_after)
         _write_atomic(args.output, json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
 
     print(json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))

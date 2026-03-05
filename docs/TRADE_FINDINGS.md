@@ -6156,3 +6156,30 @@ Status:
   - `filled / submit_attempt` 比率の回復
   - `brain_prompt_autotune_latest.json`, `brain_runtime_param_autotune_latest.json` の更新継続
   - `block_rate` と `activity_rate` が `runtime_profile` の目標帯に収束すること
+
+## 2026-03-05 15:22 JST / Brain autoPDCA実行欠損の修正（改善ループ常時化）
+
+- 作業前市況（ローカル実測 + OANDA API）:
+  - `USD/JPY bid=157.240 ask=157.248 spread=0.8p`
+  - `ATR14(M1)=2.613p`, `ATR14(M5)=6.676p`, `M1 range60=21.9p`
+  - `orders_60m_total=1522`, `reject-like=282 (18.53%)`
+  - `quant-market-data-feed` の HTTP 応答は直近サンプルで `200 OK` のみ
+  - 判定: 通常レンジ内のため改善作業を継続
+
+- 原因:
+  - `local_v2_autorecover_once.sh` は `run_brain_autopdca_cycle.sh --interval-sec` を呼ぶが、
+    受け側が `--interval-sec` 非対応で即終了し、LLMベンチ→モデル反映→再起動のPDCAが回っていなかった。
+
+- 改善:
+  - `run_brain_autopdca_cycle.sh` に以下を追加。
+    - `--interval-sec` / `--force`
+    - lock/state による多重起動・短周期連打防止
+    - `env_changed=true` の時だけ core再起動
+    - 市況ガード（spread/reject-rate）で異常時は skip
+    - `latest + history(jsonl)` 監査ログ出力
+  - `test_run_brain_autopdca_cycle.py` を契約整合（`env_changed`）へ修正し、
+    interval skip ケースを追加。
+
+- 期待効果:
+  - 「停止寄り」ではなく、ローカルLLMの判断履歴を使ったモデル・プロンプト・タイムアウト改善を定期実行できる。
+  - 不要な再起動を抑えつつ、改善が出た時だけ即時反映してトレード品質を上げる。

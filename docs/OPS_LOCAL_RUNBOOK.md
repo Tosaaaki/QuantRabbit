@@ -129,6 +129,11 @@ scripts/uninstall_local_v2_launchd.sh
   現行はリポジトリ実体を `/Users/tossaki/App/QuantRabbit` に置き、
   `/Users/tossaki/Documents/App/QuantRabbit` は互換用シンボリックリンクとして運用する。
 - `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開し、sleep/wake 相当のポーリングギャップと network down→up をログ記録する。
+- `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_brain_autopdca_cycle.sh` を非同期起動する（既定ON）。
+  - `QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED=1|0` で有効/無効。
+  - `QR_LOCAL_V2_BRAIN_AUTOPDCA_INTERVAL_SEC`（互換: `QR_LOCAL_V2_BRAIN_PDCA_INTERVAL_SEC`）で実行間隔を指定。
+- `run_brain_autopdca_cycle.sh` は `--interval-sec` とロックで多重実行を抑止し、`env_changed=true` の時だけ `quant-order-manager,quant-strategy-control` を再起動する。
+  出力は `logs/brain_autopdca_cycle_latest.json` / `logs/brain_autopdca_cycle_history.jsonl`。
 
 ## 1.1 ローカルVMパリティスタック（V2 + 予測/分析/黒板）
 - 制御スクリプト: `scripts/local_vm_parity_stack.sh`
