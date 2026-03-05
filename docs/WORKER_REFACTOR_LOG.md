@@ -5,6 +5,20 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-05（追記）local-v2 runtime tuning: `scalp_ping_5s_b_live` 約定停止対策
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - 戦略: `scalp_ping_5s_b_live`
+- 変更:
+  - `SCALP_PING_5S_B_SIDE_FILTER=none`
+  - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1`
+  - `SCALP_PING_5S_B_DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.35`
+  - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_SPREAD_MULT=0.18`
+  - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_RANGE_MULT=0.08`
+  - `SCALP_PING_5S_B_LOOKAHEAD_LATENCY_PENALTY_PIPS=0.01`
+
+
 ### 2026-03-05（追記）ローカル自動復旧を watchdog + launchd で固定（手動再起動不要化）
 
 - 対象:

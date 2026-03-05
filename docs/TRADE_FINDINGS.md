@@ -23,6 +23,26 @@
   - `Verification`（確認方法/判定基準）
   - `Status`（open/in_progress/done）
 
+## 2026-03-05 11:16 JST / scalp_ping_5s_b 約定停止の即効チューニング（side_filter解除 + lookahead遮断緩和）
+
+Period:
+- 調査時刻: 2026-03-05 11:06〜11:16 JST
+
+Fact:
+- `orders` 最終約定: `2026-03-05 09:10:20 JST`（`2026-03-05T00:10:20.711262+00:00`）
+- `trades` 最終クローズ: `2026-03-04 22:54:44 JST`（`2026-03-04T13:54:44.442316+00:00`、前日）
+- `side_filter=short` 固定で `side=long` が `no_signal:side_filter_block` に偏在、`side=short` は `lookahead_block` 高止まり。
+
+Improvement:
+- `ops/env/local-v2-stack.env` に以下を適用。
+  - `SCALP_PING_5S_B_SIDE_FILTER=none`
+  - `SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER=1`
+  - `SCALP_PING_5S_B_DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT=0.35`
+  - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_SPREAD_MULT=0.18`
+  - `SCALP_PING_5S_B_LOOKAHEAD_SLIP_RANGE_MULT=0.08`
+  - `SCALP_PING_5S_B_LOOKAHEAD_LATENCY_PENALTY_PIPS=0.01`
+
+
 ## 2026-03-05 00:50 JST / ローカル収益RCA第4段 + 停止耐性（watchdog/launchd）固定
 
 Period:
