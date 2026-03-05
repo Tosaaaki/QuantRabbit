@@ -6461,3 +6461,29 @@ Status:
   - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit`
   - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit`
   - `logs/local_v2_stack/quant-scalp-ping-5s-b.log` で `dynamic_alloc` が `entry_thesis` に付与されていること（found時）
+
+## 2026-03-05 21:55 JST / strategy_entry dyn alloc trim-only（未対応戦略のfull-size抑制）+ order-manager timeout上書き
+
+- 狙い / 仮説:
+  - `trade_all` 等で「dyn alloc 未対応 strategy が full size のまま走る」→ 損益悪化/マージン圧迫で no-entry に見える状況を作りやすい。
+  - `execution/strategy_entry.py` で dyn alloc を trim-only（<=1.0）適用して、未対応戦略を自動縮小しつつ「一律停止」には寄せない。
+  - 既に strategy 側で `entry_thesis.dynamic_alloc` を付与しているケースは二重適用しない（`dynamic_alloc` があれば skip）。
+  - `trade_all` は `quant-order-manager` 呼び出しの read timeout（既定 8s）で worker 側 skip が増えやすい → timeout を上書きして false skip を減らす。
+
+- 対応（main反映 / local V2）:
+  - `execution/strategy_entry.py`
+    - `STRATEGY_DYNAMIC_ALLOC_*` を追加し、coordinate 前に `lot_multiplier` を trim-only 適用。
+    - 適用時は `entry_thesis.dynamic_alloc.source=strategy_entry` を付与し、監査可能にした。
+  - `workers/common/dynamic_alloc.py`
+    - soft-participation 時、`dynamic_alloc.json` に無い strategy でも `min_lot_multiplier` をデフォルト返却し、trim-only が必ず効くようにした。
+  - `ops/env/local-v2-stack.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0` を追加（trade_all で timeout skip が増えやすいため）。
+
+- 検証:
+  - Unit test:
+    - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_dynamic_alloc_trim.py`
+  - local V2:
+    - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+    - `logs/health_snapshot.json` の `git_rev` が `a296316d` で、`orders_last_ts` が更新され続けること。
+  - 監査:
+    - `orders.db` の `request_json.entry_thesis.dynamic_alloc.source=strategy_entry` が（dyn alloc 未実装戦略で）付与されること。

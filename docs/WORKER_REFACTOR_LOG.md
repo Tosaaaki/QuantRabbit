@@ -11520,3 +11520,19 @@
 - `workers/scalp_ping_5s/config.py` / `workers/scalp_ping_5s/worker.py`
   - dyn alloc profile（`config/dynamic_alloc.json`）の `lot_multiplier` を entry `units` に反映し、ping5s 系（B/C/D/flow）の縮小/拡大が dyn alloc で効くようにした。
   - found時は `entry_thesis.dynamic_alloc` を付与（他戦略と同形式）。
+
+## 2026-03-05 JST - strategy_entry dyn alloc trim-only + order-manager timeout上書き（trade_all 安全化）
+
+- `execution/strategy_entry.py`
+  - `STRATEGY_DYNAMIC_ALLOC_*` を追加し、dyn alloc 未対応 strategy の entry units を trim-only（<=1.0）で自動縮小できるようにした。
+  - `entry_thesis.dynamic_alloc` が既に付与されている場合は二重適用を避けて skip。
+  - 適用時は `entry_thesis.dynamic_alloc.source=strategy_entry` を付与し、監査可能にした。
+
+- `workers/common/dynamic_alloc.py`
+  - `allocation_policy.soft_participation=true` のとき、未観測/未記録の strategy でも `min_lot_multiplier` をデフォルト適用し、trim-only が必ず効くようにした。
+
+- `ops/env/local-v2-stack.env`
+  - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0` を追加（trade_all で `quant-order-manager` 呼び出し timeout による worker skip が増えやすいため）。
+
+- `tests/workers/common/test_dynamic_alloc.py` / `tests/execution/test_strategy_entry_dynamic_alloc_trim.py`
+  - soft-participation の fallback と、strategy_entry 側 trim の unit test を追加。
