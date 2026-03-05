@@ -37,9 +37,11 @@ def test_confidence_floor_from_env(monkeypatch):
 
 def test_usdjpy_quickshot_env(monkeypatch):
     monkeypatch.setenv("M1SCALP_USDJPY_QUICKSHOT_ENABLED", "1")
+    monkeypatch.setenv("M1SCALP_USDJPY_QUICKSHOT_HARD_GATE", "0")
     monkeypatch.setenv("M1SCALP_USDJPY_QUICKSHOT_TARGET_JPY", "120")
     monkeypatch.setenv("M1SCALP_USDJPY_QUICKSHOT_BLOCK_JST_HOURS", "7,8")
     cfg = _reload_config()
     assert cfg.USDJPY_QUICKSHOT_ENABLED is True
+    assert cfg.USDJPY_QUICKSHOT_HARD_GATE is False
     assert cfg.USDJPY_QUICKSHOT_TARGET_JPY == 120.0
     assert cfg.USDJPY_QUICKSHOT_BLOCK_JST_HOURS == {7, 8}

@@ -6387,3 +6387,21 @@ Status:
 
 - 再検証:
   - Pattern book 更新後（`scripts/pattern_book_worker.py`）、`MicroRangeBreak` の新規注文で `orders.status IN ('pattern_scaled','pattern_block','pattern_scale_below_min')` が出ること。
+
+## 2026-03-05 19:40 JST / M1Scalper: quickshot hard-gate で signal を全drop（local V2）
+
+- 症状:
+  - `logs/orders.db` の `max(ts)` が `2026-03-05T05:53:30Z`（`14:53 JST`）以降更新されず、`trade_min` 起動中でも新規注文が出ない。
+
+- 原因（RCA）:
+  - `workers/scalp_m1scalper/worker.py` の quickshot 判定が `quickshot_allow=False` の場合、ログ後に無条件 `continue` しており quickshot が「必須ゲート」になっていた。
+  - quickshot は `M5 breakout + M1 pullback` を要求するため、レンジ局面では成立しにくく、結果として signal をほぼ全drop していた。
+
+- 対応（local V2）:
+  - `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE`（default=1）を追加し、`0` のときは quickshot 不成立でも通常フローで entry を継続（quickshot plan は適用しない）。
+  - `ops/env/local-v2-stack.env` で `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE=0`、`M1SCALP_USDJPY_QUICKSHOT_MAX_SPREAD_PIPS=1.20` を設定（retest 要件は維持）。
+
+- 検証手順:
+  - `./scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-m1scalper,quant-m1scalper-exit`
+  - `sqlite3 logs/orders.db 'select max(ts) from orders;'` が `2026-03-05T05:53:30Z` より新しい
+  - `scripts/local_v2_stack.sh logs --service quant-order-manager --tail 200` で preflight の通過ログを確認

@@ -36,6 +36,21 @@
 - 意図:
   - ローカルV2の既定導線を「低レイテンシ + 明示opt-in」で固定し、収益/品質のPDCAを安定させる。
 
+### 2026-03-05（同日追記）Brainゲート: Vertex(API) backend撤去（local-only）+ safe profile追加
+
+- 対象:
+  - `workers/common/brain.py`
+  - `ops/env/profiles/brain-ollama-safe.env`（新規）
+  - `ops/env/local-v2-stack.env`
+  - `AGENTS.md`
+  - `config/env.example.toml`
+  - `utils/vertex_client.py`（削除）
+- 変更:
+  - Brain backend を Ollama のみに固定し、外部API（Vertex等）を呼ばないようにした。
+  - ローカル売買で使える safe profile（micro-only / fail-open / 長めTTL / auto-tune off）を追加。
+- 意図:
+  - 「API無し・ローカルLLM稼働」の前提で、トレード導線にローカルLLMを安全に組み込める状態へ寄せる。
+
 ### 2026-03-05（追記）OrderManager Pattern Gate 復活（preserve_strategy_intent下でも評価）+ 運用キー明示 + entry_thesis backfill導線
 
 - 対象:
@@ -11472,3 +11487,12 @@
 - `scripts/backfill_entry_thesis_from_orders.py`
   - `orders.db` を `ATTACH` して参照し、`submit_attempt` を優先して `request_json` を取得する方式へ更新。
   - 診断用に `orders_matched / orders_with_request / recovered_from_orders` を追加し、復元不能の理由を出力できるようにした。
+
+## 2026-03-05 JST - M1Scalper quickshot hard-gate を env で無効化可能に（local V2）
+
+- `workers/scalp_m1scalper/config.py`
+  - `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE`（default=1）を追加し、`USDJPY_QUICKSHOT_HARD_GATE` として参照可能にした。
+- `workers/scalp_m1scalper/worker.py`
+  - quickshot 判定で `quickshot_allow=False` のとき、hard-gate が有効な場合のみ `continue`（無効時は quickshot plan 無しで通常の entry ロジックへ継続）。
+- `ops/env/local-v2-stack.env`
+  - `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE=0` / `M1SCALP_USDJPY_QUICKSHOT_MAX_SPREAD_PIPS=1.20`（retest 要件は維持）
