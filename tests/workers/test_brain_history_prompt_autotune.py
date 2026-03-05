@@ -298,8 +298,11 @@ def _insert_brain_decision_row(
     pocket: str,
     action: str,
     reason: str = "seed",
-) -> None:
+    client_order_id: str | None = None,
+    context: dict | None = None,
+) -> str:
     scale = 0.0 if action == "BLOCK" else (0.5 if action == "REDUCE" else 1.0)
+    coid = client_order_id or f"seed-{action}-{time.time_ns()}"
     decision = brain.BrainDecision(
         allowed=action != "BLOCK",
         scale=scale,
@@ -315,7 +318,7 @@ def _insert_brain_decision_row(
         sl_price=None,
         tp_price=None,
         confidence=70,
-        client_order_id=f"seed-{action}-{time.time_ns()}",
+        client_order_id=coid,
         backend="ollama",
         source="seed",
         llm_ok=True,
@@ -324,10 +327,11 @@ def _insert_brain_decision_row(
         memory_before=None,
         memory_after=None,
         profile_version="v1",
-        context={"entry_thesis": {"spread_pips": 0.8, "atr_pips": 2.1}, "meta": {}},
+        context=context or {"entry_thesis": {"spread_pips": 0.8, "atr_pips": 2.1}, "meta": {}},
         payload={"seed": True},
         error=None,
     )
+    return coid
 
 
 def test_runtime_profile_min_scale_is_applied(monkeypatch, tmp_path: Path) -> None:
@@ -423,6 +427,116 @@ def test_runtime_guard_biases_block_to_reduce_on_overblocking(monkeypatch, tmp_p
     assert decision.action == "REDUCE"
     assert decision.allowed is True
     assert decision.scale >= 0.37
+    assert "no_trade_bias_reduce" in decision.reason
+
+
+def test_market_metrics_json_stays_parsable_with_large_context(monkeypatch, tmp_path: Path) -> None:
+    brain, db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    _insert_brain_decision_row(
+        brain,
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        action="ALLOW",
+        reason="seed_large_context",
+        context={
+            "confidence": 77,
+            "entry_thesis": {
+                "spread_pips": 1.1,
+                "factors": {"M1": {"atr_pips": 2.9}},
+            },
+            "meta": {},
+            "large_blob": "x" * 9000,
+        },
+    )
+
+    con = sqlite3.connect(db_path)
+    try:
+        row = con.execute(
+            """
+            SELECT context_json, market_metrics_json
+            FROM brain_decisions
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        con.close()
+    assert row is not None
+    context_json, market_metrics_json = row
+    assert isinstance(context_json, str) and context_json.endswith("...")
+    metrics = json.loads(market_metrics_json)
+    assert metrics["spread_pips"] == 1.1
+    assert metrics["atr_pips"] == 2.9
+    assert metrics["confidence"] == 77.0
+
+    market_summary = brain._collect_market_summary(24.0)
+    assert market_summary["spread_pips"]["count"] == 1
+    assert market_summary["spread_pips"]["mean"] == 1.1
+    assert market_summary["atr_pips"]["mean"] == 2.9
+
+
+def test_runtime_guard_uses_positive_outcome_signal(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v5",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.9,
+                "activity_rate_floor": 0.95,
+                "block_to_reduce_scale": 0.36,
+                "guard_window_decisions": 30,
+                "min_guard_samples": 20,
+                "max_block_streak": 3,
+                "outcome_min_trades": 1,
+                "outcome_positive_pf_floor": 1.01,
+                "outcome_positive_win_rate_floor": 0.51,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for _ in range(6):
+        _insert_brain_decision_row(
+            brain,
+            strategy_tag="scalp_ping_5s_b_live",
+            pocket="scalp_fast",
+            action="BLOCK",
+            reason="seed_block",
+        )
+    winner_coid = _insert_brain_decision_row(
+        brain,
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        action="ALLOW",
+        reason="seed_allow",
+        client_order_id="runtime-guard-positive-1",
+    )
+    _insert_trade_row(brain._TRADES_DB_PATH, winner_coid, 8.0, 1.4)
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "BLOCK",
+            "scale": 0.0,
+            "reason": "uncertain_setup",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=66,
+        client_order_id="runtime-bias-positive-1",
+    )
+    assert decision.action == "REDUCE"
+    assert decision.allowed is True
+    assert decision.scale >= 0.36
     assert "no_trade_bias_reduce" in decision.reason
 
 
@@ -525,12 +639,18 @@ def test_collect_runtime_autotune_summary_includes_market_metrics(monkeypatch, t
             "factors": {"M1": {"atr_pips": 2.25}},
         },
     )
+    _insert_trade_row(brain._TRADES_DB_PATH, "runtime-summary-1", 9.5, 2.1)
 
     summary = brain._collect_runtime_autotune_summary(24.0)
     market = summary.get("market_summary", {})
     assert market["spread_pips"]["count"] >= 1
     assert market["atr_pips"]["count"] >= 1
     assert market["confidence"]["count"] >= 1
+    outcome_features = summary.get("market_outcome_features", {})
+    spread_rows = outcome_features.get("by_spread_bucket", [])
+    assert len(spread_rows) >= 1
+    assert spread_rows[0]["trades"] >= 1
+    assert summary.get("filled_trade_outcome", {}).get("ALLOW", {}).get("trades") == 1
 
 
 def test_prompt_report_writes_before_after_comparison(monkeypatch, tmp_path: Path) -> None:

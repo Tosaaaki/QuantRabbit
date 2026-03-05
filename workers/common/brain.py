@@ -302,11 +302,21 @@ def _ensure_schema() -> None:
                 memory_after TEXT,
                 profile_version TEXT,
                 context_json TEXT,
+                market_metrics_json TEXT,
                 response_json TEXT,
                 error TEXT
             )
             """
         )
+        try:
+            cols = {
+                str(row[1] or "").strip().lower()
+                for row in con.execute("PRAGMA table_info(brain_decisions)").fetchall()
+            }
+            if "market_metrics_json" not in cols:
+                con.execute("ALTER TABLE brain_decisions ADD COLUMN market_metrics_json TEXT")
+        except Exception:
+            pass
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS brain_prompt_runs (
@@ -540,6 +550,9 @@ def _default_runtime_param_profile() -> dict[str, Any]:
         "guard_window_decisions": 120,
         "min_guard_samples": 30,
         "max_block_streak": 4,
+        "outcome_min_trades": 8,
+        "outcome_positive_pf_floor": 1.05,
+        "outcome_positive_win_rate_floor": 0.5,
         "notes": [],
     }
 
@@ -612,6 +625,30 @@ def _coerce_runtime_param_profile(raw: Any) -> dict[str, Any]:
             int(defaults["max_block_streak"]),
             2,
             50,
+        ),
+        "outcome_min_trades": _clamp_int(
+            merged.get("outcome_min_trades"),
+            int(defaults["outcome_min_trades"]),
+            1,
+            200,
+        ),
+        "outcome_positive_pf_floor": round(
+            _clamp_float(
+                merged.get("outcome_positive_pf_floor"),
+                float(defaults["outcome_positive_pf_floor"]),
+                0.2,
+                8.0,
+            ),
+            4,
+        ),
+        "outcome_positive_win_rate_floor": round(
+            _clamp_float(
+                merged.get("outcome_positive_win_rate_floor"),
+                float(defaults["outcome_positive_win_rate_floor"]),
+                0.1,
+                0.99,
+            ),
+            4,
         ),
         "notes": notes,
     }
@@ -709,6 +746,14 @@ def _log_decision_row(
     error: Optional[str] = None,
 ) -> None:
     _ensure_schema()
+    try:
+        market_metrics_json = json.dumps(
+            _extract_market_metrics(_safe_dict(context or {})),
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+    except Exception:
+        market_metrics_json = "{}"
     con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
     try:
         con.execute(
@@ -717,9 +762,9 @@ def _log_decision_row(
                 ts, ts_epoch, strategy_tag, pocket, side, units, sl_price, tp_price,
                 confidence, client_order_id, backend, source, llm_ok, latency_ms,
                 action, allowed, scale, reason, memory_before, memory_after,
-                profile_version, context_json, response_json, error
+                profile_version, context_json, market_metrics_json, response_json, error
             )
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 _now_iso(),
@@ -744,6 +789,7 @@ def _log_decision_row(
                 memory_after,
                 profile_version,
                 _stringify(context or {}, 4000),
+                market_metrics_json,
                 _stringify(payload or {}, 4000),
                 str(error or "").strip() or None,
             ),
@@ -768,6 +814,8 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
         "strategy_action_counts": [],
         "reason_counts": [],
         "filled_trade_outcome": {},
+        "market_summary": {},
+        "market_outcome_features": {},
     }
     if not _DB_PATH.exists():
         return summary
@@ -898,6 +946,8 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
             con.close()
         except Exception:
             pass
+    summary["market_summary"] = _collect_market_summary(lookback_hours)
+    summary["market_outcome_features"] = _collect_market_outcome_features(lookback_hours)
     return summary
 
 
@@ -1174,6 +1224,35 @@ def _stats(values: list[float]) -> dict[str, float]:
     }
 
 
+def _metric_value(value: Any, *, low: float, high: float) -> Optional[float]:
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    if low <= number <= high:
+        return number
+    return None
+
+
+def _parse_market_metrics_json(raw_metrics: Any) -> dict[str, Optional[float]]:
+    if not raw_metrics:
+        return {}
+    try:
+        parsed = json.loads(str(raw_metrics))
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    metrics = {
+        "spread_pips": _metric_value(parsed.get("spread_pips"), low=0.0, high=100.0),
+        "atr_pips": _metric_value(parsed.get("atr_pips"), low=0.0, high=200.0),
+        "confidence": _metric_value(parsed.get("confidence"), low=0.0, high=100.0),
+    }
+    if any(value is not None for value in metrics.values()):
+        return metrics
+    return {}
+
+
 def _collect_market_summary(lookback_hours: float) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "spread_pips": {"count": 0, "mean": 0.0, "p95": 0.0},
@@ -1188,16 +1267,33 @@ def _collect_market_summary(lookback_hours: float) -> dict[str, Any]:
     atrs: list[float] = []
     confidences: list[float] = []
     try:
-        rows = con.execute(
-            """
-            SELECT context_json
-            FROM brain_decisions
-            WHERE ts_epoch >= ?
-            ORDER BY ts_epoch DESC
-            LIMIT 400
-            """,
-            (cutoff_epoch,),
-        ).fetchall()
+        cols = {
+            str(row[1] or "").strip().lower()
+            for row in con.execute("PRAGMA table_info(brain_decisions)").fetchall()
+        }
+        has_market_col = "market_metrics_json" in cols
+        if has_market_col:
+            rows = con.execute(
+                """
+                SELECT market_metrics_json, context_json
+                FROM brain_decisions
+                WHERE ts_epoch >= ?
+                ORDER BY ts_epoch DESC
+                LIMIT 500
+                """,
+                (cutoff_epoch,),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                """
+                SELECT NULL AS market_metrics_json, context_json
+                FROM brain_decisions
+                WHERE ts_epoch >= ?
+                ORDER BY ts_epoch DESC
+                LIMIT 500
+                """,
+                (cutoff_epoch,),
+            ).fetchall()
     except Exception:
         rows = []
     finally:
@@ -1205,14 +1301,16 @@ def _collect_market_summary(lookback_hours: float) -> dict[str, Any]:
             con.close()
         except Exception:
             pass
-    for (raw_context,) in rows:
-        if not raw_context:
-            continue
-        try:
-            context = json.loads(str(raw_context))
-        except Exception:
-            continue
-        metrics = _extract_market_metrics(_safe_dict(context))
+    for raw_metrics, raw_context in rows:
+        metrics = _parse_market_metrics_json(raw_metrics)
+        if not metrics:
+            if not raw_context:
+                continue
+            try:
+                context = json.loads(str(raw_context))
+            except Exception:
+                continue
+            metrics = _extract_market_metrics(_safe_dict(context))
         spread = metrics.get("spread_pips")
         atr = metrics.get("atr_pips")
         confidence = metrics.get("confidence")
@@ -1226,6 +1324,266 @@ def _collect_market_summary(lookback_hours: float) -> dict[str, Any]:
     summary["atr_pips"] = _stats(atrs)
     summary["confidence"] = _stats(confidences)
     return summary
+
+
+def _bucket_spread(spread_pips: float) -> str:
+    if spread_pips <= 1.0:
+        return "tight"
+    if spread_pips <= 2.0:
+        return "normal"
+    return "wide"
+
+
+def _bucket_atr(atr_pips: float) -> str:
+    if atr_pips <= 1.5:
+        return "low"
+    if atr_pips <= 3.5:
+        return "mid"
+    return "high"
+
+
+def _bucket_confidence(confidence: float) -> str:
+    if confidence < 55.0:
+        return "low"
+    if confidence < 75.0:
+        return "mid"
+    return "high"
+
+
+def _new_outcome_bucket() -> dict[str, float]:
+    return {"trades": 0.0, "wins": 0.0, "gross_win": 0.0, "gross_loss": 0.0, "sum_pips": 0.0}
+
+
+def _add_outcome_sample(bucket: dict[str, float], *, realized_pl: float, pl_pips: float) -> None:
+    bucket["trades"] = float(bucket.get("trades", 0.0) + 1.0)
+    if realized_pl > 0.0:
+        bucket["wins"] = float(bucket.get("wins", 0.0) + 1.0)
+        bucket["gross_win"] = float(bucket.get("gross_win", 0.0) + realized_pl)
+    elif realized_pl < 0.0:
+        bucket["gross_loss"] = float(bucket.get("gross_loss", 0.0) + abs(realized_pl))
+    bucket["sum_pips"] = float(bucket.get("sum_pips", 0.0) + pl_pips)
+
+
+def _finalize_outcome_buckets(buckets: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for name, values in buckets.items():
+        trades = int(values.get("trades") or 0)
+        if trades <= 0:
+            continue
+        wins = int(values.get("wins") or 0)
+        gross_win = float(values.get("gross_win") or 0.0)
+        gross_loss = float(values.get("gross_loss") or 0.0)
+        pf = (
+            gross_win / gross_loss
+            if gross_loss > 1e-9
+            else (gross_win if gross_win > 0.0 else 0.0)
+        )
+        rows.append(
+            {
+                "bucket": str(name),
+                "trades": trades,
+                "wins": wins,
+                "win_rate": round(wins / trades, 4) if trades > 0 else 0.0,
+                "avg_pips": round(float(values.get("sum_pips") or 0.0) / trades, 4),
+                "profit_factor": round(float(pf), 4),
+            }
+        )
+    rows.sort(key=lambda row: (-int(row.get("trades") or 0), str(row.get("bucket") or "")))
+    return rows
+
+
+def _collect_market_outcome_features(lookback_hours: float) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "by_spread_bucket": [],
+        "by_atr_bucket": [],
+        "by_confidence_bucket": [],
+    }
+    if not _DB_PATH.exists() or not _TRADES_DB_PATH.exists():
+        return summary
+    cutoff_epoch = time.time() - (max(1.0, lookback_hours) * 3600.0)
+    spread_buckets: dict[str, dict[str, float]] = {}
+    atr_buckets: dict[str, dict[str, float]] = {}
+    confidence_buckets: dict[str, dict[str, float]] = {}
+    attached_trades = False
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        cols = {
+            str(row[1] or "").strip().lower()
+            for row in con.execute("PRAGMA table_info(brain_decisions)").fetchall()
+        }
+        has_market_col = "market_metrics_json" in cols
+        con.execute("ATTACH DATABASE ? AS tradesdb", (str(_TRADES_DB_PATH),))
+        attached_trades = True
+        if has_market_col:
+            rows = con.execute(
+                """
+                SELECT d.market_metrics_json, d.context_json, t.realized_pl, t.pl_pips
+                FROM brain_decisions d
+                JOIN tradesdb.trades t
+                  ON t.client_order_id = d.client_order_id
+                WHERE d.ts_epoch >= ?
+                  AND d.action IN ('ALLOW','REDUCE')
+                  AND t.close_time IS NOT NULL
+                ORDER BY d.ts_epoch DESC
+                LIMIT 1200
+                """,
+                (cutoff_epoch,),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                """
+                SELECT NULL AS market_metrics_json, d.context_json, t.realized_pl, t.pl_pips
+                FROM brain_decisions d
+                JOIN tradesdb.trades t
+                  ON t.client_order_id = d.client_order_id
+                WHERE d.ts_epoch >= ?
+                  AND d.action IN ('ALLOW','REDUCE')
+                  AND t.close_time IS NOT NULL
+                ORDER BY d.ts_epoch DESC
+                LIMIT 1200
+                """,
+                (cutoff_epoch,),
+            ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        if attached_trades:
+            try:
+                con.execute("DETACH DATABASE tradesdb")
+            except Exception:
+                pass
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    for raw_metrics, raw_context, realized_pl, pl_pips in rows:
+        try:
+            realized = float(realized_pl or 0.0)
+        except Exception:
+            realized = 0.0
+        try:
+            pips = float(pl_pips or 0.0)
+        except Exception:
+            pips = 0.0
+        metrics = _parse_market_metrics_json(raw_metrics)
+        if not metrics:
+            if not raw_context:
+                continue
+            try:
+                context = json.loads(str(raw_context))
+            except Exception:
+                continue
+            metrics = _extract_market_metrics(_safe_dict(context))
+        spread = metrics.get("spread_pips")
+        atr = metrics.get("atr_pips")
+        confidence = metrics.get("confidence")
+        if spread is not None:
+            bucket = _bucket_spread(float(spread))
+            spread_row = spread_buckets.setdefault(bucket, _new_outcome_bucket())
+            _add_outcome_sample(spread_row, realized_pl=realized, pl_pips=pips)
+        if atr is not None:
+            bucket = _bucket_atr(float(atr))
+            atr_row = atr_buckets.setdefault(bucket, _new_outcome_bucket())
+            _add_outcome_sample(atr_row, realized_pl=realized, pl_pips=pips)
+        if confidence is not None:
+            bucket = _bucket_confidence(float(confidence))
+            confidence_row = confidence_buckets.setdefault(bucket, _new_outcome_bucket())
+            _add_outcome_sample(confidence_row, realized_pl=realized, pl_pips=pips)
+
+    summary["by_spread_bucket"] = _finalize_outcome_buckets(spread_buckets)
+    summary["by_atr_bucket"] = _finalize_outcome_buckets(atr_buckets)
+    summary["by_confidence_bucket"] = _finalize_outcome_buckets(confidence_buckets)
+    return summary
+
+
+def _collect_recent_outcome_stats(
+    strategy_tag: str,
+    pocket: str,
+    *,
+    window_decisions: int,
+) -> dict[str, float]:
+    stats = {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "avg_pips": 0.0,
+        "gross_win": 0.0,
+        "gross_loss": 0.0,
+        "profit_factor": 0.0,
+    }
+    if not _DB_PATH.exists() or not _TRADES_DB_PATH.exists():
+        return stats
+    attached_trades = False
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        con.execute("ATTACH DATABASE ? AS tradesdb", (str(_TRADES_DB_PATH),))
+        attached_trades = True
+        rows = con.execute(
+            """
+            SELECT t.realized_pl, t.pl_pips
+            FROM brain_decisions d
+            JOIN tradesdb.trades t
+              ON t.client_order_id = d.client_order_id
+            WHERE d.strategy_tag = ?
+              AND d.pocket = ?
+              AND d.action IN ('ALLOW','REDUCE')
+              AND t.close_time IS NOT NULL
+            ORDER BY d.id DESC
+            LIMIT ?
+            """,
+            (strategy_tag, pocket, max(1, int(window_decisions))),
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        if attached_trades:
+            try:
+                con.execute("DETACH DATABASE tradesdb")
+            except Exception:
+                pass
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not rows:
+        return stats
+
+    trades = 0
+    wins = 0
+    gross_win = 0.0
+    gross_loss = 0.0
+    sum_pips = 0.0
+    for realized_pl, pl_pips in rows:
+        try:
+            realized = float(realized_pl or 0.0)
+        except Exception:
+            realized = 0.0
+        try:
+            pips = float(pl_pips or 0.0)
+        except Exception:
+            pips = 0.0
+        trades += 1
+        if realized > 0.0:
+            wins += 1
+            gross_win += realized
+        elif realized < 0.0:
+            gross_loss += abs(realized)
+        sum_pips += pips
+
+    pf = (
+        gross_win / gross_loss
+        if gross_loss > 1e-9
+        else (gross_win if gross_win > 0.0 else 0.0)
+    )
+    stats["trades"] = trades
+    stats["wins"] = wins
+    stats["win_rate"] = round(wins / trades, 4) if trades > 0 else 0.0
+    stats["avg_pips"] = round(sum_pips / trades, 4) if trades > 0 else 0.0
+    stats["gross_win"] = round(gross_win, 6)
+    stats["gross_loss"] = round(gross_loss, 6)
+    stats["profit_factor"] = round(float(pf), 4)
+    return stats
 
 
 def _collect_recent_activity_stats(
@@ -1325,10 +1683,28 @@ def _apply_runtime_param_guard(
     )
     min_guard_samples = _clamp_int(runtime_profile.get("min_guard_samples"), 30, 10, 500)
     max_block_streak = _clamp_int(runtime_profile.get("max_block_streak"), 4, 2, 50)
+    outcome_min_trades = _clamp_int(runtime_profile.get("outcome_min_trades"), 8, 1, 200)
+    outcome_positive_pf_floor = _clamp_float(
+        runtime_profile.get("outcome_positive_pf_floor"),
+        1.05,
+        0.2,
+        8.0,
+    )
+    outcome_positive_win_rate_floor = _clamp_float(
+        runtime_profile.get("outcome_positive_win_rate_floor"),
+        0.5,
+        0.1,
+        0.99,
+    )
     stats = _collect_recent_activity_stats(
         strategy_tag,
         pocket,
         window_decisions=guard_window_decisions,
+    )
+    outcome_stats = _collect_recent_outcome_stats(
+        strategy_tag,
+        pocket,
+        window_decisions=max(guard_window_decisions, min_guard_samples * 2),
     )
 
     action = str(decision.action or "ALLOW").strip().upper()
@@ -1347,12 +1723,28 @@ def _apply_runtime_param_guard(
     over_block_rate = bool(float(stats.get("block_rate") or 0.0) > block_rate_soft_limit)
     under_activity = bool(float(stats.get("activity_rate") or 1.0) < activity_rate_floor)
     over_block_streak = bool(int(stats.get("block_streak") or 0) >= max_block_streak)
+    suppression_risk = over_block_rate or under_activity or over_block_streak
+    outcome_trades = int(outcome_stats.get("trades") or 0)
+    outcome_pf = float(outcome_stats.get("profit_factor") or 0.0)
+    outcome_win_rate = float(outcome_stats.get("win_rate") or 0.0)
+    positive_outcome_signal = outcome_trades >= outcome_min_trades and (
+        outcome_pf >= outcome_positive_pf_floor
+        or outcome_win_rate >= outcome_positive_win_rate_floor
+    )
 
-    if action == "BLOCK" and enough_samples and (over_block_rate or under_activity or over_block_streak):
+    convert_block_to_reduce = False
+    if action == "BLOCK" and enough_samples and suppression_risk:
+        convert_block_to_reduce = True
+    elif action == "BLOCK" and suppression_risk and positive_outcome_signal:
+        convert_block_to_reduce = True
+
+    if convert_block_to_reduce:
         action = "REDUCE"
         allowed = True
         scale = max(min_scale, block_to_reduce_scale)
         overrides.append("block_to_reduce_bias")
+        if positive_outcome_signal:
+            overrides.append("trade_improve_bias")
         reason = f"{reason}|no_trade_bias_reduce"
 
     if action == "BLOCK":
@@ -1377,7 +1769,13 @@ def _apply_runtime_param_guard(
         "guard_window_decisions": guard_window_decisions,
         "min_guard_samples": min_guard_samples,
         "max_block_streak": max_block_streak,
+        "outcome_min_trades": outcome_min_trades,
+        "outcome_positive_pf_floor": round(outcome_positive_pf_floor, 4),
+        "outcome_positive_win_rate_floor": round(outcome_positive_win_rate_floor, 4),
         "stats": stats,
+        "outcome_stats": outcome_stats,
+        "suppression_risk": suppression_risk,
+        "positive_outcome_signal": positive_outcome_signal,
         "overrides": overrides,
     }
     return adjusted, guard_info
@@ -1540,6 +1938,7 @@ def _collect_runtime_autotune_summary(lookback_hours: float) -> dict[str, Any]:
         "activity_rate": round((allow_n + reduce_n) / total_n, 4) if total_n > 0 else 0.0,
     }
     summary["market_summary"] = _collect_market_summary(lookback_hours)
+    summary["market_outcome_features"] = _collect_market_outcome_features(lookback_hours)
     summary["runtime_profile"] = _load_runtime_param_profile(force=True)
     return summary
 
@@ -1598,6 +1997,8 @@ def _record_runtime_param_run(
         "profile_version": str(profile_version or "").strip() or "none",
         "decision_mix": _safe_dict(summary.get("decision_mix")),
         "market_summary": _safe_dict(summary.get("market_summary")),
+        "filled_trade_outcome": _safe_dict(summary.get("filled_trade_outcome")),
+        "market_outcome_features": _safe_dict(summary.get("market_outcome_features")),
     }
     _write_runtime_param_report(report)
 
@@ -1643,6 +2044,9 @@ def _maybe_autotune_runtime_param_profile() -> None:
             '  "guard_window_decisions": 120,\n'
             '  "min_guard_samples": 30,\n'
             '  "max_block_streak": 4,\n'
+            '  "outcome_min_trades": 8,\n'
+            '  "outcome_positive_pf_floor": 1.05,\n'
+            '  "outcome_positive_win_rate_floor": 0.5,\n'
             '  "notes": ["optional short rule"]\n'
             "}\n"
             "Constraints:\n"
@@ -1653,6 +2057,9 @@ def _maybe_autotune_runtime_param_profile() -> None:
             "- guard_window_decisions: 20-2000\n"
             "- min_guard_samples: 10-500\n"
             "- max_block_streak: 2-50\n"
+            "- outcome_min_trades: 1-200\n"
+            "- outcome_positive_pf_floor: 0.20-8.0\n"
+            "- outcome_positive_win_rate_floor: 0.10-0.99\n"
             "- Keep notes short and concrete.\n\n"
             f"Current runtime profile: {_stringify(current_profile, 6000)}\n"
             f"Recent runtime summary: {_stringify(summary, 9000)}\n"
