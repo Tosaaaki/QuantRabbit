@@ -837,7 +837,7 @@ def _query_setup_perf(
         cfg.setup_avg_pips_min_default,
         cfg,
     )
-    if pf < pf_min or win_rate < win_min or avg_pips < avg_pips_min:
+    if pf < pf_min or avg_pips < avg_pips_min or (pf < 1.0 and win_rate < win_min):
         return False, f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}", n
     return True, f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}", n
 
@@ -986,7 +986,7 @@ def _query_perf(
 
     pf_min = _strategy_threshold("PERF_GUARD_PF_MIN", pocket, tag, cfg.pf_min_default, cfg)
     win_min = _strategy_threshold("PERF_GUARD_WIN_MIN", pocket, tag, cfg.win_min_default, cfg)
-    if pf < pf_min or win_rate < win_min:
+    if pf < pf_min or (pf < 1.0 and win_rate < win_min):
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
@@ -1036,7 +1036,7 @@ def _query_pocket_perf(pocket: str, cfg: PerfGuardCfg) -> Tuple[bool, str, int]:
 
     pf_min = _threshold("POCKET_PERF_GUARD_PF_MIN", pocket, cfg.pocket_pf_min_default, cfg)
     win_min = _threshold("POCKET_PERF_GUARD_WIN_MIN", pocket, cfg.pocket_win_min_default, cfg)
-    if pf < pf_min or win_rate < win_min:
+    if pf < pf_min or (pf < 1.0 and win_rate < win_min):
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
