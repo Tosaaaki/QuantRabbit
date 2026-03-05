@@ -557,6 +557,8 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
     }
     if not _DB_PATH.exists():
         return summary
+
+    attached_trades = False
     con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
     try:
         row = con.execute(
@@ -623,63 +625,61 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                     "count": int(count or 0),
                 }
             )
+
+        if _TRADES_DB_PATH.exists():
+            try:
+                con.execute("ATTACH DATABASE ? AS tradesdb", (str(_TRADES_DB_PATH),))
+                attached_trades = True
+                cur = con.execute(
+                    """
+                    SELECT
+                      d.action,
+                      COUNT(*) AS trades,
+                      SUM(CASE WHEN t.realized_pl > 0 THEN 1 ELSE 0 END) AS wins,
+                      AVG(t.pl_pips) AS avg_pips,
+                      AVG(t.realized_pl) AS avg_realized,
+                      SUM(CASE WHEN t.realized_pl > 0 THEN t.realized_pl ELSE 0 END) AS gross_win,
+                      SUM(CASE WHEN t.realized_pl < 0 THEN -t.realized_pl ELSE 0 END) AS gross_loss
+                    FROM brain_decisions d
+                    JOIN tradesdb.trades t
+                      ON t.client_order_id = d.client_order_id
+                    WHERE d.ts_epoch >= ?
+                      AND d.action IN ('ALLOW','REDUCE')
+                      AND t.close_time IS NOT NULL
+                    GROUP BY d.action
+                    """,
+                    (cutoff_epoch,),
+                )
+                for action, trades, wins, avg_pips, avg_realized, gross_win, gross_loss in cur.fetchall():
+                    trades_n = int(trades or 0)
+                    wins_n = int(wins or 0)
+                    gross_win_f = float(gross_win or 0.0)
+                    gross_loss_f = float(gross_loss or 0.0)
+                    pf = (
+                        gross_win_f / gross_loss_f
+                        if gross_loss_f > 1e-9
+                        else (gross_win_f if gross_win_f > 0 else 0.0)
+                    )
+                    summary["filled_trade_outcome"][str(action)] = {
+                        "trades": trades_n,
+                        "wins": wins_n,
+                        "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
+                        "avg_pips": round(float(avg_pips or 0.0), 4),
+                        "avg_realized": round(float(avg_realized or 0.0), 6),
+                        "profit_factor": round(float(pf), 4),
+                    }
+            except Exception:
+                pass
     except Exception:
         return summary
     finally:
+        if attached_trades:
+            try:
+                con.execute("DETACH DATABASE tradesdb")
+            except Exception:
+                pass
         try:
             con.close()
-        except Exception:
-            pass
-
-    if not _TRADES_DB_PATH.exists():
-        return summary
-
-    uri = f"file:{_TRADES_DB_PATH}?mode=ro"
-    tcon = sqlite3.connect(uri, uri=True, timeout=_DB_TIMEOUT)
-    try:
-        cur = tcon.execute(
-            """
-            SELECT
-              d.action,
-              COUNT(*) AS trades,
-              SUM(CASE WHEN t.realized_pl > 0 THEN 1 ELSE 0 END) AS wins,
-              AVG(t.pl_pips) AS avg_pips,
-              AVG(t.realized_pl) AS avg_realized,
-              SUM(CASE WHEN t.realized_pl > 0 THEN t.realized_pl ELSE 0 END) AS gross_win,
-              SUM(CASE WHEN t.realized_pl < 0 THEN -t.realized_pl ELSE 0 END) AS gross_loss
-            FROM brain_decisions d
-            JOIN trades t
-              ON t.client_order_id = d.client_order_id
-            WHERE d.ts_epoch >= ?
-              AND d.action IN ('ALLOW','REDUCE')
-              AND t.close_time IS NOT NULL
-            GROUP BY d.action
-            """,
-            (cutoff_epoch,),
-        )
-        for action, trades, wins, avg_pips, avg_realized, gross_win, gross_loss in cur.fetchall():
-            trades_n = int(trades or 0)
-            wins_n = int(wins or 0)
-            gross_win_f = float(gross_win or 0.0)
-            gross_loss_f = float(gross_loss or 0.0)
-            pf = (
-                gross_win_f / gross_loss_f
-                if gross_loss_f > 1e-9
-                else (gross_win_f if gross_win_f > 0 else 0.0)
-            )
-            summary["filled_trade_outcome"][str(action)] = {
-                "trades": trades_n,
-                "wins": wins_n,
-                "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
-                "avg_pips": round(float(avg_pips or 0.0), 4),
-                "avg_realized": round(float(avg_realized or 0.0), 6),
-                "profit_factor": round(float(pf), 4),
-            }
-    except Exception:
-        pass
-    finally:
-        try:
-            tcon.close()
         except Exception:
             pass
     return summary

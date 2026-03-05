@@ -195,3 +195,58 @@ def test_brain_auto_tune_updates_profile(monkeypatch, tmp_path: Path) -> None:
     assert row is not None
     assert int(row[0]) == 1
     assert row[1] == "v3"
+
+
+def test_collect_autotune_summary_includes_trade_outcomes(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path = _prepare_brain(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "clean_setup",
+            "memory_update": "",
+        },
+    )
+
+    client_order_id = "summary-join-coid-1"
+    brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=75,
+        client_order_id=client_order_id,
+    )
+
+    con = sqlite3.connect(brain._TRADES_DB_PATH)
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_order_id TEXT,
+                realized_pl REAL,
+                pl_pips REAL,
+                close_time TEXT
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO trades(client_order_id, realized_pl, pl_pips, close_time)
+            VALUES(?,?,?,?)
+            """,
+            (client_order_id, 12.5, 3.2, "2026-03-05T00:00:00+00:00"),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    summary = brain._collect_autotune_summary(24.0)
+    allow = summary.get("filled_trade_outcome", {}).get("ALLOW", {})
+    assert allow.get("trades") == 1
+    assert allow.get("wins") == 1
+    assert allow.get("win_rate") == 1.0
