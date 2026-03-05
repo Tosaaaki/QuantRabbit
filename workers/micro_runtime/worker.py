@@ -1433,6 +1433,7 @@ async def micro_multi_worker() -> None:
                 continue
 
             signal_mode = str(signal.get("signal_mode") or "").strip().lower()
+            bb_style = "reversion"
             if trend_flip_meta or proj_flip_meta:
                 bb_style = "trend"
             elif signal_mode == "reversion":
@@ -1442,6 +1443,8 @@ async def micro_multi_worker() -> None:
             elif strategy_name in _RANGE_STRATEGIES or _is_mr_signal(signal_tag):
                 bb_style = "reversion"
             elif strategy_name in _PULLBACK_STRATEGIES:
+                bb_style = "trend"
+            elif strategy_name in _TREND_STRATEGIES:
                 bb_style = "trend"
             if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
                 continue
