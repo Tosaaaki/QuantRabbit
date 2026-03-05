@@ -11388,3 +11388,9 @@
   - `bash -n scripts/run_brain_autopdca_cycle.sh scripts/local_v2_autorecover_once.sh`
   - `pytest -q tests/scripts/test_apply_brain_model_selection.py tests/scripts/test_run_brain_autopdca_cycle.py`
   - 結果: `5 passed`
+
+- 追補（2026-03-05 15:33 JST）:
+  - `run_brain_autopdca_cycle.sh` の market snapshot 取り込みを、
+    「ファイル全文JSON」ではなく「末尾JSON行優先 + 全文fallback」へ修正。
+  - これにより、警告行混在時でも `market_snapshot` が `null` にならず、
+    `market_sanity_guard` 判定が実測値で行われるようになった。

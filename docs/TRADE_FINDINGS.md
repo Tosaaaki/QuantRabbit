@@ -6183,3 +6183,8 @@ Status:
 - 期待効果:
   - 「停止寄り」ではなく、ローカルLLMの判断履歴を使ったモデル・プロンプト・タイムアウト改善を定期実行できる。
   - 不要な再起動を抑えつつ、改善が出た時だけ即時反映してトレード品質を上げる。
+
+- 追補（15:33 JST）:
+  - 初回実運用で `market_snapshot: null` を検知。原因は market取得出力に警告行が混在し、JSON全文パースが失敗していたこと。
+  - `run_brain_autopdca_cycle.sh` を修正し、末尾JSON行を優先抽出する方式に変更。
+  - 確認: `logs/brain_autopdca_cycle_latest.json` で `market_snapshot.status=ok` と実測 spread/ATR/reject-rate が記録されることを確認。
