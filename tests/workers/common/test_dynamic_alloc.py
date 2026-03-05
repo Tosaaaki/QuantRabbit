@@ -74,3 +74,25 @@ def test_load_strategy_profile_falls_back_to_case_insensitive_key(tmp_path: Path
     assert profile["found"] is True
     assert profile["strategy_key"] == "m1scalper-m1"
     assert profile["lot_multiplier"] == 0.74
+
+
+def test_load_strategy_profile_returns_policy_default_when_unknown(tmp_path: Path) -> None:
+    payload = {
+        "allocation_policy": {
+            "soft_participation": True,
+            "allow_loser_block": False,
+            "allow_winner_only": False,
+            "min_lot_multiplier": 0.25,
+            "max_lot_multiplier": 1.65,
+        },
+        "strategies": {},
+    }
+    path = tmp_path / "dynamic_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    profile = load_strategy_profile("scalp_ping_5s_flow_live", "scalp_fast", path=path)
+    assert profile["found"] is True
+    assert profile["soft_participation"] is True
+    assert profile["allow_loser_block"] is False
+    assert profile["allow_winner_only"] is False
+    assert profile["lot_multiplier"] == 0.25

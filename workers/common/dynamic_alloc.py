@@ -167,4 +167,21 @@ def load_strategy_profile(
             "allow_winner_only": allow_winner_only,
             "soft_participation": policy_soft_participation,
         }
+    if policy_soft_participation and policy_min_mult > 0.0:
+        fallback_key = ""
+        candidates = _candidate_keys(strategy)
+        if candidates:
+            fallback_key = candidates[0]
+        return {
+            "found": True,
+            "strategy_key": fallback_key,
+            "score": 0.0,
+            "lot_multiplier": max(0.0, policy_min_mult),
+            "trades": 0,
+            "pf": 0.0,
+            "win_rate": 0.0,
+            "allow_loser_block": policy_allow_loser_block,
+            "allow_winner_only": policy_allow_winner_only,
+            "soft_participation": policy_soft_participation,
+        }
     return base

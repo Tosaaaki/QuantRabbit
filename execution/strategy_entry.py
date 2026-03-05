@@ -16,6 +16,7 @@ from analysis import strategy_feedback
 from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
+from workers.common.dynamic_alloc import load_strategy_profile
 from workers.common import forecast_gate, pattern_gate
 
 
@@ -210,6 +211,23 @@ _STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT = _env_float(
     "STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS",
     0.02,
 )
+_STRATEGY_DYNAMIC_ALLOC_ENABLED = _env_bool("STRATEGY_DYNAMIC_ALLOC_ENABLED", True)
+_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY = _env_bool("STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True)
+_STRATEGY_DYNAMIC_ALLOC_PATH = os.getenv("STRATEGY_DYNAMIC_ALLOC_PATH", "config/dynamic_alloc.json")
+_STRATEGY_DYNAMIC_ALLOC_TTL_SEC = max(1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_TTL_SEC", 20.0))
+_STRATEGY_DYNAMIC_ALLOC_MULT_MIN = max(
+    0.05,
+    min(1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_MULT_MIN", 0.10)),
+)
+_STRATEGY_DYNAMIC_ALLOC_MULT_MAX = max(
+    _STRATEGY_DYNAMIC_ALLOC_MULT_MIN,
+    min(2.0, _env_float("STRATEGY_DYNAMIC_ALLOC_MULT_MAX", 1.00)),
+)
+_STRATEGY_DYNAMIC_ALLOC_POCKETS = {
+    p.lower().strip()
+    for p in _env_csv("STRATEGY_DYNAMIC_ALLOC_POCKETS", "scalp_fast,micro,scalp")
+    if p
+}
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 _TECH_DEFAULT_TFS_BY_POCKET = {
     "macro": ("D1", "H4", "H1", "M5", "M1"),
@@ -2388,6 +2406,86 @@ def _apply_strategy_net_edge_gate(
     return units, entry_probability, details
 
 
+def _has_dynamic_alloc_applied(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    if "dynamic_alloc" not in entry_thesis:
+        return False
+    payload = entry_thesis.get("dynamic_alloc")
+    return isinstance(payload, dict) and bool(payload)
+
+
+def _apply_dynamic_alloc_trim(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    min_units: int,
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[str]]:
+    if not _STRATEGY_DYNAMIC_ALLOC_ENABLED:
+        return units, None
+    if not strategy_tag or not units:
+        return units, None
+    if (pocket or "").lower() == "manual":
+        return units, None
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key and pocket_key not in _STRATEGY_DYNAMIC_ALLOC_POCKETS:
+        return units, None
+    if _has_dynamic_alloc_applied(entry_thesis):
+        return units, None
+    if not isinstance(entry_thesis, dict):
+        return units, None
+
+    try:
+        profile = load_strategy_profile(
+            strategy_tag,
+            pocket_key,
+            path=_STRATEGY_DYNAMIC_ALLOC_PATH,
+            ttl_sec=_STRATEGY_DYNAMIC_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        profile = None
+    if not isinstance(profile, dict):
+        return units, None
+
+    mult_raw = profile.get("lot_multiplier", 1.0)
+    try:
+        mult = float(mult_raw)
+    except (TypeError, ValueError):
+        mult = 1.0
+    if math.isnan(mult) or math.isinf(mult) or mult <= 0.0:
+        mult = 1.0
+    mult = max(_STRATEGY_DYNAMIC_ALLOC_MULT_MIN, min(_STRATEGY_DYNAMIC_ALLOC_MULT_MAX, mult))
+    effective_mult = min(1.0, mult) if _STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY else mult
+    if effective_mult >= 0.999:
+        return units, None
+
+    requested_abs = abs(int(units))
+    scaled_abs = int(round(requested_abs * effective_mult))
+    if min_units > 0 and scaled_abs < int(min_units):
+        scaled_abs = int(min_units)
+    if scaled_abs <= 0:
+        return 0, "dynamic_alloc_scale_zero"
+    if scaled_abs >= requested_abs:
+        return units, None
+
+    next_units = scaled_abs if units > 0 else -scaled_abs
+    entry_thesis["dynamic_alloc"] = {
+        "source": "strategy_entry",
+        "trim_only": bool(_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY),
+        "strategy_key": profile.get("strategy_key"),
+        "score": profile.get("score"),
+        "trades": profile.get("trades"),
+        "lot_multiplier": round(mult, 4),
+        "effective_mult": round(float(effective_mult), 4),
+        "min_units": int(min_units),
+        "requested_units": int(requested_abs),
+        "applied_units": int(abs(next_units)),
+    }
+    return int(next_units), None
+
+
 async def _coordinate_entry_units(
     *,
     instrument: str,
@@ -2438,6 +2536,15 @@ async def _coordinate_entry_units(
                             return 0, "pattern_gate_below_min"
                     if scaled_units > 0:
                         units = int((1 if units > 0 else -1) * scaled_units)
+    units, dyn_reason = _apply_dynamic_alloc_trim(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=min_units,
+        entry_thesis=entry_thesis,
+    )
+    if not units:
+        return units, dyn_reason or "dynamic_alloc_reject"
     final_units, reason, details = await order_manager.coordinate_entry_intent(
         instrument=instrument,
         pocket=pocket,
