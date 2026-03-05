@@ -6405,3 +6405,36 @@ Status:
   - `./scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-m1scalper,quant-m1scalper-exit`
   - `sqlite3 logs/orders.db 'select max(ts) from orders;'` が `2026-03-05T05:53:30Z` より新しい
   - `scripts/local_v2_stack.sh logs --service quant-order-manager --tail 200` で preflight の通過ログを確認
+
+## 2026-03-05 20:19 JST / 11:19 UTC - no-entry 継続の暫定復旧（M1Scalper 強トレンドflip + MicroRangeBreak hist_block 緩和, local V2）
+
+- 症状:
+  - `logs/orders.db` の `max(ts)=2026-03-05T05:53:30Z` 以降更新が止まり、`trade_min` 起動中でも新規注文が出ない。
+  - `logs/local_v2_stack/quant-micro-rangebreak.log` に `hist_block ... score=0.266 n=27` が継続。
+  - `logs/local_v2_stack/quant-m1scalper.log` で `range_hold_reversion_*` と `trend_block_*` が交互に出て signal が返らず無風になりやすい。
+
+- 作業前市況（ローカル実測 / OANDA API, 2026-03-05 20:18 JST）:
+  - `USD/JPY bid=157.240 ask=157.248 spread=0.8p`
+  - `ATR14(M1)=2.434p`, `range60(M1)=18.8p`
+  - API遅延: `pricing=334ms`, `candles(M1)=244ms`
+  - 判定: 通常レンジ、流動性悪化は顕著でないため作業継続。
+
+- 対応（local V2 / main 反映）:
+  - `strategies/scalping/m1_scalper.py`
+    - `range_reversion_only==True` でも `strong_up/strong_down` のときは `OPEN_LONG/OPEN_SHORT` へflipし、`trend_block_*` で全dropしないようにした。
+    - 監視ログ: `range_flip_to_trend_long` / `range_flip_to_trend_short`
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_MULTI_HIST_SKIP_SCORE=0.20`（`hist_block` の hard skip を緩和）
+    - `MICRO_MULTI_HIST_LOT_MIN=0.25`（低スコア時は縮小運転）
+    - `M1SCALP_ENTRY_GUARD_BYPASS=1` は暫定維持（BB/projection reject の可視化/復旧用）。`entry_guard_bypass` が常態化する場合は閾値チューニングへ戻す。
+
+- 影響範囲:
+  - M1Scalper のシグナル方向が強トレンドで順張りに寄る（range_reversion_only の freeze 回避）。
+  - micro runtime の hist skip を緩和し、低品質戦略はロット縮小で継続。
+
+- 検証:
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-m1scalper,quant-m1scalper-exit,quant-micro-rangebreak,quant-micro-rangebreak-exit`
+  - `sqlite3 logs/orders.db 'select max(ts) from orders;'` が `2026-03-05T05:53:30Z` より新しい
+  - `logs/local_v2_stack/quant-m1scalper.log` に `range_flip_to_trend_*` または `entry_guard_bypass` が出て、preflight が流れること
+  - `logs/local_v2_stack/quant-micro-rangebreak.log` の `hist_block` 頻度が減り、entry が流れること
+  - `orders.db` で `error_code=INSUFFICIENT_MARGIN` / `margin_*` 系の拒否が急増しないこと（増えるならロット縮小へ即応）

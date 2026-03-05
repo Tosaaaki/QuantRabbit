@@ -11496,3 +11496,14 @@
   - quickshot 判定で `quickshot_allow=False` のとき、hard-gate が有効な場合のみ `continue`（無効時は quickshot plan 無しで通常の entry ロジックへ継続）。
 - `ops/env/local-v2-stack.env`
   - `M1SCALP_USDJPY_QUICKSHOT_HARD_GATE=0` / `M1SCALP_USDJPY_QUICKSHOT_MAX_SPREAD_PIPS=1.20`（retest 要件は維持）
+
+## 2026-03-05 JST - no-entry freeze 緩和（M1Scalper 強トレンドflip + MicroRangeBreak hist_block 緩和, local V2）
+
+- `strategies/scalping/m1_scalper.py`
+  - `range_reversion_only==True` でも `strong_up/strong_down` のときは順張りへ flip し、`trend_block_*` による no-entry を緩和。
+  - 監視ログ: `range_flip_to_trend_long` / `range_flip_to_trend_short`
+
+- `ops/env/local-v2-stack.env`
+  - `MICRO_MULTI_HIST_SKIP_SCORE=0.20`（`hist_block` の hard skip を緩和）
+  - `MICRO_MULTI_HIST_LOT_MIN=0.25`（低スコア時は縮小運転）
+  - `M1SCALP_ENTRY_GUARD_BYPASS=1` は暫定維持（BB/projection reject の可視化/復旧用。常態化したら撤去して閾値側へ戻す）

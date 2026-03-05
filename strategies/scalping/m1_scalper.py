@@ -1108,7 +1108,7 @@ class M1Scalper:
             )
             action = "OPEN_LONG"
             if trend_down:
-                if range_reversion_only:
+                if range_reversion_only and not strong_down:
                     _log(
                         "range_hold_reversion_long",
                         trend="down",
@@ -1116,6 +1116,14 @@ class M1Scalper:
                         mode=range_mode or "-",
                     )
                 else:
+                    if range_reversion_only and strong_down:
+                        _log(
+                            "range_flip_to_trend_short",
+                            trend="down",
+                            range_score=round(range_score, 3),
+                            mode=range_mode or "-",
+                            reason="strong_down",
+                        )
                     # 強い下落トレンドでは順張りショートに切替
                     action = "OPEN_SHORT"
                     confidence = int(confidence * 0.9)
@@ -1178,7 +1186,7 @@ class M1Scalper:
             )
             action = "OPEN_SHORT"
             if trend_up:
-                if range_reversion_only:
+                if range_reversion_only and not strong_up:
                     _log(
                         "range_hold_reversion_short",
                         trend="up",
@@ -1186,6 +1194,14 @@ class M1Scalper:
                         mode=range_mode or "-",
                     )
                 else:
+                    if range_reversion_only and strong_up:
+                        _log(
+                            "range_flip_to_trend_long",
+                            trend="up",
+                            range_score=round(range_score, 3),
+                            mode=range_mode or "-",
+                            reason="strong_up",
+                        )
                     # 強い上昇トレンドでは順張りロングに切替
                     action = "OPEN_LONG"
                     confidence = int(confidence * 0.9)
