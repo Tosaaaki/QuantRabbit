@@ -6462,6 +6462,39 @@ Status:
   - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit`
   - `logs/local_v2_stack/quant-scalp-ping-5s-b.log` で `dynamic_alloc` が `entry_thesis` に付与されていること（found時）
 
+## 2026-03-05 22:08 JST / trade_all の worker 大半が停止（stale pid）+ OM timeout 緩和 + strategy_entry dyn alloc trim-only（local V2）
+
+- 症状:
+  - `scripts/local_v2_stack.sh status --profile trade_all --env ops/env/local-v2-stack.env` で `[running] 10 / [stopped] 54`（停止側は `stale_pid_file` 付き）。
+  - worker ログに `order_manager` 呼び出しの `Read timed out. (read timeout=8.0)` が散発（例: `logs/local_v2_stack/quant-micro-momentumburst.log`）。
+
+- 作業前市況（ローカル実測 / OANDA pricing, 2026-03-05 21:44 JST）:
+  - `USD/JPY bid=157.445 ask=157.453 spread=0.8p`
+  - `pricing latency=260ms`
+  - `ATR(M1)=2.520p`, `ATR(M5)=5.559p`
+
+- 狙い / 仮説:
+  - trade_all で停止 worker が多い状態だと、戦略が走っておらず機会損失 → 起動/復旧導線を標準化して観測できる状態に戻す。
+  - `ORDER_MANAGER_SERVICE_TIMEOUT=8.0` だと負荷時に service call timeout が出やすく、skip が増える → local override を `12.0` に上げて false-timeout を減らす。
+  - dyn alloc 未対応 worker が raw_units を full size で通すと risk/margin が悪化しやすい → `execution/strategy_entry.py` 側で dyn alloc を「trim-only（縮小のみ）」として適用し、かつ worker 側で `entry_thesis.dynamic_alloc` が付与済みなら二重適用しない。
+
+- 対応（main反映 / commit=`a296316d`）:
+  - `execution/strategy_entry.py`
+    - `STRATEGY_DYNAMIC_ALLOC_*` を追加し、`entry_thesis.dynamic_alloc` が無い注文に限り `lot_multiplier` で units を trim（デフォルトは up-scale しない）。
+  - `workers/common/dynamic_alloc.py`
+    - `allocation_policy.soft_participation=true` かつ unknown strategy の場合でも `found=true` の fallback profile を返し、metadata 付与/二重適用回避をしやすくした。
+  - `ops/env/local-v2-stack.env`
+    - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0`（runtime 8.0 → local override 12.0）。
+
+- 検証（local V2）:
+  - `python3 -m compileall execution/strategy_entry.py workers/common/dynamic_alloc.py`
+  - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_dynamic_alloc_trim.py` → `6 passed`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit,quant-micro-rangebreak,quant-micro-rangebreak-exit,quant-m1scalper,quant-m1scalper-exit`
+  - `sqlite3 logs/orders.db 'select max(ts) from orders;'` が更新継続（例: `2026-03-05T13:06:52Z`）。
+
+- 注記:
+  - trade_all の全 worker 常時起動はホスト負荷が大きい可能性がある（load avg が急上昇）。維持できない場合は「走らせたい戦略のみ worker を残す」方向で profile を再設計する。
+
 ## 2026-03-05 21:55 JST / strategy_entry dyn alloc trim-only（未対応戦略のfull-size抑制）+ order-manager timeout上書き
 
 - 狙い / 仮説:

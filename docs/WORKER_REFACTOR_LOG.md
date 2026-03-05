@@ -11521,6 +11521,22 @@
   - dyn alloc profile（`config/dynamic_alloc.json`）の `lot_multiplier` を entry `units` に反映し、ping5s 系（B/C/D/flow）の縮小/拡大が dyn alloc で効くようにした。
   - found時は `entry_thesis.dynamic_alloc` を付与（他戦略と同形式）。
 
+## 2026-03-05 JST - strategy_entry dyn alloc trim-only + dyn alloc soft-participation fallback(found) + local-v2 OM timeout
+
+- `execution/strategy_entry.py`
+  - `entry_thesis.dynamic_alloc` 未付与の注文に限り、`config/dynamic_alloc.json` の `lot_multiplier` を参照して units を trim-only で縮小（デフォルトは up-scale しない）。
+  - 調整用 env: `STRATEGY_DYNAMIC_ALLOC_ENABLED` / `STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY` / `STRATEGY_DYNAMIC_ALLOC_POCKETS` / `STRATEGY_DYNAMIC_ALLOC_MULT_MIN/MAX` / `STRATEGY_DYNAMIC_ALLOC_TTL_SEC` / `STRATEGY_DYNAMIC_ALLOC_PATH`。
+
+- `workers/common/dynamic_alloc.py`
+  - `allocation_policy.soft_participation=true` かつ unknown strategy の場合でも `found=true` の fallback profile を返すようにし、worker/strategy_entry の二重適用を避けやすくした。
+
+- `ops/env/local-v2-stack.env`
+  - `ORDER_MANAGER_SERVICE_TIMEOUT=12.0` を local override に追加（`Read timed out (read timeout=8.0)` による worker 側 skip 減狙い）。
+
+- Tests
+  - `tests/workers/common/test_dynamic_alloc.py`: unknown strategy の policy fallback を追加。
+  - `tests/execution/test_strategy_entry_dynamic_alloc_trim.py`: trim-only と dynamic_alloc 既存時スキップを検証。
+
 ## 2026-03-05 JST - strategy_entry dyn alloc trim-only + order-manager timeout上書き（trade_all 安全化）
 
 - `execution/strategy_entry.py`
