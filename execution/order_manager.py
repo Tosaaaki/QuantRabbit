@@ -7507,8 +7507,8 @@ async def close_trade(
                 )
                 _console_order_log(
                     "CLOSE_REJECT",
-                    pocket=None,
-                    strategy_tag=None,
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
                     side=None,
                     units=units,
                     sl_price=None,
@@ -7518,8 +7518,8 @@ async def close_trade(
                     note="no_negative_close",
                 )
                 _log_close_order(
-                    pocket=None,
-                    instrument=None,
+                    pocket=pocket,
+                    instrument=instrument,
                     side=None,
                     units=units,
                     sl_price=None,
@@ -7530,7 +7530,13 @@ async def close_trade(
                     ticket_id=str(trade_id),
                     executed_price=None,
                     request_payload=_with_exit_reason(
-                        {"trade_id": trade_id, "data": {"unrealized_pl": pl}}
+                        {
+                            "trade_id": trade_id,
+                            "strategy_tag": str(strategy_tag or ""),
+                            "pocket": str(pocket or ""),
+                            "instrument": str(instrument or ""),
+                            "data": {"unrealized_pl": pl, "est_pips": est_pips},
+                        }
                     ),
                 )
                 return False

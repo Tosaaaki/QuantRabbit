@@ -1194,6 +1194,8 @@ strategies:
         - max_drawdown
         - m1_structure_break
         - risk_reduce
+        - reentry_reset
+        - __de_risk__
         - health_exit
         - margin_health
         - free_margin_low
@@ -1215,6 +1217,8 @@ strategies:
         - max_drawdown
         - m1_structure_break
         - risk_reduce
+        - reentry_reset
+        - __de_risk__
         - health_exit
         - margin_health
         - free_margin_low
