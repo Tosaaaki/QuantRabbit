@@ -11110,3 +11110,14 @@
   - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
   - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
   - `logs/local_v2_stack/quant-scalp-ping-5s-b.log` と `logs/local_v2_stack/quant-micro-rangebreak.log` を tail し、起動継続と skip傾向を確認
+
+### 2026-03-05 11:30 JST / `scalp_ping_5s_b` lookahead gate temporary off（local-v2）
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0`
+- 背景:
+  - side_filter解除（`SCALP_PING_5S_B_SIDE_FILTER=none`）後も `lookahead edge_negative_block` が主遮断で、約定再開に至らなかった。
+- 意図:
+  - 約定再開を最優先し、lookahead gate の過剰遮断を一時的に外して実取引データを再取得する。

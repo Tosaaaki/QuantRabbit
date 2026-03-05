@@ -5575,3 +5575,25 @@ Recheck KPIs (next 60-90 min):
   - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
   - `tail -n 120 logs/local_v2_stack/quant-scalp-ping-5s-b.log`
   - `tail -n 120 logs/local_v2_stack/quant-micro-rangebreak.log`
+
+## 2026-03-05 11:30 JST / scalp_ping_5s_b lookahead gate temporary off（約定再開優先）
+
+Period:
+- 調査時刻: 2026-03-05 11:20〜11:30 JST
+- 対象: `ops/env/local-v2-stack.env`, `logs/orders.db`, `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
+
+Fact:
+- `SCALP_PING_5S_B_SIDE_FILTER=none` 反映後も、`orders.db` 最終約定時刻が更新されず約定停止が継続。
+- `quant-scalp-ping-5s-b.log` で `lookahead edge_negative_block` が主遮断として継続。
+
+Failure Cause:
+- side_filter解除だけでは、lookahead gate による遮断が強く、entry変換率が回復しなかった。
+
+Improvement:
+- `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0` を local-v2 実運用envへ追加し、即時の約定再開を優先。
+
+Verification:
+- 再起動後に `orders.filled` の最終時刻更新と、`submit_attempt -> filled` の再開を確認する。
+
+Status:
+- in_progress
