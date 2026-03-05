@@ -72,6 +72,35 @@ as_positive_int() {
   printf '%s\n' "${default}"
 }
 
+is_world_writable_path() {
+  local path="$1"
+  local perms
+  perms="$(LC_ALL=C ls -ld "${path}" 2>/dev/null | awk '{print $1}' || true)"
+  case "${perms}" in
+    ????????w*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+guard_env_file() {
+  local path="$1"
+  if [[ ! -e "${path}" ]]; then
+    echo "[error] env file not found: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${path}" ]]; then
+    echo "[error] env file is not a regular file: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -r "${path}" ]]; then
+    echo "[error] env file is not readable: ${path}" >&2
+    exit 1
+  fi
+  if is_world_writable_path "${path}"; then
+    echo "[warn] env file is world-writable: ${path}" >&2
+  fi
+}
+
 run_once() {
   local args=("${ONCE_SCRIPT}" "--profile" "${PROFILE}" "--env" "${ENV_FILE}")
   if [[ -n "${SERVICES}" ]]; then
@@ -258,10 +287,7 @@ case "${ACTION}" in
       echo "[error] autorecover script not executable: ${ONCE_SCRIPT}" >&2
       exit 1
     fi
-    if [[ ! -f "${ENV_FILE}" ]]; then
-      echo "[error] env file not found: ${ENV_FILE}" >&2
-      exit 1
-    fi
+    guard_env_file "${ENV_FILE}"
     ;;
 esac
 

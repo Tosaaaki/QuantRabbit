@@ -11,6 +11,10 @@ DEFAULT_PROFILE="core"
 DEFAULT_HEALTH_WAIT_SEC=25
 DEFAULT_HEALTH_POLL_SEC=1
 DEFAULT_PORT_RELEASE_WAIT_SEC=8
+DEFAULT_START_RETRY_COUNT=3
+DEFAULT_START_RETRY_DELAY_SEC=1
+DEFAULT_POST_UP_RECONCILE_ROUNDS=2
+DEFAULT_POST_UP_SETTLE_SEC=2
 DEFAULT_WATCHDOG_INTERVAL_SEC=10
 DEFAULT_WATCHDOG_RESUME_GAP_SEC=90
 LOCAL_PARITY_SESSION_NAME="qr-local-parity"
@@ -25,6 +29,62 @@ KNOWN_SERVICES=(
   "quant-scalp-ping-5s-b-exit"
   "quant-micro-rangebreak"
   "quant-micro-rangebreak-exit"
+  "quant-m1scalper"
+  "quant-m1scalper-exit"
+  "quant-micro-compressionrevert"
+  "quant-micro-compressionrevert-exit"
+  "quant-micro-levelreactor"
+  "quant-micro-levelreactor-exit"
+  "quant-micro-momentumburst"
+  "quant-micro-momentumburst-exit"
+  "quant-micro-momentumpulse"
+  "quant-micro-momentumpulse-exit"
+  "quant-micro-momentumstack"
+  "quant-micro-momentumstack-exit"
+  "quant-micro-pullbackema"
+  "quant-micro-pullbackema-exit"
+  "quant-micro-trendmomentum"
+  "quant-micro-trendmomentum-exit"
+  "quant-micro-trendretest"
+  "quant-micro-trendretest-exit"
+  "quant-micro-vwapbound"
+  "quant-micro-vwapbound-exit"
+  "quant-micro-vwaprevert"
+  "quant-micro-vwaprevert-exit"
+  "quant-scalp-extrema-reversal"
+  "quant-scalp-extrema-reversal-exit"
+  "quant-scalp-failed-break-reverse"
+  "quant-scalp-failed-break-reverse-exit"
+  "quant-scalp-false-break-fade"
+  "quant-scalp-false-break-fade-exit"
+  "quant-scalp-level-reject"
+  "quant-scalp-level-reject-exit"
+  "quant-scalp-macd-rsi-div"
+  "quant-scalp-macd-rsi-div-exit"
+  "quant-scalp-macd-rsi-div-b"
+  "quant-scalp-macd-rsi-div-b-exit"
+  "quant-scalp-ping-5s-c"
+  "quant-scalp-ping-5s-c-exit"
+  "quant-scalp-ping-5s-d"
+  "quant-scalp-ping-5s-d-exit"
+  "quant-scalp-ping-5s-flow"
+  "quant-scalp-ping-5s-flow-exit"
+  "quant-scalp-pullback-continuation"
+  "quant-scalp-pullback-continuation-exit"
+  "quant-scalp-rangefader"
+  "quant-scalp-rangefader-exit"
+  "quant-scalp-squeeze-pulse-break"
+  "quant-scalp-squeeze-pulse-break-exit"
+  "quant-scalp-tick-imbalance"
+  "quant-scalp-tick-imbalance-exit"
+  "quant-scalp-trend-breakout"
+  "quant-scalp-trend-breakout-exit"
+  "quant-scalp-wick-reversal-blend"
+  "quant-scalp-wick-reversal-blend-exit"
+  "quant-scalp-wick-reversal-pro"
+  "quant-scalp-wick-reversal-pro-exit"
+  "quant-session-open"
+  "quant-session-open-exit"
 )
 
 PROFILE_core=(
@@ -45,16 +105,83 @@ PROFILE_trade_min=(
   "quant-micro-rangebreak-exit"
 )
 
+PROFILE_trade_all=(
+  "quant-market-data-feed"
+  "quant-strategy-control"
+  "quant-order-manager"
+  "quant-position-manager"
+  "quant-scalp-ping-5s-b"
+  "quant-scalp-ping-5s-b-exit"
+  "quant-micro-rangebreak"
+  "quant-micro-rangebreak-exit"
+  "quant-m1scalper"
+  "quant-m1scalper-exit"
+  "quant-micro-compressionrevert"
+  "quant-micro-compressionrevert-exit"
+  "quant-micro-levelreactor"
+  "quant-micro-levelreactor-exit"
+  "quant-micro-momentumburst"
+  "quant-micro-momentumburst-exit"
+  "quant-micro-momentumpulse"
+  "quant-micro-momentumpulse-exit"
+  "quant-micro-momentumstack"
+  "quant-micro-momentumstack-exit"
+  "quant-micro-pullbackema"
+  "quant-micro-pullbackema-exit"
+  "quant-micro-trendmomentum"
+  "quant-micro-trendmomentum-exit"
+  "quant-micro-trendretest"
+  "quant-micro-trendretest-exit"
+  "quant-micro-vwapbound"
+  "quant-micro-vwapbound-exit"
+  "quant-micro-vwaprevert"
+  "quant-micro-vwaprevert-exit"
+  "quant-scalp-extrema-reversal"
+  "quant-scalp-extrema-reversal-exit"
+  "quant-scalp-failed-break-reverse"
+  "quant-scalp-failed-break-reverse-exit"
+  "quant-scalp-false-break-fade"
+  "quant-scalp-false-break-fade-exit"
+  "quant-scalp-level-reject"
+  "quant-scalp-level-reject-exit"
+  "quant-scalp-macd-rsi-div"
+  "quant-scalp-macd-rsi-div-exit"
+  "quant-scalp-macd-rsi-div-b"
+  "quant-scalp-macd-rsi-div-b-exit"
+  "quant-scalp-ping-5s-c"
+  "quant-scalp-ping-5s-c-exit"
+  "quant-scalp-ping-5s-d"
+  "quant-scalp-ping-5s-d-exit"
+  "quant-scalp-ping-5s-flow"
+  "quant-scalp-ping-5s-flow-exit"
+  "quant-scalp-pullback-continuation"
+  "quant-scalp-pullback-continuation-exit"
+  "quant-scalp-rangefader"
+  "quant-scalp-rangefader-exit"
+  "quant-scalp-squeeze-pulse-break"
+  "quant-scalp-squeeze-pulse-break-exit"
+  "quant-scalp-tick-imbalance"
+  "quant-scalp-tick-imbalance-exit"
+  "quant-scalp-trend-breakout"
+  "quant-scalp-trend-breakout-exit"
+  "quant-scalp-wick-reversal-blend"
+  "quant-scalp-wick-reversal-blend-exit"
+  "quant-scalp-wick-reversal-pro"
+  "quant-scalp-wick-reversal-pro-exit"
+  "quant-session-open"
+  "quant-session-open-exit"
+)
+
 usage() {
   cat <<'USAGE'
 Usage:
   scripts/local_v2_stack.sh <up|down|restart|status|logs|watchdog|watchdog-stop|watchdog-status> [options]
 
 Options:
-  --profile <core|trade_min>   Service profile (default: core)
+  --profile <core|trade_min|trade_all>  Service profile (default: core)
   --services <csv/list>        Explicit service list (e.g. "quant-order-manager,quant-position-manager")
   --base-env <file>            Base runtime env (default: ops/env/quant-v2-runtime.env)
-  --env <file>                 Optional local override env (loaded after base env)
+  --env <file[,file2,...]>     Optional local override env list (loaded after base/service env)
   --tail <n>                   Tail lines for logs command (default: 120)
   --follow                     Follow logs (for logs command)
   --service <name>             Single service target for logs command
@@ -68,7 +195,9 @@ Options:
 
 Examples:
   scripts/local_v2_stack.sh up --profile core --env ops/env/local-v2-stack.env
+  scripts/local_v2_stack.sh up --profile core --env ops/env/local-v2-stack.env,ops/env/profiles/brain-ollama.env
   scripts/local_v2_stack.sh status --profile trade_min
+  scripts/local_v2_stack.sh up --profile trade_all --env ops/env/local-v2-stack.env
   scripts/local_v2_stack.sh logs --service quant-order-manager --tail 200 --follow
   scripts/local_v2_stack.sh down --services "quant-scalp-ping-5s-b,quant-scalp-ping-5s-b-exit"
   scripts/local_v2_stack.sh up --services quant-position-manager --force-conflict
@@ -92,10 +221,66 @@ module_for_service() {
     quant-strategy-control) printf '%s\n' "workers.strategy_control.worker" ;;
     quant-order-manager) printf '%s\n' "workers.order_manager.worker" ;;
     quant-position-manager) printf '%s\n' "workers.position_manager.worker" ;;
+    quant-m1scalper) printf '%s\n' "workers.scalp_m1scalper.worker" ;;
+    quant-m1scalper-exit) printf '%s\n' "workers.scalp_m1scalper.exit_worker" ;;
+    quant-micro-compressionrevert) printf '%s\n' "workers.micro_compressionrevert.worker" ;;
+    quant-micro-compressionrevert-exit) printf '%s\n' "workers.micro_compressionrevert.exit_worker" ;;
+    quant-micro-levelreactor) printf '%s\n' "workers.micro_levelreactor.worker" ;;
+    quant-micro-levelreactor-exit) printf '%s\n' "workers.micro_levelreactor.exit_worker" ;;
+    quant-micro-momentumburst) printf '%s\n' "workers.micro_momentumburst.worker" ;;
+    quant-micro-momentumburst-exit) printf '%s\n' "workers.micro_momentumburst.exit_worker" ;;
+    quant-micro-momentumpulse) printf '%s\n' "workers.micro_momentumpulse.worker" ;;
+    quant-micro-momentumpulse-exit) printf '%s\n' "workers.micro_momentumpulse.exit_worker" ;;
+    quant-micro-momentumstack) printf '%s\n' "workers.micro_momentumstack.worker" ;;
+    quant-micro-momentumstack-exit) printf '%s\n' "workers.micro_momentumstack.exit_worker" ;;
+    quant-micro-pullbackema) printf '%s\n' "workers.micro_pullbackema.worker" ;;
+    quant-micro-pullbackema-exit) printf '%s\n' "workers.micro_pullbackema.exit_worker" ;;
     quant-scalp-ping-5s-b) printf '%s\n' "workers.scalp_ping_5s_b.worker" ;;
     quant-scalp-ping-5s-b-exit) printf '%s\n' "workers.scalp_ping_5s_b.exit_worker" ;;
+    quant-scalp-ping-5s-c) printf '%s\n' "workers.scalp_ping_5s_c.worker" ;;
+    quant-scalp-ping-5s-c-exit) printf '%s\n' "workers.scalp_ping_5s_c.exit_worker" ;;
+    quant-scalp-ping-5s-d) printf '%s\n' "workers.scalp_ping_5s_d.worker" ;;
+    quant-scalp-ping-5s-d-exit) printf '%s\n' "workers.scalp_ping_5s_d.exit_worker" ;;
+    quant-scalp-ping-5s-flow) printf '%s\n' "workers.scalp_ping_5s_flow.worker" ;;
+    quant-scalp-ping-5s-flow-exit) printf '%s\n' "workers.scalp_ping_5s_flow.exit_worker" ;;
+    quant-scalp-extrema-reversal) printf '%s\n' "workers.scalp_extrema_reversal.worker" ;;
+    quant-scalp-extrema-reversal-exit) printf '%s\n' "workers.scalp_extrema_reversal.exit_worker" ;;
+    quant-scalp-failed-break-reverse) printf '%s\n' "workers.scalp_failed_break_reverse.worker" ;;
+    quant-scalp-failed-break-reverse-exit) printf '%s\n' "workers.scalp_failed_break_reverse.exit_worker" ;;
+    quant-scalp-false-break-fade) printf '%s\n' "workers.scalp_false_break_fade.worker" ;;
+    quant-scalp-false-break-fade-exit) printf '%s\n' "workers.scalp_false_break_fade.exit_worker" ;;
+    quant-scalp-level-reject) printf '%s\n' "workers.scalp_level_reject.worker" ;;
+    quant-scalp-level-reject-exit) printf '%s\n' "workers.scalp_level_reject.exit_worker" ;;
+    quant-scalp-macd-rsi-div) printf '%s\n' "workers.scalp_macd_rsi_div.worker" ;;
+    quant-scalp-macd-rsi-div-exit) printf '%s\n' "workers.scalp_macd_rsi_div.exit_worker" ;;
+    quant-scalp-macd-rsi-div-b) printf '%s\n' "workers.scalp_macd_rsi_div_b.worker" ;;
+    quant-scalp-macd-rsi-div-b-exit) printf '%s\n' "workers.scalp_macd_rsi_div_b.exit_worker" ;;
+    quant-scalp-pullback-continuation) printf '%s\n' "workers.scalp_pullback_continuation.worker" ;;
+    quant-scalp-pullback-continuation-exit) printf '%s\n' "workers.scalp_pullback_continuation.exit_worker" ;;
+    quant-scalp-rangefader) printf '%s\n' "workers.scalp_rangefader.worker" ;;
+    quant-scalp-rangefader-exit) printf '%s\n' "workers.scalp_rangefader.exit_worker" ;;
+    quant-scalp-squeeze-pulse-break) printf '%s\n' "workers.scalp_squeeze_pulse_break.worker" ;;
+    quant-scalp-squeeze-pulse-break-exit) printf '%s\n' "workers.scalp_squeeze_pulse_break.exit_worker" ;;
+    quant-scalp-tick-imbalance) printf '%s\n' "workers.scalp_tick_imbalance.worker" ;;
+    quant-scalp-tick-imbalance-exit) printf '%s\n' "workers.scalp_tick_imbalance.exit_worker" ;;
+    quant-scalp-trend-breakout) printf '%s\n' "workers.scalp_trend_breakout.worker" ;;
+    quant-scalp-trend-breakout-exit) printf '%s\n' "workers.scalp_trend_breakout.exit_worker" ;;
+    quant-scalp-wick-reversal-blend) printf '%s\n' "workers.scalp_wick_reversal_blend.worker" ;;
+    quant-scalp-wick-reversal-blend-exit) printf '%s\n' "workers.scalp_wick_reversal_blend.exit_worker" ;;
+    quant-scalp-wick-reversal-pro) printf '%s\n' "workers.scalp_wick_reversal_pro.worker" ;;
+    quant-scalp-wick-reversal-pro-exit) printf '%s\n' "workers.scalp_wick_reversal_pro.exit_worker" ;;
     quant-micro-rangebreak) printf '%s\n' "workers.micro_rangebreak.worker" ;;
     quant-micro-rangebreak-exit) printf '%s\n' "workers.micro_rangebreak.exit_worker" ;;
+    quant-micro-trendmomentum) printf '%s\n' "workers.micro_trendmomentum.worker" ;;
+    quant-micro-trendmomentum-exit) printf '%s\n' "workers.micro_trendmomentum.exit_worker" ;;
+    quant-micro-trendretest) printf '%s\n' "workers.micro_trendretest.worker" ;;
+    quant-micro-trendretest-exit) printf '%s\n' "workers.micro_trendretest.exit_worker" ;;
+    quant-micro-vwapbound) printf '%s\n' "workers.micro_vwapbound.worker" ;;
+    quant-micro-vwapbound-exit) printf '%s\n' "workers.micro_vwapbound.exit_worker" ;;
+    quant-micro-vwaprevert) printf '%s\n' "workers.micro_vwaprevert.worker" ;;
+    quant-micro-vwaprevert-exit) printf '%s\n' "workers.micro_vwaprevert.exit_worker" ;;
+    quant-session-open) printf '%s\n' "workers.session_open.worker" ;;
+    quant-session-open-exit) printf '%s\n' "workers.session_open.exit_worker" ;;
     *) return 1 ;;
   esac
 }
@@ -187,49 +372,201 @@ as_positive_int() {
 
 load_env_file_if_exists() {
   local path="$1"
-  if [[ -f "${path}" ]]; then
-    # shellcheck disable=SC1090
-    . "${path}"
+  local label="${2:-service}"
+  local resolved
+  resolved="$(resolve_env_path "${path}")"
+  if [[ ! -e "${resolved}" ]]; then
+    return 0
   fi
+  source_env_file_once "${resolved}" "${label}"
+}
+
+resolve_env_path() {
+  local path="$1"
+  local abs dir base
+  if [[ "${path}" = /* ]]; then
+    abs="${path}"
+  else
+    abs="${ROOT_DIR}/${path}"
+  fi
+  dir="$(cd -P -- "$(dirname -- "${abs}")" 2>/dev/null && pwd || true)"
+  if [[ -n "${dir}" ]]; then
+    base="$(basename -- "${abs}")"
+    printf '%s/%s\n' "${dir}" "${base}"
+  else
+    printf '%s\n' "${abs}"
+  fi
+}
+
+contains_value() {
+  local target="$1"
+  shift || true
+  local item
+  for item in "$@"; do
+    if [[ "${item}" == "${target}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_world_writable_path() {
+  local path="$1"
+  local perms
+  perms="$(LC_ALL=C ls -ld "${path}" 2>/dev/null | awk '{print $1}' || true)"
+  case "${perms}" in
+    ????????w*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+guard_env_file() {
+  local path="$1"
+  local label="$2"
+  if [[ ! -e "${path}" ]]; then
+    echo "[error] ${label} env not found: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${path}" ]]; then
+    echo "[error] ${label} env is not a regular file: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -r "${path}" ]]; then
+    echo "[error] ${label} env is not readable: ${path}" >&2
+    exit 1
+  fi
+  if is_world_writable_path "${path}"; then
+    echo "[warn] ${label} env is world-writable: ${path}" >&2
+  fi
+}
+
+ENV_CHAIN_ENTRIES=()
+ENV_CHAIN_SEEN_PATHS=()
+
+reset_env_chain_trace() {
+  ENV_CHAIN_ENTRIES=()
+  ENV_CHAIN_SEEN_PATHS=()
+}
+
+record_env_chain_entry() {
+  local label="$1"
+  local path="$2"
+  ENV_CHAIN_ENTRIES+=("${label}=${path}")
+}
+
+log_env_chain_order() {
+  local svc="$1"
+  local entry chain
+  chain=""
+  for entry in "${ENV_CHAIN_ENTRIES[@]}"; do
+    if [[ -n "${chain}" ]]; then
+      chain="${chain} -> "
+    fi
+    chain="${chain}${entry}"
+  done
+  if [[ -n "${chain}" ]]; then
+    echo "[env-chain] ${svc} ${chain}"
+  fi
+}
+
+source_env_file_once() {
+  local path="$1"
+  local label="$2"
+  local resolved
+  resolved="$(resolve_env_path "${path}")"
+  guard_env_file "${resolved}" "${label}"
+  if contains_value "${resolved}" "${ENV_CHAIN_SEEN_PATHS[@]-}"; then
+    return 0
+  fi
+  # shellcheck disable=SC1090
+  . "${resolved}"
+  ENV_CHAIN_SEEN_PATHS+=("${resolved}")
+  record_env_chain_entry "${label}" "${resolved}"
+}
+
+load_env_chain() {
+  local raw="$1"
+  local label="$2"
+  local normalized token resolved
+  local dedup_paths=()
+  normalized="$(printf '%s' "${raw}" | tr ',' ' ')"
+  for token in ${normalized}; do
+    [[ -n "${token}" ]] || continue
+    resolved="$(resolve_env_path "${token}")"
+    if ! contains_value "${resolved}" "${dedup_paths[@]-}"; then
+      dedup_paths+=("${resolved}")
+    fi
+  done
+  for resolved in "${dedup_paths[@]}"; do
+    source_env_file_once "${resolved}" "${label}"
+  done
+}
+
+log_effective_env_snapshot() {
+  local svc="$1"
+  local key
+  case "${svc}" in
+    quant-order-manager)
+      echo "[env] ${svc} effective Brain settings:"
+      for key in \
+        BRAIN_ENABLED \
+        ORDER_MANAGER_BRAIN_GATE_ENABLED \
+        ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT \
+        BRAIN_BACKEND \
+        BRAIN_OLLAMA_URL \
+        BRAIN_OLLAMA_MODEL \
+        BRAIN_SAMPLE_RATE \
+        BRAIN_TTL_SEC \
+        BRAIN_FAIL_POLICY \
+        BRAIN_PROMPT_AUTO_TUNE_ENABLED \
+        BRAIN_PROMPT_AUTO_TUNE_INTERVAL_SEC \
+        BRAIN_PROMPT_AUTO_TUNE_MIN_DECISIONS \
+        BRAIN_PROMPT_AUTO_TUNE_LOOKBACK_HOURS \
+        BRAIN_PROMPT_PROFILE_PATH \
+        BRAIN_PROMPT_REPORT_LATEST_PATH \
+        BRAIN_PROMPT_REPORT_HISTORY_PATH; do
+        printf '[env] %s=%s\n' "${key}" "${!key:-}"
+      done
+      ;;
+  esac
 }
 
 load_env_for_service() {
   local svc="$1"
+  local emit_chain_log="${2:-0}"
 
-  if [[ ! -f "${BASE_ENV}" ]]; then
-    echo "[error] base env not found: ${BASE_ENV}" >&2
-    exit 1
-  fi
-
+  reset_env_chain_trace
   set -a
-  # shellcheck disable=SC1090
-  . "${BASE_ENV}"
+  source_env_file_once "${BASE_ENV}" "base"
 
   case "${svc}" in
     quant-order-manager)
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-order-manager.env"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-order-manager.env" "service"
       export ORDER_MANAGER_SERVICE_PORT="${ORDER_MANAGER_SERVICE_PORT:-8300}"
       ;;
     quant-position-manager)
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-position-manager.env"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-position-manager.env" "service"
       export POSITION_MANAGER_SERVICE_PORT="${POSITION_MANAGER_SERVICE_PORT:-8301}"
       ;;
     quant-scalp-ping-5s-b)
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-scalp-ping-5s-b.env"
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/scalp_ping_5s_b.env"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-scalp-ping-5s-b.env" "service"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/scalp_ping_5s_b.env" "service"
       export SCALP_PING_5S_B_PERF_GUARD_MODE="${SCALP_PING_5S_B_PERF_GUARD_MODE:-reduce}"
       export SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED="${SCALP_PING_5S_B_SL_STREAK_DIRECTION_FLIP_ENABLED:-1}"
       export SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED="${SCALP_PING_5S_B_SIDE_METRICS_DIRECTION_FLIP_ENABLED:-1}"
       export SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ENABLED="${SCALP_PING_5S_B_SIDE_ADVERSE_STACK_UNITS_ENABLED:-1}"
       ;;
-    quant-scalp-ping-5s-b-exit)
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-scalp-ping-5s-b-exit.env"
+    quant-scalp-ping-5s-c)
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-scalp-ping-5s-c.env" "service"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/scalp_ping_5s_c.env" "service"
       ;;
-    quant-micro-rangebreak)
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-micro-rangebreak.env"
+    quant-scalp-ping-5s-d)
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-scalp-ping-5s-d.env" "service"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/scalp_ping_5s_d.env" "service"
       ;;
-    quant-micro-rangebreak-exit)
-      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-micro-rangebreak-exit.env"
+    quant-scalp-ping-5s-flow)
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/quant-scalp-ping-5s-flow.env" "service"
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/scalp_ping_5s_flow.env" "service"
       ;;
     quant-market-data-feed)
       export MARKET_DATA_FEED_ENABLED="${MARKET_DATA_FEED_ENABLED:-1}"
@@ -240,15 +577,20 @@ load_env_for_service() {
       export STRATEGY_CONTROL_POLL_SEC="${STRATEGY_CONTROL_POLL_SEC:-5}"
       export STRATEGY_CONTROL_HEARTBEAT_SEC="${STRATEGY_CONTROL_HEARTBEAT_SEC:-60}"
       ;;
+    *)
+      load_env_file_if_exists "${ROOT_DIR}/ops/env/${svc}.env" "service"
+      ;;
   esac
 
   if [[ -n "${OVERRIDE_ENV}" ]]; then
-    if [[ ! -f "${OVERRIDE_ENV}" ]]; then
-      echo "[error] override env not found: ${OVERRIDE_ENV}" >&2
-      exit 1
-    fi
-    # shellcheck disable=SC1090
-    . "${OVERRIDE_ENV}"
+    load_env_chain "${OVERRIDE_ENV}" "override"
+  fi
+  if [[ -n "${LOCAL_V2_EXTRA_ENV_FILES:-}" ]]; then
+    load_env_chain "${LOCAL_V2_EXTRA_ENV_FILES}" "extra"
+  fi
+
+  if [[ "${emit_chain_log}" == "1" ]]; then
+    log_env_chain_order "${svc}"
   fi
 
   set +a
@@ -263,6 +605,9 @@ resolve_profile_services() {
       ;;
     trade_min)
       printf '%s\n' "${PROFILE_trade_min[@]}"
+      ;;
+    trade_all)
+      printf '%s\n' "${PROFILE_trade_all[@]}"
       ;;
     *)
       echo "[error] unknown profile: ${profile}" >&2
@@ -632,20 +977,30 @@ wait_for_service_health() {
 
 service_process_pids() {
   local svc="$1"
-  local patterns pattern hits
-  if ! command -v pgrep >/dev/null 2>&1; then
-    return 0
-  fi
+  local patterns pattern line pid cmd
+  local -a pattern_list=()
   patterns="$(module_patterns_for_service "${svc}" || true)"
   [[ -n "${patterns}" ]] || return 0
   while IFS= read -r pattern; do
     [[ -n "${pattern}" ]] || continue
-    hits="$(pgrep -f "${pattern}" 2>/dev/null || true)"
-    [[ -n "${hits}" ]] || continue
-    printf '%s\n' "${hits}"
+    pattern_list+=("${pattern}")
   done <<EOF_PATTERNS
 ${patterns}
 EOF_PATTERNS
+  [[ ${#pattern_list[@]} -gt 0 ]] || return 0
+
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    pid="${line%% *}"
+    cmd="${line#* }"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    for pattern in "${pattern_list[@]}"; do
+      if [[ "${cmd}" == *"${pattern}"* ]]; then
+        printf '%s\n' "${pid}"
+        break
+      fi
+    done
+  done < <(ps -axo pid=,command= 2>/dev/null || true)
 }
 
 cleanup_service_processes() {
@@ -666,70 +1021,138 @@ ${pids}
 EOF_PIDS
 }
 
+service_pid_is_healthy() {
+  local svc="$1"
+  local pid
+  pid="$(read_pid "${svc}" || true)"
+  [[ -n "${pid}" ]] || return 1
+  is_running_pid "${pid}" || return 1
+  pid_matches_service "${svc}" "${pid}" || return 1
+  return 0
+}
+
 start_service() {
   local svc="$1"
   local module pf lf pid py extra_pids
+  local max_attempts retry_delay attempt
   module="$(module_for_service "${svc}")"
   pf="$(pid_file_for "${svc}")"
   lf="$(log_file_for "${svc}")"
+  max_attempts="$(as_positive_int "${LOCAL_V2_START_RETRY_COUNT:-}" "${DEFAULT_START_RETRY_COUNT}")"
+  retry_delay="$(as_positive_int "${LOCAL_V2_START_RETRY_DELAY_SEC:-}" "${DEFAULT_START_RETRY_DELAY_SEC}")"
 
-  pid="$(read_pid "${svc}" || true)"
-  if [[ -n "${pid}" ]] && is_running_pid "${pid}" && ! pid_matches_service "${svc}" "${pid}"; then
-    echo "[warn] ${svc} pid file points to non-target pid=${pid}; ignoring stale pid file"
-    pid=""
+  for attempt in $(seq 1 "${max_attempts}"); do
+    pid="$(read_pid "${svc}" || true)"
+    if [[ -n "${pid}" ]] && is_running_pid "${pid}" && ! pid_matches_service "${svc}" "${pid}"; then
+      echo "[warn] ${svc} pid file points to non-target pid=${pid}; ignoring stale pid file"
+      pid=""
+    fi
+    extra_pids="$(service_process_pids "${svc}" | sort -u | grep -vx "${pid}" || true)"
+    if [[ -n "${pid}" ]] && is_running_pid "${pid}" && [[ -z "${extra_pids}" ]]; then
+      if wait_for_service_health "${svc}" "${pid}"; then
+        echo "[skip] ${svc} already running (pid=${pid})"
+        return 0
+      fi
+      echo "[warn] ${svc} existing pid=${pid} is not healthy; recycling"
+      stop_service "${svc}"
+      pid=""
+    fi
+
+    if [[ -n "${extra_pids}" ]]; then
+      if [[ "${CONFLICT_SAFE_MODE}" == "1" ]]; then
+        echo "[warn] ${svc} conflict-safe mode: skip module-wide stale pid cleanup"
+      else
+        echo "[clean] ${svc} removing stale worker pids"
+        cleanup_service_processes "${svc}" "${pid}"
+      fi
+    fi
+
+    if [[ "${CONFLICT_SAFE_MODE}" == "1" ]]; then
+      assert_service_port_available "${svc}" "${pid}" || return 1
+    else
+      cleanup_service_port_binding "${svc}" "${pid}" "1"
+    fi
+
+    rm -f "${pf}"
+    py="$(python_bin)"
+
+    (
+      cd "${ROOT_DIR}"
+      load_env_for_service "${svc}" "1"
+      log_effective_env_snapshot "${svc}"
+      exec nohup "${py}" -m "${module}"
+    ) >> "${lf}" 2>&1 < /dev/null &
+
+    pid=$!
+    echo "${pid}" > "${pf}"
+    echo "[up] ${svc} pid=${pid} log=${lf}"
+
+    sleep 0.2
+    if ! is_running_pid "${pid}"; then
+      echo "[warn] ${svc} exited immediately after launch (pid=${pid})" >&2
+      tail -n 40 "${lf}" >&2 || true
+      rm -f "${pf}"
+      if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+        echo "[retry] ${svc} launch retry ${attempt}/${max_attempts}" >&2
+        sleep "${retry_delay}"
+        continue
+      fi
+      return 1
+    fi
+
+    if ! wait_for_service_health "${svc}" "${pid}"; then
+      echo "[warn] ${svc} failed health check; stopping service" >&2
+      stop_service "${svc}"
+      if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+        echo "[retry] ${svc} health retry ${attempt}/${max_attempts}" >&2
+        sleep "${retry_delay}"
+        continue
+      fi
+      return 1
+    fi
+
+    return 0
+  done
+
+  return 1
+}
+
+reconcile_started_services() {
+  local rounds settle round svc
+  local -a services=("$@")
+  local -a unresolved=()
+  rounds="$(as_positive_int "${LOCAL_V2_POST_UP_RECONCILE_ROUNDS:-}" "${DEFAULT_POST_UP_RECONCILE_ROUNDS}")"
+  settle="$(as_positive_int "${LOCAL_V2_POST_UP_SETTLE_SEC:-}" "${DEFAULT_POST_UP_SETTLE_SEC}")"
+  if [[ ${#services[@]} -eq 0 ]] || [[ "${rounds}" -le 0 ]]; then
+    return 0
   fi
-  extra_pids="$(service_process_pids "${svc}" | sort -u | grep -vx "${pid}" || true)"
-  if [[ -n "${pid}" ]] && is_running_pid "${pid}" && [[ -z "${extra_pids}" ]]; then
-    if wait_for_service_health "${svc}" "${pid}"; then
-      echo "[skip] ${svc} already running (pid=${pid})"
+
+  for round in $(seq 1 "${rounds}"); do
+    if [[ "${settle}" -gt 0 ]]; then
+      sleep "${settle}"
+    fi
+
+    unresolved=()
+    for svc in "${services[@]}"; do
+      if ! service_pid_is_healthy "${svc}"; then
+        unresolved+=("${svc}")
+      fi
+    done
+
+    if [[ ${#unresolved[@]} -eq 0 ]]; then
       return 0
     fi
-    echo "[warn] ${svc} existing pid=${pid} is not healthy; recycling"
-    stop_service "${svc}"
-    pid=""
-  fi
 
-  if [[ -n "${extra_pids}" ]]; then
-    if [[ "${CONFLICT_SAFE_MODE}" == "1" ]]; then
-      echo "[warn] ${svc} conflict-safe mode: skip module-wide stale pid cleanup"
-    else
-      echo "[clean] ${svc} removing stale worker pids"
-      cleanup_service_processes "${svc}" "${pid}"
+    if [[ "${round}" -lt "${rounds}" ]]; then
+      echo "[reconcile] round=${round}/${rounds} restarting services=$(IFS=, ; printf '%s' "${unresolved[*]}")" >&2
+      for svc in "${unresolved[@]}"; do
+        start_service "${svc}" || true
+      done
     fi
-  fi
+  done
 
-  if [[ "${CONFLICT_SAFE_MODE}" == "1" ]]; then
-    assert_service_port_available "${svc}" "${pid}" || return 1
-  else
-    cleanup_service_port_binding "${svc}" "${pid}" "1"
-  fi
-
-  rm -f "${pf}"
-  py="$(python_bin)"
-
-  (
-    cd "${ROOT_DIR}"
-    load_env_for_service "${svc}"
-    exec nohup "${py}" -m "${module}"
-  ) >> "${lf}" 2>&1 < /dev/null &
-
-  pid=$!
-  echo "${pid}" > "${pf}"
-  echo "[up] ${svc} pid=${pid} log=${lf}"
-
-  sleep 0.2
-  if ! is_running_pid "${pid}"; then
-    echo "[error] ${svc} exited immediately after launch (pid=${pid})" >&2
-    tail -n 40 "${lf}" >&2 || true
-    rm -f "${pf}"
-    return 1
-  fi
-
-  if ! wait_for_service_health "${svc}" "${pid}"; then
-    echo "[error] ${svc} failed health check; stopping service" >&2
-    stop_service "${svc}"
-    return 1
-  fi
+  echo "[error] unresolved services after reconcile: $(IFS=, ; printf '%s' "${unresolved[*]}")" >&2
+  return 1
 }
 
 stop_service() {
@@ -763,15 +1186,115 @@ stop_service() {
 
 status_service() {
   local svc="$1"
-  local pid
+  local pid pf port
+  local has_pid_file=0 pid_running=0 pid_match=0 stale_pid_file=0
+  local pattern_raw pattern_pid
+  local pattern_pids=()
+  local listener_raw listener_pid
+  local listener_pids=()
+  local listener_target=0 listener_non_target=0
+
+  pf="$(pid_file_for "${svc}")"
   pid="$(read_pid "${svc}" || true)"
-  if [[ -n "${pid}" ]] && is_running_pid "${pid}" && pid_matches_service "${svc}" "${pid}"; then
-    echo "[running] ${svc} pid=${pid} log=$(log_file_for "${svc}")"
-  elif [[ -n "${pid}" ]] && is_running_pid "${pid}"; then
-    echo "[stale] ${svc} pid-file pid=${pid} is running but not target module"
-  else
-    echo "[stopped] ${svc}"
+
+  if [[ -f "${pf}" ]]; then
+    has_pid_file=1
   fi
+
+  if [[ -n "${pid}" ]] && is_running_pid "${pid}"; then
+    pid_running=1
+    if pid_matches_service "${svc}" "${pid}"; then
+      pid_match=1
+    fi
+  fi
+
+  if [[ "${has_pid_file}" == "1" ]] && ([[ -z "${pid}" ]] || [[ "${pid_running}" != "1" ]] || [[ "${pid_match}" != "1" ]]); then
+    stale_pid_file=1
+  fi
+
+  pattern_raw="$(service_process_pids "${svc}" | sort -u)"
+  while IFS= read -r pattern_pid; do
+    [[ -n "${pattern_pid}" ]] || continue
+    if ! is_running_pid "${pattern_pid}"; then
+      continue
+    fi
+    if ! pid_matches_service "${svc}" "${pattern_pid}"; then
+      continue
+    fi
+    if ! contains_value "${pattern_pid}" "${pattern_pids[@]-}"; then
+      pattern_pids+=("${pattern_pid}")
+    fi
+  done <<EOF_PATTERN_PIDS
+${pattern_raw}
+EOF_PATTERN_PIDS
+
+  port="$(service_port_for "${svc}" || true)"
+  if [[ -n "${port}" ]]; then
+    listener_raw="$(port_listener_pids "${port}")"
+    while IFS= read -r listener_pid; do
+      [[ -n "${listener_pid}" ]] || continue
+      if ! is_running_pid "${listener_pid}"; then
+        continue
+      fi
+      if ! contains_value "${listener_pid}" "${listener_pids[@]-}"; then
+        listener_pids+=("${listener_pid}")
+      fi
+      if pid_matches_service "${svc}" "${listener_pid}"; then
+        listener_target=1
+      else
+        listener_non_target=1
+      fi
+    done <<EOF_LISTENER_PIDS
+${listener_raw}
+EOF_LISTENER_PIDS
+  fi
+
+  if [[ "${pid_match}" == "1" ]]; then
+    if [[ -n "${port}" ]] && [[ ${#listener_pids[@]} -gt 0 ]] && [[ "${listener_target}" != "1" ]]; then
+      echo "[port_conflict] ${svc} pid=${pid} port=${port} listeners=$(IFS=, ; printf '%s' "${listener_pids[*]}")"
+      return 0
+    fi
+    echo "[running] ${svc} pid=${pid} log=$(log_file_for "${svc}")"
+    return 0
+  fi
+
+  if [[ "${stale_pid_file}" == "1" ]] && [[ ${#pattern_pids[@]} -eq 1 ]]; then
+    printf '%s\n' "${pattern_pids[0]}" > "${pf}"
+    echo "[running_by_pattern] ${svc} pid=${pattern_pids[0]} healed_pid_file=1 log=$(log_file_for "${svc}")"
+    return 0
+  fi
+
+  if [[ "${has_pid_file}" != "1" ]] && [[ ${#pattern_pids[@]} -eq 1 ]]; then
+    printf '%s\n' "${pattern_pids[0]}" > "${pf}"
+    echo "[running_by_pattern] ${svc} pid=${pattern_pids[0]} healed_pid_file=1 log=$(log_file_for "${svc}")"
+    return 0
+  fi
+
+  if [[ -n "${port}" ]] && [[ ${#listener_pids[@]} -gt 0 ]] && [[ "${listener_target}" != "1" ]]; then
+    echo "[port_conflict] ${svc} port=${port} listeners=$(IFS=, ; printf '%s' "${listener_pids[*]}")"
+    return 0
+  fi
+
+  if [[ "${stale_pid_file}" == "1" ]] && [[ ${#pattern_pids[@]} -eq 0 ]] && [[ ${#listener_pids[@]} -eq 0 ]]; then
+    echo "[stopped] ${svc} stale_pid_file=${pid:-<empty>}"
+    return 0
+  fi
+
+  if [[ "${stale_pid_file}" == "1" ]]; then
+    if [[ ${#pattern_pids[@]} -gt 0 ]]; then
+      echo "[stale_pid_file] ${svc} pid_file=${pid:-<empty>} pattern_pids=$(IFS=, ; printf '%s' "${pattern_pids[*]}")"
+    else
+      echo "[stale_pid_file] ${svc} pid_file=${pid:-<empty>}"
+    fi
+    return 0
+  fi
+
+  if [[ ${#pattern_pids[@]} -gt 0 ]]; then
+    echo "[running_by_pattern] ${svc} pids=$(IFS=, ; printf '%s' "${pattern_pids[*]}") log=$(log_file_for "${svc}")"
+    return 0
+  fi
+
+  echo "[stopped] ${svc}"
 }
 
 logs_service() {
@@ -893,6 +1416,7 @@ case "${CMD}" in
     for svc in "${RESOLVED_SERVICES[@]}"; do
       start_service "${svc}"
     done
+    reconcile_started_services "${RESOLVED_SERVICES[@]}"
     ;;
   down)
     guard_parity_conflict
@@ -908,6 +1432,7 @@ case "${CMD}" in
     for svc in "${RESOLVED_SERVICES[@]}"; do
       start_service "${svc}"
     done
+    reconcile_started_services "${RESOLVED_SERVICES[@]}"
     ;;
   status)
     for svc in "${RESOLVED_SERVICES[@]}"; do

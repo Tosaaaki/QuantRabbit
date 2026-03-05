@@ -50,6 +50,35 @@ as_positive_int() {
   printf '%s\n' "${default}"
 }
 
+is_world_writable_path() {
+  local path="$1"
+  local perms
+  perms="$(LC_ALL=C ls -ld "${path}" 2>/dev/null | awk '{print $1}' || true)"
+  case "${perms}" in
+    ????????w*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+guard_env_file() {
+  local path="$1"
+  if [[ ! -e "${path}" ]]; then
+    echo "[error] env file not found: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${path}" ]]; then
+    echo "[error] env file is not a regular file: ${path}" >&2
+    exit 1
+  fi
+  if [[ ! -r "${path}" ]]; then
+    echo "[error] env file is not readable: ${path}" >&2
+    exit 1
+  fi
+  if is_world_writable_path "${path}"; then
+    echo "[warn] env file is world-writable: ${path}" >&2
+  fi
+}
+
 is_truthy() {
   local raw="${1:-}"
   case "$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]')" in
@@ -204,9 +233,8 @@ case "${ENV_FILE}" in
   *) ENV_FILE="${ROOT_DIR}/${ENV_FILE}" ;;
 esac
 
-if [[ -n "${ENV_FILE}" && ! -f "${ENV_FILE}" ]]; then
-  echo "[error] env file not found: ${ENV_FILE}" >&2
-  exit 1
+if [[ -n "${ENV_FILE}" ]]; then
+  guard_env_file "${ENV_FILE}"
 fi
 
 mkdir -p "${LOG_DIR}"
@@ -274,7 +302,7 @@ if [[ ${status_rc} -ne 0 ]]; then
 fi
 
 stopped_lines="$(printf '%s\n' "${status_out}" | grep -E '^\[stopped\]' || true)"
-stale_lines="$(printf '%s\n' "${status_out}" | grep -E '^\[stale\]' || true)"
+stale_lines="$(printf '%s\n' "${status_out}" | grep -E '^\[(stale|stale_pid_file|port_conflict)\]' || true)"
 
 if [[ -z "${stopped_lines}" && -z "${stale_lines}" ]]; then
   if [[ "${VERBOSE}" == "1" ]]; then
