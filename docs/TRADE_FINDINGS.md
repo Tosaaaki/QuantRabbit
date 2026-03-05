@@ -6565,3 +6565,23 @@ Status:
 - 検証:
   - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_config.py`
   - `scripts/collect_local_health.sh` で `orders_last_ts` が更新され続けること（例: `filled` が直近1hで継続）
+
+## 2026-03-05 14:34 UTC / 2026-03-05 23:34 JST - `close_reject_no_negative` 抑制の allow negative reason 追補（local V2）
+
+- 事実（ローカル実測: `logs/orders.db` / `logs/trades.db` / `logs/metrics.db`）:
+  - 直近3h `orders.db`: `close_reject_no_negative=525`, `close_ok=816`, `filled=961`。
+  - 直近24h `close_reject_no_negative` の `exit_reason` は `reentry_reset=323`, `__de_risk__=202` に集中。
+  - 直近3h `trades.db` の flow系（`strategy|strategy_tag LIKE '%flow%'`）は `n=14`, `avg_pips=-1.55`, `sum_realized_pl=-55.3`。
+  - 直近3h `metrics.db` の `account.margin_usage_ratio` は `avg=0.8297`, `max=1.0003`。
+
+- 仮説:
+  - `reentry_reset` / `__de_risk__` が `EXIT_ALLOW_NEGATIVE_REASONS` 未登録のため `close_reject_no_negative` が反復し、負け玉解放遅延を通じて flow の平均pips悪化と margin usage 高止まりを誘発している。
+
+- 実施変更:
+  - `ops/env/quant-order-manager.env` に `EXIT_ALLOW_NEGATIVE_REASONS` を明示設定。
+  - 既定トークン（`hard_stop,tech_hard_stop,max_adverse,time_stop,no_recovery,max_floating_loss,fast_cut_time,time_cut,tech_return_fail,tech_reversal_combo,tech_candle_reversal,tech_nwave_flip`）を維持したまま、`reentry_reset` と `__de_risk__` を追加。
+
+- 検証観点（反映後 1-3h）:
+  1. `orders.db` の `status='close_reject_no_negative'` 件数が減少すること（総数と reason 内訳）。
+  2. `trades.db` の flow系 `avg(pl_pips)` が改善すること。
+  3. `metrics.db` の `account.margin_usage_ratio` が高止まりせず、`max` が改善方向に向かうこと。

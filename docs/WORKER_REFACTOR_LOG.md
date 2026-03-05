@@ -11585,3 +11585,24 @@
   - `bb_style` が未代入のまま `_bb_entry_allowed(...)` に渡されるパスがあり `UnboundLocalError` で worker が落ちる問題を修正。
   - `bb_style` を `reversion` で初期化し、`_TREND_STRATEGIES` を `trend` 判定に追加。
   - main commit: `71b9dbd2`
+
+## 2026-03-05 14:34 UTC / 2026-03-05 23:34 JST - order-manager: `close_reject_no_negative` 抑制向け allow negative reason 追補（local V2）
+
+- 背景（ローカル実測）:
+  - `logs/orders.db` 直近3hで `close_reject_no_negative=525`（`close_ok=816`, `filled=961`）。
+  - `close_reject_no_negative` の直近24h内訳は `reentry_reset=323`, `__de_risk__=202` に集中。
+  - `logs/trades.db` 直近3hの flow系は `n=14`, `avg_pips=-1.55`, `sum_realized_pl=-55.3`。
+  - `logs/metrics.db` `account.margin_usage_ratio`（直近3h）は `avg=0.8297`, `max=1.0003`。
+
+- 仮説:
+  - `reentry_reset` / `__de_risk__` が global allow set 未登録で `close_reject_no_negative` を誘発し、損失側ポジションの解放が遅延して flow 成績悪化と margin usage 圧迫に寄与している。
+
+- 実施変更:
+  - `ops/env/quant-order-manager.env`
+    - `EXIT_ALLOW_NEGATIVE_REASONS` を明示追加。
+    - 既定トークン（`hard_stop,tech_hard_stop,max_adverse,time_stop,no_recovery,max_floating_loss,fast_cut_time,time_cut,tech_return_fail,tech_reversal_combo,tech_candle_reversal,tech_nwave_flip`）を維持し、`reentry_reset` と `__de_risk__` を追補。
+
+- 反映後 1-3h の検証指標:
+  1. `orders.db`: `status='close_reject_no_negative'` 件数と reason 内訳（`reentry_reset` / `__de_risk__`）の減少。
+  2. `trades.db`: flow系 `avg(pl_pips)` の改善。
+  3. `metrics.db`: `account.margin_usage_ratio` の高止まり緩和（平均・最大の改善）。
