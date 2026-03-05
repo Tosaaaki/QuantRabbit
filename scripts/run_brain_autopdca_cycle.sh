@@ -402,10 +402,20 @@ def load_market(path_value: str):
     path = Path(path_value)
     if not path.exists() or path.stat().st_size <= 0:
         return None
+    raw = path.read_text(encoding="utf-8")
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(raw)
     except Exception:
         return None
+    return payload if isinstance(payload, dict) else None
 
 
 payload = {
@@ -564,8 +574,28 @@ if not path.exists() or path.stat().st_size <= 0:
     print("0")
     raise SystemExit(0)
 try:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
 except Exception:
+    print("0")
+    raise SystemExit(0)
+payload = None
+lines = [line.strip() for line in raw.splitlines() if line.strip()]
+for line in reversed(lines):
+    try:
+        parsed = json.loads(line)
+    except Exception:
+        continue
+    if isinstance(parsed, dict):
+        payload = parsed
+        break
+if payload is None:
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        print("0")
+        raise SystemExit(0)
+    payload = parsed if isinstance(parsed, dict) else None
+if payload is None:
     print("0")
     raise SystemExit(0)
 if not isinstance(payload, dict) or payload.get("status") != "ok":
