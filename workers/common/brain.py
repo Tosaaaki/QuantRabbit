@@ -171,6 +171,12 @@ _PROMPT_AUTOTUNE_URL = (
     or os.getenv("BRAIN_OLLAMA_URL", "")
     or _OLLAMA_URL
 ).strip()
+_PROMPT_REPORT_LATEST_PATH = pathlib.Path(
+    os.getenv("BRAIN_PROMPT_REPORT_LATEST_PATH", "logs/brain_prompt_autotune_latest.json")
+)
+_PROMPT_REPORT_HISTORY_PATH = pathlib.Path(
+    os.getenv("BRAIN_PROMPT_REPORT_HISTORY_PATH", "logs/brain_prompt_autotune_history.jsonl")
+)
 
 _CACHE: dict[tuple[str, str], tuple[float, "BrainDecision"]] = {}
 _PROMPT_PROFILE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
@@ -666,6 +672,8 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                         "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
                         "avg_pips": round(float(avg_pips or 0.0), 4),
                         "avg_realized": round(float(avg_realized or 0.0), 6),
+                        "gross_win": round(gross_win_f, 6),
+                        "gross_loss": round(gross_loss_f, 6),
                         "profit_factor": round(float(pf), 4),
                     }
             except Exception:
@@ -685,6 +693,126 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
     return summary
 
 
+def _load_latest_applied_prompt_run() -> tuple[Optional[str], dict[str, Any]]:
+    if not _DB_PATH.exists():
+        return None, {}
+    con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
+    try:
+        row = con.execute(
+            """
+            SELECT profile_version, summary_json
+            FROM brain_prompt_runs
+            WHERE applied = 1
+            ORDER BY ts_epoch DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not row:
+        return None, {}
+    profile_version = str(row[0] or "").strip() or None
+    raw_summary = row[1]
+    if not raw_summary:
+        return profile_version, {}
+    try:
+        parsed = json.loads(str(raw_summary))
+        if isinstance(parsed, dict):
+            return profile_version, parsed
+    except Exception:
+        pass
+    return profile_version, {}
+
+
+def _summary_metrics(summary: Optional[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    outcome = summary.get("filled_trade_outcome") if isinstance(summary, dict) else {}
+    metrics: dict[str, dict[str, float]] = {}
+    gross_win_total = 0.0
+    gross_loss_total = 0.0
+    trades_total = 0
+    wins_total = 0
+
+    for action in ("ALLOW", "REDUCE"):
+        row = outcome.get(action) if isinstance(outcome, dict) else None
+        row = row if isinstance(row, dict) else {}
+        trades = int(float(row.get("trades") or 0))
+        wins = int(float(row.get("wins") or 0))
+        gross_win = float(row.get("gross_win") or 0.0)
+        gross_loss = float(row.get("gross_loss") or 0.0)
+        if gross_win <= 0.0 and gross_loss <= 0.0:
+            pf_row = float(row.get("profit_factor") or 0.0)
+            if pf_row > 0.0 and trades > 0:
+                gross_win = pf_row
+                gross_loss = 1.0
+        trades_total += trades
+        wins_total += wins
+        gross_win_total += gross_win
+        gross_loss_total += gross_loss
+        metrics[action] = {
+            "trades": trades,
+            "wins": wins,
+            "win_rate": round((wins / trades), 4) if trades > 0 else 0.0,
+            "profit_factor": round(gross_win / gross_loss, 4) if gross_loss > 1e-9 else (round(gross_win, 4) if gross_win > 0.0 else 0.0),
+        }
+
+    metrics["COMBINED"] = {
+        "trades": trades_total,
+        "wins": wins_total,
+        "win_rate": round((wins_total / trades_total), 4) if trades_total > 0 else 0.0,
+        "profit_factor": round(gross_win_total / gross_loss_total, 4)
+        if gross_loss_total > 1e-9
+        else (round(gross_win_total, 4) if gross_win_total > 0.0 else 0.0),
+    }
+    return metrics
+
+
+def _build_summary_comparison(
+    current_summary: dict[str, Any],
+    previous_summary: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    current = _summary_metrics(current_summary)
+    previous = _summary_metrics(previous_summary) if isinstance(previous_summary, dict) and previous_summary else {}
+    comparison: dict[str, Any] = {}
+    for key in ("ALLOW", "REDUCE", "COMBINED"):
+        cur = current.get(key, {"trades": 0.0, "wins": 0.0, "win_rate": 0.0, "profit_factor": 0.0})
+        prev = previous.get(key)
+        comparison[key] = {
+            "current": cur,
+            "previous": prev,
+            "delta": {
+                "win_rate": round(cur["win_rate"] - prev["win_rate"], 6) if prev is not None else None,
+                "profit_factor": round(cur["profit_factor"] - prev["profit_factor"], 6) if prev is not None else None,
+            },
+        }
+    return comparison
+
+
+def _write_prompt_report(report: dict[str, Any]) -> None:
+    try:
+        _PROMPT_REPORT_LATEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_latest = _PROMPT_REPORT_LATEST_PATH.with_suffix(_PROMPT_REPORT_LATEST_PATH.suffix + ".tmp")
+        tmp_latest.write_text(
+            json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+        tmp_latest.replace(_PROMPT_REPORT_LATEST_PATH)
+    except Exception:
+        pass
+
+    try:
+        _PROMPT_REPORT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _PROMPT_REPORT_HISTORY_PATH.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(report, ensure_ascii=True, sort_keys=True))
+            fp.write("\n")
+    except Exception:
+        pass
+
+
 def _record_prompt_run(
     *,
     lookback_hours: float,
@@ -693,6 +821,8 @@ def _record_prompt_run(
     profile_version: str,
     summary: dict[str, Any],
     response: Optional[dict[str, Any]],
+    previous_profile_version: Optional[str] = None,
+    previous_summary: Optional[dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
     _ensure_schema()
@@ -729,6 +859,19 @@ def _record_prompt_run(
         except Exception:
             pass
 
+    report = {
+        "generated_at": _now_iso(),
+        "lookback_hours": float(lookback_hours),
+        "decision_count": int(decision_count),
+        "applied": bool(applied),
+        "status": "applied" if applied else "skipped",
+        "error": str(error or "").strip() or None,
+        "profile_version_before": previous_profile_version,
+        "profile_version_after": str(profile_version or "").strip() or None,
+        "comparison": _build_summary_comparison(summary, previous_summary),
+    }
+    _write_prompt_report(report)
+
 
 def _write_prompt_profile(profile_payload: dict[str, Any]) -> dict[str, Any]:
     global _PROMPT_PROFILE_CACHE
@@ -758,6 +901,8 @@ def _maybe_autotune_prompt_profile() -> None:
         return
     if not _PROMPT_AUTOTUNE_LOCK.acquire(blocking=False):
         return
+    prev_profile_version: Optional[str] = None
+    prev_summary: dict[str, Any] = {}
     try:
         now_epoch = time.time()
         if now_epoch - _LAST_PROMPT_AUTOTUNE_TS < _PROMPT_AUTOTUNE_INTERVAL_SEC:
@@ -768,6 +913,7 @@ def _maybe_autotune_prompt_profile() -> None:
         decision_count = int(summary.get("decision_count") or 0)
         if decision_count < _PROMPT_AUTOTUNE_MIN_DECISIONS:
             return
+        prev_profile_version, prev_summary = _load_latest_applied_prompt_run()
         current_profile = _load_prompt_profile(force=True)
         prompt = (
             "You optimize an FX decision gate prompt for USD/JPY scalping.\n"
@@ -803,6 +949,8 @@ def _maybe_autotune_prompt_profile() -> None:
                 profile_version=_profile_version(current_profile),
                 summary=summary,
                 response=None,
+                previous_profile_version=prev_profile_version,
+                previous_summary=prev_summary,
                 error="no_response",
             )
             return
@@ -814,6 +962,8 @@ def _maybe_autotune_prompt_profile() -> None:
             profile_version=_profile_version(merged),
             summary=summary,
             response=response,
+            previous_profile_version=prev_profile_version,
+            previous_summary=prev_summary,
             error=None,
         )
         try:
@@ -835,6 +985,8 @@ def _maybe_autotune_prompt_profile() -> None:
             profile_version="none",
             summary={},
             response=None,
+            previous_profile_version=prev_profile_version,
+            previous_summary=prev_summary,
             error=f"exception:{exc}",
         )
     finally:

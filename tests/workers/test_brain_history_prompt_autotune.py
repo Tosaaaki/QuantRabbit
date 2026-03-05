@@ -19,12 +19,16 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     db_path = tmp_path / "brain_state.db"
     profile_path = tmp_path / "brain_prompt_profile.json"
     trades_path = tmp_path / "trades.db"
+    report_latest_path = tmp_path / "brain_prompt_autotune_latest.json"
+    report_history_path = tmp_path / "brain_prompt_autotune_history.jsonl"
 
     monkeypatch.setenv("BRAIN_ENABLED", "1")
     monkeypatch.setenv("BRAIN_BACKEND", "ollama")
     monkeypatch.setenv("BRAIN_SAMPLE_RATE", "1.0")
     monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_ENABLED", "0")
     monkeypatch.setenv("BRAIN_PROMPT_PROFILE_PATH", str(profile_path))
+    monkeypatch.setenv("BRAIN_PROMPT_REPORT_LATEST_PATH", str(report_latest_path))
+    monkeypatch.setenv("BRAIN_PROMPT_REPORT_HISTORY_PATH", str(report_history_path))
 
     brain = _reload_brain_module()
     monkeypatch.setattr(brain, "_DB_PATH", db_path)
@@ -32,11 +36,11 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(brain, "log_metric", lambda *_args, **_kwargs: True)
     brain._CACHE.clear()
     brain._PROMPT_PROFILE_CACHE = (0.0, {})
-    return brain, db_path, profile_path
+    return brain, db_path, profile_path, report_latest_path, report_history_path
 
 
 def test_brain_logs_decision_history(monkeypatch, tmp_path: Path) -> None:
-    brain, db_path, _profile_path = _prepare_brain(monkeypatch, tmp_path)
+    brain, db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
 
     monkeypatch.setattr(
         brain,
@@ -84,7 +88,7 @@ def test_brain_logs_decision_history(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_brain_prompt_profile_is_injected(monkeypatch, tmp_path: Path) -> None:
-    brain, _db_path, profile_path = _prepare_brain(monkeypatch, tmp_path)
+    brain, _db_path, profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
     profile_path.write_text(
         json.dumps(
             {
@@ -133,7 +137,7 @@ def test_brain_auto_tune_updates_profile(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_ENABLED", "1")
     monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_MODEL", "gpt-oss:test")
     monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_URL", "http://127.0.0.1:11434/api/chat")
-    brain, db_path, profile_path = _prepare_brain(monkeypatch, tmp_path)
+    brain, db_path, profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
     monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_ENABLED", True)
     monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_MIN_DECISIONS", 1)
     monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_INTERVAL_SEC", 60.0)
@@ -198,7 +202,7 @@ def test_brain_auto_tune_updates_profile(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_collect_autotune_summary_includes_trade_outcomes(monkeypatch, tmp_path: Path) -> None:
-    brain, _db_path, _profile_path = _prepare_brain(monkeypatch, tmp_path)
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
 
     monkeypatch.setattr(
         brain,
@@ -250,3 +254,110 @@ def test_collect_autotune_summary_includes_trade_outcomes(monkeypatch, tmp_path:
     assert allow.get("trades") == 1
     assert allow.get("wins") == 1
     assert allow.get("win_rate") == 1.0
+
+
+def _insert_trade_row(trades_db_path: Path, client_order_id: str, realized_pl: float, pl_pips: float) -> None:
+    con = sqlite3.connect(trades_db_path)
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_order_id TEXT,
+                realized_pl REAL,
+                pl_pips REAL,
+                close_time TEXT
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO trades(client_order_id, realized_pl, pl_pips, close_time)
+            VALUES(?,?,?,?)
+            """,
+            (client_order_id, realized_pl, pl_pips, "2026-03-05T00:00:00+00:00"),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def test_prompt_report_writes_before_after_comparison(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_ENABLED", "1")
+    monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_MODEL", "gpt-oss:test")
+    monkeypatch.setenv("BRAIN_PROMPT_AUTO_TUNE_URL", "http://127.0.0.1:11434/api/chat")
+    brain, _db_path, _profile_path, report_latest_path, report_history_path = _prepare_brain(monkeypatch, tmp_path)
+    monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_ENABLED", True)
+    monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_MIN_DECISIONS", 1)
+    monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_INTERVAL_SEC", 60.0)
+    monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_MODEL", "gpt-oss:test")
+    monkeypatch.setattr(brain, "_PROMPT_AUTOTUNE_URL", "http://127.0.0.1:11434/api/chat")
+    monkeypatch.setattr(brain, "_maybe_autotune_prompt_profile_async", lambda: None)
+    brain._LAST_PROMPT_AUTOTUNE_TS = 0.0
+
+    tune_count = {"n": 0}
+
+    def _fake_ollama(prompt: str, **_kwargs):
+        if "You optimize an FX decision gate prompt" in prompt:
+            tune_count["n"] += 1
+            return {
+                "version": f"v{2 + tune_count['n']}",
+                "focus": "Avoid low-quality continuation after spread shock.",
+                "risk_bias": "Prefer BLOCK on conflicting momentum and confidence.",
+                "extra_rules": [
+                    "Block when spread is elevated and confidence < 0.6.",
+                    "Reduce size when momentum is weak after volatility spike.",
+                    "Block entries when regime and direction disagree.",
+                ],
+            }
+        return {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "clean_setup",
+            "memory_update": "",
+        }
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    # first run
+    brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=70,
+        client_order_id="report-coid-1",
+    )
+    _insert_trade_row(brain._TRADES_DB_PATH, "report-coid-1", 12.5, 3.2)
+    brain._LAST_PROMPT_AUTOTUNE_TS = 0.0
+    brain._maybe_autotune_prompt_profile()
+
+    assert report_latest_path.exists()
+    first_report = json.loads(report_latest_path.read_text(encoding="utf-8"))
+    assert first_report["profile_version_before"] is None
+    assert first_report["profile_version_after"] == "v3"
+
+    # second run
+    brain.decide(
+        strategy_tag="scalp_ping_5s_b_live",
+        pocket="scalp_fast",
+        side="buy",
+        units=100,
+        confidence=68,
+        client_order_id="report-coid-2",
+    )
+    _insert_trade_row(brain._TRADES_DB_PATH, "report-coid-2", -6.0, -1.8)
+    brain._LAST_PROMPT_AUTOTUNE_TS = 0.0
+    brain._maybe_autotune_prompt_profile()
+
+    second_report = json.loads(report_latest_path.read_text(encoding="utf-8"))
+    assert second_report["profile_version_before"] == "v3"
+    assert second_report["profile_version_after"] == "v4"
+    combined_delta = second_report["comparison"]["COMBINED"]["delta"]
+    assert combined_delta["win_rate"] is not None
+    assert combined_delta["profit_factor"] is not None
+
+    history_lines = [line for line in report_history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(history_lines) >= 2
+    last_history = json.loads(history_lines[-1])
+    assert last_history["profile_version_after"] == "v4"
