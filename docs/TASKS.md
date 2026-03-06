@@ -573,7 +573,7 @@
     - severe loser の dynamic alloc を追加クランプし、`M1Scalper-M1` を緊急縮退できる
     - OANDA account snapshot 503 時も `MicroLevelReactor` が stale snapshot で継続または安全にスキップできる
   Completed: 2026-03-07
-  PR: <pending>
+  PR: 6ef07363
   Summary: ローカル logs と OANDA API の実測から主要な損失源を切り分け、`scalp_ping_5s_flow_live` に hard reject 条件を追加、dynamic alloc に severe loser clamp を追加し、`M1Scalper-M1` の lot multiplier を 0.12 まで圧縮した。`MicroLevelReactor` は account snapshot の stale fallback を導入して OANDA 503 で worker ごと停止しないようにし、関連仕様と運用ログも同期した。
 
 - [x] ID: T-20260123-007
