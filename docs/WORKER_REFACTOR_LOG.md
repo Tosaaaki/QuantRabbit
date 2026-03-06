@@ -12006,6 +12006,28 @@
   - `B / M1` の最新 tighten を維持しつつ、trade_min の micro 枠だけを直近勝ち筋へ差し替える。
   - 共通ガードや order_manager を触らず、profile 構成だけで期待値改善を狙う。
 
+## 2026-03-07 JST - `MicroLevelReactor` gate 緩和値は main 済み、worker 再起動で live 読み込みを明示確認
+
+- 背景:
+  - `ops/env/quant-micro-levelreactor.env` と `HEAD` には既に
+    `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05`,
+    `MICRO_MULTI_MLR_MAX_ADX=36.0`,
+    `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5`
+    が入っていた。
+  - それでも `logs/local_v2_stack/quant-micro-levelreactor.log` は
+    UTC `15:05:22` まで `mlr_range_gate_block active=False score=0.081 adx=34.77 ma_gap=5.37`
+    を出しており、worker が stale 設定で走っていた。
+  - 同時に `logs/orders.db` では `scalp_ping_5s_b_live` の `filled` が
+    UTC `15:05:03`, `15:05:08`, `15:06:03`, `15:06:20`, `15:08:08` と再開しており、
+    「全体停止」ではなく winner micro の reload 不足が主因だった。
+
+- 対応:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-micro-levelreactor,quant-micro-levelreactor-exit`
+    を実行し、dedicated MLR worker を明示的に再読込した。
+
+- 意図:
+  - loser 側 (`M1` / `B`) のガードを緩めず、既に main にある winner 側の live 反映不足だけを解消する。
+
 ## 2026-03-07 JST - `MicroLevelReactor` dedicated env の strict range gate を局所緩和
 
 - 背景:

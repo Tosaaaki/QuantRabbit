@@ -1,5 +1,27 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-18. 2026-03-07 JST 「全然エントリーされない」一次対応: `MicroLevelReactor` は設定不足ではなく stale worker、`B` の filled 再開を確認
+- 背景（local-v2 実測, UTC 2026-03-06 15:04-15:09 / JST 2026-03-07 00:04-00:09）:
+  - `pdca_profitability_report.py` と直近 candle で
+    - `USD/JPY mid=157.61 spread=0.8p`
+    - `ATR14(M1)=5.24p`, `ATR60(M1)=5.06p`, `range30(M1)=43.90p`
+    - `open_trades=0`
+  - `ops/env/quant-micro-levelreactor.env` と `HEAD` には既に
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05`
+    - `MICRO_MULTI_MLR_MAX_ADX=36.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5`
+    が入っていた
+  - それでも `quant-micro-levelreactor.log` は UTC `15:05:22` まで
+    `mlr_range_gate_block active=False score=0.081 adx=34.77 ma_gap=5.37`
+    を出しており、worker が stale 設定で走っていた
+  - 一方 `logs/orders.db` では UTC `15:05:03`, `15:05:08`, `15:06:03`, `15:06:20`, `15:08:08` に
+    `scalp_ping_5s_b_live` の `filled` を確認し、全体停止ではなかった
+- 対応:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-micro-levelreactor,quant-micro-levelreactor-exit`
+    で dedicated MLR worker を明示的に再読込
+- 意図:
+  - loser 側 (`M1` / `B`) の gate を広げず、既に main 済みの winner 側緩和値だけを live に反映する
+
 ## 0-17. 2026-03-07 JST `MicroLevelReactor` の dedicated strict range gate を live 実測に合わせて局所緩和
 - 背景（local-v2 実測, UTC 2026-03-06 15:00-15:05 / JST 2026-03-07 00:00-00:05）:
   - `logs/orders.db` では `2026-03-06T14:59Z` 以降の新規 `filled` が止まり、直近数分はエントリーが細っていた

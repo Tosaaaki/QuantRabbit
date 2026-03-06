@@ -7450,3 +7450,36 @@ Status:
   1. `quant-micro-levelreactor.log` で `mlr_range_gate_block` の頻度が下がること
   2. `orders.db` で `MicroLevelReactor` 系の `preflight_start` / `filled` が再開すること
   3. `reject_rate` と `perf_block` が悪化しないこと
+
+## 2026-03-06 15:04 UTC / 2026-03-07 00:04 JST - 「全然エントリーされない」追加切り分け: MLR 緩和値は main 済みで、原因は stale worker
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.61 spread=0.8p`
+  - `ATR14(M1)=5.24p`, `ATR60(M1)=5.06p`, `range30(M1)=43.90p`
+  - `openTrades=0`
+  - `order-manager/position-manager health = ok`
+
+- 事実:
+  - `ops/env/quant-micro-levelreactor.env` と `HEAD` には既に
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05`
+    - `MICRO_MULTI_MLR_MAX_ADX=36.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5`
+    が入っていた
+  - それでも `logs/local_v2_stack/quant-micro-levelreactor.log` は UTC `15:05:22` まで
+    `mlr_range_gate_block active=False score=0.081 adx=34.77 ma_gap=5.37`
+    を継続しており、worker が stale 設定で動いていた
+  - `quant-m1scalper.log` は
+    - `worker start (... tag_filter=breakout-retest-long,nwave-long ...)`
+    - `trend_block_long ...`
+    - `tag_filter_block tag=M1Scalper-buy-dip ...`
+    で、loser 側を意図的に絞っていた
+  - `logs/orders.db` では UTC `15:05:03`, `15:05:08`, `15:06:03`, `15:06:20`, `15:08:08` に
+    `scalp_ping_5s_b_live` の `filled` を確認し、全体停止ではなかった
+
+- 対応:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-micro-levelreactor,quant-micro-levelreactor-exit`
+    で MLR dedicated worker を明示的に再起動
+
+- 判断:
+  - 直近の entry 細りは「設定不足」ではなく「winner dedicated worker が stale state のまま」だった
+  - 先に `M1` / `B` のガードを緩めるより、main 済みの MLR 緩和値を live に読ませる方が安全で正しい
