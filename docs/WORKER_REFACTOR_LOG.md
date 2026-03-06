@@ -11888,3 +11888,24 @@
 - 意図:
   - 通信回復後に `STOP_LOSS_ON_FILL_LOSS` reject が `scalp_fast` に集中したため、2p fallback を少しだけ緩めて約定成立率を戻す。
   - 既定 12p へは戻さず、scalp_fast の fallback だけを 3p に限定する。
+
+## 2026-03-06 JST - `scalp_ping_5s_d_live` の entry を env-only で保守化
+
+- `ops/env/local-v2-stack.env`
+  - `SCALP_PING_5S_D_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.72`
+  - `SCALP_PING_5S_D_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.80`
+  - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=3000`
+  - `SCALP_PING_5S_D_MAX_SPREAD_PIPS=0.90`
+
+- 意図:
+  - `D` は通信回復後も `STOP_LOSS_ORDER` 主体の負けが続き、entry precision も `slip_mean=0.314p / p95=1.600p` と悪化していた。
+  - 戦略停止ではなく、low-edge entry と広め spread entry だけを減らし、同 variant の赤字単価を圧縮する。
+
+## 2026-03-06 JST - `M1Scalper-M1` の base units を 3000 -> 1800 に縮小
+
+- `ops/env/quant-m1scalper.env`
+  - `M1SCALP_BASE_UNITS=1800`
+
+- 意図:
+  - `M1Scalper-M1` は 24h/7d ともに最大級の赤字寄与で、24h 平均 fill size はすでに `352.8 units` まで落ちていた。
+  - 既存の dynamic alloc / open-trades guard / margin guard を変えず、strategy ローカルの base units だけを 40% 縮小して赤字単価を落とす。

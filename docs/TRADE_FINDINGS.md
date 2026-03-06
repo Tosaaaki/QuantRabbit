@@ -7131,3 +7131,52 @@ Status:
 - 期待効果:
   - `STOP_LOSS_ON_FILL_LOSS` を減らし、回復直後の `submit_attempt -> rejected` を `filled` 側へ寄せる。
   - fallback SL を広げ過ぎず、scalp_fast の損失尾を増やさない範囲で執行成立率を改善する。
+
+## 2026-03-06 13:58 UTC / 2026-03-06 22:58 JST - OANDA は回復維持だが `scalp_ping_5s_d_live` の期待値が明確に負で、直近クローズのほぼ全件が `STOP_LOSS_ORDER` だったため、D variant の entry 条件を局所的に強化
+
+- 市況確認（ローカルV2実測 + OANDA）:
+  - `check_oanda_summary.py` は `200` を維持。`openTrades=4`
+  - `USD/JPY mid=157.865 spread=0.8p`
+  - `health_snapshot`: `data_lag_ms≈793`, `decision_latency_ms≈47`
+  - core services と `quant-scalp-ping-5s-b` / `-exit` は稼働中
+
+- 事実:
+  - `pdca_profitability_report.py --instrument USD_JPY`:
+    - 24h `scalp_ping_5s_d_live`: `30 trades / win 0.0% / PF 0.00 / -196.6 JPY`
+    - 7d `scalp_ping_5s_d_live`: `42 trades / win 4.8% / PF 0.08 / -280.7 JPY`
+  - `trades.db` の直近 24h は `STOP_LOSS_ORDER=39 trades / -321.9 JPY / -64.1 pips`、`MARKET_ORDER_TRADE_CLOSE=3 trades / +41.2 JPY`。負けの中心は exit ではなく entry quality。
+  - `analyze_entry_precision.py --limit 220` では `scalp_ping_5s_d_live` が `slip_mean=0.314p / slip_p95=1.600p` と、同時間帯の `B` より明確に悪い。
+  - `orders.db` では `D` の fills は `407-686 units` 帯でも連続し、その多くが数十秒以内に `STOP_LOSS_ORDER` で閉じていた。
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `SCALP_PING_5S_D_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.72` (`0.66` から引き上げ)
+    - `SCALP_PING_5S_D_ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.80` (`0.74` から引き上げ)
+    - `SCALP_PING_5S_D_BASE_ENTRY_UNITS=3000` (`4200` から縮小)
+    - `SCALP_PING_5S_D_MAX_SPREAD_PIPS=0.90` (`1.20` から圧縮)
+
+- 期待効果:
+  - `D` の弱いシグナルと広めスプレッド帯だけを削り、`scalp_fast` 全体は止めずに赤字単価を圧縮する。
+  - `STOP_LOSS_ON_FILL_LOSS` fallback に依存する前段の low-edge entry を減らし、fills 後の即 SL を抑える。
+
+## 2026-03-06 14:05 UTC / 2026-03-06 23:05 JST - `M1Scalper-M1` は negative expectancy のまま取引回数が圧倒的に多いため、shared path を触らず `base units` だけを 40% 縮小
+
+- 市況確認（ローカルV2実測 + OANDA）:
+  - `check_oanda_summary.py` は `200` 維持、`openTrades=4`
+  - `USD/JPY spread=0.8p`
+  - `local_v2_stack` の core services と `quant-m1scalper` / `-exit` は稼働中
+
+- 事実:
+  - `pdca_profitability_report.py --instrument USD_JPY`
+    - 24h `M1Scalper-M1`: `1775 trades / win 56.5% / PF 0.55 / -5750.4 JPY`
+    - 7d `M1Scalper-M1`: `2290 trades / win 58.5% / PF 0.59 / -6172.5 JPY`
+  - `trades.db` 直近 24h の `M1Scalper-M1` は `avg abs(units)=352.8`、負けの内訳は `MARKET_ORDER_TRADE_CLOSE=-3611.1 JPY`、`STOP_LOSS_ORDER=-2283.8 JPY`。
+  - すでに dynamic alloc と open-trades guard は効いているため、ここで一番境界の小さいレバーは `base units` のみ。
+
+- 対応:
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_BASE_UNITS=1800` (`3000` から縮小)
+
+- 期待効果:
+  - `M1` の挙動や exit 判断を変えず、負けトレードの赤字単価だけを先に 35-40% 程度圧縮する。
+  - shared protection や order_manager を再度触らず、strategy ローカルのサイズだけで loss drag を落とす。
