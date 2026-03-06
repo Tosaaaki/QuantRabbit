@@ -5,6 +5,18 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-06（追記）ローカルV2: profitability PDCA report-only スクリプト追加
+
+- 対象:
+  - `scripts/pdca_profitability_report.py`（新規）
+- 変更:
+  - OANDA `account/summary` + `pricing`（既定 `USD_JPY`）のスナップショット取得。
+  - `logs/trades.db` の 24h/7d 集計（PF / win_rate / net_pips / net_jpy）と pocket/strategy_tag ランキング。
+  - `logs/orders.db` の拒否/エラー集計（status / error_code / top_fail_reasons）。
+  - 出力: `logs/pdca_profitability_latest.json` / `logs/pdca_profitability_latest.md` + `logs/pdca_profitability_history.jsonl` 追記。
+- 意図:
+  - ローカルV2の監視PDCAを「report-only（副作用なし）」で定常化し、収益悪化/拒否増の切り分けを高速化する。
+
 ### 2026-03-05（追記）MicroPullbackEMA: ATRスケール化 + M5/H1確認ゲート + strategy_control hard stop解除（local V2）
 
 - 対象:
