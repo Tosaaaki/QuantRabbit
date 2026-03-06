@@ -1846,3 +1846,21 @@
 - 非変更:
   - manual margin guard 方針（閾値ゼロ運用）
   - close/exit ロジック、`entry_thesis` 契約、V2 service topology
+
+### 2026-03-07 Winner-only sizing / thin-edge rollback（local V2）
+- 目的:
+  - 収益速度は winner dedicated worker で上げ、現在進行の薄い負け筋は戦略ローカルで絞る。
+- 実装:
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.25`
+  - `ops/env/local-v2-stack.env`
+    - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=0`
+- 意図:
+  - `MomentumBurst` は 7d winner だが、`local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、
+    base units ではなく strategy-local multiplier で厚張りする。
+  - `scalp_ping_5s_b_live` は直近 60m で `PF 0.57` の drag だったため、
+    shared preflight を緩めず、B_live 専用 lookahead の thin-edge 許容だけを戻して low-edge fill を減らす。
+- 非変更:
+  - 共通 `order_manager` の選別ロジック
+  - `entry_thesis` 契約
+  - worker topology / V2 分離構成

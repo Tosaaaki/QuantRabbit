@@ -7831,3 +7831,47 @@ Status:
   1. 次の `30-60m` で `MicroLevelReactor` の `avg filled units` が `1110` 近辺から増えること。
   2. `MicroLevelReactor` の `net_jpy / PF` が悪化せず、少なくとも `30m` プラス圏を維持すること。
   3. `orders.db` の `rejected` / `margin_snapshot_failed` が `MicroLevelReactor` で増えないこと。
+
+## 2026-03-07 01:50 JST / local-v2: `MomentumBurst` を増量し、`scalp_ping_5s_b_live` の thin-edge 許容を停止
+
+- 市況確認（ローカルV2実測 + OANDA API, 2026-03-07 01:49-01:50 JST）:
+  - `USD/JPY mid=157.581 spread=0.8p`
+  - `ATR14(M1)=3.61p`, `M1 60本レンジ=20.2p`, `open_trades=0`
+  - `pricing/openTrades` は `200 OK`、一方 `account summary` は断続 `503` が残存
+  - `health_snapshot`: `data_lag_ms=861.6`, `decision_latency_ms=15.1`
+
+- 事実:
+  - `trades.db` 7d では
+    - `MomentumBurst: 31 trades / +1856.9 JPY / avg_pips=+3.8 / win=87.1%`
+    - `MicroLevelReactor: 117 trades / +220.2 JPY / avg_pips=+3.207 / win=59.8%`
+    - `M1Scalper-M1: -6172.5 JPY`, `scalp_ping_5s_flow_live: -7131.1 JPY`
+  - corrected 集計の直近 `60m` では
+    - `scalp_ping_5s_b_live: 42 fills / -0.4 JPY / avg_pips=-0.536`
+    - `MicroLevelReactor: 16 fills / -39.3 JPY / avg_pips=-0.144`
+    - `MomentumBurst` はこの1hでは未約定
+  - `orders.db` 直近 `60m` の `scalp_ping_5s_b_live` は
+    - `probability_scaled=21`, `filled=40`, `rejected(STOP_LOSS_ON_FILL_LOSS)=4`, `margin_snapshot_failed=4`
+  - `local-v2-stack.env` は `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=1` を上書きしており、
+    B_live の低エッジ許容を戻していた。
+  - `quant-micro-momentumburst` は `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、
+    dedicated service 側の base units 変更だけでは live sizing を強めにくい。
+
+- 判断:
+  - 「今すぐ回っている負け筋」は `scalp_ping_5s_b_live` の薄利薄損ショートで、
+    ここは停止ではなく thin-edge 許容を止めて entry 品質を戻す。
+  - 一方、低頻度でも強い winner は `MomentumBurst` なので、
+    shared layer を緩めず dedicated `strategy_units_mult` だけを追加して次の発火で厚く取る。
+
+- 対応:
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.25` を追加
+  - `ops/env/local-v2-stack.env`
+    - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=1 -> 0`
+
+- 再検証条件:
+  1. 次の `1-3h` で `scalp_ping_5s_b_live` の `filled / probability_scaled` 比率が下がりつつ、
+     `avg_pips` と `PF` が改善すること。
+  2. 次の `1-24h` で `MomentumBurst` の再発火時 `filled units` が従来より増え、
+     7d winner 特性を崩さないこと。
+  3. `orders.db` の `margin_snapshot_failed` と `api_error` が悪化せず、
+     `open_trades=0` からの burst で margin cap に詰まらないこと。

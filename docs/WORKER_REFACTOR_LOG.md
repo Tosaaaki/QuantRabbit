@@ -12233,3 +12233,21 @@
 - 狙い:
   - loser 側を緩めず、直近で勝っている dedicated winner だけを modest に厚くする。
   - shared order logic や forecast gate を再度緩めず、strategy-local sizing のみで収益速度を上げる。
+
+## 2026-03-07 JST - `MomentumBurst` dedicated sizing を追加、`scalp_ping_5s_b_live` の thin-edge 許容を撤回
+
+- `ops/env/quant-micro-momentumburst.env`
+  - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.25` を追加
+- `ops/env/local-v2-stack.env`
+  - `SCALP_PING_5S_B_LOOKAHEAD_ALLOW_THIN_EDGE=0`
+
+- 根拠（ローカル実測）:
+  - `MomentumBurst` は 7d `+1856.9 JPY / 31 trades / win 87.1% / avg_pips +3.8` の winner。
+  - `scalp_ping_5s_b_live` は直近 60m で `42 fills / avg_pips -0.536 / PF 0.57` と現在進行の drag。
+  - `quant-micro-momentumburst` は env chain 上 `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、
+    winner の live 追加厚張りは dedicated `strategy_units_mult` で行うのが確実。
+
+- 狙い:
+  - winner 側は shared risk を触らず dedicated worker だけで増量する。
+  - loser 側は戦略停止ではなく、B_live の local lookahead で薄い edge を通していた override を外し、
+    entry quality を戻す。
