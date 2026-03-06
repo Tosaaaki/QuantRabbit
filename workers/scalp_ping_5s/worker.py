@@ -2791,13 +2791,15 @@ def _maybe_rescue_min_units(
     return config.MIN_UNITS, "rescued"
 
 
-def _maybe_rescue_short_probe(*, units: int, side: str) -> tuple[int, str]:
+def _maybe_rescue_short_probe(*, units: int, units_risk: int, side: str) -> tuple[int, str]:
     if side != "short":
         return units, "inactive"
     if units >= config.MIN_UNITS:
         return units, "sufficient"
     if not bool(getattr(config, "SHORT_PROBE_RESCUE_ENABLED", True)):
         return units, "short_probe_disabled"
+    if units_risk < config.MIN_UNITS:
+        return units, "risk_cap_below_min"
     return config.MIN_UNITS, "short_probe_rescued"
 
 
@@ -7220,6 +7222,7 @@ async def scalp_ping_5s_worker() -> None:
             if units < config.MIN_UNITS:
                 units, short_probe_status = _maybe_rescue_short_probe(
                     units=units,
+                    units_risk=units_risk,
                     side=signal.side,
                 )
                 if short_probe_status == "short_probe_rescued":

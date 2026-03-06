@@ -6907,3 +6907,56 @@ Status:
   - `ops/env/quant-scalp-ping-5s-flow.env`（service overlay）:
     - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES: 16 -> 2`
     - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION: 8 -> 1`
+
+## 2026-03-06 06:30 UTC / 2026-03-06 15:30 JST - flow short-probe rescue が dynamic trim を打ち消していたため修正（local V2）
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY bid=157.784 ask=157.792 spread=0.8p`
+  - `tick_cache 直近15m`: `spread mean=0.8p / max=1.0p / mid range=12.8p`
+  - `factor_cache`: `ATR(M1)=3.44p / ATR(M5)=6.20p / ATR(H1)=18.36p`
+  - OANDA API応答: `pricing=246.6ms / account_summary=319.7ms / openTrades=233.6ms`
+  - 判定: メンテ時間帯（JST 7-8時）外で、流動性異常ではなく作業継続可。
+
+- 事実（ローカル実測: `logs/trades.db` / `logs/orders.db` / `logs/local_v2_stack/quant-scalp-ping-5s-flow.log`）:
+  - 直近24h `trades.db`: 全体 `net=-10892.5 JPY / PF=0.549`。
+  - 同24h 赤字寄与上位:
+    - `scalp_ping_5s_flow_live`: `n=420 / net=-7131.1 JPY / PF=0.295 / avg_units=1842.3`
+    - `M1Scalper-M1`: `n=2001 / net=-5725.5 JPY / PF=0.552`
+  - 直近3hでも `scalp_ping_5s_flow_live` は `n=273 / net=-5593.4 JPY / PF=0.193 / avg_units=2120.2` と継続悪化。
+  - `entry_thesis.dynamic_alloc.lot_multiplier=0.25` が記録されている一方、flow worker log に
+    `min_units_rescue applied mode=short_probe_rescued units=2000 ... risk_cap=1200`
+    が連発し、縮小後サイズが `MIN_UNITS=2000` rescue で押し戻されていた。
+  - `ops/env/scalp_ping_5s_flow.env` の緊急縮小値（`120 / 2 / 1`）も、
+    `ops/env/local-v2-stack.env` の `700 / 6 / 3` override で上書きされていた。
+
+- 仮説:
+  - flow の主因は市況ではなく、`short_probe_rescue` が non-B/C clone でも既定有効で、
+    dynamic alloc と risk mult による縮小を戦略側で打ち消していたこと。
+  - 併せて local-v2 override の食い違いが、flow の破滅サイズ継続を許していた。
+
+- 対応:
+  - `workers/scalp_ping_5s/config.py`
+    - `SHORT_PROBE_RESCUE_ENABLED` の既定を `B/C clone のみ true` へ変更。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_maybe_rescue_short_probe()` が `units_risk < MIN_UNITS` の場合に rescue しないよう修正。
+  - `ops/env/local-v2-stack.env`
+    - flow override を緊急縮小値へ統一:
+      - `BASE_ENTRY_UNITS=120`
+      - `MAX_ACTIVE_TRADES=2`
+      - `MAX_PER_DIRECTION=1`
+      - `MAX_SPREAD_PIPS=0.90`
+      - `MIN_UNITS_RESCUE_ENABLED=0`
+      - `SHORT_PROBE_RESCUE_ENABLED=0`
+    - `M1SCALP_DYN_ALLOC_MULT_MIN=0.45` として、最新 `dynamic_alloc.json` の縮小値を worker 側で潰さないよう修正。
+  - `config/dynamic_alloc.json`
+    - `scripts/dynamic_alloc_worker.py --limit 0 --lookback-days 7 --min-trades 12 --pf-cap 2.0 --target-use 0.88 --half-life-hours 36 --min-lot-multiplier 0.45 --max-lot-multiplier 1.65 --soft-participation 1`
+      を再実行し、`as_of=2026-03-06T06:26:55Z` へ更新。
+    - 主な更新:
+      - `scalp_ping_5s_flow_live lot_multiplier=0.45`
+      - `M1Scalper-M1 lot_multiplier=0.50`
+
+- 再検証条件（反映後 30-90分）:
+  1. `quant-scalp-ping-5s-flow.log` に `short_probe_rescued units=2000` が再発しないこと。
+  2. `orders.db/trades.db` の flow 約定ユニットが `<= 600` 帯へ収まること。
+  3. `trades.db` の直近1-3h で `scalp_ping_5s_flow_live` の PF が `0.193` から改善すること。
+  4. `M1Scalper-M1` の実トレードサイズが更新後 `dynamic_alloc` に従って縮小すること。

@@ -11732,3 +11732,26 @@
 - `ops/env/quant-scalp-ping-5s-flow.env`
   - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES=2`
   - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION=1`
+
+## 2026-03-06 JST - flow short-probe rescue の既定誤適用を修正し local-v2 override を緊急縮小へ統一
+
+- `workers/scalp_ping_5s/config.py`
+  - `SHORT_PROBE_RESCUE_ENABLED` の既定を `B/C clone のみ true` に変更。
+  - 非B/C clone（`flow` / `d` など）で `MIN_UNITS=2000` への rescue が既定発火しないようにした。
+
+- `workers/scalp_ping_5s/worker.py`
+  - `_maybe_rescue_short_probe()` に `units_risk` 条件を追加し、`risk_cap < MIN_UNITS` のときは rescue しない。
+  - これにより dynamic alloc / risk mult で縮めたサイズを戦略側 rescue が打ち消す経路を停止。
+
+- `ops/env/local-v2-stack.env`
+  - `SCALP_PING_5S_FLOW_BASE_ENTRY_UNITS=120`
+  - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES=2`
+  - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION=1`
+  - `SCALP_PING_5S_FLOW_MAX_SPREAD_PIPS=0.90`
+  - `SCALP_PING_5S_FLOW_MIN_UNITS_RESCUE_ENABLED=0`
+  - `SCALP_PING_5S_FLOW_SHORT_PROBE_RESCUE_ENABLED=0`
+  - `M1SCALP_DYN_ALLOC_MULT_MIN=0.45`
+
+- `config/dynamic_alloc.json`
+  - `scripts/dynamic_alloc_worker.py` を再実行し、最新損益を反映。
+  - `scalp_ping_5s_flow_live lot_multiplier=0.45`, `M1Scalper-M1 lot_multiplier=0.50` に更新。
