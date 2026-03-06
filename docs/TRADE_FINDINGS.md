@@ -6996,3 +6996,20 @@ Status:
   1. `quant-position-manager.log` で `sync_trades timeout` / `position manager busy` の再発頻度が下がること。
   2. `health_snapshot` の `orders_last_ts` と `trades_last_close` の差が縮むこと。
   3. `trades.db` の `updated_at` が数分単位で追随し、まとめ書きの塊が減ること。
+
+## 2026-03-06 09:10 UTC / 2026-03-06 18:10 JST - quant-position-manager を常時 background sync 化し、監視 blind を構造的に解消
+
+- 事実:
+  - 手動 `pm_sync_trades` では backlog が大きいと API 側は timeout を返すが、裏では `Saved 304 new trades.` が完走した。
+  - つまり監視 blind の主因は「保存不能」ではなく、「position-manager 自身が backlog を平常時から削り続けていない」ことだった。
+
+- 対応:
+  - `workers/position_manager/worker.py`
+    - worker lifespan で background `sync_trades` loop を追加。
+    - 既定値は `start_delay=1s / interval=5s / max_fetch=120`。
+    - 成功時は worker cache を更新して、後続 `/position/sync_trades` の stale 返却も改善。
+  - `ops/env/local-v2-stack.env`
+    - background sync 系 env を明示して local V2 で固定化。
+
+- 期待効果:
+  - `orders.db` と `trades.db` の差分を小さい backlog に保ち、PF/net の監視が「タイムアウト後にまとめて追いつく」状態から、「ほぼ追随」へ寄る。

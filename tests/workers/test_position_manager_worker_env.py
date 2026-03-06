@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import sys
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +24,15 @@ def test_service_port_reads_env(monkeypatch) -> None:
     monkeypatch.setenv("POSITION_MANAGER_SERVICE_PORT", "9315")
 
     assert worker._service_port() == 9315
+
+
+def test_normalize_sync_trades_result_limits_list() -> None:
+    raw = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    assert worker._normalize_sync_trades_result(raw, max_fetch=2) == [
+        {"id": 2},
+        {"id": 3},
+    ]
 
 
 class _DummyPositionManager:
@@ -84,3 +95,30 @@ def test_sync_trades_busy_uses_sync_lock(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": False, "error": "position manager busy"}
+
+
+def test_background_sync_once_updates_cache() -> None:
+    calls: list[int] = []
+
+    class _SyncingDummyManager:
+        def sync_trades(self, max_fetch: int) -> list[dict[str, int]]:
+            calls.append(max_fetch)
+            return [{"id": 10}, {"id": 11}]
+
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            position_manager=_SyncingDummyManager(),
+            sync_trades_cache={},
+        )
+    )
+
+    saved = asyncio.run(worker._background_sync_once(app, max_fetch=2))
+
+    assert saved == 2
+    assert calls == [2]
+    cached, _age = worker._cache_lookup(
+        app.state.sync_trades_cache,
+        worker._SYNC_TRADES_CACHE_KEY,
+        max_age_sec=1.0,
+    )
+    assert cached == [{"id": 10}, {"id": 11}]

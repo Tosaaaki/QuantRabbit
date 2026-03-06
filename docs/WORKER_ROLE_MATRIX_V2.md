@@ -206,6 +206,7 @@
 
 - `execution/position_manager.py` は `quant-position-manager.service` 経由。
 - 目的: 保有集計・sync/trades の集約責任を独立し、各戦略が状態管理を持たない。
+- `quant-position-manager` worker は background `sync_trades` を持ち、`trades.db` を `orders.db` へ常時追随させる。
 - `get_open_positions` はホットパスでの `orders.db` 参照を最小化し、`orders.db` は read-only/短timeoutで参照する。
   writer 競合時は fail-fast + 既存キャッシュ返却を優先し、strategy worker 側 timeout を増幅させない。
 - service 呼び出し側は keep-alive session と短TTL/stale キャッシュを持ち、`open_positions` の tail latency を吸収する。

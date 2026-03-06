@@ -11768,3 +11768,19 @@
   - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=20.0`
   - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=200`
   - 304件規模の backlog catch-up で 8秒 timeout になっていた local V2 条件を緩和。
+
+## 2026-03-06 JST - quant-position-manager に background sync を追加して trades.db の遅延常態化を防止
+
+- `workers/position_manager/worker.py`
+  - `POSITION_MANAGER_WORKER_BACKGROUND_SYNC_*` を追加。
+  - worker 起動中は `pm.sync_trades(max_fetch=120)` を 5 秒ごとに実行する background loop を開始。
+  - sync 成功時は `sync_trades_cache` を更新し、成功/失敗ログは rate-limit する。
+
+- `ops/env/local-v2-stack.env`
+  - `POSITION_MANAGER_WORKER_BACKGROUND_SYNC_ENABLED=1`
+  - `POSITION_MANAGER_WORKER_BACKGROUND_SYNC_START_DELAY_SEC=1`
+  - `POSITION_MANAGER_WORKER_BACKGROUND_SYNC_INTERVAL_SEC=5`
+  - `POSITION_MANAGER_WORKER_BACKGROUND_SYNC_MAX_FETCH=120`
+
+- `tests/workers/test_position_manager_worker_env.py`
+  - background sync helper と result 正規化のテストを追加。

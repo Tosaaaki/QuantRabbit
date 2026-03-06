@@ -41,6 +41,13 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 _WORKER_OPEN_POSITIONS_TIMEOUT_SEC = max(
     0.5,
     _env_float("POSITION_MANAGER_WORKER_OPEN_POSITIONS_TIMEOUT_SEC", 8.0),
@@ -89,8 +96,98 @@ _WORKER_BUSY_LOG_INTERVAL_SEC = max(
     _env_float("POSITION_MANAGER_WORKER_BUSY_LOG_INTERVAL_SEC", 30.0),
 )
 _SYNC_TRADES_CACHE_KEY = "sync_trades"
+_BACKGROUND_SYNC_ENABLED = _env_bool(
+    "POSITION_MANAGER_WORKER_BACKGROUND_SYNC_ENABLED",
+    True,
+)
+_BACKGROUND_SYNC_START_DELAY_SEC = max(
+    0.0,
+    _env_float("POSITION_MANAGER_WORKER_BACKGROUND_SYNC_START_DELAY_SEC", 1.0),
+)
+_BACKGROUND_SYNC_INTERVAL_SEC = max(
+    1.0,
+    _env_float("POSITION_MANAGER_WORKER_BACKGROUND_SYNC_INTERVAL_SEC", 5.0),
+)
+_BACKGROUND_SYNC_MAX_FETCH = max(
+    1,
+    min(
+        _WORKER_SYNC_TRADES_MAX_FETCH,
+        int(
+            _env_float(
+                "POSITION_MANAGER_WORKER_BACKGROUND_SYNC_MAX_FETCH",
+                min(_WORKER_SYNC_TRADES_MAX_FETCH, 120),
+            )
+        ),
+    ),
+)
+_BACKGROUND_SYNC_FAILURE_LOG_INTERVAL_SEC = max(
+    5.0,
+    _env_float(
+        "POSITION_MANAGER_WORKER_BACKGROUND_SYNC_FAILURE_LOG_INTERVAL_SEC",
+        30.0,
+    ),
+)
+_BACKGROUND_SYNC_SUCCESS_LOG_INTERVAL_SEC = max(
+    30.0,
+    _env_float(
+        "POSITION_MANAGER_WORKER_BACKGROUND_SYNC_SUCCESS_LOG_INTERVAL_SEC",
+        300.0,
+    ),
+)
 _FAILURE_LAST_LOG_TS: dict[str, float] = {}
 _FAILURE_LOG_LOCK = threading.Lock()
+
+
+def _normalize_sync_trades_result(raw: Any, *, max_fetch: int) -> list[dict[str, Any]]:
+    if isinstance(raw, list):
+        result = list(raw)
+    elif isinstance(raw, dict):
+        result = list(raw.values()) if raw else []
+    else:
+        result = []
+    if max_fetch > 0:
+        return result[-max_fetch:]
+    return result
+
+
+async def _background_sync_once(app: FastAPI, *, max_fetch: int) -> int:
+    manager = getattr(app.state, "position_manager", None)
+    if manager is None:
+        return 0
+    raw = await asyncio.to_thread(manager.sync_trades, max_fetch)
+    result = _normalize_sync_trades_result(raw, max_fetch=max_fetch)
+    if result:
+        _cache_store(app.state.sync_trades_cache, _SYNC_TRADES_CACHE_KEY, result)
+    return len(result)
+
+
+async def _background_sync_loop(app: FastAPI) -> None:
+    last_failure_log_ts = 0.0
+    last_success_log_ts = 0.0
+    if _BACKGROUND_SYNC_START_DELAY_SEC > 0.0:
+        await asyncio.sleep(_BACKGROUND_SYNC_START_DELAY_SEC)
+    while True:
+        try:
+            saved = await _background_sync_once(
+                app,
+                max_fetch=_BACKGROUND_SYNC_MAX_FETCH,
+            )
+            now = time.monotonic()
+            if saved > 0 and now - last_success_log_ts >= _BACKGROUND_SYNC_SUCCESS_LOG_INTERVAL_SEC:
+                LOG.info(
+                    "[POSITION_MANAGER_WORKER] background sync saved trades=%s max_fetch=%s",
+                    saved,
+                    _BACKGROUND_SYNC_MAX_FETCH,
+                )
+                last_success_log_ts = now
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            now = time.monotonic()
+            if now - last_failure_log_ts >= _BACKGROUND_SYNC_FAILURE_LOG_INTERVAL_SEC:
+                LOG.warning("[POSITION_MANAGER_WORKER] background sync failed: %s", exc)
+                last_failure_log_ts = now
+        await asyncio.sleep(_BACKGROUND_SYNC_INTERVAL_SEC)
 
 
 @asynccontextmanager
@@ -131,6 +228,7 @@ async def _lifespan(app: FastAPI):
     app.state.position_manager_sync_trades_call_lock = threading.Lock()
     app.state.open_positions_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
     app.state.sync_trades_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+    app.state.background_sync_task = None
     if pm is not None:
         for include_unknown in (False, True):
             try:
@@ -146,9 +244,20 @@ async def _lifespan(app: FastAPI):
                     include_unknown,
                     exc,
                 )
+        if _BACKGROUND_SYNC_ENABLED:
+            app.state.background_sync_task = asyncio.create_task(
+                _background_sync_loop(app)
+            )
     try:
         yield
     finally:
+        task = getattr(app.state, "background_sync_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         try:
             pm.close()
         except Exception:
@@ -567,14 +676,9 @@ async def sync_trades(
                     return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
             return _failure(str(exc))
 
-        if isinstance(raw, list):
-            result = raw
-        elif isinstance(raw, dict):
-            result = list(raw.values()) if raw else []
-        else:
-            return _failure("unexpected response type")
+        result = _normalize_sync_trades_result(raw, max_fetch=max_fetch)
         _cache_store(cache, _SYNC_TRADES_CACHE_KEY, result)
-        return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
+        return _success(result)
     finally:
         _release_call_lock(request, "position_manager_sync_trades_call_lock")
 
@@ -700,13 +804,6 @@ def _configure_logging() -> None:
         format="%(asctime)s [%(levelname)s] %(message)s",
         force=True,
     )
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _service_port() -> int:
