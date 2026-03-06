@@ -6960,3 +6960,39 @@ Status:
   2. `orders.db/trades.db` の flow 約定ユニットが `<= 600` 帯へ収まること。
   3. `trades.db` の直近1-3h で `scalp_ping_5s_flow_live` の PF が `0.193` から改善すること。
   4. `M1Scalper-M1` の実トレードサイズが更新後 `dynamic_alloc` に従って縮小すること。
+
+## 2026-03-06 08:55 UTC / 2026-03-06 17:55 JST - position-manager sync_trades が timeout/busy 競合で遅延し trades.db 反映が詰まる件を緩和（local V2）
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY bid=157.746 ask=157.754 spread=0.8p`
+  - `tick_cache 直近300`: `spread mean=0.8p / max=0.8p / mid range=4.1p`
+  - `factor_cache`: `ATR(M1)=3.13p / ATR(M5)=6.95p / ATR(H1)=18.36p`
+  - OANDA account summary: `openTradeCount=21`
+  - 判定: メンテ時間帯外、spread/ATR は異常ではなく、作業継続可。
+
+- 事実（ローカル実測: `logs/trades.db` / `logs/orders.db` / `logs/health_snapshot.json` / `logs/local_v2_stack/quant-position-manager.log`）:
+  - `health_snapshot` では `orders_last_ts=2026-03-06T06:47:57Z` に対し `trades_last_close=2026-03-06T06:11:02Z` で、監視上は trades 側が止まって見えていた。
+  - `quant-position-manager.log` には
+    - `2026-03-06 17:53:15 JST [POSITION_MANAGER_WORKER] request failed: position manager busy`
+    - `2026-03-06 17:53:21 JST [POSITION_MANAGER_WORKER] request failed: sync_trades timeout (8.0s)`
+    が出ていた。
+  - その直後、`trades.db` には `updated_at >= 2026-03-06T08:53:00Z` で `304` 件が一括反映され、
+    `transaction_id` は `443041 -> 446546` まで前進した。
+  - つまり `trades.db` は永久停止ではなく、`sync_trades` が timeout 後も裏で完走し、反映が後ろ倒しになっていた。
+
+- 仮説:
+  - `workers/position_manager/worker.py` では `sync_trades` / `performance_summary` / `fetch_recent_trades` が同じ `position_manager_db_call_lock` を共有しており、read系呼び出しや再試行と競合すると `position manager busy` が返る。
+  - さらに `sync_trades` は `asyncio.wait_for(..., 8.0s)` で包まれているため、backlog catch-up（今回 304件規模）が 8秒を超えると表では timeout 扱いになり、監視上は未反映に見える。
+
+- 対応:
+  - `workers/position_manager/worker.py`
+    - `sync_trades` 専用の `position_manager_sync_trades_call_lock` を追加し、read系 API と lock を分離。
+  - `ops/env/local-v2-stack.env`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=20.0`
+    - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=200`
+    - backlog catch-up 時の false timeout を減らし、1回の同期処理量も抑える。
+
+- 再検証条件:
+  1. `quant-position-manager.log` で `sync_trades timeout` / `position manager busy` の再発頻度が下がること。
+  2. `health_snapshot` の `orders_last_ts` と `trades_last_close` の差が縮むこと。
+  3. `trades.db` の `updated_at` が数分単位で追随し、まとめ書きの塊が減ること。

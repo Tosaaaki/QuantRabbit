@@ -11755,3 +11755,16 @@
 - `config/dynamic_alloc.json`
   - `scripts/dynamic_alloc_worker.py` を再実行し、最新損益を反映。
   - `scalp_ping_5s_flow_live lot_multiplier=0.45`, `M1Scalper-M1 lot_multiplier=0.50` に更新。
+
+## 2026-03-06 JST - position-manager worker の sync_trades を read系 lock から分離し backlog catch-up timeout を緩和
+
+- `workers/position_manager/worker.py`
+  - `position_manager_sync_trades_call_lock` を追加。
+  - `/position/sync_trades` が `performance_summary` / `fetch_recent_trades` と共有していた
+    `position_manager_db_call_lock` を使わず、専用 lock を使うよう変更。
+  - これにより read系 API の呼び出しが `sync_trades` を `position manager busy` で塞ぐ経路を減らす。
+
+- `ops/env/local-v2-stack.env`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_TIMEOUT_SEC=20.0`
+  - `POSITION_MANAGER_WORKER_SYNC_TRADES_MAX_FETCH=200`
+  - 304件規模の backlog catch-up で 8秒 timeout になっていた local V2 条件を緩和。

@@ -128,6 +128,7 @@ async def _lifespan(app: FastAPI):
     app.state.position_manager_init_error = str(init_error) if init_error else None
     app.state.position_manager_open_positions_call_lock = threading.Lock()
     app.state.position_manager_db_call_lock = threading.Lock()
+    app.state.position_manager_sync_trades_call_lock = threading.Lock()
     app.state.open_positions_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
     app.state.sync_trades_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
     if pm is not None:
@@ -520,7 +521,7 @@ async def sync_trades(
 
     if not _try_acquire_call_lock(
         request,
-        "position_manager_db_call_lock",
+        "position_manager_sync_trades_call_lock",
     ):
         stale = _cache_lookup(
             cache,
@@ -575,7 +576,7 @@ async def sync_trades(
         _cache_store(cache, _SYNC_TRADES_CACHE_KEY, result)
         return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
     finally:
-        _release_call_lock(request, "position_manager_db_call_lock")
+        _release_call_lock(request, "position_manager_sync_trades_call_lock")
 
 
 @app.get("/position/open_positions")
