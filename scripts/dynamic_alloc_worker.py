@@ -132,6 +132,7 @@ def compute_scores(
         weight = _recency_weight(close_time, now_utc=now_utc, half_life_hours=half_life_hours)
         sl_like = close_reason in {"STOP_LOSS_ORDER", "MARKET_ORDER_MARGIN_CLOSEOUT"}
         margin_closeout = close_reason == "MARKET_ORDER_MARGIN_CLOSEOUT"
+        market_close = close_reason == "MARKET_ORDER_TRADE_CLOSE"
         s = stats.setdefault(
             key,
             {
@@ -153,6 +154,10 @@ def compute_scores(
                 "w_abs_units": 0.0,
                 "w_sl_like": 0.0,
                 "w_margin_closeout": 0.0,
+                "w_market_close": 0.0,
+                "w_market_close_loss": 0.0,
+                "w_market_close_loss_pips": 0.0,
+                "w_market_close_loss_realized_jpy": 0.0,
             },
         )
         pockets.setdefault(key, {})
@@ -188,6 +193,14 @@ def compute_scores(
             s["w_sl_like"] += weight
         if margin_closeout:
             s["w_margin_closeout"] += weight
+        if market_close:
+            s["w_market_close"] += weight
+            if pl < 0.0 or realized_jpy < 0.0:
+                s["w_market_close_loss"] += weight
+                if pl < 0.0:
+                    s["w_market_close_loss_pips"] += abs(pl) * weight
+                if realized_jpy < 0.0:
+                    s["w_market_close_loss_realized_jpy"] += abs(realized_jpy) * weight
     scores: Dict[str, Dict[str, float]] = {}
     for strat, s in stats.items():
         wins = int(s["wins"])
@@ -205,6 +218,10 @@ def compute_scores(
         w_abs_units = float(s.get("w_abs_units", 0.0))
         w_sl_like = float(s.get("w_sl_like", 0.0))
         w_margin_closeout = float(s.get("w_margin_closeout", 0.0))
+        w_market_close = float(s.get("w_market_close", 0.0))
+        w_market_close_loss = float(s.get("w_market_close_loss", 0.0))
+        w_market_close_loss_pips = float(s.get("w_market_close_loss_pips", 0.0))
+        w_market_close_loss_realized_jpy = float(s.get("w_market_close_loss_realized_jpy", 0.0))
 
         wr = wins / max(1, trades)
         weighted_wr = w_wins / max(1e-9, w_trades)
@@ -227,6 +244,13 @@ def compute_scores(
         )
         sl_rate = w_sl_like / max(1e-9, w_trades)
         margin_closeout_rate = w_margin_closeout / max(1e-9, w_trades)
+        market_close_rate = w_market_close / max(1e-9, w_trades)
+        market_close_loss_rate = w_market_close_loss / max(1e-9, w_trades)
+        market_close_loss_pips_share = w_market_close_loss_pips / max(1e-9, w_loss_pips)
+        market_close_loss_jpy_share = w_market_close_loss_realized_jpy / max(
+            1e-9, w_loss_realized_jpy
+        )
+        market_close_loss_share = max(market_close_loss_pips_share, market_close_loss_jpy_share)
 
         # Risk-adjusted normalization.
         wr_norm = _clamp((weighted_wr - 0.42) / 0.26, 0.0, 1.0)
@@ -238,6 +262,8 @@ def compute_scores(
         jpy_downside_penalty = _clamp((jpy_downside_share - 0.50) / 0.35, 0.0, 1.0)
         sl_penalty = _clamp((sl_rate - 0.38) / 0.40, 0.0, 1.0)
         margin_closeout_penalty = _clamp((margin_closeout_rate - 0.01) / 0.10, 0.0, 1.0)
+        market_close_penalty = _clamp((market_close_rate - 0.45) / 0.35, 0.0, 1.0)
+        market_close_loss_penalty = _clamp((market_close_loss_share - 0.40) / 0.30, 0.0, 1.0)
 
         base_score = (
             0.28 * pf_norm
@@ -249,6 +275,8 @@ def compute_scores(
             - 0.15 * jpy_downside_penalty
             - 0.16 * sl_penalty
             - 0.22 * margin_closeout_penalty
+            - 0.08 * market_close_penalty
+            - 0.18 * market_close_loss_penalty
         )
         base_score = _clamp(base_score, 0.0, 1.0)
         sample_scale = min(1.0, trades / max(1, min_trades))
@@ -302,6 +330,19 @@ def compute_scores(
         if trades >= max(20, min_trades) and margin_closeout_rate >= 0.10:
             lot_multiplier = min(lot_multiplier, 0.50)
             effective_min_mult = min(effective_min_mult, 0.18)
+        if trades >= max(24, min_trades * 2) and sum_realized_jpy <= -2500.0 and pf < 0.70:
+            lot_multiplier = min(lot_multiplier, 0.38)
+            effective_min_mult = min(effective_min_mult, 0.18)
+        if (
+            trades >= max(24, min_trades * 2)
+            and sum_realized_jpy <= -2500.0
+            and realized_jpy_per_1k_units <= -8.0
+        ):
+            lot_multiplier = min(lot_multiplier, 0.32)
+            effective_min_mult = min(effective_min_mult, 0.15)
+        if trades >= max(32, min_trades * 2) and market_close_loss_share >= 0.55 and sum_realized_jpy < 0.0:
+            lot_multiplier = min(lot_multiplier, 0.28)
+            effective_min_mult = min(effective_min_mult, 0.14)
         if trades < max(1, min_trades):
             lot_multiplier = min(lot_multiplier, 1.00)
         lot_multiplier = _clamp(lot_multiplier, effective_min_mult, max_mult)
@@ -323,6 +364,9 @@ def compute_scores(
             "realized_jpy_per_1k_units": round(realized_jpy_per_1k_units, 3),
             "sl_rate": round(sl_rate, 3),
             "margin_closeout_rate": round(margin_closeout_rate, 3),
+            "market_close_rate": round(market_close_rate, 3),
+            "market_close_loss_rate": round(market_close_loss_rate, 3),
+            "market_close_loss_share": round(market_close_loss_share, 3),
             "downside_share": round(downside_share, 3),
             "jpy_downside_share": round(jpy_downside_share, 3),
             "allow_loser_block": bool(allow_loser_block),

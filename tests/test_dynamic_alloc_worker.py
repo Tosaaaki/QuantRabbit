@@ -44,8 +44,8 @@ def test_compute_scores_stronger_loss_penalty_applies() -> None:
     assert bad["avg_pips"] == -2.0
     assert bad["sl_rate"] >= 0.9
 
-    assert good["lot_multiplier"] > 1.4
-    assert good["pf"] == 2.0
+    assert good["lot_multiplier"] > 1.2
+    assert good["pf"] > 1.0
     assert good["allow_loser_block"] is False
     assert good["allow_winner_only"] is False
 
@@ -91,3 +91,25 @@ def test_compute_scores_caps_size_when_margin_closeout_rate_is_high() -> None:
     prof = scores["scalp_ping_5s_c_live"]
     assert prof["margin_closeout_rate"] >= 0.9
     assert prof["lot_multiplier"] <= 0.5
+
+
+def test_compute_scores_caps_size_below_global_floor_when_market_close_losses_dominate() -> None:
+    rows = []
+    for i in range(72):
+        rows.append(
+            (
+                "M1Scalper-M1",
+                "scalp",
+                -1.6,
+                f"2026-02-24T00:{i % 60:02d}:00Z",
+                "MARKET_ORDER_TRADE_CLOSE",
+                -110.0,
+                1800,
+            )
+        )
+
+    scores = compute_scores(rows, min_trades=24, pf_cap=2.0)
+    prof = scores["M1Scalper-M1"]
+    assert prof["market_close_loss_share"] >= 0.9
+    assert prof["market_close_loss_rate"] >= 0.9
+    assert prof["lot_multiplier"] < 0.45

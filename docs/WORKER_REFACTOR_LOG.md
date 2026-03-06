@@ -11845,3 +11845,20 @@
   - limit 到達時 block
   - M1 family alias block
   - position manager error 時 fail-closed
+
+## 2026-03-06 JST - profitability tuning: `MARKET_ORDER_TRADE_CLOSE` 赤字を dynamic alloc の縮退条件へ追加
+
+- `scripts/dynamic_alloc_worker.py`
+  - `MARKET_ORDER_TRADE_CLOSE` の負け寄与を `market_close_rate / market_close_loss_rate / market_close_loss_share` として集計。
+  - `sum_realized_jpy` と `realized_jpy_per_1k_units` が重く悪化した戦略は、`lot_multiplier` を `0.45` 未満まで落とせる hard cap を追加。
+  - これにより、`M1Scalper-M1` のように win rate は残っていても `MARKET_ORDER_TRADE_CLOSE` 由来の赤字単価が大きい戦略を、soft participation のまま強く縮退できる。
+
+- `ops/env/local-v2-stack.env`
+  - `ORDER_OANDA_REQUEST_TIMEOUT_SEC=10.0`
+  - `ORDER_MANAGER_SERVICE_TIMEOUT=14.0`
+  - `SCALP_PING_5S_FLOW_DYN_ALLOC_MULT_MIN=0.18`
+  - `M1SCALP_DYN_ALLOC_MULT_MIN=0.25`
+
+- 意図:
+  - 戦略を一律停止せず、勝ち筋を維持したまま `flow` / `M1` の赤字単価だけを先に圧縮する。
+  - 直近で出ていた OANDA 8s read timeout の false failure を減らし、執行品質の悪化を局所的に緩和する。

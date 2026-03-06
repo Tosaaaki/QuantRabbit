@@ -7059,3 +7059,33 @@ Status:
   - `M1Scalper` 本体だけでなく、同一シグナル系列の派生 worker が別 strategy tag で同方向に積み上がる経路を止める。
   - `position_manager` が stale/busy の瞬間でも、M1 family は「見えないから建てる」ではなく「見えないから建てない」に寄る。
   - `bb_entry_reject` long の bypass を止め、直近3hで続いていた M1 long の赤字送信をさらに削る。
+
+## 2026-03-06 11:10 UTC / 2026-03-06 20:10 JST - 収益悪化の主因は `flow` / `M1` の赤字単価と OANDA 応答劣化だったため、サイズ縮退と timeout 緩和を優先
+
+- 市況確認（ローカルV2実測 + OANDA）:
+  - `USD/JPY mid=157.892 spread=0.8p`
+  - `ATR(M1)=2.04p / ATR(M5)=5.39p / ATR(H1)=18.05p`
+  - `tail300 range=3.6p / tail1000 range=4.5p`
+  - `orderbook latency ~=166ms`
+  - `health_snapshot`: `data_lag_ms=717ms`, `decision_latency_ms=12.4ms`
+
+- 異常条件:
+  - `quant-order-manager.log` で `ORDER_OANDA_REQUEST_TIMEOUT_SEC=8.0` の read timeout と `503 Service unavailable` を確認。
+  - `quant-market-data-feed.log` で stream reconnect が断続し、`[Errno 28] No space left on device` により `tick_cache/orderbook/factor_cache` の persist 失敗が発生。
+  - `df -h .` は `/System/Volumes/Data` 空き `115-116MiB`、容量 `100%`。ローカル runtime 自体が収益評価を歪める水準だった。
+
+- 収益分解:
+  - `scripts/pdca_profitability_report.py --instrument USD_JPY`
+    - 24h: `net_jpy=-11176.8 / net_pips=-1754.9 / PF=0.65`
+  - 主損失:
+    - `scalp_ping_5s_flow_live: -6921.7 JPY`
+    - `M1Scalper-M1: -6171.2 JPY`
+  - 主利益:
+    - `MomentumBurst: +1856.9 JPY / PF=5.99`
+  - `M1Scalper-M1` の損失は `MARKET_ORDER_TRADE_CLOSE` 主体、`flow` は `STOP_LOSS_ORDER` と `MARKET_ORDER_TRADE_CLOSE` の複合赤字だった。
+
+- 対応方針:
+  - 戦略停止ではなく、`dynamic_alloc` 側で `MARKET_ORDER_TRADE_CLOSE` の負け寄与を新しい縮退シグナルとして扱い、重赤字戦略の `lot_multiplier` を `0.45` 未満へ落とせるようにする。
+  - `local-v2-stack.env` では `M1` の dynamic alloc floor を `0.25`、`flow` clone を `0.18` へ下げ、同じ負け方を繰り返す戦略の赤字単価を先に落とす。
+  - OANDA read timeout は `10s`、order-manager service timeout は `14s` に緩和し、8秒超の submit/close 失敗を減らす。
+  - disk 逼迫で patch すら失敗したため、`logs/replay`, `logs/archive`, `logs/local_vm_parity`, `logs/reports/forecast_improvement`, `logs/oanda` の古い生成物を整理して空きを `310MiB` まで回復してから修正に入る。
