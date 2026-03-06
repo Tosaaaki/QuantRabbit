@@ -19,9 +19,66 @@
   - `Period`（集計期間）
   - `Fact`（数値）
   - `Failure Cause`（敗因）
-- `Improvement`（改善施策）
+  - `Improvement`（改善施策）
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
+
+## 2026-03-06 14:22 UTC / 2026-03-06 23:22 JST - local-v2: M1Scalper setup絞り込み + Flow低品質entry圧縮 + OANDA 503耐性
+
+Period:
+- 集計: `logs/pdca_profitability_report_latest.json` generated_at=`2026-03-06T23:21:50 JST`
+- 市況確認: UTC `14:20-14:22` / JST `23:20-23:22`
+- 対象（実測）: `logs/trades.db`, `logs/orders.db`, `logs/metrics.db`, `logs/local_v2_stack/*.log`, OANDA pricing/openTrades
+
+Fact:
+- 市況（OANDA + local candle, UTC `14:21-14:22` / JST `23:21-23:22`）:
+  - USD/JPY `mid=157.976 / spread=0.8p`
+  - `ATR14(M1)=4.56p` / `ATR60(M1)=6.79p` / `range_120m=70.6p`
+  - pricing は継続 `200 OK`、一方で `openTrades/summary` は `503` が断続
+- 直近24h（bot only, `pdca_profitability_report_latest.md`）:
+  - `trades=2482 / win_rate=49.9% / PF(pips)=0.69 / net_jpy=-9909.0`
+- M1Scalper-M1 の source tag 別（同24h, `trades.db entry_thesis.source_signal_tag`）:
+  - `trend-long: 473 trades / -1759.4 JPY / -354.2 pips`
+  - `sell-rally: 861 trades / -1557.8 JPY / -442.3 pips`
+  - `buy-dip: 328 trades / -1557.7 JPY / -417.6 pips`
+  - 一方で `nwave-long: 30 trades / +98.4 JPY / +43.3 pips`
+  - `breakout-retest-long: 2 trades / +81.2 JPY / +6.5 pips`
+- Flow (`scalp_ping_5s_flow_live`) の直近負けトレード `entry_thesis` では
+  - `signal_window_adaptive_live_score_pips=-0.58 〜 -0.89`
+  - それでも `filled=366` / `net_jpy=-6998.5` が出ており、低品質entryが通過していた
+- ローカル稼働:
+  - `health_snapshot` は `data_lag_ms≈84 / decision_latency_ms≈21`
+  - `quant-m1scalper` は OANDA `/summary` `503` で worker crash を起こし、stale pid 相当の再起動が発生
+
+Failure Cause:
+- `M1Scalper-M1` は当日ソース別で `trend-long` と `sell-rally` が損失寄与の大半を占め、setup の絞り込み不足が継続。
+- `scalp_ping_5s_flow_live` は leading profile 無効のまま low-edge signal を大量通過させていた。
+- OANDA `/summary` の瞬断時に M1 worker が例外落ちし、稼働継続性を損ねていた。
+
+Improvement:
+- `ops/env/local-v2-stack.env`
+  - Flow:
+    - `SCALP_PING_5S_FLOW_ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `...REJECT_BELOW=0.58` / `...SHORT=0.66`
+    - `BASE_ENTRY_UNITS=80`
+    - `MAX_ACTIVE_TRADES=1`
+  - M1:
+    - `M1SCALP_ALLOW_REVERSION=0`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long`
+    - `M1SCALP_BASE_UNITS=1200`
+    - `M1SCALP_MARGIN_USAGE_HARD=0.88`
+- `workers/scalp_m1scalper/worker.py`
+  - account snapshot をキャッシュ付きで扱い、`/summary` `503` では loop skip / cached snapshot fallback に変更
+
+Verification:
+- 反映後:
+  - `quant-m1scalper` が `/summary 503` で即死せず、`account snapshot ... cached snapshot` ログで継続すること
+  - `orders.db` で `client_order_id like '%scalp-m1scalperm1%'` の `source_signal_tag` が `nwave-long / breakout-retest-long` 中心になること
+  - `scalp_ping_5s_flow_live` の filled 件数は減っても、`avg_pips / PF` が改善方向へ動くこと
+  - 次の24hで `PF(pips)>0.85` を暫定回復目標、14dで `PF>1.0` を再判定
+
+Status:
+- in_progress
 
 ## 2026-03-06 05:56 UTC / 2026-03-06 14:56 JST - M1Scalper-M1: 損失縮小のため exit チューニング（profit_buffer拒否多発の抑制）
 

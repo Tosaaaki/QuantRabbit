@@ -1,5 +1,27 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-14. 2026-03-06 UTC local-v2 `M1Scalper` setup絞り込み + `scalp_ping_5s_flow` 低品質entry圧縮
+- 背景（local-v2 実測, UTC 2026-03-06 14:21 / JST 23:21）:
+  - `logs/pdca_profitability_report_latest.md` で 24h `net_jpy=-9909 / PF=0.69`
+  - `M1Scalper-M1` source tag 別では `trend-long=-1759 JPY`, `sell-rally=-1558 JPY` が主因
+  - `scalp_ping_5s_flow_live` は `filled=366 / net_jpy=-6998` で、負けトレード `entry_thesis` に `signal_window_adaptive_live_score_pips<0` が残っていた
+  - `quant-m1scalper` は OANDA `/summary` `503` で worker crash を起こしていた
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `M1SCALP_ALLOW_REVERSION=0`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long`
+    - `M1SCALP_BASE_UNITS=1200`
+    - `M1SCALP_MARGIN_USAGE_HARD=0.88`
+    - `SCALP_PING_5S_FLOW_ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `...REJECT_BELOW=0.58`, `...SHORT=0.66`
+    - `SCALP_PING_5S_FLOW_BASE_ENTRY_UNITS=80`
+    - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES=1`
+  - `workers/scalp_m1scalper/worker.py`
+    - account snapshot を cache fallback 化し、`/summary` `503` では worker を落とさない
+- 意図:
+  - M1 の負け setup を worker ローカルで切り落とし、稼働継続性も確保する
+  - Flow は停止ではなく、leading profile と size で低品質エントリだけ圧縮する
+
 ## 0-13. 2026-02-27 UTC `scalp_ping_5s_c` 第9ラウンド（約定再開後のロット底上げ）
 - 背景（VM実測, UTC 2026-02-27 14:00-14:02）:
   - Round8b 後、`perf_block` は解消し `orders.db` で `filled` が再開。

@@ -5,6 +5,32 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-06（追記）local-v2: `M1Scalper` setup filter + account snapshot cache fallback、`scalp_ping_5s_flow` quality tighten
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `workers/scalp_m1scalper/worker.py`
+  - `tests/workers/test_m1scalper_open_trades_guard.py`
+- 変更:
+  - M1Scalper の local-v2 override に
+    - `M1SCALP_ALLOW_REVERSION=0`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long`
+    - `M1SCALP_BASE_UNITS=1200`
+    - `M1SCALP_MARGIN_USAGE_HARD=0.88`
+    を追加し、当日赤字寄与が大きい `sell-rally / trend-long` を切り詰めた。
+  - `workers/scalp_m1scalper/worker.py` で OANDA `/summary` の瞬断時に
+    cached snapshot fallback / skip を行い、worker crash を回避するようにした。
+  - Flow には
+    - `SCALP_PING_5S_FLOW_ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `...REJECT_BELOW=0.58`, `...SHORT=0.66`
+    - `BASE_ENTRY_UNITS=80`
+    - `MAX_ACTIVE_TRADES=1`
+    を local-v2 override として追加した。
+  - M1 の account snapshot fallback を unit test で固定化した。
+- 意図:
+  - strategy worker 側の setup 絞り込みとローカル運用 override だけで期待値を改善し、
+    共通レイヤへ後付けの一律選別を増やさずに収益改善と稼働継続性を両立する。
+
 ### 2026-03-06（追記）OpenAI Native Computer-Use のローカル最小デモ追加
 
 - 対象:

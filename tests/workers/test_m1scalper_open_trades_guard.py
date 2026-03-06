@@ -84,3 +84,31 @@ def test_open_trades_guard_fails_closed_on_positions_error(monkeypatch) -> None:
     assert allowed is False
     assert reason.startswith("open_positions_error:")
     assert count == -1
+
+
+def test_resolve_account_snapshot_uses_cached_snapshot_on_error(monkeypatch) -> None:
+    cached = object()
+
+    def _raise(**_kwargs):
+        raise RuntimeError("summary 503")
+
+    monkeypatch.setattr(m1_worker, "get_account_snapshot", _raise)
+
+    snap, unavailable, err = m1_worker._resolve_account_snapshot(cached, cache_ttl_sec=0.5)
+
+    assert snap is cached
+    assert unavailable is False
+    assert isinstance(err, RuntimeError)
+
+
+def test_resolve_account_snapshot_marks_unavailable_without_cache(monkeypatch) -> None:
+    def _raise(**_kwargs):
+        raise RuntimeError("summary 503")
+
+    monkeypatch.setattr(m1_worker, "get_account_snapshot", _raise)
+
+    snap, unavailable, err = m1_worker._resolve_account_snapshot(None, cache_ttl_sec=0.5)
+
+    assert snap is None
+    assert unavailable is True
+    assert isinstance(err, RuntimeError)

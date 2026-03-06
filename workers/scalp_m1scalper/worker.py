@@ -976,6 +976,19 @@ def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
     return res.cap, res.reasons
 
 
+def _resolve_account_snapshot(
+    last_snapshot=None,
+    *,
+    cache_ttl_sec: float = 0.5,
+):
+    try:
+        return get_account_snapshot(cache_ttl_sec=cache_ttl_sec), False, None
+    except Exception as exc:  # noqa: BLE001 - upstream HTTP/timeout errors vary.
+        if last_snapshot is None:
+            return None, True, exc
+        return last_snapshot, False, exc
+
+
 async def scalp_m1_worker() -> None:
     global _PENDING_LIMIT_UNTIL_TS, _PENDING_LIMIT_ORDER_ID
     if not config.ENABLED:
@@ -1001,6 +1014,8 @@ async def scalp_m1_worker() -> None:
     last_cap_log = 0.0
     last_conf_log = 0.0
     last_open_trades_log = 0.0
+    last_account_snapshot = None
+    last_account_snapshot_error_log = 0.0
     try:
         pos_manager = PositionManager()
     except Exception as exc:
@@ -1277,7 +1292,30 @@ async def scalp_m1_worker() -> None:
                         last_block_log = now_mono
                     continue
 
-        snap = get_account_snapshot()
+        now_mono = time.monotonic()
+        snap, snapshot_unavailable, snapshot_err = _resolve_account_snapshot(
+            last_account_snapshot,
+            cache_ttl_sec=0.5,
+        )
+        if snapshot_err is None:
+            last_account_snapshot = snap
+        elif snapshot_unavailable:
+            if now_mono - last_account_snapshot_error_log > 60.0:
+                LOG.warning(
+                    "%s account snapshot unavailable; skip loop err=%s",
+                    config.LOG_PREFIX,
+                    snapshot_err,
+                )
+                last_account_snapshot_error_log = now_mono
+            continue
+        else:
+            if now_mono - last_account_snapshot_error_log > 60.0:
+                LOG.warning(
+                    "%s account snapshot fetch failed; continue with cached snapshot err=%s",
+                    config.LOG_PREFIX,
+                    snapshot_err,
+                )
+                last_account_snapshot_error_log = now_mono
         equity = float(snap.nav or snap.balance or 0.0)
 
         balance = float(snap.balance or snap.nav or 0.0)
