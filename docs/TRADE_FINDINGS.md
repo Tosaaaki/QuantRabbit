@@ -7111,3 +7111,23 @@ Status:
 - 期待効果:
   - 数秒級の OANDA `/summary` flap では entry を無駄に止めず、長めの outage では従来どおり fail-closed を維持する。
   - stale fallback は `order_manager` の margin/preflight 導線に限定し、全体を fail-open にしない。
+
+## 2026-03-06 13:39 UTC / 2026-03-06 22:39 JST - 通信回復後の `scalp_fast` reject は `STOP_LOSS_ON_FILL_LOSS` に偏っていたため、protection fallback gap を 2p→3p へ戻し過ぎない範囲で拡大
+
+- 市況確認（ローカルV2実測）:
+  - `check_oanda_summary.py` は `200` 復帰。`openTrades=3`、`margin used=3169JPY / avail=34803JPY`。
+  - `orders.db` では `2026-03-06 22:37 JST` 台に `filled` が再開。
+  - `USD/JPY mid=157.51 spread=0.8p`
+
+- 事実:
+  - `2026-03-06T13:30:00Z` 以降の `orders.db` は `filled=33`, `rejected=7`, `entry_probability_reject=24`。
+  - `rejected` 7件はすべて `scalp_fast` 系で、`quant-order-manager.log` でも `STOP_LOSS_ON_FILL_LOSS` と `protection fallback applied ... gap=0.0200` が並んでいた。
+  - 既存の `ORDER_PROTECTION_FALLBACK_PIPS_SCALP_FAST=0.02` は、3/5 の再調整では有効だったが、3/6 22:30 JST 台の回復局面では再び tight 側に寄っていた。
+
+- 対応:
+  - `ops/env/local-v2-stack.env` の `ORDER_PROTECTION_FALLBACK_PIPS_SCALP_FAST` を `0.02 -> 0.03` へ変更。
+  - 12p 既定値へ戻すのではなく、scalp_fast の fallback だけを 3p に限定して reject 低減を狙う。
+
+- 期待効果:
+  - `STOP_LOSS_ON_FILL_LOSS` を減らし、回復直後の `submit_attempt -> rejected` を `filled` 側へ寄せる。
+  - fallback SL を広げ過ぎず、scalp_fast の損失尾を増やさない範囲で執行成立率を改善する。

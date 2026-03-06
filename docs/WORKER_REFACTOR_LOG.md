@@ -11879,3 +11879,12 @@
   - `tests/execution/test_order_manager_preflight.py`
   - `tests/execution/test_order_manager_log_retry.py`
   で bounded fallback の挙動を固定化。
+
+## 2026-03-06 JST - `scalp_fast` protection fallback gap を 3p に微拡大
+
+- `ops/env/local-v2-stack.env`
+  - `ORDER_PROTECTION_FALLBACK_PIPS_SCALP_FAST=0.03`
+
+- 意図:
+  - 通信回復後に `STOP_LOSS_ON_FILL_LOSS` reject が `scalp_fast` に集中したため、2p fallback を少しだけ緩めて約定成立率を戻す。
+  - 既定 12p へは戻さず、scalp_fast の fallback だけを 3p に限定する。
