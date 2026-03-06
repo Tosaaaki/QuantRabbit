@@ -11,6 +11,7 @@
   - `scripts/pdca_profitability_report.py`（新規）
 - 変更:
   - OANDA `account/summary` + `pricing`（既定 `USD_JPY`）のスナップショット取得。
+  - OANDA `openTrades` の簡易サマリ（open_trades_count / no_sl_count / no_tp_count + no_sl_top）を追記。
   - `logs/trades.db` の 24h/7d 集計（PF / win_rate / net_pips / net_jpy）と pocket/strategy_tag ランキング。
   - `logs/orders.db` の拒否/エラー集計（status / error_code / top_fail_reasons）。
   - 出力: `logs/pdca_profitability_latest.json` / `logs/pdca_profitability_latest.md` + `logs/pdca_profitability_history.jsonl` 追記。

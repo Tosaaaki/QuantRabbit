@@ -2,7 +2,7 @@
 """Local V2 profitability PDCA report (report-only).
 
 What it does (local-only):
-- Fetch OANDA account summary + pricing snapshot (default USD_JPY)
+- Fetch OANDA account summary + pricing + openTrades snapshot (default USD_JPY)
 - Aggregate logs/trades.db (24h / 7d): PF / win_rate / net (JPY + pips)
 - Rank by pocket / strategy_tag / (pocket,strategy_tag)
 - Aggregate logs/orders.db reject/error signals (status + error_code)
@@ -203,6 +203,108 @@ def _fetch_oanda_pricing(creds: OandaCreds, *, instrument: str, timeout_sec: flo
     else:
         out["mid"] = None
         out["spread_pips"] = None
+    return out
+
+
+def _trade_has_sl(trade: dict[str, Any]) -> bool:
+    sl_order_id = _safe_str(trade.get("stopLossOrderID"))
+    if sl_order_id:
+        return True
+    sl_order = trade.get("stopLossOrder")
+    if isinstance(sl_order, dict):
+        if _safe_str(sl_order.get("id")) or _safe_str(sl_order.get("price")):
+            return True
+        return True
+    return False
+
+
+def _trade_has_tp(trade: dict[str, Any]) -> bool:
+    tp_order_id = _safe_str(trade.get("takeProfitOrderID"))
+    if tp_order_id:
+        return True
+    tp_order = trade.get("takeProfitOrder")
+    if isinstance(tp_order, dict):
+        if _safe_str(tp_order.get("id")) or _safe_str(tp_order.get("price")):
+            return True
+        return True
+    return False
+
+
+def _fetch_oanda_open_trades(
+    creds: OandaCreds,
+    *,
+    instrument: str,
+    top_n: int,
+    timeout_sec: float,
+) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {creds.token}"}
+    payload, meta = _oanda_get_json(
+        f"{creds.base_url}/v3/accounts/{creds.account_id}/openTrades",
+        headers=headers,
+        timeout_sec=timeout_sec,
+    )
+    out: dict[str, Any] = {
+        "meta": meta,
+        "open_trades_count": 0,
+        "open_trades_count_instrument": 0,
+        "no_sl_count": 0,
+        "no_sl_count_instrument": 0,
+        "no_tp_count": 0,
+        "no_tp_count_instrument": 0,
+        "no_sl_top": [],
+    }
+    if payload is None:
+        return out
+    trades = payload.get("trades")
+    if not isinstance(trades, list):
+        return out
+
+    trade_dicts = [t for t in trades if isinstance(t, dict)]
+    out["open_trades_count"] = len(trade_dicts)
+
+    instrument_key = _safe_str(instrument).upper()
+    instrument_trades = [
+        t for t in trade_dicts if _safe_str(t.get("instrument")).upper() == instrument_key
+    ]
+    out["open_trades_count_instrument"] = len(instrument_trades)
+
+    def _count_missing(trs: list[dict[str, Any]]) -> tuple[int, int, list[dict[str, Any]]]:
+        no_sl: list[dict[str, Any]] = []
+        no_tp = 0
+        for tr in trs:
+            if not _trade_has_sl(tr):
+                no_sl.append(tr)
+            if not _trade_has_tp(tr):
+                no_tp += 1
+        return len(no_sl), int(no_tp), no_sl
+
+    no_sl_total, no_tp_total, no_sl_trades_total = _count_missing(trade_dicts)
+    no_sl_inst, no_tp_inst, _ = _count_missing(instrument_trades)
+    out["no_sl_count"] = int(no_sl_total)
+    out["no_sl_count_instrument"] = int(no_sl_inst)
+    out["no_tp_count"] = int(no_tp_total)
+    out["no_tp_count_instrument"] = int(no_tp_inst)
+
+    # Prioritize "worst" missing-SL positions by unrealizedPL (most negative first).
+    no_sl_sorted = sorted(
+        no_sl_trades_total,
+        key=lambda t: _safe_float(t.get("unrealizedPL"), 0.0),
+    )
+    limit = max(0, int(top_n))
+    for tr in no_sl_sorted[:limit]:
+        client = tr.get("clientExtensions") if isinstance(tr.get("clientExtensions"), dict) else {}
+        out["no_sl_top"].append(
+            {
+                "id": _safe_str(tr.get("id")) or None,
+                "instrument": _safe_str(tr.get("instrument")) or None,
+                "units": _safe_str(tr.get("currentUnits") or tr.get("initialUnits") or tr.get("units"))
+                or None,
+                "unrealized_pl": _safe_float(tr.get("unrealizedPL"), 0.0),
+                "client_id": _safe_str(client.get("id")) or None,
+                "client_tag": _safe_str(client.get("tag")) or None,
+            }
+        )
+
     return out
 
 
@@ -484,6 +586,7 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
     oanda = report.get("oanda") if isinstance(report.get("oanda"), dict) else {}
     summary = oanda.get("summary") if isinstance(oanda.get("summary"), dict) else {}
     pricing = oanda.get("pricing") if isinstance(oanda.get("pricing"), dict) else {}
+    open_trades = oanda.get("open_trades") if isinstance(oanda.get("open_trades"), dict) else {}
     trades = report.get("trades") if isinstance(report.get("trades"), dict) else {}
     t24 = trades.get("24h") if isinstance(trades.get("24h"), dict) else {}
     t7d = trades.get("7d") if isinstance(trades.get("7d"), dict) else {}
@@ -517,6 +620,34 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
         lines.append(
             f"- {instrument} mid={pricing.get('mid')} spread_pips={pricing.get('spread_pips')} (bid={pricing.get('bid')} ask={pricing.get('ask')})"
         )
+    if open_trades:
+        lines.append(
+            f"- open_trades: total={open_trades.get('open_trades_count')} (instrument={open_trades.get('open_trades_count_instrument')})"
+        )
+        lines.append(
+            f"- no_sl: total={open_trades.get('no_sl_count')} (instrument={open_trades.get('no_sl_count_instrument')})"
+        )
+        lines.append(
+            f"- no_tp: total={open_trades.get('no_tp_count')} (instrument={open_trades.get('no_tp_count_instrument')})"
+        )
+        no_sl_top = (
+            open_trades.get("no_sl_top") if isinstance(open_trades.get("no_sl_top"), list) else []
+        )
+        if no_sl_top:
+            lines.append("- no_sl_top:")
+            for row in no_sl_top[: max(0, int(top_n))]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    "  - id={id} instrument={instrument} units={units} uPL={u_pl} client_id={client_id} tag={client_tag}".format(
+                        id=row.get("id") or "-",
+                        instrument=row.get("instrument") or "-",
+                        units=row.get("units") or "-",
+                        u_pl=row.get("unrealized_pl"),
+                        client_id=row.get("client_id") or "-",
+                        client_tag=row.get("client_tag") or "-",
+                    )
+                )
     lines.append("")
 
     def _trade_line(label: str, section: dict[str, Any]) -> str:
@@ -631,7 +762,13 @@ def main() -> int:
     }
 
     # OANDA snapshot
-    oanda_section: dict[str, Any] = {"env": None, "account_id_masked": None, "summary": {}, "pricing": {}}
+    oanda_section: dict[str, Any] = {
+        "env": None,
+        "account_id_masked": None,
+        "summary": {},
+        "pricing": {},
+        "open_trades": {},
+    }
     if not ns.no_oanda:
         try:
             creds = _load_oanda_creds()
@@ -640,6 +777,12 @@ def main() -> int:
             oanda_section["summary"] = _fetch_oanda_summary(creds, timeout_sec=float(ns.oanda_timeout))
             oanda_section["pricing"] = _fetch_oanda_pricing(
                 creds, instrument=instrument, timeout_sec=float(ns.oanda_timeout)
+            )
+            oanda_section["open_trades"] = _fetch_oanda_open_trades(
+                creds,
+                instrument=instrument,
+                top_n=int(ns.top_n),
+                timeout_sec=float(ns.oanda_timeout),
             )
         except Exception as exc:
             errors.append(f"oanda_snapshot_failed:{exc}")
