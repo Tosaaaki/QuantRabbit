@@ -7275,3 +7275,41 @@ Status:
   1. `quant-m1scalper.log` に `tag_filter_block tag=M1Scalper-sell-rally` が継続し、`tag_filter=-` が再発しないこと。
   2. `orders.db` の post-restart で `STOP_LOSS_ON_FILL_LOSS` reject が再拡大しないこと。
   3. 30-60分後の `trades.db` で `M1Scalper-M1` と `scalp_ping_5s_b_live` の追加 net が、再起動前の時間帯より悪化しないこと。
+
+## 2026-03-06 14:33 UTC / 2026-03-06 23:36 JST - open trade が決済されなかった直接原因は「exit owner 不在」
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.915 spread=0.8p`
+  - `pricing/openTrades/summary` は取得継続可
+  - `openTrades=4` で、内訳は `scalp_ping_5s_d_live` 1本と `MicroVWAPRevert-long-trendflip` 3本
+
+- 事実:
+  - `logs/orders.db` 上、4本とも open 後に `close_request` が一度も発行されていなかった。
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-scalp-ping-5s-d,quant-scalp-ping-5s-d-exit,quant-micro-vwaprevert,quant-micro-vwaprevert-exit`
+    - `quant-scalp-ping-5s-d`: `running`
+    - `quant-scalp-ping-5s-d-exit`: `stopped`
+    - `quant-micro-vwaprevert`: `stopped`
+    - `quant-micro-vwaprevert-exit`: `stopped`
+  - `workers/micro_momentumburst/exit_worker.py` は `MICRO_MULTI_EXIT_TAG_ALLOWLIST=MomentumBurstMicro` 固定で、`strategy_tag=MicroVWAPRevert-*` の建玉は閉じない。
+  - `workers/micro_vwaprevert/exit_worker.py` は `MICRO_MULTI_EXIT_TAG_ALLOWLIST=MicroVWAPRevert` 固定で、該当3本の正しい exit owner は `quant-micro-vwaprevert-exit` だった。
+  - つまり:
+    - `scalp_ping_5s_d_live` は profile外で entry worker だけが残存し、exit owner が不在
+    - `MicroVWAPRevert-*` 3本は exit owner が停止中
+    - 結果として close 判定自体が回らず、決済されなかった
+
+- 一次対応:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-scalp-ping-5s-d-exit,quant-micro-vwaprevert-exit`
+  - `scripts/local_v2_stack.sh down --env ops/env/local-v2-stack.env --services quant-scalp-ping-5s-d`
+
+- 結果:
+  - `quant-micro-vwaprevert-exit` 復旧直後に
+    - `438381 close_request -> close_ok`
+    - `438379 close_request -> close_ok`
+    - `438377 close_request -> close_ok`
+  - `quant-scalp-ping-5s-d-exit` 復旧後に
+    - `447946 close_request -> close_ok`
+  - `scripts/oanda_open_trades.py` は `[]` となり、未決済は解消
+
+- 残課題:
+  - `trade_min` profile外 worker の残存監査が弱く、entry だけ残ると orphan trade を作れる。
+  - `position_manager` の `/position/open_positions` は `position manager busy` と `int too large to convert to float` を散発しており、exit owner 復旧後の判定遅延要因として別途修正が必要。
