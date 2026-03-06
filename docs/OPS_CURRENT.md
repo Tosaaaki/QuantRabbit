@@ -862,3 +862,30 @@ quant-manual-swing-exit.service
   1. 反映後30分/2hで C の `rate_limited` 比率が低下すること。
   2. `orders.db` で C の `filled` が再開すること。
   3. `entry_probability_reject` / `entry_leading_profile_reject` が過度に増えないこと。
+
+## 2026-03-06 15:35 UTC / 2026-03-07 00:35 JST - `MicroLevelReactor` の forecast / probability 縮小を緩和して lot と頻度を戻す
+
+- 背景:
+  - `pdca_profitability_report_latest.md` では 24h `PF=0.69 / net=-8827 JPY`、7d winner は
+    - `MomentumBurst: +1856.9 JPY / 31 trades / win 87.1%`
+    - `MicroLevelReactor: +259.5 JPY / 101 trades / win 65.3%`
+  - `orders.db` の `MicroLevelReactor` では
+    - `probability_scaled raw_units=94 -> scaled_units=42`
+    - `entry_probability=0.445`
+    が繰り返し出ており、勝ち筋なのに preserve-intent で過度に圧縮されていた
+  - 同じ `request_json` の `forecast_fusion` では `units_before=454 -> units_after=211`、`entry_probability_before=0.73 -> 0.445`
+    まで cut され、さらに `entry_probability_reject_threshold` で棄却される区間があった
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_BASE_UNITS: 14000 -> 22000`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.52 -> 0.40`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60` を追加
+    - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80` を追加
+    - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82` を追加
+- 影響範囲:
+  - `quant-micro-levelreactor.service` の dedicated ENTRY worker のみ。
+  - loser 側の `M1` / `B` / `flow` / 共通 order path は非変更。
+- 検証:
+  1. `orders.db` で `MicroLevelReactor` の `entry_probability_reject` が減ること。
+  2. `probability_scaled` の `raw_units -> scaled_units` 比率が改善すること。
+  3. 次の 1-3h で `MicroLevelReactor` の `filled` 件数と avg units が増えても PF が維持されること。

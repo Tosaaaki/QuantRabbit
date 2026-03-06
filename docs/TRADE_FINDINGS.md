@@ -7525,3 +7525,49 @@ Status:
   1. `quant-m1scalper.log` で `tag_filter` に `vshape-rebound-long` が含まれること
   2. `quant-scalp-ping-5s-c` の新規 entry が止まること
   3. 次回 1-3h 集計で `M1Scalper-M1` の net 勾配が改善し、`flow/c` の新規損失寄与が増えないこと
+
+## 2026-03-06 15:35 UTC / 2026-03-07 00:35 JST - 収益改善: `MicroLevelReactor` の lot / 頻度を winner 側だけ増やす
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.694 spread=0.8p`
+  - `oanda_open_trades.py -> []`
+  - `pdca_profitability_report_latest.md`
+    - 24h: `2361 trades / win 49.2% / PF=0.69 / net=-8827.2 JPY`
+    - 7d: `PF=0.59 / net=-11608.5 JPY`
+  - loser は依然 `scalp_ping_5s_flow_live -6915.8 JPY`, `M1Scalper-M1 -4213.7 JPY`
+  - winner は `MomentumBurst +2017.1 JPY`, `MicroLevelReactor +259.5 JPY`
+
+- 事実:
+  - `trades.db` 7d 集計:
+    - `MicroLevelReactor: avg_units=119.6 / avg_intent=601.4 / avg_prob=0.440 / net=+259.5 JPY`
+    - 勝っているのに intent 比で実約定サイズが薄すぎた
+  - `orders.db` では `MicroLevelReactor` の recent rows が
+    - `probability_scaled raw_units=94 -> scaled_units=42`
+    - `entry_probability=0.445`
+    を繰り返し、preserve-intent で 55% 以上削られていた
+  - 同じ `request_json.entry_thesis.forecast_fusion` では
+    - `units_before=454 -> units_after=211`
+    - `entry_probability_before=0.73 -> 0.445`
+    - `forecast_allowed=false reason=style_mismatch_range`
+    で、worker 側 forecast fusion でも先に圧縮されていた
+  - `quant-micro-levelreactor.log` では 2026-03-05 13:27 UTC に
+    - `OPEN_SKIP ... note=entry_probability:entry_probability_reject_threshold`
+    が連続しており、frequency も `reject_under=0.52` に削られていた
+  - 逆に `MAX_SIGNALS_PER_CYCLE=1` は dedicated 1-strategy worker では主要因ではなかった
+
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_BASE_UNITS: 14000 -> 22000`
+    - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.52 -> 0.40`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60` を追加
+    - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80` を追加
+    - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82` を追加
+
+- 判断:
+  - 「全体ロット不足」ではなく、勝っている `MicroLevelReactor` だけが forecast/probability の二段圧縮で薄くなっていた
+  - loser 側を reopen するより、winner dedicated worker の reject と scale を緩める方が収益寄りで安全
+
+- 再検証条件:
+  1. `orders.db` で `MicroLevelReactor` の `entry_probability_reject` が減ること
+  2. `probability_scaled` の `scaled_units/raw_units` が `0.45` 近辺から改善すること
+  3. 次の 1-3h で `MicroLevelReactor` の `filled` 件数と avg units が増えても net/PF が悪化しないこと

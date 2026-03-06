@@ -12110,3 +12110,22 @@
   - `curl -sf http://127.0.0.1:8300/health`
   - `curl -sf http://127.0.0.1:8301/health`
     - どちらも `{"ok":true,...}`
+
+- 2026-03-06 15:35 UTC / 2026-03-07 00:35 JST - `MicroLevelReactor` dedicated worker の sizing / forecast 緩和
+  - 背景:
+    - local 実測で `MicroLevelReactor` は 7d `+259.5 JPY / 101 trades / win 65.3%` の winner だった一方、
+      `orders.db` では `probability_scaled raw_units=94 -> scaled_units=42`、
+      `quant-micro-levelreactor.log` では `entry_probability_reject_threshold` が出ていた。
+    - `request_json.entry_thesis.forecast_fusion` でも
+      `units_before=454 -> units_after=211`, `entry_probability_before=0.73 -> 0.445`
+      と、forecast disallow と preserve-intent の二段圧縮が確認できた。
+  - 変更:
+    - `ops/env/quant-micro-levelreactor.env`
+      - `MICRO_MULTI_BASE_UNITS=22000`
+      - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60`
+      - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.40`
+      - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80`
+      - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82`
+  - 狙い:
+    - dedicated winner worker に限って、forecast contra の disallow cut と probability reject を緩め、
+      `filled` 件数と realized units を戻す。
