@@ -1,5 +1,30 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-19. 2026-03-07 JST stray loser を遮断し、`M1Scalper` は `vshape-rebound-long` を局所再開
+- 背景（local-v2 実測, UTC 2026-03-06 15:16-15:18 / JST 2026-03-07 00:16-00:18）:
+  - `pdca_profitability_report.py` では 24h `net_jpy=-8603 / PF=0.68`
+  - `trades.db` 直近3hでは
+    - `MomentumBurst +661.8 JPY`
+    - `MicroLevelReactor +200.8 JPY`
+    - `M1Scalper-M1 -1395.5 JPY`
+    - `scalp_ping_5s_flow_live -5593.4 JPY`
+  - `ps` / `local_v2_stack status` では profile 外の `quant-scalp-ping-5s-c(+exit)` が常駐していた
+  - `quant-m1scalper.log` では `signal_vshape_rebound action=OPEN_LONG conf=81` が継続しているのに、
+    `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long` のため `tag_filter_block` で落としていた
+  - `trades.db` の source tag 実績では
+    - `M1Scalper-nwave-long: +98.4 JPY / 30 trades`
+    - `M1Scalper-breakout-retest-long: +81.2 JPY / 2 trades`
+    - `M1Scalper-vshape-rebound-long: +16.7 JPY / 2 trades`
+    で、`vshape-rebound-long` は現状負け筋ではなかった
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_C=0`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_FLOW=0`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+- 意図:
+  - stray loser の新規 entry を止める
+  - `M1Scalper` は loser 全開放ではなく、直近 positive な long setup だけ追加して件数を戻す
+
 ## 0-18. 2026-03-07 JST 「全然エントリーされない」一次対応: `MicroLevelReactor` は設定不足ではなく stale worker、`B` の filled 再開を確認
 - 背景（local-v2 実測, UTC 2026-03-06 15:04-15:09 / JST 2026-03-07 00:04-00:09）:
   - `pdca_profitability_report.py` と直近 candle で

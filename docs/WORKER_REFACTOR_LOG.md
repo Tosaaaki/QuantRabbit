@@ -12006,6 +12006,26 @@
   - `B / M1` の最新 tighten を維持しつつ、trade_min の micro 枠だけを直近勝ち筋へ差し替える。
   - 共通ガードや order_manager を触らず、profile 構成だけで期待値改善を狙う。
 
+## 2026-03-07 JST - stray loser を遮断し、`M1Scalper` は `vshape-rebound-long` だけ再開
+
+- 背景:
+  - 直近3hの `trades.db` では `MomentumBurst` / `MicroLevelReactor` がプラス寄与、
+    `M1Scalper-M1` と `scalp_ping_5s_flow_live` が大幅マイナス寄与だった。
+  - profile 外の `quant-scalp-ping-5s-c(+exit)` が常駐しており、local-v2 の active 群からズレていた。
+  - `quant-m1scalper.log` では `signal_vshape_rebound action=OPEN_LONG conf=81` が出ていたが、
+    `tag_filter_block tag=M1Scalper-vshape-rebound-long` で落としていた。
+  - `trades.db` の source tag 実績では `M1Scalper-vshape-rebound-long` は `+16.7 JPY / 2 trades` で、
+    既存 allowlist から漏れているだけだった。
+
+- 変更:
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_C=0`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_FLOW=0`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+
+- 意図:
+  - loser stray の新規 entry を止めつつ、`M1Scalper` は直近 positive な long setup だけ再開する。
+
 ## 2026-03-07 JST - `MicroLevelReactor` gate 緩和値は main 済み、worker 再起動で live 読み込みを明示確認
 
 - 背景:

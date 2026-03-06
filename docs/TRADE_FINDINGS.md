@@ -7483,3 +7483,45 @@ Status:
 - 判断:
   - 直近の entry 細りは「設定不足」ではなく「winner dedicated worker が stale state のまま」だった
   - 先に `M1` / `B` のガードを緩めるより、main 済みの MLR 緩和値を live に読ませる方が安全で正しい
+
+## 2026-03-06 15:16 UTC / 2026-03-07 00:16 JST - 収益改善: stray loser を止め、`M1Scalper` は `vshape-rebound-long` だけ再開
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.668 spread=0.8p`
+  - `openTrades` は OANDA `503` が断続したが、account snapshot は取得できており local health も fresh
+
+- 事実:
+  - `pdca_profitability_report.py`
+    - 24h: `2314 trades / PF=0.68 / net=-8603.5 JPY`
+  - `trades.db` 直近3h:
+    - `MomentumBurst +661.8 JPY`
+    - `MicroLevelReactor +200.8 JPY`
+    - `M1Scalper-M1 -1395.5 JPY`
+    - `scalp_ping_5s_flow_live -5593.4 JPY`
+  - `ps` / `scripts/local_v2_stack.sh status` では
+    - profile 外の `quant-scalp-ping-5s-c` / `quant-scalp-ping-5s-c-exit` が常駐していた
+  - `quant-m1scalper.log` では
+    - `signal_vshape_rebound action=OPEN_LONG conf=81`
+    - `tag_filter_block tag=M1Scalper-vshape-rebound-long allow=['breakout-retest-long', 'nwave-long']`
+    が出ており、件数を増やせる winner 候補が allowlist で落ちていた
+  - `trades.db` の `M1Scalper` source tag 実績:
+    - `M1Scalper-nwave-long: +98.4 JPY / 30`
+    - `M1Scalper-breakout-retest-long: +81.2 JPY / 2`
+    - `M1Scalper-vshape-rebound-long: +16.7 JPY / 2`
+    - `M1Scalper-buy-dip: -2209.4 JPY / 425`
+    - `M1Scalper-trend-long: -2277.3 JPY / 520`
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_C=0`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_FLOW=0`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+
+- 判断:
+  - loser 全体を広げるのではなく、`scalp_ping_5s_c/flow` の stray entry を止め、
+    `M1` は直近 positive な long setup だけ追加するのが最も収益寄り
+
+- 再検証条件:
+  1. `quant-m1scalper.log` で `tag_filter` に `vshape-rebound-long` が含まれること
+  2. `quant-scalp-ping-5s-c` の新規 entry が止まること
+  3. 次回 1-3h 集計で `M1Scalper-M1` の net 勾配が改善し、`flow/c` の新規損失寄与が増えないこと
