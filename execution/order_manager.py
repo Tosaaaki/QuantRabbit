@@ -2956,6 +2956,15 @@ _ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY = max(
     0.0,
     _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY", 8000.0),
 )
+_ORDER_MARGIN_STALE_ALLOW_SEC = max(0.0, _env_float("ORDER_MARGIN_STALE_ALLOW_SEC", 15.0))
+_ORDER_MARGIN_STALE_MIN_FREE_RATIO = max(
+    0.0,
+    _env_float("ORDER_MARGIN_STALE_MIN_FREE_RATIO", 0.30),
+)
+_ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER = max(
+    0.0,
+    _env_float("ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER", 0.25),
+)
 _DIR_CAP_ADVERSE_ENABLE = _env_bool("DIR_CAP_ADVERSE_ENABLE", True)
 _DIR_CAP_ADVERSE_LOOKBACK_MIN = max(5, min(120, _env_int("DIR_CAP_ADVERSE_LOOKBACK_MIN", 20)))
 _DIR_CAP_ADVERSE_START_PIPS = max(0.0, _env_float("DIR_CAP_ADVERSE_START_PIPS", 6.0))
@@ -6297,6 +6306,73 @@ def _estimate_entry_price(
     return None
 
 
+def _stale_margin_snapshot_allowed(state: Any) -> tuple[bool, str]:
+    if not bool(getattr(state, "stale", False)):
+        return True, "fresh"
+    error_kind = str(getattr(state, "error_kind", "") or "")
+    allowed_errors = {
+        "refresh_in_progress",
+        "http_500",
+        "http_502",
+        "http_503",
+        "http_504",
+        "timeout",
+        "read_timeout",
+        "connect_timeout",
+        "connection_error",
+    }
+    if error_kind not in allowed_errors:
+        return False, f"error:{error_kind or 'unknown'}"
+    age_sec = float(getattr(state, "age_sec", 0.0) or 0.0)
+    if age_sec > _ORDER_MARGIN_STALE_ALLOW_SEC:
+        return False, f"age:{age_sec:.1f}"
+    snapshot = getattr(state, "snapshot", None)
+    if snapshot is None:
+        return False, "missing_snapshot"
+    free_ratio = getattr(snapshot, "free_margin_ratio", None)
+    if free_ratio is None or float(free_ratio) < _ORDER_MARGIN_STALE_MIN_FREE_RATIO:
+        return False, f"free_ratio:{free_ratio}"
+    health_buffer = getattr(snapshot, "health_buffer", None)
+    if health_buffer is None or float(health_buffer) < _ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER:
+        return False, f"health_buffer:{health_buffer}"
+    return True, error_kind
+
+
+def _load_margin_guard_snapshot(*, path_label: str, cache_ttl_sec: float = 1.0):
+    from utils.oanda_account import get_account_snapshot_state
+
+    state = get_account_snapshot_state(
+        cache_ttl_sec=cache_ttl_sec,
+        allow_stale_sec=_ORDER_MARGIN_STALE_ALLOW_SEC,
+    )
+    allowed, reason = _stale_margin_snapshot_allowed(state)
+    if not allowed:
+        raise RuntimeError(f"stale_snapshot_not_allowed:{reason}")
+    if bool(getattr(state, "stale", False)):
+        source = str(getattr(state, "source", "cache") or "cache")
+        age_sec = float(getattr(state, "age_sec", 0.0) or 0.0)
+        logging.warning(
+            "[ORDER] using stale margin snapshot path=%s source=%s age=%.1fs reason=%s",
+            path_label,
+            source,
+            age_sec,
+            reason,
+        )
+        try:
+            log_metric(
+                "order_margin_stale_fallback",
+                age_sec,
+                tags={
+                    "path": path_label,
+                    "source": source,
+                    "reason": reason,
+                },
+            )
+        except Exception:
+            pass
+    return state.snapshot
+
+
 def _preflight_units(
     *,
     estimated_price: float,
@@ -6310,12 +6386,9 @@ def _preflight_units(
     even when free margin is low.
     """
     try:
-        from utils.oanda_account import (  # lazy import
-            get_account_snapshot,
-            get_position_summary,
-        )
+        from utils.oanda_account import get_position_summary  # lazy import
 
-        snap = get_account_snapshot()
+        snap = _load_margin_guard_snapshot(path_label="preflight", cache_ttl_sec=1.0)
         margin_avail = float(getattr(snap, "margin_available", 0.0) or 0.0)
         margin_used = float(getattr(snap, "margin_used", 0.0) or 0.0)
         margin_rate = float(getattr(snap, "margin_rate", 0.0) or 0.0)
@@ -10239,13 +10312,9 @@ async def market_order(
     # 現在の使用率と注文後の想定使用率を確認し、上限超えは即リジェクト。
     if not reduce_only:
         _trace("margin_guard")
-        try:
-            from utils.oanda_account import get_account_snapshot
-        except Exception:
-            get_account_snapshot = None  # type: ignore
-        if get_account_snapshot is not None:
+        if _load_margin_guard_snapshot is not None:
             try:
-                snap = get_account_snapshot(cache_ttl_sec=1.0)
+                snap = _load_margin_guard_snapshot(path_label="market_order", cache_ttl_sec=1.0)
             except Exception as exc:
                 note = "margin_snapshot_failed"
                 logging.warning("[ORDER] margin guard snapshot failed: %s", exc)
@@ -13127,13 +13196,9 @@ async def limit_order(
             meta_guard = dict(meta)
         if meta_guard.get("entry_price") is None and meta_guard.get("price") is None:
             meta_guard["entry_price"] = float(price)
-        try:
-            from utils.oanda_account import get_account_snapshot
-        except Exception:
-            get_account_snapshot = None  # type: ignore
-        if get_account_snapshot is not None:
+        if _load_margin_guard_snapshot is not None:
             try:
-                snap = get_account_snapshot(cache_ttl_sec=1.0)
+                snap = _load_margin_guard_snapshot(path_label="limit_order", cache_ttl_sec=1.0)
             except Exception as exc:
                 note = "margin_snapshot_failed"
                 logging.warning("[ORDER] margin guard snapshot failed: %s", exc)

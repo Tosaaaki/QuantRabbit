@@ -27,6 +27,15 @@ class AccountSnapshot:
     positions: Optional[dict[str, Any]] = None
 
 
+@dataclasses.dataclass
+class AccountSnapshotState:
+    snapshot: AccountSnapshot
+    source: str
+    age_sec: float
+    stale: bool
+    error_kind: Optional[str] = None
+
+
 _SIDE_MARGIN_RATIO_ENABLED = (
     os.getenv("SIDE_SEPARATE_FREE_MARGIN_RATIO", "1").strip().lower()
     not in {"", "0", "false", "off"}
@@ -73,6 +82,9 @@ def _side_free_margin_ratio(snapshot: "AccountSnapshot") -> Optional[float]:
         long_units = max(0.0, float(long_units or 0.0))
         short_units = max(0.0, float(short_units or 0.0))
     except Exception:
+        return None
+
+    if long_units <= 0.0 and short_units <= 0.0 and margin_used > 0.0:
         return None
 
     net_units = long_units - short_units
@@ -236,6 +248,51 @@ def _snapshot_from_payload(payload: dict) -> Optional[AccountSnapshot]:
     )
 
 
+def _snapshot_state(
+    snapshot: AccountSnapshot,
+    *,
+    source: str,
+    ts: float | None,
+    now: float | None = None,
+    stale: bool = False,
+    error_kind: Optional[str] = None,
+) -> AccountSnapshotState:
+    now_ts = time.time() if now is None else float(now)
+    snap_ts = float(ts or 0.0)
+    age_sec = max(0.0, now_ts - snap_ts) if snap_ts > 0.0 else 0.0
+    return AccountSnapshotState(
+        snapshot=snapshot,
+        source=str(source),
+        age_sec=age_sec,
+        stale=bool(stale),
+        error_kind=error_kind,
+    )
+
+
+def _account_allow_stale_sec(ttl: float, allow_stale_sec: float | None) -> float:
+    cfg = _ALLOW_STALE_SEC if allow_stale_sec is None else max(0.0, float(allow_stale_sec))
+    return max(float(ttl), cfg)
+
+
+def _classify_snapshot_error(exc: Exception) -> str:
+    if isinstance(exc, requests.HTTPError):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status is not None:
+            return f"http_{int(status)}"
+        return "http_error"
+    if isinstance(exc, requests.ReadTimeout):
+        return "read_timeout"
+    if isinstance(exc, requests.ConnectTimeout):
+        return "connect_timeout"
+    if isinstance(exc, requests.Timeout):
+        return "timeout"
+    if isinstance(exc, requests.ConnectionError):
+        return "connection_error"
+    if isinstance(exc, requests.RequestException):
+        return "request_exception"
+    return exc.__class__.__name__.lower()
+
+
 def _load_account_disk(cache_path: Path, *, force: bool = False) -> tuple[AccountSnapshot | None, float | None]:
     global _ACCOUNT_DISK_STATE
     if not _SHARED_CACHE_ENABLED:
@@ -266,9 +323,14 @@ def _load_account_disk(cache_path: Path, *, force: bool = False) -> tuple[Accoun
     return None, None
 
 
-def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = None) -> AccountSnapshot:
+def get_account_snapshot_state(
+    timeout: float = 7.0,
+    *,
+    cache_ttl_sec: float | None = None,
+    allow_stale_sec: float | None = None,
+) -> AccountSnapshotState:
     """
-    Retrieve OANDA account summary with a small TTL cache.
+    Retrieve OANDA account summary and return cache metadata.
 
     - In-process cache: avoids repeated REST calls within a loop.
     - Shared disk cache: logs/*.json enables multi-worker reuse.
@@ -284,6 +346,7 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
     if ttl is None:
         ttl = _as_float(os.getenv("OANDA_ACCOUNT_SNAPSHOT_TTL_SEC"), 1.0)
     ttl = max(0.0, float(ttl))
+    allow_stale = _account_allow_stale_sec(ttl, allow_stale_sec)
     base = "https://api-fxpractice.oanda.com" if practice else "https://api-fxtrade.oanda.com"
 
     headers = {"Authorization": f"Bearer {token}"}
@@ -299,7 +362,7 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
     ):
         snapshot = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
         _LAST_SNAPSHOT = snapshot
-        return snapshot
+        return _snapshot_state(snapshot, source="memory_cache", ts=_LAST_SNAPSHOT_TS, now=now, stale=False)
 
     cache_path, lock_path = _account_cache_paths(env_name)
     disk_snapshot, disk_ts = _load_account_disk(cache_path)
@@ -308,7 +371,7 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
         _LAST_SNAPSHOT = snapshot
         _LAST_SNAPSHOT_TS = disk_ts
         _LAST_SNAPSHOT_ENV = env_name
-        return snapshot
+        return _snapshot_state(snapshot, source="disk_cache", ts=disk_ts, now=now, stale=False)
 
     lock_acquired = False
     if _SHARED_CACHE_ENABLED and ttl > 0:
@@ -317,7 +380,6 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
     try:
         # Another process is refreshing; return stale cache if still usable.
         if _SHARED_CACHE_ENABLED and ttl > 0 and not lock_acquired:
-            allow_stale = max(ttl, _ALLOW_STALE_SEC)
             now = time.time()
             disk_snapshot, disk_ts = _load_account_disk(cache_path)
             if disk_snapshot is not None and disk_ts is not None and (now - disk_ts) <= allow_stale:
@@ -325,7 +387,14 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
                 _LAST_SNAPSHOT = snapshot
                 _LAST_SNAPSHOT_TS = disk_ts
                 _LAST_SNAPSHOT_ENV = env_name
-                return snapshot
+                return _snapshot_state(
+                    snapshot,
+                    source="disk_cache",
+                    ts=disk_ts,
+                    now=now,
+                    stale=(now - disk_ts) > ttl,
+                    error_kind="refresh_in_progress" if (now - disk_ts) > ttl else None,
+                )
             if (
                 _LAST_SNAPSHOT is not None
                 and _LAST_SNAPSHOT_TS is not None
@@ -334,7 +403,14 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
             ):
                 snapshot = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
                 _LAST_SNAPSHOT = snapshot
-                return snapshot
+                return _snapshot_state(
+                    snapshot,
+                    source="memory_cache",
+                    ts=_LAST_SNAPSHOT_TS,
+                    now=now,
+                    stale=(now - _LAST_SNAPSHOT_TS) > ttl,
+                    error_kind="refresh_in_progress" if (now - _LAST_SNAPSHOT_TS) > ttl else None,
+                )
 
         # Re-check disk cache after acquiring the lock (another process may have refreshed earlier).
         if lock_acquired and _SHARED_CACHE_ENABLED and ttl > 0:
@@ -345,7 +421,7 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
                 _LAST_SNAPSHOT = snapshot
                 _LAST_SNAPSHOT_TS = disk_ts
                 _LAST_SNAPSHOT_ENV = env_name
-                return snapshot
+                return _snapshot_state(snapshot, source="disk_cache", ts=disk_ts, now=now, stale=False)
 
         resp = requests.get(
             f"{base}/v3/accounts/{account}/summary",
@@ -371,16 +447,30 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
 
         if margin_rate <= 0:
             # Prefer a recent "healthy" snapshot over a broken one.
-            disk_snapshot, _ = _load_account_disk(cache_path, force=True)
+            disk_snapshot, disk_ts = _load_account_disk(cache_path, force=True)
             if disk_snapshot is not None and (disk_snapshot.margin_rate or 0) > 0:
                 snapshot = _apply_side_free_margin_ratio(disk_snapshot)
                 _LAST_SNAPSHOT = snapshot
-                _LAST_SNAPSHOT_TS = time.time()
+                _LAST_SNAPSHOT_TS = disk_ts or time.time()
                 _LAST_SNAPSHOT_ENV = env_name
-                return snapshot
+                return _snapshot_state(
+                    snapshot,
+                    source="disk_cache",
+                    ts=_LAST_SNAPSHOT_TS,
+                    now=time.time(),
+                    stale=(time.time() - float(_LAST_SNAPSHOT_TS or 0.0)) > ttl,
+                    error_kind="margin_rate_missing",
+                )
             if _LAST_SNAPSHOT is not None and (_LAST_SNAPSHOT.margin_rate or 0) > 0 and _LAST_SNAPSHOT_ENV == env_name:
                 _LAST_SNAPSHOT = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
-                return _LAST_SNAPSHOT
+                return _snapshot_state(
+                    _LAST_SNAPSHOT,
+                    source="memory_cache",
+                    ts=_LAST_SNAPSHOT_TS,
+                    now=time.time(),
+                    stale=(time.time() - float(_LAST_SNAPSHOT_TS or 0.0)) > ttl,
+                    error_kind="margin_rate_missing",
+                )
             raise RuntimeError("margin_rate_missing")
 
         free_ratio: Optional[float]
@@ -451,18 +541,25 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
                 _ACCOUNT_DISK_STATE.update({"path": str(cache_path), "mtime": mtime, "ts": ts_now, "data": snapshot})
             except Exception:
                 pass
-        return snapshot
-    except Exception:
+        return _snapshot_state(snapshot, source="live", ts=ts_now, now=ts_now, stale=False)
+    except Exception as exc:
         # fall back to cache if possible
         now = time.time()
-        allow_stale = max(ttl, _ALLOW_STALE_SEC)
+        error_kind = _classify_snapshot_error(exc)
         disk_snapshot, disk_ts = _load_account_disk(cache_path, force=True)
         if disk_snapshot is not None and disk_ts is not None and (now - disk_ts) <= allow_stale:
             snapshot = _apply_side_free_margin_ratio(disk_snapshot)
             _LAST_SNAPSHOT = snapshot
             _LAST_SNAPSHOT_TS = disk_ts
             _LAST_SNAPSHOT_ENV = env_name
-            return snapshot
+            return _snapshot_state(
+                snapshot,
+                source="disk_cache",
+                ts=disk_ts,
+                now=now,
+                stale=(now - disk_ts) > ttl,
+                error_kind=error_kind,
+            )
         if (
             _LAST_SNAPSHOT is not None
             and _LAST_SNAPSHOT_TS is not None
@@ -471,11 +568,31 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
         ):
             snapshot = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
             _LAST_SNAPSHOT = snapshot
-            return snapshot
+            return _snapshot_state(
+                snapshot,
+                source="memory_cache",
+                ts=_LAST_SNAPSHOT_TS,
+                now=now,
+                stale=(now - _LAST_SNAPSHOT_TS) > ttl,
+                error_kind=error_kind,
+            )
         raise
     finally:
         if lock_acquired:
             _release_lock(lock_path)
+
+
+def get_account_snapshot(
+    timeout: float = 7.0,
+    *,
+    cache_ttl_sec: float | None = None,
+    allow_stale_sec: float | None = None,
+) -> AccountSnapshot:
+    return get_account_snapshot_state(
+        timeout=timeout,
+        cache_ttl_sec=cache_ttl_sec,
+        allow_stale_sec=allow_stale_sec,
+    ).snapshot
 
 
 def get_position_summary(
@@ -492,6 +609,7 @@ def get_position_summary(
     if ttl is None:
         ttl = _as_float(os.getenv("OANDA_POSITION_SUMMARY_TTL_SEC"), 1.0)
     ttl = max(0.0, float(ttl))
+    allow_stale = _account_allow_stale_sec(ttl, None)
 
     try:
         token = get_secret("oanda_token")
@@ -540,7 +658,6 @@ def get_position_summary(
 
         try:
             if _SHARED_CACHE_ENABLED and ttl > 0 and not lock_acquired and state:
-                allow_stale = max(ttl, _ALLOW_STALE_SEC)
                 ts = _as_float(state.get("ts"), 0.0)
                 data = state.get("data")
                 if ts > 0 and isinstance(data, tuple) and (now - ts) <= allow_stale:
@@ -601,6 +718,31 @@ def get_position_summary(
             if lock_acquired:
                 _release_lock(lock_path)
     except Exception as exc:  # noqa: BLE001
+        now = time.time()
+        state = _POS_STATE.get(key) if "key" in locals() else None
+        if state:
+            ts = _as_float(state.get("ts"), 0.0)
+            data = state.get("data")
+            if ts > 0 and isinstance(data, tuple) and (now - ts) <= allow_stale:
+                return float(data[0]), float(data[1])
+        cache_path = locals().get("cache_path")
+        if isinstance(cache_path, Path):
+            try:
+                payload = _read_json(cache_path) or {}
+                ts = _as_float(payload.get("ts"), 0.0)
+                long_u = _as_float(payload.get("long_units"), 0.0)
+                short_u = _as_float(payload.get("short_units"), 0.0)
+                if ts > 0 and (now - ts) <= allow_stale:
+                    env_key = locals().get("key")
+                    if isinstance(env_key, tuple):
+                        _POS_STATE[env_key] = {
+                            "mtime": _as_float(cache_path.stat().st_mtime, 0.0),
+                            "ts": ts,
+                            "data": (long_u, short_u),
+                        }
+                    return long_u, short_u
+            except Exception:
+                pass
         try:
             log_metric("oanda.positions.error", 1.0, tags={"msg": str(exc)[:120]})
         except Exception:

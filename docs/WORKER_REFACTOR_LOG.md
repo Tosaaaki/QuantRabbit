@@ -11862,3 +11862,20 @@
 - 意図:
   - 戦略を一律停止せず、勝ち筋を維持したまま `flow` / `M1` の赤字単価だけを先に圧縮する。
   - 直近で出ていた OANDA 8s read timeout の false failure を減らし、執行品質の悪化を局所的に緩和する。
+
+## 2026-03-06 JST - `order_manager` に bounded stale margin snapshot fallback を追加
+
+- `utils/oanda_account.py`
+  - account snapshot の `source / age_sec / stale / error_kind` を返す state helper を追加。
+  - `get_position_summary()` は request failure 時でも usable な stale cache を再利用。
+  - `margin_used>0` かつ position summary 不明時に、side free margin ratio を過大評価しないよう補正。
+
+- `execution/order_manager.py`
+  - `_preflight_units` / `market_order` / `limit_order` の margin guard だけ、`503/timeout/connection_error` かつ短時間 stale cache のときだけ継続可能にする helper を追加。
+  - `ORDER_MARGIN_STALE_ALLOW_SEC` / `ORDER_MARGIN_STALE_MIN_FREE_RATIO` / `ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER` を導入。
+
+- `tests`
+  - `tests/utils/test_oanda_account.py`
+  - `tests/execution/test_order_manager_preflight.py`
+  - `tests/execution/test_order_manager_log_retry.py`
+  で bounded fallback の挙動を固定化。

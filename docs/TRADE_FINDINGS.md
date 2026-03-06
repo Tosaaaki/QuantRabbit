@@ -7089,3 +7089,25 @@ Status:
   - `local-v2-stack.env` では `M1` の dynamic alloc floor を `0.25`、`flow` clone を `0.18` へ下げ、同じ負け方を繰り返す戦略の赤字単価を先に落とす。
   - OANDA read timeout は `10s`、order-manager service timeout は `14s` に緩和し、8秒超の submit/close 失敗を減らす。
   - disk 逼迫で patch すら失敗したため、`logs/replay`, `logs/archive`, `logs/local_vm_parity`, `logs/reports/forecast_improvement`, `logs/oanda` の古い生成物を整理して空きを `310MiB` まで回復してから修正に入る。
+
+## 2026-03-06 11:30 UTC / 2026-03-06 20:30 JST - OANDA `/summary` 503 で entry が全面停止していたため、`order_manager` のみ 15 秒以内 stale snapshot を許可する bounded fallback を追加
+
+- 市況確認（ローカルV2実測）:
+  - `USD/JPY pricing/stream` は `200 OK` を維持。
+  - 一方で `/summary` と `/openTrades` は `503 Service unavailable` が連発。
+  - `health_snapshot`: `data_lag_ms=292-1129ms`, `decision_latency_ms=19-110ms`
+  - `orders.db` では `2026-03-06 20:16:55 JST` が直近 `filled` で、その後は `preflight_start -> margin_snapshot_failed` が続いた。
+
+- 事実:
+  - `execution/order_manager.py` は `market_order` / `limit_order` / `_preflight_units` の3経路で `/summary` 失敗を即 fail-closed していた。
+  - `utils/oanda_account.py` には共有 cache が既にあったが、`order_manager` 側は stale age/source を見られず、`openPositions` 要約も request failure 時に `(0,0)` へ落ちて free margin を過大評価しうる余地があった。
+
+- 対応:
+  - `utils/oanda_account.py` に snapshot の `source / age_sec / stale / error_kind` を返す state helper を追加。
+  - `order_manager` では `market_order` / `limit_order` / `_preflight_units` の3箇所だけ、`503/timeout/connection_error` かつ `15s` 以内・`free_margin_ratio>=0.30`・`health_buffer>=0.25` の stale snapshot を許可する bounded fallback を実装。
+  - `get_position_summary()` は request failure 時でも usable な stale cache を優先再利用し、`margin_used>0` なのに `(0,0)` へ落ちた時に side free margin ratio を `1.0` へ誤って押し上げないよう修正。
+  - `ops/env/local-v2-stack.env` に `ORDER_MARGIN_STALE_ALLOW_SEC=15`、`ORDER_MARGIN_STALE_MIN_FREE_RATIO=0.30`、`ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER=0.25` を明示。
+
+- 期待効果:
+  - 数秒級の OANDA `/summary` flap では entry を無駄に止めず、長めの outage では従来どおり fail-closed を維持する。
+  - stale fallback は `order_manager` の margin/preflight 導線に限定し、全体を fail-open にしない。

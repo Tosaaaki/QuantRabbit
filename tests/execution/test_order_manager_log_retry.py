@@ -45,6 +45,15 @@ class _SideCapSnapshot:
         self.margin_rate = 0.04
 
 
+class _SnapshotState:
+    def __init__(self, snapshot) -> None:
+        self.snapshot = snapshot
+        self.source = "live"
+        self.age_sec = 0.0
+        self.stale = False
+        self.error_kind = None
+
+
 def _invoke_log_order(*, fast_fail: bool = False) -> None:
     order_manager._log_order(
         pocket="scalp_fast",
@@ -312,7 +321,10 @@ def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(monkeypat
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
-    monkeypatch.setattr("utils.oanda_account.get_account_snapshot", lambda cache_ttl_sec=1.0: _LimitSnapshot())
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
+    )
     monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
 
     trade_id, order_id = asyncio.run(
@@ -381,8 +393,8 @@ def test_limit_order_allows_net_reducing_under_side_cap(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
     monkeypatch.setattr(
-        "utils.oanda_account.get_account_snapshot",
-        lambda cache_ttl_sec=1.0: _SideCapSnapshot(),
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(_SideCapSnapshot()),
     )
     # Long/short both large (hedged) but net is small:
     # sell -180 reduces net exposure while side_cap would appear high.
@@ -512,7 +524,10 @@ def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypa
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
-    monkeypatch.setattr("utils.oanda_account.get_account_snapshot", lambda cache_ttl_sec=1.0: _LimitSnapshot())
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
+    )
     monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
 
     trade_id, order_id = asyncio.run(

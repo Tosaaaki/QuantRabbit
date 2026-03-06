@@ -48,10 +48,49 @@ class _ManualPressureSnapshot:
         self.health_buffer = health_buffer
 
 
+class _StaleGuardSnapshot:
+    def __init__(
+        self,
+        *,
+        nav: float = 300_000.0,
+        margin_available: float = 60_000.0,
+        margin_used: float = 300_000.0,
+        margin_rate: float = 0.04,
+        free_margin_ratio: float = 0.42,
+        health_buffer: float = 0.38,
+    ) -> None:
+        self.nav = nav
+        self.margin_available = margin_available
+        self.margin_used = margin_used
+        self.margin_rate = margin_rate
+        self.free_margin_ratio = free_margin_ratio
+        self.health_buffer = health_buffer
+
+
+class _SnapshotState:
+    def __init__(
+        self,
+        snapshot,
+        *,
+        source: str = "disk_cache",
+        age_sec: float = 0.0,
+        stale: bool = False,
+        error_kind: str | None = None,
+    ) -> None:
+        self.snapshot = snapshot
+        self.source = source
+        self.age_sec = age_sec
+        self.stale = stale
+        self.error_kind = error_kind
+
+
 def test_preflight_allows_margin_reduction_on_hedge(monkeypatch):
     """Opposite-direction entry that shrinks net margin should be allowed even when free margin is low."""
     snap = _Snapshot(margin_available=50_000.0, margin_used=480_000.0, margin_rate=0.04)
-    monkeypatch.setattr("utils.oanda_account.get_account_snapshot", lambda: snap)
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(snap),
+    )
     # Net short 80k; buy 50k reduces net to 30k.
     monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda timeout=3.0: (0.0, 80_000.0))
 
@@ -65,7 +104,10 @@ def test_preflight_allows_margin_reduction_on_hedge(monkeypatch):
 
 def test_preflight_scales_down_with_budget(monkeypatch):
     snap = _Snapshot(margin_available=60_000.0, margin_used=300_000.0, margin_rate=0.04)
-    monkeypatch.setattr("utils.oanda_account.get_account_snapshot", lambda: snap)
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(snap),
+    )
     monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda timeout=3.0: (50_000.0, 0.0))
 
     units, req_margin = _preflight_units(estimated_price=150.0, requested_units=100_000)
@@ -77,6 +119,37 @@ def test_preflight_scales_down_with_budget(monkeypatch):
     budget = snap.margin_used + snap.margin_available * 0.92
     assert req_margin == abs(net_after) * per_unit_margin
     assert req_margin <= budget + 1.0  # small slack for rounding
+
+
+def test_preflight_uses_recent_transient_stale_snapshot(monkeypatch):
+    state = _SnapshotState(
+        _StaleGuardSnapshot(),
+        age_sec=6.0,
+        stale=True,
+        error_kind="http_503",
+    )
+    monkeypatch.setattr("utils.oanda_account.get_account_snapshot_state", lambda **_kwargs: state)
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda timeout=3.0: (50_000.0, 0.0))
+
+    units, req_margin = _preflight_units(estimated_price=150.0, requested_units=100_000)
+
+    assert 0 < units < 100_000
+    assert req_margin > 0.0
+
+
+def test_preflight_rejects_old_stale_snapshot(monkeypatch):
+    state = _SnapshotState(
+        _StaleGuardSnapshot(),
+        age_sec=30.0,
+        stale=True,
+        error_kind="http_503",
+    )
+    monkeypatch.setattr("utils.oanda_account.get_account_snapshot_state", lambda **_kwargs: state)
+
+    units, req_margin = _preflight_units(estimated_price=150.0, requested_units=100_000)
+
+    assert units == 0
+    assert req_margin == 0.0
 
 
 def test_manual_margin_pressure_details_blocks_when_manual_exposure_and_margin_tight(monkeypatch):
