@@ -2369,7 +2369,7 @@ def _allow_stop_loss_on_fill(
 
     Decision order:
     1) strategy-specific override (`ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_<TAG>`)
-    2) family override for ping variants (B/C/D)
+    2) family override for ping variants (B/C/D/flow)
     3) global baseline (`ORDER_FIXED_SL_MODE`; unset == OFF)
     """
     tag = str(strategy_tag or "").strip().lower()
@@ -2387,6 +2387,8 @@ def _allow_stop_loss_on_fill(
             return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C", False)
         if tag_text.startswith("scalp_ping_5s_d"):
             return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_D", False)
+        if tag_text.startswith("scalp_ping_5s_flow"):
+            return _env_bool("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_FLOW", False)
         return None
 
     mode = fixed_sl_mode()
@@ -2445,6 +2447,8 @@ def _disable_hard_stop_by_strategy(
         return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_C", True)
     if base_tag.startswith("scalp_ping_5s_d"):
         return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_D", True)
+    if base_tag.startswith("scalp_ping_5s_flow"):
+        return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_FLOW", True)
     # Legacy 5s ping family keeps previous default (disabled) unless overridden.
     if base_tag.startswith("scalp_ping_5"):
         return _env_bool("ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5", True)

@@ -11646,3 +11646,53 @@
 
 - 検証:
   - `pytest tests/workers/test_m1scalper_split_workers.py` passed
+
+## 2026-03-06 JST - order-manager: stopLossOnFill allowlist 追補（`scalp_ping_5s_flow*` / `M1Scalper-M1`, `ORDER_FIXED_SL_MODE=0` 対応）
+
+- `execution/order_manager.py`
+  - `_allow_stop_loss_on_fill()` の ping5s family override に `scalp_ping_5s_flow*` を追加し、`ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_FLOW` を参照（未設定時は後方互換で `False`）。
+  - `_disable_hard_stop_by_strategy()` に `scalp_ping_5s_flow*` 分岐を追加し、`ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_FLOW` を参照（未設定時は後方互換で `True`）。
+
+- `ops/env/quant-order-manager.env`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_M1SCALPER_M1=1` を追加し、strategy 単位で stopLossOnFill を許可。
+
+## 2026-03-06 JST - order-manager: micro pocket stopLossOnFill allowlist 追補（TPのみ/SLなしの是正）
+
+- `ops/env/quant-order-manager.env`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MOMENTUMBURST=1`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROLEVELREACTOR=1`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROTRENDRETEST=1`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICRORANGEBREAK=1`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROVWAPREVERT=1`
+  - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROVWAPBOUND=1`
+
+## 2026-03-06 JST - position-manager: ORDER_FILL close の trades.db 欠損を防止（clientTradeID fallback + watermark hole防止）
+
+- `execution/position_manager.py`
+  - `_parse_and_save_trades()`:
+    - `_get_trade_details(trade_id)` が失敗しても close を捨てず、`closed_trade.clientTradeID` → `orders.db(client_order_id)` の fallback で entry meta を復元して保存する。
+    - それでも details を復元できない場合は tx/closed_trade から最小限の details を生成して保存する。
+    - `_last_tx_id` は連続区間でのみ進め、hole を飛び越えないようにする（再処理は idempotent）。
+
+- `scripts/backfill_trades_from_oanda_idrange.py`
+  - OANDA transactions `idrange` を replay して `PositionManager._parse_and_save_trades()` へ流し込み、欠損 close を backfill/repair できるようにする（冪等）。
+
+## 2026-03-06 JST - position-manager: sync_trades の forward paging（backlog>MAX_FETCH でも hole を作らない）+ /summary lastTransactionID
+
+- `execution/position_manager.py`
+  - `_fetch_closed_trades()`:
+    - backlog が大きいとき `last_tx_id-_MAX_FETCH+1` へジャンプして欠損を作る挙動を廃止し、`fetch_from=self._last_tx_id+1` の前進型ページングへ変更。
+    - `lastTransactionID` の取得を `/v3/accounts/{ACCOUNT}/summary` に変更し、巨大な `transactions` payload を避ける。
+
+## 2026-03-06 JST - scalp_ping_5s_flow: 緊急リスク縮小（破滅サイズ停止）
+
+- `ops/env/scalp_ping_5s_flow.env`
+  - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES=2`
+  - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION=1`
+  - `SCALP_PING_5S_FLOW_BASE_ENTRY_UNITS=120`
+  - `SCALP_PING_5S_FLOW_MAX_UNITS=600`
+  - `SCALP_PING_5S_FLOW_MAX_SPREAD_PIPS=0.9`
+
+- `ops/env/quant-scalp-ping-5s-flow.env`
+  - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES=2`
+  - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION=1`

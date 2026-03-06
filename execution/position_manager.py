@@ -2232,12 +2232,11 @@ class PositionManager:
         """OANDAから決済済みトランザクションを取得"""
         fetch_start = time.monotonic()
         summary_start = time.monotonic()
-        summary_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
+        # Use /summary for lastTransactionID to avoid downloading a potentially large
+        # transactions payload when backlog is large.
+        summary_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/summary"
         try:
-            summary = self._request_json(
-                summary_url,
-                params={"sinceID": self._last_tx_id},
-            ) or {}
+            payload = self._request_json(summary_url) or {}
         except requests.RequestException as e:
             print(f"[PositionManager] Error fetching transactions summary: {e}")
             self._reset_http_if_needed(e)
@@ -2248,12 +2247,14 @@ class PositionManager:
                 "chunk_ms": 0.0,
                 "chunk_count": 0,
                 "transactions": 0,
+                "summary_source": "summary",
             }
             return []
         summary_ms = max(0.0, (time.monotonic() - summary_start) * 1000.0)
 
         try:
-            last_tx_id = int(summary.get("lastTransactionID") or 0)
+            account_payload = payload.get("account") or {}
+            last_tx_id = int(account_payload.get("lastTransactionID") or 0)
         except (TypeError, ValueError):
             last_tx_id = 0
 
@@ -2265,13 +2266,15 @@ class PositionManager:
                 "chunk_ms": 0.0,
                 "chunk_count": 0,
                 "transactions": 0,
+                "summary_source": "summary",
+                "last_tx_id": last_tx_id,
             }
             return []
 
         fetch_from = self._last_tx_id + 1
-        min_allowed = max(1, last_tx_id - _MAX_FETCH + 1)
-        if fetch_from < min_allowed:
-            fetch_from = min_allowed
+        max_fetch = max(1, int(_MAX_FETCH or 0))
+        # Forward paging: never jump to the newest range to avoid creating holes.
+        fetch_to = min(last_tx_id, fetch_from + max_fetch - 1)
 
         transactions: list[dict] = []
         chunk_from = fetch_from
@@ -2279,8 +2282,8 @@ class PositionManager:
         chunk_ms = 0.0
         chunk_count = 0
 
-        while chunk_from <= last_tx_id:
-            chunk_to = min(chunk_from + _CHUNK_SIZE - 1, last_tx_id)
+        while chunk_from <= fetch_to:
+            chunk_to = min(chunk_from + _CHUNK_SIZE - 1, fetch_to)
             params = {"from": chunk_from, "to": chunk_to}
             chunk_start = time.monotonic()
             try:
@@ -2308,12 +2311,18 @@ class PositionManager:
 
         transactions.sort(key=_tx_sort_key)
         fetch_ms = max(0.0, (time.monotonic() - fetch_start) * 1000.0)
+        backlog = max(0, int(last_tx_id) - int(self._last_tx_id))
         self._last_sync_fetch_meta = {
             "fetch_ms": fetch_ms,
             "summary_ms": summary_ms,
             "chunk_ms": chunk_ms,
             "chunk_count": chunk_count,
             "transactions": len(transactions),
+            "summary_source": "summary",
+            "fetch_from": fetch_from,
+            "fetch_to": fetch_to,
+            "last_tx_id": last_tx_id,
+            "backlog": backlog,
         }
         return transactions
 
@@ -2520,6 +2529,126 @@ class PositionManager:
             "details_source": "orders",
         }
 
+    def _get_trade_details_from_orders_by_client_order_id(self, client_order_id: str) -> dict | None:
+        if not client_order_id:
+            return None
+        client_id = str(client_order_id).strip()
+        if not client_id:
+            return None
+        con = None
+        try:
+            con = _open_orders_db_readonly()
+            if con is None:
+                return None
+            row = con.execute(
+                """
+                SELECT pocket, instrument, units, executed_price, ts, client_order_id
+                FROM orders
+                WHERE client_order_id = ?
+                  AND status = 'filled'
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (client_id,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            print(
+                "[PositionManager] orders.db lookup failed for client_order_id "
+                f"{client_id}: {exc}"
+            )
+            return None
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+        if not row:
+            return None
+        ts = row["ts"]
+        try:
+            entry_time = datetime.fromisoformat(ts)
+            if entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=timezone.utc)
+            else:
+                entry_time = entry_time.astimezone(timezone.utc)
+        except Exception:
+            entry_time = datetime.now(timezone.utc)
+
+        strategy_tag = None
+        thesis_obj = None
+        con2 = None
+        try:
+            con2 = _open_orders_db_readonly()
+            if con2 is None:
+                raise sqlite3.OperationalError("orders.db unavailable")
+            att = con2.execute(
+                """
+                SELECT request_json FROM orders
+                WHERE client_order_id = ? AND status = 'submit_attempt'
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (client_id,),
+            ).fetchone()
+            if att and att["request_json"]:
+                payload = json.loads(att["request_json"]) or {}
+                thesis_obj = payload.get("entry_thesis")
+                if not isinstance(thesis_obj, dict):
+                    thesis_obj = (payload.get("meta") or {}).get("entry_thesis")
+                thesis_obj = _normalize_entry_contract_fields(
+                    thesis_obj,
+                    payload,
+                    fallback_units=row["units"],
+                )
+                if isinstance(thesis_obj, dict):
+                    strategy_tag = thesis_obj.get("strategy_tag")
+        except sqlite3.Error:
+            pass
+        except Exception:
+            thesis_obj = None
+        finally:
+            if con2 is not None:
+                try:
+                    con2.close()
+                except Exception:
+                    pass
+
+        if strategy_tag is None:
+            strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
+        raw_tag = None
+        if isinstance(thesis_obj, dict):
+            raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
+        if not raw_tag:
+            raw_tag = strategy_tag
+        thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+        if norm_tag:
+            strategy_tag = norm_tag
+        thesis_obj = _normalize_entry_contract_fields(
+            thesis_obj,
+            {
+                "entry_probability": None,
+                "entry_units_intent": None,
+                "oanda": {"order": {"units": row["units"]}},
+                "entry_thesis": thesis_obj,
+            },
+            fallback_units=row["units"],
+        )
+        pocket = _resolve_pocket(row["pocket"], strategy_tag, client_id)
+        macro_regime, micro_regime = _extract_regime(thesis_obj)
+        return {
+            "entry_price": float(row["executed_price"] or 0.0),
+            "entry_time": entry_time,
+            "units": int(row["units"] or 0),
+            "pocket": pocket,
+            "client_order_id": client_id,
+            "strategy_tag": strategy_tag,
+            "entry_thesis": thesis_obj,
+            "macro_regime": macro_regime,
+            "micro_regime": micro_regime,
+            "details_source": "orders",
+        }
+
     def _resolve_entry_meta(self, trade_id: str) -> dict | None:
         if not trade_id:
             return None
@@ -2541,6 +2670,8 @@ class PositionManager:
     def _parse_and_save_trades(self, transactions: list[dict]):
         """トランザクションを解析し、DBに保存"""
         parse_start = time.monotonic()
+        prev_last_tx_id = int(getattr(self, "_last_tx_id", 0) or 0)
+        min_tx_id_seen: int | None = None
         details_ms = 0.0
         details_calls = 0
         db_ms = 0.0
@@ -2555,6 +2686,8 @@ class PositionManager:
                 tx_id = int(tx_id_raw)
             except (TypeError, ValueError):
                 continue
+            if min_tx_id_seen is None or tx_id < min_tx_id_seen:
+                min_tx_id_seen = tx_id
             cashflow_record = _extract_cashflow_tx(tx)
             if cashflow_record:
                 cashflows_to_save.append(cashflow_record)
@@ -2581,12 +2714,61 @@ class PositionManager:
                 if not trade_id:
                     continue
 
+                close_price = float(tx.get("price", 0.0))
+                close_time = _parse_timestamp(tx.get("time"))
+                client_trade_id = closed_trade.get("clientTradeID") or closed_trade.get("client_trade_id")
+
                 details_start = time.monotonic()
                 details = self._get_trade_details(trade_id)
                 details_ms += max(0.0, (time.monotonic() - details_start) * 1000.0)
                 details_calls += 1
                 if not details:
-                    continue
+                    if client_trade_id:
+                        details_start2 = time.monotonic()
+                        details = self._get_trade_details_from_orders_by_client_order_id(
+                            str(client_trade_id)
+                        )
+                        details_ms += max(
+                            0.0, (time.monotonic() - details_start2) * 1000.0
+                        )
+                        details_calls += 1
+                if not details:
+                    try:
+                        units_raw = closed_trade.get("units")
+                        closure_units = int(float(units_raw)) if units_raw is not None else 0
+                    except Exception:
+                        closure_units = 0
+                    inferred_tag = None
+                    client_id_str = str(client_trade_id).strip() if client_trade_id else ""
+                    if client_id_str:
+                        inferred_tag = self._infer_strategy_tag(None, client_id_str, None)
+                    thesis_obj, norm_tag = _apply_strategy_tag_normalization(None, inferred_tag)
+                    if norm_tag:
+                        inferred_tag = norm_tag
+                    thesis_obj = _normalize_entry_contract_fields(
+                        thesis_obj,
+                        {
+                            "entry_probability": None,
+                            "entry_units_intent": None,
+                            "units": closure_units,
+                            "entry_thesis": thesis_obj,
+                        },
+                        fallback_units=closure_units,
+                    )
+                    macro_regime, micro_regime = _extract_regime(thesis_obj)
+                    details = {
+                        "entry_price": 0.0,
+                        "entry_time": close_time,
+                        "units": closure_units,
+                        "pocket": _resolve_pocket(None, inferred_tag, client_id_str),
+                        "client_order_id": client_id_str or None,
+                        "strategy_tag": inferred_tag,
+                        "entry_thesis": thesis_obj,
+                        "macro_regime": macro_regime,
+                        "micro_regime": micro_regime,
+                        "details_source": "tx",
+                    }
+
                 inferred_tag = self._infer_strategy_tag(
                     details.get("entry_thesis"),
                     details.get("client_order_id"),
@@ -2594,7 +2776,6 @@ class PositionManager:
                 )
                 if inferred_tag and not details.get("strategy_tag"):
                     details["strategy_tag"] = inferred_tag
-                client_trade_id = closed_trade.get("clientTradeID") or closed_trade.get("client_trade_id")
                 if client_trade_id:
                     if not details.get("client_order_id") or details.get("details_source") != "oanda":
                         details["client_order_id"] = client_trade_id
@@ -2607,9 +2788,6 @@ class PositionManager:
                         not details.get("strategy_tag") or details.get("details_source") != "oanda"
                     ):
                         details["strategy_tag"] = inferred_from_trade
-
-                close_price = float(tx.get("price", 0.0))
-                close_time = _parse_timestamp(tx.get("time"))
 
                 # USD/JPY の pips を計算 (1 pip = 0.01 JPY)
                 # OANDAのPLは通貨額なので、価格差からpipsを計算する
@@ -2833,7 +3011,14 @@ class PositionManager:
                 )
 
         if processed_tx_ids:
-            self._last_tx_id = max(processed_tx_ids)
+            base = prev_last_tx_id
+            if min_tx_id_seen is not None:
+                base = max(base, int(min_tx_id_seen) - 1)
+            new_last = base
+            while (new_last + 1) in processed_tx_ids:
+                new_last += 1
+            if new_last > self._last_tx_id:
+                self._last_tx_id = new_last
         parse_ms = max(0.0, (time.monotonic() - parse_start) * 1000.0)
         self._last_sync_parse_meta = {
             "parse_ms": parse_ms,

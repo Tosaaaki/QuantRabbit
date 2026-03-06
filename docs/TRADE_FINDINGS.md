@@ -23,6 +23,68 @@
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-06 13:25 JST / local-v2: 資産減少/稼げてない RCA（scalp_ping_5s_flow_live + M1Scalper-M1 寄与大、margin closeout 高止まり）
+
+Period:
+- 集計: 2026-03-05 13:19〜2026-03-06 13:19 JST（UTC 2026-03-05 04:19〜2026-03-06 04:19）
+- 比較: 直近7d（UTC 2026-02-27 04:19〜2026-03-06 04:19）
+- 対象（実測）: `logs/metrics.db`, `logs/orders.db`, `logs/trades.db`
+- 対象（OANDA API）: account summary / transactions（TRANSFER_FUNDS, DAILY_FINANCING）/ openTrades / pricing
+
+Fact:
+- 市況（OANDA pricing, UTC 04:10 / JST 13:10）:
+  - USD/JPY `bid=157.510 / ask=157.518 / spread=0.8p`
+  - pricing latency `~200ms`
+  - replay(M5) `ATR14_pips~3.14` / `range_60m_pips~6.3`
+- 口座状態（OANDA summary, UTC 04:14 / JST 13:14）:
+  - `balance=38652.5 / NAV=38321.7 / unrealized=-330.8`
+  - `marginCloseoutPercent=0.9428` / `marginAvailable=2191.9`（**closeout近傍**）
+  - openTrades: `n=13`、`USD_JPY net_units=+4175 / gross_units=7303`（unrealized寄与: micro=-262 / scalp=-60 / scalp_fast=-8）
+- 直近24h（account metrics, practice=false）:
+  - `ΔNAV=-12845.9 / Δbalance=-10454.5`（含み変動が約 `-2391`）
+- 直近24h（bot only, trades.db realized_pl）:
+  - `n=2459 / win_rate=0.536 / PF=0.508 / net=-10773 / net_pips=-1743.6`
+  - win率>50%でも **avg_loss が avg_win を大幅に上回る**（期待値負け）
+- 直近7d（trades.db realized_pl）:
+  - bot: `net=-11096 / PF=0.506`、manual: `net=-7851 / PF=0.057`（manual寄与が大きい）
+  - OANDA DAILY_FINANCING: `-66.9(24h) / -653.2(7d)`（主因ではないが確実に減る）
+- 実行コスト（orders.db 直近2000 filled, analyze_entry_precision）:
+  - `spread_pips mean=0.805 (p50=0.8)` / `cost_vs_mid_pips mean=0.401` / `slip_p95=0.3p`
+  - `latency_submit p50~193ms` / `latency_preflight p50~228ms`（**執行自体は通常**）
+  - strategy別（要点）:
+    - `scalp_ping_5s_flow_live`: `tp_mean~1.44p / sl_mean~1.32p`（**spread(0.8p)に対して取り幅が小さすぎる**）
+    - `M1Scalper-M1`: `tp_mean~7.35p / sl_mean~6.07p` だが、実現では `avg_win~+5.32 / avg_loss~-17.71`（損失が勝ちの約3.3倍）
+- 拒否/ブロック（orders.db, client_order_id最終ステータス, 直近24h）:
+  - OANDA `rejected=3/2934`（低い）
+  - 一方で `margin_usage_projected_cap=119` / `strategy_control_entry_disabled=146` / `margin_usage_exceeds_cap=26` が観測（主にscalp_fast）
+
+Failure Cause:
+- 主因（戦略期待値）:
+  - `scalp_ping_5s_flow_live` が **PF=0.30台**で大幅な赤字寄与（取り幅が spread/コストに対して小さく、期待値が構造的に負け）。
+  - `M1Scalper-M1` は勝率は高いが、**avg_loss が avg_win の約3倍**で PF<1 に沈む（負けトレードの損失拡大）。
+- 副因（リスク/稼働制約）:
+  - margin closeout が高止まり（`marginCloseoutPercent~0.94`）し、risk cap 系ブロックが出て「悪化局面での建玉・調整」が難しくなる。
+
+Improvement:
+- P0（当日・安全）: margin closeout 回避を最優先。新規entryを抑え、exitは継続。
+  - `SCALP_PING_5S_FLOW_*` の entry を一時縮小/停止（`STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_FLOW=0` または units/active_trades を強制縮小）し、口座余力を回復させる。
+  - `quant-m1scalper` は `M1SCALP_BASE_UNITS` を縮小し、`M1SCALP_MARGIN_USAGE_HARD` を下げて過剰レバを抑える。
+- P1（当日〜1日）: scalp_ping_5s_flow_live の「期待値負け」を構造的に解消。
+  - forecast gate: `FORECAST_GATE_EXPECTED_PIPS_MIN_*` と `TARGET_REACH_MIN_*` を **cost_vs_mid(≈0.4p)+spread余裕**以上へ引き上げ（low edgeを排除）。
+  - local gating: `SCALP_PING_5S_FLOW_ENTRY_LEADING_PROFILE_REJECT_BELOW` を引き上げ、低品質エントリを減らす。
+  - perf/profit guard（strategy限定）を有効化し、PF悪化時は scale-to-low へ自動退避。
+- P1（1〜3日）: M1Scalper-M1 の「損失拡大」を抑制（exit_worker/損切り設計を重点監査）。
+  - 負け側の cut を早める（損失上限・早期撤退条件の追加/強化）。
+  - replay で「どの局面が大負け源泉か」を再現し、entryフィルタ or exit改善へ落とす。
+
+Verification:
+- 24hで `PF>1.0` / `expectancy>0` を最低目標（まず n>=300 で暫定判定 → 14d で確定）。
+- `scalp_ping_5s_flow_live` の `tp_mean/spread` 比が改善し、net_pips がマイナス継続しないこと。
+- `marginCloseoutPercent` と `account.margin_usage_ratio` が 0.90 未満へ戻ること（急変時は即時縮小）。
+
+Status:
+- open
+
 ## 2026-03-05 17:30 JST / local-v2: Pattern Gateが実質無効化されていた問題を修正（preserve_strategy_intent下でも評価）+ 運用キー整理 + trades.entry_thesis backfill 追加
 
 Period:
@@ -6680,3 +6742,128 @@ Status:
   1. `trades.db`: `source_signal_tag='M1Scalper-buy-dip'` が 0 件に収束すること。
   2. `trades.db`: `source_signal_tag='M1Scalper-sell-rally'` の `exec_side='short'` が 0 件に収束すること。
   3. `trades.db`: `M1Scalper-M1` の直近1h `net_jpy` / `PF` が改善方向で安定すること。
+
+## 2026-03-05 20:07 UTC / 2026-03-06 05:07 JST - order-manager: `scalp_ping_5s_flow_live` / `M1Scalper-M1` の stopLossOnFill 欠損（broker SLなし）→ targeted allowlist 修正
+
+- 事実（ローカル実測: OANDA openTrades / `logs/orders.db`）:
+  - `scalp_ping_5s_flow_live` / `M1Scalper-M1` の一部エントリーで `takeProfitOnFill` は付くが `stopLossOnFill` が付かず、建玉が broker SLなしで残る（`stopLossOrder=null`）。
+  - 一方で `logs/orders.db` には同一 `client_order_id` の `sl_price` が記録されており、SL価格の算出自体は行われていた。
+
+- 原因:
+  - `ORDER_FIXED_SL_MODE=0` かつ strategy override 未設定時、`execution/order_manager.py:_allow_stop_loss_on_fill()` の family override が `scalp_ping_5s_b/c/d` のみで、`scalp_ping_5s_flow*` と `M1Scalper-M1` が許可対象外になっていた。
+
+- 対応（local V2, 予防的/後方互換）:
+  - `execution/order_manager.py`: `scalp_ping_5s_flow*` を family override に追加し、`ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_FLOW` を参照（未設定時の既定は `False`）。
+  - `execution/order_manager.py`: `_disable_hard_stop_by_strategy()` が `scalp_ping_5s_flow*` を `ORDER_DISABLE_ENTRY_HARD_STOP_SCALP_PING_5S_FLOW` で解決できるようにし、env既定は後方互換で `True`（＝hard stop 無効）を維持。
+  - `ops/env/quant-order-manager.env`: `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_M1SCALPER_M1=1` を追加（strategy 単位で stopLossOnFill を許可）。
+
+## 2026-03-05 21:36 UTC / 2026-03-06 06:36 JST - position-manager: ORDER_FILL close の trades.db 欠損（収益RCA誤差）→ clientTradeID fallback + watermark hole防止 + 24h backfill
+
+- Period:
+  - 集計窓: 直近24h（OANDA transactions from/to）
+  - 市況確認（OANDA実測）:
+    - `USD_JPY bid/ask=157.527/157.535`、`spread=0.8 pips`
+    - `ATR14(M5)=7.607 pips`、`range_60m=18.2 pips`
+    - API応答: pricing `225ms` / openTrades `220ms` / candles(M5) `228ms`
+
+- Fact:
+  - `logs/metrics.db` の `account.balance` が直近24hで大きく減少（約 `-5.48k JPY`）。
+  - OANDA transactions 真値では、
+    - `ORDER_FILL(pl+financing+commission)` 合計が約 `-5.13k JPY`
+    - `DAILY_FINANCING` 合計が約 `-0.35k JPY`
+    - 上記合計が `balance delta` と整合。
+  - backfill 後の `logs/trades.db`（直近24h）:
+    - pocket別: `scalp=-4.78k` / `scalp_fast=-1.64k` / `micro=+0.91k` / `manual=+0.38k`（合計 `-5.13k`）
+    - loss寄与TOP: `M1Scalper-M1=-4.78k`, `scalp_ping_5s_flow_live=-1.54k`
+  - 一方 `logs/trades.db` は close の `ORDER_FILL` が大量欠損し、同窓で
+    - `missing_pairs=1265`
+    - `missing_realized_sum=-5670.674 JPY`
+    - 欠損 reason: `MARKET_ORDER_TRADE_CLOSE` が大半（`1157`）
+
+- Failure Cause:
+  - `execution/position_manager.py:_parse_and_save_trades()` が
+    `details = _get_trade_details(trade_id)` 失敗時に `continue` して close を保存しない。
+  - 同時に `_last_tx_id` を `max(processed_tx_ids)` へ進めるため、
+    一部トランザクションが失敗すると水位が穴を飛び越え、永続欠損になる。
+
+- Improvement:
+  - `execution/position_manager.py`:
+    - `_parse_and_save_trades()`:
+      - `closed_trade.clientTradeID` を使い `orders.db (client_order_id)` から entry meta を復元する fallback を追加。
+      - details が取れない場合でも tx/closed_trade から最小限の details を組み立て、**close を必ず保存**。
+      - `_last_tx_id` は連続区間でのみ進め、hole を飛び越えないようにした（idempotent 再処理は許容）。
+  - `scripts/backfill_trades_from_oanda_idrange.py`:
+    - OANDA transactions `idrange` を指定レンジで取得し、`PositionManager._parse_and_save_trades()` へ流し込む backfill/repair ツールを追加（`uniq(transaction_id, ticket_id)` により冪等）。
+
+- Verification:
+  - 直近24h window を再処理し、OANDA `ORDER_FILL close` の `(transaction_id, tradeID)` が `logs/trades.db` に欠損なく保存される（`missing_pairs=0`）こと。
+  - `logs/trades.db` の 24h `sum(realized_pl)` が OANDA `ORDER_FILL` 真値（約 `-5.13k JPY`）と整合すること。
+
+- Status:
+  - done（`quant-position-manager` restart + `python scripts/backfill_trades_from_oanda_idrange.py --last-n 5000` 実行、`missing_pairs=0` を確認）
+  - 追記: windowズレで `--last-n 5000` が不足し得るため、`python scripts/backfill_trades_from_oanda_idrange.py --from-id 418699` を実行し、`[418699, 439517]` の `missing_pairs=0` を再確認。
+
+## 2026-03-05 21:54 UTC / 2026-03-06 06:54 JST - order-manager: micro pocket の stopLossOnFill 欠損（TPのみ/SLなし）→ strategy allowlist 追補
+
+- Fact（ローカル実測: OANDA openTrades / `logs/orders.db`）:
+  - `USD_JPY` の openTrades `7/7` が `takeProfit` は付くが `stopLoss` が `null`（broker SLなし）で残存。全て `pocket=micro`。
+  - `logs/orders.db` には同一 `client_order_id` の `sl_price` が記録されており、SL価格の算出自体は行われていた。
+
+- Failure Cause:
+  - `ORDER_FIXED_SL_MODE=0` 既定では stopLossOnFill が無効（`stop_loss_policy` の baseline）。
+  - `execution/order_manager.py:_allow_stop_loss_on_fill()` の strategy override が micro の主要 strategy tag（`MomentumBurst*` / `MicroLevelReactor*` / `MicroTrendRetest*` / `MicroRangeBreak*` / `MicroVWAPRevert*` / `MicroVWAPBound*`）に未設定だった。
+
+- Improvement（local V2）:
+  - `ops/env/quant-order-manager.env`:
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MOMENTUMBURST=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROLEVELREACTOR=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROTRENDRETEST=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICRORANGEBREAK=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROVWAPREVERT=1`
+    - `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_MICROVWAPBOUND=1`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-order-manager`
+
+- Verification（反映後 次の micro entry で確認）:
+  1. `logs/orders.db` の `submit_attempt.request_json` に `stopLossOnFill` が含まれること。
+  2. OANDA openTrades の `stopLossOrder` が `null` ではなくなること。
+  3. reject率が悪化しないこと（`orders.db status='rejected'` / `STOP_LOSS_ON_FILL_LOSS` など）。
+
+- Status:
+  - in_progress（order-manager restart 済み。次の micro entry で broker SL 付与を実測確認）
+
+## 2026-03-06 04:30 UTC / 2026-03-06 13:30 JST - position-manager: sync_trades が backlog>MAX_FETCH で newest 側にジャンプし欠損を作る → forward paging + /summary lastTransactionID
+
+- Fact:
+  - `execution/position_manager.py:_fetch_closed_trades()` は backlog が大きいとき
+    `fetch_from=min_allowed=max(1,last_tx_id-_MAX_FETCH+1)` へジャンプし、
+    `self._last_tx_id+1..min_allowed-1` の範囲を取得しない（＝決済 tx を永続欠損させ得る）。
+
+- Improvement（local V2）:
+  - `execution/position_manager.py:_fetch_closed_trades()`:
+    - `fetch_from=self._last_tx_id+1` を維持し、`fetch_to=min(last_tx_id, fetch_from+_MAX_FETCH-1)` までの **前進型ページング** に変更（hole を飛び越えない）。
+    - `lastTransactionID` の取得を `/v3/accounts/{ACCOUNT}/summary` に変更し、巨大な `transactions` payload を避ける。
+
+- Verification（ローカル実測: OANDA API）:
+  - `POSITION_MANAGER_MAX_FETCH=50`、`pm._last_tx_id=remote_last-200` で `_fetch_closed_trades()` を呼ぶと、
+    `fetch_from=remote_last-199` から `fetch_to=remote_last-150` を取得する（newest 側 `remote_last-49` へジャンプしない）。
+
+## 2026-03-06 04:35 UTC / 2026-03-06 13:35 JST - scalp_ping_5s_flow: 直近24hで大幅マイナスのため緊急リスク縮小（破滅サイズ停止）
+
+- Fact（ローカル実測: `logs/trades.db`、backfill反映後）:
+  - 直近24h（`2026-03-05T04:28Z..2026-03-06T04:28Z`）の `scalp_ping_5s_flow_live`:
+    - `net=-6427.87 JPY`, `trades=379`, `win=0.325`
+
+- Decision:
+  - 時間帯ブロックではなく、まず **破滅サイズ（過剰ユニット/過剰同時建玉）** を止めるための緊急縮小を入れる。
+  - 目的: 連続損失時の口座急落を抑えつつ、引き続き原因分析と改善を進める。
+
+- Change（local V2 / worker-local env）:
+  - `ops/env/scalp_ping_5s_flow.env`（strategy-local）:
+    - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES: 16 -> 2`
+    - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION: 8 -> 1`
+    - `SCALP_PING_5S_FLOW_BASE_ENTRY_UNITS: 1200 -> 120`
+    - `SCALP_PING_5S_FLOW_MAX_UNITS: 3500 -> 600`
+    - `SCALP_PING_5S_FLOW_MAX_SPREAD_PIPS: 1.3 -> 0.9`
+  - `ops/env/quant-scalp-ping-5s-flow.env`（service overlay）:
+    - `SCALP_PING_5S_FLOW_MAX_ACTIVE_TRADES: 16 -> 2`
+    - `SCALP_PING_5S_FLOW_MAX_PER_DIRECTION: 8 -> 1`
