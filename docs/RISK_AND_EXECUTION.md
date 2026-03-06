@@ -733,6 +733,21 @@
   - `micro_runtime` / `M1Scalper` / `scalp_macd_rsi_div` は
     上記フラグを優先し、dyn alloc 由来の hard block を抑制する。
 
+### order_manager stale margin snapshot 運用補足（2026-03-07 追記）
+- `execution/order_manager.py` の margin guard は、`503/timeout/connection_error` 時に
+  stale account snapshot を限定利用できる。
+- local V2 の現行運用値は
+  `ORDER_MARGIN_STALE_ALLOW_SEC=60`,
+  `ORDER_MARGIN_STALE_MIN_FREE_RATIO=0.30`,
+  `ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER=0.25`。
+- 2026-03-07 JST の実測では、`USD/JPY spread=0.8p`, `open_trades=0`,
+  `balance/nav=37914.75/37914.75 JPY` の局面で OANDA `/summary` `503` が断続し、
+  `orders.db` に `margin_snapshot_failed=18`、`api_error=6` が残った。
+- stale 許容は margin guard の無効化ではない。
+  free margin ratio と health buffer が閾値未満なら従来通り reject する。
+- 目的は、minute-scale の `/summary` フラップで entry 機会を落とさず、
+  strategy 判定や exit 判定を変えずに執行阻害だけを減らすこと。
+
 ### ドローダウン恒久対策（2026-02-25 追記）
 - 方針:
   - 「全停止」ではなく、低品質シグナルのみを機械的に拒否する。

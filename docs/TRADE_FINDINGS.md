@@ -7719,3 +7719,39 @@ Status:
   1. `orders.db` で `MicroLevelReactor` の `entry_probability_reject` が減ること
   2. `probability_scaled` の `scaled_units/raw_units` が `0.45` 近辺から改善すること
   3. 次の 1-3h で `MicroLevelReactor` の `filled` 件数と avg units が増えても net/PF が悪化しないこと
+## 2026-03-07 01:26 JST / local-v2: `margin_snapshot_failed` 抑制のため bounded stale margin を 60s へ延長
+
+- 市況確認（ローカルV2実測 + OANDA API, 2026-03-07 01:23-01:25 JST）:
+  - `USD/JPY mid=157.602 spread=0.8p`
+  - `ATR14(M1)=3.99p`, `range30m=19.0p`, `range60m=24.7p`
+  - `open_trades=0`
+  - `balance/nav=37914.75/37914.75 JPY`, `margin used=0`, `margin available=37914.75 JPY`
+  - `data_lag_ms=1414`, `decision_latency_ms=17.6`
+
+- 事実:
+  - `logs/health_snapshot.json` と `pdca_profitability_report.py` では口座余力は十分で、
+    spread も通常水準だった。
+  - その一方 `orders.db` 24h では `margin_snapshot_failed=18`, `api_error=6`, `rejected=32`。
+  - `logs/local_v2_stack/quant-order-manager.log` には
+    `margin guard snapshot failed: 503 ... /summary` と
+    `using stale margin snapshot ... reason=refresh_in_progress` が併存し、
+    stale reuse が 15 秒を超える burst で途切れていた。
+  - 24h 収益は `net_jpy=-7136.5 / PF=0.68`。主因は strategy expectancy 側だが、
+    `/summary` flap による no-entry は機会損失として別で潰す価値がある。
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `ORDER_MARGIN_STALE_ALLOW_SEC=15 -> 60`
+
+- 意図:
+  - strategy local 判定や exit ロジックは変えず、OANDA `/summary` の minute-scale `503`
+    による `margin_snapshot_failed` だけを減らす。
+  - 既存の `ORDER_MARGIN_STALE_MIN_FREE_RATIO=0.30` /
+    `ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER=0.25` は維持し、
+    stale fallback を無制限にはしない。
+
+- 再検証条件:
+  1. `quant-order-manager.log` で `using stale margin snapshot` が継続しつつ、
+     `margin guard snapshot failed` が burst 後に減ること。
+  2. 次の 1-3h で `orders.db` の `margin_snapshot_failed` 増分が現状ペース以下になること。
+  3. `reject_rate` を悪化させず、`filled` の連続性が維持されること。

@@ -12178,3 +12178,25 @@
       `filled` 件数と realized units を戻す。
     - さらに、MLR の実シグナルで出ていた `range_pressure≈0.16 / target_reach_prob≈0.10` を
       upstream の forecast gate で落としすぎないようにする。
+## 2026-03-07 JST - local V2 の bounded stale margin snapshot を 60s へ延長
+
+- 背景:
+  - `logs/health_snapshot.json` と `scripts/pdca_profitability_report.py` の実測では、
+    `USD/JPY mid=157.602 spread=0.8p`, `open_trades=0`,
+    `balance/nav=37914.75/37914.75 JPY`, `margin used=0` と口座余力は十分だった。
+  - しかし `orders.db` 24h では `margin_snapshot_failed=18`, `api_error=6` が残り、
+    `logs/local_v2_stack/quant-order-manager.log` には
+    `margin guard snapshot failed: 503 ... /summary` が断続していた。
+  - 既存の bounded fallback は `ORDER_MARGIN_STALE_ALLOW_SEC=15` で、
+    minute-scale の `/summary` burst を跨げず entry 機会を落としていた。
+
+- 変更:
+  - `ops/env/local-v2-stack.env`
+    - `ORDER_MARGIN_STALE_ALLOW_SEC=60`
+
+- 意図:
+  - margin guard 自体は維持したまま、OANDA account summary の短期 `503` に対して
+    直近の健全な snapshot をより長く再利用し、`margin_snapshot_failed` を減らす。
+  - `ORDER_MARGIN_STALE_MIN_FREE_RATIO=0.30` /
+    `ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER=0.25` は据え置き、
+    stale fallback の安全境界は変えない。
