@@ -11826,18 +11826,20 @@
   - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を追加。
 - `workers/scalp_trend_breakout/worker.py`
   - `PositionManager` を使う `_passes_open_trades_guard()` を追加。
-  - `strategy_tag` 単位の open trade 数が `MAX_OPEN_TRADES` 以上なら entry を拒否。
+  - `strategy_tag` または `entry_thesis.env_prefix=M1SCALP` の family 単位の open trade 数が `MAX_OPEN_TRADES` 以上なら entry を拒否。
   - `position_manager` 初期化失敗や `get_open_positions()` 失敗時は fail-closed。
 
 - `workers/scalp_pullback_continuation/config.py`
   - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を追加。
 - `workers/scalp_pullback_continuation/worker.py`
-  - `TrendBreakout` と同じ open-trades guard を追加。
+  - `TrendBreakout` と同じ open-trades family guard を追加。
 
 - `tests/workers/test_trend_breakout_open_trades_guard.py`
   - limit 到達時 block
+  - M1 family alias block
   - position manager error 時 fail-closed
 
 - `tests/workers/test_pullback_continuation_open_trades_guard.py`
   - limit 到達時 block
+  - M1 family alias block
   - position manager error 時 fail-closed

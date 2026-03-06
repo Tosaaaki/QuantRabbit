@@ -50,6 +50,36 @@ def test_open_trades_guard_blocks_when_limit_reached(monkeypatch) -> None:
     assert count == 1
 
 
+def test_open_trades_guard_blocks_for_same_m1_family(monkeypatch) -> None:
+    monkeypatch.setattr(pullback_worker.config, "MAX_OPEN_TRADES", 1)
+    monkeypatch.setattr(
+        pullback_worker.config,
+        "FAIL_CLOSED_ON_POSITIONS_ERROR",
+        True,
+    )
+    monkeypatch.setattr(pullback_worker.config, "ENV_PREFIX", "M1SCALP")
+
+    allowed, reason, count = pullback_worker._passes_open_trades_guard(
+        _DummyPositionManager(
+            {
+                "scalp": {
+                    "open_trades": [
+                        {
+                            "strategy_tag": "TrendBreakout",
+                            "entry_thesis": {"env_prefix": "M1SCALP"},
+                        },
+                    ]
+                }
+            }
+        ),
+        "PullbackContinuation",
+    )
+
+    assert allowed is False
+    assert reason == "max_open_trades"
+    assert count == 1
+
+
 def test_open_trades_guard_fails_closed_on_positions_error(monkeypatch) -> None:
     monkeypatch.setattr(pullback_worker.config, "MAX_OPEN_TRADES", 1)
     monkeypatch.setattr(

@@ -909,10 +909,18 @@ def _passes_open_trades_guard(
     pocket_info = positions.get(config.POCKET) or {}
     open_trades_all = pocket_info.get("open_trades") or []
     tag_lower = str(strategy_tag or "").strip().lower()
+    family_env_prefix = str(config.ENV_PREFIX or "").strip().upper()
     open_trades = [
         tr
         for tr in open_trades_all
-        if str(tr.get("strategy_tag") or "").strip().lower() == tag_lower
+        if (
+            str(tr.get("strategy_tag") or "").strip().lower() == tag_lower
+            or str(((tr.get("entry_thesis") or {}).get("strategy_tag") or "")).strip().lower() == tag_lower
+            or (
+                family_env_prefix
+                and str(((tr.get("entry_thesis") or {}).get("env_prefix") or "")).strip().upper() == family_env_prefix
+            )
+        )
     ]
     if len(open_trades) >= config.MAX_OPEN_TRADES:
         return False, "max_open_trades", len(open_trades)

@@ -7050,9 +7050,12 @@ Status:
 
 - 対応:
   - `TrendBreakout` / `pullback_continuation` worker に `PositionManager` ベースの `_passes_open_trades_guard()` を追加。
+  - `M1Scalper` / `TrendBreakout` / `pullback_continuation` すべてで `entry_thesis.env_prefix=M1SCALP` を同一 family とみなし、別 `strategy_tag` でも同方向積み上がりを block。
   - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を両 config でも読むようにし、`position_manager` 不達時は fail-open せず reject。
-  - それぞれに targeted test を追加して、limit 到達時 block と position-manager error 時 fail-closed を固定化。
+  - local override の `M1SCALP_ENTRY_GUARD_BYPASS=1` を `0` に戻し、`bb_entry_reject` を無視して送る経路を止めた。
+  - それぞれに targeted test を追加して、limit 到達時 block / family alias block / position-manager error 時 fail-closed を固定化。
 
 - 期待効果:
   - `M1Scalper` 本体だけでなく、同一シグナル系列の派生 worker が別 strategy tag で同方向に積み上がる経路を止める。
   - `position_manager` が stale/busy の瞬間でも、M1 family は「見えないから建てる」ではなく「見えないから建てない」に寄る。
+  - `bb_entry_reject` long の bypass を止め、直近3hで続いていた M1 long の赤字送信をさらに削る。
