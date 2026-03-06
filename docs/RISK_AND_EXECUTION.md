@@ -1864,3 +1864,19 @@
   - 共通 `order_manager` の選別ロジック
   - `entry_thesis` 契約
   - worker topology / V2 分離構成
+
+### 2026-03-07 `MicroLevelReactor` preserve-intent floor override
+- 対象:
+  - `ops/env/quant-micro-levelreactor.env`
+- 変更:
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.70`（from `0.60`）
+- 意図:
+  - `MicroLevelReactor` の `entry_units_intent` が preflight で一律 `0.60x` まで圧縮されていたため、
+    dedicated winner worker に限って `0.70x` まで保持する。
+  - その後の `entry_probability` による縮小は維持し、shared `order_manager` へ後付け選別ロジックは追加しない。
+- 根拠:
+  - local 実測の `orders.db` で `entry_units_intent -> raw_units -> scaled_units` が
+    `2234 -> 1340 -> 737`, `3403 -> 2042 -> 1123`, `5454 -> 3272 -> 1800`
+    と `raw/intent=0.60` に固定されていた。
+  - `MicroLevelReactor` は 24h `+220.2 JPY / win 59.8% / avg_pips +3.207` で、
+    loser worker ではなく winner worker のサイズ回復を優先すべき状態だった。

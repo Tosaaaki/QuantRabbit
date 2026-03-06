@@ -12251,3 +12251,21 @@
   - winner 側は shared risk を触らず dedicated worker だけで増量する。
   - loser 側は戦略停止ではなく、B_live の local lookahead で薄い edge を通していた override を外し、
     entry quality を戻す。
+
+## 2026-03-07 JST - `MicroLevelReactor` preserve-intent floor を `0.70` へ引き上げ
+
+- `ops/env/quant-micro-levelreactor.env`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60 -> 0.70`
+
+- 根拠（ローカル実測）:
+  - `orders.db` の `MicroLevelReactor` `probability_scaled` は
+    `entry_units_intent -> raw_units -> scaled_units` が
+    `2234 -> 1340 -> 737`, `3403 -> 2042 -> 1123`, `5454 -> 3272 -> 1800`
+    と、`raw/intent=0.60` の床へ一律に張り付いていた。
+  - `entry_probability` は `0.525-0.550` 帯で、floor 圧縮後に probability scaling が掛かる構造だった。
+  - 24h 実績では `MicroLevelReactor` は `+220.2 JPY / 117 trades / win 59.8%` の winner で、
+    loser worker より優先して厚くする根拠があった。
+
+- 狙い:
+  - shared `order_manager` は変えず、winner 専用 worker だけで intent 保持率を `70%` まで引き上げる。
+  - 同一 probability 帯の `scaled_units` を押し上げ、収益速度を改善する。

@@ -7875,3 +7875,42 @@ Status:
      7d winner 特性を崩さないこと。
   3. `orders.db` の `margin_snapshot_failed` と `api_error` が悪化せず、
      `open_trades=0` からの burst で margin cap に詰まらないこと。
+
+## 2026-03-06 16:56 UTC / 2026-03-07 01:56 JST - `MicroLevelReactor` の preserve-intent floor を `0.70` へ引き上げ
+
+- 市況:
+  - `tick_cache.json`: `mid=157.524`, `spread=0.8p`, tick age `0.3s`
+  - `factor_cache.json` M1: `close=157.53`, `ATR14=3.30p`, `regime=Range`, `timestamp=2026-03-06T16:52:59.947137+00:00`
+  - `pdca_profitability_report.py`: 24h `PF=0.67`, `net_jpy=-7294.6`, `open_trades=0`
+  - `summary/openTrades` は断続 `503` が残るが、`pricing` / tick / local health は正常
+
+- 事実:
+  - `MicroLevelReactor` は 24h `117 trades / +220.2 JPY / avg_pips=+3.207 / win=59.8%` の winner。
+  - 一方 `orders.db` の直近 `probability_scaled` では、同戦略の実オーダが
+    - `entry_units_intent=2234 -> raw_units=1340 -> scaled_units=737`
+    - `entry_units_intent=3403 -> raw_units=2042 -> scaled_units=1123`
+    - `entry_units_intent=5454 -> raw_units=3272 -> scaled_units=1800`
+    と一貫して `raw/intent=0.60`, `scaled/intent≈0.33` に張り付いていた。
+  - `entry_probability` は `0.525-0.550` 帯で、まず preserve-intent floor が `0.60` で raw units を切り、
+    その後 probability scaling が掛かる二段圧縮になっていた。
+  - `MicroLevelReactor` の直近クラスター（`2026-03-06 16:37-16:38 UTC`）は `7 trades / +71.3 JPY` と利益化しており、
+    losing worker ではなく winner worker のサイズ回復が最優先だった。
+
+- 判断:
+  - 前回の `MICRO_MULTI_STRATEGY_UNITS_MULT=1.60` 反映後はまだ post-change サンプルが薄く、
+    さらに生の strategy intent を増やすより、floor に張り付いている preflight 圧縮を先に戻す方が筋。
+  - shared order path は触らず、winner 専用 worker の `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE` だけを上げる。
+
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE: 0.60 -> 0.70`
+
+- 狙い:
+  - 同じ `entry_probability≈0.55` 帯でも、`raw_units` を `intent` の 70% まで戻し、
+    realized units を約 `+16.7%` 押し上げる。
+  - loser 側の B / M1 / flow や共通 `order_manager` の選別ロジックは変更しない。
+
+- 再検証条件:
+  1. 次の `1-3h` で `orders.db` の `MicroLevelReactor` `probability_scaled` が `raw/intent=0.70` に寄ること。
+  2. `scaled/intent` が従来の `0.315-0.330` より改善し、`filled units` が増えること。
+  3. `MicroLevelReactor` の `avg_pips` / `net_jpy` が悪化せず、`margin_snapshot_failed` の増加を伴わないこと。
