@@ -875,6 +875,8 @@ quant-manual-swing-exit.service
     が繰り返し出ており、勝ち筋なのに preserve-intent で過度に圧縮されていた
   - 同じ `request_json` の `forecast_fusion` では `units_before=454 -> units_after=211`、`entry_probability_before=0.73 -> 0.445`
     まで cut され、さらに `entry_probability_reject_threshold` で棄却される区間があった
+  - 同一 payload の forecast context では `range_pressure=0.1599`, `target_reach_prob=0.103` でも
+    `FORECAST_GATE_*_MICROLEVELREACTOR` の閾値が `0.40 / 0.22` と高く、upstream でも機会を削っていた
 - 対応:
   - `ops/env/quant-micro-levelreactor.env`
     - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35` を追加
@@ -882,6 +884,8 @@ quant-manual-swing-exit.service
     - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82` を追加
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROLEVELREACTOR: 0.22 -> 0.08`
+    - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROLEVELREACTOR: 0.40 -> 0.15`
 - 補足:
   - `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、lot 増加は service env の `BASE_UNITS` ではなく
     dedicated worker 専用の `MICRO_MULTI_STRATEGY_UNITS_MULT` で反映した

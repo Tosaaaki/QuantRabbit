@@ -12126,8 +12126,12 @@
       - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.40`
       - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80`
       - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82`
+      - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROLEVELREACTOR=0.08`
+      - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROLEVELREACTOR=0.15`
     - `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、
       dedicated worker の実サイズ増加は `MICRO_MULTI_STRATEGY_UNITS_MULT` で掛けた
   - 狙い:
     - dedicated winner worker に限って、forecast contra の disallow cut と probability reject を緩め、
       `filled` 件数と realized units を戻す。
+    - さらに、MLR の実シグナルで出ていた `range_pressure≈0.16 / target_reach_prob≈0.10` を
+      upstream の forecast gate で落としすぎないようにする。

@@ -7550,6 +7550,10 @@ Status:
     - `entry_probability_before=0.73 -> 0.445`
     - `forecast_allowed=false reason=style_mismatch_range`
     で、worker 側 forecast fusion でも先に圧縮されていた
+  - さらに `quant-v2-runtime.env` の strategy-specific forecast gate は
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROLEVELREACTOR=0.22`
+    - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROLEVELREACTOR=0.40`
+    で、実際の winner payload にあった `target_reach_prob=0.103 / range_pressure=0.1599` でも upstream で厳しかった
   - `quant-micro-levelreactor.log` では 2026-03-05 13:27 UTC に
     - `OPEN_SKIP ... note=entry_probability:entry_probability_reject_threshold`
     が連続しており、frequency も `reject_under=0.52` に削られていた
@@ -7562,6 +7566,8 @@ Status:
     - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82` を追加
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROLEVELREACTOR: 0.22 -> 0.08`
+    - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_MICROLEVELREACTOR: 0.40 -> 0.15`
   - 再起動後の実プロセス env では `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちしていたため、
     dedicated lot 増加は `BASE_UNITS` 変更ではなく `MICRO_MULTI_STRATEGY_UNITS_MULT` で確実に入れた
 
