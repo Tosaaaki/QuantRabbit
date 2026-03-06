@@ -34,6 +34,20 @@
   - 共通 layer に新しい一律選別を足さず、
     loser は局所的に薄くし、winner は API 一瞬断でも止めない構成へ寄せる。
 
+### 2026-03-07（追記）local-v2: detached launcher で thin wrapper worker の起動を安定化
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+- 変更:
+  - `local_v2_stack.sh` の worker 起動を `nohup` 背景 subshell から、
+    Python launcher の `start_new_session=True` による detached spawn へ変更。
+  - `scalp_ping_5s_flow` のような thin wrapper worker が、
+    `up/restart` コマンド終了時に親シェル終了へ巻き込まれて stale pid 化する問題を解消した。
+- 意図:
+  - ローカルV2の wrapper worker 群を CLI 終了と独立に生存させ、
+    status/log 監査が実ランタイムと一致する状態へ戻す。
+
 ### 2026-03-06（追記）local-v2: `M1Scalper` setup filter + account snapshot cache fallback、`scalp_ping_5s_flow` quality tighten
 
 - 対象:

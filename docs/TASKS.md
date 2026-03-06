@@ -566,7 +566,7 @@
   Status: done
   Priority: P1
   Owner: codex
-  Scope/Paths: workers/scalp_ping_5s/*, workers/micro_runtime/worker.py, scripts/dynamic_alloc_worker.py, ops/env/*.env, docs/TRADE_FINDINGS.md, docs/WORKER_REFACTOR_LOG.md, docs/RISK_AND_EXECUTION.md, docs/TASKS.md
+  Scope/Paths: workers/scalp_ping_5s/*, workers/micro_runtime/worker.py, scripts/dynamic_alloc_worker.py, scripts/local_v2_stack.sh, ops/env/*.env, docs/OPS_LOCAL_RUNBOOK.md, docs/TRADE_FINDINGS.md, docs/WORKER_REFACTOR_LOG.md, docs/RISK_AND_EXECUTION.md, docs/TASKS.md
   Context: ローカルV2実測で PF 低下と実損を確認し、`scalp_ping_5s_flow_live` と `M1Scalper-M1` の期待値悪化、OANDA 503 による `MicroLevelReactor` 停止を同時に是正する必要があった。
   Acceptance:
     - `scalp_ping_5s_flow_live` がマイナス edge/live score を戦略ローカルで拒否できる
@@ -574,7 +574,7 @@
     - OANDA account snapshot 503 時も `MicroLevelReactor` が stale snapshot で継続または安全にスキップできる
   Completed: 2026-03-07
   PR: 6ef07363
-  Summary: ローカル logs と OANDA API の実測から主要な損失源を切り分け、`scalp_ping_5s_flow_live` に hard reject 条件を追加、dynamic alloc に severe loser clamp を追加し、`M1Scalper-M1` の lot multiplier を 0.12 まで圧縮した。`MicroLevelReactor` は account snapshot の stale fallback を導入して OANDA 503 で worker ごと停止しないようにし、関連仕様と運用ログも同期した。
+  Summary: ローカル logs と OANDA API の実測から主要な損失源を切り分け、`scalp_ping_5s_flow_live` に hard reject 条件を追加、dynamic alloc に severe loser clamp を追加し、`M1Scalper-M1` の lot multiplier を 0.12 まで圧縮した。`MicroLevelReactor` は account snapshot の stale fallback を導入して OANDA 503 で worker ごと停止しないようにし、さらに `local_v2_stack.sh` を detached launcher 化して flow wrapper worker の stale pid 化を解消した。
 
 - [x] ID: T-20260123-007
   Title: Vertex AI主導の全自動ポリシー循環（BQ→Vertex→自動反映→ロールバック）

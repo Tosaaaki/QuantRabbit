@@ -1040,6 +1040,31 @@ service_pid_is_healthy() {
   return 0
 }
 
+launch_detached_python_module() {
+  local py="$1"
+  local module="$2"
+  local log_path="$3"
+
+  "${py}" - "${py}" "${module}" "${log_path}" <<'PY'
+import subprocess
+import sys
+
+py, module, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(log_path, "ab", buffering=0) as log_file:
+    proc = subprocess.Popen(
+        [py, "-m", module],
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+    )
+
+print(proc.pid, end="")
+PY
+}
+
 start_service() {
   local svc="$1"
   local module pf lf pid py extra_pids
@@ -1085,14 +1110,24 @@ start_service() {
     rm -f "${pf}"
     py="$(python_bin)"
 
-    (
-      cd "${ROOT_DIR}"
-      load_env_for_service "${svc}" "1"
-      log_effective_env_snapshot "${svc}"
-      exec nohup "${py}" -m "${module}"
-    ) >> "${lf}" 2>&1 < /dev/null &
-
-    pid=$!
+    pid="$(
+      (
+        cd "${ROOT_DIR}"
+        load_env_for_service "${svc}" "1" >> "${lf}" 2>&1
+        log_effective_env_snapshot "${svc}" >> "${lf}" 2>&1
+        launch_detached_python_module "${py}" "${module}" "${lf}"
+      ) 2>> "${lf}" < /dev/null
+    )"
+    pid="$(printf '%s' "${pid}" | tr -d '[:space:]')"
+    if [[ -z "${pid}" ]]; then
+      echo "[warn] ${svc} launcher returned empty pid" >&2
+      if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+        echo "[retry] ${svc} launch retry ${attempt}/${max_attempts}" >&2
+        sleep "${retry_delay}"
+        continue
+      fi
+      return 1
+    fi
     echo "${pid}" > "${pf}"
     echo "[up] ${svc} pid=${pid} log=${lf}"
 

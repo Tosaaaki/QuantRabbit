@@ -80,6 +80,8 @@ scripts/local_v2_stack.sh down --profile trade_min --env ops/env/local-v2-stack.
 ### ログ/ PID の保存場所
 - ログ: `logs/local_v2_stack/*.log`
 - PID: `logs/local_v2_stack/pids/*.pid`
+- `local_v2_stack.sh` は worker を親シェルと別セッションで起動する。
+  - `scalp_ping_5s_*` clone wrapper のような thin launcher でも、`up/restart` コマンド終了時に巻き込まれず継続稼働することを前提とする。
 
 ### 自動復帰（推奨）
 ローカルPCの再起動・ログイン後・ネット復帰後に `local_v2_stack` を自動で回復させるには、

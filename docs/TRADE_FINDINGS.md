@@ -108,6 +108,9 @@ Improvement:
   へ同期。
 - `workers/micro_runtime/worker.py`
   - account snapshot を stale fallback 付きで解決し、`503` 時は cached snapshot で loop 継続。
+- `scripts/local_v2_stack.sh`
+  - `scalp_ping_5s_flow` の thin wrapper worker が `up/restart` の親シェル終了に巻き込まれて stale pid 化する事象を確認。
+  - detached session launcher へ切り替え、local-v2 runtime と `status` の整合を戻した。
 
 Verification:
 1. `logs/local_v2_stack/quant-micro-levelreactor.log` で `account_snapshot_unavailable` による loop skip は許容しても、process crash が再発しないこと。
