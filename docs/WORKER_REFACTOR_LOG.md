@@ -18,6 +18,19 @@
 - 意図:
   - ローカルV2の監視PDCAを「report-only（副作用なし）」で定常化し、収益悪化/拒否増の切り分けを高速化する。
 
+### 2026-03-06（追記）`quant-m1scalper-exit`: 損失縮小の exit チューニング（profit_buffer拒否多発の抑制）
+
+- 対象:
+  - `ops/env/quant-m1scalper-exit.env`
+- 変更:
+  - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS=1.8`（from `1.00`）
+  - `M1SCALP_EXIT_COMPOSITE_MIN_SCORE=2.0`
+  - `M1SCALP_EXIT_MAX_ADVERSE_PIPS=4.0`
+  - `M1SCALP_EXIT_PROFIT_TAKE_PIPS=3.0`
+  - `M1SCALP_EXIT_LOCK_BUFFER_PIPS=0.3`
+- 意図:
+  - `close_reject_profit_buffer` の churn を抑えつつ、負け側の上限を下げて損失を縮小する（entryは別サイクルで再開判断）。
+
 ### 2026-03-05（追記）MicroPullbackEMA: ATRスケール化 + M5/H1確認ゲート + strategy_control hard stop解除（local V2）
 
 - 対象:

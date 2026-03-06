@@ -23,6 +23,46 @@
   - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-06 05:56 UTC / 2026-03-06 14:56 JST - M1Scalper-M1: 損失縮小のため exit チューニング（profit_buffer拒否多発の抑制）
+
+Period:
+- 集計: 直近24h（`logs/pdca_profitability_latest.json` generated_at=`2026-03-06T14:51 JST`）
+- 対象（実測）: `logs/trades.db`, `logs/orders.db`
+
+Fact:
+- 直近24h（trades, strategy=`m1scalper-m1`）:
+  - `PF(pips)=0.5648`（≈0.55）/ `win_rate=0.6205` / `trades=1913`
+  - `gross_loss_pips=3413.2 / losses=696` → `avg_loss≈4.90p`
+  - `gross_win_pips=1927.7 / wins=1187` → `avg_win≈1.62p`
+  - **勝率は高いが avg_loss が avg_win を大幅に上回り、期待値が負け**。
+- 直近24h（orders, client_order_id like `%m1scalperm1%`）:
+  - `close_reject_profit_buffer=509`（多発）
+- Ops note:
+  - entry は一時停止（2026-03-06 14:42 JST頃）として扱う（再開は別判断）。
+  - ただし `orders.db` では `m1scalperm1` の `filled` が `2026-03-06 14:53 JST` にも観測されており、停止が適用されていない可能性がある（要確認）。
+
+Failure Cause:
+- `lock_floor` / 早期の利確系が「極小利益帯」で頻発し、`close_reject_profit_buffer` が多発して EXIT が安定しない。
+- 負け側は avg_loss が大きく、損失上限（max_adverse）と負け側の cut 条件が弱い。
+
+Improvement:
+- `ops/env/quant-m1scalper-exit.env`（exitのみ）:
+  - `M1SCALP_EXIT_LOCK_TRIGGER_MIN_PIPS=1.8`（from `1.00`）
+  - `M1SCALP_EXIT_COMPOSITE_MIN_SCORE=2.0`
+  - `M1SCALP_EXIT_MAX_ADVERSE_PIPS=4.0`
+  - `M1SCALP_EXIT_PROFIT_TAKE_PIPS=3.0`
+  - `M1SCALP_EXIT_LOCK_BUFFER_PIPS=0.3`
+- entry は停止維持（再開は次サイクル判断）。
+
+Verification:
+- 反映後24hで以下を確認:
+  - `m1scalper-m1` の `avg_loss` が低下し、`PF(pips)` が改善していること（目標: `PF>0.85` へ回復）。
+  - `close_reject_profit_buffer` が減少していること（目標: `<= 1/3`）。
+  - `quant-m1scalper-exit` のログで例外/連続close失敗が増えていないこと。
+
+Status:
+- in_progress
+
 ## 2026-03-06 13:25 JST / local-v2: 資産減少/稼げてない RCA（scalp_ping_5s_flow_live + M1Scalper-M1 寄与大、margin closeout 高止まり）
 
 Period:
