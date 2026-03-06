@@ -7390,6 +7390,7 @@ Status:
 
 - 対応:
   - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-momentumburst(+exit)` を追加
     - `PROFILE_trade_min` に `quant-micro-levelreactor(+exit)` を追加
   - `scripts/dynamic_alloc_worker.py`
     - strong winner が軽微な margin closeout ノイズだけで過度縮小されない補正を追加

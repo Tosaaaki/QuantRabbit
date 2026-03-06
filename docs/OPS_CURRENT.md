@@ -17,8 +17,7 @@
     `allowlist empty; using all strategies` を出していた
 - 対応:
   - `scripts/local_v2_stack.sh`
-    - `PROFILE_trade_min` に `quant-micro-levelreactor(+exit)` を追加
-    - `quant-micro-momentumburst(+exit)` は維持
+    - `PROFILE_trade_min` を `quant-micro-momentumburst(+exit)` と `quant-micro-levelreactor(+exit)` を含む構成へ更新
   - `scripts/dynamic_alloc_worker.py`
     - 高PF・高勝率・強い実現損益を持つ戦略は、
       軽微な `MARKET_ORDER_MARGIN_CLOSEOUT` 混入だけで `lot_multiplier` を極端に潰さない補正を追加

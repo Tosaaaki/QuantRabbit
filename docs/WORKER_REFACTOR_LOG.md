@@ -12019,6 +12019,7 @@
 
 - 変更:
   - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-momentumburst` / `quant-micro-momentumburst-exit` を追加
     - `PROFILE_trade_min` に `quant-micro-levelreactor` / `quant-micro-levelreactor-exit` を追加
   - `scripts/dynamic_alloc_worker.py`
     - 高PF・高勝率・強い実現損益を持つ戦略について、
