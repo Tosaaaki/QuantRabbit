@@ -7237,3 +7237,41 @@ Status:
 - 期待効果:
   - `M1` の挙動や exit 判断を変えず、負けトレードの赤字単価だけを先に 35-40% 程度圧縮する。
   - shared protection や order_manager を再度触らず、strategy ローカルのサイズだけで loss drag を落とす。
+
+## 2026-03-06 14:22 UTC / 2026-03-06 23:31 JST - 24h赤字主因を再点検し、`main` 最新の local-v2 調整が active `trade_min` に未反映だったため反映確認を優先
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `pricing`: `bid=158.010 ask=158.018 spread=0.8p status=200 latency=310ms`
+  - `summary`: `status=200 latency=244ms openTradeCount=4`
+  - `openTrades`: `status=200 latency=281ms`
+  - OANDA `M1` 直近120本: `ATR14=4.74p / 15m range=18.7p / 60m range=64.5p`
+  - 判定: spread は通常帯、ATR/range はやや高めだが異常域ではなく、作業継続可。
+
+- 24h収益分解（ローカル `logs/trades.db` / `logs/orders.db` / `logs/metrics.db`）:
+  - 全体: `3368 trades / win_rate=50.0% / PF=0.552 / expectancy=-3.4 JPY / net=-11595.8 JPY`
+  - 赤字寄与上位:
+    - `scalp_ping_5s_flow_live: 420 trades / -7131.1 JPY`
+    - `M1Scalper-M1: 2290 trades / -6172.5 JPY`
+    - `scalp_ping_5s_d_live: 42 trades / -280.7 JPY`
+  - reject: `STOP_LOSS_ON_FILL_LOSS=25`, `INSUFFICIENT_MARGIN=6`, `TRADE_DOESNT_EXIST=3`
+  - 執行品質: `spread_mean=0.807p / slip_mean=0.008p / latency_submit_p50=190ms / latency_preflight_p50=227ms`
+  - つまり主因は「執行遅延」より「負け戦略の件数・赤字単価」で、特に `flow` と `M1` が支配的。
+
+- 直近反映確認で分かったこと:
+  - `local-v2-stack.env` は `2026-03-06 23:27:38 JST` に、`ee476feb tune: tighten local-v2 m1 and flow profitability` 相当の値へ更新済みだった。
+  - しかし `quant-m1scalper.log` の `2026-03-06 23:20:34 JST` 起動行は `tag_filter=-` で、`M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long` が live プロセスへ入っていなかった。
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env` を実行し、`2026-03-06 23:29-23:31 JST` に active services を再起動。
+  - 再起動後の確認:
+    - `quant-m1scalper.log`: `worker start ... tag_filter=breakout-retest-long,nwave-long`
+    - 直後に `tag_filter_block tag=M1Scalper-sell-rally`
+    - `quant-scalp-ping-5s-b.log`: `side_filter=sell`
+    - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`: core + `B / micro-rangebreak / M1` が running
+
+- 判断:
+  - 反映直後は `trade_min` の post-restart sample がまだ薄く、ここで追加の speculative tune を重ねるより、`main` 最新の tighten を live へ載せて効果を見る方が筋が良い。
+  - 現在の `trade_min` active services は `B / micro-rangebreak / M1` で、`flow / D` は反映後 profile では動いていない。次の追加調整は post-restart 実績を見てからにする。
+
+- 再検証条件:
+  1. `quant-m1scalper.log` に `tag_filter_block tag=M1Scalper-sell-rally` が継続し、`tag_filter=-` が再発しないこと。
+  2. `orders.db` の post-restart で `STOP_LOSS_ON_FILL_LOSS` reject が再拡大しないこと。
+  3. 30-60分後の `trades.db` で `M1Scalper-M1` と `scalp_ping_5s_b_live` の追加 net が、再起動前の時間帯より悪化しないこと。

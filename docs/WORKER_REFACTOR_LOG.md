@@ -11935,3 +11935,34 @@
 - 意図:
   - `M1Scalper-M1` は 24h/7d ともに最大級の赤字寄与で、24h 平均 fill size はすでに `352.8 units` まで落ちていた。
   - 既存の dynamic alloc / open-trades guard / margin guard を変えず、strategy ローカルの base units だけを 40% 縮小して赤字単価を落とす。
+
+## 2026-03-06 JST - `trade_min` を再起動して `main` 最新の local-v2 profitability tune を active runtime へ反映
+
+- 事実:
+  - `main` / `origin/main` は `ee476feb tune: tighten local-v2 m1 and flow profitability` まで進んでいた。
+  - しかし active `trade_min` の `quant-m1scalper.log` は `2026-03-06 23:20 JST` 時点で `worker start ... tag_filter=-` となっており、`local-v2-stack.env` の最新 override が live に載っていなかった。
+
+- 反映:
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+  - 再起動後の確認:
+    - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+      - `quant-market-data-feed`
+      - `quant-strategy-control`
+      - `quant-order-manager`
+      - `quant-position-manager`
+      - `quant-scalp-ping-5s-b`
+      - `quant-scalp-ping-5s-b-exit`
+      - `quant-micro-rangebreak`
+      - `quant-micro-rangebreak-exit`
+      - `quant-m1scalper`
+      - `quant-m1scalper-exit`
+      が `running`
+    - `logs/local_v2_stack/quant-m1scalper.log`
+      - `worker start ... tag_filter=breakout-retest-long,nwave-long`
+      - `tag_filter_block tag=M1Scalper-sell-rally`
+    - `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
+      - `env mapped ... side_filter=sell`
+
+- 判断:
+  - 今回の即時改善は「新しい speculative tune を追加すること」ではなく、「commit 済みだが active runtime に入っていなかった tighten を反映すること」だった。
+  - post-restart のサンプルが薄いうちは、追加の env/code 変更は入れず、この tighten の実績を先に観測する。
