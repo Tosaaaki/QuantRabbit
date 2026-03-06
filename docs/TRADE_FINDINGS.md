@@ -20,8 +20,145 @@
   - `Fact`（数値）
   - `Failure Cause`（敗因）
   - `Improvement`（改善施策）
-  - `Verification`（確認方法/判定基準）
+- `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
+
+## 2026-03-06 15:56 UTC / 2026-03-07 00:56 JST - local-v2: Git再開判断（OANDA account endpoint 復旧確認）
+
+Period:
+- 確認: UTC `15:54-15:56` / JST `00:54-00:56`
+- 対象（実測）: `logs/health_snapshot.json`, `logs/local_v2_stack/quant-market-data-feed.log`, `logs/local_v2_stack/quant-order-manager.log`, `logs/local_v2_stack/quant-position-manager.log`
+- 対象（OANDA API）: `pricing`, `summary`, `openTrades`, `candles(M5, count=30)`
+
+Fact:
+- 市況（OANDA live, UTC `15:56` / JST `00:56`）:
+  - USD/JPY `mid=157.582 / bid=157.578 / ask=157.586 / spread=0.8p`
+  - `ATR14(M5)=10.364p` / `range_last_12xM5=22.7p`
+- ローカル導線:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で主要サービスと `trade_min` 戦略群は running
+  - `scripts/collect_local_health.sh` は `snapshot_age_sec=0` で更新継続
+- OANDA API 応答品質（UTC `15:56` / JST `00:56`, 各2回直接確認）:
+  - `pricing`: `200/200`, latency `210ms/221ms`
+  - `summary`: `200/200`, latency `199ms/267ms`
+  - `openTrades`: `200/200`, latency `210ms/314ms`
+  - `candles`: `200/200`, latency `211ms/222ms`
+
+Failure Cause:
+- 直前の保留判断では `summary/openTrades` の live `503` が継続していたが、今回の再確認で account 系 endpoint の劣化は解消した。
+
+Improvement:
+- Git 処理の保留を解除し、差分検証後に commit/push を再開する。
+- 運用ログ `logs/ops_v2_audit_20260307_0056_git_resume.json` に復旧確認を退避。
+
+Verification:
+- `summary/openTrades` が連続 `200`
+- `health_snapshot` 更新継続
+- `local_v2_stack` の主要サービスが running
+
+Status:
+- done
+
+## 2026-03-06 15:50 UTC / 2026-03-07 00:50 JST - local-v2: flow負エッジ reject + severe loser縮退強化 + micro snapshot fallback
+
+Period:
+- 集計: `logs/pdca_profitability_latest.json` generated_at=`2026-03-07 00:50 JST`
+- 市況確認: UTC `15:46-15:50` / JST `00:46-00:50`
+- 対象（実測）: `logs/trades.db`, `logs/orders.db`, `logs/metrics.db`, `logs/health_snapshot.json`, `logs/tick_cache.json`, `logs/factor_cache.json`, OANDA pricing/summary/openTrades
+
+Fact:
+- 市況（OANDA live + local cache）:
+  - USD/JPY `mid=157.632-157.680`, `spread=0.8p`
+  - `ATR14(M1)=4.19p`, 直近5分レンジ `10.5p`
+  - pricing は `200`, 一方 `summary/openTrades` は `503` が断続
+- 直近24h（bot only）:
+  - 全体 `net=-8571.0 JPY`, `PF=0.65`, `win_rate=45.8%`
+  - loser 上位: `scalp_ping_5s_flow_live=-5901.8 JPY`, `M1Scalper-M1=-4479.4 JPY`
+  - winner 上位: `MomentumBurst=+1526.1 JPY`, `MicroLevelReactor=+259.5 JPY`
+- 実行品質:
+  - `spread_mean=0.805p`, `cost_vs_mid_mean=0.407p`, `latency_submit_p50=190ms`
+  - 執行コストよりも strategy expectancy 側が主因
+- 安定性:
+  - `MicroLevelReactor` worker は `get_account_snapshot()` の `503` で再起動を繰り返していた
+  - `orders.db` では `margin_snapshot_failed=16`, `api_error=4`, `quote_unavailable=14`
+
+Failure Cause:
+- `scalp_ping_5s_flow_live` は既存の `signal_window_adaptive_live_score_pips` / `lookahead_edge_pips` が負でも通る経路があり、低エッジ約定を量産していた。
+- `M1Scalper-M1` は service env の既定値が local-v2 recovery override より緩く、再起動経路で loser setup / size が戻りうる状態だった。
+- profitable な `MicroLevelReactor` が OANDA `summary 503` を worker 側で吸収できず、winner 側の機会を落としていた。
+
+Improvement:
+- `workers/scalp_ping_5s/config.py` / `workers/scalp_ping_5s/worker.py`
+  - `SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS`
+  - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS`
+  を追加し、負エッジを strategy local で hard reject。
+- `ops/env/scalp_ping_5s_flow.env`
+  - flow clone で `LOOKAHEAD_GATE_ENABLED=1`
+  - `SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.0`
+  - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.0`
+  を追加。
+- `scripts/dynamic_alloc_worker.py`
+  - `sum_realized_jpy`, `market_close_loss_share`, `realized_jpy_per_1k_units`, `jpy_downside_share`
+    が同時に悪い severe loser を `lot_multiplier=0.12-0.18` まで圧縮する段を追加。
+- `ops/env/quant-m1scalper.env` / `ops/env/local-v2-stack.env`
+  - `M1SCALP_ALLOW_REVERSION=0`
+  - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+  - `M1SCALP_BASE_UNITS=1200`
+  - `M1SCALP_MARGIN_USAGE_HARD=0.88`
+  - `M1SCALP_DYN_ALLOC_MULT_MIN=0.12`
+  へ同期。
+- `workers/micro_runtime/worker.py`
+  - account snapshot を stale fallback 付きで解決し、`503` 時は cached snapshot で loop 継続。
+
+Verification:
+1. `logs/local_v2_stack/quant-micro-levelreactor.log` で `account_snapshot_unavailable` による loop skip は許容しても、process crash が再発しないこと。
+2. `config/dynamic_alloc.json` で `M1Scalper-M1` の `lot_multiplier` が `0.12` 近辺まで縮退すること。
+3. flow を再開する場合、`orders.db` で `adaptive_live_score_block` / `lookahead_edge_hard_block` が観測され、負エッジ約定が減ること。
+4. 反映後 1-3h で `MomentumBurst` / `MicroLevelReactor` の filled が維持されつつ、`M1Scalper-M1` の `net_jpy` 悪化速度が鈍ること。
+
+Status:
+- in_progress
+
+## 2026-03-06 15:48 UTC / 2026-03-07 00:48 JST - local-v2: Git保留判断（OANDA summary/openTrades 503 継続）
+
+Period:
+- 確認: UTC `15:45-15:48` / JST `00:45-00:48`
+- 対象（実測）: `logs/orders.db`, `logs/health_snapshot.json`, `logs/local_v2_stack/quant-market-data-feed.log`, `logs/local_v2_stack/quant-order-manager.log`, `logs/local_v2_stack/quant-position-manager.log`
+- 対象（OANDA API）: `pricing`, `summary`, `openTrades`, `candles(M5, count=30)`
+
+Fact:
+- 市況（OANDA live, UTC `15:48` / JST `00:48`）:
+  - USD/JPY `mid=157.705 / bid=157.701 / ask=157.709 / spread=0.8p`
+  - `ATR14(M5)=10.8p` / `range_last_12xM5=28.8p`
+- ローカル導線:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で主要サービスは running
+  - `logs/health_snapshot.json` は `generated_at=2026-03-06T15:46:38Z`, `data_lag_ms=745.9`, `decision_latency_ms=16.5`
+  - `logs/orders.db` の直近1hは `filled=1370`, `margin_snapshot_failed=13`, `api_error=4`
+- OANDA API 応答品質（UTC `15:48` / JST `00:48`, 各2回直接確認）:
+  - `pricing`: `200/200`, latency `278ms/218ms`
+  - `candles`: `200/200`, latency `229ms/311ms`
+  - `summary`: `503/503`, latency `208ms/301ms`
+  - `openTrades`: `503/503`, latency `221ms/295ms`
+- ログ実測:
+  - `quant-market-data-feed` は `pricing/stream` `200 OK` を継続
+  - `quant-position-manager` / `quant-order-manager` は `summary` と `openTrades` の `503` を継続記録
+
+Failure Cause:
+- 価格配信と candle 取得は正常だが、OANDA の account 系 endpoint (`summary`, `openTrades`) が live で継続 `503`。
+- AGENTS の着手前チェック要件では API 応答品質悪化時は作業保留とするため、Git 操作を先行させる判断を不採用とした。
+
+Improvement:
+- 本タスクでは実装変更・commit/push を行わず保留。
+- account 系 endpoint が `200` に戻るまで、Git 操作は見送り。
+- 運用ログ `logs/ops_v2_audit_20260307_0048_git_hold.json` に同内容を退避。
+
+Verification:
+- 再開条件:
+  - `summary` と `openTrades` が連続 `200` を返すこと
+  - `quant-position-manager.log` / `quant-order-manager.log` で `503` が収束していること
+  - `scripts/collect_local_health.sh` の snapshot 更新が継続していること
+
+Status:
+- open
 
 ## 2026-03-06 14:22 UTC / 2026-03-06 23:22 JST - local-v2: M1Scalper setup絞り込み + Flow低品質entry圧縮 + OANDA 503耐性
 

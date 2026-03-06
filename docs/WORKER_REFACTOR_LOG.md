@@ -5,6 +5,35 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）local-v2: flow負エッジ reject / severe loser縮退 / micro snapshot fallback
+
+- 対象:
+  - `workers/scalp_ping_5s/config.py`
+  - `workers/scalp_ping_5s/worker.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `workers/micro_runtime/worker.py`
+  - `ops/env/scalp_ping_5s_flow.env`
+  - `ops/env/quant-m1scalper.env`
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `scalp_ping_5s` に
+    - `SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS`
+    - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS`
+    を追加し、flow clone の負エッジ entry を strategy local で reject できるようにした。
+  - `scalp_ping_5s_flow` の base env で lookahead を有効化し、
+    `live_score_pips < 0` / `lookahead_edge_pips < 0` を hard reject する既定値を入れた。
+  - `dynamic_alloc_worker` に severe loser 圧縮段を追加し、
+    `market_close_loss_share` と `sum_realized_jpy` が悪い戦略は
+    `lot_multiplier=0.12-0.18` まで落とせるようにした。
+  - `quant-m1scalper.env` を local-v2 recovery 値へ同期し、
+    `ALLOW_REVERSION=0`, `SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`,
+    `BASE_UNITS=1200`, `MARGIN_USAGE_HARD=0.88`, `DYN_ALLOC_MULT_MIN=0.12` を既定化した。
+  - `micro_runtime` worker は OANDA `/summary` 503 で crash せず、
+    stale snapshot fallback で profitable strategy を継続できるようにした。
+- 意図:
+  - 共通 layer に新しい一律選別を足さず、
+    loser は局所的に薄くし、winner は API 一瞬断でも止めない構成へ寄せる。
+
 ### 2026-03-06（追記）local-v2: `M1Scalper` setup filter + account snapshot cache fallback、`scalp_ping_5s_flow` quality tighten
 
 - 対象:

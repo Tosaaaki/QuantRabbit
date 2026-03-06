@@ -845,6 +845,15 @@
   - `M1SCALP_BLOCK_HOURS_ENABLED=0`
   - `M1SCALP_BLOCK_HOURS_UTC=`
   - `M1SCALP_SIDE_FILTER=long`
+  - `M1SCALP_ALLOW_REVERSION=0`
+  - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+  - `M1SCALP_BASE_UNITS=1200`
+  - `M1SCALP_MARGIN_USAGE_HARD=0.88`
+  - `M1SCALP_DYN_ALLOC_MULT_MIN=0.12`
+- 運用値（`scalp_ping_5s_flow_live`, 2026-03-07 local-v2）:
+  - `SCALP_PING_5S_FLOW_LOOKAHEAD_GATE_ENABLED=1`
+  - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.0`
+  - `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.0`
 - 監査:
   - `orders.db` で `outside_allow_hour_jst` が entry-stop 理由の主因になっていないこと。
   - `trades.db` で `C/M1 sell` の比率と損益が縮小していること。

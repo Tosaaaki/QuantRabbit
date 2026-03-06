@@ -68,6 +68,18 @@ except Exception:
 _MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN", True)
 _MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC", True)
 _MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN = env_bool("MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN", True)
+_ACCOUNT_SNAPSHOT_TTL_SEC = max(
+    0.1,
+    env_float("ACCOUNT_SNAPSHOT_TTL_SEC", 1.0, prefix=getattr(config, "ENV_PREFIX", "")),
+)
+_ACCOUNT_SNAPSHOT_ALLOW_STALE_SEC = max(
+    _ACCOUNT_SNAPSHOT_TTL_SEC,
+    env_float(
+        "ACCOUNT_SNAPSHOT_ALLOW_STALE_SEC",
+        15.0,
+        prefix=getattr(config, "ENV_PREFIX", ""),
+    ),
+)
 
 
 def _bb_float(value):
@@ -94,6 +106,27 @@ def _bb_levels(fac):
     if span <= 0:
         return None
     return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+
+
+def _resolve_account_snapshot(
+    last_snapshot=None,
+    *,
+    cache_ttl_sec: float = _ACCOUNT_SNAPSHOT_TTL_SEC,
+    allow_stale_sec: float = _ACCOUNT_SNAPSHOT_ALLOW_STALE_SEC,
+):
+    try:
+        return (
+            get_account_snapshot(
+                cache_ttl_sec=cache_ttl_sec,
+                allow_stale_sec=allow_stale_sec,
+            ),
+            False,
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001 - upstream HTTP/timeout errors vary.
+        if last_snapshot is None:
+            return None, True, exc
+        return last_snapshot, False, exc
 
 
 def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
@@ -1049,6 +1082,8 @@ async def micro_multi_worker() -> None:
     last_perf_block_log = 0.0
     last_mlr_block_log = 0.0
     last_pullback_mtf_block_log = 0.0
+    last_account_snapshot = None
+    last_account_snapshot_error_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -1317,7 +1352,28 @@ async def micro_multi_worker() -> None:
             if winners:
                 selected = winners[:max_signals]
 
-        snap = get_account_snapshot()
+        now_mono = time.monotonic()
+        snap, snapshot_unavailable, snapshot_err = _resolve_account_snapshot(
+            last_account_snapshot,
+        )
+        if snap is not None:
+            last_account_snapshot = snap
+        if snapshot_unavailable:
+            if now_mono - last_account_snapshot_error_log > 60.0:
+                LOG.warning(
+                    "%s account_snapshot_unavailable err=%s",
+                    config.LOG_PREFIX,
+                    snapshot_err,
+                )
+                last_account_snapshot_error_log = now_mono
+            continue
+        if snapshot_err is not None and now_mono - last_account_snapshot_error_log > 60.0:
+            LOG.warning(
+                "%s account_snapshot_fallback err=%s",
+                config.LOG_PREFIX,
+                snapshot_err,
+            )
+            last_account_snapshot_error_log = now_mono
         equity = float(snap.nav or snap.balance or 0.0)
 
         balance = float(snap.balance or snap.nav or 0.0)

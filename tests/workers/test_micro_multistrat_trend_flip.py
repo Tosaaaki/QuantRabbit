@@ -162,3 +162,31 @@ def test_allowed_strategies_matches_momentumburst_strategy_name(monkeypatch):
     names = [getattr(cls, "name", cls.__name__) for cls in allowed]
 
     assert names == ["MomentumBurst"]
+
+
+def test_resolve_account_snapshot_uses_last_snapshot_fallback(monkeypatch):
+    cached = object()
+
+    def _boom(**_kwargs):
+        raise RuntimeError("summary 503")
+
+    monkeypatch.setattr(worker, "get_account_snapshot", _boom)
+
+    snap, unavailable, err = worker._resolve_account_snapshot(cached)
+
+    assert snap is cached
+    assert unavailable is False
+    assert isinstance(err, RuntimeError)
+
+
+def test_resolve_account_snapshot_marks_unavailable_without_cache(monkeypatch):
+    def _boom(**_kwargs):
+        raise RuntimeError("summary 503")
+
+    monkeypatch.setattr(worker, "get_account_snapshot", _boom)
+
+    snap, unavailable, err = worker._resolve_account_snapshot(None)
+
+    assert snap is None
+    assert unavailable is True
+    assert isinstance(err, RuntimeError)

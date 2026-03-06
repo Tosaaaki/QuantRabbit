@@ -147,3 +147,26 @@ def test_compute_scores_caps_size_below_global_floor_when_market_close_losses_do
     assert prof["market_close_loss_share"] >= 0.9
     assert prof["market_close_loss_rate"] >= 0.9
     assert prof["lot_multiplier"] < 0.45
+
+
+def test_compute_scores_severe_loser_is_crushed_to_emergency_floor() -> None:
+    rows = []
+    for i in range(96):
+        rows.append(
+            (
+                "M1Scalper-M1",
+                "scalp",
+                -1.8,
+                f"2026-02-24T{(i // 60):02d}:{(i % 60):02d}:00Z",
+                "MARKET_ORDER_TRADE_CLOSE",
+                -150.0,
+                1800,
+            )
+        )
+
+    scores = compute_scores(rows, min_trades=24, pf_cap=2.0)
+    prof = scores["M1Scalper-M1"]
+    assert prof["sum_realized_jpy"] <= -10000.0
+    assert prof["market_close_loss_share"] >= 0.9
+    assert prof["realized_jpy_per_1k_units"] <= -7.0
+    assert prof["lot_multiplier"] <= 0.12

@@ -883,6 +883,22 @@ def _maybe_adapt_signal_window(
     return selected_signal, meta
 
 
+def _adaptive_live_score_blocked(meta: dict[str, object]) -> tuple[bool, float]:
+    threshold = float(config.SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS)
+    live_score = _safe_float(meta.get("live_score_pips"), 0.0)
+    if threshold <= -900.0:
+        return False, live_score
+    return live_score < threshold, live_score
+
+
+def _lookahead_edge_hard_blocked(decision) -> tuple[bool, float]:
+    threshold = float(config.LOOKAHEAD_EDGE_HARD_REJECT_PIPS)
+    edge = _safe_float(getattr(decision, "edge_pips", 0.0), 0.0)
+    if threshold <= -900.0:
+        return False, edge
+    return edge < threshold, edge
+
+
 def _instant_speed_scale(instant_range_pips: float) -> float:
     if not config.INSTANT_SPEED_ENABLED:
         return 1.0
@@ -6210,6 +6226,18 @@ async def scalp_ping_5s_worker() -> None:
                 spread_pips=signal.spread_pips,
                 base_signal=signal,
             )
+            adaptive_live_score_blocked, live_score_pips = _adaptive_live_score_blocked(
+                signal_window_meta
+            )
+            if adaptive_live_score_blocked:
+                _note_entry_skip(
+                    "adaptive_live_score_block",
+                    (
+                        f"live_score={live_score_pips:.3f} "
+                        f"min={config.SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS:.3f}"
+                    ),
+                )
+                continue
             side_filter_anchor_signal = (
                 signal
                 if config.SIDE_FILTER and signal.side == config.SIDE_FILTER
@@ -6447,6 +6475,18 @@ async def scalp_ping_5s_worker() -> None:
                     allow_thin_edge=config.LOOKAHEAD_ALLOW_THIN_EDGE,
                     fail_open=True,
                 )
+                lookahead_edge_blocked, lookahead_edge_pips = _lookahead_edge_hard_blocked(
+                    lookahead_decision
+                )
+                if lookahead_edge_blocked:
+                    _note_entry_skip(
+                        "lookahead_edge_hard_block",
+                        (
+                            f"edge={lookahead_edge_pips:.3f} "
+                            f"min={config.LOOKAHEAD_EDGE_HARD_REJECT_PIPS:.3f}"
+                        ),
+                    )
+                    continue
                 if not lookahead_decision.allow_entry:
                     if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
                         LOG.info(

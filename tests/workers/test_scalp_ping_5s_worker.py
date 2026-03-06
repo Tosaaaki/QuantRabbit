@@ -40,6 +40,28 @@ def _sample_signal(side: str, *, mode: str = "momentum"):
     )
 
 
+def test_adaptive_live_score_blocked_when_below_threshold(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS", 0.0)
+
+    blocked, live_score = worker._adaptive_live_score_blocked({"live_score_pips": -0.05})
+
+    assert blocked is True
+    assert live_score == pytest.approx(-0.05, abs=1e-9)
+
+
+def test_lookahead_edge_hard_blocked_when_below_threshold(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_EDGE_HARD_REJECT_PIPS", 0.0)
+
+    blocked, edge = worker._lookahead_edge_hard_blocked(SimpleNamespace(edge_pips=-0.02))
+
+    assert blocked is True
+    assert edge == pytest.approx(-0.02, abs=1e-9)
+
+
 def test_build_tick_signal_detects_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
