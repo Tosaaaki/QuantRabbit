@@ -865,6 +865,7 @@
   - `M1SCALP_BASE_UNITS=1200`
   - `M1SCALP_MARGIN_USAGE_HARD=0.88`
   - `M1SCALP_DYN_ALLOC_MULT_MIN=0.12`
+  - `config/strategy_exit_protections.yaml -> M1Scalper.min_profit_pips=0.10`
 - 運用値（`scalp_ping_5s_flow_live`, 2026-03-07 local-v2）:
   - `SCALP_PING_5S_FLOW_LOOKAHEAD_GATE_ENABLED=1`
   - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.0`

@@ -7755,3 +7755,42 @@ Status:
      `margin guard snapshot failed` が burst 後に減ること。
   2. 次の 1-3h で `orders.db` の `margin_snapshot_failed` 増分が現状ペース以下になること。
   3. `reject_rate` を悪化させず、`filled` の連続性が維持されること。
+
+## 2026-03-07 01:36 JST / local-v2: M1Scalper `close_reject_profit_buffer` を 0.10p へ緩和
+
+- 市況確認（ローカルV2実測 + OANDA API, 2026-03-07 01:23-01:25 JST）:
+  - `USD/JPY mid=157.602 spread=0.8p`
+  - `ATR14(M1)=3.99p`, `range30m=19.0p`, `open_trades=0`
+  - `summary/pricing` は 5/5 `200 OK`、latency は概ね `220-310ms`
+
+- 事実:
+  - `orders.db` 24h の `M1Scalper-M1` は `close_reject_profit_buffer=521`。
+  - reject 時の `min_profit_pips` は全件 `0.20`、`est_pips` は平均 `0.069p`。
+  - 同 reject 分布は `est_pips<0.05: 279`, `<0.10: 300`, `<0.15: 401` で、
+    `0.10-0.20p` に 221 件の tiny-profit exit が滞留していた。
+  - reject を一度でも踏んだユニーク ticket は 141 本で、最終着地は
+    `avg_pips=+0.119 / net_jpy=-46.3` と全体ではわずかに負け。
+  - 内訳は mixed で、
+    `candle_bearish_engulfing / candle_hanging_man / candle_bullish_engulfing`
+    は reject 後の final がプラスだった一方、
+    `candle_inverted_hammer / candle_hammer / candle_shooting_star`
+    は final がマイナスへ反転していた。
+  - `STOP_LOSS_ORDER` へ落ちた 8 本は `net_jpy=-228.0` と損失寄与が明確だった。
+  - `trades.db` 24h の `M1Scalper-M1` positive close は `1340` 本で、
+    `pl_pips<0.10` は 8 本、`pl_pips<0.20` は 49 本。
+
+- 判断:
+  - `0.20p -> 0.00p` まで緩めると upside を切り過ぎるリスクがある。
+  - 一方 `0.20p` 維持では `0.10-0.20p` の tiny-profit exit を大量に拒否し、
+    反転負けへつながる ticket が残る。
+  - よって `M1Scalper` の `min_profit_pips` は保守的に `0.10p` へ半減し、
+    近BE付近の tiny-profit exit だけを通しやすくする。
+
+- 対応:
+  - `config/strategy_exit_protections.yaml`
+    - `M1Scalper.min_profit_pips=0.20 -> 0.10`
+
+- 再検証条件:
+  1. 次の 1-3h / 24h で `orders.db` の `M1Scalper-M1 close_reject_profit_buffer` が減少すること。
+  2. `trades.db` の `M1Scalper-M1 MARKET_ORDER_TRADE_CLOSE` 平均損益が `-0.483p` から改善すること。
+  3. `M1Scalper-M1` の `PF(pips)` が `0.68` 近辺から改善し、`STOP_LOSS_ORDER` の純損失が増えないこと。

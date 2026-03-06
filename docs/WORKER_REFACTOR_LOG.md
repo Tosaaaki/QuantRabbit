@@ -12200,3 +12200,21 @@
   - `ORDER_MARGIN_STALE_MIN_FREE_RATIO=0.30` /
     `ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER=0.25` は据え置き、
     stale fallback の安全境界は変えない。
+
+## 2026-03-07 JST - M1Scalper: strategy exit protection の `min_profit_pips` を 0.10p へ緩和
+
+- `config/strategy_exit_protections.yaml`
+  - `M1Scalper.min_profit_pips=0.20 -> 0.10`
+  - コメントを追加し、24h local-v2 で `close_reject_profit_buffer=521` が
+    `0.20p` に集中していたことを明記。
+
+- 根拠（ローカル実測）:
+  - `orders.db` 24h の M1 reject は `min_profit_pips=0.20` 固定、`est_pips` 平均は `0.069p`。
+  - `0.10-0.20p` に 221 件の tiny-profit exit が滞留していた。
+  - reject を踏んだユニーク ticket の final は `net_jpy=-46.3` とわずかに負けで、
+    reversal candle 系の一部は reject 後に `STOP_LOSS_ORDER` へ流れていた。
+
+- 狙い:
+  - shared logic は触らず、M1 strategy 固有の profit-buffer だけを狭くして
+    tiny-profit の reversal exit を通しやすくする。
+  - `0.00p` ではなく `0.10p` を残し、premature close を避けつつ churn を落とす。
