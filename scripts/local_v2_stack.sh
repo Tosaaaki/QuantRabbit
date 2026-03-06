@@ -101,8 +101,8 @@ PROFILE_trade_min=(
   "quant-position-manager"
   "quant-scalp-ping-5s-b"
   "quant-scalp-ping-5s-b-exit"
-  "quant-micro-rangebreak"
-  "quant-micro-rangebreak-exit"
+  "quant-micro-momentumburst"
+  "quant-micro-momentumburst-exit"
   "quant-m1scalper"
   "quant-m1scalper-exit"
 )

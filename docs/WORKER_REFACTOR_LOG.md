@@ -11966,3 +11966,21 @@
 - 判断:
   - 今回の即時改善は「新しい speculative tune を追加すること」ではなく、「commit 済みだが active runtime に入っていなかった tighten を反映すること」だった。
   - post-restart のサンプルが薄いうちは、追加の env/code 変更は入れず、この tighten の実績を先に観測する。
+
+## 2026-03-06 JST - `trade_min` の micro 枠を `MicroRangeBreak` から `MomentumBurst` へ差し替え
+
+- 背景:
+  - local-v2 実測の `logs/pdca_profitability_report_latest.md` では、
+    - `MomentumBurst`: 7d `+1856.9 JPY / 31 trades / win 87.1% / PF 6.14`
+    - `MicroRangeBreak`: 7d `-66.9 JPY / 119 trades / win 16.8% / PF 0.74`
+  - active `trade_min` の micro 枠が loser 側に残っていたため、勝ち筋への振替を優先した。
+
+- 変更:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min`
+      - 削除: `quant-micro-rangebreak`, `quant-micro-rangebreak-exit`
+      - 追加: `quant-micro-momentumburst`, `quant-micro-momentumburst-exit`
+
+- 意図:
+  - `B / M1` の最新 tighten を維持しつつ、trade_min の micro 枠だけを直近勝ち筋へ差し替える。
+  - 共通ガードや order_manager を触らず、profile 構成だけで期待値改善を狙う。

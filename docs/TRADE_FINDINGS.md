@@ -7313,3 +7313,44 @@ Status:
 - 残課題:
   - `trade_min` profile外 worker の残存監査が弱く、entry だけ残ると orphan trade を作れる。
   - `position_manager` の `/position/open_positions` は `position manager busy` と `int too large to convert to float` を散発しており、exit owner 復旧後の判定遅延要因として別途修正が必要。
+
+## 2026-03-06 14:45 UTC / 2026-03-06 23:45 JST - 収益改善: `trade_min` の micro 枠を loser `MicroRangeBreak` から winner `MomentumBurst` へ差し替え
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.811 spread=0.8p`
+  - `openTrades=0`
+  - `M1` 直近120本は通常帯の値動きで、極端な流動性悪化は確認せず
+
+- 24h/7d 収益分解:
+  - 全体 24h: `2396 trades / win 49.7% / PF 0.70 / net -8912.1 JPY`
+  - 24h 主損失: `scalp_ping_5s_flow_live=-6883.7`, `M1Scalper-M1=-4408.0`
+  - micro 勝敗比較（7d）:
+    - `MomentumBurst: +1856.9 JPY / 31 trades / win 87.1% / PF 6.14`
+    - `MicroRangeBreak: -66.9 JPY / 119 trades / win 16.8% / PF 0.74`
+
+- 補助事実:
+  - `trade_min` active services は `B / MicroRangeBreak / M1Scalper`
+  - `logs/orders.db` の直近2000 fill と `metrics.db` では
+    - `spread_mean=0.805p`
+    - `latency_submit_p50=190ms`
+    - `reject_rate avg=0.032`
+  - 執行コストは劣化しているが、主因はなお strategy expectancy 側
+
+- 判断:
+  - `M1` は直近 restart 後のログで `tag_filter_block` / `trend_block_long` が継続しており、追加 tighten を即重ねるより現設定の観測を続ける方がよい
+  - いま一番境界が小さく、かつ期待値改善が大きい変更は、trade_min の micro 枠を `MicroRangeBreak` から `MomentumBurst` へ振り替えること
+
+- 対応:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min`
+      - `quant-micro-rangebreak(+exit)` を外し
+      - `quant-micro-momentumburst(+exit)` を追加
+
+- 期待効果:
+  - 同じ trade_min リソース枠のまま loser を外して winner を入れる
+  - `flow` は profile外のまま止め、`B` と `M1` の tighten は維持する
+
+- 再検証条件:
+  1. `quant-micro-momentumburst.log` に dedicated worker 起動行が出て、`allowlist empty` が再発しないこと
+  2. 30-60分後の `trades.db` で `MomentumBurst` の増分 net が正、`MicroRangeBreak` の新規約定が止まっていること
+  3. 24h `pdca_profitability_report.py` で `trade_min` active 群の net が現状より改善すること
