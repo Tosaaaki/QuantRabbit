@@ -1,20 +1,27 @@
 # Ops Current (2026-02-11 JST)
 
-## 0-15. 2026-03-06 UTC local-v2 `trade_min` を `MicroRangeBreak` から `MomentumBurst` へ差し替え
+## 0-15. 2026-03-06 UTC local-v2 `trade_min` の micro 枠を `MicroRangeBreak` から `MicroLevelReactor` へ差し替え
 - 背景（local-v2 実測, UTC 2026-03-06 14:45 / JST 23:45）:
   - `logs/pdca_profitability_report_latest.md` で 24h `net_jpy=-8912 / PF=0.70`
   - active `trade_min` は `B / MicroRangeBreak / M1Scalper` だったが、7d 実績は
-    - `MomentumBurst: +1856.9 JPY / 31 trades / win 87.1% / PF 6.14`
+    - `MicroLevelReactor: +259.5 JPY / 101 trades / win 65.3% / PF 1.67`
     - `MicroRangeBreak: -66.9 JPY / 119 trades / win 16.8% / PF 0.74`
-  - 直近90分でも `flow=-5593 JPY`, `M1=-1395 JPY` が主因で、`trade_min` の micro 枠を負け筋に置く合理性が薄かった
+  - `config/dynamic_alloc.json` でも
+    - `MicroLevelReactor lot_multiplier=1.566`
+    - `MicroRangeBreak lot_multiplier=0.28`
+    と差が大きく、active profile が allocation と逆方向だった
+  - `MomentumBurst` は 7d `+1856.9 JPY / PF 6.14` と強いが、
+    `logs/local_v2_stack/quant-micro-momentumburst.log` に `allowlist empty; using all strategies` が出ており、
+    immediate profile 追加先としては unsafe
 - 対応:
   - `scripts/local_v2_stack.sh`
     - `PROFILE_trade_min` の micro 枠を
       `quant-micro-rangebreak(+exit)` から
-      `quant-micro-momentumburst(+exit)` へ差し替え
+      `quant-micro-levelreactor(+exit)` へ差し替え
 - 意図:
-  - loser の `MicroRangeBreak` を profile から外し、同じ micro 枠を直近実績の強い `MomentumBurst` に振り替える
-  - `B` と `M1` の最新 tighten は維持したまま、trade_min の期待値を上げる
+  - loser かつ inactive な `MicroRangeBreak` を profile から外し、
+    dedicated allowlist が安定している winner `MicroLevelReactor` へ micro 枠を振り替える
+  - `B` と `M1` の最新 tighten は維持し、`MomentumBurst` は allowlist 崩れ修正後に再評価する
 
 ## 0-14. 2026-03-06 UTC local-v2 `M1Scalper` setup絞り込み + `scalp_ping_5s_flow` 低品質entry圧縮
 - 背景（local-v2 実測, UTC 2026-03-06 14:21 / JST 23:21）:

@@ -31,6 +31,27 @@
   - strategy worker 側の setup 絞り込みとローカル運用 override だけで期待値を改善し、
     共通レイヤへ後付けの一律選別を増やさずに収益改善と稼働継続性を両立する。
 
+### 2026-03-06（追記）local-v2: `trade_min` の micro 枠を `MicroRangeBreak` から `MicroLevelReactor` へ差し替え
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+- 変更:
+  - `PROFILE_trade_min` から `quant-micro-rangebreak(+exit)` を外し、
+    `quant-micro-levelreactor(+exit)` を追加。
+- 背景:
+  - local-v2 実測の 7d 集計で
+    - `MicroLevelReactor: +259.5 JPY / 101 trades / win 65.3% / PF 1.67`
+    - `MicroRangeBreak: -66.9 JPY / 119 trades / win 16.8% / PF 0.74`
+  - `config/dynamic_alloc.json` でも
+    - `MicroLevelReactor lot_multiplier=1.566`
+    - `MicroRangeBreak lot_multiplier=0.28`
+    と配分差が明確だった。
+  - `MomentumBurst` は同期間で強いが、`logs/local_v2_stack/quant-micro-momentumburst.log` に
+    `allowlist empty; using all strategies` が出ており、即時の profile 採用先としては見送った。
+- 意図:
+  - active `trade_min` の micro 枠を loser/inactive から winner へ差し替え、
+    共通レイヤや sizing ロジックを増やさずに期待値を改善する。
+
 ### 2026-03-06（追記）OpenAI Native Computer-Use のローカル最小デモ追加
 
 - 対象:
