@@ -5,6 +5,21 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-06（追記）OpenAI Native Computer-Use のローカル最小デモ追加
+
+- 対象:
+  - `examples/native_computer_use_demo/run.py`（新規）
+  - `examples/native_computer_use_demo/README.md`（新規）
+  - `examples/native_computer_use_demo/requirements.txt`（新規）
+  - `README.md`
+  - `docs/INDEX.md`
+- 変更:
+  - OpenAI Responses API の `computer` ツールを呼ぶ最小 CLI を追加。
+  - 画面スクリーンショット送信、`computer_call` action の dry-run / live 実行、artifact 保存を実装。
+  - 依存は demo 配下へ分離し、既存トレード導線の requirements には混ぜない構成にした。
+- 意図:
+  - 本体トレード実装へ影響を与えず、Native Computer-Use の検証導線を repo 内に孤立配置する。
+
 ### 2026-03-06（追記）ローカルV2: profitability PDCA report-only スクリプト追加
 
 - 対象:
@@ -11802,5 +11817,27 @@
     - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR=1`
 
 - `tests/workers/test_m1scalper_open_trades_guard.py`
+  - limit 到達時 block
+  - position manager error 時 fail-closed
+
+## 2026-03-06 JST - M1 family 派生 worker (`TrendBreakout` / `pullback_continuation`) にも open-trades guard を実装
+
+- `workers/scalp_trend_breakout/config.py`
+  - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を追加。
+- `workers/scalp_trend_breakout/worker.py`
+  - `PositionManager` を使う `_passes_open_trades_guard()` を追加。
+  - `strategy_tag` 単位の open trade 数が `MAX_OPEN_TRADES` 以上なら entry を拒否。
+  - `position_manager` 初期化失敗や `get_open_positions()` 失敗時は fail-closed。
+
+- `workers/scalp_pullback_continuation/config.py`
+  - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を追加。
+- `workers/scalp_pullback_continuation/worker.py`
+  - `TrendBreakout` と同じ open-trades guard を追加。
+
+- `tests/workers/test_trend_breakout_open_trades_guard.py`
+  - limit 到達時 block
+  - position manager error 時 fail-closed
+
+- `tests/workers/test_pullback_continuation_open_trades_guard.py`
   - limit 到達時 block
   - position manager error 時 fail-closed

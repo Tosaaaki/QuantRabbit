@@ -21,6 +21,7 @@ from autotune.scalp_trainer import AUTO_INTERVAL_SEC, start_background_autotune
 from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import spread_monitor
+from execution.position_manager import PositionManager
 from execution.strategy_entry import limit_order, market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
@@ -889,6 +890,35 @@ def _confidence_scale(conf: int) -> float:
     return 0.5 + span * 0.5
 
 
+def _passes_open_trades_guard(
+    pos_manager: PositionManager | None,
+    strategy_tag: str,
+) -> tuple[bool, str, int]:
+    if config.MAX_OPEN_TRADES <= 0:
+        return True, "disabled", 0
+    if pos_manager is None:
+        if config.FAIL_CLOSED_ON_POSITIONS_ERROR:
+            return False, "position_manager_unavailable", -1
+        return True, "position_manager_unavailable_bypass", -1
+    try:
+        positions = pos_manager.get_open_positions(include_unknown=False)
+    except Exception as exc:
+        if config.FAIL_CLOSED_ON_POSITIONS_ERROR:
+            return False, f"open_positions_error:{exc}", -1
+        return True, f"open_positions_error_bypass:{exc}", -1
+    pocket_info = positions.get(config.POCKET) or {}
+    open_trades_all = pocket_info.get("open_trades") or []
+    tag_lower = str(strategy_tag or "").strip().lower()
+    open_trades = [
+        tr
+        for tr in open_trades_all
+        if str(tr.get("strategy_tag") or "").strip().lower() == tag_lower
+    ]
+    if len(open_trades) >= config.MAX_OPEN_TRADES:
+        return False, "max_open_trades", len(open_trades)
+    return True, "ok", len(open_trades)
+
+
 def _to_confidence_0_100(confidence: object, default: float = 0.0) -> int:
     try:
         conf = float(confidence)
@@ -962,6 +992,12 @@ async def scalp_m1_worker() -> None:
     last_spread_log = 0.0
     last_cap_log = 0.0
     last_conf_log = 0.0
+    last_open_trades_log = 0.0
+    try:
+        pos_manager = PositionManager()
+    except Exception as exc:
+        pos_manager = None
+        LOG.warning("%s position_manager_init_failed err=%s", config.LOG_PREFIX, exc)
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -1507,6 +1543,23 @@ async def scalp_m1_worker() -> None:
         conf_scale = _confidence_scale(conf_val)
         signal_tag = signal_tag or M1Scalper.name
         strategy_tag = _resolve_strategy_tag(signal_tag, side)
+        allow_entry, open_guard_reason, open_trade_count = _passes_open_trades_guard(
+            pos_manager,
+            strategy_tag,
+        )
+        if not allow_entry:
+            now_mono = time.monotonic()
+            if now_mono - last_open_trades_log > 30.0:
+                LOG.warning(
+                    "%s open_trades_block tag=%s reason=%s open_trades=%s limit=%s",
+                    config.LOG_PREFIX,
+                    strategy_tag,
+                    open_guard_reason,
+                    open_trade_count,
+                    config.MAX_OPEN_TRADES,
+                )
+                last_open_trades_log = now_mono
+            continue
         entry_kind = "market"
         entry_ref_price = price
         entry_signal_price = None

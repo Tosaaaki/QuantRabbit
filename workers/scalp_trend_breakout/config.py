@@ -141,6 +141,10 @@ TECH_SOFT_FAIL_MAX_SCALE = _env_float("M1SCALP_TECH_SOFT_FAIL_MAX_SCALE", 0.88)
 # クールダウン/同時建玉制御（デフォルトを明示）
 COOLDOWN_SEC = float(os.getenv("M1SCALP_COOLDOWN_SEC", "120"))
 MAX_OPEN_TRADES = int(os.getenv("M1SCALP_MAX_OPEN_TRADES", "1"))
+FAIL_CLOSED_ON_POSITIONS_ERROR = _env_bool(
+    "M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR",
+    True,
+)
 # 直近の大敗時間帯を任意でブロック（デフォルト無効）
 BLOCK_HOURS_UTC = frozenset(
     _parse_hours(os.getenv("M1SCALP_BLOCK_HOURS_UTC", ""))

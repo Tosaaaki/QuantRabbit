@@ -7033,3 +7033,26 @@ Status:
 
 - 期待効果:
   - M1 の「同方向ナンピン的な積み上がり」を止め、利益より先に損失側の tail risk を削る。
+
+## 2026-03-06 09:35 UTC / 2026-03-06 18:35 JST - live の積み増し主因は `TrendBreakout` 派生 worker だったため、M1 family 派生 worker へ同じ fail-closed guard を展開
+
+- 市況確認（ローカルV2実測）:
+  - `USD/JPY close=157.730`
+  - `ATR(M1)=2.15p / ATR(M5)=5.44p / ATR(H1)=18.24p`
+  - `quant-order-manager / quant-position-manager` health は `200`、応答は `9-14ms`
+  - `position/open_positions` は `stale=true age_sec~4s` を返す瞬間があり、worker 側が fail-open だと積み増しを止められない条件だった
+
+- 事実:
+  - `quant-m1scalper.log` 側では `open_trades_block` が出ていた一方、`quant-scalp-trend-breakout.log` では 2026-03-06 18:06 JST 台に
+    `TrendBreakout` が `source_signal_tag=M1Scalper-breakout-retest-long` を受けて `447144 / 447167 / 447174` を連続送信していた。
+  - `position/open_positions` でも当該 open trades は `strategy_tag=TrendBreakout`、`entry_thesis.source_signal_tag=M1Scalper-breakout-retest-long` で確認できた。
+  - `workers/scalp_trend_breakout/config.py` と `workers/scalp_pullback_continuation/config.py` は `MAX_OPEN_TRADES` を持っていたが、worker 実装側では評価していなかった。
+
+- 対応:
+  - `TrendBreakout` / `pullback_continuation` worker に `PositionManager` ベースの `_passes_open_trades_guard()` を追加。
+  - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を両 config でも読むようにし、`position_manager` 不達時は fail-open せず reject。
+  - それぞれに targeted test を追加して、limit 到達時 block と position-manager error 時 fail-closed を固定化。
+
+- 期待効果:
+  - `M1Scalper` 本体だけでなく、同一シグナル系列の派生 worker が別 strategy tag で同方向に積み上がる経路を止める。
+  - `position_manager` が stale/busy の瞬間でも、M1 family は「見えないから建てる」ではなく「見えないから建てない」に寄る。
