@@ -1072,7 +1072,8 @@ strategies:
       loss_cut_max_hold_sec: 900
       loss_cut_cooldown_sec: 5
   M1Scalper:
-    min_profit_pips: 0.2
+    # Candle exits are churning at 0.2p; keep a small positive floor instead of forcing repeats.
+    min_profit_pips: 0.1
     min_profit_ratio: 0.0
     min_profit_ratio_min_tp_pips: 0.8
     exit_profile:
