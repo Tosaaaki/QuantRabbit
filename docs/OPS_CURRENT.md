@@ -877,11 +877,14 @@ quant-manual-swing-exit.service
     まで cut され、さらに `entry_probability_reject_threshold` で棄却される区間があった
 - 対応:
   - `ops/env/quant-micro-levelreactor.env`
-    - `MICRO_MULTI_BASE_UNITS: 14000 -> 22000`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35` を追加
     - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.52 -> 0.40`
     - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82` を追加
+- 補足:
+  - `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、lot 増加は service env の `BASE_UNITS` ではなく
+    dedicated worker 専用の `MICRO_MULTI_STRATEGY_UNITS_MULT` で反映した
 - 影響範囲:
   - `quant-micro-levelreactor.service` の dedicated ENTRY worker のみ。
   - loser 側の `M1` / `B` / `flow` / 共通 order path は非変更。

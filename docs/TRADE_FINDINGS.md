@@ -7557,11 +7557,13 @@ Status:
 
 - 対応:
   - `ops/env/quant-micro-levelreactor.env`
-    - `MICRO_MULTI_BASE_UNITS: 14000 -> 22000`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35` を追加
     - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER: 0.52 -> 0.40`
     - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80` を追加
     - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82` を追加
+  - 再起動後の実プロセス env では `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちしていたため、
+    dedicated lot 増加は `BASE_UNITS` 変更ではなく `MICRO_MULTI_STRATEGY_UNITS_MULT` で確実に入れた
 
 - 判断:
   - 「全体ロット不足」ではなく、勝っている `MicroLevelReactor` だけが forecast/probability の二段圧縮で薄くなっていた

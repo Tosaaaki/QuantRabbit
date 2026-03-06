@@ -12121,11 +12121,13 @@
       と、forecast disallow と preserve-intent の二段圧縮が確認できた。
   - 変更:
     - `ops/env/quant-micro-levelreactor.env`
-      - `MICRO_MULTI_BASE_UNITS=22000`
+      - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35`
       - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.60`
       - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER=0.40`
       - `STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT=0.80`
       - `STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT=0.82`
+    - `local-v2-stack.env` の `MICRO_MULTI_BASE_UNITS=48000` が後勝ちするため、
+      dedicated worker の実サイズ増加は `MICRO_MULTI_STRATEGY_UNITS_MULT` で掛けた
   - 狙い:
     - dedicated winner worker に限って、forecast contra の disallow cut と probability reject を緩め、
       `filled` 件数と realized units を戻す。
