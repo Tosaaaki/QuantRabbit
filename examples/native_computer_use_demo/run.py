@@ -9,7 +9,7 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from openai import OpenAI
 from PIL import ImageGrab
@@ -104,6 +104,24 @@ def _dump_action(action: Any) -> dict[str, Any]:
     return out
 
 
+def _dump_safety_check(check: Any) -> dict[str, Any]:
+    if hasattr(check, "model_dump"):
+        payload = check.model_dump()
+    elif isinstance(check, dict):
+        payload = dict(check)
+    else:
+        payload = {
+            "id": getattr(check, "id", None),
+            "code": getattr(check, "code", None),
+            "message": getattr(check, "message", None),
+        }
+    return {
+        "id": payload.get("id"),
+        "code": payload.get("code"),
+        "message": payload.get("message"),
+    }
+
+
 def _map_key(key: str) -> str:
     upper = key.upper()
     if upper in _KEY_ALIASES:
@@ -196,21 +214,24 @@ def _print_response_summary(response: Any) -> None:
 
 
 def _pending_safety_checks(call: Any) -> list[dict[str, Any]]:
-    checks = []
-    for check in getattr(call, "pending_safety_checks", []) or []:
-        if hasattr(check, "model_dump"):
-            checks.append(check.model_dump())
-        elif isinstance(check, dict):
-            checks.append(dict(check))
-        else:
-            checks.append(
-                {
-                    "id": getattr(check, "id", None),
-                    "code": getattr(check, "code", None),
-                    "message": getattr(check, "message", None),
-                }
-            )
-    return checks
+    return [_dump_safety_check(check) for check in (getattr(call, "pending_safety_checks", []) or [])]
+
+
+def _acknowledge_safety_checks(checks: Iterable[dict[str, Any]], *, auto_ack: bool) -> list[dict[str, Any]]:
+    payloads = [dict(check) for check in checks]
+    if not payloads:
+        return []
+    print(json.dumps({"pending_safety_checks": payloads}, ensure_ascii=False, indent=2))
+    if auto_ack:
+        return payloads
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "pending_safety_checks were returned by the API. Re-run interactively or pass --auto-ack-safety."
+        )
+    answer = input("Type 'ack' to continue, anything else to abort: ").strip().lower()
+    if answer != "ack":
+        raise RuntimeError("aborted because pending_safety_checks were not acknowledged")
+    return payloads
 
 
 def _build_client(api_key: str | None) -> OpenAI:
@@ -228,7 +249,7 @@ def main() -> int:
     parser.add_argument(
         "--tool-type",
         default="computer",
-        help="Computer tool type. Default: computer. Use computer_use_preview only if you need SDK/API compatibility fallback.",
+        help="Computer tool type. Default: computer. Use computer_use_preview only as a compatibility fallback.",
     )
     parser.add_argument("--environment", default=_detect_environment(), help="computer tool environment. Default: auto-detect.")
     parser.add_argument("--max-steps", type=int, default=20, help="Maximum computer action turns.")
@@ -247,12 +268,15 @@ def main() -> int:
     screenshot_bytes, width, height = _capture_screenshot()
     _save_artifact(args.artifacts_dir, "step_000_screen.png", screenshot_bytes)
 
-    tool = {
-        "type": args.tool_type,
-        "display_width": width,
-        "display_height": height,
-        "environment": args.environment,
-    }
+    tool: dict[str, Any] = {"type": args.tool_type}
+    if args.tool_type != "computer":
+        tool.update(
+            {
+                "display_width": width,
+                "display_height": height,
+                "environment": args.environment,
+            }
+        )
     response = client.responses.create(
         model=args.model,
         tools=[tool],
@@ -271,26 +295,24 @@ def main() -> int:
             if action is None:
                 continue
             pending_checks = _pending_safety_checks(call)
-            if pending_checks and not args.auto_ack_safety:
-                print(
-                    json.dumps(
-                        {
-                            "step": step,
-                            "call_id": call.call_id,
-                            "pending_safety_checks": pending_checks,
-                            "message": "stopping because pending safety checks require explicit --auto-ack-safety",
-                        },
-                        ensure_ascii=False,
-                    ),
-                    file=sys.stderr,
-                )
-                return 3
+            acknowledged_safety_checks = _acknowledge_safety_checks(
+                pending_checks,
+                auto_ack=args.auto_ack_safety,
+            )
             action_payload = _dump_action(action)
             print(json.dumps({"step": step, "call_id": call.call_id, "action": action_payload}, ensure_ascii=False))
             _save_artifact(
                 args.artifacts_dir,
                 f"step_{step:03d}_action_{index:02d}.json",
-                json.dumps({"call_id": call.call_id, "action": action_payload}, ensure_ascii=False, indent=2),
+                json.dumps(
+                    {
+                        "call_id": call.call_id,
+                        "action": action_payload,
+                        "acknowledged_safety_checks": acknowledged_safety_checks,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
             )
             executor.execute(action)
             screenshot_bytes, _, _ = _capture_screenshot()
@@ -303,7 +325,7 @@ def main() -> int:
                         "type": "computer_screenshot",
                         "image_url": _data_url_from_png(screenshot_bytes),
                     },
-                    "acknowledged_safety_checks": pending_checks if args.auto_ack_safety else [],
+                    "acknowledged_safety_checks": acknowledged_safety_checks,
                 }
             )
 

@@ -47,4 +47,4 @@
 ## その他
 - `docs/README_GCP_MULTI.md`: 別プロジェクトで動かすための手順書
 - `docs/KNOWN_ISSUES.md`: 既知の問題（履歴）
-- `examples/native_computer_use_demo/README.md`: OpenAI Native Computer-Use のローカル最小デモ
+- `examples/native_computer_use_demo/README.md`: OpenAI Native Computer-Use のローカル最小デモ（独立サンプル、要 `OPENAI_API_KEY` / macOS 権限）

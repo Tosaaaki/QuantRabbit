@@ -16,7 +16,9 @@
 - 変更:
   - OpenAI Responses API の `computer` ツールを呼ぶ最小 CLI を追加。
   - 画面スクリーンショット送信、`computer_call` action の dry-run / live 実行、artifact 保存を実装。
+  - `pending_safety_checks` は CLI で明示承認し、無人時のみ `--auto-ack-safety` で送出できるようにした。
   - 依存は demo 配下へ分離し、既存トレード導線の requirements には混ぜない構成にした。
+  - 実行条件として `OPENAI_API_KEY` と macOS の `Screen Recording` / `Accessibility` 権限を README に明記した。
 - 意図:
   - 本体トレード実装へ影響を与えず、Native Computer-Use の検証導線を repo 内に孤立配置する。
 
