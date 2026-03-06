@@ -31,6 +31,16 @@
 - 意図:
   - `close_reject_profit_buffer` の churn を抑えつつ、負け側の上限を下げて損失を縮小する（entryは別サイクルで再開判断）。
 
+### 2026-03-06（追記）PositionManager: trades.db を手動/自動監視で最新化する補助スクリプト追加
+
+- 対象:
+  - `scripts/pm_sync_trades.py`（新規）
+- 変更:
+  - `POSITION_MANAGER_SERVICE_PORT`（default `8301`）に対して `POST /position/sync_trades {"max_fetch":120}` を送る。
+  - 出力は `ok/err` と `trades=<n>` のみ（automation から引用符なしで呼べる）。
+- 意図:
+  - `trades.db` の遅延がある時に、監視/PDCA の前に明示的に同期して観測誤差を減らす（report-only helper）。
+
 ### 2026-03-05（追記）MicroPullbackEMA: ATRスケール化 + M5/H1確認ゲート + strategy_control hard stop解除（local V2）
 
 - 対象:
