@@ -12218,3 +12218,18 @@
   - shared logic は触らず、M1 strategy 固有の profit-buffer だけを狭くして
     tiny-profit の reversal exit を通しやすくする。
   - `0.00p` ではなく `0.10p` を残し、premature close を避けつつ churn を落とす。
+
+## 2026-03-07 JST - `MicroLevelReactor` winner sizing を `1.60` へ増量
+
+- `ops/env/quant-micro-levelreactor.env`
+  - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35 -> 1.60`
+
+- 根拠（ローカル実測）:
+  - corrected 集計で、直近 `30m` は `7 trades / +71.3 JPY / avg_pips=+1.229`。
+  - 同 `60m` の `orders.db` では `filled=16`, `avg filled units=1110.4`, `avg intent=3452.3`,
+    `fill/intent ratio=0.322` と、winner に対して実サイズがまだ薄かった。
+  - `quant-micro-levelreactor.log` でも dedicated env の `s_mult=1.35` が live 読み込みされていた。
+
+- 狙い:
+  - loser 側を緩めず、直近で勝っている dedicated winner だけを modest に厚くする。
+  - shared order logic や forecast gate を再度緩めず、strategy-local sizing のみで収益速度を上げる。

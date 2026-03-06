@@ -7794,3 +7794,40 @@ Status:
   1. 次の 1-3h / 24h で `orders.db` の `M1Scalper-M1 close_reject_profit_buffer` が減少すること。
   2. `trades.db` の `M1Scalper-M1 MARKET_ORDER_TRADE_CLOSE` 平均損益が `-0.483p` から改善すること。
   3. `M1Scalper-M1` の `PF(pips)` が `0.68` 近辺から改善し、`STOP_LOSS_ORDER` の純損失が増えないこと。
+
+## 2026-03-07 01:45 JST / local-v2: `MicroLevelReactor` の winner sizing を 1.60 へ増量
+
+- 市況確認（ローカルV2実測 + OANDA API, 2026-03-07 01:37-01:45 JST）:
+  - `USD/JPY mid=157.555-157.564 spread=0.8p`
+  - `ATR14(M1)=3.73p`, `M1 60本レンジ=19.0p`, `open_trades=0`
+  - `summary/pricing` は継続 `200 OK`、latency は概ね `230-325ms`
+
+- 事実:
+  - corrected 集計（`datetime(close_time)` 基準）では、直近 `30m` の active 群は
+    - `MicroLevelReactor: 7 trades / +71.3 JPY / avg_pips=+1.229`
+    - `scalp_ping_5s_b_live: 17 trades / -0.1 JPY / avg_pips=-0.582`
+  - `60m` では `MicroLevelReactor: 16 trades / -39.3 JPY` だが、
+    直近 `30m` は再びプラスへ戻していた。
+  - `orders.db` 直近 `60m` の `MicroLevelReactor` は
+    - `filled=16`
+    - `avg filled units=1110.4`
+    - `avg entry_units_intent=3452.3`
+    - `fill/intent ratio=0.322`
+  - `quant-micro-levelreactor.log` では dedicated env の
+    `s_mult=1.35`, `dyn=1.40`, `cap=0.95` が実際に使われていた。
+  - つまり、winner なのに probability/forecast 経路で実約定サイズがまだ薄い。
+
+- 判断:
+  - 現在の active 収益源は `MicroLevelReactor` で、`flow` と `M1` は直近 active 導線の主役ではない。
+  - shared logic を緩めるより、winner dedicated env の `strategy_units_mult` を少し持ち上げる方が
+    境界が小さく、収益速度を上げやすい。
+  - 直近 `open_trades=0`、margin 余力も大きいため、この増量は許容範囲。
+
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35 -> 1.60`
+
+- 再検証条件:
+  1. 次の `30-60m` で `MicroLevelReactor` の `avg filled units` が `1110` 近辺から増えること。
+  2. `MicroLevelReactor` の `net_jpy / PF` が悪化せず、少なくとも `30m` プラス圏を維持すること。
+  3. `orders.db` の `rejected` / `margin_snapshot_failed` が `MicroLevelReactor` で増えないこと。

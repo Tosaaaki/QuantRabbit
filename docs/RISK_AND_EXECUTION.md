@@ -870,6 +870,8 @@
   - `SCALP_PING_5S_FLOW_LOOKAHEAD_GATE_ENABLED=1`
   - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.0`
   - `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.0`
+- 運用値（`MicroLevelReactor`, 2026-03-07 local-v2）:
+  - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.60`
 - 監査:
   - `orders.db` で `outside_allow_hour_jst` が entry-stop 理由の主因になっていないこと。
   - `trades.db` で `C/M1 sell` の比率と損益が縮小していること。
