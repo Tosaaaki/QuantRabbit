@@ -11784,3 +11784,23 @@
 
 - `tests/workers/test_position_manager_worker_env.py`
   - background sync helper と result 正規化のテストを追加。
+
+## 2026-03-06 JST - M1Scalper の open-trades guard 実装漏れを修正し、position-manager 不達時を fail-closed 化
+
+- 事実:
+  - `M1SCALP_MAX_OPEN_TRADES=1` が env に存在しても、`workers/scalp_m1scalper/worker.py` 側で評価されていなかった。
+  - `position_manager` / `order_manager` の一時不達時に、`M1Scalper-M1` が同方向ロングを数秒間隔で積み上げ、`openTradeCount` が急増していた。
+
+- 実装:
+  - `workers/scalp_m1scalper/config.py`
+    - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR` を追加（既定 `true`）。
+  - `workers/scalp_m1scalper/worker.py`
+    - `PositionManager` を使った `_passes_open_trades_guard()` を追加。
+    - `strategy_tag` 単位で open trade 数を数え、`MAX_OPEN_TRADES` 到達時は entry を拒否。
+    - `position_manager` 不達時は fail-open せず `open_trades_block` で reject。
+  - `ops/env/local-v2-stack.env`
+    - `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR=1`
+
+- `tests/workers/test_m1scalper_open_trades_guard.py`
+  - limit 到達時 block
+  - position manager error 時 fail-closed

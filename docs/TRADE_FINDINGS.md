@@ -7013,3 +7013,23 @@ Status:
 
 - 期待効果:
   - `orders.db` と `trades.db` の差分を小さい backlog に保ち、PF/net の監視が「タイムアウト後にまとめて追いつく」状態から、「ほぼ追随」へ寄る。
+
+## 2026-03-06 09:20 UTC / 2026-03-06 18:20 JST - M1Scalper が `MAX_OPEN_TRADES=1` を無視して積み上がる実装漏れを修正
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY bid=157.664 ask=157.672 spread=0.8p`
+  - `ATR(M1)=2.05p / ATR(M5)=5.34p / ATR(H1)=18.24p`
+  - `openTradeCount=15` で、その大半が `M1Scalper-M1` ロングに偏っていた。
+
+- 事実:
+  - OANDA open trades では `M1Scalper-M1` ロングが数秒間隔で `~390-480 units` ずつ積み上がっていた。
+  - `logs/local_v2_stack/quant-m1scalper.log` でも同 tag の連続 `OPEN_FILLED` が確認でき、`M1SCALP_MAX_OPEN_TRADES=1` が機能していなかった。
+  - 一部は `position_manager service call failed` / `order_manager service call failed` の直後でも継続発注されており、fail-open が過剰エクスポージャを拡大していた。
+
+- 対応:
+  - `M1Scalper` worker に `PositionManager` ベースの open-trades guard を追加。
+  - `strategy_tag` 単位で open trade 数が `MAX_OPEN_TRADES` 以上なら新規 entry を拒否。
+  - `position_manager` 不達時は `M1SCALP_FAIL_CLOSED_ON_POSITIONS_ERROR=1` で fail-closed。
+
+- 期待効果:
+  - M1 の「同方向ナンピン的な積み上がり」を止め、利益より先に損失側の tail risk を削る。
