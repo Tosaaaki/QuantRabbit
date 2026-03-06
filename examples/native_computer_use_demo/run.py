@@ -207,6 +207,14 @@ def _extract_computer_calls(response: Any) -> list[Any]:
     return [item for item in getattr(response, "output", []) if getattr(item, "type", None) == "computer_call"]
 
 
+def _extract_actions(call: Any) -> list[Any]:
+    actions = list(getattr(call, "actions", None) or [])
+    if actions:
+        return actions
+    action = getattr(call, "action", None)
+    return [action] if action is not None else []
+
+
 def _print_response_summary(response: Any) -> None:
     output_text = getattr(response, "output_text", "")
     if output_text:
@@ -291,30 +299,41 @@ def main() -> int:
 
         next_input: list[dict[str, Any]] = []
         for index, call in enumerate(computer_calls, start=1):
-            action = getattr(call, "action", None)
-            if action is None:
+            actions = _extract_actions(call)
+            if not actions:
                 continue
             pending_checks = _pending_safety_checks(call)
             acknowledged_safety_checks = _acknowledge_safety_checks(
                 pending_checks,
                 auto_ack=args.auto_ack_safety,
             )
-            action_payload = _dump_action(action)
-            print(json.dumps({"step": step, "call_id": call.call_id, "action": action_payload}, ensure_ascii=False))
-            _save_artifact(
-                args.artifacts_dir,
-                f"step_{step:03d}_action_{index:02d}.json",
-                json.dumps(
-                    {
-                        "call_id": call.call_id,
-                        "action": action_payload,
-                        "acknowledged_safety_checks": acknowledged_safety_checks,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-            )
-            executor.execute(action)
+            for action_index, action in enumerate(actions, start=1):
+                action_payload = _dump_action(action)
+                print(
+                    json.dumps(
+                        {
+                            "step": step,
+                            "call_id": call.call_id,
+                            "action_index": action_index,
+                            "action": action_payload,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                _save_artifact(
+                    args.artifacts_dir,
+                    f"step_{step:03d}_call_{index:02d}_action_{action_index:02d}.json",
+                    json.dumps(
+                        {
+                            "call_id": call.call_id,
+                            "action": action_payload,
+                            "acknowledged_safety_checks": acknowledged_safety_checks,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                )
+                executor.execute(action)
             screenshot_bytes, _, _ = _capture_screenshot()
             _save_artifact(args.artifacts_dir, f"step_{step:03d}_screen_{index:02d}.png", screenshot_bytes)
             next_input.append(
@@ -324,6 +343,7 @@ def main() -> int:
                     "output": {
                         "type": "computer_screenshot",
                         "image_url": _data_url_from_png(screenshot_bytes),
+                        "detail": "original",
                     },
                     "acknowledged_safety_checks": acknowledged_safety_checks,
                 }
