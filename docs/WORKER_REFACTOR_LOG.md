@@ -12006,6 +12006,27 @@
   - `B / M1` の最新 tighten を維持しつつ、trade_min の micro 枠だけを直近勝ち筋へ差し替える。
   - 共通ガードや order_manager を触らず、profile 構成だけで期待値改善を狙う。
 
+## 2026-03-07 JST - `MicroLevelReactor` dedicated env の strict range gate を局所緩和
+
+- 背景:
+  - `trade_min` の winner micro として `MicroLevelReactor` を常駐させたが、
+    `logs/local_v2_stack/quant-micro-levelreactor.log` では
+    `mlr_range_gate_block active=False score=0.049 adx=31.24 ma_gap=6.95` などが継続し、
+    live 実測に対して dedicated strict gate が厳しすぎた。
+  - 既定値は `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.62`, `MICRO_MULTI_MLR_MAX_ADX=20.0`,
+    `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=2.2` で、直近の winner 履歴と合っていなかった。
+
+- 変更:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05`
+    - `MICRO_MULTI_MLR_MAX_ADX=36.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5`
+    を追加
+
+- 意図:
+  - strict gate を丸ごと切らず、`MicroLevelReactor` 専用 worker に限って
+    live 相場で通せる候補だけを戻す。
+
 ## 2026-03-06 JST - `trade_min` に `MicroLevelReactor` を追加し、`MomentumBurst` allowlist と dynamic alloc の勝ち筋復元を修正
 
 - 背景:

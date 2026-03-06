@@ -1,5 +1,24 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-17. 2026-03-07 JST `MicroLevelReactor` の dedicated strict range gate を live 実測に合わせて局所緩和
+- 背景（local-v2 実測, UTC 2026-03-06 15:00-15:05 / JST 2026-03-07 00:00-00:05）:
+  - `logs/orders.db` では `2026-03-06T14:59Z` 以降の新規 `filled` が止まり、直近数分はエントリーが細っていた
+  - `logs/local_v2_stack/quant-micro-levelreactor.log` では
+    - `mlr_range_gate_block active=False score=0.049 adx=31.24 ma_gap=6.95`
+    - `mlr_range_gate_block active=False score=0.067 adx=32.60 ma_gap=6.47`
+    - `mlr_range_gate_block active=False score=0.073 adx=34.34 ma_gap=5.74`
+    が継続し、winner `MicroLevelReactor` が dedicated worker 上で entry 候補を落としていた
+  - 既定値は `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.62`, `MICRO_MULTI_MLR_MAX_ADX=20.0`, `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=2.2` で、直近 live 条件に対して厳しすぎた
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05`
+    - `MICRO_MULTI_MLR_MAX_ADX=36.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5`
+    を追加
+- 意図:
+  - strict gate 自体は維持しつつ、勝っている `MicroLevelReactor` の entry 母数だけを局所的に回復する
+  - loser の `M1` / `flow` / `B` を広げず、現在の「全然エントリーされない」感の主因だけを外す
+
 ## 0-16. 2026-03-06 UTC local-v2 `trade_min` を「B + MomentumBurst + MicroLevelReactor + M1」へ更新し、dynamic alloc を勝ち筋寄りへ再計算
 - 背景（local-v2 実測, UTC 2026-03-06 14:44-14:53 / JST 23:44-23:53）:
   - `logs/pdca_profitability_report_latest.md` で 24h `2396 trades / net_jpy=-8912 / PF=0.70`

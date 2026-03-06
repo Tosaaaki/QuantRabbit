@@ -7414,3 +7414,39 @@ Status:
   1. 30-60分後に `quant-micro-momentumburst.log` / `quant-micro-levelreactor.log` で `allowlist applied` が継続すること
   2. 次回 `pdca_profitability_report.py` で active micro 群の `net_jpy` が現状より改善すること
   3. `orders.db` で `MomentumBurst` / `MicroLevelReactor` の `filled` が増えつつ、`reject_rate` が悪化しないこと
+
+## 2026-03-06 15:00 UTC / 2026-03-07 00:05 JST - entry細り対策: `MicroLevelReactor` strict range gate を dedicated env で局所緩和
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.56 spread=0.8p`
+  - `openTrades=0`
+  - `order-manager/position-manager health = ok`
+
+- 事実:
+  - `logs/orders.db` では `2026-03-06T14:59Z` を最後に新規 `filled` が止まり、ユーザー体感どおり直近数分はエントリーが細っていた
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+    - `mlr_range_gate_block active=False score=0.049 adx=31.24 ma_gap=6.95`
+    - `mlr_range_gate_block active=False score=0.067 adx=32.60 ma_gap=6.47`
+    - `mlr_range_gate_block active=False score=0.073 adx=34.34 ma_gap=5.74`
+    が継続し、勝ち筋 `MicroLevelReactor` の entry 候補が dedicated strict gate で落ちていた
+  - gate 条件は
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.62`
+    - `MICRO_MULTI_MLR_MAX_ADX=20.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=2.2`
+    で、直近 live 実測に対して厳しすぎた
+
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05`
+    - `MICRO_MULTI_MLR_MAX_ADX=36.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5`
+    を追加
+
+- 判断:
+  - `M1` や `B` を緩めると loser 側の回転まで増えるため、まずは winner `MicroLevelReactor` の dedicated gate だけを局所緩和するのが妥当
+  - strict gate 自体は残し、極端な trend 追従相場を完全には開放しない
+
+- 再検証条件:
+  1. `quant-micro-levelreactor.log` で `mlr_range_gate_block` の頻度が下がること
+  2. `orders.db` で `MicroLevelReactor` 系の `preflight_start` / `filled` が再開すること
+  3. `reject_rate` と `perf_block` が悪化しないこと
