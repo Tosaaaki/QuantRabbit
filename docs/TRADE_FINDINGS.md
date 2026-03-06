@@ -7362,3 +7362,54 @@ Status:
   1. `quant-micro-levelreactor.log` に dedicated worker 起動行が出て、`allowlist applied: MicroLevelReactor` が継続すること
   2. 30-60分後の `trades.db` で `MicroRangeBreak` の新規約定が止まり、`MicroLevelReactor` の増分 net がプラス圏で推移すること
   3. 24h `pdca_profitability_report.py` で `trade_min` active 群の net が現状より改善すること
+
+## 2026-03-06 14:44 UTC / 2026-03-06 23:53 JST - 収益改善: 勝ち筋 micro を active 化し、`MomentumBurst` の dedicated allowlist と dynamic alloc 過小評価を修正
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `USD/JPY mid=157.826 spread=0.8p`
+  - `openTrades=0`
+  - `order-manager/position-manager health = ok`
+  - `position/open_positions?include_unknown=false` は `stale=false`
+
+- 事実:
+  - `pdca_profitability_report_latest.md`
+    - 24h: `2396 trades / PF=0.70 / net=-8912.1 JPY`
+    - 7d 勝ち筋: `MomentumBurst +1856.9`, `MicroLevelReactor +259.5`
+    - 7d 負け筋: `M1Scalper-M1 -6236.4`, `scalp_ping_5s_b_live -189.6`, `scalp_ping_5s_flow_live -7131.1`
+  - `analyze_entry_precision.py --limit 2000`
+    - `spread_mean=0.805p`, `latency_submit_p50=190ms`, `latency_preflight_p50=228ms`
+    - 執行コストの悪化はあるが、主因は strategy expectancy 側
+  - `config/dynamic_alloc.json` 再計算前:
+    - `MomentumBurst lot_multiplier=0.50`
+    - `MicroLevelReactor lot_multiplier=1.566`
+    - `M1Scalper-M1 lot_multiplier=0.28`
+  - `MomentumBurst` は `margin_closeout_rate=0.12` を含むが、`31 trades / win 87.1% / sum_realized_jpy=+1856.9` で、
+    過小評価の方が支配的だった
+  - `workers/micro_momentumburst/worker.py` / env は strategy 名 `MomentumBurst` ではなく `MomentumBurstMicro` を allowlist に使っており、
+    実ログでも `allowlist empty; using all strategies` が出ていた
+
+- 対応:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-levelreactor(+exit)` を追加
+  - `scripts/dynamic_alloc_worker.py`
+    - strong winner が軽微な margin closeout ノイズだけで過度縮小されない補正を追加
+  - `config/dynamic_alloc.json`
+    - full 7d lookback で再計算し、
+      `MomentumBurst=0.85`, `MicroLevelReactor=1.566`, `M1Scalper-M1=0.28`, `scalp_ping_5s_b_live=0.45`
+  - `workers/micro_momentumburst/worker.py`
+  - `workers/micro_momentumburst/exit_worker.py`
+  - `ops/env/quant-micro-momentumburst*.env`
+    - allowlist / exit tag を `MomentumBurst` へ統一
+  - local V2 再起動:
+    - `quant-micro-momentumburst.log`: `allowlist applied: MomentumBurst`
+    - `quant-micro-levelreactor.log`: `allowlist applied: MicroLevelReactor`
+
+- 判断:
+  - 「件数を増やす」は loser を増やすことではなく、勝ち筋 micro の active 枠と実効ロットを増やすのが正解
+  - `M1` と `B` は現設定のまま継続しつつ、dynamic alloc で強く縮小したまま観測する
+  - `flow` は赤字寄与が大きすぎるため、今回の増量対象にはしない
+
+- 再検証条件:
+  1. 30-60分後に `quant-micro-momentumburst.log` / `quant-micro-levelreactor.log` で `allowlist applied` が継続すること
+  2. 次回 `pdca_profitability_report.py` で active micro 群の `net_jpy` が現状より改善すること
+  3. `orders.db` で `MomentumBurst` / `MicroLevelReactor` の `filled` が増えつつ、`reject_rate` が悪化しないこと

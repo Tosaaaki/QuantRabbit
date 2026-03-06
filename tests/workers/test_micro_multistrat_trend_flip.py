@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from workers.micro_runtime import worker
 
 
@@ -151,3 +153,12 @@ def test_mlr_strict_range_gate_allows_strong_range_context(monkeypatch):
     assert ok is True
     assert diag["adx"] == 16.0
     assert diag["range_active"] == 1.0
+
+
+def test_allowed_strategies_matches_momentumburst_strategy_name(monkeypatch):
+    monkeypatch.setenv("MICRO_STRATEGY_ALLOWLIST", "MomentumBurst")
+
+    allowed = worker._allowed_strategies()
+    names = [getattr(cls, "name", cls.__name__) for cls in allowed]
+
+    assert names == ["MomentumBurst"]

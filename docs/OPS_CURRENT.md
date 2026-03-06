@@ -1,5 +1,43 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-16. 2026-03-06 UTC local-v2 `trade_min` を「B + MomentumBurst + MicroLevelReactor + M1」へ更新し、dynamic alloc を勝ち筋寄りへ再計算
+- 背景（local-v2 実測, UTC 2026-03-06 14:44-14:53 / JST 23:44-23:53）:
+  - `logs/pdca_profitability_report_latest.md` で 24h `2396 trades / net_jpy=-8912 / PF=0.70`
+  - 7d 戦略寄与は
+    - `MomentumBurst: +1856.9 JPY / 31 trades / win 87.1%`
+    - `MicroLevelReactor: +259.5 JPY / 101 trades / win 65.3%`
+    - `M1Scalper-M1: -6236.4 JPY / 2292 trades`
+    - `scalp_ping_5s_b_live: -189.6 JPY / 912 trades`
+  - `config/dynamic_alloc.json` の再計算前は
+    - `MomentumBurst lot_multiplier=0.50`
+    - `MicroLevelReactor lot_multiplier=1.566`
+    - `M1Scalper-M1 lot_multiplier=0.28`
+    で、`MomentumBurst` だけが margin_closeout ノイズで過小評価されていた
+  - `workers/micro_momentumburst` は `MICRO_STRATEGY_ALLOWLIST=MomentumBurstMicro` の名前ズレで
+    `allowlist empty; using all strategies` を出していた
+- 対応:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-levelreactor(+exit)` を追加
+    - `quant-micro-momentumburst(+exit)` は維持
+  - `scripts/dynamic_alloc_worker.py`
+    - 高PF・高勝率・強い実現損益を持つ戦略は、
+      軽微な `MARKET_ORDER_MARGIN_CLOSEOUT` 混入だけで `lot_multiplier` を極端に潰さない補正を追加
+  - `config/dynamic_alloc.json`
+    - full 7d lookback で再計算し、
+      `MomentumBurst lot_multiplier=0.85`
+      `MicroLevelReactor lot_multiplier=1.566`
+      `M1Scalper-M1 lot_multiplier=0.28`
+      `scalp_ping_5s_b_live lot_multiplier=0.45`
+      へ更新
+  - `workers/micro_momentumburst/worker.py`
+  - `workers/micro_momentumburst/exit_worker.py`
+  - `ops/env/quant-micro-momentumburst*.env`
+    - allowlist / exit tag を `MomentumBurst` へ統一
+- 意図:
+  - loser を増やさず、勝ち筋 micro の entry 母数と実効ロットを上げる
+  - `M1` と `B` は停止せず、dynamic alloc 側で縮小維持
+  - `MomentumBurst` を dedicated worker として安全に常駐させる
+
 ## 0-15. 2026-03-06 UTC local-v2 `trade_min` の micro 枠を `MicroRangeBreak` から `MicroLevelReactor` へ差し替え
 - 背景（local-v2 実測, UTC 2026-03-06 14:45 / JST 23:45）:
   - `logs/pdca_profitability_report_latest.md` で 24h `net_jpy=-8912 / PF=0.70`

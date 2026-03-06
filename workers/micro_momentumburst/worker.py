@@ -1,4 +1,4 @@
-"""Dedicated entry worker for MomentumBurstMicro strategy."""
+"""Dedicated entry worker for MomentumBurst strategy."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import asyncio
 import logging
 import os
 
-os.environ["MICRO_STRATEGY_ALLOWLIST"] = "MomentumBurstMicro"
-os.environ["MICRO_MULTI_LOG_PREFIX"] = "[MomentumBurstMicro]"
+os.environ["MICRO_STRATEGY_ALLOWLIST"] = "MomentumBurst"
+os.environ["MICRO_MULTI_LOG_PREFIX"] = "[MomentumBurst]"
 
 from workers.micro_runtime import worker as _base_worker
 
@@ -21,4 +21,3 @@ async def micro_momentumburst_worker() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(micro_momentumburst_worker())
-

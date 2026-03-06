@@ -93,6 +93,40 @@ def test_compute_scores_caps_size_when_margin_closeout_rate_is_high() -> None:
     assert prof["lot_multiplier"] <= 0.5
 
 
+def test_compute_scores_keeps_strong_winner_above_floor_despite_small_margin_closeout_noise() -> None:
+    rows = []
+    for i in range(27):
+        rows.append(
+            (
+                "MomentumBurst",
+                "micro",
+                4.0,
+                f"2026-02-24T00:{i:02d}:00Z",
+                "TAKE_PROFIT_ORDER",
+                90.0,
+                1500,
+            )
+        )
+    for i in range(4):
+        rows.append(
+            (
+                "MomentumBurst",
+                "micro",
+                -1.2,
+                f"2026-02-24T01:{i:02d}:00Z",
+                "MARKET_ORDER_MARGIN_CLOSEOUT",
+                -30.0,
+                1500,
+            )
+        )
+
+    scores = compute_scores(rows, min_trades=12, pf_cap=2.0)
+    prof = scores["MomentumBurst"]
+    assert 0.10 <= prof["margin_closeout_rate"] <= 0.15
+    assert prof["sum_realized_jpy"] > 1000.0
+    assert prof["lot_multiplier"] >= 0.85
+
+
 def test_compute_scores_caps_size_below_global_floor_when_market_close_losses_dominate() -> None:
     rows = []
     for i in range(72):

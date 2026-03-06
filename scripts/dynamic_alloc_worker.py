@@ -343,6 +343,19 @@ def compute_scores(
         if trades >= max(32, min_trades * 2) and market_close_loss_share >= 0.55 and sum_realized_jpy < 0.0:
             lot_multiplier = min(lot_multiplier, 0.28)
             effective_min_mult = min(effective_min_mult, 0.14)
+        # Keep strong winners participating even if a few margin closeouts occurred.
+        # This avoids crushing profitable strategies whose rare margin events were
+        # transient and already outweighed by strong realized returns.
+        if (
+            trades >= max(24, min_trades * 2)
+            and score >= 0.70
+            and pf >= 1.30
+            and jpy_pf >= 1.20
+            and sum_realized_jpy >= 1000.0
+            and realized_jpy_per_1k_units >= 10.0
+            and margin_closeout_rate <= 0.15
+        ):
+            lot_multiplier = max(lot_multiplier, 0.85)
         if trades < max(1, min_trades):
             lot_multiplier = min(lot_multiplier, 1.00)
         lot_multiplier = _clamp(lot_multiplier, effective_min_mult, max_mult)

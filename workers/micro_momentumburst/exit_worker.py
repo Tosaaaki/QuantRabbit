@@ -1,4 +1,4 @@
-"""Dedicated exit worker for MomentumBurstMicro strategy.
+"""Dedicated exit worker for MomentumBurst strategy.
 
 Thin launcher: sets strategy-specific env vars, then delegates to the
 shared micro_runtime exit loop to avoid code duplication across micro workers.
@@ -10,8 +10,8 @@ import logging
 import os
 
 os.environ.setdefault("MICRO_MULTI_EXIT_ENABLED", "1")
-os.environ.setdefault("MICRO_MULTI_LOG_PREFIX", "[MomentumBurstMicro]")
-os.environ.setdefault("MICRO_MULTI_EXIT_TAG_ALLOWLIST", "MomentumBurstMicro")
+os.environ.setdefault("MICRO_MULTI_LOG_PREFIX", "[MomentumBurst]")
+os.environ.setdefault("MICRO_MULTI_EXIT_TAG_ALLOWLIST", "MomentumBurst")
 
 from workers.micro_runtime.exit_worker import micro_runtime_exit_worker
 

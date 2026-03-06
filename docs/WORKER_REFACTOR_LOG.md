@@ -12005,3 +12005,44 @@
 - 意図:
   - `B / M1` の最新 tighten を維持しつつ、trade_min の micro 枠だけを直近勝ち筋へ差し替える。
   - 共通ガードや order_manager を触らず、profile 構成だけで期待値改善を狙う。
+
+## 2026-03-06 JST - `trade_min` に `MicroLevelReactor` を追加し、`MomentumBurst` allowlist と dynamic alloc の勝ち筋復元を修正
+
+- 背景:
+  - `pdca_profitability_report_latest.md` では 24h `net_jpy=-8912 / PF=0.70`、7d の勝ち筋は
+    - `MomentumBurst: +1856.9 JPY / 31 trades / win 87.1%`
+    - `MicroLevelReactor: +259.5 JPY / 101 trades / win 65.3%`
+  - 一方 `M1Scalper-M1` は `-6236.4 JPY`、`scalp_ping_5s_b_live` も `-189.6 JPY` で、勝ち筋 micro を増やす必要があった。
+  - `workers/micro_momentumburst/worker.py` / `ops/env/quant-micro-momentumburst.env` は `MomentumBurstMicro` を allowlist 名に使っており、
+    実 strategy 名 `MomentumBurst` とズレて `allowlist empty; using all strategies` を出していた。
+  - `config/dynamic_alloc.json` でも `MomentumBurst` は `margin_closeout_rate=0.12` のノイズで `lot_multiplier=0.50` まで潰れていた。
+
+- 変更:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-levelreactor` / `quant-micro-levelreactor-exit` を追加
+  - `scripts/dynamic_alloc_worker.py`
+    - 高PF・高勝率・強い実現損益を持つ戦略について、
+      軽微な margin closeout 混入だけでは `lot_multiplier` を `0.85` 未満へ潰さない補正を追加
+  - `config/dynamic_alloc.json`
+    - full 7d lookback で再計算し、
+      `MomentumBurst=0.85`, `MicroLevelReactor=1.566`, `M1Scalper-M1=0.28`, `scalp_ping_5s_b_live=0.45`
+  - `workers/micro_momentumburst/worker.py`
+  - `workers/micro_momentumburst/exit_worker.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `ops/env/quant-micro-momentumburst-exit.env`
+    - allowlist / exit tag を `MomentumBurst` に統一
+  - `tests/test_dynamic_alloc_worker.py`
+    - strong winner + small margin closeout noise の回帰を追加
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+    - `MICRO_STRATEGY_ALLOWLIST=MomentumBurst` の dedicated allowlist 解決を固定化
+
+- 検証:
+  - `./.venv/bin/pytest tests/test_dynamic_alloc_worker.py tests/workers/common/test_dynamic_alloc.py tests/workers/test_micro_multistrat_trend_flip.py`
+    - `19 passed`
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+    - `allowlist applied: MomentumBurst`
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+    - `allowlist applied: MicroLevelReactor`
+  - `curl -sf http://127.0.0.1:8300/health`
+  - `curl -sf http://127.0.0.1:8301/health`
+    - どちらも `{"ok":true,...}`
