@@ -12456,3 +12456,47 @@
 - 期待効果:
   - winner pocket の `micro` を厚くしつつ、`M1Scalper-M1` / `flow` / `B` のような loser を本当に薄くする。
   - week open 後に同一 `dynamic_alloc.json` を読む worker 群が、個別最適ではなく pocket 協調付きでサイズを決める。
+
+## 2026-03-07 JST - `scalp_ping_5s_flow_live` に thesis force-exit を接続し、flow 専用 exit profile を分離
+
+- 目的:
+  - `scalp_ping_5s_flow_live` の `MARKET_ORDER_TRADE_CLOSE` tail-loss を、
+    strategy-local な `entry_thesis.force_exit_*` と flow 専用 exit profile で圧縮する。
+  - B/C 共用 profile の長い tail 前提をやめ、flow の薄い TP/SL に合わせた exit へ寄せる。
+
+- 変更ファイル:
+  - `workers/scalp_ping_5s_flow/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `ops/env/scalp_ping_5s_flow.env`
+  - `ops/env/quant-scalp-ping-5s-flow-exit.env`
+
+- 実装:
+  - `exit_worker.py`
+    - `entry_thesis.force_exit_max_hold_sec`
+      / `entry_thesis.force_exit_max_floating_loss_pips` を decode し、
+      flow trade では `reentry` / `direction_flip` より前に `time_stop` / `max_adverse` を実行する。
+  - `strategy_exit_protections.yaml`
+    - `scalp_ping_5s_flow(_live)` を `SCALP_PING_5S_BC_EXIT_PROFILE` から分離し、
+      hard cap / max hold / direction flip を flow 専用に短縮。
+  - `scalp_ping_5s_flow.env`
+    - thin-edge を reject しやすい lookahead / live-score しきい値へ更新。
+  - `quant-scalp-ping-5s-flow-exit.env`
+    - fallback loss-cut を `12p / 900s` から `2.2p / 120s` へ圧縮。
+
+- 根拠（local-v2 実測）:
+  - 24h `scalp_ping_5s_flow_live -1768.257 JPY / 97 trades / PF 0.22`
+  - 7d `scalp_ping_5s_flow_live -7000.614 JPY / 414 trades / PF 0.33`
+  - 72h close reason:
+    - `TAKE_PROFIT_ORDER 125 / avg +1.462p`
+    - `STOP_LOSS_ORDER 228 / avg -1.414p`
+    - `MARKET_ORDER_TRADE_CLOSE 65 / avg -3.829p`
+
+- オフライン検証:
+  - `python3 -m py_compile workers/scalp_ping_5s_flow/exit_worker.py`
+    - pass
+  - `yaml.safe_load('config/strategy_exit_protections.yaml')`
+    - pass
+
+- 期待効果:
+  - flow の loser が `entry_thesis` で意図した hold/loss を超えて伸びる経路を減らす。
+  - thin-edge entry を減らし、`TAKE_PROFIT_ORDER` の質と `MARKET_ORDER_TRADE_CLOSE` 平均損失の両方を改善する。

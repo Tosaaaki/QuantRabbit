@@ -8214,3 +8214,62 @@ Status:
 - 狙い:
   - 週明けに worker 群が同じ `dynamic_alloc.json` を読み、勝っている `micro` へ自動で厚く、負けている `scalp/scalp_fast` を自動で薄くする。
   - loser の縮小が loader で無効化されていた状態を解消し、`M1Scalper-M1` / `flow` の drag を本当に落とす。
+
+## 2026-03-07 11:44 JST / local-v2週末仕込み: `scalp_ping_5s_flow_live` の thin-edge / tail-loss を圧縮
+
+- 市況確認:
+  - `logs/pdca_profitability_latest.md`（2026-03-07 11:44:50 JST）
+    - `USD/JPY mid=157.8215 / spread=6.3p`
+    - `open_trades=0`
+  - `logs/oanda_account_snapshot_live.json`
+    - `2026-03-07 11:08:15 JST` に更新
+  - 土曜クローズ帯のため、live fill / PF の即時再評価は保留し、offline 実装とローカル反映まで進める。
+
+- 事実:
+  - `logs/pdca_profitability_latest.md`
+    - 24h loser: `scalp_ping_5s_flow_live -1768.257 JPY / 97 trades / win 18.6% / PF 0.22`
+    - 7d loser: `scalp_ping_5s_flow_live -7000.614 JPY / 414 trades / win 31.9% / PF 0.33`
+  - `logs/trades.db` 直近72h:
+    - `scalp_ping_5s_flow_live` は `avg tp_pips=1.416`, `avg sl_pips=1.260`
+    - `TAKE_PROFIT_ORDER 125 / avg +1.462p`
+    - `STOP_LOSS_ORDER 228 / avg -1.414p`
+    - `MARKET_ORDER_TRADE_CLOSE 65 / avg -3.829p`
+  - `logs/orders.db` では `close_request.exit_reason=max_adverse` の deep loser が残り、
+    worst trade は `ticket_id=428528 / -17.6p / MARKET_ORDER_TRADE_CLOSE`。
+  - 一方 `M1Scalper-M1` は現行 allowlist
+    (`breakout-retest-long,nwave-long,vshape-rebound-long`) に限ると、
+    直近72h `34 trades / avg +1.647p / avg hold 145.7s` でプラス。
+
+- 対応:
+  - `workers/scalp_ping_5s_flow/exit_worker.py`
+    - `entry_thesis.force_exit_max_hold_sec`
+      / `entry_thesis.force_exit_max_floating_loss_pips` を読み、
+      flow trade では `reentry` / `direction_flip` より前に
+      `time_stop` / `max_adverse` を強制できるよう修正。
+  - `config/strategy_exit_protections.yaml`
+    - `scalp_ping_5s_flow(_live)` を `B/C` 共用 profile から分離。
+    - fallback の `loss_cut_hard_pips=1.8`, `loss_cut_max_hold_sec=120`,
+      `non_range_max_hold_sec=90`, `direction_flip` 早期化へ更新。
+  - `ops/env/scalp_ping_5s_flow.env`
+    - `SCALP_PING_5S_FLOW_LOOKAHEAD_ALLOW_THIN_EDGE=0`
+    - `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.18`
+    - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.08`
+  - `ops/env/quant-scalp-ping-5s-flow-exit.env`
+    - fallback loss-cut を `2.2p / 120s / cooldown 3s` へ圧縮。
+
+- 検証:
+  - `python3 -m py_compile workers/scalp_ping_5s_flow/exit_worker.py`
+    - pass
+  - `python3 - <<'PY' ... yaml.safe_load('config/strategy_exit_protections.yaml') ... PY`
+    - pass
+
+- 判断:
+  - 主因は執行レイテンシではなく、`flow` の thin-edge entry と
+    `MARKET_ORDER_TRADE_CLOSE` 側の tail-loss 放置だった。
+  - `M1Scalper-M1` は現行 allowlist 部分がすでに正なので、
+    今回は `flow` を優先し、M1 追加改修は週明けの実測再評価後に限定する。
+
+- 週明け再検証条件:
+  1. `logs/orders.db` で `scalp_ping_5s_flow_live close_request(exit_reason=max_adverse|time_stop)` の深い tail が減ること。
+  2. `logs/trades.db` で `scalp_ping_5s_flow_live MARKET_ORDER_TRADE_CLOSE` 平均が `-3.829p` から改善すること。
+  3. `logs/pdca_profitability_latest.md` で `scalp_ping_5s_flow_live` の 24h `PF / avg_pips / net_jpy` が改善すること。

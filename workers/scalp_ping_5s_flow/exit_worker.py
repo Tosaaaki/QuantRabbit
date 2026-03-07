@@ -345,6 +345,36 @@ def _trade_stop_loss_price(trade: dict) -> Optional[float]:
         return None
 
 
+def _trade_entry_spread_pips(trade: dict) -> float:
+    thesis = trade.get("entry_thesis") or {}
+    if isinstance(thesis, str):
+        try:
+            thesis = json.loads(thesis) or {}
+        except Exception:
+            thesis = {}
+    if not isinstance(thesis, dict):
+        thesis = {}
+    try:
+        return max(0.0, float(thesis.get("spread_pips") or 0.0))
+    except Exception:
+        return 0.0
+
+
+def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) -> float:
+    if base_hard_loss_pips <= 0.0:
+        return 0.0
+    base_hard_loss_pips = max(
+        base_hard_loss_pips,
+        float(getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_PIPS", 0.0)),
+    )
+    entry_spread_pips = max(0.0, _trade_entry_spread_pips(trade))
+    buffer_pips = max(
+        max(0.0, float(getattr(config, "SL_SPREAD_BUFFER_PIPS", 0.0))),
+        max(0.0, float(getattr(config, "FORCE_EXIT_BID_ASK_BUFFER_PIPS", 0.0))),
+    )
+    return float(base_hard_loss_pips + entry_spread_pips + buffer_pips)
+
+
 def _reentry_prefix_for_tag(tag: str) -> Optional[str]:
     raw = str(tag or "").strip()
     if not raw:
@@ -821,6 +851,37 @@ class RangeFaderExitWorker:
                 return False
         return False
 
+    def _trade_entry_thesis(self, trade: dict) -> dict:
+        thesis = trade.get("entry_thesis")
+        if isinstance(thesis, dict):
+            return thesis
+        if isinstance(thesis, str):
+            try:
+                parsed = json.loads(thesis) or {}
+            except Exception:
+                parsed = {}
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    def _trade_force_exit_max_hold_sec(self, trade: dict, default_sec: float = 0.0) -> float:
+        if default_sec <= 0.0:
+            default_sec = 0.0
+        thesis = self._trade_entry_thesis(trade)
+        override_sec = _bb_float(thesis.get("force_exit_max_hold_sec"))
+        if override_sec is None or override_sec <= 0.0:
+            return float(default_sec)
+        return float(override_sec)
+
+    def _trade_force_exit_hard_loss_pips(self, trade: dict, default_pips: float = 0.0) -> float:
+        if default_pips <= 0.0:
+            default_pips = 0.0
+        thesis = self._trade_entry_thesis(trade)
+        override_pips = _bb_float(thesis.get("force_exit_max_floating_loss_pips"))
+        if override_pips is None or override_pips <= 0.0:
+            return float(default_pips)
+        return float(override_pips)
+
     def _loss_cut_eligible(
         self,
         trade: dict,
@@ -1127,14 +1188,7 @@ class RangeFaderExitWorker:
             unknown_is_new=False,
         )
 
-        thesis = trade.get("entry_thesis") or {}
-        if isinstance(thesis, str):
-            try:
-                thesis = json.loads(thesis) or {}
-            except Exception:
-                thesis = {}
-        if not isinstance(thesis, dict):
-            thesis = {}
+        thesis = self._trade_entry_thesis(trade)
         strategy_tag = (
             thesis.get("strategy_tag")
             or thesis.get("strategy_tag_raw")
@@ -1354,6 +1408,12 @@ class RangeFaderExitWorker:
         )
         if "non_range_max_hold_sec" in locals() and non_range_max_hold_sec > 0.0 and forecast_adj.enabled:
             non_range_max_hold_sec = max(min_hold_sec, non_range_max_hold_sec * forecast_adj.max_hold_mult)
+        force_exit_max_hold_sec = self._trade_force_exit_max_hold_sec(trade, 0.0)
+        force_exit_hard_loss_pips = self._trade_force_exit_hard_loss_pips(trade, 0.0)
+        force_exit_hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
+            trade,
+            force_exit_hard_loss_pips,
+        )
         tick_imb_profile = exit_profile.get("tick_imb")
         if not isinstance(tick_imb_profile, dict):
             tick_imb_profile = {}
@@ -1437,6 +1497,54 @@ class RangeFaderExitWorker:
         if not client_id:
             LOG.warning("[exit-rangefader] missing client_id trade=%s skip close", trade_id)
             return
+        if base_tag_lower.startswith("scalp_ping_5s_flow") and pnl <= 0.0:
+            adverse_pips = abs(float(pnl))
+            if (
+                force_exit_hard_loss_trigger_pips > 0.0
+                and adverse_pips >= force_exit_hard_loss_trigger_pips
+            ):
+                LOG.info(
+                    "[exit-rangefader] thesis force_exit trade=%s tag=%s reason=max_floating_loss pnl=%.2fp adverse=%.2fp hold=%.0fs base=%.2fp effective=%.2fp spread=%.2fp",
+                    trade_id,
+                    base_tag or strategy_tag or "unknown",
+                    pnl,
+                    adverse_pips,
+                    hold_sec,
+                    force_exit_hard_loss_pips,
+                    force_exit_hard_loss_trigger_pips,
+                    _trade_entry_spread_pips(trade),
+                )
+                await self._close(
+                    trade_id,
+                    -units,
+                    "max_floating_loss",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                self._direction_flip_states.pop(trade_id, None)
+                return
+            if force_exit_max_hold_sec > 0.0 and hold_sec >= force_exit_max_hold_sec:
+                LOG.info(
+                    "[exit-rangefader] thesis force_exit trade=%s tag=%s reason=max_hold_loss pnl=%.2fp hold=%.0fs max_hold=%.0fs",
+                    trade_id,
+                    base_tag or strategy_tag or "unknown",
+                    pnl,
+                    hold_sec,
+                    force_exit_max_hold_sec,
+                )
+                await self._close(
+                    trade_id,
+                    -units,
+                    "max_hold_loss",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                self._direction_flip_states.pop(trade_id, None)
+                return
         # For TickImbalance, enforce max-adverse loss cap before any other pro-stop logic.
         # This is critical when hard SL is disabled; otherwise a structure-based stop can realize
         # much larger losses than the intended entry SL.

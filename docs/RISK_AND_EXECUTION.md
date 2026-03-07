@@ -868,8 +868,9 @@
   - `config/strategy_exit_protections.yaml -> M1Scalper.min_profit_pips=0.10`
 - 運用値（`scalp_ping_5s_flow_live`, 2026-03-07 local-v2）:
   - `SCALP_PING_5S_FLOW_LOOKAHEAD_GATE_ENABLED=1`
-  - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.0`
-  - `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.0`
+  - `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.08`
+  - `SCALP_PING_5S_FLOW_LOOKAHEAD_ALLOW_THIN_EDGE=0`
+  - `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.18`
 - 運用値（`MicroLevelReactor`, 2026-03-07 local-v2）:
   - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.60`
 - 監査:
@@ -1895,3 +1896,28 @@
   - M1Scalper の exit logic
   - shared `order_manager` / `forecast_gate`
   - V2 topology
+
+### 2026-03-07 `scalp_ping_5s_flow_live` force-exit / thin-edge hardening
+- 対象:
+  - `workers/scalp_ping_5s_flow/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `ops/env/scalp_ping_5s_flow.env`
+  - `ops/env/quant-scalp-ping-5s-flow-exit.env`
+- 変更:
+  - flow exit worker は `entry_thesis.force_exit_max_hold_sec`
+    / `entry_thesis.force_exit_max_floating_loss_pips` を decode し、
+    `reentry` / `direction_flip` より前に `time_stop` / `max_adverse` を適用する。
+  - `scalp_ping_5s_flow(_live)` は B/C 共用 profile をやめ、
+    `loss_cut_hard_pips=1.8`, `loss_cut_max_hold_sec=120`,
+    `non_range_max_hold_sec=90`, `direction_flip` 早期化の flow 専用 profile を使う。
+  - flow entry は
+    `SCALP_PING_5S_FLOW_LOOKAHEAD_ALLOW_THIN_EDGE=0`,
+    `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.18`,
+    `SCALP_PING_5S_FLOW_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS=0.08`
+    を運用値とする。
+  - exit worker fallback も `RANGEFADER_EXIT_LOSS_CUT_HARD_PIPS=2.2`,
+    `RANGEFADER_EXIT_LOSS_CUT_MAX_HOLD_SEC=120`,
+    `RANGEFADER_EXIT_LOSS_CUT_COOLDOWN_SEC=3` へ圧縮する。
+- 意図:
+  - `TP/SL` の薄い flow で、negative-edge entry と tail-loss hold を同時に減らす。
+  - 共有 `order_manager` の後付け選別ではなく、strategy-local entry/exit で改善する。
