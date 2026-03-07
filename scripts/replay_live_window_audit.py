@@ -343,6 +343,17 @@ def _required_tick_basenames(window: ReplayWindow, *, instrument: str = "USD_JPY
     return basenames
 
 
+def _with_warmup(window: ReplayWindow, *, replay_warmup_minutes: float) -> ReplayWindow:
+    warmup_delta = timedelta(minutes=max(0.0, float(replay_warmup_minutes)))
+    if warmup_delta <= timedelta(0):
+        return window
+    return ReplayWindow(
+        start=window.start - warmup_delta,
+        end=window.end,
+        trade_count=window.trade_count,
+    )
+
+
 def _iso_utc_z(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -513,6 +524,7 @@ def build_report(
     out_dir: Path,
     run_replay: bool,
     allow_candle_sim_fallback: bool = False,
+    replay_warmup_minutes: float = 0.0,
 ) -> Dict[str, object]:
     tick_files = _expand_tick_globs(tick_patterns)
     spans = _tick_spans(tick_files)
@@ -525,6 +537,7 @@ def build_report(
         "tick_patterns": _split_csv(tick_patterns),
         "tick_file_count": len(spans),
         "allow_candle_sim_fallback": bool(allow_candle_sim_fallback),
+        "replay_warmup_minutes": max(0.0, float(replay_warmup_minutes)),
         "workers": {},
     }
 
@@ -540,14 +553,18 @@ def build_report(
         window_payloads: List[Dict[str, object]] = []
         for index, window in enumerate(windows, start=1):
             label = _window_label(index, window)
+            replay_window = _with_warmup(window, replay_warmup_minutes=replay_warmup_minutes)
             matched_spans = _overlapping_tick_files(window, spans)
+            replay_spans = _overlapping_tick_files(replay_window, spans)
             coverage_status = "covered" if matched_spans else "missing"
             clipped_path = out_dir / worker / f"{label}_ticks.jsonl"
+            replay_clip_path = out_dir / worker / f"{label}_replay_ticks.jsonl"
             clipped_tick_count = 0
             replay_ticks_path: Optional[Path] = None
             replay_tick_count = 0
             replay_result: Dict[str, object] = {"status": "skipped"}
             required_basenames = _required_tick_basenames(window)
+            replay_required_basenames = _required_tick_basenames(replay_window)
             fallback_payload: Dict[str, object] = {
                 "enabled": bool(allow_candle_sim_fallback),
                 "used": False,
@@ -576,10 +593,21 @@ def build_report(
                 else:
                     replay_ticks_path = clipped_path
                     replay_tick_count = clipped_tick_count
+                    if replay_window.start < window.start:
+                        replay_tick_count = _clip_ticks_to_window(
+                            replay_spans,
+                            window=replay_window,
+                            out_path=replay_clip_path,
+                        )
+                        if replay_tick_count > 0:
+                            replay_ticks_path = replay_clip_path
+                        else:
+                            replay_ticks_path = clipped_path
+                            replay_tick_count = clipped_tick_count
             if coverage_status == "missing" and allow_candle_sim_fallback:
                 fallback_payload = _run_candle_sim_fallback(
                     instrument="USD_JPY",
-                    window=window,
+                    window=replay_window,
                     worker_out_dir=out_dir / worker,
                     label=label,
                 )
@@ -602,12 +630,17 @@ def build_report(
                     "label": label,
                     "window_start": window.start.isoformat(),
                     "window_end": window.end.isoformat(),
+                    "replay_window_start": replay_window.start.isoformat(),
+                    "replay_window_end": replay_window.end.isoformat(),
                     "trade_count": window.trade_count,
                     "required_tick_basenames": required_basenames,
+                    "replay_required_tick_basenames": replay_required_basenames,
                     "coverage": {
                         "status": coverage_status,
                         "tick_file_count": len(matched_spans),
                         "tick_files": [str(span.path) for span in matched_spans],
+                        "replay_tick_file_count": len(replay_spans),
+                        "replay_tick_files": [str(span.path) for span in replay_spans],
                         "fallback_enabled": bool(allow_candle_sim_fallback),
                         "fallback_used": bool(fallback_payload.get("used")),
                         "fallback": fallback_payload,
@@ -644,6 +677,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_live_window_audit"))
     ap.add_argument("--run-replay", action="store_true")
     ap.add_argument("--allow-candle-sim-fallback", action="store_true")
+    ap.add_argument("--replay-warmup-minutes", type=float, default=0.0)
     return ap.parse_args()
 
 
@@ -658,6 +692,7 @@ def main() -> None:
         out_dir=args.out_dir,
         run_replay=bool(args.run_replay),
         allow_candle_sim_fallback=bool(args.allow_candle_sim_fallback),
+        replay_warmup_minutes=float(args.replay_warmup_minutes or 0.0),
     )
     report_path = args.out_dir / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)

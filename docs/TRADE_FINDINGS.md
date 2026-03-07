@@ -8369,3 +8369,40 @@ Status:
   1. `logs/orders.db` で `scalp_ping_5s_flow_live close_request(exit_reason=max_adverse|time_stop)` の深い tail が減ること。
   2. `logs/trades.db` で `scalp_ping_5s_flow_live MARKET_ORDER_TRADE_CLOSE` 平均が `-3.829p` から改善すること。
   3. `logs/pdca_profitability_latest.md` で `scalp_ping_5s_flow_live` の 24h `PF / avg_pips / net_jpy` が改善すること。
+
+## 2026-03-07 20:55 JST / local-v2週末検証: `TrendBreakout` live-window replay の主因は exact tick 欠損だけでなく warmup 欠損
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json`
+    - spread `6.3p`, latency stale
+  - `logs/health_snapshot.json`
+    - last close `2026-03-06T21:40:06Z`
+    - `orders_status_1h=[]`
+  - 土曜クローズ帯のため、live 変更は行わず replay/実装だけ進めた。
+
+- 事実:
+  - exact live 窓 `2026-03-06 09:01:51 -> 09:28:13 UTC` を
+    `--allow-candle-sim-fallback` だけで replay すると、
+    overlap は `2 trades` まで取れても `entry_replay.trades=0`。
+  - 同じ窓に `--replay-warmup-minutes 120` を付けると、
+    `tmp/replay_live_window_audit_trend_breakout_fallback_warm120/report.json`
+    で `coverage.status=candle_simulated`、
+    `summary_all.json` で `entry_replay.trades=2 / total_pnl_pips=14.041 / win_rate=1.0`。
+  - 実 replay の first trade は
+    `2026-03-06T09:06:10.721Z / tag=M1Scalper-breakout-retest-long` で、
+    live の `09:06:51 / 09:06:58 UTC` 2本に十分近い。
+  - `sim/pseudo_ticks.py` は OANDA S5 candle の nanosecond timestamp
+    (`...000000000Z`) を受けられるよう修正済み。
+
+- 判断:
+  - `TrendBreakout` の false zero は「exact live 窓と重なっていない」ことではなく、
+    replay が cold-start して `factor_cache` と breakout-retest 文脈を作れないことが主因だった。
+  - M1 family の live-window audit は、
+    exact coverage 監査と replay 用 warmup を分けて扱う必要がある。
+  - 120分 warmup は今回の `TrendBreakout` では十分で、0 trades 問題を解消した。
+
+- 運用ルール:
+  - `TrendBreakout` / `PullbackContinuation` / `FailedBreakReverse` の replay では
+    `scripts/replay_live_window_audit.py --replay-warmup-minutes 120` を標準にする。
+  - exact tick が欠けている場合も、まず `--allow-candle-sim-fallback` を併用して
+    warmup 付き replay まで回し、0 trades を即「戦略不発」とは判断しない。

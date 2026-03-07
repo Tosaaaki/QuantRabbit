@@ -12571,3 +12571,38 @@
 - 期待効果:
   - flow の loser が `entry_thesis` で意図した hold/loss を超えて伸びる経路を減らす。
   - thin-edge entry を減らし、`TAKE_PROFIT_ORDER` の質と `MARKET_ORDER_TRADE_CLOSE` 平均損失の両方を改善する。
+
+## 2026-03-07 JST - live-window replay audit に candle fallback + replay warmup を追加
+
+- 変更ファイル:
+  - `scripts/replay_live_window_audit.py`
+  - `sim/pseudo_ticks.py`
+  - `tests/scripts/test_replay_live_window_audit.py`
+  - `tests/sim/test_pseudo_ticks.py`
+  - `docs/REPLAY_STANDARD.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 実装:
+  - `replay_live_window_audit.py`
+    - `--allow-candle-sim-fallback` 時に、
+      missing live 窓を `fetch_candles.py(S5) -> sim/pseudo_ticks.py` で補完。
+    - `--replay-warmup-minutes` を追加し、
+      exact coverage 窓とは別に replay 用 pre-roll を付けられるよう変更。
+    - report に `replay_window_start/end` と
+      `replay_required_tick_basenames` を追加。
+  - `sim/pseudo_ticks.py`
+    - OANDA candle の nanosecond precision timestamp
+      (`2026-03-06T09:01:00.000000000Z`) を parse できるよう修正。
+
+- 検証:
+  - `python3 -m py_compile sim/pseudo_ticks.py scripts/replay_live_window_audit.py tests/sim/test_pseudo_ticks.py tests/scripts/test_replay_live_window_audit.py`
+    - pass
+  - `pytest -q tests/sim/test_pseudo_ticks.py tests/scripts/test_replay_live_window_audit.py`
+    - `10 passed`
+  - 実データ:
+    - `python3 scripts/replay_live_window_audit.py --workers trend_breakout --trades-db logs/trades.db --pre-minutes 5 --post-minutes 15 --allow-candle-sim-fallback --run-replay --replay-warmup-minutes 120 --out-dir tmp/replay_live_window_audit_trend_breakout_fallback_warm120`
+    - `summary_all.json` で `TrendBreakout entry_replay.trades=2 / total_pnl_pips=14.041`
+
+- 判断:
+  - `TrendBreakout` live-window replay の 0 trades は warmup 不足による cold-start が主因。
+  - replay 側は exact overlap の有無だけではなく、strategy-local な pre-roll を持たせて判定する。

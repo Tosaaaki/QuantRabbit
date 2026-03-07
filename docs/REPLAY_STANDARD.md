@@ -241,3 +241,27 @@ sudo bash scripts/install_trading_services.sh \
   --units "quant-replay-quality-gate.service quant-replay-quality-gate.timer"
 sudo systemctl enable --now quant-replay-quality-gate.timer
 ```
+
+## 2026-03-07 追記: M1 family live-window audit の warmup 標準
+
+- `scripts/replay_live_window_audit.py` は `--replay-warmup-minutes` を受け付ける。
+- `TrendBreakout` / `PullbackContinuation` / `FailedBreakReverse` のような M1 family は、
+  exact live 窓だけだと `factor_cache` と breakout context が cold-start しやすい。
+- exact 窓の coverage 監査は維持したまま、replay 用 tick だけ pre-roll を含める。
+- 標準例:
+
+```bash
+python3 scripts/replay_live_window_audit.py \
+  --workers trend_breakout \
+  --trades-db logs/trades.db \
+  --pre-minutes 5 \
+  --post-minutes 15 \
+  --replay-warmup-minutes 120 \
+  --allow-candle-sim-fallback \
+  --run-replay \
+  --out-dir tmp/replay_live_window_audit_trend_breakout
+```
+
+- `coverage.status=missing` の場合でも、`--allow-candle-sim-fallback` を付ければ
+  S5 candles を取得して pseudo tick を生成し、そのまま warmup 付き replay に流せる。
+- OANDA candle JSON の `time=...000000000Z` 形式は `sim/pseudo_ticks.py` 側で吸収済み。

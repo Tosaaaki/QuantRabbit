@@ -149,19 +149,63 @@ def test_build_report_marks_missing_and_covered_windows(tmp_path) -> None:
     first_window = worker["windows"][0]
     assert first_window["coverage"]["status"] == "covered"
     assert first_window["required_tick_basenames"] == ["USD_JPY_ticks_20260306.jsonl"]
+    assert first_window["replay_required_tick_basenames"] == ["USD_JPY_ticks_20260306.jsonl"]
     assert first_window["clipped_tick_count"] > 0
     assert Path(first_window["clipped_ticks_path"]).exists()
+    assert first_window["replay_window_start"] == first_window["window_start"]
+    assert first_window["replay_ticks_path"] == first_window["clipped_ticks_path"]
     assert first_window["replay"]["status"] == "skipped"
 
     second_window = worker["windows"][1]
     assert second_window["coverage"]["status"] == "missing"
     assert second_window["required_tick_basenames"] == ["USD_JPY_ticks_20260307.jsonl"]
+    assert second_window["replay_required_tick_basenames"] == ["USD_JPY_ticks_20260307.jsonl"]
     assert second_window["clipped_tick_count"] == 0
     assert second_window["clipped_ticks_path"] is None
     assert second_window["replay_ticks_path"] is None
 
 
-def test_build_report_uses_candle_sim_fallback_for_missing_window(tmp_path, monkeypatch) -> None:
+def test_build_report_extends_replay_window_with_warmup(tmp_path) -> None:
+    trades_db = tmp_path / "trades.db"
+    open_time = datetime(2026, 3, 6, 9, 6, tzinfo=UTC)
+    close_time = open_time + timedelta(minutes=2)
+    _write_trades_db(
+        trades_db,
+        [
+            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), close_time.isoformat()),
+        ],
+    )
+
+    covered_ticks = tmp_path / "USD_JPY_ticks_20260306.jsonl"
+    _write_ticks(
+        covered_ticks,
+        start=datetime(2026, 3, 6, 8, 58, tzinfo=UTC),
+        prices=[157.6 + (idx * 0.001) for idx in range(20)],
+    )
+
+    report = audit.build_report(
+        workers=["trend_breakout"],
+        trades_db=trades_db,
+        tick_patterns=[str(tmp_path / "USD_JPY_ticks_*.jsonl")],
+        pre_minutes=3,
+        post_minutes=5,
+        out_dir=tmp_path / "out",
+        run_replay=False,
+        replay_warmup_minutes=5,
+    )
+
+    window = report["workers"]["trend_breakout"]["windows"][0]
+    assert window["window_start"] == (open_time - timedelta(minutes=3)).isoformat()
+    assert window["replay_window_start"] == (open_time - timedelta(minutes=8)).isoformat()
+    assert window["replay_window_end"] == (close_time + timedelta(minutes=5)).isoformat()
+    assert window["replay_required_tick_basenames"] == ["USD_JPY_ticks_20260306.jsonl"]
+    assert window["clipped_tick_count"] < window["replay_tick_count"]
+    assert window["replay_ticks_path"] != window["clipped_ticks_path"]
+    assert Path(window["replay_ticks_path"]).exists()
+    assert window["coverage"]["replay_tick_file_count"] == 1
+
+
+def test_build_report_uses_candle_sim_fallback_with_replay_warmup(tmp_path, monkeypatch) -> None:
     trades_db = tmp_path / "trades.db"
     open_time = datetime(2026, 3, 6, 9, 6, tzinfo=UTC)
     close_time = open_time + timedelta(minutes=4)
@@ -213,13 +257,14 @@ def test_build_report_uses_candle_sim_fallback_for_missing_window(tmp_path, monk
         out_dir=tmp_path / "out",
         run_replay=False,
         allow_candle_sim_fallback=True,
+        replay_warmup_minutes=60,
     )
 
     worker = report["workers"]["trend_breakout"]
     window = worker["windows"][0]
     assert len(calls) == 1
     assert calls[0][0] == "USD_JPY"
-    assert calls[0][1].start == open_time - timedelta(minutes=5)
+    assert calls[0][1].start == open_time - timedelta(minutes=65)
     assert calls[0][1].end == close_time + timedelta(minutes=15)
     assert window["coverage"]["status"] == "candle_simulated"
     assert window["coverage"]["fallback_enabled"] is True
@@ -293,7 +338,7 @@ def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None
     assert worker["windows"][0]["replay_ticks_path"] == worker["windows"][0]["clipped_ticks_path"]
 
 
-def test_build_report_uses_candle_sim_fallback_for_missing_window(tmp_path, monkeypatch) -> None:
+def test_build_report_runs_real_candle_sim_fallback(tmp_path, monkeypatch) -> None:
     trades_db = tmp_path / "trades.db"
     open_time = datetime(2026, 3, 7, 9, 6, tzinfo=UTC)
     _write_trades_db(

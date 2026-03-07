@@ -18,6 +18,29 @@ from .pseudo_cfg import SimCfg
 PIP_VALUE = 0.01  # USD/JPY pip (0.01)
 
 
+def _parse_candle_time(value: str) -> datetime:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("empty_candle_time")
+    iso = text.replace("Z", "+00:00")
+    if "." in iso:
+        head, frac_and_tz = iso.split(".", 1)
+        tz = "+00:00"
+        frac = frac_and_tz
+        if "+" in frac_and_tz:
+            frac, tz_tail = frac_and_tz.split("+", 1)
+            tz = f"+{tz_tail}"
+        elif "-" in frac_and_tz:
+            frac, tz_tail = frac_and_tz.split("-", 1)
+            tz = f"-{tz_tail}"
+        frac = (frac[:6]).ljust(6, "0")
+        iso = f"{head}.{frac}{tz}"
+    dt = datetime.fromisoformat(iso)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def session_of(ts: datetime) -> str:
     hour = ts.hour
     if 7 <= hour < 15:
@@ -167,7 +190,7 @@ def synth_from_candles(
         l = _to_price(mid.get("l", o))
         c = _to_price(mid.get("c", o))
         ts_iso = candle.get("time")
-        dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+        dt = _parse_candle_time(ts_iso)
         candle_payload = {
             "ts": int(dt.timestamp() * 1000),
             "o": o,
