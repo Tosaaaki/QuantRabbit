@@ -12,6 +12,10 @@
   - 2026-03-07 JST 時点で `trend_breakout` / `pullback_continuation` / `failed_break_reverse` も replay 入口を持つ。
   - ただし M1 family の `replay_exit_workers_groups.py` は現状 `entry + simple time_stop/trail/max_adverse + hard TP/EOD` 寄りの近似で、専用 exit policy の完全再現ではない。
 - 出力は `summary_all.json` を採用する。
+- `scripts/replay_workers.py` の出力 `summary.coverage` を必ず確認する。
+  - `tick_start` / `tick_end` / `tick_count` / `tick_span_sec` で replay 窓を確認する。
+  - M1 family は `summary.coverage.live_trade_overlap` で `logs/trades.db` の実 live trade と窓の重なりを確認する。
+  - `overlap_count=0` かつ `total_strategy_trades>0` のときは、`0 trades` を「戦略不発」ではなく「tick 窓不足」と扱う。
 - シナリオ同時再生を行う場合は `--scenarios` を追加する。既定は `all` で、既存運用と同一。
 - `summary_all.json` は `base_scenarios` / `tuned_scenarios` にシナリオ別要約を持つ（後述）。
 
@@ -50,9 +54,12 @@ python scripts/replay_exit_workers_groups.py \
   `gapup/gapdown`、`stale_tick/stale_ticks` などが受理され、内部で正規化されます。
 
 - 追加されるキー:
+  - `entry_replay.summary.coverage`
+  - `entry_replay.out_path`
   - `base_scenarios[scenario].summary`
   - `base_scenarios[scenario].selection` (`requested` / `applied` / `excluded`)
   - `base_scenarios[scenario].tick_count` / `tick_meta`
+  - `entry_replay_tuned.summary.coverage` / `entry_replay_tuned.out_path`（`--tune` 時）
   - `tuned_scenarios[...]`（`--tune` 時）
 - 出力ファイル命名:
   - `replay_exit_<worker>_base_<scenario>.json`

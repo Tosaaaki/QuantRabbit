@@ -12382,6 +12382,45 @@
     - `TrendBreakout / PullbackContinuation / FailedBreakReverse` の `base.trades=0`
     - `selection.requested=0` で、`2026-02-12` の full-day tick (`137,948` rows) 上では entry 自体が発火しなかった。
 
+## 2026-03-07 JST - replay coverage を導入して、M1 family の `0 trades` と tick 窓不足を区別可能にした
+
+- 目的:
+  - `summary_all.json` の `requested=0` を「戦略不発」と誤読しないよう、entry replay 側の tick 窓と live overlap を同じ出力に残す。
+
+- 変更ファイル:
+  - `scripts/replay_workers.py`
+  - `scripts/replay_exit_workers_groups.py`
+  - `tests/replay/test_m1_family_replay.py`
+  - `docs/REPLAY_STANDARD.md`
+
+- 実装:
+  - `replay_workers.py`
+    - `summary.coverage` を追加し、`tick_start` / `tick_end` / `tick_count` / `tick_span_sec` を出す。
+    - M1 family (`trend_breakout` / `pullback_continuation` / `failed_break_reverse`) は
+      `logs/trades.db` と照合し、`live_trade_overlap` (`overlap_count`, `total_strategy_trades`) を返す。
+  - `replay_exit_workers_groups.py`
+    - `summary_all.json` に `entry_replay.summary.coverage` と `entry_replay.out_path` を保持。
+    - `--tune` 時も `entry_replay_tuned` を同様に保持。
+  - `docs/REPLAY_STANDARD.md`
+    - `overlap_count=0 && total_strategy_trades>0` の replay は
+      strategy no-signal ではなく tick coverage miss と扱う運用を明記。
+
+- 根拠（local-v2 実測）:
+  - `TrendBreakout` live trade は `2026-03-06 09:06:51Z` / `09:06:58Z` open の 2 件。
+  - `logs/replay/USD_JPY/USD_JPY_ticks_20260306.jsonl` は `11:17:48Z -> 21:59:05Z` で始まり、
+    live open を含んでいない。
+  - 反映後の `tmp/replay_trend_breakout_20260306.json` は
+    `summary.coverage.live_trade_overlap.overlap_count=0`,
+    `total_strategy_trades=2` を返す。
+  - `tmp/replay_exit_workers_groups_trend_breakout_20260306/summary_all.json` でも
+    `entry_replay.summary.coverage` から同じ事実を確認できる。
+
+- テスト:
+  - `python -m py_compile scripts/replay_workers.py scripts/replay_exit_workers_groups.py tests/replay/test_m1_family_replay.py`
+    - pass
+  - `pytest -q tests/replay/test_m1_family_replay.py`
+    - `3 passed`
+
 ## 2026-03-07 JST - dynamic alloc を pocket 協調化し、loader の policy floor バグを修正
 
 - 目的:

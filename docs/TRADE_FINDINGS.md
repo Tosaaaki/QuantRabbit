@@ -8124,6 +8124,51 @@ Status:
   - replay 導線は通ったが、`2026-02-12` のフル日 tick でも M1 family 3本は entry が 1 本も立たなかった。
   - live 昇格本命は引き続き `TrendBreakout`。ただし週明け前の追加判断は `longer replay window` と通常流動性帯の live canary で継続する。
 
+## 2026-03-07 02:52 UTC / 2026-03-07 11:52 JST - replay: `TrendBreakout` の `0 trades` は strategy no-signal ではなく tick coverage miss
+
+- 市況確認（local-v2, weekend close）:
+  - `logs/orderbook_snapshot.json`: `bid=157.790 / ask=157.853 / spread=6.3p`
+  - `logs/health_snapshot.json`: `orders_status_1h=[]`, `last close=2026-03-06 21:40:06 UTC`
+  - 週末クローズ帯のため、live 変更は行わず replay/ログ解析のみ実施
+
+- 対象:
+  - `logs/replay/USD_JPY/USD_JPY_ticks_20260306.jsonl`
+  - `logs/trades.db`
+  - `logs/local_v2_stack/quant-scalp-trend-breakout.log`
+  - `tmp/replay_trend_breakout_20260306.json`
+  - `tmp/replay_exit_workers_groups_trend_breakout_20260306/summary_all.json`
+
+- 事実:
+  - `TrendBreakout` の live close は `2026-03-06 09:06:51Z` / `09:06:58Z` open、`09:13:11Z` / `09:13:13Z` close の 2 件、各 `+89.6 JPY`。
+  - `entry_thesis.source_signal_tag` は両方とも `M1Scalper-breakout-retest-long`、`entry_probability=0.86`、`entry_units_intent=1250`。
+  - worker log でも `2026-03-06 18:06:51 JST` に同タグで `sent units=1250` を確認。
+  - 一方、`logs/replay/USD_JPY/USD_JPY_ticks_20260306.jsonl` の tick 窓は `2026-03-06T11:17:48Z -> 21:59:05Z` で、実 live open (`09:06Z`) を含んでいない。
+  - その状態で direct replay は `trades=0` のままだが、今回追加した `summary.coverage` は
+    - `tick_count=70490`
+    - `live_trade_overlap.overlap_count=0`
+    - `live_trade_overlap.total_strategy_trades=2`
+    を返し、「実 trade はあるが replay 窓に乗っていない」ことを明示した。
+  - `replay_exit_workers_groups.py` 側の `summary_all.json` にも `entry_replay.summary.coverage` を保持し、
+    `base_scenarios.all.selection.requested=0` の原因を同じファイル内で辿れるようにした。
+
+- 対応:
+  - `scripts/replay_workers.py`
+    - `summary.coverage` を追加し、tick 窓 (`tick_start/end/count/span`) を常時出力。
+    - M1 family は `logs/trades.db` と照合して `live_trade_overlap` を返す。
+  - `scripts/replay_exit_workers_groups.py`
+    - `summary_all.json` に `entry_replay.summary.coverage` を保持。
+  - `docs/REPLAY_STANDARD.md`
+    - replay 判定前に `summary.coverage` を見る運用ルールを追記。
+
+- 判断:
+  - `20260306` の `TrendBreakout replay=0 trades` は、現時点では strategy quality の根拠にならない。
+  - 以後、M1 family の replay 結果は `coverage.live_trade_overlap.overlap_count > 0` を満たした窓だけを live RCA / 昇格判断の根拠に使う。
+  - exact replay 優先窓は以下。
+    - `TrendBreakout`: `2026-03-06 09:05-09:21 UTC`
+    - `PullbackContinuation`: `2026-03-05 12:59-13:40 UTC`
+    - `FailedBreakReverse`: `2026-03-05 14:48-15:58 UTC`
+    ただし現ローカルには該当 `20260305/06` tick が未揃い。
+
 ## 2026-03-07 11:45 JST / local-v2週末仕込み: dynamic alloc を pocket 協調化し、loader の 0.45 floor バグを修正
 
 - 市況確認:
