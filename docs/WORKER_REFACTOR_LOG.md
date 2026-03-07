@@ -5,6 +5,33 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）local Brain/Ollama の Monday canary readiness 導線を追加
+
+- 対象:
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `scripts/prepare_local_brain_canary.py`
+  - `scripts/apply_brain_model_selection.py`
+  - `tests/scripts/test_prepare_local_brain_canary.py`
+  - `tests/scripts/test_apply_brain_model_selection.py`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+- 変更:
+  - `brain-ollama-safe.env` を実体化し、
+    `micro-only` / `fail-open` / `sample_rate=0.35` / `ttl=15s` / `timeout=4s` / auto-tune off
+    の canary profile を固定化。
+  - `prepare_local_brain_canary.py`
+    - safe profile へ benchmark selection を同期
+    - safe profile shape を検証
+    - Ollama `/api/tags` と required models を確認
+    - OANDA pricing/candles から market sanity を確認
+    - `logs/brain_canary_readiness_latest.json` を出力
+  - `apply_brain_model_selection.py`
+    - `--timeout-cap-sec` を追加し、safe canary 用の bounded timeout 更新を可能化。
+    - benchmark 全体が `min_parse_pass_rate` 未達のときは ranking から無理に preflight を選ばず、
+      fallback `qwen2.5:7b` / `gpt-oss:20b` を使うよう修正。
+- 意図:
+  - Brain を live 既定へ戻さず、月曜オープン時は `quant-order-manager,quant-strategy-control` のみ safe canary で段階復帰する。
+  - benchmark/selection と safe env のズレを週末のうちに吸収し、月曜の判断を JSON 1本に寄せる。
+
 ### 2026-03-07（追記）`MicroTrendRetest-short` を dedicated worker 化し、`trade_min` へ追加
 
 - 背景（local-v2 実測）:

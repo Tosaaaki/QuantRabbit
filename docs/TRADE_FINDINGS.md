@@ -23,6 +23,62 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-07 02:03 UTC / 2026-03-07 11:03 JST - local-v2: local Brain/Ollama の月曜 canary 準備を固定化
+
+Period:
+- 確認: UTC `02:00-02:03` / JST `11:00-11:03`
+- 対象（実測）: `logs/trades.db`, `logs/orders.db`, `logs/brain_state.db`, `logs/brain_local_llm_benchmark_latest.json`, `logs/brain_model_selection_latest.json`, `logs/health_snapshot.json`
+- 対象（OANDA API）: `pricing`, `candles(M1, count=180)`
+- 対象（ローカルLLM）: `ollama list`, `http://127.0.0.1:11434/api/tags`
+
+Fact:
+- 市況（OANDA live, UTC `02:03` / JST `11:03`）:
+  - USD/JPY `bid=157.790 / ask=157.853 / spread=6.3p`
+  - `tick_age_sec=48825.1`（週末 stale）
+  - `pricing=0.218s`, `candles=0.191s`
+- ローカルLLM:
+  - Ollama 稼働、installed models は `qwen2.5:7b`, `gpt-oss:20b`, `llama3.1:8b`, `gemma3:4b`
+  - live local-v2 は `BRAIN_ENABLED=0` / `ORDER_MANAGER_BRAIN_GATE_ENABLED=0` のまま
+  - benchmark / selection artifact は存在し、latest selection は `preflight=qwen2.5:7b`, `autotune=gpt-oss:20b`
+- 直近7dの strategy 実測:
+  - winner: `MomentumBurst +1856.9 JPY`, `MicroLevelReactor +74.2 JPY`
+  - loser: `M1Scalper-M1 -6172.5 JPY`, `scalp_ping_5s_flow_live -7131.1 JPY`
+
+Failure Cause:
+- safe canary profile の実体が欠けており、週明けに Brain を戻す導線が「aggressive profile をそのまま使う」か「手作業で env を組む」かの二択になっていた。
+- readiness 判定も未整備で、benchmark/selection の鮮度、safe profile の形、Ollama 到達性、market 条件を1回で判定できなかった。
+
+Improvement:
+- `ops/env/profiles/brain-ollama-safe.env`
+  - `micro-only`
+  - `MomentumBurst, MicroLevelReactor, MicroRangeBreak, MicroTrendRetest` に限定
+  - `fail-open`
+  - `sample_rate=0.35`
+  - `ttl=15s`
+  - `timeout=4s`
+  - auto-tune off
+- `scripts/prepare_local_brain_canary.py`
+  - benchmark → safe profile selection sync（`--timeout-cap-sec 4`）
+  - safe profile shape の検査
+  - Ollama server / model presence
+  - OANDA market sanity（spread / tick age）
+  - `logs/brain_canary_readiness_latest.json` を出力
+  - 実行結果（2026-03-07 11:42 JST）: `profile_safe=true`, `selection_sync_ok=true`, `ollama_ready=true`, blocker は `market_ready` のみ
+- `scripts/apply_brain_model_selection.py`
+  - benchmark の全variantが `min_parse_pass_rate` 未達でも、poor-quality model を preflight 採用しないよう修正
+  - safe canary は fallback `qwen2.5:7b` を維持
+
+Verification:
+- 週末市況のため live restart は未実施
+- 月曜の enable 条件:
+  - `python3 scripts/prepare_local_brain_canary.py`
+  - `ready.enable_recommended=true`
+  - spread / tick age が通常化していること
+  - その上で `quant-order-manager,quant-strategy-control` だけ safe profile で restart
+
+Status:
+- done
+
 ## 2026-03-06 15:56 UTC / 2026-03-07 00:56 JST - local-v2: Git再開判断（OANDA account endpoint 復旧確認）
 
 Period:

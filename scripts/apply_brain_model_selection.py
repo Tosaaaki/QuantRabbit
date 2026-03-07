@@ -63,6 +63,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-preflight-latency-ms", type=float, default=9000.0)
     parser.add_argument("--fallback-preflight-model", default="qwen2.5:7b")
     parser.add_argument("--fallback-autotune-model", default="gpt-oss:20b")
+    parser.add_argument(
+        "--timeout-cap-sec",
+        type=float,
+        default=0.0,
+        help="Optional upper bound for selected preflight timeout.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -115,7 +121,11 @@ def _pick_models(
     if not quality_rows:
         quality_rows = [row for row in rows if row.parse_pass_rate >= min_parse_pass_rate]
     if not quality_rows:
-        quality_rows = list(rows)
+        preflight_model = str(fallback_preflight_model).strip() or "qwen2.5:7b"
+        autotune_model = str(fallback_autotune_model).strip() or preflight_model
+        latency_row = next((row for row in rows if row.model == preflight_model), None)
+        latency_ms = float(latency_row.latency_p95_ms) if latency_row is not None else 0.0
+        return preflight_model, autotune_model, latency_ms
 
     preflight_candidates = [
         row for row in quality_rows if row.latency_p95_ms > 0.0 and row.latency_p95_ms <= max_preflight_latency_ms
@@ -197,7 +207,11 @@ def main() -> int:
         fallback_preflight_model=str(args.fallback_preflight_model),
         fallback_autotune_model=str(args.fallback_autotune_model),
     )
-    timeout_sec = _recommend_timeout_sec(preflight_latency)
+    timeout_sec_raw = _recommend_timeout_sec(preflight_latency)
+    timeout_cap_sec = max(0.0, float(args.timeout_cap_sec or 0.0))
+    timeout_sec = timeout_sec_raw
+    if timeout_cap_sec > 0.0:
+        timeout_sec = max(1, min(timeout_sec_raw, int(math.ceil(timeout_cap_sec))))
 
     updates = {
         "BRAIN_OLLAMA_MODEL": preflight_model,
@@ -218,6 +232,7 @@ def main() -> int:
         "env_profile_path": str(args.env_profile),
         "preflight_model": preflight_model,
         "autotune_model": autotune_model,
+        "preflight_timeout_sec_raw": timeout_sec_raw,
         "preflight_timeout_sec": timeout_sec,
         "selection_constraints": {
             "min_parse_pass_rate": float(args.min_parse_pass_rate),
@@ -232,6 +247,8 @@ def main() -> int:
         "env_changed": env_changed,
         "dry_run": bool(args.dry_run),
     }
+    if timeout_cap_sec > 0.0:
+        result["timeout_cap_sec"] = timeout_cap_sec
 
     if not args.dry_run:
         if env_after != env_before:

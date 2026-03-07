@@ -219,13 +219,25 @@ scripts/runtime_ui.sh logs
 `scripts/open_runtime_ui.command` をダブルクリックすると UI を起動してブラウザを開く。
 
 ## 3. ローカルLLM設定（任意）
-- `ops/env/local-v2-stack.env` に Brain local LLM 設定例を記載済み。
-- 有効化する場合は次を上書き:
-  - `BRAIN_ENABLED=1`
-  - `ORDER_MANAGER_BRAIN_GATE_ENABLED=1`
-  - `BRAIN_BACKEND=ollama`
-  - `BRAIN_OLLAMA_URL=http://127.0.0.1:11434`
-  - `BRAIN_OLLAMA_MODEL=gpt-oss:20b`
+- 既定は `BRAIN_ENABLED=0` / `ORDER_MANAGER_BRAIN_GATE_ENABLED=0`。週明けに使う場合も、
+  まず `python3 scripts/prepare_local_brain_canary.py` で safe canary readiness を更新/確認する。
+- safe canary profile:
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - micro pocket のみ
+  - `MomentumBurst, MicroLevelReactor, MicroRangeBreak, MicroTrendRetest` に限定
+  - `fail-open` / `sample_rate=0.35` / `ttl=15s` / `timeout_cap=4s` / auto-tune off
+- safe canary の反映:
+```bash
+python3 scripts/prepare_local_brain_canary.py
+scripts/local_v2_stack.sh restart --profile trade_min \
+  --env ops/env/local-v2-stack.env,ops/env/profiles/brain-ollama-safe.env \
+  --services quant-order-manager,quant-strategy-control
+```
+- aggressive profile は `ops/env/profiles/brain-ollama.env` を使うが、全 pocket + auto-tune のため、
+  offline ベンチや限定検証以外では既定にしない。
+- readiness レポート出力:
+  - `logs/brain_canary_readiness_latest.json`
+  - `logs/brain_model_selection_safe_latest.json`
 
 ## 4. （任意）旧VMログ/DBのローカル参照先
 - GCSミラー一式:
