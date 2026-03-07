@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from analysis import trade_counterfactual_worker as worker
+import pytest
 
 
 def _cfg(tmp_path: Path, **kwargs: object) -> worker.ReviewConfig:
@@ -230,6 +231,74 @@ def test_policy_hints_emit_reentry_overrides(tmp_path: Path) -> None:
     assert float(overrides.get("confidence", 0.0)) > 0.0
     assert float(overrides.get("cooldown_loss_mult", 1.0)) > 1.0
     assert overrides.get("return_wait_bias") == "avoid"
+
+
+def test_load_live_trade_rows_uses_close_reason(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, lookback_days=5, include_live_trades=True, replay_json_globs=())
+    con = worker.sqlite3.connect(cfg.trades_db)
+    try:
+        con.executescript(
+            """
+            CREATE TABLE trades (
+              ticket_id TEXT,
+              client_order_id TEXT,
+              strategy_tag TEXT,
+              strategy TEXT,
+              units INTEGER,
+              pl_pips REAL,
+              entry_time TEXT,
+              close_time TEXT,
+              close_reason TEXT,
+              entry_thesis TEXT
+            );
+            """
+        )
+        now = datetime.now(timezone.utc)
+        con.execute(
+            """
+            INSERT INTO trades (
+              ticket_id, client_order_id, strategy_tag, strategy, units, pl_pips,
+              entry_time, close_time, close_reason, entry_thesis
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "live-1",
+                "cid-live-1",
+                "scalp_ping_5s_b_live",
+                "scalp_ping_5s_b_live",
+                1200,
+                -0.4,
+                now.isoformat(),
+                (now + timedelta(seconds=45)).isoformat(),
+                "TAKE_PROFIT_ORDER",
+                json.dumps({"entry_probability": 0.61}),
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    rows = worker._load_live_trade_rows(cfg)
+    assert len(rows) == 1
+    assert rows[0].reason == "take_profit_order"
+    assert rows[0].entry_probability == 0.61
+
+
+def test_load_spread_map_tolerates_sqlite_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.orders_db.touch()
+
+    class _BrokenConnection:
+        row_factory = None
+
+        def execute(self, *_args, **_kwargs):
+            raise worker.sqlite3.OperationalError("unable to open database file")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(worker.sqlite3, "connect", lambda *_args, **_kwargs: _BrokenConnection())
+    assert worker._load_spread_map(cfg, ["cid-1", "cid-2"]) == {}
 
 
 def test_main_skips_when_market_open(monkeypatch) -> None:

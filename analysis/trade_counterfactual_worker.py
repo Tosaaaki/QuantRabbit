@@ -321,6 +321,7 @@ def _load_live_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
             pl_pips,
             entry_time,
             close_time,
+            COALESCE(close_reason, '') AS close_reason,
             entry_thesis
         FROM trades
         WHERE close_time IS NOT NULL
@@ -373,7 +374,7 @@ def _load_live_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
                 pl_pips=float(pl_pips),
                 entry_probability=entry_probability,
                 spread_pips=None,
-                reason="unknown",
+                reason=_normalize_reason(row["close_reason"]),
                 hold_sec=(
                     max(0.0, (close_ts - entry_ts).total_seconds())
                     if entry_ts is not None and close_ts is not None
@@ -475,7 +476,15 @@ def _load_spread_map(cfg: ReviewConfig, client_ids: list[str]) -> dict[str, floa
         return {}
 
     out: dict[str, tuple[str, float]] = {}
-    con = sqlite3.connect(f"file:{cfg.orders_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None)
+    try:
+        con = sqlite3.connect(
+            f"file:{cfg.orders_db}?mode=ro",
+            uri=True,
+            timeout=8.0,
+            isolation_level=None,
+        )
+    except sqlite3.Error:
+        return {}
     con.row_factory = sqlite3.Row
     try:
         chunk_size = 400
@@ -488,7 +497,10 @@ def _load_spread_map(cfg: ReviewConfig, client_ids: list[str]) -> dict[str, floa
             WHERE client_order_id IN ({placeholders})
               AND status = 'filled'
             """
-            rows = con.execute(sql, chunk).fetchall()
+            try:
+                rows = con.execute(sql, chunk).fetchall()
+            except sqlite3.Error:
+                break
             for row in rows:
                 cid = str(row["client_order_id"] or "").strip()
                 if not cid:

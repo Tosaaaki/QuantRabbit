@@ -12771,6 +12771,8 @@
   - `analysis/trade_counterfactual_worker.py`
     - live `trades` 読み込みで `close_reason` を取得し、
       `TradeSample.reason` に正規化して保持するよう修正。
+    - `orders.db` 読み込みが一時失敗した場合でも spread なしで継続し、
+      counterfactual レポート自体は fail-open で更新するよう修正。
   - `scripts/install_local_v2_launchd.sh`
     - stack/env path を physical path へ canonicalize。
     - plist の shell を `bash -c` に切り替え、`WorkingDirectory=/` を明示して
@@ -12786,6 +12788,8 @@
     の改善ループが closed 帯に自動接続される。
   - live counterfactual の `close_reason` 集計が `unknown` 固定から脱却し、
     失敗/成功の出口理由を次回改善へ使える。
+  - `orders.db` の瞬断/読み取り揺れで counterfactual job 全体が止まる経路を減らし、
+    weekend closed 帯の自動分析が継続しやすくなる。
   - launchd の path/cwd 起因ノイズを減らし、常駐自動復帰の安定性を上げる。
 
 ## 2026-03-07 JST - local_v2 launchd/watchdog の repo root を物理パスへ固定

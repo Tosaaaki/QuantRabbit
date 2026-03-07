@@ -8630,6 +8630,8 @@ Status:
   - `analysis/trade_counterfactual_worker.py`
     - live trade 読み込みで `close_reason` を保持し、
       `reason="unknown"` 固定を解消。
+    - `orders.db` 読み取りが一時失敗しても spread なしで継続し、
+      counterfactual 全体を落とさない fail-open へ変更。
   - `scripts/install_local_v2_launchd.sh`
     - plist に書く stack/env path を canonical path 化。
     - `bash -lc` を `bash -c` へ変更し、`WorkingDirectory=/` を明示。
@@ -8643,6 +8645,8 @@ Status:
 - 効果:
   - local でも replay/analysis の改善が `worker_reentry.yaml` 経由で次回トレードへ戻る。
   - counterfactual の失敗理由が `unknown` 汚染から改善し、reentry 改善の根拠が実測 close reason と整合する。
+  - `orders.db` 読み取り揺れで `trade_counterfactual` が丸ごと停止する頻度を下げ、
+    closed 帯の自動改善ループを維持しやすくなる。
   - launchd 自動復帰の path/cwd ノイズを下げ、週明け以降の常駐性を強化する。
 
 ## 2026-03-07 21:40 JST / local-v2 watchdog の symlink 起点を修正して feedback-cycle 断続停止を解消
