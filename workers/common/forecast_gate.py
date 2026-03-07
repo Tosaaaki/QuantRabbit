@@ -77,6 +77,294 @@ def _parse_horizon_weight_map(raw: str, *, lo: float, hi: float) -> dict[str, fl
     return out
 
 
+def _parse_iso8601(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _restore_runtime_tech_defaults() -> None:
+    global _TECH_FEATURE_EXPANSION_GAIN
+    global _TECH_BREAKOUT_ADAPTIVE_WEIGHT
+    global _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP
+    global _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES
+    global _TECH_BREAKOUT_ADAPTIVE_LOOKBACK
+    global _TECH_SESSION_BIAS_WEIGHT
+    global _TECH_SESSION_BIAS_WEIGHT_MAP
+    global _TECH_SESSION_BIAS_MIN_SAMPLES
+    global _TECH_SESSION_BIAS_LOOKBACK
+    global _TECH_REBOUND_WEIGHT
+    global _TECH_REBOUND_WEIGHT_MAP
+    global _TECH_DYNAMIC_WEIGHT_ENABLED
+    global _TECH_DYNAMIC_WEIGHT_HORIZONS
+    global _TECH_DYNAMIC_MAX_SCALE_DELTA
+    global _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER
+    global _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN
+    global _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN
+    global _TECH_DYNAMIC_SESSION_BIAS_CENTER
+    global _TECH_DYNAMIC_SESSION_BIAS_GAIN
+    global _TECH_DYNAMIC_SESSION_REGIME_GAIN
+
+    _TECH_FEATURE_EXPANSION_GAIN = float(_TECH_RUNTIME_BASE["feature_expansion_gain"])
+    _TECH_BREAKOUT_ADAPTIVE_WEIGHT = float(_TECH_RUNTIME_BASE["breakout_adaptive_weight"])
+    _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP = dict(_TECH_RUNTIME_BASE["breakout_adaptive_weight_map"])
+    _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = int(_TECH_RUNTIME_BASE["breakout_adaptive_min_samples"])
+    _TECH_BREAKOUT_ADAPTIVE_LOOKBACK = int(_TECH_RUNTIME_BASE["breakout_adaptive_lookback"])
+    _TECH_SESSION_BIAS_WEIGHT = float(_TECH_RUNTIME_BASE["session_bias_weight"])
+    _TECH_SESSION_BIAS_WEIGHT_MAP = dict(_TECH_RUNTIME_BASE["session_bias_weight_map"])
+    _TECH_SESSION_BIAS_MIN_SAMPLES = int(_TECH_RUNTIME_BASE["session_bias_min_samples"])
+    _TECH_SESSION_BIAS_LOOKBACK = int(_TECH_RUNTIME_BASE["session_bias_lookback"])
+    _TECH_REBOUND_WEIGHT = float(_TECH_RUNTIME_BASE["rebound_weight"])
+    _TECH_REBOUND_WEIGHT_MAP = dict(_TECH_RUNTIME_BASE["rebound_weight_map"])
+    _TECH_DYNAMIC_WEIGHT_ENABLED = bool(_TECH_RUNTIME_BASE["dynamic_weight_enabled"])
+    _TECH_DYNAMIC_WEIGHT_HORIZONS = set(_TECH_RUNTIME_BASE["dynamic_weight_horizons"])
+    _TECH_DYNAMIC_MAX_SCALE_DELTA = float(_TECH_RUNTIME_BASE["dynamic_max_scale_delta"])
+    _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER = float(_TECH_RUNTIME_BASE["dynamic_breakout_skill_center"])
+    _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN = float(_TECH_RUNTIME_BASE["dynamic_breakout_skill_gain"])
+    _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN = float(_TECH_RUNTIME_BASE["dynamic_breakout_regime_gain"])
+    _TECH_DYNAMIC_SESSION_BIAS_CENTER = float(_TECH_RUNTIME_BASE["dynamic_session_bias_center"])
+    _TECH_DYNAMIC_SESSION_BIAS_GAIN = float(_TECH_RUNTIME_BASE["dynamic_session_bias_gain"])
+    _TECH_DYNAMIC_SESSION_REGIME_GAIN = float(_TECH_RUNTIME_BASE["dynamic_session_regime_gain"])
+
+
+def _apply_runtime_tech_overrides() -> None:
+    global _TECH_FEATURE_EXPANSION_GAIN
+    global _TECH_BREAKOUT_ADAPTIVE_WEIGHT
+    global _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP
+    global _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES
+    global _TECH_BREAKOUT_ADAPTIVE_LOOKBACK
+    global _TECH_SESSION_BIAS_WEIGHT
+    global _TECH_SESSION_BIAS_WEIGHT_MAP
+    global _TECH_SESSION_BIAS_MIN_SAMPLES
+    global _TECH_SESSION_BIAS_LOOKBACK
+    global _TECH_REBOUND_WEIGHT
+    global _TECH_REBOUND_WEIGHT_MAP
+    global _TECH_DYNAMIC_WEIGHT_ENABLED
+    global _TECH_DYNAMIC_WEIGHT_HORIZONS
+    global _TECH_DYNAMIC_MAX_SCALE_DELTA
+    global _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER
+    global _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN
+    global _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN
+    global _TECH_DYNAMIC_SESSION_BIAS_CENTER
+    global _TECH_DYNAMIC_SESSION_BIAS_GAIN
+    global _TECH_DYNAMIC_SESSION_REGIME_GAIN
+
+    if _FORECAST_RUNTIME_OVERRIDE_PATH is None:
+        return
+    now = time.time()
+    if (
+        _FORECAST_RUNTIME_OVERRIDE_CACHE.get("loaded")
+        and (now - float(_FORECAST_RUNTIME_OVERRIDE_CACHE["loaded"])) < _FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC
+    ):
+        return
+
+    _restore_runtime_tech_defaults()
+    _FORECAST_RUNTIME_OVERRIDE_CACHE["loaded"] = now
+
+    try:
+        stat = _FORECAST_RUNTIME_OVERRIDE_PATH.stat()
+    except OSError:
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = None
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "missing"
+        return
+
+    try:
+        payload = json.loads(_FORECAST_RUNTIME_OVERRIDE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "invalid_json"
+        return
+    if not isinstance(payload, dict):
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "invalid_payload"
+        return
+
+    runtime = payload.get("runtime_overrides")
+    if not isinstance(runtime, dict):
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "missing_runtime_overrides"
+        return
+    if not bool(runtime.get("enabled")):
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = str(runtime.get("reason") or "disabled")
+        return
+
+    generated_at = _parse_iso8601(runtime.get("generated_at") or payload.get("generated_at"))
+    max_age_sec = max(
+        60.0,
+        _safe_float(runtime.get("max_age_sec"), 3 * 3600.0),
+    )
+    if generated_at is not None:
+        age_sec = max(0.0, (datetime.now(timezone.utc) - generated_at).total_seconds())
+        if age_sec > max_age_sec:
+            _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+            _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "stale"
+            return
+
+    env_overrides = runtime.get("env_overrides")
+    if not isinstance(env_overrides, dict) or not env_overrides:
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "empty_env_overrides"
+        return
+
+    feature_expansion = _safe_float(
+        env_overrides.get("FORECAST_TECH_FEATURE_EXPANSION_GAIN"),
+        _TECH_FEATURE_EXPANSION_GAIN,
+    )
+    _TECH_FEATURE_EXPANSION_GAIN = max(0.0, min(1.0, feature_expansion))
+    breakout_weight = _safe_float(
+        env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT"),
+        _TECH_BREAKOUT_ADAPTIVE_WEIGHT,
+    )
+    _TECH_BREAKOUT_ADAPTIVE_WEIGHT = max(0.0, min(0.8, breakout_weight))
+    if "FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP" in env_overrides:
+        _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP = _parse_horizon_weight_map(
+            str(env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP") or ""),
+            lo=0.0,
+            hi=0.8,
+        )
+    _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = max(
+        16,
+        int(_safe_float(
+            env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES"),
+            _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+        )),
+    )
+    _TECH_BREAKOUT_ADAPTIVE_LOOKBACK = max(
+        _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+        int(_safe_float(
+            env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK"),
+            _TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
+        )),
+    )
+    session_bias_weight = _safe_float(
+        env_overrides.get("FORECAST_TECH_SESSION_BIAS_WEIGHT"),
+        _TECH_SESSION_BIAS_WEIGHT,
+    )
+    _TECH_SESSION_BIAS_WEIGHT = max(0.0, min(_TECH_SESSION_BIAS_WEIGHT_CAP, session_bias_weight))
+    if "FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP" in env_overrides:
+        _TECH_SESSION_BIAS_WEIGHT_MAP = _parse_horizon_weight_map(
+            str(env_overrides.get("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP") or ""),
+            lo=0.0,
+            hi=_TECH_SESSION_BIAS_WEIGHT_CAP,
+        )
+    _TECH_SESSION_BIAS_MIN_SAMPLES = max(
+        8,
+        int(_safe_float(
+            env_overrides.get("FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES"),
+            _TECH_SESSION_BIAS_MIN_SAMPLES,
+        )),
+    )
+    _TECH_SESSION_BIAS_LOOKBACK = max(
+        _TECH_SESSION_BIAS_MIN_SAMPLES,
+        int(_safe_float(
+            env_overrides.get("FORECAST_TECH_SESSION_BIAS_LOOKBACK"),
+            _TECH_SESSION_BIAS_LOOKBACK,
+        )),
+    )
+    rebound_weight = _safe_float(
+        env_overrides.get("FORECAST_TECH_REBOUND_WEIGHT"),
+        _TECH_REBOUND_WEIGHT,
+    )
+    _TECH_REBOUND_WEIGHT = max(0.0, min(0.5, rebound_weight))
+    if "FORECAST_TECH_REBOUND_WEIGHT_MAP" in env_overrides:
+        _TECH_REBOUND_WEIGHT_MAP = _parse_horizon_weight_map(
+            str(env_overrides.get("FORECAST_TECH_REBOUND_WEIGHT_MAP") or ""),
+            lo=0.0,
+            hi=0.5,
+        )
+    if "FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED" in env_overrides:
+        dynamic_raw = str(env_overrides.get("FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED") or "").strip().lower()
+        _TECH_DYNAMIC_WEIGHT_ENABLED = dynamic_raw in {"1", "true", "yes", "on"}
+    if "FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS" in env_overrides:
+        _TECH_DYNAMIC_WEIGHT_HORIZONS = {
+            item.strip().lower()
+            for item in str(env_overrides.get("FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS") or "").split(",")
+            if item.strip()
+        }
+    _TECH_DYNAMIC_MAX_SCALE_DELTA = max(
+        0.0,
+        min(
+            0.6,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_MAX_SCALE_DELTA"),
+                _TECH_DYNAMIC_MAX_SCALE_DELTA,
+            ),
+        ),
+    )
+    _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER = max(
+        0.0,
+        min(
+            0.5,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_CENTER"),
+                _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER,
+            ),
+        ),
+    )
+    _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN = max(
+        0.0,
+        min(
+            1.0,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_BREAKOUT_SKILL_GAIN"),
+                _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN,
+            ),
+        ),
+    )
+    _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN = max(
+        0.0,
+        min(
+            1.0,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_BREAKOUT_REGIME_GAIN"),
+                _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN,
+            ),
+        ),
+    )
+    _TECH_DYNAMIC_SESSION_BIAS_CENTER = max(
+        0.0,
+        min(
+            0.5,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_SESSION_BIAS_CENTER"),
+                _TECH_DYNAMIC_SESSION_BIAS_CENTER,
+            ),
+        ),
+    )
+    _TECH_DYNAMIC_SESSION_BIAS_GAIN = max(
+        0.0,
+        min(
+            1.0,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_SESSION_BIAS_GAIN"),
+                _TECH_DYNAMIC_SESSION_BIAS_GAIN,
+            ),
+        ),
+    )
+    _TECH_DYNAMIC_SESSION_REGIME_GAIN = max(
+        0.0,
+        min(
+            1.0,
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN"),
+                _TECH_DYNAMIC_SESSION_REGIME_GAIN,
+            ),
+        ),
+    )
+    _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
+    _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "applied"
+
+
 _ENABLED = _env_bool("FORECAST_GATE_ENABLED", True)
 _BUNDLE_PATH = os.getenv(
     "FORECAST_BUNDLE_PATH",
@@ -189,6 +477,47 @@ _TECH_DYNAMIC_SESSION_REGIME_GAIN = max(
     0.0,
     min(1.0, _env_float("FORECAST_TECH_DYNAMIC_SESSION_REGIME_GAIN", 0.16)),
 )
+_FORECAST_RUNTIME_OVERRIDE_PATH_RAW = os.getenv(
+    "FORECAST_GATE_RUNTIME_OVERRIDE_PATH",
+    "logs/forecast_improvement_latest.json",
+).strip()
+_FORECAST_RUNTIME_OVERRIDE_PATH = (
+    Path(_FORECAST_RUNTIME_OVERRIDE_PATH_RAW).expanduser()
+    if _FORECAST_RUNTIME_OVERRIDE_PATH_RAW
+    and _FORECAST_RUNTIME_OVERRIDE_PATH_RAW.lower() not in {"off", "none"}
+    else None
+)
+_FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC = max(
+    5.0,
+    _env_float("FORECAST_GATE_RUNTIME_OVERRIDE_REFRESH_SEC", 60.0),
+)
+_FORECAST_RUNTIME_OVERRIDE_CACHE: dict[str, Any] = {
+    "loaded": 0.0,
+    "mtime": None,
+    "status": "",
+}
+_TECH_RUNTIME_BASE = {
+    "feature_expansion_gain": _TECH_FEATURE_EXPANSION_GAIN,
+    "breakout_adaptive_weight": _TECH_BREAKOUT_ADAPTIVE_WEIGHT,
+    "breakout_adaptive_weight_map": dict(_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP),
+    "breakout_adaptive_min_samples": _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+    "breakout_adaptive_lookback": _TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
+    "session_bias_weight": _TECH_SESSION_BIAS_WEIGHT,
+    "session_bias_weight_map": dict(_TECH_SESSION_BIAS_WEIGHT_MAP),
+    "session_bias_min_samples": _TECH_SESSION_BIAS_MIN_SAMPLES,
+    "session_bias_lookback": _TECH_SESSION_BIAS_LOOKBACK,
+    "rebound_weight": _TECH_REBOUND_WEIGHT,
+    "rebound_weight_map": dict(_TECH_REBOUND_WEIGHT_MAP),
+    "dynamic_weight_enabled": _TECH_DYNAMIC_WEIGHT_ENABLED,
+    "dynamic_weight_horizons": set(_TECH_DYNAMIC_WEIGHT_HORIZONS),
+    "dynamic_max_scale_delta": _TECH_DYNAMIC_MAX_SCALE_DELTA,
+    "dynamic_breakout_skill_center": _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER,
+    "dynamic_breakout_skill_gain": _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN,
+    "dynamic_breakout_regime_gain": _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN,
+    "dynamic_session_bias_center": _TECH_DYNAMIC_SESSION_BIAS_CENTER,
+    "dynamic_session_bias_gain": _TECH_DYNAMIC_SESSION_BIAS_GAIN,
+    "dynamic_session_regime_gain": _TECH_DYNAMIC_SESSION_REGIME_GAIN,
+}
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -1901,6 +2230,7 @@ def _technical_prediction_for_horizon(
     step_bars: int,
     timeframe: str = "M5",
 ) -> dict | None:
+    _apply_runtime_tech_overrides()
     available = len(candles)
     required = max(_TECH_MIN_FEATURE_ROWS, int(step_bars) * 3, 24)
     if available == 0:
@@ -2480,6 +2810,7 @@ def decide(
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
 ) -> ForecastDecision | None:
+    _apply_runtime_tech_overrides()
     if not _should_use(strategy_tag, pocket):
         return None
 

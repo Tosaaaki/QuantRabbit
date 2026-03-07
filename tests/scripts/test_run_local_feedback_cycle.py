@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -9,6 +10,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CYCLE_SCRIPT = REPO_ROOT / "scripts" / "run_local_feedback_cycle.py"
+_CYCLE_SPEC = importlib.util.spec_from_file_location("run_local_feedback_cycle_test", CYCLE_SCRIPT)
+assert _CYCLE_SPEC is not None and _CYCLE_SPEC.loader is not None
+run_local_feedback_cycle = importlib.util.module_from_spec(_CYCLE_SPEC)
+sys.modules.setdefault("run_local_feedback_cycle_test", run_local_feedback_cycle)
+_CYCLE_SPEC.loader.exec_module(run_local_feedback_cycle)
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -55,6 +61,8 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
     dyn_env.write_text("DYN_MARKER=dynamic-env\n", encoding="utf-8")
     feedback_env = tmp_path / "feedback.env"
     feedback_env.write_text("FEEDBACK_MARKER=feedback-env\n", encoding="utf-8")
+    forecast_env = tmp_path / "forecast.env"
+    forecast_env.write_text("FORECAST_MARKER=forecast-env\n", encoding="utf-8")
     replay_env = tmp_path / "replay.env"
     replay_env.write_text("REPLAY_MARKER=replay-env\n", encoding="utf-8")
 
@@ -86,6 +94,14 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_OUTPUTS": str(outputs_dir / "feedback.json"),
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_INTERVAL_SEC": "600",
             "LOCAL_FEEDBACK_CYCLE_TRADE_COUNTERFACTUAL_ENABLED": "0",
+            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'forecast.json'} "
+                "--env-key FORECAST_MARKER --marker forecast"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_ENV_FILES": str(forecast_env),
+            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_OUTPUTS": str(outputs_dir / "forecast.json"),
+            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_INTERVAL_SEC": "3600",
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_CMD": (
                 f"{sys.executable} {fake_job} --output {outputs_dir / 'replay.json'} "
@@ -115,6 +131,25 @@ def _run_cycle(tmp_path: Path, *, force: bool, env: dict[str, str]) -> dict:
     return json.loads((tmp_path / "logs" / "latest.json").read_text(encoding="utf-8"))
 
 
+def test_forecast_improvement_job_defaults_are_wired() -> None:
+    job = run_local_feedback_cycle._build_job("forecast_improvement", sys.executable)
+
+    assert job.enabled is True
+    assert job.interval_sec == 3600
+    assert job.timeout_sec == 1200
+    assert job.retry_count == 0
+    assert job.command == (sys.executable, "-m", "analysis.forecast_improvement_worker")
+    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.env_files) == (
+        "ops/env/quant-v2-runtime.env",
+        "ops/env/quant-forecast-improvement-audit.env",
+    )
+    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
+        "logs/forecast_improvement_latest.json",
+        "logs/forecast_improvement_history.jsonl",
+        "logs/reports/forecast_improvement/latest.md",
+    )
+
+
 def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> None:
     fake_job = _prepare_fake_job(tmp_path)
     env = _base_env(tmp_path, fake_job)
@@ -131,11 +166,18 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     assert feedback["status"] == "ok"
     assert any(output["updated"] for output in feedback["outputs"])
 
+    forecast = jobs["forecast_improvement"]
+    assert forecast["status"] == "ok"
+    assert any(output["updated"] for output in forecast["outputs"])
+
     dynamic_output = json.loads((tmp_path / "outputs" / "dynamic.json").read_text(encoding="utf-8"))
     assert dynamic_output == {"marker": "dynamic", "env_value": "dynamic-env"}
 
     feedback_output = json.loads((tmp_path / "outputs" / "feedback.json").read_text(encoding="utf-8"))
     assert feedback_output == {"marker": "feedback", "env_value": "feedback-env"}
+
+    forecast_output = json.loads((tmp_path / "outputs" / "forecast.json").read_text(encoding="utf-8"))
+    assert forecast_output == {"marker": "forecast", "env_value": "forecast-env"}
 
     replay_output = json.loads((tmp_path / "outputs" / "replay.json").read_text(encoding="utf-8"))
     assert replay_output == {"marker": "replay", "env_value": "replay-env"}
@@ -155,5 +197,7 @@ def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Pat
     assert jobs["dynamic_alloc"]["reason"] == "interval_not_elapsed"
     assert jobs["strategy_feedback"]["status"] == "skipped"
     assert jobs["strategy_feedback"]["reason"] == "interval_not_elapsed"
+    assert jobs["forecast_improvement"]["status"] == "skipped"
+    assert jobs["forecast_improvement"]["reason"] == "interval_not_elapsed"
     assert jobs["replay_quality_gate"]["status"] == "skipped"
     assert jobs["replay_quality_gate"]["reason"] == "interval_not_elapsed"

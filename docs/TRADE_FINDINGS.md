@@ -23,6 +23,79 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-07 13:03 UTC / 2026-03-07 22:03 JST - local-v2: counterfactual/forecast/tag解決の閉ループ欠線を docs へ反映
+
+Period:
+- 確認/記録: UTC `12:42-13:03` / JST `21:42-22:03`
+- 対象（実測）: `logs/pdca_profitability_latest.json`, `logs/brain_canary_readiness_latest.json`, `logs/trade_counterfactual_latest.json`, `logs/forecast_improvement_latest.json`
+- 対象（コード読解）: `analysis/strategy_feedback.py`, `execution/strategy_entry.py`, `analysis/forecast_improvement_worker.py`, `workers/common/forecast_gate.py`, `analysis/replay_quality_gate_worker.py`, `execution/reentry_gate.py`, `analysis/strategy_feedback_worker.py`, `scripts/dynamic_alloc_worker.py`, `utils/strategy_tags.py`
+
+Fact:
+- 市況確認（ローカル実測、週末 stale）:
+  - `logs/pdca_profitability_latest.json`
+    - pricing time=`2026-03-06T21:59:05.068919348Z`
+    - USD/JPY `bid=157.790 / ask=157.853 / mid=157.8215 / spread=6.3p`
+    - OANDA 応答品質: `pricing=202.6ms(200)`, `summary=213.1ms(200)`, `openTrades=198.9ms`
+  - `logs/brain_canary_readiness_latest.json`
+    - `tick_age_sec=50560.1`
+    - `atr_proxy_pips` / `recent_range_pips_6m` は `None`
+- `logs/trade_counterfactual_latest.json`（generated_at=`2026-03-07T12:54:45.522578+00:00`）には
+  `strategy_like=scalp_ping_5s_b_live%`、`policy_hints.reentry_overrides.mode=tighten`、
+  `same_dir_reentry_pips_mult=1.35`、`side_actions.short=block` が出力済み。
+- `logs/forecast_improvement_latest.json` は inspection 時点で
+  generated_at=`2026-03-04T13:50:54.857403+00:00`, `verdict=mixed`, `returncode=0` だが、
+  `runtime_overrides` は未出力で、今回の実装反映後 audit はまだ未実行。
+- コード接続確認では:
+  - `analysis/strategy_feedback.py` が `trade_counterfactual_latest.json` を追加で読み、
+    `policy_hints.reentry_overrides` と `side_actions` を
+    `entry_units_multiplier` / `entry_probability_multiplier` /
+    `entry_probability_delta` へ bounded に合成する。
+  - `execution/strategy_entry.py` は `current_advice()` に `side` を渡し、
+    long/short 別の soft feedback を live entry 側で受け取る。
+  - `analysis/forecast_improvement_worker.py` は
+    `logs/forecast_improvement_latest.json.runtime_overrides` へ
+    `enabled/reason/max_age_sec/env_overrides/...` を保存できる。
+  - `workers/common/forecast_gate.py` は runtime override 適用前に base env へ戻し、
+    `enabled=true` かつ fresh な payload だけを採用し、
+    `missing/stale/degraded` では override を使わない。
+  - `utils/strategy_tags.py` の `resolve_strategy_tag` /
+    `normalize_strategy_lookup_key` / `strategy_like_matches` を
+    `strategy_feedback_worker`, `dynamic_alloc_worker`,
+    `replay_quality_gate_worker`, `reentry_gate`, `strategy_feedback` が共有し、
+    alias や一時 suffix 付き tag を同じ canonical key へ寄せる。
+
+Failure Cause:
+- `trade_counterfactual` の知見は主に
+  `replay_quality_gate -> worker_reentry.yaml` にしか流れず、
+  live entry を触る `strategy_feedback` 側には直接入っていなかった。
+- `forecast_improvement` は before/after 監査を残していたが、
+  `forecast_gate` が即時参照できる runtime handoff が欠けていた。
+- strategy tag の正規化が複数箇所で重複しており、
+  alias/hash suffix/LIKE 判定のずれで feedback・replay・reentry の集計単位が割れやすかった。
+
+Improvement:
+- `strategy_feedback` は counterfactual を live へ hard block ではなく
+  soft overlay として反映する。
+  `reentry_overrides` と `side_actions` は bounded な
+  units/probability 調整へ変換し、`strategy_params.counterfactual_feedback`
+  と `_meta.counterfactual` に由来を残す。
+- `forecast_improvement_worker` は、現在の評価で使った env を
+  `runtime_overrides.env_overrides` として出力し、
+  `forecast_gate` は `FORECAST_GATE_RUNTIME_OVERRIDE_PATH` 経由で
+  それを runtime 読み込みする。
+  degrade / stale / empty payload 時は base env に自動復帰する。
+- strategy tag canonicalization は `utils/strategy_tags.py` に統合され、
+  feedback / replay / reentry / dynamic_alloc が同じ tag 解決規約を共有する。
+
+Verification:
+- `git diff -- analysis/strategy_feedback.py analysis/forecast_improvement_worker.py workers/common/forecast_gate.py analysis/replay_quality_gate_worker.py execution/reentry_gate.py analysis/strategy_feedback_worker.py scripts/dynamic_alloc_worker.py execution/strategy_entry.py utils/strategy_tags.py`
+- `rg -n "current_advice\\(|runtime_overrides|resolve_strategy_tag|strategy_like_matches" analysis/strategy_feedback.py execution/strategy_entry.py analysis/forecast_improvement_worker.py workers/common/forecast_gate.py analysis/replay_quality_gate_worker.py execution/reentry_gate.py analysis/strategy_feedback_worker.py scripts/dynamic_alloc_worker.py utils/strategy_tags.py`
+- `python3` で `logs/trade_counterfactual_latest.json` と `logs/forecast_improvement_latest.json` のキーを spot-check
+- 週末 stale のため、このタスクでは live 発注導線の再検証は未実施
+
+Status:
+- done
+
 ## 2026-03-07 12:22 UTC / 2026-03-07 21:22 JST - local-v2: `quant-strategy-feedback` は live 接続済み、残課題は loop 回帰保証だった
 
 Period:

@@ -10,42 +10,20 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import re
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+from utils.strategy_tags import resolve_strategy_tag
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TRADES_DB = BASE_DIR / "logs" / "trades.db"
 OUTPUT_PATH = BASE_DIR / "config" / "dynamic_alloc.json"
 
-_EPHEMERAL_SUFFIX_PATTERNS = (
-    re.compile(r"^(?P<base>.+?)-l[0-9a-f]{8,}$", re.IGNORECASE),
-    re.compile(r"^(?P<base>.+?)-[0-9a-f]{8,}$", re.IGNORECASE),
-)
-_PREFIX_ALIAS_PATTERNS = (
-    (re.compile(r"^micropul[0-9a-f]{8,}$", re.IGNORECASE), "MicroPullbackEMA"),
-    (re.compile(r"^microran[0-9a-f]{8,}$", re.IGNORECASE), "MicroRangeBreak"),
-    (re.compile(r"^microtre[0-9a-f]{8,}$", re.IGNORECASE), "MicroTrendRetest-long"),
-    (re.compile(r"^scalpmacdrsi[0-9a-f]{8,}$", re.IGNORECASE), "scalp_macd_rsi_div_b_live"),
-)
-_CANONICAL_STRATEGY_ALIASES = {
-    "trendbreakout": "TrendBreakout",
-}
-
 
 def normalize_strategy_key(raw: str | None) -> str:
-    key = str(raw or "").strip() or "unknown"
-    for pattern, alias in _PREFIX_ALIAS_PATTERNS:
-        if pattern.match(key):
-            return alias
-    for pattern in _EPHEMERAL_SUFFIX_PATTERNS:
-        matched = pattern.match(key)
-        if matched:
-            base = str(matched.group("base") or "").strip()
-            if base:
-                return base
-    return _CANONICAL_STRATEGY_ALIASES.get(key.lower(), key)
+    key = resolve_strategy_tag(raw)
+    return key or "unknown"
 
 
 def _clamp(value: float, low: float, high: float) -> float:

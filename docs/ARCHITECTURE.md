@@ -18,10 +18,10 @@
 | Regime Router (opt-in) | `workers/regime_router/worker.py` + `quant-regime-router.service` | macro/micro レジーム → `strategy_control` の strategy別 `entry_enabled` |
 | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
 | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
-| Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力 |
+| Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力し、必要に応じて `logs/trade_counterfactual_latest.json` の `reentry_overrides` / `side_actions` を long/short 別の soft overlay（units/probability の bounded 調整）として live advice に重ねる |
 | Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block（`BRAIN_BACKEND=vertex/ollama`, `BRAIN_FAIL_POLICY=allow/reduce/block`） |
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
-| Forecast Service | `workers/forecast/worker.py` / `workers/common/forecast_gate.py` / `quant-forecast.service` | `strategy_tag/pocket/side/units` を入力として予測判定（allow/reduce/block）を返却。回帰系に加えてトレンドライン傾き（20/50）とサポレジ/ブレイク圧力（`sr_balance` / `breakout_bias` / `squeeze`）を予測因子へ統合し、`breakout_bias` は直近一致スキルで適応重み化。`expected_pips` + `anchor/target` + 分位レンジ上下帯（`range_low/high_pips`, `range_low/high_price`）+ `tp/sl/rr` を `order_manager`/`entry_intent_board` へ連携。戦略ごとの主TFに対して補助TF整合（`tf_confluence_*`）も監査メタとして返し、`entry_thesis` 欠損時は `strategy_tag` から主TFを補完する |
+| Forecast Service | `workers/forecast/worker.py` / `workers/common/forecast_gate.py` / `quant-forecast.service` | `strategy_tag/pocket/side/units` を入力として予測判定（allow/reduce/block）を返却。回帰系に加えてトレンドライン傾き（20/50）とサポレジ/ブレイク圧力（`sr_balance` / `breakout_bias` / `squeeze`）を予測因子へ統合し、`breakout_bias` は直近一致スキルで適応重み化。`expected_pips` + `anchor/target` + 分位レンジ上下帯（`range_low/high_pips`, `range_low/high_price`）+ `tp/sl/rr` を `order_manager`/`entry_intent_board` へ連携。戦略ごとの主TFに対して補助TF整合（`tf_confluence_*`）も監査メタとして返し、`entry_thesis` 欠損時は `strategy_tag` から主TFを補完する。`logs/forecast_improvement_latest.json.runtime_overrides` が fresh かつ `enabled=true` の場合は forecast tech weight の runtime override もここで吸収する |
 | Strategy Control | `workers/common/strategy_control.py` / `workers/strategy_control/worker.py` | 戦略 `entry/exit` 可否、`global_lock`、環境変数上書き |
 | Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
 | Order Manager | `execution/order_manager.py` + `quant-order-manager.service` | units/sl/tp/client_order_id/tag → OANDA ticket。`env_prefix` は `entry_thesis` 優先で解決し、`entry` の意図を優先反映 |
@@ -64,6 +64,12 @@
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
+  `analysis/strategy_feedback.current_advice()` は live 読み込み時に
+  `logs/trade_counterfactual_latest.json` も参照し、
+  `policy_hints.reentry_overrides` と `side_actions` を
+  units/probability の soft overlay として合成する。
+  `execution/strategy_entry.py` は `side` を添えて advice を取得し、
+  common layer に新しい hard block を追加せず long/short 別の entry 調整だけを反映する。
   local_v2_stack（macOS 等の non-systemd lane）では systemd timer の代わりに
   `scripts/local_v2_autorecover_once.sh` が `scripts/run_local_feedback_cycle.py`
   を非同期起動し、`dynamic_alloc / pattern_book / trade_counterfactual / replay_quality_gate`
@@ -111,6 +117,11 @@
 - Background: `quant-forecast-improvement-audit.timer` は `vm_forecast_snapshot.py` と
   `eval_forecast_before_after.py` を定期実行し、`logs/reports/forecast_improvement/latest.md`
   と `logs/forecast_improvement_latest.json` へ before/after 判定を保存する。
+  監査が runtime env を評価したときは `runtime_overrides` も同 JSON へ保存し、
+  `workers/common/forecast_gate.py` が `FORECAST_GATE_RUNTIME_OVERRIDE_PATH`
+  から fresh payload を取り込んで tech weight を上書きする。
+  payload が `missing/invalid/stale/degraded` の場合、`forecast_gate` は
+  base env 値へ戻して fail-closed せず、監査結果を soft runtime tuning として扱う。
 
 ## 4. データスキーマと単位
 
@@ -182,6 +193,7 @@ class OrderIntent(BaseModel):
 | `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
 | `pocket` | `micro` = 短期テクニカル、`macro` = レジーム、`scalp` = スカルプ。口座資金を `pocket_ratio` で按分。 |
 | `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro`（運用では macro 上限 30%）。 |
+| `canonical strategy_tag` | `utils/strategy_tags.resolve_strategy_tag()` で alias と一時 suffix（例: `-l<hex>`）を剥がした共通キー。feedback / replay / reentry / dynamic_alloc の集計・照合はこの canonical key を正とする。 |
 
 ### 価格計算
 - `price_from_pips("BUY", entry, sl_pips) = round(entry - sl_pips * 0.01, 3)`
@@ -269,12 +281,17 @@ class OrderIntent(BaseModel):
       strategy+side の事前確率として合成し、`pattern_adjusted_lcb_uplift_pips` を算出する。
     - 政策ヒント: `reentry_overrides`（tighten/loosen + multiplier）を出力し、
       replay auto-improve が `worker_reentry` の非時間帯パラメータへ反映する。
+      同じ payload は live `strategy_feedback` 側でも soft overlay として参照でき、
+      `side_actions` は long/short 別の reduce/block/boost を bounded な
+      units/probability 調整へ落として live entry へ反映する。
   - 出力: `logs/trade_counterfactual_latest.json` / `logs/trade_counterfactual_history.jsonl`
 - 定期ワーカー:
   - `quant-trade-counterfactual.service`（oneshot）+
     `quant-trade-counterfactual.timer`（20min 周期）
   - replay quality gate 側の auto-improve でも同 worker を再利用し、
     replay run 固有 JSON (`runs/*/replay_exit_workers.json` 等) を入力に実行できる。
+    strategy tag 照合は canonical tag helper を共有し、
+    alias や hash suffix の違いで feedback/replay/reentry が分断されないようにする。
 
 ## 7. 2026-02-24 運用補足（ENTRY 詰まり解除）
 

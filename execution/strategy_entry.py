@@ -1894,8 +1894,9 @@ def _apply_strategy_feedback(
     tp_price: Optional[float],
     entry_thesis: Optional[dict],
 ) -> tuple[int, Optional[float], Optional[float], Optional[float], dict[str, object]]:
+    side = "long" if units >= 0 else "short"
     try:
-        advice = strategy_feedback.current_advice(strategy_tag, pocket=pocket)
+        advice = strategy_feedback.current_advice(strategy_tag, pocket=pocket, side=side)
     except Exception:  # noqa: BLE001 - strategy_feedback can fail many ways
         return units, entry_probability, sl_price, tp_price, {}
     if not advice:

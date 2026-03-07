@@ -165,6 +165,40 @@ def test_apply_reentry_updates_sets_block_hours(tmp_path: Path) -> None:
     assert session_open.get("block_jst_hours") == [2, 5]
 
 
+def test_apply_reentry_updates_resolves_canonical_strategy_keys(tmp_path: Path) -> None:
+    if worker.yaml is None:
+        pytest.skip("PyYAML is not available")
+
+    reentry_path = tmp_path / "worker_reentry.yaml"
+    reentry_path.write_text(
+        "defaults:\n  cooldown_loss_sec: 180\nstrategies:\n  M1Scalper-M1:\n    cooldown_loss_sec: 180\n",
+        encoding="utf-8",
+    )
+
+    result = worker._apply_reentry_updates(
+        reentry_path=reentry_path,
+        strategy_updates={
+            "m1scalper_m1": {
+                "reentry_overrides": {
+                    "mode": "tighten",
+                    "confidence": 0.8,
+                    "cooldown_loss_mult": 1.2,
+                    "cooldown_win_mult": 1.05,
+                    "same_dir_reentry_pips_mult": 1.1,
+                }
+            }
+        },
+        apply_block_hours=False,
+    )
+
+    assert result["applied"] is True
+    payload = worker._load_yaml_dict(reentry_path)
+    strategies = payload.get("strategies")
+    assert isinstance(strategies, dict)
+    assert "m1scalper_m1" not in strategies
+    assert strategies["M1Scalper-M1"]["cooldown_loss_sec"] > 180
+
+
 def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
     if worker.yaml is None:
         pytest.skip("PyYAML is not available")

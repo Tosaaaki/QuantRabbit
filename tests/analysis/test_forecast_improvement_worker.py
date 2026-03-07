@@ -46,8 +46,9 @@ def test_build_eval_command_applies_runtime_overrides(monkeypatch, tmp_path: Pat
     assert "--dynamic-weight-enabled 1" in joined
 
 
-def test_run_once_writes_state_history_and_report(tmp_path: Path) -> None:
+def test_run_once_writes_state_history_and_report(monkeypatch, tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FORECAST_TECH_FEATURE_EXPANSION_GAIN", "0.05")
 
     def fake_runner(cmd: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
         script_name = Path(cmd[1]).name
@@ -120,7 +121,83 @@ def test_run_once_writes_state_history_and_report(tmp_path: Path) -> None:
     assert latest is not None
     assert latest["verdict"] == "degraded"
     assert latest["degraded_horizons"] == ["5m"]
+    assert latest["runtime_overrides"]["enabled"] is False
+    assert latest["runtime_overrides"]["reason"] == "degraded_verdict"
+    assert latest["runtime_overrides"]["env_overrides"] == {}
     assert cfg.history_path.exists()
     assert len(cfg.history_path.read_text(encoding="utf-8").strip().splitlines()) == 1
     assert cfg.latest_md_path.exists()
     assert "degraded_horizons: `5m`" in cfg.latest_md_path.read_text(encoding="utf-8")
+
+
+def test_run_once_enables_runtime_overrides_when_verdict_is_not_degraded(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FORECAST_TECH_FEATURE_EXPANSION_GAIN", "0.07")
+    monkeypatch.setenv("FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED", "true")
+
+    def fake_runner(cmd: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
+        script_name = Path(cmd[1]).name
+        if script_name == "vm_forecast_snapshot.py":
+            return _completed(
+                stdout=json.dumps(
+                    [
+                        ["1m", {"p_up": 0.55, "edge": 0.12, "expected_pips": 1.2}],
+                        ["5m", {"p_up": 0.52, "edge": 0.08, "expected_pips": 1.0}],
+                        ["10m", {"p_up": 0.54, "edge": 0.10, "expected_pips": 1.4}],
+                    ],
+                    ensure_ascii=False,
+                ),
+                returncode=0,
+            )
+
+        if script_name == "eval_forecast_before_after.py":
+            out_idx = cmd.index("--json-out")
+            out_path = Path(cmd[out_idx + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "summary": {"bars": 400},
+                        "rows": [
+                            {
+                                "horizon": "1m",
+                                "hit_delta": 0.01,
+                                "mae_delta": -0.02,
+                                "range_coverage_delta": 0.01,
+                            },
+                            {
+                                "horizon": "5m",
+                                "hit_delta": 0.0,
+                                "mae_delta": -0.01,
+                                "range_coverage_delta": 0.0,
+                            },
+                            {
+                                "horizon": "10m",
+                                "hit_delta": 0.02,
+                                "mae_delta": -0.03,
+                                "range_coverage_delta": 0.02,
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return _completed(stdout=f"json_out={out_path}\n", returncode=0)
+
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    rc = worker.run_once(cfg, runner=fake_runner)
+
+    assert rc == 0
+    latest = worker._read_json(cfg.state_path)
+    assert latest is not None
+    runtime = latest["runtime_overrides"]
+    assert runtime["enabled"] is True
+    assert runtime["reason"] == "verified_current_runtime"
+    assert runtime["env_overrides"]["FORECAST_TECH_FEATURE_EXPANSION_GAIN"] == "0.07"
+    assert runtime["env_overrides"]["FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED"] == "1"

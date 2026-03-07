@@ -22,6 +22,7 @@ import tempfile
 from typing import Any, Callable
 
 from utils.market_hours import is_market_open
+from utils.strategy_tags import resolve_strategy_tag
 
 try:
     import yaml  # type: ignore
@@ -696,10 +697,13 @@ def _apply_reentry_updates(
     for strategy, update in strategy_updates.items():
         if not isinstance(update, dict):
             continue
-        row = strategies.get(strategy)
+        resolved_strategy = resolve_strategy_tag(strategy, known_keys=strategies.keys())
+        if not resolved_strategy:
+            resolved_strategy = str(strategy).strip()
+        row = strategies.get(resolved_strategy)
         if not isinstance(row, dict):
             row = {}
-            strategies[strategy] = row
+            strategies[resolved_strategy] = row
         row_changes: list[dict[str, Any]] = []
 
         if apply_block_hours:
@@ -719,13 +723,13 @@ def _apply_reentry_updates(
         hint = update.get("reentry_overrides")
         if not isinstance(hint, dict):
             if row_changes:
-                changed.append({"strategy": strategy, "changes": row_changes})
+                changed.append({"strategy": resolved_strategy, "changes": row_changes})
             continue
 
         mode = str(hint.get("mode") or "").strip().lower()
         if mode not in {"tighten", "loosen"}:
             if row_changes:
-                changed.append({"strategy": strategy, "changes": row_changes})
+                changed.append({"strategy": resolved_strategy, "changes": row_changes})
             continue
 
         current_cooldown_loss = _safe_positive_int(
@@ -803,7 +807,7 @@ def _apply_reentry_updates(
             )
 
         if row_changes:
-            changed.append({"strategy": strategy, "changes": row_changes})
+            changed.append({"strategy": resolved_strategy, "changes": row_changes})
 
     if not changed:
         result["reason"] = "no_diff"

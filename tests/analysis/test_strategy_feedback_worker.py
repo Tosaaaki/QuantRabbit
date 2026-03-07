@@ -86,6 +86,11 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
     assert advice["entry_probability_multiplier"] > 1.0
 
 
+def test_norm_tag_resolves_strategy_aliases() -> None:
+    assert worker._norm_tag("m1scalper_m1") == "M1Scalper-M1"
+    assert worker._norm_tag("microlevelreactor") == "MicroLevelReactor"
+
+
 def test_main_loop_runs_once_and_sleeps(monkeypatch, tmp_path: Path) -> None:
     feedback_path = tmp_path / "strategy_feedback.json"
     config = SimpleNamespace(loop_sec=0.0, feedback_path=feedback_path)

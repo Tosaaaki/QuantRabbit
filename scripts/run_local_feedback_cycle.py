@@ -106,6 +106,8 @@ def _parse_command(raw: str) -> tuple[str, ...]:
 def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
     if job_name == "strategy_feedback":
         return (python_bin, "-m", "analysis.strategy_feedback_worker")
+    if job_name == "forecast_improvement":
+        return (python_bin, "-m", "analysis.forecast_improvement_worker")
     if job_name == "replay_quality_gate":
         return (python_bin, "-m", "analysis.replay_quality_gate_worker")
     if job_name == "dynamic_alloc":
@@ -149,6 +151,11 @@ def _default_job_env_files(job_name: str) -> tuple[Path, ...]:
             _resolve_path("ops/env/quant-v2-runtime.env"),
             _resolve_path("ops/env/quant-strategy-feedback.env"),
         )
+    if job_name == "forecast_improvement":
+        return (
+            _resolve_path("ops/env/quant-v2-runtime.env"),
+            _resolve_path("ops/env/quant-forecast-improvement-audit.env"),
+        )
     if job_name == "replay_quality_gate":
         return (
             _resolve_path("ops/env/quant-v2-runtime.env"),
@@ -165,6 +172,12 @@ def _default_job_env_files(job_name: str) -> tuple[Path, ...]:
 def _default_job_outputs(job_name: str) -> tuple[Path, ...]:
     if job_name == "strategy_feedback":
         return (_resolve_path("logs/strategy_feedback.json"),)
+    if job_name == "forecast_improvement":
+        return (
+            _resolve_path("logs/forecast_improvement_latest.json"),
+            _resolve_path("logs/forecast_improvement_history.jsonl"),
+            _resolve_path("logs/reports/forecast_improvement/latest.md"),
+        )
     if job_name == "replay_quality_gate":
         return (
             _resolve_path("logs/replay_quality_gate_latest.json"),
@@ -192,6 +205,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     env_prefix = f"LOCAL_FEEDBACK_CYCLE_{job_name.upper()}"
     enabled_defaults = {
         "strategy_feedback": False,
+        "forecast_improvement": True,
         "replay_quality_gate": True,
         "dynamic_alloc": True,
         "pattern_book": True,
@@ -200,6 +214,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     enabled = _env_bool(f"{env_prefix}_ENABLED", enabled_defaults[job_name])
     interval_defaults = {
         "strategy_feedback": 600,
+        "forecast_improvement": 3600,
         "replay_quality_gate": 10800,
         "dynamic_alloc": 120,
         "pattern_book": 300,
@@ -207,6 +222,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     }
     timeout_defaults = {
         "strategy_feedback": 180,
+        "forecast_improvement": 1200,
         "replay_quality_gate": 1800,
         "dynamic_alloc": 180,
         "pattern_book": 420,
@@ -214,6 +230,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     }
     retry_defaults = {
         "strategy_feedback": 0,
+        "forecast_improvement": 0,
         "replay_quality_gate": 0,
         "dynamic_alloc": 0,
         "pattern_book": 0,
@@ -272,6 +289,7 @@ def _job_order(python_bin: str) -> list[JobConfig]:
         _build_job("pattern_book", python_bin),
         _build_job("strategy_feedback", python_bin),
         _build_job("trade_counterfactual", python_bin),
+        _build_job("forecast_improvement", python_bin),
         _build_job("replay_quality_gate", python_bin),
     ]
 

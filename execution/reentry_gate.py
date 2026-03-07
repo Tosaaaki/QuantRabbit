@@ -10,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
+from utils.strategy_tags import resolve_strategy_tag
+
 try:  # optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - optional
@@ -48,19 +50,6 @@ _BIAS_DISTANCE_SCALE = {
     "avoid": float(os.getenv("REENTRY_BIAS_AVOID_DISTANCE_SCALE", "0.85")),
 }
 _BIAS_MIN_COOLDOWN_SEC = int(os.getenv("REENTRY_BIAS_MIN_COOLDOWN_SEC", "15"))
-_ALIAS_BASE = {
-    "mlr": "MicroLevelReactor",
-    "trendma": "TrendMA",
-    "donchian": "Donchian55",
-    "h1momentum": "H1Momentum",
-    "bbrsi": "BB_RSI",
-    "bb_rsi": "BB_RSI",
-    "techfusion": "TechFusion",
-    "macrotechfusion": "MacroTechFusion",
-    "micropullbackfib": "MicroPullbackFib",
-    "scalpreversalnwave": "ScalpReversalNWave",
-    "rangecompressionbreak": "RangeCompressionBreak",
-}
 _CACHE: Dict[str, object] = {"ts": 0.0, "data": None}
 
 
@@ -99,17 +88,17 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
             return None
 
 
-def _base_strategy_tag(tag: Optional[str]) -> str:
+def _base_strategy_tag(tag: Optional[str], *, known_keys: Tuple[str, ...] = ()) -> str:
     if not tag:
         return ""
     text = str(tag).strip()
     if not text:
         return ""
+    resolved = resolve_strategy_tag(text, known_keys=known_keys)
+    if resolved:
+        return resolved
     base = text.split("-", 1)[0].strip()
-    if not base:
-        return text
-    alias = _ALIAS_BASE.get(base.lower())
-    return alias or base
+    return resolve_strategy_tag(base, known_keys=known_keys) or base
 
 
 def _load_config() -> Dict[str, Any]:
@@ -186,6 +175,8 @@ def _extract_open_stats(
     open_positions: dict,
     strategy: str,
     direction: str,
+    *,
+    known_keys: Tuple[str, ...] = (),
 ) -> Tuple[int, Optional[float], Optional[float], Optional[float]]:
     if not isinstance(open_positions, dict):
         return 0, None, None, None
@@ -210,7 +201,7 @@ def _extract_open_stats(
                 thesis = tr.get("entry_thesis")
                 if isinstance(thesis, dict):
                     tag = thesis.get("strategy_tag") or thesis.get("strategy") or thesis.get("tag")
-            base = _base_strategy_tag(tag)
+            base = _base_strategy_tag(tag, known_keys=known_keys)
             if not base or base != strategy:
                 continue
             units = tr.get("units") or 0
@@ -261,12 +252,16 @@ def _extract_open_stats(
 def needs_open_positions(strategy_tag: Optional[str]) -> bool:
     if not _ENABLED:
         return False
-    base = _base_strategy_tag(strategy_tag)
+    cfg = _load_config()
+    strategies = cfg.get("strategies") or {}
+    if not isinstance(strategies, dict):
+        strategies = {}
+    strategy_keys = tuple(str(key) for key in strategies.keys())
+    base = _base_strategy_tag(strategy_tag, known_keys=strategy_keys)
     if not base:
         return False
-    cfg = _load_config()
     defaults = cfg.get("defaults") or {}
-    overrides = (cfg.get("strategies") or {}).get(base) or {}
+    overrides = strategies.get(base) or {}
     if not isinstance(overrides, dict):
         overrides = {}
     merged = _merge_config(defaults, overrides)
@@ -338,12 +333,16 @@ def allow_entry(
         return True, "disabled", {}
     if not strategy_tag or units == 0:
         return True, "no_strategy", {}
-    base = _base_strategy_tag(strategy_tag)
-    if not base:
-        return True, "no_strategy", {}
     cfg = _load_config()
     defaults = cfg.get("defaults") or {}
-    overrides = (cfg.get("strategies") or {}).get(base) or {}
+    strategies = cfg.get("strategies") or {}
+    if not isinstance(strategies, dict):
+        strategies = {}
+    strategy_keys = tuple(str(key) for key in strategies.keys())
+    base = _base_strategy_tag(strategy_tag, known_keys=strategy_keys)
+    if not base:
+        return True, "no_strategy", {}
+    overrides = strategies.get(base) or {}
     if not isinstance(overrides, dict):
         overrides = {}
     merged = _merge_config(defaults, overrides)
@@ -386,7 +385,7 @@ def allow_entry(
         or stack_reentry_pips > 0.0
     ):
         open_count, worst_pips, avg_pips, avg_entry = _extract_open_stats(
-            open_positions, base, direction
+            open_positions, base, direction, known_keys=strategy_keys
         )
         distance_pips = None
         distance_override = False

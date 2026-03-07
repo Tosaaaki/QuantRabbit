@@ -5,6 +5,50 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）closed-loop: counterfactual を live `strategy_feedback` へ接続し、forecast runtime override と strategy tag canonicalization を統合
+
+- 対象:
+  - `analysis/strategy_feedback.py`
+  - `execution/strategy_entry.py`
+  - `analysis/forecast_improvement_worker.py`
+  - `workers/common/forecast_gate.py`
+  - `analysis/replay_quality_gate_worker.py`
+  - `execution/reentry_gate.py`
+  - `analysis/strategy_feedback_worker.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `utils/strategy_tags.py`
+- 変更:
+  - `analysis/strategy_feedback.py`
+    - `logs/trade_counterfactual_latest.json` を追読し、
+      `policy_hints.reentry_overrides` と `side_actions` を
+      `entry_units_multiplier` / `entry_probability_multiplier` /
+      `entry_probability_delta` の soft feedback へ変換する。
+    - counterfactual 適用由来は `strategy_params.counterfactual_feedback`
+      と `_meta.counterfactual` に残す。
+  - `execution/strategy_entry.py`
+    - `strategy_feedback.current_advice()` 呼び出しへ `side` を追加し、
+      long/short 別 overlay を live entry 側へ伝搬する。
+  - `analysis/forecast_improvement_worker.py`
+    - `logs/forecast_improvement_latest.json.runtime_overrides` を出力し、
+      `enabled/reason/source/generated_at/max_age_sec/verdict/env_overrides`
+      を `forecast_gate` の runtime 読み込み用 payload として残す。
+  - `workers/common/forecast_gate.py`
+    - 予測テクニカル重みの base env 値を保持し、
+      `FORECAST_GATE_RUNTIME_OVERRIDE_PATH` の payload が
+      `enabled=true` かつ fresh なときだけ runtime override を適用する。
+    - `missing/invalid/stale/degraded` では base env へ戻し、audit の失敗を live 判定へ持ち込まない。
+  - `utils/strategy_tags.py`
+    - alias、一時 suffix（`-l<hex>` 等）、LIKE 判定を共通化する helper を追加。
+    - `strategy_feedback_worker`, `dynamic_alloc_worker`,
+      `replay_quality_gate_worker`, `reentry_gate`, `strategy_feedback`
+      がこの helper を共有し、feedback/replay/reentry の tag 解決を一本化する。
+- 意図:
+  - closed-loop を `counterfactual -> strategy_feedback -> strategy_entry` と
+    `forecast_improvement -> forecast_gate` まで接続しつつ、
+    共通レイヤへ新しい hard block を足さず soft tuning に留める。
+  - strategy tag の集計単位を統一し、alias/hash suffix 差異で
+    改善提案や reentry 反映が別戦略扱いになる経路を減らす。
+
 ### 2026-03-07（追記）`quant-strategy-feedback` の常駐ループを回帰テストで固定し、local feedback cycle との責務境界を明文化
 
 - 対象:

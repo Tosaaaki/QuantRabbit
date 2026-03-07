@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import math
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from workers.common import forecast_gate
 
@@ -30,6 +33,65 @@ def _synthetic_candles(*, n: int, freq: str, drift: float) -> list[dict[str, obj
             }
         )
     return out
+
+
+@pytest.fixture(autouse=True)
+def _disable_runtime_overrides(monkeypatch) -> None:
+    monkeypatch.setattr(forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_PATH", None, raising=False)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_FORECAST_RUNTIME_OVERRIDE_CACHE",
+        {"loaded": 0.0, "mtime": None, "status": ""},
+        raising=False,
+    )
+
+
+def test_apply_runtime_tech_overrides_updates_forecast_weights(monkeypatch, tmp_path) -> None:
+    generated_at = datetime.now(timezone.utc).isoformat()
+    override_path = tmp_path / "forecast_improvement_latest.json"
+    override_path.write_text(
+        json.dumps(
+            {
+                "generated_at": generated_at,
+                "runtime_overrides": {
+                    "enabled": True,
+                    "generated_at": generated_at,
+                    "max_age_sec": 999999999,
+                    "env_overrides": {
+                        "FORECAST_TECH_FEATURE_EXPANSION_GAIN": "0.21",
+                        "FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP": "1m=0.11,5m=0.22",
+                        "FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED": "1",
+                    },
+                },
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    base = {
+        key: (dict(value) if isinstance(value, dict) else set(value) if isinstance(value, set) else value)
+        for key, value in forecast_gate._TECH_RUNTIME_BASE.items()
+    }
+    base["feature_expansion_gain"] = 0.03
+    base["breakout_adaptive_weight_map"] = {"1m": 0.04}
+    base["dynamic_weight_enabled"] = False
+
+    monkeypatch.setattr(forecast_gate, "_TECH_RUNTIME_BASE", base, raising=False)
+    monkeypatch.setattr(forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_PATH", override_path, raising=False)
+    monkeypatch.setattr(forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC", 0.0, raising=False)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_FORECAST_RUNTIME_OVERRIDE_CACHE",
+        {"loaded": 0.0, "mtime": None, "status": ""},
+        raising=False,
+    )
+
+    forecast_gate._apply_runtime_tech_overrides()
+
+    assert forecast_gate._TECH_FEATURE_EXPANSION_GAIN == 0.21
+    assert forecast_gate._TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP == {"1m": 0.11, "5m": 0.22}
+    assert forecast_gate._TECH_DYNAMIC_WEIGHT_ENABLED is True
+    assert forecast_gate._FORECAST_RUNTIME_OVERRIDE_CACHE["status"] == "applied"
 
 
 def test_technical_prediction_direction_changes_with_trend() -> None:

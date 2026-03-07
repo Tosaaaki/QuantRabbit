@@ -13,6 +13,9 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from utils.strategy_tags import normalize_strategy_lookup_key
+from utils.strategy_tags import strategy_like_matches
+
 
 _FEEDBACK_ENABLED = os.getenv("STRATEGY_FEEDBACK_ENABLED", "1").strip().lower() not in {
     "0",
@@ -35,6 +38,25 @@ _CACHE: dict[str, Any] = {
     "payload": None,
 }
 _PARAM_CACHE: dict[str, Any] = {"loaded": 0.0, "paths": None, "payloads": []}
+_COUNTERFACTUAL_ENABLED = os.getenv("STRATEGY_FEEDBACK_COUNTERFACTUAL_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "off",
+    "no",
+}
+_COUNTERFACTUAL_PATH_RAW = os.getenv(
+    "STRATEGY_FEEDBACK_COUNTERFACTUAL_PATH",
+    os.getenv("COUNTERFACTUAL_OUT_PATH", "logs/trade_counterfactual_latest.json"),
+)
+if _COUNTERFACTUAL_PATH_RAW and _COUNTERFACTUAL_PATH_RAW.strip().lower() in {"", "none", "off"}:
+    _COUNTERFACTUAL_PATH_RAW = None
+_COUNTERFACTUAL_PATH: Optional[Path] = (
+    Path(_COUNTERFACTUAL_PATH_RAW) if _COUNTERFACTUAL_PATH_RAW else None
+)
+_COUNTERFACTUAL_REFRESH_SEC = float(
+    os.getenv("STRATEGY_FEEDBACK_COUNTERFACTUAL_REFRESH_SEC", str(_FEEDBACK_REFRESH_SEC)) or _FEEDBACK_REFRESH_SEC
+)
+_COUNTERFACTUAL_CACHE: dict[str, Any] = {"loaded": 0.0, "mtime": None, "payload": None}
 
 
 def _parse_csv_paths(raw: Optional[str]) -> list[Path]:
@@ -49,9 +71,7 @@ def _parse_csv_paths(raw: Optional[str]) -> list[Path]:
 
 
 def _normalize_strategy_key(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    return "".join(ch for ch in str(value).lower() if ch.isalnum() or ch == "_")
+    return normalize_strategy_lookup_key(value)
 
 
 def _read_file_payload(path: Path) -> Optional[dict[str, Any]]:
@@ -227,16 +247,44 @@ def _read_payload() -> dict[str, Any]:
     return payload
 
 
-def _refresh_if_needed(force: bool = False) -> None:
-    if not _FEEDBACK_ENABLED or _PATH is None:
-        return
-    if not force and (_CACHE["loaded"] or 0.0) and (
-        time.time() - float(_CACHE["loaded"]) < _FEEDBACK_REFRESH_SEC
+def _read_counterfactual_payload() -> dict[str, Any]:
+    if _COUNTERFACTUAL_PATH is None:
+        return {}
+    try:
+        stat = _COUNTERFACTUAL_PATH.stat()
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return {}
+    if (
+        _COUNTERFACTUAL_CACHE["mtime"] is not None
+        and _COUNTERFACTUAL_CACHE["payload"] is not None
+        and float(_COUNTERFACTUAL_CACHE["mtime"]) == float(stat.st_mtime)
     ):
+        return _COUNTERFACTUAL_CACHE["payload"]
+    payload = _read_file_payload(_COUNTERFACTUAL_PATH)
+    if payload is None:
+        return {}
+    _COUNTERFACTUAL_CACHE["mtime"] = float(stat.st_mtime)
+    _COUNTERFACTUAL_CACHE["loaded"] = time.time()
+    _COUNTERFACTUAL_CACHE["payload"] = payload
+    return payload
+
+
+def _refresh_if_needed(force: bool = False) -> None:
+    if not _FEEDBACK_ENABLED:
         return
-    if _PATH is None:
-        return
-    _read_payload()
+    now = time.time()
+    if _PATH is not None:
+        if force or not (_CACHE["loaded"] or 0.0) or (
+            now - float(_CACHE["loaded"]) >= _FEEDBACK_REFRESH_SEC
+        ):
+            _read_payload()
+    if _COUNTERFACTUAL_ENABLED and _COUNTERFACTUAL_PATH is not None:
+        if force or not (_COUNTERFACTUAL_CACHE["loaded"] or 0.0) or (
+            now - float(_COUNTERFACTUAL_CACHE["loaded"]) >= _COUNTERFACTUAL_REFRESH_SEC
+        ):
+            _read_counterfactual_payload()
 
 
 def _apply_pocket_override(
@@ -263,10 +311,116 @@ def _apply_pocket_override(
             return
 
 
+def _normalize_side(value: Optional[str]) -> str:
+    side = str(value or "").strip().lower()
+    if side in {"buy", "long", "open_long"}:
+        return "long"
+    if side in {"sell", "short", "open_short"}:
+        return "short"
+    return ""
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) -> dict[str, Any]:
+    if not _COUNTERFACTUAL_ENABLED or _COUNTERFACTUAL_PATH is None or not strategy_tag:
+        return {}
+    payload = _read_counterfactual_payload()
+    if not isinstance(payload, dict):
+        return {}
+    strategy_like = str(payload.get("strategy_like") or "").strip()
+    if strategy_like and not strategy_like_matches(strategy_tag, strategy_like):
+        return {}
+    hints = payload.get("policy_hints")
+    if not isinstance(hints, dict):
+        return {}
+    reentry = hints.get("reentry_overrides")
+    if not isinstance(reentry, dict):
+        return {}
+
+    mode = str(reentry.get("mode") or "").strip().lower()
+    if mode not in {"tighten", "loosen"}:
+        return {}
+    confidence = _clamp(float(_to_float(reentry.get("confidence"), 0.0) or 0.0), 0.0, 1.0)
+    if confidence <= 0.0:
+        return {}
+
+    cooldown_loss_mult = _clamp(float(_to_float(reentry.get("cooldown_loss_mult"), 1.0) or 1.0), 0.60, 1.80)
+    cooldown_win_mult = _clamp(float(_to_float(reentry.get("cooldown_win_mult"), 1.0) or 1.0), 0.70, 1.50)
+    reentry_pips_mult = _clamp(
+        float(_to_float(reentry.get("same_dir_reentry_pips_mult"), 1.0) or 1.0),
+        0.70,
+        1.60,
+    )
+    if mode == "tighten":
+        severity = max(
+            0.0,
+            (cooldown_loss_mult - 1.0) / 0.80,
+            (cooldown_win_mult - 1.0) / 0.50,
+            (reentry_pips_mult - 1.0) / 0.60,
+        )
+        units_multiplier = 1.0 - 0.35 * confidence * _clamp(severity, 0.0, 1.0)
+        probability_multiplier = 1.0 - 0.18 * confidence * _clamp(severity, 0.0, 1.0)
+        probability_delta = -0.03 * confidence * _clamp(severity, 0.0, 1.0)
+    else:
+        severity = max(
+            0.0,
+            (1.0 - cooldown_loss_mult) / 0.40,
+            (1.0 - cooldown_win_mult) / 0.30,
+            (1.0 - reentry_pips_mult) / 0.30,
+        )
+        units_multiplier = 1.0 + 0.20 * confidence * _clamp(severity, 0.0, 1.0)
+        probability_multiplier = 1.0 + 0.10 * confidence * _clamp(severity, 0.0, 1.0)
+        probability_delta = 0.02 * confidence * _clamp(severity, 0.0, 1.0)
+
+    side_key = _normalize_side(side)
+    side_action = ""
+    side_actions = hints.get("side_actions")
+    if isinstance(side_actions, dict) and side_key:
+        action_raw = side_actions.get(side_key)
+        if action_raw is not None:
+            side_action = str(action_raw).strip().lower()
+    if side_action == "block":
+        units_multiplier *= 0.55
+        probability_multiplier *= 0.88
+        probability_delta -= 0.04 * confidence
+    elif side_action == "reduce":
+        units_multiplier *= 0.78
+        probability_multiplier *= 0.92
+    elif side_action == "boost":
+        units_multiplier *= 1.08
+        probability_multiplier *= 1.04
+        probability_delta += 0.02 * confidence
+
+    units_multiplier = _clamp(units_multiplier, 0.35, 1.35)
+    probability_multiplier = _clamp(probability_multiplier, 0.55, 1.20)
+    probability_delta = _clamp(probability_delta, -0.20, 0.12)
+    return {
+        "entry_units_multiplier": round(units_multiplier, 4),
+        "entry_probability_multiplier": round(probability_multiplier, 4),
+        "entry_probability_delta": round(probability_delta, 4),
+        "meta": {
+            "source": str(_COUNTERFACTUAL_PATH),
+            "strategy_like": strategy_like,
+            "mode": mode,
+            "confidence": round(confidence, 4),
+            "side_action": side_action,
+            "lcb_uplift_pips": round(float(_to_float(reentry.get("lcb_uplift_pips"), 0.0) or 0.0), 4),
+        },
+    }
+
+
 def current_advice(
     strategy_tag: Optional[str],
     *,
     pocket: Optional[str] = None,
+    side: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     if not _FEEDBACK_ENABLED or not strategy_tag:
         return None
@@ -301,7 +455,8 @@ def current_advice(
             if strategy_params:
                 metadata["strategy_params"] = strategy_params
 
-    if strategy_cfg is None and not metadata:
+    counterfactual = _counterfactual_overlay(strategy_tag, side)
+    if strategy_cfg is None and not metadata and not counterfactual:
         return None
     merged: dict[str, Any] = {}
     defaults = payload.get("strategy_defaults")
@@ -365,12 +520,33 @@ def current_advice(
     if notes is not None:
         advice["notes"] = str(notes)
     strategy_params = metadata.get("strategy_params")
+    strategy_params_dict: dict[str, Any] = {}
     configured_params = {}
     if isinstance(strategy_params, dict):
         strategy_params_dict = dict(strategy_params)
         nested_configured = strategy_params_dict.get("configured_params")
         if isinstance(nested_configured, dict):
             configured_params = nested_configured
+    if counterfactual:
+        advice["entry_units_multiplier"] = _coerce_multiplier(
+            advice["entry_units_multiplier"] * counterfactual.get("entry_units_multiplier", 1.0),
+            default=advice["entry_units_multiplier"],
+            min_value=0.0,
+            max_value=5.0,
+        )
+        advice["entry_probability_multiplier"] = _coerce_multiplier(
+            advice["entry_probability_multiplier"] * counterfactual.get("entry_probability_multiplier", 1.0),
+            default=advice["entry_probability_multiplier"],
+            min_value=0.0,
+            max_value=5.0,
+        )
+        advice["entry_probability_delta"] = _clamp(
+            advice["entry_probability_delta"] + float(counterfactual.get("entry_probability_delta", 0.0) or 0.0),
+            -1.0,
+            1.0,
+        )
+        strategy_params_dict["counterfactual_feedback"] = dict(counterfactual.get("meta") or {})
+    if strategy_params_dict:
         advice["strategy_params"] = strategy_params_dict
     has_strategy_params = (
         isinstance(advice.get("strategy_params"), dict) and bool(advice["strategy_params"])
@@ -384,6 +560,8 @@ def current_advice(
         "version": payload.get("version"),
         "updated_at": payload.get("updated_at"),
     }
+    if counterfactual:
+        advice["_meta"]["counterfactual"] = dict(counterfactual.get("meta") or {})
 
     # Return None when there are no actual tuning knobs (no-op).
     if (

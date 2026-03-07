@@ -289,6 +289,19 @@ def _collect_eval_overrides() -> list[str]:
     return args
 
 
+def _collect_eval_override_map() -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for flag, keys in _EVAL_OVERRIDE_KEYS:
+        value = _find_first_env(keys)
+        if not value:
+            continue
+        if flag == "--dynamic-weight-enabled":
+            value = _normalize_zero_one(value)
+        env_key = keys[-1]
+        overrides[str(env_key)] = str(value)
+    return overrides
+
+
 @dataclass(frozen=True)
 class WorkerConfig:
     env_file: Path
@@ -752,6 +765,32 @@ def run_once(cfg: WorkerConfig, *, runner: Runner | None = None) -> int:
     else:
         returncode = 2
 
+    runtime_override_env = _collect_eval_override_map()
+    runtime_overrides = {
+        "enabled": bool(returncode == 0 and verdict != "degraded" and runtime_override_env),
+        "reason": "",
+        "source": "forecast_improvement_worker",
+        "generated_at": finished.isoformat(),
+        "max_age_sec": max(300, _env_int("FORECAST_IMPROVEMENT_AUDIT_RUNTIME_MAX_AGE_SEC", 3 * 3600)),
+        "verdict": verdict,
+        "improved_horizons": list(improved_horizons),
+        "degraded_horizons": list(degraded_horizons),
+        "env_overrides": runtime_override_env if runtime_override_env else {},
+    }
+    if returncode != 0:
+        runtime_overrides["reason"] = "audit_error"
+        runtime_overrides["enabled"] = False
+        runtime_overrides["env_overrides"] = {}
+    elif not runtime_override_env:
+        runtime_overrides["reason"] = "no_runtime_override_env"
+        runtime_overrides["enabled"] = False
+    elif verdict == "degraded":
+        runtime_overrides["reason"] = "degraded_verdict"
+        runtime_overrides["enabled"] = False
+        runtime_overrides["env_overrides"] = {}
+    else:
+        runtime_overrides["reason"] = "verified_current_runtime"
+
     payload = {
         "worker": "forecast_improvement_worker",
         "generated_at": finished.isoformat(),
@@ -787,6 +826,7 @@ def run_once(cfg: WorkerConfig, *, runner: Runner | None = None) -> int:
         "snapshot_stderr_tail": _tail(snapshot_proc.stderr),
         "eval_stdout_tail": _tail(eval_proc.stdout),
         "eval_stderr_tail": _tail(eval_proc.stderr),
+        "runtime_overrides": runtime_overrides,
     }
     _write_json_atomic(cfg.state_path, payload)
     _append_jsonl(cfg.history_path, payload)

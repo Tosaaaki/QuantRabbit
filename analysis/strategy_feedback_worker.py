@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from utils.strategy_tags import resolve_strategy_tag
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOCAL_V2_STACK_DIR = BASE_DIR / "logs" / "local_v2_stack"
 LOCAL_V2_PID_DIR = LOCAL_V2_STACK_DIR / "pids"
@@ -121,13 +123,10 @@ def _safe_param_value(value: Any) -> bool:
 
 
 def _norm_tag(value: Any) -> str:
-    text = str(value or "").strip().lower()
+    text = resolve_strategy_tag(str(value or "").strip())
     if not text:
         return ""
-    text = text.replace("-", "_").replace(" ", "_")
-    text = re.sub(r"[^0-9a-z_]", "_", text)
-    text = re.sub(r"_+", "_", text)
-    return text.strip("_")
+    return text.strip()
 
 
 @dataclass
