@@ -419,7 +419,7 @@ def _run_replay_workers(
     out_path: Path,
     env: Optional[Dict[str, str]] = None,
     ticks_cache: Optional[List[rw.Tick]] = None,
-) -> None:
+) -> dict:
     original_env = os.environ.copy()
     if env:
         os.environ.update(env)
@@ -438,7 +438,9 @@ def _run_replay_workers(
         if not hasattr(rw, func_name):
             raise RuntimeError(f"replay function not found: {func_name}")
         result = getattr(rw, func_name)(ticks)
+        rw.attach_replay_coverage(result, ticks=ticks, worker=worker)
         out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        return result
     finally:
         for key in list(os.environ.keys()):
             if key not in original_env:
@@ -1317,7 +1319,7 @@ def main() -> None:
 
     for worker in runnable_workers:
         replay_out = args.out_dir / f"replay_workers_{worker}_base.json"
-        _run_replay_workers(
+        entry_replay = _run_replay_workers(
             worker=worker,
             ticks_path=args.ticks,
             out_path=replay_out,
@@ -1360,6 +1362,10 @@ def main() -> None:
             }
         base_summary = base_scenarios.get("all", {}).get("summary", rew._summarize([]))
         results[worker] = {
+            "entry_replay": {
+                "summary": entry_replay.get("summary", {}),
+                "out_path": str(replay_out),
+            },
             "base": base_summary,
             "base_scenarios": base_scenarios,
         }
@@ -1368,7 +1374,7 @@ def main() -> None:
             tuned_env = os.environ.copy()
             tuned_env.update(_tuning_env(worker))
             replay_tuned_out = args.out_dir / f"replay_workers_{worker}_tuned.json"
-            _run_replay_workers(
+            tuned_entry_replay = _run_replay_workers(
                 worker=worker,
                 ticks_path=args.ticks,
                 out_path=replay_tuned_out,
@@ -1412,6 +1418,10 @@ def main() -> None:
             tuned_summary = tuned_scenarios.get("all", {}).get("summary")
             if tuned_summary is not None:
                 results[worker]["tuned"] = tuned_summary
+            results[worker]["entry_replay_tuned"] = {
+                "summary": tuned_entry_replay.get("summary", {}),
+                "out_path": str(replay_tuned_out),
+            }
             results[worker]["tuned_scenarios"] = tuned_scenarios
 
     summary_path = args.out_dir / "summary_all.json"

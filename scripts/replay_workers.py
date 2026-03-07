@@ -40,6 +40,7 @@ import asyncio
 import importlib
 import json
 import os
+import sqlite3
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -75,6 +76,31 @@ class Tick:
         return datetime.fromtimestamp(self.epoch, tz=timezone.utc)
 
 
+def _isoformat_utc(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc).isoformat()
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _parse_time_value(value: object) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
 def load_ticks(path: Path) -> List[Tick]:
     ticks: List[Tick] = []
     with path.open() as fh:
@@ -100,6 +126,114 @@ def load_ticks(path: Path) -> List[Tick]:
             ticks.append(Tick(epoch=epoch, bid=bid, ask=ask))
     ticks.sort(key=lambda t: t.epoch)
     return ticks
+
+
+def _resolve_replay_live_trades_db() -> Path:
+    raw = os.getenv("REPLAY_LIVE_TRADES_DB")
+    if raw:
+        return Path(raw)
+    return REPO_ROOT / "logs" / "trades.db"
+
+
+def _build_tick_coverage(ticks: Sequence[Tick]) -> Dict[str, object]:
+    if not ticks:
+        return {
+            "status": "no_ticks",
+            "tick_start": None,
+            "tick_end": None,
+            "tick_count": 0,
+            "tick_span_sec": 0.0,
+        }
+    start_dt = ticks[0].dt
+    end_dt = ticks[-1].dt
+    return {
+        "status": "ok",
+        "tick_start": _isoformat_utc(start_dt),
+        "tick_end": _isoformat_utc(end_dt),
+        "tick_count": len(ticks),
+        "tick_span_sec": round(max(0.0, ticks[-1].epoch - ticks[0].epoch), 3),
+    }
+
+
+def _build_live_trade_overlap(worker: str, ticks: Sequence[Tick]) -> Dict[str, object]:
+    spec = M1_FAMILY_REPLAY_SPECS.get(worker)
+    if spec is None:
+        return {"status": "strategy_unmapped"}
+    if not ticks:
+        return {
+            "status": "no_ticks",
+            "strategy_tag": spec["strategy_tag"],
+            "overlap_count": 0,
+            "total_strategy_trades": 0,
+        }
+
+    trades_db = _resolve_replay_live_trades_db()
+    if not trades_db.exists():
+        return {
+            "status": "db_missing",
+            "strategy_tag": spec["strategy_tag"],
+            "db_path": str(trades_db),
+            "overlap_count": 0,
+            "total_strategy_trades": 0,
+        }
+
+    start_dt = ticks[0].dt
+    end_dt = ticks[-1].dt
+    strategy_tag = spec["strategy_tag"]
+    try:
+        con = sqlite3.connect(f"file:{trades_db}?mode=ro", uri=True, timeout=2.0)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT entry_time, open_time, close_time
+            FROM trades
+            WHERE strategy_tag = ?
+            """,
+            (strategy_tag,),
+        ).fetchall()
+        con.close()
+    except Exception as exc:
+        return {
+            "status": "query_error",
+            "strategy_tag": strategy_tag,
+            "db_path": str(trades_db),
+            "error": str(exc),
+            "overlap_count": 0,
+            "total_strategy_trades": 0,
+        }
+
+    total_strategy_trades = 0
+    overlap_count = 0
+    for row in rows:
+        opened_at = _parse_time_value(row["open_time"]) or _parse_time_value(row["entry_time"])
+        closed_at = _parse_time_value(row["close_time"]) or opened_at
+        if opened_at is None or closed_at is None:
+            continue
+        total_strategy_trades += 1
+        if opened_at <= end_dt and closed_at >= start_dt:
+            overlap_count += 1
+
+    return {
+        "status": "ok",
+        "strategy_tag": strategy_tag,
+        "db_path": str(trades_db),
+        "window_start": _isoformat_utc(start_dt),
+        "window_end": _isoformat_utc(end_dt),
+        "overlap_count": overlap_count,
+        "total_strategy_trades": total_strategy_trades,
+    }
+
+
+def attach_replay_coverage(result: Dict[str, object], *, ticks: Sequence[Tick], worker: str) -> Dict[str, object]:
+    summary = result.setdefault("summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
+        result["summary"] = summary
+    coverage = _build_tick_coverage(ticks)
+    if worker in M1_FAMILY_REPLAY_SPECS:
+        coverage["live_trade_overlap"] = _build_live_trade_overlap(worker, ticks)
+    summary["coverage"] = coverage
+    return result
 
 
 def load_s5_candles(path: Path) -> List[Tick]:
@@ -1502,7 +1636,11 @@ def _replay_m1_family(
             "profit_factor": _profit_factor_from_trades(trades),
             "pending_unfilled": len(pending_orders),
         }
-        return {"summary": summary, "trades": trades}
+        return attach_replay_coverage(
+            {"summary": summary, "trades": trades},
+            ticks=ticks,
+            worker=worker_name,
+        )
     finally:
         try:
             loop.close()  # type: ignore[name-defined]
@@ -2449,6 +2587,7 @@ def main() -> None:
 
     if sim_meta:
         result.setdefault("meta", {})["simulation"] = sim_meta
+    attach_replay_coverage(result, ticks=ticks, worker=args.worker)
 
     if args.out:
         out_path = Path(args.out)
