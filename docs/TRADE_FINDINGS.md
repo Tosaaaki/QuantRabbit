@@ -8169,6 +8169,43 @@ Status:
     - `FailedBreakReverse`: `2026-03-05 14:48-15:58 UTC`
     ただし現ローカルには該当 `20260305/06` tick が未揃い。
 
+## 2026-03-07 03:34 UTC / 2026-03-07 12:34 JST - replay: live trade から exact window を自動監査する wrapper を追加
+
+- 対象:
+  - `scripts/replay_live_window_audit.py`
+  - `tests/scripts/test_replay_live_window_audit.py`
+  - `tmp/replay_live_window_audit_m1_family_auto/report.json`
+
+- 目的:
+  - `trades.db` から live trade 時刻を引き、exact replay 窓を自動生成する。
+  - 手元の tick assets に coverage がある窓だけ標準 replay を回し、missing 窓は必要日付付きで report 化する。
+
+- 実装:
+  - worker ごとの canonical `strategy_tag` を使って `trades.db` を参照。
+  - `pre_minutes` / `post_minutes` で replay 窓を作成し、重なる窓は merge。
+  - 既定 tick globs は `logs/replay`, `logs/archive/replay.*.dir`, `tmp`, `tmp/vm_ticks` を自動探索。
+  - 各 window に `required_tick_basenames` を出し、covered 時だけ clipped tick JSONL を書く。
+  - `--run-replay` で `scripts/replay_exit_workers_groups.py --no-hard-sl --exclude-end-of-replay` を窓ごとに起動可能。
+
+- テスト:
+  - `python -m py_compile scripts/replay_live_window_audit.py tests/scripts/test_replay_live_window_audit.py`
+    - pass
+  - `pytest -q tests/scripts/test_replay_live_window_audit.py`
+    - `4 passed`
+
+- 実行結果（default globs, local logs）:
+  - `python scripts/replay_live_window_audit.py --workers trend_breakout,pullback_continuation,failed_break_reverse --trades-db logs/trades.db --pre-minutes 5 --post-minutes 15 --out-dir tmp/replay_live_window_audit_m1_family_auto`
+    - `TrendBreakout`: `live_trade_count=2`, `window_count=1`
+      - window=`2026-03-06T09:01:51Z -> 2026-03-06T09:28:13Z`
+      - `coverage.status=missing`
+      - `required_tick_basenames=['USD_JPY_ticks_20260306.jsonl']`
+    - `PullbackContinuation`: `live_trade_count=0`, `window_count=0`
+    - `FailedBreakReverse`: `live_trade_count=0`, `window_count=0`
+
+- 判断:
+  - 現ローカルで exact replay を前に進めるボトルネックは、依然として `USD_JPY_ticks_20260306.jsonl` の該当 UTC 窓不足。
+  - ただし今後は、missing を人手で推定せず `report.json` から直ちに判定できる。
+
 ## 2026-03-07 11:45 JST / local-v2週末仕込み: dynamic alloc を pocket 協調化し、loader の 0.45 floor バグを修正
 
 - 市況確認:

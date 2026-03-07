@@ -72,6 +72,31 @@ python scripts/replay_exit_workers_groups.py \
 - ルールを変えない限り、比較は `summary_all.json` 同士で行う。
 - `replay_exit_workers_groups.py` は存在するワーカーのみ実行する。環境差分でモジュールが無いワーカーはスキップされるため、実行時は `--workers` を現行 VM のワーカー構成に合わせる。
 
+## Live窓からの自動audit
+
+- exact live replay の有無を自動監査する場合は `scripts/replay_live_window_audit.py` を使う。
+- この script は以下をまとめて行う。
+  - `trades.db` から worker ごとの live trade を読む
+  - `pre/post minutes` を付けて replay 窓を生成する
+  - 既定 tick globs（`logs/replay`, `logs/archive/replay.*.dir`, `tmp`, `tmp/vm_ticks`）から overlap を探す
+  - covered 窓だけ clipped tick JSONL を作り、必要なら標準 grouped replay を実行する
+  - missing 窓は `required_tick_basenames` 付きで JSON report に残す
+- 例:
+
+```bash
+python scripts/replay_live_window_audit.py \
+  --workers trend_breakout,pullback_continuation,failed_break_reverse \
+  --trades-db logs/trades.db \
+  --pre-minutes 5 \
+  --post-minutes 15 \
+  --out-dir tmp/replay_live_window_audit_m1_family
+```
+
+- 既定 tick globs を上書きしたい場合だけ `--ticks-glob` を使う。
+- `--run-replay` を付けると、covered 窓ごとに
+  `scripts/replay_exit_workers_groups.py --no-hard-sl --exclude-end-of-replay`
+  を自動実行する。
+
 ## 内部精度ゲート（walk-forward）
 
 - リプレイ出力に対して in-sample / out-of-sample を自動判定する場合は `scripts/replay_quality_gate.py` を使う。

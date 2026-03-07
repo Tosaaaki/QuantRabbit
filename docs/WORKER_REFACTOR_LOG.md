@@ -12421,6 +12421,42 @@
   - `pytest -q tests/replay/test_m1_family_replay.py`
     - `3 passed`
 
+## 2026-03-07 JST - `replay_live_window_audit.py` を追加し、live trade から exact replay 窓を自律抽出できるようにした
+
+- 目的:
+  - `trades.db` の live trade 時刻を起点に、exact replay の coverage 判定と標準 replay 実行を 1 本の wrapper にまとめる。
+
+- 変更ファイル:
+  - `scripts/replay_live_window_audit.py`
+  - `tests/scripts/test_replay_live_window_audit.py`
+  - `docs/REPLAY_STANDARD.md`
+
+- 実装:
+  - `replay_live_window_audit.py`
+    - worker → canonical `strategy_tag` を解決し、`trades.db` から live trade を取得。
+    - `pre_minutes` / `post_minutes` を付けた replay 窓を生成し、重複窓を merge。
+    - 既定で `logs/replay`, `logs/archive/replay.*.dir`, `tmp`, `tmp/vm_ticks` の tick globs を探索。
+    - covered 窓は clipped tick JSONL を生成し、`--run-replay` 時だけ
+      `scripts/replay_exit_workers_groups.py --no-hard-sl --exclude-end-of-replay`
+      を自動起動。
+    - missing 窓は `required_tick_basenames` とともに `report.json` へ残す。
+  - `tests/scripts/test_replay_live_window_audit.py`
+    - 窓 merge
+    - covered/missing 判定
+    - `--run-replay` 呼び出し
+    - 複数 UTC 日跨ぎの `required_tick_basenames`
+      を回帰テスト化。
+
+- 検証:
+  - `python -m py_compile scripts/replay_live_window_audit.py tests/scripts/test_replay_live_window_audit.py`
+    - pass
+  - `pytest -q tests/scripts/test_replay_live_window_audit.py`
+    - `4 passed`
+  - 実行例:
+    - `python scripts/replay_live_window_audit.py --workers trend_breakout,pullback_continuation,failed_break_reverse --trades-db logs/trades.db --pre-minutes 5 --post-minutes 15 --out-dir tmp/replay_live_window_audit_m1_family_auto`
+    - 結果: `TrendBreakout` は `window_count=1`, `coverage.status=missing`, `required_tick_basenames=['USD_JPY_ticks_20260306.jsonl']`
+    - `PullbackContinuation` / `FailedBreakReverse` は現時点 `live_trade_count=0`
+
 ## 2026-03-07 JST - dynamic alloc を pocket 協調化し、loader の policy floor バグを修正
 
 - 目的:
