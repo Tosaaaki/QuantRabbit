@@ -83,6 +83,24 @@ WORKER_SPECS = {
         "exit_worker_class": "SessionOpenExitWorker",
         "config_module_name": "workers.session_open.config",
     },
+    "trend_breakout": {
+        "tag": "TrendBreakout",
+        "exit_module_name": "workers.scalp_trend_breakout.exit_worker",
+        "exit_worker_class": "M1ScalperExitWorker",
+        "config_module_name": "workers.scalp_trend_breakout.config",
+    },
+    "pullback_continuation": {
+        "tag": "PullbackContinuation",
+        "exit_module_name": "workers.scalp_pullback_continuation.exit_worker",
+        "exit_worker_class": "M1ScalperExitWorker",
+        "config_module_name": "workers.scalp_pullback_continuation.config",
+    },
+    "failed_break_reverse": {
+        "tag": "FailedBreakReverse",
+        "exit_module_name": "workers.scalp_failed_break_reverse.exit_worker",
+        "exit_worker_class": "M1ScalperExitWorker",
+        "config_module_name": "workers.scalp_failed_break_reverse.config",
+    },
 }
 
 _AVAILABLE_SPECS: dict[str, dict] = {}
@@ -97,6 +115,7 @@ for _worker_name, _spec in WORKER_SPECS.items():
 WORKER_TAGS = {name: str(spec["tag"]) for name, spec in _AVAILABLE_SPECS.items()}
 EXIT_MODULES = {name: spec["exit_module"] for name, spec in _AVAILABLE_SPECS.items()}
 EXIT_WORKER_CLASSES = {name: str(spec["exit_worker_class"]) for name, spec in _AVAILABLE_SPECS.items()}
+M1_FAMILY_WORKERS = {"trend_breakout", "pullback_continuation", "failed_break_reverse"}
 
 
 @dataclass
@@ -961,6 +980,83 @@ class GenericExitRunner:
                     pass
 
 
+class NoopExitRunner:
+    async def step(self, now: datetime) -> None:
+        return None
+
+
+class BasicM1FamilyExitRunner:
+    def __init__(self, broker: rew.SimBroker) -> None:
+        self._broker = broker
+        self._states: dict[str, dict[str, float]] = {}
+        self._min_hold_sec = max(1.0, float(os.getenv("M1SCALP_EXIT_MIN_HOLD_SEC", "10") or 10.0))
+        self._max_hold_sec = max(
+            self._min_hold_sec + 1.0,
+            float(os.getenv("M1SCALP_EXIT_MAX_HOLD_SEC", str(12 * 60.0)) or (12 * 60.0)),
+        )
+        self._max_adverse_pips = max(
+            0.0,
+            float(os.getenv("M1SCALP_EXIT_MAX_ADVERSE_PIPS", "6.0") or 6.0),
+        )
+        self._profit_take = max(0.1, float(os.getenv("M1SCALP_EXIT_PROFIT_TAKE_PIPS", "2.2") or 2.2))
+        self._trail_start = max(0.1, float(os.getenv("M1SCALP_EXIT_TRAIL_START_PIPS", "2.8") or 2.8))
+        self._trail_backoff = max(
+            0.05,
+            float(os.getenv("M1SCALP_EXIT_TRAIL_BACKOFF_PIPS", "0.9") or 0.9),
+        )
+        self._lock_buffer = max(
+            0.05,
+            float(os.getenv("M1SCALP_EXIT_LOCK_BUFFER_PIPS", "0.5") or 0.5),
+        )
+        self._loop_interval = max(0.1, float(os.getenv("M1SCALP_EXIT_LOOP_INTERVAL_SEC", "0.8") or 0.8))
+        self._last_eval = 0.0
+
+    async def step(self, now: datetime) -> None:
+        if now.timestamp() - self._last_eval < self._loop_interval:
+            return None
+        self._last_eval = now.timestamp()
+        tick = self._broker.last_tick
+        if tick is None:
+            return None
+
+        for trade_id, trade in list(self._broker.open_trades.items()):
+            units = int(trade.get("units", 0) or 0)
+            entry_price = float(trade.get("price") or 0.0)
+            if units == 0 or entry_price <= 0.0:
+                continue
+
+            side = "long" if units > 0 else "short"
+            current_price = float(tick.mid)
+            pnl_pips = (
+                (current_price - entry_price) / PIP
+                if side == "long"
+                else (entry_price - current_price) / PIP
+            )
+            state = self._states.setdefault(trade_id, {"best_pnl": pnl_pips})
+            state["best_pnl"] = max(float(state.get("best_pnl") or pnl_pips), pnl_pips)
+
+            open_time = trade.get("open_time")
+            opened_at = rew.parse_iso8601(str(open_time)) if open_time else now
+            hold_sec = max(0.0, (now - opened_at).total_seconds())
+            trail_anchor = max(self._profit_take, self._trail_start, self._lock_buffer)
+
+            reason = None
+            if hold_sec >= self._max_hold_sec:
+                reason = "time_stop"
+            elif hold_sec >= self._min_hold_sec and pnl_pips <= -self._max_adverse_pips:
+                reason = "max_adverse"
+            elif state["best_pnl"] >= trail_anchor and pnl_pips <= max(
+                self._lock_buffer,
+                state["best_pnl"] - self._trail_backoff,
+            ):
+                reason = "trail_stop"
+
+            if not reason:
+                continue
+            self._broker.close_trade(trade_id, reason)
+            self._states.pop(trade_id, None)
+
+
 def _simulate(
     *,
     ticks_path: Path,
@@ -1009,9 +1105,9 @@ def _simulate(
                 worker_obj = getattr(exit_mod, name)()
                 break
     if worker_obj is None:
-        raise RuntimeError(f"exit worker not found for {worker}")
-
-    runner = GenericExitRunner(worker, exit_mod, worker_obj, broker)
+        runner = BasicM1FamilyExitRunner(broker) if worker in M1_FAMILY_WORKERS else NoopExitRunner()
+    else:
+        runner = GenericExitRunner(worker, exit_mod, worker_obj, broker)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

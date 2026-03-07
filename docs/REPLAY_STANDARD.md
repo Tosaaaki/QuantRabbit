@@ -9,6 +9,8 @@
   - `--no-hard-tp` は付けない（TPはデフォ有効）。
 - `end_of_replay` 強制決済は除外する（`--exclude-end-of-replay`）。
 - ワーカーは **毎回 `--workers` で選択**する。
+  - 2026-03-07 JST 時点で `trend_breakout` / `pullback_continuation` / `failed_break_reverse` も replay 入口を持つ。
+  - ただし M1 family の `replay_exit_workers_groups.py` は現状 `entry + hard TP/EOD` 寄りの近似で、専用 exit policy の完全再現ではない。
 - 出力は `summary_all.json` を採用する。
 - シナリオ同時再生を行う場合は `--scenarios` を追加する。既定は `all` で、既存運用と同一。
 - `summary_all.json` は `base_scenarios` / `tuned_scenarios` にシナリオ別要約を持つ（後述）。
@@ -18,7 +20,7 @@
 ```bash
 python scripts/replay_exit_workers_groups.py \
   --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
-  --workers session_open \
+  --workers session_open,trend_breakout \
   --no-hard-sl \
   --exclude-end-of-replay \
   --out-dir tmp/replay_exit_workers_groups_YYYYMM_all

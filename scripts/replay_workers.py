@@ -17,6 +17,9 @@ Supported workers:
   * impulse_break_s5
   * impulse_momentum_s5
   * impulse_retest_s5
+  * trend_breakout
+  * pullback_continuation
+  * failed_break_reverse
 
 Usage examples:
   python scripts/replay_workers.py --worker fast_scalp \\
@@ -33,6 +36,8 @@ an exact reproduction of live trading results.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import importlib
 import json
 import os
 from collections import deque
@@ -51,6 +56,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from sim.pseudo_cfg import DensityCfg, ShapeCfg, SimCfg, SpreadCfg
 from sim.pseudo_ticks import synth_from_candles
+
+PIP = 0.01
 
 
 @dataclass
@@ -75,7 +82,10 @@ def load_ticks(path: Path) -> List[Tick]:
             line = line.strip()
             if not line:
                 continue
-            payload = json.loads(line)
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             ts_raw = payload.get("timestamp") or payload.get("ts")
             if ts_raw is None:
                 continue
@@ -232,6 +242,38 @@ FAST_SCALP_EXIT_SCHEMES: Dict[str, Dict[str, float]] = {
     "B": {"tp1_r": 0.50, "be_r": 0.60, "trail_start_r": 0.80, "trail_step_pips": 0.30},
     "C": {"tp1_r": 0.60, "be_r": 0.70, "trail_start_r": 0.90, "trail_step_pips": 0.30},
 }
+
+M1_FAMILY_REPLAY_SPECS: Dict[str, Dict[str, str]] = {
+    "trend_breakout": {
+        "config_module": "workers.scalp_trend_breakout.config",
+        "env_file": "ops/env/quant-scalp-trend-breakout.env",
+        "strategy_tag": "TrendBreakout",
+    },
+    "pullback_continuation": {
+        "config_module": "workers.scalp_pullback_continuation.config",
+        "env_file": "ops/env/quant-scalp-pullback-continuation.env",
+        "strategy_tag": "PullbackContinuation",
+    },
+    "failed_break_reverse": {
+        "config_module": "workers.scalp_failed_break_reverse.config",
+        "env_file": "ops/env/quant-scalp-failed-break-reverse.env",
+        "strategy_tag": "FailedBreakReverse",
+    },
+}
+
+SUPPORTED_WORKERS: tuple[str, ...] = (
+    "fast_scalp",
+    "pullback_s5",
+    "vwap_magnet_s5",
+    "stop_run_reversal",
+    "session_open",
+    "impulse_break_s5",
+    "impulse_momentum_s5",
+    "impulse_retest_s5",
+    "trend_breakout",
+    "pullback_continuation",
+    "failed_break_reverse",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1116,6 +1158,375 @@ class _BarBuilder:
         return None
 
 
+def _env_file_bool(env_data: Dict[str, str], key: str, default: bool) -> bool:
+    raw = env_data.get(key)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _env_file_float(env_data: Dict[str, str], key: str, default: float) -> float:
+    raw = env_data.get(key)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except Exception:
+        return float(default)
+    if out != out:
+        return float(default)
+    return out
+
+
+def _profit_factor_from_trades(trades: List[Dict[str, object]]) -> float:
+    gains = sum(float(t.get("pnl_pips") or 0.0) for t in trades if float(t.get("pnl_pips") or 0.0) > 0.0)
+    losses = sum(float(t.get("pnl_pips") or 0.0) for t in trades if float(t.get("pnl_pips") or 0.0) < 0.0)
+    if not trades:
+        return 0.0
+    if losses == 0.0:
+        return float("inf")
+    return round(gains / abs(losses), 4)
+
+
+def _replay_m1_family(
+    worker_name: str,
+    ticks: List[Tick],
+    *,
+    signal_func: Optional[Callable[[Dict[str, object]], Optional[Dict[str, object]]]] = None,
+) -> Dict[str, object]:
+    spec = M1_FAMILY_REPLAY_SPECS.get(worker_name)
+    if spec is None:
+        raise ValueError(f"Unsupported M1 family worker: {worker_name}")
+
+    original_env_file = os.environ.get("QUANTRABBIT_ENV_FILE")
+    os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
+    os.environ["QUANTRABBIT_ENV_FILE"] = str(REPO_ROOT / spec["env_file"])
+
+    try:
+        from utils.env_utils import load_env_file_hot
+        from indicators import factor_cache
+        from analysis.range_guard import detect_range_mode
+
+        config = importlib.import_module(spec["config_module"])
+        config = importlib.reload(config)
+        strategy_mod = importlib.import_module("strategies.scalping.m1_scalper")
+        strategy_mod = importlib.reload(strategy_mod)
+        env_data = load_env_file_hot(REPO_ROOT / spec["env_file"])
+        check_signal = signal_func or strategy_mod.M1Scalper.check
+
+        _reset_factor_cache_for_replay()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        builders = {
+            "M1": _BarBuilder(60),
+            "M5": _BarBuilder(300),
+            "H1": _BarBuilder(3600),
+            "H4": _BarBuilder(14400),
+        }
+        trades: List[Dict[str, object]] = []
+        open_positions: List[Dict[str, object]] = []
+        pending_orders: List[Dict[str, object]] = []
+        entry_cap = max(1, int(getattr(config, "MAX_OPEN_TRADES", 1) or 1))
+        cooldown_sec = float(getattr(config, "COOLDOWN_SEC", 120.0) or 120.0)
+        cooldown_until = ticks[0].epoch - cooldown_sec if ticks else 0.0
+        use_limit_entry = _env_file_bool(env_data, "M1SCALP_USE_LIMIT_ENTRY", False)
+        limit_ttl_default = max(1.0, _env_file_float(env_data, "M1SCALP_LIMIT_TTL_SEC", 70.0))
+
+        def _close_position(pos: Dict[str, object], tick: Tick, reason: str) -> None:
+            side = str(pos.get("side") or "long")
+            exit_price = float(tick.mid)
+            pnl_pips = (
+                (exit_price - float(pos["entry_price"])) / PIP
+                if side == "long"
+                else (float(pos["entry_price"]) - exit_price) / PIP
+            )
+            trades.append(
+                {
+                    "direction": side,
+                    "entry_time": str(pos["entry_time"]),
+                    "exit_time": tick.dt.isoformat(),
+                    "entry_price": round(float(pos["entry_price"]), 5),
+                    "exit_price": round(exit_price, 5),
+                    "tp_price": round(float(pos["tp_price"]), 5),
+                    "sl_price": round(float(pos["sl_price"]), 5),
+                    "pnl_pips": round(pnl_pips, 3),
+                    "reason": reason,
+                    "units": int(pos["units"]),
+                    "strategy_tag": str(pos["strategy_tag"]),
+                    "tag": str(pos["signal_tag"]),
+                }
+            )
+
+        def _open_position(
+            *,
+            side: str,
+            entry_price: float,
+            sl_pips: float,
+            tp_pips: float,
+            tick: Tick,
+            units: int,
+            strategy_tag: str,
+            signal_tag: str,
+        ) -> None:
+            if side == "long":
+                sl_price = entry_price - sl_pips * PIP
+                tp_price = entry_price + tp_pips * PIP
+            else:
+                sl_price = entry_price + sl_pips * PIP
+                tp_price = entry_price - tp_pips * PIP
+            open_positions.append(
+                {
+                    "side": side,
+                    "entry_price": entry_price,
+                    "entry_time": tick.dt.isoformat(),
+                    "tp_price": tp_price,
+                    "sl_price": sl_price,
+                    "units": units,
+                    "strategy_tag": strategy_tag,
+                    "signal_tag": signal_tag,
+                }
+            )
+
+        for tick in ticks:
+            next_pending: List[Dict[str, object]] = []
+            for order in pending_orders:
+                if tick.epoch > float(order["expire_epoch"]):
+                    continue
+                if len(open_positions) >= entry_cap:
+                    next_pending.append(order)
+                    continue
+                side = str(order["side"])
+                target = float(order["entry_price"])
+                tolerance = float(order["entry_tolerance_pips"]) * PIP
+                if side == "long":
+                    hit = tick.ask <= (target + tolerance)
+                else:
+                    hit = tick.bid >= (target - tolerance)
+                if not hit:
+                    next_pending.append(order)
+                    continue
+                fill_price = tick.ask if side == "long" else tick.bid
+                _open_position(
+                    side=side,
+                    entry_price=fill_price,
+                    sl_pips=float(order["sl_pips"]),
+                    tp_pips=float(order["tp_pips"]),
+                    tick=tick,
+                    units=int(order["units"]),
+                    strategy_tag=str(order["strategy_tag"]),
+                    signal_tag=str(order["signal_tag"]),
+                )
+            pending_orders = next_pending
+
+            remaining_positions: List[Dict[str, object]] = []
+            for pos in open_positions:
+                side = str(pos["side"])
+                if side == "long":
+                    stop_hit = tick.bid <= float(pos["sl_price"])
+                    tp_hit = tick.bid >= float(pos["tp_price"])
+                else:
+                    stop_hit = tick.ask >= float(pos["sl_price"])
+                    tp_hit = tick.ask <= float(pos["tp_price"])
+                if stop_hit or tp_hit:
+                    _close_position(pos, tick, "tp" if tp_hit else "sl")
+                    continue
+                remaining_positions.append(pos)
+            open_positions = remaining_positions
+
+            closed_m1 = None
+            for tf, builder in builders.items():
+                closed = builder.update(tick)
+                if not closed:
+                    continue
+                candle = {
+                    "open": closed["open"],
+                    "high": closed["high"],
+                    "low": closed["low"],
+                    "close": closed["close"],
+                    "time": datetime.fromtimestamp(float(closed["timestamp"]), tz=timezone.utc),
+                }
+                loop.run_until_complete(factor_cache.on_candle(tf, candle))
+                if tf == "M1":
+                    closed_m1 = closed
+            if not closed_m1:
+                continue
+            if tick.epoch < cooldown_until:
+                continue
+            if len(open_positions) + len(pending_orders) >= entry_cap:
+                continue
+
+            spread_pips = max(0.0, (tick.ask - tick.bid) / PIP)
+            if spread_pips > float(getattr(config, "MAX_SPREAD_PIPS", 1.4) or 1.4):
+                continue
+
+            factors = factor_cache.all_factors()
+            fac_m1 = dict(factors.get("M1") or {})
+            if not fac_m1:
+                continue
+            candles = factor_cache.get_candles_snapshot("M1", limit=80)
+            if candles:
+                fac_m1["candles"] = candles
+            fac_h4 = dict(factors.get("H4") or {})
+            range_ctx = detect_range_mode(fac_m1, fac_h4)
+            range_score = 0.0
+            try:
+                range_score = float(range_ctx.score or 0.0)
+            except Exception:
+                range_score = 0.0
+            fac_m1["range_active"] = bool(range_ctx.active)
+            fac_m1["range_score"] = range_score
+            fac_m1["range_reason"] = range_ctx.reason
+            fac_m1["range_mode"] = range_ctx.mode
+
+            signal = check_signal(fac_m1)
+            if not isinstance(signal, dict):
+                continue
+            action = str(signal.get("action") or "").upper()
+            if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                continue
+            side = "long" if action == "OPEN_LONG" else "short"
+            signal_tag = str(signal.get("tag") or spec["strategy_tag"])
+            signal_tag_l = signal_tag.lower()
+
+            allowed_tokens = set(getattr(config, "SIGNAL_TAG_CONTAINS", frozenset()) or ())
+            if allowed_tokens and not any(token in signal_tag_l for token in allowed_tokens):
+                continue
+
+            side_filter = str(getattr(config, "SIDE_FILTER", "") or "").strip().lower()
+            if side_filter and side != side_filter:
+                continue
+
+            try:
+                confidence = float(signal.get("confidence") or 0.0)
+            except Exception:
+                confidence = 0.0
+            if confidence < float(getattr(config, "CONFIDENCE_FLOOR", 0) or 0):
+                continue
+
+            is_buy_dip = "buy-dip" in signal_tag_l
+            is_sell_rally = "sell-rally" in signal_tag_l
+            is_reversion = is_buy_dip or is_sell_rally or ("reversion" in signal_tag_l)
+            if is_buy_dip:
+                continue
+            if is_reversion and bool(getattr(config, "REVERSION_REQUIRE_STRONG_RANGE", False)):
+                range_mode = str(range_ctx.mode or "").strip().lower()
+                allowed_modes = set(getattr(config, "REVERSION_ALLOWED_RANGE_MODES", frozenset()) or ())
+                range_mode_ok = not allowed_modes or range_mode in allowed_modes
+                range_ready = bool(range_ctx.active) or range_score >= float(
+                    getattr(config, "REVERSION_MIN_RANGE_SCORE", 0.0) or 0.0
+                )
+                adx_val = _coerce_float(fac_m1.get("adx"), 0.0)
+                max_adx = float(getattr(config, "REVERSION_MAX_ADX", 0.0) or 0.0)
+                adx_ok = max_adx <= 0.0 or adx_val <= max_adx
+                if not (range_mode_ok and range_ready and adx_ok):
+                    continue
+            if is_reversion and not bool(getattr(config, "ALLOW_REVERSION", False)):
+                continue
+            if (not is_reversion) and not bool(getattr(config, "ALLOW_TREND", True)):
+                continue
+
+            sl_pips = _coerce_float(signal.get("sl_pips"), 0.0)
+            tp_pips = _coerce_float(signal.get("tp_pips"), 0.0)
+            if sl_pips <= 0.0 or tp_pips <= 0.0:
+                continue
+
+            units = max(1000, abs(int(getattr(config, "BASE_ENTRY_UNITS", 6000) or 6000)))
+            strategy_tag = str(getattr(config, "STRATEGY_TAG_OVERRIDE", spec["strategy_tag"]) or spec["strategy_tag"])
+
+            entry_type = str(signal.get("entry_type") or "").strip().lower()
+            entry_signal_price = _coerce_float(signal.get("entry_price"), 0.0)
+            entry_tolerance_pips = max(0.0, _coerce_float(signal.get("entry_tolerance_pips"), 0.0))
+            limit_ttl = _coerce_float(signal.get("limit_expiry_seconds"), limit_ttl_default)
+            if (
+                use_limit_entry
+                and entry_type == "limit"
+                and entry_signal_price > 0.0
+                and limit_ttl > 0.0
+            ):
+                fill_now = (
+                    side == "long" and tick.ask <= (entry_signal_price + entry_tolerance_pips * PIP)
+                ) or (
+                    side == "short" and tick.bid >= (entry_signal_price - entry_tolerance_pips * PIP)
+                )
+                if not fill_now:
+                    pending_orders.append(
+                        {
+                            "side": side,
+                            "entry_price": entry_signal_price,
+                            "entry_tolerance_pips": entry_tolerance_pips,
+                            "expire_epoch": tick.epoch + limit_ttl,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "units": units,
+                            "strategy_tag": strategy_tag,
+                            "signal_tag": signal_tag,
+                        }
+                    )
+                    cooldown_until = tick.epoch + cooldown_sec
+                    continue
+
+            entry_price = tick.ask if side == "long" else tick.bid
+            _open_position(
+                side=side,
+                entry_price=entry_price,
+                sl_pips=sl_pips,
+                tp_pips=tp_pips,
+                tick=tick,
+                units=units,
+                strategy_tag=strategy_tag,
+                signal_tag=signal_tag,
+            )
+            cooldown_until = tick.epoch + cooldown_sec
+
+        if open_positions and ticks:
+            last_tick = ticks[-1]
+            for pos in open_positions:
+                _close_position(pos, last_tick, "eod")
+
+        summary = {
+            "trades": len(trades),
+            "total_pnl_pips": round(sum(float(t.get("pnl_pips") or 0.0) for t in trades), 3),
+            "total_pnl_jpy": round(sum(float(t.get("pnl_pips") or 0.0) for t in trades) * 100.0, 3),
+            "win_rate": round(
+                sum(1 for t in trades if float(t.get("pnl_pips") or 0.0) > 0.0) / len(trades),
+                4,
+            ) if trades else 0.0,
+            "profit_factor": _profit_factor_from_trades(trades),
+            "pending_unfilled": len(pending_orders),
+        }
+        return {"summary": summary, "trades": trades}
+    finally:
+        try:
+            loop.close()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        asyncio.set_event_loop(None)
+        if original_env_file is None:
+            os.environ.pop("QUANTRABBIT_ENV_FILE", None)
+        else:
+            os.environ["QUANTRABBIT_ENV_FILE"] = original_env_file
+
+
+def replay_trend_breakout(ticks: List[Tick]) -> Dict[str, object]:
+    return _replay_m1_family("trend_breakout", ticks)
+
+
+def replay_pullback_continuation(ticks: List[Tick]) -> Dict[str, object]:
+    return _replay_m1_family("pullback_continuation", ticks)
+
+
+def replay_failed_break_reverse(ticks: List[Tick]) -> Dict[str, object]:
+    return _replay_m1_family("failed_break_reverse", ticks)
+
+
 def _resolve_exit_pips(exit_cfg: Dict[str, object], atr_pips: float, intent: Dict[str, object]) -> Tuple[float, float]:
     sl_pips = 0.0
     tp_pips = 0.0
@@ -1824,16 +2235,7 @@ def main() -> None:
     ap.add_argument(
         "--worker",
         required=True,
-        choices=[
-            "fast_scalp",
-            "pullback_s5",
-            "vwap_magnet_s5",
-            "stop_run_reversal",
-            "session_open",
-            "impulse_break_s5",
-            "impulse_momentum_s5",
-            "impulse_retest_s5",
-        ],
+        choices=list(SUPPORTED_WORKERS),
     )
     ap.add_argument("--ticks", help="Tick JSONL file (timestamp,bid,ask).")
     ap.add_argument("--candles", help="S5 candle JSON to generate synthetic ticks.")
@@ -2036,6 +2438,12 @@ def main() -> None:
         result = replay_impulse_momentum_s5(ticks)
     elif args.worker == "impulse_retest_s5":
         result = replay_impulse_retest_s5(ticks)
+    elif args.worker == "trend_breakout":
+        result = replay_trend_breakout(ticks)
+    elif args.worker == "pullback_continuation":
+        result = replay_pullback_continuation(ticks)
+    elif args.worker == "failed_break_reverse":
+        result = replay_failed_break_reverse(ticks)
     else:
         raise ValueError(f"Unsupported worker: {args.worker}")
 

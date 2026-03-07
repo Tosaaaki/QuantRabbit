@@ -8086,3 +8086,38 @@ Status:
   1. 週明け前クローズ帯で `local_v2_autorecover.log` に不要な `stack up succeeded` が増えないこと。
   2. 次回通常流動性帯の `trade_min` 起動後、`TrendBreakout` worker が起動し `orders/trades` に新規実績が乗ること。
   3. `position-manager` の `connection refused` が減り、`orders.db` の `margin_snapshot_failed` / `api_error 503` が悪化しないこと。
+
+## 2026-03-07 JST / local-v2 replay: M1 family (`TrendBreakout` / `PullbackContinuation` / `FailedBreakReverse`) を replay 対象へ追加
+
+- 目的:
+  - 週末のうちに、M1 family 3本を `scripts/replay_workers.py` / `scripts/replay_exit_workers_groups.py` から直接回せる状態にする。
+
+- 実装:
+  - `scripts/replay_workers.py`
+    - `trend_breakout` / `pullback_continuation` / `failed_break_reverse` を追加
+    - `factor_cache` + `M1Scalper.check` ベースの近似 replay helper を実装
+    - 壊れた tick 行は skip するよう `load_ticks()` を fail-open 化
+  - `scripts/replay_exit_workers_groups.py`
+    - M1 family 3 worker を受理
+    - class ベース exit worker を持たない worker 向けに no-op runner fallback を追加
+  - `docs/REPLAY_STANDARD.md`
+    - 上記 worker 名と近似条件を追記
+
+- テスト:
+  - `pytest -q tests/replay/test_m1_family_replay.py tests/workers/test_m1scalper_split_workers.py tests/workers/test_trend_breakout_open_trades_guard.py tests/workers/test_pullback_continuation_open_trades_guard.py`
+  - `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py`
+  - 合計 `24 passed`
+
+- 週末 replay 実測:
+  - `python scripts/replay_workers.py --worker trend_breakout --ticks tmp/replay_smoke/USD_JPY_ticks_20260123_10k.jsonl`
+    - `trades=0`
+  - `python scripts/replay_exit_workers_groups.py --workers trend_breakout --ticks tmp/replay_smoke/USD_JPY_ticks_20260123_10k.jsonl --no-hard-sl --exclude-end-of-replay`
+    - `trades=0`
+  - `python scripts/replay_workers.py --worker trend_breakout --ticks tmp/USD_JPY_ticks_20260211.jsonl`
+    - `trades=0`
+  - `python scripts/replay_workers.py --worker pullback_continuation --ticks tmp/USD_JPY_ticks_20260211.jsonl`
+    - `trades=0`
+
+- 判断:
+  - replay 導線は通ったが、今回使った短窓/単日 tick では M1 family の entry は立たなかった。
+  - live 昇格本命は引き続き `TrendBreakout`。ただし週明け前の追加判断は `longer replay window` と通常流動性帯の live canary で継続する。

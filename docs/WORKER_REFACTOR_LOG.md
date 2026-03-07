@@ -12348,3 +12348,28 @@
 - 狙い:
   - shared preflight は触らず、M1 dedicated worker の side だけを intended state に戻す。
   - 週明け以降の新規エントリーで short 側の負け筋を切り、`breakout-retest-long` / `nwave-long` 中心へ寄せる。
+
+## 2026-03-07 JST - M1 family replay harness を追加
+
+- 目的:
+  - `TrendBreakout` / `PullbackContinuation` / `FailedBreakReverse` を週末のうちに replay 対象へ載せ、週明け前の比較検証を可能にする。
+
+- 変更ファイル:
+  - `scripts/replay_workers.py`
+  - `scripts/replay_exit_workers_groups.py`
+  - `docs/REPLAY_STANDARD.md`
+  - `tests/replay/test_m1_family_replay.py`
+
+- 実装:
+  - `replay_workers.py`
+    - `trend_breakout` / `pullback_continuation` / `failed_break_reverse` を CLI worker choices に追加。
+    - `factor_cache` + `strategies.scalping.m1_scalper.M1Scalper.check` を使う共通 helper を追加し、strategy ごとの env/config を読み分けて近似 replay を実装。
+    - 実 tick JSONL に壊れ行が混ざっても止まらないよう、`load_ticks()` を fail-open にした。
+  - `replay_exit_workers_groups.py`
+    - 上記 3 worker の spec を追加。
+    - class ベース exit worker を持たない M1 family 向けに no-op runner fallback を追加し、`entry + hard TP/EOD` ベースでも group replay を完走できるようにした。
+
+- 検証:
+  - `pytest -q tests/replay/test_m1_family_replay.py tests/workers/test_m1scalper_split_workers.py tests/workers/test_trend_breakout_open_trades_guard.py tests/workers/test_pullback_continuation_open_trades_guard.py`
+  - `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py`
+  - 合計 `12 passed` + `12 passed`
