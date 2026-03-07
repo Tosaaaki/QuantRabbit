@@ -8604,3 +8604,122 @@ Status:
 - 期待効果:
   - local-v2 でも `trades.db -> strategy_feedback.json -> strategy_entry` の直接ループが常時回る。
   - stale/empty feedback で entry quality が固定化する経路を解消し、勝ち/負けの反映を 10 分粒度で次回トレードへ戻せる。
+
+## 2026-03-07 21:27 JST / local-v2週末仕込み: `counterfactual -> reentry` の未接続と launchd path ノイズを修正
+
+- 市況確認:
+  - `OANDA /pricing` は `tradeable=false`、最終 quote は `2026-03-06T21:59:05Z`
+  - `USD/JPY` は `157.783/157.860`、spread は約 `7.7 pips`
+  - `logs/factor_cache.json` の `M1 ATR ~= 1.82 pips`
+  - 週末クローズ帯のため、改善対象は live 発注ではなく local PDCA 導線の閉ループ化に限定
+
+- 観測:
+  - `logs/local_feedback_cycle_latest.json` は `dynamic_alloc / pattern_book / trade_counterfactual` までは更新していたが、
+    `replay_quality_gate` が cycle 対象外で `config/worker_reentry.yaml` へ戻る線が切れていた。
+  - `logs/trade_counterfactual_latest.json` の `top_close_reasons` は live 実績に `TAKE_PROFIT_ORDER` /
+    `STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` があるのに `unknown` 偏重だった。
+  - `logs/local_v2_autorecover.launchd.err` には `~/Documents/...` 経由の
+    `Operation not permitted` / `getcwd` ノイズが混在し、launchd 常駐の安定性を落としていた。
+
+- 修正:
+  - `scripts/run_local_feedback_cycle.py`
+    - `replay_quality_gate` を既定ON job として追加。
+    - `ops/env/quant-replay-quality-gate.env` を読ませ、
+      closed 帯で `trade_counterfactual -> replay_quality_gate -> worker_reentry.yaml`
+      の auto-improve を回すよう変更。
+  - `analysis/trade_counterfactual_worker.py`
+    - live trade 読み込みで `close_reason` を保持し、
+      `reason="unknown"` 固定を解消。
+  - `scripts/install_local_v2_launchd.sh`
+    - plist に書く stack/env path を canonical path 化。
+    - `bash -lc` を `bash -c` へ変更し、`WorkingDirectory=/` を明示。
+
+- 検証:
+  - `bash -n scripts/install_local_v2_launchd.sh`
+  - `pytest -q tests/scripts/test_run_local_feedback_cycle.py tests/analysis/test_trade_counterfactual_worker.py`
+  - `scripts/status_local_v2_launchd.sh`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-strategy-feedback`
+
+- 効果:
+  - local でも replay/analysis の改善が `worker_reentry.yaml` 経由で次回トレードへ戻る。
+  - counterfactual の失敗理由が `unknown` 汚染から改善し、reentry 改善の根拠が実測 close reason と整合する。
+  - launchd 自動復帰の path/cwd ノイズを下げ、週明け以降の常駐性を強化する。
+
+## 2026-03-07 21:40 JST / local-v2 watchdog の symlink 起点を修正して feedback-cycle 断続停止を解消
+
+- 市況確認:
+  - 2026-03-07 土曜クローズ帯。`tradeable=false`、週末 spread 拡大のため live fill 検証は保留。
+  - 修正対象はローカルV2の常駐/学習導線に限定。
+
+- 事実:
+  - `scripts/status_local_v2_launchd.sh` では LaunchAgent が `running` 表示でも、
+    plist の `ProgramArguments` は `/Users/tossaki/Documents/App/QuantRabbit/...` を参照していた。
+  - `logs/local_v2_autorecover.launchd.err` には
+    `bash: /Users/tossaki/Documents/App/QuantRabbit/scripts/local_v2_autorecover_once.sh: Operation not permitted`
+    が連続しており、watchdog one-shot が Documents symlink 経由で不安定化していた。
+  - その結果、`run_local_feedback_cycle.py` を繋いでも
+    `dynamic_alloc / pattern_book / trade_counterfactual` の定期実行が launchd 側で断続停止し、
+    「分析結果を次回 entry へ返す」閉ループが再び途切れる余地が残っていた。
+
+- 修正:
+  - `scripts/local_v2_stack.sh`
+  - `scripts/local_v2_autorecover_once.sh`
+  - `scripts/install_local_v2_launchd.sh`
+    - repo root を `pwd -P` で物理パスへ正規化するよう修正。
+  - `scripts/status_local_v2_launchd.sh`
+    - plist が `Documents/App/QuantRabbit` を参照していたら警告を返すよう追加。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/ARCHITECTURE.md`
+    - local launchd/watchdog は物理パス固定が前提であることを明文化。
+
+- 検証:
+  - `bash -n scripts/local_v2_stack.sh scripts/local_v2_autorecover_once.sh scripts/install_local_v2_launchd.sh scripts/status_local_v2_launchd.sh`
+  - 修正後に `scripts/install_local_v2_launchd.sh --profile trade_min --env ops/env/local-v2-stack.env` を再実行し、
+    `scripts/status_local_v2_launchd.sh` で symlink 警告が消えること。
+  - `logs/local_v2_autorecover.launchd.err` に新しい `Operation not permitted` が追記されないこと。
+
+- 再検証条件:
+  1. `launchctl print gui/${UID}/com.quantrabbit.local-v2-autorecover` の `ProgramArguments` が
+     `/Users/tossaki/App/QuantRabbit/...` を指すこと。
+  2. 週明け market open 中に `logs/local_feedback_cycle_history.jsonl` が継続更新されること。
+  3. `logs/strategy_feedback.json`, `config/dynamic_alloc.json`,
+     `config/pattern_book_deep.json`, `logs/trade_counterfactual_latest.json`
+     の mtime が watchdog 周期に追随して stale 化しないこと。
+
+## 2026-03-07 21:55 JST / `replay_quality_gate` の入力不足を soft-skip 化して local feedback cycle の誤警報を解消
+
+- 市況確認:
+  - 土曜クローズ帯で replay 用 tick file が 1 本しかなく、walk-forward の `train=2 test=1` 条件を満たさない。
+  - closed帯の replay 学習は続けるが、入力不足そのものは常駐導線の障害とは分離して扱う。
+
+- 事実:
+  - `logs/replay_quality_gate_latest.json` は `returncode=2` かつ
+    `stderr_tail=Insufficient tick files for walk-forward: files=1 train=2 test=1`。
+  - 一方で worker wrapper は過去 run
+    `tmp/replay_quality_gate/20260225_032552/quality_gate_report.json`
+    を拾って `gate_status=pass` を書いており、
+    `run_local_feedback_cycle.py` 側では job 全体が `error` 扱いになっていた。
+  - つまり「入力不足なのに stale report を pass として見せつつ、終了コードだけ error」という
+    観測上の齟齬があった。
+
+- 修正:
+  - `analysis/replay_quality_gate_worker.py`
+    - `Insufficient tick files` / `No tick files matched` /
+      `No tick files after min_tick_lines filter` を soft-skip として分類。
+    - 非0終了時に fresh report が無ければ stale report を再利用しない。
+    - worker の戻り値は 0 とし、state には `upstream_returncode=2`,
+      `gate_status=skipped`, `soft_skip_reason=...` を残す。
+  - `tests/analysis/test_replay_quality_gate_worker.py`
+    - stale report が存在しても soft-skip になり、`report_json_path` が空になることを追加検証。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/ARCHITECTURE.md`
+    - replay入力不足時の soft-skip 方針を追記。
+
+- 検証:
+  - `pytest -q tests/analysis/test_replay_quality_gate_worker.py`
+  - `logs/local_feedback_cycle_latest.json` で `replay_quality_gate.status=skipped` かつ
+    全体 `status` が不要に `error` へ落ちないこと。
+
+- 再検証条件:
+  1. tick file が不足している closed帯では `replay_quality_gate` が `skipped` になること。
+  2. tick file が十分な closed帯では fresh report を生成し、`report_json_path` が当該 run を指すこと。

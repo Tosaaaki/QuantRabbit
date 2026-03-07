@@ -2,6 +2,7 @@
 set -euo pipefail
 
 LABEL="com.quantrabbit.local-v2-autorecover"
+ROOT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 usage() {
   cat <<'USAGE'
@@ -41,3 +42,8 @@ launchctl print "gui/${UID}/${LABEL}" 2>/dev/null | sed -n '1,120p' || {
   echo "[warn] launchctl print failed; trying list"
   launchctl list | grep -F "${LABEL}" || true
 }
+
+if grep -Fq "/Users/tossaki/Documents/App/QuantRabbit/" "${PLIST_PATH}"; then
+  echo "[warn] plist still references the Documents symlink path"
+  echo "[hint] reinstall launchd from the physical repo root: ${ROOT_DIR}/scripts/install_local_v2_launchd.sh"
+fi

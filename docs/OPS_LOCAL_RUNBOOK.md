@@ -130,13 +130,22 @@ scripts/uninstall_local_v2_launchd.sh
 - `launchd` は `~/Documents` 配下の実ファイル読み取りで `Operation not permitted` になる場合がある。
   現行はリポジトリ実体を `/Users/tossaki/App/QuantRabbit` に置き、
   `/Users/tossaki/Documents/App/QuantRabbit` は互換用シンボリックリンクとして運用する。
+- `scripts/local_v2_stack.sh` / `scripts/local_v2_autorecover_once.sh` /
+  `scripts/install_local_v2_launchd.sh` は repo root を物理パスへ正規化して扱う。
+  `scripts/status_local_v2_launchd.sh` が symlink plist を警告した場合は、
+  `scripts/install_local_v2_launchd.sh --profile trade_min --env ops/env/local-v2-stack.env`
+  を再実行して plist を再生成する。
 - `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開し、sleep/wake 相当のポーリングギャップと network down→up をログ記録する。
 - `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_local_feedback_cycle.py` を非同期起動し、
-  `dynamic_alloc / pattern_book / trade_counterfactual` を
+  `dynamic_alloc / pattern_book / trade_counterfactual / replay_quality_gate` を
   ローカルでも interval 管理付きで再計算する（既定ON）。
   `strategy_feedback` は `local_v2_stack` 管理サービス側で loop 更新するため、
   cycle 側は既定OFF。必要時だけ `LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_ENABLED=1`
   で明示有効化する。
+  `replay_quality_gate` は market-open 中を既定skipしつつ、
+  closed帯で `trade_counterfactual -> worker_reentry.yaml` の auto-improve を反映する。
+  replay入力が不足する closed帯では soft-skip として扱い、
+  `local_feedback_cycle_latest.json` 全体を false positive の `error` にしない。
   - 全体ON/OFF: `QR_LOCAL_V2_FEEDBACK_CYCLE_ENABLED=1|0`
   - 各jobは `LOCAL_FEEDBACK_CYCLE_<JOB>_{ENABLED,INTERVAL_SEC,TIMEOUT_SEC,CMD,ENV_FILES,OUTPUTS}` で上書きできる。
   - 最新実行結果は `logs/local_feedback_cycle_latest.json` と

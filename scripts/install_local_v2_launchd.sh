@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 STACK_SCRIPT="${ROOT_DIR}/scripts/local_v2_stack.sh"
 
 LABEL="com.quantrabbit.local-v2-autorecover"
@@ -51,6 +51,18 @@ shell_single_quote() {
   local s="$1"
   s="${s//\'/\'\"\'\"\'}"
   printf "'%s'" "${s}"
+}
+
+canonicalize_existing_path() {
+  local path="$1"
+  if [[ -d "${path}" ]]; then
+    (cd -P -- "${path}" && pwd -P)
+    return 0
+  fi
+  local dir base
+  dir="$(dirname "${path}")"
+  base="$(basename "${path}")"
+  printf '%s/%s\n' "$(cd -P -- "${dir}" && pwd -P)" "${base}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -124,6 +136,8 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   echo "[error] env file not found: ${ENV_FILE}" >&2
   exit 1
 fi
+STACK_SCRIPT="$(canonicalize_existing_path "${STACK_SCRIPT}")"
+ENV_FILE="$(canonicalize_existing_path "${ENV_FILE}")"
 if ! [[ "${INTERVAL_SEC}" =~ ^[0-9]+$ ]] || [[ "${INTERVAL_SEC}" -lt 5 ]]; then
   echo "[error] --interval-sec must be integer >= 5" >&2
   exit 1
@@ -150,7 +164,7 @@ PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
 mkdir -p "${PLIST_DIR}" "${ROOT_DIR}/logs"
 
 SERVICES_XML=""
-AUTORECOVER_CMD="cd / && exec $(shell_single_quote "${STACK_SCRIPT}") watchdog --once --profile $(shell_single_quote "${PROFILE}") --env $(shell_single_quote "${ENV_FILE}") --interval-sec $(shell_single_quote "${INTERVAL_SEC}") --resume-gap-sec $(shell_single_quote "${RESUME_GAP_SEC}")"
+AUTORECOVER_CMD="exec $(shell_single_quote "${STACK_SCRIPT}") watchdog --once --profile $(shell_single_quote "${PROFILE}") --env $(shell_single_quote "${ENV_FILE}") --interval-sec $(shell_single_quote "${INTERVAL_SEC}") --resume-gap-sec $(shell_single_quote "${RESUME_GAP_SEC}")"
 if [[ -n "${SERVICES}" ]]; then
   AUTORECOVER_CMD="${AUTORECOVER_CMD} --services $(shell_single_quote "${SERVICES}")"
 fi
@@ -166,9 +180,12 @@ cat >"${PLIST_PATH}" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>-lc</string>
+    <string>-c</string>
     <string>$(xml_escape "${AUTORECOVER_CMD}")</string>
   </array>
+
+  <key>WorkingDirectory</key>
+  <string>/</string>
 
   <key>EnvironmentVariables</key>
   <dict>

@@ -55,6 +55,8 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
     dyn_env.write_text("DYN_MARKER=dynamic-env\n", encoding="utf-8")
     feedback_env = tmp_path / "feedback.env"
     feedback_env.write_text("FEEDBACK_MARKER=feedback-env\n", encoding="utf-8")
+    replay_env = tmp_path / "replay.env"
+    replay_env.write_text("REPLAY_MARKER=replay-env\n", encoding="utf-8")
 
     env = os.environ.copy()
     env.update(
@@ -84,6 +86,14 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_OUTPUTS": str(outputs_dir / "feedback.json"),
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_INTERVAL_SEC": "600",
             "LOCAL_FEEDBACK_CYCLE_TRADE_COUNTERFACTUAL_ENABLED": "0",
+            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'replay.json'} "
+                "--env-key REPLAY_MARKER --marker replay"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_ENV_FILES": str(replay_env),
+            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_OUTPUTS": str(outputs_dir / "replay.json"),
+            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_INTERVAL_SEC": "10800",
         }
     )
     return env
@@ -127,6 +137,9 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     feedback_output = json.loads((tmp_path / "outputs" / "feedback.json").read_text(encoding="utf-8"))
     assert feedback_output == {"marker": "feedback", "env_value": "feedback-env"}
 
+    replay_output = json.loads((tmp_path / "outputs" / "replay.json").read_text(encoding="utf-8"))
+    assert replay_output == {"marker": "replay", "env_value": "replay-env"}
+
 
 def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Path) -> None:
     fake_job = _prepare_fake_job(tmp_path)
@@ -142,3 +155,5 @@ def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Pat
     assert jobs["dynamic_alloc"]["reason"] == "interval_not_elapsed"
     assert jobs["strategy_feedback"]["status"] == "skipped"
     assert jobs["strategy_feedback"]["reason"] == "interval_not_elapsed"
+    assert jobs["replay_quality_gate"]["status"] == "skipped"
+    assert jobs["replay_quality_gate"]["reason"] == "interval_not_elapsed"

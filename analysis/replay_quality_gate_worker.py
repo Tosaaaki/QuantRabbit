@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -33,6 +33,11 @@ _AUTO_IMPROVE_SCOPE_VALUES = {"failing", "all"}
 _AUTO_IMPROVE_WORKER_SKIP_PREFIXES = ("pocket:", "source:")
 # Policy: block-hour recommendations are audit-only for auto-improve; do not auto-apply to reentry.
 _AUTO_IMPROVE_APPLY_BLOCK_HOURS_POLICY = False
+_SOFT_SKIP_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("insufficient_tick_files", "Insufficient tick files for walk-forward"),
+    ("no_tick_files_matched", "No tick files matched:"),
+    ("no_tick_files_after_filter", "No tick files after min_tick_lines filter:"),
+)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -120,6 +125,24 @@ def _safe_filename(value: str) -> str:
 def _tail(text: str | None, *, limit: int = 12000) -> str:
     raw = str(text or "")
     return raw[-limit:]
+
+
+def _detect_soft_skip(stderr: str | None) -> str | None:
+    raw = str(stderr or "")
+    for reason, pattern in _SOFT_SKIP_PATTERNS:
+        if pattern in raw:
+            return reason
+    return None
+
+
+def _is_fresh_report(path: Path | None, *, started: datetime) -> bool:
+    if path is None:
+        return False
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except Exception:
+        return False
+    return mtime >= (started - timedelta(seconds=2))
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -1022,18 +1045,41 @@ def run_once(
     proc = executor(cmd)
     finished = datetime.now(timezone.utc)
 
+    upstream_returncode = int(proc.returncode)
+    soft_skip_reason = _detect_soft_skip(proc.stderr)
     report_path = _extract_report_path_from_stdout(proc.stdout or "", out_dir=cfg.out_dir)
+    fresh_report = _is_fresh_report(report_path, started=started)
+    if upstream_returncode != 0 and not fresh_report:
+        report_path = None
     report_payload = _read_json(report_path) if report_path is not None else None
     gate_status, failing_workers, fold_count = _summarize_report(report_payload)
+    if soft_skip_reason:
+        gate_status = "skipped"
+        failing_workers = []
+        fold_count = 0
     md_path = report_path.with_name("quality_gate_report.md") if report_path else None
-    auto_improve = _run_auto_improve(
-        cfg,
-        replay_returncode=int(proc.returncode),
-        report_payload=report_payload,
-        report_path=report_path,
-        counterfactual_runner=counterfactual_runner,
-    )
+    if soft_skip_reason:
+        auto_improve = {
+            "enabled": bool(cfg.auto_improve_enabled),
+            "status": "skipped",
+            "reason": soft_skip_reason,
+            "scope": cfg.auto_improve_scope,
+            "replay_json_globs": [],
+            "strategies": [],
+            "strategy_runs": [],
+            "accepted_updates": {},
+            "reentry_apply": {},
+        }
+    else:
+        auto_improve = _run_auto_improve(
+            cfg,
+            replay_returncode=upstream_returncode,
+            report_payload=report_payload,
+            report_path=report_path,
+            counterfactual_runner=counterfactual_runner,
+        )
     removed_dirs = _cleanup_old_runs(cfg.out_dir, keep_runs=cfg.keep_runs, protected=report_path)
+    effective_returncode = 0 if soft_skip_reason else upstream_returncode
 
     payload = {
         "worker": "replay_quality_gate_worker",
@@ -1041,7 +1087,8 @@ def run_once(
         "started_at": started.isoformat(),
         "finished_at": finished.isoformat(),
         "duration_sec": (finished - started).total_seconds(),
-        "returncode": int(proc.returncode),
+        "returncode": effective_returncode,
+        "upstream_returncode": upstream_returncode,
         "strict": bool(cfg.strict),
         "gate_status": gate_status,
         "failing_workers": failing_workers,
@@ -1050,6 +1097,8 @@ def run_once(
         "out_dir": str(cfg.out_dir),
         "report_json_path": str(report_path) if report_path else "",
         "report_md_path": str(md_path) if md_path and md_path.exists() else "",
+        "soft_skip_reason": soft_skip_reason or "",
+        "fresh_report": bool(report_path and fresh_report),
         "cleaned_run_dirs": removed_dirs,
         "command": cmd,
         "stdout_tail": _tail(proc.stdout),
@@ -1059,11 +1108,14 @@ def run_once(
     _write_json_atomic(cfg.state_path, payload)
     _append_jsonl(cfg.history_path, payload)
 
+    if soft_skip_reason:
+        print(f"[replay-quality-gate-worker] skipped reason={soft_skip_reason}")
+        return 0
     print(
-        f"[replay-quality-gate-worker] rc={proc.returncode} gate_status={gate_status} "
+        f"[replay-quality-gate-worker] rc={upstream_returncode} gate_status={gate_status} "
         f"report={payload['report_json_path'] or '-'} auto_improve={auto_improve.get('status', 'disabled')}"
     )
-    return int(proc.returncode)
+    return upstream_returncode
 
 
 def main() -> int:

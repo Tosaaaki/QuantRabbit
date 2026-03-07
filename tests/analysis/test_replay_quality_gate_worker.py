@@ -91,6 +91,41 @@ def test_run_once_writes_state_and_history(tmp_path: Path) -> None:
     assert len(cfg.history_path.read_text(encoding="utf-8").strip().splitlines()) == 1
 
 
+def test_run_once_soft_skips_when_replay_input_is_insufficient(tmp_path: Path) -> None:
+    out_dir = tmp_path / "replay_quality_gate"
+    stale_run_dir = out_dir / "20260221_010203"
+    stale_run_dir.mkdir(parents=True, exist_ok=True)
+    stale_report_json = stale_run_dir / "quality_gate_report.json"
+    stale_report_md = stale_run_dir / "quality_gate_report.md"
+    stale_report_json.write_text(
+        '{"meta":{"fold_count":2},"overall":{"status":"pass","failing_workers":[]}}',
+        encoding="utf-8",
+    )
+    stale_report_md.write_text("# stale\n", encoding="utf-8")
+    os.utime(stale_report_json, (1_700_000_000, 1_700_000_000))
+
+    cfg = replace(_base_cfg(tmp_path), out_dir=out_dir, auto_improve_enabled=True)
+
+    def fake_runner(_cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        return _completed(
+            stdout="",
+            stderr="Insufficient tick files for walk-forward: files=1 train=2 test=1\n",
+            returncode=2,
+        )
+
+    rc = worker.run_once(cfg, runner=fake_runner)
+
+    assert rc == 0
+    latest = worker._read_json(cfg.state_path)
+    assert latest is not None
+    assert latest["returncode"] == 0
+    assert latest["upstream_returncode"] == 2
+    assert latest["gate_status"] == "skipped"
+    assert latest["soft_skip_reason"] == "insufficient_tick_files"
+    assert latest["report_json_path"] == ""
+    assert latest["auto_improve"]["reason"] == "insufficient_tick_files"
+
+
 def test_collect_auto_improve_strategies_filters_virtual_workers(tmp_path: Path) -> None:
     cfg = replace(_base_cfg(tmp_path), auto_improve_scope="failing")
     report = {

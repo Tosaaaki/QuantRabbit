@@ -66,13 +66,20 @@
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
   local_v2_stack（macOS 等の non-systemd lane）では systemd timer の代わりに
   `scripts/local_v2_autorecover_once.sh` が `scripts/run_local_feedback_cycle.py`
-  を非同期起動し、`dynamic_alloc / pattern_book / trade_counterfactual`
+  を非同期起動し、`dynamic_alloc / pattern_book / trade_counterfactual / replay_quality_gate`
   を interval 管理で再実行する。
   `strategy_feedback` は `quant-strategy-feedback` 常駐サービスが責務を持ち、
   feedback cycle 側では既定で無効化して二重実行を避ける。
+  `replay_quality_gate` は replay入力不足時は soft-skip とし、
+  stale report を `pass` と誤認したまま cycle 全体を `error` にしない。
   これにより `config/dynamic_alloc.json`, `config/pattern_book*.json`,
-  `logs/strategy_feedback.json`, `logs/trade_counterfactual_latest.json`
+  `logs/strategy_feedback.json`, `logs/trade_counterfactual_latest.json`,
+  `logs/replay_quality_gate_latest.json`, `config/worker_reentry.yaml`
   の更新がローカル watchdog 導線へ接続される。
+  さらに `local_v2_stack` / `local_v2_autorecover_once` /
+  `install_local_v2_launchd` は repo root を物理パスへ正規化し、
+  `~/Documents` symlink 経由の `Operation not permitted` で watchdog が
+  途切れないようにする。
 - Background: `quant-ops-policy.service`（`scripts/gpt_ops_report.py`）は
   LLMを使わない deterministic 集計で `logs/gpt_ops_report.json`（+任意 Markdown）を生成し、
   `market_context / driver_breakdown / break_points / scenarios / if_then_rules / risk_protocol`
