@@ -50,6 +50,11 @@ WORKER_TAGS = {
     "pullback_continuation": "PullbackContinuation",
     "failed_break_reverse": "FailedBreakReverse",
 }
+DEFAULT_REPLAY_WARMUP_MINUTES = {
+    "trend_breakout": 120.0,
+    "pullback_continuation": 120.0,
+    "failed_break_reverse": 120.0,
+}
 
 
 @dataclass(frozen=True)
@@ -354,6 +359,12 @@ def _with_warmup(window: ReplayWindow, *, replay_warmup_minutes: float) -> Repla
     )
 
 
+def _resolve_replay_warmup_minutes(worker: str, replay_warmup_minutes: Optional[float]) -> float:
+    if replay_warmup_minutes is not None:
+        return max(0.0, float(replay_warmup_minutes))
+    return max(0.0, float(DEFAULT_REPLAY_WARMUP_MINUTES.get(worker, 0.0)))
+
+
 def _iso_utc_z(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -524,7 +535,7 @@ def build_report(
     out_dir: Path,
     run_replay: bool,
     allow_candle_sim_fallback: bool = False,
-    replay_warmup_minutes: float = 0.0,
+    replay_warmup_minutes: Optional[float] = None,
 ) -> Dict[str, object]:
     tick_files = _expand_tick_globs(tick_patterns)
     spans = _tick_spans(tick_files)
@@ -537,13 +548,16 @@ def build_report(
         "tick_patterns": _split_csv(tick_patterns),
         "tick_file_count": len(spans),
         "allow_candle_sim_fallback": bool(allow_candle_sim_fallback),
-        "replay_warmup_minutes": max(0.0, float(replay_warmup_minutes)),
+        "requested_replay_warmup_minutes": (
+            None if replay_warmup_minutes is None else max(0.0, float(replay_warmup_minutes))
+        ),
         "workers": {},
     }
 
     workers_payload: Dict[str, object] = {}
     for worker in workers:
         strategy_tag = WORKER_TAGS.get(worker)
+        worker_replay_warmup = _resolve_replay_warmup_minutes(worker, replay_warmup_minutes)
         worker_trades = live_trades.get(worker, [])
         windows = _build_trade_windows(
             worker_trades,
@@ -553,7 +567,7 @@ def build_report(
         window_payloads: List[Dict[str, object]] = []
         for index, window in enumerate(windows, start=1):
             label = _window_label(index, window)
-            replay_window = _with_warmup(window, replay_warmup_minutes=replay_warmup_minutes)
+            replay_window = _with_warmup(window, replay_warmup_minutes=worker_replay_warmup)
             matched_spans = _overlapping_tick_files(window, spans)
             replay_spans = _overlapping_tick_files(replay_window, spans)
             coverage_status = "covered" if matched_spans else "missing"
@@ -632,6 +646,7 @@ def build_report(
                     "window_end": window.end.isoformat(),
                     "replay_window_start": replay_window.start.isoformat(),
                     "replay_window_end": replay_window.end.isoformat(),
+                    "replay_warmup_minutes": worker_replay_warmup,
                     "trade_count": window.trade_count,
                     "required_tick_basenames": required_basenames,
                     "replay_required_tick_basenames": replay_required_basenames,
@@ -677,7 +692,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_live_window_audit"))
     ap.add_argument("--run-replay", action="store_true")
     ap.add_argument("--allow-candle-sim-fallback", action="store_true")
-    ap.add_argument("--replay-warmup-minutes", type=float, default=0.0)
+    ap.add_argument("--replay-warmup-minutes", type=float, default=None)
     return ap.parse_args()
 
 
@@ -692,7 +707,7 @@ def main() -> None:
         out_dir=args.out_dir,
         run_replay=bool(args.run_replay),
         allow_candle_sim_fallback=bool(args.allow_candle_sim_fallback),
-        replay_warmup_minutes=float(args.replay_warmup_minutes or 0.0),
+        replay_warmup_minutes=args.replay_warmup_minutes,
     )
     report_path = args.out_dir / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)

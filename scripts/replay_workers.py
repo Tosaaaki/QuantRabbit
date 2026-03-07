@@ -41,7 +41,7 @@ import importlib
 import json
 import os
 import sqlite3
-from collections import deque
+from collections import Counter, deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1365,9 +1365,14 @@ def _replay_m1_family(
             "H1": _BarBuilder(3600),
             "H4": _BarBuilder(14400),
         }
+        closed_bar_counts: Dict[str, int] = {tf: 0 for tf in builders}
+        first_closed_bar_ts: Dict[str, str] = {}
         trades: List[Dict[str, object]] = []
         open_positions: List[Dict[str, object]] = []
         pending_orders: List[Dict[str, object]] = []
+        gate_counts: Counter[str] = Counter()
+        signal_tags: Counter[str] = Counter()
+        last_reject_sample: Optional[Dict[str, object]] = None
         entry_cap = max(1, int(getattr(config, "MAX_OPEN_TRADES", 1) or 1))
         cooldown_sec = float(getattr(config, "COOLDOWN_SEC", 120.0) or 120.0)
         cooldown_until = ticks[0].epoch - cooldown_sec if ticks else 0.0
@@ -1429,12 +1434,36 @@ def _replay_m1_family(
                 }
             )
 
+        def _remember_reject(
+            reason: str,
+            *,
+            tick: Tick,
+            signal: Dict[str, object],
+            confidence: Optional[float],
+            spread_pips: float,
+            range_mode: object,
+            range_score: float,
+        ) -> None:
+            nonlocal last_reject_sample
+            last_reject_sample = {
+                "ts": tick.dt.isoformat(),
+                "reject_gate": reason,
+                "tag": str(signal.get("tag") or spec["strategy_tag"]),
+                "action": str(signal.get("action") or "").upper(),
+                "confidence": None if confidence is None else round(float(confidence), 4),
+                "spread_pips": round(float(spread_pips), 4),
+                "range_mode": str(range_mode or ""),
+                "range_score": round(float(range_score or 0.0), 4),
+            }
+
         for tick in ticks:
             next_pending: List[Dict[str, object]] = []
             for order in pending_orders:
                 if tick.epoch > float(order["expire_epoch"]):
+                    gate_counts["pending_limit_expired"] += 1
                     continue
                 if len(open_positions) >= entry_cap:
+                    gate_counts["pending_limit_wait_entry_cap"] += 1
                     next_pending.append(order)
                     continue
                 side = str(order["side"])
@@ -1445,9 +1474,12 @@ def _replay_m1_family(
                 else:
                     hit = tick.bid >= (target - tolerance)
                 if not hit:
+                    gate_counts["pending_limit_wait_fill"] += 1
                     next_pending.append(order)
                     continue
                 fill_price = tick.ask if side == "long" else tick.bid
+                gate_counts["pending_limit_filled"] += 1
+                gate_counts["entry_opened"] += 1
                 _open_position(
                     side=side,
                     entry_price=fill_price,
@@ -1488,22 +1520,29 @@ def _replay_m1_family(
                     "time": datetime.fromtimestamp(float(closed["timestamp"]), tz=timezone.utc),
                 }
                 loop.run_until_complete(factor_cache.on_candle(tf, candle))
+                closed_bar_counts[tf] += 1
+                first_closed_bar_ts.setdefault(tf, candle["time"].isoformat())
                 if tf == "M1":
                     closed_m1 = closed
             if not closed_m1:
                 continue
+            gate_counts["m1_closes"] += 1
             if tick.epoch < cooldown_until:
+                gate_counts["cooldown_blocked"] += 1
                 continue
             if len(open_positions) + len(pending_orders) >= entry_cap:
+                gate_counts["entry_cap_blocked"] += 1
                 continue
 
             spread_pips = max(0.0, (tick.ask - tick.bid) / PIP)
             if spread_pips > float(getattr(config, "MAX_SPREAD_PIPS", 1.4) or 1.4):
+                gate_counts["spread_blocked"] += 1
                 continue
 
             factors = factor_cache.all_factors()
             fac_m1 = dict(factors.get("M1") or {})
             if not fac_m1:
+                gate_counts["missing_m1_factors"] += 1
                 continue
             candles = factor_cache.get_candles_snapshot("M1", limit=80)
             if candles:
@@ -1522,20 +1561,53 @@ def _replay_m1_family(
 
             signal = check_signal(fac_m1)
             if not isinstance(signal, dict):
+                gate_counts["signal_none"] += 1
                 continue
+            gate_counts["signal_dict"] += 1
             action = str(signal.get("action") or "").upper()
-            if action not in {"OPEN_LONG", "OPEN_SHORT"}:
-                continue
-            side = "long" if action == "OPEN_LONG" else "short"
             signal_tag = str(signal.get("tag") or spec["strategy_tag"])
             signal_tag_l = signal_tag.lower()
+            signal_tags[signal_tag] += 1
+            if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                gate_counts["action_invalid"] += 1
+                _remember_reject(
+                    "action_invalid",
+                    tick=tick,
+                    signal=signal,
+                    confidence=None,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
+                continue
+            side = "long" if action == "OPEN_LONG" else "short"
 
             allowed_tokens = set(getattr(config, "SIGNAL_TAG_CONTAINS", frozenset()) or ())
             if allowed_tokens and not any(token in signal_tag_l for token in allowed_tokens):
+                gate_counts["tag_filtered"] += 1
+                _remember_reject(
+                    "tag_filtered",
+                    tick=tick,
+                    signal=signal,
+                    confidence=None,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
 
             side_filter = str(getattr(config, "SIDE_FILTER", "") or "").strip().lower()
             if side_filter and side != side_filter:
+                gate_counts["side_filtered"] += 1
+                _remember_reject(
+                    "side_filtered",
+                    tick=tick,
+                    signal=signal,
+                    confidence=None,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
 
             try:
@@ -1543,12 +1615,32 @@ def _replay_m1_family(
             except Exception:
                 confidence = 0.0
             if confidence < float(getattr(config, "CONFIDENCE_FLOOR", 0) or 0):
+                gate_counts["confidence_filtered"] += 1
+                _remember_reject(
+                    "confidence_filtered",
+                    tick=tick,
+                    signal=signal,
+                    confidence=confidence,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
 
             is_buy_dip = "buy-dip" in signal_tag_l
             is_sell_rally = "sell-rally" in signal_tag_l
             is_reversion = is_buy_dip or is_sell_rally or ("reversion" in signal_tag_l)
             if is_buy_dip:
+                gate_counts["buy_dip_blocked"] += 1
+                _remember_reject(
+                    "buy_dip_blocked",
+                    tick=tick,
+                    signal=signal,
+                    confidence=confidence,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
             if is_reversion and bool(getattr(config, "REVERSION_REQUIRE_STRONG_RANGE", False)):
                 range_mode = str(range_ctx.mode or "").strip().lower()
@@ -1561,15 +1653,55 @@ def _replay_m1_family(
                 max_adx = float(getattr(config, "REVERSION_MAX_ADX", 0.0) or 0.0)
                 adx_ok = max_adx <= 0.0 or adx_val <= max_adx
                 if not (range_mode_ok and range_ready and adx_ok):
+                    gate_counts["reversion_range_blocked"] += 1
+                    _remember_reject(
+                        "reversion_range_blocked",
+                        tick=tick,
+                        signal=signal,
+                        confidence=confidence,
+                        spread_pips=spread_pips,
+                        range_mode=range_ctx.mode,
+                        range_score=range_score,
+                    )
                     continue
             if is_reversion and not bool(getattr(config, "ALLOW_REVERSION", False)):
+                gate_counts["reversion_disabled"] += 1
+                _remember_reject(
+                    "reversion_disabled",
+                    tick=tick,
+                    signal=signal,
+                    confidence=confidence,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
             if (not is_reversion) and not bool(getattr(config, "ALLOW_TREND", True)):
+                gate_counts["trend_disabled"] += 1
+                _remember_reject(
+                    "trend_disabled",
+                    tick=tick,
+                    signal=signal,
+                    confidence=confidence,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
 
             sl_pips = _coerce_float(signal.get("sl_pips"), 0.0)
             tp_pips = _coerce_float(signal.get("tp_pips"), 0.0)
             if sl_pips <= 0.0 or tp_pips <= 0.0:
+                gate_counts["invalid_risk_params"] += 1
+                _remember_reject(
+                    "invalid_risk_params",
+                    tick=tick,
+                    signal=signal,
+                    confidence=confidence,
+                    spread_pips=spread_pips,
+                    range_mode=range_ctx.mode,
+                    range_score=range_score,
+                )
                 continue
 
             units = max(1000, abs(int(getattr(config, "BASE_ENTRY_UNITS", 6000) or 6000)))
@@ -1604,10 +1736,12 @@ def _replay_m1_family(
                             "signal_tag": signal_tag,
                         }
                     )
+                    gate_counts["pending_limit_placed"] += 1
                     cooldown_until = tick.epoch + cooldown_sec
                     continue
 
             entry_price = tick.ask if side == "long" else tick.bid
+            gate_counts["entry_opened"] += 1
             _open_position(
                 side=side,
                 entry_price=entry_price,
@@ -1635,6 +1769,13 @@ def _replay_m1_family(
             ) if trades else 0.0,
             "profit_factor": _profit_factor_from_trades(trades),
             "pending_unfilled": len(pending_orders),
+            "gate_counts": dict(sorted(gate_counts.items())),
+            "signal_tags": dict(signal_tags.most_common(20)),
+            "factor_readiness": {
+                "bars": dict(closed_bar_counts),
+                "first_bar_ts": dict(first_closed_bar_ts),
+            },
+            "last_reject_sample": last_reject_sample,
         }
         return attach_replay_coverage(
             {"summary": summary, "trades": trades},

@@ -12605,10 +12605,16 @@
   - `replay_live_window_audit.py`
     - `--allow-candle-sim-fallback` 時に、
       missing live 窓を `fetch_candles.py(S5) -> sim/pseudo_ticks.py` で補完。
+    - M1 family (`trend_breakout` / `pullback_continuation` / `failed_break_reverse`) に
+      既定 `replay_warmup_minutes=120` を持たせ、必要時だけ override できるよう変更。
     - `--replay-warmup-minutes` を追加し、
       exact coverage 窓とは別に replay 用 pre-roll を付けられるよう変更。
     - report に `replay_window_start/end` と
       `replay_required_tick_basenames` を追加。
+  - `replay_workers.py`
+    - M1 family summary に `gate_counts` / `signal_tags` /
+      `factor_readiness` / `last_reject_sample` を追加し、
+      0-trade replay の理由を report 側から追えるよう変更。
   - `sim/pseudo_ticks.py`
     - OANDA candle の nanosecond precision timestamp
       (`2026-03-06T09:01:00.000000000Z`) を parse できるよう修正。
@@ -12616,11 +12622,13 @@
 - 検証:
   - `python3 -m py_compile sim/pseudo_ticks.py scripts/replay_live_window_audit.py tests/sim/test_pseudo_ticks.py tests/scripts/test_replay_live_window_audit.py`
     - pass
-  - `pytest -q tests/sim/test_pseudo_ticks.py tests/scripts/test_replay_live_window_audit.py`
-    - `10 passed`
+  - `pytest -q tests/replay/test_m1_family_replay.py tests/scripts/test_replay_live_window_audit.py tests/sim/test_pseudo_ticks.py`
+    - `15 passed`
   - 実データ:
-    - `python3 scripts/replay_live_window_audit.py --workers trend_breakout --trades-db logs/trades.db --pre-minutes 5 --post-minutes 15 --allow-candle-sim-fallback --run-replay --replay-warmup-minutes 120 --out-dir tmp/replay_live_window_audit_trend_breakout_fallback_warm120`
-    - `summary_all.json` で `TrendBreakout entry_replay.trades=2 / total_pnl_pips=14.041`
+    - `python3 scripts/replay_live_window_audit.py --workers trend_breakout --trades-db logs/trades.db --pre-minutes 5 --post-minutes 15 --allow-candle-sim-fallback --run-replay --out-dir tmp/replay_live_window_audit_trend_breakout_default_warm`
+    - default warmup だけで `summary_all.json` に `TrendBreakout entry_replay.trades=2 / total_pnl_pips=14.041`
+    - `python3 scripts/replay_workers.py --worker trend_breakout --candles-sim tmp/test_fetch_candles_20260306_0000_0929_s5.json ...`
+      では `gate_counts.tag_filtered=16` と `last_reject_sample.reject_gate=tag_filtered` を確認。
 
 - 判断:
   - `TrendBreakout` live-window replay の 0 trades は warmup 不足による cold-start が主因。

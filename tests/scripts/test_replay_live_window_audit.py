@@ -140,6 +140,7 @@ def test_build_report_marks_missing_and_covered_windows(tmp_path) -> None:
         post_minutes=5,
         out_dir=out_dir,
         run_replay=False,
+        replay_warmup_minutes=0.0,
     )
 
     worker = report["workers"]["trend_breakout"]
@@ -277,6 +278,40 @@ def test_build_report_uses_candle_sim_fallback_with_replay_warmup(tmp_path, monk
     assert window["replay"]["status"] == "skipped"
 
 
+def test_build_report_uses_default_replay_warmup_for_m1_family(tmp_path) -> None:
+    trades_db = tmp_path / "trades.db"
+    open_time = datetime(2026, 3, 6, 9, 6, tzinfo=UTC)
+    close_time = open_time + timedelta(minutes=2)
+    _write_trades_db(
+        trades_db,
+        [
+            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), close_time.isoformat()),
+        ],
+    )
+
+    covered_ticks = tmp_path / "USD_JPY_ticks_20260306.jsonl"
+    _write_ticks(
+        covered_ticks,
+        start=datetime(2026, 3, 6, 7, 0, tzinfo=UTC),
+        prices=[157.6 + (idx * 0.001) for idx in range(180)],
+    )
+
+    report = audit.build_report(
+        workers=["trend_breakout"],
+        trades_db=trades_db,
+        tick_patterns=[str(tmp_path / "USD_JPY_ticks_*.jsonl")],
+        pre_minutes=3,
+        post_minutes=5,
+        out_dir=tmp_path / "out",
+        run_replay=False,
+    )
+
+    assert report["requested_replay_warmup_minutes"] is None
+    window = report["workers"]["trend_breakout"]["windows"][0]
+    assert window["replay_warmup_minutes"] == 120.0
+    assert window["replay_window_start"] == (open_time - timedelta(minutes=123)).isoformat()
+
+
 def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None:
     trades_db = tmp_path / "trades.db"
     open_time = datetime(2026, 3, 6, 9, 6, tzinfo=UTC)
@@ -325,6 +360,8 @@ def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None
             "--out-dir",
             str(out_dir),
             "--run-replay",
+            "--replay-warmup-minutes",
+            "0",
         ],
     )
 

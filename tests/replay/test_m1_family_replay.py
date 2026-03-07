@@ -111,9 +111,51 @@ def test_replay_trend_breakout_limit_entry_hits_tp(tmp_path, monkeypatch) -> Non
     assert live_overlap["strategy_tag"] == "TrendBreakout"
     assert live_overlap["overlap_count"] == 1
     assert live_overlap["total_strategy_trades"] == 2
+    assert result["summary"]["gate_counts"]["signal_dict"] == 1
+    assert result["summary"]["gate_counts"]["pending_limit_placed"] == 1
+    assert result["summary"]["gate_counts"]["pending_limit_filled"] == 1
+    assert result["summary"]["gate_counts"]["entry_opened"] == 1
+    assert result["summary"]["signal_tags"]["M1Scalper-breakout-retest-long"] == 1
+    assert result["summary"]["factor_readiness"]["bars"]["M1"] >= 20
+    assert "M1" in result["summary"]["factor_readiness"]["first_bar_ts"]
+    assert result["summary"]["last_reject_sample"] is None
     trade = result["trades"][0]
     assert trade["strategy_tag"] == "TrendBreakout"
     assert trade["reason"] == "tp"
+
+
+def test_replay_trend_breakout_reports_tag_filtered_diagnostics(tmp_path, monkeypatch) -> None:
+    ticks = _ticks_from_mids([157.000 + (idx * 0.001) for idx in range(24)])
+    trades_db = tmp_path / "trades.db"
+    _write_trades_db(trades_db, [])
+    monkeypatch.setenv("REPLAY_LIVE_TRADES_DB", str(trades_db))
+    fired = {"done": False}
+
+    def fake_signal(fac: dict[str, object]) -> dict[str, object] | None:
+        if fired["done"] or len(fac.get("candles") or []) < 20:
+            return None
+        fired["done"] = True
+        return {
+            "action": "OPEN_LONG",
+            "tag": "M1Scalper-buy-dip",
+            "confidence": 82,
+            "entry_type": "limit",
+            "entry_price": 157.025,
+            "entry_tolerance_pips": 0.05,
+            "limit_expiry_seconds": 180,
+            "sl_pips": 0.8,
+            "tp_pips": 0.5,
+        }
+
+    result = rw._replay_m1_family("trend_breakout", ticks, signal_func=fake_signal)
+
+    assert result["summary"]["trades"] == 0
+    assert result["summary"]["gate_counts"]["signal_dict"] == 1
+    assert result["summary"]["gate_counts"]["tag_filtered"] == 1
+    assert "entry_opened" not in result["summary"]["gate_counts"]
+    assert result["summary"]["signal_tags"]["M1Scalper-buy-dip"] == 1
+    assert result["summary"]["last_reject_sample"]["reject_gate"] == "tag_filtered"
+    assert result["summary"]["last_reject_sample"]["tag"] == "M1Scalper-buy-dip"
 
 
 def test_replay_exit_workers_groups_accepts_trend_breakout(tmp_path, monkeypatch) -> None:

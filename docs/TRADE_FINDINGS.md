@@ -8450,6 +8450,10 @@ Status:
 
 - 運用ルール:
   - `TrendBreakout` / `PullbackContinuation` / `FailedBreakReverse` の replay では
-    `scripts/replay_live_window_audit.py --replay-warmup-minutes 120` を標準にする。
+    `scripts/replay_live_window_audit.py` の worker 既定 warmup `120m` を標準にする。
+    明示 override が必要なときだけ `--replay-warmup-minutes` を渡す。
   - exact tick が欠けている場合も、まず `--allow-candle-sim-fallback` を併用して
     warmup 付き replay まで回し、0 trades を即「戦略不発」とは判断しない。
+  - `summary_all.json` の `entry_replay.summary.factor_readiness` と
+    `last_reject_sample` を先に見れば、
+    warmup 不足なのか tag filter なのかを replay 出力だけで切り分けられる。
