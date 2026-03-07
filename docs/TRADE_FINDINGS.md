@@ -8099,25 +8099,27 @@ Status:
     - 壊れた tick 行は skip するよう `load_ticks()` を fail-open 化
   - `scripts/replay_exit_workers_groups.py`
     - M1 family 3 worker を受理
-    - class ベース exit worker を持たない worker 向けに no-op runner fallback を追加
+    - class ベース exit worker を持たない worker 向けに simple exit adapter fallback を追加
   - `docs/REPLAY_STANDARD.md`
     - 上記 worker 名と近似条件を追記
 
 - テスト:
-  - `pytest -q tests/replay/test_m1_family_replay.py tests/workers/test_m1scalper_split_workers.py tests/workers/test_trend_breakout_open_trades_guard.py tests/workers/test_pullback_continuation_open_trades_guard.py`
-  - `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py`
-  - 合計 `24 passed`
+  - `pytest tests/replay/test_m1_family_replay.py`
+    - `2 passed`
+  - `pytest tests/workers/test_m1scalper_split_workers.py`
+    - `4 passed`
+  - `python -m py_compile scripts/replay_workers.py scripts/replay_exit_workers_groups.py`
+    - pass
 
 - 週末 replay 実測:
-  - `python scripts/replay_workers.py --worker trend_breakout --ticks tmp/replay_smoke/USD_JPY_ticks_20260123_10k.jsonl`
+  - `python scripts/replay_workers.py --worker trend_breakout --ticks tmp/vm_ticks/logs/replay/USD_JPY/USD_JPY_ticks_20260220.jsonl`
     - `trades=0`
-  - `python scripts/replay_exit_workers_groups.py --workers trend_breakout --ticks tmp/replay_smoke/USD_JPY_ticks_20260123_10k.jsonl --no-hard-sl --exclude-end-of-replay`
-    - `trades=0`
-  - `python scripts/replay_workers.py --worker trend_breakout --ticks tmp/USD_JPY_ticks_20260211.jsonl`
-    - `trades=0`
-  - `python scripts/replay_workers.py --worker pullback_continuation --ticks tmp/USD_JPY_ticks_20260211.jsonl`
-    - `trades=0`
+    - `tmp/vm_ticks/logs/replay/.../20260220` は `6 ticks` しかなく、smoke 相当
+  - `python scripts/replay_exit_workers_groups.py --ticks tmp/vm_ticks/logs/archive/replay.20260220-094854.dir/USD_JPY/USD_JPY_ticks_20260212.jsonl --workers trend_breakout,pullback_continuation,failed_break_reverse --no-hard-sl --exclude-end-of-replay --out-dir tmp/replay_exit_workers_groups_m1_family_20260212`
+    - `trend_breakout / pullback_continuation / failed_break_reverse` の `base` はすべて `trades=0`
+    - `summary_all.json` の `selection` も 3 worker 全て `requested=0 / applied=0 / excluded=0`
+    - 対象 tick は `137,948` 行、spread percentile は `q20≈0.8p / q80≈0.8p`
 
 - 判断:
-  - replay 導線は通ったが、今回使った短窓/単日 tick では M1 family の entry は立たなかった。
+  - replay 導線は通ったが、`2026-02-12` のフル日 tick でも M1 family 3本は entry が 1 本も立たなかった。
   - live 昇格本命は引き続き `TrendBreakout`。ただし週明け前の追加判断は `longer replay window` と通常流動性帯の live canary で継続する。

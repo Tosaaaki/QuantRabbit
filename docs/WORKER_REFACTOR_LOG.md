@@ -12367,9 +12367,17 @@
     - 実 tick JSONL に壊れ行が混ざっても止まらないよう、`load_ticks()` を fail-open にした。
   - `replay_exit_workers_groups.py`
     - 上記 3 worker の spec を追加。
-    - class ベース exit worker を持たない M1 family 向けに no-op runner fallback を追加し、`entry + hard TP/EOD` ベースでも group replay を完走できるようにした。
+    - class ベース exit worker を持たない M1 family 向けに simple exit adapter fallback を追加し、`entry + simple time_stop/trail/max_adverse + hard TP/EOD` ベースでも group replay を完走できるようにした。
 
 - 検証:
-  - `pytest -q tests/replay/test_m1_family_replay.py tests/workers/test_m1scalper_split_workers.py tests/workers/test_trend_breakout_open_trades_guard.py tests/workers/test_pullback_continuation_open_trades_guard.py`
-  - `pytest -q tests/workers/test_m1scalper_config.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py`
-  - 合計 `12 passed` + `12 passed`
+  - `pytest tests/replay/test_m1_family_replay.py`
+    - `2 passed`
+  - `pytest tests/workers/test_m1scalper_split_workers.py`
+    - `4 passed`
+  - `python -m py_compile scripts/replay_workers.py scripts/replay_exit_workers_groups.py`
+    - pass
+
+- replay 実測:
+  - `tmp/replay_exit_workers_groups_m1_family_20260212/summary_all.json`
+    - `TrendBreakout / PullbackContinuation / FailedBreakReverse` の `base.trades=0`
+    - `selection.requested=0` で、`2026-02-12` の full-day tick (`137,948` rows) 上では entry 自体が発火しなかった。
