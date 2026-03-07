@@ -7876,6 +7876,27 @@ Status:
   3. `orders.db` の `margin_snapshot_failed` と `api_error` が悪化せず、
      `open_trades=0` からの burst で margin cap に詰まらないこと。
 
+## 2026-03-07 06:59 JST / local-v2: JST 7-8時メンテ帯のため追加チューニングを保留
+
+- 市況確認（ローカルV2実測 + OANDA API, 2026-03-07 06:59 JST）:
+  - `USD/JPY mid=157.8215`
+  - `spread=6.3p`
+  - `ATR14(M1)=1.92p`, `M1 60本レンジ=11.6p`
+  - `summary/openTradeCount=0`, `marginAvailable=37839.6842`
+  - `pricing` は 3 連続で同一 timestamp を返し、更新停止状態
+
+- 事実:
+  - 直近 `15m/30m/60m` の `trades.db` は新規 close なし。
+  - `health_snapshot` は `git_rev=dcbe4482`, `data_lag_ms=1064.7`, `decision_latency_ms=11.7`。
+  - `quant-micro-levelreactor` live env では
+    `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE=0.70` と
+    `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.60` を確認済み。
+
+- 判断:
+  - これは通常の流動性劣化ではなく、JST 7-8時のメンテ時間帯に一致する。
+  - AGENTS の運用ルールどおり、この時間帯に追加の攻め設定を入れるのは保留する。
+  - 既存の `dcbe4482` 反映確認だけ完了とし、次の評価はメンテ明け後に行う。
+
 ## 2026-03-06 16:56 UTC / 2026-03-07 01:56 JST - `MicroLevelReactor` の preserve-intent floor を `0.70` へ引き上げ
 
 - 市況:
