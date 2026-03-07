@@ -8800,7 +8800,7 @@ Status:
 - 再検証条件:
   1. tick file が不足している closed帯では `replay_quality_gate` が `skipped` になること。
   2. tick file が十分な closed帯では fresh report を生成し、`report_json_path` が当該 run を指すこと。
-## 2026-03-07 23:10 JST / local read-only MCP は無駄ではないが、観測導線として使うには軽量化と fail-fast が必要
+## 2026-03-07 23:06 JST / local read-only MCP は無駄ではないが、観測導線として使うには軽量化と fail-fast が必要
 
 - 事実:
   - `scripts/mcp_sqlite_readonly.py --db logs/orders.db` に JSON-RPC で
@@ -8815,7 +8815,7 @@ Status:
     `initialize` 後の `tools/call(summary)` が
     `startup config error: Environment variable oanda_account_id is not set`
     で止まり、repo 標準の `config/env.toml` 解決系に追従していなかった。
-  - 2026-03-07 23:xx JST 時点の OANDA pricing 実測は
+  - 2026-03-07 23:00-23:06 JST 時点の OANDA pricing 実測は
     `tradeable=false`, bid/ask=`157.790/157.853`, spread=`6.3 pips`,
     `M5 ATR14 ≒ 5.03 pips`。週末クローズ帯で通常執行条件ではない。
 

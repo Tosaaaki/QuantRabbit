@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import ssl
@@ -26,7 +25,7 @@ from utils.secrets import get_secret
 
 
 JSONRPC_VERSION = "2.0"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.2.0"
 ALLOWED_GRANULARITIES = {
     "S5",
     "S10",
@@ -98,20 +97,18 @@ def _json_response(message_id, result=None, error=None):
     }
 
 
-def _get_env(name: str, default: str | None = None) -> str | None:
-    for key in (name, name.upper(), name.lower()):
-        value = os.environ.get(key)
-        if value is not None:
-            return value
-    return default
-
-
-def _get_secret_or_default(name: str, default: str | None = None) -> str | None:
+def _load_secret(name: str, *, default: str | None = None) -> str:
     try:
         value = get_secret(name)
-    except Exception:
-        return default
-    return value if value is not None else default
+    except KeyError:
+        if default is not None:
+            return default
+        raise RuntimeError(f"{name} is not set in env/config/env.toml/Secret Manager") from None
+    except Exception as exc:
+        raise RuntimeError(
+            f"failed to resolve {name} via env/config/env.toml/Secret Manager: {exc}"
+        ) from exc
+    return str(value)
 
 
 def _require_instrument(value: object) -> str:
@@ -154,31 +151,9 @@ def _require_granularity(value: object) -> str:
 
 class OandaReadOnlyClient:
     def __init__(self) -> None:
-        self.account_id = (
-            _get_env("oanda_account_id", "")
-            or _get_env("OANDA_ACCOUNT_ID", "")
-            or _get_env("OANDA_ACCOUNT", "")
-            or _get_secret_or_default("oanda_account_id", "")
-            or _get_secret_or_default("oanda_account", "")
-        )
-        if not self.account_id:
-            raise RuntimeError("OANDA account id is not set in env/config/env.toml/Secret Manager")
-
-        self.token = (
-            _get_env("oanda_token", "")
-            or _get_env("OANDA_TOKEN", "")
-            or _get_env("OANDA_API_KEY", "")
-            or _get_secret_or_default("oanda_token", "")
-        )
-        if not self.token:
-            raise RuntimeError("OANDA token is not set in env/config/env.toml/Secret Manager")
-
-        practice = (
-            _get_env("oanda_practice", "")
-            or _get_env("OANDA_PRACTICE", "")
-            or _get_secret_or_default("oanda_practice", "false")
-            or "false"
-        ).lower()
+        self.account_id = _load_secret("oanda_account_id")
+        self.token = _load_secret("oanda_token")
+        practice = _load_secret("oanda_practice", default="false").strip().lower()
         self.host = "https://api-fxpractice.oanda.com" if practice in ("1", "true", "yes") else "https://api-fxtrade.oanda.com"
 
     def _request(self, path: str, params: dict | None = None) -> dict:
