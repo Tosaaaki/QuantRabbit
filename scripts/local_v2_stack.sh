@@ -17,8 +17,11 @@ DEFAULT_POST_UP_RECONCILE_ROUNDS=2
 DEFAULT_POST_UP_SETTLE_SEC=2
 DEFAULT_WATCHDOG_INTERVAL_SEC=10
 DEFAULT_WATCHDOG_RESUME_GAP_SEC=90
+DEFAULT_STACK_OP_LOCK_WAIT_SEC=120
 LOCAL_PARITY_SESSION_NAME="qr-local-parity"
 LOCAL_PARITY_SUPERVISOR_REL="scripts/local_vm_parity_supervisor.py"
+STACK_OP_LOCK_FILE="${STATE_DIR}/stack_ops.lock"
+STACK_OP_LOCK_FALLBACK_DIR="${STATE_DIR}/stack_ops.lockdir"
 
 KNOWN_SERVICES=(
   "quant-market-data-feed"
@@ -101,6 +104,8 @@ PROFILE_trade_min=(
   "quant-position-manager"
   "quant-scalp-ping-5s-b"
   "quant-scalp-ping-5s-b-exit"
+  "quant-scalp-trend-breakout"
+  "quant-scalp-trend-breakout-exit"
   "quant-micro-momentumburst"
   "quant-micro-momentumburst-exit"
   "quant-micro-levelreactor"
@@ -212,6 +217,42 @@ Examples:
   scripts/local_v2_stack.sh watchdog-status
   scripts/local_v2_stack.sh watchdog-stop
 USAGE
+}
+
+stack_op_lock_wait_sec() {
+  as_positive_int "${LOCAL_V2_STACK_OP_LOCK_WAIT_SEC:-}" "${DEFAULT_STACK_OP_LOCK_WAIT_SEC}"
+}
+
+release_stack_operation_lock() {
+  if [[ -n "${STACK_OP_LOCK_FALLBACK_HELD:-}" ]]; then
+    rm -rf "${STACK_OP_LOCK_FALLBACK_DIR}" >/dev/null 2>&1 || true
+    STACK_OP_LOCK_FALLBACK_HELD=""
+  fi
+}
+
+acquire_stack_operation_lock() {
+  local wait_sec start_ts
+  wait_sec="$(stack_op_lock_wait_sec)"
+
+  if command -v flock >/dev/null 2>&1; then
+    # Serialize whole-stack up/down/restart so manual runs and autorecover cannot overlap.
+    exec {STACK_OP_LOCK_FD}>"${STACK_OP_LOCK_FILE}"
+    if ! flock -w "${wait_sec}" "${STACK_OP_LOCK_FD}"; then
+      echo "[error] could not acquire stack operation lock within ${wait_sec}s: ${STACK_OP_LOCK_FILE}" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  start_ts="$(date +%s)"
+  while ! mkdir "${STACK_OP_LOCK_FALLBACK_DIR}" 2>/dev/null; do
+    if (( $(date +%s) - start_ts >= wait_sec )); then
+      echo "[error] could not acquire stack operation lock within ${wait_sec}s: ${STACK_OP_LOCK_FALLBACK_DIR}" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  STACK_OP_LOCK_FALLBACK_HELD=1
 }
 
 normalize_service_name() {
@@ -1455,6 +1496,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 resolve_services
+
+case "${CMD}" in
+  up|down|restart)
+    acquire_stack_operation_lock
+    trap release_stack_operation_lock EXIT
+    ;;
+esac
 
 case "${CMD}" in
   up)

@@ -23,6 +23,10 @@ STALE_RECOVERY_ENABLED="${QR_LOCAL_V2_STALE_RECOVERY_ENABLED:-0}"
 BRAIN_AUTOPDCA_ENABLED="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED:-0}"
 BRAIN_AUTOPDCA_ALLOW_RESTART="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ALLOW_RESTART:-0}"
 BRAIN_AUTOPDCA_INTERVAL_SEC="${QR_LOCAL_V2_BRAIN_AUTOPDCA_INTERVAL_SEC:-${QR_LOCAL_V2_BRAIN_PDCA_INTERVAL_SEC:-1800}}"
+MARKET_SANITY_GUARD_ENABLED="${QR_LOCAL_V2_MARKET_SANITY_GUARD_ENABLED:-1}"
+MARKET_SANITY_MAX_SPREAD_PIPS="${QR_LOCAL_V2_MARKET_SANITY_MAX_SPREAD_PIPS:-2.2}"
+MARKET_SANITY_MAX_TICK_AGE_SEC="${QR_LOCAL_V2_MARKET_SANITY_MAX_TICK_AGE_SEC:-90}"
+MARKET_SANITY_BLOCK_JST_HOURS="${QR_LOCAL_V2_MARKET_SANITY_BLOCK_JST_HOURS:-7,8}"
 
 usage() {
   cat <<'USAGE'
@@ -220,6 +224,113 @@ raise SystemExit(0)
 PY
 }
 
+market_sanity_ready() {
+  if ! is_truthy "${MARKET_SANITY_GUARD_ENABLED}"; then
+    return 0
+  fi
+
+  local py_exec=""
+  if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+    py_exec="${ROOT_DIR}/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    py_exec="$(command -v python3)"
+  else
+    return 0
+  fi
+
+  "${py_exec}" - \
+    "${ROOT_DIR}/logs/orderbook_snapshot.json" \
+    "${MARKET_SANITY_MAX_SPREAD_PIPS}" \
+    "${MARKET_SANITY_MAX_TICK_AGE_SEC}" \
+    "${MARKET_SANITY_BLOCK_JST_HOURS}" <<'PY'
+import json
+import pathlib
+import sys
+from datetime import datetime, timedelta, timezone
+
+snapshot_path = pathlib.Path(sys.argv[1])
+max_spread = float(sys.argv[2])
+max_tick_age = float(sys.argv[3])
+blocked_hours_raw = sys.argv[4].strip()
+jst = timezone(timedelta(hours=9))
+blocked_hours = set()
+for token in blocked_hours_raw.split(","):
+    token = token.strip()
+    if not token:
+        continue
+    try:
+        blocked_hours.add(int(token))
+    except ValueError:
+        continue
+
+now_jst = datetime.now(timezone.utc).astimezone(jst)
+if now_jst.hour in blocked_hours:
+    print(f"blocked_jst_hour={now_jst.hour}")
+    raise SystemExit(1)
+
+if not snapshot_path.exists() or snapshot_path.stat().st_size <= 0:
+    print("snapshot_missing")
+    raise SystemExit(0)
+
+try:
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+except Exception:
+    print("snapshot_parse_failed")
+    raise SystemExit(0)
+
+if not isinstance(snapshot, dict):
+    print("snapshot_not_dict")
+    raise SystemExit(0)
+
+bid_levels = snapshot.get("bid_levels") if isinstance(snapshot.get("bid_levels"), list) else []
+ask_levels = snapshot.get("ask_levels") if isinstance(snapshot.get("ask_levels"), list) else []
+if bid_levels and ask_levels:
+    try:
+        bid = float(bid_levels[0][0])
+        ask = float(ask_levels[0][0])
+        spread_pips = (ask - bid) * 100.0
+        if spread_pips > max_spread:
+            print(f"spread_wide={spread_pips:.3f}>{max_spread:.3f}")
+            raise SystemExit(1)
+    except Exception:
+        pass
+
+epoch_ts = snapshot.get("epoch_ts")
+if epoch_ts is not None:
+    try:
+        age_sec = max(0.0, datetime.now(timezone.utc).timestamp() - float(epoch_ts))
+        if age_sec > max_tick_age:
+            print(f"tick_stale={age_sec:.1f}s>{max_tick_age:.1f}s")
+            raise SystemExit(1)
+    except Exception:
+        pass
+
+print("ok")
+raise SystemExit(0)
+PY
+}
+
+core_recovery_targets() {
+  local status_text="${1:-}"
+  local found=()
+  local svc=""
+  for svc in \
+    quant-market-data-feed \
+    quant-strategy-control \
+    quant-order-manager \
+    quant-position-manager; do
+    if printf '%s\n' "${status_text}" | grep -Eq "^\[(stopped|stale|stale_pid_file|port_conflict)\] ${svc}([[:space:]]|$)"; then
+      found+=("${svc}")
+    fi
+  done
+
+  if (( ${#found[@]} == 0 )); then
+    return 1
+  fi
+
+  printf '%s\n' "${found[*]}"
+}
+
 if [[ ! -x "${STACK_SCRIPT}" ]]; then
   echo "[error] local_v2_stack script not executable: ${STACK_SCRIPT}" >&2
   exit 1
@@ -338,6 +449,21 @@ fi
 if [[ "${network_state}" != "up" ]]; then
   log "[wait] network unavailable host=${NETWORK_HOST}:${NETWORK_PORT}; defer recovery"
   exit 0
+fi
+
+core_stopped_lines="$(printf '%s\n' "${stopped_lines}" | grep -E 'quant-(market-data-feed|strategy-control|order-manager|position-manager)' || true)"
+if [[ -z "${core_stopped_lines}" ]]; then
+if core_recovery_reason="$(core_recovery_targets "${status_out}")"; then
+  log "[recover] bypass market sanity guard for core services: ${core_recovery_reason}"
+elif ! market_sanity_ready >/tmp/qr_local_v2_market_sanity.$$ 2>&1; then
+  market_guard_reason="$(tr '\n' ' ' </tmp/qr_local_v2_market_sanity.$$ | sed 's/[[:space:]]\\+/ /g; s/^ //; s/ $//')"
+  rm -f /tmp/qr_local_v2_market_sanity.$$
+  log "[wait] market sanity guard blocked recovery: ${market_guard_reason:-unknown}"
+  exit 0
+fi
+rm -f /tmp/qr_local_v2_market_sanity.$$ >/dev/null 2>&1 || true
+elif [[ "${VERBOSE}" == "1" ]]; then
+  log "[warn] bypass market sanity guard due to stopped core services: ${core_stopped_lines//$'\n'/ ; }"
 fi
 
 if [[ -z "${stopped_lines}" && -n "${stale_lines}" ]] && ! is_truthy "${STALE_RECOVERY_ENABLED}"; then

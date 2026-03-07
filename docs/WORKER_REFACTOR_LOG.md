@@ -12304,6 +12304,36 @@
   - shared `order_manager` は変えず、winner 専用 worker だけで intent 保持率を `70%` まで引き上げる。
   - 同一 probability 帯の `scaled_units` を押し上げ、収益速度を改善する。
 
+## 2026-03-07 JST - local-v2 autorecover に market sanity guard を追加、`trade_min` へ `TrendBreakout` を昇格
+
+- 目的:
+  - クローズ帯/メンテ帯の不要な autorecover で `position-manager` が落ち直す事象を止める。
+  - 直近 winner の `TrendBreakout` を次回通常流動性帯の `trade_min` へ自動で載せる。
+
+- 変更ファイル:
+  - `scripts/local_v2_autorecover_once.sh`
+  - `scripts/local_v2_stack.sh`
+
+- 実装:
+  - `local_v2_autorecover_once.sh`
+    - `logs/orderbook_snapshot.json` を読み、`spread>2.2p` / `tick_age>90s` / `JST 7時台` のときは recovery を skip する `market_sanity_ready()` を追加。
+    - ネットワーク復旧だけで `stack up` を走らせる既存挙動に、市況 sanity の fail-closed を挿入。
+    - ただし core 4 サービスが `stopped` のときは、market-data-feed 障害や core crash の復旧を阻害しないよう bypass する。
+  - `local_v2_stack.sh`
+    - `up/down/restart` に stack 操作ロックを追加し、手動実行と autorecover の重複呼び出しを直列化。
+    - `PROFILE_trade_min` に `quant-scalp-trend-breakout` と `quant-scalp-trend-breakout-exit` を追加。
+
+- 根拠:
+  - `logs/orderbook_snapshot.json`: 土曜クローズ帯で `spread=6.3p`, `tick_age≈14987s`
+  - `logs/local_v2_autorecover.log`: クローズ帯でも `stack up succeeded profile=trade_min` が継続
+  - `logs/local_v2_stack/quant-position-manager.log`: 同時間帯に `127.0.0.1:8301` 接続拒否が断続
+  - `logs/trades.db`: `TrendBreakout` は 7d `3 trades / +264.4 JPY / win 100%`
+
+- 期待効果:
+  - `local_v2_stack.sh` の二重実行で起きていた `position-manager` の bind 競合を防ぐ。
+  - 市況が壊れている時間帯の無駄な worker recycle を抑え、通常帯の live stability を上げる。
+  - loser を増やさず、winner の `TrendBreakout` を `trade_min` へ昇格して期待値を厚くする。
+
 ## 2026-03-07 JST - `M1Scalper-M1` side filter を `long` に戻す
 
 - `ops/env/quant-m1scalper.env`

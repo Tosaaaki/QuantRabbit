@@ -8055,3 +8055,35 @@ Status:
   1. 週明け再開後の `trades.db` で `M1Scalper-M1` short 由来の新規 close が消えること。
   2. `M1Scalper-M1` 24h `net_jpy` と `avg_pips` が改善すること。
   3. `orders.db` で `M1Scalper-M1` が `breakout-retest-long` / `nwave-long` 中心に回ること。
+
+## 2026-03-07 11:10 JST / local-v2: autorecover に market sanity guard を追加、次回 `trade_min` へ `TrendBreakout` を昇格
+
+- 市況確認（ローカルV2実測）:
+  - `logs/orderbook_snapshot.json`: `bid=157.790 / ask=157.853 / spread=6.3p`
+  - `logs/tick_cache.json`: 最終 tick age は約 `14987s`
+  - `logs/health_snapshot.json`: `orders_status_1h=[]`, `open_trades=0`
+  - 土曜クローズ帯で、AGENTS の「市況悪化時は作業保留」に該当
+
+- 事実:
+  - `logs/local_v2_autorecover.log` では、クローズ帯でも `stack up succeeded profile=trade_min` が繰り返し出ていた。
+  - 同時間帯の `logs/local_v2_stack/quant-position-manager.log` と各 exit worker では
+    `127.0.0.1:8301` 接続拒否が断続し、`position-manager` の不要な再起動が収益導線を乱していた。
+  - 直近勝ち筋の `TrendBreakout` は 7d `3 trades / +264.4 JPY / avg_pips +6.1 / win 100%`。
+
+- 対応:
+  - `scripts/local_v2_autorecover_once.sh`
+    - `orderbook_snapshot.json` を見て、`spread>2.2p` / `tick_age>90s` / `JST 7時台` では recovery を抑止する `market sanity guard` を追加
+    - ただし `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` が `stopped` のときは、実障害復旧を塞がないよう guard を bypass する
+  - `scripts/local_v2_stack.sh`
+    - `up/down/restart` に stack 操作ロックを追加し、手動実行と autorecover の二重起動を直列化
+    - `PROFILE_trade_min` に `quant-scalp-trend-breakout` / `quant-scalp-trend-breakout-exit` を追加
+
+- 狙い:
+  - `local_v2_stack.sh` の二重実行で起きていた `position-manager` の bind 競合を止める。
+  - クローズ帯・メンテ帯での不要な autorecover による `position-manager` 再起動ループを止める。
+  - 通常流動性へ戻った次回 `trade_min` 起動で、winner の `TrendBreakout` を自動的に載せる。
+
+- 再検証条件:
+  1. 週明け前クローズ帯で `local_v2_autorecover.log` に不要な `stack up succeeded` が増えないこと。
+  2. 次回通常流動性帯の `trade_min` 起動後、`TrendBreakout` worker が起動し `orders/trades` に新規実績が乗ること。
+  3. `position-manager` の `connection refused` が減り、`orders.db` の `margin_snapshot_failed` / `api_error 503` が悪化しないこと。
