@@ -929,13 +929,12 @@ quant-manual-swing-exit.service
   2. `orders.db` で C の `filled` が再開すること。
   3. `entry_probability_reject` / `entry_leading_profile_reject` が過度に増えないこと。
 
-## 0-21. 2026-03-07 JST local-v2 autorecover market sanity guard + `TrendBreakout` 昇格準備
+## 0-22. 2026-03-07 JST local-v2 autorecover market sanity guard + `TrendBreakout` 昇格準備
 - `scripts/local_v2_autorecover_once.sh`
-  - `logs/orderbook_snapshot.json` を見て `spread>2.2p` / `tick_age>90s` / `JST 7時台` は recovery を skip する。
-  - ただし core 4 サービスが `stopped` のときは recovery を許可し、実障害復旧は塞がない。
-  - クローズ帯/メンテ帯での `position-manager` 無駄再起動を防ぐ。
+  - `logs/orderbook_snapshot.json` を見て `spread>2.2p` / `tick_age>90s` / `JST 7-8時台` は non-core recovery を skip する。
+  - ただし `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` が `stopped/stale` のときは recovery を許可し、実障害復旧は塞がない。
+  - クローズ帯/メンテ帯での `position-manager` 無駄再起動を防ぎつつ、core の自己復旧は止めない。
 - `scripts/local_v2_stack.sh`
-  - `up/down/restart` に stack 操作ロックを追加し、手動実行と autorecover の重複起動を直列化。
   - `PROFILE_trade_min` に `quant-scalp-trend-breakout` / `quant-scalp-trend-breakout-exit` を追加。
 - 運用注意:
   - 土曜クローズ帯は live restart/verify を行わない。

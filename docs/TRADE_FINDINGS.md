@@ -8072,15 +8072,14 @@ Status:
 
 - 対応:
   - `scripts/local_v2_autorecover_once.sh`
-    - `orderbook_snapshot.json` を見て、`spread>2.2p` / `tick_age>90s` / `JST 7時台` では recovery を抑止する `market sanity guard` を追加
-    - ただし `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` が `stopped` のときは、実障害復旧を塞がないよう guard を bypass する
+    - `orderbook_snapshot.json` を見て、`spread>2.2p` / `tick_age>90s` / `JST 7-8時台` では non-core recovery を抑止する `market sanity guard` を追加
+    - ただし `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` が `stopped/stale` のときは、実障害復旧を塞がないよう guard を bypass する
   - `scripts/local_v2_stack.sh`
-    - `up/down/restart` に stack 操作ロックを追加し、手動実行と autorecover の二重起動を直列化
     - `PROFILE_trade_min` に `quant-scalp-trend-breakout` / `quant-scalp-trend-breakout-exit` を追加
 
 - 狙い:
-  - `local_v2_stack.sh` の二重実行で起きていた `position-manager` の bind 競合を止める。
   - クローズ帯・メンテ帯での不要な autorecover による `position-manager` 再起動ループを止める。
+  - core 4 サービスの自己復旧は維持し、market-data-feed 障害や core crash の復旧は止めない。
   - 通常流動性へ戻った次回 `trade_min` 起動で、winner の `TrendBreakout` を自動的に載せる。
 
 - 再検証条件:

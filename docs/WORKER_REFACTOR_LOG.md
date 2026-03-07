@@ -12316,11 +12316,10 @@
 
 - 実装:
   - `local_v2_autorecover_once.sh`
-    - `logs/orderbook_snapshot.json` を読み、`spread>2.2p` / `tick_age>90s` / `JST 7時台` のときは recovery を skip する `market_sanity_ready()` を追加。
+    - `logs/orderbook_snapshot.json` を読み、`spread>2.2p` / `tick_age>90s` / `JST 7-8時台` のときは non-core recovery を skip する `market_sanity_ready()` を追加。
     - ネットワーク復旧だけで `stack up` を走らせる既存挙動に、市況 sanity の fail-closed を挿入。
-    - ただし core 4 サービスが `stopped` のときは、market-data-feed 障害や core crash の復旧を阻害しないよう bypass する。
+    - ただし core 4 サービスが `stopped/stale` のときは、market-data-feed 障害や core crash の復旧を阻害しないよう bypass する。
   - `local_v2_stack.sh`
-    - `up/down/restart` に stack 操作ロックを追加し、手動実行と autorecover の重複呼び出しを直列化。
     - `PROFILE_trade_min` に `quant-scalp-trend-breakout` と `quant-scalp-trend-breakout-exit` を追加。
 
 - 根拠:
@@ -12330,8 +12329,8 @@
   - `logs/trades.db`: `TrendBreakout` は 7d `3 trades / +264.4 JPY / win 100%`
 
 - 期待効果:
-  - `local_v2_stack.sh` の二重実行で起きていた `position-manager` の bind 競合を防ぐ。
   - 市況が壊れている時間帯の無駄な worker recycle を抑え、通常帯の live stability を上げる。
+  - core 4 サービスの自己復旧は維持し、market-data-feed 障害や core crash の復旧は止めない。
   - loser を増やさず、winner の `TrendBreakout` を `trade_min` へ昇格して期待値を厚くする。
 
 ## 2026-03-07 JST - `M1Scalper-M1` side filter を `long` に戻す
