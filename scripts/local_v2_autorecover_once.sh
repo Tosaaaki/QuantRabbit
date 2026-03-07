@@ -23,6 +23,7 @@ STALE_RECOVERY_ENABLED="${QR_LOCAL_V2_STALE_RECOVERY_ENABLED:-0}"
 BRAIN_AUTOPDCA_ENABLED="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED:-0}"
 BRAIN_AUTOPDCA_ALLOW_RESTART="${QR_LOCAL_V2_BRAIN_AUTOPDCA_ALLOW_RESTART:-0}"
 BRAIN_AUTOPDCA_INTERVAL_SEC="${QR_LOCAL_V2_BRAIN_AUTOPDCA_INTERVAL_SEC:-${QR_LOCAL_V2_BRAIN_PDCA_INTERVAL_SEC:-1800}}"
+FEEDBACK_CYCLE_ENABLED="${QR_LOCAL_V2_FEEDBACK_CYCLE_ENABLED:-1}"
 MARKET_SANITY_GUARD_ENABLED="${QR_LOCAL_V2_MARKET_SANITY_GUARD_ENABLED:-1}"
 MARKET_SANITY_MAX_SPREAD_PIPS="${QR_LOCAL_V2_MARKET_SANITY_MAX_SPREAD_PIPS:-2.2}"
 MARKET_SANITY_MAX_TICK_AGE_SEC="${QR_LOCAL_V2_MARKET_SANITY_MAX_TICK_AGE_SEC:-90}"
@@ -194,6 +195,31 @@ run_brain_autopdca_async() {
     args+=(--dry-run)
   fi
   ("${args[@]}" >>"${LOG_FILE}" 2>&1) &
+}
+
+run_feedback_cycle_async() {
+  if ! is_truthy "${FEEDBACK_CYCLE_ENABLED}"; then
+    return 0
+  fi
+  local cycle_script="${ROOT_DIR}/scripts/run_local_feedback_cycle.py"
+  local py_exec=""
+  if [[ ! -f "${cycle_script}" ]]; then
+    if [[ "${VERBOSE}" == "1" ]]; then
+      log "[warn] local feedback cycle script missing: ${cycle_script}"
+    fi
+    return 0
+  fi
+  if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+    py_exec="${ROOT_DIR}/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    py_exec="$(command -v python3)"
+  else
+    if [[ "${VERBOSE}" == "1" ]]; then
+      log "[warn] python3 unavailable; local feedback cycle skipped"
+    fi
+    return 0
+  fi
+  ("${py_exec}" "${cycle_script}" >>"${LOG_FILE}" 2>&1) &
 }
 
 network_ready() {
@@ -442,6 +468,7 @@ if [[ -z "${stopped_lines}" && -z "${stale_lines}" ]]; then
   if [[ "${VERBOSE}" == "1" ]]; then
     log "[ok] stack healthy profile=${PROFILE}"
   fi
+  run_feedback_cycle_async
   run_brain_autopdca_async
   exit 0
 fi
@@ -480,6 +507,7 @@ set -e
 
 if [[ ${up_rc} -eq 0 ]]; then
   log "[recover] stack up succeeded profile=${PROFILE} services=${SERVICES:-<profile>}"
+  run_feedback_cycle_async
   run_brain_autopdca_async
   exit 0
 fi
