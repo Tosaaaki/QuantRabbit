@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import datetime as dt
+import os
+import sqlite3
+from pathlib import Path
+
+from analysis import strategy_feedback_worker as worker
+
+
+def _seed_trades(db_path: Path, *, strategy_tag: str, count: int = 12) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE trades (
+            strategy_tag TEXT,
+            strategy TEXT,
+            pl_pips REAL,
+            open_time TEXT,
+            close_time TEXT
+        )
+        """
+    )
+    now = dt.datetime.utcnow()
+    for idx in range(count):
+        close_time = (now - dt.timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
+        open_time = (now - dt.timedelta(minutes=idx, seconds=45)).strftime("%Y-%m-%d %H:%M:%S")
+        pl_pips = 1.2 if idx < 9 else -0.4
+        conn.execute(
+            "INSERT INTO trades(strategy_tag, strategy, pl_pips, open_time, close_time) VALUES (?, ?, ?, ?, ?)",
+            (strategy_tag, strategy_tag, pl_pips, open_time, close_time),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path
+    systemd_dir = repo / "systemd"
+    env_dir = repo / "ops" / "env"
+    log_dir = repo / "logs"
+    pid_dir = log_dir / "local_v2_stack" / "pids"
+    trades_db = log_dir / "trades.db"
+
+    systemd_dir.mkdir(parents=True)
+    env_dir.mkdir(parents=True)
+    pid_dir.mkdir(parents=True)
+
+    (env_dir / "quant-v2-runtime.env").write_text("", encoding="utf-8")
+    (env_dir / "quant-scalp-ping-5s-b.env").write_text(
+        "SCALP_PING_5S_B_MODE=scalp_ping_5s_b_live\n",
+        encoding="utf-8",
+    )
+    (systemd_dir / "quant-scalp-ping-5s-b.service").write_text(
+        "\n".join(
+            [
+                "[Service]",
+                "EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env",
+                "EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-scalp-ping-5s-b.env",
+                "ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (pid_dir / "quant-scalp-ping-5s-b.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    _seed_trades(trades_db, strategy_tag="scalp_ping_5s_b_live")
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    strategies = payload["strategies"]
+    assert "scalp_ping_5s_b_live" in strategies
+    advice = strategies["scalp_ping_5s_b_live"]
+    assert advice["strategy_params"]["configured_params"]["SCALP_PING_5S_B_MODE"] == "scalp_ping_5s_b_live"
+    assert advice["entry_probability_multiplier"] > 1.0

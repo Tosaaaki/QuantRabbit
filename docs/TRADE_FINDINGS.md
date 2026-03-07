@@ -8457,3 +8457,106 @@ Status:
   - `summary_all.json` の `entry_replay.summary.factor_readiness` と
     `last_reject_sample` を先に見れば、
     warmup 不足なのか tag filter なのかを replay 出力だけで切り分けられる。
+
+## 2026-03-07 21:10 JST / local-v2: 閉ループ断線の主因は analysis timer 未接続
+
+- 市況確認:
+  - 実行時点は 2026-03-07（土）JST。OANDA `/pricing` は `tradeable=false`。
+  - `USD/JPY` last quote は `2026-03-06T21:59:05Z`、`closeout spread=7.7p`。
+  - `logs/orderbook_snapshot.json` / `tick_cache` は約 50,531 秒 stale、`spread_state.spread_pips=6.3`。
+  - live 市場は閉場なので、新規売買の live 検証は保留し、offline 実装/検証のみ進めた。
+
+- 事実:
+  - core V2 は稼働中:
+    - `quant-market-data-feed`, `quant-strategy-control`,
+      `quant-order-manager`, `quant-position-manager` は `running`。
+  - 直近 24h 実績:
+    - `trades_count_24h=344`
+    - `data_lag_ms avg=1419.271`, `decision_latency_ms avg=27.446`,
+      `reject_rate avg=0.022`
+    - 赤字寄与上位は `scalp_ping_5s_flow_live -5593.35 JPY / PF 0.193`,
+      `M1Scalper-M1 -1395.52 JPY / PF 0.629`
+  - ただし local feedback artifacts は stale:
+    - `logs/strategy_feedback.json` mtime = 2026-03-04
+    - `logs/trade_counterfactual_latest.json` mtime = 2026-03-04
+    - `config/pattern_book*.json` mtime = 2026-03-05
+    - `config/dynamic_alloc.json` だけ 2026-03-07 更新
+  - `scripts/install_local_v2_launchd.sh` / `local_v2_autorecover_once.sh` は
+    売買 worker の復旧は行うが、
+    `quant-dynamic-alloc.timer` / `quant-pattern-book.timer` /
+    `quant-strategy-feedback.timer` / `quant-trade-counterfactual.timer`
+    相当をローカル常駐導線で起動していなかった。
+
+- 判断:
+  - 「予測・分析・売買・事後反省・次回反映」の閉ループ不全は、
+    strategy 実装単体よりも、local watchdog が analysis workers を定期実行していない
+    運用導線の断線が主因。
+  - `strategy_entry` が使う `analysis.strategy_feedback.current_advice()` は
+    `logs/strategy_feedback.json` に依存し、
+    `dynamic_alloc` / `pattern_gate` も file-based reload 前提なので、
+    artifacts 更新が止まると学習結果が次回 entry に戻らない。
+
+- 対応:
+  - `scripts/run_local_feedback_cycle.py` を追加し、
+    `dynamic_alloc / pattern_book / strategy_feedback / trade_counterfactual`
+    を interval 管理付きで実行する local cycle を実装。
+  - `scripts/local_v2_autorecover_once.sh` に
+    `run_feedback_cycle_async()` を追加し、
+    stack 健全時/復旧時に上記 cycle を非同期起動するよう修正。
+  - 最新/履歴/個別ログ:
+    - `logs/local_feedback_cycle_latest.json`
+    - `logs/local_feedback_cycle_history.jsonl`
+    - `logs/local_feedback_cycle/*.log`
+
+- 再検証条件:
+  1. `python3 scripts/run_local_feedback_cycle.py --force` 後に
+     `logs/strategy_feedback.json`, `config/dynamic_alloc.json`,
+     `config/pattern_book_deep.json`, `logs/trade_counterfactual_latest.json`
+     の mtime が更新されること。
+  2. 週明け market open 後、`strategy_entry` 経路で
+     `analysis_feedback_*`, `dynamic_alloc_*`, `pattern_*` の
+     reject/trim/scale が再び新しい artifact に追随していること。
+  3. `logs/local_feedback_cycle_history.jsonl` に
+     interval 実行が蓄積し、stale 再発が無いこと。
+
+## 2026-03-07 21:20 JST / local-v2週末仕込み: `strategy_feedback` のローカル閉ループ欠損を修正
+
+- 市況確認:
+  - `logs/tick_cache.json`
+    - 最終 tick は `2026-03-07 06:59 JST` 近辺で停止
+  - `logs/factor_cache.json`
+    - `timestamp=2026-03-06T21:59:00Z`, `USD/JPY close=157.822`, `spread ~= 0.8p`, `M1 atr_pips=1.82`
+  - `logs/health_snapshot.json`
+    - `trades_last_close=2026-03-06T21:40:06Z`, `orders_status_1h=[]`
+  - 2026-03-07 21:20 JST は土曜クローズ帯のため、live fill 検証は保留し、ローカル実装と常駐分析導線の復旧に限定。
+
+- 事実:
+  - `logs/strategy_feedback.json` は `updated_at=2026-03-04T03:50:24Z` かつ `strategies={}` のまま stale。
+  - `execution/strategy_entry.py` は `analysis/strategy_feedback.current_advice()` で同 JSON を読むだけで、
+    ローカルV2側に timer 相当が無いと次回エントリーへ反映されない。
+  - `python3 -m analysis.strategy_feedback_worker` を local clone で実行しても、
+    systemd unit の `EnvironmentFile=/home/tossaki/QuantRabbit/...` をそのまま読み、
+    mac の repo clone path と不一致のため env 解決に失敗し `0 strategies` を出力していた。
+
+- 修正:
+  - `analysis/strategy_feedback_worker.py`
+    - Linux 固定 repo path を local clone path へ再解決。
+    - `logs/local_v2_stack/pids/*.pid` を読んで non-systemd 環境でも running services を判定。
+    - `STRATEGY_FEEDBACK_LOOP_SEC` を追加し、oneshot worker を local_v2 では常駐 loop に切替可能化。
+  - `scripts/local_v2_stack.sh`
+    - `quant-strategy-feedback` を local stack managed service として追加し、
+      `trade_min` / `trade_all` で起動対象化。
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_FEEDBACK_LOOP_SEC=600` を追加。
+
+- オフライン検証:
+  - `pytest -q tests/analysis/test_strategy_feedback_worker.py`
+    - local-v2 pid + Linux 固定 EnvironmentFile を模擬し、
+      `scalp_ping_5s_b_live` の feedback が生成されることを確認。
+  - 実機ローカル:
+    - `scripts/local_v2_stack.sh up --services quant-strategy-feedback --env ops/env/local-v2-stack.env`
+    - `logs/strategy_feedback.json` が non-empty strategies を持って更新されることを確認する。
+
+- 期待効果:
+  - local-v2 でも `trades.db -> strategy_feedback.json -> strategy_entry` の直接ループが常時回る。
+  - stale/empty feedback で entry quality が固定化する経路を解消し、勝ち/負けの反映を 10 分粒度で次回トレードへ戻せる。

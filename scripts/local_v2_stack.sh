@@ -28,6 +28,7 @@ KNOWN_SERVICES=(
   "quant-strategy-control"
   "quant-order-manager"
   "quant-position-manager"
+  "quant-strategy-feedback"
   "quant-scalp-ping-5s-b"
   "quant-scalp-ping-5s-b-exit"
   "quant-micro-rangebreak"
@@ -102,6 +103,7 @@ PROFILE_trade_min=(
   "quant-strategy-control"
   "quant-order-manager"
   "quant-position-manager"
+  "quant-strategy-feedback"
   "quant-scalp-ping-5s-b"
   "quant-scalp-ping-5s-b-exit"
   "quant-scalp-trend-breakout"
@@ -121,6 +123,7 @@ PROFILE_trade_all=(
   "quant-strategy-control"
   "quant-order-manager"
   "quant-position-manager"
+  "quant-strategy-feedback"
   "quant-scalp-ping-5s-b"
   "quant-scalp-ping-5s-b-exit"
   "quant-micro-rangebreak"
@@ -268,6 +271,7 @@ module_for_service() {
     quant-strategy-control) printf '%s\n' "workers.strategy_control.worker" ;;
     quant-order-manager) printf '%s\n' "workers.order_manager.worker" ;;
     quant-position-manager) printf '%s\n' "workers.position_manager.worker" ;;
+    quant-strategy-feedback) printf '%s\n' "analysis.strategy_feedback_worker" ;;
     quant-m1scalper) printf '%s\n' "workers.scalp_m1scalper.worker" ;;
     quant-m1scalper-exit) printf '%s\n' "workers.scalp_m1scalper.exit_worker" ;;
     quant-micro-compressionrevert) printf '%s\n' "workers.micro_compressionrevert.worker" ;;

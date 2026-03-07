@@ -25,25 +25,40 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+LOCAL_V2_STACK_DIR = BASE_DIR / "logs" / "local_v2_stack"
+LOCAL_V2_PID_DIR = LOCAL_V2_STACK_DIR / "pids"
 
 
 class WorkerConfig:
     def __init__(self) -> None:
-        self.trades_db = Path(os.getenv("STRATEGY_FEEDBACK_TRADES_DB", BASE_DIR / "logs" / "trades.db"))
+        self.trades_db = _resolve_repo_local_path(
+            Path(os.getenv("STRATEGY_FEEDBACK_TRADES_DB", BASE_DIR / "logs" / "trades.db"))
+        )
         raw_feedback_path = os.getenv(
             "STRATEGY_FEEDBACK_PATH", BASE_DIR / "logs" / "strategy_feedback.json"
         )
-        self.feedback_path = Path(raw_feedback_path)
-        self.systemd_dir = Path(os.getenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", BASE_DIR / "systemd"))
+        self.feedback_path = _resolve_repo_local_path(Path(raw_feedback_path))
+        self.systemd_dir = _resolve_repo_local_path(
+            Path(os.getenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", BASE_DIR / "systemd"))
+        )
+        self.local_pid_dir = _resolve_repo_local_path(
+            Path(
+                os.getenv(
+                    "STRATEGY_FEEDBACK_LOCAL_PID_DIR",
+                    BASE_DIR / "logs" / "local_v2_stack" / "pids",
+                )
+            )
+        )
         self.lookback_days = int(os.getenv("STRATEGY_FEEDBACK_LOOKBACK_DAYS", "14"))
         self.min_trades = int(os.getenv("STRATEGY_FEEDBACK_MIN_TRADES", "12"))
         self.keep_inactive_days = int(os.getenv("STRATEGY_FEEDBACK_KEEP_INACTIVE_DAYS", "14"))
-        self.force = False
+        self.loop_sec = max(0.0, _to_float(os.getenv("STRATEGY_FEEDBACK_LOOP_SEC"), 0.0))
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -265,6 +280,7 @@ def _read_service_units(systemd_dir: Path) -> list[tuple[str, str]]:
 
 def _parse_env_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
+    path = _resolve_repo_local_path(path)
     if not path.exists():
         return data
     try:
@@ -294,6 +310,51 @@ def _split_csv(raw: str) -> list[str]:
     return out
 
 
+def _resolve_repo_local_path(path: Path) -> Path:
+    if path.exists():
+        return path
+    if not path.is_absolute():
+        return path
+    parts = list(path.parts)
+    try:
+        repo_idx = max(idx for idx, part in enumerate(parts) if part == "QuantRabbit")
+    except ValueError:
+        return path
+    rel_parts = parts[repo_idx + 1 :]
+    if not rel_parts:
+        return path
+    return BASE_DIR.joinpath(*rel_parts)
+
+
+def _pid_is_running(pid_raw: str) -> bool:
+    try:
+        pid = int(str(pid_raw or "").strip())
+    except Exception:
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _local_stack_running_services(pid_dir: Path) -> set[str]:
+    running: set[str] = set()
+    pid_dir = _resolve_repo_local_path(pid_dir)
+    if not pid_dir.exists():
+        return running
+    for path in sorted(pid_dir.glob("quant-*.pid")):
+        try:
+            pid_text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if _pid_is_running(pid_text):
+            running.add(f"{path.stem}.service")
+    return running
+
+
 def _looks_like_tag_value(token: str) -> bool:
     token = token.strip()
     if not token:
@@ -303,6 +364,57 @@ def _looks_like_tag_value(token: str) -> bool:
     if re.search(r"[/\\]", token):
         return False
     return True
+
+
+def _resolve_env_file_path(path: Path, *, repo_root: Path = BASE_DIR) -> Path | None:
+    if path.exists():
+        return path
+
+    candidates: list[Path] = []
+    parts = list(path.parts)
+    if "ops" in parts and "env" in parts:
+        env_idx = parts.index("env")
+        rel_parts = parts[env_idx + 1 :]
+        if rel_parts:
+            candidates.append(repo_root / "ops" / "env" / Path(*rel_parts))
+    candidates.append(repo_root / "ops" / "env" / path.name)
+    candidates.append(repo_root / "ops" / "env" / "profiles" / path.name)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = candidate.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _local_service_running(service_name: str, *, pid_dir: Path = LOCAL_V2_PID_DIR) -> bool:
+    base = str(service_name or "").strip()
+    if not base:
+        return False
+    if base.endswith(".service"):
+        base = base[: -len(".service")]
+    pid_path = pid_dir / f"{base}.pid"
+    if not pid_path.exists():
+        return False
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except Exception:
+        return False
+    return _pid_alive(pid)
 
 
 def _extract_tag_candidates_from_env(env: dict[str, str]) -> set[str]:
@@ -357,6 +469,8 @@ def _parse_strategy_records_from_unit(
     service_name: str,
     body: str,
     is_running: bool,
+    *,
+    repo_root: Path = BASE_DIR,
 ) -> dict[str, StrategyRecord]:
     if service_name in _SYSTEMD_STRATEGY_IGNORE:
         return {}
@@ -388,7 +502,10 @@ def _parse_strategy_records_from_unit(
     for path in env_paths:
         if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
             continue
-        env = _parse_env_file(path)
+        resolved_path = _resolve_env_file_path(path, repo_root=repo_root)
+        if resolved_path is None:
+            continue
+        env = _parse_env_file(resolved_path)
         worker_tags.update(_extract_tag_candidates_from_env(env))
 
         # mode-driven fallback (ex: tick_imbalance -> TickImbalance)
@@ -422,7 +539,10 @@ def _parse_strategy_records_from_unit(
     for path in env_paths:
         if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
             continue
-        env = _parse_env_file(path)
+        resolved_path = _resolve_env_file_path(path, repo_root=repo_root)
+        if resolved_path is None:
+            continue
+        env = _parse_env_file(resolved_path)
         strategy_env_params.update(_extract_strategy_params(env, strategy_prefixes))
 
     discovered: dict[str, StrategyRecord] = {}
@@ -521,15 +641,15 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
             if rec.strategy_params:
                 merged.strategy_params.update(rec.strategy_params)
 
-    running = _systemctl_available()
+    running = _systemctl_available() or bool(running_services)
     local_unit_names: set[str] = set()
 
     for name, body in _read_service_units(systemd_dir):
         local_unit_names.add(name)
         if not name.startswith("quant-"):
             continue
-        is_running = name in running_services if running else True
-        _merge(_parse_strategy_records_from_unit(name, body, is_running))
+        is_running = name in running_services if running else _local_service_running(name)
+        _merge(_parse_strategy_records_from_unit(name, body, is_running, repo_root=BASE_DIR))
 
     if running:
         for service_name in running_services:
@@ -540,7 +660,7 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
             body = _systemctl_unit_body_from_host(service_name)
             if not body:
                 continue
-            _merge(_parse_strategy_records_from_unit(service_name, body, True))
+            _merge(_parse_strategy_records_from_unit(service_name, body, True, repo_root=BASE_DIR))
 
     return discovered
 
@@ -732,6 +852,8 @@ def _squad_recommendation(
 def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     running_services = _systemctl_running_services()
+    if not running_services:
+        running_services = _local_stack_running_services(config.local_pid_dir)
     discovered_systemd = _discover_from_systemd(config.systemd_dir, running_services, dt.datetime.utcnow())
     discovered_control = _discover_from_control()
 
@@ -821,16 +943,18 @@ def _write_payload(path: Path, payload: dict[str, Any]) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate strategy_feedback JSON")
     parser.add_argument("--nowrite", action="store_true", help="Do not write output file")
+    parser.add_argument(
+        "--loop-sec",
+        type=float,
+        default=None,
+        help="Run continuously with the given refresh interval (seconds).",
+    )
     return parser.parse_args()
 
 
-def main() -> None:
-    args = _parse_args()
-    logging.basicConfig(level=logging.INFO)
-    config = WorkerConfig()
+def _run_once(config: WorkerConfig, *, nowrite: bool) -> None:
     payload = _build_payload(config)
-
-    if args.nowrite:
+    if nowrite:
         logging.info("[strategy-feedback-worker] nowrite mode: %s", json.dumps(payload, ensure_ascii=False))
         return
     _write_payload(config.feedback_path, payload)
@@ -839,6 +963,27 @@ def main() -> None:
         config.feedback_path,
         len(payload.get("strategies", {})),
     )
+
+
+def main() -> None:
+    args = _parse_args()
+    logging.basicConfig(level=logging.INFO)
+    config = WorkerConfig()
+    loop_sec = config.loop_sec if args.loop_sec is None else max(0.0, float(args.loop_sec))
+
+    if loop_sec <= 0.0:
+        _run_once(config, nowrite=args.nowrite)
+        return
+
+    logging.info("[strategy-feedback-worker] loop start interval=%.1fs", loop_sec)
+    while True:
+        try:
+            _run_once(config, nowrite=args.nowrite)
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            logging.exception("[strategy-feedback-worker] loop iteration failed")
+        time.sleep(loop_sec)
 
 
 if __name__ == "__main__":

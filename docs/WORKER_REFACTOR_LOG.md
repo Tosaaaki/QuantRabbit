@@ -12633,3 +12633,89 @@
 - 判断:
   - `TrendBreakout` live-window replay の 0 trades は warmup 不足による cold-start が主因。
   - replay 側は exact overlap の有無だけではなく、strategy-local な pre-roll を持たせて判定する。
+
+## 2026-03-07 JST - local_v2 watchdog に分析フィードバック cycle を接続
+
+- 変更ファイル:
+  - `scripts/run_local_feedback_cycle.py`
+  - `scripts/local_v2_autorecover_once.sh`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/ARCHITECTURE.md`
+
+- 背景:
+  - local V2 は `watchdog + launchd` で売買系 worker の復旧は回っていたが、
+    `quant-dynamic-alloc.timer` / `quant-pattern-book.timer` /
+    `quant-strategy-feedback.timer` / `quant-trade-counterfactual.timer`
+    相当の analysis timer がローカル常駐導線に存在しなかった。
+  - そのため `config/dynamic_alloc.json` 以外の feedback artifacts
+    (`logs/strategy_feedback.json`, `config/pattern_book*.json`,
+    `logs/trade_counterfactual_latest.json`) が stale 化しやすく、
+    「失敗/成功を次回トレードへ反映する」閉ループがローカルで切れていた。
+
+- 実装:
+  - `run_local_feedback_cycle.py`
+    - `dynamic_alloc / pattern_book / strategy_feedback / trade_counterfactual`
+      を per-job interval + state file + lock で管理する local cycle を追加。
+    - env file 読み込み、個別 timeout、output mtime 監査、
+      `logs/local_feedback_cycle_latest.json` /
+      `logs/local_feedback_cycle_history.jsonl` /
+      `logs/local_feedback_cycle/*.log` を追加。
+  - `local_v2_autorecover_once.sh`
+    - stack 健全時/復旧時に `run_local_feedback_cycle.py` を非同期起動する
+      `run_feedback_cycle_async()` を追加。
+    - `QR_LOCAL_V2_FEEDBACK_CYCLE_ENABLED` で全体ON/OFF可能。既定は ON。
+
+- 検証:
+  - `pytest -q tests/scripts/test_run_local_feedback_cycle.py`
+  - `python3 scripts/run_local_feedback_cycle.py --force`
+  - `cat logs/local_feedback_cycle_latest.json`
+
+- 期待効果:
+  - local 導線でも `strategy_entry` が読む `strategy_feedback.json`、
+    `workers/common/dynamic_alloc.py` が読む `config/dynamic_alloc.json`、
+    `workers/common/pattern_gate.py` が読む `config/pattern_book_deep.json`
+    を watchdog 配下で継続更新できる。
+  - systemd timer 前提だった PDCA/feedback の断線を、local V2 の常駐導線側で補完する。
+
+## 2026-03-07 JST - local_v2 の `quant-strategy-feedback` を常駐化し、non-systemd で 0 strategies になる欠損を修正
+
+- 変更ファイル:
+  - `analysis/strategy_feedback_worker.py`
+  - `scripts/local_v2_stack.sh`
+  - `ops/env/local-v2-stack.env`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `docs/ARCHITECTURE.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - `execution/strategy_entry.py` は `analysis/strategy_feedback.current_advice()` 経由で
+    `logs/strategy_feedback.json` を読んで entry probability / units / TP/SL を調整する。
+  - しかし local_v2_stack には systemd timer 相当がなく、
+    `quant-strategy-feedback.service` が常駐しないため JSON が stale のまま残る。
+  - さらに `analysis/strategy_feedback_worker.py` は
+    systemd unit の `EnvironmentFile=/home/tossaki/QuantRabbit/...` をそのまま読んでおり、
+    mac の repo clone では env 解決に失敗して `0 strategies` を出力していた。
+
+- 実装:
+  - `analysis/strategy_feedback_worker.py`
+    - repo 名 `QuantRabbit` を基準に Linux 固定パスを local clone path へ再解決する helper を追加。
+    - `logs/local_v2_stack/pids/*.pid` から running services を読み、
+      non-systemd でも active worker を判定できるようにした。
+    - `STRATEGY_FEEDBACK_LOOP_SEC` / `--loop-sec` を追加し、
+      oneshot worker を local_v2 では loop worker として動かせるようにした。
+  - `scripts/local_v2_stack.sh`
+    - `quant-strategy-feedback` を managed service として追加し、
+      `trade_min` / `trade_all` のプロファイルに含めた。
+  - `ops/env/local-v2-stack.env`
+    - local timer 代替として `STRATEGY_FEEDBACK_LOOP_SEC=600` を追加。
+
+- 検証:
+  - `pytest -q tests/analysis/test_strategy_feedback_worker.py`
+    - Linux 固定 EnvironmentFile + local_v2 pid の組み合わせで
+      `scalp_ping_5s_b_live` の feedback payload が生成されることを確認。
+
+- 効果:
+  - local-v2 でも `trades.db -> strategy_feedback.json -> strategy_entry` の直結 feedback が回る。
+  - stale/empty `strategy_feedback.json` による no-op 調整を解消し、
+    ローカルPDCAの反映遅延を縮める。
