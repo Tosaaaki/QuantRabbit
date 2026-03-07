@@ -36,9 +36,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from sim.pseudo_cfg import SimCfg
-from sim.pseudo_ticks import synth_from_candles
-
 
 UTC = timezone.utc
 WORKER_TAGS = {
@@ -433,6 +430,9 @@ def _synth_candles_to_ticks(
     candles_path: Path,
     out_path: Path,
 ) -> Dict[str, object]:
+    from sim.pseudo_cfg import SimCfg
+    from sim.pseudo_ticks import synth_from_candles
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sim_path, density_info = synth_from_candles(str(candles_path), str(out_path), SimCfg())
     tick_count = _count_nonempty_lines(sim_path)
