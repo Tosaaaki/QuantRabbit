@@ -114,6 +114,15 @@
 - Background: `quant-forecast-watchdog.timer` は `quant-forecast.service` の
   `/health` を監視し、連続失敗時に forecast を再起動する。復旧不能時は
   `quant-bq-sync.service` を停止して予測APIの可用性を優先する。
+- Background: ローカル観測用 MCP は `.codex/config.toml` でのみ有効化し、
+  `scripts/mcp_sqlite_readonly.py` と `scripts/mcp_oanda_observer.py` を
+  read-only 補助導線として使う。SQLite 側は `max_rows` 上限つきの
+  `fetchmany()` で返却を打ち切り、`truncated` を返す。
+  OANDA 側は `pricing / summary / open_trades / candles` のみ公開し、
+  `instrument / count / granularity / bool` を fail-fast 検証する。
+  OANDA 資格情報は `utils.secrets.get_secret()` へ寄せ、
+  `config/env.toml` / 環境変数 / Secret Manager の既存解決系を再利用する。
+  これらは発注・決済には関与せず、`logs/*.db` と OANDA 観測の確認専用とする。
 - Background: `quant-forecast-improvement-audit.timer` は `vm_forecast_snapshot.py` と
   `eval_forecast_before_after.py` を定期実行し、`logs/reports/forecast_improvement/latest.md`
   と `logs/forecast_improvement_latest.json` へ before/after 判定を保存する。

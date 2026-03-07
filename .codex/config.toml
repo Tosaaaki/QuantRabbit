@@ -1,0 +1,56 @@
+# QuantRabbit local-safe MCP config (read-only by design)
+
+# ローカルDBは読み取り前提。実体は SQLite 読み取り専用サーバー。
+[mcp_servers.qr_local_trades_db]
+command = "python3"
+args = [
+  "/Users/tossaki/Documents/App/QuantRabbit/scripts/mcp_sqlite_readonly.py",
+  "--db",
+  "/Users/tossaki/Documents/App/QuantRabbit/logs/trades.db",
+]
+enabled_tools = ["query"]
+tool_timeout_sec = 20
+startup_timeout_sec = 20
+
+[mcp_servers.qr_local_orders_db]
+command = "python3"
+args = [
+  "/Users/tossaki/Documents/App/QuantRabbit/scripts/mcp_sqlite_readonly.py",
+  "--db",
+  "/Users/tossaki/Documents/App/QuantRabbit/logs/orders.db",
+]
+enabled_tools = ["query"]
+tool_timeout_sec = 20
+startup_timeout_sec = 20
+
+[mcp_servers.qr_local_metrics_db]
+command = "python3"
+args = [
+  "/Users/tossaki/Documents/App/QuantRabbit/scripts/mcp_sqlite_readonly.py",
+  "--db",
+  "/Users/tossaki/Documents/App/QuantRabbit/logs/metrics.db",
+]
+enabled_tools = ["query"]
+tool_timeout_sec = 20
+startup_timeout_sec = 20
+
+[mcp_servers.qr_local_patterns_db]
+command = "python3"
+args = [
+  "/Users/tossaki/Documents/App/QuantRabbit/scripts/mcp_sqlite_readonly.py",
+  "--db",
+  "/Users/tossaki/Documents/App/QuantRabbit/logs/patterns.db",
+]
+enabled_tools = ["query"]
+tool_timeout_sec = 20
+startup_timeout_sec = 20
+
+[mcp_servers.qr_oanda_observer]
+command = "python3"
+args = [
+  "/Users/tossaki/Documents/App/QuantRabbit/scripts/mcp_oanda_observer.py",
+  "--readonly",
+]
+enabled_tools = ["pricing", "summary", "open_trades", "candles"]
+tool_timeout_sec = 20
+startup_timeout_sec = 20

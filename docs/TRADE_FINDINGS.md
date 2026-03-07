@@ -8800,3 +8800,37 @@ Status:
 - 再検証条件:
   1. tick file が不足している closed帯では `replay_quality_gate` が `skipped` になること。
   2. tick file が十分な closed帯では fresh report を生成し、`report_json_path` が当該 run を指すこと。
+## 2026-03-07 23:10 JST / local read-only MCP は無駄ではないが、観測導線として使うには軽量化と fail-fast が必要
+
+- 事実:
+  - `scripts/mcp_sqlite_readonly.py --db logs/orders.db` に JSON-RPC で
+    `initialize -> tools/call(query)` を送ると、
+    `entry_intent_board / orders / sqlite_sequence` を正常返却できた。
+  - 一方で修正前は `notifications/initialized` に対しても
+    `Unknown method` を返しており、MCP クライアントとの相性が悪かった。
+  - さらに SQLite 側は `max_rows` があっても内部で `fetchall()` 後に slice していたため、
+    `logs/orders.db` / `logs/trades.db` の大きい table に LIMIT 無しで触れると無駄が大きかった。
+  - `scripts/mcp_oanda_observer.py --readonly` は修正前、
+    current shell に `OANDA_ACCOUNT_ID` 等が無いと
+    `initialize` 後の `tools/call(summary)` が
+    `startup config error: Environment variable oanda_account_id is not set`
+    で止まり、repo 標準の `config/env.toml` 解決系に追従していなかった。
+  - 2026-03-07 23:xx JST 時点の OANDA pricing 実測は
+    `tradeable=false`, bid/ask=`157.790/157.853`, spread=`6.3 pips`,
+    `M5 ATR14 ≒ 5.03 pips`。週末クローズ帯で通常執行条件ではない。
+
+- 判断:
+  - MCP 自体は「`logs/*.db` + OANDA 観測を read-only で同じ作法から触れる」点で有効。
+  - ただし、観測専用ツールとして残すなら
+    1) SQLite の返却上限を runtime でも厳守すること
+    2) MCP notification に無応答で追従すること
+    3) OANDA 引数を fail-fast 検証すること
+    4) OANDA 資格情報を `utils.secrets.get_secret()` に寄せること
+    が必須だった。
+
+- 対応:
+  - `mcp_sqlite_readonly.py` を `fetchmany()` + `truncated` 返却へ変更。
+  - `mcp_sqlite_readonly.py` / `mcp_oanda_observer.py` とも、
+    notification の無応答処理と invalid call の fail-fast を追加した。
+  - `mcp_oanda_observer.py` は `utils.secrets.get_secret()` を使うよう修正し、
+    current shell でも `initialize -> tools/call(summary)` が成功することを確認した。

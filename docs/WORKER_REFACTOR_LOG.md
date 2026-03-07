@@ -5,6 +5,33 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）local read-only MCP の観測導線を軽量化し、invalid call を fail-fast 化
+
+- 対象:
+  - `scripts/mcp_sqlite_readonly.py`
+  - `scripts/mcp_oanda_observer.py`
+  - `docs/ARCHITECTURE.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `scripts/mcp_sqlite_readonly.py`
+    - `max_rows` 上限を runtime でも強制し、`fetchall()` ではなく `fetchmany()` で上限+1件だけ読む実装へ変更。
+    - 返却 payload に `truncated` を追加し、large table を LIMIT 無しで叩いた際もローカルDB観測を重くしないようにした。
+    - `notifications/initialized` / `notifications/cancelled` を無応答で処理し、未知メソッドは JSON-RPC error を返すよう修正。
+    - DB起動失敗時に、初回メッセージ前の unsolicited response を出さず、`initialize` 後に `startup config error` を返す形へ整理。
+  - `scripts/mcp_oanda_observer.py`
+    - `instrument` / `count` / `granularity` / boolean 引数を fail-fast 検証に変更。
+    - `candles` schema に `smooth` を追加し、公開 schema と runtime 引数を一致させた。
+    - OANDA 資格情報を `utils.secrets.get_secret()` へ寄せ、
+      `config/env.toml` / env / Secret Manager の既存解決系で起動できるようにした。
+- 意図:
+  - MCP は AGENTS 通り「read-only の観測補助」に限定しつつ、誤ったクエリや oversized query がローカルPDCAの観測導線を重くしないようにする。
+  - Codex/MCP クライアントからの初期化通知に正しく追従し、`orders.db` / `trades.db` / OANDA 観測を日次確認へ使いやすく保つ。
+  - OANDA 観測MCPだけ shell 依存で起動可否が変わる状態をなくし、repo標準の秘密情報解決と揃える。
+- 検証:
+  - `python3 -m py_compile scripts/mcp_sqlite_readonly.py scripts/mcp_oanda_observer.py`
+  - 手製 JSON-RPC harness で `scripts/mcp_sqlite_readonly.py --db logs/orders.db` に対し `initialize` / `notifications/initialized` / `tools/call(query)` を送信し、通知無応答と query 正常応答を確認。
+  - 同 harness で `scripts/mcp_oanda_observer.py --readonly` に対し `initialize` / `tools/call(summary)` を送り、current shell でも account summary を返すことを確認。
+
 ### 2026-03-07（追記）closed-loop: counterfactual を live `strategy_feedback` へ接続し、forecast runtime override と strategy tag canonicalization を統合
 
 - 対象:
