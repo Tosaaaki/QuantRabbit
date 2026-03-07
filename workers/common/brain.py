@@ -519,6 +519,212 @@ def _stringify(obj: Any, limit: int) -> str:
     return text
 
 
+def _trim_text(value: Any, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _compact_jsonable(
+    value: Any,
+    *,
+    depth: int = 0,
+    max_depth: int = 3,
+    max_items: int = 8,
+    max_string: int = 160,
+) -> Any:
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if value == value and value not in {float("inf"), float("-inf")} else None
+    if isinstance(value, str):
+        return _trim_text(value, max_string)
+    if depth >= max_depth:
+        return _trim_text(value, max_string)
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= max_items:
+                out["_truncated"] = True
+                break
+            compact = _compact_jsonable(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_items=max_items,
+                max_string=max_string,
+            )
+            if compact in (None, "", [], {}):
+                continue
+            out[str(key)] = compact
+        return out
+    if isinstance(value, (list, tuple, set)):
+        out_list: list[Any] = []
+        for idx, item in enumerate(list(value)[:max_items]):
+            compact = _compact_jsonable(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_items=max_items,
+                max_string=max_string,
+            )
+            if compact in (None, "", [], {}):
+                continue
+            out_list.append(compact)
+        if len(value) > max_items:
+            out_list.append("...")
+        return out_list
+    return _trim_text(repr(value), max_string)
+
+
+def _pick_present(source: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in keys:
+        if key not in source:
+            continue
+        compact = _compact_jsonable(source.get(key))
+        if compact in (None, "", [], {}):
+            continue
+        out[key] = compact
+    return out
+
+
+def _compact_context(context: dict[str, Any]) -> dict[str, Any]:
+    raw = _safe_dict(context)
+    entry = _safe_dict(raw.get("entry_thesis"))
+    meta = _safe_dict(raw.get("meta"))
+    ticks = _safe_dict(raw.get("ticks"))
+    factors = _safe_dict(entry.get("factors"))
+    m1_factors = _safe_dict(factors.get("M1"))
+    forecast = _safe_dict(entry.get("forecast_fusion") or meta.get("forecast_fusion"))
+    dynamic_alloc = _safe_dict(entry.get("dynamic_alloc") or meta.get("dynamic_alloc"))
+
+    compact = _pick_present(
+        raw,
+        [
+            "ts",
+            "strategy_tag",
+            "pocket",
+            "side",
+            "units",
+            "sl_price",
+            "tp_price",
+            "confidence",
+            "runtime_param_profile_version",
+        ],
+    )
+    memory = _trim_text(raw.get("memory"), 200)
+    if memory:
+        compact["memory"] = memory
+
+    entry_compact = _pick_present(
+        entry,
+        [
+            "entry_probability",
+            "entry_probability_fused",
+            "entry_units_intent",
+            "confidence",
+            "spread_pips",
+            "atr_pips",
+            "tp_pips",
+            "sl_pips",
+            "expected_edge_pips",
+            "expected_reward_pips",
+            "setup_score",
+            "range_score",
+            "range_mode",
+            "market_regime",
+            "signal_tag",
+            "signal_mode",
+            "session_label",
+            "dynamic_alloc_multiplier",
+            "pattern_gate_opt_in",
+            "forecast_gate_opt_in",
+        ],
+    )
+    if m1_factors:
+        m1_compact = _pick_present(
+            m1_factors,
+            [
+                "atr_pips",
+                "range_score",
+                "adx",
+                "bbw",
+                "rsi",
+                "ma_gap_pips",
+                "vwap_gap_pips",
+            ],
+        )
+        if m1_compact:
+            entry_compact["factors_M1"] = m1_compact
+    if forecast:
+        forecast_compact = _pick_present(
+            forecast,
+            [
+                "entry_probability_before",
+                "entry_probability_after",
+                "units_before",
+                "units_after",
+                "units_scale",
+                "target_reach_prob",
+                "range_pressure",
+                "reason",
+            ],
+        )
+        if forecast_compact:
+            entry_compact["forecast_fusion"] = forecast_compact
+    if dynamic_alloc:
+        dynamic_compact = _pick_present(
+            dynamic_alloc,
+            [
+                "lot_multiplier",
+                "score",
+                "pocket_lot_multiplier",
+                "pocket_target_use",
+                "reason",
+            ],
+        )
+        if dynamic_compact:
+            entry_compact["dynamic_alloc"] = dynamic_compact
+    if entry_compact:
+        compact["entry_thesis"] = entry_compact
+
+    meta_compact = _pick_present(
+        meta,
+        [
+            "spread_pips",
+            "atr_pips",
+            "range_mode",
+            "market_regime",
+            "session",
+            "session_label",
+            "entry_price",
+            "mid_price",
+            "price",
+            "bid",
+            "ask",
+            "range_score",
+        ],
+    )
+    if ticks:
+        ticks_compact = _pick_present(ticks, ["spread_pips", "bid", "ask", "mid", "age_sec"])
+        if ticks_compact:
+            meta_compact["ticks"] = ticks_compact
+    if meta_compact:
+        compact["meta"] = meta_compact
+    return compact
+
+
+def _json_text(value: Any) -> str:
+    try:
+        return json.dumps(_compact_jsonable(value), ensure_ascii=True, sort_keys=True)
+    except Exception:
+        return _stringify(value, 4000)
+
+
 def _coerce_prompt_profile(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
@@ -776,9 +982,10 @@ def _log_decision_row(
     error: Optional[str] = None,
 ) -> None:
     _ensure_schema()
+    context_compact = _compact_context(_safe_dict(context or {}))
     try:
         market_metrics_json = json.dumps(
-            _extract_market_metrics(_safe_dict(context or {})),
+            _extract_market_metrics(context_compact),
             ensure_ascii=True,
             sort_keys=True,
         )
@@ -818,9 +1025,9 @@ def _log_decision_row(
                 memory_before,
                 memory_after,
                 profile_version,
-                _stringify(context or {}, 4000),
+                _json_text(context_compact),
                 market_metrics_json,
-                _stringify(payload or {}, 4000),
+                _json_text(payload or {}),
                 str(error or "").strip() or None,
             ),
         )
@@ -1208,6 +1415,8 @@ def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float
     meta = _safe_dict(context.get("meta"))
     factors = _safe_dict(entry.get("factors"))
     m1_factors = _safe_dict(factors.get("M1"))
+    if not m1_factors:
+        m1_factors = _safe_dict(entry.get("factors_M1"))
 
     spread_candidates = [
         entry.get("spread_pips"),
@@ -2251,7 +2460,7 @@ def _build_prompt(context: dict[str, Any]) -> str:
     persona = _persona_text(strategy_tag, pocket)
     profile = _load_prompt_profile()
     profile_text = _format_prompt_profile(profile)
-    ctx_text = _stringify(context, _MAX_CONTEXT_CHARS)
+    ctx_text = _json_text(_compact_context(context))
     profile_block = f"{profile_text}\n\n" if profile_text else ""
     return (
         "You are the decision brain for an automated USD/JPY trading worker. "

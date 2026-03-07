@@ -23,6 +23,53 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-07 11:49 UTC / 2026-03-07 20:49 JST - local Brain/Ollama を compact-context + shadow canary として local-v2 へ反映
+
+Period:
+- 実装/検証: UTC `11:45-11:49` / JST `20:45-20:49`
+- 対象: `workers/common/brain.py`, `execution/order_manager.py`, `tests/workers/test_brain_history_prompt_autotune.py`
+- 反映対象: `quant-order-manager`, `quant-strategy-control`
+
+Fact:
+- 直前 readiness:
+  - `logs/brain_canary_readiness_latest.json`
+    - `profile_safe=true`
+    - `quality_gate_ok=true`
+    - `ollama_ready=true`
+    - `market_ready=false`
+- offline benchmark:
+  - `logs/brain_local_llm_benchmark_latest.json`
+    - `qwen2.5:7b parse_pass_rate=1.0`
+    - `latency_p95_ms=3332.901`
+- 市況（週末 stale）:
+  - USD/JPY `bid=157.790 / ask=157.853 / spread=6.3p`
+  - `tick_age_sec=49694.4`
+
+Failure Cause:
+- Brain は `entry_thesis/meta` の大きい JSON をそのまま prompt に入れており、ローカルLLMの parse/latency 安定性を落としていた。
+- 週明け canary も `shadow` 観測なしでいきなり `block/scale` へ進む形だと、月曜オープン直後の切り戻しが重い。
+
+Improvement:
+- `workers/common/brain.py`
+  - prompt/context を compact scalar 中心へ変更
+  - `context_json` / `response_json` を valid JSON で保存
+  - `factors.M1`, `forecast_fusion`, `dynamic_alloc` の要点だけを保持
+- `execution/order_manager.py`
+  - `ORDER_MANAGER_BRAIN_GATE_MODE=shadow` 時は Brain 判定を `brain_shadow` と metric に記録し、
+    実際の `block/scale` は適用しない
+- 反映:
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env,ops/env/profiles/brain-ollama-safe.env --services quant-order-manager,quant-strategy-control`
+  - 週末クローズ帯のため、live fill 検証ではなく「safe shadow profile を本線へ読ませる」反映に限定
+
+Verification:
+- `python3 -m py_compile workers/common/brain.py execution/order_manager.py scripts/prepare_local_brain_canary.py`
+- `pytest -q tests/workers/test_brain_history_prompt_autotune.py tests/workers/test_brain_ollama_backend.py tests/scripts/test_apply_brain_model_selection.py tests/scripts/test_prepare_local_brain_canary.py`
+- `python3 scripts/prepare_local_brain_canary.py --warmup`
+- `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+
+Status:
+- done
+
 ## 2026-03-07 02:03 UTC / 2026-03-07 11:03 JST - local-v2: local Brain/Ollama の月曜 canary 準備を固定化
 
 Period:

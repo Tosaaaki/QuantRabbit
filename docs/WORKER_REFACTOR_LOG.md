@@ -5,6 +5,25 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）Brain prompt/context を compact 化し、order_manager に shadow mode を追加
+
+- 対象:
+  - `workers/common/brain.py`
+  - `execution/order_manager.py`
+  - `tests/workers/test_brain_history_prompt_autotune.py`
+- 変更:
+  - `brain.py`
+    - prompt と decision history に保存する context を compact scalar 中心へ変更。
+    - `entry_thesis/meta` の巨大 blob をそのまま渡さず、
+      `entry_probability`, `entry_units_intent`, `spread/atr`, `factors_M1`,
+      `forecast_fusion`, `dynamic_alloc` の要点だけを残す。
+    - `context_json` / `response_json` は truncation 文字列ではなく valid JSON で保存。
+  - `order_manager.py`
+    - `ORDER_MANAGER_BRAIN_GATE_MODE=off|shadow|apply` を追加。
+    - `shadow` は `brain_shadow` と metrics 記録のみ行い、preflight の block/scale は適用しない。
+- 意図:
+  - 月曜 canary を「観測から開始」に固定しつつ、qwen の parse/latency を悪化させる巨大 prompt を事前に縮める。
+
 ### 2026-03-07（追記）local Brain/Ollama の Monday canary readiness 導線を追加
 
 - 対象:

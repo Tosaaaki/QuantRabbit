@@ -134,12 +134,22 @@ def test_brain_prompt_profile_is_injected(monkeypatch, tmp_path: Path) -> None:
         units=100,
         confidence=72,
         client_order_id="test-coid-2",
+        entry_thesis={
+            "entry_probability": 0.71,
+            "entry_units_intent": 420,
+            "spread_pips": 0.8,
+            "factors": {"M1": {"atr_pips": 2.3, "adx": 18.4}},
+        },
+        meta={"range_mode": "trend", "large_blob": "y" * 6000},
     )
 
     prompt_text = captured.get("prompt", "")
     assert "Adaptive rules (recent live outcomes):" in prompt_text
     assert "If spread spikes, prefer REDUCE or BLOCK." in prompt_text
     assert "Focus: Block low-edge range chop entries." in prompt_text
+    assert '"entry_probability": 0.71' in prompt_text
+    assert '"entry_units_intent": 420' in prompt_text
+    assert "large_blob" not in prompt_text
 
 
 def test_brain_auto_tune_updates_profile(monkeypatch, tmp_path: Path) -> None:
@@ -463,7 +473,11 @@ def test_market_metrics_json_stays_parsable_with_large_context(monkeypatch, tmp_
         con.close()
     assert row is not None
     context_json, market_metrics_json = row
-    assert isinstance(context_json, str) and context_json.endswith("...")
+    context_payload = json.loads(context_json)
+    assert context_payload["entry_thesis"]["spread_pips"] == 1.1
+    assert context_payload["entry_thesis"]["factors_M1"]["atr_pips"] == 2.9
+    assert "large_blob" not in context_payload
+    assert len(context_json) < 2500
     metrics = json.loads(market_metrics_json)
     assert metrics["spread_pips"] == 1.1
     assert metrics["atr_pips"] == 2.9
