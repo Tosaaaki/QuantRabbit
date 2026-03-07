@@ -1071,7 +1071,13 @@ async def micro_multi_worker() -> None:
                 await asyncio.sleep(3600.0)
         except asyncio.CancelledError:
             return
-    LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    signal_tag_contains = ",".join(sorted(config.SIGNAL_TAG_CONTAINS)) or "-"
+    LOG.info(
+        "%s worker start (interval=%.1fs signal_tag_contains=%s)",
+        config.LOG_PREFIX,
+        config.LOOP_INTERVAL_SEC,
+        signal_tag_contains,
+    )
     LOG.warning("Application started! %s", config.LOG_PREFIX)
     state = globals()
     last_fresh_m1_ts = float(state.get("_LAST_FRESH_M1_TS", 0.0))
@@ -1294,6 +1300,10 @@ async def micro_multi_worker() -> None:
                     ):
                         continue
             signal_tag = str(cand.get("tag", strategy_name))
+            if config.SIGNAL_TAG_CONTAINS:
+                signal_tag_lower = signal_tag.lower()
+                if not any(token in signal_tag_lower for token in config.SIGNAL_TAG_CONTAINS):
+                    continue
             base_tag = signal_tag.split("-", 1)[0].strip()
             if not base_tag:
                 base_tag = strategy_name

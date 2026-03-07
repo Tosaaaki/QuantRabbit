@@ -1,5 +1,39 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-21. 2026-03-07 JST `MicroTrendRetest-short` を dedicated worker 化し、`trade_min` へ追加
+- 背景（local-v2 実測, UTC 2026-03-07 01:53-02:00 / JST 2026-03-07 10:53-11:00）:
+  - `logs/trades.db` 7d では
+    - `MicroTrendRetest-long: 17 trades / -162.2 JPY / PF 0.21`
+    - `MicroTrendRetest-short: 15 trades / +8.7 JPY / PF 1.06`
+    と direction ごとに期待値が逆転していた。
+  - 既存の `quant-micro-trendretest` dedicated worker は `MICRO_STRATEGY_ALLOWLIST=MicroTrendRetest` のみで、
+    `tag=MicroTrendRetest-long|short` を分離できず、負けている long も通していた。
+  - 市況は週末クローズ帯で
+    - `bid=157.790 / ask=157.853 / spread=6.3p`
+    - `ATR(M1)=1.94p / ATR(M5)=4.97p / ATR(H1)=18.82p`
+    - `USD/JPY long_units=871`
+    のため、live fill 品質の再検証は pending。
+- 対応:
+  - `workers/micro_runtime/config.py`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS` を追加。
+  - `workers/micro_runtime/worker.py`
+    - candidate `signal_tag` に `contains` フィルタを追加。
+    - 起動ログへ `signal_tag_contains=...` を出すよう変更。
+  - `ops/env/quant-micro-trendretest.env`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short`
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-trendretest(+exit)` を追加。
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+    - 再起動後、`status` で `quant-micro-trendretest` / `quant-micro-trendretest-exit` が `running`。
+    - `logs/local_v2_stack/quant-micro-trendretest.log` で
+      `worker start (interval=4.0s signal_tag_contains=short)` を確認。
+- 意図:
+  - `MicroTrendRetest` を止めずに、勝っている short slice だけを dedicated worker として常駐化する。
+  - 共通 `order_manager` や strategy class 本体は触らず、runtime 側の最小フィルタで方向だけ分離する。
+- 制約:
+  - 週末クローズ帯のため、今回確認できたのは service 起動・env 読み込み・profile 常駐化まで。
+  - 次の通常流動性帯で `filled` の `strategy_tag=MicroTrendRetest-short` と損益を再監査する。
+
 ## 0-20. 2026-03-07 JST 週末クローズ帯のため「勝ち筋追加」は保留し、次回昇格候補を `TrendBreakout` に固定
 - 背景（local-v2 実測, UTC 2026-03-07 01:53-01:59 / JST 2026-03-07 10:53-10:59）:
   - `health_snapshot.json` では

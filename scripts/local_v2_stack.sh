@@ -105,6 +105,8 @@ PROFILE_trade_min=(
   "quant-micro-momentumburst-exit"
   "quant-micro-levelreactor"
   "quant-micro-levelreactor-exit"
+  "quant-micro-trendretest"
+  "quant-micro-trendretest-exit"
   "quant-m1scalper"
   "quant-m1scalper-exit"
 )

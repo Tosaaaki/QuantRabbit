@@ -149,6 +149,10 @@ MULTI_SIGNAL_MIN_SCALE = float(os.getenv("MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE", "
 # Per-strategy minimum interval between entries to avoid same-minute burst stacking.
 STRATEGY_COOLDOWN_SEC = float(os.getenv("MICRO_MULTI_STRATEGY_COOLDOWN_SEC", "0.0"))
 STRATEGY_UNITS_MULT = _parse_strategy_mults(os.getenv("MICRO_MULTI_STRATEGY_UNITS_MULT", ""))
+SIGNAL_TAG_CONTAINS = frozenset(
+    token.lower()
+    for token in _parse_csv(os.getenv("MICRO_MULTI_SIGNAL_TAG_CONTAINS", ""))
+)
 
 # Dynamic winner routing from config/dynamic_alloc.json
 DYN_ALLOC_ENABLED = os.getenv("MICRO_MULTI_DYN_ALLOC_ENABLED", "1").strip().lower() not in {

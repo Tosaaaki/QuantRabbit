@@ -5,6 +5,40 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）`MicroTrendRetest-short` を dedicated worker 化し、`trade_min` へ追加
+
+- 背景（local-v2 実測）:
+  - `logs/trades.db` 7d では
+    - `MicroTrendRetest-long: 17 trades / -162.2 JPY / PF 0.21`
+    - `MicroTrendRetest-short: 15 trades / +8.7 JPY / PF 1.06`
+    と方向別で期待値差が明確だった。
+  - 既存 dedicated worker (`quant-micro-trendretest`) は strategy allowlist だけで、
+    `MicroTrendRetest-long` / `MicroTrendRetest-short` を分離できなかった。
+
+- 変更:
+  - `workers/micro_runtime/config.py`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS` を追加。
+  - `workers/micro_runtime/worker.py`
+    - candidate `signal_tag` に `contains` フィルタを追加。
+    - 起動ログに `signal_tag_contains` を出すよう変更。
+  - `ops/env/quant-micro-trendretest.env`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short`
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-trendretest`, `quant-micro-trendretest-exit` を追加。
+
+- 反映確認:
+  - `python -m py_compile workers/micro_runtime/config.py workers/micro_runtime/worker.py workers/micro_trendretest/worker.py`
+    - pass
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    - `quant-micro-trendretest(+exit)` が `running`
+  - `logs/local_v2_stack/quant-micro-trendretest.log`
+    - `worker start (interval=4.0s signal_tag_contains=short)` を確認
+
+- 意図:
+  - strategy class 本体を変えず、runtime だけで `MicroTrendRetest-short` を dedicated canary として常駐化する。
+  - `MicroTrendRetest-long` の負け寄与を新規 entry 側で切り離し、winner short だけを `trade_min` に増やす。
+
 ### 2026-03-07（追記）local-v2: flow負エッジ reject / severe loser縮退 / micro snapshot fallback
 
 - 対象:

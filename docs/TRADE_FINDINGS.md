@@ -7980,3 +7980,47 @@ Status:
   1. spread が通常帯（概ね `<=1.0p`）へ戻ること。
   2. `orders_status_1h` に live 注文が再開していること。
   3. その時点で `TrendBreakout` を `trade_min` に追加する実装と反映確認を再開すること。
+
+## 2026-03-07 02:00 UTC / 2026-03-07 11:00 JST - `MicroTrendRetest-short` 専用フィルタを実装し、`trade_min` に常駐化
+
+- 市況（local-v2 実測 + OANDA snapshot）:
+  - `orderbook_snapshot.json`
+    - `bid=157.790 / ask=157.853 / spread=6.3p`
+    - `latency_ms=163`
+  - `factor_cache.json`
+    - `ATR(M1)=1.94p / ATR(M5)=4.97p / ATR(H1)=18.82p`
+  - `oanda_account_snapshot_live.json` / `oanda_open_positions_live_USD_JPY.json`
+    - `margin_used=5498 JPY`
+    - `USD/JPY long_units=871 / short_units=0`
+
+- 実測根拠:
+  - `logs/trades.db` 7d
+    - `MicroTrendRetest-long: 17 trades / -162.2 JPY / PF 0.21`
+    - `MicroTrendRetest-short: 15 trades / +8.7 JPY / PF 1.06`
+  - 既存 dedicated worker は `MICRO_STRATEGY_ALLOWLIST=MicroTrendRetest` のみで、
+    `tag=MicroTrendRetest-long|short` を分離できなかった。
+
+- 実装:
+  - `workers/micro_runtime/config.py`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS` を追加。
+  - `workers/micro_runtime/worker.py`
+    - candidate `signal_tag` に `contains` フィルタを追加。
+    - 起動ログに `signal_tag_contains` を出すよう変更。
+  - `ops/env/quant-micro-trendretest.env`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short`
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に `quant-micro-trendretest(+exit)` を追加。
+
+- 反映確認:
+  - `python -m py_compile workers/micro_runtime/config.py workers/micro_runtime/worker.py workers/micro_trendretest/worker.py`
+    - pass
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+    - `quant-micro-trendretest` / `quant-micro-trendretest-exit` が `running`
+  - `logs/local_v2_stack/quant-micro-trendretest.log`
+    - `worker start (interval=4.0s signal_tag_contains=short)` を確認
+
+- 判断:
+  - shared micro runtime の最小変更で、負けている long を dedicated worker から外し、
+    `MicroTrendRetest-short` だけを `trade_min` の canary に載せる形にできた。
+  - 週末クローズ帯のため、今回確認できたのは service 起動と env 読み込みまで。
+    live fill / PF / reject の再評価は通常流動性帯で継続する。
