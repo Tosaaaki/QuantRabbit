@@ -1,5 +1,37 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-20. 2026-03-07 JST 週末クローズ帯のため「勝ち筋追加」は保留し、次回昇格候補を `TrendBreakout` に固定
+- 背景（local-v2 実測, UTC 2026-03-07 01:53-01:59 / JST 2026-03-07 10:53-10:59）:
+  - `health_snapshot.json` では
+    - `trades_last_close=2026-03-06T21:40:06Z`
+    - `orders_status_1h=[]`
+    - `trades_count_24h=1303`
+  - `orderbook_snapshot.json` は
+    - `bid=157.790 / ask=157.853 / spread=6.3p`
+    - `latency_ms=163`
+  - `factor_cache.json` は
+    - `ATR(M1)=1.94p / ATR(M5)=4.97p / ATR(H1)=18.82p`
+  - `oanda_account_snapshot_live.json` / `oanda_open_positions_live_USD_JPY.json` は
+    - `margin_used=5498 JPY`
+    - `USD/JPY long_units=871`
+    で、平日通常帯の active scalping とは別状態だった
+- 判断:
+  - spread `6.3p` は現行 scalp/micro 導線の通常レンジ外で、AGENTS の「市況悪化時は作業保留」に該当。
+  - この条件では `trade_min` への追加反映・restart・deployment verification を進めず、候補選定だけを先行する。
+- 候補比較（logs/trades.db + config/dynamic_alloc.json）:
+  - `TrendBreakout`
+    - 7d `3 trades / +264.4 JPY`
+    - dynamic alloc `score=0.575 / lot_multiplier=1.0`
+    - `docs/TRADE_FINDINGS.md` と `docs/WORKER_REFACTOR_LOG.md` にある通り、
+      2026-03-05/06 に crash 修正と open-trades guard の fail-closed 化まで完了済み。
+  - `MicroTrendRetest-short`
+    - 7d `15 trades / +8.7 JPY`
+    - 24h `10 trades / -19.0 JPY`
+    - `STOP_LOSS_ORDER=5` が重く、直近は winner と言い切れない。
+- 次回通常流動性帯での実行候補:
+  - 第1候補は `quant-scalp-trend-breakout(+exit)` の canary 追加。
+  - `MicroTrendRetest` は 直近 stop-loss 寄与が重いため、追加より前に損失要因の再調整を優先する。
+
 ## 0-19. 2026-03-07 JST stray loser を遮断し、`M1Scalper` は `vshape-rebound-long` を局所再開
 - 背景（local-v2 実測, UTC 2026-03-06 15:16-15:18 / JST 2026-03-07 00:16-00:18）:
   - `pdca_profitability_report.py` では 24h `net_jpy=-8603 / PF=0.68`

@@ -7914,3 +7914,48 @@ Status:
   1. 次の `1-3h` で `orders.db` の `MicroLevelReactor` `probability_scaled` が `raw/intent=0.70` に寄ること。
   2. `scaled/intent` が従来の `0.315-0.330` より改善し、`filled units` が増えること。
   3. `MicroLevelReactor` の `avg_pips` / `net_jpy` が悪化せず、`margin_snapshot_failed` の増加を伴わないこと。
+
+## 2026-03-07 01:53 UTC / 2026-03-07 10:53 JST - 週末クローズ帯で spread `6.3p` のため「勝ち筋追加」は保留、次回昇格候補は `TrendBreakout`
+
+- 市況（local-v2 実測 + OANDA snapshot）:
+  - `health_snapshot.json`:
+    - `trades_last_close=2026-03-06T21:40:06Z`
+    - `orders_status_1h=[]`
+    - `data_lag_ms=1065`
+    - `decision_latency_ms=11.7`
+  - `orderbook_snapshot.json`:
+    - `bid=157.790 / ask=157.853 / spread=6.3p`
+    - `latency_ms=163`
+  - `factor_cache.json`:
+    - `ATR(M1)=1.94p / ATR(M5)=4.97p / ATR(H1)=18.82p`
+  - `oanda_open_positions_live_USD_JPY.json`:
+    - `long_units=871 / short_units=0`
+
+- 判断:
+  - spread `6.3p` は現行 `scalp` / `micro` 系の通常ガードレンジ外で、AGENTS の「市況悪化時は作業保留」に該当。
+  - このため `trade_min` への新規 worker 追加、`local_v2_stack restart`、live 反映確認は行わない。
+  - 今回は候補選定と監査ログ更新に留める。
+
+- 候補比較（`logs/trades.db` 7d/24h + `config/dynamic_alloc.json`）:
+  - `TrendBreakout`
+    - 7d `3 trades / +264.4 JPY`
+    - 24h `3 trades / +264.4 JPY`
+    - dynamic alloc `score=0.575 / lot_multiplier=1.0`
+    - 2026-03-05 JST の crash 修正と、2026-03-06 JST の M1 family open-trades guard / fail-closed guard 追加が既に main 側へ入っている。
+  - `MicroTrendRetest-short`
+    - 7d `15 trades / +8.7 JPY`
+    - 24h `10 trades / -19.0 JPY`
+    - dynamic alloc `score=0.552 / lot_multiplier=1.113`
+    - `STOP_LOSS_ORDER=5`, `TAKE_PROFIT_ORDER=1` と直近の損失寄与がまだ重い。
+
+- 次回通常流動性帯での第1候補:
+  - `quant-scalp-trend-breakout(+exit)` を canary 追加候補に固定する。
+  - 理由:
+    - loser `scalp_ping_5s_flow_live` や `M1Scalper-M1` と違い、直近実現損益が正。
+    - crash 修正と open-trades family guard が完了しており、live 安全性の前提が最も揃っている。
+    - `MicroTrendRetest` よりも直近損失ドリフトが小さい。
+
+- 次回再開条件:
+  1. spread が通常帯（概ね `<=1.0p`）へ戻ること。
+  2. `orders_status_1h` に live 注文が再開していること。
+  3. その時点で `TrendBreakout` を `trade_min` に追加する実装と反映確認を再開すること。
