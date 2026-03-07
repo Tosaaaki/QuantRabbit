@@ -8024,3 +8024,34 @@ Status:
     `MicroTrendRetest-short` だけを `trade_min` の canary に載せる形にできた。
   - 週末クローズ帯のため、今回確認できたのは service 起動と env 読み込みまで。
     live fill / PF / reject の再評価は通常流動性帯で継続する。
+
+## 2026-03-07 11:00 JST / local-v2: `M1Scalper-M1` の side filter を `long` に復帰
+
+- 市況確認（OANDA 実測 / Saturday close）:
+  - `pricing` は金曜クローズの同一 timestamp を返し続け、`USD/JPY mid=157.8215 / spread=6.3p`
+  - `openTrades=0`, `marginUsed=0`, `orders_status_1h=[]`
+  - 週末クローズ中のため、新規 live fill での再評価は不可
+
+- 事実:
+  - live `quant-m1scalper` env は `M1SCALP_SIDE_FILTER=none` で、intended operational value の `long` と不整合だった。
+  - `trades.db` 24h の `M1Scalper-M1` を `source_signal_tag` 由来で side 集計すると
+    - `short: 474 trades / -812.7 JPY / avg_pips=-0.432 / win=41.8%`
+    - `long: 138 trades / -46.1 JPY / avg_pips=+0.062 / win=64.5%`
+  - source tag 別でも
+    - `M1Scalper-sell-rally: 475 trades / -614.5 JPY`
+    - `M1Scalper-nwave-short: 13 trades / -352.1 JPY`
+    - `M1Scalper-breakout-retest-long: +81.2 JPY`
+  - 現状の主損失は short 側に集中していた。
+
+- 判断:
+  - `none -> long` は新規ロジック追加ではなく、intended worker policy への復帰。
+  - 24h 実測でも short 側 cut の効果が最大だったため、週明け前の改善として最優先。
+
+- 対応:
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_SIDE_FILTER=none -> long`
+
+- 再検証条件:
+  1. 週明け再開後の `trades.db` で `M1Scalper-M1` short 由来の新規 close が消えること。
+  2. `M1Scalper-M1` 24h `net_jpy` と `avg_pips` が改善すること。
+  3. `orders.db` で `M1Scalper-M1` が `breakout-retest-long` / `nwave-long` 中心に回ること。

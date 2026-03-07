@@ -1880,3 +1880,18 @@
     と `raw/intent=0.60` に固定されていた。
   - `MicroLevelReactor` は 24h `+220.2 JPY / win 59.8% / avg_pips +3.207` で、
     loser worker ではなく winner worker のサイズ回復を優先すべき状態だった。
+
+### 2026-03-07 `M1Scalper-M1` long-only rollback
+- 目的:
+  - M1 dedicated worker の short 側負け筋を切り、intended operational state に戻す。
+- 実装:
+  - `ops/env/quant-m1scalper.env`
+    - `M1SCALP_SIDE_FILTER=long`
+- 意図:
+  - `source_signal_tag` 集計では 24h の short 側が `474 trades / -812.7 JPY` と主損失源で、
+    long 側は `138 trades / -46.1 JPY` まで損失が小さかった。
+  - 新規ロジック追加ではなく、docs に記録済みの intended worker policy へ戻す変更とする。
+- 非変更:
+  - M1Scalper の exit logic
+  - shared `order_manager` / `forecast_gate`
+  - V2 topology

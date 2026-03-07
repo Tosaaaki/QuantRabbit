@@ -12303,3 +12303,19 @@
 - 狙い:
   - shared `order_manager` は変えず、winner 専用 worker だけで intent 保持率を `70%` まで引き上げる。
   - 同一 probability 帯の `scaled_units` を押し上げ、収益速度を改善する。
+
+## 2026-03-07 JST - `M1Scalper-M1` side filter を `long` に戻す
+
+- `ops/env/quant-m1scalper.env`
+  - `M1SCALP_SIDE_FILTER=long`（from `none`）
+
+- 根拠（ローカル実測）:
+  - live env は `none` だったが、運用ドキュメント上の intended value は `long`。
+  - `trades.db` 24h を `source_signal_tag` 由来で side 集計すると
+    - `short: 474 trades / -812.7 JPY / avg_pips -0.432`
+    - `long: 138 trades / -46.1 JPY / avg_pips +0.062`
+  - source tag 別でも `M1Scalper-sell-rally` と `M1Scalper-nwave-short` が主要損失源だった。
+
+- 狙い:
+  - shared preflight は触らず、M1 dedicated worker の side だけを intended state に戻す。
+  - 週明け以降の新規エントリーで short 側の負け筋を切り、`breakout-retest-long` / `nwave-long` 中心へ寄せる。
