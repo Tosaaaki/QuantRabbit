@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -35,10 +36,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import scripts.replay_exit_workers_groups as replay_groups
+from sim.pseudo_cfg import SimCfg
+from sim.pseudo_ticks import synth_from_candles
 
 
 UTC = timezone.utc
+WORKER_TAGS = {
+    "impulse_break_s5": "impulse_break_s5",
+    "impulse_retest_s5": "impulse_retest_s5",
+    "impulse_momentum_s5": "impulse_momentum_s5",
+    "pullback_s5": "pullback_s5",
+    "vwap_magnet_s5": "vwap_magnet_s5",
+    "stop_run_reversal": "stop_run_reversal",
+    "session_open": "session_open_breakout",
+    "trend_breakout": "TrendBreakout",
+    "pullback_continuation": "PullbackContinuation",
+    "failed_break_reverse": "FailedBreakReverse",
+}
 
 
 @dataclass(frozen=True)
@@ -110,7 +124,7 @@ def _default_tick_patterns() -> List[str]:
 def _load_live_trades(trades_db: Path, workers: Sequence[str]) -> Dict[str, List[LiveTrade]]:
     worker_tags: Dict[str, str] = {}
     for worker in workers:
-        strategy_tag = replay_groups.WORKER_TAGS.get(worker)
+        strategy_tag = WORKER_TAGS.get(worker)
         if strategy_tag:
             worker_tags[worker] = strategy_tag
     results: Dict[str, List[LiveTrade]] = {worker: [] for worker in workers}
@@ -332,6 +346,163 @@ def _required_tick_basenames(window: ReplayWindow, *, instrument: str = "USD_JPY
     return basenames
 
 
+def _iso_utc_z(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _align_window_to_s5(window: ReplayWindow) -> tuple[datetime, datetime]:
+    start_ts = math.floor(window.start.timestamp() / 5.0) * 5
+    end_ts = math.ceil(window.end.timestamp() / 5.0) * 5
+    if end_ts <= start_ts:
+        end_ts = start_ts + 5
+    return (
+        datetime.fromtimestamp(start_ts, tz=UTC),
+        datetime.fromtimestamp(end_ts, tz=UTC),
+    )
+
+
+def _count_nonempty_lines(path: Path) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                count += 1
+    return count
+
+
+def _fetch_candles_to_json(
+    *,
+    instrument: str,
+    start: datetime,
+    end: datetime,
+    out_path: Path,
+) -> Dict[str, object]:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "fetch_candles.py"),
+        "--instrument",
+        instrument,
+        "--granularity",
+        "S5",
+        "--start",
+        _iso_utc_z(start),
+        "--end",
+        _iso_utc_z(end),
+        "--out",
+        str(out_path),
+    ]
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = (
+        f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(REPO_ROOT)
+    )
+    env.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
+    proc = subprocess.run(
+        cmd,
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    candle_count = 0
+    if proc.returncode == 0 and out_path.exists():
+        try:
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            candles = payload.get("candles") or []
+            if isinstance(candles, list):
+                candle_count = len(candles)
+        except Exception:
+            candle_count = 0
+    return {
+        "status": "completed" if proc.returncode == 0 else "failed",
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+        "candles_path": str(out_path) if out_path.exists() else None,
+        "candle_count": candle_count,
+    }
+
+
+def _synth_candles_to_ticks(
+    *,
+    candles_path: Path,
+    out_path: Path,
+) -> Dict[str, object]:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sim_path, density_info = synth_from_candles(str(candles_path), str(out_path), SimCfg())
+    tick_count = _count_nonempty_lines(sim_path)
+    return {
+        "status": "completed" if tick_count > 0 else "empty_ticks",
+        "ticks_path": str(sim_path),
+        "tick_count": tick_count,
+        "density": density_info,
+    }
+
+
+def _run_candle_sim_fallback(
+    *,
+    instrument: str,
+    window: ReplayWindow,
+    worker_out_dir: Path,
+    label: str,
+) -> Dict[str, object]:
+    aligned_start, aligned_end = _align_window_to_s5(window)
+    candles_path = worker_out_dir / f"{label}_candles_s5.json"
+    ticks_path = worker_out_dir / f"{label}_candles_sim_ticks.jsonl"
+    fallback: Dict[str, object] = {
+        "enabled": True,
+        "used": False,
+        "status": "failed",
+        "source": "s5_candles_pseudo_ticks",
+        "window_start": aligned_start.isoformat(),
+        "window_end": aligned_end.isoformat(),
+        "candles_path": None,
+        "generated_ticks_path": None,
+        "candle_count": 0,
+        "generated_tick_count": 0,
+        "fetch": None,
+        "simulation": None,
+    }
+    fetch_result = _fetch_candles_to_json(
+        instrument=instrument,
+        start=aligned_start,
+        end=aligned_end,
+        out_path=candles_path,
+    )
+    fallback["fetch"] = fetch_result
+    fallback["candles_path"] = fetch_result.get("candles_path")
+    fallback["candle_count"] = int(fetch_result.get("candle_count") or 0)
+    if fetch_result.get("status") != "completed":
+        fallback["status"] = "fetch_failed"
+        return fallback
+    if int(fetch_result.get("candle_count") or 0) <= 0:
+        fallback["status"] = "empty_candles"
+        return fallback
+    try:
+        simulation_result = _synth_candles_to_ticks(
+            candles_path=candles_path,
+            out_path=ticks_path,
+        )
+    except Exception as exc:
+        fallback["status"] = "simulation_failed"
+        fallback["simulation"] = {"status": "failed", "error": str(exc)}
+        return fallback
+    fallback["simulation"] = simulation_result
+    fallback["generated_ticks_path"] = simulation_result.get("ticks_path")
+    fallback["generated_tick_count"] = int(simulation_result.get("tick_count") or 0)
+    if int(simulation_result.get("tick_count") or 0) <= 0:
+        fallback["status"] = "empty_ticks"
+        return fallback
+    fallback["status"] = "completed"
+    fallback["used"] = True
+    return fallback
+
+
 def build_report(
     *,
     workers: Sequence[str],
@@ -341,6 +512,7 @@ def build_report(
     post_minutes: float,
     out_dir: Path,
     run_replay: bool,
+    allow_candle_sim_fallback: bool = False,
 ) -> Dict[str, object]:
     tick_files = _expand_tick_globs(tick_patterns)
     spans = _tick_spans(tick_files)
@@ -352,12 +524,13 @@ def build_report(
         "trades_db": str(trades_db),
         "tick_patterns": _split_csv(tick_patterns),
         "tick_file_count": len(spans),
+        "allow_candle_sim_fallback": bool(allow_candle_sim_fallback),
         "workers": {},
     }
 
     workers_payload: Dict[str, object] = {}
     for worker in workers:
-        strategy_tag = replay_groups.WORKER_TAGS.get(worker)
+        strategy_tag = WORKER_TAGS.get(worker)
         worker_trades = live_trades.get(worker, [])
         windows = _build_trade_windows(
             worker_trades,
@@ -371,8 +544,22 @@ def build_report(
             coverage_status = "covered" if matched_spans else "missing"
             clipped_path = out_dir / worker / f"{label}_ticks.jsonl"
             clipped_tick_count = 0
+            replay_ticks_path: Optional[Path] = None
+            replay_tick_count = 0
             replay_result: Dict[str, object] = {"status": "skipped"}
             required_basenames = _required_tick_basenames(window)
+            fallback_payload: Dict[str, object] = {
+                "enabled": bool(allow_candle_sim_fallback),
+                "used": False,
+                "status": "not_needed" if matched_spans else "disabled",
+                "source": "s5_candles_pseudo_ticks",
+                "candles_path": None,
+                "generated_ticks_path": None,
+                "candle_count": 0,
+                "generated_tick_count": 0,
+                "fetch": None,
+                "simulation": None,
+            }
             if matched_spans:
                 clipped_tick_count = _clip_ticks_to_window(
                     matched_spans,
@@ -386,12 +573,30 @@ def build_report(
                         clipped_path.unlink()
                     except FileNotFoundError:
                         pass
-                elif run_replay:
-                    replay_result = _run_replay(
-                        worker=worker,
-                        ticks_path=clipped_path,
-                        out_dir=out_dir / worker / label,
-                    )
+                else:
+                    replay_ticks_path = clipped_path
+                    replay_tick_count = clipped_tick_count
+            if coverage_status == "missing" and allow_candle_sim_fallback:
+                fallback_payload = _run_candle_sim_fallback(
+                    instrument="USD_JPY",
+                    window=window,
+                    worker_out_dir=out_dir / worker,
+                    label=label,
+                )
+                if bool(fallback_payload.get("used")):
+                    coverage_status = "candle_simulated"
+                    ticks_path_text = str(fallback_payload.get("generated_ticks_path") or "").strip()
+                    if ticks_path_text:
+                        replay_ticks_path = Path(ticks_path_text)
+                        replay_tick_count = int(fallback_payload.get("generated_tick_count") or 0)
+            elif not allow_candle_sim_fallback:
+                fallback_payload["status"] = "disabled"
+            if replay_ticks_path is not None and run_replay:
+                replay_result = _run_replay(
+                    worker=worker,
+                    ticks_path=replay_ticks_path,
+                    out_dir=out_dir / worker / label,
+                )
             window_payloads.append(
                 {
                     "label": label,
@@ -403,9 +608,14 @@ def build_report(
                         "status": coverage_status,
                         "tick_file_count": len(matched_spans),
                         "tick_files": [str(span.path) for span in matched_spans],
+                        "fallback_enabled": bool(allow_candle_sim_fallback),
+                        "fallback_used": bool(fallback_payload.get("used")),
+                        "fallback": fallback_payload,
                     },
                     "clipped_ticks_path": str(clipped_path) if clipped_tick_count > 0 else None,
                     "clipped_tick_count": clipped_tick_count,
+                    "replay_ticks_path": str(replay_ticks_path) if replay_ticks_path is not None else None,
+                    "replay_tick_count": replay_tick_count,
                     "replay": replay_result,
                 }
             )
@@ -433,6 +643,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--post-minutes", type=float, default=15.0)
     ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_live_window_audit"))
     ap.add_argument("--run-replay", action="store_true")
+    ap.add_argument("--allow-candle-sim-fallback", action="store_true")
     return ap.parse_args()
 
 
@@ -446,6 +657,7 @@ def main() -> None:
         post_minutes=args.post_minutes,
         out_dir=args.out_dir,
         run_replay=bool(args.run_replay),
+        allow_candle_sim_fallback=bool(args.allow_candle_sim_fallback),
     )
     report_path = args.out_dir / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
