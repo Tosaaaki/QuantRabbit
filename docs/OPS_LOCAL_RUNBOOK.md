@@ -225,6 +225,8 @@ scripts/runtime_ui.sh logs
   - `ops/env/profiles/brain-ollama-safe.env`
   - micro pocket のみ
   - `MomentumBurst, MicroLevelReactor, MicroRangeBreak, MicroTrendRetest` に限定
+  - `brain_gate_mode=shadow`
+  - `ORDER_MANAGER_SERVICE_WORKERS=1`
   - `fail-open` / `sample_rate=0.35` / `ttl=15s` / `timeout_cap=4s` / auto-tune off
 - safe canary の反映:
 ```bash
@@ -238,6 +240,7 @@ scripts/local_v2_stack.sh restart --profile trade_min \
 - readiness レポート出力:
   - `logs/brain_canary_readiness_latest.json`
   - `logs/brain_model_selection_safe_latest.json`
+  - `checks.quality_gate_ok=true` を満たしてから使う
 
 ## 4. （任意）旧VMログ/DBのローカル参照先
 - GCSミラー一式:

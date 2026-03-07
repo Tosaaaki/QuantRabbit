@@ -38,6 +38,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-benchmark-age-hours", type=float, default=72.0)
     parser.add_argument("--max-selection-age-hours", type=float, default=72.0)
+    parser.add_argument("--min-parse-pass-rate", type=float, default=0.90)
+    parser.add_argument("--max-preflight-latency-ms", type=float, default=4000.0)
     parser.add_argument("--timeout-cap-sec", type=float, default=4.0)
     parser.add_argument("--ollama-timeout-sec", type=float, default=4.0)
     parser.add_argument("--warmup-timeout-sec", type=float, default=12.0)
@@ -142,6 +144,21 @@ def _collect_required_models(env_values: dict[str, str], selection_payload: dict
     return required
 
 
+def _find_benchmark_row(benchmark_payload: dict[str, Any], model: str | None) -> dict[str, Any]:
+    model_key = str(model or "").strip()
+    if not model_key:
+        return {}
+    ranking = benchmark_payload.get("ranking")
+    if not isinstance(ranking, list):
+        return {}
+    for item in ranking:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("model") or "").strip() == model_key:
+            return item
+    return {}
+
+
 def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float) -> list[str]:
     issues: list[str] = []
     pocket_allowlist = {
@@ -161,6 +178,12 @@ def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float
         issues.append("prompt_autotune_enabled")
     if _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED")):
         issues.append("runtime_autotune_enabled")
+    gate_mode = str(env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE") or "").strip().lower()
+    if gate_mode != "shadow":
+        issues.append("brain_gate_mode_not_shadow")
+    workers = _float_env(env_values.get("ORDER_MANAGER_SERVICE_WORKERS"))
+    if workers is None or int(workers) != 1:
+        issues.append("order_manager_workers_not_1")
     timeout_sec = _float_env(env_values.get("BRAIN_TIMEOUT_SEC"))
     if timeout_cap_sec > 0.0 and (timeout_sec is None or timeout_sec > timeout_cap_sec):
         issues.append("timeout_above_cap")
@@ -387,6 +410,8 @@ def main() -> int:
     env_values = _parse_env_file(args.env_profile)
     profile_safety_issues = _profile_safety_issues(env_values, timeout_cap_sec=float(args.timeout_cap_sec))
     required_models = _collect_required_models(env_values, selection_payload)
+    preflight_model = env_values.get("BRAIN_OLLAMA_MODEL") or selection_payload.get("preflight_model")
+    benchmark_row = _find_benchmark_row(benchmark_payload, preflight_model)
 
     if args.skip_ollama:
         ollama_status = {
@@ -419,6 +444,16 @@ def main() -> int:
 
     benchmark_fresh = benchmark_age_hours is not None and benchmark_age_hours <= float(args.max_benchmark_age_hours)
     selection_fresh = selection_age_hours is not None and selection_age_hours <= float(args.max_selection_age_hours)
+    parse_pass_rate = benchmark_row.get("parse_pass_rate")
+    latency_p95_ms = benchmark_row.get("latency_p95_ms")
+    quality_gate_ok = False
+    try:
+        quality_gate_ok = (
+            float(parse_pass_rate) >= float(args.min_parse_pass_rate)
+            and float(latency_p95_ms) <= float(args.max_preflight_latency_ms)
+        )
+    except Exception:
+        quality_gate_ok = False
     profile_enabled = _bool_env(env_values.get("BRAIN_ENABLED")) and _bool_env(
         env_values.get("ORDER_MANAGER_BRAIN_GATE_ENABLED")
     )
@@ -434,6 +469,7 @@ def main() -> int:
         "selection_sync_ok": not sync_error,
         "benchmark_fresh": benchmark_fresh,
         "selection_fresh": selection_fresh,
+        "quality_gate_ok": quality_gate_ok,
         "ollama_ready": True if args.skip_ollama else ollama_ready,
         "market_ready": True if args.skip_market else market_ready,
     }
@@ -446,6 +482,9 @@ def main() -> int:
             "generated_at": benchmark_payload.get("generated_at"),
             "age_hours": benchmark_age_hours,
             "max_age_hours": float(args.max_benchmark_age_hours),
+            "selected_row": benchmark_row,
+            "min_parse_pass_rate": float(args.min_parse_pass_rate),
+            "max_preflight_latency_ms": float(args.max_preflight_latency_ms),
         },
         "selection": {
             "path": str(args.selection_output),
@@ -461,6 +500,7 @@ def main() -> int:
             "exists": args.env_profile.exists(),
             "brain_enabled": env_values.get("BRAIN_ENABLED"),
             "order_manager_brain_gate_enabled": env_values.get("ORDER_MANAGER_BRAIN_GATE_ENABLED"),
+            "brain_gate_mode": env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE"),
             "ollama_model": env_values.get("BRAIN_OLLAMA_MODEL"),
             "pocket_allowlist": env_values.get("BRAIN_POCKET_ALLOWLIST"),
             "strategy_allowlist": env_values.get("BRAIN_STRATEGY_ALLOWLIST"),

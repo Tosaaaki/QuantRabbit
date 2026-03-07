@@ -9,6 +9,7 @@
 
 - 対象:
   - `ops/env/profiles/brain-ollama-safe.env`
+  - `execution/order_manager.py`
   - `scripts/prepare_local_brain_canary.py`
   - `scripts/apply_brain_model_selection.py`
   - `tests/scripts/test_prepare_local_brain_canary.py`
@@ -16,11 +17,14 @@
   - `docs/OPS_LOCAL_RUNBOOK.md`
 - 変更:
   - `brain-ollama-safe.env` を実体化し、
-    `micro-only` / `fail-open` / `sample_rate=0.35` / `ttl=15s` / `timeout=4s` / auto-tune off
+    `micro-only` / `brain_gate_mode=shadow` / `ORDER_MANAGER_SERVICE_WORKERS=1`
+    / `fail-open` / `sample_rate=0.35` / `ttl=15s` / `timeout=4s` / auto-tune off
     の canary profile を固定化。
   - `prepare_local_brain_canary.py`
     - safe profile へ benchmark selection を同期
     - safe profile shape を検証
+    - selected preflight model の quality gate
+      (`parse_pass_rate >= 0.90`, `latency_p95_ms <= 4000`) を追加
     - Ollama `/api/tags` と required models を確認
     - OANDA pricing/candles から market sanity を確認
     - `logs/brain_canary_readiness_latest.json` を出力
@@ -28,6 +32,10 @@
     - `--timeout-cap-sec` を追加し、safe canary 用の bounded timeout 更新を可能化。
     - benchmark 全体が `min_parse_pass_rate` 未達のときは ranking から無理に preflight を選ばず、
       fallback `qwen2.5:7b` / `gpt-oss:20b` を使うよう修正。
+  - `execution/order_manager.py`
+    - `ORDER_MANAGER_BRAIN_GATE_MODE=off|shadow|apply` を追加。
+    - safe canary の `shadow` では Brain 判定を orders/metrics へ記録するだけで、
+      実際の `block/scale` は適用しない。
 - 意図:
   - Brain を live 既定へ戻さず、月曜オープン時は `quant-order-manager,quant-strategy-control` のみ safe canary で段階復帰する。
   - benchmark/selection と safe env のズレを週末のうちに吸収し、月曜の判断を JSON 1本に寄せる。

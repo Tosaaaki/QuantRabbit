@@ -63,6 +63,8 @@ def _write_safe_profile(path: Path) -> None:
             [
                 "BRAIN_ENABLED=1",
                 "ORDER_MANAGER_BRAIN_GATE_ENABLED=1",
+                "ORDER_MANAGER_BRAIN_GATE_MODE=shadow",
+                "ORDER_MANAGER_SERVICE_WORKERS=1",
                 "BRAIN_OLLAMA_URL=http://127.0.0.1:11434/api/chat",
                 "BRAIN_OLLAMA_MODEL=old:model",
                 "BRAIN_POCKET_ALLOWLIST=micro",

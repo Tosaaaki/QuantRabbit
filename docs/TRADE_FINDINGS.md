@@ -52,6 +52,8 @@ Improvement:
 - `ops/env/profiles/brain-ollama-safe.env`
   - `micro-only`
   - `MomentumBurst, MicroLevelReactor, MicroRangeBreak, MicroTrendRetest` に限定
+  - `brain_gate_mode=shadow`
+  - `ORDER_MANAGER_SERVICE_WORKERS=1`
   - `fail-open`
   - `sample_rate=0.35`
   - `ttl=15s`
@@ -60,6 +62,7 @@ Improvement:
 - `scripts/prepare_local_brain_canary.py`
   - benchmark → safe profile selection sync（`--timeout-cap-sec 4`）
   - safe profile shape の検査
+  - selected preflight model の `parse_pass_rate >= 0.90` / `latency_p95_ms <= 4000` を必須化
   - Ollama server / model presence
   - OANDA market sanity（spread / tick age）
   - `logs/brain_canary_readiness_latest.json` を出力
