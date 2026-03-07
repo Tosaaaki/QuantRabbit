@@ -23,6 +23,50 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-07 12:22 UTC / 2026-03-07 21:22 JST - local-v2: `quant-strategy-feedback` は live 接続済み、残課題は loop 回帰保証だった
+
+Period:
+- 確認/改善: UTC `12:19-12:22` / JST `21:19-21:22`
+- 対象（実測）: `logs/local_v2_stack/quant-strategy-feedback.log`, `logs/strategy_feedback.json`, `scripts/local_v2_stack.sh status`, `ps`
+- 対象（テスト）: `tests/analysis/test_strategy_feedback_worker.py`
+
+Fact:
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-strategy-feedback`
+  で `quant-strategy-feedback` は `running`、PID は `6427`。
+- `logs/strategy_feedback.json` と `logs/local_v2_stack/quant-strategy-feedback.log` の mtime は
+  UTC `12:19` / JST `21:19` で一致し、現行プロセスは生存継続している。
+- 一方で test coverage は `payload build` のみで、`main()` の loop 経路
+  (`loop start -> _run_once -> time.sleep`) を通す検証がなかった。
+- コード接続確認では:
+  - `analysis/strategy_feedback.py` / `execution/strategy_entry.py` が
+    `strategy_feedback.json` を live entry へ反映
+  - `config/dynamic_alloc.json` は worker と `strategy_entry` で使用
+  - `config/pattern_book*.json` は `order_manager` preflight で使用
+  - `trade_counterfactual` は主に `replay_quality_gate_worker -> worker_reentry.yaml`
+    の改善提案系へ接続
+
+Failure Cause:
+- `strategy_feedback` 自体の live 接続は成立していたが、
+  常駐 loop 経路を固定するテストがなく、`sleep` まわりの回帰を事前に検知できなかった。
+- ログには旧クラッシュ履歴が残るため、「今も死んでいる」のか「過去ログが残っているだけか」の判別が遅れやすかった。
+
+Improvement:
+- `tests/analysis/test_strategy_feedback_worker.py`
+  に `test_main_loop_runs_once_and_sleeps` を追加し、
+  常駐モードで 1 iteration 実行後に `time.sleep()` へ到達することを固定化。
+- `docs/ARCHITECTURE.md`
+  で local watchdog 導線の責務を修正し、
+  `quant-strategy-feedback` が常駐更新を担当、
+  `run_local_feedback_cycle.py` は既定で `strategy_feedback` を回さない構成を明記。
+
+Verification:
+- `pytest -q tests/analysis/test_strategy_feedback_worker.py`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-strategy-feedback`
+- `ps -Ao pid,ppid,lstart,command | rg "analysis.strategy_feedback_worker"`
+
+Status:
+- done
+
 ## 2026-03-07 11:49 UTC / 2026-03-07 20:49 JST - local Brain/Ollama を compact-context + shadow canary として local-v2 へ反映
 
 Period:

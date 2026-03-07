@@ -4,6 +4,9 @@ import datetime as dt
 import os
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from analysis import strategy_feedback_worker as worker
 
@@ -81,3 +84,34 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
     advice = strategies["scalp_ping_5s_b_live"]
     assert advice["strategy_params"]["configured_params"]["SCALP_PING_5S_B_MODE"] == "scalp_ping_5s_b_live"
     assert advice["entry_probability_multiplier"] > 1.0
+
+
+def test_main_loop_runs_once_and_sleeps(monkeypatch, tmp_path: Path) -> None:
+    feedback_path = tmp_path / "strategy_feedback.json"
+    config = SimpleNamespace(loop_sec=0.0, feedback_path=feedback_path)
+    run_calls: list[tuple[object, bool]] = []
+    sleep_calls: list[float] = []
+
+    monkeypatch.setattr(
+        worker,
+        "_parse_args",
+        lambda: SimpleNamespace(nowrite=False, loop_sec=0.5),
+    )
+    monkeypatch.setattr(worker, "WorkerConfig", lambda: config)
+    monkeypatch.setattr(worker.logging, "basicConfig", lambda **_: None)
+
+    def fake_run_once(actual_config: object, *, nowrite: bool) -> None:
+        run_calls.append((actual_config, nowrite))
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(worker, "_run_once", fake_run_once)
+    monkeypatch.setattr(worker.time, "sleep", fake_sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        worker.main()
+
+    assert run_calls == [(config, False)]
+    assert sleep_calls == [0.5]

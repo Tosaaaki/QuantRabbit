@@ -5,6 +5,26 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-07（追記）`quant-strategy-feedback` の常駐ループを回帰テストで固定し、local feedback cycle との責務境界を明文化
+
+- 対象:
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - `strategy_feedback_worker.main()` の loop 経路に対して、
+    1回実行後に `time.sleep()` へ到達する回帰テストを追加した。
+  - これにより `loop_sec > 0` の常駐運用で `sleep` 経路が未検証のまま残ることを防ぐ。
+  - `docs/ARCHITECTURE.md` はローカル watchdog 導線の責務を更新し、
+    `quant-strategy-feedback` が `strategy_feedback.json` の常駐更新を担当し、
+    `run_local_feedback_cycle.py` 側では `strategy_feedback` を既定OFFにして
+    二重実行を避ける構成を明文化した。
+- 反映確認:
+  - `pytest -q tests/analysis/test_strategy_feedback_worker.py`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-strategy-feedback`
+    - `pid=6427` で running を確認
+  - `ps -Ao pid,ppid,lstart,command | rg "analysis.strategy_feedback_worker"`
+    - `2026-03-07 21:19 JST` 起動の常駐プロセスが継続していることを確認
+
 ### 2026-03-07（追記）Brain prompt/context を compact 化し、order_manager に shadow mode を追加
 
 - 対象:

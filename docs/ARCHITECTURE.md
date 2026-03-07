@@ -66,8 +66,10 @@
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
   local_v2_stack（macOS 等の non-systemd lane）では systemd timer の代わりに
   `scripts/local_v2_autorecover_once.sh` が `scripts/run_local_feedback_cycle.py`
-  を非同期起動し、`dynamic_alloc / pattern_book / strategy_feedback /
-  trade_counterfactual` を interval 管理で再実行する。
+  を非同期起動し、`dynamic_alloc / pattern_book / trade_counterfactual`
+  を interval 管理で再実行する。
+  `strategy_feedback` は `quant-strategy-feedback` 常駐サービスが責務を持ち、
+  feedback cycle 側では既定で無効化して二重実行を避ける。
   これにより `config/dynamic_alloc.json`, `config/pattern_book*.json`,
   `logs/strategy_feedback.json`, `logs/trade_counterfactual_latest.json`
   の更新がローカル watchdog 導線へ接続される。
