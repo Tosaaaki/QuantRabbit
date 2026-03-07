@@ -147,7 +147,10 @@ def load_strategy_profile(
         mult = _safe_float(item.get("lot_multiplier"), 1.0)
         if mult <= 0:
             mult = 1.0
-        item_min_mult = _safe_float(item.get("min_lot_multiplier"), policy_min_mult)
+        item_min_mult_raw = item.get("effective_min_lot_multiplier")
+        if item_min_mult_raw is None:
+            item_min_mult_raw = item.get("min_lot_multiplier")
+        item_min_mult = _safe_float(item_min_mult_raw, 0.0)
         item_max_mult = _safe_float(item.get("max_lot_multiplier"), policy_max_mult)
         if item_min_mult > 0.0:
             mult = max(mult, item_min_mult)

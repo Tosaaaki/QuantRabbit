@@ -12381,3 +12381,39 @@
   - `tmp/replay_exit_workers_groups_m1_family_20260212/summary_all.json`
     - `TrendBreakout / PullbackContinuation / FailedBreakReverse` の `base.trades=0`
     - `selection.requested=0` で、`2026-02-12` の full-day tick (`137,948` rows) 上では entry 自体が発火しなかった。
+
+## 2026-03-07 JST - dynamic alloc を pocket 協調化し、loader の policy floor バグを修正
+
+- 目的:
+  - 週明け前に、各 strategy が「自分の成績」だけでなく「所属 pocket の成績」も反映してサイズ協調する状態へ寄せる。
+  - `dynamic_alloc.json` 上の low multiplier が loader で `0.45` に丸められていた不具合を修正し、loser 縮小を実効化する。
+
+- 変更ファイル:
+  - `scripts/dynamic_alloc_worker.py`
+  - `workers/common/dynamic_alloc.py`
+
+- 実装:
+  - `dynamic_alloc_worker.py`
+    - `TrendBreakout` の tag 重複を防ぐ canonical alias を追加。
+    - strategy 集計に加えて pocket 集計を追加し、`pocket_profiles` / `pocket_caps` を JSON 出力。
+    - 最終 `lot_multiplier` を `strategy_lot_multiplier x pocket_lot_multiplier` で決めるよう変更。
+    - `TrendBreakout` のような winner が loser pocket 側に居ても、pocket penalty で潰さない保護を追加。
+  - `workers/common/dynamic_alloc.py`
+    - item found 時の下限は `effective_min_lot_multiplier` 優先、なければ item 固有 `min_lot_multiplier` を使う。
+    - policy 全体の `min_lot_multiplier` は fallback/soft participation 用に限定し、item の `lot_multiplier` を上書きしない。
+
+- オフライン検証:
+  - `python3 -m py_compile scripts/dynamic_alloc_worker.py workers/common/dynamic_alloc.py`
+    - pass
+  - `python3 scripts/dynamic_alloc_worker.py --lookback-days 7 --limit 0 --min-trades 12 --pf-cap 2.0 --target-use 0.88 --half-life-hours 36 --min-lot-multiplier 0.45 --max-lot-multiplier 1.65 --soft-participation 1 --allow-loser-block 0 --allow-winner-only 0`
+    - `config/dynamic_alloc.json` を再生成
+  - `load_strategy_profile()` 実測:
+    - `MomentumBurst=0.969`
+    - `MicroLevelReactor=0.902`
+    - `M1Scalper-M1=0.100`
+    - `TrendBreakout=1.000`
+    - `scalp_ping_5s_flow_live=0.218`
+
+- 期待効果:
+  - winner pocket の `micro` を厚くしつつ、`M1Scalper-M1` / `flow` / `B` のような loser を本当に薄くする。
+  - week open 後に同一 `dynamic_alloc.json` を読む worker 群が、個別最適ではなく pocket 協調付きでサイズを決める。

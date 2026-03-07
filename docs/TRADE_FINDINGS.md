@@ -8123,3 +8123,49 @@ Status:
 - 判断:
   - replay 導線は通ったが、`2026-02-12` のフル日 tick でも M1 family 3本は entry が 1 本も立たなかった。
   - live 昇格本命は引き続き `TrendBreakout`。ただし週明け前の追加判断は `longer replay window` と通常流動性帯の live canary で継続する。
+
+## 2026-03-07 11:45 JST / local-v2週末仕込み: dynamic alloc を pocket 協調化し、loader の 0.45 floor バグを修正
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json`: `bid=157.790 / ask=157.853 / spread=6.3p`
+  - tick age は `15000s` 超で土曜クローズ帯
+  - 週明け前のため live restart は実施せず、offline 仕込みのみ実施
+
+- 事実:
+  - 7d pocket 集計では `micro=+1313.5 JPY / PF(pips)=1.209` が唯一プラス。
+  - `scalp=-5908.1 JPY / PF(pips)=0.592`、`scalp_fast=-7311.7 JPY / PF(pips)=0.348` で、pocket 間の強弱差が大きい。
+  - 既存 `scripts/dynamic_alloc_worker.py` は strategy ごとの `lot_multiplier` を出していたが、
+    pocket 全体の勝ち負けは multiplier に入っていなかった。
+  - さらに `workers/common/dynamic_alloc.py` が `allocation_policy.min_lot_multiplier=0.45` を item にも強制しており、
+    `config/dynamic_alloc.json` 上で `M1Scalper-M1=0.10`, `scalp_ping_5s_flow_live=0.218` を出しても loader では `0.45` に丸められていた。
+
+- 対応:
+  - `scripts/dynamic_alloc_worker.py`
+    - strategy tag 正規化に `trendbreakout -> TrendBreakout` を追加し、重複集計を解消
+    - pocket ごとの weighted score / PF / realized JPY を計算し、`pocket_profiles` と `pocket_caps` を出力
+    - 最終 `lot_multiplier` を `strategy_lot_multiplier x pocket_lot_multiplier` に変更
+    - ただし pocket loser 内の winner（例: `TrendBreakout`）は pocket penalty を受けないよう保護
+  - `workers/common/dynamic_alloc.py`
+    - item が見つかったときは policy の `min_lot_multiplier` を強制せず、
+      `effective_min_lot_multiplier` か item 固有 `min_lot_multiplier` のみを下限として使うよう修正
+
+- 週明け向けにできた状態:
+  - `config/dynamic_alloc.json`
+    - `pocket_profiles.micro.lot_multiplier=1.14`
+    - `pocket_profiles.scalp=0.68`
+    - `pocket_profiles.scalp_fast=0.68`
+    - `MomentumBurst lot_multiplier=0.969`
+    - `MicroLevelReactor lot_multiplier=0.902`
+    - `TrendBreakout lot_multiplier=1.000`（loser pocket penalty を neutralize）
+    - `M1Scalper-M1 lot_multiplier=0.100`
+    - `scalp_ping_5s_flow_live lot_multiplier=0.218`
+
+- 検証:
+  - `python3 -m py_compile scripts/dynamic_alloc_worker.py workers/common/dynamic_alloc.py`
+  - `python3 scripts/dynamic_alloc_worker.py --lookback-days 7 --limit 0 --min-trades 12 --pf-cap 2.0 --target-use 0.88 --half-life-hours 36 --min-lot-multiplier 0.45 --max-lot-multiplier 1.65 --soft-participation 1 --allow-loser-block 0 --allow-winner-only 0`
+  - `python3 - <<'PY' ... load_strategy_profile(...) ... PY`
+    - `MomentumBurst=0.969`, `MicroLevelReactor=0.902`, `M1Scalper-M1=0.100`, `TrendBreakout=1.000`, `scalp_ping_5s_flow_live=0.218`
+
+- 狙い:
+  - 週明けに worker 群が同じ `dynamic_alloc.json` を読み、勝っている `micro` へ自動で厚く、負けている `scalp/scalp_fast` を自動で薄くする。
+  - loser の縮小が loader で無効化されていた状態を解消し、`M1Scalper-M1` / `flow` の drag を本当に落とす。

@@ -940,6 +940,21 @@ quant-manual-swing-exit.service
   - 土曜クローズ帯は live restart/verify を行わない。
   - 次回通常流動性帯の `trade_min` 起動から `TrendBreakout` が自動で載る前提で運用する。
 
+## 0-23. 2026-03-07 JST local-v2 weekend prep: dynamic alloc pocket 協調化 + loader floor 修正
+- `scripts/dynamic_alloc_worker.py`
+  - `TrendBreakout` tag の重複を正規化し、strategy multiplier に pocket multiplier を合成する。
+  - `config/dynamic_alloc.json` に `pocket_profiles` / `pocket_caps` を出力する。
+- `workers/common/dynamic_alloc.py`
+  - strategy item が見つかったとき、policy 全体の `min_lot_multiplier=0.45` を item に強制しない。
+  - `effective_min_lot_multiplier` を優先し、loser strategy の縮小を実効化する。
+- 現在の offline 生成結果:
+  - `micro=1.14`, `scalp=0.68`, `scalp_fast=0.68`
+  - `MomentumBurst=0.969`, `MicroLevelReactor=0.902`, `TrendBreakout=1.000`
+  - `M1Scalper-M1=0.100`, `scalp_ping_5s_flow_live=0.218`
+- 運用注意:
+  - 土曜クローズ帯のため live restart は実施しない。
+  - 週明けは `trade_min` restart 後、1-3h の `orders/trades` で pocket 協調の効きを確認する。
+
 ## 2026-03-06 15:35 UTC / 2026-03-07 00:35 JST - `MicroLevelReactor` の forecast / probability 縮小を緩和して lot と頻度を戻す
 
 - 背景:
