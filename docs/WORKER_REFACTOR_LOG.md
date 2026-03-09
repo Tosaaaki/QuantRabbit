@@ -5,6 +5,33 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`MomentumBurst` の `rsi_take` を thin-edge から切り離し、micro runtime に戦略別の RSI 利確バッファを追加
+
+- 対象:
+  - `workers/micro_runtime/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/workers/test_micro_runtime_exit_worker.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `workers/micro_runtime/exit_worker.py`
+    - `exit_profile` から `rsi_take_min_pips` / `rsi_take_tp_ratio` を読める helper を追加。
+    - `rsi_take` は `pnl > 0` だけでなく、戦略別の最低利益条件を満たした場合のみ通すよう変更。
+  - `config/strategy_exit_protections.yaml`
+    - `MomentumBurst.exit_profile.rsi_take_min_pips=1.6` を追加。
+  - `tests/workers/test_micro_runtime_exit_worker.py`
+    - `MomentumBurst` の `rsi_take` が `1.6p` 未満では発火せず、到達後にだけ close を出す回帰テストを追加。
+- 意図:
+  - `MomentumBurst` の `rsi_take` が `+0.1p` のような薄利で発火し、
+    spread/slippage で負け決済に反転する経路を塞ぐ。
+  - 共通 order_manager に新しい後付け EXIT 判定は足さず、
+    micro strategy ローカルの exit runtime だけで是正する。
+- 実測根拠:
+  - `transaction_id=454072 / ticket_id=454064` は `MomentumBurst` short。
+  - exit worker log は `reason=rsi_take pnl=0.10p`、実約定は `-1.5p / -81.33 JPY`。
+  - tick validate では決済後 `120s MFE=+3.0p`, `300s MFE=+5.3p`。
+
 ### 2026-03-07（追記）local read-only MCP の観測導線を軽量化し、invalid call を fail-fast 化
 
 - 対象:

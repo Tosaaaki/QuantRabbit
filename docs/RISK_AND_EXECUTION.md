@@ -8,6 +8,23 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### `MomentumBurst` thin-edge `rsi_take` 抑制（2026-03-09）
+- 背景:
+  - `transaction_id=454072 / ticket_id=454064` は `MomentumBurst` short。
+  - exit worker は `reason=rsi_take pnl=0.10p` で close を出したが、
+    実約定は `-1.5p / -81.33 JPY` へ反転した。
+  - tick validate では決済後 `120s MFE=+3.0p`, `300s MFE=+5.3p` まで利が伸びていた。
+- 実装:
+  - `workers/micro_runtime/exit_worker.py`
+    - `exit_profile.rsi_take_min_pips` / `rsi_take_tp_ratio` を参照し、
+      `rsi_take` は戦略別の最低利益条件を満たした場合のみ許可する。
+  - `config/strategy_exit_protections.yaml`
+    - `MomentumBurst.exit_profile.rsi_take_min_pips=1.6`
+- 意図:
+  - micro runtime 共通の `rsi_take` をそのまま薄利で通さず、
+    `MomentumBurst` だけを strategy-local に粘らせる。
+  - order_manager へ新しい一律 EXIT ガードは追加しない。
+
 ### `scalp_ping_5s_b_live` 収益悪化RCA反映（2026-03-04 第3段）
 - 背景:
   - 直近24hで `PF=0.416`, `win_rate=19.57%`, `net=-175.6 JPY`。

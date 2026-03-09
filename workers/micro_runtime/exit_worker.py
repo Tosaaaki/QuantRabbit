@@ -226,6 +226,14 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _rsi_take_min_pips(exit_profile: dict, tp_hint: Optional[float]) -> float:
+    threshold = _safe_float(exit_profile.get("rsi_take_min_pips")) or 0.0
+    ratio = _safe_float(exit_profile.get("rsi_take_tp_ratio"))
+    if ratio is not None and ratio > 0.0 and tp_hint is not None and tp_hint > 0.0:
+        threshold = max(threshold, float(tp_hint) * float(ratio))
+    return max(0.0, threshold)
+
+
 def _bool_env(key: str, default: bool) -> bool:
     raw = os.getenv(key)
     if raw is None:
@@ -516,6 +524,8 @@ class MicroMultiExitWorker:
             or trade.get("strategy")
             or "micro_multi"
         )
+        base_tag = _base_tag(trade) or str(strategy_tag).split("-", 1)[0]
+        exit_profile = exit_profile_for_tag(base_tag or str(strategy_tag))
         scale, _ = momentum_scale(
             pocket=POCKET,
             strategy_tag=strategy_tag,
@@ -575,8 +585,6 @@ class MicroMultiExitWorker:
         # Strategy-level "loss-cut": once a trade is beyond the point of return, exit and redeploy.
         # Configured per-strategy via config/strategy_exit_protections.yaml -> exit_profile.loss_cut_*.
         if pnl <= 0:
-            base_tag = _base_tag(trade) or str(strategy_tag).split("-", 1)[0]
-            exit_profile = exit_profile_for_tag(base_tag or str(strategy_tag))
             sl_hint = _safe_float(thesis.get("hard_stop_pips") or thesis.get("sl_pips"))
             params = resolve_loss_cut(exit_profile, sl_pips=sl_hint)
             soft_adj, hard_adj, hold_adj = apply_exit_forecast_to_loss_cut(
@@ -812,6 +820,7 @@ class MicroMultiExitWorker:
             profit_take = max(profit_take, max(1.0, state.tp_hint * 0.9))
             trail_start = max(trail_start, profit_take * 0.9)
             lock_buffer = max(lock_buffer, profit_take * 0.4)
+        rsi_take_min_pips = _rsi_take_min_pips(exit_profile, state.tp_hint)
 
         lock_trigger = max(0.8, profit_take * 0.35)
         if (
@@ -834,7 +843,7 @@ class MicroMultiExitWorker:
             self._states.pop(trade_id, None)
             return
 
-        if pnl > 0 and rsi is not None:
+        if pnl > 0 and rsi is not None and pnl >= rsi_take_min_pips:
             if side == "long" and rsi >= self.rsi_take_long:
                 await self._close(trade_id, -units, "rsi_take", pnl, client_id, bb_style=bb_style)
                 self._states.pop(trade_id, None)

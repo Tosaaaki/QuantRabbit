@@ -73,6 +73,9 @@
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
+- 2026-03-09 追記: `MomentumBurst` の micro EXIT は `rsi_take` を薄利帯で通さず、
+  `config/strategy_exit_protections.yaml` の `rsi_take_min_pips` を下限として扱う。
+  監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-02-19 追記: `scalp_macd_rsi_div_b_live` は精度改善のため
   `range-only` + divergence 閾値強化のプロファイルへ更新。
   運用値は `ops/env/quant-scalp-macd-rsi-div-b.env`、監査ログは

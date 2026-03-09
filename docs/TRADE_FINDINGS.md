@@ -23,6 +23,80 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 05:34 UTC / 2026-03-09 14:34 JST - local-v2: `MomentumBurst` の `rsi_take` が薄利で負け決済化する経路を是正
+
+Period:
+- 調査/実装: UTC `05:28-05:34` / JST `14:28-14:34`
+- 対象（実測）:
+  - `logs/trades.db`, `logs/orders.db`, `logs/metrics.db`
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+  - `logs/local_v2_stack/quant-micro-momentumburst-exit.log`
+  - `logs/replay/USD_JPY/USD_JPY_ticks_20260309.jsonl`
+  - `logs/replay/USD_JPY/USD_JPY_M1_20260309.jsonl`
+  - `logs/orderbook_snapshot.json`, `logs/oanda_account_snapshot_live.json`, `logs/oanda_open_positions_live_USD_JPY.json`
+
+Fact:
+- 市況確認（ローカル/OANDA live）:
+  - `logs/orderbook_snapshot.json` at UTC `05:34:25` / JST `14:34:25`
+    - USD/JPY `bid=158.392 / ask=158.400 / spread=0.8p`
+    - stream latency `113.3ms`
+  - `logs/metrics.db`
+    - `data_lag_ms=434-1429`
+    - `decision_latency_ms=14-24`
+    - `reject_rate=0.0` for `MomentumBurst-open_short`
+  - `logs/oanda_account_snapshot_live.json`
+    - `balance=37258.9602`, `margin_used=0.0`
+  - `logs/oanda_open_positions_live_USD_JPY.json`
+    - `long_units=0`, `short_units=0`
+- 対象約定:
+  - ユーザー提示の `454072` は `trades.transaction_id=454072` に一致し、
+    実 trade は `ticket_id=454064`, `strategy_tag=MomentumBurst`, `client_order_id=qr-1773034140605-micro-momentumc2a9d46cd`
+  - open: UTC `05:29:01.031691` / JST `14:29:01.031691`
+    - short `-5422`, entry `158.394`
+  - close: UTC `05:30:00.287523` / JST `14:30:00.287523`
+    - `MARKET_ORDER_TRADE_CLOSE`, exit `158.409`, `pl_pips=-1.5`, `realized_pl=-81.33`
+  - `logs/local_v2_stack/quant-micro-momentumburst-exit.log`
+    - UTC `05:30:00.373` / JST `14:30:00.373` で `reason=rsi_take pnl=0.10p`
+- tick 照合:
+  - `python3 ~/.codex/skills/qr-tick-entry-validate/scripts/tick_entry_validate.py --trades-db logs/trades.db --ticks logs/replay/USD_JPY/USD_JPY_ticks_20260309.jsonl --instrument USD_JPY --ticket 454064`
+  - 結果:
+    - `mae_120s=3.6p`
+    - `mfe_120s=3.0p`
+    - `mfe_300s=5.3p`
+    - `tp_touch<=300s=0/1`
+  - つまり full TP `8.37p` までは未達だが、決済後 2-5 分では short 利益側へ再度伸びていた。
+- 傾向:
+  - `trades.db` 14d の `MomentumBurst` は `MARKET_ORDER_TRADE_CLOSE=97`, `avg_pips=-2.044`, `sum_pl=-2802.22`
+  - 同期間の `TAKE_PROFIT_ORDER=76`, `avg_pips=+4.917`, `sum_pl=+8347.79`
+
+Failure Cause:
+- `workers/micro_runtime/exit_worker.py` の `rsi_take` は「`pnl > 0` かつ RSI 閾値到達」だけで発火しており、
+  `MomentumBurst` 固有の最低利益バッファを持っていなかった。
+- 今回は `mark_pnl_pips` ベースで `+0.10p` の時点で `rsi_take` が出たが、
+  fast move + spread で実約定は `-1.5p` へ反転した。
+- `orders.db` ではその後の再試行が `close_reject_profit_buffer`（`min_profit_pips=1.2`, `est_pips=1.0`）で拒否されており、
+  初回の薄利 `rsi_take` だけが通ってしまう構造が露出した。
+
+Improvement:
+- `workers/micro_runtime/exit_worker.py`
+  - `exit_profile` から `rsi_take_min_pips` / `rsi_take_tp_ratio` を読めるようにし、
+    `rsi_take` はその閾値以上の利益がある場合だけ許可する。
+- `config/strategy_exit_protections.yaml`
+  - `MomentumBurst.exit_profile.rsi_take_min_pips=1.6` を追加。
+  - これにより `MomentumBurst` の `rsi_take` は `+0.1p` のような thin edge では出ず、
+    spread/slippage を吸収できる帯まで待つ。
+
+Verification:
+- `pytest -q tests/workers/test_micro_runtime_exit_worker.py`
+- `python3 ~/.codex/skills/qr-tick-entry-validate/scripts/tick_entry_validate.py --trades-db logs/trades.db --ticks logs/replay/USD_JPY/USD_JPY_ticks_20260309.jsonl --instrument USD_JPY --ticket 454064`
+- `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-micro-momentumburst-exit`
+- `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env --services quant-micro-momentumburst-exit`
+- `sqlite3 logs/orders.db "SELECT status, COUNT(*) FROM orders WHERE client_order_id LIKE 'qr-%micro-momentum%' AND ts >= datetime('now','-24 hours') GROUP BY status"`
+  で `close_reject_profit_buffer` の churn と `rsi_take` 発火帯を監査する
+
+Status:
+- done
+
 ## 2026-03-07 13:03 UTC / 2026-03-07 22:03 JST - local-v2: counterfactual/forecast/tag解決の閉ループ欠線を docs へ反映
 
 Period:

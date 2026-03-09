@@ -533,6 +533,8 @@ strategies:
     tp_move: {trigger_pips: 2.0, buffer_pips: 1.1}
     pro_stop: {soft_pips: 5.5, hard_pips: 10.0, min_hold_sec: 306, max_hold_sec: 2382, soft_atr_mult: 0.9, hard_atr_mult: 1.5}
     exit_profile:
+      # Avoid thin RSI exits that flip negative after spread/slippage on fast USD/JPY bursts.
+      rsi_take_min_pips: 1.6
       # hard_sl_mult raised from 1.35 to 1.50 for wider SL (now ~2.0-4.4p).
       loss_cut_enabled: true
       loss_cut_require_sl: false
