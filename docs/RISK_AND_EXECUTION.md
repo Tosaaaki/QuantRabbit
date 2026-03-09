@@ -24,6 +24,27 @@
   - winner の回転数と per-trade 取り分を少し増やすが、
     以前の過大サイズへは戻さない。
 
+### micro sizing rebalance（2026-03-09）
+- 背景:
+  - 直近2h `trades.db` では
+    - `MicroLevelReactor: 153 trades / +194.92 JPY`
+    - `MomentumBurst: 3 trades / -597.77 JPY`
+  - しかし shared micro override は
+    - `MicroLevelReactor: s_mult=0.80`
+    - `MomentumBurst: s_mult=1.60`
+    と、直近 winner/loser の向きと逆に寄っていた。
+- 実装:
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT`
+      - `MomentumBurst:1.35`
+      - `MicroLevelReactor:1.10`
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=120`
+- 意図:
+  - `MomentumBurst` は entry 頻度を少し上げつつ、per-trade size を下げて集中リスクを抑える。
+  - `MicroLevelReactor` は winner 側として size を戻し、同じ entry 数でも net_jpy を増やす。
+  - 共通 order-manager / shared gate には新しい一律判定を追加しない。
+
 ### `MomentumBurst` re-acceleration entry（2026-03-09）
 - 背景:
   - `2026-03-09 14:46-14:48 JST` の USD/JPY 再下落では、

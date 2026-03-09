@@ -60,6 +60,33 @@
   - 直近3本安値 break は成立していたが、`ma10=158.4623 > ma20=158.4385` だけが未成立で、
     既存ロジックは short を返せなかった。
 
+### 2026-03-09（追記）micro sizing を winner 側へ戻し、`MomentumBurst` は頻度増に合わせて per-trade size を再配分
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT`
+      - `MomentumBurst:1.60 -> 1.35`
+      - `MicroLevelReactor:0.80 -> 1.10`
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=180 -> 120`
+- 意図:
+  - `MomentumBurst` は re-acceleration entry 追加後の回数増に備え、
+    size を少し落として frequency 側へ寄せる。
+  - `MicroLevelReactor` は直近 winner なのに shared override で細すぎたため、
+    per-trade capture を戻す。
+- 実測根拠:
+  - 直近2h `trades.db`
+    - `MicroLevelReactor: 153 trades / +194.92 JPY`
+    - `MomentumBurst: 3 trades / -597.77 JPY`
+  - `quant-micro-levelreactor.log` は `dyn=0.68`, `s_mult=0.80`, `sent units=1120 -> 483`
+  - `quant-micro-momentumburst.log` の 14:29 JST short は `dyn=0.68`, `s_mult=1.60`, `sent units=-10045`
+
 ### 2026-03-09（追記）`RangeFader` の winner flow を増やすため、entry reject 閾値を局所緩和し sizing を少し戻す
 
 - 対象:

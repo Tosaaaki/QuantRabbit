@@ -23,6 +23,66 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 06:10 UTC / 2026-03-09 15:10 JST - local-v2: micro winner の size を戻し、`MomentumBurst` は頻度増に合わせて per-trade risk を再配分
+
+Period:
+- 調査/実装: UTC `06:03-06:10` / JST `15:03-15:10`
+- 対象（実測）:
+  - `logs/health_snapshot.json`
+  - `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+  - `config/dynamic_alloc.json`
+
+Fact:
+- 市況/health:
+  - `logs/health_snapshot.json` at UTC `06:03:12` / JST `15:03:12`
+    - `data_lag_ms=681.29`
+    - `decision_latency_ms=13.41`
+    - `orders_last_ts=2026-03-09T05:52:38.745612+00:00`
+    - `trades_last_entry=2026-03-09T05:52:38.745612+00:00`
+- 直近2h損益:
+  - `trades.db`
+    - `MicroLevelReactor`: `153 trades / +194.92 JPY / avg_pips +1.085`
+    - `MomentumBurst`: `3 trades / -597.77 JPY / avg_pips -3.567`
+    - `RangeFader`: `49 trades / +77.73 JPY / avg_pips +1.567`
+- サイズ配分:
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+    - UTC `05:06-05:10` / JST `14:06-14:10` で `sent units=1120 -> 483`, `dyn=0.68`, `s_mult=0.80`
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+    - UTC `05:29:01` / JST `14:29:01` の short は `sent units=-10045`, `dyn=0.68`, `s_mult=1.60`
+  - `config/dynamic_alloc.json`
+    - `MicroLevelReactor.score=0.222`
+    - `MomentumBurst.score=0.55`
+  - つまり shared micro override が `MomentumBurst` を winner size のまま厚くし、
+    直近 winner の `MicroLevelReactor` は `s_mult=0.80` で抑え込んでいた。
+
+Failure Cause:
+- `MomentumBurst` は just-fixed の re-acceleration signal で今後エントリー回数が増える見込みだが、
+  shared micro override では still `s_mult=1.60` と大きく、直近負け局面に対して per-trade risk が重い。
+- 一方で `MicroLevelReactor` は直近2hの実績が最良なのに、
+  `s_mult=0.80` と `dyn=0.68` の積で lot が細り、利益拡大の余地を取りこぼしている。
+
+Improvement:
+- `ops/env/local-v2-stack.env`
+  - `MICRO_MULTI_STRATEGY_UNITS_MULT`
+    - `MomentumBurst:1.60 -> 1.35`
+    - `MicroLevelReactor:0.80 -> 1.10`
+- `ops/env/quant-micro-momentumburst.env`
+  - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=180 -> 120`
+  - これで `MomentumBurst` は re-acceleration 後の再投入を増やしつつ、
+    1回あたりの risk は少し落として過剰集中を避ける。
+  - `MicroLevelReactor` は current winner として size を戻し、entry 数が同じでも稼ぎを増やす。
+
+Verification:
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-momentumburst,quant-micro-levelreactor`
+- `ps eww -p <pid>` で `MICRO_MULTI_STRATEGY_UNITS_MULT` / `MICRO_MULTI_STRATEGY_COOLDOWN_SEC` の実値確認
+- `sqlite3 logs/trades.db "SELECT strategy_tag, COUNT(*), ROUND(SUM(realized_pl),2) FROM trades WHERE close_time >= datetime('now','-2 hours') GROUP BY strategy_tag ORDER BY SUM(realized_pl) DESC"`
+- `logs/local_v2_stack/quant-micro-momentumburst.log` / `logs/local_v2_stack/quant-micro-levelreactor.log` の `sent units` を増分監査
+
+Status:
+- done
+
 ## 2026-03-09 06:08 UTC / 2026-03-09 15:08 JST - local-v2: `RangeFader` の winner flow を増やすため、entry reject 閾値を局所緩和し sizing を少し戻す
 
 Period:

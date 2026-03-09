@@ -78,6 +78,11 @@
   `RANGEFADER_BASE_UNITS=12500` を現行運用値とし、
   winner flow の通過回復と軽い sizing 回復を行う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-09 追記: micro sizing は shared override を正とし、
+  `MomentumBurst:1.35`, `MicroLevelReactor:1.10` へ再配分した。
+  あわせて `quant-micro-momentumburst` は `STRATEGY_COOLDOWN_SEC=120` とし、
+  頻度増と per-trade risk の両立を狙う。
+  監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `MomentumBurst` の micro ENTRY は、反発後の再加速局面で
   recent 3-bar break と `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
   による strategy-local override を許可する。
