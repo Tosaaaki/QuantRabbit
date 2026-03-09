@@ -10253,6 +10253,24 @@ Status:
   - 初回サンプルとしては改善方向だが、`MicroTrendRetest` は約定ゼロのため有効性未判定。
   - `quant-micro-trendretest.log` には `20:00:59 JST` に `stale factors age=445.0s` 警告が出ており、entry quality とは別に factor freshness の監視は継続要。
 
+## 2026-03-09 20:42 JST - `MicroTrendRetest` が short 固定になっていて entry 頻度を削っていた
+
+- 市況確認:
+  - `USD/JPY` 直近 tick は `158.472 / 158.480`、spread `0.8 pips`。
+  - `factor_cache M1 close=158.466`, `atr_pips=2.69`。
+  - `logs/health_snapshot.json` は `data_lag_ms=205.9`, `decision_latency_ms=11.03`。
+
+- 実測:
+  - 直近 `30m` は `0 trades`、直近 `1h` は `1 trade` のみ。
+  - `orders.db` でも直近 `1h` は `preflight_start=1 / filled=1` で、`entry_probability_reject` や `perf_block` が主因ではなかった。
+  - `quant-micro-trendretest.log` は worker start 時に `signal_tag_contains=short` を出しており、
+    dedicated env `ops/env/quant-micro-trendretest.env` に `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short` が残っていた。
+  - その結果、`MicroTrendRetest` は strategy 自体が `OPEN_LONG` を返しても worker 層で long tag を拾えず、entry 頻度が構造的に落ちていた。
+
+- 判断:
+  - これは `long/short を指標状態で対称に扱う` という現行方針と矛盾する。
+  - 頻度低下の明確な構成要因なので、`signal_tag_contains=short` は撤去して両方向通過へ戻す。
+
 ## 2026-03-09 20:17 JST - local Brain を観測専用から profit-oriented PDCA へ切り替え
 
 - 市況確認:

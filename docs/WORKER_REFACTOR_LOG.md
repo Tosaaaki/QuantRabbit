@@ -13807,6 +13807,18 @@
   - 共通 gate で事後的に選別するのではなく、strategy 自身が live factor と higher-TF context を使って entry quality を判断する。
   - 敗因分析を `side` ではなく `indicator state cluster` で行い、同じ guard を両方向へ効かせる。
 
+## 2026-03-09 20:42 JST - `quant-micro-trendretest` の short 固定 tag filter を撤去
+
+- 対象:
+  - `ops/env/quant-micro-trendretest.env`
+
+- 変更:
+  - `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short` を削除し、`MicroTrendRetest` worker が `OPEN_LONG` / `OPEN_SHORT` の両方を拾える状態へ戻した。
+
+- 意図:
+  - dedicated worker の allowlist は維持しつつ、direction を env で片側固定しない。
+  - strategy-local の quality guard で選別し、worker 層では side を事前に捨てない。
+
 ## 2026-03-09 20:17 JST - local Brain safe lane を profit-oriented PDCA へ更新
 
 - 対象:

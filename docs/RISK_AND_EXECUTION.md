@@ -2259,3 +2259,8 @@
 - 収益悪化の改善は `long/short` の片側最適化で閉じず、`pattern_tag`, `RSI`, `ADX`, `MA gap`, `trend_snapshot`, `divergence`, `連続バー偏り` を使って敗因 cluster を作る。
 - 改善は共通 post-hoc gate ではなく、strategy-local の `quality guard` として両方向へ対称に入れる。
 - micro runtime は strategy 判定前に `mtf` と `trend_snapshot` を供給し、戦略が live でも higher-TF conflict を自力で拒否できる状態を正とする。
+
+### 2026-03-09 `MicroTrendRetest` direction filter の整理
+- `quant-micro-trendretest` の dedicated env では `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short` を置かない。
+- direction の片側固定は worker 層で行わず、`MicroTrendRetest` 本体の symmetric quality guard に委ねる。
+- 頻度低下の原因が env の side filter にある場合は、strategy を止める前にまず dedicated env を点検する。
