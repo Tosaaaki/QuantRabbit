@@ -239,8 +239,10 @@ scripts/runtime_ui.sh logs
 `scripts/open_runtime_ui.command` をダブルクリックすると UI を起動してブラウザを開く。
 
 ## 3. ローカルLLM設定（任意）
-- 既定は `BRAIN_ENABLED=0` / `ORDER_MANAGER_BRAIN_GATE_ENABLED=0`。週明けに使う場合も、
-  まず `python3 scripts/prepare_local_brain_canary.py` で safe canary readiness を更新/確認する。
+- 現行既定は `ops/env/local-v2-stack.env` の
+  `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env`。
+  `trade_min` の manual restart / watchdog / launchd 復旧でも safe canary が追随する。
+- 使う前に `python3 scripts/prepare_local_brain_canary.py` で safe canary readiness を更新/確認する。
 - safe canary profile:
   - `ops/env/profiles/brain-ollama-safe.env`
   - micro pocket のみ
@@ -252,7 +254,7 @@ scripts/runtime_ui.sh logs
 ```bash
 python3 scripts/prepare_local_brain_canary.py
 scripts/local_v2_stack.sh restart --profile trade_min \
-  --env ops/env/local-v2-stack.env,ops/env/profiles/brain-ollama-safe.env \
+  --env ops/env/local-v2-stack.env \
   --services quant-order-manager,quant-strategy-control
 ```
 - aggressive profile は `ops/env/profiles/brain-ollama.env` を使うが、全 pocket + auto-tune のため、

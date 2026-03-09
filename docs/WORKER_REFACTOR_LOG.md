@@ -13238,3 +13238,39 @@
     hard reject せず OANDA submit まで到達させる。
   - `scalp_ping_5s_b/d` は live cost が forecast edge を上回る局面だったため、
     数だけ増やす緩和は採らない。
+
+## 2026-03-09 JST - local-v2 Brain safe canary を env 既定へ戻し、watchdog/launchd 再起動でも維持
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+
+- 背景:
+  - 2026-03-09 15:13 JST の `quant-order-manager` 再起動では、
+    env chain が `quant-v2-runtime.env -> quant-order-manager.env -> local-v2-stack.env`
+    で終わり、週末に手動合成した `brain-ollama-safe.env` が脱落していた。
+  - その結果、実効 Brain 設定は `BRAIN_ENABLED=0` / `ORDER_MANAGER_BRAIN_GATE_ENABLED=0` に戻り、
+    `brain_state.db` の `brain_decisions` も当日 `0件` だった。
+
+- 変更:
+  - `ops/env/local-v2-stack.env`
+    - `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を設定。
+    - これで `local_v2_stack` の manual restart、watchdog、launchd one-shot が
+      同じ safe canary を自動合成する。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+    - local-v2 の既定が safe canary 追随であることと、
+      反映コマンドが `--env ops/env/local-v2-stack.env` 単体で足りることを明記。
+
+- 意図:
+  - 週末の「手動で Brain を載せた状態」を月曜の自動復旧導線でも維持し、
+    `shadow` のまま micro pocket の live 監査を継続できるようにする。
+
+- 検証:
+  - `python3 scripts/prepare_local_brain_canary.py --warmup` は
+    2026-03-09 15:26 JST 時点で `market_ready=true`, `quality_gate_ok=true`,
+    `ollama_ready=true`, `enable_recommended=true`。
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-order-manager,quant-strategy-control`
+    実行後、`quant-order-manager.log` の最新 env chain は
+    `... -> override=/Users/tossaki/App/QuantRabbit/ops/env/local-v2-stack.env -> extra=/Users/tossaki/App/QuantRabbit/ops/env/profiles/brain-ollama-safe.env`。
+  - 同起動の effective env は `BRAIN_ENABLED=1`, `ORDER_MANAGER_BRAIN_GATE_ENABLED=1`,
+    `BRAIN_OLLAMA_MODEL=qwen2.5:7b` を示した。

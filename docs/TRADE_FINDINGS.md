@@ -9356,3 +9356,49 @@ Status:
   2. `RangeFader` の `entry_probability_below_min_units` が減少し、
      `submit_attempt/filled` が出ること。
   3. `data_lag_ms` / `decision_latency_ms` が引き続き平常圏を維持すること。
+
+## 2026-03-09 06:20 UTC / 2026-03-09 15:20 JST - local-v2 の Brain safe canary が restart で脱落していたため、default env 合成へ戻す
+
+- 市況確認:
+  - OANDA 直照会の USD/JPY は `bid=158.470 / ask=158.478 / spread=0.8p`。
+  - `M5 x24` の平均レンジは `8.60p`、直近14本 ATR proxy は `9.58p`、直近30分レンジは `12.4p`。
+  - OANDA API は `pricing=260ms`, `summary=205ms`, `openTrades=281ms`, `candles=215ms` で全て `200`。
+  - `logs/health_snapshot.json` は `data_lag_ms=694.8`, `decision_latency_ms=20.1`, `trades_count_24h=275`。
+
+- 実測:
+  - `logs/local_v2_stack/quant-order-manager.log` の 2026-03-09 14:59 / 15:08 / 15:13 JST 再起動では、
+    env chain が `quant-v2-runtime.env -> quant-order-manager.env -> local-v2-stack.env` までで止まり、
+    safe profile が読まれていなかった。
+  - 実効設定も `BRAIN_ENABLED=0`, `ORDER_MANAGER_BRAIN_GATE_ENABLED=0` で、
+    `logs/brain_state.db` の `brain_decisions` 直近24h は `0件`。
+  - つまり週末に手動で入れた safe profile は、月曜の restart/watchdog 導線では持続していなかった。
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を設定。
+    - これで `scripts/local_v2_stack.sh --env ops/env/local-v2-stack.env` の restart と
+      watchdog / launchd 復旧が同じ safe Brain canary を自動で合成する。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+    - local-v2 の既定が safe canary 追随であることを明記し、
+      反映コマンド例を `--env ops/env/local-v2-stack.env` のみへ更新。
+
+- 反映:
+  - `python3 scripts/prepare_local_brain_canary.py --warmup`
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-order-manager,quant-strategy-control`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+
+- 検証結果:
+  - `prepare_local_brain_canary.py --warmup` の 2026-03-09 15:26 JST 出力は
+    `market_ready=true`, `quality_gate_ok=true`, `ollama_ready=true`, `enable_recommended=true`。
+  - `quant-order-manager.log` の 2026-03-09 15:27 JST 最新起動では、
+    env chain に `extra=/Users/tossaki/App/QuantRabbit/ops/env/profiles/brain-ollama-safe.env` が出て、
+    effective env も `BRAIN_ENABLED=1`, `ORDER_MANAGER_BRAIN_GATE_ENABLED=1`,
+    `BRAIN_OLLAMA_MODEL=qwen2.5:7b` へ戻った。
+  - `quant-strategy-control.log` も同時刻の env chain で `extra=/Users/tossaki/App/QuantRabbit/ops/env/profiles/brain-ollama-safe.env` を読んでいる。
+  - `local_v2_stack status` では core 4 がすべて `running`。
+  - 反映後 2 分（15:27-15:29 JST）は新規 order が入らず、
+    `orders.db` の `brain_shadow` / `brain_block` と `brain_state.db` の当日 `brain_decisions` はまだ未発火。
+
+- 次の確認点:
+  1. 反映後最初の micro preflight で `orders.db` に `brain_shadow` が出ること。
+  2. `brain_state.db` に 2026-03-09 JST の `brain_decisions` 行が再開すること。
