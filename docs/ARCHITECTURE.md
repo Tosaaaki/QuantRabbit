@@ -31,6 +31,12 @@
 ## 3. ライフサイクル
 - Startup: `env.toml` 読込 → Secrets 確認 → 各サービス起動。
 - 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+- `workers/micro_runtime/worker.py` は local-v2 で recent M1 の `micro_chop` 文脈
+  （sign flip / directional efficiency / mean range）を算出し、
+  `entry_thesis.micro_chop` と strategy-local size tilt に反映する。
+  この文脈は `MicroLevelReactor` の strict range override と
+  `MomentumBurst` の strategy-local confidence 減衰にだけ使い、
+  `quant-order-manager` へ新しい共通選別ロジックは追加しない。
 - `quant-scalp-extrema-reversal` は `workers/scalp_extrema_reversal/worker.py` で
   高値/安値の極値帯（M1レンジ上端/下端）+ tick 反転を同時に満たしたときのみ
   両方向（short/long）を出す専用ワーカーとして運用する。

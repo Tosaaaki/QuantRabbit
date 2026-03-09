@@ -295,6 +295,23 @@ def _trend_snapshot(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict):
     return None
 
 
+def _strategy_fac_view(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict) -> Dict:
+    fac = dict(fac_m1 or {})
+    mtf: Dict[str, object] = {}
+    if fac_m5.get("candles"):
+        mtf["candles_m5"] = fac_m5.get("candles")
+    if fac_h1.get("candles"):
+        mtf["candles_h1"] = fac_h1.get("candles")
+    if fac_h4.get("candles"):
+        mtf["candles_h4"] = fac_h4.get("candles")
+    if mtf:
+        fac["mtf"] = mtf
+    trend = _trend_snapshot(fac_m1, fac_m5, fac_h1, fac_h4)
+    if trend:
+        fac["trend_snapshot"] = trend
+    return fac
+
+
 _PULLBACK_MTF_M5_GAP_MIN_PIPS = 0.55
 _PULLBACK_MTF_M5_ADX_MIN = 17.0
 _PULLBACK_MTF_H1_GAP_NEUTRAL_PIPS = 1.2
@@ -413,6 +430,117 @@ _RANGE_TREND_ALLOWLIST = {name for name in config.RANGE_ONLY_TREND_ALLOWLIST}
 _HISTORY_PROFILE_CACHE: Dict[Tuple[str, str, str], tuple[float, Dict[str, object]]] = {}
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def _context_scaled_multiplier(target_mult: float, intensity: float) -> float:
+    mult = float(target_mult or 1.0)
+    score = _clamp01(float(intensity or 0.0))
+    if score <= 0.0 or abs(mult - 1.0) <= 1e-9:
+        return 1.0
+    if mult > 1.0:
+        return 1.0 + (mult - 1.0) * score
+    if mult <= 0.0:
+        return 1.0
+    return 1.0 - (1.0 - mult) * score
+
+
+def _extract_m1_candle_rows(raw_candles, *, lookback: int) -> List[Dict[str, float]]:
+    rows: List[Dict[str, float]] = []
+    if not isinstance(raw_candles, list):
+        return rows
+    for item in raw_candles[-max(lookback, 2):]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            open_px = float(item.get("open") or item.get("o") or item.get("O"))
+            high_px = float(item.get("high") or item.get("h") or item.get("H"))
+            low_px = float(item.get("low") or item.get("l") or item.get("L"))
+            close_px = float(item.get("close") or item.get("c") or item.get("C"))
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            {
+                "open": open_px,
+                "high": high_px,
+                "low": low_px,
+                "close": close_px,
+            }
+        )
+    return rows
+
+
+def _micro_chop_context(fac_m1: Dict) -> Dict[str, float]:
+    inactive = {
+        "active": False,
+        "score": 0.0,
+        "bars": 0.0,
+        "mean_range_pips": 0.0,
+        "sign_flip_ratio": 0.0,
+        "directional_eff": 1.0,
+        "path_move_pips": 0.0,
+        "net_move_pips": 0.0,
+    }
+    if not config.CHOP_ENABLED:
+        return inactive
+
+    lookback = max(4, int(config.CHOP_LOOKBACK_BARS))
+    candles = fac_m1.get("candles")
+    if not isinstance(candles, list) or len(candles) < lookback:
+        candles = get_candles_snapshot("M1", limit=lookback, include_live=True)
+    rows = _extract_m1_candle_rows(candles, lookback=lookback)
+    if len(rows) < lookback:
+        return inactive
+
+    diffs = [rows[idx]["close"] - rows[idx - 1]["close"] for idx in range(1, len(rows))]
+    if not diffs:
+        return inactive
+
+    path_move_pips = sum(abs(diff) / _BB_PIP for diff in diffs)
+    net_move_pips = abs(rows[-1]["close"] - rows[0]["open"]) / _BB_PIP
+    sign_flips = sum(1 for prev, cur in zip(diffs, diffs[1:]) if prev * cur < 0.0)
+    sign_flip_ratio = sign_flips / max(1, len(diffs) - 1)
+    mean_range_pips = sum((row["high"] - row["low"]) / _BB_PIP for row in rows) / max(1, len(rows))
+    directional_eff = net_move_pips / max(path_move_pips, 1e-9)
+    active = bool(
+        mean_range_pips >= config.CHOP_MEAN_RANGE_MIN_PIPS
+        and sign_flip_ratio >= config.CHOP_SIGN_FLIP_MIN
+        and directional_eff <= config.CHOP_DIRECTIONAL_EFF_MAX
+    )
+    score = _clamp01(
+        0.35 * _clamp01(sign_flip_ratio / max(config.CHOP_SIGN_FLIP_MIN, 1e-9))
+        + 0.45
+        * _clamp01(
+            (config.CHOP_DIRECTIONAL_EFF_MAX - directional_eff)
+            / max(config.CHOP_DIRECTIONAL_EFF_MAX, 1e-9)
+        )
+        + 0.20 * _clamp01(mean_range_pips / max(config.CHOP_MEAN_RANGE_MIN_PIPS, 1e-9))
+    )
+    return {
+        "active": active,
+        "score": score,
+        "bars": float(len(rows)),
+        "mean_range_pips": mean_range_pips,
+        "sign_flip_ratio": sign_flip_ratio,
+        "directional_eff": directional_eff,
+        "path_move_pips": path_move_pips,
+        "net_move_pips": net_move_pips,
+    }
+
+
+def _strategy_chop_score_adjustment(strategy_name: str, chop_ctx: Dict[str, float]) -> float:
+    if not chop_ctx.get("active"):
+        return 0.0
+    score = _clamp01(float(chop_ctx.get("score", 0.0) or 0.0))
+    bonus = float(config.CHOP_STRATEGY_SCORE_BONUS.get(strategy_name, 0.0) or 0.0)
+    penalty = float(config.CHOP_STRATEGY_SCORE_PENALTY.get(strategy_name, 0.0) or 0.0)
+    return (bonus - penalty) * score
+
+
+def _strategy_chop_units_multiplier(strategy_name: str, chop_ctx: Dict[str, float]) -> float:
+    if not chop_ctx.get("active"):
+        return 1.0
+    target_mult = float(config.CHOP_STRATEGY_UNITS_MULT.get(strategy_name, 1.0) or 1.0)
+    return _context_scaled_multiplier(target_mult, float(chop_ctx.get("score", 0.0) or 0.0))
 
 
 def _normalize_tag_key(raw: object) -> str:
@@ -937,6 +1065,7 @@ def _mlr_strict_range_ok(
     *,
     range_active: bool,
     range_score: float,
+    chop_ctx: Optional[Dict[str, float]] = None,
 ) -> tuple[bool, Dict[str, float]]:
     if not config.MLR_STRICT_RANGE_GATE:
         return True, {}
@@ -952,12 +1081,32 @@ def _mlr_strict_range_ok(
     adx_ok = config.MLR_MAX_ADX <= 0.0 or adx_val <= config.MLR_MAX_ADX
     ma_gap_ok = config.MLR_MAX_MA_GAP_PIPS <= 0.0 or ma_gap_pips <= config.MLR_MAX_MA_GAP_PIPS
     allow = bool(range_ready and adx_ok and ma_gap_ok)
+    chop_active = bool((chop_ctx or {}).get("active"))
+    chop_score = float((chop_ctx or {}).get("score", 0.0) or 0.0)
+    chop_override = False
+    if (
+        not allow
+        and config.MLR_CHOP_OVERRIDE_ENABLED
+        and chop_active
+        and chop_score >= config.MLR_CHOP_SCORE_MIN
+    ):
+        chop_adx_ok = config.MLR_CHOP_MAX_ADX <= 0.0 or adx_val <= config.MLR_CHOP_MAX_ADX
+        chop_ma_gap_ok = (
+            config.MLR_CHOP_MAX_MA_GAP_PIPS <= 0.0
+            or ma_gap_pips <= config.MLR_CHOP_MAX_MA_GAP_PIPS
+        )
+        chop_override = bool(chop_adx_ok and chop_ma_gap_ok)
+        if chop_override:
+            allow = True
 
     diag = {
         "range_active": 1.0 if range_active else 0.0,
         "range_score": float(range_score),
         "adx": float(adx_val),
         "ma_gap_pips": float(ma_gap_pips),
+        "chop_active": 1.0 if chop_active else 0.0,
+        "chop_score": float(chop_score),
+        "chop_override": 1.0 if chop_override else 0.0,
     }
     return allow, diag
 
@@ -1225,11 +1374,23 @@ async def micro_multi_worker() -> None:
             range_score = 0.0
         range_only = range_ctx.active or range_score >= config.RANGE_ONLY_SCORE
         range_bias = range_score >= config.RANGE_BIAS_SCORE
+        chop_ctx = _micro_chop_context(fac_m1)
         fac_m1 = dict(fac_m1)
         fac_m1["range_active"] = bool(range_ctx.active)
         fac_m1["range_score"] = range_score
         fac_m1["range_reason"] = range_ctx.reason
         fac_m1["range_mode"] = range_ctx.mode
+        fac_m1["micro_chop_active"] = bool(chop_ctx.get("active"))
+        fac_m1["micro_chop_score"] = float(chop_ctx.get("score", 0.0) or 0.0)
+        fac_m1["micro_chop_sign_flip_ratio"] = float(
+            chop_ctx.get("sign_flip_ratio", 0.0) or 0.0
+        )
+        fac_m1["micro_chop_directional_eff"] = float(
+            chop_ctx.get("directional_eff", 1.0) or 1.0
+        )
+        fac_m1["micro_chop_mean_range_pips"] = float(
+            chop_ctx.get("mean_range_pips", 0.0) or 0.0
+        )
         regime_label = _normalize_regime_label(fac_m1.get("regime"))
         if not regime_label:
             regime_label = _normalize_regime_label(current_regime("M1", event_mode=False))
@@ -1240,6 +1401,7 @@ async def micro_multi_worker() -> None:
         except Exception:
             pf = None
 
+        strategy_fac = _strategy_fac_view(fac_m1, fac_m5, fac_h1, fac_h4)
         candidates: List[Tuple[float, int, Dict, str, Dict[str, object], Dict[str, object]]] = []
         for strat in _strategy_list():
             strategy_name = getattr(strat, "name", strat.__name__)
@@ -1271,21 +1433,23 @@ async def micro_multi_worker() -> None:
                     fac_m1,
                     range_active=bool(range_ctx.active),
                     range_score=range_score,
+                    chop_ctx=chop_ctx,
                 )
                 if not mlr_ok:
                     now_mono = time.monotonic()
                     if now_mono - last_mlr_block_log > 120.0:
                         LOG.info(
-                            "%s mlr_range_gate_block active=%s score=%.3f adx=%.2f ma_gap=%.2f",
+                            "%s mlr_range_gate_block active=%s score=%.3f adx=%.2f ma_gap=%.2f chop=%.3f",
                             config.LOG_PREFIX,
                             bool(mlr_diag.get("range_active")),
                             float(mlr_diag.get("range_score", 0.0)),
                             float(mlr_diag.get("adx", 0.0)),
                             float(mlr_diag.get("ma_gap_pips", 0.0)),
+                            float(mlr_diag.get("chop_score", 0.0)),
                         )
                         last_mlr_block_log = now_mono
                     continue
-            cand = strat.check(fac_m1)
+            cand = strat.check(strategy_fac)
             if not cand:
                 continue
             if strategy_name == MicroPullbackEMA.name:
@@ -1623,6 +1787,10 @@ async def micro_multi_worker() -> None:
                 strategy_units_mult = float(config.STRATEGY_UNITS_MULT.get(base_tag, 1.0) or 1.0)
             if strategy_units_mult <= 0.0:
                 strategy_units_mult = 1.0
+            chop_units_mult = _strategy_chop_units_multiplier(
+                base_tag or strategy_name,
+                chop_ctx,
+            )
             if isinstance(hist_profile, dict):
                 hist_mult = float(hist_profile.get("lot_multiplier", 1.0) or 1.0)
                 hist_mult = max(config.HIST_LOT_MIN, min(config.HIST_LOT_MAX, hist_mult))
@@ -1658,6 +1826,7 @@ async def micro_multi_worker() -> None:
             units = int(round(units * hist_mult))
             units = int(round(units * dyn_mult))
             units = int(round(units * strategy_units_mult))
+            units = int(round(units * chop_units_mult))
             if units < config.MIN_UNITS:
                 continue
             if side == "short":
@@ -1734,6 +1903,25 @@ async def micro_multi_worker() -> None:
                 }
             if abs(strategy_units_mult - 1.0) > 1e-9:
                 entry_thesis["strategy_units_mult"] = round(strategy_units_mult, 3)
+            if bool(chop_ctx.get("active")) or float(chop_ctx.get("score", 0.0) or 0.0) > 0.0:
+                entry_thesis["micro_chop"] = {
+                    "active": bool(chop_ctx.get("active")),
+                    "score": round(float(chop_ctx.get("score", 0.0) or 0.0), 3),
+                    "sign_flip_ratio": round(
+                        float(chop_ctx.get("sign_flip_ratio", 0.0) or 0.0),
+                        3,
+                    ),
+                    "directional_eff": round(
+                        float(chop_ctx.get("directional_eff", 0.0) or 0.0),
+                        3,
+                    ),
+                    "mean_range_pips": round(
+                        float(chop_ctx.get("mean_range_pips", 0.0) or 0.0),
+                        3,
+                    ),
+                }
+                if abs(chop_units_mult - 1.0) > 1e-9:
+                    entry_thesis["micro_chop_units_mult"] = round(chop_units_mult, 3)
             if div_meta:
                 entry_thesis["divergence"] = div_meta
             if trend_snapshot:

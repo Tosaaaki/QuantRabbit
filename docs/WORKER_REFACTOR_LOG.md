@@ -5,6 +5,59 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）local-v2 の微益側を優先するため、micro runtime に chop 文脈を追加し `MomentumBurst` / `MicroLevelReactor` を strategy-local に再配分
+
+- 対象:
+  - `workers/micro_runtime/config.py`
+  - `workers/micro_runtime/worker.py`
+  - `strategies/micro/momentum_burst.py`
+  - `ops/env/local-v2-stack.env`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `ops/env/quant-scalp-rangefader.env`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/ARCHITECTURE.md`
+  - `AGENTS.md`
+- 変更:
+  - `workers/micro_runtime/worker.py`
+    - recent M1 candles から `micro_chop` 文脈を算出し、`fac_m1` / `entry_thesis` へ記録。
+    - `MicroLevelReactor` の strict range gate は、`range_score` が弱くても
+      chop score が十分で `ADX` / `MA gap` が緩い上限内なら strategy-local override で通す。
+    - units 計算に `MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT` を追加し、
+      chop 時は `MomentumBurst` を縮小、`MicroLevelReactor` を加算できるようにした。
+  - `strategies/micro/momentum_burst.py`
+    - `range_active/range_score/micro_chop_*` を読み、
+      reaccel でない signal は strategy-local に confidence を減衰、強い chop/range では skip する。
+    - 反対に `reaccel` signal はその文脈でも通し、trend day の大取り導線は残す。
+  - env:
+    - `local-v2-stack.env`
+      - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.05, MicroLevelReactor:1.35`
+      - `MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT=MomentumBurst:0.74, MicroLevelReactor:1.22`
+      - MLR chop override 閾値を追加。
+    - `quant-micro-momentumburst.env`
+      - context tilt 閾値 (`RANGE_SCORE_SOFT_MAX=0.34`, `CHOP_SCORE_SOFT_MAX=0.58`, `CONTEXT_BLOCK_THRESHOLD=0.92`) を追加。
+    - `quant-scalp-rangefader.env`
+      - `RANGEFADER_BASE_UNITS=14000` へ増量。
+- 意図:
+  - 2026-03-09 JST 11-15 時台に利益源だった `MicroLevelReactor` / `RangeFader` を chop 帯で維持し、
+    17-18:30 JST に毀損した `MomentumBurst` は地合い不一致時だけ縮小する。
+  - shared order-manager や共通 gate を緩めず、
+    strategy-local entry / size だけで「大きく取る」と「細かく取る」の二刀流を分離する。
+- 実測根拠:
+  - `pdca_profitability_report.py`（2026-03-09 18:30 JST）
+    - `USD/JPY mid=158.435`, `spread=0.8p`, `open_trades=0`
+    - 24h: `313 trades`, `PF(pips)=1.72`, `net_jpy=-686.78`
+    - strategy別: `MomentumBurst -730.78 JPY`, `MicroLevelReactor +99.22 JPY`, `RangeFader +54.30 JPY`
+  - `trades.db`
+    - JST 11-15: `MicroLevelReactor +254.2 JPY`, `RangeFader +77.7 JPY`
+    - JST 17-18:30: `MomentumBurst -283.8 JPY`, `RangeFader -43.0 JPY`
+  - `quant-micro-levelreactor.log`
+    - `mlr_range_gate_block active=False ...` が 18:23-18:27 JST に連続。
+  - `quant-market-data-feed.log`
+    - 17:45-17:48 JST に pricing reconnect failure があったが、その後 `200 OK` で復旧。
+
 ### 2026-03-09（追記）`MomentumBurst` の staircase 条件を 1 本ノイズ許容へ緩和し、strategy-local に再加速の取りこぼしを減らす
 
 - 対象:

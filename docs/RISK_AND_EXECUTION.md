@@ -8,6 +8,42 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 micro chop tilt / fine-profit rebalance（2026-03-09）
+- 背景:
+  - `pdca_profitability_report.py` の `2026-03-09 18:30 JST` 集計では
+    24h `313 trades / PF(pips)=1.72 / net_jpy=-686.78`。
+  - 同集計と `trades.db` の時間帯分解では、
+    JST `11-15` は `MicroLevelReactor +254.2 JPY`, `RangeFader +77.7 JPY` が微益の本体。
+    逆に JST `17-18:30` は `MomentumBurst -283.8 JPY`, `RangeFader -43.0 JPY` と崩れた。
+  - `quant-micro-levelreactor.log` では `18:23-18:27 JST` に
+    `mlr_range_gate_block active=False` が連続し、微益側の主力が止まっていた。
+- 実装:
+  - `workers/micro_runtime/worker.py`
+    - recent M1 candles から `micro_chop_active/score/sign_flip_ratio/directional_eff/mean_range_pips`
+      を算出し、`fac_m1` と `entry_thesis.micro_chop` へ記録する。
+    - `MicroLevelReactor` の strict range gate は
+      `MICRO_MULTI_MLR_CHOP_*` の上限内なら chop override で通せる。
+    - units 計算に `MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT` を追加し、
+      chop 時は `MomentumBurst:0.74`, `MicroLevelReactor:1.22` の文脈倍率を掛ける。
+  - `strategies/micro/momentum_burst.py`
+    - `range_active/range_score/micro_chop_*` を読み、
+      reaccel 以外の signal は strategy-local に confidence を減衰し、
+      強い chop/range では skip する。
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.05,MicroLevelReactor:1.35`
+    - chop / MLR override の現行運用値を追加。
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MOMENTUMBURST_RANGE_SCORE_SOFT_MAX=0.34`
+    - `MOMENTUMBURST_CHOP_SCORE_SOFT_MAX=0.58`
+    - `MOMENTUMBURST_CONTEXT_CONF_PENALTY_MAX=18`
+    - `MOMENTUMBURST_CONTEXT_BLOCK_THRESHOLD=0.92`
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_BASE_UNITS=14000`
+- 意図:
+  - chop/range 帯で微益側を止めにくくしつつ、
+    `MomentumBurst` は地合い不一致時だけ strategy-local に薄くする。
+  - 共通 order-manager や shared gate に新しい一律選別は追加しない。
+
 ### `MomentumBurst` staircase easing（2026-03-09）
 - 背景:
   - UTC `07:24` / JST `16:24` の OANDA live は

@@ -126,11 +126,32 @@ RANGE_ONLY_TREND_ALLOWLIST = _parse_csv(
     os.getenv("MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST", "")
 )
 
+# Recent micro-structure tilt: boost choppy/range-friendly strategies and
+# downsize momentum continuation when the last few M1 bars are rotational.
+CHOP_ENABLED = _bool("MICRO_MULTI_CHOP_ENABLED", True)
+CHOP_LOOKBACK_BARS = int(os.getenv("MICRO_MULTI_CHOP_LOOKBACK_BARS", "12"))
+CHOP_SIGN_FLIP_MIN = float(os.getenv("MICRO_MULTI_CHOP_SIGN_FLIP_MIN", "0.42"))
+CHOP_DIRECTIONAL_EFF_MAX = float(os.getenv("MICRO_MULTI_CHOP_DIRECTIONAL_EFF_MAX", "0.18"))
+CHOP_MEAN_RANGE_MIN_PIPS = float(os.getenv("MICRO_MULTI_CHOP_MEAN_RANGE_MIN_PIPS", "2.0"))
+CHOP_STRATEGY_SCORE_BONUS = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_CHOP_STRATEGY_SCORE_BONUS", "")
+)
+CHOP_STRATEGY_SCORE_PENALTY = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_CHOP_STRATEGY_SCORE_PENALTY", "")
+)
+CHOP_STRATEGY_UNITS_MULT = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT", "")
+)
+
 # MicroLevelReactor safety gate: require stronger range context to avoid trend-side stop cascades.
 MLR_STRICT_RANGE_GATE = _bool("MICRO_MULTI_MLR_STRICT_RANGE_GATE", True)
 MLR_MIN_RANGE_SCORE = float(os.getenv("MICRO_MULTI_MLR_MIN_RANGE_SCORE", "0.62"))
 MLR_MAX_ADX = float(os.getenv("MICRO_MULTI_MLR_MAX_ADX", "20.0"))
 MLR_MAX_MA_GAP_PIPS = float(os.getenv("MICRO_MULTI_MLR_MAX_MA_GAP_PIPS", "2.2"))
+MLR_CHOP_OVERRIDE_ENABLED = _bool("MICRO_MULTI_MLR_CHOP_OVERRIDE_ENABLED", True)
+MLR_CHOP_SCORE_MIN = float(os.getenv("MICRO_MULTI_MLR_CHOP_SCORE_MIN", "0.55"))
+MLR_CHOP_MAX_ADX = float(os.getenv("MICRO_MULTI_MLR_CHOP_MAX_ADX", "42.0"))
+MLR_CHOP_MAX_MA_GAP_PIPS = float(os.getenv("MICRO_MULTI_MLR_CHOP_MAX_MA_GAP_PIPS", "4.8"))
 
 # Strategy diversity: promote idle strategies without inflating risk sizing.
 DIVERSITY_ENABLED = os.getenv("MICRO_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {

@@ -155,6 +155,65 @@ def test_mlr_strict_range_gate_allows_strong_range_context(monkeypatch):
     assert diag["range_active"] == 1.0
 
 
+def test_micro_chop_context_detects_rotational_m1(monkeypatch):
+    monkeypatch.setattr(worker.config, "CHOP_ENABLED", True)
+    monkeypatch.setattr(worker.config, "CHOP_LOOKBACK_BARS", 6)
+    monkeypatch.setattr(worker.config, "CHOP_SIGN_FLIP_MIN", 0.40)
+    monkeypatch.setattr(worker.config, "CHOP_DIRECTIONAL_EFF_MAX", 0.20)
+    monkeypatch.setattr(worker.config, "CHOP_MEAN_RANGE_MIN_PIPS", 2.0)
+
+    ctx = worker._micro_chop_context(
+        {
+            "candles": [
+                {"open": 150.00, "high": 150.03, "low": 149.99, "close": 150.02},
+                {"open": 150.02, "high": 150.03, "low": 149.99, "close": 150.00},
+                {"open": 150.00, "high": 150.04, "low": 149.99, "close": 150.03},
+                {"open": 150.03, "high": 150.04, "low": 150.00, "close": 150.01},
+                {"open": 150.01, "high": 150.05, "low": 150.00, "close": 150.04},
+                {"open": 150.04, "high": 150.05, "low": 150.01, "close": 150.02},
+            ]
+        }
+    )
+
+    assert ctx["active"] is True
+    assert ctx["score"] > 0.55
+    assert ctx["sign_flip_ratio"] >= 0.40
+    assert ctx["directional_eff"] <= 0.20
+
+
+def test_mlr_strict_range_gate_allows_chop_override(monkeypatch):
+    monkeypatch.setattr(worker.config, "MLR_STRICT_RANGE_GATE", True)
+    monkeypatch.setattr(worker.config, "MLR_MIN_RANGE_SCORE", 0.62)
+    monkeypatch.setattr(worker.config, "MLR_MAX_ADX", 20.0)
+    monkeypatch.setattr(worker.config, "MLR_MAX_MA_GAP_PIPS", 2.2)
+    monkeypatch.setattr(worker.config, "MLR_CHOP_OVERRIDE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "MLR_CHOP_SCORE_MIN", 0.55)
+    monkeypatch.setattr(worker.config, "MLR_CHOP_MAX_ADX", 40.0)
+    monkeypatch.setattr(worker.config, "MLR_CHOP_MAX_MA_GAP_PIPS", 5.0)
+
+    ok, diag = worker._mlr_strict_range_ok(
+        {"adx": 31.0, "ma10": 150.048, "ma20": 150.010},
+        range_active=False,
+        range_score=0.44,
+        chop_ctx={"active": True, "score": 0.72},
+    )
+
+    assert ok is True
+    assert diag["chop_active"] == 1.0
+    assert diag["chop_override"] == 1.0
+
+
+def test_strategy_chop_units_multiplier_reduces_momentumburst_in_chop(monkeypatch):
+    monkeypatch.setattr(worker.config, "CHOP_STRATEGY_UNITS_MULT", {"MomentumBurst": 0.70})
+
+    mult = worker._strategy_chop_units_multiplier(
+        "MomentumBurst",
+        {"active": True, "score": 0.75},
+    )
+
+    assert abs(mult - 0.775) < 1e-6
+
+
 def test_allowed_strategies_matches_momentumburst_strategy_name(monkeypatch):
     monkeypatch.setenv("MICRO_STRATEGY_ALLOWLIST", "MomentumBurst")
 
@@ -162,6 +221,29 @@ def test_allowed_strategies_matches_momentumburst_strategy_name(monkeypatch):
     names = [getattr(cls, "name", cls.__name__) for cls in allowed]
 
     assert names == ["MomentumBurst"]
+
+
+def test_strategy_fac_view_includes_mtf_and_trend_snapshot(monkeypatch):
+    _patch_trend_snapshot(monkeypatch, direction="long", adx=35.0)
+
+    fac = worker._strategy_fac_view(
+        fac_m1={"close": 158.30, "candles": [{"close": 158.30}]},
+        fac_m5={"candles": [{"close": 158.28}]},
+        fac_h1={"candles": [{"close": 158.12}]},
+        fac_h4={"candles": [{"close": 157.98}]},
+    )
+
+    assert fac["trend_snapshot"] == {
+        "tf": "H4",
+        "gap_pips": 20.0,
+        "direction": "long",
+        "adx": 35.0,
+    }
+    assert fac["mtf"] == {
+        "candles_m5": [{"close": 158.28}],
+        "candles_h1": [{"close": 158.12}],
+        "candles_h4": [{"close": 157.98}],
+    }
 
 
 def test_resolve_account_snapshot_uses_last_snapshot_fallback(monkeypatch):

@@ -55,6 +55,7 @@
 - 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。
 - 運用方針は「全て動的トレード」。静的な固定パラメータに依存せず、戦略ごとのローカル判定とリスク制御で都度更新する。
 - **浅い検討で進めない**。変更前に必ず「目的 / 仮説 / 影響範囲 / 検証手順」を明確化し、実データ（ローカルログ/DB・API応答）で根拠を確認してから実装・報告する。
+- **収益悪化の分析は side 名義で閉じない**。`long/short` だけで説明せず、`pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence / 連続バー偏り` など指標状態で敗因をクラスタ化し、両方向に対称な strategy-local quality guard として改善する。
 - **戦略は停止より改善を優先する**。成績悪化時は原因分析→パラメータ/執行品質の改善→再検証を先に実行し、恒久的な時間帯制限で回避しない。**JST 7〜8時（メンテ時間帯想定）は除外**し、停止は安全確保のための一時的な緊急措置に限定する。
 - **重要**: 運用上の指摘・報告・判断はローカルV2導線（`logs/*.db` + OANDA API）の実測のみで行う。
 - 変更は `git commit` → `git push` → ローカル反映（`scripts/local_v2_stack.sh` ベース）で行う。未コミット状態やローカル差し替えでの運用は避ける。
@@ -76,13 +77,17 @@
 - 2026-03-09 追記: local-v2 の Brain は `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を既定とし、manual restart / watchdog / launchd 復旧でも safe canary（micro-only / shadow / fail-open）を維持する。監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `RangeFader` の dedicated env は
   `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`,
-  `RANGEFADER_BASE_UNITS=12500` を現行運用値とし、
+  `RANGEFADER_BASE_UNITS=14000` を現行運用値とし、
   winner flow の通過回復と軽い sizing 回復を行う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: micro sizing は shared override を正とし、
-  `MomentumBurst:1.35`, `MicroLevelReactor:1.10` へ再配分した。
+  `MomentumBurst:1.05`, `MicroLevelReactor:1.35` へ再配分した。
   あわせて `quant-micro-momentumburst` は `STRATEGY_COOLDOWN_SEC=120` とし、
   頻度増と per-trade risk の両立を狙う。
+  監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-09 追記: micro runtime は recent M1 chop context を `entry_thesis` へ記録し、
+  `MicroLevelReactor` には chop override を、`MomentumBurst` には strategy-local の
+  confidence 減衰/skip を適用する。shared order-manager / 共通 gate に新しい一律判定は追加しない。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `MomentumBurst` の micro ENTRY は、反発後の再加速局面で
   recent 3-bar break と `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
@@ -266,4 +271,4 @@ flowchart LR
 - 運用:
   - MCPに基づく根拠判断は必ず `docs/TRADE_FINDINGS.md` と監査ログに紐付ける。
   - MCP設定変更時はこの AGENTS に変更点を追記する（最小1行以上）。
-- 2026-03-09 追記: `MomentumBurst` の entry 数を増やす調整は、shared micro gate を緩めず strategy-local に限定する。現行運用値は `strategies/micro/momentum_burst.py` の `reaccel` 閾値緩和と、recent 4 candles の `price_action_direction` を `3遷移中2票` で通すノイズ許容、`ops/env/quant-micro-momentumburst.env` の `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90` を正とし、サイズ配分は `ops/env/local-v2-stack.env` の shared `MICRO_MULTI_STRATEGY_UNITS_MULT` を優先する。
+- 2026-03-09 追記: `MomentumBurst` の entry 数を増やす調整は、shared micro gate を緩めず strategy-local に限定する。現行運用値は `strategies/micro/momentum_burst.py` の `reaccel` 閾値緩和と recent 4 candles の `price_action_direction` を `3遷移中2票` で通すノイズ許容に加え、`ops/env/quant-micro-momentumburst.env` の context tilt（`RANGE_SCORE_SOFT_MAX=0.34`, `CHOP_SCORE_SOFT_MAX=0.58`, `CONTEXT_BLOCK_THRESHOLD=0.92`）で chop/range 時だけ confidence を減衰させる。サイズ配分は `ops/env/local-v2-stack.env` の shared `MICRO_MULTI_STRATEGY_UNITS_MULT` を優先する。

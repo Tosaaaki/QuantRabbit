@@ -23,6 +23,76 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 09:30 UTC / 2026-03-09 18:30 JST - local-v2: 微益側の回転を維持するため、micro runtime に chop 文脈を追加して `MomentumBurst` / `MicroLevelReactor` を再配分
+
+Period:
+- 調査/実装: UTC `09:05-09:30` / JST `18:05-18:30`
+- 対象（実測）:
+  - `logs/health_snapshot.json`
+  - `logs/trades.db`, `logs/orders.db`
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+  - `logs/local_v2_stack/quant-market-data-feed.log`
+  - `python3 scripts/pdca_profitability_report.py --out-json /tmp/qr_pdca_20260309.json --top-n 10`
+  - OANDA `summary` / `open_trades`
+
+Fact:
+- 市況確認（UTC `09:30` / JST `18:30`）:
+  - USD/JPY `mid=158.435`, `spread=0.8p`, `open_trades=0`
+  - `balance/nav=37152.90`
+  - `health_snapshot.json` では `data_lag_ms` は概ね sub-2s、`decision_latency_ms` は low teens。
+- 24h 損益:
+  - `313 trades / win_rate=56.9% / PF(pips)=1.72 / net_pips=211.2 / net_jpy=-686.78`
+  - strategy別:
+    - `MomentumBurst: -730.78 JPY / 21 trades`
+    - `MicroLevelReactor: +99.22 JPY / 210 trades`
+    - `RangeFader: +54.30 JPY / 58 trades`
+- 時間帯分解:
+  - JST `11:00-15:00`
+    - `MicroLevelReactor: 120 trades / +254.2 JPY / win_rate=63.3%`
+    - `RangeFader: 49 trades / +77.7 JPY / win_rate=100%`
+  - JST `17:00-18:30`
+    - `MomentumBurst: 10 trades / -283.8 JPY`
+    - `RangeFader: 4 trades / -43.0 JPY`
+- log:
+  - `quant-micro-levelreactor.log` は `18:23-18:27 JST` に
+    `mlr_range_gate_block active=False` を連続出力。
+  - `quant-market-data-feed.log` は `17:45-17:48 JST` に pricing reconnect failure があったが、
+    その後 `200 OK` で復旧。
+
+Failure Cause:
+- 今日は「細かく稼ぐ刀」は JST `11-15` の `MicroLevelReactor` / `RangeFader` だったが、
+  後半は `MicroLevelReactor` が strict range gate で止まり、`MomentumBurst` が chop/range にそのまま出て毀損した。
+- shared sizing でも `MomentumBurst` がまだ重く、逆に微益側は late session の回転再開時に取り分が薄かった。
+
+Improvement:
+- `workers/micro_runtime/worker.py`
+  - recent M1 から `micro_chop` を算出し、`entry_thesis` へ監査情報を残す。
+  - `MicroLevelReactor` は chop score が十分なときだけ strict range gate を override 可能にした。
+  - `MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT` を units 計算へ追加し、
+    chop 時は `MomentumBurst` を縮小、`MicroLevelReactor` を増量する。
+- `strategies/micro/momentum_burst.py`
+  - `range_active/range_score/micro_chop_*` を使って strategy-local に confidence 減衰 / skip を追加。
+  - `reaccel` signal は例外として通し、「大きく取る」導線は残す。
+- env:
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.05,MicroLevelReactor:1.35`
+    - `MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT=MomentumBurst:0.74,MicroLevelReactor:1.22`
+    - `MICRO_MULTI_MLR_CHOP_*` を追加
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MOMENTUMBURST_*` の context tilt 閾値を追加
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_BASE_UNITS=14000`
+
+Verification:
+- `pytest -q tests/workers/test_micro_multistrat_trend_flip.py tests/strategies/test_momentum_burst.py`
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-momentumburst,quant-micro-levelreactor,quant-scalp-rangefader`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-momentumburst,quant-micro-levelreactor,quant-scalp-rangefader`
+- `sqlite3 logs/orders.db "SELECT ts,status,side,units,json_extract(request_json,'$.entry_thesis.strategy_tag'),json_extract(request_json,'$.entry_thesis.micro_chop.score') FROM orders WHERE ts >= datetime('now','-2 hours') ORDER BY ts DESC LIMIT 20"`
+- `sqlite3 logs/trades.db "SELECT strategy_tag, COUNT(*), ROUND(SUM(realized_pl),2) FROM trades WHERE close_time >= datetime('now','-2 hours') GROUP BY strategy_tag ORDER BY SUM(realized_pl) DESC"`
+
+Status:
+- done
+
 ## 2026-03-09 07:32 UTC / 2026-03-09 16:32 JST - local-v2: `MomentumBurst` の staircase 条件が主因で entry を落としていたため、strategy-local に 1 本ノイズ許容へ緩和
 
 Period:
