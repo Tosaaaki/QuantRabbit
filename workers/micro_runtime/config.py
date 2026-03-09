@@ -169,6 +169,10 @@ MAX_SIGNALS_PER_CYCLE = int(os.getenv("MICRO_MULTI_MAX_SIGNALS_PER_CYCLE", "2"))
 MULTI_SIGNAL_MIN_SCALE = float(os.getenv("MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE", "0.6"))
 # Per-strategy minimum interval between entries to avoid same-minute burst stacking.
 STRATEGY_COOLDOWN_SEC = float(os.getenv("MICRO_MULTI_STRATEGY_COOLDOWN_SEC", "0.0"))
+# MomentumBurst can opt into a shorter cooldown only for reacceleration entries.
+MOMENTUMBURST_REACCEL_COOLDOWN_SEC = float(
+    os.getenv("MOMENTUMBURST_REACCEL_COOLDOWN_SEC", "0.0")
+)
 STRATEGY_UNITS_MULT = _parse_strategy_mults(os.getenv("MICRO_MULTI_STRATEGY_UNITS_MULT", ""))
 SIGNAL_TAG_CONTAINS = frozenset(
     token.lower()

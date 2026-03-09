@@ -1202,8 +1202,38 @@ def _diversity_bonus(strategy_name: str, now_ts: float) -> float:
     return min(config.DIVERSITY_MAX_BONUS, bonus)
 
 
-def _strategy_cooldown_active(strategy_name: str, now_ts: float) -> bool:
+def _momentumburst_reaccel_signal(signal: Optional[Dict[str, object]]) -> bool:
+    if not isinstance(signal, dict):
+        return False
+    for payload_name in ("notes", "metadata"):
+        payload = signal.get(payload_name)
+        if not isinstance(payload, dict):
+            continue
+        momentum_meta = payload.get("momentum_burst")
+        if not isinstance(momentum_meta, dict):
+            continue
+        if bool(momentum_meta.get("reaccel")):
+            return True
+    return False
+
+
+def _strategy_cooldown_active(
+    strategy_name: str,
+    now_ts: float,
+    signal: Optional[Dict[str, object]] = None,
+) -> bool:
     cooldown = max(0.0, float(getattr(config, "STRATEGY_COOLDOWN_SEC", 0.0)))
+    if (
+        cooldown > 0.0
+        and strategy_name == MomentumBurstMicro.name
+        and _momentumburst_reaccel_signal(signal)
+    ):
+        reaccel_cooldown = max(
+            0.0,
+            float(getattr(config, "MOMENTUMBURST_REACCEL_COOLDOWN_SEC", 0.0)),
+        )
+        if 0.0 < reaccel_cooldown < cooldown:
+            cooldown = reaccel_cooldown
     if cooldown <= 0.0:
         return False
     last_ts = _STRATEGY_LAST_TS.get(strategy_name)
@@ -1405,7 +1435,10 @@ async def micro_multi_worker() -> None:
         candidates: List[Tuple[float, int, Dict, str, Dict[str, object], Dict[str, object]]] = []
         for strat in _strategy_list():
             strategy_name = getattr(strat, "name", strat.__name__)
-            if _strategy_cooldown_active(strategy_name, now_ts):
+            if (
+                strategy_name != MomentumBurstMicro.name
+                and _strategy_cooldown_active(strategy_name, now_ts)
+            ):
                 continue
             if (
                 strategy_name == TrendMomentumMicro.name
@@ -1451,6 +1484,11 @@ async def micro_multi_worker() -> None:
                     continue
             cand = strat.check(strategy_fac)
             if not cand:
+                continue
+            if (
+                strategy_name == MomentumBurstMicro.name
+                and _strategy_cooldown_active(strategy_name, now_ts, cand)
+            ):
                 continue
             if strategy_name == MicroPullbackEMA.name:
                 mtf_ok, mtf_diag = _pullback_mtf_confirm(str(cand.get("action") or ""), fac_m5, fac_h1)

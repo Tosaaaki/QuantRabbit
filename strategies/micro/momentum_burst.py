@@ -52,6 +52,22 @@ def _attach_kill(signal: Dict) -> Dict:
     return signal
 
 
+def _annotate_reaccel(signal: Dict, *, direction: str, reaccel: bool) -> Dict:
+    entry_mode = "reaccel" if reaccel else "trend"
+    momentum_meta = {
+        "direction": direction,
+        "entry_mode": entry_mode,
+        "reaccel": bool(reaccel),
+    }
+    notes = dict(signal.get("notes") or {})
+    notes["momentum_burst"] = momentum_meta
+    signal["notes"] = notes
+    metadata = dict(signal.get("metadata") or {})
+    metadata["momentum_burst"] = momentum_meta
+    signal["metadata"] = metadata
+    return signal
+
+
 class MomentumBurstMicro:
     name = "MomentumBurst"
     pocket = "micro"
@@ -428,7 +444,11 @@ class MomentumBurstMicro:
                 )
             ):
                 return MomentumBurstMicro._apply_context_tilt(
-                    _build_signal("OPEN_LONG", gap_pips),
+                    _annotate_reaccel(
+                        _build_signal("OPEN_LONG", gap_pips),
+                        direction="long",
+                        reaccel=long_reaccel,
+                    ),
                     fac,
                     reaccel=long_reaccel,
                 )
@@ -454,7 +474,11 @@ class MomentumBurstMicro:
                 )
             ):
                 return MomentumBurstMicro._apply_context_tilt(
-                    _build_signal("OPEN_SHORT", gap_pips),
+                    _annotate_reaccel(
+                        _build_signal("OPEN_SHORT", gap_pips),
+                        direction="short",
+                        reaccel=short_reaccel,
+                    ),
                     fac,
                     reaccel=short_reaccel,
                 )

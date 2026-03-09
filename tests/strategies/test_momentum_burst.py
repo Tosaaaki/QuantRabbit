@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from strategies.micro.momentum_burst import MomentumBurstMicro
+from workers.micro_runtime import worker as micro_runtime_worker
 
 
 def test_long_signal_passes_when_indicator_quality_is_clean() -> None:
@@ -126,6 +127,58 @@ def test_short_reacceleration_break_can_fire_before_ma_cross() -> None:
     assert signal["action"] == "OPEN_SHORT"
     assert signal["sl_pips"] == 5.05
     assert signal["tp_pips"] == 8.48
+    assert signal["notes"]["momentum_burst"] == {
+        "direction": "short",
+        "entry_mode": "reaccel",
+        "reaccel": True,
+    }
+    assert signal["metadata"]["momentum_burst"] == signal["notes"]["momentum_burst"]
+
+
+def test_momentumburst_reaccel_shortens_only_reaccel_cooldown(monkeypatch) -> None:
+    monkeypatch.setattr(micro_runtime_worker.config, "STRATEGY_COOLDOWN_SEC", 90.0)
+    monkeypatch.setattr(
+        micro_runtime_worker.config,
+        "MOMENTUMBURST_REACCEL_COOLDOWN_SEC",
+        45.0,
+    )
+    micro_runtime_worker._STRATEGY_LAST_TS.clear()
+    micro_runtime_worker._STRATEGY_LAST_TS["MomentumBurst"] = 100.0
+
+    reaccel_signal = {
+        "notes": {
+            "momentum_burst": {
+                "direction": "short",
+                "entry_mode": "reaccel",
+                "reaccel": True,
+            }
+        }
+    }
+    normal_signal = {
+        "notes": {
+            "momentum_burst": {
+                "direction": "short",
+                "entry_mode": "trend",
+                "reaccel": False,
+            }
+        }
+    }
+
+    assert micro_runtime_worker._strategy_cooldown_active(
+        "MomentumBurst",
+        130.0,
+        reaccel_signal,
+    )
+    assert not micro_runtime_worker._strategy_cooldown_active(
+        "MomentumBurst",
+        146.0,
+        reaccel_signal,
+    )
+    assert micro_runtime_worker._strategy_cooldown_active(
+        "MomentumBurst",
+        146.0,
+        normal_signal,
+    )
 
 
 def test_short_reacceleration_requires_real_breakdown() -> None:
