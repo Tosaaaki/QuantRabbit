@@ -278,6 +278,11 @@
   - entry 時は broker-side SL を優先付与して「無保護建玉」を抑制する。
   - SL が付かずに建った場合でも EXIT worker 側で deterministic loss-cut を維持し、
     取り残しを防止する。
+  - `2026-03-09 local-v2` 以降は trend continuation guard を追加し、
+    `range_score` が弱く `adx` / `ma_gap` が continuation を示す局面では
+    counter-trend reversal を送らない。
+  - `_place_order()` の cap 計算は actual `free_margin_ratio` を取得してから
+    `compute_cap()` へ渡す順序を正とする。
 - `scalp_ping_5s_b*` の extrema は 2026-02-19 以降、ショート側のみ非対称チューニング。
   - `short_bottom_soft` は専用倍率
     `EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT`（B既定 0.42）で縮小。
@@ -873,6 +878,11 @@
   - `SCALP_PING_5S_FLOW_LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.18`
 - 運用値（`MicroLevelReactor`, 2026-03-07 local-v2）:
   - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.60`
+  - `2026-03-09 local-v2` 以降:
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35`
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.30`
+    - `MICRO_MULTI_MLR_MAX_ADX=24.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=2.8`
 - 監査:
   - `orders.db` で `outside_allow_hour_jst` が entry-stop 理由の主因になっていないこと。
   - `trades.db` で `C/M1 sell` の比率と損益が縮小していること。

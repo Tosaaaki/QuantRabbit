@@ -12931,3 +12931,32 @@
 - 効果:
   - replay入力不足は「学習データ待ち」として扱われ、
     local feedback cycle の観測ノイズと false positive error を減らせる。
+
+## 2026-03-09 JST - `MicroLevelReactor` dedicated gate を再度締め、`scalp_extrema_reversal_live` に trend continuation guard を追加
+
+- 背景:
+  - `2026-03-09 09:09 JST` の OANDA / local V2 実測は
+    `USD/JPY mid=158.448`, `spread=0.8p`, `M5 ATR14=8.7p`, 直近30本 change `+35.9p`。
+    流動性悪化ではなく trend 継続が主状態だった。
+  - 24h 集計は `63 trades / PF=0.253 / net_jpy=-757.27`。
+  - `MicroLevelReactor` は `range=0.25`, `pf=0.95`, `win=0.46` の `fade-upper` short を継続し、
+    直近6h `-129.62 JPY`。
+  - `scalp_extrema_reversal_live` も直近 `6 trades / 0 wins / avg_pips=-2.3` で、
+    上昇継続への short が主な毀損になった。
+
+- 変更:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.35`
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.30`
+    - `MICRO_MULTI_MLR_MAX_ADX=24.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=2.8`
+  - `workers/scalp_extrema_reversal/worker.py`
+    - `range_score / range_active / ma_gap / adx` を使う trend continuation guard を追加。
+    - `_place_order()` の cap 計算順序を修正し、actual `free_margin_ratio` を `compute_cap()` に渡す。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    - trend continuation guard と cap 計算順序の回帰テストを追加。
+
+- 意図:
+  - 2026-03-07 の「winner 回復用」緩和値を、2026-03-09 の trend 継続局面へ持ち込まない。
+  - 共通レイヤではなく strategy-local / dedicated env でだけ境界を締め、
+    range 系の逆張りを通常の range 相場へ戻す。

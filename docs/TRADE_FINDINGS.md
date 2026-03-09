@@ -8834,3 +8834,52 @@ Status:
     notification の無応答処理と invalid call の fail-fast を追加した。
   - `mcp_oanda_observer.py` は `utils.secrets.get_secret()` を使うよう修正し、
     current shell でも `initialize -> tools/call(summary)` が成功することを確認した。
+
+## 2026-03-09 09:15 UTC / 2026-03-09 18:15 JST - 直近毀損の主因は trend 相場での逆張り再開。`MicroLevelReactor` gate を再度締め、`scalp_extrema_reversal_live` に trend 継続ガードを追加
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `2026-03-09 09:09 JST` OANDA snapshot:
+    - `USD/JPY bid=158.444 ask=158.452 mid=158.448 spread=0.8p`
+    - `M5 ATR14=8.7p`, 直近30本 change `+35.9p`
+    - `openTrades=1`, `margin_avail=1,139.52 JPY`
+  - `2026-03-09 09:14 JST` factor 実測:
+    - `M1 adx=17.11`, `ma_gap=1.375p`, `range_score=0.264`, `range_mode=TREND`, `range_active=false`
+  - 6h health:
+    - `data_lag_ms avg=902.7`, `decision_latency_ms avg=15.7`
+
+- 事実:
+  - 24h 集計は `63 trades / win=42.9% / PF=0.253 / net_jpy=-757.27 / net_pips=-26.3`。
+  - 損失は `00 UTC` に集中し、`6 trades / -513.88 JPY`。
+  - `MicroLevelReactor`
+    - `2026-03-09 09:06 JST` に `fade-upper` short を送信し、
+      log では `range=0.25`, `pf=0.95`, `win=0.46`, `units=-3865`。
+    - 直近6h 集計は `50 trades / -129.62 JPY`。
+  - `scalp_extrema_reversal_live`
+    - 直近 `6 trades / 0 wins / -7.42 JPY / avg_pips=-2.3`
+    - `2026-03-09 09:05 JST` 前後に上昇継続中の short を連発。
+  - `free_margin_ratio=1.0` 混入疑惑は false alarm:
+    - `2026-03-09 09:13 JST` 再確認時点で OANDA summary / `utils.oanda_account` / `metrics.db`
+      はすべて `marginUsed=0 / free_margin_ratio=1.0 / openTradeCount=0` で整合。
+
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.60 -> 1.35`
+    - `MICRO_MULTI_MLR_MIN_RANGE_SCORE=0.05 -> 0.30`
+    - `MICRO_MULTI_MLR_MAX_ADX=36.0 -> 24.0`
+    - `MICRO_MULTI_MLR_MAX_MA_GAP_PIPS=6.5 -> 2.8`
+  - `workers/scalp_extrema_reversal/worker.py`
+    - `range_score / range_active / ma_gap / adx` を使う trend continuation guard を追加。
+    - `_place_order()` が actual `free_margin_ratio` 取得前に `compute_cap()` していた順序も修正。
+
+- 判断:
+  - 現時点の悪化は「導線停止」ではなく、「trend 相場に range/reversal が再び広がった」ことが主因。
+  - 2026-03-07 に winner 回復目的で緩めた `MicroLevelReactor` dedicated gate は、
+    2026-03-09 の `range_mode=TREND` では過剰だった。
+  - `scalp_extrema_reversal_live` は極値 + 短期 reversal だけで通っていたため、
+    trend continuation の局所ガードが必要。
+
+- 再検証条件:
+  1. 反映後 30-90 分で `orders.db` の `MicroLevelReactor` が weak-range short に偏らないこと。
+  2. `scalp_extrema_reversal_live` の trend continuation 中の `filled` が減り、
+     no-entry または reject に吸収されること。
+  3. free margin が薄い局面で `scalp_extrema_reversal_live` の cap が actual `free_margin_ratio` に追随すること。

@@ -274,6 +274,70 @@ EXTREMA_SWEEP_MIN_PIPS = _env_float("SWEEP_MIN_PIPS", 0.06)
 EXTREMA_SL_ATR_MULT = _env_float("SL_ATR_MULT", 0.85)
 EXTREMA_TP_ATR_MULT = _env_float("TP_ATR_MULT", 1.15)
 EXTREMA_ALLOWED_REGIMES = _env_set("ALLOWED_REGIMES", "")
+EXTREMA_TREND_GATE_ENABLED = _env_bool("TREND_GATE_ENABLED", True)
+EXTREMA_TREND_GATE_MIN_RANGE_SCORE = _env_float("TREND_GATE_MIN_RANGE_SCORE", 0.6)
+EXTREMA_TREND_GATE_ADX_MIN = _env_float("TREND_GATE_ADX_MIN", 24.0)
+EXTREMA_TREND_GATE_MA_GAP_PIPS = _env_float("TREND_GATE_MA_GAP_PIPS", 1.6)
+
+
+def _ma_gap_pips(fac_m1: Dict[str, object]) -> float:
+    ma_fast = fac_m1.get("ma10")
+    if ma_fast is None:
+        ma_fast = fac_m1.get("ema10")
+    ma_slow = fac_m1.get("ma20")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema20")
+    try:
+        if ma_fast is None or ma_slow is None:
+            return 0.0
+        return (float(ma_fast) - float(ma_slow)) / PIP
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _extrema_trend_gate_ok(
+    side: str,
+    fac_m1: Dict[str, object],
+    *,
+    range_ctx=None,
+) -> tuple[bool, Dict[str, float]]:
+    if not EXTREMA_TREND_GATE_ENABLED:
+        return True, {}
+
+    range_active = bool(getattr(range_ctx, "active", False))
+    range_score = float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0
+    range_mode = str(getattr(range_ctx, "mode", "") or "").strip().upper() if range_ctx is not None else ""
+    adx_val = _adx(fac_m1)
+    ma_gap_pips = _ma_gap_pips(fac_m1)
+    against_gap_pips = ma_gap_pips if side == "short" else -ma_gap_pips
+
+    range_ready = range_active or range_score >= EXTREMA_TREND_GATE_MIN_RANGE_SCORE
+    if range_mode == "TREND" and not range_ready:
+        return False, {
+            "range_active": 1.0 if range_active else 0.0,
+            "range_score": float(range_score),
+            "range_mode": 1.0,
+            "adx": float(adx_val),
+            "ma_gap_pips": float(ma_gap_pips),
+            "against_gap_pips": float(against_gap_pips),
+        }
+    adx_strong = EXTREMA_TREND_GATE_ADX_MIN <= 0.0 or adx_val >= EXTREMA_TREND_GATE_ADX_MIN
+    ma_gap_strong = (
+        EXTREMA_TREND_GATE_MA_GAP_PIPS <= 0.0
+        or against_gap_pips >= EXTREMA_TREND_GATE_MA_GAP_PIPS
+    )
+    continuation_strong = against_gap_pips > 0.0 and adx_strong and ma_gap_strong
+    allow = range_ready or not continuation_strong
+
+    diag = {
+        "range_active": 1.0 if range_active else 0.0,
+        "range_score": float(range_score),
+        "range_mode": 1.0 if range_mode == "TREND" else 0.0,
+        "adx": float(adx_val),
+        "ma_gap_pips": float(ma_gap_pips),
+        "against_gap_pips": float(against_gap_pips),
+    }
+    return allow, diag
 
 
 def _signal_extrema_reversal(
@@ -359,6 +423,10 @@ def _signal_extrema_reversal(
     else:
         side = "long"
 
+    trend_gate_ok, trend_diag = _extrema_trend_gate_ok(side, fac_m1, range_ctx=range_ctx)
+    if not trend_gate_ok:
+        return None
+
     sl = max(1.0, min(2.2, atr * EXTREMA_SL_ATR_MULT))
     tp = max(1.2, min(2.8, atr * EXTREMA_TP_ATR_MULT))
 
@@ -389,6 +457,7 @@ def _signal_extrema_reversal(
             "tick_strength": round(tick_strength, 4),
             "high_ref": round(high_ref, 3),
             "low_ref": round(low_ref, 3),
+            "trend_gate": trend_diag,
         },
         "range_score": float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0,
     }
@@ -413,6 +482,7 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "rsi": _rsi(fac_m1),
         "adx": _adx(fac_m1),
         "atr_pips": _atr_pips(fac_m1),
+        "ma_gap_pips": _ma_gap_pips(fac_m1),
         "bbw": _to_float(fac_m1.get("bbw"), 0.0),
         "extrema": signal.get("extrema") if isinstance(signal.get("extrema"), dict) else {},
     }
@@ -442,10 +512,17 @@ async def _place_order(
     size_mult = float(signal.get("size_mult", 1.0) or 1.0)
     size_mult = max(0.5, min(1.8, size_mult))
 
+    try:
+        from utils.oanda_account import get_account_snapshot
+
+        free_ratio = float(get_account_snapshot().free_margin_ratio or 0.0)
+    except Exception:
+        free_ratio = 0.0
+
     atr = _atr_pips(fac_m1)
     cap_res = compute_cap(
         atr_pips=atr,
-        free_ratio=0.0,
+        free_ratio=free_ratio,
         range_active=bool(getattr(range_ctx, "active", False)),
         perf_pf=None,
         pos_bias=0.0,
@@ -453,16 +530,7 @@ async def _place_order(
         cap_max=CAP_MAX,
         env_prefix=ENV_PREFIX,
     )
-    try:
-        from utils.oanda_account import get_account_snapshot
-
-        free_ratio = float(get_account_snapshot().free_margin_ratio or 0.0)
-    except Exception:
-        free_ratio = 0.0
-        cap_res = type("CapResult", (), {"cap": 0.0, "reasons": {}})()
     cap = cap_res.cap
-    if free_ratio > 0.0 and cap <= 0.0:
-        pass
     if cap <= 0.0:
         cap = CAP_MIN
 
