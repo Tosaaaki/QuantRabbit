@@ -8,6 +8,23 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### `MomentumBurst` re-acceleration entry（2026-03-09）
+- 背景:
+  - `2026-03-09 14:46-14:48 JST` の USD/JPY 再下落では、
+    `close<ema20`, `rsi=39.29`, `adx=32.40`, `minus_di>plus_di`, `roc5<0` が揃っていた。
+  - 既存 `MomentumBurst` は `ma10<ma20` の再デッドクロス待ちを含むため、
+    反発後の再加速 short を返せなかった。
+- 実装:
+  - `strategies/micro/momentum_burst.py`
+    - recent 3-bar break と `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
+      に基づく `reaccel_break` を追加。
+    - 既存の `MA gap + staircase` 条件に加え、
+      bearish / bullish re-acceleration でも `MomentumBurst` が signal を返せる。
+- 意図:
+  - 一度の戻しで `ma10/ma20` が押し戻されても、
+    強い再開方向を strategy-local に再点火させる。
+  - 共通の entry gate や order-manager に新しい一律判定は追加しない。
+
 ### `MomentumBurst` thin-edge `rsi_take` 抑制（2026-03-09）
 - 背景:
   - `transaction_id=454072 / ticket_id=454064` は `MomentumBurst` short。

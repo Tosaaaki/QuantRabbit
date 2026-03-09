@@ -73,6 +73,10 @@
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
+- 2026-03-09 追記: `MomentumBurst` の micro ENTRY は、反発後の再加速局面で
+  recent 3-bar break と `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
+  による strategy-local override を許可する。
+  監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `MomentumBurst` の micro EXIT は `rsi_take` を薄利帯で通さず、
   `config/strategy_exit_protections.yaml` の `rsi_take_min_pips` を下限として扱う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。

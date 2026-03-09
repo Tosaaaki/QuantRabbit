@@ -32,6 +32,34 @@
   - exit worker log は `reason=rsi_take pnl=0.10p`、実約定は `-1.5p / -81.33 JPY`。
   - tick validate では決済後 `120s MFE=+3.0p`, `300s MFE=+5.3p`。
 
+### 2026-03-09（追記）`MomentumBurst` に反発後の再加速エントリーを追加し、MAクロス待ちの再ショート取り逃しを補正
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    - recent 3-bar の高値/安値 break、`ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
+      を使う `reaccel_break` を追加。
+    - 既存の `ma10/ma20` gap と staircase 条件を維持しつつ、
+      反発後の再加速では long/short とも strategy-local override で signal を返す。
+  - `tests/strategies/test_momentum_burst.py`
+    - 2026-03-09 14:46 JST 相当の bearish re-acceleration で `OPEN_SHORT` が出る回帰テストを追加。
+    - 直前の未ブレイク局面では発火しないことも固定。
+- 意図:
+  - `MomentumBurst` が一度の反発でトレンド判定を見失い、
+    MA再クロスまで待っているうちに 5-10p の再下落を逃す経路を減らす。
+  - 共通 micro runtime や order-manager を変えず、`MomentumBurst` ローカルだけで再加速を拾う。
+- 実測根拠:
+  - UTC `05:46:59` / JST `14:46:59` 時点で
+    `close=158.425`, `ema20=158.473`, `rsi=39.29`, `adx=32.40`,
+    `minus_di=27.18 > plus_di=15.82`, `roc5=-0.0398`。
+  - 直近3本安値 break は成立していたが、`ma10=158.4623 > ma20=158.4385` だけが未成立で、
+    既存ロジックは short を返せなかった。
+
 ### 2026-03-07（追記）local read-only MCP の観測導線を軽量化し、invalid call を fail-fast 化
 
 - 対象:

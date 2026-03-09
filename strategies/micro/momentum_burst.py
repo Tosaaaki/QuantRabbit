@@ -15,6 +15,9 @@ RSI_SHORT_MAX = 46
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
 DRIFT_PIPS_CEIL = 0.5    # block shorts if short-term drift is positive
 SPREAD_PIPS_MAX = 1.2    # hard cap; additionally scaled by ATR below
+REACCEL_EMA_DIST_PIPS = 2.5
+REACCEL_DI_GAP = 8.0
+REACCEL_ROC5_MIN = 0.03
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -85,6 +88,46 @@ class MomentumBurstMicro:
         if direction == "short":
             return all(h2 <= h1 and l2 <= l1 for h1, h2, l1, l2 in zip(highs, highs[1:], lows, lows[1:]))
         return True
+
+    @staticmethod
+    def _reaccel_break(
+        candles: Sequence[Dict],
+        fac: Dict,
+        direction: str,
+        close: float,
+        ema20: float,
+    ) -> bool:
+        if not candles or len(candles) < 4:
+            return False
+        recent = candles[-4:]
+        prev = recent[:-1]
+        try:
+            highs = [float(c.get("high") or c.get("h") or c.get("H")) for c in prev]
+            lows = [float(c.get("low") or c.get("l") or c.get("L")) for c in prev]
+        except (TypeError, ValueError):
+            return False
+        plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
+        minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
+        roc5 = MomentumBurstMicro._attr(fac, "roc5", 0.0)
+        ema_slope_10 = MomentumBurstMicro._attr(fac, "ema_slope_10", 0.0)
+        ema_dist_pips = (close - ema20) / PIP
+        if direction == "long":
+            return (
+                close >= max(highs)
+                and ema_dist_pips >= REACCEL_EMA_DIST_PIPS
+                and plus_di >= minus_di + REACCEL_DI_GAP
+                and roc5 >= REACCEL_ROC5_MIN
+                and ema_slope_10 > 0.0
+            )
+        if direction == "short":
+            return (
+                close <= min(lows)
+                and ema_dist_pips <= -REACCEL_EMA_DIST_PIPS
+                and minus_di >= plus_di + REACCEL_DI_GAP
+                and roc5 <= -REACCEL_ROC5_MIN
+                and ema_slope_10 < 0.0
+            )
+        return False
 
     @staticmethod
     def _mtf_supports(direction: str, fac: Dict) -> bool:
@@ -165,6 +208,20 @@ class MomentumBurstMicro:
         drift_pips = MomentumBurstMicro._drift_pips(fac)
         spread_pips = MomentumBurstMicro._attr(fac, "spread_pips", 0.0)
         candles = fac.get("candles") or []
+        long_reaccel = MomentumBurstMicro._reaccel_break(
+            candles,
+            fac,
+            "long",
+            float(close),
+            float(ema20),
+        )
+        short_reaccel = MomentumBurstMicro._reaccel_break(
+            candles,
+            fac,
+            "short",
+            float(close),
+            float(ema20),
+        )
 
         # Guard against wide spreads relative to current volatility
         spread_cap = max(SPREAD_PIPS_MAX, atr_pips * 0.35)
@@ -228,24 +285,24 @@ class MomentumBurstMicro:
             return run
 
         if (
-            gap_pips >= MIN_GAP_TREND
+            (gap_pips >= MIN_GAP_TREND or long_reaccel)
             and adx >= MIN_ADX
             and close > ema20 + 0.0015
             and drift_pips > DRIFT_PIPS_FLOOR
             and MomentumBurstMicro._mtf_supports("long", fac)
-            and MomentumBurstMicro._price_action_direction(candles, "long")
+            and (MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel)
         ):
             # 高値追い抑制: RSI過熱・連続陽線が続くときは見送り
             if rsi >= RSI_LONG_MIN and rsi < 70 and _bull_run_len(candles, 5) < 4:
                 return _build_signal("OPEN_LONG", gap_pips)
 
         if (
-            gap_pips <= -MIN_GAP_TREND
+            (gap_pips <= -MIN_GAP_TREND or short_reaccel)
             and adx >= MIN_ADX
             and close < ema20 - 0.0015
             and drift_pips < DRIFT_PIPS_CEIL
             and MomentumBurstMicro._mtf_supports("short", fac)
-            and MomentumBurstMicro._price_action_direction(candles, "short")
+            and (MomentumBurstMicro._price_action_direction(candles, "short") or short_reaccel)
         ):
             if rsi <= RSI_SHORT_MAX:
                 return _build_signal("OPEN_SHORT", gap_pips)

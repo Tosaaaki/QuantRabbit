@@ -23,6 +23,65 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 05:54 UTC / 2026-03-09 14:54 JST - local-v2: `MomentumBurst` が反発後の再下落を MAクロス待ちで取り逃す経路を是正
+
+Period:
+- 調査/実装: UTC `05:45-05:54` / JST `14:45-14:54`
+- 対象（実測）:
+  - `logs/trades.db`, `logs/orders.db`, `logs/metrics.db`
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+  - `logs/replay/USD_JPY/USD_JPY_M1_20260309.jsonl`
+  - `logs/factor_cache.json`, `logs/health_snapshot.json`
+
+Fact:
+- 市況確認（ローカル/OANDA live）:
+  - `logs/health_snapshot.json` at UTC `05:48:53` / JST `14:48:53`
+    - `data_lag_ms=517.0`, `decision_latency_ms=14.69`
+    - `orders_last_ts=2026-03-09T05:30:14.480224+00:00`
+    - `trades_last_entry=2026-03-09T05:29:01.031691+00:00`
+  - `logs/orders.db`
+    - `2026-03-09 14:29 JST` の `MomentumBurst` short fill 以降、micro の新規 reject は無し
+- 取り逃し局面:
+  - `logs/replay/USD_JPY/USD_JPY_M1_20260309.jsonl`
+    - UTC `05:46:59` / JST `14:46:59` close `158.425`
+    - UTC `05:47:59` / JST `14:47:59` close `158.388`
+    - UTC `05:48:59` / JST `14:48:59` close `158.340`
+  - 同時点の再計算 factor:
+    - UTC `05:46:59`
+      - `ema20=158.473`, `rsi=39.29`, `adx=32.40`
+      - `minus_di=27.18 > plus_di=15.82`
+      - `roc5=-0.0398`
+      - 直近3本安値ブレイク成立
+    - ただし `ma10=158.4623 > ma20=158.4385` で、既存 `gap_pips<=-0.20` 条件だけ未成立
+- つまり bearish re-acceleration 自体は出ていたが、`MomentumBurst` は MA10/MA20 の再デッドクロス待ちでショートを再投入できなかった。
+
+Failure Cause:
+- `strategies/micro/momentum_burst.py` の short 条件は
+  - `gap_pips<=-0.20`
+  - `price_action_direction(short)` の4本連続 lower-high/lower-low
+  を同時要求しており、反発直後の再下落では再加速を認識する前に遅れる。
+- 14:46-14:48 JST のケースでは、価格は `ema20` を明確に割り込み、
+  `DI / ROC / ADX` は bearish だった一方で、MAクロスだけが遅れていた。
+
+Improvement:
+- `strategies/micro/momentum_burst.py`
+  - recent 3-bar の高値/安値ブレイクと `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
+    を使う `reaccel_break` を追加。
+  - `MomentumBurst` は既存の `MA gap + staircase` 条件に加えて、
+    反発後の再加速条件でも `OPEN_SHORT` / `OPEN_LONG` を返せるようにした。
+- `tests/strategies/test_momentum_burst.py`
+  - 2026-03-09 14:46 JST 相当の factor/candle で `OPEN_SHORT` になる回帰テストを追加。
+  - 14:45 JST 相当の「まだ break 不成立」ケースでは発火しないことも固定。
+
+Verification:
+- `pytest -q tests/strategies/test_momentum_burst.py`
+- `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-micro-momentumburst`
+- `sqlite3 logs/orders.db "SELECT ts,status,side,units,strategy_tag FROM orders WHERE strategy_tag LIKE 'MomentumBurst%' AND ts >= datetime('now','-2 hours') ORDER BY ts DESC LIMIT 20"`
+- `logs/local_v2_stack/quant-micro-momentumburst.log` で 14:46-14:48 JST 型の再加速局面の `sent units` を監査
+
+Status:
+- done
+
 ## 2026-03-09 05:34 UTC / 2026-03-09 14:34 JST - local-v2: `MomentumBurst` の `rsi_take` が薄利で負け決済化する経路を是正
 
 Period:
