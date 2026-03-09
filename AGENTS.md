@@ -223,3 +223,24 @@ flowchart LR
 
 - 現行はローカル運用のみのため、クラウド起因コスト（VM/BQ/Cloud Run）は考慮対象外。
 - 負荷最適化はローカル実行系（worker数、ログ肥大、DBメンテ）に限定して行う。
+
+## 10. MCP運用（ローカルV2限定）
+
+- 本プロジェクトでは MCP は「外部情報の参照補助（read-only）」のみ許可し、発注・決済・リスク制御の実行には関与させない。
+- 主な用途: `docs/*.md`, `logs/*.db`, OANDA観測情報の取得。  
+  取引実行・VM/GCP管理・Cloud Run・systemd操作などの実務フローはMCP非対象。
+- 禁止:
+  - VM/GCP 連携 MCP/コマンド
+  - 書き込み系 MCP（order作成、cancel、DB更新など）
+  - AGENTS 追認なしの機密ファイル・設定値改変
+- 開始時の設定原則:
+  - MCP 有効化は `./.codex/config.toml` でのみ管理し、既定は read-only を維持する。
+  - `docs/` は共通設定の `~/.codex/config.toml` にある `openaiDeveloperDocs`（仕様参照）優先。
+  - ローカルDB/OANDA監視系も同一方針で参照専用としてのみ追加する。
+  - `openaiDeveloperDocs` は参照優先（API/実装仕様確認用）。
+  - `/.codex/config.toml` 側で `mcp_servers` は read-only を明示し、`write`/`mutate`系の導入を禁止する。
+- OANDA観測系は `qr_oanda_observer` を有効化し、`pricing / summary / open_trades / candles` のみ公開。注文・変更系ツールは未導入。
+- `logs/*.db` 系は `qr_local_*_db`（`scripts/mcp_sqlite_readonly.py`）で `query` のみ読取許可。
+- 運用:
+  - MCPに基づく根拠判断は必ず `docs/TRADE_FINDINGS.md` と監査ログに紐付ける。
+  - MCP設定変更時はこの AGENTS に変更点を追記する（最小1行以上）。
