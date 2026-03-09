@@ -10794,7 +10794,48 @@ Status:
     `scripts/local_v2_stack.sh restart --profile trade_all --env ops/env/local-v2-stack.env`
     を実行し、
     `quant-scalp-tick-imbalance` / `quant-scalp-wick-reversal-blend` が
+    `running` に戻ることを確認する。
 
+## 2026-03-09 22:25 JST - 損失拡大RCAを踏まえ、MomentumBurst short と MicroLevelReactor long を strategy-local に再調整
+
+- 市況確認:
+  - `scripts/pdca_profitability_report.py --instrument USD_JPY --top-n 5`
+    時点の OANDA snapshot は `USD/JPY 158.300`、spread `0.8 pips`、
+    open trades `0` で、常時異常 spread ではなく局所スパイク中心だった。
+  - `logs/metrics.db` 直近24h は `decision_latency_ms avg=17.6 / max=1401.8`、
+    `data_lag_ms avg=1369 / max=279272`、
+    `order_success_rate avg=0.992`、
+    `reject_rate avg=0.008` で、導線停止より
+    `close_reject_no_negative` ノイズと戦略期待値劣化が主因。
+
+- 実測:
+  - `trades.db` 24h は `369 trades / win_rate 52.3% / PF(pips) 1.12 / net_jpy -1360.6`。
+  - `MomentumBurst` は `long +112.1` に対し `short -598.5` で、
+    loser short の平均は `RSI 35.3`, `trend_gap_pips -3.04`, `atr_pips 3.39` と
+    既に伸び切った down move の chase が目立った。
+  - `MicroLevelReactor` long は `235 trades / net_jpy -180.6` で、
+    `pattern_meta.shape=trend_dn` かつ `wick=upper` が
+    `22 trades / net_jpy -384.3` と最大の負け cluster だった。
+
+- 対応:
+  - `strategies/micro/momentum_burst.py`
+    で short 専用の RSI/drift/reaccel threshold を env 化し、
+    `RSI low + trend_gap large negative + EMA stretch` の exhausted short を skip する guard を追加。
+  - `strategies/micro/level_reactor.py`
+    で long breakout の RSI floor を引き上げ、
+    `bounce-lower` は lower wick 優位かつ bearish continuation でない candle だけ通すようにした。
+  - `ops/env/quant-micro-levelreactor.env`
+    で shared range-score floor は維持したまま、
+    long 向け RSI / candle confirmation 閾値を明示。
+  - `ops/env/quant-micro-momentumburst.env`
+    で short exhaustion / short reaccel の閾値を dedicated env として固定。
+
+- 意図:
+  - 時間帯封鎖や shared gate 強化ではなく、
+    「MomentumBurst short の late chase」と
+    「MicroLevelReactor long の反発確認前エントリー」
+    という敗因 cluster を strategy-local に潰しつつ、
+    shared sizing や broad participation は落とさない。
 
 ## 2026-03-09 23:15 JST - local-v2 の loser size leak を止め、M1Scalper flipped continuation を cluster guard で抑制
 
@@ -10841,3 +10882,69 @@ Status:
     winner lane (`MomentumBurst`) は相対優位を保ったまま残す。
   - `M1Scalper` は broad tag filter に頼らず、
     直近 loser cluster だけを strategy-local に切り落とす。
+
+## 2026-03-10 00:35 JST - `MomentumBurst short` と `MicroLevelReactor long` の live loser cluster を strategy-local に圧縮
+
+- 市況確認:
+  - OANDA pricing は `USD/JPY 158.210 / 158.226`、mid `158.218`、spread `1.6 pips`、
+    pricing 応答 `avg 225.5ms`、M1 ATR14 `3.821 pips`、M5 ATR14 `10.143 pips`、
+    12-bar M5 range `23.8 pips` で、作業保留が必要な異常市況ではなかった。
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    では `quant-market-data-feed / quant-strategy-control / quant-order-manager /
+    quant-position-manager` を含む local-v2 主要サービスが稼働中だった。
+  - `logs/metrics.db` 24h は `decision_latency_ms avg=17.613 / max=1401.776`、
+    `data_lag_ms avg=1279.118 / max=279272.689`、`order_success_rate avg=0.99`、
+    `reject_rate avg=0.01` で、導線停止や reject 多発は主因ではなかった。
+
+- 実測:
+  - `trades.db` 直近24h は `384 trades / win_rate 51.3% / PF 0.596 /
+    expectancy -4.0 JPY / net -1550.1 JPY`。
+  - `MomentumBurst` は `24 trades / -617.2 JPY / avg_units 4171.5` で、
+    `short 11 trades / -598.5 JPY / avg_units 4458.0` が主犯だった。
+    loser short の平均 `pattern_meta.rsi=35.3`、最小 `23.06` で、
+    `trend_snapshot.direction=long, gap_pips>=31.8, adx>=30.5`
+    に対して oversold short chase が走っていた。
+  - `MicroLevelReactor` は `237 trades / -175.3 JPY` で、
+    `long 235 trades / -180.6 JPY / avg_units 264.8`。
+    loser cluster は
+    `c:trend_dn|w:upper|tr:flat|rsi:mid_low|vol:tight|atr:low|d:long`
+    が `7 trades / -220.7 JPY`、
+    `c:trend_dn|w:upper|tr:dn_strong|rsi:neutral|vol:tight|atr:ultra_low|d:long`
+    が `6 trades / -167.5 JPY` で、
+    bearish continuation candle の bounce-lower long が中心だった。
+  - `orders.db` 24h の entry reject は `STOP_LOSS_ON_FILL_LOSS` 4件のみで、
+    `filled 384 / rejected 4`。open trades も 0 で、
+    期待値悪化を strategy-local に止血する局面だった。
+
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    で short 側の stretched quality 判定を
+    `REACCEL_DI_GAP_SHORT / REACCEL_ROC5_MIN_SHORT` に揃えた。
+    さらに oversold short exhaustion 判定を
+    「stretch していれば generic early-return より先に落とす」順序へ変更した。
+  - `ops/env/quant-micro-momentumburst.env`
+    で `MOMENTUMBURST_RSI_SHORT_MIN=36`,
+    `MOMENTUMBURST_RSI_SHORT_MAX=42`,
+    `MOMENTUMBURST_SHORT_DRIFT_CEIL=0.10`,
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=45`
+    とし、oversold short と連続 reaccel long を絞った。
+  - `strategies/micro/level_reactor.py`
+    で breakout-long に supportive candle 条件を追加し、
+    `bounce-lower` は bearish continuation candle を confidence 減点ではなく
+    hard reject に変更した。
+  - `ops/env/quant-micro-levelreactor.env`
+    で `MLR_LONG_RSI_MIN=54`,
+    `MLR_LONG_BOUNCE_RSI_MAX=52`,
+    `MLR_BOUNCE_BODY_BEAR_MAX_PIPS=0.8`,
+    `MLR_BOUNCE_MIN_LOWER_WICK_PIPS=1.0`
+    とし、long 側の entry quality を引き上げた。
+
+- 検証:
+  - `pytest tests/strategies/test_momentum_burst.py tests/strategies/test_level_reactor.py`
+    は `23 passed`。
+
+- 意図:
+  - shared gate や時間帯 block は増やさず、
+    `MomentumBurst short` の late chase と
+    `MicroLevelReactor long` の bearish bounce を
+    strategy-local に圧縮する。

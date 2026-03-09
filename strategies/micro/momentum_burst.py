@@ -13,20 +13,25 @@ MIN_ATR = 0.8
 VOL_MIN = 0.5
 RSI_LONG_MIN = 54
 RSI_LONG_MAX = 70
-RSI_SHORT_MIN = 30
-RSI_SHORT_MAX = 46
+RSI_SHORT_MIN = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MIN", "34"))
+RSI_SHORT_MAX = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MAX", "44"))
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
-DRIFT_PIPS_CEIL = 0.5    # block shorts if short-term drift is positive
+DRIFT_PIPS_CEIL = float(os.getenv("MOMENTUMBURST_SHORT_DRIFT_CEIL", "0.30"))  # block shorts if short-term drift is positive
 SPREAD_PIPS_MAX = 1.2    # hard cap; additionally scaled by ATR below
 REACCEL_EMA_DIST_PIPS = 2.0
 REACCEL_DI_GAP = 6.0
+REACCEL_DI_GAP_SHORT = float(os.getenv("MOMENTUMBURST_REACCEL_DI_GAP_SHORT", "7.0"))
 REACCEL_ROC5_MIN = 0.02
+REACCEL_ROC5_MIN_SHORT = float(os.getenv("MOMENTUMBURST_REACCEL_ROC5_MIN_SHORT", "0.028"))
 TREND_SNAPSHOT_ADX_MIN = 22.0
 TREND_SNAPSHOT_GAP_MIN = 8.0
 ENTRY_SL_MIN_PIPS = 2.4
 ENTRY_SL_ATR_MULT = 1.15
 ENTRY_TP_SL_MULT = 1.6
 ENTRY_TP_ATR_BUFFER_MULT = 0.85
+SHORT_EXHAUSTION_RSI_MAX = float(os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_RSI_MAX", "38.0"))
+SHORT_EXHAUSTION_GAP_PIPS = float(os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_GAP_PIPS", "2.8"))
+SHORT_EXHAUSTION_EMA_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_EMA_ATR_MULT", "0.60"))
 RANGE_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_RANGE_SCORE_SOFT_MAX", "0.34"))
 CHOP_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_CHOP_SCORE_SOFT_MAX", "0.58"))
 CONTEXT_CONF_PENALTY_MAX = float(os.getenv("MOMENTUMBURST_CONTEXT_CONF_PENALTY_MAX", "18.0"))
@@ -165,8 +170,8 @@ class MomentumBurstMicro:
             return (
                 close <= min(lows)
                 and ema_dist_pips <= -REACCEL_EMA_DIST_PIPS
-                and minus_di >= plus_di + REACCEL_DI_GAP
-                and roc5 <= -REACCEL_ROC5_MIN
+                and minus_di >= plus_di + REACCEL_DI_GAP_SHORT
+                and roc5 <= -REACCEL_ROC5_MIN_SHORT
                 and ema_slope_10 < 0.0
             )
         return False
@@ -186,9 +191,6 @@ class MomentumBurstMicro:
             atr_pips * 0.55,
             abs(gap_pips) * 1.25,
         )
-        if ema_dist_pips <= stretch_threshold:
-            return True
-
         plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
         minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
         roc5 = MomentumBurstMicro._attr(fac, "roc5", 0.0)
@@ -200,17 +202,37 @@ class MomentumBurstMicro:
             roc_push = roc5
             slope_push = ema_slope_10
             directional_rsi = rsi
+            weak_di_gap = REACCEL_DI_GAP - 1.0
+            weak_roc_push = REACCEL_ROC5_MIN * 0.8
+            strong_di_gap = REACCEL_DI_GAP + 4.0
+            strong_roc_push = REACCEL_ROC5_MIN * 1.35
         elif direction == "short":
             di_gap = minus_di - plus_di
             roc_push = -roc5
             slope_push = -ema_slope_10
             directional_rsi = 100.0 - rsi
+            weak_di_gap = REACCEL_DI_GAP_SHORT - 1.0
+            weak_roc_push = REACCEL_ROC5_MIN_SHORT * 0.8
+            strong_di_gap = REACCEL_DI_GAP_SHORT + 4.0
+            strong_roc_push = REACCEL_ROC5_MIN_SHORT * 1.35
         else:
             return True
 
         if (
-            di_gap < REACCEL_DI_GAP - 1.0
-            or roc_push < REACCEL_ROC5_MIN * 0.8
+            direction == "short"
+            and rsi <= SHORT_EXHAUSTION_RSI_MAX
+            and gap_pips <= -SHORT_EXHAUSTION_GAP_PIPS
+            and ema_dist_pips
+            >= max(REACCEL_EMA_DIST_PIPS - 0.5, atr_pips * SHORT_EXHAUSTION_EMA_ATR_MULT)
+        ):
+            return False
+
+        if ema_dist_pips <= stretch_threshold:
+            return True
+
+        if (
+            di_gap < weak_di_gap
+            or roc_push < weak_roc_push
             or slope_push <= 0.0
         ):
             return False
@@ -219,8 +241,8 @@ class MomentumBurstMicro:
             return True
 
         return (
-            di_gap >= REACCEL_DI_GAP + 4.0
-            and roc_push >= REACCEL_ROC5_MIN * 1.35
+            di_gap >= strong_di_gap
+            and roc_push >= strong_roc_push
             and slope_push >= 0.0010
         )
 

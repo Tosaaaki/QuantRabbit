@@ -249,10 +249,10 @@ def test_short_reacceleration_allows_modest_break_after_pullback() -> None:
             "adx": 28.4,
             "atr_pips": 3.8,
             "vol_5m": 2.1,
-            "rsi": 42.0,
+            "rsi": 40.0,
             "plus_di": 17.0,
-            "minus_di": 23.5,
-            "roc5": -0.025,
+            "minus_di": 24.5,
+            "roc5": -0.029,
             "ema_slope_10": -0.0012,
             "candles": [
                 {"high": 158.488, "low": 158.456, "close": 158.466},
@@ -305,7 +305,7 @@ def test_stretched_short_still_allows_with_exceptional_indicator_impulse() -> No
             "adx": 33.0,
             "atr_pips": 3.9,
             "vol_5m": 2.5,
-            "rsi": 31.0,
+            "rsi": 36.0,
             "plus_di": 12.0,
             "minus_di": 24.0,
             "roc5": -0.034,
@@ -389,7 +389,7 @@ def test_short_price_action_allows_one_noisy_bar() -> None:
             "adx": 30.4,
             "atr_pips": 3.7,
             "vol_5m": 1.8,
-            "rsi": 31.0,
+            "rsi": 36.0,
             "plus_di": 14.0,
             "minus_di": 23.0,
             "roc5": -0.018,
@@ -427,6 +427,34 @@ def test_short_rejects_oversold_indicator_exhaustion() -> None:
                 {"high": 158.60, "low": 158.55, "close": 158.57},
                 {"high": 158.59, "low": 158.51, "close": 158.54},
                 {"high": 158.57, "low": 158.52, "close": 158.53},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
+def test_short_rejects_marginal_impulse_that_only_passes_generic_thresholds() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.418,
+            "ma10": 158.445,
+            "ma20": 158.457,
+            "ema20": 158.454,
+            "adx": 31.8,
+            "atr_pips": 3.9,
+            "vol_5m": 2.2,
+            "rsi": 36.5,
+            "plus_di": 16.5,
+            "minus_di": 22.0,
+            "roc5": -0.018,
+            "ema_slope_10": -0.0010,
+            "candles": [
+                {"high": 158.565, "low": 158.548, "close": 158.552},
+                {"high": 158.534, "low": 158.514, "close": 158.518},
+                {"high": 158.500, "low": 158.480, "close": 158.484},
+                {"high": 158.466, "low": 158.448, "close": 158.452},
+                {"high": 158.430, "low": 158.416, "close": 158.418},
             ],
         }
     )
@@ -503,7 +531,7 @@ def test_context_tilt_reduces_confidence_in_chop_without_reaccel() -> None:
         "adx": 30.4,
         "atr_pips": 3.7,
         "vol_5m": 1.8,
-        "rsi": 31.0,
+        "rsi": 36.0,
         "plus_di": 14.0,
         "minus_di": 23.0,
         "roc5": -0.018,

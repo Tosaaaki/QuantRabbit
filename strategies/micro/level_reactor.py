@@ -27,6 +27,10 @@ class MicroLevelReactor:
     BAND_PIPS = float(__import__("os").getenv("MLR_BAND_PIPS", "1.0"))  # allow +- band checks
     UP_ATR_MULT = float(__import__("os").getenv("MLR_UP_ATR_MULT", "2.0"))
     DOWN_ATR_MULT = float(__import__("os").getenv("MLR_DOWN_ATR_MULT", "2.0"))
+    LONG_RSI_MIN = float(__import__("os").getenv("MLR_LONG_RSI_MIN", "54.0"))
+    LONG_BOUNCE_RSI_MAX = float(__import__("os").getenv("MLR_LONG_BOUNCE_RSI_MAX", "52.0"))
+    BOUNCE_BODY_BEAR_MAX_PIPS = float(__import__("os").getenv("MLR_BOUNCE_BODY_BEAR_MAX_PIPS", "1.2"))
+    BOUNCE_MIN_LOWER_WICK_PIPS = float(__import__("os").getenv("MLR_BOUNCE_MIN_LOWER_WICK_PIPS", "0.8"))
 
     @staticmethod
     def _as_float(val: Optional[float], default: float = 0.0) -> float:
@@ -34,6 +38,16 @@ class MicroLevelReactor:
             return float(val)
         except (TypeError, ValueError):
             return default
+
+    @classmethod
+    def _candle_bias(cls, fac: Dict, price: float) -> tuple[float, float, float]:
+        open_price = cls._as_float(fac.get("open"), price)
+        high = cls._as_float(fac.get("high"), price)
+        low = cls._as_float(fac.get("low"), price)
+        body_pips = (price - open_price) / PIP
+        upper_wick_pips = max(0.0, (high - max(price, open_price)) / PIP)
+        lower_wick_pips = max(0.0, (min(price, open_price) - low) / PIP)
+        return body_pips, upper_wick_pips, lower_wick_pips
 
     @classmethod
     def _mk_decision(
@@ -75,6 +89,7 @@ class MicroLevelReactor:
             return None
 
         rsi = cls._as_float(fac.get("rsi"), 50.0)
+        body_pips, upper_wick_pips, lower_wick_pips = cls._candle_bias(fac, price)
         # Dynamic levels must be anchored to a slower-moving reference (not the current price),
         # otherwise they would never be crossed.
         anchor = cls._as_float(
@@ -93,9 +108,16 @@ class MicroLevelReactor:
             down = anchor - atr_pips * cls.DOWN_ATR_MULT * PIP
 
         band = cls.BAND_PIPS * PIP
+        breakout_supportive = (
+            body_pips >= 0.0
+            or (
+                lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS
+                and lower_wick_pips + 0.2 >= upper_wick_pips
+            )
+        )
 
         # Breakout long: push above upper level with supportive RSI
-        if price >= up and rsi >= 50.0:
+        if price >= up and rsi >= cls.LONG_RSI_MIN and breakout_supportive:
             sl = max(6.0, atr_pips * 1.6)
             tp = max(10.0, sl * 1.4)
             conf = 70 + min(15, int((rsi - 50.0) * 0.6))
@@ -109,7 +131,14 @@ class MicroLevelReactor:
             return cls._mk_decision("OPEN_SHORT", sl, tp, conf, "fade-upper")
 
         # Bounce long near lower band
-        if price <= down + band and rsi <= 55.0:
+        if price <= down + band and rsi <= cls.LONG_BOUNCE_RSI_MAX:
+            bullish_reject = (
+                body_pips >= -cls.BOUNCE_BODY_BEAR_MAX_PIPS
+                and (body_pips >= 0.0 or lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS)
+                and lower_wick_pips + 0.1 >= upper_wick_pips
+            )
+            if not bullish_reject:
+                return None
             sl = max(7.0, atr_pips * 1.7)
             tp = max(10.0, sl * 1.3)
             conf = 68 + min(18, int((55.0 - rsi) * 0.4))

@@ -14119,6 +14119,32 @@
   - Brain を切るのではなく、不安定時の 4 秒 stall だけを局所的に外す。
   - entry 頻度を落とさず、LLM が返る局面の size/quality 改善は残す。
 
+## 2026-03-09 22:25 JST - micro loss cluster に対する strategy-local quality tightening
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `strategies/micro/level_reactor.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `ops/env/quant-micro-levelreactor.env`
+  - `ops/env/local-v2-stack.env`
+  - `docs/TRADE_FINDINGS.md`
+
+- 変更:
+  - `MomentumBurst` は short 専用の threshold を env 参照に切り出し、
+    exhausted short (`RSI low + trend gap stretch + EMA stretch`) を skip。
+  - `MomentumBurst` の short reaccel は
+    `DI gap / ROC5` を long より硬くした。
+  - `MicroLevelReactor` は long breakout の RSI floor を上げ、
+    `bounce-lower` を bearish continuation candle では通さないようにした。
+  - `quant-micro-levelreactor` / `quant-micro-momentumburst` の dedicated env に、
+    long/short 非対称の閾値を明示した。
+
+- 意図:
+  - 共通 gate や時間帯 block を増やさず、
+    24h 実測で見えた
+    `MomentumBurst short` と `MicroLevelReactor long`
+    の負け cluster だけを潰し、entry cadence は broad に落とさない。
+
 ## 2026-03-09 22:45 JST - `stage_tracker` の naive/aware UTC 混在で停止していた precision worker を復帰可能化
 
 - 対象:
@@ -14144,7 +14170,17 @@
 
 - 変更:
   - `get_cooldown()` の public contract は naive UTC のまま維持しつつ、
+    `ensure_cooldown()` と `is_blocked()` では
+    `CooldownInfo.cooldown_until` を `_coerce_utc()` で再正規化してから比較/減算するよう統一した。
+  - 回帰テストに、
+    naive 公開値を返す cooldown でも `is_blocked()` / `ensure_cooldown()` が
+    例外なく動くことを固定した。
 
+- 意図:
+  - precision worker の停止要因を shared `stage_tracker` 側で除去し、
+    `trade_all` 常駐の entry lane を「止めずに観測できる」状態へ戻す。
+  - ただし 24h/7d 実績が弱い loser lane を根拠なく増量せず、
+    復帰は既存 sizing のまま行う。
 
 ## 2026-03-09 23:15 JST - micro shared boost が loser shrink を打ち消す leak を修正
 
@@ -14173,3 +14209,34 @@
   - 共通 gate 追加や時間帯 block ではなく、
     sizing leak と strategy-local loser cluster を個別に潰して
     participation の質だけを上げる。
+
+## 2026-03-10 00:35 JST - micro loser cluster を strategy-local guard に閉じ込める追加調整
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `strategies/micro/level_reactor.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `ops/env/quant-micro-levelreactor.env`
+  - `tests/strategies/test_momentum_burst.py`
+  - `tests/strategies/test_level_reactor.py`
+  - `docs/TRADE_FINDINGS.md`
+
+- 変更:
+  - `MomentumBurst` は short の stretched quality 判定で
+    long 共通 threshold を使わず、
+    short 専用 `DI gap / ROC5` を参照するようにした。
+  - `MomentumBurst` は short exhaustion を
+    generic stretch fast-pass より前に評価し、
+    oversold 方向への late chase を先に落とすようにした。
+  - dedicated env では short 側の `RSI / drift / reaccel cooldown`
+    を締め、live loser cluster に合わせた。
+  - `MicroLevelReactor` は breakout-long に supportive candle 条件を追加し、
+    `bounce-lower` の bearish candle は hard reject に変更した。
+  - dedicated env では long RSI / wick-body 閾値を引き上げた。
+  - 戦略テストを追加し、
+    tightened short impulse / bearish breakout / bearish bounce reject を固定した。
+
+- 意図:
+  - 共通層を触らず、
+    直近24hで観測された `MomentumBurst short` と
+    `MicroLevelReactor long` の敗因 cluster だけを local に潰す。
