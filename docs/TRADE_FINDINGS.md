@@ -8993,3 +8993,43 @@ Status:
   1. 24h で `scalp_ping_5s_flow_live` と `M1Scalper-M1` の gross loss 増加ペースが鈍ること。
   2. `scalp_ping_5s_b_live` の 約定数が明確に減り、`ENTRY_LEADING_PROFILE` が reject/scale として効くこと。
   3. `MomentumBurst` の units が micro 内相対でやや厚くなりつつ、`PF>1` を維持すること。
+
+## 2026-03-09 19:20 JST - さらに利益速度を上げるため、micro は winner-only に戻し loser pockets をもう一段削る
+
+- 直近事実:
+  - `metrics.db` 24h では `order_success_rate=98.57%`, `reject_rate=1.43%`,
+    `decision_latency_ms=16.46` と、今の主因は拒否や遅延ではなかった。
+  - `orders.db` 直近 3000 event でも `rejected=18 (0.6%)` に対し、
+    `filled=461`。主なエラーは `STOP_LOSS_ON_FILL_LOSS` と `503`。
+  - つまり「もっと稼ぐ」ための優先度は、さらに loser の厚みを落として
+    winner の signal selection を強制すること。
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `micro`
+      - `MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1`
+      - `MICRO_MULTI_DYN_ALLOC_WINNER_SCORE=0.55`
+      - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.60,MicroTrendRetest:1.30,...`
+      - `MicroLevelReactor / MicroRangeBreak / MicroPullbackEMA / MicroCompressionRevert / MicroVWAPRevert`
+        はさらに減衰
+    - `scalp_ping_5s_b_live`
+      - `BASE_ENTRY_UNITS=6`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.94`
+      - `LOOKAHEAD_EDGE_MIN_PIPS=0.65`
+      - `DYN_ALLOC_MULT_MAX=0.80`
+    - `scalp_ping_5s_flow_live`
+      - `BASE_ENTRY_UNITS=18`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.80`, `...SHORT=0.86`
+      - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.40`
+      - `DYN_ALLOC_MULT_MAX=0.55`
+    - `M1Scalper-M1`
+      - `BASE_UNITS=200`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.64`
+      - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.80`
+      - `DYN_ALLOC_MULT_MAX=0.90`
+
+- 判断:
+  - 直近7dの明確 winner は `MomentumBurst`、次点が `MicroTrendRetest-short`。
+  - `MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1` を `score=0.55` で戻すことで、
+    micro では winner 候補が存在する局面で loser micro へ signal slot を渡さない。
+  - scalp_fast / M1 は「停止」ではなく、利益毀損が出る速度だけをさらに落とす。

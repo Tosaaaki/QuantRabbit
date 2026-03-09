@@ -1928,6 +1928,36 @@
     `leading_profile/lookahead` 増量余地を local override で閉じる。
   - 期待値のある worker に相対配分を寄せ、gross loss の増加ペースを鈍らせる。
 
+### 2026-03-09 local-v2 winner-only reinforcement
+- 対象:
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `micro`
+    - `MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1`
+    - `MICRO_MULTI_DYN_ALLOC_WINNER_SCORE=0.55`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT` を
+      `MomentumBurst:1.60, MicroTrendRetest:1.30` へ引き上げ、
+      loser micro は `0.45-0.10` へ追加減衰。
+  - `scalp_ping_5s_b_live`
+    - `BASE_ENTRY_UNITS=6`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.94`
+    - `LOOKAHEAD_EDGE_MIN_PIPS=0.65`
+    - `DYN_ALLOC_MULT_MAX=0.80`
+  - `scalp_ping_5s_flow_live`
+    - `BASE_ENTRY_UNITS=18`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.80`, `...SHORT=0.86`
+    - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.40`
+    - `DYN_ALLOC_MULT_MAX=0.55`
+  - `M1Scalper-M1`
+    - `BASE_UNITS=200`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.64`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.80`
+    - `DYN_ALLOC_MULT_MAX=0.90`
+- 意図:
+  - `reject_rate` が低い局面では、サイズを広くばらまくより
+    winner selection を強くして gross loss 発生源を細くするほうが効率的。
+  - 共通 order path は変えず、worker-local の candidate selection と sizing だけを再配分する。
+
 ### 2026-03-07 `MicroLevelReactor` preserve-intent floor override
 - 対象:
   - `ops/env/quant-micro-levelreactor.env`

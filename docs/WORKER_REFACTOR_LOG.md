@@ -13038,3 +13038,42 @@
   - 「勝っている worker にだけ資本を寄せる」を local-v2 override で明示し、
     loser 側の entry boost を封じる。
   - shared `order_manager` や共通 topology は変えず、worker-local の entry sizing だけを補正する。
+
+## 2026-03-09 JST - winner concentration をさらに強化し、micro は winner-only selection へ戻す
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+
+- 背景:
+  - 24h の `metrics.db` では `order_success_rate=98.57%`, `reject_rate=1.43%`,
+    `decision_latency_ms=16.46` で、拒否率や遅延は主因ではなかった。
+  - したがって当日の利益速度を上げるには、
+    loser の entry 量と signal slot をさらに削るほうが効く。
+
+- 変更:
+  - `micro`
+    - `MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1`
+    - `MICRO_MULTI_DYN_ALLOC_WINNER_SCORE=0.55`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT`
+      を `MomentumBurst:1.60, MicroTrendRetest:1.30` まで引き上げ、
+      `MicroLevelReactor / MicroRangeBreak / MicroPullbackEMA / MicroCompressionRevert / MicroVWAPRevert`
+      を `0.45 / 0.35 / 0.25 / 0.20 / 0.10` まで下げた。
+  - `scalp_ping_5s_b_live`
+    - `BASE_ENTRY_UNITS=6`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW_SHORT=0.94`
+    - `LOOKAHEAD_EDGE_MIN_PIPS=0.65`
+    - `DYN_ALLOC_MULT_MAX=0.80`
+  - `scalp_ping_5s_flow_live`
+    - `BASE_ENTRY_UNITS=18`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.80`, `...SHORT=0.86`
+    - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.40`
+    - `DYN_ALLOC_MULT_MAX=0.55`
+  - `M1Scalper-M1`
+    - `BASE_UNITS=200`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.64`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.80`
+    - `DYN_ALLOC_MULT_MAX=0.90`
+
+- 意図:
+  - micro では winner 候補がいる周期に loser 候補を選ばない。
+  - scalp_fast / M1 は worker を止めずに、厚みと boost ceiling だけをさらに下げる。
