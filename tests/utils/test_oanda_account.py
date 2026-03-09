@@ -114,3 +114,40 @@ def test_side_free_margin_ratio_keeps_global_ratio_when_positions_unavailable(mo
     side_ratio = oanda_account._side_free_margin_ratio(snap)
 
     assert side_ratio is None
+
+
+def test_side_free_margin_ratio_does_not_expand_one_sided_exposure(monkeypatch):
+    snap = oanda_account.AccountSnapshot(
+        nav=100000.0,
+        balance=100000.0,
+        margin_available=75000.0,
+        margin_used=25000.0,
+        margin_rate=0.04,
+        unrealized_pl=0.0,
+        free_margin_ratio=0.75,
+        health_buffer=0.55,
+    )
+    monkeypatch.setattr(oanda_account, "get_position_summary", lambda: (10000.0, 0.0))
+
+    side_ratio = oanda_account._side_free_margin_ratio(snap)
+
+    assert side_ratio == 0.75
+
+
+def test_apply_side_free_margin_ratio_never_raises_global_ratio(monkeypatch):
+    snap = oanda_account.AccountSnapshot(
+        nav=100000.0,
+        balance=100000.0,
+        margin_available=3000.0,
+        margin_used=97000.0,
+        margin_rate=0.04,
+        unrealized_pl=0.0,
+        free_margin_ratio=0.03,
+        health_buffer=0.03,
+    )
+    monkeypatch.setattr(oanda_account, "_side_free_margin_ratio", lambda _snapshot: 1.0)
+
+    applied = oanda_account._apply_side_free_margin_ratio(snap)
+
+    assert applied is snap
+    assert applied.free_margin_ratio == 0.03

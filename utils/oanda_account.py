@@ -107,7 +107,10 @@ def _side_free_margin_ratio(snapshot: "AccountSnapshot") -> Optional[float]:
 
     long_free_ratio = 1.0 - (long_usage or 0.0)
     short_free_ratio = 1.0 - (short_usage or 0.0)
-    return max(0.0, min(1.0, max(long_free_ratio, short_free_ratio)))
+    # A shared snapshot is consumed without side context in many workers.
+    # Never widen the global free-margin ratio based on the "empty" side,
+    # otherwise one-sided exposure can be misread as fully healthy.
+    return max(0.0, min(1.0, min(long_free_ratio, short_free_ratio)))
 
 
 def _apply_side_free_margin_ratio(snapshot: Optional[AccountSnapshot]) -> Optional[AccountSnapshot]:
@@ -115,7 +118,15 @@ def _apply_side_free_margin_ratio(snapshot: Optional[AccountSnapshot]) -> Option
     if snapshot is None or not _SIDE_MARGIN_RATIO_ENABLED:
         return snapshot
     side_free_ratio = _side_free_margin_ratio(snapshot)
-    if side_free_ratio is None or side_free_ratio == snapshot.free_margin_ratio:
+    global_free_ratio = snapshot.free_margin_ratio
+    if (
+        side_free_ratio is None
+        or side_free_ratio == global_free_ratio
+        or (
+            global_free_ratio is not None
+            and side_free_ratio > float(global_free_ratio)
+        )
+    ):
         return snapshot
     try:
         return dataclasses.replace(snapshot, free_margin_ratio=side_free_ratio)
