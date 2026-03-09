@@ -343,3 +343,16 @@ class OrderIntent(BaseModel):
   「DD後リカバリー待ち -> 戻らなければカット」運用を許可する。
   broker SL は `ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE`
   で上限管理し、hard-stop を無効化せずに戻り余地のみを拡張する。
+
+## 9. 2026-03-09 運用補足（failed close retry の抑制）
+
+- V2 の exit worker は、`close_trade()` が `True` を返した時だけ
+  trade-local state を破棄する。
+- `close_reject_no_negative` や BB exit block のような deterministic な failed close は、
+  worker 側で confirmed close と扱わない。
+- `workers/scalp_rangefader/exit_worker.py` と
+  `workers/scalp_ping_5s_flow/exit_worker.py` は、
+  同一 `reason` の failed close に対して
+  `RANGEFADER_EXIT_CLOSE_RETRY_COOLDOWN_SEC` 秒の backoff を入れる。
+- これにより `order_manager` の negative-close policy mismatch があっても、
+  0.7 秒 loop で同一 trade の reject を増幅しない。

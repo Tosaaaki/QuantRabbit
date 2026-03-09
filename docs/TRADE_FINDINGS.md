@@ -9445,3 +9445,46 @@ Status:
   1. `MomentumBurst` の `filled` が増えても shared micro gate の reject 理由が増えないこと。
   2. `MomentumBurst` の 2h/24h PnL が再び負側へ大きく崩れないこと。
   3. `MicroLevelReactor` / `RangeFader` の winner flow を食い潰さないこと。
+
+## 2026-03-09 15:18-16:10 JST - `close_reject_no_negative` は主に duplicate close loop であり、RangeFader と `scalp_ping_5s_flow` の failed close retry を抑制する
+
+- 市況確認:
+  - `python3 scripts/pdca_profitability_report.py --instrument USD_JPY ...` の 2026-03-09 15:18 JST 時点で、
+    USD/JPY は `158.438 / 158.446`、spread `0.8 pips`、OANDA pricing/summary/openTrades はすべて `~225-245ms`。
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services ...` では
+    core/runtime と主要 strategy service は `running`。
+
+- 実測:
+  - 24h の `orders.db` では `close_reject_no_negative=4,984`、`7,308` 行中 `68.2%`。
+  - その `4,984` 行は `18` trade に集中し、`RangeFader-neutral-fade 2957`、`RangeFader-sell-fade 1509`、`RangeFader-buy-fade 518`。
+  - `18/18` trade は最終的に `close_ok` となり、最終 `close_reason=MARKET_ORDER_TRADE_CLOSE`、合計 `+28.3 pips / +29.7 JPY`。
+  - 7d では `close_reject_no_negative=5,509`。大半は同じ duplicate close だが、
+    `scalp_ping_5s_flow_live` だけは `3` trade (`424165`, `424436`, `424185`) が reject 後に負けへ悪化した。
+
+- 原因:
+  - `execution/order_manager.py` は negative close を `strategy_exit_protections` と reason allowlist で拒否する。
+  - 一方で `workers/scalp_rangefader/exit_worker.py` と
+    `workers/scalp_ping_5s_flow/exit_worker.py` は close が失敗しても local state を即座に破棄していた。
+  - そのため 0.7 秒 loop ごとに同じ `max_adverse` / `max_hold_loss` / `reentry_reset` を再送し、
+    `close_reject_no_negative` をノイズ化していた。
+
+- 対応:
+  - `RangeFader` と `scalp_ping_5s_flow` の exit worker に
+    `close` 成否の真偽値返却と、reason-scoped retry cooldown を追加。
+  - close 成功時だけ `_states` と必要な `_direction_flip_states` を破棄し、
+    failed close は worker-local state を保持したまま一定時間 backoff する。
+  - 今回は `RangeFader.neg_exit.allow_reasons` を広げていない。
+    実測で `RangeFader` の reject は全件がより良い価格で閉じており、
+    allowlist 拡張は winner の premature cut を増やすリスクが高いため。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_ping_5s_flow_exit_retry.py`
+    は `4 passed`。
+  - `python3 -m py_compile workers/scalp_rangefader/exit_worker.py workers/scalp_ping_5s_flow/exit_worker.py`
+    も成功。
+
+- 次の確認点:
+  1. `orders.db` の `close_reject_no_negative` が、同一 trade への連打ではなく散発的な reject に縮小すること。
+  2. `logs/local_v2_stack/quant-scalp-rangefader-exit.log` と
+     `logs/local_v2_stack/quant-scalp-ping-5s-flow-exit.log` で同一 trade の failed close 連打が止まること。
+  3. `scalp_ping_5s_flow_live` の near-break-even close reject が 24h で再発しないこと。

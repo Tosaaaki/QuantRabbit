@@ -13300,3 +13300,35 @@
 - 意図:
   - 共有 preflight や shared micro gate を触らず、
     `MomentumBurst` だけの entry cadence を上げて trend day の取り逃しを減らす。
+
+## 2026-03-09 JST - exit worker は `close_trade()` 成功確認後にだけ state を破棄し、failed close は reason-scoped cooldown で再試行する
+
+- 対象:
+  - `workers/scalp_rangefader/exit_worker.py`
+  - `workers/scalp_ping_5s_flow/exit_worker.py`
+  - `tests/workers/test_scalp_rangefader_exit_worker.py`
+  - `tests/workers/test_scalp_ping_5s_flow_exit_retry.py`
+
+- 背景:
+  - `close_reject_no_negative` が 24h で `4,984` 件発生していたが、
+    実体は `RangeFader` の `18` trade への duplicate close loop だった。
+  - `scalp_ping_5s_flow_live` にも同様の failed close retry が残っており、
+    7d では near-break-even reject 後に負けへ悪化した trade が `3` 件あった。
+
+- 変更:
+  - exit worker の `_close()` を真偽値返却に変更。
+  - `_attempt_close()` helper を追加し、
+    同一 reason の failed close は `RANGEFADER_EXIT_CLOSE_RETRY_COOLDOWN_SEC` で backoff。
+  - `_states` / `_direction_flip_states` は confirmed close の時だけ破棄するように統一。
+
+- 意図:
+  - `order_manager` 側の negative-close policy mismatch を、worker が 0.7 秒ごとに増幅しないようにする。
+  - policy allowlist を広げずに reject storm を止め、
+    winner を premature cut しないまま observability を正常化する。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_ping_5s_flow_exit_retry.py`
+    で `4 passed`。
+  - `python3 -m py_compile workers/scalp_rangefader/exit_worker.py workers/scalp_ping_5s_flow/exit_worker.py`
+    で syntax check を通過。
+

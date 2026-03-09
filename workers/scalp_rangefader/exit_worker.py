@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence, Set
@@ -243,6 +244,8 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    close_retry_reason: Optional[str] = None
+    close_retry_after_monotonic: float = 0.0
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -250,6 +253,19 @@ class _TradeState:
         if pnl > 0:
             floor = max(0.0, pnl - lock_buffer)
             self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
+
+    def can_retry_close(self, now_monotonic: float, reason: str) -> bool:
+        if self.close_retry_reason != reason:
+            return True
+        return now_monotonic >= self.close_retry_after_monotonic
+
+    def note_close_failure(self, now_monotonic: float, reason: str, cooldown_sec: float) -> None:
+        self.close_retry_reason = reason
+        self.close_retry_after_monotonic = now_monotonic + max(0.0, cooldown_sec)
+
+    def clear_close_retry(self) -> None:
+        self.close_retry_reason = None
+        self.close_retry_after_monotonic = 0.0
 
 
 class RangeFaderExitWorker:
@@ -310,6 +326,10 @@ class RangeFaderExitWorker:
             self.min_hold_sec + 1.0,
             _float_env("RANGEFADER_EXIT_MAX_HOLD_LOSS_SEC", 180.0),
         )
+        self.close_retry_cooldown_sec = max(
+            1.0,
+            _float_env("RANGEFADER_EXIT_CLOSE_RETRY_COOLDOWN_SEC", 15.0),
+        )
 
 
         self._pos_manager = PositionManager()
@@ -325,7 +345,14 @@ class RangeFaderExitWorker:
             range_active = False
         return _latest_mid(), range_active
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> None:
+    def _ensure_state(self, trade_id: str, pnl: float) -> _TradeState:
+        state = self._states.get(trade_id)
+        if state is None:
+            state = _TradeState(peak=pnl)
+            self._states[trade_id] = state
+        return state
+
+    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> bool:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
             pnl_val = locals().get("pnl")
@@ -335,7 +362,7 @@ class RangeFaderExitWorker:
                 side = "long" if units > 0 else "short"
                 if not _bb_exit_allowed(BB_STYLE, side, price, fac):
                     LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
-                    return
+                    return False
         if pnl <= 0:
             allow_negative = True
         ok = await close_trade(
@@ -350,6 +377,26 @@ class RangeFaderExitWorker:
             LOG.info("[exit-rangefader] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+        return bool(ok)
+
+    async def _attempt_close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], state: _TradeState, allow_negative: bool = False) -> bool:
+        now_monotonic = time.monotonic()
+        if not state.can_retry_close(now_monotonic, reason):
+            return False
+        ok = await self._close(
+            trade_id,
+            units,
+            reason,
+            pnl,
+            client_order_id,
+            allow_negative=allow_negative,
+        )
+        if ok:
+            state.clear_close_retry()
+            self._states.pop(trade_id, None)
+            return True
+        state.note_close_failure(now_monotonic, reason, self.close_retry_cooldown_sec)
+        return False
 
     async def _review_trade(self, trade: dict, now: datetime, mid: float, range_active: bool) -> None:
         trade_id = str(trade.get("trade_id"))
@@ -402,6 +449,7 @@ class RangeFaderExitWorker:
 
         if hold_sec < self.min_hold_sec:
             return
+        state = self._ensure_state(trade_id, pnl)
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:
             candle_client_id = trade.get("client_order_id")
@@ -410,9 +458,14 @@ class RangeFaderExitWorker:
                 if isinstance(client_ext, dict):
                     candle_client_id = client_ext.get("id")
             if candle_client_id:
-                await self._close(trade_id, -units, candle_reason, pnl, candle_client_id)
-                if hasattr(self, "_states"):
-                    self._states.pop(trade_id, None)
+                await self._attempt_close(
+                    trade_id,
+                    -units,
+                    candle_reason,
+                    pnl,
+                    candle_client_id,
+                    state,
+                )
                 return
         if pnl <= 0:
             fac_m1 = all_factors().get("M1") or {}
@@ -440,34 +493,40 @@ class RangeFaderExitWorker:
             if reentry.action == "hold":
                 return
             if reentry.action == "exit_reentry" and not reentry.shadow:
-                await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
-                self._states.pop(trade_id, None)
+                await self._attempt_close(
+                    trade_id,
+                    -units,
+                    "reentry_reset",
+                    pnl,
+                    client_id,
+                    state,
+                )
                 return
             if abs(float(pnl)) >= loss_cut_hard_pips:
-                await self._close(
+                await self._attempt_close(
                     trade_id,
                     -units,
                     "max_adverse",
                     pnl,
                     client_id,
+                    state,
                     allow_negative=True,
                 )
-                self._states.pop(trade_id, None)
                 return
             if (
                 loss_cut_max_hold_sec is not None
                 and loss_cut_max_hold_sec > 0.0
                 and hold_sec >= loss_cut_max_hold_sec
             ):
-                await self._close(
+                await self._attempt_close(
                     trade_id,
                     -units,
                     "max_hold_loss",
                     pnl,
                     client_id,
+                    state,
                     allow_negative=True,
                 )
-                self._states.pop(trade_id, None)
                 return
             return
 
@@ -487,10 +546,6 @@ class RangeFaderExitWorker:
             lock_buffer_floor=0.05,
         )
 
-        state = self._states.get(trade_id)
-        if state is None:
-            state = _TradeState(peak=pnl)
-            self._states[trade_id] = state
         state.update(pnl, lock_buffer)
 
         if pnl >= trail_start:
@@ -498,18 +553,36 @@ class RangeFaderExitWorker:
             state.lock_floor = candidate if state.lock_floor is None else max(state.lock_floor, candidate)
 
         if pnl >= profit_take:
-            await self._close(trade_id, -units, "take_profit", pnl, client_id)
-            self._states.pop(trade_id, None)
+            await self._attempt_close(
+                trade_id,
+                -units,
+                "take_profit",
+                pnl,
+                client_id,
+                state,
+            )
             return
 
         if state.lock_floor is not None and pnl <= state.lock_floor:
-            await self._close(trade_id, -units, "lock_floor", pnl, client_id)
-            self._states.pop(trade_id, None)
+            await self._attempt_close(
+                trade_id,
+                -units,
+                "lock_floor",
+                pnl,
+                client_id,
+                state,
+            )
             return
 
         if range_active and hold_sec >= self.range_max_hold_sec:
-            await self._close(trade_id, -units, "range_timeout", pnl, client_id)
-            self._states.pop(trade_id, None)
+            await self._attempt_close(
+                trade_id,
+                -units,
+                "range_timeout",
+                pnl,
+                client_id,
+                state,
+            )
 
     async def run(self) -> None:
         LOG.info(
