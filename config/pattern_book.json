@@ -1,8 +1,8 @@
 {
-  "as_of": "2026-03-09T09:33:54+00:00",
+  "as_of": "2026-03-09T09:39:18+00:00",
   "lookback_days": 180,
-  "processed_new_rows": 2,
-  "patterns_total": 2684,
+  "processed_new_rows": 1,
+  "patterns_total": 2685,
   "min_samples_soft": 30,
   "min_samples_block": 120,
   "action_counts": {
@@ -10,7 +10,7 @@
     "reduce": 16,
     "boost": 24,
     "block": 3,
-    "learn_only": 2635
+    "learn_only": 2636
   },
   "top_edges": [
     {
@@ -877,14 +877,14 @@
     }
   ],
   "deep_analysis": {
-    "rows_total": 16716,
-    "patterns_scored": 2684,
+    "rows_total": 16717,
+    "patterns_scored": 2685,
     "drift_rows": 0,
     "cluster_count": 8,
     "quality_counts": {
       "avoid": 8,
       "candidate": 7,
-      "learn_only": 2638,
+      "learn_only": 2639,
       "neutral": 11,
       "robust": 15,
       "weak": 5
@@ -42527,6 +42527,26 @@
       "profit_factor": 0.0,
       "avg_hold_sec": 19.2,
       "last_close_time": "2026-03-05T12:03:19.614409+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
+      "pattern_id": "st:microtrendretest_short|pk:micro|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_spin_up_w_lower_tr_dn_65181a8a",
+      "strategy_tag": "MicroTrendRetest-short",
+      "pocket": "micro",
+      "direction": "short",
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "win_rate": 0.0,
+      "avg_pips": -4.8,
+      "total_pips": -4.8,
+      "gross_profit": 0.0,
+      "gross_loss": 4.8,
+      "profit_factor": 0.0,
+      "avg_hold_sec": 18.95,
+      "last_close_time": "2026-03-09T09:37:23.223096+00:00",
       "action": "learn_only",
       "lot_multiplier": 1.0,
       "reason": "insufficient_samples"
