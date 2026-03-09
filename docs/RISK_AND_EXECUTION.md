@@ -8,6 +8,27 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MomentumBurst` reaccel cadence recovery（2026-03-09）
+- 背景:
+  - `health_snapshot.json` の UTC `12:35:32` / JST `21:35:32` は
+    `data_lag_ms=137.4`, `decision_latency_ms=17.4`, `trades_count_24h=340`, `trades_last_entry=12:31:29 UTC`。
+  - 24h `trades.db` は
+    `MicroLevelReactor +73.52 JPY`, `RangeFader +68.91 JPY`, `MomentumBurst -486.38 JPY`。
+  - ただし直近2hでは
+    `RangeFader: 7 trades / +15.02 JPY / reject 0`,
+    `MicroLevelReactor: 14 trades / -25.70 JPY`,
+    `MomentumBurst: 1 trade / +244.40 JPY` だった。
+  - `MicroLevelReactor` は `mlr_range_gate_block` が 6 本あったが、
+    同窓で負けていたため gate 緩和ではなく据え置きが妥当。
+- 実装:
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=45 -> 35`
+- 意図:
+  - `RangeFader` の current reject は解消済みで、
+    `MicroLevelReactor` は直近窓で負けていたため広げない。
+  - 次の entry 増は `MomentumBurst` の reaccel lane だけへ限定し、
+    non-reaccel 条件・shared micro gate・order-manager には新しい一律緩和を入れない。
+
 ### local-v2 winner cadence recovery / `MomentumBurst` reaccel audit（2026-03-09）
 - 背景:
   - UTC `12:09-12:10` / JST `21:09-21:10` の OANDA live は

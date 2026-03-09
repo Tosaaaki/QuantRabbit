@@ -23,6 +23,49 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 12:40 UTC / 2026-03-09 21:40 JST - local-v2: `RangeFader` の reject は解消したため、次の entry 増は `MomentumBurst` reaccel の再突入間隔だけを短縮
+
+Period:
+- 調査/実装: UTC `12:31-12:40` / JST `21:31-21:40`
+- 対象（実測）:
+  - `logs/health_snapshot.json`
+  - `logs/orders.db`, `logs/trades.db`
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+  - `ops/env/quant-micro-momentumburst.env`
+
+Fact:
+- `health_snapshot.json`（UTC `12:35:32` / JST `21:35:32`）:
+  - `data_lag_ms=137.4`, `decision_latency_ms=17.4`, `trades_count_24h=340`, `trades_last_entry=12:31:29 UTC`
+- 24h strategy 損益:
+  - `MicroLevelReactor: 224 trades / +73.52 JPY / +188.5p`
+  - `RangeFader: 64 trades / +68.91 JPY / +75.1p`
+  - `MomentumBurst: 22 trades / -486.38 JPY / -7.3p`
+- 直近2h:
+  - `RangeFader: 7 trades / +15.02 JPY / win_rate=85.7% / entry_probability_reject=0`
+  - `MicroLevelReactor: 14 trades / -25.70 JPY`
+  - `MomentumBurst: 1 trade / +244.40 JPY / +4.6p`
+- `MicroLevelReactor` は同窓で `mlr_range_gate_block` が `6` 本あったが、
+  latest block は `chop=0.533` / `0.55` でも、成績が負けていたため今この窓で gate を広げる根拠にはならなかった。
+
+Failure Cause:
+- `RangeFader` の current 窓ではすでに cadence 改善が効いており、次の scarcity は `MomentumBurst` の reaccel 再突入間隔。
+- `MicroLevelReactor` は 24h winner でも直近2hは負けており、ここを broad に緩めると精度毀損リスクが先に立つ。
+
+Improvement:
+- `ops/env/quant-micro-momentumburst.env`
+  - `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=45 -> 35`
+- `MomentumBurst` の non-reaccel 条件 / shared micro gate / order-manager / Brain は変更しない
+
+Verification:
+- `pytest -q tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py`
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-micro-momentumburst`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-momentumburst`
+- `ps eww -p <quant-micro-momentumburst pid> | rg 'MOMENTUMBURST_REACCEL_COOLDOWN_SEC=35'`
+
+Status:
+- done
+
 ## 2026-03-09 12:15 UTC / 2026-03-09 21:15 JST - local-v2: precision は許容帯、winner cadence を増やすため `RangeFader` cooldown を短縮し、`MomentumBurst` reaccel を監査可能化
 
 Period:

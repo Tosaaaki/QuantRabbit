@@ -5,6 +5,21 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`MomentumBurst` の reaccel-only cadence をさらに詰め、current 窓では winner/loser を広げすぎない
+
+- 対象:
+  - `ops/env/quant-micro-momentumburst.env`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=35` を現行運用値へ更新。
+- 意図:
+  - 直近2h 実測では `RangeFader` は `reject 0 / +15.02 JPY`、`MicroLevelReactor` は `-25.70 JPY` だった。
+  - そのため current 窓で広げるべき次の lane は `MomentumBurst` の reaccel だけとし、
+    non-reaccel や shared gate を緩めずに cadence だけを 10 秒短縮する。
+
 ### 2026-03-09（追記）`RangeFader` cadence を追加で戻し、`MomentumBurst` reaccel を order/trade 監査へ露出
 
 - 対象:

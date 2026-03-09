@@ -94,6 +94,7 @@
   recent 3-bar break と `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
   による strategy-local override を許可する。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-09 追記: current 窓で `RangeFader` の reject が解消し `MicroLevelReactor` が負けている場合、entry 増は `MomentumBurst` の reaccel lane のみへ寄せる。現行運用値は `ops/env/quant-micro-momentumburst.env` の `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=35` とし、non-reaccel や shared gate は追加で緩めない。
 - 2026-03-09 追記: `MomentumBurst` の micro EXIT は `rsi_take` を薄利帯で通さず、
   `config/strategy_exit_protections.yaml` の `rsi_take_min_pips` を下限として扱う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
