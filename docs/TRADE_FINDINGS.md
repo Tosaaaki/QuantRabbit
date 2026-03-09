@@ -9071,7 +9071,9 @@ Status:
     `entry_probability_reject=13`。システム全体停止ではなく、特定 worker の入口が詰まっていた。
   - `TrendBreakout` は `logs/local_v2_stack/quant-scalp-trend-breakout.log` で
     `tag_filter_block tag=M1Scalper-trend-long`, `...sell-rally`, `...buy-dip` が継続。
-    一方で env は `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest` のみで、M1 family の trend/nwave signal を自分で落としていた。
+    一方で `ops/env/local-v2-stack.env` の共通
+    `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+    が dedicated env より後勝ちし、`TrendBreakout` 専用の aperture を潰していた。
   - `logs/trades.db` の直近72hでは `TrendBreakout` は `2 trades / +179.18 JPY / avg +6.2p` で、
     winner 候補をタグ不一致で塞いでいた。
   - `RangeFader` の reject は `entry_probability_below_min_units` に集中し、
@@ -9085,6 +9087,9 @@ Status:
     - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest,trend-long,trend-short,nwave-long,nwave-short`
       に更新し、trend continuation 系 signal を受けられるようにした。
     - `M1SCALP_ALLOW_REVERSION=0` は維持し、逆張り再versionまでは開けない。
+  - `ops/env/local-v2-stack.env`
+    - 共通 `M1SCALP_SIGNAL_TAG_CONTAINS` override を削除し、
+      M1 family 各 worker が dedicated env の tag filter をそのまま使うよう戻した。
   - `ops/env/quant-order-manager.env`
     - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` と alias の
       `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD` を `60` へ統一。

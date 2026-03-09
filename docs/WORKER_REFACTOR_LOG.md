@@ -13104,13 +13104,16 @@
 
 - 対象:
   - `ops/env/quant-scalp-trend-breakout.env`
+  - `ops/env/local-v2-stack.env`
   - `ops/env/quant-order-manager.env`
 
 - 背景:
   - `logs/local_v2_stack/quant-strategy-control.log` は `global(entry=True, exit=True, lock=False)` を維持し、
     `orders.db` 24h でも `filled=100` が出ていたため、系全体停止ではなかった。
   - `TrendBreakout` 専用 worker は `tag_filter_block tag=M1Scalper-trend-long/sell-rally/buy-dip`
-    を連発していたが、env 側は `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest` しか許容していなかった。
+    を連発していた。原因は dedicated env ではなく、
+    `local-v2-stack.env` の共通 `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest-long,nwave-long,vshape-rebound-long`
+    が service env を上書きしていたこと。
   - `RangeFader-*` は `entry_probability=0.34-0.36` の縮小後に
     `scaled_units=202-254` まで落ち、その後 `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*=120`
     で `entry_probability_below_min_units` へ落ちていた。
@@ -13118,6 +13121,8 @@
 - 変更:
   - `TrendBreakout` は `breakout-retest` に加えて
     `trend-long,trend-short,nwave-long,nwave-short` を許可。
+  - `local-v2-stack.env` から共通 `M1SCALP_SIGNAL_TAG_CONTAINS` override を外し、
+    M1 family は service ごとの dedicated env を正本に戻した。
   - `RangeFader` は alias `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD` を含め、
     `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` をすべて `60` へ統一。
 

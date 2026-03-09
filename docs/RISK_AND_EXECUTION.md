@@ -2033,6 +2033,9 @@
 - `TrendBreakout` dedicated worker は `M1SCALP_ALLOW_REVERSION=0` を維持したまま、
   `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest,trend-long,trend-short,nwave-long,nwave-short`
   を許可する。`M1Scalper` 由来の trend continuation / nwave signal を tag mismatch で落とさないための運用値である。
+- `ops/env/local-v2-stack.env` では共通 `M1SCALP_SIGNAL_TAG_CONTAINS` override を置かない。
+  同プレフィクスを使う M1 family 派生 worker の dedicated env を上書きすると、
+  `TrendBreakout` のような winner worker まで同じ tag aperture に収束してしまう。
 - `RangeFader` は `entry_probability` 縮小後に `69-91 units` 帯へ落ちる局面があるため、
   `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` だけでなく alias の
   `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD` も `60` 以下に揃える。
