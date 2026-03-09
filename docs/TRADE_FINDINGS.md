@@ -9033,3 +9033,25 @@ Status:
   - `MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1` を `score=0.55` で戻すことで、
     micro では winner 候補が存在する局面で loser micro へ signal slot を渡さない。
   - scalp_fast / M1 は「停止」ではなく、利益毀損が出る速度だけをさらに落とす。
+
+## 2026-03-09 19:28 JST - `MicroLevelReactor` は long 側だけ残して再度利益側へ寄せる
+
+- 直近実測:
+  - `MicroLevelReactor` 7d 集計では
+    - `OPEN_LONG`: `238 trades / +277.13 JPY / PF 1.27 / avg_abs_units 450.9`
+    - `OPEN_SHORT`: `72 trades / -342.60 JPY / PF 0.379 / avg_abs_units 591.2`
+  - つまり戦略全体が負けているのではなく、`OPEN_SHORT` が
+    `OPEN_LONG` の利益を食っていた。
+
+- 対応:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MICRO_MULTI_SIGNAL_TAG_CONTAINS=breakout-long,bounce-lower`
+      を追加し、`OPEN_LONG` 系だけ通す。
+  - `ops/env/local-v2-stack.env`
+    - `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.20`
+      として、`MicroLevelReactor` の strategy score `0.222` を loser block から外す。
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT` の `MicroLevelReactor` は `0.80` へ戻す。
+
+- 判断:
+  - margin headroom の都合で global size は上げず、
+    short 側だけ切って long winner 側へ枠を戻すほうが合理的。

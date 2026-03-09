@@ -13077,3 +13077,25 @@
 - 意図:
   - micro では winner 候補がいる周期に loser 候補を選ばない。
   - scalp_fast / M1 は worker を止めずに、厚みと boost ceiling だけをさらに下げる。
+
+## 2026-03-09 JST - `MicroLevelReactor` を long-only setup に寄せる
+
+- 対象:
+  - `ops/env/quant-micro-levelreactor.env`
+  - `ops/env/local-v2-stack.env`
+
+- 背景:
+  - 7d の `MicroLevelReactor` は `OPEN_LONG +277.13 JPY / PF 1.27` に対し、
+    `OPEN_SHORT -342.60 JPY / PF 0.379` だった。
+  - strategy score は short 混在で `0.222` まで落ちていたが、
+    long 側だけ見れば loser 扱いは過剰だった。
+
+- 変更:
+  - dedicated env に `MICRO_MULTI_SIGNAL_TAG_CONTAINS=breakout-long,bounce-lower` を追加。
+  - local-v2 override で `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.20` を設定し、
+    `MicroLevelReactor` が一律 loser block されないようにした。
+  - 同時に `MICRO_MULTI_STRATEGY_UNITS_MULT` の `MicroLevelReactor` を `0.80` へ戻した。
+
+- 意図:
+  - strategy 全体停止ではなく、long winner setup だけを残して
+    gross profit を回復させる。

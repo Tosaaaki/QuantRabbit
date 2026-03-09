@@ -1958,6 +1958,21 @@
     winner selection を強くして gross loss 発生源を細くするほうが効率的。
   - 共通 order path は変えず、worker-local の candidate selection と sizing だけを再配分する。
 
+### 2026-03-09 `MicroLevelReactor` long-only reinforcement
+- 対象:
+  - `ops/env/quant-micro-levelreactor.env`
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `quant-micro-levelreactor` 専用 env で
+    `MICRO_MULTI_SIGNAL_TAG_CONTAINS=breakout-long,bounce-lower` を設定し、
+    long setup だけを通す。
+  - local-v2 override で `MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.20` を設定し、
+    `MicroLevelReactor` の strategy score `0.222` を一律 loser block から外す。
+  - `MICRO_MULTI_STRATEGY_UNITS_MULT` の `MicroLevelReactor` は `0.80` に調整。
+- 意図:
+  - `OPEN_SHORT` を切り、7d で PF>1 を維持していた `OPEN_LONG` 側だけを残す。
+  - global size を増やさず、micro 内の allocation と setup selection で利益側へ寄せる。
+
 ### 2026-03-07 `MicroLevelReactor` preserve-intent floor override
 - 対象:
   - `ops/env/quant-micro-levelreactor.env`
