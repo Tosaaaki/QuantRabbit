@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def test_load_strategy_profile_applies_soft_participation_policy(tmp_path: Path)
     assert profile["soft_participation"] is True
     assert profile["allow_loser_block"] is False
     assert profile["allow_winner_only"] is False
-    assert profile["lot_multiplier"] == 0.55
+    assert profile["lot_multiplier"] == 0.30
 
 
 def test_load_strategy_profile_defaults_keep_block_behavior_without_policy(tmp_path: Path) -> None:
@@ -96,3 +97,32 @@ def test_load_strategy_profile_returns_policy_default_when_unknown(tmp_path: Pat
     assert profile["allow_loser_block"] is False
     assert profile["allow_winner_only"] is False
     assert profile["lot_multiplier"] == 0.25
+
+
+def test_load_strategy_profile_skips_unknown_soft_fallback_when_payload_is_stale(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    payload = {
+        "as_of": (datetime.now(timezone.utc) - timedelta(minutes=45))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+        "allocation_policy": {
+            "soft_participation": True,
+            "allow_loser_block": False,
+            "allow_winner_only": False,
+            "min_lot_multiplier": 0.45,
+            "max_lot_multiplier": 1.65,
+        },
+        "strategies": {},
+    }
+    path = tmp_path / "dynamic_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC", "600")
+
+    profile = load_strategy_profile("RangeFader-buy-fade", "scalp", path=path)
+    assert profile["found"] is False
+    assert profile["soft_participation"] is True
+    assert profile["payload_stale"] is True
+    assert profile["lot_multiplier"] == 1.0
+    assert profile["soft_participation_skip_reason"] == "stale_unknown_strategy"

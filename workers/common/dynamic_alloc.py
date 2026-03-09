@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -54,6 +55,45 @@ def _candidate_keys(strategy: str) -> list[str]:
     return dedup
 
 
+def _parse_iso8601_epoch(raw: Any) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).timestamp()
+
+
+def _payload_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_as_of = payload.get("as_of")
+    as_of = str(raw_as_of).strip() if raw_as_of is not None else ""
+    age_sec: Optional[float] = None
+    epoch = _parse_iso8601_epoch(as_of)
+    if epoch is not None:
+        age_sec = max(0.0, time.time() - epoch)
+    stale_max_age_sec = max(
+        0.0,
+        _safe_float(os.getenv("WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC"), 600.0),
+    )
+    is_stale = bool(
+        as_of
+        and age_sec is not None
+        and stale_max_age_sec > 0.0
+        and age_sec > stale_max_age_sec
+    )
+    return {
+        "payload_as_of": as_of,
+        "payload_age_sec": age_sec,
+        "payload_stale": is_stale,
+    }
+
+
 def _load_payload(path: Path, ttl_sec: float) -> Optional[Dict[str, Any]]:
     cache_key = str(path)
     now = time.time()
@@ -101,12 +141,16 @@ def load_strategy_profile(
         "allow_loser_block": True,
         "allow_winner_only": True,
         "soft_participation": False,
+        "payload_as_of": "",
+        "payload_age_sec": None,
+        "payload_stale": False,
     }
     if not payload:
         return base
     strategies = payload.get("strategies")
     if not isinstance(strategies, dict):
         return base
+    payload_meta = _payload_meta(payload)
     policy = payload.get("allocation_policy")
     policy_dict = policy if isinstance(policy, dict) else {}
     policy_soft_participation = _safe_bool(policy_dict.get("soft_participation"), False)
@@ -118,6 +162,7 @@ def load_strategy_profile(
     base["allow_loser_block"] = policy_allow_loser_block
     base["allow_winner_only"] = policy_allow_winner_only
     base["soft_participation"] = policy_soft_participation
+    base.update(payload_meta)
     if policy_soft_participation and policy_min_mult > 0.0:
         base["lot_multiplier"] = max(0.0, float(policy_min_mult))
 
@@ -169,8 +214,15 @@ def load_strategy_profile(
             "allow_loser_block": allow_loser_block,
             "allow_winner_only": allow_winner_only,
             "soft_participation": policy_soft_participation,
+            **payload_meta,
         }
     if policy_soft_participation and policy_min_mult > 0.0:
+        if payload_meta["payload_stale"]:
+            return {
+                **base,
+                "lot_multiplier": 1.0,
+                "soft_participation_skip_reason": "stale_unknown_strategy",
+            }
         fallback_key = ""
         candidates = _candidate_keys(strategy)
         if candidates:
@@ -186,5 +238,6 @@ def load_strategy_profile(
             "allow_loser_block": policy_allow_loser_block,
             "allow_winner_only": policy_allow_winner_only,
             "soft_participation": policy_soft_participation,
+            **payload_meta,
         }
     return base

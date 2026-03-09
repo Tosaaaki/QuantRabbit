@@ -11964,6 +11964,43 @@
   - `tests/workers/common/test_dynamic_alloc.py`: unknown strategy の policy fallback を追加。
   - `tests/execution/test_strategy_entry_dynamic_alloc_trim.py`: trim-only と dynamic_alloc 既存時スキップを検証。
 
+## 2026-03-09 JST - stale `dynamic_alloc.json` が missing strategy を 0.45x に落とす経路を停止
+
+- 対象:
+  - `workers/common/dynamic_alloc.py`
+  - `tests/workers/common/test_dynamic_alloc.py`
+  - `docs/ARCHITECTURE.md`
+  - `AGENTS.md`
+
+- 背景:
+  - 2026-03-09 JST の local V2 監査では core 4 service は active、OANDA live も
+    `spread=0.8p`, `ATR14(M5)=8.79p`, `open_trades=0`, API 応答 `197-303ms` で通常帯。
+  - 一方で `orders.db` の `RangeFader-*` reject を確認すると、
+    `entry_probability_after≈0.40` でも
+    `request_json.entry_thesis.dynamic_alloc.lot_multiplier=0.45` に潰され、
+    `entry_probability_below_min_units` が増えていた。
+  - 直近 24h の `RangeFader` は `49 trades / +77.73 JPY` で winner 側だったが、
+    stale な `config/dynamic_alloc.json` に `RangeFader` が欠落していたため、
+    unknown strategy fallback だけが効いていた。
+
+- 変更:
+  - `workers/common/dynamic_alloc.py`
+    - payload の `as_of` を読み、`WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC`
+      （既定 `600` 秒）超の stale payload を判定する。
+    - `allocation_policy.soft_participation=true` でも、
+      stale payload かつ missing strategy の場合は
+      `min_lot_multiplier` fallback を返さず skip する。
+    - found strategy と fresh payload の既存 sizing は変更しない。
+  - `tests/workers/common/test_dynamic_alloc.py`
+    - stale payload では unknown fallback を止める回帰テストを追加。
+    - 既存 test の期待値を現行 loader 実装
+      （policy floor は found strategy に被せない）に合わせて補正。
+
+- 検証:
+  - `python3 -m py_compile workers/common/dynamic_alloc.py tests/workers/common/test_dynamic_alloc.py`
+  - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_dynamic_alloc_trim.py`
+    - `7 passed`
+
 ## 2026-03-05 JST - strategy_entry dyn alloc trim-only + order-manager timeout上書き（trade_all 安全化）
 
 - `execution/strategy_entry.py`

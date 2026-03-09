@@ -103,6 +103,10 @@
   - sidecar ポート設定は `ops/env/local-v2-sidecar-ports.env` を正とし、`18300/18301` を使用する。
   - `position-manager` は `POSITION_MANAGER_SERVICE_PORT` を参照し、既定値は `8301` とする。
   - `remote_logs_current/vm_gcs_mirror_*` と `remote_logs_current/vm_latest_core_*` は過去履歴スナップショットとしてのみ扱う。
+- 2026-03-09 追記: `workers/common/dynamic_alloc.py` の unknown strategy 向け
+  soft-participation fallback は `config/dynamic_alloc.json` が fresh な場合に限定する。
+  `as_of` が `WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC`（既定 `600` 秒）を超えて stale のときは、
+  missing strategy を `min_lot_multiplier` へ強制縮小しない。
 
 ## 4. 仕様ドキュメント索引
 - `docs/INDEX.md`: ドキュメントの起点。

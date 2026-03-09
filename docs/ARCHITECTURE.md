@@ -82,6 +82,10 @@
   `logs/strategy_feedback.json`, `logs/trade_counterfactual_latest.json`,
   `logs/replay_quality_gate_latest.json`, `config/worker_reentry.yaml`
   の更新がローカル watchdog 導線へ接続される。
+  `workers/common/dynamic_alloc.py` の unknown strategy 向け soft fallback は
+  `config/dynamic_alloc.json.as_of` が fresh な場合だけ `min_lot_multiplier` を返し、
+  stale payload（`WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC`, 既定 `600` 秒超）では
+  missing strategy を縮小せず skip する。
   さらに `local_v2_stack` / `local_v2_autorecover_once` /
   `install_local_v2_launchd` は repo root を物理パスへ正規化し、
   `~/Documents` symlink 経由の `Operation not permitted` で watchdog が
