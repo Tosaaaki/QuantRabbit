@@ -13885,3 +13885,20 @@
   - `2026-03-05` の generic throughput profile に残っていた
     `outcome_min_trades=12` が profit guard の立ち上がりを遅らせていたため、
     safe canary 自体を profit lane 用 profile に分離して reaction speed を上げる。
+
+## 2026-03-09 21:09 JST - safe Brain lane を `MicroLevelReactor` 限定 apply へ昇格
+
+- 対象:
+  - `ops/env/profiles/brain-ollama-safe.env`
+
+- 変更:
+  - `ORDER_MANAGER_BRAIN_GATE_MODE=shadow -> apply`
+  - `BRAIN_STRATEGY_ALLOWLIST=MomentumBurst,MicroLevelReactor,MicroRangeBreak,MicroTrendRetest`
+    -> `MicroLevelReactor`
+
+- 意図:
+  - dedicated profit lane の live shadow 実測で
+    `REDUCE` の filled outcome が `ALLOW` より明確に良かったため、
+    効いている strategy だけを apply に昇格する。
+  - 他の micro strategy は sample が足りるまで Brain 対象から外し、
+    `LLM が勝ちに寄る箇所だけ live 反映` の状態にする。

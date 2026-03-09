@@ -10333,3 +10333,33 @@ Status:
   - prompt 初期ルールにも
     `MomentumBurst-open_short` / `MicroTrendRetest-short`
     の loser cluster を full `ALLOW` しにくくする方針を明示した。
+
+## 2026-03-09 21:09 JST - MicroLevelReactor の shadow 成績を根拠に Brain を限定 apply へ昇格
+
+- 市況確認:
+  - `prepare_local_brain_canary.py --warmup` の最新 readiness は
+    `USD/JPY 158.445 / 158.453`, spread `0.8 pips`,
+    `atr_proxy=2.812 pips`, `recent_range_6m=1.4 pips`,
+    `tick_age=-0.1s`, `enable_recommended=true`。
+
+- 実測:
+  - `2026-03-09 21:03 JST` 時点で
+    `logs/brain_prompt_autotune_profit_latest.json` /
+    `logs/brain_runtime_param_autotune_profit_latest.json`
+    が更新され、dedicated profit lane の autotune report 出力を確認。
+  - 直近 13 decision の filled trade outcome は
+    `ALLOW: trades=7, PF=0.1586, win_rate=28.6%, avg_pips=-2.3857`
+    に対し、
+    `REDUCE: trades=5, PF=1.0682, win_rate=60.0%, avg_pips=+0.04`
+    だった。
+  - `MicroLevelReactor-bounce-lower` の直近 join でも
+    `ALLOW 4本 = realized_pl -17.837 / avg_pips -0.725`
+    に対し、
+    `REDUCE 4本 = realized_pl -0.733 / avg_pips -0.075`
+    まで損失が圧縮されていた。
+
+- 判断:
+  - ここでは `shadow 継続` より `MicroLevelReactor だけ apply`
+    の方が期待値改善に寄ると判断した。
+  - 一方で `MomentumBurst` / `MicroTrendRetest` はまだ post-profit-profile の
+    sample が薄いため、Brain 適用対象から一旦外す。
