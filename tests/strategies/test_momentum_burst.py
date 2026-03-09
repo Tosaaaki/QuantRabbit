@@ -36,6 +36,8 @@ def test_long_signal_passes_when_indicator_quality_is_clean() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
+    assert signal["sl_pips"] == 4.37
+    assert signal["tp_pips"] == 7.6
 
 
 def test_long_rejects_overextended_indicator_state() -> None:
@@ -125,14 +127,43 @@ def test_short_reacceleration_break_can_fire_before_ma_cross() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
-    assert signal["sl_pips"] == 5.05
-    assert signal["tp_pips"] == 8.48
+    assert signal["sl_pips"] == 4.64
+    assert signal["tp_pips"] == 8.07
     assert signal["notes"]["momentum_burst"] == {
         "direction": "short",
         "entry_mode": "reaccel",
         "reaccel": True,
     }
     assert signal["metadata"]["momentum_burst"] == signal["notes"]["momentum_burst"]
+
+
+def test_entry_sl_keeps_floor_when_atr_is_small() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.58,
+            "ma10": 158.55,
+            "ma20": 158.50,
+            "ema20": 158.535,
+            "adx": 30.2,
+            "atr_pips": 1.95,
+            "vol_5m": 2.1,
+            "rsi": 62.0,
+            "plus_di": 28.0,
+            "minus_di": 15.0,
+            "roc5": 0.031,
+            "ema_slope_10": 0.0014,
+            "candles": [
+                {"high": 158.50, "low": 158.46, "close": 158.48},
+                {"high": 158.54, "low": 158.49, "close": 158.52},
+                {"high": 158.57, "low": 158.51, "close": 158.55},
+                {"high": 158.60, "low": 158.54, "close": 158.58},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["sl_pips"] == 2.4
+    assert signal["tp_pips"] == 4.06
 
 
 def test_momentumburst_reaccel_shortens_only_reaccel_cooldown(monkeypatch) -> None:

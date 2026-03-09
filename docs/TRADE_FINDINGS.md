@@ -23,6 +23,56 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 13:17 UTC / 2026-03-09 22:17 JST - local-v2: `MomentumBurst` の downside は cadence 不足ではなく SL 幅過多だったため、entry SL と loss-cut drift を同時に締める
+
+Period:
+- 調査/実装: UTC `13:09-13:17` / JST `22:09-22:17`
+- 対象（実測）:
+  - `logs/tick_cache.json`, `logs/factor_cache.json`, `logs/health_snapshot.json`
+  - `logs/orders.db`, `logs/trades.db`, `logs/oanda_open_positions_live_USD_JPY.json`
+  - `strategies/micro/momentum_burst.py`, `config/strategy_exit_protections.yaml`
+
+Fact:
+- 市況は live 変更を入れてよい通常帯:
+  - `USD/JPY mid=158.452`, `spread=0.8p`
+  - `ATR14(M1)=2.573p`, `ATR14(M5)=6.146p`
+  - `data_lag_ms=457.2`, `decision_latency_ms=18.5`
+  - `USD/JPY open positions=0`
+- ローカルV2 24h は `356 trades / win_rate=54.21% / PF=0.665 / net_jpy=-1111.8`。
+- 主因は `MomentumBurst` の downside:
+  - `22 trades / -486.4 JPY / win_rate=54.5%`
+  - `STOP_LOSS_ORDER=9 / net=-1689.8 JPY / avg=-4.044p`
+  - `MARKET_ORDER_TRADE_CLOSE=13 / net=+1203.4 JPY / avg=+2.238p`
+- `orders.db` の filled payload では、stop-out cluster の planned SL は `3.2-4.6p` で、
+  realized loss とほぼ一致していた。execution latency より broker-side SL 幅が主因。
+
+Failure Cause:
+- `MomentumBurst` は entry 数や broad reject より、1トレードあたりの許容損失が重すぎた。
+- さらに `MomentumBurst.exit_profile` は現行運用の想定値 `loss_cut_max_hold_sec=900`,
+  `loss_cut_cooldown_sec=4` に対して実設定が `1800/6` のまま残っており、
+  tail-loss clamp が stale だった。
+
+Improvement:
+- `strategies/micro/momentum_burst.py`
+  - entry SL を `atr_pips * 1.25` から `atr_pips * 1.15` へ引き締め、
+    `SL floor=2.4p` は維持。
+  - TP 算式や shared gate には未変更。
+- `config/strategy_exit_protections.yaml`
+  - `MomentumBurst.exit_profile.loss_cut_max_hold_sec=900`
+  - `MomentumBurst.exit_profile.loss_cut_cooldown_sec=4`
+- shared `order_manager` / Brain / shared micro gate は変更しない。
+
+Verification:
+- `pytest -q tests/strategies/test_momentum_burst.py`
+- `python3 -m py_compile strategies/micro/momentum_burst.py`
+- 反映後 2h/24h で次を確認:
+  - `MomentumBurst` の `STOP_LOSS_ORDER avg_pl_pips` が current 窓より改善すること
+  - `MomentumBurst` の `net_jpy` が current 窓より悪化しないこと
+  - `RangeFader` / `MicroLevelReactor` の filled cadence が食われないこと
+
+Status:
+- in_progress
+
 ## 2026-03-09 13:22 UTC / 2026-03-09 22:22 JST - local-v2: `MomentumBurst` 損失拡大抑制のため loss_cut hard_mult を引き締め
 
 Period:

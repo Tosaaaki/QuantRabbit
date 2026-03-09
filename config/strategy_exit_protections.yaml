@@ -535,14 +535,14 @@ strategies:
     exit_profile:
       # Avoid thin RSI exits that flip negative after spread/slippage on fast USD/JPY bursts.
       rsi_take_min_pips: 1.6
-      # hard_sl_mult raised from 1.35 to 1.50 for wider SL (now ~2.0-4.4p).
+      # Keep the tighter hard SL and sync loss-cut timers with the live downside clamp.
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
       loss_cut_hard_pips: 0.0
       loss_cut_hard_sl_mult: 1.20
-      loss_cut_max_hold_sec: 1800
-      loss_cut_cooldown_sec: 6
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 4
 
   MicroLevelReactor:
     min_profit_pips: 0.2

@@ -5,6 +5,27 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`MomentumBurst` の tail-loss は cadence ではなく SL 幅が主因だったため、entry SL と exit loss-cut drift を同時に締める
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    - entry SL を `atr_pips * 1.25` から `1.15` へ引き締め、`SL floor=2.4p` は維持。
+  - `config/strategy_exit_protections.yaml`
+    - `MomentumBurst.exit_profile.loss_cut_max_hold_sec=900`
+    - `MomentumBurst.exit_profile.loss_cut_cooldown_sec=4`
+  - `tests/strategies/test_momentum_burst.py`
+    - reaccel short の `sl_pips/tp_pips` 期待値更新と、low ATR 時に `2.4p` floor を維持する回帰を追加。
+- 意図:
+  - shared gate を緩めず、`MomentumBurst` の per-trade downside だけを局所的に縮める。
+  - 実測で planned SL `3.2-4.6p` が realized loss とほぼ一致していたため、
+    entry 条件より stop width と stale loss-cut timer の是正を優先する。
+
 ### 2026-03-09（追記）`MomentumBurst` の STOP_LOSS tail をローカル側で抑え、負け幅を縮小
 
 - 対象:

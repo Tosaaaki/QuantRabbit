@@ -23,6 +23,10 @@ REACCEL_DI_GAP = 6.0
 REACCEL_ROC5_MIN = 0.02
 TREND_SNAPSHOT_ADX_MIN = 22.0
 TREND_SNAPSHOT_GAP_MIN = 8.0
+ENTRY_SL_MIN_PIPS = 2.4
+ENTRY_SL_ATR_MULT = 1.15
+ENTRY_TP_SL_MULT = 1.6
+ENTRY_TP_ATR_BUFFER_MULT = 0.85
 RANGE_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_RANGE_SCORE_SOFT_MAX", "0.34"))
 CHOP_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_CHOP_SCORE_SOFT_MAX", "0.58"))
 CONTEXT_CONF_PENALTY_MAX = float(os.getenv("MOMENTUMBURST_CONTEXT_CONF_PENALTY_MAX", "18.0"))
@@ -384,11 +388,10 @@ class MomentumBurstMicro:
 
         def _build_signal(action: str, bias_pips: float) -> Dict:
             strength = abs(gap_pips)
-            # Previous: sl = max(0.9, min(atr * 1.05, 0.45*strength+0.75)) -- the min() cap
-            # crushed SL to ~1p when strength was low, causing 83% stop-outs.
-            # New: ATR-anchored SL with a meaningful floor; no more strength-based cap.
-            sl = max(2.4, atr_pips * 1.25)
-            tp = max(sl * 1.6, sl + atr_pips * 0.85)
+            # Live RCA showed loser clips still running deeper than realized winner size.
+            # Keep the ATR-anchored shape, but tighten it modestly without touching shared risk logic.
+            sl = max(ENTRY_SL_MIN_PIPS, atr_pips * ENTRY_SL_ATR_MULT)
+            tp = max(sl * ENTRY_TP_SL_MULT, sl + atr_pips * ENTRY_TP_ATR_BUFFER_MULT)
             confidence = int(
                 max(
                     55.0,

@@ -8,6 +8,31 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MomentumBurst` downside clamp（2026-03-09）
+- 背景:
+  - UTC `13:09-13:17` / JST `22:09-22:17` の local-v2 実測は
+    `USD/JPY mid=158.452`, `spread=0.8p`,
+    `ATR14(M1)=2.573p`, `ATR14(M5)=6.146p`,
+    `data_lag_ms=457.2`, `decision_latency_ms=18.5`, `open_positions=0` で通常帯。
+  - 24h `trades.db` は `356 trades / win_rate=54.21% / PF=0.665 / net_jpy=-1111.8`。
+  - `MomentumBurst` は `22 trades / -486.4 JPY / win_rate=54.5%` で、
+    `STOP_LOSS_ORDER=9 / avg=-4.044p` に対し `MARKET_ORDER_TRADE_CLOSE=13 / avg=+2.238p` と、
+    勝ちより loss width が重かった。
+  - `orders.db` の filled payload では stop-out cluster の planned SL が `3.2-4.6p` で、
+    realized loss とほぼ一致していた。
+- 実装:
+  - `strategies/micro/momentum_burst.py`
+    - entry SL を `atr_pips * 1.25` から `1.15` へ引き締め、
+      `SL floor=2.4p` は維持する。
+  - `config/strategy_exit_protections.yaml`
+    - `MomentumBurst.exit_profile.loss_cut_max_hold_sec=900`
+    - `MomentumBurst.exit_profile.loss_cut_cooldown_sec=4`
+- 意図:
+  - `MomentumBurst` の問題は entry 数不足ではなく、
+    live exit と比べて broker-side SL 幅が広すぎることだった。
+  - shared Brain / shared micro gate / order-manager を触らず、
+    strategy-local の downside だけを圧縮する。
+
 ### local-v2 Brain shallow-REDUCE uplift（2026-03-09）
 - 背景:
   - `logs/brain_canary_readiness_latest.json` の latest は
