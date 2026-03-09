@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import sys
+from types import SimpleNamespace
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -140,6 +142,116 @@ def test_default_neg_exit_policy_blocks_de_risk_without_strategy_context() -> No
     )
     assert near_be is False
     assert allowed is False
+
+
+def test_close_trade_uses_explicit_flow_context_for_negative_close(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    async def _fake_service_request(path, payload):
+        seen["service_path"] = path
+        seen["service_payload"] = dict(payload)
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    def _fake_min_profit_pips(pocket, strategy_tag):
+        seen["min_profit_pips"] = (pocket, strategy_tag)
+        return None
+
+    def _fake_fetch_quote(instrument):
+        seen["fetch_quote"] = instrument
+        return {"bid": 158.010, "ask": 158.030, "mid": 158.020}
+
+    def _fake_strategy_neg_exit_policy(strategy_tag):
+        seen["neg_exit_strategy"] = strategy_tag
+        if strategy_tag != "scalp_ping_5s_flow_live":
+            return {
+                "enabled": True,
+                "allow_reasons": [],
+                "deny_reasons": [],
+            }
+        return {
+            "enabled": True,
+            "allow_reasons": ["__de_risk__"],
+            "deny_reasons": [],
+        }
+
+    class _DummyTradeClose:
+        def __init__(self, accountID, tradeID, data):
+            self.accountID = accountID
+            self.tradeID = tradeID
+            self.data = data
+            self.response = {}
+
+    def _fake_api_request(req):
+        seen["request_trade_id"] = req.tradeID
+        seen["request_data"] = dict(req.data)
+        req.response = {"orderFillTransaction": {"price": "158.015"}}
+
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request)
+    monkeypatch.setattr(order_manager, "_is_valid_live_trade_id", lambda _trade_id: True)
+    monkeypatch.setattr(order_manager, "_exit_context_snapshot", lambda _reason: {})
+    monkeypatch.setattr(order_manager, "_log_order", lambda **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_strategy_tag_from_client_id", lambda _client_id: None)
+    monkeypatch.setattr(
+        order_manager,
+        "_load_exit_trade_context",
+        lambda _trade_id, _client_id: {
+            "entry_price": 158.050,
+            "units": 1000,
+        },
+    )
+    monkeypatch.setattr(order_manager, "_reject_exit_by_control", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(order_manager, "_min_profit_pips", _fake_min_profit_pips)
+    monkeypatch.setattr(order_manager, "_latest_bid_ask", lambda: (None, None))
+    monkeypatch.setattr(order_manager, "_fetch_quote", _fake_fetch_quote)
+    monkeypatch.setattr(order_manager, "_estimate_trade_pnl_pips", lambda **_kwargs: -1.8)
+    monkeypatch.setattr(order_manager, "_exit_end_reversal_eval", lambda **_kwargs: {})
+    monkeypatch.setattr(order_manager, "_min_profit_ratio", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_hold_until_profit_match", lambda *_args, **_kwargs: (False, 0.0, False))
+    monkeypatch.setattr(order_manager, "_current_trade_unrealized_pl", lambda _trade_id: -18.0)
+    monkeypatch.setattr(order_manager, "_should_allow_negative_close", lambda _client_id: False)
+    monkeypatch.setattr(order_manager, "_reason_allows_negative", lambda _reason: False)
+    monkeypatch.setattr(order_manager, "_reason_force_allow", lambda _reason: False)
+    monkeypatch.setattr(order_manager, "_strategy_neg_exit_policy", _fake_strategy_neg_exit_policy)
+    monkeypatch.setattr(order_manager, "_current_trade_units", lambda _trade_id: 1000)
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+    monkeypatch.setattr(order_manager, "TradeClose", _DummyTradeClose)
+    monkeypatch.setattr(order_manager, "api", SimpleNamespace(request=_fake_api_request))
+    monkeypatch.setattr(order_manager, "_clear_strategy_control_exit_block", lambda **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_EXIT_NO_NEGATIVE_CLOSE", True)
+    monkeypatch.setattr(order_manager, "_EXIT_ALLOW_NEGATIVE_BY_WORKER", True)
+
+    ok = asyncio.run(
+        order_manager.close_trade(
+            "424165",
+            -1000,
+            client_order_id="cid-explicit-only",
+            allow_negative=True,
+            exit_reason="__de_risk__",
+            strategy_tag="scalp_ping_5s_flow_live",
+            pocket="scalp_fast",
+            instrument="USD_JPY",
+        )
+    )
+
+    assert ok is True
+    assert seen["service_path"] == "/order/close_trade"
+    assert seen["service_payload"] == {
+        "trade_id": "424165",
+        "units": -1000,
+        "client_order_id": "cid-explicit-only",
+        "allow_negative": True,
+        "exit_reason": "__de_risk__",
+        "strategy_tag": "scalp_ping_5s_flow_live",
+        "pocket": "scalp_fast",
+        "instrument": "USD_JPY",
+    }
+    assert seen["min_profit_pips"] == ("scalp_fast", "scalp_ping_5s_flow_live")
+    assert seen["fetch_quote"] == "USD_JPY"
+    assert seen["neg_exit_strategy"] == "scalp_ping_5s_flow_live"
+    assert seen["request_trade_id"] == "424165"
+    assert seen["request_data"] == {"units": "1000"}
 
 
 def test_strategy_control_exit_failopen_threshold_path(monkeypatch) -> None:
