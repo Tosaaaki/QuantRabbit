@@ -60,6 +60,62 @@ def test_stage_tracker_handles_existing_tzaware_rows(tmp_path):
         tracker.close()
 
 
+def test_stage_tracker_is_blocked_handles_naive_public_cooldown(tmp_path):
+    db_path = tmp_path / "stage.db"
+    tracker = StageTracker(db_path=db_path)
+    try:
+        now_aware = datetime(2025, 10, 30, 12, 51, tzinfo=timezone.utc)
+        tracker.set_cooldown(
+            "scalp",
+            "long",
+            reason="loss_cluster",
+            seconds=120,
+            now=now_aware,
+        )
+
+        blocked, remain, reason = tracker.is_blocked(
+            "scalp",
+            "long",
+            now=now_aware + timedelta(seconds=30),
+        )
+
+        assert blocked is True
+        assert remain is not None and 1 <= remain <= 90
+        assert reason == "loss_cluster"
+    finally:
+        tracker.close()
+
+
+def test_stage_tracker_ensure_cooldown_handles_naive_public_cooldown(tmp_path):
+    db_path = tmp_path / "stage.db"
+    tracker = StageTracker(db_path=db_path)
+    try:
+        now_aware = datetime(2025, 10, 30, 12, 51, tzinfo=timezone.utc)
+        tracker.set_cooldown(
+            "micro",
+            "short",
+            reason="existing",
+            seconds=180,
+            now=now_aware,
+        )
+
+        extended = tracker.ensure_cooldown(
+            "micro",
+            "short",
+            reason="new_reason",
+            seconds=60,
+            now=now_aware + timedelta(seconds=10),
+        )
+
+        cooldown = tracker.get_cooldown("micro", "short", now=now_aware + timedelta(seconds=10))
+        assert extended is False
+        assert cooldown is not None
+        assert cooldown.cooldown_until.tzinfo is None
+        assert cooldown.reason == "existing"
+    finally:
+        tracker.close()
+
+
 def test_stage_tracker_reentry_state_updates_when_trade_id_regresses(tmp_path):
     stage_db = tmp_path / "stage.db"
     trades_db = tmp_path / "trades.db"

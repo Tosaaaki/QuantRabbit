@@ -2391,6 +2391,16 @@
 - いずれも shared `order_manager` / `stage_tracker` の共通ロジックは変えず、
   local-v2 実測で多かった `premature stop-out` と `entry cadence不足` だけを個別に補正する。
 
+### 2026-03-09 local-v2 `stage_tracker` cooldown normalization
+- `execution/stage_tracker.py` の `get_cooldown()` は、
+  既存 caller 互換のため `CooldownInfo.cooldown_until` を naive UTC で返す契約を維持する。
+- ただし shared helper 側で cooldown を再利用する場合、
+  `ensure_cooldown()` と `is_blocked()` は必ず `_coerce_utc()` を通して
+  UTC-aware datetime に戻してから比較/減算する。
+- この正規化を入れないと、precision worker の stage cooldown 発火時に
+  `TypeError: can't subtract offset-naive and offset-aware datetimes`
+  で entry worker が停止し、winner/loser 判定以前に participation が欠落する。
+
 ### 2026-03-09 indicator-quality guard の運用原則
 - 収益悪化の改善は `long/short` の片側最適化で閉じず、`pattern_tag`, `RSI`, `ADX`, `MA gap`, `trend_snapshot`, `divergence`, `連続バー偏り` を使って敗因 cluster を作る。
 - 改善は共通 post-hoc gate ではなく、strategy-local の `quality guard` として両方向へ対称に入れる。

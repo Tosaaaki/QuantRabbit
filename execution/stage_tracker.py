@@ -803,8 +803,10 @@ class StageTracker:
         current = _coerce_utc(now)
         desired_until = current + timedelta(seconds=max(1, seconds))
         info = self.get_cooldown(pocket, direction, now=current)
-        if info and info.cooldown_until >= desired_until:
-            return False
+        if info:
+            existing_limit = _coerce_utc(info.cooldown_until)
+            if existing_limit >= desired_until:
+                return False
         self.set_cooldown(
             pocket,
             direction,
@@ -973,7 +975,9 @@ class StageTracker:
         if not info:
             return False, None, None
         current = _coerce_utc(now)
-        remaining = int((info.cooldown_until - current).total_seconds())
+        # Public CooldownInfo keeps naive UTC for historical compatibility.
+        limit = _coerce_utc(info.cooldown_until)
+        remaining = int((limit - current).total_seconds())
         return True, max(1, remaining), info.reason
 
     def update_loss_streaks(
