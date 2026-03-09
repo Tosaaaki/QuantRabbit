@@ -10230,3 +10230,25 @@ Status:
   - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py`
   - `39 passed`
   - `python3 -m py_compile strategies/micro/momentum_burst.py strategies/micro/trend_retest.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py`
+
+## 2026-03-09 20:03 JST - e132c325 反映後の初回 live 確認
+
+- 市況確認:
+  - `USD/JPY` 直近 tick は `158.424 / 158.432`、spread `0.8 pips`。
+  - `factor_cache M1 close=158.453`, `atr_pips=3.74`。
+  - `logs/health_snapshot.json` 更新時点で `data_lag_ms=423.5`, `decision_latency_ms=21.08`。
+  - core 4 と `quant-micro-momentumburst`, `quant-micro-trendretest`, `quant-scalp-rangefader` は `running`。
+
+- post-deploy 実測:
+  - 対象窓: `2026-03-09 19:13 JST` restart 後。
+  - closed trade は `4 trades / net_jpy=+259.0 / net_pips=+9.1 / win_rate=100%`。
+  - 内訳は `MomentumBurst 1本 +244.4 JPY / +4.6p`、`scalp_ping_5s_d_live 1本 +12.0 JPY / +2.1p`、`scalp_extrema_reversal_live 2本 +2.6 JPY / +2.4p`。
+  - `MomentumBurst` の post-deploy filled は `OPEN_LONG 5313 units` が 1本のみで、
+    `pattern_tag=c:spin_up|w:upper|tr:up_strong|rsi:mid_high|vol:tight|atr:low|d:long`,
+    `trend_snapshot={tf:H4, direction:long, gap_pips:33.692, adx:31.52}` の aligned long だった。
+  - 同窓で `MomentumBurst` / `MicroTrendRetest` の `rsi:os` + `H4 long` 逆行 short fill は確認されなかった。
+  - `MicroTrendRetest` は post-deploy でまだ order/trade サンプルが出ていない。
+
+- 残課題:
+  - 初回サンプルとしては改善方向だが、`MicroTrendRetest` は約定ゼロのため有効性未判定。
+  - `quant-micro-trendretest.log` には `20:00:59 JST` に `stale factors age=445.0s` 警告が出ており、entry quality とは別に factor freshness の監視は継続要。
