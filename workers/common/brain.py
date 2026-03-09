@@ -1656,6 +1656,46 @@ def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float
     }
 
 
+def _resolve_entry_probability(context: dict[str, Any]) -> Optional[float]:
+    entry = _safe_dict(context.get("entry_thesis"))
+    meta = _safe_dict(context.get("meta"))
+    forecast = _safe_dict(entry.get("forecast_fusion") or meta.get("forecast_fusion"))
+    for candidate in (
+        forecast.get("entry_probability_after"),
+        entry.get("entry_probability_fused"),
+        entry.get("entry_probability"),
+        forecast.get("target_reach_prob"),
+    ):
+        number = _metric_value(candidate, low=0.0, high=1.0)
+        if number is not None:
+            return round(number, 4)
+    return None
+
+
+def _is_activity_preserving_setup(context: Optional[dict[str, Any]]) -> bool:
+    if not isinstance(context, dict):
+        return False
+    metrics = _extract_market_metrics(context)
+    entry_probability = _resolve_entry_probability(context)
+    confidence = metrics.get("confidence")
+    spread_pips = metrics.get("spread_pips")
+    atr_pips = metrics.get("atr_pips")
+    if entry_probability is None or confidence is None:
+        return False
+    if entry_probability < 0.8 or confidence < 75.0:
+        return False
+    if spread_pips is not None and spread_pips > 1.2:
+        return False
+    if (
+        spread_pips is not None
+        and atr_pips is not None
+        and atr_pips > 0.0
+        and spread_pips / atr_pips > 0.55
+    ):
+        return False
+    return True
+
+
 def _stats(values: list[float]) -> dict[str, float]:
     if not values:
         return {"count": 0, "mean": 0.0, "p95": 0.0}
@@ -2264,11 +2304,18 @@ def _apply_runtime_param_guard(
     pocket: str,
     decision: BrainDecision,
     runtime_profile: dict[str, Any],
+    context: Optional[dict[str, Any]] = None,
 ) -> tuple[BrainDecision, dict[str, Any]]:
     min_scale = _clamp_float(runtime_profile.get("min_scale"), _MIN_SCALE, 0.05, 0.95)
     block_to_reduce_scale = _clamp_float(
         runtime_profile.get("block_to_reduce_scale"),
         max(_MIN_SCALE, 0.35),
+        0.05,
+        1.0,
+    )
+    reduce_to_allow_scale = _clamp_float(
+        runtime_profile.get("reduce_to_allow_scale"),
+        0.78,
         0.05,
         1.0,
     )
@@ -2372,19 +2419,27 @@ def _apply_runtime_param_guard(
     )
 
     convert_block_to_reduce = False
+    preserve_setup = _is_activity_preserving_setup(context)
+    strong_setup_preserve = action == "BLOCK" and not negative_outcome_signal and preserve_setup
     if action == "BLOCK" and enough_samples and suppression_risk:
         convert_block_to_reduce = True
     elif action == "BLOCK" and suppression_risk and positive_outcome_signal:
+        convert_block_to_reduce = True
+    elif strong_setup_preserve:
         convert_block_to_reduce = True
 
     if convert_block_to_reduce:
         action = "REDUCE"
         allowed = True
         scale = max(min_scale, block_to_reduce_scale)
-        overrides.append("block_to_reduce_bias")
-        if positive_outcome_signal:
-            overrides.append("trade_improve_bias")
-        reason = f"{reason}|no_trade_bias_reduce"
+        if strong_setup_preserve:
+            overrides.append("strong_setup_preserve_entry")
+            reason = f"{reason}|strong_setup_reduce"
+        else:
+            overrides.append("block_to_reduce_bias")
+            if positive_outcome_signal:
+                overrides.append("trade_improve_bias")
+            reason = f"{reason}|no_trade_bias_reduce"
 
     if negative_outcome_signal:
         penalty_scale = max(min_scale, min(outcome_negative_reduce_scale, 1.0))
@@ -2399,6 +2454,24 @@ def _apply_runtime_param_guard(
                 scale = penalty_scale
                 overrides.append("loss_bias_tighten")
                 reason = f"{reason}|loss_bias_tighten"
+
+    hard_risk_reason = _reason_implies_hard_risk(reason)
+    if (
+        action == "REDUCE"
+        and scale >= reduce_to_allow_scale
+        and not negative_outcome_signal
+        and not hard_risk_reason
+        and (preserve_setup or (positive_outcome_signal and under_activity))
+    ):
+        action = "ALLOW"
+        allowed = True
+        scale = 1.0
+        overrides.append("activity_preserve_allow")
+        if preserve_setup:
+            overrides.append("strong_setup_allow")
+        if positive_outcome_signal and under_activity:
+            overrides.append("trade_improve_allow")
+        reason = f"{reason}|activity_preserve_allow"
 
     if action == "BLOCK":
         allowed = False
@@ -2417,6 +2490,7 @@ def _apply_runtime_param_guard(
         "runtime_profile_version": _runtime_profile_version(runtime_profile),
         "min_scale": round(min_scale, 4),
         "block_to_reduce_scale": round(block_to_reduce_scale, 4),
+        "reduce_to_allow_scale": round(reduce_to_allow_scale, 4),
         "block_rate_soft_limit": round(block_rate_soft_limit, 4),
         "activity_rate_floor": round(activity_rate_floor, 4),
         "guard_window_decisions": guard_window_decisions,
@@ -2432,8 +2506,10 @@ def _apply_runtime_param_guard(
         "stats": stats,
         "outcome_stats": outcome_stats,
         "suppression_risk": suppression_risk,
+        "preserve_setup": preserve_setup,
         "positive_outcome_signal": positive_outcome_signal,
         "negative_outcome_signal": negative_outcome_signal,
+        "hard_risk_reason": hard_risk_reason,
         "overrides": overrides,
     }
     return adjusted, guard_info
@@ -2718,6 +2794,7 @@ def _maybe_autotune_runtime_param_profile() -> None:
             '  "block_rate_soft_limit": 0.6,\n'
             '  "activity_rate_floor": 0.35,\n'
             '  "block_to_reduce_scale": 0.38,\n'
+            '  "reduce_to_allow_scale": 0.78,\n'
             '  "guard_window_decisions": 120,\n'
             '  "min_guard_samples": 30,\n'
             '  "max_block_streak": 4,\n'
@@ -2735,6 +2812,7 @@ def _maybe_autotune_runtime_param_profile() -> None:
             "- block_rate_soft_limit: 0.10-0.98\n"
             "- activity_rate_floor: 0.05-0.95\n"
             "- block_to_reduce_scale: 0.05-1.0\n"
+            "- reduce_to_allow_scale: 0.05-1.0\n"
             "- guard_window_decisions: 20-2000\n"
             "- min_guard_samples: 10-500\n"
             "- max_block_streak: 2-50\n"
@@ -2746,6 +2824,7 @@ def _maybe_autotune_runtime_param_profile() -> None:
             "- outcome_negative_avg_pips_ceiling: -50.0 to 20.0\n"
             "- outcome_negative_reduce_scale: 0.05-1.0\n"
             "- prefer REDUCE over BLOCK unless spread/reject/latency conditions deteriorate.\n"
+            "- when setups are strong and market quality is normal, shallow REDUCE can be relaxed back to ALLOW to preserve participation.\n"
             "- if recent realized expectancy is negative, tighten ALLOW before tightening BLOCK.\n"
             "- keep participation healthy when market quality is normal and outcomes are stable.\n"
             "- Keep notes short and concrete.\n\n"
@@ -2942,7 +3021,9 @@ def _build_prompt(context: dict[str, Any]) -> str:
         "- If confidence >= 75 and entry_probability >= 0.80, prefer ALLOW unless spread, execution quality, or regime context clearly weakens the setup.\n"
         "- recent_outcome summarizes recent realized results for this strategy and pocket.\n"
         "- If recent_outcome shows profit_factor < 1 and avg_pips < 0, tighten ALLOW toward REDUCE unless entry_probability is exceptional.\n"
-        "- Prefer blocking on uncertainty or missing context.\n"
+        "- Prefer REDUCE over BLOCK when uncertainty remains but setup strength is still high.\n"
+        "- Use BLOCK only for clear invalidation, spread shock, execution degradation, or hard regime conflict.\n"
+        "- Missing or partial context alone is not enough to BLOCK if local tick/M1 context is present and market quality is normal.\n"
         "- memory_update must be a short summary (<=200 chars) or empty string to keep memory.\n\n"
         "JSON schema:\n"
         "{\n"
@@ -3047,6 +3128,7 @@ def decide(
             pocket=pocket_key,
             decision=cached[1],
             runtime_profile=runtime_profile,
+            context=context,
         )
         _log_decision_row(
             strategy_tag=tag,
@@ -3137,6 +3219,7 @@ def decide(
             pocket=pocket_key,
             decision=decision,
             runtime_profile=runtime_profile,
+            context=context,
         )
         try:
             _save_memory(tag, pocket_key, memory=decision.memory, decision=decision)
@@ -3241,6 +3324,7 @@ def decide(
         pocket=pocket_key,
         decision=decision,
         runtime_profile=runtime_profile,
+        context=context,
     )
     if memory_update:
         _save_memory(tag, pocket_key, memory=memory_after, decision=decision)

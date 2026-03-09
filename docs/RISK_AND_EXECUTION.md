@@ -238,6 +238,10 @@
   ローカル tick と `factor_cache` の M1 snapshot を補完してから LLM に渡す。
 - Brain cache は `strategy_tag+pocket` 固定ではなく、`side` と setup fingerprint
   （probability / confidence / spread / ATR / recent_outcome bucket）単位で扱う。
+- entry 数を落とさないため、strong setup
+  （`entry_probability>=0.80`, `confidence>=75`, spread/ATR が通常帯）
+  は common Brain の `BLOCK` を runtime guard で `REDUCE` へ落とし、
+  common layer では sizing だけを締める。
 - prompt/runtime autotune は safe profile でも有効だが、preflight timeout と切り離した
   background timeout を使い、`no_response` で死ににくくする。
 - shared Ollama runtime では background autotune が live preflight 実行中/直後を

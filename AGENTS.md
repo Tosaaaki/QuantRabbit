@@ -30,7 +30,7 @@
   - 判定: 市況が通常レンジ外・流動性悪化時は、作業は保留し `docs/TRADE_FINDINGS.md` と運用ログへその理由を残す。
 - 各タスク開始時は、着手前チェックとして `docs/AGENT_COLLAB_HUB.md` の「運用手順」を必ず読む。最低限 `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し、現行手順を確認してから作業に入る。
 - LLM/Brain は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
-- Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す。現行 local-v2 既定は `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES` で `ops/env/profiles/brain-ollama-safe.env` を合成する safe canary（micro-only / apply / fail-open）を正とする。Brain context は `entry_thesis` / `meta` 欠損時でもローカル tick / M1 factor を補完し、cache は `strategy+pocket` 固定ではなく side / setup fingerprint 単位で扱う。shared Ollama runtime では background autotune が live preflight 実行中/直後を自動で退避する。
+- Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す。現行 local-v2 既定は `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES` で `ops/env/profiles/brain-ollama-safe.env` を合成する safe canary（micro-only / apply / fail-open）を正とする。Brain context は `entry_thesis` / `meta` 欠損時でもローカル tick / M1 factor を補完し、cache は `strategy+pocket` 固定ではなく side / setup fingerprint 単位で扱う。shared Ollama runtime では background autotune が live preflight 実行中/直後を自動で退避する。entry 数を落とさないため、`entry_probability>=0.80` かつ `confidence>=75` の strong setup は、spread/ATR が通常帯なら common Brain の `BLOCK` を `REDUCE` へ矯正して意図を維持する。
 - Brain の aggressive/all-pocket 化は明示 opt-in とし、現行 safe canary は `BRAIN_ENABLED=1` と Ollama backend を前提にする。Vertex 認証は現行ローカル導線の必須条件ではない。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - **後付けの一律EXIT判定は作らない**。exit判断は各戦略ワーカー/専用 `exit_worker` のみが行う。`quant-strategy-control` は `entry/exit/global_lock` のガードのみで、全戦略に対する共通ロジックの事後的拒否/抑止を追加しない。
@@ -74,7 +74,7 @@
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
-- 2026-03-09 追記: local-v2 の Brain は `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を既定とし、manual restart / watchdog / launchd 復旧でも safe canary（micro-only / apply / fail-open）を維持する。`entry_thesis/meta` に spread/ATR が無い場合もローカル tick / factor_cache を補完し、async prompt/runtime autotune は preflight と分離した timeout で回す。shared Ollama runtime では `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC` を使って live preflight 優先を維持する。監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-09 追記: local-v2 の Brain は `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を既定とし、manual restart / watchdog / launchd 復旧でも safe canary（micro-only / apply / fail-open）を維持する。`entry_thesis/meta` に spread/ATR が無い場合もローカル tick / factor_cache を補完し、async prompt/runtime autotune は preflight と分離した timeout で回す。shared Ollama runtime では `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC` を使って live preflight 優先を維持する。さらに local-v2 の common Brain は、strong setup (`entry_probability>=0.80`, `confidence>=75`) かつ通常 spread/ATR 帯では `BLOCK` より `REDUCE` を優先し、entry 頻度を落とさず quality だけを締める。監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `RangeFader` の dedicated env は
   `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`,
   `RANGEFADER_BASE_UNITS=14000` を現行運用値とし、

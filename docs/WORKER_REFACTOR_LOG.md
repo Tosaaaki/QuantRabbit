@@ -5,6 +5,27 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）local-v2 Brain に strong-setup preserve bias を追加し、entry 頻度を落とさず size 制御へ寄せる
+
+- 対象:
+  - `workers/common/brain.py`
+  - `tests/workers/test_brain_history_prompt_autotune.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `workers/common/brain.py`
+    - common Brain prompt を `BLOCK` 優先から `REDUCE` 優先へ修正。
+    - `entry_probability>=0.80` かつ `confidence>=75` で、spread/ATR が通常帯の strong setup は
+      runtime guard で `BLOCK -> REDUCE` へ矯正する。
+    - spread shock や高 spread/ATR 比では preserve を適用しない。
+  - `tests/workers/test_brain_history_prompt_autotune.py`
+    - strong setup が `REDUCE` へ落ちる回帰と、spread 劣化時は `BLOCK` 維持の回帰を追加。
+- 意図:
+  - local LLM を live preflight で使いながら、common gate が entry 回数を削る方向へ振れすぎるのを防ぐ。
+  - shared layer は「通すか止めるか」より「どこまで size を締めるか」を主役に戻し、
+    strategy-local の entry cadence を維持する。
+
 ### 2026-03-09（追記）`MomentumBurst` の reaccel-only cadence をさらに詰め、current 窓では winner/loser を広げすぎない
 
 - 対象:

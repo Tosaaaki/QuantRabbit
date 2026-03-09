@@ -155,6 +155,7 @@ def test_brain_prompt_profile_is_injected(monkeypatch, tmp_path: Path) -> None:
     assert "Focus: Block low-edge range chop entries." in prompt_text
     assert '"entry_probability": 0.71' in prompt_text
     assert '"entry_units_intent": 420' in prompt_text
+    assert "Prefer REDUCE over BLOCK when uncertainty remains but setup strength is still high." in prompt_text
     assert "large_blob" not in prompt_text
 
 
@@ -451,6 +452,110 @@ def test_runtime_guard_biases_block_to_reduce_on_overblocking(monkeypatch, tmp_p
     assert "no_trade_bias_reduce" in decision.reason
 
 
+def test_runtime_guard_preserves_strong_setup_entry_as_reduce(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v3b",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.95,
+                "activity_rate_floor": 0.05,
+                "block_to_reduce_scale": 0.42,
+                "guard_window_decisions": 40,
+                "min_guard_samples": 20,
+                "max_block_streak": 6,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "BLOCK",
+            "scale": 0.0,
+            "reason": "uncertain_setup",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=500,
+        confidence=81,
+        client_order_id="runtime-strong-setup-1",
+        entry_thesis={
+            "entry_probability": 0.84,
+            "entry_units_intent": 500,
+            "spread_pips": 0.8,
+            "atr_pips": 2.6,
+        },
+    )
+
+    assert decision.action == "REDUCE"
+    assert decision.allowed is True
+    assert decision.scale == 0.42
+    assert "strong_setup_reduce" in decision.reason
+
+
+def test_runtime_guard_keeps_block_for_strong_setup_when_spread_is_degraded(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v3c",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.95,
+                "activity_rate_floor": 0.05,
+                "block_to_reduce_scale": 0.42,
+                "guard_window_decisions": 40,
+                "min_guard_samples": 20,
+                "max_block_streak": 6,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "BLOCK",
+            "scale": 0.0,
+            "reason": "spread_shock",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=500,
+        confidence=81,
+        client_order_id="runtime-strong-setup-2",
+        entry_thesis={
+            "entry_probability": 0.84,
+            "entry_units_intent": 500,
+            "spread_pips": 1.6,
+            "atr_pips": 2.0,
+        },
+    )
+
+    assert decision.action == "BLOCK"
+    assert decision.allowed is False
+    assert decision.scale == 0.0
+
+
 def test_market_metrics_json_stays_parsable_with_large_context(monkeypatch, tmp_path: Path) -> None:
     brain, db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
     _insert_brain_decision_row(
@@ -563,6 +668,142 @@ def test_runtime_guard_uses_positive_outcome_signal(monkeypatch, tmp_path: Path)
     assert decision.allowed is True
     assert decision.scale >= 0.36
     assert "no_trade_bias_reduce" in decision.reason
+
+
+def test_runtime_guard_promotes_shallow_reduce_to_allow_for_strong_setup(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v7",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.95,
+                "activity_rate_floor": 0.2,
+                "block_to_reduce_scale": 0.4,
+                "reduce_to_allow_scale": 0.78,
+                "guard_window_decisions": 30,
+                "min_guard_samples": 4,
+                "max_block_streak": 5,
+                "outcome_min_trades": 1,
+                "outcome_positive_pf_floor": 1.01,
+                "outcome_positive_win_rate_floor": 0.51,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    allow_coid = _insert_brain_decision_row(
+        brain,
+        strategy_tag="MomentumBurst-open_short",
+        pocket="micro",
+        action="ALLOW",
+        reason="seed_win",
+        client_order_id="runtime-allow-upgrade-1",
+        context={
+            "confidence": 82,
+            "entry_thesis": {"entry_probability": 0.86, "atr_pips": 2.4},
+            "meta": {"spread_pips": 0.8},
+        },
+    )
+    _insert_trade_row(brain._TRADES_DB_PATH, allow_coid, 10.0, 2.1)
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "REDUCE",
+            "scale": 0.82,
+            "reason": "setup acceptable but confirmation is not perfect",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="MomentumBurst-open_short",
+        pocket="micro",
+        side="sell",
+        units=-500,
+        confidence=82,
+        client_order_id="runtime-allow-upgrade-2",
+        entry_thesis={"entry_probability": 0.86, "entry_units_intent": 500, "atr_pips": 2.4},
+        meta={"spread_pips": 0.8},
+    )
+    assert decision.action == "ALLOW"
+    assert decision.allowed is True
+    assert decision.scale == 1.0
+    assert "activity_preserve_allow" in decision.reason
+
+
+def test_runtime_guard_keeps_reduce_when_reason_implies_hard_risk(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v8",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.95,
+                "activity_rate_floor": 0.2,
+                "block_to_reduce_scale": 0.4,
+                "reduce_to_allow_scale": 0.78,
+                "guard_window_decisions": 30,
+                "min_guard_samples": 4,
+                "max_block_streak": 5,
+                "outcome_min_trades": 1,
+                "outcome_positive_pf_floor": 1.01,
+                "outcome_positive_win_rate_floor": 0.51,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    allow_coid = _insert_brain_decision_row(
+        brain,
+        strategy_tag="MomentumBurst-open_short",
+        pocket="micro",
+        action="ALLOW",
+        reason="seed_win",
+        client_order_id="runtime-risk-reduce-1",
+        context={
+            "confidence": 84,
+            "entry_thesis": {"entry_probability": 0.88, "atr_pips": 2.5},
+            "meta": {"spread_pips": 0.8},
+        },
+    )
+    _insert_trade_row(brain._TRADES_DB_PATH, allow_coid, 11.0, 2.2)
+
+    monkeypatch.setattr(
+        brain,
+        "call_ollama_chat_json",
+        lambda *_args, **_kwargs: {
+            "action": "REDUCE",
+            "scale": 0.9,
+            "reason": "spread widening and execution latency risk",
+            "memory_update": "",
+        },
+    )
+
+    decision = brain.decide(
+        strategy_tag="MomentumBurst-open_short",
+        pocket="micro",
+        side="sell",
+        units=-500,
+        confidence=84,
+        client_order_id="runtime-risk-reduce-2",
+        entry_thesis={"entry_probability": 0.88, "entry_units_intent": 500, "atr_pips": 2.5},
+        meta={"spread_pips": 0.8},
+    )
+    assert decision.action == "REDUCE"
+    assert decision.allowed is True
+    assert decision.scale == 0.9
+    assert "activity_preserve_allow" not in decision.reason
 
 
 def test_runtime_guard_reduces_allow_when_recent_outcomes_are_negative(monkeypatch, tmp_path: Path) -> None:

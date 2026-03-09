@@ -23,6 +23,51 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 12:39 UTC / 2026-03-09 21:39 JST - local-v2: Brain は strong setup を `BLOCK` しすぎないよう `REDUCE` 優先へ補正
+
+Period:
+- 調査/実装: UTC `12:31-12:39` / JST `21:31-21:39`
+- 対象（実測）:
+  - `logs/brain_canary_readiness_latest.json`
+  - `logs/brain_state.db`
+  - `logs/orders.db`
+  - `workers/common/brain.py`
+
+Fact:
+- 市況確認（UTC `12:39` / JST `21:39`）:
+  - USD/JPY `bid=158.416 / ask=158.424 / spread=0.8p`
+  - `atr_proxy_pips=2.834`, `recent_range_pips_6m=3.0p`
+  - `market_ready=true`, `ollama_ready=true`, `quality_gate_ok=true`
+- 直近6hの `brain_state.db`:
+  - `micro REDUCE no_llm_reduce=71`
+  - `micro ALLOW no_llm=8`
+  - `micro BLOCK` は直近上位に出ていない一方、common Brain prompt は
+    `Prefer blocking on uncertainty or missing context.` を持っていた
+- 直近6hの `orders.db`:
+  - `filled=293`, `rejected=2`
+  - `entry_probability_reject=51`, `strategy_cooldown=45`, `brain_shadow=21`
+
+Failure Cause:
+- local LLM の common prompt が uncertainty 時に `BLOCK` へ寄りやすく、
+  runtime guard も「過去に block し過ぎた」時しか `BLOCK -> REDUCE` へ矯正しなかった。
+- このままだと strong setup まで common Brain が止める方向へ寄り、entry 頻度を削る余地が残っていた。
+
+Improvement:
+- `workers/common/brain.py`
+  - prompt を `BLOCK` 優先から `REDUCE` 優先へ変更
+  - `entry_probability>=0.80` かつ `confidence>=75`、spread/ATR が通常帯の strong setup は
+    runtime guard で `BLOCK -> REDUCE` へ矯正
+  - spread shock / 高 spread-to-ATR 比では preserve を無効化
+- `tests/workers/test_brain_history_prompt_autotune.py`
+  - strong setup preserve と spread 劣化時の `BLOCK` 維持を固定
+
+Verification:
+- `python3 -m py_compile workers/common/brain.py tests/workers/test_brain_history_prompt_autotune.py tests/workers/test_brain_ollama_backend.py`
+- `pytest -q tests/workers/test_brain_history_prompt_autotune.py tests/workers/test_brain_ollama_backend.py`
+
+Status:
+- done
+
 ## 2026-03-09 12:40 UTC / 2026-03-09 21:40 JST - local-v2: `RangeFader` の reject は解消したため、次の entry 増は `MomentumBurst` reaccel の再突入間隔だけを短縮
 
 Period:
