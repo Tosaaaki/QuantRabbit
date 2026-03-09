@@ -23,6 +23,68 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 06:08 UTC / 2026-03-09 15:08 JST - local-v2: `RangeFader` の winner flow を増やすため、entry reject 閾値を局所緩和し sizing を少し戻す
+
+Period:
+- 調査/実装: UTC `06:00-06:08` / JST `15:00-15:08`
+- 対象（実測）:
+  - `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`
+  - `logs/orderbook_snapshot.json`, `logs/oanda_account_snapshot_live.json`, `logs/oanda_open_positions_live_USD_JPY.json`
+  - `ops/env/quant-scalp-rangefader.env`
+
+Fact:
+- 市況確認（ローカル/OANDA live）:
+  - `logs/orderbook_snapshot.json` at UTC `06:03:37` / JST `15:03:37`
+    - USD/JPY `bid=158.390 / ask=158.398 / spread=0.8p`
+    - stream latency `216.3ms`
+  - `logs/oanda_account_snapshot_live.json`
+    - `balance=37254.1602`, `margin_used=0.0`, `free_margin_ratio=1.0`
+  - `logs/metrics.db` last 2h
+    - `data_lag_ms avg=568.704 max=2512.702`
+    - `decision_latency_ms avg=17.101 max=130.631`
+    - `reject_rate=0.0`
+- `RangeFader` 24h 実績:
+  - `trades.db`
+    - `49 trades / +77.73 JPY / avg_pips +1.567 / expectancy +1.586 JPY per trade`
+    - `close_reason=MARKET_ORDER_TRADE_CLOSE` のみで利益化
+- `RangeFader` の entry 詰まり:
+  - `orders.db`
+    - filled: `buy=14`, `sell=18`, `neutral=17`
+    - `entry_probability_reject`: `buy=6`, `sell=22`, `neutral=6`
+  - reject の `entry_probability` は主に `0.341-0.350` 帯へ集中
+    - 例: `RangeFader-sell-fade` at UTC `02:00-02:04` / JST `11:00-11:04`
+      `entry_probability=0.341-0.350`
+  - filled は主に `0.372-0.415` 帯
+    - 例: `RangeFader-buy-fade` / `sell-fade` / `neutral-fade`
+      `entry_probability=0.373-0.415`
+  - つまり `entry leading profile reject` の境界が winner flow の喉元に残っている。
+
+Failure Cause:
+- `ops/env/quant-scalp-rangefader.env` の
+  `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.34` が、
+  直近の profitable な `RangeFader-sell-fade` / `buy-fade` 候補の一部を落としていた。
+- 同時に `RANGEFADER_BASE_UNITS=11000` では live filled units が `80-138` 帯まで薄く、
+  winner 戦略の取り分が小さかった。
+
+Improvement:
+- `ops/env/quant-scalp-rangefader.env`
+  - `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW: 0.34 -> 0.30`
+  - `RANGEFADER_BASE_UNITS: 11000 -> 12500`
+- 意図:
+  - 共通 gate や loser 戦略は緩めず、`RangeFader` の profitable zone だけ通過を回復する。
+  - 低確率帯を無制限に通すのではなく、`0.34-0.35` 近辺の winner flow を局所的に拾う。
+  - 同時に per-trade の取り分を少し増やすが、過大サイズへは戻さない。
+
+Verification:
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-rangefader`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-rangefader`
+- `sqlite3 logs/orders.db "SELECT json_extract(request_json,'$.entry_thesis.strategy_tag'), status, COUNT(*) FROM orders WHERE ts >= datetime('now','-2 hours') AND json_extract(request_json,'$.entry_thesis.strategy_tag') LIKE 'RangeFader%' GROUP BY 1,2 ORDER BY 1,2"`
+- `sqlite3 logs/trades.db "SELECT COUNT(*), ROUND(SUM(realized_pl),2), ROUND(AVG(pl_pips),3) FROM trades WHERE close_time >= datetime('now','-2 hours') AND strategy_tag='RangeFader'"`
+  で `filled` 増分が出つつ、avg_pips が崩れていないことを確認する
+
+Status:
+- done
+
 ## 2026-03-09 05:54 UTC / 2026-03-09 14:54 JST - local-v2: `MomentumBurst` が反発後の再下落を MAクロス待ちで取り逃す経路を是正
 
 Period:

@@ -8,6 +8,22 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### `RangeFader` probability-floor / sizing recovery（2026-03-09）
+- 背景:
+  - `RangeFader` は直近24hで `49 trades / +77.73 JPY / avg_pips +1.567` と winner。
+  - 一方で `orders.db` には `entry_probability_reject=34` が残り、
+    その多くが `entry_probability=0.341-0.350` 帯に集中していた。
+  - live filled units も `80-138` 帯で、勝ち筋の取り分が薄かった。
+- 実装:
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`
+    - `RANGEFADER_BASE_UNITS=12500`
+- 意図:
+  - `RangeFader` の profitable band を dedicated env だけで通しやすくし、
+    loser 側の共通 gate は緩めない。
+  - winner の回転数と per-trade 取り分を少し増やすが、
+    以前の過大サイズへは戻さない。
+
 ### `MomentumBurst` re-acceleration entry（2026-03-09）
 - 背景:
   - `2026-03-09 14:46-14:48 JST` の USD/JPY 再下落では、

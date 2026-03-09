@@ -60,6 +60,29 @@
   - 直近3本安値 break は成立していたが、`ma10=158.4623 > ma20=158.4385` だけが未成立で、
     既存ロジックは short を返せなかった。
 
+### 2026-03-09（追記）`RangeFader` の winner flow を増やすため、entry reject 閾値を局所緩和し sizing を少し戻す
+
+- 対象:
+  - `ops/env/quant-scalp-rangefader.env`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`（from `0.34`）
+    - `RANGEFADER_BASE_UNITS=12500`（from `11000`）
+- 意図:
+  - `RangeFader` は直近24hで `49 trades / +77.73 JPY / avg_pips +1.567` の winner だが、
+    `entry_probability_reject=34` が残り、特に `0.341-0.350` 帯の signal を落としていた。
+  - loser 側の共通 gate を緩めず、dedicated env だけで winner の通過率と取り分を上げる。
+- 実測根拠:
+  - `orders.db` 24h:
+    - `RangeFader-buy-fade entry_probability_reject=6`
+    - `RangeFader-sell-fade entry_probability_reject=22`
+    - `RangeFader-neutral-fade entry_probability_reject=6`
+  - reject の `entry_probability` は `0.341-0.350` 帯、
+    filled は `0.372-0.415` 帯が中心。
+
 ### 2026-03-07（追記）local read-only MCP の観測導線を軽量化し、invalid call を fail-fast 化
 
 - 対象:

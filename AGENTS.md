@@ -73,6 +73,11 @@
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
+- 2026-03-09 追記: `RangeFader` の dedicated env は
+  `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`,
+  `RANGEFADER_BASE_UNITS=12500` を現行運用値とし、
+  winner flow の通過回復と軽い sizing 回復を行う。
+  監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `MomentumBurst` の micro ENTRY は、反発後の再加速局面で
   recent 3-bar break と `ema20` 乖離、`DI` 優位、`roc5`, `ema_slope_10`
   による strategy-local override を許可する。
