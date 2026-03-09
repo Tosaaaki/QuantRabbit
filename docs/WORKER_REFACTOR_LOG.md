@@ -13806,3 +13806,46 @@
 - 意図:
   - 共通 gate で事後的に選別するのではなく、strategy 自身が live factor と higher-TF context を使って entry quality を判断する。
   - 敗因分析を `side` ではなく `indicator state cluster` で行い、同じ guard を両方向へ効かせる。
+
+## 2026-03-09 20:17 JST - local Brain safe lane を profit-oriented PDCA へ更新
+
+- 対象:
+  - `workers/common/brain.py`
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `scripts/prepare_local_brain_canary.py`
+  - `tests/workers/test_brain_history_prompt_autotune.py`
+  - `tests/scripts/test_prepare_local_brain_canary.py`
+
+- 変更:
+  - safe Brain profile に `BRAIN_PROFILE_MODE=profit` を追加し、
+    `BRAIN_SAMPLE_RATE=1.0`、`BRAIN_PROMPT_AUTO_TUNE_ENABLED=1`、
+    `BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED=1` を有効化した。
+  - `brain.py` は Brain context に `recent_outcome` を追加し、
+    strategy/pocket の recent realized performance を prompt へ明示注入する。
+  - runtime param profile に
+    `outcome_negative_pf_ceiling`,
+    `outcome_negative_win_rate_ceiling`,
+    `outcome_negative_avg_pips_ceiling`,
+    `outcome_negative_reduce_scale`
+    を追加し、recent loser cluster では
+    `ALLOW -> REDUCE` または既存 `REDUCE` の tightening を deterministic に適用する。
+  - autotune summary に `strategy_filled_trade_outcome` を追加し、
+    per-strategy/per-action の `win_rate`, `avg_pips`, `profit_factor`
+    を次回の prompt/runtime tuning 入力へ渡すようにした。
+  - `prepare_local_brain_canary.py` は `profit mode` を safe-profile として許容し、
+    full sample + autotune on でも readiness を green 判定できるようにした。
+
+- 意図:
+  - Brain を「shadow を眺めるだけ」の観測レーンから、
+    recent loser pattern を使って自動で `ALLOW` を締める profit-oriented PDCA レーンへ移す。
+  - `micro-only` / `shadow` / `qwen2.5:7b` は維持しつつ、
+    sample density と per-strategy outcome feedback を増やし、
+    short-side loser cluster に対する response を早める。
+
+- 検証:
+  - `pytest -q tests/workers/test_brain_ollama_backend.py tests/workers/test_brain_history_prompt_autotune.py tests/scripts/test_prepare_local_brain_canary.py`
+  - `19 passed`
+  - `python3 -m py_compile workers/common/brain.py scripts/prepare_local_brain_canary.py tests/workers/test_brain_ollama_backend.py tests/workers/test_brain_history_prompt_autotune.py tests/scripts/test_prepare_local_brain_canary.py`
+  - readiness:
+    `python3 scripts/prepare_local_brain_canary.py --warmup`
+    -> `market_ready=true`, `quality_gate_ok=true`, `profile_safe=true`, `enable_recommended=true`

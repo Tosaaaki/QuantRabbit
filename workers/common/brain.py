@@ -598,6 +598,7 @@ def _compact_context(context: dict[str, Any]) -> dict[str, Any]:
     entry = _safe_dict(raw.get("entry_thesis"))
     meta = _safe_dict(raw.get("meta"))
     ticks = _safe_dict(raw.get("ticks"))
+    recent_outcome = _safe_dict(raw.get("recent_outcome"))
     factors = _safe_dict(entry.get("factors"))
     m1_factors = _safe_dict(factors.get("M1"))
     forecast = _safe_dict(entry.get("forecast_fusion") or meta.get("forecast_fusion"))
@@ -716,6 +717,20 @@ def _compact_context(context: dict[str, Any]) -> dict[str, Any]:
             meta_compact["ticks"] = ticks_compact
     if meta_compact:
         compact["meta"] = meta_compact
+    recent_outcome_compact = _pick_present(
+        recent_outcome,
+        [
+            "trades",
+            "wins",
+            "win_rate",
+            "avg_pips",
+            "gross_win",
+            "gross_loss",
+            "profit_factor",
+        ],
+    )
+    if recent_outcome_compact:
+        compact["recent_outcome"] = recent_outcome_compact
     return compact
 
 
@@ -791,6 +806,10 @@ def _default_runtime_param_profile() -> dict[str, Any]:
         "outcome_min_trades": 8,
         "outcome_positive_pf_floor": 1.02,
         "outcome_positive_win_rate_floor": 0.47,
+        "outcome_negative_pf_ceiling": 0.98,
+        "outcome_negative_win_rate_ceiling": 0.5,
+        "outcome_negative_avg_pips_ceiling": -0.05,
+        "outcome_negative_reduce_scale": 0.7,
         "notes": [],
     }
 
@@ -885,6 +904,42 @@ def _coerce_runtime_param_profile(raw: Any) -> dict[str, Any]:
                 float(defaults["outcome_positive_win_rate_floor"]),
                 0.1,
                 0.99,
+            ),
+            4,
+        ),
+        "outcome_negative_pf_ceiling": round(
+            _clamp_float(
+                merged.get("outcome_negative_pf_ceiling"),
+                float(defaults["outcome_negative_pf_ceiling"]),
+                0.1,
+                5.0,
+            ),
+            4,
+        ),
+        "outcome_negative_win_rate_ceiling": round(
+            _clamp_float(
+                merged.get("outcome_negative_win_rate_ceiling"),
+                float(defaults["outcome_negative_win_rate_ceiling"]),
+                0.05,
+                0.95,
+            ),
+            4,
+        ),
+        "outcome_negative_avg_pips_ceiling": round(
+            _clamp_float(
+                merged.get("outcome_negative_avg_pips_ceiling"),
+                float(defaults["outcome_negative_avg_pips_ceiling"]),
+                -50.0,
+                20.0,
+            ),
+            4,
+        ),
+        "outcome_negative_reduce_scale": round(
+            _clamp_float(
+                merged.get("outcome_negative_reduce_scale"),
+                float(defaults["outcome_negative_reduce_scale"]),
+                0.05,
+                1.0,
             ),
             4,
         ),
@@ -1053,6 +1108,7 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
         "strategy_action_counts": [],
         "reason_counts": [],
         "filled_trade_outcome": {},
+        "strategy_filled_trade_outcome": [],
         "market_summary": {},
         "market_outcome_features": {},
     }
@@ -1171,6 +1227,55 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                         "gross_loss": round(gross_loss_f, 6),
                         "profit_factor": round(float(pf), 4),
                     }
+                cur = con.execute(
+                    """
+                    SELECT
+                      d.strategy_tag,
+                      d.pocket,
+                      d.action,
+                      COUNT(*) AS trades,
+                      SUM(CASE WHEN t.realized_pl > 0 THEN 1 ELSE 0 END) AS wins,
+                      AVG(t.pl_pips) AS avg_pips,
+                      AVG(t.realized_pl) AS avg_realized,
+                      SUM(CASE WHEN t.realized_pl > 0 THEN t.realized_pl ELSE 0 END) AS gross_win,
+                      SUM(CASE WHEN t.realized_pl < 0 THEN -t.realized_pl ELSE 0 END) AS gross_loss
+                    FROM brain_decisions d
+                    JOIN tradesdb.trades t
+                      ON t.client_order_id = d.client_order_id
+                    WHERE d.ts_epoch >= ?
+                      AND d.action IN ('ALLOW','REDUCE')
+                      AND t.close_time IS NOT NULL
+                    GROUP BY d.strategy_tag, d.pocket, d.action
+                    ORDER BY trades DESC, avg_realized ASC
+                    LIMIT 30
+                    """,
+                    (cutoff_epoch,),
+                )
+                for strat, pocket, action, trades, wins, avg_pips, avg_realized, gross_win, gross_loss in cur.fetchall():
+                    trades_n = int(trades or 0)
+                    wins_n = int(wins or 0)
+                    gross_win_f = float(gross_win or 0.0)
+                    gross_loss_f = float(gross_loss or 0.0)
+                    pf = (
+                        gross_win_f / gross_loss_f
+                        if gross_loss_f > 1e-9
+                        else (gross_win_f if gross_win_f > 0 else 0.0)
+                    )
+                    summary["strategy_filled_trade_outcome"].append(
+                        {
+                            "strategy_tag": str(strat or ""),
+                            "pocket": str(pocket or ""),
+                            "action": str(action or ""),
+                            "trades": trades_n,
+                            "wins": wins_n,
+                            "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
+                            "avg_pips": round(float(avg_pips or 0.0), 4),
+                            "avg_realized": round(float(avg_realized or 0.0), 6),
+                            "gross_win": round(gross_win_f, 6),
+                            "gross_loss": round(gross_loss_f, 6),
+                            "profit_factor": round(float(pf), 4),
+                        }
+                    )
             except Exception:
                 pass
     except Exception:
@@ -1959,6 +2064,30 @@ def _apply_runtime_param_guard(
         0.1,
         0.99,
     )
+    outcome_negative_pf_ceiling = _clamp_float(
+        runtime_profile.get("outcome_negative_pf_ceiling"),
+        0.98,
+        0.1,
+        5.0,
+    )
+    outcome_negative_win_rate_ceiling = _clamp_float(
+        runtime_profile.get("outcome_negative_win_rate_ceiling"),
+        0.5,
+        0.05,
+        0.95,
+    )
+    outcome_negative_avg_pips_ceiling = _clamp_float(
+        runtime_profile.get("outcome_negative_avg_pips_ceiling"),
+        -0.05,
+        -50.0,
+        20.0,
+    )
+    outcome_negative_reduce_scale = _clamp_float(
+        runtime_profile.get("outcome_negative_reduce_scale"),
+        0.7,
+        0.05,
+        1.0,
+    )
     stats = _collect_recent_activity_stats(
         strategy_tag,
         pocket,
@@ -1990,9 +2119,15 @@ def _apply_runtime_param_guard(
     outcome_trades = int(outcome_stats.get("trades") or 0)
     outcome_pf = float(outcome_stats.get("profit_factor") or 0.0)
     outcome_win_rate = float(outcome_stats.get("win_rate") or 0.0)
+    outcome_avg_pips = float(outcome_stats.get("avg_pips") or 0.0)
     positive_outcome_signal = outcome_trades >= outcome_min_trades and (
         outcome_pf >= outcome_positive_pf_floor
         or outcome_win_rate >= outcome_positive_win_rate_floor
+    )
+    negative_outcome_signal = outcome_trades >= outcome_min_trades and (
+        outcome_pf <= outcome_negative_pf_ceiling
+        and outcome_win_rate <= outcome_negative_win_rate_ceiling
+        and outcome_avg_pips <= outcome_negative_avg_pips_ceiling
     )
 
     convert_block_to_reduce = False
@@ -2009,6 +2144,20 @@ def _apply_runtime_param_guard(
         if positive_outcome_signal:
             overrides.append("trade_improve_bias")
         reason = f"{reason}|no_trade_bias_reduce"
+
+    if negative_outcome_signal:
+        penalty_scale = max(min_scale, min(outcome_negative_reduce_scale, 1.0))
+        if action == "ALLOW":
+            action = "REDUCE"
+            allowed = True
+            scale = penalty_scale
+            overrides.append("loss_bias_reduce")
+            reason = f"{reason}|loss_bias_reduce"
+        elif action == "REDUCE":
+            if scale > penalty_scale:
+                scale = penalty_scale
+                overrides.append("loss_bias_tighten")
+                reason = f"{reason}|loss_bias_tighten"
 
     if action == "BLOCK":
         allowed = False
@@ -2035,10 +2184,15 @@ def _apply_runtime_param_guard(
         "outcome_min_trades": outcome_min_trades,
         "outcome_positive_pf_floor": round(outcome_positive_pf_floor, 4),
         "outcome_positive_win_rate_floor": round(outcome_positive_win_rate_floor, 4),
+        "outcome_negative_pf_ceiling": round(outcome_negative_pf_ceiling, 4),
+        "outcome_negative_win_rate_ceiling": round(outcome_negative_win_rate_ceiling, 4),
+        "outcome_negative_avg_pips_ceiling": round(outcome_negative_avg_pips_ceiling, 4),
+        "outcome_negative_reduce_scale": round(outcome_negative_reduce_scale, 4),
         "stats": stats,
         "outcome_stats": outcome_stats,
         "suppression_risk": suppression_risk,
         "positive_outcome_signal": positive_outcome_signal,
+        "negative_outcome_signal": negative_outcome_signal,
         "overrides": overrides,
     }
     return adjusted, guard_info
@@ -2312,6 +2466,10 @@ def _maybe_autotune_runtime_param_profile() -> None:
             '  "outcome_min_trades": 8,\n'
             '  "outcome_positive_pf_floor": 1.05,\n'
             '  "outcome_positive_win_rate_floor": 0.5,\n'
+            '  "outcome_negative_pf_ceiling": 0.98,\n'
+            '  "outcome_negative_win_rate_ceiling": 0.5,\n'
+            '  "outcome_negative_avg_pips_ceiling": -0.05,\n'
+            '  "outcome_negative_reduce_scale": 0.7,\n'
             '  "notes": ["optional short rule"]\n'
             "}\n"
             "Constraints:\n"
@@ -2325,7 +2483,12 @@ def _maybe_autotune_runtime_param_profile() -> None:
             "- outcome_min_trades: 1-200\n"
             "- outcome_positive_pf_floor: 0.20-8.0\n"
             "- outcome_positive_win_rate_floor: 0.10-0.99\n"
+            "- outcome_negative_pf_ceiling: 0.10-5.0\n"
+            "- outcome_negative_win_rate_ceiling: 0.05-0.95\n"
+            "- outcome_negative_avg_pips_ceiling: -50.0 to 20.0\n"
+            "- outcome_negative_reduce_scale: 0.05-1.0\n"
             "- prefer REDUCE over BLOCK unless spread/reject/latency conditions deteriorate.\n"
+            "- if recent realized expectancy is negative, tighten ALLOW before tightening BLOCK.\n"
             "- keep participation healthy when market quality is normal and outcomes are stable.\n"
             "- Keep notes short and concrete.\n\n"
             f"Current runtime profile: {_stringify(current_profile, 6000)}\n"
@@ -2501,6 +2664,8 @@ def _build_prompt(context: dict[str, Any]) -> str:
         "- entry_probability, entry_probability_before/after, and target_reach_prob are probabilities from 0.0 to 1.0.\n"
         "- Do not compare confidence and entry_probability as if they share the same numeric scale.\n"
         "- If confidence >= 75 and entry_probability >= 0.80, prefer ALLOW unless spread, execution quality, or regime context clearly weakens the setup.\n"
+        "- recent_outcome summarizes recent realized results for this strategy and pocket.\n"
+        "- If recent_outcome shows profit_factor < 1 and avg_pips < 0, tighten ALLOW toward REDUCE unless entry_probability is exceptional.\n"
         "- Prefer blocking on uncertainty or missing context.\n"
         "- memory_update must be a short summary (<=200 chars) or empty string to keep memory.\n\n"
         "JSON schema:\n"
@@ -2573,6 +2738,14 @@ def decide(
     runtime_profile_version = _runtime_profile_version(runtime_profile)
     memory_before = _load_memory(tag, pocket_key)
     confidence_score = _resolve_confidence_score(confidence, entry_thesis)
+    recent_outcome = _collect_recent_outcome_stats(
+        tag,
+        pocket_key,
+        window_decisions=max(
+            _clamp_int(runtime_profile.get("guard_window_decisions"), 160, 20, 2000),
+            _clamp_int(runtime_profile.get("min_guard_samples"), 30, 10, 500) * 2,
+        ),
+    )
     context = {
         "ts": _now_iso(),
         "strategy_tag": tag,
@@ -2585,6 +2758,7 @@ def decide(
         "memory": memory_before or "",
         "entry_thesis": entry_thesis or {},
         "meta": meta or {},
+        "recent_outcome": recent_outcome,
         "runtime_param_profile_version": runtime_profile_version,
     }
     now = time.monotonic()

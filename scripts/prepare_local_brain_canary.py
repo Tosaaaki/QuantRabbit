@@ -161,6 +161,8 @@ def _find_benchmark_row(benchmark_payload: dict[str, Any], model: str | None) ->
 
 def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float) -> list[str]:
     issues: list[str] = []
+    profile_mode = str(env_values.get("BRAIN_PROFILE_MODE") or "safe").strip().lower()
+    profit_mode = profile_mode == "profit"
     pocket_allowlist = {
         item.strip().lower()
         for item in str(env_values.get("BRAIN_POCKET_ALLOWLIST") or "").split(",")
@@ -172,11 +174,12 @@ def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float
     if fail_policy != "allow":
         issues.append("fail_policy_not_allow")
     sample_rate = _float_env(env_values.get("BRAIN_SAMPLE_RATE"))
-    if sample_rate is None or sample_rate <= 0.0 or sample_rate > 0.5:
+    sample_rate_cap = 1.0 if profit_mode else 0.5
+    if sample_rate is None or sample_rate <= 0.0 or sample_rate > sample_rate_cap:
         issues.append("sample_rate_out_of_range")
-    if _bool_env(env_values.get("BRAIN_PROMPT_AUTO_TUNE_ENABLED")):
+    if _bool_env(env_values.get("BRAIN_PROMPT_AUTO_TUNE_ENABLED")) and not profit_mode:
         issues.append("prompt_autotune_enabled")
-    if _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED")):
+    if _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED")) and not profit_mode:
         issues.append("runtime_autotune_enabled")
     gate_mode = str(env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE") or "").strip().lower()
     if gate_mode != "shadow":

@@ -10252,3 +10252,44 @@ Status:
 - 残課題:
   - 初回サンプルとしては改善方向だが、`MicroTrendRetest` は約定ゼロのため有効性未判定。
   - `quant-micro-trendretest.log` には `20:00:59 JST` に `stale factors age=445.0s` 警告が出ており、entry quality とは別に factor freshness の監視は継続要。
+
+## 2026-03-09 20:17 JST - local Brain を観測専用から profit-oriented PDCA へ切り替え
+
+- 市況確認:
+  - `python3 scripts/prepare_local_brain_canary.py --warmup` の最新 readiness は
+    `USD/JPY 158.414 / 158.422`, spread `0.8 pips`,
+    `recent_range_6m=3.8 pips`, `atr_proxy=3.171 pips`,
+    `tick_age=-0.4s`, `market_ready=true`, `enable_recommended=true`。
+  - `ollama qwen2.5:7b` warmup は `414.3ms`、`quality_gate_ok=true`。
+
+- 直前の問題認識:
+  - post-fix shadow は `llm_ok=1` が出ている一方、
+    `ALLOW` が loser を通し、`REDUCE` が winner を削るケースが混在していた。
+  - 問題は「LLM が未接続」ではなく、
+    `MomentumBurst-open_short` / `MicroTrendRetest-short` を中心に
+    recent loser pattern を prompt / runtime guard が十分に使えていないことだった。
+
+- 実装判断:
+  - 観測待ちをやめ、Brain を `profit mode` の PDCA レーンへ引き上げた。
+  - `micro-only shadow` は維持したまま、`BRAIN_SAMPLE_RATE=1.0` に上げ、
+    prompt/runtime autotune を safe profile 内で常時有効化した。
+  - Brain context に strategy/pocket ごとの `recent_outcome`
+    (`trades`, `wins`, `win_rate`, `avg_pips`, `profit_factor`) を注入し、
+    prompt に「`profit_factor < 1` かつ `avg_pips < 0` なら
+    exceptional setup 以外は `ALLOW` を `REDUCE` 側へ寄せる」規則を追加した。
+  - runtime guard でも同じ recent loser signal を使い、
+    `ALLOW -> REDUCE` への deterministic な loss-bias fallback を追加した。
+  - autotune input には `strategy_filled_trade_outcome` 集計を追加し、
+    per-strategy/per-action の realized outcome を次回の prompt/runtime 調整へ渡すようにした。
+
+- 検証:
+  - `pytest -q tests/workers/test_brain_ollama_backend.py tests/workers/test_brain_history_prompt_autotune.py tests/scripts/test_prepare_local_brain_canary.py`
+  - `19 passed`
+  - `python3 -m py_compile workers/common/brain.py scripts/prepare_local_brain_canary.py tests/workers/test_brain_ollama_backend.py tests/workers/test_brain_history_prompt_autotune.py tests/scripts/test_prepare_local_brain_canary.py`
+  - 新規テストでは、recent loser を持つ `MomentumBurst-open_short / micro` に対して
+    fake LLM の `ALLOW` が最終的に `REDUCE 0.62` へ下がることを固定した。
+
+- 運用メモ:
+  - `prepare_local_brain_canary.py` は `BRAIN_PROFILE_MODE=profit` を安全プロファイルとして扱うよう更新した。
+  - これにより `profit mode + sample_rate=1.0 + autotune on` でも
+    readiness は `profile_safe=true` のまま live restart 可能になった。

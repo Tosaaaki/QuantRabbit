@@ -273,6 +273,11 @@ def test_collect_autotune_summary_includes_trade_outcomes(monkeypatch, tmp_path:
     assert allow.get("trades") == 1
     assert allow.get("wins") == 1
     assert allow.get("win_rate") == 1.0
+    strat_rows = summary.get("strategy_filled_trade_outcome", [])
+    assert len(strat_rows) == 1
+    assert strat_rows[0]["strategy_tag"] == "scalp_ping_5s_b_live"
+    assert strat_rows[0]["action"] == "ALLOW"
+    assert strat_rows[0]["profit_factor"] > 0.0
 
 
 def _insert_trade_row(trades_db_path: Path, client_order_id: str, realized_pl: float, pl_pips: float) -> None:
@@ -552,6 +557,73 @@ def test_runtime_guard_uses_positive_outcome_signal(monkeypatch, tmp_path: Path)
     assert decision.allowed is True
     assert decision.scale >= 0.36
     assert "no_trade_bias_reduce" in decision.reason
+
+
+def test_runtime_guard_reduces_allow_when_recent_outcomes_are_negative(monkeypatch, tmp_path: Path) -> None:
+    brain, _db_path, _profile_path, _report_latest, _report_history = _prepare_brain(monkeypatch, tmp_path)
+    runtime_profile_path = tmp_path / "brain_runtime_param_profile.json"
+    runtime_profile_path.write_text(
+        json.dumps(
+            {
+                "version": "rp-v6",
+                "min_scale": 0.25,
+                "block_rate_soft_limit": 0.95,
+                "activity_rate_floor": 0.05,
+                "block_to_reduce_scale": 0.4,
+                "guard_window_decisions": 30,
+                "min_guard_samples": 4,
+                "max_block_streak": 5,
+                "outcome_min_trades": 3,
+                "outcome_positive_pf_floor": 1.05,
+                "outcome_positive_win_rate_floor": 0.55,
+                "outcome_negative_pf_ceiling": 0.99,
+                "outcome_negative_win_rate_ceiling": 0.5,
+                "outcome_negative_avg_pips_ceiling": -0.1,
+                "outcome_negative_reduce_scale": 0.62,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for idx, (realized, pips) in enumerate(((-120.0, -3.2), (-90.0, -2.4), (-110.0, -2.8)), start=1):
+        coid = _insert_brain_decision_row(
+            brain,
+            strategy_tag="MomentumBurst-open_short",
+            pocket="micro",
+            action="ALLOW",
+            reason=f"seed_loss_{idx}",
+            client_order_id=f"runtime-loss-{idx}",
+        )
+        _insert_trade_row(brain._TRADES_DB_PATH, coid, realized, pips)
+
+    captured: dict[str, str] = {}
+
+    def _fake_ollama(prompt: str, **_kwargs):
+        captured["prompt"] = prompt
+        return {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "high_confidence_setup",
+            "memory_update": "",
+        }
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    decision = brain.decide(
+        strategy_tag="MomentumBurst-open_short",
+        pocket="micro",
+        side="sell",
+        units=-1000,
+        confidence=73,
+        client_order_id="runtime-bias-negative-1",
+        entry_thesis={"entry_probability": 0.78, "entry_units_intent": 1000},
+    )
+    assert '"recent_outcome": {' in captured["prompt"]
+    assert '"profit_factor": 0.0' in captured["prompt"]
+    assert decision.action == "REDUCE"
+    assert decision.allowed is True
+    assert decision.scale == 0.62
+    assert "loss_bias_reduce" in decision.reason
 
 
 def test_runtime_autotune_updates_runtime_profile(monkeypatch, tmp_path: Path) -> None:
