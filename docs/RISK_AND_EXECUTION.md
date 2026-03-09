@@ -438,6 +438,16 @@
   `side_filter_final_block` として entry を拒否する。
 - replay 経路（`scripts/replay_exit_workers.py`）でも同様に、
   `MTF` 調整後の side で再判定して不一致を破棄する。
+- 2026-03-09 追記:
+  - `SCALP_REPLAY_PING_VARIANT=B/C/D` を明示して `SCALP_REPLAY_MODE/ALLOWLIST/POCKET`
+    を省略した場合、`scripts/replay_exit_workers.py` は variant 側の effective
+    `mode` と worker `POCKET` を自動採用する。
+  - replay JSON `meta` の
+    `scalp_entry_mode_effective`,
+    `scalp_entry_allowlist_effective`,
+    `scalp_entry_modes_enabled`,
+    `scalp_entry_pocket_effective`
+    を見れば、silent filter や pocket mismatch をその場で切り分けられる。
 - 目的は、`SIDE_FILTER=long` 運用時に `mtf_reversion_fade` 等で
   short が混入する経路をなくし、実運用と検証の整合性を保つこと。
 

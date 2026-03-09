@@ -157,6 +157,10 @@ def _replay_or_strategy_hours(replay_env_name: str, *, strategy_suffix: str) -> 
     return _env_hours(fallback_key)
 
 
+def _env_explicit(name: str) -> bool:
+    return os.getenv(name) is not None
+
+
 def _normalize_regime_label(value: object) -> str:
     text = str(value or "").strip().lower()
     if text in {"trend", "range", "breakout", "mixed", "event"}:
@@ -251,7 +255,22 @@ _PING5S_VARIANTS: dict[str, dict[str, str]] = {
         "exit_module": "workers.scalp_ping_5s_d.exit_worker",
     },
 }
-_PING5S_VARIANT = (str(os.getenv("SCALP_REPLAY_PING_VARIANT", "B")).strip().upper() or "B")
+
+
+def _ping5s_variant_from_replay_mode(value: object) -> str:
+    mode = str(value or "").strip().lower()
+    if mode == "scalp_ping_5s_b":
+        return "B"
+    if mode == "scalp_ping_5s_c":
+        return "C"
+    if mode == "scalp_ping_5s_d":
+        return "D"
+    return ""
+
+
+_PING5S_VARIANT = (str(os.getenv("SCALP_REPLAY_PING_VARIANT", "")).strip().upper() or "")
+if not _PING5S_VARIANT:
+    _PING5S_VARIANT = _ping5s_variant_from_replay_mode(os.getenv("SCALP_REPLAY_MODE", ""))
 if _PING5S_VARIANT not in _PING5S_VARIANTS:
     _PING5S_VARIANT = "B"
 _PING5S_VARIANT_CFG = _PING5S_VARIANTS[_PING5S_VARIANT]
@@ -265,6 +284,27 @@ _PING5S_EXIT_MODULE = _PING5S_VARIANT_CFG["exit_module"]
 
 _PING5S_RUNTIME: Optional[tuple[Any, Any, Any]] = None
 _PING5S_RUNTIME_FAILED = False
+
+
+def _resolve_scalp_replay_selection(config: ReplayScalpConfig) -> tuple[str, set[str], str]:
+    raw_allow = os.getenv("SCALP_REPLAY_ALLOWLIST", config.ALLOWLIST_RAW)
+    allowlist = {s.strip().lower() for s in (raw_allow or "").split(",") if s.strip()}
+    mode = (config.MODE or "").strip().lower()
+    if not allowlist and not _env_explicit("SCALP_REPLAY_MODE") and _env_explicit("SCALP_REPLAY_PING_VARIANT"):
+        mode = _PING5S_MODE
+    if mode and not allowlist:
+        allowlist.add(mode)
+
+    pocket = (config.POCKET or "").strip() or "scalp"
+    if not _env_explicit("SCALP_REPLAY_POCKET") and mode == _PING5S_MODE:
+        runtime = _load_ping5s_runtime()
+        if runtime is not None:
+            _, ping_config, _ = runtime
+            candidate = str(getattr(ping_config, "POCKET", "") or "").strip()
+            if candidate:
+                pocket = candidate
+
+    return mode, allowlist, pocket
 
 
 def _ping5s_force_exit_timeout_sec(ping_config: Any, *, side: str) -> float:
@@ -1632,11 +1672,10 @@ class ScalpReplayEntryEngine:
         self._loop = loop
         self._config = _SP_CFG
         self._bypass_common_guard = (self._config.MODE or "").strip().lower() in self._config.GUARD_BYPASS_MODES
-        raw_allow = os.getenv("SCALP_REPLAY_ALLOWLIST", self._config.ALLOWLIST_RAW)
-        allowlist = {s.strip().lower() for s in (raw_allow or "").split(",") if s.strip()}
-        mode = (self._config.MODE or "").strip().lower()
-        if mode and not allowlist:
-            allowlist.add(mode)
+        mode, allowlist, effective_pocket = _resolve_scalp_replay_selection(self._config)
+        self._resolved_mode = mode
+        self._resolved_allowlist = set(allowlist)
+        self._effective_pocket = effective_pocket
         modes = _signal_map()
         if allowlist:
             filtered = {}
@@ -1674,7 +1713,7 @@ class ScalpReplayEntryEngine:
         if self._live_entry:
             if not is_market_open(tick.ts):
                 return
-            if not can_trade(self._config.POCKET):
+            if not can_trade(self._effective_pocket):
                 return
         factors = factor_cache.all_factors()
         fac_m1 = factors.get("M1") or {}
@@ -1692,25 +1731,25 @@ class ScalpReplayEntryEngine:
             blocked, _, _, _ = spread_monitor.is_blocked()
             if blocked:
                 return
-            if self._config.MAX_OPEN_TRADES > 0 or self._config.MAX_OPEN_TRADES_GLOBAL > 0:
-                positions = self._broker.get_open_positions().get(self._config.POCKET) or {}
-                open_trades_all = positions.get("open_trades") or []
-                if self._config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= self._config.MAX_OPEN_TRADES_GLOBAL:
-                    return
-                open_trades = open_trades_all
-                if self._config.OPEN_TRADES_SCOPE == "tag":
-                    mode_name = (self._config.MODE or "").strip().lower()
-                    tag_filter = None
-                    for tag, mode in _TAG_TO_MODE.items():
-                        if mode == mode_name:
-                            tag_filter = tag.lower()
-                            break
-                    if tag_filter:
-                        open_trades = [
-                            tr for tr in open_trades_all if str(tr.get("strategy_tag") or "").lower() == tag_filter
-                        ]
-                if self._config.MAX_OPEN_TRADES > 0 and len(open_trades) >= self._config.MAX_OPEN_TRADES:
-                    return
+        if self._config.MAX_OPEN_TRADES > 0 or self._config.MAX_OPEN_TRADES_GLOBAL > 0:
+            positions = self._broker.get_open_positions().get(self._effective_pocket) or {}
+            open_trades_all = positions.get("open_trades") or []
+            if self._config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= self._config.MAX_OPEN_TRADES_GLOBAL:
+                return
+            open_trades = open_trades_all
+            if self._config.OPEN_TRADES_SCOPE == "tag":
+                mode_name = self._resolved_mode
+                tag_filter = None
+                for tag, mode in _TAG_TO_MODE.items():
+                    if mode == mode_name:
+                        tag_filter = tag.lower()
+                        break
+                if tag_filter:
+                    open_trades = [
+                        tr for tr in open_trades_all if str(tr.get("strategy_tag") or "").lower() == tag_filter
+                    ]
+            if self._config.MAX_OPEN_TRADES > 0 and len(open_trades) >= self._config.MAX_OPEN_TRADES:
+                return
 
         for mode, fn in self._modes.items():
             if self._config.COOLDOWN_SEC > 0.0:
@@ -1758,7 +1797,7 @@ class ScalpReplayEntryEngine:
                         units=signed_units,
                         sl_price=sl_price,
                         tp_price=tp_price,
-                        pocket=self._config.POCKET,
+                        pocket=self._effective_pocket,
                         strategy_tag=strategy_tag,
                         entry_thesis={
                             "entry_probability": min(1.0, max(0.0, conf / 100.0)),
@@ -1785,7 +1824,7 @@ class ScalpReplayEntryEngine:
                 tp_price = entry_price - tp_pips * PIP if tp_pips > 0 else entry_price - 2.0 * PIP
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
             self._broker.open_trade(
-                pocket=self._config.POCKET,
+                pocket=self._effective_pocket,
                 strategy_tag=strategy_tag,
                 direction=direction,
                 entry_price=entry_price,
@@ -2300,6 +2339,22 @@ def main() -> None:
             "latency_ms": args.latency_ms,
             "scalp_entry_min_entry_conf": _SP_CFG.MIN_ENTRY_CONF,
             "scalp_entry_allowlist": os.getenv("SCALP_REPLAY_ALLOWLIST", _SP_CFG.ALLOWLIST_RAW),
+            "scalp_entry_allowlist_effective": (
+                sorted(getattr(sp_entry, "_resolved_allowlist", set())) if sp_entry is not None else []
+            ),
+            "scalp_entry_mode_effective": (
+                getattr(sp_entry, "_resolved_mode", (_SP_CFG.MODE or "").strip().lower())
+                if sp_entry is not None
+                else (_SP_CFG.MODE or "").strip().lower()
+            ),
+            "scalp_entry_modes_enabled": (
+                sorted(getattr(sp_entry, "_modes", {}).keys()) if sp_entry is not None else []
+            ),
+            "scalp_entry_pocket_effective": (
+                getattr(sp_entry, "_effective_pocket", _SP_CFG.POCKET)
+                if sp_entry is not None
+                else _SP_CFG.POCKET
+            ),
             "scalp_entry_live_entry": bool(args.sp_live_entry),
             "bbrsi_min_entry_conf": os.getenv("BBRSI_MIN_ENTRY_CONF"),
             "exclude_end_of_replay": args.exclude_end_of_replay,

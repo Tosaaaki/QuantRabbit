@@ -13332,3 +13332,37 @@
   - `python3 -m py_compile workers/scalp_rangefader/exit_worker.py workers/scalp_ping_5s_flow/exit_worker.py`
     で syntax check を通過。
 
+
+## 2026-03-09 JST - `replay_exit_workers.py` の ping5s variant 選択を fail-closed ではなく variant-aware に補正
+
+- 対象:
+  - `scripts/replay_exit_workers.py`
+  - `tests/scripts/test_replay_exit_workers.py`
+
+- 背景:
+  - `SCALP_REPLAY_PING_VARIANT=D` を付けた replay でも、
+    `SCALP_REPLAY_MODE/ALLOWLIST` を明示しない限り内部 allowlist が既定 `spread_revert` に寄り、
+    `scalp_ping_5s_d_live` 窓で `0 trades` になる silent mismatch があった。
+  - さらに replay 側 default pocket は `scalp` で、live 実運用の `scalp_fast` とズレていた。
+
+- 変更:
+  - replay selection helper を追加し、
+    `SCALP_REPLAY_PING_VARIANT` 明示時かつ replay mode/allowlist/pocket 未指定時は
+    variant の `mode` と worker 側 `POCKET` を採用するようにした。
+  - replay JSON `meta` へ
+    `scalp_entry_mode_effective`,
+    `scalp_entry_allowlist_effective`,
+    `scalp_entry_modes_enabled`,
+    `scalp_entry_pocket_effective`
+    を追加し、silent filter を後追いしなくても見えるようにした。
+  - 回帰テストで
+    1. implicit variant selection が D mode + `scalp_fast` を解決すること
+    2. explicit `SCALP_REPLAY_MODE` は上書きしないこと
+    を固定した。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `15 passed`。
+  - 実 replay でも、`SCALP_REPLAY_PING_VARIANT=D` のみで
+    `tmp/replay_exit_workers_ping5s_d_autofix.json` が
+    `3 trades / -7.2 pips` と `scalp_entry_pocket_effective=scalp_fast`
+    を返すことを確認した。

@@ -9488,3 +9488,41 @@ Status:
   2. `logs/local_v2_stack/quant-scalp-rangefader-exit.log` と
      `logs/local_v2_stack/quant-scalp-ping-5s-flow-exit.log` で同一 trade の failed close 連打が止まること。
   3. `scalp_ping_5s_flow_live` の near-break-even close reject が 24h で再発しないこと。
+
+## 2026-03-09 15:39 JST - `scalp_ping_5s_d_live` replay が `0 trades` だった主因は tick 欠損ではなく replay 既定選択のズレ
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json` の最新 best bid/ask は `158.576 / 158.584`、spread は `0.8p`、latency は `101.5ms`。
+  - `logs/health_snapshot.json` は `generated_at=2026-03-09T06:28:31Z`、`trades_last_close=2026-03-09T06:25:22Z`、`trades_count_24h=277`。
+  - `local_v2_stack status` で core 4 は `running`。
+
+- 実測:
+  - 同一窓 `2026-03-09 05:19:37Z - 05:57:39Z` に対し、
+    `SCALP_REPLAY_PING_VARIANT=D` だけで `scripts/replay_exit_workers.py --sp-only --sp-live-entry`
+    を回すと `summary_overall.trades=0` だった。
+  - 同じ窓で `SCALP_REPLAY_MODE=scalp_ping_5s_d` を明示すると
+    `3 trades / -7.2 pips` まで戻った。
+  - 原因は `replay_exit_workers.py` が allowlist 未指定時でも既定 `SCALP_REPLAY_MODE=spread_revert`
+    を内部 allowlist に積み、`SCALP_REPLAY_PING_VARIANT=D` だけでは
+    ping5s D を有効化していなかったこと。
+
+- 対応:
+  - `scripts/replay_exit_workers.py`
+    - `SCALP_REPLAY_PING_VARIANT` が明示され、`SCALP_REPLAY_MODE/ALLOWLIST/POCKET` が未指定のときは、
+      replay 選択を variant 側へ自動解決するよう修正。
+    - effective `mode/allowlist/pocket` を replay JSON `meta` に追加。
+    - ping5s replay の default pocket も worker config に合わせて `scalp_fast` へ揃えるよう修正。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - variant D の implicit selection と、explicit replay mode を上書きしない回帰テストを追加。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `15 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py` は pass。
+  - 修正後、同じ replay コマンドを `SCALP_REPLAY_PING_VARIANT=D` のみで再実行すると
+    `tmp/replay_exit_workers_ping5s_d_autofix.json` は
+    `summary_overall.trades=3`, `meta.scalp_entry_mode_effective=scalp_ping_5s_d`,
+    `meta.scalp_entry_pocket_effective=scalp_fast` を返した。
+
+- 残課題:
+  - replay が `0 trades` になる silent fail は潰れたが、
+    live の `entry_probability` / side-metrics flip / lookahead 補正をどこまで replay に持ち込むかは別タスク。

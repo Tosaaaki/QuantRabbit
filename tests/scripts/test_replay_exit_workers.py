@@ -135,6 +135,19 @@ def test_ping5s_variant_d_module_mapping(monkeypatch) -> None:
         importlib.reload(reloaded)
 
 
+def test_ping5s_variant_infers_from_replay_mode(monkeypatch) -> None:
+    monkeypatch.delenv("SCALP_REPLAY_PING_VARIANT", raising=False)
+    monkeypatch.setenv("SCALP_REPLAY_MODE", "scalp_ping_5s_d")
+    reloaded = importlib.reload(replay)
+    try:
+        assert reloaded._PING5S_VARIANT == "D"
+        assert reloaded._PING5S_MODE == "scalp_ping_5s_d"
+        assert reloaded._PING5S_FALLBACK_TAG == "scalp_ping_5s_d_live"
+    finally:
+        monkeypatch.delenv("SCALP_REPLAY_MODE", raising=False)
+        importlib.reload(reloaded)
+
+
 def test_patch_exit_module_patches_delegate_module(monkeypatch) -> None:
     broker = replay.SimBroker(latency_ms=0.0, fill_mode="lko")
 
@@ -256,6 +269,76 @@ def test_replay_hour_filters_fallback_to_variant_env(monkeypatch) -> None:
         monkeypatch.delenv("SCALP_REPLAY_PING_VARIANT", raising=False)
         monkeypatch.delenv("SCALP_PING_5S_D_ALLOW_HOURS_JST", raising=False)
         monkeypatch.delenv("SCALP_PING_5S_D_BLOCK_HOURS_JST", raising=False)
+        importlib.reload(reloaded)
+
+
+def test_resolve_scalp_replay_selection_defaults_to_ping_variant_mode_and_pocket(monkeypatch) -> None:
+    monkeypatch.setenv("SCALP_REPLAY_PING_VARIANT", "D")
+    monkeypatch.delenv("SCALP_REPLAY_MODE", raising=False)
+    monkeypatch.delenv("SCALP_REPLAY_ALLOWLIST", raising=False)
+    monkeypatch.delenv("SCALP_REPLAY_UNIT_ALLOWLIST", raising=False)
+    monkeypatch.delenv("SCALP_REPLAY_POCKET", raising=False)
+    reloaded = importlib.reload(replay)
+    try:
+        monkeypatch.setattr(
+            reloaded,
+            "_load_ping5s_runtime",
+            lambda: (SimpleNamespace(), SimpleNamespace(POCKET="scalp_fast"), SimpleNamespace()),
+        )
+        cfg = reloaded.ReplayScalpConfig(
+            MODE="spread_revert",
+            GUARD_BYPASS_MODES=set(),
+            ALLOWLIST_RAW="",
+            LOOP_INTERVAL_SEC=4.0,
+            POCKET="scalp",
+            MAX_OPEN_TRADES=2,
+            MAX_OPEN_TRADES_GLOBAL=0,
+            OPEN_TRADES_SCOPE="tag",
+            COOLDOWN_SEC=45.0,
+            MIN_ENTRY_CONF=32,
+            MIN_UNITS=1000,
+        )
+
+        mode, allowlist, pocket = reloaded._resolve_scalp_replay_selection(cfg)
+
+        assert mode == "scalp_ping_5s_d"
+        assert allowlist == {"scalp_ping_5s_d"}
+        assert pocket == "scalp_fast"
+    finally:
+        monkeypatch.delenv("SCALP_REPLAY_PING_VARIANT", raising=False)
+        importlib.reload(reloaded)
+
+
+def test_resolve_scalp_replay_selection_keeps_explicit_replay_mode(monkeypatch) -> None:
+    monkeypatch.setenv("SCALP_REPLAY_PING_VARIANT", "D")
+    monkeypatch.setenv("SCALP_REPLAY_MODE", "false_break_fade")
+    monkeypatch.delenv("SCALP_REPLAY_ALLOWLIST", raising=False)
+    monkeypatch.delenv("SCALP_REPLAY_UNIT_ALLOWLIST", raising=False)
+    monkeypatch.delenv("SCALP_REPLAY_POCKET", raising=False)
+    reloaded = importlib.reload(replay)
+    try:
+        cfg = reloaded.ReplayScalpConfig(
+            MODE="false_break_fade",
+            GUARD_BYPASS_MODES=set(),
+            ALLOWLIST_RAW="",
+            LOOP_INTERVAL_SEC=4.0,
+            POCKET="scalp",
+            MAX_OPEN_TRADES=2,
+            MAX_OPEN_TRADES_GLOBAL=0,
+            OPEN_TRADES_SCOPE="tag",
+            COOLDOWN_SEC=45.0,
+            MIN_ENTRY_CONF=32,
+            MIN_UNITS=1000,
+        )
+
+        mode, allowlist, pocket = reloaded._resolve_scalp_replay_selection(cfg)
+
+        assert mode == "false_break_fade"
+        assert allowlist == {"false_break_fade"}
+        assert pocket == "scalp"
+    finally:
+        monkeypatch.delenv("SCALP_REPLAY_PING_VARIANT", raising=False)
+        monkeypatch.delenv("SCALP_REPLAY_MODE", raising=False)
         importlib.reload(reloaded)
 
 
