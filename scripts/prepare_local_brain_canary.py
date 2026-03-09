@@ -182,8 +182,8 @@ def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float
     if _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED")) and not profit_mode:
         issues.append("runtime_autotune_enabled")
     gate_mode = str(env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE") or "").strip().lower()
-    if gate_mode != "shadow":
-        issues.append("brain_gate_mode_not_shadow")
+    if gate_mode not in {"shadow", "apply"}:
+        issues.append("brain_gate_mode_invalid")
     workers = _float_env(env_values.get("ORDER_MANAGER_SERVICE_WORKERS"))
     if workers is None or int(workers) != 1:
         issues.append("order_manager_workers_not_1")

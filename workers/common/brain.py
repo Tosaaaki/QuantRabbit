@@ -20,6 +20,14 @@ from typing import Any, Optional
 from utils.ollama_client import call_ollama_chat_json
 from utils.vertex_client import call_vertex_text
 from utils.metrics_logger import log_metric
+try:
+    from indicators.factor_cache import all_factors
+except Exception:  # pragma: no cover - optional market context lane
+    all_factors = None
+try:
+    from market_data import tick_window
+except Exception:  # pragma: no cover - optional live tick lane
+    tick_window = None
 
 LOG = logging.getLogger(__name__)
 
@@ -251,6 +259,10 @@ _RUNTIME_PARAM_AUTOTUNE_URL = (
     or os.getenv("BRAIN_OLLAMA_URL", "")
     or _OLLAMA_URL
 ).strip()
+_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC = max(
+    0.0,
+    float(os.getenv("BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC", "30") or 30.0),
+)
 _RUNTIME_PARAM_REPORT_LATEST_PATH = pathlib.Path(
     os.getenv("BRAIN_RUNTIME_PARAM_REPORT_LATEST_PATH", "logs/brain_runtime_param_autotune_latest.json")
 )
@@ -261,7 +273,7 @@ _RUNTIME_PARAM_REPORT_HISTORY_PATH = pathlib.Path(
     )
 )
 
-_CACHE: dict[tuple[str, str], tuple[float, "BrainDecision"]] = {}
+_CACHE: dict[tuple[str, str, str], tuple[float, "BrainDecision"]] = {}
 _PROMPT_PROFILE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
 _PROMPT_PROFILE_LOCK = threading.Lock()
 _PROMPT_AUTOTUNE_LOCK = threading.Lock()
@@ -270,6 +282,10 @@ _RUNTIME_PARAM_PROFILE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
 _RUNTIME_PARAM_PROFILE_LOCK = threading.Lock()
 _RUNTIME_PARAM_AUTOTUNE_LOCK = threading.Lock()
 _LAST_RUNTIME_PARAM_AUTOTUNE_TS = 0.0
+_AUTOTUNE_OLLAMA_LOCK = threading.Lock()
+_LIVE_OLLAMA_LOCK = threading.Lock()
+_ACTIVE_LIVE_OLLAMA_CALLS = 0
+_LAST_LIVE_OLLAMA_TS = 0.0
 
 
 @dataclass(frozen=True)
@@ -283,6 +299,56 @@ class BrainDecision:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _normalize_chat_url(value: str) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _uses_shared_ollama_runtime(url: str) -> bool:
+    return _normalize_chat_url(url) == _normalize_chat_url(_OLLAMA_URL)
+
+
+def _begin_live_ollama_call() -> None:
+    global _ACTIVE_LIVE_OLLAMA_CALLS, _LAST_LIVE_OLLAMA_TS
+    with _LIVE_OLLAMA_LOCK:
+        _ACTIVE_LIVE_OLLAMA_CALLS += 1
+        _LAST_LIVE_OLLAMA_TS = time.time()
+
+
+def _end_live_ollama_call() -> None:
+    global _ACTIVE_LIVE_OLLAMA_CALLS, _LAST_LIVE_OLLAMA_TS
+    with _LIVE_OLLAMA_LOCK:
+        _ACTIVE_LIVE_OLLAMA_CALLS = max(0, _ACTIVE_LIVE_OLLAMA_CALLS - 1)
+        _LAST_LIVE_OLLAMA_TS = time.time()
+
+
+def _acquire_autotune_ollama_slot(url: str) -> tuple[bool, Optional[str]]:
+    if not _uses_shared_ollama_runtime(url):
+        return True, None
+    now_epoch = time.time()
+    with _LIVE_OLLAMA_LOCK:
+        active_live_calls = _ACTIVE_LIVE_OLLAMA_CALLS
+        last_live_ts = _LAST_LIVE_OLLAMA_TS
+    if active_live_calls > 0:
+        return False, "live_preflight_inflight"
+    if (
+        _AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC > 0.0
+        and now_epoch - last_live_ts < _AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC
+    ):
+        return False, "live_preflight_cooldown"
+    if not _AUTOTUNE_OLLAMA_LOCK.acquire(blocking=False):
+        return False, "autotune_ollama_busy"
+    return True, None
+
+
+def _release_autotune_ollama_slot(url: str, acquired: bool) -> None:
+    if not acquired or not _uses_shared_ollama_runtime(url):
+        return
+    try:
+        _AUTOTUNE_OLLAMA_LOCK.release()
+    except Exception:
+        pass
 
 
 def _ensure_schema() -> None:
@@ -527,6 +593,16 @@ def _trim_text(value: Any, limit: int) -> str:
     if limit <= 3:
         return text[:limit]
     return text[: limit - 3].rstrip() + "..."
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    if number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return number
 
 
 def _compact_jsonable(
@@ -1602,6 +1678,171 @@ def _metric_value(value: Any, *, low: float, high: float) -> Optional[float]:
     return None
 
 
+def _latest_tick_snapshot() -> dict[str, Any]:
+    if tick_window is None:
+        return {}
+    recent_ticks = getattr(tick_window, "recent_ticks", None)
+    if recent_ticks is None:
+        return {}
+    try:
+        rows = recent_ticks(seconds=6, limit=8)
+    except Exception:
+        return {}
+    newest: Optional[dict[str, Any]] = None
+    for row in reversed(list(rows or [])):
+        if isinstance(row, dict):
+            newest = row
+            break
+    if not newest:
+        return {}
+    bid = _float_or_none(newest.get("bid"))
+    ask = _float_or_none(newest.get("ask"))
+    mid = _float_or_none(newest.get("mid"))
+    if mid is None and bid is not None and ask is not None:
+        mid = round((bid + ask) / 2.0, 6)
+    epoch = _float_or_none(newest.get("epoch"))
+    spread_pips = None
+    if bid is not None and ask is not None:
+        spread_pips = round(max(0.0, ask - bid) / 0.01, 4)
+    snapshot: dict[str, Any] = {}
+    if bid is not None:
+        snapshot["bid"] = round(bid, 6)
+    if ask is not None:
+        snapshot["ask"] = round(ask, 6)
+    if mid is not None:
+        snapshot["mid"] = round(mid, 6)
+    if spread_pips is not None:
+        snapshot["spread_pips"] = spread_pips
+    if epoch is not None:
+        snapshot["age_sec"] = round(max(0.0, time.time() - epoch), 3)
+    return snapshot
+
+
+def _latest_m1_factor_snapshot() -> dict[str, Any]:
+    if all_factors is None:
+        return {}
+    try:
+        factors = all_factors() or {}
+    except Exception:
+        return {}
+    m1 = factors.get("M1")
+    if not isinstance(m1, dict):
+        return {}
+    compact = _pick_present(
+        m1,
+        [
+            "atr_pips",
+            "range_score",
+            "adx",
+            "bbw",
+            "rsi",
+            "ma_gap_pips",
+            "vwap_gap_pips",
+            "regime",
+        ],
+    )
+    return compact if isinstance(compact, dict) else {}
+
+
+def _augment_context_with_live_market(context: dict[str, Any]) -> dict[str, Any]:
+    raw = _safe_dict(context)
+    entry = dict(_safe_dict(raw.get("entry_thesis")))
+    meta = dict(_safe_dict(raw.get("meta")))
+    ticks = dict(_safe_dict(raw.get("ticks")))
+
+    tick_snapshot = _latest_tick_snapshot()
+    if tick_snapshot:
+        ticks.update({k: v for k, v in tick_snapshot.items() if v not in (None, "")})
+        if meta.get("spread_pips") in (None, "") and tick_snapshot.get("spread_pips") is not None:
+            meta["spread_pips"] = tick_snapshot["spread_pips"]
+        for key in ("bid", "ask", "mid"):
+            if meta.get(key) in (None, "") and tick_snapshot.get(key) is not None:
+                meta[key] = tick_snapshot[key]
+
+    live_m1 = _latest_m1_factor_snapshot()
+    if live_m1:
+        factors_m1 = dict(_safe_dict(entry.get("factors_M1")))
+        for key, value in live_m1.items():
+            if factors_m1.get(key) in (None, "") and value not in (None, ""):
+                factors_m1[key] = value
+        if factors_m1:
+            entry["factors_M1"] = factors_m1
+        if entry.get("atr_pips") in (None, "") and live_m1.get("atr_pips") is not None:
+            entry["atr_pips"] = live_m1["atr_pips"]
+        if entry.get("range_score") in (None, "") and live_m1.get("range_score") is not None:
+            entry["range_score"] = live_m1["range_score"]
+        if entry.get("market_regime") in (None, "") and live_m1.get("regime"):
+            entry["market_regime"] = live_m1["regime"]
+        if meta.get("atr_pips") in (None, "") and live_m1.get("atr_pips") is not None:
+            meta["atr_pips"] = live_m1["atr_pips"]
+        if meta.get("range_score") in (None, "") and live_m1.get("range_score") is not None:
+            meta["range_score"] = live_m1["range_score"]
+        if meta.get("market_regime") in (None, "") and live_m1.get("regime"):
+            meta["market_regime"] = live_m1["regime"]
+
+    if ticks:
+        raw["ticks"] = ticks
+    if entry:
+        raw["entry_thesis"] = entry
+    if meta:
+        raw["meta"] = meta
+    return raw
+
+
+def _bucket_numeric(
+    value: Any,
+    *,
+    step: float,
+    low: float,
+    high: float,
+    digits: int,
+) -> str:
+    number = _metric_value(value, low=low, high=high)
+    if number is None:
+        return "na"
+    if step <= 0:
+        bucket = number
+    else:
+        bucket = round(round(number / step) * step, digits)
+    return f"{bucket:.{digits}f}"
+
+
+def _context_cache_fingerprint(context: dict[str, Any]) -> str:
+    entry = _safe_dict(context.get("entry_thesis"))
+    meta = _safe_dict(context.get("meta"))
+    recent = _safe_dict(context.get("recent_outcome"))
+    forecast = _safe_dict(entry.get("forecast_fusion") or meta.get("forecast_fusion"))
+    metrics = _extract_market_metrics(context)
+    regime = str(
+        entry.get("market_regime")
+        or meta.get("market_regime")
+        or entry.get("range_mode")
+        or meta.get("range_mode")
+        or ""
+    ).strip().lower() or "na"
+    signal = str(
+        entry.get("signal_tag")
+        or entry.get("signal_mode")
+        or meta.get("signal_tag")
+        or meta.get("signal_mode")
+        or ""
+    ).strip().lower() or "na"
+    trades = int(_float_or_none(recent.get("trades")) or 0.0)
+    return "|".join(
+        [
+            str(context.get("side") or "").strip().lower() or "na",
+            signal,
+            regime,
+            f"prob:{_bucket_numeric(forecast.get('entry_probability_after') or entry.get('entry_probability_fused') or entry.get('entry_probability'), step=0.05, low=0.0, high=1.0, digits=2)}",
+            f"conf:{_bucket_numeric(metrics.get('confidence'), step=5.0, low=0.0, high=100.0, digits=1)}",
+            f"spread:{_bucket_numeric(metrics.get('spread_pips'), step=0.2, low=0.0, high=100.0, digits=1)}",
+            f"atr:{_bucket_numeric(metrics.get('atr_pips'), step=0.5, low=0.0, high=200.0, digits=1)}",
+            f"rr:{_bucket_numeric(recent.get('profit_factor'), step=0.25, low=0.0, high=10.0, digits=2)}",
+            f"trades:{min(max(trades, 0), 12)}",
+        ]
+    )
+
+
 def _parse_market_metrics_json(raw_metrics: Any) -> dict[str, Optional[float]]:
     if not raw_metrics:
         return {}
@@ -2209,6 +2450,7 @@ def _maybe_autotune_prompt_profile() -> None:
         return
     prev_profile_version: Optional[str] = None
     prev_summary: dict[str, Any] = {}
+    autotune_slot_acquired = False
     try:
         now_epoch = time.time()
         if now_epoch - _LAST_PROMPT_AUTOTUNE_TS < _PROMPT_AUTOTUNE_INTERVAL_SEC:
@@ -2240,6 +2482,20 @@ def _maybe_autotune_prompt_profile() -> None:
             f"Current profile: {_stringify(current_profile, 6000)}\n"
             f"Recent summary: {_stringify(summary, 9000)}\n"
         )
+        autotune_slot_acquired, defer_reason = _acquire_autotune_ollama_slot(_PROMPT_AUTOTUNE_URL)
+        if not autotune_slot_acquired:
+            _record_prompt_run(
+                lookback_hours=_PROMPT_AUTOTUNE_LOOKBACK_HOURS,
+                decision_count=decision_count,
+                applied=False,
+                profile_version=_profile_version(current_profile),
+                summary=summary,
+                response=None,
+                previous_profile_version=prev_profile_version,
+                previous_summary=prev_summary,
+                error=defer_reason,
+            )
+            return
         response = call_ollama_chat_json(
             prompt,
             model=_PROMPT_AUTOTUNE_MODEL,
@@ -2298,6 +2554,7 @@ def _maybe_autotune_prompt_profile() -> None:
             error=f"exception:{exc}",
         )
     finally:
+        _release_autotune_ollama_slot(_PROMPT_AUTOTUNE_URL, autotune_slot_acquired)
         try:
             _PROMPT_AUTOTUNE_LOCK.release()
         except Exception:
@@ -2431,6 +2688,7 @@ def _maybe_autotune_runtime_param_profile() -> None:
         return
     if not _RUNTIME_PARAM_AUTOTUNE_LOCK.acquire(blocking=False):
         return
+    autotune_slot_acquired = False
     try:
         now_epoch = time.time()
         if now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
@@ -2494,6 +2752,20 @@ def _maybe_autotune_runtime_param_profile() -> None:
             f"Current runtime profile: {_stringify(current_profile, 6000)}\n"
             f"Recent runtime summary: {_stringify(summary, 9000)}\n"
         )
+        autotune_slot_acquired, defer_reason = _acquire_autotune_ollama_slot(
+            _RUNTIME_PARAM_AUTOTUNE_URL
+        )
+        if not autotune_slot_acquired:
+            _record_runtime_param_run(
+                lookback_hours=_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS,
+                decision_count=decision_count,
+                applied=False,
+                profile_version=_runtime_profile_version(current_profile),
+                summary=summary,
+                response=None,
+                error=defer_reason,
+            )
+            return
         response = call_ollama_chat_json(
             prompt,
             model=_RUNTIME_PARAM_AUTOTUNE_MODEL,
@@ -2546,6 +2818,10 @@ def _maybe_autotune_runtime_param_profile() -> None:
             error=f"exception:{exc}",
         )
     finally:
+        _release_autotune_ollama_slot(
+            _RUNTIME_PARAM_AUTOTUNE_URL,
+            autotune_slot_acquired,
+        )
         try:
             _RUNTIME_PARAM_AUTOTUNE_LOCK.release()
         except Exception:
@@ -2761,6 +3037,8 @@ def decide(
         "recent_outcome": recent_outcome,
         "runtime_param_profile_version": runtime_profile_version,
     }
+    context = _augment_context_with_live_market(context)
+    cache_key = (tag, pocket_key, _context_cache_fingerprint(context))
     now = time.monotonic()
     cached = _CACHE.get(cache_key)
     if cached and now - cached[0] <= _TTL_SEC:
@@ -2807,15 +3085,19 @@ def decide(
     payload: Optional[dict[str, Any]] = None
     llm_text_available = False
     if _BACKEND == "ollama":
-        payload = call_ollama_chat_json(
-            prompt,
-            model=_OLLAMA_MODEL,
-            url=_OLLAMA_URL,
-            timeout_sec=timeout_sec,
-            temperature=_TEMP,
-            max_tokens=_MAX_TOKENS,
-            keep_alive=_OLLAMA_KEEP_ALIVE or None,
-        )
+        _begin_live_ollama_call()
+        try:
+            payload = call_ollama_chat_json(
+                prompt,
+                model=_OLLAMA_MODEL,
+                url=_OLLAMA_URL,
+                timeout_sec=timeout_sec,
+                temperature=_TEMP,
+                max_tokens=_MAX_TOKENS,
+                keep_alive=_OLLAMA_KEEP_ALIVE or None,
+            )
+        finally:
+            _end_live_ollama_call()
         llm_text_available = bool(payload)
     else:
         vertex_resp = call_vertex_text(

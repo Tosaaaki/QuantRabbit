@@ -41,6 +41,12 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(brain, "_DB_PATH", db_path)
     monkeypatch.setattr(brain, "_TRADES_DB_PATH", trades_path)
     monkeypatch.setattr(brain, "log_metric", lambda *_args, **_kwargs: True)
+    if hasattr(brain, "_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC"):
+        monkeypatch.setattr(brain, "_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC", 0.0)
+    if hasattr(brain, "_ACTIVE_LIVE_OLLAMA_CALLS"):
+        brain._ACTIVE_LIVE_OLLAMA_CALLS = 0
+    if hasattr(brain, "_LAST_LIVE_OLLAMA_TS"):
+        brain._LAST_LIVE_OLLAMA_TS = 0.0
     brain._CACHE.clear()
     brain._PROMPT_PROFILE_CACHE = (0.0, {})
     brain._RUNTIME_PARAM_PROFILE_CACHE = (0.0, {})

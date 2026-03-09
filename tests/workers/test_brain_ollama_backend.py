@@ -4,6 +4,7 @@ import importlib
 import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -196,3 +197,168 @@ def test_brain_context_keeps_entry_and_meta_with_sl_tp(monkeypatch, tmp_path: Pa
     assert context["entry_thesis"]["entry_units_intent"] == 5042
     assert context["meta"]["spread_pips"] == pytest.approx(0.8)
     assert context["meta"]["market_regime"] == "Trend"
+
+
+def test_brain_cache_fingerprint_separates_side_and_reuses_matching_context(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    brain = _prepare_brain(monkeypatch, tmp_path)
+
+    calls: list[str] = []
+    responses = iter(
+        [
+            {
+                "action": "ALLOW",
+                "scale": 1.0,
+                "reason": "buy_ok",
+                "memory_update": "",
+            },
+            {
+                "action": "REDUCE",
+                "scale": 0.6,
+                "reason": "sell_reduce",
+                "memory_update": "",
+            },
+        ]
+    )
+
+    def _fake_ollama(
+        prompt: str,
+        *,
+        model: str,
+        url: str,
+        timeout_sec: float,
+        temperature: float = 0.2,
+        max_tokens: int = 256,
+        keep_alive=None,
+    ):
+        calls.append(prompt)
+        return next(responses)
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    allow = brain.decide(
+        strategy_tag="MomentumBurst-open_long",
+        pocket="micro",
+        side="buy",
+        units=1200,
+        entry_thesis={"entry_probability": 0.88, "entry_units_intent": 1200},
+    )
+    reduce = brain.decide(
+        strategy_tag="MomentumBurst-open_long",
+        pocket="micro",
+        side="sell",
+        units=-1200,
+        entry_thesis={"entry_probability": 0.52, "entry_units_intent": 1200},
+    )
+    reduce_cached = brain.decide(
+        strategy_tag="MomentumBurst-open_long",
+        pocket="micro",
+        side="sell",
+        units=-1200,
+        entry_thesis={"entry_probability": 0.52, "entry_units_intent": 1200},
+    )
+
+    assert allow.action == "ALLOW"
+    assert reduce.action == "REDUCE"
+    assert reduce_cached.action == "REDUCE"
+    assert len(calls) == 2
+
+
+def test_brain_context_backfills_live_tick_and_m1_factors(monkeypatch, tmp_path: Path) -> None:
+    brain = _prepare_brain(monkeypatch, tmp_path)
+
+    captured: dict[str, str] = {}
+
+    def _fake_ollama(
+        prompt: str,
+        *,
+        model: str,
+        url: str,
+        timeout_sec: float,
+        temperature: float = 0.2,
+        max_tokens: int = 256,
+        keep_alive=None,
+    ):
+        captured["prompt"] = prompt
+        return {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "live_context_ok",
+            "memory_update": "",
+        }
+
+    class _TickWindow:
+        @staticmethod
+        def recent_ticks(*, seconds: int, limit: int):
+            return [
+                {
+                    "epoch": time.time() - 0.2,
+                    "bid": 158.410,
+                    "ask": 158.418,
+                    "mid": 158.414,
+                }
+            ]
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+    monkeypatch.setattr(brain, "tick_window", _TickWindow)
+    monkeypatch.setattr(
+        brain,
+        "all_factors",
+        lambda: {
+            "M1": {
+                "atr_pips": 2.6,
+                "range_score": 0.33,
+                "adx": 9.3,
+                "bbw": 0.0006,
+                "rsi": 42.7,
+                "regime": "Range",
+            }
+        },
+    )
+
+    client_order_id = "test-brain-live-context"
+    decision = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=500,
+        client_order_id=client_order_id,
+        entry_thesis={
+            "entry_probability": 0.54,
+            "entry_units_intent": 500,
+            "sl_pips": 7.0,
+            "tp_pips": 10.3,
+        },
+    )
+
+    assert decision.action == "ALLOW"
+    prompt = captured["prompt"]
+    assert '"ticks": {' in prompt
+    assert '"spread_pips": 0.8' in prompt
+    assert '"atr_pips": 2.6' in prompt
+    assert '"range_score": 0.33' in prompt
+
+    con = sqlite3.connect(brain._DB_PATH)
+    try:
+        row = con.execute(
+            """
+            SELECT context_json
+            FROM brain_decisions
+            WHERE client_order_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (client_order_id,),
+        ).fetchone()
+    finally:
+        con.close()
+
+    assert row is not None
+    context = json.loads(row[0])
+    assert context["meta"]["spread_pips"] == pytest.approx(0.8)
+    assert context["meta"]["atr_pips"] == pytest.approx(2.6)
+    assert context["meta"]["market_regime"] == "Range"
+    assert context["entry_thesis"]["atr_pips"] == pytest.approx(2.6)
+    assert context["entry_thesis"]["range_score"] == pytest.approx(0.33)
