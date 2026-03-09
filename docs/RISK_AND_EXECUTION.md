@@ -448,6 +448,17 @@
     `scalp_entry_modes_enabled`,
     `scalp_entry_pocket_effective`
     を見れば、silent filter や pocket mismatch をその場で切り分けられる。
+  - 同日の replay fidelity 更新で、ping5s replay は live worker の
+    `adaptive signal window`, `side_metrics_direction_flip`,
+    `entry_probability_alignment`, `entry_probability_band_allocation`
+    を再利用するようになった。
+  - `ScalpReplayEntryEngine` は `confidence/100` 固定ではなく、
+    signal が返した `entry_probability` を優先して `entry_thesis` へ渡す。
+  - replay JSON には
+    `entry_probability(_raw)`,
+    `entry_probability_*_units_mult`,
+    `signal_window_adaptive_*`,
+    `side_metrics_direction_flip_*` も残るため、live と replay の entry thesis 差分をその場で監査できる。
 - 目的は、`SIDE_FILTER=long` 運用時に `mtf_reversion_fade` 等で
   short が混入する経路をなくし、実運用と検証の整合性を保つこと。
 

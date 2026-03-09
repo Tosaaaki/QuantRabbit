@@ -410,6 +410,203 @@ def test_ping5s_signal_respects_post_regime_side_filter(monkeypatch) -> None:
     assert out is None
 
 
+def test_ping5s_signal_applies_live_probability_and_side_metrics_flip(monkeypatch) -> None:
+    def _signal(side: str, confidence: int, mode: str = "momentum"):
+        return SimpleNamespace(
+            side=side,
+            confidence=confidence,
+            spread_pips=0.3,
+            momentum_pips=1.5,
+            range_pips=2.2,
+            instant_range_pips=0.8,
+            mode=mode,
+            trigger_pips=0.2,
+            imbalance=0.6,
+            tick_rate=2.0,
+            tick_age_ms=90.0,
+            bid=150.000,
+            ask=150.002,
+            mid=150.001,
+            signal_window_sec=1.2,
+        )
+
+    class _FakeWorker:
+        def _build_tick_signal(self, rows, spread_pips):
+            assert rows
+            assert spread_pips == 0.3
+            return _signal("long", 80), "ok"
+
+        def _maybe_adapt_signal_window(self, *, ticks, spread_pips, base_signal):
+            assert ticks
+            assert spread_pips == 0.3
+            signal = _signal(base_signal.side, base_signal.confidence, mode=base_signal.mode)
+            signal.signal_window_sec = 0.8
+            return signal, {
+                "enabled": True,
+                "shadow_enabled": True,
+                "applied": True,
+                "live_window_sec": 1.2,
+                "selected_window_sec": 0.8,
+                "best_window_sec": 0.8,
+                "live_score_pips": -0.4,
+                "selected_score_pips": 0.2,
+                "best_score_pips": 0.2,
+                "best_sample": 44,
+                "candidate_count": 4,
+            }
+
+        def _adaptive_live_score_blocked(self, meta):
+            assert meta["selected_window_sec"] == 0.8
+            return False, meta["live_score_pips"]
+
+        def _build_mtf_regime(self, _factors):
+            return SimpleNamespace(mode="balanced", side="long", heat_score=0.4)
+
+        def _apply_mtf_regime(self, signal, regime):
+            _ = regime
+            return signal, 0.5, "mtf_balanced"
+
+        def _build_direction_bias(self, rows, spread_pips):
+            assert rows
+            assert spread_pips == 0.3
+            return SimpleNamespace(score=0.8, side="long")
+
+        def _build_horizon_bias(self, signal, factors):
+            _ = signal, factors
+            return SimpleNamespace(long_score=0.6, short_score=-0.2, composite_score=0.5)
+
+        def _tf_score_or_none(self, factors, timeframe):
+            _ = factors
+            assert timeframe == "M1"
+            return 0.4
+
+        def _maybe_side_metrics_direction_flip(self, signal, *, strategy_tag, pocket, now_mono):
+            assert signal.side == "long"
+            assert strategy_tag == "scalp_ping_5s_d_live"
+            assert pocket == "scalp_fast"
+            assert now_mono > 0
+            return _signal("short", 86, mode="momentum_smflip"), "long->short:test", SimpleNamespace()
+
+        def _resolve_final_signal_for_side_filter(self, *, routed_signal, anchor_signal):
+            _ = anchor_signal
+            return routed_signal, "side_filter_inactive"
+
+        def _is_signal_mode_blocked(self, mode):
+            assert mode == "momentum_smflip"
+            return False, None
+
+        def _raw_entry_probability(self, signal):
+            assert signal.side == "short"
+            return 0.8
+
+        def _adjust_entry_probability_alignment(self, **kwargs):
+            assert kwargs["signal"].side == "short"
+            return 0.55, 0.5, {"enabled": True, "adjusted": 0.55}
+
+        def _entry_probability_band_units_multiplier(self, **kwargs):
+            assert kwargs["strategy_tag"] == "scalp_ping_5s_d_live"
+            assert kwargs["pocket"] == "scalp_fast"
+            assert kwargs["side"] == "short"
+            assert kwargs["entry_probability"] == 0.55
+            return 0.8, {"reason": "ok", "units_mult": 0.8}
+
+        def _load_tp_timing_profile(self, *_args, **_kwargs):
+            return SimpleNamespace()
+
+        def _compute_targets(self, **_kwargs):
+            return 1.2, 0.9
+
+        def _confidence_scale(self, _conf):
+            return 1.0
+
+    fake_cfg = SimpleNamespace(
+        WINDOW_SEC=5.0,
+        TP_ENABLED=True,
+        FORCE_EXIT_ENABLED=True,
+        FORCE_EXIT_MAX_ACTIONS=2,
+        FORCE_EXIT_MAX_HOLD_SEC=45.0,
+        SHORT_FORCE_EXIT_MAX_HOLD_SEC=35.0,
+        FORCE_EXIT_REASON="time_stop",
+        BASE_ENTRY_UNITS=1000,
+        MIN_UNITS=100,
+        MAX_UNITS=3000,
+        STRATEGY_TAG="scalp_ping_5s_d_live",
+        POCKET="scalp_fast",
+        SIDE_FILTER="",
+    )
+
+    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
+    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
+    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+    monkeypatch.setattr(replay.factor_cache, "all_factors", lambda: {"M1": {"score": 0.4}})
+
+    out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
+
+    assert out is not None
+    assert out["action"] == "OPEN_SHORT"
+    assert out["entry_probability"] == 0.55
+    assert out["entry_probability_raw"] == 0.8
+    assert out["entry_units_intent"] == 200
+    assert out["regime_units_mult"] == 0.5
+    assert out["entry_probability_units_mult"] == 0.5
+    assert out["entry_probability_band_units_mult"] == 0.8
+    assert out["side_metrics_direction_flip_applied"] is True
+    assert out["side_metrics_direction_flip_reason"] == "long->short:test"
+    assert out["signal_mode"] == "momentum_smflip"
+    assert out["signal_window_adaptive_applied"] is True
+    assert out["signal_window_adaptive_selected_sec"] == 0.8
+    assert out["signal_window_adaptive_best_sample"] == 44
+
+
+def test_ping5s_signal_respects_adaptive_live_score_block(monkeypatch) -> None:
+    class _FakeWorker:
+        def _build_tick_signal(self, rows, spread_pips):
+            _ = rows, spread_pips
+            return SimpleNamespace(
+                side="long",
+                confidence=80,
+                spread_pips=0.3,
+                momentum_pips=1.0,
+                range_pips=2.0,
+                instant_range_pips=1.0,
+                mode="momentum",
+                bid=150.0,
+                ask=150.002,
+                mid=150.001,
+                signal_window_sec=1.2,
+            ), "ok"
+
+        def _maybe_adapt_signal_window(self, *, ticks, spread_pips, base_signal):
+            _ = ticks, spread_pips, base_signal
+            return base_signal, {"enabled": True, "live_score_pips": -0.8}
+
+        def _adaptive_live_score_blocked(self, meta):
+            return True, meta["live_score_pips"]
+
+    fake_cfg = SimpleNamespace(
+        WINDOW_SEC=5.0,
+        TP_ENABLED=True,
+        FORCE_EXIT_ENABLED=True,
+        FORCE_EXIT_MAX_ACTIONS=2,
+        FORCE_EXIT_MAX_HOLD_SEC=45.0,
+        SHORT_FORCE_EXIT_MAX_HOLD_SEC=35.0,
+        FORCE_EXIT_REASON="time_stop",
+        BASE_ENTRY_UNITS=1000,
+        MIN_UNITS=100,
+        MAX_UNITS=3000,
+        STRATEGY_TAG="scalp_ping_5s_d_live",
+        POCKET="scalp_fast",
+        SIDE_FILTER="",
+    )
+
+    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
+    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
+    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+
+    out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
+    assert out is None
+
+
 def test_candidate_regime_route_matrix() -> None:
     assert replay._candidate_regime_route("Trend", "Trend") == "trend"
     assert replay._candidate_regime_route("Breakout", "Trend") == "trend"

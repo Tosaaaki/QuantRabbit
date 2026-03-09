@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Sequence
 
 import sys
 
@@ -376,6 +377,188 @@ def _ping5s_entry_units_intent(
     return max(1, units)
 
 
+def _ping5s_scale_units_intent(
+    ping_config: Any,
+    *,
+    units: int,
+    units_mult: float,
+) -> int:
+    try:
+        max_units = int(round(float(getattr(ping_config, "MAX_UNITS", max(1, units)) or 0.0)))
+    except Exception:
+        max_units = max(1, units)
+    scaled = int(round(float(units) * max(0.0, float(units_mult))))
+    if max_units <= 0:
+        max_units = max(1, units)
+    return max(1, min(max_units, scaled))
+
+
+def _ping5s_now_mono(ping_worker: Any, now: datetime) -> float:
+    module_time = getattr(ping_worker, "time", None)
+    if module_time is not None:
+        monotonic = getattr(module_time, "monotonic", None)
+        if callable(monotonic):
+            try:
+                value = float(monotonic())
+                if math.isfinite(value):
+                    return value
+            except Exception:
+                pass
+    return float(now.timestamp())
+
+
+def _ping5s_live_signal_adjustments(
+    ping_worker: Any,
+    ping_config: Any,
+    *,
+    signal: Any,
+    rows: Sequence[dict],
+    now: datetime,
+) -> tuple[Optional[Any], dict[str, Any]]:
+    strategy_tag = str(getattr(ping_config, "STRATEGY_TAG", _PING5S_FALLBACK_TAG))
+    pocket = str(getattr(ping_config, "POCKET", "scalp_fast"))
+    side_filter = str(getattr(ping_config, "SIDE_FILTER", "") or "").strip().lower()
+    now_mono = _ping5s_now_mono(ping_worker, now)
+    factors = factor_cache.all_factors()
+    if not isinstance(factors, dict):
+        factors = {}
+
+    meta: dict[str, Any] = {
+        "entry_probability_raw": None,
+        "entry_probability": None,
+        "entry_probability_units_mult": 1.0,
+        "entry_probability_band_units_mult": 1.0,
+        "entry_probability_alignment": None,
+        "entry_probability_band_allocation": None,
+        "side_metrics_direction_flip_applied": False,
+        "side_metrics_direction_flip_reason": "",
+        "side_filter_routing": "side_filter_inactive",
+        "signal_mode_blocked_token": None,
+    }
+
+    anchor_signal = (
+        signal
+        if side_filter in {"long", "short"} and str(getattr(signal, "side", "")).strip().lower() == side_filter
+        else None
+    )
+
+    direction_bias = None
+    build_direction_bias = getattr(ping_worker, "_build_direction_bias", None)
+    if callable(build_direction_bias):
+        try:
+            direction_bias = build_direction_bias(rows, spread_pips=float(getattr(signal, "spread_pips", 0.0)))
+        except Exception:
+            direction_bias = None
+
+    horizon = None
+    build_horizon_bias = getattr(ping_worker, "_build_horizon_bias", None)
+    if callable(build_horizon_bias):
+        try:
+            horizon = build_horizon_bias(signal, factors)
+        except Exception:
+            horizon = None
+
+    m1_score = None
+    tf_score_or_none = getattr(ping_worker, "_tf_score_or_none", None)
+    if callable(tf_score_or_none):
+        try:
+            m1_score = tf_score_or_none(factors, "M1")
+        except Exception:
+            m1_score = None
+
+    maybe_side_metrics_flip = getattr(ping_worker, "_maybe_side_metrics_direction_flip", None)
+    if callable(maybe_side_metrics_flip):
+        try:
+            flipped_signal, flip_reason, _ = maybe_side_metrics_flip(
+                signal,
+                strategy_tag=strategy_tag,
+                pocket=pocket,
+                now_mono=now_mono,
+            )
+            meta["side_metrics_direction_flip_reason"] = str(flip_reason)
+            if flipped_signal is not None:
+                signal = flipped_signal
+                meta["side_metrics_direction_flip_applied"] = True
+        except Exception:
+            pass
+
+    resolve_side_filter = getattr(ping_worker, "_resolve_final_signal_for_side_filter", None)
+    if callable(resolve_side_filter):
+        try:
+            signal, routing = resolve_side_filter(
+                routed_signal=signal,
+                anchor_signal=anchor_signal,
+            )
+            meta["side_filter_routing"] = str(routing)
+        except Exception:
+            signal = signal
+    elif side_filter in {"long", "short"} and str(getattr(signal, "side", "")).strip().lower() != side_filter:
+        return None, meta
+    if signal is None:
+        return None, meta
+
+    is_signal_mode_blocked = getattr(ping_worker, "_is_signal_mode_blocked", None)
+    if callable(is_signal_mode_blocked):
+        try:
+            blocked, token = is_signal_mode_blocked(str(getattr(signal, "mode", "") or ""))
+            meta["signal_mode_blocked_token"] = token
+            if blocked:
+                return None, meta
+        except Exception:
+            pass
+
+    raw_entry_probability = None
+    raw_entry_probability_fn = getattr(ping_worker, "_raw_entry_probability", None)
+    if callable(raw_entry_probability_fn):
+        try:
+            raw_entry_probability = float(raw_entry_probability_fn(signal))
+        except Exception:
+            raw_entry_probability = None
+    if raw_entry_probability is None or not math.isfinite(raw_entry_probability):
+        raw_entry_probability = _clamp(float(getattr(signal, "confidence", 0.0) or 0.0) / 100.0, 0.0, 1.0)
+    meta["entry_probability_raw"] = float(raw_entry_probability)
+
+    entry_probability = float(raw_entry_probability)
+    probability_units_mult = 1.0
+    adjust_entry_probability_alignment = getattr(ping_worker, "_adjust_entry_probability_alignment", None)
+    if callable(adjust_entry_probability_alignment):
+        try:
+            entry_probability, probability_units_mult, probability_meta = adjust_entry_probability_alignment(
+                signal=signal,
+                raw_probability=float(raw_entry_probability),
+                direction_bias=direction_bias,
+                horizon=horizon,
+                m1_score=m1_score,
+            )
+            meta["entry_probability_alignment"] = probability_meta
+        except Exception:
+            pass
+
+    probability_band_units_mult = 1.0
+    entry_probability_band_units_multiplier = getattr(
+        ping_worker,
+        "_entry_probability_band_units_multiplier",
+        None,
+    )
+    if callable(entry_probability_band_units_multiplier):
+        try:
+            probability_band_units_mult, probability_band_meta = entry_probability_band_units_multiplier(
+                strategy_tag=strategy_tag,
+                pocket=pocket,
+                side=str(getattr(signal, "side", "") or ""),
+                entry_probability=float(entry_probability),
+                now_mono=now_mono,
+            )
+            meta["entry_probability_band_allocation"] = probability_band_meta
+        except Exception:
+            pass
+
+    meta["entry_probability"] = float(entry_probability)
+    meta["entry_probability_units_mult"] = float(probability_units_mult)
+    meta["entry_probability_band_units_mult"] = float(probability_band_units_mult)
+    return signal, meta
+
+
 def _signal_signed_units(signal: Mapping[str, Any], *, direction: str) -> int:
     for key in ("entry_units_intent", "units_intent", "units"):
         raw = signal.get(key)
@@ -452,19 +635,47 @@ def _signal_scalp_ping_5s_b(
     if signal is None:
         return None
 
+    signal_window_meta: dict[str, Any] = {}
+    maybe_adapt_signal_window = getattr(ping_worker, "_maybe_adapt_signal_window", None)
+    if callable(maybe_adapt_signal_window):
+        try:
+            signal, signal_window_meta = maybe_adapt_signal_window(
+                ticks=rows,
+                spread_pips=spread_pips,
+                base_signal=signal,
+            )
+        except Exception:
+            signal_window_meta = {}
+    adaptive_live_score_blocked = getattr(ping_worker, "_adaptive_live_score_blocked", None)
+    if callable(adaptive_live_score_blocked) and signal_window_meta:
+        try:
+            blocked, _ = adaptive_live_score_blocked(signal_window_meta)
+            if blocked:
+                return None
+        except Exception:
+            pass
+
     regime = None
     regime_gate = "mtf_unavailable"
+    regime_units_mult = 1.0
     try:
         regime = ping_worker._build_mtf_regime(factor_cache.all_factors())
         adjusted, regime_mult, regime_gate = ping_worker._apply_mtf_regime(signal, regime)
         if adjusted is None or float(regime_mult) <= 0.0:
             return None
         signal = adjusted
+        regime_units_mult = float(regime_mult)
     except Exception:
         regime_gate = "mtf_error"
 
-    side_filter = str(getattr(ping_config, "SIDE_FILTER", "") or "").strip().lower()
-    if side_filter in {"long", "short"} and str(getattr(signal, "side", "")).strip().lower() != side_filter:
+    signal, live_meta = _ping5s_live_signal_adjustments(
+        ping_worker,
+        ping_config,
+        signal=signal,
+        rows=rows,
+        now=_now,
+    )
+    if signal is None:
         return None
 
     try:
@@ -502,11 +713,34 @@ def _signal_scalp_ping_5s_b(
         ping_config,
         confidence=int(signal.confidence),
     )
+    entry_units_intent = _ping5s_scale_units_intent(
+        ping_config,
+        units=entry_units_intent,
+        units_mult=(
+            regime_units_mult
+            * float(live_meta.get("entry_probability_units_mult", 1.0) or 1.0)
+            * float(live_meta.get("entry_probability_band_units_mult", 1.0) or 1.0)
+        ),
+    )
 
     return {
         "action": "OPEN_LONG" if str(signal.side) == "long" else "OPEN_SHORT",
         "confidence": int(signal.confidence),
         "entry_units_intent": int(entry_units_intent),
+        "entry_probability": float(
+            live_meta.get("entry_probability")
+            if live_meta.get("entry_probability") is not None
+            else _clamp(int(signal.confidence) / 100.0, 0.0, 1.0)
+        ),
+        "entry_probability_raw": float(
+            live_meta.get("entry_probability_raw")
+            if live_meta.get("entry_probability_raw") is not None
+            else _clamp(int(signal.confidence) / 100.0, 0.0, 1.0)
+        ),
+        "entry_probability_units_mult": float(live_meta.get("entry_probability_units_mult", 1.0) or 1.0),
+        "entry_probability_band_units_mult": float(
+            live_meta.get("entry_probability_band_units_mult", 1.0) or 1.0
+        ),
         "tp_pips": float(max(0.0, tp_pips)),
         "sl_pips": float(max(0.1, sl_pips)),
         "timeout_sec": float(timeout_sec),
@@ -516,6 +750,46 @@ def _signal_scalp_ping_5s_b(
         "signal_mode": str(getattr(signal, "mode", "momentum")),
         "signal_reason": str(reason),
         "mtf_regime_gate": str(regime_gate),
+        "regime_units_mult": float(regime_units_mult),
+        "signal_window_adaptive_enabled": bool(signal_window_meta.get("enabled", False)),
+        "signal_window_adaptive_shadow_enabled": bool(
+            signal_window_meta.get("shadow_enabled", False)
+        ),
+        "signal_window_adaptive_applied": bool(signal_window_meta.get("applied", False)),
+        "signal_window_adaptive_live_sec": float(
+            signal_window_meta.get("live_window_sec", getattr(signal, "signal_window_sec", 0.0)) or 0.0
+        ),
+        "signal_window_adaptive_selected_sec": float(
+            signal_window_meta.get("selected_window_sec", getattr(signal, "signal_window_sec", 0.0)) or 0.0
+        ),
+        "signal_window_adaptive_best_sec": float(
+            signal_window_meta.get("best_window_sec", getattr(signal, "signal_window_sec", 0.0)) or 0.0
+        ),
+        "signal_window_adaptive_live_score_pips": float(
+            signal_window_meta.get("live_score_pips", 0.0) or 0.0
+        ),
+        "signal_window_adaptive_selected_score_pips": float(
+            signal_window_meta.get("selected_score_pips", 0.0) or 0.0
+        ),
+        "signal_window_adaptive_best_score_pips": float(
+            signal_window_meta.get("best_score_pips", 0.0) or 0.0
+        ),
+        "signal_window_adaptive_best_sample": int(
+            float(signal_window_meta.get("best_sample", 0.0) or 0.0)
+        ),
+        "signal_window_adaptive_candidate_count": int(
+            float(signal_window_meta.get("candidate_count", 0.0) or 0.0)
+        ),
+        "side_metrics_direction_flip_applied": bool(
+            live_meta.get("side_metrics_direction_flip_applied", False)
+        ),
+        "side_metrics_direction_flip_reason": str(
+            live_meta.get("side_metrics_direction_flip_reason", "")
+        ),
+        "side_filter_routing": str(live_meta.get("side_filter_routing", "side_filter_inactive")),
+        "signal_mode_blocked_token": live_meta.get("signal_mode_blocked_token"),
+        "entry_probability_alignment": live_meta.get("entry_probability_alignment"),
+        "entry_probability_band_allocation": live_meta.get("entry_probability_band_allocation"),
     }
 
 
@@ -1779,6 +2053,12 @@ class ScalpReplayEntryEngine:
             timeout_sec = float(signal.get("timeout_sec") or 0.0) or None
             if sl_pips <= 0:
                 continue
+            entry_probability = signal.get("entry_probability")
+            try:
+                entry_probability_value = float(entry_probability)
+            except Exception:
+                entry_probability_value = conf / 100.0
+            entry_probability_value = min(1.0, max(0.0, entry_probability_value))
             if self._live_entry:
                 if self._loop is None:
                     continue
@@ -1800,7 +2080,7 @@ class ScalpReplayEntryEngine:
                         pocket=self._effective_pocket,
                         strategy_tag=strategy_tag,
                         entry_thesis={
-                            "entry_probability": min(1.0, max(0.0, conf / 100.0)),
+                            "entry_probability": entry_probability_value,
                             "entry_units_intent": abs(signed_units),
                             "timeout_sec": timeout_sec,
                             "macro_regime": macro_regime,
@@ -1835,7 +2115,7 @@ class ScalpReplayEntryEngine:
                 units=abs(signed_units),
                 source="scalp_replay",
                 entry_thesis={
-                    "entry_probability": min(1.0, max(0.0, conf / 100.0)),
+                    "entry_probability": entry_probability_value,
                     "entry_units_intent": abs(signed_units),
                     "timeout_sec": timeout_sec,
                     "macro_regime": macro_regime,

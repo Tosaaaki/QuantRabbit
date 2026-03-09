@@ -9572,6 +9572,55 @@ Status:
   - replay が `0 trades` になる silent fail は潰れたが、
     live の `entry_probability` / side-metrics flip / lookahead 補正をどこまで replay に持ち込むかは別タスク。
 
+## 2026-03-09 07:02 UTC / 2026-03-09 16:02 JST - ping5s D replay は adaptive signal window と entry probability 補正を live helper へ寄せた
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json` の最新 best bid/ask は `158.616 / 158.624`、spread は `0.8p`、latency は `298.7ms`。
+  - `logs/health_snapshot.json` は `generated_at=2026-03-09T06:49:15Z`、`git_rev=fa5fdcd4`、`trades_count_24h=279`。
+  - `local_v2_stack status` で core 4 は `running`。
+
+- 実測:
+  - 前段の replay fix 後も、`scalp_ping_5s_d_live` の replay entry は
+    `confidence/100` ベースで、live worker が使う `adaptive signal window`,
+    `side_metrics_direction_flip`, `entry_probability_alignment`,
+    `entry_probability_band_allocation` を素通りしていた。
+  - そのため zero-trade は解消しても、entry thesis と replay sizing が live からまだ乖離していた。
+
+- 対応:
+  - `scripts/replay_exit_workers.py`
+    - ping5s replay signal に対して、live worker の
+      `_maybe_adapt_signal_window`, `_adaptive_live_score_blocked`,
+      `_maybe_side_metrics_direction_flip`,
+      `_adjust_entry_probability_alignment`,
+      `_entry_probability_band_units_multiplier`,
+      `_resolve_final_signal_for_side_filter`,
+      `_is_signal_mode_blocked`
+      を再利用する補正層を追加。
+    - replay signal に
+      `entry_probability`, `entry_probability_raw`,
+      `entry_probability_units_mult`, `entry_probability_band_units_mult`,
+      `signal_window_adaptive_*`,
+      `side_metrics_direction_flip_*`
+      を埋めるようにした。
+    - `ScalpReplayEntryEngine` は `confidence/100` ではなく、
+      signal 側の `entry_probability` を優先して `entry_thesis` へ渡すようにした。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - live probability 補正と side-metrics flip が replay signal へ反映される回帰テストを追加。
+    - adaptive live-score block が replay でも entry を止める回帰テストを追加。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `18 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py` は pass。
+  - 実 replay でも `SCALP_REPLAY_MODE=scalp_ping_5s_d` のみで
+    `tmp/replay_exit_workers_ping5s_d_liveadj2.json` は
+    `summary_overall.trades=3`, `total_pnl_pips=-7.2` を維持し、
+    trade count を崩さず補正層を追加できた。
+
+- 残課題:
+  - まだ replay は `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
+    までは live と一致していない。
+  - 次は lot/sizing の live parity をどこまで replay に持ち込むかを切る。
+
 ## 2026-03-09 06:44 UTC / 2026-03-09 15:44 JST - Brain `no_llm` の主因は cold start だったため、safe canary に Ollama keep-alive を追加
 
 - 市況確認:
