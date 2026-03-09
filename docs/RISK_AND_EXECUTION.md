@@ -2226,6 +2226,27 @@
   entry 数回復だけを目的に lookahead / edge gate を緩めない。期待値の悪い fill を増やす変更は
   「entry が少ない」ことの対症療法として採用しない。
 
+### 2026-03-09 local-v2 `RangeFader` cadence recovery
+- `RangeFader` worker の cooldown は global 1本ではなく、
+  `signal_tag + side` 単位で扱う。
+  `RangeFader-buy-fade` の直後に `RangeFader-sell-fade` / `RangeFader-neutral-fade`
+  が出た場合、同一 strategy の coarse cooldown でまとめて落とさない。
+- cooldown は `market_order()` が truthy な結果を返した場合にだけ更新し、
+  `entry_probability_below_min_units` や other no-fill では消費しない。
+  winner flow の no-fill によって次の setup まで止まる構造を避けるためである。
+- 現行運用値:
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_COOLDOWN_SEC=24.0`
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=60`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER=60`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_BUY_FADE=60`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_SELL_FADE=60`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_NEUTRAL_FADE=60`
+- 意図:
+  - `RangeFader` は 24h winner だが、`entry_probability_below_min_units` が no-fill を作る。
+  - shared preflight は変えず、strategy-local cadence と RangeFader alias の floor だけで通過回復を行う。
+
 ### 2026-03-09 ping5s replay fidelity
 - `scripts/replay_exit_workers.py` の ping5s replay signal は、variant worker の live helper を優先して
   `adaptive signal window`, `side_metrics_direction_flip`,

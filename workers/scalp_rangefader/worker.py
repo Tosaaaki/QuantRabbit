@@ -116,6 +116,26 @@ MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
 
 
+def _entry_cooldown_key(signal_tag: str, side: str) -> str:
+    tag_key = (signal_tag or RangeFader.name).strip().lower()
+    side_key = (side or "").strip().lower() or "unknown"
+    return f"{tag_key}:{side_key}"
+
+
+def _entry_cooldown_active(
+    last_entry_ts_by_key: Dict[str, float],
+    *,
+    cooldown_key: str,
+    now_mono: float,
+) -> bool:
+    if config.COOLDOWN_SEC <= 0.0:
+        return False
+    last_ts = last_entry_ts_by_key.get(cooldown_key)
+    if last_ts is None:
+        return False
+    return (now_mono - last_ts) < config.COOLDOWN_SEC
+
+
 def _range_size_mult(range_score: Optional[float], free_ratio: Optional[float]) -> float:
     if free_ratio is not None and free_ratio < config.SIZE_MULT_MIN_FMR:
         return 1.0
@@ -409,7 +429,7 @@ async def scalp_rangefader_worker() -> None:
 
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
     pos_manager = PositionManager()
-    last_entry_ts = 0.0
+    last_entry_ts_by_key: Dict[str, float] = {}
 
     try:
         while True:
@@ -418,8 +438,6 @@ async def scalp_rangefader_worker() -> None:
             if not is_market_open(now):
                 continue
             if not can_trade(config.POCKET):
-                continue
-            if config.COOLDOWN_SEC > 0.0 and time.monotonic() - last_entry_ts < config.COOLDOWN_SEC:
                 continue
 
             factors = all_factors()
@@ -526,6 +544,14 @@ async def scalp_rangefader_worker() -> None:
                 continue
 
             side = "long" if signal.get("action") == "OPEN_LONG" else "short"
+            signal_tag = (signal.get("tag") or "").strip() or RangeFader.name
+            cooldown_key = _entry_cooldown_key(signal_tag, side)
+            if _entry_cooldown_active(
+                last_entry_ts_by_key,
+                cooldown_key=cooldown_key,
+                now_mono=time.monotonic(),
+            ):
+                continue
             sl_pips = float(signal.get("sl_pips") or 0.0)
             tp_pips = float(signal.get("tp_pips") or 0.0)
             if sl_pips <= 0.0:
@@ -542,7 +568,6 @@ async def scalp_rangefader_worker() -> None:
             base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale * size_mult))
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
-            signal_tag = (signal.get("tag") or "").strip() or RangeFader.name
             long_units = 0.0
             short_units = 0.0
             try:
@@ -820,7 +845,8 @@ async def scalp_rangefader_worker() -> None:
                 confidence=int(signal.get("confidence", 0)),
                 entry_thesis=entry_thesis,
             )
-            last_entry_ts = time.monotonic()
+            if res:
+                last_entry_ts_by_key[cooldown_key] = time.monotonic()
             LOG.info(
                 "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
                 config.LOG_PREFIX,

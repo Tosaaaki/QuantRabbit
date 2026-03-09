@@ -23,6 +23,66 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 12:17 UTC / 2026-03-09 21:17 JST - local-v2: `RangeFader` の cadence を tag+side 単位へ寄せ、reject に cooldown を消費しないよう修正
+
+Period:
+- 調査/実装: UTC `11:55-12:17` / JST `20:55-21:17`
+- 対象（実測）:
+  - OANDA API `pricing`, `summary`, `openTrades`, `candles(M5)`
+  - `logs/health_snapshot.json`
+  - `logs/orders.db`, `logs/trades.db`, `logs/metrics.db`
+  - `logs/local_v2_stack/quant-order-manager.log`
+  - `workers/scalp_rangefader/worker.py`
+  - `ops/env/quant-scalp-rangefader.env`
+
+Fact:
+- 市況確認（OANDA live, UTC `12:09-12:10` / JST `21:09-21:10`）:
+  - USD/JPY `bid=158.449 / ask=158.457 / spread=0.8p`
+  - `ATR20(M5)=6.53p`, `last 12xM5 range=13.8p`
+  - API 応答品質: `pricing=310-373ms(200)`, `summary=289ms(200)`, `openTrades=289ms(200)`, `candles=292-298ms(200)`
+  - `openTradeCount=0`, `marginUsed=0.0`, `marginAvailable=36840.1962`
+- execution quality（`python3 scripts/analyze_entry_precision.py --db logs/orders.db --limit 120`）:
+  - `slip_vs_side mean=-0.027p`, `cost_vs_mid mean=0.373p`, `spread mean=0.8p`
+  - `latency_submit p50=203.9ms`, `latency_preflight p95=2518.0ms`
+- 24h strategy 実績:
+  - `MicroLevelReactor: 218 trades / +190.8p / win_rate=51.4%`
+  - `RangeFader: 58 trades / +68.0p / win_rate=93.1%`
+  - `MomentumBurst: 22 trades / -7.3p / win_rate=54.5%`
+- `RangeFader` の取りこぼし:
+  - `orders.db` 24h では `entry_probability_reject=34` が残り、全件 `entry_probability_below_min_units`
+  - 集中帯は UTC `01-05` で、例: `RangeFader-buy-fade prob=0.400 units_intent=263`, `RangeFader-sell-fade prob=0.346 units_intent=788`
+  - 同時に `workers/scalp_rangefader/worker.py` は `market_order()` の戻りが `None` でも global `last_entry_ts` を更新しており、
+    reject/no-fill でも `30s` cooldown を消費して次の setup を落としていた
+  - cooldown も strategy 全体で 1 本だったため、`buy-fade` の直後に `sell-fade` / `neutral-fade` が出ても同じ枠で抑止される構造だった
+- `quant-order-manager` は UTC `12:12` / JST `21:12` の再起動後、
+  実効 env で `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*=60` を読み込んでいることを `ps eww -p 23904` で確認した
+
+Failure Cause:
+- `RangeFader` の no-entry は shared gate ではなく、winner flow の local cadence が粗かったことが主因。
+- 特に `entry_probability_below_min_units` の no-fill にまで global cooldown が掛かり、
+  同一レンジ帯の連続 signal や反対側 fade の再入場機会まで 30 秒単位で失っていた。
+
+Improvement:
+- `workers/scalp_rangefader/worker.py`
+  - cooldown を global 1本から `signal_tag + side` 単位へ変更
+  - `market_order()` が truthy な結果を返したときだけ cooldown を更新し、reject/no-fill では消費しない
+- `ops/env/quant-scalp-rangefader.env`
+  - `RANGEFADER_COOLDOWN_SEC=30.0 -> 24.0`
+- `tests/workers/test_scalp_rangefader_worker.py`
+  - cooldown が tag+side ごとに独立すること
+  - cooldown 無効時は block しないこと
+
+Verification:
+- `pytest -q tests/workers/test_scalp_rangefader_worker.py`
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-rangefader`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-scalp-rangefader`
+- `ps eww -p <quant-order-manager pid> | rg 'ORDER_MIN_UNITS_STRATEGY_RANGEFADER|ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD'`
+- `sqlite3 logs/orders.db "SELECT substr(ts,1,13) AS hour_utc,status,COUNT(*) FROM orders WHERE ts >= datetime('now','-2 hours') AND json_extract(request_json,'$.entry_thesis.strategy_tag') LIKE 'RangeFader%' GROUP BY 1,2 ORDER BY 1,2"`
+- `sqlite3 logs/trades.db "SELECT COUNT(*), ROUND(SUM(pl_pips),1), ROUND(AVG(pl_pips),2) FROM trades WHERE close_time >= datetime('now','-2 hours') AND strategy_tag LIKE 'RangeFader%'"`
+
+Status:
+- done
+
 ## 2026-03-09 09:30 UTC / 2026-03-09 18:30 JST - local-v2: 微益側の回転を維持するため、micro runtime に chop 文脈を追加して `MomentumBurst` / `MicroLevelReactor` を再配分
 
 Period:

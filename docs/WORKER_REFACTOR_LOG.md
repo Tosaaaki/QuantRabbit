@@ -5,6 +5,40 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`RangeFader` cooldown を `signal_tag + side` 単位へ分解し、reject/no-fill では cadence を消費しない
+
+- 対象:
+  - `workers/scalp_rangefader/worker.py`
+  - `ops/env/quant-scalp-rangefader.env`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `workers/scalp_rangefader/worker.py`
+    - global `last_entry_ts` を廃止し、cooldown を `signal_tag + side` 単位で管理。
+    - `market_order()` が truthy のときだけ cooldown を更新し、
+      `entry_probability_below_min_units` などの no-fill では次の setup を止めない。
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_COOLDOWN_SEC=24.0` を現行運用値とする。
+  - `tests/workers/test_scalp_rangefader_worker.py`
+    - tag+side 別 cooldown と disable 時 fail-open の回帰を追加。
+- 意図:
+  - `RangeFader` は `24h +68.0p / win_rate 93.1%` の winner だった一方、
+    `orders.db` では `entry_probability_below_min_units=34` が no-fill を作っていた。
+  - reject/no-fill のたびに global cooldown を消費していたため、
+    winner flow の連続 fade と反対側 fade を strategy-local に取りこぼしていた。
+  - shared gate は触らず、`RangeFader` だけ cadence を細かくして entry 数を増やす。
+- 実測根拠:
+  - OANDA live（2026-03-09 21:09 JST）:
+    `USD/JPY 158.449 / 158.457`, `spread 0.8p`, `ATR20(M5)=6.53p`, `range_12xM5=13.8p`,
+    `pricing 310-373ms`, `summary/openTrades 289ms`, `candles 292-298ms`, `openTradeCount=0`
+  - `analyze_entry_precision.py --limit 120`:
+    `slip mean=-0.027p`, `cost_vs_mid mean=0.373p`, `latency_submit p50=203.9ms`, `latency_preflight p95=2518ms`
+  - `orders.db`:
+    `RangeFader entry_probability_reject=34` は全件 `entry_probability_below_min_units`
+  - `ps eww -p 23904`:
+    `quant-order-manager` 再起動後の実効 env で `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*=60` を確認
+
 ### 2026-03-09（追記）local-v2 の微益側を優先するため、micro runtime に chop 文脈を追加し `MomentumBurst` / `MicroLevelReactor` を strategy-local に再配分
 
 - 対象:
