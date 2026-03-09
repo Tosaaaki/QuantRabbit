@@ -9850,3 +9850,215 @@ Status:
 - 検証:
   - `pytest -q tests/execution/test_order_manager_exit_policy.py`
   - `python3 -m py_compile tests/execution/test_order_manager_exit_policy.py`
+
+## 2026-03-09 08:55 UTC / 2026-03-09 17:55 JST - local-v2: 「待てば助かる EXIT」と「lane別の低頻度」を実測確認
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `2026-03-09T08:51:24Z` pricing:
+    - `USD/JPY bid=158.586 ask=158.594 mid=158.590 spread=0.8p`
+    - `M5 ATR14=8.11p`, `range_1h=33.0p`, `range_4h=44.8p`
+  - OANDA API 応答:
+    - `pricing=342-361ms(200/200/200)`
+    - `summary=341-379ms(200/200)`
+    - `openTrades=331-388ms(200/200)`
+    - `candles(M5)=359-364ms(200/200)`
+  - account/openTrades:
+    - `openTradeCount=0`, `USD/JPY net_units=0`
+  - local health:
+    - `data_lag_ms=541.2`, `decision_latency_ms=21.45`
+
+- 実測:
+  - 直近 `308` closed trades は
+    `win_rate=56.8%`, `PF=1.741`, `net_pips=+211.3` まで改善した一方、
+    `net_jpy=-572.2` でまだ負側。
+  - entry execution 自体は prior `308` trades 比で改善:
+    - `slip_p95=0.4p -> 0.2p`
+    - `latency_submit_p95=309.9ms -> 276.5ms`
+    - つまり「入った価格」よりも、
+      「EXITの形」と「どの lane が何回入るか」の問題が残っている。
+  - `MomentumBurst` の recent `STOP_LOSS_ORDER` 7件を
+    `tick_entry_validate + trade_sl_perspectives` で見ると、
+    `TP_touch<=600s = 2/7`。
+    - `ticket=454318`: `post_close_tp_touch_s=69`
+    - `ticket=454360`: `post_close_tp_touch_s=343`
+  - `scalp_extrema_reversal_live` の recent `STOP_LOSS_ORDER` 7件では
+    `TP_touch<=600s = 3/7`。
+    - `ticket=451906`: `post_close_tp_touch_s=159`
+    - `ticket=451916`: `post_close_tp_touch_s=88`
+    - `ticket=452470`: `post_close_tp_touch_s=538`
+  - lane 別の filled cadence は大きく偏る:
+    - `MicroLevelReactor-bounce-lower`: `159 fills`, `avg_gap_sec=146.2`
+    - `MomentumBurst-open_long`: `10 fills`, `avg_gap_sec=3273.8`
+    - `MomentumBurst-open_short`: `6 fills`, `avg_gap_sec=1843.2`
+    - `scalp_extrema_reversal_live`: `8 fills`, `avg_gap_sec=1302.0`
+  - つまり「頻度不足」は全体停止ではなく、
+    `MomentumBurst` と `scalp_extrema_reversal_live` へ集中。
+
+- 低頻度の主因:
+  - `MomentumBurst`
+    - `orders.db` では `filled=16`, `entry_probability_reject=0`, `perf_block=0` で、
+      order-manager 側 reject は主因ではない。
+    - 一方 `quant-micro-momentumburst.log` では
+      `hist_block tag=MomentumBurst-open_long strategy=MomentumBurst n=12 score=0.196 reason=low_recent_score`
+      が `17:21 JST` 以降に反復。
+    - 同ログには
+      `perf_block tag=MomentumBurst reason=hard:margin_closeout_n=4 rate=0.129 n=31`
+      も断続。
+    - `brain_state.db / metrics.db` では micro shadow の
+      `brain_latency_ms=1.4s-4.2s` が記録され、
+      momentum lane だけ preflight が相対的に重い。
+  - `scalp_extrema_reversal_live`
+    - `orders.db` 24h 集計で `filled=8` に対し
+      `strategy_cooldown=39`, `perf_block=52`, `entry_probability_reject=1`。
+    - `metrics.db` では
+      `order_perf_block reason=hard:failfast:pf=0.06 win=0.08 n=12`
+      と、`risk_mult_total=0.55` が継続。
+    - つまりこの lane は「待てば戻る EXIT」も一部あるが、
+      同時に perf/cooldown で entry もかなり抑えられている。
+  - `scalp_ping_5s_b_live`
+    - `quant-scalp-ping-5s-b.log` の最新 `entry-skip summary` は
+      `lookahead_block`, `no_signal:revert_not_found`,
+      `no_signal:momentum_tail_failed`, `no_signal:side_filter_block` が主。
+    - `global_lock` は `strategy_control.db` で `0`、共通停止は主因ではない。
+
+- 判断:
+  - ユーザー指摘どおり、現状の主問題は
+    「spread/slippage悪化」ではなく、
+    `MomentumBurst` / `scalp_extrema_reversal_live` での
+    `EXIT早すぎ` と `entry cadence不足`。
+  - ただし頻度不足の中身は lane ごとに違う。
+    - `MomentumBurst`: signal/history block + micro Brain latency
+    - `scalp_extrema_reversal_live`: perf_block + cooldown + low win regime
+    - `scalp_ping_5s_b_live`: strict setup gate
+  - したがって、次の改善も共通レイヤ緩和ではなく、
+    strategy-local の EXIT/reentry/cooldown/history gate を個別に詰めるべき。
+
+- 次の観測点:
+  1. `MomentumBurst` で `hist_block(low_recent_score)` が減り、
+     `avg_gap_sec` が `30-60m` 窓で短縮すること。
+  2. `MomentumBurst` の recent stop-loss 群で
+     `post_close_tp_touch` が再発しないかを ticket 単位で継続監査すること。
+  3. `scalp_extrema_reversal_live` は `perf_block` / `strategy_cooldown` が減っても
+     `PF` が改善しないなら、頻度増より EXIT/entry quality 改善を優先すること。
+
+## 2026-03-09 08:55 UTC / 2026-03-09 17:55 JST - local-v2: entry precision は改善、ただし early exit と reentry scarcity で取り切れていない
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `2026-03-09 17:51 JST` OANDA snapshot:
+    - `USD/JPY bid=158.586 ask=158.594 mid=158.590 spread=0.8p`
+    - `M5 ATR14=8.11p`, `range_1h=33.0p`, `range_4h=44.8p`
+    - `openTrades=0`, `USD/JPY net_units=0`
+  - OANDA API 応答品質:
+    - `pricing=342-361ms (200/200/200)`
+    - `summary=341-379ms (200/200)`
+    - `openTrades=331-388ms (200/200)`
+    - `candles(M5)=359-364ms (200/200)`
+  - local health:
+    - `data_lag_ms=541.2`, `decision_latency_ms=21.4`
+    - core 4 +主要 worker は `running`
+
+- 事実:
+  - 直近 closed `308 trades` は
+    `win_rate=56.8%`, `PF=1.741`, `expectancy=+0.686p`, `net_pips=+211.3` まで回復。
+    一方で `net_jpy=-572.2` で、依然として資金寄与はマイナス。
+  - ひとつ前の `308 trades` は
+    `win_rate=28.6%`, `PF=0.486`, `expectancy=-0.687p`, `net_pips=-211.5`, `net_jpy=-148.3`。
+    つまり「entry quality が前より良い」は事実で、直近は pips ベースでは明確に改善している。
+  - 実行品質（filled entry recent 308 vs prior 308）:
+    - `slip_p95=0.4p -> 0.2p`
+    - `latency_submit_p95=309.9ms -> 276.5ms`
+    - `spread_mean=0.800p -> 0.808p`
+    - `latency_preflight_p95=413.5ms -> 534.8ms`
+  - つまり悪化源は「約定滑り」ではなく、
+    1) loser 側の oversized trade
+    2) negative close 後の戻り取り逃し
+    3) reentry 減少
+    へ移っている。
+
+- early exit / post-close recovery:
+  - `logs/replay/USD_JPY/USD_JPY_ticks_20260309.jsonl` と直近 closed `120 trades` を照合すると、
+    負け `39 trades` のうち
+    - `5分以内に建値回復`: `25`
+    - `15分以内に建値回復`: `36`
+  - strategy 別の negative trade に対する `15分以内建値回復率`:
+    - `MomentumBurst`: `6/8 = 75.0%`
+    - `scalp_extrema_reversal_live`: `8/11 = 72.7%`
+    - `scalp_ping_5s_d_live`: `5/5 = 100%`
+    - `RangeFader`: `4/4 = 100%`
+    - `MicroLevelReactor`: `96/96 = 100%`
+  - 代表例:
+    - `MomentumBurst ticket=454360`: `-4.2p` close 後、`15分 MFE=+11.9p`
+    - `RangeFader ticket=454316`: `-3.1p` close 後、`15分 MFE=+10.7p`
+    - `scalp_ping_5s_d_live ticket=454054`: `-1.4p` close 後、`15分 MFE=+17.9p`
+
+- reentry / entry frequency:
+  - filled recent `308` の pocket 構成は `micro=227 / scalp=60 / scalp_fast=21`。
+    prior `308` は `micro=158 / scalp_fast=150` で、頻度低下は主に `scalp_fast` 側。
+  - filled gap も `mean=1.54分 -> 1.96分`, `p90=2.67分 -> 3.90分` へ拡大。
+  - negative trade 後の same-strategy `15分以内 reentry`:
+    - `RangeFader`: `0/4`
+    - `scalp_ping_5s_b_live`: `0/4`
+    - `scalp_ping_5s_d_live`: `1/5 = 20.0%`
+    - `MomentumBurst`: `3/8 = 37.5%`
+    - `scalp_extrema_reversal_live`: `4/11 = 36.4%`
+    - `MicroLevelReactor`: `86/96 = 89.6%`
+  - つまり「戻るのに入らない」は主に `MomentumBurst` と `scalp_fast` / `RangeFader` に集中している。
+
+- 詰まりの主因（直近 orders/logs 実測）:
+  - `orders.db` の直近日中 block/reject:
+    - `perf_block=52`（全件 `scalp_fast / scalp_extrema_reversal_live`）
+    - `strategy_cooldown=39`（同上）
+    - `entry_probability_reject=46`
+    - `rejected=1`
+  - `quant-scalp-ping-5s-b.log`:
+    - `lookahead_block` と `side_filter_block` が数十件単位で継続
+    - 一時的に `spread_blocked=148/148` も発生
+  - `quant-scalp-ping-5s-flow.log`:
+    - `adaptive_live_score_block` と `revert_not_found` が継続
+  - `MomentumBurst`:
+    - `perf_block tag=MomentumBurst reason=hard:margin_closeout_n=4 rate=0.129 n=31` が
+      `07:37/07:39/07:51/08:34/08:52/08:58 UTC` に継続
+    - 一方で recent `16 trades / avg_abs_units=4329 / net_jpy=-616.2` と、
+      依然として oversized loser でもある
+  - `RangeFader`:
+    - `58 trades / win_rate=93.1% / net_jpy=+54.3` の winner だが、
+      負け4本は全て `15分以内建値回復` かつ `15分以内再エントリーなし`
+
+- 判断:
+  - 現時点の主問題は「entry precision の悪化」ではない。
+  - 収益を取り切れていない主因は、
+    1. exit が早すぎて negative close 後の回復を逃していること
+    2. `MomentumBurst` / `scalp_fast` / `RangeFader` で reentry frequency が不足していること
+    3. その一方で `MomentumBurst` は loser 時の absolute units がまだ大きいこと
+  - よって次の改善は
+    `滑り対策` ではなく、strategy-local の `exit patience / reentry cadence / cooldown or gate` を優先すべき。
+
+- 次の観測点:
+  1. `MomentumBurst` と `scalp_extrema_reversal_live` の negative close 後 `5-15分` の MFE を継続監視し、早すぎる exit 条件を特定する。
+  2. `RangeFader` / `MomentumBurst` / `scalp_fast` の negative close 後 `15分` 以内 reentry 率を改善指標に置く。
+  3. `scalp_fast` の `perf_block / cooldown / lookahead_block / adaptive_live_score_block` を loosening するなら、同時に `net_pips` が再悪化しないことを確認する。
+
+## 2026-03-09 09:25 UTC / 2026-03-09 18:25 JST - local-v2: `MomentumBurst` / `scalp_extrema_reversal_live` の strategy-local patience/cadence 修正を実装
+
+- 実装:
+  - `MomentumBurst` は signal 時の hard SL を `max(2.4, atr_pips * 1.25)` へ拡張。
+    直近 stop-out 群（`sl=3.38-4.56p`）の手前刈りを減らし、同時に allowed-lot 側で units を自然縮小させる。
+  - `scalp_extrema_reversal_live` は
+    `COOLDOWN_SEC=120 -> 60`,
+    `SL_ATR_MULT=0.95`, `TP_ATR_MULT=1.25`,
+    `SL_MIN/MAX=1.2/2.6`, `TP_MIN/MAX=1.4/3.2`
+    を dedicated env + worker local cap で反映。
+  - `scalp_extrema_reversal_live` の `perf_guard` は
+    `SCALP_EXTREMA_REVERSAL_PERF_GUARD_HARD_FAILFAST_ENABLED=0`
+    を追加し、hard reject ではなく `reduce` を優先させる。
+
+- ねらい:
+  - `MomentumBurst` は `STOP_LOSS_ORDER` 連発が主因で、
+    `scalp_extrema_reversal_live` は `strategy_cooldown=71` / `perf_block=52` / `filled=12`
+    と cadence 枯渇が主因だった。
+  - 共通 gate や時間帯封鎖ではなく、strategy-local の stop/cooldown/perf profile だけを動かす。
+
+- 直後の再検証条件:
+  1. `orders.db` で `scalp_extrema_reversal_live` の `perf_block:hard:failfast` が消え、`filled` が増えること。
+  2. `trades.db` で `MomentumBurst` / `scalp_extrema_reversal_live` の `STOP_LOSS_ORDER` 比率が下がること。
+  3. `strategy_cooldown` が支配的に残る場合のみ、次段で shared `stage_tracker` の strategy-local override 要否を再評価すること。

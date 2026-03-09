@@ -242,7 +242,7 @@ class MomentumBurstMicro:
             # Previous: sl = max(0.9, min(atr * 1.05, 0.45*strength+0.75)) -- the min() cap
             # crushed SL to ~1p when strength was low, causing 83% stop-outs.
             # New: ATR-anchored SL with a meaningful floor; no more strength-based cap.
-            sl = max(2.0, atr_pips * 1.10)
+            sl = max(2.4, atr_pips * 1.25)
             tp = max(sl * 1.6, sl + atr_pips * 0.85)
             confidence = int(
                 max(

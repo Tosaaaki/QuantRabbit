@@ -13691,3 +13691,31 @@
 - 検証:
   - `pytest -q tests/execution/test_order_manager_exit_policy.py`
   - `python3 -m py_compile tests/execution/test_order_manager_exit_policy.py`
+
+## 2026-03-09 JST - `MomentumBurst` / `scalp_extrema_reversal_live` patience and cadence adjustment
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `ops/env/quant-order-manager.env`
+
+- 変更:
+  - `MomentumBurst` は signal 生成時の hard SL を `max(2.4, atr_pips * 1.25)` へ拡張し、
+    premature `STOP_LOSS_ORDER` を減らしつつ allowed-lot で自然に units を抑える。
+  - `scalp_extrema_reversal_live` は worker local cooldown を `120 -> 60` へ短縮し、
+    dedicated env で `SL_ATR_MULT=0.95`, `TP_ATR_MULT=1.25`,
+    `SL_MIN/MAX=1.2/2.6`, `TP_MIN/MAX=1.4/3.2` を運用値とする。
+  - `scalp_extrema_reversal_live` の perf guard は `mode=reduce` を維持しつつ、
+    strategy-local の `HARD_FAILFAST` だけ無効化して hard reject から縮小通過へ寄せる。
+
+- 意図:
+  - local-v2 実測で `MomentumBurst` と `scalp_extrema_reversal_live` は
+    negative close 後 `5-15分` の建値回復率が高く、
+    現状は `entry quality 悪化` より `stop が近い / cadence が足りない` 寄りだった。
+  - shared gate の新設や global loosening ではなく、strategy-local の stop/cooldown/perf profile だけを調整する。
+
+- 非変更:
+  - `execution/order_manager.py` の shared preflight ロジック
+  - `execution/stage_tracker.py` の共通 `strategy_cooldown`
+  - `scalp_extrema_reversal_live` の trend gate と `MAX_OPEN_TRADES=1`

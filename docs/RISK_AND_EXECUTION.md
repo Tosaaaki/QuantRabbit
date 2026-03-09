@@ -2207,3 +2207,14 @@
 - live 側の sizing contract は
   `units_mult_total -> dynamic_alloc -> allowed_lot -> directional_bias_scale -> rescue/min-units`
   の順で、replay は現在このうち `allowed_lot` と最終 rescue/min-units を未移植として残す。
+
+### 2026-03-09 local-v2 `MomentumBurst` / `scalp_extrema_reversal_live` の strategy-local stop/cadence 調整
+- `MomentumBurst` は signal 組成時の hard SL を `max(2.4, atr_pips * 1.25)` とし、
+  stop 幅を少し広げる代わりに allowed-lot 側で自然に units を抑える。
+- `scalp_extrema_reversal_live` は dedicated env で
+  `COOLDOWN_SEC=60`, `SL_ATR_MULT=0.95`, `TP_ATR_MULT=1.25`,
+  `SL_MIN/MAX=1.2/2.6`, `TP_MIN/MAX=1.4/3.2` を現行運用値とする。
+- `scalp_extrema_reversal_live` の `perf_guard` は strategy-local に
+  `HARD_FAILFAST_ENABLED=0` を置き、hard reject をやめて `reduce` モードへ寄せる。
+- いずれも shared `order_manager` / `stage_tracker` の共通ロジックは変えず、
+  local-v2 実測で多かった `premature stop-out` と `entry cadence不足` だけを個別に補正する。

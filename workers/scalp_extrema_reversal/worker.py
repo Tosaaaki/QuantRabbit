@@ -273,6 +273,10 @@ EXTREMA_REV_WINDOW_SEC = _env_float("REV_WINDOW_SEC", 6.0)
 EXTREMA_SWEEP_MIN_PIPS = _env_float("SWEEP_MIN_PIPS", 0.06)
 EXTREMA_SL_ATR_MULT = _env_float("SL_ATR_MULT", 0.85)
 EXTREMA_TP_ATR_MULT = _env_float("TP_ATR_MULT", 1.15)
+EXTREMA_SL_MIN_PIPS = _env_float("SL_MIN_PIPS", 1.2)
+EXTREMA_SL_MAX_PIPS = _env_float("SL_MAX_PIPS", 2.6)
+EXTREMA_TP_MIN_PIPS = _env_float("TP_MIN_PIPS", 1.4)
+EXTREMA_TP_MAX_PIPS = _env_float("TP_MAX_PIPS", 3.2)
 EXTREMA_ALLOWED_REGIMES = _env_set("ALLOWED_REGIMES", "")
 EXTREMA_TREND_GATE_ENABLED = _env_bool("TREND_GATE_ENABLED", True)
 EXTREMA_TREND_GATE_MIN_RANGE_SCORE = _env_float("TREND_GATE_MIN_RANGE_SCORE", 0.6)
@@ -458,8 +462,8 @@ def _signal_extrema_reversal(
     if not trend_gate_ok:
         return None
 
-    sl = max(1.0, min(2.2, atr * EXTREMA_SL_ATR_MULT))
-    tp = max(1.2, min(2.8, atr * EXTREMA_TP_ATR_MULT))
+    sl = max(EXTREMA_SL_MIN_PIPS, min(EXTREMA_SL_MAX_PIPS, atr * EXTREMA_SL_ATR_MULT))
+    tp = max(EXTREMA_TP_MIN_PIPS, min(EXTREMA_TP_MAX_PIPS, atr * EXTREMA_TP_ATR_MULT))
 
     confidence = 56
     confidence += int(min(12.0, abs(rsi - 50.0) * 0.7))

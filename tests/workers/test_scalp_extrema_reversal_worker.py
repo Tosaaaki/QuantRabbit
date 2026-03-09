@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
+
+os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
 
 from workers.scalp_extrema_reversal import worker
 
@@ -136,3 +139,53 @@ def test_place_order_uses_actual_free_ratio_for_cap(monkeypatch):
 
     assert called["free_ratio"] == 0.07
     assert result["meta"]["cap"] == 0.5
+
+
+def test_signal_extrema_reversal_uses_wider_strategy_local_sl_tp_caps(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
+    monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
+    monkeypatch.setattr(worker, "EXTREMA_ATR_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_HIGH_BAND_PIPS", 1.5)
+    monkeypatch.setattr(worker, "EXTREMA_LOW_BAND_PIPS", 1.5)
+    monkeypatch.setattr(worker, "EXTREMA_RSI_SHORT_MIN", 54.0)
+    monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
+    monkeypatch.setattr(worker, "EXTREMA_SL_ATR_MULT", 0.95)
+    monkeypatch.setattr(worker, "EXTREMA_TP_ATR_MULT", 1.25)
+    monkeypatch.setattr(worker, "EXTREMA_SL_MIN_PIPS", 1.2)
+    monkeypatch.setattr(worker, "EXTREMA_SL_MAX_PIPS", 2.6)
+    monkeypatch.setattr(worker, "EXTREMA_TP_MIN_PIPS", 1.4)
+    monkeypatch.setattr(worker, "EXTREMA_TP_MAX_PIPS", 3.2)
+    monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
+    monkeypatch.setattr(worker, "_rsi", lambda *_args, **_kwargs: 58.0)
+    monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 3.0)
+    monkeypatch.setattr(
+        worker,
+        "get_candles_snapshot",
+        lambda *_args, **_kwargs: [{"high": 158.462, "low": 158.430}] * 80,
+    )
+    monkeypatch.setattr(
+        worker,
+        "compute_range_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(high=158.456, low=158.430),
+    )
+    monkeypatch.setattr(
+        worker,
+        "tick_snapshot",
+        lambda *_args, **_kwargs: ([158.462, 158.459, 158.455, 158.452, 158.450], None),
+    )
+    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 1.2))
+    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+
+    signal = worker._signal_extrema_reversal(
+        {"close": 158.450, "adx": 18.0, "atr_pips": 3.0, "rsi": 58.0},
+        range_ctx=_range_ctx(active=True, score=0.42, mode="RANGE"),
+        tag="scalp_extrema_reversal_live",
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["sl_pips"] == 2.6
+    assert signal["tp_pips"] == 3.2

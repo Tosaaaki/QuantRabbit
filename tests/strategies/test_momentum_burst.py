@@ -29,6 +29,8 @@ def test_short_reacceleration_break_can_fire_before_ma_cross() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
+    assert signal["sl_pips"] == 5.05
+    assert signal["tp_pips"] == 8.48
 
 
 def test_short_reacceleration_requires_real_breakdown() -> None:
