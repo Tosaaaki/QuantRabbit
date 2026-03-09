@@ -1,8 +1,8 @@
 {
-  "as_of": "2026-03-09T09:28:26+00:00",
+  "as_of": "2026-03-09T09:33:54+00:00",
   "lookback_days": 180,
-  "processed_new_rows": 1,
-  "patterns_total": 2683,
+  "processed_new_rows": 2,
+  "patterns_total": 2684,
   "min_samples_soft": 30,
   "min_samples_block": 120,
   "action_counts": {
@@ -10,7 +10,7 @@
     "reduce": 16,
     "boost": 24,
     "block": 3,
-    "learn_only": 2634
+    "learn_only": 2635
   },
   "top_edges": [
     {
@@ -877,14 +877,14 @@
     }
   ],
   "deep_analysis": {
-    "rows_total": 16714,
-    "patterns_scored": 2683,
+    "rows_total": 16716,
+    "patterns_scored": 2684,
     "drift_rows": 0,
     "cluster_count": 8,
     "quality_counts": {
       "avoid": 8,
       "candidate": 7,
-      "learn_only": 2637,
+      "learn_only": 2638,
       "neutral": 11,
       "robust": 15,
       "weak": 5
@@ -7592,6 +7592,26 @@
       "reason": "insufficient_samples"
     },
     {
+      "pattern_id": "st:scalp_ping_5s_d_live|pk:scalp_fast|sd:short|sg:momentum|mtf:mtf_balanced|hz:horizon_neutral|ex:disabled|rg:bot|pt:na",
+      "strategy_tag": "scalp_ping_5s_d_live",
+      "pocket": "scalp_fast",
+      "direction": "short",
+      "trades": 8,
+      "wins": 0,
+      "losses": 8,
+      "win_rate": 0.0,
+      "avg_pips": -1.7875,
+      "total_pips": -14.3,
+      "gross_profit": 0.0,
+      "gross_loss": 14.3,
+      "profit_factor": 0.0,
+      "avg_hold_sec": 7.2,
+      "last_close_time": "2026-03-09T09:31:29.203235+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
       "pattern_id": "st:donchian55|pk:macro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:low|pt:na",
       "strategy_tag": "Donchian55",
       "pocket": "macro",
@@ -8347,26 +8367,6 @@
       "profit_factor": 0.3488,
       "avg_hold_sec": 25.1,
       "last_close_time": "2026-03-06T21:04:48.920696+00:00",
-      "action": "learn_only",
-      "lot_multiplier": 1.0,
-      "reason": "insufficient_samples"
-    },
-    {
-      "pattern_id": "st:scalp_ping_5s_d_live|pk:scalp_fast|sd:short|sg:momentum|mtf:mtf_balanced|hz:horizon_neutral|ex:disabled|rg:bot|pt:na",
-      "strategy_tag": "scalp_ping_5s_d_live",
-      "pocket": "scalp_fast",
-      "direction": "short",
-      "trades": 7,
-      "wins": 0,
-      "losses": 7,
-      "win_rate": 0.0,
-      "avg_pips": -1.8429,
-      "total_pips": -12.9,
-      "gross_profit": 0.0,
-      "gross_loss": 12.9,
-      "profit_factor": 0.0,
-      "avg_hold_sec": 8.14,
-      "last_close_time": "2026-03-09T05:25:05.567149+00:00",
       "action": "learn_only",
       "lot_multiplier": 1.0,
       "reason": "insufficient_samples"
@@ -51567,6 +51567,26 @@
       "profit_factor": 0.0,
       "avg_hold_sec": 3.09,
       "last_close_time": "2026-03-06T13:35:24.013571+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
+      "pattern_id": "st:scalp_ping_5s_d_live|pk:scalp_fast|sd:long|sg:momentum|mtf:mtf_balanced|hz:horizon_neutral|ex:disabled|rg:mid|pt:na",
+      "strategy_tag": "scalp_ping_5s_d_live",
+      "pocket": "scalp_fast",
+      "direction": "long",
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "win_rate": 0.0,
+      "avg_pips": -1.5,
+      "total_pips": -1.5,
+      "gross_profit": 0.0,
+      "gross_loss": 1.5,
+      "profit_factor": 0.0,
+      "avg_hold_sec": 9.28,
+      "last_close_time": "2026-03-09T09:30:18.153627+00:00",
       "action": "learn_only",
       "lot_multiplier": 1.0,
       "reason": "insufficient_samples"
