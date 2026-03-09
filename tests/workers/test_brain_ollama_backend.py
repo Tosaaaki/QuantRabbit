@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -55,6 +57,7 @@ def test_brain_decide_uses_ollama_backend(monkeypatch, tmp_path: Path) -> None:
         timeout_sec: float,
         temperature: float = 0.2,
         max_tokens: int = 256,
+        keep_alive=None,
     ):
         captured["prompt"] = prompt
         captured["model"] = model
@@ -108,3 +111,88 @@ def test_brain_fail_policy_reduce_for_ollama_failure(monkeypatch, tmp_path: Path
     assert decision.action == "REDUCE"
     assert decision.reason == "no_llm_reduce"
     assert decision.scale == pytest.approx(0.5)
+
+
+def test_brain_context_keeps_entry_and_meta_with_sl_tp(monkeypatch, tmp_path: Path) -> None:
+    brain = _prepare_brain(monkeypatch, tmp_path)
+
+    captured: dict[str, str] = {}
+
+    def _fake_ollama(
+        prompt: str,
+        *,
+        model: str,
+        url: str,
+        timeout_sec: float,
+        temperature: float = 0.2,
+        max_tokens: int = 256,
+        keep_alive=None,
+    ):
+        captured["prompt"] = prompt
+        return {
+            "action": "ALLOW",
+            "scale": 1.0,
+            "reason": "clean_setup",
+            "memory_update": "",
+        }
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    client_order_id = "test-brain-context-keep"
+    decision = brain.decide(
+        strategy_tag="MomentumBurst-open_long",
+        pocket="micro",
+        side="buy",
+        units=5042,
+        sl_price=158.505,
+        tp_price=158.596,
+        confidence=0.8424,
+        client_order_id=client_order_id,
+        entry_thesis={
+            "confidence": 80,
+            "entry_probability": 0.8424,
+            "entry_units_intent": 5042,
+            "tp_pips": 5.09,
+            "sl_pips": 3.97,
+            "dynamic_alloc": {"lot_multiplier": 0.68, "score": 0.55},
+        },
+        meta={
+            "spread_pips": 0.8,
+            "market_regime": "Trend",
+            "session_label": "tokyo",
+        },
+    )
+
+    assert decision.action == "ALLOW"
+    prompt = captured["prompt"]
+    assert '"entry_thesis": {' in prompt
+    assert '"entry_probability": 0.8424' in prompt
+    assert '"entry_units_intent": 5042' in prompt
+    assert '"confidence": 80.0' in prompt
+    assert "confidence is a score from 0 to 100." in prompt
+    assert "Do not compare confidence and entry_probability as if they share the same numeric scale." in prompt
+    assert '"meta": {' in prompt
+    assert '"spread_pips": 0.8' in prompt
+
+    con = sqlite3.connect(brain._DB_PATH)
+    try:
+        row = con.execute(
+            """
+            SELECT context_json
+            FROM brain_decisions
+            WHERE client_order_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (client_order_id,),
+        ).fetchone()
+    finally:
+        con.close()
+
+    assert row is not None
+    context = json.loads(row[0])
+    assert context["confidence"] == pytest.approx(80.0)
+    assert context["entry_thesis"]["entry_probability"] == pytest.approx(0.8424)
+    assert context["entry_thesis"]["entry_units_intent"] == 5042
+    assert context["meta"]["spread_pips"] == pytest.approx(0.8)
+    assert context["meta"]["market_regime"] == "Trend"

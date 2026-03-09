@@ -719,9 +719,10 @@ def _compact_context(context: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
-def _json_text(value: Any) -> str:
+def _json_text(value: Any, *, compact: bool = True) -> str:
     try:
-        return json.dumps(_compact_jsonable(value), ensure_ascii=True, sort_keys=True)
+        payload = _compact_jsonable(value) if compact else value
+        return json.dumps(payload, ensure_ascii=True, sort_keys=True)
     except Exception:
         return _stringify(value, 4000)
 
@@ -968,7 +969,7 @@ def _log_decision_row(
     units: int,
     sl_price: Optional[float],
     tp_price: Optional[float],
-    confidence: Optional[int],
+    confidence: Optional[float],
     client_order_id: Optional[str],
     backend: str,
     source: str,
@@ -1026,7 +1027,7 @@ def _log_decision_row(
                 memory_before,
                 memory_after,
                 profile_version,
-                _json_text(context_compact),
+                _json_text(context_compact, compact=False),
                 market_metrics_json,
                 _json_text(payload or {}),
                 str(error or "").strip() or None,
@@ -1411,6 +1412,34 @@ def _safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _normalize_confidence_score(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    if number != number or number in {float("inf"), float("-inf")} or number < 0.0:
+        return None
+    if number <= 1.0:
+        return round(number * 100.0, 4)
+    if number <= 100.0:
+        return round(number, 4)
+    return None
+
+
+def _resolve_confidence_score(confidence: Any, entry_thesis: Optional[dict[str, Any]]) -> Optional[float]:
+    entry = _safe_dict(entry_thesis)
+    for candidate in (
+        entry.get("confidence"),
+        confidence,
+        entry.get("entry_probability_fused"),
+        entry.get("entry_probability"),
+    ):
+        score = _normalize_confidence_score(candidate)
+        if score is not None:
+            return score
+    return None
+
+
 def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float]]:
     entry = _safe_dict(context.get("entry_thesis"))
     meta = _safe_dict(context.get("meta"))
@@ -1429,12 +1458,6 @@ def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float
         m1_factors.get("atr_pips"),
         meta.get("atr_pips"),
     ]
-    confidence_candidates = [
-        context.get("confidence"),
-        entry.get("confidence"),
-        entry.get("entry_probability"),
-    ]
-
     def _first_valid(candidates: list[Any], *, low: float, high: float) -> Optional[float]:
         for item in candidates:
             try:
@@ -1448,7 +1471,7 @@ def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float
     return {
         "spread_pips": _first_valid(spread_candidates, low=0.0, high=100.0),
         "atr_pips": _first_valid(atr_candidates, low=0.0, high=200.0),
-        "confidence": _first_valid(confidence_candidates, low=0.0, high=100.0),
+        "confidence": _resolve_confidence_score(context.get("confidence"), entry),
     }
 
 
@@ -1486,7 +1509,7 @@ def _parse_market_metrics_json(raw_metrics: Any) -> dict[str, Optional[float]]:
     metrics = {
         "spread_pips": _metric_value(parsed.get("spread_pips"), low=0.0, high=100.0),
         "atr_pips": _metric_value(parsed.get("atr_pips"), low=0.0, high=200.0),
-        "confidence": _metric_value(parsed.get("confidence"), low=0.0, high=100.0),
+        "confidence": _normalize_confidence_score(parsed.get("confidence")),
     }
     if any(value is not None for value in metrics.values()):
         return metrics
@@ -2463,7 +2486,7 @@ def _build_prompt(context: dict[str, Any]) -> str:
     persona = _persona_text(strategy_tag, pocket)
     profile = _load_prompt_profile()
     profile_text = _format_prompt_profile(profile)
-    ctx_text = _json_text(_compact_context(context))
+    ctx_text = _json_text(_compact_context(context), compact=False)
     profile_block = f"{profile_text}\n\n" if profile_text else ""
     return (
         "You are the decision brain for an automated USD/JPY trading worker. "
@@ -2474,6 +2497,10 @@ def _build_prompt(context: dict[str, Any]) -> str:
         "Rules:\n"
         "- action must be one of: ALLOW, REDUCE, BLOCK.\n"
         "- scale must be between 0.2 and 1.0 (never > 1.0). Use 1.0 for ALLOW.\n"
+        "- confidence is a score from 0 to 100.\n"
+        "- entry_probability, entry_probability_before/after, and target_reach_prob are probabilities from 0.0 to 1.0.\n"
+        "- Do not compare confidence and entry_probability as if they share the same numeric scale.\n"
+        "- If confidence >= 75 and entry_probability >= 0.80, prefer ALLOW unless spread, execution quality, or regime context clearly weakens the setup.\n"
         "- Prefer blocking on uncertainty or missing context.\n"
         "- memory_update must be a short summary (<=200 chars) or empty string to keep memory.\n\n"
         "JSON schema:\n"
@@ -2531,7 +2558,7 @@ def decide(
     tp_price: Optional[float] = None,
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
-    confidence: Optional[int] = None,
+    confidence: Optional[float] = None,
     client_order_id: Optional[str] = None,
 ) -> BrainDecision:
     if not _should_use(strategy_tag, pocket):
@@ -2545,6 +2572,7 @@ def decide(
     runtime_profile = _load_runtime_param_profile()
     runtime_profile_version = _runtime_profile_version(runtime_profile)
     memory_before = _load_memory(tag, pocket_key)
+    confidence_score = _resolve_confidence_score(confidence, entry_thesis)
     context = {
         "ts": _now_iso(),
         "strategy_tag": tag,
@@ -2553,7 +2581,7 @@ def decide(
         "units": int(units),
         "sl_price": sl_price,
         "tp_price": tp_price,
-        "confidence": confidence,
+        "confidence": confidence_score,
         "memory": memory_before or "",
         "entry_thesis": entry_thesis or {},
         "meta": meta or {},
@@ -2575,7 +2603,7 @@ def decide(
             units=units,
             sl_price=sl_price,
             tp_price=tp_price,
-            confidence=confidence,
+            confidence=confidence_score,
             client_order_id=client_order_id,
             backend=_BACKEND,
             source="cache",
@@ -2666,7 +2694,7 @@ def decide(
             units=units,
             sl_price=sl_price,
             tp_price=tp_price,
-            confidence=confidence,
+            confidence=confidence_score,
             client_order_id=client_order_id,
             backend=_BACKEND,
             source="llm_fail",
@@ -2772,7 +2800,7 @@ def decide(
         units=units,
         sl_price=sl_price,
         tp_price=tp_price,
-        confidence=confidence,
+        confidence=confidence_score,
         client_order_id=client_order_id,
         backend=_BACKEND,
         source="llm",

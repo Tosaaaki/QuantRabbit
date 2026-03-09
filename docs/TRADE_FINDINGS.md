@@ -9659,3 +9659,65 @@ Status:
   - まだ replay は `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
     までは live と一致していない。
   - 次は lot/sizing の live parity をどこまで replay に持ち込むかを切る。
+
+## 2026-03-09 16:05 JST - Brain shadow の文脈欠落と confidence スケール誤読を修正
+
+- 市況:
+  - `scripts/collect_local_health.sh` の最新 `logs/health_snapshot.json` は更新成功。
+  - `scripts/prepare_local_brain_canary.py --warmup` 系の直近 readiness では
+    `spread_pips=0.8`, `tick_age_sec=1.2`, `atr_proxy_pips=3.766`,
+    `recent_range_pips_6m=6.4`, `ollama warmup=589.6ms`。
+  - core 4 は running 維持で、safe canary は `micro` 限定 shadow のまま。
+
+- 事象:
+  - keep-alive 反映後、`brain_decisions` の `micro` は
+    `2026-03-09T06:39:07Z no_llm / ALLOW / 4202ms`
+    と
+    `2026-03-09T06:48:04Z llm_ok=1 / REDUCE 0.5 / 1418ms`
+    まで改善した。
+  - ただし `llm_ok=1` の勝ちトレード
+    `qr-1773038883320-micro-momentum788fab3aa`
+    は実損益 `+4.3 pips / +120.228 JPY` だったのに、
+    Brain は `REDUCE 0.5` を返していた。
+
+- 原因:
+  - `workers/common/brain.py` の `_compact_context()` は
+    `entry_thesis` / `meta` を残していたが、
+    `_json_text()` が再度 `_compact_jsonable()` を通し、
+    top-level `max_items=8` 制限で `entry_thesis/meta` を落としていた。
+  - その結果 `brain_state.db.context_json` は
+    `ts/strategy_tag/pocket/side/units/sl/tp/confidence` だけになり、
+    `entry_probability`, `entry_units_intent`, `tp_pips`, `sl_pips`,
+    `dynamic_alloc`, `forecast_fusion` が LLM に渡っていなかった。
+  - あわせて top-level `confidence` には `0.842...` の確率値が入り、
+    LLM が `80` 点の confidence と `0.84` の probability を同一軸で読み違えていた。
+
+- 対応:
+  - `workers/common/brain.py`
+    - compact 済み context を prompt / `brain_state.db` へ保存する際に再圧縮しないよう修正。
+    - Brain 向け `confidence` は `entry_thesis.confidence` を優先し、
+      なければ `entry_probability` を `0-100` に正規化して使うよう修正。
+    - prompt rules に
+      `confidence=0-100`,
+      `entry_probability*=0.0-1.0`,
+      両者を同一スケール比較しないこと、
+      `confidence>=75 && entry_probability>=0.80` では
+      spread/execution/regime が悪くない限り `ALLOW` を優先すること
+      を明示した。
+  - `tests/workers/test_brain_ollama_backend.py`
+    - `sl/tp` があるケースでも prompt と `brain_state.db.context_json` の両方に
+      `entry_thesis/meta` が残る回帰テストを追加。
+    - normalized `confidence=80.0` と scale guidance が prompt に入ることを固定。
+
+- 検証:
+  - `pytest -q tests/workers/test_brain_ollama_backend.py` は `3 passed`。
+  - `python3 -m py_compile workers/common/brain.py tests/workers/test_brain_ollama_backend.py` は pass。
+  - 同じ winning sample を `qwen2.5:7b` / `timeout=4.0` / `max_tokens=128-192` で再評価すると、
+    変更前は `REDUCE 0.6-0.8` だったのが、
+    変更後は `ALLOW 1.0 / reason=\"High confidence and entry probability with stable spread\"`
+    に変わった。
+
+- 次の観測点:
+  - live shadow で `brain_shadow` の `ALLOW/REDUCE` 構成比が変わるか。
+  - `reason=no_llm` が再増加しないか。
+  - `micro` の勝ちトレードで不要な `REDUCE` が減るか。

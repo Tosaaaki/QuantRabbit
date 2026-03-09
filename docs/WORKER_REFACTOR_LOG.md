@@ -13528,3 +13528,33 @@
 - 残差:
   - `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
     までは replay に未移植。
+
+## 2026-03-09 JST - Brain shadow context fidelity and confidence normalization
+
+- 対象:
+  - `workers/common/brain.py`
+  - `tests/workers/test_brain_ollama_backend.py`
+
+- 変更:
+  - Brain prompt / `brain_state.db.context_json` は
+    `_compact_context()` 済み dict を再圧縮せず、そのまま JSON 化するよう修正。
+  - Brain の top-level `confidence` は
+    `entry_thesis.confidence` 優先、
+    fallback で `entry_probability*100`
+    の `0-100` score に正規化する。
+  - prompt rules に
+    `confidence` と `entry_probability*` のスケール差、
+    高 confidence・高 probability では `ALLOW` を優先する指示を追加。
+  - `sl/tp` ありケースでも prompt と decision history の両方に
+    `entry_thesis/meta` が残る回帰テストを追加。
+
+- 意図:
+  - keep-alive fix 後の次ボトルネックだった
+    `entry_thesis/meta` 欠落と `0.84 vs 80` の誤読を解消し、
+    shadow Brain を `apply` 判定可能な品質へ寄せる。
+
+- 検証:
+  - `pytest -q tests/workers/test_brain_ollama_backend.py` で `3 passed`。
+  - `python3 -m py_compile workers/common/brain.py tests/workers/test_brain_ollama_backend.py` を通過。
+  - `qwen2.5:7b` の offline replay では、
+    同一 winning sample が `REDUCE` から `ALLOW 1.0` に変化した。
