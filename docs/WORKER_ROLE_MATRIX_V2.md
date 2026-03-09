@@ -157,7 +157,12 @@
 - 目的: `order_manager` の forecast gate は `forecast_decide` API を経由して `allow/reduce/block` を取得。
 - `FORECAST_SERVICE_ENABLED=1` と `FORECAST_SERVICE_URL` が有効な場合、`forecast_gate` 決定をワーカー越しで取得して
   `order_manager` に反映。
+- local-v2 の `trade_min` / `trade_all` は `quant-forecast` を常駐対象へ含め、manual restart / watchdog /
+  launchd 復旧でも `8302` の forecast service を維持する。
 - `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` を維持したまま dedicated forecast gate を使う場合は、
+  `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1` を `quant-order-manager.env` の opt-in とし、
+  allowlist 戦略だけに `allow/reduce/block` を適用する。
 - 予測決定は `expected_pips` に加えて `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor`
   を `forecast_context` として各経路へ伝播し、`order_manager` と `entry_intent_board` の監査へ反映する。
 - EXIT 側は共通一律ゲートを追加せず、各 `exit_worker` が `entry_thesis.forecast` / `forecast_fusion`

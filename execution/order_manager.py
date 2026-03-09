@@ -541,6 +541,23 @@ def _forecast_decide_with_service(
     )
 
 
+def _should_apply_order_manager_forecast_gate(
+    *,
+    reduce_only: bool,
+    pocket: str,
+    preserve_strategy_intent: bool,
+) -> bool:
+    return (
+        not reduce_only
+        and pocket != "manual"
+        and _ORDER_MANAGER_FORECAST_GATE_ENABLED
+        and (
+            not preserve_strategy_intent
+            or _ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT
+        )
+    )
+
+
 async def _invoke_order_manager_service(path: str, payload: dict) -> dict:
     return await asyncio.to_thread(_order_manager_service_call, path, payload)
 
@@ -2540,6 +2557,9 @@ _ORDER_MANAGER_BRAIN_GATE_MISSING_LOG_INTERVAL_SEC = max(
 )
 _ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO = 0.0
 _ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
+_ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT = _env_bool(
+    "ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT", False
+)
 _FORECAST_SERVICE_ENABLED = _env_bool("FORECAST_SERVICE_ENABLED", False)
 _FORECAST_SERVICE_URL = os.getenv("FORECAST_SERVICE_URL", "http://127.0.0.1:8302").strip()
 _FORECAST_SERVICE_TIMEOUT = max(0.5, float(_env_float("FORECAST_SERVICE_TIMEOUT", 5.0)))
@@ -9738,11 +9758,10 @@ async def market_order(
                     )
 
     # Probabilistic forecast gate (scikit-learn, offline bundle)
-    if (
-        not reduce_only
-        and pocket != "manual"
-        and not preserve_strategy_intent
-        and _ORDER_MANAGER_FORECAST_GATE_ENABLED
+    if _should_apply_order_manager_forecast_gate(
+        reduce_only=reduce_only,
+        pocket=pocket,
+        preserve_strategy_intent=preserve_strategy_intent,
     ):
         try:
             forecast_meta: dict[str, Any] = {"instrument": instrument}

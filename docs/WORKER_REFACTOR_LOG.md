@@ -14297,3 +14297,33 @@
   - env stopgap だけで終わらせず、
     loser cluster を strategy 本体の quality guard に落として
     live でも再発しにくい形へ寄せる。
+
+## 2026-03-10 08:45 JST - local-v2 へ `quant-forecast` 常駐と narrow forecast canary を接続
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `execution/order_manager.py`
+  - `ops/env/quant-order-manager.env`
+  - `tests/execution/test_order_manager_preflight.py`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 変更:
+  - `local_v2_stack` の `KNOWN_SERVICES` / `PROFILE_trade_min` / `PROFILE_trade_all`
+    へ `quant-forecast` を追加し、`workers.forecast.worker` を正式サービス化した。
+  - `order_manager` に
+    `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT`
+    を追加し、`ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` を維持したまま
+    dedicated forecast gate を opt-in で適用できるようにした。
+  - `ops/env/quant-order-manager.env` で
+    `ORDER_MANAGER_FORECAST_GATE_ENABLED=1` /
+    `FORECAST_GATE_ENABLED=1` /
+    `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1`
+    を有効化し、allowlist は current loser cluster と既存 tuned strategy の narrow subset へ絞った。
+
+- 意図:
+  - forecast service を「起動しているだけ」で終わらせず、
+    local-v2 の restart / watchdog / autorecover で維持する。
+  - `preserve_strategy_intent` を壊さず、
+    既存の strategy-local forecast/fusion に加えて
+    order-manager の dedicated forecast gate を allowlist 戦略へだけ live 接続する。

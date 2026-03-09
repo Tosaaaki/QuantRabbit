@@ -11008,3 +11008,40 @@ Status:
     `MomentumBurst short` の late chase と
     `MicroLevelReactor long` の bearish bounce を
     strategy-local に圧縮する。
+
+## 2026-03-10 08:45 JST - forecast を local-v2 live 導線へ接続（narrow canary）
+
+- 実測:
+  - 市況は通常帯。`USD/JPY 157.83` 近辺、recent spread は `0.8 pips`、
+    `factor_cache` の `M1 ATR` は `1.67 pips`、`decision_latency_ms` は約 `14.5ms`、
+    `data_lag_ms` は約 `1869ms` で live entry 導線の健全性は維持されていた。
+  - 直近24hでは `MomentumBurst`, `MicroTrendRetest`, `MicroLevelReactor` が
+    主な毀損源だが、forecast は未接続ではなく strategy-side の
+    forecast context / fusion と worker-side gate では既に利用されていた。
+  - 一方で dedicated `quant-forecast` は local-v2 stack 管理外で、
+    order-manager 側も `ORDER_MANAGER_FORECAST_GATE_ENABLED=0` に加え
+    `preserve_strategy_intent` 下では forecast 分岐へ到達しないため、
+    service を live 発注直前へ活かせていなかった。
+
+- 変更:
+  - `local_v2_stack` の trade profile に `quant-forecast` を追加し、
+    restart / watchdog / autorecover の対象へ組み込んだ。
+  - `order_manager` へ
+    `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT`
+    を追加し、`preserve_strategy_intent` を維持したまま
+    dedicated forecast gate を opt-in で使えるようにした。
+  - `ops/env/quant-order-manager.env` で
+    `ORDER_MANAGER_FORECAST_GATE_ENABLED=1` /
+    `FORECAST_GATE_ENABLED=1` /
+    `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1`
+    を有効化し、allowlist を
+    `MicroLevelReactor, MomentumBurst, MicroTrendRetest, M1Scalper-M1, RangeFader, scalp_ping_5s_b_live, scalp_ping_5s_c_live, scalp_ping_5s_flow_live`
+    に限定して narrow canary 化した。
+
+- 意図:
+  - `forecast_improvement_latest.json` の verdict が `mixed` のため、
+    全戦略一括ではなく毀損寄与戦略と既存 tuned strategy に限定して
+    order-manager forecast gate を live 接続する。
+  - strategy-local forecast/fusion を壊さず、
+    dedicated service の `allow/reduce/block` を restart 耐性つきで
+    live 経路へ反映する。

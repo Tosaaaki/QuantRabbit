@@ -683,3 +683,44 @@ def test_forecast_service_decision_parses_rebound_and_target_prob() -> None:
     assert decision is not None
     assert decision.rebound_probability == 0.74
     assert decision.target_reach_prob == 0.58
+
+
+def test_forecast_gate_can_apply_with_preserve_strategy_intent(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_FORECAST_GATE_ENABLED", True)
+    monkeypatch.setattr(
+        order_manager,
+        "_ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT",
+        False,
+    )
+
+    assert (
+        order_manager._should_apply_order_manager_forecast_gate(
+            reduce_only=False,
+            pocket="micro",
+            preserve_strategy_intent=True,
+        )
+        is False
+    )
+
+    monkeypatch.setattr(
+        order_manager,
+        "_ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT",
+        True,
+    )
+
+    assert (
+        order_manager._should_apply_order_manager_forecast_gate(
+            reduce_only=False,
+            pocket="micro",
+            preserve_strategy_intent=True,
+        )
+        is True
+    )
+    assert (
+        order_manager._should_apply_order_manager_forecast_gate(
+            reduce_only=False,
+            pocket="manual",
+            preserve_strategy_intent=False,
+        )
+        is False
+    )
