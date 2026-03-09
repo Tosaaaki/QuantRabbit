@@ -5,6 +5,34 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）local-v2 Brain に shallow-REDUCE uplift を追加し、strong setup は `ALLOW` へ戻して participation を維持
+
+- 対象:
+  - `workers/common/brain.py`
+  - `config/brain_runtime_param_profile_profit_micro.json`
+  - `config/brain_runtime_param_profile.json`
+  - `tests/workers/test_brain_history_prompt_autotune.py`
+  - `tests/workers/test_brain_ollama_backend.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `workers/common/brain.py`
+    - runtime profile に `reduce_to_allow_scale` を追加。
+    - strong setup かつ hard risk reason ではない shallow `REDUCE` は
+      `activity_preserve_allow` として `ALLOW` へ戻す。
+    - `llm_fail` 経路でも runtime guard に live context を渡し、
+      fail-open / preserve 判定を同じ基準で扱う。
+  - `config/brain_runtime_param_profile_profit_micro.json`
+    - `reduce_to_allow_scale=0.78`
+  - `config/brain_runtime_param_profile.json`
+    - `reduce_to_allow_scale=0.80`
+  - `tests/workers/test_brain_history_prompt_autotune.py`
+    - strong setup の shallow `REDUCE -> ALLOW` と hard risk reason 維持の回帰を追加。
+- 意図:
+  - shared Brain の役割を「entry 回数を削る」より「hard risk だけ止めて quality を締める」側へ戻す。
+  - strategy-local cadence を維持しながら、local LLM を sizing / risk bias の補助として使う。
+
 ### 2026-03-09（追記）local-v2 Brain に strong-setup preserve bias を追加し、entry 頻度を落とさず size 制御へ寄せる
 
 - 対象:

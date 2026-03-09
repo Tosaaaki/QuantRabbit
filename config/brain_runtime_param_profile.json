@@ -1,10 +1,11 @@
 {
-  "version": "rp-v3-trade-improve",
-  "updated_at": "2026-03-05T14:02:00+09:00",
+  "version": "rp-v4-trade-improve",
+  "updated_at": "2026-03-09T21:55:00+09:00",
   "min_scale": 0.28,
   "block_rate_soft_limit": 0.78,
   "activity_rate_floor": 0.55,
   "block_to_reduce_scale": 0.52,
+  "reduce_to_allow_scale": 0.8,
   "guard_window_decisions": 180,
   "min_guard_samples": 40,
   "max_block_streak": 10,
@@ -13,6 +14,6 @@
   "outcome_positive_win_rate_floor": 0.47,
   "notes": [
     "Prefer throughput with controlled scaling instead of hard blocking.",
-    "Use BLOCK mainly when execution quality metrics degrade together."
+    "Relax shallow reductions back to ALLOW only when setup quality is strong and execution quality is still normal."
   ]
 }

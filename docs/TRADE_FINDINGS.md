@@ -23,6 +23,55 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 13:00 UTC / 2026-03-09 22:00 JST - local-v2: Brain は shallow `REDUCE` を strong setup で `ALLOW` へ戻し、entry 頻度を落とさず quality 制御を優先
+
+Period:
+- 調査/実装: UTC `12:44-13:00` / JST `21:44-22:00`
+- 対象（実測）:
+  - `logs/brain_state.db`
+  - `logs/brain_canary_readiness_latest.json`
+  - `workers/common/brain.py`
+  - `config/brain_runtime_param_profile_profit_micro.json`
+
+Fact:
+- 市況確認（latest readiness）:
+  - `USD/JPY bid=158.372 / ask=158.380 / spread=0.8p`
+  - `atr_proxy_pips=3.0`, `recent_range_pips_6m=4.2p`
+  - `market_ready=true`, `ollama_ready=true`, `quality_gate_ok=true`
+- 直近24hの `brain_state.db`:
+  - `micro llm ALLOW=7`, `micro llm REDUCE=7`
+  - `micro llm_fail ALLOW=6`, `micro llm_fail REDUCE=71`
+  - `MomentumBurst-open_long/open_short` は strong setup でも `scale=0.8` 前後の shallow `REDUCE` が残っていた
+- common Brain prompt / runtime guard は、これまで `BLOCK -> REDUCE` の補正は持っていたが、
+  healthy spread / strong setup での `REDUCE -> ALLOW` 補正は持っていなかった
+
+Failure Cause:
+- local LLM は使えていても、strong setup まで shared Brain が shallow `REDUCE` に寄せると、
+  strategy-local cadence は維持されても participation と size が不必要に痩せる。
+- 特に strong setup で spread / latency / reject 劣化が無い窓では、
+  common Brain の役割は entry を減らすことではなく、hard risk だけを止めることだった。
+
+Improvement:
+- `workers/common/brain.py`
+  - runtime profile に `reduce_to_allow_scale` を追加。
+  - strong setup (`entry_probability>=0.80`, `confidence>=75`, spread/ATR 正常) では、
+    `REDUCE` が shallow (`scale >= reduce_to_allow_scale`) かつ hard risk reason でない限り
+    `ALLOW` へ戻す `activity_preserve_allow` を追加。
+  - `spread / latency / reject / execution / slippage` を含む reason は hard risk として uplift 対象外に固定。
+  - `llm_fail` 経路でも runtime guard に live context を渡し、同じ preserve 判定を使えるようにした。
+- `config/brain_runtime_param_profile_profit_micro.json`
+  - `reduce_to_allow_scale=0.78`
+- `config/brain_runtime_param_profile.json`
+  - `reduce_to_allow_scale=0.80`
+
+Verification:
+- `python3 -m py_compile workers/common/brain.py tests/workers/test_brain_history_prompt_autotune.py`
+- `pytest -q tests/workers/test_brain_history_prompt_autotune.py tests/workers/test_brain_ollama_backend.py`
+  - `21 passed`
+
+Status:
+- done
+
 ## 2026-03-09 12:39 UTC / 2026-03-09 21:39 JST - local-v2: Brain は strong setup を `BLOCK` しすぎないよう `REDUCE` 優先へ補正
 
 Period:
@@ -10601,3 +10650,25 @@ Status:
     `side 別 cache 分離` と `live tick/M1 factor fallback` の unit test を追加する。
   - 反映後は `brain_state.db.context_json` の `spread_pips` / `atr_pips` / `ticks` 充足率と、
     `brain_*_autotune_profit_latest.json` の `market_summary` 非ゼロ化を監査する。
+
+## 2026-03-09 21:45 JST - Brain timeout 連発時は fail-open cooldown に退避し、entry cadence を落とさない
+
+- 市況確認:
+  - `prepare_local_brain_canary.py --warmup`: USD/JPY `158.424/158.416`、spread `0.8 pips`、ATR proxy `2.834 pips`、recent 6m range `3.0 pips`、Ollama warmup `1059 ms` で続行可能。
+  - `logs/orders.db` 直近1h: `preflight_start=24`, `filled=24`, `brain_shadow=8` で、Brain block は出ていない。
+
+- 問題:
+  - `logs/brain_state.db` 直近6hでは `MicroLevelReactor-bounce-lower` が `llm_fail` を 5 回出しており、21:18-21:19 JST に `4001-4009 ms` timeout が連発していた。
+  - safe canary は fail-open なので entry 数自体は落としていないが、同一 strategy/pocket の近接 setup ごとに 4 秒待ちを繰り返し、timing 劣化で cadence を毀損していた。
+
+- 対応:
+  - `workers/common/brain.py` に strategy/pocket 単位の failfast state を追加し、timeout / no-response が連続した場合は live LLM 呼び出しを短時間 skip して `llm_fail_fast` として fail-open へ切り替える。
+  - safe canary env に
+    `BRAIN_FAILFAST_CONSECUTIVE_FAILURES=2`,
+    `BRAIN_FAILFAST_COOLDOWN_SEC=30`,
+    `BRAIN_FAILFAST_WINDOW_SEC=60`
+    を追加し、micro entry の cadence を守る。
+
+- 意図:
+  - local LLM が不安定な瞬間に「さらに待つ」より、safe canary の fail-open 原則で timing を優先する。
+  - entry 頻度は落とさず、LLM が読める局面では判断を使い、読めない瞬間だけ遅延を切り離す。

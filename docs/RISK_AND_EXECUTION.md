@@ -8,6 +8,34 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 Brain shallow-REDUCE uplift（2026-03-09）
+- 背景:
+  - `logs/brain_canary_readiness_latest.json` の latest は
+    `USD/JPY bid=158.372 / ask=158.380 / spread=0.8p`,
+    `atr_proxy_pips=3.0`, `recent_range_pips_6m=4.2p`,
+    `market_ready=true`, `ollama_ready=true`, `quality_gate_ok=true`。
+  - `logs/brain_state.db` の直近24hは
+    `micro llm ALLOW=7 / REDUCE=7`,
+    `micro llm_fail ALLOW=6 / REDUCE=71` で、
+    strong setup でも shallow `REDUCE` が残っていた。
+- 実装:
+  - `workers/common/brain.py`
+    - runtime profile に `reduce_to_allow_scale` を追加。
+    - strong setup (`entry_probability>=0.80`, `confidence>=75`, spread/ATR 正常帯) は、
+      `scale >= reduce_to_allow_scale` かつ hard risk reason でない shallow `REDUCE` を
+      `activity_preserve_allow` で `ALLOW` へ戻す。
+    - hard risk reason は `spread / latency / reject / execution / slippage / stale` を含むものに限定し、
+      これらは uplift しない。
+    - `llm_fail` 経路でも runtime guard に live context を渡し、fail-open 判定と preserve 判定を統一。
+  - `config/brain_runtime_param_profile_profit_micro.json`
+    - `reduce_to_allow_scale=0.78`
+  - `config/brain_runtime_param_profile.json`
+    - `reduce_to_allow_scale=0.80`
+- 意図:
+  - common Brain は entry 回数や participation を unnecessary に削るのではなく、
+    hard risk を止め、soft uncertainty では quality 制御に徹する。
+  - strategy-local cadence を維持したまま、local LLM を sizing / risk bias の補助へ寄せる。
+
 ### local-v2 `MomentumBurst` reaccel cadence recovery（2026-03-09）
 - 背景:
   - `health_snapshot.json` の UTC `12:35:32` / JST `21:35:32` は
@@ -246,6 +274,10 @@
   background timeout を使い、`no_response` で死ににくくする。
 - shared Ollama runtime では background autotune が live preflight 実行中/直後を
   `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC` で退避し、fail-open を live 側で起こしにくくする。
+- 同一 strategy/pocket で Ollama timeout が連発した場合は
+  `BRAIN_FAILFAST_CONSECUTIVE_FAILURES` / `BRAIN_FAILFAST_COOLDOWN_SEC` /
+  `BRAIN_FAILFAST_WINDOW_SEC` により短い fail-open cooldown へ切り替え、
+  4 秒 timeout の再試行で entry cadence を落とさない。
 - aggressive/all-pocket profile は別 env を明示指定したときだけ有効化する。
 
 ### AddonLive 経路の strategy_tag 契約（2026-02-26）
