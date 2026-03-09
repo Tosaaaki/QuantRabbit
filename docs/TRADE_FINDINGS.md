@@ -9819,3 +9819,34 @@ Status:
   - replay 未移植は `lookahead_units_mult`, `side_adverse_stack`, `allowed_lot`。
   - 特に live vs replay の最終 units 差をさらに詰めるには、
     `allowed_lot` と `lookahead_units_mult` の順を replay へ持ち込む必要がある。
+
+## 2026-03-09 17:03 JST - `RangeFader` negative close reject は `neg_exit` override の defaults 上書きが原因
+
+- 市況確認:
+  - `logs/orders.db` / OANDA 観測では USD/JPY は spread `0.8p`、API 応答 `204-349ms`、local-v2 core 4 は稼働中。
+  - エントリー不足の主因だった stale `dynamic_alloc` は解消後で、`RangeFader` の filled は再開していた。
+
+- 実測:
+  - `orders.db` では `2026-03-09 07:59-08:00 UTC` に
+    `RangeFader-buy-fade` / `RangeFader-neutral-fade` の
+    `close_reject_no_negative` が連発し、
+    `exit_reason=max_adverse` と `max_hold_loss` が主因だった。
+  - 実行時 `_strategy_neg_exit_policy("RangeFader-buy-fade")` は
+    `allow_reasons=['reversion_*']` のみを返し、
+    defaults の `max_adverse` 等が落ちていた。
+
+- 原因:
+  - `config/strategy_exit_protections.yaml` の `RangeFader.neg_exit.allow_reasons`
+    が `reversion_*` だけを持ち、merge 時に defaults allowlist を丸ごと置換していた。
+  - そのため worker 側が `allow_negative=True` を送っても、
+    `order_manager` は strategy-local policy で negative close を拒否していた。
+
+- 対応:
+  - `RangeFader.neg_exit.allow_reasons` を defaults 相当の full list へ戻し、
+    追加分として `reversion_*` と `max_hold_loss` を保持した。
+  - derived tag (`RangeFader-buy-fade`, `RangeFader-neutral-fade`) でも
+    `max_adverse` / `max_hold_loss` / `reversion_*` が通る回帰を追加した。
+
+- 検証:
+  - `pytest -q tests/execution/test_order_manager_exit_policy.py`
+  - `python3 -m py_compile tests/execution/test_order_manager_exit_policy.py`

@@ -5,6 +5,8 @@ import pathlib
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -142,6 +144,31 @@ def test_default_neg_exit_policy_blocks_de_risk_without_strategy_context() -> No
     )
     assert near_be is False
     assert allowed is False
+
+
+@pytest.mark.parametrize(
+    ("strategy_tag", "exit_reason", "worker_allow"),
+    [
+        ("RangeFader-buy-fade", "max_adverse", True),
+        ("RangeFader-neutral-fade", "max_hold_loss", True),
+        ("RangeFader-buy-fade", "reversion_pullback", False),
+    ],
+)
+def test_rangefader_derived_tag_neg_exit_policy_keeps_default_and_reversion_reasons(
+    strategy_tag: str,
+    exit_reason: str,
+    worker_allow: bool,
+) -> None:
+    allowed, near_be = _neg_exit_decision(
+        exit_reason=exit_reason,
+        est_pips=-2.4,
+        emergency_allow=False,
+        reason_allow=False,
+        worker_allow=worker_allow,
+        neg_policy=order_manager._strategy_neg_exit_policy(strategy_tag),
+    )
+    assert near_be is False
+    assert allowed is True
 
 
 def test_close_trade_uses_explicit_flow_context_for_negative_close(monkeypatch) -> None:

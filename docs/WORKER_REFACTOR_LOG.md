@@ -13662,3 +13662,32 @@
 
 - 残差:
   - replay 未移植は `lookahead_units_mult`, `side_adverse_stack`, `allowed_lot`。
+
+## 2026-03-09 JST - `RangeFader` negative-exit allowlist を defaults 維持へ修正
+
+- 対象:
+  - `config/strategy_exit_protections.yaml`
+  - `tests/execution/test_order_manager_exit_policy.py`
+
+- 変更:
+  - `RangeFader.neg_exit.allow_reasons` は従来 `reversion_*` のみを持っており、
+    config merge 上は defaults の allowlist を置き換えていた。
+  - `RangeFader` override を明示 full list へ更新し、
+    defaults 相当の negative-exit reasons を維持したまま
+    `reversion_*` と `max_hold_loss` を追加した。
+  - 回帰テストでは derived tag
+    `RangeFader-buy-fade` に対して
+    `max_adverse` / `max_hold_loss` / `reversion_*`
+    が `neg_exit` policy で通ることを固定した。
+
+- 意図:
+  - local-v2 実測で `close_reject_no_negative` が
+    `RangeFader` の `max_adverse` / `max_hold_loss` に連発していた。
+  - worker 側の `allow_negative=True` は届いていても、
+    strategy-local `neg_exit.allow_reasons` が
+    defaults を上書きしていたため
+    `order_manager` が negative close を拒否していた。
+
+- 検証:
+  - `pytest -q tests/execution/test_order_manager_exit_policy.py`
+  - `python3 -m py_compile tests/execution/test_order_manager_exit_policy.py`
