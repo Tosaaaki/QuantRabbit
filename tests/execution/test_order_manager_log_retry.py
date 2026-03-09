@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from types import SimpleNamespace
 
 import execution.order_manager as order_manager
 
@@ -465,6 +466,89 @@ def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch
 
     assert ticket is None
     assert "entry_intent_guard_reject" in statuses
+
+
+def test_market_order_shadow_skips_disabled_brain_decision(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    statuses: list[str] = []
+    metrics: list[str] = []
+
+    def _fake_api_request(endpoint) -> None:
+        endpoint.response = {
+            "orderFillTransaction": {
+                "tradeOpened": {"tradeID": "TID-BRAIN-SHADOW-SKIP"},
+            }
+        }
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_MODE", "shadow")
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_ENABLED", True)
+    monkeypatch.setattr(
+        order_manager,
+        "brain",
+        SimpleNamespace(
+            decide=lambda **_kwargs: order_manager.brain.BrainDecision(
+                True,
+                1.0,
+                "disabled",
+                "ALLOW",
+            )
+        ),
+    )
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None))
+    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager,
+        "_augment_entry_thesis_policy_generation",
+        lambda thesis, reduce_only=False: thesis,
+    )
+    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_fetch_quote_with_retry",
+        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(order_manager, "log_metric", lambda name, *_a, **_k: metrics.append(str(name)))
+    monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
+    )
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+
+    asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-brain-shadow-disabled",
+            strategy_tag="scalp_ping_5s_d_live",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_d_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+            },
+            confidence=88,
+        )
+    )
+
+    assert "brain_shadow" not in statuses
+    assert "order_brain_shadow" not in metrics
 
 
 def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypatch) -> None:

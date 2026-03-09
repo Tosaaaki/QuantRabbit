@@ -9576,47 +9576,49 @@ async def market_order(
                 brain_decision = None
                 logging.debug("[BRAIN] decision failed: %s", exc)
         if brain_decision is not None:
+            brain_reason_key = str(brain_decision.reason or "").strip().lower()
             if _ORDER_MANAGER_BRAIN_GATE_MODE == "shadow":
-                logging.info(
-                    "[BRAIN][SHADOW] pocket=%s strategy=%s action=%s allowed=%s scale=%.3f reason=%s",
-                    pocket,
-                    strategy_tag,
-                    brain_decision.action,
-                    brain_decision.allowed,
-                    float(brain_decision.scale),
-                    brain_decision.reason,
-                )
-                log_order(
-                    pocket=pocket,
-                    instrument=instrument,
-                    side=side_label,
-                    units=units,
-                    sl_price=sl_price,
-                    tp_price=tp_price,
-                    client_order_id=client_order_id,
-                    status="brain_shadow",
-                    attempt=0,
-                    stage_index=stage_index,
-                    request_payload={
-                        "strategy_tag": strategy_tag,
-                        "meta": meta,
-                        "entry_thesis": entry_thesis,
-                        "brain_reason": brain_decision.reason,
-                        "brain_action": brain_decision.action,
-                        "brain_allowed": brain_decision.allowed,
-                        "brain_scale": brain_decision.scale,
-                    },
-                )
-                log_metric(
-                    "order_brain_shadow",
-                    1.0,
-                    tags={
-                        "pocket": pocket,
-                        "strategy": str(strategy_tag or "unknown"),
-                        "action": brain_decision.action,
-                        "reason": brain_decision.reason,
-                    },
-                )
+                if brain_reason_key != "disabled":
+                    logging.info(
+                        "[BRAIN][SHADOW] pocket=%s strategy=%s action=%s allowed=%s scale=%.3f reason=%s",
+                        pocket,
+                        strategy_tag,
+                        brain_decision.action,
+                        brain_decision.allowed,
+                        float(brain_decision.scale),
+                        brain_decision.reason,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="brain_shadow",
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "brain_reason": brain_decision.reason,
+                            "brain_action": brain_decision.action,
+                            "brain_allowed": brain_decision.allowed,
+                            "brain_scale": brain_decision.scale,
+                        },
+                    )
+                    log_metric(
+                        "order_brain_shadow",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "action": brain_decision.action,
+                            "reason": brain_decision.reason,
+                        },
+                    )
             elif not brain_decision.allowed:
                 note = f"brain_block:{brain_decision.reason}"
                 _console_order_log(

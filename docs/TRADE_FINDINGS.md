@@ -9398,10 +9398,23 @@ Status:
   - `local_v2_stack status` では core 4 がすべて `running`。
   - 反映後 2 分（15:27-15:29 JST）は新規 order が入らず、
     `orders.db` の `brain_shadow` / `brain_block` と `brain_state.db` の当日 `brain_decisions` はまだ未発火。
+  - その後 15:30:03 JST に `orders.db` へ `scalp_fast / brain_shadow` が 1 件見えたが、
+    process env では `BRAIN_POCKET_ALLOWLIST=micro` が入っていた。
+    調査すると `workers/common/brain.py` は allowlist 外 pocket に対し
+    `reason=disabled` の ALLOW を返し、`execution/order_manager.py` 側がそれまで
+    `brain_shadow` と metric に記録していた。
+    実 LLM 呼び出しではなく、shadow 監査のノイズだった。
+
+- 追加対応:
+  - `execution/order_manager.py`
+    - `ORDER_MANAGER_BRAIN_GATE_MODE=shadow` でも、`brain_decision.reason=disabled`
+      の場合は `brain_shadow` / `order_brain_shadow` を記録しないよう修正。
+  - `tests/execution/test_order_manager_log_retry.py`
+    - allowlist 外 pocket の `disabled` 決定が shadow ログへ漏れない回帰テストを追加。
 
 - 次の確認点:
-1. 反映後最初の micro preflight で `orders.db` に `brain_shadow` が出ること。
-2. `brain_state.db` に 2026-03-09 JST の `brain_decisions` 行が再開すること。
+  1. 反映後最初の micro preflight で `orders.db` に `brain_shadow` が出ること。
+  2. `brain_state.db` に 2026-03-09 JST の `brain_decisions` 行が再開すること。
 
 ## 2026-03-09 06:40 UTC / 2026-03-09 15:40 JST - `MomentumBurst` は shared sizing rebalance 後に正転したため、reaccel 条件だけを少し緩めて entry 数を戻す
 

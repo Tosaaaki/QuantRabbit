@@ -13274,6 +13274,10 @@
     `... -> override=/Users/tossaki/App/QuantRabbit/ops/env/local-v2-stack.env -> extra=/Users/tossaki/App/QuantRabbit/ops/env/profiles/brain-ollama-safe.env`。
   - 同起動の effective env は `BRAIN_ENABLED=1`, `ORDER_MANAGER_BRAIN_GATE_ENABLED=1`,
     `BRAIN_OLLAMA_MODEL=qwen2.5:7b` を示した。
+  - 追記: 15:30 JST の `scalp_fast / brain_shadow` は allowlist破りではなく、
+    `reason=disabled` の擬似決定を `shadow` 記録していた監査ノイズだった。
+    `execution/order_manager.py` で disabled 決定の shadow 記録を抑止し、
+    `tests/execution/test_order_manager_log_retry.py` に回帰テストを追加した。
 
 ## 2026-03-09 JST - `MomentumBurst` の reaccel 条件を strategy-local に緩め、dedicated cooldown を 90 秒へ短縮
 
