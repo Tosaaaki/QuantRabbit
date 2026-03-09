@@ -540,7 +540,7 @@ strategies:
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
       loss_cut_hard_pips: 0.0
-      loss_cut_hard_sl_mult: 1.50
+      loss_cut_hard_sl_mult: 1.20
       loss_cut_max_hold_sec: 1800
       loss_cut_cooldown_sec: 6
 

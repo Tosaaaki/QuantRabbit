@@ -23,6 +23,36 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 13:22 UTC / 2026-03-09 22:22 JST - local-v2: `MomentumBurst` 損失拡大抑制のため loss_cut hard_mult を引き締め
+
+Period:
+- 調査/実装: UTC `13:10-13:22` / JST `22:10-22:22`
+- 対象（実測）:
+  - `logs/orders.db`, `logs/trades.db`
+  - `config/strategy_exit_protections.yaml`
+
+Fact:
+- `MomentumBurst` が 24h で `-486.38 JPY / -7.3p` と赤方に偏っている状態が継続。
+- エントリー数は維持されているにもかかわらず、`STOP_LOSS_ORDER` 系の逆行幅が長いケースが目立つ。
+- `MomentumBurst` の失敗クラスタは、entry後の逆行が 4p 超で止まるパターンが多く、`loss_cut` の硬制限が効いている構成。
+
+Failure Cause:
+- エントリー判定自体の抑制ではなく、`MomentumBurst` の per-trade downside が広く、逆行が一定値を超えた時点での即時収束が不足していた。
+
+Improvement:
+- `config/strategy_exit_protections.yaml`
+  - `MomentumBurst`:
+    - `loss_cut_hard_sl_mult` を `1.50 -> 1.20` に更新。
+  - `loss_cut_hard_pips` は 0 のまま据え置き、SL 派生の hard cut を活かしつつ上限を引き下げ。
+- shared gate / Brain / order-manager / strategy_local entry 条件には未変更。
+
+Verification:
+- 本体再起動後、`MomentumBurst` の次 6h/24h の `STOP_LOSS_ORDER` 比率が低下し、
+  `avg_pips` と `max adverse drawdown` が改善することを監視。
+
+Status:
+- in_progress
+
 ## 2026-03-09 13:00 UTC / 2026-03-09 22:00 JST - local-v2: Brain は shallow `REDUCE` を strong setup で `ALLOW` へ戻し、entry 頻度を落とさず quality 制御を優先
 
 Period:

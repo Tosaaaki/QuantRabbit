@@ -5,6 +5,20 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`MomentumBurst` の STOP_LOSS tail をローカル側で抑え、負け幅を縮小
+
+- 対象:
+  - `config/strategy_exit_protections.yaml`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `config/strategy_exit_protections.yaml`
+    - `MomentumBurst.exit_profile.loss_cut_hard_sl_mult` を `1.50 -> 1.20` に引き下げ。
+  - `loss_cut_hard_sl_mult` は `loss_cut_hard_pips` が未設定時に entry SL を基準に導出されるため、
+    `MomentumBurst` の 1トレード逆行上限（硬い SL を伴う大きな逆行）を約 20% 縮小。
+- 意図:
+  - `MomentumBurst` のエントリー数を減らさず、`STOP_LOSS_ORDER` の巨大逆行による損失拡大を抑える。
+  - shared gate / order-manager は変更せず、strategy-local exit プロファイルで per-trade downside を抑える。
+
 ### 2026-03-09（追記）local-v2 Brain に shallow-REDUCE uplift を追加し、strong setup は `ALLOW` へ戻して participation を維持
 
 - 対象:
@@ -14056,3 +14070,30 @@
     実際の spread / ATR / regime / setup 変化を読んだ gate へ戻す。
   - safe canary の preflight latency を増やさず、
     async autotune と cache 再利用の質だけを改善する。
+
+## 2026-03-09 21:45 JST - Brain timeout 連発時の fail-open cooldown を追加し、micro cadence を維持
+
+- 対象:
+  - `workers/common/brain.py`
+  - `tests/workers/test_brain_ollama_backend.py`
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+
+- 変更:
+  - `brain.py` に strategy/pocket 単位の failfast state を追加し、
+    `llm_fail` が連発したときは live Ollama call を一定時間 skip して
+    `llm_fail_fast` として fail-open へ切り替えるようにした。
+  - safe env に
+    `BRAIN_FAILFAST_CONSECUTIVE_FAILURES=2`,
+    `BRAIN_FAILFAST_COOLDOWN_SEC=30`,
+    `BRAIN_FAILFAST_WINDOW_SEC=60`
+    を追加し、micro safe canary でだけ cadence を守る。
+  - unit test で
+    `timeout 2 回後は 3 回目を skip` と
+    `成功応答で failfast state を解除` を固定した。
+
+- 意図:
+  - Brain を切るのではなく、不安定時の 4 秒 stall だけを局所的に外す。
+  - entry 頻度を落とさず、LLM が返る局面の size/quality 改善は残す。
