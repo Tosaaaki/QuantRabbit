@@ -15,9 +15,9 @@ RSI_SHORT_MAX = 46
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
 DRIFT_PIPS_CEIL = 0.5    # block shorts if short-term drift is positive
 SPREAD_PIPS_MAX = 1.2    # hard cap; additionally scaled by ATR below
-REACCEL_EMA_DIST_PIPS = 2.5
-REACCEL_DI_GAP = 8.0
-REACCEL_ROC5_MIN = 0.03
+REACCEL_EMA_DIST_PIPS = 2.0
+REACCEL_DI_GAP = 6.0
+REACCEL_ROC5_MIN = 0.02
 
 
 def _attach_kill(signal: Dict) -> Dict:

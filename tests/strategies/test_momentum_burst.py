@@ -56,3 +56,31 @@ def test_short_reacceleration_requires_real_breakdown() -> None:
     )
 
     assert signal is None
+
+
+def test_short_reacceleration_allows_modest_break_after_pullback() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.434,
+            "ma10": 158.458,
+            "ma20": 158.447,
+            "ema20": 158.455,
+            "adx": 28.4,
+            "atr_pips": 3.8,
+            "vol_5m": 2.1,
+            "rsi": 42.0,
+            "plus_di": 17.0,
+            "minus_di": 23.5,
+            "roc5": -0.025,
+            "ema_slope_10": -0.0012,
+            "candles": [
+                {"high": 158.488, "low": 158.456, "close": 158.466},
+                {"high": 158.486, "low": 158.460, "close": 158.478},
+                {"high": 158.492, "low": 158.448, "close": 158.458},
+                {"high": 158.447, "low": 158.430, "close": 158.434},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"

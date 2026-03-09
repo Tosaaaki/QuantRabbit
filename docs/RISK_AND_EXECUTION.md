@@ -118,6 +118,12 @@
 ### Brainゲート（任意）
 - `execution/order_manager.py` で LLM 判断を実行し、**ALLOW/REDUCE/BLOCK** を返す。
 - `REDUCE` は units 縮小のみ（増加は禁止）。
+- 現行 local-v2 の既定導線は `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES` で
+  `ops/env/profiles/brain-ollama-safe.env` を合成し、
+  `BRAIN_BACKEND=ollama` / `BRAIN_POCKET_ALLOWLIST=micro` /
+  `ORDER_MANAGER_BRAIN_GATE_MODE=shadow` / `BRAIN_FAIL_POLICY=allow`
+  の safe canary を維持する。
+- aggressive/all-pocket profile は別 env を明示指定したときだけ有効化する。
 
 ### AddonLive 経路の strategy_tag 契約（2026-02-26）
 - `workers/common/addon_live.py` は `strategy_tag` を必須で解決し、
@@ -2099,6 +2105,23 @@
 - 意図:
   - `TP/SL` の薄い flow で、negative-edge entry と tail-loss hold を同時に減らす。
   - 共有 `order_manager` の後付け選別ではなく、strategy-local entry/exit で改善する。
+
+### 2026-03-09 local-v2 `MomentumBurst` reaccel easing / cooldown tightening
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `ops/env/quant-micro-momentumburst.env`
+- 変更:
+  - `MomentumBurst` の `reaccel` 条件を `ema_dist 2.5p -> 2.0p`, `DI gap 8.0 -> 6.0`, `roc5 0.03 -> 0.02` へ緩和する。
+  - dedicated worker の `MICRO_MULTI_STRATEGY_COOLDOWN_SEC` を `120 -> 90` へ短縮する。
+- 意図:
+  - `2026-03-09 15:3x JST` 時点の local-v2 実測では、`MicroLevelReactor` と `RangeFader` は勝っており、
+    `MomentumBurst` も shared sizing rebalance 後の直近2時間で正転していた。
+  - ここで shared micro gate を緩めると loser 側まで通しやすくなるため、
+    `MomentumBurst` だけを strategy-local に 1 本早く再突入できる形へ寄せる。
+- 非変更:
+  - `execution/order_manager.py` の shared preflight
+  - `ops/env/local-v2-stack.env` の shared micro gate / shared lot rebalance
+  - `MomentumBurst` の exit worker / hard stop policy
 
 ### 2026-03-09 local-v2 `TrendBreakout` tag aperture / `RangeFader` probability-floor alignment
 - `TrendBreakout` dedicated worker は `M1SCALP_ALLOW_REVERSION=0` を維持したまま、

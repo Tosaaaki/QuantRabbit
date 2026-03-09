@@ -29,9 +29,9 @@
   - 確認手段: ローカル `logs/*.db` + OANDA API、該当戦略 worker/position_manager 的ログ、必要に応じて直近チャート。
   - 判定: 市況が通常レンジ外・流動性悪化時は、作業は保留し `docs/TRADE_FINDINGS.md` と運用ログへその理由を残す。
 - 各タスク開始時は、着手前チェックとして `docs/AGENT_COLLAB_HUB.md` の「運用手順」を必ず読む。最低限 `sed -n '/^## 運用手順/,/^## /p' docs/AGENT_COLLAB_HUB.md` を実行し、現行手順を確認してから作業に入る。
-- LLM（Vertex）は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
-- Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す（default: disabled）。
-- Brain 有効化は `BRAIN_ENABLED=1` と Vertex 認証（`VERTEX_PROJECT_ID` / `VERTEX_LOCATION` 等）が必須。
+- LLM/Brain は **任意の Brainゲート** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
+- Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す。現行 local-v2 既定は `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES` で `ops/env/profiles/brain-ollama-safe.env` を合成する safe canary（micro-only / shadow / fail-open）を正とする。
+- Brain の aggressive/all-pocket 化は明示 opt-in とし、現行 safe canary は `BRAIN_ENABLED=1` と Ollama backend を前提にする。Vertex 認証は現行ローカル導線の必須条件ではない。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - **後付けの一律EXIT判定は作らない**。exit判断は各戦略ワーカー/専用 `exit_worker` のみが行う。`quant-strategy-control` は `entry/exit/global_lock` のガードのみで、全戦略に対する共通ロジックの事後的拒否/抑止を追加しない。
 - 各戦略は `entry_thesis` に「`entry_probability`」と「`entry_units_intent`」を必須で渡して、`order_manager` はここを受けるのみとする。`session_open` を含む `AddonLiveBroker` 経路でも、order 送出時にこの2値を確実に注入する。確率閾値・サイズ設計は戦略ローカルで行い、共通レイヤは強制的に戦略を選別しない（ガード・リスク系の拒否のみ）。
@@ -73,6 +73,7 @@
 
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
+- 2026-03-09 追記: local-v2 の Brain は `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を既定とし、manual restart / watchdog / launchd 復旧でも safe canary（micro-only / shadow / fail-open）を維持する。監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: `RangeFader` の dedicated env は
   `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`,
   `RANGEFADER_BASE_UNITS=12500` を現行運用値とし、
@@ -261,3 +262,4 @@ flowchart LR
 - 運用:
   - MCPに基づく根拠判断は必ず `docs/TRADE_FINDINGS.md` と監査ログに紐付ける。
   - MCP設定変更時はこの AGENTS に変更点を追記する（最小1行以上）。
+- 2026-03-09 追記: `MomentumBurst` の entry 数を増やす調整は、shared micro gate を緩めず strategy-local に限定する。現行運用値は `strategies/micro/momentum_burst.py` の `reaccel` 閾値緩和と `ops/env/quant-micro-momentumburst.env` の `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90` を正とし、サイズ配分は `ops/env/local-v2-stack.env` の shared `MICRO_MULTI_STRATEGY_UNITS_MULT` を優先する。

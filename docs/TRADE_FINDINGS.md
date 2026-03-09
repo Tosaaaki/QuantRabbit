@@ -9400,5 +9400,35 @@ Status:
     `orders.db` の `brain_shadow` / `brain_block` と `brain_state.db` の当日 `brain_decisions` はまだ未発火。
 
 - 次の確認点:
-  1. 反映後最初の micro preflight で `orders.db` に `brain_shadow` が出ること。
-  2. `brain_state.db` に 2026-03-09 JST の `brain_decisions` 行が再開すること。
+1. 反映後最初の micro preflight で `orders.db` に `brain_shadow` が出ること。
+2. `brain_state.db` に 2026-03-09 JST の `brain_decisions` 行が再開すること。
+
+## 2026-03-09 06:40 UTC / 2026-03-09 15:40 JST - `MomentumBurst` は shared sizing rebalance 後に正転したため、reaccel 条件だけを少し緩めて entry 数を戻す
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json` の最新 best bid/ask は `158.566 / 158.574`、spread は `0.8p`、stream latency は `352.8ms`。
+  - `logs/health_snapshot.json` は `generated_at=2026-03-09T06:19:55Z`, `data_lag_ms=860.9`, `decision_latency_ms=21.6`。
+  - `logs/oanda_open_positions_live_USD_JPY.json` は `long_units=0`, `short_units=0` で flat。
+
+- 実測:
+  - `logs/trades.db` 集計では、shared sizing rebalance 後の直近2時間で
+    `MicroLevelReactor 53 trades / +177.8 JPY / win_rate 73.6%`,
+    `RangeFader 20 trades / +28.94 JPY / win_rate 100%`,
+    `MomentumBurst 3 trades / +32.23 JPY / win_rate 66.7%`。
+  - `MomentumBurst` は 24h ではまだ `5 trades / -484.21 JPY` だが、7d では `36 trades / +1372.73 JPY / win_rate 80.6%`。
+  - よって loser を増やす shared gate 緩和ではなく、`MomentumBurst` の strategy-local reentry だけを少し増やすのが筋。
+
+- 対応:
+  - `strategies/micro/momentum_burst.py`
+    - `REACCEL_EMA_DIST_PIPS=2.0`
+    - `REACCEL_DI_GAP=6.0`
+    - `REACCEL_ROC5_MIN=0.02`
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90`
+  - `tests/strategies/test_momentum_burst.py`
+    - pullback 後の modest breakdown でも `OPEN_SHORT` が出る回帰ケースを追加。
+
+- 反映後の確認点:
+  1. `MomentumBurst` の `filled` が増えても shared micro gate の reject 理由が増えないこと。
+  2. `MomentumBurst` の 2h/24h PnL が再び負側へ大きく崩れないこと。
+  3. `MicroLevelReactor` / `RangeFader` の winner flow を食い潰さないこと。

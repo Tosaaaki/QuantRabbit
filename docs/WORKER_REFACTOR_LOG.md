@@ -13274,3 +13274,25 @@
     `... -> override=/Users/tossaki/App/QuantRabbit/ops/env/local-v2-stack.env -> extra=/Users/tossaki/App/QuantRabbit/ops/env/profiles/brain-ollama-safe.env`。
   - 同起動の effective env は `BRAIN_ENABLED=1`, `ORDER_MANAGER_BRAIN_GATE_ENABLED=1`,
     `BRAIN_OLLAMA_MODEL=qwen2.5:7b` を示した。
+
+## 2026-03-09 JST - `MomentumBurst` の reaccel 条件を strategy-local に緩め、dedicated cooldown を 90 秒へ短縮
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `tests/strategies/test_momentum_burst.py`
+
+- 背景:
+  - shared sizing rebalance 後の local-v2 実測では、`MomentumBurst` が直近2時間で `3 trades / +32.23 JPY` まで戻り、
+    `MicroLevelReactor` と `RangeFader` も winner を維持していた。
+  - ただし `MomentumBurst` は 24h だと件数がまだ少なく、`shared gate` を緩めるより
+    strategy-local の再加速再突入を 1 本早める方が安全だった。
+
+- 変更:
+  - `reaccel` の閾値を `ema_dist 2.5p -> 2.0p`, `DI gap 8.0 -> 6.0`, `roc5 0.03 -> 0.02` へ緩和。
+  - dedicated `MICRO_MULTI_STRATEGY_COOLDOWN_SEC` を `120 -> 90` に短縮。
+  - 回帰テストに「pullback 後の modest breakdown でも `OPEN_SHORT` が出る」ケースを追加。
+
+- 意図:
+  - 共有 preflight や shared micro gate を触らず、
+    `MomentumBurst` だけの entry cadence を上げて trend day の取り逃しを減らす。
