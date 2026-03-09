@@ -8,6 +8,31 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 winner cadence recovery / `MomentumBurst` reaccel audit（2026-03-09）
+- 背景:
+  - UTC `12:09-12:10` / JST `21:09-21:10` の OANDA live は
+    `USD/JPY bid=158.445 / ask=158.458 / spread=1.3p / tradeable=true / pricing=310.2ms(200)`、
+    local tick spread は `0.8p`、`ATR14(M5)=6.114p`, `range_60m=49.4p` で通常帯。
+  - `health_snapshot.json` は `data_lag_ms=1037.2`, `decision_latency_ms=14.0`, `trades_count_24h=329`。
+  - 24h `trades.db` は `329 trades / win_rate=55.9% / PF=0.685 / net_jpy=-999.49`。
+    winner は `MicroLevelReactor +80.65 JPY`, `RangeFader +54.30 JPY`、
+    loser は `MomentumBurst -486.38 JPY` が主因。
+  - `analyze_entry_precision.py --limit 200` は
+    `cost_vs_mid mean=0.390p`, `slip_vs_side mean=-0.009p`, `spread mean=0.800p`,
+    `latency_submit p50=196.7ms` で、execution cost は現時点の主因ではない。
+- 実装:
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_COOLDOWN_SEC=24.0 -> 20.0`
+  - `workers/micro_runtime/worker.py`
+    - `MomentumBurst` の reaccel signal だけ `entry_thesis["reaccel"]=true` を記録する helper を追加し、
+      cooldown 短縮の対象と同じシグナルを live order / trade 監査でも抽出可能にした。
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+    - `MomentumBurst` の reaccel だけが `entry_thesis` 監査フラグ対象になる回帰を追加。
+- 意図:
+  - まず勝っている `RangeFader` の cadence を増やし、shared gate を触らずに entry 数を増やす。
+  - `MomentumBurst` は loser のまま size や global gate を緩めず、
+    reaccel だけを追跡可能にして次の PDCA を strategy-local で回す。
+
 ### local-v2 micro chop tilt / fine-profit rebalance（2026-03-09）
 - 背景:
   - `pdca_profitability_report.py` の `2026-03-09 18:30 JST` 集計では
@@ -186,8 +211,16 @@
 - 現行 local-v2 の既定導線は `ops/env/local-v2-stack.env` の `LOCAL_V2_EXTRA_ENV_FILES` で
   `ops/env/profiles/brain-ollama-safe.env` を合成し、
   `BRAIN_BACKEND=ollama` / `BRAIN_POCKET_ALLOWLIST=micro` /
-  `ORDER_MANAGER_BRAIN_GATE_MODE=shadow` / `BRAIN_FAIL_POLICY=allow`
+  `ORDER_MANAGER_BRAIN_GATE_MODE=apply` / `BRAIN_FAIL_POLICY=allow`
   の safe canary を維持する。
+- Brain context は `entry_thesis` / `meta` に spread・ATR・regime が載っていない場合でも、
+  ローカル tick と `factor_cache` の M1 snapshot を補完してから LLM に渡す。
+- Brain cache は `strategy_tag+pocket` 固定ではなく、`side` と setup fingerprint
+  （probability / confidence / spread / ATR / recent_outcome bucket）単位で扱う。
+- prompt/runtime autotune は safe profile でも有効だが、preflight timeout と切り離した
+  background timeout を使い、`no_response` で死ににくくする。
+- shared Ollama runtime では background autotune が live preflight 実行中/直後を
+  `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC` で退避し、fail-open を live 側で起こしにくくする。
 - aggressive/all-pocket profile は別 env を明示指定したときだけ有効化する。
 
 ### AddonLive 経路の strategy_tag 契約（2026-02-26）

@@ -120,6 +120,15 @@ def test_strategy_cooldown_disabled_by_default(monkeypatch):
     assert worker._strategy_cooldown_active("MicroLevelReactor", 110.0) is False
 
 
+def test_momentumburst_entry_thesis_marks_only_reaccel_signals() -> None:
+    reaccel_signal = {"metadata": {"momentum_burst": {"reaccel": True}}}
+    normal_signal = {"metadata": {"momentum_burst": {"reaccel": False}}}
+
+    assert worker._momentumburst_entry_thesis_reaccel("MomentumBurst", reaccel_signal) is True
+    assert worker._momentumburst_entry_thesis_reaccel("MomentumBurst", normal_signal) is False
+    assert worker._momentumburst_entry_thesis_reaccel("MicroLevelReactor", reaccel_signal) is False
+
+
 def test_mlr_strict_range_gate_blocks_without_range_context(monkeypatch):
     monkeypatch.setattr(worker.config, "MLR_STRICT_RANGE_GATE", True)
     monkeypatch.setattr(worker.config, "MLR_MIN_RANGE_SCORE", 0.62)

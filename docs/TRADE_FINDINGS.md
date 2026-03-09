@@ -23,6 +23,57 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 12:15 UTC / 2026-03-09 21:15 JST - local-v2: precision は許容帯、winner cadence を増やすため `RangeFader` cooldown を短縮し、`MomentumBurst` reaccel を監査可能化
+
+Period:
+- 調査/実装: UTC `12:03-12:15` / JST `21:03-21:15`
+- 対象（実測）:
+  - OANDA `pricing`, `summary`, `openTrades`
+  - `logs/replay/USD_JPY/USD_JPY_ticks_20260309.jsonl`
+  - `logs/replay/USD_JPY/USD_JPY_M5_20260309.jsonl`
+  - `logs/health_snapshot.json`
+  - `logs/orders.db`, `logs/trades.db`
+  - `python3 scripts/analyze_entry_precision.py --db logs/orders.db --limit 200`
+
+Fact:
+- 市況確認（UTC `12:09-12:10` / JST `21:09-21:10`）:
+  - OANDA live `bid=158.445 / ask=158.458 / spread=1.3p / tradeable=true / pricing=310.2ms(200)`
+  - local tick spread は直近 `0.8p`
+  - `M5 bars=60`, `range=49.4p`, `ATR14=6.114p`
+  - `health_snapshot.json`: `data_lag_ms=1037.2`, `decision_latency_ms=14.0`, `trades_count_24h=329`
+- 24h 損益:
+  - `329 trades / win_rate=55.9% / PF=0.685 / expectancy=-3.04 JPY / net_jpy=-999.49`
+  - strategy別:
+    - `MicroLevelReactor: 218 trades / +80.65 JPY / avg +0.37 JPY`
+    - `RangeFader: 58 trades / +54.30 JPY / avg +0.94 JPY`
+    - `MomentumBurst: 22 trades / -486.38 JPY / avg -22.11 JPY`
+- execution quality（`analyze_entry_precision.py`）:
+  - `cost_vs_mid_pips mean=0.390`
+  - `slip_vs_side_pips mean=-0.009`
+  - `spread_pips mean=0.800`
+  - `latency_submit p50=196.7ms`
+
+Failure Cause:
+- 直近の主因は execution cost ではなく、winner 側の cadence 不足と loser 側の寄与が重い strategy mix。
+- `RangeFader` は勝っているのに回転がまだ足りず、`MomentumBurst` は reaccel fill を監査しにくく、改善後の頻度/精度を `entry_thesis` から直接追えなかった。
+
+Improvement:
+- `ops/env/quant-scalp-rangefader.env`
+  - `RANGEFADER_COOLDOWN_SEC=24.0 -> 20.0`
+- `workers/micro_runtime/worker.py`
+  - `MomentumBurst` の reaccel signal だけ `entry_thesis["reaccel"]=true` を記録し、
+    `orders.db` / `trades.db` から cadence と quality を直接追跡可能にした
+- shared order-manager / 共通 gate / 共通 sizing には追加の一律判定を入れない
+
+Verification:
+- `pytest -q tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py`
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-scalp-rangefader,quant-micro-momentumburst,quant-micro-levelreactor,quant-micro-trendretest,quant-micro-vwapbound`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-scalp-rangefader,quant-micro-momentumburst,quant-micro-levelreactor,quant-micro-trendretest,quant-micro-vwapbound`
+- `sqlite3 logs/orders.db "SELECT ts,status,json_extract(request_json,'$.entry_thesis.strategy_tag'),json_extract(request_json,'$.entry_thesis.reaccel') FROM orders WHERE ts >= datetime('now','-2 hours') AND json_extract(request_json,'$.entry_thesis.strategy_tag') LIKE 'MomentumBurst%' ORDER BY ts DESC LIMIT 20;"`
+
+Status:
+- done
+
 ## 2026-03-09 12:17 UTC / 2026-03-09 21:17 JST - local-v2: `RangeFader` の cadence を tag+side 単位へ寄せ、reject に cooldown を消費しないよう修正
 
 Period:
@@ -10423,3 +10474,42 @@ Status:
     の方が期待値改善に寄ると判断した。
   - 一方で `MomentumBurst` / `MicroTrendRetest` はまだ post-profit-profile の
     sample が薄いため、Brain 適用対象から一旦外す。
+
+## 2026-03-09 21:22 JST - local LLM が market/execution 文脈を読めておらず cache も粗すぎたため、safe canary の入力と再利用粒度を修正
+
+- 市況確認:
+  - `logs/tick_cache.json` 直近300 tick: USD/JPY `158.414` 付近、平均 spread `0.8 pips`、3分レンジ `3.6 pips`。
+  - `logs/factor_cache.json` の M1: `atr_pips=2.53`, `range_score=0.331`, `regime=Range`。
+  - `logs/orders.db` 直近1h: `filled=272`, `rejected=2`, `brain_shadow/brain_apply` 系以外の API 崩れは見えず続行可能。
+
+- 問題:
+  - `logs/brain_state.db` の直近 `context_json` では `spread_pips` / `atr_pips` / `ticks` が欠落し、
+    Brain は実質 `entry_probability + recent_outcome` だけで判断していた。
+  - `brain_runtime_param_autotune_profit_latest.json` も
+    `market_summary.spread_pips.count=0`, `atr_pips.count=0` で、
+    local LLM の runtime tuning が市場条件を学習できていなかった。
+  - `workers/common/brain.py` の cache key は `(strategy_tag, pocket)` 固定だったため、
+    同一 strategy 内の side 違い・確率帯違いでも 15 秒は同じ判断を再利用し得た。
+  - 同 report は `error=no_response` を返しており、safe profile の async autotune timeout も短かった。
+
+- 対応:
+  - Brain context へローカル tick (`bid/ask/mid/spread_pips/age_sec`) と
+    `factor_cache` の M1 snapshot (`atr_pips`, `range_score`, `adx`, `rsi`, `regime`) を
+    fallback 注入する。
+  - Brain cache を `strategy+pocket` 固定から、
+    `side + probability/confidence/spread/ATR/recent_outcome bucket` を含む
+    setup fingerprint 単位へ変更する。
+  - shared Ollama runtime では background prompt/runtime autotune が
+    live preflight 実行中/直後を `live_preflight_inflight` /
+    `live_preflight_cooldown` として退避し、safe canary の `no_llm` を
+    自己衝突で増やさないようにする。
+  - safe profile に `BRAIN_PROMPT_AUTO_TUNE_TIMEOUT_SEC=12`,
+    `BRAIN_RUNTIME_PARAM_AUTO_TUNE_TIMEOUT_SEC=12`,
+    `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC=30` を追加し、
+    preflight latency を増やさずに background autotune の `no_response` を減らす。
+
+- 検証方針:
+  - `tests/workers/test_brain_ollama_backend.py` に
+    `side 別 cache 分離` と `live tick/M1 factor fallback` の unit test を追加する。
+  - 反映後は `brain_state.db.context_json` の `spread_pips` / `atr_pips` / `ticks` 充足率と、
+    `brain_*_autotune_profit_latest.json` の `market_summary` 非ゼロ化を監査する。

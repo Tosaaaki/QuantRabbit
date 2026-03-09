@@ -1217,17 +1217,20 @@ def _momentumburst_reaccel_signal(signal: Optional[Dict[str, object]]) -> bool:
     return False
 
 
+def _momentumburst_entry_thesis_reaccel(
+    strategy_name: str,
+    signal: Optional[Dict[str, object]],
+) -> bool:
+    return strategy_name == MomentumBurstMicro.name and _momentumburst_reaccel_signal(signal)
+
+
 def _strategy_cooldown_active(
     strategy_name: str,
     now_ts: float,
     signal: Optional[Dict[str, object]] = None,
 ) -> bool:
     cooldown = max(0.0, float(getattr(config, "STRATEGY_COOLDOWN_SEC", 0.0)))
-    if (
-        cooldown > 0.0
-        and strategy_name == MomentumBurstMicro.name
-        and _momentumburst_reaccel_signal(signal)
-    ):
+    if cooldown > 0.0 and _momentumburst_entry_thesis_reaccel(strategy_name, signal):
         reaccel_cooldown = max(
             0.0,
             float(getattr(config, "MOMENTUMBURST_REACCEL_COOLDOWN_SEC", 0.0)),
@@ -1911,6 +1914,8 @@ async def micro_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
+            if _momentumburst_entry_thesis_reaccel(strategy_name, signal):
+                entry_thesis["reaccel"] = True
             if strategy_tag != signal_tag:
                 entry_thesis["strategy_tag_raw"] = signal_tag
             if base_tag == "MicroRangeBreak":

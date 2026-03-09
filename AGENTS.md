@@ -80,6 +80,7 @@
   `RANGEFADER_BASE_UNITS=14000` を現行運用値とし、
   winner flow の通過回復と軽い sizing 回復を行う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-09 追記: winner cadence 回復では `RANGEFADER_COOLDOWN_SEC=20.0` を現行運用値とし、`MomentumBurst` の reaccel は `entry_thesis.reaccel=true` で order/trade 監査へ露出する。shared gate / shared sizing は追加で緩めない。監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-09 追記: micro sizing は shared override を正とし、
   `MomentumBurst:1.05`, `MicroLevelReactor:1.35` へ再配分した。
   あわせて `quant-micro-momentumburst` は `STRATEGY_COOLDOWN_SEC=120` とし、

@@ -5,6 +5,27 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`RangeFader` cadence を追加で戻し、`MomentumBurst` reaccel を order/trade 監査へ露出
+
+- 対象:
+  - `ops/env/quant-scalp-rangefader.env`
+  - `workers/micro_runtime/worker.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `ops/env/quant-scalp-rangefader.env`
+    - `RANGEFADER_COOLDOWN_SEC=20.0` を現行運用値へ更新。
+  - `workers/micro_runtime/worker.py`
+    - `MomentumBurst` の reaccel signal 判定を helper 化し、
+      shorter cooldown と同じ条件で `entry_thesis["reaccel"]` を付与する。
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+    - `MomentumBurst` の reaccel だけが entry_thesis 監査フラグ対象になる回帰を追加。
+- 意図:
+  - 24h 実測では `RangeFader +54.30 JPY` が winner、`MomentumBurst -486.38 JPY` が loser だった。
+  - そのため shared gate を緩めず、winner 側の cadence だけを増やし、
+    `MomentumBurst` は reaccel の fill/quality を可視化して次の strategy-local PDCA に回す。
+
 ### 2026-03-09（追記）`RangeFader` cooldown を `signal_tag + side` 単位へ分解し、reject/no-fill では cadence を消費しない
 
 - 対象:
@@ -13936,3 +13957,38 @@
     効いている strategy だけを apply に昇格する。
   - 他の micro strategy は sample が足りるまで Brain 対象から外し、
     `LLM が勝ちに寄る箇所だけ live 反映` の状態にする。
+
+## 2026-03-09 21:22 JST - Brain context を live market 補完し、cache を setup fingerprint 単位へ細粒度化
+
+- 対象:
+  - `workers/common/brain.py`
+  - `tests/workers/test_brain_ollama_backend.py`
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+
+- 変更:
+  - `brain.py` は `entry_thesis/meta` に spread/ATR/regime が無いとき、
+    `tick_window` の最新 tick と `factor_cache` の M1 snapshot を fallback 注入してから
+    prompt / decision log / autotune summary を組み立てるようにした。
+  - Brain cache key を `(strategy_tag, pocket)` から
+    `side + setup fingerprint(probability/confidence/spread/ATR/recent_outcome bucket)`
+    を含む形へ変更し、反対 side や別 quality 帯で同じ 15 秒 cache を再利用しないようにした。
+  - shared Ollama runtime では background prompt/runtime autotune が
+    live preflight 実行中/直後を `live_preflight_inflight` /
+    `live_preflight_cooldown` で skip するようにし、
+    safe canary が自分の autotune で `no_llm` を増やさないようにした。
+  - safe env に
+    `BRAIN_PROMPT_AUTO_TUNE_TIMEOUT_SEC=12`,
+    `BRAIN_RUNTIME_PARAM_AUTO_TUNE_TIMEOUT_SEC=12`,
+    `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC=30`
+    を追加し、background autotune の `no_response` を減らす。
+  - unit test で
+    `side 別 cache 分離` と `live tick/M1 factor fallback` を固定した。
+
+- 意図:
+  - local LLM を `recent_outcome` だけ見る薄い gate から、
+    実際の spread / ATR / regime / setup 変化を読んだ gate へ戻す。
+  - safe canary の preflight latency を増やさず、
+    async autotune と cache 再利用の質だけを改善する。
