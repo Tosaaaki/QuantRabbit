@@ -1,8 +1,8 @@
 {
-  "as_of": "2026-03-09T01:31:17+00:00",
+  "as_of": "2026-03-09T01:37:11+00:00",
   "lookback_days": 180,
-  "processed_new_rows": 0,
-  "patterns_total": 2647,
+  "processed_new_rows": 28,
+  "patterns_total": 2650,
   "min_samples_soft": 30,
   "min_samples_block": 120,
   "action_counts": {
@@ -10,7 +10,7 @@
     "reduce": 16,
     "boost": 23,
     "block": 3,
-    "learn_only": 2599
+    "learn_only": 2602
   },
   "top_edges": [
     {
@@ -857,17 +857,17 @@
     }
   ],
   "deep_analysis": {
-    "rows_total": 16470,
-    "patterns_scored": 2647,
+    "rows_total": 16498,
+    "patterns_scored": 2650,
     "drift_rows": 2,
     "cluster_count": 8,
     "quality_counts": {
-      "avoid": 8,
+      "avoid": 7,
       "candidate": 7,
-      "learn_only": 2602,
+      "learn_only": 2605,
       "neutral": 10,
       "robust": 15,
-      "weak": 5
+      "weak": 6
     }
   },
   "patterns": [
@@ -4252,6 +4252,26 @@
       "reason": "insufficient_samples"
     },
     {
+      "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_lower_tr_dn_de5c191a",
+      "strategy_tag": "MicroLevelReactor",
+      "pocket": "micro",
+      "direction": "long",
+      "trades": 11,
+      "wins": 3,
+      "losses": 7,
+      "win_rate": 0.2727,
+      "avg_pips": 0.9636,
+      "total_pips": 10.6,
+      "gross_profit": 27.8,
+      "gross_loss": 17.2,
+      "profit_factor": 1.6163,
+      "avg_hold_sec": 393.85,
+      "last_close_time": "2026-03-09T01:35:22.997679+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
       "pattern_id": "st:micropullbackema|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_trend_dn_w_lower_tr_u_83a4cfc6",
       "strategy_tag": "MicroPullbackEMA",
       "pocket": "micro",
@@ -5812,6 +5832,26 @@
       "reason": "insufficient_samples"
     },
     {
+      "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_upper_tr_dn_bd228589",
+      "strategy_tag": "MicroLevelReactor",
+      "pocket": "micro",
+      "direction": "long",
+      "trades": 9,
+      "wins": 0,
+      "losses": 9,
+      "win_rate": 0.0,
+      "avg_pips": -1.4778,
+      "total_pips": -13.3,
+      "gross_profit": 0.0,
+      "gross_loss": 13.3,
+      "profit_factor": 0.0,
+      "avg_hold_sec": 20.41,
+      "last_close_time": "2026-03-09T01:34:26.033888+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
       "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_upper_tr_up_3455ad98",
       "strategy_tag": "MicroLevelReactor",
       "pocket": "micro",
@@ -7107,6 +7147,26 @@
       "profit_factor": 4.3901,
       "avg_hold_sec": 4432.88,
       "last_close_time": "2026-03-06T11:35:10.968819+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
+      "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_spin_dn_w_upper_tr_dn_24cd7284",
+      "strategy_tag": "MicroLevelReactor",
+      "pocket": "micro",
+      "direction": "long",
+      "trades": 8,
+      "wins": 0,
+      "losses": 7,
+      "win_rate": 0.0,
+      "avg_pips": -0.475,
+      "total_pips": -3.8,
+      "gross_profit": 0.0,
+      "gross_loss": 3.8,
+      "profit_factor": 0.0,
+      "avg_hold_sec": 32.22,
+      "last_close_time": "2026-03-09T01:36:37.341096+00:00",
       "action": "learn_only",
       "lot_multiplier": 1.0,
       "reason": "insufficient_samples"
@@ -14312,21 +14372,21 @@
       "reason": "insufficient_samples"
     },
     {
-      "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_lower_tr_dn_de5c191a",
+      "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_trend_up_w_upper_tr_d_cd0aee7a",
       "strategy_tag": "MicroLevelReactor",
       "pocket": "micro",
       "direction": "long",
       "trades": 3,
-      "wins": 3,
-      "losses": 0,
-      "win_rate": 1.0,
-      "avg_pips": 9.2667,
-      "total_pips": 27.8,
-      "gross_profit": 27.8,
-      "gross_loss": 0.0,
-      "profit_factor": 999.0,
-      "avg_hold_sec": 1386.03,
-      "last_close_time": "2026-03-05T17:30:57.379778+00:00",
+      "wins": 0,
+      "losses": 3,
+      "win_rate": 0.0,
+      "avg_pips": -0.7333,
+      "total_pips": -2.2,
+      "gross_profit": 0.0,
+      "gross_loss": 2.2,
+      "profit_factor": 0.0,
+      "avg_hold_sec": 20.12,
+      "last_close_time": "2026-03-09T01:37:10.200067+00:00",
       "action": "learn_only",
       "lot_multiplier": 1.0,
       "reason": "insufficient_samples"
