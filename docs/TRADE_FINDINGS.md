@@ -10752,3 +10752,45 @@ Status:
 - 意図:
   - local LLM が不安定な瞬間に「さらに待つ」より、safe canary の fail-open 原則で timing を優先する。
   - entry 頻度は落とさず、LLM が読める局面では判断を使い、読めない瞬間だけ遅延を切り離す。
+
+## 2026-03-09 22:45 JST - local-v2: `TickImbalance` / `WickReversalBlend` 停止原因は `stage_tracker` の naive/aware UTC 混在
+
+- 市況確認:
+  - OANDA `pricing(USD_JPY)` は `2026-03-09 13:37:59Z` 時点で
+    `bid=158.236 / ask=158.244`、spread 約 `0.8 pips`、`elapsed_ms=227`。
+  - OANDA `candles(USD_JPY, M5, count=20)` からの直近 complete bar 基準では
+    `ATR14 ≒ 7.879 pips`、直近 1h range `41.6 pips`。
+  - `logs/health_snapshot.json` では直近 24h `trades_count_24h=370`、
+    `data_lag_ms≈315`, `decision_latency_ms≈29` で、相場/導線とも作業継続可能。
+
+- 実測:
+  - `scripts/local_v2_stack.sh status --profile trade_all --env ops/env/local-v2-stack.env` で、
+    明確に止まっていた entry worker は
+    `quant-scalp-tick-imbalance` と `quant-scalp-wick-reversal-blend` の 2 本だけ。
+  - 両ログ末尾は
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`
+    で、`execution/stage_tracker.py:is_blocked()` の
+    `cooldown_until - current` が crash 点だった。
+  - 24h 損益寄与は
+    `MicroLevelReactor: 237 trades / PF 1.338 / +97.4 pips`,
+    `RangeFader: 79 / PF 1.182 / +14.7 pips`,
+    `MomentumBurst: 22 / PF 0.807 / -7.3 pips`,
+    `TickImbalance: 1 / -8.0 pips`。
+    停止 2 本をここで増量する根拠は無く、まず「停止解除」が優先。
+  - 7d では `MomentumBurst` は `53 trades / PF 2.797 / +110.5 pips` と戻り余地があり、
+    一方 `M1Scalper-M1` と `scalp_ping_5s_b_live` は依然 loser。
+    「全部総動員」は、loser widening ではなく crash recovery + winner 維持で進めるべき。
+
+- 対応:
+  - `execution/stage_tracker.py`
+    の public naive UTC contract は維持しつつ、
+    `ensure_cooldown()` / `is_blocked()` では `_coerce_utc()` で再正規化してから比較/減算するよう修正。
+  - `tests/test_stage_tracker.py` に
+    naive cooldown public value でも `is_blocked()` / `ensure_cooldown()` が動く回帰を固定。
+
+- 検証:
+  - `pytest -q tests/test_stage_tracker.py`
+  - 反映後に
+    `scripts/local_v2_stack.sh restart --profile trade_all --env ops/env/local-v2-stack.env`
+    を実行し、
+    `quant-scalp-tick-imbalance` / `quant-scalp-wick-reversal-blend` が

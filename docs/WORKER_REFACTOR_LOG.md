@@ -14118,3 +14118,29 @@
 - 意図:
   - Brain を切るのではなく、不安定時の 4 秒 stall だけを局所的に外す。
   - entry 頻度を落とさず、LLM が返る局面の size/quality 改善は残す。
+
+## 2026-03-09 22:45 JST - `stage_tracker` の naive/aware UTC 混在で停止していた precision worker を復帰可能化
+
+- 対象:
+  - `execution/stage_tracker.py`
+  - `tests/test_stage_tracker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 実測:
+  - `scripts/local_v2_stack.sh status --profile trade_all --env ops/env/local-v2-stack.env` では、
+    `quant-scalp-tick-imbalance` と `quant-scalp-wick-reversal-blend` だけが
+    `stale_pid_file` で停止していた。
+  - 直近ログは両方とも
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`
+    で落ちており、例外位置は `execution/stage_tracker.py:is_blocked()` だった。
+  - 同時点の 24h 実績は
+    `MicroLevelReactor 237 trades / PF 1.338 / +97.4 pips`,
+    `RangeFader 79 trades / PF 1.182 / +14.7 pips`,
+    `MomentumBurst 22 trades / PF 0.807 / -7.3 pips`,
+    `TickImbalance 1 trade / -8.0 pips` で、
+    停止 2 本を「サイズ増で押す」根拠はまだ薄く、
+    まず crash 復帰を優先すべき状態だった。
+
+- 変更:
+  - `get_cooldown()` の public contract は naive UTC のまま維持しつつ、
