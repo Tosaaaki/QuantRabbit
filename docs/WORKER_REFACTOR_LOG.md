@@ -12997,3 +12997,44 @@
     再発した loser pattern を抑える。
   - `dynamic_alloc` は winner routing のまま維持しつつ、
     recent regime loser を打ち消す boost だけ止める。
+
+## 2026-03-09 JST - local-v2 override で loser boost を封じ、winner へ配分を寄せる
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+
+- 背景:
+  - 7d 実績では `MomentumBurst` が `33 trades / +1340.50 JPY / PF 2.53` で唯一の明確な winner。
+  - 一方 `scalp_ping_5s_flow_live` は `-7131.11 JPY / PF 0.295`、
+    `M1Scalper-M1` は `-6172.49 JPY / PF 0.555`、
+    `scalp_ping_5s_b_live` は `-185.40 JPY / PF 0.416` と loser が gross loss を食っていた。
+  - `scalp_ping_5s_b_live` は local override 側で `ENTRY_LEADING_PROFILE_REJECT_BELOW` を強めていたが、
+    `ENTRY_LEADING_PROFILE_ENABLED=1` 不在で実効していなかった。
+
+- 変更:
+  - `scalp_ping_5s_b_live`
+    - `ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `REJECT_BELOW=0.88`, `REJECT_BELOW_SHORT=0.92`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+    - `LOOKAHEAD_EDGE_MIN_PIPS=0.55`, `LOOKAHEAD_UNITS_MAX_MULT=1.00`
+    - `BASE_ENTRY_UNITS=10`
+  - `scalp_ping_5s_flow_live`
+    - `REJECT_BELOW=0.72`, `REJECT_BELOW_SHORT=0.80`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+    - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.30`, `LOOKAHEAD_UNITS_MAX_MULT=1.00`
+    - `BASE_ENTRY_UNITS=36`
+  - `M1Scalper-M1`
+    - `BASE_UNITS=400`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.58`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+    - `DYN_ALLOC_MULT_MAX=1.05`
+  - `micro`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT` を
+      `MomentumBurst:1.35, MicroTrendRetest:1.15` へ寄せ、
+      `MicroLevelReactor / MicroRangeBreak / MicroPullbackEMA / MicroCompressionRevert / MicroVWAPRevert`
+      は `0.65 / 0.50 / 0.40 / 0.35 / 0.20` まで下げた。
+
+- 意図:
+  - 「勝っている worker にだけ資本を寄せる」を local-v2 override で明示し、
+    loser 側の entry boost を封じる。
+  - shared `order_manager` や共通 topology は変えず、worker-local の entry sizing だけを補正する。

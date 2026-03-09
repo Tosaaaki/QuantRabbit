@@ -1897,6 +1897,37 @@
   - `entry_thesis` には `dynamic_alloc_clamped_by_history` を残し、
     なぜ size を削ったかを監査可能にする。
 
+### 2026-03-09 local-v2 winner concentration override
+- 対象:
+  - `ops/env/local-v2-stack.env`
+- 変更:
+  - `scalp_ping_5s_b_live`
+    - `ENTRY_LEADING_PROFILE_ENABLED=1`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+    - `LOOKAHEAD_UNITS_MAX_MULT=1.00`
+    - `BASE_ENTRY_UNITS=10`
+  - `scalp_ping_5s_flow_live`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+    - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.30`
+    - `LOOKAHEAD_UNITS_MAX_MULT=1.00`
+    - `BASE_ENTRY_UNITS=36`
+  - `M1Scalper-M1`
+    - `BASE_UNITS=400`
+    - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.58`
+    - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`
+    - `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+    - `DYN_ALLOC_MULT_MAX=1.05`
+  - `micro`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT` を
+      `MomentumBurst:1.35, MicroTrendRetest:1.15` に引き上げ、
+      そのほかの主要 loser micro は `0.65-0.20` へ減衰。
+- 意図:
+  - `dynamic_alloc` の trim-only を前提に、loser 側で残っていた
+    `leading_profile/lookahead` 増量余地を local override で閉じる。
+  - 期待値のある worker に相対配分を寄せ、gross loss の増加ペースを鈍らせる。
+
 ### 2026-03-07 `MicroLevelReactor` preserve-intent floor override
 - 対象:
   - `ops/env/quant-micro-levelreactor.env`

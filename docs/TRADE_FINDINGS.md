@@ -8936,3 +8936,60 @@ Status:
   1. `scalp_extrema_reversal_live` が `range_score < 0.40` かつ `against_gap_pips > 1.0` のとき `filled` ではなく no-entry になること。
   2. 同 worker が同時多発の short/long を出さず、`MAX_OPEN_TRADES=1` と `COOLDOWN_SEC=120` で 1 本ずつ処理されること。
   3. `MomentumBurst` の `entry_thesis.dynamic_alloc_clamped_by_history` が recent loser regime で記録され、units が以前より縮小すること。
+
+## 2026-03-09 18:58 JST - 利益最大化の観点では「止血だけ」では足りない。winner 集中のため local-v2 override を追加
+
+- 直近実績（`logs/trades.db` 7d/30d 集計）:
+  - winner は実質 `MomentumBurst` のみ:
+    - 7d `33 trades / +1340.50 JPY / PF 2.53 / win_rate 81.8%`
+  - loser が損益を強く食っている:
+    - `scalp_ping_5s_flow_live`: 7d `-7131.11 JPY / PF 0.295`
+    - `M1Scalper-M1`: 7d `-6172.49 JPY / PF 0.555`
+    - `scalp_ping_5s_b_live`: 7d `-185.40 JPY / PF 0.416`
+  - `MomentumBurst` は直近2敗があっても 7d/30d とも winner を維持しているため、
+    利益最大化の次手は「loser を薄くし、winner にだけ厚く寄せる」こと。
+
+- 事実:
+  - `local-v2-stack.env` では `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_REJECT_BELOW` を上げていたが、
+    `SCALP_PING_5S_B_ENTRY_LEADING_PROFILE_ENABLED=1` が無く、閾値強化が実質未適用だった。
+  - `scalp_ping_5s_flow_live` は leading profile 有効でも threshold がまだ低く、
+    `BASE_ENTRY_UNITS=80` が loser PF と釣り合っていなかった。
+  - `M1Scalper-M1` は long-only 化後も 7d `-6172 JPY` で、
+    `BASE_UNITS=1200` と `DYN_ALLOC_MULT_MAX=1.75` がまだ強すぎる。
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `scalp_ping_5s_b_live`
+      - `ENTRY_LEADING_PROFILE_ENABLED=1`
+      - `REJECT_BELOW=0.88`, `REJECT_BELOW_SHORT=0.92`
+      - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+      - `MAX_ACTIVE_TRADES=1`, `MAX_PER_DIRECTION=1`
+      - `BASE_ENTRY_UNITS=10`
+      - `LOOKAHEAD_EDGE_MIN_PIPS=0.55`
+      - `LOOKAHEAD_UNITS_MAX_MULT=1.00`
+    - `scalp_ping_5s_flow_live`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.72`, `...SHORT=0.80`
+      - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+      - `BASE_ENTRY_UNITS=36`
+      - `LOOKAHEAD_EDGE_HARD_REJECT_PIPS=0.30`
+      - `LOOKAHEAD_UNITS_MAX_MULT=1.00`
+    - `M1Scalper-M1`
+      - `BASE_UNITS=400`
+      - `ENTRY_LEADING_PROFILE_REJECT_BELOW=0.58`
+      - `ENTRY_LEADING_PROFILE_BOOST_MAX=0.00`, `ENTRY_LEADING_PROFILE_UNITS_MAX_MULT=0.90`
+      - `DYN_ALLOC_MULT_MAX=1.05`
+    - `micro`
+      - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.35,MicroTrendRetest:1.15,...loser strategies downweighted...`
+      - `MomentumBurst` と `MicroTrendRetest-short` を相対増量し、
+        `MicroLevelReactor / MicroRangeBreak / MicroPullbackEMA / MicroCompressionRevert / MicroVWAPRevert` を明確に減衰
+
+- 判断:
+  - 「爆速で増やす」ための実務上の意味は、回転を上げることではなく、
+    gross profit を作る winner へロットを寄せ、gross loss を作る loser の回転とサイズを下げること。
+  - 今回は stop ではなく `override` で厚み配分を寄せ直し、
+    loser 側の `leading_profile/lookahead` 増量も封じた。
+
+- 再検証条件:
+  1. 24h で `scalp_ping_5s_flow_live` と `M1Scalper-M1` の gross loss 増加ペースが鈍ること。
+  2. `scalp_ping_5s_b_live` の 約定数が明確に減り、`ENTRY_LEADING_PROFILE` が reject/scale として効くこと。
+  3. `MomentumBurst` の units が micro 内相対でやや厚くなりつつ、`PF>1` を維持すること。
