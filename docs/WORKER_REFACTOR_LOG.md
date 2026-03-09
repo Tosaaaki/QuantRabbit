@@ -13849,3 +13849,27 @@
   - readiness:
     `python3 scripts/prepare_local_brain_canary.py --warmup`
     -> `market_ready=true`, `quality_gate_ok=true`, `profile_safe=true`, `enable_recommended=true`
+
+## 2026-03-09 20:27 JST - safe Brain lane を dedicated profit profile に切り替え
+
+- 対象:
+  - `config/brain_prompt_profile_profit_micro.json`
+  - `config/brain_runtime_param_profile_profit_micro.json`
+  - `ops/env/profiles/brain-ollama-safe.env`
+
+- 変更:
+  - safe Brain env は generic `config/brain_*profile.json` ではなく、
+    dedicated `profit_micro` profile / report path を使うようにした。
+  - runtime profile は
+    `outcome_min_trades=4`,
+    `min_guard_samples=18`,
+    `outcome_negative_reduce_scale=0.62`
+    を初期値に持ち、micro-only sample density でも recent loser cluster に早く反応する。
+  - prompt profile は recent loser を first-class signal とし、
+    `MomentumBurst-open_short` と `MicroTrendRetest-short` の loser cluster を
+    full `ALLOW` しにくい初期ルールを持つ。
+
+- 意図:
+  - `2026-03-05` の generic throughput profile に残っていた
+    `outcome_min_trades=12` が profit guard の立ち上がりを遅らせていたため、
+    safe canary 自体を profit lane 用 profile に分離して reaction speed を上げる。

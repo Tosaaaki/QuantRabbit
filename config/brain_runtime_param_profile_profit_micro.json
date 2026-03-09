@@ -1,0 +1,22 @@
+{
+  "version": "rp-v4-profit-micro",
+  "updated_at": "2026-03-09T20:27:00+09:00",
+  "min_scale": 0.28,
+  "block_rate_soft_limit": 0.82,
+  "activity_rate_floor": 0.45,
+  "block_to_reduce_scale": 0.55,
+  "guard_window_decisions": 96,
+  "min_guard_samples": 18,
+  "max_block_streak": 6,
+  "outcome_min_trades": 4,
+  "outcome_positive_pf_floor": 1.05,
+  "outcome_positive_win_rate_floor": 0.5,
+  "outcome_negative_pf_ceiling": 0.98,
+  "outcome_negative_win_rate_ceiling": 0.5,
+  "outcome_negative_avg_pips_ceiling": -0.1,
+  "outcome_negative_reduce_scale": 0.62,
+  "notes": [
+    "Profit micro lane: react within 4 closed trades instead of waiting for the generic 12-trade profile.",
+    "Prefer REDUCE before BLOCK, but tighten faster on repeated loser clusters."
+  ]
+}

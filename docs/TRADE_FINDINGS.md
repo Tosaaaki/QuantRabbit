@@ -10293,3 +10293,25 @@ Status:
   - `prepare_local_brain_canary.py` は `BRAIN_PROFILE_MODE=profit` を安全プロファイルとして扱うよう更新した。
   - これにより `profit mode + sample_rate=1.0 + autotune on` でも
     readiness は `profile_safe=true` のまま live restart 可能になった。
+
+## 2026-03-09 20:27 JST - 旧 generic profile が profit guard を鈍らせていたため、micro profit lane を専用 profile へ分離
+
+- 問題:
+  - 反映後の process env は `profit mode` だったが、
+    実際に読み込む既定 `config/brain_runtime_param_profile.json` は
+    `2026-03-05` の generic throughput profile のままで、
+    `outcome_min_trades=12` と reaction が遅かった。
+  - これでは `micro-only` shadow で loser cluster を見つけても、
+    `4-6本` の現実的な sample 数では loss-bias guard が発火しにくい。
+
+- 対応:
+  - `config/brain_prompt_profile_profit_micro.json`
+    と `config/brain_runtime_param_profile_profit_micro.json`
+    を新設し、safe Brain lane から明示参照するようにした。
+  - runtime 初期値は `outcome_min_trades=4`,
+    `min_guard_samples=18`,
+    `outcome_negative_reduce_scale=0.62`
+    へ下げ、`micro` の recent loser に faster response する形へ寄せた。
+  - prompt 初期ルールにも
+    `MomentumBurst-open_short` / `MicroTrendRetest-short`
+    の loser cluster を full `ALLOW` しにくくする方針を明示した。
