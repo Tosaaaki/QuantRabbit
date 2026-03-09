@@ -9055,3 +9055,44 @@ Status:
 - 判断:
   - margin headroom の都合で global size は上げず、
     short 側だけ切って long winner 側へ枠を戻すほうが合理的。
+
+## 2026-03-09 02:02 UTC / 2026-03-09 11:02 JST - local-v2 の無建玉主因は `TrendBreakout` の tag mismatch と `RangeFader` の min-units floor
+
+- 市況確認:
+  - `logs/tick_cache.json` の直近 USD/JPY は `bid=158.655 / ask=158.663 / spread=0.8p`。
+  - `logs/replay/USD_JPY/USD_JPY_M1_20260309.jsonl` 集計では `ATR14=2.21p`、直近60分レンジは `18.5p`。
+  - `logs/health_snapshot.json` は `data_lag_ms=638.9`, `decision_latency_ms=15.5` と平常圏。
+  - `logs/oanda_account_snapshot_live.json` / `logs/oanda_open_positions_live_USD_JPY.json` では `margin_used=0`、USD/JPY 建玉は `long=0 / short=0`。
+
+- 実測:
+  - `logs/strategy_control.db` と `logs/local_v2_stack/quant-strategy-control.log` は
+    `global(entry=True, exit=True, lock=False)` で、共通 lock は主因ではなかった。
+  - `logs/orders.db` の直近24hは `preflight_start=172`, `submit_attempt=101`, `filled=100`,
+    `entry_probability_reject=13`。システム全体停止ではなく、特定 worker の入口が詰まっていた。
+  - `TrendBreakout` は `logs/local_v2_stack/quant-scalp-trend-breakout.log` で
+    `tag_filter_block tag=M1Scalper-trend-long`, `...sell-rally`, `...buy-dip` が継続。
+    一方で env は `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest` のみで、M1 family の trend/nwave signal を自分で落としていた。
+  - `logs/trades.db` の直近72hでは `TrendBreakout` は `2 trades / +179.18 JPY / avg +6.2p` で、
+    winner 候補をタグ不一致で塞いでいた。
+  - `RangeFader` の reject は `entry_probability_below_min_units` に集中し、
+    `entry_probability=0.34-0.36`, `entry_units_intent=576-711`, `scaled_units=202-254`
+    のケースが `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*=120` に引っ掛かっていた。
+  - `scalp_ping_5s_b/d` は同時点でも `pred 0.12-0.49p < cost 1.15-1.21p` の
+    `edge_negative_block` が継続しており、ここを緩めるのは negative expectancy を増やすだけなので今回は触らない。
+
+- 対応:
+  - `ops/env/quant-scalp-trend-breakout.env`
+    - `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest,trend-long,trend-short,nwave-long,nwave-short`
+      に更新し、trend continuation 系 signal を受けられるようにした。
+    - `M1SCALP_ALLOW_REVERSION=0` は維持し、逆張り再versionまでは開けない。
+  - `ops/env/quant-order-manager.env`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` と alias の
+      `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD` を `60` へ統一。
+    - これで probability 縮小後の `69-91 units` 帯を hard reject せず、
+      `submit_attempt` へ流せる状態に戻す。
+
+- 再検証条件:
+  1. restart 後に `TrendBreakout` で `preflight_start -> submit_attempt -> filled` が再発すること。
+  2. `RangeFader` の `entry_probability_below_min_units` が減少し、
+     `submit_attempt/filled` が出ること。
+  3. `data_lag_ms` / `decision_latency_ms` が引き続き平常圏を維持すること。

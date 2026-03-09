@@ -2028,3 +2028,16 @@
 - 意図:
   - `TP/SL` の薄い flow で、negative-edge entry と tail-loss hold を同時に減らす。
   - 共有 `order_manager` の後付け選別ではなく、strategy-local entry/exit で改善する。
+
+### 2026-03-09 local-v2 `TrendBreakout` tag aperture / `RangeFader` probability-floor alignment
+- `TrendBreakout` dedicated worker は `M1SCALP_ALLOW_REVERSION=0` を維持したまま、
+  `M1SCALP_SIGNAL_TAG_CONTAINS=breakout-retest,trend-long,trend-short,nwave-long,nwave-short`
+  を許可する。`M1Scalper` 由来の trend continuation / nwave signal を tag mismatch で落とさないための運用値である。
+- `RangeFader` は `entry_probability` 縮小後に `69-91 units` 帯へ落ちる局面があるため、
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*` だけでなく alias の
+  `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD` も `60` 以下に揃える。
+  これを上回ると `order_manager` preflight が `entry_probability_below_min_units`
+  で hard reject し、strategy local の意図が submit まで届かない。
+- `scalp_ping_5s_b/d` のように live execution cost が forecast edge を上回る worker は、
+  entry 数回復だけを目的に lookahead / edge gate を緩めない。期待値の悪い fill を増やす変更は
+  「entry が少ない」ことの対症療法として採用しない。
