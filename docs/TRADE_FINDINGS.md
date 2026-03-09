@@ -10200,3 +10200,33 @@ Status:
 - 反映判断:
   - local-v2 runtime は既に現行 snapshot を参照しており、`workers/common/pattern_gate.py` は `logs/patterns.db` を優先し、JSON は fallback のみ。
   - 従って本件は repo cleanup 対象ではあるが、追加の `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager` は不要と判断した。
+
+## 2026-03-09 18:44 JST - side 別対症療法をやめ、indicator-quality guard を両方向へ導入
+
+- 市況確認:
+  - `USD/JPY` は `158.322 / 158.330`、spread `0.8 pips`。
+  - `logs/health_snapshot.json` は `data_lag_ms=1025.5`, `decision_latency_ms=14.06`。
+  - core 4 と `quant-micro-momentumburst`, `quant-scalp-extrema-reversal` は稼働中で、問題は infra 停止ではなく trade economics 側。
+
+- 実測:
+  - 直近 `1h` は `9 trades / net_jpy=-667.7 / net_pips=-13.6 / win_rate=33.3% / PF=0.328`。
+  - 直近 `6h` の悪化主因は `MicroTrendRetest-short -540.6 JPY`、`MomentumBurst -214.3 JPY`、`scalp_ping_5s_d_live -35.1 JPY`。
+  - 直近の大きい micro 負けは
+    - `MicroTrendRetest-short` 2本: `-5100 units`, `-5.8p / -4.8p`
+    - `MomentumBurst` 2本: `-5429 / -5433 units`, `-4.4p / -3.7p`
+  - `orders.db` の `entry_thesis` では、両戦略とも負けた short が `pattern_tag ... rsi:os ... d:short` かつ `trend_snapshot = {tf:H4, direction:long, gap_pips:33.692, adx:31.52}` を伴っていた。
+
+- 判断:
+  - 問題を `short が悪い / long が悪い` で切るのは不正確。
+  - 本質は `RSI 過熱/売られ過ぎ`, `ADX+MA gap に対する伸び切り`, `higher-TF 逆行`, `連続バー偏り` といった indicator state の質が悪いまま entry していること。
+  - 改善は side 固有の対症療法ではなく、両方向に効く `indicator-quality guard` を strategy-local に入れる方針へ切り替える。
+
+- 実装:
+  - `workers/micro_runtime/worker.py` は strategy 実行前に `mtf` と `trend_snapshot` を factor view へ注入し、戦略側が live でも higher-TF context を見て判定できるようにした。
+  - `MomentumBurst` は `trend_snapshot` 逆行ブロックと、`long/short` 両方向の overextension guard を導入し、`RSI 54-70 / 30-46` の quality band に収めた。
+  - `MicroTrendRetest` は既存の symmetric `RSI/ADX/gap` quality check に `trend_snapshot` 逆行ブロックを追加した。
+
+- 検証:
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py`
+  - `39 passed`
+  - `python3 -m py_compile strategies/micro/momentum_burst.py strategies/micro/trend_retest.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py`

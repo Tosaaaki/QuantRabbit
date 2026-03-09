@@ -19,6 +19,11 @@ class MicroTrendRetest:
     _MAX_RETEST_DIST_PIPS = 3.2
     _SPREAD_PIPS_MAX = 1.2
     _SPREAD_ATR_RATIO_MAX = 0.30
+    _QUALITY_GAP_ATR_MIN = 0.75
+    _QUALITY_ADX_MIN = 24.0
+    _QUALITY_TREND_RSI_BIAS_MAX = 4.0
+    _TREND_SNAPSHOT_GAP_MIN = 8.0
+    _TREND_SNAPSHOT_ADX_MIN = 22.0
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -39,6 +44,47 @@ class MicroTrendRetest:
             if isinstance(candle, dict):
                 tail.append(candle)
         return tail
+
+    @staticmethod
+    def _indicator_quality_ok(
+        *,
+        direction: str,
+        gap_pips: float,
+        adx: float,
+        atr_pips: float,
+        rsi: float,
+    ) -> bool:
+        atr_norm = max(1.0, atr_pips)
+        gap_atr_ratio = abs(gap_pips) / atr_norm
+        if gap_atr_ratio < MicroTrendRetest._QUALITY_GAP_ATR_MIN:
+            return True
+        if adx < MicroTrendRetest._QUALITY_ADX_MIN:
+            return True
+        direction_sign = 1.0 if direction == "OPEN_LONG" else -1.0
+        trend_rsi_bias = (rsi - 50.0) * direction_sign
+        return trend_rsi_bias <= MicroTrendRetest._QUALITY_TREND_RSI_BIAS_MAX
+
+    @staticmethod
+    def _trend_snapshot_supports(direction: str, fac: Dict[str, object]) -> bool:
+        snapshot = fac.get("trend_snapshot")
+        if not isinstance(snapshot, dict):
+            return True
+        snap_direction = str(snapshot.get("direction") or "").strip().lower()
+        if snap_direction not in {"long", "short"}:
+            return True
+        if (direction == "OPEN_LONG" and snap_direction == "long") or (
+            direction == "OPEN_SHORT" and snap_direction == "short"
+        ):
+            return True
+        tf = str(snapshot.get("tf") or "").strip().upper()
+        if tf not in {"H1", "H4"}:
+            return True
+        gap_pips = MicroTrendRetest._to_float(snapshot.get("gap_pips"), 0.0) or 0.0
+        adx = MicroTrendRetest._to_float(snapshot.get("adx"), 0.0) or 0.0
+        return not (
+            abs(gap_pips) >= MicroTrendRetest._TREND_SNAPSHOT_GAP_MIN
+            and adx >= MicroTrendRetest._TREND_SNAPSHOT_ADX_MIN
+        )
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -62,6 +108,7 @@ class MicroTrendRetest:
             adx = 0.0
         if adx < MicroTrendRetest._MIN_ADX:
             return None
+        rsi = MicroTrendRetest._to_float(fac.get("rsi"), 50.0) or 50.0
 
         gap = (ma10 - ma20) / PIP
         if gap >= MicroTrendRetest._MIN_GAP_PIPS:
@@ -69,6 +116,16 @@ class MicroTrendRetest:
         elif gap <= -MicroTrendRetest._MIN_GAP_PIPS:
             direction = "OPEN_SHORT"
         else:
+            return None
+        if not MicroTrendRetest._indicator_quality_ok(
+            direction=direction,
+            gap_pips=gap,
+            adx=adx,
+            atr_pips=atr_check,
+            rsi=rsi,
+        ):
+            return None
+        if not MicroTrendRetest._trend_snapshot_supports(direction, fac):
             return None
 
         candles = MicroTrendRetest._candles(fac, MicroTrendRetest._LOOKBACK + 2)
@@ -128,7 +185,6 @@ class MicroTrendRetest:
         sl_pips = max(2.5, atr_hint * 1.10)
         tp_pips = max(sl_pips * 1.5, sl_pips + atr_hint * 0.95)
 
-        rsi = MicroTrendRetest._to_float(fac.get("rsi"), 50.0) or 50.0
         confidence = 58 + int(min(16.0, abs(gap)) + min(10.0, max(0.0, adx - MicroTrendRetest._MIN_ADX)))
         if direction == "OPEN_LONG" and rsi < 52:
             confidence += 4

@@ -13790,3 +13790,19 @@
 
 - 監査メモ:
   - 着手前の market check は `USD/JPY 158.445 / 158.453`, spread 約 `0.8 pips`, `M1 ATR 3.03 pips`, `data_lag 0.05-0.93s`, recent orders `filled=313 / rejected=2` で、作業保留条件には該当しなかった。
+
+## 2026-03-09 18:44 JST - micro worker から strategy へ higher-TF context を明示注入
+
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `strategies/micro/momentum_burst.py`
+  - `strategies/micro/trend_retest.py`
+
+- 変更:
+  - micro runtime は strategy 判定前に `mtf` と `trend_snapshot` を付与した factor view を組み立てて渡す。
+  - `MomentumBurst` は live で死んでいた higher-TF context を使えるようにし、`long/short` 両方向の overextension と `H1/H4` 逆行を strategy-local に拒否する。
+  - `MicroTrendRetest` は既存の symmetric `RSI/ADX/gap` quality 判定に `trend_snapshot` 逆行ブロックを加えた。
+
+- 意図:
+  - 共通 gate で事後的に選別するのではなく、strategy 自身が live factor と higher-TF context を使って entry quality を判断する。
+  - 敗因分析を `side` ではなく `indicator state cluster` で行い、同じ guard を両方向へ効かせる。

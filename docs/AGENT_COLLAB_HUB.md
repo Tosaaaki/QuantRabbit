@@ -33,6 +33,7 @@
 
 ### 4) ローカルPDCA
 - 変更後は `scripts/local_v2_stack.sh` で主要サービスの稼働を確認。
+- 収益悪化の RCA は `long/short` の片側説明で止めず、`pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence / 連続バー偏り` を軸に cluster して、両方向に効く strategy-local quality guard へ落とす。
 - 失敗ケース・検証結果は `docs/TRADE_FINDINGS.md` に1箇所集約。
 
 ## 旧VM/GCP資料（実行対象外）

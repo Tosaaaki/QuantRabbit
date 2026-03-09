@@ -2254,3 +2254,8 @@
   `HARD_FAILFAST_ENABLED=0` を置き、hard reject をやめて `reduce` モードへ寄せる。
 - いずれも shared `order_manager` / `stage_tracker` の共通ロジックは変えず、
   local-v2 実測で多かった `premature stop-out` と `entry cadence不足` だけを個別に補正する。
+
+### 2026-03-09 indicator-quality guard の運用原則
+- 収益悪化の改善は `long/short` の片側最適化で閉じず、`pattern_tag`, `RSI`, `ADX`, `MA gap`, `trend_snapshot`, `divergence`, `連続バー偏り` を使って敗因 cluster を作る。
+- 改善は共通 post-hoc gate ではなく、strategy-local の `quality guard` として両方向へ対称に入れる。
+- micro runtime は strategy 判定前に `mtf` と `trend_snapshot` を供給し、戦略が live でも higher-TF conflict を自力で拒否できる状態を正とする。
