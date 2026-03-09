@@ -475,6 +475,18 @@ def compute_scores(
         ):
             strategy_lot_multiplier = min(strategy_lot_multiplier, 0.12)
             effective_min_mult = min(effective_min_mult, 0.10)
+        # Positive pips alone are not enough. If recent cash efficiency is negative and
+        # the strategy is still losing in realized JPY, keep participation capped.
+        if trades >= max(16, min_trades) and sum_realized_jpy <= 0.0 and avg_realized_jpy < 0.0:
+            if realized_jpy_per_1k_units <= -1.0:
+                strategy_lot_multiplier = min(strategy_lot_multiplier, 0.62)
+                effective_min_mult = min(effective_min_mult, 0.24)
+            if realized_jpy_per_1k_units <= -2.0:
+                strategy_lot_multiplier = min(strategy_lot_multiplier, 0.52)
+                effective_min_mult = min(effective_min_mult, 0.22)
+            if realized_jpy_per_1k_units <= -4.0:
+                strategy_lot_multiplier = min(strategy_lot_multiplier, 0.42)
+                effective_min_mult = min(effective_min_mult, 0.20)
         # Keep strong winners participating even if a few margin closeouts occurred.
         # This avoids crushing profitable strategies whose rare margin events were
         # transient and already outweighed by strong realized returns.
@@ -493,12 +505,18 @@ def compute_scores(
         strategy_lot_multiplier = _clamp(strategy_lot_multiplier, effective_min_mult, max_mult)
 
         pocket_lot_multiplier_applied = pocket_lot_multiplier
+        cash_profitable = (
+            sum_realized_jpy >= 0.0 and avg_realized_jpy >= 0.0 and realized_jpy_per_1k_units >= 0.0
+        )
         if (
             score >= 0.55
             or (pf >= 1.10 and sum_realized_jpy >= 0.0)
             or (weighted_wr >= 0.58 and sum_pips > 0.0)
         ):
-            pocket_lot_multiplier_applied = max(1.0, pocket_lot_multiplier_applied)
+            if cash_profitable:
+                pocket_lot_multiplier_applied = max(1.0, pocket_lot_multiplier_applied)
+            else:
+                pocket_lot_multiplier_applied = min(1.0, pocket_lot_multiplier_applied)
         elif pf < 0.95 or sum_realized_jpy < 0.0:
             if pocket_lot_multiplier_applied > 1.0:
                 pocket_lot_multiplier_applied = 1.0 + (pocket_lot_multiplier_applied - 1.0) * 0.35

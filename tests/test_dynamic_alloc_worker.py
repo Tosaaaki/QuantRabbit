@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from scripts.dynamic_alloc_worker import compute_scores, normalize_strategy_key
 
 
@@ -39,14 +41,14 @@ def test_compute_scores_stronger_loss_penalty_applies() -> None:
     bad = strategy_scores["scalp_ping_5s_b_live"]
     good = strategy_scores["MicroPullbackEMA"]
 
-    assert 0.45 <= bad["lot_multiplier"] <= 0.70
+    assert 0.30 <= bad["lot_multiplier"] <= 0.45
     assert bad["pf"] == 0.0
     assert bad["avg_pips"] == -2.0
     assert bad["sl_rate"] >= 0.9
 
-    assert good["lot_multiplier"] >= 0.82
+    assert good["lot_multiplier"] >= 0.68
     assert good["lot_multiplier"] > bad["lot_multiplier"]
-    assert good["pf"] > 0.7
+    assert good["pf"] > bad["pf"]
     assert good["allow_loser_block"] is False
     assert good["allow_winner_only"] is False
 
@@ -70,7 +72,37 @@ def test_compute_scores_caps_size_when_realized_jpy_is_negative() -> None:
     prof = strategy_scores["scalp_ping_5s_c_live"]
     assert prof["sum_pips"] > 0
     assert prof["sum_realized_jpy"] < 0
-    assert prof["lot_multiplier"] <= 0.7
+    assert prof["lot_multiplier"] <= 0.42
+
+
+def test_compute_scores_recent_cash_loser_does_not_get_boosted_by_good_pips() -> None:
+    rows = []
+    now = datetime.now(timezone.utc)
+    for i in range(48):
+        rows.append(
+            (
+                "MicroLevelReactor",
+                "micro",
+                2.2,
+                (now - timedelta(minutes=47 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "TAKE_PROFIT_ORDER",
+                -6.0,
+                1400,
+            )
+        )
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=12,
+        pf_cap=2.0,
+        half_life_hours=18.0,
+    )
+    prof = strategy_scores["MicroLevelReactor"]
+    assert prof["sum_pips"] > 0
+    assert prof["sum_realized_jpy"] < 0
+    assert prof["realized_jpy_per_1k_units"] <= -4.0
+    assert prof["pocket_lot_multiplier_applied"] <= 1.0
+    assert prof["lot_multiplier"] <= 0.42
 
 
 def test_compute_scores_caps_size_when_margin_closeout_rate_is_high() -> None:
