@@ -10062,3 +10062,20 @@ Status:
   1. `orders.db` で `scalp_extrema_reversal_live` の `perf_block:hard:failfast` が消え、`filled` が増えること。
   2. `trades.db` で `MomentumBurst` / `scalp_extrema_reversal_live` の `STOP_LOSS_ORDER` 比率が下がること。
   3. `strategy_cooldown` が支配的に残る場合のみ、次段で shared `stage_tracker` の strategy-local override 要否を再評価すること。
+
+## 2026-03-09 09:31 UTC / 2026-03-09 18:31 JST - pattern_book 未コミット差分の棚卸しと反映要否
+
+- 市況確認:
+  - `USD/JPY` は `158.445 / 158.453`、直近 tick spread 平均は約 `0.8 pips`。
+  - `logs/factor_cache.json` の `M1 ATR` は `3.03 pips`、直近 tick range は約 `3.0 pips`。
+  - `logs/metrics.db` の `data_lag_ms` は直近で `54.7-930.7ms`、`decision_latency_ms` は `13-18ms`。
+  - `logs/orders.db` 直近 24h は `filled=313`, `rejected=2` で、流動性/応答品質の悪化による作業保留条件には該当しなかった。
+
+- Git / 差分の実測:
+  - cleanup 着手時の dirty file は `config/pattern_book.json`, `config/pattern_book_deep.json` のみ。
+  - `main == origin/main` で未 push commit はなく、未反映の code/config deploy は確認されなかった。
+  - 差分は `quant-pattern-book` の live snapshot 更新で、`as_of`, `patterns_total`, `deep_analysis` の集計前進が中心だった。
+
+- 反映判断:
+  - local-v2 runtime は既に現行 snapshot を参照しており、`workers/common/pattern_gate.py` は `logs/patterns.db` を優先し、JSON は fallback のみ。
+  - 従って本件は repo cleanup 対象ではあるが、追加の `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager` は不要と判断した。

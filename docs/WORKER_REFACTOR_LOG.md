@@ -13719,3 +13719,21 @@
   - `execution/order_manager.py` の shared preflight ロジック
   - `execution/stage_tracker.py` の共通 `strategy_cooldown`
   - `scalp_extrema_reversal_live` の trend gate と `MAX_OPEN_TRADES=1`
+
+## 2026-03-09 18:31 JST - pattern_book ライブスナップショット差分の整理方針を確定
+
+- 対象:
+  - `config/pattern_book.json`
+  - `config/pattern_book_deep.json`
+
+- 確認:
+  - `git status --short` / `git diff --name-only` 上の未コミット差分は上記 2 ファイルのみ。
+  - `git rev-parse HEAD` と `git rev-parse origin/main` は一致し、cleanup 着手時点で未 push の commit は存在しない。
+  - 差分内容は `quant-pattern-book` の live snapshot 更新で、`as_of` / `patterns_total` / deep summary が直近 trade 実績で前進している。
+
+- 運用判断:
+  - local-v2 runtime は既に現行ファイル内容で稼働中で、`workers/common/pattern_gate.py` は `logs/patterns.db` を優先し、JSON は DB 不達時の fallback としてのみ参照する。
+  - このため本件は「ワークツリー整理対象」ではあるが、追加の `local_v2_stack` restart を要する未反映差分ではない。
+
+- 監査メモ:
+  - 着手前の market check は `USD/JPY 158.445 / 158.453`, spread 約 `0.8 pips`, `M1 ATR 3.03 pips`, `data_lag 0.05-0.93s`, recent orders `filled=313 / rejected=2` で、作業保留条件には該当しなかった。
