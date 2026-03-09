@@ -2422,3 +2422,19 @@
 - `quant-micro-trendretest` の dedicated env では `MICRO_MULTI_SIGNAL_TAG_CONTAINS=short` を置かない。
 - direction の片側固定は worker 層で行わず、`MicroTrendRetest` 本体の symmetric quality guard に委ねる。
 - 頻度低下の原因が env の side filter にある場合は、strategy を止める前にまず dedicated env を点検する。
+
+### 2026-03-10 local-v2 `MomentumBurst` / `MicroTrendRetest` の緊急止血
+- `MomentumBurst` の stop-loss 偏重が直近24hの主因になった場合、
+  まず shared gate ではなく dedicated env の short 条件を締める。
+- 現行運用値は
+  `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:0.90`,
+  `MOMENTUMBURST_SHORT_DRIFT_CEIL=-0.05`,
+  `MOMENTUMBURST_SHORT_EXHAUSTION_RSI_MAX=40`,
+  `MOMENTUMBURST_REACCEL_DI_GAP_SHORT=8.0`
+  を正とし、low-ATR / tight 文脈の late short を削る。
+- `MicroTrendRetest` は dedicated env に
+  `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroTrendRetest:0.85`,
+  `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=24`
+  を置き、同一分足での burst stacking を抑える。
+- いずれも shared `order_manager` や共通 quality gate を増やさず、
+  strategy-local / dedicated env だけで participation の質を戻す。

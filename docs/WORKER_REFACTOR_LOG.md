@@ -14240,3 +14240,29 @@
   - 共通層を触らず、
     直近24hで観測された `MomentumBurst short` と
     `MicroLevelReactor long` の敗因 cluster だけを local に潰す。
+
+## 2026-03-10 01:50 JST - dedicated env で `MomentumBurst` / `MicroTrendRetest` の止血
+
+- 対象:
+  - `ops/env/quant-micro-momentumburst.env`
+  - `ops/env/quant-micro-trendretest.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 変更:
+  - `quant-micro-momentumburst` は dedicated env の
+    `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:0.90` へ下げた。
+  - `MomentumBurst` short は
+    `MOMENTUMBURST_SHORT_DRIFT_CEIL=-0.05`,
+    `MOMENTUMBURST_SHORT_EXHAUSTION_RSI_MAX=40`,
+    `MOMENTUMBURST_REACCEL_DI_GAP_SHORT=8.0`
+    へ寄せ、low-ATR / tight 文脈の weak short を削る。
+  - `quant-micro-trendretest` は
+    `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroTrendRetest:0.85`,
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=24`
+    を追加し、同一分足の連打を止める。
+
+- 意図:
+  - 直近24hの `MomentumBurst` stop-loss 偏重と
+    `MicroTrendRetest-long` の burst stacking を、
+    shared order/risk を変えず dedicated env だけで抑える。

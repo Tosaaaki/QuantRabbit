@@ -10916,6 +10916,36 @@ Status:
     `filled 384 / rejected 4`。open trades も 0 で、
     期待値悪化を strategy-local に止血する局面だった。
 
+## 2026-03-10 01:50 JST - micro loser cluster の緊急止血
+
+- 実測:
+  - 調査窓 `2026-03-09 01:50 JST -> 2026-03-10 01:50 JST` は
+    `396 trades / -1839.3 JPY / PF 0.554 / win_rate 49.75%`。
+  - 市況は通常帯で、`USD/JPY 157.976 / spread 0.8 pips / M1 ATR 3.115 pips`。
+    `quant-market-data-feed` / `quant-order-manager` は稼働、口座建玉は 0。
+  - 赤字主因は `MomentumBurst -617.2 JPY (24 trades)`、
+    `MicroTrendRetest-long -290.2 JPY (17 trades)`、
+    `MicroLevelReactor -175.3 JPY (237 trades)`。
+  - `MomentumBurst` は `STOP_LOSS_ORDER 11件 / -1820.6 JPY` が重く、
+    short 側だけで `-598.5 JPY`。`MicroTrendRetest-long` は
+    `2026-03-10 01:23 JST` 台に同系セットアップを連打して `-214.4 JPY`。
+
+- 変更:
+  - `ops/env/quant-micro-momentumburst.env`
+    で `MomentumBurst` の dedicated sizing を `0.90` へ下げ、
+    short 側は `MOMENTUMBURST_SHORT_DRIFT_CEIL=-0.05`,
+    `MOMENTUMBURST_SHORT_EXHAUSTION_RSI_MAX=40`,
+    `MOMENTUMBURST_REACCEL_DI_GAP_SHORT=8.0`
+    として low-ATR / tight 文脈の late short を削る。
+  - `ops/env/quant-micro-trendretest.env`
+    で `MicroTrendRetest` の dedicated sizing を `0.85` にし、
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=24`
+    を追加して同一分足での burst stacking を止める。
+
+- 意図:
+  - 共通 gate や時間帯 block は追加せず、
+    直近24hの loser cluster を strategy-local / dedicated env のみで止血する。
+
 - 変更:
   - `strategies/micro/momentum_burst.py`
     で short 側の stretched quality 判定を
