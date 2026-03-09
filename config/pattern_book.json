@@ -1,8 +1,8 @@
 {
-  "as_of": "2026-03-09T11:00:37+00:00",
+  "as_of": "2026-03-09T12:05:55+00:00",
   "lookback_days": 180,
-  "processed_new_rows": 1,
-  "patterns_total": 2686,
+  "processed_new_rows": 8,
+  "patterns_total": 2687,
   "min_samples_soft": 30,
   "min_samples_block": 120,
   "action_counts": {
@@ -10,7 +10,7 @@
     "reduce": 16,
     "boost": 24,
     "block": 3,
-    "learn_only": 2637
+    "learn_only": 2638
   },
   "top_edges": [
     {
@@ -877,14 +877,14 @@
     }
   ],
   "deep_analysis": {
-    "rows_total": 16722,
-    "patterns_scored": 2686,
+    "rows_total": 16730,
+    "patterns_scored": 2687,
     "drift_rows": 0,
     "cluster_count": 8,
     "quality_counts": {
       "avoid": 8,
       "candidate": 7,
-      "learn_only": 2640,
+      "learn_only": 2641,
       "neutral": 11,
       "robust": 15,
       "weak": 5
@@ -7347,6 +7347,26 @@
       "profit_factor": 23.5455,
       "avg_hold_sec": 347.79,
       "last_close_time": "2026-03-09T05:16:02.484929+00:00",
+      "action": "learn_only",
+      "lot_multiplier": 1.0,
+      "reason": "insufficient_samples"
+    },
+    {
+      "pattern_id": "st:microlevelreactor|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_lower_tr_dn_5b101abc",
+      "strategy_tag": "MicroLevelReactor",
+      "pocket": "micro",
+      "direction": "long",
+      "trades": 8,
+      "wins": 2,
+      "losses": 6,
+      "win_rate": 0.25,
+      "avg_pips": -0.4,
+      "total_pips": -3.2,
+      "gross_profit": 0.9,
+      "gross_loss": 4.1,
+      "profit_factor": 0.2195,
+      "avg_hold_sec": 31.2,
+      "last_close_time": "2026-03-09T12:04:59.426656+00:00",
       "action": "learn_only",
       "lot_multiplier": 1.0,
       "reason": "insufficient_samples"
