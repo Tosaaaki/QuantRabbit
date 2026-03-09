@@ -10794,3 +10794,50 @@ Status:
     `scripts/local_v2_stack.sh restart --profile trade_all --env ops/env/local-v2-stack.env`
     を実行し、
     `quant-scalp-tick-imbalance` / `quant-scalp-wick-reversal-blend` が
+
+
+## 2026-03-09 23:15 JST - local-v2 の loser size leak を止め、M1Scalper flipped continuation を cluster guard で抑制
+
+- 市況確認:
+  - OANDA pricing は `USD/JPY 158.322 / 158.330`、spread `0.8 pips`、
+    pricing 応答 `206ms`、`openTradeCount=4`、`openPositionCount=1`、
+    `pendingOrderCount=8` だった。
+  - `logs/health_snapshot.json` は `generated_at=2026-03-09T14:01:45Z`、
+    `data_lag_ms=249.3`, `decision_latency_ms=16.6` で、
+    導線停止ではなく strategy / sizing 側の期待値悪化が主因だった。
+
+- 実測:
+  - `trades.db` 直近 24h は
+    `MomentumBurst -486.4 JPY`, `MicroLevelReactor -175.3 JPY`,
+    `MicroTrendRetest-long/-short -616.4 JPY`, `RangeFader -50.9 JPY`。
+  - `config/dynamic_alloc.json` 再生成前提では
+    `MicroTrendRetest-long 0.365`, `MicroTrendRetest-short 0.45`,
+    `MicroLevelReactor 0.452`, `MomentumBurst 0.785`, `RangeFader 0.213`
+    まで縮んでいるのに、micro runtime の shared `strategy_units_mult`
+    が後段で loser の size を戻し得る構造だった。
+  - `M1Scalper-M1` は live で tag filter 済みでも、
+    `sell-rally -> trend-long` / `buy-dip -> trend-short` の flipped continuation が
+    `ultra_low ATR × tight BBW × stretched gap × RSI extreme` で
+    7d loser cluster を作っていた。
+
+- 対応:
+  - `workers/micro_runtime/worker.py`
+    で、`dynamic_alloc` が `lot_multiplier < 1.0` もしくは
+    history-underperforming を返した戦略には
+    `MICRO_MULTI_STRATEGY_UNITS_MULT` の正方向 boost を上乗せしないようにした。
+    `entry_thesis` には `strategy_units_mult_applied` / `strategy_units_mult_guard`
+    を残し、監査可能にした。
+  - `systemd/quant-dynamic-alloc.service`
+    を `--half-life-hours 24` へ変更し、
+    直近 24-48h の悪化を 7d 勝ち残りより早く sizing に反映するようにした。
+  - `strategies/scalping/m1_scalper.py` と
+    `ops/env/quant-m1scalper.env`
+    に flipped continuation 専用の extreme guard を追加し、
+    `ATR<=3.2`, `BBW<=0.0014`, `trend_gap>=2.5 pips`,
+    `long RSI>=58` / `short RSI<=42` の反転追随を strategy-local に reject するようにした。
+
+- 意図:
+  - loser lane の shared re-inflation を止めつつ、
+    winner lane (`MomentumBurst`) は相対優位を保ったまま残す。
+  - `M1Scalper` は broad tag filter に頼らず、
+    直近 loser cluster だけを strategy-local に切り落とす。

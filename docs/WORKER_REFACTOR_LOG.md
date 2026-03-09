@@ -14144,3 +14144,32 @@
 
 - 変更:
   - `get_cooldown()` の public contract は naive UTC のまま維持しつつ、
+
+
+## 2026-03-09 23:15 JST - micro shared boost が loser shrink を打ち消す leak を修正
+
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `systemd/quant-dynamic-alloc.service`
+  - `strategies/scalping/m1_scalper.py`
+  - `ops/env/quant-m1scalper.env`
+  - `tests/workers/test_m1scalper_nwave_tolerance_override.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 変更:
+  - `micro_runtime` は `dynamic_alloc` が縮小判定した戦略に対して、
+    shared `MICRO_MULTI_STRATEGY_UNITS_MULT` の正方向 boost を適用しないようにした。
+    これにより `MicroTrendRetest` / `MicroLevelReactor` の loser shrink が
+    env override で戻る状態を止める。
+  - `quant-dynamic-alloc.service` は `--half-life-hours 24` を明示し、
+    sizing の recency を local-v2 現状に寄せた。
+  - `M1Scalper` は flipped continuation の extreme cluster だけを落とす
+    strategy-local guard を追加し、
+    `sell-rally -> trend-long` / `buy-dip -> trend-short` の late chase を抑制した。
+
+- 意図:
+  - 共通 gate 追加や時間帯 block ではなく、
+    sizing leak と strategy-local loser cluster を個別に潰して
+    participation の質だけを上げる。

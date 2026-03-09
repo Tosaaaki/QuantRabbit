@@ -161,8 +161,28 @@ _VSHAPE_BASE_CONF = int(_env_int("M1SCALP_VSHAPE_BASE_CONF", 72))
 _VSHAPE_LONG_RSI_MAX = _env_float("M1SCALP_VSHAPE_LONG_RSI_MAX", 54.0)
 _VSHAPE_SHORT_RSI_MIN = _env_float("M1SCALP_VSHAPE_SHORT_RSI_MIN", 46.0)
 _VSHAPE_MAX_ADX = _env_float("M1SCALP_VSHAPE_MAX_ADX", 28.0)
-
-
+_TREND_FLIP_EXTREME_GUARD_ENABLED = _env_bool(
+    "M1SCALP_TREND_FLIP_EXTREME_GUARD_ENABLED",
+    True,
+)
+_TREND_FLIP_EXTREME_ATR_MAX_PIPS = abs(
+    _env_float("M1SCALP_TREND_FLIP_EXTREME_ATR_MAX_PIPS", 3.2)
+)
+_TREND_FLIP_EXTREME_BBW_MAX = max(
+    0.0,
+    _env_float("M1SCALP_TREND_FLIP_EXTREME_BBW_MAX", 0.0014),
+)
+_TREND_FLIP_EXTREME_GAP_MIN_PIPS = abs(
+    _env_float("M1SCALP_TREND_FLIP_EXTREME_GAP_MIN_PIPS", 2.5)
+)
+_TREND_FLIP_EXTREME_LONG_RSI_MIN = _env_float(
+    "M1SCALP_TREND_FLIP_EXTREME_LONG_RSI_MIN",
+    58.0,
+)
+_TREND_FLIP_EXTREME_SHORT_RSI_MAX = _env_float(
+    "M1SCALP_TREND_FLIP_EXTREME_SHORT_RSI_MAX",
+    42.0,
+)
 def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
     open_px = _to_float(candle.get("open"))
     close_px = _to_float(candle.get("close"))
@@ -1025,6 +1045,36 @@ class M1Scalper:
         strong_up = (price_gap_pips >= STRONG_TREND_PIPS or ema_gap_pips >= STRONG_TREND_PIPS) and momentum > STRONG_MOMENTUM
         strong_down = (price_gap_pips <= -STRONG_TREND_PIPS or ema_gap_pips <= -STRONG_TREND_PIPS) and momentum < -STRONG_MOMENTUM
 
+        def _trend_flip_extreme_block(side: str) -> bool:
+            if not _TREND_FLIP_EXTREME_GUARD_ENABLED:
+                return False
+            if atr_pips <= 0.0 or atr_pips > _TREND_FLIP_EXTREME_ATR_MAX_PIPS:
+                return False
+            if bbw <= 0.0 or bbw > _TREND_FLIP_EXTREME_BBW_MAX:
+                return False
+            trend_gap_pips = max(abs(price_gap_pips), abs(ema_gap_pips))
+            if trend_gap_pips < _TREND_FLIP_EXTREME_GAP_MIN_PIPS:
+                return False
+            if side == "long":
+                if not trend_up or rsi < _TREND_FLIP_EXTREME_LONG_RSI_MIN:
+                    return False
+            elif side == "short":
+                if not trend_down or rsi > _TREND_FLIP_EXTREME_SHORT_RSI_MAX:
+                    return False
+            else:
+                return False
+            _log(
+                "trend_flip_extreme_block",
+                side=side,
+                rsi=round(rsi, 2),
+                atr_pips=round(atr_pips, 2),
+                bbw=round(bbw, 5),
+                trend_gap=round(trend_gap_pips, 3),
+                ema_gap=round(ema_gap_pips, 3),
+                price_gap=round(price_gap_pips, 3),
+            )
+            return True
+
         # Dynamic TP/SL (pips) tuned to recent volatility
         # - TP ≈ 3x ATR (pips) within [5, 9]
         # - SL ≈ min(2x ATR, 0.95*TP) with a floor of 4, keeping RR >= ~1.05
@@ -1107,6 +1157,7 @@ class M1Scalper:
                 max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
             action = "OPEN_LONG"
+            flipped_to_trend = False
             if trend_down:
                 if range_reversion_only and not strong_down:
                     _log(
@@ -1126,6 +1177,7 @@ class M1Scalper:
                         )
                     # 強い下落トレンドでは順張りショートに切替
                     action = "OPEN_SHORT"
+                    flipped_to_trend = True
                     confidence = int(confidence * 0.9)
                     if rsi < rsi_trend_short_min:
                         _log("trend_block_short_rsi", rsi=round(rsi, 2))
@@ -1154,6 +1206,8 @@ class M1Scalper:
                     return None
             if action == "OPEN_LONG" and strong_down:
                 _log("trend_block_long", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
+                return None
+            if flipped_to_trend and _trend_flip_extreme_block("short"):
                 return None
             if action == "OPEN_LONG":
                 trap_hit, trap_tag = _long_trap_pattern()
@@ -1185,6 +1239,7 @@ class M1Scalper:
                 max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
             action = "OPEN_SHORT"
+            flipped_to_trend = False
             if trend_up:
                 if range_reversion_only and not strong_up:
                     _log(
@@ -1204,12 +1259,15 @@ class M1Scalper:
                         )
                     # 強い上昇トレンドでは順張りロングに切替
                     action = "OPEN_LONG"
+                    flipped_to_trend = True
                     confidence = int(confidence * 0.9)
                     if rsi > rsi_trend_long_max:
                         _log("trend_block_long_rsi", rsi=round(rsi, 2))
                         return None
             if action == "OPEN_SHORT" and strong_up:
                 _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
+                return None
+            if flipped_to_trend and _trend_flip_extreme_block("long"):
                 return None
             if action == "OPEN_SHORT":
                 trap_hit, trap_tag = _short_trap_pattern()

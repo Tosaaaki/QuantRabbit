@@ -318,3 +318,40 @@ def test_clamp_dynamic_alloc_multiplier_keeps_boost_when_history_is_healthy(monk
 
     assert dyn_mult == 1.45
     assert meta == {}
+
+
+def test_clamp_strategy_units_multiplier_skips_positive_boost_for_dyn_alloc_loser(monkeypatch):
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_LOSER_SCORE", 0.28)
+
+    mult, meta = worker._clamp_strategy_units_multiplier(
+        1.30,
+        dyn_profile={"found": True},
+        dyn_mult=0.62,
+        dyn_score=0.12,
+        dyn_trades=24,
+        dyn_clamp_meta={},
+    )
+
+    assert mult == 1.0
+    assert meta["reason"] == "respect_dynamic_alloc_reduce"
+    assert meta["configured_mult"] == 1.3
+
+
+def test_clamp_strategy_units_multiplier_keeps_positive_boost_for_dyn_alloc_winner(monkeypatch):
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_LOSER_SCORE", 0.28)
+
+    mult, meta = worker._clamp_strategy_units_multiplier(
+        1.20,
+        dyn_profile={"found": True},
+        dyn_mult=1.08,
+        dyn_score=0.46,
+        dyn_trades=24,
+        dyn_clamp_meta={},
+    )
+
+    assert mult == 1.2
+    assert meta == {}

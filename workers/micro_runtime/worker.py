@@ -1280,6 +1280,45 @@ def _clamp_dynamic_alloc_multiplier(
     }
 
 
+def _clamp_strategy_units_multiplier(
+    strategy_units_mult: float,
+    *,
+    dyn_profile: Optional[Dict[str, object]],
+    dyn_mult: float,
+    dyn_score: float,
+    dyn_trades: int,
+    dyn_clamp_meta: Optional[Dict[str, object]] = None,
+) -> tuple[float, Dict[str, object]]:
+    if strategy_units_mult <= 1.0:
+        return strategy_units_mult, {}
+    if not config.DYN_ALLOC_ENABLED or not isinstance(dyn_profile, dict):
+        return strategy_units_mult, {}
+    if not bool(dyn_profile.get("found")):
+        return strategy_units_mult, {}
+    if dyn_trades < max(1, int(config.DYN_ALLOC_MIN_TRADES)):
+        return strategy_units_mult, {}
+
+    history_underperforming = (
+        isinstance(dyn_clamp_meta, dict)
+        and str(dyn_clamp_meta.get("reason") or "").strip().lower() == "history_underperforming"
+    )
+    if dyn_mult >= 1.0 and dyn_score > float(config.DYN_ALLOC_LOSER_SCORE) and not history_underperforming:
+        return strategy_units_mult, {}
+
+    return 1.0, {
+        "configured_mult": round(float(strategy_units_mult), 3),
+        "applied_mult": 1.0,
+        "dyn_mult": round(float(dyn_mult), 3),
+        "score": round(float(dyn_score), 3),
+        "trades": int(dyn_trades),
+        "reason": (
+            "respect_dynamic_alloc_history_clamp"
+            if history_underperforming and dyn_mult >= 1.0 and dyn_score > float(config.DYN_ALLOC_LOSER_SCORE)
+            else "respect_dynamic_alloc_reduce"
+        ),
+    }
+
+
 async def micro_multi_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled (idle)", config.LOG_PREFIX)
@@ -1820,6 +1859,7 @@ async def micro_multi_worker() -> None:
             dyn_trades = 0
             dyn_clamp_meta: Dict[str, object] = {}
             strategy_units_mult = 1.0
+            strategy_units_mult_meta: Dict[str, object] = {}
             hist_mult = 1.0
             hist_score = float(hist_profile.get("score", 0.5) if isinstance(hist_profile, dict) else 0.5)
             hist_n = int(hist_profile.get("n", 0) if isinstance(hist_profile, dict) else 0)
@@ -1844,6 +1884,14 @@ async def micro_multi_worker() -> None:
                     dyn_mult,
                     hist_profile=hist_profile if isinstance(hist_profile, dict) else None,
                 )
+            strategy_units_mult, strategy_units_mult_meta = _clamp_strategy_units_multiplier(
+                strategy_units_mult,
+                dyn_profile=dyn_profile if isinstance(dyn_profile, dict) else None,
+                dyn_mult=dyn_mult,
+                dyn_score=dyn_score,
+                dyn_trades=dyn_trades,
+                dyn_clamp_meta=dyn_clamp_meta,
+            )
             lot = allowed_lot(
                 float(snap.nav or 0.0),
                 sl_pips,
@@ -1946,6 +1994,14 @@ async def micro_multi_worker() -> None:
                 }
             if abs(strategy_units_mult - 1.0) > 1e-9:
                 entry_thesis["strategy_units_mult"] = round(strategy_units_mult, 3)
+            elif strategy_units_mult_meta:
+                entry_thesis["strategy_units_mult"] = round(
+                    float(strategy_units_mult_meta.get("configured_mult", 1.0) or 1.0),
+                    3,
+                )
+            if strategy_units_mult_meta:
+                entry_thesis["strategy_units_mult_applied"] = round(strategy_units_mult, 3)
+                entry_thesis["strategy_units_mult_guard"] = strategy_units_mult_meta
             if bool(chop_ctx.get("active")) or float(chop_ctx.get("score", 0.0) or 0.0) > 0.0:
                 entry_thesis["micro_chop"] = {
                     "active": bool(chop_ctx.get("active")),

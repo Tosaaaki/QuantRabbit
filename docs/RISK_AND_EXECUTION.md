@@ -1016,6 +1016,18 @@
     `allow_winner_only` / `soft_participation` を返す。
   - `micro_runtime` / `M1Scalper` / `scalp_macd_rsi_div` は
     上記フラグを優先し、dyn alloc 由来の hard block を抑制する。
+- 2026-03-09 以降の local-v2 運用では、
+  `quant-dynamic-alloc.service` を `--half-life-hours 24` で回し、
+  直近 24-48h の悪化を 7d 勝ち残りより優先して lot に反映する。
+  あわせて `workers/micro_runtime/worker.py` は、
+  `dynamic_alloc` が縮小判定した戦略に対して
+  `MICRO_MULTI_STRATEGY_UNITS_MULT` の正方向 boost を上乗せしない。
+  目的は `MicroTrendRetest` / `MicroLevelReactor` の loser 縮小を
+  shared override が打ち消す状態を防ぐこと。
+- `M1Scalper` は strategy-local guard として、
+  `sell-rally -> trend-long` / `buy-dip -> trend-short` の flipped continuation が
+  `low ATR + tight BBW + stretched trend gap + RSI extreme` に入った場合だけ reject する。
+  共通 gate や時間帯 block は追加しない。
 
 ### order_manager stale margin snapshot 運用補足（2026-03-07 追記）
 - `execution/order_manager.py` の margin guard は、`503/timeout/connection_error` 時に
