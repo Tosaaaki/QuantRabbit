@@ -13558,3 +13558,39 @@
   - `python3 -m py_compile workers/common/brain.py tests/workers/test_brain_ollama_backend.py` を通過。
   - `qwen2.5:7b` の offline replay では、
     同一 winning sample が `REDUCE` から `ALLOW 1.0` に変化した。
+
+## 2026-03-09 JST - ping5s replay は `dynamic_alloc` を units と `entry_thesis` へ反映
+
+- 対象:
+  - `scripts/replay_exit_workers.py`
+  - `tests/scripts/test_replay_exit_workers.py`
+
+- 変更:
+  - ping5s replay signal は `workers.common.dynamic_alloc.load_strategy_profile()` を読み、
+    `DYN_ALLOC_ENABLED=1` かつ profile found 時は
+    `lot_multiplier` を `entry_units_intent` に掛けるようにした。
+  - multiplier は live worker と同じく
+    `DYN_ALLOC_MULT_MIN / DYN_ALLOC_MULT_MAX` で clamp する。
+  - replay signal / `entry_thesis` には
+    `dynamic_alloc.{strategy_key,score,trades,lot_multiplier}` を残す。
+
+- 意図:
+  - 直前まで replay の ping5s sizing は
+    `regime_units_mult * entry_probability_*` までしか反映しておらず、
+    live で常時効いている `dynamic_alloc` を見落としていた。
+  - 現行 `config/dynamic_alloc.json` では
+    `scalp_ping_5s_d_live` の `lot_multiplier=0.45` なので、
+    ここを落とさないと replay units が恒常的に過大になる。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` で `20 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py`
+    を通過。
+  - `config/dynamic_alloc.json` 実値でも
+    `scalp_ping_5s_d_live.pocket=scalp_fast`,
+    `lot_multiplier=0.45`,
+    `trades=43`
+    を確認。
+
+- 残差:
+  - replay 未移植は `lookahead_units_mult`, `side_adverse_stack`, `allowed_lot`。

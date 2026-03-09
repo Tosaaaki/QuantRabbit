@@ -9770,3 +9770,38 @@ Status:
   - live shadow で `brain_shadow` の `ALLOW/REDUCE` 構成比が変わるか。
   - `reason=no_llm` が再増加しないか。
   - `micro` の勝ちトレードで不要な `REDUCE` が減るか。
+
+## 2026-03-09 16:18 JST - ping5s replay units mismatch は `dynamic_alloc` を replay sizing に戻して一段縮めた
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json` の最新 best bid/ask は `158.616 / 158.624`、spread は `0.8p`、latency は `106.8ms`。
+  - `logs/health_snapshot.json` は `generated_at=2026-03-09T07:11:04Z`、`git_rev=35432c3b`、`trades_count_24h=283`。
+  - `local_v2_stack status` で core 4 は `running`。
+
+- 実測:
+  - 直前の replay parity では `adaptive signal window` と `entry_probability` は live に寄ったが、
+    sizing 側はなお `dynamic_alloc` を落としていた。
+  - 現行 `config/dynamic_alloc.json` では
+    `scalp_ping_5s_d_live / scalp_fast` の `lot_multiplier=0.45`, `trades=43`, `score=0.089`。
+  - つまり replay の `entry_units_intent` は、D worker で live が常時 `0.45x` している分だけ
+    恒常的に大きく見えていた。
+
+- 対応:
+  - `scripts/replay_exit_workers.py`
+    - ping5s replay signal で `workers.common.dynamic_alloc.load_strategy_profile()` を読み、
+      found profile の `lot_multiplier` を `entry_units_intent` に掛けるようにした。
+    - `DYN_ALLOC_MULT_MIN / DYN_ALLOC_MULT_MAX` clamp を live worker と同じ順で適用。
+    - replay signal / `entry_thesis` に
+      `dynamic_alloc.{strategy_key,score,trades,lot_multiplier}` を残すようにした。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - profile ありで `entry_units_intent` が縮小される回帰テストを追加。
+    - `lot_multiplier` clamp の回帰テストを追加。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `20 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py` は pass。
+
+- 残課題:
+  - replay 未移植は `lookahead_units_mult`, `side_adverse_stack`, `allowed_lot`。
+  - 特に live vs replay の最終 units 差をさらに詰めるには、
+    `allowed_lot` と `lookahead_units_mult` の順を replay へ持ち込む必要がある。

@@ -2159,3 +2159,21 @@
 - `scalp_ping_5s_b/d` のように live execution cost が forecast edge を上回る worker は、
   entry 数回復だけを目的に lookahead / edge gate を緩めない。期待値の悪い fill を増やす変更は
   「entry が少ない」ことの対症療法として採用しない。
+
+### 2026-03-09 ping5s replay fidelity
+- `scripts/replay_exit_workers.py` の ping5s replay signal は、variant worker の live helper を優先して
+  `adaptive signal window`, `side_metrics_direction_flip`,
+  `entry_probability_alignment`, `entry_probability_band_allocation`
+  を replay signal に反映する。
+- `_adaptive_live_score_blocked()` が block を返した replay signal は fail-closed で落とす。
+  これにより、live で negative-edge と判定する adaptive window を replay だけ通さない。
+- `ScalpReplayEntryEngine` は `entry_thesis.entry_probability` を `confidence/100` で固定せず、
+  signal 側に計算済みの `entry_probability` を優先して渡す。
+- ping5s replay の `entry_units_intent` は
+  `regime_units_mult * entry_probability_units_mult * entry_probability_band_units_mult * dynamic_alloc.lot_multiplier`
+  を掛けた後の値を使う。
+- replay signal / `entry_thesis` には `dynamic_alloc.{strategy_key,score,trades,lot_multiplier}`
+  も残す。
+- live 側の sizing contract は
+  `units_mult_total -> dynamic_alloc -> allowed_lot -> directional_bias_scale -> rescue/min-units`
+  の順で、replay は現在このうち `allowed_lot` と最終 rescue/min-units を未移植として残す。

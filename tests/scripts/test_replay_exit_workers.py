@@ -607,6 +607,165 @@ def test_ping5s_signal_respects_adaptive_live_score_block(monkeypatch) -> None:
     assert out is None
 
 
+def test_ping5s_signal_applies_dynamic_alloc_multiplier_and_metadata(monkeypatch) -> None:
+    class _FakeWorker:
+        def _build_tick_signal(self, rows, spread_pips):
+            _ = rows, spread_pips
+            return SimpleNamespace(
+                side="long",
+                confidence=80,
+                spread_pips=0.3,
+                momentum_pips=1.0,
+                range_pips=2.0,
+                instant_range_pips=1.0,
+                mode="momentum",
+                bid=150.0,
+                ask=150.002,
+                mid=150.001,
+                signal_window_sec=1.2,
+            ), "ok"
+
+        def _build_mtf_regime(self, _factors):
+            return SimpleNamespace(mode="balanced", side="long", heat_score=0.4)
+
+        def _apply_mtf_regime(self, signal, regime):
+            _ = regime
+            return signal, 1.0, "mtf_balanced"
+
+        def _load_tp_timing_profile(self, *_args, **_kwargs):
+            return SimpleNamespace()
+
+        def _compute_targets(self, **_kwargs):
+            return 1.2, 0.9
+
+        def _confidence_scale(self, _conf):
+            return 1.0
+
+    fake_cfg = SimpleNamespace(
+        WINDOW_SEC=5.0,
+        TP_ENABLED=True,
+        FORCE_EXIT_ENABLED=True,
+        FORCE_EXIT_MAX_ACTIONS=2,
+        FORCE_EXIT_MAX_HOLD_SEC=45.0,
+        SHORT_FORCE_EXIT_MAX_HOLD_SEC=35.0,
+        FORCE_EXIT_REASON="time_stop",
+        BASE_ENTRY_UNITS=1000,
+        MIN_UNITS=100,
+        MAX_UNITS=3000,
+        STRATEGY_TAG="scalp_ping_5s_d_live",
+        POCKET="scalp_fast",
+        SIDE_FILTER="",
+        DYN_ALLOC_ENABLED=True,
+        DYN_ALLOC_PATH="config/dynamic_alloc.json",
+        DYN_ALLOC_TTL_SEC=20.0,
+        DYN_ALLOC_MULT_MIN=0.2,
+        DYN_ALLOC_MULT_MAX=1.2,
+    )
+
+    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
+    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
+    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+    monkeypatch.setattr(
+        replay,
+        "load_strategy_profile",
+        lambda *args, **kwargs: {
+            "found": True,
+            "strategy_key": "scalp_ping_5s_d_live",
+            "score": 0.089,
+            "trades": 43,
+            "lot_multiplier": 0.45,
+        },
+    )
+
+    out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
+
+    assert out is not None
+    assert out["entry_units_intent"] == 450
+    assert out["dynamic_alloc"] == {
+        "strategy_key": "scalp_ping_5s_d_live",
+        "score": 0.089,
+        "trades": 43,
+        "lot_multiplier": 0.45,
+    }
+
+
+def test_ping5s_signal_clamps_dynamic_alloc_multiplier(monkeypatch) -> None:
+    class _FakeWorker:
+        def _build_tick_signal(self, rows, spread_pips):
+            _ = rows, spread_pips
+            return SimpleNamespace(
+                side="long",
+                confidence=80,
+                spread_pips=0.3,
+                momentum_pips=1.0,
+                range_pips=2.0,
+                instant_range_pips=1.0,
+                mode="momentum",
+                bid=150.0,
+                ask=150.002,
+                mid=150.001,
+                signal_window_sec=1.2,
+            ), "ok"
+
+        def _build_mtf_regime(self, _factors):
+            return SimpleNamespace(mode="balanced", side="long", heat_score=0.4)
+
+        def _apply_mtf_regime(self, signal, regime):
+            _ = regime
+            return signal, 1.0, "mtf_balanced"
+
+        def _load_tp_timing_profile(self, *_args, **_kwargs):
+            return SimpleNamespace()
+
+        def _compute_targets(self, **_kwargs):
+            return 1.2, 0.9
+
+        def _confidence_scale(self, _conf):
+            return 1.0
+
+    fake_cfg = SimpleNamespace(
+        WINDOW_SEC=5.0,
+        TP_ENABLED=True,
+        FORCE_EXIT_ENABLED=True,
+        FORCE_EXIT_MAX_ACTIONS=2,
+        FORCE_EXIT_MAX_HOLD_SEC=45.0,
+        SHORT_FORCE_EXIT_MAX_HOLD_SEC=35.0,
+        FORCE_EXIT_REASON="time_stop",
+        BASE_ENTRY_UNITS=1000,
+        MIN_UNITS=100,
+        MAX_UNITS=3000,
+        STRATEGY_TAG="scalp_ping_5s_d_live",
+        POCKET="scalp_fast",
+        SIDE_FILTER="",
+        DYN_ALLOC_ENABLED=True,
+        DYN_ALLOC_PATH="config/dynamic_alloc.json",
+        DYN_ALLOC_TTL_SEC=20.0,
+        DYN_ALLOC_MULT_MIN=0.3,
+        DYN_ALLOC_MULT_MAX=0.6,
+    )
+
+    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
+    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
+    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+    monkeypatch.setattr(
+        replay,
+        "load_strategy_profile",
+        lambda *args, **kwargs: {
+            "found": True,
+            "strategy_key": "scalp_ping_5s_d_live",
+            "score": 0.089,
+            "trades": 43,
+            "lot_multiplier": 0.05,
+        },
+    )
+
+    out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
+
+    assert out is not None
+    assert out["entry_units_intent"] == 300
+    assert out["dynamic_alloc"]["lot_multiplier"] == 0.3
+
+
 def test_candidate_regime_route_matrix() -> None:
     assert replay._candidate_regime_route("Trend", "Trend") == "trend"
     assert replay._candidate_regime_route("Breakout", "Trend") == "trend"

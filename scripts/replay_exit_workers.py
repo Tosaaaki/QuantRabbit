@@ -36,6 +36,7 @@ from indicators import factor_cache
 from market_data import tick_window, spread_monitor
 from analysis.range_guard import detect_range_mode
 from workers.common.air_state import evaluate_air, adjust_signal
+from workers.common.dynamic_alloc import load_strategy_profile
 from workers.scalp_false_break_fade import exit_worker as sp_false_break_exit
 from workers.scalp_false_break_fade import worker as sp_false_break_worker
 from workers.scalp_level_reject import exit_worker as sp_level_reject_exit
@@ -117,6 +118,10 @@ def _env_int(name: str, default: int) -> int:
         return int(float(os.getenv(name, str(default))))
     except Exception:
         return default
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -559,6 +564,38 @@ def _ping5s_live_signal_adjustments(
     return signal, meta
 
 
+def _ping5s_dynamic_alloc_profile(
+    ping_config: Any,
+    *,
+    strategy_tag: str,
+    pocket: str,
+) -> tuple[float, Optional[dict[str, Any]]]:
+    if not bool(getattr(ping_config, "DYN_ALLOC_ENABLED", False)):
+        return 1.0, None
+    try:
+        dyn_profile = load_strategy_profile(
+            strategy_tag,
+            pocket=pocket,
+            path=getattr(ping_config, "DYN_ALLOC_PATH", None),
+            ttl_sec=float(getattr(ping_config, "DYN_ALLOC_TTL_SEC", 20.0) or 20.0),
+        )
+    except Exception:
+        return 1.0, None
+    if not isinstance(dyn_profile, dict) or not bool(dyn_profile.get("found")):
+        return 1.0, None
+    dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
+    dyn_mult = max(
+        float(getattr(ping_config, "DYN_ALLOC_MULT_MIN", dyn_mult) or dyn_mult),
+        min(float(getattr(ping_config, "DYN_ALLOC_MULT_MAX", dyn_mult) or dyn_mult), dyn_mult),
+    )
+    return dyn_mult, {
+        "strategy_key": dyn_profile.get("strategy_key"),
+        "score": round(float(dyn_profile.get("score", 0.0) or 0.0), 3),
+        "trades": int(dyn_profile.get("trades", 0) or 0),
+        "lot_multiplier": round(float(dyn_mult), 3),
+    }
+
+
 def _signal_signed_units(signal: Mapping[str, Any], *, direction: str) -> int:
     for key in ("entry_units_intent", "units_intent", "units"):
         raw = signal.get(key)
@@ -713,6 +750,13 @@ def _signal_scalp_ping_5s_b(
         ping_config,
         confidence=int(signal.confidence),
     )
+    strategy_tag = str(getattr(ping_config, "STRATEGY_TAG", _PING5S_FALLBACK_TAG))
+    pocket = str(getattr(ping_config, "POCKET", "scalp_fast"))
+    dynamic_alloc_mult, dynamic_alloc_meta = _ping5s_dynamic_alloc_profile(
+        ping_config,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
     entry_units_intent = _ping5s_scale_units_intent(
         ping_config,
         units=entry_units_intent,
@@ -720,10 +764,11 @@ def _signal_scalp_ping_5s_b(
             regime_units_mult
             * float(live_meta.get("entry_probability_units_mult", 1.0) or 1.0)
             * float(live_meta.get("entry_probability_band_units_mult", 1.0) or 1.0)
+            * float(dynamic_alloc_mult)
         ),
     )
 
-    return {
+    signal_payload = {
         "action": "OPEN_LONG" if str(signal.side) == "long" else "OPEN_SHORT",
         "confidence": int(signal.confidence),
         "entry_units_intent": int(entry_units_intent),
@@ -746,7 +791,7 @@ def _signal_scalp_ping_5s_b(
         "timeout_sec": float(timeout_sec),
         "force_exit_reason": force_exit_reason,
         "force_exit_max_hold_sec": float(timeout_sec),
-        "strategy_tag": str(getattr(ping_config, "STRATEGY_TAG", _PING5S_FALLBACK_TAG)),
+        "strategy_tag": strategy_tag,
         "signal_mode": str(getattr(signal, "mode", "momentum")),
         "signal_reason": str(reason),
         "mtf_regime_gate": str(regime_gate),
@@ -791,6 +836,9 @@ def _signal_scalp_ping_5s_b(
         "entry_probability_alignment": live_meta.get("entry_probability_alignment"),
         "entry_probability_band_allocation": live_meta.get("entry_probability_band_allocation"),
     }
+    if dynamic_alloc_meta is not None:
+        signal_payload["dynamic_alloc"] = dynamic_alloc_meta
+    return signal_payload
 
 
 def _unsupported_signal(*_args: object, **_kwargs: object) -> None:
