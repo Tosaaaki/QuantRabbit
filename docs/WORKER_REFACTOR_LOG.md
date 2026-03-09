@@ -12960,3 +12960,40 @@
   - 2026-03-07 の「winner 回復用」緩和値を、2026-03-09 の trend 継続局面へ持ち込まない。
   - 共通レイヤではなく strategy-local / dedicated env でだけ境界を締め、
     range 系の逆張りを通常の range 相場へ戻す。
+
+## 2026-03-09 JST - `scalp_extrema_reversal_live` の range-active 通過穴を塞ぎ、`MomentumBurst` は recent loser history を dyn_alloc が上書きしないよう補正
+
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `workers/micro_runtime/worker.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+
+- 背景:
+  - 反映後も `scalp_extrema_reversal_live` が `2026-03-09 09:40-09:42 JST` に
+    同条件 short を 4 本連発し、4 本とも `STOP_LOSS_ORDER` だった。
+  - 4 本とも `range_active=true / range_mode=RANGE / range_score=0.36前後 / ma_gap=1.2p前後`
+    で、`range_active` だけで通過していた。
+  - `MomentumBurst` の loser trade では `history_perf.pf=0.928 / lot_multiplier=0.625`
+    なのに、`dynamic_alloc.lot_multiplier=1.65` がさらに上書きしていた。
+
+- 変更:
+  - `scalp_extrema_reversal`
+    - `range_mode=RANGE` は `range_active=true` だけでは通さず、
+      `range_score floor` と `against_gap_pips` 上限を追加。
+    - dedicated env で `MAX_OPEN_TRADES=1`, `COOLDOWN_SEC=120`, `CAP_MAX=0.70`
+      へ変更し、同一 trap の重ね打ちを抑制。
+  - `micro_runtime`
+    - recent history が十分あり、かつ `pf<1` または `lot_multiplier<1` のときは
+      `dyn_alloc` boost を `1.0x` で clamp。
+    - clamp した場合は `entry_thesis.dynamic_alloc_clamped_by_history` を残す。
+    - dedicated env で `MomentumBurst` の `BASE_UNITS` と `STRATEGY_UNITS_MULT` を下げ、
+      `STRATEGY_COOLDOWN_SEC=180` を追加。
+
+- 意図:
+  - 共通 order path を変えずに、strategy-local worker と dedicated env だけで
+    再発した loser pattern を抑える。
+  - `dynamic_alloc` は winner routing のまま維持しつつ、
+    recent regime loser を打ち消す boost だけ止める。

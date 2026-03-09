@@ -190,3 +190,40 @@ def test_resolve_account_snapshot_marks_unavailable_without_cache(monkeypatch):
     assert snap is None
     assert unavailable is True
     assert isinstance(err, RuntimeError)
+
+
+def test_clamp_dynamic_alloc_multiplier_when_recent_history_is_underperforming(monkeypatch):
+    monkeypatch.setattr(worker.config, "HIST_REGIME_MIN_TRADES", 8)
+    monkeypatch.setattr(worker.config, "HIST_MIN_TRADES", 12)
+
+    dyn_mult, meta = worker._clamp_dynamic_alloc_multiplier(
+        1.65,
+        hist_profile={
+            "source": "regime",
+            "n": 8,
+            "pf": 0.928,
+            "lot_multiplier": 0.625,
+        },
+    )
+
+    assert dyn_mult == 1.0
+    assert meta["reason"] == "history_underperforming"
+    assert meta["dyn_mult_before"] == 1.65
+
+
+def test_clamp_dynamic_alloc_multiplier_keeps_boost_when_history_is_healthy(monkeypatch):
+    monkeypatch.setattr(worker.config, "HIST_REGIME_MIN_TRADES", 8)
+    monkeypatch.setattr(worker.config, "HIST_MIN_TRADES", 12)
+
+    dyn_mult, meta = worker._clamp_dynamic_alloc_multiplier(
+        1.45,
+        hist_profile={
+            "source": "regime",
+            "n": 9,
+            "pf": 1.12,
+            "lot_multiplier": 1.08,
+        },
+    )
+
+    assert dyn_mult == 1.45
+    assert meta == {}

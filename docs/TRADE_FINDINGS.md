@@ -8883,3 +8883,56 @@ Status:
   2. `scalp_extrema_reversal_live` の trend continuation 中の `filled` が減り、
      no-entry または reject に吸収されること。
   3. free margin が薄い局面で `scalp_extrema_reversal_live` の cap が actual `free_margin_ratio` に追随すること。
+
+## 2026-03-09 09:42 UTC / 2026-03-09 18:42 JST - 改善確認では未回復。`scalp_extrema_reversal_live` の range-active 通過穴と `MomentumBurst` の dyn_alloc 上振れを追加修正
+
+- 市況確認（ローカルV2実測 + OANDA API）:
+  - `2026-03-09 18:40 JST` OANDA snapshot:
+    - `USD/JPY bid=158.481 ask=158.489 mid=158.485 spread=0.8p`
+    - `M5 ATR14=7.14p`, 直近30本 range `28.8p`, change `+10.5p`
+    - `pricing=249ms`, `summary=216ms`, `open_trades=246ms`
+  - local health:
+    - core 4 service は `running`
+    - `snapshot_age_sec=0`
+    - `data_lag_ms avg=842.2`, `decision_latency_ms avg=16.0`
+
+- 事実:
+  - 24h/6h 集計は `65 trades / net_jpy=-755.63 / PF=0.255 / win_rate=43.1%`。
+  - 直近反映後でも closed trade は `1 trade / net_jpy=-0.02 / PF=0.0` で、改善を示すサンプルはまだ出ていない。
+  - `scalp_extrema_reversal_live`
+    - `2026-03-09 09:40-09:42 JST` に short を 4 本連発し、4 本とも `STOP_LOSS_ORDER`。
+    - 4 本とも `range_active=true / range_mode=RANGE / range_score=0.359-0.368 / ADX=9.65-9.74 / ma_gap=1.16-1.25p` で、`range_active` が gate の通過条件になっていた。
+  - `MomentumBurst`
+    - 24h の損失最大は `-516.44 JPY / 2 trades / 0 wins`。
+    - 負け約定では `dynamic_alloc.lot_multiplier=1.65`、一方で同じ `entry_thesis.history_perf` は `pf=0.928 / lot_multiplier=0.625 / n=8`。
+    - つまり recent regime が負け側でも、dyn_alloc boost が上書きしてサイズを増やしていた。
+
+- 対応:
+  - `workers/scalp_extrema_reversal/worker.py`
+    - `range_mode=RANGE` では `range_active=true` を単独通過条件にしない。
+    - `range_score` floor と `against_gap_pips` upper bound を追加し、
+      weak-range + continuation drift の short/long を block する。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `COOLDOWN_SEC=30 -> 120`
+    - `MAX_OPEN_TRADES=3 -> 1`
+    - `CAP_MAX=0.95 -> 0.70`
+    - `TREND_GATE_RANGE_SCORE_MIN=0.40`
+    - `TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS=1.00`
+  - `workers/micro_runtime/worker.py`
+    - recent history が `pf<1` または `lot_multiplier<1` なら、
+      `dyn_alloc` boost を `1.0x` まで clamp する。
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_BASE_UNITS=62000 -> 52000`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.25 -> 1.00`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=180`
+
+- 判断:
+  - 前回の改善で `MicroLevelReactor` の weak-range fade は抑えられたが、
+    収益未回復の時点では `scalp_extrema_reversal_live` の連打と
+    `MomentumBurst` の過大サイズが新しい主因になっていた。
+  - 이번対応は停止ではなく、strategy-local の range質判定と size上限を実測に合わせて詰め直したもの。
+
+- 再検証条件:
+  1. `scalp_extrema_reversal_live` が `range_score < 0.40` かつ `against_gap_pips > 1.0` のとき `filled` ではなく no-entry になること。
+  2. 同 worker が同時多発の short/long を出さず、`MAX_OPEN_TRADES=1` と `COOLDOWN_SEC=120` で 1 本ずつ処理されること。
+  3. `MomentumBurst` の `entry_thesis.dynamic_alloc_clamped_by_history` が recent loser regime で記録され、units が以前より縮小すること。

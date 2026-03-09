@@ -278,6 +278,11 @@ EXTREMA_TREND_GATE_ENABLED = _env_bool("TREND_GATE_ENABLED", True)
 EXTREMA_TREND_GATE_MIN_RANGE_SCORE = _env_float("TREND_GATE_MIN_RANGE_SCORE", 0.6)
 EXTREMA_TREND_GATE_ADX_MIN = _env_float("TREND_GATE_ADX_MIN", 24.0)
 EXTREMA_TREND_GATE_MA_GAP_PIPS = _env_float("TREND_GATE_MA_GAP_PIPS", 1.6)
+EXTREMA_TREND_GATE_RANGE_SCORE_MIN = _env_float("TREND_GATE_RANGE_SCORE_MIN", 0.40)
+EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS = _env_float(
+    "TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS",
+    1.0,
+)
 
 
 def _ma_gap_pips(fac_m1: Dict[str, object]) -> float:
@@ -310,6 +315,32 @@ def _extrema_trend_gate_ok(
     adx_val = _adx(fac_m1)
     ma_gap_pips = _ma_gap_pips(fac_m1)
     against_gap_pips = ma_gap_pips if side == "short" else -ma_gap_pips
+
+    if range_mode == "RANGE":
+        range_ready = range_score >= max(
+            EXTREMA_TREND_GATE_MIN_RANGE_SCORE,
+            EXTREMA_TREND_GATE_RANGE_SCORE_MIN,
+        )
+        range_gap_ok = (
+            EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS <= 0.0
+            or against_gap_pips <= EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS
+        )
+        allow = bool(range_ready and range_gap_ok)
+        return allow, {
+            "range_active": 1.0 if range_active else 0.0,
+            "range_score": float(range_score),
+            "range_mode": 0.0,
+            "adx": float(adx_val),
+            "ma_gap_pips": float(ma_gap_pips),
+            "against_gap_pips": float(against_gap_pips),
+            "range_score_floor": float(
+                max(
+                    EXTREMA_TREND_GATE_MIN_RANGE_SCORE,
+                    EXTREMA_TREND_GATE_RANGE_SCORE_MIN,
+                )
+            ),
+            "range_max_against_gap_pips": float(EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS),
+        }
 
     range_ready = range_active or range_score >= EXTREMA_TREND_GATE_MIN_RANGE_SCORE
     if range_mode == "TREND" and not range_ready:

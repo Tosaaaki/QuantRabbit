@@ -15,6 +15,8 @@ def test_extrema_trend_gate_blocks_countertrend_continuation(monkeypatch):
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MIN_RANGE_SCORE", 0.30)
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_ADX_MIN", 18.0)
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MA_GAP_PIPS", 1.2)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_SCORE_MIN", 0.40)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS", 1.0)
 
     ok, diag = worker._extrema_trend_gate_ok(
         "short",
@@ -32,6 +34,8 @@ def test_extrema_trend_gate_blocks_trend_mode_without_range_ready(monkeypatch):
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MIN_RANGE_SCORE", 0.30)
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_ADX_MIN", 18.0)
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MA_GAP_PIPS", 1.2)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_SCORE_MIN", 0.40)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS", 1.0)
 
     ok, diag = worker._extrema_trend_gate_ok(
         "short",
@@ -49,15 +53,37 @@ def test_extrema_trend_gate_allows_when_range_context_is_ready(monkeypatch):
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MIN_RANGE_SCORE", 0.30)
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_ADX_MIN", 18.0)
     monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MA_GAP_PIPS", 1.2)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_SCORE_MIN", 0.40)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS", 1.0)
 
     ok, diag = worker._extrema_trend_gate_ok(
         "short",
-        {"adx": 24.0, "ma10": 158.452, "ma20": 158.434},
-        range_ctx=_range_ctx(active=True, score=0.40, mode="RANGE"),
+        {"adx": 24.0, "ma10": 158.444, "ma20": 158.434},
+        range_ctx=_range_ctx(active=True, score=0.42, mode="RANGE"),
     )
 
     assert ok is True
     assert diag["range_active"] == 1.0
+
+
+def test_extrema_trend_gate_blocks_weak_range_mode_even_if_active(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MIN_RANGE_SCORE", 0.30)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_ADX_MIN", 18.0)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_MA_GAP_PIPS", 1.2)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_SCORE_MIN", 0.40)
+    monkeypatch.setattr(worker, "EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS", 1.0)
+
+    ok, diag = worker._extrema_trend_gate_ok(
+        "short",
+        {"adx": 9.7, "ma10": 158.4524, "ma20": 158.44},
+        range_ctx=_range_ctx(active=True, score=0.36, mode="RANGE"),
+    )
+
+    assert ok is False
+    assert diag["range_active"] == 1.0
+    assert diag["range_score"] == 0.36
+    assert diag["against_gap_pips"] > 1.0
 
 
 def test_place_order_uses_actual_free_ratio_for_cap(monkeypatch):

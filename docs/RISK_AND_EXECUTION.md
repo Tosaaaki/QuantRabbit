@@ -1876,6 +1876,27 @@
   - `entry_thesis` 契約
   - worker topology / V2 分離構成
 
+### 2026-03-09 `scalp_extrema_reversal_live` range-quality hardening / `MomentumBurst` dyn_alloc clamp
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `workers/micro_runtime/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `ops/env/quant-micro-momentumburst.env`
+- 変更:
+  - `scalp_extrema_reversal_live`
+    - `range_mode=RANGE` では `range_active=true` を通過条件にせず、
+      `range_score >= 0.40` かつ `against_gap_pips <= 1.0` を要求する。
+    - `MAX_OPEN_TRADES=1` と `COOLDOWN_SEC=120` で、同一レンジ局面の多重エントリーを抑える。
+    - `CAP_MAX=0.70` で dedicated size upper bound を引き下げる。
+  - `MomentumBurst`
+    - `recent history` が十分にあり、`pf<1` または `history lot_multiplier<1` のときは
+      `dyn_alloc` boost を `1.0x` で clamp する。
+    - dedicated env は `BASE_UNITS=52000`, `MomentumBurst:1.00`, `STRATEGY_COOLDOWN_SEC=180`。
+- 意図:
+  - shared `order_manager` を変更せずに、strategy-local execution quality と sizing だけを補正する。
+  - `entry_thesis` には `dynamic_alloc_clamped_by_history` を残し、
+    なぜ size を削ったかを監査可能にする。
+
 ### 2026-03-07 `MicroLevelReactor` preserve-intent floor override
 - 対象:
   - `ops/env/quant-micro-levelreactor.env`
