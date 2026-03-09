@@ -24,6 +24,9 @@ class MicroTrendRetest:
     _QUALITY_TREND_RSI_BIAS_MAX = 4.0
     _TREND_SNAPSHOT_GAP_MIN = 8.0
     _TREND_SNAPSHOT_ADX_MIN = 22.0
+    _LOW_ATR_PIPS = 3.4
+    _RETEST_CLOSE_RECOVERY_MIN = 0.20
+    _RETEST_CLOSE_RECOVERY_LOW_ATR_MIN = 0.55
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -85,6 +88,29 @@ class MicroTrendRetest:
             abs(gap_pips) >= MicroTrendRetest._TREND_SNAPSHOT_GAP_MIN
             and adx >= MicroTrendRetest._TREND_SNAPSHOT_ADX_MIN
         )
+
+    @staticmethod
+    def _retest_close_supports(
+        *,
+        direction: str,
+        last_high: float,
+        last_low: float,
+        last_close: float,
+        atr_pips: float,
+    ) -> bool:
+        candle_range = max(last_high - last_low, 0.0)
+        if candle_range <= 0.0:
+            return True
+        threshold = (
+            MicroTrendRetest._RETEST_CLOSE_RECOVERY_LOW_ATR_MIN
+            if atr_pips <= MicroTrendRetest._LOW_ATR_PIPS
+            else MicroTrendRetest._RETEST_CLOSE_RECOVERY_MIN
+        )
+        if direction == "OPEN_LONG":
+            recovery = (last_close - last_low) / candle_range
+        else:
+            recovery = (last_high - last_close) / candle_range
+        return recovery >= threshold
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -156,6 +182,14 @@ class MicroTrendRetest:
                 return None
             if abs(last_close - level_high) > MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
+            if not MicroTrendRetest._retest_close_supports(
+                direction=direction,
+                last_high=last_high,
+                last_low=last_low,
+                last_close=last_close,
+                atr_pips=atr_check,
+            ):
+                return None
             retest_dist = abs(price - level_high) / PIP
             if retest_dist > MicroTrendRetest._MAX_RETEST_DIST_PIPS:
                 return None
@@ -167,6 +201,14 @@ class MicroTrendRetest:
             if last_high < level_low - MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
             if abs(last_close - level_low) > MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
+                return None
+            if not MicroTrendRetest._retest_close_supports(
+                direction=direction,
+                last_high=last_high,
+                last_low=last_low,
+                last_close=last_close,
+                atr_pips=atr_check,
+            ):
                 return None
             retest_dist = abs(price - level_low) / PIP
             if retest_dist > MicroTrendRetest._MAX_RETEST_DIST_PIPS:

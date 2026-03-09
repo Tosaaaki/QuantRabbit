@@ -622,3 +622,62 @@ def test_reacceleration_still_passes_even_when_chop_is_active() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
+
+
+def test_tight_short_context_rejects_without_clear_downside_drift() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.432,
+            "ma10": 158.468,
+            "ma20": 158.481,
+            "ema20": 158.462,
+            "adx": 28.5,
+            "atr_pips": 3.1,
+            "vol_5m": 1.7,
+            "rsi": 39.5,
+            "plus_di": 14.0,
+            "minus_di": 22.0,
+            "roc5": -0.021,
+            "ema_slope_10": -0.0009,
+            "drift_pips_15m": -0.08,
+            "micro_chop_score": 0.62,
+            "candles": [
+                {"high": 158.51, "low": 158.47, "close": 158.49},
+                {"high": 158.49, "low": 158.45, "close": 158.46},
+                {"high": 158.47, "low": 158.44, "close": 158.45},
+                {"high": 158.45, "low": 158.43, "close": 158.432},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
+def test_tight_short_context_allows_when_impulse_is_clean() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.424,
+            "ma10": 158.468,
+            "ma20": 158.482,
+            "ema20": 158.458,
+            "adx": 31.2,
+            "atr_pips": 3.1,
+            "vol_5m": 1.6,
+            "rsi": 39.0,
+            "plus_di": 11.0,
+            "minus_di": 23.5,
+            "roc5": -0.031,
+            "ema_slope_10": -0.0014,
+            "drift_pips_15m": -0.28,
+            "range_score": 0.38,
+            "candles": [
+                {"high": 158.52, "low": 158.47, "close": 158.49},
+                {"high": 158.49, "low": 158.45, "close": 158.46},
+                {"high": 158.47, "low": 158.43, "close": 158.44},
+                {"high": 158.44, "low": 158.42, "close": 158.424},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"

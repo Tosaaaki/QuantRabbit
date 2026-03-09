@@ -36,6 +36,11 @@ RANGE_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_RANGE_SCORE_SOFT_MAX", "0.
 CHOP_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_CHOP_SCORE_SOFT_MAX", "0.58"))
 CONTEXT_CONF_PENALTY_MAX = float(os.getenv("MOMENTUMBURST_CONTEXT_CONF_PENALTY_MAX", "18.0"))
 CONTEXT_BLOCK_THRESHOLD = float(os.getenv("MOMENTUMBURST_CONTEXT_BLOCK_THRESHOLD", "0.92"))
+SHORT_TIGHT_ATR_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_ATR_MAX", "3.4"))
+SHORT_TIGHT_VOL_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_VOL_MAX", "2.0"))
+SHORT_TIGHT_DRIFT_CEIL = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_DRIFT_CEIL", "-0.20"))
+SHORT_TIGHT_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_DI_GAP_MIN", "9.0"))
+SHORT_TIGHT_ROC5_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_ROC5_MIN", "0.024"))
 
 
 def _clamp01(value: float) -> float:
@@ -329,6 +334,39 @@ class MomentumBurstMicro:
         return 0.0
 
     @staticmethod
+    def _tight_short_context_ok(
+        fac: Dict,
+        *,
+        atr_pips: float,
+        vol_5m: float,
+        drift_pips: float,
+        gap_pips: float,
+        reaccel: bool,
+    ) -> bool:
+        if reaccel:
+            return True
+        range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
+        chop_score = _clamp01(MomentumBurstMicro._attr(fac, "micro_chop_score", 0.0))
+        tight_context = atr_pips <= SHORT_TIGHT_ATR_MAX and (
+            vol_5m <= SHORT_TIGHT_VOL_MAX
+            or range_score >= RANGE_SCORE_SOFT_MAX
+            or chop_score >= CHOP_SCORE_SOFT_MAX
+        )
+        if not tight_context:
+            return True
+        plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
+        minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
+        roc5 = MomentumBurstMicro._attr(fac, "roc5", 0.0)
+        ema_slope_10 = MomentumBurstMicro._attr(fac, "ema_slope_10", 0.0)
+        return (
+            drift_pips <= SHORT_TIGHT_DRIFT_CEIL
+            and gap_pips <= -(MIN_GAP_TREND + 0.08)
+            and (minus_di - plus_di) >= SHORT_TIGHT_DI_GAP_MIN
+            and (-roc5) >= SHORT_TIGHT_ROC5_MIN
+            and ema_slope_10 < -0.0010
+        )
+
+    @staticmethod
     def _apply_context_tilt(signal: Dict, fac: Dict, *, reaccel: bool) -> Dict | None:
         range_active = bool(fac.get("range_active"))
         range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
@@ -483,6 +521,14 @@ class MomentumBurstMicro:
             and adx >= MIN_ADX
             and close < ema20 - 0.0015
             and drift_pips < DRIFT_PIPS_CEIL
+            and MomentumBurstMicro._tight_short_context_ok(
+                fac,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+                drift_pips=drift_pips,
+                gap_pips=gap_pips,
+                reaccel=short_reaccel,
+            )
             and MomentumBurstMicro._mtf_supports("short", fac)
             and MomentumBurstMicro._trend_snapshot_supports("short", fac)
             and (MomentumBurstMicro._price_action_direction(candles, "short") or short_reaccel)

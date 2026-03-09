@@ -2438,3 +2438,15 @@
   を置き、同一分足での burst stacking を抑える。
 - いずれも shared `order_manager` や共通 quality gate を増やさず、
   strategy-local / dedicated env だけで participation の質を戻す。
+
+### 2026-03-10 strategy-local quality guard の更新
+- `MomentumBurst` は strategy 本体で
+  `tight short context` を評価し、
+  `atr_pips <= 3.4` かつ `vol_5m` 低下や chop/range 文脈では
+  `drift_pips`, `DI gap`, `ROC5`, `ema_slope_10`
+  が十分な downside impulse を示す short だけを通す。
+- `MicroTrendRetest` は strategy 本体で
+  `retest close recovery` を追加し、
+  低ATRの retest candle が極値へ貼り付いたままの long/short を reject する。
+- いずれも共通 post-hoc gate ではなく、
+  loser cluster を strategy-local quality guard へ還元する運用を正とする。

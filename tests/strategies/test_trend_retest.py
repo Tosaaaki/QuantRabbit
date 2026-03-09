@@ -164,3 +164,52 @@ def test_long_retest_rejects_strong_opposing_higher_tf_snapshot() -> None:
     signal = MicroTrendRetest.check(fac)
 
     assert signal is None
+
+
+def test_long_retest_rejects_low_atr_when_close_sticks_to_retest_low() -> None:
+    signal = MicroTrendRetest.check(
+        _long_fac(
+            prev_close=100.01,
+            last_high=100.010,
+            last_low=99.998,
+            last_close=100.000,
+            price=100.004,
+            rsi=47.0,
+            atr_pips=3.0,
+        )
+    )
+
+    assert signal is None
+
+
+def test_long_retest_allows_low_atr_when_close_recovers_off_retest_low() -> None:
+    signal = MicroTrendRetest.check(
+        _long_fac(
+            prev_close=100.01,
+            last_high=100.010,
+            last_low=99.998,
+            last_close=100.008,
+            price=100.006,
+            rsi=47.0,
+            atr_pips=3.0,
+        )
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
+def test_short_retest_rejects_low_atr_when_close_sticks_to_retest_high() -> None:
+    signal = MicroTrendRetest.check(
+        _short_fac(
+            prev_close=99.99,
+            last_high=100.002,
+            last_low=99.990,
+            last_close=100.000,
+            price=99.996,
+            rsi=53.0,
+            atr_pips=3.0,
+        )
+    )
+
+    assert signal is None

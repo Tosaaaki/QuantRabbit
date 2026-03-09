@@ -10946,6 +10946,36 @@ Status:
   - 共通 gate や時間帯 block は追加せず、
     直近24hの loser cluster を strategy-local / dedicated env のみで止血する。
 
+## 2026-03-10 08:25 JST - `MomentumBurst` / `MicroTrendRetest` の strategy-local quality guard を追加
+
+- 実測:
+  - 直近24hは `455 trades / -1885.5 JPY / PF 0.551` まで悪化。
+  - `MomentumBurst -617.2 JPY`、`MicroTrendRetest-long -290.2 JPY` が継続して主因。
+  - 市況は `USD/JPY 157.807 / spread 0.8 pips / M1 ATR 2.457 pips` と通常帯で、
+    「低ATR / tight 文脈での strategy-local quality 不足」が継続していた。
+
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    に `tight short context` 判定を追加し、
+    low-ATR / low-vol / chop-range 文脈では
+    `drift_pips`, `DI gap`, `ROC5`, `ema_slope_10`
+    が十分に downside impulse を示す short だけを通すようにした。
+  - `strategies/micro/trend_retest.py`
+    に `retest close recovery` 判定を追加し、
+    低ATR時に retest 極値へ貼り付いたままの long/short を reject するようにした。
+  - `tests/strategies/test_momentum_burst.py`
+    と `tests/strategies/test_trend_retest.py`
+    へ loser cluster 向けの境界テストを追加した。
+
+- 検証:
+  - `pytest tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py`
+    は `50 passed`。
+
+- 意図:
+  - shared gate 追加ではなく、
+    `MomentumBurst short` と `MicroTrendRetest` の
+    low-ATR / tight loser cluster を strategy 本体で落とす。
+
 - 変更:
   - `strategies/micro/momentum_burst.py`
     で short 側の stretched quality 判定を

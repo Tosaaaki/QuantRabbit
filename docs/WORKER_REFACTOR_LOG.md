@@ -14266,3 +14266,34 @@
   - 直近24hの `MomentumBurst` stop-loss 偏重と
     `MicroTrendRetest-long` の burst stacking を、
     shared order/risk を変えず dedicated env だけで抑える。
+
+## 2026-03-10 08:25 JST - strategy-local quality guard の本体実装
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `strategies/micro/trend_retest.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `tests/strategies/test_trend_retest.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 変更:
+  - `MomentumBurst` は
+    low-ATR / low-vol / chop-range 文脈の short を
+    generic 条件だけでは通さず、
+    `drift_pips`, `DI gap`, `ROC5`, `ema_slope_10`
+    の downside impulse が十分なものだけへ絞った。
+  - `MicroTrendRetest` は
+    retest candle の `close recovery` を左右対称に評価し、
+    低ATRで極値へ貼り付いたままの retest を reject するようにした。
+  - strategy テストへ loser cluster の境界ケースを追加し、
+    直近24hの敗因がそのまま戻らないよう固定した。
+
+- 検証:
+  - `pytest tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py`
+    は `50 passed`。
+
+- 意図:
+  - env stopgap だけで終わらせず、
+    loser cluster を strategy 本体の quality guard に落として
+    live でも再発しにくい形へ寄せる。
