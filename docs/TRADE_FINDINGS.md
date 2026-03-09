@@ -10063,6 +10063,57 @@ Status:
   2. `trades.db` で `MomentumBurst` / `scalp_extrema_reversal_live` の `STOP_LOSS_ORDER` 比率が下がること。
   3. `strategy_cooldown` が支配的に残る場合のみ、次段で shared `stage_tracker` の strategy-local override 要否を再評価すること。
 
+## 2026-03-09 09:31 UTC / 2026-03-09 18:31 JST - local-v2 post-deploy check: 直後の実トレードはまだ悪化、改善は未確認
+
+- 市況確認:
+  - `2026-03-09T09:29:50Z` pricing:
+    - `USD/JPY bid=158.425 ask=158.433 spread=0.8p`
+  - local health:
+    - `data_lag_ms=246.4`, `decision_latency_ms=13.1`
+  - core 4 + `quant-micro-momentumburst` + `quant-scalp-extrema-reversal` は `running`
+  - OANDA `openTrades=0`, `USD/JPY net_units=0`
+
+- 変更後の即時成績:
+  - `2026-03-09 18:18 JST` 再起動以降の closed trades:
+    - `MomentumBurst`: `2 trades / net_jpy=-76.8 / net_pips=-1.4 / win_rate=50.0%`
+    - `scalp_ping_5s_d_live`: `2 trades / net_jpy=-12.5 / net_pips=-2.9 / win_rate=0.0%`
+    - 合計 `4 trades / net_jpy=-89.3 / net_pips=-4.3`
+  - 直近 `1h` は `6 trades / net_jpy=-123.6 / net_pips=-1.6 / PF=0.725`
+  - 直近 `3h` は `36 trades / net_jpy=-221.8 / net_pips=+9.8 / PF=0.821`
+  - 直近 `24h` でも `314 trades / net_jpy=-695.7 / net_pips=+209.7 / PF=0.734`
+
+- 変更後の lane 別挙動:
+  - `MomentumBurst` は post-deploy 直後に `OPEN_SHORT` を 2 本約定。
+    - `ticket=454416`: `+53.6 JPY / +3.0p`
+    - `ticket=454428`: `-238.9 JPY / -4.4p`
+    - net でまだ負け。
+  - `quant-order-manager.log` では post-deploy の `MomentumBurst-open_short` が
+    `probability_scale:1.000` で `-5404/-5429 units` まで通っており、
+    loser 1本の絶対損失がまだ重い。
+  - `quant-micro-momentumburst.log` は `18:32 JST` に
+    `hist_block tag=MomentumBurst-open_short strategy=MomentumBurst n=12 score=0.196 reason=low_recent_score`
+    を再度記録。つまり直後に2本撃った後、history gate でまた止まり始めている。
+  - `scalp_extrema_reversal_live` は post-deploy 後 `orders.db` に
+    `preflight/filled/perf_block` が 1件も増えておらず、今回の loosen がまだ評価できるほど signal が出ていない。
+    pre-restart に見えていた `perf_block:hard:failfast` は旧ログ側。
+  - `scalp_ping_5s_d_live` は `18:30 JST` に
+    `STOP_LOSS_ON_FILL_LOSS` reject -> protection fallback -> filled の後、
+    `ticket=454440` が `-9.0 JPY / -1.5p` で終了。
+
+- 判断:
+  - ユーザー指摘どおり、現時点では「うまくいっていない」で正しい。
+  - ただし post-deploy の失敗主因は `scalp_extrema_reversal_live` ではなく、
+    1. `MomentumBurst` がまだ大きい short clip を打って loser 1本で赤化していること
+    2. `scalp_ping_5s_d_live` が `STOP_LOSS_ON_FILL_LOSS` fallback 経由で薄く負けていること
+    3. `extrema` はまだ post-change の検証サンプルが出ていないこと
+  - つまり、今回の loosen の成否判定前に、
+    `MomentumBurst` の per-trade downside をもう一段落とす必要がある。
+
+- 次の観測点:
+  1. `MomentumBurst` の post-deploy `OPEN_SHORT` で `units ~5400` が続くかを最優先で監視する。
+  2. `scalp_extrema_reversal_live` は post-restart 後に `filled` が出るまで、改善/悪化の判定を保留する。
+  3. `scalp_ping_5s_d_live` の `STOP_LOSS_ON_FILL_LOSS` fallback fill が続くなら、entry hard-stop gap の再点検が必要。
+
 ## 2026-03-09 09:31 UTC / 2026-03-09 18:31 JST - pattern_book 未コミット差分の棚卸しと反映要否
 
 - 市況確認:
