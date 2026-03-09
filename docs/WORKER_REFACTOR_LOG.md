@@ -13332,7 +13332,6 @@
   - `python3 -m py_compile workers/scalp_rangefader/exit_worker.py workers/scalp_ping_5s_flow/exit_worker.py`
     で syntax check を通過。
 
-
 ## 2026-03-09 JST - `replay_exit_workers.py` の ping5s variant 選択を fail-closed ではなく variant-aware に補正
 
 - 対象:
@@ -13366,3 +13365,29 @@
     `tmp/replay_exit_workers_ping5s_d_autofix.json` が
     `3 trades / -7.2 pips` と `scalp_entry_pocket_effective=scalp_fast`
     を返すことを確認した。
+
+## 2026-03-09 JST - safe Brain canary の Ollama keep-alive を有効化し、cold-start `no_llm` を潰す
+
+- 対象:
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `utils/ollama_client.py`
+  - `workers/common/brain.py`
+  - `scripts/prepare_local_brain_canary.py`
+  - `tests/utils/test_ollama_client.py`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+
+- 背景:
+  - 15:39 JST の `micro / brain_shadow` は trade path には乗ったが、
+    `brain_state.db` では `reason=no_llm`, `llm_ok=0`, `latency_ms=4202` だった。
+  - 同じ live prompt をローカル再実行すると、初回だけ `~4.9s`、以後は `~1.4-1.9s` で応答した。
+    主因は parse 失敗ではなく Ollama の cold start だった。
+
+- 変更:
+  - safe profile に `BRAIN_OLLAMA_KEEP_ALIVE=-1` を追加。
+  - Ollama client が request-level `keep_alive` を送れるようにした。
+  - Brain の live/autotune 呼び出しと canary warmup に `keep_alive` を通すようにした。
+  - runbook に常駐化の意図を追記し、回帰テストを追加。
+
+- 意図:
+  - safe canary の比較価値を上げるため、
+    `llm_ok=0 / no_llm` の fail-open を減らして `llm_ok=1` の shadow decision を増やす。

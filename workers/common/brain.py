@@ -52,6 +52,7 @@ _OLLAMA_URL = (
     os.getenv("BRAIN_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
     or "http://127.0.0.1:11434/api/chat"
 ).strip()
+_OLLAMA_KEEP_ALIVE = (os.getenv("BRAIN_OLLAMA_KEEP_ALIVE", "") or "").strip()
 
 _TEMP = max(0.0, min(1.0, float(os.getenv("BRAIN_TEMPERATURE", "0.2") or 0.2)))
 _MAX_TOKENS = max(64, int(float(os.getenv("BRAIN_MAX_TOKENS", "256") or 256)))
@@ -2069,6 +2070,7 @@ def _maybe_autotune_prompt_profile() -> None:
             timeout_sec=_PROMPT_AUTOTUNE_TIMEOUT_SEC,
             temperature=_PROMPT_AUTOTUNE_TEMP,
             max_tokens=_PROMPT_AUTOTUNE_MAX_TOKENS,
+            keep_alive=_OLLAMA_KEEP_ALIVE or None,
         )
         if not isinstance(response, dict):
             _record_prompt_run(
@@ -2313,6 +2315,7 @@ def _maybe_autotune_runtime_param_profile() -> None:
             timeout_sec=_RUNTIME_PARAM_AUTOTUNE_TIMEOUT_SEC,
             temperature=_RUNTIME_PARAM_AUTOTUNE_TEMP,
             max_tokens=_RUNTIME_PARAM_AUTOTUNE_MAX_TOKENS,
+            keep_alive=_OLLAMA_KEEP_ALIVE or None,
         )
         if not isinstance(response, dict):
             _record_runtime_param_run(
@@ -2609,6 +2612,7 @@ def decide(
             timeout_sec=timeout_sec,
             temperature=_TEMP,
             max_tokens=_MAX_TOKENS,
+            keep_alive=_OLLAMA_KEEP_ALIVE or None,
         )
         llm_text_available = bool(payload)
     else:

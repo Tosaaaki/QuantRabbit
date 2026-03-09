@@ -36,6 +36,7 @@ def test_call_ollama_chat_json_uses_content_json(monkeypatch) -> None:
     assert payload is not None
     assert payload["action"] == "ALLOW"
     assert captured["json"]["think"] is False
+    assert "keep_alive" not in captured["json"]
 
 
 def test_call_ollama_chat_json_falls_back_to_thinking_json(monkeypatch) -> None:
@@ -84,6 +85,27 @@ def test_call_ollama_chat_json_think_none_omits_field(monkeypatch) -> None:
     assert payload is not None
     assert payload["action"] == "BLOCK"
     assert "think" not in captured["json"]
+
+
+def test_call_ollama_chat_json_includes_keep_alive_when_set(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_post(_url: str, json: dict[str, Any], timeout: float):
+        captured["json"] = json
+        assert timeout >= 1.0
+        return _Resp({"message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'}})
+
+    monkeypatch.setattr(oc.requests, "post", _fake_post)
+    payload = oc.call_ollama_chat_json(
+        "prompt",
+        model="qwen2.5:7b",
+        url="http://127.0.0.1:11434/api/chat",
+        timeout_sec=6,
+        keep_alive="-1",
+    )
+
+    assert payload is not None
+    assert captured["json"]["keep_alive"] == -1
 
 
 def test_call_ollama_chat_json_retries_when_truncated_thinking(monkeypatch) -> None:

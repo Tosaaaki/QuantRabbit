@@ -9526,3 +9526,42 @@ Status:
 - 残課題:
   - replay が `0 trades` になる silent fail は潰れたが、
     live の `entry_probability` / side-metrics flip / lookahead 補正をどこまで replay に持ち込むかは別タスク。
+
+## 2026-03-09 06:44 UTC / 2026-03-09 15:44 JST - Brain `no_llm` の主因は cold start だったため、safe canary に Ollama keep-alive を追加
+
+- 市況確認:
+  - OANDA 直照会の USD/JPY は `bid=158.497 / ask=158.505 / spread=0.8p`。
+  - `M5 x24` の ATR proxy は `9.18p`、直近30分レンジは `22.0p`。
+  - API は `pricing=286ms` で正常。
+
+- 実測:
+  - 2026-03-09 15:39 JST の Brain 発火は
+    `MomentumBurst-open_short / micro / ALLOW / reason=no_llm / llm_ok=0 / latency_ms=4202` だった。
+  - `brain_state.db` の同一行は `response_json` が `runtime_guard` のみで、
+    `error=no_llm`、`response` 本体は空。parse failure ではなく、Ollama 応答が取れなかった経路だった。
+  - 同じ `context_json` から live prompt を再現して `qwen2.5:7b` を実測すると、
+    初回 `max_tokens=64` は `4920ms`、その後の連続呼び出しは
+    `96-192 tokens` で `1386-1943ms` に収まった。
+  - `ollama ps` でも qwen の unload 期限が短く、first-hit だけ遅い cold start と整合した。
+
+- 対応:
+  - `ops/env/profiles/brain-ollama-safe.env`
+    - `BRAIN_OLLAMA_KEEP_ALIVE=-1` を追加し、safe canary では qwen を常駐化。
+  - `utils/ollama_client.py`
+    - `/api/chat` request に `keep_alive` を渡せるよう拡張。
+  - `workers/common/brain.py`
+    - live Brain / prompt autotune / runtime autotune の Ollama 呼び出しへ `BRAIN_OLLAMA_KEEP_ALIVE` を伝播。
+  - `scripts/prepare_local_brain_canary.py`
+    - warmup request にも `keep_alive` を載せ、readiness JSON へ `ollama_keep_alive` を出力。
+  - `tests/utils/test_ollama_client.py`
+    - `keep_alive` request field の回帰テストを追加。
+
+- 意図:
+  - `shadow` は動いていても `llm_ok=0 / no_llm` では比較不能なので、
+    micro pocket の first-hit を常駐モデルで受け、`llm_ok=1` のサンプルを増やす。
+
+- 検証:
+  - `python3 -m py_compile utils/ollama_client.py workers/common/brain.py scripts/prepare_local_brain_canary.py tests/utils/test_ollama_client.py`
+  - `pytest -q tests/utils/test_ollama_client.py`
+  - 反映後に `ollama ps` の `UNTIL` が常駐化すること。
+  - 次の micro Brain event で `brain_state.db.llm_ok=1` かつ `reason!=no_llm` を確認すること。

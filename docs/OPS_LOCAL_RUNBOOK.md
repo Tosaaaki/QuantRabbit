@@ -250,6 +250,7 @@ scripts/runtime_ui.sh logs
   - `brain_gate_mode=shadow`
   - `ORDER_MANAGER_SERVICE_WORKERS=1`
   - `fail-open` / `sample_rate=0.35` / `ttl=15s` / `timeout_cap=4s` / auto-tune off
+  - `BRAIN_OLLAMA_KEEP_ALIVE=-1` で qwen を常駐させ、最初の live micro decision が cold start timeout で `no_llm` になりにくいようにする
 - safe canary の反映:
 ```bash
 python3 scripts/prepare_local_brain_canary.py

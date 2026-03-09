@@ -272,6 +272,8 @@ def _fetch_ollama_status(chat_url: str, required_models: list[str], timeout_sec:
 
 
 def _warmup_model(chat_url: str, model: str, timeout_sec: float) -> dict[str, Any]:
+    env_values = _parse_env_file(DEFAULT_ENV_PROFILE)
+    keep_alive = str(env_values.get("BRAIN_OLLAMA_KEEP_ALIVE") or "").strip()
     payload = {
         "model": model,
         "stream": False,
@@ -279,6 +281,13 @@ def _warmup_model(chat_url: str, model: str, timeout_sec: float) -> dict[str, An
         "messages": [{"role": "user", "content": 'Return only {"ok":true}'}],
         "options": {"temperature": 0.0, "num_predict": 64},
     }
+    if keep_alive:
+        try:
+            keep_alive_num = float(keep_alive)
+        except Exception:
+            payload["keep_alive"] = keep_alive
+        else:
+            payload["keep_alive"] = int(keep_alive_num) if keep_alive_num.is_integer() else keep_alive_num
     started = time.monotonic()
     try:
         resp = requests.post(chat_url, json=payload, timeout=max(1.0, float(timeout_sec)))
@@ -502,6 +511,7 @@ def main() -> int:
             "order_manager_brain_gate_enabled": env_values.get("ORDER_MANAGER_BRAIN_GATE_ENABLED"),
             "brain_gate_mode": env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE"),
             "ollama_model": env_values.get("BRAIN_OLLAMA_MODEL"),
+            "ollama_keep_alive": env_values.get("BRAIN_OLLAMA_KEEP_ALIVE"),
             "pocket_allowlist": env_values.get("BRAIN_POCKET_ALLOWLIST"),
             "strategy_allowlist": env_values.get("BRAIN_STRATEGY_ALLOWLIST"),
             "sample_rate": env_values.get("BRAIN_SAMPLE_RATE"),

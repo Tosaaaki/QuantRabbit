@@ -29,6 +29,19 @@ def _extract_json_payload(text: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def _normalize_keep_alive(value: Optional[str]) -> Any:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        numeric = float(text)
+    except Exception:
+        return text
+    if numeric.is_integer():
+        return int(numeric)
+    return numeric
+
+
 def call_ollama_chat_json(
     prompt: str,
     *,
@@ -38,6 +51,7 @@ def call_ollama_chat_json(
     temperature: float = 0.2,
     max_tokens: int = 256,
     think: Optional[bool] = False,
+    keep_alive: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     base_payload = {
         "model": model,
@@ -49,6 +63,9 @@ def call_ollama_chat_json(
     }
     if think is not None:
         base_payload["think"] = bool(think)
+    normalized_keep_alive = _normalize_keep_alive(keep_alive)
+    if normalized_keep_alive is not None:
+        base_payload["keep_alive"] = normalized_keep_alive
 
     def _post_with_tokens(num_predict: int) -> Optional[dict[str, Any]]:
         payload = dict(base_payload)
