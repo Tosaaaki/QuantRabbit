@@ -23,6 +23,69 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-09 07:32 UTC / 2026-03-09 16:32 JST - local-v2: `MomentumBurst` の staircase 条件が主因で entry を落としていたため、strategy-local に 1 本ノイズ許容へ緩和
+
+Period:
+- 調査/実装: UTC `07:24-07:32` / JST `16:24-16:32`
+- 対象（実測）:
+  - OANDA API `pricing`, `summary`, `openTrades`, `candles(M1/M5)`
+  - `logs/health_snapshot.json`
+  - `logs/orders.db`, `logs/trades.db`
+  - `strategies/micro/momentum_burst.py`
+
+Fact:
+- 市況確認（OANDA live, UTC `07:24` / JST `16:24`）:
+  - USD/JPY `bid=158.586 / ask=158.594 / spread=0.8p`
+  - `ATR14(M5)=8.786p`
+  - `range_last_12xM5=23.1p`
+  - API 応答品質: `pricing=219ms(200)`, `summary=228ms(200)`, `openTrades=239ms(200)`, `candles=223ms(200)`
+  - `openTradeCount=0`, `marginUsed=0.0`, `marginAvailable=37589.9852`
+- ローカルV2稼働:
+  - `logs/health_snapshot.json` at UTC `07:22:33`
+    - `trades_count_24h=283`
+    - `orders_status_1h`: `filled=7`, `entry_probability_reject=5`, `probability_scaled=6`
+- 直近6h実績:
+  - `trades.db`
+    - `MicroLevelReactor: 153 trades / +194.92 JPY / avg_pips +1.085`
+    - `RangeFader: 49 trades / +77.73 JPY / avg_pips +1.567`
+    - `MomentumBurst: 10 trades / -260.00 JPY / avg_pips -0.720`
+- `MomentumBurst` strategy-local 診断:
+  - 直近180本の OANDA M1 を使った near-miss 集計では
+    `price_action_direction` のみ不成立が
+    `short=33`, `long=21` と最多。
+  - 次点は `gap_or_reaccel short=4`, `long_rsi=3`, `long_bull_run=1`, `short_adx=1`。
+  - 直近360本 M1 を side別 `90s` cooldown で診断すると、
+    strict staircase の candidate `24` 本 (`short=17`, `long=7`) が、
+    `3遷移中2票` へ緩和すると `45` 本 (`short=28`, `long=17`) になる。
+  - これは candidate bar 数であり、fill 数そのものではない。
+
+Failure Cause:
+- `MomentumBurst` は 2026-03-09 の `reaccel` 緩和後も、
+  `_price_action_direction()` が recent 4 candles の high/low を
+  `3/3` で順行させる strict staircase を要求していた。
+- そのため gap / ADX / EMA offset / RSI は十分でも、
+  inside bar や wick ノイズ 1 本で continuation が落ち、
+  strategy-local の no-entry が残っていた。
+
+Improvement:
+- `strategies/micro/momentum_burst.py`
+  - `_price_action_direction()` を
+    recent 4 candles の `3/3` 順行必須から、
+    `3遷移中2票以上` の majority 判定へ変更。
+  - `reaccel`, `RSI`, `EMA offset`, shared micro gate, cooldown は変更しない。
+- `tests/strategies/test_momentum_burst.py`
+  - 1 本だけ逆行するノイズ bar を含む short continuation で `OPEN_SHORT` を返す回帰テストを追加。
+  - 2 本以上崩れるケースは reject 維持の回帰テストを追加。
+
+Verification:
+- `pytest -q tests/strategies/test_momentum_burst.py`
+- `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-momentumburst`
+- `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-micro-momentumburst`
+- `sqlite3 logs/orders.db "SELECT ts,status,side,units,json_extract(request_json,'$.entry_thesis.strategy_tag') FROM orders WHERE ts >= datetime('now','-2 hours') AND json_extract(request_json,'$.entry_thesis.strategy_tag') LIKE 'MomentumBurst%' ORDER BY ts DESC LIMIT 20"`
+
+Status:
+- done
+
 ## 2026-03-09 06:10 UTC / 2026-03-09 15:10 JST - local-v2: micro winner の size を戻し、`MomentumBurst` は頻度増に合わせて per-trade risk を再配分
 
 Period:
@@ -9571,55 +9634,6 @@ Status:
 - 残課題:
   - replay が `0 trades` になる silent fail は潰れたが、
     live の `entry_probability` / side-metrics flip / lookahead 補正をどこまで replay に持ち込むかは別タスク。
-
-## 2026-03-09 07:02 UTC / 2026-03-09 16:02 JST - ping5s D replay は adaptive signal window と entry probability 補正を live helper へ寄せた
-
-- 市況確認:
-  - `logs/orderbook_snapshot.json` の最新 best bid/ask は `158.616 / 158.624`、spread は `0.8p`、latency は `298.7ms`。
-  - `logs/health_snapshot.json` は `generated_at=2026-03-09T06:49:15Z`、`git_rev=fa5fdcd4`、`trades_count_24h=279`。
-  - `local_v2_stack status` で core 4 は `running`。
-
-- 実測:
-  - 前段の replay fix 後も、`scalp_ping_5s_d_live` の replay entry は
-    `confidence/100` ベースで、live worker が使う `adaptive signal window`,
-    `side_metrics_direction_flip`, `entry_probability_alignment`,
-    `entry_probability_band_allocation` を素通りしていた。
-  - そのため zero-trade は解消しても、entry thesis と replay sizing が live からまだ乖離していた。
-
-- 対応:
-  - `scripts/replay_exit_workers.py`
-    - ping5s replay signal に対して、live worker の
-      `_maybe_adapt_signal_window`, `_adaptive_live_score_blocked`,
-      `_maybe_side_metrics_direction_flip`,
-      `_adjust_entry_probability_alignment`,
-      `_entry_probability_band_units_multiplier`,
-      `_resolve_final_signal_for_side_filter`,
-      `_is_signal_mode_blocked`
-      を再利用する補正層を追加。
-    - replay signal に
-      `entry_probability`, `entry_probability_raw`,
-      `entry_probability_units_mult`, `entry_probability_band_units_mult`,
-      `signal_window_adaptive_*`,
-      `side_metrics_direction_flip_*`
-      を埋めるようにした。
-    - `ScalpReplayEntryEngine` は `confidence/100` ではなく、
-      signal 側の `entry_probability` を優先して `entry_thesis` へ渡すようにした。
-  - `tests/scripts/test_replay_exit_workers.py`
-    - live probability 補正と side-metrics flip が replay signal へ反映される回帰テストを追加。
-    - adaptive live-score block が replay でも entry を止める回帰テストを追加。
-
-- 検証:
-  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `18 passed`。
-  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py` は pass。
-  - 実 replay でも `SCALP_REPLAY_MODE=scalp_ping_5s_d` のみで
-    `tmp/replay_exit_workers_ping5s_d_liveadj2.json` は
-    `summary_overall.trades=3`, `total_pnl_pips=-7.2` を維持し、
-    trade count を崩さず補正層を追加できた。
-
-- 残課題:
-  - まだ replay は `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
-    までは live と一致していない。
-  - 次は lot/sizing の live parity をどこまで replay に持ち込むかを切る。
 
 ## 2026-03-09 06:44 UTC / 2026-03-09 15:44 JST - Brain `no_llm` の主因は cold start だったため、safe canary に Ollama keep-alive を追加
 

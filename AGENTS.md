@@ -266,4 +266,4 @@ flowchart LR
 - 運用:
   - MCPに基づく根拠判断は必ず `docs/TRADE_FINDINGS.md` と監査ログに紐付ける。
   - MCP設定変更時はこの AGENTS に変更点を追記する（最小1行以上）。
-- 2026-03-09 追記: `MomentumBurst` の entry 数を増やす調整は、shared micro gate を緩めず strategy-local に限定する。現行運用値は `strategies/micro/momentum_burst.py` の `reaccel` 閾値緩和と `ops/env/quant-micro-momentumburst.env` の `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90` を正とし、サイズ配分は `ops/env/local-v2-stack.env` の shared `MICRO_MULTI_STRATEGY_UNITS_MULT` を優先する。
+- 2026-03-09 追記: `MomentumBurst` の entry 数を増やす調整は、shared micro gate を緩めず strategy-local に限定する。現行運用値は `strategies/micro/momentum_burst.py` の `reaccel` 閾値緩和と、recent 4 candles の `price_action_direction` を `3遷移中2票` で通すノイズ許容、`ops/env/quant-micro-momentumburst.env` の `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90` を正とし、サイズ配分は `ops/env/local-v2-stack.env` の shared `MICRO_MULTI_STRATEGY_UNITS_MULT` を優先する。

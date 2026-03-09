@@ -71,7 +71,8 @@ class MomentumBurstMicro:
         candles: Sequence[Dict], direction: str, lookback: int = 4
     ) -> bool:
         """
-        Lightweight check: require recent highs/lows to stair-step in the intended direction.
+        Lightweight check: allow one noisy bar while the recent highs/lows still
+        mostly stair-step in the intended direction.
         """
         if not candles or len(candles) < lookback:
             return True  # no data; don't block
@@ -83,10 +84,18 @@ class MomentumBurstMicro:
             lows = [float(l) for l in lows]
         except (TypeError, ValueError):
             return True
+        transitions = list(zip(highs, highs[1:], lows, lows[1:]))
+        required_votes = max(1, len(transitions) - 1)
         if direction == "long":
-            return all(h2 >= h1 and l2 >= l1 for h1, h2, l1, l2 in zip(highs, highs[1:], lows, lows[1:]))
+            votes = sum(
+                1 for h1, h2, l1, l2 in transitions if h2 >= h1 and l2 >= l1
+            )
+            return votes >= required_votes
         if direction == "short":
-            return all(h2 <= h1 and l2 <= l1 for h1, h2, l1, l2 in zip(highs, highs[1:], lows, lows[1:]))
+            votes = sum(
+                1 for h1, h2, l1, l2 in transitions if h2 <= h1 and l2 <= l1
+            )
+            return votes >= required_votes
         return True
 
     @staticmethod

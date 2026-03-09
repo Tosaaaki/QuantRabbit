@@ -8,6 +8,35 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### `MomentumBurst` staircase easing（2026-03-09）
+- 背景:
+  - UTC `07:24` / JST `16:24` の OANDA live は
+    `bid=158.586 / ask=158.594 / spread=0.8p`,
+    `ATR14(M5)=8.786p`, `range_last_12xM5=23.1p`,
+    `pricing/summary/openTrades/candles=200` で通常帯。
+  - 直近180本の USD/JPY M1 を strategy-local 診断すると、
+    `MomentumBurst` の near-miss は
+    `price_action_direction` だけ不成立が主成分
+    (`short=33`, `long=21`)。
+    次点は `gap_or_reaccel short=4`, `long_rsi=3` で、
+    既存 `reaccel` 緩和後も staircase 条件が主な詰まりだった。
+  - 同診断を直近360本 M1 / side別 90 秒 cooldown で見ると、
+    strict staircase の candidate `24` 本 (`short=17`, `long=7`) に対し、
+    1 本ノイズ許容では `45` 本 (`short=28`, `long=17`) まで増える。
+- 実装:
+  - `strategies/micro/momentum_burst.py`
+    - `_price_action_direction()` を
+      recent 4 candles の `3/3` 順行必須から
+      `2/3` 順行で通す majority 判定へ変更。
+  - `tests/strategies/test_momentum_burst.py`
+    - short continuation で 1 本だけ逆行するノイズ bar を許容する回帰テストを追加。
+    - 2 本以上崩れるケースは引き続き reject する回帰テストを追加。
+- 意図:
+  - `MomentumBurst` の entry 数増加は shared micro gate を緩めず、
+    strategy-local の momentum confirmation だけで行う。
+  - inside bar や wick ノイズを 1 本分だけ許容し、
+    re-acceleration 後の continuation を取りこぼしにくくする。
+
 ### `RangeFader` probability-floor / sizing recovery（2026-03-09）
 - 背景:
   - `RangeFader` は直近24hで `49 trades / +77.73 JPY / avg_pips +1.567` と winner。
@@ -438,6 +467,8 @@
   `side_filter_final_block` として entry を拒否する。
 - replay 経路（`scripts/replay_exit_workers.py`）でも同様に、
   `MTF` 調整後の side で再判定して不一致を破棄する。
+- 目的は、`SIDE_FILTER=long` 運用時に `mtf_reversion_fade` 等で
+  short が混入する経路をなくし、実運用と検証の整合性を保つこと。
 - 2026-03-09 追記:
   - `SCALP_REPLAY_PING_VARIANT=B/C/D` を明示して `SCALP_REPLAY_MODE/ALLOWLIST/POCKET`
     を省略した場合、`scripts/replay_exit_workers.py` は variant 側の effective
@@ -458,9 +489,8 @@
     `entry_probability(_raw)`,
     `entry_probability_*_units_mult`,
     `signal_window_adaptive_*`,
-    `side_metrics_direction_flip_*` も残るため、live と replay の entry thesis 差分をその場で監査できる。
-- 目的は、`SIDE_FILTER=long` 運用時に `mtf_reversion_fade` 等で
-  short が混入する経路をなくし、実運用と検証の整合性を保つこと。
+    `side_metrics_direction_flip_*`
+    も残るため、live と replay の entry thesis 差分をその場で監査できる。
 
 ### scalp_ping_5s_c 運用補足（動的同方向cap + side別EXIT）
 - `workers/scalp_ping_5s.worker` は `SCALP_PING_5S_DYNAMIC_DIRECTION_CAP_*` を使い、

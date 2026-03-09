@@ -5,6 +5,37 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-09（追記）`MomentumBurst` の staircase 条件を 1 本ノイズ許容へ緩和し、strategy-local に再加速の取りこぼしを減らす
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    - `_price_action_direction()` の recent 4-bar 判定を
+      「3遷移すべて順行」から「3遷移中2票以上が順行」へ変更。
+    - `reaccel` / `ema20` / `RSI` / `ADX` / 共通 micro runtime gate は変更しない。
+  - `tests/strategies/test_momentum_burst.py`
+    - 1本だけ逆行するノイズ bar を含む short continuation で `OPEN_SHORT` を返す回帰テストを追加。
+    - 逆に 2本以上崩れるケースは reject 維持の回帰テストを追加。
+- 意図:
+  - `MomentumBurst` の entry 数増加は AGENTS 方針どおり strategy-local だけで行い、
+    shared micro gate や order-manager の共通選別ロジックを緩めない。
+  - 反発後の再加速や inside bar を挟む trend continuation を 1 本分だけ許容し、
+    既存の `reaccel` 緩和後も残っていた staircase 起因の no-entry を減らす。
+- 実測根拠:
+  - UTC `07:24` / JST `16:24` の OANDA live は
+    `bid=158.586 / ask=158.594 / spread=0.8p`, `ATR14(M5)=8.786p`, `range_last_12xM5=23.1p`,
+    `pricing/summary/openTrades/candles=200` で通常帯。
+  - 直近180本 M1 の strategy-local 診断では near-miss が
+    `price_action_direction` に集中
+    (`short=33`, `long=21`, 次点 `gap_or_reaccel short=4`, `long_rsi=3`)。
+  - 直近360本 M1 の 90 秒 side cooldown 付き診断では、
+    strict staircase の candidate `24` 本が、1 本ノイズ許容で `45` 本へ増える。
+
 ### 2026-03-09（追記）`MomentumBurst` の `rsi_take` を thin-edge から切り離し、micro runtime に戦略別の RSI 利確バッファを追加
 
 - 対象:

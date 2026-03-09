@@ -84,3 +84,58 @@ def test_short_reacceleration_allows_modest_break_after_pullback() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
+
+
+def test_short_price_action_allows_one_noisy_bar() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.52,
+            "ma10": 158.5,
+            "ma20": 158.57,
+            "ema20": 158.545,
+            "adx": 30.4,
+            "atr_pips": 3.7,
+            "vol_5m": 1.8,
+            "rsi": 28.4,
+            "plus_di": 13.0,
+            "minus_di": 29.0,
+            "roc5": -0.031,
+            "ema_slope_10": -0.0018,
+            "candles": [
+                {"high": 158.62, "low": 158.57, "close": 158.6},
+                {"high": 158.6, "low": 158.55, "close": 158.58},
+                {"high": 158.61, "low": 158.53, "close": 158.56},
+                {"high": 158.58, "low": 158.5, "close": 158.52},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+
+
+def test_short_price_action_still_rejects_when_majority_is_not_directional() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.557,
+            "ma10": 158.53,
+            "ma20": 158.6,
+            "ema20": 158.575,
+            "adx": 29.8,
+            "atr_pips": 3.6,
+            "vol_5m": 1.7,
+            "rsi": 31.0,
+            "plus_di": 14.0,
+            "minus_di": 19.0,
+            "roc5": -0.028,
+            "ema_slope_10": -0.0015,
+            "candles": [
+                {"high": 158.62, "low": 158.57, "close": 158.6},
+                {"high": 158.6, "low": 158.55, "close": 158.58},
+                {"high": 158.61, "low": 158.56, "close": 158.59},
+                {"high": 158.63, "low": 158.55, "close": 158.55},
+            ],
+        }
+    )
+
+    assert signal is None
