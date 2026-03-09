@@ -1115,7 +1115,18 @@ class RangeFaderExitWorker:
             self._states[trade_id] = state
         return state
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> bool:
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+        strategy_tag: Optional[str] = None,
+        pocket: Optional[str] = None,
+        instrument: Optional[str] = None,
+    ) -> bool:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
             pnl_val = locals().get("pnl")
@@ -1135,6 +1146,9 @@ class RangeFaderExitWorker:
             allow_negative=allow_negative,
             exit_reason=reason,
             env_prefix=_BB_ENV_PREFIX,
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            instrument=instrument,
         )
         if ok:
             LOG.info("[exit-rangefader] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
@@ -1142,7 +1156,19 @@ class RangeFaderExitWorker:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
         return bool(ok)
 
-    async def _attempt_close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False, clear_direction_flip: bool = False) -> bool:
+    async def _attempt_close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+        clear_direction_flip: bool = False,
+        strategy_tag: Optional[str] = None,
+        pocket: Optional[str] = None,
+        instrument: Optional[str] = None,
+    ) -> bool:
         state = self._ensure_state(trade_id, pnl)
         now_monotonic = time.monotonic()
         if not state.can_retry_close(now_monotonic, reason):
@@ -1154,6 +1180,9 @@ class RangeFaderExitWorker:
             pnl,
             client_order_id,
             allow_negative=allow_negative,
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            instrument=instrument,
         )
         if ok:
             state.clear_close_retry()
@@ -1247,6 +1276,12 @@ class RangeFaderExitWorker:
             or trade.get("strategy")
             or ""
         )
+        instrument = str(trade.get("instrument") or "USD_JPY").strip().upper() or "USD_JPY"
+        close_context = {
+            "strategy_tag": str(strategy_tag or "").strip() or None,
+            "pocket": POCKET,
+            "instrument": instrument,
+        }
         base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
         is_tick_imb = bool(base_tag and base_tag in self.tick_imb_tags)
         exit_profile = _exit_profile_for_tag(base_tag or strategy_tag)
@@ -1571,6 +1606,7 @@ class RangeFaderExitWorker:
                     client_id,
                     allow_negative=True,
                     clear_direction_flip=True,
+                    **close_context,
                 )
                 return
             if force_exit_max_hold_sec > 0.0 and hold_sec >= force_exit_max_hold_sec:
@@ -1590,6 +1626,7 @@ class RangeFaderExitWorker:
                     client_id,
                     allow_negative=True,
                     clear_direction_flip=True,
+                    **close_context,
                 )
                 return
         # For TickImbalance, enforce max-adverse loss cap before any other pro-stop logic.
@@ -1608,9 +1645,10 @@ class RangeFaderExitWorker:
                 pnl,
                 client_id,
                 allow_negative=True,
+                **close_context,
             )
             return
-        if await maybe_close_pro_stop(trade, now=now):
+        if await maybe_close_pro_stop(trade, now=now, **close_context):
             return
 
         if is_tick_imb and tick_imb_min_hold_sec > 0:
@@ -1631,6 +1669,7 @@ class RangeFaderExitWorker:
                     candle_reason,
                     pnl,
                     candle_client_id,
+                    **close_context,
                 )
                 return
         if is_tick_imb:
@@ -1648,6 +1687,7 @@ class RangeFaderExitWorker:
                         pnl,
                         client_id,
                         allow_negative=True,
+                        **close_context,
                     )
                     return
                 if side == "short" and ask is not None and ask >= state.be_floor_price:
@@ -1658,6 +1698,7 @@ class RangeFaderExitWorker:
                         pnl,
                         client_id,
                         allow_negative=True,
+                        **close_context,
                     )
                     return
             if (
@@ -1676,6 +1717,7 @@ class RangeFaderExitWorker:
                         allow_negative=False,
                         exit_reason="partial_take",
                         env_prefix=_BB_ENV_PREFIX,
+                        **close_context,
                     )
                     if ok:
                         state.partial_done = True
@@ -1706,6 +1748,7 @@ class RangeFaderExitWorker:
                     pnl,
                     client_id,
                     allow_negative=True,
+                    **close_context,
                 )
                 return
             if (
@@ -1721,6 +1764,7 @@ class RangeFaderExitWorker:
                     pnl,
                     client_id,
                     allow_negative=True,
+                    **close_context,
                 )
                 return
         if pnl <= 0:
@@ -1768,6 +1812,7 @@ class RangeFaderExitWorker:
                     pnl,
                     client_id,
                     clear_direction_flip=True,
+                    **close_context,
                 )
                 return
 
@@ -1787,6 +1832,7 @@ class RangeFaderExitWorker:
                         client_id,
                         allow_negative=True,
                         clear_direction_flip=True,
+                        **close_context,
                     )
                     return
                 flip_reason, flip_diag = self._maybe_direction_flip_reason(
@@ -1824,6 +1870,7 @@ class RangeFaderExitWorker:
                             allow_negative=True,
                             exit_reason=direction_flip_de_risk_reason,
                             env_prefix=_BB_ENV_PREFIX,
+                            **close_context,
                         )
                         if ok:
                             st = self._direction_flip_states.get(trade_id)
@@ -1879,6 +1926,7 @@ class RangeFaderExitWorker:
                         client_id,
                         allow_negative=True,
                         clear_direction_flip=True,
+                        **close_context,
                     )
                     return
 
@@ -1950,6 +1998,7 @@ class RangeFaderExitWorker:
                 client_id,
                 allow_negative=True,
                 clear_direction_flip=True,
+                **close_context,
             )
             return
 
@@ -2069,6 +2118,7 @@ class RangeFaderExitWorker:
                 "take_profit",
                 pnl,
                 client_id,
+                **close_context,
             )
             return
 
@@ -2083,6 +2133,7 @@ class RangeFaderExitWorker:
                 "lock_floor",
                 pnl,
                 client_id,
+                **close_context,
             )
             return
 
@@ -2094,6 +2145,7 @@ class RangeFaderExitWorker:
                 pnl,
                 client_id,
                 clear_direction_flip=True,
+                **close_context,
             )
 
     async def run(self) -> None:

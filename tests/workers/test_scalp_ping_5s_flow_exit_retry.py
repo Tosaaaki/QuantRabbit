@@ -24,7 +24,7 @@ def test_failed_close_uses_reason_scoped_retry_cooldown(monkeypatch):
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
         attempts.append(str(reason))
         return False
 
@@ -77,7 +77,7 @@ def test_successful_close_clears_direction_flip_state(monkeypatch):
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
         attempts.append(str(reason))
         return True
 

@@ -13332,6 +13332,46 @@
   - `python3 -m py_compile workers/scalp_rangefader/exit_worker.py workers/scalp_ping_5s_flow/exit_worker.py`
     で syntax check を通過。
 
+## 2026-03-09 JST - close path は worker から explicit strategy context を受け取り、negative-exit policy の推測依存を外す
+
+- 対象:
+  - `execution/order_manager.py`
+  - `workers/order_manager/worker.py`
+  - `workers/scalp_ping_5s_flow/exit_utils.py`
+  - `workers/scalp_rangefader/exit_utils.py`
+  - `workers/scalp_ping_5s_flow/exit_worker.py`
+  - `workers/scalp_rangefader/exit_worker.py`
+  - `tests/execution/test_order_manager_exit_policy.py`
+  - `tests/workers/test_exit_utils_close_context.py`
+
+- 背景:
+  - 7d の実害 trade `424165 / 424436 / 424185` は `trades.db` では
+    `strategy_tag=scalp_ping_5s_flow_live` だが、
+    `orders.db` の `close_reject_no_negative` row では `strategy_tag/pocket` が空だった。
+  - current config では `scalp_ping_5s_flow_live` の `__de_risk__` / `risk_reduce` / `reentry_reset`
+    は許可される一方、strategy context なし default policy では `__de_risk__` が拒否される。
+
+- 変更:
+- `order_manager.close_trade()` と `/order/close_trade` に
+  `strategy_tag/pocket/instrument` を追加。
+- exit utils はこの context を order_manager へ forwarding する。
+- flow/range exit worker は close call ごとに `close_context` を構築して渡す。
+- `pro_stop` helper も同じ `close_context` を close request に引き継ぐようにした。
+
+- 意図:
+  - close policy の評価を `client_order_id` 解析や DB context 読み取りだけに依存させず、
+    worker が把握している strategy context をそのまま close 導線へ渡す。
+  - これにより `scalp_ping_5s_flow_live` の no-block neg-exit policy が
+    deterministic に使われ、historical な `__de_risk__` reject を再発させにくくする。
+
+- 検証:
+- `pytest -q tests/execution/test_order_manager_exit_policy.py tests/workers/test_exit_utils_close_context.py tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_ping_5s_flow_exit_retry.py`
+  で `18 passed`。
+- `pytest -q tests/workers/test_pro_stop_close_context.py`
+  で `2 passed`。
+- `python3 -m py_compile execution/order_manager.py workers/order_manager/worker.py workers/scalp_ping_5s_flow/exit_utils.py workers/scalp_rangefader/exit_utils.py workers/scalp_ping_5s_flow/exit_worker.py workers/scalp_rangefader/exit_worker.py`
+  で syntax check を通過。
+
 ## 2026-03-09 JST - `replay_exit_workers.py` の ping5s variant 選択を fail-closed ではなく variant-aware に補正
 
 - 対象:
@@ -13366,6 +13406,60 @@
     `3 trades / -7.2 pips` と `scalp_entry_pocket_effective=scalp_fast`
     を返すことを確認した。
 
+## 2026-03-09 JST - ping5s D replay は adaptive signal window と entry_probability 補正を live helper に寄せる
+
+- 対象:
+  - `scripts/replay_exit_workers.py`
+  - `tests/scripts/test_replay_exit_workers.py`
+
+- 背景:
+  - variant-aware selection 修正後も、`scalp_ping_5s_d_live` の replay entry thesis は
+    まだ `confidence/100` ベースで、live worker が持つ
+    `adaptive signal window`,
+    `side_metrics_direction_flip`,
+    `entry_probability_alignment`,
+    `entry_probability_band_allocation`
+    を反映していなかった。
+  - そのため replay trade count は揃っても、entry probability と sizing の説明力が
+    live から一段粗いままだった。
+
+- 変更:
+  - ping5s replay signal に対して、live worker の
+    `_maybe_adapt_signal_window`,
+    `_adaptive_live_score_blocked`,
+    `_maybe_side_metrics_direction_flip`,
+    `_resolve_final_signal_for_side_filter`,
+    `_is_signal_mode_blocked`,
+    `_raw_entry_probability`,
+    `_adjust_entry_probability_alignment`,
+    `_entry_probability_band_units_multiplier`
+    を再利用する補正層を追加。
+  - replay signal JSON に
+    `entry_probability`,
+    `entry_probability_raw`,
+    `entry_probability_units_mult`,
+    `entry_probability_band_units_mult`,
+    `signal_window_adaptive_*`,
+    `side_metrics_direction_flip_*`
+    を出すようにした。
+  - `ScalpReplayEntryEngine` は `confidence/100` ではなく
+    signal 側の `entry_probability` を優先して `entry_thesis` へ渡す。
+  - `entry_units_intent` は replay 内でも
+    `regime_units_mult * entry_probability_units_mult * entry_probability_band_units_mult`
+    を掛けて live 側 sizing に近づけた。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `18 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py`
+    は pass。
+  - 実 replay でも `SCALP_REPLAY_MODE=scalp_ping_5s_d` のみで
+    `tmp/replay_exit_workers_ping5s_d_liveadj2.json` が
+    `3 trades / -7.2 pips` を維持し、variant fix 後の trade count を崩さないことを確認した。
+
+- 残課題:
+  - replay はまだ `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
+    までは live と完全一致していない。
+
 ## 2026-03-09 JST - safe Brain canary の Ollama keep-alive を有効化し、cold-start `no_llm` を潰す
 
 - 対象:
@@ -13391,3 +13485,46 @@
 - 意図:
   - safe canary の比較価値を上げるため、
     `llm_ok=0 / no_llm` の fail-open を減らして `llm_ok=1` の shadow decision を増やす。
+
+## 2026-03-09 JST - `replay_exit_workers.py` の ping5s replay を live helper に寄せ、adaptive window / probability / side flip を entry_thesis へ反映
+
+- 対象:
+  - `scripts/replay_exit_workers.py`
+  - `tests/scripts/test_replay_exit_workers.py`
+
+- 変更:
+  - ping5s replay signal は live worker の
+    `_maybe_adapt_signal_window`, `_adaptive_live_score_blocked`,
+    `_maybe_side_metrics_direction_flip`,
+    `_adjust_entry_probability_alignment`,
+    `_entry_probability_band_units_multiplier`,
+    `_resolve_final_signal_for_side_filter`,
+    `_is_signal_mode_blocked`
+    を再利用する。
+  - replay signal へ
+    `signal_window_adaptive_*`,
+    `entry_probability*`,
+    `side_metrics_direction_flip_*`,
+    `entry_probability_band_allocation`
+    を埋め、`ScalpReplayEntryEngine` は `confidence/100` ではなく signal 側の
+    `entry_probability` を優先して `entry_thesis` へ渡す。
+  - `entry_units_intent` は
+    `regime_units_mult * entry_probability_units_mult * entry_probability_band_units_mult`
+    で replay 側でも縮小する。
+
+- 意図:
+  - variant 選択 fix の次段として、replay の signal routing と probability-based sizing を
+    live worker に近づける。
+  - `0 trades` を解消しただけでなく、replay で観測する `entry_thesis` の意味を
+    live と揃える。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` で `18 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py` を通過。
+  - `SCALP_REPLAY_MODE=scalp_ping_5s_d` の replay は
+    `tmp/replay_exit_workers_ping5s_d_liveadj2.json` で
+    `3 trades / -7.2 pips` を維持した。
+
+- 残差:
+  - `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
+    までは replay に未移植。

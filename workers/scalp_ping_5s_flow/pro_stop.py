@@ -61,7 +61,9 @@ async def maybe_close_pro_stop(
     trade: dict,
     *,
     now: Optional[datetime] = None,
+    strategy_tag: Optional[str] = None,
     pocket: Optional[str] = None,
+    instrument: Optional[str] = None,
 ) -> bool:
     trade_id = trade.get('trade_id')
     if not trade_id:
@@ -73,6 +75,8 @@ async def maybe_close_pro_stop(
     if not client_id:
         return False
     pocket_key = (pocket or _infer_pocket(trade) or _FALLBACK_POCKET).strip().lower()
+    resolved_strategy_tag = str(strategy_tag or "").strip() or None
+    resolved_instrument = str(instrument or trade.get('instrument') or 'USD_JPY').strip().upper() or 'USD_JPY'
     fac_m1 = all_factors().get('M1') or {}
     fac_h4 = all_factors().get('H4') or {}
     try:
@@ -95,6 +99,9 @@ async def maybe_close_pro_stop(
         client_order_id=client_id,
         allow_negative=True,
         exit_reason=reason,
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket_key,
+        instrument=resolved_instrument,
     )
     log_metric('pro_stop_exit_close', 1.0 if ok else 0.0, tags={'reason': str(reason)})
     if ok:

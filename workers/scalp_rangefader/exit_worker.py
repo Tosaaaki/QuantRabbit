@@ -352,7 +352,18 @@ class RangeFaderExitWorker:
             self._states[trade_id] = state
         return state
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> bool:
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+        strategy_tag: Optional[str] = None,
+        pocket: Optional[str] = None,
+        instrument: Optional[str] = None,
+    ) -> bool:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
             pnl_val = locals().get("pnl")
@@ -372,6 +383,9 @@ class RangeFaderExitWorker:
             allow_negative=allow_negative,
             exit_reason=reason,
             env_prefix=_BB_ENV_PREFIX,
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            instrument=instrument,
         )
         if ok:
             LOG.info("[exit-rangefader] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
@@ -379,7 +393,19 @@ class RangeFaderExitWorker:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
         return bool(ok)
 
-    async def _attempt_close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], state: _TradeState, allow_negative: bool = False) -> bool:
+    async def _attempt_close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        state: _TradeState,
+        allow_negative: bool = False,
+        strategy_tag: Optional[str] = None,
+        pocket: Optional[str] = None,
+        instrument: Optional[str] = None,
+    ) -> bool:
         now_monotonic = time.monotonic()
         if not state.can_retry_close(now_monotonic, reason):
             return False
@@ -390,6 +416,9 @@ class RangeFaderExitWorker:
             pnl,
             client_order_id,
             allow_negative=allow_negative,
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            instrument=instrument,
         )
         if ok:
             state.clear_close_retry()
@@ -416,6 +445,21 @@ class RangeFaderExitWorker:
         thesis = trade.get("entry_thesis") or {}
         if not isinstance(thesis, dict):
             thesis = {}
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or ""
+        )
+        instrument = str(trade.get("instrument") or "USD_JPY").strip().upper() or "USD_JPY"
+        close_context = {
+            "strategy_tag": str(strategy_tag or "").strip() or None,
+            "pocket": POCKET,
+            "instrument": instrument,
+        }
         forecast_adj = build_exit_forecast_adjustment(
             side=side,
             entry_thesis=thesis,
@@ -444,7 +488,7 @@ class RangeFaderExitWorker:
         if not client_id:
             LOG.warning("[exit-rangefader] missing client_id trade=%s skip close", trade_id)
             return
-        if await maybe_close_pro_stop(trade, now=now):
+        if await maybe_close_pro_stop(trade, now=now, **close_context):
             return
 
         if hold_sec < self.min_hold_sec:
@@ -465,6 +509,7 @@ class RangeFaderExitWorker:
                     pnl,
                     candle_client_id,
                     state,
+                    **close_context,
                 )
                 return
         if pnl <= 0:
@@ -500,6 +545,7 @@ class RangeFaderExitWorker:
                     pnl,
                     client_id,
                     state,
+                    **close_context,
                 )
                 return
             if abs(float(pnl)) >= loss_cut_hard_pips:
@@ -511,6 +557,7 @@ class RangeFaderExitWorker:
                     client_id,
                     state,
                     allow_negative=True,
+                    **close_context,
                 )
                 return
             if (
@@ -526,6 +573,7 @@ class RangeFaderExitWorker:
                     client_id,
                     state,
                     allow_negative=True,
+                    **close_context,
                 )
                 return
             return
@@ -560,6 +608,7 @@ class RangeFaderExitWorker:
                 pnl,
                 client_id,
                 state,
+                **close_context,
             )
             return
 
@@ -571,6 +620,7 @@ class RangeFaderExitWorker:
                 pnl,
                 client_id,
                 state,
+                **close_context,
             )
             return
 
@@ -582,6 +632,7 @@ class RangeFaderExitWorker:
                 pnl,
                 client_id,
                 state,
+                **close_context,
             )
 
     async def run(self) -> None:

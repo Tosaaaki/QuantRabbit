@@ -116,6 +116,32 @@ def test_neg_exit_policy_wildcard_allows_when_reason_missing() -> None:
     assert allowed is True
 
 
+def test_flow_neg_exit_policy_allows_de_risk_with_strategy_context() -> None:
+    allowed, near_be = _neg_exit_decision(
+        exit_reason="__de_risk__",
+        est_pips=-1.8,
+        emergency_allow=False,
+        reason_allow=False,
+        worker_allow=True,
+        neg_policy=order_manager._strategy_neg_exit_policy("scalp_ping_5s_flow_live"),
+    )
+    assert near_be is False
+    assert allowed is True
+
+
+def test_default_neg_exit_policy_blocks_de_risk_without_strategy_context() -> None:
+    allowed, near_be = _neg_exit_decision(
+        exit_reason="__de_risk__",
+        est_pips=-1.8,
+        emergency_allow=False,
+        reason_allow=False,
+        worker_allow=True,
+        neg_policy=order_manager._strategy_neg_exit_policy(None),
+    )
+    assert near_be is False
+    assert allowed is False
+
+
 def test_strategy_control_exit_failopen_threshold_path(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED", True)
     monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD", 3)

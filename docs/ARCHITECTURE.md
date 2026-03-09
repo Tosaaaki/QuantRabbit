@@ -356,3 +356,20 @@ class OrderIntent(BaseModel):
   `RANGEFADER_EXIT_CLOSE_RETRY_COOLDOWN_SEC` 秒の backoff を入れる。
 - これにより `order_manager` の negative-close policy mismatch があっても、
   0.7 秒 loop で同一 trade の reject を増幅しない。
+
+## 10. 2026-03-09 運用補足（close path の explicit strategy context）
+
+- V2 の exit worker は negative close を出す時、
+  `trade_id/client_order_id` だけでなく
+  `strategy_tag/pocket/instrument` も `close_trade()` へ渡す。
+- `quant-order-manager` の `/order/close_trade` も同 context を受け取り、
+  service 側の `close_trade()` へ転送する。
+- `workers/scalp_ping_5s_flow/pro_stop.py` と
+  `workers/scalp_rangefader/pro_stop.py` の
+  `maybe_close_pro_stop()` も同 context をそのまま close request へ渡す。
+- `order_manager` はこの explicit context を最優先で使い、
+  `client_order_id` 解析や exit trade context DB 取得は fallback として扱う。
+- これにより strategy-specific `neg_exit.allow_reasons` が
+  close path で deterministic に評価され、
+  `scalp_ping_5s_flow_live` のような no-block policy が
+  context 欠落で default policy に落ちることを避ける。

@@ -60,7 +60,7 @@ def test_negative_close_failure_uses_retry_cooldown(monkeypatch):
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
         attempts.append(str(reason))
         return False
 
@@ -94,7 +94,7 @@ def test_negative_close_success_clears_worker_state(monkeypatch):
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
         attempts.append(str(reason))
         return True
 

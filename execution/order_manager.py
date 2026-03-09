@@ -6984,6 +6984,9 @@ async def close_trade(
     client_order_id: Optional[str] = None,
     allow_negative: bool = False,
     exit_reason: Optional[str] = None,
+    strategy_tag: Optional[str] = None,
+    pocket: Optional[str] = None,
+    instrument: Optional[str] = None,
 ) -> bool:
     service_result = await _order_manager_service_request_async(
         "/order/close_trade",
@@ -6993,6 +6996,9 @@ async def close_trade(
             "client_order_id": client_order_id,
             "allow_negative": allow_negative,
             "exit_reason": exit_reason,
+            "strategy_tag": strategy_tag,
+            "pocket": pocket,
+            "instrument": instrument,
         },
     )
     if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
@@ -7011,9 +7017,7 @@ async def close_trade(
         return base
 
     trade_id = str(trade_id or "").strip()
-    strategy_tag = None
-    if client_order_id:
-        strategy_tag = _strategy_tag_from_client_id(client_order_id)
+    resolved_strategy_tag = str(strategy_tag or "").strip() or None
     if not _is_valid_live_trade_id(trade_id):
         log_metric(
             "close_reject_invalid_trade_id",
@@ -7050,7 +7054,7 @@ async def close_trade(
             "[ORDER] skip close invalid trade_id=%s client_id=%s strategy=%s",
             trade_id or "-",
             client_order_id or "-",
-            strategy_tag or "unknown",
+            resolved_strategy_tag or "unknown",
         )
         return False
 
@@ -7065,20 +7069,27 @@ async def close_trade(
         logging.info("[ORDER] skip close trade=%s missing client_id (likely manual/external)", trade_id)
         return False
     ctx = _load_exit_trade_context(trade_id, client_order_id)
-    strategy_tag = None
-    pocket = None
+    resolved_pocket = str(pocket or "").strip().lower() or None
+    resolved_instrument = str(instrument or "").strip().upper() or None
     if isinstance(ctx, dict):
-        pocket = ctx.get("pocket")
-        strategy_tag = _strategy_tag_from_thesis(ctx.get("entry_thesis"))
-        if not strategy_tag:
-            strategy_tag = ctx.get("strategy_tag")
-    if not strategy_tag:
-        strategy_tag = _strategy_tag_from_client_id(client_order_id)
+        if not resolved_pocket:
+            ctx_pocket = str(ctx.get("pocket") or "").strip().lower()
+            resolved_pocket = ctx_pocket or resolved_pocket
+        if not resolved_instrument:
+            ctx_instrument = str(ctx.get("instrument") or "").strip().upper()
+            resolved_instrument = ctx_instrument or resolved_instrument
+        if not resolved_strategy_tag:
+            resolved_strategy_tag = _strategy_tag_from_thesis(ctx.get("entry_thesis"))
+        if not resolved_strategy_tag:
+            ctx_strategy_tag = str(ctx.get("strategy_tag") or "").strip()
+            resolved_strategy_tag = ctx_strategy_tag or resolved_strategy_tag
+    if not resolved_strategy_tag:
+        resolved_strategy_tag = _strategy_tag_from_client_id(client_order_id)
 
-    if not strategy_tag:
+    if not resolved_strategy_tag:
         _console_order_log(
             "CLOSE_REJECT",
-            pocket=pocket,
+            pocket=resolved_pocket,
             strategy_tag="missing",
             side=None,
             units=units,
@@ -7089,8 +7100,8 @@ async def close_trade(
             note="missing_strategy_tag",
         )
         _log_close_order(
-            pocket=pocket,
-            instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+            pocket=resolved_pocket,
+            instrument=resolved_instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -7114,6 +7125,10 @@ async def close_trade(
         )
         return False
     emergency_allow: Optional[bool] = None
+    strategy_tag = resolved_strategy_tag
+    pocket = resolved_pocket
+    instrument = resolved_instrument
+
     immediate_bypass_reason = _strategy_control_exit_immediate_bypass_reason(
         exit_reason=exit_reason
     )
@@ -7155,7 +7170,7 @@ async def close_trade(
             )
             _log_close_order(
                 pocket=pocket,
-                instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+                instrument=instrument,
                 side=None,
                 units=units,
                 sl_price=None,
@@ -7193,7 +7208,7 @@ async def close_trade(
             )
             _log_close_order(
                 pocket=pocket,
-                instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+                instrument=instrument,
                 side=None,
                 units=units,
                 sl_price=None,
@@ -7222,7 +7237,6 @@ async def close_trade(
 
     entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
     units_ctx = int((ctx or {}).get("units") or 0)
-    instrument = (ctx or {}).get("instrument") if isinstance(ctx, dict) else None
     min_profit_pips = _min_profit_pips(pocket, strategy_tag)
     bid, ask = _latest_bid_ask()
     mid = None

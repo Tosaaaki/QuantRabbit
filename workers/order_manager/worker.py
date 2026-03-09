@@ -151,6 +151,9 @@ async def close_trade(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             client_order_id=body.get("client_order_id"),
             allow_negative=_to_bool(body.get("allow_negative"), False),
             exit_reason=body.get("exit_reason"),
+            strategy_tag=body.get("strategy_tag"),
+            pocket=body.get("pocket"),
+            instrument=body.get("instrument"),
         )
     except Exception as exc:
         return _failure(str(exc))

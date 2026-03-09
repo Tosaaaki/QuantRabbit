@@ -216,6 +216,9 @@ async def close_trade(
     allow_negative: bool = False,
     exit_reason: str | None = None,
     env_prefix: str | None = None,
+    strategy_tag: str | None = None,
+    pocket: str | None = None,
+    instrument: str | None = None,
 ) -> bool:
     if not allow_negative:
         allow_negative = should_allow_negative_close()
@@ -231,4 +234,7 @@ async def close_trade(
         client_order_id=client_order_id,
         allow_negative=allow_negative,
         exit_reason=exit_reason,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        instrument=instrument,
     )

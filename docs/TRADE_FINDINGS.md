@@ -9489,6 +9489,51 @@ Status:
      `logs/local_v2_stack/quant-scalp-ping-5s-flow-exit.log` で同一 trade の failed close 連打が止まること。
   3. `scalp_ping_5s_flow_live` の near-break-even close reject が 24h で再発しないこと。
 
+## 2026-03-09 15:45-16:05 JST - negative close は worker から `strategy_tag/pocket/instrument` を明示的に渡し、close policy の推測依存を外す
+
+- 市況確認:
+  - `python3 scripts/pdca_profitability_report.py --instrument USD_JPY ...` の 2026-03-09 15:48 JST 時点で、
+    USD/JPY は `158.546 / 158.554`、spread `0.8 pips`、pricing/summary/openTrades は `228.7 / 232.0 / 271.5 ms`。
+  - `local_v2_stack status` では core 4 + `quant-scalp-rangefader-exit` + `quant-scalp-ping-5s-flow-exit` は `running`。
+
+- 実測:
+  - 7d の実害 trade `424165 / 424436 / 424185` はいずれも `trades.db` 上では
+    `strategy_tag=scalp_ping_5s_flow_live` だった。
+  - しかし `orders.db` の `close_reject_no_negative` row では request payload の
+    `strategy_tag/pocket` が空で、reject reason は主に `__de_risk__` と `reentry_reset` だった。
+  - `execution.order_manager._neg_exit_decision()` を current config で直に叩くと、
+    `scalp_ping_5s_flow_live` の policy では `__de_risk__` は許可される一方、
+    strategy context なし default policy では拒否される。
+
+- 原因:
+  - close path は worker から `trade_id/client_order_id` だけを渡し、
+    service 側で `strategy_tag/pocket/instrument` を推測していた。
+  - この推測が崩れると、`scalp_ping_5s_flow_live` 専用の no-block neg-exit policy を使えず、
+    default policy に落ちて `__de_risk__` が reject されうる。
+
+- 対応:
+  - `execution/order_manager.py` の `close_trade()` に
+    `strategy_tag/pocket/instrument` を追加。
+  - `workers/order_manager/worker.py` の `/order/close_trade` も同 context を転送するよう更新。
+  - `workers/scalp_ping_5s_flow/exit_utils.py` と
+    `workers/scalp_rangefader/exit_utils.py` は explicit context を forwarding。
+  - `workers/scalp_ping_5s_flow/exit_worker.py` と
+    `workers/scalp_rangefader/exit_worker.py` は close context を組み立てて
+    `_attempt_close()` / partial close / de-risk close に常時渡す。
+  - `workers/scalp_ping_5s_flow/pro_stop.py` と
+    `workers/scalp_rangefader/pro_stop.py` の `maybe_close_pro_stop()` も
+    explicit context をそのまま close request へ forwarding するように揃えた。
+
+- 検証:
+  - `pytest -q tests/execution/test_order_manager_exit_policy.py tests/workers/test_exit_utils_close_context.py tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_ping_5s_flow_exit_retry.py`
+    は `18 passed`。
+  - `python3 -m py_compile execution/order_manager.py workers/order_manager/worker.py workers/scalp_ping_5s_flow/exit_utils.py workers/scalp_rangefader/exit_utils.py workers/scalp_ping_5s_flow/exit_worker.py workers/scalp_rangefader/exit_worker.py`
+    も成功。
+
+- 次の確認点:
+  1. `scalp_ping_5s_flow_live` の negative close が発生した時に、`orders.db` の close row に `strategy_tag/pocket/instrument` が埋まること。
+  2. `__de_risk__` / `risk_reduce` / `reentry_reset` が flow policy どおり通り、default policy へ落ちないこと。
+
 ## 2026-03-09 15:39 JST - `scalp_ping_5s_d_live` replay が `0 trades` だった主因は tick 欠損ではなく replay 既定選択のズレ
 
 - 市況確認:
@@ -9565,3 +9610,52 @@ Status:
   - `pytest -q tests/utils/test_ollama_client.py`
   - 反映後に `ollama ps` の `UNTIL` が常駐化すること。
   - 次の micro Brain event で `brain_state.db.llm_ok=1` かつ `reason!=no_llm` を確認すること。
+
+## 2026-03-09 07:02 UTC / 2026-03-09 16:02 JST - ping5s D replay は adaptive signal window と entry probability 補正を live helper へ寄せた
+
+- 市況確認:
+  - `logs/orderbook_snapshot.json` の最新 best bid/ask は `158.616 / 158.624`、spread は `0.8p`、latency は `298.7ms`。
+  - `logs/health_snapshot.json` は `generated_at=2026-03-09T06:49:15Z`、`git_rev=fa5fdcd4`、`trades_count_24h=279`。
+  - `local_v2_stack status` で core 4 は `running`。
+
+- 実測:
+  - 前段の replay fix 後も、`scalp_ping_5s_d_live` の replay entry は
+    `confidence/100` ベースで、live worker が使う `adaptive signal window`,
+    `side_metrics_direction_flip`, `entry_probability_alignment`,
+    `entry_probability_band_allocation` を素通りしていた。
+  - そのため zero-trade は解消しても、entry thesis と replay sizing が live からまだ乖離していた。
+
+- 対応:
+  - `scripts/replay_exit_workers.py`
+    - ping5s replay signal に対して、live worker の
+      `_maybe_adapt_signal_window`, `_adaptive_live_score_blocked`,
+      `_maybe_side_metrics_direction_flip`,
+      `_adjust_entry_probability_alignment`,
+      `_entry_probability_band_units_multiplier`,
+      `_resolve_final_signal_for_side_filter`,
+      `_is_signal_mode_blocked`
+      を再利用する補正層を追加。
+    - replay signal に
+      `entry_probability`, `entry_probability_raw`,
+      `entry_probability_units_mult`, `entry_probability_band_units_mult`,
+      `signal_window_adaptive_*`,
+      `side_metrics_direction_flip_*`
+      を埋めるようにした。
+    - `ScalpReplayEntryEngine` は `confidence/100` ではなく、
+      signal 側の `entry_probability` を優先して `entry_thesis` へ渡すようにした。
+  - `tests/scripts/test_replay_exit_workers.py`
+    - live probability 補正と side-metrics flip が replay signal へ反映される回帰テストを追加。
+    - adaptive live-score block が replay でも entry を止める回帰テストを追加。
+
+- 検証:
+  - `pytest -q tests/scripts/test_replay_exit_workers.py` は `18 passed`。
+  - `python3 -m py_compile scripts/replay_exit_workers.py tests/scripts/test_replay_exit_workers.py` は pass。
+  - 実 replay でも `SCALP_REPLAY_MODE=scalp_ping_5s_d` のみで
+    `tmp/replay_exit_workers_ping5s_d_liveadj2.json` は
+    `summary_overall.trades=3`, `total_pnl_pips=-7.2` を維持し、
+    trade count を崩さず補正層を追加できた。
+
+- 残課題:
+  - まだ replay は `lookahead_units_mult`, `dynamic_alloc`, `side_adverse_stack`, `allowed_lot`
+    までは live と一致していない。
+  - 次は lot/sizing の live parity をどこまで replay に持ち込むかを切る。
