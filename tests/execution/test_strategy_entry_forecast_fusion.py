@@ -593,6 +593,18 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     )
     monkeypatch.setattr(
         strategy_entry,
+        "_inject_market_context",
+        lambda entry_thesis, instrument=None: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_macro_news_context",
+        lambda entry_thesis: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
         "_inject_entry_forecast_context",
         lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": False, "p_up": 0.08, "edge": 0.92}),
         raising=False,
@@ -616,6 +628,26 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
             0,
             kwargs.get("entry_probability"),
             {"reject_reason": "strong_contra_forecast"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_participation_alloc",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_auto_canary",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
         ),
         raising=False,
     )
@@ -671,6 +703,8 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     assert isinstance(trail, list)
     assert [step.get("stage") for step in trail] == [
         "technical_context",
+        "market_context",
+        "macro_news_context",
         "forecast_context",
         "analysis_feedback",
         "forecast_fusion",
@@ -698,6 +732,18 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
         strategy_entry,
         "_resolve_entry_probability",
         lambda entry_thesis, confidence: 0.64,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_market_context",
+        lambda entry_thesis, instrument=None: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_macro_news_context",
+        lambda entry_thesis: (entry_thesis, None),
         raising=False,
     )
     monkeypatch.setattr(
@@ -754,6 +800,26 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
         ),
         raising=False,
     )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_participation_alloc",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_auto_canary",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
 
     async def _coordinate_entry_units(**kwargs):
         return 88, None
@@ -798,21 +864,29 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
     assert isinstance(trail, list)
     assert [step.get("stage") for step in trail] == [
         "technical_context",
+        "market_context",
+        "macro_news_context",
         "forecast_context",
         "analysis_feedback",
         "forecast_fusion",
         "entry_net_edge_gate",
         "leading_profile",
+        "participation_alloc",
+        "auto_canary",
         "blackboard_coordination",
         "entry_intent_contract",
     ]
     assert [step.get("status") for step in trail] == [
         "pass",
+        "skip",
+        "skip",
         "pass",
         "reduce",
         "reduce",
         "pass",
         "boost",
+        "skip",
+        "skip",
         "reduce",
         "pass",
     ]
@@ -837,6 +911,18 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
         strategy_entry,
         "_resolve_entry_probability",
         lambda entry_thesis, confidence: 0.58,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_market_context",
+        lambda entry_thesis, instrument=None: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_macro_news_context",
+        lambda entry_thesis: (entry_thesis, None),
         raising=False,
     )
     monkeypatch.setattr(
@@ -880,6 +966,26 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
             0,
             kwargs.get("entry_probability"),
             {"reason": "entry_leading_profile_reject"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_participation_alloc",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_auto_canary",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
         ),
         raising=False,
     )
@@ -930,6 +1036,8 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     assert isinstance(trail, list)
     assert [step.get("stage") for step in trail] == [
         "technical_context",
+        "market_context",
+        "macro_news_context",
         "forecast_context",
         "analysis_feedback",
         "forecast_fusion",

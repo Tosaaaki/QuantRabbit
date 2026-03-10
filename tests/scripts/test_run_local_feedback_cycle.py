@@ -59,12 +59,24 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
 
     dyn_env = tmp_path / "dynamic.env"
     dyn_env.write_text("DYN_MARKER=dynamic-env\n", encoding="utf-8")
+    entry_path_env = tmp_path / "entry_path.env"
+    entry_path_env.write_text("ENTRY_PATH_MARKER=entry-path-env\n", encoding="utf-8")
+    participation_env = tmp_path / "participation.env"
+    participation_env.write_text("PARTICIPATION_MARKER=participation-env\n", encoding="utf-8")
+    market_context_env = tmp_path / "market_context.env"
+    market_context_env.write_text("MARKET_CONTEXT_MARKER=market-context-env\n", encoding="utf-8")
+    macro_news_env = tmp_path / "macro_news.env"
+    macro_news_env.write_text("MACRO_NEWS_MARKER=macro-news-env\n", encoding="utf-8")
     feedback_env = tmp_path / "feedback.env"
     feedback_env.write_text("FEEDBACK_MARKER=feedback-env\n", encoding="utf-8")
     forecast_env = tmp_path / "forecast.env"
     forecast_env.write_text("FORECAST_MARKER=forecast-env\n", encoding="utf-8")
     replay_env = tmp_path / "replay.env"
     replay_env.write_text("REPLAY_MARKER=replay-env\n", encoding="utf-8")
+    loser_cluster_env = tmp_path / "loser_cluster.env"
+    loser_cluster_env.write_text("LOSER_CLUSTER_MARKER=loser-cluster-env\n", encoding="utf-8")
+    auto_canary_env = tmp_path / "auto_canary.env"
+    auto_canary_env.write_text("AUTO_CANARY_MARKER=auto-canary-env\n", encoding="utf-8")
 
     env = os.environ.copy()
     env.update(
@@ -85,6 +97,38 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
             "LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_OUTPUTS": str(outputs_dir / "dynamic.json"),
             "LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_INTERVAL_SEC": "120",
             "LOCAL_FEEDBACK_CYCLE_PATTERN_BOOK_ENABLED": "0",
+            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'entry_path.json'} "
+                "--env-key ENTRY_PATH_MARKER --marker entry-path"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_ENV_FILES": str(entry_path_env),
+            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_OUTPUTS": str(outputs_dir / "entry_path.json"),
+            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_INTERVAL_SEC": "300",
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'participation.json'} "
+                "--env-key PARTICIPATION_MARKER --marker participation"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_ENV_FILES": str(participation_env),
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_OUTPUTS": str(outputs_dir / "participation.json"),
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_INTERVAL_SEC": "300",
+            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'market_context.json'} "
+                "--env-key MARKET_CONTEXT_MARKER --marker market-context"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_ENV_FILES": str(market_context_env),
+            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_OUTPUTS": str(outputs_dir / "market_context.json"),
+            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_INTERVAL_SEC": "300",
+            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'macro_news.json'} "
+                "--env-key MACRO_NEWS_MARKER --marker macro-news"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_ENV_FILES": str(macro_news_env),
+            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_OUTPUTS": str(outputs_dir / "macro_news.json"),
+            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_INTERVAL_SEC": "300",
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_CMD": (
                 f"{sys.executable} {fake_job} --output {outputs_dir / 'feedback.json'} "
@@ -110,6 +154,22 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_ENV_FILES": str(replay_env),
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_OUTPUTS": str(outputs_dir / "replay.json"),
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_INTERVAL_SEC": "10800",
+            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'loser_cluster.json'} "
+                "--env-key LOSER_CLUSTER_MARKER --marker loser-cluster"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_ENV_FILES": str(loser_cluster_env),
+            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_OUTPUTS": str(outputs_dir / "loser_cluster.json"),
+            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_INTERVAL_SEC": "1200",
+            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'auto_canary.json'} "
+                "--env-key AUTO_CANARY_MARKER --marker auto-canary"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_ENV_FILES": str(auto_canary_env),
+            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_OUTPUTS": str(outputs_dir / "auto_canary.json"),
+            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_INTERVAL_SEC": "1200",
         }
     )
     return env
@@ -129,6 +189,28 @@ def _run_cycle(tmp_path: Path, *, force: bool, env: dict[str, str]) -> dict:
     )
     assert proc.returncode == 0, proc.stdout + "\n" + proc.stderr
     return json.loads((tmp_path / "logs" / "latest.json").read_text(encoding="utf-8"))
+
+
+def test_entry_path_aggregator_job_defaults_are_wired() -> None:
+    job = run_local_feedback_cycle._build_job("entry_path_aggregator", sys.executable)
+
+    assert job.enabled is True
+    assert job.interval_sec == 300
+    assert job.timeout_sec == 180
+    assert job.command == (
+        sys.executable,
+        "scripts/entry_path_aggregator.py",
+        "--lookback-hours",
+        "24",
+        "--limit",
+        "12000",
+        "--top-k",
+        "8",
+    )
+    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
+        "logs/entry_path_summary_latest.json",
+        "logs/entry_path_summary_history.jsonl",
+    )
 
 
 def test_forecast_improvement_job_defaults_are_wired() -> None:
@@ -162,6 +244,22 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     assert dynamic["status"] == "ok"
     assert any(output["updated"] for output in dynamic["outputs"])
 
+    entry_path = jobs["entry_path_aggregator"]
+    assert entry_path["status"] == "ok"
+    assert any(output["updated"] for output in entry_path["outputs"])
+
+    participation = jobs["participation_allocator"]
+    assert participation["status"] == "ok"
+    assert any(output["updated"] for output in participation["outputs"])
+
+    market_context = jobs["market_context"]
+    assert market_context["status"] == "ok"
+    assert any(output["updated"] for output in market_context["outputs"])
+
+    macro_news = jobs["macro_news_context"]
+    assert macro_news["status"] == "ok"
+    assert any(output["updated"] for output in macro_news["outputs"])
+
     feedback = jobs["strategy_feedback"]
     assert feedback["status"] == "ok"
     assert any(output["updated"] for output in feedback["outputs"])
@@ -182,6 +280,12 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     replay_output = json.loads((tmp_path / "outputs" / "replay.json").read_text(encoding="utf-8"))
     assert replay_output == {"marker": "replay", "env_value": "replay-env"}
 
+    loser_cluster_output = json.loads((tmp_path / "outputs" / "loser_cluster.json").read_text(encoding="utf-8"))
+    assert loser_cluster_output == {"marker": "loser-cluster", "env_value": "loser-cluster-env"}
+
+    auto_canary_output = json.loads((tmp_path / "outputs" / "auto_canary.json").read_text(encoding="utf-8"))
+    assert auto_canary_output == {"marker": "auto-canary", "env_value": "auto-canary-env"}
+
 
 def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Path) -> None:
     fake_job = _prepare_fake_job(tmp_path)
@@ -195,9 +299,21 @@ def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Pat
     jobs = {item["job"]: item for item in second["jobs"] if item.get("job")}
     assert jobs["dynamic_alloc"]["status"] == "skipped"
     assert jobs["dynamic_alloc"]["reason"] == "interval_not_elapsed"
+    assert jobs["entry_path_aggregator"]["status"] == "skipped"
+    assert jobs["entry_path_aggregator"]["reason"] == "interval_not_elapsed"
+    assert jobs["participation_allocator"]["status"] == "skipped"
+    assert jobs["participation_allocator"]["reason"] == "interval_not_elapsed"
+    assert jobs["market_context"]["status"] == "skipped"
+    assert jobs["market_context"]["reason"] == "interval_not_elapsed"
+    assert jobs["macro_news_context"]["status"] == "skipped"
+    assert jobs["macro_news_context"]["reason"] == "interval_not_elapsed"
     assert jobs["strategy_feedback"]["status"] == "skipped"
     assert jobs["strategy_feedback"]["reason"] == "interval_not_elapsed"
     assert jobs["forecast_improvement"]["status"] == "skipped"
     assert jobs["forecast_improvement"]["reason"] == "interval_not_elapsed"
     assert jobs["replay_quality_gate"]["status"] == "skipped"
     assert jobs["replay_quality_gate"]["reason"] == "interval_not_elapsed"
+    assert jobs["loser_cluster"]["status"] == "skipped"
+    assert jobs["loser_cluster"]["reason"] == "interval_not_elapsed"
+    assert jobs["auto_canary"]["status"] == "skipped"
+    assert jobs["auto_canary"]["reason"] == "interval_not_elapsed"

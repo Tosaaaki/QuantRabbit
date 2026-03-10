@@ -46,6 +46,44 @@ def _seed_health_artifacts(project_root: Path, *, include_feedback_tag: bool) ->
         project_root / "logs" / "forecast_improvement_latest.json",
         {"generated_at": now, "verdict": "mixed", "runtime_overrides": {"enabled": True}},
     )
+    _write_json(
+        project_root / "logs" / "entry_path_summary_latest.json",
+        {
+            "generated_at": now,
+            "orders_considered": 24,
+            "strategies": {"MicroTrendRetest": {"attempts": 12, "fills": 3}},
+        },
+    )
+    _write_json(
+        project_root / "config" / "participation_alloc.json",
+        {"as_of": now, "strategies": {"MicroTrendRetest": {"lot_multiplier": 0.92}}},
+    )
+    _write_json(
+        project_root / "logs" / "loser_cluster_latest.json",
+        {
+            "generated_at": now,
+            "strategies": {"MicroTrendRetest": {"cluster_count": 1}},
+            "top_clusters": [{"strategy_tag": "MicroTrendRetest"}],
+        },
+    )
+    _write_json(
+        project_root / "config" / "auto_canary_overrides.json",
+        {
+            "generated_at": now,
+            "strategies": {"MicroTrendRetest": {"enabled": True, "units_multiplier": 0.9}},
+        },
+    )
+    _write_json(
+        project_root / "logs" / "macro_news_context.json",
+        {
+            "generated_at": now,
+            "event_severity": "low",
+            "caution_window_active": False,
+            "usd_jpy_bias": "neutral",
+            "headlines": [],
+            "sources": ["market_context_latest"],
+        },
+    )
     strategies = {"MomentumBurst": {"entry_units_multiplier": 0.9}}
     if include_feedback_tag:
         strategies["MicroTrendRetest"] = {"entry_units_multiplier": 0.75}
@@ -163,6 +201,11 @@ def test_build_mechanism_integrity_is_ok_when_artifacts_and_feedback_are_present
     assert integrity["strategy_feedback"]["eligible_missing_strategies"] == []
     assert integrity["dynamic_alloc"]["fresh"] is True
     assert integrity["forecast_service"]["health"] == {"ok": True}
+    assert integrity["entry_path_summary"]["fresh"] is True
+    assert integrity["participation_alloc"]["fresh"] is True
+    assert integrity["loser_cluster"]["fresh"] is True
+    assert integrity["auto_canary"]["fresh"] is True
+    assert integrity["macro_news_context"]["fresh"] is True
 
 
 def test_build_mechanism_integrity_accepts_forecast_health_when_port_probe_misses(

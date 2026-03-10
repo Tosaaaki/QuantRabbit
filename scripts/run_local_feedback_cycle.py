@@ -104,6 +104,36 @@ def _parse_command(raw: str) -> tuple[str, ...]:
 
 
 def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
+    if job_name == "entry_path_aggregator":
+        return (
+            python_bin,
+            "scripts/entry_path_aggregator.py",
+            "--lookback-hours",
+            "24",
+            "--limit",
+            "12000",
+            "--top-k",
+            "8",
+        )
+    if job_name == "participation_allocator":
+        return (
+            python_bin,
+            "scripts/participation_allocator.py",
+            "--lookback-hours",
+            "24",
+            "--min-attempts",
+            "20",
+            "--max-units-cut",
+            "0.18",
+            "--max-units-boost",
+            "0.12",
+            "--max-probability-boost",
+            "0.05",
+        )
+    if job_name == "market_context":
+        return (python_bin, "scripts/run_market_playbook_cycle.py", "--hours", "24")
+    if job_name == "macro_news_context":
+        return (python_bin, "scripts/macro_news_context_worker.py")
     if job_name == "strategy_feedback":
         return (python_bin, "-m", "analysis.strategy_feedback_worker")
     if job_name == "forecast_improvement":
@@ -142,10 +172,30 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
         )
     if job_name == "trade_counterfactual":
         return (python_bin, "-m", "analysis.trade_counterfactual_worker")
+    if job_name == "loser_cluster":
+        return (
+            python_bin,
+            "scripts/loser_cluster_worker.py",
+            "--lookback-days",
+            "7",
+            "--min-cluster-size",
+            "4",
+            "--top-k",
+            "8",
+        )
+    if job_name == "auto_canary":
+        return (
+            python_bin,
+            "scripts/auto_canary_improver.py",
+            "--min-confidence",
+            "0.55",
+        )
     raise KeyError(f"unsupported job: {job_name}")
 
 
 def _default_job_env_files(job_name: str) -> tuple[Path, ...]:
+    if job_name in {"entry_path_aggregator", "participation_allocator", "market_context", "macro_news_context", "loser_cluster", "auto_canary"}:
+        return ()
     if job_name == "strategy_feedback":
         return (
             _resolve_path("ops/env/quant-v2-runtime.env"),
@@ -170,6 +220,22 @@ def _default_job_env_files(job_name: str) -> tuple[Path, ...]:
 
 
 def _default_job_outputs(job_name: str) -> tuple[Path, ...]:
+    if job_name == "entry_path_aggregator":
+        return (
+            _resolve_path("logs/entry_path_summary_latest.json"),
+            _resolve_path("logs/entry_path_summary_history.jsonl"),
+        )
+    if job_name == "participation_allocator":
+        return (_resolve_path("config/participation_alloc.json"),)
+    if job_name == "market_context":
+        return (
+            _resolve_path("logs/market_context_latest.json"),
+            _resolve_path("logs/market_external_snapshot.json"),
+            _resolve_path("logs/market_events.json"),
+            _resolve_path("logs/gpt_ops_report.json"),
+        )
+    if job_name == "macro_news_context":
+        return (_resolve_path("logs/macro_news_context.json"),)
     if job_name == "strategy_feedback":
         return (_resolve_path("logs/strategy_feedback.json"),)
     if job_name == "forecast_improvement":
@@ -198,43 +264,78 @@ def _default_job_outputs(job_name: str) -> tuple[Path, ...]:
             _resolve_path("logs/trade_counterfactual_latest.json"),
             _resolve_path("logs/trade_counterfactual_history.jsonl"),
         )
+    if job_name == "loser_cluster":
+        return (
+            _resolve_path("logs/loser_cluster_latest.json"),
+            _resolve_path("logs/loser_cluster_history.jsonl"),
+        )
+    if job_name == "auto_canary":
+        return (
+            _resolve_path("config/auto_canary_overrides.json"),
+            _resolve_path("logs/auto_canary_latest.json"),
+            _resolve_path("logs/auto_canary_history.jsonl"),
+        )
     raise KeyError(f"unsupported job: {job_name}")
 
 
 def _build_job(job_name: str, python_bin: str) -> JobConfig:
     env_prefix = f"LOCAL_FEEDBACK_CYCLE_{job_name.upper()}"
     enabled_defaults = {
+        "entry_path_aggregator": True,
+        "participation_allocator": True,
+        "market_context": True,
+        "macro_news_context": True,
         "strategy_feedback": False,
         "forecast_improvement": True,
         "replay_quality_gate": True,
         "dynamic_alloc": True,
         "pattern_book": True,
         "trade_counterfactual": True,
+        "loser_cluster": True,
+        "auto_canary": True,
     }
     enabled = _env_bool(f"{env_prefix}_ENABLED", enabled_defaults[job_name])
     interval_defaults = {
+        "entry_path_aggregator": 300,
+        "participation_allocator": 300,
+        "market_context": 300,
+        "macro_news_context": 300,
         "strategy_feedback": 600,
         "forecast_improvement": 3600,
         "replay_quality_gate": 10800,
         "dynamic_alloc": 120,
         "pattern_book": 300,
         "trade_counterfactual": 1200,
+        "loser_cluster": 1200,
+        "auto_canary": 1200,
     }
     timeout_defaults = {
+        "entry_path_aggregator": 180,
+        "participation_allocator": 180,
+        "market_context": 420,
+        "macro_news_context": 120,
         "strategy_feedback": 180,
         "forecast_improvement": 1200,
         "replay_quality_gate": 1800,
         "dynamic_alloc": 180,
         "pattern_book": 420,
         "trade_counterfactual": 180,
+        "loser_cluster": 180,
+        "auto_canary": 180,
     }
     retry_defaults = {
+        "entry_path_aggregator": 0,
+        "participation_allocator": 0,
+        "market_context": 0,
+        "macro_news_context": 0,
         "strategy_feedback": 0,
         "forecast_improvement": 0,
         "replay_quality_gate": 0,
         "dynamic_alloc": 0,
         "pattern_book": 0,
         "trade_counterfactual": 1,
+        "loser_cluster": 0,
+        "auto_canary": 0,
     }
     interval_sec = _env_int(
         f"{env_prefix}_INTERVAL_SEC",
@@ -288,9 +389,15 @@ def _job_order(python_bin: str) -> list[JobConfig]:
         _build_job("dynamic_alloc", python_bin),
         _build_job("pattern_book", python_bin),
         _build_job("strategy_feedback", python_bin),
+        _build_job("entry_path_aggregator", python_bin),
+        _build_job("participation_allocator", python_bin),
+        _build_job("market_context", python_bin),
+        _build_job("macro_news_context", python_bin),
         _build_job("trade_counterfactual", python_bin),
         _build_job("forecast_improvement", python_bin),
         _build_job("replay_quality_gate", python_bin),
+        _build_job("loser_cluster", python_bin),
+        _build_job("auto_canary", python_bin),
     ]
 
 

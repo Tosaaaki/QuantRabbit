@@ -12,11 +12,15 @@ import math
 import os
 from typing import Any, Iterable, Literal, Optional
 
-from analysis import strategy_feedback
+from analysis import auto_canary, market_context, strategy_feedback
 from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
 from workers.common.dynamic_alloc import load_strategy_profile
+from workers.common.macro_news_context import load_current_context as load_macro_news_context
+from workers.common.participation_alloc import (
+    load_strategy_profile as load_participation_profile,
+)
 from workers.common import forecast_gate, pattern_gate
 
 
@@ -228,6 +232,59 @@ _STRATEGY_DYNAMIC_ALLOC_POCKETS = {
     for p in _env_csv("STRATEGY_DYNAMIC_ALLOC_POCKETS", "scalp_fast,micro,scalp")
     if p
 }
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = _env_bool("STRATEGY_PARTICIPATION_ALLOC_ENABLED", True)
+_STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
+    "STRATEGY_PARTICIPATION_ALLOC_PATH",
+    "config/participation_alloc.json",
+)
+_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC = max(
+    1.0,
+    _env_float("STRATEGY_PARTICIPATION_ALLOC_TTL_SEC", 30.0),
+)
+_STRATEGY_PARTICIPATION_ALLOC_MULT_MIN = max(
+    0.10,
+    min(1.0, _env_float("STRATEGY_PARTICIPATION_ALLOC_MULT_MIN", 0.60)),
+)
+_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX = max(
+    0.0,
+    min(0.25, _env_float("STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX", 0.08)),
+)
+_STRATEGY_PARTICIPATION_ALLOC_POCKETS = {
+    p.lower().strip()
+    for p in _env_csv("STRATEGY_PARTICIPATION_ALLOC_POCKETS", "scalp_fast,micro,scalp")
+    if p
+}
+_STRATEGY_MARKET_CONTEXT_ENABLED = _env_bool("STRATEGY_MARKET_CONTEXT_ENABLED", True)
+_STRATEGY_MARKET_CONTEXT_PATH = os.getenv(
+    "STRATEGY_MARKET_CONTEXT_PATH",
+    "logs/market_context_latest.json",
+)
+_STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC = max(
+    60.0,
+    _env_float("STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC", 1800.0),
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED = _env_bool("STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True)
+_STRATEGY_MACRO_NEWS_CONTEXT_PATH = os.getenv(
+    "STRATEGY_MACRO_NEWS_CONTEXT_PATH",
+    "logs/macro_news_context.json",
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_TTL_SEC = max(
+    1.0,
+    _env_float("STRATEGY_MACRO_NEWS_CONTEXT_TTL_SEC", 60.0),
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_MAX_AGE_SEC = max(
+    60.0,
+    _env_float("STRATEGY_MACRO_NEWS_CONTEXT_MAX_AGE_SEC", 7200.0),
+)
+_STRATEGY_AUTO_CANARY_ENABLED = _env_bool("STRATEGY_AUTO_CANARY_ENABLED", True)
+_STRATEGY_AUTO_CANARY_MULT_MIN = max(
+    0.50,
+    min(1.0, _env_float("STRATEGY_AUTO_CANARY_MULT_MIN", 0.80)),
+)
+_STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX = max(
+    0.0,
+    min(0.10, _env_float("STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX", 0.05)),
+)
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 _TECH_DEFAULT_TFS_BY_POCKET = {
     "macro": ("D1", "H4", "H1", "M5", "M1"),
@@ -2569,6 +2626,278 @@ def _apply_dynamic_alloc_trim(
     return int(next_units), None
 
 
+def _has_participation_alloc_applied(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    payload = entry_thesis.get("participation_alloc")
+    return isinstance(payload, dict) and bool(payload)
+
+
+def _apply_participation_alloc(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    min_units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[float], Optional[dict[str, object]]]:
+    if not _STRATEGY_PARTICIPATION_ALLOC_ENABLED:
+        return units, entry_probability, None
+    if not strategy_tag or not units:
+        return units, entry_probability, None
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, None
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key and pocket_key not in _STRATEGY_PARTICIPATION_ALLOC_POCKETS:
+        return units, entry_probability, None
+    if not isinstance(entry_thesis, dict):
+        return units, entry_probability, None
+    if _has_participation_alloc_applied(entry_thesis):
+        return units, entry_probability, None
+
+    try:
+        profile = load_participation_profile(
+            strategy_tag,
+            pocket_key,
+            path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
+            ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        profile = None
+    if not isinstance(profile, dict) or not profile.get("found"):
+        return units, entry_probability, None
+    if profile.get("payload_stale") is True:
+        return units, entry_probability, None
+
+    requested_abs = abs(int(units))
+    mult = max(
+        _STRATEGY_PARTICIPATION_ALLOC_MULT_MIN,
+        min(1.0, float(profile.get("lot_multiplier", 1.0) or 1.0)),
+    )
+    next_units = int(units)
+    if mult < 0.999 and requested_abs > 0:
+        scaled_abs = int(round(requested_abs * mult))
+        if min_units > 0 and scaled_abs < int(min_units):
+            scaled_abs = int(min_units)
+        scaled_abs = min(requested_abs, scaled_abs)
+        if scaled_abs > 0 and scaled_abs < requested_abs:
+            next_units = scaled_abs if units > 0 else -scaled_abs
+
+    normalized_probability = _entry_probability_value(entry_probability)
+    raw_boost = max(0.0, float(profile.get("probability_boost", 0.0) or 0.0))
+    prob_boost = min(_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, raw_boost)
+    next_probability = normalized_probability
+    if normalized_probability is not None and prob_boost > 0.0:
+        next_probability = max(
+            0.0,
+            min(1.0, normalized_probability + (1.0 - normalized_probability) * prob_boost),
+        )
+
+    if next_units == int(units) and next_probability == normalized_probability:
+        return units, entry_probability, None
+
+    payload: dict[str, object] = {
+        "source": "strategy_entry",
+        "strategy_key": str(profile.get("strategy_key") or strategy_tag),
+        "requested_units": int(requested_abs),
+        "applied_units": int(abs(next_units)),
+        "lot_multiplier": round(mult, 4),
+        "preflights": int(profile.get("preflights") or 0),
+        "filled": int(profile.get("filled") or 0),
+        "fill_rate": round(float(profile.get("fill_rate") or 0.0), 4),
+        "hard_block_rate": round(float(profile.get("hard_block_rate") or 0.0), 4),
+        "quality_score": round(float(profile.get("quality_score") or 0.0), 4),
+        "current_share": round(float(profile.get("current_share") or 0.0), 5),
+        "target_share": round(float(profile.get("target_share") or 0.0), 5),
+        "reason": "pass",
+    }
+    if next_units != int(units):
+        payload["reason"] = "overused_trim"
+    if normalized_probability is not None and next_probability is not None and next_probability > normalized_probability + 1e-9:
+        payload["probability_boost"] = round(prob_boost, 4)
+        payload["entry_probability_before"] = round(normalized_probability, 6)
+        payload["entry_probability_after"] = round(next_probability, 6)
+        if payload.get("reason") == "pass":
+            payload["reason"] = "underused_boost"
+        else:
+            payload["reason"] = "rebalance"
+    entry_thesis["participation_alloc"] = payload
+    return int(next_units), next_probability, payload
+
+
+def _inject_macro_news_context(
+    entry_thesis: Optional[dict],
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not _STRATEGY_MACRO_NEWS_CONTEXT_ENABLED:
+        return entry_thesis, None
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis, None
+    try:
+        current = load_macro_news_context(
+            path=_STRATEGY_MACRO_NEWS_CONTEXT_PATH,
+            ttl_sec=_STRATEGY_MACRO_NEWS_CONTEXT_TTL_SEC,
+            max_age_sec=_STRATEGY_MACRO_NEWS_CONTEXT_MAX_AGE_SEC,
+        )
+    except Exception:
+        current = None
+    if not isinstance(current, dict) or not current.get("found") or current.get("stale"):
+        return entry_thesis, None
+
+    headlines: list[dict[str, object]] = []
+    raw_headlines = current.get("headlines")
+    if isinstance(raw_headlines, list):
+        for item in raw_headlines[:3]:
+            if not isinstance(item, dict):
+                continue
+            headlines.append(
+                {
+                    "source": item.get("source"),
+                    "published_at": item.get("published_at"),
+                    "title": item.get("title"),
+                    "severity": item.get("severity"),
+                }
+            )
+    summary: dict[str, object] = {
+        "generated_at": current.get("generated_at"),
+        "age_sec": round(float(current.get("age_sec") or 0.0), 1),
+        "event_severity": str(current.get("event_severity") or "unknown"),
+        "caution_window_active": bool(current.get("caution_window_active")),
+        "usd_jpy_bias": str(current.get("usd_jpy_bias") or "neutral"),
+        "headlines": headlines,
+        "sources": current.get("sources") if isinstance(current.get("sources"), list) else [],
+    }
+    entry_thesis["macro_news_context"] = summary
+    if summary["caution_window_active"]:
+        entry_thesis["macro_caution_window_active"] = True
+    bias = str(summary.get("usd_jpy_bias") or "").strip()
+    if bias:
+        entry_thesis["usd_jpy_macro_bias"] = bias
+    return entry_thesis, summary
+
+
+def _inject_market_context(
+    entry_thesis: Optional[dict],
+    *,
+    instrument: Optional[str],
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not _STRATEGY_MARKET_CONTEXT_ENABLED:
+        return entry_thesis, None
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis, None
+    pair = str(instrument or "USD_JPY").replace("/", "_").strip().upper() or "USD_JPY"
+    try:
+        current = market_context.current_context(
+            pair=pair,
+            path=_STRATEGY_MARKET_CONTEXT_PATH,
+            max_age_sec=_STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC,
+        )
+    except Exception:
+        current = None
+    if not isinstance(current, dict) or not current or current.get("stale"):
+        return entry_thesis, None
+
+    summary: dict[str, object] = {
+        "generated_at": current.get("generated_at"),
+        "age_sec": round(float(current.get("age_sec") or 0.0), 1),
+        "pair": str(current.get("pair") or pair),
+        "pair_price": current.get("pair_price"),
+        "pair_change_pct_24h": current.get("pair_change_pct_24h"),
+        "dxy_change_pct_24h": current.get("dxy_change_pct_24h"),
+        "us_jp_10y_spread": current.get("us_jp_10y_spread"),
+        "risk_mode": current.get("risk_mode"),
+        "high_impact_events": current.get("high_impact_events"),
+        "total_events": current.get("total_events"),
+        "minutes_to_next_event": current.get("minutes_to_next_event"),
+        "next_event_name": current.get("next_event_name"),
+        "event_severity": str(current.get("event_severity") or "none"),
+        "bias_score": current.get("bias_score"),
+        "bias_label": str(current.get("bias_label") or "neutral"),
+    }
+    entry_thesis["market_context"] = summary
+    bias_label = str(summary.get("bias_label") or "").strip()
+    if bias_label:
+        entry_thesis["market_bias_label"] = bias_label
+    return entry_thesis, summary
+
+
+def _has_auto_canary_applied(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    payload = entry_thesis.get("auto_canary")
+    return isinstance(payload, dict) and bool(payload)
+
+
+def _apply_auto_canary(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    min_units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[float], Optional[dict[str, object]]]:
+    if not _STRATEGY_AUTO_CANARY_ENABLED:
+        return units, entry_probability, None
+    if not strategy_tag or not units:
+        return units, entry_probability, None
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, None
+    if not isinstance(entry_thesis, dict):
+        return units, entry_probability, None
+    if _has_auto_canary_applied(entry_thesis):
+        return units, entry_probability, None
+
+    try:
+        override = auto_canary.current_override(strategy_tag)
+    except Exception:
+        override = None
+    if not isinstance(override, dict) or not override.get("enabled", True):
+        return units, entry_probability, None
+
+    requested_abs = abs(int(units))
+    raw_mult = float(override.get("units_multiplier", 1.0) or 1.0)
+    effective_mult = max(_STRATEGY_AUTO_CANARY_MULT_MIN, min(1.0, raw_mult))
+    next_units = int(units)
+    if effective_mult < 0.999 and requested_abs > 0:
+        scaled_abs = int(round(requested_abs * effective_mult))
+        if min_units > 0 and scaled_abs < int(min_units):
+            scaled_abs = int(min_units)
+        scaled_abs = min(requested_abs, scaled_abs)
+        if scaled_abs > 0 and scaled_abs < requested_abs:
+            next_units = scaled_abs if units > 0 else -scaled_abs
+
+    normalized_probability = _entry_probability_value(entry_probability)
+    raw_prob_offset = float(override.get("probability_offset", 0.0) or 0.0)
+    prob_offset = max(
+        -_STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX,
+        min(_STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX, raw_prob_offset),
+    )
+    next_probability = normalized_probability
+    if normalized_probability is not None and abs(prob_offset) > 1e-9:
+        next_probability = max(0.0, min(1.0, normalized_probability + prob_offset))
+
+    if next_units == int(units) and next_probability == normalized_probability:
+        return units, entry_probability, None
+
+    payload: dict[str, object] = {
+        "source": "strategy_entry",
+        "strategy_key": str(override.get("strategy_key") or strategy_tag),
+        "mode": str(override.get("mode") or "canary"),
+        "confidence": round(float(override.get("confidence") or 0.0), 4),
+        "requested_units": int(requested_abs),
+        "applied_units": int(abs(next_units)),
+        "units_multiplier": round(effective_mult, 4),
+        "probability_offset": round(prob_offset, 4),
+        "reason": str(override.get("reason") or "auto_canary"),
+    }
+    if normalized_probability is not None and next_probability is not None and abs(next_probability - normalized_probability) > 1e-9:
+        payload["entry_probability_before"] = round(normalized_probability, 6)
+        payload["entry_probability_after"] = round(next_probability, 6)
+    entry_thesis["auto_canary"] = payload
+    return int(next_units), next_probability, payload
+
+
 async def _coordinate_entry_units(
     *,
     instrument: str,
@@ -2757,6 +3086,29 @@ async def market_order(
         entry_probability_after=entry_probability,
         detail_key="technical_context",
     )
+    entry_thesis, market_ctx = _inject_market_context(
+        entry_thesis,
+        instrument=instrument,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="market_context",
+        status="pass" if isinstance(market_ctx, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(market_ctx, "bias_label", "event_severity"),
+        detail_key="market_context",
+    )
+    entry_thesis, macro_news_context = _inject_macro_news_context(entry_thesis)
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="macro_news_context",
+        status="pass" if isinstance(macro_news_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(macro_news_context, "event_severity"),
+        detail_key="macro_news_context",
+    )
     entry_thesis, forecast_context = _inject_entry_forecast_context(
         instrument=instrument,
         strategy_tag=resolved_strategy_tag,
@@ -2967,6 +3319,64 @@ async def market_order(
             extra_payload=leading_applied,
         )
         return None
+    participation_units_before = units
+    participation_probability_before = entry_probability
+    participation_min_units = order_manager.min_units_for_strategy(
+        resolved_strategy_tag,
+        pocket=pocket,
+    )
+    units, entry_probability, participation_applied = _apply_participation_alloc(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="participation_alloc",
+        status=_entry_path_stage_status(
+            units_before=participation_units_before,
+            units_after=units,
+            entry_probability_before=participation_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(participation_applied, dict) or not participation_applied,
+        ),
+        units_before=participation_units_before,
+        units_after=units,
+        entry_probability_before=participation_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(participation_applied, "reason"),
+        detail_key="participation_alloc",
+    )
+    auto_canary_units_before = units
+    auto_canary_probability_before = entry_probability
+    units, entry_probability, auto_canary_applied = _apply_auto_canary(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="auto_canary",
+        status=_entry_path_stage_status(
+            units_before=auto_canary_units_before,
+            units_after=units,
+            entry_probability_before=auto_canary_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(auto_canary_applied, dict) or not auto_canary_applied,
+        ),
+        units_before=auto_canary_units_before,
+        units_after=units,
+        entry_probability_before=auto_canary_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(auto_canary_applied, "reason"),
+        detail_key="auto_canary",
+    )
     coordination_units_before = units
     coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
@@ -3084,6 +3494,29 @@ async def limit_order(
         units_after=units,
         entry_probability_after=entry_probability,
         detail_key="technical_context",
+    )
+    entry_thesis, market_ctx = _inject_market_context(
+        entry_thesis,
+        instrument=instrument,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="market_context",
+        status="pass" if isinstance(market_ctx, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(market_ctx, "bias_label", "event_severity"),
+        detail_key="market_context",
+    )
+    entry_thesis, macro_news_context = _inject_macro_news_context(entry_thesis)
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="macro_news_context",
+        status="pass" if isinstance(macro_news_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(macro_news_context, "event_severity"),
+        detail_key="macro_news_context",
     )
     entry_thesis, forecast_context = _inject_entry_forecast_context(
         instrument=instrument,
@@ -3295,6 +3728,64 @@ async def limit_order(
             extra_payload=leading_applied,
         )
         return None, None
+    participation_units_before = units
+    participation_probability_before = entry_probability
+    participation_min_units = order_manager.min_units_for_strategy(
+        resolved_strategy_tag,
+        pocket=pocket,
+    )
+    units, entry_probability, participation_applied = _apply_participation_alloc(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="participation_alloc",
+        status=_entry_path_stage_status(
+            units_before=participation_units_before,
+            units_after=units,
+            entry_probability_before=participation_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(participation_applied, dict) or not participation_applied,
+        ),
+        units_before=participation_units_before,
+        units_after=units,
+        entry_probability_before=participation_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(participation_applied, "reason"),
+        detail_key="participation_alloc",
+    )
+    auto_canary_units_before = units
+    auto_canary_probability_before = entry_probability
+    units, entry_probability, auto_canary_applied = _apply_auto_canary(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="auto_canary",
+        status=_entry_path_stage_status(
+            units_before=auto_canary_units_before,
+            units_after=units,
+            entry_probability_before=auto_canary_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(auto_canary_applied, dict) or not auto_canary_applied,
+        ),
+        units_before=auto_canary_units_before,
+        units_after=units,
+        entry_probability_before=auto_canary_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(auto_canary_applied, "reason"),
+        detail_key="auto_canary",
+    )
     coordination_units_before = units
     coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,

@@ -502,6 +502,49 @@ def _build_mechanism_integrity(
         ),
     }
 
+    entry_path_summary = _artifact_integrity(
+        logs_dir / "entry_path_summary_latest.json",
+        timestamp_fields=("generated_at",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_ENTRY_PATH_SUMMARY_MAX_AGE_SEC"), 1800),
+    )
+    entry_path_payload = entry_path_summary.pop("_payload", None)
+    entry_path_summary["strategies_count"] = len((entry_path_payload or {}).get("strategies") or {})
+    entry_path_summary["orders_considered"] = (entry_path_payload or {}).get("orders_considered")
+
+    participation_alloc = _artifact_integrity(
+        project_root / "config" / "participation_alloc.json",
+        timestamp_fields=("as_of",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_PARTICIPATION_ALLOC_MAX_AGE_SEC"), 1800),
+    )
+    participation_payload = participation_alloc.pop("_payload", None)
+    participation_alloc["strategies_count"] = len((participation_payload or {}).get("strategies") or {})
+
+    loser_cluster = _artifact_integrity(
+        logs_dir / "loser_cluster_latest.json",
+        timestamp_fields=("generated_at",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_LOSER_CLUSTER_MAX_AGE_SEC"), 3600),
+    )
+    loser_cluster_payload = loser_cluster.pop("_payload", None)
+    loser_cluster["strategies_count"] = len((loser_cluster_payload or {}).get("strategies") or {})
+    loser_cluster["top_clusters_count"] = len((loser_cluster_payload or {}).get("top_clusters") or [])
+
+    auto_canary = _artifact_integrity(
+        project_root / "config" / "auto_canary_overrides.json",
+        timestamp_fields=("generated_at",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_AUTO_CANARY_MAX_AGE_SEC"), 3600),
+    )
+    auto_canary_payload = auto_canary.pop("_payload", None)
+    auto_canary["strategies_count"] = len((auto_canary_payload or {}).get("strategies") or {})
+
+    macro_news_context = _artifact_integrity(
+        logs_dir / "macro_news_context.json",
+        timestamp_fields=("generated_at",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_MACRO_NEWS_CONTEXT_MAX_AGE_SEC"), 3600),
+    )
+    macro_news_payload = macro_news_context.pop("_payload", None)
+    macro_news_context["event_severity"] = (macro_news_payload or {}).get("event_severity")
+    macro_news_context["caution_window_active"] = (macro_news_payload or {}).get("caution_window_active")
+
     strategy_feedback = _strategy_feedback_integrity(
         project_root=project_root,
         logs_dir=logs_dir,
@@ -526,6 +569,16 @@ def _build_mechanism_integrity(
     elif pattern_book.get("fresh") is False:
         missing.append("pattern_book_stale")
 
+    if not entry_path_summary.get("exists"):
+        missing.append("entry_path_summary_missing")
+    elif entry_path_summary.get("fresh") is False:
+        missing.append("entry_path_summary_stale")
+
+    if not participation_alloc.get("exists"):
+        missing.append("participation_alloc_missing")
+    elif participation_alloc.get("fresh") is False:
+        missing.append("participation_alloc_stale")
+
     if not forecast_runtime.get("exists"):
         missing.append("forecast_runtime_missing")
     elif forecast_runtime.get("fresh") is False:
@@ -535,6 +588,18 @@ def _build_mechanism_integrity(
         missing.append("forecast_service_down")
     if blackboard.get("entry_intent_board_table") is not True:
         missing.append("entry_intent_board_missing")
+    if not loser_cluster.get("exists"):
+        missing.append("loser_cluster_missing")
+    elif loser_cluster.get("fresh") is False:
+        missing.append("loser_cluster_stale")
+    if not auto_canary.get("exists"):
+        missing.append("auto_canary_missing")
+    elif auto_canary.get("fresh") is False:
+        missing.append("auto_canary_stale")
+    if not macro_news_context.get("exists"):
+        missing.append("macro_news_context_missing")
+    elif macro_news_context.get("fresh") is False:
+        missing.append("macro_news_context_stale")
 
     return {
         "ok": not missing,
@@ -542,9 +607,14 @@ def _build_mechanism_integrity(
         "strategy_feedback": strategy_feedback,
         "dynamic_alloc": dynamic_alloc,
         "pattern_book": pattern_book,
+        "entry_path_summary": entry_path_summary,
+        "participation_alloc": participation_alloc,
         "forecast_runtime": forecast_runtime,
         "forecast_service": forecast_service,
         "blackboard": blackboard,
+        "loser_cluster": loser_cluster,
+        "auto_canary": auto_canary,
+        "macro_news_context": macro_news_context,
     }
 
 

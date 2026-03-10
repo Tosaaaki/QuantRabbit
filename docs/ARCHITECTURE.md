@@ -387,3 +387,27 @@ class OrderIntent(BaseModel):
   close path で deterministic に評価され、
   `scalp_ping_5s_flow_live` のような no-block policy が
   context 欠落で default policy に落ちることを避ける。
+
+## 11. 2026-03-10 adaptive entry / improvement loop
+
+- fast path は従来どおり strategy worker の deterministic entry と
+  `quant-order-manager` preflight を正とする。
+- slow loop は `scripts/run_local_feedback_cycle.py` が定期実行し、
+  次の artifact を更新する。
+  - `logs/entry_path_summary_latest.json`
+  - `config/participation_alloc.json`
+  - `logs/market_context_latest.json`
+  - `logs/macro_news_context.json`
+  - `logs/loser_cluster_latest.json`
+  - `config/auto_canary_overrides.json`
+- `execution/strategy_entry.py` は slow loop のうち
+  `market_context`、`macro_news_context`、`participation_alloc`、`auto_canary`
+  だけを参照し、entry_thesis trail に残したうえで
+  strategy-local intent を soft に補正する。
+- 補正方針は固定:
+  - `market_context`: DXY/金利差/イベント密度/risk mode を slow context として渡す。
+  - `macro_news_context`: caution/bias のみ。通常時の hard block には使わない。
+  - `participation_alloc`: strategy 別の試行配分と size/probability の微調整。
+  - `auto_canary`: loser cluster と replay/counterfactual に基づく小さな canary override。
+- `scripts/publish_health_snapshot.py` は上記 artifact の freshness と欠落を
+  `mechanism_integrity` として監査し、silent failure を防ぐ。

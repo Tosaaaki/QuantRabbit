@@ -14694,3 +14694,40 @@
   - `scalp_extrema_reversal_live` の broad participation は維持しつつ、
     `soft-down M1 gap` に逆らう non-supportive long だけを削る。
   - short 判定、shared gate、exit worker 契約は非変更。
+
+### 2026-03-10 local-v2 adaptive entry layers / self-improve loop
+- 対象:
+  - `execution/strategy_entry.py`
+  - `workers/common/participation_alloc.py`
+  - `workers/common/macro_news_context.py`
+  - `analysis/auto_canary.py`
+  - `analysis/market_context.py`
+  - `scripts/entry_path_aggregator.py`
+  - `scripts/participation_allocator.py`
+  - `scripts/loser_cluster_worker.py`
+  - `scripts/auto_canary_improver.py`
+  - `scripts/macro_news_context_worker.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `scripts/publish_health_snapshot.py`
+
+- 変更:
+  - `strategy_entry` に
+    `market_context -> macro_news_context -> participation_alloc -> auto_canary`
+    の slow adaptive layer を追加した。
+  - `participation_allocator` は recent order conversion と realized P/L を見て、
+    strategy ごとに soft な `units/probability` 補正と `cadence_floor` を出力する。
+  - `loser_cluster_worker` は closed trade の `entry_thesis` を cluster し、
+    `auto_canary_improver` は replay/counterfactual と組み合わせて
+    live 向けの軽い canary override を `config/auto_canary_overrides.json` へ出力する。
+  - `macro_news_context_worker` は Fed/BoJ の official feed から
+    slow context を作り、通常時は hard block ではなく caution/bias 情報として扱う。
+  - `run_local_feedback_cycle` と `health_snapshot` は
+    `entry_path_summary / participation_alloc / loser_cluster / auto_canary / macro_news_context`
+    を標準ジョブ・標準監査対象に追加した。
+
+- 意図:
+  - fast path の deterministic entry を維持したまま、
+    「どの戦略に試行回数を配るか」「どの loser cluster を軽く抑えるか」を
+    slow loop で自動更新する。
+  - 外部コンテキストは shared hard block にせず、
+    live cadence を落とさない soft bias として only local-v2 へ供給する。
