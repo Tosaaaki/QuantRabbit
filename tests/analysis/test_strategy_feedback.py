@@ -63,6 +63,7 @@ def test_current_advice_applies_counterfactual_overlay_for_side(monkeypatch, tmp
                         "cooldown_win_mult": 1.10,
                         "same_dir_reentry_pips_mult": 1.20,
                         "lcb_uplift_pips": 1.4,
+                        "return_wait_bias": "avoid",
                     },
                 },
             },
@@ -78,7 +79,10 @@ def test_current_advice_applies_counterfactual_overlay_for_side(monkeypatch, tmp
     assert advice["entry_units_multiplier"] < 0.9
     assert advice["entry_probability_multiplier"] < 0.95
     assert advice["entry_probability_delta"] < 0.0
+    assert advice["sl_distance_multiplier"] < 1.0
+    assert advice["tp_distance_multiplier"] < 1.0
     assert advice["_meta"]["counterfactual"]["side_action"] == "block"
+    assert advice["_meta"]["counterfactual"]["return_wait_bias"] == "avoid"
     assert advice["strategy_params"]["counterfactual_feedback"]["mode"] == "tighten"
 
 
@@ -109,6 +113,8 @@ def test_current_advice_returns_counterfactual_only_when_feedback_missing(monkey
     assert advice is not None
     assert advice["entry_units_multiplier"] > 1.0
     assert advice["entry_probability_multiplier"] > 1.0
+    assert advice["sl_distance_multiplier"] > 1.0
+    assert advice["tp_distance_multiplier"] > 1.0
     assert advice["_meta"]["counterfactual"]["mode"] == "loosen"
 
 

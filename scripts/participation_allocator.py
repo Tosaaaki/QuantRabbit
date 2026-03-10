@@ -119,6 +119,7 @@ def build_participation_alloc(
     median_fill_rate = _median(fill_rates)
     if median_fill_rate <= 0.0:
         median_fill_rate = 0.02
+    small_sample_boost_attempts = max(3, min(int(min_attempts), 4))
 
     output_strategies: dict[str, Any] = {}
     for raw_key, record in sorted(strategies.items()):
@@ -156,16 +157,40 @@ def build_participation_alloc(
             elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy >= 0.0:
                 advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
                 quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
-                boost = max_units_boost * (0.30 + 0.70 * max(advantage, quality))
+                boost_strength = max(advantage, quality)
+                boost = max_units_boost * (0.30 + 0.70 * boost_strength)
                 units_multiplier = 1.0 + boost
-                probability_boost = max_prob_boost * (0.25 + 0.75 * max(advantage, quality))
-                cadence_floor = 1.00
+                probability_boost = max_prob_boost * (0.25 + 0.75 * boost_strength)
+                cadence_floor = 1.0 + 0.18 * (0.30 + 0.70 * boost_strength)
                 action = "boost_participation"
             elif filled_rate >= median_fill_rate * 1.10 and realized_jpy >= 0.0 and attempts >= max(min_attempts, 8):
                 units_multiplier = 1.0 + max_units_boost * 0.40
                 probability_boost = max_prob_boost * 0.35
-                cadence_floor = 1.00
+                cadence_floor = 1.08
                 action = "boost_participation"
+        elif (
+            attempts >= small_sample_boost_attempts
+            and fills >= 2
+            and realized_jpy > 0.0
+            and filled_rate >= max(median_fill_rate * 1.05, 0.30)
+            and fill_share >= attempt_share + 0.003
+            and hard_block_rate <= 0.35
+        ):
+            participation_edge = _clamp((fill_share - attempt_share) / 0.12, 0.0, 1.0)
+            sample_confidence = _clamp(
+                (attempts - small_sample_boost_attempts + 1) / max(1, int(min_attempts) - small_sample_boost_attempts + 1),
+                0.0,
+                1.0,
+            )
+            profit_confidence = _clamp(realized_jpy / 400.0, 0.0, 1.0)
+            boost_strength = max(
+                participation_edge,
+                0.55 * participation_edge + 0.25 * sample_confidence + 0.20 * profit_confidence,
+            )
+            units_multiplier = 1.0 + max_units_boost * (0.18 + 0.32 * boost_strength)
+            probability_boost = max_prob_boost * (0.12 + 0.28 * boost_strength)
+            cadence_floor = 1.0 + 0.06 + 0.08 * boost_strength
+            action = "boost_participation"
 
         quality_score = _clamp(
             0.45 * _clamp(filled_rate / max(0.01, median_fill_rate), 0.0, 1.25)
@@ -195,7 +220,7 @@ def build_participation_alloc(
             "probability_multiplier": round(max(1.0, probability_multiplier), 4),
             "probability_offset": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
             "probability_boost": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
-            "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.0), 4),
+            "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.18), 4),
             "quality_score": round(quality_score, 4),
             "hard_block_rate": round(hard_block_rate, 6),
             "action": action,

@@ -103,6 +103,27 @@ def test_entry_cooldown_extends_with_fresh_trim_participation_profile(monkeypatc
     assert rf_worker._entry_cooldown_sec("RangeFader-buy-fade") == pytest.approx(15.5556, rel=1e-3)
 
 
+def test_entry_cooldown_shortens_with_fresh_boost_participation_profile(monkeypatch) -> None:
+    monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 20.0)
+    monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 14.0)
+    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        rf_worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "protect_frequency": True,
+            "action": "boost_participation",
+            "cadence_floor": 1.10,
+        },
+        raising=False,
+    )
+
+    assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == pytest.approx(20.0 / 1.10, rel=1e-3)
+    assert rf_worker._entry_cooldown_sec("RangeFader-buy-fade") == pytest.approx(14.0 / 1.10, rel=1e-3)
+
+
 def test_entry_cooldown_ignores_stale_or_non_trim_participation_profile(monkeypatch) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 20.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 14.0)

@@ -152,10 +152,15 @@ def _participation_cadence_floor(signal_tag: str) -> float:
         return 1.0
     if not bool(profile.get("protect_frequency")):
         return 1.0
-    if str(profile.get("action") or "").strip().lower() != "trim_units":
+    action = str(profile.get("action") or "").strip().lower()
+    if action not in {"trim_units", "boost_participation"}:
         return 1.0
     cadence_floor = _bb_float(profile.get("cadence_floor"))
-    if cadence_floor is None or cadence_floor <= 0.0 or cadence_floor >= 1.0:
+    if cadence_floor is None or cadence_floor <= 0.0:
+        return 1.0
+    if action == "trim_units" and cadence_floor >= 1.0:
+        return 1.0
+    if action == "boost_participation" and cadence_floor <= 1.0:
         return 1.0
     return float(cadence_floor)
 
@@ -171,6 +176,8 @@ def _entry_cooldown_sec(signal_tag: str) -> float:
     cadence_floor = _participation_cadence_floor(signal_tag)
     if cadence_floor < 1.0:
         cooldown_sec = max(cooldown_sec, cooldown_sec / cadence_floor)
+    elif cadence_floor > 1.0:
+        cooldown_sec = min(cooldown_sec, cooldown_sec / cadence_floor)
     return cooldown_sec
 
 

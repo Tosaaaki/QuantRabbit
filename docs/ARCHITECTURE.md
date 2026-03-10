@@ -18,7 +18,7 @@
 | Regime Router (opt-in) | `workers/regime_router/worker.py` + `quant-regime-router.service` | macro/micro レジーム → `strategy_control` の strategy別 `entry_enabled` |
 | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
 | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
-| Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力し、必要に応じて `logs/trade_counterfactual_latest.json` の `reentry_overrides` / `side_actions` を long/short 別の soft overlay（units/probability の bounded 調整）として live advice に重ねる |
+| Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力し、必要に応じて `logs/trade_counterfactual_latest.json` の `reentry_overrides` / `side_actions` を long/short 別の soft overlay（units/probability/TP/SL の bounded 調整）として live advice に重ねる |
 | Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block（`BRAIN_BACKEND=vertex/ollama`, `BRAIN_FAIL_POLICY=allow/reduce/block`） |
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
 | Forecast Service | `workers/forecast/worker.py` / `workers/common/forecast_gate.py` / `quant-forecast.service` | `strategy_tag/pocket/side/units` を入力として予測判定（allow/reduce/block）を返却。回帰系に加えてトレンドライン傾き（20/50）とサポレジ/ブレイク圧力（`sr_balance` / `breakout_bias` / `squeeze`）を予測因子へ統合し、`breakout_bias` は直近一致スキルで適応重み化。`expected_pips` + `anchor/target` + 分位レンジ上下帯（`range_low/high_pips`, `range_low/high_price`）+ `tp/sl/rr` を `order_manager`/`entry_intent_board` へ連携。戦略ごとの主TFに対して補助TF整合（`tf_confluence_*`）も監査メタとして返し、`entry_thesis` 欠損時は `strategy_tag` から主TFを補完する。`logs/forecast_improvement_latest.json.runtime_overrides` が fresh かつ `enabled=true` の場合は forecast tech weight の runtime override もここで吸収する |
@@ -75,7 +75,7 @@
   `analysis/strategy_feedback.current_advice()` は live 読み込み時に
   `logs/trade_counterfactual_latest.json` も参照し、
   `policy_hints.reentry_overrides` と `side_actions` を
-  units/probability の soft overlay として合成する。
+  units/probability/TP/SL の soft overlay として合成する。
   runtime tag が split-tag のときも base `strategy_feedback` を fallback 参照し、
   analysis feedback の欠損を避ける。
   `execution/strategy_entry.py` は `side` を添えて advice を取得し、
@@ -407,7 +407,7 @@ class OrderIntent(BaseModel):
 - 補正方針は固定:
   - `market_context`: DXY/金利差/イベント密度/risk mode を slow context として渡す。
   - `macro_news_context`: caution/bias のみ。通常時の hard block には使わない。
-  - `participation_alloc`: strategy 別の試行配分と size/probability の微調整。
+  - `participation_alloc`: strategy 別の試行配分と size/probability/cadence の微調整。
   - `auto_canary`: loser cluster と replay/counterfactual に基づく小さな canary override。
 - `scripts/publish_health_snapshot.py` は上記 artifact の freshness と欠落を
   `mechanism_integrity` として監査し、silent failure を防ぐ。

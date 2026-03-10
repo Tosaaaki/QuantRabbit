@@ -23,6 +23,58 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-10 23:28 JST / local-v2: shared participation alloc を「低試行 winner の cadence 回復」まで広げ、counterfactual overlay で全戦略の TP/SL を動的化
+
+- Period:
+  - UTC `2026-03-10 14:15-14:28`
+  - JST `2026-03-10 23:15-23:28`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.730 / ask=157.738 / spread=0.8p`
+    - `ATR14(M1)=2.834p`, `ATR14(M5)=6.863p`, `ATR14(H1)=20.959p`
+    - `data_lag_ms=549.341`, `decision_latency_ms=17.026`
+  - 変更前の `config/participation_alloc.json` は
+    `PrecisionLowVol 10 attempts / 10 fills / +33.67 JPY` と
+    `session_open_breakout 4 attempts / 4 fills / +0.804 JPY` を
+    どちらも `action=hold` に据え置いていた。
+  - 同時に `RangeFader-buy/sell-fade` は
+    `666/575 attempts`, `filled_rate=7.81%/4.52%`, `realized_jpy=-71.60/-8.84`,
+    `action=trim_units`, `cadence_floor=0.9` で過剰参加側の trim が残っていた。
+  - 変更後に `python3 scripts/participation_allocator.py ...` を再実行すると、
+    `PrecisionLowVol -> boost_participation / lot_multiplier=1.0296 / probability_boost=0.0089 / cadence_floor=1.0766`
+    `session_open_breakout -> boost_participation / lot_multiplier=1.0241 / probability_boost=0.0069 / cadence_floor=1.0651`
+    へ更新された。
+- Failure Cause:
+  - shared `participation_alloc` は `min_attempts` 未満の profitable winner を
+    保守的に `hold` へ残しやすく、`micro_runtime` 側も mild `dynamic_alloc` trim があると
+    cadence boost を実効頻度へ変換しきれなかった。
+  - `analysis/strategy_feedback.py` は counterfactual overlay を
+    主に `units/probability` へ使っていたため、
+    live 相場で「細かく取る / 大きく狙う」を全戦略へ共通反映する幅が不足していた。
+- Improvement:
+  - `scripts/participation_allocator.py`
+    - low-sample winner の必要試行数を `min_attempts*0.2` 基準へ下げ、
+      `filled_rate` と `fill_share-attempt_share` で `session_open_breakout` 級の
+      4-trade winner も `boost_participation` に昇格できるようにした。
+  - `workers/micro_runtime/worker.py`
+    - `boost_participation` の `cadence_floor>1.0` を cooldown 短縮へ反映。
+    - `dynamic_alloc` が mild trim のときは cadence boost が一部相殺できるようにし、
+      loser lane の `trim + dyn trim` は従来どおり強く減速させる。
+  - `workers/scalp_rangefader/worker.py`
+    - `boost_participation` でも `cadence_floor` を解釈し、
+      trim は延長、boost は短縮の両方向 cooldown を許可した。
+  - `analysis/strategy_feedback.py`
+    - `trade_counterfactual_latest.json` の `reentry_overrides / side_actions` から
+      `sl_distance_multiplier / tp_distance_multiplier` も導出し、
+      `strategy_entry` 経由で all-strategy の TP/SL オーバーレイへ反映するようにした。
+- Verification:
+  - `pytest -q tests/scripts/test_participation_allocator.py tests/analysis/test_strategy_feedback.py tests/workers/test_scalp_rangefader_worker.py tests/workers/test_micro_multistrat_trend_flip.py` → `40 passed`
+  - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 24 --min-attempts 20`
+  - `config/participation_alloc.json` で `PrecisionLowVol` / `session_open_breakout` の
+    `boost_participation` を確認。
+- Status:
+  - done
+
 ## 2026-03-10 12:30 JST / local-v2: `health_snapshot` に `mechanism_integrity` を追加し、forecast / strategy_feedback / dynamic_alloc / pattern_book / blackboard の欠落を即検知
 
 - Period:

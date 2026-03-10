@@ -877,17 +877,41 @@
   を使う。
 - side に依らず `abs(units)` 基準で監査 reason を決める。
   `sell` 側でも boost が trim と誤記録されないことを不変条件とする。
+- `scripts/participation_allocator.py` は
+  `min_attempts` 未満でも `filled_rate` と `fill_share-attempt_share` が十分高い
+  profitable lane を `boost_participation` に昇格できる。
+  現行 local-v2 では `PrecisionLowVol` と `session_open_breakout` が
+  この small-sample recovery 対象。
 
 ### RangeFader cadence 連動 cooldown（2026-03-10）
 - `workers/scalp_rangefader/worker.py` は
   `participation_alloc` の frequency signal も使う。
 - fresh payload で
-  `protect_frequency=true`, `action=trim_units`, `cadence_floor<1.0`
-  のときだけ、既存 entry cooldown を `base / cadence_floor` へ延長する。
+  `protect_frequency=true` かつ
+  `action=trim_units`, `cadence_floor<1.0`
+  なら既存 entry cooldown を `base / cadence_floor` へ延長し、
+  `action=boost_participation`, `cadence_floor>1.0`
+  なら `base / cadence_floor` へ短縮する。
 - これは strategy-local の frequency 調整であり、
   shared global gate ではない。
-- stale / missing / hold / boost は no-op とし、
-  static cooldown を維持する。
+- stale / missing / hold は no-op とし、static cooldown を維持する。
+
+### micro_runtime participation cadence / dynamic alloc 合成（2026-03-10）
+- `workers/micro_runtime/worker.py` は
+  strategy-local cooldown に `participation_alloc` と `dynamic_alloc` を同時反映する。
+- `trim_units + dyn trim` の loser lane では、より長い cooldown を優先して減速する。
+- `boost_participation + mild dyn trim` の winner lane では、
+  cadence boost が dyn trim を一部相殺できるようにし、
+  profitable なのに `lot_multiplier<1.0` だけで回転が落ち切る状態を防ぐ。
+
+### counterfactual TP/SL overlay（2026-03-10）
+- `analysis/strategy_feedback.current_advice()` は
+  `logs/trade_counterfactual_latest.json` の `policy_hints.reentry_overrides` /
+  `side_actions` から `sl_distance_multiplier / tp_distance_multiplier` も生成する。
+- `execution/strategy_entry.py` は既存の `strategy_feedback` 経路で
+  broker SL/TP の entry 距離を再計算し、
+  相場・戦略状態に応じて「細かく利確する / 大きく伸ばす」を
+  common hard gate なしで all-strategy へ soft 反映する。
 
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に

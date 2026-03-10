@@ -157,6 +157,63 @@ def test_strategy_cooldown_extends_with_fresh_participation_trim(monkeypatch):
     assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(50.0)
 
 
+def test_strategy_cooldown_shortens_with_fresh_participation_boost(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
+    monkeypatch.setattr(
+        worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "protect_frequency": True,
+            "action": "boost_participation",
+            "cadence_floor": 1.10,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MomentumBurst") == pytest.approx(45.0 / 1.10)
+
+
+def test_strategy_cooldown_boost_offsets_mild_dynamic_alloc_trim(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MULT_MIN", 0.7)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MULT_MAX", 1.8)
+    monkeypatch.setattr(
+        worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "protect_frequency": True,
+            "action": "boost_participation",
+            "cadence_floor": 1.10,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "trades": 24,
+            "lot_multiplier": 0.95,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("PrecisionLowVol") == pytest.approx(
+        45.0 / (1.10 * 0.95),
+        rel=1e-3,
+    )
+
+
 def test_strategy_cooldown_uses_dynamic_alloc_when_base_is_zero(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 0.0)
     monkeypatch.setattr(worker.config, "LOOP_INTERVAL_SEC", 8.0)

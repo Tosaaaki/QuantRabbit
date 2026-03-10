@@ -417,6 +417,12 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
         0.70,
         1.60,
     )
+    lcb_uplift_pips = max(0.0, float(_to_float(reentry.get("lcb_uplift_pips"), 0.0) or 0.0))
+    return_wait_bias = str(reentry.get("return_wait_bias") or "").strip().lower()
+    if return_wait_bias not in {"avoid", "favor"}:
+        return_wait_bias = "avoid" if mode == "tighten" else "favor"
+    sl_multiplier = 1.0
+    tp_multiplier = 1.0
     if mode == "tighten":
         severity = max(
             0.0,
@@ -424,9 +430,12 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
             (cooldown_win_mult - 1.0) / 0.50,
             (reentry_pips_mult - 1.0) / 0.60,
         )
-        units_multiplier = 1.0 - 0.35 * confidence * _clamp(severity, 0.0, 1.0)
-        probability_multiplier = 1.0 - 0.18 * confidence * _clamp(severity, 0.0, 1.0)
-        probability_delta = -0.03 * confidence * _clamp(severity, 0.0, 1.0)
+        severity = _clamp(severity, 0.0, 1.0)
+        units_multiplier = 1.0 - 0.35 * confidence * severity
+        probability_multiplier = 1.0 - 0.18 * confidence * severity
+        probability_delta = -0.03 * confidence * severity
+        sl_multiplier = 1.0 - 0.11 * confidence * severity
+        tp_multiplier = 1.0 - 0.16 * confidence * max(severity, _clamp(lcb_uplift_pips / 2.5, 0.0, 1.0))
     else:
         severity = max(
             0.0,
@@ -434,9 +443,18 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
             (1.0 - cooldown_win_mult) / 0.30,
             (1.0 - reentry_pips_mult) / 0.30,
         )
-        units_multiplier = 1.0 + 0.20 * confidence * _clamp(severity, 0.0, 1.0)
-        probability_multiplier = 1.0 + 0.10 * confidence * _clamp(severity, 0.0, 1.0)
-        probability_delta = 0.02 * confidence * _clamp(severity, 0.0, 1.0)
+        severity = _clamp(severity, 0.0, 1.0)
+        units_multiplier = 1.0 + 0.20 * confidence * severity
+        probability_multiplier = 1.0 + 0.10 * confidence * severity
+        probability_delta = 0.02 * confidence * severity
+        sl_multiplier = 1.0 + 0.05 * confidence * severity
+        tp_multiplier = 1.0 + 0.14 * confidence * severity + 0.08 * confidence * _clamp(lcb_uplift_pips / 2.5, 0.0, 1.0)
+
+    if return_wait_bias == "avoid":
+        sl_multiplier *= 0.98
+        tp_multiplier *= 0.97
+    elif return_wait_bias == "favor":
+        tp_multiplier *= 1.04
 
     side_key = _normalize_side(side)
     side_action = ""
@@ -449,28 +467,39 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
         units_multiplier *= 0.55
         probability_multiplier *= 0.88
         probability_delta -= 0.04 * confidence
+        sl_multiplier *= 0.94
+        tp_multiplier *= 0.90
     elif side_action == "reduce":
         units_multiplier *= 0.78
         probability_multiplier *= 0.92
+        sl_multiplier *= 0.97
+        tp_multiplier *= 0.95
     elif side_action == "boost":
         units_multiplier *= 1.08
         probability_multiplier *= 1.04
         probability_delta += 0.02 * confidence
+        sl_multiplier *= 1.02
+        tp_multiplier *= 1.06
 
     units_multiplier = _clamp(units_multiplier, 0.35, 1.35)
     probability_multiplier = _clamp(probability_multiplier, 0.55, 1.20)
     probability_delta = _clamp(probability_delta, -0.20, 0.12)
+    sl_multiplier = _clamp(sl_multiplier, 0.78, 1.18)
+    tp_multiplier = _clamp(tp_multiplier, 0.72, 1.28)
     return {
         "entry_units_multiplier": round(units_multiplier, 4),
         "entry_probability_multiplier": round(probability_multiplier, 4),
         "entry_probability_delta": round(probability_delta, 4),
+        "sl_distance_multiplier": round(sl_multiplier, 4),
+        "tp_distance_multiplier": round(tp_multiplier, 4),
         "meta": {
             "source": str(_COUNTERFACTUAL_PATH),
             "strategy_like": strategy_like,
             "mode": mode,
             "confidence": round(confidence, 4),
             "side_action": side_action,
-            "lcb_uplift_pips": round(float(_to_float(reentry.get("lcb_uplift_pips"), 0.0) or 0.0), 4),
+            "lcb_uplift_pips": round(lcb_uplift_pips, 4),
+            "return_wait_bias": return_wait_bias,
         },
     }
 
@@ -602,6 +631,18 @@ def current_advice(
             advice["entry_probability_delta"] + float(counterfactual.get("entry_probability_delta", 0.0) or 0.0),
             -1.0,
             1.0,
+        )
+        advice["sl_distance_multiplier"] = _coerce_multiplier(
+            advice["sl_distance_multiplier"] * counterfactual.get("sl_distance_multiplier", 1.0),
+            default=advice["sl_distance_multiplier"],
+            min_value=0.05,
+            max_value=5.0,
+        )
+        advice["tp_distance_multiplier"] = _coerce_multiplier(
+            advice["tp_distance_multiplier"] * counterfactual.get("tp_distance_multiplier", 1.0),
+            default=advice["tp_distance_multiplier"],
+            min_value=0.05,
+            max_value=5.0,
         )
         strategy_params_dict["counterfactual_feedback"] = dict(counterfactual.get("meta") or {})
     if strategy_params_dict:

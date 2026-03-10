@@ -1316,10 +1316,15 @@ def _strategy_participation_cadence_floor(
         return 1.0
     if not bool(profile.get("protect_frequency")):
         return 1.0
-    if str(profile.get("action") or "").strip().lower() != "trim_units":
+    action = str(profile.get("action") or "").strip().lower()
+    if action not in {"trim_units", "boost_participation"}:
         return 1.0
     cadence_floor = _bb_float(profile.get("cadence_floor"))
-    if cadence_floor is None or cadence_floor <= 0.0 or cadence_floor >= 1.0:
+    if cadence_floor is None or cadence_floor <= 0.0:
+        return 1.0
+    if action == "trim_units" and cadence_floor >= 1.0:
+        return 1.0
+    if action == "boost_participation" and cadence_floor <= 1.0:
         return 1.0
     return float(cadence_floor)
 
@@ -1361,7 +1366,9 @@ def _strategy_effective_cooldown_sec(
     signal_tag = _signal_tag(signal)
     cadence_floor = _strategy_participation_cadence_floor(strategy_name, signal_tag)
     dyn_mult = _strategy_dynamic_alloc_cooldown_mult(strategy_name, signal_tag)
-    if cadence_floor >= 1.0 and dyn_mult >= 1.0:
+    if cooldown <= 0.0 and cadence_floor > 1.0 and dyn_mult >= 1.0:
+        return 0.0
+    if cadence_floor == 1.0 and dyn_mult >= 1.0:
         return cooldown
     ref_cooldown = cooldown
     if ref_cooldown <= 0.0:
@@ -1369,11 +1376,20 @@ def _strategy_effective_cooldown_sec(
     if ref_cooldown <= 0.0:
         return 0.0
     effective_cooldown = max(0.0, cooldown)
+    has_effective = effective_cooldown > 0.0
     if cadence_floor < 1.0:
         effective_cooldown = max(effective_cooldown, ref_cooldown / cadence_floor)
+        has_effective = True
+    elif cadence_floor > 1.0:
+        boosted_cooldown = ref_cooldown / cadence_floor
+        effective_cooldown = boosted_cooldown if not has_effective else min(effective_cooldown, boosted_cooldown)
+        has_effective = True
     if dyn_mult < 1.0:
-        effective_cooldown = max(effective_cooldown, ref_cooldown / dyn_mult)
-    return effective_cooldown
+        dyn_cooldown = ref_cooldown / max(config.DYN_ALLOC_MULT_MIN, dyn_mult)
+        if cadence_floor > 1.0:
+            dyn_cooldown = dyn_cooldown / cadence_floor
+        effective_cooldown = dyn_cooldown if not has_effective else max(effective_cooldown, dyn_cooldown)
+    return max(0.0, effective_cooldown)
 
 
 def _strategy_cooldown_active(

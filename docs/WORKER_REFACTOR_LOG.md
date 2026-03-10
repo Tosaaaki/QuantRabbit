@@ -5,6 +5,43 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-10（追記）shared participation alloc は low-sample winner の cadence 回復まで担当し、counterfactual overlay は TP/SL も live へ返す
+
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `workers/micro_runtime/worker.py`
+  - `workers/scalp_rangefader/worker.py`
+  - `analysis/strategy_feedback.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `tests/analysis/test_strategy_feedback.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - `scripts/participation_allocator.py`
+    - `min_attempts` 未満でも `filled_rate` と `fill_share` が十分高い winner は
+      `boost_participation` を出せるように閾値を引き下げた。
+    - これにより `PrecisionLowVol` や `session_open_breakout` のような
+      low-sample profitable lane を shared artifact で拾える。
+  - `workers/micro_runtime/worker.py`
+    - `cadence_floor>1.0` の `boost_participation` を cooldown 短縮へ反映。
+    - `dynamic_alloc` の mild trim があるときだけ cadence boost を相殺させ、
+      `trim_units + dyn trim` の loser lane は従来どおり延長を優先する。
+  - `workers/scalp_rangefader/worker.py`
+    - participation alloc の cooldown 反映を trim-only から双方向へ拡張し、
+      `boost_participation` では `base / cadence_floor` へ短縮する。
+  - `analysis/strategy_feedback.py`
+    - `trade_counterfactual_latest.json` の `reentry_overrides / side_actions` から
+      `sl_distance_multiplier / tp_distance_multiplier` を生成し、
+      live advice の `units/probability` と同じ経路で `strategy_entry` へ渡す。
+- 意図:
+  - shared layer は「勝っているのに回数が足りない」lane を modest に回復させ、
+    loser lane の trim は維持する。
+  - entry/exit の strategy-local 判断は残したまま、
+    all-strategy の cadence と payoff だけを実績連動の soft overlay で動的化する。
+
 ### 2026-03-10（追記）`health_snapshot.json.mechanism_integrity` を追加し、live 仕組み欠落を health 導線で可視化
 
 - 対象:
