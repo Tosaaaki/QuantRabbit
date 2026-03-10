@@ -270,6 +270,70 @@ def test_momentumburst_reaccel_shortens_before_dynamic_extension(monkeypatch):
     ) == pytest.approx(25.0)
 
 
+def test_trendretest_side_specific_dynamic_alloc_key_is_resolved(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    seen = []
+
+    def _fake_load(strategy, *_args, **_kwargs):
+        seen.append(strategy)
+        if strategy == "MicroTrendRetest-long":
+            return {
+                "found": True,
+                "payload_stale": False,
+                "trades": 24,
+                "lot_multiplier": 0.75,
+            }
+        return {
+            "found": True,
+            "payload_stale": False,
+            "trades": 18,
+            "lot_multiplier": 0.95,
+        }
+
+    monkeypatch.setattr(worker, "load_dynamic_alloc_profile", _fake_load, raising=False)
+
+    assert worker._strategy_effective_cooldown_sec(
+        "MicroTrendRetest",
+        {"tag": "MicroTrendRetest-long-trendflip"},
+    ) == pytest.approx(60.0)
+    assert seen[0] == "MicroTrendRetest-long"
+
+
+def test_strategy_cooldown_uses_stronger_dynamic_extension_when_both_present(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(
+        worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "protect_frequency": True,
+            "action": "trim_units",
+            "cadence_floor": 0.90,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "trades": 24,
+            "lot_multiplier": 0.80,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(56.25)
+
+
 def test_mlr_strict_range_gate_blocks_without_range_context(monkeypatch):
     monkeypatch.setattr(worker.config, "MLR_STRICT_RANGE_GATE", True)
     monkeypatch.setattr(worker.config, "MLR_MIN_RANGE_SCORE", 0.62)

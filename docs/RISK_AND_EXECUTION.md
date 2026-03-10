@@ -2716,3 +2716,20 @@
   `docs/TRADE_FINDINGS.md`,
   `tests/workers/test_scalp_extrema_reversal_worker.py`
   を正とする。
+
+### 2026-03-10 micro loser cadence を runtime dynamic_alloc へ接続
+- `workers/micro_runtime/worker.py` は
+  `dynamic_alloc` / `participation_alloc` を使って strategy-local cooldown を延長できる。
+- `MicroTrendRetest` 系は side 別 profile を使うため、
+  signal tag から `MicroTrendRetest-long` / `MicroTrendRetest-short`
+  を優先解決し、未解決時だけ base key へ戻す。
+- `participation_alloc` は fresh `trim_units` + `protect_frequency=true` +
+  `cadence_floor<1.0` のときだけ cadence 値を返す。
+- `dynamic_alloc` は fresh profile かつ
+  `trades >= MICRO_MULTI_DYN_ALLOC_MIN_TRADES`
+  かつ `lot_multiplier < 1.0` のときだけ loser cooldown 補正を返す。
+- cooldown 合成は積算ではなく
+  `max(base_cooldown, base/cadence_floor, ref/dyn_mult)` を正とする。
+  `ref` は base cooldown、base が 0 のときは `LOOP_INTERVAL_SEC` を使う。
+- この変更は micro worker の strategy-local cadence 制御に限定し、
+  `quant-order-manager` / 共通 preflight / shared gate には新しい一律判定を追加しない。

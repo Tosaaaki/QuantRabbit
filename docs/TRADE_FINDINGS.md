@@ -12035,3 +12035,66 @@ Status:
     -> `6 passed`
   - `python3 -m compileall workers/scalp_rangefader/worker.py tests/workers/test_scalp_rangefader_worker.py`
     -> 成功
+
+## 2026-03-10 20:5x JST / micro runtime の loser cadence を dynamic_alloc へ接続
+- 目的:
+  - 「マイナスが出すぎる / 稼ぐのが遅い」状態に対し、
+    micro loser lane の頻度を strategy-local に落としつつ、
+    side 別の成績を runtime がちゃんと参照できる状態へ戻す。
+- 市況確認:
+  - `logs/orderbook_snapshot.json` 直近値は `bid=157.801 / ask=157.809 / spread=0.8p`、
+    provider `oanda-stream`, latency `212.9ms`。
+  - `logs/factor_cache.json` は `ATR(M1)=2.21p / ATR(M5)=6.70p / ATR(H1)=22.82p`。
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    は core と micro worker を含め running。
+  - `logs/local_v2_stack/quant-order-manager.log` と
+    `quant-micro-{momentumburst,levelreactor,trendretest}.log` の更新時刻は
+    `2026-03-10 20:51-20:53 JST` で fresh。
+- 実測:
+  - `logs/trades.db` 直近24h:
+    - `MomentumBurst`: `24 trades / realized=-617.2 JPY / -17.1 pips`
+    - `MicroTrendRetest-short`: `2 trades / realized=-540.6 JPY / -10.6 pips`
+    - `MicroTrendRetest-long`: `17 trades / realized=-290.2 JPY / -45.7 pips`
+    - `MicroLevelReactor`: `228 trades / realized=-79.7 JPY / +40.2 pips`
+  - `config/dynamic_alloc.json` (`as_of=2026-03-10T11:47:03Z`) は
+    `MicroLevelReactor=0.14`, `MomentumBurst=0.301`,
+    `MicroTrendRetest-long=0.14`, `MicroTrendRetest-short=0.14`
+    を出していた。
+  - しかし `workers/micro_runtime/worker.py` は
+    `dynamic_alloc` を `strategy_name` だけで引いており、
+    `MicroTrendRetest-long/-short` の side 別 profile を live sizing / loser cadence に使えていなかった。
+  - さらに cooldown 延長は `participation_alloc` と `dynamic_alloc` を
+    積算で掛けてしまう形になり得たため、
+    loser 抑制を二重に強める設計になりやすかった。
+- 変更:
+  - `workers/micro_runtime/worker.py`
+    - `MicroTrendRetest-long-trendflip` のような tag から
+      `MicroTrendRetest-long` を優先解決し、未解決時だけ base strategy へ戻す
+      micro-local profile loader を追加。
+    - `dynamic_alloc` の live load を signal tag 解決後へ移動し、
+      loser block / sizing / cooldown が同じ resolved key を参照するよう整理。
+    - `participation_alloc` cadence と `dynamic_alloc` loser multiplier を
+      `max(base, base/cadence_floor, ref/dyn_mult)` で合成し、
+      二重積算ではなく「強い方だけ採用」に変更。
+    - base cooldown が 0 の戦略は `LOOP_INTERVAL_SEC` を参照基準にして、
+      loser lane でも frequency 制御が効くようにした。
+- 現行 env での実効イメージ:
+  - local-v2 shared `MICRO_MULTI_DYN_ALLOC_MULT_MIN=0.68`
+    のため `0.14/0.301` は live では `0.68` まで clamp。
+  - `MicroLevelReactor`: `8s / 0.68 ≒ 11.8s`
+  - `MicroTrendRetest`: `45s / 0.68 ≒ 66.2s`
+  - `MomentumBurst`: `120s / 0.68 ≒ 176.5s`
+    (`reaccel` は `35s / 0.68 ≒ 51.5s`)
+  - `participation_alloc` が今後 `trim_units + cadence_floor<1.0` を出した場合も、
+    その延長値と dynamic_alloc 延長値の大きい方だけを採用する。
+- 意図:
+  - shared order-manager / common gate に新しい一律判定は足さず、
+    micro worker の strategy-local cadence だけを
+    live artifact 駆動へ寄せる。
+  - 負けている lane の size と cadence を同じ profile key で整合させ、
+    `MicroTrendRetest` の side 別 loser を runtime が見落とさないようにする。
+- 検証:
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py`
+    -> `25 passed`
+  - `python3 -m compileall workers/micro_runtime/worker.py tests/workers/test_micro_multistrat_trend_flip.py`
+    -> 成功

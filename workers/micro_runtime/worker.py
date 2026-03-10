@@ -1236,18 +1236,80 @@ def _momentumburst_entry_thesis_reaccel(
     return strategy_name == MomentumBurstMicro.name and _momentumburst_reaccel_signal(signal)
 
 
-def _strategy_participation_cadence_floor(strategy_name: str) -> float:
+def _signal_tag(signal: Optional[Dict[str, object]]) -> str:
+    if not isinstance(signal, dict):
+        return ""
+    return str(signal.get("tag") or "").strip()
+
+
+def _strategy_profile_lookup_keys(
+    strategy_name: str,
+    signal_tag: str = "",
+) -> List[str]:
+    keys: List[str] = []
+    tag = str(signal_tag or "").strip()
+    if strategy_name in {MicroTrendRetest.name, MicroCompressionRevert.name} and tag:
+        parts = [part for part in tag.split("-") if part]
+        if len(parts) >= 2 and parts[0] == strategy_name and parts[1] in {"long", "short"}:
+            keys.append(f"{strategy_name}-{parts[1]}")
+    keys.append(str(strategy_name or "").strip())
+    dedup: List[str] = []
+    for key in keys:
+        if key and key not in dedup:
+            dedup.append(key)
+    return dedup
+
+
+def _load_micro_participation_profile(
+    strategy_name: str,
+    signal_tag: str = "",
+) -> Dict[str, object]:
+    for key in _strategy_profile_lookup_keys(strategy_name, signal_tag):
+        try:
+            profile = load_participation_profile(
+                key,
+                config.POCKET,
+                path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
+                ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
+            )
+        except Exception:
+            continue
+        if isinstance(profile, dict) and profile.get("found"):
+            return profile
+    return {}
+
+
+def _load_micro_dynamic_alloc_profile(
+    strategy_name: str,
+    signal_tag: str = "",
+) -> Dict[str, object]:
+    fallback: Dict[str, object] = {}
+    for key in _strategy_profile_lookup_keys(strategy_name, signal_tag):
+        try:
+            profile = load_dynamic_alloc_profile(
+                key,
+                config.POCKET,
+                path=config.DYN_ALLOC_PATH,
+                ttl_sec=config.DYN_ALLOC_TTL_SEC,
+            )
+        except Exception:
+            continue
+        if not isinstance(profile, dict):
+            continue
+        if profile.get("found") and int(profile.get("trades", 0) or 0) > 0:
+            return profile
+        if not fallback:
+            fallback = profile
+    return fallback
+
+
+def _strategy_participation_cadence_floor(
+    strategy_name: str,
+    signal_tag: str = "",
+) -> float:
     if not _STRATEGY_PARTICIPATION_ALLOC_ENABLED:
         return 1.0
-    try:
-        profile = load_participation_profile(
-            strategy_name,
-            config.POCKET,
-            path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
-            ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
-        )
-    except Exception:
-        return 1.0
+    profile = _load_micro_participation_profile(strategy_name, signal_tag)
     if not isinstance(profile, dict) or not profile.get("found"):
         return 1.0
     if profile.get("payload_stale") is True:
@@ -1262,18 +1324,13 @@ def _strategy_participation_cadence_floor(strategy_name: str) -> float:
     return float(cadence_floor)
 
 
-def _strategy_dynamic_alloc_cooldown_mult(strategy_name: str) -> float:
+def _strategy_dynamic_alloc_cooldown_mult(
+    strategy_name: str,
+    signal_tag: str = "",
+) -> float:
     if not bool(getattr(config, "DYN_ALLOC_ENABLED", False)):
         return 1.0
-    try:
-        profile = load_dynamic_alloc_profile(
-            strategy_name,
-            config.POCKET,
-            path=config.DYN_ALLOC_PATH,
-            ttl_sec=config.DYN_ALLOC_TTL_SEC,
-        )
-    except Exception:
-        return 1.0
+    profile = _load_micro_dynamic_alloc_profile(strategy_name, signal_tag)
     if not isinstance(profile, dict) or not profile.get("found"):
         return 1.0
     if profile.get("payload_stale") is True:
@@ -1301,19 +1358,22 @@ def _strategy_effective_cooldown_sec(
         )
         if 0.0 < reaccel_cooldown < cooldown:
             cooldown = reaccel_cooldown
-    cadence_floor = _strategy_participation_cadence_floor(strategy_name)
-    dyn_mult = _strategy_dynamic_alloc_cooldown_mult(strategy_name)
+    signal_tag = _signal_tag(signal)
+    cadence_floor = _strategy_participation_cadence_floor(strategy_name, signal_tag)
+    dyn_mult = _strategy_dynamic_alloc_cooldown_mult(strategy_name, signal_tag)
     if cadence_floor >= 1.0 and dyn_mult >= 1.0:
         return cooldown
-    if cooldown <= 0.0:
-        cooldown = max(0.0, float(getattr(config, "LOOP_INTERVAL_SEC", 0.0)))
-    if cooldown <= 0.0:
+    ref_cooldown = cooldown
+    if ref_cooldown <= 0.0:
+        ref_cooldown = max(0.0, float(getattr(config, "LOOP_INTERVAL_SEC", 0.0)))
+    if ref_cooldown <= 0.0:
         return 0.0
+    effective_cooldown = max(0.0, cooldown)
     if cadence_floor < 1.0:
-        cooldown /= cadence_floor
+        effective_cooldown = max(effective_cooldown, ref_cooldown / cadence_floor)
     if dyn_mult < 1.0:
-        cooldown /= dyn_mult
-    return cooldown
+        effective_cooldown = max(effective_cooldown, ref_cooldown / dyn_mult)
+    return effective_cooldown
 
 
 def _strategy_cooldown_active(
@@ -1646,13 +1706,12 @@ async def micro_multi_worker() -> None:
                     )
                     last_perf_block_log = now_mono
                 continue
+            signal_tag = str(cand.get("tag", strategy_name))
             dyn_profile: Dict[str, object] = {}
             if config.DYN_ALLOC_ENABLED:
-                dyn_profile = load_dynamic_alloc_profile(
+                dyn_profile = _load_micro_dynamic_alloc_profile(
                     strategy_name,
-                    config.POCKET,
-                    path=config.DYN_ALLOC_PATH,
-                    ttl_sec=config.DYN_ALLOC_TTL_SEC,
+                    signal_tag,
                 )
                 dyn_allow_loser_block = bool(dyn_profile.get("allow_loser_block", True))
                 if config.DYN_ALLOC_LOSER_BLOCK and dyn_allow_loser_block and bool(dyn_profile.get("found")):
@@ -1663,7 +1722,6 @@ async def micro_multi_worker() -> None:
                         and dyn_score <= config.DYN_ALLOC_LOSER_SCORE
                     ):
                         continue
-            signal_tag = str(cand.get("tag", strategy_name))
             if config.SIGNAL_TAG_CONTAINS:
                 signal_tag_lower = signal_tag.lower()
                 if not any(token in signal_tag_lower for token in config.SIGNAL_TAG_CONTAINS):

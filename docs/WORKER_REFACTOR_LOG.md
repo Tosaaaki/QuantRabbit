@@ -15033,3 +15033,32 @@
     -> `5 passed`
   - `python3 -m compileall workers/scalp_rangefader/worker.py tests/workers/test_scalp_rangefader_worker.py`
     -> 成功
+
+### 2026-03-10 micro runtime cooldown を dynamic_alloc / participation cadence 連動へ更新
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - micro runtime は `dynamic_alloc` を `strategy_name` だけで引いていたため、
+    `MicroTrendRetest-long/-short` の side 別 profile を live で使えていなかった。
+  - さらに loser cadence 延長を participation と dynamic_alloc の積算で掛けると、
+    同一 lane に対して過剰な二重抑制になり得た。
+
+- 変更:
+  - `MicroTrendRetest-long-trendflip` のような tag から
+    `MicroTrendRetest-long` を優先解決する micro-local loader を追加。
+  - `dynamic_alloc` の live load を signal tag 解決後へ移動し、
+    loser block / sizing / cooldown が同じ key を参照するよう整理。
+  - cooldown は `max(base, base/cadence_floor, ref/dyn_mult)` で決定し、
+    loser cadence を「強い方だけ採用」する形へ更新。
+  - base cooldown が 0 の戦略は `LOOP_INTERVAL_SEC` を fallback 基準にして、
+    `MicroLevelReactor` のような lane にも live cadence trim を適用可能にした。
+
+- 検証:
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py`
+    -> `25 passed`
+  - `python3 -m compileall workers/micro_runtime/worker.py tests/workers/test_micro_multistrat_trend_flip.py`
+    -> 成功
