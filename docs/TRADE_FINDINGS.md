@@ -11848,3 +11848,45 @@ Status:
   - explorer review でも
     「7d で blocked 2 本は loser のみ、winner 巻き込み 0」
     を確認。
+
+## 2026-03-10 18:05-18:12 JST / `scalp_ping_5s_c_live` を strategy-control reopen
+
+- 市況:
+  - `2026-03-10 18:05 JST` の USD/JPY は
+    `157.712/157.720`, spread `p50/p95=0.8p/0.8p`,
+    `M1 ATR 2.963p`, `ADX 55.75`, `RSI 79.34`。
+  - OANDA `summary/pricing/candles` はすべて `200 OK`。
+  - 相場停止ではなく participation 配置の問題として扱う。
+
+- 実測:
+  - 直近90分の order-manager 実数は
+    `session_open_breakout` のみ `OPEN_SCALE/REQ/FILLED=1`。
+  - `scalp_ping_5s_c_live` は
+    `OPEN_REJECT=2` で、両方とも
+    `strategy_control_entry_disabled`。
+  - 2本の blocked signal は
+    `entry_probability=0.712 / 0.922`,
+    `confidence=92`,
+    `entry_units_intent=25 / 21` で、
+    低品質だから落ちたのではなく strategy-control で閉じていた。
+  - `logs/strategy_control.db` では
+    `scalp_ping_5s_c` が `entry_enabled=0`。
+
+- 追加根拠:
+  - `scalp_ping_5s_c_live` は
+    7d `21 trades / -4.659 JPY`,
+    14d `31 trades / +3.624 JPY` で、
+    直近 stray loser の恒久停止を続けるほどの壊れ方ではない。
+  - 既存の forecast / perf / probability / min-units guard は
+    そのまま残っているため、
+    reopen しても shared gate を緩める変更ではない。
+
+- 対応:
+  - `ops/env/local-v2-stack.env`
+    - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_C=1`
+
+- 意図:
+  - `scalp_ping_5s_c_live` をフルノーガードで増やすのではなく、
+    既存 guard 群を維持したまま
+    strategy-control だけ reopen して、
+    現在捨てている strong setup を再び通す。

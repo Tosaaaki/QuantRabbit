@@ -2626,6 +2626,14 @@
   shared order-manager の global threshold や
   他 strategy の perf-guard metric を変えることではない。
 
+### 2026-03-10 `scalp_ping_5s_c_live` strategy-control reopen
+- `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_C=1` を current 値とする。
+- 既存の forecast / perf / probability / min-units guard は維持し、
+  shared order-manager / risk gate の仕様は変えない。
+- 意図は quality gate を外すことではなく、
+  `strategy_control_entry_disabled` だけで捨てていた
+  strong setup の participation を戻すこと。
+
 ### 2026-03-10 `scalp_extrema_reversal_live` countertrend long current guard
 - `scalp_extrema_reversal_live` の current
   `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS`

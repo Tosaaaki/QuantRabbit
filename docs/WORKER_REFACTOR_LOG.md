@@ -14910,3 +14910,30 @@
   - `tests/workers/test_scalp_extrema_reversal_worker.py` は `12 passed`。
   - 7d closed trade の non-supportive long 21 本に対する再判定では
     `2 losers blocked / 0 winners blocked / net -3.874 JPY`。
+
+### 2026-03-10 `scalp_ping_5s_c_live` strategy-control reopen
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - 直近90分の order-manager 実数では
+    `scalp_ping_5s_c_live` が 2 本 signal まで到達していたが、
+    どちらも `strategy_control_entry_disabled` で reject されていた。
+  - blocked signal は
+    `entry_probability=0.712 / 0.922`,
+    `confidence=92`,
+    `entry_units_intent=25 / 21` で、
+    品質不足ではなく strategy-control flag が主因だった。
+  - 7d `-4.659 JPY`、14d `+3.624 JPY` で、
+    stray loser の恒久停止を維持するほどの悪化は見えなかった。
+
+- 変更:
+  - `STRATEGY_CONTROL_ENTRY_SCALP_PING_5S_C=0 -> 1`
+
+- 意図:
+  - `scalp_ping_5s_c_live` の existing
+    forecast / perf / probability guard は維持したまま、
+    strategy-control だけ reopen して
+    strong setup の participation を戻す。
