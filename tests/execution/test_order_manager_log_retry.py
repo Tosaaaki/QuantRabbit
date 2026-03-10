@@ -55,6 +55,135 @@ class _SnapshotState:
         self.error_kind = None
 
 
+def _captured_log_by_status(
+    captured: list[dict[str, object]],
+    status: str,
+) -> dict[str, object]:
+    for item in captured:
+        if str(item.get("status")) == status:
+            return item
+    raise AssertionError(f"missing log status: {status}")
+
+
+def _setup_market_order_local_path(
+    monkeypatch,
+    *,
+    perf_pocket_allowed: bool = True,
+    perf_strategy_allowed: bool = True,
+    brain_decision=None,
+    brain_mode: str = "apply",
+    forecast_decision=None,
+    pattern_decision=None,
+) -> list[dict[str, object]]:
+    captured: list[dict[str, object]] = []
+
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    def _fake_api_request(endpoint) -> None:
+        endpoint.response = {
+            "orderFillTransaction": {
+                "tradeOpened": {"tradeID": "TID-ENTRY-PATH"},
+            }
+        }
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", False)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT", True)
+    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
+    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "attach_section_axis", lambda thesis, pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager,
+        "_augment_entry_thesis_policy_generation",
+        lambda thesis, reduce_only=False: thesis,
+    )
+    monkeypatch.setattr(order_manager, "_reject_entry_by_control", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager.slo_guard,
+        "decide",
+        lambda **_k: SimpleNamespace(
+            allowed=True,
+            reason="pass",
+            sample=1,
+            data_lag_latest_ms=0,
+            data_lag_p95_ms=0,
+            decision_latency_latest_ms=0,
+            decision_latency_p95_ms=0,
+        ),
+    )
+    monkeypatch.setattr(order_manager, "_policy_gate_allows_entry", lambda *_a, **_k: (True, None, {}))
+    monkeypatch.setattr(
+        order_manager.perf_guard,
+        "is_pocket_allowed",
+        lambda *_a, **_k: SimpleNamespace(
+            allowed=perf_pocket_allowed,
+            reason="pocket_block" if not perf_pocket_allowed else "pass",
+        ),
+    )
+    monkeypatch.setattr(
+        order_manager.perf_guard,
+        "is_allowed",
+        lambda *_a, **_k: SimpleNamespace(
+            allowed=perf_strategy_allowed,
+            reason="perf_block" if not perf_strategy_allowed else "pass",
+        ),
+    )
+    monkeypatch.setattr(
+        order_manager.profit_guard,
+        "is_allowed",
+        lambda *_a, **_k: SimpleNamespace(allowed=True, reason="pass"),
+    )
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_ENABLED", brain_decision is not None)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_MODE", brain_mode)
+    monkeypatch.setattr(
+        order_manager,
+        "brain",
+        SimpleNamespace(decide=lambda **_k: brain_decision) if brain_decision is not None else None,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_should_apply_order_manager_forecast_gate",
+        lambda **_k: forecast_decision is not None,
+    )
+    if forecast_decision is not None:
+        monkeypatch.setattr(order_manager, "_forecast_decide_with_service", lambda **_k: forecast_decision)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PATTERN_GATE_ENABLED", pattern_decision is not None)
+    if pattern_decision is not None:
+        monkeypatch.setattr(
+            order_manager,
+            "pattern_gate",
+            SimpleNamespace(decide=lambda **_k: pattern_decision),
+        )
+    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(order_manager, "_load_margin_guard_snapshot", lambda **_k: _LimitSnapshot())
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_fetch_quote_with_retry",
+        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+    )
+    monkeypatch.setattr(order_manager, "_quote_is_usable", lambda quote: True)
+    monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs)))
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
+    monkeypatch.setattr(
+        "utils.oanda_account.get_account_snapshot_state",
+        lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
+    )
+    return captured
+
+
 def _invoke_log_order(*, fast_fail: bool = False) -> None:
     order_manager._log_order(
         pocket="scalp_fast",
@@ -471,6 +600,239 @@ def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch
 
     assert ticket is None
     assert "entry_intent_guard_reject" in statuses
+
+
+def test_market_order_entry_intent_guard_logs_dynamic_alloc_attribution(monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    async def _unexpected_service_call(_path: str, _payload: dict) -> None:
+        raise AssertionError("service should not be called when entry intent guard rejects")
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
+    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(order_manager, "_strategy_tag_from_client_id", lambda _cid: None)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs)))
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=1200,
+            sl_price=None,
+            tp_price=155.2,
+            pocket="scalp_fast",
+            client_order_id="cid-entry-intent-guard-no-tag",
+            strategy_tag=None,
+            entry_thesis={
+                "entry_units_intent": 1200,
+                "entry_probability": 0.62,
+                "dynamic_alloc": {
+                    "source": "strategy_entry",
+                    "lot_multiplier": 0.5,
+                    "reason": "trim",
+                },
+            },
+            confidence=62,
+        )
+    )
+
+    assert ticket is None
+    log_entry = _captured_log_by_status(captured, "entry_intent_guard_reject")
+    request_payload = log_entry["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == [
+        "dynamic_alloc",
+        "order_manager_entry_intent_guard",
+    ]
+    assert [step.get("status") for step in trail] == ["reduce", "block"]
+    assert request_payload.get("entry_path_attribution") == trail
+
+
+def test_market_order_perf_block_logs_entry_path_attribution(monkeypatch) -> None:
+    captured = _setup_market_order_local_path(monkeypatch, perf_strategy_allowed=False)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-perf-block-attribution",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+                "dynamic_alloc": {"source": "strategy_entry", "lot_multiplier": 0.75},
+            },
+            confidence=88,
+        )
+    )
+
+    assert ticket is None
+    log_entry = _captured_log_by_status(captured, "perf_block")
+    request_payload = log_entry["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == [
+        "dynamic_alloc",
+        "order_manager_entry_intent_guard",
+        "order_manager_strategy_control",
+        "order_manager_slo_guard",
+        "order_manager_policy_gate",
+        "order_manager_preflight",
+        "order_manager_perf_guard_pocket",
+        "order_manager_perf_guard_strategy",
+    ]
+    assert trail[-1]["status"] == "block"
+
+
+def test_market_order_brain_shadow_logs_entry_path_attribution(monkeypatch) -> None:
+    captured = _setup_market_order_local_path(
+        monkeypatch,
+        brain_decision=order_manager.brain.BrainDecision(
+            allowed=False,
+            scale=1.0,
+            reason="soft_filter",
+            action="BLOCK",
+        ),
+        brain_mode="shadow",
+    )
+
+    trade_id = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-brain-shadow-attribution",
+            strategy_tag="scalp_ping_5s_d_live",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_d_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+                "dynamic_alloc": {"source": "strategy_entry", "lot_multiplier": 0.9},
+            },
+            confidence=88,
+        )
+    )
+
+    assert trade_id == "TID-ENTRY-PATH"
+    log_entry = _captured_log_by_status(captured, "brain_shadow")
+    request_payload = log_entry["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert trail[-1]["stage"] == "order_manager_brain_gate"
+    assert trail[-1]["status"] == "shadow"
+    assert trail[-1]["reason"] == "soft_filter"
+
+
+def test_market_order_forecast_block_logs_entry_path_attribution(monkeypatch) -> None:
+    captured = _setup_market_order_local_path(
+        monkeypatch,
+        forecast_decision=order_manager.forecast_gate.ForecastDecision(
+            allowed=False,
+            scale=1.0,
+            reason="contra",
+            horizon="20",
+            edge=0.82,
+            p_up=0.18,
+        ),
+    )
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-forecast-block-attribution",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+            },
+            confidence=88,
+        )
+    )
+
+    assert ticket is None
+    log_entry = _captured_log_by_status(captured, "forecast_block")
+    request_payload = log_entry["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert trail[-1]["stage"] == "order_manager_forecast_gate"
+    assert trail[-1]["status"] == "block"
+    assert trail[-1]["reason"] == "contra"
+
+
+def test_market_order_pattern_block_logs_entry_path_attribution(monkeypatch) -> None:
+    captured = _setup_market_order_local_path(
+        monkeypatch,
+        pattern_decision=order_manager.pattern_gate.PatternGateDecision(
+            allowed=False,
+            scale=1.0,
+            reason="avoid_cluster",
+            action="BLOCK",
+            pattern_id="pat-1",
+            quality="avoid",
+            trades=12,
+            suggested_multiplier=0.5,
+            robust_score=0.72,
+            p_value=0.01,
+            source="pattern_book",
+        ),
+    )
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-pattern-block-attribution",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+                "pattern_gate_opt_in": True,
+            },
+            confidence=88,
+        )
+    )
+
+    assert ticket is None
+    log_entry = _captured_log_by_status(captured, "pattern_block")
+    request_payload = log_entry["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert trail[-1]["stage"] == "order_manager_pattern_gate"
+    assert trail[-1]["status"] == "block"
+    assert trail[-1]["reason"] == "avoid_cluster"
 
 
 def test_market_order_brain_block_records_entry_path_attribution(monkeypatch) -> None:
