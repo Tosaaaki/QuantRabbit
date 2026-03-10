@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from workers.micro_runtime import worker
 
 
@@ -105,18 +107,24 @@ def test_trend_flip_still_applies_when_allowed(monkeypatch):
 
 def test_strategy_cooldown_active_when_recent(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
     worker._STRATEGY_LAST_TS.clear()
     worker._STRATEGY_LAST_TS["MicroLevelReactor"] = 100.0
 
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == 45.0
     assert worker._strategy_cooldown_active("MicroLevelReactor", 120.0) is True
     assert worker._strategy_cooldown_active("MicroLevelReactor", 146.0) is False
 
 
 def test_strategy_cooldown_disabled_by_default(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 0.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
     worker._STRATEGY_LAST_TS.clear()
     worker._STRATEGY_LAST_TS["MicroLevelReactor"] = 100.0
 
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == 0.0
     assert worker._strategy_cooldown_active("MicroLevelReactor", 110.0) is False
 
 
@@ -127,6 +135,139 @@ def test_momentumburst_entry_thesis_marks_only_reaccel_signals() -> None:
     assert worker._momentumburst_entry_thesis_reaccel("MomentumBurst", reaccel_signal) is True
     assert worker._momentumburst_entry_thesis_reaccel("MomentumBurst", normal_signal) is False
     assert worker._momentumburst_entry_thesis_reaccel("MicroLevelReactor", reaccel_signal) is False
+
+
+def test_strategy_cooldown_extends_with_fresh_participation_trim(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
+    monkeypatch.setattr(
+        worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "protect_frequency": True,
+            "action": "trim_units",
+            "cadence_floor": 0.90,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(50.0)
+
+
+def test_strategy_cooldown_uses_dynamic_alloc_when_base_is_zero(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "LOOP_INTERVAL_SEC", 8.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MULT_MIN", 0.7)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MULT_MAX", 1.8)
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "trades": 24,
+            "lot_multiplier": 0.80,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(10.0)
+
+
+def test_strategy_cooldown_ignores_stale_missing_and_noop_dynamic_inputs(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(
+        worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": True,
+            "protect_frequency": True,
+            "action": "trim_units",
+            "cadence_floor": 0.90,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": True,
+            "trades": 24,
+            "lot_multiplier": 0.80,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == 45.0
+
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "trades": 8,
+            "lot_multiplier": 0.80,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == 45.0
+
+    monkeypatch.setattr(
+        worker,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {"found": False},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "trades": 24,
+            "lot_multiplier": 1.05,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == 45.0
+
+
+def test_momentumburst_reaccel_shortens_before_dynamic_extension(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker.config, "MOMENTUMBURST_REACCEL_COOLDOWN_SEC", 20.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    monkeypatch.setattr(
+        worker,
+        "load_dynamic_alloc_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "payload_stale": False,
+            "trades": 24,
+            "lot_multiplier": 0.80,
+        },
+        raising=False,
+    )
+
+    assert worker._strategy_effective_cooldown_sec(
+        "MomentumBurst",
+        {"metadata": {"momentum_burst": {"reaccel": True}}},
+    ) == pytest.approx(25.0)
 
 
 def test_mlr_strict_range_gate_blocks_without_range_context(monkeypatch):

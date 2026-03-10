@@ -36,7 +36,10 @@ from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.metrics_logger import log_metric
 from workers.common.dyn_cap import compute_cap
-from workers.common.dynamic_alloc import load_strategy_profile
+from workers.common.dynamic_alloc import load_strategy_profile as load_dynamic_alloc_profile
+from workers.common.participation_alloc import (
+    load_strategy_profile as load_participation_profile,
+)
 from workers.common import perf_guard
 from workers.common.quality_gate import current_regime
 from analysis import perf_monitor
@@ -79,6 +82,15 @@ _ACCOUNT_SNAPSHOT_ALLOW_STALE_SEC = max(
         15.0,
         prefix=getattr(config, "ENV_PREFIX", ""),
     ),
+)
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = env_bool("STRATEGY_PARTICIPATION_ALLOC_ENABLED", True)
+_STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
+    "STRATEGY_PARTICIPATION_ALLOC_PATH",
+    "config/participation_alloc.json",
+)
+_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC = max(
+    1.0,
+    env_float("STRATEGY_PARTICIPATION_ALLOC_TTL_SEC", 30.0),
 )
 
 
@@ -1224,11 +1236,63 @@ def _momentumburst_entry_thesis_reaccel(
     return strategy_name == MomentumBurstMicro.name and _momentumburst_reaccel_signal(signal)
 
 
-def _strategy_cooldown_active(
+def _strategy_participation_cadence_floor(strategy_name: str) -> float:
+    if not _STRATEGY_PARTICIPATION_ALLOC_ENABLED:
+        return 1.0
+    try:
+        profile = load_participation_profile(
+            strategy_name,
+            config.POCKET,
+            path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
+            ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        return 1.0
+    if not isinstance(profile, dict) or not profile.get("found"):
+        return 1.0
+    if profile.get("payload_stale") is True:
+        return 1.0
+    if not bool(profile.get("protect_frequency")):
+        return 1.0
+    if str(profile.get("action") or "").strip().lower() != "trim_units":
+        return 1.0
+    cadence_floor = _bb_float(profile.get("cadence_floor"))
+    if cadence_floor is None or cadence_floor <= 0.0 or cadence_floor >= 1.0:
+        return 1.0
+    return float(cadence_floor)
+
+
+def _strategy_dynamic_alloc_cooldown_mult(strategy_name: str) -> float:
+    if not bool(getattr(config, "DYN_ALLOC_ENABLED", False)):
+        return 1.0
+    try:
+        profile = load_dynamic_alloc_profile(
+            strategy_name,
+            config.POCKET,
+            path=config.DYN_ALLOC_PATH,
+            ttl_sec=config.DYN_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        return 1.0
+    if not isinstance(profile, dict) or not profile.get("found"):
+        return 1.0
+    if profile.get("payload_stale") is True:
+        return 1.0
+    dyn_trades = int(profile.get("trades", 0) or 0)
+    if dyn_trades < max(1, int(getattr(config, "DYN_ALLOC_MIN_TRADES", 0) or 0)):
+        return 1.0
+    dyn_mult = float(profile.get("lot_multiplier", 1.0) or 1.0)
+    dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
+    dyn_mult, _ = _clamp_dynamic_alloc_multiplier(dyn_mult, hist_profile=None)
+    if dyn_mult <= 0.0 or dyn_mult >= 1.0:
+        return 1.0
+    return float(dyn_mult)
+
+
+def _strategy_effective_cooldown_sec(
     strategy_name: str,
-    now_ts: float,
     signal: Optional[Dict[str, object]] = None,
-) -> bool:
+) -> float:
     cooldown = max(0.0, float(getattr(config, "STRATEGY_COOLDOWN_SEC", 0.0)))
     if cooldown > 0.0 and _momentumburst_entry_thesis_reaccel(strategy_name, signal):
         reaccel_cooldown = max(
@@ -1237,6 +1301,27 @@ def _strategy_cooldown_active(
         )
         if 0.0 < reaccel_cooldown < cooldown:
             cooldown = reaccel_cooldown
+    cadence_floor = _strategy_participation_cadence_floor(strategy_name)
+    dyn_mult = _strategy_dynamic_alloc_cooldown_mult(strategy_name)
+    if cadence_floor >= 1.0 and dyn_mult >= 1.0:
+        return cooldown
+    if cooldown <= 0.0:
+        cooldown = max(0.0, float(getattr(config, "LOOP_INTERVAL_SEC", 0.0)))
+    if cooldown <= 0.0:
+        return 0.0
+    if cadence_floor < 1.0:
+        cooldown /= cadence_floor
+    if dyn_mult < 1.0:
+        cooldown /= dyn_mult
+    return cooldown
+
+
+def _strategy_cooldown_active(
+    strategy_name: str,
+    now_ts: float,
+    signal: Optional[Dict[str, object]] = None,
+) -> bool:
+    cooldown = _strategy_effective_cooldown_sec(strategy_name, signal)
     if cooldown <= 0.0:
         return False
     last_ts = _STRATEGY_LAST_TS.get(strategy_name)
@@ -1563,7 +1648,7 @@ async def micro_multi_worker() -> None:
                 continue
             dyn_profile: Dict[str, object] = {}
             if config.DYN_ALLOC_ENABLED:
-                dyn_profile = load_strategy_profile(
+                dyn_profile = load_dynamic_alloc_profile(
                     strategy_name,
                     config.POCKET,
                     path=config.DYN_ALLOC_PATH,
