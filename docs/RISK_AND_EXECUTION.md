@@ -2606,3 +2606,22 @@
 - 追加 worker はすべて既存 dedicated env を使い、
   `order_manager` / `position_manager` / shared preflight に
   新しい一律選別ロジックは足さない。
+
+### 2026-03-10 `RangeFader` order-manager entry path alignment
+- `RangeFader` の perf guard は
+  `RANGEFADER_PERF_GUARD_VALUE_COLUMN=pl_pips` を current 値とし、
+  low-unit / high-turnover lane を `realized_pl` ベースの cost bias だけで
+  failfast しない。
+- `RangeFader` alias の current `ORDER_MIN_UNITS` は
+  `35` を正とし、
+  `RangeFader-sell-fade` だけは scaled intent の 24h 実分布に合わせて
+  `30` を current 値とする。
+  対象は
+  `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD`,
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER`,
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_BUY_FADE`,
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_SELL_FADE`,
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_NEUTRAL_FADE`。
+- 目的は `RangeFader` の latent setup を注文まで通すことであり、
+  shared order-manager の global threshold や
+  他 strategy の perf-guard metric を変えることではない。

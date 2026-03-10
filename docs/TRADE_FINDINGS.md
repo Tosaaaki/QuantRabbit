@@ -11695,3 +11695,54 @@ Status:
   - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
   - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
   - `scripts/collect_local_health.sh`
+
+## 2026-03-10 17:08-17:16 JST / `RangeFader` no-entry の主因は perf-guard metric と scaled min-units のズレ
+
+- 市況:
+  - `2026-03-10 17:09-17:10 JST` の USD/JPY は
+    local `tick_cache` で `157.454/157.462`, spread median/p95 `0.8p/0.8p`。
+  - `factor_cache` は `M1 close 157.451 / ATR 3.32p / ADX 29.06 / RSI 65.28`。
+  - OANDA `pricing` は `200 OK / 304ms`、closeout `157.448/157.466`。
+  - 市況停止ではなく order-manager 側の entry path が主因。
+
+- 実測:
+  - `orders.db` 直近60分は `filled=40` あるが、
+    `RangeFader-buy/sell/neutral` だけで
+    `preflight_start 1580 / perf_block 1580 / entry_probability_reject 689` と詰まっていた。
+  - `quant-order-manager.log` の reject note は
+    `perf_block:failfast_soft:pf=0.70 win=0.78 n=79`。
+  - ただし `trades.db` の同じ `RangeFader` 7日集計は
+    `pf_jpy=0.70` に対し `pf_pips=1.18`, `avg_pips=+0.186`, `win_rate=78.5%`。
+    低単位・高頻度ゆえに `realized_pl` 評価でだけ failfast していた。
+  - さらに probability-scaled intents の分布は
+    `buy p50=38`, `sell p50=34`, `neutral p50=36` で、
+    現行 `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*=60` では大半が
+    `entry_probability_below_min_units` になっていた。
+  - 24h の `orders.db` 実分布では
+    `RangeFader-buy-fade >=35` が `577/1070 (53.9%)`,
+    `RangeFader-neutral-fade >=35` が `486/806 (60.3%)`,
+    `RangeFader-sell-fade >=35` が `464/1108 (41.9%)`。
+    `sell-fade` だけは `>=30` に下げると `748/1108 (67.5%)` まで回復するため,
+    追加緩和は sell lane のみに限定する。
+
+- 対応:
+  - `ops/env/quant-order-manager.env`
+    - `RANGEFADER_PERF_GUARD_VALUE_COLUMN=pl_pips`
+    - `ORDER_MIN_UNITS_STRATEGY_SCALP_RANGEFAD=35`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER=35`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_BUY_FADE=35`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_SELL_FADE=30`
+    - `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_NEUTRAL_FADE=35`
+
+- 意図:
+  - shared perf-guard 全体は変えず,
+    `RangeFader` だけ評価軸を `pl_pips` に切り替えて
+    cost-heavy な JPY failfast を外す。
+  - 同時に scaled `min_units` を現在の実分布へ合わせ,
+    near-miss intents を注文まで通す。
+
+- 検証:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-order-manager`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-rangefader,quant-scalp-rangefader-exit`
+  - `ps eww -p <quant-order-manager pid>`
+  - `logs/local_v2_stack/quant-order-manager.log`

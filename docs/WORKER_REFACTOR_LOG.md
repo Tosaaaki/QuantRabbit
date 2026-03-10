@@ -14823,3 +14823,31 @@
     watchdog / restart の標準復旧対象へ戻す。
   - 新規 service 追加ではなく、既存 dedicated worker を
     常設プロファイルへ昇格するだけに留める。
+
+### 2026-03-10 `RangeFader` perf metric / min-units alignment
+- 対象:
+  - `ops/env/quant-order-manager.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - local 実測では `RangeFader` が大量に signal を出している一方で、
+    `quant-order-manager` が
+    `failfast_soft:pf=0.70 win=0.78 n=79` で strategy block していた。
+  - 同じ 7 日窓でも `pl_pips` ベースでは `pf=1.18`, `avg_pips=+0.186` で、
+    JPY ベースだけが low-unit / cost-heavy 特性に引っ張られていた。
+  - probability-scaled intents も `26-54 units` 帯に集中しており、
+    `ORDER_MIN_UNITS_STRATEGY_RANGEFADER*=60` が no-entry を増やしていた。
+
+- 変更:
+  - `quant-order-manager.env` に
+    `RANGEFADER_PERF_GUARD_VALUE_COLUMN=pl_pips` を追加。
+  - `RangeFader` alias の `ORDER_MIN_UNITS` を
+    `60 -> 35` へ更新し、
+    `RangeFader-sell-fade` だけは 24h 分布
+    `>=35: 464/1108 (41.9%)` / `>=30: 748/1108 (67.5%)`
+    を根拠に `30` まで追加緩和。
+
+- 意図:
+  - `RangeFader` だけを strategy-local に通しやすくし、
+    shared perf guard の基準や他戦略の sizing は変えない。
