@@ -47,6 +47,8 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
         brain._ACTIVE_LIVE_OLLAMA_CALLS = 0
     if hasattr(brain, "_LAST_LIVE_OLLAMA_TS"):
         brain._LAST_LIVE_OLLAMA_TS = 0.0
+    if hasattr(brain, "_FAILFAST_STATE"):
+        brain._FAILFAST_STATE.clear()
     brain._CACHE.clear()
     brain._PROMPT_PROFILE_CACHE = (0.0, {})
     brain._RUNTIME_PARAM_PROFILE_CACHE = (0.0, {})

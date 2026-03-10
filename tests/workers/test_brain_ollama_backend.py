@@ -39,6 +39,8 @@ def _prepare_brain(monkeypatch, tmp_path: Path):
     brain._CACHE.clear()
     brain._PROMPT_PROFILE_CACHE = (0.0, {})
     brain._RUNTIME_PARAM_PROFILE_CACHE = (0.0, {})
+    if hasattr(brain, "_FAILFAST_STATE"):
+        brain._FAILFAST_STATE.clear()
     return brain
 
 
@@ -112,6 +114,123 @@ def test_brain_fail_policy_reduce_for_ollama_failure(monkeypatch, tmp_path: Path
     assert decision.action == "REDUCE"
     assert decision.reason == "no_llm_reduce"
     assert decision.scale == pytest.approx(0.5)
+
+
+def test_brain_failfast_skips_repeated_timeout_without_reducing_frequency(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BRAIN_FAILFAST_CONSECUTIVE_FAILURES", "2")
+    monkeypatch.setenv("BRAIN_FAILFAST_COOLDOWN_SEC", "30")
+    monkeypatch.setenv("BRAIN_FAILFAST_WINDOW_SEC", "60")
+    monkeypatch.setenv("BRAIN_FAIL_POLICY", "allow")
+    brain = _prepare_brain(monkeypatch, tmp_path)
+
+    call_count = {"n": 0}
+
+    def _fake_ollama(*_args, **_kwargs):
+        call_count["n"] += 1
+        return None
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    first = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=600,
+        entry_thesis={"entry_probability": 0.51, "entry_units_intent": 600},
+    )
+    second = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=620,
+        entry_thesis={"entry_probability": 0.64, "entry_units_intent": 620},
+    )
+    third = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=640,
+        entry_thesis={"entry_probability": 0.77, "entry_units_intent": 640},
+    )
+
+    assert first.action == "ALLOW"
+    assert second.action == "ALLOW"
+    assert third.action == "ALLOW"
+    assert third.reason == "recent_llm_timeout_cooldown"
+    assert call_count["n"] == 2
+
+    con = sqlite3.connect(brain._DB_PATH)
+    try:
+        row = con.execute(
+            """
+            SELECT source, llm_ok, error
+            FROM brain_decisions
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        con.close()
+
+    assert row == ("llm_fail_fast", 0, "recent_llm_timeout_cooldown")
+
+
+def test_brain_failfast_resets_after_success(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BRAIN_FAILFAST_CONSECUTIVE_FAILURES", "2")
+    monkeypatch.setenv("BRAIN_FAILFAST_COOLDOWN_SEC", "30")
+    monkeypatch.setenv("BRAIN_FAILFAST_WINDOW_SEC", "60")
+    monkeypatch.setenv("BRAIN_FAIL_POLICY", "allow")
+    brain = _prepare_brain(monkeypatch, tmp_path)
+
+    responses = iter(
+        [
+            None,
+            {
+                "action": "ALLOW",
+                "scale": 1.0,
+                "reason": "recovered",
+                "memory_update": "",
+            },
+            None,
+        ]
+    )
+    call_count = {"n": 0}
+
+    def _fake_ollama(*_args, **_kwargs):
+        call_count["n"] += 1
+        return next(responses)
+
+    monkeypatch.setattr(brain, "call_ollama_chat_json", _fake_ollama)
+
+    fail = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=600,
+        entry_thesis={"entry_probability": 0.51, "entry_units_intent": 600},
+    )
+    recovered = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="buy",
+        units=700,
+        entry_thesis={"entry_probability": 0.88, "entry_units_intent": 700},
+    )
+    fail_again = brain.decide(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        side="sell",
+        units=-620,
+        entry_thesis={"entry_probability": 0.67, "entry_units_intent": 620},
+    )
+
+    assert fail.action == "ALLOW"
+    assert recovered.reason == "recovered"
+    assert fail_again.reason == "no_llm"
+    assert call_count["n"] == 3
 
 
 def test_brain_context_keeps_entry_and_meta_with_sl_tp(monkeypatch, tmp_path: Path) -> None:

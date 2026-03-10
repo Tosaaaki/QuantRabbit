@@ -263,6 +263,24 @@ _AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC = max(
     0.0,
     float(os.getenv("BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC", "30") or 30.0),
 )
+_FAILFAST_CONSECUTIVE_FAILURES = max(
+    0,
+    int(float(os.getenv("BRAIN_FAILFAST_CONSECUTIVE_FAILURES", "0") or 0)),
+)
+_FAILFAST_COOLDOWN_SEC = max(
+    0.0,
+    float(os.getenv("BRAIN_FAILFAST_COOLDOWN_SEC", "0") or 0.0),
+)
+_FAILFAST_WINDOW_SEC = max(
+    1.0,
+    float(
+        os.getenv(
+            "BRAIN_FAILFAST_WINDOW_SEC",
+            str(max(_FAILFAST_COOLDOWN_SEC, 30.0)),
+        )
+        or max(_FAILFAST_COOLDOWN_SEC, 30.0)
+    ),
+)
 _RUNTIME_PARAM_REPORT_LATEST_PATH = pathlib.Path(
     os.getenv("BRAIN_RUNTIME_PARAM_REPORT_LATEST_PATH", "logs/brain_runtime_param_autotune_latest.json")
 )
@@ -286,6 +304,8 @@ _AUTOTUNE_OLLAMA_LOCK = threading.Lock()
 _LIVE_OLLAMA_LOCK = threading.Lock()
 _ACTIVE_LIVE_OLLAMA_CALLS = 0
 _LAST_LIVE_OLLAMA_TS = 0.0
+_FAILFAST_LOCK = threading.Lock()
+_FAILFAST_STATE: dict[tuple[str, str], dict[str, float]] = {}
 
 
 @dataclass(frozen=True)
@@ -349,6 +369,56 @@ def _release_autotune_ollama_slot(url: str, acquired: bool) -> None:
         _AUTOTUNE_OLLAMA_LOCK.release()
     except Exception:
         pass
+
+
+def _failfast_key(strategy_tag: str, pocket: str) -> tuple[str, str]:
+    return (str(strategy_tag or "").strip().lower(), str(pocket or "").strip().lower())
+
+
+def _active_failfast_reason(strategy_tag: str, pocket: str) -> Optional[str]:
+    if _FAILFAST_CONSECUTIVE_FAILURES <= 0 or _FAILFAST_COOLDOWN_SEC <= 0.0:
+        return None
+    now_mono = time.monotonic()
+    key = _failfast_key(strategy_tag, pocket)
+    with _FAILFAST_LOCK:
+        state = _FAILFAST_STATE.get(key)
+        if not state:
+            return None
+        cooldown_until = float(state.get("cooldown_until") or 0.0)
+        last_failure_mono = float(state.get("last_failure_mono") or 0.0)
+        if cooldown_until > now_mono:
+            return "recent_llm_timeout_cooldown"
+        if last_failure_mono <= 0.0 or now_mono - last_failure_mono > _FAILFAST_WINDOW_SEC:
+            _FAILFAST_STATE.pop(key, None)
+    return None
+
+
+def _record_failfast_failure(strategy_tag: str, pocket: str) -> None:
+    if _FAILFAST_CONSECUTIVE_FAILURES <= 0 or _FAILFAST_COOLDOWN_SEC <= 0.0:
+        return
+    now_mono = time.monotonic()
+    key = _failfast_key(strategy_tag, pocket)
+    with _FAILFAST_LOCK:
+        state = _FAILFAST_STATE.get(key) or {}
+        last_failure_mono = float(state.get("last_failure_mono") or 0.0)
+        failure_count = int(state.get("failure_count") or 0)
+        if last_failure_mono <= 0.0 or now_mono - last_failure_mono > _FAILFAST_WINDOW_SEC:
+            failure_count = 0
+        failure_count += 1
+        cooldown_until = float(state.get("cooldown_until") or 0.0)
+        if failure_count >= _FAILFAST_CONSECUTIVE_FAILURES:
+            cooldown_until = max(cooldown_until, now_mono + _FAILFAST_COOLDOWN_SEC)
+        _FAILFAST_STATE[key] = {
+            "failure_count": float(failure_count),
+            "last_failure_mono": now_mono,
+            "cooldown_until": cooldown_until,
+        }
+
+
+def _clear_failfast_failures(strategy_tag: str, pocket: str) -> None:
+    key = _failfast_key(strategy_tag, pocket)
+    with _FAILFAST_LOCK:
+        _FAILFAST_STATE.pop(key, None)
 
 
 def _ensure_schema() -> None:
@@ -2298,6 +2368,24 @@ def _collect_recent_activity_stats(
     return stats
 
 
+def _reason_implies_hard_risk(reason: str) -> bool:
+    text = str(reason or "").strip().lower()
+    if not text:
+        return False
+    keywords = (
+        "spread",
+        "latency",
+        "reject",
+        "margin",
+        "slippage",
+        "stale",
+        "execution",
+        "volatility_spike",
+        "volatility spike",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
 def _apply_runtime_param_guard(
     *,
     strategy_tag: str,
@@ -3161,6 +3249,68 @@ def decide(
             pass
         return decision
 
+    failfast_reason = _active_failfast_reason(tag, pocket_key) if _BACKEND == "ollama" else None
+    if failfast_reason:
+        decision = _llm_failure_decision(
+            memory=memory_before,
+            allow_reason=failfast_reason,
+            fail_policy=fail_policy,
+        )
+        decision, runtime_guard = _apply_runtime_param_guard(
+            strategy_tag=tag,
+            pocket=pocket_key,
+            decision=decision,
+            runtime_profile=runtime_profile,
+            context=context,
+        )
+        try:
+            log_metric(
+                "brain_failfast_skip",
+                1.0,
+                tags={"strategy": tag, "pocket": pocket_key, "reason": failfast_reason},
+            )
+        except Exception:
+            pass
+        try:
+            _save_memory(tag, pocket_key, memory=decision.memory, decision=decision)
+        except Exception:
+            pass
+        _CACHE[cache_key] = (now, decision)
+        _log_decision_row(
+            strategy_tag=tag,
+            pocket=pocket_key,
+            side=side,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            confidence=confidence_score,
+            client_order_id=client_order_id,
+            backend=_BACKEND,
+            source="llm_fail_fast",
+            llm_ok=False,
+            latency_ms=0.0,
+            decision=decision,
+            memory_before=memory_before,
+            memory_after=decision.memory,
+            profile_version=profile_version,
+            context=context,
+            payload={
+                "failfast": True,
+                "failfast_reason": failfast_reason,
+                "runtime_guard": runtime_guard,
+            },
+            error=failfast_reason,
+        )
+        try:
+            _maybe_autotune_prompt_profile_async()
+        except Exception:
+            pass
+        try:
+            _maybe_autotune_runtime_param_profile_async()
+        except Exception:
+            pass
+        return decision
+
     prompt = _build_prompt(context)
     call_start = time.monotonic()
     vertex_resp = None
@@ -3208,6 +3358,7 @@ def decide(
     except Exception:
         pass
     if payload is None:
+        _record_failfast_failure(tag, pocket_key)
         allow_reason = "bad_response" if llm_text_available else "no_llm"
         decision = _llm_failure_decision(
             memory=memory_before,
@@ -3256,6 +3407,7 @@ def decide(
         except Exception:
             pass
         return decision
+    _clear_failfast_failures(tag, pocket_key)
 
     if vertex_resp is not None:
         try:
