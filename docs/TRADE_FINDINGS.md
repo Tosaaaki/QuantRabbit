@@ -11444,3 +11444,53 @@ Status:
     profitable buy cluster の participation だけを strategy-local に戻す。
   - loser history を引きずる既存 `RangeFader-*` tag を壊さず、
     `supportive buy` のみ別 lane として監査可能にする。
+
+## 2026-03-10 13:11-13:20 JST / `scalp_extrema_reversal_live` long を M5-supportive shallow pullback へ拡張
+
+- 実測:
+  - `2026-03-10 13:11 JST` の USD/JPY は
+    `157.888/157.896`, spread `0.8p`,
+    `M1 RSI 49.6 / ADX 16.8`,
+    `M5 close > ema20 / RSI 61.2 / ADX 21.2` で、
+    強トレンドではなく `M5 bullish shallow pullback` だった。
+  - `2026-03-10 13:20 JST` でも spread は `0.8p` のまま、
+    feed の `data_lag_ms` は `~212ms` で local-v2 は正常帯を維持した。
+  - `scalp_extrema_reversal_live` の直近90分 closed trade は
+    `long 4 trades / +1.78 JPY / +2.8 pips / win_rate 75%`,
+    `short 12 trades / -8.716 JPY / -15.8 pips / win_rate 16.7%` だった。
+  - 同じ90分の注文は
+    `buy filled=4` に対して `sell filled=12` で、
+    shared preflight 側の reject ではなく long signal 生成が薄かった。
+
+- 判断:
+  - 今の live ボトルネックは shared gate ではなく、
+    `EXTREMA_RSI_LONG_MAX=46.0` と `LOW_BAND_PIPS=0.9`
+    が `M5 上向きの浅い押し目 long` を取り逃がすことだった。
+  - broad な threshold 緩和ではなく、
+    `M5 close >= ema20`, `M5 RSI`, `DI gap`, `ema_slope_10`,
+    `M1 ADX`, `M1-ema20 gap`
+    を満たすときだけ long の `RSI cap / low band / confidence`
+    を少し広げるのが最も狭い改善だった。
+
+- 反映:
+  - `workers/scalp_extrema_reversal/worker.py`
+    - `M5 supportive` 判定を追加し、
+      条件を満たす long にだけ
+      `RSI cap 46 -> 50`,
+      `low band 0.9 -> 1.2 pips`,
+      `confidence +4`
+      を適用する。
+    - short ロジック、shared preflight、order_manager は変更しない。
+    - `entry_thesis.extrema` に
+      `supportive_long`, `supportive_long_context`,
+      `long_rsi_cap`, `long_low_band_pips`
+      を残し、監査可能にした。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - current 運用値として
+      `LONG_SUPPORT_*` を dedicated env に明示した。
+
+- 意図:
+  - `short loser cluster` を shared 層で止めるのではなく、
+    `M5 support 付き shallow long` だけを strategy-local に増やす。
+  - `scalp_extrema_reversal_live` の既存 tag / exit 契約を維持し、
+    反応速度だけを上げる。

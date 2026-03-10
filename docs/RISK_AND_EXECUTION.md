@@ -2497,3 +2497,27 @@
 - `workers/scalp_rangefader/exit_worker.py` と `execution/order_manager.py`
   は base tag `RangeFader` を解決するため、
   `RangeFader-buy-supportive` でも既存 exit / protection policy はそのまま有効。
+
+### 2026-03-10 `scalp_extrema_reversal_live` M5-supportive long override
+- `scalp_extrema_reversal_live` は shared gate を増やさず、
+  worker 内の signal 生成で `M5-supportive long` を許可できる。
+- 条件は strategy-local に限定し、
+  `M5 close>=ema20`, `M5 RSI`, `M5 DI gap`, `M5 ema_slope_10`,
+  `M1 ADX`, `M1-ema20 gap`
+  を同時に見て shallow pullback 文脈だけを拾う。
+- 該当文脈では long のみ
+  `RSI cap`, `low band`, `confidence`
+  を少し広げる。
+  current local-v2 dedicated env は
+  `LONG_SUPPORT_RSI_CAP=50.0`,
+  `LONG_SUPPORT_LOW_BAND_PIPS=1.20`,
+  `LONG_SUPPORT_CONF_BONUS=4`
+  を運用値とする。
+- `strategy_tag` は既存 `scalp_extrema_reversal_live` を維持し、
+  `workers/scalp_extrema_reversal/exit_worker.py` の
+  `SCALP_EXTREMA_REVERSAL_EXIT_TAGS` 契約と
+  open-position scope を壊さない。
+- 監査用に `entry_thesis.extrema` へ
+  `supportive_long`, `supportive_long_context`,
+  `long_rsi_cap`, `long_low_band_pips`
+  を残す。

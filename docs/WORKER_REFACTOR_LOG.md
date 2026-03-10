@@ -14581,3 +14581,41 @@
     profitable buy cluster だけを failfast 履歴から切り離して再参加させる。
   - exit / protection / alias は base tag `RangeFader` 互換を維持し、
     既存 close policy を壊さない。
+
+### 2026-03-10 local-v2 `scalp_extrema_reversal_live` long-supportive override 追加
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/OPS_CURRENT.md`
+
+- 背景:
+  - `2026-03-10 13:11-13:20 JST` の live では
+    `scalp_extrema_reversal_live` の直近90分成績が
+    `long 4 trades / +1.78 JPY / win_rate 75%`
+    に対し、
+    `short 12 trades / -8.716 JPY / win_rate 16.7%`
+    だった。
+  - 注文自体は `buy filled=4 / sell filled=12` で通っており、
+    shared preflight ではなく long signal 生成が under-participating と判断した。
+
+- 変更:
+  - worker は `all_factors()` から `M5` を読み、
+    `M5 close>=ema20`, `M5 RSI`, `DI gap`, `ema_slope_10`,
+    `M1 ADX`, `M1-ema20 gap`
+    を満たすときだけ long-supportive 文脈を有効化する。
+  - この文脈では long のみ
+    `RSI cap`, `low band`, `confidence`
+    を少し広げる。
+  - `entry_thesis.extrema` へ
+    `supportive_long` とその diagnostic を残し、
+    live 後追い分析を可能にした。
+  - short 判定、shared gate、exit worker 契約は変更しない。
+
+- 意図:
+  - `M5 bullish shallow pullback` の取り逃しだけを埋め、
+    同 worker の losing short flow を shared 層で無理に止めない。
+  - base tag `scalp_extrema_reversal_live` を維持し、
+    EXIT と open-position scope を壊さず participation だけを増やす。

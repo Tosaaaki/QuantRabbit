@@ -264,6 +264,15 @@ EXTREMA_SHORT_ENABLED = _env_bool("SHORT_ENABLED", True)
 EXTREMA_LONG_ENABLED = _env_bool("LONG_ENABLED", True)
 EXTREMA_RSI_LONG_MAX = _env_float("RSI_LONG_MAX", 44.0)
 EXTREMA_RSI_SHORT_MIN = _env_float("RSI_SHORT_MIN", 56.0)
+EXTREMA_LONG_SUPPORT_ENABLED = _env_bool("LONG_SUPPORT_ENABLED", True)
+EXTREMA_LONG_SUPPORT_M5_RSI_MIN = _env_float("LONG_SUPPORT_M5_RSI_MIN", 56.0)
+EXTREMA_LONG_SUPPORT_M5_DI_GAP_MIN = _env_float("LONG_SUPPORT_M5_DI_GAP_MIN", 0.0)
+EXTREMA_LONG_SUPPORT_M5_EMA_SLOPE_MIN = _env_float("LONG_SUPPORT_M5_EMA_SLOPE_MIN", 0.0)
+EXTREMA_LONG_SUPPORT_M1_ADX_MAX = _env_float("LONG_SUPPORT_M1_ADX_MAX", 24.0)
+EXTREMA_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float("LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS", 1.4)
+EXTREMA_LONG_SUPPORT_RSI_CAP = _env_float("LONG_SUPPORT_RSI_CAP", 50.0)
+EXTREMA_LONG_SUPPORT_LOW_BAND_PIPS = _env_float("LONG_SUPPORT_LOW_BAND_PIPS", 1.2)
+EXTREMA_LONG_SUPPORT_CONF_BONUS = _env_int("LONG_SUPPORT_CONF_BONUS", 4)
 EXTREMA_ADX_MAX = _env_float("ADX_MAX", 35.0)
 EXTREMA_ATR_MAX = _env_float("ATR_MAX", 0.0)
 EXTREMA_SPREAD_P25_MAX = _env_float("SPREAD_P25_MAX", 0.0)
@@ -302,6 +311,50 @@ def _ma_gap_pips(fac_m1: Dict[str, object]) -> float:
         return (float(ma_fast) - float(ma_slow)) / PIP
     except (TypeError, ValueError):
         return 0.0
+
+
+def _extrema_long_support_context(
+    fac_m1: Dict[str, object],
+    fac_m5: Optional[Dict[str, object]],
+    *,
+    price: float,
+) -> tuple[bool, Dict[str, float]]:
+    diag: Dict[str, float] = {}
+    if not EXTREMA_LONG_SUPPORT_ENABLED or not fac_m5:
+        return False, diag
+
+    m5_close = _to_float(fac_m5.get("close"), 0.0)
+    m5_ema20 = _to_float(fac_m5.get("ema20") or fac_m5.get("ma20"), 0.0)
+    m5_rsi = _to_float(fac_m5.get("rsi"), 50.0)
+    m5_plus_di = _to_float(fac_m5.get("plus_di"), 0.0)
+    m5_minus_di = _to_float(fac_m5.get("minus_di"), 0.0)
+    m5_ema_slope_10 = _to_float(fac_m5.get("ema_slope_10"), 0.0)
+    m1_adx = _adx(fac_m1)
+    m1_ema20 = _to_float(fac_m1.get("ema20") or fac_m1.get("ma20"), price)
+    m1_ema_gap_pips = abs(price - m1_ema20) / PIP if m1_ema20 > 0.0 else 0.0
+
+    diag = {
+        "m5_close": round(m5_close, 3),
+        "m5_ema20": round(m5_ema20, 3),
+        "m5_rsi": round(m5_rsi, 3),
+        "m5_di_gap": round(m5_plus_di - m5_minus_di, 3),
+        "m5_ema_slope_10": round(m5_ema_slope_10, 6),
+        "m1_adx": round(m1_adx, 3),
+        "m1_ema_gap_pips": round(m1_ema_gap_pips, 3),
+    }
+    if m5_close < m5_ema20:
+        return False, diag
+    if m5_rsi < EXTREMA_LONG_SUPPORT_M5_RSI_MIN:
+        return False, diag
+    if (m5_plus_di - m5_minus_di) < EXTREMA_LONG_SUPPORT_M5_DI_GAP_MIN:
+        return False, diag
+    if m5_ema_slope_10 < EXTREMA_LONG_SUPPORT_M5_EMA_SLOPE_MIN:
+        return False, diag
+    if m1_adx > EXTREMA_LONG_SUPPORT_M1_ADX_MAX:
+        return False, diag
+    if m1_ema_gap_pips > EXTREMA_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS:
+        return False, diag
+    return True, diag
 
 
 def _extrema_trend_gate_ok(
@@ -378,6 +431,7 @@ def _extrema_trend_gate_ok(
 def _signal_extrema_reversal(
     fac_m1: Dict[str, object],
     *,
+    fac_m5: Optional[Dict[str, object]] = None,
     range_ctx=None,
     tag: str,
 ) -> Optional[Dict[str, object]]:
@@ -406,6 +460,11 @@ def _signal_extrema_reversal(
     price = _latest_price(fac_m1)
     if price <= 0:
         return None
+    long_supportive, long_support_diag = _extrema_long_support_context(
+        fac_m1,
+        fac_m5,
+        price=price,
+    )
 
     candles = get_candles_snapshot("M1", limit=max(80, EXTREMA_LOOKBACK + 8))
     snap = compute_range_snapshot(candles or [], lookback=EXTREMA_LOOKBACK, hi_pct=97.0, lo_pct=3.0)
@@ -432,6 +491,11 @@ def _signal_extrema_reversal(
 
     short_bounce_pips = max(0.0, (recent_max - price) / PIP)
     long_bounce_pips = max(0.0, (price - recent_min) / PIP)
+    long_rsi_cap = EXTREMA_RSI_LONG_MAX
+    long_low_band_pips = EXTREMA_LOW_BAND_PIPS
+    if long_supportive:
+        long_rsi_cap = max(long_rsi_cap, EXTREMA_LONG_SUPPORT_RSI_CAP)
+        long_low_band_pips = max(long_low_band_pips, EXTREMA_LONG_SUPPORT_LOW_BAND_PIPS)
 
     can_short = (
         EXTREMA_SHORT_ENABLED
@@ -443,8 +507,8 @@ def _signal_extrema_reversal(
     can_long = (
         EXTREMA_LONG_ENABLED
         and rev_dir == "long"
-        and dist_low <= EXTREMA_LOW_BAND_PIPS
-        and rsi <= EXTREMA_RSI_LONG_MAX
+        and dist_low <= long_low_band_pips
+        and rsi <= long_rsi_cap
         and long_bounce_pips >= EXTREMA_SWEEP_MIN_PIPS
     )
 
@@ -472,6 +536,8 @@ def _signal_extrema_reversal(
         confidence += int(min(6.0, short_bounce_pips * 8.0))
     else:
         confidence += int(min(6.0, long_bounce_pips * 8.0))
+        if long_supportive:
+            confidence += EXTREMA_LONG_SUPPORT_CONF_BONUS
     confidence = int(max(45, min(94, confidence)))
 
     return {
@@ -488,10 +554,14 @@ def _signal_extrema_reversal(
             "dist_low_pips": round(dist_low, 3),
             "short_bounce_pips": round(short_bounce_pips, 3),
             "long_bounce_pips": round(long_bounce_pips, 3),
+            "long_rsi_cap": round(long_rsi_cap, 3),
+            "long_low_band_pips": round(long_low_band_pips, 3),
             "rsi": round(rsi, 2),
             "tick_strength": round(tick_strength, 4),
             "high_ref": round(high_ref, 3),
             "low_ref": round(low_ref, 3),
+            "supportive_long": bool(long_supportive and side == "long"),
+            "supportive_long_context": long_support_diag if long_supportive else {},
             "trend_gate": trend_diag,
         },
         "range_score": float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0,
@@ -685,6 +755,7 @@ async def _run_worker() -> None:
 
         factors = all_factors()
         fac_m1 = factors.get("M1", {}) or {}
+        fac_m5 = factors.get("M5", {}) or {}
         fac_h4 = factors.get("H4", {}) or {}
         if not fac_m1:
             continue
@@ -696,6 +767,7 @@ async def _run_worker() -> None:
 
         signal = _signal_extrema_reversal(
             fac_m1,
+            fac_m5=fac_m5,
             range_ctx=range_ctx,
             tag=TAG,
         )

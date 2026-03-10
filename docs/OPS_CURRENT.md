@@ -631,6 +631,24 @@
   - `entry_thesis` 監査項目:
     - `extrema_reversal_applied`
     - `extrema_reversal_score`
+
+### 2026-03-10 local-v2 `scalp_extrema_reversal_live` long-supportive current values
+- dedicated env は `ops/env/quant-scalp-extrema-reversal.env` を正とし、
+  current 値は以下:
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_ENABLED=1`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_M5_RSI_MIN=56.0`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_M5_DI_GAP_MIN=0.0`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_M5_EMA_SLOPE_MIN=0.0`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_M1_ADX_MAX=24.0`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS=1.4`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_RSI_CAP=50.0`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_LOW_BAND_PIPS=1.20`
+  - `SCALP_EXTREMA_REVERSAL_LONG_SUPPORT_CONF_BONUS=4`
+- 意図:
+  - `M5 bullish shallow pullback` で
+    `EXTREMA_RSI_LONG_MAX=46.0` だけでは拾えない long を、
+    strategy-local にだけ追加する。
+  - short 判定、shared gate、exit 契約は変えない。
 - 2026-02-19 UTC 追加: ショート偏重クラスタ抑制（方向補正の非対称化）
   - `scalp_ping_5s_b`
     - `SCALP_PING_5S_B_EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT=0.42`
