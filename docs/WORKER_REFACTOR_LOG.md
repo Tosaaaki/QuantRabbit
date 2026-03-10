@@ -14362,3 +14362,47 @@
   - `MicroTrendRetest`: trend strength / edge / expected_pips / target_reach
   - `MicroLevelReactor`: expected_pips / contra guard を追加で引き締め
 - shared `order_manager` / shared micro gate の一律判定は増やしていない。
+
+## 2026-03-10 10:40 JST - `MomentumBurst` short の tight oversold sell-chase を strategy-local で遮断
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 実測:
+  - local-v2 の `2026-03-10 10:40 JST` 時点は
+    `USD/JPY bid=157.624 / ask=157.632 / spread=0.8p`,
+    `ATR14(M1)=3.183p`, `ATR14(M5)=8.185p` で通常帯。
+  - `trades.db` 24h は `403 trades / net_jpy=-1643.03 / PF=0.558`。
+    `MomentumBurst` は `24 trades / -617.21 JPY / PF=0.675`、
+    うち short が `11 trades / -598.47 JPY / win_rate=36.4%` だった。
+  - 上位 loser short は
+    `tr:dn_strong|rsi:os|vol:tight|atr:low|d:short`
+    に偏り、oversold / EMA stretch のまま
+    bearish marubozu を売り追いするか、
+    直前2本の bullish reclaim 後に再ショートしていた。
+
+- 変更:
+  - `MomentumBurst` の tight short context に、
+    `non-reaccel` だけへ効く exhaustion guard を追加した。
+  - entry bar が
+    `大陰線 + close near low + 上ヒゲほぼ無し`
+    の breakdown chase は reject。
+  - 直前2本が
+    `bullish + close near high`
+    の rebound squeeze も reject。
+  - `reaccel` lane は exempt のままとし、
+    cadence を broad に落とさない。
+  - strategy テストへ
+    `oversold breakdown chase reject`
+    と
+    `oversold rebound squeeze reject`
+    を追加し、`pytest -q tests/strategies/test_momentum_burst.py` は `24 passed`。
+
+- 意図:
+  - 共通 gate / Brain / order-manager を触らず、
+    `MomentumBurst short` の loser cluster だけを strategy-local に潰す。
+  - clean pullback / reaccel short は残し、
+    quality を上げても participation を広く削らない。

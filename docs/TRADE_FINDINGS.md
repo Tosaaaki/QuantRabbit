@@ -23,6 +23,63 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-10 01:32 UTC / 2026-03-10 10:40 JST - local-v2: `MomentumBurst` short の tight oversold sell-chase を non-reaccel だけ止める
+
+Period:
+- 調査/実装: UTC `01:32-01:40` / JST `10:32-10:40`
+- 対象（実測）:
+  - `logs/tick_cache.json`, `logs/factor_cache.json`
+  - `logs/trades.db`, `logs/orders.db`
+  - `logs/local_v2_stack/quant-market-data-feed.log`
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+
+Fact:
+- 市況は作業継続可の通常帯:
+  - `USD/JPY bid=157.624 / ask=157.632 / spread=0.8p`
+  - `ATR14(M1)=3.183p`, `ATR14(M5)=8.185p`, `M1 RSI=42.97`, `M1 ADX=22.50`
+  - `quant-market-data-feed.log` は `2026-03-10 08:19 JST` に stream reconnect を 1 回出したが、
+    `08:19:47 JST` と `08:25:31 JST` に `pricing/stream HTTP 200 OK` で復帰した。
+- `trades.db` 24h 集計は `403 trades / net_jpy=-1643.03 / win_rate=46.7% / PF=0.558`。
+- `MomentumBurst` は `24 trades / net_jpy=-617.21 / win_rate=50.0% / PF=0.675`。
+- 同 strategy の short は `11 trades / net_jpy=-598.47 / win_rate=36.4%` で、ほぼ毀損の本体。
+- short loser cluster は
+  `tr:dn_strong|rsi:os|vol:tight|atr:low|d:short`
+  に偏り、`rsi=23.06-33.67`, `ema20 gap=-7.97~-19.35p`, `ma gap=-1.53~-7.84p`
+  のまま売り追いした例が上位損失を占めた。
+- 一方で winner short は `spin/doji/pullback` を伴うものが多く、
+  `reaccel` か、oversold でも entry bar が marubozu ではないケースに寄っていた。
+
+Failure Cause:
+- `MomentumBurst` の non-reaccel short は、tight/low-ATR の oversold 帯で
+  bearish marubozu をそのまま追うケースと、
+  直前2本が高値引け bullish reclaim の rebound squeeze を再ショートするケースを
+  十分に弾けていなかった。
+- shared gate や order-manager の問題ではなく、strategy-local short quality の境界が粗かった。
+
+Improvement:
+- `strategies/micro/momentum_burst.py`
+  - tight short context の中で、`non-reaccel` かつ `oversold/stretch` の short に
+    追加 exhaustion guard を導入。
+  - entry bar が `大陰線 + close near low + 上ヒゲほぼ無し` の breakdown chase を reject。
+  - 直前2本が `bullish + close near high` の rebound squeeze も reject。
+  - `reaccel` lane とそれ以外の long/clean short 条件は維持。
+- `tests/strategies/test_momentum_burst.py`
+  - oversold breakdown chase reject
+  - oversold rebound squeeze reject
+  を回帰テストとして追加。
+
+Verification:
+- `pytest -q tests/strategies/test_momentum_burst.py` → `24 passed`
+- `python3 -m py_compile strategies/micro/momentum_burst.py tests/strategies/test_momentum_burst.py`
+- 反映後 2h/24h で次を確認:
+  - `MomentumBurst short` の `STOP_LOSS_ORDER` 比率と `avg adverse pips` が悪化しないこと
+  - `MomentumBurst` 全体の filled cadence が `reaccel` lane を中心に維持されること
+  - `RangeFader` / `MicroLevelReactor` の cadence を食わないこと
+
+Status:
+- in_progress
+
 ## 2026-03-09 13:17 UTC / 2026-03-09 22:17 JST - local-v2: `MomentumBurst` の downside は cadence 不足ではなく SL 幅過多だったため、entry SL と loss-cut drift を同時に締める
 
 Period:

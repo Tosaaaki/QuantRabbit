@@ -681,3 +681,61 @@ def test_tight_short_context_allows_when_impulse_is_clean() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
+
+
+def test_tight_short_context_rejects_oversold_breakdown_chase() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.402,
+            "ma10": 158.454,
+            "ma20": 158.470,
+            "ema20": 158.470,
+            "adx": 30.8,
+            "atr_pips": 3.2,
+            "vol_5m": 1.5,
+            "rsi": 33.0,
+            "plus_di": 11.0,
+            "minus_di": 24.0,
+            "roc5": -0.031,
+            "ema_slope_10": -0.0014,
+            "drift_pips_15m": -0.34,
+            "range_score": 0.36,
+            "candles": [
+                {"open": 158.51, "high": 158.52, "low": 158.47, "close": 158.49},
+                {"open": 158.49, "high": 158.49, "low": 158.45, "close": 158.46},
+                {"open": 158.46, "high": 158.47, "low": 158.43, "close": 158.44},
+                {"open": 158.44, "high": 158.44, "low": 158.40, "close": 158.402},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
+def test_tight_short_context_rejects_oversold_rebound_squeeze() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.468,
+            "ma10": 158.496,
+            "ma20": 158.508,
+            "ema20": 158.525,
+            "adx": 29.6,
+            "atr_pips": 3.1,
+            "vol_5m": 1.6,
+            "rsi": 33.4,
+            "plus_di": 12.0,
+            "minus_di": 23.0,
+            "roc5": -0.026,
+            "ema_slope_10": -0.0013,
+            "drift_pips_15m": -0.27,
+            "range_score": 0.37,
+            "candles": [
+                {"open": 158.56, "high": 158.56, "low": 158.52, "close": 158.53},
+                {"open": 158.505, "high": 158.54, "low": 158.50, "close": 158.535},
+                {"open": 158.485, "high": 158.52, "low": 158.48, "close": 158.515},
+                {"open": 158.49, "high": 158.50, "low": 158.46, "close": 158.468},
+            ],
+        }
+    )
+
+    assert signal is None

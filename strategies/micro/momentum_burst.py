@@ -41,6 +41,15 @@ SHORT_TIGHT_VOL_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_VOL_MAX", "2.0"
 SHORT_TIGHT_DRIFT_CEIL = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_DRIFT_CEIL", "-0.20"))
 SHORT_TIGHT_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_DI_GAP_MIN", "9.0"))
 SHORT_TIGHT_ROC5_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_ROC5_MIN", "0.024"))
+SHORT_TIGHT_EXHAUSTION_RSI_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_RSI_MAX", "34.5"))
+SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN", "5.5"))
+SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT", "1.7"))
+SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN", "2.8"))
+SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT", "0.85"))
+SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX", "0.22"))
+SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX", "0.35"))
+SHORT_TIGHT_REBOUND_CLOSE_POS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_CLOSE_POS_MIN", "0.82"))
+SHORT_TIGHT_REBOUND_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_UPPER_WICK_MAX", "0.45"))
 
 
 def _clamp01(value: float) -> float:
@@ -180,6 +189,40 @@ class MomentumBurstMicro:
                 and ema_slope_10 < 0.0
             )
         return False
+
+    @staticmethod
+    def _candle_shape(candle: Dict) -> Optional[Dict[str, float | bool]]:
+        try:
+            close = float(candle.get("close") or candle.get("c"))
+        except (TypeError, ValueError):
+            return None
+        open_ = candle.get("open")
+        if open_ is None:
+            open_ = candle.get("o", close)
+        high = candle.get("high")
+        if high is None:
+            high = candle.get("h", max(close, open_))
+        low = candle.get("low")
+        if low is None:
+            low = candle.get("l", min(close, open_))
+        try:
+            open_ = float(open_)
+            high = float(high)
+            low = float(low)
+        except (TypeError, ValueError):
+            return None
+        span = max(high - low, PIP * 0.1)
+        upper = max(0.0, high - max(open_, close)) / PIP
+        lower = max(0.0, min(open_, close) - low) / PIP
+        body = (close - open_) / PIP
+        return {
+            "bull": close > open_,
+            "bear": close < open_,
+            "body_pips": body,
+            "upper_pips": upper,
+            "lower_pips": lower,
+            "close_pos": max(0.0, min(1.0, (close - low) / span)),
+        }
 
     @staticmethod
     def _indicator_quality_ok(
@@ -341,6 +384,10 @@ class MomentumBurstMicro:
         vol_5m: float,
         drift_pips: float,
         gap_pips: float,
+        close: float,
+        ema20: float,
+        rsi: float,
+        candles: Sequence[Dict],
         reaccel: bool,
     ) -> bool:
         if reaccel:
@@ -358,13 +405,60 @@ class MomentumBurstMicro:
         minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
         roc5 = MomentumBurstMicro._attr(fac, "roc5", 0.0)
         ema_slope_10 = MomentumBurstMicro._attr(fac, "ema_slope_10", 0.0)
-        return (
+        if not (
             drift_pips <= SHORT_TIGHT_DRIFT_CEIL
             and gap_pips <= -(MIN_GAP_TREND + 0.08)
             and (minus_di - plus_di) >= SHORT_TIGHT_DI_GAP_MIN
             and (-roc5) >= SHORT_TIGHT_ROC5_MIN
             and ema_slope_10 < -0.0010
-        )
+        ):
+            return False
+
+        ema_dist_pips = abs(close - ema20) / PIP
+        if (
+            rsi > SHORT_TIGHT_EXHAUSTION_RSI_MAX
+            or ema_dist_pips
+            < max(
+                SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN,
+                atr_pips * SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT,
+            )
+            or len(candles) < 3
+        ):
+            return True
+
+        current = MomentumBurstMicro._candle_shape(candles[-1])
+        prev_shapes = [
+            shape
+            for shape in (
+                MomentumBurstMicro._candle_shape(candle) for candle in candles[-3:-1]
+            )
+            if shape is not None
+        ]
+        if current is not None:
+            breakdown_body_min = max(
+                SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN,
+                atr_pips * SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT,
+            )
+            if (
+                bool(current["bear"])
+                and abs(float(current["body_pips"])) >= breakdown_body_min
+                and float(current["close_pos"]) <= SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX
+                and float(current["upper_pips"]) <= SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX
+            ):
+                return False
+
+        if len(prev_shapes) >= 2 and all(bool(shape["bull"]) for shape in prev_shapes[-2:]):
+            if (
+                all(
+                    float(shape["close_pos"]) >= SHORT_TIGHT_REBOUND_CLOSE_POS_MIN
+                    for shape in prev_shapes[-2:]
+                )
+                and max(float(shape["upper_pips"]) for shape in prev_shapes[-2:])
+                <= SHORT_TIGHT_REBOUND_UPPER_WICK_MAX
+            ):
+                return False
+
+        return True
 
     @staticmethod
     def _apply_context_tilt(signal: Dict, fac: Dict, *, reaccel: bool) -> Dict | None:
@@ -527,6 +621,10 @@ class MomentumBurstMicro:
                 vol_5m=vol_5m,
                 drift_pips=drift_pips,
                 gap_pips=gap_pips,
+                close=float(close),
+                ema20=float(ema20),
+                rsi=rsi,
+                candles=candles,
                 reaccel=short_reaccel,
             )
             and MomentumBurstMicro._mtf_supports("short", fac)

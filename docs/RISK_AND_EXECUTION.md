@@ -8,6 +8,35 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MomentumBurst` tight-short exhaustion guard（2026-03-10）
+- 背景:
+  - UTC `01:32-01:40` / JST `10:32-10:40` の local-v2 実測は
+    `USD/JPY bid=157.624 / ask=157.632 / spread=0.8p`,
+    `ATR14(M1)=3.183p`, `ATR14(M5)=8.185p`, `M1 RSI=42.97`, `M1 ADX=22.50` で通常帯。
+  - `quant-market-data-feed` は `2026-03-10 08:19 JST` に stream reconnect を 1 回出したが、
+    直後に `pricing/stream HTTP 200 OK` へ復帰した。
+  - 24h `trades.db` は `403 trades / net_jpy=-1643.03 / PF=0.558`。
+    `MomentumBurst` は `24 trades / -617.21 JPY / PF=0.675`、
+    うち short が `11 trades / -598.47 JPY / win_rate=36.4%`。
+  - loser short は
+    `tr:dn_strong|rsi:os|vol:tight|atr:low|d:short`
+    に偏り、oversold / EMA stretch のまま bearish marubozu を追うか、
+    直前2本が高値引け bullish reclaim の rebound squeeze を再ショートしていた。
+- 実装:
+  - `strategies/micro/momentum_burst.py`
+    - tight short context の中で、`non-reaccel` かつ `oversold/stretch` の short に
+      exhaustion guard を追加。
+    - `大陰線 + close near low + 上ヒゲ不足` の breakdown chase を reject。
+    - 直前2本が `bullish + close near high` の rebound squeeze も reject。
+    - `reaccel` lane は exempt にして cadence を維持する。
+  - `tests/strategies/test_momentum_burst.py`
+    - 上記 2 クラスタの reject 回帰を追加。
+- 意図:
+  - shared gate や order-manager に後付けの一律 short 抑制を入れず、
+    `MomentumBurst` の loser cluster だけを strategy-local に潰す。
+  - cadence を broad に落とさず、
+    clean pullback / reaccel short は維持したまま sell-chase だけを外す。
+
 ### local-v2 `MomentumBurst` downside clamp（2026-03-09）
 - 背景:
   - UTC `13:09-13:17` / JST `22:09-22:17` の local-v2 実測は
