@@ -11649,3 +11649,49 @@ Status:
 - 検証:
   - `python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
   - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py`
+
+## 2026-03-10 16:59-17:05 JST / local-v2 `trade_min` に winner-cover lane を昇格
+
+- 市況:
+  - `2026-03-10 16:59-17:00 JST` の USD/JPY は
+    local `tick_cache` で `157.298/157.306`, spread median/p95 `0.8p/0.8p`。
+  - `factor_cache` は `M1 close 157.345 / ATR 2.80p / ADX 30.06 / RSI 49.34`。
+  - OANDA live は `pricing 200 OK / 328ms`, `candles 200 OK / 218ms`,
+    closeout spread `1.7p`, `ATR20 proxy 2.78p`, `20-candle range 8.8p`。
+  - よって市況悪化や API 劣化ではなく、participation 配置の問題として扱った。
+
+- 実測:
+  - `trade_min` の定義には
+    `RangeFader` / `MicroRangeBreak` / `session_open`
+    が含まれておらず、watchdog / restart で常設維持されない状態だった。
+  - 一方で local 実行中には
+    `quant-scalp-rangefader`, `quant-micro-rangebreak`, `quant-session-open`
+    が別起動で `running` だった。
+  - `trades.db` 180日集計では
+    `MicroRangeBreak = 281 trades / +7752.2 JPY`,
+    `RangeFader = 248 trades / +253.4 JPY`,
+    `session_open_breakout = 3 trades / +11.7 JPY`。
+  - 直近窓では `MomentumBurst` 以外の winner が薄く、
+    active winner lane を watchdog 管理下へ戻すことを優先した。
+
+- 対応:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_min` に
+      `quant-scalp-rangefader(+exit)`,
+      `quant-micro-rangebreak(+exit)`,
+      `quant-session-open(+exit)`
+      を追加した。
+
+- 意図:
+  - shared gate / sizing を緩めず、
+    既に local で稼働実績のある winner-cover lane を
+    `trade_min` の標準構成へ昇格させる。
+  - これで `restart --profile trade_min` と watchdog 復旧後も、
+    `RangeFader` / `MicroRangeBreak` / `session_open`
+    が常設 worker として残る。
+
+- 検証:
+  - `bash -n scripts/local_v2_stack.sh`
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/collect_local_health.sh`

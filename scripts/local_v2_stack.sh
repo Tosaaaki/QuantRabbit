@@ -116,12 +116,16 @@ PROFILE_trade_min=(
   "quant-scalp-ping-5s-b-exit"
   "quant-scalp-trend-breakout"
   "quant-scalp-trend-breakout-exit"
+  "quant-scalp-rangefader"
+  "quant-scalp-rangefader-exit"
   "quant-scalp-precision-lowvol"
   "quant-scalp-precision-lowvol-exit"
   "quant-scalp-vwap-revert"
   "quant-scalp-vwap-revert-exit"
   "quant-scalp-drought-revert"
   "quant-scalp-drought-revert-exit"
+  "quant-micro-rangebreak"
+  "quant-micro-rangebreak-exit"
   "quant-micro-momentumburst"
   "quant-micro-momentumburst-exit"
   "quant-micro-levelreactor"
@@ -130,6 +134,8 @@ PROFILE_trade_min=(
   "quant-micro-trendretest-exit"
   "quant-m1scalper"
   "quant-m1scalper-exit"
+  "quant-session-open"
+  "quant-session-open-exit"
 )
 
 PROFILE_trade_cover=(

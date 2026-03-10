@@ -14793,3 +14793,33 @@
 - 意図:
   - slow news sidecar の片側失敗を silent に見逃さず、
     official Fed / BoJ feed が両方 live に乗っている状態を保つ。
+
+### 2026-03-10 local-v2 `trade_min` winner-cover promotion
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - local-v2 では `trade_cover` に
+    `RangeFader` / `MicroRangeBreak` / `session_open`
+    が存在していたが、watchdog の標準である `trade_min` には入っていなかった。
+  - 同日の local 実測ではこれらの dedicated service が実際に `running` で、
+    `trades.db` 長めの窓でも
+    `MicroRangeBreak +7752.2 JPY`,
+    `RangeFader +253.4 JPY`,
+    `session_open_breakout +11.7 JPY`
+    のプラス寄与を確認した。
+
+- 変更:
+  - `PROFILE_trade_min` へ
+    `quant-scalp-rangefader(+exit)`,
+    `quant-micro-rangebreak(+exit)`,
+    `quant-session-open(+exit)`
+    を追加した。
+
+- 意図:
+  - runtime 上で個別起動されている winner-cover lane を、
+    watchdog / restart の標準復旧対象へ戻す。
+  - 新規 service 追加ではなく、既存 dedicated worker を
+    常設プロファイルへ昇格するだけに留める。

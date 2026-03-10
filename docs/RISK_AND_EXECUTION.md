@@ -2590,3 +2590,19 @@
   を正とする。
 - 目的は shared gate 緩和ではなく、
   stale dedicated env による `MomentumBurst` reaccel cadence 劣化を解消すること。
+
+### 2026-03-10 local-v2 `trade_min` winner-cover baseline
+- local-v2 の標準復旧プロファイル `trade_min` は、
+  core + 既存 minimal lane だけでなく
+  `RangeFader`, `MicroRangeBreak`, `session_open`
+  の dedicated pair も含めて扱う。
+- 対象 service は
+  `quant-scalp-rangefader(+exit)`,
+  `quant-micro-rangebreak(+exit)`,
+  `quant-session-open(+exit)`。
+- 目的は shared entry gate を緩めることではなく、
+  local で既に running な winner-cover lane を
+  watchdog / restart 後も恒常的に残すこと。
+- 追加 worker はすべて既存 dedicated env を使い、
+  `order_manager` / `position_manager` / shared preflight に
+  新しい一律選別ロジックは足さない。
