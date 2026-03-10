@@ -50,6 +50,12 @@ SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT
 SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX", "0.35"))
 SHORT_TIGHT_REBOUND_CLOSE_POS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_CLOSE_POS_MIN", "0.82"))
 SHORT_TIGHT_REBOUND_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_UPPER_WICK_MAX", "0.45"))
+SHORT_CLEAN_TREND_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_RANGE_SCORE_MAX", "0.22"))
+SHORT_CLEAN_TREND_RSI_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_RSI_MAX", "35.0"))
+SHORT_CLEAN_TREND_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_DI_GAP_MIN", "10.0"))
+SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN", "2.2"))
+SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT", "0.65"))
+SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX", "0.22"))
 
 
 def _clamp01(value: float) -> float:
@@ -461,6 +467,41 @@ class MomentumBurstMicro:
         return True
 
     @staticmethod
+    def _clean_trend_short_chase_ok(
+        fac: Dict,
+        *,
+        atr_pips: float,
+        rsi: float,
+        candles: Sequence[Dict],
+        reaccel: bool,
+    ) -> bool:
+        if reaccel:
+            return True
+        range_score_raw = fac.get("range_score")
+        if range_score_raw is None:
+            return True
+        range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 1.0))
+        if range_score > SHORT_CLEAN_TREND_RANGE_SCORE_MAX:
+            return True
+        plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
+        minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
+        if rsi > SHORT_CLEAN_TREND_RSI_MAX or (minus_di - plus_di) < SHORT_CLEAN_TREND_DI_GAP_MIN:
+            return True
+        if not candles:
+            return True
+        current = MomentumBurstMicro._candle_shape(candles[-1])
+        if current is None or not bool(current["bear"]):
+            return True
+        breakdown_body_min = max(
+            SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN,
+            atr_pips * SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT,
+        )
+        return not (
+            abs(float(current["body_pips"])) >= breakdown_body_min
+            and float(current["close_pos"]) <= SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX
+        )
+
+    @staticmethod
     def _apply_context_tilt(signal: Dict, fac: Dict, *, reaccel: bool) -> Dict | None:
         range_active = bool(fac.get("range_active"))
         range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
@@ -623,6 +664,13 @@ class MomentumBurstMicro:
                 gap_pips=gap_pips,
                 close=float(close),
                 ema20=float(ema20),
+                rsi=rsi,
+                candles=candles,
+                reaccel=short_reaccel,
+            )
+            and MomentumBurstMicro._clean_trend_short_chase_ok(
+                fac,
+                atr_pips=atr_pips,
                 rsi=rsi,
                 candles=candles,
                 reaccel=short_reaccel,

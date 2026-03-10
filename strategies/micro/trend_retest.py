@@ -27,6 +27,9 @@ class MicroTrendRetest:
     _LOW_ATR_PIPS = 3.4
     _RETEST_CLOSE_RECOVERY_MIN = 0.20
     _RETEST_CLOSE_RECOVERY_LOW_ATR_MIN = 0.55
+    _RECLAIM_EXHAUSTION_LONG_RSI_MIN = 62.0
+    _RECLAIM_EXHAUSTION_SHORT_RSI_MAX = 38.0
+    _RECLAIM_SMALL_BODY_RATIO_MAX = 0.38
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -113,6 +116,32 @@ class MicroTrendRetest:
         return recovery >= threshold
 
     @staticmethod
+    def _reclaim_exhaustion_ok(
+        *,
+        direction: str,
+        last_open: float,
+        last_high: float,
+        last_low: float,
+        last_close: float,
+        rsi: float,
+    ) -> bool:
+        candle_range = max(last_high - last_low, 0.0)
+        if candle_range <= 0.0:
+            return True
+        body_ratio = abs(last_close - last_open) / candle_range
+        if direction == "OPEN_LONG":
+            return not (
+                rsi >= MicroTrendRetest._RECLAIM_EXHAUSTION_LONG_RSI_MIN
+                and last_close <= last_open
+                and body_ratio <= MicroTrendRetest._RECLAIM_SMALL_BODY_RATIO_MAX
+            )
+        return not (
+            rsi <= MicroTrendRetest._RECLAIM_EXHAUSTION_SHORT_RSI_MAX
+            and last_close >= last_open
+            and body_ratio <= MicroTrendRetest._RECLAIM_SMALL_BODY_RATIO_MAX
+        )
+
+    @staticmethod
     def check(fac: Dict) -> Dict | None:
         price = MicroTrendRetest._to_float(fac.get("close"))
         ma10 = MicroTrendRetest._to_float(fac.get("ma10"))
@@ -171,6 +200,7 @@ class MicroTrendRetest:
         level_low = min(lows)
 
         prev_close = MicroTrendRetest._to_float(prev.get("close"), 0.0) or 0.0
+        last_open = MicroTrendRetest._to_float(last.get("open"), prev_close) or prev_close
         last_close = MicroTrendRetest._to_float(last.get("close"), 0.0) or 0.0
         last_low = MicroTrendRetest._to_float(last.get("low"), 0.0) or 0.0
         last_high = MicroTrendRetest._to_float(last.get("high"), 0.0) or 0.0
@@ -188,6 +218,15 @@ class MicroTrendRetest:
                 last_low=last_low,
                 last_close=last_close,
                 atr_pips=atr_check,
+            ):
+                return None
+            if not MicroTrendRetest._reclaim_exhaustion_ok(
+                direction=direction,
+                last_open=last_open,
+                last_high=last_high,
+                last_low=last_low,
+                last_close=last_close,
+                rsi=rsi,
             ):
                 return None
             retest_dist = abs(price - level_high) / PIP
@@ -208,6 +247,15 @@ class MicroTrendRetest:
                 last_low=last_low,
                 last_close=last_close,
                 atr_pips=atr_check,
+            ):
+                return None
+            if not MicroTrendRetest._reclaim_exhaustion_ok(
+                direction=direction,
+                last_open=last_open,
+                last_high=last_high,
+                last_low=last_low,
+                last_close=last_close,
+                rsi=rsi,
             ):
                 return None
             retest_dist = abs(price - level_low) / PIP

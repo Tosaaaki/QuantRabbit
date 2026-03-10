@@ -173,6 +173,13 @@ def test_momentumburst_reaccel_shortens_only_reaccel_cooldown(monkeypatch) -> No
         "MOMENTUMBURST_REACCEL_COOLDOWN_SEC",
         45.0,
     )
+    monkeypatch.setattr(micro_runtime_worker.config, "DYN_ALLOC_ENABLED", False)
+    monkeypatch.setattr(
+        micro_runtime_worker,
+        "_STRATEGY_PARTICIPATION_ALLOC_ENABLED",
+        False,
+        raising=False,
+    )
     micro_runtime_worker._STRATEGY_LAST_TS.clear()
     micro_runtime_worker._STRATEGY_LAST_TS["MomentumBurst"] = 100.0
 
@@ -651,6 +658,66 @@ def test_tight_short_context_rejects_without_clear_downside_drift() -> None:
     )
 
     assert signal is None
+
+
+def test_clean_trend_short_rejects_late_breakdown_chase() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.402,
+            "ma10": 158.454,
+            "ma20": 158.470,
+            "ema20": 158.462,
+            "adx": 30.8,
+            "atr_pips": 3.6,
+            "vol_5m": 2.2,
+            "rsi": 34.2,
+            "plus_di": 11.0,
+            "minus_di": 25.0,
+            "roc5": -0.022,
+            "ema_slope_10": -0.0012,
+            "drift_pips_15m": -0.31,
+            "range_score": 0.18,
+            "candles": [
+                {"open": 158.51, "high": 158.52, "low": 158.47, "close": 158.49},
+                {"open": 158.49, "high": 158.49, "low": 158.45, "close": 158.46},
+                {"open": 158.46, "high": 158.47, "low": 158.43, "close": 158.44},
+                {"open": 158.44, "high": 158.44, "low": 158.40, "close": 158.402},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
+def test_low_range_score_alone_does_not_block_short_reaccel() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.424,
+            "ma10": 158.468,
+            "ma20": 158.482,
+            "ema20": 158.458,
+            "adx": 31.2,
+            "atr_pips": 3.1,
+            "vol_5m": 1.6,
+            "rsi": 39.0,
+            "plus_di": 15.5,
+            "minus_di": 23.5,
+            "roc5": -0.031,
+            "ema_slope_10": -0.0012,
+            "drift_pips_15m": -0.31,
+            "range_score": 0.18,
+            "candles": [
+                {"open": 158.52, "high": 158.52, "low": 158.47, "close": 158.49},
+                {"open": 158.49, "high": 158.49, "low": 158.45, "close": 158.46},
+                {"open": 158.47, "high": 158.47, "low": 158.43, "close": 158.44},
+                {"open": 158.44, "high": 158.44, "low": 158.42, "close": 158.424},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["notes"]["momentum_burst"]["reaccel"] is True
 
 
 def test_tight_short_context_allows_when_impulse_is_clean() -> None:

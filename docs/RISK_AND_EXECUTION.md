@@ -2733,3 +2733,16 @@
   `ref` は base cooldown、base が 0 のときは `LOOP_INTERVAL_SEC` を使う。
 - この変更は micro worker の strategy-local cadence 制御に限定し、
   `quant-order-manager` / 共通 preflight / shared gate には新しい一律判定を追加しない。
+
+### 2026-03-10 `MomentumBurst` / `MicroTrendRetest` quality guard current
+- `MomentumBurst` は current で
+  low-range clean trend (`range_score<=0.22`) の late short chase を
+  strategy-local に拒否する。
+  条件は `rsi<=35`, 強い `DI gap`, 大きい bearish breakdown candle。
+- `MicroTrendRetest` は current で
+  small MA-gap でも extreme RSI の small-body reclaim を拒否する。
+  対称条件は
+  `long + rsi>=62 + bearish reclaim`,
+  `short + rsi<=38 + bullish reclaim`。
+- どちらも `STOP_LOSS_ORDER` cluster を entry quality で潰す目的であり、
+  shared order-manager / global gate / time block を追加するものではない。

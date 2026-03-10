@@ -12098,3 +12098,56 @@ Status:
     -> `25 passed`
   - `python3 -m compileall workers/micro_runtime/worker.py tests/workers/test_micro_multistrat_trend_flip.py`
     -> 成功
+
+## 2026-03-10 21:xx JST / micro loser cluster を strategy-local quality 改善へ変換
+- 目的:
+  - cadence や lot をさらに削るのではなく、
+    `MomentumBurst` と `MicroTrendRetest` の負けパターン自体を
+    strategy-local entry quality guard に変換する。
+- 市況確認:
+  - 再確認時点でも `logs/orderbook_snapshot.json` は
+    `bid=157.826 / ask=157.834 / spread=0.8p / latency=156.2ms`。
+  - `logs/factor_cache.json` は
+    `ATR(M1)=2.14p / ATR(M5)=5.79p / ATR(H1)=22.82p`。
+  - 主要 service は local-v2 running 継続。
+- 実測:
+  - `logs/trades.db` 直近24h:
+    - `MomentumBurst-open_short`: `11 trades / -598.5 JPY / -13.8p`
+      で、`7` 負けのうち `6` が `STOP_LOSS_ORDER`。
+      負け側は `M1 RSI≈32.7`, `range_score≈0.158`,
+      `abs(MA10-MA20)≈3.57p` に偏り、`maru_dn/flat` の continuation candle が多い。
+    - `MicroTrendRetest-long`: `17 trades / -290.2 JPY / -45.7p`,
+      `14` 負けで全件 `STOP_LOSS_ORDER`。
+      そのうち `9/14` が
+      `spin_dn|lower|tr:up_strong|rsi:ob|...|d:long` で、勝ち側には 0 件。
+    - `MicroTrendRetest-short`: `2 trades / -540.6 JPY / -10.6p`,
+      `2/2` 負けで `spin_up|...|rsi:os|d:short` に揃っていた。
+  - `projection` や `micro_chop` より、
+    今回は `pattern shape + RSI + DI/ADX + low-range clean trend` の方が
+    敗因の説明力が高かった。
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    - low-range clean trend (`range_score<=0.22`) で
+      `rsi<=35`, 強い `DI gap`, 大きい bearish breakdown candle の
+      late short chase を reject する guard を追加。
+    - これは cadence trim ではなく、
+      clean trend の末端で売り遅れる cluster を strategy-local に落とす変更。
+  - `strategies/micro/trend_retest.py`
+    - small MA-gap 条件でも
+      `long + rsi>=62 + bearish small-body reclaim`,
+      `short + rsi<=38 + bullish small-body reclaim`
+      を reject する対称 guard を追加。
+    - 既存の `trend_snapshot` / `retest_close_recovery` / `max_retest_dist`
+      の上に、reclaim candle 自体の exhaustion を追加で見る形。
+- 意図:
+  - loser lane の frequency を一律に削るのではなく、
+    `entry` の質を上げて `STOP_LOSS_ORDER` cluster を先に潰す。
+  - 共有 gate や `order_manager` は触らず、
+    `MomentumBurst` と `MicroTrendRetest` の strategy-local contract の中で完結させる。
+- 検証:
+  - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py`
+    -> `37 passed`
+  - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `68 passed`
+  - `python3 -m compileall strategies/micro/trend_retest.py strategies/micro/momentum_burst.py tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py`
+    -> 成功

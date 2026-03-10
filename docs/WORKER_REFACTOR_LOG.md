@@ -15062,3 +15062,35 @@
     -> `25 passed`
   - `python3 -m compileall workers/micro_runtime/worker.py tests/workers/test_micro_multistrat_trend_flip.py`
     -> 成功
+
+### 2026-03-10 micro loser cluster を strategy-local quality guard へ変換
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `strategies/micro/trend_retest.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `tests/strategies/test_trend_retest.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `MomentumBurst-open_short` は low-range clean trend での late short chase が
+    `STOP_LOSS_ORDER` cluster を作っていた。
+  - `MicroTrendRetest` は small MA-gap でも
+    extreme RSI の small-body reclaim を通しており、
+    `spin_dn|lower|rsi:ob` long と `spin_up|rsi:os` short が負け cluster になっていた。
+
+- 変更:
+  - `MomentumBurstMicro` に
+    `range_score + RSI + DI gap + breakdown candle shape`
+    を使った clean-trend late short chase guard を追加。
+  - `MicroTrendRetest` に
+    `RSI + reclaim candle body/open-close` を使った
+    symmetric exhaustion guard を追加。
+  - どちらも lot/cadence の削減ではなく、
+    strategy-local entry quality の改善として実装。
+
+- 検証:
+  - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py`
+    -> `37 passed`
+  - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `68 passed`

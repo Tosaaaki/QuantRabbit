@@ -145,6 +145,27 @@ def test_long_retest_rejects_when_indicators_already_show_resumed_breakout() -> 
     assert signal is None
 
 
+def test_long_retest_rejects_small_gap_overbought_bearish_reclaim() -> None:
+    signal = MicroTrendRetest.check(
+        {
+            "close": 100.006,
+            "ma10": 100.020,
+            "ma20": 100.000,
+            "adx": 26.0,
+            "atr_pips": 4.0,
+            "spread_pips": 0.4,
+            "rsi": 63.0,
+            "candles": _flat_history(high=100.00, low=99.82, close=99.92)
+            + [
+                {"high": 100.05, "low": 100.00, "close": 100.01},
+                {"open": 100.006, "high": 100.010, "low": 99.998, "close": 100.004},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
 def test_long_retest_rejects_strong_opposing_higher_tf_snapshot() -> None:
     fac = _long_fac(
         prev_close=100.01,
@@ -162,6 +183,27 @@ def test_long_retest_rejects_strong_opposing_higher_tf_snapshot() -> None:
     }
 
     signal = MicroTrendRetest.check(fac)
+
+    assert signal is None
+
+
+def test_short_retest_rejects_small_gap_oversold_bullish_reclaim() -> None:
+    signal = MicroTrendRetest.check(
+        {
+            "close": 99.994,
+            "ma10": 99.980,
+            "ma20": 100.000,
+            "adx": 26.0,
+            "atr_pips": 4.0,
+            "spread_pips": 0.4,
+            "rsi": 30.0,
+            "candles": _flat_history(high=100.18, low=100.00, close=100.08)
+            + [
+                {"high": 100.04, "low": 99.95, "close": 99.99},
+                {"open": 99.992, "high": 100.002, "low": 99.986, "close": 99.996},
+            ],
+        }
+    )
 
     assert signal is None
 
