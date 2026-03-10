@@ -122,18 +122,27 @@ def _entry_cooldown_key(signal_tag: str, side: str) -> str:
     return f"{tag_key}:{side_key}"
 
 
+def _entry_cooldown_sec(signal_tag: str) -> float:
+    tag_key = (signal_tag or RangeFader.name).strip().lower()
+    if tag_key.startswith("rangefader-buy-"):
+        return max(0.0, float(getattr(config, "BUY_COOLDOWN_SEC", config.COOLDOWN_SEC)))
+    return max(0.0, float(config.COOLDOWN_SEC))
+
+
 def _entry_cooldown_active(
     last_entry_ts_by_key: Dict[str, float],
     *,
+    signal_tag: str,
     cooldown_key: str,
     now_mono: float,
 ) -> bool:
-    if config.COOLDOWN_SEC <= 0.0:
+    cooldown_sec = _entry_cooldown_sec(signal_tag)
+    if cooldown_sec <= 0.0:
         return False
     last_ts = last_entry_ts_by_key.get(cooldown_key)
     if last_ts is None:
         return False
-    return (now_mono - last_ts) < config.COOLDOWN_SEC
+    return (now_mono - last_ts) < cooldown_sec
 
 
 def _range_size_mult(range_score: Optional[float], free_ratio: Optional[float]) -> float:
@@ -548,6 +557,7 @@ async def scalp_rangefader_worker() -> None:
             cooldown_key = _entry_cooldown_key(signal_tag, side)
             if _entry_cooldown_active(
                 last_entry_ts_by_key,
+                signal_tag=signal_tag,
                 cooldown_key=cooldown_key,
                 now_mono=time.monotonic(),
             ):

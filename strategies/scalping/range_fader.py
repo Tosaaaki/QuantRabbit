@@ -4,6 +4,12 @@ from typing import Dict
 import os
 import logging
 
+BUY_SUPPORT_DI_GAP_FLOOR = float(os.getenv("RANGE_FADER_BUY_SUPPORT_DI_GAP_FLOOR", "-2.0"))
+BUY_SUPPORT_EMA_SLOPE_FLOOR = float(os.getenv("RANGE_FADER_BUY_SUPPORT_EMA_SLOPE_FLOOR", "-0.0012"))
+BUY_SUPPORT_MAX_ADX = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MAX_ADX", "32.0"))
+BUY_SUPPORT_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MOMENTUM_PIPS_CAP", "2.4"))
+BUY_SUPPORT_GATE_EXTRA = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_GATE_EXTRA", "2.0")))
+
 
 def _attach_kill(signal: Dict) -> Dict:
     tags = []
@@ -32,6 +38,41 @@ class RangeFader:
     def _log_skip(reason: str, **kwargs) -> None:
         extras = " ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
         logging.info("[STRAT_SKIP_DETAIL] RangeFader reason=%s %s", reason, extras)
+
+    @staticmethod
+    def _float_attr(fac: Dict, key: str, default: float = 0.0) -> float:
+        try:
+            return float(fac.get(key, default))
+        except Exception:
+            return default
+
+    @staticmethod
+    def _buy_supportive_context(
+        fac: Dict,
+        *,
+        close: float,
+        ema20: float,
+        atr_pips: float,
+        momentum_pips: float,
+        spread: float | None,
+        adx_val: float,
+        vol_5m: float,
+    ) -> bool:
+        plus_di = RangeFader._float_attr(fac, "plus_di", 0.0)
+        minus_di = RangeFader._float_attr(fac, "minus_di", 0.0)
+        ema_slope_10 = RangeFader._float_attr(fac, "ema_slope_10", 0.0)
+        if close > ema20:
+            return False
+        if adx_val > BUY_SUPPORT_MAX_ADX or vol_5m < 0.85:
+            return False
+        if spread is not None and spread > 1.0:
+            return False
+        if (plus_di - minus_di) < BUY_SUPPORT_DI_GAP_FLOOR:
+            return False
+        if ema_slope_10 < BUY_SUPPORT_EMA_SLOPE_FLOOR:
+            return False
+        momentum_cap = max(BUY_SUPPORT_MOMENTUM_PIPS_CAP, atr_pips * 1.1)
+        return momentum_pips <= momentum_cap
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -145,6 +186,17 @@ class RangeFader:
 
         fast_cut = max(6.0, atr_pips * 0.9)
         fast_cut_time = max(60.0, atr_pips * 15.0)
+        buy_supportive = RangeFader._buy_supportive_context(
+            fac,
+            close=float(close),
+            ema20=float(ema20),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+            spread=spread,
+            adx_val=adx_val,
+            vol_5m=vol_5m,
+        )
+        buy_long_gate = long_gate + (BUY_SUPPORT_GATE_EXTRA if buy_supportive else 0)
 
         confidence_scale = 1.0
         high_atr_profile = atr_pips > high_atr
@@ -154,7 +206,7 @@ class RangeFader:
             confidence_scale *= 0.75
         confidence_scale = max(0.45, min(confidence_scale, 1.0))
 
-        if rsi <= long_gate:
+        if rsi <= buy_long_gate:
             if high_atr_profile:
                 sl = max(3.0, min(6.5, atr_pips * 0.95))
                 tp = max(sl * 1.25, min(8.5, atr_pips * 1.35))
@@ -168,7 +220,16 @@ class RangeFader:
             rsi_eta_up = fac.get("rsi_eta_upper_min")
             if rsi_eta_up is not None:
                 eta_bonus = max(0.0, min(8.0, (6.0 - min(6.0, rsi_eta_up)) * 1.0))
-            confidence = int(min(90, max(45, (38 - rsi) * 2.6 + vol_5m * 5.5 + eta_bonus)))
+            confidence = int(
+                min(
+                    90,
+                    max(
+                        45,
+                        (38 - rsi) * 2.6 + vol_5m * 5.5 + eta_bonus,
+                    ),
+                )
+            )
+            tag = f"{RangeFader.name}-buy-supportive" if buy_supportive and rsi > long_gate else f"{RangeFader.name}-buy-fade"
             return _attach_kill({
                 "action": "OPEN_LONG",
                 "sl_pips": round(sl, 2),
@@ -177,7 +238,7 @@ class RangeFader:
                 "fast_cut_pips": round(fast_cut, 2),
                 "fast_cut_time_sec": int(fast_cut_time),
                 "fast_cut_hard_mult": 1.6,
-                "tag": f"{RangeFader.name}-buy-fade",
+                "tag": tag,
             })
 
         if rsi >= short_gate:

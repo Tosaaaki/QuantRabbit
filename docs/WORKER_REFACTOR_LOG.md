@@ -14543,3 +14543,37 @@
     を薄い wrapper と dedicated env で operationalize する。
   - shared gate / order-manager を触らず、
     thin transition/chop と entry drought の participation を strategy-local に増やす。
+
+### 2026-03-10 local-v2 `RangeFader-buy-supportive` lane 追加
+- 対象:
+  - `strategies/scalping/range_fader.py`
+  - `workers/scalp_rangefader/config.py`
+  - `workers/scalp_rangefader/worker.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `2026-03-10 12:27 JST` の live 集計では
+    `RangeFader-buy-fade` が `preflight_start=105 / filled=25 / entry_probability_reject=86 / perf_block=80`
+    と under-participating だった。
+  - 同期間の buy side 成績は `33 trades / +13.17 JPY / win_rate 84.8%` で、
+    buy cluster 自体は profitable だった。
+  - `workers.common.perf_guard` の `split_directional=true` を確認し、
+    profitable buy cluster を新 tag へ分離するのが最小変更と判断した。
+
+- 変更:
+  - `RangeFader` は supportive buy 文脈
+    `plus_di/minus_di`, `ema_slope_10`, spread, ADX, mean gap
+    を満たす場合だけ、
+    既存 `buy-fade` と別 tag の `RangeFader-buy-supportive` を返す。
+  - `quant-scalp-rangefader` は `RangeFader-buy-*` だけ短い cooldown を適用し、
+    既定値は `BUY_COOLDOWN_SEC = COOLDOWN_SEC * 0.7` とした。
+  - sell / neutral の tag と cooldown は不変。
+
+- 意図:
+  - shared gate を緩めず、
+    profitable buy cluster だけを failfast 履歴から切り離して再参加させる。
+  - exit / protection / alias は base tag `RangeFader` 互換を維持し、
+    既存 close policy を壊さない。

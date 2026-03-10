@@ -11397,3 +11397,46 @@ Status:
     `transition/chop` と `entry drought` を埋める strategy-local lane 増設で実現する。
   - 既存 momentum / breakout lane を壊さず、
     薄い相場での participation だけを厚くする。
+
+## 2026-03-10 12:27 JST / `RangeFader` profitable buy cluster を `perf_block` 履歴から分離
+
+- 実測:
+  - `2026-03-10 12:27 JST` 時点の USD/JPY は
+    `157.846/157.854`, spread `0.8p`, 直近レンジ `300 ticks=2.0p / 900 ticks=4.3p`。
+    `M1 RSI 54.76 / ADX 29.33 / +DI 23.39 / -DI 17.03`,
+    `M5 RSI 63.6 / ADX 20.4` で、pricing stream は `200 OK` 継続だった。
+  - `RangeFader-buy-fade` の直近72h注文は
+    `105 preflight_start / 25 filled / 86 entry_probability_reject / 80 perf_block`。
+  - 一方で `RangeFader` buy side の直近72hトレードは
+    `33 trades / +13.17 JPY / avg +0.67 pips / win_rate 84.8%` で、
+    buy side 自体は profitable を維持していた。
+  - 直近30-90分の live no-fill 主因は `RangeFader-buy-fade` で、
+    `MomentumBurst` は signal formation 自体が 0 件だったため、
+    今回の participation 改善対象から外した。
+
+- 判断:
+  - broad な `confidence` 引き上げや shared gate 緩和ではなく、
+    profitable な buy cluster だけを別 tag に切り出して
+    directional `perf_block` 履歴から分離するのが最も狭い改善だった。
+  - `workers.common.perf_guard` の `split_directional=true` を前提に、
+    `RangeFader-buy-supportive` を新設すれば
+    既存 `RangeFader-buy-fade` / `sell-fade` / `neutral-fade` の failfast 履歴を継承しない。
+
+- 反映:
+  - `strategies/scalping/range_fader.py`
+    - `plus_di/minus_di`, `ema_slope_10`, spread, ADX, mean 乖離で
+      `buy_supportive` 文脈を判定。
+    - 元の `long_gate` を超えた近傍RSIでも、
+      supportive buy 文脈だけは `RangeFader-buy-supportive` を返す。
+    - sell / neutral の判定は変更しない。
+  - `workers/scalp_rangefader/config.py`
+    - `BUY_COOLDOWN_SEC` を追加し、既定を `COOLDOWN_SEC * 0.7` とした。
+  - `workers/scalp_rangefader/worker.py`
+    - `RangeFader-buy-*` tag だけ短い cooldown を使い、
+      sell / neutral は従来 cooldown を維持する。
+
+- 意図:
+  - shared `order_manager` / `perf_guard` / dynamic alloc を触らず、
+    profitable buy cluster の participation だけを strategy-local に戻す。
+  - loser history を引きずる既存 `RangeFader-*` tag を壊さず、
+    `supportive buy` のみ別 lane として監査可能にする。

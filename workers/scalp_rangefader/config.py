@@ -25,6 +25,9 @@ CAP_MIN = float(os.getenv("RANGEFADER_CAP_MIN", "0.1"))
 CAP_MAX = float(os.getenv("RANGEFADER_CAP_MAX", "1.0"))
 
 COOLDOWN_SEC = float(os.getenv("RANGEFADER_COOLDOWN_SEC", "30.0"))
+BUY_COOLDOWN_SEC = float(
+    os.getenv("RANGEFADER_BUY_COOLDOWN_SEC", str(max(0.0, COOLDOWN_SEC * 0.7)))
+)
 MAX_OPEN_TRADES = int(os.getenv("RANGEFADER_MAX_OPEN_TRADES", "4"))
 MAX_OPEN_TRADES_GLOBAL = int(os.getenv("RANGEFADER_MAX_OPEN_TRADES_GLOBAL", "0"))
 OPEN_TRADES_SCOPE = os.getenv("RANGEFADER_OPEN_TRADES_SCOPE", "tag").strip().lower()

@@ -2479,3 +2479,18 @@
   低ATRの retest candle が極値へ貼り付いたままの long/short を reject する。
 - いずれも共通 post-hoc gate ではなく、
   loser cluster を strategy-local quality guard へ還元する運用を正とする。
+
+### 2026-03-10 `RangeFader-buy-supportive` execution lane
+- `RangeFader` は profitable buy cluster を
+  `RangeFader-buy-supportive` として別 tag に分離できる。
+- この lane は strategy-local の supportive buy 文脈
+  `plus_di/minus_di`, `ema_slope_10`, spread, ADX, mean gap
+  を満たしたときだけ返す。
+- `workers.common.perf_guard` は `split_directional=true` のため、
+  新しい directional tag は既存 `RangeFader-buy-fade` / `sell-fade` /
+  `neutral-fade` の failfast 履歴を直接継承しない。
+- `quant-scalp-rangefader` は `RangeFader-buy-*` tag にだけ
+  `BUY_COOLDOWN_SEC` を適用し、既定は `COOLDOWN_SEC * 0.7`。
+- `workers/scalp_rangefader/exit_worker.py` と `execution/order_manager.py`
+  は base tag `RangeFader` を解決するため、
+  `RangeFader-buy-supportive` でも既存 exit / protection policy はそのまま有効。
