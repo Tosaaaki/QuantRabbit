@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from utils.strategy_tags import normalize_strategy_lookup_key
 from utils.strategy_tags import resolve_strategy_tag
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -127,6 +128,28 @@ def _norm_tag(value: Any) -> str:
     if not text:
         return ""
     return text.strip()
+
+
+def _canonical_known_strategy_key(raw: str, known_keys: list[str]) -> str:
+    resolved = resolve_strategy_tag(raw, known_keys=known_keys) or raw
+    lookup = normalize_strategy_lookup_key(resolved)
+    if not lookup:
+        return resolved
+    matches = [
+        candidate
+        for candidate in known_keys
+        if normalize_strategy_lookup_key(candidate) == lookup
+    ]
+    if not matches:
+        return resolved
+    matches.sort(
+        key=lambda candidate: (
+            0 if any(ch.isupper() for ch in candidate) else 1,
+            -len(candidate),
+            candidate,
+        )
+    )
+    return matches[0]
 
 
 @dataclass
@@ -235,7 +258,7 @@ def _remap_stats_to_known_keys(
     grouped: dict[str, list[StrategyStats]] = {}
     remapped_latest: dict[str, str] = {}
     for key, stats in stats_by_tag.items():
-        resolved = resolve_strategy_tag(key, known_keys=known_keys) or key
+        resolved = _canonical_known_strategy_key(key, known_keys)
         grouped.setdefault(resolved, []).append(stats)
         latest = str(latest_by_tag.get(key) or stats.last_closed or "").strip()
         if latest and (resolved not in remapped_latest or latest > remapped_latest[resolved]):

@@ -150,6 +150,32 @@ def test_norm_tag_resolves_strategy_aliases() -> None:
     assert worker._norm_tag("microlevelreactor") == "MicroLevelReactor"
 
 
+def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> None:
+    stats_by_tag = {
+        "MicroTrendRetest-long": worker.StrategyStats(
+            tag="MicroTrendRetest-long",
+            trades=14,
+            wins=9,
+            losses=5,
+            sum_pips=8.8,
+            avg_pips=0.6286,
+            avg_abs_pips=0.9143,
+            gross_win=10.8,
+            gross_loss=2.0,
+            avg_hold_sec=45.0,
+            last_closed="2026-03-10 00:00:00",
+        )
+    }
+    remapped, _ = worker._remap_stats_to_known_keys(
+        stats_by_tag,
+        {"MicroTrendRetest-long": "2026-03-10 00:00:00"},
+        ["microtrendretest", "MicroTrendRetest"],
+    )
+
+    assert "MicroTrendRetest" in remapped
+    assert "microtrendretest" not in remapped
+
+
 def test_main_loop_runs_once_and_sleeps(monkeypatch, tmp_path: Path) -> None:
     feedback_path = tmp_path / "strategy_feedback.json"
     config = SimpleNamespace(loop_sec=0.0, feedback_path=feedback_path)
