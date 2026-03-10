@@ -5,6 +5,36 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）shared participation に loser-side `probability_offset` を追加し、`RangeFader` の late reject を pre-order trim へ寄せる
+
+- 対象:
+  - `execution/strategy_entry.py`
+  - `scripts/participation_allocator.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `scripts/participation_allocator.py`
+    - `trim_units` lane で `share_gap`, bounded `hard_block_rate`,
+      negative `realized_jpy` から `probability_offset<0` を生成するようにした。
+    - `allocation_policy.negative_probability_offsets_enabled` を
+      live payload から算出するようにした。
+  - `execution/strategy_entry.py`
+    - `probability_offset<0` を pre-order で `entry_probability` へ反映し、
+      `STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX` と artifact policy で clamp する。
+    - 監査 payload に `probability_offset`,
+      `entry_probability_before/after`, `reason=overused_trim` を残すようにした。
+  - tests:
+    - loser lane の units trim + probability trim、
+      allocator の negative offset 生成を回帰で固定した。
+- 意図:
+  - `RangeFader` の `entry_probability_reject` / `perf_block` が
+    order-manager の late reject に偏っており、
+    shared 側で overused loser lane を前捌きする必要があった。
+  - `execution/order_manager.py` の reject gate を変更せず、
+    participation artifact と strategy-entry の責務だけで対処する。
+
 ### 2026-03-11（追記）`docs/TRADE_FINDINGS.md` を good/bad/pending と次アクションが追える change diary として明文化
 
 - 対象:
@@ -26,6 +56,36 @@
 - 意図:
   - 「何を変えたら良くなったか / 悪くなったか / まだ判定待ちか」を
     時系列で比較できる形に固定し、改善判断を感覚ではなく履歴で回せるようにする。
+
+### 2026-03-11（追記）`run_local_feedback_cycle` に `trade_findings_draft` を追加し、change diary の下書き生成を自動化
+
+- 対象:
+  - `scripts/trade_findings_diary_draft.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `tests/scripts/test_trade_findings_diary_draft.py`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
+  - `AGENTS.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/OBSERVABILITY.md`
+  - `docs/INDEX.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `scripts/trade_findings_diary_draft.py`
+    - `health_snapshot`, `pdca_profitability`, `strategy_feedback`,
+      `participation_alloc`, `trade_counterfactual`, `replay_quality_gate`,
+      `market_context` を集約して
+      `logs/trade_findings_draft_latest.{json,md}` を生成する。
+    - 同一 fingerprint の draft は `logs/trade_findings_draft_history.jsonl`
+      へ重複追記せず、whiteboard も再通知しない。
+  - `scripts/run_local_feedback_cycle.py`
+    - 後段 job `trade_findings_draft` を追加し、既存の interval/lock/outputs 契約へ載せた。
+  - tests:
+    - draft artifact 生成、history dedupe、whiteboard open task 再利用、
+      local feedback cycle 配線の回帰を追加。
+- 意図:
+  - analysis artifact は自動で溜まっても、そのままでは `TRADE_FINDINGS` の
+    change diary にならず流れやすい。
+  - live 発注系へ責務を混ぜず、analysis cycle の後段だけで review draft を作る。
 
 ### 2026-03-11（追記）boosted low-sample lane を shared feedback / health coverage へ接続し、`strategy_feedback_worker` crash を除去
 

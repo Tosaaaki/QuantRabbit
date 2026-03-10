@@ -867,11 +867,18 @@
     `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX` と
     artifact `allocation_policy.max_units_boost` の両方で clamp した
     modest boost を許可する。
-  - `trim_units` / `hold` / stale payload / missing payload は
-    従来どおり trim-only もしくは no-op を維持する。
+  - `trim_units` は units trim に加えて、
+    artifact `probability_offset<0` がある場合だけ
+    `STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX` と
+    artifact `allocation_policy.max_probability_boost` の両方で clamp した
+    bounded な確率減衰を許可する。
+  - `hold` / stale payload / missing payload は no-op を維持する。
 - probability boost も artifact `max_probability_boost` と
   `STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX` の両方で clamp し、
   共通レイヤが無制限に strategy intent を拡大しないようにする。
+- loser trim は order-manager の reject gate を書き換えるものではない。
+  shared `participation_alloc` が overused lane を pre-order で前捌きし、
+  late `entry_probability_below_min_units` へ流れ込む件数を減らすのが目的。
 - 監査は `entry_thesis["participation_alloc"]` に残し、
   `reason` は `boost_participation / overused_trim / rebalance / underused_boost`
   を使う。
@@ -886,6 +893,11 @@
     `hard_blocks / (attempts + hard_blocks)` の bounded rate を使う。
     `entry_probability_reject` / `perf_block` が attempts を上回る lane でも
     quality score が破綻しないことを優先する。
+  - overused loser lane は `share_gap`, `hard_block_rate`, `realized_jpy` から
+    `probability_offset` を生成できる。
+    現行の shared trim は `RangeFader-buy-fade` / `RangeFader-sell-fade` を
+    `trim_units + negative probability_offset` へ寄せ、
+    `RangeFader-neutral-fade` の hold と分離して扱う。
 
 ### RangeFader cadence 連動 cooldown（2026-03-10）
 - `workers/scalp_rangefader/worker.py` は

@@ -50,6 +50,78 @@
 - Status:
 ```
 
+## 2026-03-11 02:29 JST / local-v2: shared participation に loser-side `probability_offset` を追加し、`RangeFader` の late reject を pre-order trim へ寄せる
+
+- Change:
+  - `scripts/participation_allocator.py` が
+    `trim_units` lane で `share_gap`, bounded `hard_block_rate`,
+    negative `realized_jpy` を合成した負の `probability_offset` を出せるようにした。
+  - `execution/strategy_entry.py` は
+    `probability_offset<0` を pre-order の `entry_probability` へ反映し、
+    `entry_thesis["participation_alloc"]` に
+    `entry_probability_before/after` と `reason=overused_trim` を残すようにした。
+  - `execution/order_manager.py` の reject gate 自体は変更していない。
+- Why:
+  - current の `RangeFader` は loser lane の試行過多が続いており、
+    shared trim が units だけだと late `entry_probability_below_min_units`
+    直前まで signal を流し込んでいた。
+- Hypothesis:
+  - loser lane に bounded な negative `probability_offset` を追加すれば、
+    order-manager の late reject へ届く前に shared artifact 側で前捌きできる。
+- Expected Good:
+  - overused loser lane の `entry_probability_reject` / `perf_block` が減りやすくなる。
+  - `RangeFader-neutral-fade` のような hold lane を巻き込まずに
+    `buy-fade` / `sell-fade` だけを shared trim できる。
+  - `order_manager` の責務は guard/reject のまま維持できる。
+- Expected Bad:
+  - loser 判定が短期ノイズに引っ張られると、
+    recover 手前の lane を shared 側で少し締め過ぎる可能性がある。
+  - `probability_offset` と units trim が同時に効くため、
+    live の見かけ上の entry 数は一時的にさらに減る可能性がある。
+- Period:
+  - UTC `2026-03-10 17:20-17:30`
+  - JST `2026-03-11 02:20-02:30`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.439 / ask=157.447 / spread=0.8p`
+    - recent range `5m=6.8p / 15m=9.8p / 60m=13.6p`
+    - `ATR14(M1)=2.922p`, `ATR14(M5)=6.934p`, `ATR14(H1)=20.632p`
+    - `data_lag_ms=548.528`, `decision_latency_ms=16.972`
+  - 直近24h の `RangeFader` order status は
+    `buy-fade entry_probability_reject=1159 / perf_block=616 / filled=54`,
+    `sell-fade entry_probability_reject=913 / perf_block=549 / filled=44`,
+    `neutral-fade entry_probability_reject=344 / perf_block=501 / filled=46`。
+  - 直近24h の closed trade は `RangeFader 144 trades / -128.086 JPY / -33.0p / win_rate 0.632`。
+  - 変更後に再生成した `config/participation_alloc.json` では
+    `RangeFader-buy-fade action=trim_units lot_multiplier=0.8366 probability_offset=-0.0443`,
+    `RangeFader-sell-fade action=trim_units lot_multiplier=0.8307 probability_offset=-0.0463`,
+    `RangeFader-neutral-fade action=hold probability_offset=0.0`、
+    `allocation_policy.negative_probability_offsets_enabled=true` を確認した。
+- Failure Cause:
+  - `RangeFader` の loser lane は
+    leading profile, dynamic alloc, blackboard coordination, participation trim の後でも
+    order-manager の probability gate に多く到達していた。
+  - shared participation は winner boost だけで、
+    loser の probability 側を前倒し調整できていなかった。
+- Improvement:
+  - overused loser lane に `probability_offset<0` を追加し、
+    shared artifact で units と probability の両方を軽く trim できるようにした。
+  - 적용点は `execution/strategy_entry.py` に限定し、
+    `order_manager` の reject semantics は維持した。
+- Verification:
+  - `pytest -q tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+  - `pytest -q tests/scripts/test_run_local_feedback_cycle.py tests/scripts/test_publish_health_snapshot.py`
+  - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 24 --min-attempts 20`
+- Verdict:
+  - `pending`
+- Next Action:
+  - restart 後の current window で
+    `RangeFader-buy/sell-fade` の `entry_probability_reject` と `perf_block` の比率が
+    前窓より下がるかを監視する。
+  - `neutral-fade` が hold を維持しつつ fill を落としていないかも併せて確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-11 01:55 JST / docs運用: `TRADE_FINDINGS` を「良かった/悪かった/保留」が追える change diary として固定
 
 - Change:
@@ -171,6 +243,61 @@
     `feedback_probe` が自動出力されることを next monitoring で確認する。
   - `RangeFader` の reject 過多は別件なので、
     strategy-local quality と shared trim のどちらで処理するかを分離して次回詰める。
+- Status:
+  - done
+
+## 2026-03-11 02:13 JST / local-v2: `trade_findings_draft` を feedback cycle 後段へ追加し、change diary の下書きを自動生成
+
+- Change:
+  - `scripts/trade_findings_diary_draft.py` を追加し、
+    `health_snapshot / pdca_profitability / strategy_feedback / participation_alloc /
+    trade_counterfactual / replay_quality_gate / market_context`
+    から `logs/trade_findings_draft_latest.{json,md}` を生成するようにした。
+  - `scripts/run_local_feedback_cycle.py` に `trade_findings_draft` job を追加し、
+    既存の interval/lock/output 契約へ載せた。
+  - whiteboard 通知は同一 fingerprint で重複投稿しないようにした。
+- Why:
+  - analysis artifact は自動生成されていたが、
+    `docs/TRADE_FINDINGS.md` の change diary へ昇格する前に散りやすく、
+    「何が悪くて次に何を変えるか」の起点が毎回手作業だった。
+- Hypothesis:
+  - feedback cycle の最後で review draft を自動生成すれば、
+    次の改善 entry は facts をゼロから集め直さずに始められ、
+    `good/bad/pending` 判定までの時間を短縮できる。
+- Expected Good:
+  - `TRADE_FINDINGS` へ昇格すべき候補が whiteboard と draft artifact に残り、
+    JSON 群の見落としを減らせる。
+  - live 発注 worker や health snapshot を汚さず、analysis 後段だけで日記化できる。
+- Expected Bad:
+  - stale artifact や weak signal まで draft 化すると、review queue がノイズ化する。
+  - fingerprint 設計が粗いと、同内容の再通知や history spam が起きる。
+- Period:
+  - UTC `2026-03-10 17:13-17:24`
+  - JST `2026-03-11 02:13-02:24`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.486 / ask=157.494 / spread=0.8p`
+    - recent range `5m=6.0p / 15m=11.0p / 60m=25.3p`
+    - `data_lag_ms=1155.1`, `decision_latency_ms=14.1`, `mechanism_integrity.ok=true`
+  - 現状の local artifact には
+    `health_snapshot`, `pdca_profitability`, `strategy_feedback`,
+    `participation_alloc`, `trade_counterfactual`, `replay_quality_gate`,
+    `market_context` が既にあり、
+    `run_local_feedback_cycle.py` も job 拡張を受け入れる構造だった。
+- Failure Cause:
+  - 事実の収集は自動化されていた一方、
+    change diary に必要な「人が読むための束ね直し」が自動化されていなかった。
+- Improvement:
+  - local feedback cycle 後段で review-only draft を自動生成し、
+    同一 fingerprint の history/whiteboard 重複を抑止した。
+- Verification:
+  - `python3 -m py_compile scripts/trade_findings_diary_draft.py scripts/run_local_feedback_cycle.py tests/scripts/test_trade_findings_diary_draft.py tests/scripts/test_run_local_feedback_cycle.py`
+  - `pytest -q tests/scripts/test_trade_findings_diary_draft.py tests/scripts/test_run_local_feedback_cycle.py`
+- Verdict:
+  - `pending`
+- Next Action:
+  - 実運用で `python3 scripts/trade_findings_diary_draft.py --disable-whiteboard` の出力を確認し、
+    draft がノイズ過多なら headline/fingerprint 条件をさらに絞る。
 - Status:
   - done
 

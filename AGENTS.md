@@ -62,6 +62,8 @@
 - 変更点は必ず AGENTS と実装仕様側へ同時記録すること。少なくとも `docs/WORKER_REFACTOR_LOG.md` と関連仕様（`docs/WORKER_ROLE_MATRIX_V2.md`/`docs/ARCHITECTURE.md` 等）へ追記し、追跡可能な監査ログを残す。
 - 改善/敗因の運用記録は **`docs/TRADE_FINDINGS.md` の1箇所に集約** する。新しい分析を行ったら必ず同ファイルへ追記し、同種の分散メモを新規作成しない。
 - `docs/TRADE_FINDINGS.md` は単なる台帳ではなく、変更の良し悪しを後から改善に使うための change diary として扱う。各変更で最低限 `Why/Hypothesis`、`Expected Good`、`Expected Bad`、`Observed/Fact`、`Verdict`（`good/bad/pending`）、`Next Action` を残す。
+- `scripts/trade_findings_diary_draft.py` / `logs/trade_findings_draft_latest.{json,md}` は review-only の自動下書きとして扱う。whiteboard 通知は許可するが、`docs/TRADE_FINDINGS.md` への自動追記は禁止し、反映は必ずレビュー後に行う。
+- 自動化は `logs/trade_findings_draft_latest.{json,md}` の draft 生成までを許可し、正式な監査記録の確定は `docs/TRADE_FINDINGS.md` への追記で行う。whiteboard 通知は同一 draft fingerprint で重複投稿しない。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。
 - その差分は「他者/他タスクの作業中変更」を前提に、関連ファイルを読んで意図を把握したうえで今回タスクを継続する（差分の存在だけで作業停止・続行確認を挟まない）。
 - **並行タスク時のGit運用を厳守**: 作業開始前/コミット前に `git status --short` と `git diff --name-only` を確認し、ステージは自分が変更したファイルのみに限定する。タスク単位でコミットを分離し、他タスク差分を混在・巻き戻ししない。
@@ -101,6 +103,7 @@
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-10 追記: `MicroLevelReactor-bounce-lower` / `MicroTrendRetest-long` / `WickReversalBlend` の reverse-entry RCA 改善は、dedicated env の固定 tightening ではなく strategy-local の動的 quality / exit を正とする。`strategies/micro/level_reactor.py` は recent M1 continuation と `ma_gap` 拡大型を reclaim 判定へ織り込み、`strategies/micro/trend_retest.py` は same-direction chase pressure 下の shallow retest を reject する。`workers/scalp_wick_reversal_blend` は signal quality を `entry_thesis` へ保存し、`exit_worker` が trade ごとの `sl/tp/quality` で profit/loss thresholds を動的化する。shared gate / time block / dedicated env の追加 tightening は行わない。
 - 2026-03-11 追記: shared participation / feedback の current 運用では、`config/participation_alloc.json` の `boost_participation` lane を active 時のみ `strategy_feedback` coverage 対象へ昇格する。`analysis/strategy_feedback_worker.py` は `STRATEGY_FEEDBACK_MIN_TRADES` 未満でも active + `boost_participation` lane に `feedback_probe` metadata を出力し、`scripts/publish_health_snapshot.py` は同 lane が `strategy_feedback.json` から欠けた場合だけ `strategy_feedback_coverage_gap` を出す。inactive winner lane は health を赤化させない。あわせて `scripts/participation_allocator.py` の `hard_block_rate` は `attempts + hard_blocks` を母数とする bounded rate を正とし、`strategy_feedback_worker` は zero-win / zero-loss lane で crash しないことを不変条件とする。
+- 2026-03-11 追記: shared participation は winner の `boost_participation` だけでなく、overused loser lane に対する負の `probability_offset` も扱う。`scripts/participation_allocator.py` は `trim_units` lane で `share_gap + hard_block_rate + realized_jpy` から bounded な負の `probability_offset` を生成し、`execution/strategy_entry.py` は `STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX` と artifact `max_probability_boost` の範囲で pre-order の `entry_probability` を減衰させる。`execution/order_manager.py` の確率 reject gate 自体は変更せず、late `entry_probability_below_min_units` の前に shared artifact 側で loser lane を前捌きすることを正とする。
 - 2026-02-19 追記: `scalp_macd_rsi_div_b_live` は精度改善のため
   `range-only` + divergence 閾値強化のプロファイルへ更新。
   運用値は `ops/env/quant-scalp-macd-rsi-div-b.env`、監査ログは

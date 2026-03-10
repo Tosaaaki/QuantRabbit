@@ -253,6 +253,16 @@ _STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX = max(
     0.0,
     min(0.25, _env_float("STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX", 0.08)),
 )
+_STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX = max(
+    0.0,
+    min(
+        0.25,
+        _env_float(
+            "STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX",
+            _STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX,
+        ),
+    ),
+)
 _STRATEGY_PARTICIPATION_ALLOC_POCKETS = {
     p.lower().strip()
     for p in _env_csv("STRATEGY_PARTICIPATION_ALLOC_POCKETS", "scalp_fast,micro,scalp")
@@ -2708,6 +2718,13 @@ def _apply_participation_alloc(
             next_units = scaled_abs if units > 0 else -scaled_abs
 
     normalized_probability = _entry_probability_value(entry_probability)
+    raw_prob_offset = float(profile.get("probability_offset", 0.0) or 0.0)
+    prob_offset = 0.0
+    if raw_prob_offset < 0.0:
+        prob_offset = max(
+            -_STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
+            min(0.0, raw_prob_offset),
+        )
     raw_boost = max(0.0, float(profile.get("probability_boost", 0.0) or 0.0))
     profile_prob_cap = max(
         0.0,
@@ -2715,11 +2732,16 @@ def _apply_participation_alloc(
     )
     prob_boost = min(_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, profile_prob_cap, raw_boost)
     next_probability = normalized_probability
-    if normalized_probability is not None and prob_boost > 0.0:
-        next_probability = max(
-            0.0,
-            min(1.0, normalized_probability + (1.0 - normalized_probability) * prob_boost),
-        )
+    if normalized_probability is not None:
+        if prob_offset < 0.0:
+            next_probability = max(0.0, min(1.0, normalized_probability + prob_offset))
+        elif prob_boost > 0.0:
+            next_probability = max(
+                0.0,
+                min(1.0, normalized_probability + (1.0 - normalized_probability) * prob_boost),
+            )
+    if next_probability is not None:
+        next_probability = round(float(next_probability), 6)
 
     if next_units == int(units) and next_probability == normalized_probability:
         return units, entry_probability, None
@@ -2745,14 +2767,19 @@ def _apply_participation_alloc(
         payload["reason"] = "boost_participation"
     elif applied_abs < requested_abs:
         payload["reason"] = "overused_trim"
-    if normalized_probability is not None and next_probability is not None and next_probability > normalized_probability + 1e-9:
-        payload["probability_boost"] = round(prob_boost, 4)
+    if prob_offset < 0.0:
+        payload["probability_offset"] = round(prob_offset, 4)
+    if normalized_probability is not None and next_probability is not None and abs(next_probability - normalized_probability) > 1e-9:
+        if prob_boost > 0.0:
+            payload["probability_boost"] = round(prob_boost, 4)
         payload["entry_probability_before"] = round(normalized_probability, 6)
         payload["entry_probability_after"] = round(next_probability, 6)
-        if payload.get("reason") == "pass":
+        if next_probability > normalized_probability + 1e-9 and payload.get("reason") == "pass":
             payload["reason"] = "underused_boost"
-        elif payload.get("reason") == "overused_trim":
+        elif next_probability > normalized_probability + 1e-9 and payload.get("reason") == "overused_trim":
             payload["reason"] = "rebalance"
+        elif next_probability < normalized_probability - 1e-9 and payload.get("reason") == "pass":
+            payload["reason"] = "overused_trim"
     entry_thesis["participation_alloc"] = payload
     return int(next_units), next_probability, payload
 

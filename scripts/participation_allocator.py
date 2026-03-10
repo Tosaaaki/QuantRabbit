@@ -135,6 +135,7 @@ def build_participation_alloc(
         realized_jpy = _safe_float(realized_by_strategy.get(strategy_key), 0.0)
         units_multiplier = 1.0
         probability_multiplier = 1.0
+        probability_offset = 0.0
         probability_boost = 0.0
         cadence_floor = 1.0
         action = "hold"
@@ -158,7 +159,14 @@ def build_participation_alloc(
             if share_gap >= 0.08 and filled_rate <= (median_fill_rate * 0.85) and realized_jpy <= 0.0:
                 severity = _clamp((share_gap - 0.08) / 0.22, 0.0, 1.0)
                 severity = max(severity, _clamp((median_fill_rate - filled_rate) / max(0.01, median_fill_rate), 0.0, 1.0))
+                reject_pressure = _clamp((hard_block_rate - 0.20) / 0.55, 0.0, 1.0)
+                loss_pressure = _clamp(abs(min(realized_jpy, 0.0)) / 240.0, 0.0, 1.0)
+                trim_strength = max(
+                    severity,
+                    0.55 * severity + 0.30 * reject_pressure + 0.15 * loss_pressure,
+                )
                 units_multiplier = 1.0 - max_units_cut * (0.35 + 0.65 * severity)
+                probability_offset = -max_prob_boost * (0.20 + 0.80 * trim_strength)
                 cadence_floor = 0.90
                 action = "trim_units"
             elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy >= 0.0:
@@ -239,8 +247,8 @@ def build_participation_alloc(
             "realized_jpy": round(realized_jpy, 3),
             "units_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
             "lot_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
-            "probability_multiplier": round(max(1.0, probability_multiplier), 4),
-            "probability_offset": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
+            "probability_multiplier": round(_clamp(probability_multiplier + probability_offset, 0.75, 1.25), 4),
+            "probability_offset": round(_clamp(probability_offset, -max_prob_boost, max_prob_boost), 4),
             "probability_boost": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
             "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.18), 4),
             "quality_score": round(quality_score, 4),
@@ -252,6 +260,9 @@ def build_participation_alloc(
     for rec in output_strategies.values():
         action = str(rec.get("action") or "hold")
         action_counts[action] = action_counts.get(action, 0) + 1
+    negative_probability_offsets_enabled = any(
+        float(rec.get("probability_offset") or 0.0) < 0.0 for rec in output_strategies.values()
+    )
 
     return {
         "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -263,7 +274,7 @@ def build_participation_alloc(
             "max_units_cut": round(max_units_cut, 4),
             "max_units_boost": round(max_units_boost, 4),
             "max_probability_boost": round(max_prob_boost, 4),
-            "negative_probability_offsets_enabled": False,
+            "negative_probability_offsets_enabled": negative_probability_offsets_enabled,
         },
         "action_counts": action_counts,
         "strategies": output_strategies,

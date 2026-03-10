@@ -56,6 +56,54 @@ def test_build_participation_alloc_trims_overused_loser_and_boosts_winner() -> N
     assert winner["cadence_floor"] > 1.0
 
 
+def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_loser() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "MicroTrendRetest-long": {
+                "pocket": "micro",
+                "attempts": 140,
+                "fills": 18,
+                "filled_rate": 0.1286,
+                "attempt_share": 0.36,
+                "fill_share": 0.11,
+                "share_gap": 0.25,
+                "terminal_status_counts": {"perf_block": 39, "filled": 18},
+            },
+            "MomentumBurst": {
+                "pocket": "micro",
+                "attempts": 35,
+                "fills": 14,
+                "filled_rate": 0.40,
+                "attempt_share": 0.12,
+                "fill_share": 0.34,
+                "share_gap": -0.22,
+                "terminal_status_counts": {"filled": 14},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "MicroTrendRetest-long": -420.0,
+            "MomentumBurst": 180.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    loser = payload["strategies"]["MicroTrendRetest-long"]
+
+    assert payload["allocation_policy"]["negative_probability_offsets_enabled"] is True
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 1.0
+    assert loser["probability_offset"] < 0.0
+    assert loser["probability_multiplier"] <= 1.0
+
+
 def test_build_participation_alloc_boosts_profitable_small_sample_winner() -> None:
     summary = {
         "lookback_hours": 24.0,
