@@ -2625,3 +2625,12 @@
 - 目的は `RangeFader` の latent setup を注文まで通すことであり、
   shared order-manager の global threshold や
   他 strategy の perf-guard metric を変えることではない。
+
+### 2026-03-10 `scalp_extrema_reversal_live` countertrend long current guard
+- `scalp_extrema_reversal_live` の current
+  `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS`
+  は `0.30` を正とする。
+- 対象は `supportive_long=false` の shallow countertrend long で、
+  直近 fresh loss の `ma_gap_pips=-0.32/-0.40` を strategy-local に遮断する。
+- `supportive_long=true` の long、shared gate、order_manager、
+  exit worker 契約は変更しない。

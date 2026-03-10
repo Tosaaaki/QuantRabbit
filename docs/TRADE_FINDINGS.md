@@ -11746,3 +11746,47 @@ Status:
   - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-order-manager,quant-scalp-rangefader,quant-scalp-rangefader-exit`
   - `ps eww -p <quant-order-manager pid>`
   - `logs/local_v2_stack/quant-order-manager.log`
+
+## 2026-03-10 17:34-17:39 JST / `scalp_extrema_reversal_live` の shallow countertrend long を追加遮断
+
+- 市況:
+  - `2026-03-10 17:34 JST` の USD/JPY は local `tick_cache` で
+    `157.492/157.500`, spread `p50/p95=0.8p/0.8p`, tick age `0.605s`。
+  - `factor_cache` は `M1 close 157.498 / ATR 3.51p / ADX 23.76 / RSI 64.09`。
+  - `health_snapshot` は `data_lag_ms=341.9`, `decision_latency_ms=18.4`,
+    `mechanism_integrity=yes`。
+  - 市況停止ではなく strategy-local な loser 再発として処理。
+
+- 実測:
+  - fresh loss は直近90分 `2026-03-10 16:04-17:34 JST` に
+    `-5.994 JPY / -7.0p`。
+  - 内訳は
+    `scalp_extrema_reversal_live` 2本
+    (`2026-03-10 16:19:08 JST -1.596 JPY / -2.8p`,
+    `2026-03-10 16:20:24 JST -2.278 JPY / -3.4p`)
+    と `session_open_breakout` 1本 (`17:28:10 JST -2.12 JPY / -0.8p`)。
+  - `scalp_extrema_reversal_live` の2本はどちらも
+    `supportive_long=false`, `ma_gap_pips=-0.32/-0.40`,
+    `ADX=12.0/12.6`, `range_score=0.306/0.315` の
+    shallow countertrend long だった。
+  - 現行 `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.50`
+    ではこの2本が通っていたが、24h closed trade に対する再判定では
+    `0.30` へ下げると該当2本だけが block 対象になり、
+    勝ち玉は追加で削らなかった。
+
+- 対応:
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.30`
+
+- 意図:
+  - `supportive_long=true` は維持しつつ、
+    弱い trend / weak range 帯の `non-supportive` long だけを
+    strategy-local に追加遮断する。
+  - shared gate / order_manager / exit worker には触れない。
+
+- 検証:
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-scalp-extrema-reversal`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-scalp-extrema-reversal,quant-order-manager,quant-position-manager`
+  - `ps eww -p <quant-scalp-extrema-reversal pid>`
+  - env 読み込み下で `EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.30`,
+    `ma_gap=-0.32/-0.40 -> blocked`, `ma_gap=-0.29 -> pass` を確認

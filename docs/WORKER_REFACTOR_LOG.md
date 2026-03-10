@@ -14851,3 +14851,29 @@
 - 意図:
   - `RangeFader` だけを strategy-local に通しやすくし、
     shared perf guard の基準や他戦略の sizing は変えない。
+
+### 2026-03-10 `scalp_extrema_reversal_live` shallow countertrend long block 追加
+- 対象:
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - fresh loss の直近90分では
+    `scalp_extrema_reversal_live` が
+    `-3.874 JPY / -6.2p` の2連敗を出していた。
+  - 2本とも `supportive_long=false`,
+    `ma_gap_pips=-0.32/-0.40`,
+    `ADX=12-13`, `range_score=0.31 前後` の shallow countertrend long だった。
+  - 既存 `LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.50` では通るが、
+    `0.30` ならこの2本を block できる。
+
+- 変更:
+  - `quant-scalp-extrema-reversal.env` の
+    `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS`
+    を `0.50 -> 0.30` へ更新。
+
+- 意図:
+  - `supportive_long` を壊さず、
+    weak trend / weak range 帯の non-supportive long だけを
+    strategy-local に追加遮断する。
