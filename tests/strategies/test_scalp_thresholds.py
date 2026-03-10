@@ -61,6 +61,7 @@ def test_range_fader_buy_supportive_context_extends_long_gate() -> None:
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
     assert signal["tag"] == "RangeFader-buy-supportive"
+    assert signal["confidence"] == 51
 
 
 def test_range_fader_buy_supportive_context_without_cluster_falls_back_to_neutral() -> None:

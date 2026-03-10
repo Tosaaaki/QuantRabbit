@@ -11428,6 +11428,10 @@ Status:
       `buy_supportive` 文脈を判定。
     - 元の `long_gate` を超えた近傍RSIでも、
       supportive buy 文脈だけは `RangeFader-buy-supportive` を返す。
+    - `RangeFader-buy-supportive` にだけ
+      `RANGE_FADER_BUY_SUPPORT_CONF_BONUS=6` を加え、
+      `confidence 45 -> 51` 相当まで引き上げて
+      `entry_probability_reject` 側の目減りを減らす。
     - sell / neutral の判定は変更しない。
   - `workers/scalp_rangefader/config.py`
     - `BUY_COOLDOWN_SEC` を追加し、既定を `COOLDOWN_SEC * 0.7` とした。

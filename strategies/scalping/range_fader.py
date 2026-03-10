@@ -9,6 +9,7 @@ BUY_SUPPORT_EMA_SLOPE_FLOOR = float(os.getenv("RANGE_FADER_BUY_SUPPORT_EMA_SLOPE
 BUY_SUPPORT_MAX_ADX = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MAX_ADX", "32.0"))
 BUY_SUPPORT_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MOMENTUM_PIPS_CAP", "2.4"))
 BUY_SUPPORT_GATE_EXTRA = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_GATE_EXTRA", "2.0")))
+BUY_SUPPORT_CONF_BONUS = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_CONF_BONUS", "6.0")))
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -230,11 +231,14 @@ class RangeFader:
                 )
             )
             tag = f"{RangeFader.name}-buy-supportive" if buy_supportive and rsi > long_gate else f"{RangeFader.name}-buy-fade"
+            final_confidence = int(confidence * confidence_scale)
+            if tag.endswith("buy-supportive"):
+                final_confidence = min(90, final_confidence + BUY_SUPPORT_CONF_BONUS)
             return _attach_kill({
                 "action": "OPEN_LONG",
                 "sl_pips": round(sl, 2),
                 "tp_pips": round(tp, 2),
-                "confidence": int(confidence * confidence_scale),
+                "confidence": final_confidence,
                 "fast_cut_pips": round(fast_cut, 2),
                 "fast_cut_time_sec": int(fast_cut_time),
                 "fast_cut_hard_mult": 1.6,

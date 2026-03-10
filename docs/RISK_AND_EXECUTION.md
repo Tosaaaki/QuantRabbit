@@ -2486,6 +2486,9 @@
 - この lane は strategy-local の supportive buy 文脈
   `plus_di/minus_di`, `ema_slope_10`, spread, ADX, mean gap
   を満たしたときだけ返す。
+- `RangeFader-buy-supportive` は
+  `RANGE_FADER_BUY_SUPPORT_CONF_BONUS` を持てる。
+  現行値は `6` で、追加 lane だけ `entry_probability` を押し上げる。
 - `workers.common.perf_guard` は `split_directional=true` のため、
   新しい directional tag は既存 `RangeFader-buy-fade` / `sell-fade` /
   `neutral-fade` の failfast 履歴を直接継承しない。

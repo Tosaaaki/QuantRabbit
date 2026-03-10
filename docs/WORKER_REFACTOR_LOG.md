@@ -14568,6 +14568,10 @@
     `plus_di/minus_di`, `ema_slope_10`, spread, ADX, mean gap
     を満たす場合だけ、
     既存 `buy-fade` と別 tag の `RangeFader-buy-supportive` を返す。
+  - 追加 lane の `confidence` は
+    `RANGE_FADER_BUY_SUPPORT_CONF_BONUS=6` で
+    `45 -> 51` 相当まで持ち上げ、
+    `entry_probability_reject` に先に痩せるのを避ける。
   - `quant-scalp-rangefader` は `RangeFader-buy-*` だけ短い cooldown を適用し、
     既定値は `BUY_COOLDOWN_SEC = COOLDOWN_SEC * 0.7` とした。
   - sell / neutral の tag と cooldown は不変。
