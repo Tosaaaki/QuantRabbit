@@ -245,6 +245,10 @@ _STRATEGY_PARTICIPATION_ALLOC_MULT_MIN = max(
     0.10,
     min(1.0, _env_float("STRATEGY_PARTICIPATION_ALLOC_MULT_MIN", 0.60)),
 )
+_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX = max(
+    1.0,
+    min(1.5, _env_float("STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12)),
+)
 _STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX = max(
     0.0,
     min(0.25, _env_float("STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX", 0.08)),
@@ -2671,22 +2675,45 @@ def _apply_participation_alloc(
         return units, entry_probability, None
 
     requested_abs = abs(int(units))
-    mult = max(
-        _STRATEGY_PARTICIPATION_ALLOC_MULT_MIN,
-        min(1.0, float(profile.get("lot_multiplier", 1.0) or 1.0)),
+    action = str(profile.get("action") or "").strip().lower()
+    raw_mult = float(
+        profile.get("units_multiplier", profile.get("lot_multiplier", 1.0)) or 1.0
     )
+    if raw_mult <= 0.0:
+        raw_mult = float(profile.get("lot_multiplier", 1.0) or 1.0)
+    if raw_mult <= 0.0:
+        raw_mult = 1.0
+    profile_mult_max = 1.0 + max(
+        0.0,
+        min(0.30, float(profile.get("max_units_boost", 0.0) or 0.0)),
+    )
+    mult_max = max(1.0, min(_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX, profile_mult_max))
+    if action == "boost_participation" and raw_mult > 1.0:
+        mult = max(1.0, min(mult_max, raw_mult))
+    else:
+        mult = max(
+            _STRATEGY_PARTICIPATION_ALLOC_MULT_MIN,
+            min(1.0, raw_mult),
+        )
     next_units = int(units)
-    if mult < 0.999 and requested_abs > 0:
+    if requested_abs > 0 and (mult < 0.999 or mult > 1.001):
         scaled_abs = int(round(requested_abs * mult))
-        if min_units > 0 and scaled_abs < int(min_units):
+        if mult < 1.0 and min_units > 0 and scaled_abs < int(min_units):
             scaled_abs = int(min_units)
-        scaled_abs = min(requested_abs, scaled_abs)
-        if scaled_abs > 0 and scaled_abs < requested_abs:
+        if mult < 1.0:
+            scaled_abs = min(requested_abs, scaled_abs)
+        else:
+            scaled_abs = max(requested_abs, scaled_abs)
+        if scaled_abs > 0 and scaled_abs != requested_abs:
             next_units = scaled_abs if units > 0 else -scaled_abs
 
     normalized_probability = _entry_probability_value(entry_probability)
     raw_boost = max(0.0, float(profile.get("probability_boost", 0.0) or 0.0))
-    prob_boost = min(_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, raw_boost)
+    profile_prob_cap = max(
+        0.0,
+        min(0.25, float(profile.get("max_probability_boost", raw_boost) or raw_boost)),
+    )
+    prob_boost = min(_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, profile_prob_cap, raw_boost)
     next_probability = normalized_probability
     if normalized_probability is not None and prob_boost > 0.0:
         next_probability = max(
@@ -2703,6 +2730,7 @@ def _apply_participation_alloc(
         "requested_units": int(requested_abs),
         "applied_units": int(abs(next_units)),
         "lot_multiplier": round(mult, 4),
+        "action": action or "hold",
         "preflights": int(profile.get("preflights") or 0),
         "filled": int(profile.get("filled") or 0),
         "fill_rate": round(float(profile.get("fill_rate") or 0.0), 4),
@@ -2712,7 +2740,10 @@ def _apply_participation_alloc(
         "target_share": round(float(profile.get("target_share") or 0.0), 5),
         "reason": "pass",
     }
-    if next_units != int(units):
+    applied_abs = abs(int(next_units))
+    if applied_abs > requested_abs:
+        payload["reason"] = "boost_participation"
+    elif applied_abs < requested_abs:
         payload["reason"] = "overused_trim"
     if normalized_probability is not None and next_probability is not None and next_probability > normalized_probability + 1e-9:
         payload["probability_boost"] = round(prob_boost, 4)
@@ -2720,7 +2751,7 @@ def _apply_participation_alloc(
         payload["entry_probability_after"] = round(next_probability, 6)
         if payload.get("reason") == "pass":
             payload["reason"] = "underused_boost"
-        else:
+        elif payload.get("reason") == "overused_trim":
             payload["reason"] = "rebalance"
     entry_thesis["participation_alloc"] = payload
     return int(next_units), next_probability, payload

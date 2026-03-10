@@ -858,6 +858,26 @@
   - `ops/env/quant-scalp-{wick-reversal-blend,wick-reversal-pro,squeeze-pulse-break,tick-imbalance}.env`
   - `ops/env/quant-micro-rangebreak.env`
 
+### strategy_entry participation alloc（2026-03-10）
+- `execution/strategy_entry.py` の `participation_alloc` は
+  `config/participation_alloc.json` を read-only で読み、
+  overused lane の trim と underused lane の soft participation 回復を扱う。
+- units boost は常時許可しない。
+  - `action=boost_participation` が明示されている場合だけ、
+    `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX` と
+    artifact `allocation_policy.max_units_boost` の両方で clamp した
+    modest boost を許可する。
+  - `trim_units` / `hold` / stale payload / missing payload は
+    従来どおり trim-only もしくは no-op を維持する。
+- probability boost も artifact `max_probability_boost` と
+  `STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX` の両方で clamp し、
+  共通レイヤが無制限に strategy intent を拡大しないようにする。
+- 監査は `entry_thesis["participation_alloc"]` に残し、
+  `reason` は `boost_participation / overused_trim / rebalance / underused_boost`
+  を使う。
+- side に依らず `abs(units)` 基準で監査 reason を決める。
+  `sell` 側でも boost が trim と誤記録されないことを不変条件とする。
+
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に
   `ORDER_DB_LOG_RETRY_*` の短時間 backoff 再試行を行う。

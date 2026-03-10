@@ -14976,3 +14976,34 @@
   - ローカル算出:
     - `RangeFader`: `reduce 0.95`
     - `scalp_extrema_reversal_live`: `reduce 0.80`
+
+### 2026-03-10 participation alloc の explicit boost を strategy_entry で復旧
+- 対象:
+  - `execution/strategy_entry.py`
+  - `workers/common/participation_alloc.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `scripts/participation_allocator.py` は `boost_participation` 時に
+    `lot_multiplier > 1.0` を生成できる設計だった。
+  - しかし `execution/strategy_entry.py` の `_apply_participation_alloc()` は
+    `lot_multiplier` を `<=1.0` に clamp しており、
+    underused winner の units boost path が execution 側で死んでいた。
+
+- 変更:
+  - `boost_participation` の explicit action だけは
+    `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX` と
+    artifact `max_units_boost` 上限の範囲で modest boost を許可。
+  - trim / hold / stale / missing は従来どおり trim-only or no-op を維持。
+  - artifact loader から `max_units_boost` / `max_probability_boost` など
+    policy metadata を返すよう更新。
+  - `sell` 側でも監査 reason が逆転しないよう、
+    `abs(units)` 基準で `boost_participation` と `overused_trim` を記録。
+
+- 検証:
+  - `pytest -q tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `6 passed`
+  - `python3 -m compileall execution/strategy_entry.py workers/common/participation_alloc.py`
+    -> 成功

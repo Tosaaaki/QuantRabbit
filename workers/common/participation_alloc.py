@@ -149,6 +149,11 @@ def load_strategy_profile(
         "share_gap": 0.0,
         "quality_score": 0.0,
         "hard_block_rate": 0.0,
+        "protect_frequency": False,
+        "min_attempts": 0,
+        "max_units_cut": 0.0,
+        "max_units_boost": 0.0,
+        "max_probability_boost": 0.0,
         **_payload_meta(payload or {}),
     }
     if not payload:
@@ -156,6 +161,8 @@ def load_strategy_profile(
     strategies = payload.get("strategies")
     if not isinstance(strategies, dict):
         return base
+    allocation_policy = payload.get("allocation_policy")
+    policy = allocation_policy if isinstance(allocation_policy, dict) else {}
 
     pocket_l = str(pocket or "").strip().lower()
     lower_key_map: Dict[str, str] = {}
@@ -211,6 +218,20 @@ def load_strategy_profile(
             "share_gap": _safe_float(item.get("share_gap"), 0.0),
             "quality_score": _safe_float(item.get("quality_score"), 0.0),
             "hard_block_rate": _safe_float(item.get("hard_block_rate"), 0.0),
+            "protect_frequency": bool(policy.get("protect_frequency")),
+            "min_attempts": _safe_int(policy.get("min_attempts"), 0),
+            "max_units_cut": _safe_float(
+                item.get("max_units_cut"),
+                _safe_float(policy.get("max_units_cut"), 0.0),
+            ),
+            "max_units_boost": _safe_float(
+                item.get("max_units_boost"),
+                _safe_float(policy.get("max_units_boost"), 0.0),
+            ),
+            "max_probability_boost": _safe_float(
+                item.get("max_probability_boost"),
+                _safe_float(policy.get("max_probability_boost"), 0.0),
+            ),
             **_payload_meta(payload),
         }
     return base

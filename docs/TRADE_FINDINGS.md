@@ -11959,3 +11959,47 @@ Status:
     `perf_scale('RangeFader','scalp') -> reduce 0.95`,
     `perf_scale('scalp_extrema_reversal_live','scalp_fast') -> reduce 0.8`
     を確認。
+
+## 2026-03-10 20:05 JST / strategy_entry participation alloc の boost path 復旧（local-v2）
+- 目的:
+  - 「全部動的にして、市況でちゃんとトレードできるようにする」方針に合わせ、
+    共通レイヤが underused winner の participation 回復を潰していないかを local-v2 実測で確認する。
+- 市況確認:
+  - `logs/orderbook_snapshot.json` 直近値は `bid=157.830 / ask=157.838 / spread=0.8p`、
+    provider `oanda-stream`, latency `202.5ms`。
+  - `logs/factor_cache.json` は `ATR(M1)=2.81p / ATR(M5)=6.83p / ATR(H1)=22.77p`。
+  - `logs/metrics.db` 直近2h平均は `data_lag_ms=546.26`, `decision_latency_ms=16.5`。
+  - `bash scripts/collect_local_health.sh` は `health_snapshot.json updated=yes` を返し、
+    OANDA pricing/account snapshot も直近更新だったため通常帯として作業継続。
+- 実測:
+  - 直近6h `orders.db` は `scalp perf_block=1580 / entry_probability_reject=689 / filled=11`。
+  - `logs/entry_path_summary_latest.json` では
+    `RangeFader attempts=1710 fills=46 share_gap=0.696389 hard_block_rate=1.9228` と過剰試行が継続。
+  - 一方で `WickReversalBlend 4/4`, `PrecisionLowVol 6/6`, `MomentumBurst 22/22` のように
+    filled quality が高い lane もあり、participation を戻す余地があった。
+  - しかし `execution/strategy_entry.py` の `_apply_participation_alloc()` は
+    `lot_multiplier` を常に `<=1.0` に clamp しており、
+    `scripts/participation_allocator.py` が将来 `boost_participation` を出しても
+    units boost は execution 側で無効化される状態だった。
+- 変更:
+  - `execution/strategy_entry.py`
+    - `participation_alloc.action == boost_participation` のときだけ
+      modest な units boost を許可。
+    - 上限は `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX` と
+      artifact `allocation_policy.max_units_boost` の両方で clamp。
+    - trim lane / stale or missing payload / non-explicit action は従来どおり trim-only。
+    - `sell` 側でも reason が逆転しないよう、`abs(units)` 基準で
+      `boost_participation / overused_trim` を監査記録。
+  - `workers/common/participation_alloc.py`
+    - `allocation_policy.max_units_boost` / `max_probability_boost` など
+      artifact の policy 上限を loader から返すよう更新。
+- 意図:
+  - 新しい global gate は足さず、既存 `strategy_entry` の soft participation layer を
+    artifact 設計どおりに動かす。
+  - overused loser の trim は維持しつつ、
+    underused winner の modest scale-up だけを explicit signal 時に解放する。
+- 検証:
+  - `pytest -q tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `6 passed`
+  - `python3 -m compileall execution/strategy_entry.py workers/common/participation_alloc.py`
+    -> 成功

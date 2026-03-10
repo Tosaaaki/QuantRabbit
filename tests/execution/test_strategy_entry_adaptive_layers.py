@@ -6,6 +6,7 @@ import execution.strategy_entry as strategy_entry
 def test_apply_participation_alloc_trims_and_boosts_probability(monkeypatch) -> None:
     monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
     monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -39,6 +40,96 @@ def test_apply_participation_alloc_trims_and_boosts_probability(monkeypatch) -> 
     assert prob is not None and prob > 0.60
     assert isinstance(payload, dict)
     assert thesis["participation_alloc"]["reason"] == "rebalance"
+
+
+def test_apply_participation_alloc_boosts_units_for_explicit_boost_signal(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "strategy_key": "MomentumBurst",
+            "action": "boost_participation",
+            "units_multiplier": 1.18,
+            "lot_multiplier": 1.18,
+            "max_units_boost": 0.12,
+            "probability_boost": 0.05,
+            "max_probability_boost": 0.05,
+            "preflights": 42,
+            "filled": 21,
+            "fill_rate": 0.5,
+            "hard_block_rate": 0.0,
+            "quality_score": 0.92,
+            "current_share": 0.08,
+            "target_share": 0.22,
+        },
+        raising=False,
+    )
+
+    thesis: dict = {}
+    units, prob, payload = strategy_entry._apply_participation_alloc(
+        strategy_tag="MomentumBurst",
+        pocket="micro",
+        units=-100,
+        min_units=10,
+        entry_probability=0.60,
+        entry_thesis=thesis,
+    )
+
+    assert units == -112
+    assert prob == 0.62
+    assert isinstance(payload, dict)
+    assert payload["reason"] == "boost_participation"
+    assert payload["lot_multiplier"] == 1.12
+    assert payload["applied_units"] == 112
+    assert thesis["participation_alloc"]["action"] == "boost_participation"
+
+
+def test_apply_participation_alloc_does_not_boost_units_without_explicit_signal(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "strategy_key": "MomentumBurst",
+            "action": "hold",
+            "units_multiplier": 1.18,
+            "lot_multiplier": 1.18,
+            "max_units_boost": 0.12,
+            "probability_boost": 0.05,
+            "max_probability_boost": 0.05,
+            "preflights": 42,
+            "filled": 21,
+            "fill_rate": 0.5,
+            "hard_block_rate": 0.0,
+            "quality_score": 0.92,
+            "current_share": 0.08,
+            "target_share": 0.22,
+        },
+        raising=False,
+    )
+
+    thesis: dict = {}
+    units, prob, payload = strategy_entry._apply_participation_alloc(
+        strategy_tag="MomentumBurst",
+        pocket="micro",
+        units=100,
+        min_units=10,
+        entry_probability=0.60,
+        entry_thesis=thesis,
+    )
+
+    assert units == 100
+    assert prob == 0.62
+    assert isinstance(payload, dict)
+    assert payload["reason"] == "underused_boost"
+    assert thesis["participation_alloc"]["lot_multiplier"] == 1.0
 
 
 def test_inject_market_context_records_slow_market_snapshot(monkeypatch) -> None:
