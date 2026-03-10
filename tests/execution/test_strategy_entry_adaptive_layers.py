@@ -58,6 +58,7 @@ def test_apply_participation_alloc_trims_units_and_lowers_probability_for_loser_
             "units_multiplier": 0.82,
             "lot_multiplier": 0.82,
             "probability_offset": -0.04,
+            "max_probability_boost": 0.03,
             "preflights": 144,
             "filled": 19,
             "fill_rate": 0.1319,
@@ -80,12 +81,12 @@ def test_apply_participation_alloc_trims_units_and_lowers_probability_for_loser_
     )
 
     assert units == 82
-    assert prob == 0.56
+    assert prob == 0.57
     assert isinstance(payload, dict)
     assert payload["reason"] == "overused_trim"
     assert payload["entry_probability_before"] == 0.6
-    assert payload["entry_probability_after"] == 0.56
-    assert payload["probability_offset"] == -0.04
+    assert payload["entry_probability_after"] == 0.57
+    assert payload["probability_offset"] == -0.03
     assert thesis["participation_alloc"]["action"] == "trim_units"
 
 

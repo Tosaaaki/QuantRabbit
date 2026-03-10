@@ -2719,17 +2719,22 @@ def _apply_participation_alloc(
 
     normalized_probability = _entry_probability_value(entry_probability)
     raw_prob_offset = float(profile.get("probability_offset", 0.0) or 0.0)
+    profile_prob_cap = max(
+        0.0,
+        min(0.25, float(profile.get("max_probability_boost", 0.0) or 0.0)),
+    )
     prob_offset = 0.0
     if raw_prob_offset < 0.0:
         prob_offset = max(
-            -_STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
+            -min(_STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX, profile_prob_cap or _STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX),
             min(0.0, raw_prob_offset),
         )
     raw_boost = max(0.0, float(profile.get("probability_boost", 0.0) or 0.0))
-    profile_prob_cap = max(
-        0.0,
-        min(0.25, float(profile.get("max_probability_boost", raw_boost) or raw_boost)),
-    )
+    if profile_prob_cap <= 0.0:
+        profile_prob_cap = max(
+            0.0,
+            min(0.25, float(profile.get("max_probability_boost", raw_boost) or raw_boost)),
+        )
     prob_boost = min(_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, profile_prob_cap, raw_boost)
     next_probability = normalized_probability
     if normalized_probability is not None:

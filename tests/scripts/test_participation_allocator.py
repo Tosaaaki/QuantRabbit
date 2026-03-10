@@ -101,7 +101,7 @@ def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_los
     assert loser["action"] == "trim_units"
     assert loser["lot_multiplier"] < 1.0
     assert loser["probability_offset"] < 0.0
-    assert loser["probability_multiplier"] <= 1.0
+    assert loser["probability_multiplier"] == 1.0
 
 
 def test_build_participation_alloc_boosts_profitable_small_sample_winner() -> None:

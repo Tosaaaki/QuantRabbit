@@ -247,7 +247,7 @@ def build_participation_alloc(
             "realized_jpy": round(realized_jpy, 3),
             "units_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
             "lot_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
-            "probability_multiplier": round(_clamp(probability_multiplier + probability_offset, 0.75, 1.25), 4),
+            "probability_multiplier": round(_clamp(probability_multiplier, 0.75, 1.25), 4),
             "probability_offset": round(_clamp(probability_offset, -max_prob_boost, max_prob_boost), 4),
             "probability_boost": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
             "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.18), 4),
