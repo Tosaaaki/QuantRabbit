@@ -150,6 +150,28 @@ def test_norm_tag_resolves_strategy_aliases() -> None:
     assert worker._norm_tag("microlevelreactor") == "MicroLevelReactor"
 
 
+def test_squad_recommendation_keeps_metadata_for_neutral_strategy() -> None:
+    stats = worker.StrategyStats(
+        tag="MicroLevelReactor",
+        trades=12,
+        wins=6,
+        losses=6,
+        sum_pips=0.6,
+        avg_pips=0.05,
+        avg_abs_pips=0.8,
+        gross_win=4.8,
+        gross_loss=4.2,
+        avg_hold_sec=120.0,
+        last_closed="2026-03-10 00:00:00",
+    )
+
+    advice = worker._squad_recommendation("MicroLevelReactor", stats, 12, strategy_params={"FOO": "bar"})
+
+    assert advice["strategy_params"]["analysis_squad"] == "micro"
+    assert advice["strategy_params"]["configured_params"]["FOO"] == "bar"
+    assert "entry_probability_multiplier" not in advice
+
+
 def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> None:
     stats_by_tag = {
         "MicroTrendRetest-long": worker.StrategyStats(

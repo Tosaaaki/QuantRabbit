@@ -932,8 +932,6 @@ def _squad_recommendation(
     if abs(tp_multiplier - 1.0) >= 0.03:
         out["tp_distance_multiplier"] = round(tp_multiplier, 4)
 
-    if len(out) <= 1:
-        return {}
     return out
 
 

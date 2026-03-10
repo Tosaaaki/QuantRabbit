@@ -67,8 +67,12 @@
     - `trade_counterfactual_latest.json` の `reentry_overrides / side_actions` から
       `sl_distance_multiplier / tp_distance_multiplier` も導出し、
       `strategy_entry` 経由で all-strategy の TP/SL オーバーレイへ反映するようにした。
+  - `analysis/strategy_feedback_worker.py`
+    - `min_trades` を超えた active strategy は、
+      tuning knob が閾値未満でも metadata-only payload を残し、
+      `strategy_feedback_coverage_gap` で health が赤化しないようにした。
 - Verification:
-  - `pytest -q tests/scripts/test_participation_allocator.py tests/analysis/test_strategy_feedback.py tests/workers/test_scalp_rangefader_worker.py tests/workers/test_micro_multistrat_trend_flip.py` → `40 passed`
+  - `pytest -q tests/scripts/test_participation_allocator.py tests/analysis/test_strategy_feedback.py tests/analysis/test_strategy_feedback_worker.py tests/workers/test_scalp_rangefader_worker.py tests/workers/test_micro_multistrat_trend_flip.py` → `46 passed`
   - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 24 --min-attempts 20`
   - `config/participation_alloc.json` で `PrecisionLowVol` / `session_open_breakout` の
     `boost_participation` を確認。

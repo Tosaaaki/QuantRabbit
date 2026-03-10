@@ -36,6 +36,10 @@
     - `trade_counterfactual_latest.json` の `reentry_overrides / side_actions` から
       `sl_distance_multiplier / tp_distance_multiplier` を生成し、
       live advice の `units/probability` と同じ経路で `strategy_entry` へ渡す。
+  - `analysis/strategy_feedback_worker.py`
+    - active かつ `min_trades` を満たす strategy は
+      tuning knob が no-op でも metadata-only payload を残し、
+      `strategy_feedback_coverage_gap` を起こさないようにした。
 - 意図:
   - shared layer は「勝っているのに回数が足りない」lane を modest に回復させ、
     loser lane の trim は維持する。
