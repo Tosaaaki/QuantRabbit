@@ -14619,3 +14619,38 @@
     同 worker の losing short flow を shared 層で無理に止めない。
   - base tag `scalp_extrema_reversal_live` を維持し、
     EXIT と open-position scope を壊さず participation だけを増やす。
+
+### 2026-03-10 local-v2 `MicroLevelReactor` bounce-lower countertrend probe guard
+- 対象:
+  - `strategies/micro/level_reactor.py`
+  - `tests/strategies/test_level_reactor.py`
+  - `ops/env/quant-micro-levelreactor.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/OPS_CURRENT.md`
+
+- 背景:
+  - `2026-03-10 14:56-14:57 JST` の live では
+    `MicroLevelReactor` が直近90分 `6 trades / -13.056 JPY / win_rate 0%`
+    で active loser の中心だった。
+  - 6 連敗は同一 cluster で、
+    `pattern_tag=c:maru_up|w:none|tr:dn_strong|rsi:os|vol:tight|atr:ultra_low|d:long`
+    に集中していた。
+
+- 変更:
+  - `bounce-lower` long に
+    `local ma10-ma20 <= -0.6 pips`
+    のときだけ発火する countertrend probe guard を追加した。
+  - この文脈では
+    `body >= 0.2 pips`,
+    `lower wick >= 1.0 pips`,
+    `lower wick > upper wick`
+    を必須にし、
+    `下ヒゲなしの陽線 probe` を反発扱いしない。
+  - local trend が down-strong でないときは、
+    既存の `body-only reclaim` を維持する。
+
+- 意図:
+  - `MicroLevelReactor` の broad participation は残しつつ、
+    `dn_strong + no-wick` の loser cluster だけを strategy-local に除去する。
+  - shared gate / order_manager / exit worker 契約は非変更。

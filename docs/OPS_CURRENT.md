@@ -1005,6 +1005,28 @@ quant-manual-swing-exit.service
   - 土曜クローズ帯のため live restart は実施しない。
   - 週明けは `trade_min` restart 後、1-3h の `orders/trades` で pocket 協調の効きを確認する。
 
+## 2026-03-10 14:56 JST / 2026-03-10 05:56 UTC - `MicroLevelReactor` bounce-lower countertrend probe guard
+
+- 背景:
+  - local-v2 live の直近90分で `MicroLevelReactor` が
+    `6 trades / -13.056 JPY / win_rate 0%`
+    と active loser の本体だった。
+  - 負けは `pattern_tag=c:maru_up|w:none|tr:dn_strong|...`
+    の `no-wick` long cluster に集中していた。
+
+- 現行運用値:
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS=0.6`
+    - `MLR_BOUNCE_COUNTERTREND_MIN_BODY_PIPS=0.2`
+    - `MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS=1.0`
+
+- 運用意図:
+  - local `ma10-ma20` が `down-strong` のときだけ
+    `bounce-lower` long に実反発品質を要求し、
+    `下ヒゲなしの陽線 probe` を拾わない。
+  - local trend が down-strong でないレンジ側の bounce は残し、
+    broad participation は落とさない。
+
 ## 2026-03-06 15:35 UTC / 2026-03-07 00:35 JST - `MicroLevelReactor` の forecast / probability 縮小を緩和して lot と頻度を戻す
 
 - 背景:

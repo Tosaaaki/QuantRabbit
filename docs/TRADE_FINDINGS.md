@@ -11494,3 +11494,52 @@ Status:
     `M5 support 付き shallow long` だけを strategy-local に増やす。
   - `scalp_extrema_reversal_live` の既存 tag / exit 契約を維持し、
     反応速度だけを上げる。
+
+### 2026-03-10 local-v2 `MicroLevelReactor` bounce-lower の no-wick countertrend probe を遮断
+
+- 市況:
+  - `2026-03-10 14:56-14:57 JST` の USD/JPY は
+    `157.664/157.672`, spread `0.8p`,
+    直近レンジが `60/120/300/900 ticks = 1.6/2.1/2.5/5.6 pips`。
+  - `M1 close 157.667 < ema20 157.684`,
+    `M5 close 157.685 < ema20 157.729`,
+    `H1 close 157.778 < ema20 157.976` で、
+    短期は still soft-down だった。
+  - `health_snapshot.json` は fresh、`git_rev=98295a99`、
+    `data_lag_ms ~= 685` で local-v2/OANDA 応答は通常帯だった。
+
+- 実測:
+  - 直近90分の closed trade は
+    `MicroLevelReactor 6 trades / -13.056 JPY / -11.9 pips / win_rate 0%`
+    で最大の active loser だった。
+  - 同 cluster は `2026-03-10 04:17 UTC` に 6 連続 long fill され、
+    すべて `entry_probability=0.4901`, `confidence=76`,
+    `pattern_tag=c:maru_up|w:none|tr:dn_strong|rsi:os|vol:tight|atr:ultra_low|d:long`
+    だった。
+  - つまり負け筋は `bounce-lower` 自体ではなく、
+    `local MA gap が down-strong` なのに
+    `下ヒゲなしの陽線 probe` を反発と誤認した部分だった。
+
+- 対応:
+  - `strategies/micro/level_reactor.py`
+    - `bounce-lower` で `ma10-ma20 <= -0.6 pips` の countertrend probe を検知したときだけ、
+      `body >= 0.2 pips`,
+      `lower wick >= 1.0 pips`,
+      `lower wick > upper wick`
+      を追加要件にした。
+    - local MA gap が down-strong でないときは、
+      従来どおり `body-only reclaim` も通す。
+  - `ops/env/quant-micro-levelreactor.env`
+    - `MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS=0.6`
+    - `MLR_BOUNCE_COUNTERTREND_MIN_BODY_PIPS=0.2`
+    - `MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS=1.0`
+      を dedicated env に明示した。
+
+- 意図:
+  - broad に `MicroLevelReactor` を止めず、
+    `dn_strong + no-wick` の loser cluster だけを strategy-local に削る。
+  - shared preflight / sizing / exit worker は変更しない。
+
+- 検証:
+  - `python3 -m pytest -q tests/strategies/test_level_reactor.py` -> `6 passed`
+  - `python3 -m py_compile strategies/micro/level_reactor.py tests/strategies/test_level_reactor.py`

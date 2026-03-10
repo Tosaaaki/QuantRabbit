@@ -31,6 +31,27 @@ class MicroLevelReactor:
     LONG_BOUNCE_RSI_MAX = float(__import__("os").getenv("MLR_LONG_BOUNCE_RSI_MAX", "52.0"))
     BOUNCE_BODY_BEAR_MAX_PIPS = float(__import__("os").getenv("MLR_BOUNCE_BODY_BEAR_MAX_PIPS", "1.2"))
     BOUNCE_MIN_LOWER_WICK_PIPS = float(__import__("os").getenv("MLR_BOUNCE_MIN_LOWER_WICK_PIPS", "0.8"))
+    BOUNCE_COUNTERTREND_MIN_GAP_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS", "0.6")
+    )
+    BOUNCE_COUNTERTREND_MIN_BODY_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_COUNTERTREND_MIN_BODY_PIPS", "0.2")
+    )
+    BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS", "1.0")
+    )
+    BOUNCE_CONTINUATION_ATR_MAX = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_ATR_MAX", "1.8")
+    )
+    BOUNCE_CONTINUATION_ADX_MIN = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_ADX_MIN", "22.0")
+    )
+    BOUNCE_CONTINUATION_DI_GAP_MIN = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_DI_GAP_MIN", "18.0")
+    )
+    BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS", "0.4")
+    )
 
     @staticmethod
     def _as_float(val: Optional[float], default: float = 0.0) -> float:
@@ -48,6 +69,39 @@ class MicroLevelReactor:
         upper_wick_pips = max(0.0, (high - max(price, open_price)) / PIP)
         lower_wick_pips = max(0.0, (min(price, open_price) - low) / PIP)
         return body_pips, upper_wick_pips, lower_wick_pips
+
+    @classmethod
+    def _ma_gap_pips(cls, fac: Dict) -> Optional[float]:
+        ma_fast = fac.get("ma10") if fac.get("ma10") is not None else fac.get("ema10")
+        ma_slow = fac.get("ma20") if fac.get("ma20") is not None else fac.get("ema20")
+        try:
+            if ma_fast is None or ma_slow is None:
+                return None
+            return (float(ma_fast) - float(ma_slow)) / PIP
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _bounce_continuation_probe(
+        cls,
+        fac: Dict,
+        *,
+        body_pips: float,
+        lower_wick_pips: float,
+        atr_pips: float,
+    ) -> bool:
+        if body_pips < cls.BOUNCE_COUNTERTREND_MIN_BODY_PIPS:
+            return False
+        if lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS:
+            return False
+        if atr_pips > cls.BOUNCE_CONTINUATION_ATR_MAX:
+            return False
+        adx = cls._as_float(fac.get("adx"), 0.0)
+        if adx < cls.BOUNCE_CONTINUATION_ADX_MIN:
+            return False
+        plus_di = cls._as_float(fac.get("plus_di"), 0.0)
+        minus_di = cls._as_float(fac.get("minus_di"), 0.0)
+        return (minus_di - plus_di) >= cls.BOUNCE_CONTINUATION_DI_GAP_MIN
 
     @classmethod
     def _mk_decision(
@@ -90,6 +144,7 @@ class MicroLevelReactor:
 
         rsi = cls._as_float(fac.get("rsi"), 50.0)
         body_pips, upper_wick_pips, lower_wick_pips = cls._candle_bias(fac, price)
+        ma_gap_pips = cls._ma_gap_pips(fac)
         # Dynamic levels must be anchored to a slower-moving reference (not the current price),
         # otherwise they would never be crossed.
         anchor = cls._as_float(
@@ -137,6 +192,28 @@ class MicroLevelReactor:
                 and (body_pips >= 0.0 or lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS)
                 and lower_wick_pips + 0.1 >= upper_wick_pips
             )
+            countertrend_probe = (
+                ma_gap_pips is not None and ma_gap_pips <= -cls.BOUNCE_COUNTERTREND_MIN_GAP_PIPS
+            )
+            continuation_probe = cls._bounce_continuation_probe(
+                fac,
+                body_pips=body_pips,
+                lower_wick_pips=lower_wick_pips,
+                atr_pips=atr_pips,
+            )
+            if countertrend_probe:
+                bullish_reject = (
+                    bullish_reject
+                    and body_pips >= cls.BOUNCE_COUNTERTREND_MIN_BODY_PIPS
+                    and lower_wick_pips >= cls.BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS
+                    and lower_wick_pips > upper_wick_pips
+                )
+            if continuation_probe:
+                bullish_reject = (
+                    bullish_reject
+                    and lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS
+                    and lower_wick_pips > upper_wick_pips
+                )
             if not bullish_reject:
                 return None
             sl = max(7.0, atr_pips * 1.7)

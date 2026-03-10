@@ -54,3 +54,64 @@ def test_bounce_long_rejects_when_candle_is_still_bearish() -> None:
     )
 
     assert signal is None
+
+
+def test_bounce_long_rejects_countertrend_probe_without_lower_wick() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.93,
+            "open": 157.91,
+            "high": 157.93,
+            "low": 157.91,
+            "ma10": 157.97,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 2.2,
+            "rsi": 45.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is None
+
+
+def test_bounce_long_allows_countertrend_reclaim_with_clear_lower_wick() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.935,
+            "open": 157.918,
+            "high": 157.939,
+            "low": 157.902,
+            "ma10": 157.97,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 2.2,
+            "rsi": 45.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "MicroLevelReactor-bounce-lower"
+
+
+def test_bounce_long_keeps_body_only_reclaim_when_local_trend_is_not_down() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.93,
+            "open": 157.91,
+            "high": 157.93,
+            "low": 157.91,
+            "ma10": 157.98,
+            "ma20": 157.979,
+            "ema20": 158.00,
+            "atr_pips": 2.2,
+            "rsi": 45.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "MicroLevelReactor-bounce-lower"
