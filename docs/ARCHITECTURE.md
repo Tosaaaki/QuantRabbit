@@ -409,5 +409,10 @@ class OrderIntent(BaseModel):
   - `macro_news_context`: caution/bias のみ。通常時の hard block には使わない。
   - `participation_alloc`: strategy 別の試行配分と size/probability/cadence の微調整。
   - `auto_canary`: loser cluster と replay/counterfactual に基づく小さな canary override。
+- `config/dynamic_alloc.json`, `config/participation_alloc.json`,
+  `config/auto_canary_overrides.json` は
+  local feedback cycle が再生成する runtime artifact として扱う。
+  source-of-truth は Git 上の固定 JSON ではなく local-v2 の最新生成物と
+  `docs/TRADE_FINDINGS.md` / `docs/WORKER_REFACTOR_LOG.md` の監査記録に置く。
 - `scripts/publish_health_snapshot.py` は上記 artifact の freshness と欠落を
   `mechanism_integrity` として監査し、silent failure を防ぐ。

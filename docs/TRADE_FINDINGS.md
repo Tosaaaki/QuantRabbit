@@ -51,6 +51,83 @@
 - Status:
 ```
 
+## 2026-03-11 04:35 JST / local-v2: RangeFader は通常 spread 下でも `entry_probability_below_min_units` 優勢、current RCA を task 化
+
+- Change:
+  - runtime logic は追加変更せず、
+    current local-v2 の RangeFader reject profile を実測で再確認した。
+  - `docs/TASKS.md`, `docs/OPS_CURRENT.md`, `docs/WORKER_REFACTOR_LOG.md`,
+    `docs/ARCHITECTURE.md` へ
+    artifact 運用と next verification を同期する前提を整理した。
+- Why:
+  - 2026-03-11 02:29/02:48 JST の shared participation 改善後も、
+    「今の通常相場で RangeFader reject がどこまで減ったか」が
+    current diary と task board に残っていなかった。
+- Hypothesis:
+  - 現在の main blocker は market abnormal や margin ではなく、
+    `risk_mult_perf` と `order_probability_scale` を経た
+    `entry_probability_below_min_units` 優勢である。
+  - よって今やるべきなのは追加の共通緩和ではなく、
+    shared trim 後の fill/reject 比率を next live window で再検証すること。
+- Expected Good:
+  - current state を `OPS_CURRENT` / `TASKS` / change diary で一貫して追える。
+  - `RangeFader` の blockage を margin/API 障害と誤認せず、
+    participation/perf trim の follow-up に絞れる。
+- Expected Bad:
+  - current snapshot だけで conclusion を固定し過ぎると、
+    次の market regime 変化を取り逃がす可能性がある。
+  - shared trim を維持したまま live 監視だけに留めるため、
+    短期では reject 件数自体は大きく変わらない可能性がある。
+- Period:
+  - UTC `2026-03-10 19:25-19:35`
+  - JST `2026-03-11 04:25-04:35`
+- Fact:
+  - 市況は通常帯:
+    - `USD/JPY bid=158.044 / ask=158.052 / spread=0.8p`
+    - `M1 close=158.001 / ATR14=2.17p / regime=Mixed`
+    - `M5 ATR14=7.23p`
+    - `H1 ATR14=21.05p / regime=Mixed`
+  - account / OANDA:
+    - `margin_used=316.096`
+    - `free_margin_ratio=0.9911`
+    - `USD/JPY short_units=50`
+  - `RangeFader` 直近10分:
+    - `entry_probability_reject=128`
+    - `filled=3`
+    - `preflight_start=3`
+    - `probability_scaled=3`
+    - `submit_attempt=3`
+  - metrics:
+    - `risk_mult_perf=0.55`
+    - `order_probability_scale=0.3781`
+    - `data_lag_ms=780.5`
+    - `decision_latency_ms=14.3`
+- Failure Cause:
+  - current blockage は `margin` 系 reject ではなく、
+    `RangeFader-sell-fade` が performance / probability trim の後段で
+    `entry_probability_below_min_units` へ落ちていること。
+  - `shared trim` の改善は入っているが、
+    current live window では still `reject >> fill` の比率だった。
+- Improvement:
+  - 追加の global gate / time block / common relax は入れない。
+  - generated artifact の Git 方針を固定し、
+    current snapshot を `OPS_CURRENT` と `TASKS` に同期する。
+- Verification:
+  - `sqlite3 logs/orders.db "select status, count(*) ... client_order_id like '%rangefad%'"` で直近10分を集計
+  - `sqlite3 logs/metrics.db "select ts, metric, value ..."` で `risk_mult_perf` / `order_probability_scale` / latency を確認
+  - `jq` / `sed` で `tick_cache.json`, `factor_cache.json`,
+    `oanda_account_snapshot_live.json`, `oanda_open_positions_live_USD_JPY.json` を確認
+- Verdict:
+  - `pending`
+- Next Action:
+  - next live window で
+    `RangeFader-sell-fade` の `entry_probability_reject / filled / realized_jpy`
+    を再集計し、shared trim の追加見直しが必要か判定する。
+  - その際も共通 gate ではなく、
+    strategy-local quality か shared participation artifact のどちらで詰めるかを切り分ける。
+- Status:
+  - in_progress
+
 ## 2026-03-11 02:48 JST / local-v2: shared loser-side trim を二段化し、`RangeFader-neutral-fade` は units trim のみに留める
 
 - Change:

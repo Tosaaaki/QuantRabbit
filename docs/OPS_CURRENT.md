@@ -1,4 +1,45 @@
-# Ops Current (2026-02-11 JST)
+# Ops Current (2026-03-11 JST)
+
+## 0-23. 2026-03-11 JST RangeFader の current reject profile を再確認し、artifact/task 運用を同期
+- 背景（local-v2 実測, UTC 2026-03-10 19:25-19:35 / JST 2026-03-11 04:25-04:35）:
+  - `logs/tick_cache.json` は
+    - `USD/JPY bid=158.044 / ask=158.052 / spread=0.8p`
+    - 直近300 sample の spread `min=max=avg=0.8p`
+  - `logs/factor_cache.json` は
+    - `M1 close=158.001 / ATR=2.17p / regime=Mixed`
+    - `M5 ATR=7.23p`
+    - `H1 ATR=21.05p / regime=Mixed`
+    で、極端な異常レンジや流動性崩壊ではなかった。
+  - `logs/oanda_account_snapshot_live.json` / `logs/oanda_open_positions_live_USD_JPY.json` は
+    - `margin_used=316.096`
+    - `free_margin_ratio=0.9911`
+    - `USD/JPY short_units=50`
+    で、margin 起因の reject 優勢ではなかった。
+  - `logs/orders.db` の `RangeFader` 直近10分は
+    - `entry_probability_reject=128`
+    - `filled=3`
+    - `preflight_start=3`
+    - `probability_scaled=3`
+    - `submit_attempt=3`
+    で、late reject が依然優勢だった。
+  - `logs/metrics.db` は
+    - `risk_mult_perf=0.55`
+    - `order_probability_scale=0.3781`
+    - `data_lag_ms=780.5`
+    - `decision_latency_ms=14.3`
+    を示し、OANDA/API 応答品質そのものは通常帯だった。
+- 判断:
+  - current blockage の主因は market abnormal / margin 不足ではなく、
+    `RangeFader-sell-fade` の performance / probability trim が
+    `entry_probability_below_min_units` へ流れ込んでいること。
+  - したがって今回は runtime guard を追加で緩めず、
+    `TASKS` と `TRADE_FINDINGS` に current RCA を残し、
+    next live window で shared trim 後の fill/reject 比率を再監査する。
+- 追加運用メモ:
+  - `config/dynamic_alloc.json`, `config/participation_alloc.json`,
+    `config/auto_canary_overrides.json` は
+    local feedback cycle の generated artifact として扱い、
+    Git では source-of-truth にしない。
 
 ## 0-22. 2026-03-10 JST local-v2 に broad coverage 用 `trade_cover` profile を追加し、常駐 profile を切替
 - 背景（local-v2 実測, UTC 2026-03-10 01:55-02:00 / JST 2026-03-10 10:55-11:00）:

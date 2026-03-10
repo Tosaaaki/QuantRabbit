@@ -57,6 +57,11 @@ config/env.local.toml
 config/forecast_models/
 config/fast_scalp_models/
 
+# Generated local-v2 feedback artifacts
+config/dynamic_alloc.json
+config/participation_alloc.json
+config/auto_canary_overrides.json
+
 # Ad-hoc local artifacts
 pipeline.log
 tick_sample.json

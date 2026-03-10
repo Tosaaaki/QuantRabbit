@@ -34,6 +34,24 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260311-001
+  Title: local-v2 feedback artifact運用の固定とRangeFader reject RCA継続
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: .gitignore, docs/TASKS.md, docs/OPS_CURRENT.md, docs/TRADE_FINDINGS.md, docs/WORKER_REFACTOR_LOG.md, docs/ARCHITECTURE.md
+  Context: 2026-03-11 の local-v2 点検で `config/participation_alloc.json` / `config/auto_canary_overrides.json` が未追跡のまま生成され、`RangeFader-sell-fade` は通常 spread 下でも `entry_probability_below_min_units` が連続していた。
+  Acceptance:
+    - local feedback artifact の source-control 方針が repo で明文化される
+    - current RangeFader RCA と next action が `OPS_CURRENT` / `TRADE_FINDINGS` に残る
+    - follow-up が `docs/TASKS.md` から追跡できる
+  Plan:
+    - generated artifact の Git 方針を固定する
+    - current local-v2 数値を `OPS_CURRENT` と `TRADE_FINDINGS` に同期する
+    - next live window の RangeFader verification を台帳化する
+  Notes:
+    - 2026-03-11 04:25-04:35 JST 時点で `spread=0.8p`, `free_margin_ratio=0.9911`, `risk_mult_perf=0.55`, `order_probability_scale=0.3781`, `RangeFader` 直近10分 `entry_probability_reject=128 / filled=3`
+
 - [ ] ID: T-20260205-001
   Title: 損失拡大の抑止（perf_guard金額ベース化・scalp停止・リスク上限の是正）
   Status: in-progress

@@ -5,6 +5,40 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）local-v2 feedback artifact の Git 方針を固定し、RangeFader current RCA を task/ops へ同期
+
+- 対象:
+  - `.gitignore`
+  - `docs/TASKS.md`
+  - `docs/OPS_CURRENT.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/ARCHITECTURE.md`
+- 変更:
+  - `.gitignore`
+    - `config/dynamic_alloc.json`
+    - `config/participation_alloc.json`
+    - `config/auto_canary_overrides.json`
+    を generated local-v2 feedback artifact として ignore 対象へ追加した。
+  - docs:
+    - `docs/TASKS.md` に
+      feedback artifact 運用と RangeFader reject RCA follow-up の open task を追加した。
+    - `docs/OPS_CURRENT.md` に
+      2026-03-11 04:25-04:35 JST の current snapshot
+      （spread / ATR / free_margin_ratio / reject vs fill）を追加した。
+    - `docs/TRADE_FINDINGS.md` に
+      current RCA と next verification を change diary として追記した。
+    - `docs/ARCHITECTURE.md` に
+      slow-loop generated artifact は local runtime output であり
+      source-control の truth にしない旨を追記した。
+- 意図:
+  - `participation_alloc` / `auto_canary` / `dynamic_alloc` は
+    local feedback cycle が継続再生成する artifact であり、
+    未追跡ノイズや accidental staging を避けたい。
+  - 同時に `RangeFader` の current blockage が
+    market abnormal ではなく participation/perf trim 優勢であることを
+    task board と ops snapshot へ同期し、
+    next live verification の起点を明確にする。
+
 ### 2026-03-11（追記）shared loser-side trim を二段化し、mild loser は `trim_units` のみに留める
 
 - 対象:
