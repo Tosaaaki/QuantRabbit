@@ -27,6 +27,37 @@
   - 「何を変えたら良くなったか / 悪くなったか / まだ判定待ちか」を
     時系列で比較できる形に固定し、改善判断を感覚ではなく履歴で回せるようにする。
 
+### 2026-03-11（追記）boosted low-sample lane を shared feedback / health coverage へ接続し、`strategy_feedback_worker` crash を除去
+
+- 対象:
+  - `analysis/strategy_feedback_worker.py`
+  - `scripts/publish_health_snapshot.py`
+  - `scripts/participation_allocator.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `tests/scripts/test_publish_health_snapshot.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/OBSERVABILITY.md`
+- 変更:
+  - `strategy_feedback_worker`
+    - fresh `participation_alloc` の `boost_participation` lane を読み、
+      active + low-sample lane に `strategy_params.feedback_probe` を出力するようにした。
+    - `avg_win` / `avg_loss` に zero guard を追加し、
+      zero-win / zero-loss lane で loop が停止しないようにした。
+  - `publish_health_snapshot`
+    - `boosted_low_sample_strategies` を追加し、
+      active かつ boosted low-sample lane を
+      `STRATEGY_FEEDBACK_MIN_TRADES` 未満でも coverage 対象へ含めるようにした。
+  - `participation_allocator`
+    - `hard_block_rate` を
+      `hard_blocks / (attempts + hard_blocks)` の bounded 指標へ修正した。
+- 意図:
+  - profitable probe lane の participation boost が
+    shared feedback / health から見えない状態を解消する。
+  - quality 指標と feedback worker loop を、
+    low-sample / one-sided trade distribution に対しても壊れない current 実装へ揃える。
+
 ### 2026-03-10（追記）shared participation alloc は low-sample winner の cadence 回復まで担当し、counterfactual overlay は TP/SL も live へ返す
 
 - 対象:

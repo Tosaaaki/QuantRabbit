@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover - fallback to CLI upload
 
 from utils.secrets import get_secret
 from utils.gcs_uploader import upload_json_via_metadata
+from utils.strategy_tags import resolve_strategy_tag
 
 
 def _utcnow_iso() -> str:
@@ -377,11 +378,42 @@ def _merge_strategy_records(*sources: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _participation_feedback_boosts(payload: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    strategies = payload.get("strategies") if isinstance(payload, dict) else None
+    if not isinstance(strategies, dict):
+        return {}
+    boosted: dict[str, dict[str, Any]] = {}
+    for raw_key, item in strategies.items():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action") or "").strip().lower() != "boost_participation":
+            continue
+        attempts = _coerce_int(item.get("attempts") or item.get("preflights"), 0)
+        fills = _coerce_int(item.get("fills") or item.get("filled"), 0)
+        lot_multiplier = float(item.get("lot_multiplier") or item.get("units_multiplier") or 1.0)
+        probability_boost = float(item.get("probability_boost") or item.get("probability_offset") or 0.0)
+        cadence_floor = float(item.get("cadence_floor") or 1.0)
+        if attempts < 1 or fills < 1:
+            continue
+        if max(lot_multiplier, 1.0) <= 1.0 and max(probability_boost, 0.0) <= 0.0 and max(cadence_floor, 1.0) <= 1.0:
+            continue
+        strategy_key = resolve_strategy_tag(str(raw_key or "").strip()) or str(raw_key or "").strip()
+        if not strategy_key:
+            continue
+        boosted[strategy_key] = {
+            "attempts": attempts,
+            "fills": fills,
+        }
+    return boosted
+
+
 def _strategy_feedback_integrity(
     *,
     project_root: Path,
     logs_dir: Path,
     trades_db: Path,
+    participation_payload: Optional[dict[str, Any]] = None,
+    participation_fresh: bool = False,
 ) -> dict[str, Any]:
     max_age_sec = _coerce_int(os.getenv("HEALTH_STRATEGY_FEEDBACK_MAX_AGE_SEC"), 1800)
     info = _artifact_integrity(
@@ -405,6 +437,10 @@ def _strategy_feedback_integrity(
     min_trades = _coerce_int(env.get("STRATEGY_FEEDBACK_MIN_TRADES"), 12)
     info["lookback_days"] = lookback_days
     info["min_trades"] = min_trades
+    boosted_probe_strategies = (
+        _participation_feedback_boosts(participation_payload) if participation_fresh else {}
+    )
+    info["boosted_low_sample_strategies"] = sorted(boosted_probe_strategies.keys())
 
     try:
         from analysis import strategy_feedback_worker as feedback_worker
@@ -435,6 +471,9 @@ def _strategy_feedback_integrity(
             active_strategies.append(tag)
             stats = stats_by_tag.get(tag)
             if stats is None or int(getattr(stats, "trades", 0)) < min_trades:
+                if tag not in boosted_probe_strategies:
+                    continue
+            if stats is None and tag not in boosted_probe_strategies:
                 continue
             eligible_active.append(tag)
             if tag not in strategy_names:
@@ -553,6 +592,8 @@ def _build_mechanism_integrity(
         project_root=project_root,
         logs_dir=logs_dir,
         trades_db=trades_db,
+        participation_payload=participation_payload if participation_alloc.get("exists") else None,
+        participation_fresh=participation_alloc.get("fresh") is not False,
     )
 
     missing: list[str] = []

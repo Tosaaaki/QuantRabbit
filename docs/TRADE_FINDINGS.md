@@ -94,6 +94,86 @@
 - Status:
   - done
 
+## 2026-03-11 02:18 JST / local-v2: boosted low-sample lane の shared feedback coverage を復旧し、`strategy_feedback_worker` crash を除去
+
+- Change:
+  - `analysis/strategy_feedback_worker.py` が
+    active + `boost_participation` lane に `feedback_probe` metadata を出せるようにした。
+  - `scripts/publish_health_snapshot.py` は
+    fresh `participation_alloc` の boosted low-sample lane を
+    active 時のみ `strategy_feedback` coverage 対象へ含めるようにした。
+  - `scripts/participation_allocator.py` の `hard_block_rate` を
+    `hard_blocks / (attempts + hard_blocks)` へ修正した。
+  - 同 worker の zero-win / zero-loss lane での `ZeroDivisionError` を除去した。
+- Why:
+  - profitable probe lane を `boost_participation` しても、
+    shared feedback/health から見えず、worker 自体も一部 lane で落ち得た。
+- Hypothesis:
+  - boosted lane を active feedback coverage へ入れ、hard-block 指標を bounded に直せば、
+    shared participation と shared feedback の blind spot を減らせる。
+- Expected Good:
+  - active な boosted lane 欠落を `health_snapshot` が即検知できる。
+  - `strategy_feedback_worker` が zero-win / zero-loss lane で止まらない。
+  - `hard_block_rate` が 1.0 超で暴れず、quality score が安定する。
+- Expected Bad:
+  - low-sample lane を metadata-only で feedback bus に載せるため、
+    `strategy_feedback.json` の strategy 件数は増える。
+  - `boost_participation` lane の active 判定が過剰なら health が敏感になり過ぎる可能性がある。
+- Period:
+  - UTC `2026-03-10 16:45-17:18`
+  - JST `2026-03-11 01:45-02:18`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.638 / ask=157.646 / spread=0.8p`
+    - `ATR14(M1)=2.331p`, `ATR14(M5)=6.547p`, `ATR14(H1)=20.873p`
+    - `data_lag_ms=547.499`, `decision_latency_ms=16.894`
+  - 直近24h の entry path summary は
+    `preflight_start=2112`, `filled=404`, `entry_probability_reject=2242`, `perf_block=1672`。
+  - 変更前は `config/participation_alloc.json` に
+    `PrecisionLowVol`, `session_open_breakout`, `scalp_ping_5s_c_live`
+    の `boost_participation` が存在した一方、
+    `strategy_feedback.json` は 5 strategy しか持たなかった。
+  - さらに `python3 -m analysis.strategy_feedback_worker` は
+    zero-win lane の `avg_win` 計算で `ZeroDivisionError` を起こした。
+  - 変更後は targeted test
+    `tests/scripts/test_participation_allocator.py`,
+    `tests/analysis/test_strategy_feedback_worker.py`,
+    `tests/scripts/test_publish_health_snapshot.py`,
+    `tests/analysis/test_strategy_feedback.py`,
+    `tests/scripts/test_run_local_feedback_cycle.py`
+    で `26 passed`。
+  - 再生成後の `logs/strategy_feedback.json` は `11 strategies` を持ち、
+    `scalp_ping_5s_c_live` に `strategy_params.feedback_probe` が出力された。
+  - `logs/health_snapshot.json` の
+    `mechanism_integrity.ok=true`,
+    `strategy_feedback.boosted_low_sample_strategies=['MicroTrendRetest-long','PrecisionLowVol','scalp_ping_5s_c_live','scalp_ping_5s_d_live','session_open_breakout']`,
+    `eligible_missing_strategies=[]` を確認した。
+- Failure Cause:
+  - shared participation と shared feedback の接続が
+    `min_trades` 閾値で切れており、
+    boosted lane が active でも coverage から落ちていた。
+  - `hard_block_rate` は attempts を超える reject count で 1.0 超へ壊れ得た。
+  - `strategy_feedback_worker` は zero-win / zero-loss lane を前提にしていなかった。
+- Improvement:
+  - boosted low-sample lane を metadata-only probe として feedback bus へ露出した。
+  - health は active boosted lane のみ追加 coverage 対象にした。
+  - `hard_block_rate` を bounded 化し、
+    quality score が極端に歪まないようにした。
+  - stats helper に zero guard を追加した。
+- Verification:
+  - `pytest -q tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_publish_health_snapshot.py tests/scripts/test_participation_allocator.py tests/analysis/test_strategy_feedback.py tests/scripts/test_run_local_feedback_cycle.py`
+  - `python3 -m analysis.strategy_feedback_worker`
+  - `python3 scripts/publish_health_snapshot.py`
+- Verdict:
+  - `good`
+- Next Action:
+  - `PrecisionLowVol` / `session_open_breakout` が active に戻った窓で
+    `feedback_probe` が自動出力されることを next monitoring で確認する。
+  - `RangeFader` の reject 過多は別件なので、
+    strategy-local quality と shared trim のどちらで処理するかを分離して次回詰める。
+- Status:
+  - done
+
 ## 2026-03-10 23:28 JST / local-v2: shared participation alloc を「低試行 winner の cadence 回復」まで広げ、counterfactual overlay で全戦略の TP/SL を動的化
 
 - Period:

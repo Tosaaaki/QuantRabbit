@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -170,6 +171,87 @@ def test_squad_recommendation_keeps_metadata_for_neutral_strategy() -> None:
     assert advice["strategy_params"]["analysis_squad"] == "micro"
     assert advice["strategy_params"]["configured_params"]["FOO"] == "bar"
     assert "entry_probability_multiplier" not in advice
+
+
+def test_squad_recommendation_handles_zero_win_counts() -> None:
+    stats = worker.StrategyStats(
+        tag="scalp_extrema_reversal_live",
+        trades=12,
+        wins=0,
+        losses=12,
+        sum_pips=-4.8,
+        avg_pips=-0.4,
+        avg_abs_pips=0.8,
+        gross_win=0.0,
+        gross_loss=4.8,
+        avg_hold_sec=45.0,
+        last_closed="2026-03-10 00:00:00",
+    )
+
+    advice = worker._squad_recommendation("scalp_extrema_reversal_live", stats, 12)
+
+    assert advice["strategy_params"]["analysis_squad"] == "scalp"
+    assert advice["entry_probability_multiplier"] < 1.0
+
+
+def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path
+    log_dir = repo / "logs"
+    trades_db = log_dir / "trades.db"
+    participation_path = repo / "config" / "participation_alloc.json"
+
+    _seed_trades(trades_db, strategy_tag="PrecisionLowVol", count=4)
+    participation_path.parent.mkdir(parents=True, exist_ok=True)
+    participation_path.write_text(
+        json.dumps(
+            {
+                "as_of": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                "strategies": {
+                    "PrecisionLowVol": {
+                        "action": "boost_participation",
+                        "lot_multiplier": 1.03,
+                        "probability_boost": 0.01,
+                        "cadence_floor": 1.07,
+                        "attempts": 4,
+                        "fills": 4,
+                    }
+                },
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(
+        worker,
+        "_discover_from_control",
+        lambda: {
+            "PrecisionLowVol": worker.StrategyRecord(
+                canonical_tag="PrecisionLowVol",
+                active=True,
+                entry_active=True,
+                exit_active=False,
+            )
+        },
+    )
+    monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PARTICIPATION_PATH", str(participation_path))
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    advice = payload["strategies"]["PrecisionLowVol"]
+    assert "entry_probability_multiplier" not in advice
+    assert advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
+    assert advice["strategy_params"]["feedback_probe"]["mode"] == "low_sample_safe"
+    assert advice["strategy_params"]["feedback_probe"]["lot_multiplier"] == 1.03
 
 
 def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> None:

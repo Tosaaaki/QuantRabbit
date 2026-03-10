@@ -140,12 +140,19 @@ def build_participation_alloc(
         action = "hold"
         terminal_status_counts = record.get("terminal_status_counts") if isinstance(record.get("terminal_status_counts"), dict) else {}
         hard_block_rate = 0.0
+        probability_rejects = 0
+        strategy_control_blocks = 0
         if terminal_status_counts:
             hard_blocks = 0
             for status_name, count in terminal_status_counts.items():
-                if str(status_name or "").strip() in {"perf_block", "entry_probability_reject", "rejected"}:
+                status_key = str(status_name or "").strip()
+                if status_key == "entry_probability_reject":
+                    probability_rejects += int(count or 0)
+                elif status_key == "strategy_control_entry_disabled":
+                    strategy_control_blocks += int(count or 0)
+                if status_key in {"perf_block", "entry_probability_reject", "rejected"}:
                     hard_blocks += int(count or 0)
-            hard_block_rate = hard_blocks / max(1, attempts)
+            hard_block_rate = hard_blocks / max(1, attempts + hard_blocks)
 
         if attempts >= max(1, min_attempts):
             if share_gap >= 0.08 and filled_rate <= (median_fill_rate * 0.85) and realized_jpy <= 0.0:
@@ -190,6 +197,21 @@ def build_participation_alloc(
             units_multiplier = 1.0 + max_units_boost * (0.18 + 0.32 * boost_strength)
             probability_boost = max_prob_boost * (0.12 + 0.28 * boost_strength)
             cadence_floor = 1.0 + 0.06 + 0.08 * boost_strength
+            action = "boost_participation"
+        elif (
+            attempts >= 1
+            and fills >= 1
+            and realized_jpy > 0.0
+            and probability_rejects >= max(8, fills * 8)
+            and strategy_control_blocks <= probability_rejects
+            and fill_share >= attempt_share + 0.001
+        ):
+            reject_pressure = _clamp(probability_rejects / 64.0, 0.0, 1.0)
+            profit_confidence = _clamp(realized_jpy / 80.0, 0.0, 1.0)
+            boost_strength = max(0.25, 0.65 * reject_pressure + 0.35 * profit_confidence)
+            units_multiplier = 1.0 + max_units_boost * (0.04 + 0.08 * boost_strength)
+            probability_boost = max_prob_boost * (0.08 + 0.17 * boost_strength)
+            cadence_floor = 1.0 + 0.03 + 0.03 * boost_strength
             action = "boost_participation"
 
         quality_score = _clamp(

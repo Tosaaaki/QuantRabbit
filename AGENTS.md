@@ -100,6 +100,7 @@
   `config/strategy_exit_protections.yaml` の `rsi_take_min_pips` を下限として扱う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
 - 2026-03-10 追記: `MicroLevelReactor-bounce-lower` / `MicroTrendRetest-long` / `WickReversalBlend` の reverse-entry RCA 改善は、dedicated env の固定 tightening ではなく strategy-local の動的 quality / exit を正とする。`strategies/micro/level_reactor.py` は recent M1 continuation と `ma_gap` 拡大型を reclaim 判定へ織り込み、`strategies/micro/trend_retest.py` は same-direction chase pressure 下の shallow retest を reject する。`workers/scalp_wick_reversal_blend` は signal quality を `entry_thesis` へ保存し、`exit_worker` が trade ごとの `sl/tp/quality` で profit/loss thresholds を動的化する。shared gate / time block / dedicated env の追加 tightening は行わない。
+- 2026-03-11 追記: shared participation / feedback の current 運用では、`config/participation_alloc.json` の `boost_participation` lane を active 時のみ `strategy_feedback` coverage 対象へ昇格する。`analysis/strategy_feedback_worker.py` は `STRATEGY_FEEDBACK_MIN_TRADES` 未満でも active + `boost_participation` lane に `feedback_probe` metadata を出力し、`scripts/publish_health_snapshot.py` は同 lane が `strategy_feedback.json` から欠けた場合だけ `strategy_feedback_coverage_gap` を出す。inactive winner lane は health を赤化させない。あわせて `scripts/participation_allocator.py` の `hard_block_rate` は `attempts + hard_blocks` を母数とする bounded rate を正とし、`strategy_feedback_worker` は zero-win / zero-loss lane で crash しないことを不変条件とする。
 - 2026-02-19 追記: `scalp_macd_rsi_div_b_live` は精度改善のため
   `range-only` + divergence 閾値強化のプロファイルへ更新。
   運用値は `ops/env/quant-scalp-macd-rsi-div-b.env`、監査ログは

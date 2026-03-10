@@ -150,6 +150,58 @@ def test_build_participation_alloc_boosts_four_trade_session_breakout_winner() -
     assert winner["cadence_floor"] > 1.0
 
 
+def test_build_participation_alloc_boosts_profitable_probe_lane_with_probability_rejects() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "scalp_ping_5s_c_live": {
+                "pocket": "scalp_fast",
+                "attempts": 1,
+                "fills": 1,
+                "filled_rate": 1.0,
+                "attempt_share": 0.001,
+                "fill_share": 0.005,
+                "share_gap": -0.004,
+                "terminal_status_counts": {
+                    "entry_probability_reject": 42,
+                    "strategy_control_entry_disabled": 8,
+                    "filled": 1,
+                },
+            },
+            "RangeFader-buy-fade": {
+                "pocket": "scalp",
+                "attempts": 120,
+                "fills": 10,
+                "filled_rate": 0.0833,
+                "attempt_share": 0.50,
+                "fill_share": 0.20,
+                "share_gap": 0.30,
+                "terminal_status_counts": {"perf_block": 40, "filled": 10},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "scalp_ping_5s_c_live": 6.0,
+            "RangeFader-buy-fade": -120.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    probe = payload["strategies"]["scalp_ping_5s_c_live"]
+
+    assert probe["action"] == "boost_participation"
+    assert probe["lot_multiplier"] > 1.0
+    assert probe["probability_boost"] > 0.0
+    assert probe["cadence_floor"] > 1.0
+    assert 0.0 < probe["hard_block_rate"] < 1.0
+
+
 def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     with sqlite3.connect(db_path) as conn:

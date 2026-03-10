@@ -152,6 +152,10 @@ sqlite3 logs/orders.db \
   - `strategy_feedback`
     - `strategy_feedback.json` の freshness
     - active entry strategy discovery と recent trades remap に基づく coverage gap
+    - さらに fresh `config/participation_alloc.json` で
+      `action=boost_participation` の low-sample lane は、
+      active entry worker が存在する場合だけ
+      `STRATEGY_FEEDBACK_MIN_TRADES` 未満でも coverage 対象に含める
   - `dynamic_alloc`
   - `pattern_book`
   - `forecast_runtime`
@@ -164,6 +168,7 @@ sqlite3 logs/orders.db \
   - `mechanism_integrity.ok`
   - `mechanism_integrity.missing_mechanisms[]`
   - `mechanism_integrity.strategy_feedback.eligible_missing_strategies[]`
+  - `mechanism_integrity.strategy_feedback.boosted_low_sample_strategies[]`
   - `mechanism_integrity.forecast_service.ok`
   - `mechanism_integrity.blackboard.entry_intent_board_table`
 

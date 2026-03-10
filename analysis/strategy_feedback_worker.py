@@ -58,6 +58,14 @@ class WorkerConfig:
                 )
             )
         )
+        raw_participation_path = os.getenv(
+            "STRATEGY_FEEDBACK_PARTICIPATION_PATH",
+            BASE_DIR / "config" / "participation_alloc.json",
+        )
+        self.participation_path = _resolve_repo_local_path(Path(raw_participation_path))
+        self.participation_max_age_sec = int(
+            os.getenv("STRATEGY_FEEDBACK_PARTICIPATION_MAX_AGE_SEC", "1800")
+        )
         self.lookback_days = int(os.getenv("STRATEGY_FEEDBACK_LOOKBACK_DAYS", "14"))
         self.min_trades = int(os.getenv("STRATEGY_FEEDBACK_MIN_TRADES", "12"))
         self.keep_inactive_days = int(os.getenv("STRATEGY_FEEDBACK_KEEP_INACTIVE_DAYS", "14"))
@@ -123,6 +131,94 @@ def _safe_param_value(value: Any) -> bool:
     return True
 
 
+def _read_json_dict(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_iso8601(raw: Any) -> dt.datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _path_age_sec(path: Path) -> float | None:
+    try:
+        return max(0.0, time.time() - float(path.stat().st_mtime))
+    except Exception:
+        return None
+
+
+def _load_participation_feedback_boosts(
+    path: Path,
+    *,
+    max_age_sec: int,
+) -> dict[str, dict[str, Any]]:
+    payload = _read_json_dict(path)
+    if not payload:
+        return {}
+    generated_at = _parse_iso8601(payload.get("as_of"))
+    age_sec = (
+        max(0.0, (dt.datetime.now(dt.timezone.utc) - generated_at).total_seconds())
+        if generated_at is not None
+        else _path_age_sec(path)
+    )
+    if max_age_sec > 0 and age_sec is not None and age_sec > max_age_sec:
+        return {}
+    strategies = payload.get("strategies")
+    if not isinstance(strategies, dict):
+        return {}
+
+    boosted: dict[str, dict[str, Any]] = {}
+    for raw_key, item in strategies.items():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action") or "").strip().lower() != "boost_participation":
+            continue
+        attempts = _to_int(item.get("attempts") or item.get("preflights"), 0)
+        fills = _to_int(item.get("fills") or item.get("filled"), 0)
+        lot_multiplier = _to_float(
+            item.get("lot_multiplier"),
+            _to_float(item.get("units_multiplier"), 1.0),
+        )
+        probability_boost = _to_float(
+            item.get("probability_boost"),
+            _to_float(item.get("probability_offset"), 0.0),
+        )
+        cadence_floor = _to_float(item.get("cadence_floor"), 1.0)
+        if attempts < 1 or fills < 1:
+            continue
+        if max(lot_multiplier or 1.0, 1.0) <= 1.0 and max(probability_boost or 0.0, 0.0) <= 0.0 and max(
+            cadence_floor or 1.0,
+            1.0,
+        ) <= 1.0:
+            continue
+        strategy_key = _norm_tag(raw_key) or str(raw_key or "").strip()
+        if not strategy_key:
+            continue
+        boosted[strategy_key] = {
+            "source": "participation_alloc",
+            "action": "boost_participation",
+            "attempts": attempts,
+            "fills": fills,
+            "lot_multiplier": round(max(lot_multiplier or 1.0, 1.0), 4),
+            "probability_boost": round(max(probability_boost or 0.0, 0.0), 4),
+            "cadence_floor": round(max(cadence_floor or 1.0, 1.0), 4),
+            "payload_age_sec": None if age_sec is None else round(float(age_sec), 1),
+        }
+    return boosted
+
+
 def _norm_tag(value: Any) -> str:
     text = resolve_strategy_tag(str(value or "").strip())
     if not text:
@@ -186,10 +282,14 @@ class StrategyStats:
 
     @property
     def avg_win(self) -> float:
+        if self.wins <= 0:
+            return 0.0
         return _to_float(self.gross_win / self.wins, 0.0)
 
     @property
     def avg_loss(self) -> float:
+        if self.losses <= 0:
+            return 0.0
         return _to_float(self.gross_loss / self.losses, 0.0)
 
     @property
@@ -854,9 +954,29 @@ def _squad_recommendation(
     stats: StrategyStats,
     min_trades: int,
     strategy_params: dict[str, Any] | None = None,
+    probe_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    squad = _select_squad(tag)
     if stats.trades < min_trades:
-        return {}
+        if not probe_feedback:
+            return {}
+        avg_hold = stats.avg_hold_sec
+        pf = stats.profit_factor
+        return {
+            "strategy_params": {
+                "analysis_squad": squad,
+                "win_rate": round(_clamp(stats.win_rate, 0.0, 1.0), 3),
+                "profit_factor": None if pf == float("inf") else round(pf, 3),
+                "trades": stats.trades,
+                "avg_hold_sec": None if avg_hold is None else round(avg_hold, 1),
+                "configured_params": dict(strategy_params or {}),
+                "feedback_probe": {
+                    **dict(probe_feedback),
+                    "mode": "low_sample_safe",
+                    "min_trades_required": int(min_trades),
+                },
+            }
+        }
 
     confidence = _clamp(stats.trades / max(1, min_trades), 0.0, 1.0)
     wr = _clamp(stats.win_rate, 0.0, 1.0)
@@ -884,7 +1004,6 @@ def _squad_recommendation(
         if avg_hold > 600 and wr < 0.48:
             tp_multiplier *= 0.96
 
-    squad = _select_squad(tag)
     if squad == "scalp":
         if wr >= 0.55 and stats.avg_abs_pips > 0.8:
             units_multiplier *= 1.04
@@ -923,6 +1042,12 @@ def _squad_recommendation(
             "configured_params": dict(strategy_params or {}),
         },
     }
+    if probe_feedback:
+        out["strategy_params"]["feedback_probe"] = {
+            **dict(probe_feedback),
+            "mode": "tracked",
+            "min_trades_required": int(min_trades),
+        }
     if abs(prob_multiplier - 1.0) >= 0.02:
         out["entry_probability_multiplier"] = round(prob_multiplier, 4)
     if abs(units_multiplier - 1.0) >= 0.03:
@@ -984,6 +1109,10 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
         "generated_by": "analysis/strategy_feedback_worker.py",
         "strategies": {},
     }
+    probe_feedback_by_tag = _load_participation_feedback_boosts(
+        config.participation_path,
+        max_age_sec=max(0, int(config.participation_max_age_sec)),
+    )
 
     if _systemctl_available():
         stale_limit = dt.timedelta(days=max(1, config.keep_inactive_days))
@@ -1015,6 +1144,7 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             stats,
             config.min_trades,
             strategy_params=rec.strategy_params,
+            probe_feedback=probe_feedback_by_tag.get(tag),
         )
         if not advice:
             continue

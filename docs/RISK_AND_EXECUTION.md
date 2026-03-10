@@ -882,6 +882,10 @@
   profitable lane を `boost_participation` に昇格できる。
   現行 local-v2 では `PrecisionLowVol` と `session_open_breakout` が
   この small-sample recovery 対象。
+  - `hard_block_rate` は単純な `hard_blocks / attempts` ではなく、
+    `hard_blocks / (attempts + hard_blocks)` の bounded rate を使う。
+    `entry_probability_reject` / `perf_block` が attempts を上回る lane でも
+    quality score が破綻しないことを優先する。
 
 ### RangeFader cadence 連動 cooldown（2026-03-10）
 - `workers/scalp_rangefader/worker.py` は
@@ -912,6 +916,15 @@
   broker SL/TP の entry 距離を再計算し、
   相場・戦略状態に応じて「細かく利確する / 大きく伸ばす」を
   common hard gate なしで all-strategy へ soft 反映する。
+- `analysis/strategy_feedback_worker.py` は
+  `STRATEGY_FEEDBACK_MIN_TRADES` 未満でも
+  active かつ `boost_participation` の lane には
+  tuning knob ではなく `strategy_params.feedback_probe` を出力する。
+  これは low-sample winner lane を shared feedback bus へ可視化するための
+  metadata-only payload であり、units/probability の二重 boost は行わない。
+- `strategy_feedback_worker` の統計計算は
+  zero-win / zero-loss lane を許容し、
+  `avg_win` / `avg_loss` の 0 除算で loop が停止しないことを前提とする。
 
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に

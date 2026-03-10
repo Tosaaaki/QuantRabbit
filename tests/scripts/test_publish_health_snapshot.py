@@ -291,3 +291,84 @@ def test_build_mechanism_integrity_flags_missing_blackboard_when_orders_db_absen
     assert integrity["ok"] is False
     assert integrity["blackboard"]["entry_intent_board_table"] is None
     assert "entry_intent_board_missing" in integrity["missing_mechanisms"]
+
+
+def test_build_mechanism_integrity_flags_missing_feedback_for_boosted_low_sample_lane(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path
+    logs_dir = project_root / "logs"
+    orders_db = logs_dir / "orders.db"
+    trades_db = logs_dir / "trades.db"
+
+    _seed_health_artifacts(project_root, include_feedback_tag=True)
+    _write_json(
+        project_root / "config" / "participation_alloc.json",
+        {
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "strategies": {
+                "PrecisionLowVol": {
+                    "action": "boost_participation",
+                    "lot_multiplier": 1.03,
+                    "probability_boost": 0.01,
+                    "cadence_floor": 1.07,
+                    "attempts": 4,
+                    "fills": 4,
+                }
+            },
+        },
+    )
+    _seed_entry_intent_board(orders_db)
+    trades_db.touch()
+
+    record = feedback_worker.StrategyRecord(
+        canonical_tag="PrecisionLowVol",
+        active=True,
+        entry_active=True,
+        exit_active=False,
+    )
+    stats = feedback_worker.StrategyStats(
+        tag="PrecisionLowVol",
+        trades=4,
+        wins=4,
+        losses=0,
+        sum_pips=3.6,
+        avg_pips=0.9,
+        avg_abs_pips=0.9,
+        gross_win=3.6,
+        gross_loss=0.0,
+        avg_hold_sec=82.0,
+        last_closed="2026-03-10T00:00:00+00:00",
+    )
+    monkeypatch.setattr(feedback_worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(feedback_worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(feedback_worker, "_discover_from_control", lambda: {})
+    monkeypatch.setattr(
+        feedback_worker,
+        "_discover_from_systemd",
+        lambda _systemd_dir, _running, _now: {"PrecisionLowVol": record},
+    )
+    monkeypatch.setattr(
+        feedback_worker,
+        "_discover_from_trades",
+        lambda _db_path, _lookback_days: ({"PrecisionLowVol": stats}, {"PrecisionLowVol": stats.last_closed or ""}),
+    )
+    monkeypatch.setattr(
+        feedback_worker,
+        "_remap_stats_to_known_keys",
+        lambda stats_by_tag, latest_by_tag, _known_keys: (stats_by_tag, latest_by_tag),
+    )
+    monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
+    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+
+    integrity = snapshot._build_mechanism_integrity(
+        project_root=project_root,
+        logs_dir=logs_dir,
+        orders_db=orders_db,
+        trades_db=trades_db,
+    )
+
+    assert integrity["ok"] is False
+    assert "strategy_feedback_coverage_gap" in integrity["missing_mechanisms"]
+    assert integrity["strategy_feedback"]["eligible_missing_strategies"] == ["PrecisionLowVol"]
