@@ -5,7 +5,7 @@ ROOT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 STACK_SCRIPT="${ROOT_DIR}/scripts/local_v2_stack.sh"
 
 LABEL="com.quantrabbit.local-v2-autorecover"
-PROFILE="trade_min"
+PROFILE="trade_cover"
 ENV_FILE="${ROOT_DIR}/ops/env/local-v2-stack.env"
 SERVICES=""
 INTERVAL_SEC=10
@@ -23,7 +23,7 @@ Usage:
 
 Options:
   --label <label>         launchd label (default: com.quantrabbit.local-v2-autorecover)
-  --profile <profile>     local_v2_stack profile (default: trade_min)
+  --profile <profile>     local_v2_stack profile (default: trade_cover)
   --env <file>            override env path (default: ops/env/local-v2-stack.env)
   --services <csv>        optional explicit service list
   --interval-sec <sec>    health/recovery check interval (default: 10)

@@ -9,7 +9,7 @@ LOCK_DIR="${LOG_DIR}/local_v2_autorecover.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
 STATE_FILE="${LOG_DIR}/local_v2_autorecover.state"
 
-PROFILE="${QR_LOCAL_V2_PROFILE:-trade_min}"
+PROFILE="${QR_LOCAL_V2_PROFILE:-trade_cover}"
 ENV_FILE="${QR_LOCAL_V2_ENV_FILE:-${ROOT_DIR}/ops/env/local-v2-stack.env}"
 SERVICES="${QR_LOCAL_V2_SERVICES:-}"
 NETWORK_HOST="${QR_LOCAL_V2_NET_CHECK_HOST:-api-fxtrade.oanda.com}"
@@ -35,7 +35,7 @@ Usage:
   scripts/local_v2_autorecover_once.sh [options]
 
 Options:
-  --profile <name>    local_v2_stack profile (default: trade_min)
+  --profile <name>    local_v2_stack profile (default: trade_cover)
   --env <file>        override env file (default: ops/env/local-v2-stack.env)
   --services <csv>    optional explicit services list
   -h, --help          show help

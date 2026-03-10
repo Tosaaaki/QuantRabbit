@@ -1,5 +1,37 @@
 # Ops Current (2026-02-11 JST)
 
+## 0-22. 2026-03-10 JST local-v2 に broad coverage 用 `trade_cover` profile を追加し、常駐 profile を切替
+- 背景（local-v2 実測, UTC 2026-03-10 01:55-02:00 / JST 2026-03-10 10:55-11:00）:
+  - `logs/tick_cache.json` は
+    - `USD/JPY bid=157.622 / ask=157.630 / spread=0.8p`
+    - 直近レンジ `5分 2.0p / 15分 3.9p / 60分 11.0p`
+  - `logs/factor_cache.json` は
+    - `M1 RSI=42.3 / ADX=16.5`
+    - `M5 RSI=43.8 / ADX=20.7`
+    - `H1 RSI=39.0 / -DI優位`
+    - `H4 RSI=52.8 / +DI優位`
+    で、強い単一トレンドではなく transition/chop だった。
+  - `logs/orders.db` / `logs/trades.db` の直近60分は
+    - `filled=5`
+    - `probability_scaled=10`
+    - `entry_probability_reject=3`
+    - winner は `scalp_extrema_reversal_live 3 trades / +0.56 JPY`
+    で、regime coverage の不足が participation の主因だった。
+- 対応:
+  - `scripts/local_v2_stack.sh`
+    - `PROFILE_trade_cover` を追加。
+    - `trade_min` の勝ち筋を残しつつ、
+      `MACDRSIDivB / PullbackContinuation / RangeFader / ExtremaReversal /
+      FailedBreakReverse / FalseBreakFade / TickImbalance / SqueezePulseBreak /
+      MicroRangeBreak / MicroVWAPBound / MicroVWAPRevert / MicroTrendMomentum /
+      MicroMomentumPulse / MicroMomentumStack`
+      を常駐候補へ追加。
+- 意図:
+  - shared gate や `order_manager` を緩めず、
+    既存の dedicated worker を局面別に並べて participation を増やす。
+  - `trade_all` 全開よりは絞り、`trade_min` よりは coverage を厚くする
+    中間 operational profile とする。
+
 ## 0-21. 2026-03-07 JST `MicroTrendRetest-short` を dedicated worker 化し、`trade_min` へ追加
 - 背景（local-v2 実測, UTC 2026-03-07 01:53-02:00 / JST 2026-03-07 10:53-11:00）:
   - `logs/trades.db` 7d では

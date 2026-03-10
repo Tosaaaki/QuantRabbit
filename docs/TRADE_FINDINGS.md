@@ -23,6 +23,58 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-10 11:00 JST / local-v2: `trade_cover` profile を追加し、既存 dedicated worker を regime-cover 常駐へ昇格
+
+- Period:
+  - UTC `2026-03-10 01:55-02:00`
+  - JST `2026-03-10 10:55-11:00`
+- Fact:
+  - `logs/tick_cache.json`
+    - `USD/JPY bid=157.622 / ask=157.630 / spread=0.8p`
+    - 直近レンジ `5分 2.0p / 15分 3.9p / 60分 11.0p`
+  - `logs/factor_cache.json`
+    - `M1 RSI=42.3 / ADX=16.5`
+    - `M5 RSI=43.8 / ADX=20.7`
+    - `H1 RSI=39.0 / -DI優位`
+    - `H4 RSI=52.8 / +DI優位`
+    で transition/chop。
+  - `logs/orders.db` / `logs/trades.db` 直近60分:
+    - `filled=5`
+    - `probability_scaled=10`
+    - `entry_probability_reject=3`
+    - winner は `scalp_extrema_reversal_live 3 trades / +0.56 JPY`
+    - `scalp_ping_5s_d_live` は negative-edge block 優勢
+- Failure Cause:
+  - current `trade_min` は winner 集中には向くが、
+    transition/chop で有効な reversion / failed-break / vwap 系 lane が薄く、
+    valid setup 不在時に participation が細る。
+- Improvement:
+  - `scripts/local_v2_stack.sh` に `PROFILE_trade_cover` を追加。
+  - `trade_cover` は `trade_min` の構成へ次の pair を重ねた:
+    - `quant-scalp-rangefader(+exit)`
+    - `quant-scalp-extrema-reversal(+exit)`
+    - `quant-scalp-failed-break-reverse(+exit)`
+    - `quant-scalp-false-break-fade(+exit)`
+    - `quant-scalp-macd-rsi-div-b(+exit)`
+    - `quant-scalp-pullback-continuation(+exit)`
+    - `quant-scalp-tick-imbalance(+exit)`
+    - `quant-scalp-squeeze-pulse-break(+exit)`
+    - `quant-micro-rangebreak(+exit)`
+    - `quant-micro-trendmomentum(+exit)`
+    - `quant-micro-vwapbound(+exit)`
+    - `quant-micro-vwaprevert(+exit)`
+    - `quant-micro-momentumpulse(+exit)`
+    - `quant-micro-momentumstack(+exit)`
+  - `brain.py` / `order_manager.py` / `strategy_entry.py` / `pattern_gate.py` /
+    `ops/env/local-v2-stack.env` は触らない。
+- Verification:
+  - `bash -n scripts/local_v2_stack.sh scripts/install_local_v2_launchd.sh`
+  - `scripts/local_v2_stack.sh restart --profile trade_cover --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh status --profile trade_cover --env ops/env/local-v2-stack.env`
+  - `scripts/install_local_v2_launchd.sh --profile trade_cover --env ops/env/local-v2-stack.env`
+- Status:
+  - done
+
 ## 2026-03-10 01:58 UTC / 2026-03-10 10:58 JST - local-v2: `strategy_feedback` が directional split-tag を base 戦略へ接続できておらず、`MicroTrendRetest` 系へ分析補正が届いていなかった
 
 Period:
@@ -11243,3 +11295,50 @@ Status:
   - shared gate を増やさず、既存 forecast runtime override と
     dedicated service env だけで loser lane の low-edge / contra / weak-target-reach を
     先に落とす。
+## 2026-03-10 11:00 JST / local-v2 regime coverage: thin transition/chop 向け precision wrapper を追加
+
+- 実測:
+  - local-v2 の `2026-03-10 10:59-11:00 JST` は
+    `USD/JPY 157.622/157.630`, `spread=0.8p`, 直近レンジ `5分 2.0p / 15分 3.9p / 60分 11.0p`。
+  - `factor_cache.json` は
+    `M1 RSI 42.3 / ADX 16.5 / -DI優位`,
+    `M5 RSI 43.8 / ADX 20.7 / -DI優位`,
+    `H1 RSI 39.0 / -DI優位`,
+    `H4 RSI 52.8 / +DI優位`
+    で、強い順張りではなく `transition/chop`。
+  - `local_v2_stack/pids/*.pid` では既に trade_all 相当の多数 worker が稼働していた一方、
+    `orders.db` / `trades.db` の直近60分は
+    `scalp_extrema_reversal_live` の `3 trades / +0.56 JPY` 以外は寄与が薄く、
+    `LevelReject`, `WickReversalBlend`, `MicroVWAPRevert`, `MicroVWAPBound`, `FalseBreakFade`, `TickImbalance`
+    では新規約定が見えなかった。
+
+- 判断:
+  - 問題は「worker 数不足」ではなく、
+    既存多数 worker の中でも
+    `低ボラ / 薄い range / entry drought`
+    を専用に埋める scalp lane が足りないことだった。
+  - broad gate 緩和ではなく、既存 precision base を再利用した
+    wrapper worker を足す方が速く、shared layer を汚さない。
+
+- 反映:
+  - 新規 ENTRY/EXIT ペア:
+    - `quant-scalp-precision-lowvol`
+    - `quant-scalp-vwap-revert`
+    - `quant-scalp-drought-revert`
+  - いずれも `workers.scalp_wick_reversal_blend` の
+    precision base を env projection wrapper で再利用し、
+    `SCALP_PRECISION_*` を strategy-local prefix へ写して動かす。
+  - `precision_lowvol` は
+    `ADX/BBW/ATR` が細い帯での BB touch + tick reversal を拾う。
+  - `vwap_revert` は
+    VWAP gap を使った内側回帰を拾う。
+  - `drought_revert` は
+    `DROUGHT_MINUTES=6` の entry drought 時だけ gap-filler として起動する。
+  - `scripts/local_v2_stack.sh` の `PROFILE_trade_min` / `PROFILE_trade_all`
+    へ 3 ペアを追加し、通常 restart / watchdog 後も維持する。
+
+- 意図:
+  - 「どんな局面でも入る」を shared gate の無差別緩和ではなく、
+    `transition/chop` と `entry drought` を埋める strategy-local lane 増設で実現する。
+  - 既存 momentum / breakout lane を壊さず、
+    薄い相場での participation だけを厚くする。

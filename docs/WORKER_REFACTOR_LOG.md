@@ -5,6 +5,44 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-10（追記）local-v2 に `trade_cover` profile を追加し、既存 dedicated worker を broad coverage へ昇格
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `docs/OPS_CURRENT.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - local 実測の `2026-03-10 10:55-11:00 JST` は
+    `USD/JPY spread=0.8p`, `5分 range=2.0p`, `15分 range=3.9p`, `60分 range=11.0p`。
+  - `M1/M5` は ADX が低く、`H1` は下向き、`H4` は上向きで、
+    強い一方向ではなく transition/chop だった。
+  - 直近60分の winner は `scalp_extrema_reversal_live` のみで、
+    `trade_min` だけでは regime coverage が不足していた。
+- 変更:
+  - `PROFILE_trade_cover` を追加。
+  - `trade_cover` は `trade_min` の常駐集合へ以下の pair を重ねた:
+    - `quant-scalp-rangefader`
+    - `quant-scalp-extrema-reversal`
+    - `quant-scalp-failed-break-reverse`
+    - `quant-scalp-false-break-fade`
+    - `quant-scalp-macd-rsi-div-b`
+    - `quant-scalp-pullback-continuation`
+    - `quant-scalp-tick-imbalance`
+    - `quant-scalp-squeeze-pulse-break`
+    - `quant-micro-rangebreak`
+    - `quant-micro-trendmomentum`
+    - `quant-micro-vwapbound`
+    - `quant-micro-vwaprevert`
+    - `quant-micro-momentumpulse`
+    - `quant-micro-momentumstack`
+  - `trade_all` には寄せず、中間 profile として追加した。
+- 意図:
+  - shared gate を緩めず、既存 dedicated worker の組み合わせだけで
+    regime coverage を厚くする。
+- `trade_min` は winner 集中用に残し、`trade_cover` を
+  「どの相場でも何本かは走る」常駐運用の新しい選択肢とする。
+
 ### 2026-03-10（追記）`strategy_feedback` は directional split-tag を discovered base strategy へ再解決し、live advice を欠損させない
 
 - 対象:
@@ -14432,3 +14470,45 @@
     `MomentumBurst short` の loser cluster だけを strategy-local に潰す。
   - clean pullback / reaccel short は残し、
     quality を上げても participation を広く削らない。
+## 2026-03-10 JST - thin transition/chop を埋める precision wrapper 3 ペアを local_v2 へ追加
+
+- 対象:
+  - `workers/scalp_precision_wrapper.py`
+  - `workers/scalp_precision_lowvol/*`
+  - `workers/scalp_vwap_revert/*`
+  - `workers/scalp_drought_revert/*`
+  - `ops/env/quant-scalp-{precision-lowvol,vwap-revert,drought-revert}*.env`
+  - `scripts/local_v2_stack.sh`
+  - `tests/workers/test_scalp_precision_wrapper_env.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+
+- 背景:
+  - local-v2 の `2026-03-10 10:59-11:00 JST` は
+    `USD/JPY 157.622/157.630`, `spread 0.8p`, `M1 ADX 16.5`, `M5 ADX 20.7` の薄い `transition/chop`。
+  - 実ランタイムでは既に多数 worker が起動していたが、
+    直近60分で実約定の寄与があったのは `scalp_extrema_reversal_live` だけで、
+    `thin low-vol / VWAP inner revert / entry drought gap-fill`
+    を専用に拾う lane が不足していた。
+
+- 変更:
+  - `scalp_wick_reversal_blend` の precision base を再利用する
+    env projection helper `workers/scalp_precision_wrapper.py` を追加。
+  - 新規 service/module:
+    - `quant-scalp-precision-lowvol` / `quant-scalp-precision-lowvol-exit`
+    - `quant-scalp-vwap-revert` / `quant-scalp-vwap-revert-exit`
+    - `quant-scalp-drought-revert` / `quant-scalp-drought-revert-exit`
+  - `scripts/local_v2_stack.sh`
+    - `KNOWN_SERVICES`
+    - `PROFILE_trade_min`
+    - `PROFILE_trade_all`
+    - `module_for_service()`
+    へ 3 ペアを追加。
+
+- 意図:
+  - 既存多数 worker にさらに full strategy を複製するのではなく、
+    precision base の既存 signal 実装
+    `precision_lowvol / vwap_revert / drought_revert`
+    を薄い wrapper と dedicated env で operationalize する。
+  - shared gate / order-manager を触らず、
+    thin transition/chop と entry drought の participation を strategy-local に増やす。

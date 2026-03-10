@@ -47,10 +47,13 @@
 - `quant-scalp-ping-5s-d` + `quant-scalp-ping-5s-d-exit`（C分離の独立検証用）
 - `quant-scalp-macd-rsi-div` + `quant-scalp-macd-rsi-div-exit`
 - `quant-scalp-macd-rsi-div-b` + `quant-scalp-macd-rsi-div-b-exit`
+- `quant-scalp-precision-lowvol` + `quant-scalp-precision-lowvol-exit`
 - `quant-scalp-tick-imbalance` + `quant-scalp-tick-imbalance-exit`
 - `quant-scalp-squeeze-pulse-break` + `quant-scalp-squeeze-pulse-break-exit`
+- `quant-scalp-vwap-revert` + `quant-scalp-vwap-revert-exit`
 - `quant-scalp-wick-reversal-blend` + `quant-scalp-wick-reversal-blend-exit`
 - `quant-scalp-wick-reversal-pro` + `quant-scalp-wick-reversal-pro-exit`
+- `quant-scalp-drought-revert` + `quant-scalp-drought-revert-exit`
 - `quant-m1scalper` + `quant-m1scalper-exit`
 - `quant-scalp-trend-breakout` + `quant-scalp-trend-breakout-exit`（entry/exitロジック独立化済み、初期は disabled）
 - `quant-scalp-pullback-continuation` + `quant-scalp-pullback-continuation-exit`（entry/exitロジック独立化済み、初期は disabled）
@@ -157,8 +160,18 @@
 - 目的: `order_manager` の forecast gate は `forecast_decide` API を経由して `allow/reduce/block` を取得。
 - `FORECAST_SERVICE_ENABLED=1` と `FORECAST_SERVICE_URL` が有効な場合、`forecast_gate` 決定をワーカー越しで取得して
   `order_manager` に反映。
-- local-v2 の `trade_min` / `trade_all` は `quant-forecast` を常駐対象へ含め、manual restart / watchdog /
+- local-v2 の `trade_min` / `trade_cover` / `trade_all` は `quant-forecast` を常駐対象へ含め、manual restart / watchdog /
   launchd 復旧でも `8302` の forecast service を維持する。
+- 2026-03-10 JST 時点の `trade_cover` は、core + forecast/feedback に加えて
+  `scalp_ping_5s_b` / `scalp_macd_rsi_div_b` / `scalp_pullback_continuation` /
+  `scalp_trend_breakout` / `scalp_rangefader` /
+  `scalp_extrema_reversal` / `scalp_failed_break_reverse` /
+  `scalp_false_break_fade` / `scalp_tick_imbalance` /
+  `scalp_squeeze_pulse_break` / `micro_rangebreak` / `micro_levelreactor` /
+  `micro_momentumburst` / `micro_momentumpulse` / `micro_momentumstack` /
+  `micro_trendmomentum` / `micro_trendretest` / `micro_vwapbound` / `micro_vwaprevert` /
+  `m1scalper` の ENTRY+EXIT を常駐対象とし、
+  trend / breakout / failed-break / range / vwap / transition の regime coverage を持つ。
 - `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
 - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` を維持したまま dedicated forecast gate を使う場合は、
   `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1` を `quant-order-manager.env` の opt-in とし、

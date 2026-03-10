@@ -68,6 +68,8 @@ KNOWN_SERVICES=(
   "quant-scalp-macd-rsi-div-exit"
   "quant-scalp-macd-rsi-div-b"
   "quant-scalp-macd-rsi-div-b-exit"
+  "quant-scalp-precision-lowvol"
+  "quant-scalp-precision-lowvol-exit"
   "quant-scalp-ping-5s-c"
   "quant-scalp-ping-5s-c-exit"
   "quant-scalp-ping-5s-d"
@@ -76,6 +78,8 @@ KNOWN_SERVICES=(
   "quant-scalp-ping-5s-flow-exit"
   "quant-scalp-pullback-continuation"
   "quant-scalp-pullback-continuation-exit"
+  "quant-scalp-drought-revert"
+  "quant-scalp-drought-revert-exit"
   "quant-scalp-rangefader"
   "quant-scalp-rangefader-exit"
   "quant-scalp-squeeze-pulse-break"
@@ -84,6 +88,8 @@ KNOWN_SERVICES=(
   "quant-scalp-tick-imbalance-exit"
   "quant-scalp-trend-breakout"
   "quant-scalp-trend-breakout-exit"
+  "quant-scalp-vwap-revert"
+  "quant-scalp-vwap-revert-exit"
   "quant-scalp-wick-reversal-blend"
   "quant-scalp-wick-reversal-blend-exit"
   "quant-scalp-wick-reversal-pro"
@@ -110,12 +116,67 @@ PROFILE_trade_min=(
   "quant-scalp-ping-5s-b-exit"
   "quant-scalp-trend-breakout"
   "quant-scalp-trend-breakout-exit"
+  "quant-scalp-precision-lowvol"
+  "quant-scalp-precision-lowvol-exit"
+  "quant-scalp-vwap-revert"
+  "quant-scalp-vwap-revert-exit"
+  "quant-scalp-drought-revert"
+  "quant-scalp-drought-revert-exit"
   "quant-micro-momentumburst"
   "quant-micro-momentumburst-exit"
   "quant-micro-levelreactor"
   "quant-micro-levelreactor-exit"
   "quant-micro-trendretest"
   "quant-micro-trendretest-exit"
+  "quant-m1scalper"
+  "quant-m1scalper-exit"
+)
+
+PROFILE_trade_cover=(
+  "quant-market-data-feed"
+  "quant-strategy-control"
+  "quant-order-manager"
+  "quant-position-manager"
+  "quant-forecast"
+  "quant-strategy-feedback"
+  "quant-scalp-ping-5s-b"
+  "quant-scalp-ping-5s-b-exit"
+  "quant-scalp-macd-rsi-div-b"
+  "quant-scalp-macd-rsi-div-b-exit"
+  "quant-scalp-pullback-continuation"
+  "quant-scalp-pullback-continuation-exit"
+  "quant-scalp-trend-breakout"
+  "quant-scalp-trend-breakout-exit"
+  "quant-scalp-rangefader"
+  "quant-scalp-rangefader-exit"
+  "quant-scalp-extrema-reversal"
+  "quant-scalp-extrema-reversal-exit"
+  "quant-scalp-failed-break-reverse"
+  "quant-scalp-failed-break-reverse-exit"
+  "quant-scalp-false-break-fade"
+  "quant-scalp-false-break-fade-exit"
+  "quant-scalp-tick-imbalance"
+  "quant-scalp-tick-imbalance-exit"
+  "quant-scalp-squeeze-pulse-break"
+  "quant-scalp-squeeze-pulse-break-exit"
+  "quant-micro-rangebreak"
+  "quant-micro-rangebreak-exit"
+  "quant-micro-levelreactor"
+  "quant-micro-levelreactor-exit"
+  "quant-micro-momentumburst"
+  "quant-micro-momentumburst-exit"
+  "quant-micro-momentumpulse"
+  "quant-micro-momentumpulse-exit"
+  "quant-micro-momentumstack"
+  "quant-micro-momentumstack-exit"
+  "quant-micro-trendmomentum"
+  "quant-micro-trendmomentum-exit"
+  "quant-micro-trendretest"
+  "quant-micro-trendretest-exit"
+  "quant-micro-vwapbound"
+  "quant-micro-vwapbound-exit"
+  "quant-micro-vwaprevert"
+  "quant-micro-vwaprevert-exit"
   "quant-m1scalper"
   "quant-m1scalper-exit"
 )
@@ -165,6 +226,8 @@ PROFILE_trade_all=(
   "quant-scalp-macd-rsi-div-exit"
   "quant-scalp-macd-rsi-div-b"
   "quant-scalp-macd-rsi-div-b-exit"
+  "quant-scalp-precision-lowvol"
+  "quant-scalp-precision-lowvol-exit"
   "quant-scalp-ping-5s-c"
   "quant-scalp-ping-5s-c-exit"
   "quant-scalp-ping-5s-d"
@@ -173,6 +236,8 @@ PROFILE_trade_all=(
   "quant-scalp-ping-5s-flow-exit"
   "quant-scalp-pullback-continuation"
   "quant-scalp-pullback-continuation-exit"
+  "quant-scalp-drought-revert"
+  "quant-scalp-drought-revert-exit"
   "quant-scalp-rangefader"
   "quant-scalp-rangefader-exit"
   "quant-scalp-squeeze-pulse-break"
@@ -181,6 +246,8 @@ PROFILE_trade_all=(
   "quant-scalp-tick-imbalance-exit"
   "quant-scalp-trend-breakout"
   "quant-scalp-trend-breakout-exit"
+  "quant-scalp-vwap-revert"
+  "quant-scalp-vwap-revert-exit"
   "quant-scalp-wick-reversal-blend"
   "quant-scalp-wick-reversal-blend-exit"
   "quant-scalp-wick-reversal-pro"
@@ -195,7 +262,7 @@ Usage:
   scripts/local_v2_stack.sh <up|down|restart|status|logs|watchdog|watchdog-stop|watchdog-status> [options]
 
 Options:
-  --profile <core|trade_min|trade_all>  Service profile (default: core)
+  --profile <core|trade_min|trade_cover|trade_all>  Service profile (default: core)
   --services <csv/list>        Explicit service list (e.g. "quant-order-manager,quant-position-manager")
   --base-env <file>            Base runtime env (default: ops/env/quant-v2-runtime.env)
   --env <file[,file2,...]>     Optional local override env list (loaded after base/service env)
@@ -310,8 +377,12 @@ module_for_service() {
     quant-scalp-macd-rsi-div-exit) printf '%s\n' "workers.scalp_macd_rsi_div.exit_worker" ;;
     quant-scalp-macd-rsi-div-b) printf '%s\n' "workers.scalp_macd_rsi_div_b.worker" ;;
     quant-scalp-macd-rsi-div-b-exit) printf '%s\n' "workers.scalp_macd_rsi_div_b.exit_worker" ;;
+    quant-scalp-precision-lowvol) printf '%s\n' "workers.scalp_precision_lowvol.worker" ;;
+    quant-scalp-precision-lowvol-exit) printf '%s\n' "workers.scalp_precision_lowvol.exit_worker" ;;
     quant-scalp-pullback-continuation) printf '%s\n' "workers.scalp_pullback_continuation.worker" ;;
     quant-scalp-pullback-continuation-exit) printf '%s\n' "workers.scalp_pullback_continuation.exit_worker" ;;
+    quant-scalp-drought-revert) printf '%s\n' "workers.scalp_drought_revert.worker" ;;
+    quant-scalp-drought-revert-exit) printf '%s\n' "workers.scalp_drought_revert.exit_worker" ;;
     quant-scalp-rangefader) printf '%s\n' "workers.scalp_rangefader.worker" ;;
     quant-scalp-rangefader-exit) printf '%s\n' "workers.scalp_rangefader.exit_worker" ;;
     quant-scalp-squeeze-pulse-break) printf '%s\n' "workers.scalp_squeeze_pulse_break.worker" ;;
@@ -320,6 +391,8 @@ module_for_service() {
     quant-scalp-tick-imbalance-exit) printf '%s\n' "workers.scalp_tick_imbalance.exit_worker" ;;
     quant-scalp-trend-breakout) printf '%s\n' "workers.scalp_trend_breakout.worker" ;;
     quant-scalp-trend-breakout-exit) printf '%s\n' "workers.scalp_trend_breakout.exit_worker" ;;
+    quant-scalp-vwap-revert) printf '%s\n' "workers.scalp_vwap_revert.worker" ;;
+    quant-scalp-vwap-revert-exit) printf '%s\n' "workers.scalp_vwap_revert.exit_worker" ;;
     quant-scalp-wick-reversal-blend) printf '%s\n' "workers.scalp_wick_reversal_blend.worker" ;;
     quant-scalp-wick-reversal-blend-exit) printf '%s\n' "workers.scalp_wick_reversal_blend.exit_worker" ;;
     quant-scalp-wick-reversal-pro) printf '%s\n' "workers.scalp_wick_reversal_pro.worker" ;;
@@ -660,6 +733,9 @@ resolve_profile_services() {
       ;;
     trade_min)
       printf '%s\n' "${PROFILE_trade_min[@]}"
+      ;;
+    trade_cover)
+      printf '%s\n' "${PROFILE_trade_cover[@]}"
       ;;
     trade_all)
       printf '%s\n' "${PROFILE_trade_all[@]}"
