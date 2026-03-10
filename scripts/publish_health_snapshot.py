@@ -544,6 +544,10 @@ def _build_mechanism_integrity(
     macro_news_payload = macro_news_context.pop("_payload", None)
     macro_news_context["event_severity"] = (macro_news_payload or {}).get("event_severity")
     macro_news_context["caution_window_active"] = (macro_news_payload or {}).get("caution_window_active")
+    macro_news_context["source_error_count"] = _coerce_int(
+        (macro_news_payload or {}).get("source_error_count"),
+        0,
+    )
 
     strategy_feedback = _strategy_feedback_integrity(
         project_root=project_root,
@@ -600,6 +604,8 @@ def _build_mechanism_integrity(
         missing.append("macro_news_context_missing")
     elif macro_news_context.get("fresh") is False:
         missing.append("macro_news_context_stale")
+    elif macro_news_context.get("source_error_count", 0) > 0:
+        missing.append("macro_news_context_source_errors")
 
     return {
         "ok": not missing,

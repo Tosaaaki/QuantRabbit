@@ -14731,3 +14731,18 @@
     slow loop で自動更新する。
   - 外部コンテキストは shared hard block にせず、
     live cadence を落とさない soft bias として only local-v2 へ供給する。
+
+### 2026-03-10 macro news fetch hardening
+- 対象:
+  - `scripts/macro_news_context_worker.py`
+  - `scripts/publish_health_snapshot.py`
+
+- 変更:
+  - official RSS 取得に browser-like header と retry を追加し、
+    `federalreserve.gov` の 403 を回避した。
+  - `health_snapshot` は `macro_news_context.source_error_count` を監査し、
+    partial failure を `macro_news_context_source_errors` として検知するようにした。
+
+- 意図:
+  - slow news sidecar の片側失敗を silent に見逃さず、
+    official Fed / BoJ feed が両方 live に乗っている状態を保つ。

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,12 @@ DEFAULT_FEEDS = (
     ("boj_whatsnew", "https://www.boj.or.jp/en/rss/whatsnew.xml", "boj"),
     ("boj_statistics", "https://www.boj.or.jp/en/rss/statistics.xml", "boj"),
 )
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (QuantRabbit; +https://github.com/Tosaaaki/QuantRabbit)",
+    "Accept": "application/rss+xml, application/xml, text/xml; q=0.9, */*; q=0.8",
+    "Accept-Language": "en-US,en; q=0.9",
+    "Cache-Control": "no-cache",
+}
 
 CRITICAL_KEYWORDS = (
     "statement",
@@ -68,9 +75,37 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         fh.write("\n")
 
 
-def _fetch_bytes(url: str, *, timeout_sec: float) -> bytes:
-    with urllib.request.urlopen(url, timeout=timeout_sec) as resp:
-        return resp.read()
+def _build_request(url: str) -> urllib.request.Request:
+    headers = dict(DEFAULT_HEADERS)
+    lowered = url.lower()
+    if "federalreserve.gov" in lowered:
+        headers["Referer"] = "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+    elif "boj.or.jp" in lowered:
+        headers["Referer"] = "https://www.boj.or.jp/en/"
+    return urllib.request.Request(url, headers=headers)
+
+
+def _fetch_bytes(
+    url: str,
+    *,
+    timeout_sec: float,
+    retries: int = 2,
+    retry_delay_sec: float = 0.4,
+) -> bytes:
+    attempts = max(1, int(retries) + 1)
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(_build_request(url), timeout=timeout_sec) as resp:
+                return resp.read()
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(max(0.0, float(retry_delay_sec)) * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"failed to fetch {url}")
 
 
 def _first_text(node: ET.Element, *paths: str) -> str:

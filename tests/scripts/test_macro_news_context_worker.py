@@ -1,8 +1,45 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from urllib.request import Request
 
 from scripts import macro_news_context_worker
+
+
+def test_fetch_bytes_uses_browser_like_headers(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b"<rss/>"
+
+    def _fake_urlopen(request: Request, timeout: float):
+        captured["url"] = request.full_url
+        captured["user_agent"] = request.get_header("User-agent") or ""
+        captured["accept"] = request.get_header("Accept") or ""
+        captured["referer"] = request.get_header("Referer") or ""
+        captured["timeout"] = str(timeout)
+        return _Resp()
+
+    monkeypatch.setattr(macro_news_context_worker.urllib.request, "urlopen", _fake_urlopen)
+
+    body = macro_news_context_worker._fetch_bytes(
+        "https://www.federalreserve.gov/feeds/press_all.xml",
+        timeout_sec=3.0,
+        retries=0,
+    )
+
+    assert body == b"<rss/>"
+    assert captured["url"] == "https://www.federalreserve.gov/feeds/press_all.xml"
+    assert "QuantRabbit" in captured["user_agent"]
+    assert "application/rss+xml" in captured["accept"]
+    assert captured["referer"] == "https://www.federalreserve.gov/newsevents/pressreleases.htm"
 
 
 def test_build_report_reads_official_rss_and_scores_context(monkeypatch) -> None:

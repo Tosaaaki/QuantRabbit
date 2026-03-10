@@ -208,6 +208,37 @@ def test_build_mechanism_integrity_is_ok_when_artifacts_and_feedback_are_present
     assert integrity["macro_news_context"]["fresh"] is True
 
 
+def test_build_mechanism_integrity_flags_macro_news_source_errors(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path
+    logs_dir = project_root / "logs"
+    orders_db = logs_dir / "orders.db"
+    trades_db = logs_dir / "trades.db"
+
+    _seed_health_artifacts(project_root, include_feedback_tag=True)
+    payload = json.loads((project_root / "logs" / "macro_news_context.json").read_text(encoding="utf-8"))
+    payload["source_error_count"] = 2
+    _write_json(project_root / "logs" / "macro_news_context.json", payload)
+    _seed_entry_intent_board(orders_db)
+    trades_db.touch()
+    _mock_feedback_discovery(monkeypatch)
+    monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
+    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+
+    integrity = snapshot._build_mechanism_integrity(
+        project_root=project_root,
+        logs_dir=logs_dir,
+        orders_db=orders_db,
+        trades_db=trades_db,
+    )
+
+    assert integrity["ok"] is False
+    assert "macro_news_context_source_errors" in integrity["missing_mechanisms"]
+    assert integrity["macro_news_context"]["source_error_count"] == 2
+
+
 def test_build_mechanism_integrity_accepts_forecast_health_when_port_probe_misses(
     monkeypatch,
     tmp_path: Path,
