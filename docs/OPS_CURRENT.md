@@ -1033,6 +1033,29 @@ quant-manual-swing-exit.service
   - local trend が down-strong でないレンジ側の bounce は残し、
     broad participation は落とさない。
 
+## 2026-03-10 15:58 JST / 2026-03-10 06:58 UTC - `scalp_extrema_reversal_live` long countertrend gap guard
+
+- 背景:
+  - local-v2 live の直近90分で
+    `scalp_extrema_reversal_live` が
+    `28 trades / -12.929 JPY`
+    の active loser だった。
+  - 24h long のうち
+    `supportive_long=false` かつ
+    `trend_gate.ma_gap_pips <= -0.5`
+    は `7 trades / -5.267 JPY / win_rate 14.3%`
+    に集中していた。
+
+- 現行運用値:
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.50`
+
+- 運用意図:
+  - `soft-down M1 gap` に逆らう
+    non-supportive long だけを止める。
+  - `supportive_long` が立つ long は残し、
+    short 側や shared 層は変更しない。
+
 ## 2026-03-06 15:35 UTC / 2026-03-07 00:35 JST - `MicroLevelReactor` の forecast / probability 縮小を緩和して lot と頻度を戻す
 
 - 背景:

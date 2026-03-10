@@ -14659,3 +14659,38 @@
     `dn_strong + no-wick` の loser cluster だけを strategy-local に除去する。
   - `ultra-low ATR + strong -DI` の continuation probe も同じ branch で削る。
   - shared gate / order_manager / exit worker 契約は非変更。
+
+### 2026-03-10 local-v2 `scalp_extrema_reversal_live` long countertrend gap guard
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/OPS_CURRENT.md`
+
+- 背景:
+  - `2026-03-10 15:58 JST` の live で
+    `scalp_extrema_reversal_live` は直近90分
+    `28 trades / -12.929 JPY`
+    の active loser だった。
+  - long のうち
+    `supportive_long=false` かつ
+    `trend_gate.ma_gap_pips <= -0.5`
+    は `7 trades / -5.267 JPY / win_rate 14.3%`
+    に集中していた。
+
+- 変更:
+  - worker は `non-supportive long` で
+    `ma10-ma20 <= -0.5 pips`
+    のとき、`OPEN_LONG` を生成しない。
+  - `supportive_long=true` の long は、
+    同じ local ma gap でも従来どおり通す。
+  - `entry_thesis.extrema` へ
+    `ma_gap_pips` と `long_countertrend_block`
+    を残す。
+
+- 意図:
+  - `scalp_extrema_reversal_live` の broad participation は維持しつつ、
+    `soft-down M1 gap` に逆らう non-supportive long だけを削る。
+  - short 判定、shared gate、exit worker 契約は非変更。

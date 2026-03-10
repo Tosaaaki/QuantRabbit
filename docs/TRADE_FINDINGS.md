@@ -11552,3 +11552,45 @@ Status:
 - 検証:
   - `python3 -m pytest -q tests/strategies/test_level_reactor.py`
   - `python3 -m py_compile strategies/micro/level_reactor.py tests/strategies/test_level_reactor.py`
+
+### 2026-03-10 local-v2 `scalp_extrema_reversal_live` の non-supportive long countertrend を遮断
+
+- 市況:
+  - `2026-03-10 15:58 JST` の USD/JPY は
+    `157.536/157.544`, spread `0.8p`。
+  - `M5 close 157.569 < ema20 157.611`,
+    `H1 close 157.641 < ema20 157.944` で、
+    短中期は still soft-down だった。
+
+- 実測:
+  - 直近90分の `scalp_extrema_reversal_live` は
+    `28 trades / -12.929 JPY / -20.6 pips`。
+  - 24h の long だけでも
+    `19 trades / -7.568 JPY / win_rate 31.6%`。
+  - このうち `supportive_long=false` かつ
+    `trend_gate.ma_gap_pips <= -0.5`
+    の long cluster は
+    `7 trades / -5.267 JPY / -7.3 pips / win_rate 14.3%`
+    だった。
+
+- 対応:
+  - `workers/scalp_extrema_reversal/worker.py`
+    - `non-supportive long` で
+      `ma10-ma20 <= -0.5 pips`
+      の local countertrend gap を検知したら、
+      `OPEN_LONG` を生成しないようにした。
+    - `supportive_long=true` の long は、
+      同じ ma gap でも従来どおり通す。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.50`
+      を dedicated env に明示した。
+
+- 意図:
+  - `scalp_extrema_reversal_live` 全体を止めず、
+    `soft-down M1 gap に逆らう non-supportive long`
+    だけを strategy-local に削る。
+  - short 側と shared gate / order_manager / exit worker は変更しない。
+
+- 検証:
+  - `python3 -m pytest -q tests/workers/test_scalp_extrema_reversal_worker.py` -> `10 passed`
+  - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`

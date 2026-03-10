@@ -2546,3 +2546,20 @@
 - local trend が `down-strong` でないときは既存 `body-only reclaim` を残し、
   `MicroLevelReactor` の broad participation は維持する。
 - shared preflight / order_manager / exit worker へ新しい一律判定は追加しない。
+
+### 2026-03-10 `scalp_extrema_reversal_live` long countertrend gap guard
+- `scalp_extrema_reversal_live` の long は、
+  `supportive_long=false` かつ
+  local `ma10-ma20 <= -0.5 pips`
+  のとき `countertrend gap` とみなし、
+  `OPEN_LONG` を生成しない。
+- current local-v2 dedicated env は
+  `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.50`
+  を運用値とする。
+- `supportive_long=true` の long は、
+  同じ local ma gap でも worker 内 long-support override を優先して通す。
+- 監査用に `entry_thesis.extrema` へ
+  `ma_gap_pips` と `long_countertrend_block`
+  を残す。
+- short 側と shared preflight / order_manager / exit worker へ
+  新しい一律判定は追加しない。
