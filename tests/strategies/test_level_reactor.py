@@ -163,6 +163,28 @@ def test_bounce_long_allows_clear_lower_wick_under_same_down_di_pressure() -> No
     assert signal["tag"] == "MicroLevelReactor-bounce-lower"
 
 
+def test_bounce_long_rejects_small_reclaim_body_under_strong_continuation_pressure() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.95,
+            "high": 157.957,
+            "low": 157.944,
+            "ma10": 157.981,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 1.5,
+            "rsi": 35.0,
+            "adx": 24.0,
+            "plus_di": 12.0,
+            "minus_di": 38.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is None
+
+
 def test_bounce_long_keeps_tiny_lower_wick_when_di_pressure_is_not_strong() -> None:
     signal = MicroLevelReactor.check(
         {

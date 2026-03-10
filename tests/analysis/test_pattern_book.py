@@ -37,6 +37,23 @@ def test_build_pattern_id_from_entry_thesis() -> None:
     assert "rg:low" in pattern_id
 
 
+def test_build_pattern_id_prefers_strategy_tag_raw_lane() -> None:
+    thesis = {
+        "strategy_tag_raw": "RangeFader-neutral-fade",
+        "strategy_tag": "RangeFader",
+        "strategy": "RangeFader",
+    }
+
+    pattern_id = build_pattern_id(
+        entry_thesis=thesis,
+        units=-1400,
+        pocket="scalp",
+        strategy_tag_fallback="RangeFader",
+    )
+
+    assert "st:rangefader_neutral_fade" in pattern_id
+
+
 def test_classify_pattern_action_block_reduce_boost() -> None:
     block = classify_pattern_action(
         PatternAggregate(

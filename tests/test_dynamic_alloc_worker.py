@@ -27,6 +27,40 @@ def test_compute_scores_aggregates_ephemeral_tags() -> None:
     assert strategy_scores["scalp_ping_5s_b_live"]["sum_pips"] == -0.9
 
 
+def test_compute_scores_prefers_lane_tag_from_entry_thesis_when_trade_rows_are_canonicalized() -> None:
+    rows = [
+        (
+            "RangeFader",
+            "scalp",
+            -1.2,
+            "2026-02-24T00:00:00Z",
+            "STOP_LOSS_ORDER",
+            -110.0,
+            1400,
+            "RangeFader",
+            "RangeFader",
+            '{"strategy":"RangeFader","strategy_tag":"RangeFader","strategy_tag_raw":"RangeFader-neutral-fade"}',
+        ),
+        (
+            "RangeFader",
+            "scalp",
+            0.8,
+            "2026-02-24T00:01:00Z",
+            "TAKE_PROFIT_ORDER",
+            75.0,
+            1400,
+            "RangeFader",
+            "RangeFader",
+            '{"strategy":"RangeFader","strategy_tag":"RangeFader","strategy_tag_raw":"RangeFader-neutral-fade"}',
+        ),
+    ]
+
+    strategy_scores, _ = compute_scores(rows, min_trades=12, pf_cap=2.0)
+
+    assert "RangeFader-neutral-fade" in strategy_scores
+    assert "RangeFader" not in strategy_scores
+
+
 def test_compute_scores_stronger_loss_penalty_applies() -> None:
     bad_rows = [
         (f"scalp_ping_5s_b_live-l{i:08x}", "scalp_fast", -2.0, f"2026-02-24T00:{i:02d}:00Z", "STOP_LOSS_ORDER")

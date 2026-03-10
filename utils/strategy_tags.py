@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 _EPHEMERAL_SUFFIX_PATTERNS = (
     re.compile(r"^(?P<base>.+?)-l[0-9a-f]{8,}$", re.IGNORECASE),
@@ -133,6 +134,76 @@ def resolve_strategy_tag(raw: str | None, *, known_keys: Iterable[str] | None = 
         return ""
     aliased = _resolve_alias(text)
     return _match_known(aliased, known_keys)
+
+
+def _parse_entry_thesis(entry_thesis: Any) -> dict[str, Any]:
+    if isinstance(entry_thesis, dict):
+        return entry_thesis
+    if not isinstance(entry_thesis, str):
+        return {}
+    text = entry_thesis.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _prefer_lane_tag(raw: str) -> str:
+    text = strip_ephemeral_strategy_suffix(raw)
+    if not text:
+        return ""
+    resolved = resolve_strategy_tag(text)
+    if not resolved:
+        return text
+    if resolved == text:
+        return resolved
+    if any(sep in text for sep in ("-", ":", "/", " ")):
+        return text
+    return resolved
+
+
+def extract_strategy_tags(
+    *,
+    strategy_tag: str | None = None,
+    strategy: str | None = None,
+    entry_thesis: Any = None,
+    known_keys: Iterable[str] | None = None,
+) -> tuple[str, str]:
+    thesis = _parse_entry_thesis(entry_thesis)
+    raw_tag = ""
+    for candidate in (
+        thesis.get("strategy_tag_raw"),
+        thesis.get("strategy_tag"),
+        strategy_tag,
+        thesis.get("strategy"),
+        strategy,
+    ):
+        text = _prefer_lane_tag(str(candidate or "").strip())
+        if text:
+            raw_tag = text
+            break
+
+    canonical_tag = ""
+    for candidate in (
+        thesis.get("strategy"),
+        strategy,
+        thesis.get("strategy_tag"),
+        strategy_tag,
+        raw_tag,
+    ):
+        resolved = resolve_strategy_tag(str(candidate or "").strip(), known_keys=known_keys)
+        if resolved:
+            canonical_tag = resolved
+            break
+
+    if canonical_tag and not raw_tag:
+        raw_tag = canonical_tag
+    if raw_tag and not canonical_tag:
+        canonical_tag = resolve_strategy_tag(raw_tag, known_keys=known_keys) or raw_tag
+    return raw_tag, canonical_tag
 
 
 def strategy_like_matches(

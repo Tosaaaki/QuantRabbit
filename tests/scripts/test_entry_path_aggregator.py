@@ -28,8 +28,10 @@ def _seed_orders_db(db_path: Path) -> None:
                 "preflight_start",
                 json.dumps(
                     {
+                        "strategy": "MomentumBurst",
                         "strategy_tag": "MomentumBurst",
                         "entry_thesis": {
+                            "strategy": "MomentumBurst",
                             "strategy_tag": "MomentumBurst",
                             "entry_path_attribution": [
                                 {"stage": "technical_context", "status": "pass"},
@@ -45,6 +47,7 @@ def _seed_orders_db(db_path: Path) -> None:
                 "filled",
                 json.dumps(
                     {
+                        "strategy": "MomentumBurst",
                         "strategy_tag": "MomentumBurst",
                         "entry_thesis": {"strategy_tag": "MomentumBurst"},
                     }
@@ -56,8 +59,10 @@ def _seed_orders_db(db_path: Path) -> None:
                 "preflight_start",
                 json.dumps(
                     {
+                        "strategy": "RangeFader",
                         "strategy_tag": "RangeFader-neutral-fade",
                         "entry_thesis": {
+                            "strategy": "RangeFader",
                             "strategy_tag": "RangeFader-neutral-fade",
                             "entry_path_attribution": [
                                 {"stage": "technical_context", "status": "pass"},
@@ -73,8 +78,12 @@ def _seed_orders_db(db_path: Path) -> None:
                 "perf_block",
                 json.dumps(
                     {
+                        "strategy": "RangeFader",
                         "strategy_tag": "RangeFader-neutral-fade",
-                        "entry_thesis": {"strategy_tag": "RangeFader-neutral-fade"},
+                        "entry_thesis": {
+                            "strategy": "RangeFader",
+                            "strategy_tag": "RangeFader-neutral-fade",
+                        },
                     }
                 ),
             ),
@@ -84,8 +93,12 @@ def _seed_orders_db(db_path: Path) -> None:
                 "close_ok",
                 json.dumps(
                     {
+                        "strategy": "RangeFader",
                         "strategy_tag": "RangeFader-neutral-fade",
-                        "entry_thesis": {"strategy_tag": "RangeFader-neutral-fade"},
+                        "entry_thesis": {
+                            "strategy": "RangeFader",
+                            "strategy_tag": "RangeFader-neutral-fade",
+                        },
                     }
                 ),
             ),
@@ -116,9 +129,26 @@ def test_build_report_aggregates_entry_statuses_and_shares(tmp_path: Path) -> No
     assert momentum["filled_rate"] == 1.0
     assert momentum["fill_share"] == 1.0
 
-    range_fader = payload["strategies"]["RangeFader"]
+    range_fader = payload["strategies"]["RangeFader-neutral-fade"]
     assert range_fader["attempts"] == 1
     assert range_fader["fills"] == 0
+    assert range_fader["strategy_canonical"] == "RangeFader"
     assert range_fader["terminal_status_counts"]["perf_block"] == 1
     assert range_fader["hard_blocks"] >= 1
     assert any(item["key"] == "entry_net_edge_gate:negative" for item in range_fader["top_blockers"])
+
+
+def test_extract_strategy_tag_prefers_raw_lane_from_entry_thesis() -> None:
+    strategy_key, canonical = entry_path_aggregator._extract_strategy_tag(
+        {
+            "strategy_tag": "RangeFader",
+            "entry_thesis": {
+                "strategy": "RangeFader",
+                "strategy_tag": "RangeFader",
+                "strategy_tag_raw": "RangeFader-buy-fade",
+            },
+        }
+    )
+
+    assert strategy_key == "RangeFader-buy-fade"
+    assert canonical == "RangeFader"

@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from utils.strategy_tags import resolve_strategy_tag
+from utils.strategy_tags import extract_strategy_tags, resolve_strategy_tag
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -143,7 +143,8 @@ def _fetch_trade_rows(trades_db: Path, *, lookback_days: int) -> list[dict[str, 
             """
             SELECT
               ticket_id,
-              COALESCE(NULLIF(strategy_tag, ''), strategy) AS strategy_key,
+              strategy_tag,
+              strategy,
               pocket,
               units,
               pl_pips,
@@ -163,7 +164,15 @@ def _fetch_trade_rows(trades_db: Path, *, lookback_days: int) -> list[dict[str, 
 def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, top_k: int) -> dict[str, Any]:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        strategy_tag = resolve_strategy_tag(str(row.get("strategy_key") or "").strip()) or str(row.get("strategy_key") or "").strip()
+        strategy_tag, _canonical_tag = extract_strategy_tags(
+            strategy_tag=row.get("strategy_tag") or row.get("strategy_key"),
+            strategy=row.get("strategy"),
+            entry_thesis=row.get("entry_thesis"),
+        )
+        if not strategy_tag:
+            strategy_tag = resolve_strategy_tag(str(row.get("strategy_key") or "").strip()) or str(
+                row.get("strategy_key") or ""
+            ).strip()
         if not strategy_tag:
             continue
         entry_thesis = _safe_json_loads(row.get("entry_thesis"))

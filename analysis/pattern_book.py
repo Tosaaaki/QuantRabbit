@@ -59,7 +59,7 @@ def _range_bucket(entry_thesis: Mapping[str, Any]) -> str:
 
 
 def _strategy_tag(entry_thesis: Mapping[str, Any], fallback: str) -> str:
-    for key in ("strategy_tag", "strategy", "tag"):
+    for key in ("strategy_tag_raw", "strategy_tag", "strategy", "tag"):
         token = _norm_token(entry_thesis.get(key), default="")
         if token:
             return token

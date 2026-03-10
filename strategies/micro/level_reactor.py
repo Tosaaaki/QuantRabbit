@@ -52,6 +52,24 @@ class MicroLevelReactor:
     BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS = float(
         __import__("os").getenv("MLR_BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS", "0.4")
     )
+    BOUNCE_CONTINUATION_STRONG_ATR_MAX = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_STRONG_ATR_MAX", "1.6")
+    )
+    BOUNCE_CONTINUATION_STRONG_ADX_MIN = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_STRONG_ADX_MIN", "22.0")
+    )
+    BOUNCE_CONTINUATION_STRONG_DI_GAP_MIN = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_STRONG_DI_GAP_MIN", "22.0")
+    )
+    BOUNCE_CONTINUATION_STRONG_BODY_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_STRONG_BODY_PIPS", "0.9")
+    )
+    BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS", "0.8")
+    )
+    BOUNCE_CONTINUATION_STRONG_WICK_EDGE_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_CONTINUATION_STRONG_WICK_EDGE_PIPS", "0.15")
+    )
 
     @staticmethod
     def _as_float(val: Optional[float], default: float = 0.0) -> float:
@@ -82,26 +100,28 @@ class MicroLevelReactor:
             return None
 
     @classmethod
-    def _bounce_continuation_probe(
+    def _bounce_continuation_pressure(
         cls,
         fac: Dict,
         *,
-        body_pips: float,
-        lower_wick_pips: float,
         atr_pips: float,
-    ) -> bool:
-        if body_pips < cls.BOUNCE_COUNTERTREND_MIN_BODY_PIPS:
-            return False
-        if lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS:
-            return False
+    ) -> int:
         if atr_pips > cls.BOUNCE_CONTINUATION_ATR_MAX:
-            return False
+            return 0
         adx = cls._as_float(fac.get("adx"), 0.0)
         if adx < cls.BOUNCE_CONTINUATION_ADX_MIN:
-            return False
+            return 0
         plus_di = cls._as_float(fac.get("plus_di"), 0.0)
         minus_di = cls._as_float(fac.get("minus_di"), 0.0)
-        return (minus_di - plus_di) >= cls.BOUNCE_CONTINUATION_DI_GAP_MIN
+        di_gap = minus_di - plus_di
+        if di_gap < cls.BOUNCE_CONTINUATION_DI_GAP_MIN:
+            return 0
+        is_strong = (
+            atr_pips <= cls.BOUNCE_CONTINUATION_STRONG_ATR_MAX
+            and adx >= cls.BOUNCE_CONTINUATION_STRONG_ADX_MIN
+            and di_gap >= cls.BOUNCE_CONTINUATION_STRONG_DI_GAP_MIN
+        )
+        return 2 if is_strong else 1
 
     @classmethod
     def _mk_decision(
@@ -195,10 +215,8 @@ class MicroLevelReactor:
             countertrend_probe = (
                 ma_gap_pips is not None and ma_gap_pips <= -cls.BOUNCE_COUNTERTREND_MIN_GAP_PIPS
             )
-            continuation_probe = cls._bounce_continuation_probe(
+            continuation_pressure = cls._bounce_continuation_pressure(
                 fac,
-                body_pips=body_pips,
-                lower_wick_pips=lower_wick_pips,
                 atr_pips=atr_pips,
             )
             if countertrend_probe:
@@ -208,12 +226,23 @@ class MicroLevelReactor:
                     and lower_wick_pips >= cls.BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS
                     and lower_wick_pips > upper_wick_pips
                 )
-            if continuation_probe:
-                bullish_reject = (
-                    bullish_reject
-                    and lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS
-                    and lower_wick_pips > upper_wick_pips
-                )
+            if continuation_pressure:
+                if continuation_pressure >= 2:
+                    strong_body_reclaim = body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
+                    strong_wick_reclaim = (
+                        lower_wick_pips >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
+                        and (lower_wick_pips - upper_wick_pips)
+                        >= cls.BOUNCE_CONTINUATION_STRONG_WICK_EDGE_PIPS
+                    )
+                    bullish_reject = bullish_reject and (
+                        strong_body_reclaim or strong_wick_reclaim
+                    )
+                else:
+                    bullish_reject = (
+                        bullish_reject
+                        and lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS
+                        and lower_wick_pips > upper_wick_pips
+                    )
             if not bullish_reject:
                 return None
             sl = max(7.0, atr_pips * 1.7)

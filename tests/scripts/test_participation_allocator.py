@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+from pathlib import Path
+
 from scripts import participation_allocator
 
 
@@ -50,3 +53,38 @@ def test_build_participation_alloc_trims_overused_loser_and_boosts_winner() -> N
     assert winner["action"] == "boost_participation"
     assert winner["lot_multiplier"] > 1.0
     assert winner["probability_boost"] > 0.0
+
+
+def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE trades (
+                strategy_tag TEXT,
+                strategy TEXT,
+                entry_thesis TEXT,
+                realized_pl REAL,
+                close_time TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO trades(strategy_tag, strategy, entry_thesis, realized_pl, close_time)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "RangeFader",
+                "RangeFader",
+                '{"strategy":"RangeFader","strategy_tag":"RangeFader","strategy_tag_raw":"RangeFader-sell-fade"}',
+                -220.0,
+                "2026-03-10T00:00:00Z",
+            ),
+        )
+        conn.commit()
+
+    realized = participation_allocator._load_recent_realized_jpy(db_path, lookback_hours=48.0)
+
+    assert realized["RangeFader-sell-fade"] == -220.0
+    assert "RangeFader" not in realized

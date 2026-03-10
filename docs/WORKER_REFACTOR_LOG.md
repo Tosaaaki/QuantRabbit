@@ -15152,3 +15152,51 @@
     -> `25 passed`
   - `pytest -q tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_worker.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
     -> `84 passed`
+
+### 2026-03-10 lane-aware feedback artifact への復旧
+- 対象:
+  - `utils/strategy_tags.py`
+  - `scripts/entry_path_aggregator.py`
+  - `scripts/participation_allocator.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `scripts/loser_cluster_worker.py`
+  - `analysis/pattern_book.py`
+  - `strategies/micro/level_reactor.py`
+  - `ops/env/quant-order-manager.env`
+  - `tests/test_dynamic_alloc_worker.py`
+  - `tests/scripts/test_entry_path_aggregator.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/scripts/test_loser_cluster_worker.py`
+  - `tests/analysis/test_pattern_book.py`
+  - `tests/strategies/test_level_reactor.py`
+
+- 背景:
+  - live の closed trade は `entry_thesis.strategy_tag_raw` に
+    raw lane を残していたが、
+    feedback artifact 側は canonical `strategy_tag` を優先しており、
+    `RangeFader-buy/sell/neutral-fade` と
+    `MicroLevelReactor-bounce/fade` の勝敗差を shared feedback へ戻せていなかった。
+  - current では `RangeFader` の `sell/neutral` lane が
+    probability-scale 後の min-units 落ちで participation を失い、
+    `MicroLevelReactor-bounce-lower` は strong continuation で weak reclaim を拾っていた。
+
+- 変更:
+  - `extract_strategy_tags()` を追加し、
+    raw lane と canonical strategy の両方を取り出せるようにした。
+  - `entry_path / participation / dynamic_alloc / loser_cluster / pattern_id`
+    は raw lane 優先へ更新。
+    ただし `trades.strategy_tag` の schema/意味は変えず、
+    既存 `entry_thesis.strategy_tag_raw` を根拠に lane-aware 化している。
+  - `RangeFader` は `sell-fade=25`, `neutral-fade=30` へ min-units を緩和。
+  - `MicroLevelReactor` は strong continuation 圧力時に
+    weak reclaim `bounce-lower` を reject する body/wick 要件を追加。
+
+- 検証:
+  - `pytest -q tests/strategies/test_level_reactor.py`
+    -> `10 passed`
+  - `pytest -q tests/workers/test_scalp_rangefader_worker.py`
+    -> `5 passed`
+  - `pytest -q tests/test_dynamic_alloc_worker.py tests/scripts/test_participation_allocator.py tests/scripts/test_entry_path_aggregator.py tests/scripts/test_loser_cluster_worker.py tests/analysis/test_pattern_book.py`
+    -> `19 passed`
+  - `pytest -q tests/workers/test_pattern_gate.py`
+    -> `6 passed`

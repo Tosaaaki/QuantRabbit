@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from utils.strategy_tags import resolve_strategy_tag
+from utils.strategy_tags import extract_strategy_tags, resolve_strategy_tag
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TRADES_DB = BASE_DIR / "logs" / "trades.db"
@@ -24,6 +24,19 @@ OUTPUT_PATH = BASE_DIR / "config" / "dynamic_alloc.json"
 def normalize_strategy_key(raw: str | None) -> str:
     key = resolve_strategy_tag(raw)
     return key or "unknown"
+
+
+def _strategy_key_from_row(row: Tuple) -> str:
+    raw_key = row[0] if len(row) > 0 else None
+    if len(row) >= 10:
+        raw_key, _canonical_key = extract_strategy_tags(
+            strategy_tag=row[7],
+            strategy=row[8],
+            entry_thesis=row[9],
+        )
+        if not raw_key:
+            raw_key = row[0] if len(row) > 0 else None
+    return normalize_strategy_key(str(raw_key or "").strip())
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -291,13 +304,16 @@ def fetch_trades(limit: int, lookback_days: int) -> List[Tuple]:
         cur = conn.cursor()
         sql = """
             SELECT
-              COALESCE(NULLIF(strategy_tag, ''), strategy) AS strategy,
+              COALESCE(NULLIF(strategy_tag, ''), strategy) AS strategy_key,
               pocket,
               pl_pips,
               close_time,
               close_reason,
               realized_pl,
-              units
+              units,
+              strategy_tag,
+              strategy,
+              entry_thesis
             FROM trades
             WHERE close_time IS NOT NULL
               AND julianday(close_time) >= julianday('now', ?)
@@ -329,13 +345,11 @@ def compute_scores(
     pockets: Dict[str, Dict[str, int]] = {}
     now_utc = dt.datetime.now(dt.timezone.utc)
     for row in rows:
-        strat = row[0] if len(row) > 0 else None
+        strat = _strategy_key_from_row(row)
         pocket = row[1] if len(row) > 1 else None
         pl_pips = row[2] if len(row) > 2 else 0.0
         close_time = row[3] if len(row) > 3 else None
         close_reason = str(row[4] if len(row) > 4 else "")
-
-        strat = normalize_strategy_key(strat)
         pocket = pocket or "unknown"
         key = strat
         weight = _recency_weight(close_time, now_utc=now_utc, half_life_hours=half_life_hours)

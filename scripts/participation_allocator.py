@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from utils.strategy_tags import resolve_strategy_tag
+from utils.strategy_tags import extract_strategy_tags, resolve_strategy_tag
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -73,15 +73,23 @@ def _load_recent_realized_jpy(trades_db: Path, *, lookback_hours: float) -> dict
         cur = con.cursor()
         cur.execute(
             """
-            SELECT COALESCE(NULLIF(strategy_tag, ''), strategy) AS strategy_key, COALESCE(realized_pl, 0.0)
+            SELECT strategy_tag, strategy, entry_thesis, COALESCE(realized_pl, 0.0)
             FROM trades
             WHERE close_time IS NOT NULL
               AND julianday(close_time) >= julianday('now', ?)
             """,
             (f"-{max(0.1, float(lookback_hours)):.3f} hours",),
         )
-        for raw_strategy, realized_pl in cur.fetchall():
-            strategy_key = resolve_strategy_tag(str(raw_strategy or "").strip()) or str(raw_strategy or "").strip()
+        for strategy_tag, strategy, entry_thesis, realized_pl in cur.fetchall():
+            strategy_key, _canonical_key = extract_strategy_tags(
+                strategy_tag=strategy_tag,
+                strategy=strategy,
+                entry_thesis=entry_thesis,
+            )
+            if not strategy_key:
+                strategy_key = resolve_strategy_tag(str(strategy_tag or strategy or "").strip()) or str(
+                    strategy_tag or strategy or ""
+                ).strip()
             if not strategy_key:
                 continue
             out[strategy_key] = out.get(strategy_key, 0.0) + _safe_float(realized_pl, 0.0)

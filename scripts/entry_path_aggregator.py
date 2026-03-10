@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from utils.strategy_tags import resolve_strategy_tag
+from utils.strategy_tags import extract_strategy_tags
 
 
 def _safe_json_loads(raw: Any) -> dict[str, Any]:
@@ -67,19 +67,16 @@ def _is_hard_block_status(status: str) -> bool:
     return any(token in status_l for token in ("block", "reject", "disabled", "cooldown", "rejected"))
 
 
-def _extract_strategy_tag(payload: dict[str, Any]) -> str:
+def _extract_strategy_tag(payload: dict[str, Any]) -> tuple[str, str]:
     thesis = payload.get("entry_thesis") if isinstance(payload.get("entry_thesis"), dict) else {}
-    raw = (
-        thesis.get("strategy_tag")
-        or payload.get("strategy_tag")
-        or thesis.get("strategy")
-        or payload.get("strategy")
+    raw_tag, canonical_tag = extract_strategy_tags(
+        strategy_tag=payload.get("strategy_tag"),
+        strategy=payload.get("strategy"),
+        entry_thesis=thesis,
     )
-    raw_text = str(raw or "").strip()
-    resolved = resolve_strategy_tag(raw_text)
-    if resolved == raw_text and "-" in raw_text:
-        resolved = resolve_strategy_tag(raw_text.split("-", 1)[0]) or raw_text.split("-", 1)[0]
-    return resolved or str(raw or "unknown").strip() or "unknown"
+    strategy_key = raw_tag or canonical_tag or "unknown"
+    strategy_canonical = canonical_tag or strategy_key
+    return strategy_key, strategy_canonical
 
 
 def _extract_pocket(payload: dict[str, Any], row_pocket: Any) -> str:
@@ -142,7 +139,7 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
             continue
         orders_considered += 1
         payload = _safe_json_loads(request_json)
-        strategy = _extract_strategy_tag(payload)
+        strategy, strategy_canonical = _extract_strategy_tag(payload)
         pocket = _extract_pocket(payload, pocket_raw)
         strategy_key = strategy
         if strategy_key in strategies and strategies[strategy_key].get("pocket") not in {pocket, None}:
@@ -151,6 +148,7 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
             strategy_key,
             {
                 "strategy_key": strategy,
+                "strategy_canonical": strategy_canonical,
                 "pocket": pocket,
                 "preflights": 0,
                 "submit_attempts": 0,
@@ -205,6 +203,7 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
         }
         strategy_rows[key] = {
             "strategy_key": bucket["strategy_key"],
+            "strategy_canonical": bucket["strategy_canonical"],
             "pocket": bucket["pocket"],
             "attempts": preflights,
             "preflights": preflights,

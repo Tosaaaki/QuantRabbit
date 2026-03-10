@@ -2765,3 +2765,21 @@
   clean stretch fade の lane は残す。
 - この guard は shared cadence / shared gate / order-manager ではなく
   `strategies/scalping/range_fader.py` 内の strategy-local quality 判定として扱う。
+
+### 2026-03-10 lane-aware feedback / current loser quick fix
+- feedback artifact (`entry_path_summary`, `participation_alloc`, `dynamic_alloc`,
+  `loser_cluster`, `pattern_book`) は
+  `entry_thesis.strategy_tag_raw` を優先して raw lane を扱う。
+  canonical strategy は fallback/集約用として保持し、
+  `trades.strategy_tag` の schema/意味自体は変更しない。
+- これにより `RangeFader-buy/sell/neutral-fade`,
+  `MicroLevelReactor-bounce/fade` のような lane ごとの
+  winner/loser 差を shared feedback へ戻せる。
+- `RangeFader` の current live は `sell-fade` と `neutral-fade` が
+  probability-scale 後に min-units を割りやすいため、
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_SELL_FADE=25`,
+  `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_NEUTRAL_FADE=30`
+  を現行 quick-fix とする。
+- `MicroLevelReactor` の `bounce-lower` は
+  `low ATR + strong ADX/-DI` の continuation 圧力を別判定で扱い、
+  weak body / weak lower-wick の reclaim long を strategy-local に reject する。

@@ -12304,3 +12304,73 @@ Status:
   - `entry_probability` が高いのに負ける lane を
     `pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence`
     で再クラスタし、probability と size の較正を戦略別に分離する。
+
+## 2026-03-10 21:59 JST / lane-aware feedback 復旧 + current loser 即応
+- 目的:
+  - `RangeFader-buy/sell/neutral-fade` と `MicroLevelReactor-bounce/fade` を
+    canonical `strategy_tag` へ潰さず、動的配分・loser cluster・pattern gate を
+    lane 単位で再較正できる状態へ戻す。
+  - 同時に current loser である `RangeFader` の under-min-units reject と
+    `MicroLevelReactor-bounce-lower` の weak reclaim を即応で改善する。
+- 仮説:
+  - live の `trades.entry_thesis.strategy_tag_raw` には raw lane が残っている一方、
+    `dynamic_alloc` / `participation_alloc` / `loser_cluster` / `pattern_id`
+    が canonical `strategy_tag` を優先しており、
+    `RangeFader-neutral-fade` のような winner/loser lane を同じ `RangeFader`
+    として扱っていた。
+  - `RangeFader` は probability-scale 後の units が `sell/neutral` lane で
+    min-units を割りやすく、`MicroLevelReactor` は
+    low ATR + strong `-DI` の continuation で weak reclaim long をまだ拾っていた。
+- 変更:
+  - `utils/strategy_tags.py` に `extract_strategy_tags()` を追加し、
+    `entry_thesis.strategy_tag_raw` を最優先、
+    canonical tag は fallback として返す形へ整理。
+  - `scripts/entry_path_aggregator.py`
+    `scripts/participation_allocator.py`
+    `scripts/dynamic_alloc_worker.py`
+    `scripts/loser_cluster_worker.py`
+    は raw lane 優先へ更新。
+    `trades.strategy_tag` の schema/意味は変更せず、
+    既存 `entry_thesis.strategy_tag_raw` だけを根拠に lane-aware 化した。
+  - `analysis/pattern_book.py` は `build_pattern_id()` で
+    `strategy_tag_raw` を優先するよう変更し、
+    pattern gate も同じ lane 粒度で学習/照合できるようにした。
+  - `strategies/micro/level_reactor.py` は
+    strong continuation (`low ATR + strong ADX/-DI`) を別閾値に切り出し、
+    weak body / weak lower-wick の `bounce-lower` を reject。
+  - `ops/env/quant-order-manager.env` は
+    `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_SELL_FADE=25`,
+    `ORDER_MIN_UNITS_STRATEGY_RANGEFADER_NEUTRAL_FADE=30`
+    へ下げ、shared loosen なしで winner lane の生存率を戻した。
+- 影響範囲:
+  - shared feedback artifact の粒度が `strategy family` から `lane` へ細かくなる。
+    対象は `entry_path_summary_latest.json`, `participation_alloc.json`,
+    `dynamic_alloc.json`, `loser_cluster_latest.json`, `pattern_book*.json`。
+  - `order_manager` / `position_manager` の schema や共通 reject 条件は変更していない。
+- 生成物確認:
+  - `logs/entry_path_summary_latest.json` は
+    `RangeFader-buy-fade / sell-fade / neutral-fade` を個別 key として出力。
+  - `config/participation_alloc.json` は
+    `RangeFader-buy-fade` `trim_units lot_multiplier=0.8296`,
+    `RangeFader-sell-fade` `trim_units lot_multiplier=0.8296`,
+    `RangeFader-neutral-fade` `hold lot_multiplier=1.0`
+    を確認。
+  - `config/dynamic_alloc.json` は
+    `RangeFader-buy/sell/neutral-fade`,
+    `MicroLevelReactor-bounce-lower/fade-upper`
+    を別 key として出力。
+- 検証:
+  - `pytest -q tests/strategies/test_level_reactor.py`
+    -> `10 passed`
+  - `pytest -q tests/workers/test_scalp_rangefader_worker.py`
+    -> `5 passed`
+  - `pytest -q tests/test_dynamic_alloc_worker.py tests/scripts/test_participation_allocator.py tests/scripts/test_entry_path_aggregator.py tests/scripts/test_loser_cluster_worker.py tests/analysis/test_pattern_book.py`
+    -> `19 passed`
+  - `pytest -q tests/workers/test_pattern_gate.py`
+    -> `6 passed`
+  - `python3 scripts/entry_path_aggregator.py ...`
+    `python3 scripts/participation_allocator.py ...`
+    `PYTHONPATH=/Users/tossaki/Documents/App/QuantRabbit python3 scripts/dynamic_alloc_worker.py ...`
+    `python3 scripts/loser_cluster_worker.py ...`
+    `PYTHONPATH=/Users/tossaki/Documents/App/QuantRabbit python3 scripts/pattern_book_worker.py ...`
+    を実行し、live artifact を更新済み。
