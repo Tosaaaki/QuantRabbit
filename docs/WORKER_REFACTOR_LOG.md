@@ -5,6 +5,31 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）shared loser-side trim を二段化し、mild loser は `trim_units` のみに留める
+
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+- 変更:
+  - `participation_allocator`
+    - `trim_units` 条件は維持したまま、
+      negative `probability_offset` は stronger loser 条件を満たす lane に限定した。
+    - 現行ルールは
+      `loss_pressure` が十分高いか、
+      `severity + reject_pressure + share_gap` が高い lane にだけ
+      `probability_offset<0` を出す。
+  - tests:
+    - mild loser は `trim_units + probability_offset=0` に留まること、
+      high-reject small-loss lane は still `probability_offset<0` を出すことを追加した。
+- 意図:
+  - `RangeFader-neutral-fade` は still loser lane だが、
+    `buy/sell-fade` と同じ強さの probability trim を入れるには根拠が弱かった。
+  - shared trim の方向は維持しつつ、
+    loser lane の重症度に応じて units trim と probability trim を分離する。
+
 ### 2026-03-11（追記）shared participation に loser-side `probability_offset` を追加し、`RangeFader` の late reject を pre-order trim へ寄せる
 
 - 対象:

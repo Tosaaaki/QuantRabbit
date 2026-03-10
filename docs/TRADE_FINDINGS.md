@@ -51,6 +51,78 @@
 - Status:
 ```
 
+## 2026-03-11 02:48 JST / local-v2: shared loser-side trim を二段化し、`RangeFader-neutral-fade` は units trim のみに留める
+
+- Change:
+  - `scripts/participation_allocator.py` の loser trim を二段化し、
+    `trim_units` は維持したまま、
+    negative `probability_offset` は stronger loser 条件を満たす lane に限定した。
+  - `tests/scripts/test_participation_allocator.py` に
+    mild loser と high-reject small-loss loser の回帰を追加した。
+- Why:
+  - `RangeFader-neutral-fade` は still loser だが、
+    `buy/sell-fade` と同じ強さの `probability_offset` を入れるには loss 根拠が弱かった。
+- Hypothesis:
+  - loser lane を一律に probability trim せず、
+    軽症 lane は `trim_units` のみに留めれば、
+    `RangeFader-neutral-fade` の取り過ぎだけを抑えつつ fill を潰しにくくできる。
+- Expected Good:
+  - `RangeFader-buy/sell-fade` の強い trim は維持しつつ、
+    `neutral-fade` の mild loser を shared 側で締め過ぎない。
+  - `order_manager` の reject gate を変えずに、
+    loser lane の重症度で trim 強度を分けられる。
+- Expected Bad:
+  - stronger loser 条件が緩すぎると、
+    本来 probability trim すべき lane を units trim のみに留める可能性がある。
+  - `neutral-fade` の live 悪化が続く場合は、
+    この変更で reject が減る代わりに負け trade を増やす可能性がある。
+- Period:
+  - UTC `2026-03-10 17:35-17:48`
+  - JST `2026-03-11 02:35-02:48`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.599 / ask=157.607 / spread=0.8p`
+    - recent range `5m=5.0p / 15m=23.1p / 60m=23.8p`
+    - `ATR14(M1)=3.175p`, `ATR14(M5)=7.289p`, `ATR14(H1)=20.632p`
+    - `data_lag_ms=548.170`, `decision_latency_ms=17.100`
+  - current `entry_path_summary_latest.json` では
+    `RangeFader-buy-fade attempts=668 fills=52 share_gap=0.1852 hard_block_rate=0.7266`,
+    `sell-fade 578/29 share_gap=0.2009 hard_block_rate=0.7136`,
+    `neutral-fade 537/35 share_gap=0.1662 hard_block_rate=0.6100`。
+  - current `participation_alloc.json` の再生成後は
+    `buy-fade probability_offset=-0.0443`,
+    `sell-fade=-0.0463`,
+    `neutral-fade=0.0` となり、
+    `trim_units` 自体は 3 lane で維持された。
+  - targeted test は
+    `tests/scripts/test_participation_allocator.py`,
+    `tests/execution/test_strategy_entry_adaptive_layers.py`,
+    `tests/scripts/test_run_local_feedback_cycle.py`,
+    `tests/scripts/test_publish_health_snapshot.py`
+    で `25 passed`。
+- Failure Cause:
+  - 直前の shared loser trim は
+    mild loser でも severe loser と近い `probability_offset` を返し得た。
+  - `RangeFader-neutral-fade` は loss が軽い一方で
+    share/reject 指標だけで `buy/sell-fade` と近い trim 強度になっていた。
+- Improvement:
+  - negative `probability_offset` を
+    `loss_pressure` または stronger loser 条件へ分離した。
+  - これにより `neutral-fade` は
+    `trim_units + probability_offset=0` の shared trim に留まる。
+- Verification:
+  - `pytest -q tests/scripts/test_participation_allocator.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_run_local_feedback_cycle.py tests/scripts/test_publish_health_snapshot.py`
+  - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 24 --min-attempts 20`
+- Verdict:
+  - `pending`
+- Next Action:
+  - next live window で
+    `RangeFader-neutral-fade` の `filled` と `entry_probability_reject` の比率が改善するかを監視する。
+  - `neutral-fade` まで負けが拡大するなら、
+    shared trim ではなく strategy-local quality 側へ戻って詰める。
+- Status:
+  - in_progress
+
 ## 2026-03-11 02:40 JST / ここまでの改善サマリ: change diary 固定、shared feedback coverage 復旧、review draft 自動化、RangeFader loser lane 前捌き
 
 - Change:

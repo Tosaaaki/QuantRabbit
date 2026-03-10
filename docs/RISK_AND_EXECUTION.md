@@ -872,6 +872,9 @@
     `STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX` と
     artifact `allocation_policy.max_probability_boost` の両方で clamp した
     bounded な確率減衰を許可する。
+    allocator 側は mild loser を全部 probability trim せず、
+    `loss_pressure` か `severity + reject_pressure + share_gap` が
+    stronger loser 条件を満たす lane に限って `probability_offset<0` を出す。
   - `hold` / stale payload / missing payload は no-op を維持する。
 - probability boost も artifact `max_probability_boost` と
   `STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX` の両方で clamp し、
@@ -896,8 +899,9 @@
   - overused loser lane は `share_gap`, `hard_block_rate`, `realized_jpy` から
     `probability_offset` を生成できる。
     現行の shared trim は `RangeFader-buy-fade` / `RangeFader-sell-fade` を
-    `trim_units + negative probability_offset` へ寄せ、
-    `RangeFader-neutral-fade` の hold と分離して扱う。
+    `trim_units + negative probability_offset` へ寄せる一方、
+    `RangeFader-neutral-fade` のような mild loser は
+    `trim_units + probability_offset=0` に留める。
 
 ### RangeFader cadence 連動 cooldown（2026-03-10）
 - `workers/scalp_rangefader/worker.py` は
