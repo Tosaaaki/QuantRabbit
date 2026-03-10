@@ -5,6 +5,28 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）`docs/TRADE_FINDINGS.md` を good/bad/pending と次アクションが追える change diary として明文化
+
+- 対象:
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/INDEX.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `docs/TRADE_FINDINGS.md`
+    - 冒頭 Rules に `Change / Why / Hypothesis / Expected Good / Expected Bad / Verdict / Next Action` を追加。
+    - 短い記入テンプレートを追記し、単一台帳方針は維持した。
+  - `AGENTS.md`
+    - `docs/TRADE_FINDINGS.md` を change diary として使うこと、
+      各変更で `good/bad/pending` と次アクションを残すことを追記。
+  - `docs/AGENT_COLLAB_HUB.md`
+    - ローカルPDCA 手順に「変更日記の最低項目」を追加。
+  - `docs/INDEX.md`
+    - `docs/TRADE_FINDINGS.md` の説明を単一台帳兼 change diary へ更新。
+- 意図:
+  - 「何を変えたら良くなったか / 悪くなったか / まだ判定待ちか」を
+    時系列で比較できる形に固定し、改善判断を感覚ではなく履歴で回せるようにする。
+
 ### 2026-03-10（追記）shared participation alloc は low-sample winner の cadence 回復まで担当し、counterfactual overlay は TP/SL も live へ返す
 
 - 対象:

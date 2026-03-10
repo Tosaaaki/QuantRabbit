@@ -6,7 +6,7 @@
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
 
-このファイルは、QuantRabbit の「改善記録」と「敗因記録」の単一台帳です。
+このファイルは、QuantRabbit の「改善記録」と「敗因記録」の単一台帳兼 change diary です。
 以後、同種の記録は必ずここに追記し、他の分散ファイルは作らないこと。
 
 ## Rules (Read First)
@@ -15,13 +15,84 @@
 - 追記順は「新しいものを上」に統一する。
 - 事実は VM/OANDA 実測を優先し、日時は UTC と JST を明記する。
 - 推測は `Hypothesis` と明示し、事実 (`Fact`) と混在させない。
+- 各エントリは「何を変え、何を期待し、結果が良かったか悪かったか、次にどうするか」が追える change diary として書く。
 - 最低限の記載項目:
+  - `Change`（何を変えたか）
+  - `Why`（なぜ今それをやるか）
+  - `Hypothesis`（どう効く想定か）
+  - `Expected Good`（期待した改善）
+  - `Expected Bad`（想定した副作用/悪化条件）
   - `Period`（集計期間）
   - `Fact`（数値）
   - `Failure Cause`（敗因）
   - `Improvement`（改善施策）
-- `Verification`（確認方法/判定基準）
-- `Status`（open/in_progress/done）
+  - `Verification`（確認方法/判定基準）
+  - `Verdict`（`good/bad/mixed/pending`）
+  - `Next Action`（維持/戻す/追加調整/再検証条件）
+  - `Status`（`open/in_progress/done`）
+
+## Short Template
+
+```md
+## YYYY-MM-DD HH:MM JST / short title
+- Change:
+- Why:
+- Hypothesis:
+- Expected Good:
+- Expected Bad:
+- Period:
+- Fact:
+- Failure Cause:
+- Improvement:
+- Verification:
+- Verdict:
+- Next Action:
+- Status:
+```
+
+## 2026-03-11 01:55 JST / docs運用: `TRADE_FINDINGS` を「良かった/悪かった/保留」が追える change diary として固定
+
+- Change:
+  - `docs/TRADE_FINDINGS.md` の冒頭ルールに
+    `Change / Why / Hypothesis / Expected Good / Expected Bad / Verdict / Next Action`
+    を追加し、短い記入テンプレートを定義した。
+  - `AGENTS.md`, `docs/AGENT_COLLAB_HUB.md`, `docs/INDEX.md`,
+    `docs/WORKER_REFACTOR_LOG.md` も同じ前提へ同期した。
+- Why:
+  - 記録場所自体は既にあったが、変更ごとの「良かった/悪かった/次に何をする」が
+    一目で追いにくく、改善判断が時系列比較しづらかった。
+- Hypothesis:
+  - 変更ごとに期待値と副作用、実測結果、次アクションを固定で残せば、
+    同じ失敗の再発と「効かなかった調整の再実施」を減らせる。
+- Expected Good:
+  - 変更の当たり外れを `good/bad/mixed/pending` で横比較しやすくなる。
+  - 次の改善が「前回の続き」から始まり、勘ではなく履歴で回せる。
+- Expected Bad:
+  - 記録項目が増えることで、追記が雑になるか、更新コストを嫌って未記入が増える可能性がある。
+- Period:
+  - UTC `2026-03-10 16:40-16:55`
+  - JST `2026-03-11 01:40-01:55`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.536 / ask=157.544 / spread=0.8p`
+    - recent range `5m=5.5p / 15m=15.8p / 60m=15.8p`
+    - `data_lag_ms=261.6`, `decision_latency_ms=11.7`, `mechanism_integrity.ok=true`
+  - 既存ルールでは `docs/TRADE_FINDINGS.md` を単一台帳と定義していたが、
+    冒頭 Rules には `Verdict` と `Next Action` の明示必須化がなかった。
+- Failure Cause:
+  - 「記録先がない」のではなく、「改善日記としての読み方が固定されていない」ことが課題だった。
+- Improvement:
+  - 単一台帳方針は維持したまま、change diary の最低項目とテンプレートを明文化した。
+- Verification:
+  - `git diff -- AGENTS.md docs/AGENT_COLLAB_HUB.md docs/INDEX.md docs/TRADE_FINDINGS.md docs/WORKER_REFACTOR_LOG.md`
+  - 追記後の `docs/TRADE_FINDINGS.md` 冒頭で必須項目とテンプレートを確認。
+- Verdict:
+  - `pending`
+- Next Action:
+  - 次の strategy/runtime 変更からこの形式で 3-5 件連続記録し、
+    「読みやすさが上がったか」「未記入が増えていないか」を再評価する。
+- Status:
+  - done
 
 ## 2026-03-10 23:28 JST / local-v2: shared participation alloc を「低試行 winner の cadence 回復」まで広げ、counterfactual overlay で全戦略の TP/SL を動的化
 

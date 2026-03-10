@@ -61,6 +61,7 @@
 - 変更は `git commit` → `git push` → ローカル反映（`scripts/local_v2_stack.sh` ベース）で行う。未コミット状態やローカル差し替えでの運用は避ける。
 - 変更点は必ず AGENTS と実装仕様側へ同時記録すること。少なくとも `docs/WORKER_REFACTOR_LOG.md` と関連仕様（`docs/WORKER_ROLE_MATRIX_V2.md`/`docs/ARCHITECTURE.md` 等）へ追記し、追跡可能な監査ログを残す。
 - 改善/敗因の運用記録は **`docs/TRADE_FINDINGS.md` の1箇所に集約** する。新しい分析を行ったら必ず同ファイルへ追記し、同種の分散メモを新規作成しない。
+- `docs/TRADE_FINDINGS.md` は単なる台帳ではなく、変更の良し悪しを後から改善に使うための change diary として扱う。各変更で最低限 `Why/Hypothesis`、`Expected Good`、`Expected Bad`、`Observed/Fact`、`Verdict`（`good/bad/pending`）、`Next Action` を残す。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。
 - その差分は「他者/他タスクの作業中変更」を前提に、関連ファイルを読んで意図を把握したうえで今回タスクを継続する（差分の存在だけで作業停止・続行確認を挟まない）。
 - **並行タスク時のGit運用を厳守**: 作業開始前/コミット前に `git status --short` と `git diff --name-only` を確認し、ステージは自分が変更したファイルのみに限定する。タスク単位でコミットを分離し、他タスク差分を混在・巻き戻ししない。
@@ -133,7 +134,7 @@
 - `docs/KATA_MICRO_RANGEBREAK.md`: micro（`MicroRangeBreak`）の型（Kata）設計・運用。
 - `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（ローカル検証ログ/展開計画）。
 - `docs/WORKER_REFACTOR_LOG.md`: ワーカー再編（データ供給・制御・ENTRY/EXIT分離）の確定記録。
-- `docs/TRADE_FINDINGS.md`: 改善/敗因の単一台帳（全担当者共通）。
+- `docs/TRADE_FINDINGS.md`: 改善/敗因の単一台帳兼 change diary（good/bad/pending と次アクションを残す）。
 
 ## 5. ワーカー再編（V2）—役割を完全分離
 
