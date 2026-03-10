@@ -3715,6 +3715,35 @@ def _entry_probability_value(
     return None
 
 
+def _entry_path_stage_status(
+    *,
+    units_before: Optional[int] = None,
+    units_after: Optional[int] = None,
+    entry_probability_before: Optional[float] = None,
+    entry_probability_after: Optional[float] = None,
+    skip_when_unchanged: bool = False,
+) -> str:
+    before_abs = abs(int(units_before)) if units_before is not None else None
+    after_abs = abs(int(units_after)) if units_after is not None else None
+    if after_abs == 0 and (before_abs is None or before_abs > 0):
+        return "block"
+    if before_abs is not None and after_abs is not None:
+        if after_abs < before_abs:
+            return "reduce"
+        if after_abs > before_abs:
+            return "boost"
+    prob_before = _entry_probability_value(entry_probability_before, None)
+    prob_after = _entry_probability_value(entry_probability_after, None)
+    if prob_before is not None and prob_after is not None:
+        if prob_after + 1e-9 < prob_before:
+            return "reduce"
+        if prob_after > prob_before + 1e-9:
+            return "boost"
+    if skip_when_unchanged:
+        return "skip"
+    return "pass"
+
+
 def _probability_scaled_units(
     units: int,
     *,
@@ -4151,6 +4180,91 @@ def _ensure_entry_intent_payload(
         thesis["entry_probability"] = _ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT
 
     return thesis
+
+
+def _append_entry_path_stage(
+    entry_thesis: Optional[dict],
+    *,
+    stage: str,
+    status: str,
+    units_before: Optional[int] = None,
+    units_after: Optional[int] = None,
+    entry_probability_before: Optional[float] = None,
+    entry_probability_after: Optional[float] = None,
+    reason: Optional[str] = None,
+    detail_key: Optional[str] = None,
+    extra: Optional[dict[str, object]] = None,
+) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    thesis = dict(entry_thesis)
+    existing = thesis.get("entry_path_attribution")
+    trail: list[dict[str, object]] = []
+    if isinstance(existing, list):
+        trail = [dict(item) for item in existing if isinstance(item, dict)]
+    record: dict[str, object] = {
+        "stage": stage,
+        "status": status,
+    }
+    if units_before is not None:
+        record["units_before"] = int(units_before)
+    if units_after is not None:
+        record["units_after"] = int(units_after)
+    prob_before = _entry_probability_value(entry_probability_before, None)
+    if prob_before is not None:
+        record["entry_probability_before"] = round(float(prob_before), 6)
+    prob_after = _entry_probability_value(entry_probability_after, None)
+    if prob_after is not None:
+        record["entry_probability_after"] = round(float(prob_after), 6)
+    if reason:
+        record["reason"] = reason
+    if detail_key:
+        record["detail_key"] = detail_key
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            if value is not None:
+                record[key] = value
+    trail.append(record)
+    thesis["entry_path_attribution_version"] = 1
+    thesis["entry_path_attribution"] = trail
+    return thesis
+
+
+def _append_dynamic_alloc_entry_path(entry_thesis: Optional[dict]) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    dynamic_alloc = entry_thesis.get("dynamic_alloc")
+    if not isinstance(dynamic_alloc, dict):
+        return entry_thesis
+    existing = entry_thesis.get("entry_path_attribution")
+    if isinstance(existing, list):
+        for item in existing:
+            if isinstance(item, dict) and item.get("stage") == "dynamic_alloc":
+                return entry_thesis
+    lot_multiplier = _as_float(dynamic_alloc.get("lot_multiplier"), None)
+    status = "pass"
+    if lot_multiplier is not None:
+        if lot_multiplier < 1.0 - 1e-9:
+            status = "reduce"
+        elif lot_multiplier > 1.0 + 1e-9:
+            status = "boost"
+    probability = _entry_probability_value(None, entry_thesis)
+    return _append_entry_path_stage(
+        entry_thesis,
+        stage="dynamic_alloc",
+        status=status,
+        entry_probability_after=probability,
+        reason=str(dynamic_alloc.get("reason") or dynamic_alloc.get("source") or "").strip() or None,
+        detail_key="dynamic_alloc",
+        extra={
+            "source": dynamic_alloc.get("source"),
+            "lot_multiplier": (
+                round(float(lot_multiplier), 6)
+                if lot_multiplier is not None
+                else None
+            ),
+        },
+    )
 
 
 def _entry_intent_guard_reason(
@@ -8719,6 +8833,7 @@ async def market_order(
         strategy_tag=strategy_tag,
         entry_thesis=entry_thesis,
     )
+    entry_thesis = _append_dynamic_alloc_entry_path(entry_thesis)
     entry_probability = _entry_probability_value(confidence, entry_thesis)
 
     def _inject_entry_payload(payload: Optional[dict] = None) -> dict:
@@ -8735,6 +8850,13 @@ async def market_order(
                 req["entry_units_intent"] = entry_thesis.get("entry_units_intent")
             if "entry_probability" not in req:
                 req["entry_probability"] = entry_thesis.get("entry_probability")
+            trail = entry_thesis.get("entry_path_attribution")
+            if isinstance(trail, list):
+                req.setdefault(
+                    "entry_path_attribution_version",
+                    entry_thesis.get("entry_path_attribution_version"),
+                )
+                req.setdefault("entry_path_attribution", trail)
         if entry_probability is not None:
             req["entry_probability"] = entry_probability
         return req
@@ -8760,6 +8882,16 @@ async def market_order(
         entry_probability=entry_probability,
     )
     if entry_intent_guard_reason is not None:
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_entry_intent_guard",
+            status="block",
+            units_before=units,
+            units_after=0,
+            entry_probability_after=entry_probability,
+            reason=entry_intent_guard_reason,
+            detail_key="entry_intent_guard",
+        )
         side_label = "buy" if units > 0 else "sell"
         _console_order_log(
             "OPEN_SKIP",
@@ -8813,6 +8945,15 @@ async def market_order(
             },
         )
         return None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="order_manager_entry_intent_guard",
+        status="pass",
+        units_before=units,
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="entry_intent_guard",
+    )
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -8826,6 +8967,16 @@ async def market_order(
             entry_probability=entry_probability,
         )
         if probability_reason is not None:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_probability_gate",
+                status="block",
+                units_before=units,
+                units_after=0,
+                entry_probability_after=entry_probability,
+                reason=probability_reason,
+                detail_key="entry_probability",
+            )
             reason_note = probability_reason
             _console_order_log(
                 "OPEN_SKIP",
@@ -8882,6 +9033,19 @@ async def market_order(
                 },
             )
             return None
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_probability_gate",
+            status=_entry_path_stage_status(
+                units_before=units,
+                units_after=scaled_units,
+                entry_probability_after=entry_probability,
+            ),
+            units_before=units,
+            units_after=scaled_units,
+            entry_probability_after=entry_probability,
+            detail_key="entry_probability",
+        )
         if scaled_units != units:
             _console_order_log(
                 "OPEN_SCALE",
@@ -9227,6 +9391,16 @@ async def market_order(
         return None
 
     if _reject_entry_by_control(strategy_tag, pocket=pocket):
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_strategy_control",
+            status="block",
+            units_before=units,
+            units_after=0,
+            entry_probability_after=entry_probability,
+            reason="entry_disabled",
+            detail_key="strategy_control",
+        )
         note = "strategy_control_entry_disabled"
         _console_order_log(
             "OPEN_REJECT",
@@ -9257,11 +9431,30 @@ async def market_order(
             tags={"pocket": pocket, "strategy": strategy_tag, "action": "entry"},
         )
         return None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="order_manager_strategy_control",
+        status="pass",
+        units_before=units,
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="strategy_control",
+    )
 
     if not reduce_only and pocket != "manual":
         slo_decision = slo_guard.decide(pocket=pocket, strategy_tag=strategy_tag)
         if not slo_decision.allowed:
             reason = str(slo_decision.reason or "slo_block")
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_slo_guard",
+                status="block",
+                units_before=units,
+                units_after=0,
+                entry_probability_after=entry_probability,
+                reason=reason,
+                detail_key="slo_guard",
+            )
             note = f"slo_block:{reason}"
             _console_order_log(
                 "OPEN_REJECT",
@@ -9305,6 +9498,15 @@ async def market_order(
                 },
             )
             return None
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_slo_guard",
+            status="pass",
+            units_before=units,
+            units_after=units,
+            entry_probability_after=entry_probability,
+            detail_key="slo_guard",
+        )
 
     if not reduce_only and pocket != "manual":
         policy_allowed, policy_reason, policy_details = _policy_gate_allows_entry(
@@ -9315,6 +9517,16 @@ async def market_order(
         )
         if not policy_allowed:
             reason = policy_reason or "policy_block"
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_policy_gate",
+                status="block",
+                units_before=units,
+                units_after=0,
+                entry_probability_after=entry_probability,
+                reason=reason,
+                detail_key="policy_gate",
+            )
             _console_order_log(
                 "OPEN_REJECT",
                 pocket=pocket,
@@ -9349,7 +9561,25 @@ async def market_order(
                 tags={"pocket": pocket, "strategy": strategy_tag or "unknown", "reason": reason},
             )
             return None
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_policy_gate",
+            status="pass",
+            units_before=units,
+            units_after=units,
+            entry_probability_after=entry_probability,
+            detail_key="policy_gate",
+        )
 
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="order_manager_preflight",
+        status="pass",
+        units_before=units,
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="preflight_start",
+    )
     log_order(
         pocket=pocket,
         instrument=instrument,
@@ -9406,6 +9636,16 @@ async def market_order(
         except Exception:
             pocket_decision = None
         if pocket_decision is not None and not pocket_decision.allowed:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_perf_guard_pocket",
+                status="block",
+                units_before=units,
+                units_after=0,
+                entry_probability_after=entry_probability,
+                reason=str(pocket_decision.reason or "pocket_block"),
+                detail_key="perf_guard",
+            )
             note = f"perf_block_pocket:{pocket_decision.reason}"
             _console_order_log(
                 "OPEN_REJECT",
@@ -9440,6 +9680,16 @@ async def market_order(
                 },
             )
             return None
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_perf_guard_pocket",
+            status="pass" if pocket_decision is not None else "skip",
+            units_before=units,
+            units_after=units,
+            entry_probability_after=entry_probability,
+            reason=None if pocket_decision is not None else "unavailable",
+            detail_key="perf_guard",
+        )
     if pocket != "manual" and strategy_tag:
         _trace("perf_guard")
         try:
@@ -9454,6 +9704,16 @@ async def market_order(
             env_prefix=env_prefix,
         )
         if not decision.allowed:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_perf_guard_strategy",
+                status="block",
+                units_before=units,
+                units_after=0,
+                entry_probability_after=entry_probability,
+                reason=str(decision.reason or "strategy_block"),
+                detail_key="perf_guard",
+            )
             note = f"perf_block:{decision.reason}"
             _console_order_log(
                 "OPEN_REJECT",
@@ -9489,6 +9749,15 @@ async def market_order(
                 },
             )
             return None
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_perf_guard_strategy",
+            status="pass",
+            units_before=units,
+            units_after=units,
+            entry_probability_after=entry_probability,
+            detail_key="perf_guard",
+        )
 
     if not reduce_only and pocket != "manual":
         decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag, env_prefix=env_prefix)
@@ -9497,6 +9766,16 @@ async def market_order(
             if _PROFIT_GUARD_BYPASS_RANGE and pocket in {"scalp", "micro"}:
                 range_active = _range_active_for_entry()
             if range_active:
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_profit_guard",
+                    status="bypass",
+                    units_before=units,
+                    units_after=units,
+                    entry_probability_after=entry_probability,
+                    reason=str(decision.reason or "range_bypass"),
+                    detail_key="profit_guard",
+                )
                 log_metric(
                     "order_profit_guard_bypass",
                     1.0,
@@ -9527,6 +9806,16 @@ async def market_order(
                     },
                 )
             else:
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_profit_guard",
+                    status="block",
+                    units_before=units,
+                    units_after=0,
+                    entry_probability_after=entry_probability,
+                    reason=str(decision.reason or "profit_block"),
+                    detail_key="profit_guard",
+                )
                 note = f"profit_guard:{decision.reason}"
                 _console_order_log(
                     "OPEN_REJECT",
@@ -9562,6 +9851,16 @@ async def market_order(
                     },
                 )
                 return None
+        else:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_profit_guard",
+                status="pass",
+                units_before=units,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                detail_key="profit_guard",
+            )
 
     # LLM brain gate (per-strategy human-like filter)
     if (
@@ -9573,7 +9872,9 @@ async def market_order(
             or _ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT
         )
     ):
+        brain_units_before = units
         brain_decision = None
+        brain_skip_reason: Optional[str] = None
         if brain is None:
             global _ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO
             now_mono = time.monotonic()
@@ -9592,6 +9893,7 @@ async def market_order(
                 1.0,
                 tags={"pocket": pocket, "strategy": str(strategy_tag or "unknown")},
             )
+            brain_skip_reason = "unavailable"
         else:
             try:
                 brain_decision = brain.decide(
@@ -9609,10 +9911,21 @@ async def market_order(
             except Exception as exc:
                 brain_decision = None
                 logging.debug("[BRAIN] decision failed: %s", exc)
+                brain_skip_reason = "decision_failed"
         if brain_decision is not None:
             brain_reason_key = str(brain_decision.reason or "").strip().lower()
             if _ORDER_MANAGER_BRAIN_GATE_MODE == "shadow":
                 if brain_reason_key != "disabled":
+                    entry_thesis = _append_entry_path_stage(
+                        entry_thesis,
+                        stage="order_manager_brain_gate",
+                        status="shadow",
+                        units_before=brain_units_before,
+                        units_after=units,
+                        entry_probability_after=entry_probability,
+                        reason=str(brain_decision.reason or "shadow"),
+                        detail_key="brain",
+                    )
                     logging.info(
                         "[BRAIN][SHADOW] pocket=%s strategy=%s action=%s allowed=%s scale=%.3f reason=%s",
                         pocket,
@@ -9653,7 +9966,19 @@ async def market_order(
                             "reason": brain_decision.reason,
                         },
                     )
+                else:
+                    brain_skip_reason = "disabled"
             elif not brain_decision.allowed:
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_brain_gate",
+                    status="block",
+                    units_before=brain_units_before,
+                    units_after=0,
+                    entry_probability_after=entry_probability,
+                    reason=str(brain_decision.reason or "block"),
+                    detail_key="brain",
+                )
                 note = f"brain_block:{brain_decision.reason}"
                 _console_order_log(
                     "OPEN_REJECT",
@@ -9699,6 +10024,16 @@ async def market_order(
                 scaled_units = int(round(abs(units) * brain_decision.scale))
                 min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 if scaled_units < min_allowed:
+                    entry_thesis = _append_entry_path_stage(
+                        entry_thesis,
+                        stage="order_manager_brain_gate",
+                        status="block",
+                        units_before=brain_units_before,
+                        units_after=0,
+                        entry_probability_after=entry_probability,
+                        reason=f"scale_below_min:{brain_decision.reason}",
+                        detail_key="brain",
+                    )
                     note = f"brain_scale_below_min:{brain_decision.reason}"
                     _console_order_log(
                         "OPEN_REJECT",
@@ -9756,6 +10091,41 @@ async def market_order(
                             "scale": f"{brain_decision.scale:.2f}",
                         },
                     )
+            if _ORDER_MANAGER_BRAIN_GATE_MODE != "shadow" or brain_reason_key == "disabled":
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_brain_gate",
+                    status=(
+                        _entry_path_stage_status(
+                            units_before=brain_units_before,
+                            units_after=units,
+                            entry_probability_after=entry_probability,
+                            skip_when_unchanged=brain_reason_key == "disabled",
+                        )
+                        if brain_reason_key != "disabled"
+                        else "skip"
+                    ),
+                    units_before=brain_units_before,
+                    units_after=units,
+                    entry_probability_after=entry_probability,
+                    reason=(
+                        str(brain_decision.reason).strip()
+                        if brain_decision.reason
+                        else brain_skip_reason
+                    ),
+                    detail_key="brain",
+                )
+        elif brain_skip_reason:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_brain_gate",
+                status="skip",
+                units_before=brain_units_before,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                reason=brain_skip_reason,
+                detail_key="brain",
+            )
 
     # Probabilistic forecast gate (scikit-learn, offline bundle)
     if _should_apply_order_manager_forecast_gate(
@@ -9763,6 +10133,8 @@ async def market_order(
         pocket=pocket,
         preserve_strategy_intent=preserve_strategy_intent,
     ):
+        forecast_units_before = units
+        forecast_skip_reason: Optional[str] = None
         try:
             forecast_meta: dict[str, Any] = {"instrument": instrument}
             if isinstance(meta, dict):
@@ -9778,8 +10150,19 @@ async def market_order(
         except Exception as exc:
             fc_decision = None
             logging.debug("[FORECAST] decision failed: %s", exc)
+            forecast_skip_reason = "decision_failed"
         if fc_decision is not None:
             if not fc_decision.allowed:
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_forecast_gate",
+                    status="block",
+                    units_before=forecast_units_before,
+                    units_after=0,
+                    entry_probability_after=entry_probability,
+                    reason=str(fc_decision.reason or "block"),
+                    detail_key="forecast",
+                )
                 note = f"forecast_block:{fc_decision.reason}"
                 _console_order_log(
                     "OPEN_REJECT",
@@ -9854,6 +10237,16 @@ async def market_order(
                 scaled_units = int(round(abs(units) * fc_decision.scale))
                 min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 if scaled_units < min_allowed:
+                    entry_thesis = _append_entry_path_stage(
+                        entry_thesis,
+                        stage="order_manager_forecast_gate",
+                        status="block",
+                        units_before=forecast_units_before,
+                        units_after=0,
+                        entry_probability_after=entry_probability,
+                        reason=f"scale_below_min:{fc_decision.reason}",
+                        detail_key="forecast",
+                    )
                     note = f"forecast_scale_below_min:{fc_decision.reason}"
                     _console_order_log(
                         "OPEN_REJECT",
@@ -10159,6 +10552,31 @@ async def market_order(
                         "style": str(fc_decision.style or "n/a"),
                     },
                 )
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_forecast_gate",
+                status=_entry_path_stage_status(
+                    units_before=forecast_units_before,
+                    units_after=units,
+                    entry_probability_after=entry_probability,
+                ),
+                units_before=forecast_units_before,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                reason=str(fc_decision.reason or "pass"),
+                detail_key="forecast",
+            )
+        elif forecast_skip_reason:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_forecast_gate",
+                status="skip",
+                units_before=forecast_units_before,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                reason=forecast_skip_reason,
+                detail_key="forecast",
+            )
 
     # Pattern gate (pattern_book-driven block/scale; strategy worker opt-in)
     # NOTE: pattern_gate は opt-in のため、preserve_strategy_intent 下でも評価してよい
@@ -10168,6 +10586,8 @@ async def market_order(
         and pocket != "manual"
         and _ORDER_MANAGER_PATTERN_GATE_ENABLED
     ):
+        pattern_units_before = units
+        pattern_skip_reason: Optional[str] = None
         try:
             pattern_decision = pattern_gate.decide(
                 strategy_tag=strategy_tag,
@@ -10180,11 +10600,22 @@ async def market_order(
         except Exception as exc:
             pattern_decision = None
             logging.debug("[PATTERN_GATE] decision failed: %s", exc)
+            pattern_skip_reason = "decision_failed"
         if pattern_decision is not None:
             if isinstance(entry_thesis, dict):
                 entry_thesis = dict(entry_thesis)
                 entry_thesis["pattern_gate"] = pattern_decision.to_payload()
             if not pattern_decision.allowed:
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_pattern_gate",
+                    status="block",
+                    units_before=pattern_units_before,
+                    units_after=0,
+                    entry_probability_after=entry_probability,
+                    reason=str(pattern_decision.reason or "block"),
+                    detail_key="pattern_gate",
+                )
                 note = f"pattern_block:{pattern_decision.reason}"
                 _console_order_log(
                     "OPEN_REJECT",
@@ -10241,6 +10672,16 @@ async def market_order(
                         scaled_units = min_allowed
                         pattern_scale_floored = True
                     else:
+                        entry_thesis = _append_entry_path_stage(
+                            entry_thesis,
+                            stage="order_manager_pattern_gate",
+                            status="block",
+                            units_before=pattern_units_before,
+                            units_after=0,
+                            entry_probability_after=entry_probability,
+                            reason=f"scale_below_min:{pattern_decision.reason}",
+                            detail_key="pattern_gate",
+                        )
                         note = f"pattern_scale_below_min:{pattern_decision.reason}"
                         _console_order_log(
                             "OPEN_REJECT",
@@ -10336,6 +10777,31 @@ async def market_order(
                             "source": pattern_decision.source,
                         },
                     )
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_pattern_gate",
+                status=_entry_path_stage_status(
+                    units_before=pattern_units_before,
+                    units_after=units,
+                    entry_probability_after=entry_probability,
+                ),
+                units_before=pattern_units_before,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                reason=str(pattern_decision.reason or "pass"),
+                detail_key="pattern_gate",
+            )
+        elif pattern_skip_reason:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_pattern_gate",
+                status="skip",
+                units_before=pattern_units_before,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                reason=pattern_skip_reason,
+                detail_key="pattern_gate",
+            )
 
     exec_cfg = None
     if isinstance(entry_thesis, dict):
@@ -12861,6 +13327,7 @@ async def limit_order(
         strategy_tag=strategy_tag,
         entry_thesis=entry_thesis,
     )
+    entry_thesis = _append_dynamic_alloc_entry_path(entry_thesis)
     entry_probability = _entry_probability_value(confidence, entry_thesis)
 
     def _inject_entry_payload(payload: Optional[dict] = None) -> dict:
@@ -12877,6 +13344,13 @@ async def limit_order(
                 req["entry_units_intent"] = entry_thesis.get("entry_units_intent")
             if "entry_probability" not in req:
                 req["entry_probability"] = entry_thesis.get("entry_probability")
+            trail = entry_thesis.get("entry_path_attribution")
+            if isinstance(trail, list):
+                req.setdefault(
+                    "entry_path_attribution_version",
+                    entry_thesis.get("entry_path_attribution_version"),
+                )
+                req.setdefault("entry_path_attribution", trail)
         if entry_probability is not None:
             req["entry_probability"] = entry_probability
         return req
@@ -12895,6 +13369,16 @@ async def limit_order(
         entry_probability=entry_probability,
     )
     if entry_intent_guard_reason is not None:
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_entry_intent_guard",
+            status="block",
+            units_before=units,
+            units_after=0,
+            entry_probability_after=entry_probability,
+            reason=entry_intent_guard_reason,
+            detail_key="entry_intent_guard",
+        )
         side_label = "buy" if units > 0 else "sell"
         _console_order_log(
             "OPEN_SKIP",
@@ -12935,6 +13419,15 @@ async def limit_order(
             },
         )
         return None, None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="order_manager_entry_intent_guard",
+        status="pass",
+        units_before=units,
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="entry_intent_guard",
+    )
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -12948,6 +13441,16 @@ async def limit_order(
             entry_probability=entry_probability,
         )
         if probability_reason is not None:
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_probability_gate",
+                status="block",
+                units_before=units,
+                units_after=0,
+                entry_probability_after=entry_probability,
+                reason=probability_reason,
+                detail_key="entry_probability",
+            )
             reason_note = probability_reason
             _console_order_log(
                 "OPEN_SKIP",
@@ -12988,6 +13491,19 @@ async def limit_order(
                 },
             )
             return None, None
+        entry_thesis = _append_entry_path_stage(
+            entry_thesis,
+            stage="order_manager_probability_gate",
+            status=_entry_path_stage_status(
+                units_before=units,
+                units_after=scaled_units,
+                entry_probability_after=entry_probability,
+            ),
+            units_before=units,
+            units_after=scaled_units,
+            entry_probability_after=entry_probability,
+            detail_key="entry_probability",
+        )
         if scaled_units != units:
             _console_order_log(
                 "OPEN_SCALE",

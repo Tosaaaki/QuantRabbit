@@ -445,6 +445,11 @@ def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch
     monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY", True)
     monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
     monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_ensure_entry_intent_payload",
+        lambda units, confidence, strategy_tag, entry_thesis: {"entry_units_intent": abs(int(units))},
+    )
     monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
@@ -466,6 +471,126 @@ def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch
 
     assert ticket is None
     assert "entry_intent_guard_reject" in statuses
+
+
+def test_market_order_brain_block_records_entry_path_attribution(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    logged: list[dict[str, object]] = []
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", True)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_MODE", "apply")
+    monkeypatch.setattr(
+        order_manager,
+        "_ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT",
+        True,
+    )
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None))
+    monkeypatch.setattr(
+        order_manager,
+        "perf_guard",
+        SimpleNamespace(
+            is_pocket_allowed=lambda *_a, **_k: SimpleNamespace(allowed=True, reason="ok"),
+            is_allowed=lambda *_a, **_k: SimpleNamespace(allowed=True, reason="ok"),
+        ),
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "profit_guard",
+        SimpleNamespace(
+            is_allowed=lambda *_a, **_k: SimpleNamespace(allowed=True, reason="ok"),
+        ),
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "slo_guard",
+        SimpleNamespace(
+            decide=lambda **_k: SimpleNamespace(
+                allowed=True,
+                reason=None,
+                sample=0,
+                data_lag_latest_ms=None,
+                data_lag_p95_ms=None,
+                decision_latency_latest_ms=None,
+                decision_latency_p95_ms=None,
+            ),
+        ),
+    )
+    monkeypatch.setattr(order_manager, "_policy_gate_allows_entry", lambda *_a, **_k: (True, None, {}))
+    monkeypatch.setattr(order_manager, "_reject_entry_by_control", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "attach_section_axis", lambda thesis, pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
+    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager,
+        "_augment_entry_thesis_policy_generation",
+        lambda thesis, reduce_only=False: thesis,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "brain",
+        SimpleNamespace(
+            decide=lambda **_kwargs: SimpleNamespace(
+                allowed=False,
+                scale=1.0,
+                reason="llm_veto",
+                action="BLOCK",
+            )
+        ),
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: logged.append(dict(kwargs)))
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-brain-attribution",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+            },
+            confidence=88,
+        )
+    )
+
+    assert ticket is None
+    brain_block = next(item for item in logged if item.get("status") == "brain_block")
+    request_payload = brain_block.get("request_payload")
+    assert isinstance(request_payload, dict)
+    assert request_payload.get("entry_path_attribution_version") == 1
+    top_level_trail = request_payload.get("entry_path_attribution")
+    assert isinstance(top_level_trail, list)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == [
+        "order_manager_entry_intent_guard",
+        "order_manager_probability_gate",
+        "order_manager_strategy_control",
+        "order_manager_slo_guard",
+        "order_manager_policy_gate",
+        "order_manager_preflight",
+        "order_manager_perf_guard_pocket",
+        "order_manager_perf_guard_strategy",
+        "order_manager_profit_guard",
+        "order_manager_brain_gate",
+    ]
+    assert trail[-1]["status"] == "block"
+    assert trail[-1]["reason"] == "llm_veto"
 
 
 def test_market_order_shadow_skips_disabled_brain_decision(monkeypatch) -> None:
@@ -549,6 +674,50 @@ def test_market_order_shadow_skips_disabled_brain_decision(monkeypatch) -> None:
 
     assert "brain_shadow" not in statuses
     assert "order_brain_shadow" not in metrics
+
+
+def test_limit_order_entry_intent_guard_records_entry_path_attribution(monkeypatch) -> None:
+    async def _unexpected_service_call(_path: str, _payload: dict) -> None:
+        raise AssertionError("service should not be called when entry intent guard rejects")
+
+    logged: list[dict[str, object]] = []
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
+    monkeypatch.setattr(order_manager, "_strategy_tag_from_client_id", lambda _cid: None)
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: logged.append(dict(kwargs)))
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
+
+    trade_id, order_id = asyncio.run(
+        order_manager.limit_order(
+            instrument="USD_JPY",
+            units=1000,
+            price=150.000,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp",
+            client_order_id="cid-limit-missing-tag",
+            entry_thesis={
+                "entry_probability": 0.88,
+                "entry_units_intent": 1000,
+            },
+            confidence=88,
+        )
+    )
+
+    assert trade_id is None
+    assert order_id is None
+    reject = next(item for item in logged if item.get("status") == "entry_intent_guard_reject")
+    request_payload = reject.get("request_payload")
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == ["order_manager_entry_intent_guard"]
+    assert trail[0]["status"] == "block"
+    assert trail[0]["reason"] == "missing_strategy_tag"
 
 
 def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypatch) -> None:
