@@ -14877,3 +14877,36 @@
   - `supportive_long` を壊さず、
     weak trend / weak range 帯の non-supportive long だけを
     strategy-local に追加遮断する。
+
+### 2026-03-10 `scalp_extrema_reversal_live` shallow-probe quality guard
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - 直前 hotfix の
+    `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.30`
+    は fresh loser 2 本を止めるには効いたが、
+    broad な lane hardening であり user intent とずれる。
+  - fresh loss 2 本は
+    `supportive_long=false` かつ
+    `dist_low<=0.30 / long_bounce<=0.30 / tick_strength<=0.20 / adx<=13 / range_score<=0.32`
+    の shallow probe cluster に揃っていた。
+
+- 変更:
+  - env の gap threshold は `0.50` に戻す。
+  - worker に `long_shallow_probe_block` を追加し、
+    non-supportive long の shallow probe loser pattern だけを
+    strategy-local に拒否する。
+  - `entry_thesis.extrema.long_shallow_probe_block` を追加し、
+    order/trade 監査から理由を追えるようにする。
+  - worker test に
+    block case と deeper-probe pass case を追加する。
+
+- 検証:
+  - `tests/workers/test_scalp_extrema_reversal_worker.py` は `12 passed`。
+  - 7d closed trade の non-supportive long 21 本に対する再判定では
+    `2 losers blocked / 0 winners blocked / net -3.874 JPY`。

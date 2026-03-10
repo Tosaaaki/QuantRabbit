@@ -2634,3 +2634,25 @@
   直近 fresh loss の `ma_gap_pips=-0.32/-0.40` を strategy-local に遮断する。
 - `supportive_long=true` の long、shared gate、order_manager、
   exit worker 契約は変更しない。
+
+### 2026-03-10 `scalp_extrema_reversal_live` shallow-probe long current guard
+- `scalp_extrema_reversal_live` の current
+  `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS`
+  は `0.50` を正とする。
+- 追加の current guard は
+  `SCALP_EXTREMA_REVERSAL_LONG_SHALLOW_PROBE_*` で管理し、
+  `supportive_long=false` の long に対して
+  `dist_low / long_bounce / tick_strength / adx / range_score`
+  の shallow probe cluster を strategy-local に拒否する。
+- current 運用値は
+  `DIST_LOW_MAX_PIPS=0.30`,
+  `BOUNCE_MAX_PIPS=0.30`,
+  `TICK_STRENGTH_MAX=0.20`,
+  `ADX_MAX=13.0`,
+  `RANGE_SCORE_MAX=0.32`。
+- `supportive_long=true` の long はこの guard の対象外とし、
+  broad な lane kill を避ける。
+- 監査根拠は `entry_thesis.extrema.long_shallow_probe_block`,
+  `docs/TRADE_FINDINGS.md`,
+  `tests/workers/test_scalp_extrema_reversal_worker.py`
+  を正とする。

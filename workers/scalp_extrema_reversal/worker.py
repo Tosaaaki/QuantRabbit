@@ -274,6 +274,21 @@ EXTREMA_LONG_SUPPORT_RSI_CAP = _env_float("LONG_SUPPORT_RSI_CAP", 50.0)
 EXTREMA_LONG_SUPPORT_LOW_BAND_PIPS = _env_float("LONG_SUPPORT_LOW_BAND_PIPS", 1.2)
 EXTREMA_LONG_SUPPORT_CONF_BONUS = _env_int("LONG_SUPPORT_CONF_BONUS", 4)
 EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS = _env_float("LONG_COUNTERTREND_GAP_BLOCK_PIPS", 0.5)
+EXTREMA_LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS = _env_float(
+    "LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS", 0.30
+)
+EXTREMA_LONG_SHALLOW_PROBE_BOUNCE_MAX_PIPS = _env_float(
+    "LONG_SHALLOW_PROBE_BOUNCE_MAX_PIPS", 0.30
+)
+EXTREMA_LONG_SHALLOW_PROBE_TICK_STRENGTH_MAX = _env_float(
+    "LONG_SHALLOW_PROBE_TICK_STRENGTH_MAX", 0.20
+)
+EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX = _env_float(
+    "LONG_SHALLOW_PROBE_ADX_MAX", 13.0
+)
+EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX = _env_float(
+    "LONG_SHALLOW_PROBE_RANGE_SCORE_MAX", 0.32
+)
 EXTREMA_ADX_MAX = _env_float("ADX_MAX", 35.0)
 EXTREMA_ATR_MAX = _env_float("ATR_MAX", 0.0)
 EXTREMA_SPREAD_P25_MAX = _env_float("SPREAD_P25_MAX", 0.0)
@@ -498,10 +513,23 @@ def _signal_extrema_reversal(
         long_rsi_cap = max(long_rsi_cap, EXTREMA_LONG_SUPPORT_RSI_CAP)
         long_low_band_pips = max(long_low_band_pips, EXTREMA_LONG_SUPPORT_LOW_BAND_PIPS)
     ma_gap_pips = _ma_gap_pips(fac_m1)
+    range_score = (
+        float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0
+    )
+    adx_value = _adx(fac_m1)
     long_countertrend_block = (
         EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS > 0.0
         and not long_supportive
         and ma_gap_pips <= -EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS
+    )
+    long_shallow_probe_block = (
+        not long_supportive
+        and EXTREMA_LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS > 0.0
+        and dist_low <= EXTREMA_LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS
+        and long_bounce_pips <= EXTREMA_LONG_SHALLOW_PROBE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_LONG_SHALLOW_PROBE_TICK_STRENGTH_MAX
+        and adx_value <= EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX
+        and range_score <= EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX
     )
 
     can_short = (
@@ -518,6 +546,7 @@ def _signal_extrema_reversal(
         and rsi <= long_rsi_cap
         and long_bounce_pips >= EXTREMA_SWEEP_MIN_PIPS
         and not long_countertrend_block
+        and not long_shallow_probe_block
     )
 
     if not can_short and not can_long:
@@ -572,9 +601,10 @@ def _signal_extrema_reversal(
             "supportive_long_context": long_support_diag if long_supportive else {},
             "ma_gap_pips": round(ma_gap_pips, 3),
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
+            "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
             "trend_gate": trend_diag,
         },
-        "range_score": float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0,
+        "range_score": range_score,
     }
 
 

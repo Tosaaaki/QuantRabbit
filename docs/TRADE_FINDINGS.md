@@ -11790,3 +11790,61 @@ Status:
   - `ps eww -p <quant-scalp-extrema-reversal pid>`
   - env 読み込み下で `EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.30`,
     `ma_gap=-0.32/-0.40 -> blocked`, `ma_gap=-0.29 -> pass` を確認
+
+## 2026-03-10 17:50-17:58 JST / `scalp_extrema_reversal_live` を停止ではなく shallow-probe quality guard へ置換
+
+- 市況:
+  - `2026-03-10 17:50 JST` 時点の USD/JPY は local 実測で通常帯。
+  - local tick は `157.562/157.570`、spread `p50/p95=0.8p/0.8p`、
+    `M1 ATR 3.03p`、OANDA `pricing/candles` は `200 OK`。
+  - 市況停止ではなく、strategy-local な loser cluster 改善として扱う。
+
+- 直前 hotfix の見直し:
+  - `LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.30` は
+    fresh loss 2 本を止めるには効いたが、
+    user intent の「止めるのではなく改善する」には blunt すぎる。
+  - そのため gap hardening は `0.50` に戻し、
+    loser pattern にだけ当たる quality guard へ置換する。
+
+- 実測と cluster:
+  - fresh loss 2 本はどちらも
+    `supportive_long=false`,
+    `dist_low_pips=0.296/0.300`,
+    `long_bounce_pips=0.2/0.3`,
+    `tick_strength=0.2`,
+    `ADX=12.0/12.6`,
+    `range_score=0.315/0.306`
+    の shallow probe long だった。
+  - 7d の closed `scalp_extrema_reversal_live` / non-supportive long 21 本に
+    同条件
+    `dist_low<=0.30 && long_bounce<=0.30 && tick_strength<=0.20 && adx<=13 && range_score<=0.32`
+    を当てると、
+    `2 trades blocked / 0 winners blocked / net -3.874 JPY`
+    で、fresh loser 2 本だけに一致した。
+
+- 対応:
+  - `workers/scalp_extrema_reversal/worker.py`
+    - non-supportive long に対して
+      `dist_low / long_bounce / tick_strength / adx / range_score`
+      を束ねた `long_shallow_probe_block` を追加。
+    - `entry_thesis.extrema.long_shallow_probe_block` を監査用に露出。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_LONG_COUNTERTREND_GAP_BLOCK_PIPS=0.50`
+    - `SCALP_EXTREMA_REVERSAL_LONG_SHALLOW_PROBE_*`
+      (`DIST_LOW_MAX=0.30`, `BOUNCE_MAX=0.30`,
+      `TICK_STRENGTH_MAX=0.20`, `ADX_MAX=13.0`,
+      `RANGE_SCORE_MAX=0.32`)
+
+- 意図:
+  - `supportive_long=true` の lane は維持する。
+  - broad な long kill は避け、
+    shallow countertrend long の loser micro-pattern だけを
+    strategy-local に削る。
+  - shared gate / order_manager / exit worker 契約は変えない。
+
+- 検証:
+  - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `python3 -m pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+  - explorer review でも
+    「7d で blocked 2 本は loser のみ、winner 巻き込み 0」
+    を確認。
