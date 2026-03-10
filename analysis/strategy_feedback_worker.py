@@ -307,6 +307,58 @@ class StrategyStats:
         return self.avg_loss / self.avg_win
 
 
+@dataclass
+class _StatsAccumulator:
+    trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    sum_pips: float = 0.0
+    gross_win: float = 0.0
+    gross_loss: float = 0.0
+    abs_sum_pips: float = 0.0
+    hold_sec_sum: float = 0.0
+    hold_sec_count: int = 0
+    last_closed: str | None = None
+
+    def add(
+        self,
+        *,
+        pl_pips: float,
+        hold_sec: float | None,
+        close_time: str | None,
+    ) -> None:
+        self.trades += 1
+        self.sum_pips += pl_pips
+        self.abs_sum_pips += abs(pl_pips)
+        if pl_pips > 0:
+            self.wins += 1
+            self.gross_win += pl_pips
+        elif pl_pips < 0:
+            self.losses += 1
+            self.gross_loss += abs(pl_pips)
+        if hold_sec is not None and hold_sec >= 0.0:
+            self.hold_sec_sum += hold_sec
+            self.hold_sec_count += 1
+        if close_time and (self.last_closed is None or str(close_time) > str(self.last_closed)):
+            self.last_closed = str(close_time)
+
+    def to_stats(self, tag: str) -> StrategyStats:
+        avg_hold = self.hold_sec_sum / self.hold_sec_count if self.hold_sec_count > 0 else None
+        return StrategyStats(
+            tag=tag,
+            trades=self.trades,
+            wins=self.wins,
+            losses=self.losses,
+            sum_pips=self.sum_pips,
+            avg_pips=self.sum_pips / self.trades if self.trades > 0 else 0.0,
+            avg_abs_pips=self.abs_sum_pips / self.trades if self.trades > 0 else 0.0,
+            gross_win=self.gross_win,
+            gross_loss=self.gross_loss,
+            avg_hold_sec=avg_hold,
+            last_closed=self.last_closed,
+        )
+
+
 def _merge_strategy_stats(canonical_tag: str, stats_list: list[StrategyStats]) -> StrategyStats:
     trades = sum(max(0, int(stats.trades)) for stats in stats_list)
     wins = sum(max(0, int(stats.wins)) for stats in stats_list)
@@ -932,6 +984,165 @@ def _discover_from_trades(
     return stats_by_tag, latest_by_tag
 
 
+def _parse_entry_thesis(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _entry_setup_context(entry_thesis: dict[str, Any]) -> dict[str, str]:
+    if not isinstance(entry_thesis, dict):
+        return {}
+    live_setup = entry_thesis.get("live_setup_context")
+    if not isinstance(live_setup, dict):
+        live_setup = {}
+    context: dict[str, str] = {}
+    for key in ("setup_fingerprint", "flow_regime", "microstructure_bucket"):
+        raw = entry_thesis.get(key)
+        if raw in {None, ""}:
+            raw = live_setup.get(key)
+        text = str(raw or "").strip()
+        if text:
+            context[key] = text
+    return context
+
+
+def _setup_matches(context: dict[str, str]) -> list[dict[str, str]]:
+    matches: list[dict[str, str]] = []
+    setup_fingerprint = context.get("setup_fingerprint")
+    flow_regime = context.get("flow_regime")
+    microstructure_bucket = context.get("microstructure_bucket")
+    if setup_fingerprint:
+        match = {"match_dimension": "setup_fingerprint", "setup_fingerprint": setup_fingerprint}
+        if flow_regime:
+            match["flow_regime"] = flow_regime
+        if microstructure_bucket:
+            match["microstructure_bucket"] = microstructure_bucket
+        matches.append(match)
+    if flow_regime and microstructure_bucket:
+        matches.append(
+            {
+                "match_dimension": "flow_micro",
+                "flow_regime": flow_regime,
+                "microstructure_bucket": microstructure_bucket,
+            }
+        )
+    if flow_regime:
+        matches.append({"match_dimension": "flow_regime", "flow_regime": flow_regime})
+    if microstructure_bucket:
+        matches.append(
+            {"match_dimension": "microstructure_bucket", "microstructure_bucket": microstructure_bucket}
+        )
+    return matches
+
+
+def _match_sort_key(match: dict[str, str]) -> tuple[int, str, str, str]:
+    dimension = str(match.get("match_dimension") or "")
+    specificity = {
+        "setup_fingerprint": 4,
+        "flow_micro": 3,
+        "flow_regime": 2,
+        "microstructure_bucket": 1,
+    }.get(dimension, 0)
+    return (
+        specificity,
+        str(match.get("setup_fingerprint") or ""),
+        str(match.get("flow_regime") or ""),
+        str(match.get("microstructure_bucket") or ""),
+    )
+
+
+def _discover_setup_stats(
+    trades_db: Path,
+    lookback_days: int,
+    *,
+    known_keys: list[str] | None = None,
+) -> dict[str, list[tuple[dict[str, str], StrategyStats]]]:
+    if not trades_db.exists():
+        return {}
+    conn = sqlite3.connect(f"file:{trades_db}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(trades)").fetchall()
+            if row["name"] is not None
+        }
+        if "entry_thesis" not in columns:
+            return {}
+        since = f"-{max(1, int(lookback_days))} day"
+        rows = conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(strategy_tag, ''), COALESCE(NULLIF(strategy, ''), 'unknown')) AS strategy,
+              entry_thesis,
+              pl_pips,
+              open_time,
+              close_time
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND strategy_tag IS NOT NULL
+              AND close_time >= datetime('now', ?)
+            ORDER BY close_time DESC
+            """,
+            (since,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    grouped: dict[str, dict[str, tuple[dict[str, str], _StatsAccumulator]]] = {}
+    for row in rows:
+        tag_raw = str(row["strategy"] or "").strip()
+        if not tag_raw:
+            continue
+        canonical = _norm_tag(tag_raw)
+        if not canonical:
+            continue
+        if known_keys:
+            canonical = _canonical_known_strategy_key(canonical, known_keys)
+        entry_thesis = _parse_entry_thesis(row["entry_thesis"])
+        context = _entry_setup_context(entry_thesis)
+        if not context:
+            continue
+        pl_pips = _to_float(row["pl_pips"], 0.0)
+        hold_sec = None
+        if row["open_time"] and row["close_time"]:
+            try:
+                hold_sec = (
+                    dt.datetime.fromisoformat(str(row["close_time"]).replace("Z", "+00:00"))
+                    - dt.datetime.fromisoformat(str(row["open_time"]).replace("Z", "+00:00"))
+                ).total_seconds()
+            except Exception:
+                hold_sec = None
+        for match in _setup_matches(context):
+            group_key = json.dumps(match, sort_keys=True, ensure_ascii=True)
+            strategy_bucket = grouped.setdefault(canonical, {})
+            if group_key not in strategy_bucket:
+                strategy_bucket[group_key] = (dict(match), _StatsAccumulator())
+            _, acc = strategy_bucket[group_key]
+            acc.add(pl_pips=pl_pips, hold_sec=hold_sec, close_time=str(row["close_time"] or ""))
+
+    out: dict[str, list[tuple[dict[str, str], StrategyStats]]] = {}
+    for tag, bucket in grouped.items():
+        entries: list[tuple[dict[str, str], StrategyStats]] = []
+        for match, acc in bucket.values():
+            stats = acc.to_stats(tag)
+            if stats.trades <= 0:
+                continue
+            entries.append((match, stats))
+        entries.sort(key=lambda item: (_match_sort_key(item[0]), item[1].trades), reverse=True)
+        if entries:
+            out[tag] = entries
+    return out
+
+
 def _select_squad(tag: str) -> str:
     normalized = tag.lower()
     if any(k in normalized for k in ("scalp", "ping", "m1scalper", "tick")):
@@ -1060,6 +1271,53 @@ def _squad_recommendation(
     return out
 
 
+def _build_setup_overrides(
+    tag: str,
+    setup_stats: list[tuple[dict[str, str], StrategyStats]],
+    *,
+    min_trades: int,
+) -> list[dict[str, Any]]:
+    if not setup_stats:
+        return []
+    setup_min_trades = max(3, int(min_trades) // 2)
+    overrides: list[dict[str, Any]] = []
+    for match, stats in setup_stats:
+        advice = _squad_recommendation(tag, stats, setup_min_trades)
+        if not advice:
+            continue
+        override = {
+            key: advice[key]
+            for key in (
+                "entry_probability_multiplier",
+                "entry_probability_delta",
+                "entry_units_multiplier",
+                "entry_units_min",
+                "entry_units_max",
+                "sl_distance_multiplier",
+                "tp_distance_multiplier",
+                "notes",
+            )
+            if key in advice
+        }
+        if not override:
+            continue
+        override.update(match)
+        override["trades"] = int(stats.trades)
+        override["win_rate"] = round(_clamp(stats.win_rate, 0.0, 1.0), 3)
+        pf = stats.profit_factor
+        override["profit_factor"] = None if pf == float("inf") else round(pf, 3)
+        override["avg_hold_sec"] = None if stats.avg_hold_sec is None else round(stats.avg_hold_sec, 1)
+        overrides.append(override)
+    overrides.sort(
+        key=lambda item: (
+            _match_sort_key(item),
+            int(item.get("trades") or 0),
+        ),
+        reverse=True,
+    )
+    return overrides[:8]
+
+
 def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     running_services = _systemctl_running_services()
@@ -1102,6 +1360,12 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     for key, close_time in latest_by_tag.items():
         if key in merged and not merged[key].last_closed:
             merged[key].last_closed = close_time
+
+    setup_stats_by_tag = _discover_setup_stats(
+        config.trades_db,
+        config.lookback_days,
+        known_keys=list(merged.keys()),
+    )
 
     payload: dict[str, Any] = {
         "version": "2026-02-24",
@@ -1148,6 +1412,14 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
         )
         if not advice:
             continue
+
+        setup_overrides = _build_setup_overrides(
+            tag,
+            setup_stats_by_tag.get(tag, []),
+            min_trades=config.min_trades,
+        )
+        if setup_overrides:
+            advice["setup_overrides"] = setup_overrides
 
         # keep strategy-level metadata minimal and deterministic
         payload["strategies"][tag] = advice

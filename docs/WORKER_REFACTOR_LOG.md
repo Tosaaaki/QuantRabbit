@@ -36,6 +36,33 @@
   - live entry path の主導権を current tick/candle/factor に戻し、slow-loop artifact は stale 時に自動で advisory/no-op へ下げる。
   - `RangeFader` の repeated low-quality fade を shared reject に頼らず strategy-local に減らし、同じ loser setup の連発を抑える。
 
+### 2026-03-11（追記）`strategy_feedback` を setup-scoped override 対応へ拡張
+
+- 対象:
+  - `analysis/strategy_feedback_worker.py`
+  - `analysis/strategy_feedback.py`
+  - `execution/strategy_entry.py`
+  - `tests/analysis/test_strategy_feedback.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+- 変更:
+  - `strategy_feedback_worker`
+    - `trades.entry_thesis` から `setup_fingerprint`, `flow_regime`, `microstructure_bucket` を抽出し、
+      strategy ごとに `setup_overrides` を生成するようにした。
+    - override は `setup_fingerprint`、`flow_regime + microstructure_bucket`、
+      `flow_regime`、`microstructure_bucket` の順で specificity を持ち、
+      recent trade stats から strategy-local と同じ recommendation 式で knobs を算出する。
+  - `strategy_feedback`
+    - `current_advice()` が live `entry_thesis` を受け取り、
+      current setup に一致する `setup_overrides` を base advice の上に適用するようにした。
+    - `_meta.setup_override` に一致した current setup を残す。
+  - `strategy_entry`
+    - feedback 適用時に live `entry_thesis` を `current_advice()` へ渡すようにした。
+- 意図:
+  - fresh artifact でも「戦略全体が最近負けたから今の clean setup も一律に絞る」状態を減らす。
+  - shared feedback を slow baseline から current-setup matched override へ寄せ、
+    strategy-wide static bias を薄くする。
+
 ### 2026-03-11（追記）local-v2 feedback artifact の Git 方針を固定し、RangeFader current RCA を task/ops へ同期
 
 - 対象:

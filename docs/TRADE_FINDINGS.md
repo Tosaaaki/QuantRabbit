@@ -13214,3 +13214,42 @@ Status:
     `RangeFader-sell-fade` / `RangeFader-buy-fade` の repeated reject 本数、
     `entry_probability_reject` / `perf_block` / `filled` 比率、
     `signal_flow_context` と `live_setup_context` の監査 payload を live で確認する。
+
+## 2026-03-11 05:11 JST / `strategy_feedback` を strategy-wide から setup-scoped override へ分解
+- Why/Hypothesis:
+  - stale artifact を切っても、fresh な `strategy_feedback` が strategy-wide 一律補正のままだと、
+    current setup が変わった直後も「最近の losers/winners」の bias が broad に残る。
+  - 本当に動的にするなら、shared feedback 自体を
+    `setup_fingerprint / flow_regime / microstructure_bucket` 単位で current setup match に限定する必要がある。
+- Expected Good:
+  - `RangeFader` や `MicroTrendRetest` のような同一 strategy 内の mixed regime で、
+    loser cluster の trim が clean setup へ波及しにくくなる。
+  - shared feedback が「戦略単位の古い平均」ではなく、
+    current live setup に一致した recent cluster にだけ効く。
+- Expected Bad:
+  - setup 粒度を細かくしすぎると sample 不足で override が sparse になる。
+  - `entry_thesis` の setup metadata 欠損時は従来の strategy-wide advice へ fallback するため、
+    新旧 path の混在期間は効き方が uneven になり得る。
+- Observed/Fact:
+  - `analysis/strategy_feedback_worker.py`
+    - `trades.entry_thesis` から `setup_fingerprint`, `flow_regime`, `microstructure_bucket` を抽出し、
+      `setup_fingerprint` / `flow_micro` / `flow_regime` / `microstructure_bucket`
+      の specificity で `setup_overrides` を生成するようにした。
+  - `analysis/strategy_feedback.py`
+    - `current_advice(..., entry_thesis=...)` を追加し、
+      current setup に一致した override を base strategy advice の上に適用するようにした。
+    - 一致した override は `_meta.setup_override` に残す。
+  - `execution/strategy_entry.py`
+    - feedback 適用時に live `entry_thesis` を `current_advice()` へ渡すようにした。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback.py` -> `5 passed`
+    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback_worker.py` -> `9 passed`
+    - `./.venv/bin/pytest -q tests/execution/test_strategy_entry_adaptive_layers.py` -> `9 passed`
+- Verdict: pending
+- Next Action:
+  - `main` へ push 後に local-v2 を restart し、
+    `logs/strategy_feedback.json` に `setup_overrides` が載る strategy を確認する。
+  - live order/trade 監査で `_meta.setup_override` と
+    `live_setup_context` / `setup_fingerprint` の一致率、
+    blanket trim の減少、
+    `entry_probability_reject` と `filled` の比率変化を追う。

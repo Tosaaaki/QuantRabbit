@@ -203,3 +203,64 @@ def test_current_advice_ignores_stale_feedback_payload(monkeypatch, tmp_path) ->
     assert advice["entry_probability_multiplier"] > 1.0
     assert advice["_meta"]["payload_stale"] is True
     assert advice["_meta"]["payload_age_sec"] is not None
+
+
+def test_current_advice_prefers_setup_specific_override(monkeypatch, tmp_path) -> None:
+    feedback_path = tmp_path / "strategy_feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-10T00:00:00Z",
+                "strategies": {
+                    "RangeFader": {
+                        "entry_units_multiplier": 0.92,
+                        "entry_probability_multiplier": 0.95,
+                        "setup_overrides": [
+                            {
+                                "match_dimension": "flow_regime",
+                                "flow_regime": "trend_long",
+                                "entry_units_multiplier": 0.84,
+                                "entry_probability_multiplier": 0.88,
+                                "trades": 6,
+                            },
+                            {
+                                "match_dimension": "setup_fingerprint",
+                                "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+                                "flow_regime": "trend_long",
+                                "microstructure_bucket": "tight_fast",
+                                "entry_units_multiplier": 0.70,
+                                "entry_probability_multiplier": 0.78,
+                                "trades": 9,
+                            },
+                        ],
+                    }
+                },
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    _reset_feedback_caches(
+        monkeypatch,
+        feedback_path=feedback_path,
+        counterfactual_path=tmp_path / "missing_counterfactual.json",
+    )
+
+    advice = strategy_feedback.current_advice(
+        "RangeFader-sell-fade",
+        side="short",
+        entry_thesis={
+            "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+            "live_setup_context": {
+                "flow_regime": "trend_long",
+                "microstructure_bucket": "tight_fast",
+            },
+        },
+    )
+
+    assert advice is not None
+    assert advice["entry_units_multiplier"] == 0.70
+    assert advice["entry_probability_multiplier"] == 0.78
+    assert advice["_meta"]["setup_override"]["match_dimension"] == "setup_fingerprint"
+    assert advice["_meta"]["setup_override"]["trades"] == 9

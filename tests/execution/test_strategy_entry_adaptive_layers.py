@@ -315,3 +315,52 @@ def test_inject_live_setup_context_records_flow_regime_and_fingerprint() -> None
     assert thesis["microstructure_bucket"] == "tight_fast"
     assert thesis["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
     assert thesis["live_setup_context"]["setup_fingerprint"] == thesis["setup_fingerprint"]
+
+
+def test_apply_strategy_feedback_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _fake_current_advice(strategy_tag, *, pocket=None, side=None, entry_thesis=None):
+        captured["strategy_tag"] = strategy_tag
+        captured["pocket"] = pocket
+        captured["side"] = side
+        captured["entry_thesis"] = dict(entry_thesis or {})
+        return {
+            "entry_probability_multiplier": 0.8,
+            "entry_units_multiplier": 0.75,
+            "_meta": {
+                "setup_override": {
+                    "match_dimension": "setup_fingerprint",
+                    "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+                }
+            },
+        }
+
+    monkeypatch.setattr(strategy_entry.strategy_feedback, "current_advice", _fake_current_advice, raising=False)
+
+    thesis = {
+        "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+        "live_setup_context": {
+            "flow_regime": "trend_long",
+            "microstructure_bucket": "tight_fast",
+        },
+    }
+    units, probability, sl_price, tp_price, applied = strategy_entry._apply_strategy_feedback(
+        "RangeFader-sell-fade",
+        pocket="scalp",
+        units=-100,
+        entry_probability=0.5,
+        entry_price=158.0,
+        sl_price=158.2,
+        tp_price=157.7,
+        entry_thesis=thesis,
+    )
+
+    assert captured["strategy_tag"] == "RangeFader-sell-fade"
+    assert captured["side"] == "short"
+    assert captured["entry_thesis"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert units == -75
+    assert probability == 0.4
+    assert sl_price == 158.2
+    assert tp_price == 157.7
+    assert applied["entry_units_multiplier"] == 0.75

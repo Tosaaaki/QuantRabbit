@@ -103,6 +103,100 @@ def _base_strategy_tag(value: Optional[str]) -> str:
     return ""
 
 
+def _setup_context(entry_thesis: Optional[dict[str, Any]]) -> dict[str, str]:
+    if not isinstance(entry_thesis, dict):
+        return {}
+    live_setup = entry_thesis.get("live_setup_context")
+    if not isinstance(live_setup, dict):
+        live_setup = {}
+    context: dict[str, str] = {}
+    for key in ("setup_fingerprint", "flow_regime", "microstructure_bucket"):
+        raw = entry_thesis.get(key)
+        if raw in {None, ""}:
+            raw = live_setup.get(key)
+        text = str(raw or "").strip()
+        if text:
+            context[key] = text
+    return context
+
+
+def _setup_match_specificity(
+    override: dict[str, Any],
+    *,
+    setup_context: dict[str, str],
+) -> int:
+    if not setup_context:
+        return 0
+    setup_fingerprint = str(override.get("setup_fingerprint") or "").strip()
+    flow_regime = str(override.get("flow_regime") or "").strip()
+    microstructure_bucket = str(override.get("microstructure_bucket") or "").strip()
+    if setup_fingerprint:
+        return 4 if setup_context.get("setup_fingerprint") == setup_fingerprint else 0
+    if flow_regime and microstructure_bucket:
+        return (
+            3
+            if setup_context.get("flow_regime") == flow_regime
+            and setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
+    if flow_regime:
+        return 2 if setup_context.get("flow_regime") == flow_regime else 0
+    if microstructure_bucket:
+        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+    return 0
+
+
+def _select_setup_override(
+    setup_overrides: object,
+    *,
+    entry_thesis: Optional[dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    if not isinstance(setup_overrides, list):
+        return None, None
+    setup_context = _setup_context(entry_thesis)
+    if not setup_context:
+        return None, None
+
+    best_override: Optional[dict[str, Any]] = None
+    best_meta: Optional[dict[str, Any]] = None
+    best_rank = (0, 0)
+    allowed_fields = {
+        "entry_probability_multiplier",
+        "entry_probability_delta",
+        "entry_units_multiplier",
+        "entry_units_min",
+        "entry_units_max",
+        "sl_distance_multiplier",
+        "tp_distance_multiplier",
+        "notes",
+    }
+    for item in setup_overrides:
+        if not isinstance(item, dict):
+            continue
+        specificity = _setup_match_specificity(item, setup_context=setup_context)
+        if specificity <= 0:
+            continue
+        trades = _to_float(item.get("trades"), 0.0) or 0.0
+        rank = (specificity, int(trades))
+        if rank < best_rank:
+            continue
+        override_payload = {key: item.get(key) for key in allowed_fields if key in item}
+        if not override_payload:
+            continue
+        best_rank = rank
+        best_override = override_payload
+        best_meta = {
+            "match_dimension": str(item.get("match_dimension") or ""),
+            "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
+            "flow_regime": str(item.get("flow_regime") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "trades": int(trades),
+            "win_rate": _to_float(item.get("win_rate"), None),
+            "profit_factor": _to_float(item.get("profit_factor"), None),
+        }
+    return best_override, best_meta
+
+
 def _strategy_lookup_candidates(
     strategy_tag: Optional[str],
     *,
@@ -577,6 +671,7 @@ def current_advice(
     *,
     pocket: Optional[str] = None,
     side: Optional[str] = None,
+    entry_thesis: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     if not _FEEDBACK_ENABLED or not strategy_tag:
         return None
@@ -635,6 +730,15 @@ def current_advice(
         strategy_pocket_source = metadata.get("strategy_params")
     if isinstance(strategy_pocket_source, dict):
         _apply_pocket_override(merged, strategy_pocket_source, pocket)
+    setup_override = None
+    setup_override_meta = None
+    if isinstance(strategy_cfg, dict):
+        setup_override, setup_override_meta = _select_setup_override(
+            strategy_cfg.get("setup_overrides"),
+            entry_thesis=entry_thesis,
+        )
+    if isinstance(setup_override, dict):
+        merged.update(setup_override)
     if not _to_bool(merged.get("enabled"), True):
         return None
     metadata_status = str(metadata.get("status") or "").strip().lower()
@@ -739,6 +843,8 @@ def current_advice(
     }
     if counterfactual:
         advice["_meta"]["counterfactual"] = dict(counterfactual.get("meta") or {})
+    if setup_override_meta:
+        advice["_meta"]["setup_override"] = dict(setup_override_meta)
 
     # Return None when there are no actual tuning knobs (no-op).
     if (

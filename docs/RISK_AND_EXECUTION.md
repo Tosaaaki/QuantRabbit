@@ -42,6 +42,27 @@
   - `RangeFader` は shared gate 追加ではなく、
     current flow に対する strategy-local quality guard で loser fade の連発を止める。
 
+### local-v2 setup-scoped `strategy_feedback` override（2026-03-11）
+- 背景:
+  - stale no-op 化だけでは、fresh な `strategy_feedback` が依然として strategy-wide blanket trim になり得る。
+  - これは「`MicroTrendRetest` が最近負けた」事実を、
+    current flow が違う clean retest setup にもそのまま乗せる形で、
+    still static bias を残す。
+- 実装:
+  - `analysis/strategy_feedback_worker.py`
+    - recent `trades.entry_thesis` から `setup_fingerprint`, `flow_regime`,
+      `microstructure_bucket` を抽出し、
+      strategy ごとに `setup_overrides` を生成する。
+  - `analysis/strategy_feedback.py`
+    - `current_advice()` は live `entry_thesis` の current setup と一致する override だけを選び、
+      base strategy advice の上に上書き適用する。
+  - `execution/strategy_entry.py`
+    - feedback 適用時に live `entry_thesis` を `current_advice()` へ渡す。
+- 意図:
+  - shared feedback を「戦略全体に同じ trim」ではなく、
+    「今の setup に一致した trim/boost」へ寄せる。
+  - current setup と一致しない loser cluster の補正は live entry に流用しない。
+
 ### local-v2 `MomentumBurst` tight-short exhaustion guard（2026-03-10）
 - 背景:
   - UTC `01:32-01:40` / JST `10:32-10:40` の local-v2 実測は

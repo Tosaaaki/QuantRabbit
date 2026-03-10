@@ -39,6 +39,53 @@ def _seed_trades(db_path: Path, *, strategy_tag: str, count: int = 12) -> None:
     conn.close()
 
 
+def _seed_trades_with_setup_context(
+    db_path: Path,
+    *,
+    strategy_tag: str,
+    count: int,
+    setup_fingerprint: str,
+    flow_regime: str,
+    microstructure_bucket: str,
+) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE trades (
+            strategy_tag TEXT,
+            strategy TEXT,
+            pl_pips REAL,
+            open_time TEXT,
+            close_time TEXT,
+            entry_thesis TEXT
+        )
+        """
+    )
+    now = dt.datetime.utcnow()
+    thesis = json.dumps(
+        {
+            "setup_fingerprint": setup_fingerprint,
+            "flow_regime": flow_regime,
+            "microstructure_bucket": microstructure_bucket,
+        },
+        ensure_ascii=True,
+    )
+    for idx in range(count):
+        close_time = (now - dt.timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
+        open_time = (now - dt.timedelta(minutes=idx, seconds=40)).strftime("%Y-%m-%d %H:%M:%S")
+        pl_pips = -0.9 if idx < max(3, count - 2) else 0.4
+        conn.execute(
+            """
+            INSERT INTO trades(strategy_tag, strategy, pl_pips, open_time, close_time, entry_thesis)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (strategy_tag, strategy_tag, pl_pips, open_time, close_time, thesis),
+        )
+    conn.commit()
+    conn.close()
+
+
 def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path
     systemd_dir = repo / "systemd"
@@ -252,6 +299,56 @@ def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(monkeypatch, tm
     assert advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
     assert advice["strategy_params"]["feedback_probe"]["mode"] == "low_sample_safe"
     assert advice["strategy_params"]["feedback_probe"]["lot_multiplier"] == 1.03
+
+
+def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path
+    log_dir = repo / "logs"
+    trades_db = log_dir / "trades.db"
+
+    _seed_trades_with_setup_context(
+        trades_db,
+        strategy_tag="RangeFader-sell-fade",
+        count=8,
+        setup_fingerprint="RangeFader|short|sell-fade|trend_long|p2",
+        flow_regime="trend_long",
+        microstructure_bucket="tight_fast",
+    )
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(
+        worker,
+        "_discover_from_control",
+        lambda: {
+            "RangeFader": worker.StrategyRecord(
+                canonical_tag="RangeFader",
+                active=True,
+                entry_active=True,
+                exit_active=False,
+            )
+        },
+    )
+    monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_MIN_TRADES", "6")
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    advice = payload["strategies"]["RangeFader"]
+    assert advice["strategy_params"]["trades"] == 8
+    assert isinstance(advice.get("setup_overrides"), list)
+    exact = next(item for item in advice["setup_overrides"] if item["match_dimension"] == "setup_fingerprint")
+    assert exact["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert exact["flow_regime"] == "trend_long"
+    assert exact["microstructure_bucket"] == "tight_fast"
+    assert exact["trades"] == 8
+    assert exact["entry_probability_multiplier"] < 1.0
 
 
 def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> None:
