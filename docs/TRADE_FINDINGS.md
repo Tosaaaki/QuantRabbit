@@ -12374,3 +12374,129 @@ Status:
     `python3 scripts/loser_cluster_worker.py ...`
     `PYTHONPATH=/Users/tossaki/Documents/App/QuantRabbit python3 scripts/pattern_book_worker.py ...`
     を実行し、live artifact を更新済み。
+
+## 2026-03-10 13:17 UTC / 2026-03-10 22:17 JST - 「逆に張っている」仮説と restart persistence 監査
+- 対象（実測）:
+  - `logs/trades.db`, `logs/orders.db`, `logs/metrics.db`, `logs/health_snapshot.json`
+  - `logs/tick_cache.json`, `logs/factor_cache.json`
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`, `logs/local_v2_stack/quant-micro-trendretest.log`
+  - `config/dynamic_alloc.json`, `config/pattern_book.json`,
+    `config/participation_alloc.json`, `config/auto_canary_overrides.json`
+  - `logs/strategy_feedback.json`, `logs/brain_state.db`
+  - `scripts/local_v2_stack.sh`, `analysis/strategy_feedback.py`,
+    `analysis/auto_canary.py`, `workers/common/dynamic_alloc.py`,
+    `workers/common/participation_alloc.py`, `workers/common/brain.py`,
+    `workers/common/pattern_gate.py`
+- 市況・稼働:
+  - USD/JPY は `157.768`、spread `0.8 pips`
+    （`logs/tick_cache.json` 末尾）。
+  - `logs/factor_cache.json` は `M1 ATR=2.84 pips`, `M5 ATR=6.29 pips`,
+    `H1 ATR=21.73 pips`。
+  - `metrics.db` 直近6hは `data_lag_ms avg=548.4`,
+    `decision_latency_ms avg=17.0`。
+  - `health_snapshot.json` は fresh、`trade_min` の主要サービスは running。
+  - `orders.db` 直近24hは
+    `preflight_start=1818`, `probability_scaled=1803`,
+    `perf_block=1583`, `entry_probability_reject=1467`,
+    `submit_attempt=207`, `filled=205`, `rejected=2`。
+    現時点の悪化は OANDA/API 不調より strategy quality 側が主因。
+- 24h 収益:
+  - `214 trades`, `win_rate=30.8%`, `PF(pips)=0.27`,
+    `net_pips=-315.3`, `net_jpy=-963.0`,
+    `expectancy=-1.47 pips/trade`。
+  - 同一 exit 時刻のまま side だけ反転した仮説では
+    `+315.3 pips / +963.0 JPY` 相当なので、
+    「方向/タイミングの問題」は確かにある。
+  - ただし全戦略が単純に long/short 反転しているわけではない。
+- 主損失クラスター:
+  - `MicroTrendRetest-long`
+    - `17 trades`, `all long`, `trend_snapshot.direction=long`,
+      `pattern_meta.trend_bucket=up_strong`,
+      `rsi_bucket=ob(9) / mid_high(8)`,
+      `net_pips=-45.7`, `net_jpy=-290.2`
+    - これは「逆方向」より
+      `up_strong + ob/mid_high` で long を追いかけ過ぎている lane。
+  - `MicroLevelReactor-bounce-lower`
+    - `44 trades`, `all long`, `trend_snapshot.direction=long`,
+      `pattern_meta.trend_bucket=dn_strong`,
+      `net_pips=-75.8`, `net_jpy=-75.2`
+    - 大局 long のまま、局所の `dn_strong` 継続に対して
+      bounce long を早く入れている。
+      「逆に張っているように見える」主因はここ。
+    - worker log でも restart 後に
+      `mlr_range_gate_block active=False score=0.150 adx=37.21 ma_gap=4.05`
+      や
+      `... score=0.161 adx=39.62 ma_gap=3.92`
+      が出ており、継続局面の抑止が弱い。
+  - `WickReversalBlend`
+    - `9 trades`, `win_rate=77.8%`,
+      `net_pips=-5.2`, `net_jpy=-156.5`
+    - これは reverse side ではなく、
+      一部 loser の損失幅が勝ちを食っている payoff/exit 問題。
+- 判定:
+  - 「ほとんど逆にトレードしている」は **部分的に真**。
+  - より正確には、
+    - `MicroLevelReactor-bounce-lower` は
+      局所 continuation に対する早すぎる long
+    - `MicroTrendRetest-long` は
+      過熱帯 long の chase
+    - `WickReversalBlend` は
+      payoff/exit の非対称
+    の混合。
+  - したがって修正方針は
+    「全体 side を反転」ではなく、
+    strategy-local quality guard と exit/payoff の分離改善が正。
+- restart persistence 監査:
+  - `scripts/local_v2_stack.sh` は service 起動時に
+    base/service/override/extra env を毎回読込み、
+    `ops/env/local-v2-stack.env` は
+    `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env`
+    を固定している。
+    manual restart / watchdog / launchd 復旧で同じ Brain 導線を維持する。
+  - live runtime は disk artifact を都度読む設計:
+    - `analysis/strategy_feedback.py`
+      -> `logs/strategy_feedback.json`
+    - `analysis/auto_canary.py`
+      -> `config/auto_canary_overrides.json`
+    - `workers/common/dynamic_alloc.py`
+      -> `config/dynamic_alloc.json`
+    - `workers/common/participation_alloc.py`
+      -> `config/participation_alloc.json`
+    - `workers/common/pattern_gate.py`
+      -> `logs/patterns.db`, `config/pattern_book_deep.json`
+    - `workers/common/brain.py`
+      -> `logs/brain_state.db` に memory/decisions を永続化
+  - 実測でも、主要サービスは `2026-03-10 22:01 JST` 前後に起動し直していたが、
+    その後
+    `auto_canary_overrides.json=22:02:57`,
+    `strategy_feedback.json=22:09:55`,
+    `dynamic_alloc.json=22:10:03`,
+    `pattern_book.json=22:10:43`,
+    `participation_alloc.json=22:11:01`
+    と fresh 更新されている。
+  - `brain_state.db` も
+    `brain_memory rows=14`,
+    `last_memory_update=2026-03-10T12:50:00+00:00`,
+    `brain_decisions 24h=44`
+    を保持しており、restart で Brain memory が消えた形跡はない。
+  - 揮発するのは process 内 cache / cooldown 類
+    （`strategy_feedback._CACHE`,
+    `auto_canary._CACHE`,
+    `dynamic_alloc._CACHE`,
+    `participation_alloc._CACHE`,
+    `brain._CACHE`,
+    `brain._FAILFAST_STATE`,
+    live Ollama priority state など）で、
+    restart 直後に短い warm-up はある。
+  - ただし current loser は restart 後の数分だけではなく
+    直近24h全体で継続しており、
+    「restart のたびに thinking が初期化して current losses を作っている」
+    ことは現時点では主因と断定できない。
+- 次アクション:
+  - `MicroLevelReactor-bounce-lower` に対して
+    `dn_strong + high ADX + ma_gap expansion` の continuation 抑止を
+    strategy-local で強める。
+  - `MicroTrendRetest-long` は
+    `up_strong + ob/mid_high` の chase を減衰/skip する。
+  - `WickReversalBlend` は reverse 判定と切り離して、
+    exit/payoff の非対称だけを別件で詰める。
