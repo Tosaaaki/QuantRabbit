@@ -86,6 +86,27 @@
   - analysis artifact は自動で溜まっても、そのままでは `TRADE_FINDINGS` の
     change diary にならず流れやすい。
   - live 発注系へ責務を混ぜず、analysis cycle の後段だけで review draft を作る。
+
+### 2026-03-11（追記）ここまでの改善サマリを `TRADE_FINDINGS` 先頭へ要約同期
+
+- 対象:
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+- 変更:
+  - `docs/TRADE_FINDINGS.md`
+    - 直近の改善を 1 本のサマリへ集約し、
+      「何を直したか / 何が効いたか / 何が pending か」が先頭で読めるようにした。
+    - 要約対象は
+      `change diary 固定`,
+      `boosted low-sample lane の shared feedback / health coverage 復旧`,
+      `trade_findings_draft 自動化`,
+      `RangeFader loser lane の probability_offset`
+      とした。
+  - `docs/WORKER_REFACTOR_LOG.md`
+    - 実装確定ログ側にも、要約を追加した事実を同期した。
+- 意図:
+  - 個別 entry を順に読まなくても、
+    「ここまで何を改善して、次に何を見ればよいか」を即把握できるようにする。
   - `docs/TRADE_FINDINGS.md` 本体への追記は手動レビューを必須にし、自動化は下書き生成までで止める。
 
 ### 2026-03-11（追記）boosted low-sample lane を shared feedback / health coverage へ接続し、`strategy_feedback_worker` crash を除去
