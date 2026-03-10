@@ -11045,3 +11045,50 @@ Status:
   - strategy-local forecast/fusion を壊さず、
     dedicated service の `allow/reduce/block` を restart 耐性つきで
     live 経路へ反映する。
+
+## 2026-03-10 09:15 JST / local-v2 profitability hotfix: current loser cluster と stale 14d feedback の窓ズレ
+
+- 市況確認:
+  - `logs/tick_cache.json`
+    - 最新 tick は `mid 157.932`, spread は約 `0.8 pips`
+  - `logs/factor_cache.json`
+    - `M1 close=157.947`, `atr_pips=3.31`, `timestamp=2026-03-10T00:09:59Z`
+  - `logs/health_snapshot.json`
+    - `generated_at=2026-03-10T00:05:20Z`, `trades_last_close=2026-03-09T23:03:40Z`,
+      `orders_status_1h` は `entry_probability_reject=18` が主で、
+      異常停止を示す snapshot ではなかった
+
+- 実測:
+  - 直近24hの loser cluster は
+    `MomentumBurst 22 trades / -7.9 pips`,
+    `MicroTrendRetest-long 17 trades / -45.7 pips`,
+    `MicroTrendRetest-short 2 trades / -10.6 pips`
+    に集中した。
+  - `MicroLevelReactor` は 24h 合算では `220 trades / +51.1 pips` だが、
+    勝敗数は `95W / 120L` で、直近6hは `34 trades / -36.1 pips` の loser burst へ反転している。
+  - `logs/strategy_feedback.json` は `updated_at=2026-03-10T00:04:35Z`,
+    `version=2026-02-24`, `7 strategies` を保持し、
+    `MomentumBurst` に `entry_probability_multiplier=1.0732`,
+    `entry_units_multiplier=1.3107` を、
+    `MicroLevelReactor` に `entry_units_multiplier=1.141`,
+    `tp_distance_multiplier=1.0407` をまだ返していた。
+  - 一方で `MicroTrendRetest-long/short` は current loser cluster に入っているのに
+    `strategy_feedback.json` には現れず、split tag 側の current loser を
+    live へ十分速く戻せていない。
+
+- 判断:
+  - `STRATEGY_FEEDBACK_LOOKBACK_DAYS=14` は local-v2 の cadence に対して長すぎ、
+    直近24h-6hの悪化より 14d aggregate を優先して stale boost を残している。
+  - broad に shared gate を増やすより、
+    dedicated env 側で loser cluster の参加率と cadence を先に落とし、
+    `strategy_feedback` の窓だけを `3d` へ縮めるのが最小リスク。
+
+- 即時 hotfix 方針:
+  - `MomentumBurst`, `MicroTrendRetest`, `MicroLevelReactor` は
+    dedicated env 側の units / cooldown / cadence を先に de-risk する。
+  - `quant-strategy-feedback` は止めず、
+    `STRATEGY_FEEDBACK_LOOKBACK_DAYS` を `14 -> 3` へ寄せて
+    current loser turn で stale boost を早く中立化する。
+  - `MicroLevelReactor` のように 24h aggregate がまだ残る戦略は、
+    全停止ではなく `entry_units_multiplier <= 1.0` を先に狙い、
+    loser burst 収束後に再評価する。

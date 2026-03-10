@@ -14327,3 +14327,26 @@
   - `preserve_strategy_intent` を壊さず、
     既存の strategy-local forecast/fusion に加えて
     order-manager の dedicated forecast gate を allowlist 戦略へだけ live 接続する。
+
+## 2026-03-10 09:15 JST - profitability hotfix の narrow 運用レバーを整理
+
+- local 実測では、直近24hの毀損は
+  `MomentumBurst -7.9 pips`,
+  `MicroTrendRetest-long/-short 合算 -56.3 pips`
+  に集中し、
+  `MicroLevelReactor` も 24h aggregate は正でも
+  直近6h `-36.1 pips` の loser burst を出していた。
+- 同時点の `logs/strategy_feedback.json` は
+  `MomentumBurst` に `prob 1.0732 / units 1.3107`,
+  `MicroLevelReactor` に `units 1.141`
+  の boost をまだ返しており、
+  `STRATEGY_FEEDBACK_LOOKBACK_DAYS=14` が current loser turn より
+  過去 aggregate を優先していることを確認した。
+- このため、shared order/risk へ一律 gate を足さず、
+  profitability hotfix は次の narrow レバーで扱うのが安全:
+  - dedicated env で `MomentumBurst / MicroTrendRetest / MicroLevelReactor`
+    の units / cooldown / cadence を先に de-risk
+  - `quant-strategy-feedback` の lookback を `14d -> 3d` へ短縮し、
+    stale boost を current loser に追随して早めに中立化
+  - `strategy_feedback` 全停止や broad shared block は避け、
+    strategy-local / service-local の参加率調整に留める
