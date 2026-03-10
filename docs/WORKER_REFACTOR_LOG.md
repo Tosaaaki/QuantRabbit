@@ -15094,3 +15094,30 @@
     -> `37 passed`
   - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
     -> `68 passed`
+
+### 2026-03-10 micro quality guard 追加調整（reaccel long / oversold short reclaim）
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `strategies/micro/trend_retest.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `tests/strategies/test_trend_retest.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `MomentumBurst` の reaccel long は
+    `trend_up|upper|tr:flat` の weak follow-through breakout が `2/2` 負け。
+  - `MicroTrendRetest-short` は
+    oversold short の bullish reclaim が `2/2` 負け。
+
+- 変更:
+  - `MomentumBurst` に long reaccel の follow-through guard を追加し、
+    upper-wick + weak body breakout を reject。
+  - `MicroTrendRetest` の short reclaim exhaustion を強め、
+    oversold short の high-close bullish reclaim を reject。
+
+- 検証:
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py`
+    -> `40 passed`
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `71 passed`

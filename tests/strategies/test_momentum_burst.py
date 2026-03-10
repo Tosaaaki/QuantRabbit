@@ -274,6 +274,62 @@ def test_short_reacceleration_allows_modest_break_after_pullback() -> None:
     assert signal["action"] == "OPEN_SHORT"
 
 
+def test_long_reacceleration_rejects_flat_upper_wick_breakout() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.582,
+            "ma10": 158.555,
+            "ma20": 158.548,
+            "ema20": 158.554,
+            "adx": 30.5,
+            "atr_pips": 3.6,
+            "vol_5m": 2.2,
+            "rsi": 62.0,
+            "plus_di": 28.0,
+            "minus_di": 16.0,
+            "roc5": 0.032,
+            "ema_slope_10": 0.0013,
+            "candles": [
+                {"open": 158.53, "high": 158.55, "low": 158.52, "close": 158.545},
+                {"open": 158.545, "high": 158.56, "low": 158.535, "close": 158.552},
+                {"open": 158.552, "high": 158.57, "low": 158.545, "close": 158.562},
+                {"open": 158.578, "high": 158.608, "low": 158.572, "close": 158.582},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
+def test_long_reacceleration_allows_clean_followthrough_breakout() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.584,
+            "ma10": 158.556,
+            "ma20": 158.548,
+            "ema20": 158.554,
+            "adx": 30.8,
+            "atr_pips": 3.6,
+            "vol_5m": 2.2,
+            "rsi": 62.0,
+            "plus_di": 28.0,
+            "minus_di": 16.0,
+            "roc5": 0.032,
+            "ema_slope_10": 0.0013,
+            "candles": [
+                {"open": 158.53, "high": 158.55, "low": 158.52, "close": 158.545},
+                {"open": 158.545, "high": 158.56, "low": 158.535, "close": 158.552},
+                {"open": 158.552, "high": 158.57, "low": 158.545, "close": 158.562},
+                {"open": 158.568, "high": 158.587, "low": 158.566, "close": 158.584},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["notes"]["momentum_burst"]["reaccel"] is True
+
+
 def test_stretched_short_rejects_when_indicator_quality_is_not_strong_enough() -> None:
     signal = MomentumBurstMicro.check(
         {

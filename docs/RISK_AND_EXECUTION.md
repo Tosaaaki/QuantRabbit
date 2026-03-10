@@ -2739,10 +2739,15 @@
   low-range clean trend (`range_score<=0.22`) の late short chase を
   strategy-local に拒否する。
   条件は `rsi<=35`, 強い `DI gap`, 大きい bearish breakdown candle。
+- 追加で long `reaccel` は
+  upper-wick + weak body の breakout を strategy-local に拒否する。
+  対象は weak follow-through の reaccel long で、clean breakout は維持する。
 - `MicroTrendRetest` は current で
   small MA-gap でも extreme RSI の small-body reclaim を拒否する。
   対称条件は
   `long + rsi>=62 + bearish reclaim`,
   `short + rsi<=38 + bullish reclaim`。
+- さらに short 側は
+  `rsi<=38` で bullish reclaim が high-close のときも reject する。
 - どちらも `STOP_LOSS_ORDER` cluster を entry quality で潰す目的であり、
   shared order-manager / global gate / time block を追加するものではない。

@@ -30,6 +30,7 @@ class MicroTrendRetest:
     _RECLAIM_EXHAUSTION_LONG_RSI_MIN = 62.0
     _RECLAIM_EXHAUSTION_SHORT_RSI_MAX = 38.0
     _RECLAIM_SMALL_BODY_RATIO_MAX = 0.38
+    _RECLAIM_SHORT_BULL_CLOSE_POS_MIN = 0.65
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -129,6 +130,7 @@ class MicroTrendRetest:
         if candle_range <= 0.0:
             return True
         body_ratio = abs(last_close - last_open) / candle_range
+        close_pos = (last_close - last_low) / candle_range
         if direction == "OPEN_LONG":
             return not (
                 rsi >= MicroTrendRetest._RECLAIM_EXHAUSTION_LONG_RSI_MIN
@@ -138,7 +140,10 @@ class MicroTrendRetest:
         return not (
             rsi <= MicroTrendRetest._RECLAIM_EXHAUSTION_SHORT_RSI_MAX
             and last_close >= last_open
-            and body_ratio <= MicroTrendRetest._RECLAIM_SMALL_BODY_RATIO_MAX
+            and (
+                body_ratio <= MicroTrendRetest._RECLAIM_SMALL_BODY_RATIO_MAX
+                or close_pos >= MicroTrendRetest._RECLAIM_SHORT_BULL_CLOSE_POS_MIN
+            )
         )
 
     @staticmethod

@@ -56,6 +56,11 @@ SHORT_CLEAN_TREND_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_
 SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN", "2.2"))
 SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT", "0.65"))
 SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX", "0.22"))
+LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN", "1.0"))
+LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT", "0.28"))
+LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN", "0.68"))
+LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX", "1.2"))
+LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT", "0.35"))
 
 
 def _clamp01(value: float) -> float:
@@ -502,6 +507,40 @@ class MomentumBurstMicro:
         )
 
     @staticmethod
+    def _long_reaccel_followthrough_ok(
+        *,
+        atr_pips: float,
+        candles: Sequence[Dict],
+        reaccel: bool,
+    ) -> bool:
+        if not reaccel or not candles:
+            return True
+        current_candle = candles[-1]
+        if not isinstance(current_candle, dict):
+            return True
+        if current_candle.get("open") is None and current_candle.get("o") is None:
+            return True
+        current = MomentumBurstMicro._candle_shape(current_candle)
+        if current is None:
+            return True
+        body_min = max(
+            LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN,
+            atr_pips * LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT,
+        )
+        upper_max = max(
+            LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX,
+            atr_pips * LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT,
+        )
+        body_pips = float(current["body_pips"])
+        close_pos = float(current["close_pos"])
+        upper_pips = float(current["upper_pips"])
+        return not (
+            body_pips < body_min
+            and close_pos < LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN
+            and upper_pips > upper_max
+        )
+
+    @staticmethod
     def _apply_context_tilt(signal: Dict, fac: Dict, *, reaccel: bool) -> Dict | None:
         range_active = bool(fac.get("range_active"))
         range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
@@ -626,6 +665,11 @@ class MomentumBurstMicro:
             and adx >= MIN_ADX
             and close > ema20 + 0.0015
             and drift_pips > DRIFT_PIPS_FLOOR
+            and MomentumBurstMicro._long_reaccel_followthrough_ok(
+                atr_pips=atr_pips,
+                candles=candles,
+                reaccel=long_reaccel,
+            )
             and MomentumBurstMicro._mtf_supports("long", fac)
             and MomentumBurstMicro._trend_snapshot_supports("long", fac)
             and (MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel)

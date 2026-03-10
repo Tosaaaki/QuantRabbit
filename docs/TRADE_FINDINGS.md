@@ -12151,3 +12151,42 @@ Status:
     -> `68 passed`
   - `python3 -m compileall strategies/micro/trend_retest.py strategies/micro/momentum_burst.py tests/strategies/test_trend_retest.py tests/strategies/test_momentum_burst.py`
     -> 成功
+
+## 2026-03-10 21:14 JST / current 状況確認 + micro quality の追加改善
+- current 状況:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    は core / scalp / micro 全サービス running。
+  - `bash scripts/collect_local_health.sh` は
+    `health_snapshot.json updated=yes`, `snapshot_age_sec=0`, `mechanism_integrity=yes`。
+  - `logs/health_snapshot.json` は
+    `generated_at=2026-03-10T12:14:28Z`, `git_rev=6084a691`, `trades_count_24h=223`。
+  - 市況は `bid=157.899 / ask=157.907 / spread=0.8p / latency=313ms`、
+    `ATR(M1)=2.81p / M5=6.09p / H1=21.74p` で通常帯。
+  - 直近約定は `RangeFader` と `WickReversalBlend` が継続し、
+    `MomentumBurst` / `MicroTrendRetest` は再起動後まだ新規約定なし。
+- 追加で見えた負け cluster:
+  - `MomentumBurst` の reaccel long は直近7日でも `2/2` 負け、
+    どちらも `pattern_tag=trend_up|w:upper|tr:flat|...|d:long`,
+    `trend_snapshot(H4 long, gap 37.683p, adx 32.44)` で
+    weak follow-through の breakout だった。
+  - `MicroTrendRetest-short` の `2/2` 負けは
+    `rsi<=30` の oversold かつ bullish reclaim に揃っていた。
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    - long `reaccel` でだけ、
+      flat / upper-wick / weak body の breakout を reject する
+      follow-through guard を追加。
+    - open を持たない fixture では no-op にして、既存 test 契約は維持。
+  - `strategies/micro/trend_retest.py`
+    - short 側の reclaim exhaustion を強め、
+      `rsi<=38` の oversold short で bullish reclaim が high-close なら reject。
+- 意図:
+  - entry 数を一律に減らさず、
+    weak breakout / oversold reclaim だけを strategy-local に外す。
+- 検証:
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py`
+    -> `40 passed`
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `71 passed`
+  - `python3 -m compileall strategies/micro/momentum_burst.py strategies/micro/trend_retest.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py`
+    -> 成功
