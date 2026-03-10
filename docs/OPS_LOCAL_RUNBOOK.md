@@ -166,6 +166,9 @@ scripts/uninstall_local_v2_launchd.sh
   - `trade_findings_draft` は `logs/trade_findings_draft_latest.json` /
     `logs/trade_findings_draft_latest.md` /
     `logs/trade_findings_draft_history.jsonl` を更新し、
+    review-only draft を生成する。`docs/TRADE_FINDINGS.md` へは自動追記せず、
+    反映はレビュー後に手動で行う。whiteboard 通知は
+    `TRADE_FINDINGS_DRAFT_WHITEBOARD_ENABLED=1` のときだけ有効で、
     同一 fingerprint の draft では `logs/agent_whiteboard.db` へ重複通知しない。
 - `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_brain_autopdca_cycle.sh` を非同期起動する（既定ON）。
   - `QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED=1|0` で有効/無効。

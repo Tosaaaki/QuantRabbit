@@ -62,8 +62,7 @@
 - 変更点は必ず AGENTS と実装仕様側へ同時記録すること。少なくとも `docs/WORKER_REFACTOR_LOG.md` と関連仕様（`docs/WORKER_ROLE_MATRIX_V2.md`/`docs/ARCHITECTURE.md` 等）へ追記し、追跡可能な監査ログを残す。
 - 改善/敗因の運用記録は **`docs/TRADE_FINDINGS.md` の1箇所に集約** する。新しい分析を行ったら必ず同ファイルへ追記し、同種の分散メモを新規作成しない。
 - `docs/TRADE_FINDINGS.md` は単なる台帳ではなく、変更の良し悪しを後から改善に使うための change diary として扱う。各変更で最低限 `Why/Hypothesis`、`Expected Good`、`Expected Bad`、`Observed/Fact`、`Verdict`（`good/bad/pending`）、`Next Action` を残す。
-- `scripts/trade_findings_diary_draft.py` / `logs/trade_findings_draft_latest.{json,md}` は review-only の自動下書きとして扱う。whiteboard 通知は許可するが、`docs/TRADE_FINDINGS.md` への自動追記は禁止し、反映は必ずレビュー後に行う。
-- 自動化は `logs/trade_findings_draft_latest.{json,md}` の draft 生成までを許可し、正式な監査記録の確定は `docs/TRADE_FINDINGS.md` への追記で行う。whiteboard 通知は同一 draft fingerprint で重複投稿しない。
+- `scripts/trade_findings_diary_draft.py` と `logs/trade_findings_draft_latest.{json,md}` / `logs/trade_findings_draft_history.jsonl` は review-only の自動下書きとして扱う。`docs/TRADE_FINDINGS.md` への自動追記は禁止し、正式反映は必ずレビュー後に行う。whiteboard 通知は opt-in とし、同一 draft fingerprint では重複投稿しない。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。
 - その差分は「他者/他タスクの作業中変更」を前提に、関連ファイルを読んで意図を把握したうえで今回タスクを継続する（差分の存在だけで作業停止・続行確認を挟まない）。
 - **並行タスク時のGit運用を厳守**: 作業開始前/コミット前に `git status --short` と `git diff --name-only` を確認し、ステージは自分が変更したファイルのみに限定する。タスク単位でコミットを分離し、他タスク差分を混在・巻き戻ししない。

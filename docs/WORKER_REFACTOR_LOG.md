@@ -67,16 +67,16 @@
   - `AGENTS.md`
   - `docs/OPS_LOCAL_RUNBOOK.md`
   - `docs/OBSERVABILITY.md`
-  - `docs/INDEX.md`
   - `docs/TRADE_FINDINGS.md`
 - 変更:
   - `scripts/trade_findings_diary_draft.py`
     - `health_snapshot`, `pdca_profitability`, `strategy_feedback`,
-      `participation_alloc`, `trade_counterfactual`, `replay_quality_gate`,
-      `market_context` を集約して
-      `logs/trade_findings_draft_latest.{json,md}` を生成する。
+      `trade_counterfactual`, `replay_quality_gate` を集約して
+      `logs/trade_findings_draft_latest.json`,
+      `logs/trade_findings_draft_history.jsonl`,
+      `logs/trade_findings_draft_latest.md` を生成する。
     - 同一 fingerprint の draft は `logs/trade_findings_draft_history.jsonl`
-      へ重複追記せず、whiteboard も再通知しない。
+      へ重複追記せず、whiteboard も opt-in + 同一 fingerprint で再通知しない。
   - `scripts/run_local_feedback_cycle.py`
     - 後段 job `trade_findings_draft` を追加し、既存の interval/lock/outputs 契約へ載せた。
   - tests:
@@ -86,6 +86,7 @@
   - analysis artifact は自動で溜まっても、そのままでは `TRADE_FINDINGS` の
     change diary にならず流れやすい。
   - live 発注系へ責務を混ぜず、analysis cycle の後段だけで review draft を作る。
+  - `docs/TRADE_FINDINGS.md` 本体への追記は手動レビューを必須にし、自動化は下書き生成までで止める。
 
 ### 2026-03-11（追記）boosted low-sample lane を shared feedback / health coverage へ接続し、`strategy_feedback_worker` crash を除去
 

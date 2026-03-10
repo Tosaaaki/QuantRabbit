@@ -22,17 +22,14 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def _paths(tmp_path: Path) -> dict[str, Path]:
+def _source_paths(tmp_path: Path) -> dict[str, Path]:
     logs_dir = tmp_path / "logs"
-    config_dir = tmp_path / "config"
     return {
         "health": logs_dir / "health_snapshot.json",
         "pdca": logs_dir / "pdca_profitability_latest.json",
         "feedback": logs_dir / "strategy_feedback.json",
         "counterfactual": logs_dir / "trade_counterfactual_latest.json",
         "replay": logs_dir / "replay_quality_gate_latest.json",
-        "participation": config_dir / "participation_alloc.json",
-        "market_context": logs_dir / "market_context_latest.json",
         "out_json": logs_dir / "trade_findings_draft_latest.json",
         "out_history": logs_dir / "trade_findings_draft_history.jsonl",
         "out_md": logs_dir / "trade_findings_draft_latest.md",
@@ -40,8 +37,8 @@ def _paths(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _prepare(tmp_path: Path) -> dict[str, Path]:
-    paths = _paths(tmp_path)
+def _prepare_sources(tmp_path: Path) -> dict[str, Path]:
+    paths = _source_paths(tmp_path)
     _write_json(
         paths["health"],
         {
@@ -77,13 +74,21 @@ def _prepare(tmp_path: Path) -> dict[str, Path]:
             },
         },
     )
-    _write_json(paths["feedback"], {"updated_at": "2026-03-10T17:11:00+00:00", "strategies": {"MicroLevelReactor": {}, "PrecisionLowVol": {}}})
+    _write_json(
+        paths["feedback"],
+        {
+            "updated_at": "2026-03-10T17:11:00+00:00",
+            "strategies": {"MicroLevelReactor": {}, "PrecisionLowVol": {}},
+        },
+    )
     _write_json(
         paths["counterfactual"],
         {
             "generated_at": "2026-03-10T17:12:00+00:00",
             "summary": {"trades": 45, "mean_pips": -0.45, "stuck_trade_ratio": 0.21},
-            "recommendations": [{"strategy_tag": "microlevelreactor", "action": "tighten_quality", "reason": "loss cluster"}],
+            "recommendations": [
+                {"strategy_tag": "microlevelreactor", "action": "tighten_quality", "reason": "loss cluster"}
+            ],
         },
     )
     _write_json(
@@ -92,15 +97,17 @@ def _prepare(tmp_path: Path) -> dict[str, Path]:
             "generated_at": "2026-03-10T17:13:00+00:00",
             "gate_status": "fail",
             "failing_workers": ["microlevelreactor"],
-            "auto_improve": {"accepted_updates": [{"strategy": "microlevelreactor", "field": "quality_floor", "value": 0.62}]},
+            "auto_improve": {
+                "accepted_updates": [
+                    {"strategy": "microlevelreactor", "field": "quality_floor", "value": 0.62}
+                ]
+            },
         },
     )
-    _write_json(paths["participation"], {"as_of": "2026-03-10T17:14:00+00:00", "strategies": {"PrecisionLowVol": {"action": "boost_participation"}}})
-    _write_json(paths["market_context"], {"generated_at": "2026-03-10T17:15:00+00:00", "events": [{"headline": "range transition"}]})
     return paths
 
 
-def _run(paths: dict[str, Path], *, whiteboard_enabled: bool = True) -> dict:
+def _run_once(paths: dict[str, Path], *, whiteboard_enabled: bool = False) -> dict:
     argv = [
         "--health-path",
         str(paths["health"]),
@@ -112,10 +119,6 @@ def _run(paths: dict[str, Path], *, whiteboard_enabled: bool = True) -> dict:
         str(paths["counterfactual"]),
         "--replay-quality-gate-path",
         str(paths["replay"]),
-        "--participation-alloc-path",
-        str(paths["participation"]),
-        "--market-context-path",
-        str(paths["market_context"]),
         "--out-json",
         str(paths["out_json"]),
         "--out-history",
@@ -129,46 +132,97 @@ def _run(paths: dict[str, Path], *, whiteboard_enabled: bool = True) -> dict:
         "--whiteboard-author",
         "pytest",
     ]
-    if not whiteboard_enabled:
-        argv.append("--no-whiteboard")
+    argv.append("--whiteboard-enabled" if whiteboard_enabled else "--no-whiteboard-enabled")
     assert trade_findings_diary_draft.main(argv) == 0
     return json.loads(paths["out_json"].read_text(encoding="utf-8"))
 
 
-def test_trade_findings_diary_draft_generates_outputs_and_dedupes_history(tmp_path: Path) -> None:
-    paths = _prepare(tmp_path)
+def test_trade_findings_diary_draft_generates_required_sections(tmp_path: Path) -> None:
+    paths = _prepare_sources(tmp_path)
 
-    first = _run(paths, whiteboard_enabled=True)
-    assert first["status"] == "actionable"
-    assert first["history"]["action"] == "appended"
+    report = _run_once(paths, whiteboard_enabled=False)
+
+    assert report["status"] == "actionable"
+    assert report["history"]["action"] == "appended"
+    assert report["draft_policy"] == {"review_only": True, "writes_to_trade_findings": False}
+    assert set(report["sources"]) == {
+        "health_snapshot",
+        "pdca_profitability",
+        "strategy_feedback",
+        "trade_counterfactual",
+        "replay_quality_gate",
+    }
+
+    sections = report["sections"]
+    for key in [
+        "change",
+        "why",
+        "hypothesis",
+        "expected_good",
+        "expected_bad",
+        "period",
+        "fact",
+        "failure_cause",
+        "improvement",
+        "verification",
+        "verdict",
+        "next_action",
+        "status",
+    ]:
+        assert sections[key]
+
     markdown = paths["out_md"].read_text(encoding="utf-8")
-    assert "auto-generated review draft" in markdown
+    assert "do not append directly to docs/TRADE_FINDINGS.md" in markdown
     assert "- Change:" in markdown
+    assert "- Failure Cause:" in markdown
+    assert "- Status:" in markdown
     assert "microlevelreactor" in markdown
 
-    history_lines = paths["out_history"].read_text(encoding="utf-8").strip().splitlines()
-    assert len(history_lines) == 1
+
+def test_trade_findings_diary_draft_dedupes_history_and_reuses_single_whiteboard_task(tmp_path: Path) -> None:
+    paths = _prepare_sources(tmp_path)
+
+    first = _run_once(paths, whiteboard_enabled=True)
+    assert first["history"]["action"] == "appended"
+    assert first["whiteboard"]["action"] == "created_task_and_note"
     tasks = whiteboard.list_tasks(status="open", db_path=paths["whiteboard_db"])
     assert len(tasks) == 1
     events = whiteboard.list_events(task_id=tasks[0].id, db_path=paths["whiteboard_db"])
     assert len(events) == 1
 
-    second = _run(paths, whiteboard_enabled=True)
+    second = _run_once(paths, whiteboard_enabled=True)
     assert second["history"]["action"] == "skipped_duplicate_fingerprint"
     assert second["whiteboard"]["action"] == "skipped_duplicate_fingerprint"
-    history_lines = paths["out_history"].read_text(encoding="utf-8").strip().splitlines()
-    assert len(history_lines) == 1
+    tasks = whiteboard.list_tasks(status="open", db_path=paths["whiteboard_db"])
+    assert len(tasks) == 1
     events = whiteboard.list_events(task_id=tasks[0].id, db_path=paths["whiteboard_db"])
     assert len(events) == 1
 
-    pdca = json.loads(paths["pdca"].read_text(encoding="utf-8"))
-    pdca["generated_at_utc"] = "2026-03-10T17:20:00+00:00"
-    pdca["trades"]["24h"]["overall"]["net_jpy"] = -990.0
-    _write_json(paths["pdca"], pdca)
+    updated_pdca = json.loads(paths["pdca"].read_text(encoding="utf-8"))
+    updated_pdca["generated_at_utc"] = "2026-03-10T17:20:00+00:00"
+    updated_pdca["trades"]["24h"]["overall"]["net_jpy"] = -990.0
+    _write_json(paths["pdca"], updated_pdca)
 
-    third = _run(paths, whiteboard_enabled=True)
+    third = _run_once(paths, whiteboard_enabled=True)
     assert third["history"]["action"] == "appended"
-    history_lines = paths["out_history"].read_text(encoding="utf-8").strip().splitlines()
-    assert len(history_lines) == 2
+    assert third["whiteboard"]["action"] == "posted_note"
+    tasks = whiteboard.list_tasks(status="open", db_path=paths["whiteboard_db"])
+    assert len(tasks) == 1
     events = whiteboard.list_events(task_id=tasks[0].id, db_path=paths["whiteboard_db"])
     assert len(events) == 2
+
+    restored_pdca = json.loads(paths["pdca"].read_text(encoding="utf-8"))
+    restored_pdca["generated_at_utc"] = "2026-03-10T17:10:00+00:00"
+    restored_pdca["trades"]["24h"]["overall"]["net_jpy"] = -1050.433
+    _write_json(paths["pdca"], restored_pdca)
+
+    fourth = _run_once(paths, whiteboard_enabled=True)
+    assert fourth["history"]["action"] == "skipped_duplicate_fingerprint"
+    assert fourth["whiteboard"]["action"] == "skipped_duplicate_fingerprint"
+    tasks = whiteboard.list_tasks(status="open", db_path=paths["whiteboard_db"])
+    assert len(tasks) == 1
+    events = whiteboard.list_events(task_id=tasks[0].id, db_path=paths["whiteboard_db"])
+    assert len(events) == 2
+
+    history_lines = paths["out_history"].read_text(encoding="utf-8").strip().splitlines()
+    assert len(history_lines) == 2

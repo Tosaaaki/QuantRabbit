@@ -133,10 +133,13 @@ sqlite3 logs/orders.db \
 - WFO / 過学習診断は `scripts/run_wfo_overfit_report.sh` を利用し、
   `logs/reports/wfo_overfit/latest.{json,md}` を監視する。
 - `scripts/trade_findings_diary_draft.py` は `health_snapshot / pdca_profitability /
-  strategy_feedback / participation_alloc / trade_counterfactual /
-  replay_quality_gate / market_context` を束ねて
-  `logs/trade_findings_draft_latest.{json,md}` を生成する。
-  whiteboard 通知は同一 fingerprint で再投稿しない。
+  strategy_feedback / trade_counterfactual / replay_quality_gate` を束ねて
+  `logs/trade_findings_draft_latest.json` /
+  `logs/trade_findings_draft_history.jsonl` /
+  `logs/trade_findings_draft_latest.md` を生成する。
+  出力は review-only で、`docs/TRADE_FINDINGS.md` へは自動追記しない。
+  whiteboard 通知は `TRADE_FINDINGS_DRAFT_WHITEBOARD_ENABLED=1` のときだけ有効で、
+  同一 fingerprint では再投稿しない。
 
 ## 6. 観測指標と SLO
 - 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。

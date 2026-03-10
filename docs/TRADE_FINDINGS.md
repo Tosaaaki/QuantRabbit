@@ -16,6 +16,7 @@
 - 事実は VM/OANDA 実測を優先し、日時は UTC と JST を明記する。
 - 推測は `Hypothesis` と明示し、事実 (`Fact`) と混在させない。
 - 各エントリは「何を変え、何を期待し、結果が良かったか悪かったか、次にどうするか」が追える change diary として書く。
+- `logs/trade_findings_draft_latest.json` / `logs/trade_findings_draft_history.jsonl` / `logs/trade_findings_draft_latest.md` は review-only の自動下書きであり、このファイルへ自動追記してはいけない。正式記録はレビュー後に手動で反映する。
 - 最低限の記載項目:
   - `Change`（何を変えたか）
   - `Why`（なぜ今それをやるか）
@@ -49,6 +50,70 @@
 - Next Action:
 - Status:
 ```
+
+## 2026-03-11 02:40 JST / ここまでの改善サマリ: change diary 固定、shared feedback coverage 復旧、review draft 自動化、RangeFader loser lane 前捌き
+
+- Change:
+  - `docs/TRADE_FINDINGS.md` を
+    `good/bad/pending + Next Action` が追える change diary として固定した。
+  - boosted low-sample lane を
+    shared `strategy_feedback` / `health_snapshot` coverage へ接続し、
+    `strategy_feedback_worker` の zero-win / zero-loss crash を除去した。
+  - `scripts/trade_findings_diary_draft.py` を追加し、
+    `run_local_feedback_cycle` 後段で review-only draft
+    (`logs/trade_findings_draft_latest.{json,md}`) を自動生成するようにした。
+  - shared participation に loser-side `probability_offset` を追加し、
+    `RangeFader` の late reject を pre-order trim 側へ寄せる改善を入れた。
+- Why:
+  - 改善自体は進んでいたが、個別エントリだけだと
+    「ここまで何を直して、どこが終わっていて、何がまだ pending か」が
+    一目で追いにくかった。
+- Hypothesis:
+  - 改善群を 1 本の要約として束ねておけば、
+    次の RCA / 調整 / 引き継ぎが「前提整理」から始まらず、
+    すぐ次の改善へ入れる。
+- Expected Good:
+  - 直近の改善スタックを 1 画面で把握できる。
+  - `done` と `pending` が分かれ、次の監視ポイントが明確になる。
+- Expected Bad:
+  - この要約が更新されなくなると、逆に古いサマリが誤解を招く。
+  - 詳細を省きすぎると、個別エントリを読まずに判断してしまう可能性がある。
+- Period:
+  - UTC `2026-03-10 16:40-17:30`
+  - JST `2026-03-11 01:40-02:30`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.638 / ask=157.646 / spread=0.8p`
+    - recent range `5m=8.1p`
+    - `data_lag_ms=854.1`, `decision_latency_ms=25.4`, `mechanism_integrity.ok=true`
+  - ここまでの改善は大きく 4 本:
+    1. change diary 化
+    2. boosted low-sample lane の shared feedback / health coverage 復旧
+    3. review-only draft 自動生成
+    4. `RangeFader` loser lane の shared pre-order trim 強化
+  - 状態の整理:
+    - `change diary` 固定: `done`
+    - `shared feedback coverage + worker crash fix`: `good`
+    - `review draft 自動化`: `done`（運用ノイズ評価は継続）
+    - `RangeFader` loser-side `probability_offset`: `pending`
+- Failure Cause:
+  - 調整は「記録運用」「shared feedback」「review automation」「shared participation」の
+    別々のエントリに分かれており、全体進捗を俯瞰するまとめがなかった。
+- Improvement:
+  - 直近の改善群を 1 本の要約へまとめ、
+    「何を直したか / 何が効いたか / 何がまだ監視中か」を先頭で読めるようにした。
+- Verification:
+  - 本ファイル内の 2026-03-11 01:55 JST / 02:13 JST / 02:18 JST / 02:29 JST の各エントリ
+  - `docs/WORKER_REFACTOR_LOG.md` の対応追記
+- Verdict:
+  - `mixed`
+- Next Action:
+  - `RangeFader-buy/sell-fade` の `entry_probability_reject` / `perf_block` が
+    前窓より低下するかを継続監視する。
+  - `trade_findings_draft` は draft ノイズが増えないかを数窓運用で確認する。
+  - 次の改善を入れたら、このサマリも更新して「いま何が最新か」を保つ。
+- Status:
+  - done
 
 ## 2026-03-11 02:29 JST / local-v2: shared participation に loser-side `probability_offset` を追加し、`RangeFader` の late reject を pre-order trim へ寄せる
 
@@ -250,12 +315,14 @@
 
 - Change:
   - `scripts/trade_findings_diary_draft.py` を追加し、
-    `health_snapshot / pdca_profitability / strategy_feedback / participation_alloc /
-    trade_counterfactual / replay_quality_gate / market_context`
-    から `logs/trade_findings_draft_latest.{json,md}` を生成するようにした。
+    `health_snapshot / pdca_profitability / strategy_feedback /
+    trade_counterfactual / replay_quality_gate`
+    から `logs/trade_findings_draft_latest.json` /
+    `logs/trade_findings_draft_history.jsonl` /
+    `logs/trade_findings_draft_latest.md` を生成するようにした。
   - `scripts/run_local_feedback_cycle.py` に `trade_findings_draft` job を追加し、
     既存の interval/lock/output 契約へ載せた。
-  - whiteboard 通知は同一 fingerprint で重複投稿しないようにした。
+  - whiteboard 通知は opt-in とし、同一 fingerprint で重複投稿しないようにした。
 - Why:
   - analysis artifact は自動生成されていたが、
     `docs/TRADE_FINDINGS.md` の change diary へ昇格する前に散りやすく、
@@ -281,14 +348,14 @@
     - `data_lag_ms=1155.1`, `decision_latency_ms=14.1`, `mechanism_integrity.ok=true`
   - 現状の local artifact には
     `health_snapshot`, `pdca_profitability`, `strategy_feedback`,
-    `participation_alloc`, `trade_counterfactual`, `replay_quality_gate`,
-    `market_context` が既にあり、
+    `trade_counterfactual`, `replay_quality_gate` が既にあり、
     `run_local_feedback_cycle.py` も job 拡張を受け入れる構造だった。
 - Failure Cause:
   - 事実の収集は自動化されていた一方、
     change diary に必要な「人が読むための束ね直し」が自動化されていなかった。
 - Improvement:
   - local feedback cycle 後段で review-only draft を自動生成し、
+    `docs/TRADE_FINDINGS.md` 本体へは自動追記せず、
     同一 fingerprint の history/whiteboard 重複を抑止した。
 - Verification:
   - `python3 -m py_compile scripts/trade_findings_diary_draft.py scripts/run_local_feedback_cycle.py tests/scripts/test_trade_findings_diary_draft.py tests/scripts/test_run_local_feedback_cycle.py`
@@ -296,7 +363,7 @@
 - Verdict:
   - `pending`
 - Next Action:
-  - 実運用で `python3 scripts/trade_findings_diary_draft.py --disable-whiteboard` の出力を確認し、
+  - 実運用で `python3 scripts/trade_findings_diary_draft.py --no-whiteboard-enabled` の出力を確認し、
     draft がノイズ過多なら headline/fingerprint 条件をさらに絞る。
 - Status:
   - done
