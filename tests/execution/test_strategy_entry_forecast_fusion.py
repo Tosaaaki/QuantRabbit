@@ -662,6 +662,160 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     assert cached[0]["status"] == "strong_contra_forecast"
     assert cached[0]["side"] == "buy"
     assert cached[0]["units"] == 0
+    request_payload = cached[0]["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    assert thesis.get("entry_path_attribution_version") == 1
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == [
+        "technical_context",
+        "forecast_context",
+        "analysis_feedback",
+        "forecast_fusion",
+    ]
+    assert trail[-1]["status"] == "block"
+    assert trail[-1]["reason"] == "strong_contra_forecast"
+
+
+def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> None:
+    dispatched: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_strategy_tag",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "scalp_ping_5s_b_live",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_technical_context",
+        lambda **kwargs: {"technical_context": {"spread_pips": 0.8}},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_entry_probability",
+        lambda entry_thesis, confidence: 0.64,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_forecast_context",
+        lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": True, "p_up": 0.68, "edge": 0.62}),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_feedback",
+        lambda *args, **kwargs: (
+            96,
+            0.61,
+            kwargs.get("sl_price"),
+            kwargs.get("tp_price"),
+            {"reason": "feedback_trim"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_forecast_fusion",
+        lambda **kwargs: (
+            90,
+            0.6,
+            {"forecast_reason": "aligned"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_net_edge_gate",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            {"reason": "pass"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_env_prefix_context",
+        lambda entry_thesis, meta, strategy_tag: (entry_thesis, meta),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_leading_profile",
+        lambda **kwargs: (
+            99,
+            0.63,
+            {"reason": "pass", "reject": False},
+        ),
+        raising=False,
+    )
+
+    async def _coordinate_entry_units(**kwargs):
+        return 88, None
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_coordinate_entry_units",
+        _coordinate_entry_units,
+        raising=False,
+    )
+
+    async def _market_order(**kwargs):
+        dispatched.update(kwargs)
+        return "trade-123"
+
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "market_order",
+        _market_order,
+        raising=False,
+    )
+
+    result = asyncio.run(
+        strategy_entry.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=150.0,
+            tp_price=151.0,
+            pocket="scalp",
+            client_order_id="test-entry-trail",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={},
+        )
+    )
+
+    assert result == "trade-123"
+    thesis = dispatched.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    assert thesis.get("entry_probability") == 0.63
+    assert thesis.get("entry_units_intent") == 88
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == [
+        "technical_context",
+        "forecast_context",
+        "analysis_feedback",
+        "forecast_fusion",
+        "entry_net_edge_gate",
+        "leading_profile",
+        "blackboard_coordination",
+        "entry_intent_contract",
+    ]
+    assert [step.get("status") for step in trail] == [
+        "pass",
+        "pass",
+        "reduce",
+        "reduce",
+        "pass",
+        "boost",
+        "reduce",
+        "pass",
+    ]
 
 
 def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -> None:
@@ -768,3 +922,19 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     assert cached[0]["status"] == "entry_leading_profile_reject"
     assert cached[0]["side"] == "sell"
     assert cached[0]["units"] == 0
+    request_payload = cached[0]["request_payload"]
+    assert isinstance(request_payload, dict)
+    thesis = request_payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    trail = thesis.get("entry_path_attribution")
+    assert isinstance(trail, list)
+    assert [step.get("stage") for step in trail] == [
+        "technical_context",
+        "forecast_context",
+        "analysis_feedback",
+        "forecast_fusion",
+        "entry_net_edge_gate",
+        "leading_profile",
+    ]
+    assert trail[-1]["status"] == "block"
+    assert trail[-1]["reason"] == "entry_leading_profile_reject"

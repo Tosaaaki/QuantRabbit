@@ -732,6 +732,88 @@ def _inject_entry_intent_contract(
     return thesis, normalized_probability
 
 
+def _entry_path_stage_status(
+    *,
+    units_before: Optional[int] = None,
+    units_after: Optional[int] = None,
+    entry_probability_before: Optional[float] = None,
+    entry_probability_after: Optional[float] = None,
+    skip_when_unchanged: bool = False,
+) -> str:
+    before_abs = abs(int(units_before)) if units_before is not None else None
+    after_abs = abs(int(units_after)) if units_after is not None else None
+    if after_abs == 0 and (before_abs is None or before_abs > 0):
+        return "block"
+    if before_abs is not None and after_abs is not None:
+        if after_abs < before_abs:
+            return "reduce"
+        if after_abs > before_abs:
+            return "boost"
+    prob_before = _entry_probability_value(entry_probability_before)
+    prob_after = _entry_probability_value(entry_probability_after)
+    if prob_before is not None and prob_after is not None:
+        if prob_after + 1e-9 < prob_before:
+            return "reduce"
+        if prob_after > prob_before + 1e-9:
+            return "boost"
+    if skip_when_unchanged:
+        return "skip"
+    return "pass"
+
+
+def _entry_path_reason(payload: object, *keys: str) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        raw = payload.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+def _append_entry_path_stage(
+    entry_thesis: Optional[dict],
+    *,
+    stage: str,
+    status: str,
+    units_before: Optional[int] = None,
+    units_after: Optional[int] = None,
+    entry_probability_before: Optional[float] = None,
+    entry_probability_after: Optional[float] = None,
+    reason: Optional[str] = None,
+    detail_key: Optional[str] = None,
+) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    thesis = dict(entry_thesis)
+    existing = thesis.get("entry_path_attribution")
+    trail: list[dict[str, object]] = []
+    if isinstance(existing, list):
+        trail = [dict(item) for item in existing if isinstance(item, dict)]
+    record: dict[str, object] = {
+        "stage": stage,
+        "status": status,
+    }
+    if units_before is not None:
+        record["units_before"] = int(units_before)
+    if units_after is not None:
+        record["units_after"] = int(units_after)
+    normalized_prob_before = _entry_probability_value(entry_probability_before)
+    if normalized_prob_before is not None:
+        record["entry_probability_before"] = round(float(normalized_prob_before), 6)
+    normalized_prob_after = _entry_probability_value(entry_probability_after)
+    if normalized_prob_after is not None:
+        record["entry_probability_after"] = round(float(normalized_prob_after), 6)
+    if reason:
+        record["reason"] = reason
+    if detail_key:
+        record["detail_key"] = detail_key
+    trail.append(record)
+    thesis["entry_path_attribution_version"] = 1
+    thesis["entry_path_attribution"] = trail
+    return thesis
+
+
 def _strategy_tag_to_env_prefix(strategy_tag: Optional[str]) -> Optional[str]:
     raw = str(strategy_tag or "").strip().upper()
     if not raw:
@@ -2608,6 +2690,7 @@ def _cache_entry_reject_status(
     strategy_tag: Optional[str],
     pocket: str,
     entry_probability: Optional[float],
+    entry_thesis: Optional[dict] = None,
     extra_payload: Optional[dict[str, object]] = None,
 ) -> None:
     if not client_order_id:
@@ -2620,6 +2703,8 @@ def _cache_entry_reject_status(
         "pocket": pocket,
         "entry_probability": entry_probability,
     }
+    if isinstance(entry_thesis, dict):
+        request_payload["entry_thesis"] = entry_thesis
     if isinstance(extra_payload, dict):
         request_payload["extra_payload"] = extra_payload
     order_manager._cache_order_status(
@@ -2664,6 +2749,14 @@ async def market_order(
     )
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="technical_context",
+        status="pass",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="technical_context",
+    )
     entry_thesis, forecast_context = _inject_entry_forecast_context(
         instrument=instrument,
         strategy_tag=resolved_strategy_tag,
@@ -2672,6 +2765,16 @@ async def market_order(
         entry_thesis=entry_thesis,
         meta=meta,
     )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_context",
+        status="pass" if isinstance(forecast_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(forecast_context, "reason"),
+    )
+    feedback_units_before = units
+    feedback_probability_before = entry_probability
     units, entry_probability, sl_price, tp_price, feedback_applied = _apply_strategy_feedback(
         resolved_strategy_tag,
         pocket=pocket,
@@ -2681,6 +2784,23 @@ async def market_order(
         sl_price=sl_price,
         tp_price=tp_price,
         entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="analysis_feedback",
+        status=_entry_path_stage_status(
+            units_before=feedback_units_before,
+            units_after=units,
+            entry_probability_before=feedback_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(feedback_applied, dict) or not feedback_applied,
+        ),
+        units_before=feedback_units_before,
+        units_after=units,
+        entry_probability_before=feedback_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(feedback_applied, "reason"),
+        detail_key="analysis_feedback",
     )
     if not units:
         feedback_reason = "analysis_feedback_zero_units"
@@ -2697,8 +2817,11 @@ async def market_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
         )
         return None
+    forecast_units_before = units
+    forecast_probability_before = entry_probability
     units, entry_probability, forecast_applied = _apply_forecast_fusion(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
@@ -2706,6 +2829,23 @@ async def market_order(
         entry_probability=entry_probability,
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_fusion",
+        status=_entry_path_stage_status(
+            units_before=forecast_units_before,
+            units_after=units,
+            entry_probability_before=forecast_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(forecast_applied, dict) or not forecast_applied,
+        ),
+        units_before=forecast_units_before,
+        units_after=units,
+        entry_probability_before=forecast_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(forecast_applied, "reject_reason", "forecast_reason", "reason"),
+        detail_key="forecast_fusion",
     )
     if not units:
         forecast_reason = "forecast_fusion_reject"
@@ -2725,8 +2865,11 @@ async def market_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
         )
         return None
+    net_edge_units_before = units
+    net_edge_probability_before = entry_probability
     units, entry_probability, net_edge_applied = _apply_strategy_net_edge_gate(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
@@ -2735,6 +2878,23 @@ async def market_order(
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
         meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_net_edge_gate",
+        status=_entry_path_stage_status(
+            units_before=net_edge_units_before,
+            units_after=units,
+            entry_probability_before=net_edge_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(net_edge_applied, dict) or not net_edge_applied,
+        ),
+        units_before=net_edge_units_before,
+        units_after=units,
+        entry_probability_before=net_edge_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(net_edge_applied, "reason"),
+        detail_key="entry_net_edge_gate",
     )
     if not units:
         net_edge_reason = "entry_net_edge_gate"
@@ -2753,12 +2913,15 @@ async def market_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
             extra_payload=net_edge_applied,
         )
         return None
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
+    leading_units_before = units
+    leading_probability_before = entry_probability
     units, entry_probability, leading_applied = _apply_strategy_leading_profile(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
@@ -2767,6 +2930,23 @@ async def market_order(
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
         meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="leading_profile",
+        status=_entry_path_stage_status(
+            units_before=leading_units_before,
+            units_after=units,
+            entry_probability_before=leading_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(leading_applied, dict) or not leading_applied,
+        ),
+        units_before=leading_units_before,
+        units_after=units,
+        entry_probability_before=leading_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(leading_applied, "reason"),
+        detail_key="entry_probability_leading_profile",
     )
     if not units:
         leading_reason = "entry_leading_profile_reject"
@@ -2783,9 +2963,11 @@ async def market_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
             extra_payload=leading_applied,
         )
         return None
+    coordination_units_before = units
     coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -2798,6 +2980,19 @@ async def market_order(
         meta=meta,
         forecast_context=forecast_context,
     )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="blackboard_coordination",
+        status=_entry_path_stage_status(
+            units_before=coordination_units_before,
+            units_after=coordinated_units,
+        ),
+        units_before=coordination_units_before,
+        units_after=coordinated_units,
+        entry_probability_after=entry_probability,
+        reason=str(coordination_reason).strip() if coordination_reason else None,
+        detail_key="entry_intent_board",
+    )
     if not coordinated_units:
         _cache_entry_reject_status(
             client_order_id=client_order_id,
@@ -2807,14 +3002,31 @@ async def market_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
         )
         return None
     if coordinated_units != units:
         units = coordinated_units
+    contract_probability_before = entry_probability
     entry_thesis, entry_probability = _inject_entry_intent_contract(
         entry_thesis=entry_thesis,
         units=units,
         entry_probability=entry_probability,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_intent_contract",
+        status=_entry_path_stage_status(
+            units_before=units,
+            units_after=units,
+            entry_probability_before=contract_probability_before,
+            entry_probability_after=entry_probability,
+        ),
+        units_before=units,
+        units_after=units,
+        entry_probability_before=contract_probability_before,
+        entry_probability_after=entry_probability,
+        detail_key="entry_units_intent",
     )
     return await order_manager.market_order(
         instrument=instrument,
@@ -2865,6 +3077,14 @@ async def limit_order(
     )
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="technical_context",
+        status="pass",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="technical_context",
+    )
     entry_thesis, forecast_context = _inject_entry_forecast_context(
         instrument=instrument,
         strategy_tag=resolved_strategy_tag,
@@ -2873,6 +3093,16 @@ async def limit_order(
         entry_thesis=entry_thesis,
         meta=meta,
     )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_context",
+        status="pass" if isinstance(forecast_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(forecast_context, "reason"),
+    )
+    feedback_units_before = units
+    feedback_probability_before = entry_probability
     units, entry_probability, sl_price, tp_price, feedback_applied = _apply_strategy_feedback(
         resolved_strategy_tag,
         pocket=pocket,
@@ -2882,6 +3112,23 @@ async def limit_order(
         sl_price=sl_price,
         tp_price=tp_price,
         entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="analysis_feedback",
+        status=_entry_path_stage_status(
+            units_before=feedback_units_before,
+            units_after=units,
+            entry_probability_before=feedback_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(feedback_applied, dict) or not feedback_applied,
+        ),
+        units_before=feedback_units_before,
+        units_after=units,
+        entry_probability_before=feedback_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(feedback_applied, "reason"),
+        detail_key="analysis_feedback",
     )
     if not units:
         feedback_reason = "analysis_feedback_zero_units"
@@ -2898,8 +3145,11 @@ async def limit_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
         )
         return None, None
+    forecast_units_before = units
+    forecast_probability_before = entry_probability
     units, entry_probability, forecast_applied = _apply_forecast_fusion(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
@@ -2907,6 +3157,23 @@ async def limit_order(
         entry_probability=entry_probability,
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_fusion",
+        status=_entry_path_stage_status(
+            units_before=forecast_units_before,
+            units_after=units,
+            entry_probability_before=forecast_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(forecast_applied, dict) or not forecast_applied,
+        ),
+        units_before=forecast_units_before,
+        units_after=units,
+        entry_probability_before=forecast_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(forecast_applied, "reject_reason", "forecast_reason", "reason"),
+        detail_key="forecast_fusion",
     )
     if not units:
         forecast_reason = "forecast_fusion_reject"
@@ -2926,8 +3193,11 @@ async def limit_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
         )
         return None, None
+    net_edge_units_before = units
+    net_edge_probability_before = entry_probability
     units, entry_probability, net_edge_applied = _apply_strategy_net_edge_gate(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
@@ -2936,6 +3206,23 @@ async def limit_order(
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
         meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_net_edge_gate",
+        status=_entry_path_stage_status(
+            units_before=net_edge_units_before,
+            units_after=units,
+            entry_probability_before=net_edge_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(net_edge_applied, dict) or not net_edge_applied,
+        ),
+        units_before=net_edge_units_before,
+        units_after=units,
+        entry_probability_before=net_edge_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(net_edge_applied, "reason"),
+        detail_key="entry_net_edge_gate",
     )
     if not units:
         net_edge_reason = "entry_net_edge_gate"
@@ -2954,12 +3241,15 @@ async def limit_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
             extra_payload=net_edge_applied,
         )
         return None, None
     entry_thesis, meta = _inject_env_prefix_context(
         entry_thesis, meta, resolved_strategy_tag
     )
+    leading_units_before = units
+    leading_probability_before = entry_probability
     units, entry_probability, leading_applied = _apply_strategy_leading_profile(
         strategy_tag=resolved_strategy_tag,
         pocket=pocket,
@@ -2968,6 +3258,23 @@ async def limit_order(
         entry_thesis=entry_thesis,
         forecast_context=forecast_context,
         meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="leading_profile",
+        status=_entry_path_stage_status(
+            units_before=leading_units_before,
+            units_after=units,
+            entry_probability_before=leading_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(leading_applied, dict) or not leading_applied,
+        ),
+        units_before=leading_units_before,
+        units_after=units,
+        entry_probability_before=leading_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(leading_applied, "reason"),
+        detail_key="entry_probability_leading_profile",
     )
     if not units:
         leading_reason = "entry_leading_profile_reject"
@@ -2984,9 +3291,11 @@ async def limit_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
             extra_payload=leading_applied,
         )
         return None, None
+    coordination_units_before = units
     coordinated_units, coordination_reason = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -2999,6 +3308,19 @@ async def limit_order(
         meta=meta,
         forecast_context=forecast_context,
     )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="blackboard_coordination",
+        status=_entry_path_stage_status(
+            units_before=coordination_units_before,
+            units_after=coordinated_units,
+        ),
+        units_before=coordination_units_before,
+        units_after=coordinated_units,
+        entry_probability_after=entry_probability,
+        reason=str(coordination_reason).strip() if coordination_reason else None,
+        detail_key="entry_intent_board",
+    )
     if not coordinated_units:
         _cache_entry_reject_status(
             client_order_id=client_order_id,
@@ -3008,14 +3330,31 @@ async def limit_order(
             strategy_tag=resolved_strategy_tag,
             pocket=pocket,
             entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
         )
         return None, None
     if coordinated_units != units:
         units = coordinated_units
+    contract_probability_before = entry_probability
     entry_thesis, entry_probability = _inject_entry_intent_contract(
         entry_thesis=entry_thesis,
         units=units,
         entry_probability=entry_probability,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_intent_contract",
+        status=_entry_path_stage_status(
+            units_before=units,
+            units_after=units,
+            entry_probability_before=contract_probability_before,
+            entry_probability_after=entry_probability,
+        ),
+        units_before=units,
+        units_after=units,
+        entry_probability_before=contract_probability_before,
+        entry_probability_after=entry_probability,
+        detail_key="entry_units_intent",
     )
     return await order_manager.limit_order(
         instrument=instrument,
