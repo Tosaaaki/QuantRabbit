@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -461,6 +462,96 @@ def test_build_participation_alloc_boosts_profitable_probe_lane_with_probability
     assert 0.0 < probe["hard_block_rate"] < 1.0
 
 
+def test_build_participation_alloc_emits_setup_overrides_for_loser_setup() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "RangeFader-sell-fade": {
+                "pocket": "scalp",
+                "attempts": 578,
+                "fills": 29,
+                "filled_rate": 0.0502,
+                "attempt_share": 0.274715,
+                "fill_share": 0.073791,
+                "share_gap": 0.200923,
+                "terminal_status_counts": {
+                    "entry_probability_reject": 891,
+                    "perf_block": 549,
+                    "filled": 29,
+                },
+                "setups": {
+                    "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression": {
+                        "setup_fingerprint": "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression",
+                        "flow_regime": "trend_long",
+                        "microstructure_bucket": "tight_fast",
+                        "attempts": 244,
+                        "fills": 8,
+                        "filled_rate": 0.0328,
+                        "attempt_share": 0.122,
+                        "fill_share": 0.018,
+                        "share_gap": 0.104,
+                        "terminal_status_counts": {
+                            "entry_probability_reject": 402,
+                            "perf_block": 231,
+                            "filled": 8,
+                        },
+                    },
+                    "RangeFader-sell-fade|short|transition|normal_normal|rsi:mid|atr:mid|gap:down_flat|volatility_compression": {
+                        "setup_fingerprint": "RangeFader-sell-fade|short|transition|normal_normal|rsi:mid|atr:mid|gap:down_flat|volatility_compression",
+                        "flow_regime": "transition",
+                        "microstructure_bucket": "normal_normal",
+                        "attempts": 88,
+                        "fills": 12,
+                        "filled_rate": 0.1364,
+                        "attempt_share": 0.041,
+                        "fill_share": 0.038,
+                        "share_gap": 0.003,
+                        "terminal_status_counts": {
+                            "entry_probability_reject": 53,
+                            "filled": 12,
+                        },
+                    },
+                },
+            },
+            "MomentumBurst": {
+                "pocket": "micro",
+                "attempts": 35,
+                "fills": 14,
+                "filled_rate": 0.40,
+                "attempt_share": 0.12,
+                "fill_share": 0.34,
+                "share_gap": -0.22,
+                "terminal_status_counts": {"filled": 14},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "RangeFader-sell-fade": -220.0,
+            "MomentumBurst": 180.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    lane = payload["strategies"]["RangeFader-sell-fade"]
+    assert isinstance(lane.get("setup_overrides"), list)
+    loser = next(
+        item
+        for item in lane["setup_overrides"]
+        if item["match_dimension"] == "setup_fingerprint"
+        and item["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    )
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 1.0
+    assert loser["flow_regime"] == "trend_long"
+    assert loser["microstructure_bucket"] == "tight_fast"
+
+
 def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     with sqlite3.connect(db_path) as conn:
@@ -494,3 +585,65 @@ def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: P
 
     assert realized["RangeFader-sell-fade"] == -220.0
     assert "RangeFader" not in realized
+
+
+def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context(tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE trades (
+                strategy_tag TEXT,
+                strategy TEXT,
+                units INTEGER,
+                entry_thesis TEXT,
+                realized_pl REAL,
+                close_time TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO trades(strategy_tag, strategy, units, entry_thesis, realized_pl, close_time)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "RangeFader-sell-fade",
+                "RangeFader-sell-fade",
+                -120,
+                json.dumps(
+                    {
+                        "strategy_tag": "RangeFader-sell-fade",
+                        "range_mode": "trend",
+                        "range_score": 0.18,
+                        "spread_pips": 0.8,
+                        "technical_context": {
+                            "ticks": {"spread_pips": 0.8, "tick_rate": 9.2},
+                            "indicators": {
+                                "M1": {
+                                    "atr_pips": 2.4,
+                                    "rsi": 67.0,
+                                    "adx": 29.0,
+                                    "plus_di": 31.0,
+                                    "minus_di": 14.0,
+                                    "ma10": 158.110,
+                                    "ma20": 158.080,
+                                }
+                            },
+                        },
+                    },
+                    ensure_ascii=True,
+                ),
+                -88.0,
+                "2026-03-10T00:00:00Z",
+            ),
+        )
+        conn.commit()
+
+    realized = participation_allocator._load_recent_realized_setup_jpy(db_path, lookback_hours=48.0)
+
+    key = next(iter(realized.keys()))
+    assert "RangeFader-sell-fade" in key
+    assert "trend_long" in key
+    assert "tight_fast" in key
+    assert realized[key] == -88.0

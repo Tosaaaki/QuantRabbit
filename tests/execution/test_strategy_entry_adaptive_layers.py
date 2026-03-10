@@ -180,6 +180,73 @@ def test_apply_participation_alloc_does_not_boost_units_without_explicit_signal(
     assert thesis["participation_alloc"]["lot_multiplier"] == 1.0
 
 
+def test_apply_participation_alloc_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+    captured: dict = {}
+
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"scalp"}, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+
+    def _fake_load_participation_profile(strategy_tag, pocket, *, path=None, ttl_sec=None, entry_thesis=None):
+        captured["strategy_tag"] = strategy_tag
+        captured["pocket"] = pocket
+        captured["entry_thesis"] = dict(entry_thesis or {})
+        return {
+            "found": True,
+            "strategy_key": "RangeFader-sell-fade",
+            "action": "trim_units",
+            "units_multiplier": 0.84,
+            "lot_multiplier": 0.84,
+            "probability_offset": -0.02,
+            "max_probability_boost": 0.05,
+            "preflights": 212,
+            "filled": 19,
+            "fill_rate": 0.0896,
+            "hard_block_rate": 0.24,
+            "quality_score": 0.41,
+            "current_share": 0.31,
+            "target_share": 0.12,
+            "setup_override": {
+                "match_dimension": "setup_fingerprint",
+                "setup_fingerprint": "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression",
+                "flow_regime": "trend_long",
+                "microstructure_bucket": "tight_fast",
+            },
+        }
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_participation_profile",
+        _fake_load_participation_profile,
+        raising=False,
+    )
+
+    thesis = {
+        "setup_fingerprint": "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression",
+        "live_setup_context": {
+            "flow_regime": "trend_long",
+            "microstructure_bucket": "tight_fast",
+        },
+    }
+    units, prob, payload = strategy_entry._apply_participation_alloc(
+        strategy_tag="RangeFader-sell-fade",
+        pocket="scalp",
+        units=-100,
+        min_units=10,
+        entry_probability=0.60,
+        entry_thesis=thesis,
+    )
+
+    assert captured["strategy_tag"] == "RangeFader-sell-fade"
+    assert captured["pocket"] == "scalp"
+    assert captured["entry_thesis"]["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    assert units == -84
+    assert prob == 0.58
+    assert isinstance(payload, dict)
+    assert payload["setup_override"]["match_dimension"] == "setup_fingerprint"
+    assert thesis["participation_alloc"]["setup_override"]["flow_regime"] == "trend_long"
+
+
 def test_inject_market_context_records_slow_market_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(strategy_entry, "_STRATEGY_MARKET_CONTEXT_ENABLED", True, raising=False)
     monkeypatch.setattr(

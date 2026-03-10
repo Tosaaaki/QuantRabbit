@@ -13259,3 +13259,50 @@ Status:
     `live_setup_context` / `setup_fingerprint` の一致率、
     blanket trim の減少、
     `entry_probability_reject` と `filled` の比率変化を追う。
+
+## 2026-03-11 05:40 JST / `participation_alloc` を strategy-wide から setup-scoped override へ分解
+- Why/Hypothesis:
+  - `strategy_feedback` だけ setup-scoped にしても、
+    shared participation が strategy-wide のままだと
+    同一 strategy 内の mixed regime を still broad に trim/boost してしまう。
+  - `entry_path_summary` から setup identity を集計し、
+    `participation_alloc` でも current setup match の override を使えば、
+    shared participation も「今の型」にだけ効かせられる。
+- Expected Good:
+  - `RangeFader` のように同一 strategy 内で buy/sell/neutral や regime が混在していても、
+    loser setup の trim が winner setup を巻き添えで削りにくくなる。
+  - shared participation が current setup 単位の overuse / underuse を反映する。
+- Expected Bad:
+  - setup 粒度が細かいと sample が割れ、override が sparse になる。
+  - setup realized P/L の backfill が弱い戦略では、
+    share / hard-block 中心の override になり、効き方が uneven になり得る。
+- Observed/Fact:
+  - `scripts/entry_path_aggregator.py`
+    - `orders.request_json.entry_thesis` から `setup_fingerprint`,
+      `flow_regime`, `microstructure_bucket` を抽出し、
+      strategy ごとに `setups` 集計を出すようにした。
+  - `scripts/participation_allocator.py`
+    - strategy-level allocation に加えて setup 別 `setup_overrides` を生成するようにした。
+    - setup realized P/L を `trades.entry_thesis` から backfill する path を追加した。
+  - `workers/common/participation_alloc.py`
+    - live `entry_thesis` の current setup と一致する `setup_overrides` を選ぶようにした。
+  - `execution/strategy_entry.py`
+    - participation loader に live `entry_thesis` を渡し、
+      一致した `setup_override` を監査 payload に残すようにした。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/scripts/test_participation_allocator.py tests/workers/common/test_participation_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py` -> `23 passed`
+  - live dry-run:
+    - `entry_path_aggregator.build_report(...)` + `participation_allocator.build_participation_alloc(...)`
+      で `21` strategy 中 `4` strategy に `setup_overrides` が即時生成された。
+    - sample:
+      - `RangeFader-buy-fade: 1`
+      - `RangeFader-neutral-fade: 4`
+      - `RangeFader-sell-fade: 2`
+      - `scalp_extrema_reversal_live: 2`
+- Verdict: pending
+- Next Action:
+  - `main` へ push 後に local-v2 へ反映し、
+    `config/participation_alloc.json` と `logs/entry_path_summary_latest.json` を最新生成する。
+  - live order 監査で `entry_thesis["participation_alloc"].setup_override` が
+    current setup と一致すること、
+    RangeFader 系の blanket trim が減ることを確認する。

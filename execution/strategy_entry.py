@@ -2682,6 +2682,7 @@ def _apply_participation_alloc(
         profile = load_participation_profile(
             strategy_tag,
             pocket_key,
+            entry_thesis=entry_thesis,
             path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
             ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
         )
@@ -2793,6 +2794,9 @@ def _apply_participation_alloc(
             payload["reason"] = "rebalance"
         elif next_probability < normalized_probability - 1e-9 and payload.get("reason") == "pass":
             payload["reason"] = "overused_trim"
+    setup_override = profile.get("setup_override")
+    if isinstance(setup_override, dict):
+        payload["setup_override"] = dict(setup_override)
     entry_thesis["participation_alloc"] = payload
     return int(next_units), next_probability, payload
 

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.strategy_tags import extract_strategy_tags
+from workers.common.setup_context import extract_setup_identity
 
 
 def _safe_json_loads(raw: Any) -> dict[str, Any]:
@@ -29,6 +30,13 @@ def _safe_json_loads(raw: Any) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return int(default)
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -85,6 +93,52 @@ def _extract_pocket(payload: dict[str, Any], row_pocket: Any) -> str:
         text = str(raw or "").strip().lower()
         if text:
             return text
+    return "unknown"
+
+
+def _extract_entry_thesis(payload: dict[str, Any]) -> dict[str, Any]:
+    thesis = payload.get("entry_thesis")
+    return thesis if isinstance(thesis, dict) else {}
+
+
+def _extract_setup_context(payload: dict[str, Any]) -> dict[str, str]:
+    thesis = _extract_entry_thesis(payload)
+    if not thesis:
+        return {}
+    units = _safe_int(payload.get("units"), 0)
+    if units == 0:
+        units = _safe_int(thesis.get("entry_units_intent"), 0)
+    if units == 0:
+        oanda = payload.get("oanda")
+        if isinstance(oanda, dict):
+            order = oanda.get("order")
+            if isinstance(order, dict):
+                units = _safe_int(order.get("units"), 0)
+    return extract_setup_identity(thesis, units=units)
+
+
+def _setup_bucket_key(context: dict[str, str]) -> str:
+    setup_fingerprint = str(context.get("setup_fingerprint") or "").strip()
+    if setup_fingerprint:
+        return setup_fingerprint
+    flow_regime = str(context.get("flow_regime") or "").strip()
+    microstructure_bucket = str(context.get("microstructure_bucket") or "").strip()
+    if flow_regime and microstructure_bucket:
+        return f"{flow_regime}|{microstructure_bucket}"
+    if flow_regime:
+        return flow_regime
+    return microstructure_bucket
+
+
+def _setup_match_dimension(context: dict[str, str]) -> str:
+    if str(context.get("setup_fingerprint") or "").strip():
+        return "setup_fingerprint"
+    if str(context.get("flow_regime") or "").strip() and str(context.get("microstructure_bucket") or "").strip():
+        return "flow_micro"
+    if str(context.get("flow_regime") or "").strip():
+        return "flow_regime"
+    if str(context.get("microstructure_bucket") or "").strip():
+        return "microstructure_bucket"
     return "unknown"
 
 
@@ -158,21 +212,57 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
                 "status_counts": defaultdict(int),
                 "stage_counts": defaultdict(int),
                 "blockers": defaultdict(int),
+                "setups": {},
             },
         )
+        setup_context = _extract_setup_context(payload)
+        setup_bucket = None
+        setup_key = _setup_bucket_key(setup_context) if setup_context else ""
+        if setup_key:
+            setup_bucket = bucket["setups"].setdefault(
+                setup_key,
+                {
+                    "setup_key": setup_key,
+                    "match_dimension": _setup_match_dimension(setup_context),
+                    "setup_fingerprint": str(setup_context.get("setup_fingerprint") or ""),
+                    "flow_regime": str(setup_context.get("flow_regime") or ""),
+                    "microstructure_bucket": str(setup_context.get("microstructure_bucket") or ""),
+                    "preflights": 0,
+                    "submit_attempts": 0,
+                    "filled": 0,
+                    "hard_blocks": 0,
+                    "soft_reduces": 0,
+                    "status_counts": defaultdict(int),
+                    "stage_counts": defaultdict(int),
+                    "blockers": defaultdict(int),
+                },
+            )
         global_status_counts[status] += 1
         bucket["status_counts"][status] += 1
+        if isinstance(setup_bucket, dict):
+            setup_bucket["status_counts"][status] += 1
         if status == "preflight_start":
             bucket["preflights"] += 1
+            if isinstance(setup_bucket, dict):
+                setup_bucket["preflights"] += 1
         elif status == "submit_attempt":
             bucket["submit_attempts"] += 1
+            if isinstance(setup_bucket, dict):
+                setup_bucket["submit_attempts"] += 1
         elif status == "filled":
             bucket["filled"] += 1
+            if isinstance(setup_bucket, dict):
+                setup_bucket["filled"] += 1
         elif status == "probability_scaled":
             bucket["soft_reduces"] += 1
+            if isinstance(setup_bucket, dict):
+                setup_bucket["soft_reduces"] += 1
         elif _is_hard_block_status(status):
             bucket["hard_blocks"] += 1
             bucket["blockers"][f"status:{status}"] += 1
+            if isinstance(setup_bucket, dict):
+                setup_bucket["hard_blocks"] += 1
+                setup_bucket["blockers"][f"status:{status}"] += 1
 
         for trail_item in _extract_trail(payload):
             stage = str(trail_item.get("stage") or "").strip() or "unknown"
@@ -181,12 +271,19 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
             stage_key = f"{stage}:{stage_status}"
             global_stage_counts[stage_key] += 1
             bucket["stage_counts"][stage_key] += 1
+            if isinstance(setup_bucket, dict):
+                setup_bucket["stage_counts"][stage_key] += 1
             if stage_status == "reduce":
                 bucket["soft_reduces"] += 1
+                if isinstance(setup_bucket, dict):
+                    setup_bucket["soft_reduces"] += 1
             if stage_status == "block":
                 bucket["hard_blocks"] += 1
                 blocker_key = f"{stage}:{reason or 'unknown'}"
                 bucket["blockers"][blocker_key] += 1
+                if isinstance(setup_bucket, dict):
+                    setup_bucket["hard_blocks"] += 1
+                    setup_bucket["blockers"][blocker_key] += 1
 
     total_attempts = sum(int(bucket["preflights"]) for bucket in strategies.values())
     total_fills = sum(int(bucket["filled"]) for bucket in strategies.values())
@@ -197,10 +294,58 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
         hard_blocks = int(bucket["hard_blocks"])
         attempt_share = preflights / float(max(1, total_attempts))
         fill_share = filled / float(max(1, total_fills))
+        total_setup_attempts = sum(
+            int(item.get("preflights") or 0) for item in bucket.get("setups", {}).values()
+        )
+        total_setup_fills = sum(
+            int(item.get("filled") or 0) for item in bucket.get("setups", {}).values()
+        )
         status_counts_map = {
             str(name): int(count)
             for name, count in sorted(bucket["status_counts"].items(), key=lambda item: item[0])
         }
+        setup_rows: list[dict[str, Any]] = []
+        for setup_key, setup_bucket in sorted(
+            bucket.get("setups", {}).items(),
+            key=lambda item: (-int(item[1].get("preflights") or 0), item[0]),
+        ):
+            setup_preflights = int(setup_bucket["preflights"])
+            setup_filled = int(setup_bucket["filled"])
+            setup_hard_blocks = int(setup_bucket["hard_blocks"])
+            if setup_preflights <= 0 and setup_filled <= 0 and setup_hard_blocks <= 0:
+                continue
+            setup_attempt_share = setup_preflights / float(max(1, total_setup_attempts))
+            setup_fill_share = setup_filled / float(max(1, total_setup_fills))
+            setup_status_counts = {
+                str(name): int(count)
+                for name, count in sorted(setup_bucket["status_counts"].items(), key=lambda item: item[0])
+            }
+            setup_rows.append(
+                {
+                    "setup_key": setup_key,
+                    "match_dimension": str(setup_bucket.get("match_dimension") or "unknown"),
+                    "setup_fingerprint": str(setup_bucket.get("setup_fingerprint") or ""),
+                    "flow_regime": str(setup_bucket.get("flow_regime") or ""),
+                    "microstructure_bucket": str(setup_bucket.get("microstructure_bucket") or ""),
+                    "attempts": setup_preflights,
+                    "preflights": setup_preflights,
+                    "fills": setup_filled,
+                    "submit_attempts": int(setup_bucket["submit_attempts"]),
+                    "filled": setup_filled,
+                    "hard_blocks": setup_hard_blocks,
+                    "soft_reduces": int(setup_bucket["soft_reduces"]),
+                    "filled_rate": round(setup_filled / float(max(1, setup_preflights)), 4),
+                    "fill_rate": round(setup_filled / float(max(1, setup_preflights)), 4),
+                    "attempt_share": round(setup_attempt_share, 6),
+                    "fill_share": round(setup_fill_share, 6),
+                    "share_gap": round(setup_attempt_share - setup_fill_share, 6),
+                    "hard_block_rate": round(setup_hard_blocks / float(max(1, setup_preflights)), 4),
+                    "terminal_status_counts": setup_status_counts,
+                    "status_counts": _sort_counts(setup_bucket["status_counts"]),
+                    "stage_counts": _sort_counts(setup_bucket["stage_counts"]),
+                    "top_blockers": _sort_counts(setup_bucket["blockers"], top_k=max(1, int(top_k))),
+                }
+            )
         strategy_rows[key] = {
             "strategy_key": bucket["strategy_key"],
             "strategy_canonical": bucket["strategy_canonical"],
@@ -222,6 +367,7 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
             "status_counts": _sort_counts(bucket["status_counts"]),
             "stage_counts": _sort_counts(bucket["stage_counts"]),
             "top_blockers": _sort_counts(bucket["blockers"], top_k=max(1, int(top_k))),
+            "setups": setup_rows,
         }
 
     return {

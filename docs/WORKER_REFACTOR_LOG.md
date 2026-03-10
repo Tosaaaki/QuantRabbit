@@ -66,6 +66,34 @@
   - shared feedback を slow baseline から current-setup matched override へ寄せ、
     strategy-wide static bias を薄くする。
 
+### 2026-03-11（追記）`participation_alloc` を setup-scoped override 対応へ拡張
+
+- 対象:
+  - `scripts/entry_path_aggregator.py`
+  - `scripts/participation_allocator.py`
+  - `workers/common/participation_alloc.py`
+  - `execution/strategy_entry.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/workers/common/test_participation_alloc.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+- 変更:
+  - `entry_path_aggregator`
+    - `orders.request_json.entry_thesis` から `setup_fingerprint`, `flow_regime`,
+      `microstructure_bucket` を抽出し、strategy ごとに `setups` 集計を出力するようにした。
+  - `participation_allocator`
+    - strategy-level allocation に加え、setup 別の `setup_overrides` を生成するようにした。
+    - realized P/L も strategy 単位だけでなく setup 単位で backfill できるようにした。
+  - `participation_alloc` loader
+    - live `entry_thesis` の current setup と一致する override を選択し、
+      strategy-wide profile の上に適用するようにした。
+  - `strategy_entry`
+    - participation 適用時に live `entry_thesis` を loader へ渡し、
+      一致した `setup_override` を監査 payload に残すようにした。
+- 意図:
+  - shared participation でも「同一 strategy 内の mixed regime をまとめて trim/boost」しない。
+  - overused loser setup と underused winner setup を同一 strategy の中で分離し、
+    current flow に一致した lane だけへ shared participation を効かせる。
+
 ### 2026-03-11（追記）local-v2 feedback artifact の Git 方針を固定し、RangeFader current RCA を task/ops へ同期
 
 - 対象:

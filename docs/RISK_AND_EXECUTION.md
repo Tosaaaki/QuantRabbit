@@ -67,6 +67,31 @@
     「今の setup に一致した trim/boost」へ寄せる。
   - current setup と一致しない loser cluster の補正は live entry に流用しない。
 
+### local-v2 setup-scoped `participation_alloc` override（2026-03-11）
+- 背景:
+  - `participation_alloc` が strategy 単位の share gap だけを見ると、
+    同一 strategy 内の loser setup と clean setup をまとめて trim してしまう。
+  - `strategy_feedback` を setup-scoped にしても、
+    participation が strategy-wide のままでは still static bias が残る。
+- 実装:
+  - `scripts/entry_path_aggregator.py`
+    - `orders.request_json.entry_thesis` から `setup_fingerprint`,
+      `flow_regime`, `microstructure_bucket` を抽出し、
+      strategy ごとに `setups` 集計を出力する。
+  - `scripts/participation_allocator.py`
+    - strategy-level allocation を維持しつつ、
+      setup 別の `attempt_share / fill_share / hard_block_rate / realized_jpy`
+      から `setup_overrides` を生成する。
+  - `workers/common/participation_alloc.py`
+    - live `entry_thesis` の current setup と一致した override だけを base profile の上に適用する。
+  - `execution/strategy_entry.py`
+    - `load_participation_profile(..., entry_thesis=entry_thesis)` で current setup を渡し、
+      反映した override を `entry_thesis["participation_alloc"]` に監査保存する。
+- 意図:
+  - shared participation を「戦略全体の winner/loser」ではなく
+    「今の setup が overused か underused か」へ寄せる。
+  - current winner setup の participation を、同 strategy の loser setup が巻き添えで削らないようにする。
+
 ### local-v2 `MomentumBurst` tight-short exhaustion guard（2026-03-10）
 - 背景:
   - UTC `01:32-01:40` / JST `10:32-10:40` の local-v2 実測は

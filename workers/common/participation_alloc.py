@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from utils.strategy_tags import resolve_strategy_tag
+from workers.common.setup_context import extract_setup_identity
 
 
 _CACHE: Dict[str, Dict[str, Any]] = {}
@@ -90,6 +91,96 @@ def _payload_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _setup_match_specificity(
+    override: dict[str, Any],
+    *,
+    setup_context: dict[str, str],
+) -> int:
+    if not setup_context:
+        return 0
+    setup_fingerprint = str(override.get("setup_fingerprint") or "").strip()
+    flow_regime = str(override.get("flow_regime") or "").strip()
+    microstructure_bucket = str(override.get("microstructure_bucket") or "").strip()
+    if setup_fingerprint:
+        return 4 if setup_context.get("setup_fingerprint") == setup_fingerprint else 0
+    if flow_regime and microstructure_bucket:
+        return (
+            3
+            if setup_context.get("flow_regime") == flow_regime
+            and setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
+    if flow_regime:
+        return 2 if setup_context.get("flow_regime") == flow_regime else 0
+    if microstructure_bucket:
+        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+    return 0
+
+
+def _select_setup_override(
+    setup_overrides: object,
+    *,
+    entry_thesis: Optional[dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    if not isinstance(setup_overrides, list):
+        return None, None
+    setup_context = extract_setup_identity(entry_thesis)
+    if not setup_context:
+        return None, None
+    allowed_fields = {
+        "units_multiplier",
+        "lot_multiplier",
+        "probability_multiplier",
+        "probability_offset",
+        "probability_boost",
+        "cadence_floor",
+        "quality_score",
+        "hard_block_rate",
+        "action",
+        "attempts",
+        "preflights",
+        "fills",
+        "filled",
+        "filled_rate",
+        "fill_rate",
+        "current_share",
+        "target_share",
+        "attempt_share",
+        "fill_share",
+        "share_gap",
+        "realized_jpy",
+    }
+    best_override: Optional[dict[str, Any]] = None
+    best_meta: Optional[dict[str, Any]] = None
+    best_rank = (0, 0)
+    for item in setup_overrides:
+        if not isinstance(item, dict):
+            continue
+        specificity = _setup_match_specificity(item, setup_context=setup_context)
+        if specificity <= 0:
+            continue
+        attempts = _safe_int(item.get("attempts"), 0)
+        rank = (specificity, attempts)
+        if rank < best_rank:
+            continue
+        payload = {key: item.get(key) for key in allowed_fields if key in item}
+        if not payload:
+            continue
+        best_rank = rank
+        best_override = payload
+        best_meta = {
+            "match_dimension": str(item.get("match_dimension") or ""),
+            "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
+            "flow_regime": str(item.get("flow_regime") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "attempts": attempts,
+            "fill_rate": _safe_float(item.get("fill_rate"), 0.0),
+            "hard_block_rate": _safe_float(item.get("hard_block_rate"), 0.0),
+            "quality_score": _safe_float(item.get("quality_score"), 0.0),
+        }
+    return best_override, best_meta
+
+
 def _load_payload(path: Path, ttl_sec: float) -> Optional[Dict[str, Any]]:
     cache_key = str(path)
     now = time.time()
@@ -121,6 +212,7 @@ def load_strategy_profile(
     strategy: str,
     pocket: str,
     *,
+    entry_thesis: Optional[dict[str, Any]] = None,
     path: str | Path | None = None,
     ttl_sec: float = 20.0,
 ) -> Dict[str, Any]:
@@ -186,7 +278,7 @@ def load_strategy_profile(
         item_pocket = str(item.get("pocket") or "").strip().lower()
         if item_pocket and pocket_l and item_pocket != pocket_l:
             continue
-        return {
+        profile = {
             "found": True,
             "strategy_key": str(lookup_key),
             "units_multiplier": _safe_float(
@@ -234,4 +326,13 @@ def load_strategy_profile(
             ),
             **_payload_meta(payload),
         }
+        setup_override, setup_meta = _select_setup_override(
+            item.get("setup_overrides"),
+            entry_thesis=entry_thesis,
+        )
+        if isinstance(setup_override, dict):
+            profile.update(setup_override)
+        if isinstance(setup_meta, dict):
+            profile["setup_override"] = setup_meta
+        return profile
     return base
