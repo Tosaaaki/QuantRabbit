@@ -86,6 +86,68 @@ def _seed_trades_with_setup_context(
     conn.close()
 
 
+def _seed_trades_with_derived_setup_context(
+    db_path: Path,
+    *,
+    strategy_tag: str,
+    count: int,
+    units: int,
+) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE trades (
+            strategy_tag TEXT,
+            strategy TEXT,
+            units INTEGER,
+            pl_pips REAL,
+            open_time TEXT,
+            close_time TEXT,
+            entry_thesis TEXT
+        )
+        """
+    )
+    now = dt.datetime.utcnow()
+    thesis = json.dumps(
+        {
+            "strategy_tag": strategy_tag,
+            "range_mode": "trend",
+            "range_score": 0.18,
+            "range_reason": "volatility_compression",
+            "spread_pips": 0.8,
+            "technical_context": {
+                "ticks": {"spread_pips": 0.8, "tick_rate": 9.1},
+                "indicators": {
+                    "M1": {
+                        "atr_pips": 2.4,
+                        "rsi": 67.0,
+                        "adx": 29.0,
+                        "plus_di": 31.0,
+                        "minus_di": 14.0,
+                        "ma10": 158.110,
+                        "ma20": 158.080,
+                    }
+                },
+            },
+        },
+        ensure_ascii=True,
+    )
+    for idx in range(count):
+        close_time = (now - dt.timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
+        open_time = (now - dt.timedelta(minutes=idx, seconds=40)).strftime("%Y-%m-%d %H:%M:%S")
+        pl_pips = -0.9 if idx < max(3, count - 2) else 0.4
+        conn.execute(
+            """
+            INSERT INTO trades(strategy_tag, strategy, units, pl_pips, open_time, close_time, entry_thesis)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (strategy_tag, strategy_tag, units, pl_pips, open_time, close_time, thesis),
+        )
+    conn.commit()
+    conn.close()
+
+
 def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path
     systemd_dir = repo / "systemd"
@@ -349,6 +411,52 @@ def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatc
     assert exact["microstructure_bucket"] == "tight_fast"
     assert exact["trades"] == 8
     assert exact["entry_probability_multiplier"] < 1.0
+
+
+def test_build_payload_derives_setup_overrides_from_technical_context(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path
+    log_dir = repo / "logs"
+    trades_db = log_dir / "trades.db"
+
+    _seed_trades_with_derived_setup_context(
+        trades_db,
+        strategy_tag="RangeFader-sell-fade",
+        count=8,
+        units=-120,
+    )
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(
+        worker,
+        "_discover_from_control",
+        lambda: {
+            "RangeFader": worker.StrategyRecord(
+                canonical_tag="RangeFader",
+                active=True,
+                entry_active=True,
+                exit_active=False,
+            )
+        },
+    )
+    monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_MIN_TRADES", "6")
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    advice = payload["strategies"]["RangeFader"]
+    assert isinstance(advice.get("setup_overrides"), list)
+    flow_micro = next(item for item in advice["setup_overrides"] if item["match_dimension"] == "flow_micro")
+    assert flow_micro["flow_regime"] == "trend_long"
+    assert flow_micro["microstructure_bucket"] == "tight_fast"
+    exact = next(item for item in advice["setup_overrides"] if item["match_dimension"] == "setup_fingerprint")
+    assert exact["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
 
 
 def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> None:

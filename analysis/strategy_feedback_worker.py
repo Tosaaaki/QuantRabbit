@@ -32,6 +32,7 @@ from typing import Any
 
 from utils.strategy_tags import normalize_strategy_lookup_key
 from utils.strategy_tags import resolve_strategy_tag
+from workers.common.setup_context import extract_setup_identity
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOCAL_V2_STACK_DIR = BASE_DIR / "logs" / "local_v2_stack"
@@ -997,21 +998,8 @@ def _parse_entry_thesis(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _entry_setup_context(entry_thesis: dict[str, Any]) -> dict[str, str]:
-    if not isinstance(entry_thesis, dict):
-        return {}
-    live_setup = entry_thesis.get("live_setup_context")
-    if not isinstance(live_setup, dict):
-        live_setup = {}
-    context: dict[str, str] = {}
-    for key in ("setup_fingerprint", "flow_regime", "microstructure_bucket"):
-        raw = entry_thesis.get(key)
-        if raw in {None, ""}:
-            raw = live_setup.get(key)
-        text = str(raw or "").strip()
-        if text:
-            context[key] = text
-    return context
+def _entry_setup_context(entry_thesis: dict[str, Any], *, units: int = 0) -> dict[str, str]:
+    return extract_setup_identity(entry_thesis, units=units)
 
 
 def _setup_matches(context: dict[str, str]) -> list[dict[str, str]]:
@@ -1077,12 +1065,17 @@ def _discover_setup_stats(
         }
         if "entry_thesis" not in columns:
             return {}
+        units_select = "units" if "units" in columns else "0 AS units"
         since = f"-{max(1, int(lookback_days))} day"
         rows = conn.execute(
             """
             SELECT
               COALESCE(NULLIF(strategy_tag, ''), COALESCE(NULLIF(strategy, ''), 'unknown')) AS strategy,
               entry_thesis,
+              """
+            + units_select
+            + """
+              ,
               pl_pips,
               open_time,
               close_time
@@ -1108,7 +1101,7 @@ def _discover_setup_stats(
         if known_keys:
             canonical = _canonical_known_strategy_key(canonical, known_keys)
         entry_thesis = _parse_entry_thesis(row["entry_thesis"])
-        context = _entry_setup_context(entry_thesis)
+        context = _entry_setup_context(entry_thesis, units=_to_int(row["units"], 0))
         if not context:
             continue
         pl_pips = _to_float(row["pl_pips"], 0.0)

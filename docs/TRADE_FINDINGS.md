@@ -13235,6 +13235,11 @@ Status:
     - `trades.entry_thesis` から `setup_fingerprint`, `flow_regime`, `microstructure_bucket` を抽出し、
       `setup_fingerprint` / `flow_micro` / `flow_regime` / `microstructure_bucket`
       の specificity で `setup_overrides` を生成するようにした。
+    - local `logs/trades.db` の closed trade `17211` 件では explicit `setup_*` field が 0 件だったが、
+      `technical_context` は `4865` 件に残っていた。
+      そのため `technical_context` / `spread_pips` / `range_score` / `units` から
+      setup identity を再構成する fallback を追加し、
+      新規約定待ちをせず historical cluster から `setup_overrides` を作れるようにした。
   - `analysis/strategy_feedback.py`
     - `current_advice(..., entry_thesis=...)` を追加し、
       current setup に一致した override を base strategy advice の上に適用するようにした。
@@ -13242,13 +13247,14 @@ Status:
   - `execution/strategy_entry.py`
     - feedback 適用時に live `entry_thesis` を `current_advice()` へ渡すようにした。
   - テスト:
-    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback.py` -> `5 passed`
-    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback_worker.py` -> `9 passed`
+    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback.py` -> `6 passed`
+    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback_worker.py` -> `10 passed`
     - `./.venv/bin/pytest -q tests/execution/test_strategy_entry_adaptive_layers.py` -> `9 passed`
 - Verdict: pending
 - Next Action:
   - `main` へ push 後に local-v2 を restart し、
     `logs/strategy_feedback.json` に `setup_overrides` が載る strategy を確認する。
+    特に historical `technical_context` 由来の override が即時に生成されるかを見る。
   - live order/trade 監査で `_meta.setup_override` と
     `live_setup_context` / `setup_fingerprint` の一致率、
     blanket trim の減少、

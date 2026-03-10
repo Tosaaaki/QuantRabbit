@@ -264,3 +264,69 @@ def test_current_advice_prefers_setup_specific_override(monkeypatch, tmp_path) -
     assert advice["entry_probability_multiplier"] == 0.78
     assert advice["_meta"]["setup_override"]["match_dimension"] == "setup_fingerprint"
     assert advice["_meta"]["setup_override"]["trades"] == 9
+
+
+def test_current_advice_derives_setup_context_from_technical_context(monkeypatch, tmp_path) -> None:
+    feedback_path = tmp_path / "strategy_feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-10T00:00:00Z",
+                "strategies": {
+                    "RangeFader": {
+                        "entry_units_multiplier": 0.92,
+                        "entry_probability_multiplier": 0.95,
+                        "setup_overrides": [
+                            {
+                                "match_dimension": "flow_micro",
+                                "flow_regime": "trend_long",
+                                "microstructure_bucket": "tight_fast",
+                                "entry_units_multiplier": 0.76,
+                                "entry_probability_multiplier": 0.82,
+                                "trades": 7,
+                            }
+                        ],
+                    }
+                },
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    _reset_feedback_caches(
+        monkeypatch,
+        feedback_path=feedback_path,
+        counterfactual_path=tmp_path / "missing_counterfactual.json",
+    )
+
+    advice = strategy_feedback.current_advice(
+        "RangeFader-sell-fade",
+        side="short",
+        entry_thesis={
+            "strategy_tag": "RangeFader-sell-fade",
+            "side": "short",
+            "range_mode": "trend",
+            "range_score": 0.18,
+            "spread_pips": 0.8,
+            "technical_context": {
+                "ticks": {"spread_pips": 0.8, "tick_rate": 9.2},
+                "indicators": {
+                    "M1": {
+                        "atr_pips": 2.4,
+                        "rsi": 67.0,
+                        "adx": 29.0,
+                        "plus_di": 31.0,
+                        "minus_di": 14.0,
+                        "ma10": 158.110,
+                        "ma20": 158.080,
+                    }
+                },
+            },
+        },
+    )
+
+    assert advice is not None
+    assert advice["entry_units_multiplier"] == 0.76
+    assert advice["entry_probability_multiplier"] == 0.82
+    assert advice["_meta"]["setup_override"]["match_dimension"] == "flow_micro"

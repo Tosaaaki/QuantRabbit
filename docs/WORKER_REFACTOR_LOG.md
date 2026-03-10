@@ -52,6 +52,9 @@
     - override は `setup_fingerprint`、`flow_regime + microstructure_bucket`、
       `flow_regime`、`microstructure_bucket` の順で specificity を持ち、
       recent trade stats から strategy-local と同じ recommendation 式で knobs を算出する。
+    - explicit な setup field が無い既存 trade でも `technical_context` / `spread_pips` /
+      `range_score` / `units` から同じ setup identity を再構成し、
+      `setup_overrides` の historical seed に使えるようにした。
   - `strategy_feedback`
     - `current_advice()` が live `entry_thesis` を受け取り、
       current setup に一致する `setup_overrides` を base advice の上に適用するようにした。

@@ -21,6 +21,7 @@ from workers.common.macro_news_context import load_current_context as load_macro
 from workers.common.participation_alloc import (
     load_strategy_profile as load_participation_profile,
 )
+from workers.common.setup_context import derive_live_setup_context
 from workers.common import forecast_gate, pattern_gate
 
 
@@ -2891,46 +2892,6 @@ def _inject_market_context(
     return entry_thesis, summary
 
 
-def _entry_side_label(units: int, entry_thesis: Optional[dict]) -> str:
-    if units > 0:
-        return "long"
-    if units < 0:
-        return "short"
-    if isinstance(entry_thesis, dict):
-        for key in ("side", "entry_side"):
-            value = str(entry_thesis.get(key) or "").strip().lower()
-            if value in {"long", "short"}:
-                return value
-    return "flat"
-
-
-def _technical_indicator_frame(entry_thesis: Optional[dict], tf: str = "M1") -> dict[str, object]:
-    if not isinstance(entry_thesis, dict):
-        return {}
-    technical_context = entry_thesis.get("technical_context")
-    if not isinstance(technical_context, dict):
-        return {}
-    indicators = technical_context.get("indicators")
-    if not isinstance(indicators, dict):
-        return {}
-    frame = indicators.get(tf)
-    return dict(frame) if isinstance(frame, dict) else {}
-
-
-def _bucket_label(
-    value: Optional[float],
-    *,
-    cuts: tuple[tuple[float, str], ...],
-    default: str,
-) -> str:
-    if value is None:
-        return default
-    for threshold, label in cuts:
-        if value < threshold:
-            return label
-    return cuts[-1][1] if cuts else default
-
-
 def _inject_live_setup_context(
     entry_thesis: Optional[dict],
     *,
@@ -2938,125 +2899,14 @@ def _inject_live_setup_context(
 ) -> tuple[Optional[dict], Optional[dict[str, object]]]:
     if not isinstance(entry_thesis, dict):
         return entry_thesis, None
-    frame_m1 = _technical_indicator_frame(entry_thesis, "M1")
-    ticks = entry_thesis.get("technical_context", {}).get("ticks") if isinstance(entry_thesis.get("technical_context"), dict) else {}
-    ticks = ticks if isinstance(ticks, dict) else {}
-
-    atr_pips = _to_float(frame_m1.get("atr_pips"))
-    if atr_pips is None:
-        atr_pips = _to_float(entry_thesis.get("atr_entry"))
-    rsi = _to_float(frame_m1.get("rsi"))
-    adx = _to_float(frame_m1.get("adx"))
-    plus_di = _to_float(frame_m1.get("plus_di"))
-    minus_di = _to_float(frame_m1.get("minus_di"))
-    ma_fast = _to_float(frame_m1.get("ma10"))
-    ma_slow = _to_float(frame_m1.get("ma20"))
-    if ma_fast is None:
-        ma_fast = _to_float(frame_m1.get("ema20"))
-    if ma_slow is None:
-        ma_slow = _to_float(frame_m1.get("ema24"))
-    ma_gap_pips = None
-    if ma_fast is not None and ma_slow is not None:
-        ma_gap_pips = (ma_fast - ma_slow) / 0.01
-    gap_ratio = abs(ma_gap_pips) / max(atr_pips or 0.0, 1.0) if ma_gap_pips is not None else None
-
-    range_mode = str(entry_thesis.get("range_mode") or "").strip().lower()
-    range_score = _to_float(entry_thesis.get("range_score"))
-    if range_mode == "range" and range_score is not None and range_score >= 0.45 and (adx is None or adx < 24.0):
-        flow_regime = "range_compression"
-    else:
-        trend_dir = "neutral"
-        if plus_di is not None and minus_di is not None:
-            if plus_di > minus_di:
-                trend_dir = "long"
-            elif minus_di > plus_di:
-                trend_dir = "short"
-        if gap_ratio is not None and gap_ratio >= 0.85 and (adx or 0.0) >= 22.0 and trend_dir != "neutral":
-            flow_regime = f"trend_{trend_dir}"
-        elif range_score is not None and range_score >= 0.28 and (adx is None or adx < 32.0):
-            flow_regime = "range_fade"
-        else:
-            flow_regime = "transition"
-
-    spread_pips = _to_float(ticks.get("spread_pips"))
-    if spread_pips is None:
-        spread_pips = _to_float(entry_thesis.get("spread_pips"))
-    tick_rate = _to_float(ticks.get("tick_rate"))
-    if spread_pips is None:
-        microstructure_bucket = "unknown"
-    else:
-        spread_ratio = spread_pips / max(atr_pips or 0.0, 1.0)
-        if spread_pips <= 0.9 and spread_ratio <= 0.35:
-            spread_bucket = "tight"
-        elif spread_pips <= 1.4 and spread_ratio <= 0.55:
-            spread_bucket = "normal"
-        else:
-            spread_bucket = "wide"
-        pace_bucket = "normal"
-        if tick_rate is not None:
-            if tick_rate < 2.0:
-                pace_bucket = "thin"
-            elif tick_rate >= 8.0:
-                pace_bucket = "fast"
-        microstructure_bucket = f"{spread_bucket}_{pace_bucket}"
-
-    rsi_bucket = _bucket_label(
-        rsi,
-        cuts=((35.0, "ext_oversold"), (45.0, "oversold"), (55.0, "mid"), (65.0, "overbought"), (1e9, "ext_overbought")),
-        default="unknown",
-    )
-    atr_bucket = _bucket_label(
-        atr_pips,
-        cuts=((1.2, "ultra_low"), (2.6, "low"), (5.5, "mid"), (9.0, "high"), (1e9, "extreme")),
-        default="unknown",
-    )
-    if ma_gap_pips is None or gap_ratio is None:
-        gap_bucket = "unknown"
-    else:
-        gap_side = "up" if ma_gap_pips >= 0.0 else "down"
-        gap_mag = _bucket_label(
-            gap_ratio,
-            cuts=((0.35, "flat"), (0.75, "lean"), (1.20, "strong"), (1e9, "extended")),
-            default="unknown",
-        )
-        gap_bucket = f"{gap_side}_{gap_mag}"
-
-    side_label = _entry_side_label(units, entry_thesis)
-    setup_anchor = str(entry_thesis.get("pattern_tag") or entry_thesis.get("range_reason") or "").strip().lower()
-    setup_parts = [
-        str(entry_thesis.get("strategy_tag") or "").strip(),
-        side_label,
-        flow_regime,
-        microstructure_bucket,
-        f"rsi:{rsi_bucket}",
-        f"atr:{atr_bucket}",
-        f"gap:{gap_bucket}",
-    ]
-    if setup_anchor:
-        setup_parts.append(setup_anchor)
-    setup_fingerprint = "|".join(part for part in setup_parts if part)
-    summary: dict[str, object] = {
-        "flow_regime": flow_regime,
-        "microstructure_bucket": microstructure_bucket,
-        "setup_fingerprint": setup_fingerprint,
-        "side": side_label,
-        "range_mode": range_mode or None,
-        "range_score": round(range_score, 4) if range_score is not None else None,
-        "atr_pips": round(atr_pips, 4) if atr_pips is not None else None,
-        "rsi": round(rsi, 4) if rsi is not None else None,
-        "adx": round(adx, 4) if adx is not None else None,
-        "spread_pips": round(spread_pips, 4) if spread_pips is not None else None,
-        "tick_rate": round(tick_rate, 4) if tick_rate is not None else None,
-        "ma_gap_pips": round(ma_gap_pips, 4) if ma_gap_pips is not None else None,
-        "gap_ratio": round(gap_ratio, 4) if gap_ratio is not None else None,
-        "rsi_bucket": rsi_bucket,
-        "atr_bucket": atr_bucket,
-        "gap_bucket": gap_bucket,
-    }
+    summary = derive_live_setup_context(entry_thesis, units=units)
+    if not isinstance(summary, dict):
+        return entry_thesis, None
     entry_thesis["live_setup_context"] = summary
-    entry_thesis.setdefault("flow_regime", flow_regime)
-    entry_thesis.setdefault("microstructure_bucket", microstructure_bucket)
-    entry_thesis.setdefault("setup_fingerprint", setup_fingerprint)
+    for key in ("flow_regime", "microstructure_bucket", "setup_fingerprint"):
+        value = str(summary.get(key) or "").strip()
+        if value:
+            entry_thesis.setdefault(key, value)
     return entry_thesis, summary
 
 

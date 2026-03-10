@@ -53,6 +53,10 @@
     - recent `trades.entry_thesis` から `setup_fingerprint`, `flow_regime`,
       `microstructure_bucket` を抽出し、
       strategy ごとに `setup_overrides` を生成する。
+    - explicit な setup field が無い historical trade でも、
+      `technical_context` / `spread_pips` / `range_score` / `units`
+      から同じ setup identity を再構成し、
+      新規約定待ちをせず existing history を current setup cluster へ再利用する。
   - `analysis/strategy_feedback.py`
     - `current_advice()` は live `entry_thesis` の current setup と一致する override だけを選び、
       base strategy advice の上に上書き適用する。

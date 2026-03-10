@@ -16,6 +16,7 @@ from typing import Any, Optional
 from utils.strategy_tags import normalize_strategy_lookup_key
 from utils.strategy_tags import resolve_strategy_tag
 from utils.strategy_tags import strategy_like_matches
+from workers.common.setup_context import extract_setup_identity
 
 
 _FEEDBACK_ENABLED = os.getenv("STRATEGY_FEEDBACK_ENABLED", "1").strip().lower() not in {
@@ -104,20 +105,7 @@ def _base_strategy_tag(value: Optional[str]) -> str:
 
 
 def _setup_context(entry_thesis: Optional[dict[str, Any]]) -> dict[str, str]:
-    if not isinstance(entry_thesis, dict):
-        return {}
-    live_setup = entry_thesis.get("live_setup_context")
-    if not isinstance(live_setup, dict):
-        live_setup = {}
-    context: dict[str, str] = {}
-    for key in ("setup_fingerprint", "flow_regime", "microstructure_bucket"):
-        raw = entry_thesis.get(key)
-        if raw in {None, ""}:
-            raw = live_setup.get(key)
-        text = str(raw or "").strip()
-        if text:
-            context[key] = text
-    return context
+    return extract_setup_identity(entry_thesis)
 
 
 def _setup_match_specificity(
