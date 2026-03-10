@@ -12238,3 +12238,69 @@ Status:
     -> `84 passed`
   - `python3 -m compileall strategies/scalping/range_fader.py tests/strategies/test_scalp_thresholds.py strategies/micro/trend_retest.py tests/strategies/test_trend_retest.py`
     -> 成功
+
+## 2026-03-10 21:40 JST / 「市況適応できているか」実測診断
+- current 状況:
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+    は4サービスとも `running`。
+  - `scripts/collect_local_health.sh` は
+    `health_snapshot.json updated=yes`, `mechanism_integrity=yes`。
+  - `python3 scripts/pdca_profitability_report.py --instrument USD_JPY`
+    は `generated_at_jst=2026-03-10T21:35:23+09:00`,
+    `USD_JPY mid=157.904`, `spread=0.8p`,
+    `24h trades=218`, `PF(pips)=0.25`, `net_jpy=-1050.433`,
+    `7d PF(pips)=0.62`, `net_jpy=-13820.152`。
+  - `logs/metrics.db` 直近500件平均は
+    `decision_latency_ms=21.433`, `data_lag_ms=567.321`,
+    latest は `reject_rate=0.0`, `order_success_rate=1.0`。
+- 観測できた「適応している部分」:
+  - `entry_thesis` 契約は生きており、直近2000 orders で
+    `entry_probability=1845`, `entry_units_intent=1845`,
+    `forecast=1845`, `dynamic_alloc=1796`。
+  - micro runtime は `range_active/range_score` と `micro_chop_*` を factor に注入し、
+    `dynamic_alloc`, `strategy_units_mult`, `chop_units_mult`,
+    `entry_probability`, `entry_units_intent` を合成して sizing している。
+  - current logs でも `RangeFader` は
+    `range_reason=volatility_compression`、
+    `MicroLevelReactor` は `mlr_range_gate_block ... chop=0.55` を出しており、
+    regime-aware の strategy-local gate 自体は動いている。
+- ただし「適応が弱い / 範囲が狭い」点:
+  - Brain は safe canary のままで、
+    `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env`,
+    `BRAIN_POCKET_ALLOWLIST=micro`,
+    `BRAIN_STRATEGY_ALLOWLIST=MicroLevelReactor`。
+    `logs/brain_state.db` の直近24h decision は
+    `53件`, すべて `MicroLevelReactor-bounce-lower / REDUCE / avg_scale=0.549`。
+    つまり LLM は live 全体の主判定ではなく、micro の一部だけ。
+  - forecast gate は order-manager で live だが allowlist 制で、
+    `FORECAST_GATE_STRATEGY_ALLOWLIST=MicroLevelReactor,MicroTrendRetest,MomentumBurst,M1Scalper-M1,RangeFader,scalp_ping_5s_b_live,scalp_ping_5s_c_live,scalp_ping_5s_flow_live`。
+    直近24h order の `entry_thesis.forecast.reason` は
+    `not_applicable=7758`, `__missing__=6243` が大半で、
+    prediction が付いていても「使える判定」まで至らないケースが多い。
+  - pattern gate は global opt-in ではなく、
+    直近24h orders で `pattern_gate_opt_in=1` は `228件` のみ。
+  - fallback candle artifact は stale で、
+    `logs/oanda/candles_M1_latest.json` は `2026-03-04T03:04:00Z`,
+    `H1/H4` は `2025-11-04` のまま。
+    `workers/common/forecast_gate.py` の fallback path はこの M1 file を参照するため、
+    live service / factor で埋まらない経路は stale context を掴むリスクがある。
+- 今回の主因整理:
+  - 「市況に合わせる仕組み」はあるが、現行 live は
+    `LLM=一部 canary`, `forecast=allowlist`, `pattern=opt-in` のため、
+    ユーザーが期待する “全体が動的に考える” 状態ではない。
+  - 24h では normal spread / low reject / low latency なのに負けているため、
+    主因はインフラではなく strategy quality / calibration。
+  - 高めの `entry_probability` でも負けている例があり、
+    `MomentumBurst avg_prob=0.848 / exp_pips=-0.713`,
+    `MicroTrendRetest-long avg_prob=0.657 / exp_pips=-2.688`,
+    `WickReversalBlend avg_prob=0.807 / exp_pips=-0.578`。
+    現行の probability / forecast / local guard が current regime に十分再較正されていない。
+- 優先改善:
+  - Brain を broad 化する前に、
+    `MomentumBurst / MicroTrendRetest / WickReversalBlend / RangeFader`
+    の loser cluster を strategy-local で先に潰す。
+  - stale な `logs/oanda/candles_*.json` を更新し、
+    forecast fallback が古い文脈へ落ちない状態を回復する。
+  - `entry_probability` が高いのに負ける lane を
+    `pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence`
+    で再クラスタし、probability と size の較正を戦略別に分離する。
