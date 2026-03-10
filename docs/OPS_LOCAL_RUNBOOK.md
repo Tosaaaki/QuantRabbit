@@ -149,7 +149,7 @@ scripts/uninstall_local_v2_launchd.sh
   を再実行して plist を再生成する。
 - `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開し、sleep/wake 相当のポーリングギャップと network down→up をログ記録する。
 - `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_local_feedback_cycle.py` を非同期起動し、
-  `dynamic_alloc / pattern_book / trade_counterfactual / replay_quality_gate` を
+  `dynamic_alloc / pattern_book / trade_counterfactual / replay_quality_gate / trade_findings_draft` を
   ローカルでも interval 管理付きで再計算する（既定ON）。
   `strategy_feedback` は `local_v2_stack` 管理サービス側で loop 更新するため、
   cycle 側は既定OFF。必要時だけ `LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_ENABLED=1`
@@ -163,6 +163,10 @@ scripts/uninstall_local_v2_launchd.sh
   - 最新実行結果は `logs/local_feedback_cycle_latest.json` と
     `logs/local_feedback_cycle_history.jsonl`、個別stdout/stderrは
     `logs/local_feedback_cycle/*.log` を正とする。
+  - `trade_findings_draft` は `logs/trade_findings_draft_latest.json` /
+    `logs/trade_findings_draft_latest.md` /
+    `logs/trade_findings_draft_history.jsonl` を更新し、
+    同一 fingerprint の draft では `logs/agent_whiteboard.db` へ重複通知しない。
 - `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_brain_autopdca_cycle.sh` を非同期起動する（既定ON）。
   - `QR_LOCAL_V2_BRAIN_AUTOPDCA_ENABLED=1|0` で有効/無効。
   - `QR_LOCAL_V2_BRAIN_AUTOPDCA_INTERVAL_SEC`（互換: `QR_LOCAL_V2_BRAIN_PDCA_INTERVAL_SEC`）で実行間隔を指定。

@@ -22,6 +22,7 @@
 - `docs/OPS_SKILLS.md`: 日次運用スキルの使い方
 - `docs/LOCAL_LANE_SPLIT.md`: VM本番repoとローカル実売買repoを分離する運用手順
 - `scripts/agent_whiteboard.py`: 共有ホワイトボードCLI（local-only / `logs/agent_whiteboard.db`、`auto-session` で開始〜完了を自動記録）
+- `scripts/trade_findings_diary_draft.py`: local artifact から `TRADE_FINDINGS` 用の review draft（`logs/trade_findings_draft_latest.{json,md}`）を生成し、必要時だけ whiteboard へ通知
 - `workers/common/agent_whiteboard.py`: 共有ホワイトボード永続化ロジック（SQLite）
 
 ## アーキテクチャ / 仕様

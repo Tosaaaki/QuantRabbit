@@ -78,6 +78,8 @@
 - `logs/health_snapshot.json` はローカル運用の横断監査 JSON とし、
   `mechanism_integrity` で `strategy_feedback`, `dynamic_alloc`, `pattern_book`,
   `forecast_runtime/service`, `blackboard(entry_intent_board)` の欠落を監査する。
+- `logs/trade_findings_draft_latest.{json,md}` は local artifact から組み立てた
+  review-only の change diary draft とし、正式記録は `docs/TRADE_FINDINGS.md` を正とする。
 
 ## 3. ログ永続化とバックアップ
 - GCS 自動退避（guarded）:
@@ -130,6 +132,11 @@ sqlite3 logs/orders.db \
 - 標準リプレイ手順は `docs/REPLAY_STANDARD.md` を参照。
 - WFO / 過学習診断は `scripts/run_wfo_overfit_report.sh` を利用し、
   `logs/reports/wfo_overfit/latest.{json,md}` を監視する。
+- `scripts/trade_findings_diary_draft.py` は `health_snapshot / pdca_profitability /
+  strategy_feedback / participation_alloc / trade_counterfactual /
+  replay_quality_gate / market_context` を束ねて
+  `logs/trade_findings_draft_latest.{json,md}` を生成する。
+  whiteboard 通知は同一 fingerprint で再投稿しない。
 
 ## 6. 観測指標と SLO
 - 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。

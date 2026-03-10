@@ -190,11 +190,21 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             "--min-confidence",
             "0.55",
         )
+    if job_name == "trade_findings_draft":
+        return (python_bin, "scripts/trade_findings_diary_draft.py")
     raise KeyError(f"unsupported job: {job_name}")
 
 
 def _default_job_env_files(job_name: str) -> tuple[Path, ...]:
-    if job_name in {"entry_path_aggregator", "participation_allocator", "market_context", "macro_news_context", "loser_cluster", "auto_canary"}:
+    if job_name in {
+        "entry_path_aggregator",
+        "participation_allocator",
+        "market_context",
+        "macro_news_context",
+        "loser_cluster",
+        "auto_canary",
+        "trade_findings_draft",
+    }:
         return ()
     if job_name == "strategy_feedback":
         return (
@@ -275,6 +285,12 @@ def _default_job_outputs(job_name: str) -> tuple[Path, ...]:
             _resolve_path("logs/auto_canary_latest.json"),
             _resolve_path("logs/auto_canary_history.jsonl"),
         )
+    if job_name == "trade_findings_draft":
+        return (
+            _resolve_path("logs/trade_findings_draft_latest.json"),
+            _resolve_path("logs/trade_findings_draft_history.jsonl"),
+            _resolve_path("logs/trade_findings_draft_latest.md"),
+        )
     raise KeyError(f"unsupported job: {job_name}")
 
 
@@ -293,6 +309,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
         "trade_counterfactual": True,
         "loser_cluster": True,
         "auto_canary": True,
+        "trade_findings_draft": True,
     }
     enabled = _env_bool(f"{env_prefix}_ENABLED", enabled_defaults[job_name])
     interval_defaults = {
@@ -308,6 +325,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
         "trade_counterfactual": 1200,
         "loser_cluster": 1200,
         "auto_canary": 1200,
+        "trade_findings_draft": 600,
     }
     timeout_defaults = {
         "entry_path_aggregator": 180,
@@ -322,6 +340,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
         "trade_counterfactual": 180,
         "loser_cluster": 180,
         "auto_canary": 180,
+        "trade_findings_draft": 120,
     }
     retry_defaults = {
         "entry_path_aggregator": 0,
@@ -336,6 +355,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
         "trade_counterfactual": 1,
         "loser_cluster": 0,
         "auto_canary": 0,
+        "trade_findings_draft": 0,
     }
     interval_sec = _env_int(
         f"{env_prefix}_INTERVAL_SEC",
@@ -398,6 +418,7 @@ def _job_order(python_bin: str) -> list[JobConfig]:
         _build_job("replay_quality_gate", python_bin),
         _build_job("loser_cluster", python_bin),
         _build_job("auto_canary", python_bin),
+        _build_job("trade_findings_draft", python_bin),
     ]
 
 

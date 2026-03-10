@@ -77,6 +77,8 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
     loser_cluster_env.write_text("LOSER_CLUSTER_MARKER=loser-cluster-env\n", encoding="utf-8")
     auto_canary_env = tmp_path / "auto_canary.env"
     auto_canary_env.write_text("AUTO_CANARY_MARKER=auto-canary-env\n", encoding="utf-8")
+    draft_env = tmp_path / "trade_findings_draft.env"
+    draft_env.write_text("TRADE_FINDINGS_DRAFT_MARKER=trade-findings-draft-env\n", encoding="utf-8")
 
     env = os.environ.copy()
     env.update(
@@ -170,6 +172,14 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_ENV_FILES": str(auto_canary_env),
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_OUTPUTS": str(outputs_dir / "auto_canary.json"),
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_INTERVAL_SEC": "1200",
+            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'trade_findings_draft.json'} "
+                "--env-key TRADE_FINDINGS_DRAFT_MARKER --marker trade-findings-draft"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_ENV_FILES": str(draft_env),
+            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_OUTPUTS": str(outputs_dir / "trade_findings_draft.json"),
+            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_INTERVAL_SEC": "600",
         }
     )
     return env
@@ -232,6 +242,22 @@ def test_forecast_improvement_job_defaults_are_wired() -> None:
     )
 
 
+def test_trade_findings_draft_job_defaults_are_wired() -> None:
+    job = run_local_feedback_cycle._build_job("trade_findings_draft", sys.executable)
+
+    assert job.enabled is True
+    assert job.interval_sec == 600
+    assert job.timeout_sec == 120
+    assert job.retry_count == 0
+    assert job.command == (sys.executable, "scripts/trade_findings_diary_draft.py")
+    assert job.env_files == ()
+    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
+        "logs/trade_findings_draft_latest.json",
+        "logs/trade_findings_draft_history.jsonl",
+        "logs/trade_findings_draft_latest.md",
+    )
+
+
 def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> None:
     fake_job = _prepare_fake_job(tmp_path)
     env = _base_env(tmp_path, fake_job)
@@ -286,6 +312,13 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     auto_canary_output = json.loads((tmp_path / "outputs" / "auto_canary.json").read_text(encoding="utf-8"))
     assert auto_canary_output == {"marker": "auto-canary", "env_value": "auto-canary-env"}
 
+    draft = jobs["trade_findings_draft"]
+    assert draft["status"] == "ok"
+    assert any(output["updated"] for output in draft["outputs"])
+
+    draft_output = json.loads((tmp_path / "outputs" / "trade_findings_draft.json").read_text(encoding="utf-8"))
+    assert draft_output == {"marker": "trade-findings-draft", "env_value": "trade-findings-draft-env"}
+
 
 def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Path) -> None:
     fake_job = _prepare_fake_job(tmp_path)
@@ -317,3 +350,5 @@ def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Pat
     assert jobs["loser_cluster"]["reason"] == "interval_not_elapsed"
     assert jobs["auto_canary"]["status"] == "skipped"
     assert jobs["auto_canary"]["reason"] == "interval_not_elapsed"
+    assert jobs["trade_findings_draft"]["status"] == "skipped"
+    assert jobs["trade_findings_draft"]["reason"] == "interval_not_elapsed"
