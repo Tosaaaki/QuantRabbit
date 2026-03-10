@@ -11594,3 +11594,58 @@ Status:
 - 検証:
   - `python3 -m pytest -q tests/workers/test_scalp_extrema_reversal_worker.py` -> `10 passed`
   - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
+
+## 2026-03-10 16:44-16:47 JST / local-v2 `precision_lowvol` と `drought_revert` crash 復旧 + `MomentumBurst` dedicated env を現行 cadence へ補正
+
+- 市況:
+  - `2026-03-10 16:44 JST` 時点の USD/JPY は
+    local `tick_cache` で `157.326/157.334`, spread median/p95 `0.8p/0.8p`。
+  - `factor_cache` は `M1 close 157.334 / ATR 3.29p / ADX 32.19 / RSI 34.16`,
+    OANDA `pricing` は `200 OK / 200ms`, `candles` は `200 OK / 275ms`,
+    `M1 ATR proxy 3.6p`, `20-candle range 17.9p` だった。
+  - `health_snapshot.json` は fresh で
+    `data_lag_ms ~= 161`, `decision_latency_ms ~= 17.5`,
+    `orders_status_1h = entry_probability_reject 84 / perf_block 59 / filled 2`。
+  - よって今回は spread 異常・API 劣化・グローバル lock ではなく、
+    strategy-local / worker-side の entry cadence 不全として扱った。
+
+- 実測:
+  - `scripts/local_v2_stack.sh status` では
+    `quant-scalp-precision-lowvol` と `quant-scalp-drought-revert`
+    が `stale_pid_file` で停止していた。
+  - 両 worker のログは
+    `TypeError: _signal_precision_lowvol() missing 1 required positional argument: 'range_ctx'`
+    と
+    `TypeError: _signal_drought_revert() missing 1 required positional argument: 'range_ctx'`
+    で即落ちしていた。
+  - 同時に `quant-micro-momentumburst` の実効 env は
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=45`,
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=150`
+    のままで、`docs/RISK_AND_EXECUTION.md` /
+    `docs/WORKER_REFACTOR_LOG.md` に残した現行値
+    `35 / 120` より重かった。
+
+- 対応:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - strategy dispatch を `_dispatch_strategy_signal(...)` へ切り出し、
+      `DroughtRevert` / `PrecisionLowVol` を
+      `range_ctx` 必須 signal として明示した。
+    - これで dedicated wrapper 経由でも
+      `_signal_drought_revert` / `_signal_precision_lowvol`
+      に `range_ctx` が渡るようにした。
+  - `ops/env/quant-micro-momentumburst.env`
+    - `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.05`
+    - `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=120`
+    - `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=35`
+      へ更新し、現行運用台帳と dedicated env のズレを解消した。
+
+- 意図:
+  - 「候補を作る lane が process crash で死んでいる」状態を先に戻し、
+    shared gate を緩めずに entry source を復元する。
+  - `MomentumBurst` は shared override を維持したまま、
+    dedicated env の stale cooldown だけを current 値へ揃えて
+    reaccel cadence を戻す。
+
+- 検証:
+  - `python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py`

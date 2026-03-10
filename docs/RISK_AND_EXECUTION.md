@@ -2563,3 +2563,30 @@
   を残す。
 - short 側と shared preflight / order_manager / exit worker へ
   新しい一律判定は追加しない。
+
+### 2026-03-10 `precision_lowvol` / `drought_revert` dispatch integrity
+- `workers/scalp_wick_reversal_blend/worker.py` の strategy dispatch は、
+  `range_ctx` 必須 signal を helper で一元化して扱う。
+- current local-v2 では
+  `DroughtRevert` と `PrecisionLowVol` を
+  `range_ctx` 付き dispatch 対象へ含める。
+- これにより
+  `quant-scalp-drought-revert` /
+  `quant-scalp-precision-lowvol`
+  は dedicated wrapper 経由でも
+  `_signal_*` 呼び出しで `range_ctx` 欠損 crash を起こさない。
+- 回帰は
+  `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  を正とする。
+
+### 2026-03-10 `MomentumBurst` dedicated env current cadence
+- `quant-micro-momentumburst` の dedicated env は
+  shared `MICRO_MULTI_STRATEGY_UNITS_MULT` override と矛盾しないよう、
+  `MICRO_MULTI_STRATEGY_UNITS_MULT=MomentumBurst:1.05`
+  を current 値とする。
+- current local-v2 dedicated cadence は
+  `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=120`,
+  `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=35`
+  を正とする。
+- 目的は shared gate 緩和ではなく、
+  stale dedicated env による `MomentumBurst` reaccel cadence 劣化を解消すること。

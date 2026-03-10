@@ -14732,6 +14732,53 @@
   - 外部コンテキストは shared hard block にせず、
     live cadence を落とさない soft bias として only local-v2 へ供給する。
 
+### 2026-03-10 local-v2 `precision_lowvol` / `drought_revert` dispatch crash fix
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `2026-03-10 16:44-16:47 JST` の local-v2 は
+    USD/JPY spread `0.8p`, `M1 ATR ~= 3.29p`,
+    OANDA `pricing/candles = 200 OK`
+    で通常帯だった。
+  - 一方 `scripts/local_v2_stack.sh status` では
+    `quant-scalp-precision-lowvol` と
+    `quant-scalp-drought-revert` が `stale_pid_file` で停止していた。
+  - 両 worker log は
+    `_signal_precision_lowvol(...)` /
+    `_signal_drought_revert(...)`
+    への `range_ctx` 未注入で crash していた。
+  - `quant-micro-momentumburst` の dedicated env も
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=150`,
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=45`
+    と stale で、現行運用台帳の `120 / 35` とズレていた。
+
+- 変更:
+  - `worker.py` に `_dispatch_strategy_signal(...)` を追加し、
+    `range_ctx` を必要とする signal 名を
+    `_RANGE_CTX_SIGNAL_NAMES` として一元化した。
+  - main loop は個別の if/elif 連鎖ではなく
+    `_dispatch_strategy_signal(...)` を通すように変更し、
+    `DroughtRevert` / `PrecisionLowVol` でも
+    `range_ctx` を確実に渡すようにした。
+  - dispatch helper の回帰テストを追加し、
+    2 signal に `range_ctx` が届くことを固定した。
+  - `quant-micro-momentumburst.env` は
+    `MomentumBurst:1.05`, `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=120`,
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC=35`
+    へ更新した。
+
+- 意図:
+  - shared gate を触らず、
+    crash で失われていた scalp entry lane を先に復元する。
+  - `MomentumBurst` dedicated env の stale cadence を
+    current local-v2 の運用値へ戻し、
+    reaccel participation を落とさない状態へ揃える。
+
 ### 2026-03-10 macro news fetch hardening
 - 対象:
   - `scripts/macro_news_context_worker.py`

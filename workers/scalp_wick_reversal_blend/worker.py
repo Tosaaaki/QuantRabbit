@@ -19,7 +19,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
 from analysis.technique_engine import evaluate_entry_techniques
@@ -93,8 +93,51 @@ _MODE_TAG_MAP = {
     'false_break_fade': 'FalseBreakFade',
 }
 
+_RANGE_CTX_SIGNAL_NAMES = {
+    "SpreadRangeRevert",
+    "DroughtRevert",
+    "PrecisionLowVol",
+    "RangeFaderPro",
+    "VwapRevertS",
+    "StochBollBounce",
+    "DivergenceRevert",
+    "TickImbalance",
+    "TickImbalanceRRPlus",
+    "LevelRejectPlus",
+    "WickReversalBlend",
+    "WickReversalHF",
+    "WickReversalPro",
+    "TickWickReversal",
+    "SqueezePulseBreak",
+    "FalseBreakFade",
+}
+_M5_SIGNAL_NAMES = {"MacdTrendRide", "EmaSlopePull"}
+
+
 def _mode_to_tag(mode: str) -> Optional[str]:
     return _MODE_TAG_MAP.get((mode or '').strip().lower())
+
+
+def _dispatch_strategy_signal(
+    *,
+    name: str,
+    fn: Callable[..., Optional[Dict[str, object]]],
+    fac_m1: Dict[str, object],
+    fac_h1: Dict[str, object],
+    fac_m5: Dict[str, object],
+    range_ctx,
+    now_utc: datetime.datetime,
+    kwargs: Dict[str, object],
+) -> Optional[Dict[str, object]]:
+    if name == "HTFPullbackS":
+        return fn(fac_m1, fac_h1, fac_m5, **kwargs)
+    if name in _M5_SIGNAL_NAMES:
+        return fn(fac_m1, fac_m5, **kwargs)
+    if name == "SessionEdge":
+        return fn(fac_m1, range_ctx, now_utc=now_utc, **kwargs)
+    if name in _RANGE_CTX_SIGNAL_NAMES:
+        return fn(fac_m1, range_ctx, **kwargs)
+    return fn(fac_m1, **kwargs)
 
 # --- env helpers ---
 
@@ -3757,30 +3800,16 @@ async def scalp_wick_reversal_blend_worker() -> None:
 
             signals: List[Dict[str, object]] = []
             for name, fn, kwargs in strategies:
-                if fn is _signal_htf_pullback:
-                    signal = fn(fac_m1, fac_h1, fac_m5, **kwargs)
-                elif fn in (_signal_macd_trend, _signal_ema_slope_pull):
-                    signal = fn(fac_m1, fac_m5, **kwargs)
-                elif fn is _signal_session_edge:
-                    signal = fn(fac_m1, range_ctx, now_utc=now, **kwargs)
-                elif fn in (
-                    _signal_spread_revert,
-                    _signal_vwap_revert,
-                    _signal_stoch_bounce,
-                    _signal_divergence_revert,
-                    _signal_tick_imbalance,
-                    _signal_tick_imbalance_rrplus,
-                    _signal_level_reject_plus,
-                    _signal_wick_reversal_blend,
-                    _signal_wick_reversal_hf,
-                    _signal_wick_reversal_pro,
-                    _signal_tick_wick_reversal,
-                    _signal_squeeze_pulse_break,
-                    _signal_false_break_fade,
-                ):
-                    signal = fn(fac_m1, range_ctx, **kwargs)
-                else:
-                    signal = fn(fac_m1, **kwargs)
+                signal = _dispatch_strategy_signal(
+                    name=name,
+                    fn=fn,
+                    fac_m1=fac_m1,
+                    fac_h1=fac_h1,
+                    fac_m5=fac_m5,
+                    range_ctx=range_ctx,
+                    now_utc=now,
+                    kwargs=kwargs,
+                )
                 if signal:
                     signal = adjust_signal(signal, air)
                     if signal:
