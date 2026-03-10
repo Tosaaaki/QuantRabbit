@@ -14350,3 +14350,15 @@
     stale boost を current loser に追随して早めに中立化
   - `strategy_feedback` 全停止や broad shared block は避け、
     strategy-local / service-local の参加率調整に留める
+
+## 2026-03-10 09:28 JST - loser 3戦略に forecast sub-guards を追加
+
+- current loser 3戦略に対して、
+  pattern gate はまだ `learn_only` が大半で即効性が弱く、
+  Brain も safe canary 上 `MicroLevelReactor` 限定のため、
+  broad opt-in は見送った。
+- 代わりに、すでに live な forecast gate を strategy-local に強化した。
+  - `MomentumBurst`: trend strength / edge / expected_pips / target_reach
+  - `MicroTrendRetest`: trend strength / edge / expected_pips / target_reach
+  - `MicroLevelReactor`: expected_pips / contra guard を追加で引き締め
+- shared `order_manager` / shared micro gate の一律判定は増やしていない。

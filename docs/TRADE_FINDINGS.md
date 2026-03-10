@@ -11092,3 +11092,41 @@ Status:
   - `MicroLevelReactor` のように 24h aggregate がまだ残る戦略は、
     全停止ではなく `entry_units_multiplier <= 1.0` を先に狙い、
     loser burst 収束後に再評価する。
+
+## 2026-03-10 09:28 JST / local-v2 profitability hotfix: current loser 3戦略へ forecast sub-guards を追加
+
+- 実測:
+  - `orders.db` 直近24hの mechanism status は `brain_shadow=21` のみで、
+    current loser 3戦略に対する `forecast_*` / `pattern_*` の reject は観測されなかった。
+  - `ops/env/profiles/brain-ollama-safe.env` の live canary は
+    `BRAIN_STRATEGY_ALLOWLIST=MicroLevelReactor` で、Brain は現行 safe canary のまま。
+  - `config/pattern_book.json` に `MomentumBurst / MicroTrendRetest / MicroLevelReactor`
+    の top-level strategy entry はなく、`logs/patterns.db` の `pattern_actions` も
+    current loser 3戦略では大半が `learn_only / insufficient_samples` だった。
+
+- 判断:
+  - 「全部の仕組み」を広げる候補のうち、今すぐ live で意味を持つ追加レバーは
+    pattern/brain の broad opt-in ではなく、既に live な forecast gate の
+    strategy-local sub-guards を loser 3戦略に足すことだった。
+
+- 反映:
+  - `MomentumBurst`
+    - `FORECAST_GATE_STYLE_TREND_MIN_STRENGTH_STRATEGY_MOMENTUMBURST=0.56`
+    - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_MOMENTUMBURST=0.54`
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_MOMENTUMBURST=0.14`
+    - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_MOMENTUMBURST=-0.02`
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MOMENTUMBURST=0.18`
+  - `MicroTrendRetest`
+    - `FORECAST_GATE_STYLE_TREND_MIN_STRENGTH_STRATEGY_MICROTRENDRETEST=0.58`
+    - `FORECAST_GATE_EDGE_BLOCK_STRATEGY_MICROTRENDRETEST=0.58`
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_MICROTRENDRETEST=0.18`
+    - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_MICROTRENDRETEST=-0.02`
+    - `FORECAST_GATE_TARGET_REACH_MIN_STRATEGY_MICROTRENDRETEST=0.22`
+  - `MicroLevelReactor`
+    - `FORECAST_GATE_EXPECTED_PIPS_MIN_STRATEGY_MICROLEVELREACTOR=0.16`
+    - `FORECAST_GATE_EXPECTED_PIPS_CONTRA_MAX_STRATEGY_MICROLEVELREACTOR=-0.02`
+
+- 意図:
+  - shared gate を増やさず、既存 forecast runtime override と
+    dedicated service env だけで loser lane の low-edge / contra / weak-target-reach を
+    先に落とす。
