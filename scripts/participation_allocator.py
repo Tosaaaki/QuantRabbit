@@ -64,6 +64,12 @@ def _median(values: list[float]) -> float:
     return float(values[mid - 1] + values[mid]) / 2.0
 
 
+_NEGATIVE_PROB_TRIM_MIN_LOSS_PRESSURE = 0.08
+_NEGATIVE_PROB_TRIM_MIN_SEVERITY = 0.78
+_NEGATIVE_PROB_TRIM_MIN_REJECT_PRESSURE = 0.80
+_NEGATIVE_PROB_TRIM_MIN_SHARE_GAP = 0.18
+
+
 def _load_recent_realized_jpy(trades_db: Path, *, lookback_hours: float) -> dict[str, float]:
     if not trades_db.exists():
         return {}
@@ -166,7 +172,16 @@ def build_participation_alloc(
                     0.55 * severity + 0.30 * reject_pressure + 0.15 * loss_pressure,
                 )
                 units_multiplier = 1.0 - max_units_cut * (0.35 + 0.65 * severity)
-                probability_offset = -max_prob_boost * (0.20 + 0.80 * trim_strength)
+                should_trim_probability = (
+                    loss_pressure >= _NEGATIVE_PROB_TRIM_MIN_LOSS_PRESSURE
+                    or (
+                        severity >= _NEGATIVE_PROB_TRIM_MIN_SEVERITY
+                        and reject_pressure >= _NEGATIVE_PROB_TRIM_MIN_REJECT_PRESSURE
+                        and share_gap >= _NEGATIVE_PROB_TRIM_MIN_SHARE_GAP
+                    )
+                )
+                if should_trim_probability:
+                    probability_offset = -max_prob_boost * (0.20 + 0.80 * trim_strength)
                 cadence_floor = 0.90
                 action = "trim_units"
             elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy >= 0.0:

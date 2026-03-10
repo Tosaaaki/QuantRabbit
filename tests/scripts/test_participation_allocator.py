@@ -104,6 +104,217 @@ def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_los
     assert loser["probability_multiplier"] == 1.0
 
 
+def test_build_participation_alloc_keeps_mild_loser_on_units_trim_without_probability_offset() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "RangeFader-neutral-fade": {
+                "pocket": "scalp",
+                "attempts": 537,
+                "fills": 35,
+                "filled_rate": 0.0652,
+                "attempt_share": 0.255228,
+                "fill_share": 0.089059,
+                "share_gap": 0.16617,
+                "terminal_status_counts": {
+                    "entry_probability_reject": 338,
+                    "perf_block": 502,
+                    "filled": 35,
+                },
+            },
+            "MicroTrendRetest-long": {
+                "pocket": "micro",
+                "attempts": 31,
+                "fills": 17,
+                "filled_rate": 0.5484,
+                "attempt_share": 0.10,
+                "fill_share": 0.23,
+                "share_gap": -0.13,
+                "terminal_status_counts": {"filled": 17},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "RangeFader-neutral-fade": -4.218,
+            "MicroTrendRetest-long": 42.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    loser = payload["strategies"]["RangeFader-neutral-fade"]
+
+    assert payload["allocation_policy"]["negative_probability_offsets_enabled"] is False
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 1.0
+    assert loser["probability_offset"] == 0.0
+    assert loser["probability_multiplier"] == 1.0
+
+
+def test_build_participation_alloc_can_emit_probability_trim_for_high_reject_loser_with_small_loss() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "RangeFader-sell-fade": {
+                "pocket": "scalp",
+                "attempts": 578,
+                "fills": 29,
+                "filled_rate": 0.0502,
+                "attempt_share": 0.274715,
+                "fill_share": 0.073791,
+                "share_gap": 0.200923,
+                "terminal_status_counts": {
+                    "entry_probability_reject": 891,
+                    "perf_block": 549,
+                    "filled": 29,
+                },
+            },
+            "MicroTrendRetest-long": {
+                "pocket": "micro",
+                "attempts": 31,
+                "fills": 17,
+                "filled_rate": 0.5484,
+                "attempt_share": 0.10,
+                "fill_share": 0.23,
+                "share_gap": -0.13,
+                "terminal_status_counts": {"filled": 17},
+            },
+            "scalp_ping_5s_d_live": {
+                "pocket": "scalp_fast",
+                "attempts": 44,
+                "fills": 29,
+                "filled_rate": 0.6591,
+                "attempt_share": 0.08,
+                "fill_share": 0.18,
+                "share_gap": -0.10,
+                "terminal_status_counts": {"filled": 29},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "RangeFader-sell-fade": -7.866,
+            "MicroTrendRetest-long": 42.0,
+            "scalp_ping_5s_d_live": 9.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    loser = payload["strategies"]["RangeFader-sell-fade"]
+
+    assert payload["allocation_policy"]["negative_probability_offsets_enabled"] is True
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 1.0
+    assert loser["probability_offset"] < 0.0
+    assert loser["probability_multiplier"] == 1.0
+
+
+def test_build_participation_alloc_keeps_buy_sell_probability_trim_but_exempts_neutral_fade() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "RangeFader-buy-fade": {
+                "pocket": "scalp",
+                "attempts": 668,
+                "fills": 52,
+                "filled_rate": 0.0778,
+                "attempt_share": 0.31749,
+                "fill_share": 0.132316,
+                "share_gap": 0.185175,
+                "terminal_status_counts": {"perf_block": 1800, "filled": 52},
+            },
+            "RangeFader-sell-fade": {
+                "pocket": "scalp",
+                "attempts": 578,
+                "fills": 29,
+                "filled_rate": 0.0502,
+                "attempt_share": 0.274715,
+                "fill_share": 0.073791,
+                "share_gap": 0.200923,
+                "terminal_status_counts": {"perf_block": 1438, "filled": 29},
+            },
+            "RangeFader-neutral-fade": {
+                "pocket": "scalp",
+                "attempts": 537,
+                "fills": 35,
+                "filled_rate": 0.0652,
+                "attempt_share": 0.255228,
+                "fill_share": 0.089059,
+                "share_gap": 0.16617,
+                "terminal_status_counts": {"perf_block": 840, "filled": 35},
+            },
+            "MomentumBurst": {
+                "pocket": "micro",
+                "attempts": 35,
+                "fills": 14,
+                "filled_rate": 0.4,
+                "attempt_share": 0.12,
+                "fill_share": 0.34,
+                "share_gap": -0.22,
+                "terminal_status_counts": {"filled": 14},
+            },
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 24,
+                "fills": 10,
+                "filled_rate": 0.4167,
+                "attempt_share": 0.08,
+                "fill_share": 0.18,
+                "share_gap": -0.10,
+                "terminal_status_counts": {"filled": 10},
+            },
+            "session_open_breakout": {
+                "pocket": "micro",
+                "attempts": 20,
+                "fills": 9,
+                "filled_rate": 0.45,
+                "attempt_share": 0.05,
+                "fill_share": 0.12,
+                "share_gap": -0.07,
+                "terminal_status_counts": {"filled": 9},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "RangeFader-buy-fade": -71.598,
+            "RangeFader-sell-fade": -7.866,
+            "RangeFader-neutral-fade": -4.218,
+            "MomentumBurst": 180.0,
+            "PrecisionLowVol": 33.0,
+            "session_open_breakout": 12.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    buy = payload["strategies"]["RangeFader-buy-fade"]
+    sell = payload["strategies"]["RangeFader-sell-fade"]
+    neutral = payload["strategies"]["RangeFader-neutral-fade"]
+
+    assert buy["action"] == "trim_units"
+    assert buy["probability_offset"] < 0.0
+    assert sell["action"] == "trim_units"
+    assert sell["probability_offset"] < 0.0
+    assert neutral["action"] == "trim_units"
+    assert neutral["probability_offset"] == 0.0
+    assert payload["allocation_policy"]["negative_probability_offsets_enabled"] is True
+
+
 def test_build_participation_alloc_boosts_profitable_small_sample_winner() -> None:
     summary = {
         "lookback_hours": 24.0,
