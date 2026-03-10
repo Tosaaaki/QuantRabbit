@@ -2749,5 +2749,19 @@
   `short + rsi<=38 + bullish reclaim`。
 - さらに short 側は
   `rsi<=38` で bullish reclaim が high-close のときも reject する。
+- さらに long 側も
+  `rsi>=62` で bearish reclaim が low-close のとき reject する。
 - どちらも `STOP_LOSS_ORDER` cluster を entry quality で潰す目的であり、
   shared order-manager / global gate / time block を追加するものではない。
+
+### 2026-03-10 `RangeFader` current headwind quality guard
+- `RangeFader` は current で
+  `range_score<=0.28` の weak range かつ
+  `ADX>=26`, 強い `DI gap`, `ema_slope_10` 同方向のとき、
+  trend headwind 下の weak fade を strategy-local に抑止する。
+- short 側は bullish headwind の `sell-fade` / `neutral-fade` short、
+  long 側は bearish headwind の weak long fade が対象。
+- ただし `momentum_pips` が十分に伸びた極端な overextension までは block せず、
+  clean stretch fade の lane は残す。
+- この guard は shared cadence / shared gate / order-manager ではなく
+  `strategies/scalping/range_fader.py` 内の strategy-local quality 判定として扱う。

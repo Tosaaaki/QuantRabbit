@@ -15121,3 +15121,34 @@
     -> `40 passed`
   - `pytest -q tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
     -> `71 passed`
+
+### 2026-03-10 current live headwind に対する RangeFader / TrendRetest quality guard 追加
+- 対象:
+  - `strategies/scalping/range_fader.py`
+  - `strategies/micro/trend_retest.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+  - `tests/strategies/test_trend_retest.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - 2026-03-10 21:14-21:16 JST の closed trade は `RangeFader` short loss が連続し、
+    同時間帯の `M1` は `RSI 64.35 / ADX 37.13 / +DI 優位 / ema_slope_10 > 0`
+    で bullish headwind が明確だった。
+  - `MicroTrendRetest` の reclaim tightening は short 側だけ先に進んでおり、
+    long 側の bearish low-close reclaim には対称穴が残っていた。
+
+- 変更:
+  - `RangeFader` に trend headwind 判定を追加し、
+    `range_score` が低い weak range での
+    `neutral-fade` / `sell-fade` short と
+    対称の weak long fade を strategy-local に抑止。
+  - `MicroTrendRetest` は long 側にも reclaim close-position guard を追加し、
+    `rsi>=62` の bearish low-close reclaim を reject。
+
+- 検証:
+  - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_worker.py`
+    -> `25 passed`
+  - `pytest -q tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_worker.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `84 passed`

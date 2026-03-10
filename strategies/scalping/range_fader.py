@@ -10,6 +10,13 @@ BUY_SUPPORT_MAX_ADX = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MAX_ADX", "32.0")
 BUY_SUPPORT_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MOMENTUM_PIPS_CAP", "2.4"))
 BUY_SUPPORT_GATE_EXTRA = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_GATE_EXTRA", "2.0")))
 BUY_SUPPORT_CONF_BONUS = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_CONF_BONUS", "6.0")))
+FADE_HEADWIND_RANGE_SCORE_MAX = float(os.getenv("RANGE_FADER_FADE_HEADWIND_RANGE_SCORE_MAX", "0.28"))
+FADE_HEADWIND_ADX_MIN = float(os.getenv("RANGE_FADER_FADE_HEADWIND_ADX_MIN", "26.0"))
+FADE_HEADWIND_DI_GAP_MIN = float(os.getenv("RANGE_FADER_FADE_HEADWIND_DI_GAP_MIN", "9.0"))
+FADE_HEADWIND_EMA_SLOPE_MIN = float(os.getenv("RANGE_FADER_FADE_HEADWIND_EMA_SLOPE_MIN", "0.0020"))
+FADE_HEADWIND_MOMENTUM_ATR_MULT = float(os.getenv("RANGE_FADER_FADE_HEADWIND_MOMENTUM_ATR_MULT", "1.05"))
+FADE_HEADWIND_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_FADE_HEADWIND_MOMENTUM_PIPS_CAP", "3.0"))
+FADE_HEADWIND_GATE_EXTRA = int(float(os.getenv("RANGE_FADER_FADE_HEADWIND_GATE_EXTRA", "6.0")))
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -74,6 +81,50 @@ class RangeFader:
             return False
         momentum_cap = max(BUY_SUPPORT_MOMENTUM_PIPS_CAP, atr_pips * 1.1)
         return momentum_pips <= momentum_cap
+
+    @staticmethod
+    def _fade_headwind_context(
+        fac: Dict,
+        side: str,
+        *,
+        close: float,
+        ema20: float,
+        atr_pips: float,
+        momentum_pips: float,
+        spread: float | None,
+        adx_val: float,
+        vol_5m: float,
+    ) -> bool:
+        range_score_raw = fac.get("range_score")
+        if range_score_raw is None:
+            return False
+        try:
+            range_score = float(range_score_raw)
+        except Exception:
+            return False
+        plus_di = RangeFader._float_attr(fac, "plus_di", 0.0)
+        minus_di = RangeFader._float_attr(fac, "minus_di", 0.0)
+        ema_slope_10 = RangeFader._float_attr(fac, "ema_slope_10", 0.0)
+        if range_score > FADE_HEADWIND_RANGE_SCORE_MAX:
+            return False
+        if adx_val < FADE_HEADWIND_ADX_MIN or vol_5m < 0.85:
+            return False
+        if spread is not None and spread > 1.0:
+            return False
+        momentum_cap = max(FADE_HEADWIND_MOMENTUM_PIPS_CAP, atr_pips * FADE_HEADWIND_MOMENTUM_ATR_MULT)
+        if momentum_pips > momentum_cap:
+            return False
+        if side == "short":
+            if close <= ema20:
+                return False
+            if (plus_di - minus_di) < FADE_HEADWIND_DI_GAP_MIN:
+                return False
+            return ema_slope_10 >= FADE_HEADWIND_EMA_SLOPE_MIN
+        if close >= ema20:
+            return False
+        if (minus_di - plus_di) < FADE_HEADWIND_DI_GAP_MIN:
+            return False
+        return ema_slope_10 <= -FADE_HEADWIND_EMA_SLOPE_MIN
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -197,7 +248,33 @@ class RangeFader:
             adx_val=adx_val,
             vol_5m=vol_5m,
         )
+        long_headwind = RangeFader._fade_headwind_context(
+            fac,
+            "long",
+            close=float(close),
+            ema20=float(ema20),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+            spread=spread,
+            adx_val=adx_val,
+            vol_5m=vol_5m,
+        )
+        short_headwind = RangeFader._fade_headwind_context(
+            fac,
+            "short",
+            close=float(close),
+            ema20=float(ema20),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+            spread=spread,
+            adx_val=adx_val,
+            vol_5m=vol_5m,
+        )
         buy_long_gate = long_gate + (BUY_SUPPORT_GATE_EXTRA if buy_supportive else 0)
+        if long_headwind:
+            buy_long_gate -= FADE_HEADWIND_GATE_EXTRA
+        if short_headwind:
+            short_gate += FADE_HEADWIND_GATE_EXTRA
 
         confidence_scale = 1.0
         high_atr_profile = atr_pips > high_atr
@@ -273,6 +350,22 @@ class RangeFader:
 
         # ニュートラルRSIでもEMAからの乖離方向にフェードを打つ
         neutral_side = "short" if close > ema20 else "long"
+        if neutral_side == "short" and short_headwind:
+            RangeFader._log_skip(
+                "neutral_headwind_short",
+                range_score=round(float(fac.get("range_score") or 0.0), 3),
+                adx=round(adx_val, 3),
+                di_gap=round(RangeFader._float_attr(fac, "plus_di", 0.0) - RangeFader._float_attr(fac, "minus_di", 0.0), 3),
+            )
+            return None
+        if neutral_side == "long" and long_headwind:
+            RangeFader._log_skip(
+                "neutral_headwind_long",
+                range_score=round(float(fac.get("range_score") or 0.0), 3),
+                adx=round(adx_val, 3),
+                di_gap=round(RangeFader._float_attr(fac, "minus_di", 0.0) - RangeFader._float_attr(fac, "plus_di", 0.0), 3),
+            )
+            return None
         sl = max(2.4, min(5.0, atr_pips * 1.2))
         tp = max(sl * 1.2, min(6.0, atr_pips * 1.6))
         conf_base = 48 + min(12.0, abs(momentum_pips) * 1.8)

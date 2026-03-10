@@ -229,6 +229,27 @@ def test_short_retest_rejects_oversold_bullish_high_close_reclaim() -> None:
     assert signal is None
 
 
+def test_long_retest_rejects_overbought_bearish_low_close_reclaim() -> None:
+    signal = MicroTrendRetest.check(
+        {
+            "close": 100.005,
+            "ma10": 100.020,
+            "ma20": 100.000,
+            "adx": 26.0,
+            "atr_pips": 4.0,
+            "spread_pips": 0.4,
+            "rsi": 68.0,
+            "candles": _flat_history(high=100.18, low=100.00, close=100.10)
+            + [
+                {"high": 100.06, "low": 100.00, "close": 100.02},
+                {"open": 100.024, "high": 100.028, "low": 100.002, "close": 100.006},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
 def test_long_retest_rejects_low_atr_when_close_sticks_to_retest_low() -> None:
     signal = MicroTrendRetest.check(
         _long_fac(

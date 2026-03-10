@@ -85,3 +85,71 @@ def test_range_fader_buy_supportive_context_without_cluster_falls_back_to_neutra
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
     assert signal["tag"] == "RangeFader-neutral-fade"
+
+
+def test_range_fader_short_headwind_blocks_weak_short_fade() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.93,
+            "ema20": 157.90,
+            "rsi": 60.0,
+            "atr_pips": 2.9,
+            "vol_5m": 1.30,
+            "adx": 37.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 28.0,
+            "minus_di": 14.0,
+            "ema_slope_10": 0.0060,
+            "range_score": 0.24,
+        }
+    )
+
+    assert signal is None
+
+
+def test_range_fader_extreme_short_stretch_still_allows_short_fade() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.96,
+            "ema20": 157.90,
+            "rsi": 68.0,
+            "atr_pips": 2.9,
+            "vol_5m": 1.30,
+            "adx": 37.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 28.0,
+            "minus_di": 14.0,
+            "ema_slope_10": 0.0060,
+            "range_score": 0.24,
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["tag"] == "RangeFader-sell-fade"
+
+
+def test_range_fader_long_headwind_blocks_weak_long_fade() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.87,
+            "ema20": 157.90,
+            "rsi": 40.0,
+            "atr_pips": 2.9,
+            "vol_5m": 1.30,
+            "adx": 37.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 14.0,
+            "minus_di": 28.0,
+            "ema_slope_10": -0.0060,
+            "range_score": 0.24,
+        }
+    )
+
+    assert signal is None

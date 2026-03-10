@@ -12190,3 +12190,51 @@ Status:
     -> `71 passed`
   - `python3 -m compileall strategies/micro/momentum_burst.py strategies/micro/trend_retest.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py`
     -> 成功
+
+## 2026-03-10 21:22 JST / current 状況確認 + RangeFader headwind guard 追加
+- current 状況:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    は core / scalp / micro 全サービス running。
+  - `bash scripts/collect_local_health.sh` は
+    `health_snapshot.json updated=yes`, `snapshot_age_sec=0`, `mechanism_integrity=yes`。
+  - `logs/health_snapshot.json` は
+    `generated_at=2026-03-10T12:14:28Z`, `git_rev=6084a691`, `trades_count_24h=223`。
+  - 市況は `bid=157.920 / ask=157.928 / spread=0.8p / latency=127ms`、
+    `ATR(M1)=2.92p / M5=6.01p / H1=21.74p` で通常帯。
+  - 直近 closed trade は `2026-03-10 21:14-21:16 JST` の `RangeFader` short が
+    `-2.9p` から `-4.9p` の連続 loss。
+  - 最新 orders は `2026-03-10 21:20-21:21 JST` の `RangeFader sell`
+    `entry_probability_reject` が連打。
+- 追加で見えた敗因:
+  - 24h 累積損失の上位は引き続き
+    `MomentumBurst -617.2 JPY`,
+    `MicroTrendRetest-short -540.6 JPY`,
+    `MicroTrendRetest-long -290.2 JPY`。
+  - ただし live の新しい負け lane は `RangeFader` 側で、
+    直近 short loss は `range_score=0.225-0.252`,
+    `entry_probability=0.36-0.37` の weak fade に偏っていた。
+  - 同時点の `M1` は `RSI=64.35`, `ADX=37.13`, `+DI 28.25 > -DI 14.91`,
+    `ema_slope_10=0.00597` で bullish headwind が明確だった。
+- 変更:
+  - `strategies/scalping/range_fader.py`
+    - `range_score` が低く、`ADX` と `DI gap` と `ema_slope_10` が
+      trend continuation を示すときは、
+      weak `sell-fade` / `neutral-fade` short を strategy-local に抑止。
+    - 同じ条件を long 側にも対称に入れ、
+      bearish headwind 下の weak long fade も抑止。
+    - ただし極端な overextension は残すため、
+      `momentum_pips` が十分に伸びたケースまでは block しない。
+  - `strategies/micro/trend_retest.py`
+    - `short` に入れていた reclaim close-position guard を `long` 側にも対称追加し、
+      `rsi>=62` の bearish low-close reclaim も reject。
+- 意図:
+  - cadence や shared gate ではなく、
+    `RangeFader` / `MicroTrendRetest` の strategy-local entry quality 改善で
+    current loser cluster を潰す。
+- 検証:
+  - `pytest -q tests/strategies/test_trend_retest.py tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_worker.py`
+    -> `25 passed`
+  - `pytest -q tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_worker.py tests/strategies/test_momentum_burst.py tests/strategies/test_trend_retest.py tests/workers/test_micro_multistrat_trend_flip.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `84 passed`
+  - `python3 -m compileall strategies/scalping/range_fader.py tests/strategies/test_scalp_thresholds.py strategies/micro/trend_retest.py tests/strategies/test_trend_retest.py`
+    -> 成功
