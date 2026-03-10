@@ -11533,13 +11533,22 @@ Status:
     - `MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS=0.6`
     - `MLR_BOUNCE_COUNTERTREND_MIN_BODY_PIPS=0.2`
     - `MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS=1.0`
+    - `MLR_BOUNCE_CONTINUATION_ATR_MAX=1.8`
+    - `MLR_BOUNCE_CONTINUATION_ADX_MIN=22.0`
+    - `MLR_BOUNCE_CONTINUATION_DI_GAP_MIN=18.0`
+    - `MLR_BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS=0.4`
       を dedicated env に明示した。
+  - 同じ `bounce-lower` 内で
+    `ATR <= 1.8`, `ADX >= 22`, `minus_di - plus_di >= 18`
+    の `continuation probe` も別扱いし、
+    `tiny lower wick` のままでは long しないようにした。
 
 - 意図:
   - broad に `MicroLevelReactor` を止めず、
     `dn_strong + no-wick` の loser cluster だけを strategy-local に削る。
+  - `ultra-low ATR + strong -DI` の continuation probe も同じ branch で削る。
   - shared preflight / sizing / exit worker は変更しない。
 
 - 検証:
-  - `python3 -m pytest -q tests/strategies/test_level_reactor.py` -> `6 passed`
+  - `python3 -m pytest -q tests/strategies/test_level_reactor.py`
   - `python3 -m py_compile strategies/micro/level_reactor.py tests/strategies/test_level_reactor.py`

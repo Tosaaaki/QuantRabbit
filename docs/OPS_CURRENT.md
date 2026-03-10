@@ -1019,11 +1019,17 @@ quant-manual-swing-exit.service
     - `MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS=0.6`
     - `MLR_BOUNCE_COUNTERTREND_MIN_BODY_PIPS=0.2`
     - `MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS=1.0`
+    - `MLR_BOUNCE_CONTINUATION_ATR_MAX=1.8`
+    - `MLR_BOUNCE_CONTINUATION_ADX_MIN=22.0`
+    - `MLR_BOUNCE_CONTINUATION_DI_GAP_MIN=18.0`
+    - `MLR_BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS=0.4`
 
 - 運用意図:
   - local `ma10-ma20` が `down-strong` のときだけ
     `bounce-lower` long に実反発品質を要求し、
     `下ヒゲなしの陽線 probe` を拾わない。
+  - あわせて `ultra-low ATR + strong -DI` の continuation probe では
+    `tiny lower wick` のまま拾わない。
   - local trend が down-strong でないレンジ側の bounce は残し、
     broad participation は落とさない。
 

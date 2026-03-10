@@ -2529,13 +2529,20 @@
 - current local-v2 dedicated env は
   `MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS=0.6`,
   `MLR_BOUNCE_COUNTERTREND_MIN_BODY_PIPS=0.2`,
-  `MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS=1.0`
+  `MLR_BOUNCE_COUNTERTREND_MIN_LOWER_WICK_PIPS=1.0`,
+  `MLR_BOUNCE_CONTINUATION_ATR_MAX=1.8`,
+  `MLR_BOUNCE_CONTINUATION_ADX_MIN=22.0`,
+  `MLR_BOUNCE_CONTINUATION_DI_GAP_MIN=18.0`,
+  `MLR_BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS=0.4`
   を運用値とする。
 - この文脈では
   `body >= 0.2 pips`,
   `lower wick >= 1.0 pips`,
   `lower wick > upper wick`
   を満たさない `no-wick reclaim` を反発として扱わない。
+- さらに `ATR <= 1.8`, `ADX >= 22`, `minus_di - plus_di >= 18`
+  の continuation probe では、
+  `lower wick < 0.4 pips` の tiny probe を反発として扱わない。
 - local trend が `down-strong` でないときは既存 `body-only reclaim` を残し、
   `MicroLevelReactor` の broad participation は維持する。
 - shared preflight / order_manager / exit worker へ新しい一律判定は追加しない。

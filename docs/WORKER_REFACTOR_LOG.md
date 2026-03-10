@@ -14647,10 +14647,15 @@
     `lower wick > upper wick`
     を必須にし、
     `下ヒゲなしの陽線 probe` を反発扱いしない。
+  - さらに
+    `ATR <= 1.8`, `ADX >= 22`, `minus_di - plus_di >= 18`
+    の continuation probe を追加で検知し、
+    `tiny lower wick` のままでは long しない。
   - local trend が down-strong でないときは、
     既存の `body-only reclaim` を維持する。
 
 - 意図:
   - `MicroLevelReactor` の broad participation は残しつつ、
     `dn_strong + no-wick` の loser cluster だけを strategy-local に除去する。
+  - `ultra-low ATR + strong -DI` の continuation probe も同じ branch で削る。
   - shared gate / order_manager / exit worker 契約は非変更。

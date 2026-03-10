@@ -115,3 +115,73 @@ def test_bounce_long_keeps_body_only_reclaim_when_local_trend_is_not_down() -> N
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
     assert signal["tag"] == "MicroLevelReactor-bounce-lower"
+
+
+def test_bounce_long_rejects_tiny_lower_wick_under_strong_down_di_pressure() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.951,
+            "high": 157.956,
+            "low": 157.95,
+            "ma10": 157.981,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 1.6,
+            "rsi": 35.0,
+            "adx": 23.0,
+            "plus_di": 14.0,
+            "minus_di": 37.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is None
+
+
+def test_bounce_long_allows_clear_lower_wick_under_same_down_di_pressure() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.943,
+            "high": 157.957,
+            "low": 157.938,
+            "ma10": 157.981,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 1.6,
+            "rsi": 35.0,
+            "adx": 23.0,
+            "plus_di": 14.0,
+            "minus_di": 37.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "MicroLevelReactor-bounce-lower"
+
+
+def test_bounce_long_keeps_tiny_lower_wick_when_di_pressure_is_not_strong() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.951,
+            "high": 157.956,
+            "low": 157.95,
+            "ma10": 157.981,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 1.6,
+            "rsi": 35.0,
+            "adx": 19.0,
+            "plus_di": 18.0,
+            "minus_di": 27.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "MicroLevelReactor-bounce-lower"
