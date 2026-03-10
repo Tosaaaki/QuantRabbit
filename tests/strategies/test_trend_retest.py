@@ -318,3 +318,57 @@ def test_long_retest_rejects_mid_high_rsi_shallow_bearish_reclaim_chase() -> Non
     )
 
     assert signal is None
+
+
+def test_long_retest_rejects_low_atr_same_direction_shallow_bearish_chase() -> None:
+    fac = {
+        "close": 100.005,
+        "ma10": 100.015,
+        "ma20": 100.000,
+        "adx": 28.0,
+        "atr_pips": 3.0,
+        "spread_pips": 0.4,
+        "rsi": 59.0,
+        "trend_snapshot": {
+            "tf": "H1",
+            "direction": "long",
+            "gap_pips": 14.0,
+            "adx": 28.0,
+        },
+        "candles": _flat_history(high=100.00, low=99.82, close=99.92)
+        + [
+            {"high": 100.05, "low": 100.00, "close": 100.03},
+            {"open": 100.009, "high": 100.011, "low": 99.999, "close": 100.004},
+        ],
+    }
+
+    signal = MicroTrendRetest.check(fac)
+
+    assert signal is None
+
+
+def test_short_retest_rejects_low_atr_same_direction_shallow_bullish_chase() -> None:
+    fac = {
+        "close": 99.995,
+        "ma10": 99.985,
+        "ma20": 100.000,
+        "adx": 28.0,
+        "atr_pips": 3.0,
+        "spread_pips": 0.4,
+        "rsi": 41.0,
+        "trend_snapshot": {
+            "tf": "H1",
+            "direction": "short",
+            "gap_pips": 14.0,
+            "adx": 28.0,
+        },
+        "candles": _flat_history(high=100.18, low=100.00, close=100.08)
+        + [
+            {"high": 100.00, "low": 99.95, "close": 99.97},
+            {"open": 99.991, "high": 100.001, "low": 99.989, "close": 99.996},
+        ],
+    }
+
+    signal = MicroTrendRetest.check(fac)
+
+    assert signal is None

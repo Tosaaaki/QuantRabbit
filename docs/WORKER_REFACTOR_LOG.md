@@ -15445,3 +15445,37 @@
     -> `33 passed`
   - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
     -> `27 passed`
+
+### 2026-03-11 04:45 JST - `MicroTrendRetest` low-ATR shallow chase retest を対称ガード化
+- 対象:
+  - `strategies/micro/trend_retest.py`
+  - `tests/strategies/test_trend_retest.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - ユーザー指摘どおり、単発価格帯のスナップショットに合わせた fixed tuning では
+    live follow-through を改善できない。
+  - local-v2 実測では
+    `USD_JPY mid=157.962 / spread=0.8p / M1 ATR14=2.63p` と通常帯で、
+    異常市況が主因ではなかった。
+  - `MicroTrendRetest-long` は
+    `24h net_jpy=-290.2, PF=0.115`,
+    `7d net_jpy=-452.4, PF=0.152`。
+    `MicroTrendRetest-short` も `7d net_jpy=-531.9, PF=0.220` で、
+    `same-direction pressure + low ATR + shallow retest` が
+    long/short 両方向の loser cluster に残っていた。
+
+- 変更:
+  - `_chase_reset_ok()` に
+    `ATR / breakout stretch / retest depth / body / wick / close recovery`
+    を組み合わせた low-ATR shallow chase guard を追加。
+  - 条件は long/short 対称で、
+    `same-direction chase pressure` があるときだけ発火する。
+  - 固定時間帯 block、固定価格帯、shared gate への後付け判定は追加しない。
+
+- 検証:
+  - `./.venv/bin/pytest -q tests/strategies/test_trend_retest.py`
+    -> `16 passed`
+  - `./.venv/bin/pytest -q tests/workers/test_micro_multistrat_trend_flip.py`
+    -> `27 passed`

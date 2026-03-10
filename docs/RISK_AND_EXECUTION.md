@@ -2804,6 +2804,11 @@
   `rsi<=38` で bullish reclaim が high-close のときも reject する。
 - さらに long 側も
   `rsi>=62` で bearish reclaim が low-close のとき reject する。
+- さらに same-direction chase pressure 下では、
+  `low ATR + breakout stretch + shallow retest + weak reclaim candle`
+  を long/short 対称に reject する。
+  判定は `ATR / breakout stretch / retest depth / body / wick / close recovery`
+  を使う strategy-local guard で、固定時間帯や静止価格帯には依存しない。
 - どちらも `STOP_LOSS_ORDER` cluster を entry quality で潰す目的であり、
   shared order-manager / global gate / time block を追加するものではない。
 

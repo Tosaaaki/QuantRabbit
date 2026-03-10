@@ -38,6 +38,14 @@ class MicroTrendRetest:
     _CHASE_EXHAUSTION_SNAPSHOT_ADX_MIN = 24.0
     _CHASE_EXHAUSTION_LONG_RSI_MIN = 58.0
     _CHASE_EXHAUSTION_SHORT_RSI_MAX = 42.0
+    _LOW_ATR_CHASE_BREAKOUT_ATR_MIN = 0.55
+    _LOW_ATR_CHASE_BREAKOUT_ATR_STEP = 0.10
+    _LOW_ATR_CHASE_RETEST_ATR_MAX = 0.30
+    _LOW_ATR_CHASE_RETEST_ATR_STEP = 0.06
+    _LOW_ATR_CHASE_RECOVERY_MIN = 0.62
+    _LOW_ATR_CHASE_RECOVERY_STEP = 0.06
+    _LOW_ATR_CHASE_BODY_MIN_PIPS = 0.10
+    _LOW_ATR_CHASE_WICK_EDGE_PIPS = 0.15
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -195,6 +203,7 @@ class MicroTrendRetest:
         rsi: float,
         level: float,
         prev_close: float,
+        last_open: float,
         last_high: float,
         last_low: float,
         last_close: float,
@@ -213,27 +222,77 @@ class MicroTrendRetest:
             return True
         close_pos = (last_close - last_low) / candle_range
         atr_norm = max(1.0, atr_pips)
+        pressure_step = max(0, pressure - 1)
         if direction == "OPEN_LONG":
-            if rsi < MicroTrendRetest._CHASE_EXHAUSTION_LONG_RSI_MIN - max(0, pressure - 1) * 3.0:
+            if rsi < MicroTrendRetest._CHASE_EXHAUSTION_LONG_RSI_MIN - pressure_step * 3.0:
                 return True
+            breakout_stretch_pips = max(0.0, (prev_close - level) / PIP)
             retest_depth_pips = max(0.0, (level - last_low) / PIP)
             overshoot_pips = max(0.0, (last_high - level) / PIP)
-            min_reset_depth = max(0.5, atr_norm * (0.18 + max(0, pressure - 1) * 0.07))
-            max_overshoot = max(0.25, atr_norm * (0.10 - max(0, pressure - 1) * 0.03))
-            max_close_pos = 0.68 - max(0, pressure - 1) * 0.08
+            min_reset_depth = max(0.5, atr_norm * (0.18 + pressure_step * 0.07))
+            max_overshoot = max(0.25, atr_norm * (0.10 - pressure_step * 0.03))
+            max_close_pos = 0.68 - pressure_step * 0.08
+            if atr_pips <= MicroTrendRetest._LOW_ATR_PIPS:
+                shallow_breakout_min = atr_norm * (
+                    MicroTrendRetest._LOW_ATR_CHASE_BREAKOUT_ATR_MIN
+                    + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_BREAKOUT_ATR_STEP
+                )
+                shallow_retest_max = atr_norm * (
+                    MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_MAX
+                    + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_STEP
+                )
+                if breakout_stretch_pips >= shallow_breakout_min and retest_depth_pips <= shallow_retest_max:
+                    body_pips = (last_close - last_open) / PIP
+                    upper_wick_pips = max(0.0, (last_high - max(last_open, last_close)) / PIP)
+                    lower_wick_pips = max(0.0, (min(last_open, last_close) - last_low) / PIP)
+                    recovery_min = (
+                        MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_MIN
+                        + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_STEP
+                    )
+                    if (
+                        body_pips <= MicroTrendRetest._LOW_ATR_CHASE_BODY_MIN_PIPS
+                        or close_pos < recovery_min
+                        or lower_wick_pips <= upper_wick_pips + MicroTrendRetest._LOW_ATR_CHASE_WICK_EDGE_PIPS
+                    ):
+                        return False
             return (
                 retest_depth_pips >= min_reset_depth
                 and overshoot_pips <= max_overshoot
                 and close_pos <= max_close_pos
                 and last_close <= prev_close
             )
-        if rsi > MicroTrendRetest._CHASE_EXHAUSTION_SHORT_RSI_MAX + max(0, pressure - 1) * 3.0:
+        if rsi > MicroTrendRetest._CHASE_EXHAUSTION_SHORT_RSI_MAX + pressure_step * 3.0:
             return True
+        breakout_stretch_pips = max(0.0, (level - prev_close) / PIP)
         retest_depth_pips = max(0.0, (last_high - level) / PIP)
         overshoot_pips = max(0.0, (level - last_low) / PIP)
-        min_reset_depth = max(0.5, atr_norm * (0.18 + max(0, pressure - 1) * 0.07))
-        max_overshoot = max(0.25, atr_norm * (0.10 - max(0, pressure - 1) * 0.03))
-        min_close_pos = 0.32 + max(0, pressure - 1) * 0.08
+        min_reset_depth = max(0.5, atr_norm * (0.18 + pressure_step * 0.07))
+        max_overshoot = max(0.25, atr_norm * (0.10 - pressure_step * 0.03))
+        min_close_pos = 0.32 + pressure_step * 0.08
+        if atr_pips <= MicroTrendRetest._LOW_ATR_PIPS:
+            shallow_breakout_min = atr_norm * (
+                MicroTrendRetest._LOW_ATR_CHASE_BREAKOUT_ATR_MIN
+                + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_BREAKOUT_ATR_STEP
+            )
+            shallow_retest_max = atr_norm * (
+                MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_MAX
+                + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_STEP
+            )
+            if breakout_stretch_pips >= shallow_breakout_min and retest_depth_pips <= shallow_retest_max:
+                body_pips = (last_open - last_close) / PIP
+                upper_wick_pips = max(0.0, (last_high - max(last_open, last_close)) / PIP)
+                lower_wick_pips = max(0.0, (min(last_open, last_close) - last_low) / PIP)
+                recovery = 1.0 - close_pos
+                recovery_min = (
+                    MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_MIN
+                    + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_STEP
+                )
+                if (
+                    body_pips <= MicroTrendRetest._LOW_ATR_CHASE_BODY_MIN_PIPS
+                    or recovery < recovery_min
+                    or upper_wick_pips <= lower_wick_pips + MicroTrendRetest._LOW_ATR_CHASE_WICK_EDGE_PIPS
+                ):
+                    return False
         return (
             retest_depth_pips >= min_reset_depth
             and overshoot_pips <= max_overshoot
@@ -338,6 +397,7 @@ class MicroTrendRetest:
                 rsi=rsi,
                 level=level_high,
                 prev_close=prev_close,
+                last_open=last_open,
                 last_high=last_high,
                 last_low=last_low,
                 last_close=last_close,
@@ -381,6 +441,7 @@ class MicroTrendRetest:
                 rsi=rsi,
                 level=level_low,
                 prev_close=prev_close,
+                last_open=last_open,
                 last_high=last_high,
                 last_low=last_low,
                 last_close=last_close,

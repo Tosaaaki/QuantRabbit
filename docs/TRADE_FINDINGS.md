@@ -13012,3 +13012,82 @@ Status:
   - まだ `main` の local-v2 service restart / live post-check は未実施。
     commit/push 後に `scripts/local_v2_stack.sh restart` と `status` /
     主要 worker log 確認まで続ける。
+
+## 2026-03-11 04:36 JST / 改善レイヤの snapshot 依存と current flow 非追随の切り分け
+- Why/Hypothesis:
+  - ユーザー指摘どおり、「entry 実行は live でも、改善・配分・共通 penalty の一部が snapshot artifact 依存なら、相場の流れが変わった直後に効かなくなる」可能性がある。
+  - 特に `RangeFader` 系の repeated low-probability entry は、strategy-local の flow 判定が弱く、shared 側の artifact trim/reject が後追いになっている疑いがある。
+- Expected Good:
+  - live tick/candle/factor に主導権を戻し、artifact は slow baseline / audit に降格すれば、同じ低品質 setup の連発を減らせる。
+  - strategy 全体ではなく `setup_fingerprint / trend_snapshot / microstructure bucket` 単位で補正できれば、regime shift 後の立ち上がりが速くなる。
+- Expected Bad:
+  - snapshot 系を急に弱めすぎると、低 sample 戦略で loser lane の抑制が外れ、参加率だけ先に回復して損失が増える。
+  - freshness gate を厳格化しすぎると artifact 欠損時に保守的 skip が増え、entry 数が落ちる。
+- Observed/Fact:
+  - 2026-03-11 04:32 JST 前後の OANDA 観測は `USD/JPY 157.998` 近辺、spread `0.8 pips`、ATR14 は `M1 2.59 pips / M5 7.43 pips`、pricing/openTrades/candles 応答は `236-355 ms` で、異常流動性ではなかった。
+  - local-v2 主要サービスは active。`logs/health_snapshot.json` では `data_lag_ms=628`, `decision_latency_ms=21.5` と execution path は健全。
+  - 直近15分は `orders.db` で `entry_probability_reject=2216`, `perf_block=1583`, `filled=202`。`trades.db` は `200 trades / -197.8 pips / avg -0.989 pips`。
+  - `RangeFader-sell-fade` は 2026-03-11 04:34-04:35 JST に `entry_probability 0.371-0.378`、`confidence 33`、`range_reason=volatility_compression` のほぼ同一 thesis を数秒おきに再送しており、current flow に対する strategy-local の再評価よりも shared reject が先に働いている。
+  - code 上も freshness 方針が不統一。
+    - stale skip あり: `participation_alloc`, `market_context`, `order_manager` の tick/factor stale guards。
+    - stale age gate 弱い/未実装: `dynamic_alloc`, `strategy_feedback`, `auto_canary`, `pattern_gate`。
+  - artifact 実測:
+    - `config/dynamic_alloc.json as_of=2026-03-10T19:33:58Z`（約17秒齢）
+    - `config/participation_alloc.json as_of=2026-03-10T19:31:03Z`（約192秒齢）
+    - `config/pattern_book_deep.json as_of=2026-03-10T19:30:03Z`（約252秒齢）
+    - `analysis/macro_snapshot_builder.py` は 10分 refresh、`analysis/market_context.py` は 30秒 refresh / 最大1800秒 stale 許容。
+- Verdict:
+  - `pending`
+  - 「全部が静止画」は誤りだが、「改善レイヤの一部が窓集計 artifact 依存で、しかも freshness 制御が揃っていない」は事実。
+  - 現症の主因は「shared gate が厳しすぎること単体」ではなく、「strategy-local が current flow を十分に折り込まず、artifact ベース trim/reject が後追いで効いていること」。
+- Next Action:
+  - `RangeFader` を優先対象にし、strategy-local で `recent 3-5 candles pressure / ma_gap-ATR ratio / setup_fingerprint` を使って low-quality fade の repeated emission を止める。
+  - `dynamic_alloc` と `strategy_feedback` に payload age / drift overlay の扱いを追加し、slow baseline と fast overlay を分離する。
+  - shared layer には新しい一律 gate を足さず、`entry_thesis` に `setup_fingerprint`, `flow_regime`, `microstructure_bucket` を標準化して、strategy-local と exit worker に引き回す。
+
+## 2026-03-11 04:45 JST / `MicroTrendRetest` の shallow chase retest を動的ガードで対称補強
+- Why/Hypothesis:
+  - ユーザー指摘どおり、単発の価格スナップショットに合わせた fixed tuning は
+    1分後に腐るため採らない。
+  - 代わりに local-v2 実測の multi-window RCA を実施した。
+    `OANDA snapshot: USD_JPY mid=157.962 spread=0.8p`,
+    `M1 ATR14=2.63p / ATR60=3.11p / 60m range=20.4p`,
+    `M5 ATR14=8.84p` で市況は通常帯。
+  - そのうえで `MicroTrendRetest-long` は
+    `24h net_jpy=-290.2, PF=0.115`,
+    `7d net_jpy=-452.4, PF=0.152` と継続劣化。
+    `MicroTrendRetest-short` も `7d net_jpy=-531.9, PF=0.220`。
+  - loser cluster は
+    `up_strong/down_strong + vol:tight + atr:low/ultra_low + shallow retest`
+    に寄っており、
+    現行 `_chase_reset_ok()` が
+    same-direction pressure 下の weak reclaim candle をまだ通していると判断。
+- Expected Good:
+  - `STOP_LOSS_ORDER` へ落ちる shallow chase retest を
+    `ATR / breakout stretch / retest depth / candle body-wick / recovery`
+    で動的に reject し、
+    時間帯 block や固定価格帯 tuning なしに
+    `MicroTrendRetest` の expectancy を改善する。
+- Expected Bad:
+  - low ATR の clean retest まで過剰に落とすと
+    participation が下がるリスクがある。
+  - 特に strong continuation 後の深め reset を許したいので、
+    `breakout stretch` と `retest depth` を ATR 比で併用し、
+    shallow case だけを狙う。
+- Observed/Fact:
+  - `strategies/micro/trend_retest.py` の `_chase_reset_ok()` を更新し、
+    same-direction chase pressure 下の
+    `low ATR + shallow retest + weak reclaim candle`
+    を long/short 対称に reject する guard を追加。
+  - 実装は price snapshot 固定ではなく、
+    `ATR / breakout stretch / retest depth / body / wick / close recovery`
+    の runtime feature だけを使用。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/strategies/test_trend_retest.py` -> `16 passed`
+    - `./.venv/bin/pytest -q tests/workers/test_micro_multistrat_trend_flip.py` -> `27 passed`
+- Verdict: pending
+- Next Action:
+  - commit/push 後に `quant-micro-trendretest` 系を restart し、
+    `MicroTrendRetest-long/-short` の `STOP_LOSS_ORDER` 件数、
+    `filled` / `strategy_cooldown` / `perf_block` 比率、
+    24h `net_jpy` / `PF` を再観測する。
