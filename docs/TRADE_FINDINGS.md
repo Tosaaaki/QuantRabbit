@@ -12003,3 +12003,35 @@ Status:
     -> `6 passed`
   - `python3 -m compileall execution/strategy_entry.py workers/common/participation_alloc.py`
     -> 成功
+
+## 2026-03-10 20:xx JST / RangeFader の cadence_floor を strategy-local cooldown へ接続
+- 目的:
+  - マイナスが出すぎる loser lane を、shared gate 追加ではなく strategy-local frequency 制御で動的に絞る。
+- 市況確認:
+  - 追加確認時も `logs/orderbook_snapshot.json` は `spread=0.8p`、
+    `logs/factor_cache.json` は `ATR(M1)=3.54p / M5=7.33p / H1=22.82p` で通常帯。
+- 実測:
+  - `config/participation_alloc.json` は `RangeFader action=trim_units cadence_floor=0.9` を出していた。
+  - しかし runtime では `cadence_floor` が未使用で、
+    `logs/entry_path_summary_latest.json` は `RangeFader attempts=1710 / fills=46 / perf_block=1664`。
+  - つまり「動的に頻度を落とせ」という artifact が出ていても、
+    worker 側 cooldown は静的のままだった。
+- 変更:
+  - `workers/scalp_rangefader/worker.py`
+    - `participation_alloc` を read-only で読み、
+      fresh `trim_units` + `protect_frequency=true` + `cadence_floor<1.0`
+      のときだけ cooldown を `base / cadence_floor` へ延長。
+    - 例: `20s / 0.9 = 22.2s`。
+    - stale / missing / hold / boost は no-op のまま。
+- 意図:
+  - 新しい global gate を足さず、
+    RangeFader の strategy-local cooldown だけを artifact 駆動へ寄せる。
+  - サイズだけではなく頻度側も動的にすることで、
+    loser lane の「出すぎ」を抑える。
+- 検証:
+  - `pytest -q tests/workers/test_scalp_rangefader_worker.py`
+    -> `5 passed`
+  - `pytest -q tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_participation_allocator.py`
+    -> `6 passed`
+  - `python3 -m compileall workers/scalp_rangefader/worker.py tests/workers/test_scalp_rangefader_worker.py`
+    -> 成功

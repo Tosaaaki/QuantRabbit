@@ -15007,3 +15007,29 @@
     -> `6 passed`
   - `python3 -m compileall execution/strategy_entry.py workers/common/participation_alloc.py`
     -> 成功
+
+### 2026-03-10 RangeFader cooldown を participation cadence 連動へ更新
+- 対象:
+  - `workers/scalp_rangefader/worker.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `scripts/participation_allocator.py` は `cadence_floor` を生成していたが、
+    runtime 側に使用先がなく dead signal になっていた。
+  - local 実測では `RangeFader action=trim_units cadence_floor=0.9` にもかかわらず
+    `attempts=1710 / fills=46 / perf_block=1664` と過剰試行が継続していた。
+
+- 変更:
+  - `workers/scalp_rangefader/worker.py` の既存 `_entry_cooldown_sec()` に
+    `participation_alloc` 読み込みを追加。
+  - fresh `trim_units` + `protect_frequency=true` + `cadence_floor<1.0`
+    のときだけ cooldown を `base / cadence_floor` に延長。
+  - stale / missing / hold / boost では既存静的 cooldown を維持。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_rangefader_worker.py`
+    -> `5 passed`
+  - `python3 -m compileall workers/scalp_rangefader/worker.py tests/workers/test_scalp_rangefader_worker.py`
+    -> 成功

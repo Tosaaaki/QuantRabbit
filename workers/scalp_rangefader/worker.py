@@ -23,6 +23,9 @@ from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
 from workers.common.air_state import evaluate_air
+from workers.common.participation_alloc import (
+    load_strategy_profile as load_participation_profile,
+)
 
 from . import config
 
@@ -40,6 +43,15 @@ _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, pr
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = env_bool("STRATEGY_PARTICIPATION_ALLOC_ENABLED", True)
+_STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
+    "STRATEGY_PARTICIPATION_ALLOC_PATH",
+    "config/participation_alloc.json",
+)
+_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC = max(
+    1.0,
+    env_float("STRATEGY_PARTICIPATION_ALLOC_TTL_SEC", 30.0),
+)
 
 
 def _bb_float(value):
@@ -122,11 +134,44 @@ def _entry_cooldown_key(signal_tag: str, side: str) -> str:
     return f"{tag_key}:{side_key}"
 
 
+def _participation_cadence_floor(signal_tag: str) -> float:
+    if not _STRATEGY_PARTICIPATION_ALLOC_ENABLED:
+        return 1.0
+    try:
+        profile = load_participation_profile(
+            signal_tag or RangeFader.name,
+            config.POCKET,
+            path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
+            ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        return 1.0
+    if not isinstance(profile, dict) or not profile.get("found"):
+        return 1.0
+    if profile.get("payload_stale") is True:
+        return 1.0
+    if not bool(profile.get("protect_frequency")):
+        return 1.0
+    if str(profile.get("action") or "").strip().lower() != "trim_units":
+        return 1.0
+    cadence_floor = _bb_float(profile.get("cadence_floor"))
+    if cadence_floor is None or cadence_floor <= 0.0 or cadence_floor >= 1.0:
+        return 1.0
+    return float(cadence_floor)
+
+
 def _entry_cooldown_sec(signal_tag: str) -> float:
     tag_key = (signal_tag or RangeFader.name).strip().lower()
     if tag_key.startswith("rangefader-buy-"):
-        return max(0.0, float(getattr(config, "BUY_COOLDOWN_SEC", config.COOLDOWN_SEC)))
-    return max(0.0, float(config.COOLDOWN_SEC))
+        cooldown_sec = max(0.0, float(getattr(config, "BUY_COOLDOWN_SEC", config.COOLDOWN_SEC)))
+    else:
+        cooldown_sec = max(0.0, float(config.COOLDOWN_SEC))
+    if cooldown_sec <= 0.0:
+        return cooldown_sec
+    cadence_floor = _participation_cadence_floor(signal_tag)
+    if cadence_floor < 1.0:
+        cooldown_sec = max(cooldown_sec, cooldown_sec / cadence_floor)
+    return cooldown_sec
 
 
 def _entry_cooldown_active(

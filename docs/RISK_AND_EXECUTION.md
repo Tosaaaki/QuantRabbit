@@ -878,6 +878,17 @@
 - side に依らず `abs(units)` 基準で監査 reason を決める。
   `sell` 側でも boost が trim と誤記録されないことを不変条件とする。
 
+### RangeFader cadence 連動 cooldown（2026-03-10）
+- `workers/scalp_rangefader/worker.py` は
+  `participation_alloc` の frequency signal も使う。
+- fresh payload で
+  `protect_frequency=true`, `action=trim_units`, `cadence_floor<1.0`
+  のときだけ、既存 entry cooldown を `base / cadence_floor` へ延長する。
+- これは strategy-local の frequency 調整であり、
+  shared global gate ではない。
+- stale / missing / hold / boost は no-op とし、
+  static cooldown を維持する。
+
 ### orders.db ログ運用補足（lock耐性）
 - `execution/order_manager.py` の orders logger は lock 検知時に
   `ORDER_DB_LOG_RETRY_*` の短時間 backoff 再試行を行う。
