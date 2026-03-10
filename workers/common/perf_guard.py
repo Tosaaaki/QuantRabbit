@@ -1179,14 +1179,27 @@ def perf_scale(tag: str, pocket: str, *, env_prefix: Optional[str] = None) -> Pe
     score = 0
     if pf >= cfg.scale_pf_min:
         score += 1
+    else:
+        score -= 1
     if win_rate >= cfg.scale_win_min:
         score += 1
+    else:
+        score -= 1
     if avg_pips >= cfg.scale_avg_pips_min:
         score += 1
-    mult = min(cfg.scale_max_mult, 1.0 + score * cfg.scale_step)
-    if mult < 1.0:
-        mult = 1.0
-    reason = "boost" if mult > 1.0 else "flat"
+    else:
+        score -= 1
+    if pf < 1.0 and avg_pips < 0.0:
+        score -= 1
+    min_mult = max(0.6, 1.0 - (cfg.scale_step * 4.0))
+    mult = 1.0 + score * cfg.scale_step
+    mult = max(min_mult, min(cfg.scale_max_mult, mult))
+    if mult > 1.0:
+        reason = "boost"
+    elif mult < 1.0:
+        reason = "reduce"
+    else:
+        reason = "flat"
     dec = PerfScaleDecision(mult, reason, n, pf, win_rate, avg_pips)
     _scale_cache[key] = (now, dec.multiplier, dec.reason, dec.sample, dec.pf, dec.win_rate, dec.avg_pips)
     return dec

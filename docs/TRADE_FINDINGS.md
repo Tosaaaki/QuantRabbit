@@ -11890,3 +11890,72 @@ Status:
     既存 guard 群を維持したまま
     strategy-control だけ reopen して、
     現在捨てている strong setup を再び通す。
+
+## 2026-03-10 19:45-20:10 JST / perf scale を boost-only から dynamic reduce へ拡張
+
+- 市況:
+  - `2026-03-10 19:47 JST` の USD/JPY は
+    `157.822/157.830`, spread `0.8p`,
+    `ATR(M1/M5/H1)=2.85/6.83/22.77p`,
+    `data_lag_ms=640`, `decision_latency_ms=15.5ms`。
+  - `health_snapshot` では直近1h `filled=14`、
+    `orders_recent` は `10:41-10:44 UTC` まで更新。
+  - `quant-market-data-feed.log` の OANDA pricing stream は
+    直近 restart 後も `HTTP 200` 継続。
+  - 過去には `summary/openTrades` の `502/503/read timeout` があるが、
+    直近末尾では再発していないため今回は通常帯として扱った。
+
+- 実測:
+  - 直近3h `orders.db` は
+    `scalp perf_block=1580`, `scalp probability_scaled=1586`, `scalp filled=11`。
+  - `perf_block` の大半は `RangeFader-*` で、
+    entry path は
+    `order_manager_perf_guard_strategy -> block`
+    `reason=failfast_soft:pf=0.70 win=0.78 n=79`。
+  - 同時に `config/dynamic_alloc.json` は
+    `RangeFader score=0.086 lot_multiplier=0.231` まで縮小済みで、
+    既に dynamic alloc は participation を絞っていた。
+  - 一方 `perf_scale('RangeFader','scalp')` は
+    `pf=0.698 / win_rate=0.785 / avg_pips=0.186` で、
+    旧実装だと `boost 1.05` を返していた。
+    block 側と scale 側で評価軸が噛み合っていなかった。
+  - `scalp_extrema_reversal_live` は 7d
+    `pf=0.217 / win=0.242 / avg_pips=-1.061`、
+    `MomentumBurst` は 7d
+    `pf=1.548 / win=0.709 / avg_pips=1.831` と、
+    戦略ごとに「縮小すべき lane」と
+    「継続 participation すべき lane」が明確に分かれていた。
+
+- 対応:
+  - `workers/common/perf_guard.py`
+    - `perf_scale` を boost-only から
+      `boost / flat / reduce` の対称スコアへ拡張。
+    - `pf`, `win_rate`, `avg_pips` の miss を penalty として扱い、
+      `pf<1.0 && avg_pips<0.0` の lane は追加 penalty を入れる。
+  - `workers/common/dyn_size.py`
+    - `perf_scale` の `multiplier<1.0` を実 units に反映。
+    - `spread/adx/signal/perf` のどれかが悪化しているときは
+      base floor への強制ブレンドをやめ、
+      downscale をそのまま残す。
+  - `ops/env/quant-order-manager.env`
+    - `RANGEFADER_PERF_GUARD_MODE=reduce`
+      を追加し、
+      soft failfast を即 block ではなく
+      warn + dynamic sizing に寄せる。
+
+- 意図:
+  - hard failfast / margin closeout / SL-loss-rate の
+    hard block は残す。
+  - soft 悪化は
+    `block` ではなく `size down` へ寄せ、
+    市況に合わせて participation を滑らかに調整する。
+  - shared order-manager に新しい global gate は追加せず、
+    既存 perf-guard / dyn-size の役割分担だけを整える。
+
+- 検証:
+  - `pytest tests/test_perf_guard_failfast.py tests/workers/common/test_dyn_size.py -q`
+    -> `19 passed`
+  - ローカル確認では
+    `perf_scale('RangeFader','scalp') -> reduce 0.95`,
+    `perf_scale('scalp_extrema_reversal_live','scalp_fast') -> reduce 0.8`
+    を確認。

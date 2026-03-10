@@ -2591,6 +2591,27 @@
 - 目的は shared gate 緩和ではなく、
   stale dedicated env による `MomentumBurst` reaccel cadence 劣化を解消すること。
 
+### 2026-03-10 perf guard / dyn size current behavior
+- `workers/common/perf_guard.py` の `perf_scale` は
+  current local-v2 で `boost / flat / reduce` を返す。
+- 評価軸は `pf / win_rate / avg_pips` で、
+  miss は penalty として扱う。
+  `pf<1.0 && avg_pips<0.0` の lane は追加 penalty を入れて
+  loser lane の縮小を優先する。
+- `workers/common/dyn_size.py` は
+  `perf_mult<1.0` も units に反映し、
+  `spread/adx/signal/perf` のいずれかが悪化しているときは
+  base floor へ引き戻さずに downscale を残す。
+- hard block は従来どおり
+  `margin_closeout / hard failfast / hard sl_loss_rate`
+  を優先し、
+  shared order-manager に新しい一律 gate は足さない。
+- `RangeFader` は
+  `RANGEFADER_PERF_GUARD_VALUE_COLUMN=pl_pips`,
+  `RANGEFADER_PERF_GUARD_MODE=reduce`
+  を current 値とし、
+  soft failfast は warn + dynamic sizing に寄せる。
+
 ### 2026-03-10 local-v2 `trade_min` winner-cover baseline
 - local-v2 の標準復旧プロファイル `trade_min` は、
   core + 既存 minimal lane だけでなく

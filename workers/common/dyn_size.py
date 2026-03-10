@@ -135,15 +135,19 @@ def compute_units(
         try:
             perf = perf_guard.perf_scale(strategy_tag, pocket, env_prefix=env_prefix)
             perf_mult = float(perf.multiplier or 1.0)
-            if perf_mult > 1.0:
+            if perf_mult != 1.0:
                 scaled_units = int(round(scaled_units * perf_mult))
         except Exception:
             perf_mult = 1.0
     # Soft floor: prefer base_entry_units but allow going below when conditions are poor
     if scaled_units < base_entry_units:
-        # Blend towards base by 50%
-        blended = int(round(0.5 * base_entry_units + 0.5 * scaled_units))
-        scaled_units = max(min_units, blended)
+        reducing = any(scale < 1.0 for scale in (s_spread, s_adx, s_sig, perf_mult))
+        if reducing:
+            scaled_units = max(min_units, scaled_units)
+        else:
+            # Blend towards base by 50% only when the market/risk profile is healthy.
+            blended = int(round(0.5 * base_entry_units + 0.5 * scaled_units))
+            scaled_units = max(min_units, blended)
 
     # 7) Margin cap (usage budget)
     cap_units = 0

@@ -881,3 +881,53 @@ def test_perf_guard_strategy_min_trades_override_for_base_guard(
     dec = perf_guard.is_allowed("QuickBase", "scalp")
     assert dec.allowed is False
     assert dec.reason.startswith("pf=")
+
+
+def test_perf_scale_reduces_when_recent_stats_are_all_weak(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(12):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="ScaleDown",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.2,
+            close_time=now,
+        )
+    for _ in range(8):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="ScaleDown",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=0.3,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "reduce",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_SCALE_ENABLED": "1",
+            "PERF_SCALE_LOOKBACK_DAYS": "7",
+            "PERF_SCALE_MIN_TRADES": "10",
+            "PERF_SCALE_PF_MIN": "1.10",
+            "PERF_SCALE_WIN_MIN": "0.55",
+            "PERF_SCALE_AVG_PIPS_MIN": "0.10",
+            "PERF_SCALE_STEP": "0.05",
+            "PERF_SCALE_MAX_MULT": "1.25",
+        },
+    )
+
+    dec = perf_guard.perf_scale("ScaleDown", "scalp")
+    assert dec.reason == "reduce"
+    assert dec.multiplier == 0.8
+    assert dec.sample == 20

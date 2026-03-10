@@ -14937,3 +14937,42 @@
     forecast / perf / probability guard は維持したまま、
     strategy-control だけ reopen して
     strong setup の participation を戻す。
+
+### 2026-03-10 perf scale dynamic reduce + RangeFader soft-failfast reopen
+- 対象:
+  - `workers/common/perf_guard.py`
+  - `workers/common/dyn_size.py`
+  - `ops/env/quant-order-manager.env`
+  - `tests/test_perf_guard_failfast.py`
+  - `tests/workers/common/test_dyn_size.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - runtime では `RangeFader-*` が
+    `failfast_soft:pf=0.70 win=0.78 n=79` で block されていた。
+  - しかし同じ lookback の `dynamic_alloc` は
+    `lot_multiplier=0.231` まで縮小済みで、
+    さらに `perf_scale` の旧実装は boost-only のため
+    `RangeFader` に `1.05` boost を返していた。
+  - つまり shared perf レイヤが
+    `block` と `boost` を同時に出せる不整合があった。
+
+- 変更:
+  - `perf_scale` を
+    `pf / win_rate / avg_pips` の hit/miss を対称評価する
+    `boost/flat/reduce` へ更新。
+  - `pf<1.0 && avg_pips<0.0` の lane は追加 penalty を入れ、
+    loser lane の縮小を強める。
+  - `dyn_size.compute_units()` は
+    `perf_mult<1.0` を実 units に反映し、
+    degradation があるときは base floor へのブレンドを止める。
+  - `RANGEFADER_PERF_GUARD_MODE=reduce` を current 化し、
+    soft failfast を warn + dynamic sizing に寄せる。
+
+- 検証:
+  - `pytest tests/test_perf_guard_failfast.py tests/workers/common/test_dyn_size.py -q`
+    -> `19 passed`
+  - ローカル算出:
+    - `RangeFader`: `reduce 0.95`
+    - `scalp_extrema_reversal_live`: `reduce 0.80`
