@@ -9,6 +9,28 @@ os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
 from workers.scalp_rangefader import worker as rf_worker
 
 
+def test_apply_signal_flow_context_copies_rangefader_signal_metadata() -> None:
+    thesis = {"strategy_tag": "RangeFader-sell-fade"}
+    signal = {
+        "tag": "RangeFader-sell-fade",
+        "continuation_pressure": 2,
+        "flow_regime": "trend_long",
+        "ma_gap_pips": 3.4,
+        "gap_ratio": 1.18,
+        "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+    }
+
+    updated = rf_worker._apply_signal_flow_context(thesis, signal)
+
+    assert updated is thesis
+    assert thesis["continuation_pressure"] == 2
+    assert thesis["flow_regime"] == "trend_long"
+    assert thesis["ma_gap_pips"] == 3.4
+    assert thesis["gap_ratio"] == 1.18
+    assert thesis["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert thesis["signal_flow_context"]["continuation_pressure"] == 2
+
+
 def test_entry_cooldown_is_scoped_by_signal_tag_and_side(monkeypatch) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 24.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 16.0)

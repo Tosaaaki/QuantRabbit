@@ -5,6 +5,37 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）shared artifact を stale no-op 化し、`RangeFader` の flow metadata を live thesis へ統一
+
+- 対象:
+  - `analysis/strategy_feedback.py`
+  - `analysis/auto_canary.py`
+  - `workers/common/pattern_gate.py`
+  - `execution/strategy_entry.py`
+  - `strategies/scalping/range_fader.py`
+  - `workers/scalp_rangefader/worker.py`
+  - `tests/analysis/test_strategy_feedback.py`
+  - `tests/analysis/test_auto_canary.py`
+  - `tests/workers/test_pattern_gate.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+- 変更:
+  - `strategy_feedback` / `auto_canary`
+    - payload timestamp または mtime で freshness を判定し、stale advice/override は runtime で無効化するようにした。
+    - `strategy_feedback` は stale main payload を空扱いにしつつ、fresh な counterfactual overlay だけは継続できるようにした。
+  - `pattern_gate`
+    - DB/JSON source に最大 age 判定を追加し、`db_stale` / `json_stale` source は block/reduce の根拠に使わないようにした。
+  - `strategy_entry`
+    - `technical_context` と tick から `live_setup_context` を生成し、`flow_regime`, `microstructure_bucket`, `setup_fingerprint` を `entry_thesis` に標準注入するようにした。
+    - stale `dynamic_alloc` profile は trim しないようにした。
+  - `RangeFader`
+    - recent 4-bar continuation、`ma_gap/ATR`, `ADX`, `DI`, `range_score` を使う side 別 `flow_headwind` pressure を追加し、continuation が強い局面の shallow fade を strategy-local に reject するようにした。
+    - allowed signal は `continuation_pressure`, `flow_regime`, `ma_gap_pips`, `gap_ratio`, `setup_fingerprint` を返し、worker はそのまま `entry_thesis` へ引き回す。
+- 意図:
+  - live entry path の主導権を current tick/candle/factor に戻し、slow-loop artifact は stale 時に自動で advisory/no-op へ下げる。
+  - `RangeFader` の repeated low-quality fade を shared reject に頼らず strategy-local に減らし、同じ loser setup の連発を抑える。
+
 ### 2026-03-11（追記）local-v2 feedback artifact の Git 方針を固定し、RangeFader current RCA を task/ops へ同期
 
 - 対象:

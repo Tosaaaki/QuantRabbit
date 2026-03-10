@@ -13168,3 +13168,49 @@ Status:
     `MicroTrendRetest-long/-short` の `STOP_LOSS_ORDER` 件数、
     `filled` / `strategy_cooldown` / `perf_block` 比率、
     24h `net_jpy` / `PF` を再観測する。
+
+## 2026-03-11 04:55 JST / stale artifact を no-op 化し、`RangeFader` を current flow へ寄せる
+- Why/Hypothesis:
+  - 2026-03-11 04:36 JST の RCA どおり、問題は「全部が静止 snapshot」ではなく、
+    live entry path の上に stale artifact と strategy-local current-flow 不足が重なっていたことだった。
+  - shared artifact が stale のまま trim/block すると、
+    相場が切り替わっても loser setup の後追い reject か、古い winner/loser bias が残る。
+  - `RangeFader` は repeated low-probability fade を shared reject で落とすのではなく、
+    recent continuation と `ma_gap/ATR` で strategy-local に止めるほうが正しい。
+- Expected Good:
+  - stale `strategy_feedback` / `auto_canary` / `pattern_gate` が live entry に効き続ける状態を減らせる。
+  - `entry_thesis` に `flow_regime`, `microstructure_bucket`, `setup_fingerprint`,
+    `continuation_pressure` を残すことで、entry/exit/監査が同じ live context を参照できる。
+  - `RangeFader` の same-thesis repeated fade が減り、
+    shared `entry_probability_reject` / `perf_block` へ行く前に loser fade を間引ける。
+- Expected Bad:
+  - freshness gate を厳しくしすぎると、artifact 欠損窓で補助 trim が薄くなり entry が荒れるリスクがある。
+  - `RangeFader` の flow guard が強すぎると、極端な逆張り winner まで取り逃がす可能性がある。
+- Observed/Fact:
+  - 実装:
+    - `analysis/strategy_feedback.py`
+      - feedback / counterfactual payload に最大 age 判定を追加し、stale main payload は空扱い、fresh counterfactual のみ overlay 可能にした。
+    - `analysis/auto_canary.py`
+      - stale override を no-op にした。
+    - `workers/common/pattern_gate.py`
+      - stale DB/JSON source を `db_stale/json_stale` として読み飛ばすようにした。
+    - `execution/strategy_entry.py`
+      - stale `dynamic_alloc` profile は trim しない。
+      - `technical_context` から `live_setup_context` を生成し、
+        `flow_regime`, `microstructure_bucket`, `setup_fingerprint` を `entry_thesis` に注入するようにした。
+    - `strategies/scalping/range_fader.py`
+      - recent 4-bar continuation + `ma_gap/ATR` + `ADX/DI` による `flow_headwind` pressure で
+        continuation 強めの shallow fade を reject するようにした。
+      - allowed signal に `continuation_pressure`, `flow_regime`, `ma_gap_pips`, `gap_ratio`, `setup_fingerprint` を露出するようにした。
+    - `workers/scalp_rangefader/worker.py`
+      - 上記 signal metadata を `entry_thesis` へコピーするようにした。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/analysis/test_strategy_feedback.py tests/analysis/test_auto_canary.py` -> `6 passed`
+    - `./.venv/bin/pytest -q tests/workers/test_pattern_gate.py tests/workers/test_scalp_rangefader_worker.py` -> `15 passed`
+    - `./.venv/bin/pytest -q tests/execution/test_strategy_entry_adaptive_layers.py tests/strategies/test_scalp_thresholds.py` -> `16 passed`
+- Verdict: pending
+- Next Action:
+  - `main` へ push 後に local-v2 を restart し、
+    `RangeFader-sell-fade` / `RangeFader-buy-fade` の repeated reject 本数、
+    `entry_probability_reject` / `perf_block` / `filled` 比率、
+    `signal_flow_context` と `live_setup_context` の監査 payload を live で確認する。

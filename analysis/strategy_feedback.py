@@ -31,6 +31,10 @@ if _FEEDBACK_PATH is not None and _FEEDBACK_PATH.strip().lower() in {"", "none",
     _FEEDBACK_PATH = None
 
 _FEEDBACK_REFRESH_SEC = float(os.getenv("STRATEGY_FEEDBACK_REFRESH_SEC", "30") or 30)
+_FEEDBACK_MAX_AGE_SEC = max(
+    0.0,
+    float(os.getenv("STRATEGY_FEEDBACK_MAX_AGE_SEC", "1800") or 1800.0),
+)
 
 _PATH: Optional[Path] = Path(_FEEDBACK_PATH) if _FEEDBACK_PATH else None
 _CACHE: dict[str, Any] = {
@@ -56,6 +60,16 @@ _COUNTERFACTUAL_PATH: Optional[Path] = (
 )
 _COUNTERFACTUAL_REFRESH_SEC = float(
     os.getenv("STRATEGY_FEEDBACK_COUNTERFACTUAL_REFRESH_SEC", str(_FEEDBACK_REFRESH_SEC)) or _FEEDBACK_REFRESH_SEC
+)
+_COUNTERFACTUAL_MAX_AGE_SEC = max(
+    0.0,
+    float(
+        os.getenv(
+            "STRATEGY_FEEDBACK_COUNTERFACTUAL_MAX_AGE_SEC",
+            str(_FEEDBACK_MAX_AGE_SEC),
+        )
+        or _FEEDBACK_MAX_AGE_SEC
+    ),
 )
 _COUNTERFACTUAL_CACHE: dict[str, Any] = {"loaded": 0.0, "mtime": None, "payload": None}
 
@@ -249,6 +263,53 @@ def _to_float(value: object, default: Optional[float] = None) -> Optional[float]
     return parsed
 
 
+def _parse_iso8601_epoch(raw: object) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        import datetime as dt
+
+        parsed = dt.datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).timestamp()
+
+
+def _payload_freshness(
+    payload: Optional[dict[str, Any]],
+    *,
+    path: Optional[Path],
+    max_age_sec: float,
+) -> dict[str, object]:
+    age_sec: Optional[float] = None
+    timestamp_source = ""
+    if isinstance(payload, dict):
+        for key in ("updated_at", "generated_at", "as_of", "timestamp"):
+            epoch = _parse_iso8601_epoch(payload.get(key))
+            if epoch is None:
+                continue
+            age_sec = max(0.0, time.time() - epoch)
+            timestamp_source = str(key)
+            break
+    if age_sec is None and path is not None:
+        try:
+            age_sec = max(0.0, time.time() - float(path.stat().st_mtime))
+            timestamp_source = "mtime"
+        except OSError:
+            age_sec = None
+    stale = bool(max_age_sec > 0.0 and age_sec is not None and age_sec > max_age_sec)
+    return {
+        "age_sec": age_sec,
+        "timestamp_source": timestamp_source or None,
+        "stale": stale,
+    }
+
+
 def _to_bool(value: object, default: bool = True) -> bool:
     if value is None:
         return default
@@ -393,6 +454,13 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
     payload = _read_counterfactual_payload()
     if not isinstance(payload, dict):
         return {}
+    freshness = _payload_freshness(
+        payload,
+        path=_COUNTERFACTUAL_PATH,
+        max_age_sec=_COUNTERFACTUAL_MAX_AGE_SEC,
+    )
+    if freshness.get("stale"):
+        return {}
     strategy_like = str(payload.get("strategy_like") or "").strip()
     if strategy_like and not strategy_like_matches(strategy_tag, strategy_like):
         return {}
@@ -516,6 +584,13 @@ def current_advice(
     payload = _read_payload()
     if not isinstance(payload, dict):
         return None
+    freshness = _payload_freshness(
+        payload,
+        path=_PATH,
+        max_age_sec=_FEEDBACK_MAX_AGE_SEC,
+    )
+    if freshness.get("stale"):
+        payload = {}
     strategies = payload.get("strategies")
     known_keys = list(strategies.keys()) if isinstance(strategies, dict) else None
     strategy_keys = _strategy_lookup_candidates(strategy_tag, known_keys=known_keys)
@@ -658,6 +733,9 @@ def current_advice(
         "source": str(_PATH) if _PATH else "",
         "version": payload.get("version"),
         "updated_at": payload.get("updated_at"),
+        "payload_age_sec": freshness.get("age_sec"),
+        "payload_timestamp_source": freshness.get("timestamp_source"),
+        "payload_stale": bool(freshness.get("stale")),
     }
     if counterfactual:
         advice["_meta"]["counterfactual"] = dict(counterfactual.get("meta") or {})

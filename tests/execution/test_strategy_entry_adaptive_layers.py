@@ -248,3 +248,70 @@ def test_apply_auto_canary_caps_units_and_probability(monkeypatch) -> None:
     assert prob == 0.59
     assert isinstance(payload, dict)
     assert thesis["auto_canary"]["reason"] == "loser_cluster_canary"
+
+
+def test_apply_dynamic_alloc_trim_skips_stale_profile(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_strategy_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "strategy_key": "MicroRangeBreak",
+            "lot_multiplier": 0.25,
+            "payload_stale": True,
+        },
+        raising=False,
+    )
+
+    thesis: dict = {}
+    units, reason = strategy_entry._apply_dynamic_alloc_trim(
+        strategy_tag="MicroRangeBreak",
+        pocket="micro",
+        units=100,
+        min_units=10,
+        entry_thesis=thesis,
+    )
+
+    assert units == 100
+    assert reason is None
+    assert "dynamic_alloc" not in thesis
+
+
+def test_inject_live_setup_context_records_flow_regime_and_fingerprint() -> None:
+    thesis = {
+        "strategy_tag": "RangeFader-sell-fade",
+        "range_mode": "transition",
+        "range_score": 0.24,
+        "technical_context": {
+            "indicators": {
+                "M1": {
+                    "atr_pips": 2.6,
+                    "rsi": 69.4,
+                    "adx": 28.2,
+                    "plus_di": 31.0,
+                    "minus_di": 14.0,
+                    "ma10": 158.05,
+                    "ma20": 158.02,
+                }
+            },
+            "ticks": {
+                "spread_pips": 0.8,
+                "tick_rate": 9.4,
+            },
+        },
+    }
+
+    updated, payload = strategy_entry._inject_live_setup_context(thesis, units=-120)
+
+    assert updated is thesis
+    assert isinstance(payload, dict)
+    assert payload["flow_regime"] == "trend_long"
+    assert payload["microstructure_bucket"] == "tight_fast"
+    assert payload["gap_bucket"] == "up_strong"
+    assert thesis["flow_regime"] == "trend_long"
+    assert thesis["microstructure_bucket"] == "tight_fast"
+    assert thesis["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    assert thesis["live_setup_context"]["setup_fingerprint"] == thesis["setup_fingerprint"]

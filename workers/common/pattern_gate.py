@@ -138,6 +138,7 @@ def _row_rank(row: dict[str, Any]) -> tuple[int, float]:
 
 _ENABLED = _env_bool("ORDER_PATTERN_GATE_ENABLED", True)
 _TTL_SEC = max(2.0, _env_float("ORDER_PATTERN_GATE_TTL_SEC", 20.0))
+_MAX_AGE_SEC = max(0.0, _env_float("ORDER_PATTERN_GATE_MAX_AGE_SEC", 1800.0))
 _DB_PATH = Path(os.getenv("ORDER_PATTERN_GATE_DB_PATH", "logs/patterns.db"))
 _JSON_PATH = Path(os.getenv("ORDER_PATTERN_GATE_JSON_PATH", "config/pattern_book_deep.json"))
 _GLOBAL_OPT_IN = _env_bool("ORDER_PATTERN_GATE_GLOBAL_OPT_IN", False)
@@ -228,6 +229,42 @@ _CACHE_SOURCE = "none"
 _CACHE_FALLBACK_INDEX: dict[str, dict[str, str]] = {}
 
 
+def _parse_iso8601_epoch(raw: Any) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        import datetime as dt
+
+        parsed = dt.datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).timestamp()
+
+
+def _source_is_stale(*, path: Path, payload: Optional[dict[str, Any]] = None) -> bool:
+    if _MAX_AGE_SEC <= 0.0:
+        return False
+    age_sec: Optional[float] = None
+    if isinstance(payload, dict):
+        for key in ("as_of", "updated_at", "generated_at", "timestamp"):
+            epoch = _parse_iso8601_epoch(payload.get(key))
+            if epoch is None:
+                continue
+            age_sec = max(0.0, time.time() - epoch)
+            break
+    if age_sec is None:
+        try:
+            age_sec = max(0.0, time.time() - float(path.stat().st_mtime))
+        except OSError:
+            age_sec = None
+    return bool(age_sec is not None and age_sec > _MAX_AGE_SEC)
+
+
 def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
     if not _ENABLED:
         return False
@@ -276,6 +313,8 @@ def _allow_generic(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
 def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str]:
     if not _DB_PATH.exists():
         return {}, {}, "db_missing"
+    if _source_is_stale(path=_DB_PATH):
+        return {}, {}, "db_stale"
 
     rows: dict[str, dict[str, Any]] = {}
     drift: dict[str, dict[str, Any]] = {}
@@ -375,6 +414,8 @@ def _load_from_json() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, An
     except Exception as exc:  # noqa: BLE001 - json/io can fail many ways
         LOG.debug("[PATTERN_GATE] json load failed: %s", exc)
         return {}, {}, "json_error"
+    if _source_is_stale(path=_JSON_PATH, payload=payload):
+        return {}, {}, "json_stale"
 
     rows: dict[str, dict[str, Any]] = {}
     drift: dict[str, dict[str, Any]] = {}

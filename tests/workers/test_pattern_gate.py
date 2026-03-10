@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sqlite3
 from pathlib import Path
 
@@ -399,3 +400,49 @@ def test_pattern_gate_fallback_does_not_block_avoid_by_default(monkeypatch, tmp_
     assert decision.reason == "pattern_fallback_reduce"
     assert decision.match_mode != "exact"
     assert decision.pattern_id == base_pid
+
+
+def test_pattern_gate_db_source_skips_stale_artifact(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "patterns.db"
+    _create_pattern_db(db_path)
+    os.utime(db_path, (1, 1))
+    monkeypatch.setenv("ORDER_PATTERN_GATE_MAX_AGE_SEC", "60")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_JSON_PATH", str(tmp_path / "missing.json"))
+    gate = _reload_gate(monkeypatch, db_path)
+
+    rows, drift, source = gate._load_from_db()
+
+    assert rows == {}
+    assert drift == {}
+    assert source == "db_stale"
+
+
+def test_pattern_gate_json_source_skips_stale_artifact(monkeypatch, tmp_path: Path) -> None:
+    json_path = tmp_path / "pattern_book_deep.json"
+    json_path.write_text(
+        """
+        {
+          "as_of": "2026-03-01T00:00:00Z",
+          "top_robust": [
+            {
+              "pattern_id": "st:test|pk:scalp_fast|sd:short|sg:ping|mtf:aligned|hz:m1|ex:soft|rg:mid|pt:probe",
+              "trades": 120,
+              "quality": "robust",
+              "suggested_multiplier": 1.1,
+              "robust_score": 1.4,
+              "p_value": 0.03
+            }
+          ]
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ORDER_PATTERN_GATE_MAX_AGE_SEC", "60")
+    monkeypatch.setenv("ORDER_PATTERN_GATE_JSON_PATH", str(json_path))
+    gate = _reload_gate(monkeypatch, tmp_path / "missing.db")
+
+    rows, drift, source = gate._load_from_json()
+
+    assert rows == {}
+    assert drift == {}
+    assert source == "json_stale"

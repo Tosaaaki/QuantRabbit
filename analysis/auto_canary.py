@@ -12,6 +12,7 @@ from utils.strategy_tags import resolve_strategy_tag
 _PATH_RAW = os.getenv("AUTO_CANARY_PATH", "config/auto_canary_overrides.json")
 _PATH = Path(_PATH_RAW) if _PATH_RAW and _PATH_RAW.strip().lower() not in {"", "off", "none"} else None
 _REFRESH_SEC = float(os.getenv("AUTO_CANARY_REFRESH_SEC", "30") or 30.0)
+_MAX_AGE_SEC = max(0.0, float(os.getenv("AUTO_CANARY_MAX_AGE_SEC", "1800") or 1800.0))
 _CACHE: dict[str, Any] = {"loaded": 0.0, "mtime": None, "payload": None}
 
 
@@ -78,9 +79,46 @@ def _load_payload() -> Optional[dict[str, Any]]:
     return payload
 
 
+def _parse_iso8601_epoch(raw: object) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        import datetime as dt
+
+        parsed = dt.datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).timestamp()
+
+
+def _payload_is_stale(payload: Optional[dict[str, Any]]) -> bool:
+    if _PATH is None or not isinstance(payload, dict) or _MAX_AGE_SEC <= 0.0:
+        return False
+    age_sec: Optional[float] = None
+    for key in ("generated_at", "updated_at", "as_of", "timestamp"):
+        epoch = _parse_iso8601_epoch(payload.get(key))
+        if epoch is None:
+            continue
+        age_sec = max(0.0, time.time() - epoch)
+        break
+    if age_sec is None:
+        try:
+            age_sec = max(0.0, time.time() - float(_PATH.stat().st_mtime))
+        except OSError:
+            age_sec = None
+    return bool(age_sec is not None and age_sec > _MAX_AGE_SEC)
+
+
 def current_override(strategy_tag: Optional[str]) -> Optional[dict[str, Any]]:
     payload = _load_payload()
     if not payload:
+        return None
+    if _payload_is_stale(payload):
         return None
     strategies = payload.get("strategies")
     if not isinstance(strategies, dict):

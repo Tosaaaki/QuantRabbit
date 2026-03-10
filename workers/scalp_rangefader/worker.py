@@ -208,6 +208,27 @@ def _range_size_mult(range_score: Optional[float], free_ratio: Optional[float]) 
     return float(mult)
 
 
+def _apply_signal_flow_context(entry_thesis: Dict[str, object], signal: Dict[str, object]) -> Dict[str, object]:
+    if not isinstance(entry_thesis, dict) or not isinstance(signal, dict):
+        return entry_thesis
+    flow_context: Dict[str, object] = {}
+    for key in (
+        "continuation_pressure",
+        "flow_regime",
+        "ma_gap_pips",
+        "gap_ratio",
+        "setup_fingerprint",
+    ):
+        value = signal.get(key)
+        if value is None or value == "":
+            continue
+        entry_thesis[key] = value
+        flow_context[key] = value
+    if flow_context:
+        entry_thesis["signal_flow_context"] = flow_context
+    return entry_thesis
+
+
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 
@@ -704,6 +725,7 @@ async def scalp_rangefader_worker() -> None:
                     entry_mean=entry_mean,
                 )
             )
+            entry_thesis = _apply_signal_flow_context(entry_thesis, signal)
             rf = entry_thesis.get("reversion_failure")
             if isinstance(rf, dict):
                 bars_budget = rf.get("bars_budget")

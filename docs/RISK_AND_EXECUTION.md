@@ -8,6 +8,40 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 stale artifact no-op / `RangeFader` current-flow guard（2026-03-11）
+- 背景:
+  - 2026-03-11 04:32 JST 前後の local-v2 実測は
+    `USD/JPY mid=157.998`, `spread=0.8p`,
+    `ATR14(M1)=2.59p`, `ATR14(M5)=7.43p`,
+    `data_lag_ms=628`, `decision_latency_ms=21.5` で通常帯だった。
+  - 同窓の `orders.db` は
+    `entry_probability_reject=2216`, `perf_block=1583`, `filled=202`。
+    `RangeFader-sell-fade` は `entry_probability 0.371-0.378` のほぼ同一 thesis を数秒おきに再送しており、
+    strategy-local より shared reject が後段で効いていた。
+- 実装:
+  - `analysis/strategy_feedback.py`
+    - feedback payload と counterfactual payload に最大 age 判定を追加し、
+      stale payload は runtime advice に反映しない。
+  - `analysis/auto_canary.py`
+    - `generated_at/updated_at/as_of/timestamp` または mtime が stale の override を no-op にした。
+  - `workers/common/pattern_gate.py`
+    - DB/JSON source に freshness 判定を追加し、stale pattern artifact では block/reduce しない。
+  - `execution/strategy_entry.py`
+    - `technical_context` / tick / range metadata から
+      `live_setup_context` を組み立て、`flow_regime`, `microstructure_bucket`, `setup_fingerprint` を `entry_thesis` へ入れる。
+    - stale `dynamic_alloc` profile は trim しない。
+  - `strategies/scalping/range_fader.py`
+    - recent continuation、`ma_gap/ATR`, `ADX`, `DI`, `range_score` を使う `flow_headwind` pressure を追加し、
+      continuation 2 の shallow fade を strategy-local に reject する。
+  - `workers/scalp_rangefader/worker.py`
+    - signal の `continuation_pressure`, `flow_regime`, `ma_gap_pips`, `gap_ratio`, `setup_fingerprint` を
+      `entry_thesis` へ保存する。
+- 意図:
+  - stale artifact が 1 分後の流れにそのまま効き続ける状態を避け、
+    shared layer は fresh なときだけ補助に回す。
+  - `RangeFader` は shared gate 追加ではなく、
+    current flow に対する strategy-local quality guard で loser fade の連発を止める。
+
 ### local-v2 `MomentumBurst` tight-short exhaustion guard（2026-03-10）
 - 背景:
   - UTC `01:32-01:40` / JST `10:32-10:40` の local-v2 実測は

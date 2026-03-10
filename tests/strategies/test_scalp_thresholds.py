@@ -114,7 +114,9 @@ def test_range_fader_extreme_short_stretch_still_allows_short_fade() -> None:
         {
             "close": 157.96,
             "ema20": 157.90,
-            "rsi": 68.0,
+            "ma10": 157.94,
+            "ma20": 157.90,
+            "rsi": 73.0,
             "atr_pips": 2.9,
             "vol_5m": 1.30,
             "adx": 37.0,
@@ -125,12 +127,21 @@ def test_range_fader_extreme_short_stretch_still_allows_short_fade() -> None:
             "minus_di": 14.0,
             "ema_slope_10": 0.0060,
             "range_score": 0.24,
+            "candles": [
+                {"open": 157.88, "close": 157.90, "high": 157.91, "low": 157.87},
+                {"open": 157.90, "close": 157.92, "high": 157.93, "low": 157.89},
+                {"open": 157.92, "close": 157.94, "high": 157.95, "low": 157.91},
+                {"open": 157.94, "close": 157.96, "high": 157.97, "low": 157.93},
+            ],
         }
     )
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
     assert signal["tag"] == "RangeFader-sell-fade"
+    assert signal["continuation_pressure"] == 2
+    assert signal["flow_regime"] == "trend_long"
+    assert signal["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
 
 
 def test_range_fader_long_headwind_blocks_weak_long_fade() -> None:
@@ -153,3 +164,38 @@ def test_range_fader_long_headwind_blocks_weak_long_fade() -> None:
     )
 
     assert signal is None
+
+
+def test_range_fader_extreme_long_stretch_still_allows_long_fade() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.84,
+            "ema20": 157.90,
+            "ma10": 157.86,
+            "ma20": 157.90,
+            "rsi": 27.0,
+            "atr_pips": 2.9,
+            "vol_5m": 1.30,
+            "adx": 37.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 14.0,
+            "minus_di": 28.0,
+            "ema_slope_10": -0.0060,
+            "range_score": 0.24,
+            "candles": [
+                {"open": 157.92, "close": 157.90, "high": 157.93, "low": 157.89},
+                {"open": 157.90, "close": 157.88, "high": 157.91, "low": 157.87},
+                {"open": 157.88, "close": 157.86, "high": 157.89, "low": 157.85},
+                {"open": 157.86, "close": 157.84, "high": 157.87, "low": 157.83},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "RangeFader-buy-fade"
+    assert signal["continuation_pressure"] == 2
+    assert signal["flow_regime"] == "trend_short"
+    assert signal["setup_fingerprint"] == "RangeFader|long|buy-fade|trend_short|p2"
