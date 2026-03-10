@@ -12500,3 +12500,42 @@ Status:
     `up_strong + ob/mid_high` の chase を減衰/skip する。
   - `WickReversalBlend` は reverse 判定と切り離して、
     exit/payoff の非対称だけを別件で詰める。
+
+## 2026-03-10 22:41 JST / reverse-entry RCA を strategy-local dynamic quality / exit へ反映
+- 対象:
+  - `MicroLevelReactor-bounce-lower`
+  - `MicroTrendRetest-long`
+  - `WickReversalBlend`
+- 実装:
+  - `MicroLevelReactor` は
+    `recent M1 continuation + wide negative ma_gap + DI continuation`
+    を合算して pressure を出し、
+    pressure が強い局面では
+    `bounce-lower` long に
+    `strong body reclaim` と `strong lower-wick reclaim`
+    を要求するよう更新。
+  - `MicroTrendRetest` は
+    `gap/ATR`, `ADX`, `trend_snapshot` の same-direction 圧力と
+    retest depth / overshoot / close position を使って
+    `up_strong + mid_high/ob` の shallow chase long を
+    strategy-local に reject するよう更新。
+  - `WickReversalBlend` は
+    signal 生成時に `wick_ratio`, `tick_strength`, `follow`,
+    `retrace_from_extreme`, `projection.score` から entry quality を計算し、
+    `entry_thesis` へ保存。
+    exit worker はその quality と trade ごとの `sl_pips/tp_pips/current ATR`
+    を使って `profit_take`, `trail_start`, `trail_backoff`,
+    `loss_cut_hard_pips`, `loss_cut_max_hold_sec` を動的化する。
+- 方針:
+  - dedicated env の固定 tightening は今回の主解にしない。
+  - shared gate / time block / order-manager の後付け一律判定も増やさない。
+  - entry と exit の両方を strategy-local contract の中で閉じる。
+- 検証:
+  - `pytest -q tests/strategies/test_level_reactor.py tests/strategies/test_trend_retest.py tests/workers/test_scalp_wick_reversal_blend_policy.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+    -> `33 passed`
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    -> `27 passed`
+- 未反映事項:
+  - まだ `main` の local-v2 service restart / live post-check は未実施。
+    commit/push 後に `scripts/local_v2_stack.sh restart` と `status` /
+    主要 worker log 確認まで続ける。

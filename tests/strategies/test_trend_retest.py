@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from strategies.micro.trend_retest import MicroTrendRetest
 
 
@@ -301,12 +299,6 @@ def test_short_retest_rejects_low_atr_when_close_sticks_to_retest_high() -> None
     assert signal is None
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Current long retest exhaustion guard still allows shallow bearish reclaim "
-        "entries when RSI is already mid-high and the pullback has not really reset."
-    )
-)
 def test_long_retest_rejects_mid_high_rsi_shallow_bearish_reclaim_chase() -> None:
     signal = MicroTrendRetest.check(
         {

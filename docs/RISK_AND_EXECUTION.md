@@ -2783,3 +2783,22 @@
 - `MicroLevelReactor` の `bounce-lower` は
   `low ATR + strong ADX/-DI` の continuation 圧力を別判定で扱い、
   weak body / weak lower-wick の reclaim long を strategy-local に reject する。
+
+### 2026-03-10 reverse-entry RCA の動的化
+- `MicroLevelReactor-bounce-lower` は dedicated env をさらに締めず、
+  strategy 本体で `recent M1 continuation + wide negative ma_gap + DI continuation`
+  を合算した pressure を計算し、pressure が強いほど
+  `body reclaim / lower-wick reclaim` の両方を要求する。
+- `MicroTrendRetest` は side 名義ではなく
+  `gap/ATR`, `ADX`, `trend_snapshot` 同方向圧力, retest の深さ/overshoot を使って
+  `shallow chase retest` を reject する。
+  これにより `up_strong + mid_high/ob` の long chase を
+  time block なしで strategy-local に削る。
+- `WickReversalBlend` は signal 生成時に
+  `wick_ratio`, `tick_strength`, `follow`, `retrace_from_extreme`, `projection.score`
+  から entry quality を計算し、`entry_thesis` へ保存する。
+  exit 側は fixed `profit_pips/loss_cut_hard_pips` をそのまま使わず、
+  trade ごとの `sl_pips/tp_pips/wick_blend_quality/current ATR` で
+  `profit_take`, `trail`, `loss_cut_hard`, `loss_cut_max_hold_sec` を動的化する。
+- shared gate / order-manager / time block は増やさず、
+  entry と exit の両方を strategy-local contract の中で閉じる。

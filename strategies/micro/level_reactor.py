@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 PIP = 0.01
 
@@ -98,6 +98,84 @@ class MicroLevelReactor:
             return (float(ma_fast) - float(ma_slow)) / PIP
         except (TypeError, ValueError):
             return None
+
+    @classmethod
+    def _candles(cls, fac: Dict, count: int) -> list[dict]:
+        candles = fac.get("candles") or []
+        if not isinstance(candles, Iterable):
+            return []
+        tail: list[dict] = []
+        for candle in list(candles)[-count:]:
+            if isinstance(candle, dict):
+                tail.append(candle)
+        return tail
+
+    @classmethod
+    def _recent_down_continuation_pressure(
+        cls,
+        fac: Dict,
+        *,
+        atr_pips: float,
+        price: float,
+    ) -> int:
+        candles = cls._candles(fac, 5)
+        if len(candles) < 4:
+            return 0
+        last_close = cls._as_float(candles[-1].get("close"), None)
+        if last_close is not None and abs(last_close - price) <= 0.002:
+            recent = candles[-4:-1]
+        else:
+            recent = candles[-3:]
+        if len(recent) < 3:
+            return 0
+
+        closes: list[float] = []
+        lows: list[float] = []
+        close_pos_sum = 0.0
+        close_pos_count = 0
+        for candle in recent:
+            close = cls._as_float(candle.get("close"), None)
+            low = cls._as_float(candle.get("low"), None)
+            high = cls._as_float(candle.get("high"), None)
+            if close is None or low is None:
+                return 0
+            closes.append(close)
+            lows.append(low)
+            if high is not None and high > low:
+                close_pos_sum += (close - low) / max(high - low, 1e-9)
+                close_pos_count += 1
+        if len(closes) < 3 or len(lows) < 3:
+            return 0
+
+        down_closes = sum(1 for idx in range(1, len(closes)) if closes[idx] < closes[idx - 1])
+        lower_lows = sum(1 for idx in range(1, len(lows)) if lows[idx] <= lows[idx - 1] + 1e-9)
+        net_drop_pips = max(0.0, (closes[0] - closes[-1]) / PIP)
+        avg_close_pos = close_pos_sum / close_pos_count if close_pos_count > 0 else 0.5
+
+        pressure = 0
+        if down_closes >= 2 and net_drop_pips >= max(0.8, atr_pips * 0.40):
+            pressure += 1
+        if lower_lows >= 2 and avg_close_pos <= 0.45:
+            pressure += 1
+        return min(2, pressure)
+
+    @classmethod
+    def _countertrend_ma_gap_pressure(
+        cls,
+        ma_gap_pips: Optional[float],
+        *,
+        atr_pips: float,
+    ) -> int:
+        if ma_gap_pips is None or ma_gap_pips >= 0.0:
+            return 0
+        atr_norm = max(1.0, atr_pips)
+        gap_ratio = abs(ma_gap_pips) / atr_norm
+        pressure = 0
+        if gap_ratio >= 0.8:
+            pressure += 1
+        if gap_ratio >= 1.4:
+            pressure += 1
+        return min(2, pressure)
 
     @classmethod
     def _bounce_continuation_pressure(
@@ -215,9 +293,21 @@ class MicroLevelReactor:
             countertrend_probe = (
                 ma_gap_pips is not None and ma_gap_pips <= -cls.BOUNCE_COUNTERTREND_MIN_GAP_PIPS
             )
-            continuation_pressure = cls._bounce_continuation_pressure(
+            di_continuation_pressure = cls._bounce_continuation_pressure(
                 fac,
                 atr_pips=atr_pips,
+            )
+            recent_continuation_pressure = cls._recent_down_continuation_pressure(
+                fac,
+                atr_pips=atr_pips,
+                price=price,
+            )
+            ma_gap_pressure = cls._countertrend_ma_gap_pressure(
+                ma_gap_pips,
+                atr_pips=atr_pips,
+            )
+            continuation_pressure = (
+                di_continuation_pressure + recent_continuation_pressure + ma_gap_pressure
             )
             if countertrend_probe:
                 bullish_reject = (
@@ -227,7 +317,15 @@ class MicroLevelReactor:
                     and lower_wick_pips > upper_wick_pips
                 )
             if continuation_pressure:
-                if continuation_pressure >= 2:
+                if continuation_pressure >= 4:
+                    strong_body_reclaim = body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
+                    strong_wick_reclaim = (
+                        lower_wick_pips >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
+                        and (lower_wick_pips - upper_wick_pips)
+                        >= cls.BOUNCE_CONTINUATION_STRONG_WICK_EDGE_PIPS
+                    )
+                    bullish_reject = bullish_reject and strong_body_reclaim and strong_wick_reclaim
+                elif continuation_pressure >= 2:
                     strong_body_reclaim = body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
                     strong_wick_reclaim = (
                         lower_wick_pips >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
@@ -242,6 +340,7 @@ class MicroLevelReactor:
                         bullish_reject
                         and lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS
                         and lower_wick_pips > upper_wick_pips
+                        and body_pips >= 0.0
                     )
             if not bullish_reject:
                 return None

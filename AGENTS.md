@@ -98,6 +98,7 @@
 - 2026-03-09 追記: `MomentumBurst` の micro EXIT は `rsi_take` を薄利帯で通さず、
   `config/strategy_exit_protections.yaml` の `rsi_take_min_pips` を下限として扱う。
   監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-10 追記: `MicroLevelReactor-bounce-lower` / `MicroTrendRetest-long` / `WickReversalBlend` の reverse-entry RCA 改善は、dedicated env の固定 tightening ではなく strategy-local の動的 quality / exit を正とする。`strategies/micro/level_reactor.py` は recent M1 continuation と `ma_gap` 拡大型を reclaim 判定へ織り込み、`strategies/micro/trend_retest.py` は same-direction chase pressure 下の shallow retest を reject する。`workers/scalp_wick_reversal_blend` は signal quality を `entry_thesis` へ保存し、`exit_worker` が trade ごとの `sl/tp/quality` で profit/loss thresholds を動的化する。shared gate / time block / dedicated env の追加 tightening は行わない。
 - 2026-02-19 追記: `scalp_macd_rsi_div_b_live` は精度改善のため
   `range-only` + divergence 閾値強化のプロファイルへ更新。
   運用値は `ops/env/quant-scalp-macd-rsi-div-b.env`、監査ログは

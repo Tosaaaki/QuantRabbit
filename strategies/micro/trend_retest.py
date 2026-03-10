@@ -32,6 +32,12 @@ class MicroTrendRetest:
     _RECLAIM_SMALL_BODY_RATIO_MAX = 0.38
     _RECLAIM_LONG_BEAR_CLOSE_POS_MAX = 0.35
     _RECLAIM_SHORT_BULL_CLOSE_POS_MIN = 0.65
+    _CHASE_EXHAUSTION_GAP_ATR_MIN = 0.35
+    _CHASE_EXHAUSTION_ADX_MIN = 24.0
+    _CHASE_EXHAUSTION_SNAPSHOT_GAP_MIN = 12.0
+    _CHASE_EXHAUSTION_SNAPSHOT_ADX_MIN = 24.0
+    _CHASE_EXHAUSTION_LONG_RSI_MIN = 58.0
+    _CHASE_EXHAUSTION_SHORT_RSI_MAX = 42.0
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -151,6 +157,91 @@ class MicroTrendRetest:
         )
 
     @staticmethod
+    def _same_direction_chase_pressure(
+        *,
+        direction: str,
+        fac: Dict[str, object],
+        gap_pips: float,
+        adx: float,
+        atr_pips: float,
+    ) -> int:
+        pressure = 0
+        atr_norm = max(1.0, atr_pips)
+        if abs(gap_pips) / atr_norm >= MicroTrendRetest._CHASE_EXHAUSTION_GAP_ATR_MIN and adx >= MicroTrendRetest._CHASE_EXHAUSTION_ADX_MIN:
+            pressure += 1
+        snapshot = fac.get("trend_snapshot")
+        if not isinstance(snapshot, dict):
+            return pressure
+        snap_direction = str(snapshot.get("direction") or "").strip().lower()
+        expected = "long" if direction == "OPEN_LONG" else "short"
+        snap_gap = abs(MicroTrendRetest._to_float(snapshot.get("gap_pips"), 0.0) or 0.0)
+        snap_adx = MicroTrendRetest._to_float(snapshot.get("adx"), 0.0) or 0.0
+        if (
+            snap_direction == expected
+            and snap_gap >= MicroTrendRetest._CHASE_EXHAUSTION_SNAPSHOT_GAP_MIN
+            and snap_adx >= MicroTrendRetest._CHASE_EXHAUSTION_SNAPSHOT_ADX_MIN
+        ):
+            pressure += 1
+        return pressure
+
+    @staticmethod
+    def _chase_reset_ok(
+        *,
+        direction: str,
+        fac: Dict[str, object],
+        gap_pips: float,
+        adx: float,
+        atr_pips: float,
+        rsi: float,
+        level: float,
+        prev_close: float,
+        last_high: float,
+        last_low: float,
+        last_close: float,
+    ) -> bool:
+        pressure = MicroTrendRetest._same_direction_chase_pressure(
+            direction=direction,
+            fac=fac,
+            gap_pips=gap_pips,
+            adx=adx,
+            atr_pips=atr_pips,
+        )
+        if pressure <= 0:
+            return True
+        candle_range = max(last_high - last_low, 0.0)
+        if candle_range <= 0.0:
+            return True
+        close_pos = (last_close - last_low) / candle_range
+        atr_norm = max(1.0, atr_pips)
+        if direction == "OPEN_LONG":
+            if rsi < MicroTrendRetest._CHASE_EXHAUSTION_LONG_RSI_MIN - max(0, pressure - 1) * 3.0:
+                return True
+            retest_depth_pips = max(0.0, (level - last_low) / PIP)
+            overshoot_pips = max(0.0, (last_high - level) / PIP)
+            min_reset_depth = max(0.5, atr_norm * (0.18 + max(0, pressure - 1) * 0.07))
+            max_overshoot = max(0.25, atr_norm * (0.10 - max(0, pressure - 1) * 0.03))
+            max_close_pos = 0.68 - max(0, pressure - 1) * 0.08
+            return (
+                retest_depth_pips >= min_reset_depth
+                and overshoot_pips <= max_overshoot
+                and close_pos <= max_close_pos
+                and last_close <= prev_close
+            )
+        if rsi > MicroTrendRetest._CHASE_EXHAUSTION_SHORT_RSI_MAX + max(0, pressure - 1) * 3.0:
+            return True
+        retest_depth_pips = max(0.0, (last_high - level) / PIP)
+        overshoot_pips = max(0.0, (level - last_low) / PIP)
+        min_reset_depth = max(0.5, atr_norm * (0.18 + max(0, pressure - 1) * 0.07))
+        max_overshoot = max(0.25, atr_norm * (0.10 - max(0, pressure - 1) * 0.03))
+        min_close_pos = 0.32 + max(0, pressure - 1) * 0.08
+        return (
+            retest_depth_pips >= min_reset_depth
+            and overshoot_pips <= max_overshoot
+            and close_pos >= min_close_pos
+            and last_close >= prev_close
+        )
+
+    @staticmethod
     def check(fac: Dict) -> Dict | None:
         price = MicroTrendRetest._to_float(fac.get("close"))
         ma10 = MicroTrendRetest._to_float(fac.get("ma10"))
@@ -238,6 +329,20 @@ class MicroTrendRetest:
                 rsi=rsi,
             ):
                 return None
+            if not MicroTrendRetest._chase_reset_ok(
+                direction=direction,
+                fac=fac,
+                gap_pips=gap,
+                adx=adx,
+                atr_pips=atr_check,
+                rsi=rsi,
+                level=level_high,
+                prev_close=prev_close,
+                last_high=last_high,
+                last_low=last_low,
+                last_close=last_close,
+            ):
+                return None
             retest_dist = abs(price - level_high) / PIP
             if retest_dist > MicroTrendRetest._MAX_RETEST_DIST_PIPS:
                 return None
@@ -265,6 +370,20 @@ class MicroTrendRetest:
                 last_low=last_low,
                 last_close=last_close,
                 rsi=rsi,
+            ):
+                return None
+            if not MicroTrendRetest._chase_reset_ok(
+                direction=direction,
+                fac=fac,
+                gap_pips=gap,
+                adx=adx,
+                atr_pips=atr_check,
+                rsi=rsi,
+                level=level_low,
+                prev_close=prev_close,
+                last_high=last_high,
+                last_low=last_low,
+                last_close=last_close,
             ):
                 return None
             retest_dist = abs(price - level_low) / PIP

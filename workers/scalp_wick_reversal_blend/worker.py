@@ -52,6 +52,7 @@ from .common import (
     tick_reversal,
     tick_snapshot,
 )
+from .policy import wick_blend_entry_quality
 
 LOG = logging.getLogger(__name__)
 
@@ -2393,6 +2394,7 @@ def _signal_wick_reversal_blend(
     price = _latest_price(fac_m1)
     if price <= 0.0:
         return None
+    follow = 0.0
     if WICK_BLEND_FOLLOW_PIPS > 0.0:
         if side == "short":
             follow = (upper - price) / PIP
@@ -2402,6 +2404,7 @@ def _signal_wick_reversal_blend(
             follow = (price - lower) / PIP
             if follow < WICK_BLEND_FOLLOW_PIPS:
                 return None
+    retrace_from_extreme = 0.0
     if WICK_BLEND_EXTREME_RETRACE_MIN_PIPS > 0.0:
         if side == "short":
             retrace_from_extreme = (h - price) / PIP
@@ -2412,6 +2415,20 @@ def _signal_wick_reversal_blend(
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
+        return None
+    quality = wick_blend_entry_quality(
+        side=side,
+        rsi=_rsi(fac_m1),
+        adx=adx,
+        atr_pips=atr,
+        range_score=range_score if range_ctx is not None else 0.0,
+        wick_ratio=wick_ratio,
+        tick_strength=strength,
+        follow_pips=follow if WICK_BLEND_FOLLOW_PIPS > 0.0 else 0.0,
+        retrace_from_extreme_pips=retrace_from_extreme if WICK_BLEND_EXTREME_RETRACE_MIN_PIPS > 0.0 else 0.0,
+        projection_score=float((proj_detail or {}).get("score") or 0.0),
+    )
+    if not bool(quality.get("allow")):
         return None
 
     sl = max(1.2, min(2.2, atr * 0.85))
@@ -2449,6 +2466,8 @@ def _signal_wick_reversal_blend(
         "reason": "wick_reversal_blend",
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
+        "wick_blend_quality": quality.get("quality"),
+        "wick_blend_components": quality.get("components"),
         "wick": {
             "rng_pips": round(rng, 2),
             "body_pips": round(body, 2),
@@ -2456,6 +2475,11 @@ def _signal_wick_reversal_blend(
             "lower_wick_pips": round(lower_wick, 2),
             "ratio": round(wick_ratio, 3),
             "tick_strength": round(strength, 3),
+            "follow_pips": round(follow if WICK_BLEND_FOLLOW_PIPS > 0.0 else 0.0, 3),
+            "retrace_from_extreme_pips": round(
+                retrace_from_extreme if WICK_BLEND_EXTREME_RETRACE_MIN_PIPS > 0.0 else 0.0,
+                3,
+            ),
         },
     }
 
@@ -3273,6 +3297,10 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "air_exec_quality": signal.get("air_exec_quality"),
         "air_regime_shift": signal.get("air_regime_shift"),
         "air_range_pref": signal.get("air_range_pref"),
+        "projection": signal.get("projection"),
+        "wick": signal.get("wick"),
+        "wick_blend_quality": signal.get("wick_blend_quality"),
+        "wick_blend_components": signal.get("wick_blend_components"),
     }
     tag = str(signal.get("tag") or "").strip()
     if tag in {"TickImbalance", "TickImbalanceRRPlus"}:

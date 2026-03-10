@@ -26,6 +26,7 @@ from .exit_forecast import (
     apply_exit_forecast_to_targets,
     build_exit_forecast_adjustment,
 )
+from .policy import wick_blend_exit_adjustments
 
 try:  # optional config
     import yaml  # type: ignore
@@ -953,6 +954,7 @@ class RangeFaderExitWorker:
         loss_cut_reversion_rsi_long_max = _pick_float(
             exit_profile.get("loss_cut_reversion_rsi_long_max"), 0.0
         )
+        fac_m1 = all_factors().get("M1") or {}
         if str(base_tag).lower() == "levelreject":
             # LevelReject is tuned via config/strategy_exit_protections.yaml.
             # Keep that configuration authoritative (avoid VWAP-gap-based overrides that
@@ -993,6 +995,40 @@ class RangeFaderExitWorker:
             adjustment=forecast_adj,
             floor_pips=0.1,
         )
+        if base_tag == "WickReversalBlend":
+            current_atr_pips = _bb_float(fac_m1.get("atr_pips")) or _pick_float(thesis.get("atr_pips"), 0.0)
+            live_adjust = wick_blend_exit_adjustments(
+                side=side,
+                thesis=thesis,
+                atr_pips=current_atr_pips,
+                profit_take=profit_take,
+                trail_start=trail_start,
+                trail_backoff=trail_backoff,
+                lock_buffer=lock_buffer,
+                loss_cut_hard_pips=loss_cut_hard_pips,
+                loss_cut_max_hold_sec=loss_cut_max_hold_sec,
+            )
+            profit_take = live_adjust["profit_take"]
+            trail_start = live_adjust["trail_start"]
+            trail_backoff = live_adjust["trail_backoff"]
+            lock_buffer = live_adjust["lock_buffer"]
+            loss_cut_hard_pips = live_adjust["loss_cut_hard_pips"]
+            loss_cut_max_hold_sec = live_adjust["loss_cut_max_hold_sec"]
+            live_range_adjust = wick_blend_exit_adjustments(
+                side=side,
+                thesis=thesis,
+                atr_pips=current_atr_pips,
+                profit_take=range_profit_take,
+                trail_start=range_trail_start,
+                trail_backoff=range_trail_backoff,
+                lock_buffer=range_lock_buffer,
+                loss_cut_hard_pips=loss_cut_hard_pips,
+                loss_cut_max_hold_sec=loss_cut_max_hold_sec,
+            )
+            range_profit_take = live_range_adjust["profit_take"]
+            range_trail_start = live_range_adjust["trail_start"]
+            range_trail_backoff = live_range_adjust["trail_backoff"]
+            range_lock_buffer = live_range_adjust["lock_buffer"]
         if "non_range_max_hold_sec" in locals() and non_range_max_hold_sec > 0.0 and forecast_adj.enabled:
             non_range_max_hold_sec = max(min_hold_sec, non_range_max_hold_sec * forecast_adj.max_hold_mult)
         tick_imb_profile = exit_profile.get("tick_imb")
@@ -1188,7 +1224,6 @@ class RangeFaderExitWorker:
                     reason="negative_exit",
                 )
                 return
-            fac_m1 = all_factors().get("M1") or {}
             rsi = _bb_float(fac_m1.get("rsi"))
             adx = _bb_float(fac_m1.get("adx"))
             atr_pips = _bb_float(fac_m1.get("atr_pips"))

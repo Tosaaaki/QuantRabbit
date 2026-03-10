@@ -15200,3 +15200,47 @@
     -> `19 passed`
   - `pytest -q tests/workers/test_pattern_gate.py`
     -> `6 passed`
+
+### 2026-03-10 22:41 JST - reverse-entry RCA を strategy-local dynamic quality / exit へ接続
+- 対象:
+  - `strategies/micro/level_reactor.py`
+  - `strategies/micro/trend_retest.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+  - `workers/scalp_wick_reversal_blend/policy.py`
+  - `tests/strategies/test_level_reactor.py`
+  - `tests/strategies/test_trend_retest.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_policy.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - 直近 reverse-entry RCA では
+    `MicroLevelReactor-bounce-lower` が局所 continuation に早すぎる long、
+    `MicroTrendRetest-long` が same-direction chase、
+    `WickReversalBlend` が high win-rate でも tail loss で負ける
+    という別々の失敗が出ていた。
+  - ユーザー要求は dedicated env の固定 tightening ではなく、
+    市況・trade quality に応じて entry/exit を動的化することだった。
+
+- 変更:
+  - `MicroLevelReactor` は `recent candles` の連続下押しと
+    `ma_gap` 拡大型を continuation pressure として加算し、
+    pressure が強いほど `bounce-lower` long に
+    強い body reclaim / wick reclaim を要求するよう更新。
+  - `MicroTrendRetest` は
+    `gap/ATR + ADX + trend_snapshot` の same-direction chase pressure と
+    retest の深さ/overshoot を組み合わせ、
+    shallow retest chase を strategy-local に reject する helper を追加。
+  - `WickReversalBlend` は entry quality を pure policy へ切り出し、
+    `signal -> entry_thesis -> exit_worker` で同じ quality を共有する。
+    exit 側は fixed `profit/loss` の代わりに
+    trade ごとの `sl/tp/quality/current ATR` から
+    `profit_take/trail/loss_cut/max_hold` を再計算する。
+
+- 検証:
+  - `pytest -q tests/strategies/test_level_reactor.py tests/strategies/test_trend_retest.py tests/workers/test_scalp_wick_reversal_blend_policy.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+    -> `33 passed`
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    -> `27 passed`

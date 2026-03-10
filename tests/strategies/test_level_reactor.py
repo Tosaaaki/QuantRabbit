@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from strategies.micro.level_reactor import MicroLevelReactor
 
 
@@ -211,12 +209,6 @@ def test_bounce_long_keeps_tiny_lower_wick_when_di_pressure_is_not_strong() -> N
     assert signal["tag"] == "MicroLevelReactor-bounce-lower"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Current continuation guard still allows bounce-lower longs when a strong "
-        "downtrend keeps a wide negative MA gap despite a single reclaim wick."
-    )
-)
 def test_bounce_long_rejects_clear_wick_when_strong_down_continuation_keeps_wide_ma_gap() -> None:
     signal = MicroLevelReactor.check(
         {
@@ -237,3 +229,51 @@ def test_bounce_long_rejects_clear_wick_when_strong_down_continuation_keeps_wide
     )
 
     assert signal is None
+
+
+def test_bounce_long_rejects_recent_three_bar_selloff_without_clear_reclaim() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.952,
+            "high": 157.958,
+            "low": 157.946,
+            "ema20": 158.00,
+            "atr_pips": 1.5,
+            "rsi": 35.0,
+            "spread_pips": 0.8,
+            "candles": [
+                {"open": 157.984, "high": 157.985, "low": 157.978, "close": 157.980},
+                {"open": 157.980, "high": 157.982, "low": 157.968, "close": 157.970},
+                {"open": 157.968, "high": 157.972, "low": 157.954, "close": 157.958},
+                {"open": 157.952, "high": 157.958, "low": 157.946, "close": 157.956},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
+def test_bounce_long_allows_recent_three_bar_selloff_with_strong_body_reclaim() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.944,
+            "high": 157.957,
+            "low": 157.938,
+            "ema20": 158.00,
+            "atr_pips": 1.5,
+            "rsi": 35.0,
+            "spread_pips": 0.8,
+            "candles": [
+                {"open": 157.984, "high": 157.985, "low": 157.978, "close": 157.980},
+                {"open": 157.980, "high": 157.982, "low": 157.968, "close": 157.970},
+                {"open": 157.968, "high": 157.972, "low": 157.954, "close": 157.958},
+                {"open": 157.944, "high": 157.957, "low": 157.938, "close": 157.956},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "MicroLevelReactor-bounce-lower"

@@ -165,3 +165,56 @@ def test_wick_reversal_blend_lock_floor_waits_for_profile_min_hold_before_closin
     )
 
     assert calls == [("lock_floor", 0.75)]
+
+
+def test_wick_reversal_blend_dynamic_exit_respects_entry_quality_before_taking_profit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_worker, worker = _build_worker(monkeypatch)
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda _tag: {
+            "min_hold_sec": 0.0,
+            "profit_pips": 1.2,
+            "trail_start_pips": 1.7,
+            "trail_backoff_pips": 0.55,
+            "lock_buffer_pips": 0.25,
+            "loss_cut_hard_pips": 6.0,
+            "loss_cut_max_hold_sec": 420.0,
+        },
+    )
+
+    calls: list[tuple[str, float]] = []
+
+    async def _fake_close(
+        _trade_id: str,
+        _units: int,
+        reason: str,
+        pnl: float,
+        _client_id: str,
+        **_kwargs,
+    ) -> None:
+        calls.append((reason, pnl))
+
+    monkeypatch.setattr(worker, "_close", _fake_close)
+
+    trade = _sample_trade(opened_sec=120, pnl_pips=1.9)
+    trade["entry_thesis"].update(
+        {
+            "sl_pips": 2.0,
+            "tp_pips": 3.0,
+            "atr_pips": 2.2,
+            "wick_blend_quality": 0.62,
+        }
+    )
+
+    now = datetime.now(timezone.utc)
+    asyncio.run(worker._review_trade(trade, now=now, mid=158.019, range_active=False))
+
+    assert calls == []
+
+    trade["unrealized_pl_pips"] = 2.4
+    asyncio.run(worker._review_trade(trade, now=now, mid=158.024, range_active=False))
+
+    assert calls == [("take_profit", 2.4)]
