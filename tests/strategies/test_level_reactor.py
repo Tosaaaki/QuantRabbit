@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from strategies.micro.level_reactor import MicroLevelReactor
 
 
@@ -207,3 +209,31 @@ def test_bounce_long_keeps_tiny_lower_wick_when_di_pressure_is_not_strong() -> N
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
     assert signal["tag"] == "MicroLevelReactor-bounce-lower"
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Current continuation guard still allows bounce-lower longs when a strong "
+        "downtrend keeps a wide negative MA gap despite a single reclaim wick."
+    )
+)
+def test_bounce_long_rejects_clear_wick_when_strong_down_continuation_keeps_wide_ma_gap() -> None:
+    signal = MicroLevelReactor.check(
+        {
+            "close": 157.956,
+            "open": 157.95,
+            "high": 157.957,
+            "low": 157.936,
+            "ma10": 157.95,
+            "ma20": 157.98,
+            "ema20": 158.00,
+            "atr_pips": 1.6,
+            "rsi": 35.0,
+            "adx": 37.0,
+            "plus_di": 12.0,
+            "minus_di": 40.0,
+            "spread_pips": 0.8,
+        }
+    )
+
+    assert signal is None
