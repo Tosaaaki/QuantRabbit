@@ -72,9 +72,12 @@
   timeout 超過時は warning を出して、CLI/metadata 経路へフォールバックを試行する。
 
 ## 2. ログの真偽と参照ルール
-- 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。
-- ローカル `logs/*.db` は参考扱い。
-- 運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行う。
+- 現行運用（2026-03-04 以降）の真はローカルV2 `logs/*.db`, `logs/*.json`,
+  `logs/local_v2_stack/*.log` と OANDA API とする。
+- VM/GCP のログ/DB/プロセスは履歴参照専用とし、現行運用判断には使わない。
+- `logs/health_snapshot.json` はローカル運用の横断監査 JSON とし、
+  `mechanism_integrity` で `strategy_feedback`, `dynamic_alloc`, `pattern_book`,
+  `forecast_runtime/service`, `blackboard(entry_intent_board)` の欠落を監査する。
 
 ## 3. ログ永続化とバックアップ
 - GCS 自動退避（guarded）:
@@ -106,16 +109,18 @@
 
 ### 日次集計
 ```bash
-scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql \
-  -f /home/tossaki/QuantRabbit/logs/trades.db \
-  -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t
+sqlite3 logs/trades.db \
+  "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) \
+   FROM trades \
+   WHERE DATE(close_time)=DATE('now') \
+   GROUP BY 1;"
 ```
 
 ### 直近オーダー
 ```bash
-gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap \
-  --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
-  --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"
+sqlite3 logs/orders.db \
+  "select ts,pocket,side,units,client_order_id,status \
+   from orders order by ts desc limit 5;"
 ```
 
 ## 5. 検証パイプライン
@@ -136,6 +141,31 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - `scripts/policy_guard.py` は市場オープン時に SLO メトリクス欠損/停滞も違反扱いにする。
   - `POLICY_GUARD_REQUIRE_SLO_METRICS_WHEN_OPEN=1`（既定）
   - `POLICY_GUARD_SLO_METRICS_MAX_STALE_SEC=900`（既定）
+
+### 6.1 `health_snapshot.json.mechanism_integrity`
+- 生成元: `scripts/publish_health_snapshot.py`
+- 参照導線: `scripts/collect_local_health.sh`, `logs/health_snapshot.json`
+- 主目的:
+  - core service の `running` だけでは見えない
+    live 仕組み欠落を即検知する。
+- 監査対象:
+  - `strategy_feedback`
+    - `strategy_feedback.json` の freshness
+    - active entry strategy discovery と recent trades remap に基づく coverage gap
+  - `dynamic_alloc`
+  - `pattern_book`
+  - `forecast_runtime`
+  - `forecast_service`
+    - port probe に加え `http://127.0.0.1:8302/health` の `ok=true` を healthy 判定に使う
+  - `blackboard`
+    - `logs/orders.db` の `entry_intent_board` table 存在
+    - 直近24h row count
+- 主要 field:
+  - `mechanism_integrity.ok`
+  - `mechanism_integrity.missing_mechanisms[]`
+  - `mechanism_integrity.strategy_feedback.eligible_missing_strategies[]`
+  - `mechanism_integrity.forecast_service.ok`
+  - `mechanism_integrity.blackboard.entry_intent_board_table`
 
 ## 7. metrics.db lock 運用ガード（2026-02-20）
 - `utils/metrics_logger.py` は lock 競合時に指数バックオフ付きで再試行する。

@@ -9,6 +9,8 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -227,6 +229,325 @@ def _git_rev(repo_dir: Path) -> Optional[str]:
     return output.strip() if output else None
 
 
+def _load_json(path: Path) -> Optional[dict[str, Any]]:
+    if not path.exists():
+        return None
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    data: dict[str, str] = {}
+    if not path.exists():
+        return data
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                data[key] = value
+    except Exception:
+        return {}
+    return data
+
+
+def _load_env_chain(paths: list[Path]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for path in paths:
+        merged.update(_parse_env_file(path))
+    return merged
+
+
+def _coerce_int(raw: object, default: int) -> int:
+    try:
+        return int(str(raw))
+    except Exception:
+        return default
+
+
+def _age_sec_from_iso(raw: Optional[str]) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds())
+
+
+def _age_sec_from_mtime(path: Path) -> Optional[float]:
+    try:
+        return max(0.0, datetime.now(timezone.utc).timestamp() - path.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def _artifact_integrity(
+    path: Path,
+    *,
+    timestamp_fields: tuple[str, ...] = (),
+    max_age_sec: Optional[int] = None,
+) -> dict[str, Any]:
+    payload = _load_json(path)
+    info: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "mtime": _mtime_iso(path),
+        "size_bytes": _size_bytes(path),
+    }
+    timestamp_value = None
+    if isinstance(payload, dict):
+        for key in timestamp_fields:
+            raw = payload.get(key)
+            if isinstance(raw, str) and raw.strip():
+                timestamp_value = raw.strip()
+                break
+    age_sec = _age_sec_from_iso(timestamp_value) if timestamp_value else _age_sec_from_mtime(path)
+    if timestamp_value:
+        info["timestamp"] = timestamp_value
+    if age_sec is not None:
+        info["age_sec"] = round(age_sec, 1)
+    if max_age_sec is not None:
+        info["max_age_sec"] = int(max_age_sec)
+        info["fresh"] = bool(age_sec is not None and age_sec <= max_age_sec)
+    info["_payload"] = payload
+    return info
+
+
+def _sqlite_table_exists(db_path: Path, table_name: str) -> Optional[bool]:
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "select 1 from sqlite_master where type='table' and name=? limit 1;",
+                (table_name,),
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        return None
+
+
+def _http_json(url: str, *, timeout_sec: float = 1.5) -> Optional[dict[str, Any]]:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_sec) as resp:
+            raw = resp.read().decode("utf-8")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _merge_strategy_records(*sources: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for src in sources:
+        for key, rec in src.items():
+            bucket = merged.setdefault(
+                key,
+                {
+                    "entry_active": False,
+                    "exit_active": False,
+                    "active": False,
+                    "enabled": None,
+                    "sources": set(),
+                },
+            )
+            bucket["entry_active"] = bucket["entry_active"] or bool(getattr(rec, "entry_active", False))
+            bucket["exit_active"] = bucket["exit_active"] or bool(getattr(rec, "exit_active", False))
+            bucket["active"] = bucket["active"] or bool(getattr(rec, "active", False))
+            if getattr(rec, "enabled", None) is not None:
+                bucket["enabled"] = bool(getattr(rec, "enabled"))
+            bucket["sources"].update(getattr(rec, "sources", set()) or set())
+    return merged
+
+
+def _strategy_feedback_integrity(
+    *,
+    project_root: Path,
+    logs_dir: Path,
+    trades_db: Path,
+) -> dict[str, Any]:
+    max_age_sec = _coerce_int(os.getenv("HEALTH_STRATEGY_FEEDBACK_MAX_AGE_SEC"), 1800)
+    info = _artifact_integrity(
+        logs_dir / "strategy_feedback.json",
+        timestamp_fields=("updated_at",),
+        max_age_sec=max_age_sec,
+    )
+    payload = info.pop("_payload", None)
+    strategies = payload.get("strategies") if isinstance(payload, dict) else None
+    strategy_names = sorted((strategies or {}).keys())
+    info["strategies_count"] = len(strategy_names)
+
+    env = _load_env_chain(
+        [
+            project_root / "ops" / "env" / "quant-v2-runtime.env",
+            project_root / "ops" / "env" / "quant-strategy-feedback.env",
+            project_root / "ops" / "env" / "local-v2-stack.env",
+        ]
+    )
+    lookback_days = _coerce_int(env.get("STRATEGY_FEEDBACK_LOOKBACK_DAYS"), 14)
+    min_trades = _coerce_int(env.get("STRATEGY_FEEDBACK_MIN_TRADES"), 12)
+    info["lookback_days"] = lookback_days
+    info["min_trades"] = min_trades
+
+    try:
+        from analysis import strategy_feedback_worker as feedback_worker
+
+        local_pid_dir = project_root / "logs" / "local_v2_stack" / "pids"
+        systemd_dir = project_root / "systemd"
+        running_services = feedback_worker._systemctl_running_services()
+        if not running_services:
+            running_services = feedback_worker._local_stack_running_services(local_pid_dir)
+        discovered = _merge_strategy_records(
+            feedback_worker._discover_from_control(),
+            feedback_worker._discover_from_systemd(systemd_dir, running_services, datetime.now(timezone.utc)),
+        )
+        stats_by_tag, latest_by_tag = feedback_worker._discover_from_trades(trades_db, lookback_days)
+        if discovered:
+            stats_by_tag, latest_by_tag = feedback_worker._remap_stats_to_known_keys(
+                stats_by_tag,
+                latest_by_tag,
+                list(discovered.keys()),
+            )
+        active_strategies: list[str] = []
+        eligible_active: list[str] = []
+        eligible_missing: list[str] = []
+        for tag in sorted(discovered.keys()):
+            rec = discovered[tag]
+            if rec.get("enabled") is False or not rec.get("entry_active"):
+                continue
+            active_strategies.append(tag)
+            stats = stats_by_tag.get(tag)
+            if stats is None or int(getattr(stats, "trades", 0)) < min_trades:
+                continue
+            eligible_active.append(tag)
+            if tag not in strategy_names:
+                eligible_missing.append(tag)
+        info["active_strategies"] = active_strategies
+        info["eligible_active_strategies"] = eligible_active
+        info["eligible_missing_strategies"] = eligible_missing
+        info["coverage_ok"] = not eligible_missing
+    except Exception as exc:  # noqa: BLE001
+        info["coverage_ok"] = False
+        info["coverage_error"] = str(exc)
+    return info
+
+
+def _build_mechanism_integrity(
+    *,
+    project_root: Path,
+    logs_dir: Path,
+    orders_db: Path,
+    trades_db: Path,
+) -> dict[str, Any]:
+    dynamic_alloc = _artifact_integrity(
+        project_root / "config" / "dynamic_alloc.json",
+        timestamp_fields=("as_of",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_DYNAMIC_ALLOC_MAX_AGE_SEC"), 1800),
+    )
+    dynamic_payload = dynamic_alloc.pop("_payload", None)
+    dynamic_alloc["strategies_count"] = len((dynamic_payload or {}).get("strategies") or {})
+
+    pattern_book = _artifact_integrity(
+        project_root / "config" / "pattern_book.json",
+        max_age_sec=_coerce_int(os.getenv("HEALTH_PATTERN_BOOK_MAX_AGE_SEC"), 1800),
+    )
+    pattern_payload = pattern_book.pop("_payload", None)
+    pattern_book["has_content"] = bool(pattern_payload) if pattern_payload is not None else bool(pattern_book["size_bytes"])
+
+    forecast_runtime = _artifact_integrity(
+        logs_dir / "forecast_improvement_latest.json",
+        timestamp_fields=("generated_at",),
+        max_age_sec=_coerce_int(os.getenv("HEALTH_FORECAST_RUNTIME_MAX_AGE_SEC"), 21600),
+    )
+    forecast_payload = forecast_runtime.pop("_payload", None)
+    runtime_overrides = (forecast_payload or {}).get("runtime_overrides") if isinstance(forecast_payload, dict) else {}
+    forecast_runtime["verdict"] = (forecast_payload or {}).get("verdict") if isinstance(forecast_payload, dict) else None
+    forecast_runtime["runtime_overrides_enabled"] = (
+        runtime_overrides.get("enabled") if isinstance(runtime_overrides, dict) else None
+    )
+
+    forecast_service = {
+        "port": 8302,
+        "listening": _port_listening(8302),
+        "health": _http_json("http://127.0.0.1:8302/health"),
+    }
+    forecast_health = forecast_service.get("health")
+    forecast_service["ok"] = bool(
+        (isinstance(forecast_health, dict) and forecast_health.get("ok") is True)
+        or forecast_service.get("listening") is True
+    )
+
+    blackboard = {
+        "entry_intent_board_table": _sqlite_table_exists(orders_db, "entry_intent_board"),
+        "recent_rows_24h": _safe_query(
+            orders_db,
+            "select count(*) from entry_intent_board where ts_epoch >= strftime('%s','now') - 86400;",
+        ),
+    }
+
+    strategy_feedback = _strategy_feedback_integrity(
+        project_root=project_root,
+        logs_dir=logs_dir,
+        trades_db=trades_db,
+    )
+
+    missing: list[str] = []
+    if not strategy_feedback.get("exists"):
+        missing.append("strategy_feedback_missing")
+    elif strategy_feedback.get("fresh") is False:
+        missing.append("strategy_feedback_stale")
+    if strategy_feedback.get("coverage_ok") is False:
+        missing.append("strategy_feedback_coverage_gap")
+
+    if not dynamic_alloc.get("exists"):
+        missing.append("dynamic_alloc_missing")
+    elif dynamic_alloc.get("fresh") is False:
+        missing.append("dynamic_alloc_stale")
+
+    if not pattern_book.get("exists"):
+        missing.append("pattern_book_missing")
+    elif pattern_book.get("fresh") is False:
+        missing.append("pattern_book_stale")
+
+    if not forecast_runtime.get("exists"):
+        missing.append("forecast_runtime_missing")
+    elif forecast_runtime.get("fresh") is False:
+        missing.append("forecast_runtime_stale")
+
+    if forecast_service.get("ok") is False:
+        missing.append("forecast_service_down")
+    if blackboard.get("entry_intent_board_table") is not True:
+        missing.append("entry_intent_board_missing")
+
+    return {
+        "ok": not missing,
+        "missing_mechanisms": missing,
+        "strategy_feedback": strategy_feedback,
+        "dynamic_alloc": dynamic_alloc,
+        "pattern_book": pattern_book,
+        "forecast_runtime": forecast_runtime,
+        "forecast_service": forecast_service,
+        "blackboard": blackboard,
+    }
+
+
 def _upload_via_cli(bucket: str, object_path: str, payload: str) -> bool:
     target = f"gs://{bucket}/{object_path}"
     for cmd in (["gcloud", "storage", "cp", "-", target], ["gsutil", "cp", "-", target]):
@@ -367,6 +688,12 @@ def _build_snapshot() -> dict[str, Any]:
         "disk_used_pct": _disk_usage_pct(Path("/")),
         "disk_free_mb": _free_mb(Path("/")),
     }
+    snapshot["mechanism_integrity"] = _build_mechanism_integrity(
+        project_root=repo_dir,
+        logs_dir=logs_dir,
+        orders_db=orders_db,
+        trades_db=trades_db,
+    )
     try:
         load1, load5, load15 = os.getloadavg()
         snapshot["load_avg"] = [round(load1, 3), round(load5, 3), round(load15, 3)]

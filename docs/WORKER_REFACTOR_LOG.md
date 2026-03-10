@@ -5,6 +5,37 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-10（追記）`health_snapshot.json.mechanism_integrity` を追加し、live 仕組み欠落を health 導線で可視化
+
+- 対象:
+  - `scripts/publish_health_snapshot.py`
+  - `scripts/collect_local_health.sh`
+  - `tests/scripts/test_publish_health_snapshot.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/OBSERVABILITY.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+- 変更:
+  - `scripts/publish_health_snapshot.py`
+    - `health_snapshot.json` に `mechanism_integrity` を追加。
+    - 監査対象は `strategy_feedback`, `dynamic_alloc`, `pattern_book`,
+      `forecast_runtime`, `forecast_service`, `blackboard(entry_intent_board)`。
+    - `strategy_feedback` は active entry strategy discovery と recent trades remap を再利用し、
+      `min_trades` を超えた戦略が feedback payload から落ちていないかを coverage 監査する。
+    - `forecast_service` は port probe miss でも `/health ok=true` を優先して healthy 扱いにする。
+    - `entry_intent_board` は table 不在だけでなく DB 不在/読取不能も欠落扱いにした。
+  - `scripts/collect_local_health.sh`
+    - snapshot 鮮度に加えて `mechanism_integrity=yes|no missing=...` を即時表示する。
+  - tests:
+    - feedback coverage gap
+    - forecast health fallback
+    - blackboard DB 不在
+    の回帰を追加。
+- 意図:
+  - core service が `running` でも、
+    live 導線を支える分析/予測/黒板 artifact の欠落を見逃さない。
+  - 欠落検知を `logs/health_snapshot.json` と `collect_local_health.sh` の
+    標準導線へ寄せ、手元確認と監査ログの根拠を一本化する。
+
 ### 2026-03-10（追記）local-v2 に `trade_cover` profile を追加し、既存 dedicated worker を broad coverage へ昇格
 
 - 対象:

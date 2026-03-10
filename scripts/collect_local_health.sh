@@ -30,3 +30,28 @@ fi
 
 echo "[collect-local-health] ok: ${HEALTH_JSON_PATH} updated=${updated}"
 echo "[collect-local-health] snapshot_age_sec=${age_sec} stale_warn=${stale_warn} threshold_sec=${HEALTH_SNAPSHOT_STALE_SEC}"
+python3 - "$HEALTH_JSON_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print("[collect-local-health] mechanism_integrity=unknown missing=parse_error")
+    raise SystemExit(0)
+
+integrity = payload.get("mechanism_integrity")
+if not isinstance(integrity, dict):
+    print("[collect-local-health] mechanism_integrity=unknown missing=not_present")
+    raise SystemExit(0)
+
+ok = "yes" if integrity.get("ok") else "no"
+missing = integrity.get("missing_mechanisms")
+if isinstance(missing, list) and missing:
+    missing_text = ",".join(str(item) for item in missing)
+else:
+    missing_text = "-"
+print(f"[collect-local-health] mechanism_integrity={ok} missing={missing_text}")
+PY

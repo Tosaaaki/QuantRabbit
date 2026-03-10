@@ -23,6 +23,61 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-10 12:30 JST / local-v2: `health_snapshot` に `mechanism_integrity` を追加し、forecast / strategy_feedback / dynamic_alloc / pattern_book / blackboard の欠落を即検知
+
+- Period:
+  - UTC `2026-03-10 03:21-03:30`
+  - JST `2026-03-10 12:21-12:30`
+- Fact:
+  - 市況は変更継続可の通常帯:
+    - `USD/JPY bid=157.860 / ask=157.868 / spread=0.8p`
+    - `M1 ATR14=1.872p / RSI=59.82 / ADX=28.46`
+    - `M5 ATR14=5.800p / RSI=64.88 / ADX=20.76`
+    - `openTradeCount=0`, `marginRate=0.04`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager,quant-forecast,quant-strategy-feedback`
+    では core 4 本と `quant-forecast`, `quant-strategy-feedback` がすべて `running`。
+  - 直前の `logs/health_snapshot.json` は鮮度メトリクスを持っていたが、
+    `strategy_feedback` の coverage gap や `entry_intent_board` 欠落のような
+    「仕組みが一部抜けている」状態は即座に見えなかった。
+- Failure Cause:
+  - live 導線では core service が `running` でも、
+    `strategy_feedback.json` の戦略カバレッジ欠落、
+    `dynamic_alloc/pattern_book/forecast runtime` の stale、
+    `entry_intent_board` 消失は別レイヤで起こり得る。
+  - 既存 `collect_local_health.sh` は snapshot 鮮度までしか表示せず、
+    欠落の検知がログ JSON 深部依存だった。
+- Improvement:
+  - `scripts/publish_health_snapshot.py`
+    - `health_snapshot.json.mechanism_integrity` を追加。
+    - `strategy_feedback.json`, `dynamic_alloc.json`, `pattern_book.json`,
+      `forecast_improvement_latest.json` の freshness を監査。
+    - `analysis.strategy_feedback_worker` の active strategy discovery と
+      recent trades remap を再利用し、
+      `min_trades` を超えた active entry strategy が
+      `strategy_feedback.json` に不在なら `strategy_feedback_coverage_gap` を立てる。
+    - `quant-forecast` は port probe だけでなく
+      `http://127.0.0.1:8302/health` の `ok=true` でも healthy 扱いにする。
+    - `entry_intent_board` は table 不在だけでなく、
+      `orders.db` 不在/読取不能でも `entry_intent_board_missing` として拾う。
+  - `scripts/collect_local_health.sh`
+    - 実行後に `mechanism_integrity=yes|no missing=...` を即表示するよう更新。
+- Verification:
+  - `pytest -q tests/scripts/test_publish_health_snapshot.py tests/analysis/test_strategy_feedback.py tests/analysis/test_strategy_feedback_worker.py` → `12 passed`
+  - `python3 -m py_compile scripts/publish_health_snapshot.py tests/scripts/test_publish_health_snapshot.py`
+  - `bash scripts/collect_local_health.sh`
+    - `updated=yes`
+    - `mechanism_integrity=yes missing=-`
+  - `logs/health_snapshot.json`
+    - `generated_at=2026-03-10T03:30:13.665454+00:00`
+    - `data_lag_ms=686.2`, `decision_latency_ms=17.4`
+    - `mechanism_integrity.ok=true`
+    - `missing_mechanisms=[]`
+    - `strategy_feedback.eligible_missing_strategies=[]`
+    - `forecast_service.health={"ok": true, "service": "quant-forecast"}`
+    - `blackboard.recent_rows_24h=1`
+- Status:
+  - done
+
 ## 2026-03-10 11:00 JST / local-v2: `trade_cover` profile を追加し、既存 dedicated worker を regime-cover 常駐へ昇格
 
 - Period:

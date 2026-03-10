@@ -67,6 +67,18 @@ scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.en
 scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env
 ```
 
+### ヘルススナップショット確認
+```bash
+scripts/collect_local_health.sh
+```
+
+- `logs/health_snapshot.json` の `mechanism_integrity.ok` を見る。
+- `mechanism_integrity.missing_mechanisms` が空でない場合は、
+  `strategy_feedback`, `dynamic_alloc`, `pattern_book`, `forecast_runtime/service`,
+  `blackboard(entry_intent_board)` のどこが欠けたかを優先確認する。
+- `collect_local_health.sh` は snapshot 鮮度に加えて
+  `mechanism_integrity=yes|no missing=...` を標準出力へ出す。
+
 ### ログ確認
 ```bash
 scripts/local_v2_stack.sh logs --service quant-order-manager --tail 200 --follow
