@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from utils.strategy_tags import normalize_strategy_lookup_key
+from utils.strategy_tags import resolve_strategy_tag
 from utils.strategy_tags import strategy_like_matches
 
 
@@ -72,6 +73,45 @@ def _parse_csv_paths(raw: Optional[str]) -> list[Path]:
 
 def _normalize_strategy_key(value: Optional[str]) -> str:
     return normalize_strategy_lookup_key(value)
+
+
+def _base_strategy_tag(value: Optional[str]) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    for suffix in ("-long", "-short", "_long", "_short", "/long", "/short"):
+        if not lowered.endswith(suffix):
+            continue
+        base = text[: -len(suffix)].rstrip("-_/ ")
+        if base:
+            return base
+    return ""
+
+
+def _strategy_lookup_candidates(
+    strategy_tag: Optional[str],
+    *,
+    known_keys: Optional[list[str]] = None,
+) -> list[str]:
+    candidates: list[str] = []
+
+    def _append(raw: Optional[str]) -> None:
+        key = _normalize_strategy_key(raw)
+        if key and key not in candidates:
+            candidates.append(key)
+
+    base_tag = _base_strategy_tag(strategy_tag)
+    _append(strategy_tag)
+    _append(base_tag)
+    for raw in (strategy_tag, base_tag):
+        if not raw:
+            continue
+        try:
+            _append(resolve_strategy_tag(raw, known_keys=known_keys))
+        except Exception:
+            continue
+    return candidates
 
 
 def _read_file_payload(path: Path) -> Optional[dict[str, Any]]:
@@ -151,6 +191,25 @@ def _resolve_strategy_metadata(
             else:
                 resolved.setdefault("strategy_params", {})[mkey] = mvalue
     return resolved
+
+
+def _merge_strategy_metadata(base: dict[str, Any], extra: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not extra:
+        return base
+    merged = dict(base)
+    if "enabled" not in merged and extra.get("enabled") is not None:
+        merged["enabled"] = extra["enabled"]
+    if not merged.get("status") and extra.get("status"):
+        merged["status"] = extra["status"]
+    strategy_params = merged.get("strategy_params")
+    if not isinstance(strategy_params, dict):
+        strategy_params = {}
+    extra_params = extra.get("strategy_params")
+    if isinstance(extra_params, dict):
+        strategy_params.update(extra_params)
+    if strategy_params:
+        merged["strategy_params"] = strategy_params
+    return merged
 
 
 def _load_param_payloads() -> list[dict[str, Any]]:
@@ -428,32 +487,31 @@ def current_advice(
     payload = _read_payload()
     if not isinstance(payload, dict):
         return None
-    strategy_key = _normalize_strategy_key(strategy_tag)
+    strategies = payload.get("strategies")
+    known_keys = list(strategies.keys()) if isinstance(strategies, dict) else None
+    strategy_keys = _strategy_lookup_candidates(strategy_tag, known_keys=known_keys)
+    if not strategy_keys:
+        strategy_keys = [_normalize_strategy_key(strategy_tag)]
 
     # Resolve optional strategy metadata from external sources (tuning/overlay/reentry
     # profiles). Strategy-specific parameters are not directly used as hard gates;
     # they are carried as analysis metadata and used by external analysis services.
-    strategies = payload.get("strategies")
     strategy_cfg = None
     if isinstance(strategies, dict):
-        strategy_cfg = _lookup_strategy_section(strategies, strategy_key)
+        for strategy_key in strategy_keys:
+            strategy_cfg = _lookup_strategy_section(strategies, strategy_key)
+            if strategy_cfg:
+                break
 
-    metadata = _resolve_strategy_metadata(payload, strategy_key)
+    metadata: dict[str, Any] = {}
+    for strategy_key in strategy_keys:
+        metadata = _merge_strategy_metadata(metadata, _resolve_strategy_metadata(payload, strategy_key))
     for path_payload in _load_param_payloads():
-        merged_meta = _resolve_strategy_metadata(path_payload, strategy_key)
-        if merged_meta:
-            metadata = dict(metadata)
-            if "enabled" not in metadata and merged_meta.get("enabled") is not None:
-                metadata["enabled"] = merged_meta["enabled"]
-            if not metadata.get("status") and merged_meta.get("status"):
-                metadata["status"] = merged_meta["status"]
-            strategy_params = metadata.get("strategy_params")
-            if not isinstance(strategy_params, dict):
-                strategy_params = {}
-            if isinstance(merged_meta.get("strategy_params"), dict):
-                strategy_params.update(merged_meta["strategy_params"])  # type: ignore[union-attr]
-            if strategy_params:
-                metadata["strategy_params"] = strategy_params
+        for strategy_key in strategy_keys:
+            metadata = _merge_strategy_metadata(
+                metadata,
+                _resolve_strategy_metadata(path_payload, strategy_key),
+            )
 
     counterfactual = _counterfactual_overlay(strategy_tag, side)
     if strategy_cfg is None and not metadata and not counterfactual:

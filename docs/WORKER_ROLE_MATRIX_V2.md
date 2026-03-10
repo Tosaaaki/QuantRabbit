@@ -310,6 +310,9 @@
     `logs/trades.db` と strategy list を再解析して `logs/strategy_feedback.json` を更新する分析係ワーカーを導入。
   - 戦略の追加・停止（systemd/service状態）に追従して指標を更新し、停止/追加時の事故条件を避ける `keep_inactive` 制約を明記。
   - エントリーワーカー稼働を優先判定に変更し、EXITワーカーのみ残存するケースでは `strategy_feedback` の更新適用を抑止。
+  - directional split-tag（例: `MicroTrendRetest-long/-short`）は discovered base strategy key
+    （例: `MicroTrendRetest`）へ再解決して集計し、runtime `current_advice()` も
+    split-tag から base `strategy_feedback` を fallback 参照する。
   - `ops/env/quant-strategy-feedback.env` に `STRATEGY_FEEDBACK_*` を追加し、lookback / min_trades / systemd_path を運用制御可能化。
 - 運用整備（2026-02-17）
   - `scalp_ping_5s_b` / `scalp_ping_5s_flow` は VM 実ログの skip 要因（`revert_not_found`, `low_tick_count`, `units_below_min`）に合わせ、

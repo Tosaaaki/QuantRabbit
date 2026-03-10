@@ -72,6 +72,7 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(worker, "BASE_DIR", repo)
     monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
     monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_discover_from_control", lambda: {})
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
     monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
@@ -83,6 +84,64 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
     assert "scalp_ping_5s_b_live" in strategies
     advice = strategies["scalp_ping_5s_b_live"]
     assert advice["strategy_params"]["configured_params"]["SCALP_PING_5S_B_MODE"] == "scalp_ping_5s_b_live"
+    assert advice["entry_probability_multiplier"] > 1.0
+
+
+def test_build_payload_remaps_directional_trade_tags_to_discovered_base_strategy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    systemd_dir = repo / "systemd"
+    env_dir = repo / "ops" / "env"
+    log_dir = repo / "logs"
+    pid_dir = log_dir / "local_v2_stack" / "pids"
+    trades_db = log_dir / "trades.db"
+
+    systemd_dir.mkdir(parents=True)
+    env_dir.mkdir(parents=True)
+    pid_dir.mkdir(parents=True)
+
+    (env_dir / "quant-v2-runtime.env").write_text("", encoding="utf-8")
+    (env_dir / "quant-micro-trendretest.env").write_text(
+        "\n".join(
+            [
+                "MICRO_STRATEGY_ALLOWLIST=MicroTrendRetest",
+                "MICRO_MULTI_LOG_PREFIX=[MicroTrendRetest]",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (systemd_dir / "quant-micro-trendretest.service").write_text(
+        "\n".join(
+            [
+                "[Service]",
+                "EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env",
+                "EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-micro-trendretest.env",
+                "ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_trendretest.worker",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (pid_dir / "quant-micro-trendretest.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    _seed_trades(trades_db, strategy_tag="MicroTrendRetest-long", count=14)
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_discover_from_control", lambda: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    strategies = payload["strategies"]
+    assert "MicroTrendRetest" in strategies
+    advice = strategies["MicroTrendRetest"]
+    assert advice["strategy_params"]["trades"] == 14
     assert advice["entry_probability_multiplier"] > 1.0
 
 

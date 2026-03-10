@@ -5,6 +5,32 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-10（追記）`strategy_feedback` は directional split-tag を discovered base strategy へ再解決し、live advice を欠損させない
+
+- 対象:
+  - `analysis/strategy_feedback.py`
+  - `analysis/strategy_feedback_worker.py`
+  - `tests/analysis/test_strategy_feedback.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+- 変更:
+  - `analysis/strategy_feedback_worker.py`
+    - recent `trades.db` stats を discovered canonical strategy keys に remap する処理を追加。
+    - `MicroTrendRetest-long/-short` や同種の directional/live split-tag が、
+      active な base strategy（例: `MicroTrendRetest`）へ集約されるようにした。
+  - `analysis/strategy_feedback.py`
+    - `current_advice()` に base strategy fallback を追加し、
+      runtime tag が split-tag でも base feedback を引けるようにした。
+  - tests:
+    - base `strategy_feedback` が directional runtime tag に適用される回帰と、
+      worker payload が discovered base strategy 名義で出力される回帰を追加。
+- 意図:
+  - `execution/strategy_entry.py` の analysis feedback 段で、
+    split-tag 戦略だけが soft fail-open になる穴を塞ぐ。
+  - 黒板・forecast・dynamic alloc を足しても analysis feedback だけ届かない状態をなくし、
+    live 導線の仕組み連携を canonical key 単位で揃える。
+
 ### 2026-03-09（追記）`MomentumBurst` の tail-loss は cadence ではなく SL 幅が主因だったため、entry SL と exit loss-cut drift を同時に締める
 
 - 対象:

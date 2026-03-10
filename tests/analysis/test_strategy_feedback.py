@@ -110,3 +110,38 @@ def test_current_advice_returns_counterfactual_only_when_feedback_missing(monkey
     assert advice["entry_units_multiplier"] > 1.0
     assert advice["entry_probability_multiplier"] > 1.0
     assert advice["_meta"]["counterfactual"]["mode"] == "loosen"
+
+
+def test_current_advice_falls_back_to_base_strategy_feedback_for_directional_tag(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    feedback_path = tmp_path / "strategy_feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-10T00:00:00Z",
+                "strategies": {
+                    "MicroTrendRetest": {
+                        "entry_units_multiplier": 0.84,
+                        "entry_probability_multiplier": 0.91,
+                    }
+                },
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    _reset_feedback_caches(
+        monkeypatch,
+        feedback_path=feedback_path,
+        counterfactual_path=tmp_path / "missing_counterfactual.json",
+    )
+
+    advice = strategy_feedback.current_advice("MicroTrendRetest-long", side="long")
+
+    assert advice is not None
+    assert advice["entry_units_multiplier"] == 0.84
+    assert advice["entry_probability_multiplier"] == 0.91
+    assert advice["_meta"]["strategy_tag"] == "MicroTrendRetest-long"

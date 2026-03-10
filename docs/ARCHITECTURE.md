@@ -70,10 +70,14 @@
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で
   `trades.db` / ENTRYワーカー稼働中の戦略を再評価し、`strategy_feedback.json` を更新。
+  directional split-tag（例: `MicroTrendRetest-long/-short`）は
+  discovered base strategy key（例: `MicroTrendRetest`）へ再解決して集計する。
   `analysis/strategy_feedback.current_advice()` は live 読み込み時に
   `logs/trade_counterfactual_latest.json` も参照し、
   `policy_hints.reentry_overrides` と `side_actions` を
   units/probability の soft overlay として合成する。
+  runtime tag が split-tag のときも base `strategy_feedback` を fallback 参照し、
+  analysis feedback の欠損を避ける。
   `execution/strategy_entry.py` は `side` を添えて advice を取得し、
   common layer に新しい hard block を追加せず long/short 別の entry 調整だけを反映する。
   local_v2_stack（macOS 等の non-systemd lane）では systemd timer の代わりに

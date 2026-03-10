@@ -184,6 +184,72 @@ class StrategyStats:
         return self.avg_loss / self.avg_win
 
 
+def _merge_strategy_stats(canonical_tag: str, stats_list: list[StrategyStats]) -> StrategyStats:
+    trades = sum(max(0, int(stats.trades)) for stats in stats_list)
+    wins = sum(max(0, int(stats.wins)) for stats in stats_list)
+    losses = sum(max(0, int(stats.losses)) for stats in stats_list)
+    sum_pips = sum(_to_float(stats.sum_pips, 0.0) for stats in stats_list)
+    gross_win = sum(_to_float(stats.gross_win, 0.0) for stats in stats_list)
+    gross_loss = sum(_to_float(stats.gross_loss, 0.0) for stats in stats_list)
+
+    avg_abs_num = 0.0
+    avg_hold_num = 0.0
+    avg_hold_den = 0
+    last_closed: str | None = None
+    for stats in stats_list:
+        weight = max(0, int(stats.trades))
+        avg_abs_num += _to_float(stats.avg_abs_pips, 0.0) * weight
+        if stats.avg_hold_sec is not None and weight > 0:
+            avg_hold_num += _to_float(stats.avg_hold_sec, 0.0) * weight
+            avg_hold_den += weight
+        if stats.last_closed:
+            if last_closed is None or str(stats.last_closed) > str(last_closed):
+                last_closed = str(stats.last_closed)
+
+    avg_pips = sum_pips / trades if trades > 0 else 0.0
+    avg_abs_pips = avg_abs_num / trades if trades > 0 else 0.0
+    avg_hold_sec = avg_hold_num / avg_hold_den if avg_hold_den > 0 else None
+    return StrategyStats(
+        tag=canonical_tag,
+        trades=trades,
+        wins=wins,
+        losses=losses,
+        sum_pips=sum_pips,
+        avg_pips=avg_pips,
+        avg_abs_pips=avg_abs_pips,
+        gross_win=gross_win,
+        gross_loss=gross_loss,
+        avg_hold_sec=avg_hold_sec,
+        last_closed=last_closed,
+    )
+
+
+def _remap_stats_to_known_keys(
+    stats_by_tag: dict[str, StrategyStats],
+    latest_by_tag: dict[str, str],
+    known_keys: list[str],
+) -> tuple[dict[str, StrategyStats], dict[str, str]]:
+    if not stats_by_tag or not known_keys:
+        return stats_by_tag, latest_by_tag
+
+    grouped: dict[str, list[StrategyStats]] = {}
+    remapped_latest: dict[str, str] = {}
+    for key, stats in stats_by_tag.items():
+        resolved = resolve_strategy_tag(key, known_keys=known_keys) or key
+        grouped.setdefault(resolved, []).append(stats)
+        latest = str(latest_by_tag.get(key) or stats.last_closed or "").strip()
+        if latest and (resolved not in remapped_latest or latest > remapped_latest[resolved]):
+            remapped_latest[resolved] = latest
+
+    remapped_stats: dict[str, StrategyStats] = {}
+    for key, group in grouped.items():
+        merged = _merge_strategy_stats(key, group)
+        remapped_stats[key] = merged
+        if merged.last_closed:
+            remapped_latest[key] = str(merged.last_closed)
+    return remapped_stats, remapped_latest
+
+
 def _systemctl_available() -> bool:
     return shutil.which("systemctl") is not None
 
@@ -871,6 +937,12 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
                 merged[key].enabled = rec.enabled
 
     stats_by_tag, latest_by_tag = _discover_from_trades(config.trades_db, config.lookback_days)
+    if merged:
+        stats_by_tag, latest_by_tag = _remap_stats_to_known_keys(
+            stats_by_tag,
+            latest_by_tag,
+            list(merged.keys()),
+        )
     for key, stats in stats_by_tag.items():
         merged.setdefault(
             key,

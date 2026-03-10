@@ -23,6 +23,62 @@
 - `Verification`（確認方法/判定基準）
 - `Status`（open/in_progress/done）
 
+## 2026-03-10 01:58 UTC / 2026-03-10 10:58 JST - local-v2: `strategy_feedback` が directional split-tag を base 戦略へ接続できておらず、`MicroTrendRetest` 系へ分析補正が届いていなかった
+
+Period:
+- 調査/実装: UTC `01:41-01:58` / JST `10:41-10:58`
+- 対象（実測）:
+  - `logs/strategy_feedback.json`
+  - `logs/trades.db`
+  - `analysis/strategy_feedback.py`
+  - `analysis/strategy_feedback_worker.py`
+  - `tests/analysis/test_strategy_feedback.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+
+Fact:
+- 市況は変更継続可の通常帯:
+  - `USD/JPY bid=157.680 / ask=157.688 / spread=0.8p`
+  - `health_snapshot generated_at=2026-03-10T01:38:04Z`, `data_lag_ms=733`, `decision_latency_ms=10.1`
+  - `openTradeCount=0`, `marginRate=0.04`
+- `logs/strategy_feedback.json` は `MomentumBurst` / `MicroLevelReactor` を出している一方、
+  `MicroTrendRetest` / `MicroTrendRetest-long` / `MicroTrendRetest-short` は欠落していた。
+- `logs/trades.db` の直近3日では `MicroTrendRetest-long=17 trades / -290.23 JPY / -45.7p`,
+  `MicroTrendRetest-short=2 trades / -540.6 JPY / -10.6p` で、long 側は
+  `STRATEGY_FEEDBACK_MIN_TRADES=12` を超えていた。
+- 原因は canonical key の食い違い:
+  - worker discovery は dedicated service から base key `MicroTrendRetest` を検知
+  - trade 集計は live tag `MicroTrendRetest-long` / `-short` を別 key で保持
+  - runtime `current_advice()` も base fallback を持たず、split-tag から
+    base feedback を引けなかった
+
+Failure Cause:
+- `strategy_feedback` が alias/hash suffix だけでなく directional split-tag も
+  canonical base 戦略へ束ねる前提になっておらず、
+  `execution/strategy_entry.py` の analysis feedback 段で
+  `MicroTrendRetest-long/-short` が実質 fail-open になっていた。
+
+Improvement:
+- `analysis/strategy_feedback_worker.py`
+  - trade stats を discovered canonical strategy keys に再解決し、
+    `MicroTrendRetest-long/-short` のような directional tag を
+    active base 戦略 `MicroTrendRetest` へ集約するよう更新。
+- `analysis/strategy_feedback.py`
+  - `current_advice()` に base-tag fallback を追加し、
+    runtime の split-tag から base `strategy_feedback` を参照可能にした。
+- `tests/analysis/test_strategy_feedback.py`
+  - base `MicroTrendRetest` feedback が `MicroTrendRetest-long` へ適用される回帰を追加。
+- `tests/analysis/test_strategy_feedback_worker.py`
+  - directional trade tag が discovered base strategy へ再集約されて payload に出る回帰を追加。
+
+Verification:
+- `pytest -q tests/analysis/test_strategy_feedback.py tests/analysis/test_strategy_feedback_worker.py` → `7 passed`
+- `python3 -m py_compile analysis/strategy_feedback.py analysis/strategy_feedback_worker.py tests/analysis/test_strategy_feedback.py tests/analysis/test_strategy_feedback_worker.py`
+- 反映後は `logs/strategy_feedback.json` に `MicroTrendRetest` が出ること、
+  `strategy_feedback.current_advice("MicroTrendRetest-long")` が `None` でなくなることを確認する。
+
+Status:
+- in_progress
+
 ## 2026-03-10 01:32 UTC / 2026-03-10 10:40 JST - local-v2: `MomentumBurst` short の tight oversold sell-chase を non-reaccel だけ止める
 
 Period:
