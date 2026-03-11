@@ -16303,6 +16303,9 @@
   - `workers/scalp_wick_reversal_blend/worker.py` は
     両 strategy の `sl_pips` を広げ、
     `tp_pips` は current ATR 帯で届く範囲に維持した。
+  - dedicated env では
+    `SCALP_PRECISION_PERF_GUARD_MODE=reduce`
+    を明示し、current `perf guard blocked` を block 運転のまま残さないようにした。
 
 - 検証:
   - `pytest -q tests/execution/test_order_manager_preflight.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`

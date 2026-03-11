@@ -3381,6 +3381,9 @@
   `units` は sl 連動で自動縮小する。
 - これは shared blanket loosen ではなく、
   strategy-local / strategy-scoped な reversion lane の生存時間延長を目的とする。
+- `PrecisionLowVol` / `DroughtRevert` の current live運用では、
+  shared prefix `SCALP_PRECISION` の perf guard は `reduce` を正とし、
+  `block` のままで SL/TP 修正が live へ届かない状態を避ける。
 
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は

@@ -14537,6 +14537,10 @@ Status:
   - `workers/scalp_wick_reversal_blend/worker.py`
     で `PrecisionLowVol` / `DroughtRevert` の `sl_pips` を広げ、
     `tp_pips` は current ボラ帯で届く範囲に留めた。
+  - `ops/env/quant-scalp-precision-lowvol.env` と
+    `ops/env/quant-scalp-drought-revert.env`
+    では shared `SCALP_PRECISION_PERF_GUARD_MODE=reduce` を明示し、
+    current log 上の `perf guard blocked` で entry 自体が止まる状態を避けた。
   - `pytest -q tests/execution/test_order_manager_preflight.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
     は `44 passed`。
 - Verdict: pending
