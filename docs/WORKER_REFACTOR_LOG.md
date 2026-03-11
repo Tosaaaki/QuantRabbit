@@ -5,6 +5,24 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）`PrecisionLowVol` hostile short guard を participation 維持型へ follow-up
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `PrecisionLowVol` short の hostile projection lane は
+    blanket reject を維持せず、
+    `rev_strength` と `touch_ratio` が十分強い場合は
+    confidence / size を下げて strong reversal probe を残すようにした。
+  - weak hostile short は引き続き reject する。
+- 意図:
+  - 「止める」のではなく、
+    weak loser lane を落としつつ
+    strong probe の participation は残す。
+
 ### 2026-03-11（追記）`PrecisionLowVol` short の hostile projection lane を worker 内で block
 
 - 対象:

@@ -1207,6 +1207,7 @@ def _signal_precision_lowvol(
         return None
     proj_size_mult = float(size_mult)
     projection_score = None
+    hostile_projection_lane = False
     if isinstance(proj_detail, dict):
         try:
             raw_projection_score = proj_detail.get("score")
@@ -1217,16 +1218,22 @@ def _signal_precision_lowvol(
     if side == "short" and flow_guard is not None and projection_score is not None:
         gap_atr_ratio = abs(vgap) / max(1.0, atr)
         setup_quality = float(flow_guard.get("setup_quality") or 0.0)
-        if (
+        hostile_projection_lane = (
             projection_score <= -0.10
             and gap_atr_ratio >= 2.5
             and setup_quality < 0.40
             and rsi < max(config.PREC_LOWVOL_RSI_SHORT_MIN + 10.0, 60.0)
-        ):
-            return None
+        )
 
     dist = dist_lower if side == "long" else dist_upper
     touch_ratio = max(0.0, (band - dist) / max(0.2, band))
+    if hostile_projection_lane:
+        strong_reversal_probe = (
+            rev_strength >= max(config.PREC_LOWVOL_REV_MIN_STRENGTH + 0.46, 0.82)
+            and touch_ratio >= 0.55
+        )
+        if not strong_reversal_probe:
+            return None
 
     sl = max(1.0, min(1.6, atr * 0.75))
     tp = max(1.1, min(2.0, atr * (0.9 + min(0.2, rev_strength * 0.2))))
@@ -1241,6 +1248,8 @@ def _signal_precision_lowvol(
         conf += 2
     if flow_guard is not None:
         conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
+    if hostile_projection_lane:
+        conf -= 4
 
     size_boost = 0.0
     if vgap_bias_ok:
@@ -1250,11 +1259,18 @@ def _signal_precision_lowvol(
     if rev_strength >= 0.75:
         size_boost += 0.06
     size_cap = 1.35 if rev_strength >= 0.75 else 1.25
+    if hostile_projection_lane:
+        size_cap = min(size_cap, 1.02)
     size_mult = max(0.85, min(size_cap, size_mult + size_boost))
     if flow_guard is not None:
         size_mult = max(
             0.78,
             min(size_cap, min(size_mult, proj_size_mult * (0.86 + float(flow_guard["setup_quality"]) * 0.14))),
+        )
+    if hostile_projection_lane:
+        size_mult = max(
+            0.78,
+            min(size_cap, min(size_mult, proj_size_mult * (0.78 + float(flow_guard["setup_quality"]) * 0.12))),
         )
 
     signal = {

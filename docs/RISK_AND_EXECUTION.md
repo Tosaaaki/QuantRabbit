@@ -8,6 +8,28 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `PrecisionLowVol` hostile short guard follow-up（2026-03-11）
+- 背景:
+  - user goal は「止める」ではなく participation を維持した改善であり、
+    post-restart の `orders.db` でも
+    `projection.score = 0.0 / 0.075` の `PrecisionLowVol` short fill は still 残っていた。
+  - したがって本当に絞るべきは hostile projection short の weakest lane であり、
+    strong reversal probe まで blanket reject にする必要はない。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - hostile projection short は
+      `rev_strength >= max(PREC_LOWVOL_REV_MIN_STRENGTH + 0.46, 0.82)` かつ
+      `touch_ratio >= 0.55`
+      の strong reversal probe だけ allow する。
+    - allow した hostile probe は confidence を引き、
+      `size_cap` と `size_mult` も tighter にして per-trade risk を落とす。
+    - weak hostile short は引き続き reject する。
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    - weak hostile short reject / strong hostile short degraded allow を固定した。
+- 意図:
+  - `PrecisionLowVol` short を完全に止めず、
+    same hostile lane の中でも reversal 強度で participation を残す。
+
 ### local-v2 `PrecisionLowVol` hostile short projection guard（2026-03-11）
 - 背景:
   - 2026-03-11 18:24 JST 時点の local-v2 実測では、

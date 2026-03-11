@@ -51,6 +51,75 @@
 - Status:
 ```
 
+## 2026-03-11 18:32 JST / local-v2: `PrecisionLowVol` short hostile lane を strong reversal probe 条件つきへ調整
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py` の
+    `PrecisionLowVol` short hostile projection guard を follow-up 調整し、
+    weak hostile lane だけを reject し、
+    `rev_strength` と `touch_ratio` が十分強い strong reversal probe は
+    confidence / size を落として残すようにした。
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py` に
+    weak hostile short が落ち、
+    strong reversal hostile short は縮小で残ることを追加した。
+- Why:
+  - `PrecisionLowVol` の hostile short を strategy-local に潰す方針は妥当だが、
+    participation を落とし過ぎず、
+    本当に reversal が強い probe は残したい。
+- Hypothesis:
+  - negative projection の short でも
+    `rev_strength >= max(min_strength+0.46, 0.82)` かつ `touch_ratio >= 0.55`
+    の probe だけを残せば、
+    weak loser lane を抑えつつ short participation は維持できる。
+- Expected Good:
+  - `PrecisionLowVol` short の weak hostile churn を減らしつつ、
+    strong reversal short はまだ取れる。
+  - 「止める」ではなく、same lane の quality 差で trade を選別できる。
+- Expected Bad:
+  - strong probe 条件が甘いと hostile lane の一部が still 通る。
+  - 条件が厳しすぎると hostile projection の candidate がほぼ全落ちして、
+    short cadence が細る。
+- Period:
+  - UTC `2026-03-11 09:26` - `2026-03-11 09:44`
+  - JST `2026-03-11 18:26` - `2026-03-11 18:44`
+- Fact:
+  - market check:
+    - recent tick `158.424-158.474`, spread `0.8 pips`
+    - `data_lag_ms=736.2`, `decision_latency_ms=17.0`
+  - post-restart `orders.db`:
+    - `PrecisionLowVol` short fill が
+      `projection.score=0.0`, `setup_quality=0.239` と
+      `projection.score=0.075`, `setup_quality=0.34`
+      の lane で残っていた。
+    - つまり current runtime は already
+      supportive / neutral projection short を still 通している。
+  - new test:
+    - weak hostile short (`projection.score=-0.125`, low quality, weaker reversal) は reject
+    - strong hostile short (`projection.score=-0.125`, low quality, stronger reversal) は
+      `size_mult<=1.02` で allow
+- Failure Cause:
+  - 直前の guard は hostile projection lane を block できたが、
+    user goal である「止めずに改善する」には
+    hostile setup の中の strong probe を残す余地が必要だった。
+- Improvement:
+  - `PrecisionLowVol` short は
+    hostile projection lane を blanket reject せず、
+    weak lane のみ reject、strong reversal probe は de-rate して通す。
+- Verification:
+  - `./.venv/bin/pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - 反映後 2-6h で
+    `PrecisionLowVol` short の `filled`, `STOP_LOSS_ORDER`, `net_jpy`, `avg pl_pips`
+    と `projection.score<=-0.10` lane の surviving fills を再監査する。
+- Verdict:
+  - pending
+- Next Action:
+  - `projection.score<=-0.10` で surviving fill が still 悪いなら、
+    `rev_strength` と `touch_ratio` の gate をさらに引き上げる。
+  - short cadence が細り過ぎるなら、
+    positive / neutral projection lane 側の confidence/size recovery を検討する。
+- Status:
+  - in_progress
+
 ## 2026-03-11 18:24 JST / local-v2: `PrecisionLowVol` short の hostile projection lane を strategy-local に遮断
 
 - Change:
