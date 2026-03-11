@@ -16435,6 +16435,9 @@
   - `workers/scalp_wick_reversal_blend/worker.py`
     も source-prefix key を直接読んで
     `perf_guard.is_allowed()` を bypass する。
+  - `execution/order_manager.py`
+    も同 3 strategy の preflight perf guard を
+    bypass key で skip する。
   - reopen 対象は soft block に限り、
     `VwapRevertS` の `hard:failfast` は維持した。
 

@@ -14761,6 +14761,9 @@ Status:
     を正とする。
   - worker でも source-prefix key を直接読み、
     wrapper 投影の成否に依存せず `perf_guard.is_allowed()` を bypass する。
+  - `execution/order_manager.py` も
+    `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
+    の strategy perf guard を同じ bypass key で skip する。
   - `WickReversalBlend` は wrapper を噛まないため、
     `SCALP_PRECISION_PERF_GUARD_ENABLED=0` をそのまま使う。
   - `SCALP_PRECISION_PERF_GUARD_MODE=reduce` は残すが、

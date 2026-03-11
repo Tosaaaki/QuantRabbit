@@ -22,6 +22,7 @@ from execution.order_manager import (
     _loss_cap_units_from_sl,
     _manual_margin_pressure_details,
     _min_rr_adjust_mode_for,
+    _order_manager_perf_guard_bypass,
     _order_spread_block_pips,
     _preflight_units,
     _protection_fallback_gap_price,
@@ -726,6 +727,17 @@ def test_apply_min_rr_floor_respects_strategy_rr_override(monkeypatch) -> None:
     assert round(thesis_sl_pips or 0.0, 2) == 1.6
     assert round(thesis_tp_pips or 0.0, 2) == 2.0
     assert thesis == {"sl_pips": 1.6, "tp_pips": 2.0}
+
+
+def test_order_manager_perf_guard_bypass_uses_strategy_specific_keys(monkeypatch) -> None:
+    monkeypatch.setenv("SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED", "1")
+    monkeypatch.setenv("SCALP_PRECISION_PERF_GUARD_ENABLED", "1")
+
+    assert _order_manager_perf_guard_bypass("PrecisionLowVol") is True
+    assert _order_manager_perf_guard_bypass("DroughtRevert") is True
+    assert _order_manager_perf_guard_bypass("WickReversalBlend") is True
+    assert _order_manager_perf_guard_bypass("VwapRevertS") is False
 
 
 def test_protection_fallback_gap_price_prefers_strategy_then_pocket(monkeypatch) -> None:

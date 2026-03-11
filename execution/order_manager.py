@@ -671,6 +671,24 @@ def _resolve_env_prefix_for_order(
     return None
 
 
+_ORDER_MANAGER_PERF_GUARD_BYPASS_KEYS = {
+    "precisionlowvol": "SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED",
+    "droughtrevert": "SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED",
+    "wickreversalblend": "SCALP_PRECISION_PERF_GUARD_ENABLED",
+}
+
+
+def _order_manager_perf_guard_bypass(strategy_tag: Optional[str]) -> bool:
+    tag = str(strategy_tag or "").strip().lower()
+    if not tag:
+        return False
+    normalized = "".join(ch for ch in tag if ch.isalnum())
+    key = _ORDER_MANAGER_PERF_GUARD_BYPASS_KEYS.get(normalized)
+    if not key:
+        return False
+    return _env_bool(key, False)
+
+
 def _entry_execution_deadline_sec(pocket: Optional[str]) -> float:
     """Return entry preflight deadline seconds (0 = disabled).
 
@@ -9875,72 +9893,84 @@ async def market_order(
         )
     if pocket != "manual" and strategy_tag:
         _trace("perf_guard")
-        try:
-            current_hour = datetime.now(timezone.utc).hour
-        except Exception:
-            current_hour = None
-        decision = perf_guard.is_allowed(
-            str(strategy_tag),
-            pocket,
-            hour=current_hour,
-            side=side_label,
-            env_prefix=env_prefix,
-        )
-        if not decision.allowed:
+        if _order_manager_perf_guard_bypass(strategy_tag):
             entry_thesis = _append_entry_path_stage(
                 entry_thesis,
                 stage="order_manager_perf_guard_strategy",
-                status="block",
+                status="skip",
                 units_before=units,
-                units_after=0,
+                units_after=units,
                 entry_probability_after=entry_probability,
-                reason=str(decision.reason or "strategy_block"),
+                reason="strategy_bypass",
                 detail_key="perf_guard",
             )
-            note = f"perf_block:{decision.reason}"
-            _console_order_log(
-                "OPEN_REJECT",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
+        else:
+            try:
+                current_hour = datetime.now(timezone.utc).hour
+            except Exception:
+                current_hour = None
+            decision = perf_guard.is_allowed(
+                str(strategy_tag),
+                pocket,
+                hour=current_hour,
                 side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note=note,
+                env_prefix=env_prefix,
             )
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="perf_block",
-                attempt=0,
-                stage_index=stage_index,
-                request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+            if not decision.allowed:
+                entry_thesis = _append_entry_path_stage(
+                    entry_thesis,
+                    stage="order_manager_perf_guard_strategy",
+                    status="block",
+                    units_before=units,
+                    units_after=0,
+                    entry_probability_after=entry_probability,
+                    reason=str(decision.reason or "strategy_block"),
+                    detail_key="perf_guard",
+                )
+                note = f"perf_block:{decision.reason}"
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="perf_block",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+                )
+                log_metric(
+                    "order_perf_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag),
+                        "reason": decision.reason,
+                    },
+                )
+                return None
+            entry_thesis = _append_entry_path_stage(
+                entry_thesis,
+                stage="order_manager_perf_guard_strategy",
+                status="pass",
+                units_before=units,
+                units_after=units,
+                entry_probability_after=entry_probability,
+                detail_key="perf_guard",
             )
-            log_metric(
-                "order_perf_block",
-                1.0,
-                tags={
-                    "pocket": pocket,
-                    "strategy": str(strategy_tag),
-                    "reason": decision.reason,
-                },
-            )
-            return None
-        entry_thesis = _append_entry_path_stage(
-            entry_thesis,
-            stage="order_manager_perf_guard_strategy",
-            status="pass",
-            units_before=units,
-            units_after=units,
-            entry_probability_after=entry_probability,
-            detail_key="perf_guard",
-        )
 
     if not reduce_only and pocket != "manual":
         decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag, env_prefix=env_prefix)

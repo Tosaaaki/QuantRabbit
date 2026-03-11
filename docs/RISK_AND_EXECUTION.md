@@ -3463,7 +3463,10 @@
   `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
   を使う。`WickReversalBlend` は
   `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
-  を使い、soft block (`pf<1`, `failfast_soft`) による
+  を使う。worker だけでなく
+  `execution/order_manager.py`
+  の strategy perf guard も同 key で skip し、
+  soft block (`pf<1`, `failfast_soft`) による
   strategy-wide entry 停止を避ける。
 - `VwapRevertS` のような `hard:failfast` lane は reopen せず、
   hard loser と soft loser を分けて扱う。
