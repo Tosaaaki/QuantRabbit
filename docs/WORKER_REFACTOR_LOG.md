@@ -16405,3 +16405,31 @@
   - `pytest -q tests/execution/test_order_manager_preflight.py`
     -> `38 passed`
   - `python3 -m py_compile execution/order_manager.py`
+
+### 2026-03-12 `scalp_precision` soft perf-guard disable for live entry recovery
+- 対象:
+  - `ops/env/quant-scalp-precision-lowvol.env`
+  - `ops/env/quant-scalp-drought-revert.env`
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+
+- 背景:
+  - local-v2 実測では feed / metrics は生きているのに、
+    `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
+    が `perf guard blocked` を継続し、
+    current live の entry が止まっていた。
+  - この 3 本はすでに worker-local の
+    `setup_pressure` / `flow_guard` / `RR` 修正へ寄せてあり、
+    shared prefix `SCALP_PRECISION` の soft perf block が
+    それらより先に entry を落とす状態は過剰だった。
+
+- 変更:
+  - 各 dedicated env に
+    `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
+    を追加した。
+  - reopen 対象は soft block に限り、
+    `VwapRevertS` の `hard:failfast` は維持した。
+
+- 検証:
+  - runtime 再起動後に `ps eww` と service log で
+    `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
+    と `perf guard blocked` 消失を確認する。

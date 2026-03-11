@@ -3452,6 +3452,17 @@
 - 差分が無い fill では no-op とし、
   risk gate / submit 前 preflight の判定自体は変えない。
 
+### 2026-03-12 `scalp_precision` soft perf block bypass
+- `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend` の current live 運用は、
+  shared prefix `SCALP_PRECISION` の soft perf guard より
+  worker-local `setup_pressure` / `flow_guard` / `RR` 修正を優先する。
+- current entry starvation 時は dedicated env で
+  `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
+  を明示し、soft block (`pf<1`, `failfast_soft`) による
+  strategy-wide entry 停止を避ける。
+- `VwapRevertS` のような `hard:failfast` lane は reopen せず、
+  hard loser と soft loser を分けて扱う。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

@@ -14722,3 +14722,46 @@ Status:
     `scalp_ping_5s_d_live`
     の `actual avg_sl / avg_tp / avg_rr / missing_tp`
     を再確認する。
+
+## 2026-03-12 scalp_precision soft perf-guard disable for entry recovery
+- Why/Hypothesis:
+  - current local-v2 では `orders.db` / `trades.db` の最新時刻が
+    `2026-03-12 02:55 JST` 付近で止まる一方、
+    `metrics.db` と market data は更新を続けていた。
+  - `quant-scalp-precision-lowvol.log`,
+    `quant-scalp-drought-revert.log`,
+    `quant-scalp-wick-reversal-blend.log`
+    には current signal / loop が出ているのに、
+    `perf guard blocked` が 03:38-03:41 JST まで継続していた。
+  - `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend` は
+    すでに worker-local の `setup_pressure`, `flow_guard`, `RR` 修正を入れており、
+    その上で shared prefix `SCALP_PRECISION` の soft perf guard が
+    entry を全落ちさせる状態は過剰と判断した。
+- Expected Good:
+  - soft block で止まっていた scalp precision 系の entry を live へ戻す。
+  - guard は消さず、strategy-local の quality / RR / setup-pressure を主系に戻す。
+  - `VwapRevertS` の hard loser lane は reopen しないため、
+    worst lane の再悪化は避ける。
+- Expected Bad:
+  - `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend` が
+    想定より早く再開し、直後に数件の small loser を出す可能性がある。
+  - ただし `VwapRevertS` hard-failfast は残し、
+    shared blanket reopen にはしない。
+- Observed/Fact:
+  - dedicated env
+    `ops/env/quant-scalp-precision-lowvol.env`,
+    `ops/env/quant-scalp-drought-revert.env`,
+    `ops/env/quant-scalp-wick-reversal-blend.env`
+    に `SCALP_PRECISION_PERF_GUARD_ENABLED=0` を追加した。
+  - `SCALP_PRECISION_PERF_GUARD_MODE=reduce` は残すが、
+    current live では worker-local guard を優先して
+    soft perf block を明示的に無効化する。
+  - `quant-scalp-vwap-revert.log` は
+    `hard:failfast:pf=0.24 win=0.57 n=14`
+    なので reopen 対象から除外した。
+- Verdict: pending
+- Next Action:
+  - push/restart 後の next 15-30 分で
+    `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
+    の `new submit_attempt / filled / realized_jpy`
+    と `perf guard blocked` 消失を確認する。
