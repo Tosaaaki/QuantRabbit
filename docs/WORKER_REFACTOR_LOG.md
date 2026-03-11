@@ -15727,3 +15727,40 @@
 - 検証:
   - `./.venv/bin/pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
     -> `13 passed`
+
+### 2026-03-11 10:55 JST - order-manager service 委譲時の probability gate を単一化
+- 対象:
+  - `execution/order_manager.py`
+  - `tests/execution/test_order_manager_log_retry.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - local-v2 の strategy runtime は `ORDER_MANAGER_SERVICE_ENABLED=1` で
+    `quant-order-manager` worker へ HTTP 委譲する一方、
+    worker 側は `ORDER_MANAGER_SERVICE_ENABLED=0` / `FALLBACK_LOCAL=1` で
+    `execution.order_manager` をローカル実行していた。
+  - その結果、client 側 `market_order()/limit_order()` と
+    service worker 側 `market_order()/limit_order()` の両方で
+    `order_manager_probability_gate` が走り、
+    `entry_probability_below_min_units` が二重適用されていた。
+  - live 実測では `nav=35,151.17`, `margin_used=10,501.80`,
+    `margin_available=24,655.85` と free margin が大きい一方、
+    `entry_probability_reject=2640` が発生しており、
+    RangeFader lane の `60 units` 級 intent まで二度目の gate で落ちていた。
+
+- 変更:
+  - `execution/order_manager.py`
+    - `market_order()` / `limit_order()` は
+      `entry_intent_guard` pass 後に service へ委譲し、
+      service が `handled` を返した場合は client 側 `probability_gate` を通さずに return するようにした。
+    - service が `unhandled` のときのみ、既存の local fallback 経路で
+      `probability_gate` を含む preflight を実行するようにした。
+  - `tests/execution/test_order_manager_log_retry.py`
+    - service 成功時に client 側 `_probability_scaled_units()` が呼ばれないこと。
+    - service unhandled 時に local fallback 側で `_probability_scaled_units()` が呼ばれること。
+    - limit order でも同じ単一 gate ルールになること。
+
+- 検証:
+  - `pytest tests/execution/test_order_manager_log_retry.py`
+    -> `22 passed`

@@ -13457,3 +13457,58 @@ Status:
     short reject/filled mix と `entry_thesis.flow_guard` を spot check する。
   - `scalp` pocket の short 偏りと `RangeFader` 以外の loser lane が
     どこまで減るかを current live trades で追う。
+
+## 2026-03-11 10:55 JST / local-v2: order-manager service 経由の二重 probability gate を解消
+- Why/Hypothesis:
+  - 2026-03-11 10:49 JST 時点の local-v2 実測では
+    `USD/JPY 158.223`、tick spread 約 `0.8 pips`、
+    `M1 ATR 2.61 pips`、`M5 ATR 5.88 pips`、
+    `data_lag_ms 666`、`decision_latency_ms 17` で、
+    OANDA pricing stream は `200 OK` 継続だった。
+  - `logs/oanda_account_snapshot_live.json` では
+    `nav=35,151.17`, `margin_used=10,501.80`, `margin_available=24,655.85`,
+    `free_margin_ratio=0.7012` で、margin 使用率は約 `29.9%` に留まっていた。
+  - `orders.db` / `quant-order-manager.log` では
+    直近 6 時間の `entry_probability_reject=2640`、`perf_block=1583` が支配的で、
+    `RangeFader-buy/sell/neutral-fade` が reject の大半を占めていた。
+  - 実際の reject payload では
+    `1628 -> 1067 -> 972 -> 136` と worker/strategy_entry 側で縮小した後、
+    `order_manager_probability_gate` が `136 -> 60` に縮小し、
+    さらに同じ gate がもう一度走って `60 -> block` になっていた。
+  - 原因は `ORDER_MANAGER_SERVICE_ENABLED=1` の strategy runtime から
+    `quant-order-manager` service へ委譲する前に client 側 `execution/order_manager.py`
+    でも probability gate を実行し、service worker 側で同じ gate を再実行していたこと。
+- Expected Good:
+  - service 経由の market/limit order で `order_manager_probability_gate` が 1 回だけになり、
+    `entry_probability_below_min_units` の過剰 reject を減らせる。
+  - `dynamic_alloc` / `participation_alloc` / `blackboard_coordination` 後に残った
+    intent size が二重に削られず、margin 利用率と filled cadence の回復が見込める。
+  - service timeout / unhandled 時は local fallback 側が従来どおり
+    probability gate を 1 回実行する。
+- Expected Bad:
+  - client 側の pre-service `probability_scaled` ログが減るため、
+    監査の見え方が一時的に変わる。
+  - loser lane の実発注が少し増える可能性があるため、
+    live では `filled / reject_rate / margin_used` を同時監視する必要がある。
+- Observed/Fact:
+  - `execution/order_manager.py`
+    - `market_order()` / `limit_order()` は
+      `entry_intent_guard` pass 後に service へ委譲し、
+      service が `handled` を返した場合は client 側 `probability_gate` を実行しないようにした。
+    - service が `unhandled` のときだけ local fallback 側で
+      `probability_gate` を実行するようにした。
+  - `tests/execution/test_order_manager_log_retry.py`
+    - service 成功時に client 側 `_probability_scaled_units()` が呼ばれないこと、
+      service unhandled 時に local fallback で gate が走ることを追加検証した。
+  - テスト:
+    - `pytest tests/execution/test_order_manager_log_retry.py`
+      -> `22 passed`
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後に `orders.db` で
+    `RangeFader-*` の `entry_probability_reject` と `probability_scaled` の比率が
+    どう変わるかを確認する。
+  - `logs/oanda_account_snapshot_live.json` の
+    `margin_used / margin_available / free_margin_ratio` と、
+    `health_snapshot.json` の `order_success_rate / reject_rate` を追って、
+    margin 使用率が `~30%` からどこまで戻るかを監査する。

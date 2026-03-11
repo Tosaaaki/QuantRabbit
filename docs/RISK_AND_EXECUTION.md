@@ -3049,3 +3049,20 @@
   `profit_take`, `trail`, `loss_cut_hard`, `loss_cut_max_hold_sec` を動的化する。
 - shared gate / order-manager / time block は増やさず、
   entry と exit の両方を strategy-local contract の中で閉じる。
+
+### 2026-03-11 local-v2: order-manager service 経由の probability gate は worker 側 1 回だけ適用する
+- local-v2 の strategy runtime は `ORDER_MANAGER_SERVICE_ENABLED=1` で
+  `quant-order-manager` worker へ HTTP 委譲する。
+- `execution/order_manager.py` の client 側 `market_order()` / `limit_order()` は、
+  `entry_intent_guard` pass 後に service へ委譲し、
+  service が `handled` を返した場合は client 側で
+  `order_manager_probability_gate` を先に適用しない。
+- `quant-order-manager` worker 側は
+  `ORDER_MANAGER_SERVICE_ENABLED=0` / `ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=1`
+  のローカル実行として、同じ `execution.order_manager` を最終実行主体として呼ぶ。
+  preserve-intent の probability scaling / reject はこの worker 側で 1 回だけ行う。
+- service が timeout / unhandled のときだけ、
+  client 側 local fallback が `order_manager_probability_gate` を含む preflight を実行する。
+- これにより `dynamic_alloc` / `participation_alloc` / `blackboard_coordination` 後の
+  intent size が二重に縮小されず、
+  `entry_probability_below_min_units` の過剰 reject を避ける。

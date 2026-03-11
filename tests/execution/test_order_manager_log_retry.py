@@ -319,6 +319,94 @@ def test_market_order_skips_preservice_db_log_when_service_mode(monkeypatch) -> 
     assert logged_statuses == []
 
 
+def test_market_order_service_mode_defers_probability_gate_to_worker(monkeypatch) -> None:
+    captured_payloads: list[dict[str, object]] = []
+
+    async def _fake_service_request_async(_path: str, payload: dict) -> str:
+        captured_payloads.append(dict(payload))
+        return "TICKET-SERVICE"
+
+    monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_probability_scaled_units",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-side probability gate should be skipped in service mode")
+        ),
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **_kwargs: None)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=1000,
+            sl_price=None,
+            tp_price=155.2,
+            pocket="scalp_fast",
+            client_order_id="cid-service-defers-probability",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={"entry_probability": 0.95, "entry_units_intent": 1000},
+            confidence=95,
+        )
+    )
+
+    assert ticket == "TICKET-SERVICE"
+    assert captured_payloads
+    assert captured_payloads[0]["units"] == 1000
+
+
+def test_market_order_service_fallback_runs_probability_gate_locally(monkeypatch) -> None:
+    async def _fake_service_request_async(_path: str, _payload: dict):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    probability_calls: list[int] = []
+    statuses: list[str] = []
+
+    def _fake_probability_scaled_units(units: int, **_kwargs):
+        probability_calls.append(units)
+        return 0, "entry_probability_reject_threshold"
+
+    monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
+    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_probability_scaled_units",
+        _fake_probability_scaled_units,
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_args, **_kwargs: None)
+
+    ticket = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=1000,
+            sl_price=None,
+            tp_price=155.2,
+            pocket="scalp_fast",
+            client_order_id="cid-service-fallback-local",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={"entry_probability": 0.18, "entry_units_intent": 1000},
+            confidence=18,
+        )
+    )
+
+    assert ticket is None
+    assert probability_calls == [1000]
+    assert "entry_probability_reject" in statuses
+
+
 def test_market_order_service_none_result_does_not_fallback_local(monkeypatch) -> None:
     async def _fake_service_request_async(_path: str, _payload: dict) -> None:
         return None
@@ -397,6 +485,53 @@ def test_limit_order_service_none_result_does_not_fallback_local(monkeypatch) ->
 
     assert trade_id is None
     assert order_id is None
+
+
+def test_limit_order_service_mode_defers_probability_gate_to_worker(monkeypatch) -> None:
+    captured_payloads: list[dict[str, object]] = []
+
+    async def _fake_service_request_async(_path: str, payload: dict):
+        captured_payloads.append(dict(payload))
+        return {"trade_id": "TID-SERVICE", "order_id": "OID-SERVICE"}
+
+    monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_probability_scaled_units",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-side probability gate should be skipped in service mode")
+        ),
+    )
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_log_order", lambda **_kwargs: None)
+
+    trade_id, order_id = asyncio.run(
+        order_manager.limit_order(
+            instrument="USD_JPY",
+            units=1000,
+            price=156.000,
+            sl_price=155.900,
+            tp_price=None,
+            pocket="scalp_fast",
+            client_order_id="cid-limit-service-defers-probability",
+            entry_thesis={
+                "strategy_tag": "scalp_ping_5s_b_live",
+                "entry_probability": 0.95,
+                "entry_units_intent": 1000,
+            },
+            confidence=95,
+        )
+    )
+
+    assert trade_id == "TID-SERVICE"
+    assert order_id == "OID-SERVICE"
+    assert captured_payloads
+    assert captured_payloads[0]["units"] == 1000
 
 
 def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(monkeypatch) -> None:

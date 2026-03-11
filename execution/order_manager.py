@@ -8954,6 +8954,29 @@ async def market_order(
         entry_probability_after=entry_probability,
         detail_key="entry_intent_guard",
     )
+    service_result = await _order_manager_service_request_async(
+        "/order/market_order",
+        {
+            "instrument": instrument,
+            "units": units,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "pocket": pocket,
+            "client_order_id": client_order_id,
+            "strategy_tag": strategy_tag,
+            "reduce_only": reduce_only,
+            "entry_thesis": entry_thesis,
+            "meta": meta,
+            "confidence": confidence,
+            "entry_probability": entry_probability,
+            "stage_index": stage_index,
+            "arbiter_final": arbiter_final,
+        },
+    )
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
+        if service_result is None:
+            return None
+        return str(service_result) if service_result is not None else None
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -9094,30 +9117,6 @@ async def market_order(
                 },
             )
             units = scaled_units
-    service_result = await _order_manager_service_request_async(
-        "/order/market_order",
-        {
-            "instrument": instrument,
-            "units": units,
-            "sl_price": sl_price,
-            "tp_price": tp_price,
-            "pocket": pocket,
-            "client_order_id": client_order_id,
-            "strategy_tag": strategy_tag,
-            "reduce_only": reduce_only,
-            "entry_thesis": entry_thesis,
-            "meta": meta,
-            "confidence": confidence,
-            "entry_probability": entry_probability,
-            "stage_index": stage_index,
-            "arbiter_final": arbiter_final,
-        },
-    )
-    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
-        if service_result is None:
-            return None
-        return str(service_result) if service_result is not None else None
-
     if _order_manager_service_enabled() and _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
         recovered_status = _await_terminal_service_order_status(client_order_id)
         if isinstance(recovered_status, dict):
@@ -13428,6 +13427,38 @@ async def limit_order(
         entry_probability_after=entry_probability,
         detail_key="entry_intent_guard",
     )
+    service_result = await _order_manager_service_request_async(
+        "/order/limit_order",
+        {
+            "instrument": instrument,
+            "units": units,
+            "price": price,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "pocket": pocket,
+            "current_bid": current_bid,
+            "current_ask": current_ask,
+            "require_passive": require_passive,
+            "client_order_id": client_order_id,
+            "reduce_only": reduce_only,
+            "ttl_ms": ttl_ms,
+            "entry_thesis": entry_thesis,
+            "meta": meta,
+            "confidence": confidence,
+            "entry_probability": entry_probability,
+        },
+    )
+    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
+        if service_result is None:
+            return None, None
+        if isinstance(service_result, dict):
+            trade_id = service_result.get("trade_id")
+            order_id = service_result.get("order_id")
+            return (
+                str(trade_id) if trade_id is not None else None,
+                str(order_id) if order_id is not None else None,
+            )
+        return None, None
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -13551,39 +13582,6 @@ async def limit_order(
                 },
             )
             units = scaled_units
-    service_result = await _order_manager_service_request_async(
-        "/order/limit_order",
-        {
-            "instrument": instrument,
-            "units": units,
-            "price": price,
-            "sl_price": sl_price,
-            "tp_price": tp_price,
-            "pocket": pocket,
-            "current_bid": current_bid,
-            "current_ask": current_ask,
-            "require_passive": require_passive,
-            "client_order_id": client_order_id,
-            "reduce_only": reduce_only,
-            "ttl_ms": ttl_ms,
-            "entry_thesis": entry_thesis,
-            "meta": meta,
-            "confidence": confidence,
-            "entry_probability": entry_probability,
-        },
-    )
-    if service_result is not _ORDER_MANAGER_SERVICE_UNHANDLED:
-        if service_result is None:
-            return None, None
-        if isinstance(service_result, dict):
-            trade_id = service_result.get("trade_id")
-            order_id = service_result.get("order_id")
-            return (
-                str(trade_id) if trade_id is not None else None,
-                str(order_id) if order_id is not None else None,
-            )
-        return None, None
-
     sl_disabled = _entry_sl_disabled_for_strategy(
         pocket,
         strategy_tag=strategy_tag,
