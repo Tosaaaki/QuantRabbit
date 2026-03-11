@@ -87,6 +87,76 @@ def test_range_fader_buy_supportive_context_without_cluster_falls_back_to_neutra
     assert signal["tag"] == "RangeFader-neutral-fade"
 
 
+def test_range_fader_blocks_shallow_buy_fade_probe_in_range_regime() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 156.500,
+            "ema20": 156.515,
+            "rsi": 43.8,
+            "atr_pips": 1.9,
+            "vol_5m": 1.05,
+            "adx": 18.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "range_score": 0.31,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.0007,
+        }
+    )
+
+    assert signal is None
+
+
+def test_range_fader_blocks_shallow_neutral_fade_probe_in_range_regime() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 156.500,
+            "ema20": 156.514,
+            "rsi": 49.5,
+            "atr_pips": 1.9,
+            "vol_5m": 1.05,
+            "adx": 18.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "range_score": 0.31,
+            "plus_di": 17.0,
+            "minus_di": 18.0,
+            "ema_slope_10": -0.0004,
+        }
+    )
+
+    assert signal is None
+
+
+def test_range_fader_buy_supportive_survives_shallow_probe_guard_in_range_regime() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 156.50,
+            "ema20": 156.515,
+            "rsi": 46.5,
+            "atr_pips": 1.9,
+            "vol_5m": 1.15,
+            "adx": 24.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "range_score": 0.31,
+            "plus_di": 21.0,
+            "minus_di": 19.5,
+            "ema_slope_10": -0.0004,
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tag"] == "RangeFader-buy-supportive"
+    assert signal["flow_regime"] == "range_fade"
+    assert signal["setup_fingerprint"] == "RangeFader|long|buy-supportive|range_fade|p0"
+
+
 def test_range_fader_short_headwind_blocks_weak_short_fade() -> None:
     signal = RangeFader.check(
         {

@@ -51,6 +51,86 @@
 - Status:
 ```
 
+## 2026-03-11 13:59 JST / local-v2: `RangeFader` の shallow range-fade long probe を strategy-local に遮断
+
+- Change:
+  - `strategies/scalping/range_fader.py` に
+    `range_fade + continuation_pressure=0` の shallow long probe を落とす
+    `shallow_probe_guard` を追加した。
+  - guard は `buy-fade` / `neutral-fade` long に対して、
+    `range_score`, `setup_quality`, `momentum_pips / ATR`, `RSI distance`
+    を同時に見て block する。
+  - `tests/strategies/test_scalp_thresholds.py` に
+    shallow `buy-fade` / `neutral-fade` が block され、
+    `buy-supportive` は通ることを追加した。
+- Why:
+  - fixed-SL 欠落の是正だけでは
+    `RangeFader` の current loser lane が残るため、
+    strategy-local の次優先改善が必要だった。
+- Hypothesis:
+  - `RangeFader|long|neutral-fade|range_fade|p0` と
+    `RangeFader|long|buy-fade|range_fade|p0` の shallow probe を
+    entry 前に worker 内で遮断すれば、
+    spread 負け主体の churn を減らせる。
+- Expected Good:
+  - `RangeFader` の long-side loser cluster が減り、
+    `max_hold_loss` まで持たされる shallow fade が減る。
+  - shared `entry_probability_reject` に頼らず、
+    same loser setup の preflight を早い段で減らせる。
+- Expected Bad:
+  - `buy-supportive` に近い marginal long まで落とすと、
+    long-side winner cadence も削る可能性がある。
+  - loser setup の定義が浅いと、
+    sell-side や supportive lane の観測を十分に増やせない。
+- Period:
+  - UTC `2026-03-10 04:59` - `2026-03-11 04:59`
+  - JST `2026-03-10 13:59` - `2026-03-11 13:59`
+- Fact:
+  - market check:
+    - `USD/JPY 158.144/158.152`, spread `0.8 pips`
+    - OANDA `pricing` latency `240ms`
+    - `M5 ATR14=3.607 pips`, recent 1h range `11.1 pips`
+    - `data_lag_ms=330`, `decision_latency_ms=18`
+  - `logs/trades.db` 24h:
+    - `346 trades / net_jpy=-440.9 / PF=0.452 / win_rate=0.289`
+    - `RangeFader 211 trades / net_jpy=-156.0 / exp_jpy=-0.7`
+  - current loser cluster:
+    - `RangeFader|long|neutral-fade|range_fade|p0`: `18 trades / -21.6 JPY / win_rate=0.111`
+    - `RangeFader|long|buy-fade|range_fade|p0`: `16 trades / -8.2 JPY / win_rate=0.000`
+    - fresh quality 付き sample でも
+      `buy-fade=-2.2 JPY (6 trades)`, `neutral-fade=-8.3 JPY (21 trades)` が継続。
+  - fresh loser sample は
+    `hold_sec≈180-817`, `close_reason=MARKET_ORDER_TRADE_CLOSE` で、
+    `max_hold_loss` まで保有して spread 負けへ寄るケースがあった。
+- Failure Cause:
+  - current `flow_headwind` guard は trend continuation 側には効いていたが、
+    `range_fade p0` の shallow long probe は
+    `continuation_pressure=0` のため通過していた。
+  - その結果、shared trim 後も shallow long fade が残り、
+    低い期待値の churn を作っていた。
+- Improvement:
+  - trend headwind ではなく
+    `range_score + setup_quality + momentum/ATR + RSI distance`
+    で shallow range probe 自体を strategy-local に block する。
+  - `buy-supportive` は guard 対象から外し、
+    supportive winner lane は維持する。
+- Verification:
+  - `pytest -q tests/strategies/test_scalp_thresholds.py`
+  - 反映後 2-6h で
+    `RangeFader|long|neutral-fade|range_fade|p0` と
+    `RangeFader|long|buy-fade|range_fade|p0` の trade count / net_jpy / win_rate を直前窓と比較する。
+  - `orders.db` で `RangeFader-buy-fade` / `RangeFader-neutral-fade` の
+    `preflight_start` と `filled` の比率変化を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - local-v2 反映後に
+    long loser cluster の減少と `buy-supportive` の cadence 低下有無を同時に監査する。
+  - `RangeFader-sell-fade|range_fade|p1` は別 cluster として継続監視し、
+    必要なら short 側も setup-local に追加 tightening する。
+- Status:
+  - in_progress
+
 ## 2026-03-11 14:15 JST / local-v2: fixed-SL dedicated worker の broker SL 欠落を order-manager override で補修
 
 - Change:

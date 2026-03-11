@@ -27,6 +27,13 @@ FLOW_HEADWIND_LONG_EXTREME_RSI_MAX = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_
 FLOW_HEADWIND_GATE_STEP = int(float(os.getenv("RANGE_FADER_FLOW_HEADWIND_GATE_STEP", "3.0")))
 FLOW_HEADWIND_CONF_CUT = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_CONF_CUT", "0.16"))
 SETUP_QUALITY_BLOCK_MIN = float(os.getenv("RANGE_FADER_SETUP_QUALITY_BLOCK_MIN", "0.26"))
+SHALLOW_PROBE_RANGE_SCORE_MIN = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_RANGE_SCORE_MIN", "0.28"))
+SHALLOW_PROBE_RANGE_SCORE_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_RANGE_SCORE_MAX", "0.36"))
+SHALLOW_PROBE_QUALITY_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_QUALITY_MAX", "0.58"))
+SHALLOW_PROBE_MOMENTUM_ATR_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_ATR_MAX", "0.95"))
+SHALLOW_PROBE_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_PIPS_CAP", "1.8"))
+SHALLOW_PROBE_BUY_RSI_DIST_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_BUY_RSI_DIST_MAX", "3.5"))
+SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX", "6.5"))
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -330,6 +337,47 @@ class RangeFader:
             return False
         return setup_quality < SETUP_QUALITY_BLOCK_MIN
 
+    @classmethod
+    def _shallow_probe_guard(
+        cls,
+        fac: Dict,
+        *,
+        side: str,
+        tag_kind: str,
+        flow_regime: str,
+        continuation_pressure: int,
+        setup_quality: float,
+        rsi: float,
+        gate: float,
+        atr_pips: float,
+        momentum_pips: float,
+        buy_supportive: bool = False,
+    ) -> bool:
+        if side != "long":
+            return False
+        if tag_kind not in {"buy-fade", "neutral-fade"}:
+            return False
+        if buy_supportive or flow_regime != "range_fade" or continuation_pressure != 0:
+            return False
+        range_score = cls._float_attr(fac, "range_score", 0.0)
+        if not (SHALLOW_PROBE_RANGE_SCORE_MIN <= range_score <= SHALLOW_PROBE_RANGE_SCORE_MAX):
+            return False
+        momentum_cap = max(
+            SHALLOW_PROBE_MOMENTUM_PIPS_CAP,
+            atr_pips * SHALLOW_PROBE_MOMENTUM_ATR_MAX,
+        )
+        if momentum_pips > momentum_cap:
+            return False
+        rsi_distance = abs(float(rsi) - float(gate))
+        rsi_distance_cap = (
+            max(SHALLOW_PROBE_BUY_RSI_DIST_MAX, atr_pips * 1.25)
+            if tag_kind == "buy-fade"
+            else max(SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX, atr_pips * 2.0)
+        )
+        if rsi_distance > rsi_distance_cap:
+            return False
+        return setup_quality <= SHALLOW_PROBE_QUALITY_MAX
+
     @staticmethod
     def check(fac: Dict) -> Dict | None:
         close = fac.get("close")
@@ -584,6 +632,32 @@ class RangeFader:
                 )
             )
             tag = f"{RangeFader.name}-buy-supportive" if buy_supportive and rsi > long_gate else f"{RangeFader.name}-buy-fade"
+            tag_kind = tag.split("-", 1)[-1]
+            if RangeFader._shallow_probe_guard(
+                fac,
+                side="long",
+                tag_kind=tag_kind,
+                flow_regime=long_flow_regime,
+                continuation_pressure=long_flow_pressure,
+                setup_quality=long_setup_quality,
+                rsi=float(rsi),
+                gate=float(buy_long_gate),
+                atr_pips=atr_pips,
+                momentum_pips=momentum_pips,
+                buy_supportive=buy_supportive,
+            ):
+                RangeFader._log_skip(
+                    "shallow_probe_guard_long",
+                    tag=tag_kind,
+                    setup_quality=round(long_setup_quality, 3),
+                    flow_regime=long_flow_regime,
+                    continuation_pressure=long_flow_pressure,
+                    range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
+                    rsi=round(float(rsi), 3),
+                    gate=round(float(buy_long_gate), 3),
+                    momentum_pips=round(momentum_pips, 3),
+                )
+                return None
             final_confidence = int(confidence * confidence_scale * long_conf_scale)
             if tag.endswith("buy-supportive"):
                 final_confidence = min(90, final_confidence + BUY_SUPPORT_CONF_BONUS)
@@ -755,6 +829,30 @@ class RangeFader:
                 continuation_pressure=neutral_flow_pressure,
                 flow_regime=neutral_flow_regime,
                 rsi=round(float(rsi), 3),
+                momentum_pips=round(momentum_pips, 3),
+            )
+            return None
+        if RangeFader._shallow_probe_guard(
+            fac,
+            side=neutral_side,
+            tag_kind="neutral-fade",
+            flow_regime=neutral_flow_regime,
+            continuation_pressure=neutral_flow_pressure,
+            setup_quality=neutral_setup_quality,
+            rsi=float(rsi),
+            gate=float(neutral_gate),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+        ):
+            RangeFader._log_skip(
+                f"shallow_probe_guard_{neutral_side}",
+                tag="neutral-fade",
+                setup_quality=round(neutral_setup_quality, 3),
+                flow_regime=neutral_flow_regime,
+                continuation_pressure=neutral_flow_pressure,
+                range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
+                rsi=round(float(rsi), 3),
+                gate=round(float(neutral_gate), 3),
                 momentum_pips=round(momentum_pips, 3),
             )
             return None

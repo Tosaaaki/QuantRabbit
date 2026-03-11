@@ -8,6 +8,31 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `RangeFader` shallow range probe guard（2026-03-11）
+- 背景:
+  - 2026-03-11 13:59 JST 時点の local-v2 実測では
+    `RangeFader 211 trades / -156.0 JPY` で、
+    current loser は
+    `RangeFader|long|neutral-fade|range_fade|p0` と
+    `RangeFader|long|buy-fade|range_fade|p0` に偏っていた。
+  - 既存 `flow_headwind` guard は continuation headwind を潰せる一方で、
+    `continuation_pressure=0` の shallow `range_fade` long probe は still 通していた。
+- 実装:
+  - `strategies/scalping/range_fader.py`
+    - `range_fade + continuation_pressure=0` の
+      `buy-fade` / `neutral-fade` long に対して
+      `range_score`, `setup_quality`, `momentum_pips / ATR`, `RSI distance`
+      を使う `shallow_probe_guard` を追加した。
+    - `buy-supportive` は guard 対象から外し、
+      supportive lane は維持する。
+  - `tests/strategies/test_scalp_thresholds.py`
+    - shallow `buy-fade` / `neutral-fade` が block され、
+      `buy-supportive` が通ることを固定した。
+- 意図:
+  - shallow `range_fade p0` long の churn を
+    shared probability trim や order-manager skip に押し込まず、
+    strategy-local entry quality で前段遮断する。
+
 ### local-v2 `RangeFader` setup-local entry/exit dynamicization（2026-03-11）
 - 背景:
   - 2026-03-11 10:42-11:00 JST の post-restart loser は `RangeFader-sell-fade` の

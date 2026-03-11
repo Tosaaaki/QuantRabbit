@@ -27,6 +27,27 @@
   - `stopLossOnFill` 欠落による tail loss を、
     shared post-hoc gate ではなく broker protection の付与で止血する。
 
+### 2026-03-11（追記）`RangeFader` の shallow range-fade long probe を worker 内で block
+
+- 対象:
+  - `strategies/scalping/range_fader.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+- 変更:
+  - `RangeFader` に `shallow_probe_guard` を追加し、
+    `range_fade + continuation_pressure=0` の shallow `buy-fade` /
+    `neutral-fade` long を
+    `range_score`, `setup_quality`, `momentum_pips/ATR`, `RSI distance`
+    で strategy-local に block するようにした。
+  - `buy-supportive` は guard 対象から外し、
+    supportive buy lane は従来どおり通す。
+  - strategy test で
+    shallow `buy-fade` / `neutral-fade` が落ち、
+    `buy-supportive` が残ることを固定した。
+- 意図:
+  - shared trim の後段で still 残る `range_fade p0` long churn を、
+    order-manager や shared feedback ではなく
+    `RangeFader` 自身の current setup 判定で止める。
+
 ### 2026-03-11（追記）`RangeFader` の setup-local dynamicization を entry/exit 両側へ展開
 
 - 対象:
