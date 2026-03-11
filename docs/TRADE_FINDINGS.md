@@ -13409,3 +13409,51 @@ Status:
   - `M1Scalper-M1`, `MicroLevelReactor-*`, `MicroTrendRetest-long`,
     `RangeFader-*` の live order/trade で
     strategy-wide blanket trim が減って current setup match の補正へ寄ったかを追う。
+
+## 2026-03-11 10:25 JST / local-v2: `WickReversalBlend` short fade の bullish continuation headwind を worker local で遮断
+- Why/Hypothesis:
+  - live loser は `DroughtRevert` / `PrecisionLowVol` / `VwapRevertS` の short fade に寄っていた。
+    2026-03-11 10:25 JST の local-v2 実測では `USD/JPY bid/ask=158.210/158.218`、spread 約 `0.8 pips`、
+    `scalp` pocket は `-1659 units / 3 trades / unrealized -70.8 pips` の short 偏りだった。
+  - `WickReversalBlend` には short 用 `flow_guard` が既にあったが、
+    `DI gap` と `vwap stretch` の continuation 圧力が弱く、
+    `PrecisionLowVol` では marginal headwind でも `vgap_bias_ok` が
+    confidence/size boost を残していた。
+  - `flow_guard` を live continuation ベースへ寄せ、
+    `DroughtRevert` は projection deny も worker local で止めれば、
+    shared post-hoc reject に頼らず wrong-way short を前段で削れる。
+- Expected Good:
+  - bullish continuation が残る short fade を signal 時点で reject し、
+    `entry_probability_reject` の後段 reject より前に低品質 attempt を減らせる。
+  - `PrecisionLowVol` の positive `vwap_gap` は
+    clean fade のときだけ boost され、marginal headwind short の size/conf boost が消える。
+  - `flow_guard` が `entry_thesis` に残るため、
+    downstream の setup-scoped shared layer と exit 監査で
+    `continuation_pressure / setup_quality` を読める。
+- Expected Bad:
+  - short fade の blocked rate が一時的に上がり、
+    range revert 系の cadence が落ちる可能性がある。
+  - `trend_stack` や `stretch_pressure` の重みが強すぎると、
+    clean overextension まで block して winner fade を落とすリスクがある。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_reversion_short_flow_guard()` に
+      `plus_di-minus_di`, `trend_stack`, `stretch_pressure` を追加した。
+    - `setup_quality` が低く `trend_stack` が高い marginal short も reject するようにした。
+    - `DroughtRevert` は `projection_decision(..., mode="range")` を必須化した。
+    - `PrecisionLowVol` の `vgap_bias_ok` は
+      `continuation_pressure + 0.05 <= max_pressure` かつ `setup_quality >= 0.66`
+      のときだけ boost するようにした。
+    - `flow_guard` を `entry_thesis` に露出し、
+      `continuation_pressure / reversion_support / setup_quality / flow_regime`
+      を記録するようにした。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+      -> `13 passed`
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後、
+    `orders.db` で `DroughtRevert` / `PrecisionLowVol` / `VwapRevertS` の
+    short reject/filled mix と `entry_thesis.flow_guard` を spot check する。
+  - `scalp` pocket の short 偏りと `RangeFader` 以外の loser lane が
+    どこまで減るかを current live trades で追う。

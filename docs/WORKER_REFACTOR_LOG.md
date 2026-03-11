@@ -15692,3 +15692,38 @@
 - 検証:
   - `./.venv/bin/pytest -q tests/workers/common/test_dynamic_alloc.py tests/analysis/test_auto_canary.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_auto_canary_improver.py tests/scripts/test_loser_cluster_worker.py tests/test_dynamic_alloc_worker.py tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_setup_context.py tests/workers/test_m1scalper_exit_worker.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py tests/workers/test_m1scalper_config.py tests/replay/test_m1_family_replay.py`
     -> `62 passed`
+
+### 2026-03-11 10:25 JST - `WickReversalBlend` short fade を live `flow_guard` ベースへ更新
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - live loser は `DroughtRevert` / `PrecisionLowVol` / `VwapRevertS` の short fade に集中し、
+    2026-03-11 10:25 JST 時点で `scalp` pocket は `-1659 units / 3 trades / -70.8 pips`
+    の short 偏りだった。
+  - current worker には short 用 `flow_guard` があったが、
+    `DI gap` と `vwap stretch` の continuation 圧力が弱く、
+    `PrecisionLowVol` では marginal headwind でも `vgap_bias_ok` が
+    confidence/size boost を残していた。
+
+- 変更:
+  - `_reversion_short_flow_guard()` に
+    `plus_di-minus_di`, `trend_stack`, `stretch_pressure` を追加し、
+    bullish continuation が残る short fade を強く block するようにした。
+  - `setup_quality` が低く `trend_stack` が高い marginal short も reject するようにした。
+  - `DroughtRevert` に `projection_decision(..., mode="range")` を追加し、
+    projection deny の short を worker local で止めるようにした。
+  - `PrecisionLowVol` の `vgap_bias_ok` は
+    `continuation_pressure + 0.05 <= max_pressure` かつ `setup_quality >= 0.66`
+    のときだけ boost を許可するようにした。
+  - `flow_guard` は `entry_thesis` にも露出し、
+    `continuation_pressure / reversion_support / setup_quality / flow_regime`
+    を downstream 監査できるようにした。
+
+- 検証:
+  - `./.venv/bin/pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    -> `13 passed`

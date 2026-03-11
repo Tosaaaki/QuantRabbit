@@ -2993,6 +2993,26 @@
 - この guard は shared cadence / shared gate / order-manager ではなく
   `strategies/scalping/range_fader.py` 内の strategy-local quality 判定として扱う。
 
+### 2026-03-11 `WickReversalBlend` current short flow guard
+- `DroughtRevert` / `PrecisionLowVol` / `VwapRevertS` の short fade は current で
+  worker local `flow_guard` を通す。
+- `flow_guard` は
+  `ema_slope_10/20`, `macd_hist`, `DI gap`, `vwap_gap stretch`,
+  `price-vs-ema20/vwap`, `range_score`, `tick_reversal strength`, band touch
+  から `continuation_pressure`, `reversion_support`, `setup_quality`, `max_pressure`
+  を live 算出する。
+- `continuation_pressure > max_pressure` だけでなく、
+  `setup_quality` が低く `trend_stack` が高い marginal short も reject する。
+- `PrecisionLowVol` の `vgap_bias_ok` は
+  `continuation_pressure + 0.05 <= max_pressure` かつ `setup_quality >= 0.66`
+  のときだけ confidence/size boost を許可する。
+- `DroughtRevert` は `projection_decision(side=\"short\", mode=\"range\")`
+  を通らない short を出さない。
+- signal は `flow_guard` を `entry_thesis` へ引き回し、
+  `continuation_pressure / reversion_support / setup_quality / flow_regime`
+  を監査できるようにする。
+- shared order-manager / global gate / time block の追加は行わない。
+
 ### 2026-03-10 lane-aware feedback / current loser quick fix
 - feedback artifact (`entry_path_summary`, `participation_alloc`, `dynamic_alloc`,
   `loser_cluster`, `pattern_book`) は

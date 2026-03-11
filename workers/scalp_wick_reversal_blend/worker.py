@@ -810,6 +810,20 @@ def _vwap_gap_pips(fac_m1: Dict[str, object]) -> float:
         return 0.0
 
 
+def _plus_di(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("plus_di") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _minus_di(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("minus_di") or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _div_score(fac_m1: Dict[str, object]) -> float:
     try:
         rsi_score = float(fac_m1.get("div_rsi_score") or 0.0)
@@ -820,6 +834,116 @@ def _div_score(fac_m1: Dict[str, object]) -> float:
     except Exception:
         macd_score = 0.0
     return rsi_score * 0.6 + macd_score * 0.4
+
+
+def _unit_bound(value: object) -> float:
+    try:
+        numeric = float(value)
+    except Exception:
+        return 0.0
+    return max(0.0, min(1.0, numeric))
+
+
+def _positive_norm(value: object, scale: float, *, offset: float = 0.0) -> float:
+    try:
+        numeric = float(value) - float(offset)
+    except Exception:
+        return 0.0
+    if scale <= 0.0:
+        return 0.0
+    return _unit_bound(max(0.0, numeric) / float(scale))
+
+
+def _reversion_short_flow_guard(
+    *,
+    fac_m1: Dict[str, object],
+    price: float,
+    dist_upper_pips: float,
+    band_pips: float,
+    range_score: float,
+    rev_strength: float,
+    profile: str,
+) -> Tuple[bool, Dict[str, float]]:
+    try:
+        adx = float(fac_m1.get("adx") or 0.0)
+    except Exception:
+        adx = 0.0
+    anchor = 0.0
+    for key in ("ema20", "ma20", "vwap"):
+        try:
+            candidate = float(fac_m1.get(key) or 0.0)
+        except Exception:
+            candidate = 0.0
+        if candidate > 0.0:
+            anchor = candidate
+            break
+    price_gap_pips = ((price - anchor) / PIP) if anchor > 0.0 else 0.0
+    slope_10 = _ema_slope_pips(fac_m1, "ema_slope_10")
+    slope_20 = _ema_slope_pips(fac_m1, "ema_slope_20")
+    macd_hist = _macd_hist_pips(fac_m1)
+    vgap = _vwap_gap_pips(fac_m1)
+    di_gap = max(0.0, _plus_di(fac_m1) - _minus_di(fac_m1))
+
+    touch_ratio = _unit_bound((max(0.0, band_pips) - max(0.0, dist_upper_pips)) / max(0.15, band_pips))
+    range_support = _unit_bound((range_score - 0.25) / 0.45)
+    reversal_support = _unit_bound((rev_strength - 0.18) / 0.72)
+    vgap_support = _positive_norm(vgap, 1.4) * (0.55 + touch_ratio * 0.45)
+    price_extension = _positive_norm(
+        price_gap_pips,
+        max(1.2, band_pips * 1.4),
+        offset=max(0.2, band_pips * 0.35),
+    )
+    adx_reversion = _unit_bound((28.0 - adx) / 12.0)
+    trend_stack = _unit_bound(
+        0.34 * _positive_norm(slope_10, 0.14)
+        + 0.22 * _positive_norm(slope_20, 0.10)
+        + 0.20 * _positive_norm(macd_hist, 0.45)
+        + 0.24 * _positive_norm(di_gap, 9.0)
+    )
+    stretch_pressure = _positive_norm(
+        vgap,
+        max(1.6, band_pips * 1.6),
+        offset=max(0.5, band_pips * 0.55),
+    ) * (0.30 + trend_stack * 0.70)
+
+    continuation_pressure = (
+        0.20 * _positive_norm(slope_10, 0.14)
+        + 0.12 * _positive_norm(slope_20, 0.10)
+        + 0.12 * _positive_norm(macd_hist, 0.45)
+        + 0.12 * _positive_norm(adx - 18.0, 10.0)
+        + 0.16 * _positive_norm(di_gap, 9.0)
+        + 0.28 * stretch_pressure
+    )
+    reversion_support_score = (
+        0.28 * touch_ratio
+        + 0.20 * range_support
+        + 0.22 * reversal_support
+        + 0.18 * vgap_support
+        + 0.12 * price_extension
+    )
+    reversion_support_score = _unit_bound(reversion_support_score * 0.9 + adx_reversion * 0.1)
+    setup_quality = _unit_bound(0.18 + reversion_support_score * 0.68 - continuation_pressure * 0.72)
+    max_pressure = _unit_bound(
+        0.32 + reversion_support_score * 0.28 + max(0.0, setup_quality - 0.55) * 0.08
+    )
+    allow = continuation_pressure <= max_pressure and not (
+        continuation_pressure >= 0.50 and setup_quality <= 0.40 and trend_stack >= 0.55
+    )
+    detail = {
+        "profile": profile,
+        "continuation_pressure": round(continuation_pressure, 3),
+        "reversion_support": round(reversion_support_score, 3),
+        "setup_quality": round(setup_quality, 3),
+        "max_pressure": round(max_pressure, 3),
+        "touch_ratio": round(touch_ratio, 3),
+        "price_gap_pips": round(price_gap_pips, 3),
+        "vgap_pips": round(vgap, 3),
+        "di_gap": round(di_gap, 3),
+        "trend_stack": round(trend_stack, 3),
+        "stretch_pressure": round(stretch_pressure, 3),
+        "adx": round(adx, 3),
+    }
+    return allow, detail
 
 
 
@@ -936,14 +1060,38 @@ def _signal_drought_revert(
     if not side or rev_dir != side:
         return None
 
+    flow_guard = None
+    if side == "short":
+        short_ok, flow_guard = _reversion_short_flow_guard(
+            fac_m1=fac_m1,
+            price=price,
+            dist_upper_pips=dist_upper,
+            band_pips=band,
+            range_score=range_score,
+            rev_strength=rev_strength,
+            profile=tag,
+        )
+        if not short_ok:
+            return None
+
+    proj_allow, proj_size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
     sl = max(1.0, min(1.7, atr * 0.75))
     tp = max(0.9, min(1.7, atr * 0.9))
     conf = 52
     conf += int(min(10, abs(rsi - 50.0) * 0.5))
     conf += int(min(8, rev_strength * 4.0))
     conf -= int(min(6, max(0.0, adx - 20.0) * 0.4))
+    if flow_guard is not None:
+        conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
+    size_mult = 0.9
+    size_mult = max(0.76, min(0.96, size_mult * float(proj_size_mult)))
+    if flow_guard is not None:
+        size_mult = max(0.76, min(0.9, size_mult * (0.86 + float(flow_guard["setup_quality"]) * 0.14)))
 
-    return {
+    signal = {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
         "sl_pips": round(sl, 2),
         "tp_pips": round(tp, 2),
@@ -951,8 +1099,12 @@ def _signal_drought_revert(
         "tag": tag,
         "reason": "drought_revert",
         "range_score": round(range_score, 3),
-        "size_mult": 0.9,
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
     }
+    if flow_guard is not None:
+        signal["flow_guard"] = flow_guard
+    return signal
 
 
 def _signal_precision_lowvol(
@@ -1011,6 +1163,20 @@ def _signal_precision_lowvol(
     if not side:
         return None
 
+    flow_guard = None
+    if side == "short":
+        short_ok, flow_guard = _reversion_short_flow_guard(
+            fac_m1=fac_m1,
+            price=price,
+            dist_upper_pips=dist_upper,
+            band_pips=band,
+            range_score=range_score,
+            rev_strength=rev_strength,
+            profile=tag,
+        )
+        if not short_ok:
+            return None
+
     vgap_block = config.PREC_LOWVOL_VWAP_GAP_BLOCK
     if vgap_block > 0.0:
         if side == "long" and vgap > vgap_block:
@@ -1020,10 +1186,17 @@ def _signal_precision_lowvol(
 
     vgap_bias_min = config.PREC_LOWVOL_VWAP_GAP_MIN
     vgap_bias_ok = (vgap <= -vgap_bias_min and side == "long") or (vgap >= vgap_bias_min and side == "short")
+    if vgap_bias_ok and flow_guard is not None:
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        max_pressure = float(flow_guard.get("max_pressure") or 0.0)
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        if continuation_pressure + 0.05 > max_pressure or setup_quality < 0.66:
+            vgap_bias_ok = False
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
         return None
+    proj_size_mult = float(size_mult)
 
     dist = dist_lower if side == "long" else dist_upper
     touch_ratio = max(0.0, (band - dist) / max(0.2, band))
@@ -1039,6 +1212,8 @@ def _signal_precision_lowvol(
         conf += 3
     if range_ctx and getattr(range_ctx, "active", False):
         conf += 2
+    if flow_guard is not None:
+        conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
 
     size_boost = 0.0
     if vgap_bias_ok:
@@ -1049,8 +1224,13 @@ def _signal_precision_lowvol(
         size_boost += 0.06
     size_cap = 1.35 if rev_strength >= 0.75 else 1.25
     size_mult = max(0.85, min(size_cap, size_mult + size_boost))
+    if flow_guard is not None:
+        size_mult = max(
+            0.78,
+            min(size_cap, min(size_mult, proj_size_mult * (0.86 + float(flow_guard["setup_quality"]) * 0.14))),
+        )
 
-    return {
+    signal = {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
         "sl_pips": round(sl, 2),
         "tp_pips": round(tp, 2),
@@ -1061,6 +1241,9 @@ def _signal_precision_lowvol(
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
+    if flow_guard is not None:
+        signal["flow_guard"] = flow_guard
+    return signal
 
 
 def _signal_compression_retest(
@@ -2926,14 +3109,35 @@ def _signal_vwap_revert(
     if not side:
         return None
 
+    flow_guard = None
+    if side == "short":
+        short_ok, flow_guard = _reversion_short_flow_guard(
+            fac_m1=fac_m1,
+            price=price,
+            dist_upper_pips=dist_upper,
+            band_pips=max(VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18),
+            range_score=range_score,
+            rev_strength=rev_strength,
+            profile=tag,
+        )
+        if not short_ok:
+            return None
+
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
         return None
+    proj_size_mult = float(size_mult)
 
     sl = max(1.2, min(1.8, atr * 0.7))
     tp = max(1.4, min(2.2, atr * 0.95))
     conf = 60 + int(min(10, abs(vgap) * 1.6)) + int(min(8, rev_strength * 3.5))
-    return {
+    if flow_guard is not None:
+        conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
+        size_mult = max(
+            0.78,
+            min(1.1, min(size_mult, proj_size_mult * (0.86 + float(flow_guard["setup_quality"]) * 0.14))),
+        )
+    signal = {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
         "sl_pips": round(sl, 2),
         "tp_pips": round(tp, 2),
@@ -2943,6 +3147,9 @@ def _signal_vwap_revert(
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
+    if flow_guard is not None:
+        signal["flow_guard"] = flow_guard
+    return signal
 
 
 def _signal_stoch_bounce(
@@ -3289,6 +3496,8 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "macd_hist_pips": _macd_hist_pips(fac_m1),
         "vwap_gap": _vwap_gap_pips(fac_m1),
         "ema_slope_10_pips": _ema_slope_pips(fac_m1, "ema_slope_10"),
+        "plus_di": _plus_di(fac_m1),
+        "minus_di": _minus_di(fac_m1),
         "div_score": _div_score(fac_m1),
         "air_score": signal.get("air_score"),
         "air_pressure": signal.get("air_pressure"),
@@ -3301,7 +3510,15 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "wick": signal.get("wick"),
         "wick_blend_quality": signal.get("wick_blend_quality"),
         "wick_blend_components": signal.get("wick_blend_components"),
+        "flow_guard": signal.get("flow_guard"),
     }
+    flow_guard = signal.get("flow_guard")
+    if isinstance(flow_guard, dict):
+        thesis["continuation_pressure"] = flow_guard.get("continuation_pressure")
+        thesis["reversion_support"] = flow_guard.get("reversion_support")
+        thesis["setup_quality"] = flow_guard.get("setup_quality")
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        thesis["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
     tag = str(signal.get("tag") or "").strip()
     if tag in {"TickImbalance", "TickImbalanceRRPlus"}:
         thesis["pattern_gate_opt_in"] = bool(TICK_IMB_PATTERN_GATE_OPT_IN)
