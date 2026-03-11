@@ -13980,3 +13980,34 @@ Status:
     `setup_fingerprint`, `projection.score`, `setup_quality` を
     `orders.db` / `trades.db` で spot check する。
   - `gap:up_lean` や `gap:up_flat` の winner lane が維持されるかも同時に確認する。
+
+## 2026-03-11 20:xx JST / local-v2: shared env blanket stop rollback を docs 正本へ反映
+- Why/Hypothesis:
+  - 2026-03-11 の RCA では loser lane が `PrecisionLowVol` / `WickReversalBlend` /
+    `VwapRevertS` / `MicroCompressionRevert` / `MicroVWAPRevert` に集中したが、
+    current architecture は shared env の blanket `STRATEGY_CONTROL_ENTRY_* = 0`
+    ではなく strategy-local guard と setup-scoped shared trim を正としている。
+  - あわせて shared `RISK_PERF_MIN_MULT` の broad raise は
+    winner 以外まで一律に risk floor を押し上げるため、
+    safer baseline を正本へ戻しておかないと次回 RCA で再び全体 raise に寄りやすい。
+  - `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1` の運用は
+    preserve-intent が min-RR を bypass する誤解を生みやすく、
+    `ORDER_MIN_RR_*` が risk/execution guard であることを明記する必要があった。
+- Expected Good:
+  - 次回の RCA / PDCA で blanket stop や broad multiplier raise へ戻らず、
+    strategy-local guard と shared trim の責務分離を維持できる。
+  - preserve-intent を使う order path でも
+    min-RR floor が有効である前提を運用ログ/仕様で揃えられる。
+- Expected Bad:
+  - docs だけ先行して stale になると、runtime env と運用記録の間にズレが残る可能性がある。
+- Observed/Fact:
+  - `AGENTS.md` / `docs/WORKER_REFACTOR_LOG.md` / `docs/RISK_AND_EXECUTION.md`
+    を更新し、shared env の blanket `STRATEGY_CONTROL_ENTRY_* = 0` を
+    current 運用として扱わないこと、
+    shared risk multiplier は safer baseline を維持すること、
+    `ORDER_MIN_RR_*` は preserve-intent 下でも risk/execution guard として適用することを追記した。
+- Verdict: good
+- Next Action:
+  - 次回の env / code change では
+    `ops/env/local-v2-stack.env` と `ops/env/quant-order-manager.env` の実値が
+    この方針と一致しているかを先に spot check してから RCA を進める。

@@ -3214,3 +3214,24 @@
   strategy-local に block する。
 - strong extension でも clean reversal / supportive projection を持つ lane は残し、
   static env tightening や shared gate 追加は行わない。
+
+### 2026-03-11 local-v2 shared env rollback / min-RR floor current
+- current local-v2 は
+  shared env の blanket `STRATEGY_CONTROL_ENTRY_* = 0` を
+  loser lane 改善の主手段として扱わない。
+  `PrecisionLowVol` / `WickReversalBlend` / `VwapRevertS` /
+  `MicroCompressionRevert` / `MicroVWAPRevert` のような lane も、
+  まず worker local `flow_guard`, lane-aware exit,
+  setup-scoped shared trim（`trim_units`, bounded negative `probability_offset`,
+  active `boost_participation`）で改善する。
+- shared `RISK_PERF_MIN_MULT` などの広域 multiplier は
+  safer baseline を維持し、
+  winner participation の回復を broad raise ではなく
+  strategy-local sizing と setup-scoped shared artifacts で行う。
+- `quant-order-manager` の `ORDER_MIN_RR_SCALP`,
+  `ORDER_MIN_RR_SCALP_FAST`, `ORDER_MIN_RR_MICRO`
+  と `ORDER_MIN_RR_ADJUST_MODE` は risk/execution guard であり、
+  `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1`
+  や preserve-intent scaling が有効でも適用する。
+  preserve-intent は strategy intent の保持であって、
+  min-RR / spread / margin などの risk guard bypass ではない。

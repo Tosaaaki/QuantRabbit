@@ -15978,3 +15978,32 @@
 - 検証:
   - `pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_policy.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
     -> `22 passed`
+
+### 2026-03-11 20:xx JST - local-v2 shared env rollback 方針を運用 docs へ同期
+- 対象:
+  - `AGENTS.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - recent RCA で shared env 側の blanket `STRATEGY_CONTROL_ENTRY_* = 0` と
+    broad な shared risk multiplier raise が一時案として浮上したが、
+    current architecture は
+    strategy-local guard / lane-aware exit / setup-scoped shared trim を正としている。
+  - `quant-order-manager` の preserve-intent path についても、
+    `ORDER_MIN_RR_*` が bypass 可能な quality gate ではなく
+    risk/execution guard であることを明示する必要があった。
+
+- 変更:
+  - current local-v2 は
+    shared env の blanket hard stop を常用せず、
+    loser lane は worker local guard と shared trim で改善する方針を明記した。
+  - shared `RISK_PERF_MIN_MULT` などの広域 multiplier は
+    safer baseline を維持し、
+    winner participation は strategy-local sizing / setup-scoped shared artifacts で戻す方針を明記した。
+  - `ORDER_MIN_RR_SCALP` / `ORDER_MIN_RR_SCALP_FAST` / `ORDER_MIN_RR_MICRO`
+    は preserve-intent 有効時も適用される risk/execution guard として明記した。
+
+- 検証:
+  - docs only（runtime / test 実行なし）

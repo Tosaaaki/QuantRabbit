@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import execution.order_manager as order_manager
 from execution.order_manager import (
+    _apply_min_rr_floor,
     _augment_entry_thesis_policy_generation,
     _dynamic_entry_sl_target_pips,
     _entry_intent_guard_reason,
@@ -635,6 +636,60 @@ def test_min_rr_adjust_mode_prefers_strategy_then_pocket(monkeypatch) -> None:
 
     mode_global = _min_rr_adjust_mode_for("micro", strategy_tag="other")
     assert mode_global == "sl"
+
+
+def test_apply_min_rr_floor_tightens_sl_in_sl_first_mode(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_MIN_RR_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_MIN_RR_BY_POCKET", {"scalp_fast": 1.4})
+    monkeypatch.setattr(order_manager, "_MIN_RR_ADJUST_MODE", "sl_first")
+    monkeypatch.setattr(order_manager, "log_metric", lambda *args, **kwargs: None)
+
+    sl_price, tp_price, thesis, thesis_sl_pips, thesis_tp_pips = _apply_min_rr_floor(
+        pocket="scalp_fast",
+        strategy_tag="scalp_extrema_reversal_live",
+        units=1500,
+        entry_basis=158.400,
+        sl_price=158.382,
+        tp_price=158.423,
+        entry_thesis={"sl_pips": 1.8, "tp_pips": 2.3},
+        thesis_sl_pips=1.8,
+        thesis_tp_pips=2.3,
+    )
+
+    assert sl_price == 158.384
+    assert tp_price == 158.423
+    assert round(thesis_sl_pips or 0.0, 2) == 1.64
+    assert round(thesis_tp_pips or 0.0, 2) == 2.3
+    assert thesis is not None
+    assert thesis["sl_pips"] == 1.64
+    assert thesis["min_rr_adjusted"]["mode"] == "sl"
+
+
+def test_apply_min_rr_floor_can_expand_tp_with_preserve_intent_safe_mode(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_MIN_RR_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_MIN_RR_BY_POCKET", {"scalp": 1.5})
+    monkeypatch.setattr(order_manager, "_MIN_RR_ADJUST_MODE", "tp")
+    monkeypatch.setattr(order_manager, "log_metric", lambda *args, **kwargs: None)
+
+    sl_price, tp_price, thesis, thesis_sl_pips, thesis_tp_pips = _apply_min_rr_floor(
+        pocket="scalp",
+        strategy_tag="DroughtRevert",
+        units=-1200,
+        entry_basis=158.400,
+        sl_price=158.413,
+        tp_price=158.384,
+        entry_thesis={"sl_pips": 1.3, "tp_pips": 1.6},
+        thesis_sl_pips=1.3,
+        thesis_tp_pips=1.6,
+    )
+
+    assert sl_price == 158.413
+    assert tp_price == 158.380
+    assert round(thesis_sl_pips or 0.0, 2) == 1.3
+    assert round(thesis_tp_pips or 0.0, 2) == 1.95
+    assert thesis is not None
+    assert thesis["tp_pips"] == 1.95
+    assert thesis["min_rr_adjusted"]["mode"] == "tp"
 
 
 def test_protection_fallback_gap_price_prefers_strategy_then_pocket(monkeypatch) -> None:

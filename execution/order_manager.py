@@ -2881,6 +2881,120 @@ def _min_rr_adjust_mode_for(
     return "tp"
 
 
+def _apply_min_rr_floor(
+    *,
+    pocket: Optional[str],
+    strategy_tag: Optional[str],
+    units: int,
+    entry_basis: Optional[float],
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    entry_thesis: Optional[dict[str, Any]],
+    thesis_sl_pips: Optional[float],
+    thesis_tp_pips: Optional[float],
+) -> tuple[
+    Optional[float],
+    Optional[float],
+    Optional[dict[str, Any]],
+    Optional[float],
+    Optional[float],
+]:
+    if (
+        not _MIN_RR_ENABLED
+        or entry_basis is None
+        or sl_price is None
+        or tp_price is None
+    ):
+        return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
+
+    min_rr = _min_rr_for(pocket)
+    if min_rr <= 0.0:
+        return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
+
+    sl_pips = abs(entry_basis - sl_price) / 0.01
+    tp_pips = abs(tp_price - entry_basis) / 0.01
+    if sl_pips <= 0.0 or tp_pips <= 0.0 or tp_pips >= sl_pips * min_rr:
+        return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
+
+    max_sl_pips = tp_pips / min_rr if min_rr > 0.0 else 0.0
+    mode = _min_rr_adjust_mode_for(
+        pocket,
+        strategy_tag=strategy_tag,
+    )
+    sl_adjusted = False
+    if mode in {"sl", "sl_first", "both"} and max_sl_pips > 0.0 and sl_pips > max_sl_pips:
+        if units > 0:
+            sl_price = round(entry_basis - max_sl_pips * 0.01, 3)
+        else:
+            sl_price = round(entry_basis + max_sl_pips * 0.01, 3)
+        sl_pips = max_sl_pips
+        thesis_sl_pips = max_sl_pips
+        sl_adjusted = True
+        if isinstance(entry_thesis, dict):
+            entry_thesis = dict(entry_thesis)
+            entry_thesis["sl_pips"] = round(max_sl_pips, 2)
+            entry_thesis["min_rr_adjusted"] = {
+                "min_rr": min_rr,
+                "sl_pips": round(sl_pips, 2),
+                "tp_pips": round(tp_pips, 2),
+                "mode": "sl",
+            }
+        log_metric(
+            "min_rr_adjust_sl",
+            float(max_sl_pips),
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "min_rr": f"{min_rr:.2f}",
+            },
+        )
+        logging.info(
+            "[ORDER] min_rr adjust sl pocket=%s strategy=%s sl=%.2fp tp=%.2fp min_rr=%.2f",
+            pocket,
+            strategy_tag or "-",
+            sl_pips,
+            tp_pips,
+            min_rr,
+        )
+
+    if mode in {"sl"} or (mode == "sl_first" and sl_adjusted):
+        return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
+
+    adj_tp_pips = sl_pips * min_rr
+    if units > 0:
+        tp_price = round(entry_basis + adj_tp_pips * 0.01, 3)
+    else:
+        tp_price = round(entry_basis - adj_tp_pips * 0.01, 3)
+    thesis_tp_pips = adj_tp_pips
+    if isinstance(entry_thesis, dict):
+        entry_thesis = dict(entry_thesis)
+        entry_thesis["tp_pips"] = round(adj_tp_pips, 2)
+        entry_thesis["min_rr_adjusted"] = {
+            "min_rr": min_rr,
+            "sl_pips": round(sl_pips, 2),
+            "tp_pips": round(adj_tp_pips, 2),
+            "mode": "tp",
+        }
+    log_metric(
+        "min_rr_adjust",
+        float(adj_tp_pips),
+        tags={
+            "pocket": pocket,
+            "strategy": strategy_tag or "unknown",
+            "min_rr": f"{min_rr:.2f}",
+        },
+    )
+    logging.info(
+        "[ORDER] min_rr adjust tp pocket=%s strategy=%s sl=%.2fp tp=%.2fp min_rr=%.2f",
+        pocket,
+        strategy_tag or "-",
+        sl_pips,
+        adj_tp_pips,
+        min_rr,
+    )
+    return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
+
+
 def _protection_fallback_gap_price(
     pocket: Optional[str],
     *,
@@ -11846,87 +11960,18 @@ async def market_order(
         and entry_basis is not None
         and sl_price is not None
         and tp_price is not None
-        and not preserve_strategy_intent
     ):
-        min_rr = _min_rr_for(pocket)
-        if min_rr > 0.0:
-            sl_pips = abs(entry_basis - sl_price) / 0.01
-            tp_pips = abs(tp_price - entry_basis) / 0.01
-            if sl_pips > 0.0 and tp_pips > 0.0 and tp_pips < sl_pips * min_rr:
-                max_sl_pips = tp_pips / min_rr if min_rr > 0 else 0.0
-                mode = _min_rr_adjust_mode_for(
-                    pocket,
-                    strategy_tag=strategy_tag,
-                )
-                sl_adjusted = False
-                if mode in {"sl", "sl_first", "both"} and max_sl_pips > 0.0 and sl_pips > max_sl_pips:
-                    if units > 0:
-                        sl_price = round(entry_basis - max_sl_pips * 0.01, 3)
-                    else:
-                        sl_price = round(entry_basis + max_sl_pips * 0.01, 3)
-                    sl_pips = max_sl_pips
-                    sl_adjusted = True
-                    if isinstance(entry_thesis, dict):
-                        entry_thesis = dict(entry_thesis)
-                        entry_thesis["sl_pips"] = round(max_sl_pips, 2)
-                        entry_thesis["min_rr_adjusted"] = {
-                            "min_rr": min_rr,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "mode": "sl",
-                        }
-                    log_metric(
-                        "min_rr_adjust_sl",
-                        float(max_sl_pips),
-                        tags={
-                            "pocket": pocket,
-                            "strategy": strategy_tag or "unknown",
-                            "min_rr": f"{min_rr:.2f}",
-                        },
-                    )
-                    logging.info(
-                        "[ORDER] min_rr adjust sl pocket=%s strategy=%s sl=%.2fp tp=%.2fp min_rr=%.2f",
-                        pocket,
-                        strategy_tag or "-",
-                        sl_pips,
-                        tp_pips,
-                        min_rr,
-                    )
-                if mode in {"sl"} or (mode == "sl_first" and sl_adjusted):
-                    pass
-                else:
-                    adj_tp_pips = sl_pips * min_rr
-                    if units > 0:
-                        tp_price = round(entry_basis + adj_tp_pips * 0.01, 3)
-                    else:
-                        tp_price = round(entry_basis - adj_tp_pips * 0.01, 3)
-                    thesis_tp_pips = adj_tp_pips
-                    if isinstance(entry_thesis, dict):
-                        entry_thesis = dict(entry_thesis)
-                        entry_thesis["tp_pips"] = round(adj_tp_pips, 2)
-                        entry_thesis["min_rr_adjusted"] = {
-                            "min_rr": min_rr,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "mode": "tp",
-                        }
-                    log_metric(
-                        "min_rr_adjust",
-                        float(adj_tp_pips),
-                        tags={
-                            "pocket": pocket,
-                            "strategy": strategy_tag or "unknown",
-                            "min_rr": f"{min_rr:.2f}",
-                        },
-                    )
-                    logging.info(
-                        "[ORDER] min_rr adjust tp pocket=%s strategy=%s sl=%.2fp tp=%.2fp min_rr=%.2f",
-                        pocket,
-                        strategy_tag or "-",
-                        sl_pips,
-                        adj_tp_pips,
-                        min_rr,
-                    )
+        sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips = _apply_min_rr_floor(
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            units=units,
+            entry_basis=entry_basis,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            thesis_sl_pips=thesis_sl_pips,
+            thesis_tp_pips=thesis_tp_pips,
+        )
 
     if (
         not reduce_only
