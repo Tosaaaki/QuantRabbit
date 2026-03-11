@@ -3385,6 +3385,21 @@
   shared prefix `SCALP_PRECISION` の perf guard は `reduce` を正とし、
   `block` のままで SL/TP 修正が live へ届かない状態を避ける。
 
+### 2026-03-12 `scalp_extrema_reversal_live` short setup-pressure guard
+- `scalp_extrema_reversal_live` の current 運用は
+  short side を一律 stop しない。
+- `workers/scalp_extrema_reversal/worker.py` は
+  recent trades の `entry_thesis.extrema.side` と `range_reason`
+  を見て、current lane の `sl_rate / fast_sl_rate / net_jpy`
+  が悪化している間だけ short `volatility_compression`
+  shallow probe を reject する。
+- current block 対象は
+  `dist_high<=0.90`, `short_bounce<=0.50`, `tick_strength<=0.50`
+  の shallow short に限定し、
+  stronger reversal short は維持する。
+- shared gate / time block / strategy-wide blanket trim は追加せず、
+  worker-local の dynamic quality guard を正とする。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

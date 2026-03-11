@@ -14552,3 +14552,39 @@ Status:
     `avg_hold_sec`,
     `realized_jpy`
     を再確認する。
+
+## 2026-03-12 scalp_extrema_reversal short setup-pressure guard
+- Why/Hypothesis:
+  - 最新 180 分の local-v2 実測では、`scalp_extrema_reversal_live` の最速 drag は
+    short `volatility_compression` に集中していた。
+  - current fast SL sample は
+    `dist_high<=0.893`, `short_bounce<=0.5`, `tick_strength<=0.5`
+    の shallow short が連続し、`2.88-18.46s` で broker SL に刺さっていた。
+  - 一方で RR 自体は current actual `1:1.3-1.4` 帯で極端には崩れておらず、
+    問題は current lane の repeated entry quality と判断した。
+- Expected Good:
+  - current loser になっている short `volatility_compression` shallow lane を、
+    連続負け中だけ strategy-local に抑える。
+  - 強い reversal short や long side は残し、short 全停止にはしない。
+- Expected Bad:
+  - recent lane pressure が強い間、rare winner の shallow short も一部取り逃がす。
+  - ただし setup-pressure は recent outcome 連動なので、固定 stop より復帰しやすい。
+- Observed/Fact:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に recent setup-pressure 判定を追加し、
+    short `volatility_compression` の
+    `sl_rate / fast_sl_rate / net_jpy`
+    が悪化している間だけ shallow short を reject するようにした。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    に `SETUP_PRESSURE_*` と
+    `SHORT_SETUP_PRESSURE_*`
+    の current live 値を明記した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    は `18 passed`。
+- Verdict: pending
+- Next Action:
+  - push/restart 後の next 30-60 分で
+    `scalp_extrema_reversal_live`
+    の short `volatility_compression`
+    について `fills / STOP_LOSS_ORDER<=30s / realized_jpy`
+    を再確認する。

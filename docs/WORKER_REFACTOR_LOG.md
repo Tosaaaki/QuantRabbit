@@ -16311,3 +16311,38 @@
   - `pytest -q tests/execution/test_order_manager_preflight.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
     -> `44 passed`
   - `python3 -m py_compile execution/order_manager.py workers/scalp_wick_reversal_blend/worker.py`
+
+### 2026-03-12 `scalp_extrema_reversal_live` short setup-pressure guard
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+
+- 背景:
+  - current 180 分の local-v2 では、
+    `scalp_extrema_reversal_live` short `volatility_compression`
+    が `2.88-18.46s` の fast SL を繰り返していた。
+  - actual RR は極端に悪くなく、
+    current 問題は repeated shallow short entry の quality 側だった。
+
+- 変更:
+  - worker に recent setup-pressure 判定を追加し、
+    current short `volatility_compression`
+    の recent `sl_rate / fast_sl_rate / net_jpy`
+    が閾値を超えて悪化している間だけ、
+    shallow short を reject するようにした。
+  - block 条件は
+    `dist_high<=0.90`,
+    `short_bounce<=0.50`,
+    `tick_strength<=0.50`
+    の current loser 形だけに限定し、
+    stronger reversal short は残す。
+  - 運用値は
+    `ops/env/quant-scalp-extrema-reversal.env`
+    に `SETUP_PRESSURE_*` / `SHORT_SETUP_PRESSURE_*`
+    として明記した。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+    -> `18 passed`
+  - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py`

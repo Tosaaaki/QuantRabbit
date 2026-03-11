@@ -14,6 +14,7 @@ import datetime
 import hashlib
 import logging
 import os
+import sqlite3
 import time
 from typing import Dict, Optional, Sequence, Set
 
@@ -314,6 +315,30 @@ EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN = _env_float(
 EXTREMA_SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS = _env_float(
     "SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS", 0.10
 )
+EXTREMA_SETUP_PRESSURE_ENABLED = _env_bool("SETUP_PRESSURE_ENABLED", True)
+EXTREMA_SETUP_PRESSURE_LOOKBACK_HOURS = _env_float("SETUP_PRESSURE_LOOKBACK_HOURS", 6.0)
+EXTREMA_SETUP_PRESSURE_LOOKBACK_TRADES = _env_int("SETUP_PRESSURE_LOOKBACK_TRADES", 6)
+EXTREMA_SETUP_PRESSURE_MIN_TRADES = _env_int("SETUP_PRESSURE_MIN_TRADES", 4)
+EXTREMA_SETUP_PRESSURE_SL_RATE_MIN = _env_float("SETUP_PRESSURE_SL_RATE_MIN", 0.70)
+EXTREMA_SETUP_PRESSURE_FAST_SL_RATE_MIN = _env_float(
+    "SETUP_PRESSURE_FAST_SL_RATE_MIN", 0.50
+)
+EXTREMA_SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC = _env_float(
+    "SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC", 90.0
+)
+EXTREMA_SETUP_PRESSURE_CACHE_TTL_SEC = _env_float("SETUP_PRESSURE_CACHE_TTL_SEC", 8.0)
+EXTREMA_SHORT_SETUP_PRESSURE_RANGE_REASONS = _env_set(
+    "SHORT_SETUP_PRESSURE_RANGE_REASONS", "volatility_compression"
+)
+EXTREMA_SHORT_SETUP_PRESSURE_DIST_HIGH_MAX_PIPS = _env_float(
+    "SHORT_SETUP_PRESSURE_DIST_HIGH_MAX_PIPS", 0.90
+)
+EXTREMA_SHORT_SETUP_PRESSURE_BOUNCE_MAX_PIPS = _env_float(
+    "SHORT_SETUP_PRESSURE_BOUNCE_MAX_PIPS", 0.50
+)
+EXTREMA_SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX = _env_float(
+    "SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX", 0.50
+)
 EXTREMA_ADX_MAX = _env_float("ADX_MAX", 35.0)
 EXTREMA_ATR_MAX = _env_float("ATR_MAX", 0.0)
 EXTREMA_SPREAD_P25_MAX = _env_float("SPREAD_P25_MAX", 0.0)
@@ -337,6 +362,8 @@ EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS = _env_float(
     "TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS",
     1.0,
 )
+_TRADES_DB_URI = "file:logs/trades.db?mode=ro"
+_SETUP_PRESSURE_CACHE: Dict[tuple[str, str], tuple[float, Dict[str, float]]] = {}
 
 
 def _ma_gap_pips(fac_m1: Dict[str, object]) -> float:
@@ -513,6 +540,107 @@ def _extrema_trend_gate_ok(
     return allow, diag
 
 
+def _recent_setup_pressure(side: str, range_reason: str) -> Dict[str, float]:
+    reason_key = str(range_reason or "").strip().lower()
+    side_key = str(side or "").strip().lower()
+    if (
+        not EXTREMA_SETUP_PRESSURE_ENABLED
+        or not reason_key
+        or not side_key
+        or EXTREMA_SETUP_PRESSURE_LOOKBACK_TRADES <= 0
+        or EXTREMA_SETUP_PRESSURE_LOOKBACK_HOURS <= 0.0
+    ):
+        return {}
+
+    cache_key = (side_key, reason_key)
+    now_mono = time.monotonic()
+    cached = _SETUP_PRESSURE_CACHE.get(cache_key)
+    if (
+        cached is not None
+        and EXTREMA_SETUP_PRESSURE_CACHE_TTL_SEC > 0.0
+        and (now_mono - cached[0]) <= EXTREMA_SETUP_PRESSURE_CACHE_TTL_SEC
+    ):
+        return dict(cached[1])
+
+    since_dt = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(hours=max(0.25, EXTREMA_SETUP_PRESSURE_LOOKBACK_HOURS))
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    query = """
+        SELECT
+          close_reason,
+          COALESCE(realized_pl, 0.0) AS realized_pl,
+          COALESCE((julianday(close_time) - julianday(open_time)) * 86400.0, 0.0) AS hold_sec
+        FROM trades
+        WHERE strategy_tag = ?
+          AND open_time >= ?
+          AND json_extract(entry_thesis, '$.extrema.side') = ?
+          AND lower(COALESCE(json_extract(entry_thesis, '$.range_reason'), '')) = ?
+        ORDER BY open_time DESC
+        LIMIT ?
+    """
+    summary: Dict[str, float] = {
+        "trades": 0.0,
+        "sl_rate": 0.0,
+        "fast_sl_rate": 0.0,
+        "net_jpy": 0.0,
+        "active": 0.0,
+    }
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect(_TRADES_DB_URI, uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            query,
+            (
+                TAG,
+                since_dt,
+                side_key,
+                reason_key,
+                int(max(1, EXTREMA_SETUP_PRESSURE_LOOKBACK_TRADES)),
+            ),
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        if con is not None:
+            con.close()
+
+    if rows:
+        trades = len(rows)
+        sl_count = 0
+        fast_sl_count = 0
+        net_jpy = 0.0
+        for row in rows:
+            close_reason = str(row["close_reason"] or "").upper()
+            realized_pl = _to_float(row["realized_pl"], 0.0)
+            hold_sec = max(0.0, _to_float(row["hold_sec"], 0.0))
+            net_jpy += realized_pl
+            if close_reason == "STOP_LOSS_ORDER":
+                sl_count += 1
+                if hold_sec <= EXTREMA_SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC:
+                    fast_sl_count += 1
+
+        sl_rate = sl_count / max(1, trades)
+        fast_sl_rate = fast_sl_count / max(1, trades)
+        active = (
+            trades >= max(1, EXTREMA_SETUP_PRESSURE_MIN_TRADES)
+            and net_jpy < 0.0
+            and sl_rate >= max(0.0, EXTREMA_SETUP_PRESSURE_SL_RATE_MIN)
+            and fast_sl_rate >= max(0.0, EXTREMA_SETUP_PRESSURE_FAST_SL_RATE_MIN)
+        )
+        summary = {
+            "trades": float(trades),
+            "sl_rate": round(sl_rate, 3),
+            "fast_sl_rate": round(fast_sl_rate, 3),
+            "net_jpy": round(net_jpy, 3),
+            "active": 1.0 if active else 0.0,
+        }
+
+    _SETUP_PRESSURE_CACHE[cache_key] = (now_mono, dict(summary))
+    return summary
+
+
 def _signal_extrema_reversal(
     fac_m1: Dict[str, object],
     *,
@@ -627,6 +755,17 @@ def _signal_extrema_reversal(
         and range_score >= EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN
         and ma_gap_pips >= EXTREMA_SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS
     )
+    short_range_reason = str(getattr(range_ctx, "reason", "") or "").strip().lower()
+    short_setup_pressure_diag = _recent_setup_pressure("short", short_range_reason)
+    short_setup_pressure_active = bool(short_setup_pressure_diag.get("active", 0.0) >= 1.0)
+    short_setup_pressure_block = (
+        short_setup_pressure_active
+        and range_mode == "RANGE"
+        and short_range_reason in EXTREMA_SHORT_SETUP_PRESSURE_RANGE_REASONS
+        and dist_high <= EXTREMA_SHORT_SETUP_PRESSURE_DIST_HIGH_MAX_PIPS
+        and short_bounce_pips <= EXTREMA_SHORT_SETUP_PRESSURE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX
+    )
 
     can_short = (
         EXTREMA_SHORT_ENABLED
@@ -636,6 +775,7 @@ def _signal_extrema_reversal(
         and short_bounce_pips >= EXTREMA_SWEEP_MIN_PIPS
         and not short_countertrend_block
         and not short_shallow_probe_block
+        and not short_setup_pressure_block
     )
     can_long = (
         EXTREMA_LONG_ENABLED
@@ -702,6 +842,8 @@ def _signal_extrema_reversal(
             "ma_gap_pips": round(ma_gap_pips, 3),
             "short_countertrend_block": bool(short_countertrend_block and side == "short"),
             "short_shallow_probe_block": bool(short_shallow_probe_block and side == "short"),
+            "short_setup_pressure_block": bool(short_setup_pressure_block and side == "short"),
+            "short_setup_pressure": short_setup_pressure_diag if side == "short" else {},
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
             "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
             "trend_gate": trend_diag,
