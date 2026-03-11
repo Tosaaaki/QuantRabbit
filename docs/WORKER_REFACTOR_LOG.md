@@ -5,6 +5,28 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`scalp_extrema_reversal_live` の late `entry_probability_reject` を order-manager 側で止血
+
+- 対象:
+  - `ops/env/quant-order-manager.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_EXTREMA_REVERSAL(_LIVE)=0.35`
+    を追加し、current shared trim 後でも truly weak setup だけを reject するようにした。
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN/MAX_SCALE_STRATEGY_SCALP_EXTREMA_REVERSAL(_LIVE)=1.00`
+    を追加し、worker/local/shared が決めた `entry_units_intent` を
+    `quant-order-manager` がさらに probability-scale して
+    `entry_probability_below_min_units` へ落とさないようにした。
+- 意図:
+  - current live の `scalp_extrema_reversal_live` は
+    `analysis_feedback` / `participation_alloc` / `auto_canary` / `dynamic_alloc`
+    の後に `order_manager_probability_gate`
+    が二重で小さくして cadence を潰していた。
+  - strategy-local と shared の dynamic trim は維持しつつ、
+    late reject だけを strategy-scoped に外して
+    scalp lane の participation を戻す。
+
 ### 2026-03-12（追記）`PrecisionLowVol` short repeated-loss burst を worker-local setup-pressure で抑制
 
 - 対象:

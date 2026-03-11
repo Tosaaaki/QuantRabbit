@@ -51,6 +51,88 @@
 - Status:
 ```
 
+## 2026-03-12 04:57 JST / local-v2: `scalp_extrema_reversal_live` の late probability reject を撤去
+
+- Change:
+  - `ops/env/quant-order-manager.env` に
+    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_EXTREMA_REVERSAL(_LIVE)=0.35`
+    と
+    `ORDER_MANAGER_PRESERVE_INTENT_MIN/MAX_SCALE_STRATEGY_SCALP_EXTREMA_REVERSAL(_LIVE)=1.00`
+    を追加した。
+- Why:
+  - live では worker が signal を出して order path まで届いているのに、
+    `quant-order-manager` の final probability-scale で
+    `entry_probability_below_min_units`
+    へ落ち続け、entry cadence が潰れていた。
+- Hypothesis:
+  - `analysis_feedback` / `participation_alloc` / `auto_canary` / `dynamic_alloc`
+    の dynamic trim は残したまま、
+    order-manager の二重縮小だけ外せば
+    `scalp_extrema_reversal_live`
+    の small intent entry が live に戻る。
+- Expected Good:
+  - `scalp_extrema_reversal_live` の
+    `entry_probability_reject`
+    が減り、`submit_attempt` / `filled` が増える。
+  - weak setup は `entry_probability<0.35`
+    で引き続き弾かれる。
+- Expected Bad:
+  - current loser setup でも
+    low-mid probability の entry が通りやすくなるため、
+    loser lane の再開が早すぎる可能性がある。
+- Period:
+  - RCA window:
+    - JST `2026-03-12 04:31-04:43`
+  - 参照集計:
+    - past 1 day `orders.db`
+- Fact:
+  - current live の `quant-order-manager.log` では
+    `2026-03-12 04:31:56-04:43:27 JST`
+    に `scalp_extrema_reversal_live`
+    の `OPEN_SKIP note=entry_probability:entry_probability_below_min_units`
+    が連続していた。
+  - `orders.db` の latest reject row では
+    `entry_probability 0.4888`,
+    `entry_units_intent 55`,
+    `confidence 64`
+    で、`analysis_feedback -> leading_profile -> participation_alloc -> auto_canary`
+    を通過した後、
+    `order_manager_probability_gate`
+    だけが block していた。
+  - past 1 day の `entry_probability_reject`
+    は `scalp_extrema_reversal_live 99`
+    で、live starvation の主要因の 1 本だった。
+- Failure Cause:
+  - worker/local/shared で既に dynamic に薄くした後、
+    order-manager が same probability を使って
+    preserve-intent scale をもう一度掛けており、
+    final units が `min_units` を割っていた。
+- Improvement:
+  - `scalp_extrema_reversal_live`
+    だけは order-manager の preserve-intent scale を `1.00`
+    へ固定し、
+    common layer は truly weak (`<0.35`) reject だけに戻した。
+- Verification:
+  - restart 後に
+    `logs/local_v2_stack/quant-order-manager.log`
+    で `scalp_extrema_reversal_live`
+    の new signal が
+    `entry_probability_below_min_units`
+    へ落ちず、
+    `submit_attempt` か `filled`
+    へ進むことを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - next live signal で
+    `scalp_extrema_reversal_live`
+    の `entry_probability_reject`
+    が消えるかを確認し、
+    まだ詰まるなら `analysis_feedback` と
+    `auto_canary` の stacked trim 上限を見直す。
+- Status:
+  - in_progress
+
 ## 2026-03-12 03:34 JST / local-v2: `PrecisionLowVol` short repeated-loss burst を setup-pressure guard で抑制
 
 - Change:

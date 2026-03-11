@@ -3422,6 +3422,25 @@
   shared prefix `SCALP_PRECISION` の perf guard は `reduce` を正とし、
   `block` のままで SL/TP 修正が live へ届かない状態を避ける。
 
+### 2026-03-12 `scalp_extrema_reversal_live` preserve-intent late reject bypass
+- current live の `scalp_extrema_reversal_live` は
+  worker/local/shared の dynamic trim を通過した後、
+  `quant-order-manager` の preserve-intent probability scaling で
+  `entry_probability_below_min_units` に落ちていた。
+- `ops/env/quant-order-manager.env` の current 運用値は:
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_EXTREMA_REVERSAL_LIVE=0.35`
+  - `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_EXTREMA_REVERSAL=0.35`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_EXTREMA_REVERSAL_LIVE=1.00`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_EXTREMA_REVERSAL=1.00`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_EXTREMA_REVERSAL_LIVE=1.00`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE_STRATEGY_SCALP_EXTREMA_REVERSAL=1.00`
+- これにより `analysis_feedback` / `participation_alloc` / `auto_canary` /
+  `dynamic_alloc` が決めた current `entry_units_intent`
+  を order-manager が再度縮めず、
+  `entry_probability<0.35` の truly weak setup だけを共通 reject で落とす。
+- shared blanket loosening や strategy-wide stop ではなく、
+  strategy-scoped な late reject の除去で cadence を戻す。
+
 ### 2026-03-12 `scalp_extrema_reversal_live` short setup-pressure guard
 - `scalp_extrema_reversal_live` の current 運用は
   short side を一律 stop しない。
