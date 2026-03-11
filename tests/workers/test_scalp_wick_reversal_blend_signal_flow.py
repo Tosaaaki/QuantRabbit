@@ -209,6 +209,7 @@ def test_drought_revert_boosts_strong_reclaim_long_lane() -> None:
     assert signal["action"] == "OPEN_LONG"
     assert signal["tp_pips"] >= 1.4
     assert signal["size_mult"] >= 0.95
+    assert signal["sl_pips"] >= 1.7
 
 
 def test_drought_revert_blocks_flat_gap_oversold_long_with_deep_mean_stretch() -> None:
@@ -284,6 +285,8 @@ def test_precision_lowvol_disables_vgap_bonus_when_flow_guard_is_marginal() -> N
     assert high_pressure is not None
     assert low_pressure["confidence"] > high_pressure["confidence"]
     assert low_pressure["size_mult"] > high_pressure["size_mult"]
+    assert low_pressure["sl_pips"] >= 1.7
+    assert high_pressure["sl_pips"] >= 1.7
 
 
 def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:

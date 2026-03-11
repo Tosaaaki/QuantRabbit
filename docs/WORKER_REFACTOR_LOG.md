@@ -16274,3 +16274,37 @@
   - `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
     -> `15 passed`
   - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py`
+
+### 2026-03-12 `PrecisionLowVol` / `DroughtRevert` RR-floor relax
+- 対象:
+  - `execution/order_manager.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-order-manager.env`
+  - `tests/execution/test_order_manager_preflight.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+
+- 背景:
+  - local tick 照合では
+    `PrecisionLowVol` の current stop loss `7件` 中 `2件` が
+    `120s` 以内に `TP` 側へ戻っていた。
+  - `DroughtRevert` も current stop loss `5件` 中 `2件` が
+    `300s` 以内に `TP` 側へ戻っていた。
+  - `PrecisionLowVol` の実約定では
+    thesis `sl/tp=1.6/2.0` が actual `1.4/2.2` まで寄る例があり、
+    scalp pocket の global `ORDER_MIN_RR=1.50` が
+    strategy-local の protective SL を削っていた。
+
+- 変更:
+  - `order_manager`
+    に `ORDER_MIN_RR_STRATEGY_*` の strategy override を追加した。
+  - current live loser の
+    `PrecisionLowVol` / `DroughtRevert`
+    に `ORDER_MIN_RR=1.10` を適用した。
+  - `workers/scalp_wick_reversal_blend/worker.py` は
+    両 strategy の `sl_pips` を広げ、
+    `tp_pips` は current ATR 帯で届く範囲に維持した。
+
+- 検証:
+  - `pytest -q tests/execution/test_order_manager_preflight.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `44 passed`
+  - `python3 -m py_compile execution/order_manager.py workers/scalp_wick_reversal_blend/worker.py`

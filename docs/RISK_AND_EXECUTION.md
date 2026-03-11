@@ -3368,6 +3368,20 @@
 - bearish `M5` support が揃う short は維持し、
   short side を一律停止しない。
 
+### 2026-03-12 `PrecisionLowVol` / `DroughtRevert` strategy-scoped RR relax
+- scalp pocket の global `ORDER_MIN_RR_SCALP=1.50` は current 既定のまま維持するが、
+  `execution/order_manager.py` は
+  `ORDER_MIN_RR_STRATEGY_*`
+  を優先して読めるようにする。
+- current live loser だった
+  `PrecisionLowVol` / `DroughtRevert`
+  には `1.10` を適用し、global floor による `SL` の過剰圧縮を避ける。
+- `workers/scalp_wick_reversal_blend/worker.py` は
+  両 strategy の `sl_pips` を current 1.8-2.2 pip ATR 帯向けに広げ、
+  `units` は sl 連動で自動縮小する。
+- これは shared blanket loosen ではなく、
+  strategy-local / strategy-scoped な reversion lane の生存時間延長を目的とする。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

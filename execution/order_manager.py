@@ -2181,8 +2181,17 @@ def _policy_gate_allows_entry(
 
 
 
-def _min_rr_for(pocket: Optional[str]) -> float:
-    if not _MIN_RR_ENABLED or not pocket:
+def _min_rr_for(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
+    if not _MIN_RR_ENABLED:
+        return 0.0
+    strategy_override = _strategy_env_float("ORDER_MIN_RR", strategy_tag)
+    if strategy_override is not None:
+        try:
+            value = float(strategy_override)
+        except Exception:
+            value = 0.0
+        return min(max(value, 0.0), 5.0)
+    if not pocket:
         return 0.0
     try:
         value = float(_MIN_RR_BY_POCKET.get(str(pocket).lower(), 0.0))
@@ -2907,7 +2916,7 @@ def _apply_min_rr_floor(
     ):
         return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
 
-    min_rr = _min_rr_for(pocket)
+    min_rr = _min_rr_for(pocket, strategy_tag=strategy_tag)
     if min_rr <= 0.0:
         return sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips
 
@@ -11988,7 +11997,7 @@ async def market_order(
                     tp_price = round(entry_basis + adj_tp_pips * 0.01, 3)
                 else:
                     tp_price = round(entry_basis - adj_tp_pips * 0.01, 3)
-                min_rr = _min_rr_for(pocket)
+                min_rr = _min_rr_for(pocket, strategy_tag=strategy_tag)
                 if sl_price is not None and min_rr > 0.0:
                     sl_pips = abs(entry_basis - sl_price) / 0.01
                     max_sl_pips = adj_tp_pips / min_rr

@@ -14501,3 +14501,50 @@ Status:
     `short|range_compression|...|volatility_compression`
     の `fills / realized_jpy / close_reason`
     を再確認する。
+
+## 2026-03-12 PrecisionLowVol / DroughtRevert RR-floor relax and wider SL
+- Why/Hypothesis:
+  - ユーザー指摘どおり、current 問題は「entry が全部悪い」ではなく、
+    hard SL が current ボラに対して浅すぎる lane が混ざっていた。
+  - local tick 照合では `PrecisionLowVol` の current stop loss `7件` 中
+    `2件` が `120s` 以内に `TP` 側へ到達し、
+    `avg_sl=1.60`, `avg_tp=2.00`, `avg_mae_120=4.24`, `avg_mfe_120=1.21`
+    だった。
+  - `DroughtRevert` も current stop loss `5件` 中 `2件` が
+    `300s` 以内に `TP` 側へ到達し、
+    `avg_sl=1.42`, `avg_tp=1.84`, `avg_mae_120=4.20`
+    だった。
+  - さらに `PrecisionLowVol` 実約定では
+    thesis `1.6 / 2.0` が actual `1.4 / 2.2` に寄る例があり、
+    scalp pocket の global `ORDER_MIN_RR=1.50` が
+    strategy-local 想定より `SL` を浅くしていた。
+- Expected Good:
+  - `PrecisionLowVol` / `DroughtRevert` の「数秒-十数秒で broker SL → その後戻る」
+    lane を減らす。
+  - `SL` 拡大で `units` は自動縮小し、1 trade あたりの JPY リスクを暴れさせずに
+    生存時間だけを伸ばす。
+- Expected Bad:
+  - loser lane がそのまま走り続けた場合、1 trade の保持時間は伸びる。
+  - current drag を止めるには十分でも、即座に gross profit cadence が
+    大きく跳ねるとは限らない。
+- Observed/Fact:
+  - `execution/order_manager.py`
+    に strategy-scoped `ORDER_MIN_RR_STRATEGY_*` override を追加した。
+  - `ops/env/quant-order-manager.env`
+    で `ORDER_MIN_RR_STRATEGY_PRECISIONLOWVOL=1.10`,
+    `ORDER_MIN_RR_STRATEGY_DROUGHTREVERT=1.10`
+    を設定した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    で `PrecisionLowVol` / `DroughtRevert` の `sl_pips` を広げ、
+    `tp_pips` は current ボラ帯で届く範囲に留めた。
+  - `pytest -q tests/execution/test_order_manager_preflight.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    は `44 passed`。
+- Verdict: pending
+- Next Action:
+  - push/restart 後の next 30-60 分で
+    `PrecisionLowVol` / `DroughtRevert` の
+    `STOP_LOSS_ORDER<=30s 件数`,
+    `post_close_tp_touch`,
+    `avg_hold_sec`,
+    `realized_jpy`
+    を再確認する。

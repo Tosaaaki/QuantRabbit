@@ -638,6 +638,15 @@ def test_min_rr_adjust_mode_prefers_strategy_then_pocket(monkeypatch) -> None:
     assert mode_global == "sl"
 
 
+def test_min_rr_prefers_strategy_override_then_pocket(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_MIN_RR_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_MIN_RR_BY_POCKET", {"scalp": 1.5})
+    monkeypatch.setenv("ORDER_MIN_RR_STRATEGY_PRECISIONLOWVOL", "1.10")
+
+    assert order_manager._min_rr_for("scalp", strategy_tag="PrecisionLowVol") == 1.10
+    assert order_manager._min_rr_for("scalp", strategy_tag="other") == 1.50
+
+
 def test_apply_min_rr_floor_tightens_sl_in_sl_first_mode(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "_MIN_RR_ENABLED", True)
     monkeypatch.setattr(order_manager, "_MIN_RR_BY_POCKET", {"scalp_fast": 1.4})
@@ -690,6 +699,32 @@ def test_apply_min_rr_floor_can_expand_tp_with_preserve_intent_safe_mode(monkeyp
     assert thesis is not None
     assert thesis["tp_pips"] == 1.95
     assert thesis["min_rr_adjusted"]["mode"] == "tp"
+
+
+def test_apply_min_rr_floor_respects_strategy_rr_override(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_MIN_RR_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_MIN_RR_BY_POCKET", {"scalp": 1.5})
+    monkeypatch.setattr(order_manager, "_MIN_RR_ADJUST_MODE", "sl_first")
+    monkeypatch.setenv("ORDER_MIN_RR_STRATEGY_PRECISIONLOWVOL", "1.10")
+    monkeypatch.setattr(order_manager, "log_metric", lambda *args, **kwargs: None)
+
+    sl_price, tp_price, thesis, thesis_sl_pips, thesis_tp_pips = _apply_min_rr_floor(
+        pocket="scalp",
+        strategy_tag="PrecisionLowVol",
+        units=-1000,
+        entry_basis=158.400,
+        sl_price=158.416,
+        tp_price=158.380,
+        entry_thesis={"sl_pips": 1.6, "tp_pips": 2.0},
+        thesis_sl_pips=1.6,
+        thesis_tp_pips=2.0,
+    )
+
+    assert sl_price == 158.416
+    assert tp_price == 158.380
+    assert round(thesis_sl_pips or 0.0, 2) == 1.6
+    assert round(thesis_tp_pips or 0.0, 2) == 2.0
+    assert thesis == {"sl_pips": 1.6, "tp_pips": 2.0}
 
 
 def test_protection_fallback_gap_price_prefers_strategy_then_pocket(monkeypatch) -> None:

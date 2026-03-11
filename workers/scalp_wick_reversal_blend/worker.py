@@ -1164,8 +1164,11 @@ def _signal_drought_revert(
     if not proj_allow:
         return None
 
-    sl = max(0.95, min(1.6, atr * 0.72))
-    tp = max(1.2, min(2.2, atr * (0.98 + min(0.18, rev_strength * 0.15) + (0.08 if side == "long" else 0.02))))
+    # local-v2 replay/live showed several drought-revert longs stopping inside ~10s
+    # and later mean-reverting into the prior TP zone; widen the protective band a bit
+    # and keep TP reachable in the current 1.8-2.2 pip ATR regime.
+    sl = max(1.7, min(2.4, atr * 1.05))
+    tp = max(1.9, min(2.4, atr * (0.98 + min(0.14, rev_strength * 0.10) + (0.06 if side == "long" else 0.02))))
     conf = 54
     conf += int(min(10, abs(rsi - 50.0) * 0.5))
     conf += int(min(8, rev_strength * 4.0))
@@ -1355,8 +1358,10 @@ def _signal_precision_lowvol(
         if not strong_reversal_probe:
             return None
 
-    sl = max(1.0, min(1.6, atr * 0.75))
-    tp = max(1.1, min(2.0, atr * (0.9 + min(0.2, rev_strength * 0.2))))
+    # current precision-lowvol short losers were repeatedly stopping inside seconds while
+    # a subset still reached the old 2.0 pip TP; widen SL modestly and avoid over-stretching TP.
+    sl = max(1.7, min(1.9, atr * 0.9))
+    tp = max(1.9, min(2.1, atr * (0.94 + min(0.12, rev_strength * 0.12))))
     conf = 58
     conf += int(min(10, abs(rsi - 50.0) * 0.6))
     conf += int(min(10, rev_strength * 4.0))
