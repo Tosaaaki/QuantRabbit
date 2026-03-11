@@ -14,6 +14,45 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
+def _projection_headwind(projection_score: float) -> float:
+    return _clamp((-projection_score - 0.02) / 0.28)
+
+
+def _fallback_wick_blend_trade_quality(
+    *,
+    side: str,
+    thesis: Mapping[str, object],
+    atr_pips: float,
+    projection_score: float,
+) -> float:
+    rsi = _to_float(thesis.get("rsi"), 50.0)
+    adx = _to_float(thesis.get("adx"), 18.0)
+    range_score = _to_float(thesis.get("range_score"), 0.0)
+    atr_norm = max(0.8, _to_float(thesis.get("atr_pips"), atr_pips))
+    direction_rsi = (rsi - 50.0) if side == "short" else (50.0 - rsi)
+    stretch = _clamp((direction_rsi - 4.5) / max(6.0, 10.0 - min(adx, 28.0) * 0.08))
+    regime = _clamp(range_score / 0.50)
+    adx_reversion = _clamp((28.0 - adx) / 14.0)
+    projection = _clamp((projection_score + 0.10) / 0.45)
+    vwap_gap = abs(_to_float(thesis.get("vwap_gap"), 0.0))
+    vwap_ext = _clamp(vwap_gap / max(4.0, atr_norm * 2.6))
+    wick_missing_penalty = 0.18 if not isinstance(thesis.get("wick"), Mapping) else 0.0
+    quality = (
+        0.10
+        + stretch * 0.28
+        + regime * 0.18
+        + adx_reversion * 0.18
+        + vwap_ext * 0.14
+        + projection * 0.10
+        - wick_missing_penalty
+    )
+    return _clamp(quality)
+
+
+def _flow_guard_regime(continuation_pressure: float) -> str:
+    return "continuation_headwind" if continuation_pressure >= 0.60 else "range_fade"
+
+
 def wick_blend_entry_quality(
     *,
     side: str,
@@ -29,6 +68,7 @@ def wick_blend_entry_quality(
 ) -> dict[str, object]:
     direction_rsi = (rsi - 50.0) if side == "short" else (50.0 - rsi)
     atr_norm = max(0.8, atr_pips)
+    projection_headwind = _projection_headwind(projection_score)
 
     stretch = _clamp((direction_rsi - 2.0) / max(6.0, 9.0 - min(adx, 30.0) * 0.10))
     wick = _clamp((wick_ratio - 0.35) / 0.30)
@@ -46,10 +86,11 @@ def wick_blend_entry_quality(
         + retrace * 0.14
         + projection * 0.10
         + regime * 0.04
+        - projection_headwind * 0.14
     )
     neutral_rsi = direction_rsi < max(5.0, min(8.0, 3.2 + adx * 0.11))
     structure_strong = wick >= 0.65 and tick >= 0.45 and retrace >= 0.55
-    threshold = 0.52 if neutral_rsi else 0.46
+    threshold = (0.52 if neutral_rsi else 0.46) + projection_headwind * (0.04 if neutral_rsi else 0.03)
     allow = quality >= threshold and (projection >= 0.12 or structure_strong)
 
     return {
@@ -65,6 +106,7 @@ def wick_blend_entry_quality(
             "follow": round(follow, 3),
             "retrace": round(retrace, 3),
             "projection": round(projection, 3),
+            "projection_headwind": round(projection_headwind, 3),
             "range": round(regime, 3),
         },
     }
@@ -84,15 +126,17 @@ def wick_blend_exit_adjustments(
 ) -> dict[str, float]:
     entry_sl = max(0.0, _to_float(thesis.get("sl_pips"), 0.0))
     entry_tp = max(0.0, _to_float(thesis.get("tp_pips"), 0.0))
+    projection = thesis.get("projection")
+    projection_score = _to_float(
+        projection.get("score") if isinstance(projection, Mapping) else None,
+        0.0,
+    )
+    projection_headwind = _projection_headwind(projection_score)
     quality = _clamp(_to_float(thesis.get("wick_blend_quality"), -1.0), 0.0, 1.0)
+    quality_rebuilt = False
     if quality <= 0.0:
         wick = thesis.get("wick")
-        projection = thesis.get("projection")
         if isinstance(wick, Mapping):
-            projection_score = _to_float(
-                projection.get("score") if isinstance(projection, Mapping) else None,
-                0.0,
-            )
             rebuilt = wick_blend_entry_quality(
                 side=side,
                 rsi=_to_float(thesis.get("rsi"), 50.0),
@@ -106,6 +150,15 @@ def wick_blend_exit_adjustments(
                 projection_score=projection_score,
             )
             quality = _clamp(_to_float(rebuilt.get("quality"), 0.0))
+            quality_rebuilt = True
+        else:
+            quality = _fallback_wick_blend_trade_quality(
+                side=side,
+                thesis=thesis,
+                atr_pips=atr_pips,
+                projection_score=projection_score,
+            )
+            quality_rebuilt = True
     atr_norm = max(0.8, atr_pips)
 
     adjusted_profit_take = profit_take
@@ -114,28 +167,57 @@ def wick_blend_exit_adjustments(
     adjusted_lock_buffer = lock_buffer
     adjusted_loss_cut_hard = loss_cut_hard_pips
     adjusted_loss_cut_max_hold_sec = loss_cut_max_hold_sec
+    continuation_pressure = _to_float(thesis.get("continuation_pressure"), 0.0)
+    if continuation_pressure <= 0.0:
+        continuation_pressure = projection_headwind
+    headwind_regime = _flow_guard_regime(continuation_pressure) == "continuation_headwind"
 
     if entry_tp > 0.0:
-        profit_from_tp = entry_tp * (0.56 + quality * 0.20)
-        adjusted_profit_take = max(profit_take, profit_from_tp)
+        profit_factor = _clamp(0.60 + quality * 0.20 - projection_headwind * 0.18, 0.34, 0.78)
+        adjusted_profit_take = max(0.5, entry_tp * profit_factor)
+        trail_anchor = adjusted_profit_take * (0.78 + (1.0 - quality) * 0.04 - projection_headwind * 0.08)
+        trail_floor_mult = 1.0 if quality >= 0.58 and not headwind_regime and projection_headwind <= 0.10 else 0.82
         adjusted_trail_start = max(
-            trail_start,
-            min(adjusted_profit_take - 0.10, adjusted_profit_take * (0.72 + (1.0 - quality) * 0.08)),
+            0.5,
+            min(
+                adjusted_profit_take - 0.10,
+                max(trail_start * max(0.72, trail_floor_mult - projection_headwind * 0.12), trail_anchor),
+            ),
         )
     if entry_sl > 0.0:
         adjusted_trail_backoff = min(
             trail_backoff,
-            max(0.22, min(entry_sl * 0.30, max(0.24, adjusted_profit_take * 0.26))),
+            max(
+                0.18,
+                min(
+                    entry_sl * (0.26 - projection_headwind * 0.04 + quality * 0.03),
+                    max(0.22, adjusted_profit_take * (0.24 - projection_headwind * 0.05)),
+                ),
+            ),
         )
-        adjusted_lock_buffer = max(
-            lock_buffer,
-            min(max(0.18, adjusted_profit_take * 0.24), max(0.25, entry_sl * 0.38)),
+        adjusted_lock_buffer = min(
+            max(lock_buffer * (0.88 - projection_headwind * 0.10), 0.10),
+            min(
+                max(0.16, adjusted_profit_take * (0.22 - projection_headwind * 0.05)),
+                max(0.22, entry_sl * (0.36 - projection_headwind * 0.05)),
+            ),
         )
-        dynamic_hard_cut = max(entry_sl * (1.05 + (1.0 - quality) * 0.20), atr_norm * 0.95, 2.0)
+        dynamic_hard_cut = max(
+            entry_sl * (0.95 + (1.0 - quality) * 0.22 - projection_headwind * 0.16),
+            atr_norm * (0.82 - projection_headwind * 0.08),
+            1.4,
+        )
         adjusted_loss_cut_hard = (
             min(loss_cut_hard_pips, dynamic_hard_cut) if loss_cut_hard_pips > 0.0 else dynamic_hard_cut
         )
-    dynamic_hold_sec = max(120.0, min(360.0, 150.0 + entry_tp * 55.0 + quality * 60.0))
+    rebuilt_penalty_sec = 60.0 if quality_rebuilt else 0.0
+    dynamic_hold_sec = max(
+        120.0,
+        min(
+            360.0,
+            120.0 + entry_tp * 35.0 + quality * 60.0 - projection_headwind * 80.0 - rebuilt_penalty_sec,
+        ),
+    )
     adjusted_loss_cut_max_hold_sec = (
         min(loss_cut_max_hold_sec, dynamic_hold_sec)
         if loss_cut_max_hold_sec > 0.0

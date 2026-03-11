@@ -3089,3 +3089,24 @@
 - これにより `dynamic_alloc` / `participation_alloc` / `blackboard_coordination` 後の
   intent size が二重に縮小されず、
   `entry_probability_below_min_units` の過剰 reject を避ける。
+
+### 2026-03-11 `WickReversalBlend` / `VwapRevertS` sparse-thesis exit hardening
+- 直近 loser RCA では `WickReversalBlend short` と `VwapRevertS short` に
+  adverse hold が残っており、古い trade では `entry_thesis` に
+  `wick_blend_quality` や `flow_guard` が無いまま `time_stop` まで保持されていた。
+- `workers/scalp_wick_reversal_blend/policy.py` は
+  `projection.score` の逆風を `wick_blend_entry_quality()` に直接織り込み、
+  `wick_blend_exit_adjustments()` では sparse thesis でも
+  `rsi/adx/range_score/vwap_gap/projection` から trade quality を再構成する。
+- high-quality / no-headwind lane は過度に早締めしない一方で、
+  `projection_headwind` または `continuation_headwind` が強い lane と
+  sparse thesis lane では `loss_cut_hard_pips` と `loss_cut_max_hold_sec` を
+  worker local に前倒しする。
+- `workers/scalp_wick_reversal_blend/exit_worker.py` は
+  `WickReversalBlend` だけでなく `VwapRevertS` にも同じ
+  `wick_blend_exit_adjustments()` を適用する。
+- `workers/scalp_wick_reversal_blend/worker.py` は
+  `flow_guard` を nested payload だけでなく
+  `continuation_pressure / reversion_support / setup_quality / flow_regime`
+  の top-level fields としても signal / `entry_thesis` に残し、
+  downstream で欠損しても trade-local dynamic exit が再利用できるようにする。

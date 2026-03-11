@@ -19,6 +19,7 @@ def _load_worker_namespace() -> dict[str, object]:
         "_plus_di",
         "_minus_di",
         "_reversion_short_flow_guard",
+        "_attach_flow_guard_context",
         "_signal_drought_revert",
         "_signal_precision_lowvol",
         "_build_entry_thesis",
@@ -230,3 +231,40 @@ def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:
     assert thesis["flow_regime"] == "continuation_headwind"
     assert thesis["plus_di"] == 24.0
     assert thesis["minus_di"] == 19.0
+
+
+def test_build_entry_thesis_preserves_direct_dynamic_fields_without_nested_flow_guard() -> None:
+    ns = _load_worker_namespace()
+    build_entry_thesis = ns["_build_entry_thesis"]
+    signal = {
+        "confidence": 68,
+        "tag": "VwapRevertS",
+        "reason": "vwap_revert",
+        "sl_pips": 1.8,
+        "tp_pips": 2.2,
+        "projection": {"side": "short", "mode": "range"},
+        "continuation_pressure": 0.58,
+        "reversion_support": 0.49,
+        "setup_quality": 0.44,
+        "flow_regime": "range_fade",
+    }
+    fac = {
+        "rsi": 63.8,
+        "adx": 21.4,
+        "atr_pips": 2.53,
+        "bbw": 0.00063,
+        "stoch_rsi": 0.91,
+        "macd_hist": 0.25,
+        "vwap_gap": 18.4,
+        "ema_slope_10": 0.05,
+        "plus_di": 27.0,
+        "minus_di": 18.0,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression", mode="RANGE")
+
+    thesis = build_entry_thesis(signal, fac, range_ctx)
+
+    assert thesis["continuation_pressure"] == 0.58
+    assert thesis["reversion_support"] == 0.49
+    assert thesis["setup_quality"] == 0.44
+    assert thesis["flow_regime"] == "range_fade"

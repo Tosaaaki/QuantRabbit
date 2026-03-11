@@ -13559,3 +13559,63 @@ Status:
     `margin_used / margin_available / free_margin_ratio` と、
     `health_snapshot.json` の `order_success_rate / reject_rate` を追って、
     margin 使用率が `~30%` からどこまで戻るかを監査する。
+
+## 2026-03-11 12:xx JST / local-v2: `WickReversalBlend` / `VwapRevertS` の sparse-thesis adverse hold を worker local で前倒し
+- Why/Hypothesis:
+  - 2026-03-11 現在の local-v2 実測では
+    `health_snapshot.git_rev=3abc9423`, `mechanism_integrity.ok=true`,
+    `data_lag_ms=456.9`, `decision_latency_ms=13.1` と導線自体は正常で、
+    open trades も `0` だった。
+  - 一方で直近 6 時間は
+    `WickReversalBlend short -154.42 JPY`, `VwapRevertS short -24.94 JPY`,
+    `RangeFader long/short -151.53 JPY` と loser が続いていた。
+  - `WickReversalBlend` の大きい負け trade を見ると、
+    `wick_blend_quality / wick / projection` を欠いた sparse `entry_thesis` のまま
+    `time_stop` まで保有されていた。
+  - `VwapRevertS` short も `exit_worker` の
+    `wick_blend_exit_adjustments()` 適用対象から漏れており、
+    `orders.db` / `trades.db` 上で `continuation_pressure / setup_quality / flow_guard`
+    が欠落していた。
+  - sparse thesis でも quality を rebuild し、
+    `projection_headwind` と `continuation_pressure` を使って
+    `hard cut / max hold` を前倒しすれば、
+    trade-local の adverse hold を減らせる。
+- Expected Good:
+  - `WickReversalBlend` / `VwapRevertS` の wrong-way fade が
+    `time_stop` まで残るケースを減らせる。
+  - `entry_thesis` の nested `flow_guard` が落ちても、
+    top-level dynamic fields から exit 側が同じ current setup を復元できる。
+  - high-quality / no-headwind winner は必要以上に早く利食わず、
+    headwind lane だけ tighter にできる。
+- Expected Bad:
+  - headwind 判定が強すぎると `VwapRevertS` の clean revert winner まで
+    早利食いへ寄る可能性がある。
+  - signal/top-level field の冗長化で order payload がやや膨らむ。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/policy.py`
+    - `projection_headwind` を entry quality に追加した。
+    - sparse thesis 向け `_fallback_wick_blend_trade_quality()` を追加した。
+    - `wick_blend_exit_adjustments()` は
+      `projection_headwind` / `continuation_pressure` / sparse thesis を見て
+      `trail_*`, `loss_cut_hard_pips`, `loss_cut_max_hold_sec` を再計算するようにした。
+    - high-quality / no-headwind lane では
+      `trail_start` を base より不用意に下げない floor を戻した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - short `flow_guard` を
+      `continuation_pressure / reversion_support / setup_quality / flow_regime`
+      の top-level fields としても signal に保持するようにした。
+    - `_build_entry_thesis()` は nested `flow_guard` が無くても
+      top-level dynamic fields を `entry_thesis` に昇格するようにした。
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+    - `wick_blend_exit_adjustments()` の live adjust を
+      `WickReversalBlend` だけでなく `VwapRevertS` にも適用した。
+  - テスト:
+    - `pytest -q tests/workers/test_scalp_wick_reversal_blend_* tests/workers/test_scalp_precision_wrapper_env.py`
+      -> `29 passed`
+- Verdict: pending
+- Next Action:
+  - 反映後に `orders.db` / `trades.db` で
+    `WickReversalBlend` / `VwapRevertS` の新規 trade に
+    `continuation_pressure / setup_quality / flow_regime` が実際に残るかを spot check する。
+  - `time_stop` close が `loss_cut_*` や earlier protective close へ置き換わるか、
+    直近 6 時間の same-tag loser cluster で追う。

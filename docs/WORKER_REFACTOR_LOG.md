@@ -15790,3 +15790,48 @@
 - 検証:
   - `pytest tests/execution/test_order_manager_log_retry.py`
     -> `22 passed`
+
+### 2026-03-11 12:xx JST - `WickReversalBlend` / `VwapRevertS` の sparse-thesis dynamic exit を補強
+- 対象:
+  - `workers/scalp_wick_reversal_blend/policy.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_policy.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - 直近 6 時間の loser は `WickReversalBlend short -154.42 JPY`、
+    `VwapRevertS short -24.94 JPY` が残り、
+    古い大きい負けは sparse `entry_thesis` のまま `time_stop` へ流れていた。
+  - current code には short `flow_guard` と dynamic exit があったが、
+    `VwapRevertS` は exit 側の special handling から漏れており、
+    また nested `flow_guard` が payload から欠けると
+    trade-local dynamic field を再利用できなかった。
+
+- 変更:
+  - `policy.py`
+    - `projection_headwind` を entry quality に織り込み、
+      sparse thesis でも `rsi/adx/range_score/vwap_gap/projection` から
+      fallback quality を再構成できるようにした。
+    - `projection_headwind` / `continuation_pressure` / sparse thesis を使って
+      `profit_take`, `trail_*`, `loss_cut_hard_pips`, `loss_cut_max_hold_sec`
+      を再計算するようにした。
+    - ただし high-quality / no-headwind lane は
+      base の `trail_start` を不用意に下げないよう floor を戻した。
+  - `worker.py`
+    - short `flow_guard` を signal の nested field だけでなく
+      `continuation_pressure / reversion_support / setup_quality / flow_regime`
+      の top-level にも冗長化した。
+    - `_build_entry_thesis()` も `flow_guard` 欠損時に
+      signal の top-level dynamic fields から同じ情報を復元するようにした。
+  - `exit_worker.py`
+    - `wick_blend_exit_adjustments()` の live adjust を
+      `WickReversalBlend` に加えて `VwapRevertS` にも適用した。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_wick_reversal_blend_* tests/workers/test_scalp_precision_wrapper_env.py`
+    -> `29 passed`

@@ -48,7 +48,7 @@ def _load_worker_functions(*names: str):
     selected = []
     wanted = set(names)
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in wanted:
+        if isinstance(node, ast.FunctionDef) and node.name in wanted.union({"_attach_flow_guard_context"}):
             selected.append(node)
     module = ast.Module(body=selected, type_ignores=[])
     namespace = {

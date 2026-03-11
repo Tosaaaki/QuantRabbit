@@ -995,7 +995,7 @@ class RangeFaderExitWorker:
             adjustment=forecast_adj,
             floor_pips=0.1,
         )
-        if base_tag == "WickReversalBlend":
+        if base_tag in {"WickReversalBlend", "VwapRevertS"}:
             current_atr_pips = _bb_float(fac_m1.get("atr_pips")) or _pick_float(thesis.get("atr_pips"), 0.0)
             live_adjust = wick_blend_exit_adjustments(
                 side=side,

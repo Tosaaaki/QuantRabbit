@@ -946,6 +946,16 @@ def _reversion_short_flow_guard(
     return allow, detail
 
 
+def _attach_flow_guard_context(signal: Dict[str, object], flow_guard: Optional[Dict[str, float]]) -> None:
+    if not isinstance(flow_guard, dict):
+        return
+    signal["flow_guard"] = flow_guard
+    signal["continuation_pressure"] = flow_guard.get("continuation_pressure")
+    signal["reversion_support"] = flow_guard.get("reversion_support")
+    signal["setup_quality"] = flow_guard.get("setup_quality")
+    continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+    signal["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+
 
 def _signal_spread_revert(
     fac_m1: Dict[str, object],
@@ -1102,8 +1112,7 @@ def _signal_drought_revert(
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
-    if flow_guard is not None:
-        signal["flow_guard"] = flow_guard
+    _attach_flow_guard_context(signal, flow_guard)
     return signal
 
 
@@ -1241,8 +1250,7 @@ def _signal_precision_lowvol(
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
-    if flow_guard is not None:
-        signal["flow_guard"] = flow_guard
+    _attach_flow_guard_context(signal, flow_guard)
     return signal
 
 
@@ -3147,8 +3155,7 @@ def _signal_vwap_revert(
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
-    if flow_guard is not None:
-        signal["flow_guard"] = flow_guard
+    _attach_flow_guard_context(signal, flow_guard)
     return signal
 
 
@@ -3518,6 +3525,13 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         thesis["reversion_support"] = flow_guard.get("reversion_support")
         thesis["setup_quality"] = flow_guard.get("setup_quality")
         continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        thesis["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+    for key in ("continuation_pressure", "reversion_support", "setup_quality", "flow_regime"):
+        value = signal.get(key)
+        if value is not None:
+            thesis[key] = value
+    if "flow_regime" not in thesis and thesis.get("continuation_pressure") is not None:
+        continuation_pressure = float(thesis.get("continuation_pressure") or 0.0)
         thesis["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
     tag = str(signal.get("tag") or "").strip()
     if tag in {"TickImbalance", "TickImbalanceRRPlus"}:

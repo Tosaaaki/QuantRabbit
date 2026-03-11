@@ -12,7 +12,7 @@ class _DummyPosManager:
         return None
 
 
-def _sample_trade(*, opened_sec: float, pnl_pips: float) -> dict:
+def _sample_trade(*, opened_sec: float, pnl_pips: float, strategy_tag: str = "WickReversalBlend") -> dict:
     return {
         "trade_id": "wick-trade-1",
         "units": 1000,
@@ -20,7 +20,7 @@ def _sample_trade(*, opened_sec: float, pnl_pips: float) -> dict:
         "open_time": (datetime.now(timezone.utc) - timedelta(seconds=opened_sec)).isoformat(),
         "client_order_id": "qr-test-wick",
         "entry_thesis": {
-            "strategy_tag": "WickReversalBlend",
+            "strategy_tag": strategy_tag,
         },
         "unrealized_pl_pips": pnl_pips,
     }
@@ -218,3 +218,76 @@ def test_wick_reversal_blend_dynamic_exit_respects_entry_quality_before_taking_p
     asyncio.run(worker._review_trade(trade, now=now, mid=158.024, range_active=False))
 
     assert calls == [("take_profit", 2.4)]
+
+
+def test_vwap_revert_dynamic_exit_uses_same_headwind_adjustment_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_worker, worker = _build_worker(monkeypatch)
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda _tag: {
+            "min_hold_sec": 0.0,
+            "profit_pips": 1.2,
+            "trail_start_pips": 1.7,
+            "trail_backoff_pips": 0.55,
+            "lock_buffer_pips": 0.25,
+            "loss_cut_hard_pips": 6.0,
+            "loss_cut_max_hold_sec": 420.0,
+        },
+    )
+
+    calls: list[tuple[str, float]] = []
+
+    async def _fake_close(
+        _trade_id: str,
+        _units: int,
+        reason: str,
+        pnl: float,
+        _client_id: str,
+        **_kwargs,
+    ) -> None:
+        calls.append((reason, pnl))
+
+    monkeypatch.setattr(worker, "_close", _fake_close)
+    adjust_calls: list[str] = []
+
+    def _fake_adjust(**kwargs):
+        adjust_calls.append(str(kwargs["thesis"].get("strategy_tag")))
+        return {
+            "profit_take": 2.5,
+            "trail_start": 1.8,
+            "trail_backoff": 0.3,
+            "lock_buffer": 0.2,
+            "loss_cut_hard_pips": 2.0,
+            "loss_cut_max_hold_sec": 180.0,
+        }
+
+    monkeypatch.setattr(exit_worker, "wick_blend_exit_adjustments", _fake_adjust)
+
+    trade = _sample_trade(opened_sec=120, pnl_pips=1.9, strategy_tag="VwapRevertS")
+    trade["entry_thesis"].update(
+        {
+            "sl_pips": 1.8,
+            "tp_pips": 2.2,
+            "atr_pips": 2.53,
+            "continuation_pressure": 0.63,
+            "rsi": 63.9,
+            "adx": 21.4,
+            "range_score": 0.37,
+            "vwap_gap": 18.4,
+            "projection": {"score": -0.12},
+        }
+    )
+
+    now = datetime.now(timezone.utc)
+    asyncio.run(worker._review_trade(trade, now=now, mid=158.019, range_active=False))
+
+    assert calls == []
+    assert adjust_calls == ["VwapRevertS", "VwapRevertS"]
+
+    trade["unrealized_pl_pips"] = 2.6
+    asyncio.run(worker._review_trade(trade, now=now, mid=158.022, range_active=False))
+
+    assert calls == [("take_profit", 2.6)]
