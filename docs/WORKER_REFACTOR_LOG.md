@@ -16423,13 +16423,19 @@
     それらより先に entry を落とす状態は過剰だった。
 
 - 変更:
-  - 各 dedicated env に
+  - 各 dedicated env に perf guard bypass を追加した。
+  - wrapper 経由の
+    `PrecisionLowVol` / `DroughtRevert`
+    は `SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED=0` /
+    `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
+    を使い、wrapper を噛まない
+    `WickReversalBlend` は
     `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
-    を追加した。
+    を使う。
   - reopen 対象は soft block に限り、
     `VwapRevertS` の `hard:failfast` は維持した。
 
 - 検証:
   - runtime 再起動後に `ps eww` と service log で
-    `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
+    perf guard bypass key
     と `perf guard blocked` 消失を確認する。

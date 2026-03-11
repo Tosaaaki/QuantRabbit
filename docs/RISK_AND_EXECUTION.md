@@ -3457,8 +3457,13 @@
   shared prefix `SCALP_PRECISION` の soft perf guard より
   worker-local `setup_pressure` / `flow_guard` / `RR` 修正を優先する。
 - current entry starvation 時は dedicated env で
+  perf guard bypass を明示し、wrapper 経由の
+  `PrecisionLowVol` / `DroughtRevert`
+  には `SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED=0` /
+  `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
+  を使う。`WickReversalBlend` は
   `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
-  を明示し、soft block (`pf<1`, `failfast_soft`) による
+  を使い、soft block (`pf<1`, `failfast_soft`) による
   strategy-wide entry 停止を避ける。
 - `VwapRevertS` のような `hard:failfast` lane は reopen せず、
   hard loser と soft loser を分けて扱う。

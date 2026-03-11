@@ -14752,7 +14752,15 @@ Status:
     `ops/env/quant-scalp-precision-lowvol.env`,
     `ops/env/quant-scalp-drought-revert.env`,
     `ops/env/quant-scalp-wick-reversal-blend.env`
-    に `SCALP_PRECISION_PERF_GUARD_ENABLED=0` を追加した。
+    に perf guard bypass を追加した。
+  - `PrecisionLowVol` / `DroughtRevert` は wrapper が
+    `SCALP_PRECISION_*` を source prefix から再投影するため、
+    bypass key は
+    `SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED=0` /
+    `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
+    を正とする。
+  - `WickReversalBlend` は wrapper を噛まないため、
+    `SCALP_PRECISION_PERF_GUARD_ENABLED=0` をそのまま使う。
   - `SCALP_PRECISION_PERF_GUARD_MODE=reduce` は残すが、
     current live では worker-local guard を優先して
     soft perf block を明示的に無効化する。
