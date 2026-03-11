@@ -13803,3 +13803,38 @@ Status:
     `RangeFader|long|buy-fade|range_fade|p0` の trades / avg_pips を
     post-commit UTC 窓で再集計する。
   - `sell-fade short p0` の winner lane が維持されているかも同時に監査する。
+
+## 2026-03-11 15:xx JST / local-v2: `VwapRevertS` の `gap:up_strong` hostile short を entry 前に止める
+- Why/Hypothesis:
+  - 最新の正しい UTC 窓では、fresh sample で `RangeFader` はほぼ止まり、
+    post-restart では `scalp_extrema_reversal_live` の 1 本しか新規 closed trade が無かった。
+  - それでも 6 時間 loser では
+    `VwapRevertS short` が `-26.643 JPY / -19.6 pips` で最悪だった。
+  - setup cluster で切ると
+    `VwapRevertS|short|range_fade|unknown|rsi:overbought|atr:mid|gap:up_strong|volatility_compression`
+    の 2 本が `-30.739 JPY / -26.1 pips / avg hold 1082 sec` を作っていた。
+  - この lane は `projection.score` が negative でも、`vgap` extension と shallow reversal だけで short が通っていた。
+  - hostile projection / strong extension / weak reversal / weak setup_quality を組み合わせて
+    entry 前に止めれば、後段の exit に頼る前に最悪 lane を消せる。
+- Expected Good:
+  - `VwapRevertS short` の `gap:up_strong` loser lane を fresh sample で減らせる。
+  - strong extension でも supportive projection や明確な reversal を持つ winner lane は残せる。
+- Expected Bad:
+  - `vgap/ATR` が大きい clean revert winner まで削ると、VwapRevertS の参加率が落ちる可能性がある。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_signal_vwap_revert()` に short lane block を追加した。
+    - 条件は `projection.score <= -0.10`, `vgap/ATR >= 6.5`,
+      `range_score >= 0.30`, shallow overbought RSI, `rev_strength < 0.90`,
+      `flow_guard.setup_quality < 0.58` の組み合わせ。
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    - `gap:up_strong` hostile projection lane が block されることを追加検証した。
+  - テスト:
+    - `pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_policy.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+      -> `22 passed`
+- Verdict: pending
+- Next Action:
+  - 反映後に `VwapRevertS short` の new fills が出た場合、
+    `setup_fingerprint`, `projection.score`, `setup_quality` を
+    `orders.db` / `trades.db` で spot check する。
+  - `gap:up_lean` や `gap:up_flat` の winner lane が維持されるかも同時に確認する。

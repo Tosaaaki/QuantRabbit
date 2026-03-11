@@ -3135,6 +3135,24 @@ def _signal_vwap_revert(
     if not proj_allow:
         return None
     proj_size_mult = float(size_mult)
+    projection_score = 0.0
+    if isinstance(proj_detail, dict):
+        try:
+            projection_score = float(proj_detail.get("score") or 0.0)
+        except Exception:
+            projection_score = 0.0
+    if side == "short" and flow_guard is not None:
+        gap_atr_ratio = abs(vgap) / max(1.0, atr)
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        if (
+            projection_score <= -0.10
+            and gap_atr_ratio >= 6.5
+            and range_score >= 0.30
+            and rsi < max(VWAP_REV_RSI_SHORT_MIN + 6.0, 60.0)
+            and rev_strength < 0.90
+            and setup_quality < 0.58
+        ):
+            return None
 
     sl = max(1.2, min(1.8, atr * 0.7))
     tp = max(1.4, min(2.2, atr * 0.95))

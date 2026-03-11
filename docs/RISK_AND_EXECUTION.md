@@ -3156,3 +3156,14 @@
   `trail_*`, `lock_buffer` を tighter に再計算する。
 - shared gate / shared time block / dedicated env の追加 tightening は行わず、
   entry/exit の strategy-local dynamic rule だけで low-edge lane を減らす。
+
+### 2026-03-11 `VwapRevertS` gap-strong hostile short block
+- `VwapRevertS` の直近 loser cluster は
+  `VwapRevertS|short|range_fade|unknown|rsi:overbought|atr:mid|gap:up_strong|volatility_compression`
+  で、`2 trades / -30.739 JPY / -26.1 pips / avg hold 1082 sec` だった。
+- `workers/scalp_wick_reversal_blend/worker.py` の `_signal_vwap_revert()` は、
+  short side で `projection.score` が明確に逆風、`vgap/ATR` が強い extension、
+  `rev_strength` がまだ浅く、`flow_guard.setup_quality` も弱い lane を
+  strategy-local に block する。
+- strong extension でも clean reversal / supportive projection を持つ lane は残し、
+  static env tightening や shared gate 追加は行わない。

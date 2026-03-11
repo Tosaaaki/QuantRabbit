@@ -15914,3 +15914,29 @@
 - 検証:
   - `pytest -q tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_rangefader_worker.py`
     -> `26 passed`
+
+### 2026-03-11 15:xx JST - `VwapRevertS` の `gap:up_strong` short を hostile projection で block
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - 正しい UTC 窓の loser cluster では
+    `VwapRevertS|short|range_fade|unknown|rsi:overbought|atr:mid|gap:up_strong|volatility_compression`
+    が `2 trades / -30.739 JPY / -26.1 pips / avg hold 1082 sec` で最悪だった。
+  - 両 trade は `projection.score` が negative でも short が通っており、
+    strong extension に逆らう shallow revert short が entry 側で漏れていた。
+
+- 変更:
+  - `_signal_vwap_revert()` は short side で
+    `projection.score <= -0.10`, `vgap/ATR >= 6.5`,
+    `range_score >= 0.30`, `rsi` がまだ浅い overbought,
+    `rev_strength < 0.90`, `flow_guard.setup_quality < 0.58`
+    の lane を strategy-local に block するようにした。
+  - strong extension でも supportive projection / stronger reversal の lane は残す。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_policy.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+    -> `22 passed`
