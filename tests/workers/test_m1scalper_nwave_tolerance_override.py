@@ -74,6 +74,35 @@ def _breakout_retest_fac() -> dict:
     }
 
 
+def _vshape_rebound_fac() -> dict:
+    candles = [
+        {"open": 155.998, "high": 156.004, "low": 155.994, "close": 156.000},
+        {"open": 156.000, "high": 156.006, "low": 155.996, "close": 156.002},
+        {"open": 156.002, "high": 156.010, "low": 155.998, "close": 156.006},
+        {"open": 156.006, "high": 156.012, "low": 156.000, "close": 156.008},
+        {"open": 156.008, "high": 156.031, "low": 156.006, "close": 156.027},
+        {"open": 156.027, "high": 156.029, "low": 156.020, "close": 156.022},
+        {"open": 156.022, "high": 156.026, "low": 156.018, "close": 156.021},
+        {"open": 156.021, "high": 156.024, "low": 156.016, "close": 156.020},
+        {"open": 156.020, "high": 156.022, "low": 156.017, "close": 156.020},
+        {"open": 156.020, "high": 156.021, "low": 156.014, "close": 156.016},
+    ]
+    return {
+        "candles": candles,
+        "close": candles[-1]["close"],
+        "ema20": 156.020,
+        "ema10": 156.012,
+        "rsi": 50.0,
+        "atr": 0.02,
+        "atr_pips": 2.0,
+        "vol_5m": 0.22,
+        "adx": 19.0,
+        "bbw": 0.0015,
+        "range_active": False,
+        "range_score": 0.18,
+    }
+
+
 def test_nwave_tolerance_default_can_be_overridden_by_env(monkeypatch):
     from strategies.scalping import m1_scalper as strategy
 
@@ -168,4 +197,47 @@ def test_breakout_retest_signal_exposes_dynamic_setup_metadata(monkeypatch):
     assert notes.get("mode") == "breakout_retest"
     assert notes.get("flow_regime")
     assert notes.get("setup_fingerprint")
+    assert isinstance(notes.get("continuation_pressure"), int)
+
+
+def test_vshape_rebound_signal_exposes_dynamic_setup_metadata():
+    from strategies.scalping import m1_scalper as strategy
+
+    fac = _vshape_rebound_fac()
+    signal = strategy._vshape_rebound_signal(
+        candles=fac["candles"],
+        close=fac["close"],
+        rsi=fac["rsi"],
+        adx=fac["adx"],
+        atr_pips=fac["atr_pips"],
+        ema20=fac["ema20"],
+        range_active=fac["range_active"],
+        range_score=fac["range_score"],
+        price_gap_pips=(fac["close"] - fac["ema20"]) / 0.01,
+        ema_gap_pips=(fac["ema10"] - fac["ema20"]) / 0.01,
+        bbw=fac["bbw"],
+        vol5=fac["vol_5m"],
+        trend_up=False,
+        trend_down=True,
+        strong_up=False,
+        strong_down=False,
+        range_reversion_only=False,
+        fast_cut=5.0,
+        fast_cut_time=60.0,
+        tp_dyn=6.0,
+        sl_dyn=4.2,
+        adjust_tp=lambda tp, _conf: tp,
+    )
+
+    assert isinstance(signal, dict)
+    assert signal.get("tag") == "M1Scalper-vshape-rebound-short"
+    assert 0.38 <= float(signal.get("entry_probability") or 0.0) <= 0.88
+    assert 0.0 <= float(signal.get("setup_quality") or 0.0) <= 1.0
+    assert 0.60 <= float(signal.get("setup_size_mult") or 0.0) <= 1.18
+    assert signal.get("flow_regime")
+    assert signal.get("setup_fingerprint")
+    notes = signal.get("notes") or {}
+    assert notes.get("mode") == "vshape_rebound"
+    assert notes.get("flow_regime") == signal.get("flow_regime")
+    assert notes.get("setup_fingerprint") == signal.get("setup_fingerprint")
     assert isinstance(notes.get("continuation_pressure"), int)

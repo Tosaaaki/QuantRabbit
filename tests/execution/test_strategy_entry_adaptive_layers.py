@@ -290,7 +290,7 @@ def test_apply_auto_canary_caps_units_and_probability(monkeypatch) -> None:
     monkeypatch.setattr(
         strategy_entry.auto_canary,
         "current_override",
-        lambda _strategy_tag: {
+        lambda _strategy_tag, entry_thesis=None: {
             "enabled": True,
             "strategy_key": "MicroTrendRetest",
             "units_multiplier": 0.85,
@@ -315,6 +315,59 @@ def test_apply_auto_canary_caps_units_and_probability(monkeypatch) -> None:
     assert prob == 0.59
     assert isinstance(payload, dict)
     assert thesis["auto_canary"]["reason"] == "loser_cluster_canary"
+
+
+def test_apply_auto_canary_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+    captured: dict = {}
+
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_AUTO_CANARY_ENABLED", True, raising=False)
+
+    def _fake_current_override(strategy_tag, *, entry_thesis=None):
+        captured["strategy_tag"] = strategy_tag
+        captured["entry_thesis"] = dict(entry_thesis or {})
+        return {
+            "enabled": True,
+            "strategy_key": "RangeFader-sell-fade",
+            "units_multiplier": 0.81,
+            "probability_offset": -0.03,
+            "reason": "loser_cluster_canary",
+            "confidence": 0.72,
+            "setup_override": {
+                "match_dimension": "setup_fingerprint",
+                "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+            },
+        }
+
+    monkeypatch.setattr(
+        strategy_entry.auto_canary,
+        "current_override",
+        _fake_current_override,
+        raising=False,
+    )
+
+    thesis = {
+        "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+        "live_setup_context": {
+            "flow_regime": "trend_long",
+            "microstructure_bucket": "tight_fast",
+        },
+    }
+    units, prob, payload = strategy_entry._apply_auto_canary(
+        strategy_tag="RangeFader-sell-fade",
+        pocket="scalp",
+        units=-100,
+        min_units=10,
+        entry_probability=0.62,
+        entry_thesis=thesis,
+    )
+
+    assert captured["strategy_tag"] == "RangeFader-sell-fade"
+    assert captured["entry_thesis"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert units == -81
+    assert prob == 0.59
+    assert isinstance(payload, dict)
+    assert payload["setup_override"]["match_dimension"] == "setup_fingerprint"
+    assert thesis["auto_canary"]["setup_override"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
 
 
 def test_apply_dynamic_alloc_trim_skips_stale_profile(monkeypatch) -> None:
@@ -345,6 +398,62 @@ def test_apply_dynamic_alloc_trim_skips_stale_profile(monkeypatch) -> None:
     assert units == 100
     assert reason is None
     assert "dynamic_alloc" not in thesis
+
+
+def test_apply_dynamic_alloc_trim_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+    captured: dict = {}
+
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
+
+    def _fake_load_strategy_profile(strategy_tag, pocket, *, entry_thesis=None, path=None, ttl_sec=None):
+        captured["strategy_tag"] = strategy_tag
+        captured["pocket"] = pocket
+        captured["entry_thesis"] = dict(entry_thesis or {})
+        return {
+            "found": True,
+            "strategy_key": "RangeFader-sell-fade",
+            "lot_multiplier": 0.58,
+            "payload_stale": False,
+            "score": 0.12,
+            "trades": 24,
+            "setup_override": {
+                "match_dimension": "setup_fingerprint",
+                "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+                "flow_regime": "trend_long",
+                "microstructure_bucket": "tight_fast",
+            },
+        }
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_strategy_profile",
+        _fake_load_strategy_profile,
+        raising=False,
+    )
+
+    thesis = {
+        "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
+        "live_setup_context": {
+            "flow_regime": "trend_long",
+            "microstructure_bucket": "tight_fast",
+        },
+    }
+    units, reason = strategy_entry._apply_dynamic_alloc_trim(
+        strategy_tag="RangeFader-sell-fade",
+        pocket="scalp",
+        units=-100,
+        min_units=10,
+        entry_thesis=thesis,
+    )
+
+    assert captured["strategy_tag"] == "RangeFader-sell-fade"
+    assert captured["pocket"] == "scalp"
+    assert captured["entry_thesis"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert units == -58
+    assert reason is None
+    assert thesis["dynamic_alloc"]["setup_override"]["match_dimension"] == "setup_fingerprint"
 
 
 def test_inject_live_setup_context_records_flow_regime_and_fingerprint() -> None:

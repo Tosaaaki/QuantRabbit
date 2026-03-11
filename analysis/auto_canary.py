@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from utils.strategy_tags import resolve_strategy_tag
+from workers.common.setup_context import extract_setup_identity
 
 
 _PATH_RAW = os.getenv("AUTO_CANARY_PATH", "config/auto_canary_overrides.json")
@@ -114,7 +115,94 @@ def _payload_is_stale(payload: Optional[dict[str, Any]]) -> bool:
     return bool(age_sec is not None and age_sec > _MAX_AGE_SEC)
 
 
-def current_override(strategy_tag: Optional[str]) -> Optional[dict[str, Any]]:
+def _setup_match_specificity(
+    override: dict[str, Any],
+    *,
+    setup_context: dict[str, str],
+) -> int:
+    if not setup_context:
+        return 0
+    setup_fingerprint = str(override.get("setup_fingerprint") or "").strip()
+    flow_regime = str(override.get("flow_regime") or "").strip()
+    microstructure_bucket = str(override.get("microstructure_bucket") or "").strip()
+    if setup_fingerprint:
+        return 4 if setup_context.get("setup_fingerprint") == setup_fingerprint else 0
+    if flow_regime and microstructure_bucket:
+        return (
+            3
+            if setup_context.get("flow_regime") == flow_regime
+            and setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
+    if flow_regime:
+        return 2 if setup_context.get("flow_regime") == flow_regime else 0
+    if microstructure_bucket:
+        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+    return 0
+
+
+def _select_setup_override(
+    setup_overrides: object,
+    *,
+    entry_thesis: Optional[dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    if not isinstance(setup_overrides, list):
+        return None, None
+    setup_context = extract_setup_identity(entry_thesis)
+    if not setup_context:
+        return None, None
+    allowed_fields = {
+        "enabled",
+        "mode",
+        "confidence",
+        "units_multiplier",
+        "probability_offset",
+        "reason",
+        "reasons",
+        "source",
+    }
+    best_override: Optional[dict[str, Any]] = None
+    best_meta: Optional[dict[str, Any]] = None
+    best_rank = (0, 0)
+    for item in setup_overrides:
+        if not isinstance(item, dict):
+            continue
+        specificity = _setup_match_specificity(item, setup_context=setup_context)
+        if specificity <= 0:
+            continue
+        samples = 0
+        try:
+            samples = int(float(item.get("samples") or item.get("trades") or 0))
+        except (TypeError, ValueError):
+            samples = 0
+        rank = (specificity, samples)
+        if rank < best_rank:
+            continue
+        payload = {key: item.get(key) for key in allowed_fields if key in item}
+        if not payload:
+            continue
+        best_rank = rank
+        best_override = payload
+        try:
+            confidence = float(item.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        best_meta = {
+            "match_dimension": str(item.get("match_dimension") or ""),
+            "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
+            "flow_regime": str(item.get("flow_regime") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "samples": samples,
+            "confidence": max(0.0, min(1.0, confidence)),
+        }
+    return best_override, best_meta
+
+
+def current_override(
+    strategy_tag: Optional[str],
+    *,
+    entry_thesis: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
     payload = _load_payload()
     if not payload:
         return None
@@ -134,5 +222,13 @@ def current_override(strategy_tag: Optional[str]) -> Optional[dict[str, Any]]:
             merged = dict(advice)
             merged.setdefault("strategy_key", key)
             merged.setdefault("generated_at", payload.get("generated_at"))
+            setup_override, setup_meta = _select_setup_override(
+                advice.get("setup_overrides"),
+                entry_thesis=entry_thesis,
+            )
+            if isinstance(setup_override, dict):
+                merged.update(setup_override)
+                if isinstance(setup_meta, dict):
+                    merged["setup_override"] = setup_meta
             return merged
     return None

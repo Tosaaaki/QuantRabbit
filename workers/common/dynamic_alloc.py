@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from workers.common.setup_context import extract_setup_identity
+
 
 _CACHE: Dict[str, Dict[str, Any]] = {}
 
@@ -121,10 +123,103 @@ def _load_payload(path: Path, ttl_sec: float) -> Optional[Dict[str, Any]]:
     return payload
 
 
+def _setup_match_specificity(
+    override: dict[str, Any],
+    *,
+    setup_context: dict[str, str],
+) -> int:
+    if not setup_context:
+        return 0
+    setup_fingerprint = str(override.get("setup_fingerprint") or "").strip()
+    flow_regime = str(override.get("flow_regime") or "").strip()
+    microstructure_bucket = str(override.get("microstructure_bucket") or "").strip()
+    if setup_fingerprint:
+        return 4 if setup_context.get("setup_fingerprint") == setup_fingerprint else 0
+    if flow_regime and microstructure_bucket:
+        return (
+            3
+            if setup_context.get("flow_regime") == flow_regime
+            and setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
+    if flow_regime:
+        return 2 if setup_context.get("flow_regime") == flow_regime else 0
+    if microstructure_bucket:
+        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+    return 0
+
+
+def _select_setup_override(
+    setup_overrides: object,
+    *,
+    entry_thesis: Optional[dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    if not isinstance(setup_overrides, list):
+        return None, None
+    setup_context = extract_setup_identity(entry_thesis)
+    if not setup_context:
+        return None, None
+    allowed_fields = {
+        "score",
+        "lot_multiplier",
+        "strategy_lot_multiplier",
+        "effective_min_lot_multiplier",
+        "trades",
+        "win_rate",
+        "weighted_win_rate",
+        "pf",
+        "jpy_pf",
+        "avg_pips",
+        "sum_pips",
+        "avg_realized_jpy",
+        "sum_realized_jpy",
+        "realized_jpy_per_1k_units",
+        "sl_rate",
+        "margin_closeout_rate",
+        "market_close_rate",
+        "market_close_loss_rate",
+        "market_close_loss_share",
+        "downside_share",
+        "jpy_downside_share",
+        "allow_loser_block",
+        "allow_winner_only",
+    }
+    best_override: Optional[dict[str, Any]] = None
+    best_meta: Optional[dict[str, Any]] = None
+    best_rank = (0, 0)
+    for item in setup_overrides:
+        if not isinstance(item, dict):
+            continue
+        specificity = _setup_match_specificity(item, setup_context=setup_context)
+        if specificity <= 0:
+            continue
+        trades = _safe_int(item.get("trades"), 0)
+        rank = (specificity, trades)
+        if rank < best_rank:
+            continue
+        payload = {key: item.get(key) for key in allowed_fields if key in item}
+        if not payload:
+            continue
+        best_rank = rank
+        best_override = payload
+        best_meta = {
+            "match_dimension": str(item.get("match_dimension") or ""),
+            "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
+            "flow_regime": str(item.get("flow_regime") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "trades": trades,
+            "score": _safe_float(item.get("score"), 0.0),
+            "pf": _safe_float(item.get("pf"), 0.0),
+            "win_rate": _safe_float(item.get("win_rate"), 0.0),
+        }
+    return best_override, best_meta
+
+
 def load_strategy_profile(
     strategy: str,
     pocket: str,
     *,
+    entry_thesis: Optional[dict[str, Any]] = None,
     path: str | Path | None = None,
     ttl_sec: float = 20.0,
 ) -> Dict[str, Any]:
@@ -203,7 +298,7 @@ def load_strategy_profile(
             mult = min(mult, max(item_min_mult if item_min_mult > 0.0 else 0.0, item_max_mult))
         allow_loser_block = _safe_bool(item.get("allow_loser_block"), policy_allow_loser_block)
         allow_winner_only = _safe_bool(item.get("allow_winner_only"), policy_allow_winner_only)
-        return {
+        profile = {
             "found": True,
             "strategy_key": str(lookup_key),
             "score": score,
@@ -216,6 +311,15 @@ def load_strategy_profile(
             "soft_participation": policy_soft_participation,
             **payload_meta,
         }
+        setup_override, setup_meta = _select_setup_override(
+            item.get("setup_overrides"),
+            entry_thesis=entry_thesis,
+        )
+        if isinstance(setup_override, dict):
+            profile.update(setup_override)
+            if isinstance(setup_meta, dict):
+                profile["setup_override"] = setup_meta
+        return profile
     if policy_soft_participation and policy_min_mult > 0.0:
         if payload_meta["payload_stale"]:
             return {

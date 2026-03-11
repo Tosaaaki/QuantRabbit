@@ -27,5 +27,8 @@ def test_apply_signal_setup_context_carries_dynamic_setup_metadata():
     assert thesis["setup_quality"] == 0.64
     assert thesis["continuation_pressure"] == 1.0
     assert thesis["signal_entry_probability"] == 0.71
+    assert thesis["m1_setup"]["entry_probability"] == 0.71
+    assert thesis["m1_setup"]["flow_regime"] == "trend_long"
+    assert thesis["m1_setup"]["continuation_pressure"] == 1.0
     assert thesis["m1_setup"]["setup_size_mult"] == 1.08
     assert thesis["setup_quality_components"]["breakout"] == 0.83

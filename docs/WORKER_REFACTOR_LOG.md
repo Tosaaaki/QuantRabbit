@@ -15629,3 +15629,66 @@
     -> `16 passed`
   - `./.venv/bin/pytest -q tests/workers/test_micro_multistrat_trend_flip.py`
     -> `27 passed`
+
+### 2026-03-11 09:52 JST - shared `dynamic_alloc` / `auto_canary` を setup-scoped 化し、`M1Scalper` EXIT を trade-local dynamic 化
+- 対象:
+  - `workers/common/dynamic_alloc.py`
+  - `analysis/auto_canary.py`
+  - `execution/strategy_entry.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `scripts/loser_cluster_worker.py`
+  - `scripts/auto_canary_improver.py`
+  - `workers/scalp_m1scalper/exit_worker.py`
+  - `tests/workers/common/test_dynamic_alloc.py`
+  - `tests/analysis/test_auto_canary.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+  - `tests/test_dynamic_alloc_worker.py`
+  - `tests/scripts/test_loser_cluster_worker.py`
+  - `tests/scripts/test_auto_canary_improver.py`
+  - `tests/workers/test_m1scalper_exit_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `participation_alloc` / `strategy_feedback` は setup-scoped 化済みでも、
+    `dynamic_alloc` と `auto_canary` が strategy-wide のままだと
+    current setup と無関係な blanket trim が残る。
+  - `M1Scalper` も entry 側だけ setup payload を持っていて、
+    exit 側が fixed threshold 寄りだと winner/loser の差を trade-local に引き回せない。
+
+- 変更:
+  - `scripts/dynamic_alloc_worker.py`
+    - recent `trades.entry_thesis` から
+      `setup_fingerprint / flow_regime / microstructure_bucket` を再構成し、
+      strategy score に加えて `setup_overrides` を生成するようにした。
+  - `workers/common/dynamic_alloc.py`
+    - live `entry_thesis` と一致する setup override を選び、
+      `strategy_entry` へ返すようにした。
+  - `scripts/loser_cluster_worker.py`
+    - loser cluster に `setup_context` と
+      `setup_fingerprint / flow_regime / microstructure_bucket` を保持するようにした。
+  - `scripts/auto_canary_improver.py`
+    - strategy-level canary に加えて setup-scoped `setup_overrides` を生成するようにした。
+  - `analysis/auto_canary.py`
+    - live `entry_thesis` と一致する setup override だけを使うようにした。
+  - `execution/strategy_entry.py`
+    - dynamic alloc / auto canary の loader へ current `entry_thesis` を渡し、
+      適用 override を `entry_thesis.dynamic_alloc` / `entry_thesis.auto_canary` に監査保存するようにした。
+  - `workers/scalp_m1scalper/exit_worker.py`
+    - `entry_thesis.m1_setup` の
+      `strategy_mode / flow_regime / setup_quality / continuation_pressure / setup_fingerprint`
+      を優先し、trade-local の
+      `profit_take / lock_trigger / hold / adverse / trail / soft-exit`
+      threshold を bounded に再計算する helper を追加した。
+
+- 結果:
+  - `config/dynamic_alloc.json`
+    - `11` strategy / `55` setup override を current data から生成。
+  - `config/auto_canary_overrides.json`
+    - `13` strategy / `46` setup override を current data から生成。
+  - current setup に一致する slow layer だけが
+    live trim/canary に使われる状態へ寄せた。
+
+- 検証:
+  - `./.venv/bin/pytest -q tests/workers/common/test_dynamic_alloc.py tests/analysis/test_auto_canary.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_auto_canary_improver.py tests/scripts/test_loser_cluster_worker.py tests/test_dynamic_alloc_worker.py tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_setup_context.py tests/workers/test_m1scalper_exit_worker.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py tests/workers/test_m1scalper_config.py tests/replay/test_m1_family_replay.py`
+    -> `62 passed`

@@ -237,3 +237,57 @@ def test_compute_scores_severe_loser_is_crushed_to_emergency_floor() -> None:
     assert prof["market_close_loss_share"] >= 0.9
     assert prof["realized_jpy_per_1k_units"] <= -7.0
     assert prof["lot_multiplier"] <= 0.12
+
+
+def test_compute_scores_emits_setup_overrides_from_entry_thesis() -> None:
+    rows = []
+    for i in range(8):
+        rows.append(
+            (
+                "RangeFader-sell-fade",
+                "scalp",
+                -1.8,
+                f"2026-02-24T00:{i:02d}:00Z",
+                "MARKET_ORDER_TRADE_CLOSE",
+                -95.0,
+                1400,
+                "RangeFader-sell-fade",
+                "RangeFader-sell-fade",
+                '{"setup_fingerprint":"RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression","flow_regime":"trend_long","microstructure_bucket":"tight_fast"}',
+            )
+        )
+    for i in range(8):
+        rows.append(
+            (
+                "RangeFader-sell-fade",
+                "scalp",
+                1.1,
+                f"2026-02-24T01:{i:02d}:00Z",
+                "TAKE_PROFIT_ORDER",
+                60.0,
+                1400,
+                "RangeFader-sell-fade",
+                "RangeFader-sell-fade",
+                '{"setup_fingerprint":"RangeFader-sell-fade|short|transition|normal_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression","flow_regime":"transition","microstructure_bucket":"normal_normal"}',
+            )
+        )
+
+    strategy_scores, _ = compute_scores(rows, min_trades=12, pf_cap=2.0)
+
+    prof = strategy_scores["RangeFader-sell-fade"]
+    assert isinstance(prof.get("setup_overrides"), list)
+    loser_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression"
+    )
+    winner_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "RangeFader-sell-fade|short|transition|normal_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression"
+    )
+    assert loser_override["match_dimension"] == "setup_fingerprint"
+    assert loser_override["trades"] == 8
+    assert loser_override["lot_multiplier"] < winner_override["lot_multiplier"]

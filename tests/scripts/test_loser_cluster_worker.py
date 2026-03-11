@@ -92,3 +92,47 @@ def test_build_loser_clusters_prefers_lane_from_entry_thesis() -> None:
 
     assert "RangeFader-buy-fade" in payload["strategies"]
     assert "RangeFader" not in payload["strategies"]
+
+
+def test_build_loser_clusters_exposes_setup_context_when_present() -> None:
+    rows = [
+        {
+            "strategy_key": "RangeFader-sell-fade",
+            "pocket": "scalp",
+            "units": -100,
+            "pl_pips": -1.4,
+            "realized_pl": -120.0,
+            "entry_thesis": '{"setup_fingerprint":"RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression","flow_regime":"trend_long","microstructure_bucket":"tight_fast","spread_pips":0.7}',
+        },
+        {
+            "strategy_key": "RangeFader-sell-fade",
+            "pocket": "scalp",
+            "units": -100,
+            "pl_pips": -1.2,
+            "realized_pl": -110.0,
+            "entry_thesis": '{"setup_fingerprint":"RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression","flow_regime":"trend_long","microstructure_bucket":"tight_fast","spread_pips":0.7}',
+        },
+        {
+            "strategy_key": "RangeFader-sell-fade",
+            "pocket": "scalp",
+            "units": -100,
+            "pl_pips": -1.8,
+            "realized_pl": -150.0,
+            "entry_thesis": '{"setup_fingerprint":"RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression","flow_regime":"trend_long","microstructure_bucket":"tight_fast","spread_pips":0.7}',
+        },
+        {
+            "strategy_key": "RangeFader-sell-fade",
+            "pocket": "scalp",
+            "units": -100,
+            "pl_pips": -0.9,
+            "realized_pl": -90.0,
+            "entry_thesis": '{"setup_fingerprint":"RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression","flow_regime":"trend_long","microstructure_bucket":"tight_fast","spread_pips":0.7}',
+        },
+    ]
+
+    payload = loser_cluster_worker.build_loser_clusters(rows, min_cluster_size=4, top_k=3)
+
+    cluster = payload["strategies"]["RangeFader-sell-fade"]["clusters"][0]
+    assert cluster["setup_context"]["flow_regime"] == "trend_long"
+    assert cluster["setup_context"]["microstructure_bucket"] == "tight_fast"
+    assert cluster["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")

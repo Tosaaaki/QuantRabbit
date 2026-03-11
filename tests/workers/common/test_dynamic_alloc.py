@@ -77,6 +77,112 @@ def test_load_strategy_profile_falls_back_to_case_insensitive_key(tmp_path: Path
     assert profile["lot_multiplier"] == 0.74
 
 
+def test_load_strategy_profile_prefers_setup_override(tmp_path: Path) -> None:
+    payload = {
+        "strategies": {
+            "RangeFader-sell-fade": {
+                "pocket": "scalp",
+                "score": 0.31,
+                "lot_multiplier": 0.82,
+                "trades": 61,
+                "setup_overrides": [
+                    {
+                        "match_dimension": "setup_fingerprint",
+                        "setup_fingerprint": "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression",
+                        "flow_regime": "trend_long",
+                        "microstructure_bucket": "tight_fast",
+                        "score": 0.09,
+                        "lot_multiplier": 0.58,
+                        "effective_min_lot_multiplier": 0.18,
+                        "trades": 24,
+                        "pf": 0.42,
+                        "win_rate": 0.29,
+                    }
+                ],
+            }
+        },
+    }
+    path = tmp_path / "dynamic_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    profile = load_strategy_profile(
+        "RangeFader-sell-fade",
+        "scalp",
+        path=path,
+        entry_thesis={
+            "setup_fingerprint": "RangeFader-sell-fade|short|trend_long|tight_fast|rsi:overbought|atr:mid|gap:up_extended|volatility_compression",
+            "live_setup_context": {
+                "flow_regime": "trend_long",
+                "microstructure_bucket": "tight_fast",
+            },
+        },
+    )
+
+    assert profile["found"] is True
+    assert profile["lot_multiplier"] == 0.58
+    assert profile["effective_min_lot_multiplier"] == 0.18
+    assert profile["setup_override"]["match_dimension"] == "setup_fingerprint"
+
+
+def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp_path: Path) -> None:
+    payload = {
+        "strategies": {
+            "RangeFader-sell-fade": {
+                "pocket": "scalp",
+                "score": 0.31,
+                "lot_multiplier": 0.82,
+                "trades": 61,
+                "setup_overrides": [
+                    {
+                        "match_dimension": "flow_micro",
+                        "flow_regime": "trend_long",
+                        "microstructure_bucket": "tight_fast",
+                        "score": 0.14,
+                        "lot_multiplier": 0.64,
+                        "effective_min_lot_multiplier": 0.20,
+                        "trades": 18,
+                        "pf": 0.51,
+                        "win_rate": 0.33,
+                    }
+                ],
+            }
+        },
+    }
+    path = tmp_path / "dynamic_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    profile = load_strategy_profile(
+        "RangeFader-sell-fade",
+        "scalp",
+        path=path,
+        entry_thesis={
+            "strategy_tag": "RangeFader-sell-fade",
+            "side": "short",
+            "range_mode": "trend",
+            "range_score": 0.18,
+            "spread_pips": 0.8,
+            "technical_context": {
+                "ticks": {"spread_pips": 0.8, "tick_rate": 9.2},
+                "indicators": {
+                    "M1": {
+                        "atr_pips": 2.4,
+                        "rsi": 67.0,
+                        "adx": 29.0,
+                        "plus_di": 31.0,
+                        "minus_di": 14.0,
+                        "ma10": 158.110,
+                        "ma20": 158.080,
+                    }
+                },
+            },
+        },
+    )
+
+    assert profile["found"] is True
+    assert profile["lot_multiplier"] == 0.64
+    assert profile["setup_override"]["match_dimension"] == "flow_micro"
+
+
 def test_load_strategy_profile_returns_policy_default_when_unknown(tmp_path: Path) -> None:
     payload = {
         "allocation_policy": {

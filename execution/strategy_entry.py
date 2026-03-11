@@ -2601,6 +2601,7 @@ def _apply_dynamic_alloc_trim(
         profile = load_strategy_profile(
             strategy_tag,
             pocket_key,
+            entry_thesis=entry_thesis,
             path=_STRATEGY_DYNAMIC_ALLOC_PATH,
             ttl_sec=_STRATEGY_DYNAMIC_ALLOC_TTL_SEC,
         )
@@ -2645,6 +2646,9 @@ def _apply_dynamic_alloc_trim(
         "requested_units": int(requested_abs),
         "applied_units": int(abs(next_units)),
     }
+    setup_override = profile.get("setup_override")
+    if isinstance(setup_override, dict):
+        entry_thesis["dynamic_alloc"]["setup_override"] = dict(setup_override)
     return int(next_units), None
 
 
@@ -2942,7 +2946,7 @@ def _apply_auto_canary(
         return units, entry_probability, None
 
     try:
-        override = auto_canary.current_override(strategy_tag)
+        override = auto_canary.current_override(strategy_tag, entry_thesis=entry_thesis)
     except Exception:
         override = None
     if not isinstance(override, dict) or not override.get("enabled", True):
@@ -2984,6 +2988,9 @@ def _apply_auto_canary(
         "probability_offset": round(prob_offset, 4),
         "reason": str(override.get("reason") or "auto_canary"),
     }
+    setup_override = override.get("setup_override")
+    if isinstance(setup_override, dict):
+        payload["setup_override"] = dict(setup_override)
     if normalized_probability is not None and next_probability is not None and abs(next_probability - normalized_probability) > 1e-9:
         payload["entry_probability_before"] = round(normalized_probability, 6)
         payload["entry_probability_after"] = round(next_probability, 6)

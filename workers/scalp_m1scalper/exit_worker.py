@@ -211,6 +211,10 @@ def _clamp01(value: Optional[float]) -> Optional[float]:
     return float(value)
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, float(value)))
+
+
 def _norm(value: Optional[float], low: float, high: float) -> Optional[float]:
     if value is None:
         return None
@@ -404,6 +408,247 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
+
+
+def _first_text(*values: object) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _first_float(*values: object) -> Optional[float]:
+    for value in values:
+        parsed = _safe_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _infer_setup_mode(strategy_mode: Optional[str], setup_fingerprint: Optional[str]) -> Optional[str]:
+    mode = _first_text(strategy_mode)
+    if mode:
+        return mode
+    fingerprint = _first_text(setup_fingerprint)
+    if not fingerprint:
+        return None
+    if "breakout_retest" in fingerprint:
+        return "breakout_retest"
+    if "vshape_rebound" in fingerprint:
+        return "vshape_rebound"
+    return None
+
+
+def _flow_alignment(*, side: str, flow_regime: Optional[str], strategy_mode: Optional[str]) -> float:
+    regime = _first_text(flow_regime) or ""
+    mode = _first_text(strategy_mode) or ""
+    side_key = str(side).lower()
+    if regime == "trend_long":
+        return 1.0 if side_key == "long" else -1.0
+    if regime == "trend_short":
+        return 1.0 if side_key == "short" else -1.0
+    if regime.startswith("range_"):
+        if mode == "vshape_rebound":
+            return 0.55
+        if mode == "breakout_retest":
+            return -0.15
+        return 0.10
+    if regime == "transition":
+        if mode == "breakout_retest":
+            return 0.20
+        if mode == "vshape_rebound":
+            return 0.10
+    return 0.0
+
+
+def _trade_local_exit_thresholds(
+    *,
+    side: str,
+    entry_thesis: dict | None,
+    min_hold_sec: float,
+    max_hold_sec: float,
+    max_adverse_pips: float,
+    profit_take_pips: float,
+    lock_trigger_pips: float,
+    trail_start_pips: float,
+    trail_backoff_pips: float,
+    lock_buffer_pips: float,
+    rsi_fade_long: float,
+    rsi_fade_short: float,
+    vwap_gap_pips: float,
+    structure_adx: float,
+    structure_gap_pips: float,
+    atr_spike_pips: float,
+) -> dict[str, object]:
+    thesis = entry_thesis if isinstance(entry_thesis, dict) else {}
+    m1_setup = thesis.get("m1_setup")
+    if not isinstance(m1_setup, dict):
+        m1_setup = {}
+
+    setup_fingerprint = _first_text(
+        m1_setup.get("setup_fingerprint"),
+        thesis.get("setup_fingerprint"),
+    )
+    strategy_mode = _infer_setup_mode(
+        _first_text(m1_setup.get("strategy_mode"), thesis.get("strategy_mode")),
+        setup_fingerprint,
+    )
+    flow_regime = _first_text(m1_setup.get("flow_regime"), thesis.get("flow_regime"))
+    setup_quality = _clamp01(_first_float(m1_setup.get("setup_quality"), thesis.get("setup_quality")))
+    continuation_pressure = _first_float(
+        m1_setup.get("continuation_pressure"),
+        thesis.get("continuation_pressure"),
+    )
+    continuation_pressure = _clamp(continuation_pressure or 0.0, 0.0, 3.0)
+    has_setup = any(
+        value is not None
+        for value in (setup_quality, flow_regime, strategy_mode, setup_fingerprint)
+    )
+    if not has_setup:
+        return {
+            "strategy_mode": strategy_mode,
+            "flow_regime": flow_regime,
+            "setup_fingerprint": setup_fingerprint,
+            "setup_quality": setup_quality,
+            "continuation_pressure": continuation_pressure,
+            "max_hold_sec": max_hold_sec,
+            "max_adverse_pips": max_adverse_pips,
+            "profit_take_pips": profit_take_pips,
+            "lock_trigger_pips": lock_trigger_pips,
+            "trail_start_pips": trail_start_pips,
+            "trail_backoff_pips": trail_backoff_pips,
+            "lock_buffer_pips": lock_buffer_pips,
+            "rsi_fade_long": rsi_fade_long,
+            "rsi_fade_short": rsi_fade_short,
+            "vwap_gap_pips": vwap_gap_pips,
+            "structure_adx": structure_adx,
+            "structure_gap_pips": structure_gap_pips,
+            "atr_spike_pips": atr_spike_pips,
+            "setup_dynamicized": False,
+        }
+
+    quality = setup_quality if setup_quality is not None else 0.5
+    quality_edge = quality - 0.5
+    pressure_norm = _clamp(continuation_pressure / 2.0, 0.0, 1.0)
+    flow_bias = _flow_alignment(side=side, flow_regime=flow_regime, strategy_mode=strategy_mode)
+    mode_hold_bias = 0.04 if strategy_mode == "breakout_retest" else -0.06 if strategy_mode == "vshape_rebound" else 0.0
+    mode_lock_bias = 0.03 if strategy_mode == "breakout_retest" else -0.04 if strategy_mode == "vshape_rebound" else 0.0
+    mode_soft_bias = 0.06 if strategy_mode == "breakout_retest" else -0.08 if strategy_mode == "vshape_rebound" else 0.0
+
+    hold_mult = _clamp(
+        1.0 + mode_hold_bias + quality_edge * 0.26 + flow_bias * 0.12 - pressure_norm * 0.18,
+        0.78,
+        1.24,
+    )
+    adverse_mult = _clamp(
+        1.0
+        + (0.04 if strategy_mode == "breakout_retest" else -0.04 if strategy_mode == "vshape_rebound" else 0.0)
+        + quality_edge * 0.18
+        + flow_bias * 0.10
+        - pressure_norm * 0.20,
+        0.78,
+        1.20,
+    )
+    take_profit_mult = _clamp(
+        1.0
+        + mode_hold_bias
+        + quality_edge * 0.20
+        + flow_bias * 0.12
+        - pressure_norm * 0.18,
+        0.80,
+        1.22,
+    )
+    lock_trigger_mult = _clamp(
+        1.0
+        + mode_hold_bias
+        + quality_edge * 0.14
+        + flow_bias * 0.10
+        - pressure_norm * 0.16,
+        0.78,
+        1.20,
+    )
+    trail_start_mult = _clamp(
+        1.0 + mode_hold_bias + quality_edge * 0.12 + flow_bias * 0.10 - pressure_norm * 0.14,
+        0.80,
+        1.18,
+    )
+    trail_backoff_mult = _clamp(
+        1.0 + mode_lock_bias + quality_edge * 0.10 + flow_bias * 0.08 - pressure_norm * 0.10,
+        0.78,
+        1.18,
+    )
+    lock_buffer_mult = _clamp(
+        1.0 + mode_lock_bias + quality_edge * 0.08 + flow_bias * 0.06 - pressure_norm * 0.08,
+        0.78,
+        1.16,
+    )
+    rsi_offset = _clamp(
+        quality_edge * 5.0 + flow_bias * 2.5 - pressure_norm * 3.0 + mode_soft_bias,
+        -4.0,
+        4.0,
+    )
+    vwap_gap_mult = _clamp(
+        1.0
+        - quality_edge * 0.18
+        - flow_bias * 0.16
+        + pressure_norm * 0.20
+        + (0.10 if strategy_mode == "vshape_rebound" else -0.06 if strategy_mode == "breakout_retest" else 0.0),
+        0.72,
+        1.30,
+    )
+    structure_adx_mult = _clamp(
+        1.0
+        - quality_edge * 0.12
+        - flow_bias * 0.15
+        + pressure_norm * 0.18
+        + (0.08 if strategy_mode == "vshape_rebound" else -0.04 if strategy_mode == "breakout_retest" else 0.0),
+        0.78,
+        1.25,
+    )
+    structure_gap_mult = _clamp(
+        1.0
+        - quality_edge * 0.14
+        - flow_bias * 0.12
+        + pressure_norm * 0.20
+        + (0.10 if strategy_mode == "vshape_rebound" else -0.04 if strategy_mode == "breakout_retest" else 0.0),
+        0.72,
+        1.30,
+    )
+    atr_spike_mult = _clamp(
+        1.0
+        + quality_edge * 0.14
+        + flow_bias * 0.15
+        - pressure_norm * 0.18
+        + (0.04 if strategy_mode == "breakout_retest" else -0.06 if strategy_mode == "vshape_rebound" else 0.0),
+        0.75,
+        1.28,
+    )
+
+    return {
+        "strategy_mode": strategy_mode,
+        "flow_regime": flow_regime,
+        "setup_fingerprint": setup_fingerprint,
+        "setup_quality": round(quality, 3),
+        "continuation_pressure": round(continuation_pressure, 3),
+        "flow_bias": round(flow_bias, 3),
+        "max_hold_sec": max(min_hold_sec, max_hold_sec * hold_mult),
+        "max_adverse_pips": max(0.5, max_adverse_pips * adverse_mult),
+        "profit_take_pips": max(0.5, profit_take_pips * take_profit_mult),
+        "lock_trigger_pips": max(0.05, lock_trigger_pips * lock_trigger_mult),
+        "trail_start_pips": max(0.5, trail_start_pips * trail_start_mult),
+        "trail_backoff_pips": max(0.05, trail_backoff_pips * trail_backoff_mult),
+        "lock_buffer_pips": max(0.05, lock_buffer_pips * lock_buffer_mult),
+        "rsi_fade_long": _clamp(rsi_fade_long - rsi_offset, 35.0, 55.0),
+        "rsi_fade_short": _clamp(rsi_fade_short + rsi_offset, 45.0, 65.0),
+        "vwap_gap_pips": max(0.1, vwap_gap_pips * vwap_gap_mult),
+        "structure_adx": max(5.0, structure_adx * structure_adx_mult),
+        "structure_gap_pips": max(0.2, structure_gap_pips * structure_gap_mult),
+        "atr_spike_pips": max(0.5, atr_spike_pips * atr_spike_mult),
+        "setup_dynamicized": True,
+    }
 
 
 @dataclass
@@ -645,6 +890,39 @@ async def _run_exit_loop(
             ts = max(ts, max(1.0, tp * trail_from_tp_ratio))
             lb = max(lb, tp * lock_from_tp_ratio)
 
+        lock_trigger = max(lock_trigger_min_pips, tp * lock_trigger_from_tp_ratio)
+        local_thresholds = _trade_local_exit_thresholds(
+            side=side,
+            entry_thesis=thesis,
+            min_hold_sec=min_hold,
+            max_hold_sec=max_hold,
+            max_adverse_pips=max_adverse,
+            profit_take_pips=tp,
+            lock_trigger_pips=lock_trigger,
+            trail_start_pips=ts,
+            trail_backoff_pips=tb,
+            lock_buffer_pips=lb,
+            rsi_fade_long=rsi_fade_long,
+            rsi_fade_short=rsi_fade_short,
+            vwap_gap_pips=vwap_gap_pips,
+            structure_adx=structure_adx,
+            structure_gap_pips=structure_gap_pips,
+            atr_spike_pips=atr_spike_pips,
+        )
+        max_hold = float(local_thresholds.get("max_hold_sec") or max_hold)
+        max_adverse = float(local_thresholds.get("max_adverse_pips") or max_adverse)
+        tp = float(local_thresholds.get("profit_take_pips") or tp)
+        lock_trigger = float(local_thresholds.get("lock_trigger_pips") or lock_trigger)
+        ts = float(local_thresholds.get("trail_start_pips") or ts)
+        tb = float(local_thresholds.get("trail_backoff_pips") or tb)
+        lb = float(local_thresholds.get("lock_buffer_pips") or lb)
+        rsi_fade_long_local = float(local_thresholds.get("rsi_fade_long") or rsi_fade_long)
+        rsi_fade_short_local = float(local_thresholds.get("rsi_fade_short") or rsi_fade_short)
+        vwap_gap_pips_local = float(local_thresholds.get("vwap_gap_pips") or vwap_gap_pips)
+        structure_adx_local = float(local_thresholds.get("structure_adx") or structure_adx)
+        structure_gap_pips_local = float(local_thresholds.get("structure_gap_pips") or structure_gap_pips)
+        atr_spike_pips_local = float(local_thresholds.get("atr_spike_pips") or atr_spike_pips)
+
         state.update(pnl, lb)
 
         client_ext = trade.get("clientExtensions")
@@ -673,7 +951,6 @@ async def _run_exit_loop(
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
             return
 
-        lock_trigger = max(lock_trigger_min_pips, tp * lock_trigger_from_tp_ratio)
         if (
             state.lock_floor is not None
             and state.peak >= lock_trigger
@@ -736,7 +1013,7 @@ async def _run_exit_loop(
             if not skip_soft:
                 soft_failed = False
                 if rsi is not None:
-                    if side == "long" and rsi <= rsi_fade_long:
+                    if side == "long" and rsi <= rsi_fade_long_local:
                         ok = await _close(
                             trade_id,
                             -units,
@@ -748,7 +1025,7 @@ async def _run_exit_loop(
                             states.pop(trade_id, None)
                             return
                         soft_failed = True
-                    if side == "short" and rsi >= rsi_fade_short:
+                    if side == "short" and rsi >= rsi_fade_short_local:
                         ok = await _close(
                             trade_id,
                             -units,
@@ -760,7 +1037,7 @@ async def _run_exit_loop(
                             states.pop(trade_id, None)
                             return
                         soft_failed = True
-                if not soft_failed and vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips:
+                if not soft_failed and vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips_local:
                     ok = await _close(
                         trade_id,
                         -units,
@@ -776,7 +1053,7 @@ async def _run_exit_loop(
                     ma10, ma20 = ma_pair
                     gap = abs(ma10 - ma20) / 0.01
                     cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
-                    if adx <= structure_adx and (cross_bad or gap <= structure_gap_pips):
+                    if adx <= structure_adx_local and (cross_bad or gap <= structure_gap_pips_local):
                         ok = await _close(
                             trade_id,
                             -units,
@@ -788,7 +1065,7 @@ async def _run_exit_loop(
                             states.pop(trade_id, None)
                             return
                         soft_failed = True
-                if not soft_failed and atr_pips is not None and atr_pips >= atr_spike_pips:
+                if not soft_failed and atr_pips is not None and atr_pips >= atr_spike_pips_local:
                     ok = await _close(
                         trade_id,
                         -units,

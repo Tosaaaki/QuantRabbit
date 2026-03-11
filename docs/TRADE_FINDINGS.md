@@ -13352,3 +13352,60 @@ Status:
     で `entry_thesis.m1_setup.setup_fingerprint` と `entry_probability` が入っていることを確認する。
   - `strategy_feedback` / `participation_alloc` の setup-scoped overlay が
     `M1Scalper` の broad loser trim ではなく current setup match で効くかを live order/trade で追う。
+
+## 2026-03-11 09:52 JST / local-v2: `dynamic_alloc` / `auto_canary` / `M1Scalper EXIT` を setup/trade-local 化
+- Why/Hypothesis:
+  - `participation_alloc` / `strategy_feedback` を setup-scoped にしても、
+    `dynamic_alloc` と `auto_canary` が strategy-wide のままだと
+    current setup と無関係な blanket trim が残る。
+  - `M1Scalper` も entry だけ setup payload を持っていて、
+    exit が fixed threshold 寄りだと winner setup を伸ばせず loser setup の cut も遅れる。
+  - slow adaptive layer と exit worker まで同じ setup identity でつなげば、
+    「静止した市況の snapshot」ではなく current setup と trade thesis に沿った補正へ寄せられる。
+- Expected Good:
+  - `dynamic_alloc` と `auto_canary` が current setup match に限定され、
+    同一 strategy 内の別 lane を巻き添えで trim しにくくなる。
+  - `M1Scalper` は aligned `breakout_retest` を伸ばしやすく、
+    headwind `vshape_rebound` は hold / adverse / soft-exit を tighter に寄せられる。
+  - `loser_cluster -> auto_canary` も setup context を持つので、
+    canary line が strategy-wide ではなく setup-scoped で回り始める。
+- Expected Bad:
+  - setup 粒度を上げる分、sample が割れて override が sparse になる lane が出る。
+  - `setup_fingerprint` が細かすぎる strategy は、
+    `flow_regime / microstructure_bucket` fallback より exact fingerprint が先に選ばれ、
+    current data の sparse/noisy override を拾うリスクがある。
+  - `M1Scalper` exit の dynamic threshold が強すぎると、
+    弱い setup で早利食いしすぎて cadence が落ちる可能性がある。
+- Observed/Fact:
+  - 市況:
+    - `USD/JPY bid/ask=158.094/158.102`, spread 約 `0.8 pips`。
+    - `logs/health_snapshot.json` は `generated_at=2026-03-11T00:52:04Z`,
+      `data_lag_ms=846.0`, `decision_latency_ms=16.37`, `missing_mechanisms=null`。
+  - `scripts/dynamic_alloc_worker.py`
+    - recent `trades.entry_thesis` から setup identity を再構成し、
+      `config/dynamic_alloc.json` に `11` strategy / `55` setup override を生成した。
+  - `scripts/loser_cluster_worker.py` / `scripts/auto_canary_improver.py`
+    - loser cluster に `setup_context` を保持し、
+      `config/auto_canary_overrides.json` に `13` strategy / `46` setup override を生成した。
+  - `workers/common/dynamic_alloc.py` / `analysis/auto_canary.py`
+    - live `entry_thesis` の current setup と一致する override だけを返すようにした。
+  - `execution/strategy_entry.py`
+    - `dynamic_alloc` / `auto_canary` 適用時に live `entry_thesis` を loader へ渡し、
+      一致した override を監査 payload に残すようにした。
+  - `workers/scalp_m1scalper/exit_worker.py`
+    - `entry_thesis.m1_setup` を優先して
+      `profit_take_pips`, `lock_trigger_pips`, `max_hold_sec`, `max_adverse_pips`,
+      `trail_*`, `rsi_fade_*`, `vwap_gap_pips`, `structure_*`, `atr_spike_pips`
+      を trade-local に再計算するようにした。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/workers/common/test_dynamic_alloc.py tests/analysis/test_auto_canary.py tests/execution/test_strategy_entry_adaptive_layers.py tests/scripts/test_auto_canary_improver.py tests/scripts/test_loser_cluster_worker.py tests/test_dynamic_alloc_worker.py tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_setup_context.py tests/workers/test_m1scalper_exit_worker.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py tests/workers/test_m1scalper_config.py tests/replay/test_m1_family_replay.py`
+      -> `62 passed`
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後、
+    `orders.db` / `trades.db` で `entry_thesis.dynamic_alloc.setup_override`,
+    `entry_thesis.auto_canary.setup_override`,
+    `entry_thesis.m1_setup` と exit 監査の整合を spot check する。
+  - `M1Scalper-M1`, `MicroLevelReactor-*`, `MicroTrendRetest-long`,
+    `RangeFader-*` の live order/trade で
+    strategy-wide blanket trim が減って current setup match の補正へ寄ったかを追う。

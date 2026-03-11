@@ -118,6 +118,65 @@
     shared feedback / participation が current setup に一致した trade だけを学習できるようにする。
   - strategy-local の live quality と shared setup-scoped overlay を同じ setup identity でつなぐ。
 
+### local-v2 setup-scoped `dynamic_alloc` / `auto_canary`（2026-03-11）
+- 背景:
+  - `participation_alloc` / `strategy_feedback` を setup-scoped にしても、
+    `dynamic_alloc` と `auto_canary` が strategy-wide のままだと
+    still blanket trim が残る。
+  - `auto_canary` は source の `loser_cluster` が setup identity を持たないと
+    runtime 側が setup-aware でも current data で strategy-wide に戻る。
+- 実装:
+  - `scripts/dynamic_alloc_worker.py`
+    - recent `trades.entry_thesis` から
+      `setup_fingerprint / flow_regime / microstructure_bucket`
+      を再構成し、strategy score に加えて `setup_overrides` を生成する。
+  - `workers/common/dynamic_alloc.py`
+    - `load_strategy_profile(..., entry_thesis=entry_thesis)` で
+      live setup に一致する override だけを base profile の上に適用する。
+  - `execution/strategy_entry.py`
+    - dynamic alloc / auto canary の loader に current `entry_thesis` を渡し、
+      一致した override を `entry_thesis.dynamic_alloc` /
+      `entry_thesis.auto_canary` の監査 payload に残す。
+  - `scripts/loser_cluster_worker.py`
+    - cluster ごとに `setup_context` を保持し、
+      `setup_fingerprint / flow_regime / microstructure_bucket` を artifact へ出す。
+  - `scripts/auto_canary_improver.py`
+    - strategy-level canary に加えて setup-scoped `setup_overrides` を生成する。
+  - `analysis/auto_canary.py`
+    - live `entry_thesis` の current setup に一致する canary override だけを適用する。
+- current artifact:
+  - `config/dynamic_alloc.json`
+    - `11` strategy / `55` setup override を保持。
+  - `config/auto_canary_overrides.json`
+    - `13` strategy / `46` setup override を保持。
+- 意図:
+  - `dynamic_alloc` と `auto_canary` も
+    「戦略全体が悪いから一律に削る」ではなく
+    「今の setup が悪いからその lane だけを削る」へ寄せる。
+  - slow adaptive layer を全部 live setup identity で統一し、
+    別 setup への誤転写を減らす。
+
+### local-v2 `M1Scalper` trade-local dynamic exit（2026-03-11）
+- 背景:
+  - entry 側で `m1_setup` を保存しても、
+    exit worker が固定 `profit_take / lock_trigger / max_hold / soft-exit`
+    を使い続けると、winner setup を伸ばせず loser setup の損切りも遅れる。
+- 実装:
+  - `workers/scalp_m1scalper/exit_worker.py`
+    - `entry_thesis.m1_setup` を優先して
+      `strategy_mode`, `flow_regime`, `setup_quality`,
+      `continuation_pressure`, `setup_fingerprint` を読み、
+      trade-local の `profit_take_pips`, `lock_trigger_pips`,
+      `max_hold_sec`, `max_adverse_pips`, `trail_*`, `lock_buffer_pips`,
+      `rsi_fade_*`, `vwap_gap_pips`, `structure_*`, `atr_spike_pips`
+      を bounded に再計算する。
+    - aligned `breakout_retest` は利を伸ばし、
+      headwind の `vshape_rebound` は hold / adverse / soft-exit を tighter に寄せる。
+- 意図:
+  - `M1Scalper` の entry と exit を同じ setup identity でつなぎ、
+    その trade の thesis に沿った利確/損切りへ寄せる。
+  - shared gate を増やさず、strategy-local contract の中で動的 exit を閉じる。
+
 ### local-v2 `MomentumBurst` tight-short exhaustion guard（2026-03-10）
 - 背景:
   - UTC `01:32-01:40` / JST `10:32-10:40` の local-v2 実測は

@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.strategy_tags import extract_strategy_tags, resolve_strategy_tag
+from workers.common.setup_context import extract_setup_identity
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -90,11 +91,12 @@ def _extract_nested_number(payload: dict[str, Any], *path: str) -> float | None:
     return value
 
 
-def _feature_snapshot(entry_thesis: dict[str, Any]) -> dict[str, Any]:
+def _feature_snapshot(entry_thesis: dict[str, Any], *, units: int = 0) -> dict[str, Any]:
     technical_context = entry_thesis.get("technical_context") if isinstance(entry_thesis.get("technical_context"), dict) else {}
     ticks = technical_context.get("ticks") if isinstance(technical_context.get("ticks"), dict) else {}
     factors = technical_context.get("factors") if isinstance(technical_context.get("factors"), dict) else {}
     m1 = factors.get("M1") if isinstance(factors.get("M1"), dict) else {}
+    setup_context = extract_setup_identity(entry_thesis, units=units)
     side = str(entry_thesis.get("side") or "").strip().lower()
     rsi = _extract_nested_number(entry_thesis, "rsi")
     if rsi is None:
@@ -116,6 +118,9 @@ def _feature_snapshot(entry_thesis: dict[str, Any]) -> dict[str, Any]:
         "range_bin": _bin(range_score, [0.25, 0.45, 0.65], ["range_00_le_025", "range_01_025_045", "range_02_045_065", "range_03_gt_065"]),
         "chop_bin": _bin(chop_score, [0.35, 0.55, 0.75], ["chop_00_le_035", "chop_01_035_055", "chop_02_055_075", "chop_03_gt_075"]),
         "spread_bin": _bin(spread_pips, [0.40, 0.80, 1.20], ["spread_00_le_040", "spread_01_040_080", "spread_02_080_120", "spread_03_gt_120"]),
+        "setup_fingerprint": str(setup_context.get("setup_fingerprint") or ""),
+        "flow_regime": str(setup_context.get("flow_regime") or ""),
+        "microstructure_bucket": str(setup_context.get("microstructure_bucket") or ""),
     }
 
 
@@ -129,6 +134,9 @@ def _cluster_key(features: dict[str, Any]) -> str:
             str(features.get("range_bin") or "unknown"),
             str(features.get("chop_bin") or "unknown"),
             str(features.get("spread_bin") or "unknown"),
+            str(features.get("flow_regime") or "unknown"),
+            str(features.get("microstructure_bucket") or "unknown"),
+            str(features.get("setup_fingerprint") or "unknown"),
         ]
     )
 
@@ -176,9 +184,19 @@ def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, t
         if not strategy_tag:
             continue
         entry_thesis = _safe_json_loads(row.get("entry_thesis"))
-        features = _feature_snapshot(entry_thesis)
+        features = _feature_snapshot(
+            entry_thesis,
+            units=int(_safe_float(row.get("units"), 0.0)),
+        )
         if features["side"] == "unknown":
             features["side"] = "long" if _safe_float(row.get("units"), 0.0) >= 0.0 else "short"
+        setup_context = {
+            "setup_fingerprint": str(features.get("setup_fingerprint") or ""),
+            "flow_regime": str(features.get("flow_regime") or ""),
+            "microstructure_bucket": str(features.get("microstructure_bucket") or ""),
+        }
+        if not any(setup_context.values()):
+            setup_context = {}
         groups[(strategy_tag, _cluster_key(features))].append(
             {
                 "strategy_tag": strategy_tag,
@@ -186,6 +204,7 @@ def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, t
                 "pl_pips": _safe_float(row.get("pl_pips"), 0.0),
                 "realized_pl": _safe_float(row.get("realized_pl"), 0.0),
                 "features": features,
+                "setup_context": setup_context,
             }
         )
 
@@ -226,6 +245,12 @@ def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, t
                 "probability_offset": round(_clamp(probability_offset, -0.04, 0.0), 4),
             },
         }
+        sample_setup_context = samples[0].get("setup_context")
+        if isinstance(sample_setup_context, dict) and any(sample_setup_context.values()):
+            cluster["setup_context"] = dict(sample_setup_context)
+            cluster["setup_fingerprint"] = str(sample_setup_context.get("setup_fingerprint") or "") or None
+            cluster["flow_regime"] = str(sample_setup_context.get("flow_regime") or "") or None
+            cluster["microstructure_bucket"] = str(sample_setup_context.get("microstructure_bucket") or "") or None
         per_strategy[strategy_tag].append(cluster)
         all_clusters.append(cluster)
 
