@@ -3400,6 +3400,21 @@
 - shared gate / time block / strategy-wide blanket trim は追加せず、
   worker-local の dynamic quality guard を正とする。
 
+### 2026-03-12 market order on-fill protection realign
+- market order の current 運用では、
+  retry / slippage 後の actual `executed_price`
+  に対して broker protection を再アンカーする。
+- `execution/order_manager.py` は
+  fill 後の `on_fill_protection`
+  で submit 時の `sl_price / tp_price` をそのまま再送せず、
+  thesis `sl_pips / tp_pips`
+  を actual fill 基準に引き直した protection を優先する。
+- これにより `ping_d` のような small-target scalp が
+  retry basis と executed price のズレで
+  actual RR を失うことを避ける。
+- 差分が無い fill では no-op とし、
+  risk gate / submit 前 preflight の判定自体は変えない。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

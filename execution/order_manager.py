@@ -6136,6 +6136,67 @@ def _fallback_protections(
     return sl_price, tp_price
 
 
+def _realign_protections_to_fill(
+    *,
+    executed_price: Optional[float],
+    entry_basis: Optional[float],
+    units: int,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    thesis_sl_pips: Optional[float],
+    thesis_tp_pips: Optional[float],
+    sl_disabled: bool,
+) -> tuple[Optional[float], Optional[float], bool]:
+    """Re-anchor protections to the actual fill so slippage does not distort intended RR."""
+
+    try:
+        fill_price = float(executed_price) if executed_price is not None else None
+    except (TypeError, ValueError):
+        fill_price = None
+    if fill_price is None or fill_price <= 0.0 or units == 0:
+        return sl_price, tp_price, False
+
+    try:
+        basis_price = float(entry_basis) if entry_basis is not None else None
+    except (TypeError, ValueError):
+        basis_price = None
+
+    sl_gap_pips = thesis_sl_pips
+    if (sl_gap_pips is None or sl_gap_pips <= 0.0) and basis_price is not None and sl_price is not None:
+        sl_gap_pips = abs(float(basis_price) - float(sl_price)) / 0.01
+
+    tp_gap_pips = thesis_tp_pips
+    if (tp_gap_pips is None or tp_gap_pips <= 0.0) and basis_price is not None and tp_price is not None:
+        tp_gap_pips = abs(float(tp_price) - float(basis_price)) / 0.01
+
+    desired_sl = sl_price
+    desired_tp = tp_price
+    if sl_disabled:
+        desired_sl = None
+    elif sl_gap_pips is not None and sl_gap_pips > 0.0:
+        desired_sl = _sl_price_from_pips(fill_price, units, sl_gap_pips)
+
+    if tp_gap_pips is not None and tp_gap_pips > 0.0:
+        if units > 0:
+            desired_tp = round(fill_price + tp_gap_pips * 0.01, 3)
+        else:
+            desired_tp = round(fill_price - tp_gap_pips * 0.01, 3)
+
+    desired_sl, desired_tp, _ = _normalize_protections(
+        fill_price,
+        desired_sl,
+        desired_tp,
+        units > 0,
+    )
+
+    current_sl = round(sl_price, 3) if sl_price is not None else None
+    current_tp = round(tp_price, 3) if tp_price is not None else None
+    next_sl = round(desired_sl, 3) if desired_sl is not None else None
+    next_tp = round(desired_tp, 3) if desired_tp is not None else None
+    changed = current_sl != next_sl or current_tp != next_tp
+    return desired_sl, desired_tp, changed
+
+
 def _derive_fallback_basis(
     estimated_price: Optional[float],
     sl_price: Optional[float],
@@ -13220,10 +13281,37 @@ async def market_order(
                                 f"{basis_val:.3f}",
                             )
                             target_sl = None
+                target_sl, target_tp, protections_realigned = _realign_protections_to_fill(
+                    executed_price=executed_price,
+                    entry_basis=entry_basis if entry_basis is not None else estimated_entry,
+                    units=units_to_send,
+                    sl_price=target_sl,
+                    tp_price=tp_price,
+                    thesis_sl_pips=thesis_sl_pips,
+                    thesis_tp_pips=thesis_tp_pips,
+                    sl_disabled=target_sl is None,
+                )
+                if protections_realigned:
+                    log_metric(
+                        "on_fill_protection_realign",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                        },
+                    )
+                    logging.info(
+                        "[ORDER] on_fill_protection realigned trade=%s basis=%s fill=%s sl=%s tp=%s",
+                        trade_id,
+                        f"{entry_basis:.3f}" if entry_basis is not None else "-",
+                        f"{executed_price:.3f}" if executed_price is not None else "-",
+                        f"{target_sl:.3f}" if target_sl is not None else "-",
+                        f"{target_tp:.3f}" if target_tp is not None else "-",
+                    )
                 _maybe_update_protections(
                     trade_id,
                     target_sl,
-                    tp_price,
+                    target_tp,
                     context="on_fill_protection",
                     ref_price=executed_price,
                 )

@@ -16346,3 +16346,32 @@
   - `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
     -> `18 passed`
   - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py`
+
+### 2026-03-12 `ping_d` on-fill protection realign
+- 対象:
+  - `execution/order_manager.py`
+  - `tests/execution/test_order_manager_preflight.py`
+
+- 背景:
+  - `scalp_ping_5s_d_live` の latest fill では
+    thesis `sl/tp=1.0/1.4` に対して
+    actual が `3.0/1.4` まで崩れていた。
+  - protection retry が quote basis を動かした後、
+    actual executed price に対して
+    broker protection を再アンカーしていなかったため、
+    small-target scalp の intended RR が fill 後に失われていた。
+
+- 変更:
+  - `order_manager` に
+    `_realign_protections_to_fill()`
+    を追加した。
+  - market order fill 後の `on_fill_protection`
+    は submit/retry 時の `sl_price / tp_price` をそのまま再送せず、
+    thesis gap と actual `executed_price`
+    から再計算した protection を使う。
+  - 差分が無い fill では realign は no-op にしている。
+
+- 検証:
+  - `pytest -q tests/execution/test_order_manager_preflight.py`
+    -> `38 passed`
+  - `python3 -m py_compile execution/order_manager.py`

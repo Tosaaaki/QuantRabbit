@@ -26,6 +26,7 @@ from execution.order_manager import (
     _preflight_units,
     _protection_fallback_gap_price,
     _projected_usage_with_netting,
+    _realign_protections_to_fill,
 )
 
 
@@ -738,6 +739,40 @@ def test_protection_fallback_gap_price_prefers_strategy_then_pocket(monkeypatch)
     assert _protection_fallback_gap_price("scalp_fast", strategy_tag="scalp_ping_5s_live") == 0.015
     assert _protection_fallback_gap_price("scalp_fast", strategy_tag="unknown") == 0.02
     assert _protection_fallback_gap_price("micro", strategy_tag="unknown") == 0.12
+
+
+def test_realign_protections_to_fill_reanchors_short_to_executed_price() -> None:
+    sl_price, tp_price, changed = _realign_protections_to_fill(
+        executed_price=158.432,
+        entry_basis=158.447,
+        units=-151,
+        sl_price=158.462,
+        tp_price=158.418,
+        thesis_sl_pips=1.0,
+        thesis_tp_pips=1.4,
+        sl_disabled=False,
+    )
+
+    assert changed is True
+    assert sl_price == 158.442
+    assert tp_price == 158.418
+
+
+def test_realign_protections_to_fill_is_noop_when_already_aligned() -> None:
+    sl_price, tp_price, changed = _realign_protections_to_fill(
+        executed_price=158.432,
+        entry_basis=158.432,
+        units=-151,
+        sl_price=158.442,
+        tp_price=158.418,
+        thesis_sl_pips=1.0,
+        thesis_tp_pips=1.4,
+        sl_disabled=False,
+    )
+
+    assert changed is False
+    assert sl_price == 158.442
+    assert tp_price == 158.418
 
 
 def test_fallback_protections_widens_only_rejected_side() -> None:

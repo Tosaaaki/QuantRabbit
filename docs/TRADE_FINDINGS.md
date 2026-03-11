@@ -14588,3 +14588,40 @@ Status:
     の short `volatility_compression`
     について `fills / STOP_LOSS_ORDER<=30s / realized_jpy`
     を再確認する。
+
+## 2026-03-12 ping_d on-fill protection realign
+- Why/Hypothesis:
+  - `scalp_ping_5s_d_live` の current drag には、
+    TP disabled だった旧 fill に加えて、
+    current TP-enabled fill でも actual RR が崩れる問題が残っていた。
+  - local `orders.db` では latest fill が
+    thesis `sl/tp = 1.0 / 1.4`
+    なのに actual は `3.0 / 1.4` となっており、
+    protection retry で使った basis と actual executed price のズレで
+    intended RR を失っていた。
+- Expected Good:
+  - `ping_d` を含む small-target scalp が
+    retry / fill drift で設計 RR を失わず、
+    fill 後の実保護が thesis gap に近づく。
+  - current `scalp_fast` lane の small winner capture を残したまま、
+    broker protection 側の歪みだけを潰せる。
+- Expected Bad:
+  - fill ごとに protection update が追加で 1 回走る可能性がある。
+  - ただし差分が無い fill では no-op とし、
+    drift があるケースだけを realign する。
+- Observed/Fact:
+  - `execution/order_manager.py`
+    に fill 後の executed price 基準で
+    `SL/TP` を引き直す `_realign_protections_to_fill()`
+    を追加した。
+  - market order fill 後の `on_fill_protection`
+    は submit 時の `sl_price / tp_price` をそのまま再設定せず、
+    thesis gap と actual fill price から再計算した protection を使う。
+  - `tests/execution/test_order_manager_preflight.py`
+    は `38 passed`。
+- Verdict: pending
+- Next Action:
+  - push/restart 後の next 30-60 分で
+    `scalp_ping_5s_d_live`
+    の `actual avg_sl / avg_tp / avg_rr / missing_tp`
+    を再確認する。
