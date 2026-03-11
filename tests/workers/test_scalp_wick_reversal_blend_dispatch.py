@@ -56,6 +56,7 @@ def _load_worker_functions(*names: str):
         "Optional": Optional,
         "Tuple": Tuple,
         "PIP": 0.01,
+        "_precision_lowvol_setup_pressure": lambda *_args, **_kwargs: {},
     }
     exec(compile(module, str(worker_path), "exec"), namespace)
     return namespace

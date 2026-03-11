@@ -51,6 +51,103 @@
 - Status:
 ```
 
+## 2026-03-12 03:34 JST / local-v2: `PrecisionLowVol` short repeated-loss burst を setup-pressure guard で抑制
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py` に
+    `_precision_lowvol_setup_pressure()` を追加し、
+    recent `PrecisionLowVol` short `volatility_compression` close から
+    `sl_rate / fast_sl_rate / net_jpy / stop_loss_streak /
+    fast_stop_loss_streak / last_close_age_sec` を集計するようにした。
+  - `_signal_precision_lowvol()` は
+    `2x STOP_LOSS_ORDER` と `1x fast SL (<=35s)` が
+    `180s` 以内に並ぶ burst 中は weak short re-entry を reject し、
+    `touch_ratio / rev_strength / setup_quality / reversion_support /
+    projection.score` が強い reclaim short だけを残す。
+  - `workers/scalp_wick_reversal_blend/config.py` と
+    `ops/env/quant-scalp-precision-lowvol.env` に
+    `PREC_LOWVOL_SETUP_PRESSURE_*` を追加し、
+    current threshold を dedicated env で明示した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py` と
+    `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    に回帰を追加した。
+- Why:
+  - user 指摘どおり `PrecisionLowVol` は
+    RR だけではなく
+    same-direction の short 再突入 burst が
+    数秒-数十秒の broker SL を連打して資産を削っていた。
+- Hypothesis:
+  - `PrecisionLowVol` short `volatility_compression` の
+    immediate loser burst を worker local にだけ絞れば、
+    strong reclaim short を残したまま
+    「数秒で SL を何回も繰り返す」 lane を止められる。
+- Expected Good:
+  - `PrecisionLowVol` の short repeated-loss cluster が減る。
+  - same lane の `STOP_LOSS_ORDER` と fast-SL count が落ちる。
+  - strong reclaim short は維持される。
+- Expected Bad:
+  - burst 直後の本来 winner だった short まで
+    一時的に落とす可能性がある。
+  - setup-pressure 条件が緩すぎると guard が効かず、
+    厳しすぎると cadence を落とす。
+- Period:
+  - RCA window:
+    - JST `2026-03-11 16:04-22:11`
+    - tick validation:
+      - `2026-03-11 09:00-2026-03-12 03:30 JST`
+- Fact:
+  - recent 6h aggregate:
+    - `PrecisionLowVol 14 trades / -49.987 JPY`
+    - `STOP_LOSS_ORDER 7 trades / -87.233 JPY / avg_hold_sec 26.42`
+    - `TAKE_PROFIT_ORDER 2 trades / +37.58 JPY / avg_hold_sec 242.98`
+  - all recent `PrecisionLowVol` fills は short で、
+    `2026-03-11 16:14 JST` と `17:18 JST` に
+    short stop-loss burst が集中していた。
+    - 例:
+      - `458138` `-1.7 pips` after `34s`
+      - `458146` `-1.5 pips` after `1s`
+      - `458169` `-1.6 pips` after `3s`
+      - `458245` `-2.0 pips` after `9s`
+      - `458259` `-1.6 pips` after `22s`
+  - tick validation:
+    - `TP_touch<=120s 3/14`
+    - `TP_touch<=300s 5/14`
+    - `TP_touch<=600s 6/14`
+    - つまり current loser は
+      「全部 tight-SL」ではなく、
+      RR 問題と repeated re-entry の両方を含んでいた。
+- Failure Cause:
+  - `PrecisionLowVol` short `volatility_compression` が
+    weak re-entry のまま同方向に連打され、
+    short cooldown だけでは burst を止め切れていなかった。
+  - hostile projection guard と wider SL の後でも、
+    same-direction burst への current local brake が不足していた。
+- Improvement:
+  - strategy-wide stop ではなく、
+    recent repeated-loss burst にだけ効く
+    setup-pressure guard を worker local へ追加した。
+  - strong reclaim short の allow 条件は残し、
+    `setup_pressure` を thesis に保存して
+    post-trade 監査を可能にした。
+- Verification:
+  - `pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py`
+  - restart 後に `PrecisionLowVol` の
+    `filled / STOP_LOSS_ORDER / fast_sl_count / realized_jpy /
+    setup_pressure.active / last_close_age_sec`
+    を再集計する。
+- Verdict:
+  - pending
+- Next Action:
+  - restart 後の next `30-60m` で
+    `PrecisionLowVol` short `volatility_compression` の
+    burst が減るかを見る。
+  - まだ repeated-loss が続く場合は、
+    `allow_touch_ratio / allow_reversion_support / active_max_age_sec`
+    のどれが甘いかを詰める。
+- Status:
+  - done
+
 ## 2026-03-12 00:05 JST / local-v2: `strategy_feedback_coverage_gap` を canonical remap + 120s loop で解消
 
 - Change:

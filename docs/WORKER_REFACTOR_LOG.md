@@ -5,6 +5,36 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`PrecisionLowVol` short repeated-loss burst を worker-local setup-pressure で抑制
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-precision-lowvol.env`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `PrecisionLowVol` short `volatility_compression` 用に
+    `_precision_lowvol_setup_pressure()` を追加し、
+    recent close から `sl_rate / fast_sl_rate / net_jpy /
+    stop_loss_streak / fast_stop_loss_streak / last_close_age_sec`
+    を算出するようにした。
+  - `2x STOP_LOSS_ORDER` と `1x fast SL (<=35s)` が
+    `180s` 以内に並ぶ burst が active の間は、
+    weak short re-entry を `_signal_precision_lowvol()` で reject する。
+  - `touch_ratio / rev_strength / setup_quality / reversion_support /
+    projection.score` が十分強い reclaim short は通し、
+    signal / `entry_thesis` に `setup_pressure` を監査保存する。
+  - dedicated env に current 運用値を明示し、
+    signal-flow / dispatch test で weak block / strong keep を固定した。
+- 意図:
+  - `PrecisionLowVol` の current loser を
+    「short 全体」や「時間帯」で止めるのではなく、
+    short `volatility_compression` の repeated-loss burst だけへ
+    strategy-local に効かせる。
+
 ### 2026-03-11（追記）`scalp_ping_5s_d_live` を countertrend reject + broker TP へ修正
 
 - 対象:

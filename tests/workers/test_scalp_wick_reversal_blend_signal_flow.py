@@ -85,6 +85,7 @@ def _load_worker_namespace() -> dict[str, object]:
         "tick_snapshot": lambda *_args, **_kwargs: ([1.0, 2.0, 3.0], 1.0),
         "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.38),
         "projection_decision": lambda side, mode="range": (True, 1.0, {"side": side, "mode": mode}),
+        "_precision_lowvol_setup_pressure": lambda *_args, **_kwargs: {},
     }
     exec(compile(module, str(worker_path), "exec"), namespace)
     return namespace
@@ -287,6 +288,98 @@ def test_precision_lowvol_disables_vgap_bonus_when_flow_guard_is_marginal() -> N
     assert low_pressure["size_mult"] > high_pressure["size_mult"]
     assert low_pressure["sl_pips"] >= 1.7
     assert high_pressure["sl_pips"] >= 1.7
+
+
+def test_precision_lowvol_blocks_weak_short_under_recent_setup_pressure() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 17.0,
+        "bbw": 0.00075,
+        "atr_pips": 2.2,
+        "rsi": 53.5,
+        "stoch_rsi": 0.74,
+        "vwap_gap": 1.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.25,
+            "max_pressure": 0.58,
+            "setup_quality": 0.34,
+            "reversion_support": 0.56,
+        },
+    )
+    ns["_precision_lowvol_setup_pressure"] = lambda *_args, **_kwargs: {
+        "trades": 4.0,
+        "sl_rate": 0.75,
+        "fast_sl_rate": 0.50,
+        "net_jpy": -26.0,
+        "stop_loss_streak": 2.0,
+        "fast_stop_loss_streak": 1.0,
+        "last_close_age_sec": 45.0,
+        "active": 1.0,
+    }
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_stronger_short_under_recent_setup_pressure() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 17.0,
+        "bbw": 0.00075,
+        "atr_pips": 2.2,
+        "rsi": 55.5,
+        "stoch_rsi": 0.82,
+        "vwap_gap": 1.8,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.19,
+            "max_pressure": 0.60,
+            "setup_quality": 0.38,
+            "reversion_support": 0.74,
+        },
+    )
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "short", 0.82)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.12},
+    )
+    ns["_precision_lowvol_setup_pressure"] = lambda *_args, **_kwargs: {
+        "trades": 4.0,
+        "sl_rate": 0.75,
+        "fast_sl_rate": 0.50,
+        "net_jpy": -26.0,
+        "stop_loss_streak": 2.0,
+        "fast_stop_loss_streak": 1.0,
+        "last_close_age_sec": 45.0,
+        "active": 1.0,
+    }
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["setup_pressure"]["active"] == 1.0
 
 
 def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:

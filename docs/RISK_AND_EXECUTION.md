@@ -8,6 +8,43 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `PrecisionLowVol` short repeated-loss setup-pressure guard（2026-03-12）
+- 背景:
+  - 2026-03-12 03:34 JST 時点の local-v2 実測では、
+    `PrecisionLowVol` は直近 6h で `14 trades / -49.987 JPY`、
+    うち `STOP_LOSS_ORDER 7 trades / -87.233 JPY / avg_hold_sec 26.42` だった。
+  - tick 照合でも `TP_touch<=120s 3/14`, `<=300s 5/14` で、
+    「RR が厳しい」だけでなく
+    `07:14 UTC` と `08:18 UTC` の short 再突入 burst が
+    数秒-数十秒の SL 連打を作っていた。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    - `PREC_LOWVOL_SETUP_PRESSURE_*` を追加し、
+      lookback / burst age / fast-SL hold / strong probe 条件を
+      dedicated env から操作できるようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_precision_lowvol_setup_pressure()` で
+      recent `PrecisionLowVol` short `volatility_compression` close を集計し、
+      `sl_rate / fast_sl_rate / net_jpy / stop_loss_streak /
+      fast_stop_loss_streak / last_close_age_sec` を返す。
+    - `_signal_precision_lowvol()` は
+      `2x STOP_LOSS_ORDER` と `1x fast SL (<=35s)` が
+      `180s` 以内に並ぶ burst 中は weak short re-entry を reject し、
+      `touch_ratio / rev_strength / setup_quality / reversion_support /
+      projection.score` が strong な reclaim short だけを残す。
+    - `setup_pressure` は signal と `entry_thesis` に保存し、
+      live 約定後も監査可能にした。
+  - `ops/env/quant-scalp-precision-lowvol.env`
+    - current burst guard の閾値を dedicated env に明示した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    - active pressure 下で weak short が block され、
+      stronger short が残ることを固定した。
+- 意図:
+  - `PrecisionLowVol` の loser lane を
+    shared stop / time block / strategy-wide trim で潰さず、
+    「今まさに short を連打して削っている burst」だけを
+    worker local に締める。
+
 ### local-v2 `scalp_ping_5s_d_live` countertrend guard + broker TP（2026-03-11）
 - 背景:
   - 2026-03-11 20:45 JST 前後の local-v2 実測では、

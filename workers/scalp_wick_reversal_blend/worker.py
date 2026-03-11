@@ -603,6 +603,7 @@ TICK_WICK_MIN_UNITS_CLAMP_RATIO = _env_float("TICK_WICK_MIN_UNITS_CLAMP_RATIO", 
 
 _LAST_TICK_WICK_PLACE_DIAG_TS = 0.0
 _LAST_WICK_BLEND_DIAG_TS = 0.0
+_PREC_LOWVOL_SETUP_PRESSURE_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, float]]] = {}
 
 
 class _NoopStageTracker:
@@ -944,6 +945,141 @@ def _reversion_short_flow_guard(
         "adx": round(adx, 3),
     }
     return allow, detail
+
+
+def _precision_lowvol_setup_pressure(side: str, range_reason: str) -> Dict[str, float]:
+    reason_key = str(range_reason or "").strip().lower()
+    side_key = str(side or "").strip().lower()
+    if (
+        not getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ENABLED", True)
+        or reason_key != "volatility_compression"
+        or side_key != "short"
+        or getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_LOOKBACK_TRADES", 0) <= 0
+        or getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_LOOKBACK_MINUTES", 0.0) <= 0.0
+    ):
+        return {}
+
+    cache_key = (side_key, reason_key)
+    now_mono = time.monotonic()
+    cached = _PREC_LOWVOL_SETUP_PRESSURE_CACHE.get(cache_key)
+    cache_ttl = max(0.0, float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_CACHE_TTL_SEC", 8.0)))
+    if cached is not None and cache_ttl > 0.0 and (now_mono - cached[0]) <= cache_ttl:
+        return dict(cached[1])
+
+    lookback_minutes = max(
+        5.0,
+        float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_LOOKBACK_MINUTES", 20.0)),
+    )
+    query = """
+        SELECT
+          close_reason,
+          COALESCE(realized_pl, 0.0) AS realized_pl,
+          COALESCE((julianday(close_time) - julianday(open_time)) * 86400.0, 0.0) AS hold_sec,
+          COALESCE((julianday('now') - julianday(close_time)) * 86400.0, 999999.0) AS age_sec
+        FROM trades
+        WHERE strategy_tag = 'PrecisionLowVol'
+          AND close_time IS NOT NULL
+          AND julianday(close_time) >= julianday('now', ?)
+          AND lower(
+                COALESCE(
+                    json_extract(entry_thesis, '$.projection.side'),
+                    CASE
+                      WHEN units > 0 THEN 'long'
+                      WHEN units < 0 THEN 'short'
+                      ELSE ''
+                    END
+                )
+              ) = ?
+          AND lower(COALESCE(json_extract(entry_thesis, '$.range_reason'), '')) = ?
+        ORDER BY julianday(close_time) DESC
+        LIMIT ?
+    """
+    summary: Dict[str, float] = {
+        "trades": 0.0,
+        "sl_rate": 0.0,
+        "fast_sl_rate": 0.0,
+        "net_jpy": 0.0,
+        "stop_loss_streak": 0.0,
+        "fast_stop_loss_streak": 0.0,
+        "last_close_age_sec": 999999.0,
+        "active": 0.0,
+    }
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect("file:logs/trades.db?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            query,
+            (
+                f"-{lookback_minutes:.1f} minutes",
+                side_key,
+                reason_key,
+                int(max(1, getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_LOOKBACK_TRADES", 6))),
+            ),
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        if con is not None:
+            con.close()
+
+    if rows:
+        trades = len(rows)
+        sl_count = 0
+        fast_sl_count = 0
+        stop_loss_streak = 0
+        fast_stop_loss_streak = 0
+        net_jpy = 0.0
+        fast_sl_max_hold_sec = max(
+            0.0,
+            float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC", 35.0)),
+        )
+        for idx, row in enumerate(rows):
+            close_reason = str(row["close_reason"] or "").upper()
+            realized_pl = float(row["realized_pl"] or 0.0)
+            hold_sec = max(0.0, float(row["hold_sec"] or 0.0))
+            net_jpy += realized_pl
+            is_stop_loss = close_reason == "STOP_LOSS_ORDER"
+            is_fast_stop_loss = is_stop_loss and hold_sec <= fast_sl_max_hold_sec
+            if is_stop_loss:
+                sl_count += 1
+                if is_fast_stop_loss:
+                    fast_sl_count += 1
+            if idx == 0:
+                last_close_age_sec = max(0.0, float(row["age_sec"] or 0.0))
+            if stop_loss_streak == idx and is_stop_loss:
+                stop_loss_streak += 1
+            if fast_stop_loss_streak == idx and is_fast_stop_loss:
+                fast_stop_loss_streak += 1
+
+        sl_rate = sl_count / max(1, trades)
+        fast_sl_rate = fast_sl_count / max(1, trades)
+        active = (
+            trades >= max(1, int(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_MIN_TRADES", 3)))
+            and net_jpy <= -max(0.0, float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_NET_LOSS_MIN_JPY", 10.0)))
+            and stop_loss_streak >= max(
+                1, int(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_STOP_LOSS_STREAK_MIN", 2))
+            )
+            and fast_stop_loss_streak >= max(
+                0, int(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_FAST_STOP_LOSS_STREAK_MIN", 1))
+            )
+            and last_close_age_sec <= max(
+                0.0, float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ACTIVE_MAX_AGE_SEC", 180.0))
+            )
+        )
+        summary = {
+            "trades": float(trades),
+            "sl_rate": round(sl_rate, 3),
+            "fast_sl_rate": round(fast_sl_rate, 3),
+            "net_jpy": round(net_jpy, 3),
+            "stop_loss_streak": float(stop_loss_streak),
+            "fast_stop_loss_streak": float(fast_stop_loss_streak),
+            "last_close_age_sec": round(last_close_age_sec, 1),
+            "active": 1.0 if active else 0.0,
+        }
+
+    _PREC_LOWVOL_SETUP_PRESSURE_CACHE[cache_key] = (now_mono, dict(summary))
+    return summary
 
 
 def _attach_flow_guard_context(signal: Dict[str, object], flow_guard: Optional[Dict[str, float]]) -> None:
@@ -1358,6 +1494,44 @@ def _signal_precision_lowvol(
         if not strong_reversal_probe:
             return None
 
+    setup_pressure = {}
+    if side == "short":
+        setup_pressure = _precision_lowvol_setup_pressure(
+            side=side,
+            range_reason=getattr(range_ctx, "reason", None),
+        )
+        if float(setup_pressure.get("active") or 0.0) > 0.0:
+            reversion_support = float(flow_guard.get("reversion_support") or 0.0) if flow_guard is not None else 0.0
+            setup_quality = float(flow_guard.get("setup_quality") or 0.0) if flow_guard is not None else 0.0
+            strong_reentry_probe = (
+                touch_ratio >= max(
+                    0.0,
+                    float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ALLOW_TOUCH_RATIO_MIN", 0.58)),
+                )
+                and rev_strength >= max(
+                    config.PREC_LOWVOL_REV_MIN_STRENGTH,
+                    float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ALLOW_REV_STRENGTH_MIN", 0.76)),
+                )
+                and setup_quality >= max(
+                    0.0,
+                    float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ALLOW_SETUP_QUALITY_MIN", 0.30)),
+                )
+                and (
+                    reversion_support >= max(
+                        0.0,
+                        float(getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ALLOW_REVERSION_SUPPORT_MIN", 0.70)),
+                    )
+                    or (
+                        projection_score is not None
+                        and projection_score >= float(
+                            getattr(config, "PREC_LOWVOL_SETUP_PRESSURE_ALLOW_PROJECTION_SCORE_MIN", 0.08)
+                        )
+                    )
+                )
+            )
+            if not strong_reentry_probe:
+                return None
+
     # current precision-lowvol short losers were repeatedly stopping inside seconds while
     # a subset still reached the old 2.0 pip TP; widen SL modestly and avoid over-stretching TP.
     sl = max(1.7, min(1.9, atr * 0.9))
@@ -1422,6 +1596,8 @@ def _signal_precision_lowvol(
         "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
+    if setup_pressure:
+        signal["setup_pressure"] = setup_pressure
     _attach_flow_guard_context(signal, flow_guard)
     return signal
 
@@ -3750,6 +3926,7 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "wick_blend_quality": signal.get("wick_blend_quality"),
         "wick_blend_components": signal.get("wick_blend_components"),
         "flow_guard": signal.get("flow_guard"),
+        "setup_pressure": signal.get("setup_pressure"),
     }
     flow_guard = signal.get("flow_guard")
     if isinstance(flow_guard, dict):
