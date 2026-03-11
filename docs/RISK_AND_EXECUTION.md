@@ -3304,3 +3304,16 @@
   `participation_allocator` 既定引数も
   `0.18 / 0.08` へ揃え、
   manual regeneration と auto cycle の乖離を避ける。
+
+### 2026-03-11 DroughtRevert current loser guard
+- `DroughtRevert` の long `range_fade` は
+  broad stop や shared blanket trim ではなく、
+  worker local の `flow_guard` で current loser lane を落とす。
+- current 運用では
+  `oversold + flat-gap + deep price-vs-ema stretch + stretched VWAP gap`
+  を満たす long reclaim を reject し、
+  `gap:up_lean` / `gap:down_strong` の directional reclaim lane は残す。
+- exceptionally strong reclaim
+  (`rev_strength>=0.92`, `touch_ratio>=1.60`, `setup_quality>=0.62`)
+  は例外通過とし、
+ 「flat-gap だから一律 stop」は行わない。

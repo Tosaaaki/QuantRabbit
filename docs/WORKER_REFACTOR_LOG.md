@@ -16161,3 +16161,29 @@
     `PrecisionLowVol -> lot_multiplier=0.856 / probability_offset=-0.056`,
     `RangeFader|long|neutral-fade|range_fade|p0 -> lot_multiplier=0.856 / probability_offset=-0.056`
     を確認した。
+
+### 2026-03-11 DroughtRevert flat-gap long tighten
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+
+- 背景:
+  - local-v2 実測の直近 closed trades では
+    `DroughtRevert|long|range_fade|...|gap:up_flat/down_flat`
+    が current loser で、
+    `oversold + flat-gap + deep mean stretch`
+    の long reclaim が通っていた。
+
+- 変更:
+  - `_signal_drought_revert`
+    に `abs(ma_gap_pips)` が flat、`price_vs_ema_pips` が深い、
+    `vwap_gap` が stretched、`rsi<=45` の
+    `oversold_flat_gap_long` guard を追加した。
+  - ただし reclaim が例外的に強い
+    `rev_strength>=0.92 && touch_ratio>=1.60 && setup_quality>=0.62`
+    は通す。
+
+- 検証:
+  - current loser cluster 相当の
+    `test_drought_revert_blocks_flat_gap_oversold_long_with_deep_mean_stretch`
+    を追加。

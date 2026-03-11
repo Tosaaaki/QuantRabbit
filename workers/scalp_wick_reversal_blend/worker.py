@@ -1138,6 +1138,25 @@ def _signal_drought_revert(
             "di_gap": round(_minus_di(fac_m1) - _plus_di(fac_m1), 3),
             "adx": round(adx, 3),
         }
+        # Current live loser cluster was flat-gap long reclaim with a deep mean stretch.
+        # Keep strong directional reclaim lanes, but suppress oversold flat-gap longs that
+        # are still far below the fast mean while the broader VWAP gap remains stretched.
+        flat_gap_lane = abs(ma_gap_pips) <= max(0.65, atr * 0.24)
+        mean_stretch_lane = price_vs_ema_pips >= max(2.8, atr * 0.95)
+        vwap_stretch_lane = _vwap_gap_pips(fac_m1) >= max(18.0, atr * 7.0)
+        oversold_flat_gap_long = (
+            flat_gap_lane
+            and mean_stretch_lane
+            and vwap_stretch_lane
+            and rsi <= min(float(config.DROUGHT_RSI_LONG_MAX) - 1.0, 45.0)
+        )
+        exceptional_reclaim_probe = (
+            rev_strength >= 0.92
+            and touch_ratio >= 1.60
+            and setup_quality >= 0.62
+        )
+        if oversold_flat_gap_long and not exceptional_reclaim_probe:
+            return None
         if trend_pressure > max_pressure and not strong_reclaim_probe:
             return None
 

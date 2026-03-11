@@ -211,6 +211,36 @@ def test_drought_revert_boosts_strong_reclaim_long_lane() -> None:
     assert signal["size_mult"] >= 0.95
 
 
+def test_drought_revert_blocks_flat_gap_oversold_long_with_deep_mean_stretch() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.82)
+    fac = {
+        "close": 158.512,
+        "upper": 158.598,
+        "lower": 158.522,
+        "span_pips": 7.6,
+        "adx": 12.1,
+        "bbw": 0.0006,
+        "atr_pips": 2.88,
+        "rsi": 44.7,
+        "ema20": 158.544,
+        "ma10": 158.542,
+        "ma20": 158.5382,
+        "ema_slope_10": 0.002,
+        "ema_slope_20": 0.001,
+        "macd_hist": -0.08,
+        "vwap_gap": 37.8,
+        "plus_di": 23.0,
+        "minus_di": 29.0,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.35)
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is None
+
+
 def test_precision_lowvol_disables_vgap_bonus_when_flow_guard_is_marginal() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]

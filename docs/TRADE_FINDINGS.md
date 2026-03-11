@@ -14279,3 +14279,29 @@ Status:
     `DroughtRevert`
     の `fills / realized_jpy / avg units / entry_probability_after`
     を再確認する。
+
+## 2026-03-11 DroughtRevert flat-gap long guard
+- Why/Hypothesis:
+  - 直近 closed trades では `DroughtRevert|long|range_fade|...|gap:up_flat/down_flat`
+    が `-10.57 JPY`, `-10.28 JPY` と current drag で、
+    いずれも `rsi<=45`, `abs(ma_gap_pips)<=0.59`, `price_gap_pips>=3.17`,
+    `vwap_gap>=37.7` の「flat-gap なのに mean stretch が深い」lane だった。
+  - `gap:up_lean` / `gap:down_strong` の勝ち lane まで殺さずに、
+    flat-gap oversold long だけを strategy-local で落とす。
+- Expected Good:
+  - `DroughtRevert` の current long loser fill を減らし、
+    30 分窓の giveback を抑える。
+- Expected Bad:
+  - reclaim が非常に強い flat-gap long を取り逃がす可能性がある。
+  - そのため `rev_strength>=0.92`, `touch_ratio>=1.60`, `setup_quality>=0.62`
+    の exceptional reclaim は通す。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py` の `_signal_drought_revert`
+    に `oversold flat-gap + deep mean/VWAP stretch` guard を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に current loser cluster 相当の regression test を追加した。
+- Verdict: pending
+- Next Action:
+  - push/restart 後の next 30-60 分で
+    `DroughtRevert|long|range_fade|...|gap:up_flat/down_flat`
+    の `fills / realized_jpy / entry_probability_after` を再確認する。
