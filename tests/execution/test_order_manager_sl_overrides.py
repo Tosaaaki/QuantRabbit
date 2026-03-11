@@ -39,6 +39,29 @@ def test_allow_stop_loss_on_fill_generic_strategy_override(monkeypatch) -> None:
     )
 
 
+def test_allow_stop_loss_on_fill_generic_strategy_override_supports_underscore_tags(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
+    monkeypatch.setenv(
+        "ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SESSION_OPEN_BREAKOUT",
+        "1",
+    )
+
+    assert (
+        order_manager._allow_stop_loss_on_fill(
+            "scalp",
+            strategy_tag="session_open_breakout",
+        )
+        is True
+    )
+    assert (
+        order_manager._entry_sl_disabled_for_strategy(
+            "scalp",
+            strategy_tag="session_open_breakout",
+        )
+        is False
+    )
+
+
 def test_allow_stop_loss_on_fill_generic_strategy_override_can_disable(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
     monkeypatch.setenv(

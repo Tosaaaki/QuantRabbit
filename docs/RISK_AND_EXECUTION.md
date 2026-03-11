@@ -1510,6 +1510,10 @@
     `ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_{B,C,D}` が true の戦略では
     `sl_disabled` を解除して `stopLossOnFill` を有効化する。
     （fixed-mode OFF 時に strategy override が無視される不整合を防止）
+  - dedicated worker が独自 env で `ORDER_FIXED_SL_MODE=1` を持っていても、
+    発注実体の `quant-order-manager` に同 tag の
+    `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_*` が無ければ broker SL は付かない。
+    よって fixed-SL 前提の strategy は order-manager 側 env にも同 override を置くこと。
   - 現行 runtime baseline は `ops/env/quant-v2-runtime.env` の
     `ORDER_FIXED_SL_MODE=0`（global OFF）で固定し、
     実運用の attach 可否は `ops/env/quant-order-manager.env` の

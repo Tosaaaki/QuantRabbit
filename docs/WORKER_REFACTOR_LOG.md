@@ -5,6 +5,28 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）`quant-order-manager` に fixed-SL dedicated strategy の broker SL override を集約
+
+- 対象:
+  - `ops/env/quant-order-manager.env`
+  - `tests/execution/test_order_manager_sl_overrides.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `quant-order-manager` の global baseline `ORDER_FIXED_SL_MODE=0` でも、
+    worker 側 dedicated env が `ORDER_FIXED_SL_MODE=1` を前提にしている戦略
+    （`DroughtRevert`, `PrecisionLowVol`, `VwapRevertS`, `WickReversalBlend`,
+    `TickImbalance`, `LevelReject`, `FalseBreakFade`, `SqueezePulseBreak`,
+    `session_open_breakout`, `scalp_macd_rsi_div_live`, `scalp_macd_rsi_div_b_live`）
+    に対して `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_*` を order-manager 側へ明示した。
+  - underscore を含む strategy tag でも generic strategy override が解決されることを
+    unit test で固定した。
+- 意図:
+  - strategy worker の dedicated env が持つ fixed-SL 意図を、
+    実際に OANDA payload を作る `quant-order-manager` の runtime に同期する。
+  - `stopLossOnFill` 欠落による tail loss を、
+    shared post-hoc gate ではなく broker protection の付与で止血する。
+
 ### 2026-03-11（追記）`RangeFader` の setup-local dynamicization を entry/exit 両側へ展開
 
 - 対象:

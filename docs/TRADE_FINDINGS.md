@@ -51,6 +51,68 @@
 - Status:
 ```
 
+## 2026-03-11 14:15 JST / local-v2: fixed-SL dedicated worker の broker SL 欠落を order-manager override で補修
+
+- Change:
+  - `ops/env/quant-order-manager.env` に
+    `DroughtRevert / PrecisionLowVol / VwapRevertS / WickReversalBlend / TickImbalance /
+    LevelReject / FalseBreakFade / SqueezePulseBreak / session_open_breakout /
+    scalp_macd_rsi_div_live / scalp_macd_rsi_div_b_live`
+    向けの `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_*` を追加した。
+  - `tests/execution/test_order_manager_sl_overrides.py` に
+    underscore を含む strategy tag でも generic override が効くことを固定した。
+- Why:
+  - current local-v2 は `quant-v2-runtime.env` の `ORDER_FIXED_SL_MODE=0` を baseline にしている一方、
+    dedicated worker 側は `ORDER_FIXED_SL_MODE=1` を前提にしていた。
+    しかし order submit を担当する `quant-order-manager` にはその worker env が入らないため、
+    live fill に broker `stopLossOnFill` が付かず、想定SLを大きく超える負けが出ていた。
+- Hypothesis:
+  - fixed-SL 前提の戦略だけ order-manager 側で explicit override すれば、
+    新規 fill に broker SL が付き、exit worker の遅延や range fade hold で tail loss が膨らむ経路を止められる。
+- Expected Good:
+  - `VwapRevertS / WickReversalBlend` などの `avg_loss_vs_sl` が改善する。
+  - OANDA `openTrades` の新規建玉に `stopLossOrder` が付与される。
+- Expected Bad:
+  - タイトな SL を持つ戦略では `STOP_LOSS_ON_FILL_LOSS` や early stop の増加で cadence が落ちる可能性がある。
+  - strategy-local exit より broker SL が先に約定することで、従来より profit factor が荒れる可能性がある。
+- Period:
+  - UTC `2026-03-10 04:51` - `2026-03-11 04:51`
+  - JST `2026-03-10 13:51` - `2026-03-11 13:51`
+- Fact:
+  - market check:
+    - OANDA `pricing/summary/openTrades` は全て `200 OK`、latency は約 `238-243ms`。
+    - `USD/JPY 158.138/158.146`, spread `0.8 pips`, tick 由来 `M1 ATR14=1.293 pips`, recent range `2.8 pips`。
+  - `logs/trades.db` 24h:
+    - `346 trades / net_jpy=-440.9 / net_pips=-396.7 / win_rate=0.289 / PF=0.452 / expectancy=-1.3 JPY`
+    - 比較窓 `prev24h` は `398 trades / net_jpy=-1642.1 / PF=0.558`。
+  - loss vs intended SL:
+    - `WickReversalBlend avg_loss_vs_sl=3.84x, max=5.46x`
+    - `VwapRevertS avg_loss_vs_sl=3.66x, max=7.61x`
+  - 実例:
+    - `VwapRevertS` は `sl_pips=1.8` に対して `-13.7p / -12.4p`
+    - `WickReversalBlend` は `sl_pips=1.83` に対して `-10.0p / -8.8p`
+  - `ops/env/quant-scalp-*.env` 側では該当 worker が `ORDER_FIXED_SL_MODE=1` を持つ一方、
+    `ops/env/quant-order-manager.env` には同 tag の `ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_*` が存在しなかった。
+- Failure Cause:
+  - worker 側 dedicated env の fixed-SL 意図が、
+    発注主体である `quant-order-manager` に伝播していなかった。
+  - そのため global baseline `ORDER_FIXED_SL_MODE=0` が優先され、
+    live order payload から `stopLossOnFill` が抜けていた。
+- Improvement:
+  - fixed-SL dedicated strategy の attach 可否を order-manager 側で明示し、
+    live order submit の source of truth を 1 箇所に揃える。
+- Verification:
+  - 新規 fill の `orders.request_json.order.stopLossOnFill` を確認する。
+  - `python3 scripts/oanda_open_trades.py` で新規建玉に `stopLossOrder` が出ることを確認する。
+  - 24h 後に `WickReversalBlend / VwapRevertS` の `avg_loss_vs_sl` と `STOP_LOSS_ON_FILL_LOSS` 件数を比較する。
+- Verdict:
+  - pending
+- Next Action:
+  - local-v2 restart 後に order-manager log と openTrades を確認し、
+    `STOP_LOSS_ON_FILL_LOSS` が過剰なら戦略別 `ORDER_ENTRY_MAX_SL_PIPS_*` の見直しへ進む。
+- Status:
+  - in_progress
+
 ## 2026-03-11 11:00 JST / local-v2: `RangeFader` を setup-local entry/exit へ寄せ、thin fade を worker 内で処理
 
 - Change:
