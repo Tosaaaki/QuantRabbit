@@ -92,6 +92,32 @@
     「今の setup が overused か underused か」へ寄せる。
   - current winner setup の participation を、同 strategy の loser setup が巻き添えで削らないようにする。
 
+### local-v2 `M1Scalper` live setup payload（2026-03-11）
+- 背景:
+  - `M1Scalper` は signal 生成時点で live factor を持っていても、
+    breakout/vshape の最後の判定と worker 側の sizing/thesis が固定 threshold 寄りで、
+    shared layer からは broad な `M1Scalper-M1` としてしか見えにくかった。
+- 実装:
+  - `strategies/scalping/m1_scalper.py`
+    - breakout-retest / vshape-rebound signal ごとに
+      `flow_regime`, `continuation_pressure`, `microstructure_bucket`,
+      `setup_quality`, `setup_fingerprint`, `entry_probability`, `setup_size_mult`
+      を live factor から算出して signal に載せる。
+    - fixed `BODY/RETEST/MOMENTUM/RSI/TTL` はそのまま生で使わず、
+      `atr_pips`, `adx`, `range_score`, `ema gap`, recent continuation から
+      effective threshold を再計算する。
+  - `workers/scalp_m1scalper/worker.py`
+    - signal の setup payload を `entry_thesis` に保存し、
+      `m1_setup` 監査 payload として `strategy_mode`, `flow_regime`,
+      `microstructure_bucket`, `setup_fingerprint`, `setup_quality`,
+      `entry_probability`, `setup_size_mult`, `continuation_pressure`
+      を引き回す。
+    - `setup_size_mult` は worker local の size scale にも反映する。
+- 意図:
+  - `M1Scalper` を strategy-wide loser/winner としてしか扱えない状態を減らし、
+    shared feedback / participation が current setup に一致した trade だけを学習できるようにする。
+  - strategy-local の live quality と shared setup-scoped overlay を同じ setup identity でつなぐ。
+
 ### local-v2 `MomentumBurst` tight-short exhaustion guard（2026-03-10）
 - 背景:
   - UTC `01:32-01:40` / JST `10:32-10:40` の local-v2 実測は

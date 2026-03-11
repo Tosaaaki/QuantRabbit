@@ -94,6 +94,33 @@
   - overused loser setup と underused winner setup を同一 strategy の中で分離し、
     current flow に一致した lane だけへ shared participation を効かせる。
 
+### 2026-03-11（追記）`M1Scalper` breakout/vshape を live setup payload 化
+
+- 対象:
+  - `strategies/scalping/m1_scalper.py`
+  - `workers/scalp_m1scalper/worker.py`
+  - `tests/workers/test_m1scalper_nwave_tolerance_override.py`
+  - `tests/workers/test_m1scalper_setup_context.py`
+  - `tests/workers/test_m1scalper_quickshot.py`
+  - `tests/workers/test_m1scalper_open_trades_guard.py`
+  - `tests/workers/test_m1scalper_config.py`
+  - `tests/replay/test_m1_family_replay.py`
+- 変更:
+  - `m1_scalper`
+    - breakout-retest / vshape-rebound signal に
+      `flow_regime`, `continuation_pressure`, `microstructure_bucket`,
+      `setup_quality`, `setup_fingerprint`, `entry_probability`, `setup_size_mult`
+      を live factor ベースで付与するようにした。
+    - `BODY/RETEST/MOMENTUM/RSI/TTL` は env 固定値をそのまま使わず、
+      `atr_pips`, `adx`, `range_score`, `ema gap`, recent continuation で effective threshold を動的化した。
+  - `scalp_m1scalper.worker`
+    - signal setup payload を `entry_thesis` の `m1_setup` / `flow_regime` /
+      `microstructure_bucket` / `setup_fingerprint` / `setup_quality` へ保存し、
+      `signal_setup_mult` を worker local sizing に反映するようにした。
+- 意図:
+  - `M1Scalper` を strategy-wide な loser lane ではなく current setup cluster として shared layer に露出する。
+  - signal で作った live quality を worker / order / exit 側で失わず、setup-scoped feedback の材料へつなぐ。
+
 ### 2026-03-11（追記）local-v2 feedback artifact の Git 方針を固定し、RangeFader current RCA を task/ops へ同期
 
 - 対象:

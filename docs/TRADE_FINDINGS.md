@@ -13306,3 +13306,49 @@ Status:
   - live order 監査で `entry_thesis["participation_alloc"].setup_override` が
     current setup と一致すること、
     RangeFader 系の blanket trim が減ることを確認する。
+
+## 2026-03-11 09:07 JST / local-v2: `M1Scalper` breakout/vshape を live setup payload 化
+- Why/Hypothesis:
+  - `M1Scalper` は live factor を十分に持っているのに、
+    breakout/vshape の final threshold と worker 側 sizing/thesis が固定値寄りで、
+    current setup の quality が shared layer へ十分に露出していなかった。
+  - breakout/vshape の signal で `flow_regime / continuation_pressure / setup_quality / setup_fingerprint`
+    を live 算出し、worker がそのまま `entry_thesis` へ保存すれば、
+    `M1Scalper-M1` を strategy-wide に見る static bias を薄くできる。
+- Expected Good:
+  - breakout/vshape の entry が current continuation / regime / volatility に応じて
+    `entry_probability` と size を変える。
+  - shared `strategy_feedback` / `participation_alloc` が
+    `M1Scalper` を broad loser lane ではなく current setup cluster で学習できる。
+- Expected Bad:
+  - setup payload が細かすぎると sample が割れ、
+    setup-scoped shared overlay の効き方が sparse になる。
+  - signal quality が弱い局面では `setup_size_mult` が downscale し、
+    participation が一時的に落ちる可能性がある。
+- Observed/Fact:
+  - 市況:
+    - `USD_JPY bid/ask=158.082/158.090`、spread 約 `0.8 pips`。
+    - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env` で
+      core/strategy service は `running`。
+    - `scripts/collect_local_health.sh` は `snapshot_age_sec=0`, `stale_warn=no`。
+  - `strategies/scalping/m1_scalper.py`
+    - breakout-retest / vshape-rebound signal に
+      `flow_regime`, `continuation_pressure`, `microstructure_bucket`,
+      `setup_quality`, `setup_fingerprint`, `entry_probability`, `setup_size_mult`
+      を live factor ベースで付与するようにした。
+    - `BODY/RETEST/MOMENTUM/RSI/TTL` は `atr_pips`, `adx`, `range_score`,
+      `ema gap`, recent continuation から effective threshold を再計算するようにした。
+  - `workers/scalp_m1scalper/worker.py`
+    - signal setup payload を `entry_thesis` の
+      `m1_setup`, `flow_regime`, `microstructure_bucket`, `setup_fingerprint`,
+      `setup_quality`, `signal_entry_probability` へ保存するようにした。
+    - `setup_size_mult` は worker local の size scale に反映するようにした。
+  - テスト:
+    - `./.venv/bin/pytest -q tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_setup_context.py tests/workers/test_m1scalper_quickshot.py` -> `7 passed`
+    - `./.venv/bin/pytest -q tests/workers/test_m1scalper_nwave_tolerance_override.py tests/workers/test_m1scalper_setup_context.py tests/workers/test_m1scalper_quickshot.py tests/workers/test_m1scalper_open_trades_guard.py tests/workers/test_m1scalper_config.py tests/replay/test_m1_family_replay.py` -> `20 passed`
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後、`orders.db` の `M1Scalper-breakout-retest-*` / `M1Scalper-vshape-rebound-*`
+    で `entry_thesis.m1_setup.setup_fingerprint` と `entry_probability` が入っていることを確認する。
+  - `strategy_feedback` / `participation_alloc` の setup-scoped overlay が
+    `M1Scalper` の broad loser trim ではなく current setup match で効くかを live order/trade で追う。

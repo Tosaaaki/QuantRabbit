@@ -487,12 +487,145 @@ def _build_range(values: list[float]) -> tuple[float, float]:
     return min(values), max(values)
 
 
+def _clamp_value(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _microstructure_bucket(*, atr_pips: float, bbw: float, vol5: float) -> str:
+    if atr_pips <= 1.2 and bbw <= 0.0014:
+        spread_bucket = "tight"
+    elif atr_pips >= 3.8 or bbw >= 0.0036:
+        spread_bucket = "wide"
+    else:
+        spread_bucket = "normal"
+    if vol5 < 0.10:
+        pace_bucket = "thin"
+    elif vol5 >= 0.35:
+        pace_bucket = "fast"
+    else:
+        pace_bucket = "normal"
+    return f"{spread_bucket}_{pace_bucket}"
+
+
+def _continuation_pressure(
+    candles: list[dict],
+    side: str,
+    *,
+    atr_pips: float,
+    ema20: float | None,
+) -> int:
+    if len(candles) < 4:
+        return 0
+    recent = candles[-4:]
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    close_pos_sum = 0.0
+    close_pos_count = 0
+    for candle in recent:
+        close = _to_float(candle.get("close") or candle.get("c"))
+        open_px = _to_float(candle.get("open") or candle.get("o"), close)
+        high = _to_float(candle.get("high") or candle.get("h"))
+        low = _to_float(candle.get("low") or candle.get("l"))
+        if None in (close, open_px, high, low) or high < low:
+            return 0
+        candle_range = max(high - low, _PIP * 0.1)
+        closes.append(float(close))
+        highs.append(float(high))
+        lows.append(float(low))
+        close_pos_sum += (float(close) - float(low)) / candle_range
+        close_pos_count += 1
+    avg_close_pos = close_pos_sum / max(1, close_pos_count)
+    pressure = 0
+    if side == "short":
+        rising_closes = sum(1 for idx in range(1, len(closes)) if closes[idx] >= closes[idx - 1] - 1e-9)
+        higher_highs = sum(1 for idx in range(1, len(highs)) if highs[idx] >= highs[idx - 1] - 1e-9)
+        net_move_pips = max(0.0, (closes[-1] - closes[0]) / _PIP)
+        if rising_closes >= 2 and net_move_pips >= max(0.8, atr_pips * 0.32):
+            pressure += 1
+        if higher_highs >= 2 and avg_close_pos >= 0.62 and ema20 is not None and closes[-1] > ema20:
+            pressure += 1
+    else:
+        falling_closes = sum(1 for idx in range(1, len(closes)) if closes[idx] <= closes[idx - 1] + 1e-9)
+        lower_lows = sum(1 for idx in range(1, len(lows)) if lows[idx] <= lows[idx - 1] + 1e-9)
+        net_move_pips = max(0.0, (closes[0] - closes[-1]) / _PIP)
+        if falling_closes >= 2 and net_move_pips >= max(0.8, atr_pips * 0.32):
+            pressure += 1
+        if lower_lows >= 2 and avg_close_pos <= 0.38 and ema20 is not None and closes[-1] < ema20:
+            pressure += 1
+    return min(2, pressure)
+
+
+def _flow_regime_label(
+    *,
+    atr_pips: float,
+    adx: float,
+    range_active: bool,
+    range_score: float,
+    price_gap_pips: float,
+    ema_gap_pips: float,
+) -> str:
+    trend_gap = max(abs(price_gap_pips), abs(ema_gap_pips))
+    if (range_active or range_score >= 0.45) and adx < 22.0:
+        return "range_compression"
+    if trend_gap >= max(1.6, atr_pips * 0.65) and adx >= 20.0:
+        return "trend_long" if max(price_gap_pips, ema_gap_pips) >= 0.0 else "trend_short"
+    if range_score >= 0.28 and adx < 30.0:
+        return "range_fade"
+    return "transition"
+
+
+def _signal_setup_payload(
+    *,
+    side: str,
+    mode: str,
+    flow_regime: str,
+    continuation_pressure: int,
+    microstructure_bucket: str,
+    quality: float,
+    entry_probability: float,
+    size_mult: float,
+    components: dict[str, float],
+) -> dict[str, object]:
+    setup_quality = _clamp_value(quality, 0.0, 1.0)
+    entry_probability = _clamp_value(entry_probability, 0.35, 0.95)
+    setup_size_mult = _clamp_value(size_mult, 0.65, 1.35)
+    setup_fingerprint = "|".join(
+        [
+            M1Scalper.name,
+            side,
+            mode,
+            flow_regime,
+            f"p{int(max(0, continuation_pressure))}",
+            microstructure_bucket,
+        ]
+    )
+    return {
+        "entry_probability": round(entry_probability, 3),
+        "setup_quality": round(setup_quality, 3),
+        "setup_size_mult": round(setup_size_mult, 3),
+        "flow_regime": flow_regime,
+        "continuation_pressure": int(max(0, continuation_pressure)),
+        "microstructure_bucket": microstructure_bucket,
+        "setup_fingerprint": setup_fingerprint,
+        "quality_components": {key: round(_clamp_value(value, 0.0, 1.0), 3) for key, value in components.items()},
+    }
+
+
 def _breakout_retest_signal(
     *,
     candles: list[dict],
     close: float,
+    ema20: float,
     rsi: float,
     atr_pips: float,
+    adx: float,
+    range_active: bool,
+    range_score: float,
+    price_gap_pips: float,
+    ema_gap_pips: float,
+    bbw: float,
+    vol5: float,
     trend_up: bool,
     trend_down: bool,
     strong_up: bool,
@@ -524,7 +657,8 @@ def _breakout_retest_signal(
     prev_body_pips = _candle_body_pips(prev)
     if prev_body_pips is None:
         return None
-    if abs(prev_body_pips) < _BREAKOUT_RETEST_BODY_PIPS:
+    body_floor = max(_BREAKOUT_RETEST_BODY_PIPS, min(0.75, max(0.18, atr_pips * 0.16)))
+    if abs(prev_body_pips) < body_floor:
         return None
 
     lookback = _BREAKOUT_RETEST_LOOKBACK
@@ -540,80 +674,182 @@ def _breakout_retest_signal(
     range_low, range_high = _build_range(range_values)
     if range_low == 0.0 and range_high == 0.0:
         return None
-    move = max(_BREAKOUT_RETEST_BREAKOUT_MOVE_PIPS * _PIP, abs(prev_body_pips) * 0.8 * _PIP)
+    move_pips = max(
+        _BREAKOUT_RETEST_BREAKOUT_MOVE_PIPS,
+        abs(prev_body_pips) * 0.8,
+        min(2.4, max(0.65, atr_pips * 0.55)),
+    )
+    move = move_pips * _PIP
 
-    long_break = prev_close >= range_high + move and prev_body_pips >= _BREAKOUT_RETEST_BODY_PIPS
-    short_break = prev_close <= range_low - move and prev_body_pips <= -_BREAKOUT_RETEST_BODY_PIPS
+    long_break = prev_close >= range_high + move and prev_body_pips >= body_floor
+    short_break = prev_close <= range_low - move and prev_body_pips <= -body_floor
     if not (long_break or short_break):
         return None
 
-    band = _BREAKOUT_RETEST_RETEST_BAND_PIPS
+    side = "long" if long_break else "short"
+    continuation_pressure = _continuation_pressure(candles, side, atr_pips=atr_pips, ema20=ema20)
+    band = max(
+        _BREAKOUT_RETEST_RETEST_BAND_PIPS,
+        min(1.60, 0.40 + atr_pips * 0.32 + continuation_pressure * 0.08),
+    )
+    retest_min = _clamp_value(
+        _BREAKOUT_RETEST_RETEST_MIN_PIPS + max(0.0, continuation_pressure - 1.0) * 0.03,
+        0.03,
+        0.40,
+    )
     pull = (current - range_high) / _PIP if long_break else (range_low - current) / _PIP
-    if pull < _BREAKOUT_RETEST_RETEST_MIN_PIPS or pull > band:
+    if pull < retest_min or pull > band:
         return None
-    if abs((prev_close - prev_open) / _PIP) < _BREAKOUT_RETEST_BODY_PIPS:
+    if abs((prev_close - prev_open) / _PIP) < body_floor:
         return None
 
+    momentum_req = _clamp_value(
+        _BREAKOUT_RETEST_MOMENTUM_PIPS
+        + max(0.0, continuation_pressure - 1.0) * 0.03
+        + max(0.0, atr_pips - 2.5) * 0.01,
+        0.08,
+        0.45,
+    )
     momentum = current - prev_close
-    if abs(momentum) / _PIP < _BREAKOUT_RETEST_MOMENTUM_PIPS:
+    if abs(momentum) / _PIP < momentum_req:
         return None
+
+    flow_regime = _flow_regime_label(
+        atr_pips=atr_pips,
+        adx=adx,
+        range_active=range_active,
+        range_score=range_score,
+        price_gap_pips=price_gap_pips,
+        ema_gap_pips=ema_gap_pips,
+    )
+    microstructure_bucket = _microstructure_bucket(atr_pips=atr_pips, bbw=bbw, vol5=vol5)
+    breakout_stretch = abs(prev_close - (range_high if long_break else range_low)) / _PIP
+    pull_quality = _clamp_value(
+        1.0 - max(0.0, pull - retest_min) / max(0.25, band - retest_min),
+        0.0,
+        1.0,
+    )
+    momentum_quality = _clamp_value(abs(momentum) / _PIP / max(0.08, momentum_req), 0.0, 1.0)
+    breakout_quality = _clamp_value(breakout_stretch / max(0.5, move_pips), 0.0, 1.0)
+    regime_quality = 0.72 if flow_regime.startswith("trend_") else 0.58 if flow_regime == "transition" else 0.46
+    trend_quality = 1.0 if (long_break and trend_up) or (short_break and trend_down) else (0.74 if not range_reversion_only else 0.40)
+    setup_quality = _clamp_value(
+        breakout_quality * 0.30
+        + pull_quality * 0.24
+        + momentum_quality * 0.20
+        + trend_quality * 0.14
+        + regime_quality * 0.12
+        - continuation_pressure * 0.06,
+        0.0,
+        1.0,
+    )
+    entry_probability = _clamp_value(0.48 + setup_quality * 0.34 - continuation_pressure * 0.03, 0.40, 0.93)
+    setup_size_mult = _clamp_value(0.82 + setup_quality * 0.34 - continuation_pressure * 0.04, 0.65, 1.25)
+    setup_payload = _signal_setup_payload(
+        side=side,
+        mode="breakout_retest",
+        flow_regime=flow_regime,
+        continuation_pressure=continuation_pressure,
+        microstructure_bucket=microstructure_bucket,
+        quality=setup_quality,
+        entry_probability=entry_probability,
+        size_mult=setup_size_mult,
+        components={
+            "breakout": breakout_quality,
+            "pullback": pull_quality,
+            "momentum": momentum_quality,
+            "trend": trend_quality,
+            "regime": regime_quality,
+        },
+    )
+    entry_tolerance_pips = _clamp_value(
+        _BREAKOUT_RETEST_ENTRY_TOL_PIPS + max(0.0, atr_pips - 1.2) * 0.03,
+        0.12,
+        0.42,
+    )
+    limit_ttl_sec = int(
+        round(
+            _clamp_value(
+                _BREAKOUT_RETEST_LIMIT_TTL_SEC + setup_quality * 10.0 - continuation_pressure * 5.0,
+                20.0,
+                75.0,
+            )
+        )
+    )
+    base_conf = int(round(_BREAKOUT_RETEST_BASE_CONF + setup_quality * 10.0 - continuation_pressure * 2.0))
 
     if long_break:
         if strong_down or (range_reversion_only and not trend_up):
             return None
-        if not trend_up and atr_pips >= 2.8:
+        if not trend_up and atr_pips >= max(2.8, 1.8 + continuation_pressure * 0.45):
             return None
-        score = int(_BREAKOUT_RETEST_BASE_CONF + min(12, abs(prev_body_pips) * 2 + pull * 3))
+        score = int(base_conf + min(12, abs(prev_body_pips) * 2 + pull * 3))
         score = max(60, min(96, score))
         tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+        notes = {
+            "mode": "breakout_retest",
+            "lookback": lookback,
+            "pull_pips": round(pull, 2),
+            "range_high": round(range_high, 3),
+            "rsi": round(rsi, 2),
+            "flow_regime": flow_regime,
+            "continuation_pressure": continuation_pressure,
+            "microstructure_bucket": microstructure_bucket,
+            "setup_fingerprint": setup_payload["setup_fingerprint"],
+            "setup_quality": setup_payload["setup_quality"],
+            "quality_components": dict(setup_payload["quality_components"]),
+        }
         return {
             "action": "OPEN_LONG",
             "entry_type": "limit",
             "entry_price": round(current, 3),
-            "entry_tolerance_pips": round(_BREAKOUT_RETEST_ENTRY_TOL_PIPS, 2),
-            "limit_expiry_seconds": int(_BREAKOUT_RETEST_LIMIT_TTL_SEC),
+            "entry_tolerance_pips": round(entry_tolerance_pips, 2),
+            "limit_expiry_seconds": limit_ttl_sec,
             "sl_pips": round(max(sl_dyn * 0.88, 4.0), 2),
             "tp_pips": round(tp or 0.0, 2),
             "confidence": score,
             "fast_cut_pips": round(fast_cut, 2),
             "fast_cut_time_sec": int(fast_cut_time),
             "tag": f"{M1Scalper.name}-breakout-retest-long",
-            "notes": {
-                "mode": "breakout_retest",
-                "lookback": lookback,
-                "pull_pips": round(pull, 2),
-                "range_high": round(range_high, 3),
-                "rsi": round(rsi, 2),
-            },
+            "notes": notes,
+            **setup_payload,
         }
 
     if short_break:
         if strong_up or (range_reversion_only and not trend_down):
             return None
-        if not trend_down and atr_pips >= 2.8:
+        if not trend_down and atr_pips >= max(2.8, 1.8 + continuation_pressure * 0.45):
             return None
-        score = int(_BREAKOUT_RETEST_BASE_CONF + min(12, abs(prev_body_pips) * 2 + pull * 3))
+        score = int(base_conf + min(12, abs(prev_body_pips) * 2 + pull * 3))
         score = max(60, min(96, score))
         tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+        notes = {
+            "mode": "breakout_retest",
+            "lookback": lookback,
+            "pull_pips": round(pull, 2),
+            "range_low": round(range_low, 3),
+            "rsi": round(rsi, 2),
+            "flow_regime": flow_regime,
+            "continuation_pressure": continuation_pressure,
+            "microstructure_bucket": microstructure_bucket,
+            "setup_fingerprint": setup_payload["setup_fingerprint"],
+            "setup_quality": setup_payload["setup_quality"],
+            "quality_components": dict(setup_payload["quality_components"]),
+        }
         return {
             "action": "OPEN_SHORT",
             "entry_type": "limit",
             "entry_price": round(current, 3),
-            "entry_tolerance_pips": round(_BREAKOUT_RETEST_ENTRY_TOL_PIPS, 2),
-            "limit_expiry_seconds": int(_BREAKOUT_RETEST_LIMIT_TTL_SEC),
+            "entry_tolerance_pips": round(entry_tolerance_pips, 2),
+            "limit_expiry_seconds": limit_ttl_sec,
             "sl_pips": round(max(sl_dyn * 0.88, 4.0), 2),
             "tp_pips": round(tp or 0.0, 2),
             "confidence": score,
             "fast_cut_pips": round(fast_cut, 2),
             "fast_cut_time_sec": int(fast_cut_time),
             "tag": f"{M1Scalper.name}-breakout-retest-short",
-            "notes": {
-                "mode": "breakout_retest",
-                "lookback": lookback,
-                "pull_pips": round(pull, 2),
-                "range_low": round(range_low, 3),
-                "rsi": round(rsi, 2),
-            },
+            "notes": notes,
+            **setup_payload,
         }
 
     return None
@@ -626,6 +862,13 @@ def _vshape_rebound_signal(
     rsi: float,
     adx: float,
     atr_pips: float,
+    ema20: float,
+    range_active: bool,
+    range_score: float,
+    price_gap_pips: float,
+    ema_gap_pips: float,
+    bbw: float,
+    vol5: float,
     trend_up: bool,
     trend_down: bool,
     strong_up: bool,
@@ -642,7 +885,8 @@ def _vshape_rebound_signal(
     current = _to_float(close)
     if current is None:
         return None
-    if adx is not None and _VSHAPE_MAX_ADX > 0.0 and adx > _VSHAPE_MAX_ADX:
+    dynamic_adx_cap = _clamp_value(_VSHAPE_MAX_ADX + max(0.0, range_score - 0.35) * 8.0, 18.0, 34.0)
+    if adx is not None and dynamic_adx_cap > 0.0 and adx > dynamic_adx_cap:
         return None
 
     window = max(8, _VSHAPE_REBOUND_LOOKBACK + 1)
@@ -656,6 +900,22 @@ def _vshape_rebound_signal(
     prev_close = _to_float(history[-1].get("close") or history[-1].get("c"))
     if prev_close is None:
         return None
+
+    flow_regime = _flow_regime_label(
+        atr_pips=atr_pips,
+        adx=adx,
+        range_active=range_active,
+        range_score=range_score,
+        price_gap_pips=price_gap_pips,
+        ema_gap_pips=ema_gap_pips,
+    )
+    microstructure_bucket = _microstructure_bucket(atr_pips=atr_pips, bbw=bbw, vol5=vol5)
+    long_pressure = _continuation_pressure(candles, "long", atr_pips=atr_pips, ema20=ema20)
+    short_pressure = _continuation_pressure(candles, "short", atr_pips=atr_pips, ema20=ema20)
+    drop_floor = max(_VSHAPE_DROP_PIPS, min(4.4, max(1.4, atr_pips * (0.85 if range_reversion_only or range_active else 1.0))))
+    body_floor = max(_VSHAPE_BODY_PIPS, min(0.55, max(0.15, atr_pips * 0.14)))
+    retest_cap = max(_VSHAPE_RETEST_PIPS, min(2.8, 0.65 + atr_pips * 0.40))
+    entry_tolerance_pips = _clamp_value(_VSHAPE_ENTRY_TOL_PIPS + max(0.0, atr_pips - 1.5) * 0.03, 0.12, 0.45)
 
     low_i = -1
     high_i = -1
@@ -695,41 +955,82 @@ def _vshape_rebound_signal(
                 return None
         drop = (pre_high - low_price) / _PIP
         recovery = (current - low_price) / _PIP
+        long_rsi_cap = _clamp_value(_VSHAPE_LONG_RSI_MAX + max(0.0, range_score - 0.30) * 6.0 - long_pressure * 1.5, 44.0, 60.0)
         if (
-            drop >= _VSHAPE_DROP_PIPS
-            and rebound_body >= _VSHAPE_BODY_PIPS
-            and recovery <= _VSHAPE_RETEST_PIPS
+            drop >= drop_floor
+            and rebound_body >= body_floor
+            and recovery <= retest_cap
             and recovery >= 0.05
             and current >= (low_price + 0.0001)
-            and (current - prev_close) / _PIP >= _VSHAPE_BODY_PIPS
-            and rsi <= _VSHAPE_LONG_RSI_MAX
+            and (current - prev_close) / _PIP >= body_floor
+            and rsi <= long_rsi_cap
             and not strong_down
             and not range_reversion_only
             and (trend_up or not trend_down)
         ):
-            score = int(_VSHAPE_BASE_CONF + min(15, drop * 1.2 + recovery * 0.7))
+            drop_quality = _clamp_value(drop / max(1.0, drop_floor), 0.0, 1.0)
+            rebound_quality = _clamp_value(rebound_body / max(0.10, body_floor), 0.0, 1.0)
+            pullback_quality = _clamp_value(1.0 - (recovery / max(0.15, retest_cap)), 0.0, 1.0)
+            regime_quality = 0.72 if flow_regime.startswith("range_") else 0.54 if flow_regime == "transition" else 0.38
+            rsi_quality = _clamp_value((long_rsi_cap - rsi) / max(2.0, long_rsi_cap - 40.0), 0.0, 1.0)
+            setup_quality = _clamp_value(
+                drop_quality * 0.30
+                + rebound_quality * 0.22
+                + pullback_quality * 0.18
+                + regime_quality * 0.14
+                + rsi_quality * 0.16
+                - long_pressure * 0.10,
+                0.0,
+                1.0,
+            )
+            setup_payload = _signal_setup_payload(
+                side="long",
+                mode="vshape_rebound",
+                flow_regime=flow_regime,
+                continuation_pressure=long_pressure,
+                microstructure_bucket=microstructure_bucket,
+                quality=setup_quality,
+                entry_probability=_clamp_value(0.45 + setup_quality * 0.31 - long_pressure * 0.05, 0.38, 0.88),
+                size_mult=_clamp_value(0.78 + setup_quality * 0.30 - long_pressure * 0.07, 0.60, 1.18),
+                components={
+                    "drop": drop_quality,
+                    "rebound": rebound_quality,
+                    "pullback": pullback_quality,
+                    "regime": regime_quality,
+                    "rsi": rsi_quality,
+                },
+            )
+            score = int(_VSHAPE_BASE_CONF + setup_quality * 14.0 + min(15, drop * 1.2 + recovery * 0.7) - long_pressure * 4.0)
             score = max(58, min(96, score))
             tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+            notes = {
+                "mode": "vshape_rebound",
+                "lookback": _VSHAPE_REBOUND_LOOKBACK,
+                "drop_pips": round(drop, 2),
+                "rebound_body": round(rebound_body, 3),
+                "rsi": round(rsi, 2),
+                "adx": round(adx, 2),
+                "flow_regime": flow_regime,
+                "continuation_pressure": long_pressure,
+                "microstructure_bucket": microstructure_bucket,
+                "setup_fingerprint": setup_payload["setup_fingerprint"],
+                "setup_quality": setup_payload["setup_quality"],
+                "quality_components": dict(setup_payload["quality_components"]),
+            }
             return {
                 "action": "OPEN_LONG",
                 "entry_type": "limit",
                 "entry_price": round(current, 3),
-                "entry_tolerance_pips": round(_VSHAPE_ENTRY_TOL_PIPS, 2),
-                "limit_expiry_seconds": int(_VSHAPE_LIMIT_TTL_SEC),
+                "entry_tolerance_pips": round(entry_tolerance_pips, 2),
+                "limit_expiry_seconds": int(round(_clamp_value(_VSHAPE_LIMIT_TTL_SEC + setup_quality * 8.0 - long_pressure * 4.0, 20.0, 75.0))),
                 "sl_pips": round(max(sl_dyn * 0.9, 4.2), 2),
                 "tp_pips": round(tp or 0.0, 2),
                 "confidence": score,
                 "fast_cut_pips": round(fast_cut, 2),
                 "fast_cut_time_sec": int(fast_cut_time),
                 "tag": f"{M1Scalper.name}-vshape-rebound-long",
-                "notes": {
-                    "mode": "vshape_rebound",
-                    "lookback": _VSHAPE_REBOUND_LOOKBACK,
-                    "drop_pips": round(drop, 2),
-                    "rebound_body": round(rebound_body, 3),
-                    "rsi": round(rsi, 2),
-                    "adx": round(adx, 2),
-                },
+                "notes": notes,
+                **setup_payload,
             }
 
     # Short: sharp rise to a local high, then immediate pullback.
@@ -754,43 +1055,84 @@ def _vshape_rebound_signal(
             return None
         rebound_amount = (high_price - pre_low) / _PIP
         pullback = (high_price - current) / _PIP
+        short_rsi_floor = _clamp_value(_VSHAPE_SHORT_RSI_MIN - max(0.0, range_score - 0.30) * 6.0 + short_pressure * 1.5, 40.0, 56.0)
 
         if (
-            rebound_amount >= _VSHAPE_DROP_PIPS
-            and rebound_body <= -_VSHAPE_BODY_PIPS
-            and pullback <= _VSHAPE_RETEST_PIPS
+            rebound_amount >= drop_floor
+            and rebound_body <= -body_floor
+            and pullback <= retest_cap
             and pullback >= 0.05
             and rebound_body < 0
-            and rsi >= _VSHAPE_SHORT_RSI_MIN
+            and rsi >= short_rsi_floor
             and not strong_up
             and not range_reversion_only
             and (trend_down or not trend_up)
             and current <= (high_price - 0.0001)
-            and (prev_close - current) / _PIP >= _VSHAPE_BODY_PIPS
+            and (prev_close - current) / _PIP >= body_floor
         ):
-            score = int(_VSHAPE_BASE_CONF + min(15, rebound_amount * 1.2 + pullback * 0.7))
+            rebound_quality = _clamp_value(rebound_amount / max(1.0, drop_floor), 0.0, 1.0)
+            body_quality = _clamp_value(abs(rebound_body) / max(0.10, body_floor), 0.0, 1.0)
+            pullback_quality = _clamp_value(1.0 - (pullback / max(0.15, retest_cap)), 0.0, 1.0)
+            regime_quality = 0.72 if flow_regime.startswith("range_") else 0.54 if flow_regime == "transition" else 0.38
+            rsi_quality = _clamp_value((rsi - short_rsi_floor) / max(2.0, 65.0 - short_rsi_floor), 0.0, 1.0)
+            setup_quality = _clamp_value(
+                rebound_quality * 0.30
+                + body_quality * 0.22
+                + pullback_quality * 0.18
+                + regime_quality * 0.14
+                + rsi_quality * 0.16
+                - short_pressure * 0.10,
+                0.0,
+                1.0,
+            )
+            setup_payload = _signal_setup_payload(
+                side="short",
+                mode="vshape_rebound",
+                flow_regime=flow_regime,
+                continuation_pressure=short_pressure,
+                microstructure_bucket=microstructure_bucket,
+                quality=setup_quality,
+                entry_probability=_clamp_value(0.45 + setup_quality * 0.31 - short_pressure * 0.05, 0.38, 0.88),
+                size_mult=_clamp_value(0.78 + setup_quality * 0.30 - short_pressure * 0.07, 0.60, 1.18),
+                components={
+                    "rebound": rebound_quality,
+                    "body": body_quality,
+                    "pullback": pullback_quality,
+                    "regime": regime_quality,
+                    "rsi": rsi_quality,
+                },
+            )
+            score = int(_VSHAPE_BASE_CONF + setup_quality * 14.0 + min(15, rebound_amount * 1.2 + pullback * 0.7) - short_pressure * 4.0)
             score = max(58, min(96, score))
             tp = _to_float(adjust_tp(tp_dyn, score), tp_dyn)
+            notes = {
+                "mode": "vshape_rebound",
+                "lookback": _VSHAPE_REBOUND_LOOKBACK,
+                "rebound_amount_pips": round(rebound_amount, 2),
+                "rebound_body": round(rebound_body, 3),
+                "rsi": round(rsi, 2),
+                "adx": round(adx, 2),
+                "flow_regime": flow_regime,
+                "continuation_pressure": short_pressure,
+                "microstructure_bucket": microstructure_bucket,
+                "setup_fingerprint": setup_payload["setup_fingerprint"],
+                "setup_quality": setup_payload["setup_quality"],
+                "quality_components": dict(setup_payload["quality_components"]),
+            }
             return {
                 "action": "OPEN_SHORT",
                 "entry_type": "limit",
                 "entry_price": round(current, 3),
-                "entry_tolerance_pips": round(_VSHAPE_ENTRY_TOL_PIPS, 2),
-                "limit_expiry_seconds": int(_VSHAPE_LIMIT_TTL_SEC),
+                "entry_tolerance_pips": round(entry_tolerance_pips, 2),
+                "limit_expiry_seconds": int(round(_clamp_value(_VSHAPE_LIMIT_TTL_SEC + setup_quality * 8.0 - short_pressure * 4.0, 20.0, 75.0))),
                 "sl_pips": round(max(sl_dyn * 0.9, 4.2), 2),
                 "tp_pips": round(tp or 0.0, 2),
                 "confidence": score,
                 "fast_cut_pips": round(fast_cut, 2),
                 "fast_cut_time_sec": int(fast_cut_time),
                 "tag": f"{M1Scalper.name}-vshape-rebound-short",
-                "notes": {
-                    "mode": "vshape_rebound",
-                    "lookback": _VSHAPE_REBOUND_LOOKBACK,
-                    "rebound_amount_pips": round(rebound_amount, 2),
-                    "rebound_body": round(rebound_body, 3),
-                    "rsi": round(rsi, 2),
-                    "adx": round(adx, 2),
-                },
+                "notes": notes,
+                **setup_payload,
             }
 
     return None
@@ -1094,8 +1436,16 @@ class M1Scalper:
         breakout_retest_signal = _breakout_retest_signal(
             candles=candles,
             close=close,
+            ema20=float(ema20),
             rsi=rsi,
             atr_pips=atr_pips,
+            adx=adx,
+            range_active=range_active,
+            range_score=range_score,
+            price_gap_pips=price_gap_pips,
+            ema_gap_pips=ema_gap_pips,
+            bbw=bbw,
+            vol5=vol5,
             trend_up=trend_up,
             trend_down=trend_down,
             strong_up=strong_up,
@@ -1126,6 +1476,13 @@ class M1Scalper:
             rsi=rsi,
             adx=adx,
             atr_pips=atr_pips,
+            ema20=float(ema20),
+            range_active=range_active,
+            range_score=range_score,
+            price_gap_pips=price_gap_pips,
+            ema_gap_pips=ema_gap_pips,
+            bbw=bbw,
+            vol5=vol5,
             trend_up=trend_up,
             trend_down=trend_down,
             strong_up=strong_up,

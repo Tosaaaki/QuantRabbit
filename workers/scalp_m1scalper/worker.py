@@ -852,6 +852,82 @@ def _resolve_min_units_guard(units, signal_tag, side):
             "min_units_soft_raise",
         )
     return False, int(units), "min_units_reject"
+
+
+def _signal_setup_payload(signal: dict | None) -> dict[str, object]:
+    if not isinstance(signal, dict):
+        return {}
+    notes = signal.get("notes")
+    if not isinstance(notes, dict):
+        notes = {}
+    payload: dict[str, object] = {}
+    strategy_mode = _signal_mode(signal)
+    if strategy_mode:
+        payload["strategy_mode"] = strategy_mode
+    for key in ("flow_regime", "microstructure_bucket", "setup_fingerprint"):
+        raw = signal.get(key)
+        if raw in (None, ""):
+            raw = notes.get(key)
+        text = str(raw or "").strip()
+        if text:
+            payload[key] = text
+    for key in ("setup_quality", "entry_probability", "setup_size_mult", "continuation_pressure"):
+        raw = signal.get(key)
+        if raw is None:
+            raw = notes.get(key)
+        value = _bb_float(raw)
+        if value is not None:
+            payload[key] = value
+    components = signal.get("quality_components")
+    if not isinstance(components, dict):
+        components = notes.get("quality_components")
+    if isinstance(components, dict) and components:
+        payload["quality_components"] = {
+            str(key): round(float(value), 3)
+            for key, value in components.items()
+            if _bb_float(value) is not None
+        }
+    return payload
+
+
+def _apply_signal_setup_context(entry_thesis: dict[str, object], signal: dict | None) -> dict[str, object]:
+    payload = _signal_setup_payload(signal)
+    if not payload:
+        return {}
+    strategy_mode = str(payload.get("strategy_mode") or "").strip()
+    if strategy_mode:
+        entry_thesis["strategy_mode"] = strategy_mode
+    for key in ("flow_regime", "microstructure_bucket", "setup_fingerprint"):
+        text = str(payload.get(key) or "").strip()
+        if text:
+            entry_thesis[key] = text
+    for key in ("setup_quality", "continuation_pressure"):
+        value = _bb_float(payload.get(key))
+        if value is None:
+            continue
+        entry_thesis[key] = round(value, 3)
+    if isinstance(payload.get("quality_components"), dict):
+        entry_thesis["setup_quality_components"] = dict(payload["quality_components"])
+    if _bb_float(payload.get("entry_probability")) is not None:
+        entry_thesis["signal_entry_probability"] = round(float(payload["entry_probability"]), 3)
+    entry_thesis["m1_setup"] = {
+        key: payload[key]
+        for key in (
+            "strategy_mode",
+            "flow_regime",
+            "microstructure_bucket",
+            "setup_fingerprint",
+            "setup_quality",
+            "entry_probability",
+            "setup_size_mult",
+            "continuation_pressure",
+            "quality_components",
+        )
+        if key in payload
+    }
+    return payload
+
+
 def _latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=6.0, limit=1)
     if ticks:
@@ -1692,8 +1768,11 @@ async def scalp_m1_worker() -> None:
         units = int(round(base_units * conf_scale))
         units = min(units, units_risk)
         units = int(round(units * cap))
+        signal_setup = _signal_setup_payload(signal)
+        signal_setup_mult = _bb_float(signal_setup.get("setup_size_mult")) or 1.0
+        signal_setup_mult = max(0.65, min(1.35, signal_setup_mult))
         setup_size_mult = usdjpy_setup_mult
-        setup_label = usdjpy_setup_mode or str(quickshot_plan.get("mode") or "none")
+        setup_label = usdjpy_setup_mode or str(quickshot_plan.get("mode") or signal_setup.get("strategy_mode") or "none")
         applied_setup_mult = setup_size_mult * quickshot_size_mult
         dyn_mult = 1.0
         dyn_score = 0.0
@@ -1706,6 +1785,8 @@ async def scalp_m1_worker() -> None:
         total_size_mult = dyn_mult * applied_setup_mult
         if total_size_mult != 1.0:
             units = int(round(units * total_size_mult))
+        if signal_setup_mult != 1.0:
+            entry_size_scale *= signal_setup_mult
         units = int(round(units * entry_size_scale))
         if side == "short":
             units = -abs(units)
@@ -1728,7 +1809,9 @@ async def scalp_m1_worker() -> None:
             is_buy=side == "long",
         )
         client_id = _client_order_id(strategy_tag)
-        entry_probability = _to_probability(signal.get("entry_probability"), conf_val / 100.0)
+        entry_probability = _to_probability(signal_setup.get("entry_probability"), None)
+        if entry_probability is None:
+            entry_probability = _to_probability(signal.get("entry_probability"), conf_val / 100.0)
         if quickshot_entry_probability is not None:
             entry_probability = max(entry_probability, quickshot_entry_probability)
         entry_thesis = {
@@ -1746,6 +1829,8 @@ async def scalp_m1_worker() -> None:
             "fast_cut_pips": signal.get("fast_cut_pips"),
             "fast_cut_time_sec": signal.get("fast_cut_time_sec"),
         }
+        if signal_setup_mult != 1.0:
+            entry_thesis["signal_setup_mult"] = round(signal_setup_mult, 3)
         if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
             entry_thesis["dynamic_alloc"] = {
                 "strategy_key": dyn_profile.get("strategy_key"),
@@ -1761,6 +1846,7 @@ async def scalp_m1_worker() -> None:
         if quickshot_plan:
             entry_thesis["usdjpy_quickshot"] = dict(quickshot_plan)
             entry_thesis["setup_mult"] = round(applied_setup_mult, 4)
+        _apply_signal_setup_context(entry_thesis, signal)
         if derive_pattern_signature is not None and isinstance(entry_thesis, dict):
             pattern_tag, pattern_meta = derive_pattern_signature(
                 fac_m1, action="OPEN_LONG" if units > 0 else "OPEN_SHORT"
