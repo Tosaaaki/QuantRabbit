@@ -13761,3 +13761,45 @@ Status:
     `continuation_pressure / setup_quality / flow_regime` が実際に残るかを spot check する。
   - `time_stop` close が `loss_cut_*` や earlier protective close へ置き換わるか、
     直近 6 時間の same-tag loser cluster で追う。
+
+## 2026-03-11 14:xx JST / local-v2: `RangeFader` の post-commit loser lane を strategy-local にさらに削る
+- Why/Hypothesis:
+  - `0cc16fd8` 反映後の UTC 窓を正しく `julianday(...)` で切ると、
+    `RangeFader` は `21 trades / -3.514 JPY / -5.6 pips / avg -0.27 pips`
+    まで改善していた。
+  - それでも loser は
+    `RangeFader|short|neutral-fade|range_fade|p0 = 7 trades / -7.7 pips` と
+    `RangeFader|long|buy-fade|range_fade|p0 = 3 trades / -3.6 pips`
+    に集約していた。
+  - いずれも huge loser ではなく、
+    `~180 sec` 前後で小さく切られる low-edge lane の積み上がりだった。
+  - `neutral-fade short p0` は entry quality が薄すぎるので block 寄りに、
+    `buy-fade long p0` は entry を全停止せず trade-local exit を早めれば、
+    current cadence を落としすぎずに expectancy を改善できる。
+- Expected Good:
+  - `neutral-fade short p0` の 0W-7L lane を entry 前に減らせる。
+  - `buy-fade long p0` は勝ちを小さく拾い、負けをより短くする方向へ寄る。
+  - `sell-fade short p0` の winner lane は維持しやすい。
+- Expected Bad:
+  - `neutral-fade short` を切りすぎると、薄いが有効な revert winner も減る可能性がある。
+  - `buy-fade long` の exit を早めすぎると、遅れて戻る winner を取り逃がす可能性がある。
+- Observed/Fact:
+  - `strategies/scalping/range_fader.py`
+    - `fragile_neutral_short_range_guard()` を追加した。
+    - `flow_regime=range_fade`, `continuation_pressure=0`, `range_score>=0.45`,
+      `gap_ratio>=0.35`, low momentum の `neutral-fade short` に対して、
+      lane-aware quality floor を満たせない setup を skip するようにした。
+  - `workers/scalp_rangefader/exit_worker.py`
+    - `buy-fade long` の `range_fade/p0` で
+      `setup_quality>=0.70` なら
+      `profit_take`, `soft_adverse`, `max_hold`, `trail_*`, `lock_buffer`
+      を tighter に再計算するようにした。
+  - テスト:
+    - `pytest -q tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_rangefader_worker.py`
+      -> `26 passed`
+- Verdict: pending
+- Next Action:
+  - 反映後に `RangeFader|short|neutral-fade|range_fade|p0` と
+    `RangeFader|long|buy-fade|range_fade|p0` の trades / avg_pips を
+    post-commit UTC 窓で再集計する。
+  - `sell-fade short p0` の winner lane が維持されているかも同時に監査する。

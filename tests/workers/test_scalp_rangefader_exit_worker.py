@@ -208,3 +208,31 @@ def test_supportive_setup_keeps_more_room_in_trade_local_thresholds():
     assert float(supportive["profit_take_pips"]) > 1.2
     assert float(supportive["loss_cut_hard_pips"]) > 2.8
     assert float(supportive["positive_max_hold_sec"]) > 600.0
+
+
+def test_buy_fade_range_setup_tightens_hold_and_profit_targets():
+    fade_long = range_exit_worker._trade_local_exit_thresholds(
+        side="long",
+        entry_thesis={
+            "strategy_tag": "RangeFader-buy-fade",
+            "flow_regime": "range_fade",
+            "setup_quality": 0.772,
+            "continuation_pressure": 0,
+            "setup_fingerprint": "RangeFader|long|buy-fade|range_fade|p0",
+        },
+        min_hold_sec=1.0,
+        range_active=True,
+        range_max_hold_sec=600.0,
+        loss_cut_soft_pips=1.8,
+        loss_cut_hard_pips=2.8,
+        loss_cut_max_hold_sec=180.0,
+        profit_take_pips=1.2,
+        trail_start_pips=1.7,
+        trail_backoff_pips=0.55,
+        lock_buffer_pips=0.25,
+    )
+
+    assert fade_long["setup_dynamicized"] is True
+    assert float(fade_long["profit_take_pips"]) < 1.2
+    assert float(fade_long["loss_cut_max_hold_sec"]) < 180.0
+    assert float(fade_long["positive_max_hold_sec"]) < 600.0

@@ -3139,3 +3139,20 @@
   `continuation_pressure / reversion_support / setup_quality / flow_regime`
   の top-level fields としても signal / `entry_thesis` に残し、
   downstream で欠損しても trade-local dynamic exit が再利用できるようにする。
+
+### 2026-03-11 `RangeFader` low-edge lane pruning
+- post-commit の正しい UTC 窓監査では、
+  `RangeFader` は `21 trades / -3.514 JPY / -5.6 pips` まで改善したが、
+  `RangeFader|short|neutral-fade|range_fade|p0` と
+  `RangeFader|long|buy-fade|range_fade|p0` が still loser lane として残った。
+- `strategies/scalping/range_fader.py` は
+  `neutral-fade short` で
+  `flow_regime=range_fade`, `continuation_pressure=0`,
+  `range_score>=0.45`, `gap_ratio>=0.35`, low momentum のとき、
+  lane-aware quality floor を上回れない shallow short を worker local で skip する。
+- `workers/scalp_rangefader/exit_worker.py` は
+  `buy-fade long` の `range_fade/p0` を fragile lane として扱い、
+  `setup_quality>=0.70` でも `profit_take`, `soft_adverse`, `max_hold`,
+  `trail_*`, `lock_buffer` を tighter に再計算する。
+- shared gate / shared time block / dedicated env の追加 tightening は行わず、
+  entry/exit の strategy-local dynamic rule だけで low-edge lane を減らす。

@@ -378,6 +378,30 @@ class RangeFader:
             return False
         return setup_quality <= SHALLOW_PROBE_QUALITY_MAX
 
+    @classmethod
+    def _fragile_neutral_short_range_guard(
+        cls,
+        *,
+        side: str,
+        flow_regime: str,
+        continuation_pressure: int,
+        setup_quality: float,
+        gap_ratio: Optional[float],
+        range_score: float,
+        atr_pips: float,
+        momentum_pips: float,
+    ) -> bool:
+        if side != "short":
+            return False
+        if flow_regime != "range_fade" or continuation_pressure != 0:
+            return False
+        if gap_ratio is None or gap_ratio < 0.35 or range_score < 0.45:
+            return False
+        if momentum_pips >= max(2.2, atr_pips * 1.05):
+            return False
+        quality_floor = 0.44 if gap_ratio < 0.40 else 0.46
+        return setup_quality < quality_floor
+
     @staticmethod
     def check(fac: Dict) -> Dict | None:
         close = fac.get("close")
@@ -815,6 +839,26 @@ class RangeFader:
             flow_regime=neutral_flow_regime,
             gap_ratio=neutral_gap_ratio,
         )
+        if RangeFader._fragile_neutral_short_range_guard(
+            side=neutral_side,
+            flow_regime=neutral_flow_regime,
+            continuation_pressure=neutral_flow_pressure,
+            setup_quality=neutral_setup_quality,
+            gap_ratio=neutral_gap_ratio,
+            range_score=RangeFader._float_attr(fac, "range_score", 0.0),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+        ):
+            RangeFader._log_skip(
+                "fragile_neutral_short_range",
+                setup_quality=round(neutral_setup_quality, 3),
+                continuation_pressure=neutral_flow_pressure,
+                flow_regime=neutral_flow_regime,
+                range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
+                gap_ratio=round(neutral_gap_ratio, 3) if neutral_gap_ratio is not None else None,
+                momentum_pips=round(momentum_pips, 3),
+            )
+            return None
         if RangeFader._thin_fade_setup(
             setup_quality=neutral_setup_quality,
             rsi=float(rsi),

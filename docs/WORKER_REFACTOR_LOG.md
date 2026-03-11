@@ -15878,3 +15878,39 @@
 - 検証:
   - `pytest -q tests/workers/test_scalp_wick_reversal_blend_* tests/workers/test_scalp_precision_wrapper_env.py`
     -> `29 passed`
+
+### 2026-03-11 14:xx JST - `RangeFader` の `neutral-fade short p0` と `buy-fade long p0` を lane-aware に削る
+- 対象:
+  - `strategies/scalping/range_fader.py`
+  - `workers/scalp_rangefader/exit_worker.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+  - `tests/workers/test_scalp_rangefader_exit_worker.py`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - `0cc16fd8` 反映後の正しい UTC 窓監査では
+    `RangeFader` は `21 trades / -3.514 JPY / -5.6 pips / avg -0.27 pips`
+    まで改善していた。
+  - ただし loser lane は
+    `RangeFader|short|neutral-fade|range_fade|p0 = 7 trades / -7.7 pips`
+    と
+    `RangeFader|long|buy-fade|range_fade|p0 = 3 trades / -3.6 pips`
+    に集約していた。
+  - どちらも `max_hold_loss` / `small MARKET_ORDER_TRADE_CLOSE` の連打で、
+    huge miss ではなく low-edge lane の積み上がりだった。
+
+- 変更:
+  - `range_fader.py`
+    - `neutral-fade short` の `range_fade/p0` で
+      `range_score`, `gap_ratio`, low momentum を見た
+      `fragile_neutral_short_range_guard()` を追加し、
+      lane-aware quality floor を満たさない shallow short を skip するようにした。
+  - `exit_worker.py`
+    - `buy-fade long` の `range_fade/p0` を fragile lane として扱い、
+      `profit_take`, `soft_adverse`, `max_hold`, `trail_*`, `lock_buffer`
+      を tighter に再計算するようにした。
+
+- 検証:
+  - `pytest -q tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_rangefader_exit_worker.py tests/workers/test_scalp_rangefader_worker.py`
+    -> `26 passed`

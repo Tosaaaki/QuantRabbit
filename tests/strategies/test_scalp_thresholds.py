@@ -293,3 +293,27 @@ def test_range_fader_blocks_thin_neutral_fade_setup() -> None:
     )
 
     assert signal is None
+
+
+def test_range_fader_blocks_fragile_neutral_short_range_lane() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 156.5079,
+            "ema20": 156.5000,
+            "ma10": 156.5079,
+            "ma20": 156.5000,
+            "rsi": 54.0,
+            "atr_pips": 1.63,
+            "vol_5m": 1.0,
+            "adx": 18.0,
+            "bbw": 0.18,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "range_score": 0.486,
+            "plus_di": 18.0,
+            "minus_di": 17.0,
+            "ema_slope_10": 0.0004,
+        }
+    )
+
+    assert signal is None

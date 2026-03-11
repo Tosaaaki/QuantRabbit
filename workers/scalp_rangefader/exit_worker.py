@@ -390,6 +390,22 @@ def _trade_local_exit_thresholds(
         0.68,
         1.12,
     )
+    fragile_buy_fade_long = (
+        side == "long"
+        and setup_mode == "fade"
+        and flow_regime == "range_fade"
+        and continuation_pressure <= 0.0
+        and quality >= 0.70
+    )
+    if fragile_buy_fade_long:
+        hold_mult = min(hold_mult, 0.72)
+        soft_hold_mult = min(soft_hold_mult, 0.44)
+        soft_adverse_mult = min(soft_adverse_mult, 0.84)
+        hard_adverse_mult = min(hard_adverse_mult, 0.90)
+        profit_take_mult = min(profit_take_mult, 0.88)
+        trail_start_mult = min(trail_start_mult, 0.86)
+        trail_backoff_mult = min(trail_backoff_mult, 0.82)
+        lock_buffer_mult = min(lock_buffer_mult, 0.84)
 
     positive_hold_base = range_max_hold_sec if range_active else max(min_hold_sec + 15.0, range_max_hold_sec * 0.65)
     return {
