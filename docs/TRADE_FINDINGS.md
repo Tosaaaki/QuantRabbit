@@ -51,6 +51,76 @@
 - Status:
 ```
 
+## 2026-03-11 21:15 JST / local-v2: `scalp_ping_5s_d_live` を countertrend lane reject + broker TP 前提へ修正
+
+- Change:
+  - `workers/scalp_ping_5s/worker.py` に
+    D variant 専用の `countertrend_horizon_m1_block` を追加し、
+    `horizon_composite_side != neutral` で horizon に逆らい、
+    さらに `m1_trend_gate == m1_opposite` の entry を
+    strategy-local に reject するようにした。
+  - `ops/env/scalp_ping_5s_d.env` と `ops/env/local-v2-stack.env` で
+    `SCALP_PING_5S_D_TP_ENABLED=1` を明示し、
+    `ping_d` が broker TP 付きで small-win を取りに行く形へ戻した。
+  - `tests/workers/test_scalp_ping_5s_extrema_routes.py` に
+    D variant countertrend guard の unit test を追加した。
+- Why:
+  - 2026-03-11 20:45 JST 前後の restart 後に、
+    資金を減らしていた immediate loser は `scalp_ping_5s_d_live` だった。
+  - user goal は「1円を積み上げる」型であり、
+    no-TP の countertrend momentum を維持する理由がない。
+- Hypothesis:
+  - D の current loser は
+    「non-neutral horizon に逆らい、M1 でも逆行している momentum entry」
+    に集中しているため、
+    その lane だけを worker 内で切れば cadence を大きく落とさずに
+    小さな損切りの連打を止められる。
+  - broker TP を有効化すれば、
+    exit worker 任せの no-TP hold より small-win capture が安定する。
+- Expected Good:
+  - `scalp_ping_5s_d_live` の `-2 JPY` 級 stop/close churn が減る。
+  - scalp_fast の small-win cadence が
+    「逆行を薄く打つ」より
+    「neutral / aligned setup を短く利確する」側へ寄る。
+- Expected Bad:
+  - trend window で D の fill 数が一時的に減る。
+  - TP が短すぎると一部の大きい winner を早取りし過ぎる。
+- Period:
+  - 2026-03-08 21:15 JST 〜 2026-03-11 21:15 JST
+  - post-restart immediate window: 2026-03-11 20:44 JST 以降
+- Fact:
+  - local snapshot: `USD/JPY 158.5345`, filled spread は `0.8 pips`,
+    filled thesis ATR は概ね `1.77-2.05 pips`,
+    `nav=35429.58`, `free_margin_ratio≈0.987`。
+  - `scalp_ping_5s_d_live` の post-restart 実績は
+    `5 trades / -8.48 JPY / avg -2.22 pips / avg hold 13.2s / avg TP 0.0 pips`。
+  - 同 strategy の直近3日で
+    `horizon_composite_side != neutral` かつ `m1_trend_gate=m1_opposite`
+    は `10 trades / -22.0 JPY / positive trades 0` だった。
+- Failure Cause:
+  - D worker が
+    「horizon に逆らい、M1 trend でも逆行」の momentum lane を
+    縮小だけで通しており、
+    no-TP のまま small stop を繰り返していた。
+- Improvement:
+  - shared gate ではなく D worker 内で countertrend lane を reject し、
+    D runtime 自体も broker TP を持つ前提へ戻した。
+- Verification:
+  - `pytest -q tests/workers/test_scalp_ping_5s_extrema_routes.py`
+  - restart 後に `orders.db` / `trades.db` で
+    `scalp_ping_5s_d_live` の `countertrend_horizon_m1_block` skip と
+    `tp_pips > 0` の fill を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - 次の 30-60 分で `scalp_ping_5s_d_live` の
+    `filled / realized_jpy / avg_hold_sec / tp_pips / horizon_composite_side`
+    を再集計する。
+  - なお negative が残る場合は
+    `horizon_neutral + m1_opposite` lane も setup-local に切る。
+- Status:
+  - done
+
 ## 2026-03-11 18:32 JST / local-v2: `PrecisionLowVol` short hostile lane を strong reversal probe 条件つきへ調整
 
 - Change:

@@ -3105,6 +3105,33 @@ def _m1_trend_units_multiplier(
     return 1.0 + (align_boost_max * ratio), "m1_align_boost"
 
 
+def _countertrend_horizon_m1_block_reason(
+    signal: TickSignal,
+    horizon: Optional[HorizonBias],
+    *,
+    m1_trend_gate: str,
+    m1_score: Optional[float],
+) -> Optional[str]:
+    if not config.D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED:
+        return None
+    if signal.side not in {"long", "short"} or horizon is None:
+        return None
+    horizon_side = str(getattr(horizon, "composite_side", "") or "").strip().lower()
+    if horizon_side not in {"long", "short"}:
+        return None
+    if signal.side == horizon_side or str(m1_trend_gate or "").strip().lower() != "m1_opposite":
+        return None
+    m1_score_abs = abs(_safe_float(m1_score, 0.0))
+    if m1_score_abs < config.D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN:
+        return None
+    return (
+        f"env={config.ENV_PREFIX} side={signal.side} hz={horizon_side} "
+        f"hz_score={_safe_float(getattr(horizon, 'composite_score', 0.0), 0.0):.3f} "
+        f"agree={int(_safe_float(getattr(horizon, 'agreement', 0.0), 0.0))} "
+        f"m1={m1_score_abs:.3f}"
+    )
+
+
 def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
     if not config.SIDE_BIAS_ENABLED:
         return 1.0, {"enabled": 0.0}
@@ -6816,6 +6843,19 @@ async def scalp_ping_5s_worker() -> None:
                         side_filter_routing,
                     )
                     last_bias_log_mono = now_mono
+            countertrend_horizon_m1_block_reason = _countertrend_horizon_m1_block_reason(
+                signal,
+                horizon,
+                m1_trend_gate=m1_trend_gate,
+                m1_score=m1_score,
+            )
+            if countertrend_horizon_m1_block_reason:
+                _note_entry_skip(
+                    "countertrend_horizon_m1_block",
+                    countertrend_horizon_m1_block_reason,
+                    side=signal.side,
+                )
+                continue
             signal_mode_blocked, signal_mode_block_token = _is_signal_mode_blocked(signal.mode)
             if signal_mode_blocked:
                 _note_entry_skip(

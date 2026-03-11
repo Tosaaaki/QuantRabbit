@@ -8,6 +8,34 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_ping_5s_d_live` countertrend guard + broker TP（2026-03-11）
+- 背景:
+  - 2026-03-11 20:45 JST 前後の local-v2 実測では、
+    `scalp_ping_5s_d_live` が post-restart immediate loser で、
+    `5 trades / -8.48 JPY / avg -2.22 pips / avg TP 0.0 pips` だった。
+  - 直近3日集計でも
+    `horizon_composite_side != neutral` かつ `m1_trend_gate = m1_opposite`
+    は `10 trades / -22.0 JPY / positive trades 0` で、
+    loser lane が setup-local に特定できていた。
+- 実装:
+  - `workers/scalp_ping_5s/config.py`
+    - D variant 専用 `D_COUNTERTREND_HORIZON_M1_BLOCK_*` を追加した。
+  - `workers/scalp_ping_5s/worker.py`
+    - `horizon` に逆らい、
+      かつ `m1_trend_gate == m1_opposite` の D entry を
+      `countertrend_horizon_m1_block` として reject する。
+  - `ops/env/scalp_ping_5s_d.env`
+    - `SCALP_PING_5S_D_TP_ENABLED=1` を現行運用値とし、
+      D の small-win capture を broker TP でも取る。
+  - `tests/workers/test_scalp_ping_5s_extrema_routes.py`
+    - D countertrend guard の block / neutral pass を固定した。
+- 意図:
+  - `scalp_ping_5s_d_live` は
+    「non-neutral horizon に逆らう momentum」を shared layer で後処理するのではなく、
+    worker 内の lane-local guard で前段 reject する。
+  - 同時に no-TP hold を避け、
+    small-win 目標に合う broker TP を strategy-local に持つ。
+
 ### local-v2 `PrecisionLowVol` hostile short guard follow-up（2026-03-11）
 - 背景:
   - user goal は「止める」ではなく participation を維持した改善であり、

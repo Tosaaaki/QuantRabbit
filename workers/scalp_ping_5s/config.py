@@ -1263,6 +1263,22 @@ M1_TREND_ALIGN_BOOST_MAX_HIGH_VOL: float = max(
         ),
     ),
 )
+D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_D" else False,
+)
+D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN",
+                str(M1_TREND_OPPOSITE_SCORE),
+            )
+        ),
+    ),
+)
 
 EXTREMA_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_EXTREMA_GATE_ENABLED", True)
 EXTREMA_FAIL_OPEN: bool = _bool_env("SCALP_PING_5S_EXTREMA_FAIL_OPEN", True)

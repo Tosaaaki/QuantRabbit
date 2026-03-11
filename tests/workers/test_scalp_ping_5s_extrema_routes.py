@@ -187,3 +187,83 @@ def test_extrema_gate_uses_tighter_short_soft_mult_in_balanced_regime(monkeypatc
     assert decision.allow_entry is True
     assert decision.reason == "short_bottom_soft_balanced"
     assert decision.units_mult == 0.30
+
+
+def test_countertrend_horizon_m1_block_hits_d_variant(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN",
+        0.28,
+        raising=False,
+    )
+
+    signal = _sample_signal("short")
+    horizon = scalp_worker.HorizonBias(
+        long_side="long",
+        long_score=0.74,
+        mid_side="long",
+        mid_score=0.65,
+        short_side="long",
+        short_score=0.58,
+        micro_side="long",
+        micro_score=0.52,
+        composite_side="long",
+        composite_score=0.66,
+        agreement=3,
+    )
+
+    reason = scalp_worker._countertrend_horizon_m1_block_reason(
+        signal,
+        horizon,
+        m1_trend_gate="m1_opposite",
+        m1_score=0.96,
+    )
+
+    assert reason is not None
+    assert "side=short" in reason
+    assert "hz=long" in reason
+
+
+def test_countertrend_horizon_m1_block_skips_neutral_horizon(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN",
+        0.28,
+        raising=False,
+    )
+
+    signal = _sample_signal("short")
+    neutral_horizon = scalp_worker.HorizonBias(
+        long_side="neutral",
+        long_score=0.12,
+        mid_side="neutral",
+        mid_score=0.08,
+        short_side="neutral",
+        short_score=0.11,
+        micro_side="neutral",
+        micro_score=0.09,
+        composite_side="neutral",
+        composite_score=0.11,
+        agreement=0,
+    )
+
+    reason = scalp_worker._countertrend_horizon_m1_block_reason(
+        signal,
+        neutral_horizon,
+        m1_trend_gate="m1_opposite",
+        m1_score=0.96,
+    )
+
+    assert reason is None

@@ -5,6 +5,29 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）`scalp_ping_5s_d_live` を countertrend reject + broker TP へ修正
+
+- 対象:
+  - `workers/scalp_ping_5s/config.py`
+  - `workers/scalp_ping_5s/worker.py`
+  - `ops/env/scalp_ping_5s_d.env`
+  - `ops/env/local-v2-stack.env`
+  - `tests/workers/test_scalp_ping_5s_extrema_routes.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - D variant だけに効く `countertrend_horizon_m1_block` を追加し、
+    `horizon_composite_side != neutral` で horizon に逆らい、
+    さらに `m1_trend_gate == m1_opposite` の momentum entry を
+    worker 内で reject するようにした。
+  - `SCALP_PING_5S_D_TP_ENABLED=1` を現行運用値として明示し、
+    D の small-win は exit worker のみへ依存せず broker TP も使う前提に戻した。
+- 意図:
+  - restart 後の immediate loser だった `scalp_ping_5s_d_live` を
+    shared gate で止めず、
+    D worker の lane-local quality guard と
+    strategy-local target capture で改善する。
+
 ### 2026-03-11（追記）`PrecisionLowVol` hostile short guard を participation 維持型へ follow-up
 
 - 対象:
