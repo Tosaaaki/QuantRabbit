@@ -421,6 +421,99 @@ def test_precision_lowvol_keeps_strong_reversal_probe_under_hostile_projection()
     assert signal["size_mult"] <= 1.02
 
 
+def test_precision_lowvol_prefers_short_up_lean_over_down_flat_lane() -> None:
+    namespace = _load_worker_functions(
+        "_unit_bound",
+        "_positive_norm",
+        "_plus_di",
+        "_minus_di",
+        "_reversion_short_flow_guard",
+        "_signal_precision_lowvol",
+    )
+    namespace.update(
+        {
+            "config": SimpleNamespace(
+                MAX_SPREAD_PIPS=2.0,
+                PREC_LOWVOL_RANGE_SCORE=0.18,
+                PREC_LOWVOL_ADX_MAX=24.0,
+                PREC_LOWVOL_BBW_MAX=0.0016,
+                PREC_LOWVOL_ATR_MIN=0.4,
+                PREC_LOWVOL_ATR_MAX=4.4,
+                PREC_LOWVOL_BB_TOUCH_PIPS=1.2,
+                PREC_LOWVOL_RSI_LONG_MAX=48.0,
+                PREC_LOWVOL_RSI_SHORT_MIN=52.0,
+                PREC_LOWVOL_STOCH_LONG_MAX=0.55,
+                PREC_LOWVOL_STOCH_SHORT_MIN=0.45,
+                PREC_LOWVOL_VWAP_GAP_MIN=0.08,
+                PREC_LOWVOL_VWAP_GAP_BLOCK=64.0,
+                PREC_LOWVOL_SPREAD_P25=1.0,
+                PREC_LOWVOL_REV_MIN_STRENGTH=0.18,
+            ),
+            "_latest_price": lambda _fac: 158.286,
+            "bb_levels": lambda _fac: (158.288, 158.272, 158.244, 0.044, 4.4),
+            "spread_ok": lambda **_kwargs: (True, {}),
+            "_adx": lambda fac: float(fac.get("adx") or 0.0),
+            "_bbw": lambda fac: float(fac.get("bbw") or 0.0),
+            "_atr_pips": lambda fac: float(fac.get("atr") or 0.0),
+            "_rsi": lambda fac: float(fac.get("rsi") or 50.0),
+            "_stoch_rsi": lambda fac: float(fac.get("stoch") or 0.0),
+            "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
+            "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
+            "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
+            "tick_snapshot": lambda *_args, **_kwargs: ([158.278, 158.284, 158.286], 6.0),
+            "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.88),
+            "_reversion_short_flow_guard": lambda **_kwargs: (
+                True,
+                {
+                    "continuation_pressure": 0.22,
+                    "max_pressure": 0.46,
+                    "setup_quality": 0.71,
+                    "reversion_support": 0.62,
+                },
+            ),
+            "projection_decision": lambda side, mode="range": (
+                side == "short",
+                1.06,
+                {"mode": mode, "score": 0.18},
+            ),
+        }
+    )
+
+    base_fac = {
+        "adx": 16.8,
+        "bbw": 0.00054,
+        "atr": 2.13,
+        "rsi": 60.7,
+        "stoch": 0.81,
+        "vgap": 2.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.43)
+
+    up_lean = namespace["_signal_precision_lowvol"](
+        {
+            **base_fac,
+            "ma10": 158.304,
+            "ma20": 158.298,
+        },
+        range_ctx,
+        tag="PrecisionLowVol",
+    )
+    down_flat = namespace["_signal_precision_lowvol"](
+        {
+            **base_fac,
+            "ma10": 158.294,
+            "ma20": 158.296,
+        },
+        range_ctx,
+        tag="PrecisionLowVol",
+    )
+
+    assert up_lean is not None
+    assert down_flat is not None
+    assert up_lean["confidence"] > down_flat["confidence"]
+    assert up_lean["size_mult"] > down_flat["size_mult"]
+
+
 def test_vwap_revert_short_blocks_gap_strong_hostile_projection_lane() -> None:
     namespace = _load_worker_functions(
         "_unit_bound",
@@ -492,3 +585,96 @@ def test_vwap_revert_short_blocks_gap_strong_hostile_projection_lane() -> None:
     signal = namespace["_signal_vwap_revert"](fac_m1, range_ctx, tag="VwapRevertS")
 
     assert signal is None
+
+
+def test_vwap_revert_prefers_short_up_lean_lane() -> None:
+    namespace = _load_worker_functions(
+        "_unit_bound",
+        "_positive_norm",
+        "_plus_di",
+        "_minus_di",
+        "_reversion_short_flow_guard",
+        "_signal_vwap_revert",
+    )
+    namespace.update(
+        {
+            "config": SimpleNamespace(MAX_SPREAD_PIPS=2.0),
+            "VWAP_REV_RANGE_SCORE": 0.40,
+            "VWAP_REV_SPREAD_P25": 0.9,
+            "VWAP_REV_ADX_MAX": 22.0,
+            "VWAP_REV_BBW_MAX": 0.0014,
+            "VWAP_REV_ATR_MIN": 0.7,
+            "VWAP_REV_ATR_MAX": 3.2,
+            "VWAP_REV_GAP_MIN": 1.2,
+            "VWAP_REV_BB_TOUCH_PIPS": 0.9,
+            "VWAP_REV_RSI_LONG_MAX": 46.0,
+            "VWAP_REV_RSI_SHORT_MIN": 54.0,
+            "VWAP_REV_STOCH_LONG_MAX": 0.2,
+            "VWAP_REV_STOCH_SHORT_MIN": 0.8,
+            "_latest_price": lambda _fac: 158.046,
+            "bb_levels": lambda _fac: (158.048, 158.020, 157.992, 0.056, 5.6),
+            "spread_ok": lambda **_kwargs: (True, {}),
+            "_adx": lambda fac: float(fac.get("adx") or 0.0),
+            "_bbw": lambda fac: float(fac.get("bbw") or 0.0),
+            "_atr_pips": lambda fac: float(fac.get("atr") or 0.0),
+            "_rsi": lambda fac: float(fac.get("rsi") or 50.0),
+            "_stoch_rsi": lambda fac: float(fac.get("stoch") or 0.0),
+            "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
+            "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
+            "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
+            "tick_snapshot": lambda *_args, **_kwargs: ([158.020, 158.034, 158.046], 6.0),
+            "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.86),
+            "_reversion_short_flow_guard": lambda **_kwargs: (
+                True,
+                {
+                    "continuation_pressure": 0.28,
+                    "max_pressure": 0.48,
+                    "setup_quality": 0.72,
+                    "reversion_support": 0.63,
+                },
+            ),
+            "projection_decision": lambda side, mode="range": (
+                side == "short",
+                1.04,
+                {"mode": mode, "score": 0.12},
+            ),
+        }
+    )
+
+    base_fac = {
+        "adx": 16.2,
+        "bbw": 0.00079,
+        "atr": 2.72,
+        "rsi": 56.2,
+        "stoch": 0.92,
+        "vgap": 8.4,
+        "ema20": 158.022,
+        "ema_slope_10": 0.0006,
+        "ema_slope_20": 0.0002,
+        "macd_hist": 0.0023,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.337)
+
+    up_lean = namespace["_signal_vwap_revert"](
+        {
+            **base_fac,
+            "ma10": 158.035,
+            "ma20": 158.028,
+        },
+        range_ctx,
+        tag="VwapRevertS",
+    )
+    down_flat = namespace["_signal_vwap_revert"](
+        {
+            **base_fac,
+            "ma10": 158.021,
+            "ma20": 158.023,
+        },
+        range_ctx,
+        tag="VwapRevertS",
+    )
+
+    assert up_lean is not None
+    assert down_flat is not None
+    assert up_lean["confidence"] > down_flat["confidence"]
+    assert up_lean["size_mult"] > down_flat["size_mult"]

@@ -183,6 +183,42 @@ def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp
     assert profile["setup_override"]["match_dimension"] == "flow_micro"
 
 
+def test_load_strategy_profile_skips_blanket_negative_trim_without_matching_setup_override(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "strategies": {
+            "VwapRevertS": {
+                "pocket": "scalp",
+                "score": 0.27,
+                "lot_multiplier": 0.14,
+                "trades": 18,
+            }
+        },
+    }
+    path = tmp_path / "dynamic_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    profile = load_strategy_profile(
+        "VwapRevertS",
+        "scalp",
+        path=path,
+        entry_thesis={
+            "setup_fingerprint": "VwapRevertS|short|range_fade|tight_fast|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+            "live_setup_context": {
+                "flow_regime": "range_fade",
+                "microstructure_bucket": "tight_fast",
+            },
+        },
+    )
+
+    assert profile["found"] is True
+    assert profile["lot_multiplier"] == 1.0
+    assert profile["strategy_lot_multiplier"] == 0.14
+    assert profile["setup_trim_skip_reason"] == "explicit_setup_without_override"
+    assert profile["setup_identity"]["flow_regime"] == "range_fade"
+
+
 def test_load_strategy_profile_returns_policy_default_when_unknown(tmp_path: Path) -> None:
     payload = {
         "allocation_policy": {

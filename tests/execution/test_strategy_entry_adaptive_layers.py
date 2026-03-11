@@ -456,6 +456,46 @@ def test_apply_dynamic_alloc_trim_passes_entry_thesis_for_setup_override(monkeyp
     assert thesis["dynamic_alloc"]["setup_override"]["match_dimension"] == "setup_fingerprint"
 
 
+def test_apply_dynamic_alloc_trim_skips_unmatched_setup_blanket_trim(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_strategy_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "strategy_key": "VwapRevertS",
+            "lot_multiplier": 1.0,
+            "strategy_lot_multiplier": 0.14,
+            "setup_trim_skip_reason": "explicit_setup_without_override",
+            "payload_stale": False,
+            "score": 0.27,
+            "trades": 18,
+        },
+        raising=False,
+    )
+
+    thesis = {
+        "setup_fingerprint": "VwapRevertS|short|range_fade|tight_fast|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+        "live_setup_context": {
+            "flow_regime": "range_fade",
+            "microstructure_bucket": "tight_fast",
+        },
+    }
+    units, reason = strategy_entry._apply_dynamic_alloc_trim(
+        strategy_tag="VwapRevertS",
+        pocket="scalp",
+        units=-120,
+        min_units=10,
+        entry_thesis=thesis,
+    )
+
+    assert units == -120
+    assert reason is None
+    assert "dynamic_alloc" not in thesis
+
+
 def test_inject_live_setup_context_records_flow_regime_and_fingerprint() -> None:
     thesis = {
         "strategy_tag": "RangeFader-sell-fade",

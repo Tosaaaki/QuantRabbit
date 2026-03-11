@@ -148,6 +148,69 @@ def test_drought_revert_requires_projection_gate() -> None:
     assert signal is None
 
 
+def test_drought_revert_blocks_falling_knife_long_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.66)
+    fac = {
+        "close": 158.012,
+        "upper": 158.094,
+        "lower": 158.006,
+        "span_pips": 8.8,
+        "adx": 21.0,
+        "bbw": 0.0009,
+        "atr_pips": 1.6,
+        "rsi": 46.5,
+        "ema20": 158.040,
+        "ma10": 158.022,
+        "ma20": 158.040,
+        "ema_slope_10": -0.020,
+        "ema_slope_20": -0.010,
+        "macd_hist": -0.25,
+        "vwap_gap": -2.1,
+        "plus_di": 16.0,
+        "minus_di": 24.0,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.42)
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is None
+
+
+def test_drought_revert_boosts_strong_reclaim_long_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.88)
+    fac = {
+        "close": 158.012,
+        "upper": 158.094,
+        "lower": 158.006,
+        "span_pips": 8.8,
+        "adx": 16.5,
+        "bbw": 0.0008,
+        "atr_pips": 1.6,
+        "rsi": 42.0,
+        "ema20": 158.024,
+        "ma10": 158.020,
+        "ma20": 158.028,
+        "ema_slope_10": -0.005,
+        "ema_slope_20": -0.003,
+        "macd_hist": -0.06,
+        "vwap_gap": -1.2,
+        "plus_di": 19.0,
+        "minus_di": 22.0,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.46)
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["tp_pips"] >= 1.4
+    assert signal["size_mult"] >= 0.95
+
+
 def test_precision_lowvol_disables_vgap_bonus_when_flow_guard_is_marginal() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]

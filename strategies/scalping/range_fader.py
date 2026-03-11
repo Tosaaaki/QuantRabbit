@@ -34,6 +34,9 @@ SHALLOW_PROBE_MOMENTUM_ATR_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_MOME
 SHALLOW_PROBE_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_PIPS_CAP", "1.8"))
 SHALLOW_PROBE_BUY_RSI_DIST_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_BUY_RSI_DIST_MAX", "3.5"))
 SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX", "6.5"))
+FRAGILE_SELL_TRANSITION_QUALITY_MAX = float(os.getenv("RANGE_FADER_FRAGILE_SELL_TRANSITION_QUALITY_MAX", "0.58"))
+FRAGILE_SELL_RANGE_P1_QUALITY_MAX = float(os.getenv("RANGE_FADER_FRAGILE_SELL_RANGE_P1_QUALITY_MAX", "0.60"))
+FRAGILE_NEUTRAL_LONG_QUALITY_MAX = float(os.getenv("RANGE_FADER_FRAGILE_NEUTRAL_LONG_QUALITY_MAX", "0.50"))
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -391,16 +394,63 @@ class RangeFader:
         atr_pips: float,
         momentum_pips: float,
     ) -> bool:
-        if side != "short":
+        if side == "short":
+            if flow_regime != "range_fade" or continuation_pressure != 0:
+                return False
+            if gap_ratio is None or gap_ratio < 0.35 or range_score < 0.45:
+                return False
+            if momentum_pips >= max(2.2, atr_pips * 1.05):
+                return False
+            quality_floor = 0.44 if gap_ratio < 0.40 else 0.46
+            return setup_quality < quality_floor
+        if side != "long":
             return False
         if flow_regime != "range_fade" or continuation_pressure != 0:
             return False
-        if gap_ratio is None or gap_ratio < 0.35 or range_score < 0.45:
+        if range_score < 0.44:
             return False
-        if momentum_pips >= max(2.2, atr_pips * 1.05):
+        if gap_ratio is not None and gap_ratio >= 0.32:
             return False
-        quality_floor = 0.44 if gap_ratio < 0.40 else 0.46
-        return setup_quality < quality_floor
+        if momentum_pips >= max(2.0, atr_pips * 0.95):
+            return False
+        return setup_quality < FRAGILE_NEUTRAL_LONG_QUALITY_MAX
+
+    @classmethod
+    def _fragile_sell_fade_short_guard(
+        cls,
+        *,
+        flow_regime: str,
+        continuation_pressure: int,
+        setup_quality: float,
+        gap_ratio: Optional[float],
+        range_score: float,
+        atr_pips: float,
+        momentum_pips: float,
+        rsi: float,
+        gate: float,
+    ) -> bool:
+        rsi_distance = max(0.0, float(rsi) - float(gate))
+        if rsi_distance >= max(12.0, atr_pips * 3.0):
+            return False
+        if flow_regime == "transition":
+            if continuation_pressure > 1:
+                return False
+            if gap_ratio is not None and gap_ratio >= 0.70 and momentum_pips >= max(2.8, atr_pips * 1.15):
+                return False
+            return (
+                setup_quality < FRAGILE_SELL_TRANSITION_QUALITY_MAX
+                and momentum_pips < max(2.6, atr_pips * 1.15)
+            )
+        if flow_regime == "range_fade" and continuation_pressure == 1:
+            if range_score < 0.28:
+                return False
+            if gap_ratio is not None and gap_ratio >= 0.52 and momentum_pips >= max(2.8, atr_pips * 1.10):
+                return False
+            return (
+                setup_quality < FRAGILE_SELL_RANGE_P1_QUALITY_MAX
+                and momentum_pips < max(2.6, atr_pips * 1.08)
+            )
+        return False
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -749,6 +799,27 @@ class RangeFader:
                 continuation_pressure=short_flow_pressure,
                 flow_regime=short_flow_regime,
             )
+            if RangeFader._fragile_sell_fade_short_guard(
+                flow_regime=short_flow_regime,
+                continuation_pressure=short_flow_pressure,
+                setup_quality=short_setup_quality,
+                gap_ratio=short_gap_ratio,
+                range_score=RangeFader._float_attr(fac, "range_score", 0.0),
+                atr_pips=atr_pips,
+                momentum_pips=momentum_pips,
+                rsi=float(rsi),
+                gate=float(short_gate),
+            ):
+                RangeFader._log_skip(
+                    "fragile_sell_fade_short",
+                    setup_quality=round(short_setup_quality, 3),
+                    continuation_pressure=short_flow_pressure,
+                    flow_regime=short_flow_regime,
+                    range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
+                    gap_ratio=round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
+                    momentum_pips=round(momentum_pips, 3),
+                )
+                return None
             if high_atr_profile:
                 sl = max(3.0, min(6.5, atr_pips * 0.95))
                 tp = max(sl * 1.25, min(8.5, atr_pips * 1.35))
@@ -850,7 +921,7 @@ class RangeFader:
             momentum_pips=momentum_pips,
         ):
             RangeFader._log_skip(
-                "fragile_neutral_short_range",
+                "fragile_neutral_range",
                 setup_quality=round(neutral_setup_quality, 3),
                 continuation_pressure=neutral_flow_pressure,
                 flow_regime=neutral_flow_regime,

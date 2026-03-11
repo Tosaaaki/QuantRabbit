@@ -16007,3 +16007,46 @@
 
 - 検証:
   - docs only（runtime / test 実行なし）
+
+### 2026-03-11 20:42 JST - setup-scoped dynamic_alloc 復帰と precision winner lane 強化
+- 対象:
+  - `workers/common/dynamic_alloc.py`
+  - `execution/strategy_entry.py`
+  - `strategies/scalping/range_fader.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-drought-revert.env`
+  - `ops/env/quant-scalp-precision-lowvol.env`
+  - `ops/env/quant-scalp-vwap-revert.env`
+  - `tests/workers/common/test_dynamic_alloc.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+
+- 背景:
+  - live RCA では `RangeFader short sell-fade` の `transition` / `range_fade|p1` と
+    `neutral-fade long range_fade|p0` が churn source になっていた。
+  - `PrecisionLowVol` / `VwapRevertS` は winner setup がある一方で、
+    top-level `dynamic_alloc` trim が setup override 無しでも strategy-wide に効いていた。
+  - precision dedicated env は `*_UNIT_BASE_UNITS` / `*_UNIT_CAP_MAX` しか持たず、
+    runtime が参照する `*_BASE_UNITS` / `*_CAP_MAX` が欠けていた。
+
+- 変更:
+  - `dynamic_alloc.load_strategy_profile()` は
+    live setup identity があるのに matching `setup_override` が無い場合、
+    top-level negative `lot_multiplier` を runtime no-op に戻すようにした。
+  - `RangeFader` は
+    `sell-fade short` の fragile `transition` / `range_fade|p1` と
+    `neutral-fade long range_fade|p0` を entry 前に skip する guard を追加した。
+  - `DroughtRevert` は long side の falling-knife guard を追加し、
+    strong reclaim lane の `tp_pips` / `confidence` / `size_mult` を引き上げた。
+  - `PrecisionLowVol` / `VwapRevertS` は
+    `ma10-ma20` から `gap:up_lean` winner lane を優遇し、
+    `gap:down_flat` weak short lane を penalty / block するようにした。
+  - precision dedicated env へ
+    `SCALP_PRECISION_*_BASE_UNITS` / `SCALP_PRECISION_*_CAP_MAX`
+    を追加し、実際に runtime sizing へ載るようにした。
+
+- 検証:
+  - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    -> `55 passed`

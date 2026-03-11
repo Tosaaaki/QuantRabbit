@@ -14011,3 +14011,64 @@ Status:
   - 次回の env / code change では
     `ops/env/local-v2-stack.env` と `ops/env/quant-order-manager.env` の実値が
     この方針と一致しているかを先に spot check してから RCA を進める。
+
+## 2026-03-11 20:42 JST / local-v2: setup-scoped trim へ戻しつつ precision winner lane を攻める
+- Why/Hypothesis:
+  - 直近 60 分の `orders.db` では `scalp` pocket が `RangeFader short sell-fade` の churn に支配されており、
+    `RangeFader|short|sell-fade|range_fade|p1` と `transition` lane が大量 preflight を消費していた。
+  - 一方で `PrecisionLowVol` と `VwapRevertS` は current winner lane があるのに、
+    `config/dynamic_alloc.json` の top-level `lot_multiplier` が
+    setup override 無しで strategy-wide に効き、`0.14-0.24x` まで blanket trim されていた。
+  - `DroughtRevert` は recent winner だが、専用 env の `*_UNIT_BASE_UNITS` / `*_UNIT_CAP_MAX` が
+    runtime key と一致しておらず sizing が実質 default のまま、さらに long side は falling-knife guard が弱かった。
+  - shared で広く止めるより、`dynamic_alloc` を setup-scoped に戻しつつ、
+    `RangeFader` / `WickReversalBlend` の loser lane を strategy-local に締め、
+    `DroughtRevert` / `PrecisionLowVol` / `VwapRevertS` の winner lane だけを厚くする方が current 方針に合う。
+- Expected Good:
+  - `PrecisionLowVol` / `VwapRevertS` は live setup に一致する override が無い限り
+    blanket trim されず、winner lane の participation が戻る。
+  - `RangeFader` の `transition` と `range_fade/p1` short fade、
+    および `neutral-fade long range_fade/p0` の churn を entry 前に削れる。
+  - `DroughtRevert` の strong reclaim long は
+    stronger TP / size floor と正しい dedicated base units が効き、
+    30 分窓の realized JPY を押し上げやすくなる。
+- Expected Bad:
+  - `dynamic_alloc` の trim を戻し過ぎると、
+    `PrecisionLowVol` / `VwapRevertS` の non-winner lane まで participation が戻るリスクがある。
+  - dedicated base units を 1.7-2.4x へ上げたため、
+    short-term drawdown と margin pressure は悪化しうる。
+- Observed/Fact:
+  - `workers/common/dynamic_alloc.py`
+    - live setup identity があるのに matching `setup_override` が無い場合、
+      top-level negative `lot_multiplier` を runtime no-op に戻すようにした。
+  - `execution/strategy_entry.py`
+    - unmatched setup では `dynamic_alloc` trim が適用されず、
+      `entry_thesis["dynamic_alloc"]` も汚さないことをテストで固定した。
+  - `strategies/scalping/range_fader.py`
+    - `sell-fade short` の fragile `transition` / `range_fade|p1` lane と
+      `neutral-fade long range_fade|p0` lane を strategy-local guard で block するようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `DroughtRevert` の long side に falling-knife guard を追加し、
+      strong reclaim lane は TP / confidence / size floor を引き上げた。
+    - `PrecisionLowVol` / `VwapRevertS` は `ma10-ma20` 由来の `gap:up_lean` winner lane を優遇し、
+      `gap:down_flat` の weak short lane は penalty/block するようにした。
+  - `ops/env/quant-scalp-drought-revert.env`
+    - `SCALP_PRECISION_DROUGHT_REVERT_BASE_UNITS=22000`
+    - `SCALP_PRECISION_DROUGHT_REVERT_CAP_MAX=1.08`
+  - `ops/env/quant-scalp-precision-lowvol.env`
+    - `SCALP_PRECISION_LOWVOL_BASE_UNITS=15000`
+    - `SCALP_PRECISION_LOWVOL_CAP_MAX=0.98`
+  - `ops/env/quant-scalp-vwap-revert.env`
+    - `SCALP_PRECISION_VWAP_REVERT_BASE_UNITS=18000`
+    - `SCALP_PRECISION_VWAP_REVERT_CAP_MAX=1.00`
+  - テスト:
+    - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+      -> `55 passed`
+- Verdict: pending
+- Next Action:
+  - restart 後 30-60 分で
+    `DroughtRevert`, `PrecisionLowVol`, `VwapRevertS`, `RangeFader`
+    の `submit_attempt / filled / realized_jpy / avg_pips / setup_fingerprint`
+    を再集計し、winner lane の厚みと loser lane の遮断が両立しているか確認する。
+  - `PrecisionLowVol` / `VwapRevertS` の recent `request_json.entry_thesis.dynamic_alloc`
+    が blank になり、shared top-level trim が消えていることを spot check する。

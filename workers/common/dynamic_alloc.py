@@ -319,6 +319,13 @@ def load_strategy_profile(
             profile.update(setup_override)
             if isinstance(setup_meta, dict):
                 profile["setup_override"] = setup_meta
+        else:
+            setup_context = extract_setup_identity(entry_thesis)
+            if setup_context and mult < 1.0:
+                profile["strategy_lot_multiplier"] = round(mult, 4)
+                profile["lot_multiplier"] = 1.0
+                profile["setup_trim_skip_reason"] = "explicit_setup_without_override"
+                profile["setup_identity"] = dict(setup_context)
         return profile
     if policy_soft_participation and policy_min_mult > 0.0:
         if payload_meta["payload_stale"]:

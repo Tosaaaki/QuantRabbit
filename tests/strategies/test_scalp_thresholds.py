@@ -179,6 +179,54 @@ def test_range_fader_short_headwind_blocks_weak_short_fade() -> None:
     assert signal is None
 
 
+def test_range_fader_blocks_fragile_transition_short_sell_fade() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.93,
+            "ema20": 157.915,
+            "ma10": 157.929,
+            "ma20": 157.918,
+            "rsi": 56.4,
+            "atr_pips": 2.4,
+            "vol_5m": 1.08,
+            "adx": 20.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 22.0,
+            "minus_di": 18.0,
+            "ema_slope_10": 0.0008,
+            "range_score": 0.20,
+        }
+    )
+
+    assert signal is None
+
+
+def test_range_fader_blocks_fragile_range_p1_short_sell_fade() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.94,
+            "ema20": 157.92,
+            "ma10": 157.937,
+            "ma20": 157.923,
+            "rsi": 56.1,
+            "atr_pips": 2.4,
+            "vol_5m": 1.05,
+            "adx": 25.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 22.0,
+            "minus_di": 18.0,
+            "ema_slope_10": 0.0010,
+            "range_score": 0.31,
+        }
+    )
+
+    assert signal is None
+
+
 def test_range_fader_extreme_short_stretch_still_allows_short_fade() -> None:
     signal = RangeFader.check(
         {
@@ -214,6 +262,30 @@ def test_range_fader_extreme_short_stretch_still_allows_short_fade() -> None:
     assert 0.0 <= float(signal["setup_quality"]) <= 1.0
     assert 0.55 <= float(signal["setup_size_mult"]) <= 1.10
     assert signal["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+
+
+def test_range_fader_blocks_fragile_neutral_long_range_probe() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 157.89,
+            "ema20": 157.902,
+            "ma10": 157.894,
+            "ma20": 157.899,
+            "rsi": 49.4,
+            "atr_pips": 2.2,
+            "vol_5m": 1.04,
+            "adx": 19.0,
+            "bbw": 0.20,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "plus_di": 18.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.0004,
+            "range_score": 0.48,
+        }
+    )
+
+    assert signal is None
 
 
 def test_range_fader_long_headwind_blocks_weak_long_fade() -> None:

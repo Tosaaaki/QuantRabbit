@@ -1070,6 +1070,8 @@ def _signal_drought_revert(
     if not side or rev_dir != side:
         return None
 
+    dist = dist_lower if side == "long" else dist_upper
+    touch_ratio = max(0.0, (band - dist) / max(0.2, band))
     flow_guard = None
     if side == "short":
         short_ok, flow_guard = _reversion_short_flow_guard(
@@ -1083,23 +1085,84 @@ def _signal_drought_revert(
         )
         if not short_ok:
             return None
+    else:
+        ma_fast = fac_m1.get("ma10")
+        if ma_fast is None:
+            ma_fast = fac_m1.get("ema20")
+        ma_slow = fac_m1.get("ma20")
+        if ma_slow is None:
+            ma_slow = fac_m1.get("ema24")
+        if ma_slow is None:
+            ma_slow = fac_m1.get("vwap")
+        try:
+            ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else 0.0
+        except Exception:
+            ma_gap_pips = 0.0
+        ema20 = fac_m1.get("ema20")
+        try:
+            price_vs_ema_pips = ((float(ema20) - price) / PIP) if ema20 is not None else 0.0
+        except Exception:
+            price_vs_ema_pips = 0.0
+        trend_pressure = _unit_bound(
+            0.34 * _positive_norm(-ma_gap_pips, max(0.8, atr * 0.55))
+            + 0.18 * _positive_norm(_minus_di(fac_m1) - _plus_di(fac_m1), 8.0)
+            + 0.14 * _positive_norm(adx - 14.0, 10.0)
+            + 0.12 * _positive_norm(price_vs_ema_pips, max(0.6, band * 0.55))
+            + 0.12 * _positive_norm(-_ema_slope_pips(fac_m1, "ema_slope_10"), 0.14)
+            + 0.10 * _positive_norm(-_ema_slope_pips(fac_m1, "ema_slope_20"), 0.10)
+        )
+        reversion_support_score = _unit_bound(
+            0.34 * touch_ratio
+            + 0.32 * _unit_bound((float(config.DROUGHT_RSI_LONG_MAX) - rsi + 8.0) / 18.0)
+            + 0.24 * _unit_bound((rev_strength - 0.20) / 0.70)
+            + 0.10 * _unit_bound((range_score - 0.18) / 0.32)
+        )
+        setup_quality = _unit_bound(0.24 + reversion_support_score * 0.62 - trend_pressure * 0.72)
+        max_pressure = _unit_bound(
+            0.34 + reversion_support_score * 0.30 + max(0.0, setup_quality - 0.58) * 0.10
+        )
+        strong_reclaim_probe = (
+            rev_strength >= 0.78
+            and touch_ratio >= 0.42
+            and setup_quality >= 0.44
+        )
+        flow_guard = {
+            "profile": tag,
+            "continuation_pressure": round(trend_pressure, 3),
+            "reversion_support": round(reversion_support_score, 3),
+            "setup_quality": round(setup_quality, 3),
+            "max_pressure": round(max_pressure, 3),
+            "touch_ratio": round(touch_ratio, 3),
+            "ma_gap_pips": round(ma_gap_pips, 3),
+            "price_gap_pips": round(price_vs_ema_pips, 3),
+            "di_gap": round(_minus_di(fac_m1) - _plus_di(fac_m1), 3),
+            "adx": round(adx, 3),
+        }
+        if trend_pressure > max_pressure and not strong_reclaim_probe:
+            return None
 
     proj_allow, proj_size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
         return None
 
-    sl = max(1.0, min(1.7, atr * 0.75))
-    tp = max(0.9, min(1.7, atr * 0.9))
-    conf = 52
+    sl = max(0.95, min(1.6, atr * 0.72))
+    tp = max(1.2, min(2.2, atr * (0.98 + min(0.18, rev_strength * 0.15) + (0.08 if side == "long" else 0.02))))
+    conf = 54
     conf += int(min(10, abs(rsi - 50.0) * 0.5))
     conf += int(min(8, rev_strength * 4.0))
+    conf += int(min(5, touch_ratio * 6.0))
     conf -= int(min(6, max(0.0, adx - 20.0) * 0.4))
     if flow_guard is not None:
-        conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
-    size_mult = 0.9
-    size_mult = max(0.76, min(0.96, size_mult * float(proj_size_mult)))
+        conf -= int(min(7.0, max(0.0, 0.64 - float(flow_guard["setup_quality"])) * 18.0))
+    size_mult = 0.96 + min(0.08, touch_ratio * 0.12) + min(0.06, max(0.0, rev_strength - 0.55) * 0.16)
+    size_mult = max(0.82, min(1.18, size_mult * float(proj_size_mult)))
     if flow_guard is not None:
-        size_mult = max(0.76, min(0.9, size_mult * (0.86 + float(flow_guard["setup_quality"]) * 0.14)))
+        size_mult = max(
+            0.82,
+            min(1.10, min(size_mult, float(proj_size_mult) * (0.88 + float(flow_guard["setup_quality"]) * 0.18))),
+        )
+        if side == "long" and rev_strength >= 0.82 and touch_ratio >= 0.42:
+            size_mult = max(size_mult, 0.96)
 
     signal = {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
@@ -1208,6 +1271,33 @@ def _signal_precision_lowvol(
     proj_size_mult = float(size_mult)
     projection_score = None
     hostile_projection_lane = False
+    ma_fast = fac_m1.get("ma10")
+    if ma_fast is None:
+        ma_fast = fac_m1.get("ema20")
+    ma_slow = fac_m1.get("ma20")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema24")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema20")
+    try:
+        ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else None
+    except Exception:
+        ma_gap_pips = None
+    ma_gap_atr_ratio = abs(ma_gap_pips) / max(1.0, atr) if ma_gap_pips is not None else None
+    short_up_lean = bool(
+        side == "short"
+        and ma_gap_pips is not None
+        and ma_gap_pips > 0.0
+        and ma_gap_atr_ratio is not None
+        and 0.30 <= ma_gap_atr_ratio < 0.90
+    )
+    short_down_flat = bool(
+        side == "short"
+        and ma_gap_pips is not None
+        and ma_gap_pips < 0.0
+        and ma_gap_atr_ratio is not None
+        and ma_gap_atr_ratio < 0.35
+    )
     if isinstance(proj_detail, dict):
         try:
             raw_projection_score = proj_detail.get("score")
@@ -1215,6 +1305,8 @@ def _signal_precision_lowvol(
                 projection_score = float(raw_projection_score)
         except Exception:
             projection_score = None
+    dist = dist_lower if side == "long" else dist_upper
+    touch_ratio = max(0.0, (band - dist) / max(0.2, band))
     if side == "short" and flow_guard is not None and projection_score is not None:
         gap_atr_ratio = abs(vgap) / max(1.0, atr)
         setup_quality = float(flow_guard.get("setup_quality") or 0.0)
@@ -1225,8 +1317,17 @@ def _signal_precision_lowvol(
             and rsi < max(config.PREC_LOWVOL_RSI_SHORT_MIN + 10.0, 60.0)
         )
 
-    dist = dist_lower if side == "long" else dist_upper
-    touch_ratio = max(0.0, (band - dist) / max(0.2, band))
+    weak_down_flat_lane = False
+    if side == "short" and short_down_flat:
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0) if flow_guard is not None else 0.0
+        weak_down_flat_lane = (
+            rev_strength < 0.78
+            and touch_ratio < 0.62
+            and setup_quality < 0.58
+            and (projection_score is None or projection_score < 0.18)
+        )
+    if weak_down_flat_lane:
+        return None
     if hostile_projection_lane:
         strong_reversal_probe = (
             rev_strength >= max(config.PREC_LOWVOL_REV_MIN_STRENGTH + 0.46, 0.82)
@@ -1244,12 +1345,16 @@ def _signal_precision_lowvol(
     conf += int(min(4, range_score * 4.0))
     if vgap_bias_ok:
         conf += 3
+    if short_up_lean:
+        conf += 4
     if range_ctx and getattr(range_ctx, "active", False):
         conf += 2
     if flow_guard is not None:
         conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
     if hostile_projection_lane:
         conf -= 4
+    if short_down_flat:
+        conf -= 5
 
     size_boost = 0.0
     if vgap_bias_ok:
@@ -1258,6 +1363,11 @@ def _signal_precision_lowvol(
         size_boost += 0.06
     if rev_strength >= 0.75:
         size_boost += 0.06
+    if short_up_lean:
+        size_boost += 0.10
+        tp = max(tp, min(2.2, atr * 1.05))
+    if short_down_flat:
+        size_boost -= 0.08
     size_cap = 1.35 if rev_strength >= 0.75 else 1.25
     if hostile_projection_lane:
         size_cap = min(size_cap, 1.02)
@@ -1272,6 +1382,10 @@ def _signal_precision_lowvol(
             0.78,
             min(size_cap, min(size_mult, proj_size_mult * (0.78 + float(flow_guard["setup_quality"]) * 0.12))),
         )
+    if short_up_lean:
+        size_mult = max(size_mult, min(size_cap, proj_size_mult * 1.08))
+    if short_down_flat:
+        size_mult = max(0.78, min(size_mult, proj_size_mult * 0.92))
 
     signal = {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
@@ -3170,6 +3284,33 @@ def _signal_vwap_revert(
         return None
     proj_size_mult = float(size_mult)
     projection_score = 0.0
+    ma_fast = fac_m1.get("ma10")
+    if ma_fast is None:
+        ma_fast = fac_m1.get("ema20")
+    ma_slow = fac_m1.get("ma20")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema24")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema20")
+    try:
+        ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else None
+    except Exception:
+        ma_gap_pips = None
+    ma_gap_atr_ratio = abs(ma_gap_pips) / max(1.0, atr) if ma_gap_pips is not None else None
+    short_up_lean = bool(
+        side == "short"
+        and ma_gap_pips is not None
+        and ma_gap_pips > 0.0
+        and ma_gap_atr_ratio is not None
+        and 0.30 <= ma_gap_atr_ratio < 0.90
+    )
+    short_down_flat = bool(
+        side == "short"
+        and ma_gap_pips is not None
+        and ma_gap_pips < 0.0
+        and ma_gap_atr_ratio is not None
+        and ma_gap_atr_ratio < 0.35
+    )
     if isinstance(proj_detail, dict):
         try:
             projection_score = float(proj_detail.get("score") or 0.0)
@@ -3187,16 +3328,31 @@ def _signal_vwap_revert(
             and setup_quality < 0.58
         ):
             return None
+        if (
+            short_down_flat
+            and projection_score <= 0.0
+            and rev_strength < 0.88
+            and setup_quality < 0.55
+        ):
+            return None
 
     sl = max(1.2, min(1.8, atr * 0.7))
-    tp = max(1.4, min(2.2, atr * 0.95))
+    tp = max(1.4, min(2.4, atr * (0.95 + (0.08 if short_up_lean else 0.0))))
     conf = 60 + int(min(10, abs(vgap) * 1.6)) + int(min(8, rev_strength * 3.5))
+    if short_up_lean:
+        conf += 4
+    if short_down_flat:
+        conf -= 4
     if flow_guard is not None:
         conf -= int(min(5.0, max(0.0, 0.62 - float(flow_guard["setup_quality"])) * 18.0))
         size_mult = max(
             0.78,
             min(1.1, min(size_mult, proj_size_mult * (0.86 + float(flow_guard["setup_quality"]) * 0.14))),
         )
+    if short_up_lean:
+        size_mult = max(size_mult, min(1.18, proj_size_mult * 1.06))
+    if short_down_flat:
+        size_mult = max(0.76, min(size_mult, 0.92))
     signal = {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
         "sl_pips": round(sl, 2),
