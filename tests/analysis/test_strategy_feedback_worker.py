@@ -363,6 +363,69 @@ def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(monkeypatch, tm
     assert advice["strategy_params"]["feedback_probe"]["lot_multiplier"] == 1.03
 
 
+def test_build_payload_remaps_directional_boost_probe_to_canonical_strategy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    log_dir = repo / "logs"
+    trades_db = log_dir / "trades.db"
+    participation_path = repo / "config" / "participation_alloc.json"
+
+    _seed_trades(trades_db, strategy_tag="MomentumBurst", count=4)
+    participation_path.parent.mkdir(parents=True, exist_ok=True)
+    participation_path.write_text(
+        json.dumps(
+            {
+                "as_of": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                "strategies": {
+                    "MomentumBurst-open_long": {
+                        "action": "boost_participation",
+                        "lot_multiplier": 1.2064,
+                        "probability_boost": 0.07,
+                        "cadence_floor": 1.2,
+                        "attempts": 2,
+                        "fills": 2,
+                    }
+                },
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(
+        worker,
+        "_discover_from_control",
+        lambda: {
+            "MomentumBurst": worker.StrategyRecord(
+                canonical_tag="MomentumBurst",
+                active=True,
+                entry_active=True,
+                exit_active=False,
+            )
+        },
+    )
+    monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PARTICIPATION_PATH", str(participation_path))
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    assert "MomentumBurst" in payload["strategies"]
+    assert "MomentumBurst-open_long" not in payload["strategies"]
+    advice = payload["strategies"]["MomentumBurst"]
+    assert advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
+    assert advice["strategy_params"]["feedback_probe"]["lot_multiplier"] == 1.2064
+
+
 def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path
     log_dir = repo / "logs"

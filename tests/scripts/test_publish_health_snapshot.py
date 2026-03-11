@@ -173,6 +173,26 @@ def test_build_mechanism_integrity_flags_missing_strategy_feedback_coverage(monk
     assert integrity["blackboard"]["entry_intent_board_table"] is True
 
 
+def test_participation_feedback_boosts_canonicalize_directional_lane_keys() -> None:
+    boosted = snapshot._participation_feedback_boosts(
+        {
+            "strategies": {
+                "MomentumBurst-open_long": {
+                    "action": "boost_participation",
+                    "attempts": 2,
+                    "fills": 2,
+                    "lot_multiplier": 1.2064,
+                    "probability_boost": 0.07,
+                    "cadence_floor": 1.2,
+                }
+            }
+        },
+        known_keys=["MomentumBurst"],
+    )
+
+    assert boosted == {"MomentumBurst": {"attempts": 2, "fills": 2}}
+
+
 def test_build_mechanism_integrity_is_ok_when_artifacts_and_feedback_are_present(
     monkeypatch,
     tmp_path: Path,

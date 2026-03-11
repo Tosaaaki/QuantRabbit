@@ -3337,6 +3337,20 @@
   まで受ける current default とし、
   winner push を artifact にだけ限定して広域 raise にしない。
 
+### 2026-03-12 `strategy_feedback` coverage fast-repair current
+- local-v2 の current 運用は
+  `participation_alloc` の boosted low-sample lane を
+  directional key のまま `strategy_feedback` / health coverage に使わない。
+  `analysis/strategy_feedback_worker.py` は
+  discovered strategy key に canonical remap して
+  `feedback_probe` へ載せる。
+- `scripts/publish_health_snapshot.py` も
+  boosted low-sample lane の coverage 表示を
+  canonical strategy key へ揃える。
+- `ops/env/local-v2-stack.env` の
+  `STRATEGY_FEEDBACK_LOOP_SEC` は `120` を正とし、
+  restart 後の薄い payload が長く残らないようにする。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

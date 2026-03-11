@@ -62,6 +62,28 @@
     winner lane を 30 分窓内で押し、
     loser setup を数発目で薄くする current feedback loop を正とする。
 
+### 2026-03-12（追記）`strategy_feedback` probe key を canonical remap し、loop を 120s 化
+
+- 対象:
+  - `analysis/strategy_feedback_worker.py`
+  - `scripts/publish_health_snapshot.py`
+  - `ops/env/local-v2-stack.env`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `tests/scripts/test_publish_health_snapshot.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `participation_alloc` の boosted low-sample lane は
+    directional key のまま `strategy_feedback` へ渡さず、
+    discovered strategy key へ canonical remap するようにした。
+  - `publish_health_snapshot` も同じ canonical key を使う。
+  - local-v2 の `STRATEGY_FEEDBACK_LOOP_SEC` は
+    `600 -> 120` に短縮した。
+- 意図:
+  - restart 直後の薄い `strategy_feedback.json` が
+    health を長く赤化させる状態を減らし、
+    active strategy coverage を短時間で self-heal させる。
+
 ### 2026-03-11（追記）`PrecisionLowVol` hostile short guard を participation 維持型へ follow-up
 
 - 対象:

@@ -164,6 +164,7 @@ def _load_participation_feedback_boosts(
     path: Path,
     *,
     max_age_sec: int,
+    known_keys: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     payload = _read_json_dict(path)
     if not payload:
@@ -205,17 +206,34 @@ def _load_participation_feedback_boosts(
         ) <= 1.0:
             continue
         strategy_key = _norm_tag(raw_key) or str(raw_key or "").strip()
+        if known_keys:
+            strategy_key = _canonical_known_strategy_key(strategy_key, known_keys)
         if not strategy_key:
             continue
+        current = boosted.get(strategy_key)
+        payload_age = None if age_sec is None else round(float(age_sec), 1)
+        if current and current.get("payload_age_sec") is not None and payload_age is not None:
+            payload_age = min(payload_age, _to_float(current.get("payload_age_sec"), payload_age))
+        elif current and current.get("payload_age_sec") is not None:
+            payload_age = _to_float(current.get("payload_age_sec"), 0.0)
         boosted[strategy_key] = {
             "source": "participation_alloc",
             "action": "boost_participation",
-            "attempts": attempts,
-            "fills": fills,
-            "lot_multiplier": round(max(lot_multiplier or 1.0, 1.0), 4),
-            "probability_boost": round(max(probability_boost or 0.0, 0.0), 4),
-            "cadence_floor": round(max(cadence_floor or 1.0, 1.0), 4),
-            "payload_age_sec": None if age_sec is None else round(float(age_sec), 1),
+            "attempts": attempts + _to_int((current or {}).get("attempts"), 0),
+            "fills": fills + _to_int((current or {}).get("fills"), 0),
+            "lot_multiplier": round(
+                max(max(lot_multiplier or 1.0, 1.0), _to_float((current or {}).get("lot_multiplier"), 1.0)),
+                4,
+            ),
+            "probability_boost": round(
+                max(max(probability_boost or 0.0, 0.0), _to_float((current or {}).get("probability_boost"), 0.0)),
+                4,
+            ),
+            "cadence_floor": round(
+                max(max(cadence_floor or 1.0, 1.0), _to_float((current or {}).get("cadence_floor"), 1.0)),
+                4,
+            ),
+            "payload_age_sec": payload_age,
         }
     return boosted
 
@@ -1369,6 +1387,7 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     probe_feedback_by_tag = _load_participation_feedback_boosts(
         config.participation_path,
         max_age_sec=max(0, int(config.participation_max_age_sec)),
+        known_keys=list(merged.keys()),
     )
 
     if _systemctl_available():

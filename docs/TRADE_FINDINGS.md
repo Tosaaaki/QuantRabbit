@@ -51,6 +51,63 @@
 - Status:
 ```
 
+## 2026-03-12 00:05 JST / local-v2: `strategy_feedback_coverage_gap` を canonical remap + 120s loop で解消
+
+- Change:
+  - `analysis/strategy_feedback_worker.py` で
+    `participation_alloc` の boosted low-sample lane を
+    discovered strategy の canonical key へ remap するようにした。
+    例: `MomentumBurst-open_long -> MomentumBurst`。
+  - `scripts/publish_health_snapshot.py` も
+    boosted low-sample lane の表示を canonical key に揃えた。
+  - `ops/env/local-v2-stack.env` の
+    `STRATEGY_FEEDBACK_LOOP_SEC` を `600 -> 120` へ短縮した。
+  - `tests/analysis/test_strategy_feedback_worker.py`,
+    `tests/scripts/test_publish_health_snapshot.py`
+    に回帰を追加した。
+- Why:
+  - stack 自体は正常でも、
+    `strategy_feedback.json` が restart 直後の薄い payload のまま残ると
+    `health_snapshot.json` に `strategy_feedback_coverage_gap` が出ていた。
+- Hypothesis:
+  - boosted probe の key を canonical strategy に揃え、
+    feedback loop を 2 分化すれば、
+    coverage gap は restart 後も短時間で self-heal する。
+- Expected Good:
+  - `MomentumBurst` など active strategy の coverage gap が消える。
+  - restart 後の health 赤化時間が短くなる。
+- Expected Bad:
+  - feedback artifact の更新頻度が上がるため、
+    log 書き込み回数は増える。
+- Period:
+  - JST `2026-03-11 23:54-2026-03-12 00:05`
+- Fact:
+  - `strategy_feedback.json` の on-disk payload は
+    `2 strategies` まで落ちる瞬間があり、
+    health では `MicroLevelReactor`, `MomentumBurst`,
+    `scalp_extrema_reversal_live` が missing と見えていた。
+  - 同時に worker の one-shot build 自体は `9 strategies` を返せていたため、
+    runtime 停止ではなく payload freshness / key alignment の問題だった。
+- Failure Cause:
+  - boosted low-sample lane の key が directional のまま残り、
+    health / feedback の canonical strategy key と揃っていなかった。
+  - 加えて feedback loop が `600s` で、
+    restart 直後の薄い payload が長く残りやすかった。
+- Improvement:
+  - boosted probe key を canonical remap し、
+    loop を `120s` に短縮した。
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_publish_health_snapshot.py`
+  - restart 後に `strategy_feedback.json` と `health_snapshot.json` を再生成して
+    `coverage_gap` が消えることを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - restart 後の `strategy_feedback.json` strategies count と
+    `eligible_missing_strategies` を再確認する。
+- Status:
+  - done
+
 ## 2026-03-11 23:35 JST / local-v2: shared participation を faster profit cadence 向けに 2 分化
 
 - Change:

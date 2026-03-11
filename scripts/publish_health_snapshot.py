@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover - fallback to CLI upload
 
 from utils.secrets import get_secret
 from utils.gcs_uploader import upload_json_via_metadata
+from utils.strategy_tags import normalize_strategy_lookup_key
 from utils.strategy_tags import resolve_strategy_tag
 
 
@@ -378,7 +379,33 @@ def _merge_strategy_records(*sources: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def _participation_feedback_boosts(payload: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _canonical_known_strategy_key(raw: str, known_keys: list[str]) -> str:
+    resolved = resolve_strategy_tag(raw, known_keys=known_keys) or raw
+    lookup = normalize_strategy_lookup_key(resolved)
+    if not lookup:
+        return resolved
+    matches = [
+        candidate
+        for candidate in known_keys
+        if normalize_strategy_lookup_key(candidate) == lookup
+    ]
+    if not matches:
+        return resolved
+    matches.sort(
+        key=lambda candidate: (
+            0 if any(ch.isupper() for ch in candidate) else 1,
+            -len(candidate),
+            candidate,
+        )
+    )
+    return matches[0]
+
+
+def _participation_feedback_boosts(
+    payload: Optional[dict[str, Any]],
+    *,
+    known_keys: list[str] | None = None,
+) -> dict[str, dict[str, Any]]:
     strategies = payload.get("strategies") if isinstance(payload, dict) else None
     if not isinstance(strategies, dict):
         return {}
@@ -398,11 +425,14 @@ def _participation_feedback_boosts(payload: Optional[dict[str, Any]]) -> dict[st
         if max(lot_multiplier, 1.0) <= 1.0 and max(probability_boost, 0.0) <= 0.0 and max(cadence_floor, 1.0) <= 1.0:
             continue
         strategy_key = resolve_strategy_tag(str(raw_key or "").strip()) or str(raw_key or "").strip()
+        if known_keys:
+            strategy_key = _canonical_known_strategy_key(strategy_key, known_keys)
         if not strategy_key:
             continue
+        current = boosted.get(strategy_key)
         boosted[strategy_key] = {
-            "attempts": attempts,
-            "fills": fills,
+            "attempts": attempts + _coerce_int((current or {}).get("attempts"), 0),
+            "fills": fills + _coerce_int((current or {}).get("fills"), 0),
         }
     return boosted
 
@@ -437,10 +467,8 @@ def _strategy_feedback_integrity(
     min_trades = _coerce_int(env.get("STRATEGY_FEEDBACK_MIN_TRADES"), 12)
     info["lookback_days"] = lookback_days
     info["min_trades"] = min_trades
-    boosted_probe_strategies = (
-        _participation_feedback_boosts(participation_payload) if participation_fresh else {}
-    )
-    info["boosted_low_sample_strategies"] = sorted(boosted_probe_strategies.keys())
+    boosted_probe_strategies: dict[str, dict[str, Any]] = {}
+    info["boosted_low_sample_strategies"] = []
 
     try:
         from analysis import strategy_feedback_worker as feedback_worker
@@ -454,6 +482,15 @@ def _strategy_feedback_integrity(
             feedback_worker._discover_from_control(),
             feedback_worker._discover_from_systemd(systemd_dir, running_services, datetime.now(timezone.utc)),
         )
+        boosted_probe_strategies = (
+            _participation_feedback_boosts(
+                participation_payload,
+                known_keys=list(discovered.keys()),
+            )
+            if participation_fresh
+            else {}
+        )
+        info["boosted_low_sample_strategies"] = sorted(boosted_probe_strategies.keys())
         stats_by_tag, latest_by_tag = feedback_worker._discover_from_trades(trades_db, lookback_days)
         if discovered:
             stats_by_tag, latest_by_tag = feedback_worker._remap_stats_to_known_keys(
