@@ -5,6 +5,32 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）`RangeFader` の setup-local dynamicization を entry/exit 両側へ展開
+
+- 対象:
+  - `strategies/scalping/range_fader.py`
+  - `workers/scalp_rangefader/worker.py`
+  - `workers/scalp_rangefader/exit_worker.py`
+  - `tests/strategies/test_scalp_thresholds.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `tests/workers/test_scalp_rangefader_exit_worker.py`
+- 変更:
+  - `RangeFader`
+    - signal 生成時に `setup_quality` と `setup_size_mult` を live factor から計算し、
+      thin fade は strategy-local に block する。
+    - allowed signal は `setup_quality / setup_size_mult / continuation_pressure / flow_regime / setup_fingerprint`
+      を返す。
+  - `RangeFader worker`
+    - signal の `setup_*` を `entry_thesis` へ保存し、
+      `setup_size_mult` を sizing に反映する。
+  - `RangeFader exit worker`
+    - `entry_thesis` の `setup_quality / continuation_pressure / flow_regime / setup_fingerprint`
+      から `soft_adverse / take_profit / trail / hold` を trade-local に再計算する。
+    - hostile low-quality setup は `soft_adverse` と早めの `take_profit` を使う。
+- 意図:
+  - loser cluster を shared trim に押し込まず、
+    `RangeFader` 自身が current setup の質で entry/exit を変える形へ寄せる。
+
 ### 2026-03-11（追記）shared artifact を stale no-op 化し、`RangeFader` の flow metadata を live thesis へ統一
 
 - 対象:

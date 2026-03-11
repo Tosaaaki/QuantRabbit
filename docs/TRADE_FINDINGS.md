@@ -51,6 +51,53 @@
 - Status:
 ```
 
+## 2026-03-11 11:00 JST / local-v2: `RangeFader` を setup-local entry/exit へ寄せ、thin fade を worker 内で処理
+
+- Change:
+  - `strategies/scalping/range_fader.py` が `setup_quality / setup_size_mult` を live factor から算出し、
+    thin fade を strategy-local に block するようにした。
+  - `workers/scalp_rangefader/worker.py` が `setup_size_mult` を sizing に反映し、
+    `setup_*` を `entry_thesis` へ保存するようにした。
+  - `workers/scalp_rangefader/exit_worker.py` が `setup_quality / continuation_pressure / flow_regime / setup_fingerprint`
+    から `soft_adverse / take_profit / trail / hold` を trade-local に再計算するようにした。
+- Why:
+  - post-restart loser は `RangeFader-sell-fade` の `range_fade p0/p1` cluster に偏っており、
+    thin fade が同じ static exit で処理されていた。
+- Hypothesis:
+  - thin fade を worker 内で block し、通した trade も low-quality hostile setup では
+    `soft_adverse` と早めの `take_profit` に寄せれば、
+    `RangeFader` の marginal loser を shared layer 依存なしに薄くできる。
+- Expected Good:
+  - `RangeFader` の loser cluster が `setup_fingerprint` 単位で薄くなる。
+  - 保有時間と per-trade risk が hostile setup で短くなる。
+- Expected Bad:
+  - `setup_quality` 判定が浅いと winner cadence まで削る。
+  - `setup_size_mult` が強すぎると winner も細り、件数だけ減る可能性がある。
+- Period:
+  - 2026-03-11 10:42-11:00 JST の live loser cluster を根拠に実装。
+- Fact:
+  - fresh `RangeFader` loser sample は `entry_probability 0.29-0.30`,
+    `flow_regime=range_fade`, `continuation_pressure=0/1`,
+    `setup_fingerprint=RangeFader|short|sell-fade|range_fade|p0/p1` に集中していた。
+  - focused test では hostile low-quality setup が `soft_adverse` と早めの `take_profit` を使うことを確認対象とした。
+- Failure Cause:
+  - `setup_fingerprint` は live にあっても、
+    entry size と exit threshold が still static で、
+    setup quality が保有ロジックまでつながっていなかった。
+- Improvement:
+  - signal 時点の `setup_quality` を entry/exit 両方へ引き回し、
+    `RangeFader` の worker 内で dynamic sizing / dynamic exit を完結させる。
+- Verification:
+  - post-restart の `RangeFader` fresh trade を再集計し、
+    `range_fade p0/p1` loser の件数・平均保有時間・平均 pips を直前 window と比較する。
+- Verdict:
+  - pending
+- Next Action:
+  - local-v2 反映後に `logs/trades.db` と strategy log で `RangeFader` fresh trade を監査し、
+    cadence を削り過ぎていないかも同時に確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-11 04:35 JST / local-v2: RangeFader は通常 spread 下でも `entry_probability_below_min_units` 優勢、current RCA を task 化
 
 - Change:

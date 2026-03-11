@@ -217,6 +217,8 @@ def _apply_signal_flow_context(entry_thesis: Dict[str, object], signal: Dict[str
         "flow_regime",
         "ma_gap_pips",
         "gap_ratio",
+        "setup_quality",
+        "setup_size_mult",
         "setup_fingerprint",
     ):
         value = signal.get(key)
@@ -751,6 +753,14 @@ async def scalp_rangefader_worker() -> None:
             if proj_mult > 1.0:
                 sign = 1 if units > 0 else -1
                 units = int(round(abs(units) * proj_mult)) * sign
+            signal_setup_mult = signal.get("setup_size_mult")
+            try:
+                signal_setup_mult = float(signal_setup_mult)
+            except Exception:
+                signal_setup_mult = 1.0
+            if signal_setup_mult != 1.0:
+                sign = 1 if units > 0 else -1
+                units = max(1, int(round(abs(units) * signal_setup_mult))) * sign
 
             candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
             if not candle_allow:

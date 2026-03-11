@@ -141,6 +141,8 @@ def test_range_fader_extreme_short_stretch_still_allows_short_fade() -> None:
     assert signal["tag"] == "RangeFader-sell-fade"
     assert signal["continuation_pressure"] == 2
     assert signal["flow_regime"] == "trend_long"
+    assert 0.0 <= float(signal["setup_quality"]) <= 1.0
+    assert 0.55 <= float(signal["setup_size_mult"]) <= 1.10
     assert signal["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
 
 
@@ -199,3 +201,25 @@ def test_range_fader_extreme_long_stretch_still_allows_long_fade() -> None:
     assert signal["continuation_pressure"] == 2
     assert signal["flow_regime"] == "trend_short"
     assert signal["setup_fingerprint"] == "RangeFader|long|buy-fade|trend_short|p2"
+
+
+def test_range_fader_blocks_thin_neutral_fade_setup() -> None:
+    signal = RangeFader.check(
+        {
+            "close": 156.507,
+            "ema20": 156.500,
+            "rsi": 54.0,
+            "atr_pips": 2.4,
+            "vol_5m": 1.0,
+            "adx": 21.0,
+            "bbw": 0.18,
+            "bbw_squeeze_eta_min": 4.0,
+            "spread_pips": 0.8,
+            "range_score": 0.22,
+            "plus_di": 18.0,
+            "minus_di": 17.0,
+            "ema_slope_10": 0.0005,
+        }
+    )
+
+    assert signal is None

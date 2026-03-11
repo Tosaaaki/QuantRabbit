@@ -8,6 +8,29 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `RangeFader` setup-local entry/exit dynamicization（2026-03-11）
+- 背景:
+  - 2026-03-11 10:42-11:00 JST の post-restart loser は `RangeFader-sell-fade` の
+    `range_fade p0/p1` cluster に偏っており、`entry_probability 0.29-0.30` の薄い fade が
+    同じ static exit で処理されていた。
+  - `setup_fingerprint` は already live に入っていたが、entry size と exit threshold は
+    まだ trade-local に十分つながっていなかった。
+- 実装:
+  - `strategies/scalping/range_fader.py`
+    - live factor から `setup_quality` と `setup_size_mult` を算出し、signal に付与する。
+    - extreme stretch ではない薄い fade は `setup_quality` で strategy-local に block する。
+  - `workers/scalp_rangefader/worker.py`
+    - `setup_quality / setup_size_mult` を `entry_thesis` へ保存し、
+      `setup_size_mult` を order size へ反映する。
+  - `workers/scalp_rangefader/exit_worker.py`
+    - `setup_quality / continuation_pressure / flow_regime / setup_fingerprint` から
+      `soft_adverse / take_profit / trail / hold` を trade-local に再計算する。
+    - hostile low-quality setup は `soft_adverse` と早めの `take_profit` で保有時間を短くする。
+- 意図:
+  - `RangeFader` を strategy-wide loser として一律に扱わず、
+    「今の fade setup の質」に応じて entry size と exit cadence を動的に変える。
+  - shared gate や共通 exit を足さず、strategy-local だけで marginal loser を薄くする。
+
 ### local-v2 stale artifact no-op / `RangeFader` current-flow guard（2026-03-11）
 - 背景:
   - 2026-03-11 04:32 JST 前後の local-v2 実測は

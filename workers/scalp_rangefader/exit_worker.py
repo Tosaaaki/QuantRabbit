@@ -195,6 +195,31 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _clamp(value: float, floor: float, ceil: float) -> float:
+    return max(floor, min(ceil, value))
+
+
+def _first_float(*values) -> Optional[float]:
+    for value in values:
+        try:
+            if value is None:
+                continue
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _first_text(*values) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
 def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -215,6 +240,176 @@ def _latest_mid() -> Optional[float]:
         return float(all_factors().get("M1", {}).get("close"))
     except Exception:
         return None
+
+
+def _infer_setup_mode(strategy_tag: Optional[str], setup_fingerprint: Optional[str]) -> Optional[str]:
+    tag = (_first_text(strategy_tag) or "").lower()
+    fingerprint = (_first_text(setup_fingerprint) or "").lower()
+    if "buy-supportive" in tag or "buy-supportive" in fingerprint:
+        return "supportive"
+    if "neutral-fade" in tag or "neutral-fade" in fingerprint:
+        return "neutral_fade"
+    if "buy-fade" in tag or "sell-fade" in tag or "buy-fade" in fingerprint or "sell-fade" in fingerprint:
+        return "fade"
+    return None
+
+
+def _flow_alignment(*, side: str, flow_regime: Optional[str], setup_mode: Optional[str]) -> float:
+    regime = (_first_text(flow_regime) or "").lower()
+    mode = (_first_text(setup_mode) or "").lower()
+    side_key = str(side).lower()
+    if regime == "trend_long":
+        return 1.0 if side_key == "long" else -1.0
+    if regime == "trend_short":
+        return 1.0 if side_key == "short" else -1.0
+    if regime == "range_fade":
+        if mode == "supportive":
+            return 0.40
+        if mode == "fade":
+            return 0.28
+        if mode == "neutral_fade":
+            return 0.12
+        return 0.15
+    if regime == "transition":
+        if mode == "supportive":
+            return 0.08
+        if mode == "neutral_fade":
+            return -0.05
+    return 0.0
+
+
+def _trade_local_exit_thresholds(
+    *,
+    side: str,
+    entry_thesis: dict | None,
+    min_hold_sec: float,
+    range_active: bool,
+    range_max_hold_sec: float,
+    loss_cut_soft_pips: float,
+    loss_cut_hard_pips: float,
+    loss_cut_max_hold_sec: float,
+    profit_take_pips: float,
+    trail_start_pips: float,
+    trail_backoff_pips: float,
+    lock_buffer_pips: float,
+) -> dict[str, object]:
+    thesis = entry_thesis if isinstance(entry_thesis, dict) else {}
+    signal_flow_context = thesis.get("signal_flow_context")
+    if not isinstance(signal_flow_context, dict):
+        signal_flow_context = {}
+    setup_fingerprint = _first_text(
+        thesis.get("setup_fingerprint"),
+        signal_flow_context.get("setup_fingerprint"),
+    )
+    strategy_tag = _first_text(thesis.get("strategy_tag"), thesis.get("tag"))
+    setup_mode = _infer_setup_mode(strategy_tag, setup_fingerprint)
+    flow_regime = _first_text(thesis.get("flow_regime"), signal_flow_context.get("flow_regime"))
+    setup_quality = _first_float(thesis.get("setup_quality"), signal_flow_context.get("setup_quality"))
+    if setup_quality is not None:
+        setup_quality = _clamp(setup_quality, 0.0, 1.0)
+    continuation_pressure = _first_float(
+        thesis.get("continuation_pressure"),
+        signal_flow_context.get("continuation_pressure"),
+    )
+    continuation_pressure = _clamp(continuation_pressure or 0.0, 0.0, 2.0)
+    has_setup = any(value is not None for value in (setup_fingerprint, flow_regime, setup_quality))
+    positive_max_hold_sec = range_max_hold_sec if range_active else 0.0
+    base = {
+        "setup_mode": setup_mode,
+        "flow_regime": flow_regime,
+        "setup_fingerprint": setup_fingerprint,
+        "setup_quality": round(setup_quality, 3) if setup_quality is not None else None,
+        "continuation_pressure": round(continuation_pressure, 3),
+        "loss_cut_soft_pips": loss_cut_soft_pips,
+        "loss_cut_hard_pips": loss_cut_hard_pips,
+        "loss_cut_max_hold_sec": loss_cut_max_hold_sec,
+        "soft_adverse_hold_sec": max(min_hold_sec + 1.0, loss_cut_max_hold_sec * 0.72),
+        "profit_take_pips": profit_take_pips,
+        "trail_start_pips": trail_start_pips,
+        "trail_backoff_pips": trail_backoff_pips,
+        "lock_buffer_pips": lock_buffer_pips,
+        "positive_max_hold_sec": positive_max_hold_sec,
+        "flow_bias": 0.0,
+        "setup_dynamicized": False,
+    }
+    if not has_setup:
+        return base
+
+    quality = setup_quality if setup_quality is not None else 0.5
+    quality_edge = quality - 0.5
+    pressure_norm = _clamp(continuation_pressure / 2.0, 0.0, 1.0)
+    flow_bias = _flow_alignment(side=side, flow_regime=flow_regime, setup_mode=setup_mode)
+    mode_hold_bias = 0.10 if setup_mode == "supportive" else -0.10 if setup_mode == "neutral_fade" else 0.0
+    mode_risk_bias = 0.05 if setup_mode == "supportive" else -0.08 if setup_mode == "neutral_fade" else 0.0
+
+    hold_mult = _clamp(
+        1.0 + mode_hold_bias + quality_edge * 0.30 + flow_bias * 0.14 - pressure_norm * 0.22,
+        0.70,
+        1.25,
+    )
+    soft_hold_mult = _clamp(
+        0.58 + mode_risk_bias + quality_edge * 0.18 + flow_bias * 0.16 - pressure_norm * 0.22,
+        0.30,
+        0.88,
+    )
+    soft_adverse_mult = _clamp(
+        1.0 + mode_risk_bias + quality_edge * 0.16 + flow_bias * 0.10 - pressure_norm * 0.22,
+        0.72,
+        1.15,
+    )
+    hard_adverse_mult = _clamp(
+        1.0 + mode_risk_bias + quality_edge * 0.12 + flow_bias * 0.08 - pressure_norm * 0.18,
+        0.80,
+        1.18,
+    )
+    profit_take_mult = _clamp(
+        1.0 + mode_hold_bias + quality_edge * 0.18 + flow_bias * 0.12 - pressure_norm * 0.18,
+        0.72,
+        1.18,
+    )
+    trail_start_mult = _clamp(
+        1.0 + mode_hold_bias + quality_edge * 0.12 + flow_bias * 0.10 - pressure_norm * 0.16,
+        0.72,
+        1.18,
+    )
+    trail_backoff_mult = _clamp(
+        1.0
+        + (0.02 if setup_mode == "supportive" else -0.04 if setup_mode == "neutral_fade" else 0.0)
+        + quality_edge * 0.08
+        + flow_bias * 0.06
+        - pressure_norm * 0.10,
+        0.70,
+        1.15,
+    )
+    lock_buffer_mult = _clamp(
+        1.0
+        + (0.02 if setup_mode == "supportive" else -0.05 if setup_mode == "neutral_fade" else 0.0)
+        + quality_edge * 0.06
+        + flow_bias * 0.05
+        - pressure_norm * 0.10,
+        0.68,
+        1.12,
+    )
+
+    positive_hold_base = range_max_hold_sec if range_active else max(min_hold_sec + 15.0, range_max_hold_sec * 0.65)
+    return {
+        "setup_mode": setup_mode,
+        "flow_regime": flow_regime,
+        "setup_fingerprint": setup_fingerprint,
+        "setup_quality": round(quality, 3),
+        "continuation_pressure": round(continuation_pressure, 3),
+        "loss_cut_soft_pips": max(0.1, loss_cut_soft_pips * soft_adverse_mult),
+        "loss_cut_hard_pips": max(0.2, loss_cut_hard_pips * hard_adverse_mult),
+        "loss_cut_max_hold_sec": max(min_hold_sec + 1.0, loss_cut_max_hold_sec * hold_mult),
+        "soft_adverse_hold_sec": max(min_hold_sec + 1.0, loss_cut_max_hold_sec * soft_hold_mult),
+        "profit_take_pips": max(0.5, profit_take_pips * profit_take_mult),
+        "trail_start_pips": max(0.5, trail_start_pips * trail_start_mult),
+        "trail_backoff_pips": max(0.05, trail_backoff_pips * trail_backoff_mult),
+        "lock_buffer_pips": max(0.05, lock_buffer_pips * lock_buffer_mult),
+        "positive_max_hold_sec": max(min_hold_sec + 5.0, positive_hold_base * hold_mult),
+        "flow_bias": round(flow_bias, 3),
+        "setup_dynamicized": True,
+    }
 
 
 def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
@@ -480,6 +675,28 @@ class RangeFaderExitWorker:
             adjustment=forecast_adj,
             floor_pips=0.1,
         )
+        profit_take_base = self.range_profit_take if range_active else self.profit_take
+        trail_start_base = self.range_trail_start if range_active else self.trail_start
+        trail_backoff_base = self.range_trail_backoff if range_active else self.trail_backoff
+        lock_buffer_base = self.range_lock_buffer if range_active else self.lock_buffer
+        trade_thresholds = _trade_local_exit_thresholds(
+            side=side,
+            entry_thesis=thesis,
+            min_hold_sec=self.min_hold_sec,
+            range_active=range_active,
+            range_max_hold_sec=self.range_max_hold_sec,
+            loss_cut_soft_pips=loss_cut_soft_pips,
+            loss_cut_hard_pips=loss_cut_hard_pips,
+            loss_cut_max_hold_sec=loss_cut_max_hold_sec,
+            profit_take_pips=profit_take_base,
+            trail_start_pips=trail_start_base,
+            trail_backoff_pips=trail_backoff_base,
+            lock_buffer_pips=lock_buffer_base,
+        )
+        loss_cut_soft_pips = float(trade_thresholds["loss_cut_soft_pips"])
+        loss_cut_hard_pips = float(trade_thresholds["loss_cut_hard_pips"])
+        loss_cut_max_hold_sec = float(trade_thresholds["loss_cut_max_hold_sec"])
+        soft_adverse_hold_sec = float(trade_thresholds["soft_adverse_hold_sec"])
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -548,6 +765,22 @@ class RangeFaderExitWorker:
                     **close_context,
                 )
                 return
+            if (
+                trade_thresholds.get("setup_dynamicized")
+                and abs(float(pnl)) >= loss_cut_soft_pips
+                and hold_sec >= soft_adverse_hold_sec
+            ):
+                await self._attempt_close(
+                    trade_id,
+                    -units,
+                    "soft_adverse",
+                    pnl,
+                    client_id,
+                    state,
+                    allow_negative=True,
+                    **close_context,
+                )
+                return
             if abs(float(pnl)) >= loss_cut_hard_pips:
                 await self._attempt_close(
                     trade_id,
@@ -578,10 +811,10 @@ class RangeFaderExitWorker:
                 return
             return
 
-        lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer
-        profit_take = self.range_profit_take if range_active else self.profit_take
-        trail_start = self.range_trail_start if range_active else self.trail_start
-        trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
+        lock_buffer = float(trade_thresholds["lock_buffer_pips"])
+        profit_take = float(trade_thresholds["profit_take_pips"])
+        trail_start = float(trade_thresholds["trail_start_pips"])
+        trail_backoff = float(trade_thresholds["trail_backoff_pips"])
         profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
             profit_take=profit_take,
             trail_start=trail_start,
@@ -624,11 +857,12 @@ class RangeFaderExitWorker:
             )
             return
 
-        if range_active and hold_sec >= self.range_max_hold_sec:
+        positive_max_hold_sec = float(trade_thresholds["positive_max_hold_sec"])
+        if positive_max_hold_sec > 0.0 and hold_sec >= positive_max_hold_sec:
             await self._attempt_close(
                 trade_id,
                 -units,
-                "range_timeout",
+                "range_timeout" if range_active else "quality_timeout",
                 pnl,
                 client_id,
                 state,

@@ -26,6 +26,7 @@ FLOW_HEADWIND_SHORT_EXTREME_RSI_MIN = float(os.getenv("RANGE_FADER_FLOW_HEADWIND
 FLOW_HEADWIND_LONG_EXTREME_RSI_MAX = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_LONG_EXTREME_RSI_MAX", "29.0"))
 FLOW_HEADWIND_GATE_STEP = int(float(os.getenv("RANGE_FADER_FLOW_HEADWIND_GATE_STEP", "3.0")))
 FLOW_HEADWIND_CONF_CUT = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_CONF_CUT", "0.16"))
+SETUP_QUALITY_BLOCK_MIN = float(os.getenv("RANGE_FADER_SETUP_QUALITY_BLOCK_MIN", "0.26"))
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -62,6 +63,10 @@ class RangeFader:
             return float(fac.get(key, default))
         except Exception:
             return default
+
+    @staticmethod
+    def _clamp(value: float, floor: float = 0.0, ceil: float = 1.0) -> float:
+        return max(floor, min(ceil, value))
 
     @staticmethod
     def _candles(fac: Dict, count: int) -> list[dict]:
@@ -248,6 +253,82 @@ class RangeFader:
         if (minus_di - plus_di) < FADE_HEADWIND_DI_GAP_MIN:
             return False
         return ema_slope_10 <= -FADE_HEADWIND_EMA_SLOPE_MIN
+
+    @classmethod
+    def _fade_setup_quality(
+        cls,
+        fac: Dict,
+        side: str,
+        *,
+        rsi: float,
+        gate: float,
+        atr_pips: float,
+        momentum_pips: float,
+        adx_val: float,
+        continuation_pressure: int,
+        flow_regime: str,
+        gap_ratio: Optional[float],
+        supportive_bias: float = 0.0,
+    ) -> float:
+        range_score = cls._float_attr(fac, "range_score", 0.28)
+        atr_norm = max(0.8, atr_pips)
+        if side == "short":
+            rsi_distance = max(0.0, float(rsi) - float(gate))
+        else:
+            rsi_distance = max(0.0, float(gate) - float(rsi))
+        rsi_component = cls._clamp(rsi_distance / 9.0)
+        stretch_component = cls._clamp(momentum_pips / max(1.2, atr_norm * 1.05))
+        range_component = cls._clamp((range_score - 0.20) / 0.18)
+        gap_component = 0.5
+        if gap_ratio is not None:
+            gap_component = cls._clamp(1.0 - max(0.0, gap_ratio - 0.40) / 0.70)
+        adx_component = cls._clamp(1.0 - max(0.0, adx_val - 20.0) / 18.0)
+        regime_bias = 0.04 if flow_regime == "range_fade" else 0.0 if flow_regime == "transition" else -0.12
+        pressure_penalty = continuation_pressure * 0.18
+        quality = (
+            0.05
+            + rsi_component * 0.24
+            + stretch_component * 0.22
+            + range_component * 0.12
+            + gap_component * 0.10
+            + adx_component * 0.06
+            + regime_bias
+            + supportive_bias
+            - pressure_penalty
+        )
+        return round(cls._clamp(quality), 3)
+
+    @classmethod
+    def _setup_size_mult(
+        cls,
+        *,
+        setup_quality: float,
+        continuation_pressure: int,
+        flow_regime: str,
+    ) -> float:
+        regime_bonus = 0.03 if flow_regime == "range_fade" else 0.0 if flow_regime == "transition" else -0.06
+        size_mult = 0.62 + setup_quality * 0.55 - continuation_pressure * 0.07 + regime_bonus
+        return round(cls._clamp(size_mult, 0.55, 1.10), 3)
+
+    @classmethod
+    def _thin_fade_setup(
+        cls,
+        *,
+        setup_quality: float,
+        rsi: float,
+        gate: float,
+        atr_pips: float,
+        momentum_pips: float,
+        continuation_pressure: int,
+    ) -> bool:
+        rsi_distance = abs(float(rsi) - float(gate))
+        extreme_rsi_distance = max(9.0, atr_pips * 2.4)
+        extreme_stretch = momentum_pips >= max(3.4, atr_pips * 1.15)
+        if continuation_pressure >= 2:
+            return False
+        if extreme_stretch or rsi_distance >= extreme_rsi_distance:
+            return False
+        return setup_quality < SETUP_QUALITY_BLOCK_MIN
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -444,6 +525,42 @@ class RangeFader:
                     gap_ratio=round(long_gap_ratio, 3) if long_gap_ratio is not None else None,
                 )
                 return None
+            long_setup_quality = RangeFader._fade_setup_quality(
+                fac,
+                "long",
+                rsi=float(rsi),
+                gate=float(buy_long_gate),
+                atr_pips=atr_pips,
+                momentum_pips=momentum_pips,
+                adx_val=adx_val,
+                continuation_pressure=long_flow_pressure,
+                flow_regime=long_flow_regime,
+                gap_ratio=long_gap_ratio,
+                supportive_bias=0.08 if buy_supportive else 0.0,
+            )
+            if RangeFader._thin_fade_setup(
+                setup_quality=long_setup_quality,
+                rsi=float(rsi),
+                gate=float(buy_long_gate),
+                atr_pips=atr_pips,
+                momentum_pips=momentum_pips,
+                continuation_pressure=long_flow_pressure,
+            ):
+                RangeFader._log_skip(
+                    "thin_fade_setup_long",
+                    setup_quality=round(long_setup_quality, 3),
+                    continuation_pressure=long_flow_pressure,
+                    flow_regime=long_flow_regime,
+                    rsi=round(float(rsi), 3),
+                    gate=round(float(buy_long_gate), 3),
+                    momentum_pips=round(momentum_pips, 3),
+                )
+                return None
+            long_setup_size_mult = RangeFader._setup_size_mult(
+                setup_quality=long_setup_quality,
+                continuation_pressure=long_flow_pressure,
+                flow_regime=long_flow_regime,
+            )
             if high_atr_profile:
                 sl = max(3.0, min(6.5, atr_pips * 0.95))
                 tp = max(sl * 1.25, min(8.5, atr_pips * 1.35))
@@ -483,6 +600,8 @@ class RangeFader:
                 "flow_regime": long_flow_regime,
                 "ma_gap_pips": round(long_ma_gap_pips, 3) if long_ma_gap_pips is not None else None,
                 "gap_ratio": round(long_gap_ratio, 3) if long_gap_ratio is not None else None,
+                "setup_quality": long_setup_quality,
+                "setup_size_mult": long_setup_size_mult,
                 "setup_fingerprint": f"{RangeFader.name}|long|{tag.split('-', 1)[-1]}|{long_flow_regime}|p{long_flow_pressure}",
             })
 
@@ -497,6 +616,41 @@ class RangeFader:
                     gap_ratio=round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
                 )
                 return None
+            short_setup_quality = RangeFader._fade_setup_quality(
+                fac,
+                "short",
+                rsi=float(rsi),
+                gate=float(short_gate),
+                atr_pips=atr_pips,
+                momentum_pips=momentum_pips,
+                adx_val=adx_val,
+                continuation_pressure=short_flow_pressure,
+                flow_regime=short_flow_regime,
+                gap_ratio=short_gap_ratio,
+            )
+            if RangeFader._thin_fade_setup(
+                setup_quality=short_setup_quality,
+                rsi=float(rsi),
+                gate=float(short_gate),
+                atr_pips=atr_pips,
+                momentum_pips=momentum_pips,
+                continuation_pressure=short_flow_pressure,
+            ):
+                RangeFader._log_skip(
+                    "thin_fade_setup_short",
+                    setup_quality=round(short_setup_quality, 3),
+                    continuation_pressure=short_flow_pressure,
+                    flow_regime=short_flow_regime,
+                    rsi=round(float(rsi), 3),
+                    gate=round(float(short_gate), 3),
+                    momentum_pips=round(momentum_pips, 3),
+                )
+                return None
+            short_setup_size_mult = RangeFader._setup_size_mult(
+                setup_quality=short_setup_quality,
+                continuation_pressure=short_flow_pressure,
+                flow_regime=short_flow_regime,
+            )
             if high_atr_profile:
                 sl = max(3.0, min(6.5, atr_pips * 0.95))
                 tp = max(sl * 1.25, min(8.5, atr_pips * 1.35))
@@ -524,6 +678,8 @@ class RangeFader:
                 "flow_regime": short_flow_regime,
                 "ma_gap_pips": round(short_ma_gap_pips, 3) if short_ma_gap_pips is not None else None,
                 "gap_ratio": round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
+                "setup_quality": short_setup_quality,
+                "setup_size_mult": short_setup_size_mult,
                 "setup_fingerprint": f"{RangeFader.name}|short|sell-fade|{short_flow_regime}|p{short_flow_pressure}",
             })
 
@@ -572,6 +728,41 @@ class RangeFader:
         neutral_flow_pressure = short_flow_pressure if neutral_side == "short" else long_flow_pressure
         neutral_ma_gap_pips = short_ma_gap_pips if neutral_side == "short" else long_ma_gap_pips
         neutral_gap_ratio = short_gap_ratio if neutral_side == "short" else long_gap_ratio
+        neutral_gate = short_gate if neutral_side == "short" else buy_long_gate
+        neutral_setup_quality = RangeFader._fade_setup_quality(
+            fac,
+            neutral_side,
+            rsi=float(rsi),
+            gate=float(neutral_gate),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+            adx_val=adx_val,
+            continuation_pressure=neutral_flow_pressure,
+            flow_regime=neutral_flow_regime,
+            gap_ratio=neutral_gap_ratio,
+        )
+        if RangeFader._thin_fade_setup(
+            setup_quality=neutral_setup_quality,
+            rsi=float(rsi),
+            gate=float(neutral_gate),
+            atr_pips=atr_pips,
+            momentum_pips=momentum_pips,
+            continuation_pressure=neutral_flow_pressure,
+        ):
+            RangeFader._log_skip(
+                f"thin_fade_setup_{neutral_side}",
+                setup_quality=round(neutral_setup_quality, 3),
+                continuation_pressure=neutral_flow_pressure,
+                flow_regime=neutral_flow_regime,
+                rsi=round(float(rsi), 3),
+                momentum_pips=round(momentum_pips, 3),
+            )
+            return None
+        neutral_setup_size_mult = RangeFader._setup_size_mult(
+            setup_quality=neutral_setup_quality,
+            continuation_pressure=neutral_flow_pressure,
+            flow_regime=neutral_flow_regime,
+        )
         return _attach_kill({
             "action": "OPEN_SHORT" if neutral_side == "short" else "OPEN_LONG",
             "sl_pips": round(sl, 2),
@@ -585,5 +776,7 @@ class RangeFader:
             "flow_regime": neutral_flow_regime,
             "ma_gap_pips": round(neutral_ma_gap_pips, 3) if neutral_ma_gap_pips is not None else None,
             "gap_ratio": round(neutral_gap_ratio, 3) if neutral_gap_ratio is not None else None,
+            "setup_quality": neutral_setup_quality,
+            "setup_size_mult": neutral_setup_size_mult,
             "setup_fingerprint": f"{RangeFader.name}|{neutral_side}|neutral-fade|{neutral_flow_regime}|p{neutral_flow_pressure}",
         })

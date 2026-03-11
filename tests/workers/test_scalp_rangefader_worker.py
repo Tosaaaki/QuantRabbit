@@ -17,6 +17,8 @@ def test_apply_signal_flow_context_copies_rangefader_signal_metadata() -> None:
         "flow_regime": "trend_long",
         "ma_gap_pips": 3.4,
         "gap_ratio": 1.18,
+        "setup_quality": 0.24,
+        "setup_size_mult": 0.68,
         "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
     }
 
@@ -27,6 +29,8 @@ def test_apply_signal_flow_context_copies_rangefader_signal_metadata() -> None:
     assert thesis["flow_regime"] == "trend_long"
     assert thesis["ma_gap_pips"] == 3.4
     assert thesis["gap_ratio"] == 1.18
+    assert thesis["setup_quality"] == 0.24
+    assert thesis["setup_size_mult"] == 0.68
     assert thesis["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
     assert thesis["signal_flow_context"]["continuation_pressure"] == 2
 
