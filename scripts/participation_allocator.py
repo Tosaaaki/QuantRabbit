@@ -51,6 +51,10 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _default_setup_min_attempts(min_attempts: int) -> int:
+    return max(3, min(4, max(1, int(min_attempts))))
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -238,6 +242,9 @@ def _build_allocation_record(
         "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.18), 4),
         "quality_score": round(quality_score, 4),
         "hard_block_rate": round(hard_block_rate, 6),
+        "max_units_cut": round(float(max_units_cut), 4),
+        "max_units_boost": round(float(max_units_boost), 4),
+        "max_probability_boost": round(float(max_prob_boost), 4),
         "action": action,
     }
 
@@ -249,6 +256,7 @@ def _build_setup_overrides(
     realized_by_setup: dict[str, float],
     median_fill_rate: float,
     min_attempts: int,
+    setup_min_attempts: int | None,
     max_units_cut: float,
     max_units_boost: float,
     max_prob_boost: float,
@@ -259,6 +267,23 @@ def _build_setup_overrides(
         iterable = list(setups)
     else:
         return []
+    resolved_setup_min_attempts = max(
+        1,
+        int(
+            setup_min_attempts
+            if setup_min_attempts is not None
+            else _default_setup_min_attempts(min_attempts)
+        ),
+    )
+    setup_fill_rates = [
+        _safe_float(item.get("filled_rate"), 0.0)
+        for item in iterable
+        if isinstance(item, dict)
+        and int(item.get("attempts") or 0) >= resolved_setup_min_attempts
+    ]
+    setup_median_fill_rate = _median(setup_fill_rates)
+    if setup_median_fill_rate <= 0.0:
+        setup_median_fill_rate = median_fill_rate
     overrides: list[dict[str, Any]] = []
     for setup in iterable:
         if not isinstance(setup, dict):
@@ -277,8 +302,8 @@ def _build_setup_overrides(
         metrics = _build_allocation_record(
             setup,
             realized_jpy=realized_jpy,
-            median_fill_rate=median_fill_rate,
-            min_attempts=min_attempts,
+            median_fill_rate=setup_median_fill_rate,
+            min_attempts=resolved_setup_min_attempts,
             max_units_cut=max_units_cut,
             max_units_boost=max_units_boost,
             max_prob_boost=max_prob_boost,
@@ -650,6 +675,7 @@ def build_participation_alloc(
     realized_by_strategy: dict[str, float],
     realized_by_setup: dict[str, float] | None = None,
     min_attempts: int,
+    setup_min_attempts: int | None = None,
     max_units_cut: float,
     max_units_boost: float,
     max_prob_boost: float,
@@ -667,6 +693,14 @@ def build_participation_alloc(
     if median_fill_rate <= 0.0:
         median_fill_rate = 0.02
     realized_by_setup = realized_by_setup if isinstance(realized_by_setup, dict) else {}
+    resolved_setup_min_attempts = max(
+        1,
+        int(
+            setup_min_attempts
+            if setup_min_attempts is not None
+            else _default_setup_min_attempts(min_attempts)
+        ),
+    )
 
     output_strategies: dict[str, Any] = {}
     for raw_key, record in sorted(strategies.items()):
@@ -693,6 +727,7 @@ def build_participation_alloc(
             realized_by_setup=realized_by_setup,
             median_fill_rate=median_fill_rate,
             min_attempts=min_attempts,
+            setup_min_attempts=resolved_setup_min_attempts,
             max_units_cut=max_units_cut,
             max_units_boost=max_units_boost,
             max_prob_boost=max_prob_boost,
@@ -720,6 +755,7 @@ def build_participation_alloc(
         "allocation_policy": {
             "protect_frequency": True,
             "min_attempts": int(min_attempts),
+            "setup_min_attempts": int(resolved_setup_min_attempts),
             "max_units_cut": round(max_units_cut, 4),
             "max_units_boost": round(max_units_boost, 4),
             "max_probability_boost": round(max_prob_boost, 4),
@@ -737,6 +773,7 @@ def main() -> None:
     ap.add_argument("--output", default="config/participation_alloc.json")
     ap.add_argument("--lookback-hours", type=float, default=24.0)
     ap.add_argument("--min-attempts", type=int, default=20)
+    ap.add_argument("--setup-min-attempts", type=int, default=4)
     ap.add_argument("--max-units-cut", type=float, default=0.18)
     ap.add_argument("--max-units-boost", type=float, default=0.12)
     ap.add_argument("--max-probability-boost", type=float, default=0.05)
@@ -756,6 +793,7 @@ def main() -> None:
         realized_by_strategy=realized_by_strategy,
         realized_by_setup=realized_by_setup,
         min_attempts=max(1, int(args.min_attempts)),
+        setup_min_attempts=max(1, int(args.setup_min_attempts)),
         max_units_cut=_clamp(float(args.max_units_cut), 0.0, 0.5),
         max_units_boost=_clamp(float(args.max_units_boost), 0.0, 0.3),
         max_prob_boost=_clamp(float(args.max_probability_boost), 0.0, 0.15),

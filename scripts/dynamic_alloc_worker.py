@@ -44,6 +44,10 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _default_setup_min_trades(_min_trades: int) -> int:
+    return 4
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -500,6 +504,7 @@ def _build_setup_overrides(
     setup_pockets: Dict[tuple[str, str, str, str], Dict[str, int]],
     pocket_profiles: Dict[str, Dict[str, float]],
     min_trades: int,
+    setup_min_trades: int,
     pf_cap: float,
     min_lot_multiplier: float,
     max_lot_multiplier: float,
@@ -507,13 +512,22 @@ def _build_setup_overrides(
     allow_winner_only: bool,
 ) -> list[Dict[str, Any]]:
     overrides: list[Dict[str, Any]] = []
-    setup_min_trades = max(6, min(12, max(1, int(min_trades / 2))))
+    resolved_setup_min_trades = max(
+        1,
+        int(setup_min_trades or _default_setup_min_trades(min_trades)),
+    )
     parent_multiplier = float(strategy_record.get("lot_multiplier", 1.0) or 1.0)
     parent_cap = min(float(max_lot_multiplier), max(1.0, parent_multiplier * 1.25))
     for key, stats in setup_stats.items():
         snapshot = _compute_perf_snapshot(stats, pf_cap=pf_cap)
         trades = int(snapshot["trades"])
-        if trades < setup_min_trades:
+        severe_low_sample_loser = bool(
+            0 < trades < resolved_setup_min_trades
+            and float(snapshot.get("sum_realized_jpy", 0.0) or 0.0) <= -8.0
+            and float(snapshot.get("weighted_win_rate", 0.0) or 0.0) <= 0.25
+            and float(snapshot.get("jpy_pf", 0.0) or 0.0) <= 0.25
+        )
+        if trades < resolved_setup_min_trades and not severe_low_sample_loser:
             continue
         match_dimension, setup_fingerprint, flow_regime, microstructure_bucket = key
         pocket_counts = setup_pockets.get(key, {})
@@ -524,7 +538,7 @@ def _build_setup_overrides(
             snapshot,
             pocket=pocket,
             pocket_profile=pocket_profiles.get(pocket, {}),
-            min_trades=setup_min_trades,
+            min_trades=resolved_setup_min_trades,
             min_lot_multiplier=min_lot_multiplier,
             max_lot_multiplier=max_lot_multiplier,
             allow_loser_block=allow_loser_block,
@@ -657,6 +671,7 @@ def compute_scores(
     rows: List[Tuple],
     *,
     min_trades: int,
+    setup_min_trades: int = 4,
     pf_cap: float,
     min_lot_multiplier: float = 0.45,
     max_lot_multiplier: float = 1.65,
@@ -755,6 +770,7 @@ def compute_scores(
             setup_pockets=setup_pockets.get(strat, {}),
             pocket_profiles=pocket_profiles,
             min_trades=min_trades,
+            setup_min_trades=setup_min_trades,
             pf_cap=pf_cap,
             min_lot_multiplier=min_lot_multiplier,
             max_lot_multiplier=max_lot_multiplier,
@@ -777,6 +793,7 @@ def main() -> None:
     )
     ap.add_argument("--lookback-days", type=int, default=7, help="Lookback window in days")
     ap.add_argument("--min-trades", type=int, default=12, help="Min trades for full score weight")
+    ap.add_argument("--setup-min-trades", type=int, default=4, help="Min trades for setup-scoped override emission")
     ap.add_argument("--pf-cap", type=float, default=2.0, help="Profit factor cap for normalization")
     ap.add_argument("--target-use", type=float, default=0.88, help="Target margin usage fraction")
     ap.add_argument("--half-life-hours", type=float, default=36.0, help="Recency half-life for scoring")
@@ -812,6 +829,7 @@ def main() -> None:
     scores, pocket_profiles = compute_scores(
         rows,
         min_trades=args.min_trades,
+        setup_min_trades=max(1, int(args.setup_min_trades)),
         pf_cap=args.pf_cap,
         min_lot_multiplier=args.min_lot_multiplier,
         max_lot_multiplier=args.max_lot_multiplier,
@@ -836,6 +854,7 @@ def main() -> None:
         "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "lookback_days": int(args.lookback_days),
         "min_trades": int(args.min_trades),
+        "setup_min_trades": max(1, int(args.setup_min_trades)),
         "pf_cap": float(args.pf_cap),
         "half_life_hours": float(args.half_life_hours),
         "target_use": args.target_use,

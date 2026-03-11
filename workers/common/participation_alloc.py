@@ -13,6 +13,32 @@ from workers.common.setup_context import extract_setup_identity
 
 
 _CACHE: Dict[str, Dict[str, Any]] = {}
+_SETUP_OVERRIDE_FIELDS = {
+    "units_multiplier",
+    "lot_multiplier",
+    "probability_multiplier",
+    "probability_offset",
+    "probability_boost",
+    "cadence_floor",
+    "quality_score",
+    "hard_block_rate",
+    "action",
+    "attempts",
+    "preflights",
+    "fills",
+    "filled",
+    "filled_rate",
+    "fill_rate",
+    "current_share",
+    "target_share",
+    "attempt_share",
+    "fill_share",
+    "share_gap",
+    "realized_jpy",
+    "max_units_cut",
+    "max_units_boost",
+    "max_probability_boost",
+}
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -127,29 +153,6 @@ def _select_setup_override(
     setup_context = extract_setup_identity(entry_thesis)
     if not setup_context:
         return None, None
-    allowed_fields = {
-        "units_multiplier",
-        "lot_multiplier",
-        "probability_multiplier",
-        "probability_offset",
-        "probability_boost",
-        "cadence_floor",
-        "quality_score",
-        "hard_block_rate",
-        "action",
-        "attempts",
-        "preflights",
-        "fills",
-        "filled",
-        "filled_rate",
-        "fill_rate",
-        "current_share",
-        "target_share",
-        "attempt_share",
-        "fill_share",
-        "share_gap",
-        "realized_jpy",
-    }
     best_override: Optional[dict[str, Any]] = None
     best_meta: Optional[dict[str, Any]] = None
     best_rank = (0, 0)
@@ -163,7 +166,7 @@ def _select_setup_override(
         rank = (specificity, attempts)
         if rank < best_rank:
             continue
-        payload = {key: item.get(key) for key in allowed_fields if key in item}
+        payload = {key: item.get(key) for key in _SETUP_OVERRIDE_FIELDS if key in item}
         if not payload:
             continue
         best_rank = rank

@@ -16073,3 +16073,47 @@
 - 検証:
   - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/strategies/test_scalp_thresholds.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
     -> `55 passed`
+
+### 2026-03-11 21:40 JST - shared setup override の低サンプル current lane を前倒し
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `workers/common/participation_alloc.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/workers/common/test_participation_alloc.py`
+  - `tests/test_dynamic_alloc_worker.py`
+
+- 背景:
+  - local-v2 実測では execution 劣化ではなく lane 配分が主因で、
+    current 30 分 loser setup が shared artifact に上がる前に損失化していた。
+  - `participation_alloc` は setup override を持てても
+    strategy-level `min_attempts=20` に縛られ、
+    current 4+ attempt / 3-5 fill setup を shared boost/trim に上げづらかった。
+  - setup override の `max_units_boost / max_probability_boost` が
+    loader を通らず、winner setup の unit boost が実 runtime で効きにくかった。
+  - `dynamic_alloc` は `setup_min_trades>=6` で、
+    `DroughtRevert` の single-trade severe loser setup を trim できていなかった。
+
+- 変更:
+  - `participation_allocator`
+    - `setup_min_attempts` を独立化し、default `4` で setup override を評価するようにした。
+    - setup override payload に
+      `max_units_cut / max_units_boost / max_probability_boost`
+      を含めるようにした。
+  - `participation_alloc` loader
+    - setup override の boost/trim cap を runtime profile へ保持するようにした。
+  - `dynamic_alloc_worker`
+    - `setup_min_trades` を独立化し、default `4` にした。
+    - `sum_realized_jpy<=-8` の single-trade severe loser setup は、
+      `setup_min_trades` 未満でも trim override を生成するようにした。
+
+- 検証:
+  - `python3 -m py_compile scripts/participation_allocator.py workers/common/participation_alloc.py scripts/dynamic_alloc_worker.py`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py tests/workers/common/test_participation_alloc.py`
+    -> `15 passed`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/test_dynamic_alloc_worker.py`
+    -> `13 passed`
+  - artifact 再生成後、
+    `config/dynamic_alloc.json` に
+    `DroughtRevert|long|range_fade|...|gap:up_flat|volatility_compression -> lot_multiplier=0.45`
+    が出ることを確認した。

@@ -214,6 +214,14 @@
   - shared participation を「戦略全体の winner/loser」ではなく
     「今の setup が overused か underused か」へ寄せる。
   - current winner setup の participation を、同 strategy の loser setup が巻き添えで削らないようにする。
+- current 運用:
+  - `setup_min_attempts=4` を正とし、
+    current 30 分 lane の 4+ attempt setup を shared override へ昇格しやすくする。
+  - setup override は
+    `max_units_cut / max_units_boost / max_probability_boost`
+    を payload に含め、runtime loader がそのまま `strategy_entry` へ渡す。
+  - global `STRATEGY_PARTICIPATION_ALLOC_*` cap は据え置き、
+    shared upper bound を緩める前に current setup override の観測を優先する。
 
 ### local-v2 `M1Scalper` live setup payload（2026-03-11）
 - 背景:
@@ -278,6 +286,14 @@
     「今の setup が悪いからその lane だけを削る」へ寄せる。
   - slow adaptive layer を全部 live setup identity で統一し、
     別 setup への誤転写を減らす。
+- current 運用:
+  - `dynamic_alloc` の `setup_min_trades=4` を正とし、
+    current 4-trade setup を strategy-level `min_trades` と切り離して trim/hold 判定する。
+  - さらに `sum_realized_jpy<=-8` かつ `weighted_win_rate<=0.25` /
+    `jpy_pf<=0.25` の single-trade severe loser setup は、
+    `setup_min_trades` 未満でも setup override を emit して current lane を薄くする。
+  - winner 側の shared push は `participation_alloc` が担当し、
+    `dynamic_alloc` では global cap を広域に緩めない。
 
 ### local-v2 `M1Scalper` trade-local dynamic exit（2026-03-11）
 - 背景:

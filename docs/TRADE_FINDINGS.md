@@ -14142,3 +14142,69 @@ Status:
     を再集計し、winner lane の厚みと loser lane の遮断が両立しているか確認する。
   - `PrecisionLowVol` / `VwapRevertS` の recent `request_json.entry_thesis.dynamic_alloc`
     が blank になり、shared top-level trim が消えていることを spot check する。
+
+## 2026-03-11 21:40 JST / local-v2: shared setup override の低サンプル反応を 30 分窓向けに前倒し
+- Why/Hypothesis:
+  - 2026-03-11 21:39 JST 時点の local-v2 実測では
+    `USD/JPY price=158.5035`、recent filled spread `0.8 pips`、
+    `nav=35417.7654`、open trade `0`、`order_success_rate=1.0`、
+    `reject_rate=0.0` で、ボトルネックは execution ではなく lane 配分だった。
+  - `participation_alloc` は setup override を持てても
+    strategy-level `min_attempts=20` と同じ閾値で setup を評価しており、
+    current 4+ attempt / 3-5 fill の setup を shared boost/trim に上げにくかった。
+  - さらに setup override は
+    `max_units_boost / max_probability_boost`
+    を loader へ渡しておらず、
+    winner setup の `boost_participation` が
+    probability-only になりやすかった。
+  - `dynamic_alloc` も `setup_min_trades>=6` のため、
+    `DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:up_flat|volatility_compression`
+    のような single-trade severe loser setup を current window で trim できていなかった。
+- Expected Good:
+  - current 30 分 loser setup を strategy-wide stop なしで細くし、
+    share を winner setup へ戻しやすくなる。
+  - `participation_alloc` の winner setup が
+    probability だけでなく unit boost も runtime へ届く。
+  - `dynamic_alloc` が acute loser setup を 2 分周期の artifact で捕まえられる。
+- Expected Bad:
+  - setup override の sample 閾値を下げるため、
+    一時的なノイズ setup へ反応しやすくなる。
+  - single-trade severe loser trim は conservative でも、
+    一過性 stop を 1 本で細くしすぎるリスクがある。
+- Observed/Fact:
+  - `scripts/participation_allocator.py`
+    - `setup_min_attempts` を独立化し、default `4` で setup override を評価するようにした。
+    - setup override payload に
+      `max_units_cut / max_units_boost / max_probability_boost`
+      を含めるようにした。
+  - `workers/common/participation_alloc.py`
+    - setup override loader が
+      `max_units_boost / max_probability_boost`
+      を runtime profile へ保持するようにした。
+  - `scripts/dynamic_alloc_worker.py`
+    - `setup_min_trades` を独立化し、default `4` にした。
+    - `sum_realized_jpy<=-8` かつ `weighted_win_rate<=0.25` /
+      `jpy_pf<=0.25` の single-trade severe loser setup は、
+      `setup_min_trades` 未満でも trim override を出すようにした。
+  - テスト:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py tests/workers/common/test_participation_alloc.py`
+      -> `15 passed`
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/test_dynamic_alloc_worker.py`
+      -> `13 passed`
+  - artifact 再生成:
+    - `python3 scripts/entry_path_aggregator.py --lookback-hours 24 --limit 12000 --top-k 8`
+    - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 24 --min-attempts 20 --setup-min-attempts 4`
+    - `PYTHONPATH=/Users/tossaki/Documents/App/QuantRabbit python3 scripts/dynamic_alloc_worker.py --limit 2400 --lookback-days 7 --min-trades 16 --setup-min-trades 4 --pf-cap 2.0 --target-use 0.88 --half-life-hours 24 --min-lot-multiplier 0.45 --max-lot-multiplier 1.65 --soft-participation 1 --allow-loser-block 0 --allow-winner-only 0`
+    - 再生成後の `config/dynamic_alloc.json` では
+      `DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:up_flat|volatility_compression`
+      に `lot_multiplier=0.45` の setup override が出た。
+    - 同じく `PrecisionLowVol|short|...|gap:down_flat|volatility_compression`
+      に `lot_multiplier=0.45` が出ており、
+      `VwapRevertS|short|...|gap:up_lean|volatility_compression`
+      の positive setup override も維持された。
+- Verdict: pending
+- Next Action:
+  - `main` へ push 後に local-v2 を restart し、
+    `DroughtRevert`, `PrecisionLowVol`, `VwapRevertS`, `RangeFader-sell-fade`
+    の next 30-60 分 `gross_win / gross_loss / net_jpy`
+    を setup ごとに再評価する。

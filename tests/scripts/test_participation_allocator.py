@@ -552,6 +552,104 @@ def test_build_participation_alloc_emits_setup_overrides_for_loser_setup() -> No
     assert loser["microstructure_bucket"] == "tight_fast"
 
 
+def test_build_participation_alloc_emits_low_sample_precision_setup_overrides() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 26,
+                "fills": 23,
+                "filled_rate": 0.8846,
+                "attempt_share": 0.08,
+                "fill_share": 0.18,
+                "share_gap": -0.10,
+                "terminal_status_counts": {"filled": 23},
+                "setups": {
+                    "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression": {
+                        "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "unknown",
+                        "attempts": 15,
+                        "fills": 3,
+                        "filled_rate": 0.20,
+                        "attempt_share": 0.009,
+                        "fill_share": 0.062,
+                        "share_gap": -0.053,
+                        "terminal_status_counts": {"filled": 3},
+                    },
+                    "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression": {
+                        "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "unknown",
+                        "attempts": 25,
+                        "fills": 2,
+                        "filled_rate": 0.08,
+                        "attempt_share": 0.121,
+                        "fill_share": 0.019,
+                        "share_gap": 0.102,
+                        "terminal_status_counts": {"perf_block": 12, "filled": 2},
+                    },
+                },
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={"PrecisionLowVol": -6.11},
+        realized_by_setup={
+            json.dumps(
+                {
+                    "strategy_key": "PrecisionLowVol",
+                    "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+                    "flow_regime": "range_fade",
+                    "microstructure_bucket": "unknown",
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+            ): 51.03,
+            json.dumps(
+                {
+                    "strategy_key": "PrecisionLowVol",
+                    "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression",
+                    "flow_regime": "range_fade",
+                    "microstructure_bucket": "unknown",
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+            ): -57.14,
+        },
+        min_attempts=20,
+        setup_min_attempts=4,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    overrides = payload["strategies"]["PrecisionLowVol"]["setup_overrides"]
+    winner = next(
+        item
+        for item in overrides
+        if item.get("setup_fingerprint")
+        == "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression"
+    )
+    loser = next(
+        item
+        for item in overrides
+        if item.get("setup_fingerprint")
+        == "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression"
+    )
+
+    assert payload["allocation_policy"]["setup_min_attempts"] == 4
+    assert winner["action"] == "boost_participation"
+    assert winner["lot_multiplier"] > 1.0
+    assert winner["max_units_boost"] == 0.12
+    assert winner["max_probability_boost"] == 0.05
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 1.0
+
+
 def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     with sqlite3.connect(db_path) as conn:

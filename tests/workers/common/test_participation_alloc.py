@@ -105,3 +105,48 @@ def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp
     assert profile["lot_multiplier"] == 0.84
     assert profile["probability_offset"] == -0.02
     assert profile["setup_override"]["match_dimension"] == "flow_micro"
+
+
+def test_load_strategy_profile_preserves_setup_override_runtime_caps(tmp_path: Path) -> None:
+    payload = {
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "lot_multiplier": 1.0,
+                "setup_overrides": [
+                    {
+                        "match_dimension": "setup_fingerprint",
+                        "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+                        "action": "boost_participation",
+                        "lot_multiplier": 1.12,
+                        "units_multiplier": 1.12,
+                        "probability_boost": 0.05,
+                        "max_units_boost": 0.12,
+                        "max_probability_boost": 0.05,
+                        "attempts": 15,
+                    }
+                ],
+            }
+        }
+    }
+    path = tmp_path / "participation_alloc.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    profile = load_strategy_profile(
+        "PrecisionLowVol",
+        "scalp",
+        path=path,
+        entry_thesis={
+            "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+            "live_setup_context": {
+                "flow_regime": "range_fade",
+                "microstructure_bucket": "unknown",
+            },
+        },
+    )
+
+    assert profile["found"] is True
+    assert profile["action"] == "boost_participation"
+    assert profile["lot_multiplier"] == 1.12
+    assert profile["max_units_boost"] == 0.12
+    assert profile["max_probability_boost"] == 0.05

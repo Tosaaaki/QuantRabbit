@@ -291,3 +291,107 @@ def test_compute_scores_emits_setup_overrides_from_entry_thesis() -> None:
     assert loser_override["match_dimension"] == "setup_fingerprint"
     assert loser_override["trades"] == 8
     assert loser_override["lot_multiplier"] < winner_override["lot_multiplier"]
+
+
+def test_compute_scores_emits_four_trade_setup_override_when_strategy_window_is_wider() -> None:
+    rows = []
+    for i in range(4):
+        rows.append(
+            (
+                "PrecisionLowVol",
+                "scalp",
+                -1.7,
+                f"2026-02-24T00:{i:02d}:00Z",
+                "MARKET_ORDER_TRADE_CLOSE",
+                -90.0,
+                1400,
+                "PrecisionLowVol",
+                "PrecisionLowVol",
+                '{"setup_fingerprint":"PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression","flow_regime":"range_fade","microstructure_bucket":"unknown"}',
+            )
+        )
+    for i in range(4):
+        rows.append(
+            (
+                "PrecisionLowVol",
+                "scalp",
+                1.4,
+                f"2026-02-24T01:{i:02d}:00Z",
+                "TAKE_PROFIT_ORDER",
+                75.0,
+                1400,
+                "PrecisionLowVol",
+                "PrecisionLowVol",
+                '{"setup_fingerprint":"PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression","flow_regime":"range_fade","microstructure_bucket":"unknown"}',
+            )
+        )
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=16,
+        setup_min_trades=4,
+        pf_cap=2.0,
+    )
+
+    prof = strategy_scores["PrecisionLowVol"]
+    assert isinstance(prof.get("setup_overrides"), list)
+    loser_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression"
+    )
+    winner_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression"
+    )
+    assert loser_override["trades"] == 4
+    assert loser_override["lot_multiplier"] < winner_override["lot_multiplier"]
+
+
+def test_compute_scores_emits_single_trade_severe_loser_setup_override() -> None:
+    rows = [
+        (
+            "DroughtRevert",
+            "scalp",
+            -1.5,
+            "2026-02-24T00:00:00Z",
+            "STOP_LOSS_ORDER",
+            -10.57,
+            4800,
+            "DroughtRevert",
+            "DroughtRevert",
+            '{"setup_fingerprint":"DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:up_flat|volatility_compression","flow_regime":"range_fade","microstructure_bucket":"unknown"}',
+        ),
+        (
+            "DroughtRevert",
+            "scalp",
+            1.2,
+            "2026-02-24T00:01:00Z",
+            "TAKE_PROFIT_ORDER",
+            13.47,
+            4800,
+            "DroughtRevert",
+            "DroughtRevert",
+            '{"setup_fingerprint":"DroughtRevert|long|range_fade|unknown|rsi:mid|atr:mid|gap:down_strong|volatility_compression","flow_regime":"range_fade","microstructure_bucket":"unknown"}',
+        ),
+    ]
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=16,
+        setup_min_trades=4,
+        pf_cap=2.0,
+    )
+
+    prof = strategy_scores["DroughtRevert"]
+    loser_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:up_flat|volatility_compression"
+    )
+    assert loser_override["trades"] == 1
+    assert loser_override["lot_multiplier"] <= 0.45
