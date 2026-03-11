@@ -1206,6 +1206,24 @@ def _signal_precision_lowvol(
     if not proj_allow:
         return None
     proj_size_mult = float(size_mult)
+    projection_score = None
+    if isinstance(proj_detail, dict):
+        try:
+            raw_projection_score = proj_detail.get("score")
+            if raw_projection_score is not None:
+                projection_score = float(raw_projection_score)
+        except Exception:
+            projection_score = None
+    if side == "short" and flow_guard is not None and projection_score is not None:
+        gap_atr_ratio = abs(vgap) / max(1.0, atr)
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        if (
+            projection_score <= -0.10
+            and gap_atr_ratio >= 2.5
+            and setup_quality < 0.40
+            and rsi < max(config.PREC_LOWVOL_RSI_SHORT_MIN + 10.0, 60.0)
+        ):
+            return None
 
     dist = dist_lower if side == "long" else dist_upper
     touch_ratio = max(0.0, (band - dist) / max(0.2, band))

@@ -51,6 +51,79 @@
 - Status:
 ```
 
+## 2026-03-11 18:24 JST / local-v2: `PrecisionLowVol` short の hostile projection lane を strategy-local に遮断
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py` の `_signal_precision_lowvol()` に、
+    short side で `projection.score` が明確に逆風、`vwap_gap/ATR` が過伸長、
+    `flow_guard.setup_quality` が低い lane を block する guard を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py` に、
+    supportive short が残りつつ hostile short が落ちることを追加した。
+- Why:
+  - `RangeFader` の long-side shallow probe を締めた後、
+    live loser は `PrecisionLowVol` short へ寄っており、
+    fixed-SL attach 後も low-quality short fade が SL を連打していた。
+- Hypothesis:
+  - `projection.score <= -0.10`, `vwap_gap/ATR >= 2.5`,
+    `setup_quality < 0.40`, `rsi < max(short_min+10, 60)` の short を
+    entry 前に strategy-local で落とせば、
+    continuation 寄りの shallow short fade を減らして
+    per-trade loss の連発を止められる。
+- Expected Good:
+  - `PrecisionLowVol` の hostile short lane が減り、
+    `STOP_LOSS_ORDER` 連打の churn が薄くなる。
+  - shared gate を増やさず、`PrecisionLowVol` 自身の quality 判定だけで
+    live loser lane を抑えられる。
+- Expected Bad:
+  - short cadence が落ち過ぎると、
+    positive projection の clean revert short まで巻き添えで減る可能性がある。
+  - projection score 閾値が浅いと、
+    hostile lane の一部が still 通る可能性がある。
+- Period:
+  - UTC `2026-03-11 05:00` - `2026-03-11 09:24`
+  - JST `2026-03-11 14:00` - `2026-03-11 18:24`
+- Fact:
+  - market check:
+    - `USD/JPY 158.3965` 近辺、tick spread `0.8 pips`
+    - recent tick range `158.38-158.45`（約 `7.0 pips`）
+    - `data_lag_ms=1314.8`, `decision_latency_ms=18.6`
+    - `openTrades=[]`
+  - `logs/trades.db` current live window:
+    - `27 trades / -63.9 JPY / avg -0.67 pips`
+    - `PrecisionLowVol 8 trades / -92.2 JPY / avg -1.387 pips / win_rate 0.125`
+  - current loser lane:
+    - `2026-03-11 07:15-08:19 UTC` の `PrecisionLowVol` short で
+      `setup_quality=0.262-0.378`, `flow_regime=range_fade`,
+      `projection.score=-0.125/-0.14`, `vwap_gap=7.0-29.4 pips`,
+      `rsi=59.18-61.42`, `adx=13.0-16.8`
+    - 同 cluster は `STOP_LOSS_ORDER` で `-1.5` から `-2.0 pips` を連打した。
+- Failure Cause:
+  - fixed-SL は attach 済みで tail loss は止まったが、
+    `_signal_precision_lowvol()` は
+    negative projection かつ stretched short fade を still 通していた。
+  - その結果、broker SL は正しく付いていても
+    shallow short fade の期待値自体が負のまま連発していた。
+- Improvement:
+  - `PrecisionLowVol` short にだけ hostile projection guard を追加し、
+    positive/supportive projection の short は残したまま
+    stretched loser lane だけを落とす。
+- Verification:
+  - `./.venv/bin/pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - 反映後 2-6h で
+    `PrecisionLowVol` の `filled`, `STOP_LOSS_ORDER`, `net_jpy`, `avg pl_pips`
+    を直前窓と比較する。
+  - `orders.db` で `projection.score <= -0.10` の short fill が
+    0 近傍まで減るかを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - `PrecisionLowVol` short の cadence が落ち過ぎず、
+    `projection.score > 0` の clean short が残るかを次窓で監査する。
+  - hostile short が still 残る場合は
+    `flow_guard.setup_quality` と `rsi` 側の quality floor をさらに引き上げる。
+- Status:
+  - in_progress
+
 ## 2026-03-11 13:59 JST / local-v2: `RangeFader` の shallow range-fade long probe を strategy-local に遮断
 
 - Change:

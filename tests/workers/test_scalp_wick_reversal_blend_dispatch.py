@@ -243,7 +243,11 @@ def test_precision_lowvol_short_keeps_local_flow_guard_when_headwind_is_mild() -
             "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
             "tick_snapshot": lambda *_args, **_kwargs: ([158.188, 158.196, 158.198], 6.0),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.88),
-            "projection_decision": lambda side, mode="range": (side == "short", 1.08, {"mode": mode}),
+            "projection_decision": lambda side, mode="range": (
+                side == "short",
+                1.08,
+                {"mode": mode, "score": 0.22},
+            ),
         }
     )
 
@@ -270,6 +274,77 @@ def test_precision_lowvol_short_keeps_local_flow_guard_when_headwind_is_mild() -
     assert signal["size_mult"] < 1.08
     assert signal["flow_guard"]["setup_quality"] > 0.5
     assert signal["flow_guard"]["continuation_pressure"] < signal["flow_guard"]["max_pressure"]
+
+
+def test_precision_lowvol_blocks_gap_stretched_hostile_projection_short_lane() -> None:
+    namespace = _load_worker_functions(
+        "_unit_bound",
+        "_positive_norm",
+        "_plus_di",
+        "_minus_di",
+        "_reversion_short_flow_guard",
+        "_signal_precision_lowvol",
+    )
+    namespace.update(
+        {
+            "config": SimpleNamespace(
+                MAX_SPREAD_PIPS=2.0,
+                PREC_LOWVOL_RANGE_SCORE=0.18,
+                PREC_LOWVOL_ADX_MAX=24.0,
+                PREC_LOWVOL_BBW_MAX=0.0016,
+                PREC_LOWVOL_ATR_MIN=0.4,
+                PREC_LOWVOL_ATR_MAX=4.4,
+                PREC_LOWVOL_BB_TOUCH_PIPS=1.2,
+                PREC_LOWVOL_RSI_LONG_MAX=48.0,
+                PREC_LOWVOL_RSI_SHORT_MIN=52.0,
+                PREC_LOWVOL_STOCH_LONG_MAX=0.55,
+                PREC_LOWVOL_STOCH_SHORT_MIN=0.45,
+                PREC_LOWVOL_VWAP_GAP_MIN=0.08,
+                PREC_LOWVOL_VWAP_GAP_BLOCK=64.0,
+                PREC_LOWVOL_SPREAD_P25=1.0,
+                PREC_LOWVOL_REV_MIN_STRENGTH=0.18,
+            ),
+            "_latest_price": lambda _fac: 158.286,
+            "bb_levels": lambda _fac: (158.288, 158.272, 158.244, 0.044, 4.4),
+            "spread_ok": lambda **_kwargs: (True, {}),
+            "_adx": lambda fac: float(fac.get("adx") or 0.0),
+            "_bbw": lambda fac: float(fac.get("bbw") or 0.0),
+            "_atr_pips": lambda fac: float(fac.get("atr") or 0.0),
+            "_rsi": lambda fac: float(fac.get("rsi") or 50.0),
+            "_stoch_rsi": lambda fac: float(fac.get("stoch") or 0.0),
+            "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
+            "tick_snapshot": lambda *_args, **_kwargs: ([158.278, 158.283, 158.286], 6.0),
+            "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.72),
+            "_reversion_short_flow_guard": lambda **_kwargs: (
+                True,
+                {
+                    "continuation_pressure": 0.34,
+                    "max_pressure": 0.41,
+                    "setup_quality": 0.32,
+                    "reversion_support": 0.45,
+                },
+            ),
+            "projection_decision": lambda side, mode="range": (
+                side == "short",
+                1.0,
+                {"mode": mode, "score": -0.125},
+            ),
+        }
+    )
+
+    fac_m1 = {
+        "adx": 16.8,
+        "bbw": 0.00054,
+        "atr": 2.13,
+        "rsi": 60.7,
+        "stoch": 0.81,
+        "vgap": 29.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.43)
+
+    signal = namespace["_signal_precision_lowvol"](fac_m1, range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
 
 
 def test_vwap_revert_short_blocks_gap_strong_hostile_projection_lane() -> None:

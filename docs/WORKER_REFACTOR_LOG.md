@@ -5,6 +5,26 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-11（追記）`PrecisionLowVol` short の hostile projection lane を worker 内で block
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `_signal_precision_lowvol()` は short side で
+    `projection.score <= -0.10`, `vwap_gap/ATR >= 2.5`,
+    `flow_guard.setup_quality < 0.40`,
+    `rsi < max(PREC_LOWVOL_RSI_SHORT_MIN + 10, 60)` の lane を
+    strategy-local に reject するようにした。
+  - supportive projection score を持つ short lane は従来どおり通すことを
+    dispatch test で固定した。
+- 意図:
+  - fixed-SL attach 後に残った `PrecisionLowVol` current loser は
+    「大きく負ける」ではなく「negative projection の short fade を積む」ことだったため、
+    shared gate を増やさず worker の setup-local quality で止める。
+
 ### 2026-03-11（追記）`quant-order-manager` に fixed-SL dedicated strategy の broker SL override を集約
 
 - 対象:

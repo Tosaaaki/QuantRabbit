@@ -8,6 +8,31 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `PrecisionLowVol` hostile short projection guard（2026-03-11）
+- 背景:
+  - 2026-03-11 18:24 JST 時点の local-v2 実測では、
+    `PrecisionLowVol` は current live window で
+    `8 trades / -92.2 JPY / avg -1.387 pips` と最悪寄与だった。
+  - broker `stopLossOnFill` は既に付いており、
+    loss は `STOP_LOSS_ORDER` の `-1.5` から `-2.0 pips` に収まっていた。
+    主因は protection 欠落ではなく、negative projection の short fade が still 通ることだった。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_signal_precision_lowvol()` の short side に
+      `projection.score <= -0.10`,
+      `vwap_gap/ATR >= 2.5`,
+      `flow_guard.setup_quality < 0.40`,
+      `rsi < max(PREC_LOWVOL_RSI_SHORT_MIN + 10, 60)` の
+      hostile projection lane を block する guard を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    - supportive short が残り、
+      stretched hostile short が reject されることを固定した。
+- 意図:
+  - fixed-SL attach 後の `PrecisionLowVol` は
+    loss magnitude ではなく entry quality が問題なので、
+    shared post-hoc gate ではなく worker local の short-lane quality guard で
+    loser setup を前段遮断する。
+
 ### local-v2 `RangeFader` shallow range probe guard（2026-03-11）
 - 背景:
   - 2026-03-11 13:59 JST 時点の local-v2 実測では
