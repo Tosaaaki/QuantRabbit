@@ -3441,6 +3441,39 @@
 - shared blanket loosening や strategy-wide stop ではなく、
   strategy-scoped な late reject の除去で cadence を戻す。
 
+### 2026-03-12 `scalp_extrema_reversal_live` mid-RSI loser probe block
+- current live の `scalp_extrema_reversal_live` は
+  entry 復帰後も
+  `range_compression / volatility_compression`
+  の mid-RSI probe が loser になっていた。
+- `workers/scalp_extrema_reversal/worker.py` は
+  new worker-local guard として:
+  - short:
+    non-supportive かつ
+    `RSI<=60`, `dist_high<=0.90`, `short_bounce<=0.85`,
+    `tick_strength<=0.25`, `range_score>=0.50`
+    の probe を `short_mid_rsi_probe_block` で reject する。
+  - long:
+    non-supportive かつ
+    `RSI>=40`, `dist_low<=0.85`, `long_bounce<=0.25`,
+    `tick_strength<=0.25`, `ADX>=15`, `range_score>=0.55`
+    の probe を `long_mid_rsi_probe_block` で reject する。
+- winner short (`RSI 69` 帯) は維持し、
+  shared gate / time block / strategy-wide blanket stop は追加しない。
+
+### 2026-03-12 shared participation zero-profit no-boost
+- current shared participation は
+  `filled_rate` と `share_gap` だけで
+  flat lane を `boost_participation` しない。
+- `scripts/participation_allocator.py` は
+  strategy / setup ともに
+  `boost_participation` の前提として
+  `realized_jpy > 0.0` を必須にする。
+- これにより
+  `dynamic_alloc` が trim している loser/flat setup を
+  `participation_alloc` が zero-profit のまま
+  再度押し上げる衝突を避ける。
+
 ### 2026-03-12 `scalp_extrema_reversal_live` short setup-pressure guard
 - `scalp_extrema_reversal_live` の current 運用は
   short side を一律 stop しない。

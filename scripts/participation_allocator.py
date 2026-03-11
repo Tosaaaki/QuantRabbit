@@ -192,7 +192,7 @@ def _build_allocation_record(
                 probability_offset = -max_prob_boost * (0.10 + 0.60 * trim_strength)
             cadence_floor = 0.94
             action = "trim_units"
-        elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy >= 0.0:
+        elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy > 0.0:
             advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
             quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
             boost_strength = max(advantage, quality)
@@ -201,7 +201,7 @@ def _build_allocation_record(
             probability_boost = max_prob_boost * (0.30 + 0.70 * boost_strength)
             cadence_floor = 1.0 + 0.22 * (0.35 + 0.65 * boost_strength)
             action = "boost_participation"
-        elif filled_rate >= median_fill_rate * 1.10 and realized_jpy >= 0.0 and attempts >= max(min_attempts, 8):
+        elif filled_rate >= median_fill_rate * 1.10 and realized_jpy > 0.0 and attempts >= max(min_attempts, 8):
             units_multiplier = 1.0 + max_units_boost * 0.52
             probability_boost = max_prob_boost * 0.42
             cadence_floor = 1.12
@@ -529,7 +529,7 @@ def _allocation_record(
                 probability_offset = -max_prob_boost * (0.20 + 0.80 * trim_strength)
             cadence_floor = 0.90
             action = "trim_units"
-        elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy >= 0.0:
+        elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy > 0.0:
             advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
             quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
             boost_strength = max(advantage, quality)
@@ -538,7 +538,7 @@ def _allocation_record(
             probability_boost = max_prob_boost * (0.25 + 0.75 * boost_strength)
             cadence_floor = 1.0 + 0.18 * (0.30 + 0.70 * boost_strength)
             action = "boost_participation"
-        elif filled_rate >= median_fill_rate * 1.10 and realized_jpy >= 0.0 and attempts >= max(min_attempts, 8):
+        elif filled_rate >= median_fill_rate * 1.10 and realized_jpy > 0.0 and attempts >= max(min_attempts, 8):
             units_multiplier = 1.0 + max_units_boost * 0.40
             probability_boost = max_prob_boost * 0.35
             cadence_floor = 1.08

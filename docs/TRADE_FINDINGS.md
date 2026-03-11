@@ -133,6 +133,126 @@
 - Status:
   - in_progress
 
+## 2026-03-12 07:40 JST / local-v2: `scalp_extrema_reversal_live` の mid-RSI loser probe を worker-local に切る
+
+- Change:
+  - `workers/scalp_extrema_reversal/worker.py` に
+    non-supportive `mid-RSI` probe block を追加し、
+    `range_compression / volatility_compression`
+    の current loser short/long を worker local で落とすようにした。
+  - `ops/env/quant-scalp-extrema-reversal.env` に
+    `LONG_MID_RSI_PROBE_*` / `SHORT_MID_RSI_PROBE_*`
+    を追加し、current live threshold を明示した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に short loser / short winner / long loser の回帰を追加した。
+- Why:
+  - entry は戻ったが、
+    current loser の `ExtremaReversal`
+    は `entry_probability` より
+    `mid-RSI / shallow bounce / non-supportive`
+    な reversal probe が主因だった。
+- Hypothesis:
+  - `RSI 55-56` の short と
+    `RSI 40-42` の shallow long を
+    current range-compression loser として切れば、
+    winner short (`RSI 69`) を残したまま
+    30 分窓の downside を減らせる。
+- Expected Good:
+  - `scalp_extrema_reversal_live`
+    の immediate `STOP_LOSS_ORDER`
+    が減る。
+  - high-RSI short winner lane は残る。
+- Expected Bad:
+  - range compression の
+    early reversal long/short を削りすぎると cadence が落ちる。
+- Period:
+  - RCA window:
+    - JST `2026-03-12 06:56-07:28`
+- Fact:
+  - loser short `459162` は
+    `RSI 56.3 / dist_high 0.85 / tick_strength 0.1`
+    で `sl_hit_s=0`, `MFE=-1.6p`。
+  - loser long `459152` は
+    `RSI 41.5 / dist_low 0.331 / ADX 26.4`
+    で `sl_hit_s=0`, `MFE=-1.6p`。
+  - winner short `459180` は
+    `RSI 69.0 / dist_high 0.55`
+    で `+1.0p` を確保した。
+- Failure Cause:
+  - current loser は
+    shallow probe が range compression の真ん中で反転に失敗し、
+    TP 側へほぼ触れずに逆行していた。
+- Improvement:
+  - `short_mid_rsi_probe_block` と
+    `long_mid_rsi_probe_block`
+    を追加し、non-supportive かつ
+    `mid-RSI + shallow bounce`
+    の probe だけを reject する。
+- Verification:
+  - restart 後に
+    `scalp_extrema_reversal_live`
+    の recent fills で
+    `RSI 55-56` short と `RSI 40-42` long が減り、
+    `STOP_LOSS_ORDER` が下がることを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - live で 3-5 trade 見て、
+    まだ loser が続くなら
+    `DroughtRevert` の current long `gap:up_flat`
+    lane を次に切る。
+- Status:
+  - in_progress
+
+## 2026-03-12 08:00 JST / local-v2: shared participation は zero-profit setup を boost しない
+
+- Change:
+  - `scripts/participation_allocator.py` の
+    `boost_participation` 条件を tightened し、
+    `realized_jpy == 0` の strategy / setup は
+    fill-rate が高くても boost しないようにした。
+  - `tests/scripts/test_participation_allocator.py`
+    に strategy-level と setup-level の
+    zero-profit no-boost 回帰を追加した。
+- Why:
+  - current live では
+    `PrecisionLowVol|short|range_fade|...|gap:down_flat`
+    が realized `0.0` のまま
+    `boost_participation` され、
+    `dynamic_alloc` の trim と衝突していた。
+- Hypothesis:
+  - 「勝っていない lane は押し上げない」を shared participation に入れると、
+    loser / flat lane の無駄な cadence 増を止められる。
+- Expected Good:
+  - zero-profit setup の
+    `probability_boost / units boost`
+    が消える。
+  - `PrecisionLowVol` の current loser/flat lane を
+    shared artifact が誤って押し上げない。
+- Expected Bad:
+  - close lag で realized がまだ 0 の fresh winner を
+    早く押せなくなる可能性がある。
+- Fact:
+  - current `participation_alloc` では
+    `PrecisionLowVol|short|range_fade|...|gap:down_flat`
+    が `realized_jpy=0.0` でも
+    `boost_participation / probability_boost>0`
+    になっていた。
+- Improvement:
+  - shared participation の boost は
+    `positive realized_jpy` を必須にした。
+- Verification:
+  - regenerated `config/participation_alloc.json`
+    で zero-profit lane の boost が消えていることを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - regenerate artifact 後、
+    `PrecisionLowVol` の current setup override を見て
+    boost conflict が消えたことを確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 03:34 JST / local-v2: `PrecisionLowVol` short repeated-loss burst を setup-pressure guard で抑制
 
 - Change:

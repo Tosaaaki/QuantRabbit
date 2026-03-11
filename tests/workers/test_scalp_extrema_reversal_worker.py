@@ -847,3 +847,169 @@ def test_signal_extrema_reversal_keeps_non_supportive_long_with_deeper_probe(mon
 
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
+
+
+def test_signal_extrema_reversal_blocks_non_supportive_mid_rsi_short(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
+    monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
+    monkeypatch.setattr(worker, "EXTREMA_ATR_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_HIGH_BAND_PIPS", 0.9)
+    monkeypatch.setattr(worker, "EXTREMA_RSI_SHORT_MIN", 54.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_RSI_MAX", 60.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_DIST_HIGH_MAX_PIPS", 0.90)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_BOUNCE_MAX_PIPS", 0.85)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_TICK_STRENGTH_MAX", 0.25)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.50)
+    monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
+    monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
+    monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
+    monkeypatch.setattr(
+        worker,
+        "get_candles_snapshot",
+        lambda *_args, **_kwargs: [{"high": 158.4585, "low": 158.3968}] * 80,
+    )
+    monkeypatch.setattr(
+        worker,
+        "compute_range_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(high=158.4585, low=158.3968),
+    )
+    monkeypatch.setattr(
+        worker,
+        "tick_snapshot",
+        lambda *_args, **_kwargs: ([158.4585, 158.4520, 158.4500, 158.4495, 158.4500], None),
+    )
+    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
+    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+
+    signal = worker._signal_extrema_reversal(
+        {
+            "close": 158.450,
+            "ma10": 158.448,
+            "ma20": 158.447,
+            "ema20": 158.447,
+            "adx": 15.0,
+            "atr_pips": 1.8,
+            "rsi": 56.3,
+        },
+        range_ctx=_range_ctx(active=True, score=0.57, mode="RANGE"),
+        tag="scalp_extrema_reversal_live",
+    )
+
+    assert signal is None
+
+
+def test_signal_extrema_reversal_keeps_higher_rsi_short_outside_mid_rsi_probe(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
+    monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
+    monkeypatch.setattr(worker, "EXTREMA_ATR_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_HIGH_BAND_PIPS", 0.9)
+    monkeypatch.setattr(worker, "EXTREMA_RSI_SHORT_MIN", 54.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_RSI_MAX", 60.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_DIST_HIGH_MAX_PIPS", 0.90)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_BOUNCE_MAX_PIPS", 0.85)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_TICK_STRENGTH_MAX", 0.25)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.50)
+    monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
+    monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
+    monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
+    monkeypatch.setattr(
+        worker,
+        "get_candles_snapshot",
+        lambda *_args, **_kwargs: [{"high": 158.4555, "low": 158.3720}] * 80,
+    )
+    monkeypatch.setattr(
+        worker,
+        "compute_range_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(high=158.4555, low=158.3720),
+    )
+    monkeypatch.setattr(
+        worker,
+        "tick_snapshot",
+        lambda *_args, **_kwargs: ([158.4555, 158.4525, 158.4505, 158.4490, 158.4500], None),
+    )
+    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.35))
+    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+
+    signal = worker._signal_extrema_reversal(
+        {
+            "close": 158.450,
+            "ma10": 158.448,
+            "ma20": 158.447,
+            "ema20": 158.447,
+            "adx": 16.6,
+            "atr_pips": 1.8,
+            "rsi": 69.0,
+        },
+        range_ctx=_range_ctx(active=True, score=0.52, mode="RANGE"),
+        tag="scalp_extrema_reversal_live",
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["extrema"]["short_mid_rsi_probe_block"] is False
+
+
+def test_signal_extrema_reversal_blocks_non_supportive_mid_rsi_long(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
+    monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
+    monkeypatch.setattr(worker, "EXTREMA_ATR_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LOW_BAND_PIPS", 0.9)
+    monkeypatch.setattr(worker, "EXTREMA_RSI_LONG_MAX", 46.0)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_MID_RSI_PROBE_RSI_MIN", 40.0)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_MID_RSI_PROBE_DIST_LOW_MAX_PIPS", 0.85)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_MID_RSI_PROBE_BOUNCE_MAX_PIPS", 0.25)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_MID_RSI_PROBE_TICK_STRENGTH_MAX", 0.25)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_MID_RSI_PROBE_ADX_MIN", 15.0)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.55)
+    monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
+    monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
+    monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
+    monkeypatch.setattr(
+        worker,
+        "get_candles_snapshot",
+        lambda *_args, **_kwargs: [{"high": 158.485, "low": 158.4467}] * 80,
+    )
+    monkeypatch.setattr(
+        worker,
+        "compute_range_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(high=158.485, low=158.4467),
+    )
+    monkeypatch.setattr(
+        worker,
+        "tick_snapshot",
+        lambda *_args, **_kwargs: ([158.4492, 158.4479, 158.4475, 158.4476, 158.4500], None),
+    )
+    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.25))
+    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+
+    signal = worker._signal_extrema_reversal(
+        {
+            "close": 158.450,
+            "ma10": 158.447,
+            "ma20": 158.447,
+            "ema20": 158.447,
+            "adx": 26.4,
+            "atr_pips": 1.8,
+            "rsi": 41.5,
+        },
+        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
+        range_ctx=_range_ctx(active=True, score=0.73, mode="RANGE"),
+        tag="scalp_extrema_reversal_live",
+    )
+
+    assert signal is None

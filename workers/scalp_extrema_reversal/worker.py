@@ -297,6 +297,20 @@ EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX = _env_float(
 EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX = _env_float(
     "LONG_SHALLOW_PROBE_RANGE_SCORE_MAX", 0.32
 )
+EXTREMA_LONG_MID_RSI_PROBE_RSI_MIN = _env_float("LONG_MID_RSI_PROBE_RSI_MIN", 40.0)
+EXTREMA_LONG_MID_RSI_PROBE_DIST_LOW_MAX_PIPS = _env_float(
+    "LONG_MID_RSI_PROBE_DIST_LOW_MAX_PIPS", 0.85
+)
+EXTREMA_LONG_MID_RSI_PROBE_BOUNCE_MAX_PIPS = _env_float(
+    "LONG_MID_RSI_PROBE_BOUNCE_MAX_PIPS", 0.25
+)
+EXTREMA_LONG_MID_RSI_PROBE_TICK_STRENGTH_MAX = _env_float(
+    "LONG_MID_RSI_PROBE_TICK_STRENGTH_MAX", 0.25
+)
+EXTREMA_LONG_MID_RSI_PROBE_ADX_MIN = _env_float("LONG_MID_RSI_PROBE_ADX_MIN", 15.0)
+EXTREMA_LONG_MID_RSI_PROBE_RANGE_SCORE_MIN = _env_float(
+    "LONG_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.55
+)
 EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS = _env_float(
     "SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.45
 )
@@ -314,6 +328,19 @@ EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN = _env_float(
 )
 EXTREMA_SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS = _env_float(
     "SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS", 0.10
+)
+EXTREMA_SHORT_MID_RSI_PROBE_RSI_MAX = _env_float("SHORT_MID_RSI_PROBE_RSI_MAX", 60.0)
+EXTREMA_SHORT_MID_RSI_PROBE_DIST_HIGH_MAX_PIPS = _env_float(
+    "SHORT_MID_RSI_PROBE_DIST_HIGH_MAX_PIPS", 0.90
+)
+EXTREMA_SHORT_MID_RSI_PROBE_BOUNCE_MAX_PIPS = _env_float(
+    "SHORT_MID_RSI_PROBE_BOUNCE_MAX_PIPS", 0.85
+)
+EXTREMA_SHORT_MID_RSI_PROBE_TICK_STRENGTH_MAX = _env_float(
+    "SHORT_MID_RSI_PROBE_TICK_STRENGTH_MAX", 0.25
+)
+EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN = _env_float(
+    "SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.50
 )
 EXTREMA_SETUP_PRESSURE_ENABLED = _env_bool("SETUP_PRESSURE_ENABLED", True)
 EXTREMA_SETUP_PRESSURE_LOOKBACK_HOURS = _env_float("SETUP_PRESSURE_LOOKBACK_HOURS", 6.0)
@@ -744,6 +771,17 @@ def _signal_extrema_reversal(
         and adx_value <= EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX
         and range_score <= EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX
     )
+    long_mid_rsi_probe_block = (
+        not long_supportive
+        and range_mode == "RANGE"
+        and EXTREMA_LONG_MID_RSI_PROBE_DIST_LOW_MAX_PIPS > 0.0
+        and dist_low <= EXTREMA_LONG_MID_RSI_PROBE_DIST_LOW_MAX_PIPS
+        and long_bounce_pips <= EXTREMA_LONG_MID_RSI_PROBE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_LONG_MID_RSI_PROBE_TICK_STRENGTH_MAX
+        and adx_value >= EXTREMA_LONG_MID_RSI_PROBE_ADX_MIN
+        and range_score >= EXTREMA_LONG_MID_RSI_PROBE_RANGE_SCORE_MIN
+        and rsi >= EXTREMA_LONG_MID_RSI_PROBE_RSI_MIN
+    )
     short_shallow_probe_block = (
         not short_supportive
         and range_mode == "RANGE"
@@ -754,6 +792,16 @@ def _signal_extrema_reversal(
         and adx_value <= EXTREMA_SHORT_SHALLOW_PROBE_ADX_MAX
         and range_score >= EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN
         and ma_gap_pips >= EXTREMA_SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS
+    )
+    short_mid_rsi_probe_block = (
+        not short_supportive
+        and range_mode == "RANGE"
+        and EXTREMA_SHORT_MID_RSI_PROBE_DIST_HIGH_MAX_PIPS > 0.0
+        and dist_high <= EXTREMA_SHORT_MID_RSI_PROBE_DIST_HIGH_MAX_PIPS
+        and short_bounce_pips <= EXTREMA_SHORT_MID_RSI_PROBE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_SHORT_MID_RSI_PROBE_TICK_STRENGTH_MAX
+        and range_score >= EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN
+        and rsi <= EXTREMA_SHORT_MID_RSI_PROBE_RSI_MAX
     )
     short_range_reason = str(getattr(range_ctx, "reason", "") or "").strip().lower()
     short_setup_pressure_diag = _recent_setup_pressure("short", short_range_reason)
@@ -775,6 +823,7 @@ def _signal_extrema_reversal(
         and short_bounce_pips >= EXTREMA_SWEEP_MIN_PIPS
         and not short_countertrend_block
         and not short_shallow_probe_block
+        and not short_mid_rsi_probe_block
         and not short_setup_pressure_block
     )
     can_long = (
@@ -785,6 +834,7 @@ def _signal_extrema_reversal(
         and long_bounce_pips >= EXTREMA_SWEEP_MIN_PIPS
         and not long_countertrend_block
         and not long_shallow_probe_block
+        and not long_mid_rsi_probe_block
     )
 
     if not can_short and not can_long:
@@ -842,10 +892,12 @@ def _signal_extrema_reversal(
             "ma_gap_pips": round(ma_gap_pips, 3),
             "short_countertrend_block": bool(short_countertrend_block and side == "short"),
             "short_shallow_probe_block": bool(short_shallow_probe_block and side == "short"),
+            "short_mid_rsi_probe_block": bool(short_mid_rsi_probe_block and side == "short"),
             "short_setup_pressure_block": bool(short_setup_pressure_block and side == "short"),
             "short_setup_pressure": short_setup_pressure_diag if side == "short" else {},
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
             "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
+            "long_mid_rsi_probe_block": bool(long_mid_rsi_probe_block and side == "long"),
             "trend_gate": trend_diag,
         },
         "range_score": range_score,

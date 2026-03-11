@@ -27,6 +27,49 @@
     late reject だけを strategy-scoped に外して
     scalp lane の participation を戻す。
 
+### 2026-03-12（追記）`scalp_extrema_reversal_live` の mid-RSI loser probe を worker-local で遮断
+
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - non-supportive な short `range_compression` で
+    `RSI<=60`, `dist_high<=0.90`, `short_bounce<=0.85`,
+    `tick_strength<=0.25`, `range_score>=0.50`
+    の mid-RSI probe を `short_mid_rsi_probe_block` で reject するようにした。
+  - non-supportive な long `range_compression` で
+    `RSI>=40`, `dist_low<=0.85`, `long_bounce<=0.25`,
+    `tick_strength<=0.25`, `ADX>=15`, `range_score>=0.55`
+    の shallow long を `long_mid_rsi_probe_block` で reject するようにした。
+  - current live loser/winner を模した worker test を追加し、
+    loser short / loser long は block、
+    winner short は keep を固定した。
+- 意図:
+  - entry cadence を落とさず、
+    `ExtremaReversal` の current loser だけを
+    strategy-local の quality gate で削る。
+
+### 2026-03-12（追記）shared participation の boost は positive realized を必須化
+
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - strategy / setup の `boost_participation` 条件を
+    `realized_jpy > 0.0` へ tightened し、
+    zero-profit lane を shared participation が押し上げないようにした。
+  - strategy-level / setup-level の
+    zero-profit no-boost regression を追加した。
+- 意図:
+  - `dynamic_alloc` が trim している loser/flat setup を
+    `participation_alloc` が zero-profit のまま
+    boost して衝突するのを止める。
+
 ### 2026-03-12（追記）`PrecisionLowVol` short repeated-loss burst を worker-local setup-pressure で抑制
 
 - 対象:

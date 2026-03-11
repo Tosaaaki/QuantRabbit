@@ -363,6 +363,52 @@ def test_build_participation_alloc_boosts_profitable_small_sample_winner() -> No
     assert winner["cadence_floor"] > 1.0
 
 
+def test_build_participation_alloc_does_not_boost_zero_realized_strategy() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 10,
+                "fills": 8,
+                "filled_rate": 0.80,
+                "attempt_share": 0.05,
+                "fill_share": 0.18,
+                "share_gap": -0.13,
+                "terminal_status_counts": {"filled": 8},
+            },
+            "RangeFader-neutral-fade": {
+                "pocket": "scalp",
+                "attempts": 120,
+                "fills": 3,
+                "filled_rate": 0.025,
+                "attempt_share": 0.70,
+                "fill_share": 0.15,
+                "share_gap": 0.55,
+                "terminal_status_counts": {"perf_block": 45, "filled": 3},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "PrecisionLowVol": 0.0,
+            "RangeFader-neutral-fade": -1200.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    neutral = payload["strategies"]["PrecisionLowVol"]
+
+    assert neutral["action"] == "hold"
+    assert neutral["lot_multiplier"] == 1.0
+    assert neutral["probability_boost"] == 0.0
+
+
 def test_build_participation_alloc_trims_underused_high_fill_loser() -> None:
     summary = {
         "lookback_hours": 24.0,
@@ -838,6 +884,67 @@ def test_build_participation_alloc_emits_low_sample_precision_setup_overrides() 
     assert winner["lot_multiplier"] > 1.0
     assert winner["max_units_boost"] == 0.12
     assert winner["max_probability_boost"] == 0.05
+
+
+def test_build_participation_alloc_skips_zero_realized_setup_boost() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 26,
+                "fills": 23,
+                "filled_rate": 0.8846,
+                "attempt_share": 0.08,
+                "fill_share": 0.18,
+                "share_gap": -0.10,
+                "terminal_status_counts": {"filled": 23},
+                "setups": {
+                    "PrecisionLowVol|short|range_fade|unknown|rsi:mid|atr:low|gap:down_flat|volatility_compression": {
+                        "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:mid|atr:low|gap:down_flat|volatility_compression",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "unknown",
+                        "attempts": 4,
+                        "fills": 4,
+                        "filled_rate": 1.0,
+                        "attempt_share": 0.010,
+                        "fill_share": 0.038,
+                        "share_gap": -0.028,
+                        "terminal_status_counts": {"filled": 4},
+                    },
+                },
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={"PrecisionLowVol": -6.11},
+        realized_by_setup={
+            json.dumps(
+                {
+                    "strategy_key": "PrecisionLowVol",
+                    "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:mid|atr:low|gap:down_flat|volatility_compression",
+                    "flow_regime": "range_fade",
+                    "microstructure_bucket": "unknown",
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+            ): 0.0,
+        },
+        min_attempts=20,
+        setup_min_attempts=4,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    overrides = payload["strategies"]["PrecisionLowVol"].get("setup_overrides") or []
+    assert not any(
+        item.get("setup_fingerprint")
+        == "PrecisionLowVol|short|range_fade|unknown|rsi:mid|atr:low|gap:down_flat|volatility_compression"
+        for item in overrides
+    )
 
 
 def test_build_participation_alloc_emits_two_attempt_loser_setup_override() -> None:
