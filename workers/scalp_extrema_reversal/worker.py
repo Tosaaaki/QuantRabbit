@@ -273,7 +273,14 @@ EXTREMA_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float("LONG_SUPPORT_M1_EMA_GAP_M
 EXTREMA_LONG_SUPPORT_RSI_CAP = _env_float("LONG_SUPPORT_RSI_CAP", 50.0)
 EXTREMA_LONG_SUPPORT_LOW_BAND_PIPS = _env_float("LONG_SUPPORT_LOW_BAND_PIPS", 1.2)
 EXTREMA_LONG_SUPPORT_CONF_BONUS = _env_int("LONG_SUPPORT_CONF_BONUS", 4)
+EXTREMA_SHORT_SUPPORT_ENABLED = _env_bool("SHORT_SUPPORT_ENABLED", True)
+EXTREMA_SHORT_SUPPORT_M5_RSI_MAX = _env_float("SHORT_SUPPORT_M5_RSI_MAX", 44.0)
+EXTREMA_SHORT_SUPPORT_M5_DI_GAP_MAX = _env_float("SHORT_SUPPORT_M5_DI_GAP_MAX", 0.0)
+EXTREMA_SHORT_SUPPORT_M5_EMA_SLOPE_MAX = _env_float("SHORT_SUPPORT_M5_EMA_SLOPE_MAX", 0.0)
+EXTREMA_SHORT_SUPPORT_M1_ADX_MAX = _env_float("SHORT_SUPPORT_M1_ADX_MAX", 24.0)
+EXTREMA_SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float("SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS", 1.4)
 EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS = _env_float("LONG_COUNTERTREND_GAP_BLOCK_PIPS", 0.5)
+EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS = _env_float("SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.45)
 EXTREMA_LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS = _env_float(
     "LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS", 0.30
 )
@@ -288,6 +295,24 @@ EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX = _env_float(
 )
 EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX = _env_float(
     "LONG_SHALLOW_PROBE_RANGE_SCORE_MAX", 0.32
+)
+EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS = _env_float(
+    "SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.45
+)
+EXTREMA_SHORT_SHALLOW_PROBE_BOUNCE_MAX_PIPS = _env_float(
+    "SHORT_SHALLOW_PROBE_BOUNCE_MAX_PIPS", 0.45
+)
+EXTREMA_SHORT_SHALLOW_PROBE_TICK_STRENGTH_MAX = _env_float(
+    "SHORT_SHALLOW_PROBE_TICK_STRENGTH_MAX", 0.45
+)
+EXTREMA_SHORT_SHALLOW_PROBE_ADX_MAX = _env_float(
+    "SHORT_SHALLOW_PROBE_ADX_MAX", 26.0
+)
+EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN = _env_float(
+    "SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN", 0.40
+)
+EXTREMA_SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS = _env_float(
+    "SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS", 0.10
 )
 EXTREMA_ADX_MAX = _env_float("ADX_MAX", 35.0)
 EXTREMA_ATR_MAX = _env_float("ATR_MAX", 0.0)
@@ -369,6 +394,50 @@ def _extrema_long_support_context(
     if m1_adx > EXTREMA_LONG_SUPPORT_M1_ADX_MAX:
         return False, diag
     if m1_ema_gap_pips > EXTREMA_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS:
+        return False, diag
+    return True, diag
+
+
+def _extrema_short_support_context(
+    fac_m1: Dict[str, object],
+    fac_m5: Optional[Dict[str, object]],
+    *,
+    price: float,
+) -> tuple[bool, Dict[str, float]]:
+    diag: Dict[str, float] = {}
+    if not EXTREMA_SHORT_SUPPORT_ENABLED or not fac_m5:
+        return False, diag
+
+    m5_close = _to_float(fac_m5.get("close"), 0.0)
+    m5_ema20 = _to_float(fac_m5.get("ema20") or fac_m5.get("ma20"), 0.0)
+    m5_rsi = _to_float(fac_m5.get("rsi"), 50.0)
+    m5_plus_di = _to_float(fac_m5.get("plus_di"), 0.0)
+    m5_minus_di = _to_float(fac_m5.get("minus_di"), 0.0)
+    m5_ema_slope_10 = _to_float(fac_m5.get("ema_slope_10"), 0.0)
+    m1_adx = _adx(fac_m1)
+    m1_ema20 = _to_float(fac_m1.get("ema20") or fac_m1.get("ma20"), price)
+    m1_ema_gap_pips = abs(price - m1_ema20) / PIP if m1_ema20 > 0.0 else 0.0
+
+    diag = {
+        "m5_close": round(m5_close, 3),
+        "m5_ema20": round(m5_ema20, 3),
+        "m5_rsi": round(m5_rsi, 3),
+        "m5_di_gap": round(m5_plus_di - m5_minus_di, 3),
+        "m5_ema_slope_10": round(m5_ema_slope_10, 6),
+        "m1_adx": round(m1_adx, 3),
+        "m1_ema_gap_pips": round(m1_ema_gap_pips, 3),
+    }
+    if m5_close > m5_ema20:
+        return False, diag
+    if m5_rsi > EXTREMA_SHORT_SUPPORT_M5_RSI_MAX:
+        return False, diag
+    if (m5_plus_di - m5_minus_di) > EXTREMA_SHORT_SUPPORT_M5_DI_GAP_MAX:
+        return False, diag
+    if m5_ema_slope_10 > EXTREMA_SHORT_SUPPORT_M5_EMA_SLOPE_MAX:
+        return False, diag
+    if m1_adx > EXTREMA_SHORT_SUPPORT_M1_ADX_MAX:
+        return False, diag
+    if m1_ema_gap_pips > EXTREMA_SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS:
         return False, diag
     return True, diag
 
@@ -481,6 +550,11 @@ def _signal_extrema_reversal(
         fac_m5,
         price=price,
     )
+    short_supportive, short_support_diag = _extrema_short_support_context(
+        fac_m1,
+        fac_m5,
+        price=price,
+    )
 
     candles = get_candles_snapshot("M1", limit=max(80, EXTREMA_LOOKBACK + 8))
     snap = compute_range_snapshot(candles or [], lookback=EXTREMA_LOOKBACK, hi_pct=97.0, lo_pct=3.0)
@@ -516,11 +590,22 @@ def _signal_extrema_reversal(
     range_score = (
         float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0
     )
+    range_mode = (
+        str(getattr(range_ctx, "mode", "") or "").strip().upper()
+        if range_ctx is not None
+        else ""
+    )
     adx_value = _adx(fac_m1)
     long_countertrend_block = (
         EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS > 0.0
         and not long_supportive
         and ma_gap_pips <= -EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS
+    )
+    short_countertrend_block = (
+        EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS > 0.0
+        and not short_supportive
+        and range_mode == "RANGE"
+        and ma_gap_pips >= EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS
     )
     long_shallow_probe_block = (
         not long_supportive
@@ -531,6 +616,17 @@ def _signal_extrema_reversal(
         and adx_value <= EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX
         and range_score <= EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX
     )
+    short_shallow_probe_block = (
+        not short_supportive
+        and range_mode == "RANGE"
+        and EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS > 0.0
+        and dist_high <= EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS
+        and short_bounce_pips <= EXTREMA_SHORT_SHALLOW_PROBE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_SHORT_SHALLOW_PROBE_TICK_STRENGTH_MAX
+        and adx_value <= EXTREMA_SHORT_SHALLOW_PROBE_ADX_MAX
+        and range_score >= EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN
+        and ma_gap_pips >= EXTREMA_SHORT_SHALLOW_PROBE_MA_GAP_MIN_PIPS
+    )
 
     can_short = (
         EXTREMA_SHORT_ENABLED
@@ -538,6 +634,8 @@ def _signal_extrema_reversal(
         and dist_high <= EXTREMA_HIGH_BAND_PIPS
         and rsi >= EXTREMA_RSI_SHORT_MIN
         and short_bounce_pips >= EXTREMA_SWEEP_MIN_PIPS
+        and not short_countertrend_block
+        and not short_shallow_probe_block
     )
     can_long = (
         EXTREMA_LONG_ENABLED
@@ -597,9 +695,13 @@ def _signal_extrema_reversal(
             "tick_strength": round(tick_strength, 4),
             "high_ref": round(high_ref, 3),
             "low_ref": round(low_ref, 3),
+            "supportive_short": bool(short_supportive and side == "short"),
+            "supportive_short_context": short_support_diag if short_supportive else {},
             "supportive_long": bool(long_supportive and side == "long"),
             "supportive_long_context": long_support_diag if long_supportive else {},
             "ma_gap_pips": round(ma_gap_pips, 3),
+            "short_countertrend_block": bool(short_countertrend_block and side == "short"),
+            "short_shallow_probe_block": bool(short_shallow_probe_block and side == "short"),
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
             "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
             "trend_gate": trend_diag,

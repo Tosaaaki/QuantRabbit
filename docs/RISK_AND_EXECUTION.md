@@ -3351,6 +3351,23 @@
   `STRATEGY_FEEDBACK_LOOP_SEC` は `120` を正とし、
   restart 後の薄い payload が長く残らないようにする。
 
+### 2026-03-12 `scalp_extrema_reversal_live` short shallow-probe guard
+- `scalp_extrema_reversal_live` の current short loser は
+  shared blanket trim ではなく worker local guard で改善する。
+- `workers/scalp_extrema_reversal/worker.py` は
+  `M5` bearish support が無い状態で、
+  `range_mode=RANGE` かつ positive `ma_gap_pips` の short を
+  `short_countertrend_block` で reject する。
+- さらに
+  `dist_high`, `short_bounce_pips`, `tick_strength`
+  が shallow な short probe は、
+  `short_shallow_probe_block`
+  (`dist_high<=0.45`, `short_bounce<=0.45`,
+  `tick_strength<=0.45`, `ma_gap_pips>=0.10`,
+  `range_score>=0.40`) で落とす。
+- bearish `M5` support が揃う short は維持し、
+  short side を一律停止しない。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

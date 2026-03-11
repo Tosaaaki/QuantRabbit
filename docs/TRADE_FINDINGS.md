@@ -14460,3 +14460,44 @@ Status:
   - push/restart 後の next 30-60 分で
     `DroughtRevert|long|range_fade|...|gap:up_flat/down_flat`
     の `fills / realized_jpy / entry_probability_after` を再確認する。
+
+## 2026-03-12 scalp_extrema_reversal short shallow-probe guard
+- Why/Hypothesis:
+  - 2026-03-12 02:01 JST 時点の local-v2 実測では、
+    `30m=+0.300 JPY`, `120m=-1.151 JPY` で execution は正常だった一方、
+    drag は `scalp_extrema_reversal_live` の short lane に集中していた。
+  - worst fingerprints は
+    `short|range_fade|...|volatility_compression = -3.706 JPY`
+    と `short|range_compression|...|volatility_compression = -3.400 JPY`
+    で、filled order の `entry_thesis` は
+    `range_mode=RANGE`, `ma_gap_pips>0`, `dist_high<=0.4`,
+    `short_bounce_pips<=0.4`, `tick_strength<=0.4`
+    の shallow short probe だった。
+  - shared `participation / dynamic_alloc / strategy_feedback` は既に trim 済みだったため、
+    これ以上 shared を締めるより worker local で low-edge short を reject する方が妥当。
+- Expected Good:
+  - bullish continuation 気味の shallow short を減らし、
+    `scalp_extrema_reversal_live` の current giveback を止める。
+  - bearish `M5` support が揃う short と long lane は残す。
+- Expected Bad:
+  - shallow short の rare winner を一部取り逃がす。
+  - ただし current lane は short 合計 `62 trades / -35.604 JPY` と負債が大きく、
+    先に drag を切る方が期待値が高い。
+- Observed/Fact:
+  - `workers/scalp_extrema_reversal/worker.py` に
+    `short_support_context`, `short_countertrend_block`,
+    `short_shallow_probe_block` を追加した。
+  - `ops/env/quant-scalp-extrema-reversal.env` に current 運用値
+    `SHORT_COUNTERTREND_GAP_BLOCK_PIPS=0.45`,
+    `SHORT_SHALLOW_PROBE_*`
+    を明記した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    は `15 passed`。
+- Verdict: pending
+- Next Action:
+  - push/restart 後の next 30-60 分で
+    `scalp_extrema_reversal_live` の
+    `short|range_fade|...|volatility_compression`,
+    `short|range_compression|...|volatility_compression`
+    の `fills / realized_jpy / close_reason`
+    を再確認する。

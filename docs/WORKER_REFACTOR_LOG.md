@@ -16243,3 +16243,34 @@
   - current loser cluster 相当の
     `test_drought_revert_blocks_flat_gap_oversold_long_with_deep_mean_stretch`
     を追加。
+
+### 2026-03-12 `scalp_extrema_reversal_live` short shallow-probe guard
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+
+- 背景:
+  - 2026-03-12 02:01 JST 時点の local-v2 実測では
+    `scalp_extrema_reversal_live` の current loser は
+    short `range_fade / range_compression` に集中していた。
+  - recent filled short は
+    `range_mode=RANGE`, `ma_gap_pips>0`, `dist_high<=0.4`,
+    `short_bounce<=0.4`, `tick_strength<=0.4`
+    の shallow probe で、shared trim 後も通っていた。
+
+- 変更:
+  - `M5` bearish support を評価する
+    `short_support_context` を追加した。
+  - support が無い short について、
+    `range_mode=RANGE` かつ positive `ma_gap_pips` の
+    countertrend short を `short_countertrend_block` で reject する。
+  - `dist_high / short_bounce / tick_strength` が shallow な current loser short を
+    `short_shallow_probe_block` で reject する。
+  - bearish support が揃う short は維持し、
+    short 全停止にはしていない。
+
+- 検証:
+  - `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+    -> `15 passed`
+  - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py`
