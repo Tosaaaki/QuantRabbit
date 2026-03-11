@@ -107,6 +107,21 @@ def _setup_market_order_local_path(
     )
     monkeypatch.setattr(order_manager, "_reject_entry_by_control", lambda *_a, **_k: False)
     monkeypatch.setattr(
+        order_manager.strategy_guard,
+        "is_blocked",
+        lambda *_a, **_k: (False, 0, None),
+    )
+    monkeypatch.setattr(
+        order_manager.reentry_gate,
+        "needs_open_positions",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(
+        order_manager.reentry_gate,
+        "allow_entry",
+        lambda *_a, **_k: (True, None, {}),
+    )
+    monkeypatch.setattr(
         order_manager.slo_guard,
         "decide",
         lambda **_k: SimpleNamespace(
