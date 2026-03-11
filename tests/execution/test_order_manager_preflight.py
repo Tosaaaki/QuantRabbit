@@ -730,9 +730,9 @@ def test_apply_min_rr_floor_respects_strategy_rr_override(monkeypatch) -> None:
 
 
 def test_order_manager_perf_guard_bypass_uses_strategy_specific_keys(monkeypatch) -> None:
-    monkeypatch.setenv("SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED", "1")
-    monkeypatch.setenv("SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED", "1")
-    monkeypatch.setenv("SCALP_PRECISION_PERF_GUARD_ENABLED", "1")
+    monkeypatch.setenv("ORDER_MANAGER_PERF_GUARD_BYPASS_STRATEGY_PRECISIONLOWVOL", "1")
+    monkeypatch.setenv("ORDER_MANAGER_PERF_GUARD_BYPASS_STRATEGY_DROUGHTREVERT", "1")
+    monkeypatch.setenv("ORDER_MANAGER_PERF_GUARD_BYPASS_STRATEGY_WICKREVERSALBLEND", "1")
 
     assert _order_manager_perf_guard_bypass("PrecisionLowVol") is True
     assert _order_manager_perf_guard_bypass("DroughtRevert") is True

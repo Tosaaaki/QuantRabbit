@@ -3465,7 +3465,9 @@
   `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
   を使う。worker だけでなく
   `execution/order_manager.py`
-  の strategy perf guard も同 key で skip し、
+  の strategy perf guard は
+  `ORDER_MANAGER_PERF_GUARD_BYPASS_STRATEGY_*`
+  で同 3 strategy だけを skip し、
   soft block (`pf<1`, `failfast_soft`) による
   strategy-wide entry 停止を避ける。
 - `VwapRevertS` のような `hard:failfast` lane は reopen せず、

@@ -16436,8 +16436,8 @@
     も source-prefix key を直接読んで
     `perf_guard.is_allowed()` を bypass する。
   - `execution/order_manager.py`
-    も同 3 strategy の preflight perf guard を
-    bypass key で skip する。
+    も `ORDER_MANAGER_PERF_GUARD_BYPASS_STRATEGY_*`
+    で同 3 strategy の preflight perf guard を skip する。
   - reopen 対象は soft block に限り、
     `VwapRevertS` の `hard:failfast` は維持した。
 
