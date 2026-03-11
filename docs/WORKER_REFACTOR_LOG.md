@@ -16432,6 +16432,9 @@
     `WickReversalBlend` は
     `SCALP_PRECISION_PERF_GUARD_ENABLED=0`
     を使う。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    も source-prefix key を直接読んで
+    `perf_guard.is_allowed()` を bypass する。
   - reopen 対象は soft block に限り、
     `VwapRevertS` の `hard:failfast` は維持した。
 

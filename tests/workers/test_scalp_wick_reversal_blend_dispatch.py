@@ -62,6 +62,33 @@ def _load_worker_functions(*names: str):
     return namespace
 
 
+@pytest.mark.parametrize(
+    ("mode", "enabled_key"),
+    [
+        ("precision_lowvol", "SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED"),
+        ("drought_revert", "SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED"),
+        ("wick_reversal_blend", "SCALP_PRECISION_PERF_GUARD_ENABLED"),
+    ],
+)
+def test_perf_guard_bypass_enabled_uses_mode_specific_env(mode: str, enabled_key: str) -> None:
+    namespace = _load_worker_functions("_perf_guard_bypass_enabled")
+    seen: list[tuple[str, bool]] = []
+
+    def fake_env_bool(key: str, default: bool) -> bool:
+        seen.append((key, default))
+        return key == enabled_key
+
+    namespace.update(
+        {
+            "config": SimpleNamespace(MODE=mode),
+            "_env_bool": fake_env_bool,
+        }
+    )
+
+    assert namespace["_perf_guard_bypass_enabled"]() is True
+    assert seen == [(enabled_key, False)]
+
+
 @pytest.mark.parametrize("name", ["DroughtRevert", "PrecisionLowVol"])
 def test_dispatch_strategy_signal_passes_range_ctx(name: str) -> None:
     dispatch = _load_dispatch_helper()

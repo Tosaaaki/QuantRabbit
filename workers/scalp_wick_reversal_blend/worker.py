@@ -175,6 +175,15 @@ def _env_csv(key: str, default: str = "") -> List[str]:
     return items
 
 
+def _perf_guard_bypass_enabled() -> bool:
+    mode = str(getattr(config, "MODE", "") or "").strip().lower()
+    if mode == "precision_lowvol":
+        return _env_bool("SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED", False)
+    if mode == "drought_revert":
+        return _env_bool("SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED", False)
+    return _env_bool("SCALP_PRECISION_PERF_GUARD_ENABLED", False)
+
+
 _DROUGHT_CACHE_TS = 0.0
 _DROUGHT_LAST_ENTRY: Optional[datetime.datetime] = None
 _DROUGHT_LAST_OK: Optional[bool] = None
@@ -4275,6 +4284,7 @@ async def scalp_wick_reversal_blend_worker() -> None:
     last_guard_log = 0.0
     last_diag_log = 0.0
     bypass_common_guard = config.MODE in config.GUARD_BYPASS_MODES
+    bypass_perf_guard = _perf_guard_bypass_enabled()
     # Guard bypass is risky for modes that can generate large tail losses when data/exits degrade.
     # In particular, tick_imbalance suffered margin closeouts when common guards (spread/air/perf/stage)
     # were skipped. Keep these modes under the common guardrails regardless of env settings.
@@ -4286,6 +4296,8 @@ async def scalp_wick_reversal_blend_worker() -> None:
                 config.MODE,
             )
         bypass_common_guard = False
+    if bypass_perf_guard:
+        LOG.info("%s perf guard bypass enabled mode=%s", config.LOG_PREFIX, config.MODE)
 
     try:
         while True:
@@ -4538,22 +4550,23 @@ async def scalp_wick_reversal_blend_worker() -> None:
                                         )
                                         last_guard_log = now_mono
                                     continue
-                                perf_decision = perf_guard.is_allowed(
-                                    tag,
-                                    config.POCKET,
-                                    hour=now.hour,
-                                    env_prefix=config.ENV_PREFIX,
-                                )
-                                if not perf_decision.allowed:
-                                    if now_mono - last_guard_log > 30.0:
-                                        LOG.info(
-                                            "%s perf guard blocked tag=%s reason=%s",
-                                            config.LOG_PREFIX,
-                                            tag,
-                                            perf_decision.reason,
-                                        )
-                                        last_guard_log = now_mono
-                                    continue
+                                if not bypass_perf_guard:
+                                    perf_decision = perf_guard.is_allowed(
+                                        tag,
+                                        config.POCKET,
+                                        hour=now.hour,
+                                        env_prefix=config.ENV_PREFIX,
+                                    )
+                                    if not perf_decision.allowed:
+                                        if now_mono - last_guard_log > 30.0:
+                                            LOG.info(
+                                                "%s perf guard blocked tag=%s reason=%s",
+                                                config.LOG_PREFIX,
+                                                tag,
+                                                perf_decision.reason,
+                                            )
+                                            last_guard_log = now_mono
+                                        continue
                                 blocked, remain, reason = stage_tracker.is_strategy_blocked(tag, now=now)
                                 if blocked:
                                     if now_mono - last_guard_log > 30.0:

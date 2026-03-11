@@ -14759,6 +14759,8 @@ Status:
     `SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED=0` /
     `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
     を正とする。
+  - worker でも source-prefix key を直接読み、
+    wrapper 投影の成否に依存せず `perf_guard.is_allowed()` を bypass する。
   - `WickReversalBlend` は wrapper を噛まないため、
     `SCALP_PRECISION_PERF_GUARD_ENABLED=0` をそのまま使う。
   - `SCALP_PRECISION_PERF_GUARD_MODE=reduce` は残すが、
