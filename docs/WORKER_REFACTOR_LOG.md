@@ -16117,3 +16117,47 @@
     `config/dynamic_alloc.json` に
     `DroughtRevert|long|range_fade|...|gap:up_flat|volatility_compression -> lot_multiplier=0.45`
     が出ることを確認した。
+
+## 2026-03-11 JST - participation speed-to-profit acceleration
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `execution/strategy_entry.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+
+- 背景:
+  - local-v2 実測では service / execution は正常で、
+    30 分窓の遅さは lane 配分の問題だった。
+  - 既存 `participation_alloc` は
+    `underused でも current loser` の lane を trim できず、
+    `RangeFader-neutral-fade`, `PrecisionLowVol`,
+    `DroughtRevert` の current drag が残っていた。
+  - explicit winner boost も `1.12 / 0.05` cap では浅く、
+    `MomentumBurst-open_long` の立ち上がりが弱かった。
+
+- 変更:
+  - `participation_allocator`
+    - `underused/high-fill loser` を `loss_drag` で trim する分岐を追加。
+    - explicit winner / small-sample winner の boost 係数を引き上げた。
+    - default cap を `max_units_boost=0.18`,
+      `max_probability_boost=0.08` に更新した。
+  - `strategy_entry`
+    - participation runtime cap の default を
+      `mult_max=1.18`, `prob_boost_max=0.10`
+      へ更新した。
+  - `run_local_feedback_cycle`
+    - `participation_allocator` 既定引数を
+      `0.18 / 0.08` へ揃えた。
+
+- 検証:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py`
+    -> `14 passed`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/execution/test_strategy_entry_adaptive_layers.py`
+    -> `14 passed`
+  - `python3 -m py_compile scripts/participation_allocator.py execution/strategy_entry.py scripts/run_local_feedback_cycle.py`
+  - 再生成した `config/participation_alloc.json` で
+    `MomentumBurst-open_long -> lot_multiplier=1.0731 / probability_boost=0.0224`,
+    `PrecisionLowVol -> lot_multiplier=0.856 / probability_offset=-0.056`,
+    `RangeFader|long|neutral-fade|range_fade|p0 -> lot_multiplier=0.856 / probability_offset=-0.056`
+    を確認した。

@@ -126,9 +126,9 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             "--max-units-cut",
             "0.18",
             "--max-units-boost",
-            "0.12",
+            "0.18",
             "--max-probability-boost",
-            "0.05",
+            "0.08",
         )
     if job_name == "market_context":
         return (python_bin, "scripts/run_market_playbook_cycle.py", "--hours", "24")

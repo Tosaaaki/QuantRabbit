@@ -136,6 +136,51 @@ def test_apply_participation_alloc_boosts_units_for_explicit_boost_signal(monkey
     assert thesis["participation_alloc"]["action"] == "boost_participation"
 
 
+def test_apply_participation_alloc_allows_higher_explicit_boost_cap(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.18, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX", 0.10, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "strategy_key": "MomentumBurst-open_long",
+            "action": "boost_participation",
+            "units_multiplier": 1.18,
+            "lot_multiplier": 1.18,
+            "max_units_boost": 0.18,
+            "probability_boost": 0.08,
+            "max_probability_boost": 0.08,
+            "preflights": 5,
+            "filled": 5,
+            "fill_rate": 1.0,
+            "hard_block_rate": 0.0,
+            "quality_score": 1.12,
+            "current_share": 0.002,
+            "target_share": 0.013,
+        },
+        raising=False,
+    )
+
+    thesis: dict = {}
+    units, prob, payload = strategy_entry._apply_participation_alloc(
+        strategy_tag="MomentumBurst-open_long",
+        pocket="micro",
+        units=100,
+        min_units=10,
+        entry_probability=0.70,
+        entry_thesis=thesis,
+    )
+
+    assert units == 118
+    assert prob == 0.724
+    assert isinstance(payload, dict)
+    assert payload["lot_multiplier"] == 1.18
+    assert payload["reason"] == "boost_participation"
+
+
 def test_apply_participation_alloc_does_not_boost_units_without_explicit_signal(monkeypatch) -> None:
     monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
     monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)

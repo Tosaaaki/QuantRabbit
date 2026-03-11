@@ -14208,3 +14208,74 @@ Status:
     `DroughtRevert`, `PrecisionLowVol`, `VwapRevertS`, `RangeFader-sell-fade`
     の next 30-60 分 `gross_win / gross_loss / net_jpy`
     を setup ごとに再評価する。
+
+## 2026-03-11 JST - 30分 speed-to-profit 向け participation trim/boost 加速
+- Why/Hypothesis:
+  - local-v2 実測では service / execution は正常で、
+    `decision_latency_ms~17`, `order_success_rate~0.992`, `reject_rate~0.008`
+    とボトルネックは runtime ではなかった。
+  - 直近 30-120 分の loser は
+    `PrecisionLowVol|short|range_fade|...|gap:down_flat`,
+    `RangeFader|long|neutral-fade|range_fade|p0`,
+    `RangeFader|short|sell-fade|range_fade|p1`,
+    `DroughtRevert` の current lane に集中しており、
+    既存 `participation_alloc` は
+    「underused だが負けている lane」を trim できていなかった。
+  - winner 側も `MomentumBurst-open_long` の current boost が
+    `+2.6%` 前後と浅く、30 分窓の立ち上がりには弱かった。
+- Expected Good:
+  - `underused/high-fill` の loser lane を
+    strategy-wide stop なしで current setup 単位に前捌きできる。
+  - `MomentumBurst-open_long` など short-window winner の
+    units/probability boost を少し厚くして、
+    30 分 net JPY の立ち上がりを速くできる。
+  - `run_local_feedback_cycle` の再計算でも同じ cap が継続し、
+    manual regeneration と自動 cycle が乖離しない。
+- Expected Bad:
+  - recent loser への反応が速くなる分、
+    一過性の drawdown lane に敏感になり、
+    勝ち返し直前の setup を一時的に絞る可能性がある。
+  - winner boost cap を `1.18 / 0.08` へ広げるため、
+    artifact の誤学習があると短時間で size がやや乗りやすい。
+- Observed/Fact:
+  - `scripts/participation_allocator.py`
+    - `underused でも realized_jpy が十分に悪い lane` を
+      `trim_units + bounded probability_offset` に落とす
+      `loss_drag` 分岐を追加した。
+    - explicit `boost_participation` と small-sample winner boost を強め、
+      default cap も `max_units_boost=0.18`,
+      `max_probability_boost=0.08` へ更新した。
+  - `execution/strategy_entry.py`
+    - runtime の `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX` default を `1.18`,
+      `STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX` default を `0.10`
+      へ更新し、artifact 側の explicit boost を clip しにくくした。
+  - `scripts/run_local_feedback_cycle.py`
+    - `participation_allocator` 既定引数を
+      `--max-units-boost 0.18 --max-probability-boost 0.08`
+      に合わせた。
+  - テスト:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py`
+      -> `14 passed`
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/execution/test_strategy_entry_adaptive_layers.py`
+      -> `14 passed`
+    - `python3 -m py_compile scripts/participation_allocator.py execution/strategy_entry.py scripts/run_local_feedback_cycle.py`
+  - artifact 再生成:
+    - `python3 scripts/entry_path_aggregator.py --lookback-hours 24 --limit 12000 --top-k 8`
+    - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 24 --min-attempts 20 --setup-min-attempts 4 --max-units-cut 0.18 --max-units-boost 0.18 --max-probability-boost 0.08`
+    - 再生成後:
+      - `MomentumBurst-open_long -> lot_multiplier=1.0731, probability_boost=0.0224`
+      - `PrecisionLowVol -> lot_multiplier=0.856, probability_offset=-0.056`
+      - `PrecisionLowVol|short|range_fade|...|gap:down_flat -> lot_multiplier=0.856, probability_offset=-0.056`
+      - `RangeFader-neutral-fade -> base hold` だが
+        `RangeFader|long|neutral-fade|range_fade|p0 -> lot_multiplier=0.856, probability_offset=-0.056`
+      - `DroughtRevert -> lot_multiplier=0.856, probability_offset=-0.056`
+- Verdict: pending
+- Next Action:
+  - `main` へ push 後に local-v2 restart を実施し、
+    next 30-60 分で
+    `MomentumBurst-open_long`,
+    `PrecisionLowVol short gap:down_flat`,
+    `RangeFader long neutral-fade p0`,
+    `DroughtRevert`
+    の `fills / realized_jpy / avg units / entry_probability_after`
+    を再確認する。

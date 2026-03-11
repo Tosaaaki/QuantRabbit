@@ -3279,3 +3279,28 @@
   や preserve-intent scaling が有効でも適用する。
   preserve-intent は strategy intent の保持であって、
   min-RR / spread / margin などの risk guard bypass ではない。
+
+### 2026-03-11 participation speed-to-profit current
+- current shared participation は
+  `overused loser` だけでなく、
+  `filled は出ているが realized_jpy が current loser` の
+  `underused/high-fill lane` も bounded に trim する。
+- 実装は `scripts/participation_allocator.py` の
+  `loss_drag` 分岐を正とし、
+  `fills >= 0.5 * min_attempts`,
+  `fill_share >= attempt_share - 0.04`,
+  `realized_jpy <= -max(12, 0.6 * min_attempts)`
+  を満たす lane を
+  `trim_units + bounded probability_offset`
+  へ落とす。
+- winner 側の explicit `boost_participation` は
+  `max_units_boost=0.18`,
+  `max_probability_boost=0.08`,
+  runtime cap `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX=1.18`
+  を current default とする。
+  これは blanket raise ではなく、
+  artifact で `boost_participation` が出た lane にだけ適用する。
+- `scripts/run_local_feedback_cycle.py` の
+  `participation_allocator` 既定引数も
+  `0.18 / 0.08` へ揃え、
+  manual regeneration と auto cycle の乖離を避ける。

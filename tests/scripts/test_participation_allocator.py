@@ -363,6 +363,57 @@ def test_build_participation_alloc_boosts_profitable_small_sample_winner() -> No
     assert winner["cadence_floor"] > 1.0
 
 
+def test_build_participation_alloc_trims_underused_high_fill_loser() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "RangeFader-neutral-fade": {
+                "pocket": "scalp",
+                "attempts": 367,
+                "fills": 66,
+                "filled_rate": 0.1798,
+                "attempt_share": 0.150225,
+                "fill_share": 0.176,
+                "share_gap": -0.025775,
+                "terminal_status_counts": {
+                    "entry_probability_reject": 116,
+                    "filled": 66,
+                    "perf_block": 237,
+                },
+            },
+            "MomentumBurst-open_long": {
+                "pocket": "micro",
+                "attempts": 8,
+                "fills": 8,
+                "filled_rate": 1.0,
+                "attempt_share": 0.006,
+                "fill_share": 0.026,
+                "share_gap": -0.02,
+                "terminal_status_counts": {"filled": 8},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "RangeFader-neutral-fade": -46.15,
+            "MomentumBurst-open_long": 185.32,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.18,
+        max_prob_boost=0.08,
+    )
+
+    loser = payload["strategies"]["RangeFader-neutral-fade"]
+
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 1.0
+    assert loser["probability_offset"] < 0.0
+    assert loser["cadence_floor"] < 1.0
+
+
 def test_build_participation_alloc_boosts_four_trade_session_breakout_winner() -> None:
     summary = {
         "lookback_hours": 24.0,
@@ -460,6 +511,53 @@ def test_build_participation_alloc_boosts_profitable_probe_lane_with_probability
     assert probe["probability_boost"] > 0.0
     assert probe["cadence_floor"] > 1.0
     assert 0.0 < probe["hard_block_rate"] < 1.0
+
+
+def test_build_participation_alloc_expands_small_sample_winner_boost_with_higher_caps() -> None:
+    summary = {
+        "lookback_hours": 24.0,
+        "strategies": {
+            "MomentumBurst-open_long": {
+                "pocket": "micro",
+                "attempts": 5,
+                "fills": 5,
+                "filled_rate": 1.0,
+                "attempt_share": 0.002,
+                "fill_share": 0.013,
+                "share_gap": -0.011,
+                "terminal_status_counts": {"filled": 5},
+            },
+            "RangeFader-buy-fade": {
+                "pocket": "scalp",
+                "attempts": 240,
+                "fills": 18,
+                "filled_rate": 0.075,
+                "attempt_share": 0.40,
+                "fill_share": 0.12,
+                "share_gap": 0.28,
+                "terminal_status_counts": {"perf_block": 88, "filled": 18},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "MomentumBurst-open_long": 185.32,
+            "RangeFader-buy-fade": -74.0,
+        },
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.18,
+        max_prob_boost=0.08,
+    )
+
+    winner = payload["strategies"]["MomentumBurst-open_long"]
+
+    assert winner["action"] == "boost_participation"
+    assert winner["lot_multiplier"] > 1.07
+    assert winner["probability_boost"] >= 0.02
+    assert winner["cadence_floor"] > 1.08
 
 
 def test_build_participation_alloc_emits_setup_overrides_for_loser_setup() -> None:
