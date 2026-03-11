@@ -205,21 +205,71 @@ def test_entry_path_aggregator_job_defaults_are_wired() -> None:
     job = run_local_feedback_cycle._build_job("entry_path_aggregator", sys.executable)
 
     assert job.enabled is True
-    assert job.interval_sec == 300
+    assert job.interval_sec == 120
     assert job.timeout_sec == 180
     assert job.command == (
         sys.executable,
         "scripts/entry_path_aggregator.py",
         "--lookback-hours",
-        "24",
+        "6",
         "--limit",
-        "12000",
+        "6000",
         "--top-k",
         "8",
     )
     assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
         "logs/entry_path_summary_latest.json",
         "logs/entry_path_summary_history.jsonl",
+    )
+
+
+def test_dynamic_alloc_job_defaults_are_wired() -> None:
+    job = run_local_feedback_cycle._build_job("dynamic_alloc", sys.executable)
+
+    assert job.enabled is True
+    assert job.interval_sec == 120
+    assert job.timeout_sec == 180
+    assert job.command == (
+        sys.executable,
+        "scripts/dynamic_alloc_worker.py",
+        "--limit",
+        "2400",
+        "--lookback-days",
+        "3",
+        "--min-trades",
+        "12",
+        "--setup-min-trades",
+        "4",
+        "--pf-cap",
+        "2.0",
+        "--target-use",
+        "0.88",
+        "--half-life-hours",
+        "18",
+    )
+
+
+def test_participation_allocator_job_defaults_are_wired() -> None:
+    job = run_local_feedback_cycle._build_job("participation_allocator", sys.executable)
+
+    assert job.enabled is True
+    assert job.interval_sec == 120
+    assert job.timeout_sec == 180
+    assert job.command == (
+        sys.executable,
+        "scripts/participation_allocator.py",
+        "--lookback-hours",
+        "6",
+        "--min-attempts",
+        "12",
+        "--setup-min-attempts",
+        "2",
+        "--max-units-cut",
+        "0.22",
+        "--max-units-boost",
+        "0.24",
+        "--max-probability-boost",
+        "0.10",
     )
 
 

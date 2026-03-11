@@ -555,9 +555,103 @@ def test_build_participation_alloc_expands_small_sample_winner_boost_with_higher
     winner = payload["strategies"]["MomentumBurst-open_long"]
 
     assert winner["action"] == "boost_participation"
-    assert winner["lot_multiplier"] > 1.07
-    assert winner["probability_boost"] >= 0.02
-    assert winner["cadence_floor"] > 1.08
+    assert winner["lot_multiplier"] > 1.14
+    assert winner["probability_boost"] >= 0.05
+    assert winner["cadence_floor"] > 1.17
+
+
+def test_build_participation_alloc_boosts_two_trade_fast_winner_lane() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "MomentumBurst-open_long": {
+                "pocket": "micro",
+                "attempts": 2,
+                "fills": 2,
+                "filled_rate": 1.0,
+                "attempt_share": 0.0017,
+                "fill_share": 0.0377,
+                "share_gap": -0.0360,
+                "terminal_status_counts": {"filled": 2},
+            },
+            "RangeFader-buy-fade": {
+                "pocket": "scalp",
+                "attempts": 120,
+                "fills": 10,
+                "filled_rate": 0.0833,
+                "attempt_share": 0.50,
+                "fill_share": 0.20,
+                "share_gap": 0.30,
+                "terminal_status_counts": {"perf_block": 40, "filled": 10},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "MomentumBurst-open_long": 185.32,
+            "RangeFader-buy-fade": -120.0,
+        },
+        min_attempts=12,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    winner = payload["strategies"]["MomentumBurst-open_long"]
+
+    assert winner["action"] == "boost_participation"
+    assert winner["lot_multiplier"] > 1.18
+    assert winner["probability_boost"] >= 0.06
+    assert winner["cadence_floor"] > 1.17
+
+
+def test_build_participation_alloc_trims_recent_loss_drag_lane_sooner() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "DroughtRevert": {
+                "pocket": "scalp",
+                "attempts": 13,
+                "fills": 10,
+                "filled_rate": 0.7692,
+                "attempt_share": 0.0098,
+                "fill_share": 0.0751,
+                "share_gap": -0.0653,
+                "terminal_status_counts": {"filled": 10},
+            },
+            "MomentumBurst-open_long": {
+                "pocket": "micro",
+                "attempts": 2,
+                "fills": 2,
+                "filled_rate": 1.0,
+                "attempt_share": 0.0017,
+                "fill_share": 0.0377,
+                "share_gap": -0.0360,
+                "terminal_status_counts": {"filled": 2},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "DroughtRevert": -33.301,
+            "MomentumBurst-open_long": 185.32,
+        },
+        min_attempts=12,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    loser = payload["strategies"]["DroughtRevert"]
+
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 0.85
+    assert loser["probability_offset"] < 0.0
+    assert loser["cadence_floor"] < 1.0
 
 
 def test_build_participation_alloc_emits_setup_overrides_for_loser_setup() -> None:
@@ -744,8 +838,86 @@ def test_build_participation_alloc_emits_low_sample_precision_setup_overrides() 
     assert winner["lot_multiplier"] > 1.0
     assert winner["max_units_boost"] == 0.12
     assert winner["max_probability_boost"] == 0.05
+
+
+def test_build_participation_alloc_emits_two_attempt_loser_setup_override() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "DroughtRevert": {
+                "pocket": "scalp",
+                "attempts": 12,
+                "fills": 6,
+                "filled_rate": 0.5,
+                "attempt_share": 0.05,
+                "fill_share": 0.08,
+                "share_gap": -0.03,
+                "terminal_status_counts": {"filled": 6},
+                "setups": {
+                    "DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:down_flat|volatility_compression": {
+                        "setup_fingerprint": "DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:down_flat|volatility_compression",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "unknown",
+                        "attempts": 2,
+                        "fills": 2,
+                        "filled_rate": 1.0,
+                        "attempt_share": 0.01,
+                        "fill_share": 0.03,
+                        "share_gap": -0.02,
+                        "terminal_status_counts": {"filled": 2},
+                    },
+                },
+            },
+            "MomentumBurst-open_long": {
+                "pocket": "micro",
+                "attempts": 2,
+                "fills": 2,
+                "filled_rate": 1.0,
+                "attempt_share": 0.0017,
+                "fill_share": 0.0377,
+                "share_gap": -0.0360,
+                "terminal_status_counts": {"filled": 2},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "DroughtRevert": -10.279,
+            "MomentumBurst-open_long": 185.32,
+        },
+        realized_by_setup={
+            json.dumps(
+                {
+                    "strategy_key": "DroughtRevert",
+                    "setup_fingerprint": "DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:down_flat|volatility_compression",
+                    "flow_regime": "range_fade",
+                    "microstructure_bucket": "unknown",
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+            ): -10.279,
+        },
+        min_attempts=12,
+        setup_min_attempts=2,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    overrides = payload["strategies"]["DroughtRevert"]["setup_overrides"]
+    loser = next(
+        item
+        for item in overrides
+        if item.get("setup_fingerprint")
+        == "DroughtRevert|long|range_fade|unknown|rsi:oversold|atr:mid|gap:down_flat|volatility_compression"
+    )
+
+    assert payload["allocation_policy"]["setup_min_attempts"] == 2
     assert loser["action"] == "trim_units"
     assert loser["lot_multiplier"] < 1.0
+    assert loser["probability_offset"] < 0.0
 
 
 def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:

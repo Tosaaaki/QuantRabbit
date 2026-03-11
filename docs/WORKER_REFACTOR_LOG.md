@@ -28,6 +28,40 @@
     D worker の lane-local quality guard と
     strategy-local target capture で改善する。
 
+### 2026-03-11（追記）shared participation の current cycle を 2 分化し、2-attempt setup を前倒し
+
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `execution/strategy_entry.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `participation_allocator`
+    - current short window の `2/2 fills + positive realized` winner lane を
+      fast `boost_participation` へ上げる係数を強めた。
+    - `loss_drag` の floor を下げ、
+      current loser trim を早く発火させた。
+  - `run_local_feedback_cycle`
+    - `entry_path_aggregator` / `participation_allocator` の
+      default interval を `300s -> 120s` へ短縮した。
+    - `participation_allocator` の default `--setup-min-attempts`
+      を `2` に下げた。
+  - `strategy_entry`
+    - current runtime participation cap を
+      `mult_max=1.24`, `prob_boost_max=0.12`
+      に更新した。
+  - 検証:
+    - `tests/execution/test_strategy_entry_adaptive_layers.py`
+      で runtime cap の既存受け口を再確認した。
+- 意図:
+  - local-v2 の遅さは service latency ではなく
+    shared artifact の反映速度だったため、
+    winner lane を 30 分窓内で押し、
+    loser setup を数発目で薄くする current feedback loop を正とする。
+
 ### 2026-03-11（追記）`PrecisionLowVol` hostile short guard を participation 維持型へ follow-up
 
 - 対象:

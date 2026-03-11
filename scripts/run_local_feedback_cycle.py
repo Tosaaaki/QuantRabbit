@@ -109,9 +109,9 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             python_bin,
             "scripts/entry_path_aggregator.py",
             "--lookback-hours",
-            "24",
+            "6",
             "--limit",
-            "12000",
+            "6000",
             "--top-k",
             "8",
         )
@@ -120,15 +120,17 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             python_bin,
             "scripts/participation_allocator.py",
             "--lookback-hours",
-            "24",
+            "6",
             "--min-attempts",
-            "20",
+            "12",
+            "--setup-min-attempts",
+            "2",
             "--max-units-cut",
-            "0.18",
+            "0.22",
             "--max-units-boost",
-            "0.18",
+            "0.24",
             "--max-probability-boost",
-            "0.08",
+            "0.10",
         )
     if job_name == "market_context":
         return (python_bin, "scripts/run_market_playbook_cycle.py", "--hours", "24")
@@ -147,13 +149,17 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             "--limit",
             "2400",
             "--lookback-days",
-            "7",
+            "3",
             "--min-trades",
-            "16",
+            "12",
+            "--setup-min-trades",
+            "4",
             "--pf-cap",
             "2.0",
             "--target-use",
             "0.88",
+            "--half-life-hours",
+            "18",
         )
     if job_name == "pattern_book":
         return (
@@ -313,8 +319,8 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     }
     enabled = _env_bool(f"{env_prefix}_ENABLED", enabled_defaults[job_name])
     interval_defaults = {
-        "entry_path_aggregator": 300,
-        "participation_allocator": 300,
+        "entry_path_aggregator": 120,
+        "participation_allocator": 120,
         "market_context": 300,
         "macro_news_context": 300,
         "strategy_feedback": 600,

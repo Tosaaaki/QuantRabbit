@@ -124,7 +124,10 @@ def _build_allocation_record(
     hard_block_rate = 0.0
     probability_rejects = 0
     strategy_control_blocks = 0
-    loss_drag_floor = max(12.0, float(max(1, min_attempts)) * 0.60)
+    loss_drag_floor = max(8.0, float(max(1, min_attempts)) * 0.45)
+    fast_lane_boost_attempts = 2
+    small_sample_boost_attempts = max(3, min(int(min_attempts), 4))
+    fast_winner_profit_floor = max(24.0, float(max(1, min_attempts)) * 4.0)
     if terminal_status_counts:
         hard_blocks = 0
         for status_name, count in terminal_status_counts.items():
@@ -204,28 +207,58 @@ def _build_allocation_record(
             cadence_floor = 1.12
             action = "boost_participation"
     elif (
-        attempts >= max(3, min(int(min_attempts), 4))
+        attempts >= fast_lane_boost_attempts
+        and fills >= 2
+        and fills == attempts
+        and realized_jpy > 0.0
+        and filled_rate >= max(median_fill_rate * 1.05, 0.30)
+        and fill_share >= attempt_share + 0.003
+        and hard_block_rate <= 0.25
+    ):
+        participation_edge = _clamp((fill_share - attempt_share) / 0.14, 0.0, 1.0)
+        sample_confidence = _clamp(
+            (attempts - fast_lane_boost_attempts + 1) / max(1, int(min_attempts) - fast_lane_boost_attempts + 1),
+            0.0,
+            1.0,
+        )
+        fill_quality = _clamp(
+            (filled_rate - max(0.20, median_fill_rate * 0.90))
+            / max(0.05, 1.0 - max(0.20, median_fill_rate * 0.90)),
+            0.0,
+            1.0,
+        )
+        profit_confidence = _clamp(realized_jpy / fast_winner_profit_floor, 0.0, 1.0)
+        boost_strength = max(
+            participation_edge,
+            fill_quality,
+            0.25 * participation_edge + 0.15 * sample_confidence + 0.60 * profit_confidence,
+        )
+        units_multiplier = 1.0 + max_units_boost * (0.44 + 0.42 * boost_strength)
+        probability_boost = max_prob_boost * (0.24 + 0.46 * boost_strength)
+        cadence_floor = 1.0 + 0.09 + 0.11 * boost_strength
+        action = "boost_participation"
+    elif (
+        attempts >= small_sample_boost_attempts
         and fills >= 2
         and realized_jpy > 0.0
         and filled_rate >= max(median_fill_rate * 1.05, 0.30)
         and fill_share >= attempt_share + 0.003
         and hard_block_rate <= 0.35
     ):
-        small_sample_boost_attempts = max(3, min(int(min_attempts), 4))
         participation_edge = _clamp((fill_share - attempt_share) / 0.12, 0.0, 1.0)
         sample_confidence = _clamp(
             (attempts - small_sample_boost_attempts + 1) / max(1, int(min_attempts) - small_sample_boost_attempts + 1),
             0.0,
             1.0,
         )
-        profit_confidence = _clamp(realized_jpy / 400.0, 0.0, 1.0)
+        profit_confidence = _clamp(realized_jpy / max(120.0, fast_winner_profit_floor * 1.5), 0.0, 1.0)
         boost_strength = max(
             participation_edge,
-            0.55 * participation_edge + 0.25 * sample_confidence + 0.20 * profit_confidence,
+            0.45 * participation_edge + 0.20 * sample_confidence + 0.35 * profit_confidence,
         )
-        units_multiplier = 1.0 + max_units_boost * (0.34 + 0.58 * boost_strength)
-        probability_boost = max_prob_boost * (0.22 + 0.52 * boost_strength)
-        cadence_floor = 1.0 + 0.08 + 0.10 * boost_strength
+        units_multiplier = 1.0 + max_units_boost * (0.38 + 0.52 * boost_strength)
+        probability_boost = max_prob_boost * (0.22 + 0.56 * boost_strength)
+        cadence_floor = 1.0 + 0.08 + 0.11 * boost_strength
         action = "boost_participation"
     elif (
         attempts >= 1

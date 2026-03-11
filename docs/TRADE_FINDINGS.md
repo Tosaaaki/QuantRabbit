@@ -51,6 +51,104 @@
 - Status:
 ```
 
+## 2026-03-11 23:35 JST / local-v2: shared participation を faster profit cadence 向けに 2 分化
+
+- Change:
+  - `scripts/participation_allocator.py` の
+    fast winner / loss-drag 分岐を current short window 前提で強め、
+    `2 fills` の profitable lane を早めに `boost_participation` へ上げ、
+    `realized_jpy <= -8` 級の current loser を早めに `trim_units` へ寄せた。
+  - `scripts/run_local_feedback_cycle.py` の
+    `entry_path_aggregator` / `participation_allocator` 既定周期を
+    `300s -> 120s` に短縮し、
+    `--setup-min-attempts 2` を現行運用値にした。
+  - `execution/strategy_entry.py` は
+    participation cap を `mult_max=1.24`,
+    `prob_boost_max=0.12` まで受けられる current runtime に更新した。
+  - `tests/scripts/test_participation_allocator.py`,
+    `tests/scripts/test_run_local_feedback_cycle.py`
+    を更新し、
+    `tests/execution/test_strategy_entry_adaptive_layers.py`
+    で runtime cap の既存受け口を再検証した。
+- Why:
+  - local-v2 実測では service / execution は正常で、
+    直近 `30m=-5.895 JPY`, `60m=-16.174 JPY`, `120m=+160.610 JPY`
+    だった。
+  - つまり「遅い」の主因は latency ではなく、
+    `MomentumBurst-open_long` winner を shared が押す前に、
+    `DroughtRevert` / `PrecisionLowVol` / `scalp_ping_5s_d_live`
+    の current loser が先に資金を削ることだった。
+- Hypothesis:
+  - artifact 再計算を 5 分待たず 2 分で回し、
+    さらに `2-attempt` setup まで current loser trim を前倒しすれば、
+    winner lane の participation 回復と loser lane の削減が
+    30 分窓の中で間に合う。
+- Expected Good:
+  - `MomentumBurst-open_long` の current winner lane が
+    `1.20x` 近辺の shared push を早く受けられる。
+  - `DroughtRevert|...|gap:down_flat`,
+    `PrecisionLowVol current loser short`,
+    `ping_d current loser` の current drag を
+    artifact 側で先に薄くできる。
+- Expected Bad:
+  - short window の bias が強くなり、
+    zero-realized / noise lane を誤 boost するリスクがある。
+  - `2-attempt` trim は sample noise を拾いやすいため、
+    clean setup を一時的に削る副作用があり得る。
+- Period:
+  - JST `2026-03-11 21:35-23:21`
+  - RCA window:
+    - `30m`, `60m`, `120m`
+- Fact:
+  - market/account:
+    - `USD/JPY 158.5145-158.5155`
+    - `NAV 35578.7594 JPY`
+    - open trade `0`
+  - execution quality:
+    - `decision_latency_ms ≈ 16.7-17.6`
+    - `data_lag_ms ≈ 534-549`
+    - `preflight 13 -> submit 8 -> filled 7` in 120m
+  - current winner:
+    - `MomentumBurst-open_long` の 120m 粗利は `+185.32 JPY`
+  - current losers:
+    - `DroughtRevert -10.279 JPY`
+    - `PrecisionLowVol -8.152 JPY`
+    - `scalp_ping_5s_d_live -4.53 JPY`
+- Failure Cause:
+  - shared participation が
+    「winner/loser を認識できない」のではなく、
+    「認識と反映が遅い」ことが main drag だった。
+  - 特に 5 分周期では、
+    short-window loser lane が artifact に反映される前に
+    次の数発を食っていた。
+- Improvement:
+  - winner boost の閾値を
+    current `2/2 fills + positive realized` lane で即座に有効化し、
+    loser trim は `2-attempt` setup まで前倒しした。
+  - auto cycle 自体を 2 分化し、
+    runtime TTL `30s` と合わせて live 反映を早めた。
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_run_local_feedback_cycle.py`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/execution/test_strategy_entry_adaptive_layers.py`
+  - restart 後に `config/participation_alloc.json` と `orders.db / trades.db` で
+    `MomentumBurst-open_long` の boost と
+    current loser setup override の反映を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - 次の `30-60m` で
+    `MomentumBurst-open_long`,
+    `DroughtRevert gap:down_flat`,
+    `PrecisionLowVol current short`,
+    `scalp_ping_5s_d_live`
+    の `fills / realized_jpy / setup_fingerprint` を再集計する。
+  - short-window noise が見えたら
+    `2-attempt trim` は loser 条件を維持したまま、
+    boost 側だけを stricter に戻す。
+- Status:
+  - done
+
 ## 2026-03-11 21:15 JST / local-v2: `scalp_ping_5s_d_live` を countertrend lane reject + broker TP 前提へ修正
 
 - Change:

@@ -3305,6 +3305,38 @@
   `0.18 / 0.08` へ揃え、
   manual regeneration と auto cycle の乖離を避ける。
 
+### 2026-03-11 participation speed-to-profit fast cycle
+- 2026-03-11 23:20 JST 時点の local-v2 実測では、
+  `30m=-5.895 JPY`, `60m=-16.174 JPY`, `120m=+160.610 JPY` で、
+  `decision_latency_ms≈16.7-17.6`, `data_lag_ms≈534-549` だった。
+  current drag は execution ではなく shared participation の反映速度だった。
+- current default は
+  `scripts/run_local_feedback_cycle.py` で
+  `entry_path_aggregator=120s`,
+  `participation_allocator=120s`,
+  `participation_allocator --setup-min-attempts 2`
+  を正とする。
+- `scripts/participation_allocator.py` は
+  `2 attempts / 2 fills / positive realized_jpy` の fast winner lane を
+  `boost_participation` へ早く上げる。
+  current 例では
+  `MomentumBurst-open_long -> lot_multiplier=1.2064 / probability_boost=0.07 / cadence_floor=1.2`
+  を出せることを正とする。
+- loser 側は
+  `2-attempt` setup でも current realized loss が明確なら
+  setup override を emit し、
+  `trim_units + bounded negative probability_offset`
+  を前倒しする。
+  current 例では
+  `PrecisionLowVol -> lot_multiplier=0.824 / probability_offset=-0.07`
+  を出せることを確認した。
+- `execution/strategy_entry.py` は
+  participation runtime cap を
+  `STRATEGY_PARTICIPATION_ALLOC_MULT_MAX=1.24`,
+  `STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX=0.12`
+  まで受ける current default とし、
+  winner push を artifact にだけ限定して広域 raise にしない。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、
