@@ -90,6 +90,23 @@
   の stop band も strategy-local に調整しており、
   `scalp_extrema_reversal_live` と `scalp_ping_5s_d_live`
   は dedicated env 側で SL/TP 帯を別管理しています。
+- `workers/scalp_level_reject/exit_worker.py`
+  と
+  `workers/scalp_wick_reversal_blend/exit_worker.py`
+  は、
+  `config/strategy_exit_protections.yaml`
+  の
+  `be_profile / tp_move`
+  を opt-in で読み、
+  `scalp_extrema_reversal_live`,
+  `WickReversalBlend`,
+  `PrecisionLowVol`,
+  `DroughtRevert`
+  の open trade に対して broker
+  `SL/TP`
+  を live 更新する。
+  共通 exit manager を増やすのではなく、
+  dedicated exit worker 内で strategy-local に完結させる。
 
 ## 4. Live Optimization / Feedback / Guard Mechanisms
 

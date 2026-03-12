@@ -465,6 +465,14 @@ flowchart LR
 備考
 - 既存ワーカーは「並行実行」に前提を置く。ENTRY/EXIT は原則 1:1 で個別 `systemd` ユニット化。
 - `strategy control` は「可否フラグ配信」だけを担当。実行判断と注文/保有更新は各ワーカーと専用サービスで実施。
+- dedicated `exit_worker` は close 判定に加えて、
+  `config/strategy_exit_protections.yaml`
+  の
+  `be_profile / tp_move`
+  に基づく broker `SL/TP`
+  更新も担当する。
+  これは strategy-local 実装であり、
+  共通の後付け exit manager を復活させるものではない。
 
 
 ## 監査用の記載先

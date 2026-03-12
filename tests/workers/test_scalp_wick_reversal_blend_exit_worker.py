@@ -104,6 +104,64 @@ def test_wick_reversal_blend_take_profit_uses_strategy_exit_profile(
     assert calls == [("take_profit", 0.9)]
 
 
+def test_precision_exit_worker_moves_broker_sl_tp_once_trade_is_in_profit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_worker, worker = _build_worker(monkeypatch)
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda _tag: {
+            "min_hold_sec": 0.0,
+            "profit_pips": 2.4,
+            "trail_start_pips": 1.8,
+            "trail_backoff_pips": 0.5,
+            "lock_buffer_pips": 0.2,
+        },
+    )
+    monkeypatch.setattr(
+        exit_worker,
+        "_be_profile_for_tag",
+        lambda _tag, *, pocket: {
+            "trigger_pips": 1.0,
+            "lock_ratio": 0.42,
+            "min_lock_pips": 0.35,
+            "cooldown_sec": 10.0,
+        },
+    )
+    monkeypatch.setattr(
+        exit_worker,
+        "_tp_move_profile_for_tag",
+        lambda _tag, *, pocket: {
+            "enabled": True,
+            "trigger_pips": 0.85,
+            "buffer_pips": 0.55,
+            "min_gap_pips": 0.3,
+        },
+    )
+    set_protections = AsyncMock(return_value=True)
+    monkeypatch.setattr(exit_worker, "set_trade_protections", set_protections)
+
+    trade = _sample_trade(opened_sec=120, pnl_pips=1.4, strategy_tag="PrecisionLowVol")
+    trade["stop_loss"] = {"price": 157.980}
+    trade["take_profit"] = {"price": 158.030}
+
+    asyncio.run(
+        worker._review_trade(
+            trade,
+            now=datetime.now(timezone.utc),
+            mid=158.014,
+            range_active=False,
+        )
+    )
+
+    set_protections.assert_awaited_once_with(
+        "wick-trade-1",
+        sl_price=158.006,
+        tp_price=158.02,
+    )
+
+
 def test_wick_reversal_blend_lock_floor_waits_for_profile_min_hold_before_closing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

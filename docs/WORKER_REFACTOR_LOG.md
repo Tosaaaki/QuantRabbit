@@ -18351,3 +18351,82 @@
     -> `29 passed`
   - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
     -> 成功
+
+### 2026-03-13 08:35 JST - `scalp_level_reject` / `scalp_wick_reversal_blend` exit worker で live protection move を strategy-local 化
+
+- 対象:
+  - `workers/scalp_level_reject/exit_worker.py`
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/workers/test_scalp_level_reject_exit_worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+
+- 背景:
+  - OANDA live
+    `2026-03-13 08:34 JST`
+    は
+    `USD/JPY 159.312 / spread 0.8p / ATR14(M1)=1.257p / ATR14(M5)=3.221p / pricing=298ms`
+    で通常帯だった。
+  - `pdca_profitability_report`
+    24h
+    では
+    `PrecisionLowVol=-117.25`,
+    `WickReversalBlend=-69.224`,
+    `scalp_extrema_reversal_live=-68.265`
+    が上位 loser。
+  - `tick_entry_validate`
+    では
+    `scalp_extrema_reversal_live`
+    の recent `MARKET_ORDER_TRADE_CLOSE`
+    に
+    `post_close_tp_touch_s=320,121`
+    があり、
+    entry 後の broker protection が固定寄りだった。
+  - `execution/order_manager.py`
+    には
+    `dynamic_protection_v2`
+    があるが、
+    current local-v2 では呼び出し元が無く、
+    dedicated exit worker 側で
+    `be_profile / tp_move`
+    を実際の live protection に反映できていなかった。
+
+- 変更:
+  - `scalp_level_reject` /
+    `scalp_wick_reversal_blend`
+    exit worker に
+    `tp_move_profile`
+    と
+    `trade.take_profit`
+    取得を追加。
+  - 含み益中の trade について、
+    strategy-local
+    `be_profile`
+    で broker `SL`
+    を profit-lock 位置へ更新し、
+    `tp_move`
+    で broker `TP`
+    を current price + buffer へ寄せる
+    `protection_move`
+    を追加。
+  - `config/strategy_exit_protections.yaml`
+    に
+    `scalp_extrema_reversal_live`,
+    `WickReversalBlend`,
+    `PrecisionLowVol`,
+    `DroughtRevert`
+    の
+    `be_profile / tp_move`
+    override を追加。
+  - close 判定
+    (`loss_cut`, `take_profit`, `lock_floor`, `range_timeout`)
+    自体は非変更。
+
+- 検証:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+    -> `6 passed`
+  - `python3 -m py_compile workers/scalp_level_reject/exit_worker.py workers/scalp_wick_reversal_blend/exit_worker.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+    -> 成功

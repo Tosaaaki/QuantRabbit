@@ -907,6 +907,8 @@ strategies:
     min_profit_pips: 0.45
     min_profit_ratio: 0.0
     min_profit_ratio_min_tp_pips: 99.0
+    be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
+    tp_move: {enabled: true, trigger_pips: 0.9, buffer_pips: 0.65}
     neg_exit:
       allow_reasons:
         - max_adverse
@@ -929,6 +931,18 @@ strategies:
       loss_cut_hard_pips: 6.0
       loss_cut_max_hold_sec: 420
       loss_cut_cooldown_sec: 5
+
+  PrecisionLowVol:
+    min_profit_pips: 0.35
+    min_profit_ratio: 0.0
+    be_profile: {trigger_pips: 1.0, lock_ratio: 0.42, min_lock_pips: 0.35, cooldown_sec: 10}
+    tp_move: {enabled: true, trigger_pips: 0.85, buffer_pips: 0.55}
+
+  DroughtRevert:
+    min_profit_pips: 0.4
+    min_profit_ratio: 0.0
+    be_profile: {trigger_pips: 1.1, lock_ratio: 0.40, min_lock_pips: 0.40, cooldown_sec: 12}
+    tp_move: {enabled: true, trigger_pips: 0.9, buffer_pips: 0.60}
 
   WickReversalPro:
     min_profit_pips: 1.0
@@ -1140,6 +1154,8 @@ strategies:
   scalp_extrema_reversal_live:
     min_profit_pips: 0.6
     min_profit_ratio: 0.20
+    be_profile: {trigger_pips: 0.9, lock_ratio: 0.45, min_lock_pips: 0.35, cooldown_sec: 8}
+    tp_move: {enabled: true, trigger_pips: 0.8, buffer_pips: 0.55}
     exit_profile:
       # ExtremaReversal can reverse hard after sweep failure; keep deterministic
       # tail cap active even when broker-side SL is missing.

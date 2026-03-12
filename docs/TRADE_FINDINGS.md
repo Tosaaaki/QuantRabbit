@@ -19497,3 +19497,137 @@ Status:
     stop band ではなく
     entry timing / partial exit
     側へ移る。
+
+## 2026-03-13 08:35 JST / local-v2: dedicated exit worker で post-entry の broker protection move を有効化
+- Why/Hypothesis:
+  - ユーザ指摘どおり
+    「entry 後に
+    `SL/TP`
+    が市況追随できていない」
+    仮説を、
+    current live と tick 照合で切り分けた。
+  - OANDA live
+    `2026-03-13 08:34 JST`
+    は
+    `USD/JPY bid=159.308 ask=159.316 spread=0.8p`,
+    `ATR14(M1)=1.257p`,
+    `ATR14(M5)=3.221p`,
+    `pricing=298ms`,
+    `summary=170ms`,
+    `openTrades=0`
+    で通常帯だった。
+  - `scripts/pdca_profitability_report.py`
+    では
+    24h
+    `106 trades / win=33.0% / PF=0.52 / net_jpy=-307.2`
+    で、
+    top losers は
+    `PrecisionLowVol=-117.25`,
+    `WickReversalBlend=-69.224`,
+    `scalp_extrema_reversal_live=-68.265`
+    だった。
+  - `tick_entry_validate`
+    を
+    `scalp_extrema_reversal_live`
+    の
+    `2026-03-12 22:45-23:20 JST`
+    に当てると、
+    `MARKET_ORDER_TRADE_CLOSE`
+    2本で
+    `post_close_tp_touch_s=320,121`
+    が出ており、
+    `TP_touch<=600s`
+    も
+    `5/7`
+    だった。
+  - 一方
+    `PrecisionLowVol`
+    の
+    `2026-03-12 15:50-18:45 JST`
+    は
+    `TP_touch<=120s=0/8`,
+    `<=600s=2/8`
+    で、
+    post-entry 管理だけでなく
+    entry quality
+    の問題も大きかった。
+  - したがって
+    shared exit manager
+    を足さず、
+    loser lane を持つ dedicated exit worker で
+    `be_profile / tp_move`
+    を broker-side protection へ反映するのが妥当と判断した。
+- Expected Good:
+  - `scalp_extrema_reversal_live`
+    と
+    `WickReversalBlend / PrecisionLowVol / DroughtRevert`
+    が含み益化した後、
+    broker `SL`
+    を建値超えへ寄せ、
+    `TP`
+    も current price + buffer へ引き直せる。
+  - `MARKET_ORDER_TRADE_CLOSE`
+    後の
+    `post_close_tp_touch`
+    や、
+    小さい winner の give-back を減らせる。
+- Expected Bad:
+  - `TP`
+    を近づける分、
+    一部の大きい runner は伸び切る前に刈られる。
+  - `PrecisionLowVol`
+    は
+    current loser の主因が entry 側にもあるため、
+    この変更だけでは PF 改善が限定的な可能性がある。
+- Observed/Fact:
+  - `workers/scalp_level_reject/exit_worker.py`
+    と
+    `workers/scalp_wick_reversal_blend/exit_worker.py`
+    に、
+    strategy-local
+    `be_profile / tp_move`
+    を使って
+    broker `SL/TP`
+    を live 更新する経路を追加した。
+  - `config/strategy_exit_protections.yaml`
+    に
+    `scalp_extrema_reversal_live`,
+    `WickReversalBlend`,
+    `PrecisionLowVol`,
+    `DroughtRevert`
+    の
+    `be_profile / tp_move`
+    override を追加した。
+  - 既存の
+    `loss_cut / take_profit / lock_floor`
+    などの exit 判断自体は変更せず、
+    dedicated exit worker 内の protection move だけを増やした。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+      -> `6 passed`
+    - `python3 -m py_compile workers/scalp_level_reject/exit_worker.py workers/scalp_wick_reversal_blend/exit_worker.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - 再起動後に
+    `logs/local_v2_stack/quant-*-exit.log`
+    と
+    `quant-order-manager.log`
+    で
+    `protection_move`
+    /
+    `set_trade_protections`
+    /
+    `STOP_LOSS_ORDER`
+    を追う。
+  - 特に
+    `scalp_extrema_reversal_live`
+    の
+    `MARKET_ORDER_TRADE_CLOSE -> post_close_tp_touch`
+    が減るか、
+    `PrecisionLowVol`
+    の
+    loser burst が残るかを分けて確認し、
+    後者が残るなら
+    entry guard
+    側を優先して詰める。
