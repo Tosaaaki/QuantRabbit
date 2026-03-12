@@ -446,6 +446,52 @@
     `MomentumBurst`
     の winner cluster / reaccel の通過率を少し上げる。
 
+### local-v2 `MomentumBurst` projection-backed transition-long keep（2026-03-12）
+- 背景:
+  - 2026-03-12 22:01 JST 時点で
+    `USD/JPY 158.8845 / spread 0.8 pips / data_lag_ms 651.9 / decision_latency_ms 12.9`
+    で、
+    execution failure より
+    strategy-local cadence が論点だった。
+  - `orders.db` の直近48h
+    `MomentumBurst-open_long`
+    は
+    `5 fills / 5 preflight / 0 rejected`
+    で、
+    shared gate 側では詰まっていない。
+  - `trades.db` の直近48h long は
+    `transition 2 trades / +91.8 JPY`
+    に対して
+    `reaccel 3 trades / -25.4 JPY`
+    で、
+    増やすべきは transition だけだった。
+- 実装:
+  - `strategies/micro/momentum_burst.py`
+    の
+    `_long_rsi_min()`
+    で、
+    `trend_snapshot.direction=long`
+    だけを
+    mid-RSI 緩和条件にせず、
+    higher-TF 逆風が strong でない場合は
+    `projection.score`
+    でも代替確認できるようにした。
+  - `ops/env/quant-micro-momentumburst.env`
+    に
+    `MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN=0.18`
+    を追加し、
+    positive projection が弱い
+    soft-contra snapshot は従来どおり reject する。
+- 意図:
+  - `MomentumBurst-open_long`
+    の current winner lane に見えていた
+    `softly-contra higher-TF snapshot + positive local projection`
+    を shared gate ではなく
+    strategy-local quality 判定で拾い直し、
+    `reaccel`
+    や broad forecast loosening を増やさずに
+    transition cadence だけを押し上げる。
+
 ### local-v2 `MomentumBurst` sizing nudge（2026-03-12）
 - 背景:
   - 2026-03-12 12:53 JST 時点で

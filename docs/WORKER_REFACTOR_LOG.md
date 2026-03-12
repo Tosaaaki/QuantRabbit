@@ -5,6 +5,46 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`MomentumBurst` transition long の mid-RSI 緩和を positive projection 付き softly-contra snapshot へ広げた
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `_long_rsi_min()`
+    に
+    `projection.score`
+    を読む override を追加し、
+    `trend_snapshot.direction=long`
+    でなくても
+    higher-TF 逆風が strong でないうえで
+    local projection が十分 positive なら
+    transition long の
+    `RSI 54 -> 52`
+    緩和を許すよう更新した。
+  - dedicated env に
+    `MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN=0.18`
+    を追加し、
+    soft-contra snapshot の early continuation を
+    strategy-local にだけ許可した。
+  - regression test として
+    default block、
+    strong projection allow、
+    weak projection keep-block
+    を追加した。
+- 意図:
+  - `MomentumBurst-open_long`
+    は shared gate では詰まっておらず、
+    current winner lane の一部が
+    softly-contra higher-TF snapshot 下の
+    positive local projection に寄っていたため、
+    broad loosening ではなく
+    strategy-local の
+    early continuation 判定だけを current market state に寄せる。
+
 ### 2026-03-12（追記）`MomentumBurst` high-RSI bull-run follow-through を strategy-local に前倒し
 
 - 対象:

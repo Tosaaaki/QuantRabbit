@@ -17660,3 +17660,109 @@ Status:
     次は `RSI` ではなく
     `long_bull_run`
     側の near-miss を strategy-local に点検する。
+
+## 2026-03-12 22:01 JST / local-v2: `MomentumBurst` の transition long は softly-contra higher-TF snapshot でも positive projection があれば mid-RSI early continuation を拾う
+- Why/Hypothesis:
+  - 市況確認（`logs/market_context_latest.json`, `logs/health_snapshot.json`）では
+    2026-03-12 22:01 JST 時点で
+    `USD/JPY 158.8845`,
+    `spread 0.8p`,
+    `data_lag_ms 651.9`,
+    `decision_latency_ms 12.9`
+    で、
+    execution failure より
+    strategy-local cadence が論点だった。
+  - `logs/orders.db`
+    の直近48h
+    `MomentumBurst-open_long`
+    は
+    `5 fills / 5 preflight / 0 rejected`
+    で、
+    shared gate では詰まっていない。
+  - `logs/trades.db`
+    の直近48h long は
+    `transition 2 trades / +91.8 JPY`
+    に対して
+    `reaccel 3 trades / -25.4 JPY`
+    だったため、
+    増やすべきは
+    `transition`
+    だけ。
+  - recent winner の一部は
+    `projection.score≈0.195-0.245`
+    を持ちながら
+    `trend_snapshot.direction=short`
+    で、
+    current `_long_rsi_min()`
+    の
+    `trend_snapshot.direction=long`
+    必須条件だと
+    softly-contra snapshot 下の
+    `RSI 52-54`
+    early continuation を拾えない余地が残っていた。
+- Expected Good:
+  - `gap:up_strong / tr:up_strong / low range-chop / positive projection`
+    の
+    `transition long`
+    だけを少し早く通せる。
+  - `reaccel`
+    や
+    shared gate
+    を緩めずに cadence を増やせる。
+- Expected Bad:
+  - positive projection が false positive のとき、
+    softly-contra snapshot 下の shallow long が増える可能性。
+  - ただし
+    `gap/DI/ROC/EMA slope`,
+    `range/chop`,
+    `trend_snapshot_supports`,
+    `price_action_direction`
+    は維持する。
+- Observed/Fact:
+  - `strategies/micro/momentum_burst.py`
+    に
+    `MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN`
+    と
+    `_projection_score()`
+    を追加し、
+    `_long_rsi_min()`
+    で
+    `trend_snapshot`
+    が non-long / weak でも
+    `projection.score`
+    が閾値以上なら
+    `RSI 54 -> 52`
+    緩和を許すようにした。
+  - `ops/env/quant-micro-momentumburst.env`
+    では
+    `MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN=0.18`
+    を current live 値とし、
+    soft-contra snapshot 下の positive projection だけを拾う。
+  - `tests/strategies/test_momentum_burst.py`
+    に
+    default block /
+    strong projection allow /
+    weak projection keep-block
+    を追加した。
+  - `pytest -q tests/strategies/test_momentum_burst.py`
+    は
+    `35 passed`。
+- Verdict: pending
+- Next Action:
+  - `quant-micro-momentumburst`
+    反映後、
+    next 30-60 分で
+    `MomentumBurst-open_long`
+    の
+    `OPEN_REQ / OPEN_SCALE / fills`
+    を確認し、
+    `transition long`
+    の件数が増えるかを見る。
+  - それでも still scarce なら、
+    次は forecast gate ではなく
+    `long_bull_run`
+    か
+    `transition`
+    の
+    `gap/DI/roc`
+    近辺の near-miss を点検する。

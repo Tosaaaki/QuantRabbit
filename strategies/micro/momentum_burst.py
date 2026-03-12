@@ -22,6 +22,9 @@ TRANSITION_LONG_ROC5_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_ROC5_M
 TRANSITION_LONG_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_EMA_SLOPE_MIN", "0.0010"))
 TRANSITION_LONG_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_GAP_MIN", "12.0"))
 TRANSITION_LONG_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_ADX_MIN", "18.0"))
+TRANSITION_LONG_PROJECTION_SCORE_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", "1.10")
+)
 LONG_BULL_RUN_RSI_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RSI_MAX", "72.0"))
 LONG_BULL_RUN_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RANGE_SCORE_MAX", "0.26"))
 LONG_BULL_RUN_CHOP_SCORE_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_CHOP_SCORE_MAX", "0.54"))
@@ -144,6 +147,16 @@ class MomentumBurstMicro:
             return 0.0
         try:
             return float(raw) * 100.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _projection_score(fac: Dict) -> float:
+        projection = fac.get("projection")
+        if not isinstance(projection, dict):
+            return 0.0
+        try:
+            return float(projection.get("score") or 0.0)
         except (TypeError, ValueError):
             return 0.0
 
@@ -646,9 +659,13 @@ class MomentumBurstMicro:
         snapshot = fac.get("trend_snapshot")
         if not isinstance(snapshot, dict):
             return RSI_LONG_MIN
+        projection_override = (
+            MomentumBurstMicro._projection_score(fac)
+            >= TRANSITION_LONG_PROJECTION_SCORE_MIN
+        )
         snap_direction = str(snapshot.get("direction") or "").strip().lower()
         if snap_direction != "long":
-            return RSI_LONG_MIN
+            return TRANSITION_LONG_RSI_MIN if projection_override else RSI_LONG_MIN
         try:
             snap_gap_pips = abs(float(snapshot.get("gap_pips") or 0.0))
         except (TypeError, ValueError):
@@ -661,7 +678,7 @@ class MomentumBurstMicro:
             snap_gap_pips < TRANSITION_LONG_TREND_GAP_MIN
             and snap_adx < TRANSITION_LONG_TREND_ADX_MIN
         ):
-            return RSI_LONG_MIN
+            return TRANSITION_LONG_RSI_MIN if projection_override else RSI_LONG_MIN
         return TRANSITION_LONG_RSI_MIN
 
     @staticmethod

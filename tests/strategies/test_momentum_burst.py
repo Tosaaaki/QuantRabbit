@@ -1,7 +1,42 @@
 from __future__ import annotations
 
+import importlib
+
+import strategies.micro.momentum_burst as momentum_burst_module
 from strategies.micro.momentum_burst import MomentumBurstMicro
 from workers.micro_runtime import worker as micro_runtime_worker
+
+
+def _softly_contra_transition_long_fixture(*, projection_score: float) -> dict:
+    return {
+        "close": 158.582,
+        "ma10": 158.556,
+        "ma20": 158.528,
+        "ema20": 158.544,
+        "adx": 19.6,
+        "atr_pips": 4.0,
+        "vol_5m": 1.9,
+        "rsi": 52.6,
+        "plus_di": 22.5,
+        "minus_di": 15.8,
+        "roc5": 0.026,
+        "ema_slope_10": 0.0012,
+        "range_score": 0.24,
+        "micro_chop_score": 0.54,
+        "projection": {"score": projection_score},
+        "trend_snapshot": {
+            "tf": "H4",
+            "direction": "short",
+            "gap_pips": -7.0,
+            "adx": 19.0,
+        },
+        "candles": [
+            {"high": 158.53, "low": 158.49, "close": 158.50},
+            {"high": 158.55, "low": 158.50, "close": 158.53},
+            {"high": 158.586, "low": 158.52, "close": 158.55},
+            {"high": 158.584, "low": 158.548, "close": 158.582},
+        ],
+    }
 
 
 def test_long_signal_passes_when_indicator_quality_is_clean() -> None:
@@ -111,6 +146,49 @@ def test_transition_long_keeps_rsi_floor_in_range_chop_context() -> None:
     )
 
     assert signal is None
+
+
+def test_transition_long_keeps_rsi_floor_under_softly_contra_snapshot_without_projection_override() -> None:
+    module = importlib.reload(momentum_burst_module)
+
+    signal = module.MomentumBurstMicro.check(
+        _softly_contra_transition_long_fixture(projection_score=0.22)
+    )
+
+    assert signal is None
+
+
+def test_transition_long_allows_projection_backed_mid_rsi_under_softly_contra_snapshot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", "0.18")
+    module = importlib.reload(momentum_burst_module)
+
+    try:
+        signal = module.MomentumBurstMicro.check(
+            _softly_contra_transition_long_fixture(projection_score=0.22)
+        )
+        assert signal is not None
+        assert signal["action"] == "OPEN_LONG"
+    finally:
+        monkeypatch.delenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False)
+        importlib.reload(momentum_burst_module)
+
+
+def test_transition_long_rejects_weak_projection_override_under_softly_contra_snapshot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", "0.18")
+    module = importlib.reload(momentum_burst_module)
+
+    try:
+        signal = module.MomentumBurstMicro.check(
+            _softly_contra_transition_long_fixture(projection_score=0.12)
+        )
+        assert signal is None
+    finally:
+        monkeypatch.delenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False)
+        importlib.reload(momentum_burst_module)
 
 
 def test_long_rejects_overextended_indicator_state() -> None:
