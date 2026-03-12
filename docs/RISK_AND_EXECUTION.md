@@ -8,6 +8,57 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `DroughtRevert` dynamic long setup-pressure（2026-03-12）
+- 背景:
+  - 2026-03-12 10:15 JST 時点の local-v2 実測では、
+    `DroughtRevert`
+    全体は `19 trades / -24.094 JPY`、
+    そのうち
+    `long × volatility_compression`
+    は `13 trades / -33.770 JPY`
+    で current red contributor だった。
+  - 同 lane のうち
+    `projection.score<=0.08`
+    かつ `setup_quality<0.40`
+    は `10 trades / -45.164 JPY`
+    で、
+    recent sample 上は weak reclaim long が
+    expectancy を悪化させていた。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    - `DROUGHT_SETUP_PRESSURE_*`
+      を追加し、
+      `DroughtRevert` long の recent-outcome guard を
+      source-prefix env から調整できるようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_drought_revert_setup_pressure()`
+      を追加し、
+      recent `DroughtRevert` long close の
+      `sl_rate / fast_sl_rate / net_jpy / age`
+      を集計する。
+    - active pressure 中は
+      `projection_score<=0.08`
+      で
+      `setup_quality / reversion_support`
+      が弱いか、
+      `continuation_pressure` が高い reclaim long を
+      reject する。
+    - ただし
+      `touch_ratio / rev_strength / setup_quality / reversion_support / projection`
+      が強い reclaim long は維持する。
+  - `ops/env/quant-scalp-drought-revert.env`
+    - `...DROUGHT_SETUP_PRESSURE_*`
+      を current 運用値で明示した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    - active pressure 下で
+      weak long を block し、
+      stronger long を keep する回帰を追加した。
+- 意図:
+  - `DroughtRevert` long を blanket stop せず、
+    current loser lane だけを
+    `市況 + recent outcome`
+    で薄くする。
+
 ### local-v2 `WickReversalBlend` dynamic long setup-pressure + protection cache seed（2026-03-12）
 - 背景:
   - 2026-03-12 09:30 JST の local-v2 実測では、

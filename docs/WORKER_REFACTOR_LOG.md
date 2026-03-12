@@ -5,6 +5,42 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`DroughtRevert` dynamic long setup-pressure
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-drought-revert.env`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+- 変更:
+  - `config.py` に
+    `DROUGHT_SETUP_PRESSURE_*`
+    を追加し、
+    dedicated env から current threshold を扱えるようにした。
+  - `_drought_revert_setup_pressure()`
+    を追加し、
+    recent `DroughtRevert` long close の
+    `sl_rate / fast_sl_rate / net_jpy / age`
+    で active pressure を判定するようにした。
+  - `_signal_drought_revert()` は
+    active pressure 中だけ、
+    `projection.score<=0.08`
+    かつ
+    `setup_quality / reversion_support`
+    が弱いか
+    `continuation_pressure`
+    が高い long reclaim を reject する。
+  - stronger reclaim probe は維持し、
+    strategy 全停止や shared blanket trim は追加しない。
+- 意図:
+  - `DroughtRevert long / volatility_compression`
+    の loser lane を
+    recent outcome 連動で絞り、
+    マイナス回数を先に減らす。
+
 ### 2026-03-12（追記）`PrecisionLowVol` weak overbought short guard
 
 - 対象:

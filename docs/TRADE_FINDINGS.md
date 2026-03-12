@@ -51,6 +51,79 @@
 - Status:
 ```
 
+## 2026-03-12 10:20 JST / local-v2: `DroughtRevert` long の loser lane を recent outcome で動的に絞る
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/config.py` に
+    `DROUGHT_SETUP_PRESSURE_*`
+    を追加し、`DroughtRevert` long の recent-outcome guard を
+    dedicated env から調整できるようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py` に
+    recent `DroughtRevert` long close を集計する
+    `_drought_revert_setup_pressure()` を追加し、
+    active 時だけ weak reclaim long を reject するようにした。
+  - `ops/env/quant-scalp-drought-revert.env`
+    に current live 用の `...DROUGHT_SETUP_PRESSURE_*`
+    運用値を追加した。
+- Why:
+  - 直近24hの local-v2 実測では
+    `DroughtRevert` 全体が `19 trades / -24.094 JPY`、
+    特に `long × volatility_compression`
+    が `13 trades / -33.770 JPY / PF 0.605`
+    で赤字寄与になっていた。
+  - 同 lane のうち
+    `projection.score<=0.08` かつ `setup_quality<0.40`
+    は `10 trades / -45.164 JPY` で、
+    小さな勝ちを混ぜても expectancy を押し下げていた。
+- Hypothesis:
+  - recent 8-trade 程度で
+    `sl_rate / fast_sl_rate / net_jpy`
+    が悪化している間だけ、
+    `projection / continuation_pressure / reversion_support / setup_quality`
+    が弱い reclaim long を止めれば、
+    loser lane のマイナス回数を先に減らせる。
+- Expected Good:
+  - `DroughtRevert` long の `STOP_LOSS_ORDER` 回数と
+    negative expectancy が改善する。
+- Expected Bad:
+  - active pressure 中は small winner の一部も削る可能性がある。
+- Period:
+  - 直近24h（2026-03-11 10:20 JST - 2026-03-12 10:20 JST）
+- Fact:
+  - `DroughtRevert long / volatility_compression`
+    直近24h: `13 trades / -33.770 JPY`
+  - `projection.score<=0.08 && setup_quality<0.40`
+    直近24h: `10 trades / -45.164 JPY`
+- Failure Cause:
+  - long 側 winner はあるが、
+    negative / flat projection の shallow reclaim を
+    recent outcome 悪化中でも拾っていた。
+- Improvement:
+  - strategy-local の `setup_pressure`
+    を recent outcome から計算し、
+    active 時だけ weak reclaim long を block する。
+  - strong reclaim probe
+    (`touch_ratio / rev_strength / setup_quality / reversion_support / projection`)
+    は維持する。
+- Verification:
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    で weak/strong 両 lane を固定する。
+  - live では次の `30-60m`
+    に `DroughtRevert long` の
+    `filled / STOP_LOSS_ORDER / net_jpy`
+    を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - `DroughtRevert long`
+    の `STOP_LOSS_ORDER`
+    と `expectancy_jpy`
+    が改善しなければ、
+    次は `RangeFader long`
+    の setup-scoped loser lane を切る。
+- Status:
+  - in_progress
+
 ## 2026-03-12 09:45 JST / local-v2: `WickReversalBlend` を市況 + recent outcome で動的化し、同値 protection refresh を止める
 
 - Change:
