@@ -1279,6 +1279,28 @@ D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN: float = max(
         ),
     ),
 )
+D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_D" else False,
+)
+D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX: float = min(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX",
+            "-0.85",
+        )
+    ),
+)
+D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX",
+            "0.40",
+        )
+    ),
+)
 
 EXTREMA_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_EXTREMA_GATE_ENABLED", True)
 EXTREMA_FAIL_OPEN: bool = _bool_env("SCALP_PING_5S_EXTREMA_FAIL_OPEN", True)

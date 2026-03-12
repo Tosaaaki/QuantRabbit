@@ -8,6 +8,47 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_ping_5s_d_live` negative-window short guard（2026-03-12）
+- 背景:
+  - 2026-03-12 14:19 JST 時点の local-v2 では
+    `USD/JPY 159.052 / spread 0.8 pips / open_trades 0`
+    で execution は正常だったが、
+    `scalp_ping_5s_d_live`
+    は
+    24h
+    `9 trades / net -17.529 JPY / win 0%`
+    と悪化していた。
+  - `logs/trades.db`
+    の recent 7d 集計では
+    `short + horizon_neutral + m1_align_boost`
+    が
+    `13 trades / net -52.875 JPY / avg lookahead_edge 0.270 / avg live_score -1.529`
+    で、
+    current loser lane が
+    `signal_window_adaptive_live_score_pips`
+    の深い negative に寄っていた。
+- 実装:
+  - `workers/scalp_ping_5s/worker.py`
+    に
+    D 専用の
+    negative-window short guard
+    を追加し、
+    `m1_align_boost`
+    でも
+    `horizon_neutral|align_weak|counter_scaled`
+    かつ
+    `live_score <= -0.85`
+    /
+    `lookahead_edge <= 0.40`
+    の short は entry 前に reject するようにした。
+  - `workers/scalp_ping_5s/config.py`
+    に D 専用閾値を追加した。
+- 意図:
+  - current loser lane の
+    immediate / fast SL
+    だけを落とし、
+    D short を strategy-wide に止めずに participation の質だけを上げる。
+
 ### local-v2 `scalp_wick_reversal_blend` perf guard flag semantics fix（2026-03-12）
 - 背景:
   - 2026-03-12 14:07 JST 時点で

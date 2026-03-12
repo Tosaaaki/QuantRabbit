@@ -62,6 +62,45 @@ def test_lookahead_edge_hard_blocked_when_below_threshold(monkeypatch) -> None:
     assert edge == pytest.approx(-0.02, abs=1e-9)
 
 
+def test_d_negative_window_short_align_block_reason_blocks_loser_lane(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX", -0.85)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX", 0.40)
+    monkeypatch.setattr(worker.config, "ENV_PREFIX", "SCALP_PING_5S_D")
+
+    reason = worker._d_negative_window_short_align_block_reason(
+        _sample_signal("short"),
+        signal_window_meta={"live_score_pips": -1.12},
+        lookahead_decision=SimpleNamespace(edge_pips=0.32, reason="edge_ok"),
+        m1_trend_gate="m1_align_boost",
+        horizon_gate="horizon_neutral",
+    )
+
+    assert reason is not None
+    assert "live=-1.120" in reason
+    assert "edge=0.320" in reason
+
+
+def test_d_negative_window_short_align_block_reason_preserves_supported_lane(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX", -0.85)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX", 0.40)
+
+    reason = worker._d_negative_window_short_align_block_reason(
+        _sample_signal("short"),
+        signal_window_meta={"live_score_pips": -0.22},
+        lookahead_decision=SimpleNamespace(edge_pips=0.28, reason="edge_ok"),
+        m1_trend_gate="m1_align_boost",
+        horizon_gate="horizon_neutral",
+    )
+
+    assert reason is None
+
+
 def test_build_tick_signal_detects_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

@@ -51,6 +51,125 @@
 - Status:
 ```
 
+## 2026-03-12 14:40 JST / local-v2: `scalp_ping_5s_d_live` short の negative-window momentum lane を worker local で遮断
+
+- Change:
+  - `workers/scalp_ping_5s/worker.py`
+    に
+    `D_NEGATIVE_WINDOW_SHORT_ALIGN`
+    guard を追加し、
+    `short`
+    かつ
+    `m1_align_boost`
+    で、
+    `horizon_neutral|align_weak|counter_scaled`
+    のまま
+    `signal_window_adaptive_live_score_pips`
+    が深く負、
+    かつ
+    `lookahead_edge_pips`
+    が薄い lane を reject するようにした。
+  - `workers/scalp_ping_5s/config.py`
+    に
+    D 専用閾値
+    `SCALP_PING_5S_D_NEGATIVE_WINDOW_SHORT_ALIGN_*`
+    を追加した。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    に
+    loser lane block / supported lane pass
+    の回帰を追加した。
+- Why:
+  - ユーザ指摘どおり、
+    `logs/trades.db`
+    では
+    `STOP_LOSS_ORDER`
+    が
+    `0.5-5 秒`
+    で刺さる lane が残っており、
+    その一部は
+    `scalp_ping_5s_d_live`
+    の short に集中していた。
+  - 2026-03-12 14:19 JST 時点の local-v2 実測は
+    `USD/JPY 159.052 / spread 0.8 pips / open_trades 0`
+    で execution 停止ではなく、
+    24h は
+    `scalp_ping_5s_d_live 9 trades / net -17.529 JPY / win 0%`
+    の current loser だった。
+- Hypothesis:
+  - D short の
+    `m1_align_boost`
+    だから通している momentum lane でも、
+    `signal_window_adaptive_live_score_pips`
+    が深く負で
+    `lookahead_edge`
+    が薄いものは実際には follow-through が足りず、
+    即 SL の確率が高い。
+- Expected Good:
+  - `scalp_ping_5s_d_live`
+    short の
+    `STOP_LOSS_ORDER`
+    と
+    sub-5s loss
+    を減らす。
+  - D の short participation は全面停止せず、
+    stronger edge の short だけ残す。
+- Expected Bad:
+  - D short の entry 数が落ちる。
+  - 閾値がきつすぎると、
+    `horizon_neutral`
+    の薄い winner short も削る可能性がある。
+- Period:
+  - current 24h / recent 7d (`logs/trades.db`, `logs/orders.db`, 2026-03-12 14:19-14:34 JST 集計)
+- Fact:
+  - current 24h fast-SL 集計では
+    `scalp_ping_5s_d_live short`
+    が
+    `6 trades / fast<=5s 5 / fast<=2s 2 / avg_hold 7.922s / net -11.349 JPY`
+    だった。
+  - recent 7d cluster では
+    `short + horizon_neutral + m1_align_boost`
+    が
+    `13 trades / net -52.875 JPY / avg lookahead_edge 0.270 / avg live_score -1.529`
+    と継続悪化だった。
+  - 直近 losers の代表は
+    `2026-03-11 23:00 UTC`
+    close の short で
+    `hold 4.148s / tp_pips 1.4 / lookahead_edge 0.342 / live_score -1.312 / horizon_neutral / m1_align_boost`
+    だった。
+- Failure Cause:
+  - `m1_align_boost`
+    だけでは short momentum の continuation を保証できず、
+    adaptive signal-window が強く negative の時点で lane quality が崩れていた。
+- Improvement:
+  - D short だけに限定して、
+    `live_score <= -0.85`
+    かつ
+    `lookahead_edge <= 0.40`
+    の negative-window momentum short を worker local で reject する。
+- Verification:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_ping_5s_worker.py -k 'd_negative_window_short_align_block_reason'`
+    で
+    `2 passed`
+  - `python3 -m py_compile workers/scalp_ping_5s/config.py workers/scalp_ping_5s/worker.py tests/workers/test_scalp_ping_5s_worker.py`
+    は成功。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    全体は今回差分と無関係な既存失敗があるため、
+    targeted test のみを採用。
+- Verdict:
+  - pending
+- Next Action:
+  - deploy 後 30-60 分で
+    `scalp_ping_5s_d_live short`
+    の
+    `fills / STOP_LOSS_ORDER / hold_sec<=5 / realized_jpy`
+    を再確認する。
+  - まだ fast-SL が残るなら、
+    次は
+    `scalp_extrema_reversal_live`
+    の short fast-SL cluster を追加で削る。
+- Status:
+  - in_progress
+
 ## 2026-03-12 14:15 JST / local-v2: `scalp_wick_reversal_blend` 系の perf guard 無効化フラグが逆読まれて participation を落としていた
 
 - Change:

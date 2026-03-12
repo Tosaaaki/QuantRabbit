@@ -5,6 +5,34 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`scalp_ping_5s_d_live` negative-window short guard
+
+- 対象:
+  - `workers/scalp_ping_5s/config.py`
+  - `workers/scalp_ping_5s/worker.py`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - D variant 専用の
+    `D_NEGATIVE_WINDOW_SHORT_ALIGN`
+    guard を追加し、
+    `short + m1_align_boost`
+    でも
+    `horizon_neutral|align_weak|counter_scaled`
+    のまま
+    `signal_window_adaptive_live_score_pips`
+    が深く負、
+    かつ
+    `lookahead_edge_pips`
+    が薄い lane を worker local に reject するようにした。
+  - 対応する D 専用 config 閾値と unit test を追加した。
+- 意図:
+  - `scalp_ping_5s_d_live`
+    short の current loser lane を strategy-local に落とし、
+    stronger edge の momentum short は残したまま
+    fast STOP_LOSS cluster だけ削る。
+
 ### 2026-03-12（追記）`MomentumBurst` sizing nudge
 
 - 対象:
