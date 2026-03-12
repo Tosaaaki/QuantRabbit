@@ -4327,6 +4327,15 @@
   `negative realized / negative avg realized / bad avg_pips or PF`
   を満たす fast-reactive loser setup を
   setup-scoped trim 候補として emit する。
+- `scripts/run_local_feedback_cycle.py`
+  は local root を
+  `PYTHONPATH`
+  へ prepend してから各 job を実行する。
+  これにより
+  `dynamic_alloc_worker.py`
+  のような root import 前提 script が
+  `ModuleNotFoundError: utils`
+  で stale artifact を残すことを避ける。
 - `analysis/strategy_feedback_worker.py`
   の positive overlay は
   `profitable_now && payoff_ok && improved_vs_prev`

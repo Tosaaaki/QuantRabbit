@@ -370,6 +370,21 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     assert draft_output == {"marker": "trade-findings-draft", "env_value": "trade-findings-draft-env"}
 
 
+def test_run_local_feedback_cycle_prepends_repo_root_to_pythonpath(tmp_path: Path) -> None:
+    fake_job = _prepare_fake_job(tmp_path)
+    env = _base_env(tmp_path, fake_job)
+    env["LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_CMD"] = (
+        f"{sys.executable} {fake_job} --output {tmp_path / 'outputs' / 'dynamic.json'} "
+        "--env-key PYTHONPATH --marker dynamic"
+    )
+
+    _run_cycle(tmp_path, force=True, env=env)
+
+    dynamic_output = json.loads((tmp_path / "outputs" / "dynamic.json").read_text(encoding="utf-8"))
+    assert dynamic_output["marker"] == "dynamic"
+    assert str(REPO_ROOT) in str(dynamic_output["env_value"]).split(os.pathsep)
+
+
 def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Path) -> None:
     fake_job = _prepare_fake_job(tmp_path)
     env = _base_env(tmp_path, fake_job)

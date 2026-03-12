@@ -16823,9 +16823,17 @@ Status:
     を満たすときだけ正の
     `entry_probability_multiplier / entry_units_multiplier / sl/tp multiplier`
     を残すようにした。
+  - `scripts/run_local_feedback_cycle.py`
+    は repo root を `PYTHONPATH` の先頭へ自動注入するようにし、
+    `dynamic_alloc` job が
+    `ModuleNotFoundError: utils`
+    で stale 化する経路を潰した。
   - targeted test:
-    `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/workers/common/test_participation_alloc.py tests/test_dynamic_alloc_worker.py tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_participation_allocator.py`
-    は `74 passed`。
+    `pytest -q tests/scripts/test_run_local_feedback_cycle.py tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/workers/common/test_participation_alloc.py tests/test_dynamic_alloc_worker.py tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_participation_allocator.py`
+    は `82 passed`。
+  - `python3 scripts/run_local_feedback_cycle.py --force --job dynamic_alloc --job participation_allocator`
+    は `dynamic_alloc=ok`, `participation_allocator=ok`
+    で両 artifact 更新を確認した。
 - Verdict: pending
 - Next Action:
   - 自動 feedback cycle と local-v2 runtime へ反映し、

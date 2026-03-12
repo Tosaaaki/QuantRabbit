@@ -17072,8 +17072,10 @@
   - `execution/strategy_entry.py`
   - `workers/common/dynamic_alloc.py`
   - `scripts/dynamic_alloc_worker.py`
+  - `scripts/run_local_feedback_cycle.py`
   - `analysis/strategy_feedback_worker.py`
   - `tests/scripts/test_participation_allocator.py`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
   - `tests/workers/common/test_participation_alloc.py`
   - `tests/execution/test_strategy_entry_adaptive_layers.py`
   - `tests/workers/common/test_dynamic_alloc.py`
@@ -17116,6 +17118,11 @@
     は `2 trades` の fast-reactive loser setup でも
     negative realized / bad PF を満たせば
     setup override を emit する。
+  - `run_local_feedback_cycle`
+    は repo root を
+    `PYTHONPATH`
+    の先頭へ注入し、
+    `dynamic_alloc` job が local root import 前提で落ちないようにした。
   - `strategy_feedback_worker`
     は previous feedback を参照し、
     `profitable_now && payoff_ok && improved_vs_prev`
@@ -17123,5 +17130,7 @@
     正の multiplier を残す。
 
 - 検証:
-  - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/workers/common/test_participation_alloc.py tests/test_dynamic_alloc_worker.py tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_participation_allocator.py`
-    -> `74 passed`
+  - `pytest -q tests/scripts/test_run_local_feedback_cycle.py tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/workers/common/test_participation_alloc.py tests/test_dynamic_alloc_worker.py tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_participation_allocator.py`
+    -> `82 passed`
+  - `python3 scripts/run_local_feedback_cycle.py --force --job dynamic_alloc --job participation_allocator`
+    -> `dynamic_alloc=ok`, `participation_allocator=ok`

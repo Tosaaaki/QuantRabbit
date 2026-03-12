@@ -561,6 +561,12 @@ def _run_job(job: JobConfig, *, dry_run: bool) -> dict[str, Any]:
     env = os.environ.copy()
     for env_file in job.env_files:
         env.update(_load_env_file(env_file))
+    repo_pythonpath = str(REPO_ROOT)
+    current_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+    pythonpath_parts = [part for part in current_pythonpath.split(os.pathsep) if part]
+    if repo_pythonpath not in pythonpath_parts:
+        pythonpath_parts.insert(0, repo_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
     RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = RUN_LOG_DIR / f"{job.name}.log"
