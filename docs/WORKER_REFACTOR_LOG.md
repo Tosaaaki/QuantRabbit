@@ -44,6 +44,45 @@
     へそのまま広げるには重いため、
     safe canary のまま micro だけへ段階拡張する。
 
+### 2026-03-12（追記）local Brain safe canary に `session_open_breakout` を追加
+
+- 対象:
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - safe canary の
+    `BRAIN_STRATEGY_ALLOWLIST`
+    に
+    `session_open_breakout`
+    を追加した。
+  - `BRAIN_POCKET_ALLOWLIST=micro`
+    と
+    `timeout=4s / fail-open`
+    は維持し、
+    `scalp`
+    pocket へは広げていない。
+- 意図:
+  - `session_open_breakout`
+    は直近12hでも live 発火しており、
+    `entry_thesis`
+    に
+    `setup_fingerprint`
+    /
+    `flow_regime`
+    が入り、
+    Brain 側は `entry_probability`
+    から confidence を補完できる。
+  - 直近7dの
+    `trades.db`
+    では
+    `8 trades / -2.8 JPY`
+    と極端な loser ではなく、
+    一方で直近2件は
+    `STOP_LOSS_ORDER`
+    なので、
+    transition/session-open の weak probe を local Brain で軽くふるいにかける価値がある。
+
 ### 2026-03-12（追記）`MomentumBurst` transition long の mid-RSI 緩和を positive projection 付き softly-contra snapshot へ広げた
 
 - 対象:

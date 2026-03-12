@@ -51,6 +51,179 @@
 - Status:
 ```
 
+## 2026-03-12 23:20 JST / local-v2: Brain safe canary に `session_open_breakout` を追加
+
+- Change:
+  - `ops/env/profiles/brain-ollama-safe.env`
+    の
+    `BRAIN_STRATEGY_ALLOWLIST`
+    を
+    `MicroLevelReactor, MomentumBurst-open_long, MomentumBurst-open_short, MicroTrendRetest-short`
+    から
+    `MicroLevelReactor, MomentumBurst-open_long, MomentumBurst-open_short, MicroTrendRetest-short, session_open_breakout`
+    へ更新した。
+  - `BRAIN_POCKET_ALLOWLIST=micro`
+    と
+    `timeout=4s / fail-open`
+    は維持し、
+    `scalp`
+    pocket へは広げていない。
+- Why:
+  - 2026-03-12 23:11 JST 時点の
+    `python3 scripts/prepare_local_brain_canary.py --dry-run`
+    では、
+    `USD/JPY bid=159.022 / ask=159.030 / spread=0.8p / atr_proxy=3.404p / recent_range_6m=7.4p`
+    で
+    `market_ready=true`
+    だった。
+  - 同時点で safe canary は
+    `ollama_ready=true`
+    /
+    `profile_safe=true`
+    を維持していたが、
+    `logs/brain_state.db`
+    直近2hには新しい Brain decision が無く、
+    既存 allowlist の lane がその時間帯に発火していなかった。
+  - 一方で
+    `logs/orders.db`
+    直近12hでは
+    `session_open_breakout`
+    が
+    `8 rows / 2 filled`
+    で live 発火しており、
+    `entry_thesis`
+    に
+    `setup_fingerprint=session_open_breakout|{side}|transition|unknown|...`
+    と
+    `flow_regime=transition`
+    が記録されていた。
+  - `logs/trades.db`
+    直近7dでは
+    `session_open_breakout`
+    が
+    `8 trades / -2.8 JPY / avg -0.35 JPY`
+    で、
+    `MicroTrendRetest-long=-452.4 JPY`
+    /
+    `MicroTrendRetest-short=-531.9 JPY`
+    より明らかにマイルドだった。
+  - 直近2件は
+    `STOP_LOSS_ORDER`
+    で、
+    long `-24.7 JPY`
+    /
+    short `-16.9 JPY`
+    の transition probe が出ていた。
+- Hypothesis:
+  - いま実際に動いている
+    `session_open_breakout`
+    を safe canary に入れると、
+    live Brain decision を増やしつつ、
+    session-open の weak transition probe を
+    `ALLOW/REDUCE`
+    で軽く整流できる。
+  - `workers/common/brain.py`
+    は
+    `entry_thesis.confidence`
+    が無くても
+    `entry_probability`
+    から confidence を補完できるので、
+    文脈不足で無意味な canary にはなりにくい。
+- Expected Good:
+  - `session_open_breakout`
+    の recent loser probe に対して、
+    local Brain が
+    `REDUCE`
+    か
+    `BLOCK`
+    を返す余地を持てる。
+  - allowlist に入っているのに動かない状態から一歩進み、
+    prompt/runtime tuning 用の current live data を取れる。
+- Expected Bad:
+  - `session_open_breakout`
+    は件数がまだ少ないため、
+    live LLM が shallow `REDUCE`
+    を出し過ぎると cadence が鈍る可能性がある。
+  - `benchmark_fresh=false`
+    /
+    `selection_fresh=false`
+    の stale さは残っており、
+    canary 拡張だけで readiness blocker 自体は消えない。
+- Period:
+  - `scripts/prepare_local_brain_canary.py --dry-run`: 現時点
+  - `logs/orders.db`: 直近12h
+  - `logs/trades.db`: 直近7d
+  - `logs/brain_state.db`: 直近2h / 直近14d
+- Fact:
+  - `logs/orders.db`
+    直近12hの strategy 別 rows では
+    `session_open_breakout=8 rows / 2 filled / avg entry_probability=0.573 / setup_fingerprint付き=8 / flow_regime付き=8`
+    だった。
+  - `logs/trades.db`
+    直近7dの
+    `session_open_breakout`
+    は
+    `8 trades / realized_pl=-2.8 / avg=-0.35 / tp=0 / sl=2`
+    で、
+    recent 2 trade は
+    `2026-03-12 22:04 JST short -16.9`
+    と
+    `2026-03-12 22:55 JST long -24.7`
+    の
+    `STOP_LOSS_ORDER`
+    だった。
+  - `logs/brain_state.db`
+    直近14dでは
+    `session_open_breakout`
+    の decision はまだ 0 件で、
+    allowlist 未投入が live Brain data 不足の直接要因だった。
+  - `logs/local_v2_stack/quant-market-data-feed.log`
+    は
+    `tick_fetcher reconnect`
+    をまだ出しているが、
+    OANDA pricing stream は
+    `HTTP 200`
+    を返している。
+- Failure Cause:
+  - 直前の canary 拡張後も、
+    allowlist に入れた lane がその時間帯に動かず、
+    Brain を live で使う対象が十分広がっていなかった。
+- Improvement:
+  - 実際に現在動いている
+    `session_open_breakout`
+    を micro-only canary に追加し、
+    scalp へは広げずに
+    Brain decision の母数を増やす。
+- Verification:
+  - `python3 scripts/prepare_local_brain_canary.py --dry-run`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+  - `ps eww -p $(cat logs/local_v2_stack/pids/quant-order-manager.pid)`
+    で
+    `BRAIN_STRATEGY_ALLOWLIST`
+    を確認
+  - `sqlite3 logs/brain_state.db`
+    で
+    `session_open_breakout`
+    の new decision を監視
+- Verdict:
+  - pending
+- Next Action:
+  - 次の session-open window で
+    `logs/brain_state.db`
+    に
+    `session_open_breakout`
+    の decision が入るか確認する。
+  - `REDUCE/BLOCK`
+    が過剰で cadence を落とすなら、
+    allowlist を戻す前に prompt/runtime の shallow reduce 側を調整する。
+  - `benchmark_fresh`
+    /
+    `selection_fresh`
+    stale は別タスクで更新する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 22:35 JST / local-v2: Brain safe canary を `MomentumBurst` / `MicroTrendRetest-short` へ限定拡張
 
 - Change:

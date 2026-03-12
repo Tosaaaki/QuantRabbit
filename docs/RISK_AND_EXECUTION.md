@@ -1517,7 +1517,7 @@
   `ORDER_MANAGER_BRAIN_GATE_MODE=apply` / `BRAIN_FAIL_POLICY=allow`
   の safe canary を維持する。
 - safe canary の `BRAIN_STRATEGY_ALLOWLIST` は現行
-  `MicroLevelReactor, MomentumBurst-open_long, MomentumBurst-open_short, MicroTrendRetest-short`
+  `MicroLevelReactor, MomentumBurst-open_long, MomentumBurst-open_short, MicroTrendRetest-short, session_open_breakout`
   に限定し、`scalp` pocket へは live LLM の multi-second latency が残る間は広げない。
 - Brain context は `entry_thesis` / `meta` に spread・ATR・regime が載っていない場合でも、
   ローカル tick と `factor_cache` の M1 snapshot を補完してから LLM に渡す。
