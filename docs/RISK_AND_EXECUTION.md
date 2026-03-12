@@ -4305,12 +4305,14 @@
   long RSI floor を `54 -> 52` へ緩和し、
   winner lane の early continuation だけを拾う。
 - loser 側は
-  `2-attempt` setup でも current realized loss が明確なら
-  setup override を emit し、
+  `2 attempts / 2 fills`
+  の strategy / setup でも current realized loss が明確なら
+  fast trim を emit し、
   `trim_units + bounded negative probability_offset`
   を前倒しする。
   current 例では
-  `PrecisionLowVol -> lot_multiplier=0.824 / probability_offset=-0.07`
+  `DroughtRevert -> lot_multiplier=0.8528 / probability_offset=-0.0731`,
+  `WickReversalBlend -> lot_multiplier=0.8302 / probability_offset=-0.0977`
   を出せることを確認した。
 - `execution/strategy_entry.py` は
   participation runtime cap を

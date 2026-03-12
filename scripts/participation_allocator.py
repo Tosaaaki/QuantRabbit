@@ -129,6 +129,7 @@ def _build_allocation_record(
     strategy_control_blocks = 0
     loss_drag_floor = max(8.0, float(max(1, min_attempts)) * 0.45)
     fast_lane_boost_attempts = 2
+    fast_loser_trim_attempts = 2
     small_sample_boost_attempts = max(3, min(int(min_attempts), 4))
     fast_winner_profit_floor = max(24.0, float(max(1, min_attempts)) * 4.0)
     if terminal_status_counts:
@@ -229,6 +230,45 @@ def _build_allocation_record(
             probability_boost = max_prob_boost * 0.42
             cadence_floor = 1.12
             action = "boost_participation"
+    elif (
+        attempts >= fast_loser_trim_attempts
+        and fills >= 2
+        and realized_jpy <= -max(8.0, loss_drag_floor * 1.10)
+        and loss_per_fill >= 4.0
+        and filled_rate >= max(median_fill_rate * 0.90, 0.25)
+        and hard_block_rate <= 0.35
+    ):
+        # Cut fresh loser lanes quickly so the current short-horizon P/L is not
+        # dragged by fully participating flows that are already net negative.
+        participation_drag = _clamp((fill_share - attempt_share + 0.02) / 0.18, 0.0, 1.0)
+        sample_confidence = _clamp(
+            (attempts - fast_loser_trim_attempts + 1)
+            / max(1, int(min_attempts) - fast_loser_trim_attempts + 1),
+            0.0,
+            1.0,
+        )
+        loss_pressure = max(
+            _clamp(abs(realized_jpy) / max(20.0, loss_drag_floor * 2.0), 0.0, 1.0),
+            _clamp(loss_per_fill / 10.0, 0.0, 1.0),
+        )
+        trim_strength = max(
+            loss_pressure,
+            0.20 * participation_drag + 0.20 * sample_confidence + 0.60 * loss_pressure,
+        )
+        units_multiplier = 1.0 - max_units_cut * (0.26 + 0.54 * trim_strength)
+        should_trim_probability = (
+            realized_jpy <= -max(12.0, loss_drag_floor * 1.50)
+            or loss_per_fill >= 6.0
+            or attempts >= 3
+        )
+        if should_trim_probability:
+            max_probability_cut = min(
+                0.25,
+                max(max_prob_boost, max_prob_boost * (0.75 + 0.75 * loss_pressure)),
+            )
+            probability_offset = -max_probability_cut * (0.10 + 0.60 * trim_strength)
+        cadence_floor = 0.96 - 0.08 * trim_strength
+        action = "trim_units"
     elif (
         attempts >= fast_lane_boost_attempts
         and fills >= 2

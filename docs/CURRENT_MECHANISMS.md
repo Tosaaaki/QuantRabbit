@@ -86,7 +86,7 @@
 | `dynamic_alloc` | strategy / setup ごとの lot multiplier を動的更新する | `config/dynamic_alloc.json`, `workers/common/dynamic_alloc.py` |
 | `pattern_book` | 勝ち負けパターンの集計と deep pattern を保持する | `config/pattern_book.json`, `config/pattern_book_deep.json`, `scripts/pattern_book_worker.py` |
 | `entry_path_summary` | recent order path を戦略 / setup 単位で集計する | `logs/entry_path_summary_latest.json`, `scripts/entry_path_aggregator.py` |
-| `participation_alloc` | winner lane の boost と loser lane の trim/probability offset を出す | `config/participation_alloc.json`, `scripts/participation_allocator.py` |
+| `participation_alloc` | winner lane の boost と loser lane の trim/probability offset を出す。`2 fills + negative realized` の fresh loser lane も fast trim 対象に含む | `config/participation_alloc.json`, `scripts/participation_allocator.py` |
 | `forecast_runtime` | forecast runtime override と改善監査結果を保持する | `logs/forecast_improvement_latest.json`, `workers/common/forecast_gate.py` |
 | `forecast_service` | `:8302/health` を持つ dedicated forecast 判定サービス | `workers/forecast/worker.py` |
 | `blackboard` | `entry_intent_board` の存在と直近 row を監査する | `logs/orders.db`, `execution/strategy_entry.py` |

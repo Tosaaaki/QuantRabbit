@@ -19140,3 +19140,98 @@ Status:
     `supportive_long_context / M5 support / range_score`
     を軸に
     setup-pressure 内 long probe をさらに split する。
+
+## 2026-03-13 07:55 JST / local-v2: `participation_alloc` で fresh loser lane を fast trim する
+- Why/Hypothesis:
+  - 2026-03-13 07:49 JST の local-v2 実測では
+    USD/JPY `159.310 / 159.318`,
+    spread `0.8 pips`,
+    ATR14 `M1=1.429 pips / M5=3.929 pips`,
+    30-candle range `M1=5.6 pips / M5=15.6 pips`,
+    OANDA `pricing=246.6ms / account_summary=319.7ms / openTrades=233.6ms / candles(M1,M5)=318-362ms`
+    で市況・API は通常帯だった。
+  - 一方で `logs/trades.db` の直近30分は
+    `104 trades / -312.2 JPY / avg -3.0 JPY`
+    と短期収益がマイナスで、
+    `PrecisionLowVol=-126.9 JPY`,
+    `WickReversalBlend=-69.2 JPY`,
+    `scalp_extrema_reversal_live=-68.3 JPY`
+    が current drag だった。
+  - 既存 shared `participation_alloc` は
+    `2 attempts / 2 fills / positive realized_jpy`
+    の winner lane を早く `boost_participation`
+    できる一方で、
+    `2 fills + negative realized_jpy`
+    の fresh loser lane は
+    `min_attempts`
+    未満だと `hold`
+    に残りやすく、
+    30分KPIに対する下押しを止め切れていなかった。
+- Expected Good:
+  - `DroughtRevert` / `WickReversalBlend`
+    のような filled loser lane を
+    strategy stop ではなく shared trim で早く減速できる。
+  - `2 fills + positive realized`
+    の winner boost ロジックは維持しつつ、
+    current loser lane だけを対称に前倒しで落とせる。
+- Expected Bad:
+  - 2連敗直後の回復 lane まで shared trim すると
+    rebound participation を削る恐れがある。
+  - そのため negative `probability_offset`
+    は
+    `realized_jpy<=-12`
+    か
+    `loss_per_fill>=6`
+    か
+    `attempts>=3`
+    のときだけ付与し、
+    それ未満は units trim 優先に留める。
+- Observed/Fact:
+  - `scripts/participation_allocator.py`
+    に small-sample loser branch を追加し、
+    `attempts>=2`,
+    `fills>=2`,
+    `negative realized_jpy`,
+    `loss_per_fill>=4`
+    かつ正常 fill quality の lane を
+    fast `trim_units`
+    へ落とすようにした。
+  - `tests/scripts/test_participation_allocator.py`
+    に
+    `WickReversalBlend`
+    の
+    `2 trades / 2 fills / -18.958 JPY`
+    fast loser と、
+    `PrecisionLowVol`
+    の
+    setup-scoped fast loser override
+    の回帰を追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py`
+      -> `22 passed`
+    - `python3 -m py_compile scripts/participation_allocator.py tests/scripts/test_participation_allocator.py`
+      -> 成功
+    - `python3 scripts/participation_allocator.py --entry-path-summary logs/entry_path_summary_latest.json --trades-db logs/trades.db --output config/participation_alloc.json --lookback-hours 6 --min-attempts 12 --setup-min-attempts 2 --max-units-cut 0.22 --max-units-boost 0.24 --max-probability-boost 0.10`
+      -> `config/participation_alloc.json`
+      で
+      `DroughtRevert: lot_multiplier=0.8528 / probability_offset=-0.0731`,
+      `WickReversalBlend: lot_multiplier=0.8302 / probability_offset=-0.0977`,
+      `scalp_extrema_reversal_live: lot_multiplier=0.824 / probability_offset=-0.112`
+      を確認した。
+- Verdict: pending
+- Next Action:
+  - 08:00 JST 以降の通常帯で
+    `orders.db` / `entry_thesis.participation_alloc`
+    を見て、
+    `DroughtRevert` /
+    `WickReversalBlend`
+    の current loser lane が
+    `trim_units`
+    のまま維持されるか確認する。
+  - 直近30分の
+    `net_jpy`
+    が依然強くマイナスなら、
+    次は
+    `PrecisionLowVol`
+    の single-fill loser を
+    worker local guard で先に落とす。

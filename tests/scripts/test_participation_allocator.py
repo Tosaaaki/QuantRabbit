@@ -688,6 +688,53 @@ def test_build_participation_alloc_boosts_two_trade_fast_winner_lane() -> None:
     assert winner["cadence_floor"] > 1.17
 
 
+def test_build_participation_alloc_trims_two_trade_fast_loser_lane() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "WickReversalBlend": {
+                "pocket": "scalp",
+                "attempts": 2,
+                "fills": 2,
+                "filled_rate": 1.0,
+                "attempt_share": 0.11,
+                "fill_share": 0.125,
+                "share_gap": -0.015,
+                "terminal_status_counts": {"filled": 2},
+            },
+            "MomentumBurst-open_long": {
+                "pocket": "micro",
+                "attempts": 2,
+                "fills": 2,
+                "filled_rate": 1.0,
+                "attempt_share": 0.0017,
+                "fill_share": 0.0377,
+                "share_gap": -0.0360,
+                "terminal_status_counts": {"filled": 2},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "WickReversalBlend": -18.958,
+            "MomentumBurst-open_long": 185.32,
+        },
+        min_attempts=12,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    loser = payload["strategies"]["WickReversalBlend"]
+
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 0.9
+    assert loser["probability_offset"] < 0.0
+    assert loser["cadence_floor"] < 1.0
+
+
 def test_build_participation_alloc_trims_recent_loss_drag_lane_sooner() -> None:
     summary = {
         "lookback_hours": 6.0,
@@ -823,6 +870,99 @@ def test_build_participation_alloc_emits_setup_overrides_for_loser_setup() -> No
     assert loser["lot_multiplier"] < 1.0
     assert loser["flow_regime"] == "trend_long"
     assert loser["microstructure_bucket"] == "tight_fast"
+
+
+def test_build_participation_alloc_emits_fast_trim_for_two_trade_loser_setup() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 10,
+                "fills": 8,
+                "filled_rate": 0.80,
+                "attempt_share": 0.08,
+                "fill_share": 0.18,
+                "share_gap": -0.10,
+                "terminal_status_counts": {"filled": 8},
+                "setups": {
+                    "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression": {
+                        "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "unknown",
+                        "attempts": 2,
+                        "fills": 2,
+                        "filled_rate": 1.0,
+                        "attempt_share": 0.012,
+                        "fill_share": 0.05,
+                        "share_gap": -0.038,
+                        "terminal_status_counts": {"filled": 2},
+                    },
+                    "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression": {
+                        "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "unknown",
+                        "attempts": 8,
+                        "fills": 6,
+                        "filled_rate": 0.75,
+                        "attempt_share": 0.03,
+                        "fill_share": 0.13,
+                        "share_gap": -0.10,
+                        "terminal_status_counts": {"filled": 6},
+                    },
+                },
+            },
+            "MomentumBurst": {
+                "pocket": "micro",
+                "attempts": 6,
+                "fills": 4,
+                "filled_rate": 0.6667,
+                "attempt_share": 0.10,
+                "fill_share": 0.28,
+                "share_gap": -0.18,
+                "terminal_status_counts": {"filled": 4},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "PrecisionLowVol": 28.0,
+            "MomentumBurst": 54.0,
+        },
+        realized_by_setup={
+            json.dumps(
+                {
+                    "strategy_key": "PrecisionLowVol",
+                    "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+                    "flow_regime": "range_fade",
+                    "microstructure_bucket": "unknown",
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+            ): -18.958
+        },
+        min_attempts=12,
+        setup_min_attempts=4,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    lane = payload["strategies"]["PrecisionLowVol"]
+    loser = next(
+        item
+        for item in lane["setup_overrides"]
+        if item["setup_fingerprint"].startswith(
+            "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|"
+        )
+    )
+
+    assert loser["action"] == "trim_units"
+    assert loser["lot_multiplier"] < 0.9
+    assert loser["probability_offset"] < 0.0
+    assert loser["cadence_floor"] < 1.0
 
 
 def test_build_participation_alloc_emits_low_sample_precision_setup_overrides() -> None:
