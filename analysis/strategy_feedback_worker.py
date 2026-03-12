@@ -700,6 +700,70 @@ def _extract_tag_candidates_from_env(env: dict[str, str]) -> set[str]:
     return tags
 
 
+_DISCOVERY_TAG_ALIASES = {
+    "rangefader": "RangeFader",
+    "scalprangefader": "RangeFader",
+    "precisionlowvol": "PrecisionLowVol",
+    "scalpprecisionlowvol": "PrecisionLowVol",
+    "droughtrevert": "DroughtRevert",
+    "scalpdroughtrevert": "DroughtRevert",
+    "vwaprevert": "VwapRevertS",
+    "vwapreverts": "VwapRevertS",
+    "scalpvwaprevert": "VwapRevertS",
+    "wickreversalblend": "WickReversalBlend",
+    "scalpwickreversalblend": "WickReversalBlend",
+}
+
+
+def _infer_strategy_tag_from_identifier(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    candidates = [
+        text,
+        text.removeprefix("quant-").removesuffix(".service"),
+        text.removeprefix("quant-").removesuffix(".service").removesuffix("-exit"),
+        text.replace("-", "_"),
+        text.replace("_", "-"),
+    ]
+    for candidate in candidates:
+        candidate = str(candidate or "").strip()
+        if not candidate:
+            continue
+        alias = _DISCOVERY_TAG_ALIASES.get(normalize_strategy_lookup_key(candidate))
+        if alias:
+            return alias
+        resolved = resolve_strategy_tag(candidate)
+        if not resolved or resolved.lower() in {"worker", "exit_worker"}:
+            continue
+        if resolved != candidate or any(ch.isupper() for ch in resolved):
+            return resolved
+    return ""
+
+
+def _fallback_strategy_tags(service_name: str, modules: list[str]) -> set[str]:
+    tags: set[str] = set()
+    for candidate in (
+        service_name,
+        service_name.removeprefix("quant-").removesuffix(".service"),
+        service_name.removeprefix("quant-").removesuffix(".service").removesuffix("-exit"),
+    ):
+        resolved = _infer_strategy_tag_from_identifier(candidate)
+        if resolved:
+            tags.add(resolved)
+    for module in modules:
+        parts = [part for part in str(module or "").split(".") if part]
+        if len(parts) >= 2 and parts[0] == "workers":
+            resolved = _infer_strategy_tag_from_identifier(parts[1])
+            if resolved:
+                tags.add(resolved)
+        if len(parts) >= 3 and parts[-1] in {"worker", "exit_worker"}:
+            resolved = _infer_strategy_tag_from_identifier(parts[-2])
+            if resolved:
+                tags.add(resolved)
+    return tags
+
+
 def _extract_modules_from_execstart(exec_line: str) -> list[str]:
     modules: list[str] = []
     try:
@@ -780,16 +844,13 @@ def _parse_strategy_records_from_unit(
     for module in modules:
         if not module.startswith("workers."):
             continue
-        base = module.split(".")[-1]
-        if not worker_tags and base == "session_open":
-            worker_tags.add("session_open")
-            fallback = True
-        if not worker_tags and base == "scalp_precision":
-            worker_tags.add("scalp_precision")
-            fallback = True
         is_entry_module, is_exit_module = _module_roles(module)
         saw_entry_module = saw_entry_module or is_entry_module
         saw_exit_module = saw_exit_module or is_exit_module
+
+    if not worker_tags:
+        worker_tags.update(_fallback_strategy_tags(service_name, modules))
+        fallback = bool(worker_tags)
 
     if not worker_tags:
         return {}

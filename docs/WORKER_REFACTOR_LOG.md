@@ -5,6 +5,37 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`strategy_feedback_worker` の dedicated worker discovery fallback 修正
+
+- 対象:
+  - `analysis/strategy_feedback_worker.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `strategy_feedback_worker`
+    に
+    service/module 名から canonical strategy tag を復元する
+    discovery fallback を追加した。
+  - `quant-scalp-rangefader.service`
+    や
+    `quant-scalp-precision-lowvol.service`
+    のように
+    env へ `*_MODE / *_TAGS / *_STRATEGY_TAG`
+    を持たない dedicated worker でも、
+    `RangeFader / PrecisionLowVol / DroughtRevert / VwapRevertS / WickReversalBlend`
+    を推定できるようにした。
+  - explicit tag env が無い dedicated worker でも
+    payload に出る回帰テストを追加した。
+- 意図:
+  - local-v2 の `strategy_feedback.json`
+    から
+    `RangeFader`
+    が欠落していた原因を潰し、
+    running な dedicated worker の feedback coverage を復旧する。
+  - stopped worker は無理に resurrect せず、
+    「running な worker は必ず feedback に出る」
+    ところまで責務を限定する。
+
 ### 2026-03-12（追記）local feedback cycle の participation allocator override key 修正
 
 - 対象:

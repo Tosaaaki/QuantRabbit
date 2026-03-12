@@ -197,6 +197,94 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
     assert advice["entry_probability_multiplier"] > 1.0
 
 
+@pytest.mark.parametrize(
+    ("service_name", "env_name", "env_body", "module_name", "strategy_tag"),
+    [
+        (
+            "quant-scalp-rangefader.service",
+            "quant-scalp-rangefader.env",
+            "\n".join(
+                [
+                    "RANGEFADER_ENABLED=1",
+                    "RANGEFADER_POCKET=scalp",
+                    "RANGEFADER_LOG_PREFIX=[RangeFader]",
+                ]
+            )
+            + "\n",
+            "workers.scalp_rangefader.worker",
+            "RangeFader",
+        ),
+        (
+            "quant-scalp-precision-lowvol.service",
+            "quant-scalp-precision-lowvol.env",
+            "\n".join(
+                [
+                    "SCALP_PRECISION_LOWVOL_ENABLED=1",
+                    "SCALP_PRECISION_LOWVOL_POCKET=scalp",
+                    "SCALP_PRECISION_LOWVOL_LOG_PREFIX=[Scalp:PrecisionLowVol]",
+                ]
+            )
+            + "\n",
+            "workers.scalp_precision_lowvol.worker",
+            "PrecisionLowVol",
+        ),
+    ],
+)
+def test_build_payload_discovers_dedicated_worker_without_explicit_tag_env(
+    monkeypatch,
+    tmp_path: Path,
+    service_name: str,
+    env_name: str,
+    env_body: str,
+    module_name: str,
+    strategy_tag: str,
+) -> None:
+    repo = tmp_path
+    systemd_dir = repo / "systemd"
+    env_dir = repo / "ops" / "env"
+    log_dir = repo / "logs"
+    pid_dir = log_dir / "local_v2_stack" / "pids"
+    trades_db = log_dir / "trades.db"
+
+    systemd_dir.mkdir(parents=True)
+    env_dir.mkdir(parents=True)
+    pid_dir.mkdir(parents=True)
+
+    (env_dir / "quant-v2-runtime.env").write_text("", encoding="utf-8")
+    (env_dir / env_name).write_text(env_body, encoding="utf-8")
+    (systemd_dir / service_name).write_text(
+        "\n".join(
+            [
+                "[Service]",
+                "EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env",
+                f"EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/{env_name}",
+                f"ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m {module_name}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (pid_dir / service_name.removesuffix(".service").replace(".service", "")).with_suffix(".pid").write_text(
+        f"{os.getpid()}\n",
+        encoding="utf-8",
+    )
+    _seed_trades(trades_db, strategy_tag=strategy_tag)
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_discover_from_control", lambda: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    assert strategy_tag in payload["strategies"]
+    advice = payload["strategies"][strategy_tag]
+    assert advice["strategy_params"]["trades"] == 12
+
+
 def test_build_payload_remaps_directional_trade_tags_to_discovered_base_strategy(
     monkeypatch,
     tmp_path: Path,

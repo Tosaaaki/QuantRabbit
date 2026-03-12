@@ -51,6 +51,115 @@
 - Status:
 ```
 
+## 2026-03-12 20:58 JST / local-v2: `strategy_feedback_worker` が dedicated entry worker を発見できず `RangeFader` を落としていた
+
+- Change:
+  - `analysis/strategy_feedback_worker.py`
+    に
+    service 名 /
+    worker module 名から
+    canonical strategy tag を復元する fallback を追加した。
+  - `tests/analysis/test_strategy_feedback_worker.py`
+    に
+    explicit tag env を持たない
+    `quant-scalp-rangefader.service`
+    /
+    `quant-scalp-precision-lowvol.service`
+    の discovery 回帰を追加した。
+- Why:
+  - 2026-03-12 20:24 JST 時点の local-v2 は
+    24h
+    `256 trades / net -170.7 JPY / PF 0.78 / win_rate 29.3%`
+    だった。
+  - その時点の
+    `logs/strategy_feedback.json`
+    は
+    `RangeFader / PrecisionLowVol / DroughtRevert / VwapRevertS`
+    を含まず、
+    current loser / current live strategy への feedback coverage が欠けていた。
+- Hypothesis:
+  - `strategy_feedback_worker`
+    は
+    `*_MODE / *_TAGS / *_STRATEGY_TAG`
+    を持つ env だけを tag source として扱っており、
+    dedicated worker の一部は
+    entry service が running でも
+    `entry_active`
+    を立てられていない。
+  - service/module 名 fallback を入れれば、
+    running な dedicated worker の feedback omission を解消できる。
+- Expected Good:
+  - `RangeFader`
+    のような running entry worker が
+    `strategy_feedback.json`
+    へ戻る。
+  - worker local / shared trim の current artifact coverage が改善する。
+- Expected Bad:
+  - fallback mapping が広すぎると、
+    unrelated service 名を誤って canonical tag へ寄せる可能性がある。
+- Period:
+  - 2026-03-12 20:24-20:57 JST。
+- Fact:
+  - raw `trades.db` 14日窓では
+    `RangeFader=295`,
+    `PrecisionLowVol=50`,
+    `DroughtRevert=30`,
+    `VwapRevertS=14`,
+    `WickReversalBlend=13`
+    が存在した。
+  - 修正前の payload では
+    `RangeFader`
+    が absent だったが、
+    修正後の
+    `python3 -m analysis.strategy_feedback_worker --nowrite`
+    / `_build_payload()`
+    では
+    `RangeFader`
+    が復帰した。
+  - 一方
+    `PrecisionLowVol / DroughtRevert / VwapRevertS`
+    は
+    `scripts/local_v2_stack.sh status --profile trade_min`
+    で
+    `stopped`
+    のため、
+    修正後も payload には出ない。
+- Failure Cause:
+  - `strategy_feedback_worker`
+    の discovery が
+    env tag 依存で、
+    `workers.scalp_rangefader.worker`
+    や
+    `workers.scalp_precision_lowvol.worker`
+    のような dedicated worker module を
+    canonical strategy tag へ変換できていなかった。
+- Improvement:
+  - service/module 名から
+    `RangeFader / PrecisionLowVol / DroughtRevert / VwapRevertS / WickReversalBlend`
+    を補完する fallback を追加した。
+- Verification:
+  - `pytest -q tests/analysis/test_strategy_feedback_worker.py -k 'discovers_local_v2_services or dedicated_worker_without_explicit_tag_env'`
+    が通ること。
+  - `_build_payload()`
+    の live result で
+    `RangeFader`
+    が現れること。
+- Verdict:
+  - mixed
+- Next Action:
+  - `quant-scalp-precision-lowvol`,
+    `quant-scalp-drought-revert`,
+    `quant-scalp-vwap-revert`
+    が stop のままなので、
+    それらを別件で
+    「なぜ止まっているか」
+    まで切る。
+  - 今回の修正は
+    `RangeFader`
+    の feedback coverage 復旧として維持する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 20:38 JST / local-v2: participation allocator override が env key typo と未クォート値で無効化されていた
 
 - Change:
