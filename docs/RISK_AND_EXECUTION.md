@@ -4060,6 +4060,19 @@
   current 例では
   `MomentumBurst-open_long -> lot_multiplier=1.2064 / probability_boost=0.07 / cadence_floor=1.2`
   を出せることを正とする。
+  micro runtime の live lookup も
+  `long/short` だけでなく
+  `open_long/open_short`
+  directional split-tag を優先解決し、
+  `MomentumBurst-open_long`
+  の cadence boost / trim を
+  base `MomentumBurst`
+  fallback に潰さない。
+  ただし
+  `MicroLevelReactor-bounce-lower`
+  のような non-directional setup tag は
+  base strategy key のまま扱い、
+  mid-segment broad match は行わない。
 - loser 側は
   `2-attempt` setup でも current realized loss が明確なら
   setup override を emit し、

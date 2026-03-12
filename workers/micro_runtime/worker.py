@@ -1242,17 +1242,25 @@ def _signal_tag(signal: Optional[Dict[str, object]]) -> str:
     return str(signal.get("tag") or "").strip()
 
 
+_DIRECTIONAL_PROFILE_TAG_SEGMENTS = frozenset({"long", "short", "open_long", "open_short"})
+
+
 def _strategy_profile_lookup_keys(
     strategy_name: str,
     signal_tag: str = "",
 ) -> List[str]:
     keys: List[str] = []
+    base_key = str(strategy_name or "").strip()
     tag = str(signal_tag or "").strip()
-    if strategy_name in {MicroTrendRetest.name, MicroCompressionRevert.name} and tag:
+    if base_key and tag:
         parts = [part for part in tag.split("-") if part]
-        if len(parts) >= 2 and parts[0] == strategy_name and parts[1] in {"long", "short"}:
-            keys.append(f"{strategy_name}-{parts[1]}")
-    keys.append(str(strategy_name or "").strip())
+        if (
+            len(parts) >= 2
+            and parts[0] == base_key
+            and parts[1] in _DIRECTIONAL_PROFILE_TAG_SEGMENTS
+        ):
+            keys.append(f"{base_key}-{parts[1]}")
+    keys.append(base_key)
     dedup: List[str] = []
     for key in keys:
         if key and key not in dedup:

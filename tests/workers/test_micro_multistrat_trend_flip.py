@@ -359,6 +359,63 @@ def test_trendretest_side_specific_dynamic_alloc_key_is_resolved(monkeypatch):
     assert seen[0] == "MicroTrendRetest-long"
 
 
+def test_momentumburst_open_long_dynamic_alloc_key_is_resolved(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    seen = []
+
+    def _fake_load(strategy, *_args, **_kwargs):
+        seen.append(strategy)
+        if strategy == "MomentumBurst-open_long":
+            return {
+                "found": True,
+                "payload_stale": False,
+                "trades": 18,
+                "lot_multiplier": 0.75,
+            }
+        return {
+            "found": True,
+            "payload_stale": False,
+            "trades": 18,
+            "lot_multiplier": 0.95,
+        }
+
+    monkeypatch.setattr(worker, "load_dynamic_alloc_profile", _fake_load, raising=False)
+
+    assert worker._strategy_effective_cooldown_sec(
+        "MomentumBurst",
+        {"tag": "MomentumBurst-open_long-reaccel"},
+    ) == pytest.approx(60.0)
+    assert seen[0] == "MomentumBurst-open_long"
+
+
+def test_setup_tag_does_not_resolve_non_directional_profile_key(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
+    monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
+    seen = []
+
+    def _fake_load(strategy, *_args, **_kwargs):
+        seen.append(strategy)
+        return {
+            "found": True,
+            "payload_stale": False,
+            "trades": 18,
+            "lot_multiplier": 0.95,
+        }
+
+    monkeypatch.setattr(worker, "load_dynamic_alloc_profile", _fake_load, raising=False)
+
+    assert worker._strategy_effective_cooldown_sec(
+        "MicroLevelReactor",
+        {"tag": "MicroLevelReactor-bounce-lower"},
+    ) == pytest.approx(47.36842105263158)
+    assert seen == ["MicroLevelReactor"]
+
+
 def test_strategy_cooldown_uses_stronger_dynamic_extension_when_both_present(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
     monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)

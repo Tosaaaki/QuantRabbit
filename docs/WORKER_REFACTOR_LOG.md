@@ -17134,3 +17134,52 @@
     -> `82 passed`
   - `python3 scripts/run_local_feedback_cycle.py --force --job dynamic_alloc --job participation_allocator`
     -> `dynamic_alloc=ok`, `participation_allocator=ok`
+
+### 2026-03-12 micro runtime directional split lookup を `MomentumBurst-open_long/open_short` まで拡張
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `config/dynamic_alloc.json` の current live output では
+    `MomentumBurst-open_long`
+    が direction split key として生成される一方、
+    micro runtime の `_strategy_profile_lookup_keys()`
+    は
+    `MicroTrendRetest-long/-short`
+    と
+    `MicroCompressionRevert-long/-short`
+    だけを特例解決していた。
+  - そのため
+    `MomentumBurst-open_long`
+    の live loser trim / future winner cadence boost が、
+    signal tag 側の cooldown 計算へ届いていなかった。
+
+- 変更:
+  - `_strategy_profile_lookup_keys()`
+    は base strategy 名に続く second token が
+    `long/short/open_long/open_short`
+    の場合だけ generic directional key を組み立てるよう更新した。
+  - これにより
+    `MomentumBurst-open_long-reaccel`
+    のような tag でも
+    `MomentumBurst-open_long`
+    を優先 lookup できる。
+  - 一方で
+    `MicroLevelReactor-bounce-lower`
+    のような non-directional setup tag は
+    `MicroLevelReactor-bounce`
+    に変換せず、
+    base strategy key のまま扱う。
+  - 回帰テストとして
+    `MomentumBurst-open_long`
+    の dynamic_alloc cooldown 解決と、
+    non-directional setup tag の誤解決防止を追加した。
+
+- 検証:
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py`
+    -> `29 passed`
+  - `python3 -m compileall workers/micro_runtime/worker.py tests/workers/test_micro_multistrat_trend_flip.py`
+    -> 成功

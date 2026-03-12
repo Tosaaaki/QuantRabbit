@@ -16846,3 +16846,93 @@ Status:
     のような chronic loser で、
     shared trim だけで足りるか、
     まだ worker-local payoff 修正が必要かを再判定する。
+
+## 2026-03-12 20:18 JST / local-v2: `MomentumBurst-open_long` の directional profile が micro runtime に届かず、winner/loser cadence が live signal に反映されていなかった
+- Why/Hypothesis:
+  - 「エントリーが少ない」の正体は
+    global trade count 不足ではなく、
+    winner lane の participation/cadence が
+    実際の `signal.tag` に十分つながっていないこと。
+  - fresh `config/dynamic_alloc.json` では
+    `MomentumBurst-open_long` が direction split key として出ている一方、
+    `workers/micro_runtime/worker.py`
+    の `_strategy_profile_lookup_keys()`
+    は
+    `MicroTrendRetest-long/-short`
+    と
+    `MicroCompressionRevert-long/-short`
+    しか見ておらず、
+    `MomentumBurst-open_long`
+    を live load できていなかった。
+  - この穴があると、
+    future winner lane の `boost_participation`
+    や direction-specific loser trim が
+    micro runtime の cooldown へ乗らず、
+    「良い lane を増やす / 悪い lane を落とす」
+    自動化が incomplete のまま残る。
+- Expected Good:
+  - `MomentumBurst-open_long/open_short`
+    のような directional split key を
+    live cooldown / dynamic_alloc / participation cadence にそのまま接続できる。
+  - future winner lane が
+    `boost_participation + cadence_floor>1.0`
+    を出したとき、
+    base strategy fallback に潰されず
+    cooldown 短縮まで反映される。
+  - `MicroLevelReactor-bounce-lower`
+    のような setup tag は
+    誤って `MicroLevelReactor-bounce`
+    へ broad match せず、
+    non-directional setup を勝手に再配線しない。
+- Expected Bad:
+  - direction split の recent loser profile が出ている lane は、
+    これまでより明確に cooldown 延長が効く。
+    current `MomentumBurst-open_long`
+    は 3d `dynamic_alloc score=0.283 / lot_multiplier=0.592 / sum_realized_jpy=-64.41`
+    のため、
+    「ただ数を増やす」動きにはならない。
+  - 今の M1 factor は
+    `adx=13.82`, `rsi=45.37`, `ma10<ma20`, `close<ema20`
+    で
+    `MomentumBurst` long edge 自体が成立しておらず、
+    lookup 修正だけでは即時 entry 増には直結しない。
+- Observed/Fact:
+  - `logs/pdca_profitability_latest.md` 時点で
+    24h は `134 trades / PF 0.39 / net -76.3 JPY`。
+    「全体が建っていない」より
+    loser lane 偏重の問題が大きい。
+  - fresh `config/dynamic_alloc.json`
+    には
+    `MomentumBurst-open_long`
+    が存在したが、
+    micro runtime の live lookup は base `MomentumBurst`
+    にしか落ちていなかった。
+  - `_strategy_profile_lookup_keys()`
+    を directional token
+    `long/short/open_long/open_short`
+    の generic 解決へ更新し、
+    `MomentumBurst-open_long-reaccel`
+    などから
+    `MomentumBurst-open_long`
+    を優先解決するよう修正した。
+  - 同時に、
+    non-directional setup tag
+    `MicroLevelReactor-bounce-lower`
+    は base `MicroLevelReactor`
+    のまま扱うガードを追加した。
+  - `pytest -q tests/workers/test_micro_multistrat_trend_flip.py`
+    は `29 passed`。
+    `MomentumBurst-open_long` lookup と
+    non-directional tag guard の回帰テストを追加した。
+- Verdict: pending
+- Next Action:
+  - local-v2 runtime へ反映後、
+    `MomentumBurst-open_long`
+    の `OPEN_SCALE` / `OPEN_REQ`
+    が direction-specific cooldown と整合するか確認する。
+  - その上で still no-attempt が続くなら、
+    共有 layer ではなく
+    `strategies/micro/momentum_burst.py`
+    の transition/reaccel long 条件を、
+    current profitable setup fingerprint を根拠に
+    strategy-local で見直す。
