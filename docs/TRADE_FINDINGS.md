@@ -18009,3 +18009,99 @@ Status:
     依存ではなく
     `MTF support`
     依存へ寄せる。
+
+### 2026-03-12 `live_setup_context` に tick pace と MTF macro suffix を追加
+- Why/Hypothesis:
+  - 2026-03-12 JST の local 実測では
+    `USD/JPY 158.945/158.953`,
+    `spread 0.8 pips`,
+    `M5 ATR14 6.914 pips`,
+    `H1 ATR14 21.036 pips`,
+    `OANDA 279-301ms`
+    で市況は通常帯だった。
+  - 一方で直近24hは
+    `259 trades / -211.4 JPY / win_rate 28.6%`
+    かつ
+    `range_fade|unknown`
+    が
+    `178 trades / -237.9 JPY`
+    と支配的で、
+    shared setup identity が `spread_pips/tick_rate` 欠損と M1-only 圧縮で粗すぎた。
+  - `PrecisionLowVol` / `DroughtRevert` の loser lane と
+    `scalp_extrema_reversal_live`
+    の current short probe を、
+    `MTF disagreement`
+    を残した setup fingerprint に分ければ、
+    strategy-local 改善と shared trim の両方が current setup 単位で効きやすくなる。
+- Expected Good:
+  - `tick_window` 由来の `microstructure_bucket=unknown` が減り、
+    `tight/normal/wide + thin/normal/fast`
+    へ復元される。
+  - H1/H4/D1 が強い trend のときだけ
+    `macro:trend_*` / `align:countertrend|mixed`
+    が setup fingerprint へ残り、
+    countertrend fade loser を別 lane として学習できる。
+  - `scalp_extrema_reversal_live`
+    でも worker 側 explicit contract により
+    `technical_context`
+    が live thesis に常時注入される。
+- Expected Bad:
+  - setup fingerprint の suffix 追加により、
+    既存 shared artifact と exact match しない current lane が一時的に増える可能性。
+  - そのため suffix は
+    `macro_flow_regime != local flow_regime`
+    または
+    `align in {countertrend,mixed}`
+    のケースに限定した。
+- Observed/Fact:
+  - `market_data/tick_window.py`
+    の `summarize()`
+    は
+    `spread_pips`
+    と
+    `tick_rate`
+    を返すよう更新した。
+  - `workers/common/setup_context.py`
+    は
+    `H1/H4/D1`
+    から
+    `h1_flow_regime / h4_flow_regime / d1_flow_regime / macro_flow_regime / mtf_alignment`
+    を導出し、
+    必要時だけ
+    `setup_fingerprint`
+    へ
+    `macro:*`
+    と
+    `align:*`
+    を付与するよう更新した。
+  - `workers/scalp_extrema_reversal/worker.py`
+    は
+    `technical_context_tfs/fields/ticks/candle_counts`
+    を explicit に持つよう更新し、
+    `tick_rate`
+    も request するようにした。
+  - テスト:
+    - `python3 -m pytest tests/test_tick_window_reload.py -q`
+      -> `3 passed`
+    - `python3 -m pytest tests/workers/common/test_setup_context.py -q`
+      -> `4 passed`
+    - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+      -> `28 passed`
+    - `python3 -m pytest tests/execution/test_strategy_entry_adaptive_layers.py -k "inject_live_setup_context_records_flow_regime_and_fingerprint" -q`
+      -> `1 passed`
+    - `python3 -m pytest tests/execution/test_strategy_entry_forecast_fusion.py -k "preserves_richer_live_setup_context" -q`
+      -> `2 passed`
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後の次 `30-120m` で、
+    `orders.db / trades.db`
+    から
+    `microstructure_bucket=unknown`
+    の比率と
+    `macro:trend_*`
+    suffix の出現を確認する。
+  - `PrecisionLowVol` / `DroughtRevert` / `scalp_extrema_reversal_live`
+    の loser lane が
+    `countertrend`
+    として分離されたら、
+    次は worker local quality guard をその lane にだけ寄せる。

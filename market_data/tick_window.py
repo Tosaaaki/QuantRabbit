@@ -279,10 +279,17 @@ def summarize(seconds: float = 60.0) -> Dict[str, float]:
     lows = min(row.bid for row in rows), min(row.ask for row in rows), min(row.mid for row in rows)
     latest = rows[0]
     span = latest.epoch - rows[-1].epoch if len(rows) > 1 else 0.0
+    spread_pips = (latest.ask - latest.bid) / 0.01
+    if len(rows) > 1 and span > 0.0:
+        observed_seconds = span
+    else:
+        observed_seconds = max(float(seconds), 1.0)
+    tick_rate = float(len(rows)) / max(observed_seconds, 1e-6)
     return {
         "latest_bid": latest.bid,
         "latest_ask": latest.ask,
         "latest_mid": latest.mid,
+        "spread_pips": spread_pips,
         "high_bid": highs[0],
         "high_ask": highs[1],
         "high_mid": highs[2],
@@ -291,4 +298,5 @@ def summarize(seconds: float = 60.0) -> Dict[str, float]:
         "low_mid": lows[2],
         "span_seconds": span,
         "tick_count": float(len(rows)),
+        "tick_rate": tick_rate,
     }

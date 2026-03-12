@@ -36,6 +36,25 @@ LOG = logging.getLogger(__name__)
 ENV_PREFIX = "SCALP_EXTREMA_REVERSAL"
 STRATEGY_TAG = "scalp_extrema_reversal_live"
 PIP = 0.01
+TECHNICAL_CONTEXT_TFS = ["M1", "M5", "H1", "H4"]
+TECHNICAL_CONTEXT_FIELDS = [
+    "ma10",
+    "ma20",
+    "ema12",
+    "ema20",
+    "ema24",
+    "rsi",
+    "atr",
+    "atr_pips",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "bbw",
+    "macd",
+    "macd_hist",
+]
+TECHNICAL_CONTEXT_TICKS = ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"]
+TECHNICAL_CONTEXT_CANDLE_COUNTS = {"M1": 140, "M5": 100, "H1": 70, "H4": 40}
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -1026,7 +1045,7 @@ def _signal_extrema_reversal(
 def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
     conf = int(signal.get("confidence", 0) or 0)
     p_raw = _to_probability(conf)
-    return {
+    thesis = {
         "strategy_tag": signal.get("tag") or TAG,
         "env_prefix": ENV_PREFIX,
         "confidence": conf,
@@ -1046,6 +1065,11 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "bbw": _to_float(fac_m1.get("bbw"), 0.0),
         "extrema": signal.get("extrema") if isinstance(signal.get("extrema"), dict) else {},
     }
+    thesis.setdefault("technical_context_tfs", list(TECHNICAL_CONTEXT_TFS))
+    thesis.setdefault("technical_context_fields", list(TECHNICAL_CONTEXT_FIELDS))
+    thesis.setdefault("technical_context_ticks", list(TECHNICAL_CONTEXT_TICKS))
+    thesis.setdefault("technical_context_candle_counts", dict(TECHNICAL_CONTEXT_CANDLE_COUNTS))
+    return thesis
 
 
 async def _place_order(

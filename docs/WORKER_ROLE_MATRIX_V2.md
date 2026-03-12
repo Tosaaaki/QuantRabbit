@@ -138,8 +138,18 @@
   - `session_open`
   - 技術コンテキスト共通の取得項目
     - `technical_context_ticks`: 原則 `["latest_bid", "latest_ask", "latest_mid", "spread_pips"]`
-      - 例外: `tick_imbalance` 系で `tick_rate` 追加
+      - microstructure pace を setup identity に使う戦略は `tick_rate` を追加してよい
+      - current では `tick_imbalance` 系に加え `scalp_extrema_reversal_live` も `tick_rate` を要求する
     - `technical_context_candle_counts`: 戦略別に個別上限（例: Scalp系 `M1/H1/M5/H4` 系、Micro系 `M5/M1/H1` 系）
+  - `live_setup_context` は `technical_context` から導出し、
+    最低限 `flow_regime / microstructure_bucket / setup_fingerprint` を持つ。
+    追加で `H1/H4/D1` が入っている場合は
+    `h1_flow_regime / h4_flow_regime / d1_flow_regime / macro_flow_regime / mtf_alignment`
+    を保持してよい。
+  - `setup_fingerprint` の MTF suffix は無制限に増やさず、
+    local flow と macro flow がズレる場合、
+    または `mtf_alignment in {countertrend, mixed}` の場合だけ
+    `macro:*` / `align:*` を追加する。
 - 仕様上の役割分離は維持:
   - 共通 `strategy_entry.py` は指標入力契約の補完・保存を担い、評価ロジックの主体は各戦略ワーカーへ移す。
   - 最終的な受け入れ/サイズ拡大縮小は `order_manager` 側で再選別しない（意図受け渡し + ガード/リスクのみ）。

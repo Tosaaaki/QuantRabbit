@@ -17513,3 +17513,80 @@
     -> `38 passed`
   - `python3 -m compileall strategies/micro/momentum_burst.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py`
     -> 成功
+
+### 2026-03-12 `live_setup_context` の tick/MTF contract を拡張
+- 対象:
+  - `market_data/tick_window.py`
+  - `workers/common/setup_context.py`
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `tests/test_tick_window_reload.py`
+  - `tests/workers/common/test_setup_context.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+
+- 背景:
+  - local 24h の loser cluster で
+    `range_fade|unknown`
+    が支配的だった一方、
+    `technical_context.indicators`
+    には
+    `H1/H4`
+    が既に入っていた。
+  - 原因は
+    `tick_window.summarize()`
+    が
+    `spread_pips/tick_rate`
+    を返さず、
+    `setup_context`
+    も
+    `M1`
+    優先の coarse label に圧縮していたこと。
+  - `scalp_extrema_reversal_live`
+    は `ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS=0`
+    既定下で explicit requirement を持たず、
+    live thesis へ
+    `technical_context`
+    が乗らない current 経路だった。
+
+- 変更:
+  - `tick_window.summarize()`
+    に
+    `spread_pips`
+    と
+    `tick_rate`
+    を追加した。
+  - `setup_context`
+    に
+    `H1/H4/D1`
+    の
+    `flow_regime`
+    要約と
+    `macro_flow_regime / mtf_alignment`
+    を追加し、
+    必要時だけ
+    `setup_fingerprint`
+    へ
+    `macro:*`
+    /
+    `align:*`
+    suffix を付けるようにした。
+  - `scalp_extrema_reversal`
+    の `entry_thesis`
+    へ
+    `technical_context_tfs/fields/ticks/candle_counts`
+    を explicit に追加し、
+    `tick_rate`
+    まで request するようにした。
+
+- 検証:
+  - `python3 -m pytest tests/test_tick_window_reload.py -q`
+    -> `3 passed`
+  - `python3 -m pytest tests/workers/common/test_setup_context.py -q`
+    -> `4 passed`
+  - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+    -> `28 passed`
+  - `python3 -m pytest tests/execution/test_strategy_entry_adaptive_layers.py -k "inject_live_setup_context_records_flow_regime_and_fingerprint" -q`
+    -> `1 passed`
+  - `python3 -m pytest tests/execution/test_strategy_entry_forecast_fusion.py -k "preserves_richer_live_setup_context" -q`
+    -> `2 passed`

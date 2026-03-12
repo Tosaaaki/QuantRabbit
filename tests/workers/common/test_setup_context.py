@@ -24,6 +24,60 @@ def test_derive_live_setup_context_prefers_common_fingerprint_over_conflicting_f
     assert summary["setup_fingerprint"] == fingerprint
 
 
+def test_derive_live_setup_context_appends_mtf_suffix_for_countertrend_macro() -> None:
+    summary = derive_live_setup_context(
+        {
+            "strategy_tag": "PrecisionLowVol",
+            "range_mode": "range",
+            "range_score": 0.52,
+            "range_reason": "volatility_compression",
+            "technical_context": {
+                "indicators": {
+                    "M1": {
+                        "atr_pips": 2.4,
+                        "rsi": 61.0,
+                        "adx": 18.0,
+                        "plus_di": 22.0,
+                        "minus_di": 20.0,
+                        "ma10": 158.021,
+                        "ma20": 158.020,
+                    },
+                    "H1": {
+                        "atr_pips": 11.0,
+                        "adx": 24.0,
+                        "plus_di": 29.0,
+                        "minus_di": 14.0,
+                        "ma10": 158.280,
+                        "ma20": 158.170,
+                    },
+                    "H4": {
+                        "atr_pips": 24.0,
+                        "adx": 28.0,
+                        "plus_di": 31.0,
+                        "minus_di": 12.0,
+                        "ma10": 158.620,
+                        "ma20": 158.360,
+                    },
+                },
+                "ticks": {
+                    "spread_pips": 0.8,
+                    "tick_rate": 8.4,
+                },
+            },
+        },
+        units=-180,
+    )
+
+    assert isinstance(summary, dict)
+    assert summary["flow_regime"] == "range_compression"
+    assert summary["h1_flow_regime"] == "trend_long"
+    assert summary["h4_flow_regime"] == "trend_long"
+    assert summary["macro_flow_regime"] == "trend_long"
+    assert summary["mtf_alignment"] == "countertrend"
+    assert "macro:trend_long" in str(summary["setup_fingerprint"])
+    assert "align:countertrend" in str(summary["setup_fingerprint"])
+
+
 def test_extract_setup_identity_repairs_common_fingerprint_context_from_live_setup() -> None:
     fingerprint = (
         "DroughtRevert|long|range_compression|unknown|"

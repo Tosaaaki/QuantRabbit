@@ -143,6 +143,34 @@ def test_place_order_uses_actual_free_ratio_for_cap(monkeypatch):
     assert result["meta"]["cap"] == 0.5
 
 
+def test_build_entry_thesis_requests_mtf_technical_context() -> None:
+    thesis = worker._build_entry_thesis(
+        {
+            "confidence": 72,
+            "tag": "scalp_extrema_reversal_live",
+            "reason": "extrema_reversal",
+            "sl_pips": 2.0,
+            "tp_pips": 2.8,
+            "extrema": {"side": "short"},
+        },
+        {
+            "adx": 18.0,
+            "atr_pips": 3.0,
+            "rsi": 58.0,
+            "ma10": 158.45,
+            "ma20": 158.42,
+            "bbw": 0.11,
+        },
+        _range_ctx(active=True, score=0.42, mode="RANGE"),
+    )
+
+    assert thesis["technical_context_tfs"] == ["M1", "M5", "H1", "H4"]
+    assert thesis["technical_context_ticks"] == ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"]
+    assert thesis["technical_context_candle_counts"] == {"M1": 140, "M5": 100, "H1": 70, "H4": 40}
+    assert "plus_di" in thesis["technical_context_fields"]
+    assert "macd_hist" in thesis["technical_context_fields"]
+
+
 def test_signal_extrema_reversal_uses_wider_strategy_local_sl_tp_caps(monkeypatch):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)

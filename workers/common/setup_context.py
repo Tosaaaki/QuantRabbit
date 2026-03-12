@@ -72,6 +72,112 @@ def _technical_indicator_frame(entry_thesis: Mapping[str, Any], tf: str = "M1") 
     return dict(frame) if isinstance(frame, Mapping) else {}
 
 
+def _frame_ma_pair(frame: Mapping[str, Any]) -> tuple[Optional[float], Optional[float]]:
+    ma_fast = _to_float(frame.get("ma10"))
+    if ma_fast is None:
+        ma_fast = _to_float(frame.get("ema12"))
+    if ma_fast is None:
+        ma_fast = _to_float(frame.get("ema20"))
+    ma_slow = _to_float(frame.get("ma20"))
+    if ma_slow is None:
+        ma_slow = _to_float(frame.get("ema20"))
+    if ma_slow is None:
+        ma_slow = _to_float(frame.get("ema24"))
+    return ma_fast, ma_slow
+
+
+def _frame_flow_snapshot(frame: Mapping[str, Any]) -> dict[str, object]:
+    if not frame:
+        return {}
+    atr_pips = _to_float(frame.get("atr_pips"))
+    adx = _to_float(frame.get("adx"))
+    plus_di = _to_float(frame.get("plus_di"))
+    minus_di = _to_float(frame.get("minus_di"))
+    di_gap = plus_di - minus_di if plus_di is not None and minus_di is not None else None
+    ma_fast, ma_slow = _frame_ma_pair(frame)
+    ma_gap_pips = None
+    if ma_fast is not None and ma_slow is not None:
+        ma_gap_pips = (ma_fast - ma_slow) / 0.01
+    gap_ratio = abs(ma_gap_pips) / max(atr_pips or 0.0, 1.0) if ma_gap_pips is not None else None
+
+    trend_dir = "neutral"
+    if di_gap is not None:
+        if di_gap > 0.0:
+            trend_dir = "long"
+        elif di_gap < 0.0:
+            trend_dir = "short"
+    if trend_dir == "neutral" and ma_gap_pips is not None and abs(ma_gap_pips) >= 0.05:
+        trend_dir = "long" if ma_gap_pips > 0.0 else "short"
+
+    flow_regime = "transition"
+    strong_gap = gap_ratio is not None and gap_ratio >= 0.55
+    medium_gap = gap_ratio is not None and gap_ratio >= 0.35
+    strong_di = di_gap is not None and abs(di_gap) >= 6.0
+    if trend_dir != "neutral" and (
+        (strong_gap and (adx is None or adx >= 17.0))
+        or (medium_gap and strong_di and (adx is None or adx >= 14.0))
+    ):
+        flow_regime = f"trend_{trend_dir}"
+
+    strength = 0.0
+    if gap_ratio is not None:
+        strength += min(gap_ratio, 1.5)
+    if adx is not None:
+        strength += max(0.0, min((adx - 14.0) / 16.0, 1.5))
+    if di_gap is not None:
+        strength += min(abs(di_gap) / 12.0, 1.5)
+
+    return {
+        "flow_regime": flow_regime,
+        "trend_dir": trend_dir,
+        "trend_strength": round(strength, 4),
+    }
+
+
+def _derive_mtf_context(
+    entry_thesis: Mapping[str, Any],
+    *,
+    side_label: str,
+) -> dict[str, object]:
+    snapshots: dict[str, object] = {}
+    trend_votes: list[str] = []
+    available = 0
+    for tf in ("H1", "H4", "D1"):
+        frame = _technical_indicator_frame(entry_thesis, tf)
+        snapshot = _frame_flow_snapshot(frame)
+        if not snapshot:
+            continue
+        available += 1
+        flow_regime = str(snapshot.get("flow_regime") or "transition")
+        trend_strength = _to_float(snapshot.get("trend_strength"))
+        snapshots[f"{tf.lower()}_flow_regime"] = flow_regime
+        if trend_strength is not None:
+            snapshots[f"{tf.lower()}_trend_strength"] = round(trend_strength, 4)
+        if flow_regime in {"trend_long", "trend_short"}:
+            trend_votes.append(flow_regime.rsplit("_", 1)[-1])
+    if available == 0:
+        return {}
+
+    vote_long = sum(1 for value in trend_votes if value == "long")
+    vote_short = sum(1 for value in trend_votes if value == "short")
+    if vote_long > 0 and vote_short > 0:
+        macro_flow_regime = "transition"
+        mtf_alignment = "mixed"
+    elif vote_long > 0:
+        macro_flow_regime = "trend_long"
+        mtf_alignment = "aligned" if side_label == "long" else "countertrend" if side_label == "short" else "unknown"
+    elif vote_short > 0:
+        macro_flow_regime = "trend_short"
+        mtf_alignment = "aligned" if side_label == "short" else "countertrend" if side_label == "long" else "unknown"
+    else:
+        macro_flow_regime = "transition"
+        mtf_alignment = "neutral"
+
+    snapshots["macro_flow_regime"] = macro_flow_regime
+    snapshots["mtf_alignment"] = mtf_alignment
+    return snapshots
+
+
 def _resolve_units(units: int, entry_thesis: Mapping[str, Any]) -> float:
     if units != 0:
         return float(units)
@@ -187,6 +293,9 @@ def derive_live_setup_context(
         gap_bucket = f"{gap_side}_{gap_mag}"
 
     side_label = _entry_side_label(units, entry_thesis)
+    mtf_context = _derive_mtf_context(entry_thesis, side_label=side_label)
+    macro_flow_regime = str(mtf_context.get("macro_flow_regime") or "").strip()
+    mtf_alignment = str(mtf_context.get("mtf_alignment") or "").strip()
     setup_anchor = str(entry_thesis.get("pattern_tag") or entry_thesis.get("range_reason") or "").strip().lower()
     setup_parts = [
         str(entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or "").strip(),
@@ -199,10 +308,15 @@ def derive_live_setup_context(
     ]
     if setup_anchor:
         setup_parts.append(setup_anchor)
+    if macro_flow_regime in {"trend_long", "trend_short"} and macro_flow_regime != flow_regime:
+        setup_parts.append(f"macro:{macro_flow_regime}")
+    if mtf_alignment in {"countertrend", "mixed"}:
+        setup_parts.append(f"align:{mtf_alignment}")
     summary: dict[str, object] = {}
     live_setup = entry_thesis.get("live_setup_context")
     if isinstance(live_setup, Mapping):
         summary.update(dict(live_setup))
+    summary.update(mtf_context)
     summary.update(
         {
             "flow_regime": flow_regime,
