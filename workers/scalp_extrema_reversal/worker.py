@@ -402,6 +402,33 @@ EXTREMA_SHORT_SETUP_PRESSURE_BOUNCE_MAX_PIPS = _env_float(
 EXTREMA_SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX = _env_float(
     "SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX", 0.50
 )
+EXTREMA_LONG_SETUP_PRESSURE_RANGE_REASONS = _env_set(
+    "LONG_SETUP_PRESSURE_RANGE_REASONS", "volatility_compression"
+)
+EXTREMA_LONG_SETUP_PRESSURE_MIN_TRADES = _env_int("LONG_SETUP_PRESSURE_MIN_TRADES", 6)
+EXTREMA_LONG_SETUP_PRESSURE_SL_RATE_MIN = _env_float("LONG_SETUP_PRESSURE_SL_RATE_MIN", 0.45)
+EXTREMA_LONG_SETUP_PRESSURE_FAST_SL_RATE_MIN = _env_float(
+    "LONG_SETUP_PRESSURE_FAST_SL_RATE_MIN", 0.40
+)
+EXTREMA_LONG_SETUP_PRESSURE_DIST_LOW_MAX_PIPS = _env_float(
+    "LONG_SETUP_PRESSURE_DIST_LOW_MAX_PIPS", 0.90
+)
+EXTREMA_LONG_SETUP_PRESSURE_BOUNCE_MAX_PIPS = _env_float(
+    "LONG_SETUP_PRESSURE_BOUNCE_MAX_PIPS", 0.35
+)
+EXTREMA_LONG_SETUP_PRESSURE_TICK_STRENGTH_MAX = _env_float(
+    "LONG_SETUP_PRESSURE_TICK_STRENGTH_MAX", 0.30
+)
+EXTREMA_LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS = _env_float(
+    "LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS", 0.0
+)
+EXTREMA_LONG_SETUP_PRESSURE_RANGE_SCORE_MIN = _env_float(
+    "LONG_SETUP_PRESSURE_RANGE_SCORE_MIN", 0.45
+)
+EXTREMA_LONG_SETUP_PRESSURE_RANGE_SCORE_MAX = _env_float(
+    "LONG_SETUP_PRESSURE_RANGE_SCORE_MAX", 0.55
+)
+EXTREMA_LONG_SETUP_PRESSURE_ADX_MAX = _env_float("LONG_SETUP_PRESSURE_ADX_MAX", 23.0)
 EXTREMA_ADX_MAX = _env_float("ADX_MAX", 35.0)
 EXTREMA_ATR_MAX = _env_float("ATR_MAX", 0.0)
 EXTREMA_SPREAD_P25_MAX = _env_float("SPREAD_P25_MAX", 0.0)
@@ -866,6 +893,29 @@ def _signal_extrema_reversal(
         and ma_gap_pips <= EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MAX_PIPS
         and rsi <= EXTREMA_SHORT_DRIFT_PROBE_RSI_MAX
     )
+    long_range_reason = str(getattr(range_ctx, "reason", "") or "").strip().lower()
+    long_setup_pressure_diag = _recent_setup_pressure("long", long_range_reason)
+    long_setup_pressure_active = (
+        long_setup_pressure_diag.get("trades", 0.0)
+        >= max(1, EXTREMA_LONG_SETUP_PRESSURE_MIN_TRADES)
+        and long_setup_pressure_diag.get("net_jpy", 0.0) < 0.0
+        and long_setup_pressure_diag.get("sl_rate", 0.0) >= max(0.0, EXTREMA_LONG_SETUP_PRESSURE_SL_RATE_MIN)
+        and long_setup_pressure_diag.get("fast_sl_rate", 0.0)
+        >= max(0.0, EXTREMA_LONG_SETUP_PRESSURE_FAST_SL_RATE_MIN)
+    )
+    long_setup_pressure_block = (
+        long_setup_pressure_active
+        and not long_supportive
+        and range_mode == "RANGE"
+        and long_range_reason in EXTREMA_LONG_SETUP_PRESSURE_RANGE_REASONS
+        and dist_low <= EXTREMA_LONG_SETUP_PRESSURE_DIST_LOW_MAX_PIPS
+        and long_bounce_pips <= EXTREMA_LONG_SETUP_PRESSURE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_LONG_SETUP_PRESSURE_TICK_STRENGTH_MAX
+        and ma_gap_pips <= EXTREMA_LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS
+        and range_score >= EXTREMA_LONG_SETUP_PRESSURE_RANGE_SCORE_MIN
+        and range_score <= EXTREMA_LONG_SETUP_PRESSURE_RANGE_SCORE_MAX
+        and adx_value <= EXTREMA_LONG_SETUP_PRESSURE_ADX_MAX
+    )
     short_setup_pressure_diag = _recent_setup_pressure("short", short_range_reason)
     short_setup_pressure_active = bool(short_setup_pressure_diag.get("active", 0.0) >= 1.0)
     short_setup_pressure_block = (
@@ -899,6 +949,7 @@ def _signal_extrema_reversal(
         and not long_shallow_probe_block
         and not long_mid_rsi_probe_block
         and not long_drift_probe_block
+        and not long_setup_pressure_block
     )
 
     if not can_short and not can_long:
@@ -964,6 +1015,8 @@ def _signal_extrema_reversal(
             "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
             "long_mid_rsi_probe_block": bool(long_mid_rsi_probe_block and side == "long"),
             "long_drift_probe_block": bool(long_drift_probe_block and side == "long"),
+            "long_setup_pressure_block": bool(long_setup_pressure_block and side == "long"),
+            "long_setup_pressure": long_setup_pressure_diag if side == "long" else {},
             "trend_gate": trend_diag,
         },
         "range_score": range_score,

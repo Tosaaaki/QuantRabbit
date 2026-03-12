@@ -5,6 +5,36 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を recent-outcome guard で絞る
+
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `scalp_extrema_reversal_live`
+    に
+    long-side の
+    `setup_pressure`
+    guard を追加し、
+    `volatility_compression`
+    の recent loser 圧力がある時だけ、
+    weak reclaim long を worker local に reject するようにした。
+  - long guard は
+    `dist_low / long_bounce / tick_strength / ma_gap / range_score / ADX`
+    の current loser 特徴へ絞り、
+    stronger reclaim long は残す。
+  - corresponding unit test を追加し、
+    weak long block と stronger long keep を固定した。
+- 意図:
+  - short 側を何度も調整しても
+    current loser が long `volatility_compression`
+    へ移っていたため、
+    shared gate ではなく worker local で
+    現在の負け lane を直接削る。
+
 ### 2026-03-12（追記）`strategy_feedback_worker` の dedicated worker discovery fallback 修正
 
 - 対象:

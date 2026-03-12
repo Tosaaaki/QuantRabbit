@@ -51,6 +51,132 @@
 - Status:
 ```
 
+## 2026-03-12 21:34 JST / local-v2: `scalp_extrema_reversal_live` は short ではなく long `volatility_compression` loser lane を先に切る
+
+- Change:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    long-side の
+    `setup_pressure`
+    guard を追加し、
+    current loser の
+    `volatility_compression`
+    だけを
+    recent outcome + weak reclaim 条件で reject するようにした。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    に
+    long-side setup-pressure の dedicated 閾値を追加した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に
+    weak long block / stronger long keep
+    の回帰を追加した。
+- Why:
+  - 2026-03-12 21:23 JST 時点の local-v2 は
+    24h
+    `256 trades / net -170.7 JPY / win_rate 29.3%`
+    で、
+    current loser の主因は
+    `PrecisionLowVol`
+    と
+    `scalp_extrema_reversal_live`
+    だった。
+  - `scalp_extrema_reversal_live`
+    では
+    recent tuning が short 側中心だった一方で、
+    24h 実測は
+    `long + volatility_compression`
+    が
+    `30 trades / -40.0 JPY`
+    と、むしろ long 側へ損失が寄っていた。
+  - 特に
+    `long|range_compression|...|volatility_compression`
+    は
+    `15 trades / -14.8 JPY / sl_rate 0.733 / fast_sl_rate 0.667`
+    で、
+    `2026-03-12 20:22-20:24 JST`
+    相当の recent 3 losers は
+    `-3.128 / -2.992 / -2.754 JPY`
+    かつ
+    `ma_gap<=0`,
+    `tick_strength<=0.3`,
+    `range_score 0.48-0.51`,
+    `ADX 9-13`
+    の weak reclaim だった。
+- Hypothesis:
+  - long loser は
+    strategy 名義ではなく
+    `long + volatility_compression + weak reclaim`
+    に偏っている。
+  - shared gate をまた触らず、
+    worker local で
+    `recent negative outcome`
+    と
+    `dist_low / bounce / tick_strength / ma_gap / range_score / ADX`
+    が弱い lane だけを落とせば、
+    current loser を削りつつ stronger long は残せる。
+- Expected Good:
+  - `scalp_extrema_reversal_live`
+    long
+    `volatility_compression`
+    の recent fast-SL cluster が減る。
+  - short 側や stronger long 側の participation は維持する。
+- Expected Bad:
+  - weak reclaim から始まる一部の small winner も削る可能性がある。
+- Period:
+  - 直近24h（2026-03-11 21:23 JST - 2026-03-12 21:23 JST）。
+- Fact:
+  - `scalp_extrema_reversal_live`
+    24h は
+    `80 trades / -71.7 JPY / win_rate 25.0%`
+    だった。
+  - side×range_reason では
+    `long|volatility_compression = 30 trades / -40.0 JPY / sl_rate 0.50 / fast_sl_rate 0.467`,
+    `short|volatility_compression = 40 trades / -22.9 JPY / sl_rate 0.75 / fast_sl_rate 0.60`
+    だった。
+  - `long|range_compression|...|volatility_compression`
+    loser は
+    `avg dist_low 0.542 / long_bounce 0.258 / tick_strength 0.204 / ma_gap -0.094 / range_score 0.55 / RSI 39.97 / ADX 17.23`
+    で、
+    same bucket の positive sample は
+    `ma_gap 0.31-0.70`
+    の stronger reclaim が残っていた。
+- Failure Cause:
+  - recent 改善が short shallow probe に寄っており、
+    current loser に移った
+    long weak reclaim lane を取りこぼしていた。
+- Improvement:
+  - long-side の
+    `setup_pressure`
+    を
+    `volatility_compression`
+    専用で追加し、
+    `trades>=6 / net<0 / sl_rate>=0.45 / fast_sl_rate>=0.40`
+    の recent loser 圧力がある時だけ、
+    `dist_low<=0.90 / bounce<=0.35 / tick_strength<=0.30 / ma_gap<=0 / range_score 0.45-0.55 / ADX<=23`
+    の weak reclaim long を reject する。
+- Verification:
+  - `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py -k 'recent_setup_pressure or stronger_long_even_under_setup_pressure or blocks_long_under_recent_setup_pressure'`
+    が通ること。
+  - restart 後の
+    `orders.db / trades.db`
+    で
+    `scalp_extrema_reversal_live long volatility_compression`
+    の
+    fills / STOP_LOSS / realized_jpy
+    を 30-60 分で再確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - 次は shared gate を触らず、
+    この long lane の結果だけを見る。
+  - 改善しない場合も
+    `PrecisionLowVol`
+    と同時に触らず、
+    `range_fade` と `range_compression`
+    を分けて切る。
+- Status:
+  - in_progress
+
 ## 2026-03-12 20:58 JST / local-v2: `strategy_feedback_worker` が dedicated entry worker を発見できず `RangeFader` を落としていた
 
 - Change:

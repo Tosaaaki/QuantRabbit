@@ -8,6 +8,57 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_extrema_reversal_live` long `volatility_compression` recent-outcome guard（2026-03-12）
+- 背景:
+  - 2026-03-12 21:23 JST 時点の local-v2 で
+    `scalp_extrema_reversal_live`
+    は
+    24h
+    `80 trades / net -71.7 JPY / win 25.0%`
+    だった。
+  - その内訳では
+    `long + volatility_compression`
+    が
+    `30 trades / -40.0 JPY`
+    と、
+    recent short tuning 後は long 側が main loser へ移っていた。
+  - 特に
+    `long|range_compression|...|volatility_compression`
+    は
+    `15 trades / -14.8 JPY / sl_rate 0.733 / fast_sl_rate 0.667`
+    で、
+    recent loser は
+    `ma_gap<=0`
+    /
+    `tick_strength<=0.3`
+    /
+    `range_score 0.48-0.51`
+    /
+    `ADX 9-13`
+    の weak reclaim に集中していた。
+- 実装:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    long-side の
+    `setup_pressure`
+    guard を追加した。
+  - recent
+    `volatility_compression`
+    long が
+    `trades>=6 / net<0 / sl_rate>=0.45 / fast_sl_rate>=0.40`
+    を満たす時だけ、
+    `dist_low<=0.90 / bounce<=0.35 / tick_strength<=0.30 / ma_gap<=0 / range_score 0.45-0.55 / ADX<=23`
+    の weak reclaim long を reject する。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    に
+    long-side setup-pressure の閾値を追加し、
+    `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に block/keep 回帰を追加した。
+- 意図:
+  - shared gate や short 側をさらに動かさず、
+    current loser の long weak reclaim lane だけを
+    strategy-local に削る。
+
 ### local-v2 `MicroLevelReactor` leading-profile reject for negative-forecast `bounce-lower`（2026-03-12）
 - 背景:
   - 2026-03-12 15:41 JST 時点の local-v2 で、
