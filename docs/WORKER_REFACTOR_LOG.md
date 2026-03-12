@@ -5,6 +5,34 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）local feedback cycle の participation allocator override key 修正
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOC_CMD`
+    を
+    `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_CMD`
+    へ修正し、
+    値を shell-safe なクォート付きの1文字列へ変更した。
+  - パスは launchd / symlink 差異で崩れないよう
+    物理パス
+    `/Users/tossaki/App/QuantRabbit`
+    基準へ揃えた。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+    に
+    participation allocator job の override key と
+    `CMD` 値のクォート要件を追記した。
+- 意図:
+  - local-v2 起動時に env 読み込みだけで
+    `scripts/participation_allocator.py`
+    を誤実行していた不整合を止め、
+    intended な deeper trim override を
+    `run_local_feedback_cycle.py`
+    へ正しく渡す。
+
 ### 2026-03-12（追記）`MicroLevelReactor` leading-profile reject for negative-forecast `bounce-lower`
 
 - 対象:

@@ -51,6 +51,110 @@
 - Status:
 ```
 
+## 2026-03-12 20:38 JST / local-v2: participation allocator override が env key typo と未クォート値で無効化されていた
+
+- Change:
+  - `ops/env/local-v2-stack.env`
+    の
+    `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOC_CMD`
+    を
+    `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_CMD`
+    へ修正し、
+    値を
+    `"/Users/tossaki/App/QuantRabbit/.venv/bin/python .../scripts/participation_allocator.py ..."`
+    の1文字列へ変更した。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+    に
+    participation allocator job の override key と
+    `CMD`
+    クォート要件を追記した。
+- Why:
+  - 2026-03-12 20:24 JST 時点の local-v2 では
+    24h
+    `256 trades / net -170.7 JPY / PF 0.78 / win_rate 29.3%`
+    と悪化していた。
+  - 同時に
+    `quant-position-manager.log`
+    と
+    `scripts/local_v2_stack.sh status`
+    で
+    `local-v2-stack.env: line 54: .../scripts/participation_allocator.py: Permission denied`
+    が反復し、
+    `config/participation_alloc.json`
+    は intended override ではなく
+    既定の
+    `max_units_cut=0.22 / max_units_boost=0.24 / max_probability_boost=0.10`
+    のままだった。
+- Hypothesis:
+  - env key typo と shell-unsafe な未クォート値のせいで、
+    「chronic loser setup を deeper に trim する」override が
+    runtime へ渡っていない。
+  - key と quoting を直せば、
+    local feedback cycle が intended policy
+    `0.35 / 0.30 / 0.15`
+    を適用できる。
+- Expected Good:
+  - env 読み込み時の
+    `Permission denied`
+    を止める。
+  - `participation_allocator`
+    が intended override で再計算され、
+    loser setup の trim を深くできる。
+- Expected Bad:
+  - deeper trim が強すぎると、
+    市況回復直後の scalp 参加率を落とす。
+- Period:
+  - 2026-03-12 19:30-20:35 JST。
+- Fact:
+  - `ops/env/local-v2-stack.env:54`
+    は
+    `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOC_CMD=...python .../participation_allocator.py ...`
+    となっており、
+    shell source 時に command 実行へ解釈されていた。
+  - `scripts/run_local_feedback_cycle.py`
+    は
+    `job_name=participation_allocator`
+    に対して
+    `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_*`
+    を読む実装だった。
+  - `config/participation_alloc.json`
+    の policy は
+    `max_units_cut=0.22`
+    で、
+    2026-03-12 の intended setting
+    `0.35`
+    が runtime に入っていなかった。
+- Failure Cause:
+  - env override key typo と未クォート command 値により、
+    participation allocator の override が無効化され、
+    しかも env 読み込みのたびに誤実行エラーを出していた。
+- Improvement:
+  - override key を正しい
+    `...PARTICIPATION_ALLOCATOR_CMD`
+    に合わせ、
+    command 値を shell-safe にクォートした。
+- Verification:
+  - `source ops/env/local-v2-stack.env`
+    相当の読み込みで
+    `Permission denied`
+    が出ないこと。
+  - `scripts/run_local_feedback_cycle.py`
+    実行後に
+    `config/participation_alloc.json`
+    の policy が
+    `max_units_cut=0.35 / max_units_boost=0.30 / max_probability_boost=0.15`
+    を示すこと。
+- Verdict:
+  - pending
+- Next Action:
+  - local feedback cycle を再実行し、
+    `participation_alloc.json`
+    の policy と
+    `PrecisionLowVol / scalp_extrema_reversal_live`
+    の trim 深度が変わることを確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 16:05 JST / local-v2: `MicroLevelReactor-bounce-lower` の negative-forecast long を strategy-scoped leading profile で reject
 
 - Change:

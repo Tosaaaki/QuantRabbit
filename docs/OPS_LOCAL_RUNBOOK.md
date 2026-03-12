@@ -160,6 +160,9 @@ scripts/uninstall_local_v2_launchd.sh
   `local_feedback_cycle_latest.json` 全体を false positive の `error` にしない。
   - 全体ON/OFF: `QR_LOCAL_V2_FEEDBACK_CYCLE_ENABLED=1|0`
   - 各jobは `LOCAL_FEEDBACK_CYCLE_<JOB>_{ENABLED,INTERVAL_SEC,TIMEOUT_SEC,CMD,ENV_FILES,OUTPUTS}` で上書きできる。
+  - `participation_allocator` job の override key は
+    `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_*` を正とする。
+    `CMD` に空白を含む場合は env 値全体を必ずクォートする。
   - 最新実行結果は `logs/local_feedback_cycle_latest.json` と
     `logs/local_feedback_cycle_history.jsonl`、個別stdout/stderrは
     `logs/local_feedback_cycle/*.log` を正とする。
