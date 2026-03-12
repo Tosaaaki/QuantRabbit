@@ -8,6 +8,33 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_wick_reversal_blend` flow label de-flattening（2026-03-12）
+- 背景:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    は `flow_guard`
+    から
+    `flow_regime=continuation_headwind|range_fade`
+    を直接書いており、
+    `strategy_entry`
+    の `live_setup_context`
+    が持つ
+    `range_compression / transition / trend_*`
+    を coarse binary に潰していた。
+- 実装:
+  - worker-local の label は
+    `flow_headwind_regime`
+    に分離した。
+  - `flow_regime`
+    は explicit signal が無い限り
+    worker から先に固定せず、
+    richer live setup context が入る余地を残した。
+- 意図:
+  - `市況を読めていない`
+    問題の一部だった
+    market-structure の flattening を止め、
+    shared feedback と setup-scoped alloc が
+    現在の phase を finer に学習できるようにする。
+
 ### local-v2 `DroughtRevert` dynamic long setup-pressure（2026-03-12）
 - 背景:
   - 2026-03-12 10:15 JST 時点の local-v2 実測では、

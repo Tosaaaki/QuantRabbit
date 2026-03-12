@@ -124,6 +124,70 @@
 - Status:
   - in_progress
 
+## 2026-03-12 10:35 JST / local-v2: `scalp_wick_reversal_blend` 系が市況ラベルを binary に潰していたのを止める
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の `flow_regime` 上書きをやめ、
+    worker-local の label は
+    `flow_headwind_regime`
+    として別名保持するようにした。
+- Why:
+  - この worker 系は `continuation_pressure`
+    から `flow_regime=continuation_headwind|range_fade`
+    を書き込んでいたため、
+    `strategy_entry`
+    が持つ richer な
+    `range_compression / transition / trend_*`
+    の setup context を潰していた。
+- Hypothesis:
+  - binary 化を止めれば、
+    shared feedback / dynamic alloc / participation alloc
+    が current setup を
+    より market-structure に沿って学習できる。
+- Expected Good:
+  - `DroughtRevert` / `PrecisionLowVol` / `WickReversalBlend`
+    の loser cluster が
+    `range_fade` 一色に潰れず、
+    `range_compression` や `trend_short`
+    を別 setup として扱える。
+- Expected Bad:
+  - 既存 artifact は coarse label 前提のものがあり、
+    短期的に setup key の分布が変わる。
+- Period:
+  - 2026-03-12 10:35 JST 時点の current code / local-v2 logs
+- Fact:
+  - 直近24hの `DroughtRevert`
+    には `range_compression`
+    と `range_fade`
+    が混在していたが、
+    worker-local `flow_guard`
+    経由の thesis では binary label に寄っていた。
+- Failure Cause:
+  - 市況の複雑さを読む基盤は別にあったが、
+    worker 側が coarse label を先に固定していた。
+- Improvement:
+  - binary label は
+    `flow_headwind_regime`
+    として残し、
+    `flow_regime`
+    自体は richer live setup context に委ねる。
+- Verification:
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    で
+    `flow_headwind_regime`
+    と `flow_regime`
+    の分離を固定する。
+- Verdict:
+  - pending
+- Next Action:
+  - 次回 entry から
+    `entry_thesis.flow_regime`
+    と `setup_fingerprint`
+    が richer label で保存されるかを確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 09:45 JST / local-v2: `WickReversalBlend` を市況 + recent outcome で動的化し、同値 protection refresh を止める
 
 - Change:

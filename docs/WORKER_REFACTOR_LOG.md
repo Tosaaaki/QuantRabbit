@@ -41,6 +41,32 @@
     recent outcome 連動で絞り、
     マイナス回数を先に減らす。
 
+### 2026-03-12（追記）`scalp_wick_reversal_blend` flow label de-flattening
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+- 変更:
+  - `_attach_flow_guard_context()`
+    と `_build_entry_thesis()`
+    で、
+    worker-local の coarse label を
+    `flow_regime`
+    ではなく
+    `flow_headwind_regime`
+    に分離した。
+  - `flow_regime`
+    は richer live setup context が
+    `range_compression / transition / trend_*`
+    を保持できるよう、
+    worker から先に binary で固定しない。
+- 意図:
+  - `市況が複雑なのに range_fade 一色で見えてしまう`
+    flattening を止める。
+
 ### 2026-03-12（追記）`PrecisionLowVol` weak overbought short guard
 
 - 対象:

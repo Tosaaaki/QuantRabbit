@@ -1403,7 +1403,12 @@ def _attach_flow_guard_context(signal: Dict[str, object], flow_guard: Optional[D
     signal["reversion_support"] = flow_guard.get("reversion_support")
     signal["setup_quality"] = flow_guard.get("setup_quality")
     continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
-    signal["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+    # Keep the worker-local headwind label separate so strategy_entry can inject the
+    # richer live setup context (`range_compression` / `transition` / `trend_*`) without
+    # being flattened into a binary range/headwind bucket.
+    signal["flow_headwind_regime"] = (
+        "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+    )
 
 
 def _signal_spread_revert(
@@ -4354,14 +4359,18 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         thesis["reversion_support"] = flow_guard.get("reversion_support")
         thesis["setup_quality"] = flow_guard.get("setup_quality")
         continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
-        thesis["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
-    for key in ("continuation_pressure", "reversion_support", "setup_quality", "flow_regime"):
+        thesis["flow_headwind_regime"] = (
+            "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+        )
+    for key in ("continuation_pressure", "reversion_support", "setup_quality", "flow_regime", "flow_headwind_regime"):
         value = signal.get(key)
         if value is not None:
             thesis[key] = value
-    if "flow_regime" not in thesis and thesis.get("continuation_pressure") is not None:
+    if "flow_headwind_regime" not in thesis and thesis.get("continuation_pressure") is not None:
         continuation_pressure = float(thesis.get("continuation_pressure") or 0.0)
-        thesis["flow_regime"] = "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+        thesis["flow_headwind_regime"] = (
+            "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
+        )
     tag = str(signal.get("tag") or "").strip()
     if tag in {"TickImbalance", "TickImbalanceRRPlus"}:
         thesis["pattern_gate_opt_in"] = bool(TICK_IMB_PATTERN_GATE_OPT_IN)

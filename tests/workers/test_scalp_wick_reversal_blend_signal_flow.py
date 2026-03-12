@@ -700,7 +700,8 @@ def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:
     assert thesis["flow_guard"] == signal["flow_guard"]
     assert thesis["continuation_pressure"] == 0.64
     assert thesis["setup_quality"] == 0.38
-    assert thesis["flow_regime"] == "continuation_headwind"
+    assert thesis["flow_headwind_regime"] == "continuation_headwind"
+    assert "flow_regime" not in thesis
     assert thesis["plus_di"] == 24.0
     assert thesis["minus_di"] == 19.0
 
