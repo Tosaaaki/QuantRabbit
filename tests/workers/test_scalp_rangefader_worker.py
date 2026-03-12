@@ -182,3 +182,80 @@ def test_entry_cooldown_ignores_stale_or_non_trim_participation_profile(monkeypa
         raising=False,
     )
     assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == 20.0
+
+
+def test_rangefader_long_weak_probe_guard_blocks_neutral_fade_with_negative_forecast() -> None:
+    blocked = rf_worker._rangefader_long_weak_probe_guard(
+        "RangeFader-neutral-fade",
+        {
+            "range_reason": "volatility_compression",
+            "range_mode": "RANGE",
+            "flow_regime": "range_fade",
+            "continuation_pressure": 0,
+            "range_score": 0.512,
+            "gap_ratio": 0.46,
+            "entry_probability": 0.432,
+            "tech_score": 0.117,
+            "projection": {"score": 0.275},
+            "tech_entry": {
+                "forecast": {
+                    "expected_side_pips": -0.193,
+                    "directional_edge": -0.027,
+                }
+            },
+        },
+    )
+
+    assert blocked is not None
+    assert blocked["lane"] == "neutral-fade"
+
+
+def test_rangefader_long_weak_probe_guard_allows_neutral_fade_with_positive_reclaim_context() -> None:
+    blocked = rf_worker._rangefader_long_weak_probe_guard(
+        "RangeFader-neutral-fade",
+        {
+            "range_reason": "volatility_compression",
+            "range_mode": "RANGE",
+            "flow_regime": "range_fade",
+            "continuation_pressure": 0,
+            "range_score": 0.478,
+            "gap_ratio": 0.565,
+            "entry_probability": 0.407,
+            "tech_score": 0.271,
+            "projection": {"score": 0.345},
+            "tech_entry": {
+                "forecast": {
+                    "expected_side_pips": 0.225,
+                    "directional_edge": 0.026,
+                }
+            },
+        },
+    )
+
+    assert blocked is None
+
+
+def test_rangefader_long_weak_probe_guard_blocks_buy_fade_low_projection_probe() -> None:
+    blocked = rf_worker._rangefader_long_weak_probe_guard(
+        "RangeFader-buy-fade",
+        {
+            "range_reason": "volatility_compression",
+            "range_mode": "RANGE",
+            "flow_regime": "range_fade",
+            "continuation_pressure": 0,
+            "range_score": 0.455,
+            "gap_ratio": 0.268,
+            "entry_probability": 0.275,
+            "tech_score": 0.145,
+            "projection": {"score": 0.2},
+            "tech_entry": {
+                "forecast": {
+                    "expected_side_pips": 0.924,
+                    "directional_edge": 0.087,
+                }
+            },
+        },
+    )
+
+    assert blocked is not None
+    assert blocked["lane"] == "buy-fade"

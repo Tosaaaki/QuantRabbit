@@ -231,6 +231,82 @@ def _apply_signal_flow_context(entry_thesis: Dict[str, object], signal: Dict[str
     return entry_thesis
 
 
+def _nested_float(mapping: Dict[str, object], *path: str) -> Optional[float]:
+    current: object = mapping
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return _bb_float(current)
+
+
+def _rangefader_long_weak_probe_guard(
+    signal_tag: str,
+    entry_thesis: Dict[str, object],
+) -> Optional[Dict[str, float | str]]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    tag_key = (signal_tag or "").strip().lower()
+    if tag_key not in {"rangefader-buy-fade", "rangefader-neutral-fade"}:
+        return None
+    if str(entry_thesis.get("range_reason") or "").strip().lower() != "volatility_compression":
+        return None
+    if str(entry_thesis.get("range_mode") or "").strip().upper() != "RANGE":
+        return None
+    if str(entry_thesis.get("flow_regime") or "").strip().lower() != "range_fade":
+        return None
+    continuation_pressure = _bb_float(entry_thesis.get("continuation_pressure"))
+    if continuation_pressure is None or int(round(continuation_pressure)) != 0:
+        return None
+
+    range_score = _bb_float(entry_thesis.get("range_score"))
+    projection_score = _nested_float(entry_thesis, "projection", "score")
+    tech_score = _bb_float(entry_thesis.get("tech_score"))
+    entry_probability = _bb_float(entry_thesis.get("entry_probability"))
+    gap_ratio = _bb_float(entry_thesis.get("gap_ratio"))
+    forecast_side_pips = _nested_float(entry_thesis, "tech_entry", "forecast", "expected_side_pips")
+    forecast_edge = _nested_float(entry_thesis, "tech_entry", "forecast", "directional_edge")
+    if range_score is None or projection_score is None or tech_score is None or entry_probability is None:
+        return None
+
+    if tag_key.endswith("buy-fade"):
+        if range_score < 0.44:
+            return None
+        if projection_score > 0.20 or tech_score > 0.20 or entry_probability > 0.38:
+            return None
+        return {
+            "lane": "buy-fade",
+            "range_score": round(range_score, 3),
+            "projection_score": round(projection_score, 3),
+            "tech_score": round(tech_score, 3),
+            "entry_probability": round(entry_probability, 3),
+            "gap_ratio": round(gap_ratio, 3) if gap_ratio is not None else "na",
+            "forecast_side_pips": round(forecast_side_pips, 3) if forecast_side_pips is not None else "na",
+            "forecast_edge": round(forecast_edge, 3) if forecast_edge is not None else "na",
+        }
+
+    if range_score < 0.48:
+        return None
+    if gap_ratio is None or gap_ratio > 0.50:
+        return None
+    if forecast_side_pips is None or forecast_edge is None:
+        return None
+    if projection_score > 0.30 or tech_score > 0.22 or entry_probability > 0.44:
+        return None
+    if forecast_side_pips > -0.05 or forecast_edge > -0.01:
+        return None
+    return {
+        "lane": "neutral-fade",
+        "range_score": round(range_score, 3),
+        "projection_score": round(projection_score, 3),
+        "tech_score": round(tech_score, 3),
+        "entry_probability": round(entry_probability, 3),
+        "gap_ratio": round(gap_ratio, 3),
+        "forecast_side_pips": round(forecast_side_pips, 3),
+        "forecast_edge": round(forecast_edge, 3),
+    }
+
+
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 
@@ -926,6 +1002,26 @@ async def scalp_rangefader_worker() -> None:
                 entry_probability = round(probability, 3)
                 entry_thesis["entry_probability"] = entry_probability
                 entry_thesis_ctx["entry_probability"] = entry_probability
+
+            weak_long_probe_block = None
+            if units > 0:
+                weak_long_probe_block = _rangefader_long_weak_probe_guard(signal_tag, entry_thesis_ctx)
+            if weak_long_probe_block is not None:
+                LOG.info(
+                    "%s skip weak_long_probe_guard tag=%s lane=%s range_score=%s projection_score=%s tech_score=%s "
+                    "forecast_side_pips=%s forecast_edge=%s gap_ratio=%s entry_probability=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    weak_long_probe_block.get("lane"),
+                    weak_long_probe_block.get("range_score"),
+                    weak_long_probe_block.get("projection_score"),
+                    weak_long_probe_block.get("tech_score"),
+                    weak_long_probe_block.get("forecast_side_pips"),
+                    weak_long_probe_block.get("forecast_edge"),
+                    weak_long_probe_block.get("gap_ratio"),
+                    weak_long_probe_block.get("entry_probability"),
+                )
+                continue
 
 
             res = await market_order(

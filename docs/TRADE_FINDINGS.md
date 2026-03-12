@@ -51,6 +51,144 @@
 - Status:
 ```
 
+## 2026-03-12 12:45 JST / local-v2: `RangeFader` long `range_fade|p0` の weak probe を worker local で遮断
+
+- Change:
+  - `workers/scalp_rangefader/worker.py`
+    に
+    `_rangefader_long_weak_probe_guard()`
+    を追加し、
+    `RangeFader` long の
+    `buy-fade` / `neutral-fade`
+    のうち current loser lane だけを
+    `projection + tech forecast + entry_probability`
+    で reject するようにした。
+  - `tests/workers/test_scalp_rangefader_worker.py`
+    に
+    `neutral-fade` の block/allow と
+    `buy-fade` の block 回帰を追加した。
+- Why:
+  - 2026-03-12 12:37 JST の local-v2 実測では
+    市況は通常帯
+    (`USD/JPY 159.062 / spread 0.8 pips / open_trades 0 / OANDA正常`)
+    で、
+    `RangeFader`
+    は 24h 集計で
+    `27 trades / net -7.764 JPY / win 11.1% / PF 0.59`
+    とまだ赤字だった。
+  - loser の中心は
+    `RangeFader|long|neutral-fade|range_fade|p0`
+    `14 trades / -20.8 JPY`
+    と
+    `RangeFader|long|buy-fade|range_fade|p0`
+    `9 trades / -4.1 JPY`
+    だった。
+- Hypothesis:
+  - `neutral-fade`
+    は
+    `forecast.expected_side_pips<0`
+    かつ
+    `directional_edge<0`
+    で
+    `tech_score / projection / entry_probability`
+    も薄い lane だけを落とせば、
+    positive reclaim sample は残したまま
+    main loser cluster を削れる。
+  - `buy-fade`
+    は 24h で winner が無く、
+    `projection<=0.20`
+    かつ
+    `tech_score<=0.20`
+    かつ
+    `entry_probability<=0.38`
+    の shallow probe を止めれば、
+    期待値の悪い long を先に減らせる。
+- Expected Good:
+  - `RangeFader` long
+    `volatility_compression`
+    の
+    `MARKET_ORDER_TRADE_CLOSE / STOP_LOSS_ORDER`
+    のマイナス回数が減る。
+- Expected Bad:
+  - weak probe から始まる small winner の一部も削る可能性がある。
+- Period:
+  - 直近24h（2026-03-11 12:37 JST - 2026-03-12 12:37 JST）
+- Fact:
+  - `RangeFader|long|neutral-fade|range_fade|p0`
+    は
+    `14 trades / -20.8 JPY`
+    で、
+    平均
+    `projection.score=0.242`,
+    `forecast_side_pips=-0.470`,
+    `forecast_edge=-0.064`,
+    `tech_score=0.132`,
+    `entry_probability=0.408`,
+    `gap_ratio=0.353`
+    だった。
+  - 同 lane の唯一の positive sample は
+    `forecast_side_pips=0.225`,
+    `forecast_edge=0.026`,
+    `tech_score=0.271`,
+    `gap_ratio=0.565`
+    で、
+    blanket stop は不要だった。
+  - `RangeFader|long|buy-fade|range_fade|p0`
+    は
+    `9 trades / -4.1 JPY / 0 winners`
+    で、
+    全 sample が
+    `projection.score<=0.20`,
+    `tech_score<=0.20`,
+    `entry_probability<=0.379`
+    に収まっていた。
+  - system-wide の最新3クローズは
+    2026-03-12 12:29-12:40 JST に
+    `+0.534 / +17.440 / +14.256 JPY`
+    で連続プラスだったため、
+    市況異常ではなく loser lane の修正を続けられる状態だった。
+- Failure Cause:
+  - `RangeFader` long は
+    strategy signal だけでは
+    `forecast/tech` の弱さを最終拒否に使っておらず、
+    `range_fade|p0` の shallow probe を残していた。
+- Improvement:
+  - worker local で
+    `range_reason=volatility_compression`
+    かつ
+    `flow_regime=range_fade`
+    かつ
+    `continuation_pressure=0`
+    の long を対象に、
+    `buy-fade` と `neutral-fade` で別閾値の
+    weak-probe guard を入れる。
+  - positive reclaim context
+    (`forecast>0`, `gap_ratio高め`, `tech_score高め`)
+    の `neutral-fade` は残す。
+- Verification:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_rangefader_worker.py`
+    で
+    `10 passed`
+    を確認する。
+  - live では次の `30-60m` で
+    `RangeFader long` の
+    `fills / STOP_LOSS_ORDER / realized_jpy`
+    を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - deploy 後に
+    `RangeFader|long|neutral-fade|range_fade|p0`
+    と
+    `...buy-fade...`
+    の出現数と収支を確認し、
+    まだ負けるなら次は
+    `order-manager` の
+    `file is not a database`
+    警告を優先して切る。
+- Status:
+  - in_progress
+
 ## 2026-03-12 10:20 JST / local-v2: `DroughtRevert` long の loser lane を recent outcome で動的に絞る
 
 - Change:

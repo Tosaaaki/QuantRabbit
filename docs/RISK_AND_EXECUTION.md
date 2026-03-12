@@ -8,6 +8,80 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `RangeFader` long weak probe guard（2026-03-12）
+- 背景:
+  - 2026-03-12 12:37 JST の local-v2 実測では
+    市況は通常帯
+    (`USD/JPY 159.062 / spread 0.8 pips / open_trades 0`)
+    だった一方、
+    `RangeFader`
+    は 24h で
+    `27 trades / net -7.764 JPY / win 11.1% / PF 0.59`
+    とまだ赤字だった。
+  - loser の中心は
+    `RangeFader|long|neutral-fade|range_fade|p0`
+    `14 trades / -20.8 JPY`
+    と
+    `RangeFader|long|buy-fade|range_fade|p0`
+    `9 trades / -4.1 JPY`
+    だった。
+  - `neutral-fade`
+    には
+    `forecast_side_pips<0`,
+    `forecast_edge<0`,
+    `tech_score低い`
+    sample が固まっていたが、
+    positive reclaim sample も 1 本だけ存在した。
+  - `buy-fade`
+    は 24h で winner が無く、
+    全 sample が
+    `projection<=0.20`,
+    `tech_score<=0.20`,
+    `entry_probability<=0.379`
+    に収まっていた。
+- 実装:
+  - `workers/scalp_rangefader/worker.py`
+    に
+    `_rangefader_long_weak_probe_guard()`
+    を追加した。
+  - 対象は
+    `range_reason=volatility_compression`
+    かつ
+    `range_mode=RANGE`
+    かつ
+    `flow_regime=range_fade`
+    かつ
+    `continuation_pressure=0`
+    の long のみ。
+  - `buy-fade`
+    は
+    `range_score>=0.44`,
+    `projection.score<=0.20`,
+    `tech_score<=0.20`,
+    `entry_probability<=0.38`
+    の shallow probe を block する。
+  - `neutral-fade`
+    は
+    `range_score>=0.48`,
+    `gap_ratio<=0.50`,
+    `projection.score<=0.30`,
+    `tech_score<=0.22`,
+    `entry_probability<=0.44`,
+    `forecast_side_pips<=-0.05`,
+    `forecast_edge<=-0.01`
+    の negative reclaim lane だけを block する。
+  - worker log には
+    `weak_long_probe_guard`
+    として
+    `lane / range_score / projection_score / tech_score / forecast / gap_ratio / entry_probability`
+    を残す。
+- 意図:
+  - `RangeFader` long の
+    `range_fade|p0`
+    を blanket stop せず、
+    `worker local`
+    で weak probe だけを削る。
+
 ### local-v2 `scalp_wick_reversal_blend` flow label de-flattening（2026-03-12）
 - 背景:
   - `workers/scalp_wick_reversal_blend/worker.py`

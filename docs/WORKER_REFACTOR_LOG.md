@@ -5,6 +5,46 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`RangeFader` long weak probe guard
+
+- 対象:
+  - `workers/scalp_rangefader/worker.py`
+  - `tests/workers/test_scalp_rangefader_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - worker に
+    `_rangefader_long_weak_probe_guard()`
+    を追加し、
+    `RangeFader` long
+    `buy-fade / neutral-fade`
+    のうち
+    `range_reason=volatility_compression`,
+    `flow_regime=range_fade`,
+    `continuation_pressure=0`
+    の weak lane を
+    `projection.score / tech_score / entry_probability / forecast`
+    で落とすようにした。
+  - `buy-fade`
+    は
+    `projection<=0.20`,
+    `tech_score<=0.20`,
+    `entry_probability<=0.38`
+    の shallow probe を block する。
+  - `neutral-fade`
+    は
+    negative forecast と low-tech/low-projection が並ぶ lane だけを block し、
+    positive reclaim sample は残す。
+  - worker test に
+    `neutral-fade` block/allow と
+    `buy-fade` block
+    の回帰を追加した。
+- 意図:
+  - strategy 全停止ではなく、
+    `RangeFader` long の current loser lane
+    `range_fade|p0`
+    を worker local に薄くする。
+
 ### 2026-03-12（追記）`DroughtRevert` dynamic long setup-pressure
 
 - 対象:
