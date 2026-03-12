@@ -91,6 +91,11 @@ def _load_worker_namespace() -> dict[str, object]:
             PREC_LOWVOL_MARGINAL_SHORT_PROJECTION_SCORE_MAX=0.08,
             PREC_LOWVOL_MARGINAL_SHORT_SETUP_QUALITY_MAX=0.44,
             PREC_LOWVOL_MARGINAL_SHORT_CONTINUATION_PRESSURE_MIN=0.33,
+            PREC_LOWVOL_HEADWIND_SHORT_GUARD_ENABLED=True,
+            PREC_LOWVOL_HEADWIND_SHORT_RSI_MIN=58.0,
+            PREC_LOWVOL_HEADWIND_SHORT_PROJECTION_SCORE_MAX=0.05,
+            PREC_LOWVOL_HEADWIND_SHORT_SETUP_QUALITY_MAX=0.48,
+            PREC_LOWVOL_HEADWIND_SHORT_CONTINUATION_PRESSURE_MIN=0.33,
             PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_GUARD_ENABLED=True,
             PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_PROJECTION_SCORE_MAX=0.28,
             PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_SETUP_QUALITY_MAX=0.50,
@@ -631,6 +636,81 @@ def test_precision_lowvol_keeps_marginal_short_when_headwind_is_absent() -> None
         True,
         1.0,
         {"side": side, "mode": mode, "score": 0.05},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+
+
+def test_precision_lowvol_blocks_headwind_short_just_below_marginal_rsi() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 15.5,
+        "bbw": 0.00036,
+        "atr_pips": 2.2,
+        "rsi": 58.6,
+        "stoch_rsi": 0.88,
+        "vwap_gap": 1.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.39,
+            "max_pressure": 0.60,
+            "setup_quality": 0.29,
+            "reversion_support": 0.57,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.05},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_headwind_short_when_quality_recovers() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 15.5,
+        "bbw": 0.00036,
+        "atr_pips": 2.2,
+        "rsi": 58.6,
+        "stoch_rsi": 0.88,
+        "vwap_gap": 1.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.39,
+            "max_pressure": 0.60,
+            "setup_quality": 0.52,
+            "reversion_support": 0.72,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.05},
     )
 
     signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")

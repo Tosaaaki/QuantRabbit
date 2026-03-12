@@ -4700,3 +4700,111 @@
     short lane だけを worker local に落とし、
     `RSI>=69`
     の more-extended short は残す。
+
+### local-v2 `PrecisionLowVol` mid-RSI continuation-headwind short guard（2026-03-13）
+- 背景:
+  - 2026-03-13 07:02 JST の local-v2 snapshot では
+    `openTrades=[] / decision_latency_ms 17.1 / data_lag_ms 2291.6`
+    で stack / OANDA は生きていた一方、
+    JST 7-8 時の maintenance 帯で
+    live spread は不安定だった。
+  - 直近24hの
+    `PrecisionLowVol`
+    は
+    `42 trades / -181.678 JPY / win rate 31.0% / PF 0.468`
+    で、
+    short `volatility_compression`
+    のうち
+    `rsi>=58 / projection.score<=0.05 / setup_quality<0.48 / continuation_pressure>=0.33`
+    の lane が
+    `9 trades / 0 wins / -110.881 JPY`
+    と loser cluster になっていた。
+  - 既存
+    `weak overbought short guard`
+    と
+    `marginal short guard`
+    の少し外側にあるため、
+    continuation headwind を背負った mid-RSI short が still 通っていた。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `PREC_LOWVOL_HEADWIND_SHORT_GUARD_ENABLED`,
+    `PREC_LOWVOL_HEADWIND_SHORT_RSI_MIN`,
+    `PREC_LOWVOL_HEADWIND_SHORT_PROJECTION_SCORE_MAX`,
+    `PREC_LOWVOL_HEADWIND_SHORT_SETUP_QUALITY_MAX`,
+    `PREC_LOWVOL_HEADWIND_SHORT_CONTINUATION_PRESSURE_MIN`
+    を追加した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_signal_precision_lowvol()`
+    で、
+    short `volatility_compression`
+    の
+    `continuation_pressure>=0.33`
+    /
+    `rsi>=58`
+    /
+    `projection.score<=0.05`
+    /
+    `setup_quality<0.48`
+    を
+    `headwind_short_lane`
+    として additive に reject するようにした。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    `rsi=58.6`
+    の loser lane block と、
+    quality 回復時の keep を追加した。
+- 意図:
+  - `PrecisionLowVol` short を strategy-wide に止めるのではなく、
+    continuation headwind を背負った mid-RSI reclaim short だけを
+    worker local で前倒しに落とす。
+
+### local-v2 `scalp_extrema_reversal_live` long setup-pressure window widening（2026-03-13）
+- 背景:
+  - 同じ local-v2 snapshot 下で、
+    `scalp_extrema_reversal_live`
+    は直近24h
+    `100 trades / -103.25 JPY / win rate 25.0% / PF 0.295`
+    と strong loser だった。
+  - long `volatility_compression`
+    の recent setup-pressure lane では、
+    既存
+    `LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS=0.00`
+    /
+    `LONG_SETUP_PRESSURE_RANGE_SCORE_MAX=0.55`
+    の窓から少し外れた
+    neutral-gap / higher-range probe が
+    `3 trades / 0 wins / -8.04 JPY`
+    残っていた。
+  - 内訳は
+    `ma_gap_pips=0.065`
+    の neutral-gap loser 1 本と、
+    `range_score=0.561 / 0.586`
+    の slightly higher-range loser 2 本で、
+    recent setup-pressure active 中だけ追加で落とす価値があった。
+- 実装:
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    の
+    `SCALP_EXTREMA_REVERSAL_LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS`
+    を
+    `0.10`
+    に、
+    `SCALP_EXTREMA_REVERSAL_LONG_SETUP_PRESSURE_RANGE_SCORE_MAX`
+    を
+    `0.60`
+    に更新した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に
+    neutral-gap long が setup-pressure 下で block される
+    regression test を追加した。
+  - worker code 自体は変えず、
+    既存
+    `long_setup_pressure`
+    ロジックの window だけを
+    narrow に広げた。
+- 意図:
+  - `scalp_extrema_reversal_live` long を blanket stop せず、
+    recent outcome が悪化している間だけ
+    neutral-gap / higher-range の weak probe を
+    strategy-local setup-pressure で前倒しに cut する。

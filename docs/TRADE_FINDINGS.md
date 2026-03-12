@@ -18911,3 +18911,232 @@ Status:
     `range_score / supportive_short_context / M5 bearish support`
     を軸に
     short positive-gap lane をさらに split する。
+
+## 2026-03-13 07:32 JST / local-v2: `PrecisionLowVol` short の mid-RSI continuation-headwind lane を追加で落とす
+- Why/Hypothesis:
+  - 市況確認では
+    `logs/health_snapshot.json`
+    の
+    `2026-03-13 07:02 JST`
+    時点で
+    `openTrades=[]`,
+    `decision_latency_ms 17.1`,
+    `data_lag_ms 2291.6`
+    で stack / OANDA 応答自体は生きていた。
+    ただし
+    JST 7-8 時の maintenance 帯で
+    spread / stream は不安定だったため、
+    live entry の評価ではなく
+    直近 24h の closed trades cluster を根拠に RCA を進めた。
+  - `logs/trades.db`
+    の直近24hでは
+    `PrecisionLowVol`
+    が
+    `42 trades / -181.678 JPY / win rate 31.0% / PF 0.468`
+    と current loser だった。
+  - 既存の
+    `weak overbought short guard`
+    と
+    `marginal short continuation-headwind guard`
+    の少し外側に、
+    short `volatility_compression`
+    の
+    `rsi>=58`,
+    `projection.score<=0.05`,
+    `setup_quality<0.48`,
+    `continuation_pressure>=0.33`
+    という mid-RSI lane が残っており、
+    この subset だけで
+    `9 trades / 0 wins / -110.881 JPY`
+    すべて
+    `STOP_LOSS_ORDER`
+    だった。
+  - current marginal guard は
+    `rsi>=59`
+    と
+    `setup_quality<0.44`
+    を見ているため、
+    `rsi 58.6-62.6`
+    /
+    `setup_quality 0.416-0.435`
+    の loser lane が still 通っていた。
+- Expected Good:
+  - `PrecisionLowVol` short を blanket stop せず、
+    continuation headwind を背負った
+    mid-RSI の弱い reclaim short だけを
+    worker local に前倒しで落とせる。
+  - 既存
+    `weak overbought short`
+    /
+    `marginal short`
+    /
+    `setup-pressure`
+    より強い reclaim short は残せる。
+- Expected Bad:
+  - threshold を広げすぎると
+    reclaim short の winner まで削る可能性がある。
+  - そのため条件は
+    `range_reason=volatility_compression`
+    /
+    `projection.score<=0.05`
+    /
+    `continuation_pressure>=0.33`
+    /
+    `rsi>=58`
+    /
+    `setup_quality<0.48`
+    の narrow lane に限定し、
+    env flag で切り戻せる形にした。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `PREC_LOWVOL_HEADWIND_SHORT_*`
+    を追加し、
+    new guard を dedicated config として明示した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_signal_precision_lowvol()`
+    で
+    short `volatility_compression`
+    かつ
+    `continuation_pressure>=0.33`
+    /
+    `rsi>=58`
+    /
+    `projection.score<=0.05`
+    /
+    `setup_quality<0.48`
+    の lane を
+    `headwind_short_lane`
+    として reject するよう更新した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    `rsi=58.6`
+    の current loser lane block と、
+    `setup_quality` 回復時の keep を追加した。
+  - 検証:
+    - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -q`
+      -> `26 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - 08:00 JST 以降の通常帯で
+    `PrecisionLowVol` short `volatility_compression`
+    の
+    `OPEN_REQ -> fills`
+    /
+    `STOP_LOSS_ORDER`
+    /
+    `realized_jpy`
+    を見て、
+    `rsi 58-59`
+    帯の loser short が消えるか確認する。
+  - それでも short loser が残るなら、
+    次は
+    `projection.score / setup_quality / mtf_alignment`
+    で
+    reclaim short を finer split する。
+
+## 2026-03-13 07:40 JST / local-v2: `scalp_extrema_reversal_live` long setup-pressure の neutral-gap / higher-range 窓を広げる
+- Why/Hypothesis:
+  - 同じ
+    `2026-03-13 07:02 JST`
+    の local-v2 snapshot では、
+    maintenance 帯で spread は荒いものの
+    stack / API 自体は生存していたため、
+    RCA は直近 24h closed trades を基準に行った。
+  - `logs/trades.db`
+    の直近24hでは
+    `scalp_extrema_reversal_live`
+    が
+    `100 trades / -103.25 JPY / win rate 25.0% / PF 0.295`
+    と strong loser だった。
+  - long `volatility_compression`
+    かつ
+    `long_setup_pressure.active=1`
+    の current loser lane を見ると、
+    既存
+    `dist_low<=0.90`
+    /
+    `bounce<=0.35`
+    /
+    `tick_strength<=0.30`
+    /
+    `adx<=23`
+    に加えて、
+    `ma_gap_pips<=0.10`
+    と
+    `range_score<=0.60`
+    まで広げると
+    `3 trades / 0 wins / -8.04 JPY`
+    を捉えられた。
+  - 内訳は
+    `ma_gap_pips=0.065, range_score=0.458`
+    の neutral-to-positive gap loser 1 本と、
+    `range_score=0.561 / 0.586`
+    の slightly higher-range loser 2 本で、
+    既存
+    `ma_gap<=0.00`
+    /
+    `range_score<=0.55`
+    の setup-pressure 窓の少し外側に残っていた。
+- Expected Good:
+  - `scalp_extrema_reversal_live` long を停止せず、
+    recent outcome が悪化している間だけ
+    neutral-gap / higher-range の weak probe を
+    setup-pressure guard で落とせる。
+  - stronger reclaim long や
+    setup-pressure 非 active 時の long は維持できる。
+- Expected Bad:
+  - setup-pressure 窓を広げすぎると
+    回復局面の long まで block する可能性がある。
+  - そのため変更は
+    `LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS 0.00 -> 0.10`
+    と
+    `LONG_SETUP_PRESSURE_RANGE_SCORE_MAX 0.55 -> 0.60`
+    のみとし、
+    recent setup-pressure active 時にしか効かない narrow widening に留めた。
+- Observed/Fact:
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    で
+    `SCALP_EXTREMA_REVERSAL_LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS=0.10`
+    と
+    `SCALP_EXTREMA_REVERSAL_LONG_SETUP_PRESSURE_RANGE_SCORE_MAX=0.60`
+    へ更新した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に
+    neutral-gap long が setup-pressure 下で block されることを確認する
+    regression test
+    を追加した。
+  - 既存の
+    `long_drift_probe`
+    /
+    `long_positive_gap_probe`
+    /
+    `supportive_long`
+    の分岐はそのまま残し、
+    shared gate や time block は増やしていない。
+  - 検証:
+    - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+      -> `33 passed`
+    - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - 08:00 JST 以降の通常帯で
+    `scalp_extrema_reversal_live`
+    long
+    `volatility_compression`
+    /
+    `long_setup_pressure.active=1`
+    の
+    fills,
+    `STOP_LOSS_ORDER`,
+    `net_jpy`
+    を確認する。
+  - それでも loser lane が残るなら、
+    次は
+    `supportive_long_context / M5 support / range_score`
+    を軸に
+    setup-pressure 内 long probe をさらに split する。

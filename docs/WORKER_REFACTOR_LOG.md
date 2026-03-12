@@ -18048,3 +18048,85 @@
     -> `32 passed`
   - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
     -> 成功
+
+### 2026-03-13 `PrecisionLowVol` mid-RSI headwind short guard / `scalp_extrema_reversal_live` long setup-pressure widening
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - 2026-03-13 07:02 JST の local-v2 snapshot では
+    `openTrades=[] / decision_latency_ms 17.1 / data_lag_ms 2291.6`
+    で stack / API は生きていたが、
+    JST 7-8 時の maintenance 帯で spread は荒れていた。
+    そのため live execution の善し悪しではなく、
+    closed trades の loser cluster を主根拠に RCA した。
+  - `PrecisionLowVol`
+    は直近24h
+    `42 trades / -181.678 JPY / win rate 31.0% / PF 0.468`
+    で、
+    既存 weak short / marginal short guard の少し外側に
+    `rsi>=58 / projection<=0.05 / setup_quality<0.48 / continuation_pressure>=0.33`
+    の short `volatility_compression`
+    lane が
+    `9 trades / 0 wins / -110.881 JPY`
+    残っていた。
+  - `scalp_extrema_reversal_live`
+    は直近24h
+    `100 trades / -103.25 JPY / win rate 25.0% / PF 0.295`
+    で、
+    long `volatility_compression`
+    の recent setup-pressure lane でも
+    neutral-gap / slightly higher-range probe が
+    `3 trades / 0 wins / -8.04 JPY`
+    残っていた。
+
+- 変更:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `PREC_LOWVOL_HEADWIND_SHORT_*`
+    を追加し、
+    `PrecisionLowVol`
+    の新しい mid-RSI headwind short guard を env 契約として明示した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_signal_precision_lowvol()`
+    で、
+    short `volatility_compression`
+    かつ
+    `continuation_pressure>=0.33`
+    /
+    `rsi>=58`
+    /
+    `projection.score<=0.05`
+    /
+    `setup_quality<0.48`
+    の lane を
+    additive に reject するようにした。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    で
+    `LONG_SETUP_PRESSURE_MA_GAP_MAX_PIPS`
+    を
+    `0.00 -> 0.10`,
+    `LONG_SETUP_PRESSURE_RANGE_SCORE_MAX`
+    を
+    `0.55 -> 0.60`
+    へ広げ、
+    current loser だった neutral-gap / higher-range long probe を
+    recent setup-pressure 中だけ拾えるようにした。
+  - それぞれの regression test を追加し、
+    stronger reclaim lane は残ることを固定した。
+
+- 検証:
+  - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -q`
+    -> `26 passed`
+  - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+    -> `33 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py tests/workers/test_scalp_extrema_reversal_worker.py`
+    -> 成功
