@@ -4291,3 +4291,49 @@
   (`rev_strength>=0.92`, `touch_ratio>=1.60`, `setup_quality>=0.62`)
   は例外通過とし、
  「flat-gap だから一律 stop」は行わない。
+
+### 2026-03-12 shared feedback loop monotonicity guard
+- current shared feedback / alloc 運用では、
+  feedback cycle を回すたびに
+  `unproven winner boost` や
+  `fresh setup の blanket-trim bypass`
+  が再注入されないことを正とする。
+- `scripts/participation_allocator.py` は
+  `profit_per_fill` を winner boost の前提にし、
+  `loss_per_fill` を loser trim 深度へ織り込む。
+  negative probability trim は
+  `max_probability_cut`
+  を独立 cap として emit し、
+  `max_probability_boost` と共有しない。
+- `workers/common/participation_alloc.py` /
+  `execution/strategy_entry.py`
+  は `max_probability_cut`
+  を read-only で live runtime へ通し、
+  negative `probability_offset`
+  を旧 boost cap で潰さない。
+- `workers/common/dynamic_alloc.py`
+  は explicit `setup_identity`
+  があっても override 不一致を理由に
+  strategy-level trim を外さない。
+  current setup に dedicated override が無い間は
+  `setup_trim_fallback=strategy_level_trim`
+  を監査に残しつつ、
+  parent `lot_multiplier`
+  をそのまま適用する。
+- `scripts/dynamic_alloc_worker.py`
+  は `setup_min_trades`
+  未満でも、
+  `2 trades` 以上で
+  `negative realized / negative avg realized / bad avg_pips or PF`
+  を満たす fast-reactive loser setup を
+  setup-scoped trim 候補として emit する。
+- `analysis/strategy_feedback_worker.py`
+  の positive overlay は
+  `profitable_now && payoff_ok && improved_vs_prev`
+  を満たす setup に限定する。
+  high win-rate でも
+  `loss_asymmetry`
+  が悪い lane や、
+  前回より改善していない lane には
+  `entry_probability_multiplier / entry_units_multiplier / tp/sl multiplier`
+  の正方向変更を残さない。

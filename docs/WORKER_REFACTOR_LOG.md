@@ -17064,3 +17064,64 @@
 - 検証:
   - `PYTHONPATH=. pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
     -> `23 passed`
+
+### 2026-03-12 feedback loop monotonicity guard for shared alloc / feedback
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `workers/common/participation_alloc.py`
+  - `execution/strategy_entry.py`
+  - `workers/common/dynamic_alloc.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `analysis/strategy_feedback_worker.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/workers/common/test_participation_alloc.py`
+  - `tests/execution/test_strategy_entry_adaptive_layers.py`
+  - `tests/workers/common/test_dynamic_alloc.py`
+  - `tests/test_dynamic_alloc_worker.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+
+- 背景:
+  - current local-v2 では
+    loser lane が浅い trim のまま残る一方で、
+    thin-profit winner や non-improving setup に shared boost が戻り、
+    feedback cycle を回すたびに期待値を削る経路が残っていた。
+  - とくに
+    `dynamic_alloc` の
+    `explicit_setup_without_override`
+    fallback が strategy-level trim を外し、
+    `participation_alloc` / `strategy_feedback`
+    の positive overlay と合成されると、
+    fresh setup が過剰に復帰しやすかった。
+
+- 変更:
+  - `participation_allocator`
+    は `profit_per_fill / loss_per_fill`
+    を導入し、
+    winner boost を thin-profit lane に出さない。
+    loser trim は per-fill loss でも深くし、
+    negative probability trim は
+    `max_probability_cut`
+    を boost cap と分離して出す。
+  - `strategy_entry`
+    / `participation_alloc` loader は
+    `max_probability_cut`
+    を live runtime へ通す。
+  - `dynamic_alloc.load_strategy_profile()`
+    は explicit setup に override が無くても
+    `lot_multiplier=1.0`
+    へ戻さず、
+    `setup_trim_fallback=strategy_level_trim`
+    で strategy trim を維持する。
+  - `dynamic_alloc_worker`
+    は `2 trades` の fast-reactive loser setup でも
+    negative realized / bad PF を満たせば
+    setup override を emit する。
+  - `strategy_feedback_worker`
+    は previous feedback を参照し、
+    `profitable_now && payoff_ok && improved_vs_prev`
+    を満たす場合だけ
+    正の multiplier を残す。
+
+- 検証:
+  - `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/workers/common/test_participation_alloc.py tests/test_dynamic_alloc_worker.py tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_participation_allocator.py`
+    -> `74 passed`

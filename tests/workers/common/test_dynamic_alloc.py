@@ -183,7 +183,7 @@ def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp
     assert profile["setup_override"]["match_dimension"] == "flow_micro"
 
 
-def test_load_strategy_profile_skips_blanket_negative_trim_without_matching_setup_override(
+def test_load_strategy_profile_keeps_strategy_level_trim_without_matching_setup_override(
     tmp_path: Path,
 ) -> None:
     payload = {
@@ -213,9 +213,8 @@ def test_load_strategy_profile_skips_blanket_negative_trim_without_matching_setu
     )
 
     assert profile["found"] is True
-    assert profile["lot_multiplier"] == 1.0
-    assert profile["strategy_lot_multiplier"] == 0.14
-    assert profile["setup_trim_skip_reason"] == "explicit_setup_without_override"
+    assert profile["lot_multiplier"] == 0.14
+    assert profile["setup_trim_fallback"] == "strategy_level_trim"
     assert profile["setup_identity"]["flow_regime"] == "range_fade"
 
 

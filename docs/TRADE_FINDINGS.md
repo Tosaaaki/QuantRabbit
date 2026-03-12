@@ -16765,3 +16765,76 @@ Status:
     worker-local hard reject を追加で深くする。
   - winner lane (`MomentumBurst` など) の participation を
     loser trim と同じ速度で上げられるかを再設計する。
+
+## 2026-03-12 19:38 JST / local-v2: feedback loops should only deepen proven edges and cut fresh losers earlier
+- Why/Hypothesis:
+  - current loss loop を悪化させていた主因は、
+    `participation_alloc` が
+    「薄い利益でも winner boost を出す」,
+    `dynamic_alloc` が
+    「fresh setup なら strategy trim を素通しする」,
+    `strategy_feedback` が
+    「前回より改善していなくても正の multiplier を残す」
+    という 3 つの緩さを同時に持っていたこと。
+  - このままだと feedback cycle を回すたびに、
+    unproven lane へ size/probability が戻り、
+    chronic loser は浅い trim のまま残る。
+- Expected Good:
+  - low-sample winner でも `profit_per_fill` が薄い lane は
+    boost されず、
+    「回すたびに期待値を下げる」復元ループを止められる。
+  - explicit setup identity があっても、
+    setup override 未学習の lane は
+    strategy-level trim を維持できる。
+  - positive feedback は
+    `PF / avg_pips / loss_asymmetry`
+    の改善が確認できた setup だけへ残る。
+- Expected Bad:
+  - 立ち上がり直後の winner lane は、
+    以前より participation 回復が遅くなる。
+  - deeper negative probability cut により、
+    recovering lane が一時的に baseline 近辺へ留まる。
+- Observed/Fact:
+  - `scripts/participation_allocator.py`
+    で `profit_per_fill / loss_per_fill` を導入し、
+    loser trim の深さを per-fill 損失でも決めるようにした。
+    winner boost は `profit_per_fill` 下限を満たす lane に限定し、
+    負の確率 trim は `max_probability_cut` を別 cap で扱うようにした。
+  - 同ファイルの最終 payload clamp は
+    旧 `max_probability_boost` で負の trim を潰していたため、
+    `max(max_probability_boost, max_probability_cut)` を使うよう修正した。
+  - `workers/common/participation_alloc.py`
+    と `execution/strategy_entry.py`
+    で `max_probability_cut` を runtime へ通し、
+    deep loser trim を live pre-order に反映できるようにした。
+  - `workers/common/dynamic_alloc.py`
+    は `explicit_setup_without_override`
+    で `lot_multiplier=1.0` へ戻す処理を削除し、
+    `setup_trim_fallback=strategy_level_trim`
+    で blanket trim を維持するようにした。
+  - `scripts/dynamic_alloc_worker.py`
+    は `2 trades` でも
+    `negative realized / negative avg realized / bad avg_pips or PF`
+    の fast-reactive loser setup に対して
+    setup override を emit するようにした。
+  - `analysis/strategy_feedback_worker.py`
+    は previous feedback を読み、
+    `profitable_now && payoff_ok && improved_vs_prev`
+    を満たすときだけ正の
+    `entry_probability_multiplier / entry_units_multiplier / sl/tp multiplier`
+    を残すようにした。
+  - targeted test:
+    `pytest -q tests/workers/common/test_dynamic_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py tests/workers/common/test_participation_alloc.py tests/test_dynamic_alloc_worker.py tests/analysis/test_strategy_feedback_worker.py tests/scripts/test_participation_allocator.py`
+    は `74 passed`。
+- Verdict: pending
+- Next Action:
+  - 自動 feedback cycle と local-v2 runtime へ反映し、
+    next 30-60 分で
+    `trim_units` lane の `probability_offset / realized_jpy_per_fill`
+    と
+    winner lane の `boost_participation`
+    が thin-profit で再発しないかを確認する。
+  - `M1Scalper-M1` と `scalp_ping_5s_flow_live`
+    のような chronic loser で、
+    shared trim だけで足りるか、
+    まだ worker-local payoff 修正が必要かを再判定する。

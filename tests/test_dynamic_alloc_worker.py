@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from scripts.dynamic_alloc_worker import compute_scores, normalize_strategy_key
@@ -107,6 +108,66 @@ def test_compute_scores_caps_size_when_realized_jpy_is_negative() -> None:
     assert prof["sum_pips"] > 0
     assert prof["sum_realized_jpy"] < 0
     assert prof["lot_multiplier"] <= 0.42
+
+
+def test_compute_scores_emits_setup_override_for_fast_reactive_loser() -> None:
+    now = datetime.now(timezone.utc)
+    thesis = json.dumps(
+        {
+            "setup_fingerprint": "VwapRevertS|short|range_fade|tight_fast|rsi:overbought|atr:low|gap:up_lean|volatility_compression",
+            "live_setup_context": {
+                "flow_regime": "range_fade",
+                "microstructure_bucket": "tight_fast",
+            },
+        },
+        ensure_ascii=True,
+    )
+    rows = [
+        (
+            "VwapRevertS",
+            "scalp",
+            -0.8,
+            (now - timedelta(minutes=2)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "STOP_LOSS_ORDER",
+            -12.0,
+            -1200,
+            "VwapRevertS",
+            "VwapRevertS",
+            thesis,
+        ),
+        (
+            "VwapRevertS",
+            "scalp",
+            -0.6,
+            (now - timedelta(minutes=1)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "MARKET_ORDER_TRADE_CLOSE",
+            -9.0,
+            -1200,
+            "VwapRevertS",
+            "VwapRevertS",
+            thesis,
+        ),
+    ]
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=12,
+        setup_min_trades=4,
+        pf_cap=2.0,
+    )
+
+    prof = strategy_scores["VwapRevertS"]
+    overrides = prof.get("setup_overrides") or []
+    loser = next(
+        item
+        for item in overrides
+        if item["setup_fingerprint"]
+        == "VwapRevertS|short|range_fade|tight_fast|rsi:overbought|atr:low|gap:up_lean|volatility_compression"
+    )
+
+    assert loser["trades"] == 2
+    assert loser["lot_multiplier"] < 1.0
+    assert loser["sum_realized_jpy"] < 0.0
 
 
 def test_compute_scores_recent_cash_loser_does_not_get_boosted_by_good_pips() -> None:

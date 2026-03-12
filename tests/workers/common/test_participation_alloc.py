@@ -121,6 +121,7 @@ def test_load_strategy_profile_preserves_setup_override_runtime_caps(tmp_path: P
                         "lot_multiplier": 1.12,
                         "units_multiplier": 1.12,
                         "probability_boost": 0.05,
+                        "max_probability_cut": 0.08,
                         "max_units_boost": 0.12,
                         "max_probability_boost": 0.05,
                         "attempts": 15,
@@ -149,4 +150,5 @@ def test_load_strategy_profile_preserves_setup_override_runtime_caps(tmp_path: P
     assert profile["action"] == "boost_participation"
     assert profile["lot_multiplier"] == 1.12
     assert profile["max_units_boost"] == 0.12
+    assert profile["max_probability_cut"] == 0.08
     assert profile["max_probability_boost"] == 0.05

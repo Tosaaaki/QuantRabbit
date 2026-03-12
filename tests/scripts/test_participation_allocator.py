@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts import participation_allocator
@@ -102,6 +103,7 @@ def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_los
     assert loser["action"] == "trim_units"
     assert loser["lot_multiplier"] < 1.0
     assert loser["probability_offset"] < 0.0
+    assert loser["max_probability_cut"] >= 0.05
     assert loser["probability_multiplier"] == 1.0
 
 
@@ -407,6 +409,39 @@ def test_build_participation_alloc_does_not_boost_zero_realized_strategy() -> No
     assert neutral["action"] == "hold"
     assert neutral["lot_multiplier"] == 1.0
     assert neutral["probability_boost"] == 0.0
+
+
+def test_build_participation_alloc_requires_profit_per_fill_for_small_sample_boost() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 5,
+                "fills": 5,
+                "filled_rate": 1.0,
+                "attempt_share": 0.02,
+                "fill_share": 0.10,
+                "share_gap": -0.08,
+                "terminal_status_counts": {"filled": 5},
+            }
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={"PrecisionLowVol": 8.0},
+        min_attempts=20,
+        max_units_cut=0.18,
+        max_units_boost=0.12,
+        max_prob_boost=0.05,
+    )
+
+    winner = payload["strategies"]["PrecisionLowVol"]
+
+    assert winner["action"] == "hold"
+    assert winner["lot_multiplier"] == 1.0
+    assert winner["probability_boost"] == 0.0
 
 
 def test_build_participation_alloc_trims_underused_high_fill_loser() -> None:
@@ -1029,6 +1064,7 @@ def test_build_participation_alloc_emits_two_attempt_loser_setup_override() -> N
 
 def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
+    close_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
@@ -1051,7 +1087,7 @@ def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: P
                 "RangeFader",
                 '{"strategy":"RangeFader","strategy_tag":"RangeFader","strategy_tag_raw":"RangeFader-sell-fade"}',
                 -220.0,
-                "2026-03-10T00:00:00Z",
+                close_time,
             ),
         )
         conn.commit()
@@ -1064,6 +1100,7 @@ def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: P
 
 def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context(tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
+    close_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
@@ -1110,7 +1147,7 @@ def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context
                     ensure_ascii=True,
                 ),
                 -88.0,
-                "2026-03-10T00:00:00Z",
+                close_time,
             ),
         )
         conn.commit()

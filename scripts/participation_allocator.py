@@ -114,10 +114,13 @@ def _build_allocation_record(
     attempt_share = _safe_float(record.get("attempt_share"), 0.0)
     fill_share = _safe_float(record.get("fill_share"), 0.0)
     share_gap = _safe_float(record.get("share_gap"), attempt_share - fill_share)
+    profit_per_fill = realized_jpy / max(1, fills) if fills > 0 else 0.0
+    loss_per_fill = abs(min(realized_jpy, 0.0)) / max(1, fills) if fills > 0 else 0.0
     units_multiplier = 1.0
     probability_multiplier = 1.0
     probability_offset = 0.0
     probability_boost = 0.0
+    max_probability_cut = 0.0
     cadence_floor = 1.0
     action = "hold"
     terminal_status_counts = record.get("terminal_status_counts") if isinstance(record.get("terminal_status_counts"), dict) else {}
@@ -145,10 +148,13 @@ def _build_allocation_record(
             severity = _clamp((share_gap - 0.08) / 0.22, 0.0, 1.0)
             severity = max(severity, _clamp((median_fill_rate - filled_rate) / max(0.01, median_fill_rate), 0.0, 1.0))
             reject_pressure = _clamp((hard_block_rate - 0.20) / 0.55, 0.0, 1.0)
-            loss_pressure = _clamp(abs(min(realized_jpy, 0.0)) / 240.0, 0.0, 1.0)
+            loss_pressure = max(
+                _clamp(abs(min(realized_jpy, 0.0)) / 240.0, 0.0, 1.0),
+                _clamp(loss_per_fill / 18.0, 0.0, 1.0),
+            )
             trim_strength = max(
                 severity,
-                0.55 * severity + 0.30 * reject_pressure + 0.15 * loss_pressure,
+                0.45 * severity + 0.25 * reject_pressure + 0.30 * loss_pressure,
             )
             units_multiplier = 1.0 - max_units_cut * (0.35 + 0.65 * severity)
             should_trim_probability = (
@@ -158,9 +164,11 @@ def _build_allocation_record(
                     and reject_pressure >= _NEGATIVE_PROB_TRIM_MIN_REJECT_PRESSURE
                     and share_gap >= _NEGATIVE_PROB_TRIM_MIN_SHARE_GAP
                 )
+                or loss_per_fill >= 6.0
             )
             if should_trim_probability:
-                probability_offset = -max_prob_boost * (0.20 + 0.80 * trim_strength)
+                max_probability_cut = min(0.25, max(max_prob_boost, max_prob_boost * (1.0 + 0.80 * loss_pressure)))
+                probability_offset = -max_probability_cut * (0.20 + 0.80 * trim_strength)
             cadence_floor = 0.90
             action = "trim_units"
         elif (
@@ -169,7 +177,10 @@ def _build_allocation_record(
             and filled_rate >= max(median_fill_rate * 0.85, 0.10)
             and fill_share >= max(0.0, attempt_share - 0.04)
         ):
-            loss_pressure = _clamp(abs(realized_jpy) / max(1.0, loss_drag_floor), 0.0, 1.0)
+            loss_pressure = max(
+                _clamp(abs(realized_jpy) / max(1.0, loss_drag_floor), 0.0, 1.0),
+                _clamp(loss_per_fill / 18.0, 0.0, 1.0),
+            )
             participation_drag = _clamp((fill_share - attempt_share + 0.04) / 0.18, 0.0, 1.0)
             quality_drag = _clamp(
                 (filled_rate / max(0.01, median_fill_rate) - 0.85) / 0.45,
@@ -187,12 +198,19 @@ def _build_allocation_record(
                     fills >= max(4, int(min_attempts * 0.5))
                     and participation_drag >= 0.25
                 )
+                or loss_per_fill >= 5.0
             )
             if should_trim_probability:
-                probability_offset = -max_prob_boost * (0.10 + 0.60 * trim_strength)
+                max_probability_cut = min(0.25, max(max_prob_boost, max_prob_boost * (1.0 + 0.60 * loss_pressure)))
+                probability_offset = -max_probability_cut * (0.10 + 0.60 * trim_strength)
             cadence_floor = 0.94
             action = "trim_units"
-        elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy > 0.0:
+        elif (
+            fill_share >= attempt_share + 0.02
+            and filled_rate >= median_fill_rate
+            and realized_jpy > 0.0
+            and profit_per_fill >= 2.0
+        ):
             advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
             quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
             boost_strength = max(advantage, quality)
@@ -201,7 +219,12 @@ def _build_allocation_record(
             probability_boost = max_prob_boost * (0.30 + 0.70 * boost_strength)
             cadence_floor = 1.0 + 0.22 * (0.35 + 0.65 * boost_strength)
             action = "boost_participation"
-        elif filled_rate >= median_fill_rate * 1.10 and realized_jpy > 0.0 and attempts >= max(min_attempts, 8):
+        elif (
+            filled_rate >= median_fill_rate * 1.10
+            and realized_jpy > 0.0
+            and attempts >= max(min_attempts, 8)
+            and profit_per_fill >= 2.5
+        ):
             units_multiplier = 1.0 + max_units_boost * 0.52
             probability_boost = max_prob_boost * 0.42
             cadence_floor = 1.12
@@ -211,6 +234,7 @@ def _build_allocation_record(
         and fills >= 2
         and fills == attempts
         and realized_jpy > 0.0
+        and profit_per_fill >= 3.0
         and filled_rate >= max(median_fill_rate * 1.05, 0.30)
         and fill_share >= attempt_share + 0.003
         and hard_block_rate <= 0.25
@@ -241,6 +265,7 @@ def _build_allocation_record(
         attempts >= small_sample_boost_attempts
         and fills >= 2
         and realized_jpy > 0.0
+        and profit_per_fill >= 3.0
         and filled_rate >= max(median_fill_rate * 1.05, 0.30)
         and fill_share >= attempt_share + 0.003
         and hard_block_rate <= 0.35
@@ -264,6 +289,7 @@ def _build_allocation_record(
         attempts >= 1
         and fills >= 1
         and realized_jpy > 0.0
+        and profit_per_fill >= 3.0
         and probability_rejects >= max(8, fills * 8)
         and strategy_control_blocks <= probability_rejects
         and fill_share >= attempt_share + 0.001
@@ -300,8 +326,16 @@ def _build_allocation_record(
         "units_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
         "lot_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
         "probability_multiplier": round(_clamp(probability_multiplier, 0.75, 1.25), 4),
-        "probability_offset": round(_clamp(probability_offset, -max_prob_boost, max_prob_boost), 4),
+        "probability_offset": round(
+            _clamp(
+                probability_offset,
+                -max(max_prob_boost, max_probability_cut),
+                max_prob_boost,
+            ),
+            4,
+        ),
         "probability_boost": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
+        "max_probability_cut": round(max(0.0, min(0.25, max_probability_cut)), 4),
         "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.24), 4),
         "quality_score": round(quality_score, 4),
         "hard_block_rate": round(hard_block_rate, 6),

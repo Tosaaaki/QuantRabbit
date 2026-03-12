@@ -19,6 +19,7 @@ _SETUP_OVERRIDE_FIELDS = {
     "probability_multiplier",
     "probability_offset",
     "probability_boost",
+    "max_probability_cut",
     "cadence_floor",
     "quality_score",
     "hard_block_rate",
@@ -229,6 +230,7 @@ def load_strategy_profile(
         "probability_multiplier": 1.0,
         "probability_offset": 0.0,
         "probability_boost": 0.0,
+        "max_probability_cut": 0.0,
         "cadence_floor": 1.0,
         "action": "hold",
         "attempts": 0,
@@ -297,6 +299,10 @@ def load_strategy_profile(
             "probability_boost": _safe_float(
                 item.get("probability_boost"),
                 _safe_float(item.get("probability_offset"), 0.0),
+            ),
+            "max_probability_cut": _safe_float(
+                item.get("max_probability_cut"),
+                0.0,
             ),
             "cadence_floor": _safe_float(item.get("cadence_floor"), 1.0),
             "action": str(item.get("action") or "hold"),

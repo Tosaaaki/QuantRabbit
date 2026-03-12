@@ -1177,6 +1177,7 @@ def _squad_recommendation(
     min_trades: int,
     strategy_params: dict[str, Any] | None = None,
     probe_feedback: dict[str, Any] | None = None,
+    previous_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     squad = _select_squad(tag)
     if stats.trades < min_trades:
@@ -1248,6 +1249,35 @@ def _squad_recommendation(
         units_multiplier *= 0.95
         sl_multiplier *= 0.96
 
+    prev_params = previous_feedback.get("strategy_params") if isinstance(previous_feedback, dict) else {}
+    if not isinstance(prev_params, dict):
+        prev_params = {}
+    prev_pf = _to_optional_float(prev_params.get("profit_factor"))
+    prev_avg_pips = _to_optional_float(prev_params.get("avg_pips"))
+    prev_loss_asym = _to_optional_float(prev_params.get("loss_asymmetry"))
+    profitable_now = pf == float("inf") or pf >= 1.05
+    payoff_ok = stats.avg_pips > 0.0 and (stats.loss_asymmetry <= 1.15 or (wr >= 0.62 and (pf == float("inf") or pf >= 1.20)))
+    improved_vs_prev = prev_pf is None and prev_avg_pips is None
+    if not improved_vs_prev:
+        improved_vs_prev = False
+        if prev_pf is not None and pf != float("inf") and pf >= prev_pf + 0.03:
+            improved_vs_prev = True
+        if prev_avg_pips is not None and stats.avg_pips >= prev_avg_pips + 0.05:
+            improved_vs_prev = True
+        if (
+            prev_loss_asym is not None
+            and stats.loss_asymmetry != float("inf")
+            and stats.loss_asymmetry <= prev_loss_asym - 0.08
+            and profitable_now
+        ):
+            improved_vs_prev = True
+    allow_positive_adjustment = profitable_now and payoff_ok and improved_vs_prev
+    if not allow_positive_adjustment:
+        prob_multiplier = min(prob_multiplier, 1.0)
+        units_multiplier = min(units_multiplier, 1.0)
+        sl_multiplier = min(sl_multiplier, 1.0)
+        tp_multiplier = min(tp_multiplier, 1.0)
+
     prob_multiplier = _clamp(prob_multiplier, 0.55, 1.28)
     units_multiplier = _clamp(units_multiplier, 0.55, 1.65)
     sl_multiplier = _clamp(sl_multiplier, 0.75, 1.25)
@@ -1260,8 +1290,19 @@ def _squad_recommendation(
             "win_rate": round(wr, 3),
             "profit_factor": None if pf == float("inf") else round(pf, 3),
             "trades": stats.trades,
+            "avg_pips": round(stats.avg_pips, 3),
+            "loss_asymmetry": None if stats.loss_asymmetry == float("inf") else round(stats.loss_asymmetry, 3),
             "avg_hold_sec": None if avg_hold is None else round(avg_hold, 1),
             "configured_params": dict(strategy_params or {}),
+            "feedback_growth_gate": {
+                "allow_positive_adjustment": bool(allow_positive_adjustment),
+                "profitable_now": bool(profitable_now),
+                "payoff_ok": bool(payoff_ok),
+                "improved_vs_prev": bool(improved_vs_prev),
+                "prev_profit_factor": None if prev_pf is None else round(prev_pf, 3),
+                "prev_avg_pips": None if prev_avg_pips is None else round(prev_avg_pips, 3),
+                "prev_loss_asymmetry": None if prev_loss_asym is None else round(prev_loss_asym, 3),
+            },
         },
     }
     if probe_feedback:
@@ -1287,13 +1328,25 @@ def _build_setup_overrides(
     setup_stats: list[tuple[dict[str, str], StrategyStats]],
     *,
     min_trades: int,
+    previous_overrides: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if not setup_stats:
         return []
     setup_min_trades = max(3, int(min_trades) // 2)
     overrides: list[dict[str, Any]] = []
     for match, stats in setup_stats:
-        advice = _squad_recommendation(tag, stats, setup_min_trades)
+        match_key = (
+            str(match.get("match_dimension") or ""),
+            str(match.get("setup_fingerprint") or ""),
+            str(match.get("flow_regime") or ""),
+            str(match.get("microstructure_bucket") or ""),
+        )
+        advice = _squad_recommendation(
+            tag,
+            stats,
+            setup_min_trades,
+            previous_feedback=(previous_overrides or {}).get(match_key),
+        )
         if not advice:
             continue
         override = {
@@ -1329,8 +1382,30 @@ def _build_setup_overrides(
     return overrides[:8]
 
 
+def _previous_setup_override_map(strategy_cfg: dict[str, Any] | None) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    if not isinstance(strategy_cfg, dict):
+        return {}
+    raw_overrides = strategy_cfg.get("setup_overrides")
+    if not isinstance(raw_overrides, list):
+        return {}
+    out: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for item in raw_overrides:
+        if not isinstance(item, dict):
+            continue
+        key = (
+            str(item.get("match_dimension") or ""),
+            str(item.get("setup_fingerprint") or ""),
+            str(item.get("flow_regime") or ""),
+            str(item.get("microstructure_bucket") or ""),
+        )
+        out[key] = item
+    return out
+
+
 def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    previous_payload = _read_json_dict(config.feedback_path) or {}
+    previous_strategies = previous_payload.get("strategies") if isinstance(previous_payload.get("strategies"), dict) else {}
     running_services = _systemctl_running_services()
     if not running_services:
         running_services = _local_stack_running_services(config.local_pid_dir)
@@ -1421,6 +1496,7 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             config.min_trades,
             strategy_params=rec.strategy_params,
             probe_feedback=probe_feedback_by_tag.get(tag),
+            previous_feedback=previous_strategies.get(tag) if isinstance(previous_strategies, dict) else None,
         )
         if not advice:
             continue
@@ -1429,6 +1505,9 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             tag,
             setup_stats_by_tag.get(tag, []),
             min_trades=config.min_trades,
+            previous_overrides=_previous_setup_override_map(
+                previous_strategies.get(tag) if isinstance(previous_strategies, dict) else None
+            ),
         )
         if setup_overrides:
             advice["setup_overrides"] = setup_overrides

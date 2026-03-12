@@ -90,6 +90,50 @@ def test_apply_participation_alloc_trims_units_and_lowers_probability_for_loser_
     assert thesis["participation_alloc"]["action"] == "trim_units"
 
 
+def test_apply_participation_alloc_uses_max_probability_cut_when_present(monkeypatch) -> None:
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+    monkeypatch.setattr(
+        strategy_entry,
+        "load_participation_profile",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "strategy_key": "MicroTrendRetest-long",
+            "action": "trim_units",
+            "units_multiplier": 0.82,
+            "lot_multiplier": 0.82,
+            "probability_offset": -0.06,
+            "max_probability_boost": 0.03,
+            "max_probability_cut": 0.06,
+            "preflights": 144,
+            "filled": 19,
+            "fill_rate": 0.1319,
+            "hard_block_rate": 0.24,
+            "quality_score": 0.42,
+            "current_share": 0.31,
+            "target_share": 0.15,
+        },
+        raising=False,
+    )
+
+    thesis: dict = {}
+    units, prob, payload = strategy_entry._apply_participation_alloc(
+        strategy_tag="MicroTrendRetest-long",
+        pocket="micro",
+        units=100,
+        min_units=10,
+        entry_probability=0.60,
+        entry_thesis=thesis,
+    )
+
+    assert units == 82
+    assert prob == 0.54
+    assert isinstance(payload, dict)
+    assert payload["probability_offset"] == -0.06
+    assert thesis["participation_alloc"]["action"] == "trim_units"
+
+
 def test_apply_participation_alloc_boosts_units_for_explicit_boost_signal(monkeypatch) -> None:
     monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
     monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
@@ -501,7 +545,7 @@ def test_apply_dynamic_alloc_trim_passes_entry_thesis_for_setup_override(monkeyp
     assert thesis["dynamic_alloc"]["setup_override"]["match_dimension"] == "setup_fingerprint"
 
 
-def test_apply_dynamic_alloc_trim_skips_unmatched_setup_blanket_trim(monkeypatch) -> None:
+def test_apply_dynamic_alloc_trim_keeps_strategy_level_trim_when_setup_override_is_missing(monkeypatch) -> None:
     monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
     monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
     monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
@@ -511,9 +555,8 @@ def test_apply_dynamic_alloc_trim_skips_unmatched_setup_blanket_trim(monkeypatch
         lambda *_args, **_kwargs: {
             "found": True,
             "strategy_key": "VwapRevertS",
-            "lot_multiplier": 1.0,
-            "strategy_lot_multiplier": 0.14,
-            "setup_trim_skip_reason": "explicit_setup_without_override",
+            "lot_multiplier": 0.14,
+            "setup_trim_fallback": "strategy_level_trim",
             "payload_stale": False,
             "score": 0.27,
             "trades": 18,
@@ -536,9 +579,10 @@ def test_apply_dynamic_alloc_trim_skips_unmatched_setup_blanket_trim(monkeypatch
         entry_thesis=thesis,
     )
 
-    assert units == -120
+    assert units == -17
     assert reason is None
-    assert "dynamic_alloc" not in thesis
+    assert thesis["dynamic_alloc"]["lot_multiplier"] == 0.14
+    assert thesis["dynamic_alloc"]["applied_units"] == 17
 
 
 def test_inject_live_setup_context_records_flow_regime_and_fingerprint() -> None:

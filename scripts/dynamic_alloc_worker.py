@@ -527,7 +527,19 @@ def _build_setup_overrides(
             and float(snapshot.get("weighted_win_rate", 0.0) or 0.0) <= 0.25
             and float(snapshot.get("jpy_pf", 0.0) or 0.0) <= 0.25
         )
-        if trades < resolved_setup_min_trades and not severe_low_sample_loser:
+        fast_reactive_loser = bool(
+            0 < trades < resolved_setup_min_trades
+            and trades >= 2
+            and float(snapshot.get("sum_realized_jpy", 0.0) or 0.0) < 0.0
+            and float(snapshot.get("avg_realized_jpy", 0.0) or 0.0) < 0.0
+            and float(snapshot.get("realized_jpy_per_1k_units", 0.0) or 0.0) <= -1.0
+            and (
+                float(snapshot.get("avg_pips", 0.0) or 0.0) < 0.0
+                or float(snapshot.get("pf", 0.0) or 0.0) < 0.90
+                or float(snapshot.get("jpy_pf", 0.0) or 0.0) < 0.90
+            )
+        )
+        if trades < resolved_setup_min_trades and not (severe_low_sample_loser or fast_reactive_loser):
             continue
         match_dimension, setup_fingerprint, flow_regime, microstructure_bucket = key
         pocket_counts = setup_pockets.get(key, {})

@@ -303,6 +303,98 @@ def test_squad_recommendation_handles_zero_win_counts() -> None:
     assert advice["entry_probability_multiplier"] < 1.0
 
 
+def test_squad_recommendation_blocks_positive_adjustment_without_payoff_edge() -> None:
+    stats = worker.StrategyStats(
+        tag="M1Scalper-M1",
+        trades=12,
+        wins=8,
+        losses=4,
+        sum_pips=0.6,
+        avg_pips=0.05,
+        avg_abs_pips=0.62,
+        gross_win=4.0,
+        gross_loss=3.4,
+        avg_hold_sec=75.0,
+        last_closed="2026-03-10 00:00:00",
+    )
+
+    advice = worker._squad_recommendation("M1Scalper-M1", stats, 12)
+
+    assert "entry_probability_multiplier" not in advice
+    assert "entry_units_multiplier" not in advice
+    assert advice["strategy_params"]["feedback_growth_gate"]["payoff_ok"] is False
+    assert advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"] is False
+
+
+def test_squad_recommendation_requires_improvement_for_positive_adjustment() -> None:
+    stats = worker.StrategyStats(
+        tag="MomentumBurst",
+        trades=12,
+        wins=8,
+        losses=4,
+        sum_pips=2.2,
+        avg_pips=0.1833,
+        avg_abs_pips=0.6167,
+        gross_win=4.8,
+        gross_loss=2.6,
+        avg_hold_sec=120.0,
+        last_closed="2026-03-10 00:00:00",
+    )
+
+    advice = worker._squad_recommendation(
+        "MomentumBurst",
+        stats,
+        12,
+        previous_feedback={
+            "strategy_params": {
+                "profit_factor": 1.95,
+                "avg_pips": 0.25,
+                "loss_asymmetry": 0.9,
+            }
+        },
+    )
+
+    assert "entry_probability_multiplier" not in advice
+    assert "entry_units_multiplier" not in advice
+    assert advice["strategy_params"]["feedback_growth_gate"]["payoff_ok"] is True
+    assert advice["strategy_params"]["feedback_growth_gate"]["improved_vs_prev"] is False
+    assert advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"] is False
+
+
+def test_squad_recommendation_allows_positive_adjustment_for_improving_profitable_setup() -> None:
+    stats = worker.StrategyStats(
+        tag="MomentumBurst",
+        trades=12,
+        wins=8,
+        losses=4,
+        sum_pips=2.2,
+        avg_pips=0.1833,
+        avg_abs_pips=0.6167,
+        gross_win=4.8,
+        gross_loss=2.6,
+        avg_hold_sec=120.0,
+        last_closed="2026-03-10 00:00:00",
+    )
+
+    advice = worker._squad_recommendation(
+        "MomentumBurst",
+        stats,
+        12,
+        previous_feedback={
+            "strategy_params": {
+                "profit_factor": 1.25,
+                "avg_pips": 0.07,
+                "loss_asymmetry": 1.25,
+            }
+        },
+    )
+
+    assert advice["entry_probability_multiplier"] > 1.0
+    assert advice["entry_units_multiplier"] > 1.0
+    assert advice["strategy_params"]["feedback_growth_gate"]["improved_vs_prev"] is True
+    assert advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"] is True
+
+
 def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path
     log_dir = repo / "logs"
