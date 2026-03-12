@@ -311,6 +311,23 @@ EXTREMA_LONG_MID_RSI_PROBE_ADX_MIN = _env_float("LONG_MID_RSI_PROBE_ADX_MIN", 15
 EXTREMA_LONG_MID_RSI_PROBE_RANGE_SCORE_MIN = _env_float(
     "LONG_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.55
 )
+EXTREMA_LONG_DRIFT_PROBE_DIST_LOW_MAX_PIPS = _env_float(
+    "LONG_DRIFT_PROBE_DIST_LOW_MAX_PIPS", 0.35
+)
+EXTREMA_LONG_DRIFT_PROBE_BOUNCE_MAX_PIPS = _env_float(
+    "LONG_DRIFT_PROBE_BOUNCE_MAX_PIPS", 0.35
+)
+EXTREMA_LONG_DRIFT_PROBE_TICK_STRENGTH_MAX = _env_float(
+    "LONG_DRIFT_PROBE_TICK_STRENGTH_MAX", 0.25
+)
+EXTREMA_LONG_DRIFT_PROBE_ADX_MIN = _env_float("LONG_DRIFT_PROBE_ADX_MIN", 24.0)
+EXTREMA_LONG_DRIFT_PROBE_RANGE_SCORE_MIN = _env_float(
+    "LONG_DRIFT_PROBE_RANGE_SCORE_MIN", 0.38
+)
+EXTREMA_LONG_DRIFT_PROBE_MA_GAP_MIN_PIPS = _env_float(
+    "LONG_DRIFT_PROBE_MA_GAP_MIN_PIPS", 0.15
+)
+EXTREMA_LONG_DRIFT_PROBE_RSI_MIN = _env_float("LONG_DRIFT_PROBE_RSI_MIN", 36.0)
 EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS = _env_float(
     "SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.45
 )
@@ -782,6 +799,19 @@ def _signal_extrema_reversal(
         and range_score >= EXTREMA_LONG_MID_RSI_PROBE_RANGE_SCORE_MIN
         and rsi >= EXTREMA_LONG_MID_RSI_PROBE_RSI_MIN
     )
+    long_drift_probe_block = (
+        not long_supportive
+        and range_mode == "RANGE"
+        and str(getattr(range_ctx, "reason", "") or "").strip().lower() == "volatility_compression"
+        and EXTREMA_LONG_DRIFT_PROBE_DIST_LOW_MAX_PIPS > 0.0
+        and dist_low <= EXTREMA_LONG_DRIFT_PROBE_DIST_LOW_MAX_PIPS
+        and long_bounce_pips <= EXTREMA_LONG_DRIFT_PROBE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_LONG_DRIFT_PROBE_TICK_STRENGTH_MAX
+        and adx_value >= EXTREMA_LONG_DRIFT_PROBE_ADX_MIN
+        and range_score >= EXTREMA_LONG_DRIFT_PROBE_RANGE_SCORE_MIN
+        and ma_gap_pips >= EXTREMA_LONG_DRIFT_PROBE_MA_GAP_MIN_PIPS
+        and rsi >= EXTREMA_LONG_DRIFT_PROBE_RSI_MIN
+    )
     short_shallow_probe_block = (
         not short_supportive
         and range_mode == "RANGE"
@@ -835,6 +865,7 @@ def _signal_extrema_reversal(
         and not long_countertrend_block
         and not long_shallow_probe_block
         and not long_mid_rsi_probe_block
+        and not long_drift_probe_block
     )
 
     if not can_short and not can_long:
@@ -898,6 +929,7 @@ def _signal_extrema_reversal(
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
             "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
             "long_mid_rsi_probe_block": bool(long_mid_rsi_probe_block and side == "long"),
+            "long_drift_probe_block": bool(long_drift_probe_block and side == "long"),
             "trend_gate": trend_diag,
         },
         "range_score": range_score,

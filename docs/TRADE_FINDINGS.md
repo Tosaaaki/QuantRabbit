@@ -15492,3 +15492,50 @@ Status:
     で反映し、
     next 30-60 分の `PrecisionLowVol short fills / STOP_LOSS_ORDER / realized_jpy`
     を再確認する。
+
+## 2026-03-12 scalp_extrema_reversal long drift-probe guard
+- Why/Hypothesis:
+  - 2026-03-12 11:10 JST 前後の local-v2 実測では、
+    `PrecisionLowVol` への fix 後も
+    `scalp_extrema_reversal_live` buy `volatility_compression|range_fade`
+    が current active loser だった。
+  - 直近24hの buy side では
+    `range_fade` だけで `5 trades / -25.7 JPY`。
+    current worst 2 trades は
+    `supportive_long=0`, `long_bounce<=0.3`, `dist_low<=0.3`,
+    `tick_strength<=0.2`, `ADX>=29`, `ma_gap_pips>=0.2`,
+    `range_score≈0.40` に集中していた。
+  - 既存 long guard は
+    shallow probe (`ADX<=13`, `range_score<=0.32`) と
+    mid-RSI probe (`rsi>=40`, `range_score>=0.55`) の間に隙間があり、
+    current drift lane はそこで通っていた。
+- Expected Good:
+  - `scalp_extrema_reversal_live` の active loser だった
+    浅い buy drift probe を worker local に削れる。
+  - `supportive_long` と deeper probe は残し、
+    long strategy 自体の参加は維持する。
+- Expected Bad:
+  - shallow long の rare winner を少数取り逃がす可能性がある。
+  - ただし current cluster は `2 trades / 0 wins / -17.7 JPY`
+    で集中しており、まずここを切る方が副作用は小さい。
+- Observed/Fact:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に `LONG_DRIFT_PROBE_*` を追加し、
+    `volatility_compression` の non-supportive long で
+    `dist_low<=0.35`, `bounce<=0.35`, `tick_strength<=0.25`,
+    `ADX>=24`, `range_score>=0.38`, `ma_gap_pips>=0.15`, `rsi>=36`
+    の drift probe を reject するようにした。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    に current live 値を明記した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    へ drift probe block / keep regression を追加し、
+    `PYTHONPATH=. pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+    は `23 passed`。
+- Verdict: pending
+- Next Action:
+  - `git commit -> git push -> scripts/local_v2_stack.sh restart ...`
+    で反映し、
+    next 30-60 分の `scalp_extrema_reversal_live` buy
+    `volatility_compression|range_fade` の
+    `fills / realized_jpy / STOP_LOSS_ORDER`
+    を再確認する。

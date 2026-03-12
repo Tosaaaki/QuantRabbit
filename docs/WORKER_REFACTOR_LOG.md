@@ -16778,3 +16778,32 @@
 - 検証:
   - `PYTHONPATH=. pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
     -> `19 passed`
+
+### 2026-03-12 scalp_extrema_reversal long drift-probe guard
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+
+- 背景:
+  - local-v2 実測では
+    `scalp_extrema_reversal_live` buy `volatility_compression|range_fade`
+    が `5 trades / -25.7 JPY` の active loser だった。
+  - worst 2 trades は
+    `supportive_long=0`, `bounce<=0.3`, `dist_low<=0.3`,
+    `tick_strength<=0.2`, `ADX>=29`, `ma_gap_pips>=0.2`,
+    `range_score≈0.40` に集中し、
+    既存 shallow/mid-RSI long guard の間を抜けていた。
+
+- 変更:
+  - `LONG_DRIFT_PROBE_*` を追加し、
+    `volatility_compression` の non-supportive long で
+    `dist_low<=0.35`, `bounce<=0.35`, `tick_strength<=0.25`,
+    `ADX>=24`, `range_score>=0.38`, `ma_gap_pips>=0.15`, `rsi>=36`
+    の shallow drift probe を reject するようにした。
+  - dedicated env に current live 値を追加し、
+    deeper long は通す regression test を追加した。
+
+- 検証:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+    -> `23 passed`

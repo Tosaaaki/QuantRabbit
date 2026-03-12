@@ -265,6 +265,38 @@
     continuation headwind を背負った marginal reclaim short だけを
     worker local に前倒しで落とす。
 
+### local-v2 `scalp_extrema_reversal_live` long drift-probe guard（2026-03-12）
+- 背景:
+  - 2026-03-12 11:10 JST 前後の local-v2 実測では、
+    `PrecisionLowVol` への fix 後も
+    `scalp_extrema_reversal_live` buy `volatility_compression|range_fade`
+    が current active loser だった。
+  - 直近24hの buy side では
+    `range_fade` だけで `5 trades / -25.7 JPY`。
+    worst 2 trades は
+    `supportive_long=0`, `long_bounce<=0.3`, `dist_low<=0.3`,
+    `tick_strength<=0.2`, `ADX>=29`, `ma_gap_pips>=0.2`,
+    `range_score≈0.40` に集中していた。
+  - 既存 long guard は shallow probe (`ADX<=13`, `range_score<=0.32`) と
+    mid-RSI probe (`rsi>=40`, `range_score>=0.55`) に分かれており、
+    この current drift lane はその間を抜けていた。
+- 実装:
+  - `workers/scalp_extrema_reversal/worker.py`
+    - `LONG_DRIFT_PROBE_*` を追加し、
+      `volatility_compression` の non-supportive long で
+      `dist_low<=0.35`, `bounce<=0.35`, `tick_strength<=0.25`,
+      `ADX>=24`, `range_score>=0.38`, `ma_gap_pips>=0.15`, `rsi>=36`
+      の shallow drift probe を reject する。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    - `SCALP_EXTREMA_REVERSAL_LONG_DRIFT_PROBE_*`
+      を current live 値で明示した。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    - drift probe loser lane が block され、
+      headwind が薄い deeper long は残ることを regression test 化した。
+- 意図:
+  - `scalp_extrema_reversal_live` long を停止せず、
+    current loser だった浅い drift probe だけを worker local に削る。
+
 ### local-v2 `scalp_ping_5s_d_live` countertrend guard + broker TP（2026-03-11）
 - 背景:
   - 2026-03-11 20:45 JST 前後の local-v2 実測では、
