@@ -4523,3 +4523,41 @@
   前回より改善していない lane には
   `entry_probability_multiplier / entry_units_multiplier / tp/sl multiplier`
   の正方向変更を残さない。
+
+### 2026-03-12 `MomentumBurst` MTF cadence guard
+- `MomentumBurst`
+  の current cadence 改善は
+  shared gate を緩めず、
+  worker local の
+  `MTF support`
+  だけで行う。
+- `workers/micro_runtime/worker.py`
+  は
+  `mtf_context`
+  として
+  `m5/h1/h4`
+  の
+  `gap_pips / adx / direction`
+  を strategy factor へ渡す。
+- `strategies/micro/momentum_burst.py`
+  の `_mtf_supports()`
+  は
+  `M5 + H4`
+  同方向を major trend とみなし、
+  `H1`
+  の countertrend が
+  `gap<=4.0 pips`
+  かつ
+  `adx<18.0`
+  の shallow state だけを neutralize する。
+  strong `H1`
+  逆風や
+  `H4`
+  不一致は引き続き block する。
+- dedicated env は
+  `ops/env/quant-micro-momentumburst.env`
+  の
+  `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX=4.0`
+  と
+  `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_ADX_MAX=18.0`
+  を current 運用値とする。

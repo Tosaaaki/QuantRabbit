@@ -17453,3 +17453,63 @@
     -> `59 passed`
   - `python3 -m compileall strategies/micro/momentum_burst.py tests/strategies/test_momentum_burst.py`
     -> 成功
+
+### 2026-03-12 `MomentumBurst` に H4 tie-break 付き MTF context を追加
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - `MomentumBurst`
+    は current 24h で
+    `2 trades / +185.3 JPY`
+    と winner 側なのに、
+    直近 6h order path では
+    cadence が 0 件まで細っていた。
+  - runtime は
+    `candles_h4`
+    を strategy factor に渡していたが、
+    `_mtf_supports()`
+    は実質
+    `M5/H1`
+    だけで binary block していた。
+
+- 変更:
+  - `workers/micro_runtime/worker.py`
+    の `_strategy_fac_view()`
+    で
+    `mtf_context`
+    を追加し、
+    `m5/h1/h4`
+    の
+    `gap_pips / adx / direction`
+    を strategy-local 判定へ渡すようにした。
+  - `strategies/micro/momentum_burst.py`
+    の `_mtf_supports()`
+    は
+    `H4`
+    を投票へ加え、
+    `M5 + H4`
+    同方向かつ
+    `H1 gap<=4.0`
+    かつ
+    `H1 adx<18.0`
+    の shallow countertrend だけを neutralize する。
+  - dedicated env に
+    `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX`
+    と
+    `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_ADX_MAX`
+    を追加した。
+  - テストとして
+    `H4 tie-break allow / strong H1 block / H4 disagree block`
+    を追加した。
+
+- 検証:
+  - `pytest -q tests/strategies/test_momentum_burst.py`
+    -> `38 passed`
+  - `python3 -m compileall strategies/micro/momentum_burst.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py`
+    -> 成功

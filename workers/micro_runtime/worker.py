@@ -318,6 +318,9 @@ def _strategy_fac_view(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict) -
         mtf["candles_h4"] = fac_h4.get("candles")
     if mtf:
         fac["mtf"] = mtf
+    mtf_context = _mtf_context(fac_m5, fac_h1, fac_h4)
+    if mtf_context:
+        fac["mtf_context"] = mtf_context
     trend = _trend_snapshot(fac_m1, fac_m5, fac_h1, fac_h4)
     if trend:
         fac["trend_snapshot"] = trend
@@ -338,6 +341,27 @@ def _ma_gap_pips(fac: Dict) -> Optional[float]:
     if ma_fast is None or ma_slow is None:
         return None
     return (ma_fast - ma_slow) / _BB_PIP
+
+
+def _mtf_context(fac_m5: Dict, fac_h1: Dict, fac_h4: Dict) -> Dict[str, Dict[str, object]]:
+    context: Dict[str, Dict[str, object]] = {}
+    for name, fac in (("m5", fac_m5), ("h1", fac_h1), ("h4", fac_h4)):
+        gap_pips = _ma_gap_pips(fac)
+        adx = _bb_float(fac.get("adx")) if fac else None
+        if gap_pips is None and adx is None:
+            continue
+        direction = "flat"
+        if gap_pips is not None:
+            if gap_pips > 0:
+                direction = "long"
+            elif gap_pips < 0:
+                direction = "short"
+        context[name] = {
+            "gap_pips": round(float(gap_pips), 3) if gap_pips is not None else None,
+            "adx": round(float(adx), 2) if adx is not None else None,
+            "direction": direction,
+        }
+    return context
 
 
 def _pullback_mtf_confirm(action: str, fac_m5: Dict, fac_h1: Dict) -> tuple[bool, Dict[str, object]]:

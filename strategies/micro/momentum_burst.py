@@ -46,6 +46,12 @@ REACCEL_ROC5_MIN = 0.02
 REACCEL_ROC5_MIN_SHORT = float(os.getenv("MOMENTUMBURST_REACCEL_ROC5_MIN_SHORT", "0.028"))
 TREND_SNAPSHOT_ADX_MIN = 22.0
 TREND_SNAPSHOT_GAP_MIN = 8.0
+MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX = float(
+    os.getenv("MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX", "4.0")
+)
+MTF_H1_WEAK_OPPOSE_ADX_MAX = float(
+    os.getenv("MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_ADX_MAX", "18.0")
+)
 ENTRY_SL_MIN_PIPS = 2.4
 ENTRY_SL_ATR_MULT = 1.15
 ENTRY_TP_SL_MULT = 1.6
@@ -397,7 +403,8 @@ class MomentumBurstMicro:
     def _mtf_supports(direction: str, fac: Dict) -> bool:
         """
         Use optional MTF candles if provided to confirm direction.
-        Requires at least two frames in agreement to enforce; otherwise allow.
+        The default path still requires at least two agreeing higher-timeframe votes.
+        When M5 and H4 agree, a shallow H1 countertrend can be treated as neutral.
         """
         mtf = fac.get("mtf")
         if not isinstance(mtf, dict):
@@ -413,22 +420,41 @@ class MomentumBurstMicro:
 
         frames = [
             ("m5", _proj(mtf.get("candles_m5"), 5.0)),
-            ("m15", _proj(mtf.get("candles_m15"), 15.0)),
             ("h1", _proj(mtf.get("candles_h1"), 60.0)),
+            ("h4", _proj(mtf.get("candles_h4"), 240.0)),
         ]
         votes = []
-        for _, proj in frames:
+        for name, proj in frames:
             if not proj or proj.fast_ma is None or proj.slow_ma is None:
                 continue
             if proj.fast_ma > proj.slow_ma:
-                votes.append("long")
+                votes.append((name, "long"))
             elif proj.fast_ma < proj.slow_ma:
-                votes.append("short")
+                votes.append((name, "short"))
         if len(votes) < 2:
             return True  # not enough data to enforce
-        agree = sum(1 for v in votes if v == direction)
-        oppose = sum(1 for v in votes if v != direction)
-        return agree >= 2 and oppose == 0
+        agree = [name for name, vote in votes if vote == direction]
+        oppose = [name for name, vote in votes if vote != direction]
+        if not oppose:
+            return len(agree) >= 2
+        if len(agree) < 2 or set(oppose) != {"h1"} or "h4" not in agree:
+            return False
+
+        mtf_context = fac.get("mtf_context")
+        if not isinstance(mtf_context, dict):
+            return False
+        h1_ctx = mtf_context.get("h1")
+        if not isinstance(h1_ctx, dict):
+            return False
+        try:
+            h1_gap_pips = abs(float(h1_ctx.get("gap_pips") or 0.0))
+        except (TypeError, ValueError):
+            h1_gap_pips = 0.0
+        try:
+            h1_adx = float(h1_ctx.get("adx") or 0.0)
+        except (TypeError, ValueError):
+            h1_adx = 0.0
+        return h1_gap_pips <= MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX and h1_adx < MTF_H1_WEAK_OPPOSE_ADX_MAX
 
     @staticmethod
     def _trend_snapshot_supports(direction: str, fac: Dict) -> bool:

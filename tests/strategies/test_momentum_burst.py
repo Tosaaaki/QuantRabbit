@@ -7,6 +7,26 @@ from strategies.micro.momentum_burst import MomentumBurstMicro
 from workers.micro_runtime import worker as micro_runtime_worker
 
 
+def _synthetic_candles(*, start: float, drift: float, n: int = 40) -> list[dict[str, object]]:
+    candles: list[dict[str, object]] = []
+    close = start
+    for idx in range(n):
+        open_ = close
+        close = start + drift * float(idx + 1)
+        high = max(open_, close) + 0.01
+        low = min(open_, close) - 0.01
+        candles.append(
+            {
+                "timestamp": f"2026-01-01T00:{idx:02d}:00+00:00",
+                "open": round(open_, 3),
+                "high": round(high, 3),
+                "low": round(low, 3),
+                "close": round(close, 3),
+            }
+        )
+    return candles
+
+
 def _softly_contra_transition_long_fixture(*, projection_score: float) -> dict:
     return {
         "close": 158.582,
@@ -29,6 +49,57 @@ def _softly_contra_transition_long_fixture(*, projection_score: float) -> dict:
             "direction": "short",
             "gap_pips": -7.0,
             "adx": 19.0,
+        },
+        "candles": [
+            {"high": 158.53, "low": 158.49, "close": 158.50},
+            {"high": 158.55, "low": 158.50, "close": 158.53},
+            {"high": 158.586, "low": 158.52, "close": 158.55},
+            {"high": 158.584, "low": 158.548, "close": 158.582},
+        ],
+    }
+
+
+def _h4_tiebreak_transition_long_fixture(
+    *,
+    h1_gap_pips: float = -2.8,
+    h1_adx: float = 16.0,
+    h4_direction: str = "long",
+) -> dict:
+    h4_is_long = h4_direction == "long"
+    return {
+        "close": 158.582,
+        "ma10": 158.556,
+        "ma20": 158.528,
+        "ema20": 158.544,
+        "adx": 19.6,
+        "atr_pips": 4.0,
+        "vol_5m": 1.9,
+        "rsi": 52.6,
+        "plus_di": 22.5,
+        "minus_di": 15.8,
+        "roc5": 0.026,
+        "ema_slope_10": 0.0012,
+        "range_score": 0.24,
+        "micro_chop_score": 0.54,
+        "trend_snapshot": {
+            "tf": "H4",
+            "direction": h4_direction,
+            "gap_pips": 18.0 if h4_is_long else -18.0,
+            "adx": 19.0,
+        },
+        "mtf": {
+            "candles_m5": _synthetic_candles(start=158.10, drift=0.018),
+            "candles_h1": _synthetic_candles(start=158.80, drift=-0.014),
+            "candles_h4": _synthetic_candles(start=157.90, drift=0.060 if h4_is_long else -0.060),
+        },
+        "mtf_context": {
+            "m5": {"gap_pips": 3.6, "adx": 23.7, "direction": "long"},
+            "h1": {"gap_pips": h1_gap_pips, "adx": h1_adx, "direction": "short"},
+            "h4": {
+                "gap_pips": 35.2 if h4_is_long else -35.2,
+                "adx": 19.2,
+                "direction": h4_direction,
+            },
         },
         "candles": [
             {"high": 158.53, "low": 158.49, "close": 158.50},
@@ -189,6 +260,29 @@ def test_transition_long_rejects_weak_projection_override_under_softly_contra_sn
     finally:
         monkeypatch.delenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False)
         importlib.reload(momentum_burst_module)
+
+
+def test_transition_long_allows_h4_tiebreak_when_h1_countertrend_is_shallow() -> None:
+    signal = MomentumBurstMicro.check(_h4_tiebreak_transition_long_fixture())
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
+def test_transition_long_keeps_h1_countertrend_block_when_h1_headwind_is_strong() -> None:
+    signal = MomentumBurstMicro.check(
+        _h4_tiebreak_transition_long_fixture(h1_gap_pips=-6.2, h1_adx=20.0)
+    )
+
+    assert signal is None
+
+
+def test_transition_long_keeps_h1_countertrend_block_when_h4_disagrees() -> None:
+    signal = MomentumBurstMicro.check(
+        _h4_tiebreak_transition_long_fixture(h4_direction="short")
+    )
+
+    assert signal is None
 
 
 def test_long_rejects_overextended_indicator_state() -> None:

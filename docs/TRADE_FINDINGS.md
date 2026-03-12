@@ -17902,3 +17902,110 @@ Status:
     の
     `gap/DI/roc`
     近辺の near-miss を点検する。
+
+### 2026-03-12 `MomentumBurst` の H4 tie-break で weak H1 逆風だけ neutralize
+- Why/Hypothesis:
+  - current local-v2 では
+    24h closed trade が
+    `MomentumBurst: 2 trades / +185.3 JPY`
+    と winner 側なのに、
+    直近 6h の order path では
+    `MomentumBurst`
+    の `preflight / submit / fill`
+    が 0 件で、
+    cadence 不足が続いていた。
+  - runtime は
+    `candles_m5 / candles_h1 / candles_h4`
+    を strategy factor に渡している一方で、
+    `strategies/micro/momentum_burst.py`
+    の `_mtf_supports()`
+    は実質
+    `M5/H1`
+    の 2 票だけで binary block していた。
+    `M5 + H4`
+    が同方向でも
+    `H1`
+    の弱い逆風だけで
+    `transition long`
+    を丸ごと落とす余地があった。
+- Expected Good:
+  - `M5 + H4`
+    major trend が揃い、
+    `H1 gap<=4 pips && H1 ADX<18`
+    の shallow countertrend だけを neutralize して、
+    `MomentumBurst`
+    の cadence を strategy-local に少し戻せる。
+  - shared gate / shared sizing / cooldown はそのまま維持できる。
+- Expected Bad:
+  - weak `H1`
+    を広く取りすぎると、
+    broad loosening になって continuation loser を増やす可能性。
+  - そのため
+    `M5 + H4`
+    の同方向 2 票を必須とし、
+    `H1`
+    は
+    `gap/adx`
+    が shallow なときだけ neutralize する。
+- Observed/Fact:
+  - `workers/micro_runtime/worker.py`
+    に
+    `mtf_context`
+    を追加し、
+    `m5/h1/h4`
+    の
+    `gap_pips / adx / direction`
+    を strategy factor へ引き回すよう更新した。
+  - `strategies/micro/momentum_burst.py`
+    の `_mtf_supports()`
+    は
+    `candles_h4`
+    を投票へ加え、
+    `M5 + H4`
+    同方向かつ
+    `H1 gap<=4.0`,
+    `H1 adx<18.0`
+    のときだけ
+    `H1`
+    の逆風を neutralize する。
+  - `ops/env/quant-micro-momentumburst.env`
+    に
+    `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX=4.0`,
+    `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_ADX_MAX=18.0`
+    を dedicated 値として追加した。
+  - `tests/strategies/test_momentum_burst.py`
+    へ
+    `H4 tie-break allow`,
+    `strong H1 headwind keep-block`,
+    `H4 disagreement keep-block`
+    を追加し、
+    `pytest -q tests/strategies/test_momentum_burst.py`
+    は
+    `38 passed`
+    だった。
+  - 軽い replay check（`2026-03-12` UTC day）では
+    extra signal は 0 件で、
+    broad cadence loosening ではなく
+    rare setup 向けの narrow change に留まることを確認した。
+- Verdict: pending
+- Next Action:
+  - `quant-micro-momentumburst`
+    反映後、
+    next `30-90m`
+    の
+    `MomentumBurst`
+    で
+    `M5/H4 aligned + weak H1 oppose`
+    局面の
+    `OPEN_REQ / fills`
+    が増えるかを見る。
+  - 追加 fills が出ても
+    `fast SL`
+    が増えるなら、
+    次は
+    `_long_rsi_min()`
+    の projection-backed override を
+    `trend_snapshot`
+    依存ではなく
+    `MTF support`
+    依存へ寄せる。
