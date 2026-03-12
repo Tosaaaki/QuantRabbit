@@ -1832,6 +1832,15 @@ def _signal_precision_lowvol(
         and ma_gap_atr_ratio is not None
         and 0.30 <= ma_gap_atr_ratio < 0.90
     )
+    short_up_flat = bool(
+        side == "short"
+        and ma_gap_pips is not None
+        and ma_gap_pips > 0.0
+        and ma_gap_atr_ratio is not None
+        and ma_gap_atr_ratio < float(
+            getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_GAP_ATR_RATIO_MAX", 0.30)
+        )
+    )
     short_down_flat = bool(
         side == "short"
         and ma_gap_pips is not None
@@ -1907,6 +1916,24 @@ def _signal_precision_lowvol(
     if weak_overbought_short_lane:
         return None
     if marginal_short_lane:
+        return None
+    up_flat_shallow_short_lane = False
+    if (
+        side == "short"
+        and short_up_flat
+        and range_reason == "volatility_compression"
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        up_flat_shallow_short_lane = (
+            projection_score
+            <= float(getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_PROJECTION_SCORE_MAX", 0.28))
+            and setup_quality
+            < float(getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_SETUP_QUALITY_MAX", 0.50))
+        )
+    if up_flat_shallow_short_lane:
         return None
     if hostile_projection_lane:
         strong_reversal_probe = (

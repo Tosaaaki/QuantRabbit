@@ -36,6 +36,35 @@
     `breakout-long`
     の winner lane は残す。
 
+### 2026-03-12（追記）`PrecisionLowVol` `gap:up_flat` shallow short guard
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `PrecisionLowVol`
+    専用の
+    `PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_*`
+    を追加し、
+    `gap:up_flat`
+    の short で
+    `projection<=0.28`
+    /
+    `setup_quality<0.50`
+    の shallow lane を worker local に reject するようにした。
+  - loser lane block / stronger reclaim keep の回帰を追加した。
+- 意図:
+  - current 最大 loser
+    `PrecisionLowVol`
+    の
+    `range_compression + gap:up_flat`
+    short loser lane だけを狙って削り、
+    `setup_quality`
+    が高い reclaim short は残す。
+
 ### 2026-03-12（追記）`scalp_ping_5s_d_live` negative-window short guard
 
 - 対象:

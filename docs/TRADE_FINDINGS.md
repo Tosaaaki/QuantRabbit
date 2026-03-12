@@ -183,6 +183,129 @@
 - Status:
   - in_progress
 
+## 2026-03-12 16:15 JST / local-v2: `PrecisionLowVol` の `gap:up_flat` shallow short を worker local で遮断
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    に
+    `short_up_flat`
+    判定と
+    `PrecisionLowVol`
+    専用
+    `up_flat_shallow_short_lane`
+    guard を追加し、
+    `range_compression + volatility_compression + gap:up_flat`
+    の short で
+    `projection<=0.28`
+    かつ
+    `setup_quality<0.50`
+    の shallow lane を reject するようにした。
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に対応閾値を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に current loser lane block / stronger reclaim keep の回帰を追加した。
+- Why:
+  - 2026-03-12 16:07 JST 時点の local-v2 では
+    `PrecisionLowVol`
+    が
+    24h
+    `28 trades / net -131.147 JPY / win 32.1% / PF 0.50`
+    の最大 loser だった。
+  - recent loser
+    `459601`
+    は
+    `-22.899 JPY / 10s`
+    で、
+    `PrecisionLowVol|short|range_compression|...|gap:up_flat|volatility_compression`
+    の current lane だった。
+  - 直近同型 loser
+    `459483 / 459473 / 459429 / 459371`
+    も同じ fingerprint 群で、
+    winner
+    `459411`
+    との差は
+    `setup_quality`
+    が
+    `0.301-0.455`
+    と低いことだった
+    （winner は `0.609`）。
+- Hypothesis:
+  - 現在の `PrecisionLowVol` short loser は
+    「強い overbought short」ではなく、
+    `gap:up_flat`
+    の shallow reclaim を short している。
+  - `setup_quality`
+    を閾値にすれば、
+    same fingerprint でも
+    stronger reclaim short は残しつつ、
+    loser probe だけを切れる。
+- Expected Good:
+  - `PrecisionLowVol`
+    の current loser lane を減らし、
+    `STOP_LOSS_ORDER`
+    を止める。
+  - `setup_quality`
+    が高い reclaim short は残す。
+- Expected Bad:
+  - `PrecisionLowVol`
+    short の participation が減る。
+  - 閾値が厳しすぎると、
+    薄利 winner も一部落ちる。
+- Period:
+  - 直近 12h-24h（2026-03-12 16:07 JST 時点確認）。
+- Fact:
+  - recent
+    `gap:up_flat`
+    loser
+    `459601 / 459483 / 459473 / 459429 / 459371`
+    は
+    `setup_quality=0.301-0.455`
+    で、
+    `projection=0.015-0.275`
+    だった。
+  - same fingerprint の winner
+    `459411`
+    は
+    `setup_quality=0.609`
+    /
+    `projection=0.275`
+    で、
+    `flow_guard`
+    が明確に強かった。
+- Failure Cause:
+  - 既存 guard は
+    `RSI>=59`
+    の weak overbought short を中心に切っていたため、
+    `RSI 51-56`
+    の
+    `gap:up_flat`
+    shallow short を残していた。
+- Improvement:
+  - `short_up_flat`
+    を別 cluster として切り出し、
+    `projection<=0.28`
+    /
+    `setup_quality<0.50`
+    の lane を worker local に reject する。
+- Verification:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -k 'up_flat_shallow_short or marginal_short or weak_short'`
+    が通ること。
+  - deploy 後 30-60 分で
+    `PrecisionLowVol|short|range_compression|...|gap:up_flat|volatility_compression`
+    の
+    `fills / STOP_LOSS_ORDER / realized_jpy`
+    を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - post-deploy で
+    `PrecisionLowVol`
+    の同 fingerprint が still loser なら、
+    `touch_ratio`
+    まで使った reclaim strength guard を追加する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 15:35 JST / local-v2: `scalp_extrema_reversal_live` short の marginal drift probe を worker local で遮断
 
 - Change:

@@ -54,6 +54,57 @@
     `breakout-long`
     は維持する。
 
+### local-v2 `PrecisionLowVol` `gap:up_flat` shallow short guard（2026-03-12）
+- 背景:
+  - 2026-03-12 16:07 JST 時点の local-v2 で
+    `PrecisionLowVol`
+    は
+    24h
+    `28 trades / net -131.147 JPY / win 32.1% / PF 0.50`
+    の最大 loser だった。
+  - recent loser
+    `459601`
+    は
+    `-22.899 JPY / 10s`
+    で、
+    fingerprint は
+    `PrecisionLowVol|short|range_compression|...|gap:up_flat|volatility_compression`
+    だった。
+  - 同 fingerprint の recent losers
+    `459483 / 459473 / 459429 / 459371`
+    は
+    `setup_quality=0.301-0.455`
+    で、
+    same bucket の winner
+    `459411`
+    は
+    `setup_quality=0.609`
+    だった。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    に
+    `short_up_flat`
+    判定と
+    `up_flat_shallow_short_lane`
+    guard を追加し、
+    `range_compression + volatility_compression + gap:up_flat`
+    の short で
+    `projection<=0.28`
+    /
+    `setup_quality<0.50`
+    の lane を reject する。
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_*`
+    を追加した。
+- 意図:
+  - `RSI>=59`
+    条件の既存 weak short guard をすり抜けていた
+    `RSI 51-56`
+    の shallow short loser lane を、
+    `setup_quality`
+    ベースで strategy-local に落とす。
+
 ### local-v2 `scalp_extrema_reversal_live` short drift probe guard（2026-03-12）
 - 背景:
   - 2026-03-12 15:18 JST 時点でも
