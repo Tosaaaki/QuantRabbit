@@ -15440,3 +15440,55 @@ Status:
     setup override が
     `range_compression`
     側へ寄るかを確認する。
+
+## 2026-03-12 PrecisionLowVol marginal short continuation-headwind guard
+- Why/Hypothesis:
+  - 2026-03-12 10:48 JST 時点の local-v2 実測では、
+    USD/JPY は `158.824`、spread `0.8 pips`、M1平均レンジ `2.5 pips` で
+    市況・execution は通常帯だった。
+  - 直近24hの `trades.db` では
+    `PrecisionLowVol` short `volatility_compression` が
+    `24 trades / -81.7 JPY` と最大 drag だった。
+  - 既存 weak overbought short guard
+    (`rsi>=60`, `projection.score<=0`, `setup_quality<0.46`)
+    の少し外側を集計すると、
+    `continuation_pressure>=0.33`, `rsi>=59`,
+    `projection.score<=0.08`, `setup_quality<0.44`
+    が `8 trades / 0 wins / -107.6 JPY` に集中していた。
+  - env 閾値を単純に広げるだけだと
+    `continuation_pressure=0` の戻り勝ち short まで巻き込むため、
+    headwind 条件つきの marginal guard を別建てした方が安全と判断した。
+- Expected Good:
+  - continuation headwind を背負った marginal reclaim short を前倒しで落とし、
+    `PrecisionLowVol` の current drag を減らす。
+  - headwind が薄い short と stronger projection short は残し、
+    strategy 自体の参加は維持する。
+- Expected Bad:
+  - `continuation_pressure` が一時的に高い局面で、
+    rare winner の short を少数取り逃がす可能性がある。
+  - ただし current cluster は `0 wins` で集中しており、
+    blanket stop より worker local の lane 切りの方が副作用は小さい。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に `PREC_LOWVOL_MARGINAL_SHORT_*` を追加した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    は `range_reason=volatility_compression` short で
+    `continuation_pressure>=0.33`, `rsi>=59`,
+    `projection.score<=0.08`, `setup_quality<0.44`
+    の marginal short を reject するようにした。
+  - `ops/env/quant-scalp-precision-lowvol.env`
+    に current live 値
+    `RSI_MIN=59.0`, `PROJECTION_SCORE_MAX=0.08`,
+    `SETUP_QUALITY_MAX=0.44`,
+    `CONTINUATION_PRESSURE_MIN=0.33`
+    を明記した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    へ headwind あり/なしの regression を追加した。
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    は `19 passed`。
+- Verdict: pending
+- Next Action:
+  - `git commit -> git push -> scripts/local_v2_stack.sh restart ...`
+    で反映し、
+    next 30-60 分の `PrecisionLowVol short fills / STOP_LOSS_ORDER / realized_jpy`
+    を再確認する。

@@ -229,6 +229,42 @@
     「今まさに short を連打して削っている burst」だけを
     worker local に締める。
 
+### local-v2 `PrecisionLowVol` marginal short continuation-headwind guard（2026-03-12）
+- 背景:
+  - 同日 10:45 JST 時点の local-v2 実測では、
+    USD/JPY は `158.824`、spread `0.8 pips`、M1平均レンジ `2.5 pips` で
+    execution は正常だった。
+  - それでも `PrecisionLowVol` short `volatility_compression` は
+    直近24h `24 trades / -81.7 JPY` で、
+    既存 weak overbought short guard (`rsi>=60`, `projection<=0`, `setup_quality<0.46`) の
+    少し外側にある marginal short が残っていた。
+  - current loser cluster は
+    `continuation_pressure>=0.33`, `rsi>=59`,
+    `projection.score<=0.08`, `setup_quality<0.44`
+    で `8 trades / 0 wins / -107.6 JPY` と集中していた。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    - `PREC_LOWVOL_MARGINAL_SHORT_*` を追加し、
+      continuation headwind 下の marginal short guard を dedicated env から操作できるようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_signal_precision_lowvol()` は
+      `range_reason=volatility_compression` の short で
+      `continuation_pressure>=0.33`, `rsi>=59`,
+      `projection.score<=0.08`, `setup_quality<0.44`
+      の marginal reclaim short を reject する。
+    - `continuation_pressure` が薄い short や stronger projection short は維持し、
+      既存 weak-short / setup-pressure / hostile projection guard は残した。
+  - `ops/env/quant-scalp-precision-lowvol.env`
+    - `SCALP_PRECISION_LOWVOL_PREC_LOWVOL_MARGINAL_SHORT_*`
+      を current live 値で明示した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    - continuation headwind ありの marginal short が block され、
+      headwind なしの short が残ることを regression test 化した。
+- 意図:
+  - `PrecisionLowVol` short を blanket stop せず、
+    continuation headwind を背負った marginal reclaim short だけを
+    worker local に前倒しで落とす。
+
 ### local-v2 `scalp_ping_5s_d_live` countertrend guard + broker TP（2026-03-11）
 - 背景:
   - 2026-03-11 20:45 JST 前後の local-v2 実測では、

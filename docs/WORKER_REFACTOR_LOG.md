@@ -16744,3 +16744,37 @@
     ではなく
     `range_compression`
     を復元することを確認した。
+
+### 2026-03-12 PrecisionLowVol marginal short continuation-headwind guard
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-precision-lowvol.env`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+
+- 背景:
+  - local-v2 実測では
+    `PrecisionLowVol` short `volatility_compression` が
+    直近24h `24 trades / -81.7 JPY` の主因で、
+    既存 weak-short guard の少し外側にある
+    marginal reclaim short が残っていた。
+  - current loser cluster は
+    `continuation_pressure>=0.33`, `rsi>=59`,
+    `projection.score<=0.08`, `setup_quality<0.44`
+    で `8 trades / 0 wins / -107.6 JPY` と集中していた。
+
+- 変更:
+  - `PREC_LOWVOL_MARGINAL_SHORT_*` を追加し、
+    continuation headwind 下の marginal short guard を
+    dedicated env で調整可能にした。
+  - `_signal_precision_lowvol()` は
+    `range_reason=volatility_compression` の short で
+    `continuation_pressure>=0.33`, `rsi>=59`,
+    `projection.score<=0.08`, `setup_quality<0.44`
+    を満たす lane を worker local に reject する。
+  - existing weak-short / setup-pressure / hostile projection guard は維持し、
+    headwind が薄い short は通す regression test を追加した。
+
+- 検証:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `19 passed`

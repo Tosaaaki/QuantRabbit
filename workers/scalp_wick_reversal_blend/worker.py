@@ -1885,7 +1885,28 @@ def _signal_precision_lowvol(
             and setup_quality
             < float(getattr(config, "PREC_LOWVOL_WEAK_SHORT_SETUP_QUALITY_MAX", 0.46))
         )
+    marginal_short_lane = False
+    if (
+        side == "short"
+        and range_reason == "volatility_compression"
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_MARGINAL_SHORT_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        marginal_short_lane = (
+            continuation_pressure
+            >= float(getattr(config, "PREC_LOWVOL_MARGINAL_SHORT_CONTINUATION_PRESSURE_MIN", 0.33))
+            and rsi >= float(getattr(config, "PREC_LOWVOL_MARGINAL_SHORT_RSI_MIN", 59.0))
+            and projection_score
+            <= float(getattr(config, "PREC_LOWVOL_MARGINAL_SHORT_PROJECTION_SCORE_MAX", 0.08))
+            and setup_quality
+            < float(getattr(config, "PREC_LOWVOL_MARGINAL_SHORT_SETUP_QUALITY_MAX", 0.44))
+        )
     if weak_overbought_short_lane:
+        return None
+    if marginal_short_lane:
         return None
     if hostile_projection_lane:
         strong_reversal_probe = (
