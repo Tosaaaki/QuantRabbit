@@ -5,6 +5,37 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`MicroLevelReactor` leading-profile reject for negative-forecast `bounce-lower`
+
+- 対象:
+  - `ops/env/quant-micro-levelreactor.env`
+  - `ops/env/local-v2-stack.env`
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `MicroLevelReactor`
+    専用の
+    `ENTRY_LEADING_PROFILE`
+    を有効化し、
+    `forecast 60% / tech 15% / range 20% / micro 5%`
+    の重みで
+    `adjusted entry_probability < 0.44`
+    の long を reject するようにした。
+  - current loser
+    `bounce-lower`
+    reject と
+    winner
+    `breakout-long`
+    keep の unit test を追加した。
+- 意図:
+  - shared forecast fusion で縮小止まりだった
+    `MicroLevelReactor-bounce-lower`
+    の negative forecast long を
+    strategy-scoped に止め、
+    `breakout-long`
+    の winner lane は残す。
+
 ### 2026-03-12（追記）`scalp_ping_5s_d_live` negative-window short guard
 
 - 対象:

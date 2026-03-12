@@ -4,6 +4,8 @@ import asyncio
 import pathlib
 import sys
 
+import pytest
+
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -549,6 +551,69 @@ def test_entry_leading_profile_rejects_under_strategy_threshold(monkeypatch) -> 
     assert prob is not None and prob < 0.70
     assert applied.get("reject") is True
     assert applied.get("reason") == "entry_leading_profile_reject"
+
+
+def test_entry_leading_profile_rejects_mlr_bounce_lower_negative_forecast(monkeypatch) -> None:
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
+    thesis: dict[str, object] = {
+        "env_prefix": "MICRO_MULTI",
+        "tech_score": 0.333,
+        "range_score": 0.416,
+    }
+
+    units, prob, applied = strategy_entry._apply_strategy_leading_profile(
+        strategy_tag="MicroLevelReactor",
+        pocket="micro",
+        units=759,
+        entry_probability=0.473559,
+        entry_thesis=thesis,
+        forecast_context={"p_up": 0.331551},
+        meta={},
+    )
+
+    assert units == 0
+    assert prob is not None and prob < 0.44
+    assert applied.get("reject") is True
+    assert applied.get("reason") == "entry_leading_profile_reject"
+    assert applied.get("env_prefixes") == ["MICRO_MULTI", "MICROLEVELREACTOR"]
+
+
+def test_entry_leading_profile_keeps_mlr_breakout_long_positive_forecast(monkeypatch) -> None:
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
+    thesis: dict[str, object] = {
+        "env_prefix": "MICRO_MULTI",
+        "tech_score": 0.224,
+        "range_score": 0.614,
+    }
+
+    units, prob, applied = strategy_entry._apply_strategy_leading_profile(
+        strategy_tag="MicroLevelReactor",
+        pocket="micro",
+        units=987,
+        entry_probability=0.664901,
+        entry_thesis=thesis,
+        forecast_context={"p_up": 0.760283},
+        meta={},
+    )
+
+    assert units == 987
+    assert prob == pytest.approx(0.664901)
+    assert applied.get("reject") is False
+    assert applied.get("reason") == "entry_leading_profile_passthrough"
 
 
 def test_entry_leading_profile_skips_manual_pocket(monkeypatch) -> None:

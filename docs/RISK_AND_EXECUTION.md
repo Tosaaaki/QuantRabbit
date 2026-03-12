@@ -8,6 +8,52 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MicroLevelReactor` leading-profile reject for negative-forecast `bounce-lower`（2026-03-12）
+- 背景:
+  - 2026-03-12 15:41 JST 時点の local-v2 で、
+    current loser は
+    `MicroLevelReactor-bounce-lower`
+    だった。
+  - recent 12h の
+    `MicroLevelReactor-bounce-lower|long|range_fade|...|gap:down_lean|...|tr:dn_strong`
+    は
+    `6 trades / net -28.026 JPY / 4x STOP_LOSS`
+    で、
+    losers
+    `459537 / 459541 / 459563 / 459571`
+    は
+    `tp_touch<=600s = 0/4`
+    だった。
+  - これらは全件
+    `forecast.reason=style_mismatch_range`
+    /
+    `forecast.expected_pips=-0.4551`
+    /
+    `forecast.p_up=0.331551`
+    /
+    `trend_state=strong_down`
+    の negative forecast long だった。
+- 実装:
+  - `MicroLevelReactor`
+    専用に
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    を追加し、
+    leading profile の重みを
+    `forecast 60% / tech 15% / range 20% / micro 5%`
+    へ設定した。
+  - `adjusted entry_probability < 0.44`
+    の long を reject する。
+- 意図:
+  - shared forecast fusion の `reduce`
+    だけでは残っていた
+    `MicroLevelReactor-bounce-lower`
+    の negative forecast long を、
+    `MicroLevelReactor`
+    専用の strategy-scoped reject で止める。
+  - positive forecast の
+    `breakout-long`
+    は維持する。
+
 ### local-v2 `scalp_extrema_reversal_live` short drift probe guard（2026-03-12）
 - 背景:
   - 2026-03-12 15:18 JST 時点でも

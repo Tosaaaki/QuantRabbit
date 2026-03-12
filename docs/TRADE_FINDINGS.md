@@ -51,6 +51,138 @@
 - Status:
 ```
 
+## 2026-03-12 16:05 JST / local-v2: `MicroLevelReactor-bounce-lower` の negative-forecast long を strategy-scoped leading profile で reject
+
+- Change:
+  - `ops/env/quant-micro-levelreactor.env`
+    と
+    `ops/env/local-v2-stack.env`
+    に
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    を追加し、
+    `MicroLevelReactor`
+    long の leading profile を
+    `forecast 60% / tech 15% / range 20% / micro 5%`
+    で評価し、
+    `adjusted entry_probability < 0.44`
+    の lane を reject するようにした。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    に
+    current loser
+    `bounce-lower`
+    は reject、
+    current winner
+    `breakout-long`
+    は keep
+    の回帰を追加した。
+- Why:
+  - 2026-03-12 15:41 JST 時点の local-v2 は
+    `146 trades / PF 0.44 / net -23.255 JPY`
+    で、
+    post-deploy の current loser は
+    `MicroLevelReactor-bounce-lower`
+    だった。
+  - 直近 12h の同一 fingerprint
+    `MicroLevelReactor-bounce-lower|long|range_fade|...|gap:down_lean|...|tr:dn_strong`
+    は
+    `6 trades / net -28.026 JPY / 4x STOP_LOSS`
+    だった。
+  - recent loser
+    `459537 / 459541 / 459563 / 459571`
+    は
+    `TP_touch<=600s = 0/4`
+    で、
+    全件
+    `forecast.reason=style_mismatch_range`
+    /
+    `forecast.expected_pips=-0.4551`
+    /
+    `forecast.p_up=0.331551`
+    /
+    `trend_state=strong_down`
+    のまま通っていた。
+- Hypothesis:
+  - この lane は、
+    forecast block を shared layer が
+    `reduce`
+    に留めた結果、
+    negative forecast long が still filled されている。
+  - `MicroLevelReactor`
+    専用 leading profile で
+    forecast の contra を強めに重み付けすれば、
+    loser `bounce-lower`
+    は切り、
+    positive forecast の
+    `breakout-long`
+    は残せる。
+- Expected Good:
+  - `MicroLevelReactor-bounce-lower`
+    の current loser long を reject し、
+    `STOP_LOSS_ORDER`
+    を減らす。
+  - `breakout-long`
+    の winner lane は維持する。
+- Expected Bad:
+  - `MicroLevelReactor`
+    long の participation が減る。
+  - threshold が強すぎると、
+    反発勝ちの薄利 long も落とす。
+- Period:
+  - 直近 12h-24h（2026-03-12 15:41 JST 時点確認）。
+- Fact:
+  - `459537 / 459541 / 459563 / 459571`
+    は
+    `entry_probability_after_forecast_fusion ≈ 0.4736`
+    から、
+    提案値の leading profile simulation で
+    `0.41897`
+    へ低下し、
+    reject になることを確認した。
+  - 一方
+    `458937 / 458929`
+    の
+    `MicroLevelReactor-breakout-long`
+    は
+    `entry_probability_after_forecast_fusion ≈ 0.6649`
+    のまま
+    pass することを確認した。
+- Failure Cause:
+  - `MicroLevelReactor-bounce-lower`
+    の negative forecast long を
+    shared forecast fusion が縮小だけで残し、
+    same-lane burst が filled されていた。
+- Improvement:
+  - `MicroLevelReactor`
+    専用
+    `ENTRY_LEADING_PROFILE`
+    を有効化し、
+    negative forecast + weak range の long だけを
+    strategy-scoped に reject する。
+- Verification:
+  - `PYTHONPATH=. pytest -q tests/execution/test_strategy_entry_forecast_fusion.py -k 'mlr_bounce_lower_negative_forecast or mlr_breakout_long_positive_forecast or entry_leading_profile_'`
+    が通ること。
+  - deploy 後 30-60 分で
+    `MicroLevelReactor-bounce-lower`
+    の
+    `forecast_gate_block`
+    と
+    `entry_leading_profile_reject`
+    が並び、
+    filled が止まること。
+- Verdict:
+  - pending
+- Next Action:
+  - post-deploy で
+    `MicroLevelReactor-bounce-lower`
+    の
+    `fills / STOP_LOSS_ORDER / realized_jpy`
+    を確認し、
+    まだ残るなら
+    `bounce-lower`
+    自体に worker local guard を追加する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 15:35 JST / local-v2: `scalp_extrema_reversal_live` short の marginal drift probe を worker local で遮断
 
 - Change:
