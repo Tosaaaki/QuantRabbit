@@ -17,6 +17,8 @@
 - VM の稼働監視/操作はデフォルトで行わない（`QR_LOCAL_ONLY=1`）。
 - ローカル運用タスクでは `scripts/vm.sh` / `deploy_to_vm.sh` / `gcloud compute *` を実行しない。
 - ローカル実売買は自己責任で行い、手動ポジションへの干渉条件を常に確認する。
+- local-v2 の仕組みを追加・削除したタスクでは、`docs/CURRENT_MECHANISMS.md` も同じ変更で更新する。
+  - 削除・停止した仕組みは単純削除せず、同ファイルの `Archive` セクションへ日付と理由つきで移す。
 
 ## 1. ローカルV2スタック（worker群）
 - 制御スクリプト: `scripts/local_v2_stack.sh`

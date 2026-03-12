@@ -2,6 +2,13 @@
 
 このファイルは、QuantRabbit の「今ある仕組み」を 1 枚で見られるようにするための棚卸しです。詳細仕様は `docs/ARCHITECTURE.md` と `docs/WORKER_ROLE_MATRIX_V2.md` を正本とし、この文書は「どの仕組みがあり、どこを見れば状態確認できるか」の早見表として使います。
 
+## 0. 保守ルール
+
+- 新しい仕組みを local-v2 の運用導線へ追加したら、このファイルの該当セクションも同じ変更で更新する。
+- 既存の仕組みを停止・削除したら、行を単純削除せず、末尾の `Archive` セクションへ移して日付と理由を残す。
+- `trade_min` / `trade_cover` / `trade_all` の profile 変更、または `mechanism_integrity` の監査対象変更が入った場合も、このファイルを更新対象に含める。
+- 実装詳細は正本ドキュメントへ譲り、このファイルでは「現行かどうか」「どこで確認するか」「何として動いているか」を優先して保守する。
+
 ## 1. 作成時点スナップショット（2026-03-12 JST）
 
 - 市況チェック
@@ -189,3 +196,15 @@ print(obj["mechanism_integrity"]["strategy_feedback"]["active_strategies"])
 print(obj["mechanism_integrity"]["strategy_feedback"]["eligible_active_strategies"])
 PY
 ```
+
+## 8. Archive
+
+現時点では archive 対象なし。
+
+削除・停止した仕組みは、次の形式でここへ追記する。
+
+- `YYYY-MM-DD`: `mechanism_name`
+  - 前の役割:
+  - 現在の扱い: archived / removed / replaced
+  - 置き換え先:
+  - 備考:

@@ -17822,3 +17822,37 @@
     - `summary=279ms(200)`
     - `openTrades=220ms(200)`
     - `USD/JPY spread=0.8 pips`
+
+### 2026-03-12 `CURRENT_MECHANISMS` を運用台帳化
+- 対象:
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - 一覧を作っただけだと、
+    以後の仕組み追加・削除で放置されるとすぐ陳腐化する。
+  - とくに削除系は履歴ごと消すと
+    「前は何があって何に置き換わったか」
+    が追えなくなる。
+
+- 変更:
+  - `docs/CURRENT_MECHANISMS.md`
+    に
+    `保守ルール`
+    と
+    `Archive`
+    セクションを追加した。
+  - 追加時は同ファイル更新、
+    削除時は archive へ日付と理由を残す方針を明文化した。
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+    の運用原則にも、
+    local-v2 の仕組み追加・削除時は
+    `docs/CURRENT_MECHANISMS.md`
+    を更新することを追記した。
+
+- 検証:
+  - `sed -n '1,120p docs/CURRENT_MECHANISMS.md'`
+    で保守ルール追記を確認。
+  - `sed -n '1,40p docs/OPS_LOCAL_RUNBOOK.md'`
+    で runbook 側の更新責務追記を確認。
