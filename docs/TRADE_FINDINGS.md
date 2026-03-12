@@ -51,6 +51,117 @@
 - Status:
 ```
 
+## 2026-03-12 09:45 JST / local-v2: `WickReversalBlend` を市況 + recent outcome で動的化し、同値 protection refresh を止める
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/policy.py` に
+    `WickReversalBlend` long の weak countertrend lane block を追加した。
+  - `workers/scalp_wick_reversal_blend/worker.py` に
+    recent long loser を読む `setup_pressure` を追加し、
+    active 時だけ shallow long を追加で reject するようにした。
+  - `execution/order_manager.py` に
+    submit-time protection の cache seed を追加し、
+    fill 後の identical `on_fill_protection`
+    refresh を no-op にした。
+- Why:
+  - user-facing では 09:30 台に `注文取消` が並んだが、
+    実態は `WickReversalBlend` long が約定してすぐ SL を踏み、
+    その前後で child order の replace / sibling cancel が見えていた。
+  - 取消の説明だけでは不十分で、
+    実際に money を削っている current lane と
+    無駄な protection refresh の両方を潰す必要があった。
+- Hypothesis:
+  - `volatility_compression` の weak countertrend long を entry 前に落とせば、
+    09:30 型の immediate SL を減らせる。
+  - さらに recent loser streak が active な間だけ
+    `bbw / range_score / wick_quality / projection_score`
+    を使った `setup_pressure`
+    を掛ければ、fixed stop ではなく
+    current market regime に応じて long participation を絞れる。
+  - submit-time `SL/TP` と actual fill 基準の target が同じケースでは
+    protection refresh を送らなければ、
+    OANDA UI 上の cancel noise と不要な child order churn を減らせる。
+- Expected Good:
+  - `WickReversalBlend` の `09:30` 型 long loser が減る。
+  - normal fill 直後に identical protection refresh が走らず、
+    user-facing cancel notice が減る。
+- Expected Bad:
+  - `WickReversalBlend` long の aggressive reclaim が一部減る可能性がある。
+  - broker 側で protection 未作成なのに cache seed だけ入るケースがあれば、
+    same-value refresh を skip してしまうリスクがある。
+- Period:
+  - incident:
+    - JST `2026-03-12 09:29-09:30`
+  - RCA sample:
+    - last 14 days `trades.db`
+- Fact:
+  - `quant-order-manager.log` では
+    `2026-03-12 09:30:16-09:30:17 JST`
+    に
+    `WickReversalBlend buy 2012 units`
+    が `OPEN_REQ sl/tp=159.173/159.220`
+    で送られ、
+    fill 後の `on_fill_protection`
+    も同じ `159.173/159.220`
+    を target にしていた。
+  - `trades.db` では
+    `ticket=459305`
+    が `09:30:17 JST fill 159.192`
+    から
+    `09:30:22 JST STOP_LOSS_ORDER 159.173 / -38.228 JPY`
+    で閉じていた。
+  - same detailed lane
+    (`technical_context.side=long`,
+    `range_reason=volatility_compression`,
+    `rsi<50`,
+    `projection.score<=0.15`,
+    `macd_hist_pips<-0.05`)
+    は直近14日で
+    `3 trades / 0 wins / -44.845 JPY`
+    だった。
+- Failure Cause:
+  - `WickReversalBlend` が
+    neutral-to-weak RSI かつ bearish micro momentum の
+    countertrend long を strong wick/tick だけで通していた。
+  - `order_manager` は
+    submit-time protection を cache していなかったため、
+    realign 不要でも same-value `TradeCRCDO`
+    を送り直しうる状態だった。
+- Improvement:
+  - `wick_blend_entry_quality()` に
+    `range_reason / macd_hist_pips / di_gap`
+    を渡し、
+    weak countertrend long lane を
+    `weak_countertrend_lane`
+    として reject する。
+  - `WickReversalBlend` long の recent outcome を
+    `setup_pressure`
+    として集計し、
+    current loser streak が active な間だけ
+    shallow long を worker local で絞る。
+  - fill 後は `_remember_protections()`
+    で submit-time `SL/TP`
+    を seed し、
+    actual fill への change が無いケースは
+    `on_fill_protection`
+    を skip する。
+- Verification:
+  - `pytest -q tests/workers/test_scalp_wick_reversal_blend_policy.py`
+  - `pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `pytest -q tests/execution/test_order_manager_dynamic_protection.py`
+  - `pytest -q tests/execution/test_order_manager_preflight.py`
+- Verdict:
+  - pending
+- Next Action:
+  - restart 後の next `30-60分` で
+    `WickReversalBlend` long の
+    `filled / STOP_LOSS_ORDER / net_jpy`
+    と、
+    fill 直後の `on_fill_protection`
+    cancel noise が実際に減るかを確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 04:57 JST / local-v2: `scalp_extrema_reversal_live` の late probability reject を撤去
 
 - Change:

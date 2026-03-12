@@ -2812,6 +2812,36 @@ _PROTECTION_RETRY_REASONS = {
     # Observed from OANDA as a take-profit protection reject when price moved past TP.
     "LOSING_TAKE_PROFIT",
 }
+
+
+def _remember_protections(
+    trade_id: str,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    *,
+    overwrite: bool = True,
+) -> None:
+    trade_key = str(trade_id or "").strip()
+    if not trade_key:
+        return
+    prev = _LAST_PROTECTIONS.get(trade_key)
+    if (
+        not overwrite
+        and isinstance(prev, dict)
+        and (prev.get("sl") is not None or prev.get("tp") is not None)
+    ):
+        return
+
+    current_sl = round(sl_price, 3) if sl_price is not None else None
+    current_tp = round(tp_price, 3) if tp_price is not None else None
+    if current_sl is None and current_tp is None:
+        return
+
+    _LAST_PROTECTIONS[trade_key] = {
+        "sl": current_sl,
+        "tp": current_tp,
+        "ts": time.time(),
+    }
 _ORDER_QUOTE_RETRY_REASONS = {
     "OFF_QUOTES",
     "PRICE_BOUND_EXCEEDED",
@@ -7298,11 +7328,7 @@ def _maybe_update_protections(
     try:
         req = TradeCRCDO(accountID=ACCOUNT, tradeID=trade_id, data=data)
         api.request(req)
-        _LAST_PROTECTIONS[trade_id] = {
-            "sl": current_sl,
-            "tp": current_tp,
-            "ts": time.time(),
-        }
+        _remember_protections(trade_id, current_sl, current_tp)
     except Exception as exc:  # noqa: BLE001
         logging.warning(
             "[ORDER] Failed to update protections trade=%s sl=%s tp=%s ctx=%s: %s",
@@ -13311,6 +13337,14 @@ async def market_order(
                                 f"{basis_val:.3f}",
                             )
                             target_sl = None
+                # Seed the protection cache from the submit-time request so we do not
+                # cancel/recreate identical child orders immediately after fill.
+                _remember_protections(
+                    trade_id,
+                    target_sl,
+                    tp_price,
+                    overwrite=False,
+                )
                 target_sl, target_tp, protections_realigned = _realign_protections_to_fill(
                     executed_price=executed_price,
                     entry_basis=entry_basis if entry_basis is not None else estimated_entry,

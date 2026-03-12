@@ -584,6 +584,49 @@ WICK_BLEND_FOLLOW_PIPS = _env_float("WICK_BLEND_FOLLOW_PIPS", 0.0)
 WICK_BLEND_EXTREME_RETRACE_MIN_PIPS = _env_float("WICK_BLEND_EXTREME_RETRACE_MIN_PIPS", 0.0)
 WICK_BLEND_DIAG = _env_bool("WICK_BLEND_DIAG", False)
 WICK_BLEND_DIAG_INTERVAL_SEC = _env_float("WICK_BLEND_DIAG_INTERVAL_SEC", 20.0)
+WICK_BLEND_LONG_SETUP_PRESSURE_ENABLED = _env_bool("WICK_BLEND_LONG_SETUP_PRESSURE_ENABLED", True)
+WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_MINUTES = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_MINUTES", 1440.0
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_TRADES = _env_int(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_TRADES", 6
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_MIN_TRADES = _env_int(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_MIN_TRADES", 2
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_ACTIVE_MAX_AGE_SEC = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_ACTIVE_MAX_AGE_SEC", 43200.0
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC", 35.0
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_STOP_LOSS_STREAK_MIN = _env_int(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_STOP_LOSS_STREAK_MIN", 2
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_FAST_STOP_LOSS_STREAK_MIN = _env_int(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_FAST_STOP_LOSS_STREAK_MIN", 2
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_NET_LOSS_MIN_JPY = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_NET_LOSS_MIN_JPY", 10.0
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_CACHE_TTL_SEC = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_CACHE_TTL_SEC", 15.0
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_BBW_MAX = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_BBW_MAX", 0.00055
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_RANGE_SCORE_MIN = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_RANGE_SCORE_MIN", 0.40
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_RSI_MAX = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_RSI_MAX", 50.0
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_QUALITY_MAX = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_QUALITY_MAX", 0.83
+)
+WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX = _env_float(
+    "WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX", 0.15
+)
 
 # Tick-window wick reversal (higher-frequency range-reversion).
 TICK_WICK_WINDOW_SEC = _env_float("TICK_WICK_WINDOW_SEC", 9.0)
@@ -613,6 +656,7 @@ TICK_WICK_MIN_UNITS_CLAMP_RATIO = _env_float("TICK_WICK_MIN_UNITS_CLAMP_RATIO", 
 _LAST_TICK_WICK_PLACE_DIAG_TS = 0.0
 _LAST_WICK_BLEND_DIAG_TS = 0.0
 _PREC_LOWVOL_SETUP_PRESSURE_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, float]]] = {}
+_WICK_BLEND_LONG_SETUP_PRESSURE_CACHE: Dict[str, Tuple[float, Dict[str, float]]] = {}
 
 
 class _NoopStageTracker:
@@ -1089,6 +1133,143 @@ def _precision_lowvol_setup_pressure(side: str, range_reason: str) -> Dict[str, 
 
     _PREC_LOWVOL_SETUP_PRESSURE_CACHE[cache_key] = (now_mono, dict(summary))
     return summary
+
+
+def _wick_blend_long_setup_pressure(range_reason: str) -> Dict[str, float]:
+    reason_key = str(range_reason or "").strip().lower()
+    if (
+        not WICK_BLEND_LONG_SETUP_PRESSURE_ENABLED
+        or reason_key != "volatility_compression"
+        or WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_TRADES <= 0
+        or WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_MINUTES <= 0.0
+    ):
+        return {}
+
+    now_mono = time.monotonic()
+    cached = _WICK_BLEND_LONG_SETUP_PRESSURE_CACHE.get(reason_key)
+    cache_ttl = max(0.0, WICK_BLEND_LONG_SETUP_PRESSURE_CACHE_TTL_SEC)
+    if cached is not None and cache_ttl > 0.0 and (now_mono - cached[0]) <= cache_ttl:
+        return dict(cached[1])
+
+    query = """
+        SELECT
+          close_reason,
+          COALESCE(realized_pl, 0.0) AS realized_pl,
+          COALESCE((julianday(close_time) - julianday(open_time)) * 86400.0, 0.0) AS hold_sec,
+          COALESCE((julianday('now') - julianday(close_time)) * 86400.0, 999999.0) AS age_sec
+        FROM trades
+        WHERE strategy_tag = 'WickReversalBlend'
+          AND close_time IS NOT NULL
+          AND julianday(close_time) >= julianday('now', ?)
+          AND units > 0
+          AND lower(COALESCE(json_extract(entry_thesis, '$.range_reason'), '')) = ?
+        ORDER BY julianday(close_time) DESC
+        LIMIT ?
+    """
+    summary: Dict[str, float] = {
+        "trades": 0.0,
+        "sl_rate": 0.0,
+        "fast_sl_rate": 0.0,
+        "net_jpy": 0.0,
+        "stop_loss_streak": 0.0,
+        "fast_stop_loss_streak": 0.0,
+        "last_close_age_sec": 999999.0,
+        "active": 0.0,
+    }
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect("file:logs/trades.db?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            query,
+            (
+                f"-{max(30.0, WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_MINUTES):.1f} minutes",
+                reason_key,
+                int(max(1, WICK_BLEND_LONG_SETUP_PRESSURE_LOOKBACK_TRADES)),
+            ),
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        if con is not None:
+            con.close()
+
+    if rows:
+        trades = len(rows)
+        sl_count = 0
+        fast_sl_count = 0
+        stop_loss_streak = 0
+        fast_stop_loss_streak = 0
+        net_jpy = 0.0
+        last_close_age_sec = 999999.0
+        fast_sl_max_hold_sec = max(0.0, WICK_BLEND_LONG_SETUP_PRESSURE_FAST_SL_MAX_HOLD_SEC)
+        for idx, row in enumerate(rows):
+            close_reason = str(row["close_reason"] or "").upper()
+            realized_pl = float(row["realized_pl"] or 0.0)
+            hold_sec = max(0.0, float(row["hold_sec"] or 0.0))
+            net_jpy += realized_pl
+            is_stop_loss = close_reason == "STOP_LOSS_ORDER"
+            is_fast_stop_loss = is_stop_loss and hold_sec <= fast_sl_max_hold_sec
+            if is_stop_loss:
+                sl_count += 1
+            if is_fast_stop_loss:
+                fast_sl_count += 1
+            if idx == 0:
+                last_close_age_sec = max(0.0, float(row["age_sec"] or 0.0))
+            if stop_loss_streak == idx and is_stop_loss:
+                stop_loss_streak += 1
+            if fast_stop_loss_streak == idx and is_fast_stop_loss:
+                fast_stop_loss_streak += 1
+
+        sl_rate = sl_count / max(1, trades)
+        fast_sl_rate = fast_sl_count / max(1, trades)
+        active = (
+            trades >= max(1, WICK_BLEND_LONG_SETUP_PRESSURE_MIN_TRADES)
+            and net_jpy <= -max(0.0, WICK_BLEND_LONG_SETUP_PRESSURE_NET_LOSS_MIN_JPY)
+            and stop_loss_streak >= max(1, WICK_BLEND_LONG_SETUP_PRESSURE_STOP_LOSS_STREAK_MIN)
+            and fast_stop_loss_streak >= max(0, WICK_BLEND_LONG_SETUP_PRESSURE_FAST_STOP_LOSS_STREAK_MIN)
+            and last_close_age_sec <= max(0.0, WICK_BLEND_LONG_SETUP_PRESSURE_ACTIVE_MAX_AGE_SEC)
+        )
+        summary = {
+            "trades": float(trades),
+            "sl_rate": round(sl_rate, 3),
+            "fast_sl_rate": round(fast_sl_rate, 3),
+            "net_jpy": round(net_jpy, 3),
+            "stop_loss_streak": float(stop_loss_streak),
+            "fast_stop_loss_streak": float(fast_stop_loss_streak),
+            "last_close_age_sec": round(last_close_age_sec, 1),
+            "active": 1.0 if active else 0.0,
+        }
+
+    _WICK_BLEND_LONG_SETUP_PRESSURE_CACHE[reason_key] = (now_mono, dict(summary))
+    return summary
+
+
+def _wick_blend_long_pressure_blocked(
+    *,
+    range_reason: str,
+    side: str,
+    setup_pressure: Dict[str, float],
+    bbw: float,
+    range_score: float,
+    rsi: float,
+    wick_quality: float,
+    projection_score: float,
+) -> bool:
+    if (
+        not WICK_BLEND_LONG_SETUP_PRESSURE_ENABLED
+        or str(side or "").strip().lower() != "long"
+        or str(range_reason or "").strip().lower() != "volatility_compression"
+        or float(setup_pressure.get("active") or 0.0) <= 0.0
+    ):
+        return False
+    return (
+        bbw <= WICK_BLEND_LONG_SETUP_PRESSURE_BBW_MAX
+        and range_score >= WICK_BLEND_LONG_SETUP_PRESSURE_RANGE_SCORE_MIN
+        and rsi <= WICK_BLEND_LONG_SETUP_PRESSURE_RSI_MAX
+        and wick_quality <= WICK_BLEND_LONG_SETUP_PRESSURE_QUALITY_MAX
+        and projection_score <= WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX
+    )
 
 
 def _attach_flow_guard_context(signal: Dict[str, object], flow_guard: Optional[Dict[str, float]]) -> None:
@@ -2869,6 +3050,7 @@ def _signal_wick_reversal_blend(
     tag: str,
 ) -> Optional[Dict[str, object]]:
     """Band-touch + tick-confirmed wick fade with strict trend filters."""
+    range_reason = str(getattr(range_ctx, "reason", "") or "").strip().lower() if range_ctx else ""
     if range_ctx is not None:
         try:
             range_active = bool(getattr(range_ctx, "active", False))
@@ -2983,6 +3165,12 @@ def _signal_wick_reversal_blend(
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
         return None
+    projection_score = 0.0
+    if isinstance(proj_detail, dict):
+        try:
+            projection_score = float(proj_detail.get("score") or 0.0)
+        except Exception:
+            projection_score = 0.0
     quality = wick_blend_entry_quality(
         side=side,
         rsi=_rsi(fac_m1),
@@ -2993,9 +3181,25 @@ def _signal_wick_reversal_blend(
         tick_strength=strength,
         follow_pips=follow if WICK_BLEND_FOLLOW_PIPS > 0.0 else 0.0,
         retrace_from_extreme_pips=retrace_from_extreme if WICK_BLEND_EXTREME_RETRACE_MIN_PIPS > 0.0 else 0.0,
-        projection_score=float((proj_detail or {}).get("score") or 0.0),
+        projection_score=projection_score,
+        range_reason=getattr(range_ctx, "reason", None) if range_ctx is not None else None,
+        macd_hist_pips=_macd_hist_pips(fac_m1),
+        di_gap=_plus_di(fac_m1) - _minus_di(fac_m1),
     )
     if not bool(quality.get("allow")):
+        return None
+    wick_quality = float(quality.get("quality") or 0.0)
+    setup_pressure = _wick_blend_long_setup_pressure(range_reason)
+    if _wick_blend_long_pressure_blocked(
+        range_reason=range_reason,
+        side=side,
+        setup_pressure=setup_pressure,
+        bbw=bbw,
+        range_score=range_score if range_ctx is not None else 0.0,
+        rsi=_rsi(fac_m1),
+        wick_quality=wick_quality,
+        projection_score=projection_score,
+    ):
         return None
 
     sl = max(1.2, min(2.2, atr * 0.85))
@@ -3035,6 +3239,7 @@ def _signal_wick_reversal_blend(
         "projection": proj_detail,
         "wick_blend_quality": quality.get("quality"),
         "wick_blend_components": quality.get("components"),
+        "setup_pressure": setup_pressure or None,
         "wick": {
             "rng_pips": round(rng, 2),
             "body_pips": round(body, 2),

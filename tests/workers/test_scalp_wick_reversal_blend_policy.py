@@ -72,6 +72,50 @@ def test_wick_blend_entry_quality_penalizes_counter_projection() -> None:
     assert float(headwind["components"]["projection_headwind"]) > 0.0
 
 
+def test_wick_blend_entry_quality_blocks_current_weak_countertrend_long_lane() -> None:
+    quality = wick_blend_entry_quality(
+        side="long",
+        rsi=46.97,
+        adx=22.09,
+        atr_pips=2.43,
+        range_score=0.411,
+        wick_ratio=0.882,
+        tick_strength=0.9,
+        follow_pips=1.785,
+        retrace_from_extreme_pips=2.7,
+        projection_score=0.14,
+        range_reason="volatility_compression",
+        macd_hist_pips=-0.692,
+        di_gap=-8.607,
+    )
+
+    assert quality["allow"] is False
+    assert quality["weak_countertrend_lane"] is True
+    assert float(quality["components"]["trend_headwind"]) > 0.5
+
+
+def test_wick_blend_entry_quality_keeps_stronger_long_when_momentum_aligns() -> None:
+    quality = wick_blend_entry_quality(
+        side="long",
+        rsi=43.5,
+        adx=20.0,
+        atr_pips=2.2,
+        range_score=0.44,
+        wick_ratio=0.88,
+        tick_strength=0.92,
+        follow_pips=2.2,
+        retrace_from_extreme_pips=3.1,
+        projection_score=0.22,
+        range_reason="volatility_compression",
+        macd_hist_pips=0.12,
+        di_gap=3.8,
+    )
+
+    assert quality["allow"] is True
+    assert quality["weak_countertrend_lane"] is False
+    assert float(quality["components"]["trend_headwind"]) == 0.0
+
+
 def test_wick_blend_exit_adjustments_use_trade_quality_and_entry_sl() -> None:
     adjusted = wick_blend_exit_adjustments(
         side="short",

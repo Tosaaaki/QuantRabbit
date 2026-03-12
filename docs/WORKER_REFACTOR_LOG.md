@@ -37,6 +37,57 @@
     burst 成立前の current loser lane だけを
     worker local の factor で落とす。
 
+### 2026-03-12（追記）`WickReversalBlend` dynamic long setup-pressure + identical protection refresh no-op
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/policy.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+  - `execution/order_manager.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_policy.py`
+  - `tests/execution/test_order_manager_dynamic_protection.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+- 変更:
+  - `wick_blend_entry_quality()` に
+    `range_reason / macd_hist_pips / di_gap`
+    を渡し、
+    `volatility_compression`
+    の weak countertrend long
+    (`rsi<50`, `projection.score<=0.15`, `macd_hist_pips<0`)
+    を `weak_countertrend_lane`
+    として reject するようにした。
+  - `_signal_wick_reversal_blend()` は
+    current factor を policy へ渡し、
+    `WickReversalBlend`
+    の current long loser lane を
+    worker local で block する。
+  - recent `WickReversalBlend` long close を
+    `setup_pressure`
+    として集計し、
+    loser streak が active な間だけ
+    shallow `volatility_compression` long を
+    additional block するようにした。
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    に
+    `WICK_BLEND_LONG_SETUP_PRESSURE_*`
+    を current 運用値で明示した。
+  - `order_manager` に
+    `_remember_protections()`
+    を追加し、
+    fill 直後は submit-time `SL/TP`
+    を cache seed してから realign を判定するようにした。
+    same-value refresh は
+    child order の cancel/recreate を起こさず no-op になる。
+- 意図:
+  - 09:30 型の `WickReversalBlend` immediate SL を
+    strategy-local に減らす。
+  - 同時に submit-time と同じ protection を
+    fill 直後に送り直すノイズを止め、
+    user-facing cancel notice を減らす。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` の late `entry_probability_reject` を order-manager 側で止血
 
 - 対象:

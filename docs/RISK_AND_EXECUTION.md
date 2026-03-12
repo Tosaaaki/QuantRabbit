@@ -8,6 +8,73 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `WickReversalBlend` dynamic long setup-pressure + protection cache seed（2026-03-12）
+- 背景:
+  - 2026-03-12 09:30 JST の local-v2 実測では、
+    `WickReversalBlend` long `ticket=459305`
+    が `159.192` で fill したあと
+    `09:30:22 JST` に `STOP_LOSS_ORDER`
+    `159.173 / -38.228 JPY` で落ちた。
+  - 同じ detailed context を持つ直近14日 sample では、
+    `range_reason=volatility_compression`,
+    `technical_context.side=long`,
+    `rsi<50`,
+    `projection.score<=0.15`,
+    `macd_hist_pips<-0.05`
+    は `3 trades / 0 wins / -44.845 JPY` だった。
+  - 同時刻の `quant-order-manager.log` では
+    `OPEN_REQ` の `sl/tp=159.173/159.220`
+    と `on_fill_protection` の target が同値で、
+    difference が無いのに child order refresh が走りうる状態だった。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/policy.py`
+    - `wick_blend_entry_quality()` に
+      `range_reason / macd_hist_pips / di_gap`
+      を渡し、
+      `volatility_compression` の
+      weak countertrend long
+      (`rsi<50`, `projection.score<=0.15`, `macd_hist_pips<0`)
+      を `weak_countertrend_lane` として reject するようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_signal_wick_reversal_blend()` は
+      current factor を quality policy へ渡し、
+      `WickReversalBlend` の long loser lane を
+      strategy-local に block する。
+    - recent `WickReversalBlend` long close を
+      `setup_pressure` として集計し、
+      `STOP_LOSS_ORDER` streak が active な間だけ
+      `bbw / range_score / rsi / wick_quality / projection_score`
+      が shallow な `volatility_compression` long を追加で reject する。
+  - `execution/order_manager.py`
+    - `_remember_protections()` を追加し、
+      fill 直後は submit-time の `SL/TP`
+      を cache してから realign を判定する。
+    - actual fill への reanchor が不要な場合は
+      identical `TradeCRCDO` を送らず、
+      child order の cancel / recreate を避ける。
+  - `tests/workers/test_scalp_wick_reversal_blend_policy.py`
+    - current weak long lane の block と
+      stronger aligned long の keep を固定した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    - active `setup_pressure` 下の
+      current loser long lane block を固定した。
+  - `ops/env/quant-scalp-wick-reversal-blend.env`
+    - `WICK_BLEND_LONG_SETUP_PRESSURE_*`
+      を current 運用値で明示した。
+  - `tests/execution/test_order_manager_dynamic_protection.py`
+    - seeded protection cache により
+      identical `on_fill_protection`
+      refresh が no-op になることを固定した。
+- 意図:
+  - user-facing の「注文取消」ノイズに対しては
+    identical protection refresh だけを止める。
+  - 本丸の収益悪化に対しては
+    `WickReversalBlend` の weak countertrend long を
+    fixed stop ではなく
+    `市況 + recent outcome`
+    で worker local に絞り、
+    long strategy 自体は停止しない。
+
 ### local-v2 `PrecisionLowVol` weak overbought short guard（2026-03-12）
 - 背景:
   - 2026-03-12 09:10 JST 時点の local-v2 実測では、

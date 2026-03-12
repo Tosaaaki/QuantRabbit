@@ -11,6 +11,34 @@ if str(PROJECT_ROOT) not in sys.path:
 import execution.order_manager as order_manager
 
 
+def test_seeded_protections_skip_identical_on_fill_refresh(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(order_manager, "TRAILING_SL_ALLOWED", True, raising=False)
+    monkeypatch.setattr(
+        order_manager,
+        "TradeCRCDO",
+        lambda *args, **kwargs: calls.append(("TradeCRCDO", kwargs)) or object(),
+    )
+    monkeypatch.setattr(
+        order_manager.api,
+        "request",
+        lambda req: calls.append(("request", req)),
+    )
+    order_manager._LAST_PROTECTIONS.clear()
+    order_manager._remember_protections("459305", 159.173, 159.220, overwrite=False)
+
+    order_manager._maybe_update_protections(
+        "459305",
+        159.173,
+        159.220,
+        context="on_fill_protection",
+        ref_price=159.192,
+    )
+
+    assert calls == []
+
+
 def test_dynamic_protection_uses_scalp_defaults_for_scalp_fast(monkeypatch) -> None:
     captured: list[tuple[str, float, float | None, str, float]] = []
 

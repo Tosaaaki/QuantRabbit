@@ -65,10 +65,14 @@ def wick_blend_entry_quality(
     follow_pips: float,
     retrace_from_extreme_pips: float,
     projection_score: float,
+    range_reason: str | None = None,
+    macd_hist_pips: float | None = None,
+    di_gap: float | None = None,
 ) -> dict[str, object]:
     direction_rsi = (rsi - 50.0) if side == "short" else (50.0 - rsi)
     atr_norm = max(0.8, atr_pips)
     projection_headwind = _projection_headwind(projection_score)
+    range_reason_key = str(range_reason or "").strip().lower()
 
     stretch = _clamp((direction_rsi - 2.0) / max(6.0, 9.0 - min(adx, 30.0) * 0.10))
     wick = _clamp((wick_ratio - 0.35) / 0.30)
@@ -77,6 +81,11 @@ def wick_blend_entry_quality(
     retrace = _clamp(retrace_from_extreme_pips / max(0.35, atr_norm * 0.20))
     projection = _clamp((projection_score + 0.15) / 0.55)
     regime = _clamp(range_score / 0.45)
+    signed_macd = (-_to_float(macd_hist_pips, 0.0)) if side == "long" else _to_float(macd_hist_pips, 0.0)
+    macd_headwind = _clamp((signed_macd - 0.05) / 0.35)
+    signed_di_gap = (-_to_float(di_gap, 0.0)) if side == "long" else _to_float(di_gap, 0.0)
+    di_headwind = _clamp((signed_di_gap - 4.0) / 6.0)
+    trend_headwind = _clamp(macd_headwind * 0.70 + di_headwind * 0.30)
 
     quality = (
         stretch * 0.24
@@ -87,11 +96,27 @@ def wick_blend_entry_quality(
         + projection * 0.10
         + regime * 0.04
         - projection_headwind * 0.14
+        - trend_headwind * 0.08
     )
     neutral_rsi = direction_rsi < max(5.0, min(8.0, 3.2 + adx * 0.11))
     structure_strong = wick >= 0.65 and tick >= 0.45 and retrace >= 0.55
-    threshold = (0.52 if neutral_rsi else 0.46) + projection_headwind * (0.04 if neutral_rsi else 0.03)
-    allow = quality >= threshold and (projection >= 0.12 or structure_strong)
+    threshold = (
+        (0.52 if neutral_rsi else 0.46)
+        + projection_headwind * (0.04 if neutral_rsi else 0.03)
+        + trend_headwind * (0.05 if neutral_rsi else 0.03)
+    )
+    weak_countertrend_lane = (
+        side == "long"
+        and range_reason_key == "volatility_compression"
+        and rsi < 50.0
+        and projection_score <= 0.15
+        and signed_macd > 0.05
+    )
+    allow = (
+        quality >= threshold
+        and (projection >= 0.12 or structure_strong)
+        and not weak_countertrend_lane
+    )
 
     return {
         "allow": allow,
@@ -99,6 +124,7 @@ def wick_blend_entry_quality(
         "threshold": round(threshold, 3),
         "neutral_rsi": neutral_rsi,
         "structure_strong": structure_strong,
+        "weak_countertrend_lane": weak_countertrend_lane,
         "components": {
             "stretch": round(stretch, 3),
             "wick": round(wick, 3),
@@ -107,6 +133,9 @@ def wick_blend_entry_quality(
             "retrace": round(retrace, 3),
             "projection": round(projection, 3),
             "projection_headwind": round(projection_headwind, 3),
+            "trend_headwind": round(trend_headwind, 3),
+            "macd_headwind": round(macd_headwind, 3),
+            "di_headwind": round(di_headwind, 3),
             "range": round(regime, 3),
         },
     }
@@ -148,6 +177,17 @@ def wick_blend_exit_adjustments(
                 follow_pips=_to_float(wick.get("follow_pips"), 0.0),
                 retrace_from_extreme_pips=_to_float(wick.get("retrace_from_extreme_pips"), 0.0),
                 projection_score=projection_score,
+                range_reason=(
+                    str(thesis.get("range_reason"))
+                    if thesis.get("range_reason") is not None
+                    else None
+                ),
+                macd_hist_pips=_to_float(thesis.get("macd_hist_pips"), None),
+                di_gap=(
+                    _to_float(thesis.get("plus_di"), 0.0) - _to_float(thesis.get("minus_di"), 0.0)
+                    if thesis.get("plus_di") is not None and thesis.get("minus_di") is not None
+                    else None
+                ),
             )
             quality = _clamp(_to_float(rebuilt.get("quality"), 0.0))
             quality_rebuilt = True
