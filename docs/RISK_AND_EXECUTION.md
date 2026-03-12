@@ -4595,19 +4595,24 @@
   を strategy factor へ渡す。
 - `strategies/micro/momentum_burst.py`
   の `_mtf_supports()`
+  は legacy の
+  `M5/H1`
+  同方向 path を preserve し、
+  `H4`
   は
-  `M5 + H4`
-  同方向を major trend とみなし、
+  `M5/H1`
+  が split したときだけ tie-break に使う。
+  その際も
   `H1`
   の countertrend が
   `gap<=4.0 pips`
   かつ
   `adx<18.0`
   の shallow state だけを neutralize する。
-  strong `H1`
-  逆風や
+  `M5/H1`
+  が既に同方向の winner lane を
   `H4`
-  不一致は引き続き block する。
+  単独で veto しない。
 - dedicated env は
   `ops/env/quant-micro-momentumburst.env`
   の

@@ -18358,6 +18358,85 @@ Status:
     `MTF support`
     依存へ寄せる。
 
+### 2026-03-12 `MomentumBurst` H4 tie-break 回帰修正
+- Why/Hypothesis:
+  - 直前の
+    `H4 tie-break`
+    実装は
+    `H4`
+    を third vote として扱っており、
+    `M5/H1 long + H4 short`
+    の既存 winner lane まで block する回帰になっていた。
+  - 実測では
+    `2026-03-11 21:51 JST`
+    close の
+    `MomentumBurst` winner
+    (`+78.1 JPY`)
+    が
+    `M5 long / H1 long / H4 short`
+    だったのに、
+    新実装の `_mtf_supports()`
+    だと
+    `False`
+    になっていた。
+- Expected Good:
+  - 既存の
+    `M5/H1`
+    winner path を温存したまま、
+    `M5/H1`
+    disagreement 時だけ
+    `H4`
+    を tie-break に使える。
+  - cadence 改善のための narrow override が、
+    legacy winner lane を壊さない。
+- Expected Bad:
+  - `H4`
+    の影響を弱めすぎると、
+    tie-break としての追加価値が薄くなる可能性。
+  - そのため
+    `M5/H1`
+    が同方向のときは legacy pass を優先し、
+    `1 vs 1`
+    の split にだけ
+    `H4 + weak H1`
+    条件を使う。
+- Observed/Fact:
+  - `strategies/micro/momentum_burst.py`
+    の `_mtf_supports()`
+    を修正し、
+    `M5/H1`
+    同方向はそのまま pass、
+    `M5/H1`
+    split のときだけ
+    `H4`
+    を tie-break に使う形へ戻した。
+  - regression test として
+    `M5/H1 long + H4 short`
+    の legacy support keep-pass を
+    `tests/strategies/test_momentum_burst.py`
+    に追加した。
+  - historical winner 再現で
+    `2026-03-11T12:51:12Z`
+    相当の
+    `mtf_supports`
+    は
+    `False -> True`
+    に戻った。
+  - `pytest -q tests/strategies/test_momentum_burst.py`
+    は
+    `39 passed`
+    だった。
+- Verdict: good
+- Next Action:
+  - この修正を反映した上で、
+    `MomentumBurst`
+    の post-restart
+    `OPEN_REQ / fills`
+    を再観測する。
+  - 次の cadence 改善は、
+    legacy winner lane を壊さないことを
+    historical winner replay で確認してから入れる。
+
 ### 2026-03-12 `live_setup_context` に tick pace と MTF macro suffix を追加
 - Why/Hypothesis:
   - 2026-03-12 JST の local 実測では
@@ -18453,3 +18532,100 @@ Status:
     `countertrend`
     として分離されたら、
     次は worker local quality guard をその lane にだけ寄せる。
+
+### 2026-03-12 `PrecisionLowVol / DroughtRevert` に strategy-local MTF flow guard を追加
+- Why/Hypothesis:
+  - 前段の `live_setup_context` 改善だけでは、
+    `PrecisionLowVol` / `DroughtRevert`
+    本体の signal 判定が still `M1 + range_ctx`
+    主体で、
+    higher timeframe continuation を entry 前に十分反映できない。
+  - current loser は
+    bullish higher timeframe continuation 下の
+    weak short fade、
+    および bearish continuation 下の weak long reclaim を含むため、
+    `M5/H1/H4`
+    を worker local の `continuation_pressure`
+    へ直接戻す必要がある。
+- Expected Good:
+  - weak countertrend probe は
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure`
+    で worker local に落ち、
+    same strategy の stronger reclaim / aligned fade は残せる。
+  - `entry_thesis`
+    にも
+    `macro_flow_regime / mtf_alignment / m5/h1/h4_flow_regime`
+    が残り、
+    shared RCA / feedback が current setup をより細かく学習できる。
+  - `technical_context_ticks`
+    に
+    `tick_rate`
+    を追加したので、
+    `PrecisionLowVol / DroughtRevert`
+    でも `microstructure_bucket`
+    が `unknown`
+    へ落ちにくくなる。
+- Expected Bad:
+  - MTF pressure を強く掛けすぎると、
+    revert winner lane まで broad に削る可能性。
+  - そのため guard は blanket block ではなく、
+    既存 `flow_guard`
+    の `continuation_pressure / reversion_support / max_pressure`
+    に only additive で寄せ、
+    `strong_reclaim_probe`
+    は維持した。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    に
+    `M5/H1/H4`
+    の trend snapshot helper を追加し、
+    `DroughtRevert` / `PrecisionLowVol`
+    へだけ `fac_m5/fac_h1/fac_h4`
+    を dispatch するよう更新した。
+  - short/long の `reversion_*_flow_guard`
+    は
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / mtf_aligned_support`
+    を織り込んで
+    `continuation_pressure`
+    を動的化するよう更新した。
+  - `DroughtRevert` long 側の duplicated local pressure 計算は
+    `_reversion_long_flow_guard()`
+    へ寄せ、
+    `PrecisionLowVol`
+    と同じ MTF-aware path を使うようにした。
+  - `entry_thesis`
+    は nested `flow_guard`
+    から
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / m5/h1/h4_flow_regime`
+    を top-level へ昇格し、
+    `technical_context_ticks`
+    には
+    `tick_rate`
+    を追加した。
+  - テスト:
+    - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -q`
+      -> `24 passed`
+    - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+      -> `30 passed`
+    - `python3 -m pytest tests/workers/common/test_setup_context.py -q`
+      -> `4 passed`
+    - `python3 -m compileall workers/scalp_wick_reversal_blend/worker.py workers/scalp_wick_reversal_blend/config.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後の次 `30-120m`
+    で
+    `PrecisionLowVol / DroughtRevert`
+    の
+    `mtf_alignment=countertrend`
+    lane の
+    `OPEN_REQ -> fills`
+    減少と、
+    stronger reclaim lane の残存を確認する。
+  - それでも loser が残るなら、
+    次は `RangeFader`
+    側の
+    `flow_headwind`
+    と同じ粒度で
+    `pattern_tag / projection.score / mtf_alignment`
+    を組み合わせた lane split を追加する。

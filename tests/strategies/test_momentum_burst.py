@@ -269,6 +269,28 @@ def test_transition_long_allows_h4_tiebreak_when_h1_countertrend_is_shallow() ->
     assert signal["action"] == "OPEN_LONG"
 
 
+def test_transition_long_preserves_legacy_m5_h1_support_when_h4_disagrees() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            **_h4_tiebreak_transition_long_fixture(h4_direction="short"),
+            "rsi": 55.6,
+            "mtf": {
+                "candles_m5": _synthetic_candles(start=158.10, drift=0.018),
+                "candles_h1": _synthetic_candles(start=158.30, drift=0.022),
+                "candles_h4": _synthetic_candles(start=158.70, drift=-0.060),
+            },
+            "mtf_context": {
+                "m5": {"gap_pips": 3.6, "adx": 23.7, "direction": "long"},
+                "h1": {"gap_pips": 13.4, "adx": 15.3, "direction": "long"},
+                "h4": {"gap_pips": -9.2, "adx": 18.6, "direction": "short"},
+            },
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
 def test_transition_long_keeps_h1_countertrend_block_when_h1_headwind_is_strong() -> None:
     signal = MomentumBurstMicro.check(
         _h4_tiebreak_transition_long_fixture(h1_gap_pips=-6.2, h1_adx=20.0)

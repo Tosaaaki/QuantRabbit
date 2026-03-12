@@ -403,8 +403,8 @@ class MomentumBurstMicro:
     def _mtf_supports(direction: str, fac: Dict) -> bool:
         """
         Use optional MTF candles if provided to confirm direction.
-        The default path still requires at least two agreeing higher-timeframe votes.
-        When M5 and H4 agree, a shallow H1 countertrend can be treated as neutral.
+        Preserve the legacy M5/H1 agreement path, and use H4 only as a
+        tiebreaker when the core higher timeframes disagree.
         """
         mtf = fac.get("mtf")
         if not isinstance(mtf, dict):
@@ -420,24 +420,34 @@ class MomentumBurstMicro:
 
         frames = [
             ("m5", _proj(mtf.get("candles_m5"), 5.0)),
+            ("m15", _proj(mtf.get("candles_m15"), 15.0)),
             ("h1", _proj(mtf.get("candles_h1"), 60.0)),
-            ("h4", _proj(mtf.get("candles_h4"), 240.0)),
         ]
-        votes = []
+        core_votes = []
         for name, proj in frames:
             if not proj or proj.fast_ma is None or proj.slow_ma is None:
                 continue
             if proj.fast_ma > proj.slow_ma:
-                votes.append((name, "long"))
+                core_votes.append((name, "long"))
             elif proj.fast_ma < proj.slow_ma:
-                votes.append((name, "short"))
-        if len(votes) < 2:
+                core_votes.append((name, "short"))
+        if len(core_votes) < 2:
             return True  # not enough data to enforce
-        agree = [name for name, vote in votes if vote == direction]
-        oppose = [name for name, vote in votes if vote != direction]
+
+        agree = [name for name, vote in core_votes if vote == direction]
+        oppose = [name for name, vote in core_votes if vote != direction]
         if not oppose:
             return len(agree) >= 2
-        if len(agree) < 2 or set(oppose) != {"h1"} or "h4" not in agree:
+        if len(agree) >= 2:
+            return True
+        if len(core_votes) != 2 or len(agree) != 1 or set(oppose) != {"h1"}:
+            return False
+
+        h4_proj = _proj(mtf.get("candles_h4"), 240.0)
+        if not h4_proj or h4_proj.fast_ma is None or h4_proj.slow_ma is None:
+            return False
+        h4_direction = "long" if h4_proj.fast_ma > h4_proj.slow_ma else "short"
+        if h4_direction != direction:
             return False
 
         mtf_context = fac.get("mtf_context")

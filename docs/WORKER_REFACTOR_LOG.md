@@ -17584,6 +17584,59 @@
   - `python3 -m compileall strategies/micro/momentum_burst.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py`
     -> 成功
 
+### 2026-03-12 `MomentumBurst` H4 tie-break を core disagreement 限定へ修正
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - 初回の
+    `H4 tie-break`
+    実装は
+    `H4`
+    を third vote として扱っており、
+    `M5/H1`
+    が long で揃っていても
+    `H4`
+    short だけで block する回帰があった。
+  - historical winner
+    (`2026-03-11T12:51:12Z`, `+78.1 JPY`)
+    の
+    `M5 long / H1 long / H4 short`
+    lane が
+    `_mtf_supports=False`
+    になっていた。
+
+- 変更:
+  - `_mtf_supports()`
+    は legacy の
+    `M5/H1`
+    core vote を優先し、
+    core が同方向なら
+    `H4`
+    は veto しない。
+  - `H4`
+    は
+    `M5/H1`
+    が
+    `1 vs 1`
+    に割れたときだけ
+    tie-break として使い、
+    その際も
+    `H1 gap<=4.0 / adx<18.0`
+    の weak countertrend 条件を必須にした。
+  - regression test として
+    `M5/H1 long + H4 short`
+    の keep-pass を追加した。
+
+- 検証:
+  - `pytest -q tests/strategies/test_momentum_burst.py`
+    -> `39 passed`
+  - `python3 -m compileall strategies/micro/momentum_burst.py tests/strategies/test_momentum_burst.py`
+    -> 成功
+
 ### 2026-03-12 `live_setup_context` の tick/MTF contract を拡張
 - 対象:
   - `market_data/tick_window.py`
@@ -17660,6 +17713,73 @@
     -> `1 passed`
   - `python3 -m pytest tests/execution/test_strategy_entry_forecast_fusion.py -k "preserves_richer_live_setup_context" -q`
     -> `2 passed`
+
+### 2026-03-12 `PrecisionLowVol / DroughtRevert` を MTF-aware flow guard へ寄せた
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+
+- 背景:
+  - `scalp_wick_reversal_blend`
+    は `technical_context`
+    契約自体は持っていたが、
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    の signal 判定は
+    実質
+    `fac_m1 + range_ctx`
+    に寄っていた。
+  - current loser は higher timeframe continuation 下の weak countertrend probe なので、
+    shared label だけでなく worker local の
+    `continuation_pressure`
+    自体へ
+    `M5/H1/H4`
+    を戻す必要があった。
+
+- 変更:
+  - `_dispatch_strategy_signal()`
+    は
+    `DroughtRevert / PrecisionLowVol`
+    へ
+    `fac_m5 / fac_h1 / fac_h4`
+    を渡すよう更新した。
+  - `M5/H1/H4`
+    の trend snapshot helper を追加し、
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / mtf_aligned_support`
+    を算出するようにした。
+  - `_reversion_short_flow_guard()`
+    と
+    `_reversion_long_flow_guard()`
+    は上記 MTF context を取り、
+    existing
+    `continuation_pressure / reversion_support / max_pressure`
+    を additive に補正する。
+  - `DroughtRevert` long の duplicated pressure 計算は
+    `_reversion_long_flow_guard()`
+    へ寄せて、
+    `PrecisionLowVol`
+    と同じ経路で MTF-aware にした。
+  - `flow_guard`
+    から thesis へ
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / m5/h1/h4_flow_regime`
+    を昇格し、
+    `technical_context_ticks`
+    には
+    `tick_rate`
+    を追加した。
+
+- 検証:
+  - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -q`
+    -> `24 passed`
+  - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+    -> `30 passed`
+  - `python3 -m pytest tests/workers/common/test_setup_context.py -q`
+    -> `4 passed`
+  - `python3 -m compileall workers/scalp_wick_reversal_blend/worker.py workers/scalp_wick_reversal_blend/config.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> 成功
 
 ### 2026-03-12 現行仕組み一覧ドキュメントを追加
 - 対象:
