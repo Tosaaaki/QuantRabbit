@@ -8,6 +8,60 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_ping_5s_d_live` negative-window long-opposite guard（2026-03-12）
+- 背景:
+  - 2026-03-12 15:09 JST 時点の local-v2 は
+    `USD/JPY 159.051 / spread 0.8 pips / open_trades 0`
+    で execution は正常だったが、
+    current 24h は
+    `141 trades / PF 0.48 / net -11.281 JPY`
+    と依然弱かった。
+  - `logs/trades.db`
+    と
+    `tick_entry_validate.py`
+    で
+    `scalp_ping_5s_d_live`
+    の
+    `long + m1_opposite + horizon_neutral + direction_bias_side=long + tp_pips>0.5`
+    を確認すると、
+    recent 7d で
+    `2 trades / 2 STOP_LOSS / 2 fast<=2s / net -3.870 JPY`
+    かつ
+    `459319`
+    /
+    `459441`
+    は
+    `tp_touch<=600s なし`
+    だった。
+- 実装:
+  - `workers/scalp_ping_5s/worker.py`
+    に
+    D 専用の
+    negative-window long-opposite guard
+    を追加し、
+    `TP_ENABLED=1`
+    の current variant で
+    `long`
+    /
+    `m1_opposite`
+    /
+    `horizon_neutral`
+    /
+    `direction_bias_side=long`
+    /
+    `live_score<=-1.0`
+    /
+    `lookahead_edge<=0.60`
+    の lane を reject するようにした。
+  - `workers/scalp_ping_5s/config.py`
+    に D 専用閾値
+    `SCALP_PING_5S_D_NEGATIVE_WINDOW_LONG_OPPOSITE_*`
+    を追加した。
+- 意図:
+  - `1秒前後のSTOP_LOSS`
+    を出していた current long lane だけを削り、
+    D long 全体を止めずに participation の質を上げる。
+
 ### local-v2 `scalp_ping_5s_d_live` negative-window short guard（2026-03-12）
 - 背景:
   - 2026-03-12 14:19 JST 時点の local-v2 では

@@ -33,6 +33,33 @@
     stronger edge の momentum short は残したまま
     fast STOP_LOSS cluster だけ削る。
 
+### 2026-03-12（追記）`scalp_ping_5s_d_live` negative-window long-opposite guard
+
+- 対象:
+  - `workers/scalp_ping_5s/config.py`
+  - `workers/scalp_ping_5s/worker.py`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - D variant 専用の
+    `D_NEGATIVE_WINDOW_LONG_OPPOSITE`
+    guard を追加し、
+    `TP_ENABLED=1`
+    の current variant で
+    `long + m1_opposite + horizon_neutral + direction_bias_side=long`
+    かつ
+    `signal_window_adaptive_live_score_pips`
+    が深く負、
+    `lookahead_edge_pips`
+    が薄い lane を worker local に reject するようにした。
+  - 対応する D 専用 config 閾値と unit test を追加した。
+- 意図:
+  - `scalp_ping_5s_d_live`
+    long の current loser lane を strategy-local に落とし、
+    `1秒前後のSTOP_LOSS`
+    を出していた TP-enabled variant だけを削る。
+
 ### 2026-03-12（追記）`MomentumBurst` sizing nudge
 
 - 対象:

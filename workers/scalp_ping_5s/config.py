@@ -1301,6 +1301,28 @@ D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX: float = max(
         )
     ),
 )
+D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_D" else False,
+)
+D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX: float = min(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX",
+            "-1.00",
+        )
+    ),
+)
+D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX",
+            "0.60",
+        )
+    ),
+)
 
 EXTREMA_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_EXTREMA_GATE_ENABLED", True)
 EXTREMA_FAIL_OPEN: bool = _bool_env("SCALP_PING_5S_EXTREMA_FAIL_OPEN", True)

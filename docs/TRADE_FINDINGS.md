@@ -51,6 +51,135 @@
 - Status:
 ```
 
+## 2026-03-12 15:20 JST / local-v2: `scalp_ping_5s_d_live` TP-enabled long の instant-SL lane を worker local で遮断
+
+- Change:
+  - `workers/scalp_ping_5s/worker.py`
+    に
+    `D_NEGATIVE_WINDOW_LONG_OPPOSITE`
+    guard を追加し、
+    `long`
+    かつ
+    `m1_opposite`
+    /
+    `horizon_neutral`
+    /
+    `direction_bias_side=long`
+    の D momentum long で、
+    `TP_ENABLED=1`
+    の current variant に限り
+    `signal_window_adaptive_live_score_pips<=-1.0`
+    かつ
+    `lookahead_edge_pips<=0.60`
+    の lane を reject するようにした。
+  - `workers/scalp_ping_5s/config.py`
+    に D 専用閾値
+    `SCALP_PING_5S_D_NEGATIVE_WINDOW_LONG_OPPOSITE_*`
+    を追加した。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    に
+    block / pass
+    の focused test を追加した。
+- Why:
+  - 2026-03-12 15:09 JST 時点の local-v2 は
+    `USD/JPY 159.051 / spread 0.8 pips / open_trades 0`
+    で execution 停止ではなく、
+    24h は
+    `141 trades / PF 0.48 / net -11.281 JPY`
+    だった。
+  - ユーザ指摘の
+    `1秒前後のSTOP_LOSS`
+    を ticket 単位で見ると、
+    `scalp_ping_5s_d_live`
+    の current TP-enabled long variant
+    が
+    `459319`
+    /
+    `459441`
+    ともに
+    `0.2-1.1s`
+    で
+    `STOP_LOSS_ORDER`
+    になっていた。
+- Hypothesis:
+  - D long の
+    `m1_opposite + horizon_neutral`
+    でも、
+    `direction_bias_side=long`
+    に引っ張られて
+    `signal_window_adaptive_live_score_pips`
+    が深く負のまま入る lane は、
+    current TP-enabled scalp variant では follow-through が足りず、
+    broker TP/SL を付けても即時損切りになりやすい。
+- Expected Good:
+  - `scalp_ping_5s_d_live`
+    current long variant の
+    `STOP_LOSS_ORDER`
+    と
+    `fast<=2s`
+    loss を減らす。
+  - D の long participation 全体は止めず、
+    stronger live-score / edge の long は残す。
+- Expected Bad:
+  - D long の entry 数がさらに減る。
+  - 今後この lane が改善した場合、
+    初動の細い winner long も落ちる可能性がある。
+- Period:
+  - recent 7d
+    / ticket validation は 2026-03-12 UTC の current loser trades
+- Fact:
+  - `logs/trades.db`
+    の
+    `scalp_ping_5s_d_live`
+    で
+    `m1_opposite + horizon_neutral + direction_bias_side=long + tp_pips>0.5`
+    は
+    `2 trades / 2 STOP_LOSS / 2 fast<=2s / avg live_score -1.313 / avg edge 0.277 / avg sl 0.965p / avg tp 1.35p / net -3.870 JPY`
+    だった。
+  - `ticket 459319`
+    は
+    `hold 0.2s / pl -1.0p / tp_touch<=600s なし / MAE 9.8p / MFE 0.0p`。
+  - `ticket 459441`
+    は
+    `hold 1.1s / pl -1.0p / tp_touch<=600s なし / MAE 3.6p / MFE 1.1p`。
+- Failure Cause:
+  - SL が単に近すぎたのではなく、
+    `negative live-score`
+    のまま
+    `direction_bias long`
+    に押されて入った current long lane 自体の質が悪かった。
+- Improvement:
+  - `TP_ENABLED=1`
+    の D long current variant に限定し、
+    `negative-window opposite long`
+    を worker local で entry 前に落とす。
+- Verification:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_ping_5s_worker.py -k 'd_negative_window_short_align_block_reason or d_negative_window_long_opposite_block_reason'`
+  - `python3 -m py_compile workers/scalp_ping_5s/config.py workers/scalp_ping_5s/worker.py tests/workers/test_scalp_ping_5s_worker.py`
+  - deploy 後 30-60 分で
+    `scalp_ping_5s_d_live`
+    の
+    `STOP_LOSS_ORDER`
+    /
+    `fast<=2s`
+    /
+    `realized_jpy`
+    を再確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - post-deploy で
+    `scalp_ping_5s_d_live`
+    の
+    `d_negative_window_long_opposite_block`
+    log 出現と、
+    long の instant-SL 消失を確認する。
+  - なお悪ければ次は
+    `scalp_extrema_reversal_live`
+    short の shallow probe を current window だけで再評価する。
+- Status:
+  - open
+
 ## 2026-03-12 14:40 JST / local-v2: `scalp_ping_5s_d_live` short の negative-window momentum lane を worker local で遮断
 
 - Change:

@@ -3170,6 +3170,46 @@ def _d_negative_window_short_align_block_reason(
     )
 
 
+def _d_negative_window_long_opposite_block_reason(
+    signal: TickSignal,
+    *,
+    signal_window_meta: Optional[dict[str, object]],
+    lookahead_decision: Optional[object],
+    m1_trend_gate: str,
+    horizon_gate: str,
+    direction_bias_side: str,
+) -> Optional[str]:
+    if not config.D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED:
+        return None
+    if not config.TP_ENABLED:
+        return None
+    if str(signal.side or "").strip().lower() != "long":
+        return None
+    if str(m1_trend_gate or "").strip().lower() != "m1_opposite":
+        return None
+    if str(direction_bias_side or "").strip().lower() != "long":
+        return None
+    horizon_gate_key = str(horizon_gate or "").strip().lower()
+    if not horizon_gate_key.startswith("horizon_neutral"):
+        return None
+    live_score_pips = _safe_float(
+        (signal_window_meta or {}).get("live_score_pips") if isinstance(signal_window_meta, dict) else None,
+        0.0,
+    )
+    if live_score_pips > config.D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX:
+        return None
+    lookahead_edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
+    if lookahead_edge_pips > config.D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX:
+        return None
+    lookahead_reason = str(getattr(lookahead_decision, "reason", "") or "").strip().lower()
+    return (
+        f"env={config.ENV_PREFIX} side=long hz={horizon_gate_key} "
+        f"dir={direction_bias_side} m1={m1_trend_gate} "
+        f"live={live_score_pips:.3f} edge={lookahead_edge_pips:.3f} "
+        f"lookahead={lookahead_reason or 'none'}"
+    )
+
+
 def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
     if not config.SIDE_BIAS_ENABLED:
         return 1.0, {"enabled": 0.0}
@@ -6907,6 +6947,23 @@ async def scalp_ping_5s_worker() -> None:
                 _note_entry_skip(
                     "d_negative_window_short_align_block",
                     d_negative_window_short_align_block_reason,
+                    side=signal.side,
+                )
+                continue
+            d_negative_window_long_opposite_block_reason = (
+                _d_negative_window_long_opposite_block_reason(
+                    signal,
+                    signal_window_meta=signal_window_meta,
+                    lookahead_decision=lookahead_decision,
+                    m1_trend_gate=m1_trend_gate,
+                    horizon_gate=horizon_gate,
+                    direction_bias_side=str(getattr(direction_bias, "side", "") or ""),
+                )
+            )
+            if d_negative_window_long_opposite_block_reason:
+                _note_entry_skip(
+                    "d_negative_window_long_opposite_block",
+                    d_negative_window_long_opposite_block_reason,
                     side=signal.side,
                 )
                 continue

@@ -101,6 +101,53 @@ def test_d_negative_window_short_align_block_reason_preserves_supported_lane(mon
     assert reason is None
 
 
+def test_d_negative_window_long_opposite_block_reason_blocks_tp_enabled_loser_lane(
+    monkeypatch,
+) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX", -1.0)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX", 0.60)
+    monkeypatch.setattr(worker.config, "TP_ENABLED", True)
+    monkeypatch.setattr(worker.config, "ENV_PREFIX", "SCALP_PING_5S_D")
+
+    reason = worker._d_negative_window_long_opposite_block_reason(
+        _sample_signal("long"),
+        signal_window_meta={"live_score_pips": -1.31},
+        lookahead_decision=SimpleNamespace(edge_pips=0.54, reason="edge_ok"),
+        m1_trend_gate="m1_opposite",
+        horizon_gate="horizon_neutral",
+        direction_bias_side="long",
+    )
+
+    assert reason is not None
+    assert "side=long" in reason
+    assert "live=-1.310" in reason
+
+
+def test_d_negative_window_long_opposite_block_reason_preserves_supported_lane(
+    monkeypatch,
+) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX", -1.0)
+    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX", 0.60)
+    monkeypatch.setattr(worker.config, "TP_ENABLED", True)
+
+    reason = worker._d_negative_window_long_opposite_block_reason(
+        _sample_signal("long"),
+        signal_window_meta={"live_score_pips": -0.42},
+        lookahead_decision=SimpleNamespace(edge_pips=0.72, reason="edge_ok"),
+        m1_trend_gate="m1_opposite",
+        horizon_gate="horizon_neutral",
+        direction_bias_side="long",
+    )
+
+    assert reason is None
+
+
 def test_build_tick_signal_detects_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
