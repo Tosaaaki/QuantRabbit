@@ -16656,3 +16656,112 @@ Status:
     `volatility_compression|range_fade` の
     `fills / realized_jpy / STOP_LOSS_ORDER`
     を再確認する。
+
+## 2026-03-12 19:20 JST / local-v2: repeated improvements still fail because negative-expectancy lanes dominate participation
+- Why/Hypothesis:
+  - current local-v2 が稼げない主因は、インフラや OANDA 異常ではなく、
+    `volatility_compression / range_fade` 系の低エッジ reversion が
+    まだ実弾で多く通っており、
+    winner lane より loser lane に participation が偏っているため。
+  - shared trim / probability offset は効いているが、
+    chronic loser を止め切るには弱く、
+    repeated local fixes のたびに別の loser lane が残る構造になっている。
+- Expected Good:
+  - 次の改善優先度を
+    `infra` ではなく
+    `loser lane の遮断 / RR 再設計 / participation 再配分`
+    へ固定できる。
+  - 時間帯封鎖ではなく、
+    setup fingerprint 単位の worker-local 改善へ戻せる。
+- Expected Bad:
+  - report-only のため、
+    この記録自体では収益は改善しない。
+  - loser lane を deeper に切ると、
+    rare winner を少数取り逃がす副作用は残る。
+- Observed/Fact:
+  - 市況 / API / health:
+    - `OANDA summary/pricing/openTrades = 200 OK`
+    - latency `235-301ms`
+    - `USD/JPY 158.775 / 158.783`, spread `0.8 pips`
+    - `open_trades=0`
+    - `data_lag_ms=141.4`, `decision_latency_ms=20.2`
+    - factor cache: `M1 ATR14=2.18 pips`, range `5m=4.7p / 15m=8.5p / 60m=22.6p`
+  - 収益:
+    - 24h: `136 trades / win_rate 28.7% / PF 0.38 / net -78.5 JPY / -105.7 pips`
+    - 7d: `4444 trades / win_rate 46.8% / PF 0.63 / net -13687.9 JPY / -2516.2 pips`
+  - 7d の赤字寄与上位:
+    - `scalp_ping_5s_flow_live`: `420 trades / -7131.1 JPY`
+    - `M1Scalper-M1`: `2290 trades / -6172.5 JPY`
+    - `RangeFader`: `295 trades / -206.9 JPY`
+    - `PrecisionLowVol`: `50 trades / -141.2 JPY`
+    - `scalp_extrema_reversal_live`: `160 trades / -125.9 JPY`
+  - payoff / expectancy の歪み:
+    - `M1Scalper-M1`: win rate `58.5%` だが
+      avg win `1.667p` / avg loss `4.142p` / RR `0.40`
+      で payoff が壊れている。
+    - `scalp_ping_5s_flow_live`: win rate `31.4%`,
+      avg win `1.398p` / avg loss `2.010p` / RR `0.70`
+      で signal quality も payoff も足りない。
+    - `PrecisionLowVol`: win rate `40.0%`,
+      avg win `1.575p` / avg loss `1.627p`
+      でコスト込み期待値が負。
+    - `scalp_extrema_reversal_live`: win rate `23.1%`,
+      avg win `1.524p` / avg loss `1.715p`
+      で participation 維持に値しない。
+  - 24h の active loser:
+    - `PrecisionLowVol`: `40 trades / -174.8 JPY`
+      loser cluster は
+      `short range_fade/range_compression volatility_compression`
+      と
+      `long trend_short volatility_compression`
+      に集中。
+      sample では negative / weak projection でも
+      `entry_probability 0.64-0.76`
+      で通っていた。
+    - `scalp_extrema_reversal_live`: `75 trades / -60.2 JPY`
+      loser cluster は
+      `long range_fade volatility_compression`,
+      `short range_compression volatility_compression`,
+      `short range_fade volatility_compression`
+      に集中。
+      sample では
+      `supportive_long/short = false`,
+      `range_score ≈ 0.44`
+      の shallow probe が残っていた。
+  - close reason:
+    - `PrecisionLowVol`: `STOP_LOSS_ORDER 24 trades / -312.7 JPY`
+    - `scalp_extrema_reversal_live`: `STOP_LOSS_ORDER 48 trades / -81.1 JPY`
+    - `RangeFader`: `MARKET_ORDER_TRADE_CLOSE 67 trades / -33.7 JPY`
+  - order funnel (24h):
+    - unique candidate `2377`
+    - `preflight_start 1470`
+    - `perf_block 1150`
+    - `entry_probability_reject 907`
+    - `filled 250`
+    filled 比率は低いのに、filled subset 自体がまだ負。
+  - shared trim の弱さ:
+    - current `participation_alloc` では
+      `PrecisionLowVol` と `scalp_extrema_reversal_live` が loser 判定でも
+      `units_multiplier=0.824`, `probability_offset=-0.07`
+      程度で、
+      current drag に対して cut が浅い。
+  - winner under-allocation:
+    - `MomentumBurst` は 24h `2 trades / +185.3 JPY`、
+      7d `60 trades / +1306.2 JPY`。
+      それでも
+      `scalp_ping_5s_flow_live + M1Scalper-M1`
+      の `2710 trades`
+      に比べて participation が薄すぎる。
+- Verdict: bad
+- Next Action:
+  - `M1Scalper-M1` は entry 増ではなく、
+    `avg loss >> avg win` の payoff asymmetry を先に修正する。
+  - `scalp_ping_5s_flow_live` は
+    signal quality と RR が同時に負けているため、
+    active participation 対象から外すか deeper trim が必要。
+  - current loser の `PrecisionLowVol` と `scalp_extrema_reversal_live` は、
+    mild trim ではなく
+    `volatility_compression` reclaim / shallow probe の
+    worker-local hard reject を追加で深くする。
+  - winner lane (`MomentumBurst` など) の participation を
+    loser trim と同じ速度で上げられるかを再設計する。
