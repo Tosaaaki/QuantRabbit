@@ -16936,3 +16936,95 @@ Status:
     の transition/reaccel long 条件を、
     current profitable setup fingerprint を根拠に
     strategy-local で見直す。
+
+## 2026-03-12 20:24 JST / local-v2: `MomentumBurst` の transition long だけ mid-RSI を拾い、winner lane の entry scarcity を埋める
+- Why/Hypothesis:
+  - current `logs/pdca_profitability_latest.md`
+    では
+    24h winner は
+    `MomentumBurst +185.32 JPY / 2 trades`
+    だけで、
+    loser の大半は
+    `PrecisionLowVol`
+    と
+    `scalp_extrema_reversal_live`
+    に偏っていた。
+  - `logs/trades.db`
+    の recent `MomentumBurst` winner は
+    `flow_regime=transition`,
+    `gap:up_strong`,
+    `tr:up_strong`
+    に集中していた一方、
+    過去 RCA では
+    `MomentumBurst` long の near-miss に
+    `long_rsi`
+    が残っていた。
+  - したがって
+    broad gate loosening ではなく、
+    strong higher-TF uptrend + low range/chop の
+    transition long にだけ
+    RSI floor を少し下げるのが最短。
+- Expected Good:
+  - `MomentumBurst-open_long`
+    の transition winner lane で、
+    `RSI 52-54`
+    の early continuation を拾える。
+  - `range_fade` / high-chop / weak DI gap の long は
+    従来どおり通さず、
+    loser lane の増加を避けられる。
+- Expected Bad:
+  - higher-TF uptrend がある transition 局面で、
+    これまでより少し早い long が増える。
+    impulse が十分でない窓では
+    shallow continuation を掴むリスクがある。
+- Observed/Fact:
+  - `strategies/micro/momentum_burst.py`
+    に
+    `_long_rsi_min()`
+    を追加し、
+    non-reaccel long かつ
+    `range_active=false`,
+    `range_score<=0.30`,
+    `micro_chop_score<=0.58`,
+    `plus_di-minus_di>=6`,
+    `roc5>=0.022`,
+    `ema_slope_10>=0.001`,
+    `trend_snapshot.direction=long`,
+    `trend_snapshot gap/adx` が十分なときだけ、
+    long RSI floor を
+    `54 -> 52`
+    へ緩和した。
+  - `reaccel` long,
+    range/chop headwind,
+    no higher-TF support,
+    weak impulse では
+    従来の `RSI_LONG_MIN=54`
+    を維持する。
+  - `tests/strategies/test_momentum_burst.py`
+    に
+    strong transition long の `mid-RSI` 通過ケースと、
+    range/chop では同じ `mid-RSI` を通さない回帰テストを追加した。
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py`
+    は `59 passed`。
+  - synthetic fixture でも
+    `rsi=52.6`,
+    `trend_snapshot long`,
+    `range_score=0.24`,
+    `micro_chop_score=0.54`
+    の transition long が
+    `OPEN_LONG`
+    になることを確認した。
+- Verdict: pending
+- Next Action:
+  - `quant-micro-momentumburst`
+    反映後、
+    next 30-60 分で
+    `MomentumBurst-open_long`
+    の `OPEN_REQ` 件数と
+    `entry_probability / confidence / close_reason`
+    を確認し、
+    `transition` lane が実際に増えるかを見る。
+  - もし still scarce なら、
+    次は `RSI` ではなく
+    `long_bull_run`
+    側の near-miss を strategy-local に点検する。

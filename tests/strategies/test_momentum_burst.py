@@ -40,6 +40,79 @@ def test_long_signal_passes_when_indicator_quality_is_clean() -> None:
     assert signal["tp_pips"] == 7.6
 
 
+def test_transition_long_allows_mid_rsi_when_higher_tf_impulse_is_strong() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.582,
+            "ma10": 158.556,
+            "ma20": 158.528,
+            "ema20": 158.544,
+            "adx": 19.6,
+            "atr_pips": 4.0,
+            "vol_5m": 1.9,
+            "rsi": 52.6,
+            "plus_di": 22.5,
+            "minus_di": 15.8,
+            "roc5": 0.026,
+            "ema_slope_10": 0.0012,
+            "range_score": 0.24,
+            "micro_chop_score": 0.54,
+            "trend_snapshot": {
+                "tf": "H4",
+                "direction": "long",
+                "gap_pips": 18.0,
+                "adx": 26.0,
+            },
+            "candles": [
+                {"high": 158.53, "low": 158.49, "close": 158.50},
+                {"high": 158.55, "low": 158.50, "close": 158.53},
+                {"high": 158.586, "low": 158.52, "close": 158.55},
+                {"high": 158.584, "low": 158.548, "close": 158.582},
+            ],
+        }
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
+def test_transition_long_keeps_rsi_floor_in_range_chop_context() -> None:
+    signal = MomentumBurstMicro.check(
+        {
+            "close": 158.582,
+            "ma10": 158.556,
+            "ma20": 158.528,
+            "ema20": 158.544,
+            "adx": 19.6,
+            "atr_pips": 4.0,
+            "vol_5m": 1.9,
+            "rsi": 52.6,
+            "plus_di": 22.5,
+            "minus_di": 15.8,
+            "roc5": 0.026,
+            "ema_slope_10": 0.0012,
+            "range_active": True,
+            "range_score": 0.52,
+            "micro_chop_active": True,
+            "micro_chop_score": 0.72,
+            "trend_snapshot": {
+                "tf": "H4",
+                "direction": "long",
+                "gap_pips": 18.0,
+                "adx": 26.0,
+            },
+            "candles": [
+                {"high": 158.53, "low": 158.49, "close": 158.50},
+                {"high": 158.55, "low": 158.50, "close": 158.53},
+                {"high": 158.586, "low": 158.52, "close": 158.55},
+                {"high": 158.584, "low": 158.548, "close": 158.582},
+            ],
+        }
+    )
+
+    assert signal is None
+
+
 def test_long_rejects_overextended_indicator_state() -> None:
     signal = MomentumBurstMicro.check(
         {

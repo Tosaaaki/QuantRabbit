@@ -4073,6 +4073,13 @@
   のような non-directional setup tag は
   base strategy key のまま扱い、
   mid-segment broad match は行わない。
+  さらに `strategies/micro/momentum_burst.py` は
+  shared gate を緩めず、
+  non-reaccel long のうち
+  strong higher-TF uptrend + low range/chop + strong DI/ROC/EMA slope
+  の transition 文脈に限って
+  long RSI floor を `54 -> 52` へ緩和し、
+  winner lane の early continuation だけを拾う。
 - loser 側は
   `2-attempt` setup でも current realized loss が明確なら
   setup override を emit し、

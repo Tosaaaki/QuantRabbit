@@ -13,6 +13,15 @@ MIN_ATR = 0.8
 VOL_MIN = 0.5
 RSI_LONG_MIN = 54
 RSI_LONG_MAX = 70
+TRANSITION_LONG_RSI_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_RSI_MIN", "52"))
+TRANSITION_LONG_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_RANGE_SCORE_MAX", "0.30"))
+TRANSITION_LONG_CHOP_SCORE_MAX = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_CHOP_SCORE_MAX", "0.58"))
+TRANSITION_LONG_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_DI_GAP_MIN", "6.0"))
+TRANSITION_LONG_GAP_PIPS_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_GAP_PIPS_MIN", "0.28"))
+TRANSITION_LONG_ROC5_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_ROC5_MIN", "0.022"))
+TRANSITION_LONG_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_EMA_SLOPE_MIN", "0.0010"))
+TRANSITION_LONG_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_GAP_MIN", "12.0"))
+TRANSITION_LONG_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_ADX_MIN", "18.0"))
 RSI_SHORT_MIN = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MIN", "34"))
 RSI_SHORT_MAX = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MAX", "44"))
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
@@ -541,6 +550,55 @@ class MomentumBurstMicro:
         )
 
     @staticmethod
+    def _long_rsi_min(
+        fac: Dict,
+        *,
+        gap_pips: float,
+        reaccel: bool,
+    ) -> float:
+        if reaccel:
+            return RSI_LONG_MIN
+        if TRANSITION_LONG_RSI_MIN >= RSI_LONG_MIN:
+            return RSI_LONG_MIN
+        if bool(fac.get("range_active")):
+            return RSI_LONG_MIN
+        range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
+        chop_score = _clamp01(MomentumBurstMicro._attr(fac, "micro_chop_score", 0.0))
+        if range_score > TRANSITION_LONG_RANGE_SCORE_MAX or chop_score > TRANSITION_LONG_CHOP_SCORE_MAX:
+            return RSI_LONG_MIN
+        plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
+        minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
+        roc5 = MomentumBurstMicro._attr(fac, "roc5", 0.0)
+        ema_slope_10 = MomentumBurstMicro._attr(fac, "ema_slope_10", 0.0)
+        if (
+            gap_pips < TRANSITION_LONG_GAP_PIPS_MIN
+            or (plus_di - minus_di) < TRANSITION_LONG_DI_GAP_MIN
+            or roc5 < TRANSITION_LONG_ROC5_MIN
+            or ema_slope_10 < TRANSITION_LONG_EMA_SLOPE_MIN
+        ):
+            return RSI_LONG_MIN
+        snapshot = fac.get("trend_snapshot")
+        if not isinstance(snapshot, dict):
+            return RSI_LONG_MIN
+        snap_direction = str(snapshot.get("direction") or "").strip().lower()
+        if snap_direction != "long":
+            return RSI_LONG_MIN
+        try:
+            snap_gap_pips = abs(float(snapshot.get("gap_pips") or 0.0))
+        except (TypeError, ValueError):
+            snap_gap_pips = 0.0
+        try:
+            snap_adx = float(snapshot.get("adx") or 0.0)
+        except (TypeError, ValueError):
+            snap_adx = 0.0
+        if (
+            snap_gap_pips < TRANSITION_LONG_TREND_GAP_MIN
+            and snap_adx < TRANSITION_LONG_TREND_ADX_MIN
+        ):
+            return RSI_LONG_MIN
+        return TRANSITION_LONG_RSI_MIN
+
+    @staticmethod
     def _apply_context_tilt(signal: Dict, fac: Dict, *, reaccel: bool) -> Dict | None:
         range_active = bool(fac.get("range_active"))
         range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
@@ -674,8 +732,13 @@ class MomentumBurstMicro:
             and MomentumBurstMicro._trend_snapshot_supports("long", fac)
             and (MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel)
         ):
+            long_rsi_min = MomentumBurstMicro._long_rsi_min(
+                fac,
+                gap_pips=gap_pips,
+                reaccel=long_reaccel,
+            )
             if (
-                RSI_LONG_MIN <= rsi < RSI_LONG_MAX
+                long_rsi_min <= rsi < RSI_LONG_MAX
                 and MomentumBurstMicro._indicator_quality_ok(
                     "long",
                     fac,

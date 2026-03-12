@@ -17183,3 +17183,47 @@
     -> `29 passed`
   - `python3 -m compileall workers/micro_runtime/worker.py tests/workers/test_micro_multistrat_trend_flip.py`
     -> 成功
+
+### 2026-03-12 `MomentumBurst` transition long の mid-RSI override を strategy-local に追加
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+
+- 背景:
+  - current local-v2 では
+    24h winner は
+    `MomentumBurst`
+    がほぼ唯一で、
+    recent closed winner は
+    `transition / gap:up_strong / tr:up_strong`
+    の long lane に寄っていた。
+  - 一方で既存 RCA では
+    `MomentumBurst` long の near-miss に
+    `long_rsi`
+    が残っており、
+    broad loosening ではなく
+    transition long だけの早期復帰が必要だった。
+
+- 変更:
+  - `_long_rsi_min()`
+    を追加し、
+    non-reaccel long かつ
+    low range/chop + strong DI/ROC/EMA slope + supportive `trend_snapshot`
+    のときだけ
+    long RSI floor を
+    `54 -> 52`
+    へ緩和するよう更新した。
+  - range/headwind/chop が強い文脈や
+    `reaccel` long では
+    既存の long RSI floor を維持する。
+  - 回帰テストとして
+    strong transition long の mid-RSI 通過と、
+    range/chop 文脈では同じ mid-RSI を拒否するケースを追加した。
+
+- 検証:
+  - `pytest -q tests/strategies/test_momentum_burst.py tests/workers/test_micro_multistrat_trend_flip.py`
+    -> `59 passed`
+  - `python3 -m compileall strategies/micro/momentum_burst.py tests/strategies/test_momentum_burst.py`
+    -> 成功
