@@ -8,6 +8,63 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MomentumBurst` bull-run follow-through easing（2026-03-12）
+- 背景:
+  - 2026-03-12 22:06 JST 時点の local-v2 で
+    `MomentumBurst`
+    は
+    24h
+    `2 trades / +185.3 JPY`
+    の winner だったが、
+    2026-03-12 当日は
+    `preflight_start=0`
+    で cadence が止まっていた。
+  - 既に
+    stale participation artifact 修正、
+    `90s / reaccel 20s`
+    cooldown、
+    transition long の `mid-RSI`
+    緩和は入っており、
+    次の scarcity は
+    `rsi:overbought`
+    continuation 側だった。
+  - recent winner は
+    `MomentumBurst-open_long|long|transition|...|gap:up_strong|...|tr:up_strong|rsi:overbought`
+    に集中していた。
+- 実装:
+  - `strategies/micro/momentum_burst.py`
+    の
+    `_indicator_quality_ok()`
+    に
+    long-side の
+    `_long_bull_run_context_ok()`
+    を追加した。
+  - `rsi>68`
+    の long でも、
+    `range_score<=0.26`
+    /
+    `micro_chop_score<=0.54`
+    /
+    `gap_pips>=0.34`
+    /
+    `DI gap>=9`
+    /
+    `roc5>=0.024`
+    /
+    `ema_slope_10>=0.0008`
+    /
+    strong higher-TF `trend_snapshot`
+    が揃うときだけ通す。
+  - choppy/range 文脈では
+    従来どおり
+    overextension block を維持し、
+    short 条件や shared gate には触れない。
+- 意図:
+  - loser lane を broad に増やさず、
+    `MomentumBurst-open_long`
+    の high-RSI winner continuation だけを
+    strategy-local に増やす。
+
 ### local-v2 `scalp_extrema_reversal_live` long `volatility_compression` recent-outcome guard（2026-03-12）
 - 背景:
   - 2026-03-12 21:23 JST 時点の local-v2 で

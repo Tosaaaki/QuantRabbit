@@ -5,6 +5,33 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`MomentumBurst` high-RSI bull-run follow-through を strategy-local に前倒し
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `MomentumBurstMicro`
+    に
+    `_long_bull_run_context_ok()`
+    を追加し、
+    overbought long でも
+    strong higher-TF uptrend + low range/chop + strong impulse
+    のときだけ continuation long を通せるようにした。
+  - regression test として、
+    high-RSI follow-through keep と
+    choppy keep-block を追加した。
+- 意図:
+  - `MomentumBurst-open_long`
+    の winner lane が
+    `rsi:overbought`
+    に偏っているのに
+    current cadence が止まっていたため、
+    shared gate ではなく strategy-local の
+    quality 判定だけを少し前倒しする。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を recent-outcome guard で絞る
 
 - 対象:

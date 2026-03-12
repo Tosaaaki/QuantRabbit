@@ -51,6 +51,160 @@
 - Status:
 ```
 
+## 2026-03-12 22:06 JST / local-v2: `MomentumBurst` の high-RSI bull-run follow-through を strategy-local に少し前倒し
+
+- Change:
+  - `strategies/micro/momentum_burst.py`
+    に
+    long-side の
+    `bull_run`
+    context helper を追加し、
+    `rsi>68`
+    でも
+    strong higher-TF uptrend + low range/chop + strong gap/DI/ROC/slope
+    のときだけ
+    transition long を通せるようにした。
+  - `tests/strategies/test_momentum_burst.py`
+    に
+    high-RSI follow-through keep / choppy keep-block
+    の回帰を追加した。
+- Why:
+  - 2026-03-12 22:06 JST 時点の local-v2 実測では
+    `USD/JPY 158.848`
+    /
+    `M1 ATR 2.32 pips`
+    /
+    `ADX 25.7`
+    /
+    `vol_5m 1.96`
+    /
+    `open_positions 0`
+    で、
+    execution/流動性の異常は見えていなかった。
+  - それでも
+    `MomentumBurst`
+    は
+    24h
+    `2 trades / +185.3 JPY`
+    のまま、
+    2026-03-12 当日は
+    `preflight_start=0`
+    だった。
+  - 既に
+    `stale participation artifact` 修正、
+    `90s / reaccel 20s`
+    cooldown、
+    transition long の
+    `mid-RSI`
+    緩和は入っているため、
+    次の scarcity は
+    `rsi:overbought`
+    winner lane の
+    follow-through 判定側と見た。
+- Hypothesis:
+  - current winner の
+    `MomentumBurst-open_long|...|gap:up_strong|...|tr:up_strong|rsi:overbought`
+    は、
+    broad loosening ではなく
+    high-RSI continuation の quality 判定を
+    strong trend 文脈に限定して少し前倒しすれば、
+    expectancy を保ったまま cadence を増やせる。
+- Expected Good:
+  - `MomentumBurst-open_long`
+    の
+    overbought continuation winner lane で
+    1 本早い entry を拾える。
+  - range/chop / weaker higher-TF support / weak DI-ROC-slope
+    では従来どおり block される。
+- Expected Bad:
+  - strong uptrend の終盤で
+    earlier continuation long が増え、
+    shallow exhaustion を掴む可能性がある。
+- Period:
+  - 直近24h の `logs/orders.db` / `logs/trades.db`
+  - 2026-03-12 22:06 JST 時点の `logs/factor_cache.json` / `logs/market_context_latest.json`
+- Fact:
+  - `logs/orders.db`
+    の
+    `MomentumBurst`
+    preflight は
+    7d
+    `62 attempts / avg_prob 0.842`
+    だが、
+    2026-03-12 は `0 attempts`。
+  - `logs/trades.db`
+    の直近 winner は
+    2026-03-11 21:44-21:51 JST の
+    `MomentumBurst-open_long`
+    2本で、
+    どちらも
+    `entry_probability=0.955`
+    /
+    `flow_regime=transition`
+    /
+    `gap:up_strong`
+    /
+    `rsi:overbought`
+    /
+    `tr:up_strong`
+    だった。
+  - `pytest -q tests/strategies/test_momentum_burst.py`
+    は
+    `32 passed`
+    だった。
+- Failure Cause:
+  - `mid-RSI`
+    緩和後も、
+    high-RSI continuation は
+    `_indicator_quality_ok()`
+    の
+    strict overextension 条件
+    (`strong_di_gap / strong_roc_push / slope>=0.0010`)
+    に縛られ、
+    strong trend 文脈でも no-entry が残っていた。
+- Improvement:
+  - `MomentumBurstMicro._long_bull_run_context_ok()`
+    を追加し、
+    `rsi<=72`
+    /
+    `range_score<=0.26`
+    /
+    `micro_chop_score<=0.54`
+    /
+    `gap_pips>=0.34`
+    /
+    `DI gap>=9`
+    /
+    `roc5>=0.024`
+    /
+    `ema_slope_10>=0.0008`
+    /
+    `trend_snapshot.direction=long`
+    かつ strong higher-TF gap/ADX
+    のときだけ、
+    long bull-run を通すようにした。
+  - short 条件・shared gate・forecast gate・cooldown は変更しない。
+- Verification:
+  - `pytest -q tests/strategies/test_momentum_burst.py`
+  - restart 後
+    30-60 分で
+    `MomentumBurst-open_long`
+    の
+    `preflight_start / filled / entry_probability / confidence / close_reason`
+    を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - 反映後も
+    `MomentumBurst`
+    が still `0 attempts`
+    なら、
+    次は shared gate ではなく
+    `forecast gate` の strategy-local 閾値か
+    explicit trend snapshot 要件を点検する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 21:34 JST / local-v2: `scalp_extrema_reversal_live` は short ではなく long `volatility_compression` loser lane を先に切る
 
 - Change:

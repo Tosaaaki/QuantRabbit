@@ -22,6 +22,15 @@ TRANSITION_LONG_ROC5_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_ROC5_M
 TRANSITION_LONG_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_EMA_SLOPE_MIN", "0.0010"))
 TRANSITION_LONG_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_GAP_MIN", "12.0"))
 TRANSITION_LONG_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_ADX_MIN", "18.0"))
+LONG_BULL_RUN_RSI_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RSI_MAX", "72.0"))
+LONG_BULL_RUN_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RANGE_SCORE_MAX", "0.26"))
+LONG_BULL_RUN_CHOP_SCORE_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_CHOP_SCORE_MAX", "0.54"))
+LONG_BULL_RUN_GAP_PIPS_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_GAP_PIPS_MIN", "0.34"))
+LONG_BULL_RUN_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_DI_GAP_MIN", "9.0"))
+LONG_BULL_RUN_ROC5_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_ROC5_MIN", "0.024"))
+LONG_BULL_RUN_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_EMA_SLOPE_MIN", "0.0008"))
+LONG_BULL_RUN_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_GAP_MIN", "14.0"))
+LONG_BULL_RUN_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_ADX_MIN", "22.0"))
 RSI_SHORT_MIN = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MIN", "34"))
 RSI_SHORT_MAX = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MAX", "44"))
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
@@ -308,10 +317,67 @@ class MomentumBurstMicro:
         if directional_rsi <= 68.0:
             return True
 
+        if direction == "long" and MomentumBurstMicro._long_bull_run_context_ok(
+            fac,
+            gap_pips=gap_pips,
+            di_gap=di_gap,
+            roc_push=roc_push,
+            slope_push=slope_push,
+            directional_rsi=directional_rsi,
+        ):
+            return True
+
         return (
             di_gap >= strong_di_gap
             and roc_push >= strong_roc_push
             and slope_push >= 0.0010
+        )
+
+    @staticmethod
+    def _long_bull_run_context_ok(
+        fac: Dict,
+        *,
+        gap_pips: float,
+        di_gap: float,
+        roc_push: float,
+        slope_push: float,
+        directional_rsi: float,
+    ) -> bool:
+        if directional_rsi > LONG_BULL_RUN_RSI_MAX:
+            return False
+        if bool(fac.get("range_active")):
+            return False
+        range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
+        chop_score = _clamp01(MomentumBurstMicro._attr(fac, "micro_chop_score", 0.0))
+        if (
+            range_score > LONG_BULL_RUN_RANGE_SCORE_MAX
+            or chop_score > LONG_BULL_RUN_CHOP_SCORE_MAX
+        ):
+            return False
+        if (
+            gap_pips < LONG_BULL_RUN_GAP_PIPS_MIN
+            or di_gap < LONG_BULL_RUN_DI_GAP_MIN
+            or roc_push < LONG_BULL_RUN_ROC5_MIN
+            or slope_push < LONG_BULL_RUN_EMA_SLOPE_MIN
+        ):
+            return False
+        snapshot = fac.get("trend_snapshot")
+        if not isinstance(snapshot, dict):
+            return False
+        snap_direction = str(snapshot.get("direction") or "").strip().lower()
+        if snap_direction != "long":
+            return False
+        try:
+            snap_gap_pips = abs(float(snapshot.get("gap_pips") or 0.0))
+        except (TypeError, ValueError):
+            snap_gap_pips = 0.0
+        try:
+            snap_adx = float(snapshot.get("adx") or 0.0)
+        except (TypeError, ValueError):
+            snap_adx = 0.0
+        return not (
+            snap_gap_pips < LONG_BULL_RUN_TREND_GAP_MIN
+            and snap_adx < LONG_BULL_RUN_TREND_ADX_MIN
         )
 
     @staticmethod
