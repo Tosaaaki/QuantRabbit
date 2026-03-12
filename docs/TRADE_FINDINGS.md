@@ -253,6 +253,76 @@
 - Status:
   - in_progress
 
+## 2026-03-12 09:20 JST / local-v2: `PrecisionLowVol` weak overbought short を setup-pressure 前段で遮断
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py` の
+    `_signal_precision_lowvol()` に、
+    `range_reason=volatility_compression` の short で
+    `flow_guard` 付き `rsi>=60`, `projection.score<=0`,
+    `setup_quality<0.46` を満たす weak overbought lane を
+    reject する guard を追加した。
+  - `workers/scalp_wick_reversal_blend/config.py` と
+    `ops/env/quant-scalp-precision-lowvol.env` に
+    `PREC_LOWVOL_WEAK_SHORT_*` を追加し、
+    current threshold を dedicated env で固定した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に block / allow の回帰を追加した。
+- Why:
+  - current loser は burst 成立後だけではなく、
+    setup-pressure が立つ前に
+    weak short を同時に複数持って削る entry も残っていた。
+- Hypothesis:
+  - `flow_guard` が付き、
+    `rsi>=60`, `projection.score<=0`, `setup_quality<0.46`
+    の weak overbought short を前段で落とせば、
+    `PrecisionLowVol` の短期 loser lane を削りつつ
+    positive projection short は残せる。
+- Expected Good:
+  - `PrecisionLowVol` の current short loser が減る。
+  - setup-pressure が発火する前の simultaneous weak short を減らせる。
+  - 直近30分の scalp expectancy が改善する。
+- Expected Bad:
+  - overbought short の cadence が少し落ちる。
+  - weak 判定が厳しすぎると positive reclaim を取り逃がす可能性がある。
+- Fact:
+  - 2026-03-12 09:10 JST 時点の市況:
+    - USD/JPY `159.212`
+    - spread `0.8 pips`
+    - M1 ATR14 `2.9 pips`
+    - OANDA pricing/candle latency `246-332 ms`
+  - 2026-03-12 09:10 JST 時点の直近30分:
+    - 全体 `200 trades / +13.0 JPY / PF 1.029`
+    - `PrecisionLowVol 24 trades / -81.71 JPY`
+  - 直近7日 `PrecisionLowVol short volatility_compression` のうち
+    `flow_guard` 付き `rsi>=60`, `projection.score<=0`,
+    `setup_quality<0.46` は
+    `7 trades / 0 wins / -91.923 JPY` だった。
+  - 直近 loser 例:
+    - `2026-03-12 09:01 JST`
+      `rsi=61.146 / projection=-0.065 / setup_quality=0.435`
+      `-> -13.244 JPY`
+    - `2026-03-12 09:01 JST`
+      `rsi=61.146 / projection=-0.065 / setup_quality=0.416`
+      `-> -13.640 JPY`
+- Observed/Fact:
+  - current burst guard は recent loser burst には効くが、
+    burst が成立する前の weak short 同時持ちまでは止められなかった。
+  - loser lane は shared gate ではなく、
+    `PrecisionLowVol` worker local の current factor だけで説明できる。
+- Verdict:
+  - pending
+- Next Action:
+  - restart 後の next `30-60m` で
+    `PrecisionLowVol` の
+    `filled / net_jpy / STOP_LOSS_ORDER / entry_thesis.flow_guard.setup_quality`
+    を再確認する。
+  - まだ current short loser が残るなら、
+    `projection_score_max` か `setup_quality_max`
+    のどちらを tighter にするかを切り分ける。
+- Status:
+  - done
+
 ## 2026-03-12 03:34 JST / local-v2: `PrecisionLowVol` short repeated-loss burst を setup-pressure guard で抑制
 
 - Change:

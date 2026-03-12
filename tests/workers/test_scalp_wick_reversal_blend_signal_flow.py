@@ -59,6 +59,10 @@ def _load_worker_namespace() -> dict[str, object]:
             PREC_LOWVOL_VWAP_GAP_BLOCK=1.8,
             PREC_LOWVOL_SPREAD_P25=1.8,
             PREC_LOWVOL_REV_MIN_STRENGTH=0.28,
+            PREC_LOWVOL_WEAK_SHORT_GUARD_ENABLED=True,
+            PREC_LOWVOL_WEAK_SHORT_RSI_MIN=60.0,
+            PREC_LOWVOL_WEAK_SHORT_PROJECTION_SCORE_MAX=0.0,
+            PREC_LOWVOL_WEAK_SHORT_SETUP_QUALITY_MAX=0.46,
             ENV_PREFIX="SCALP_PRECISION",
         ),
         "SPREAD_REV_TICK_MIN": 6,
@@ -330,6 +334,81 @@ def test_precision_lowvol_blocks_weak_short_under_recent_setup_pressure() -> Non
     signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
 
     assert signal is None
+
+
+def test_precision_lowvol_blocks_current_weak_overbought_short_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 15.5,
+        "bbw": 0.00036,
+        "atr_pips": 2.2,
+        "rsi": 61.2,
+        "stoch_rsi": 1.0,
+        "vwap_gap": 1.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.26,
+            "max_pressure": 0.60,
+            "setup_quality": 0.43,
+            "reversion_support": 0.73,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.05},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_higher_projection_short_when_rsi_is_high() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 15.5,
+        "bbw": 0.00036,
+        "atr_pips": 2.2,
+        "rsi": 61.2,
+        "stoch_rsi": 1.0,
+        "vwap_gap": 1.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.22,
+            "max_pressure": 0.60,
+            "setup_quality": 0.43,
+            "reversion_support": 0.73,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.12},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
 
 
 def test_precision_lowvol_keeps_stronger_short_under_recent_setup_pressure() -> None:

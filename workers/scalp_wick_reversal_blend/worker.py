@@ -1368,6 +1368,7 @@ def _signal_precision_lowvol(
     vgap = _vwap_gap_pips(fac_m1)
 
     range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
+    range_reason = str(getattr(range_ctx, "reason", "") or "").strip().lower() if range_ctx else ""
     range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.PREC_LOWVOL_RANGE_SCORE))
     if not range_ok:
         range_ok = adx <= config.PREC_LOWVOL_ADX_MAX and bbw <= config.PREC_LOWVOL_BBW_MAX
@@ -1494,6 +1495,24 @@ def _signal_precision_lowvol(
             and (projection_score is None or projection_score < 0.18)
         )
     if weak_down_flat_lane:
+        return None
+    weak_overbought_short_lane = False
+    if (
+        side == "short"
+        and range_reason == "volatility_compression"
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_WEAK_SHORT_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        weak_overbought_short_lane = (
+            rsi >= float(getattr(config, "PREC_LOWVOL_WEAK_SHORT_RSI_MIN", 60.0))
+            and projection_score
+            <= float(getattr(config, "PREC_LOWVOL_WEAK_SHORT_PROJECTION_SCORE_MAX", 0.0))
+            and setup_quality
+            < float(getattr(config, "PREC_LOWVOL_WEAK_SHORT_SETUP_QUALITY_MAX", 0.46))
+        )
+    if weak_overbought_short_lane:
         return None
     if hostile_projection_lane:
         strong_reversal_probe = (

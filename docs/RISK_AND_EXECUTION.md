@@ -8,6 +8,45 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `PrecisionLowVol` weak overbought short guard（2026-03-12）
+- 背景:
+  - 2026-03-12 09:10 JST 時点の local-v2 実測では、
+    USD/JPY は `159.212` 付近、spread `0.8 pips`、M1 ATR14 `2.9 pips` で
+    市況自体は通常帯だった。
+  - 同時点の `logs/trades.db` では
+    直近30分 `200 trades / +13.0 JPY` と伸びず、
+    `PrecisionLowVol` だけで `24 trades / -81.71 JPY` を削っていた。
+  - さらに直近7日で
+    `range_reason=volatility_compression` かつ
+    `flow_guard` 付き short のうち
+    `rsi>=60`, `projection.score<=0`, `setup_quality<0.46`
+    は `7 trades / 0 wins / -91.923 JPY` で、
+    setup-pressure が発火する前の weak short lane が loser だった。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    - `PREC_LOWVOL_WEAK_SHORT_*` を追加し、
+      current weak short lane の閾値を dedicated env から操作できるようにした。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    - `_signal_precision_lowvol()` は
+      `range_reason=volatility_compression` の short で
+      `flow_guard` が付き、
+      `rsi>=60`, `projection.score<=0`, `setup_quality<0.46`
+      を満たす weak overbought lane を
+      setup-pressure 発火前でも reject する。
+    - positive projection か higher quality の short は維持し、
+      existing setup-pressure / hostile projection / RR widening は残した。
+  - `ops/env/quant-scalp-precision-lowvol.env`
+    - `SCALP_PRECISION_LOWVOL_PREC_LOWVOL_WEAK_SHORT_*`
+      を current 運用値で明示した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    - weak current lane が block され、
+      stronger projection short は残ることを固定した。
+- 意図:
+  - `PrecisionLowVol` short を止めるのではなく、
+    setup-pressure がまだ立っていない瞬間の
+    weak overbought short だけを
+    worker local に落として短期 expectancy を戻す。
+
 ### local-v2 `PrecisionLowVol` short repeated-loss setup-pressure guard（2026-03-12）
 - 背景:
   - 2026-03-12 03:34 JST 時点の local-v2 実測では、

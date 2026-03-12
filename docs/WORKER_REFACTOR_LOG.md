@@ -5,6 +5,38 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`PrecisionLowVol` weak overbought short guard
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `ops/env/quant-scalp-precision-lowvol.env`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `AGENTS.md`
+- 変更:
+  - `config.py` に
+    `PREC_LOWVOL_WEAK_SHORT_*`
+    を追加し、`rsi / projection.score / setup_quality`
+    ベースの current short loser 閾値を dedicated env から扱えるようにした。
+  - `_signal_precision_lowvol()` は
+    `range_reason=volatility_compression` の short で
+    `flow_guard` が付く current lane のうち、
+    `rsi>=60`, `projection.score<=0`, `setup_quality<0.46`
+    を満たす weak overbought short を
+    setup-pressure 発火前でも reject するようにした。
+  - dedicated env に
+    `SCALP_PRECISION_LOWVOL_PREC_LOWVOL_WEAK_SHORT_*`
+    を追加し、current threshold を明示した。
+  - signal-flow test に
+    weak lane block / stronger projection keep
+    の回帰を追加した。
+- 意図:
+  - `PrecisionLowVol` short を blanket stop せず、
+    burst 成立前の current loser lane だけを
+    worker local の factor で落とす。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` の late `entry_probability_reject` を order-manager 側で止血
 
 - 対象:
