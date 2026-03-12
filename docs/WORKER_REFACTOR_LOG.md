@@ -25,6 +25,30 @@
     の size を小幅に戻し、
     open-trade 不足時の収益機会を少し押す。
 
+### 2026-03-12（追記）`scalp_wick_reversal_blend` perf guard flag semantics fix
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `_perf_guard_bypass_enabled()`
+    を
+    `not _env_bool(..., True)`
+    に変更し、
+    `SCALP_PRECISION_*_PERF_GUARD_ENABLED=0`
+    を
+    `perf guard off`
+    として扱うようにした。
+  - mode-specific env flag の
+    `0/1`
+    が bypass に正しく反映される回帰テストを追加した。
+- 意図:
+  - `DroughtRevert / PrecisionLowVol / WickReversalBlend`
+    系で、
+    env では無効化したはずの perf guard が live participation を止める不整合を解消する。
+
 ### 2026-03-12（追記）`MomentumBurst` cadence / entry-path freshness fix
 
 - 対象:

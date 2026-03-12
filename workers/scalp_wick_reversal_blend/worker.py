@@ -178,10 +178,10 @@ def _env_csv(key: str, default: str = "") -> List[str]:
 def _perf_guard_bypass_enabled() -> bool:
     mode = str(getattr(config, "MODE", "") or "").strip().lower()
     if mode == "precision_lowvol":
-        return _env_bool("SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED", False)
+        return not _env_bool("SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED", True)
     if mode == "drought_revert":
-        return _env_bool("SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED", False)
-    return _env_bool("SCALP_PRECISION_PERF_GUARD_ENABLED", False)
+        return not _env_bool("SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED", True)
+    return not _env_bool("SCALP_PRECISION_PERF_GUARD_ENABLED", True)
 
 
 _DROUGHT_CACHE_TS = 0.0

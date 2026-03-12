@@ -51,6 +51,125 @@
 - Status:
 ```
 
+## 2026-03-12 14:15 JST / local-v2: `scalp_wick_reversal_blend` 系の perf guard 無効化フラグが逆読まれて participation を落としていた
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_perf_guard_bypass_enabled()`
+    を修正し、
+    `SCALP_PRECISION_*_PERF_GUARD_ENABLED=0`
+    を本当に
+    `perf guard off`
+    として扱うようにした。
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+    に
+    `guard disabled -> bypass on`
+    と
+    `guard enabled -> bypass off`
+    の回帰を追加した。
+- Why:
+  - 2026-03-12 14:07 JST 時点の local-v2 実測では
+    `USD/JPY 159.070 / spread 0.8 pips / open_trades 0`
+    で、
+    last 60 分の entry は
+    `13:12 JST`
+    の
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    各1本だけだった。
+  - live log では
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    に
+    `perf guard blocked`
+    が連発していた一方、
+    dedicated env は
+    `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
+    と
+    `SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED=0`
+    になっていた。
+- Hypothesis:
+  - worker の
+    `_perf_guard_bypass_enabled()`
+    が
+    `PERF_GUARD_ENABLED`
+    をそのまま
+    `bypass`
+    として読んでおり、
+    `0`
+    でも perf guard が active のままになっていた。
+  - その結果、
+    本来 worker-local quality guard で選別したい
+    `DroughtRevert / PrecisionLowVol / WickReversalBlend`
+    系が strategy-wide に止まり、
+    participation を不必要に落としていた。
+- Expected Good:
+  - dedicated env で
+    `PERF_GUARD_ENABLED=0`
+    にしている mode は、
+    worker-local guard だけで entry 候補を評価できるようになる。
+  - `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    の candidate 空白が縮む。
+- Expected Bad:
+  - loser lane まで戻し過ぎると、
+    entry 数だけ増えて損失も戻る。
+- Period:
+  - 直近60分 live orders/logs + current dedicated env
+- Fact:
+  - last 60 分 orders は
+    `DroughtRevert filled 1`,
+    `PrecisionLowVol filled 1`,
+    `scalp_ping_5s_c_live entry_probability_reject 1`
+    で、
+    その後の candidate は極端に薄かった。
+  - live log は
+    `2026-03-12 12:xx-14:xx JST`
+    に
+    `perf guard blocked tag=DroughtRevert reason=pf=0.89 win=0.54 n=13`
+    と
+    `perf guard blocked tag=PrecisionLowVol reason=pf=0.87 win=0.50 n=24`
+    を出していた。
+  - dedicated env は
+    `...PERF_GUARD_ENABLED=0`
+    を明示していた。
+- Failure Cause:
+  - mode-specific env の
+    `PERF_GUARD_ENABLED`
+    を bypass flag として逆向きに読んでいた実装ミス。
+- Improvement:
+  - `_perf_guard_bypass_enabled()`
+    を
+    `not _env_bool(..., True)`
+    に修正し、
+    env の意味と worker の挙動を一致させた。
+- Verification:
+  - `pytest -q tests/workers/test_scalp_wick_reversal_blend_dispatch.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - restart 後に
+    `quant-scalp-drought-revert`
+    と
+    `quant-scalp-precision-lowvol`
+    の
+    `perf guard blocked`
+    ログ消失と
+    `preflight_start`
+    の戻りを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - restart 後 30-60 分で
+    `DroughtRevert / PrecisionLowVol`
+    の `preflight / filled / realized_jpy`
+    を見て、
+    participation だけ戻って quality が崩れるなら
+    perf guard ではなく setup-local block を追加する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 13:45 JST / local-v2: `MomentumBurst` cadence を stale participation artifact と cooldown で詰めていた箇所を修正
 
 - Change:

@@ -8,6 +8,43 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_wick_reversal_blend` perf guard flag semantics fix（2026-03-12）
+- 背景:
+  - 2026-03-12 14:07 JST 時点で
+    `USD/JPY 159.070 / spread 0.8 pips / open_trades 0`
+    かつ
+    last 60 分 entry は
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    各1本だけで、
+    その後の candidate が薄かった。
+  - live log には
+    `perf guard blocked tag=DroughtRevert`
+    と
+    `perf guard blocked tag=PrecisionLowVol`
+    が継続していた一方、
+    dedicated env は
+    `SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED=0`
+    /
+    `SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED=0`
+    だった。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_perf_guard_bypass_enabled()`
+    を
+    `not _env_bool(..., True)`
+    に変更し、
+    env の
+    `PERF_GUARD_ENABLED=0`
+    を本当に
+    `guard off`
+    として扱うようにした。
+- 意図:
+  - perf guard の naming と live 動作を一致させ、
+    worker-local quality guard で制御したい mode を strategy-wide perf block で止めない。
+
 ### local-v2 `MomentumBurst` cadence / entry-path freshness fix（2026-03-12）
 - 背景:
   - 2026-03-12 13:33 JST 時点で

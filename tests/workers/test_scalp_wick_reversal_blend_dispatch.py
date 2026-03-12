@@ -70,13 +70,13 @@ def _load_worker_functions(*names: str):
         ("wick_reversal_blend", "SCALP_PRECISION_PERF_GUARD_ENABLED"),
     ],
 )
-def test_perf_guard_bypass_enabled_uses_mode_specific_env(mode: str, enabled_key: str) -> None:
+def test_perf_guard_bypass_enabled_when_mode_specific_guard_is_disabled(mode: str, enabled_key: str) -> None:
     namespace = _load_worker_functions("_perf_guard_bypass_enabled")
     seen: list[tuple[str, bool]] = []
 
     def fake_env_bool(key: str, default: bool) -> bool:
         seen.append((key, default))
-        return key == enabled_key
+        return True if key != enabled_key else False
 
     namespace.update(
         {
@@ -86,7 +86,34 @@ def test_perf_guard_bypass_enabled_uses_mode_specific_env(mode: str, enabled_key
     )
 
     assert namespace["_perf_guard_bypass_enabled"]() is True
-    assert seen == [(enabled_key, False)]
+    assert seen == [(enabled_key, True)]
+
+
+@pytest.mark.parametrize(
+    ("mode", "enabled_key"),
+    [
+        ("precision_lowvol", "SCALP_PRECISION_LOWVOL_PERF_GUARD_ENABLED"),
+        ("drought_revert", "SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_ENABLED"),
+        ("wick_reversal_blend", "SCALP_PRECISION_PERF_GUARD_ENABLED"),
+    ],
+)
+def test_perf_guard_bypass_disabled_when_mode_specific_guard_is_enabled(mode: str, enabled_key: str) -> None:
+    namespace = _load_worker_functions("_perf_guard_bypass_enabled")
+    seen: list[tuple[str, bool]] = []
+
+    def fake_env_bool(key: str, default: bool) -> bool:
+        seen.append((key, default))
+        return True
+
+    namespace.update(
+        {
+            "config": SimpleNamespace(MODE=mode),
+            "_env_bool": fake_env_bool,
+        }
+    )
+
+    assert namespace["_perf_guard_bypass_enabled"]() is False
+    assert seen == [(enabled_key, True)]
 
 
 @pytest.mark.parametrize("name", ["DroughtRevert", "PrecisionLowVol"])
