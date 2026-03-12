@@ -51,6 +51,181 @@
 - Status:
 ```
 
+## 2026-03-12 23:15 JST / `scalp_extrema_reversal_live` long `volatility_compression` loser lane を worker-local に追加 tightening
+
+- Change:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に、
+    `long_setup_pressure_active`
+    中だけ効く
+    `long_positive_gap_probe_block`
+    を追加した。
+  - 条件は
+    `volatility_compression`
+    /
+    `RANGE`
+    /
+    `not long_supportive`
+    /
+    `ma_gap_pips>=0.45`
+    /
+    `dist_low<=0.70`
+    /
+    `long_bounce<=0.20`
+    /
+    `tick_strength<=0.20`
+    /
+    `range_score<=0.46`
+    /
+    `rsi>=38`
+    に限定した。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    の
+    `SCALP_EXTREMA_REVERSAL_LONG_SETUP_PRESSURE_MIN_TRADES`
+    を
+    `6 -> 4`
+    へ下げ、
+    current loser lane に対する反応を早めた。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に
+    shallow positive-gap long の block / deeper long keep の回帰を追加した。
+- Why:
+  - 2026-03-12 23:00 JST 前後の local-v2 実測では、
+    USD/JPY は
+    `158.978`
+    近辺、
+    直近6hの実注文 spread は
+    `0.8 pips`
+    で安定、
+    `data_lag_ms 506`
+    /
+    `decision_latency_ms 17.4`
+    /
+    `order_success_rate 0.97`
+    /
+    `reject_rate 0.03`
+    と execution 側の崩れは主因ではなかった。
+  - 一方で
+    `scalp_extrema_reversal_live`
+    の
+    `long + volatility_compression`
+    は直近約12hで
+    `17 trades / net -34.121 JPY / avg -0.688 pips / sl_rate 0.529 / fast_sl_rate 0.412`
+    だった。
+  - 特に直近 loser は
+    `dist_low 0.53-0.83`
+    /
+    `long_bounce 0.1-0.2`
+    /
+    `tick_strength 0.1-0.2`
+    /
+    `range_score 0.41-0.46`
+    の shallow reclaim に偏り、
+    13:03 UTC の最新 loser では
+    `ma_gap_pips=0.635`
+    の positive-gap lane が既存 `long_setup_pressure_block`
+    を抜けていた。
+- Hypothesis:
+  - 現在の負け筋は
+    「price が mean より上へ少し drift しているのに、
+    reclaim の bounce / tick reversal が浅い long」
+    で、
+    これを recent setup pressure 中だけ落とせば
+    scalp_fast の連続小損を減らせる。
+  - `min_trades=4`
+    へ下げることで、
+    loser burst の検知が
+    `6 trades`
+    待ちより早くなり、
+    同種の連続損失を縮められる。
+- Expected Good:
+  - `scalp_extrema_reversal_live`
+    long `volatility_compression`
+    の STOP_LOSS burst を減らす。
+  - shared gate をいじらず、
+    current loser lane だけを strategy-local に削れる。
+- Expected Bad:
+  - positive-gap reclaim long のうち、
+    反発初動が浅い winner も少数取りこぼす可能性がある。
+  - `min_trades=4`
+    化で setup pressure が早く効きすぎると、
+    loser burst 後の初回回復 long も 1-2 本捨てる可能性がある。
+- Period:
+  - `logs/orders.db`: 直近24h / 直近6h
+  - `logs/trades.db`: 直近12h / 直近48h
+  - `logs/health_snapshot.json`: 2026-03-12 23:14-23:15 JST 付近
+- Fact:
+  - `logs/trades.db`
+    直近12hの
+    `scalp_extrema_reversal_live`
+    `long + volatility_compression`
+    集計:
+    `17 trades / net -34.121 JPY / sl_rate 0.529 / fast_sl_rate 0.412`。
+  - 同 lane の
+    `loss`
+    平均は
+    `dist_low=0.387 / bounce=0.208 / tick=0.175 / ma_gap=0.171 / range_score=0.446 / rsi=39.132`、
+    `win`
+    平均は
+    `dist_low=0.585 / bounce=0.320 / tick=0.280 / ma_gap=-0.045 / range_score=0.466 / rsi=42.200`
+    だった。
+  - 新しい targeted test は
+    `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+    で
+    `30 passed`
+    を確認した。
+- Failure Cause:
+  - 既存 guard は
+    `ma_gap<=0`
+    を前提にした weak reclaim block へ寄っており、
+    positive-gap の shallow reclaim loser が current lane として残っていた。
+  - また
+    long-side setup pressure は
+    `min_trades=6`
+    で、
+    loser burst の早い段階では反応が遅かった。
+- Improvement:
+  - recent outcome が悪化している間だけ、
+    positive-gap shallow reclaim long を worker local で reject する。
+  - setup pressure の起動を
+    `4 trades`
+    へ前倒しし、
+    long loser burst への追従を速める。
+- Verification:
+  - `pytest -q tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-order-manager,quant-position-manager`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-scalp-extrema-reversal,quant-scalp-extrema-reversal-exit`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-order-manager,quant-position-manager,quant-scalp-extrema-reversal,quant-scalp-extrema-reversal-exit`
+  - `logs/local_v2_stack/quant-scalp-extrema-reversal.log`
+    と
+    `logs/orders.db`
+    で
+    `long_positive_gap_probe_block`
+    相当 lane の entry 減少、
+    `scalp_extrema_reversal_live`
+    long `volatility_compression`
+    の
+    `sl_rate / fast_sl_rate / net_jpy`
+    を次の 30-90 分で再確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - まず 30-90 分で
+    `scalp_extrema_reversal_live`
+    long `volatility_compression`
+    の新規約定数と
+    `STOP_LOSS_ORDER`
+    比率を見る。
+  - cadence が落ちすぎる場合は、
+    `long_positive_gap_probe_block`
+    の
+    `range_score_max`
+    または
+    `rsi_min`
+    を戻す方向で再調整する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 23:20 JST / local-v2: Brain safe canary に `session_open_breakout` を追加
 
 - Change:

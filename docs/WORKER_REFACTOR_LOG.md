@@ -5,6 +5,37 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を positive-gap shallow reclaim まで拡張抑制
+
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `long_setup_pressure_active`
+    中だけ効く
+    `long_positive_gap_probe_block`
+    を追加し、
+    `volatility_compression`
+    の shallow positive-gap reclaim long を
+    worker local に reject できるようにした。
+  - 反応を早めるため、
+    dedicated env の
+    `SCALP_EXTREMA_REVERSAL_LONG_SETUP_PRESSURE_MIN_TRADES`
+    を
+    `4`
+    へ変更した。
+  - regression test として、
+    shallow positive-gap block と
+    deeper keep を固定した。
+- 意図:
+  - shared gate ではなく
+    `scalp_extrema_reversal_live`
+    自身の current loser long lane だけを削り、
+    scalp_fast の STOP_LOSS burst を縮める。
+
 ### 2026-03-12（追記）local Brain safe canary を `MomentumBurst` / `MicroTrendRetest-short` へ限定拡張
 
 - 対象:
@@ -17629,3 +17660,45 @@
     -> `1 passed`
   - `python3 -m pytest tests/execution/test_strategy_entry_forecast_fusion.py -k "preserves_richer_live_setup_context" -q`
     -> `2 passed`
+
+### 2026-03-12 現行仕組み一覧ドキュメントを追加
+- 対象:
+  - `docs/CURRENT_MECHANISMS.md`
+  - `README.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - 現行の仕組みは
+    `docs/ARCHITECTURE.md`,
+    `docs/WORKER_ROLE_MATRIX_V2.md`,
+    `docs/OBSERVABILITY.md`,
+    `logs/health_snapshot.json`
+    に分散しており、
+    「今ある runtime / 補助機構 / active strategy」を一目で確認しづらかった。
+
+- 変更:
+  - `docs/CURRENT_MECHANISMS.md`
+    を新設し、
+    以下を 1 枚に集約した。
+    - 作成時点の market sanity / local-v2 snapshot
+    - `trade_min` core services と現在起動中の worker ペア
+    - entry / exit / order preflight / blackboard coordination の実行系
+    - `mechanism_integrity` が監査する live 補助機構
+    - active discovery 戦略と `strategy_feedback` の eligible active lane
+    - 更新時に見るコマンド
+  - `README.md`
+    と
+    `docs/ARCHITECTURE.md`
+    から新ドキュメントへ導線を追加した。
+
+- 検証:
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    で current running worker 一覧を確認。
+  - `bash scripts/collect_local_health.sh`
+    で `logs/health_snapshot.json` 更新と `mechanism_integrity=yes` を確認。
+  - OANDA 観測:
+    - `pricing=248ms(200)`
+    - `summary=279ms(200)`
+    - `openTrades=220ms(200)`
+    - `USD/JPY spread=0.8 pips`

@@ -448,6 +448,27 @@ EXTREMA_LONG_SETUP_PRESSURE_RANGE_SCORE_MAX = _env_float(
     "LONG_SETUP_PRESSURE_RANGE_SCORE_MAX", 0.55
 )
 EXTREMA_LONG_SETUP_PRESSURE_ADX_MAX = _env_float("LONG_SETUP_PRESSURE_ADX_MAX", 23.0)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_ENABLED = _env_bool(
+    "LONG_SETUP_PRESSURE_POS_GAP_ENABLED", True
+)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_MIN_PIPS = _env_float(
+    "LONG_SETUP_PRESSURE_POS_GAP_MIN_PIPS", 0.45
+)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS = _env_float(
+    "LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS", 0.70
+)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS = _env_float(
+    "LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.20
+)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX = _env_float(
+    "LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.20
+)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX = _env_float(
+    "LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX", 0.46
+)
+EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RSI_MIN = _env_float(
+    "LONG_SETUP_PRESSURE_POS_GAP_RSI_MIN", 38.0
+)
 EXTREMA_ADX_MAX = _env_float("ADX_MAX", 35.0)
 EXTREMA_ATR_MAX = _env_float("ATR_MAX", 0.0)
 EXTREMA_SPREAD_P25_MAX = _env_float("SPREAD_P25_MAX", 0.0)
@@ -935,6 +956,19 @@ def _signal_extrema_reversal(
         and range_score <= EXTREMA_LONG_SETUP_PRESSURE_RANGE_SCORE_MAX
         and adx_value <= EXTREMA_LONG_SETUP_PRESSURE_ADX_MAX
     )
+    long_positive_gap_probe_block = (
+        long_setup_pressure_active
+        and EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_ENABLED
+        and not long_supportive
+        and range_mode == "RANGE"
+        and long_range_reason in EXTREMA_LONG_SETUP_PRESSURE_RANGE_REASONS
+        and ma_gap_pips >= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_MIN_PIPS
+        and dist_low <= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS
+        and long_bounce_pips <= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX
+        and range_score <= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX
+        and rsi >= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RSI_MIN
+    )
     short_setup_pressure_diag = _recent_setup_pressure("short", short_range_reason)
     short_setup_pressure_active = bool(short_setup_pressure_diag.get("active", 0.0) >= 1.0)
     short_setup_pressure_block = (
@@ -969,6 +1003,7 @@ def _signal_extrema_reversal(
         and not long_mid_rsi_probe_block
         and not long_drift_probe_block
         and not long_setup_pressure_block
+        and not long_positive_gap_probe_block
     )
 
     if not can_short and not can_long:
@@ -1035,6 +1070,7 @@ def _signal_extrema_reversal(
             "long_mid_rsi_probe_block": bool(long_mid_rsi_probe_block and side == "long"),
             "long_drift_probe_block": bool(long_drift_probe_block and side == "long"),
             "long_setup_pressure_block": bool(long_setup_pressure_block and side == "long"),
+            "long_positive_gap_probe_block": bool(long_positive_gap_probe_block and side == "long"),
             "long_setup_pressure": long_setup_pressure_diag if side == "long" else {},
             "trend_gate": trend_diag,
         },

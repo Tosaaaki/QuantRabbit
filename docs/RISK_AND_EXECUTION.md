@@ -8,6 +8,60 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_extrema_reversal_live` long positive-gap reclaim tightening（2026-03-12）
+- 背景:
+  - 2026-03-12 23:00 JST 前後の local-v2 で
+    `scalp_extrema_reversal_live`
+    `long + volatility_compression`
+    は
+    直近12h
+    `17 trades / net -34.121 JPY / sl_rate 0.529 / fast_sl_rate 0.412`
+    だった。
+  - latest loser は
+    `ma_gap_pips=0.635`
+    /
+    `dist_low=0.531`
+    /
+    `long_bounce=0.1`
+    /
+    `tick_strength=0.1`
+    /
+    `range_score=0.414`
+    の shallow positive-gap reclaim で、
+    既存
+    `long_setup_pressure_block`
+    を抜けていた。
+- 実装:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    `long_positive_gap_probe_block`
+    を追加し、
+    recent setup pressure 中だけ
+    `ma_gap>=0.45`
+    /
+    `dist_low<=0.70`
+    /
+    `bounce<=0.20`
+    /
+    `tick_strength<=0.20`
+    /
+    `range_score<=0.46`
+    /
+    `rsi>=38`
+    の long を reject する。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    では
+    `LONG_SETUP_PRESSURE_MIN_TRADES`
+    を
+    `4`
+    へ下げ、
+    long loser burst への追従を速めた。
+  - shared gate / order_manager には変更を入れていない。
+- 意図:
+  - current loser の shallow reclaim long だけを
+    strategy-local に薄くし、
+    broader long shutdown は避ける。
+
 ### local-v2 `MomentumBurst` bull-run follow-through easing（2026-03-12）
 - 背景:
   - 2026-03-12 22:06 JST 時点の local-v2 で
