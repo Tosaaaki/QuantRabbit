@@ -173,6 +173,113 @@
 - Status:
   - done
 
+## 2026-03-12 21:05 JST / local-v2: `PrecisionLowVol / DroughtRevert / VwapRevertS` は worker restart 後も `strategy_feedback` から欠落し、`systemd` 非依存の local pid discovery が必要だった
+
+- Change:
+  - `analysis/strategy_feedback_worker.py`
+    に
+    local pid-only service 名から
+    synthetic unit body を生成する fallback を追加した。
+  - `tests/analysis/test_strategy_feedback_worker.py`
+    に
+    `systemd/*.service`
+    が無くても
+    `quant-scalp-precision-lowvol`
+    /
+    `quant-scalp-drought-revert`
+    /
+    `quant-scalp-vwap-revert`
+    を拾う回帰を追加した。
+- Why:
+  - `quant-scalp-precision-lowvol`,
+    `quant-scalp-drought-revert`,
+    `quant-scalp-vwap-revert`
+    は stale pid で停止していたため restart したが、
+    restart 後に
+    `python3 -m analysis.strategy_feedback_worker`
+    を回しても
+    `logs/strategy_feedback.json`
+    は
+    `RangeFader`
+    しか拾わなかった。
+- Hypothesis:
+  - local-v2 の一部 worker は
+    `scripts/local_v2_stack.sh`
+    管理の service であり、
+    `systemd/*.service`
+    や host systemd unit を持たない。
+  - `strategy_feedback_worker`
+    が
+    local pid の running service 名だけを見ても
+    unit body を解決できないため、
+    `entry_active`
+    を立てられていない。
+- Expected Good:
+  - local stack 上で実際に running な
+    `PrecisionLowVol / DroughtRevert / VwapRevertS`
+    が
+    `strategy_feedback.json`
+    へ復帰する。
+- Expected Bad:
+  - synthetic module 推定が広すぎると、
+    strategy と無関係な local service を誤認する可能性がある。
+- Period:
+  - 2026-03-12 21:05-21:10 JST。
+- Fact:
+  - `scripts/local_v2_stack.sh status --profile trade_min`
+    では
+    上記 3 strategy の worker は
+    restart 後に
+    `running`
+    へ戻った。
+  - それでも修正前の
+    `strategy_feedback_worker`
+    は
+    `systemd/*.service`
+    が無い
+    `quant-scalp-precision-lowvol`
+    /
+    `quant-scalp-drought-revert`
+    /
+    `quant-scalp-vwap-revert`
+    を
+    discovery できず、
+    actual artifact は
+    `RangeFader`
+    のみだった。
+- Failure Cause:
+  - `_discover_from_systemd`
+    は
+    local pid から running service 名を得ても、
+    systemd unit body を解決できない service を捨てていた。
+- Improvement:
+  - local pid-only service は
+    `ops/env/{service}.env`
+    と
+    service 名から推定した worker module で
+    synthetic unit body を構成し、
+    既存 parser へ通すようにした。
+- Verification:
+  - `pytest -q tests/analysis/test_strategy_feedback_worker.py -k 'discovers_local_v2_services or dedicated_worker_without_explicit_tag_env or local_pid_only_service_without_systemd_unit'`
+    が通ること。
+  - `python3 -m analysis.strategy_feedback_worker`
+    後の
+    `logs/strategy_feedback.json`
+    で
+    `PrecisionLowVol / DroughtRevert / VwapRevertS`
+    が復帰すること。
+- Verdict:
+  - pending
+- Next Action:
+  - テスト通過後に
+    `main`
+    へ push し、
+    `quant-strategy-feedback`
+    を restart して
+    actual artifact まで確認する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 20:38 JST / local-v2: participation allocator override が env key typo と未クォート値で無効化されていた
 
 - Change:

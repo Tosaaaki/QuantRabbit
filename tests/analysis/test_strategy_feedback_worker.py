@@ -221,6 +221,7 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
                 [
                     "SCALP_PRECISION_LOWVOL_ENABLED=1",
                     "SCALP_PRECISION_LOWVOL_POCKET=scalp",
+                    "SCALP_PRECISION_LOWVOL_PERF_GUARD_MODE=reduce",
                     "SCALP_PRECISION_LOWVOL_LOG_PREFIX=[Scalp:PrecisionLowVol]",
                 ]
             )
@@ -267,6 +268,88 @@ def test_build_payload_discovers_dedicated_worker_without_explicit_tag_env(
         f"{os.getpid()}\n",
         encoding="utf-8",
     )
+    _seed_trades(trades_db, strategy_tag=strategy_tag)
+
+    monkeypatch.setattr(worker, "BASE_DIR", repo)
+    monkeypatch.setattr(worker, "_systemctl_available", lambda: False)
+    monkeypatch.setattr(worker, "_systemctl_running_services", lambda: set())
+    monkeypatch.setattr(worker, "_discover_from_control", lambda: {})
+    monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
+    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+
+    payload = worker._build_payload(worker.WorkerConfig())
+
+    assert strategy_tag in payload["strategies"]
+    advice = payload["strategies"][strategy_tag]
+    assert advice["strategy_params"]["trades"] == 12
+
+
+@pytest.mark.parametrize(
+    ("service_base", "env_body", "strategy_tag"),
+    [
+        (
+            "quant-scalp-precision-lowvol",
+            "\n".join(
+                [
+                    "SCALP_PRECISION_LOWVOL_ENABLED=1",
+                    "SCALP_PRECISION_LOWVOL_POCKET=scalp",
+                    "SCALP_PRECISION_LOWVOL_PERF_GUARD_MODE=reduce",
+                    "SCALP_PRECISION_LOWVOL_LOG_PREFIX=[Scalp:PrecisionLowVol]",
+                ]
+            )
+            + "\n",
+            "PrecisionLowVol",
+        ),
+        (
+            "quant-scalp-drought-revert",
+            "\n".join(
+                [
+                    "SCALP_PRECISION_DROUGHT_REVERT_ENABLED=1",
+                    "SCALP_PRECISION_DROUGHT_REVERT_POCKET=scalp",
+                    "SCALP_PRECISION_DROUGHT_REVERT_PERF_GUARD_MODE=reduce",
+                    "SCALP_PRECISION_DROUGHT_REVERT_LOG_PREFIX=[Scalp:DroughtRevert]",
+                ]
+            )
+            + "\n",
+            "DroughtRevert",
+        ),
+        (
+            "quant-scalp-vwap-revert",
+            "\n".join(
+                [
+                    "SCALP_PRECISION_VWAP_REVERT_ENABLED=1",
+                    "SCALP_PRECISION_VWAP_REVERT_POCKET=scalp",
+                    "SCALP_PRECISION_VWAP_REVERT_LOG_PREFIX=[Scalp:VWAPRevert]",
+                ]
+            )
+            + "\n",
+            "VwapRevertS",
+        ),
+    ],
+)
+def test_build_payload_discovers_local_pid_only_service_without_systemd_unit(
+    monkeypatch,
+    tmp_path: Path,
+    service_base: str,
+    env_body: str,
+    strategy_tag: str,
+) -> None:
+    repo = tmp_path
+    systemd_dir = repo / "systemd"
+    env_dir = repo / "ops" / "env"
+    log_dir = repo / "logs"
+    pid_dir = log_dir / "local_v2_stack" / "pids"
+    trades_db = log_dir / "trades.db"
+
+    systemd_dir.mkdir(parents=True)
+    env_dir.mkdir(parents=True)
+    pid_dir.mkdir(parents=True)
+
+    (env_dir / "quant-v2-runtime.env").write_text("", encoding="utf-8")
+    (env_dir / f"{service_base}.env").write_text(env_body, encoding="utf-8")
+    (pid_dir / f"{service_base}.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     _seed_trades(trades_db, strategy_tag=strategy_tag)
 
     monkeypatch.setattr(worker, "BASE_DIR", repo)

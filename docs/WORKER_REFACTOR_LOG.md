@@ -36,6 +36,37 @@
     「running な worker は必ず feedback に出る」
     ところまで責務を限定する。
 
+### 2026-03-12（追記）local pid-only service を `strategy_feedback_worker` が拾えない欠陥を補修
+
+- 対象:
+  - `analysis/strategy_feedback_worker.py`
+  - `tests/analysis/test_strategy_feedback_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+- 変更:
+  - `systemd/*.service` を持たない
+    local-v2 専用 service について、
+    running pid 名から synthetic unit body を組み立てて
+    既存 parser に流す fallback を追加した。
+  - `quant-scalp-precision-lowvol`
+    /
+    `quant-scalp-drought-revert`
+    /
+    `quant-scalp-vwap-revert`
+    のような
+    local pid-only service を
+    `PrecisionLowVol / DroughtRevert / VwapRevertS`
+    として復元できる回帰テストを追加した。
+- 意図:
+  - local-v2 の実運用では worker が running でも
+    `systemd` unit 不在だけで
+    `strategy_feedback.json`
+    から落ちる経路があった。
+  - feedback coverage を
+    「systemd 管理されているか」
+    ではなく
+    「local stack で実際に稼働しているか」
+    に合わせる。
+
 ### 2026-03-12（追記）local feedback cycle の participation allocator override key 修正
 
 - 対象:

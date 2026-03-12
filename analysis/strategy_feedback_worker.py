@@ -676,6 +676,81 @@ def _local_service_running(service_name: str, *, pid_dir: Path = LOCAL_V2_PID_DI
     return _pid_alive(pid)
 
 
+_GENERIC_MODE_VALUES = {
+    "reduce",
+    "allow",
+    "block",
+    "disabled",
+    "enabled",
+    "strict",
+    "relaxed",
+    "aggressive",
+    "conservative",
+    "shadow",
+    "apply",
+    "monitor",
+}
+
+
+def _infer_local_stack_module(service_name: str) -> str:
+    base = str(service_name or "").strip()
+    if not base:
+        return ""
+    if base.endswith(".service"):
+        base = base[: -len(".service")]
+    base = base.removeprefix("quant-")
+    if not base:
+        return ""
+    if base == "strategy-feedback":
+        return "analysis.strategy_feedback_worker"
+    role = "worker"
+    if base.endswith("-exit"):
+        role = "exit_worker"
+        base = base.removesuffix("-exit")
+    module_base = base.replace("-", "_")
+    if not module_base:
+        return ""
+    return f"workers.{module_base}.{role}"
+
+
+def _synthetic_local_unit_body(service_name: str, *, repo_root: Path = BASE_DIR) -> str:
+    base = str(service_name or "").strip()
+    if not base:
+        return ""
+    if base.endswith(".service"):
+        base = base[: -len(".service")]
+    module_name = _infer_local_stack_module(base)
+    service_env = repo_root / "ops" / "env" / f"{base}.env"
+    base_env = repo_root / "ops" / "env" / "quant-v2-runtime.env"
+
+    lines: list[str] = ["[Service]"]
+    if base_env.exists():
+        lines.append(f"EnvironmentFile=-{base_env}")
+    if service_env.exists():
+        lines.append(f"EnvironmentFile=-{service_env}")
+    if module_name:
+        lines.append(f"ExecStart={repo_root}/.venv/bin/python -m {module_name}")
+
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines)
+
+
+def _looks_like_strategy_mode_value(token: str) -> bool:
+    raw = str(token or "").strip()
+    if not raw:
+        return False
+    key = normalize_strategy_lookup_key(raw)
+    if not key or key in _GENERIC_MODE_VALUES:
+        return False
+    if key in _DISCOVERY_TAG_ALIASES:
+        return True
+    if any(ch in raw for ch in "_-") or any(ch.isdigit() for ch in raw) or any(ch.isupper() for ch in raw):
+        return True
+    resolved = resolve_strategy_tag(raw)
+    return bool(resolved and resolved != raw)
+
+
 def _extract_tag_candidates_from_env(env: dict[str, str]) -> set[str]:
     tags: set[str] = set()
     for key, value in env.items():
@@ -696,6 +771,8 @@ def _extract_tag_candidates_from_env(env: dict[str, str]) -> set[str]:
             continue
         for token in values:
             if _looks_like_tag_value(token):
+                if is_mode and not _looks_like_strategy_mode_value(token):
+                    continue
                 tags.add(token)
     return tags
 
@@ -830,13 +907,6 @@ def _parse_strategy_records_from_unit(
             continue
         env = _parse_env_file(resolved_path)
         worker_tags.update(_extract_tag_candidates_from_env(env))
-
-        # mode-driven fallback (ex: tick_imbalance -> TickImbalance)
-        for key, value in env.items():
-            if not key.upper().endswith("_MODE"):
-                continue
-            if _looks_like_tag_value(value):
-                worker_tags.add(value)
 
     fallback = False
     saw_entry_module = False
@@ -978,6 +1048,8 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
             if service_name in local_unit_names:
                 continue
             body = _systemctl_unit_body_from_host(service_name)
+            if not body:
+                body = _synthetic_local_unit_body(service_name, repo_root=BASE_DIR)
             if not body:
                 continue
             _merge(_parse_strategy_records_from_unit(service_name, body, True, repo_root=BASE_DIR))
