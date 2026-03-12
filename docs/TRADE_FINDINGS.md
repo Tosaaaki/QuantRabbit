@@ -19235,3 +19235,265 @@ Status:
     `PrecisionLowVol`
     の single-fill loser を
     worker local guard で先に落とす。
+
+## 2026-03-13 08:14 JST / local-v2: `PrecisionLowVol` short `gap:down_flat` の low-score loser lane を落とす
+- Why/Hypothesis:
+  - 2026-03-13 08:12 JST の local-v2 実測では
+    USD/JPY `159.294 / 159.302`,
+    spread `0.8 pips`,
+    ATR14 `M1=1.629 pips / M5=4.107 pips`,
+    OANDA `pricing=354ms / summary=223ms / openTrades=260ms / candles(M1,M5)=210-294ms`,
+    `openTrades=0`
+    で市況・API は通常帯だった。
+  - 同時点の直近24h closed trades では
+    `PrecisionLowVol`
+    が
+    `42 trades / -181.678 JPY / win rate 31.0%`
+    と current loser で、
+    short `volatility_compression`
+    の
+    `gap:down_flat`
+    cluster だけで
+    `11 trades / -89.30 JPY / win rate 18.2%`
+    を削っていた。
+  - その内側でも
+    `range_score<=0.44`
+    /
+    `projection.score<=0.30`
+    /
+    `setup_quality<0.40`
+    /
+    `continuation_pressure>=0.24`
+    /
+    `rsi>=54`
+    の lane は
+    `8 trades / 0 wins / -88.24 JPY`
+    かつ
+    全て
+    `STOP_LOSS_ORDER`
+    で、
+    ほぼこの low-score lane が
+    `gap:down_flat`
+    loser を作っていた。
+  - 一方で
+    `gap:down_flat`
+    の winner 2 本は
+    `range_score=0.469 / 0.610`
+    と higher-score 側に寄っており、
+    range score を軸に loser lane だけを薄く切り分けられる余地があった。
+- Expected Good:
+  - `PrecisionLowVol` short を blanket stop せず、
+    `gap:down_flat`
+    の low-score loser lane だけを
+    worker local に前倒しで落とせる。
+  - 既存の
+    `gap:up_flat` shallow guard,
+    mid-RSI continuation-headwind guard
+    と合わせて、
+    `PrecisionLowVol`
+    short
+    `volatility_compression`
+    の低期待値 reclaim を段階的に削れる。
+- Expected Bad:
+  - `range_score<=0.44`
+    を広く使いすぎると
+    回復初動の reclaim short まで削る恐れがある。
+  - そのため条件は
+    `gap:down_flat`
+    /
+    `volatility_compression`
+    /
+    `continuation_pressure>=0.24`
+    /
+    `rsi>=54`
+    /
+    `projection.score<=0.30`
+    /
+    `setup_quality<0.40`
+    に限定し、
+    `range_score`
+    が戻った lane は残す形にした。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_GUARD_ENABLED`,
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_RANGE_SCORE_MAX`,
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_PROJECTION_SCORE_MAX`,
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_SETUP_QUALITY_MAX`,
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_CONTINUATION_PRESSURE_MIN`,
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_RSI_MIN`
+    を追加した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_signal_precision_lowvol()`
+    で、
+    short `volatility_compression`
+    かつ
+    `gap:down_flat`
+    の
+    `range_score<=0.44`
+    /
+    `continuation_pressure>=0.24`
+    /
+    `rsi>=54`
+    /
+    `projection.score<=0.30`
+    /
+    `setup_quality<0.40`
+    を
+    `down_flat_low_score_short_lane`
+    として reject するよう更新した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    low-score loser lane block と、
+    `range_score=0.61`
+    の recover case で short を keep する回帰を追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> `28 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - 再起動後の通常帯で
+    `PrecisionLowVol`
+    short
+    `volatility_compression`
+    /
+    `gap:down_flat`
+    の
+    `OPEN_REQ -> fills`
+    /
+    `STOP_LOSS_ORDER`
+    /
+    `realized_jpy`
+    を確認する。
+  - それでも short loser が残るなら、
+    次は
+    `gap:down_flat`
+    の
+    `range_fade`
+    と
+    `range_compression`
+    を分けて、
+    winner が残る score 帯だけを finer split する。
+
+## 2026-03-13 08:27 JST / local-v2: all-strategy tick audit を基に stop band を strategy-local に広げる
+- Why/Hypothesis:
+  - ユーザ指摘どおり
+    `SLで刈られてすぐ戻る`
+    trade が本当に多いのかを、
+    strategy ごとに切り分ける必要があった。
+  - `tick_entry_validate`
+    を
+    `logs/trades.db`
+    と
+    `logs/replay/USD_JPY/USD_JPY_ticks_20260311.jsonl`,
+    `logs/replay/USD_JPY/USD_JPY_ticks_20260312.jsonl`
+    に対して実行し、
+    `2026-03-11 00:00 UTC -> 2026-03-13 00:00 UTC`
+    の
+    `300 trades`
+    を照合した。
+  - 結果は一律ではなく、
+    `SL後300秒以内にTP帯へ戻る`
+    比率は
+    `scalp_ping_5s_d_live=5/9`,
+    `WickReversalBlend=3/6`
+    で強い一方、
+    `PrecisionLowVol=5/26`,
+    `DroughtRevert=3/16`,
+    `scalp_extrema_reversal_live=10/66`
+    は
+    `entry負け`
+    の寄与も無視できなかった。
+  - したがって
+    `全戦略を一律に widen`
+    ではなく、
+    clear stop-hunt sample は stop band widening、
+    mixed sample は
+    entry guard + modest widening
+    に分けるのが妥当と判断した。
+- Expected Good:
+  - `WickReversalBlend` /
+    `scalp_ping_5s_d_live`
+    の
+    `即 SL -> 数十秒-数分で戻る`
+    取りこぼしを減らせる。
+  - `PrecisionLowVol` /
+    `DroughtRevert` /
+    `scalp_extrema_reversal_live`
+    は
+    bad entry を残したまま大きく widen しないため、
+    負け trade の延命を避けられる。
+- Expected Bad:
+  - stop band を広げると
+    1-trade あたりの nominal loss は増える。
+  - そのため
+    `PrecisionLowVol` /
+    `DroughtRevert` /
+    `WickReversalBlend`
+    は strategy-local の modest widening に留め、
+    `ping_d` /
+    `extrema`
+    は dedicated env で narrow に管理して切り戻し可能にした。
+- Observed/Fact:
+  - tick audit 集計:
+    - `scalp_extrema_reversal_live`: `66 stop`, `36` が `30s以内`, `10` が `tp_after_sl<=300s`
+    - `PrecisionLowVol`: `26 stop`, `17` が `30s以内`, `5` が `tp_after_sl<=300s`
+    - `DroughtRevert`: `16 stop`, `9` が `30s以内`, `3` が `tp_after_sl<=300s`
+    - `WickReversalBlend`: `6 stop`, `3` が `tp_after_sl<=300s`
+    - `scalp_ping_5s_d_live`: `9 stop`, `8` が `30s以内`, `5` が `tp_after_sl<=300s`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    で
+    `DroughtRevert`,
+    `PrecisionLowVol`,
+    `WickReversalBlend`
+    の
+    `sl_pips / tp_pips`
+    band を広げた。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    で
+    `SL_ATR_MULT=1.05`,
+    `TP_ATR_MULT=1.35`,
+    `SL_MIN/MAX=1.30/2.90`,
+    `TP_MIN/MAX=1.60/3.40`
+    へ更新した。
+  - `ops/env/quant-scalp-ping-5s-d.env`
+    で
+    `TP_ENABLED=1`
+    と
+    D 専用の
+    `SL_* / TP_*`
+    を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    widened stop band の回帰を追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> `29 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - 再起動後に
+    `orders.db` /
+    `trades.db`
+    で
+    `STOP_LOSS_ORDER`
+    の
+    `hold_sec`,
+    `sl_pips`,
+    `post_close_tp_touch`
+    を strategy 別に再集計する。
+  - 特に
+    `scalp_ping_5s_d_live`,
+    `WickReversalBlend`,
+    `scalp_extrema_reversal_live`
+    で
+    `tp_after_sl<=300s`
+    が減るかを確認し、
+    まだ高ければ
+    stop band ではなく
+    entry timing / partial exit
+    側へ移る。

@@ -75,6 +75,21 @@
 - 共通 `exit_manager` はスタブで、exit 判定の主体ではありません。
 - Brain は optional で、現行 safe canary は `brain-ollama-safe.env` 合成前提です。
 - common layer は preserve-intent 方針で、戦略の方向意図を後付けで再採点しません。
+- `PrecisionLowVol` / `DroughtRevert` は `workers/scalp_wick_reversal_blend/worker.py`
+  の thin wrapper で、
+  `PrecisionLowVol`
+  については current live で
+  short `volatility_compression`
+  の
+  `gap:up_flat` shallow lane,
+  mid-RSI continuation-headwind lane,
+  `gap:down_flat` low-score lane
+  を worker-local guard で個別に抑える運用です。
+- 同じ family では
+  `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
+  の stop band も strategy-local に調整しており、
+  `scalp_extrema_reversal_live` と `scalp_ping_5s_d_live`
+  は dedicated env 側で SL/TP 帯を別管理しています。
 
 ## 4. Live Optimization / Feedback / Guard Mechanisms
 

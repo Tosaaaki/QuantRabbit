@@ -18204,3 +18204,150 @@
     `WickReversalBlend: lot_multiplier=0.8302 / probability_offset=-0.0977`,
     `scalp_extrema_reversal_live: lot_multiplier=0.824 / probability_offset=-0.112`
     を確認。
+
+### 2026-03-13 08:14 JST - `PrecisionLowVol` に `gap:down_flat` low-score short guard を追加
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - 2026-03-13 08:12 JST の local-v2 実測では
+    USD/JPY `159.294 / 159.302`, spread `0.8 pips`,
+    ATR14 `M1=1.629 pips / M5=4.107 pips`,
+    OANDA `pricing=354ms / summary=223ms / openTrades=260ms / candles(M1,M5)=210-294ms`,
+    `openTrades=0`
+    で市況・API は通常帯だった。
+  - 直近24hの
+    `PrecisionLowVol`
+    は
+    `42 trades / -181.678 JPY / win rate 31.0%`
+    と current loser で、
+    short `gap:down_flat`
+    `volatility_compression`
+    cluster は
+    `11 trades / -89.30 JPY / win rate 18.2%`
+    だった。
+  - さらに
+    `range_score<=0.44`
+    /
+    `projection.score<=0.30`
+    /
+    `setup_quality<0.40`
+    /
+    `continuation_pressure>=0.24`
+    /
+    `rsi>=54`
+    の narrow lane だけで
+    `8 trades / 0 wins / -88.24 JPY`
+    と almost all loss を占めていた。
+
+- 変更:
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_*`
+    を追加し、
+    `gap:down_flat`
+    low-score lane の閾値を dedicated config 化した。
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `_signal_precision_lowvol()`
+    で、
+    short `volatility_compression`
+    かつ
+    `gap:down_flat`
+    の
+    `range_score<=0.44`
+    /
+    `continuation_pressure>=0.24`
+    /
+    `rsi>=54`
+    /
+    `projection.score<=0.30`
+    /
+    `setup_quality<0.40`
+    を
+    `down_flat_low_score_short_lane`
+    として additive に reject するようにした。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    loser lane block と、
+    `range_score` 回復時の keep regression を追加した。
+
+- 検証:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `28 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> 成功
+
+### 2026-03-13 08:27 JST - all-strategy stop-hunt audit を基に `wick/precision/drought/extrema/ping_d` の stop band を調整
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `ops/env/quant-scalp-extrema-reversal.env`
+  - `ops/env/quant-scalp-ping-5s-d.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - `tick_entry_validate`
+    を使った
+    `2026-03-11 00:00 UTC -> 2026-03-13 00:00 UTC`
+    の
+    all-strategy 照合では、
+    `scalp_ping_5s_d_live=5/9`,
+    `WickReversalBlend=3/6`
+    が
+    `SL後300秒以内にTP帯へ戻る`
+    clear sample だった。
+  - 一方で
+    `PrecisionLowVol=5/26`,
+    `DroughtRevert=3/16`,
+    `scalp_extrema_reversal_live=10/66`
+    は
+    SL-hunt
+    のみではなく
+    entry quality
+    も悪化していたため、
+    widen
+    は modest に留める必要があった。
+
+- 変更:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    で
+    `DroughtRevert`,
+    `PrecisionLowVol`,
+    `WickReversalBlend`
+    の
+    `sl_pips / tp_pips`
+    band を広げた。
+  - `ops/env/quant-scalp-extrema-reversal.env`
+    で
+    `SL/TP`
+    の
+    `ATR mult / min / max`
+    を引き上げた。
+  - `ops/env/quant-scalp-ping-5s-d.env`
+    で
+    `TP_ENABLED=1`
+    と
+    D variant 専用の
+    `SL_* / TP_*`
+    override を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    widened stop band の回帰を追加した。
+
+- 検証:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `29 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> 成功

@@ -284,7 +284,7 @@ def test_drought_revert_boosts_strong_reclaim_long_lane() -> None:
     assert signal["action"] == "OPEN_LONG"
     assert signal["tp_pips"] >= 1.4
     assert signal["size_mult"] >= 0.95
-    assert signal["sl_pips"] >= 1.7
+    assert signal["sl_pips"] >= 1.8
 
 
 def test_drought_revert_blocks_flat_gap_oversold_long_with_deep_mean_stretch() -> None:
@@ -448,8 +448,8 @@ def test_precision_lowvol_disables_vgap_bonus_when_flow_guard_is_marginal() -> N
     assert high_pressure is not None
     assert low_pressure["confidence"] > high_pressure["confidence"]
     assert low_pressure["size_mult"] > high_pressure["size_mult"]
-    assert low_pressure["sl_pips"] >= 1.7
-    assert high_pressure["sl_pips"] >= 1.7
+    assert low_pressure["sl_pips"] >= 1.8
+    assert high_pressure["sl_pips"] >= 1.8
 
 
 def test_precision_lowvol_blocks_weak_short_under_recent_setup_pressure() -> None:
@@ -909,6 +909,85 @@ def test_precision_lowvol_blocks_up_flat_shallow_short_lane() -> None:
     assert signal is None
 
 
+def test_precision_lowvol_blocks_low_score_down_flat_short_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 16.6,
+        "bbw": 0.00042,
+        "atr_pips": 2.2,
+        "rsi": 54.7,
+        "stoch_rsi": 0.92,
+        "vwap_gap": 1.4,
+        "ma10": 158.018,
+        "ma20": 158.020,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.42, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.28,
+            "max_pressure": 0.60,
+            "setup_quality": 0.38,
+            "reversion_support": 0.57,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.27},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_down_flat_short_when_range_score_recovers() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 16.6,
+        "bbw": 0.00042,
+        "atr_pips": 2.2,
+        "rsi": 56.9,
+        "stoch_rsi": 0.92,
+        "vwap_gap": 1.4,
+        "ma10": 158.018,
+        "ma20": 158.020,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.61, reason="volatility_compression")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.18,
+            "max_pressure": 0.60,
+            "setup_quality": 0.50,
+            "reversion_support": 0.65,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.14},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+
+
 def test_precision_lowvol_keeps_up_flat_short_when_setup_quality_is_strong() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]
@@ -1068,6 +1147,42 @@ def test_wick_blend_signal_blocks_current_breakout_loser_lane() -> None:
     signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
 
     assert signal is None
+
+
+def test_wick_blend_signal_uses_wider_sl_band() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_wick_reversal_blend"]
+    fac = {
+        "close": 159.18,
+        "upper": 159.205,
+        "lower": 159.161,
+        "span_pips": 4.4,
+        "adx": 20.1,
+        "bbw": 0.000399,
+        "atr_pips": 1.6,
+        "rsi": 46.97,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.511, reason="volatility_compression")
+
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.9)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.14},
+    )
+    ns["wick_blend_entry_quality"] = lambda **_kwargs: {
+        "allow": True,
+        "quality": 0.81,
+        "components": {"range": 0.92},
+    }
+    ns["_wick_blend_long_setup_pressure"] = lambda *_args, **_kwargs: {}
+
+    signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["sl_pips"] >= 1.5
+    assert signal["tp_pips"] > signal["sl_pips"]
 
 
 def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:

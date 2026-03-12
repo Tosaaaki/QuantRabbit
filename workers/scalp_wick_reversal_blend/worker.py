@@ -1921,8 +1921,11 @@ def _signal_drought_revert(
     # local-v2 replay/live showed several drought-revert longs stopping inside ~10s
     # and later mean-reverting into the prior TP zone; widen the protective band a bit
     # and keep TP reachable in the current 1.8-2.2 pip ATR regime.
-    sl = max(1.7, min(2.4, atr * 1.05))
-    tp = max(1.9, min(2.4, atr * (0.98 + min(0.14, rev_strength * 0.10) + (0.06 if side == "long" else 0.02))))
+    sl = max(1.8, min(2.5, atr * 1.10))
+    tp = max(
+        max(2.0, sl * 1.08),
+        min(2.5, atr * (1.00 + min(0.16, rev_strength * 0.10) + (0.06 if side == "long" else 0.02))),
+    )
     conf = 54
     conf += int(min(10, abs(rsi - 50.0) * 0.5))
     conf += int(min(8, rev_strength * 4.0))
@@ -2142,6 +2145,48 @@ def _signal_precision_lowvol(
         )
     if weak_down_flat_lane:
         return None
+    down_flat_low_score_short_lane = False
+    if (
+        side == "short"
+        and short_down_flat
+        and range_reason == "volatility_compression"
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        down_flat_low_score_short_lane = (
+            range_score
+            <= float(getattr(config, "PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_RANGE_SCORE_MAX", 0.44))
+            and continuation_pressure
+            >= float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_CONTINUATION_PRESSURE_MIN",
+                    0.24,
+                )
+            )
+            and rsi >= float(getattr(config, "PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_RSI_MIN", 54.0))
+            and projection_score
+            <= float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_PROJECTION_SCORE_MAX",
+                    0.30,
+                )
+            )
+            and setup_quality
+            < float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_DOWN_FLAT_LOW_SCORE_SHORT_SETUP_QUALITY_MAX",
+                    0.40,
+                )
+            )
+        )
+    if down_flat_low_score_short_lane:
+        return None
     weak_overbought_short_lane = False
     if (
         side == "short"
@@ -2298,8 +2343,11 @@ def _signal_precision_lowvol(
 
     # current precision-lowvol short losers were repeatedly stopping inside seconds while
     # a subset still reached the old 2.0 pip TP; widen SL modestly and avoid over-stretching TP.
-    sl = max(1.7, min(1.9, atr * 0.9))
-    tp = max(1.9, min(2.1, atr * (0.94 + min(0.12, rev_strength * 0.12))))
+    sl = max(1.8, min(2.1, atr * 1.0))
+    tp = max(
+        max(2.0, sl * 1.10),
+        min(2.4, atr * (1.02 + min(0.14, rev_strength * 0.12))),
+    )
     conf = 58
     conf += int(min(10, abs(rsi - 50.0) * 0.6))
     conf += int(min(10, rev_strength * 4.0))
@@ -3757,8 +3805,8 @@ def _signal_wick_reversal_blend(
     ):
         return None
 
-    sl = max(1.2, min(2.2, atr * 0.85))
-    tp = max(sl * 1.30, min(3.6, atr * 1.15))
+    sl = max(1.4, min(2.4, atr * 0.95))
+    tp = max(sl * 1.30, min(3.8, atr * 1.20))
     conf = 64
     conf += int(min(12.0, wick_ratio * 22.0))
     conf += int(min(6.0, max(0.0, rng - 1.0) * 3.0))
