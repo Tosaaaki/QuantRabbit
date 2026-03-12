@@ -51,6 +51,102 @@
 - Status:
 ```
 
+## 2026-03-12 13:00 JST / local-v2: `MomentumBurst` current winner lane の size を小幅に戻す
+
+- Change:
+  - `ops/env/local-v2-stack.env`
+    と
+    `ops/env/quant-micro-momentumburst.env`
+    の
+    `MICRO_MULTI_STRATEGY_UNITS_MULT`
+    を
+    `MomentumBurst:1.05 -> 1.20`
+    へ引き上げた。
+- Why:
+  - 2026-03-12 12:53 JST 時点の local-v2 実測では、
+    市況は通常帯
+    (`USD/JPY 159.007 / spread 0.8 pips / open_trades 0 / reject_rate 0 / order_success_rate 1.0`)
+    で、
+    `資本を使えていない`
+    状態だった。
+  - 24h の `MomentumBurst`
+    は
+    `2 trades / +185.320 JPY / win 100%`
+    で、
+    strategy 別では最もまともな winner だった。
+- Hypothesis:
+  - current winner setup が
+    `MomentumBurst-open_long|long|transition|...|gap:up_strong`
+    に寄っており、
+    7d loser setup は
+    `dynamic_alloc` の setup override で既に
+    `0.14`
+    まで薄くなっている。
+  - そのため strategy-wide multiplier を
+    `1.20`
+    へ小幅に戻しても、
+    loser setup を大きく増やさず
+    strong open_long の期待値を少し押せる。
+- Expected Good:
+  - `MomentumBurst` の current strong open_long が出たときの
+    realized_jpy を増やせる。
+- Expected Bad:
+  - non-winning setup まで拾う局面では
+    損失幅もやや増える。
+- Period:
+  - 直近24h-7d の local-v2 trades / current live metrics
+- Fact:
+  - 24h `MomentumBurst`: `2 trades / +185.320 JPY / avg abs units 4674.5`
+  - 直近 winner は
+    `2026-03-11 21:46-21:51 JST`
+    の
+    `MomentumBurst-open_long|long|transition|...|gap:up_strong`
+    2本で、
+    `entry_probability=0.955`,
+    `tech_score=0.058-0.064`,
+    `+107.208 JPY`,
+    `+78.112 JPY`
+    だった。
+  - `config/dynamic_alloc.json`
+    では current loser setup が
+    `lot_multiplier=0.14`
+    まで落ちている一方、
+    strategy 本体は
+    `sum_realized_jpy=181.23`
+    を維持していた。
+- Failure Cause:
+  - winner はあるのに、
+    shared micro sizing が
+    `MomentumBurst:1.05`
+    のままで
+    current live winner lane を押し切れていなかった。
+- Improvement:
+  - shared / dedicated 両方の
+    `MomentumBurst` units multiplier を
+    `1.20`
+    へ上げて、
+    current live winner lane の size を少し戻す。
+- Verification:
+  - deploy 後に
+    `quant-micro-momentumburst`
+    の再起動を確認し、
+    次の `30-60m`
+    で
+    `MomentumBurst filled / avg units / realized_jpy`
+    を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - `MomentumBurst`
+    の次回 fill が無ければ
+    size 調整より
+    participation/cadence 側を見直す。
+  - fill は出るが expectancy が悪化するなら
+    `1.20 -> 1.05`
+    に戻す。
+- Status:
+  - in_progress
+
 ## 2026-03-12 12:45 JST / local-v2: `RangeFader` long `range_fade|p0` の weak probe を worker local で遮断
 
 - Change:

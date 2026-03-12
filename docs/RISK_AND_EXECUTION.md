@@ -8,6 +8,51 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MomentumBurst` sizing nudge（2026-03-12）
+- 背景:
+  - 2026-03-12 12:53 JST 時点で
+    `USD/JPY 159.007 / spread 0.8 pips / open_trades 0`
+    かつ
+    latest execution metrics は
+    `reject_rate=0`,
+    `order_success_rate=1.0`
+    で、
+    execution quality より participation 不足が先に見えていた。
+  - 24h の `MomentumBurst` は
+    `2 trades / +185.320 JPY / win 100%`
+    で、
+    current live の winner としては最上位だった。
+  - 直近 winner 2 本は
+    `MomentumBurst-open_long|long|transition|...|gap:up_strong`
+    で、
+    `entry_probability=0.955`,
+    `tech_score=0.058-0.064`
+    の strong setup だった。
+  - 一方で shared micro sizing は
+    `MomentumBurst:1.05`
+    のままで、
+    winner lane を押し切るにはまだ弱かった。
+- 実装:
+  - `ops/env/local-v2-stack.env`
+    と
+    `ops/env/quant-micro-momentumburst.env`
+    の
+    `MICRO_MULTI_STRATEGY_UNITS_MULT`
+    を
+    `MomentumBurst:1.20`
+    へ更新した。
+  - 7d loser setup は
+    `config/dynamic_alloc.json`
+    の setup override 側で
+    `lot_multiplier=0.14`
+    に落ちているため、
+    strategy-wide nudge を入れても
+    current known loser をそのまま full size で戻す形にはしない。
+- 意図:
+  - execution が正常で open trade が薄い局面で、
+    `MomentumBurst` の current winner lane だけを
+    size 面から少し押す。
+
 ### local-v2 `RangeFader` long weak probe guard（2026-03-12）
 - 背景:
   - 2026-03-12 12:37 JST の local-v2 実測では

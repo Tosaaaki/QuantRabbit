@@ -5,6 +5,26 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）`MomentumBurst` sizing nudge
+
+- 対象:
+  - `ops/env/local-v2-stack.env`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - shared micro runtime と dedicated `quant-micro-momentumburst`
+    の
+    `MICRO_MULTI_STRATEGY_UNITS_MULT`
+    を
+    `MomentumBurst:1.05 -> 1.20`
+    へ変更した。
+- 意図:
+  - current live winner
+    `MomentumBurst-open_long / transition / gap:up_strong`
+    の size を小幅に戻し、
+    open-trade 不足時の収益機会を少し押す。
+
 ### 2026-03-12（追記）`RangeFader` long weak probe guard
 
 - 対象:
