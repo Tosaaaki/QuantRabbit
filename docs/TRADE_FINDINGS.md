@@ -51,6 +51,142 @@
 - Status:
 ```
 
+## 2026-03-12 22:35 JST / local-v2: Brain safe canary を `MomentumBurst` / `MicroTrendRetest-short` へ限定拡張
+
+- Change:
+  - `ops/env/profiles/brain-ollama-safe.env`
+    の
+    `BRAIN_STRATEGY_ALLOWLIST`
+    を
+    `MicroLevelReactor`
+    から
+    `MicroLevelReactor, MomentumBurst-open_long, MomentumBurst-open_short, MicroTrendRetest-short`
+    へ更新した。
+  - `BRAIN_POCKET_ALLOWLIST=micro`
+    は維持し、
+    `scalp`
+    pocket へは広げない方針を
+    config / spec に明記した。
+- Why:
+  - 2026-03-12 22:24 JST 時点の local-v2 実測では、
+    `logs/orders.db`
+    直近24hが
+    `filled=259 / rejected=8 / reject_rate=3.0%`
+    で、
+    `avg spread=0.8p`,
+    `avg ATR=2.096p`,
+    `avg preflight_to_fill=551.4ms`
+    と、
+    execution 側は極端な異常ではなかった。
+  - `logs/brain_state.db`
+    直近24hは
+    `14 decisions / llm_ok=8 / llm_fail=6 / live_llm_ok=2 / avg live latency=3166.3ms`
+    で、
+    ローカル LLM 自体は使えている一方、
+    safe canary の allowlist が
+    `MicroLevelReactor`
+    だけに留まっていた。
+  - 同じ
+    `logs/brain_state.db`
+    の直近7dには、
+    `MomentumBurst-open_short: 6 decisions / llm_ok=5`,
+    `MomentumBurst-open_long: 3 / 3`,
+    `MicroTrendRetest-short: 2 / 2`
+    の Brain decision が既に残っていた。
+  - `config/brain_prompt_profile_profit_micro.json`
+    も
+    `MomentumBurst-open_short`
+    と
+    `MicroTrendRetest-short`
+    の loser lane を前提にした extra rule を持っており、
+    prompt / runtime 側の準備はできていた。
+- Hypothesis:
+  - live 実績がある micro 戦略だけへ Brain を広げれば、
+    `MicroLevelReactor`
+    以外でも
+    loser cluster の size cut / allow 判定を local LLM に使える。
+  - ただし
+    3 秒級の LLM latency を持つため、
+    `scalp`
+    まで広げると cadence を壊しやすく、
+    safe canary は micro-only のままが妥当。
+- Expected Good:
+  - `MomentumBurst`
+    の marginal setup と
+    `MicroTrendRetest-short`
+    の loser lane を
+    order_manager preflight で局所的に絞れる。
+  - `MicroLevelReactor`
+    以外の live Brain data が増え、
+    次の prompt/runtime tuning の根拠が取れる。
+- Expected Bad:
+  - `MomentumBurst-open_long`
+    の current winner lane まで Brain が shallow `REDUCE`
+    を出すと cadence が鈍る可能性。
+  - `MicroTrendRetest-long`
+    は live Brain 根拠が薄いため今回は未投入にしており、
+    short だけ先行すると片側だけ tuning が進む。
+- Period:
+  - `logs/orders.db`: 直近24h
+  - `logs/brain_state.db`: 直近24h / 直近7d
+- Fact:
+  - `logs/brain_state.db`
+    直近7dの strategy 別 Brain decision:
+    `MicroLevelReactor-bounce-lower=91`,
+    `MomentumBurst-open_short=6`,
+    `MomentumBurst-open_long=3`,
+    `MicroTrendRetest-short=2`。
+  - `logs/local_v2_stack/quant-market-data-feed.log`
+    では
+    pricing stream の `HTTP 200`
+    は取れている一方、
+    `tick_fetcher reconnect`
+    警告は継続している。
+  - したがって今回の変更は
+    market-data-feed
+    や
+    scalp
+    へ広げる理由にはせず、
+    Brain の proven micro lane 拡張に限定した。
+- Failure Cause:
+  - local LLM は実際に動いていたが、
+    safe canary allowlist が狭すぎて
+    `MicroLevelReactor`
+    以外に live preflight の知見を溜められていなかった。
+- Improvement:
+  - Brain safe canary を
+    proven micro tag
+    へだけ広げ、
+    `fail-open / timeout=4s / micro-only`
+    は維持した。
+- Verification:
+  - `python3 scripts/prepare_local_brain_canary.py --dry-run`
+  - `scripts/local_v2_stack.sh restart --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+  - `scripts/local_v2_stack.sh status --env ops/env/local-v2-stack.env --services quant-market-data-feed,quant-strategy-control,quant-order-manager,quant-position-manager`
+  - `ps eww -p $(cat logs/local_v2_stack/pids/quant-order-manager.pid)`
+    で
+    `BRAIN_STRATEGY_ALLOWLIST`
+    を確認
+- Verdict:
+  - pending
+- Next Action:
+  - next 30-90 分で
+    `logs/brain_state.db`
+    に
+    `MomentumBurst-open_long/open_short`
+    と
+    `MicroTrendRetest-short`
+    の新しい decision が入るか確認する。
+  - `MomentumBurst-open_long`
+    の winner lane が過剰に
+    `REDUCE`
+    されるなら、
+    allowlist は維持したまま prompt/runtime rule を調整する。
+  - `MicroTrendRetest-long`
+    は live Brain 根拠が取れてから次段で追加判断する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 22:06 JST / local-v2: `MomentumBurst` の high-RSI bull-run follow-through を strategy-local に少し前倒し
 
 - Change:

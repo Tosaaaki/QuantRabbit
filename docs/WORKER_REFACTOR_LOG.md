@@ -5,6 +5,45 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-12（追記）local Brain safe canary を `MomentumBurst` / `MicroTrendRetest-short` へ限定拡張
+
+- 対象:
+  - `ops/env/profiles/brain-ollama-safe.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `brain-ollama-safe.env`
+    の
+    `BRAIN_STRATEGY_ALLOWLIST`
+    を
+    `MicroLevelReactor`
+    のみから、
+    `MomentumBurst-open_long`
+    /
+    `MomentumBurst-open_short`
+    /
+    `MicroTrendRetest-short`
+    を含む限定 allowlist へ更新した。
+  - `BRAIN_POCKET_ALLOWLIST=micro`
+    は維持し、
+    `scalp`
+    pocket へは広げない方針を明文化した。
+- 意図:
+  - `logs/brain_state.db`
+    には
+    `MomentumBurst-open_long/open_short`
+    と
+    `MicroTrendRetest-short`
+    の live/cached Brain decision がすでに存在し、
+    `config/brain_prompt_profile_profit_micro.json`
+    もこれらの micro loser lane を前提にしている。
+  - 一方で
+    直近24hの live LLM latency は
+    3 秒級で、
+    `scalp`
+    へそのまま広げるには重いため、
+    safe canary のまま micro だけへ段階拡張する。
+
 ### 2026-03-12（追記）`MomentumBurst` transition long の mid-RSI 緩和を positive projection 付き softly-contra snapshot へ広げた
 
 - 対象:
