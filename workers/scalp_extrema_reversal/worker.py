@@ -359,6 +359,25 @@ EXTREMA_SHORT_MID_RSI_PROBE_TICK_STRENGTH_MAX = _env_float(
 EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN = _env_float(
     "SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.50
 )
+EXTREMA_SHORT_DRIFT_PROBE_DIST_HIGH_MAX_PIPS = _env_float(
+    "SHORT_DRIFT_PROBE_DIST_HIGH_MAX_PIPS", 0.90
+)
+EXTREMA_SHORT_DRIFT_PROBE_BOUNCE_MAX_PIPS = _env_float(
+    "SHORT_DRIFT_PROBE_BOUNCE_MAX_PIPS", 0.15
+)
+EXTREMA_SHORT_DRIFT_PROBE_TICK_STRENGTH_MAX = _env_float(
+    "SHORT_DRIFT_PROBE_TICK_STRENGTH_MAX", 0.15
+)
+EXTREMA_SHORT_DRIFT_PROBE_RANGE_SCORE_MAX = _env_float(
+    "SHORT_DRIFT_PROBE_RANGE_SCORE_MAX", 0.48
+)
+EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MIN_PIPS = _env_float(
+    "SHORT_DRIFT_PROBE_MA_GAP_MIN_PIPS", 0.0
+)
+EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MAX_PIPS = _env_float(
+    "SHORT_DRIFT_PROBE_MA_GAP_MAX_PIPS", 0.35
+)
+EXTREMA_SHORT_DRIFT_PROBE_RSI_MAX = _env_float("SHORT_DRIFT_PROBE_RSI_MAX", 60.0)
 EXTREMA_SETUP_PRESSURE_ENABLED = _env_bool("SETUP_PRESSURE_ENABLED", True)
 EXTREMA_SETUP_PRESSURE_LOOKBACK_HOURS = _env_float("SETUP_PRESSURE_LOOKBACK_HOURS", 6.0)
 EXTREMA_SETUP_PRESSURE_LOOKBACK_TRADES = _env_int("SETUP_PRESSURE_LOOKBACK_TRADES", 6)
@@ -834,6 +853,19 @@ def _signal_extrema_reversal(
         and rsi <= EXTREMA_SHORT_MID_RSI_PROBE_RSI_MAX
     )
     short_range_reason = str(getattr(range_ctx, "reason", "") or "").strip().lower()
+    short_drift_probe_block = (
+        not short_supportive
+        and range_mode == "RANGE"
+        and short_range_reason == "volatility_compression"
+        and EXTREMA_SHORT_DRIFT_PROBE_DIST_HIGH_MAX_PIPS > 0.0
+        and dist_high <= EXTREMA_SHORT_DRIFT_PROBE_DIST_HIGH_MAX_PIPS
+        and short_bounce_pips <= EXTREMA_SHORT_DRIFT_PROBE_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_SHORT_DRIFT_PROBE_TICK_STRENGTH_MAX
+        and range_score <= EXTREMA_SHORT_DRIFT_PROBE_RANGE_SCORE_MAX
+        and ma_gap_pips >= EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MIN_PIPS
+        and ma_gap_pips <= EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MAX_PIPS
+        and rsi <= EXTREMA_SHORT_DRIFT_PROBE_RSI_MAX
+    )
     short_setup_pressure_diag = _recent_setup_pressure("short", short_range_reason)
     short_setup_pressure_active = bool(short_setup_pressure_diag.get("active", 0.0) >= 1.0)
     short_setup_pressure_block = (
@@ -854,6 +886,7 @@ def _signal_extrema_reversal(
         and not short_countertrend_block
         and not short_shallow_probe_block
         and not short_mid_rsi_probe_block
+        and not short_drift_probe_block
         and not short_setup_pressure_block
     )
     can_long = (
@@ -924,6 +957,7 @@ def _signal_extrema_reversal(
             "short_countertrend_block": bool(short_countertrend_block and side == "short"),
             "short_shallow_probe_block": bool(short_shallow_probe_block and side == "short"),
             "short_mid_rsi_probe_block": bool(short_mid_rsi_probe_block and side == "short"),
+            "short_drift_probe_block": bool(short_drift_probe_block and side == "short"),
             "short_setup_pressure_block": bool(short_setup_pressure_block and side == "short"),
             "short_setup_pressure": short_setup_pressure_diag if side == "short" else {},
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),

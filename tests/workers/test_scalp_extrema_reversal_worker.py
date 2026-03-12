@@ -754,6 +754,124 @@ def test_signal_extrema_reversal_keeps_supportive_short_under_same_bullish_gap(m
     assert signal["extrema"]["supportive_short"] is True
 
 
+def test_signal_extrema_reversal_blocks_non_supportive_short_drift_probe(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
+    monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
+    monkeypatch.setattr(worker, "EXTREMA_ATR_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_HIGH_BAND_PIPS", 0.9)
+    monkeypatch.setattr(worker, "EXTREMA_RSI_SHORT_MIN", 54.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_SUPPORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.45)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.45)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.50)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_DIST_HIGH_MAX_PIPS", 0.90)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_BOUNCE_MAX_PIPS", 0.15)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_TICK_STRENGTH_MAX", 0.15)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_RANGE_SCORE_MAX", 0.48)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MIN_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MAX_PIPS", 0.35)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_RSI_MAX", 60.0)
+    monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
+    monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
+    monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
+    monkeypatch.setattr(
+        worker,
+        "get_candles_snapshot",
+        lambda *_args, **_kwargs: [{"high": 158.539, "low": 158.370}] * 80,
+    )
+    monkeypatch.setattr(
+        worker,
+        "compute_range_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(high=158.539, low=158.370),
+    )
+    monkeypatch.setattr(
+        worker,
+        "tick_snapshot",
+        lambda *_args, **_kwargs: ([158.460, 158.455, 158.451, 158.450, 158.449], None),
+    )
+    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
+    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+
+    signal = worker._signal_extrema_reversal(
+        {
+            "close": 158.450,
+            "ma10": 158.4527,
+            "ma20": 158.4500,
+            "ema20": 158.4500,
+            "adx": 17.0,
+            "atr_pips": 1.8,
+            "rsi": 56.5,
+        },
+        range_ctx=_range_ctx(active=True, score=0.46, mode="RANGE", reason="volatility_compression"),
+        tag="scalp_extrema_reversal_live",
+    )
+
+    assert signal is None
+
+
+def test_signal_extrema_reversal_keeps_bearish_gap_short_outside_drift_probe(monkeypatch):
+    monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
+    monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
+    monkeypatch.setattr(worker, "EXTREMA_ATR_MAX", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_LONG_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_HIGH_BAND_PIPS", 0.9)
+    monkeypatch.setattr(worker, "EXTREMA_RSI_SHORT_MIN", 54.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_SUPPORT_ENABLED", True)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.45)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_SHALLOW_PROBE_DIST_HIGH_MAX_PIPS", 0.45)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_MID_RSI_PROBE_RANGE_SCORE_MIN", 0.50)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_DIST_HIGH_MAX_PIPS", 0.90)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_BOUNCE_MAX_PIPS", 0.15)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_TICK_STRENGTH_MAX", 0.15)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_RANGE_SCORE_MAX", 0.48)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MIN_PIPS", 0.0)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_MA_GAP_MAX_PIPS", 0.35)
+    monkeypatch.setattr(worker, "EXTREMA_SHORT_DRIFT_PROBE_RSI_MAX", 60.0)
+    monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
+    monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
+    monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
+    monkeypatch.setattr(
+        worker,
+        "get_candles_snapshot",
+        lambda *_args, **_kwargs: [{"high": 158.460, "low": 158.370}] * 80,
+    )
+    monkeypatch.setattr(
+        worker,
+        "compute_range_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(high=158.460, low=158.370),
+    )
+    monkeypatch.setattr(
+        worker,
+        "tick_snapshot",
+        lambda *_args, **_kwargs: ([158.460, 158.455, 158.451, 158.450, 158.449], None),
+    )
+    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
+    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+
+    signal = worker._signal_extrema_reversal(
+        {
+            "close": 158.450,
+            "ma10": 158.4468,
+            "ma20": 158.4500,
+            "ema20": 158.4500,
+            "adx": 23.0,
+            "atr_pips": 1.8,
+            "rsi": 59.2,
+        },
+        range_ctx=_range_ctx(active=True, score=0.45, mode="RANGE", reason="volatility_compression"),
+        tag="scalp_extrema_reversal_live",
+    )
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["extrema"]["short_drift_probe_block"] is False
+
+
 def test_signal_extrema_reversal_blocks_non_supportive_shallow_probe_long(monkeypatch):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)

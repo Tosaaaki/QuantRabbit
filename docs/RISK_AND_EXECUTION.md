@@ -8,6 +8,59 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_extrema_reversal_live` short drift probe guard（2026-03-12）
+- 背景:
+  - 2026-03-12 15:18 JST 時点でも
+    `scalp_extrema_reversal_live`
+    は
+    24h
+    `65 trades / net -54.296 JPY / win 23.1%`
+    の loser だった。
+  - recent short loser
+    `459489`
+    /
+    `459495`
+    は
+    `STOP_LOSS_ORDER`
+    後
+    `tp_touch<=600s なし`
+    で、
+    `range_score 0.443-0.460`
+    /
+    `ma_gap 0.09-0.27`
+    /
+    `short_bounce 0.10`
+    /
+    `tick_strength 0.10`
+    の marginal short probe だった。
+- 実装:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    short drift probe guard
+    を追加し、
+    `short`
+    /
+    `volatility_compression`
+    /
+    `non-supportive`
+    /
+    `dist_high<=0.9`
+    /
+    `short_bounce<=0.15`
+    /
+    `tick_strength<=0.15`
+    /
+    `range_score<=0.48`
+    /
+    `0<=ma_gap<=0.35`
+    /
+    `rsi<=60`
+    の marginal short を reject するようにした。
+- 意図:
+  - current short loser lane だけを削り、
+    bearish gap の short や
+    stronger stretch short は残して participation を維持する。
+
 ### local-v2 `scalp_ping_5s_d_live` negative-window long-opposite guard（2026-03-12）
 - 背景:
   - 2026-03-12 15:09 JST 時点の local-v2 は

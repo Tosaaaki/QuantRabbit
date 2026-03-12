@@ -51,6 +51,140 @@
 - Status:
 ```
 
+## 2026-03-12 15:35 JST / local-v2: `scalp_extrema_reversal_live` short の marginal drift probe を worker local で遮断
+
+- Change:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    `short_drift_probe_block`
+    を追加し、
+    `short + volatility_compression + non-supportive`
+    で
+    `dist_high<=0.9`
+    /
+    `short_bounce<=0.15`
+    /
+    `tick_strength<=0.15`
+    /
+    `range_score<=0.48`
+    /
+    `0<=ma_gap_pips<=0.35`
+    /
+    `rsi<=60`
+    の marginal short probe を reject するようにした。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に
+    loser lane block / bearish-gap short keep
+    の回帰を追加した。
+- Why:
+  - 2026-03-12 15:18 JST 時点の local-v2 で
+    `scalp_extrema_reversal_live`
+    は
+    24h
+    `65 trades / net -54.296 JPY / win 23.1%`
+    の main loser のままだった。
+  - 直近 short loser
+    `459489`
+    /
+    `459495`
+    は
+    `4.5s`
+    /
+    `22.5s`
+    で
+    `STOP_LOSS_ORDER`
+    になり、
+    tick validate でも
+    `tp_touch<=600s なし`
+    だった。
+- Hypothesis:
+  - 現在の short loser は
+    「上方向へ強く伸び切った sell fade」ではなく、
+    `ma_gap`
+    がまだ中途半端に正で、
+    `bounce/tick`
+    も弱い shallow reversal probe を short している。
+  - この marginal lane は、
+    bearish gap の short や、
+    強く stretch した reversion short とは分けて落とせる。
+- Expected Good:
+  - `scalp_extrema_reversal_live`
+    short の current loser lane を削り、
+    `STOP_LOSS_ORDER`
+    を減らす。
+  - bearish gap の short や、
+    stronger stretch short は残す。
+- Expected Bad:
+  - short entry 数が減る。
+  - 閾値がきつすぎると、
+    薄いが勝てる short を落とす可能性がある。
+- Period:
+  - recent 24h / recent 7d
+  - tick validation は 2026-03-12 UTC の recent short loser 2件
+- Fact:
+  - `logs/trades.db`
+    の
+    `scalp_extrema_reversal_live`
+    `short + volatility_compression + non-supportive + dist_high<=0.9 + short_bounce<=0.15 + tick_strength<=0.15 + range_score<=0.48`
+    を
+    `ma_gap`
+    で見ると、
+    `0<=ma_gap<0.35`
+    は
+    `5 trades / 5 STOP_LOSS / net -5.590 JPY`
+    だった。
+  - 同じ shallow short でも、
+    `459393`
+    は
+    `ma_gap=-0.320`
+    の bearish gap で
+    `+0.534 JPY`
+    だった。
+  - `459489`
+    は
+    `range_score 0.460 / ma_gap 0.270 / dist_high 0.886 / bounce 0.100 / tick 0.100 / tp_touch<=600s なし`。
+  - `459495`
+    は
+    `range_score 0.443 / ma_gap 0.090 / dist_high 0.124 / bounce 0.100 / tick 0.100 / tp_touch<=600s なし`。
+- Failure Cause:
+  - 既存 short guard は
+    `countertrend gap>=0.45`
+    か
+    `setup_pressure active`
+    のときだけ強く効いていたため、
+    その手前の
+    `0-0.35 pip`
+    程度の bullish drift short が current loser lane として残っていた。
+- Improvement:
+  - `short_drift_probe_block`
+    で、
+    current loser cluster に一致する
+    marginal short probe だけを worker local に落とす。
+- Verification:
+  - `PYTHONPATH=. pytest -q tests/workers/test_scalp_extrema_reversal_worker.py -k 'short_drift_probe or bullish_gap'`
+  - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
+  - deploy 後 30-60 分で
+    `scalp_extrema_reversal_live`
+    short の
+    `STOP_LOSS_ORDER`
+    /
+    `fast<=5s`
+    /
+    `realized_jpy`
+    を再確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - post-deploy で
+    `short_drift_probe_block`
+    の skip ログと、
+    recent short loser の消失を確認する。
+  - まだ悪ければ
+    `PrecisionLowVol`
+    short を current 窓だけで再評価する。
+- Status:
+  - open
+
 ## 2026-03-12 15:20 JST / local-v2: `scalp_ping_5s_d_live` TP-enabled long の instant-SL lane を worker local で遮断
 
 - Change:

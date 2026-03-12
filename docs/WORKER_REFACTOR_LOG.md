@@ -60,6 +60,36 @@
     `1秒前後のSTOP_LOSS`
     を出していた TP-enabled variant だけを削る。
 
+### 2026-03-12（追記）`scalp_extrema_reversal_live` short drift probe guard
+
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `short_drift_probe_block`
+    を追加し、
+    `short + volatility_compression + non-supportive`
+    で
+    `dist_high<=0.9`
+    /
+    `short_bounce<=0.15`
+    /
+    `tick_strength<=0.15`
+    /
+    `range_score<=0.48`
+    /
+    `0<=ma_gap<=0.35`
+    /
+    `rsi<=60`
+    の marginal short probe を worker local に reject するようにした。
+  - 対応する unit test を追加した。
+- 意図:
+  - `scalp_extrema_reversal_live`
+    short の current loser lane だけを削り、
+    bearish gap の short や stronger stretch short は残す。
+
 ### 2026-03-12（追記）`MomentumBurst` sizing nudge
 
 - 対象:
