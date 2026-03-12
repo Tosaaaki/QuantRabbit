@@ -4633,3 +4633,70 @@
   と
   `MOMENTUMBURST_MTF_H1_WEAK_OPPOSE_ADX_MAX=18.0`
   を current 運用値とする。
+
+### local-v2 `scalp_extrema_reversal_live` short positive-gap setup-pressure guard（2026-03-13）
+- 背景:
+  - 2026-03-13 03:47 JST 時点の local-v2 は
+    `USD/JPY 159.394 / spread 0.8 pips / M1 ATR 0.818 pips / 15m range 2.7 pips / open_trades 0`
+    で、
+    pricing 応答も
+    `234.7ms`
+    と正常だった。
+  - それでも
+    `scalp_extrema_reversal_live`
+    は直近24h
+    `93 trades / -86.098 JPY`
+    の loser で、
+    short `volatility_compression`
+    が
+    `42 trades / -31.066 JPY`
+    を削っていた。
+  - recent
+    `short_setup_pressure.active=1`
+    かつ
+    `ma_gap_pips>=0.15`
+    の positive-gap lane は
+    `3 trades / -5.390 JPY`
+    で、
+    `RSI 69.06`
+    の winner `+0.79`
+    は残る一方、
+    `RSI 65.37 / 67.19`
+    の weak short が
+    `-1.236 / -4.944 JPY`
+    と current drag だった。
+- 実装:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    `short_positive_gap_probe_block`
+    を追加した。
+  - block 条件は
+    `setup-pressure active`
+    /
+    `range_mode=RANGE`
+    /
+    `volatility_compression`
+    /
+    `short_supportive=false`
+    /
+    `ma_gap>=0.15`
+    /
+    `dist_high<=0.90`
+    /
+    `short_bounce<=0.75`
+    /
+    `tick_strength<=0.40`
+    /
+    `rsi<=68`
+    に限定した。
+  - 既存
+    `short_setup_pressure_block`
+    や
+    stronger reversal short は維持し、
+    shared gate / time block / strategy-wide trim は追加していない。
+- 意図:
+  - current loser の
+    `positive gap + weak tick + mid-to-high RSI`
+    short lane だけを worker local に落とし、
+    `RSI>=69`
+    の more-extended short は残す。

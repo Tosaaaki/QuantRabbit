@@ -18787,3 +18787,127 @@ Status:
     を組み合わせた lane split を追加する。
   - 今回の `tick_rate` request は `scalp_wick_reversal_blend` worker explicit contract で入れており、
     shared strategy contract 側の blanket 追加はまだ行っていない。
+
+## 2026-03-13 03:48 JST / local-v2: `scalp_extrema_reversal_live` short の setup-pressure 中 positive-gap weak lane を追加で落とす
+- Why/Hypothesis:
+  - 市況確認では
+    2026-03-13 03:47 JST 時点で
+    `USD/JPY 159.394`,
+    `spread 0.8p`,
+    `M1 ATR 0.818p`,
+    `15m range 2.7p`,
+    `60m range 12.0p`,
+    `OANDA pricing 234.7ms`,
+    `openTrades=[]`,
+    `decision_latency_ms 10-32`,
+    `data_lag_ms 74-1415`
+    で、
+    market / execution は通常帯だった。
+  - `logs/trades.db`
+    の直近24hでは
+    `scalp_extrema_reversal_live`
+    が
+    `93 trades / -86.098 JPY`
+    と loser で、
+    short `volatility_compression`
+    だけでも
+    `42 trades / -31.066 JPY`
+    を削っていた。
+  - そのうち
+    `short_setup_pressure.active=1`
+    かつ
+    `ma_gap_pips>=0.15`
+    の positive-gap lane は
+    `3 trades / -5.390 JPY`
+    で、
+    `RSI 69.06`
+    の winner `+0.79`
+    は残る一方、
+    `RSI 65.37 / 67.19`
+    の weak short が
+    `-1.236 / -4.944 JPY`
+    と current drag になっていた。
+  - 既存の
+    `short_setup_pressure_block`
+    は
+    `short_bounce<=0.50`
+    までしか見ておらず、
+    `positive ma_gap + weak tick + RSI 未伸び切り`
+    の中間 short lane が still 通っていた。
+- Expected Good:
+  - setup-pressure active 中の
+    short `volatility_compression`
+    で、
+    `ma_gap>0`
+    の weak countertrend short だけを
+    strategy-local に落とせる。
+  - `RSI>=69`
+    まで伸びた stronger short や、
+    supportive short は維持できる。
+- Expected Bad:
+  - `rsi<=68`
+    の閾値が低すぎると、
+    shallow positive-gap short の winner まで削る可能性。
+  - そのため条件は
+    `setup-pressure active`
+    かつ
+    `range_mode=RANGE`
+    かつ
+    `volatility_compression`
+    かつ
+    `ma_gap>=0.15`
+    かつ
+    `dist_high<=0.90`
+    かつ
+    `short_bounce<=0.75`
+    かつ
+    `tick_strength<=0.40`
+    かつ
+    `rsi<=68`
+    の narrow lane に限定した。
+- Observed/Fact:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    `short_positive_gap_probe_block`
+    を追加し、
+    recent setup-pressure が active なときだけ
+    positive-gap の weak short probe を reject するよう更新した。
+  - 既存の
+    `short_setup_pressure_block`
+    や
+    `short_shallow_probe_block`
+    は維持し、
+    新 block は
+    `short_supportive=false`
+    の narrow lane に only additive で入れた。
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+    に
+    `positive-gap weak short block`
+    と
+    `RSI 69 の stronger short keep`
+    を追加した。
+  - 検証:
+    - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+      -> `32 passed`
+    - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
+      -> 成功
+- Verdict: pending
+- Next Action:
+  - local-v2 反映後の次
+    `30-90m`
+    で
+    `scalp_extrema_reversal_live`
+    short
+    `volatility_compression`
+    の
+    `OPEN_REQ -> fills`
+    と
+    `STOP_LOSS_ORDER`
+    を確認し、
+    `short_positive_gap_probe_block`
+    相当 lane の fill が消えるかを見る。
+  - それでも current loser が残るなら、
+    次は
+    `range_score / supportive_short_context / M5 bearish support`
+    を軸に
+    short positive-gap lane をさらに split する。

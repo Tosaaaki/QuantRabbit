@@ -421,6 +421,24 @@ EXTREMA_SHORT_SETUP_PRESSURE_BOUNCE_MAX_PIPS = _env_float(
 EXTREMA_SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX = _env_float(
     "SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX", 0.50
 )
+EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_ENABLED = _env_bool(
+    "SHORT_SETUP_PRESSURE_POS_GAP_ENABLED", True
+)
+EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_MIN_PIPS = _env_float(
+    "SHORT_SETUP_PRESSURE_POS_GAP_MIN_PIPS", 0.15
+)
+EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS = _env_float(
+    "SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS", 0.90
+)
+EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS = _env_float(
+    "SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.75
+)
+EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX = _env_float(
+    "SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.40
+)
+EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_RSI_MAX = _env_float(
+    "SHORT_SETUP_PRESSURE_POS_GAP_RSI_MAX", 68.0
+)
 EXTREMA_LONG_SETUP_PRESSURE_RANGE_REASONS = _env_set(
     "LONG_SETUP_PRESSURE_RANGE_REASONS", "volatility_compression"
 )
@@ -979,6 +997,18 @@ def _signal_extrema_reversal(
         and short_bounce_pips <= EXTREMA_SHORT_SETUP_PRESSURE_BOUNCE_MAX_PIPS
         and tick_strength <= EXTREMA_SHORT_SETUP_PRESSURE_TICK_STRENGTH_MAX
     )
+    short_positive_gap_probe_block = (
+        short_setup_pressure_active
+        and EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_ENABLED
+        and not short_supportive
+        and range_mode == "RANGE"
+        and short_range_reason in EXTREMA_SHORT_SETUP_PRESSURE_RANGE_REASONS
+        and ma_gap_pips >= EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_MIN_PIPS
+        and dist_high <= EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS
+        and short_bounce_pips <= EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS
+        and tick_strength <= EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX
+        and rsi <= EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_RSI_MAX
+    )
 
     can_short = (
         EXTREMA_SHORT_ENABLED
@@ -991,6 +1021,7 @@ def _signal_extrema_reversal(
         and not short_mid_rsi_probe_block
         and not short_drift_probe_block
         and not short_setup_pressure_block
+        and not short_positive_gap_probe_block
     )
     can_long = (
         EXTREMA_LONG_ENABLED
@@ -1064,6 +1095,9 @@ def _signal_extrema_reversal(
             "short_mid_rsi_probe_block": bool(short_mid_rsi_probe_block and side == "short"),
             "short_drift_probe_block": bool(short_drift_probe_block and side == "short"),
             "short_setup_pressure_block": bool(short_setup_pressure_block and side == "short"),
+            "short_positive_gap_probe_block": bool(
+                short_positive_gap_probe_block and side == "short"
+            ),
             "short_setup_pressure": short_setup_pressure_diag if side == "short" else {},
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
             "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),

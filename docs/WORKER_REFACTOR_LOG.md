@@ -17962,3 +17962,89 @@
     -> `4 passed`
   - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
     -> `30 passed`
+
+### 2026-03-13 `scalp_extrema_reversal_live` short positive-gap setup-pressure guard
+- 対象:
+  - `workers/scalp_extrema_reversal/worker.py`
+  - `tests/workers/test_scalp_extrema_reversal_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - 2026-03-13 03:47 JST 時点の local-v2 は
+    `USD/JPY 159.394 / spread 0.8p / openTrades=[] / pricing 234.7ms`
+    で、
+    execution failure ではなく strategy quality が論点だった。
+  - `logs/trades.db`
+    の直近24hでは
+    `scalp_extrema_reversal_live`
+    が
+    `93 trades / -86.098 JPY`
+    の loser で、
+    short `volatility_compression`
+    だけでも
+    `42 trades / -31.066 JPY`
+    を削っていた。
+  - recent
+    `short_setup_pressure.active=1`
+    かつ
+    `ma_gap_pips>=0.15`
+    の positive-gap lane は
+    `3 trades`
+    で、
+    `RSI 69.06`
+    の winner `+0.79`
+    を除く
+    `RSI 65.37 / 67.19`
+    が
+    `-1.236 / -4.944 JPY`
+    と current drag になっていた。
+  - 既存
+    `short_setup_pressure_block`
+    は
+    `short_bounce<=0.50`
+    までしか見ないため、
+    `ma_gap>0 + weak tick + RSI 未伸び切り`
+    の中間 short lane が still 通っていた。
+
+- 変更:
+  - `workers/scalp_extrema_reversal/worker.py`
+    に
+    `SHORT_SETUP_PRESSURE_POS_GAP_*`
+    定数を追加した。
+  - recent setup-pressure が active で、
+    `range_mode=RANGE`
+    /
+    `volatility_compression`
+    /
+    `short_supportive=false`
+    /
+    `ma_gap>=0.15`
+    /
+    `dist_high<=0.90`
+    /
+    `short_bounce<=0.75`
+    /
+    `tick_strength<=0.40`
+    /
+    `rsi<=68`
+    の positive-gap weak short を
+    `short_positive_gap_probe_block`
+    で reject するようにした。
+  - 既存
+    `short_setup_pressure_block`
+    や
+    stronger short lane は維持し、
+    broad stop にはしていない。
+  - テストに
+    `positive-gap weak short block`
+    と
+    `more-extended positive-gap short keep`
+    を追加した。
+
+- 検証:
+  - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+    -> `32 passed`
+  - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
+    -> 成功
