@@ -15360,3 +15360,83 @@ Status:
     に再投入する change を入れる場合は、
     `flow_headwind_regime`
     のような別 key に分離する。
+
+## 2026-03-12 shared setup identity repair for pre-fix coarse flow labels
+- Why/Hypothesis:
+  - `WickReversalBlend` 系の coarse
+    `flow_regime=range_fade`
+    が fix 前 trade に残っている間、
+    `dynamic_alloc` / `participation_alloc` /
+    `strategy_feedback`
+    が recent trade を current setup ごとに
+    学習するとき、
+    `setup_fingerprint`
+    の richer phase
+    (`range_compression`)
+    と top-level `flow_regime`
+    が食い違って miscluster する。
+  - current live では worker 側を
+    `flow_headwind_regime`
+    へ分離済みでも、
+    直近 6-24h の pre-fix trade が
+    shared artifact を汚すなら
+    改善の反映が遅れる。
+- Expected Good:
+  - common 形式の
+    `setup_fingerprint`
+    を持つ trade は、
+    coarse top-level label が残っていても
+    shared setup identity を
+    `flow_regime / microstructure_bucket / setup_fingerprint`
+    の整合した組で復元できる。
+  - `RangeFader`
+    のような custom fingerprint は壊さず、
+    common fingerprint を使う strategy だけ
+    repair できる。
+- Expected Bad:
+  - custom fingerprint の parse 条件が広すぎると
+    別 strategy の独自 fingerprint を
+    誤って common 形式として扱うリスクがある。
+  - runtime の entry/exit ではなく
+    shared feedback の分類修正なので、
+    即時の P/L 改善は限定的。
+- Observed/Fact:
+  - `workers/common/setup_context.py`
+    に common fingerprint parser を追加し、
+    `derive_live_setup_context` /
+    `extract_setup_identity`
+    が parse 可能な
+    `setup_fingerprint`
+    を setup identity の正として扱うようにした。
+  - pre-fix の recent trade で
+    `flow_regime=range_fade`
+    かつ
+    `setup_fingerprint` が
+    `...|range_compression|unknown|...`
+    だった
+    `DroughtRevert` /
+    `PrecisionLowVol`
+    3 件を確認し、
+    修正後の
+    `extract_setup_identity()`
+    は
+    `flow_regime=range_compression`
+    を復元した。
+  - custom fingerprint
+    `RangeFader|short|sell-fade|trend_long|p0`
+    は explicit
+    `flow_regime / microstructure_bucket`
+    をそのまま保持する unit test を追加した。
+  - `PYTHONPATH=. pytest -q tests/workers/common/test_setup_context.py tests/workers/common/test_dynamic_alloc.py tests/workers/common/test_participation_alloc.py tests/execution/test_strategy_entry_forecast_fusion.py`
+    は `34 passed`。
+- Verdict: good
+- Next Action:
+  - next feedback cycle で
+    `dynamic_alloc` /
+    `participation_alloc`
+    artifact の
+    `PrecisionLowVol` /
+    `DroughtRevert`
+    setup override が
+    `range_compression`
+    側へ寄るかを確認する。

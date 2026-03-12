@@ -3725,6 +3725,43 @@
   の両入口を固定し、
   stale test による market-phase flattening 見逃しを防ぐ。
 
+### 2026-03-12 shared setup identity repair for common fingerprints
+- current shared feedback / alloc 運用では、
+  common 形式の
+  `setup_fingerprint`
+  を setup identity 復元の正とする。
+- `workers/common/setup_context.py`
+  の
+  `derive_live_setup_context` /
+  `extract_setup_identity`
+  は
+  `Strategy|side|flow_regime|microstructure_bucket|...`
+  の fingerprint を parse できる場合、
+  top-level の stale
+  `flow_regime`
+  より fingerprint 側の
+  `flow_regime / microstructure_bucket`
+  を優先する。
+- これにより
+  `WickReversalBlend` 系 pre-fix trade の
+  coarse
+  `flow_regime=range_fade`
+  が recent 24h に残っていても、
+  `dynamic_alloc` /
+  `participation_alloc` /
+  `strategy_feedback` /
+  `auto_canary`
+  は richer setup
+  (`range_compression`
+  など) を current lane として扱える。
+- custom fingerprint
+  （例:
+  `RangeFader|short|sell-fade|trend_long|p0`）
+  は common parser の対象外とし、
+  explicit
+  `flow_regime / microstructure_bucket`
+  を保持する。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、

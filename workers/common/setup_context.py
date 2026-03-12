@@ -2,12 +2,49 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+_KNOWN_FLOW_REGIMES = {
+    "range_compression",
+    "range_fade",
+    "transition",
+    "trend_long",
+    "trend_short",
+}
+
 
 def _to_float(value: Any) -> Optional[float]:
     try:
         return float(value)
     except Exception:
         return None
+
+
+def _looks_like_common_microstructure_bucket(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text == "unknown":
+        return True
+    return text.startswith(("tight_", "normal_", "wide_"))
+
+
+def _parse_common_setup_fingerprint(value: Any) -> dict[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    parts = [part.strip() for part in text.split("|")]
+    if len(parts) < 4:
+        return {}
+    flow_regime = parts[2]
+    microstructure_bucket = parts[3]
+    if flow_regime not in _KNOWN_FLOW_REGIMES:
+        return {}
+    if not _looks_like_common_microstructure_bucket(microstructure_bucket):
+        return {}
+    return {
+        "setup_fingerprint": text,
+        "flow_regime": flow_regime,
+        "microstructure_bucket": microstructure_bucket,
+    }
 
 
 def _bucket_label(
@@ -186,13 +223,20 @@ def derive_live_setup_context(
             "gap_bucket": gap_bucket,
         }
     )
-    for key in ("flow_regime", "microstructure_bucket", "setup_fingerprint"):
-        explicit = entry_thesis.get(key)
-        if explicit in {None, ""} and isinstance(live_setup, Mapping):
-            explicit = live_setup.get(key)
-        text = str(explicit or "").strip()
-        if text:
-            summary[key] = text
+    explicit_fingerprint = entry_thesis.get("setup_fingerprint")
+    if explicit_fingerprint in {None, ""} and isinstance(live_setup, Mapping):
+        explicit_fingerprint = live_setup.get("setup_fingerprint")
+    parsed_fingerprint = _parse_common_setup_fingerprint(explicit_fingerprint)
+    if parsed_fingerprint:
+        summary.update(parsed_fingerprint)
+    else:
+        for key in ("flow_regime", "microstructure_bucket", "setup_fingerprint"):
+            explicit = entry_thesis.get(key)
+            if explicit in {None, ""} and isinstance(live_setup, Mapping):
+                explicit = live_setup.get(key)
+            text = str(explicit or "").strip()
+            if text:
+                summary[key] = text
     return summary
 
 
@@ -207,12 +251,20 @@ def extract_setup_identity(
     if not isinstance(live_setup, Mapping):
         live_setup = {}
     context: dict[str, str] = {}
+    explicit_fingerprint = entry_thesis.get("setup_fingerprint")
+    if explicit_fingerprint in {None, ""}:
+        explicit_fingerprint = live_setup.get("setup_fingerprint")
+    parsed_fingerprint = _parse_common_setup_fingerprint(explicit_fingerprint)
+    if parsed_fingerprint:
+        context.update(parsed_fingerprint)
     for key in ("setup_fingerprint", "flow_regime", "microstructure_bucket"):
         raw = entry_thesis.get(key)
         if raw in {None, ""}:
             raw = live_setup.get(key)
         text = str(raw or "").strip()
         if text:
+            if parsed_fingerprint and key in {"flow_regime", "microstructure_bucket"}:
+                continue
             context[key] = text
     if len(context) == 3:
         return context

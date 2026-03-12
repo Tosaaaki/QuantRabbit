@@ -16689,3 +16689,58 @@
 - 検証:
   - `PYTHONPATH=. pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`
     -> `20 passed`
+
+### 2026-03-12 shared setup identity repair for common fingerprints
+- 対象:
+  - `workers/common/setup_context.py`
+  - `tests/workers/common/test_setup_context.py`
+
+- 背景:
+  - `WickReversalBlend` 系 pre-fix trade には
+    top-level
+    `flow_regime=range_fade`
+    が残る一方で、
+    `setup_fingerprint`
+    は
+    `...|range_compression|unknown|...`
+    の richer phase を持つ行があった。
+  - `dynamic_alloc` /
+    `participation_alloc` /
+    `strategy_feedback`
+    は
+    `extract_setup_identity()`
+    を使って recent trade を setup ごとに集計するため、
+    この食い違いを current feedback cycle の中で
+    吸収する必要があった。
+
+- 変更:
+  - common 形式
+    `Strategy|side|flow_regime|microstructure_bucket|...`
+    の
+    `setup_fingerprint`
+    parser を追加した。
+  - `derive_live_setup_context`
+    は parse 可能な fingerprint がある場合、
+    `flow_regime / microstructure_bucket / setup_fingerprint`
+    を fingerprint 基準で整合させる。
+  - `extract_setup_identity`
+    も common fingerprint がある場合は
+    top-level の stale
+    `flow_regime`
+    より fingerprint 由来の
+    `flow_regime / microstructure_bucket`
+    を優先する。
+  - `RangeFader`
+    の custom fingerprint は parse 対象外とし、
+    explicit context を維持する test を追加した。
+
+- 検証:
+  - `PYTHONPATH=. pytest -q tests/workers/common/test_setup_context.py tests/workers/common/test_dynamic_alloc.py tests/workers/common/test_participation_alloc.py tests/execution/test_strategy_entry_forecast_fusion.py`
+    -> `34 passed`
+  - recent pre-fix trade 3 件で
+    `extract_setup_identity()`
+    が
+    `range_fade`
+    ではなく
+    `range_compression`
+    を復元することを確認した。
