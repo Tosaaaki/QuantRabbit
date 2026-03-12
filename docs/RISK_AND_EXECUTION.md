@@ -8,6 +8,54 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `MomentumBurst` cadence / entry-path freshness fix（2026-03-12）
+- 背景:
+  - 2026-03-12 13:33 JST 時点で
+    `USD/JPY 159.060 / spread 0.8 pips / open_trades 0`
+    かつ
+    latest execution metrics は
+    `reject_rate=0`,
+    `order_success_rate=1.0`
+    で、
+    直近の詰まりは execution failure ではなく cadence 側だった。
+  - `config/participation_alloc.json`
+    は
+    `lookback_hours=6`
+    にもかかわらず
+    前日
+    `2026-03-11T12:44-12:46+00:00`
+    の
+    `MomentumBurst-open_long`
+    を current attempts として残していた。
+  - 同 strategy の 7d cadence は
+    `60 trades`,
+    entry interval
+    `<120s 28/59`,
+    `<90s 24/59`,
+    `median 133.8s`
+    で、
+    fixed `120s`
+    cooldown が clustered burst を削る余地があった。
+- 実装:
+  - `scripts/entry_path_aggregator.py`
+    の lookback filter を
+    `julianday(ts) >= julianday('now', ?)`
+    へ変更し、
+    ISO8601 UTC timestamp の文字列比較バグを除去した。
+  - `ops/env/quant-micro-momentumburst.env`
+    の
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC`
+    を
+    `120 -> 90`,
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC`
+    を
+    `35 -> 20`
+    へ変更した。
+- 意図:
+  - current participation artifact を live 窓へ揃えたうえで、
+    `MomentumBurst`
+    の winner cluster / reaccel の通過率を少し上げる。
+
 ### local-v2 `MomentumBurst` sizing nudge（2026-03-12）
 - 背景:
   - 2026-03-12 12:53 JST 時点で

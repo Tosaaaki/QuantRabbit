@@ -25,6 +25,34 @@
     の size を小幅に戻し、
     open-trade 不足時の収益機会を少し押す。
 
+### 2026-03-12（追記）`MomentumBurst` cadence / entry-path freshness fix
+
+- 対象:
+  - `scripts/entry_path_aggregator.py`
+  - `tests/scripts/test_entry_path_aggregator.py`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `entry_path_aggregator`
+    の lookback 判定を
+    ISO8601 UTC timestamp でも正しく効く
+    `julianday(ts) >= julianday('now', ?)`
+    へ変更した。
+  - `MomentumBurst`
+    dedicated env の
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC`
+    を
+    `90`,
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC`
+    を
+    `20`
+    へ変更した。
+  - ISO8601 timestamp が stale lookback に残らない回帰テストを追加した。
+- 意図:
+  - stale participation artifact による cadence 判断のズレを止めつつ、
+    current winner lane の cluster を少し多く通す。
+
 ### 2026-03-12（追記）`RangeFader` long weak probe guard
 
 - 対象:

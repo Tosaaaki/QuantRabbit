@@ -51,6 +51,133 @@
 - Status:
 ```
 
+## 2026-03-12 13:45 JST / local-v2: `MomentumBurst` cadence を stale participation artifact と cooldown で詰めていた箇所を修正
+
+- Change:
+  - `scripts/entry_path_aggregator.py`
+    の lookback 判定を
+    `ts >= datetime('now', ?)`
+    から
+    `julianday(ts) >= julianday('now', ?)`
+    へ変更した。
+  - `ops/env/quant-micro-momentumburst.env`
+    の
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC`
+    を
+    `120 -> 90`,
+    `MOMENTUMBURST_REACCEL_COOLDOWN_SEC`
+    を
+    `35 -> 20`
+    へ短縮した。
+- Why:
+  - 2026-03-12 13:33 JST 時点の local-v2 実測では
+    `USD/JPY 159.060 / spread 0.8 pips / open_trades 0`
+    で execution は正常、
+    24h は
+    `141 trades / win 29.1% / PF 0.50 / net -19.453 JPY`
+    だった。
+  - `MomentumBurst`
+    は 24h
+    `2 trades / +185.320 JPY / win 100%`
+    で winner なのに、
+    13時台の live では fills が増えていなかった。
+  - その確認中、
+    `config/participation_alloc.json`
+    の
+    `lookback_hours=6`
+    にもかかわらず
+    `MomentumBurst-open_long attempts=2`
+    が残っており、
+    `2026-03-11 12:44-12:46 UTC`
+    の stale order が current window に混入していることを確認した。
+- Hypothesis:
+  - `orders.ts` は
+    `2026-03-11T12:46:30.837953+00:00`
+    形式で保存されており、
+    文字列比較の
+    `ts >= datetime('now', ?)`
+    では current 6h 窓を正しく切れない。
+  - stale entry-path artifact が残ると、
+    current participation の押し引きが live 市況とズレる。
+  - あわせて
+    `MomentumBurst`
+    は 7d で
+    `60 trades`
+    の entry 間隔のうち
+    `28本`
+    が
+    `120s未満`,
+    `24本`
+    が
+    `90s未満`
+    だったため、
+    `120s`
+    cooldown は valid cluster の一部を削っている可能性がある。
+- Expected Good:
+  - current 6h participation artifact から stale lane が消え、
+    live cadence 制御が current window に揃う。
+  - `MomentumBurst`
+    の clustered winner/reaccel を少し多く拾える。
+- Expected Bad:
+  - short-interval re-entry が増え、
+    burst 局面での連敗幅が大きくなる可能性がある。
+- Period:
+  - 直近6h artifact / 直近24h live results / 直近7d `MomentumBurst` cadence
+- Fact:
+  - `python3 scripts/pdca_profitability_report.py --top-n 10`
+    で
+    `2026-03-12 13:33 JST`
+    snapshot は
+    `open_trades=0`,
+    `reject_rate=0`,
+    `order_success_rate=1.0`
+    だった。
+  - `logs/orders.db`
+    の latest `MomentumBurst-open_long`
+    order は
+    `2026-03-11T12:46:30.837953+00:00`
+    で、
+    current 6h 窓には本来入らない。
+  - それでも修正前 artifact は
+    `MomentumBurst-open_long attempts=2`
+    を出しており、
+    lookback 判定が壊れていた。
+  - 7d `MomentumBurst`
+    の entry interval は
+    `median 133.8s`,
+    `<120s 28/59`,
+    `<90s 24/59`
+    だった。
+- Failure Cause:
+  - stale order を current entry-path summary に残す query と、
+    `MomentumBurst`
+    の base cooldown がやや長いことの組み合わせで、
+    cadence の改善判断と actual cadence の両方が鈍っていた。
+- Improvement:
+  - `entry_path_aggregator`
+    を time-aware query に修正し、
+    `MomentumBurst`
+    の dedicated cooldown を
+    `90s / reaccel 20s`
+    に下げた。
+- Verification:
+  - `pytest -q tests/scripts/test_entry_path_aggregator.py tests/workers/test_micro_multistrat_trend_flip.py`
+  - `python3 scripts/entry_path_aggregator.py --lookback-hours 6 --limit 6000 --top-k 8`
+  - `python3 scripts/participation_allocator.py --lookback-hours 6 --min-attempts 12 --setup-min-attempts 2 --max-units-cut 0.22 --max-units-boost 0.24 --max-probability-boost 0.10`
+  - restart 後に
+    `MomentumBurst` の
+    `fills / avg units / realized_jpy`
+    を 30-60 分で確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - current 30-60 分で
+    `MomentumBurst-open_long`
+    の fill が増えない場合は、
+    cadence ではなく entry condition 側の long follow-through / forecast gate を切る。
+- Status:
+  - in_progress
+
 ## 2026-03-12 13:00 JST / local-v2: `MomentumBurst` current winner lane の size を小幅に戻す
 
 - Change:

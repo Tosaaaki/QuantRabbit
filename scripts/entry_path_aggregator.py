@@ -172,8 +172,8 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
                 "FROM orders "
                 "WHERE request_json IS NOT NULL "
                 "  AND LENGTH(request_json) > 2 "
-                "  AND ts >= datetime('now', ?) "
-                "ORDER BY ts DESC"
+                "  AND julianday(ts) >= julianday('now', ?) "
+                "ORDER BY julianday(ts) DESC, ts DESC"
             )
             params: list[Any] = [f"-{int(lookback_hours)} hours"]
             if int(limit) > 0:

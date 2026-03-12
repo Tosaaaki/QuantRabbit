@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts import entry_path_aggregator
@@ -116,7 +117,7 @@ def test_build_report_aggregates_entry_statuses_and_shares(tmp_path: Path) -> No
 
     payload = entry_path_aggregator.build_report(
         db_path,
-        lookback_hours=24,
+        lookback_hours=24 * 365,
         limit=100,
         top_k=4,
     )
@@ -152,3 +153,72 @@ def test_extract_strategy_tag_prefers_raw_lane_from_entry_thesis() -> None:
 
     assert strategy_key == "RangeFader-buy-fade"
     assert canonical == "RangeFader"
+
+
+def test_build_report_respects_lookback_for_iso8601_utc_timestamps(tmp_path: Path) -> None:
+    db_path = tmp_path / "orders.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    now_utc = datetime.now(timezone.utc)
+    stale_ts = (now_utc - timedelta(hours=8)).isoformat()
+    recent_ts = (now_utc - timedelta(hours=2)).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT,
+                pocket TEXT,
+                status TEXT,
+                request_json TEXT
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO orders(ts, pocket, status, request_json) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    stale_ts,
+                    "micro",
+                    "preflight_start",
+                    json.dumps(
+                        {
+                            "strategy": "MomentumBurst",
+                            "strategy_tag": "MomentumBurst-open_long",
+                            "entry_thesis": {
+                                "strategy": "MomentumBurst",
+                                "strategy_tag": "MomentumBurst",
+                                "strategy_tag_raw": "MomentumBurst-open_long",
+                            },
+                        }
+                    ),
+                ),
+                (
+                    recent_ts,
+                    "micro",
+                    "preflight_start",
+                    json.dumps(
+                        {
+                            "strategy": "MomentumBurst",
+                            "strategy_tag": "MomentumBurst-open_long",
+                            "entry_thesis": {
+                                "strategy": "MomentumBurst",
+                                "strategy_tag": "MomentumBurst",
+                                "strategy_tag_raw": "MomentumBurst-open_long",
+                            },
+                        }
+                    ),
+                ),
+            ],
+        )
+        conn.commit()
+
+    payload = entry_path_aggregator.build_report(
+        db_path,
+        lookback_hours=6,
+        limit=100,
+        top_k=4,
+    )
+
+    momentum = payload["strategies"]["MomentumBurst-open_long"]
+    assert payload["orders_considered"] == 1
+    assert momentum["attempts"] == 1
