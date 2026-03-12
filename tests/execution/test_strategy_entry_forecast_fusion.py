@@ -704,6 +704,7 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     assert [step.get("stage") for step in trail] == [
         "technical_context",
         "market_context",
+        "live_setup_context",
         "macro_news_context",
         "forecast_context",
         "analysis_feedback",
@@ -865,6 +866,7 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
     assert [step.get("stage") for step in trail] == [
         "technical_context",
         "market_context",
+        "live_setup_context",
         "macro_news_context",
         "forecast_context",
         "analysis_feedback",
@@ -879,6 +881,7 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
     assert [step.get("status") for step in trail] == [
         "pass",
         "skip",
+        "pass",
         "skip",
         "pass",
         "reduce",
@@ -890,6 +893,356 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
         "reduce",
         "pass",
     ]
+
+
+def test_market_order_preserves_richer_live_setup_context_over_worker_headwind_label(monkeypatch) -> None:
+    dispatched: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_strategy_tag",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "DroughtRevert",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_technical_context",
+        lambda **kwargs: {
+            **(kwargs.get("entry_thesis") or {}),
+            "strategy_tag": "DroughtRevert",
+            "range_mode": "transition",
+            "range_score": 0.24,
+            "technical_context": {
+                "indicators": {
+                    "M1": {
+                        "atr_pips": 2.6,
+                        "rsi": 69.4,
+                        "adx": 28.2,
+                        "plus_di": 31.0,
+                        "minus_di": 14.0,
+                        "ma10": 158.05,
+                        "ma20": 158.02,
+                    }
+                },
+                "ticks": {
+                    "spread_pips": 0.8,
+                    "tick_rate": 9.4,
+                },
+            },
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_entry_probability",
+        lambda entry_thesis, confidence: 0.66,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_market_context",
+        lambda entry_thesis, instrument=None: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_macro_news_context",
+        lambda entry_thesis: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_forecast_context",
+        lambda **kwargs: (kwargs.get("entry_thesis") or {}, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_feedback",
+        lambda *args, **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            kwargs.get("sl_price"),
+            kwargs.get("tp_price"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_forecast_fusion",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_net_edge_gate",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_env_prefix_context",
+        lambda entry_thesis, meta, strategy_tag: (entry_thesis, meta),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_leading_profile",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_participation_alloc",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_auto_canary",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+
+    async def _coordinate_entry_units(**kwargs):
+        return kwargs.get("units"), None
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_coordinate_entry_units",
+        _coordinate_entry_units,
+        raising=False,
+    )
+
+    async def _market_order(**kwargs):
+        dispatched.update(kwargs)
+        return "trade-setup-rich"
+
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "market_order",
+        _market_order,
+        raising=False,
+    )
+
+    result = asyncio.run(
+        strategy_entry.market_order(
+            instrument="USD_JPY",
+            units=-120,
+            sl_price=158.20,
+            tp_price=157.70,
+            pocket="scalp",
+            client_order_id="test-rich-setup",
+            strategy_tag="DroughtRevert",
+            entry_thesis={"flow_headwind_regime": "continuation_headwind"},
+        )
+    )
+
+    assert result == "trade-setup-rich"
+    thesis = dispatched.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    assert thesis["flow_headwind_regime"] == "continuation_headwind"
+    assert thesis["flow_regime"] == "trend_long"
+    assert thesis["microstructure_bucket"] == "tight_fast"
+    assert thesis["setup_fingerprint"].startswith("DroughtRevert|short|trend_long|tight_fast|")
+    assert thesis["live_setup_context"]["flow_regime"] == "trend_long"
+
+
+def test_limit_order_preserves_richer_live_setup_context_over_worker_headwind_label(monkeypatch) -> None:
+    dispatched: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_strategy_tag",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "DroughtRevert",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_technical_context",
+        lambda **kwargs: {
+            **(kwargs.get("entry_thesis") or {}),
+            "strategy_tag": "DroughtRevert",
+            "range_mode": "transition",
+            "range_score": 0.24,
+            "technical_context": {
+                "indicators": {
+                    "M1": {
+                        "atr_pips": 2.6,
+                        "rsi": 69.4,
+                        "adx": 28.2,
+                        "plus_di": 31.0,
+                        "minus_di": 14.0,
+                        "ma10": 158.05,
+                        "ma20": 158.02,
+                    }
+                },
+                "ticks": {
+                    "spread_pips": 0.8,
+                    "tick_rate": 9.4,
+                },
+            },
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_resolve_entry_probability",
+        lambda entry_thesis, confidence: 0.66,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_market_context",
+        lambda entry_thesis, instrument=None: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_macro_news_context",
+        lambda entry_thesis: (entry_thesis, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_entry_forecast_context",
+        lambda **kwargs: (kwargs.get("entry_thesis") or {}, None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_feedback",
+        lambda *args, **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            kwargs.get("sl_price"),
+            kwargs.get("tp_price"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_forecast_fusion",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_net_edge_gate",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_inject_env_prefix_context",
+        lambda entry_thesis, meta, strategy_tag: (entry_thesis, meta),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_strategy_leading_profile",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_participation_alloc",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_apply_auto_canary",
+        lambda **kwargs: (
+            kwargs.get("units"),
+            kwargs.get("entry_probability"),
+            None,
+        ),
+        raising=False,
+    )
+
+    async def _coordinate_entry_units(**kwargs):
+        return kwargs.get("units"), None
+
+    monkeypatch.setattr(
+        strategy_entry,
+        "_coordinate_entry_units",
+        _coordinate_entry_units,
+        raising=False,
+    )
+
+    async def _limit_order(**kwargs):
+        dispatched.update(kwargs)
+        return "order-setup-rich", None
+
+    monkeypatch.setattr(
+        strategy_entry.order_manager,
+        "limit_order",
+        _limit_order,
+        raising=False,
+    )
+
+    order_id, rejected_reason = asyncio.run(
+        strategy_entry.limit_order(
+            instrument="USD_JPY",
+            units=-120,
+            price=158.12,
+            sl_price=158.20,
+            tp_price=157.70,
+            pocket="scalp",
+            client_order_id="test-rich-limit-setup",
+            strategy_tag="DroughtRevert",
+            entry_thesis={"flow_headwind_regime": "continuation_headwind"},
+        )
+    )
+
+    assert order_id == "order-setup-rich"
+    assert rejected_reason is None
+    thesis = dispatched.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    assert thesis["flow_headwind_regime"] == "continuation_headwind"
+    assert thesis["flow_regime"] == "trend_long"
+    assert thesis["microstructure_bucket"] == "tight_fast"
+    assert thesis["setup_fingerprint"].startswith("DroughtRevert|short|trend_long|tight_fast|")
+    assert thesis["live_setup_context"]["flow_regime"] == "trend_long"
 
 
 def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -> None:
@@ -1037,6 +1390,7 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     assert [step.get("stage") for step in trail] == [
         "technical_context",
         "market_context",
+        "live_setup_context",
         "macro_news_context",
         "forecast_context",
         "analysis_feedback",

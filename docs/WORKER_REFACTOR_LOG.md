@@ -16655,3 +16655,37 @@
   - runtime 再起動後に `ps eww` と service log で
     perf guard bypass key
     と `perf guard blocked` 消失を確認する。
+
+### 2026-03-12 `strategy_entry` live setup context regression coverage
+- 対象:
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+
+- 背景:
+  - `execution/strategy_entry.py` の
+    `market_order` / `limit_order`
+    は `live_setup_context` stage を
+    `entry_path_attribution` に追加済みだったが、
+    既存 test は reject path を含めて
+    旧 stage 列のまま残っていた。
+  - `workers/scalp_wick_reversal_blend`
+    で `flow_headwind_regime` へ分離した後も、
+    dispatch path の test が stale だと
+    richer setup context の欠落や再 flatten を
+    継続的に検知できない。
+
+- 変更:
+  - `market_order` / `limit_order`
+    の stage 列期待値に
+    `live_setup_context`
+    を追加した。
+  - worker-local の
+    `flow_headwind_regime`
+    を保持したまま、
+    `flow_regime / microstructure_bucket / setup_fingerprint`
+    が richer live setup context で残ることを
+    `market_order` / `limit_order`
+    の両方で regression test 化した。
+
+- 検証:
+  - `PYTHONPATH=. pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`
+    -> `20 passed`

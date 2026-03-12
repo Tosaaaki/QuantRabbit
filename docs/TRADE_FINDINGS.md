@@ -15299,3 +15299,64 @@ Status:
     `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
     の `new submit_attempt / filled / realized_jpy`
     と `perf guard blocked` 消失を確認する。
+
+## 2026-03-12 `strategy_entry` live setup context regression audit
+- Why/Hypothesis:
+  - `workers/scalp_wick_reversal_blend`
+    で coarse headwind label を
+    `flow_headwind_regime`
+    へ分離しても、
+    `execution/strategy_entry.py`
+    の dispatch / reject path test が
+    `live_setup_context` stage を見ていないと
+    richer setup context の欠落を再発防止できない。
+  - local-v2 の active worker を見る限り、
+    `RangeFader` と `M1Scalper` は
+    worker 側の `flow_regime` 自体が
+    `trend_* / range_fade / transition`
+    などの richer label で、
+    `ExtremaReversal` は同 label を持っていない。
+    current 実害は `WickReversalBlend` 系だった。
+- Expected Good:
+  - `market_order` / `limit_order`
+    の両入口で
+    `live_setup_context`
+    が `entry_path_attribution`
+    に残ることを CI で固定できる。
+  - coarse headwind label の再導入や
+    stage 欠落が起きたときに
+    reject path を含めて即座に検知できる。
+- Expected Bad:
+  - runtime 挙動は変わらないため、
+    直近収益の改善はこの change 単体では起こらない。
+  - 市況適応そのものの改善は
+    worker local の signal / exit 側で
+    継続して詰める必要がある。
+- Observed/Fact:
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    の stale だった stage 期待値を
+    `live_setup_context`
+    付きへ更新した。
+  - `flow_headwind_regime`
+    を保持したまま
+    `flow_regime / microstructure_bucket / setup_fingerprint`
+    が richer live setup context で残ることを
+    `market_order` / `limit_order`
+    の両方で regression test 化した。
+  - active worker audit では
+    `strategies/scalping/range_fader.py`
+    は `trend_* / range_fade / transition`
+    を signal に載せており、
+    `strategies/scalping/m1_scalper.py`
+    も worker local で richer setup payload を生成する。
+    `workers/scalp_extrema_reversal/worker.py`
+    には同系統 label の overwrite は無かった。
+  - `PYTHONPATH=. pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`
+    は `20 passed`。
+- Verdict: good
+- Next Action:
+  - current active worker で coarse label を
+    `flow_regime`
+    に再投入する change を入れる場合は、
+    `flow_headwind_regime`
+    のような別 key に分離する。

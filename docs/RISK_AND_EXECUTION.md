@@ -3709,6 +3709,22 @@
 - `VwapRevertS` のような `hard:failfast` lane は reopen せず、
   hard loser と soft loser を分けて扱う。
 
+### 2026-03-12 `strategy_entry` live setup context regression guard
+- `execution/strategy_entry.py` の current dispatch path は
+  `market_order` / `limit_order` と reject path の
+  `entry_path_attribution`
+  に `live_setup_context` stage を持つことを正とする。
+- worker-local の coarse headwind label は
+  `flow_headwind_regime`
+  のような別 key に分離し、
+  `flow_regime / microstructure_bucket / setup_fingerprint`
+  は richer live setup context の保持を優先する。
+- regression guard は
+  `tests/execution/test_strategy_entry_forecast_fusion.py`
+  で `market_order` / `limit_order`
+  の両入口を固定し、
+  stale test による market-phase flattening 見逃しを防ぐ。
+
 ### 2026-03-11 DroughtRevert current loser guard
 - `DroughtRevert` の long `range_fade` は
   broad stop や shared blanket trim ではなく、
