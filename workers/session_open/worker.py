@@ -37,6 +37,29 @@ _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, pr
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
+_SESSION_OPEN_TECH_CONTEXT_TFS = ["M1", "M5", "H1"]
+_SESSION_OPEN_TECH_CONTEXT_FIELDS = [
+    "ma10",
+    "ma20",
+    "ema12",
+    "ema24",
+    "atr",
+    "atr_pips",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "bbw",
+    "rsi",
+    "macd",
+]
+_SESSION_OPEN_TECH_CONTEXT_TICKS = [
+    "latest_bid",
+    "latest_ask",
+    "latest_mid",
+    "spread_pips",
+    "tick_rate",
+]
+_SESSION_OPEN_TECH_CONTEXT_CANDLE_COUNTS = {"M1": 120, "M5": 90, "H1": 60}
 
 
 def _bb_float(value):
@@ -479,6 +502,10 @@ class SessionOpenWorker:
         order = {
             "symbol": sym, "side": side, "type": "market", "size": size,
             "meta": {"worker_id": self.c.get("id", "session_open_breakout"), "intent": intent},
+            "technical_context_tfs": list(_SESSION_OPEN_TECH_CONTEXT_TFS),
+            "technical_context_fields": list(_SESSION_OPEN_TECH_CONTEXT_FIELDS),
+            "technical_context_ticks": list(_SESSION_OPEN_TECH_CONTEXT_TICKS),
+            "technical_context_candle_counts": dict(_SESSION_OPEN_TECH_CONTEXT_CANDLE_COUNTS),
         }
         if size > 0:
             order["entry_units_intent"] = max(1, int(round(float(size) * 100000)))

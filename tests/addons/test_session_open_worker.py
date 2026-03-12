@@ -29,3 +29,42 @@ def test_construct_ok():
                           broker=None, datafeed=DummyFeed(bars))
     intents = w.run_once(now=now)
     assert isinstance(intents, list)
+
+
+def test_mk_order_requests_technical_context():
+    worker = SessionOpenWorker(
+        {**CFG, "universe": ["USD_JPY"], "place_orders": False},
+        broker=None,
+        datafeed=DummyFeed(_bars(200, 1730694000)),
+    )
+
+    order = worker._mk_order(
+        "USD_JPY",
+        {"side": "long", "px": 100.2, "meta": {}},
+        size_mult=1.0,
+        entry_probability=0.62,
+    )
+
+    assert order["technical_context_tfs"] == ["M1", "M5", "H1"]
+    assert order["technical_context_fields"] == [
+        "ma10",
+        "ma20",
+        "ema12",
+        "ema24",
+        "atr",
+        "atr_pips",
+        "adx",
+        "plus_di",
+        "minus_di",
+        "bbw",
+        "rsi",
+        "macd",
+    ]
+    assert order["technical_context_ticks"] == [
+        "latest_bid",
+        "latest_ask",
+        "latest_mid",
+        "spread_pips",
+        "tick_rate",
+    ]
+    assert order["technical_context_candle_counts"] == {"M1": 120, "M5": 90, "H1": 60}

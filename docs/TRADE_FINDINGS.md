@@ -51,6 +51,160 @@
 - Status:
 ```
 
+## 2026-03-12 23:35 JST / local-v2: `session_open_breakout` の addon-live 経路で technical context を `entry_thesis` へ明示伝搬
+
+- Change:
+  - `workers/common/addon_live.py`
+    に、
+    `technical_context_tfs/fields/ticks/candle_counts`
+    などの explicit context 要求を
+    `order/intention`
+    から
+    `entry_thesis`
+    へ引き継ぐ passthrough を追加した。
+  - `workers/session_open/worker.py`
+    の
+    `_mk_order()`
+    で、
+    `M1/M5/H1`
+    の technical context と
+    `tick_rate`
+    を explicit に要求するようにした。
+  - `tests/addons/test_addon_live_broker_strategy_tag.py`
+    と
+    `tests/addons/test_session_open_worker.py`
+    に回帰を追加した。
+- Why:
+  - 2026-03-12 23:17 JST 時点の
+    `python3 scripts/prepare_local_brain_canary.py --dry-run`
+    では、
+    `USD/JPY bid=159.074 / ask=159.082 / spread=0.8p / atr_proxy=3.325p / recent_range_6m=4.4p`
+    で
+    `market_ready=true`
+    だった。
+  - 一方で
+    `logs/orders.db`
+    の直近
+    `session_open_breakout`
+    fill を見ると、
+    `entry_path_attribution`
+    に
+    `technical_context`
+    stage はあるのに、
+    `entry_thesis.technical_context.indicators.M1.*`
+    と
+    `live_setup_context.atr_pips/rsi/adx`
+    は空で、
+    `setup_fingerprint`
+    が
+    `rsi:unknown|atr:unknown|gap:unknown`
+    に固定されていた。
+  - `session_open_breakout`
+    を Brain allowlist に入れても、
+    addon-live 経路で explicit context 要求が落ちている限り、
+    LLM に渡す setup identity の質が上がりきらなかった。
+- Hypothesis:
+  - addon-live 経路で strategy-local の
+    `technical_context_*`
+    要求を preserving すれば、
+    `session_open_breakout`
+    の
+    `live_setup_context`
+    に
+    `atr/rsi/gap/microstructure`
+    が入り、
+    Brain cache / decision の setup fingerprint が少しまともになる。
+  - これは gate の閾値や sizing を変えず、
+    Brain が読む文脈だけを増やす変更なので、
+    participation 悪化のリスクは小さい。
+- Expected Good:
+  - 次の
+    `session_open_breakout`
+    order で
+    `technical_context.indicators`
+    と
+    `live_setup_context`
+    の unknown が減る。
+  - Brain safe canary の
+    `session_open_breakout`
+    decision が、
+    より current setup に紐づいた fingerprint で記録される。
+- Expected Bad:
+  - addon-live 共通経路の変更なので、
+    他の addon-live worker でも explicit context 要求があれば
+    `entry_thesis`
+    が少し太くなる。
+  - 次の session-open window までは live 実データでの確認ができない。
+- Period:
+  - `scripts/prepare_local_brain_canary.py --dry-run`: 現時点
+  - `logs/orders.db`: 直近24h の `session_open_breakout` fill
+- Fact:
+  - 直近 fill の
+    `session_open_breakout`
+    は
+    `entry_probability=0.62395`
+    /
+    `flow_regime=transition`
+    /
+    `microstructure_bucket=unknown`
+    /
+    `setup_fingerprint=...|rsi:unknown|atr:unknown|gap:unknown`
+    だった。
+  - `sqlite3 logs/orders.db`
+    の抽出では、
+    `entry_thesis.technical_context.indicators.M1.atr_pips/rsi/adx`
+    が
+    null
+    で、
+    `technical_context`
+    の explicit 要求が載っていなかった。
+  - 追加した regression は
+    `pytest -q tests/addons/test_addon_live_broker_strategy_tag.py`
+    と
+    `pytest -q tests/addons/test_session_open_worker.py`
+    で
+    `2 passed`
+    / `2 passed`
+    を確認した。
+- Failure Cause:
+  - Brain canary の拡張自体は進んだが、
+    addon-live worker が explicit technical context 要求を
+    `entry_thesis`
+    へ渡していなかったため、
+    session-open lane の setup fingerprint が荒かった。
+- Improvement:
+  - Brain gate や shared threshold を変えず、
+    addon-live 経路で strategy-local な context 要求を preserve する。
+- Verification:
+  - `pytest -q tests/addons/test_addon_live_broker_strategy_tag.py`
+  - `pytest -q tests/addons/test_session_open_worker.py`
+  - 次の session-open window で
+    `sqlite3 logs/orders.db`
+    から
+    `session_open_breakout`
+    の
+    `entry_thesis.technical_context`
+    と
+    `live_setup_context`
+    を再確認
+- Verdict:
+  - pending
+- Next Action:
+  - 次の
+    `session_open_breakout`
+    fill で
+    `rsi/atr/gap`
+    bucket が埋まるかを確認する。
+  - それでも
+    `unknown`
+    が残るなら、
+    session_open 側で
+    `range_score` や
+    `projection score`
+    の top-level 露出を追加する。
+- Status:
+  - in_progress
+
 ## 2026-03-12 23:15 JST / `scalp_extrema_reversal_live` long `volatility_compression` loser lane を worker-local に追加 tightening
 
 - Change:
@@ -18603,6 +18757,8 @@ Status:
     `tick_rate`
     を追加した。
   - テスト:
+    - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_dispatch.py -q`
+      -> `17 passed`
     - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -q`
       -> `24 passed`
     - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
@@ -18629,3 +18785,5 @@ Status:
     と同じ粒度で
     `pattern_tag / projection.score / mtf_alignment`
     を組み合わせた lane split を追加する。
+  - 今回の `tick_rate` request は `scalp_wick_reversal_blend` worker explicit contract で入れており、
+    shared strategy contract 側の blanket 追加はまだ行っていない。

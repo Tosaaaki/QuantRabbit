@@ -66,3 +66,61 @@ def test_send_falls_back_to_worker_id_strategy_tag(monkeypatch):
     assert thesis.get("strategy_tag") == "session_open"
     client_order_id = str(captured.get("client_order_id") or "")
     assert "-sessionopen-" in client_order_id
+
+
+def test_send_preserves_entry_thesis_context_passthrough(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _fake_market_order(**kwargs):
+        captured.update(kwargs)
+        return "TICKET-2"
+
+    monkeypatch.setattr(addon_live, "market_order", _fake_market_order)
+    monkeypatch.setattr(addon_live, "all_factors", lambda: {"M1": {}, "H4": {}})
+    monkeypatch.setattr(
+        addon_live,
+        "get_account_snapshot",
+        lambda: SimpleNamespace(nav=1_000_000.0, margin_available=800_000.0, margin_rate=0.04),
+    )
+    monkeypatch.setattr(addon_live, "allowed_lot", lambda *args, **kwargs: 0.1)
+    monkeypatch.setattr(addon_live, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"]))
+
+    broker = addon_live.AddonLiveBroker(
+        worker_id="session_open_breakout",
+        pocket="micro",
+        datafeed=_DummyFeed(),
+        exit_cfg={"stop_pips": 1.0, "tp_pips": 2.0},
+    )
+
+    ticket = broker.send(
+        {
+            "symbol": "USD_JPY",
+            "side": "buy",
+            "type": "market",
+            "technical_context_tfs": ["M1", "M5", "H1"],
+            "technical_context_fields": ["ma10", "ma20", "adx", "plus_di", "minus_di", "rsi"],
+            "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
+            "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
+        }
+    )
+
+    assert ticket == "TICKET-2"
+    thesis = captured.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    assert thesis.get("technical_context_tfs") == ["M1", "M5", "H1"]
+    assert thesis.get("technical_context_fields") == [
+        "ma10",
+        "ma20",
+        "adx",
+        "plus_di",
+        "minus_di",
+        "rsi",
+    ]
+    assert thesis.get("technical_context_ticks") == [
+        "latest_bid",
+        "latest_ask",
+        "latest_mid",
+        "spread_pips",
+        "tick_rate",
+    ]
+    assert thesis.get("technical_context_candle_counts") == {"M1": 120, "M5": 90, "H1": 60}

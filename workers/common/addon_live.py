@@ -24,6 +24,19 @@ except Exception:  # pragma: no cover - optional
 
 LOG = logging.getLogger(__name__)
 PIP_VALUE = 0.01
+_ENTRY_THESIS_PASSTHROUGH_KEYS = (
+    "confidence",
+    "pattern_tag",
+    "range_mode",
+    "range_score",
+    "flow_regime",
+    "microstructure_bucket",
+    "setup_fingerprint",
+    "technical_context_tfs",
+    "technical_context_fields",
+    "technical_context_ticks",
+    "technical_context_candle_counts",
+)
 
 
 def _env_bool(key: str, default: Optional[bool]) -> Optional[bool]:
@@ -64,6 +77,26 @@ def _env_csv(key: str) -> Optional[List[str]]:
         return None
     parts = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()]
     return parts or None
+
+
+def _copy_entry_thesis_passthrough(
+    entry_thesis: Dict[str, Any],
+    source: Optional[Dict[str, Any]],
+) -> None:
+    if not isinstance(source, dict):
+        return
+    for key in _ENTRY_THESIS_PASSTHROUGH_KEYS:
+        if key in entry_thesis or key not in source:
+            continue
+        value = source.get(key)
+        if value is None or value == "":
+            continue
+        if isinstance(value, dict):
+            entry_thesis[key] = dict(value)
+        elif isinstance(value, (list, tuple, set)):
+            entry_thesis[key] = list(value)
+        else:
+            entry_thesis[key] = value
 
 
 def is_live_enabled(prefix: str) -> bool:
@@ -467,6 +500,8 @@ class AddonLiveBroker:
             entry_thesis["entry_units_intent"] = max(0, int(round(float(entry_units_intent))))
         if atr_pips > 0:
             entry_thesis["atr_pips"] = round(atr_pips, 3)
+        _copy_entry_thesis_passthrough(entry_thesis, order)
+        _copy_entry_thesis_passthrough(entry_thesis, intent)
         if intent:
             entry_thesis["intent"] = intent
 

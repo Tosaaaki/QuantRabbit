@@ -1575,6 +1575,19 @@
   に限定し、`scalp` pocket へは live LLM の multi-second latency が残る間は広げない。
 - Brain context は `entry_thesis` / `meta` に spread・ATR・regime が載っていない場合でも、
   ローカル tick と `factor_cache` の M1 snapshot を補完してから LLM に渡す。
+- addon-live 経路の worker が
+  `technical_context_tfs/fields/ticks/candle_counts`
+  の explicit 要求を持つ場合は、
+  `workers/common/addon_live.py`
+  がそれを
+  `entry_thesis`
+  へ引き継ぎ、
+  `session_open_breakout`
+  のような Brain canary lane でも
+  `live_setup_context`
+  の
+  `rsi/atr/gap`
+  を `unknown` に固定しない。
 - Brain cache は `strategy_tag+pocket` 固定ではなく、`side` と setup fingerprint
   （probability / confidence / spread / ATR / recent_outcome bucket）単位で扱う。
 - entry 数を落とさないため、strong setup

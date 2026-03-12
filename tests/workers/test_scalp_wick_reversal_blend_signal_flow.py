@@ -18,6 +18,9 @@ def _load_worker_namespace() -> dict[str, object]:
         "_positive_norm",
         "_plus_di",
         "_minus_di",
+        "_mtf_frame_flow_snapshot",
+        "_reversion_mtf_context",
+        "_reversion_long_flow_guard",
         "_reversion_short_flow_guard",
         "_drought_revert_setup_pressure",
         "_wick_blend_long_pressure_blocked",
@@ -75,6 +78,14 @@ def _load_worker_namespace() -> dict[str, object]:
             PREC_LOWVOL_WEAK_SHORT_RSI_MIN=60.0,
             PREC_LOWVOL_WEAK_SHORT_PROJECTION_SCORE_MAX=0.0,
             PREC_LOWVOL_WEAK_SHORT_SETUP_QUALITY_MAX=0.46,
+            PREC_LOWVOL_WEAK_LONG_GUARD_ENABLED=True,
+            PREC_LOWVOL_WEAK_LONG_RSI_MAX=35.0,
+            PREC_LOWVOL_WEAK_LONG_PROJECTION_SCORE_MAX=-0.05,
+            PREC_LOWVOL_WEAK_LONG_SETUP_QUALITY_MAX=0.46,
+            PREC_LOWVOL_WEAK_LONG_CONTINUATION_PRESSURE_MIN=0.28,
+            PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_REV_STRENGTH_MIN=0.82,
+            PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_TOUCH_RATIO_MIN=0.46,
+            PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_SETUP_QUALITY_MIN=0.52,
             PREC_LOWVOL_MARGINAL_SHORT_GUARD_ENABLED=True,
             PREC_LOWVOL_MARGINAL_SHORT_RSI_MIN=59.0,
             PREC_LOWVOL_MARGINAL_SHORT_PROJECTION_SCORE_MAX=0.08,
@@ -628,6 +639,157 @@ def test_precision_lowvol_keeps_marginal_short_when_headwind_is_absent() -> None
     assert signal["action"] == "OPEN_SHORT"
 
 
+def test_precision_lowvol_blocks_oversold_negative_projection_long_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.004,
+        "upper": 158.082,
+        "lower": 158.003,
+        "span_pips": 7.9,
+        "adx": 22.5,
+        "bbw": 0.00038,
+        "atr_pips": 2.4,
+        "rsi": 29.4,
+        "stoch_rsi": 0.08,
+        "vwap_gap": -2.4,
+        "ma10": 158.018,
+        "ma20": 158.028,
+        "ema20": 158.024,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.31, reason="volatility_compression")
+
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.40)
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.43,
+            "max_pressure": 0.35,
+            "setup_quality": 0.34,
+            "reversion_support": 0.42,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.12},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_strong_reclaim_long_when_projection_recovers() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.004,
+        "upper": 158.082,
+        "lower": 158.003,
+        "span_pips": 7.9,
+        "adx": 17.0,
+        "bbw": 0.00038,
+        "atr_pips": 2.4,
+        "rsi": 31.0,
+        "stoch_rsi": 0.08,
+        "vwap_gap": -1.8,
+        "ma10": 158.010,
+        "ma20": 158.016,
+        "ema20": 158.012,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression")
+
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.86)
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.22,
+            "max_pressure": 0.48,
+            "setup_quality": 0.58,
+            "reversion_support": 0.74,
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.04},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["flow_guard"]["setup_quality"] == 0.58
+
+
+def test_precision_lowvol_blocks_short_when_higher_timeframes_stay_bullish() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 15.5,
+        "bbw": 0.00036,
+        "atr_pips": 2.2,
+        "rsi": 59.4,
+        "stoch_rsi": 0.91,
+        "vwap_gap": 1.4,
+        "ma10": 158.024,
+        "ma20": 158.018,
+        "ema20": 158.020,
+        "ema24": 158.018,
+        "ema_slope_10": 0.010,
+        "ema_slope_20": 0.008,
+        "macd_hist": 0.05,
+        "plus_di": 23.0,
+        "minus_di": 18.0,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.05},
+    )
+
+    signal = signal_fn(
+        dict(fac),
+        range_ctx,
+        tag="PrecisionLowVol",
+        fac_m5={
+            "ma10": 158.088,
+            "ma20": 158.040,
+            "adx": 24.0,
+            "plus_di": 31.0,
+            "minus_di": 14.0,
+            "ema_slope_10": 0.18,
+            "ema_slope_20": 0.11,
+        },
+        fac_h1={
+            "ma10": 159.180,
+            "ma20": 159.020,
+            "adx": 28.0,
+            "plus_di": 34.0,
+            "minus_di": 12.0,
+            "ema_slope_10": 0.22,
+            "ema_slope_20": 0.14,
+        },
+        fac_h4={
+            "ma10": 159.520,
+            "ma20": 159.180,
+            "adx": 31.0,
+            "plus_di": 36.0,
+            "minus_di": 10.0,
+            "ema_slope_10": 0.28,
+            "ema_slope_20": 0.18,
+        },
+    )
+
+    assert signal is None
+
+
 def test_precision_lowvol_blocks_up_flat_shallow_short_lane() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]
@@ -842,6 +1004,10 @@ def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:
             "continuation_pressure": 0.64,
             "reversion_support": 0.41,
             "setup_quality": 0.38,
+            "macro_flow_regime": "trend_long",
+            "mtf_alignment": "countertrend",
+            "mtf_countertrend_pressure": 0.82,
+            "h1_flow_regime": "trend_long",
         },
     }
     fac = {
@@ -864,6 +1030,10 @@ def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:
     assert thesis["continuation_pressure"] == 0.64
     assert thesis["setup_quality"] == 0.38
     assert thesis["flow_headwind_regime"] == "continuation_headwind"
+    assert thesis["macro_flow_regime"] == "trend_long"
+    assert thesis["mtf_alignment"] == "countertrend"
+    assert thesis["mtf_countertrend_pressure"] == 0.82
+    assert thesis["h1_flow_regime"] == "trend_long"
     assert "flow_regime" not in thesis
     assert thesis["plus_di"] == 24.0
     assert thesis["minus_di"] == 19.0

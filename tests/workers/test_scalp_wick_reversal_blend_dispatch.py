@@ -47,8 +47,19 @@ def _load_worker_functions(*names: str):
     worker_path, tree = _worker_tree()
     selected = []
     wanted = set(names)
+    wanted.add("_attach_flow_guard_context")
+    if wanted.intersection({"_signal_drought_revert", "_signal_precision_lowvol"}):
+        wanted.update(
+            {
+                "_mtf_frame_flow_snapshot",
+                "_reversion_mtf_context",
+                "_reversion_long_flow_guard",
+            }
+        )
+    if "_reversion_mtf_context" in wanted:
+        wanted.add("_mtf_frame_flow_snapshot")
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in wanted.union({"_attach_flow_guard_context"}):
+        if isinstance(node, ast.FunctionDef) and node.name in wanted:
             selected.append(node)
     module = ast.Module(body=selected, type_ignores=[])
     namespace = {
@@ -120,19 +131,28 @@ def test_perf_guard_bypass_disabled_when_mode_specific_guard_is_enabled(mode: st
 def test_dispatch_strategy_signal_passes_range_ctx(name: str) -> None:
     dispatch = _load_dispatch_helper()
     marker = object()
+    fac_h1 = {"tf": "H1"}
+    fac_h4 = {"tf": "H4"}
+    fac_m5 = {"tf": "M5"}
 
     def fake_signal(fac_m1, range_ctx, **kwargs):
         assert fac_m1 == {"close": 150.0}
         assert range_ctx is marker
-        assert kwargs == {"tag": name}
+        assert kwargs == {
+            "fac_m5": fac_m5,
+            "fac_h1": fac_h1,
+            "fac_h4": fac_h4,
+            "tag": name,
+        }
         return {"tag": name}
 
     signal = dispatch(
         name=name,
         fn=fake_signal,
         fac_m1={"close": 150.0},
-        fac_h1={},
-        fac_m5={},
+        fac_h1=fac_h1,
+        fac_h4=fac_h4,
+        fac_m5=fac_m5,
         range_ctx=marker,
         now_utc=dt.datetime(2026, 3, 10, 12, 0, 0),
         kwargs={"tag": name},

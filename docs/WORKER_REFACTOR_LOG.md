@@ -36,6 +36,47 @@
     自身の current loser long lane だけを削り、
     scalp_fast の STOP_LOSS burst を縮める。
 
+### 2026-03-12（追記）`session_open_breakout` の addon-live 経路で technical context を `entry_thesis` へ明示伝搬
+
+- 対象:
+  - `workers/common/addon_live.py`
+  - `workers/session_open/worker.py`
+  - `tests/addons/test_addon_live_broker_strategy_tag.py`
+  - `tests/addons/test_session_open_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 変更:
+  - `AddonLiveBroker`
+    に
+    `technical_context_tfs/fields/ticks/candle_counts`
+    などの explicit context 要求を
+    `order/intention -> entry_thesis`
+    へそのまま移す passthrough を追加した。
+  - `SessionOpenWorker._mk_order()`
+    で
+    `M1/M5/H1`
+    の technical context 要求と
+    `tick_rate`
+    を explicit に付与するようにした。
+  - regression test として、
+    addon-live passthrough と
+    session_open order payload の両方を固定した。
+- 意図:
+  - `session_open_breakout`
+    は Brain allowlist に入っても、
+    addon-live 経路では explicit technical context 要求が
+    `entry_thesis`
+    へ落ちず、
+    `live_setup_context`
+    の
+    `rsi/atr/gap`
+    が
+    `unknown`
+    に寄っていた。
+  - Brain gate 自体をいじらず、
+    strategy-local な文脈だけを preserves して、
+    session-open lane の setup fingerprint を少しまともにする。
+
 ### 2026-03-12（追記）local Brain safe canary を `MomentumBurst` / `MicroTrendRetest-short` へ限定拡張
 
 - 対象:
@@ -17856,3 +17897,68 @@
     で保守ルール追記を確認。
   - `sed -n '1,40p docs/OPS_LOCAL_RUNBOOK.md'`
     で runbook 側の更新責務追記を確認。
+
+### 2026-03-12 `scalp_wick_reversal_blend` に MTF-aware reversion guard を追加
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_dispatch.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - `PrecisionLowVol` / `DroughtRevert`
+    は `technical_context`
+    に `M5/H1/H4`
+    があっても、
+    実際の flow guard では
+    `M1 + range_ctx`
+    へ潰れており、
+    bullish continuation 下の shallow short fade や
+    weak reclaim long を
+    higher timeframe disagreement で切り分けられていなかった。
+  - あわせて worker の explicit contract に
+    `tick_rate`
+    が無く、
+    shared `microstructure_bucket`
+    が `unknown`
+    へ落ちる余地が残っていた。
+
+- 変更:
+  - `_dispatch_strategy_signal()`
+    は
+    `DroughtRevert` / `PrecisionLowVol`
+    に
+    `fac_m5 / fac_h1 / fac_h4`
+    を渡すよう更新した。
+  - `_mtf_frame_flow_snapshot()`
+    と
+    `_reversion_mtf_context()`
+    を追加し、
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / mtf_aligned_support`
+    を strategy-local に導出するようにした。
+  - short/long の `reversion_*_flow_guard`
+    は
+    higher timeframe pressure を additive に織り込み、
+    `strong_reclaim_probe`
+    を残したまま shallow countertrend lane だけを落とす形へ寄せた。
+  - `entry_thesis`
+    へ
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / m5/h1/h4_flow_regime`
+    を昇格し、
+    `technical_context_ticks`
+    には
+    `tick_rate`
+    を追加した。
+  - dispatch / signal flow tests は新 contract に追随させた。
+
+- 検証:
+  - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_dispatch.py -q`
+    -> `17 passed`
+  - `python3 -m pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -q`
+    -> `24 passed`
+  - `python3 -m pytest tests/workers/common/test_setup_context.py -q`
+    -> `4 passed`
+  - `python3 -m pytest tests/workers/test_scalp_extrema_reversal_worker.py -q`
+    -> `30 passed`

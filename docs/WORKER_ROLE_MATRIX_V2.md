@@ -139,13 +139,19 @@
   - 技術コンテキスト共通の取得項目
     - `technical_context_ticks`: 原則 `["latest_bid", "latest_ask", "latest_mid", "spread_pips"]`
       - microstructure pace を setup identity に使う戦略は `tick_rate` を追加してよい
-      - current では `tick_imbalance` 系に加え `scalp_extrema_reversal_live` も `tick_rate` を要求する
+      - current では `tick_imbalance` 系に加え `scalp_extrema_reversal_live` と `scalp_wick_reversal_blend` 系も `tick_rate` を要求する
     - `technical_context_candle_counts`: 戦略別に個別上限（例: Scalp系 `M1/H1/M5/H4` 系、Micro系 `M5/M1/H1` 系）
   - `live_setup_context` は `technical_context` から導出し、
     最低限 `flow_regime / microstructure_bucket / setup_fingerprint` を持つ。
     追加で `H1/H4/D1` が入っている場合は
     `h1_flow_regime / h4_flow_regime / d1_flow_regime / macro_flow_regime / mtf_alignment`
     を保持してよい。
+  - strategy-local `flow_guard` / `entry_thesis` でも
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / m5/h1/h4_flow_regime`
+    を保持してよい。
+    ただしこれは worker local の quality guard 用であり、
+    shared `flow_regime`
+    を post-hoc に上書きする用途では使わない。
   - `setup_fingerprint` の MTF suffix は無制限に増やさず、
     local flow と macro flow がズレる場合、
     または `mtf_alignment in {countertrend, mixed}` の場合だけ

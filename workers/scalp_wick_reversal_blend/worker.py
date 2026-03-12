@@ -125,6 +125,7 @@ def _dispatch_strategy_signal(
     fn: Callable[..., Optional[Dict[str, object]]],
     fac_m1: Dict[str, object],
     fac_h1: Dict[str, object],
+    fac_h4: Dict[str, object],
     fac_m5: Dict[str, object],
     range_ctx,
     now_utc: datetime.datetime,
@@ -134,6 +135,8 @@ def _dispatch_strategy_signal(
         return fn(fac_m1, fac_h1, fac_m5, **kwargs)
     if name in _M5_SIGNAL_NAMES:
         return fn(fac_m1, fac_m5, **kwargs)
+    if name in {"DroughtRevert", "PrecisionLowVol"}:
+        return fn(fac_m1, range_ctx, fac_m5=fac_m5, fac_h1=fac_h1, fac_h4=fac_h4, **kwargs)
     if name == "SessionEdge":
         return fn(fac_m1, range_ctx, now_utc=now_utc, **kwargs)
     if name in _RANGE_CTX_SIGNAL_NAMES:
@@ -909,6 +912,120 @@ def _positive_norm(value: object, scale: float, *, offset: float = 0.0) -> float
     return _unit_bound(max(0.0, numeric) / float(scale))
 
 
+def _mtf_frame_flow_snapshot(
+    fac: Optional[Dict[str, object]],
+) -> Dict[str, float | str]:
+    if not isinstance(fac, dict) or not fac:
+        return {}
+    adx = _adx(fac)
+    plus_di = _plus_di(fac)
+    minus_di = _minus_di(fac)
+    di_gap = plus_di - minus_di
+    ma_fast = fac.get("ma10")
+    if ma_fast is None:
+        ma_fast = fac.get("ema12")
+    if ma_fast is None:
+        ma_fast = fac.get("ema20")
+    ma_slow = fac.get("ma20")
+    if ma_slow is None:
+        ma_slow = fac.get("ema24")
+    if ma_slow is None:
+        ma_slow = fac.get("vwap")
+    try:
+        ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else 0.0
+    except Exception:
+        ma_gap_pips = 0.0
+    slope_10 = _ema_slope_pips(fac, "ema_slope_10")
+    slope_20 = _ema_slope_pips(fac, "ema_slope_20")
+    long_score = _unit_bound(
+        0.34 * _positive_norm(ma_gap_pips, 4.0)
+        + 0.24 * _positive_norm(di_gap, 10.0)
+        + 0.18 * _positive_norm(adx - 14.0, 14.0)
+        + 0.14 * _positive_norm(slope_10, 0.18)
+        + 0.10 * _positive_norm(slope_20, 0.12)
+    )
+    short_score = _unit_bound(
+        0.34 * _positive_norm(-ma_gap_pips, 4.0)
+        + 0.24 * _positive_norm(-di_gap, 10.0)
+        + 0.18 * _positive_norm(adx - 14.0, 14.0)
+        + 0.14 * _positive_norm(-slope_10, 0.18)
+        + 0.10 * _positive_norm(-slope_20, 0.12)
+    )
+    direction = "neutral"
+    flow_regime = "transition"
+    strength = max(long_score, short_score)
+    if strength >= 0.30:
+        if long_score > short_score:
+            direction = "long"
+            flow_regime = "trend_long"
+        elif short_score > long_score:
+            direction = "short"
+            flow_regime = "trend_short"
+    return {
+        "flow_regime": flow_regime,
+        "direction": direction,
+        "strength": round(strength, 3),
+        "ma_gap_pips": round(ma_gap_pips, 3),
+        "adx": round(adx, 3),
+    }
+
+
+def _reversion_mtf_context(
+    *,
+    side: str,
+    fac_m5: Optional[Dict[str, object]] = None,
+    fac_h1: Optional[Dict[str, object]] = None,
+    fac_h4: Optional[Dict[str, object]] = None,
+) -> Dict[str, float | str]:
+    weights = (("m5", fac_m5, 0.9), ("h1", fac_h1, 1.15), ("h4", fac_h4, 1.35))
+    long_bias = 0.0
+    short_bias = 0.0
+    total_bias = 0.0
+    context: Dict[str, float | str] = {}
+    for label, fac, weight in weights:
+        snapshot = _mtf_frame_flow_snapshot(fac)
+        if not snapshot:
+            continue
+        flow_regime = str(snapshot.get("flow_regime") or "transition")
+        direction = str(snapshot.get("direction") or "neutral")
+        strength = float(snapshot.get("strength") or 0.0)
+        context[f"{label}_flow_regime"] = flow_regime
+        context[f"{label}_trend_strength"] = round(strength, 3)
+        if flow_regime in {"trend_long", "trend_short"}:
+            weighted = strength * weight
+            total_bias += weighted
+            if direction == "long":
+                long_bias += weighted
+            elif direction == "short":
+                short_bias += weighted
+    if total_bias <= 0.0:
+        context["macro_flow_regime"] = "transition"
+        context["mtf_alignment"] = "neutral"
+        context["mtf_countertrend_pressure"] = 0.0
+        context["mtf_aligned_support"] = 0.0
+        context["macro_trend_strength"] = 0.0
+        return context
+
+    bias_gap = abs(long_bias - short_bias) / max(total_bias, 1e-6)
+    if bias_gap <= 0.18:
+        macro_flow_regime = "transition"
+        mtf_alignment = "mixed"
+    elif long_bias > short_bias:
+        macro_flow_regime = "trend_long"
+        mtf_alignment = "aligned" if side == "long" else "countertrend"
+    else:
+        macro_flow_regime = "trend_short"
+        mtf_alignment = "aligned" if side == "short" else "countertrend"
+    aligned_bias = long_bias if side == "long" else short_bias if side == "short" else 0.0
+    countertrend_bias = short_bias if side == "long" else long_bias if side == "short" else 0.0
+    context["macro_flow_regime"] = macro_flow_regime
+    context["mtf_alignment"] = mtf_alignment
+    context["mtf_countertrend_pressure"] = round(_unit_bound(countertrend_bias / max(total_bias, 1e-6)), 3)
+    context["mtf_aligned_support"] = round(_unit_bound(aligned_bias / max(total_bias, 1e-6)), 3)
+    context["macro_trend_strength"] = round(_unit_bound(max(long_bias, short_bias) / 2.2), 3)
+    return context
+
+
 def _reversion_short_flow_guard(
     *,
     fac_m1: Dict[str, object],
@@ -918,6 +1035,7 @@ def _reversion_short_flow_guard(
     range_score: float,
     rev_strength: float,
     profile: str,
+    mtf_context: Optional[Dict[str, object]] = None,
 ) -> Tuple[bool, Dict[str, float]]:
     try:
         adx = float(fac_m1.get("adx") or 0.0)
@@ -976,10 +1094,27 @@ def _reversion_short_flow_guard(
         + 0.18 * vgap_support
         + 0.12 * price_extension
     )
+    mtf_countertrend_pressure = _unit_bound(float((mtf_context or {}).get("mtf_countertrend_pressure") or 0.0))
+    mtf_aligned_support = _unit_bound(float((mtf_context or {}).get("mtf_aligned_support") or 0.0))
+    macro_trend_strength = _unit_bound(float((mtf_context or {}).get("macro_trend_strength") or 0.0))
+    continuation_pressure = _unit_bound(
+        continuation_pressure
+        + 0.24 * mtf_countertrend_pressure * (0.55 + macro_trend_strength * 0.45)
+        - 0.08 * mtf_aligned_support
+    )
+    reversion_support_score = _unit_bound(
+        reversion_support_score
+        + 0.06 * mtf_aligned_support
+        - 0.10 * mtf_countertrend_pressure
+    )
     reversion_support_score = _unit_bound(reversion_support_score * 0.9 + adx_reversion * 0.1)
     setup_quality = _unit_bound(0.18 + reversion_support_score * 0.68 - continuation_pressure * 0.72)
     max_pressure = _unit_bound(
-        0.32 + reversion_support_score * 0.28 + max(0.0, setup_quality - 0.55) * 0.08
+        0.32
+        + reversion_support_score * 0.28
+        + max(0.0, setup_quality - 0.55) * 0.08
+        + 0.04 * mtf_aligned_support
+        - 0.08 * mtf_countertrend_pressure
     )
     allow = continuation_pressure <= max_pressure and not (
         continuation_pressure >= 0.50 and setup_quality <= 0.40 and trend_stack >= 0.55
@@ -997,7 +1132,117 @@ def _reversion_short_flow_guard(
         "trend_stack": round(trend_stack, 3),
         "stretch_pressure": round(stretch_pressure, 3),
         "adx": round(adx, 3),
+        "macro_flow_regime": str((mtf_context or {}).get("macro_flow_regime") or "transition"),
+        "mtf_alignment": str((mtf_context or {}).get("mtf_alignment") or "neutral"),
+        "mtf_countertrend_pressure": round(mtf_countertrend_pressure, 3),
+        "mtf_aligned_support": round(mtf_aligned_support, 3),
+        "macro_trend_strength": round(macro_trend_strength, 3),
+        "m5_flow_regime": str((mtf_context or {}).get("m5_flow_regime") or ""),
+        "h1_flow_regime": str((mtf_context or {}).get("h1_flow_regime") or ""),
+        "h4_flow_regime": str((mtf_context or {}).get("h4_flow_regime") or ""),
     }
+    return allow, detail
+
+
+def _reversion_long_flow_guard(
+    *,
+    fac_m1: Dict[str, object],
+    price: float,
+    atr_pips: float,
+    dist_lower_pips: float,
+    band_pips: float,
+    range_score: float,
+    rev_strength: float,
+    rsi: float,
+    rsi_long_max: float,
+    profile: str,
+    mtf_context: Optional[Dict[str, object]] = None,
+) -> Tuple[bool, Dict[str, float]]:
+    try:
+        adx = float(fac_m1.get("adx") or 0.0)
+    except Exception:
+        adx = 0.0
+    ma_fast = fac_m1.get("ma10")
+    if ma_fast is None:
+        ma_fast = fac_m1.get("ema20")
+    ma_slow = fac_m1.get("ma20")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema24")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("vwap")
+    try:
+        ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else 0.0
+    except Exception:
+        ma_gap_pips = 0.0
+    ema20 = fac_m1.get("ema20")
+    try:
+        price_vs_ema_pips = ((float(ema20) - price) / PIP) if ema20 is not None else 0.0
+    except Exception:
+        price_vs_ema_pips = 0.0
+
+    touch_ratio = _unit_bound((max(0.0, band_pips) - max(0.0, dist_lower_pips)) / max(0.15, band_pips))
+    continuation_pressure = _unit_bound(
+        0.34 * _positive_norm(-ma_gap_pips, max(0.8, atr_pips * 0.55))
+        + 0.18 * _positive_norm(_minus_di(fac_m1) - _plus_di(fac_m1), 8.0)
+        + 0.14 * _positive_norm(adx - 14.0, 10.0)
+        + 0.12 * _positive_norm(price_vs_ema_pips, max(0.6, band_pips * 0.55))
+        + 0.12 * _positive_norm(-_ema_slope_pips(fac_m1, "ema_slope_10"), 0.14)
+        + 0.10 * _positive_norm(-_ema_slope_pips(fac_m1, "ema_slope_20"), 0.10)
+    )
+    reversion_support_score = _unit_bound(
+        0.34 * touch_ratio
+        + 0.32 * _unit_bound((float(rsi_long_max) - rsi + 8.0) / 18.0)
+        + 0.24 * _unit_bound((rev_strength - 0.20) / 0.70)
+        + 0.10 * _unit_bound((range_score - 0.18) / 0.32)
+    )
+    mtf_countertrend_pressure = _unit_bound(float((mtf_context or {}).get("mtf_countertrend_pressure") or 0.0))
+    mtf_aligned_support = _unit_bound(float((mtf_context or {}).get("mtf_aligned_support") or 0.0))
+    macro_trend_strength = _unit_bound(float((mtf_context or {}).get("macro_trend_strength") or 0.0))
+    continuation_pressure = _unit_bound(
+        continuation_pressure
+        + 0.24 * mtf_countertrend_pressure * (0.55 + macro_trend_strength * 0.45)
+        - 0.08 * mtf_aligned_support
+    )
+    reversion_support_score = _unit_bound(
+        reversion_support_score
+        + 0.06 * mtf_aligned_support
+        - 0.10 * mtf_countertrend_pressure
+    )
+    setup_quality = _unit_bound(0.24 + reversion_support_score * 0.62 - continuation_pressure * 0.72)
+    max_pressure = _unit_bound(
+        0.34
+        + reversion_support_score * 0.30
+        + max(0.0, setup_quality - 0.58) * 0.10
+        + 0.04 * mtf_aligned_support
+        - 0.08 * mtf_countertrend_pressure
+    )
+    strong_reclaim_probe = (
+        rev_strength >= 0.78
+        and touch_ratio >= 0.42
+        and setup_quality >= 0.44
+    )
+    detail = {
+        "profile": profile,
+        "continuation_pressure": round(continuation_pressure, 3),
+        "reversion_support": round(reversion_support_score, 3),
+        "setup_quality": round(setup_quality, 3),
+        "max_pressure": round(max_pressure, 3),
+        "touch_ratio": round(touch_ratio, 3),
+        "ma_gap_pips": round(ma_gap_pips, 3),
+        "price_gap_pips": round(price_vs_ema_pips, 3),
+        "di_gap": round(_minus_di(fac_m1) - _plus_di(fac_m1), 3),
+        "adx": round(adx, 3),
+        "strong_reclaim_probe": 1.0 if strong_reclaim_probe else 0.0,
+        "macro_flow_regime": str((mtf_context or {}).get("macro_flow_regime") or "transition"),
+        "mtf_alignment": str((mtf_context or {}).get("mtf_alignment") or "neutral"),
+        "mtf_countertrend_pressure": round(mtf_countertrend_pressure, 3),
+        "mtf_aligned_support": round(mtf_aligned_support, 3),
+        "macro_trend_strength": round(macro_trend_strength, 3),
+        "m5_flow_regime": str((mtf_context or {}).get("m5_flow_regime") or ""),
+        "h1_flow_regime": str((mtf_context or {}).get("h1_flow_regime") or ""),
+        "h4_flow_regime": str((mtf_context or {}).get("h4_flow_regime") or ""),
+    }
+    allow = continuation_pressure <= max_pressure or strong_reclaim_probe
     return allow, detail
 
 
@@ -1402,6 +1647,19 @@ def _attach_flow_guard_context(signal: Dict[str, object], flow_guard: Optional[D
     signal["continuation_pressure"] = flow_guard.get("continuation_pressure")
     signal["reversion_support"] = flow_guard.get("reversion_support")
     signal["setup_quality"] = flow_guard.get("setup_quality")
+    for key in (
+        "macro_flow_regime",
+        "mtf_alignment",
+        "mtf_countertrend_pressure",
+        "mtf_aligned_support",
+        "macro_trend_strength",
+        "m5_flow_regime",
+        "h1_flow_regime",
+        "h4_flow_regime",
+    ):
+        value = flow_guard.get(key)
+        if value not in {None, ""}:
+            signal[key] = value
     continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
     # Keep the worker-local headwind label separate so strategy_entry can inject the
     # richer live setup context (`range_compression` / `transition` / `trend_*`) without
@@ -1481,6 +1739,9 @@ def _signal_drought_revert(
     range_ctx,
     *,
     tag: str,
+    fac_m5: Optional[Dict[str, object]] = None,
+    fac_h1: Optional[Dict[str, object]] = None,
+    fac_h4: Optional[Dict[str, object]] = None,
 ) -> Optional[Dict[str, object]]:
     price = _latest_price(fac_m1)
     if price <= 0:
@@ -1526,6 +1787,12 @@ def _signal_drought_revert(
 
     dist = dist_lower if side == "long" else dist_upper
     touch_ratio = max(0.0, (band - dist) / max(0.2, band))
+    mtf_context = _reversion_mtf_context(
+        side=side,
+        fac_m5=fac_m5,
+        fac_h1=fac_h1,
+        fac_h4=fac_h4,
+    )
     flow_guard = None
     if side == "short":
         short_ok, flow_guard = _reversion_short_flow_guard(
@@ -1536,62 +1803,33 @@ def _signal_drought_revert(
             range_score=range_score,
             rev_strength=rev_strength,
             profile=tag,
+            mtf_context=mtf_context,
         )
         if not short_ok:
             return None
     else:
-        ma_fast = fac_m1.get("ma10")
-        if ma_fast is None:
-            ma_fast = fac_m1.get("ema20")
-        ma_slow = fac_m1.get("ma20")
-        if ma_slow is None:
-            ma_slow = fac_m1.get("ema24")
-        if ma_slow is None:
-            ma_slow = fac_m1.get("vwap")
-        try:
-            ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else 0.0
-        except Exception:
-            ma_gap_pips = 0.0
-        ema20 = fac_m1.get("ema20")
-        try:
-            price_vs_ema_pips = ((float(ema20) - price) / PIP) if ema20 is not None else 0.0
-        except Exception:
-            price_vs_ema_pips = 0.0
-        trend_pressure = _unit_bound(
-            0.34 * _positive_norm(-ma_gap_pips, max(0.8, atr * 0.55))
-            + 0.18 * _positive_norm(_minus_di(fac_m1) - _plus_di(fac_m1), 8.0)
-            + 0.14 * _positive_norm(adx - 14.0, 10.0)
-            + 0.12 * _positive_norm(price_vs_ema_pips, max(0.6, band * 0.55))
-            + 0.12 * _positive_norm(-_ema_slope_pips(fac_m1, "ema_slope_10"), 0.14)
-            + 0.10 * _positive_norm(-_ema_slope_pips(fac_m1, "ema_slope_20"), 0.10)
+        long_ok, flow_guard = _reversion_long_flow_guard(
+            fac_m1=fac_m1,
+            price=price,
+            atr_pips=atr,
+            dist_lower_pips=dist_lower,
+            band_pips=band,
+            range_score=range_score,
+            rev_strength=rev_strength,
+            rsi=rsi,
+            rsi_long_max=config.DROUGHT_RSI_LONG_MAX,
+            profile=tag,
+            mtf_context=mtf_context,
         )
-        reversion_support_score = _unit_bound(
-            0.34 * touch_ratio
-            + 0.32 * _unit_bound((float(config.DROUGHT_RSI_LONG_MAX) - rsi + 8.0) / 18.0)
-            + 0.24 * _unit_bound((rev_strength - 0.20) / 0.70)
-            + 0.10 * _unit_bound((range_score - 0.18) / 0.32)
-        )
-        setup_quality = _unit_bound(0.24 + reversion_support_score * 0.62 - trend_pressure * 0.72)
-        max_pressure = _unit_bound(
-            0.34 + reversion_support_score * 0.30 + max(0.0, setup_quality - 0.58) * 0.10
-        )
-        strong_reclaim_probe = (
-            rev_strength >= 0.78
-            and touch_ratio >= 0.42
-            and setup_quality >= 0.44
-        )
-        flow_guard = {
-            "profile": tag,
-            "continuation_pressure": round(trend_pressure, 3),
-            "reversion_support": round(reversion_support_score, 3),
-            "setup_quality": round(setup_quality, 3),
-            "max_pressure": round(max_pressure, 3),
-            "touch_ratio": round(touch_ratio, 3),
-            "ma_gap_pips": round(ma_gap_pips, 3),
-            "price_gap_pips": round(price_vs_ema_pips, 3),
-            "di_gap": round(_minus_di(fac_m1) - _plus_di(fac_m1), 3),
-            "adx": round(adx, 3),
-        }
+        if not long_ok:
+            return None
+        trend_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        reversion_support_score = float(flow_guard.get("reversion_support") or 0.0)
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        max_pressure = float(flow_guard.get("max_pressure") or 0.0)
+        ma_gap_pips = float(flow_guard.get("ma_gap_pips") or 0.0)
+        price_vs_ema_pips = float(flow_guard.get("price_gap_pips") or 0.0)
+        strong_reclaim_probe = bool(flow_guard.get("strong_reclaim_probe"))
         # Current live loser cluster was flat-gap long reclaim with a deep mean stretch.
         # Keep strong directional reclaim lanes, but suppress oversold flat-gap longs that
         # are still far below the fast mean while the broader VWAP gap remains stretched.
@@ -1724,6 +1962,9 @@ def _signal_precision_lowvol(
     range_ctx,
     *,
     tag: str,
+    fac_m5: Optional[Dict[str, object]] = None,
+    fac_h1: Optional[Dict[str, object]] = None,
+    fac_h4: Optional[Dict[str, object]] = None,
 ) -> Optional[Dict[str, object]]:
     price = _latest_price(fac_m1)
     if price <= 0:
@@ -1776,6 +2017,14 @@ def _signal_precision_lowvol(
     if not side:
         return None
 
+    dist = dist_lower if side == "long" else dist_upper
+    touch_ratio = max(0.0, (band - dist) / max(0.2, band))
+    mtf_context = _reversion_mtf_context(
+        side=side,
+        fac_m5=fac_m5,
+        fac_h1=fac_h1,
+        fac_h4=fac_h4,
+    )
     flow_guard = None
     if side == "short":
         short_ok, flow_guard = _reversion_short_flow_guard(
@@ -1786,8 +2035,25 @@ def _signal_precision_lowvol(
             range_score=range_score,
             rev_strength=rev_strength,
             profile=tag,
+            mtf_context=mtf_context,
         )
         if not short_ok:
+            return None
+    else:
+        long_ok, flow_guard = _reversion_long_flow_guard(
+            fac_m1=fac_m1,
+            price=price,
+            atr_pips=atr,
+            dist_lower_pips=dist_lower,
+            band_pips=band,
+            range_score=range_score,
+            rev_strength=rev_strength,
+            rsi=rsi,
+            rsi_long_max=config.PREC_LOWVOL_RSI_LONG_MAX,
+            profile=tag,
+            mtf_context=mtf_context,
+        )
+        if not long_ok:
             return None
 
     vgap_block = config.PREC_LOWVOL_VWAP_GAP_BLOCK
@@ -1855,8 +2121,6 @@ def _signal_precision_lowvol(
                 projection_score = float(raw_projection_score)
         except Exception:
             projection_score = None
-    dist = dist_lower if side == "long" else dist_upper
-    touch_ratio = max(0.0, (band - dist) / max(0.2, band))
     if side == "short" and flow_guard is not None and projection_score is not None:
         gap_atr_ratio = abs(vgap) / max(1.0, atr)
         setup_quality = float(flow_guard.get("setup_quality") or 0.0)
@@ -1916,6 +2180,36 @@ def _signal_precision_lowvol(
     if weak_overbought_short_lane:
         return None
     if marginal_short_lane:
+        return None
+    weak_oversold_long_lane = False
+    if (
+        side == "long"
+        and range_reason == "volatility_compression"
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_WEAK_LONG_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        strong_reclaim_probe = (
+            rev_strength
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_REV_STRENGTH_MIN", 0.82))
+            and touch_ratio
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_TOUCH_RATIO_MIN", 0.46))
+            and setup_quality
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_SETUP_QUALITY_MIN", 0.52))
+        )
+        weak_oversold_long_lane = (
+            rsi <= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_RSI_MAX", 35.0))
+            and projection_score
+            <= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_PROJECTION_SCORE_MAX", -0.05))
+            and setup_quality
+            < float(getattr(config, "PREC_LOWVOL_WEAK_LONG_SETUP_QUALITY_MAX", 0.46))
+            and continuation_pressure
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_CONTINUATION_PRESSURE_MIN", 0.28))
+            and not strong_reclaim_probe
+        )
+    if weak_oversold_long_lane:
         return None
     up_flat_shallow_short_lane = False
     if (
@@ -4406,11 +4700,38 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         thesis["continuation_pressure"] = flow_guard.get("continuation_pressure")
         thesis["reversion_support"] = flow_guard.get("reversion_support")
         thesis["setup_quality"] = flow_guard.get("setup_quality")
+        for key in (
+            "macro_flow_regime",
+            "mtf_alignment",
+            "mtf_countertrend_pressure",
+            "mtf_aligned_support",
+            "macro_trend_strength",
+            "m5_flow_regime",
+            "h1_flow_regime",
+            "h4_flow_regime",
+        ):
+            value = flow_guard.get(key)
+            if value not in {None, ""}:
+                thesis[key] = value
         continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
         thesis["flow_headwind_regime"] = (
             "continuation_headwind" if continuation_pressure >= 0.6 else "range_fade"
         )
-    for key in ("continuation_pressure", "reversion_support", "setup_quality", "flow_regime", "flow_headwind_regime"):
+    for key in (
+        "continuation_pressure",
+        "reversion_support",
+        "setup_quality",
+        "flow_regime",
+        "flow_headwind_regime",
+        "macro_flow_regime",
+        "mtf_alignment",
+        "mtf_countertrend_pressure",
+        "mtf_aligned_support",
+        "macro_trend_strength",
+        "m5_flow_regime",
+        "h1_flow_regime",
+        "h4_flow_regime",
+    ):
         value = signal.get(key)
         if value is not None:
             thesis[key] = value
@@ -4632,7 +4953,10 @@ async def _place_order(
             "ema24",
         ],
     )
-    entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
+    entry_thesis_ctx.setdefault(
+        "technical_context_ticks",
+        ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
+    )
     entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
     entry_thesis_ctx.setdefault("tech_allow_candle", True)
     entry_thesis_ctx.setdefault(
@@ -4953,6 +5277,7 @@ async def scalp_wick_reversal_blend_worker() -> None:
                     fn=fn,
                     fac_m1=fac_m1,
                     fac_h1=fac_h1,
+                    fac_h4=fac_h4,
                     fac_m5=fac_m5,
                     range_ctx=range_ctx,
                     now_utc=now,
