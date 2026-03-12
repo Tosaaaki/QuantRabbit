@@ -116,6 +116,19 @@
     では
     `RangeFader`
     が復帰した。
+  - `main`
+    へ
+    `f83fe33f`
+    を push して
+    `quant-market-data-feed / quant-strategy-control / quant-order-manager / quant-position-manager / quant-strategy-feedback`
+    を restart 後、
+    actual
+    `logs/strategy_feedback.json`
+    は
+    `5 strategies`
+    となり
+    `RangeFader`
+    が復帰した。
   - 一方
     `PrecisionLowVol / DroughtRevert / VwapRevertS`
     は
@@ -145,7 +158,7 @@
     `RangeFader`
     が現れること。
 - Verdict:
-  - mixed
+  - good
 - Next Action:
   - `quant-scalp-precision-lowvol`,
     `quant-scalp-drought-revert`,
@@ -158,7 +171,7 @@
     `RangeFader`
     の feedback coverage 復旧として維持する。
 - Status:
-  - in_progress
+  - done
 
 ## 2026-03-12 20:38 JST / local-v2: participation allocator override が env key typo と未クォート値で無効化されていた
 
