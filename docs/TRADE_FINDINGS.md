@@ -247,11 +247,33 @@
     actual artifact は
     `RangeFader`
     のみだった。
+  - `main`
+    へ
+    `e388be92`
+    を push して
+    `quant-market-data-feed / quant-strategy-control / quant-order-manager / quant-position-manager / quant-strategy-feedback`
+    を restart 後、
+    常駐
+    `quant-strategy-feedback`
+    が書く
+    `logs/strategy_feedback.json`
+    は
+    `8 strategies`
+    となり、
+    subset は
+    `DroughtRevert / PrecisionLowVol / RangeFader / VwapRevertS`
+    へ復帰した。
 - Failure Cause:
   - `_discover_from_systemd`
     は
     local pid から running service 名を得ても、
     systemd unit body を解決できない service を捨てていた。
+  - さらに
+    `PrecisionLowVol / DroughtRevert`
+    は env の
+    `*_PERF_GUARD_MODE=reduce`
+    を strategy tag と誤認し、
+    service-name fallback 自体も潰れていた。
 - Improvement:
   - local pid-only service は
     `ops/env/{service}.env`
@@ -263,22 +285,19 @@
   - `pytest -q tests/analysis/test_strategy_feedback_worker.py -k 'discovers_local_v2_services or dedicated_worker_without_explicit_tag_env or local_pid_only_service_without_systemd_unit'`
     が通ること。
   - `python3 -m analysis.strategy_feedback_worker`
-    後の
+    と
+    restart 後の常駐 worker が書く
     `logs/strategy_feedback.json`
     で
     `PrecisionLowVol / DroughtRevert / VwapRevertS`
     が復帰すること。
 - Verdict:
-  - pending
+  - good
 - Next Action:
-  - テスト通過後に
-    `main`
-    へ push し、
-    `quant-strategy-feedback`
-    を restart して
-    actual artifact まで確認する。
+  - `WickReversalBlend`
+    系が current coverage に戻っていない理由は別件として切る。
 - Status:
-  - in_progress
+  - done
 
 ## 2026-03-12 20:38 JST / local-v2: participation allocator override が env key typo と未クォート値で無効化されていた
 
