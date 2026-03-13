@@ -18562,3 +18562,52 @@
     single-strategy skip /
     multi-strategy cooldown
     を固定した。
+
+### 2026-03-13 10:30 JST - feedback cycle の current-loser 反応速度を引き上げ
+
+- 対象:
+  - `scripts/run_local_feedback_cycle.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
+  - `tests/test_dynamic_alloc_worker.py`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - live は止まっておらず、
+    `fills_15m=3 / fills_30m=3 / fills_60m=3`
+    だった一方で、
+    current loser lane
+    (`PrecisionLowVol / WickReversalBlend / TickImbalance / scalp_extrema_reversal_live`)
+    にサイズが残っていた。
+  - `run_local_feedback_cycle`
+    の既定は
+    `participation_allocator=6h/12 attempts`
+    と
+    `dynamic_alloc=3d/18h half-life`
+    で反応が遅く、
+    `dynamic_alloc_worker`
+    は setup-level には low-sample loser clamp があるのに
+    strategy-level には無かった。
+
+- 変更:
+  - `run_local_feedback_cycle`
+    の既定を
+    `dynamic_alloc=1d / min_trades=8 / setup_min_trades=2 / half_life=6h / min_lot_multiplier=0.20`
+    と
+    `participation_allocator=3h / min_attempts=4 / setup_min_attempts=1 / max_units_cut=0.35 / max_units_boost=0.30 / max_probability_boost=0.15`
+    へ更新。
+  - `dynamic_alloc_worker`
+    に strategy-level の
+    `severe_low_sample_loser`
+    /
+    `fast_burst_loser`
+    clamp を追加し、
+    single hard loser と
+    few-trade burst loser
+    を
+    `0.16-0.20`
+    帯まで落とせるようにした。
+  - unit test を 2 本追加して、
+    single-trade severe loser と
+    4-trade burst loser の strategy-level trim を固定した。

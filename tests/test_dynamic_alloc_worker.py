@@ -456,3 +456,67 @@ def test_compute_scores_emits_single_trade_severe_loser_setup_override() -> None
     )
     assert loser_override["trades"] == 1
     assert loser_override["lot_multiplier"] <= 0.45
+
+
+def test_compute_scores_crushes_single_trade_strategy_level_severe_loser() -> None:
+    rows = [
+        (
+            "TickImbalance",
+            "scalp",
+            -1.8,
+            "2026-02-24T00:00:00Z",
+            "STOP_LOSS_ORDER",
+            -69.012,
+            3834,
+            "TickImbalance",
+            "TickImbalance",
+            '{"setup_fingerprint":"TickImbalance|short|trend_short|unknown|rsi:ext_oversold|atr:mid|gap:down_extended|trend_ok","flow_regime":"trend_short","microstructure_bucket":"unknown"}',
+        ),
+    ]
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=8,
+        setup_min_trades=2,
+        pf_cap=2.0,
+        min_lot_multiplier=0.20,
+    )
+
+    prof = strategy_scores["TickImbalance"]
+    assert prof["trades"] == 1
+    assert prof["sum_realized_jpy"] <= -60.0
+    assert prof["effective_min_lot_multiplier"] <= 0.16
+    assert prof["lot_multiplier"] <= 0.16
+
+
+def test_compute_scores_crushes_fast_burst_strategy_level_loser() -> None:
+    rows = []
+    for i in range(4):
+        rows.append(
+            (
+                "WickReversalBlend",
+                "scalp",
+                -1.3,
+                f"2026-02-24T00:0{i}:00Z",
+                "MARKET_ORDER_TRADE_CLOSE",
+                -18.0,
+                1200,
+                "WickReversalBlend",
+                "WickReversalBlend",
+                '{"setup_fingerprint":"WickReversalBlend|short|range_fade|unknown|rsi:overbought|atr:mid|gap:up_flat|trend_ok","flow_regime":"range_fade","microstructure_bucket":"unknown"}',
+            )
+        )
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=8,
+        setup_min_trades=2,
+        pf_cap=2.0,
+        min_lot_multiplier=0.20,
+    )
+
+    prof = strategy_scores["WickReversalBlend"]
+    assert prof["trades"] == 4
+    assert prof["sum_realized_jpy"] <= -70.0
+    assert prof["effective_min_lot_multiplier"] <= 0.18
+    assert prof["lot_multiplier"] <= 0.256

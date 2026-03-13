@@ -352,6 +352,19 @@ def _score_snapshot_to_record(
     effective_min_mult = min_mult
     max_mult = max(min_mult, float(max_lot_multiplier))
     strategy_lot_multiplier = min_mult + (max_mult - min_mult) * score
+    severe_low_sample_loser = bool(
+        0 < trades < max(1, min_trades)
+        and sum_realized_jpy <= -8.0
+        and weighted_wr <= 0.25
+        and jpy_pf <= 0.25
+    )
+    fast_burst_loser = bool(
+        2 <= trades < max(1, min_trades)
+        and sum_realized_jpy <= -20.0
+        and avg_realized_jpy < 0.0
+        and realized_jpy_per_1k_units <= -4.0
+        and (avg_pl <= -0.4 or pf < 0.70 or jpy_pf < 0.70)
+    )
 
     if pf < 1.0:
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.95)
@@ -369,6 +382,18 @@ def _score_snapshot_to_record(
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.66)
     if trades >= max(8, min_trades // 2) and sum_realized_jpy < 0.0:
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.88)
+    if fast_burst_loser:
+        strategy_lot_multiplier = min(strategy_lot_multiplier, 0.32)
+        effective_min_mult = min(effective_min_mult, 0.18)
+    if severe_low_sample_loser:
+        strategy_lot_multiplier = min(
+            strategy_lot_multiplier,
+            0.20 if realized_jpy_per_1k_units <= -8.0 or avg_realized_jpy <= -8.0 else 0.24,
+        )
+        effective_min_mult = min(
+            effective_min_mult,
+            0.16 if realized_jpy_per_1k_units <= -8.0 or avg_realized_jpy <= -8.0 else 0.18,
+        )
     if trades >= max(24, min_trades) and sum_realized_jpy <= -1500.0:
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.70)
         effective_min_mult = min(effective_min_mult, 0.30)

@@ -19873,3 +19873,104 @@ Status:
     の
     `lookahead_block / revert_not_found`
     を個別に詰める。
+
+## 2026-03-13 10:30 JST / local-v2: feedback cycle を current loser へ速く反応する配分に更新
+- Why/Hypothesis:
+  - `2026-03-13 10:30 JST`
+    時点の live review では、
+    `market_context_latest`
+    は
+    `2026-03-13 10:16:48 JST`
+    生成、
+    `USD/JPY=159.0825`,
+    `risk_mode=neutral`,
+    次の event は
+    `2026-03-13 12:35 JST`
+    の low impact。
+  - 同 review の
+    `factor_cache`
+    は
+    `ATR14(M1)=2.736p`,
+    `ATR14(M5)=6.456p`
+    で通常帯、
+    `quant-market-data-feed`
+    の OANDA pricing stream は
+    `2026-03-13 10:13 JST`
+    に `HTTP 200`
+    を確認した。
+  - `fills_15m=3`,
+    `fills_30m=3`,
+    `fills_60m=3`
+    で「止まっている」のではなく、
+    現在の問題は
+    `PrecisionLowVol=-126.855 JPY / 20 trades`,
+    `WickReversalBlend=-69.224 / 6`,
+    `TickImbalance=-69.012 / 1`,
+    `scalp_extrema_reversal_live=-68.985 / 43`
+    のような loser lane に current 窓でもサイズが残っていたこと。
+  - `run_local_feedback_cycle`
+    は
+    `participation_allocator=6h/12 attempts`,
+    `dynamic_alloc=3d/18h half-life`
+    と遅く、
+    しかも
+    `dynamic_alloc_worker`
+    には strategy-level の
+    low-sample severe loser clamp
+    が無かった。
+- Expected Good:
+  - current 1 日窓で悪化している loser lane を
+    数十分単位の feedback loop で
+    `0.20` 付近まで薄くできる。
+  - future loop でも
+    single hard loser / few-trade burst loser
+    を historical floor のまま残さない。
+- Expected Bad:
+  - 直後は loser lane の entry がさらに減るので、
+    winner lane への置き換えが弱い間は fills が少なく見える。
+  - one-off noise trade でも severe loser 条件に入る lane は
+    一時的に切りすぎるリスクがある。
+- Observed/Fact:
+  - `scripts/run_local_feedback_cycle.py`
+    の既定を
+    `dynamic_alloc=1d lookback / min_trades=8 / setup_min_trades=2 / half_life=6h / min_lot_multiplier=0.20`
+    と
+    `participation_allocator=3h lookback / min_attempts=4 / setup_min_attempts=1 / max_units_cut=0.35 / max_units_boost=0.30 / max_probability_boost=0.15`
+    へ更新した。
+  - `scripts/dynamic_alloc_worker.py`
+    に
+    strategy-level の
+    `severe_low_sample_loser`
+    と
+    `fast_burst_loser`
+    clamp を追加した。
+  - test は
+    `tests/test_dynamic_alloc_worker.py`
+    と
+    `tests/scripts/test_run_local_feedback_cycle.py`
+    で
+    `24 passed`
+    を確認した。
+  - same 条件で
+    `dynamic_alloc_worker`
+    を再実行すると、
+    `PrecisionLowVol=0.20`,
+    `WickReversalBlend=0.16`,
+    `DroughtRevert=0.20`,
+    `TickImbalance=0.16`,
+    `scalp_extrema_reversal_live=0.20`,
+    `session_open_breakout=0.205`
+    まで trim された。
+- Verdict: good
+- Next Action:
+  - `main`
+    へ push 後、
+    core 4 と current loser worker を restart して
+    live artifact 読み込みを揃える。
+  - 次の 60-90 分は
+    loser lane の fills / net_jpy / reject family
+    を監視し、
+    まだ赤字が残る lane は
+    shared trim をこれ以上広げず
+    worker-local guard / exit
+    を詰める。
