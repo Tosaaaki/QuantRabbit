@@ -105,10 +105,26 @@
   weak reclaim probe だけを
   `DROUGHT_WEAK_TREND_LONG_PROBE_*`
   で worker-local に reject する。
+  2026-03-13 21:55 JST からは、
+  `rsi 42-46 / adx<=12.5 / projection<=0.10 / flat gap`
+  の soft-trend long も
+  `DROUGHT_FLAT_GAP_SOFT_TREND_LONG_*`
+  で reject 対象に含める。
   `tight_thin`
   の recovery winner まで broad に落とさないため、
   shared gate ではなく
   exact setup 条件で扱う。
+- `WickReversalBlend`
+  は
+  `volatility_compression|adx_squeeze`
+  の long について、
+  `0.35 <= gap_ratio < 1.20`
+  の lean-gap reclaim を
+  `WICK_BLEND_LEAN_GAP_LONG_*`
+  で worker-local に reject する。
+  `gap:up_flat`
+  の winner lane を broad stop しないため、
+  flat-gap ではなく lean-gap だけを先に落とす。
 - 同じ family では
   `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
   の stop band も strategy-local に調整しており、

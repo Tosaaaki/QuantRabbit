@@ -23157,3 +23157,212 @@ Status:
     `hold_sec tail`
     が縮むかを比較し、
     cadence を壊していないかも同時に見る。
+
+## 2026-03-13 21:55 JST / local-v2: `DroughtRevert` と `WickReversalBlend` の current loser setup を worker-local guard で止める
+
+- Hypothesis Key: `drought_wick_setup_local_guard_20260313`
+- Primary Loss Driver: `STOP_LOSS_ORDER`
+- Mechanism Fired: `0`
+- Do Not Repeat Unless:
+  - 直近 6h 以上で
+    `DroughtRevert`
+    の
+    `long|range_fade|...|gap:up_flat/down_flat|volatility_compression|macro:trend_long`
+    か
+    `WickReversalBlend`
+    の
+    `long|...|gap:*_lean|volatility_compression|macro:trend_long`
+    が再び dominant loser になり、
+    今回の local guard が live order path で発火しても
+    `STOP_LOSS_ORDER`
+    の寄与が縮まらない時だけ次の tightening を入れる。
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- Change:
+  - `DroughtRevert`
+    の flat-gap soft-trend long guard と
+    `WickReversalBlend`
+    の lean-gap long guard を
+    `workers/scalp_wick_reversal_blend/worker.py`
+    に追加する。
+
+- Period:
+  - primary window:
+    `2026-03-12 12:46 UTC - 2026-03-13 12:46 UTC`
+    （`2026-03-12 21:46 JST - 2026-03-13 21:46 JST`）
+  - current drag window:
+    `2026-03-13 06:46 UTC - 2026-03-13 12:46 UTC`
+    （`2026-03-13 15:46 JST - 2026-03-13 21:46 JST`）
+
+- Why/Hypothesis:
+  - 2026-03-13 21:42 JST の preflight 実測では
+    USD/JPY
+    `bid=159.322 / ask=159.330 / spread=0.8 pips`,
+    `M1 ATR14=3.0 pips`,
+    `range_6m=3.6 pips`,
+    `range_30m=14.0 pips`,
+    `data_lag_ms=472.9`,
+    `decision_latency_ms=74.5`
+    で、
+    市況・API 品質は通常帯だった。
+  - corrected SQL
+    （`datetime(close_time)` / `datetime(ts)`）
+    での 24h 実績は
+    `124 trades / net_jpy=-340.2 / win_rate=23.4% / PF=0.248`
+    で、
+    上位 drag は
+    `DroughtRevert=-68.8 JPY`,
+    `WickReversalBlend=-66.7 JPY`,
+    `scalp_extrema_reversal_live=-56.5 JPY`
+    だった。
+  - 直近 6h でも
+    `40 trades / -101.8 JPY / PF=0.155`
+    で、
+    `DroughtRevert=-30.0 JPY`,
+    `WickReversalBlend=-32.2 JPY`
+    が current loser。
+  - loser cluster は side 名義ではなく setup で偏っており、
+    `DroughtRevert`
+    は
+    `long|range_fade|tight_normal|rsi:oversold|atr:low|gap:up_flat|volatility_compression|macro:trend_long`
+    が
+    `2 trades / -23.6 JPY`
+    、
+    `WickReversalBlend`
+    は
+    `long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|macro:trend_long`
+    が
+    `2 trades / -11.3 JPY`
+    、
+    `long|range_compression|normal_normal|rsi:mid|atr:low|gap:down_lean|volatility_compression|macro:trend_long`
+    が
+    `2 trades / -10.4 JPY`
+    を削っていた。
+  - `WickReversalBlend`
+    は shared trim
+    （`lot_multiplier=0.72/0.803`, `probability_offset=-0.15`）
+    が既に入っていても負けており、
+    shared participation では止血が足りない。
+    `DroughtRevert`
+    も shared boost lane ではなく worker 側の long reclaim lane が損失源だった。
+
+- Failure Cause:
+  - `DroughtRevert`
+    は
+    `macro:trend_long`
+    下の flat-gap reclaim long が、
+    deep oversold continuation ではなく
+    soft-trend / mid-oversold
+    probe のまま通過して
+    `STOP_LOSS_ORDER`
+    を連発していた。
+  - `WickReversalBlend`
+    は shared trim 後も、
+    `volatility_compression|adx_squeeze`
+    の lean-gap long reclaim が
+    worker local で拒否されず、
+    same fingerprint の stop を積んでいた。
+
+- Expected Good:
+  - `DroughtRevert`
+    の
+    mid-oversold
+    flat-gap
+    `macro:trend_long`
+    long probe と、
+    `WickReversalBlend`
+    の
+    lean-gap
+    long probe を worker-local に落とし、
+    current loser setup だけを薄くできる。
+  - winner 側の
+    `DroughtRevert gap:up_lean`
+    や
+    `WickReversalBlend gap:up_flat`
+    を broad stop せず、
+    exact loser fingerprint 近傍だけを先に切れる。
+
+- Expected Bad:
+  - reclaim 初動の一部 winner も落とす可能性がある。
+  - とくに
+    `DroughtRevert`
+    は flat-gap winner も混在するため、
+    `rsi 42-46`,
+    `adx<=12.5`,
+    `projection<=0.10`,
+    `setup_quality<0.52`,
+    `reversion_support<0.60`
+    の soft-trend lane に限定した。
+  - `WickReversalBlend`
+    は lean-gap long を絞るので、
+    lean winner が出るなら別の stronger reclaim 条件で戻す必要がある。
+
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    に
+    `DroughtRevert`
+    の
+    flat-gap soft-trend long guard
+    と
+    `WickReversalBlend`
+    の
+    lean-gap long guard
+    を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    current loser lane を block しつつ、
+    deeper oversold reclaim lane は残す回帰を追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> `34 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+
+- Improvement:
+  - `DroughtRevert`
+    は
+    `rsi 42-46 / adx<=12.5 / projection<=0.10 / flat gap`
+    の soft-trend long だけを reject する。
+  - `WickReversalBlend`
+    は
+    `0.35 <= gap_ratio < 1.20`
+    の lean-gap long だけを reject し、
+    `gap:up_flat`
+    の winner lane は維持する。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `34 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> 成功
+
+- Verdict: pending
+
+- Status:
+  - `pending`
+
+- Next Action:
+  - restart 後の
+    `logs/orders.db`
+    で
+    `DroughtRevert`
+    と
+    `WickReversalBlend`
+    の current loser fingerprint が
+    `filled`
+    から減り、
+    `preflight_start`
+    以降で消えるかを 30-60 分追う。
+  - 6h/24h の
+    `STOP_LOSS_ORDER`
+    集計で
+    `DroughtRevert`
+    と
+    `WickReversalBlend`
+    の寄与が落ちるかを再確認する。

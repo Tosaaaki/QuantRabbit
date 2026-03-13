@@ -19738,3 +19738,42 @@
     から直近の同系改善を抜き出し、
     `Verdict / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless`
     を agent が実装前に読み返せるようにした。
+
+### 2026-03-13 21:55 JST - `DroughtRevert` / `WickReversalBlend` の current loser setup を worker-local guard で止血
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - corrected 24h 実績で
+    `DroughtRevert=-68.8 JPY`,
+    `WickReversalBlend=-66.7 JPY`
+    が current drag だった。
+  - 6h loser cluster は
+    `DroughtRevert long flat-gap soft-trend reclaim`
+    と
+    `WickReversalBlend long lean-gap reclaim`
+    に偏っており、
+    shared trim だけでは止まっていなかった。
+- 変更:
+  - `DroughtRevert`
+    に
+    `volatility_compression`
+    /
+    `macro:trend_long`
+    /
+    `rsi 42-46`
+    /
+    `adx<=12.5`
+    /
+    `projection<=0.10`
+    の flat-gap soft-trend long guard を追加した。
+  - `WickReversalBlend`
+    に
+    `volatility_compression|adx_squeeze`
+    の lean-gap long
+    （`0.35 <= gap_ratio < 1.20`）
+    を reject する guard を追加した。
+  - signal-flow test に block / keep の回帰を追加した。

@@ -405,6 +405,107 @@ def test_drought_revert_keeps_strong_long_under_recent_setup_pressure() -> None:
     assert signal["setup_pressure"]["active"] == 1.0
 
 
+def test_drought_revert_blocks_mid_oversold_flat_gap_soft_trend_long_probe() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.72)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.05},
+    )
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.11,
+            "max_pressure": 0.59,
+            "setup_quality": 0.49,
+            "reversion_support": 0.55,
+            "touch_ratio": 0.36,
+            "ma_gap_pips": 0.18,
+            "price_gap_pips": 3.2,
+            "di_gap": 3.0,
+            "strong_reclaim_probe": 0.0,
+            "macro_flow_regime": "trend_long",
+        },
+    )
+    fac = {
+        "close": 159.271,
+        "upper": 159.345,
+        "lower": 159.268,
+        "span_pips": 7.7,
+        "adx": 10.2,
+        "bbw": 0.00036,
+        "atr_pips": 2.36,
+        "rsi": 44.8,
+        "ema20": 159.302,
+        "ma10": 159.321,
+        "ma20": 159.3192,
+        "ema_slope_10": 0.004,
+        "ema_slope_20": 0.002,
+        "macd_hist": -0.14,
+        "vwap_gap": 13.0,
+        "plus_di": 24.0,
+        "minus_di": 20.6,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is None
+
+
+def test_drought_revert_keeps_deeper_oversold_flat_gap_when_trend_support_recovers() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.74)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.125},
+    )
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.31,
+            "max_pressure": 0.61,
+            "setup_quality": 0.46,
+            "reversion_support": 0.71,
+            "touch_ratio": 0.58,
+            "ma_gap_pips": 0.22,
+            "price_gap_pips": 4.8,
+            "di_gap": 15.6,
+            "strong_reclaim_probe": 0.0,
+            "macro_flow_regime": "trend_long",
+        },
+    )
+    fac = {
+        "close": 159.367,
+        "upper": 159.454,
+        "lower": 159.366,
+        "span_pips": 8.8,
+        "adx": 15.4,
+        "bbw": 0.00054,
+        "atr_pips": 2.64,
+        "rsi": 36.1,
+        "ema20": 159.399,
+        "ma10": 159.404,
+        "ma20": 159.4018,
+        "ema_slope_10": -0.006,
+        "ema_slope_20": -0.003,
+        "macd_hist": -0.061,
+        "vwap_gap": -4.8,
+        "plus_di": 18.8,
+        "minus_di": 34.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
 def test_drought_revert_blocks_current_down_flat_weak_trend_long_probe() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_drought_revert"]
@@ -1244,6 +1345,46 @@ def test_wick_blend_signal_blocks_current_breakout_loser_lane() -> None:
         "components": {"range": 0.914},
     }
     ns["_wick_blend_long_setup_pressure"] = lambda *_args, **_kwargs: {"active": 1.0}
+
+    signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
+
+    assert signal is None
+
+
+def test_wick_blend_signal_blocks_vol_compression_lean_gap_long_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_wick_reversal_blend"]
+    fac = {
+        "close": 159.184,
+        "upper": 159.205,
+        "lower": 159.161,
+        "span_pips": 4.4,
+        "adx": 15.3,
+        "bbw": 0.000636,
+        "atr_pips": 2.96,
+        "rsi": 49.7,
+        "ma10": 159.197,
+        "ma20": 159.185,
+        "macd_hist": 0.03,
+        "plus_di": 25.8,
+        "minus_di": 30.9,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.33, reason="volatility_compression")
+
+    ns["get_candles_snapshot"] = lambda *_args, **_kwargs: [
+        {"open": 159.190, "high": 159.205, "low": 159.160, "close": 159.184}
+    ]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.82)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.06},
+    )
+    ns["wick_blend_entry_quality"] = lambda **_kwargs: {
+        "allow": True,
+        "quality": 0.64,
+        "components": {"range": 0.73},
+    }
 
     signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
 

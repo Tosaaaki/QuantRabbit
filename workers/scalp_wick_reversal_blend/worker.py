@@ -1889,6 +1889,33 @@ def _signal_drought_revert(
         )
         if weak_trend_long_probe:
             return None
+        flat_gap_soft_trend_long_probe = (
+            bool(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_GUARD_ENABLED", True))
+            and str(getattr(range_ctx, "reason", "") or "").strip().lower() == "volatility_compression"
+            and macro_flow_regime == "trend_long"
+            and projection_score is not None
+            and projection_score
+            <= float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_PROJECTION_SCORE_MAX", 0.10))
+            and float(rsi)
+            >= float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_RSI_MIN", 42.0))
+            and float(rsi)
+            <= float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_RSI_MAX", 46.0))
+            and float(adx)
+            <= float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_ADX_MAX", 12.5))
+            and abs(ma_gap_pips)
+            <= float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_MA_GAP_ABS_MAX_PIPS", 0.40))
+            and setup_quality
+            < float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_SETUP_QUALITY_MAX", 0.52))
+            and reversion_support_score
+            < float(getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_REVERSION_SUPPORT_MAX", 0.60))
+            and trend_pressure
+            <= float(
+                getattr(config, "DROUGHT_FLAT_GAP_SOFT_TREND_LONG_CONTINUATION_PRESSURE_MAX", 0.18)
+            )
+            and not strong_reclaim_probe
+        )
+        if flat_gap_soft_trend_long_probe:
+            return None
 
     setup_pressure = {}
     if side == "long":
@@ -3800,6 +3827,19 @@ def _signal_wick_reversal_blend(
             projection_score = float(proj_detail.get("score") or 0.0)
         except Exception:
             projection_score = 0.0
+    ma_fast = fac_m1.get("ma10")
+    if ma_fast is None:
+        ma_fast = fac_m1.get("ema20")
+    ma_slow = fac_m1.get("ma20")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema24")
+    if ma_slow is None:
+        ma_slow = fac_m1.get("ema20")
+    try:
+        ma_gap_pips = ((float(ma_fast) - float(ma_slow)) / PIP) if ma_fast is not None and ma_slow is not None else None
+    except Exception:
+        ma_gap_pips = None
+    gap_ratio = abs(ma_gap_pips) / max(1.0, atr) if ma_gap_pips is not None else None
     quality = wick_blend_entry_quality(
         side=side,
         rsi=_rsi(fac_m1),
@@ -3818,6 +3858,19 @@ def _signal_wick_reversal_blend(
     if not bool(quality.get("allow")):
         return None
     wick_quality = float(quality.get("quality") or 0.0)
+    lean_gap_long_lane = (
+        bool(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_GUARD_ENABLED", True))
+        and side == "long"
+        and range_reason in {"volatility_compression", "adx_squeeze"}
+        and gap_ratio is not None
+        and gap_ratio >= float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_GAP_RATIO_MIN", 0.35))
+        and gap_ratio < float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_GAP_RATIO_MAX", 1.20))
+        and projection_score <= float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_PROJECTION_SCORE_MAX", 0.28))
+        and wick_quality < float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_QUALITY_MAX", 0.70))
+        and _rsi(fac_m1) <= float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_RSI_MAX", 54.0))
+    )
+    if lean_gap_long_lane:
+        return None
     setup_pressure = _wick_blend_long_setup_pressure(range_reason)
     if _wick_blend_long_pressure_blocked(
         range_reason=range_reason,
