@@ -157,11 +157,13 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             "--pf-cap",
             "2.0",
             "--target-use",
-            "0.88",
+            "0.96",
             "--half-life-hours",
             "6",
             "--min-lot-multiplier",
             "0.30",
+            "--max-lot-multiplier",
+            "1.85",
         )
     if job_name == "pattern_book":
         return (

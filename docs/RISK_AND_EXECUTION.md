@@ -5182,3 +5182,26 @@
 - 意図:
   - loser family を broad に緩めず、
     current winner setup だけ participation を落とさない。
+
+- micro dedicated runner で actual margin cap を変えたい場合、
+  `MICRO_MULTI_MAX_MARGIN_USAGE`
+  だけでは足りない。
+  actual lot cap は
+  `execution.risk_guard.allowed_lot()`
+  の global
+  `MAX_MARGIN_USAGE`
+  /
+  `MAX_MARGIN_USAGE_HARD`
+  が決めるため、
+  winner runner 専用に margin full を寄せるときは dedicated service env で
+  この 2 つを明示 override する。
+
+- `workers/micro_runtime/worker.py`
+  の dynamic alloc / participation lookup は、
+  directional alias だけでなく exact
+  `signal_tag`
+  も first key として解決できる。
+  これにより
+  `MicroLevelReactor-bounce-lower`
+  のような exact winner lane の boost を、
+  family fallback に潰さず worker sizing へ反映できる。

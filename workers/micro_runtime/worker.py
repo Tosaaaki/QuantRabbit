@@ -1503,6 +1503,8 @@ def _strategy_profile_lookup_keys(
     base_key = str(strategy_name or "").strip()
     tag = str(signal_tag or "").strip()
     if base_key and tag:
+        if tag == base_key or tag.startswith(f"{base_key}-"):
+            keys.append(tag)
         parts = [part for part in tag.split("-") if part]
         if (
             len(parts) >= 2

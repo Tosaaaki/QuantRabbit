@@ -441,6 +441,13 @@ def test_trendretest_side_specific_dynamic_alloc_key_is_resolved(monkeypatch):
                 "trades": 24,
                 "lot_multiplier": 0.75,
             }
+        if strategy == "MicroTrendRetest-long-trendflip":
+            return {
+                "found": False,
+                "payload_stale": False,
+                "trades": 0,
+                "lot_multiplier": 1.0,
+            }
         return {
             "found": True,
             "payload_stale": False,
@@ -454,7 +461,7 @@ def test_trendretest_side_specific_dynamic_alloc_key_is_resolved(monkeypatch):
         "MicroTrendRetest",
         {"tag": "MicroTrendRetest-long-trendflip"},
     ) == pytest.approx(60.0)
-    assert seen[0] == "MicroTrendRetest-long"
+    assert seen[:2] == ["MicroTrendRetest-long-trendflip", "MicroTrendRetest-long"]
 
 
 def test_momentumburst_open_long_dynamic_alloc_key_is_resolved(monkeypatch):
@@ -473,6 +480,13 @@ def test_momentumburst_open_long_dynamic_alloc_key_is_resolved(monkeypatch):
                 "trades": 18,
                 "lot_multiplier": 0.75,
             }
+        if strategy == "MomentumBurst-open_long-reaccel":
+            return {
+                "found": False,
+                "payload_stale": False,
+                "trades": 0,
+                "lot_multiplier": 1.0,
+            }
         return {
             "found": True,
             "payload_stale": False,
@@ -486,10 +500,10 @@ def test_momentumburst_open_long_dynamic_alloc_key_is_resolved(monkeypatch):
         "MomentumBurst",
         {"tag": "MomentumBurst-open_long-reaccel"},
     ) == pytest.approx(60.0)
-    assert seen[0] == "MomentumBurst-open_long"
+    assert seen[:2] == ["MomentumBurst-open_long-reaccel", "MomentumBurst-open_long"]
 
 
-def test_setup_tag_does_not_resolve_non_directional_profile_key(monkeypatch):
+def test_setup_tag_prefers_exact_profile_key_before_strategy_fallback(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
     monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
@@ -498,6 +512,13 @@ def test_setup_tag_does_not_resolve_non_directional_profile_key(monkeypatch):
 
     def _fake_load(strategy, *_args, **_kwargs):
         seen.append(strategy)
+        if strategy == "MicroLevelReactor-bounce-lower":
+            return {
+                "found": True,
+                "payload_stale": False,
+                "trades": 18,
+                "lot_multiplier": 0.75,
+            }
         return {
             "found": True,
             "payload_stale": False,
@@ -510,8 +531,8 @@ def test_setup_tag_does_not_resolve_non_directional_profile_key(monkeypatch):
     assert worker._strategy_effective_cooldown_sec(
         "MicroLevelReactor",
         {"tag": "MicroLevelReactor-bounce-lower"},
-    ) == pytest.approx(47.36842105263158)
-    assert seen == ["MicroLevelReactor"]
+    ) == pytest.approx(60.0)
+    assert seen == ["MicroLevelReactor-bounce-lower"]
 
 
 def test_strategy_cooldown_uses_stronger_dynamic_extension_when_both_present(monkeypatch):

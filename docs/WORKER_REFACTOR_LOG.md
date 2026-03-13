@@ -19294,3 +19294,57 @@
     にする。
   - units multiplier は family history のまま維持し、
     participation だけを戻す。
+
+### 2026-03-13 15:50 JST - exact winner key lookup と dedicated margin cap を winner runner に通す
+
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `ops/env/quant-micro-levelreactor.env`
+  - `ops/env/quant-micro-momentumburst.env`
+  - `config/dynamic_alloc.json`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `MicroLevelReactor-bounce-lower`
+    は current winner lane なのに、
+    micro runtime の dynamic alloc lookup は exact tag を見ず、
+    base
+    `MicroLevelReactor`
+    fallback だけだった。
+  - dedicated env の
+    `MICRO_MULTI_MAX_MARGIN_USAGE`
+    も actual lot cap には効かず、
+    `allowed_lot()`
+    側の global
+    `MAX_MARGIN_USAGE`
+    override が必要だった。
+- 変更:
+  - `_strategy_profile_lookup_keys`
+    は
+    `strategy_name-...`
+    で始まる
+    `signal_tag`
+    を exact key として最優先 lookup するよう変更した。
+  - `quant-micro-levelreactor`
+    dedicated env は
+    base units / equity scale / strategy mult を上げ、
+    actual margin cap
+    `MAX_MARGIN_USAGE=0.985`
+    と
+    `MAX_MARGIN_USAGE_HARD=0.995`
+    を追加した。
+  - `quant-micro-momentumburst`
+    も actual margin cap override を追加した。
+  - `dynamic_alloc`
+    は
+    `1d / min_trades=8 / setup_min_trades=2 / half_life=6h / target_use=0.96 / max_lot_multiplier=1.85`
+    で再生成した。
+  - background の
+    `run_local_feedback_cycle`
+    も同じ
+    `dynamic_alloc`
+    default args を使うよう更新し、
+    120 秒周期で old params へ巻き戻る状態を止めた。

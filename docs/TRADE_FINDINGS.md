@@ -21544,3 +21544,138 @@ Status:
     もしくは current winner setup が
     family-level `hist_block`
     で止まらないことを確認する。
+
+## 2026-03-13 15:50 JST - margin full は loser ではなく exact winner lane に寄せる
+
+- Why/Hypothesis:
+  - live account snapshot は
+    `margin_used=0`
+    / `free_margin_ratio=1.0`
+    で、詰まりは margin 上限ではなく
+    winner lane の under-sizing だった。
+  - 直近24hでは
+    `MicroLevelReactor`
+    が
+    `18 trades / +5.874 JPY / avg_units 135.7`
+    で唯一プラス圏なのに、
+    `DroughtRevert`
+    は
+    `19 trades / -4.62 JPY / avg_units 467.5`、
+    `PrecisionLowVol`
+    は
+    `25 trades / -127.861 JPY / avg_units 593.2`
+    と loser の方が大きかった。
+  - さらに micro runtime の dynamic alloc lookup は
+    exact
+    `MicroLevelReactor-bounce-lower`
+    を見ず、
+    base
+    `MicroLevelReactor`
+    fallback しか引かないため、
+    current winner key の boost が worker sizing に乗っていなかった。
+  - dedicated micro env にあった
+    `MICRO_MULTI_MAX_MARGIN_USAGE`
+    も、
+    actual lot cap を決める
+    `execution.risk_guard.allowed_lot()`
+    は global
+    `MAX_MARGIN_USAGE`
+    を読むため、
+    winner runner の full-margin 意図が sizing path に届いていなかった。
+
+- Expected Good:
+  - `MicroLevelReactor-bounce-lower`
+    の exact winner score
+    （current artifact で
+    `score=0.735`, `lot_multiplier=1.664`）
+    が worker sizing に直接反映される。
+  - dedicated
+    `quant-micro-levelreactor`
+    だけ実効 margin cap を
+    `0.985/0.995`
+    へ引き上げることで、
+    loser scalp を broad に緩めずに winner lane の size だけ戻せる。
+  - regenerated
+    `dynamic_alloc`
+    では strongest winner setup override が
+    `lot_multiplier=1.85`
+    まで上がるため、
+    current loser lane より小さいままだった
+    `MicroLevelReactor`
+    の average units を反転させやすくなる。
+
+- Expected Bad:
+  - exact signal tag 単位の boost は sample が薄い lane でも乗りやすくなるため、
+    false-positive winner の監視が必要。
+  - dedicated winner runner の actual margin cap を上げるので、
+    edge が崩れた場合の giveback 速度は上がる。
+  - `MomentumBurst`
+    側にも actual margin cap override は入るが、
+    current live で winner 実績が薄い間は cadence だけ見て追う必要がある。
+
+- Observed/Fact:
+  - `workers/micro_runtime/worker.py`
+    の
+    `_strategy_profile_lookup_keys`
+    は
+    `signal_tag`
+    が
+    `strategy_name-...`
+    で始まるとき、
+    exact tag を first lookup に追加するよう修正した。
+  - `ops/env/quant-micro-levelreactor.env`
+    は
+    `MICRO_MULTI_BASE_UNITS=18000`,
+    `MICRO_MULTI_BASE_UNITS_EQUITY_SCALE_MIN/MAX=0.32`,
+    `MICRO_MULTI_STRATEGY_UNITS_MULT=MicroLevelReactor:1.55`
+    へ引き上げ、
+    さらに actual sizing 用に
+    `MAX_MARGIN_USAGE=0.985`,
+    `MAX_MARGIN_USAGE_HARD=0.995`,
+    `MARGIN_SAFETY_FACTOR=0.96`
+    を追加した。
+  - `ops/env/quant-micro-momentumburst.env`
+    にも actual margin cap override を追加したが、
+    base sizing は触っていない。
+  - `config/dynamic_alloc.json`
+    は
+    `lookback_days=1`,
+    `min_trades=8`,
+    `setup_min_trades=2`,
+    `half_life_hours=6`,
+    `target_use=0.96`,
+    `max_lot_multiplier=1.85`
+    で再生成した。
+  - `scripts/run_local_feedback_cycle.py`
+    の
+    `dynamic_alloc`
+    default command も同じ
+    `target_use=0.96`
+    /
+    `max_lot_multiplier=1.85`
+    へ更新し、
+    120 秒周期の background cycle が old params に戻さないようにした。
+  - 再生成後、
+    `load_strategy_profile('MicroLevelReactor-bounce-lower', 'micro')`
+    は
+    `found=True`, `lot_multiplier=1.664`
+    を返し、
+    strongest setup override も
+    `lot_multiplier=1.85`
+    になっていることを確認した。
+
+- Verdict: pending
+
+- Next Action:
+  - pytest と local-v2 restart 後、
+    first
+    `MicroLevelReactor-bounce-lower`
+    order で
+    `entry_thesis.dynamic_alloc.strategy_key=MicroLevelReactor-bounce-lower`
+    と larger
+    `entry_units_intent`
+    が出るか確認する。
+  - live account の
+    `margin_used`
+    が上がる一方で、
+    loser scalp lane の avg units が broad に増えていないことを追う。
