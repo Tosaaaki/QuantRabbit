@@ -20579,3 +20579,121 @@ Status:
     `filled / realized_jpy / avg_pl_pips`
     を再集計し、
     D variant の赤字寄与が縮むかを見る。
+
+### 2026-03-13 12:30 JST - 24h contract audit では照合ミスは主因ではなく、`STOP_LOSS_ORDER` が主損失だった
+
+- Why/Hypothesis:
+  - user から
+    「照合のミスがたくさんあって損失につながっていないか」
+    の指摘があった。
+  - 仮説は 2 本で、
+    1)
+    `entry_thesis`
+    契約欠損が大量にあり、
+    entry/size/probability の食い違いが赤字を作っている、
+    2)
+    欠損は多くないが、
+    stale `entry_units_intent`
+    や `strategy_tag`
+    が一部で残っている、
+    である。
+
+- Expected Good:
+  - contract mismatch が主因でないなら、
+    RCA を entry/SL 側へ戻せる。
+  - stale intent が残っているなら、
+    order_manager 側で最終 units に self-heal して、
+    今後の照合ズレを runtime で潰せる。
+
+- Expected Bad:
+  - order_manager で
+    `entry_units_intent`
+    を強制整合すると、
+    worker 側の古い意図値を後から比較したい用途には使えなくなる。
+  - ただし現行 contract の正本は
+    「最終送信 units」
+    なので、
+    stale 値を残すより安全側である。
+
+- Observed/Fact:
+  - `qr-entry-thesis-contract-check`
+    を
+    `--window-hours 24`
+    で実行した結果は
+    `overall=pass`。
+    `static calls_missing=0`,
+    `trades missing_rows=0 invalid_rows=0`,
+    `orders missing_rows=0 invalid_rows=0`
+    だった。
+  - `orders.db`
+    を素直に数えると
+    `close_request / close_ok / close_reject_profit_buffer`
+    の
+    `131 rows`
+    に
+    `entry_thesis`
+    が無いが、
+    これは close 系 payload であり、
+    entry contract 欠損ではない。
+  - 24h 損益は
+    `STOP_LOSS_ORDER 71件 / -596.871 JPY`
+    が主損失で、
+    `MARKET_ORDER_TRADE_CLOSE`
+    は
+    `37件 / +73.797 JPY`,
+    `TAKE_PROFIT_ORDER`
+    は
+    `11件 / +115.45 JPY`
+    だった。
+    つまり現在の主因は照合ミスではなく、
+    loser entry と hard SL 集中である。
+  - ただし 1 本だけ、
+    `ticket=459725`
+    `scalp_macd_rsi_div_live`
+    で
+    `entry_units_intent=287`
+    に対して
+    actual units が
+    `377`
+    の stale intent が残っていた。
+    この trade の realized は
+    `-5.278 JPY`
+    で、
+    24h 赤字の主因ではないが、
+    contract integrity 上は無視しない。
+  - 対応として
+    `execution/order_manager.py`
+    の
+    `_ensure_entry_intent_payload`
+    を、
+    missing 補完ではなく
+    最終 `units` / `strategy_tag`
+    への強制整合へ変更した。
+    stale `entry_units_intent`
+    や stale `strategy_tag`
+    が来ても、
+    order_manager payload では最終送信値に self-heal される。
+  - test は
+    `tests/execution/test_order_manager_log_retry.py`
+    に追加し、
+    stale
+    `entry_units_intent=287`,
+    `strategy_tag=stale_strategy`
+    が
+    `377` /
+    `scalp_macd_rsi_div_live`
+    へ上書きされることを固定した。
+
+- Verdict: good
+
+- Next Action:
+  - 収益改善の主戦場は
+    contract audit ではなく
+    `STOP_LOSS_ORDER`
+    集中の strategy-local RCA に戻す。
+  - 以後、
+    stale intent の再発は
+    order_manager self-heal が受ける前提で、
+    赤字 cluster は
+    `PrecisionLowVol / scalp_extrema_reversal_live / WickReversalBlend / DroughtRevert`
+    の entry/SL 品質側を優先して詰める。

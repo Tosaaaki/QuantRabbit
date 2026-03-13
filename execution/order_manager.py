@@ -4336,11 +4336,10 @@ def _ensure_entry_intent_payload(
     if strategy_tag:
         if isinstance(strategy_tag, str):
             strategy_tag = strategy_tag.strip()
-            if strategy_tag and "strategy_tag" not in thesis:
+            if strategy_tag:
                 thesis["strategy_tag"] = strategy_tag
 
-    if "entry_units_intent" not in thesis:
-        thesis["entry_units_intent"] = abs(int(units))
+    thesis["entry_units_intent"] = abs(int(units))
 
     prob = _entry_probability_value(confidence, thesis)
     if prob is not None:

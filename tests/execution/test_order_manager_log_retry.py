@@ -714,6 +714,26 @@ def test_entry_probability_value_returns_none_when_candidates_are_non_numeric() 
     assert prob is None
 
 
+def test_ensure_entry_intent_payload_overrides_stale_units_and_strategy_tag() -> None:
+    thesis = order_manager._ensure_entry_intent_payload(
+        units=-377,
+        confidence=91,
+        strategy_tag="scalp_macd_rsi_div_live",
+        entry_thesis={
+            "strategy_tag": "stale_strategy",
+            "entry_units_intent": 287,
+            "entry_probability": 0.44,
+            "note": "keep-me",
+        },
+    )
+
+    assert isinstance(thesis, dict)
+    assert thesis["strategy_tag"] == "scalp_macd_rsi_div_live"
+    assert thesis["entry_units_intent"] == 377
+    assert thesis["entry_probability"] == 0.44
+    assert thesis["note"] == "keep-me"
+
+
 def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch) -> None:
     async def _unexpected_service_call(_path: str, _payload: dict) -> None:
         raise AssertionError("service should not be called when entry intent guard rejects")

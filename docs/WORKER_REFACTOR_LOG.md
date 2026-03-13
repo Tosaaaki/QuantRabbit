@@ -18876,3 +18876,46 @@
     `HTTP 200`
     継続で、
     infra stop ではなく lane quality 問題だった。
+
+### 2026-03-13 12:30 JST - order_manager で stale entry intent を最終 units / strategy へ強制整合
+
+- 対象:
+  - `execution/order_manager.py`
+  - `tests/execution/test_order_manager_log_retry.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- 背景:
+  - 24h の
+    `qr-entry-thesis-contract-check`
+    は
+    `overall=pass`
+    で、
+    大量の contract 欠損は無かった。
+  - ただし
+    `ticket=459725`
+    `scalp_macd_rsi_div_live`
+    では
+    `entry_units_intent=287`
+    に対して
+    actual units が
+    `377`
+    の stale intent が残っていた。
+
+- 変更:
+  - `execution/order_manager.py`
+    の
+    `_ensure_entry_intent_payload`
+    を
+    missing 補完から
+    final `units` / `strategy_tag`
+    への強制整合へ変更した。
+  - これにより、
+    worker や wrapper が stale
+    `entry_units_intent`
+    / `strategy_tag`
+    を送っても、
+    order_manager request payload では
+    最終送信値が正本になる。
+  - `tests/execution/test_order_manager_log_retry.py`
+    に regression test を追加した。
