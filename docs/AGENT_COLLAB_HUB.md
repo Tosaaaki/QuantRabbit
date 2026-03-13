@@ -36,6 +36,28 @@
 - 収益悪化の RCA は `long/short` の片側説明で止めず、`pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence / 連続バー偏り` を軸に cluster して、両方向に効く strategy-local quality guard へ落とす。
 - 失敗ケース・検証結果は `docs/TRADE_FINDINGS.md` に1箇所集約。
 - `docs/TRADE_FINDINGS.md` は変更日記として使い、各変更で `Why/Hypothesis / Expected Good / Expected Bad / Observed/Fact / Verdict / Next Action` を最低限残す。
+- 市況が通常帯なのに
+  `fills_15m=0`
+  または
+  `fills_30m<=1`
+  になった場合は、
+  「低稼働」とみなして 15 分以内に fast triage を行う。
+  先に
+  `logs/orders.db`
+  と
+  `logs/local_v2_stack/*.log`
+  から dominant block family
+  （例:
+  `entry_probability_reject`,
+  `lookahead_block`,
+  `cluster cooldown`,
+  `strategy_cooldown:loss_streak`,
+  `no_signal:revert_not_found`
+  ）
+  を 1 つに絞り、
+  広域緩和ではなく
+  strategy-local
+  の 1 変更で PDCA を回す。
 
 ## 旧VM/GCP資料（実行対象外）
 - `docs/OPS_GCP_RUNBOOK.md` / `docs/VM_OPERATIONS.md` / `docs/VM_BOOTSTRAP.md` は履歴アーカイブ。

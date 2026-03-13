@@ -19723,3 +19723,83 @@ Status:
     `post_close_tp_touch`
     の改善有無を
     6h 窓で照合する。
+
+## 2026-03-13 09:45 JST / local-v2: 低稼働の主因確認と fast PDCA 運用ルール化
+- Why/Hypothesis:
+  - user 指摘どおり、
+    current live は
+    「entry が少ない」
+    状態で、
+    low-activity 時の確認順序を運用側へ固定しておく必要があった。
+- Expected Good:
+  - 市況が通常帯なのに low-entry になったとき、
+    15 分以内に dominant block family を切り分けられる。
+  - 広域緩和ではなく、
+    strategy-local
+    の 1 変更ずつで PDCA を回せる。
+- Expected Bad:
+  - 低稼働と market pause を混同すると、
+    不要な tuning を急いで入れるリスクがある。
+- Observed/Fact:
+  - `2026-03-13 09:42 JST`
+    時点の live は
+    `USD/JPY 159.161/159.169 spread=0.8p`,
+    `ATR14(M1)=2.664p`,
+    `ATR14(M5)=5.415p`,
+    `open_trades=0`
+    で通常帯だった。
+  - exact time 差で取り直すと、
+    recent は
+    `fills_15m=0`,
+    `fills_30m=1`,
+    `fills_60m=2`
+    だった。
+    最終 fill は
+    `2026-03-13 09:27 JST`
+    の
+    `scalp_ping_5s_c_live`
+    だった。
+  - recent active lane は
+    `scalp_ping_5s_c_live`
+    と
+    `TickImbalance`
+    だけで、
+    `scalp_ping_5s_c_live`
+    は
+    `entry_probability_reject`
+    が 2 件、
+    worker log では
+    `lookahead block`
+    と
+    `no_signal:revert_not_found`
+    が主因だった。
+  - `PrecisionLowVol`,
+    `DroughtRevert`,
+    `WickReversalBlend`,
+    `TickImbalance`
+    は worker log が
+    `cluster cooldown`
+    に張り付いていた。
+  - `scalp_extrema_reversal_live`
+    は
+    `risk multiplier=0.55`
+    かつ
+    `strategy_cooldown:loss_streak`
+    により recent entry が抑制されていた。
+  - 上記を踏まえ、
+    `docs/AGENT_COLLAB_HUB.md`
+    と
+    `docs/OPS_LOCAL_RUNBOOK.md`
+    に
+    low-entry fast PDCA の運用ルールを追記した。
+- Verdict: good
+- Next Action:
+  - 次の調整は
+    1. `scalp_ping_5s_c_live`
+       の
+       `lookahead_block / revert_not_found`
+       のどちらを先に削るかを決める。
+  - その後に
+    2. scalp pocket の
+       `cluster cooldown`
+       が長すぎないかを点検する。

@@ -308,3 +308,59 @@ gcloud storage cp --recursive \
 3. `logs/local_v2_stack/*.log` とローカルLLMレーンログを監視。
 4. `docs/TRADE_FINDINGS.md` へ改善/敗因を追記。
 5. 必要時のみ旧VM由来データを `remote_logs_current/` で参照。
+
+### 5.1 低稼働時の高速PDCA
+- 発火条件:
+  - 市況が通常帯
+    （spread/ATR/API 応答に異常なし）
+    なのに
+    `fills_15m=0`
+    または
+    `fills_30m<=1`
+  - 直近 30 分の active lane が 1 本以下
+- 15 分以内に確認する順序:
+  1. `logs/orders.db` で recent `preflight_start / filled / entry_probability_reject / strategy_cooldown`
+     の時系列と strategy 別件数を確認する。
+  2. `logs/local_v2_stack/quant-order-manager.log`
+     で
+     `OPEN_SKIP`
+     の dominant reason を確認する。
+  3. active / expected-active worker のログを見て、
+     `lookahead_block`,
+     `no_signal:revert_not_found`,
+     `cluster cooldown`,
+     `strategy_cooldown:loss_streak`
+     のどれが主因かを 1 つに絞る。
+  4. `logs/health_snapshot.json`
+     で
+     `mechanism_integrity`
+     の freshness と coverage gap が無いことを確認する。
+- 判断ルール:
+  - `lookahead_block` /
+    `entry_probability_reject`
+    が主因:
+    shared gate を広く緩めず、
+    該当 worker の signal / probability / size 設計を strategy-local に見直す。
+  - `cluster cooldown` /
+    `strategy_cooldown:loss_streak`
+    が主因:
+    「entry が少ないから即 cooldown を殺す」ではなく、
+    recent loser burst の lane を特定して、
+    cooldown 条件か loss cluster 条件の妥当性を点検する。
+  - `no_signal:revert_not_found`
+    が主因:
+    signal 生成側の revert / setup 検出不足を優先し、
+    後段 gate ではなく worker 内条件を調べる。
+  - `margin` /
+    `reject` /
+    `perf_block`
+    が主因:
+    execution / risk path を優先確認する。
+- 実行ルール:
+  - 1 回の PDCA で広域に複数 lane を同時に緩めない。
+  - 変更は 1 本の dominant bottleneck に対する
+    strategy-local
+    の 1 変更を原則とする。
+  - 観測と判断は
+    `docs/TRADE_FINDINGS.md`
+    に必ず記録する。

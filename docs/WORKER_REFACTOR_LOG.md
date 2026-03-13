@@ -18466,3 +18466,51 @@
     -> `8 passed`
   - `python3 -m py_compile workers/scalp_wick_reversal_blend/exit_worker.py workers/scalp_level_reject/exit_worker.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
     -> 成功
+
+### 2026-03-13 09:45 JST - 低稼働時の fast PDCA を運用手順へ追加
+
+- 対象:
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - current live は
+    `2026-03-13 09:42 JST`
+    時点で
+    `fills_15m=0`,
+    `fills_30m=1`,
+    `fills_60m=2`
+    と low-entry。
+  - 市況自体は
+    `spread=0.8p`,
+    `ATR14(M1)=2.664p`
+    で通常帯。
+  - recent block family は
+    `scalp_ping_5s_c_live`
+    の
+    `lookahead_block / entry_probability_reject / revert_not_found`
+    と、
+    scalp pocket 側の
+    `cluster cooldown`,
+    `scalp_extrema_reversal_live`
+    の
+    `strategy_cooldown:loss_streak`
+    が優勢だった。
+
+- 変更:
+  - `AGENT_COLLAB_HUB`
+    に
+    「通常帯で
+    `fills_15m=0`
+    または
+    `fills_30m<=1`
+    なら 15 分以内に fast triage」
+    の短い強制ルールを追加。
+  - `OPS_LOCAL_RUNBOOK`
+    に
+    「低稼働時の高速PDCA」
+    を追加し、
+    recent orders / order-manager / worker logs / health snapshot
+    をどう見るか、
+    どの dominant reason に対してどこを触るかを明文化した。
