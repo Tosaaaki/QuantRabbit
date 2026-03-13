@@ -20943,3 +20943,80 @@ Status:
   - まだ margin use が細いままなら、
     shared broad loosen ではなく
     winner setup の relief 条件だけをさらに詰める。
+
+## 2026-03-13 13:53 JST - post-restart 監視: runtime は正常、まだ lot 改善の live sample は不足
+
+- Why/Hypothesis:
+  - sizing 緩和後に
+    actual fill size が増えたかを
+    post-restart の live で確認する必要がある。
+  - 市況が通常帯なのに
+    fills が薄いままなら、
+    margin 不足ではなく
+    signal-side gate が主因の可能性が高い。
+
+- Expected Good:
+  - core 4 が正常稼働し、
+    fresh artifact を読んだ状態で
+    winner lane の fill が再開する。
+  - dominant block family を 1 つに絞って、
+    次の PDCA を worker-local に寄せられる。
+
+- Expected Bad:
+  - restart 直後は sample が薄く、
+    sizing 改善の有無をまだ断定できない。
+  - low activity が続く場合、
+    shared sizing ではなく
+    signal gate 側の詰まりが残る。
+
+- Observed/Fact:
+  - `2026-03-13 13:53 JST`
+    の
+    `health_snapshot`
+    は
+    `mechanism_integrity.ok=true`,
+    `decision_latency_ms=18.8`,
+    `data_lag_ms=431.8`
+    で fresh だった。
+  - core 4 は
+    `quant-market-data-feed / quant-strategy-control / quant-order-manager / quant-position-manager`
+    すべて
+    `[running]`
+    を維持していた。
+  - factor cache は
+    `M1 close=159.480 ATR=3.421p RSI=49.25 ADX=30.54`,
+    `M5 close=159.454 ATR=5.951p RSI=56.41 ADX=32.80`
+    で通常帯だった。
+  - restart 後の new order event は
+    `2026-03-13 13:52 JST`
+    の
+    `scalp_ping_5s_c_live entry_probability_reject`
+    1 本で、
+    post-restart の new filled はまだ 0 本だった。
+  - `quant-scalp-ping-5s-c.log`
+    では
+    `lookahead_block(edge_negative_block)`
+    と
+    `no_signal:revert_not_found`
+    が優勢で、
+    `entry-skip summary total=148 no_signal=50 lookahead_block=48 no_signal:revert_not_found=42`
+    を確認した。
+  - `PrecisionLowVol / DroughtRevert / WickReversalBlend`
+    は
+    `cluster cooldown skip ... single_strategy_contained`
+    を継続しており、
+    pocket-wide block 自体は再発していない。
+
+- Verdict: pending
+
+- Next Action:
+  - 次の
+    `15-30分`
+    で post-restart fill が still 0 のままなら、
+    dominant block family は
+    `scalp_ping_5s_c_live`
+    の
+    `lookahead_block / revert_not_found`
+    と見なし、
+    shared sizing ではなく
+    worker-local signal gate を 1 本だけ詰める。
