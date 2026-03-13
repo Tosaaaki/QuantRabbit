@@ -894,6 +894,101 @@ LOOKAHEAD_LOG_INTERVAL_SEC: float = max(
 LOOKAHEAD_EDGE_HARD_REJECT_PIPS: float = float(
     os.getenv("SCALP_PING_5S_LOOKAHEAD_EDGE_HARD_REJECT_PIPS", "-999.0")
 )
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED",
+    ENV_PREFIX == "SCALP_PING_5S_C",
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_LOOKBACK_MINUTES: int = max(
+    1,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_LOOKBACK_MINUTES",
+                "30",
+            )
+        )
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS: int = max(
+    0,
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS",
+                "0",
+            )
+        )
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS: float = max(
+    0.05,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS",
+            "0.95",
+        )
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS: float = max(
+    0.05,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS",
+            "0.24",
+        )
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS: float = max(
+    0.05,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS",
+            "0.40",
+        )
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS: float = max(
+    0.05,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS",
+            "0.40",
+        )
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT",
+                "0.18",
+            )
+        ),
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MAX_MULT: float = max(
+    LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MAX_MULT",
+                "0.42",
+            )
+        ),
+    ),
+)
+LOOKAHEAD_NEGATIVE_EDGE_RESCUE_CACHE_TTL_SEC: float = max(
+    0.5,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_LOOKAHEAD_NEGATIVE_EDGE_RESCUE_CACHE_TTL_SEC",
+            "5.0",
+        )
+    ),
+)
 SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS: float = float(
     os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS", "-999.0")
 )

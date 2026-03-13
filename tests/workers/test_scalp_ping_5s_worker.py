@@ -62,6 +62,81 @@ def test_lookahead_edge_hard_blocked_when_below_threshold(monkeypatch) -> None:
     assert edge == pytest.approx(-0.02, abs=1e-9)
 
 
+def test_negative_lookahead_rescue_routes_strong_low_activity_signal(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_ENABLED", False)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_LOOKBACK_MINUTES", 30)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT", 0.18)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MAX_MULT", 0.42)
+    monkeypatch.setattr(worker.config, "MAX_SPREAD_PIPS", 2.0)
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_c_live")
+    monkeypatch.setattr(worker, "_recent_strategy_fill_count", lambda **_: 0)
+
+    signal = _sample_signal("long")
+    signal.spread_pips = 0.8
+    signal.momentum_pips = 0.5
+    signal.range_pips = 0.5
+    signal.instant_range_pips = 0.4
+    rescue = worker._maybe_rescue_negative_lookahead(
+        signal=signal,
+        lookahead_decision=SimpleNamespace(
+            allow_entry=False,
+            reason="edge_negative_block",
+            edge_pips=-0.82,
+            pred_move_pips=0.37,
+            cost_pips=1.19,
+        ),
+        now_mono=10.0,
+    )
+
+    assert rescue is not None
+    units_mult, detail, recent_fills = rescue
+    assert 0.18 <= units_mult <= 0.42
+    assert "recent_fills=0/30m" in detail
+    assert recent_fills == 0
+
+
+def test_negative_lookahead_rescue_skips_once_fills_resume(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_ENABLED", False)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40)
+    monkeypatch.setattr(worker.config, "MAX_SPREAD_PIPS", 2.0)
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_c_live")
+    monkeypatch.setattr(worker, "_recent_strategy_fill_count", lambda **_: 1)
+
+    signal = _sample_signal("long")
+    signal.spread_pips = 0.8
+    signal.momentum_pips = 0.5
+    signal.range_pips = 0.5
+    signal.instant_range_pips = 0.4
+    rescue = worker._maybe_rescue_negative_lookahead(
+        signal=signal,
+        lookahead_decision=SimpleNamespace(
+            allow_entry=False,
+            reason="edge_negative_block",
+            edge_pips=-0.82,
+            pred_move_pips=0.37,
+            cost_pips=1.19,
+        ),
+        now_mono=10.0,
+    )
+
+    assert rescue is None
+
+
 def test_d_negative_window_short_align_block_reason_blocks_loser_lane(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

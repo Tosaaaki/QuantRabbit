@@ -98,6 +98,10 @@ _LAST_FAST_FLIP_MONO: float = 0.0
 _LAST_SIDE_METRICS_FLIP_MONO: float = 0.0
 _SL_STREAK_CACHE: dict[tuple[str, str], tuple[float, Optional["StopLossStreak"]]] = {}
 _SL_METRICS_CACHE: dict[tuple[str, str], tuple[float, Optional["SideCloseMetrics"]]] = {}
+_RECENT_STRATEGY_FILL_CACHE: dict[
+    tuple[str, int],
+    tuple[float, Optional[int]],
+] = {}
 _SIDE_CLOSE_METRICS_ALLOC_CACHE: dict[
     tuple[str, str],
     tuple[float, Optional["SideCloseMetrics"]],
@@ -897,6 +901,176 @@ def _lookahead_edge_hard_blocked(decision) -> tuple[bool, float]:
     if threshold <= -900.0:
         return False, edge
     return edge < threshold, edge
+
+
+def _recent_strategy_fill_count(
+    *,
+    strategy_tag: str,
+    lookback_minutes: int,
+    now_mono: Optional[float] = None,
+) -> Optional[int]:
+    strategy_key = str(strategy_tag or "").strip().lower()
+    lookback = max(1, int(lookback_minutes))
+    if not strategy_key:
+        return None
+
+    now_mono = time.monotonic() if now_mono is None else float(now_mono)
+    ttl_sec = max(
+        0.5,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_CACHE_TTL_SEC", 5.0),
+            5.0,
+        ),
+    )
+    cache_key = (strategy_key, lookback)
+    cached = _RECENT_STRATEGY_FILL_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= ttl_sec:
+        return cached[1]
+
+    count: Optional[int] = None
+    if _TRADES_DB.exists():
+        try:
+            with sqlite3.connect(_TRADES_DB) as conn:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM trades
+                    WHERE LOWER(COALESCE(strategy_tag, '')) = ?
+                      AND open_time IS NOT NULL
+                      AND datetime(replace(substr(open_time, 1, 19), 'T', ' ')) >= datetime('now', ?)
+                    """,
+                    (strategy_key, f"-{lookback} minutes"),
+                ).fetchone()
+            count = int(row[0] or 0) if row else 0
+        except Exception:
+            count = None
+
+    _RECENT_STRATEGY_FILL_CACHE[cache_key] = (now_mono, count)
+    return count
+
+
+def _maybe_rescue_negative_lookahead(
+    *,
+    signal: TickSignal,
+    lookahead_decision: Optional[object],
+    now_mono: Optional[float] = None,
+) -> Optional[tuple[float, str, int]]:
+    if not bool(getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED", False)):
+        return None
+    if bool(getattr(config, "TECH_ROUTER_ENABLED", False)):
+        return None
+    if lookahead_decision is None or bool(getattr(lookahead_decision, "allow_entry", False)):
+        return None
+    if str(getattr(lookahead_decision, "reason", "")).strip().lower() != "edge_negative_block":
+        return None
+
+    max_negative_edge = max(
+        0.05,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95),
+            0.95,
+        ),
+    )
+    min_pred_move = max(
+        0.05,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24),
+            0.24,
+        ),
+    )
+    min_momentum = max(
+        0.05,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40),
+            0.40,
+        ),
+    )
+    min_range = max(
+        0.05,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40),
+            0.40,
+        ),
+    )
+    min_units_mult = max(
+        0.05,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT", 0.18),
+            0.18,
+        ),
+    )
+    max_units_mult = max(
+        min_units_mult,
+        _safe_float(
+            getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MAX_MULT", 0.42),
+            0.42,
+        ),
+    )
+    lookback_minutes = max(
+        1,
+        int(
+            _safe_float(
+                getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_LOOKBACK_MINUTES", 30),
+                30.0,
+            )
+        ),
+    )
+    max_recent_fills = max(
+        0,
+        int(
+            _safe_float(
+                getattr(config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0),
+                0.0,
+            )
+        ),
+    )
+
+    spread_pips = max(0.0, _safe_float(signal.spread_pips, 0.0))
+    if spread_pips <= 0.0 or spread_pips > max(0.0, _safe_float(config.MAX_SPREAD_PIPS, 0.0)):
+        return None
+
+    pred_move_pips = max(0.0, _safe_float(getattr(lookahead_decision, "pred_move_pips", 0.0), 0.0))
+    edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
+    if edge_pips < -max_negative_edge or pred_move_pips < min_pred_move:
+        return None
+
+    momentum_abs = abs(_safe_float(signal.momentum_pips, 0.0))
+    if momentum_abs < min_momentum:
+        return None
+
+    signal_range_pips = max(
+        _safe_float(signal.range_pips, 0.0),
+        _safe_float(signal.instant_range_pips, 0.0),
+    )
+    if signal_range_pips < min_range:
+        return None
+
+    recent_fills = _recent_strategy_fill_count(
+        strategy_tag=config.STRATEGY_TAG,
+        lookback_minutes=lookback_minutes,
+        now_mono=now_mono,
+    )
+    if recent_fills is None or recent_fills > max_recent_fills:
+        return None
+
+    edge_nearness = _clamp((edge_pips + max_negative_edge) / max(max_negative_edge, 0.05), 0.0, 1.0)
+    pred_ratio = _clamp(pred_move_pips / max(min_pred_move * 2.0, 0.1), 0.0, 1.0)
+    momentum_ratio = _clamp(momentum_abs / max(min_momentum * 2.0, 0.1), 0.0, 1.0)
+    range_ratio = _clamp(signal_range_pips / max(min_range * 2.0, 0.1), 0.0, 1.0)
+    strength = (
+        edge_nearness * 0.50
+        + pred_ratio * 0.20
+        + momentum_ratio * 0.15
+        + range_ratio * 0.15
+    )
+    units_mult = _lerp(min_units_mult, max_units_mult, strength)
+    detail = (
+        f"recent_fills={recent_fills}/{lookback_minutes}m "
+        f"edge={edge_pips:.3f} pred={pred_move_pips:.3f} "
+        f"momentum={momentum_abs:.3f} range={signal_range_pips:.3f} "
+        f"strength={strength:.2f}"
+    )
+    return units_mult, detail, recent_fills
 
 
 def _instant_speed_scale(instant_range_pips: float) -> float:
@@ -6540,6 +6714,9 @@ async def scalp_ping_5s_worker() -> None:
 
             lookahead_decision = None
             lookahead_units_mult = 1.0
+            lookahead_rescue_applied = False
+            lookahead_rescue_reason: Optional[str] = None
+            lookahead_rescue_recent_fills: Optional[int] = None
             decision_speed_scale = _instant_speed_scale(signal.instant_range_pips)
             lookahead_horizon_sec = max(
                 config.LOOKAHEAD_HORIZON_SEC * config.INSTANT_LOOKAHEAD_SCALE_MIN,
@@ -6593,31 +6770,58 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     continue
                 if not lookahead_decision.allow_entry:
-                    if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
-                        LOG.info(
-                            "%s lookahead %s side=%s reason=%s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp",
-                            config.LOG_PREFIX,
-                            ("route" if config.TECH_ROUTER_ENABLED else "block"),
-                            signal.side,
-                            lookahead_decision.reason,
-                            lookahead_decision.pred_move_pips,
-                            lookahead_decision.cost_pips,
-                            lookahead_decision.edge_pips,
-                            lookahead_decision.momentum_aligned_pips,
-                            lookahead_decision.range_pips,
-                        )
-                        last_lookahead_log_mono = now_mono
-                    if config.TECH_ROUTER_ENABLED:
-                        lookahead_units_mult = max(
-                            0.1, float(config.TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT)
-                        )
-                        tech_route_reasons.append("lookahead")
+                    lookahead_rescue = _maybe_rescue_negative_lookahead(
+                        signal=signal,
+                        lookahead_decision=lookahead_decision,
+                        now_mono=now_mono,
+                    )
+                    if lookahead_rescue is not None:
+                        (
+                            lookahead_units_mult,
+                            lookahead_rescue_reason,
+                            lookahead_rescue_recent_fills,
+                        ) = lookahead_rescue
+                        lookahead_rescue_applied = True
+                        if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
+                            LOG.info(
+                                "%s lookahead rescue side=%s %s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp units=%.2f",
+                                config.LOG_PREFIX,
+                                signal.side,
+                                lookahead_rescue_reason,
+                                lookahead_decision.pred_move_pips,
+                                lookahead_decision.cost_pips,
+                                lookahead_decision.edge_pips,
+                                lookahead_decision.momentum_aligned_pips,
+                                lookahead_decision.range_pips,
+                                lookahead_units_mult,
+                            )
+                            last_lookahead_log_mono = now_mono
                     else:
-                        _note_entry_skip(
-                            "lookahead_block",
-                            f"reason={lookahead_decision.reason}",
-                        )
-                        continue
+                        if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
+                            LOG.info(
+                                "%s lookahead %s side=%s reason=%s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp",
+                                config.LOG_PREFIX,
+                                ("route" if config.TECH_ROUTER_ENABLED else "block"),
+                                signal.side,
+                                lookahead_decision.reason,
+                                lookahead_decision.pred_move_pips,
+                                lookahead_decision.cost_pips,
+                                lookahead_decision.edge_pips,
+                                lookahead_decision.momentum_aligned_pips,
+                                lookahead_decision.range_pips,
+                            )
+                            last_lookahead_log_mono = now_mono
+                        if config.TECH_ROUTER_ENABLED:
+                            lookahead_units_mult = max(
+                                0.1, float(config.TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT)
+                            )
+                            tech_route_reasons.append("lookahead")
+                        else:
+                            _note_entry_skip(
+                                "lookahead_block",
+                                f"reason={lookahead_decision.reason}",
+                            )
+                            continue
                 else:
                     lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
             extrema_decision = _extrema_gate_decision(
@@ -7720,6 +7924,13 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),
+                "lookahead_rescue_applied": bool(lookahead_rescue_applied),
+                "lookahead_rescue_reason": lookahead_rescue_reason,
+                "lookahead_rescue_recent_fills": (
+                    int(lookahead_rescue_recent_fills)
+                    if lookahead_rescue_recent_fills is not None
+                    else None
+                ),
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),
                 "extrema_gate_reason": extrema_decision.reason,
                 "extrema_units_mult": round(extrema_units_mult, 3),

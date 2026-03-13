@@ -20101,3 +20101,140 @@ Status:
     は current loser のままなので、
     margin 拡大対象にはせず
     worker-local guard / exit 改善を別で続ける。
+
+### 2026-03-13 11:46 JST - `scalp_ping_5s_c_live` の negative lookahead を low-activity 時だけ薄く救済
+
+- Why/Hypothesis:
+  - `2026-03-13 11:46 JST`
+    時点で
+    `USD/JPY 159.364/159.372`
+    / spread `0.8p`
+    / `ATR14(M1)=1.34p`
+    / `ATR14(M5)=4.96p`
+    と通常帯なのに、
+    `fills_15m=0`
+    / `fills_30m=0`
+    / `fills_60m=1`
+    で
+    低稼働が継続していた。
+  - `quant-scalp-ping-5s-c.log`
+    の直近 skip は
+    `no_signal:revert_not_found`
+    と
+    `lookahead_block`
+    が主因で、
+    特に
+    `lookahead_block`
+    は
+    `reason=edge_negative_block`
+    に集中していた。
+  - `revert_not_found`
+    側の threshold は既にかなり薄く、
+    これ以上の blanket loosening は quality 悪化が先に来る。
+    一方で
+    `edge_negative_block`
+    には
+    `pred_move 0.30-0.40p`
+    / `momentum 0.4-0.6p`
+    / `range 0.4-0.6p`
+    の
+    thin-but-not-dead
+    な候補が混ざっていた。
+  - 仮説は、
+    「entry が止まり過ぎている current 窓だけ、
+    `scalp_ping_5s_c_live`
+    の negative lookahead を
+    bounded units で rescue すれば、
+    低稼働を壊さずに cadence を戻せる」
+    である。
+
+- Expected Good:
+  - `fills_15m/30m`
+    がゼロの窓で、
+    `edge_negative_block`
+    起因の取り逃しを少し戻せる。
+  - blanket に gate を外さず、
+    `recent fills == 0`
+    かつ
+    `pred/momentum/range`
+    が最低条件を満たす候補だけを
+    `0.18-0.42x`
+    の小さい units で通せる。
+
+- Expected Bad:
+  - negative edge の玉を救済するため、
+    very thin edge の small loser を増やすリスクがある。
+  - `recent fills == 0`
+    でも地合いそのものが悪い窓では、
+    cadence だけ戻って収益が伴わない可能性がある。
+
+- Observed/Fact:
+  - `workers/scalp_ping_5s/config.py`
+    に
+    `LOOKAHEAD_NEGATIVE_EDGE_RESCUE_*`
+    を追加し、
+    `ENV_PREFIX == SCALP_PING_5S_C`
+    のときだけ default-on で使えるようにした。
+  - `workers/scalp_ping_5s/worker.py`
+    に
+    `trades.db`
+    ベースの recent fill count helper と
+    `_maybe_rescue_negative_lookahead`
+    を追加した。
+    `TECH_ROUTER_ENABLED=0`
+    の current C lane では、
+    `reason=edge_negative_block`
+    でも
+    `recent fills <= 0`
+    / `edge >= -0.95p`
+    / `pred >= 0.24p`
+    / `momentum >= 0.40p`
+    / `range >= 0.40p`
+    を満たす候補だけを
+    bounded units で rescue する。
+  - rescue が発火したときは
+    `entry_thesis`
+    に
+    `lookahead_rescue_applied`
+    / `lookahead_rescue_reason`
+    / `lookahead_rescue_recent_fills`
+    を残すので、
+    後から勝敗を切り分けられる。
+  - `ops/env/scalp_ping_5s_c.env`
+    に current 運用値として
+    rescue knobs を追加した。
+  - test は
+    `tests/workers/test_scalp_ping_5s_worker.py -k negative_lookahead_rescue`
+    で
+    `2 passed`
+    を確認した。
+  - 変更前の live 事実として、
+    `quant-scalp-ping-5s-c.log`
+    には
+    `2026-03-13 11:45 JST`
+    でも
+    `entry-skip summary total=165 ... lookahead_block=41`
+    が残り、
+    例として
+    `pred=0.318p cost=1.180p edge=-0.862p mom=0.400p range=0.400p`
+    のような
+    rescue 対象候補が存在した。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-scalp-ping-5s-c`
+    を再起動して
+    `lookahead rescue`
+    ログが出るか、
+    かつ
+    `fills_15m/30m`
+    が
+    `0/0`
+    から改善するかを確認する。
+  - rescue 発火玉だけを
+    `trades.db`
+    で後追いし、
+    loser が先行するなら
+    `max_neg_edge`
+    をさらに浅くする。

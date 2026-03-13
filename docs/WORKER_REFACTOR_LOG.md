@@ -18670,3 +18670,62 @@
   - regression test を 2 本追加して、
     one-trade small scalp winner boost と
     one-trade winner relief override を固定した。
+
+### 2026-03-13 11:46 JST - `scalp_ping_5s_c_live` low-activity negative lookahead rescue
+
+- 対象:
+  - `workers/scalp_ping_5s/config.py`
+  - `workers/scalp_ping_5s/worker.py`
+  - `ops/env/scalp_ping_5s_c.env`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - `2026-03-13 11:46 JST`
+    の通常帯
+    (`USD/JPY 159.364/159.372`, spread `0.8p`, `ATR14(M1)=1.34p`)
+    でも
+    `fills_15m=0`, `fills_30m=0`
+    が続いた。
+  - `quant-scalp-ping-5s-c.log`
+    の current skip は
+    `revert_not_found`
+    と
+    `lookahead_block(reason=edge_negative_block)`
+    が主因だった。
+  - `revert_not_found`
+    側は既にかなり loose なので、
+    先に
+    `edge_negative_block`
+    の中の thin-but-acceptable 候補だけを
+    strategy-local に拾う方が安全だった。
+
+- 変更:
+  - `LOOKAHEAD_NEGATIVE_EDGE_RESCUE_*`
+    config を追加し、
+    C lane だけ default-on で使えるようにした。
+  - `trades.db`
+    の recent fill count を見て、
+    low-activity 窓
+    (`recent fills <= 0 / 30m`)
+    でのみ
+    `edge_negative_block`
+    を
+    `0.18-0.42x`
+    units の bounded rescue に切り替える helper を追加した。
+  - rescue 発火時は
+    `entry_thesis`
+    に
+    `lookahead_rescue_*`
+    metadata を残し、
+    log にも
+    `lookahead rescue`
+    を出すようにした。
+  - `ops/env/scalp_ping_5s_c.env`
+    に current 運用値
+    (`max_neg_edge=0.95p`, `min_pred=0.24p`, `min_momentum=0.40p`, `min_range=0.40p`)
+    を追加した。
+  - unit test を 2 本追加し、
+    low-activity では rescue し、
+    fills が戻ったら rescue しないことを固定した。
