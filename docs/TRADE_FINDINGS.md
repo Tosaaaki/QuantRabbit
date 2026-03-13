@@ -23728,3 +23728,193 @@ Status:
     と
     `realized_pl`
     寄与が改善するかを再確認する。
+
+## 2026-03-13 23:53 JST / local-v2: `PrecisionLowVol` の up-flat shallow long を worker-local に遮断
+
+- Hypothesis Key: `precision_up_flat_shallow_long_guard_20260313_2353`
+- Primary Loss Driver: `STOP_LOSS_ORDER`
+- Mechanism Fired: `0`
+- Do Not Repeat Unless:
+  - 直近 30-60 分で
+    `PrecisionLowVol`
+    の
+    `long|...|gap:up_flat|volatility_compression|macro:trend_long`
+    が再び live loser として並び、
+    今回の guard が発火しても
+    `filled`
+    と
+    `STOP_LOSS_ORDER`
+    寄与が縮まらない時だけ次の tightening を検討する。
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- Change:
+  - `PrecisionLowVol`
+    の
+    `up_flat`
+    shallow long を
+    worker-local guard で reject する。
+
+- Period:
+  - primary window:
+    `2026-03-12 14:50 UTC - 2026-03-13 14:50 UTC`
+    （`2026-03-12 23:50 JST - 2026-03-13 23:50 JST`）
+  - live trigger window:
+    `2026-03-13 14:30 UTC - 2026-03-13 14:50 UTC`
+    （`2026-03-13 23:30 JST - 2026-03-13 23:50 JST`）
+
+- Why/Hypothesis:
+  - 2026-03-13 23:49 JST の preflight 実測は
+    USD/JPY
+    `bid=159.322 / ask=159.330 / spread=0.8 pips`,
+    `M1 ATR14=2.81 pips`,
+    `range_6m=5.4 pips`,
+    `range_30m=24.1 pips`,
+    `data_lag_ms=482.4`,
+    `decision_latency_ms=35.7`,
+    `fills_30m=9`,
+    `rejects_30m=0`
+    で、
+    市況・execution は通常帯だった。
+  - `DroughtRevert`
+    は 6h 集計で drag だが、
+    直近 90 分の
+    `orders.db`
+    では live flow が薄かった。
+    一方
+    `PrecisionLowVol`
+    は直近 20 分で
+    `long|...|gap:up_flat|volatility_compression|macro:trend_long`
+    が
+    `2 fills`
+    と
+    `tight_thin/tight_normal`
+    の両 lane で live に流れていた。
+  - `trades.db`
+    直近 20 分では
+    `PrecisionLowVol`
+    の同 setup が
+    `-3.0 / -2.9`
+    の
+    `STOP_LOSS_ORDER`
+    を即時に出し、
+    同じ 30d cluster でも
+    `3 losses / 0 wins / -8.4 JPY`
+    だった。
+  - loser signature は
+    `projection=0.0-0.275`,
+    `setup_quality=0.317-0.497`,
+    `reversion_support=0.313-0.710`,
+    `continuation_pressure=0.162-0.254`,
+    `rsi=44.7-52.4`,
+    `adx=15.1-15.7`
+    で、
+    deep reclaim ではなく
+    `up_flat`
+    の shallow long probe に寄っていた。
+
+- Failure Cause:
+  - `PrecisionLowVol`
+    long は
+    deep oversold negative-projection long を既に reject していたが、
+    `macro:trend_long`
+    の
+    `up_flat`
+    shallow reclaim は通していた。
+  - その結果、
+    `rsi 44-52`
+    /
+    `projection<=0.30`
+    /
+    `setup_quality<0.52`
+    の weak long fade が
+    live current で stop を積んでいた。
+
+- Expected Good:
+  - `up_flat`
+    shallow long だけを落とし、
+    いま live に出ている
+    `PrecisionLowVol`
+    long loser を即座に止められる。
+  - stronger reclaim long
+    は残し、
+    `PrecisionLowVol`
+    long 全体を止めない。
+
+- Expected Bad:
+  - 同型の sample は 3 loss のみで薄いので、
+    早計な overfit の可能性がある。
+  - そのため guard は
+    `macro:trend_long`,
+    `up_flat`,
+    `continuation_pressure<=0.28`,
+    `rsi>=44`,
+    `projection<=0.30`,
+    `setup_quality<0.52`,
+    `reversion_support<0.72`
+    に限定し、
+    `strong_reclaim_probe`
+    が立つ long は維持した。
+
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    に
+    `PrecisionLowVol`
+    の
+    `up_flat shallow long`
+    guard を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    block / keep の回帰を追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> `42 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+
+- Improvement:
+  - `PrecisionLowVol`
+    は
+    `up_lean` short の次に、
+    `up_flat`
+    shallow long も worker-local に reject する。
+  - これは
+    `same family`
+    の broad tighten ではなく、
+    直近 20 分で live に発火した別 fingerprint だけを狙う。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `42 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> 成功
+
+- Verdict: pending
+
+- Status:
+  - `pending`
+
+- Next Action:
+  - restart 後の
+    `logs/orders.db`
+    で
+    `PrecisionLowVol`
+    の
+    `long|...|gap:up_flat|volatility_compression|macro:trend_long`
+    が
+    `filled`
+    から消えるかを 20-30 分追う。
+  - 同時に
+    `PrecisionLowVol`
+    short
+    `gap:up_lean`
+    と long
+    `gap:up_flat`
+    の両方で
+    `STOP_LOSS_ORDER`
+    が減るかを 6h 集計で見直す。

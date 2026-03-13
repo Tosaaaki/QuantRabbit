@@ -19856,3 +19856,41 @@
     を満たす weak short fade を worker-local に reject するようにした。
   - signal-flow test に block / keep の回帰を追加し、
     stronger short lane を残す境界を固定した。
+
+### 2026-03-13 23:53 JST - `PrecisionLowVol` up-flat shallow long を worker-local に reject
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `PrecisionLowVol`
+    の up-lean short guard を入れた直後、
+    live order flow は short ではなく
+    `long|...|gap:up_flat|volatility_compression|macro:trend_long`
+    へ移り、
+    直近 20 分で
+    `2 fills / 2 stop-loss`
+    が出た。
+  - 同 setup は 30d でも
+    `3 losses / 0 wins / -8.4 JPY`
+    で、
+    current live loser の repeat と見なせた。
+- 変更:
+  - `long_up_flat`
+    かつ
+    `macro:trend_long`
+    の
+    `continuation_pressure<=0.28`
+    /
+    `rsi>=44`
+    /
+    `projection<=0.30`
+    /
+    `setup_quality<0.52`
+    /
+    `reversion_support<0.72`
+    を満たす shallow long を worker-local に reject するようにした。
+  - signal-flow test に block / keep の回帰を追加し、
+    stronger reclaim long は残す境界を固定した。

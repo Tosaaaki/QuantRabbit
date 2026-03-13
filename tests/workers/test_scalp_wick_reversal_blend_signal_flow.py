@@ -1012,6 +1012,91 @@ def test_precision_lowvol_keeps_strong_reclaim_long_when_projection_recovers() -
     assert signal["flow_guard"]["setup_quality"] == 0.58
 
 
+def test_precision_lowvol_blocks_up_flat_shallow_long_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.004,
+        "upper": 158.082,
+        "lower": 158.003,
+        "span_pips": 7.9,
+        "adx": 15.1,
+        "bbw": 0.00038,
+        "atr_pips": 2.4,
+        "rsi": 44.7,
+        "stoch_rsi": 0.12,
+        "vwap_gap": -1.0,
+        "ma10": 158.010,
+        "ma20": 158.004,
+        "ema20": 158.006,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression")
+
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.74)
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.25,
+            "max_pressure": 0.48,
+            "setup_quality": 0.49,
+            "reversion_support": 0.70,
+            "macro_flow_regime": "trend_long",
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.0},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_up_flat_long_when_reclaim_strength_recovers() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.004,
+        "upper": 158.082,
+        "lower": 158.003,
+        "span_pips": 7.9,
+        "adx": 15.1,
+        "bbw": 0.00038,
+        "atr_pips": 2.4,
+        "rsi": 46.2,
+        "stoch_rsi": 0.12,
+        "vwap_gap": -1.0,
+        "ma10": 158.010,
+        "ma20": 158.004,
+        "ema20": 158.006,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression")
+
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.86)
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.12,
+            "max_pressure": 0.48,
+            "setup_quality": 0.58,
+            "reversion_support": 0.76,
+            "macro_flow_regime": "trend_long",
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.34},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
 def test_precision_lowvol_blocks_short_when_higher_timeframes_stay_bullish() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]

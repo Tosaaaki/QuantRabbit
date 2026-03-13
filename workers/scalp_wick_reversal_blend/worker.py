@@ -2206,6 +2206,14 @@ def _signal_precision_lowvol(
             getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_SHORT_GAP_ATR_RATIO_MAX", 0.30)
         )
     )
+    long_up_flat = bool(
+        side == "long"
+        and ma_gap_pips is not None
+        and ma_gap_pips > 0.0
+        and ma_gap_atr_ratio is not None
+        and ma_gap_atr_ratio
+        < float(getattr(config, "PREC_LOWVOL_UP_FLAT_LONG_GAP_ATR_RATIO_MAX", 0.30))
+    )
     short_down_flat = bool(
         side == "short"
         and ma_gap_pips is not None
@@ -2425,6 +2433,67 @@ def _signal_precision_lowvol(
             and not strong_reclaim_probe
         )
     if weak_oversold_long_lane:
+        return None
+    up_flat_shallow_long_lane = False
+    if (
+        side == "long"
+        and long_up_flat
+        and range_reason == "volatility_compression"
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_LONG_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        reversion_support = float(flow_guard.get("reversion_support") or 0.0)
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        macro_flow_regime = str(flow_guard.get("macro_flow_regime") or "").strip().lower()
+        strong_reclaim_probe = (
+            rev_strength
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_REV_STRENGTH_MIN", 0.82))
+            and touch_ratio
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_TOUCH_RATIO_MIN", 0.46))
+            and setup_quality
+            >= float(getattr(config, "PREC_LOWVOL_WEAK_LONG_STRONG_RECLAIM_SETUP_QUALITY_MIN", 0.52))
+        )
+        up_flat_shallow_long_lane = (
+            macro_flow_regime == "trend_long"
+            and not strong_reclaim_probe
+            and continuation_pressure
+            <= float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_FLAT_SHALLOW_LONG_CONTINUATION_PRESSURE_MAX",
+                    0.28,
+                )
+            )
+            and rsi
+            >= float(getattr(config, "PREC_LOWVOL_UP_FLAT_SHALLOW_LONG_RSI_MIN", 44.0))
+            and projection_score
+            <= float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_FLAT_SHALLOW_LONG_PROJECTION_SCORE_MAX",
+                    0.30,
+                )
+            )
+            and setup_quality
+            < float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_FLAT_SHALLOW_LONG_SETUP_QUALITY_MAX",
+                    0.52,
+                )
+            )
+            and reversion_support
+            < float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_FLAT_SHALLOW_LONG_REVERSION_SUPPORT_MAX",
+                    0.72,
+                )
+            )
+        )
+    if up_flat_shallow_long_lane:
         return None
     up_flat_shallow_short_lane = False
     if (
