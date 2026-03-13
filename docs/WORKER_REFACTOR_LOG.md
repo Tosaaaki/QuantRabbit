@@ -18796,3 +18796,10 @@
     を追加し、
     rescue floor 適用玉を監査可能にした。
   - regression test を 2 本追加した。
+  - follow-up で
+    floor 適用位置を
+    `min_units_rescue`
+    の後ろへ移し、
+    raw `units<=0`
+    から `min_units_rescue` で `5`
+    に戻る候補にも floor が効くようにした。

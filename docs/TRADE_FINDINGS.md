@@ -20410,6 +20410,18 @@ Status:
     `lookahead_rescue_units_floor_status`
     を追加し、
     rescue floor が入った玉を後で切り出せるようにした。
+  - first implementation では
+    floor を
+    `min_units_rescue`
+    より前に当てていたため、
+    raw `units<=0`
+    の候補で
+    `non_positive`
+    となり floor が実効化しなかった。
+    follow-up で
+    floor 適用位置を
+    `min_units_rescue`
+    後へ移した。
   - test は
     `tests/workers/test_scalp_ping_5s_worker.py -k negative_lookahead_rescue`
     へ 2 本追加し、

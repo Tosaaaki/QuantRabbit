@@ -7642,14 +7642,6 @@ async def scalp_ping_5s_worker() -> None:
                 bias_meta["raw_scale"] = raw_side_bias
                 bias_meta["mode_adjusted_scale"] = float(bias_scale)
             units = int(round(units * bias_scale))
-            units, lookahead_rescue_units_floor_status = _maybe_apply_lookahead_rescue_units_floor(
-                units=units,
-                units_risk=units_risk,
-                entry_probability=entry_probability,
-                lookahead_rescue_applied=lookahead_rescue_applied,
-            )
-            if lookahead_rescue_units_floor_status == "rescued":
-                tech_route_reasons.append("lookahead_rescue_units_floor")
             units, min_units_status = _maybe_rescue_min_units(
                 units=units,
                 base_units=base_units,
@@ -7665,6 +7657,15 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 if short_probe_status == "short_probe_rescued":
                     min_units_status = short_probe_status
+
+            units, lookahead_rescue_units_floor_status = _maybe_apply_lookahead_rescue_units_floor(
+                units=units,
+                units_risk=units_risk,
+                entry_probability=entry_probability,
+                lookahead_rescue_applied=lookahead_rescue_applied,
+            )
+            if lookahead_rescue_units_floor_status == "rescued":
+                tech_route_reasons.append("lookahead_rescue_units_floor")
 
             if min_units_status in {"rescued", "short_probe_rescued"}:
                 tech_route_reasons.append("min_units_rescue")
