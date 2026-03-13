@@ -2337,11 +2337,64 @@ def _signal_precision_lowvol(
             and setup_quality
             < float(getattr(config, "PREC_LOWVOL_HEADWIND_SHORT_SETUP_QUALITY_MAX", 0.48))
         )
+    up_lean_countertrend_short_lane = False
+    if (
+        side == "short"
+        and short_up_lean
+        and flow_guard is not None
+        and projection_score is not None
+        and bool(getattr(config, "PREC_LOWVOL_UP_LEAN_COUNTERTREND_SHORT_GUARD_ENABLED", True))
+    ):
+        setup_quality = float(flow_guard.get("setup_quality") or 0.0)
+        reversion_support = float(flow_guard.get("reversion_support") or 0.0)
+        continuation_pressure = float(flow_guard.get("continuation_pressure") or 0.0)
+        macro_flow_regime = str(flow_guard.get("macro_flow_regime") or "").strip().lower()
+        mtf_alignment = str(flow_guard.get("mtf_alignment") or "").strip().lower()
+        up_lean_countertrend_short_lane = (
+            macro_flow_regime == "trend_long"
+            and mtf_alignment == "countertrend"
+            and continuation_pressure
+            >= float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_LEAN_COUNTERTREND_SHORT_CONTINUATION_PRESSURE_MIN",
+                    0.22,
+                )
+            )
+            and rsi
+            <= float(getattr(config, "PREC_LOWVOL_UP_LEAN_COUNTERTREND_SHORT_RSI_MAX", 55.0))
+            and projection_score
+            <= float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_LEAN_COUNTERTREND_SHORT_PROJECTION_SCORE_MAX",
+                    0.30,
+                )
+            )
+            and setup_quality
+            < float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_LEAN_COUNTERTREND_SHORT_SETUP_QUALITY_MAX",
+                    0.30,
+                )
+            )
+            and reversion_support
+            < float(
+                getattr(
+                    config,
+                    "PREC_LOWVOL_UP_LEAN_COUNTERTREND_SHORT_REVERSION_SUPPORT_MAX",
+                    0.58,
+                )
+            )
+        )
     if weak_overbought_short_lane:
         return None
     if marginal_short_lane:
         return None
     if headwind_short_lane:
+        return None
+    if up_lean_countertrend_short_lane:
         return None
     weak_oversold_long_lane = False
     if (

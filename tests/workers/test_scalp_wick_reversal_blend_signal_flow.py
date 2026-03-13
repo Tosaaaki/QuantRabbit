@@ -1079,6 +1079,89 @@ def test_precision_lowvol_blocks_short_when_higher_timeframes_stay_bullish() -> 
     assert signal is None
 
 
+def test_precision_lowvol_blocks_up_lean_countertrend_short_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 17.8,
+        "bbw": 0.00041,
+        "atr_pips": 2.2,
+        "rsi": 52.5,
+        "stoch_rsi": 0.92,
+        "vwap_gap": 1.4,
+        "ma10": 158.030,
+        "ma20": 158.020,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.47, reason="trend_ok")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.36,
+            "max_pressure": 0.60,
+            "setup_quality": 0.26,
+            "reversion_support": 0.49,
+            "macro_flow_regime": "trend_long",
+            "mtf_alignment": "countertrend",
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.27},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is None
+
+
+def test_precision_lowvol_keeps_up_lean_short_when_quality_recovers() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_precision_lowvol"]
+    fac = {
+        "close": 158.046,
+        "upper": 158.055,
+        "lower": 157.945,
+        "span_pips": 11.0,
+        "adx": 18.4,
+        "bbw": 0.00041,
+        "atr_pips": 2.2,
+        "rsi": 57.2,
+        "stoch_rsi": 0.93,
+        "vwap_gap": 1.4,
+        "ma10": 158.030,
+        "ma20": 158.020,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.47, reason="trend_ok")
+
+    ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.18,
+            "max_pressure": 0.60,
+            "setup_quality": 0.38,
+            "reversion_support": 0.68,
+            "macro_flow_regime": "trend_long",
+            "mtf_alignment": "countertrend",
+        },
+    )
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.34},
+    )
+
+    signal = signal_fn(dict(fac), range_ctx, tag="PrecisionLowVol")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+
+
 def test_precision_lowvol_blocks_up_flat_shallow_short_lane() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]

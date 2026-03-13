@@ -19816,3 +19816,43 @@
     の weak countertrend short を worker-local に reject するようにした。
   - signal-flow test に helper block / keep と signal block / keep を追加し、
     stronger short lane を残す境界を固定した。
+
+### 2026-03-13 23:40 JST - `PrecisionLowVol` up-lean countertrend short を worker-local に reject
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - preflight 時点の execution は
+    `spread=0.8 pips / fills_30m=7 / rejects_30m=0`
+    で正常だった一方、
+    corrected 6h では
+    `PrecisionLowVol=-25.5 JPY`
+    が current drag だった。
+  - `orders.db`
+    直近 1h でも
+    `PrecisionLowVol filled=4`
+    と live order flow があり、
+    `short|...|gap:up_lean|macro:trend_long|align:countertrend`
+    は 30d で
+    `5 losses / 0 wins / -26.6 JPY`
+    だった。
+- 変更:
+  - `short_up_lean`
+    かつ
+    `macro:trend_long / align:countertrend`
+    の
+    `setup_quality<0.30`
+    /
+    `reversion_support<0.58`
+    /
+    `continuation_pressure>=0.22`
+    /
+    `rsi<=55`
+    /
+    `projection<=0.30`
+    を満たす weak short fade を worker-local に reject するようにした。
+  - signal-flow test に block / keep の回帰を追加し、
+    stronger short lane を残す境界を固定した。
