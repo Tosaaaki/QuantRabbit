@@ -18611,3 +18611,62 @@
   - unit test を 2 本追加して、
     single-trade severe loser と
     4-trade burst loser の strategy-level trim を固定した。
+
+### 2026-03-13 11:10 JST - small winner scalp を shared boost / dyn-relief へ載せる
+
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `scripts/dynamic_alloc_worker.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/test_dynamic_alloc_worker.py`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - `2026-03-13 10:49 JST`
+    の最新 loser は
+    `WickReversalBlend short`
+    `ticket=460239`
+    / `trade_id=59389`
+    / `-3.42 JPY`
+    で、
+    loser lane に margin を戻す局面ではなかった。
+  - 一方で
+    `oanda_account_snapshot_live`
+    は
+    `nav=35173.2698`
+    / `margin_available=35173.2698`
+    / `margin_used=0`
+    で、
+    underuse は risk cap ではなく shared sizing の細さだった。
+  - `PrecisionLowVol`
+    の small winner long
+    (`+1.748 / +1.992 JPY`)
+    は
+    `participation_alloc`
+    の winner threshold に届かず、
+    `dynamic_alloc`
+    も strategy-wide loser trim のまま
+    `0.20`
+    近辺へ押し戻していた。
+
+- 変更:
+  - `participation_allocator`
+    の current winner 判定を
+    `small positive scalp`
+    向けに下げ、
+    `profit_per_fill>=1.5-2.0 JPY`
+    帯でも setup-level
+    `boost_participation`
+    を emit するようにした。
+  - `dynamic_alloc_worker`
+    に
+    low-sample winner relief
+    を追加し、
+    exact winner setup は
+    strategy-wide loser trim の中でも
+    `0.55-0.65`
+    まで戻せるようにした。
+  - regression test を 2 本追加して、
+    one-trade small scalp winner boost と
+    one-trade winner relief override を固定した。

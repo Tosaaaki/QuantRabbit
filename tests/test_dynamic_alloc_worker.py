@@ -520,3 +520,58 @@ def test_compute_scores_crushes_fast_burst_strategy_level_loser() -> None:
     assert prof["sum_realized_jpy"] <= -70.0
     assert prof["effective_min_lot_multiplier"] <= 0.18
     assert prof["lot_multiplier"] <= 0.256
+
+
+def test_compute_scores_emits_low_sample_winner_relief_override() -> None:
+    now = datetime.now(timezone.utc)
+    rows = []
+    for i in range(5):
+        rows.append(
+            (
+                "PrecisionLowVol",
+                "scalp",
+                -1.8,
+                (now - timedelta(minutes=6 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "STOP_LOSS_ORDER",
+                -12.0,
+                1400,
+                "PrecisionLowVol",
+                "PrecisionLowVol",
+                '{"setup_fingerprint":"PrecisionLowVol|short|range_fade|tight_thin|rsi:mid|atr:mid|gap:down_flat|volatility_compression|align:mixed","flow_regime":"range_fade","microstructure_bucket":"tight_thin"}',
+            )
+        )
+    rows.append(
+        (
+            "PrecisionLowVol",
+            "scalp",
+            2.0,
+            (now - timedelta(minutes=1)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "TAKE_PROFIT_ORDER",
+            1.92,
+            1400,
+            "PrecisionLowVol",
+            "PrecisionLowVol",
+            '{"setup_fingerprint":"PrecisionLowVol|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|align:mixed","flow_regime":"range_fade","microstructure_bucket":"tight_normal"}',
+        )
+    )
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=8,
+        setup_min_trades=4,
+        pf_cap=2.0,
+        min_lot_multiplier=0.20,
+    )
+
+    prof = strategy_scores["PrecisionLowVol"]
+    winner_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "PrecisionLowVol|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|align:mixed"
+    )
+
+    assert winner_override["trades"] == 1
+    assert winner_override["sum_realized_jpy"] > 0.0
+    assert winner_override["lot_multiplier"] > prof["lot_multiplier"]
+    assert 0.55 <= winner_override["lot_multiplier"] <= 0.65

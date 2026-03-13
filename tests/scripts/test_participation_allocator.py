@@ -1202,6 +1202,85 @@ def test_build_participation_alloc_emits_two_attempt_loser_setup_override() -> N
     assert loser["probability_offset"] < 0.0
 
 
+def test_build_participation_alloc_boosts_one_trade_small_scalp_winner_setup() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "PrecisionLowVol": {
+                "pocket": "scalp",
+                "attempts": 5,
+                "fills": 3,
+                "filled_rate": 0.6,
+                "attempt_share": 0.20,
+                "fill_share": 0.25,
+                "share_gap": -0.05,
+                "terminal_status_counts": {"filled": 3},
+                "setups": {
+                    "PrecisionLowVol|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|align:mixed": {
+                        "setup_fingerprint": "PrecisionLowVol|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|align:mixed",
+                        "flow_regime": "range_fade",
+                        "microstructure_bucket": "tight_normal",
+                        "attempts": 1,
+                        "fills": 1,
+                        "filled_rate": 1.0,
+                        "attempt_share": 0.20,
+                        "fill_share": 0.50,
+                        "share_gap": -0.30,
+                        "terminal_status_counts": {"filled": 1},
+                    },
+                },
+            },
+            "MomentumBurst": {
+                "pocket": "micro",
+                "attempts": 5,
+                "fills": 2,
+                "filled_rate": 0.4,
+                "attempt_share": 0.20,
+                "fill_share": 0.10,
+                "share_gap": 0.10,
+                "terminal_status_counts": {"filled": 2},
+            },
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={
+            "PrecisionLowVol": 4.16,
+            "MomentumBurst": 1.0,
+        },
+        realized_by_setup={
+            json.dumps(
+                {
+                    "strategy_key": "PrecisionLowVol",
+                    "setup_fingerprint": "PrecisionLowVol|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|align:mixed",
+                    "flow_regime": "range_fade",
+                    "microstructure_bucket": "tight_normal",
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+            ): 1.92,
+        },
+        min_attempts=4,
+        setup_min_attempts=1,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    overrides = payload["strategies"]["PrecisionLowVol"]["setup_overrides"]
+    winner = next(
+        item
+        for item in overrides
+        if item.get("setup_fingerprint")
+        == "PrecisionLowVol|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:up_lean|volatility_compression|align:mixed"
+    )
+
+    assert winner["action"] == "boost_participation"
+    assert winner["lot_multiplier"] > 1.0
+    assert winner["probability_boost"] > 0.0
+
+
 def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
     db_path = tmp_path / "trades.db"
     close_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds").replace("+00:00", "Z")

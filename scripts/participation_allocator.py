@@ -132,6 +132,9 @@ def _build_allocation_record(
     fast_loser_trim_attempts = 2
     small_sample_boost_attempts = max(3, min(int(min_attempts), 4))
     fast_winner_profit_floor = max(24.0, float(max(1, min_attempts)) * 4.0)
+    scalp_small_win_floor = 1.5
+    fast_scalp_win_floor = 1.8
+    small_sample_scalp_win_floor = 2.0
     if terminal_status_counts:
         hard_blocks = 0
         for status_name, count in terminal_status_counts.items():
@@ -210,7 +213,7 @@ def _build_allocation_record(
             fill_share >= attempt_share + 0.02
             and filled_rate >= median_fill_rate
             and realized_jpy > 0.0
-            and profit_per_fill >= 2.0
+            and profit_per_fill >= scalp_small_win_floor
         ):
             advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
             quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
@@ -274,7 +277,7 @@ def _build_allocation_record(
         and fills >= 2
         and fills == attempts
         and realized_jpy > 0.0
-        and profit_per_fill >= 3.0
+        and profit_per_fill >= fast_scalp_win_floor
         and filled_rate >= max(median_fill_rate * 1.05, 0.30)
         and fill_share >= attempt_share + 0.003
         and hard_block_rate <= 0.25
@@ -305,7 +308,7 @@ def _build_allocation_record(
         attempts >= small_sample_boost_attempts
         and fills >= 2
         and realized_jpy > 0.0
-        and profit_per_fill >= 3.0
+        and profit_per_fill >= small_sample_scalp_win_floor
         and filled_rate >= max(median_fill_rate * 1.05, 0.30)
         and fill_share >= attempt_share + 0.003
         and hard_block_rate <= 0.35

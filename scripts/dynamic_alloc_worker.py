@@ -546,6 +546,17 @@ def _build_setup_overrides(
     for key, stats in setup_stats.items():
         snapshot = _compute_perf_snapshot(stats, pf_cap=pf_cap)
         trades = int(snapshot["trades"])
+        low_sample_winner_relief = bool(
+            0 < trades < resolved_setup_min_trades
+            and float(snapshot.get("sum_realized_jpy", 0.0) or 0.0) >= (1.5 if trades <= 1 else 3.0)
+            and float(snapshot.get("avg_realized_jpy", 0.0) or 0.0) > 0.0
+            and float(snapshot.get("avg_pl", 0.0) or 0.0) > 0.0
+            and float(snapshot.get("weighted_wr", 0.0) or 0.0) >= 0.75
+            and float(snapshot.get("jpy_pf", 0.0) or 0.0) >= 1.05
+            and float(snapshot.get("sl_rate", 0.0) or 0.0) <= 0.35
+            and float(snapshot.get("market_close_loss_share", 0.0) or 0.0) <= 0.25
+            and parent_multiplier < 0.999
+        )
         severe_low_sample_loser = bool(
             0 < trades < resolved_setup_min_trades
             and float(snapshot.get("sum_realized_jpy", 0.0) or 0.0) <= -8.0
@@ -564,7 +575,9 @@ def _build_setup_overrides(
                 or float(snapshot.get("jpy_pf", 0.0) or 0.0) < 0.90
             )
         )
-        if trades < resolved_setup_min_trades and not (severe_low_sample_loser or fast_reactive_loser):
+        if trades < resolved_setup_min_trades and not (
+            severe_low_sample_loser or fast_reactive_loser or low_sample_winner_relief
+        ):
             continue
         match_dimension, setup_fingerprint, flow_regime, microstructure_bucket = key
         pocket_counts = setup_pockets.get(key, {})
@@ -590,6 +603,12 @@ def _build_setup_overrides(
             setup_multiplier,
             float(setup_record.get("effective_min_lot_multiplier", setup_multiplier) or setup_multiplier),
         )
+        if low_sample_winner_relief:
+            relief_floor = min(parent_cap, 0.55 if trades <= 1 else 0.72)
+            relief_cap = min(parent_cap, 0.65 if trades <= 1 else 0.88)
+            setup_multiplier = max(parent_multiplier, min(setup_multiplier, relief_cap))
+            setup_multiplier = max(setup_multiplier, relief_floor)
+            effective_min = max(effective_min, relief_floor)
         override: Dict[str, Any] = {
             "match_dimension": match_dimension,
             "setup_fingerprint": setup_fingerprint or None,

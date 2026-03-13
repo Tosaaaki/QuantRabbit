@@ -19974,3 +19974,130 @@ Status:
     shared trim をこれ以上広げず
     worker-local guard / exit
     を詰める。
+
+## 2026-03-13 11:10 JST - small positive scalp winner を winner 扱いへ寄せ、current winner trim を緩めた
+
+- Why/Hypothesis:
+  - `2026-03-13 10:49 JST`
+    の最新 loser は
+    `WickReversalBlend short`
+    `trade_id=59389`
+    / `ticket=460239`
+    / `entry=159.208`
+    / `close=159.227`
+    / `-1.9 pips`
+    / `-3.42 JPY`
+    で、
+    これは trend-long tape に against した loser lane だった。
+  - 同時点の market context は
+    `2026-03-13 10:47 JST`
+    `USD/JPY=159.2265`
+    / `risk_mode=neutral`
+    / `next_event=2026-03-13 12:35 JST 3-Month Bill Auction(low)`
+    で通常帯、
+    account snapshot は
+    `nav=35173.2698`
+    / `margin_available=35173.2698`
+    / `margin_used=0`
+    / `free_margin_ratio=1.0`
+    だった。
+  - つまり
+    「margin を使っていない」主因は risk cap ではなく、
+    `PrecisionLowVol / DroughtRevert`
+    の current winner long まで
+    shared sizing が細くしていたことだと判断した。
+  - high-turnover scalp では
+    `+1.7-2.0 JPY`
+    級の small winner も
+    winner lane として拾わないと、
+    few-trade loser trim だけが速くなって
+    total notional が増えない。
+
+- Expected Good:
+  - `PrecisionLowVol / DroughtRevert`
+    の current winner long setup だけは
+    shared sizing で
+    `0.20`
+    まで潰されず、
+    fills と margin use を増やせる。
+  - loser strategy 全体を緩めずに、
+    exact winner setup だけを
+    bounded に持ち上げられる。
+
+- Expected Bad:
+  - one-trade winner noise に反応して
+    exact setup を一時的に持ち上げすぎるリスクがある。
+  - small positive scalp を winner 判定へ寄せるので、
+    very weak edge を early boost するケースが混ざる可能性がある。
+
+- Observed/Fact:
+  - `scripts/participation_allocator.py`
+    で
+    setup-level winner boost の
+    `profit_per_fill`
+    閾値を
+    `1.5-2.0 JPY`
+    帯へ下げた。
+  - `scripts/dynamic_alloc_worker.py`
+    で
+    low-sample winner relief
+    を追加し、
+    current loser strategy の exact winner setup には
+    `0.55-0.65`
+    の bounded override を出すようにした。
+  - test は
+    `tests/test_dynamic_alloc_worker.py`
+    `tests/scripts/test_participation_allocator.py`
+    `tests/scripts/test_run_local_feedback_cycle.py`
+    で
+    `48 passed`
+    を確認した。
+  - `2026-03-13 11:10 JST`
+    に
+    `run_local_feedback_cycle --force`
+    を実行した結果、
+    `participation_alloc`
+    は
+    `PrecisionLowVol|long|range_fade|tight_normal|...|gap:up_lean`
+    と
+    `...|gap:up_flat`
+    を
+    `boost_participation lot_multiplier=1.2549 probability_boost=0.1228`
+    へ更新した。
+  - same cycle で
+    `DroughtRevert|long|range_fade|tight_normal|...|gap:up_lean`
+    も
+    `boost_participation lot_multiplier=1.3 probability_boost=0.15`
+    を維持した。
+  - `dynamic_alloc`
+    は
+    `PrecisionLowVol`
+    の 2 本の winner long fingerprint と
+    `DroughtRevert`
+    の winner long fingerprint に
+    `lot_multiplier=0.65`
+    の winner-relief override を出した。
+    strategy-wide base は
+    `PrecisionLowVol=0.336`
+    / `DroughtRevert=0.20`
+    のままなので、
+    broad loosening ではなく
+    exact setup だけを戻している。
+
+- Verdict: pending
+
+- Next Action:
+  - 次の
+    `60-90 分`
+    か
+    `10-20 trade`
+    で、
+    `PrecisionLowVol / DroughtRevert`
+    の winner long が
+    以前の
+    `77-92 units`
+    より太く約定するかを確認する。
+  - `WickReversalBlend short`
+    は current loser のままなので、
+    margin 拡大対象にはせず
+    worker-local guard / exit 改善を別で続ける。
