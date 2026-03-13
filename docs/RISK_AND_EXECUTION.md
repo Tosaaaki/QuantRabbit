@@ -70,6 +70,52 @@
     小利幅の market close を
     broker TP 近傍へ寄せる。
 
+### local-v2 `scalp_extrema_reversal_live` lock-floor near-BE pass（2026-03-13）
+- 背景:
+  - same current window で、
+    `scalp_extrema_reversal_live`
+    には
+    `MFE>=0.5p`
+    を見た後に負けで閉じる trade が
+    `5`
+    件あった。
+  - `460187`
+    と
+    `459735`
+    は
+    `quant-order-manager.log`
+    上で
+    `close_reject_profit_buffer`
+    を挟んだ後に
+    negative close されており、
+    `lock_floor`
+    protective close が
+    min-profit gate に止められていた。
+- 実装:
+  - `config/strategy_exit_protections.yaml`
+    の
+    `scalp_extrema_reversal_live`
+    で
+    `min_profit_pips=0.1`
+    とし、
+    `min_profit_ratio_reasons`
+    から
+    `lock_floor`
+    を外した。
+  - これにより、
+    near-BE の
+    `lock_floor`
+    close は通しつつ、
+    `take_profit / range_timeout / candle_*`
+    は引き続き
+    TP ratio guard
+    に掛ける。
+- 意図:
+  - early profit-take を抑える仕組みと、
+    seen-profit の protective close を分離して、
+    `positive -> negative`
+    giveback を減らす。
+
 ### local-v2 `DroughtRevert` weak trend-long probe guard（2026-03-13）
 - 背景:
   - 2026-03-13 16:34-16:35 JST の local-v2 で

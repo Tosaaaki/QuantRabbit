@@ -51,6 +51,165 @@
 - Status:
 ```
 
+## 2026-03-13 17:45 JST / local-v2: `scalp_extrema_reversal_live` の `lock_floor` を near-BE で通す
+
+- Change:
+  - `config/strategy_exit_protections.yaml`
+    の
+    `scalp_extrema_reversal_live`
+    で
+    `min_profit_pips`
+    を
+    `0.6 -> 0.1`
+    へ下げた。
+  - 同 strategy の
+    `min_profit_ratio_reasons`
+    から
+    `lock_floor`
+    を外し、
+    `take_profit / range_timeout / candle_*`
+    だけを
+    TP ratio guard 対象にした。
+  - `tests/execution/test_order_manager_exit_policy.py`
+    に、
+    `lock_floor`
+    near-BE close が通る回帰を追加した。
+- Why:
+  - `含み益を見てからマイナス決済`
+    の direct count を
+    `logs/replay/USD_JPY/USD_JPY_ticks_20260312-20260313.jsonl`
+    で取ると、
+    `scalp_extrema_reversal_live`
+    は
+    `5 trades`
+    が
+    `MFE>=0.5p`
+    を見た後に負けで閉じていた。
+  - その内
+    `460187`
+    と
+    `459735`
+    は
+    `quant-order-manager.log`
+    で
+    `close_reject_profit_buffer`
+    を踏んだ後に
+    later close されており、
+    `lock_floor`
+    由来の保護 close が
+    min-profit gate に止められていた。
+- Hypothesis:
+  - `lock_floor`
+    は
+    TP 手前での early profit-take ではなく、
+    既に見えた利益を守る protective close なので、
+    `candle/take_profit`
+    と同じ
+    TP ratio guard
+    に入れるべきではない。
+  - `min_profit_pips=0.1`
+    まで下げれば、
+    near-BE の保護 close を通しつつ、
+    `candle_*`
+    は既存の
+    `min_profit_ratio=0.60`
+    で止められる。
+- Expected Good:
+  - `scalp_extrema_reversal_live`
+    の
+    `positive -> negative`
+    giveback を減らせる。
+  - `460187`
+    型の
+    `lock_floor`
+    protective close が
+    negative close になる前に通る。
+- Expected Bad:
+  - `min_profit_pips`
+    を下げることで、
+    too-small profit での close が増える可能性がある。
+  - ただし
+    `candle_*`
+    と
+    `take_profit`
+    は
+    ratio guard を残すので、
+    broad な早利確にはならない想定。
+- Period:
+  - local-v2 recent
+    `2026-03-12 08:00 UTC - 2026-03-13 08:15 UTC`
+    の
+    `scalp_extrema_reversal_live`
+    negative closes と
+    `logs/local_v2_stack/quant-order-manager.log`
+    を照合。
+- Fact:
+  - negative close with
+    `in-trade MFE>=0.5p`
+    は
+    `scalp_extrema_reversal_live=5`,
+    `session_open_breakout=2`,
+    `WickReversalBlend=2`,
+    `DroughtRevert=2`
+    だった。
+  - `460187`
+    は
+    `MFE=1.0p`
+    を見た後、
+    `close_reject_profit_buffer`
+    を挟んで
+    `-0.4p`
+    で閉じていた。
+  - `459735`
+    も
+    `MFE=0.9p`
+    後に
+    `close_reject_profit_buffer`
+    を踏んで
+    `-0.3p`
+    close だった。
+- Failure Cause:
+  - `lock_floor`
+    protective close が、
+    strategy-level
+    `min_profit_pips`
+    と
+    TP ratio guard
+    に巻き込まれていた。
+- Improvement:
+  - `lock_floor`
+    だけは
+    protective close
+    として near-BE で通し、
+    early profit-take を抑えるのは
+    `candle/take_profit/range_timeout`
+    に限定した。
+- Verification:
+  - `python3 -m py_compile tests/execution/test_order_manager_exit_policy.py`
+  - `.venv/bin/pytest tests/execution/test_order_manager_exit_policy.py -k "close_trade_blocks_extrema_candle_exit_until_tp_ratio or close_trade_allows_extrema_lock_floor_near_be or close_trade_uses_explicit_flow_context_for_negative_close" -q`
+- Verdict:
+  - pending
+- Next Action:
+  - 反映後、
+    `scalp_extrema_reversal_live`
+    の
+    `close_reject_profit_buffer`
+    と
+    negative
+    `MARKET_ORDER_TRADE_CLOSE`
+    が減るかを見る。
+  - まだ
+    `positive -> negative`
+    が多ければ、
+    次は
+    `WickReversalBlend`
+    family
+    と
+    `session_open_breakout`
+    を同じ手順で切る。
+- Status:
+  - in_progress
+
 ## 2026-03-13 17:25 JST / local-v2: `scalp_extrema_reversal_live` の soft TP を broker TP 近傍まで引き上げ
 
 - Change:

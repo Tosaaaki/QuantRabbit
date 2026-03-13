@@ -105,6 +105,38 @@
     の early market take-profit だけを
     broker TP 近傍まで待たせる。
 
+### 2026-03-13（追記）`scalp_extrema_reversal_live` の `lock_floor` を near-BE で通す
+
+- 対象:
+  - `config/strategy_exit_protections.yaml`
+  - `tests/execution/test_order_manager_exit_policy.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 変更:
+  - `scalp_extrema_reversal_live`
+    の
+    `min_profit_pips`
+    を
+    `0.1`
+    へ下げ、
+    `min_profit_ratio_reasons`
+    から
+    `lock_floor`
+    を外した。
+  - regression test として、
+    `lock_floor`
+    near-BE close が
+    ratio guard に止められず通ることを固定した。
+- 意図:
+  - `lock_floor`
+    は early take-profit ではなく
+    protective close
+    なので、
+    `candle/take_profit`
+    と切り分けて、
+    含み益後のマイナス決済を減らす。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を positive-gap shallow reclaim まで拡張抑制
 
 - 対象:

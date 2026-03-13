@@ -135,7 +135,7 @@
   で
   `min_profit_ratio=0.60`
   を持ち、
-  `take_profit / lock_floor / range_timeout / candle_*`
+  `take_profit / range_timeout / candle_*`
   の positive market close では
   broker TP の
   60%
@@ -144,7 +144,14 @@
   が
   `close_reject_profit_ratio`
   で拒否する。
-  早すぎる soft TP を strategy-scoped に抑える仕組みで、
+  一方で
+  `lock_floor`
+  は protective close として
+  near-BE で通し、
+  `min_profit_pips=0.1`
+  だけを floor にする。
+  早すぎる soft TP だけを抑えつつ、
+  seen-profit の giveback は減らす設計で、
   shared blanket hold 延長ではない。
 - `order_manager`
   の
