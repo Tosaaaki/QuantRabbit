@@ -42,6 +42,7 @@ from workers.common.participation_alloc import (
 )
 from workers.common import perf_guard
 from workers.common.quality_gate import current_regime
+from workers.common.setup_context import derive_live_setup_context
 from analysis import perf_monitor
 
 from workers.common.size_utils import scale_base_units
@@ -464,6 +465,7 @@ _RANGE_STRATEGIES = {
 _RANGE_TREND_ALLOWLIST = {name for name in config.RANGE_ONLY_TREND_ALLOWLIST}
 
 _HISTORY_PROFILE_CACHE: Dict[Tuple[str, str, str], tuple[float, Dict[str, object]]] = {}
+_SETUP_HISTORY_PROFILE_CACHE: Dict[Tuple[str, str], tuple[float, Dict[str, object]]] = {}
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
@@ -604,6 +606,13 @@ def _history_profile_cache_key(
     return (_normalize_tag_key(strategy_key), str(pocket).strip().lower(), regime_label)
 
 
+def _setup_history_profile_cache_key(
+    setup_fingerprint: str,
+    pocket: str,
+) -> tuple[str, str]:
+    return (str(setup_fingerprint).strip(), str(pocket).strip().lower())
+
+
 def _query_strategy_history(
     *,
     strategy_key: str,
@@ -654,6 +663,72 @@ def _query_strategy_history(
               SUM(pl_pips) AS sum_pips
             FROM trades
             WHERE {where}
+            """,
+            params,
+        ).fetchone()
+    except Exception:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    if not row:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+
+    n = int(row["n"] or 0)
+    if n <= 0:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win = float(row["win"] or 0.0)
+    sum_pips = float(row["sum_pips"] or 0.0)
+    pf = profit / loss if loss > 0 else float("inf")
+    win_rate = win / n
+    avg_pips = sum_pips / n
+    return dict(n=n, pf=pf, win_rate=win_rate, avg_pips=avg_pips)
+
+
+def _query_setup_history(
+    *,
+    setup_fingerprint: str,
+    pocket: str,
+) -> Dict[str, object]:
+    setup_fingerprint = str(setup_fingerprint).strip()
+    if not setup_fingerprint:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+    db_path = pathlib.Path(config.HIST_DB_PATH)
+    if not db_path.exists():
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+
+    lookback = max(1, int(config.HIST_LOOKBACK_DAYS))
+    params: List[object] = [
+        str(pocket).strip().lower(),
+        f"-{lookback} day",
+        setup_fingerprint,
+        setup_fingerprint,
+    ]
+    con: sqlite3.Connection | None = None
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            """
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(pl_pips) AS sum_pips
+            FROM trades
+            WHERE LOWER(pocket) = ?
+              AND close_time IS NOT NULL
+              AND datetime(close_time) >= datetime('now', ?)
+              AND (
+                json_extract(entry_thesis, '$.setup_fingerprint') = ?
+                OR json_extract(entry_thesis, '$.live_setup_context.setup_fingerprint') = ?
+              )
             """,
             params,
         ).fetchone()
@@ -802,6 +877,151 @@ def _history_profile(
     }
     _HISTORY_PROFILE_CACHE[cache_key] = (now, dict(profile))
     return dict(profile)
+
+
+def _setup_history_profile(
+    setup_fingerprint: str,
+    pocket: str,
+) -> Dict[str, object]:
+    setup_fingerprint = str(setup_fingerprint).strip()
+    if not config.HIST_SETUP_WINNER_PROTECT_ENABLED or not setup_fingerprint:
+        return {
+            "enabled": False,
+            "setup_fingerprint": setup_fingerprint,
+            "pocket": pocket,
+            "n": 0,
+            "pf": 1.0,
+            "win_rate": 0.0,
+            "avg_pips": 0.0,
+            "score": 0.5,
+            "winner_protect": False,
+            "source": "disabled",
+        }
+
+    cache_key = _setup_history_profile_cache_key(setup_fingerprint, pocket)
+    now = time.time()
+    cached = _SETUP_HISTORY_PROFILE_CACHE.get(cache_key)
+    if cached and (now - cached[0]) <= max(1.0, float(config.HIST_TTL_SEC)):
+        return dict(cached[1])
+
+    row = _query_setup_history(setup_fingerprint=setup_fingerprint, pocket=pocket)
+    score = _clamp01(_derive_history_score(row))
+    n = int(row.get("n", 0) or 0)
+    pf = float(row.get("pf", 1.0))
+    win_rate = float(row.get("win_rate", 0.0))
+    avg_pips = float(row.get("avg_pips", 0.0))
+    winner_protect = bool(
+        n >= max(1, int(config.HIST_SETUP_WINNER_MIN_TRADES))
+        and score >= float(config.HIST_SETUP_WINNER_SCORE)
+    )
+    profile = {
+        "enabled": True,
+        "setup_fingerprint": setup_fingerprint,
+        "pocket": pocket,
+        "n": n,
+        "pf": pf if pf != float("inf") else float(config.HIST_PF_CAP),
+        "win_rate": win_rate,
+        "avg_pips": avg_pips,
+        "score": score,
+        "winner_protect": winner_protect,
+        "source": "setup_exact",
+    }
+    _SETUP_HISTORY_PROFILE_CACHE[cache_key] = (now, dict(profile))
+    return dict(profile)
+
+
+def _build_signal_history_setup_fingerprint(
+    *,
+    signal_tag: str,
+    signal_action: str,
+    range_ctx,
+    fac_m1: Dict[str, object],
+    fac_m5: Dict[str, object],
+    fac_h1: Dict[str, object],
+    fac_h4: Dict[str, object],
+) -> str:
+    signal_tag = str(signal_tag or "").strip()
+    signal_action = str(signal_action or "").strip().upper()
+    if not signal_tag or signal_action not in {"OPEN_LONG", "OPEN_SHORT"}:
+        return ""
+    side = "long" if signal_action == "OPEN_LONG" else "short"
+    entry_thesis = {
+        "strategy_tag": signal_tag,
+        "strategy_tag_raw": signal_tag,
+        "signal_action": signal_action,
+        "signal_side": side,
+        "exec_action": signal_action,
+        "exec_side": side,
+        "side": side,
+        "entry_side": side,
+        "range_score": round(float(getattr(range_ctx, "score", 0.0) or 0.0), 3),
+        "range_reason": getattr(range_ctx, "reason", ""),
+        "range_mode": getattr(range_ctx, "mode", ""),
+        "technical_context": {
+            "indicators": {
+                "M1": dict(fac_m1 or {}),
+                "M5": dict(fac_m5 or {}),
+                "H1": dict(fac_h1 or {}),
+                "H4": dict(fac_h4 or {}),
+            },
+            "ticks": {
+                "latest_bid": fac_m1.get("latest_bid", fac_m1.get("bid")),
+                "latest_ask": fac_m1.get("latest_ask", fac_m1.get("ask")),
+                "latest_mid": fac_m1.get("latest_mid", fac_m1.get("close")),
+                "spread_pips": fac_m1.get("spread_pips"),
+                "tick_rate": fac_m1.get("tick_rate"),
+            },
+        },
+    }
+    if derive_pattern_signature is not None:
+        try:
+            pattern_fac = {
+                "open": fac_m1.get("open"),
+                "high": fac_m1.get("high"),
+                "low": fac_m1.get("low"),
+                "close": fac_m1.get("close"),
+                "ma10": fac_m1.get("ma10"),
+                "ma20": fac_m1.get("ma20"),
+                "rsi": fac_m1.get("rsi"),
+                "atr_pips": fac_m1.get("atr_pips"),
+                "bbw": fac_m1.get("bbw"),
+            }
+            pattern_tag, _pattern_meta = derive_pattern_signature(pattern_fac, action=signal_action)
+            if pattern_tag:
+                entry_thesis["pattern_tag"] = pattern_tag
+        except Exception:
+            pass
+    live_setup = derive_live_setup_context(entry_thesis, units=1 if side == "long" else -1)
+    if not isinstance(live_setup, dict):
+        return ""
+    return str(live_setup.get("setup_fingerprint") or "").strip()
+
+
+def _apply_setup_history_winner_override(
+    hist_profile: Dict[str, object],
+    *,
+    setup_fingerprint: str,
+    pocket: str,
+) -> tuple[Dict[str, object], Dict[str, object]]:
+    if not isinstance(hist_profile, dict):
+        return hist_profile, {}
+    if not bool(hist_profile.get("skip")):
+        return hist_profile, {}
+    setup_profile = _setup_history_profile(setup_fingerprint, pocket)
+    if not bool(setup_profile.get("winner_protect")):
+        return hist_profile, setup_profile
+    adjusted = dict(hist_profile)
+    adjusted["skip"] = False
+    adjusted["source"] = f"{adjusted.get('source', 'global')}+setup_winner"
+    adjusted["winner_setup_override"] = {
+        "setup_fingerprint": setup_fingerprint,
+        "n": int(setup_profile.get("n", 0) or 0),
+        "score": float(setup_profile.get("score", 0.5) or 0.5),
+        "pf": float(setup_profile.get("pf", 1.0) or 1.0),
+        "win_rate": float(setup_profile.get("win_rate", 0.0) or 0.0),
+        "avg_pips": float(setup_profile.get("avg_pips", 0.0) or 0.0),
+    }
+    return adjusted, setup_profile
 
 
 
@@ -1541,6 +1761,7 @@ async def micro_multi_worker() -> None:
     last_stale_log = 0.0
     last_stale_scale_log = 0.0
     last_perf_block_log = 0.0
+    last_hist_override_log = 0.0
     last_mlr_block_log = 0.0
     last_pullback_mtf_block_log = 0.0
     last_account_snapshot = None
@@ -1783,11 +2004,38 @@ async def micro_multi_worker() -> None:
             base_tag = signal_tag.split("-", 1)[0].strip()
             if not base_tag:
                 base_tag = strategy_name
+            setup_fingerprint = _build_signal_history_setup_fingerprint(
+                signal_tag=signal_tag,
+                signal_action=str(cand.get("action") or ""),
+                range_ctx=range_ctx,
+                fac_m1=fac_m1,
+                fac_m5=fac_m5,
+                fac_h1=fac_h1,
+                fac_h4=fac_h4,
+            )
             hist_profile = _history_profile(
                 strategy_key=base_tag,
                 pocket=config.POCKET,
                 regime_label=regime_label,
             )
+            hist_profile, setup_hist_profile = _apply_setup_history_winner_override(
+                hist_profile if isinstance(hist_profile, dict) else {},
+                setup_fingerprint=setup_fingerprint,
+                pocket=config.POCKET,
+            )
+            if isinstance(hist_profile, dict) and bool(hist_profile.get("winner_setup_override")):
+                now_mono = time.monotonic()
+                if now_mono - last_hist_override_log > 120.0:
+                    LOG.info(
+                        "%s hist_winner_override tag=%s setup_n=%s setup_score=%.3f family_n=%s family_score=%.3f",
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        int(setup_hist_profile.get("n", 0) or 0),
+                        float(setup_hist_profile.get("score", 0.0) or 0.0),
+                        int(hist_profile.get("n", 0) or 0),
+                        float(hist_profile.get("score", 0.0) or 0.0),
+                    )
+                    last_hist_override_log = now_mono
             if bool(hist_profile.get("skip")):
                 now_mono = time.monotonic()
                 if now_mono - last_perf_block_log > 120.0:
@@ -2189,6 +2437,16 @@ async def micro_multi_worker() -> None:
                     "win_rate": round(float(hist_profile.get("win_rate", 0.0) or 0.0), 3),
                     "avg_pips": round(float(hist_profile.get("avg_pips", 0.0) or 0.0), 3),
                 }
+                winner_setup_override = hist_profile.get("winner_setup_override")
+                if isinstance(winner_setup_override, dict):
+                    entry_thesis["history_perf"]["winner_setup_override"] = {
+                        "setup_fingerprint": str(winner_setup_override.get("setup_fingerprint") or ""),
+                        "n": int(winner_setup_override.get("n", 0) or 0),
+                        "score": round(float(winner_setup_override.get("score", 0.5) or 0.5), 3),
+                        "pf": round(float(winner_setup_override.get("pf", 1.0) or 1.0), 3),
+                        "win_rate": round(float(winner_setup_override.get("win_rate", 0.0) or 0.0), 3),
+                        "avg_pips": round(float(winner_setup_override.get("avg_pips", 0.0) or 0.0), 3),
+                    }
             if abs(strategy_units_mult - 1.0) > 1e-9:
                 entry_thesis["strategy_units_mult"] = round(strategy_units_mult, 3)
             elif strategy_units_mult_meta:

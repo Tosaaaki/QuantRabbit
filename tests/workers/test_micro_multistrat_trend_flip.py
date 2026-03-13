@@ -171,6 +171,70 @@ def test_history_profile_uses_override_skip_threshold(monkeypatch):
     assert profile["skip_score_threshold"] == pytest.approx(0.18)
 
 
+def test_setup_history_profile_marks_recent_winner(monkeypatch):
+    monkeypatch.setattr(worker.config, "HIST_SETUP_WINNER_PROTECT_ENABLED", True)
+    monkeypatch.setattr(worker.config, "HIST_SETUP_WINNER_MIN_TRADES", 2)
+    monkeypatch.setattr(worker.config, "HIST_SETUP_WINNER_SCORE", 0.58)
+    monkeypatch.setattr(worker.config, "HIST_MIN_TRADES", 12)
+    monkeypatch.setattr(worker.config, "HIST_PF_CAP", 2.0)
+    monkeypatch.setattr(worker.config, "HIST_TTL_SEC", 30.0)
+    monkeypatch.setattr(
+        worker,
+        "_query_setup_history",
+        lambda **_kwargs: {
+            "n": 2,
+            "pf": float("inf"),
+            "win_rate": 1.0,
+            "avg_pips": 3.0,
+        },
+    )
+    worker._SETUP_HISTORY_PROFILE_CACHE.clear()
+
+    profile = worker._setup_history_profile(
+        "MicroLevelReactor-breakout-long|long|range_compression|tight_normal",
+        "micro",
+    )
+
+    assert profile["enabled"] is True
+    assert profile["winner_protect"] is True
+    assert profile["score"] == pytest.approx(0.58, rel=1e-3)
+
+
+def test_apply_setup_history_winner_override_unblocks_hist_skip(monkeypatch):
+    monkeypatch.setattr(worker.config, "HIST_SETUP_WINNER_PROTECT_ENABLED", True)
+    monkeypatch.setattr(
+        worker,
+        "_setup_history_profile",
+        lambda *_args, **_kwargs: {
+            "enabled": True,
+            "winner_protect": True,
+            "n": 6,
+            "score": 0.747,
+            "pf": 2.0,
+            "win_rate": 1.0,
+            "avg_pips": 3.7,
+        },
+    )
+
+    hist_profile, setup_profile = worker._apply_setup_history_winner_override(
+        {
+            "skip": True,
+            "source": "global",
+            "n": 312,
+            "score": 0.182,
+        },
+        setup_fingerprint="MicroLevelReactor-bounce-lower|long|range_fade|tight_normal",
+        pocket="micro",
+    )
+
+    assert setup_profile["winner_protect"] is True
+    assert hist_profile["skip"] is False
+    assert hist_profile["source"] == "global+setup_winner"
+    assert hist_profile["winner_setup_override"]["setup_fingerprint"].startswith(
+        "MicroLevelReactor-bounce-lower"
+    )
+
+
 def test_strategy_cooldown_extends_with_fresh_participation_trim(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
     monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)

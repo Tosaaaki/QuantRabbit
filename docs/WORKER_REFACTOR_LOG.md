@@ -19255,3 +19255,42 @@
     override
     `0.18`
     では pass することを固定した。
+
+### 2026-03-13 15:25 JST - recent winner setup を family-level `hist_block` から保護
+
+- 対象:
+  - `workers/micro_runtime/config.py`
+  - `workers/micro_runtime/worker.py`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `MicroLevelReactor`
+    では
+    same signal tag の中に winner / loser setup fingerprint が混在していた。
+  - 既存 history gate は
+    `base_tag`
+    family score だけを見て
+    `skip`
+    を決めるため、
+    current winner setup も family loser に巻き込まれて止まりうる構造だった。
+- 変更:
+  - micro runtime config に
+    `MICRO_MULTI_HIST_SETUP_WINNER_PROTECT_*`
+    を追加した。
+  - worker は runtime signal から minimal thesis を組んで
+    `setup_fingerprint`
+    を生成し、
+    trades.db の exact setup history を
+    `json_extract`
+    で引くようにした。
+  - family-level `hist_profile.skip`
+    が立っていても、
+    recent winner setup なら
+    `winner_setup_override`
+    を付けて
+    `skip=False`
+    にする。
+  - units multiplier は family history のまま維持し、
+    participation だけを戻す。

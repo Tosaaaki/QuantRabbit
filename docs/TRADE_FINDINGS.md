@@ -21460,3 +21460,87 @@ Status:
     `MicroLevelReactor`
     preflight / filled
     が戻るかを確認する。
+
+## 2026-03-13 15:25 JST / local-v2: family-level `hist_block` でも recent winner setup は止めない `setup_fingerprint` protect を追加
+
+- Why/Hypothesis:
+  - 直近24hの `MicroLevelReactor` では、
+    `bounce-lower`
+    の exact setup 内に
+    `6 trades / +27.775 JPY / win_rate 1.0`
+    の current winner cluster がある一方で、
+    別 fingerprint は負けていた。
+  - しかし micro runtime の history gate は
+    `base_tag=MicroLevelReactor`
+    の family score だけで
+    `skip`
+    を決めており、
+    winner setup も loser family に巻き込まれて止まる構造だった。
+  - 仮説は、
+    family-level history gate は維持しつつ、
+    exact
+    `setup_fingerprint`
+    の closed-trade score が recent winner 条件
+    （`min_trades=2`, `score>=0.58`）
+    を満たすときだけ
+    `skip`
+    を解除すれば、
+    「勝ち筋は止めない」を broad loosening なしで実現できる、
+    というもの。
+
+- Expected Good:
+  - `MicroLevelReactor`
+    のように
+    same signal tag 内で winner / loser setup が混ざる戦略でも、
+    recent winner fingerprint は family-level `hist_block` で止まらない。
+  - units multiplier は family history のまま残るため、
+    winner lane を通しつつ sizing の暴れは抑えられる。
+
+- Expected Bad:
+  - setup history query が 1 段増えるため、
+    micro runtime の history path は少し複雑になる。
+  - sample 2-3 件の early winner も protect 対象に入りうるため、
+    false-positive の監視は必要。
+
+- Observed/Fact:
+  - `workers/micro_runtime/worker.py`
+    に
+    exact setup 用の history query / cache を追加し、
+    `setup_fingerprint`
+    が recent winner のときだけ
+    `winner_setup_override`
+    を付けて
+    `skip=False`
+    にするようにした。
+  - setup fingerprint は runtime signal から minimal thesis を組んで
+    `derive_live_setup_context`
+    で生成し、
+    closed trades 側は
+    `json_extract(entry_thesis, '$.setup_fingerprint')`
+    と
+    `$.live_setup_context.setup_fingerprint`
+    の exact match で集計する。
+  - 回帰は
+    `tests/workers/test_micro_multistrat_trend_flip.py`
+    に追加し、
+    `2 wins`
+    setup が
+    `winner_protect=True`
+    になることと、
+    family `skip=True`
+    が
+    `global+setup_winner`
+    へ変わることを固定した。
+
+- Verdict: pending
+
+- Next Action:
+  - main へ反映して
+    `quant-micro-levelreactor`
+    を含む active micro workers を restart し、
+    live log に
+    `hist_winner_override`
+    が出るか、
+    もしくは current winner setup が
+    family-level `hist_block`
+    で止まらないことを確認する。

@@ -229,3 +229,15 @@ HIST_SKIP_SCORE_OVERRIDE = (
 HIST_CONF_WEIGHT = float(os.getenv("MICRO_MULTI_HIST_CONF_WEIGHT", "14.0"))
 HIST_LOT_MIN = float(os.getenv("MICRO_MULTI_HIST_LOT_MIN", "0.72"))
 HIST_LOT_MAX = float(os.getenv("MICRO_MULTI_HIST_LOT_MAX", "1.28"))
+HIST_SETUP_WINNER_PROTECT_ENABLED = os.getenv(
+    "MICRO_MULTI_HIST_SETUP_WINNER_PROTECT_ENABLED",
+    "1",
+).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+HIST_SETUP_WINNER_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_MIN_TRADES", "2"))
+HIST_SETUP_WINNER_SCORE = float(os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_SCORE", "0.58"))

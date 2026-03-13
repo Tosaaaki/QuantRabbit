@@ -5149,3 +5149,36 @@
 - 意図:
   - dirty な shared env を触らず、
     dedicated runner だけに history-skip threshold を効かせる。
+
+### local-v2 setup-winner protect for micro history gate（2026-03-13）
+- 背景:
+  - `MicroLevelReactor`
+    のように
+    same signal tag 内で winner / loser setup が混在する戦略では、
+    family-level history score だけで
+    `skip`
+    を決めると、
+    recent winner setup まで止める。
+- 実装:
+  - `workers/micro_runtime/worker.py`
+    は runtime signal から minimal thesis を組み、
+    `derive_live_setup_context`
+    で
+    `setup_fingerprint`
+    を生成する。
+  - trades.db では
+    `json_extract(entry_thesis, '$.setup_fingerprint')`
+    と
+    `$.live_setup_context.setup_fingerprint`
+    の exact match で recent setup history を集計する。
+  - family-level `hist_profile.skip`
+    が立っていても、
+    `min_trades=2`
+    かつ
+    `score>=0.58`
+    の recent winner setup は
+    `winner_setup_override`
+    を付けて通す。
+- 意図:
+  - loser family を broad に緩めず、
+    current winner setup だけ participation を落とさない。
