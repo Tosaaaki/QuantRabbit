@@ -74,6 +74,37 @@
     `tight_normal + gap:down_flat + macro:trend_long`
     loser lane だけを exact setup で削る。
 
+### 2026-03-13（追記）`scalp_extrema_reversal_live` の soft TP を TP ratio guard で引き上げ
+
+- 対象:
+  - `config/strategy_exit_protections.yaml`
+  - `tests/execution/test_order_manager_exit_policy.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 変更:
+  - `scalp_extrema_reversal_live`
+    の
+    `min_profit_ratio`
+    を
+    `0.60`
+    へ引き上げ、
+    `min_profit_ratio_min_tp_pips=2.0`
+    と
+    `min_profit_ratio_reasons=[take_profit, lock_floor, range_timeout, candle_*]`
+    を追加した。
+  - regression test として、
+    `candle_*`
+    の soft close が
+    TP 比率未達なら
+    `close_reject_profit_ratio`
+    になることを固定した。
+- 意図:
+  - exit worker を広域に緩めず、
+    `scalp_extrema_reversal_live`
+    の early market take-profit だけを
+    broker TP 近傍まで待たせる。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を positive-gap shallow reclaim まで拡張抑制
 
 - 対象:

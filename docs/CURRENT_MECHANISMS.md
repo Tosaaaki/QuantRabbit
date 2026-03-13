@@ -129,6 +129,23 @@
   を補正する market-aware multiplier を持つ。
   共通 exit manager を増やすのではなく、
   dedicated exit worker 内で strategy-local に完結させる。
+- `scalp_extrema_reversal_live`
+  は
+  `config/strategy_exit_protections.yaml`
+  で
+  `min_profit_ratio=0.60`
+  を持ち、
+  `take_profit / lock_floor / range_timeout / candle_*`
+  の positive market close では
+  broker TP の
+  60%
+  未満を
+  `order_manager`
+  が
+  `close_reject_profit_ratio`
+  で拒否する。
+  早すぎる soft TP を strategy-scoped に抑える仕組みで、
+  shared blanket hold 延長ではない。
 - `order_manager`
   の
   `profit_guard`

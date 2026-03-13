@@ -8,6 +8,68 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `scalp_extrema_reversal_live` soft TP ratio guard（2026-03-13）
+- 背景:
+  - 2026-03-13 の local-v2 で
+    `scalp_extrema_reversal_live`
+    は
+    broker TP を置いている一方、
+    positive
+    `MARKET_ORDER_TRADE_CLOSE`
+    が
+    `+0.8p ~ +1.2p`
+    に寄っていた。
+  - tick 照合では
+    `ticket 460291`
+    が
+    `+1.2p`
+    market close の
+    `14s`
+    後に broker TP へ到達し、
+    `459913`
+    も
+    close 後
+    `23s`
+    で TP touch していた。
+  - ただし
+    `460254`
+    は early close 後に
+    `sl_hit_s=27`
+    だったため、
+    strategy 全体の hold 延長は危険だった。
+- 実装:
+  - `config/strategy_exit_protections.yaml`
+    の
+    `scalp_extrema_reversal_live`
+    で、
+    `min_profit_ratio=0.60`
+    /
+    `min_profit_ratio_min_tp_pips=2.0`
+    を設定し、
+    `take_profit`
+    /
+    `lock_floor`
+    /
+    `range_timeout`
+    /
+    `candle_*`
+    の soft close では
+    broker TP の
+    60%
+    未満の positive exit を
+    `order_manager`
+    が reject するようにした。
+  - 既存の
+    `close_reject_profit_ratio`
+    path を使うため、
+    common code は増やしていない。
+- 意図:
+  - `scalp_extrema_reversal_live`
+    の
+    early TP cut を減らし、
+    小利幅の market close を
+    broker TP 近傍へ寄せる。
+
 ### local-v2 `DroughtRevert` weak trend-long probe guard（2026-03-13）
 - 背景:
   - 2026-03-13 16:34-16:35 JST の local-v2 で

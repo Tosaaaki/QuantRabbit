@@ -51,6 +51,146 @@
 - Status:
 ```
 
+## 2026-03-13 17:25 JST / local-v2: `scalp_extrema_reversal_live` の soft TP を broker TP 近傍まで引き上げ
+
+- Change:
+  - `config/strategy_exit_protections.yaml`
+    の
+    `scalp_extrema_reversal_live`
+    で
+    `min_profit_ratio`
+    を
+    `0.20 -> 0.60`
+    へ引き上げ、
+    `min_profit_ratio_min_tp_pips=2.0`
+    と
+    `min_profit_ratio_reasons=[take_profit, lock_floor, range_timeout, candle_*]`
+    を追加した。
+  - `tests/execution/test_order_manager_exit_policy.py`
+    に、
+    `candle_*`
+    soft close が
+    TP 比率未達なら
+    `close_reject_profit_ratio`
+    になる回帰を追加した。
+- Why:
+  - user 指摘どおり、
+    `scalp_extrema_reversal_live`
+    は
+    broker TP を置いているのに、
+    soft market close が早すぎた。
+  - `ticket 460291`
+    は
+    `MARKET_ORDER_TRADE_CLOSE`
+    で
+    `+1.2p`
+    で閉じた
+    `14s`
+    後に
+    broker TP へ到達していた。
+  - 追加で sampled した
+    `459861, 459913`
+    も
+    market close 後に
+    `tp_touch_s=144s, 46s`
+    を記録しており、
+    `Extrema`
+    の positive exits は
+    TP 手前で降り過ぎていた。
+  - 一方で
+    `460254`
+    は早逃げ後に
+    `sl_hit_s=27`
+    を踏んでおり、
+    broad に hold を伸ばすのは危険だった。
+- Hypothesis:
+  - `scalp_extrema_reversal_live`
+    の soft exit 全体を緩めるのではなく、
+    `take_profit/lock_floor/range_timeout/candle_*`
+    の positive market close だけを
+    broker TP の
+    `60%`
+    以上まで待たせれば、
+    early profit cut を減らしつつ
+    `460254`
+    のような早逃げ必要ケースは残せる。
+- Expected Good:
+  - `Extrema`
+    の
+    `+0.8p ~ +1.2p`
+    での早利確が減り、
+    `broker TP`
+    へ近い利幅を取りやすくなる。
+  - `MARKET_ORDER_TRADE_CLOSE`
+    の小利幅偏重を減らせる。
+- Expected Bad:
+  - 反転前に market close できず、
+    小幅利確が減る。
+  - `candle_*`
+    soft close の一部が blocked されて、
+    giveback が増える可能性がある。
+- Period:
+  - local-v2 recent
+    `2026-03-12 16:00 UTC - 2026-03-13 04:30 UTC`
+    の
+    `scalp_extrema_reversal_live`
+    MARKET_ORDER_TRADE_CLOSE を
+    `logs/trades.db`
+    と
+    `logs/replay/USD_JPY/USD_JPY_ticks_20260312-20260313.jsonl`
+    で照合。
+- Fact:
+  - sampled
+    `scalp_extrema_reversal_live`
+    market close
+    `5` 本のうち、
+    `TP_touch<=300s: 2/5`,
+    `TP_touch<=600s: 4/5`
+    だった。
+  - recent 24h の
+    `scalp_extrema_reversal_live`
+    は
+    `STOP_LOSS_ORDER 33 trades / -109.648 JPY`
+    に対し、
+    `MARKET_ORDER_TRADE_CLOSE 17 trades / +19.32 JPY`
+    で、
+    positive exits の利幅が薄かった。
+- Failure Cause:
+  - `scalp_extrema_reversal_live`
+    は
+    broker TP を持っていても、
+    existing soft close guard が
+    `TP 20%`
+    相当で通っていたため、
+    take-profit / candle reversal / lock-floor が
+    TP 手前で成立していた。
+- Improvement:
+  - shared layer を広く変えず、
+    `scalp_extrema_reversal_live`
+    だけ
+    TP ratio guard を引き上げた。
+- Verification:
+  - `python3 /Users/tossaki/.codex/skills/qr-tick-entry-validate/scripts/tick_entry_validate.py --trades-db logs/trades.db --ticks logs/replay/USD_JPY/USD_JPY_ticks_20260312.jsonl --ticks logs/replay/USD_JPY/USD_JPY_ticks_20260313.jsonl --instrument USD_JPY --ticket 459875 --ticket 459861 --ticket 459845 --ticket 459913 --ticket 460187 --post-close-sec 120`
+  - `python3 -m py_compile tests/execution/test_order_manager_exit_policy.py`
+  - `.venv/bin/pytest tests/execution/test_order_manager_exit_policy.py -k "close_trade_blocks_extrema_candle_exit_until_tp_ratio or close_trade_uses_explicit_flow_context_for_negative_close" -q`
+  - `.venv/bin/pytest tests/workers/test_scalp_level_reject_exit_worker.py -q`
+- Verdict:
+  - pending
+- Next Action:
+  - 反映後、
+    `scalp_extrema_reversal_live`
+    の
+    `MARKET_ORDER_TRADE_CLOSE`
+    平均利幅と
+    `TAKE_PROFIT_ORDER`
+    件数が改善するかを見る。
+  - giveback が増えるなら、
+    next は strategy 全体ではなく
+    `short countertrend + volatility_compression`
+    の reason 別に再分解する。
+- Status:
+  - in_progress
+
 ## 2026-03-13 16:55 JST / local-v2: `DroughtRevert` の current bad probe を worker-local に遮断
 
 - Change:

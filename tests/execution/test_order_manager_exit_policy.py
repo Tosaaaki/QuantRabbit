@@ -281,6 +281,59 @@ def test_close_trade_uses_explicit_flow_context_for_negative_close(monkeypatch) 
     assert seen["request_data"] == {"units": "1000"}
 
 
+def test_close_trade_blocks_extrema_candle_exit_until_tp_ratio(monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    async def _fake_service_request(path, payload):
+        return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
+
+    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request)
+    monkeypatch.setattr(order_manager, "_is_valid_live_trade_id", lambda _trade_id: True)
+    monkeypatch.setattr(order_manager, "_exit_context_snapshot", lambda _reason: {})
+    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs)))
+    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "log_metric", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_strategy_tag_from_client_id", lambda _client_id: None)
+    monkeypatch.setattr(
+        order_manager,
+        "_load_exit_trade_context",
+        lambda _trade_id, _client_id: {
+            "entry_price": 159.406,
+            "units": -152,
+            "tp_price": 159.383,
+        },
+    )
+    monkeypatch.setattr(order_manager, "_reject_exit_by_control", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(order_manager, "_min_profit_pips", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(order_manager, "_latest_bid_ask", lambda: (159.393, 159.395))
+    monkeypatch.setattr(order_manager, "_estimate_trade_pnl_pips", lambda **_kwargs: 1.2)
+    monkeypatch.setattr(order_manager, "_exit_end_reversal_eval", lambda **_kwargs: {"triggered": False})
+    monkeypatch.setattr(order_manager, "_min_profit_ratio", lambda *_args, **_kwargs: 0.60)
+    monkeypatch.setattr(order_manager, "_min_profit_ratio_reasons", lambda *_args, **_kwargs: {"candle_*"})
+    monkeypatch.setattr(order_manager, "_min_profit_ratio_min_tp_pips", lambda *_args, **_kwargs: 2.0)
+    monkeypatch.setattr(order_manager, "_hold_until_profit_match", lambda *_args, **_kwargs: (False, 0.0, False))
+    monkeypatch.setattr(order_manager, "_current_trade_unrealized_pl", lambda _trade_id: 18.24)
+    monkeypatch.setattr(order_manager, "_should_allow_negative_close", lambda _client_id: False)
+    monkeypatch.setattr(order_manager, "_reason_force_allow", lambda _reason: False)
+    monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
+
+    ok = asyncio.run(
+        order_manager.close_trade(
+            "460291",
+            152,
+            client_order_id="cid-extrema",
+            allow_negative=False,
+            exit_reason="candle_bearish_engulfing",
+            strategy_tag="scalp_extrema_reversal_live",
+            pocket="scalp_fast",
+            instrument="USD_JPY",
+        )
+    )
+
+    assert ok is False
+    assert any(str(item.get("status")) == "close_reject_profit_ratio" for item in captured)
+
+
 def test_strategy_control_exit_failopen_threshold_path(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED", True)
     monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD", 3)

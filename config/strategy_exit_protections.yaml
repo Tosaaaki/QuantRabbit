@@ -1153,7 +1153,13 @@ strategies:
 
   scalp_extrema_reversal_live:
     min_profit_pips: 0.6
-    min_profit_ratio: 0.20
+    min_profit_ratio: 0.60
+    min_profit_ratio_min_tp_pips: 2.0
+    min_profit_ratio_reasons:
+      - take_profit
+      - lock_floor
+      - range_timeout
+      - candle_*
     be_profile: {trigger_pips: 0.9, lock_ratio: 0.45, min_lock_pips: 0.35, cooldown_sec: 8}
     tp_move: {enabled: true, trigger_pips: 0.8, buffer_pips: 0.55}
     exit_profile:
