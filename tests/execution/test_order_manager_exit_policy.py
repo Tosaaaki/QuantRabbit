@@ -414,6 +414,14 @@ def test_close_trade_allows_extrema_lock_floor_near_be(monkeypatch) -> None:
     }
 
 
+def test_strategy_min_profit_buffers_allow_near_be_for_wick_profiles() -> None:
+    from execution import order_manager
+
+    assert order_manager._min_profit_pips("scalp", "PrecisionLowVol") == pytest.approx(0.1)
+    assert order_manager._min_profit_pips("scalp", "DroughtRevert") == pytest.approx(0.1)
+    assert order_manager._min_profit_pips("scalp", "WickReversalBlend") == pytest.approx(0.2)
+
+
 def test_strategy_control_exit_failopen_threshold_path(monkeypatch) -> None:
     monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_ENABLED", True)
     monkeypatch.setattr(order_manager, "_ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_BLOCK_THRESHOLD", 3)

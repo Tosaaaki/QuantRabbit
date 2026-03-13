@@ -75,6 +75,14 @@
 - 共通 `exit_manager` はスタブで、exit 判定の主体ではありません。
 - Brain は optional で、現行 safe canary は `brain-ollama-safe.env` 合成前提です。
 - common layer は preserve-intent 方針で、戦略の方向意図を後付けで再採点しません。
+- `session_open_breakout` は
+  `min_hold_sec=300`
+  の negative/candle exit を維持したまま、
+  positive PnL 中だけ
+  `workers/session_open/exit_worker.py`
+  から broker
+  `set_trade_protections`
+  を前倒しで更新する。
 - `PrecisionLowVol` / `DroughtRevert` は `workers/scalp_wick_reversal_blend/worker.py`
   の thin wrapper で、
   `PrecisionLowVol`

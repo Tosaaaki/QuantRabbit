@@ -51,6 +51,205 @@
 - Status:
 ```
 
+## 2026-03-13 18:25 JST / local-v2: `positive -> negative close` の残り本丸を 3 本同時に補修
+
+- Change:
+  - `config/strategy_exit_protections.yaml`
+    で
+    `PrecisionLowVol`
+    /
+    `DroughtRevert`
+    の
+    `min_profit_pips`
+    を
+    `0.35/0.40 -> 0.10`
+    へ下げ、
+    `be_profile`
+    /
+    `tp_move`
+    を早めた。
+  - 同ファイルで
+    `WickReversalBlend`
+    の
+    `min_profit_pips`
+    を
+    `0.45 -> 0.20`
+    に下げ、
+    `be_profile`
+    /
+    `tp_move`
+    /
+    `exit_profile.min_hold_sec`
+    を前倒しした。
+  - `session_open_breakout`
+    に
+    strategy-level
+    `be_profile`
+    /
+    `tp_move`
+    /
+    `start_delay_sec`
+    を追加した。
+  - `workers/session_open/exit_worker.py`
+    に、
+    既存
+    `min_hold_sec=300`
+    の negative/candle gate とは別に、
+    positive PnL 中だけ broker
+    `SL/TP`
+    を前倒し更新する
+    early protection path を追加した。
+  - 回帰として
+    `tests/workers/test_session_open_exit_worker.py`
+    と
+    `tests/execution/test_order_manager_exit_policy.py`
+    を追加・更新した。
+- Why:
+  - `close_reject_profit_buffer`
+    の直近事実として、
+    `DroughtRevert ticket=460199`
+    は
+    `min_profit_pips=0.4 / est_pips=0.2 / exit_reason=lock_floor`
+    で reject、
+    `PrecisionLowVol ticket=460323`
+    は
+    `min_profit_pips=0.35 / est_pips=0.2 / exit_reason=take_profit`
+    で reject されていた。
+  - tick 照合では
+    `session_open_breakout ticket=459853`
+    が
+    `MFE=3.5p`
+    を見た後、
+    `296s`
+    で
+    `STOP_LOSS_ORDER -4.4p`
+    に戻していた。
+    一方で
+    worker 実装は
+    `min_hold_sec=300`
+    の前に profit protection を持っていなかった。
+  - `WickReversalBlend ticket=460529/460533`
+    も
+    `MFE=1.7p / 1.3p`
+    を見た後に
+    `STOP_LOSS_ORDER`
+    へ落ちており、
+    current protection trigger が遅かった。
+- Hypothesis:
+  - scalp reversion 系は
+    `+0.2p ~ +0.6p`
+    の protective close を通せば
+    `+を見てから-へ戻す`
+    churn をかなり減らせる。
+  - `session_open_breakout`
+    は
+    `loss-cut を遅らせる`
+    方針自体は維持しつつ、
+    positive 側だけ
+    broker protection を早く動かせば、
+    macro lane の勝ちを守れる。
+- Expected Good:
+  - `PrecisionLowVol`
+    /
+    `DroughtRevert`
+    の
+    `close_reject_profit_buffer`
+    が消える。
+  - `session_open_breakout`
+    の
+    `MFE>0`
+    からの
+    `STOP_LOSS_ORDER`
+    が減る。
+  - `WickReversalBlend`
+    の短い positive excursion が
+    broker protection へ変わる。
+- Expected Bad:
+  - early protection を前倒しし過ぎると、
+    micro/scalp の winner が
+    near-BE
+    で刈られやすくなる。
+  - `session_open_breakout`
+    で broker SL/TP 更新頻度が増える。
+- Period:
+  - 直近
+    `2026-03-12 00:00 UTC`
+    から
+    `2026-03-13 09:20 UTC`
+    の trades / orders / local-v2 logs。
+- Fact:
+  - `459853`
+    は
+    `tp_pips=7.114 / sl_pips=4.446 / MFE=3.5p / SL hit=296s`
+    だった。
+  - `460529`
+    は
+    `MFE=1.7p -> STOP_LOSS_ORDER -2.5p`、
+    `460533`
+    は
+    `MFE=1.3p -> STOP_LOSS_ORDER -2.4p`
+    だった。
+  - `460199`
+    /
+    `460323`
+    の close reject reason は
+    どちらも
+    `profit_buffer`
+    で、
+    est positive の protective close が共通 gate に止められていた。
+- Failure Cause:
+  - scalp reversion lane では
+    strategy-local protective intent より
+    shared
+    `min_profit_pips`
+    が勝っていた。
+  - `session_open_breakout`
+    は
+    `negative exit を遅らせる`
+    ための
+    `min_hold_sec`
+    が、
+    positive protection まで一緒に遅らせていた。
+- Improvement:
+  - scalp 3 strategy は
+    near-BE close を通すよう
+    `min_profit_pips`
+    と
+    `be/tp move`
+    を strategy-local に緩和した。
+  - `session_open_breakout`
+    は
+    `close_trade`
+    ではなく
+    broker
+    `set_trade_protections`
+    で先に守る path を worker-local に入れた。
+- Verification:
+  - `python3 -m py_compile utils/strategy_protection.py workers/session_open/exit_worker.py tests/workers/test_session_open_exit_worker.py tests/execution/test_order_manager_exit_policy.py`
+  - `.venv/bin/pytest tests/workers/test_session_open_exit_worker.py -q`
+  - `.venv/bin/pytest tests/workers/test_scalp_wick_reversal_blend_exit_worker.py -q`
+  - `.venv/bin/pytest tests/execution/test_order_manager_exit_policy.py -q`
+- Verdict:
+  - pending
+- Next Action:
+  - 反映後
+    `close_reject_profit_buffer`
+    の
+    `DroughtRevert / PrecisionLowVol`
+    再発有無、
+    `session_open_breakout`
+    の
+    `PROTECT][legacy_set_trade_protections`
+    実ログ、
+    `WickReversalBlend`
+    の
+    `STOP_LOSS_ORDER`
+    比率を
+    `30-120m`
+    追う。
+- Status:
+  - open
+
 ## 2026-03-13 17:45 JST / local-v2: `scalp_extrema_reversal_live` の `lock_floor` を near-BE で通す
 
 - Change:

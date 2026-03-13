@@ -41,6 +41,62 @@
     の low-sample loser lane だけを
     strategy-local に薄くする。
 
+### 2026-03-13（追記）`session_open_breakout` に early profit protection を追加し、`DroughtRevert` / `PrecisionLowVol` / `WickReversalBlend` の near-BE close を通す
+
+- 対象:
+  - `workers/session_open/exit_worker.py`
+  - `utils/strategy_protection.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/workers/test_session_open_exit_worker.py`
+  - `tests/execution/test_order_manager_exit_policy.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 変更:
+  - `session_open_breakout`
+    に
+    worker-local
+    early profit protection を追加し、
+    `min_hold_sec=300`
+    の前でも positive PnL なら
+    broker
+    `SL/TP`
+    を更新できるようにした。
+  - `strategy_exit_protections`
+    側では
+    `session_open_breakout`
+    の
+    `be_profile/tp_move/start_delay`
+    を新設し、
+    `PrecisionLowVol`
+    /
+    `DroughtRevert`
+    /
+    `WickReversalBlend`
+    の
+    `min_profit_pips`
+    と
+    `be_profile/tp_move`
+    を near-BE 側へ前倒しした。
+  - regression として、
+    `session_open`
+    が
+    `min_hold_sec`
+    前でも
+    `set_trade_protections`
+    を呼ぶことと、
+    `PrecisionLowVol`
+    /
+    `DroughtRevert`
+    /
+    `WickReversalBlend`
+    の low profit floor を固定した。
+- 意図:
+  - `含み益を見てからマイナスで終わる`
+    current loser lane を、
+    stop widening ではなく
+    earlier profit protection で潰す。
+
 ### 2026-03-13（追記）`DroughtRevert` に weak trend-long probe guard を追加
 
 - 対象:

@@ -123,3 +123,20 @@ def exit_profile_for_tag(strategy_tag: Optional[str]) -> dict:
     override_profile = override.get("exit_profile") if isinstance(override, dict) else None
     return _merge_profile(defaults_profile, override_profile)
 
+
+def be_profile_for_tag(strategy_tag: Optional[str]) -> dict:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    defaults_profile = defaults.get("be_profile") if isinstance(defaults, dict) else None
+    override = _strategy_override(cfg, strategy_tag)
+    override_profile = override.get("be_profile") if isinstance(override, dict) else None
+    return _merge_profile(defaults_profile, override_profile)
+
+
+def tp_move_profile_for_tag(strategy_tag: Optional[str]) -> dict:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    defaults_profile = defaults.get("tp_move") if isinstance(defaults, dict) else None
+    override = _strategy_override(cfg, strategy_tag)
+    override_profile = override.get("tp_move") if isinstance(override, dict) else None
+    return _merge_profile(defaults_profile, override_profile)

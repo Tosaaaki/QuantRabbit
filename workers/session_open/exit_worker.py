@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
+from execution.order_manager import set_trade_protections
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -20,7 +21,7 @@ from .exit_forecast import (
 from .exit_utils import close_trade, mark_pnl_pips
 from .reentry_decider import decide_reentry
 from .loss_cut import LossCutParams, pick_loss_cut_reason, resolve_loss_cut
-from utils.strategy_protection import exit_profile_for_tag
+from utils.strategy_protection import be_profile_for_tag, exit_profile_for_tag, tp_move_profile_for_tag
 
 
 from . import config
@@ -256,6 +257,9 @@ def _trade_has_stop_loss(trade: dict) -> bool:
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    be_last_ts: float = 0.0
+    be_last_sl: Optional[float] = None
+    be_last_tp: Optional[float] = None
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -263,6 +267,28 @@ class _TradeState:
         if pnl > 0:
             floor = max(0.0, pnl - lock_buffer)
             self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
+
+
+def _trade_stop_loss_price(trade: dict) -> Optional[float]:
+    stop_loss = trade.get("stop_loss")
+    if not isinstance(stop_loss, dict):
+        return None
+    try:
+        price = float(stop_loss.get("price"))
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0.0 else None
+
+
+def _trade_take_profit_price(trade: dict) -> Optional[float]:
+    take_profit = trade.get("take_profit")
+    if not isinstance(take_profit, dict):
+        return None
+    try:
+        price = float(take_profit.get("price"))
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0.0 else None
 
 
 class SessionOpenExitWorker:
@@ -361,6 +387,124 @@ class SessionOpenExitWorker:
         else:
             LOG.error("[exit-session-open] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
+    async def _maybe_move_profit_protection(
+        self,
+        *,
+        trade: dict,
+        trade_id: str,
+        strategy_tag: str,
+        state: _TradeState,
+        side: str,
+        entry: float,
+        pnl: float,
+        mid: Optional[float],
+    ) -> None:
+        if pnl <= 0.0:
+            return
+        be_profile = be_profile_for_tag(strategy_tag)
+        tp_move_profile = tp_move_profile_for_tag(strategy_tag)
+        if not be_profile and not tp_move_profile:
+            return
+
+        def _pick_float(value: object, default: float) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        current_sl = _trade_stop_loss_price(trade)
+        current_tp = _trade_take_profit_price(trade)
+        desired_sl = current_sl
+        desired_tp = current_tp
+        sl_updated = False
+        tp_updated = False
+        lock_metric_pips: Optional[float] = None
+        now_mono = time.monotonic()
+
+        if isinstance(be_profile, dict):
+            trigger_pips = max(0.0, _pick_float(be_profile.get("trigger_pips"), 0.0))
+            lock_ratio = max(0.0, min(1.0, _pick_float(be_profile.get("lock_ratio"), 0.0)))
+            min_lock_pips = max(0.0, _pick_float(be_profile.get("min_lock_pips"), 0.0))
+            cooldown_sec = max(0.0, _pick_float(be_profile.get("cooldown_sec"), 0.0))
+            if (
+                trigger_pips > 0.0
+                and pnl >= trigger_pips
+                and lock_ratio > 0.0
+                and (cooldown_sec <= 0.0 or (now_mono - float(state.be_last_ts or 0.0)) >= cooldown_sec)
+            ):
+                lock_pips = max(min_lock_pips, float(pnl) * lock_ratio)
+                candidate_sl = entry + lock_pips * _BB_PIP if side == "long" else entry - lock_pips * _BB_PIP
+                if mid is not None:
+                    if side == "long":
+                        candidate_sl = min(candidate_sl, float(mid) - 0.003)
+                    else:
+                        candidate_sl = max(candidate_sl, float(mid) + 0.003)
+                if side == "long":
+                    if candidate_sl > entry + 1e-6 and (current_sl is None or candidate_sl > current_sl + 1e-6):
+                        desired_sl = round(candidate_sl, 3)
+                        sl_updated = True
+                        lock_metric_pips = lock_pips
+                else:
+                    if candidate_sl < entry - 1e-6 and (current_sl is None or candidate_sl < current_sl - 1e-6):
+                        desired_sl = round(candidate_sl, 3)
+                        sl_updated = True
+                        lock_metric_pips = lock_pips
+
+        effective_sl = desired_sl if sl_updated else current_sl
+        locked_profit = False
+        if effective_sl is not None:
+            locked_profit = (
+                (side == "long" and effective_sl > entry + 1e-6)
+                or (side == "short" and effective_sl < entry - 1e-6)
+            )
+
+        if isinstance(tp_move_profile, dict) and locked_profit:
+            enabled = str(tp_move_profile.get("enabled", True)).strip().lower() not in {"0", "false", "no", "off"}
+            trigger_pips = max(0.0, _pick_float(tp_move_profile.get("trigger_pips"), 0.0))
+            buffer_pips = max(0.0, _pick_float(tp_move_profile.get("buffer_pips"), 0.0))
+            min_gap_pips = max(0.3, _pick_float(tp_move_profile.get("min_gap_pips"), 0.3))
+            if enabled and trigger_pips > 0.0 and pnl >= trigger_pips and mid is not None:
+                if side == "long":
+                    candidate_tp = max(entry + min_gap_pips * _BB_PIP, float(mid) + buffer_pips * _BB_PIP)
+                    if current_tp is None or current_tp - candidate_tp > 1e-6:
+                        desired_tp = round(candidate_tp, 3)
+                        tp_updated = True
+                else:
+                    candidate_tp = min(entry - min_gap_pips * _BB_PIP, float(mid) - buffer_pips * _BB_PIP)
+                    if current_tp is None or candidate_tp - current_tp > 1e-6:
+                        desired_tp = round(candidate_tp, 3)
+                        tp_updated = True
+
+        if not sl_updated and not tp_updated:
+            return
+        if state.be_last_sl == desired_sl and state.be_last_tp == desired_tp:
+            return
+        ok = await set_trade_protections(
+            trade_id,
+            sl_price=desired_sl if (sl_updated or current_sl is not None) else None,
+            tp_price=desired_tp if (tp_updated or current_tp is not None) else None,
+        )
+        if not ok:
+            return
+        state.be_last_ts = now_mono
+        state.be_last_sl = desired_sl
+        state.be_last_tp = desired_tp
+        LOG.info(
+            "[exit-session-open] protection_move trade=%s tag=%s pnl=%.2fp sl=%s tp=%s",
+            trade_id,
+            strategy_tag or "unknown",
+            pnl,
+            f"{desired_sl:.3f}" if desired_sl is not None else "-",
+            f"{desired_tp:.3f}" if desired_tp is not None else "-",
+        )
+        if lock_metric_pips is not None:
+            LOG.info(
+                "[exit-session-open] protection_lock trade=%s tag=%s lock_pips=%.2f",
+                trade_id,
+                strategy_tag or "unknown",
+                lock_metric_pips,
+            )
+
     async def _review_trade(self, trade: dict, now: datetime, mid: float, range_active: bool) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
@@ -393,6 +537,35 @@ class SessionOpenExitWorker:
             LOG.warning("[exit-session-open] missing client_id trade=%s skip close", trade_id)
             return
 
+        state = self._states.get(trade_id)
+        if state is None:
+            state = _TradeState(peak=pnl)
+            self._states[trade_id] = state
+        elif pnl > state.peak:
+            state.peak = pnl
+
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or ""
+        )
+        base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
+        if pnl > 0.0:
+            await self._maybe_move_profit_protection(
+                trade=trade,
+                trade_id=trade_id,
+                strategy_tag=base_tag or str(strategy_tag or ""),
+                state=state,
+                side=side,
+                entry=entry,
+                pnl=float(pnl),
+                mid=mid,
+            )
+
         if hold_sec < self.min_hold_sec:
             return
 
@@ -400,16 +573,6 @@ class SessionOpenExitWorker:
         # For macro trades, require longer hold before considering loss-cut to avoid
         # premature exits that cause the bulk of market-order close losses.
         if pnl <= 0 and hold_sec >= self.loss_cut_min_hold_sec:
-            strategy_tag = (
-                thesis.get("strategy_tag")
-                or thesis.get("strategy_tag_raw")
-                or thesis.get("strategy")
-                or thesis.get("tag")
-                or trade.get("strategy_tag")
-                or trade.get("strategy")
-                or ""
-            )
-            base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
             exit_profile = exit_profile_for_tag(base_tag or strategy_tag)
             sl_hint = None
             try:
@@ -514,10 +677,6 @@ class SessionOpenExitWorker:
             lock_buffer_floor=0.5,
         )
 
-        state = self._states.get(trade_id)
-        if state is None:
-            state = _TradeState(peak=pnl)
-            self._states[trade_id] = state
         state.update(pnl, lock_buffer)
 
         if pnl >= trail_start:

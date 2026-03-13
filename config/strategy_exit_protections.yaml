@@ -904,11 +904,11 @@ strategies:
       loss_cut_cooldown_sec: 5
 
   WickReversalBlend:
-    min_profit_pips: 0.45
+    min_profit_pips: 0.20
     min_profit_ratio: 0.0
     min_profit_ratio_min_tp_pips: 99.0
-    be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
-    tp_move: {enabled: true, trigger_pips: 0.9, buffer_pips: 0.65}
+    be_profile: {trigger_pips: 0.9, lock_ratio: 0.45, min_lock_pips: 0.20, cooldown_sec: 8}
+    tp_move: {enabled: true, trigger_pips: 0.75, buffer_pips: 0.55}
     neg_exit:
       allow_reasons:
         - max_adverse
@@ -924,6 +924,7 @@ strategies:
         - free_margin_low
         - margin_usage_high
     exit_profile:
+      min_hold_sec: 5
       # Blend is a higher-quality wick fade with tick confirmation; still cap tail risk mechanically.
       loss_cut_enabled: true
       loss_cut_require_sl: false
@@ -933,16 +934,22 @@ strategies:
       loss_cut_cooldown_sec: 5
 
   PrecisionLowVol:
-    min_profit_pips: 0.35
+    min_profit_pips: 0.10
     min_profit_ratio: 0.0
-    be_profile: {trigger_pips: 1.0, lock_ratio: 0.42, min_lock_pips: 0.35, cooldown_sec: 10}
-    tp_move: {enabled: true, trigger_pips: 0.85, buffer_pips: 0.55}
+    be_profile: {trigger_pips: 0.8, lock_ratio: 0.45, min_lock_pips: 0.20, cooldown_sec: 8}
+    tp_move: {enabled: true, trigger_pips: 0.65, buffer_pips: 0.45}
 
   DroughtRevert:
-    min_profit_pips: 0.4
+    min_profit_pips: 0.10
     min_profit_ratio: 0.0
-    be_profile: {trigger_pips: 1.1, lock_ratio: 0.40, min_lock_pips: 0.40, cooldown_sec: 12}
-    tp_move: {enabled: true, trigger_pips: 0.9, buffer_pips: 0.60}
+    be_profile: {trigger_pips: 0.8, lock_ratio: 0.45, min_lock_pips: 0.20, cooldown_sec: 8}
+    tp_move: {enabled: true, trigger_pips: 0.70, buffer_pips: 0.45}
+
+  session_open_breakout:
+    be_profile: {trigger_pips: 1.4, lock_ratio: 0.38, min_lock_pips: 0.45, cooldown_sec: 12}
+    tp_move: {enabled: true, trigger_pips: 1.4, buffer_pips: 0.8}
+    start_delay_sec: 15
+    max_delay_sec: 35
 
   WickReversalPro:
     min_profit_pips: 1.0

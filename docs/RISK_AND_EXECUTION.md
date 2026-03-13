@@ -8,6 +8,93 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `positive -> negative close` の残件補修（2026-03-13）
+- 背景:
+  - `DroughtRevert`
+    の
+    `ticket 460199`
+    は
+    `lock_floor +0.2p`
+    が
+    `min_profit_pips=0.4`
+    で reject されていた。
+  - `PrecisionLowVol`
+    の
+    `ticket 460323`
+    は
+    `take_profit +0.2p`
+    が
+    `min_profit_pips=0.35`
+    で reject されていた。
+  - `session_open_breakout`
+    の
+    `ticket 459853`
+    は
+    `MFE=3.5p`
+    を見たが、
+    worker が
+    `min_hold_sec=300`
+    前に profit protection を持たず、
+    `296s`
+    後に
+    `STOP_LOSS_ORDER`
+    へ戻していた。
+  - `WickReversalBlend`
+    も
+    `460529/460533`
+    で
+    `MFE=1.7p/1.3p`
+    後に
+    `STOP_LOSS_ORDER`
+    へ戻していた。
+- 実装:
+  - `PrecisionLowVol`
+    /
+    `DroughtRevert`
+    の
+    `min_profit_pips`
+    を
+    `0.10`
+    に下げ、
+    `be_profile`
+    /
+    `tp_move`
+    の trigger を早めた。
+  - `WickReversalBlend`
+    は
+    `min_profit_pips=0.20`
+    と
+    earlier
+    `be_profile`
+    /
+    `tp_move`
+    /
+    `min_hold_sec=5`
+    に切り替えた。
+  - `session_open_breakout`
+    は
+    strategy protection config に
+    `be_profile`
+    /
+    `tp_move`
+    /
+    `start_delay_sec`
+    を追加し、
+    `workers/session_open/exit_worker.py`
+    でも
+    `close_trade`
+    とは別に
+    broker
+    `set_trade_protections`
+    を早期実行する。
+- 意図:
+  - `含み益を見てから負ける`
+    lane を
+    `shared gate の reject`
+    と
+    `profit protection 不在`
+    の両面から止める。
+
 ### local-v2 `scalp_extrema_reversal_live` soft TP ratio guard（2026-03-13）
 - 背景:
   - 2026-03-13 の local-v2 で
