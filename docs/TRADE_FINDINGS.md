@@ -21020,3 +21020,125 @@ Status:
     と見なし、
     shared sizing ではなく
     worker-local signal gate を 1 本だけ詰める。
+
+## 2026-03-13 14:10 JST - `scalp_ping_5s_c_live` の generic min-units rescue を post-probability floor へ拡張
+
+- Why/Hypothesis:
+  - `2026-03-13 13:59 JST`
+    の local-v2 実測では、
+    `USD/JPY bid=159.477 / ask=159.485 / spread=0.8p / M1 ATR=3.39p / M5 ATR=6.05p`
+    で、
+    `data_lag_ms=121-943`,
+    `decision_latency_ms=11-67`,
+    `open_trades=0`
+    と市況・API 品質は通常帯だった。
+  - それでも
+    `fills_15m=0`, `fills_30m=4`
+    で low activity が続き、
+    `orders.db`
+    直近6hの
+    `entry_probability_reject`
+    は
+    `scalp_ping_5s_c_live`
+    の
+    `entry_probability_below_min_units=53`
+    に集中していた。
+  - 直近 reject sample は
+    `2026-03-13 13:52:09 JST`
+    の
+    `entry_probability=0.824175`, `confidence=92`, `units=5`
+    で、
+    `lookahead_rescue_applied=0`
+    の generic small probe が
+    `order_manager`
+    preserve-intent scale で
+    `5 -> 4`
+    相当に潰されていた。
+  - 仮説は、
+    「lookahead rescue 専用 floor だけでは current no-fill を捌けず、
+    generic `min_units_rescue`
+    自体にも bounded post-probability floor を入れれば、
+    `entry_probability>=0.46`
+    の rescue candidate を worker-local に cadence 回復できる」
+    である。
+
+- Expected Good:
+  - `scalp_ping_5s_c_live`
+    の rescued small probe が
+    `entry_probability_below_min_units`
+    へ落ちにくくなり、
+    fills cadence が戻る。
+  - bounded floor
+    （`max MIN_UNITS*2`）
+    なので、
+    broad shared loosening ではなく
+    strategy-local の small probe だけを薄く通せる。
+
+- Expected Bad:
+  - `entry_probability 0.46-0.55`
+    帯の rescued probe が増えるため、
+    loser noise が増える可能性がある。
+  - cadence だけ戻っても、
+    rescue-tagged trade の PF が伴わなければ
+    追加 tightening が必要になる。
+
+- Observed/Fact:
+  - `orders.db`
+    直近6hの
+    `scalp_ping_5s_c_live`
+    reject 集計は
+    `53件`,
+    `avg_confidence=91.8`,
+    `avg_entry_probability=0.509`,
+    `avg_units=-5.7`
+    だった。
+  - same sample を local で再計算すると、
+    current threshold
+    （`entry_probability>=0.46`, `confidence>=72`）
+    を満たす reject のうち
+    `36/53`
+    は
+    bounded post-probability floor
+    で execution 前 reject を跨げる見込みだった。
+  - `workers/scalp_ping_5s/worker.py`
+    の
+    `min_units_rescue`
+    を
+    `max(MIN_UNITS, ceil((MIN_UNITS-0.5)/entry_probability))`
+    相当の bounded floor
+    へ更新し、
+    `entry_thesis.min_units_rescue_status`
+    へ
+    `rescued_post_probability_floor`
+    を残すようにした。
+  - regression test として、
+    `0.824175 prob / 92 conf`
+    の current reject 相当 sample が
+    `5 -> 6 units`
+    へ救済されることを
+    `tests/workers/test_scalp_ping_5s_worker.py`
+    に固定した。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-scalp-ping-5s-c`
+    と
+    `quant-order-manager`
+    を再起動し、
+    次の
+    `15-30分`
+    で
+    `scalp_ping_5s_c_live`
+    の
+    `entry_probability_reject(entry_probability_below_min_units)`
+    が減るかを確認する。
+  - 反映後は
+    `orders.db`
+    で
+    `min_units_rescue_status='rescued_post_probability_floor'`
+    相当の entry を切り出し、
+    `fills_15m/30m`
+    と
+    `trades.db`
+    の realized JPY を別建てで監視する。

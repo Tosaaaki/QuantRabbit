@@ -478,6 +478,15 @@ flowchart LR
   を補正する。
   これは strategy-local 実装であり、
   共通の後付け exit manager を復活させるものではない。
+- `scalp_ping_5s_c_live` の current local-v2 では、
+  worker local `min_units_rescue`
+  が発火した small probe に対して
+  bounded post-probability floor を先に掛け、
+  `order_manager` preserve-intent scale 後も
+  `entry_probability_below_min_units`
+  で潰れないようにする。
+  これは cadence 回復のための strategy-local sizing であり、
+  shared `ORDER_MIN_UNITS` や broad pocket guard を緩める方針ではない。
 
 
 ## 監査用の記載先

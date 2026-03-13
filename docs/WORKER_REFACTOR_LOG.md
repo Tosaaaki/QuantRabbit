@@ -19038,3 +19038,56 @@
     は
     `0.16`
     帯を維持した。
+
+### 2026-03-13 14:10 JST - `scalp_ping_5s_c_live` の min-units rescue を post-probability floor へ拡張
+
+- 対象:
+  - `workers/scalp_ping_5s/worker.py`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - 市況は通常帯
+    （`USD/JPY 159.477/159.485`, `spread=0.8p`, `M1 ATR=3.39p`, `M5 ATR=6.05p`,
+    `data_lag_ms=121-943`, `decision_latency_ms=11-67`）
+    なのに、
+    `fills_15m=0`
+    が継続した。
+  - `orders.db`
+    直近6hでは
+    `scalp_ping_5s_c_live`
+    の
+    `entry_probability_reject(entry_probability_below_min_units)=53`
+    が集中し、
+    平均
+    `confidence=91.8`,
+    `entry_probability=0.509`
+    でも
+    `-10 .. 5 units`
+    帯で execution 前に落ちていた。
+- 変更:
+  - `min_units_rescue`
+    が発火した候補に対して、
+    `order_manager`
+    の preserve-intent probability scale 後も
+    `MIN_UNITS`
+    を割らない bounded floor
+    （`max MIN_UNITS*2`）
+    を worker local に追加した。
+  - `entry_thesis`
+    へ
+    `min_units_rescue_status`
+    を保存し、
+    `rescued_post_probability_floor`
+    を後追い抽出できるようにした。
+  - regression test として、
+    `0.824175 prob`
+    の small probe が
+    `5 -> 6 units`
+    へ持ち上がるケースを固定した。
+- 意図:
+  - broad loosening ではなく
+    `scalp_ping_5s_c_live`
+    の rescue 済み small probe だけを
+    execution scale mismatch から守り、
+    low-activity 時の cadence を worker local に回復させる。

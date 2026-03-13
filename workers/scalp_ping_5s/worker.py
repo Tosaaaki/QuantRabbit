@@ -3012,7 +3012,31 @@ def _maybe_rescue_min_units(
         return units, "probability_below_rescue_floor"
     if confidence < config.MIN_UNITS_RESCUE_MIN_CONFIDENCE:
         return units, "confidence_below_rescue_floor"
-    return config.MIN_UNITS, "rescued"
+    # Bridge the order-manager preserve-intent probability scale without
+    # loosening beyond a bounded small-probe floor.
+    min_units = max(1, int(_safe_float(getattr(config, "MIN_UNITS", 0), 0.0)))
+    max_units = max(min_units, int(_safe_float(getattr(config, "MAX_UNITS", min_units), min_units)))
+    probability = _clamp(_safe_float(entry_probability, 0.0), 0.0, 1.0)
+    rescue_units = min_units
+    rescue_reason = "rescued"
+    if probability > 0.0:
+        bridge_floor = max(
+            min_units,
+            int(math.ceil((max(1.0, float(min_units)) - 0.5 + 1e-9) / max(probability, 0.01))),
+        )
+        bridge_floor = min(
+            bridge_floor,
+            max(min_units, min_units * 2),
+            max_units,
+        )
+        if bridge_floor > rescue_units:
+            rescue_units = bridge_floor
+            rescue_reason = "rescued_post_probability_floor"
+    if base_units < rescue_units:
+        return units, "base_below_floor"
+    if units_risk < rescue_units:
+        return units, "risk_cap_below_floor"
+    return rescue_units, rescue_reason
 
 
 def _maybe_rescue_short_probe(*, units: int, units_risk: int, side: str) -> tuple[int, str]:
@@ -7671,7 +7695,7 @@ async def scalp_ping_5s_worker() -> None:
             if lookahead_rescue_units_floor_status == "rescued":
                 tech_route_reasons.append("lookahead_rescue_units_floor")
 
-            if min_units_status in {"rescued", "short_probe_rescued"}:
+            if min_units_status in {"rescued", "rescued_post_probability_floor", "short_probe_rescued"}:
                 tech_route_reasons.append("min_units_rescue")
                 if (
                     now_mono - last_min_units_rescue_log_mono
@@ -7979,6 +8003,7 @@ async def scalp_ping_5s_worker() -> None:
                     if lookahead_rescue_recent_fills is not None
                     else None
                 ),
+                "min_units_rescue_status": min_units_status,
                 "lookahead_rescue_units_floor_status": lookahead_rescue_units_floor_status,
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),
                 "extrema_gate_reason": extrema_decision.reason,
