@@ -267,3 +267,45 @@ def test_countertrend_horizon_m1_block_skips_neutral_horizon(monkeypatch) -> Non
     )
 
     assert reason is None
+
+
+def test_countertrend_horizon_m1_block_blocks_horizon_aligned_fast_flip_lane(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scalp_worker.config,
+        "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN",
+        0.03,
+        raising=False,
+    )
+
+    signal = _sample_signal("long")
+    aligned_horizon = scalp_worker.HorizonBias(
+        long_side="long",
+        long_score=0.61,
+        mid_side="long",
+        mid_score=0.54,
+        short_side="long",
+        short_score=0.49,
+        micro_side="long",
+        micro_score=0.42,
+        composite_side="long",
+        composite_score=0.54,
+        agreement=2,
+    )
+
+    reason = scalp_worker._countertrend_horizon_m1_block_reason(
+        signal,
+        aligned_horizon,
+        m1_trend_gate="m1_opposite",
+        m1_score=-0.039,
+    )
+
+    assert reason is not None
+    assert "side=long" in reason
+    assert "hz=long" in reason
+    assert "relation=align" in reason

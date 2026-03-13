@@ -8353,6 +8353,23 @@ async def scalp_ping_5s_worker() -> None:
                     continue
                 units = _abs_units if units > 0 else -_abs_units
 
+            late_contract_signal = SimpleNamespace(
+                side="long" if units > 0 else "short",
+            )
+            late_countertrend_horizon_m1_block_reason = _countertrend_horizon_m1_block_reason(
+                late_contract_signal,
+                horizon,
+                m1_trend_gate=m1_trend_gate,
+                m1_score=m1_score,
+            )
+            if late_countertrend_horizon_m1_block_reason:
+                _note_entry_skip(
+                    "countertrend_horizon_m1_late_block",
+                    late_countertrend_horizon_m1_block_reason,
+                    side=late_contract_signal.side,
+                )
+                continue
+
             result = await market_order(
                 instrument="USD_JPY",
                 units=units,

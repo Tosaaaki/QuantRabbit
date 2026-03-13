@@ -18844,6 +18844,13 @@
     を
     `signal.side == horizon_side`
     の fast-flip align lane も含めて block するようにした。
+  - あわせて
+    `market_order`
+    直前に
+    `countertrend_horizon_m1_late_block`
+    を追加し、
+    後段ルーティングや sizing 調整のあとでも
+    same contract を再評価する二重チェックにした。
   - block reason に
     `relation=align/counter`
     を追加し、

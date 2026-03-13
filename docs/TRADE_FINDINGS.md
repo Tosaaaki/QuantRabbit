@@ -20543,6 +20543,11 @@ Status:
     を
     `relation=align/counter`
     付きで一律 block するように変更した。
+    さらに
+    `market_order`
+    直前にも同じ contract を late 再評価し、
+    途中ルーティングで side/units が変わっても
+    最終送信前に落ちる二重ガードへした。
   - test は
     `tests/workers/test_scalp_ping_5s_worker.py`
     に 2 本追加し、
@@ -20551,6 +20556,10 @@ Status:
     が block されることと、
     `m1_score`
     が閾値未満の weak conflict は preserve されることを固定した。
+    `tests/workers/test_scalp_ping_5s_extrema_routes.py`
+    側にも route-level test を追加したが、
+    環境依存 import で即時実行が安定しないため、
+    今回の反映判断は worker unit test を正本とした。
 
 - Verdict: pending
 
