@@ -81,6 +81,21 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _run_findings_lint() -> tuple[bool, str]:
+    result = subprocess.run(
+        ["python3", "scripts/trade_findings_lint.py"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    output = (result.stdout or "").strip()
+    if result.returncode == 0:
+        return True, output
+    stderr = (result.stderr or "").strip()
+    detail = output if output else stderr
+    return False, detail
+
+
 def main() -> int:
     args = _parse_args()
 
@@ -131,6 +146,14 @@ def main() -> int:
         print('- rerun `scripts/change_preflight.sh "<query>"` with a non-empty query')
         return 1
 
+    lint_ok, lint_detail = _run_findings_lint()
+    if not lint_ok:
+        print("preflight-guard: blocked")
+        print("- TRADE_FINDINGS lint failed")
+        if lint_detail:
+            print(lint_detail)
+        return 1
+
     review = artifact.get("review") if isinstance(artifact.get("review"), dict) else {}
     market = artifact.get("market") if isinstance(artifact.get("market"), dict) else {}
     print("preflight-guard: ok")
@@ -144,6 +167,7 @@ def main() -> int:
             f"fills_15m={market.get('fills_15m', 'n/a')} rejects_30m={market.get('rejects_30m', 'n/a')} "
             f"status={artifact.get('preflight_status', 'n/a')}"
         )
+    print("- findings_lint: ok")
     print(f"- review matches: {len(review.get('entries') or [])}")
     return 0
 

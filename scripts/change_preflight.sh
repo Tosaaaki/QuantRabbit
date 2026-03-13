@@ -206,6 +206,14 @@ echo "== TRADE_FINDINGS Review =="
 python3 "${ROOT_DIR}/scripts/trade_findings_review.py" --query "${QUERY}" --limit "${LIMIT}"
 echo
 
+echo "== TRADE_FINDINGS Lint =="
+python3 "${ROOT_DIR}/scripts/trade_findings_lint.py"
+echo
+
+echo "== TRADE_FINDINGS Index =="
+python3 "${ROOT_DIR}/scripts/trade_findings_index.py"
+echo
+
 echo "== Preflight Artifact =="
 python3 - "${ROOT_DIR}" "${QUERY}" "${LIMIT}" <<'PY'
 from __future__ import annotations
@@ -341,6 +349,22 @@ review_proc = subprocess.run(
 )
 review = json.loads(review_proc.stdout)
 
+lint_proc = subprocess.run(
+    [
+        "python3",
+        str(root / "scripts" / "trade_findings_lint.py"),
+        "--json",
+    ],
+    cwd=root,
+    check=False,
+    capture_output=True,
+    text=True,
+)
+lint = json.loads(lint_proc.stdout) if lint_proc.stdout.strip() else {
+    "ok": False,
+    "issues": [{"kind": "lint_runner_error", "detail": lint_proc.stderr.strip() or "unknown"}],
+}
+
 git_rev = subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"],
     cwd=root,
@@ -357,6 +381,11 @@ artifact = {
     "preflight_status": "warn" if warnings else "ok",
     "warnings": warnings,
     "health_generated_at": health.get("generated_at"),
+    "lint": lint,
+    "index_paths": {
+        "json": str(root / "logs" / "trade_findings_index_latest.json"),
+        "md": str(root / "logs" / "trade_findings_index_latest.md"),
+    },
     "market": {
         "bid": latest_bid,
         "ask": latest_ask,
@@ -380,5 +409,9 @@ artifact = {
 artifact_path = root / "logs" / "change_preflight_latest.json"
 artifact_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
 print(f"artifact={artifact_path}")
-print(f"artifact_status={artifact['preflight_status']} review_entries={len(review.get('entries') or [])}")
+print(
+    f"artifact_status={artifact['preflight_status']} "
+    f"review_entries={len(review.get('entries') or [])} "
+    f"lint_ok={lint.get('ok')}"
+)
 PY

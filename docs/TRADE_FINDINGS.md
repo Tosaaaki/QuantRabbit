@@ -58,10 +58,151 @@
 ## Improvement Memory Protocol
 - 収益/リスク/ENTRY/EXIT 改善の前に必ず `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `TRADE_FINDINGS` review を 1 コマンドにまとめる。
 - runtime / risk / env 変更の commit 前には `.githooks/pre-commit` が `logs/change_preflight_latest.json` の freshness と staged `docs/TRADE_FINDINGS.md` を確認する。新しい clone / 端末では `scripts/install_git_hooks.sh` を 1 回実行する。
+- `scripts/trade_findings_lint.py` は `2026-03-13 20:00` 以降の entry に required fields と `Hypothesis Key` format を要求する。`scripts/trade_findings_index.py` は `logs/trade_findings_index_latest.{json,md}` に latest key / unresolved / dominant loss driver の derived index を出す。
+- `Hypothesis Key` は stable な `snake_case` を使い、同じ仮説で別名を増やさない。新しい名前を作る前に既存 key を review/index で確認する。
 - 新しい改善エントリには `Hypothesis Key` / `Primary Loss Driver` / `Mechanism Fired` / `Do Not Repeat Unless` を必須で残す。
 - `Mechanism Fired` は `fired=0` や `none` も含めて明記する。発火していない仕組みを、主損失ドライバ不変のまま繰り返さない。
 - 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
 - close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
+
+## 2026-03-13 21:35 JST / trade_findings: lint と derived index で台帳の欠損を commit 前に可視化する
+
+- Hypothesis Key:
+  - `trade_findings_lint_index`
+- Primary Loss Driver:
+  - 改善記録の形式崩れや仮説 key の欠損があっても、
+    review だけでは見落として同じ改善を繰り返せること
+- Mechanism Fired:
+  - `scripts/change_preflight.sh`
+    が
+    `trade_findings_review.py`
+    に加えて
+    `trade_findings_lint.py`
+    と
+    `trade_findings_index.py`
+    を実行する。
+  - `.githooks/pre-commit`
+    の
+    `scripts/preflight_guard.py`
+    は fresh artifact 確認後に
+    `trade_findings_lint.py`
+    を再実行し、
+    台帳が壊れていれば runtime commit を block する。
+  - derived index は
+    `logs/trade_findings_index_latest.json`
+    と
+    `logs/trade_findings_index_latest.md`
+    に出力する。
+- Do Not Repeat Unless:
+  - lint が拾えない欠損か、
+    index で拾えない重複仮説が明確に確認できるまでは、
+    別の記録台帳を増やさず
+    `trade_findings_lint.py`
+    /
+    `trade_findings_index.py`
+    を拡張する。
+- Change:
+  - `scripts/trade_findings_lint.py`
+    を追加し、
+    `2026-03-13 20:00`
+    以降の entry に required field と
+    `Hypothesis Key`
+    の `snake_case` format を必須化した。
+  - `scripts/trade_findings_index.py`
+    を追加し、
+    latest hypothesis key、
+    unresolved entry、
+    dominant primary loss driver、
+    missing key を
+    `logs/`
+    に要約するようにした。
+  - `scripts/change_preflight.sh`,
+    `scripts/preflight_guard.py`,
+    `scripts/install_git_hooks.sh`
+    と運用 docs を、
+    review-only から lint/index 含みの記録導線へ更新した。
+- Why:
+  - preflight wrapper と commit guard だけでは、
+    台帳の field 欠損や
+    `Hypothesis Key`
+    の揺れまでは防げない。
+  - 「記録する」だけでは再利用しにくいので、
+    latest key と unresolved をすぐ見返せる derived index が必要だった。
+- Hypothesis:
+  - entry 形式を lint し、
+    hypothesis key / unresolved / loss driver を index 化すれば、
+    同じ改善の再実施前に
+    「前回の key / verdict / 主因」
+    を短時間で確認できる。
+- Expected Good:
+  - field 欠損や key 揺れのある
+    `TRADE_FINDINGS`
+    を commit 前に止められる。
+  - agent が full ledger を生読みしなくても、
+    unresolved と dominant loss driver を
+    `logs/trade_findings_index_latest.*`
+    から素早く引ける。
+- Expected Bad:
+  - strict-since 以降の entry を雑に追記すると lint で commit が止まる。
+  - derived index は summary なので、
+    詳細判断は元の
+    `docs/TRADE_FINDINGS.md`
+    を読む必要がある。
+- Period:
+  - 2026-03-13 21:20-21:35 JST
+- Fact:
+  - `scripts/change_preflight.sh 'entry_probability_reject close_reject_profit_buffer winner_lane_exact_sizing' 4`
+    実行で
+    `trade_findings_lint.py`
+    と
+    `trade_findings_index.py`
+    が通り、
+    `preflight_status=warn`
+    /
+    `fills_15m=0`
+    /
+    `fills_30m=0`
+    /
+    `rejects_30m=45`
+    を伴う artifact が更新された。
+  - `python3 scripts/preflight_guard.py --paths execution/order_manager.py`
+    は block、
+    `python3 scripts/preflight_guard.py --paths execution/order_manager.py docs/TRADE_FINDINGS.md`
+    は pass した。
+  - 旧 entry の
+    `close_reject_profit_buffer`,
+    `winner_lane_exact_sizing`,
+    `ping5s_c_entry_probability_reject`
+    は new field 形式へ backfill し、
+    review/index で引ける状態にした。
+- Failure Cause:
+  - これまでは
+    `TRADE_FINDINGS`
+    の形式保証と一覧性が弱く、
+    review を実行しても
+    「同じ仮説の別名」
+    や
+    「required field 欠損」
+    を見落とせた。
+- Improvement:
+  - strict lint + derived index + preflight/hook 統合。
+- Verification:
+  - `python3 scripts/trade_findings_lint.py`
+    が success すること。
+  - `python3 scripts/trade_findings_index.py`
+    が
+    `logs/trade_findings_index_latest.{json,md}`
+    を更新すること。
+  - `scripts/preflight_guard.py`
+    が lint failure を block すること。
+- Verdict:
+  - pending
+- Next Action:
+  - 直近の重要 entry を new field 形式へ順次 backfill し、
+    `Hypothesis Key`
+    の重複や別名を index で減らす。
+- Status:
+  - done
 
 ## 2026-03-13 21:20 JST / trade_findings: commit 前 guard で preflight 未実施の runtime 変更を止める
 

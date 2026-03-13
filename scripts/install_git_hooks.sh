@@ -5,7 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 mkdir -p .githooks
-chmod +x .githooks/pre-commit scripts/preflight_guard.py
+chmod +x \
+  .githooks/pre-commit \
+  scripts/preflight_guard.py \
+  scripts/trade_findings_lint.py \
+  scripts/trade_findings_index.py
 git config core.hooksPath .githooks
 
 echo "installed git hooks"

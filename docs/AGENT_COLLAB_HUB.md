@@ -38,6 +38,7 @@
 - `docs/TRADE_FINDINGS.md` は変更日記として使い、各変更で `Why/Hypothesis / Expected Good / Expected Bad / Observed/Fact / Verdict / Next Action` を最低限残す。
 - 収益/リスク/ENTRY/EXIT 改善の前には必ず `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `TRADE_FINDINGS` review をまとめて行い、raw `python3 scripts/trade_findings_review.py ...` 単独では完了扱いにしない。
 - runtime / risk / env 変更を commit する前は `scripts/install_git_hooks.sh` で有効化した `.githooks/pre-commit` が fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` を確認する。hook 失敗時は先に `scripts/change_preflight.sh` と `TRADE_FINDINGS` 更新をやり直す。
+- `scripts/change_preflight.sh` は `trade_findings_review.py` だけでなく `trade_findings_lint.py` と `trade_findings_index.py` も実行し、derived artifact を `logs/` へ更新する。
 - 市況が通常帯なのに
   `fills_15m=0`
   または

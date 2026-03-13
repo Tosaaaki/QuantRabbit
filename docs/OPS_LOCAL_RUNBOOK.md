@@ -16,6 +16,7 @@
 - ローカル検証でも作業前にUSD/JPYの市況（価格/スプレッド/ATR/API応答）を確認する。
 - 収益/リスク/ENTRY/EXIT 改善の前は `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を正とし、市況確認と `TRADE_FINDINGS` review を1コマンドで通す。
 - runtime / risk / env 変更の commit 前ガードとして `.githooks/pre-commit` を使う。新しい clone / 端末では最初に `scripts/install_git_hooks.sh` を実行し、fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` が無い commit を止める。
+- `scripts/change_preflight.sh` 実行時は `logs/change_preflight_latest.json` に加えて `logs/trade_findings_index_latest.{json,md}` を更新する。hook は `trade_findings_lint.py` が失敗した commit も止める。
 - VM の稼働監視/操作はデフォルトで行わない（`QR_LOCAL_ONLY=1`）。
 - ローカル運用タスクでは `scripts/vm.sh` / `deploy_to_vm.sh` / `gcloud compute *` を実行しない。
 - ローカル実売買は自己責任で行い、手動ポジションへの干渉条件を常に確認する。

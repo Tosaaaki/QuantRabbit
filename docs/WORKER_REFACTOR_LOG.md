@@ -5,6 +5,52 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-13 21:35 JST - `TRADE_FINDINGS` lint/index を preflight と hook に統合
+
+- 対象:
+  - `scripts/trade_findings_lint.py`
+  - `scripts/trade_findings_index.py`
+  - `scripts/change_preflight.sh`
+  - `scripts/preflight_guard.py`
+  - `scripts/install_git_hooks.sh`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `change_preflight.sh`
+    と
+    pre-commit guard
+    は入っていたが、
+    台帳自体の field 欠損や
+    `Hypothesis Key`
+    の揺れまでは止めていなかった。
+  - 「記録を全部見返す」運用を実際に回すには、
+    latest key / unresolved / dominant loss driver の索引が必要だった。
+- 変更:
+  - `scripts/trade_findings_lint.py`
+    を追加し、
+    strict-since 以降の entry に required field と
+    `Hypothesis Key`
+    の format を要求した。
+  - `scripts/trade_findings_index.py`
+    を追加し、
+    `logs/trade_findings_index_latest.{json,md}`
+    を生成するようにした。
+  - `scripts/change_preflight.sh`
+    は review に加えて lint/index を実行し、
+    artifact に lint 結果と index path を含めるようにした。
+  - `scripts/preflight_guard.py`
+    は fresh artifact 確認後に lint を再実行し、
+    壊れた台帳のまま runtime commit できないようにした。
+  - 運用 docs と
+    `TRADE_FINDINGS`
+    の protocol を lint/index 前提へ更新した。
+- 意図:
+  - 記録の量だけでなく再利用性を上げ、
+    同じ仮説の別名追加や field 欠損を commit 前に止める。
+
 ### 2026-03-13（追記）`TickImbalance` / `TickImbalanceRRPlus` に trend exhaustion guard を追加
 
 - 対象:
