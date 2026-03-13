@@ -18803,3 +18803,69 @@
     raw `units<=0`
     から `min_units_rescue` で `5`
     に戻る候補にも floor が効くようにした。
+
+### 2026-03-13 12:10 JST - `scalp_ping_5s_d_live` の horizon-align fast-flip loser lane を遮断
+
+- 対象:
+  - `workers/scalp_ping_5s/worker.py`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- 背景:
+  - user 提示の
+    `2026-03-13 11:55:41 JST`
+    `-21.01 JPY`
+    close は
+    `ticket=460251`
+    `scalp_ping_5s_d_live`
+    long
+    (`159.324 -> 159.270`, `-5.4p`)
+    だった。
+  - thesis は
+    `signal_mode=momentum_fflip_hz`,
+    `horizon_gate=horizon_align_fflip`,
+    `horizon_composite_side=long`,
+    `m1_trend_gate=m1_opposite`,
+    `fast_direction_flip_applied=true`
+    で、
+    fast flip 後に horizon 側へ寄せた lane が
+    M1 conflict のまま通っていた。
+
+- 変更:
+  - `workers/scalp_ping_5s/worker.py`
+    の
+    `_countertrend_horizon_m1_block_reason`
+    を広げ、
+    D variant では
+    `horizon_composite_side != neutral`
+    かつ
+    `m1_trend_gate=m1_opposite`
+    を
+    `signal.side == horizon_side`
+    の fast-flip align lane も含めて block するようにした。
+  - block reason に
+    `relation=align/counter`
+    を追加し、
+    horizon-align で落ちた玉と
+    countertrend で落ちた玉を
+    同じ skip reason の中で監査可能にした。
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+    に、
+    exact loser lane の block と
+    weak conflict preserve の test を追加した。
+
+- 監査メモ:
+  - `scalp_ping_5s_d_live`
+    の
+    `non-neutral horizon + m1_opposite`
+    は
+    直近 7 日で
+    `15 trades / 0勝 / -60.356 JPY`
+    だった。
+  - OANDA pricing は
+    `2026-03-13 12:09-12:10 JST`
+    も
+    `HTTP 200`
+    継続で、
+    infra stop ではなく lane quality 問題だった。

@@ -20448,3 +20448,125 @@ Status:
     だけを追い、
     loser noise が多ければ
     floor cap を下げる。
+
+### 2026-03-13 12:10 JST - `scalp_ping_5s_d_live` の `fast_flip + horizon align + m1_opposite` loser lane を worker local で遮断
+
+- Why/Hypothesis:
+  - user が提示した
+    `2026-03-13 11:55:41 JST`
+    の
+    `-21.01 JPY`
+    close は、
+    `ticket=460251`
+    の
+    `scalp_ping_5s_d_live`
+    long
+    (`159.324 -> 159.270`, `-5.4p`)
+    だった。
+  - `entry_thesis`
+    を切ると、
+    `signal_mode=momentum_fflip_hz`,
+    `horizon_gate=horizon_align_fflip`,
+    `horizon_composite_side=long`,
+    `m1_trend_gate=m1_opposite`,
+    `fast_direction_flip_applied=true`
+    で、
+    `short->long`
+    へ fast flip した後でも
+    M1 が逆向きの lane が通っていた。
+  - 仮説は、
+    「D variant は
+    `horizon_composite_side != neutral`
+    かつ
+    `m1_trend_gate=m1_opposite`
+    の時点で reject すべきで、
+    fast flip 済みの horizon-align lane も例外にしない」
+    である。
+
+- Expected Good:
+  - `scalp_ping_5s_d_live`
+    の
+    `fast_flip`
+    loser lane を止め、
+    `-5p`
+    級の single-loss を削る。
+  - shared gate を緩めずに、
+    D worker 内だけで
+    non-neutral horizon / opposite M1 conflict を潰せる。
+
+- Expected Bad:
+  - D variant の fill は少し減る。
+  - horizon 側へ寄せた flip lane も切るので、
+    ごく一部の early recovery winner を捨てる可能性がある。
+
+- Observed/Fact:
+  - RCA window の市況は通常帯で、
+    `spread=0.8p`,
+    `ATR14(M1)=2.1585p`,
+    `ATR14(M5)=4.6155p`
+    だった。
+    `logs/local_v2_stack/quant-scalp-ping-5s-b.log`
+    では
+    `2026-03-13 12:09-12:10 JST`
+    の
+    OANDA pricing が継続して
+    `HTTP 200`
+    を返しており、
+    API 品質は問題なかった。
+  - `logs/trades.db`
+    の
+    `scalp_ping_5s_d_live`
+    7日分で、
+    `horizon_composite_side != neutral`
+    かつ
+    `m1_trend_gate=m1_opposite`
+    の close は
+    `15 trades / 0勝 / -60.356 JPY`
+    だった。
+    うち
+    `fast_direction_flip_applied=true`
+    は
+    `1 trade / -21.006 JPY`
+    で、
+    user 提示の loser と一致した。
+  - `workers/scalp_ping_5s/worker.py`
+    の
+    `_countertrend_horizon_m1_block_reason`
+    は従来
+    `signal.side != horizon_side`
+    のときしか block せず、
+    `fast_flip`
+    で horizon 側へ寄せた lane は通っていた。
+  - 今回の patch で、
+    D variant は
+    `non-neutral horizon + m1_opposite`
+    を
+    `relation=align/counter`
+    付きで一律 block するように変更した。
+  - test は
+    `tests/workers/test_scalp_ping_5s_worker.py`
+    に 2 本追加し、
+    exact loser lane
+    (`long + horizon long + m1_opposite + m1_score=-0.039`)
+    が block されることと、
+    `m1_score`
+    が閾値未満の weak conflict は preserve されることを固定した。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-scalp-ping-5s-d`
+    再起動後に、
+    同 lane が
+    `countertrend_horizon_m1_block`
+    skip へ変わるかを
+    `logs/local_v2_stack/quant-scalp-ping-5s-d.log`
+    で確認する。
+  - 次の
+    `60-90分`
+    で
+    `scalp_ping_5s_d_live`
+    の
+    `filled / realized_jpy / avg_pl_pips`
+    を再集計し、
+    D variant の赤字寄与が縮むかを見る。

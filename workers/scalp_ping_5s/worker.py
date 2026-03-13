@@ -3322,18 +3322,22 @@ def _countertrend_horizon_m1_block_reason(
 ) -> Optional[str]:
     if not config.D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED:
         return None
-    if signal.side not in {"long", "short"} or horizon is None:
+    signal_side = str(signal.side or "").strip().lower()
+    if signal_side not in {"long", "short"} or horizon is None:
         return None
     horizon_side = str(getattr(horizon, "composite_side", "") or "").strip().lower()
     if horizon_side not in {"long", "short"}:
         return None
-    if signal.side == horizon_side or str(m1_trend_gate or "").strip().lower() != "m1_opposite":
+    # D variant should not pass a non-neutral horizon when M1 is still opposite,
+    # even if a fast flip already retargeted the routed signal to the horizon side.
+    if str(m1_trend_gate or "").strip().lower() != "m1_opposite":
         return None
     m1_score_abs = abs(_safe_float(m1_score, 0.0))
     if m1_score_abs < config.D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN:
         return None
+    relation = "align" if signal_side == horizon_side else "counter"
     return (
-        f"env={config.ENV_PREFIX} side={signal.side} hz={horizon_side} "
+        f"env={config.ENV_PREFIX} side={signal_side} hz={horizon_side} relation={relation} "
         f"hz_score={_safe_float(getattr(horizon, 'composite_score', 0.0), 0.0):.3f} "
         f"agree={int(_safe_float(getattr(horizon, 'agreement', 0.0), 0.0))} "
         f"m1={m1_score_abs:.3f}"

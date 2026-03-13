@@ -257,6 +257,46 @@ def test_d_negative_window_long_opposite_block_reason_preserves_supported_lane(
     assert reason is None
 
 
+def test_countertrend_horizon_m1_block_reason_blocks_d_horizon_aligned_m1_opposite_lane(
+    monkeypatch,
+) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN", 0.03)
+    monkeypatch.setattr(worker.config, "ENV_PREFIX", "SCALP_PING_5S_D")
+
+    reason = worker._countertrend_horizon_m1_block_reason(
+        _sample_signal("long", mode="momentum_fflip_hz"),
+        SimpleNamespace(composite_side="long", composite_score=0.5401, agreement=2),
+        m1_trend_gate="m1_opposite",
+        m1_score=-0.039,
+    )
+
+    assert reason is not None
+    assert "side=long" in reason
+    assert "hz=long" in reason
+    assert "relation=align" in reason
+
+
+def test_countertrend_horizon_m1_block_reason_preserves_weak_m1_conflict_lane(
+    monkeypatch,
+) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN", 0.05)
+
+    reason = worker._countertrend_horizon_m1_block_reason(
+        _sample_signal("long"),
+        SimpleNamespace(composite_side="long", composite_score=0.62, agreement=2),
+        m1_trend_gate="m1_opposite",
+        m1_score=-0.039,
+    )
+
+    assert reason is None
+
+
 def test_build_tick_signal_detects_long(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
