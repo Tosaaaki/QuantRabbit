@@ -20238,3 +20238,103 @@ Status:
     loser が先行するなら
     `max_neg_edge`
     をさらに浅くする。
+
+### 2026-03-13 11:50 JST - `scalp_ping_5s_c_live` rescue 候補を order-manager min units mismatch で落とさない
+
+- Why/Hypothesis:
+  - first deploy 後、
+    `quant-scalp-ping-5s-c.log`
+    で
+    `lookahead rescue`
+    自体は即時発火した。
+    ただし
+    `orders.db`
+    / `quant-order-manager.log`
+    を見ると、
+    rescue 候補は
+    `entry_probability_reject`
+    ではなく
+    `note=entry_probability:entry_probability_below_min_units`
+    で
+    `-5/-6 units`
+    に潰されていた。
+  - 原因は
+    `SCALP_PING_5S_C_MIN_UNITS=5`
+    に対して、
+    `quant-order-manager`
+    側の
+    `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=10`
+    が残っていたことだった。
+  - 仮説は、
+    「C lane の current rescue は 5-6 units 帯で通す設計なので、
+    order-manager の strategy min units を 5 に揃えれば、
+    rescue 候補を無駄に潰さず cadence を戻せる」
+    である。
+
+- Expected Good:
+  - `lookahead rescue`
+    された C lane の 5-6 units 候補が
+    `entry_probability_below_min_units`
+    で落ちなくなる。
+  - broad pocket ではなく
+    `scalp_ping_5s_c(_live)`
+    だけの mismatch 修正なので、
+    shared risk guard 全体は変えずに済む。
+
+- Expected Bad:
+  - 5 units 級の very small scalp が増えるので、
+    cadence は戻っても per-trade PnL への寄与は小さい。
+  - low-edge rescue が増えすぎると、
+    `fills` は回復しても収益が伴わない可能性は残る。
+
+- Observed/Fact:
+  - `2026-03-13 11:49:42 JST`
+    に
+    `lookahead rescue side=short recent_fills=0/30m edge=-0.677 pred=0.447 momentum=1.000 ... units=0.33`
+    が live log に出た。
+  - 同候補は
+    `orders.db`
+    上で
+    `strategy=scalp_ping_5s_c_live`
+    / `entry_probability=0.796`
+    / `lookahead_rescue_applied=1`
+    のまま
+    `entry_probability_reject`
+    となり、
+    `quant-order-manager.log`
+    では
+    `units=-5 note=entry_probability:entry_probability_below_min_units`
+    と記録された。
+  - さらに
+    `2026-03-13 11:50:35 JST`
+    の rescue 候補も
+    `entry_probability=0.638`
+    / `units=-6`
+    で同じ reject に当たった。
+  - `ops/env/quant-order-manager.env`
+    の
+    `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C_LIVE`
+    と
+    `...SCALP_PING_5S_C`
+    を
+    `10 -> 5`
+    に揃える。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-order-manager`
+    と
+    `quant-scalp-ping-5s-c`
+    を再起動して、
+    次の
+    `lookahead rescue`
+    候補が
+    `entry_probability_below_min_units`
+    を跨いで filled/requested へ進むかを見る。
+  - それでも reject が残るなら、
+    次は
+    `preserve-intent min_scale`
+    ではなく
+    worker-local `entry_probability`
+    側を見直す。

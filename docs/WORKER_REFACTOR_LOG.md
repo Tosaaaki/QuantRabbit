@@ -18729,3 +18729,37 @@
   - unit test を 2 本追加し、
     low-activity では rescue し、
     fills が戻ったら rescue しないことを固定した。
+
+### 2026-03-13 11:50 JST - `scalp_ping_5s_c_live` order-manager min units を 5 に整合
+
+- 対象:
+  - `ops/env/quant-order-manager.env`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - first deploy 後、
+    `lookahead rescue`
+    は live 発火したが、
+    `quant-order-manager`
+    で
+    `entry_probability:entry_probability_below_min_units`
+    に落ちた。
+  - worker 側は
+    `SCALP_PING_5S_C_MIN_UNITS=5`
+    なのに、
+    order-manager 側は
+    `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=10`
+    のままで、
+    rescued 5-6 units を execution 層で潰していた。
+
+- 変更:
+  - `ops/env/quant-order-manager.env`
+    の
+    `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C_LIVE`
+    と
+    `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C`
+    を
+    `5`
+    に揃えた。
+  - C lane の worker-local rescue と
+    order-manager min-units floor の mismatch を解消した。
