@@ -161,7 +161,7 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             "--half-life-hours",
             "6",
             "--min-lot-multiplier",
-            "0.20",
+            "0.30",
         )
     if job_name == "pattern_book":
         return (

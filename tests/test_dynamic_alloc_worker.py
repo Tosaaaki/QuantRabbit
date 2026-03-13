@@ -574,4 +574,60 @@ def test_compute_scores_emits_low_sample_winner_relief_override() -> None:
     assert winner_override["trades"] == 1
     assert winner_override["sum_realized_jpy"] > 0.0
     assert winner_override["lot_multiplier"] > prof["lot_multiplier"]
-    assert 0.55 <= winner_override["lot_multiplier"] <= 0.65
+    assert 0.70 <= winner_override["lot_multiplier"] <= 0.82
+
+
+def test_compute_scores_emits_two_trade_winner_relief_near_full_size() -> None:
+    now = datetime.now(timezone.utc)
+    rows = []
+    for i in range(5):
+        rows.append(
+            (
+                "DroughtRevert",
+                "scalp",
+                -1.7,
+                (now - timedelta(minutes=8 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "STOP_LOSS_ORDER",
+                -11.5,
+                1400,
+                "DroughtRevert",
+                "DroughtRevert",
+                '{"setup_fingerprint":"DroughtRevert|short|range_fade|tight_thin|rsi:mid|atr:mid|gap:up_flat|volatility_compression|align:mixed","flow_regime":"range_fade","microstructure_bucket":"tight_thin"}',
+            )
+        )
+    for i in range(2):
+        rows.append(
+            (
+                "DroughtRevert",
+                "scalp",
+                2.3,
+                (now - timedelta(minutes=1 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "TAKE_PROFIT_ORDER",
+                2.24,
+                1400,
+                "DroughtRevert",
+                "DroughtRevert",
+                '{"setup_fingerprint":"DroughtRevert|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:down_flat|volatility_compression|align:mixed","flow_regime":"range_fade","microstructure_bucket":"tight_normal"}',
+            )
+        )
+
+    strategy_scores, _ = compute_scores(
+        rows,
+        min_trades=8,
+        setup_min_trades=4,
+        pf_cap=2.0,
+        min_lot_multiplier=0.20,
+    )
+
+    prof = strategy_scores["DroughtRevert"]
+    winner_override = next(
+        item
+        for item in prof["setup_overrides"]
+        if item.get("setup_fingerprint")
+        == "DroughtRevert|long|range_fade|tight_normal|rsi:mid|atr:mid|gap:down_flat|volatility_compression|align:mixed"
+    )
+
+    assert winner_override["trades"] == 2
+    assert winner_override["sum_realized_jpy"] > 4.0
+    assert winner_override["lot_multiplier"] > prof["lot_multiplier"]
+    assert 0.82 <= winner_override["lot_multiplier"] <= 1.0

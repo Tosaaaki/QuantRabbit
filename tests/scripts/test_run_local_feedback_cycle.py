@@ -247,7 +247,7 @@ def test_dynamic_alloc_job_defaults_are_wired() -> None:
         "--half-life-hours",
         "6",
         "--min-lot-multiplier",
-        "0.20",
+        "0.30",
     )
 
 

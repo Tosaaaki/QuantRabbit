@@ -18978,3 +18978,63 @@
     `orders 407 -> 0`,
     `trades 72 -> 0`
     へ掃除した。
+
+### 2026-03-13 13:45 JST - current winner setup の dyn relief を拡大し、local dyn floor を 0.30 へ更新
+
+- 対象:
+  - `scripts/dynamic_alloc_worker.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `tests/test_dynamic_alloc_worker.py`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
+  - `config/dynamic_alloc.json`
+  - `config/participation_alloc.json`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - `pdca_profitability_latest.json`
+    では
+    `2026-03-13 13:34 JST`
+    の
+    OANDA pricing/account が
+    `HTTP 200`,
+    `USD/JPY 159.464/159.472`,
+    `margin_used_jpy=0.0`
+    で、
+    cap ではなく shared sizing がボトルネックだった。
+  - current winner setup でも
+    `dynamic_alloc`
+    の relief が
+    `0.65`
+    止まりで、
+    `run_local_feedback_cycle`
+    も
+    `--min-lot-multiplier 0.20`
+    を固定していた。
+
+- 変更:
+  - `scripts/dynamic_alloc_worker.py`
+    の low-sample winner relief を
+    `single winner: 0.70-0.82`,
+    `2-trade winner: 0.82-1.00`
+    に拡大した。
+  - `scripts/run_local_feedback_cycle.py`
+    の
+    `dynamic_alloc`
+    既定を
+    `--min-lot-multiplier 0.30`
+    へ更新した。
+  - targeted test は
+    `26 passed`
+    を確認した。
+  - force cycle 後の
+    `config/dynamic_alloc.json`
+    は
+    `DroughtRevert 0.30`,
+    `scalp_ping_5s_c_live 0.30`,
+    `scalp_extrema_reversal_live 0.24`
+    へ回復しつつ、
+    `WickReversalBlend / scalp_ping_5s_d_live / TickImbalance`
+    は
+    `0.16`
+    帯を維持した。

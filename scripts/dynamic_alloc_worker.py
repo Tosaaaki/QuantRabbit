@@ -604,8 +604,10 @@ def _build_setup_overrides(
             float(setup_record.get("effective_min_lot_multiplier", setup_multiplier) or setup_multiplier),
         )
         if low_sample_winner_relief:
-            relief_floor = min(parent_cap, 0.55 if trades <= 1 else 0.72)
-            relief_cap = min(parent_cap, 0.65 if trades <= 1 else 0.88)
+            # Let current winner setups recover faster than strategy-wide losers
+            # without reopening full size on a single noisy scalp.
+            relief_floor = min(parent_cap, 0.70 if trades <= 1 else 0.82)
+            relief_cap = min(parent_cap, 0.82 if trades <= 1 else 1.00)
             setup_multiplier = max(parent_multiplier, min(setup_multiplier, relief_cap))
             setup_multiplier = max(setup_multiplier, relief_floor)
             effective_min = max(effective_min, relief_floor)

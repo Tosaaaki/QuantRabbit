@@ -20828,3 +20828,118 @@ Status:
     ふたたび
     `STOP_LOSS_ORDER`
     cluster の quality 改善へ戻す。
+
+## 2026-03-13 13:45 JST - current winner setup の lot 回復を強め、local feedback の dyn floor を 0.30 へ戻した
+
+- Why/Hypothesis:
+  - `2026-03-13 13:34 JST`
+    の
+    `pdca_profitability_latest.json`
+    では
+    `USD/JPY bid/ask=159.464/159.472`,
+    `spread=0.8p`,
+    OANDA pricing/account は
+    `status=200`,
+    `nav_jpy=35150.0`,
+    `margin_used_jpy=0.0`,
+    `open_trade_count=0`
+    だった。
+  - つまり margin cap ではなく、
+    shared sizing が still too tight で、
+    current winner setup まで薄くしていた。
+  - 実際、
+    変更前の
+    `dynamic_alloc`
+    は
+    `PrecisionLowVol / DroughtRevert`
+    の exact winner setup でも
+    `lot_multiplier=0.65`
+    止まりで、
+    local feedback cycle も
+    `--min-lot-multiplier 0.20`
+    を固定していた。
+
+- Expected Good:
+  - loser strategy の blanket trim は維持しつつ、
+    current winner setup だけは
+    `0.70-1.00`
+    帯まで lot を戻せる。
+  - `scalp_ping_5s_c_live`
+    や
+    `DroughtRevert`
+    の mild lane が
+    `0.20`
+    固定から抜け、
+    margin use と fill size を少し戻せる。
+
+- Expected Bad:
+  - one-trade winner noise を拾って
+    lot を戻しすぎるリスクがある。
+  - そのため、
+    severe loser / fast burst loser clamp 自体は維持し、
+    `TickImbalance / scalp_ping_5s_d_live / WickReversalBlend`
+    の hard loser 側は broad に緩めない。
+
+- Observed/Fact:
+  - `scripts/dynamic_alloc_worker.py`
+    の
+    low-sample winner relief
+    を
+    `single winner: 0.70-0.82`,
+    `2-trade winner: 0.82-1.00`
+    へ引き上げた。
+  - `scripts/run_local_feedback_cycle.py`
+    の
+    `dynamic_alloc`
+    既定を
+    `--min-lot-multiplier 0.20 -> 0.30`
+    へ更新した。
+  - test は
+    `tests/test_dynamic_alloc_worker.py`
+    と
+    `tests/scripts/test_run_local_feedback_cycle.py`
+    で
+    `26 passed`
+    を確認した。
+  - `2026-03-13 13:45 JST`
+    に
+    `run_local_feedback_cycle --force --job participation_allocator --job dynamic_alloc`
+    を再実行し、
+    `config/dynamic_alloc.json as_of=2026-03-13T04:45:04Z`
+    を生成した。
+  - 生成後の main lane は
+    `DroughtRevert 0.20 -> 0.30`,
+    `scalp_ping_5s_c_live 0.20 -> 0.30`,
+    `scalp_extrema_reversal_live 0.20 -> 0.24`
+    へ回復した。
+    一方で
+    `WickReversalBlend=0.16`,
+    `scalp_ping_5s_d_live=0.16`,
+    `TickImbalance=0.16`
+    は据え置きだった。
+  - exact winner override は
+    `PrecisionLowVol long tight_normal`
+    が
+    `0.82`,
+    `DroughtRevert long tight_normal`
+    が
+    `0.82`
+    まで回復した。
+  - 直後の factor cache は
+    `2026-03-13 13:45 JST`
+    で
+    `M1 close=159.478 ATR=3.478p RSI=47.61 ADX=42.90`,
+    `M5 close=159.524 ATR=5.870p RSI=64.69 ADX=31.34`
+    だった。
+
+- Verdict: good
+
+- Next Action:
+  - 次の
+    `10-20 trades`
+    で
+    `PrecisionLowVol / DroughtRevert / scalp_ping_5s_c_live`
+    の notional と net_jpy が改善するかを見る。
+  - まだ margin use が細いままなら、
+    shared broad loosen ではなく
+    winner setup の relief 条件だけをさらに詰める。
