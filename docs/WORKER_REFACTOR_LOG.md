@@ -19584,3 +19584,41 @@
     にだけ付けた。
   - focused unit test を追加し、
     stress 時にだけ close することを固定した。
+
+### 2026-03-13 20:00 JST - `TRADE_FINDINGS` の改善前 review を agent preflight に昇格
+
+- 対象:
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `scripts/trade_findings_review.py`
+- 背景:
+  - 同じ系統の改善を、主損失ドライバや発火有無を見返さずに繰り返すと、
+    commit 数だけが積み上がって因果が見えなくなる。
+  - 実際に
+    `inventory_stress_cleanup`
+    は実装できたが、
+    as-of
+    `2026-03-13 19:54 JST`
+    で
+    `Mechanism Fired=0`
+    かつ dominant loss driver は
+    `STOP_LOSS_ORDER`
+    のままだった。
+- 変更:
+  - 収益/リスク/ENTRY/EXIT 改善の前に
+    `python3 scripts/trade_findings_review.py --query "<strategy|hypothesis|close_reason>"`
+    を必須化した。
+  - `TRADE_FINDINGS`
+    の必須欄に
+    `Hypothesis Key`,
+    `Primary Loss Driver`,
+    `Mechanism Fired`,
+    `Do Not Repeat Unless`
+    を追加した。
+  - review script は
+    `TRADE_FINDINGS`
+    から直近の同系改善を抜き出し、
+    `Verdict / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless`
+    を agent が実装前に読み返せるようにした。

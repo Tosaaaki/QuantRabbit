@@ -36,6 +36,7 @@
 - 収益悪化の RCA は `long/short` の片側説明で止めず、`pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence / 連続バー偏り` を軸に cluster して、両方向に効く strategy-local quality guard へ落とす。
 - 失敗ケース・検証結果は `docs/TRADE_FINDINGS.md` に1箇所集約。
 - `docs/TRADE_FINDINGS.md` は変更日記として使い、各変更で `Why/Hypothesis / Expected Good / Expected Bad / Observed/Fact / Verdict / Next Action` を最低限残す。
+- 収益/リスク/ENTRY/EXIT 改善の前には必ず `python3 scripts/trade_findings_review.py --query "<strategy_tag or hypothesis_key or close_reason>"` を実行し、同系改善の `Verdict / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless` を確認する。
 - 市況が通常帯なのに
   `fills_15m=0`
   または

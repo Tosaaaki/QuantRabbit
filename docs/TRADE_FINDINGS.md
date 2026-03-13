@@ -36,6 +36,10 @@
 
 ```md
 ## YYYY-MM-DD HH:MM JST / short title
+- Hypothesis Key:
+- Primary Loss Driver:
+- Mechanism Fired:
+- Do Not Repeat Unless:
 - Change:
 - Why:
 - Hypothesis:
@@ -50,6 +54,104 @@
 - Next Action:
 - Status:
 ```
+
+## Improvement Memory Protocol
+- 収益/リスク/ENTRY/EXIT 改善の前に必ず `python3 scripts/trade_findings_review.py --query "<strategy_tag or hypothesis_key or close_reason>"` を実行する。
+- 新しい改善エントリには `Hypothesis Key` / `Primary Loss Driver` / `Mechanism Fired` / `Do Not Repeat Unless` を必須で残す。
+- `Mechanism Fired` は `fired=0` や `none` も含めて明記する。発火していない仕組みを、主損失ドライバ不変のまま繰り返さない。
+- 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
+- close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
+
+## 2026-03-13 20:00 JST / trade_findings: 改善前 review を必須 preflight に昇格
+
+- Hypothesis Key:
+  - `improvement_memory_preflight`
+- Primary Loss Driver:
+  - 直近の dominant loss driver を見ずに同系改善を繰り返すこと自体
+- Mechanism Fired:
+  - `trade_findings_review.py` を新設。
+  - future task では実行前にこの review を必ず走らせる。
+- Do Not Repeat Unless:
+  - `Hypothesis Key / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless`
+    の 4 欄で再発防止できないと判断できるまでは、
+    さらに別の review 導線を増やさない。
+- Change:
+  - `scripts/trade_findings_review.py`
+    を追加し、
+    `docs/TRADE_FINDINGS.md`
+    から同系改善の
+    `Verdict / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless`
+    を agent が着手前に抜き出せるようにした。
+  - `AGENTS.md`
+    と
+    `docs/AGENT_COLLAB_HUB.md`
+    に、
+    収益/リスク/ENTRY/EXIT 改善の前に上記スクリプトを必ず実行するルールを追加した。
+  - `docs/TRADE_FINDINGS.md`
+    のテンプレートに
+    `Hypothesis Key / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless`
+    を追加した。
+- Why:
+  - 「細かく網羅的に残し、改善のたびに見返す」を agent が実行可能な手順に落とさないと、
+    記録があっても次の変更前に参照されない。
+  - 特に
+    `inventory_stress_cleanup`
+    のように
+    `Mechanism Fired=0`
+    かつ dominant loss driver 不変のケースは、
+    review 手順が無いと同系改善を再発させやすい。
+- Hypothesis:
+  - 記録の量だけでなく、
+    「変更前に読む導線」と
+    「同じ改善を再実施してはいけない条件」
+    を固定すれば、
+    commit 数先行の PDCA を抑えられる。
+- Expected Good:
+  - 次の改善前に、
+    同じ
+    `Hypothesis Key`
+    の過去 verdict と
+    `Primary Loss Driver`
+    を必ず確認できる。
+  - `Mechanism Fired=0`
+    の改善を、
+    dominant loss driver 不変のまま焼き直す回数が減る。
+- Expected Bad:
+  - 改善前の review 手順が 1 ステップ増えるので、
+    緊急時を除く通常 PDCA の着手は少し遅くなる。
+  - entry が雑なまま query を広くしすぎると、
+    review 出力がノイズになる。
+- Period:
+  - 2026-03-13
+- Fact:
+  - as-of
+    `2026-03-13 19:54 JST`
+    では
+    `inventory_stress_exit=0`
+    で、
+    target lane の dominant
+    `Primary Loss Driver`
+    はまだ
+    `STOP_LOSS_ORDER`
+    だった。
+  - つまり「新しい保険を入れた」事実だけでは足りず、
+    「その保険が実際に使われたか」を改善前に見返す必要があると確認できた。
+- Failure Cause:
+  - change diary があっても、
+    次の改善前に同系 entry を強制的に review する手順が弱かった。
+- Improvement:
+  - review script + 必須欄 + AGENTS/HUB 強制手順。
+- Verification:
+  - future の収益/リスク/ENTRY/EXIT 改善タスクで、
+    `python3 scripts/trade_findings_review.py --query ...`
+    の実行を先に残してから変更しているかを確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - 次回の profitability 系タスクで、
+    実際に query を使って過去 entry を読んでから着手する運用を 1 回通す。
+- Status:
+  - done
 
 ## 2026-03-13 18:25 JST / local-v2: `positive -> negative close` の残り本丸を 3 本同時に補修
 
@@ -22482,6 +22584,30 @@ Status:
     loser scalp lane の avg units が broad に増えていないことを追う。
 
 ### 2026-03-13 18:11 JST - loser lane は entry を足す前に strategy-local な inventory stress cleanup を持たせる
+
+- Hypothesis Key:
+  - `inventory_stress_cleanup`
+- Primary Loss Driver:
+  - before:
+    `STOP_LOSS_ORDER`
+  - after as-of 2026-03-13 19:54 JST:
+    `STOP_LOSS_ORDER`
+- Mechanism Fired:
+  - as-of 2026-03-13 19:54 JST:
+    `inventory_stress_exit=0`
+  - `margin_health / free_margin_low / margin_usage_high / drawdown`
+    close reason も
+    `0`
+    件
+- Do Not Repeat Unless:
+  - target lane で
+    `inventory_stress_exit`
+    が実際に発火した、
+    または dominant
+    `Primary Loss Driver`
+    が
+    `STOP_LOSS_ORDER`
+    から stale loser / margin stress 系へ変わった時だけ再調整する。
 
 - 対象:
   - `workers/scalp_wick_reversal_blend/exit_worker.py`
