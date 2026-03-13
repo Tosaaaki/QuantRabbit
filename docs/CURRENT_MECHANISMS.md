@@ -113,6 +113,21 @@
   を補正する market-aware multiplier を持つ。
   共通 exit manager を増やすのではなく、
   dedicated exit worker 内で strategy-local に完結させる。
+- `order_manager`
+  の
+  `profit_guard`
+  は
+  既定では pocket scope だが、
+  `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_*`
+  で strategy ごとに
+  `strategy`
+  へ切り替えられる。
+  現行 local-v2 では
+  `PrecisionLowVol`
+  だけが
+  `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL=strategy`
+  で
+  loser scalp pocket の giveback から切り離されている。
 
 ## 4. Live Optimization / Feedback / Guard Mechanisms
 

@@ -176,7 +176,13 @@ class ProfitDecision:
     current_jpy: float = 0.0
 
 
-def _query_guard(pocket: str, *, strategy_tag: Optional[str], cfg: ProfitGuardCfg) -> ProfitDecision:
+def _query_guard(
+    pocket: str,
+    *,
+    strategy_tag: Optional[str],
+    cfg: ProfitGuardCfg,
+    scope_override: Optional[str] = None,
+) -> ProfitDecision:
     if not _DB.exists():
         return ProfitDecision(True, "no_db")
     if cfg.lookback_min <= 0:
@@ -198,7 +204,10 @@ def _query_guard(pocket: str, *, strategy_tag: Optional[str], cfg: ProfitGuardCf
               AND close_time IS NOT NULL
               AND datetime(close_time) >= datetime('now', ?)
         """
-        if cfg.scope == "strategy" and strategy_tag:
+        scope = str(scope_override or cfg.scope or "pocket").strip().lower()
+        if scope not in {"pocket", "strategy"}:
+            scope = cfg.scope
+        if scope == "strategy" and strategy_tag:
             sql += " AND coalesce(strategy_tag, strategy) = ?\n"
             params.append(str(strategy_tag))
         sql += " ORDER BY datetime(close_time) ASC, id ASC\n"
@@ -279,6 +288,7 @@ def is_allowed(
     *,
     strategy_tag: Optional[str] = None,
     env_prefix: Optional[str] = None,
+    scope_override: Optional[str] = None,
 ) -> ProfitDecision:
     """
     Evaluate whether new entries are allowed based on recent profit giveback.
@@ -296,13 +306,21 @@ def is_allowed(
         cache_key = f"{cfg.env_prefix}:{cache_key}"
     if cfg.scope == "strategy" and strat_key:
         cache_key = f"{cache_key}:{strat_key}"
+    override_key = str(scope_override or "").strip().lower()
+    if override_key in {"pocket", "strategy"}:
+        cache_key = f"{cache_key}:scope={override_key}"
 
     now = time.monotonic()
     cached = _cache.get(cache_key)
     if cached and now - cached[0] <= cfg.ttl_sec:
         return cached[1]
 
-    decision = _query_guard(pocket, strategy_tag=strategy_tag, cfg=cfg)
+    decision = _query_guard(
+        pocket,
+        strategy_tag=strategy_tag,
+        cfg=cfg,
+        scope_override=override_key or None,
+    )
     if cfg.mode != "block":
         decision = ProfitDecision(
             True,

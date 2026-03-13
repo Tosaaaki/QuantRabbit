@@ -21142,3 +21142,128 @@ Status:
     と
     `trades.db`
     の realized JPY を別建てで監視する。
+
+## 2026-03-13 14:45 JST / local-v2: `PrecisionLowVol` を pocket-wide `profit_guard` から切り離し、current winner が loser scalp lane に巻き込まれないようにした
+
+- Why/Hypothesis:
+  - user 指摘どおり
+    「entry を増やしたのに負けが嵩む」
+    主因は、
+    extra fills が
+    `scalp_ping_5s_c_live / scalp_ping_5s_d_live / scalp_extrema_reversal_live / TickImbalance`
+    の loser lane に寄る一方で、
+    current market で唯一まだ勝っている
+    `PrecisionLowVol`
+    まで
+    `scalp` pocket 全体の
+    `profit_guard`
+    giveback で止まっていたことだった。
+  - `PrecisionLowVol`
+    は current 6h で
+    `4 trades / +4.484 JPY / +4.8 pips / win_rate 1.0`
+    なのに、
+    `orders.db`
+    では
+    `2026-03-13 10:15:34 JST`
+    と
+    `10:20:10 JST`
+    に
+    `profit_guard`
+    block が出ていた。
+  - same 180m sample の
+    `trades.db`
+    では
+    `scalp pocket = -17.801 JPY / -4.2 pips`
+    （`DroughtRevert=-7.942`, `TickImbalance=-10.183`, `PrecisionLowVol=+0.324`）
+    だった一方、
+    `PrecisionLowVol`
+    単体は
+    `+0.324 JPY / +0.2 pips`
+    で giveback を起こしていなかった。
+  - 仮説は
+    `PrecisionLowVol`
+    を
+    pocket-wide guard
+    ではなく
+    strategy-scoped guard
+    へ切り替えれば、
+    loser scalp lane を緩めずに
+    current winner の entry だけを増やせる、
+    というもの。
+
+- Expected Good:
+  - `PrecisionLowVol`
+    が
+    `DroughtRevert / TickImbalance`
+    の pocket drawdown に巻き込まれず、
+    current range 市況での
+    `profit_guard`
+    block が減る。
+  - broad shared loosening ではなく、
+    strategy-local な guard scope 切り替えだけで
+    entry 増を狙える。
+
+- Expected Bad:
+  - `PrecisionLowVol`
+    自身の giveback が始まった場合でも、
+    pocket loser の連座ではなく
+    strategy 自身の履歴でしか止まらなくなるため、
+    monitor が甘いと loser re-entry を増やす可能性がある。
+
+- Observed/Fact:
+  - `execution/order_manager.py`
+    に
+    strategy-specific
+    `ORDER_PROFIT_GUARD_SCOPE`
+    override を追加し、
+    `workers/common/profit_guard.py`
+    が
+    `scope_override`
+    を受けて
+    `pocket|strategy`
+    を切り替えられるようにした。
+  - local-v2 の
+    `quant-order-manager`
+    env に
+    `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL=strategy`
+    を入れ、
+    `PrecisionLowVol`
+    だけ
+    strategy-scoped query
+    に切り替えた。
+  - 回帰として、
+    `tests/test_profit_guard_prefix.py`
+    に
+    `PrecisionLowVol + TickImbalance`
+    混在 pocket で
+    pocket-scope は block、
+    strategy-scope は pass
+    になるケースを追加した。
+  - `tests/execution/test_order_manager_log_retry.py`
+    では
+    `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL`
+    が
+    `order_manager -> profit_guard`
+    に
+    `scope_override='strategy'`
+    として渡ることを固定した。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-order-manager`
+    を再起動して反映後、
+    次の
+    `30-60分`
+    で
+    `PrecisionLowVol`
+    の
+    `profit_guard`
+    block 件数、
+    `filled`
+    件数、
+    realized JPY を切り出す。
+  - loser lane
+    （`DroughtRevert / TickImbalance / scalp_ping_5s_c_live`）
+    の entry を追加で緩めずに、
+    winner lane の share だけが増えるかを確認する。

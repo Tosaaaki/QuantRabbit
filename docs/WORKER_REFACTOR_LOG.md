@@ -19091,3 +19091,73 @@
     の rescue 済み small probe だけを
     execution scale mismatch から守り、
     low-activity 時の cadence を worker local に回復させる。
+
+### 2026-03-13 14:45 JST - `PrecisionLowVol` の `profit_guard` を strategy scope override 可能にし、loser scalp pocket から切り離した
+
+- 対象:
+  - `execution/order_manager.py`
+  - `workers/common/profit_guard.py`
+  - `ops/env/quant-order-manager.env`
+  - `tests/test_profit_guard_prefix.py`
+  - `tests/execution/test_order_manager_log_retry.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 背景:
+  - current 6h の
+    `PrecisionLowVol`
+    は
+    `4 trades / +4.484 JPY / +4.8 pips`
+    と winner 側だったが、
+    `orders.db`
+    には
+    `2026-03-13 10:15 JST / 10:20 JST`
+    の
+    `profit_guard`
+    block が残っていた。
+  - same 180m の
+    `scalp pocket`
+    は
+    `-17.801 JPY / -4.2 pips`
+    で、
+    内訳は
+    `DroughtRevert=-7.942`,
+    `TickImbalance=-10.183`,
+    `PrecisionLowVol=+0.324`
+    だった。
+  - つまり
+    current winner の
+    `PrecisionLowVol`
+    が、
+    自身ではなく
+    loser scalp lane の pocket giveback に巻き込まれて止まっていた。
+- 変更:
+  - `workers/common/profit_guard.py`
+    に
+    `scope_override`
+    を追加し、
+    cache key / SQL query
+    の両方で
+    `pocket|strategy`
+    を切り替えられるようにした。
+  - `execution/order_manager.py`
+    に
+    strategy-specific env
+    reader
+    （`ORDER_PROFIT_GUARD_SCOPE_STRATEGY_*`）
+    を追加し、
+    `profit_guard.is_allowed(...)`
+    へ
+    override を渡すようにした。
+  - `ops/env/quant-order-manager.env`
+    に
+    `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL=strategy`
+    を追加し、
+    `PrecisionLowVol`
+    だけ strategy-scoped guard に切り替えた。
+- 意図:
+  - loser scalp lane を broad に loosen せず、
+    current market でまだ勝っている
+    `PrecisionLowVol`
+    だけを
+    pocket-wide giveback から切り離して、
+    winner share を増やす。

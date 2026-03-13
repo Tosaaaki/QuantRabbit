@@ -5006,3 +5006,62 @@
   `loss_jpy>=2500`
   の severe case
   に限定する。
+
+### local-v2 `PrecisionLowVol` strategy-scoped `profit_guard` override（2026-03-13）
+- 背景:
+  - current 6h では
+    `PrecisionLowVol`
+    が
+    `4 trades / +4.484 JPY / +4.8 pips`
+    と winner 側なのに、
+    `orders.db`
+    で
+    `profit_guard`
+    block が
+    `2026-03-13 10:15 JST`
+    /
+    `10:20 JST`
+    に発生していた。
+  - same 180m の
+    `scalp pocket`
+    は
+    `DroughtRevert=-7.942 JPY`,
+    `TickImbalance=-10.183 JPY`,
+    `PrecisionLowVol=+0.324 JPY`
+    で、
+    pocket-wide giveback が
+    current winner の
+    `PrecisionLowVol`
+    まで止めていた。
+- 実装:
+  - `workers/common/profit_guard.py`
+    は
+    `scope_override`
+    を受け取り、
+    cache / query
+    の両方で
+    `pocket|strategy`
+    を切り替えられるようにした。
+  - `execution/order_manager.py`
+    は
+    `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_*`
+    を strategy tag ごとに読み、
+    `profit_guard.is_allowed(...)`
+    へ渡す。
+  - 現行 local-v2 では
+    `ops/env/quant-order-manager.env`
+    に
+    `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL=strategy`
+    を入れ、
+    `PrecisionLowVol`
+    だけ strategy-scoped guard を適用する。
+- 意図:
+  - loser scalp lane を broad に loosen せず、
+    current winner の
+    `PrecisionLowVol`
+    が
+    `scalp` pocket 全体の giveback に連座しないようにする。
+  - loser 側
+    （`DroughtRevert / TickImbalance / WickReversalBlend`）
+    までは同じ override を広げず、
+    winner lane の share 増だけを狙う。

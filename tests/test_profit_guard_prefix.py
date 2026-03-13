@@ -142,3 +142,59 @@ def test_profit_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: 
     dec = profit_guard.is_allowed("scalp", strategy_tag="M1Scalp", env_prefix="M1SCALP")
     assert dec.allowed is False
     assert "giveback=" in dec.reason
+
+
+def test_profit_guard_scope_override_isolates_strategy_from_pocket_losses(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    _insert_trade(
+        db_path,
+        pocket="scalp",
+        strategy_tag="PrecisionLowVol",
+        pl_pips=2.0,
+        realized_pl=200.0,
+        close_time=now,
+    )
+    _insert_trade(
+        db_path,
+        pocket="scalp",
+        strategy_tag="TickImbalance",
+        pl_pips=-2.0,
+        realized_pl=-200.0,
+        close_time=now,
+    )
+
+    profit_guard = _reload_profit_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "SCALP_PRECISION_PROFIT_GUARD_ENABLED": "1",
+            "SCALP_PRECISION_PROFIT_GUARD_MODE": "block",
+            "SCALP_PRECISION_PROFIT_GUARD_LOOKBACK_MIN": "180",
+            "SCALP_PRECISION_PROFIT_GUARD_POCKETS": "scalp",
+            "SCALP_PRECISION_PROFIT_GUARD_MIN_PEAK_PIPS": "1",
+            "SCALP_PRECISION_PROFIT_GUARD_MAX_GIVEBACK_PIPS": "1",
+        },
+    )
+
+    pocket_dec = profit_guard.is_allowed(
+        "scalp",
+        strategy_tag="PrecisionLowVol",
+        env_prefix="SCALP_PRECISION",
+    )
+    strategy_dec = profit_guard.is_allowed(
+        "scalp",
+        strategy_tag="PrecisionLowVol",
+        env_prefix="SCALP_PRECISION",
+        scope_override="strategy",
+    )
+
+    assert pocket_dec.allowed is False
+    assert "giveback=" in pocket_dec.reason
+    assert strategy_dec.allowed is True
+    assert strategy_dec.reason == "ok"

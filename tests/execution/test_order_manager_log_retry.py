@@ -951,6 +951,43 @@ def test_market_order_perf_block_logs_entry_path_attribution(monkeypatch) -> Non
     assert trail[-1]["status"] == "block"
 
 
+def test_market_order_uses_strategy_specific_profit_guard_scope_override(monkeypatch) -> None:
+    captured = _setup_market_order_local_path(monkeypatch)
+    scopes: list[object] = []
+
+    monkeypatch.setenv("ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL", "strategy")
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None))
+    monkeypatch.setattr(
+        order_manager.profit_guard,
+        "is_allowed",
+        lambda *_a, **kwargs: (
+            scopes.append(kwargs.get("scope_override")),
+            SimpleNamespace(allowed=True, reason="pass"),
+        )[1],
+    )
+
+    trade_id = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp",
+            client_order_id="cid-profit-guard-scope-override",
+            strategy_tag="PrecisionLowVol",
+            entry_thesis={
+                "strategy_tag": "PrecisionLowVol",
+                "entry_probability": 0.56,
+                "entry_units_intent": 120,
+            },
+            confidence=60,
+        )
+    )
+
+    assert scopes == ["strategy"]
+    assert captured
+
+
 def test_market_order_brain_shadow_logs_entry_path_attribution(monkeypatch) -> None:
     captured = _setup_market_order_local_path(
         monkeypatch,

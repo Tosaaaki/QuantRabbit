@@ -1812,6 +1812,17 @@ def _strategy_env_int(name: str, strategy_tag: Optional[str]) -> Optional[int]:
     return None
 
 
+def _strategy_env_str(name: str, strategy_tag: Optional[str]) -> Optional[str]:
+    for key in _strategy_env_key_candidates(name, strategy_tag):
+        raw = os.getenv(f"{name}_STRATEGY_{key}")
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value:
+            return value
+    return None
+
+
 def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
     """Return the entry hard SL distance in pips (0 = disabled)."""
 
@@ -2688,6 +2699,16 @@ def _order_manager_coordination_rejection_dominance(
     if strategy_override is not None:
         return max(1.0, float(strategy_override))
     return _ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE
+
+
+def _order_profit_guard_scope_override(strategy_tag: Optional[str]) -> Optional[str]:
+    raw = _strategy_env_str("ORDER_PROFIT_GUARD_SCOPE", strategy_tag)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in {"pocket", "strategy"}:
+        return value
+    return None
 
 
 _ORDER_INTENT_COORDINATION_ENABLED = _env_bool("ORDER_INTENT_COORDINATION_ENABLED", True)
@@ -10140,7 +10161,12 @@ async def market_order(
             )
 
     if not reduce_only and pocket != "manual":
-        decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag, env_prefix=env_prefix)
+        decision = profit_guard.is_allowed(
+            pocket,
+            strategy_tag=strategy_tag,
+            env_prefix=env_prefix,
+            scope_override=_order_profit_guard_scope_override(strategy_tag),
+        )
         if not decision.allowed:
             range_active = False
             if _PROFIT_GUARD_BYPASS_RANGE and pocket in {"scalp", "micro"}:
