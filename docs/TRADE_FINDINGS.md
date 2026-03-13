@@ -23366,3 +23366,181 @@ Status:
     と
     `WickReversalBlend`
     の寄与が落ちるかを再確認する。
+
+## 2026-03-13 22:15 JST / local-v2: `WickReversalBlend` の weak countertrend short を worker-local に遮断
+
+- Hypothesis Key: `wick_short_countertrend_guard_20260313_2215`
+- Primary Loss Driver: `STOP_LOSS_ORDER`
+- Mechanism Fired: `0`
+- Do Not Repeat Unless:
+  - 直近 6h 以上で
+    `WickReversalBlend`
+    の
+    `short|range_fade|...|volatility_compression|macro:trend_long|align:countertrend`
+    が再び dominant loser のまま残り、
+    今回の short guard が live order path で発火しても
+    `filled`
+    と
+    `STOP_LOSS_ORDER`
+    寄与が縮まらない時だけ次の tightening を検討する。
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- Change:
+  - `WickReversalBlend`
+    の
+    `volatility_compression`
+    下 weak countertrend short を
+    worker-local guard で reject する。
+
+- Period:
+  - primary window:
+    `2026-03-12 22:15 UTC - 2026-03-13 13:15 UTC`
+    （`2026-03-13 07:15 JST - 2026-03-13 22:15 JST`）
+  - current drag window:
+    `2026-03-13 07:15 UTC - 2026-03-13 13:15 UTC`
+    （`2026-03-13 16:15 JST - 2026-03-13 22:15 JST`）
+
+- Why/Hypothesis:
+  - 2026-03-13 22:00 JST 前後の preflight 実測は
+    USD/JPY
+    `bid=159.324 / ask=159.332 / spread=0.8 pips`,
+    `M1 ATR14=3.46 pips`,
+    `range_6m=8.5 pips`,
+    `range_30m=11.9 pips`,
+    `data_lag_ms=814.1`,
+    `decision_latency_ms=14.2`
+    で、
+    市況・API 品質は通常帯だった。
+  - corrected SQL
+    （`datetime(close_time)` / `datetime(ts)`）
+    では
+    `24h=123 trades / -313.0 JPY / PF=0.264`,
+    `6h=41 trades / -121.0 JPY / PF=0.063`,
+    `1h=5 trades / -16.9 JPY / PF=0.008`
+    で、
+    expectancy 悪化が継続していた。
+  - `WickReversalBlend`
+    の 30d countertrend short
+    `range_fade`
+    /
+    `volatility_compression`
+    /
+    `macro:trend_long`
+    /
+    `align:countertrend`
+    は
+    `4 trades / -35.5 JPY / 0 wins`
+    で、
+    live current でも
+    `gap:down_flat`
+    が
+    `2 trades / -21.3 JPY`
+    と最悪だった。
+  - 具体的な loser signature は
+    `projection_score=0.215`,
+    `wick_quality=0.684`,
+    `rsi=55.5`,
+    `adx=12.9`,
+    `macd_hist_pips=0.175`
+    で、
+    short に対して bullish continuation headwind が残ったまま fade していた。
+
+- Failure Cause:
+  - `WickReversalBlend`
+    short は、
+    `volatility_compression`
+    でも upper-wick rejection だけで通しており、
+    projection / MACD 側の bullish headwind と
+    stretch 不足
+    （`rsi<=58`, `adx<=20`）
+    が残る weak countertrend lane を worker local で落としていなかった。
+
+- Expected Good:
+  - `projection_score>=0.10`
+    かつ
+    `macd_hist_pips>=0.12`
+    の weak countertrend short だけを落とし、
+    連続
+    `STOP_LOSS_ORDER`
+    の main drag を止血できる。
+  - stronger short
+    （高 quality / 高 ADX / より stretched な short）
+    は維持し、
+    `WickReversalBlend`
+    全停止にはしない。
+
+- Expected Bad:
+  - 弱い short rebound winner が混ざると entry を取りこぼす。
+  - そのため guard は
+    `projection>=0.10`,
+    `quality<=0.78`,
+    `rsi<=58`,
+    `adx<=20`,
+    `macd_hist_pips>=0.12`
+    の同時成立に限定した。
+
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    に
+    `_wick_blend_short_countertrend_blocked`
+    を追加し、
+    short
+    `volatility_compression`
+    lane を worker-local に reject するよう更新した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に
+    helper block / keep と signal block / keep の回帰を追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> `38 passed`
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_policy.py`
+      -> `8 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+      -> 成功
+
+- Improvement:
+  - `WickReversalBlend`
+    short は
+    `projection>=0.10`
+    と
+    positive
+    `macd_hist`
+    が残る weak countertrend fade を reject する。
+  - long lean-gap guard と独立に効かせ、
+    winner になりうる stronger short lane は維持する。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> `38 passed`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_policy.py`
+    -> `8 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    -> 成功
+
+- Verdict: pending
+
+- Status:
+  - `pending`
+
+- Next Action:
+  - restart 後の
+    `logs/orders.db`
+    で
+    `WickReversalBlend`
+    の
+    `short|range_fade|...|volatility_compression|macro:trend_long|align:countertrend`
+    が
+    `filled`
+    から消えるかを 30-60 分追う。
+  - 6h/24h の
+    `WickReversalBlend`
+    `STOP_LOSS_ORDER`
+    と
+    `realized_pl`
+    寄与が改善するかを再確認する。

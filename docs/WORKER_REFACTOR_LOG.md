@@ -19777,3 +19777,42 @@
     （`0.35 <= gap_ratio < 1.20`）
     を reject する guard を追加した。
   - signal-flow test に block / keep の回帰を追加した。
+
+### 2026-03-13 22:15 JST - `WickReversalBlend` short の weak countertrend lane を worker-local に reject
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - corrected 6h/24h 実績で
+    `WickReversalBlend`
+    の current drag が継続し、
+    30d の
+    `short|range_fade|...|volatility_compression|macro:trend_long|align:countertrend`
+    は
+    `4 trades / -35.5 JPY / 0 wins`
+    だった。
+  - とくに
+    `gap:down_flat`
+    は
+    `2 trades / -21.3 JPY`
+    で、
+    `projection=0.215 / wick_quality=0.684 / rsi=55.5 / adx=12.9 / macd_hist=0.175`
+    の weak short fade が current loser fingerprint だった。
+- 変更:
+  - `_wick_blend_short_countertrend_blocked`
+    を追加し、
+    `projection>=0.10`
+    /
+    `quality<=0.78`
+    /
+    `rsi<=58`
+    /
+    `adx<=20`
+    /
+    `macd_hist_pips>=0.12`
+    の weak countertrend short を worker-local に reject するようにした。
+  - signal-flow test に helper block / keep と signal block / keep を追加し、
+    stronger short lane を残す境界を固定した。

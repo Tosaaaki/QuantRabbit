@@ -24,6 +24,7 @@ def _load_worker_namespace() -> dict[str, object]:
         "_reversion_short_flow_guard",
         "_drought_revert_setup_pressure",
         "_wick_blend_long_pressure_blocked",
+        "_wick_blend_short_countertrend_blocked",
         "_attach_flow_guard_context",
         "_signal_drought_revert",
         "_signal_precision_lowvol",
@@ -160,6 +161,12 @@ def _load_worker_namespace() -> dict[str, object]:
         "WICK_BLEND_LONG_SETUP_PRESSURE_RSI_MAX": 50.0,
         "WICK_BLEND_LONG_SETUP_PRESSURE_QUALITY_MAX": 0.83,
         "WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX": 0.15,
+        "WICK_BLEND_SHORT_COUNTERTREND_GUARD_ENABLED": True,
+        "WICK_BLEND_SHORT_COUNTERTREND_PROJECTION_SCORE_MIN": 0.10,
+        "WICK_BLEND_SHORT_COUNTERTREND_QUALITY_MAX": 0.78,
+        "WICK_BLEND_SHORT_COUNTERTREND_RSI_MAX": 58.0,
+        "WICK_BLEND_SHORT_COUNTERTREND_ADX_MAX": 20.0,
+        "WICK_BLEND_SHORT_COUNTERTREND_MACD_HIST_PIPS_MIN": 0.12,
     }
     exec(compile(module, str(worker_path), "exec"), namespace)
     return namespace
@@ -1318,6 +1325,42 @@ def test_wick_blend_long_pressure_keeps_stronger_lane() -> None:
     )
 
 
+def test_wick_blend_short_countertrend_guard_blocks_current_loser_lane() -> None:
+    ns = _load_worker_namespace()
+    blocked = ns["_wick_blend_short_countertrend_blocked"]
+
+    assert (
+        blocked(
+            range_reason="volatility_compression",
+            side="short",
+            projection_score=0.215,
+            wick_quality=0.684,
+            rsi=55.5,
+            adx=12.9,
+            macd_hist_pips=0.175,
+        )
+        is True
+    )
+
+
+def test_wick_blend_short_countertrend_guard_keeps_stronger_short_lane() -> None:
+    ns = _load_worker_namespace()
+    blocked = ns["_wick_blend_short_countertrend_blocked"]
+
+    assert (
+        blocked(
+            range_reason="volatility_compression",
+            side="short",
+            projection_score=0.06,
+            wick_quality=0.826,
+            rsi=66.6,
+            adx=24.1,
+            macd_hist_pips=0.529,
+        )
+        is False
+    )
+
+
 def test_wick_blend_signal_blocks_current_breakout_loser_lane() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_wick_reversal_blend"]
@@ -1349,6 +1392,85 @@ def test_wick_blend_signal_blocks_current_breakout_loser_lane() -> None:
     signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
 
     assert signal is None
+
+
+def test_wick_blend_signal_blocks_weak_countertrend_short_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_wick_reversal_blend"]
+    fac = {
+        "close": 159.231,
+        "upper": 159.240,
+        "lower": 159.115,
+        "span_pips": 12.5,
+        "adx": 12.9,
+        "bbw": 0.00061,
+        "atr_pips": 2.1,
+        "rsi": 55.5,
+        "macd_hist": 0.175,
+        "plus_di": 30.5,
+        "minus_di": 19.8,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.29, reason="volatility_compression")
+
+    ns["get_candles_snapshot"] = lambda *_args, **_kwargs: [
+        {"open": 159.220, "high": 159.240, "low": 159.115, "close": 159.231}
+    ]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "short", 0.86)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.215},
+    )
+    ns["wick_blend_entry_quality"] = lambda **_kwargs: {
+        "allow": True,
+        "quality": 0.684,
+        "components": {"range": 0.71},
+    }
+    ns["_wick_blend_long_setup_pressure"] = lambda *_args, **_kwargs: {}
+
+    signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
+
+    assert signal is None
+
+
+def test_wick_blend_signal_keeps_stronger_countertrend_short_lane() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_wick_reversal_blend"]
+    fac = {
+        "close": 159.232,
+        "upper": 159.280,
+        "lower": 159.154,
+        "span_pips": 12.6,
+        "adx": 23.5,
+        "bbw": 0.00074,
+        "atr_pips": 2.0,
+        "rsi": 66.6,
+        "macd_hist": 0.529,
+        "plus_di": 32.4,
+        "minus_di": 14.7,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.24, reason="volatility_compression")
+
+    ns["get_candles_snapshot"] = lambda *_args, **_kwargs: [
+        {"open": 159.246, "high": 159.280, "low": 159.224, "close": 159.232}
+    ]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "short", 0.91)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": 0.06},
+    )
+    ns["wick_blend_entry_quality"] = lambda **_kwargs: {
+        "allow": True,
+        "quality": 0.826,
+        "components": {"range": 0.78},
+    }
+    ns["_wick_blend_long_setup_pressure"] = lambda *_args, **_kwargs: {}
+
+    signal = signal_fn(dict(fac), range_ctx, tag="WickReversalBlend")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
 
 
 def test_wick_blend_signal_blocks_vol_compression_lean_gap_long_lane() -> None:

@@ -630,6 +630,24 @@ WICK_BLEND_LONG_SETUP_PRESSURE_QUALITY_MAX = _env_float(
 WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX = _env_float(
     "WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX", 0.15
 )
+WICK_BLEND_SHORT_COUNTERTREND_GUARD_ENABLED = _env_bool(
+    "WICK_BLEND_SHORT_COUNTERTREND_GUARD_ENABLED", True
+)
+WICK_BLEND_SHORT_COUNTERTREND_PROJECTION_SCORE_MIN = _env_float(
+    "WICK_BLEND_SHORT_COUNTERTREND_PROJECTION_SCORE_MIN", 0.10
+)
+WICK_BLEND_SHORT_COUNTERTREND_QUALITY_MAX = _env_float(
+    "WICK_BLEND_SHORT_COUNTERTREND_QUALITY_MAX", 0.78
+)
+WICK_BLEND_SHORT_COUNTERTREND_RSI_MAX = _env_float(
+    "WICK_BLEND_SHORT_COUNTERTREND_RSI_MAX", 58.0
+)
+WICK_BLEND_SHORT_COUNTERTREND_ADX_MAX = _env_float(
+    "WICK_BLEND_SHORT_COUNTERTREND_ADX_MAX", 20.0
+)
+WICK_BLEND_SHORT_COUNTERTREND_MACD_HIST_PIPS_MIN = _env_float(
+    "WICK_BLEND_SHORT_COUNTERTREND_MACD_HIST_PIPS_MIN", 0.12
+)
 
 # Tick-window wick reversal (higher-frequency range-reversion).
 TICK_WICK_WINDOW_SEC = _env_float("TICK_WICK_WINDOW_SEC", 9.0)
@@ -1637,6 +1655,31 @@ def _wick_blend_long_pressure_blocked(
         and rsi <= WICK_BLEND_LONG_SETUP_PRESSURE_RSI_MAX
         and wick_quality <= WICK_BLEND_LONG_SETUP_PRESSURE_QUALITY_MAX
         and projection_score <= WICK_BLEND_LONG_SETUP_PRESSURE_PROJECTION_SCORE_MAX
+    )
+
+
+def _wick_blend_short_countertrend_blocked(
+    *,
+    range_reason: str,
+    side: str,
+    projection_score: float,
+    wick_quality: float,
+    rsi: float,
+    adx: float,
+    macd_hist_pips: float,
+) -> bool:
+    if (
+        not WICK_BLEND_SHORT_COUNTERTREND_GUARD_ENABLED
+        or str(side or "").strip().lower() != "short"
+        or str(range_reason or "").strip().lower() != "volatility_compression"
+    ):
+        return False
+    return (
+        projection_score >= WICK_BLEND_SHORT_COUNTERTREND_PROJECTION_SCORE_MIN
+        and wick_quality <= WICK_BLEND_SHORT_COUNTERTREND_QUALITY_MAX
+        and rsi <= WICK_BLEND_SHORT_COUNTERTREND_RSI_MAX
+        and adx <= WICK_BLEND_SHORT_COUNTERTREND_ADX_MAX
+        and macd_hist_pips >= WICK_BLEND_SHORT_COUNTERTREND_MACD_HIST_PIPS_MIN
     )
 
 
@@ -3827,6 +3870,9 @@ def _signal_wick_reversal_blend(
             projection_score = float(proj_detail.get("score") or 0.0)
         except Exception:
             projection_score = 0.0
+    rsi = _rsi(fac_m1)
+    macd_hist_pips = _macd_hist_pips(fac_m1)
+    di_gap = _plus_di(fac_m1) - _minus_di(fac_m1)
     ma_fast = fac_m1.get("ma10")
     if ma_fast is None:
         ma_fast = fac_m1.get("ema20")
@@ -3842,7 +3888,7 @@ def _signal_wick_reversal_blend(
     gap_ratio = abs(ma_gap_pips) / max(1.0, atr) if ma_gap_pips is not None else None
     quality = wick_blend_entry_quality(
         side=side,
-        rsi=_rsi(fac_m1),
+        rsi=rsi,
         adx=adx,
         atr_pips=atr,
         range_score=range_score if range_ctx is not None else 0.0,
@@ -3852,8 +3898,8 @@ def _signal_wick_reversal_blend(
         retrace_from_extreme_pips=retrace_from_extreme if WICK_BLEND_EXTREME_RETRACE_MIN_PIPS > 0.0 else 0.0,
         projection_score=projection_score,
         range_reason=getattr(range_ctx, "reason", None) if range_ctx is not None else None,
-        macd_hist_pips=_macd_hist_pips(fac_m1),
-        di_gap=_plus_di(fac_m1) - _minus_di(fac_m1),
+        macd_hist_pips=macd_hist_pips,
+        di_gap=di_gap,
     )
     if not bool(quality.get("allow")):
         return None
@@ -3867,9 +3913,19 @@ def _signal_wick_reversal_blend(
         and gap_ratio < float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_GAP_RATIO_MAX", 1.20))
         and projection_score <= float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_PROJECTION_SCORE_MAX", 0.28))
         and wick_quality < float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_QUALITY_MAX", 0.70))
-        and _rsi(fac_m1) <= float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_RSI_MAX", 54.0))
+        and rsi <= float(getattr(config, "WICK_BLEND_LEAN_GAP_LONG_RSI_MAX", 54.0))
     )
     if lean_gap_long_lane:
+        return None
+    if _wick_blend_short_countertrend_blocked(
+        range_reason=range_reason,
+        side=side,
+        projection_score=projection_score,
+        wick_quality=wick_quality,
+        rsi=rsi,
+        adx=adx,
+        macd_hist_pips=macd_hist_pips,
+    ):
         return None
     setup_pressure = _wick_blend_long_setup_pressure(range_reason)
     if _wick_blend_long_pressure_blocked(
@@ -3878,7 +3934,7 @@ def _signal_wick_reversal_blend(
         setup_pressure=setup_pressure,
         bbw=bbw,
         range_score=range_score if range_ctx is not None else 0.0,
-        rsi=_rsi(fac_m1),
+        rsi=rsi,
         wick_quality=wick_quality,
         projection_score=projection_score,
     ):
