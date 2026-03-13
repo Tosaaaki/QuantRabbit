@@ -5106,3 +5106,46 @@
     `MicroLevelReactor-breakout-long`
     のような current winner setup が
     just-under threshold で止まる状態だけを解消する。
+
+### local-v2 dedicated history-skip override key（2026-03-13）
+- 背景:
+  - `quant-micro-levelreactor`
+    は
+    `ops/env/quant-micro-levelreactor.env`
+    を持つ dedicated runner だが、
+    local-v2 restart 時の env chain は
+    `base -> service -> local-v2-stack -> extra`
+    で評価される。
+  - そのため service env に generic
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.18`
+    を置いても、
+    shared
+    `ops/env/local-v2-stack.env`
+    の
+    `0.20`
+    が後勝ちし、
+    `2026-03-13 15:10:04 JST`
+    に
+    `hist_block ... score=0.182`
+    が再発した。
+- 実装:
+  - `workers/micro_runtime/config.py`
+    は
+    optional
+    `MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE`
+    を読む。
+  - `workers/micro_runtime/worker.py`
+    の
+    `_history_profile`
+    は override があるときだけ
+    `skip_score_threshold`
+    を差し替えて判定し、
+    profile へも記録する。
+  - `ops/env/quant-micro-levelreactor.env`
+    は generic key をやめ、
+    dedicated override key
+    `MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE=0.18`
+    を使う。
+- 意図:
+  - dirty な shared env を触らず、
+    dedicated runner だけに history-skip threshold を効かせる。

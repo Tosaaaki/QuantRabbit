@@ -222,6 +222,10 @@ HIST_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_MIN_TRADES", "12"))
 HIST_REGIME_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_REGIME_MIN_TRADES", "8"))
 HIST_PF_CAP = float(os.getenv("MICRO_MULTI_HIST_PF_CAP", "2.0"))
 HIST_SKIP_SCORE = float(os.getenv("MICRO_MULTI_HIST_SKIP_SCORE", "0.34"))
+_hist_skip_score_override_raw = os.getenv("MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE", "").strip()
+HIST_SKIP_SCORE_OVERRIDE = (
+    float(_hist_skip_score_override_raw) if _hist_skip_score_override_raw else None
+)
 HIST_CONF_WEIGHT = float(os.getenv("MICRO_MULTI_HIST_CONF_WEIGHT", "14.0"))
 HIST_LOT_MIN = float(os.getenv("MICRO_MULTI_HIST_LOT_MIN", "0.72"))
 HIST_LOT_MAX = float(os.getenv("MICRO_MULTI_HIST_LOT_MAX", "1.28"))

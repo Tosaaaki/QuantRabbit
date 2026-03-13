@@ -21363,3 +21363,100 @@ Status:
     `MicroLevelReactor`
     preflight / filled
     が戻るかを確認する。
+
+## 2026-03-13 15:15 JST / local-v2: shared env の後勝ちを避けるため `MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE` を追加
+
+- Why/Hypothesis:
+  - 15:05 JST の first fix は
+    `ops/env/quant-micro-levelreactor.env`
+    に
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.18`
+    を置いたが、
+    restart 後の env chain は
+    `base -> service -> local-v2-stack -> extra`
+    で、
+    shared
+    `ops/env/local-v2-stack.env`
+    の generic
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.20`
+    が後勝ちしていた。
+  - 実際に restart 後
+    `2026-03-13 15:10:04 JST`
+    の
+    `quant-micro-levelreactor.log`
+    で
+    `hist_block tag=MicroLevelReactor-bounce-lower strategy=MicroLevelReactor n=312 score=0.182`
+    が再発し、
+    dedicated env だけでは unblock できていないことを確認した。
+  - 仮説は、
+    generic key を shared override と競合させるのではなく、
+    code 側で dedicated runner 専用の
+    `MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE`
+    を受ければ、
+    dirty な shared env を触らずに
+    `MicroLevelReactor`
+    だけへ threshold
+    `0.18`
+    を効かせられる、
+    というもの。
+
+- Expected Good:
+  - `ops/env/local-v2-stack.env`
+    を触らずに
+    `quant-micro-levelreactor`
+    だけが
+    `0.18`
+    threshold を使う。
+  - current winner setup / adjacent setup が
+    shared env の後勝ちで潰されず、
+    `hist_block`
+    の再発を減らせる。
+
+- Expected Bad:
+  - dedicated override key を追加することで、
+    micro runtime の history gate 設定面が 1 つ増える。
+  - `MicroLevelReactor`
+    family 全体 score
+    `0.182`
+    を通す副作用自体は残るため、
+    weak setup 混入の監視は必要。
+
+- Observed/Fact:
+  - `workers/micro_runtime/config.py`
+    に
+    `MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE`
+    を optional parse として追加した。
+  - `workers/micro_runtime/worker.py`
+    の
+    `_history_profile`
+    は
+    override があるときだけ
+    `skip_score_threshold`
+    を差し替え、
+    profile にも threshold を残すようにした。
+  - 回帰は
+    `tests/workers/test_micro_multistrat_trend_flip.py`
+    に追加し、
+    `score=0.182`
+    / generic
+    `0.20`
+    / override
+    `0.18`
+    で
+    `skip=False`
+    になることを固定した。
+
+- Verdict: pending
+
+- Next Action:
+  - test を通したうえで
+    `quant-micro-levelreactor`
+    と core 4 を再起動し、
+    post-deploy で
+    `hist_block ... score=0.182`
+    が再発するか、
+    `orders.db`
+    の
+    `MicroLevelReactor`
+    preflight / filled
+    が戻るかを確認する。

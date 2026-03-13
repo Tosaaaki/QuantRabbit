@@ -778,7 +778,12 @@ def _history_profile(
     score = _clamp01(score)
     lot_mult = config.HIST_LOT_MIN + (config.HIST_LOT_MAX - config.HIST_LOT_MIN) * score
     lot_mult = max(config.HIST_LOT_MIN, min(config.HIST_LOT_MAX, lot_mult))
-    skip = bool(n >= config.HIST_MIN_TRADES and score < config.HIST_SKIP_SCORE)
+    skip_score_threshold = (
+        float(config.HIST_SKIP_SCORE_OVERRIDE)
+        if config.HIST_SKIP_SCORE_OVERRIDE is not None
+        else config.HIST_SKIP_SCORE
+    )
+    skip = bool(n >= config.HIST_MIN_TRADES and score < skip_score_threshold)
 
     profile = {
         "enabled": True,
@@ -793,6 +798,7 @@ def _history_profile(
         "score": score,
         "lot_multiplier": lot_mult,
         "skip": skip,
+        "skip_score_threshold": skip_score_threshold,
     }
     _HISTORY_PROFILE_CACHE[cache_key] = (now, dict(profile))
     return dict(profile)

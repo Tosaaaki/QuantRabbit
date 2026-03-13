@@ -137,6 +137,40 @@ def test_momentumburst_entry_thesis_marks_only_reaccel_signals() -> None:
     assert worker._momentumburst_entry_thesis_reaccel("MicroLevelReactor", reaccel_signal) is False
 
 
+def test_history_profile_uses_override_skip_threshold(monkeypatch):
+    monkeypatch.setattr(worker.config, "HIST_ENABLED", True)
+    monkeypatch.setattr(worker.config, "HIST_MIN_TRADES", 12)
+    monkeypatch.setattr(worker.config, "HIST_REGIME_MIN_TRADES", 8)
+    monkeypatch.setattr(worker.config, "HIST_SKIP_SCORE", 0.20)
+    monkeypatch.setattr(worker.config, "HIST_SKIP_SCORE_OVERRIDE", 0.18)
+    monkeypatch.setattr(worker.config, "HIST_LOT_MIN", 0.72)
+    monkeypatch.setattr(worker.config, "HIST_LOT_MAX", 1.28)
+    monkeypatch.setattr(worker.config, "HIST_PF_CAP", 2.0)
+    monkeypatch.setattr(worker.config, "HIST_TTL_SEC", 30.0)
+    monkeypatch.setattr(
+        worker,
+        "_query_strategy_history",
+        lambda **_kwargs: {
+            "n": 312,
+            "pf": 0.9,
+            "win_rate": 0.35,
+            "avg_pips": 0.2,
+        },
+    )
+    monkeypatch.setattr(worker, "_derive_history_score", lambda _row: 0.182)
+    worker._HISTORY_PROFILE_CACHE.clear()
+
+    profile = worker._history_profile(
+        strategy_key="MicroLevelReactor",
+        pocket="micro",
+        regime_label=None,
+    )
+
+    assert profile["enabled"] is True
+    assert profile["skip"] is False
+    assert profile["skip_score_threshold"] == pytest.approx(0.18)
+
+
 def test_strategy_cooldown_extends_with_fresh_participation_trim(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
     monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)

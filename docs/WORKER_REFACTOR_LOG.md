@@ -19206,3 +19206,52 @@
     current winner setup が
     `hist_block`
     の just-under threshold で止まる状態だけを解消する。
+
+### 2026-03-13 15:15 JST - shared env 後勝ちを避ける dedicated `hist_skip` override key を追加
+
+- 対象:
+  - `workers/micro_runtime/config.py`
+  - `workers/micro_runtime/worker.py`
+  - `ops/env/quant-micro-levelreactor.env`
+  - `tests/workers/test_micro_multistrat_trend_flip.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 背景:
+  - 15:05 JST の first fix は
+    service env の
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.18`
+    を使ったが、
+    env chain が
+    `service -> local-v2-stack`
+    の順だったため、
+    shared generic key
+    `0.20`
+    が後勝ちした。
+  - restart 後にも
+    `2026-03-13 15:10:04 JST`
+    に
+    `hist_block ... score=0.182`
+    が再発し、
+    dedicated env だけでは unblock できていないことを確認した。
+- 変更:
+  - micro runtime config に
+    `MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE`
+    を追加した。
+  - `_history_profile`
+    は override 優先の
+    `skip_score_threshold`
+    を使い、
+    profile にも threshold を残すようにした。
+  - `quant-micro-levelreactor`
+    dedicated env は generic key をやめ、
+    new override key
+    `0.18`
+    を使うように切り替えた。
+  - test で
+    `score=0.182`
+    が generic
+    `0.20`
+    では block されるが、
+    override
+    `0.18`
+    では pass することを固定した。
