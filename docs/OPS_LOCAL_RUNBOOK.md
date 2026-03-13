@@ -14,6 +14,7 @@
 ## 0. 運用原則
 - 現行はローカルPDCAを優先する。
 - ローカル検証でも作業前にUSD/JPYの市況（価格/スプレッド/ATR/API応答）を確認する。
+- 収益/リスク/ENTRY/EXIT 改善の前は `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を正とし、市況確認と `TRADE_FINDINGS` review を1コマンドで通す。
 - VM の稼働監視/操作はデフォルトで行わない（`QR_LOCAL_ONLY=1`）。
 - ローカル運用タスクでは `scripts/vm.sh` / `deploy_to_vm.sh` / `gcloud compute *` を実行しない。
 - ローカル実売買は自己責任で行い、手動ポジションへの干渉条件を常に確認する。

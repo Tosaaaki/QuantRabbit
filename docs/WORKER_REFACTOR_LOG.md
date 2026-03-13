@@ -19585,6 +19585,36 @@
   - focused unit test を追加し、
     stress 時にだけ close することを固定した。
 
+### 2026-03-13 21:00 JST - `change_preflight.sh` で改善前の市況確認と review を一体化
+
+- 対象:
+  - `scripts/change_preflight.sh`
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - `trade_findings_review.py`
+    は追加済みだったが、
+    AGENTS の必須項目である USD/JPY 市況確認とは別導線だった。
+  - 改善前 preflight は
+    `local health refresh -> market summary -> TRADE_FINDINGS review`
+    を必ず 1 セットで通したい。
+- 変更:
+  - `scripts/change_preflight.sh`
+    を追加し、
+    `collect_local_health.sh`
+    実行、
+    `tick_cache / factor_cache / health_snapshot / orders.db`
+    からの市場サマリ出力、
+    `trade_findings_review.py`
+    実行までを一括化した。
+  - agent 向け手順書は、
+    raw
+    `python3 scripts/trade_findings_review.py ...`
+    より wrapper を正とするよう更新した。
+
 ### 2026-03-13 20:00 JST - `TRADE_FINDINGS` の改善前 review を agent preflight に昇格
 
 - 対象:

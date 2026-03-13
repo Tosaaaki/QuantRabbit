@@ -56,11 +56,113 @@
 ```
 
 ## Improvement Memory Protocol
-- 収益/リスク/ENTRY/EXIT 改善の前に必ず `python3 scripts/trade_findings_review.py --query "<strategy_tag or hypothesis_key or close_reason>"` を実行する。
+- 収益/リスク/ENTRY/EXIT 改善の前に必ず `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `TRADE_FINDINGS` review を 1 コマンドにまとめる。
 - 新しい改善エントリには `Hypothesis Key` / `Primary Loss Driver` / `Mechanism Fired` / `Do Not Repeat Unless` を必須で残す。
 - `Mechanism Fired` は `fired=0` や `none` も含めて明記する。発火していない仕組みを、主損失ドライバ不変のまま繰り返さない。
 - 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
 - close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
+
+## 2026-03-13 21:00 JST / trade_findings: change_preflight wrapper で市況確認と review を一体化
+
+- Hypothesis Key:
+  - `change_preflight_wrapper`
+- Primary Loss Driver:
+  - preflight 手順が分散していて、
+    市況確認と `TRADE_FINDINGS` review のどちらかが抜けやすいこと
+- Mechanism Fired:
+  - `scripts/change_preflight.sh`
+    を追加。
+  - `collect_local_health.sh`
+    で local health を更新し、
+    `tick_cache / factor_cache / health_snapshot / orders.db`
+    から USD/JPY 市況と直近 fills/rejects をまとめた上で、
+    `trade_findings_review.py`
+    を自動実行する。
+- Do Not Repeat Unless:
+  - `change_preflight.sh`
+    で必要情報が足りないと確認できるまでは、
+    別の preflight wrapper を増やさず、
+    この script を拡張する。
+- Change:
+  - `scripts/change_preflight.sh`
+    を追加し、
+    変更前 preflight を 1 コマンド化した。
+  - `AGENTS.md`,
+    `docs/AGENT_COLLAB_HUB.md`,
+    `docs/OPS_LOCAL_RUNBOOK.md`,
+    `docs/CURRENT_MECHANISMS.md`
+    の運用手順を、
+    raw
+    `python3 scripts/trade_findings_review.py ...`
+    から wrapper 実行へ更新した。
+- Why:
+  - raw review command だけだと、
+    AGENTS が要求する USD/JPY 市況確認と別手順になり、
+    どちらかが飛びやすい。
+  - 改善前に毎回やるべきことは
+    `local health refresh -> market summary -> TRADE_FINDINGS review`
+    の 3 点なので、
+    1 コマンド化した方が agent が再現しやすい。
+- Hypothesis:
+  - review と市況確認を 1 導線に束ねれば、
+    「記録は見たが market を見ていない」
+    または
+    「market は見たが同系改善を見返していない」
+    という抜けが減る。
+- Expected Good:
+  - 収益/リスク/ENTRY/EXIT 改善の前に、
+    現在の USD/JPY 市況と同系改善の過去 verdict を同時に確認できる。
+  - agent が preflight 実施をログで残しやすくなる。
+- Expected Bad:
+  - preflight 出力が長くなり、
+    query を雑にすると review 側のノイズも増える。
+  - `tick_cache / factor_cache / health_snapshot`
+    のどれかが欠けると、
+    一部の市場項目は
+    `n/a`
+    になる。
+- Period:
+  - 2026-03-13
+- Fact:
+  - as-of
+    `2026-03-13 21:00 JST`
+    の local 実測では、
+    `tick_cache`
+    から
+    `bid=159.464 / ask=159.472 / spread=0.8p`
+    を取れ、
+    `factor_cache`
+    から
+    `M1 atr_pips`
+    を取れた。
+  - `health_snapshot`
+    から
+    `mechanism_integrity`,
+    `data_lag_ms`,
+    `decision_latency_ms`,
+    `orders_status_1h`
+    を取得でき、
+    `orders.db`
+    から
+    `fills_15m / fills_30m / rejects_30m`
+    を追加集計できた。
+- Failure Cause:
+  - 必須 preflight は前回追加したが、
+    market check と review の実行導線がまだ別だった。
+- Improvement:
+  - one-command preflight wrapper。
+- Verification:
+  - `bash -n scripts/change_preflight.sh`
+  - `scripts/change_preflight.sh "inventory_stress STOP_LOSS_ORDER" 3`
+- Verdict:
+  - pending
+- Next Action:
+  - 次の profitability 系タスクでは、
+    raw review command ではなく
+    `scripts/change_preflight.sh`
+    の出力を先に残してから着手する。
+- Status:
+  - done
 
 ## 2026-03-13 20:00 JST / trade_findings: 改善前 review を必須 preflight に昇格
 
