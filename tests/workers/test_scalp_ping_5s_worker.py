@@ -137,6 +137,40 @@ def test_negative_lookahead_rescue_skips_once_fills_resume(monkeypatch) -> None:
     assert rescue is None
 
 
+def test_negative_lookahead_rescue_units_floor_bridges_probability_scale(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MIN_UNITS", 5)
+    monkeypatch.setattr(worker.config, "MAX_UNITS", 170)
+
+    units, status = worker._maybe_apply_lookahead_rescue_units_floor(
+        units=6,
+        units_risk=40,
+        entry_probability=0.55,
+        lookahead_rescue_applied=True,
+    )
+
+    assert units == 10
+    assert status == "rescued"
+
+
+def test_negative_lookahead_rescue_units_floor_inactive_without_rescue(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MIN_UNITS", 5)
+    monkeypatch.setattr(worker.config, "MAX_UNITS", 170)
+
+    units, status = worker._maybe_apply_lookahead_rescue_units_floor(
+        units=6,
+        units_risk=40,
+        entry_probability=0.55,
+        lookahead_rescue_applied=False,
+    )
+
+    assert units == 6
+    assert status == "inactive"
+
+
 def test_d_negative_window_short_align_block_reason_blocks_loser_lane(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 

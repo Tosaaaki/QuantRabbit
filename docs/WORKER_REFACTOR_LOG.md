@@ -18763,3 +18763,36 @@
     に揃えた。
   - C lane の worker-local rescue と
     order-manager min-units floor の mismatch を解消した。
+
+### 2026-03-13 11:54 JST - `scalp_ping_5s_c_live` rescued candidate 用 post-probability units floor
+
+- 対象:
+  - `workers/scalp_ping_5s/worker.py`
+  - `tests/workers/test_scalp_ping_5s_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- 背景:
+  - order-manager min units を `5` に揃えた後も、
+    rescued candidate の raw units が `5-6`
+    しかなく、
+    `entry_probability`
+    scale 後に still `< 5`
+    となって reject が続いた。
+
+- 変更:
+  - `lookahead_rescue_applied`
+    のときだけ、
+    worker-local に
+    `ceil(MIN_UNITS / entry_probability)`
+    ベースの bounded units floor を入れた。
+  - cap は
+    `MIN_UNITS * 2`
+    までに抑え、
+    current C lane では
+    `5 -> max 10 units`
+    の small floor とした。
+  - `entry_thesis.lookahead_rescue_units_floor_status`
+    を追加し、
+    rescue floor 適用玉を監査可能にした。
+  - regression test を 2 本追加した。

@@ -20338,3 +20338,101 @@ Status:
     ではなく
     worker-local `entry_probability`
     側を見直す。
+
+### 2026-03-13 11:54 JST - rescued C lane に post-probability units floor を入れて execution scale を跨がせる
+
+- Why/Hypothesis:
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_C(_LIVE)=5`
+    に揃えた後も、
+    `quant-order-manager.log`
+    では
+    `entry_probability:entry_probability_below_min_units`
+    が継続した。
+  - 直近 reject は
+    `units=-5/-6`
+    / `entry_probability=0.53-0.79`
+    帯で、
+    rescue 後の raw units が small すぎて
+    `entry_probability`
+    scale 後に
+    `5`
+    を割っていた。
+  - 仮説は、
+    「lookahead rescue が発火した候補だけ、
+    worker-local に `ceil(MIN_UNITS / entry_probability)` ベースの
+    small floor を入れれば、
+    order-manager の preserve-intent scale を跨げる」
+    である。
+
+- Expected Good:
+  - rescued candidate が
+    `5-6 units`
+    のまま execution 層で潰れず、
+    `7-10 units`
+    帯で通る。
+  - rescue 対象以外の通常 signal は触らないので、
+    broad sizing loosening にはならない。
+
+- Expected Bad:
+  - low-activity rescue short が小さく通るようになるので、
+    cadence は戻っても loser noise が増える可能性がある。
+  - `entry_probability`
+    が低い候補まで通しすぎると、
+    rescue lane の PF が悪化するリスクがある。
+
+- Observed/Fact:
+  - `2026-03-13 11:53 JST`
+    までの
+    `orders.db`
+    では、
+    `lookahead_rescue_applied=1`
+    の
+    `scalp_ping_5s_c_live`
+    short が
+    `entry_probability=0.537-0.796`
+    でも
+    `entry_probability_reject`
+    に当たり続けた。
+  - `workers/scalp_ping_5s/worker.py`
+    に
+    `_maybe_apply_lookahead_rescue_units_floor`
+    を追加し、
+    `lookahead_rescue_applied`
+    のときだけ
+    `ceil(MIN_UNITS / entry_probability)`
+    を基準に
+    `MIN_UNITS * 2`
+    までの bounded floor
+    (`5 -> max 10 units`)
+    を掛けるようにした。
+  - `entry_thesis`
+    に
+    `lookahead_rescue_units_floor_status`
+    を追加し、
+    rescue floor が入った玉を後で切り出せるようにした。
+  - test は
+    `tests/workers/test_scalp_ping_5s_worker.py -k negative_lookahead_rescue`
+    へ 2 本追加し、
+    `0.55 prob / 6 units`
+    の rescued candidate が
+    `10 units`
+    へ持ち上がることと、
+    non-rescue 候補では不活性のままなことを固定した。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-order-manager`
+    と
+    `quant-scalp-ping-5s-c`
+    を再起動して、
+    rescue 候補が
+    `entry_probability_below_min_units`
+    を抜けるか確認する。
+  - 抜けた後は
+    `fills_15m/30m`
+    と
+    rescue-tagged trade の PnL
+    だけを追い、
+    loser noise が多ければ
+    floor cap を下げる。

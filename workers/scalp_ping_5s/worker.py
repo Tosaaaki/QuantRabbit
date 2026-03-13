@@ -1073,6 +1073,40 @@ def _maybe_rescue_negative_lookahead(
     return units_mult, detail, recent_fills
 
 
+def _maybe_apply_lookahead_rescue_units_floor(
+    *,
+    units: int,
+    units_risk: int,
+    entry_probability: float,
+    lookahead_rescue_applied: bool,
+) -> tuple[int, str]:
+    if not lookahead_rescue_applied:
+        return units, "inactive"
+    if units <= 0:
+        return units, "non_positive"
+    min_units = max(1, int(_safe_float(getattr(config, "MIN_UNITS", 0), 0.0)))
+    if min_units <= 0:
+        return units, "invalid_min_units"
+    probability = _clamp(_safe_float(entry_probability, 0.0), 0.0, 1.0)
+    if probability <= 0.0:
+        return units, "invalid_probability"
+
+    floor_units = max(
+        min_units,
+        int(math.ceil(min_units / max(probability, 0.01))),
+    )
+    floor_units = min(
+        floor_units,
+        max(min_units, min_units * 2),
+        max(min_units, int(_safe_float(getattr(config, "MAX_UNITS", min_units), min_units))),
+    )
+    if units >= floor_units:
+        return units, "sufficient"
+    if units_risk < floor_units:
+        return units, "risk_cap_below_floor"
+    return floor_units, "rescued"
+
+
 def _instant_speed_scale(instant_range_pips: float) -> float:
     if not config.INSTANT_SPEED_ENABLED:
         return 1.0
@@ -6717,6 +6751,7 @@ async def scalp_ping_5s_worker() -> None:
             lookahead_rescue_applied = False
             lookahead_rescue_reason: Optional[str] = None
             lookahead_rescue_recent_fills: Optional[int] = None
+            lookahead_rescue_units_floor_status: Optional[str] = None
             decision_speed_scale = _instant_speed_scale(signal.instant_range_pips)
             lookahead_horizon_sec = max(
                 config.LOOKAHEAD_HORIZON_SEC * config.INSTANT_LOOKAHEAD_SCALE_MIN,
@@ -7607,6 +7642,14 @@ async def scalp_ping_5s_worker() -> None:
                 bias_meta["raw_scale"] = raw_side_bias
                 bias_meta["mode_adjusted_scale"] = float(bias_scale)
             units = int(round(units * bias_scale))
+            units, lookahead_rescue_units_floor_status = _maybe_apply_lookahead_rescue_units_floor(
+                units=units,
+                units_risk=units_risk,
+                entry_probability=entry_probability,
+                lookahead_rescue_applied=lookahead_rescue_applied,
+            )
+            if lookahead_rescue_units_floor_status == "rescued":
+                tech_route_reasons.append("lookahead_rescue_units_floor")
             units, min_units_status = _maybe_rescue_min_units(
                 units=units,
                 base_units=base_units,
@@ -7931,6 +7974,7 @@ async def scalp_ping_5s_worker() -> None:
                     if lookahead_rescue_recent_fills is not None
                     else None
                 ),
+                "lookahead_rescue_units_floor_status": lookahead_rescue_units_floor_status,
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),
                 "extrema_gate_reason": extrema_decision.reason,
                 "extrema_units_mult": round(extrema_units_mult, 3),
