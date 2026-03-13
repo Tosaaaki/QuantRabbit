@@ -405,6 +405,107 @@ def test_drought_revert_keeps_strong_long_under_recent_setup_pressure() -> None:
     assert signal["setup_pressure"]["active"] == 1.0
 
 
+def test_drought_revert_blocks_current_down_flat_weak_trend_long_probe() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.70)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.265},
+    )
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.431,
+            "max_pressure": 0.599,
+            "setup_quality": 0.382,
+            "reversion_support": 0.73,
+            "touch_ratio": 1.0,
+            "ma_gap_pips": -0.72,
+            "price_gap_pips": 5.198,
+            "di_gap": 8.4,
+            "strong_reclaim_probe": 0.0,
+            "macro_flow_regime": "trend_long",
+        },
+    )
+    fac = {
+        "close": 159.431,
+        "upper": 159.520,
+        "lower": 159.430,
+        "span_pips": 9.0,
+        "adx": 18.1,
+        "bbw": 0.00077,
+        "atr_pips": 2.90,
+        "rsi": 40.8,
+        "ema20": 159.477,
+        "ma10": 159.485,
+        "ma20": 159.492,
+        "ema_slope_10": -0.011,
+        "ema_slope_20": -0.006,
+        "macd_hist": -0.105,
+        "vwap_gap": -5.2,
+        "plus_di": 21.1,
+        "minus_di": 29.5,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is None
+
+
+def test_drought_revert_keeps_down_flat_trend_long_when_projection_and_di_support_recover() -> None:
+    ns = _load_worker_namespace()
+    signal_fn = ns["_signal_drought_revert"]
+    ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.70)
+    ns["projection_decision"] = lambda side, mode="range": (
+        True,
+        1.0,
+        {"side": side, "mode": mode, "score": -0.14},
+    )
+    ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
+        True,
+        {
+            "continuation_pressure": 0.475,
+            "max_pressure": 0.602,
+            "setup_quality": 0.357,
+            "reversion_support": 0.74,
+            "touch_ratio": 1.0,
+            "ma_gap_pips": -0.51,
+            "price_gap_pips": 4.805,
+            "di_gap": 15.611,
+            "strong_reclaim_probe": 0.0,
+            "macro_flow_regime": "trend_long",
+        },
+    )
+    fac = {
+        "close": 159.367,
+        "upper": 159.454,
+        "lower": 159.366,
+        "span_pips": 8.8,
+        "adx": 14.3,
+        "bbw": 0.00054,
+        "atr_pips": 2.64,
+        "rsi": 41.4,
+        "ema20": 159.399,
+        "ma10": 159.399,
+        "ma20": 159.404,
+        "ema_slope_10": -0.006,
+        "ema_slope_20": -0.003,
+        "macd_hist": -0.061,
+        "vwap_gap": -4.8,
+        "plus_di": 18.8,
+        "minus_di": 34.4,
+    }
+    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+
+    signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
+
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+
+
 def test_precision_lowvol_disables_vgap_bonus_when_flow_guard_is_marginal() -> None:
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_precision_lowvol"]

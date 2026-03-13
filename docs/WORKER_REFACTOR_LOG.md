@@ -41,6 +41,39 @@
     の low-sample loser lane だけを
     strategy-local に薄くする。
 
+### 2026-03-13（追記）`DroughtRevert` に weak trend-long probe guard を追加
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/config.py`
+  - `workers/scalp_wick_reversal_blend/worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 変更:
+  - `DroughtRevert`
+    long path に
+    `DROUGHT_WEAK_TREND_LONG_PROBE_*`
+    の dedicated threshold を追加し、
+    `volatility_compression + macro trend_long`
+    の中でも
+    `projection deeply negative`
+    かつ
+    `di support が弱い`
+    `down_flat`
+    reclaim probe を
+    worker-local に reject するようにした。
+  - regression test として、
+    current loser mirror の block と
+    `tight_thin`
+    winner mirror の keep を固定した。
+- 意図:
+  - shared gate や blanket trim を増やさず、
+    `DroughtRevert`
+    の
+    `tight_normal + gap:down_flat + macro:trend_long`
+    loser lane だけを exact setup で削る。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を positive-gap shallow reclaim まで拡張抑制
 
 - 対象:

@@ -85,6 +85,22 @@
   mid-RSI continuation-headwind lane,
   `gap:down_flat` low-score lane
   を worker-local guard で個別に抑える運用です。
+- `DroughtRevert`
+  については
+  long `volatility_compression`
+  の
+  `macro:trend_long + gap:down_flat`
+  でも
+  `projection deeply negative`
+  かつ
+  `di support が弱い`
+  weak reclaim probe だけを
+  `DROUGHT_WEAK_TREND_LONG_PROBE_*`
+  で worker-local に reject する。
+  `tight_thin`
+  の recovery winner まで broad に落とさないため、
+  shared gate ではなく
+  exact setup 条件で扱う。
 - 同じ family では
   `PrecisionLowVol` / `DroughtRevert` / `WickReversalBlend`
   の stop band も strategy-local に調整しており、

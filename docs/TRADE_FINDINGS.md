@@ -51,6 +51,157 @@
 - Status:
 ```
 
+## 2026-03-13 16:55 JST / local-v2: `DroughtRevert` の current bad probe を worker-local に遮断
+
+- Change:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `DroughtRevert`
+    long pathに、
+    `volatility_compression + macro trend_long`
+    の中でも
+    `projection が深くマイナス`
+    かつ
+    `di support が弱い`
+    `down_flat` reclaim probe を落とす exact guard を追加した。
+  - `workers/scalp_wick_reversal_blend/config.py`
+    に
+    `DROUGHT_WEAK_TREND_LONG_PROBE_*`
+    の dedicated threshold を追加した。
+  - `tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+    に、
+    current loser mirror の block と
+    `06:44 UTC` winner mirror の keep を追加した。
+- Why:
+  - `f9bbcc3d`
+    反映後の recent trades は
+    `session_open_breakout -8.36 JPY`
+    に加えて
+    `DroughtRevert`
+    が
+    `2026-03-13 16:34:01 JST`
+    と
+    `16:34:44 JST`
+    に
+    43 秒差で同じ long setup を 2 本建て、
+    `16:35:32 JST`
+    に同時
+    `STOP_LOSS_ORDER`
+    で
+    `-2.73 / -2.575 JPY`
+    を出していた。
+  - この 2 本は
+    同一
+    `setup_fingerprint=DroughtRevert|long|range_fade|tight_normal|rsi:oversold|atr:mid|gap:down_flat|volatility_compression|macro:trend_long`
+    で、
+    `projection_score=-0.265 / continuation_pressure=0.431 / setup_quality=0.382 / di_gap=8.4 / price_gap=5.198p / ma_gap=-0.72p`
+    に揃っていた。
+  - 一方で直前
+    `06:44 UTC`
+    の winner は
+    `tight_thin`
+    で、
+    `projection_score=-0.14 / di_gap=15.611 / price_gap=4.805p / ma_gap=-0.51p`
+    だった。
+- Hypothesis:
+  - current loser は
+    `macro trend_long`
+    に against ではなく、
+    同 trend の押し戻りを拾う lane の中でも
+    `projection が弱く、di support も薄い bad probe`
+    だった。
+  - `projection<=-0.18`
+    /
+    `di_gap<=10`
+    /
+    `price_gap>=5p`
+    /
+    `|ma_gap|>=0.65p`
+    を exact に切れば、
+    current bad probe を落としつつ
+    `tight_thin`
+    の winner は残せる。
+- Expected Good:
+  - `DroughtRevert`
+    の
+    `tight_normal + gap:down_flat + macro:trend_long`
+    loser probe を減らせる。
+  - duplicate fill が来ても、
+    そもそもの bad lane を signal 段階で止めやすくなる。
+- Expected Bad:
+  - 押し目の深い reclaim long を切り過ぎると、
+    `DroughtRevert`
+    の件数が減る。
+  - `di_gap`
+    や
+    `projection`
+    の閾値が厳しすぎると、
+    later recovery の winner まで削る可能性がある。
+- Period:
+  - local-v2 recent trades / orders:
+    主に
+    `2026-03-13 06:44-07:35 UTC`
+    の
+    `DroughtRevert`
+    fills / closes を確認。
+- Fact:
+  - post-`f9bbcc3d`
+    の recent closed trades は
+    `DroughtRevert -5.305 JPY`,
+    `session_open_breakout -8.36 JPY`,
+    `scalp_ping_5s_c_live -0.07 JPY`
+    で、
+    `DroughtRevert`
+    が current repeat loser だった。
+  - 直近24hの
+    `DroughtRevert`
+    exact setup 集計では、
+    `tight_normal + gap:down_flat + atr:mid + macro:trend_long`
+    が
+    `3 trades / net -16.13 JPY`
+    だった一方、
+    `tight_thin`
+    同系 setup は
+    `1 trade / +10.692 JPY`
+    だった。
+- Failure Cause:
+  - 既存の
+    `flow_guard`
+    と
+    `setup_pressure`
+    だけでは、
+    current loser の
+    `projection deeply negative + weak di support`
+    probe を block できていなかった。
+  - shared trim は効いていたが、
+    `103-105 units`
+    の repeated loser を防ぐには不十分だった。
+- Improvement:
+  - broad shared gate や time block ではなく、
+    `DroughtRevert`
+    worker 内に
+    exact weak-trend-long-probe guard を追加した。
+- Verification:
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/config.py workers/scalp_wick_reversal_blend/worker.py tests/workers/test_scalp_wick_reversal_blend_signal_flow.py`
+  - `.venv/bin/pytest tests/workers/test_scalp_wick_reversal_blend_signal_flow.py -k "drought_revert_blocks_current_down_flat_weak_trend_long_probe or drought_revert_keeps_down_flat_trend_long_when_projection_and_di_support_recover or drought_revert_blocks_weak_long_under_recent_setup_pressure or drought_revert_keeps_strong_long_under_recent_setup_pressure" -q`
+- Verdict:
+  - pending
+- Next Action:
+  - 反映後、
+    `logs/orders.db`
+    で
+    `DroughtRevert`
+    の
+    `tight_normal + gap:down_flat + projection<=-0.18`
+    fill が消えるかを確認する。
+  - まだ同 lane の repeated fill が残るなら、
+    次は
+    open-trade aware の exact duplicate guard を
+    `DroughtRevert`
+    に足す。
+- Status:
+  - in_progress
+
 ## 2026-03-13 16:35 JST / local-v2: `TickImbalance` の trend exhaustion 追随を worker-local に遮断
 
 - Change:

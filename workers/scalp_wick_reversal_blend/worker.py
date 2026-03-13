@@ -1863,6 +1863,32 @@ def _signal_drought_revert(
                 projection_score = float(raw_projection_score)
         except Exception:
             projection_score = None
+    if side == "long" and flow_guard is not None:
+        macro_flow_regime = str(flow_guard.get("macro_flow_regime") or "").strip().lower()
+        di_gap = abs(float(flow_guard.get("di_gap") or 0.0))
+        weak_trend_long_probe = (
+            bool(getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_GUARD_ENABLED", True))
+            and str(getattr(range_ctx, "reason", "") or "").strip().lower() == "volatility_compression"
+            and macro_flow_regime == "trend_long"
+            and projection_score is not None
+            and projection_score
+            <= float(getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_PROJECTION_SCORE_MAX", -0.18))
+            and setup_quality
+            <= float(getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_SETUP_QUALITY_MAX", 0.40))
+            and trend_pressure
+            >= float(
+                getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_CONTINUATION_PRESSURE_MIN", 0.40)
+            )
+            and price_vs_ema_pips
+            >= float(getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_PRICE_GAP_MIN_PIPS", 5.0))
+            and abs(ma_gap_pips)
+            >= float(getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_MA_GAP_ABS_MIN_PIPS", 0.65))
+            and di_gap
+            <= float(getattr(config, "DROUGHT_WEAK_TREND_LONG_PROBE_DI_GAP_MAX", 10.0))
+            and not strong_reclaim_probe
+        )
+        if weak_trend_long_probe:
+            return None
 
     setup_pressure = {}
     if side == "long":

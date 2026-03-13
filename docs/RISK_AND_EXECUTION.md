@@ -8,6 +8,79 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `DroughtRevert` weak trend-long probe guard（2026-03-13）
+- 背景:
+  - 2026-03-13 16:34-16:35 JST の local-v2 で
+    `DroughtRevert`
+    long が
+    43 秒差で同一 setup を 2 本建て、
+    同時
+    `STOP_LOSS_ORDER`
+    で
+    `-2.73 / -2.575 JPY`
+    を出していた。
+  - 2 本とも
+    `setup_fingerprint=DroughtRevert|long|range_fade|tight_normal|rsi:oversold|atr:mid|gap:down_flat|volatility_compression|macro:trend_long`
+    で、
+    `projection_score=-0.265`
+    /
+    `continuation_pressure=0.431`
+    /
+    `setup_quality=0.382`
+    /
+    `di_gap=8.4`
+    /
+    `price_gap=5.198p`
+    /
+    `ma_gap=-0.72p`
+    が揃っていた。
+  - 一方で直前 winner は
+    `tight_thin`
+    同系 setup で、
+    `projection_score=-0.14`
+    /
+    `di_gap=15.611`
+    /
+    `price_gap=4.805p`
+    /
+    `ma_gap=-0.51p`
+    だった。
+- 実装:
+  - `workers/scalp_wick_reversal_blend/worker.py`
+    の
+    `DroughtRevert`
+    long path に、
+    `volatility_compression`
+    かつ
+    `macro trend_long`
+    のときだけ効く
+    weak-trend-long-probe guard を追加した。
+  - `projection<=-0.18`
+    /
+    `setup_quality<=0.40`
+    /
+    `continuation_pressure>=0.40`
+    /
+    `price_gap>=5.0p`
+    /
+    `|ma_gap|>=0.65p`
+    /
+    `di_gap<=10.0`
+    を満たし、
+    `strong_reclaim_probe`
+    でない long を worker-local に reject する。
+  - 閾値は
+    `workers/scalp_wick_reversal_blend/config.py`
+    の
+    `DROUGHT_WEAK_TREND_LONG_PROBE_*`
+    で dedicated に持たせた。
+- 意図:
+  - `DroughtRevert`
+    全体や
+    scalp pocket
+    を止めず、
+    current bad probe の exact lane だけを signal 段階で落とす。
+
 ### local-v2 `TickImbalance` trend-exhaustion guard（2026-03-13）
 - 背景:
   - 2026-03-13 16:12 JST 時点の local-v2 で
