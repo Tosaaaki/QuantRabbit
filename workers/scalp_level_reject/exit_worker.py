@@ -17,6 +17,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
+from utils.oanda_account import get_account_snapshot
 from .exit_utils import close_trade, mark_pnl_pips
 from .rollout_gate import load_rollout_start_ts, trade_passes_rollout
 from .reentry_decider import decide_reentry
@@ -294,6 +295,104 @@ def _protection_spread_pips(*, bid: Optional[float], ask: Optional[float]) -> Op
 
 def _clamp_float(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _inventory_stress_exit_trigger(
+    *,
+    exit_profile: dict,
+    thesis: dict,
+    pnl: float,
+    hold_sec: float,
+    atr_pips: Optional[float],
+) -> tuple[Optional[str], Optional[str]]:
+    if pnl >= 0.0 or not isinstance(exit_profile, dict):
+        return None, None
+    profile = exit_profile.get("inventory_stress")
+    if not isinstance(profile, dict):
+        return None, None
+    if not _coerce_bool(profile.get("enabled"), False):
+        return None, None
+
+    def _pick_float(value: object, default: float) -> float:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(out):
+            return default
+        return out
+
+    min_hold_sec = max(0.0, _pick_float(profile.get("min_hold_sec"), 0.0))
+    if hold_sec < min_hold_sec:
+        return None, None
+
+    base_loss_pips = max(0.0, _pick_float(profile.get("loss_pips"), 0.0))
+    loss_sl_mult = max(0.0, _pick_float(profile.get("loss_sl_mult"), 0.0))
+    loss_atr_mult = max(0.0, _pick_float(profile.get("loss_atr_mult"), 0.0))
+    loss_cap_pips = max(0.0, _pick_float(profile.get("loss_cap_pips"), 0.0))
+    max_hold_sec = max(0.0, _pick_float(profile.get("max_hold_sec"), 0.0))
+    time_loss_pips = max(0.0, _pick_float(profile.get("time_loss_pips"), 0.4))
+    cache_ttl_sec = max(0.5, _pick_float(profile.get("cache_ttl_sec"), 2.0))
+
+    adverse_pips = abs(float(pnl))
+    threshold_pips = base_loss_pips
+    thesis_sl_pips = max(0.0, _pick_float(thesis.get("sl_pips"), 0.0))
+    if loss_sl_mult > 0.0 and thesis_sl_pips > 0.0:
+        threshold_pips = max(threshold_pips, thesis_sl_pips * loss_sl_mult)
+    if loss_atr_mult > 0.0 and atr_pips is not None and atr_pips > 0.0:
+        threshold_pips = max(threshold_pips, float(atr_pips) * loss_atr_mult)
+    if loss_cap_pips > 0.0 and threshold_pips > 0.0:
+        threshold_pips = min(threshold_pips, loss_cap_pips)
+
+    loss_trigger = threshold_pips > 0.0 and adverse_pips >= threshold_pips
+    time_trigger = max_hold_sec > 0.0 and hold_sec >= max_hold_sec and adverse_pips >= time_loss_pips
+    if not loss_trigger and not time_trigger:
+        return None, None
+
+    try:
+        snapshot = get_account_snapshot(cache_ttl_sec=cache_ttl_sec)
+    except Exception:
+        return None, None
+
+    def _snapshot_float(value: object) -> Optional[float]:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(out):
+            return None
+        return out
+
+    nav = _snapshot_float(getattr(snapshot, "nav", None)) or 0.0
+    health_buffer = _snapshot_float(getattr(snapshot, "health_buffer", None))
+    free_margin_ratio = _snapshot_float(getattr(snapshot, "free_margin_ratio", None))
+    margin_used = _snapshot_float(getattr(snapshot, "margin_used", None))
+    unrealized_pl = _snapshot_float(getattr(snapshot, "unrealized_pl", None)) or 0.0
+    margin_usage_ratio = (margin_used / nav) if nav > 0.0 and margin_used is not None else None
+    unrealized_dd_ratio = abs(unrealized_pl) / nav if nav > 0.0 and unrealized_pl < 0.0 else None
+
+    hb_limit = max(0.0, _pick_float(profile.get("health_buffer"), 0.0))
+    free_limit = max(0.0, _pick_float(profile.get("free_margin_ratio"), 0.0))
+    usage_limit = max(0.0, _pick_float(profile.get("margin_usage_ratio"), 0.0))
+    dd_limit = max(0.0, _pick_float(profile.get("unrealized_dd_ratio"), 0.0))
+
+    if hb_limit > 0.0 and health_buffer is not None and health_buffer <= hb_limit:
+        return str(profile.get("reason_health") or "margin_health").strip() or "margin_health", (
+            "time" if time_trigger and not loss_trigger else "loss"
+        )
+    if free_limit > 0.0 and free_margin_ratio is not None and free_margin_ratio <= free_limit:
+        return str(profile.get("reason_free_margin") or "free_margin_low").strip() or "free_margin_low", (
+            "time" if time_trigger and not loss_trigger else "loss"
+        )
+    if usage_limit > 0.0 and margin_usage_ratio is not None and margin_usage_ratio >= usage_limit:
+        return str(profile.get("reason_margin_usage") or "margin_usage_high").strip() or "margin_usage_high", (
+            "time" if time_trigger and not loss_trigger else "loss"
+        )
+    if dd_limit > 0.0 and unrealized_dd_ratio is not None and unrealized_dd_ratio >= dd_limit:
+        return str(profile.get("reason_drawdown") or "drawdown").strip() or "drawdown", (
+            "time" if time_trigger and not loss_trigger else "loss"
+        )
+    return None, None
 
 
 def _level_reject_live_protection_adjustments(
@@ -1290,6 +1389,9 @@ class RangeFaderExitWorker:
         tick_imb_profile = exit_profile.get("tick_imb")
         if not isinstance(tick_imb_profile, dict):
             tick_imb_profile = {}
+        inventory_stress_profile = exit_profile.get("inventory_stress")
+        if not isinstance(inventory_stress_profile, dict):
+            inventory_stress_profile = {}
         tick_imb_partial_enabled = _coerce_bool(
             tick_imb_profile.get("partial_enabled"), self.tick_imb_partial_enabled
         )
@@ -1487,6 +1589,45 @@ class RangeFaderExitWorker:
             vwap_gap = _bb_float(fac_m1.get("vwap_gap"))
             ma10 = _bb_float(fac_m1.get("ma10"))
             ma20 = _bb_float(fac_m1.get("ma20"))
+            inventory_stress_reason, inventory_stress_trigger = _inventory_stress_exit_trigger(
+                exit_profile=exit_profile,
+                thesis=thesis,
+                pnl=float(pnl),
+                hold_sec=float(hold_sec),
+                atr_pips=atr_pips,
+            )
+            if inventory_stress_reason:
+                now_mono = time.monotonic()
+                inventory_stress_cooldown_sec = max(
+                    0.0,
+                    _pick_float(
+                        inventory_stress_profile.get("cooldown_sec"),
+                        loss_cut_cooldown_sec,
+                    ),
+                )
+                last = self._loss_cut_last_ts.get(trade_id, 0.0)
+                if inventory_stress_cooldown_sec <= 0.0 or (now_mono - last) >= inventory_stress_cooldown_sec:
+                    self._loss_cut_last_ts[trade_id] = now_mono
+                    log_metric(
+                        "scalp_level_reject_inventory_stress_exit",
+                        abs(float(pnl)),
+                        tags={
+                            "strategy": base_tag or "unknown",
+                            "reason": inventory_stress_reason,
+                            "trigger": inventory_stress_trigger or "loss",
+                            "side": side,
+                        },
+                        ts=now,
+                    )
+                    await self._close(
+                        trade_id,
+                        -units,
+                        inventory_stress_reason,
+                        pnl,
+                        client_id,
+                        allow_negative=True,
+                    )
+                    return
             ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
             reentry_prefix = _reentry_prefix_for_tag(base_tag)
             reentry = None

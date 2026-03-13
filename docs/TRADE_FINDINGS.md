@@ -22480,3 +22480,139 @@ Status:
     `margin_used`
     が上がる一方で、
     loser scalp lane の avg units が broad に増えていないことを追う。
+
+### 2026-03-13 18:11 JST - loser lane は entry を足す前に strategy-local な inventory stress cleanup を持たせる
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+  - `workers/scalp_level_reject/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+  - `tests/workers/test_scalp_level_reject_exit_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- Why/Hypothesis:
+  - 2026-03-13 18:11 JST 時点の local/OANDA 実測では
+    `USD/JPY mid=159.328`,
+    `spread=0.8 pips`,
+    `M1 ATR14=3.821 pips`,
+    `6m range=8.1 pips`,
+    `30m range=21.4 pips`,
+    `pricing/candles latency=224.5/235.0ms`
+    で、
+    市況や API 停止よりも strategy expectancy の悪化が主因だった。
+  - 直近 30 分の orders は
+    `filled=57`,
+    `submit_attempt=59`,
+    `rejected=2`,
+    `entry_probability_reject=100`
+    で、
+    order path は動いているが loser lane を抱えたまま entry 側だけを詰め続けていた。
+  - 24h 実績は
+    `162 trades / -476.8 JPY / win_rate 28.4% / PF 0.349`、
+    6h でも
+    `57 trades / -160.0 JPY / win_rate 21.1% / PF 0.186`
+    と改善の兆しが見えない。
+  - 24h loser 上位は
+    `PrecisionLowVol -134.6 JPY (26 trades)`,
+    `scalp_extrema_reversal_live -88.5 JPY (55 trades)`,
+    `WickReversalBlend -83.9 JPY (9 trades)`。
+  - 72h の loser hold 分布は
+    `PrecisionLowVol p50/p75/p90 = 23.7s / 45.7s / 78.6s`,
+    `WickReversalBlend = 53.9s / 100.3s / 569.9s`,
+    `scalp_extrema_reversal_live = 31.7s / 70.6s / 116.9s`
+    で、
+    「長時間の勝ち待ち」より
+    「数十秒で stale loser が積み上がる」性質が強い。
+  - Git の履歴も、
+    `2025-06-21` 開始から総コミット
+    `2441`、
+    `2026-03-04` 以降
+    `376`、
+    `2026-03-01` 以降
+    `396`、
+    subject prefix でも
+    `fix=199 tune=30 feat=46 docs=41`
+    と変更速度が観測速度を上回っていた。
+  - `execution/order_manager.py`
+    は新規 entry の margin/risk guard が厚い一方で、
+    `execution/exit_manager.py`
+    は stub のまま。
+    ただし AGENTS の制約上、
+    common の事後 EXIT 判定は増やせないため、
+    stale loser cleanup は strategy-local な dedicated exit worker に閉じる必要がある。
+
+- Expected Good:
+  - `PrecisionLowVol` /
+    `WickReversalBlend` /
+    `scalp_extrema_reversal_live`
+    が、
+    margin closeout 近辺まで losing inventory を抱え込む前に、
+    strategy-local に stale loser を掃除できる。
+  - 新規 entry guard をさらに厚くしなくても、
+    loser lane の tail だけを減らしやすくなる。
+  - 将来 winner lane の participation / lot を戻すときに、
+    「負け玉在庫の積み上がり」が先にボトルネックになる状態を緩められる。
+
+- Expected Bad:
+  - account stress 下では eventual recovery 候補も早めに切るので、
+    一部の戻り玉は取り逃す。
+  - stress threshold が tight すぎると、
+    実質 hidden SL に近づいて cadence を削る。
+  - `scalp_level_reject` 実装へ寄せたため、
+    extrema 以外の同 family tag へ誤適用しないかは tag ごとの YAML 監視が必要。
+
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+    と
+    `workers/scalp_level_reject/exit_worker.py`
+    に、
+    `exit_profile.inventory_stress`
+    を読む strategy-local 分岐を追加した。
+  - この分岐は
+    `pnl<0`
+    かつ
+    `min_hold/loss_pips/max_hold`
+    を満たした stale loser に対してだけ動き、
+    さらに
+    `health_buffer`,
+    `free_margin_ratio`,
+    `margin_usage_ratio`,
+    `unrealized_dd_ratio`
+    のどれかが閾値を超えたときだけ
+    `margin_health / free_margin_low / margin_usage_high / drawdown`
+    で close する。
+  - `config/strategy_exit_protections.yaml`
+    に
+    `PrecisionLowVol`,
+    `WickReversalBlend`,
+    `scalp_extrema_reversal_live`
+    の
+    `inventory_stress`
+    閾値を追加した。
+    既存の broad common exit は増やしていない。
+  - focused test として
+    `pytest tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+    を実行し、
+    `11 passed`
+    を確認した。
+
+- Verdict: pending
+
+- Next Action:
+  - local-v2 restart 後、
+    `logs/orders.db`
+    と
+    `logs/trades.db`
+    で
+    `margin_health / free_margin_low / margin_usage_high / drawdown`
+    の close reason が target 3 戦略にだけ出ているかを確認する。
+  - 次の 6h / 24h で
+    target 3 戦略の
+    `net_jpy`,
+    `PF`,
+    `hold_sec tail`
+    が縮むかを比較し、
+    cadence を壊していないかも同時に見る。

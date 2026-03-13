@@ -932,12 +932,39 @@ strategies:
       loss_cut_hard_pips: 6.0
       loss_cut_max_hold_sec: 420
       loss_cut_cooldown_sec: 5
+      inventory_stress:
+        enabled: true
+        min_hold_sec: 30
+        max_hold_sec: 150
+        time_loss_pips: 0.6
+        loss_pips: 1.6
+        loss_sl_mult: 0.80
+        loss_cap_pips: 2.3
+        cooldown_sec: 6
+        health_buffer: 0.10
+        free_margin_ratio: 0.18
+        margin_usage_ratio: 0.82
+        unrealized_dd_ratio: 0.035
 
   PrecisionLowVol:
     min_profit_pips: 0.10
     min_profit_ratio: 0.0
     be_profile: {trigger_pips: 0.8, lock_ratio: 0.45, min_lock_pips: 0.20, cooldown_sec: 8}
     tp_move: {enabled: true, trigger_pips: 0.65, buffer_pips: 0.45}
+    exit_profile:
+      inventory_stress:
+        enabled: true
+        min_hold_sec: 20
+        max_hold_sec: 60
+        time_loss_pips: 0.5
+        loss_pips: 1.4
+        loss_sl_mult: 0.75
+        loss_cap_pips: 1.9
+        cooldown_sec: 4
+        health_buffer: 0.10
+        free_margin_ratio: 0.20
+        margin_usage_ratio: 0.80
+        unrealized_dd_ratio: 0.030
 
   DroughtRevert:
     min_profit_pips: 0.10
@@ -1179,6 +1206,19 @@ strategies:
       loss_cut_reason_hard: m1_structure_break
       loss_cut_max_hold_sec: 900
       loss_cut_cooldown_sec: 4
+      inventory_stress:
+        enabled: true
+        min_hold_sec: 28
+        max_hold_sec: 90
+        time_loss_pips: 0.5
+        loss_pips: 1.5
+        loss_sl_mult: 0.70
+        loss_cap_pips: 2.1
+        cooldown_sec: 5
+        health_buffer: 0.10
+        free_margin_ratio: 0.18
+        margin_usage_ratio: 0.82
+        unrealized_dd_ratio: 0.035
 
   scalp_macd_rsi_div_live:
     min_profit_pips: 0.2

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -160,6 +161,127 @@ def test_precision_exit_worker_moves_broker_sl_tp_once_trade_is_in_profit(
         sl_price=158.006,
         tp_price=158.02,
     )
+
+
+def test_precision_lowvol_inventory_stress_exit_closes_stale_loser_before_closeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_worker, worker = _build_worker(monkeypatch)
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda _tag: {
+            "min_hold_sec": 0.0,
+            "inventory_stress": {
+                "enabled": True,
+                "min_hold_sec": 20.0,
+                "max_hold_sec": 60.0,
+                "time_loss_pips": 0.5,
+                "loss_pips": 1.4,
+                "loss_sl_mult": 0.75,
+                "loss_cap_pips": 1.9,
+                "cooldown_sec": 0.0,
+                "health_buffer": 0.0,
+                "free_margin_ratio": 0.20,
+                "margin_usage_ratio": 0.0,
+                "unrealized_dd_ratio": 0.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        exit_worker,
+        "get_account_snapshot",
+        lambda **_kwargs: SimpleNamespace(
+            nav=1000.0,
+            margin_used=780.0,
+            health_buffer=0.22,
+            free_margin_ratio=0.16,
+            unrealized_pl=-32.0,
+        ),
+    )
+
+    calls: list[tuple[str, float, bool]] = []
+
+    async def _fake_close(
+        _trade_id: str,
+        _units: int,
+        reason: str,
+        pnl: float,
+        _client_id: str,
+        **kwargs,
+    ) -> None:
+        calls.append((reason, pnl, bool(kwargs.get("allow_negative"))))
+
+    monkeypatch.setattr(worker, "_close", _fake_close)
+
+    trade = _sample_trade(opened_sec=45, pnl_pips=-1.7, strategy_tag="PrecisionLowVol")
+    trade["entry_thesis"]["sl_pips"] = 2.0
+
+    asyncio.run(
+        worker._review_trade(
+            trade,
+            now=datetime.now(timezone.utc),
+            mid=157.983,
+            range_active=False,
+        )
+    )
+
+    assert calls == [("free_margin_low", -1.7, True)]
+
+
+def test_precision_lowvol_inventory_stress_exit_does_not_fire_without_account_stress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_worker, worker = _build_worker(monkeypatch)
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda _tag: {
+            "min_hold_sec": 0.0,
+            "inventory_stress": {
+                "enabled": True,
+                "min_hold_sec": 20.0,
+                "max_hold_sec": 60.0,
+                "time_loss_pips": 0.5,
+                "loss_pips": 1.4,
+                "loss_sl_mult": 0.75,
+                "loss_cap_pips": 1.9,
+                "cooldown_sec": 0.0,
+                "health_buffer": 0.0,
+                "free_margin_ratio": 0.20,
+                "margin_usage_ratio": 0.0,
+                "unrealized_dd_ratio": 0.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        exit_worker,
+        "get_account_snapshot",
+        lambda **_kwargs: SimpleNamespace(
+            nav=1000.0,
+            margin_used=420.0,
+            health_buffer=0.26,
+            free_margin_ratio=0.58,
+            unrealized_pl=-9.0,
+        ),
+    )
+
+    close_mock = AsyncMock()
+    monkeypatch.setattr(worker, "_close", close_mock)
+
+    trade = _sample_trade(opened_sec=45, pnl_pips=-1.7, strategy_tag="PrecisionLowVol")
+    trade["entry_thesis"]["sl_pips"] = 2.0
+
+    asyncio.run(
+        worker._review_trade(
+            trade,
+            now=datetime.now(timezone.utc),
+            mid=157.983,
+            range_active=False,
+        )
+    )
+
+    close_mock.assert_not_called()
 
 
 def test_precision_exit_worker_tightens_protection_under_headwind_and_wide_spread(

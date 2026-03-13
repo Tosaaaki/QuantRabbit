@@ -19536,3 +19536,51 @@
     `dynamic_alloc`
     default args を使うよう更新し、
     120 秒周期で old params へ巻き戻る状態を止めた。
+
+### 2026-03-13 18:11 JST - `PrecisionLowVol` / `WickReversalBlend` / `extrema` に strategy-local inventory stress exit を追加
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+  - `workers/scalp_level_reject/exit_worker.py`
+  - `config/strategy_exit_protections.yaml`
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+  - `tests/workers/test_scalp_level_reject_exit_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - recent live loser は
+    `PrecisionLowVol`,
+    `WickReversalBlend`,
+    `scalp_extrema_reversal_live`
+    に集中していた。
+  - entry 側の margin/risk guard は既に厚い一方で、
+    pre-closeout の stale loser cleanup は弱く、
+    common `exit_manager`
+    は stub のままだった。
+  - AGENTS 制約上、
+    common の後付け EXIT judge は増やせないので、
+    dedicated exit worker 内で strategy-local に閉じる必要があった。
+- 変更:
+  - `scalp_wick_reversal_blend` /
+    `scalp_level_reject`
+    exit worker に
+    `exit_profile.inventory_stress`
+    を追加し、
+    stale loser かつ account stress 時だけ negative close を許可する分岐を入れた。
+  - stress 判定は
+    `health_buffer`,
+    `free_margin_ratio`,
+    `margin_usage_ratio`,
+    `unrealized_dd_ratio`
+    を見て、
+    close reason は
+    `margin_health / free_margin_low / margin_usage_high / drawdown`
+    の既存 allow reason を使う。
+  - strategy ごとの hold/loss threshold は
+    YAML 側で
+    `PrecisionLowVol`,
+    `WickReversalBlend`,
+    `scalp_extrema_reversal_live`
+    にだけ付けた。
+  - focused unit test を追加し、
+    stress 時にだけ close することを固定した。

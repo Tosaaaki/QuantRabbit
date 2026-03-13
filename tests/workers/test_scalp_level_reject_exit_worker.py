@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -164,3 +165,69 @@ def test_level_reject_exit_worker_lets_supportive_extrema_run_more_than_neutral(
     assert supportive["trigger_mult"] > neutral["trigger_mult"]
     assert supportive["lock_ratio_mult"] < neutral["lock_ratio_mult"]
     assert supportive["buffer_mult"] > neutral["buffer_mult"]
+
+
+def test_extrema_inventory_stress_exit_closes_stale_loser_when_margin_usage_is_high(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_worker, worker = _build_worker(monkeypatch)
+    monkeypatch.setattr(
+        exit_worker,
+        "_exit_profile_for_tag",
+        lambda _tag: {
+            "min_hold_sec": 0.0,
+            "inventory_stress": {
+                "enabled": True,
+                "min_hold_sec": 28.0,
+                "max_hold_sec": 90.0,
+                "time_loss_pips": 0.5,
+                "loss_pips": 1.5,
+                "loss_sl_mult": 0.70,
+                "loss_cap_pips": 2.1,
+                "cooldown_sec": 0.0,
+                "health_buffer": 0.0,
+                "free_margin_ratio": 0.0,
+                "margin_usage_ratio": 0.82,
+                "unrealized_dd_ratio": 0.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        exit_worker,
+        "get_account_snapshot",
+        lambda **_kwargs: SimpleNamespace(
+            nav=1000.0,
+            margin_used=860.0,
+            health_buffer=0.21,
+            free_margin_ratio=0.24,
+            unrealized_pl=-21.0,
+        ),
+    )
+
+    calls: list[tuple[str, float, bool]] = []
+
+    async def _fake_close(
+        _trade_id: str,
+        _units: int,
+        reason: str,
+        pnl: float,
+        _client_id: str,
+        **kwargs,
+    ) -> None:
+        calls.append((reason, pnl, bool(kwargs.get("allow_negative"))))
+
+    monkeypatch.setattr(worker, "_close", _fake_close)
+
+    trade = _sample_trade(opened_sec=80, pnl_pips=-1.8)
+    trade["entry_thesis"]["sl_pips"] = 2.0
+
+    asyncio.run(
+        worker._review_trade(
+            trade,
+            now=datetime.now(timezone.utc),
+            mid=158.982,
+            range_active=False,
+        )
+    )
+
+    assert calls == [("margin_usage_high", -1.8, True)]
