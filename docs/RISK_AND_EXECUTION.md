@@ -8,6 +8,59 @@
 
 ## 1. エントリー/EXIT/リスク制御
 
+### local-v2 `TickImbalance` trend-exhaustion guard（2026-03-13）
+- 背景:
+  - 2026-03-13 16:12 JST 時点の local-v2 で
+    `USD/JPY bid=159.386 / ask=159.394 / spread=0.8p`
+    と通常帯だった一方、
+    recent
+    `TickImbalance`
+    loser は
+    `2026-03-13 09:05 JST`
+    short
+    `-69.012 JPY / -3834 units`
+    で、
+    `dynamic_alloc=None`
+    のまま
+    `RSI=20.57 / ADX=48.25 / range_mode=TREND / vwap_gap=-5.37`
+    の底売り追随を通していた。
+  - 直近30dの同 strategy を見ると、
+    `2026-03-09 07:16 JST`
+    の
+    `RSI=98.24 / ADX=72.77 / vwap_gap=+65.19`
+    long loser もあり、
+    side対称に
+    trend exhaustion
+    の high-chase / low-chase が敗因だった。
+- 実装:
+  - `workers/scalp_tick_imbalance/worker.py`
+    に
+    `TickImbalance`
+    /
+    `TickImbalanceRRPlus`
+    共通の
+    exhaustion guard を追加し、
+    `TREND`
+    文脈で
+    side-aligned extreme
+    `RSI + ADX + VWAP gap + ema_slope + MACD hist`
+    が揃う entry を reject する。
+  - `entry_thesis`
+    に
+    `side`
+    と
+    `tick_imbalance.mode/direction/exhaustion_guard`
+    を保存し、
+    RCA と setup-scoped feedback の材料を残す。
+  - shared gate / order_manager / time block は変更していない。
+- 意図:
+  - `TickImbalance`
+    の no-profile / low-sample 窓でも、
+    worker-local に
+    trend exhaustion
+    だけを切って、
+    full-size loser の尾を減らす。
+
 ### local-v2 `scalp_extrema_reversal_live` long positive-gap reclaim tightening（2026-03-12）
 - 背景:
   - 2026-03-12 23:00 JST 前後の local-v2 で

@@ -128,6 +128,22 @@
   `ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL=strategy`
   で
   loser scalp pocket の giveback から切り離されている。
+- `TickImbalance` / `TickImbalanceRRPlus`
+  は
+  `workers/scalp_tick_imbalance/worker.py`
+  内で
+  `trend exhaustion`
+  guard を持ち、
+  `TREND`
+  文脈の
+  side-aligned extreme
+  `RSI + ADX + VWAP gap + ema_slope + MACD hist`
+  が揃う伸び切り entry を
+  strategy-local に reject する。
+  判定結果は
+  `entry_thesis.tick_imbalance.exhaustion_guard`
+  に残し、
+  shared gate の追加 tightening では扱わない。
 
 ## 4. Live Optimization / Feedback / Guard Mechanisms
 

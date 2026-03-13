@@ -337,6 +337,21 @@ class OrderIntent(BaseModel):
   `TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS=0` /
   `TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT=0` とし、
   strategy ローカルの reentry 距離ゲートを無効化した。
+- 2026-03-13 以降の local-v2 では、
+  `TickImbalance` /
+  `TickImbalanceRRPlus`
+  は worker local の
+  `trend exhaustion`
+  guard を持ち、
+  `TREND`
+  文脈の
+  side-aligned extreme
+  `RSI + ADX + VWAP gap + ema_slope + MACD hist`
+  が揃う伸び切り entry を reject する。
+  監査は
+  `entry_thesis.tick_imbalance.exhaustion_guard`
+  を正とし、
+  shared gate 側へ同種ロジックを重ねない。
 
 ## 8. 2026-02-24 運用補足（損切り肥大の抑制）
 

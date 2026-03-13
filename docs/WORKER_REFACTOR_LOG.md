@@ -5,6 +5,42 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-13（追記）`TickImbalance` / `TickImbalanceRRPlus` に trend exhaustion guard を追加
+
+- 対象:
+  - `workers/scalp_tick_imbalance/worker.py`
+  - `tests/workers/test_scalp_tick_imbalance_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 変更:
+  - `TREND`
+    文脈で
+    side-aligned extreme
+    `RSI + ADX + VWAP gap + ema_slope + MACD hist`
+    が揃った
+    `TickImbalance`
+    /
+    `TickImbalanceRRPlus`
+    entry を
+    worker-local に reject する
+    exhaustion guard を追加した。
+  - `entry_thesis`
+    に
+    `side`
+    と
+    `tick_imbalance.mode/direction/exhaustion_guard`
+    を保存し、
+    setup-scoped RCA を追えるようにした。
+  - regression test として、
+    stretched short/long の block と
+    reclaim long keep を固定した。
+- 意図:
+  - shared sizing / shared gate を広域にいじらず、
+    `TickImbalance`
+    の low-sample loser lane だけを
+    strategy-local に薄くする。
+
 ### 2026-03-12（追記）`scalp_extrema_reversal_live` long `volatility_compression` loser lane を positive-gap shallow reclaim まで拡張抑制
 
 - 対象:

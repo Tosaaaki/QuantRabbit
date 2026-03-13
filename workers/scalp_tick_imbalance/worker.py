@@ -343,6 +343,14 @@ TICK_IMB_REQUIRE_CONFIRM_SIGN = _env_bool("TICK_IMB_REQUIRE_CONFIRM_SIGN", True)
 TICK_IMB_REENTRY_LOOKBACK_SEC = _env_float("TICK_IMB_REENTRY_LOOKBACK_SEC", 0.0)
 TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS = _env_float("TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS", 0.0)
 TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT = _env_bool("TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT", True)
+TICK_IMB_EXHAUSTION_GUARD_ENABLED = _env_bool("TICK_IMB_EXHAUSTION_GUARD_ENABLED", True)
+TICK_IMB_EXHAUSTION_TREND_ONLY = _env_bool("TICK_IMB_EXHAUSTION_TREND_ONLY", True)
+TICK_IMB_EXHAUSTION_ADX_MIN = _env_float("TICK_IMB_EXHAUSTION_ADX_MIN", 36.0)
+TICK_IMB_EXHAUSTION_LONG_RSI_MIN = _env_float("TICK_IMB_EXHAUSTION_LONG_RSI_MIN", 84.0)
+TICK_IMB_EXHAUSTION_SHORT_RSI_MAX = _env_float("TICK_IMB_EXHAUSTION_SHORT_RSI_MAX", 24.0)
+TICK_IMB_EXHAUSTION_VWAP_GAP_MIN_PIPS = _env_float("TICK_IMB_EXHAUSTION_VWAP_GAP_MIN_PIPS", 4.5)
+TICK_IMB_EXHAUSTION_EMA_SLOPE_MIN_PIPS = _env_float("TICK_IMB_EXHAUSTION_EMA_SLOPE_MIN_PIPS", 0.55)
+TICK_IMB_EXHAUSTION_MACD_HIST_MIN_PIPS = _env_float("TICK_IMB_EXHAUSTION_MACD_HIST_MIN_PIPS", 1.2)
 # Pattern gate (pattern_book-driven). TickImbalance currently has strong direction-only edge/avoid signals.
 TICK_IMB_PATTERN_GATE_OPT_IN = _env_bool("TICK_IMB_PATTERN_GATE_OPT_IN", True)
 TICK_IMB_PATTERN_GATE_ALLOW_GENERIC = _env_bool("TICK_IMB_PATTERN_GATE_ALLOW_GENERIC", True)
@@ -1707,6 +1715,53 @@ def _tick_imb_reentry_gap_ok(
     return gap_pips >= TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS
 
 
+def _tick_imb_exhaustion_guard(
+    fac_m1: Dict[str, object],
+    *,
+    direction: str,
+    range_ctx=None,
+) -> Tuple[bool, Dict[str, float]]:
+    range_mode = str(getattr(range_ctx, "mode", "") or "").strip().upper()
+    rsi = _rsi(fac_m1)
+    adx = _adx(fac_m1)
+    vwap_gap = _vwap_gap_pips(fac_m1)
+    ema_slope = _ema_slope_pips(fac_m1, "ema_slope_10")
+    macd_hist = _macd_hist_pips(fac_m1)
+    diag = {
+        "enabled": 1.0 if TICK_IMB_EXHAUSTION_GUARD_ENABLED else 0.0,
+        "trend_only": 1.0 if TICK_IMB_EXHAUSTION_TREND_ONLY else 0.0,
+        "range_mode": 1.0 if range_mode == "TREND" else 0.0,
+        "rsi": round(rsi, 3),
+        "adx": round(adx, 3),
+        "vwap_gap_pips": round(vwap_gap, 3),
+        "ema_slope_10_pips": round(ema_slope, 3),
+        "macd_hist_pips": round(macd_hist, 3),
+        "blocked": 0.0,
+    }
+    if not TICK_IMB_EXHAUSTION_GUARD_ENABLED:
+        return True, diag
+    if TICK_IMB_EXHAUSTION_TREND_ONLY and range_mode and range_mode != "TREND":
+        return True, diag
+
+    if direction == "long":
+        aligned_extreme = (
+            rsi >= TICK_IMB_EXHAUSTION_LONG_RSI_MIN
+            and vwap_gap >= TICK_IMB_EXHAUSTION_VWAP_GAP_MIN_PIPS
+            and ema_slope >= TICK_IMB_EXHAUSTION_EMA_SLOPE_MIN_PIPS
+            and macd_hist >= TICK_IMB_EXHAUSTION_MACD_HIST_MIN_PIPS
+        )
+    else:
+        aligned_extreme = (
+            rsi <= TICK_IMB_EXHAUSTION_SHORT_RSI_MAX
+            and vwap_gap <= -TICK_IMB_EXHAUSTION_VWAP_GAP_MIN_PIPS
+            and ema_slope <= -TICK_IMB_EXHAUSTION_EMA_SLOPE_MIN_PIPS
+            and macd_hist <= -TICK_IMB_EXHAUSTION_MACD_HIST_MIN_PIPS
+        )
+    blocked = adx >= TICK_IMB_EXHAUSTION_ADX_MIN and aligned_extreme
+    diag["blocked"] = 1.0 if blocked else 0.0
+    return not blocked, diag
+
+
 def _signal_tick_imbalance(
     fac_m1: Dict[str, object],
     range_ctx=None,
@@ -1754,6 +1809,13 @@ def _signal_tick_imbalance(
     direction = "long" if imb.momentum_pips > 0 else "short"
     if not _tick_imb_reentry_gap_ok(fac_m1, direction=direction, tag=tag):
         return None
+    exhaustion_ok, exhaustion_diag = _tick_imb_exhaustion_guard(
+        fac_m1,
+        direction=direction,
+        range_ctx=range_ctx,
+    )
+    if not exhaustion_ok:
+        return None
     if TICK_IMB_ENTRY_QUALITY_ENABLED:
         if imb.ratio < TICK_IMB_QUALITY_RATIO_MIN:
             return None
@@ -1799,7 +1861,14 @@ def _signal_tick_imbalance(
         "tag": tag,
         "reason": "tick_imbalance",
         "size_mult": round(TICK_IMB_SIZE_MULT, 3),
-        "imbalance": {"ratio": round(imb.ratio, 3), "momentum_pips": round(imb.momentum_pips, 3)},
+        "tick_imbalance": {
+            "mode": "tick_imbalance",
+            "direction": direction,
+            "ratio": round(imb.ratio, 3),
+            "momentum_pips": round(imb.momentum_pips, 3),
+            "range_pips": round(imb.range_pips, 3),
+            "exhaustion_guard": exhaustion_diag,
+        },
     }
 
 
@@ -1849,6 +1918,13 @@ def _signal_tick_imbalance_rrplus(
         return None
 
     direction = "long" if imb.momentum_pips > 0 else "short"
+    exhaustion_ok, exhaustion_diag = _tick_imb_exhaustion_guard(
+        fac_m1,
+        direction=direction,
+        range_ctx=range_ctx,
+    )
+    if not exhaustion_ok:
+        return None
     if TIRP_REQUIRE_MA_ALIGN:
         try:
             ma10 = float(fac_m1.get("ma10") or 0.0)
@@ -1876,10 +1952,13 @@ def _signal_tick_imbalance_rrplus(
         "tag": tag,
         "reason": "tick_imbalance_rrplus",
         "size_mult": round(TIRP_SIZE_MULT, 3),
-        "imbalance": {
+        "tick_imbalance": {
+            "mode": "tick_imbalance_rrplus",
+            "direction": direction,
             "ratio": round(imb.ratio, 3),
             "momentum_pips": round(imb.momentum_pips, 3),
             "range_pips": round(imb.range_pips, 3),
+            "exhaustion_guard": exhaustion_diag,
         },
     }
 
@@ -3187,9 +3266,11 @@ def _signal_session_edge(
 
 def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
     signal_confidence = int(signal.get("confidence", 0) or 0)
+    side = "long" if signal.get("action") == "OPEN_LONG" else "short"
     thesis = {
         "strategy_tag": signal.get("tag"),
         "env_prefix": config.ENV_PREFIX,
+        "side": side,
         "confidence": signal_confidence,
         "entry_probability": round(_to_probability(signal_confidence), 3),
         "reason": signal.get("reason"),
@@ -3216,6 +3297,9 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "air_regime_shift": signal.get("air_regime_shift"),
         "air_range_pref": signal.get("air_range_pref"),
     }
+    tick_imbalance_signal = signal.get("tick_imbalance")
+    if isinstance(tick_imbalance_signal, dict) and tick_imbalance_signal:
+        thesis["tick_imbalance"] = dict(tick_imbalance_signal)
     tag = str(signal.get("tag") or "").strip()
     if tag in {"TickImbalance", "TickImbalanceRRPlus"}:
         thesis["pattern_gate_opt_in"] = bool(TICK_IMB_PATTERN_GATE_OPT_IN)

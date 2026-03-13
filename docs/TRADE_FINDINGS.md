@@ -51,6 +51,158 @@
 - Status:
 ```
 
+## 2026-03-13 16:35 JST / local-v2: `TickImbalance` の trend exhaustion 追随を worker-local に遮断
+
+- Change:
+  - `workers/scalp_tick_imbalance/worker.py`
+    に
+    `TickImbalance` /
+    `TickImbalanceRRPlus`
+    共通の
+    `trend exhaustion`
+    guard を追加し、
+    `TREND`
+    文脈で
+    side-aligned extreme
+    `RSI + ADX + VWAP gap + ema_slope + MACD hist`
+    が揃った伸び切り entry を reject するようにした。
+  - 同 worker の
+    `_build_entry_thesis()`
+    で
+    `side`
+    と
+    `tick_imbalance.mode/direction/exhaustion_guard`
+    を監査 payload へ保存するようにした。
+  - `tests/workers/test_scalp_tick_imbalance_worker.py`
+    を追加し、
+    stretched short/long block と
+    non-exhausted reclaim long keep を固定した。
+- Why:
+  - 2026-03-13 16:12 JST 時点の local-v2 市況は
+    `USD/JPY bid=159.386 / ask=159.394 / spread=0.8p`
+    で、
+    `M1 ATR=2.399p / M5 ATR=5.678p / H1 ATR=15.047p`
+    と通常帯だった。
+  - 直近6hの赤字寄与は
+    `scalp_ping_5s_d_live=-23.605 JPY`,
+    `scalp_extrema_reversal_live=-13.487 JPY`,
+    `TickImbalance=-10.183 JPY`
+    だったが、
+    `TickImbalance`
+    は sample が薄いまま
+    1 発の loser がサイズ尾を引く構図だった。
+  - 実際の recent loser は
+    `2026-03-13 09:05 JST`
+    short
+    `units=-3834 / -69.012 JPY / dynamic_alloc=None / participation_alloc=None`
+    で、
+    `RSI=20.57 / ADX=48.25 / range_mode=TREND / vwap_gap=-5.37 / ema_slope_10=-0.913p / macd_hist=-1.840p`
+    の底売り追随だった。
+  - さらに
+    `2026-03-09 07:16 JST`
+    long loser
+    `+1171 units / -93.68 JPY`
+    も
+    `RSI=98.24 / ADX=72.77 / vwap_gap=+65.19 / ema_slope_10=+1.488p / macd_hist=+2.513p`
+    の天井追いで、side対称な exhaustion pattern が見えた。
+- Hypothesis:
+  - `TickImbalance`
+    の本来の edge は
+    reclaim / imbalance continuation
+    であり、
+    side-aligned extreme
+    指標が全部揃った「伸び切り追随」を切っても
+    winner cadence を壊しにくい。
+  - shared
+    `dynamic_alloc`
+    が warm-up 前や欠落時でも、
+    worker local の exhaustion guard があれば
+    no-profile full-size loser を減らせる。
+- Expected Good:
+  - `TickImbalance`
+    の cold-start / low-sample 窓で
+    oversized loser を直接減らせる。
+  - `entry_thesis`
+    に
+    `side`
+    と
+    `tick_imbalance`
+    diagnostics が残るため、
+    今後の setup-scoped feedback / RCA でも型を追いやすくなる。
+- Expected Bad:
+  - 強い continuation の late winner まで切って、
+    `TickImbalance`
+    の件数が少し減る可能性がある。
+  - 阈値がタイトすぎると、
+    trend follow-through の最後の伸びを取り損ねる。
+- Period:
+  - local-v2 recent trades / orders:
+    主に
+    `2026-03-13 00:05-04:37 UTC`
+    と
+    `2026-03-08-2026-03-13`
+    の
+    `TickImbalance`
+    closed trades を確認。
+- Fact:
+  - `trades.db`
+    直近30dの
+    `TickImbalance`
+    は
+    `4 trades / net -171.575 JPY`
+    で、
+    loser 3 件のうち 2 件が
+    `RSI 20/98`
+    帯かつ
+    `ADX 48/72`
+    の extreme trend follow だった。
+  - 一方で同30dの唯一の winner は
+    `2026-03-10 19:11 JST`
+    long
+    `+1.3 JPY`
+    で、
+    `RSI=62.46 / ADX=25.65 / vwap_gap=-16.38`
+    と extreme exhaustion 条件には当たっていなかった。
+- Failure Cause:
+  - `TickImbalance`
+    は
+    `range_mode=TREND`
+    でも
+    side-aligned overextension を strategy-local に弾いておらず、
+    shared trim が無い/弱い窓では
+    底売り・天井買いを full-size 近くで通していた。
+- Improvement:
+  - broad shared gate は増やさず、
+    `workers/scalp_tick_imbalance/worker.py`
+    内だけで
+    `trend exhaustion`
+    guard を適用。
+  - 監査 payload へ
+    `tick_imbalance.exhaustion_guard`
+    を残し、
+    live order/trade の RCA と setup 学習を容易にした。
+- Verification:
+  - `python3 -m py_compile workers/scalp_tick_imbalance/worker.py tests/workers/test_scalp_tick_imbalance_worker.py`
+  - `.venv/bin/pytest tests/workers/test_scalp_tick_imbalance_worker.py -q`
+- Verdict:
+  - pending
+- Next Action:
+  - local-v2 反映後、
+    `logs/orders.db`
+    で
+    `TickImbalance`
+    の
+    `RSI extreme + TREND`
+    entry が消えるかを確認する。
+  - それでも loser が続くなら、
+    次は
+    `TickImbalance`
+    の recent side-pressure を
+    worker-local に足して、
+    same-side burst 中の weak entry を追加で薄くする。
+- Status:
+  - in_progress
+
 ## 2026-03-12 23:35 JST / local-v2: `session_open_breakout` の addon-live 経路で technical context を `entry_thesis` へ明示伝搬
 
 - Change:
