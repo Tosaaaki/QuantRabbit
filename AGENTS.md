@@ -63,6 +63,7 @@
 - 改善/敗因の運用記録は **`docs/TRADE_FINDINGS.md` の1箇所に集約** する。新しい分析を行ったら必ず同ファイルへ追記し、同種の分散メモを新規作成しない。
 - `docs/TRADE_FINDINGS.md` は単なる台帳ではなく、変更の良し悪しを後から改善に使うための change diary として扱う。各変更で最低限 `Why/Hypothesis`、`Expected Good`、`Expected Bad`、`Observed/Fact`、`Verdict`（`good/bad/pending`）、`Next Action` を残す。
 - **収益/リスク/ENTRY/EXIT 改善の前には必ず** `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `docs/TRADE_FINDINGS.md` review をまとめて行う。`python3 scripts/trade_findings_review.py ...` の単独実行だけで済ませない。
+- `.githooks/pre-commit` に `scripts/preflight_guard.py` を入れ、runtime / risk / env の staged 変更では fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` が無い commit を止める。clone/環境ごとに 1 回 `scripts/install_git_hooks.sh` を実行して `core.hooksPath=.githooks` を有効化する。
 - `docs/TRADE_FINDINGS.md` の新規改善エントリには、上記に加えて `Hypothesis Key`、`Primary Loss Driver`、`Mechanism Fired`、`Do Not Repeat Unless` を必須で残す。`Mechanism Fired=0` か `none` なら明記し、`Primary Loss Driver` が前回と不変なら「何が違うか」を書かずに同じ改善を繰り返さない。
 - `scripts/trade_findings_diary_draft.py` と `logs/trade_findings_draft_latest.{json,md}` / `logs/trade_findings_draft_history.jsonl` は review-only の自動下書きとして扱う。`docs/TRADE_FINDINGS.md` への自動追記は禁止し、正式反映は必ずレビュー後に行う。whiteboard 通知は opt-in とし、同一 draft fingerprint では重複投稿しない。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。

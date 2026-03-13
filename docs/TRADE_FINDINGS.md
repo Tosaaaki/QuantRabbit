@@ -57,10 +57,114 @@
 
 ## Improvement Memory Protocol
 - 収益/リスク/ENTRY/EXIT 改善の前に必ず `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `TRADE_FINDINGS` review を 1 コマンドにまとめる。
+- runtime / risk / env 変更の commit 前には `.githooks/pre-commit` が `logs/change_preflight_latest.json` の freshness と staged `docs/TRADE_FINDINGS.md` を確認する。新しい clone / 端末では `scripts/install_git_hooks.sh` を 1 回実行する。
 - 新しい改善エントリには `Hypothesis Key` / `Primary Loss Driver` / `Mechanism Fired` / `Do Not Repeat Unless` を必須で残す。
 - `Mechanism Fired` は `fired=0` や `none` も含めて明記する。発火していない仕組みを、主損失ドライバ不変のまま繰り返さない。
 - 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
 - close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
+
+## 2026-03-13 21:20 JST / trade_findings: commit 前 guard で preflight 未実施の runtime 変更を止める
+
+- Hypothesis Key:
+  - `preflight_commit_guard`
+- Primary Loss Driver:
+  - preflight を実行せずに runtime / risk / env 変更を commit できてしまうこと
+- Mechanism Fired:
+  - `.githooks/pre-commit`
+    に
+    `scripts/preflight_guard.py`
+    を追加。
+  - `scripts/change_preflight.sh`
+    は
+    `logs/change_preflight_latest.json`
+    を書き出すようにした。
+  - hook は protected な staged path があるとき、
+    fresh artifact と staged
+    `docs/TRADE_FINDINGS.md`
+    が無い commit を block する。
+- Do Not Repeat Unless:
+  - commit-time guard で拾えない抜けが確認できるまでは、
+    別の enforcement を足さず、
+    `scripts/preflight_guard.py`
+    の対象 path と条件を拡張する。
+- Change:
+  - `scripts/preflight_guard.py`
+    を追加した。
+  - `.githooks/pre-commit`
+    と
+    `scripts/install_git_hooks.sh`
+    を追加した。
+  - `scripts/change_preflight.sh`
+    は
+    review + market summary を
+    `logs/change_preflight_latest.json`
+    に残すようにした。
+  - 過去の重要 entry として
+    `close_reject_profit_buffer`,
+    `winner_lane_exact_sizing`,
+    `ping5s_c_entry_probability_reject`
+    を new field 形式で backfill した。
+- Why:
+  - review と market check の wrapper は作ったが、
+    それを通らずに
+    `execution/`, `workers/`, `ops/env`
+    を commit すること自体はまだ可能だった。
+  - 「見返すべき」と書くだけでは弱いので、
+    commit 時に最低限の強制力を持たせる必要がある。
+- Hypothesis:
+  - protected path だけを対象にした軽い pre-commit guard なら、
+    docs-only / process-only commit を邪魔せず、
+    runtime 変更だけ preflight 実施と
+    `TRADE_FINDINGS`
+    更新を強制できる。
+- Expected Good:
+  - `change_preflight.sh`
+    を通していない runtime 変更が commit されにくくなる。
+  - `docs/TRADE_FINDINGS.md`
+    を書かずに risk/runtime 変更だけが積み上がるパターンを減らせる。
+- Expected Bad:
+  - 新しい clone / 端末では
+    `scripts/install_git_hooks.sh`
+    を 1 回実行しないと guard が有効にならない。
+  - 長時間作業では artifact age が stale になり、
+    commit 前に preflight 再実行が必要になる。
+- Period:
+  - 2026-03-13
+- Fact:
+  - as-of
+    `2026-03-13 21:04 JST`
+    の preflight 実行では
+    `fills_15m=0 / fills_30m=3 / rejects_30m=31`
+    で
+    `preflight_status=warn`
+    だった。
+  - この程度の事実でも commit 前に毎回見えていないと、
+    「低稼働 + high reject pressure」のまま次の変更へ進みやすい。
+- Failure Cause:
+  - preflight 導線はあっても、
+    それを通さない commit を止める仕組みが無かった。
+- Improvement:
+  - commit-time guard + preflight artifact。
+- Verification:
+  - `python3 scripts/preflight_guard.py --paths execution/order_manager.py`
+    は block される。
+  - `python3 scripts/preflight_guard.py --paths execution/order_manager.py docs/TRADE_FINDINGS.md`
+    は fresh artifact があれば pass する。
+  - `scripts/install_git_hooks.sh`
+    実行後、
+    `git config --get core.hooksPath`
+    が
+    `.githooks`
+    になる。
+- Verdict:
+  - pending
+- Next Action:
+  - この clone で
+    `scripts/install_git_hooks.sh`
+    を実行し、
+    次の runtime commit から hook を実働させる。
+- Status:
+  - done
 
 ## 2026-03-13 21:00 JST / trade_findings: change_preflight wrapper で市況確認と review を一体化
 
@@ -256,6 +360,29 @@
   - done
 
 ## 2026-03-13 18:25 JST / local-v2: `positive -> negative close` の残り本丸を 3 本同時に補修
+
+- Hypothesis Key:
+  - `close_reject_profit_buffer`
+- Primary Loss Driver:
+  - before:
+    `close_reject_profit_buffer + STOP_LOSS_ORDER`
+  - after:
+    pending
+- Mechanism Fired:
+  - `PrecisionLowVol / DroughtRevert / WickReversalBlend`
+    の
+    `min_profit_pips`
+    と
+    protection trigger を前倒しした。
+  - `session_open_breakout`
+    に positive PnL 中だけ broker protection を早める
+    early protection path を追加した。
+- Do Not Repeat Unless:
+  - `close_reject_profit_buffer`
+    か
+    `MFE>0 -> STOP_LOSS_ORDER`
+    が dominant のまま残り、
+    今回の early protection / relaxed min-profit path が実際に発火していると確認できた時だけ再調整する。
 
 - Change:
   - `config/strategy_exit_protections.yaml`
@@ -8683,10 +8810,32 @@ Status:
 - in_progress
 
 ## 2026-02-27 15:38 UTC / 2026-02-28 00:38 JST - `scalp_ping_5s_c_live` の `entry_probability_reject` 閾値を再緩和
-Period:
+
+- Hypothesis Key:
+  - `ping5s_c_entry_probability_reject`
+
+- Primary Loss Driver:
+  - `entry_probability_reject`
+
+- Mechanism Fired:
+  - worker / order-manager の
+    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]`
+    を
+    `0.72 -> 0.58`
+    へ同期した。
+
+- Do Not Repeat Unless:
+  - `entry_probability_reject`
+    が again dominant で、
+    かつ C の
+    `submit_attempt / filled`
+    が不足していると確認できた時だけ、
+    同系 threshold 緩和を再実施する。
+
+- Period:
 - 観測: 2026-02-27 15:34:41-15:37:20 UTC（long leading reject 無効化後）
 
-Fact:
+- Fact:
 - `REJECT_BELOW=0.00` 反映後、long 側 `entry_leading_profile_reject` は減少した一方、
   `entry_probability_reject` が主因化。
 - Cログは `prob=0.81〜0.89` のシグナルでも
@@ -8695,12 +8844,12 @@ Fact:
 - `quant-order-manager` 実効envは
   `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]=0.72`。
 
-Failure Cause:
+- Failure Cause:
 1. leading reject を外した後も preserve-intent 側の確率閾値 `0.72` が高く、
    C の実効確率帯（0.8前後）で閾値下振れが起きやすい。
 2. C worker と order-manager の reject_under が同水準で、同時に拒否寄りへ働いた。
 
-Improvement:
+- Improvement:
 1. `ops/env/scalp_ping_5s_c.env` の
    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C_LIVE`
    を `0.72 -> 0.58`。
@@ -8708,14 +8857,14 @@ Improvement:
    `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER_STRATEGY_SCALP_PING_5S_C[_LIVE]`
    を `0.72 -> 0.58` へ同期。
 
-Verification:
+- Verification:
 1. 再デプロイ後 15 分で C の
    `market_order rejected ... entry_probability_reject` 件数が減少すること。
 2. 同期間 `orders.db` で `scalp_ping_5s_c_live` の
    `submit_attempt`/`filled` が再開・増加すること。
 3. `metrics.db` の `order_perf_block` hard reason 再発がないこと。
 
-Status:
+- Status:
 - in_progress
 
 ## 2026-02-28 04:40 UTC / 13:40 JST - 期待値改善を加速するための即時クランプ（ping B/C + MACD RSI div）
@@ -22551,6 +22700,29 @@ Status:
     で止まらないことを確認する。
 
 ## 2026-03-13 15:50 JST - margin full は loser ではなく exact winner lane に寄せる
+
+- Hypothesis Key:
+  - `winner_lane_exact_sizing`
+- Primary Loss Driver:
+  - winner under-sizing / loser over-sizing
+- Mechanism Fired:
+  - exact
+    `MicroLevelReactor-bounce-lower`
+    setup override を worker sizing に直接反映した。
+  - dedicated
+    `quant-micro-levelreactor`
+    の実効 margin cap を
+    `0.985/0.995`
+    へ引き上げ、
+    winner lane にだけ full-margin 意図を通した。
+- Do Not Repeat Unless:
+  - winner lane の
+    `avg_units`
+    が still under-sized で、
+    dominant loss が
+    `under-participation`
+    のまま残る時だけ、
+    同系の sizing/margin 追加緩和を再実施する。
 
 - Why/Hypothesis:
   - live account snapshot は

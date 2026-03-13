@@ -19585,6 +19585,46 @@
   - focused unit test を追加し、
     stress 時にだけ close することを固定した。
 
+### 2026-03-13 21:20 JST - preflight 未実施の runtime commit を `.githooks/pre-commit` で止める
+
+- 対象:
+  - `.githooks/pre-commit`
+  - `scripts/preflight_guard.py`
+  - `scripts/install_git_hooks.sh`
+  - `scripts/change_preflight.sh`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `change_preflight.sh`
+    は追加済みだったが、
+    実行せずに runtime / risk / env 変更を commit すること自体はまだ可能だった。
+  - 変更前 review を本当に回すには、
+    commit 前の軽い強制力が必要だった。
+- 変更:
+  - `scripts/change_preflight.sh`
+    は
+    `logs/change_preflight_latest.json`
+    を出力するようにした。
+  - `.githooks/pre-commit`
+    から
+    `scripts/preflight_guard.py`
+    を呼び、
+    protected path が staged されている場合は fresh artifact と staged
+    `docs/TRADE_FINDINGS.md`
+    を必須化した。
+  - `scripts/install_git_hooks.sh`
+    で
+    `core.hooksPath=.githooks`
+    を設定できるようにした。
+  - あわせて
+    `TRADE_FINDINGS`
+    の representative な旧 entry
+    （`close_reject_profit_buffer`, `winner_lane_exact_sizing`, `ping5s_c_entry_probability_reject`）
+    を new field 形式へ backfill した。
+
 ### 2026-03-13 21:00 JST - `change_preflight.sh` で改善前の市況確認と review を一体化
 
 - 対象:
