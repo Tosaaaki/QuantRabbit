@@ -5065,3 +5065,44 @@
     （`DroughtRevert / TickImbalance / WickReversalBlend`）
     までは同じ override を広げず、
     winner lane の share 増だけを狙う。
+
+### local-v2 `MicroLevelReactor` dedicated history-skip relax（2026-03-13）
+- 背景:
+  - current 24h では
+    `MicroLevelReactor|micro`
+    が
+    `18 trades / +5.874 JPY / PF 1.142`
+    と唯一の winner lane だった。
+  - 一方で
+    `quant-micro-levelreactor.log`
+    では
+    `MicroLevelReactor-breakout-long`
+    が
+    `hist_block ... score=0.182 reason=low_recent_score`
+    で止まり、
+    global micro history gate の
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.20`
+    に just under だった。
+  - 30d setup breakdown では
+    `MicroLevelReactor-breakout-long`
+    が
+    `2 trades / +32.344 JPY / win_rate 1.0`
+    と positive だったため、
+    current winner setup が strategy-wide drag に巻き込まれていると判断した。
+- 実装:
+  - `ops/env/quant-micro-levelreactor.env`
+    に
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.18`
+    を追加した。
+  - shared
+    `ops/env/local-v2-stack.env`
+    や
+    `workers/micro_runtime/worker.py`
+    は変えず、
+    `quant-micro-levelreactor`
+    dedicated runner だけを unblock する。
+- 意図:
+  - loser micro lane まで broad に緩めず、
+    `MicroLevelReactor-breakout-long`
+    のような current winner setup が
+    just-under threshold で止まる状態だけを解消する。

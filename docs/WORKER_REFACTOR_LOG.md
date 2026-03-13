@@ -19161,3 +19161,48 @@
     だけを
     pocket-wide giveback から切り離して、
     winner share を増やす。
+
+### 2026-03-13 15:05 JST - `MicroLevelReactor` dedicated env の `hist_block` 閾値を 0.18 へ引き下げ
+
+- 対象:
+  - `ops/env/quant-micro-levelreactor.env`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/RISK_AND_EXECUTION.md`
+- 背景:
+  - current 24h の winner lane は
+    `MicroLevelReactor|micro`
+    `18 trades / +5.874 JPY / PF 1.142`
+    だけだった。
+  - しかし
+    `quant-micro-levelreactor.log`
+    では
+    `MicroLevelReactor-breakout-long`
+    が
+    `hist_block ... score=0.182 reason=low_recent_score`
+    で止まり、
+    既定の
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.20`
+    に just under だった。
+  - 30d setup breakdown では
+    `MicroLevelReactor-breakout-long`
+    自体が
+    `2 trades / +32.344 JPY / win_rate 1.0`
+    と positive で、
+    current winner setup が strategy-wide drag に巻き込まれていた。
+- 変更:
+  - `quant-micro-levelreactor`
+    dedicated env に
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.18`
+    を追加した。
+  - shared
+    `local-v2-stack`
+    や
+    `micro_runtime`
+    code は変えず、
+    `MicroLevelReactor`
+    単体だけを unblock する。
+- 意図:
+  - loser micro worker まで broad に緩めず、
+    current winner setup が
+    `hist_block`
+    の just-under threshold で止まる状態だけを解消する。

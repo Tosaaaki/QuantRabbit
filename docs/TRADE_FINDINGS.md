@@ -21267,3 +21267,99 @@ Status:
     （`DroughtRevert / TickImbalance / scalp_ping_5s_c_live`）
     の entry を追加で緩めずに、
     winner lane の share だけが増えるかを確認する。
+
+## 2026-03-13 15:05 JST / local-v2: `MicroLevelReactor` の `hist_block` しきい値を dedicated env だけで下げ、current winner setup を通し直す
+
+- Why/Hypothesis:
+  - 直近24hの live winner は
+    `MicroLevelReactor|micro`
+    だけで
+    `18 trades / +5.874 JPY / +7.8 pips / PF 1.142`
+    だった。
+  - ただし current no-entry の dominant block family は
+    `quant-micro-levelreactor.log`
+    の
+    `hist_block tag=MicroLevelReactor-breakout-long strategy=MicroLevelReactor n=312 score=0.182 reason=low_recent_score`
+    で、
+    既定
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.20`
+    に just under で引っかかっていた。
+  - 30d setup breakdown では
+    `MicroLevelReactor-breakout-long`
+    自体は
+    `2 trades / +32.344 JPY / win_rate 1.0`
+    で、
+    current winner setup が strategy-wide historical drag に巻き込まれている形だった。
+  - 仮説は、
+    `quant-micro-levelreactor`
+    の dedicated env だけ
+    `MICRO_MULTI_HIST_SKIP_SCORE`
+    を
+    `0.20 -> 0.18`
+    に下げれば、
+    winner lane を broad に緩めずに unblock できる、
+    というもの。
+
+- Expected Good:
+  - `MicroLevelReactor-breakout-long`
+    の current winner setup が
+    `hist_block`
+    で止まりにくくなり、
+    micro winner の participation が戻る。
+  - global micro history gate や loser micro worker までは緩まない。
+
+- Expected Bad:
+  - `MicroLevelReactor`
+    全体 score
+    `0.182`
+    をそのまま通すため、
+    winner setup 以外の marginal signal まで増える可能性がある。
+  - current signal が実際には減速局面なら、
+    breakout-long 再開で small loser が増える可能性がある。
+
+- Observed/Fact:
+  - `logs/trades.db`
+    30d aggregate では
+    `MicroLevelReactor`
+    は
+    `573 trades / -153.44 JPY / PF 0.932`
+    と still negative だが、
+    30d setup breakdown では
+    `MicroLevelReactor-breakout-long`
+    が
+    `2 trades / +32.344 JPY`
+    と strongest positive setup だった。
+  - `workers/micro_runtime/worker.py`
+    の history selector は
+    current runtime で strategy family score を使って
+    `skip = n >= HIST_MIN_TRADES and score < HIST_SKIP_SCORE`
+    を判定しており、
+    current log sample では
+    `score=0.182`
+    が just under だった。
+  - 実装は
+    `ops/env/quant-micro-levelreactor.env`
+    に
+    `MICRO_MULTI_HIST_SKIP_SCORE=0.18`
+    を追加する dedicated env tuning のみとし、
+    shared
+    `ops/env/local-v2-stack.env`
+    や code は触らなかった。
+
+- Verdict: pending
+
+- Next Action:
+  - `quant-micro-levelreactor`
+    と core 4 を再起動し、
+    次の
+    `30-60分`
+    で
+    `quant-micro-levelreactor.log`
+    の
+    `hist_block ... score=0.182`
+    が消えるか、
+    `orders.db`
+    の
+    `MicroLevelReactor`
+    preflight / filled
+    が戻るかを確認する。
