@@ -794,25 +794,36 @@ def _normalize_entry_contract_fields(
         if 0.0 <= float(entry_prob) <= 1.0:
             thesis["entry_probability"] = float(entry_prob)
 
-    if thesis.get("entry_units_intent") is None:
-        entry_units = _coerce_float(payload.get("entry_units_intent"))
-        if entry_units is None:
-            entry_units = _coerce_float(payload.get("entry_units"))
-        if entry_units is None:
-            entry_units = _coerce_float(payload.get("units"))
-        if entry_units is None:
-            oanda_payload = payload.get("oanda")
-            if isinstance(oanda_payload, dict):
-                order_payload = oanda_payload.get("order")
-                if isinstance(order_payload, dict):
-                    entry_units = _coerce_float(order_payload.get("units"))
-        if entry_units is None and fallback_units is not None:
-            entry_units = _coerce_float(fallback_units)
-        if entry_units is not None:
-            try:
-                thesis["entry_units_intent"] = abs(int(entry_units))
-            except (TypeError, ValueError):
-                pass
+    entry_units = _coerce_float(payload.get("entry_units_intent"))
+    if entry_units is None:
+        entry_units = _coerce_float(payload.get("entry_units"))
+    if entry_units is None:
+        entry_units = _coerce_float(payload.get("units"))
+    if entry_units is None:
+        oanda_payload = payload.get("oanda")
+        if isinstance(oanda_payload, dict):
+            order_payload = oanda_payload.get("order")
+            if isinstance(order_payload, dict):
+                entry_units = _coerce_float(order_payload.get("units"))
+    if entry_units is None and fallback_units is not None:
+        entry_units = _coerce_float(fallback_units)
+    if entry_units is not None:
+        try:
+            normalized_units = abs(int(entry_units))
+        except (TypeError, ValueError):
+            normalized_units = None
+        if normalized_units is not None:
+            current_units = thesis.get("entry_units_intent")
+            current_units_num = _coerce_float(current_units)
+            current_units_int = None
+            if current_units_num is not None:
+                try:
+                    current_units_int = abs(int(current_units_num))
+                except (TypeError, ValueError):
+                    current_units_int = None
+            if current_units is not None and current_units_int != normalized_units:
+                thesis.setdefault("entry_units_intent_raw", current_units)
+            thesis["entry_units_intent"] = normalized_units
 
     if thesis.get("entry_probability") is None:
         # Keep contract shape even if probability is absent in legacy rows.
@@ -828,7 +839,13 @@ def _apply_strategy_tag_normalization(thesis: dict | None, raw_tag: object | Non
         return thesis, None
     if thesis is None or not isinstance(thesis, dict):
         thesis = {}
-    if raw_tag and norm and str(raw_tag) != norm:
+    existing_tag = None
+    if isinstance(thesis, dict):
+        existing_tag = thesis.get("strategy_tag") or thesis.get("strategy")
+    existing_norm = _normalize_strategy_tag(existing_tag)
+    if existing_tag and norm and existing_norm and existing_norm != norm:
+        thesis.setdefault("strategy_tag_raw", str(existing_tag))
+    elif raw_tag and norm and str(raw_tag) != norm:
         thesis.setdefault("strategy_tag_raw", str(raw_tag))
     if norm:
         thesis["strategy_tag"] = norm
@@ -2496,11 +2513,9 @@ class PositionManager:
                         pass
         if strategy_tag is None:
             strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
-        raw_tag = None
-        if isinstance(thesis_obj, dict):
+        raw_tag = strategy_tag
+        if not raw_tag and isinstance(thesis_obj, dict):
             raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
-        if not raw_tag:
-            raw_tag = strategy_tag
         thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
         if norm_tag:
             strategy_tag = norm_tag
@@ -2616,11 +2631,9 @@ class PositionManager:
 
         if strategy_tag is None:
             strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
-        raw_tag = None
-        if isinstance(thesis_obj, dict):
+        raw_tag = strategy_tag
+        if not raw_tag and isinstance(thesis_obj, dict):
             raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
-        if not raw_tag:
-            raw_tag = strategy_tag
         thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
         if norm_tag:
             strategy_tag = norm_tag
@@ -3391,12 +3404,10 @@ class PositionManager:
                     inferred = self._infer_strategy_tag(trade_entry.get("entry_thesis"), client_id, pocket)
                     if inferred:
                         trade_entry["strategy_tag"] = inferred
-                raw_tag = None
+                raw_tag = trade_entry.get("strategy_tag")
                 thesis_obj = trade_entry.get("entry_thesis")
-                if isinstance(thesis_obj, dict):
+                if not raw_tag and isinstance(thesis_obj, dict):
                     raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
-                if not raw_tag:
-                    raw_tag = trade_entry.get("strategy_tag")
                 thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
                 if thesis_obj is not None:
                     trade_entry["entry_thesis"] = thesis_obj
@@ -3487,8 +3498,8 @@ class PositionManager:
                         cid = trade.get("client_id")
                         if cid and cid in entry_map:
                             thesis_obj = entry_map[cid]
-                            raw_tag = None
-                            if isinstance(thesis_obj, dict):
+                            raw_tag = trade.get("strategy_tag")
+                            if not raw_tag and isinstance(thesis_obj, dict):
                                 raw_tag = thesis_obj.get("strategy_tag_raw") or thesis_obj.get("strategy_tag")
                                 if not raw_tag:
                                     raw_tag = thesis_obj.get("strategy")

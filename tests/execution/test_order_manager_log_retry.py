@@ -734,6 +734,39 @@ def test_ensure_entry_intent_payload_overrides_stale_units_and_strategy_tag() ->
     assert thesis["note"] == "keep-me"
 
 
+def test_canonicalize_logged_entry_payload_overrides_stale_contract_fields() -> None:
+    payload = order_manager._canonicalize_logged_entry_payload(
+        {
+            "entry_thesis": {
+                "strategy_tag": "stale_strategy",
+                "entry_units_intent": 287,
+                "entry_probability": 0.44,
+            },
+            "raw_units": 287,
+        },
+        units=-377,
+        side="sell",
+        strategy_tag="scalp_macd_rsi_div_live",
+        entry_thesis={"note": "fallback"},
+        entry_probability=0.44,
+        meta={"source": "unit-test"},
+    )
+
+    thesis = payload.get("entry_thesis")
+    assert isinstance(thesis, dict)
+    assert thesis["strategy_tag"] == "scalp_macd_rsi_div_live"
+    assert thesis["strategy_tag_raw"] == "stale_strategy"
+    assert thesis["entry_units_intent"] == 377
+    assert thesis["entry_units_intent_raw"] == 287
+    assert payload["entry_units_intent"] == 377
+    assert payload["units"] == -377
+    assert payload["side"] == "sell"
+    assert payload["meta"]["entry_thesis"]["entry_units_intent"] == 377
+    corrections = payload.get("entry_contract_corrections")
+    assert isinstance(corrections, dict)
+    assert corrections["entry_units_intent"]["to"] == 377
+
+
 def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch) -> None:
     async def _unexpected_service_call(_path: str, _payload: dict) -> None:
         raise AssertionError("service should not be called when entry intent guard rejects")
@@ -822,6 +855,57 @@ def test_market_order_entry_intent_guard_logs_dynamic_alloc_attribution(monkeypa
     ]
     assert [step.get("status") for step in trail] == ["reduce", "block"]
     assert request_payload.get("entry_path_attribution") == trail
+
+
+def test_market_order_probability_scaled_logs_canonicalized_entry_contract(monkeypatch) -> None:
+    captured = _setup_market_order_local_path(monkeypatch)
+
+    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", True)
+    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (77, None))
+
+    trade_id = asyncio.run(
+        order_manager.market_order(
+            instrument="USD_JPY",
+            units=120,
+            sl_price=149.950,
+            tp_price=150.120,
+            pocket="scalp_fast",
+            client_order_id="cid-probability-scale-contract",
+            strategy_tag="scalp_ping_5s_b_live",
+            entry_thesis={
+                "strategy_tag": "stale_strategy",
+                "entry_probability": 0.88,
+                "entry_units_intent": 120,
+            },
+            confidence=88,
+        )
+    )
+
+    assert trade_id == "TID-ENTRY-PATH"
+    scaled = _captured_log_by_status(captured, "probability_scaled")
+    scaled_payload = scaled["request_payload"]
+    assert isinstance(scaled_payload, dict)
+    scaled_thesis = scaled_payload.get("entry_thesis")
+    assert isinstance(scaled_thesis, dict)
+    assert scaled_payload["units"] == 77
+    assert scaled_payload["entry_units_intent"] == 77
+    assert scaled_thesis["entry_units_intent"] == 77
+    assert scaled_thesis["entry_units_intent_raw"] == 120
+    assert scaled_thesis["strategy_tag"] == "scalp_ping_5s_b_live"
+    assert scaled_thesis["strategy_tag_raw"] == "stale_strategy"
+    corrections = scaled_payload.get("entry_contract_corrections")
+    assert isinstance(corrections, dict)
+    assert corrections["entry_units_intent"]["from"] == 120
+
+    submit_attempt = _captured_log_by_status(captured, "submit_attempt")
+    submit_payload = submit_attempt["request_payload"]
+    assert isinstance(submit_payload, dict)
+    assert submit_payload["entry_thesis"]["entry_units_intent"] == submit_attempt["units"]
+
+    filled = _captured_log_by_status(captured, "filled")
+    filled_payload = filled["request_payload"]
+    assert isinstance(filled_payload, dict)
+    assert filled_payload["entry_thesis"]["entry_units_intent"] == filled["units"]
 
 
 def test_market_order_perf_block_logs_entry_path_attribution(monkeypatch) -> None:

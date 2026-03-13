@@ -144,3 +144,28 @@ def test_bounded_cache_put_evicts_oldest_entry() -> None:
             max_entries=3,
         )
     assert list(cache.keys()) == ["k1", "k2", "k3"]
+
+
+def test_normalize_entry_contract_fields_overwrites_stale_units() -> None:
+    thesis = position_manager._normalize_entry_contract_fields(
+        {"entry_units_intent": 992, "entry_probability": 0.61},
+        {"units": -682},
+        fallback_units=-682,
+    )
+
+    assert isinstance(thesis, dict)
+    assert thesis["entry_units_intent"] == 682
+    assert thesis["entry_units_intent_raw"] == 992
+    assert thesis["entry_probability"] == 0.61
+
+
+def test_apply_strategy_tag_normalization_preserves_stale_tag() -> None:
+    thesis, norm = position_manager._apply_strategy_tag_normalization(
+        {"strategy_tag": "stale_strategy"},
+        "PrecisionLowVol",
+    )
+
+    assert norm == "PrecisionLowVol"
+    assert isinstance(thesis, dict)
+    assert thesis["strategy_tag"] == "PrecisionLowVol"
+    assert thesis["strategy_tag_raw"] == "stale_strategy"

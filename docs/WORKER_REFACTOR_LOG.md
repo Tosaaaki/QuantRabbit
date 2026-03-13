@@ -18919,3 +18919,62 @@
     最終送信値が正本になる。
   - `tests/execution/test_order_manager_log_retry.py`
     に regression test を追加した。
+
+### 2026-03-13 13:15 JST - order/trade 保存の stale entry contract を status 単位の canonicalization へ変更
+
+- 対象:
+  - `execution/order_manager.py`
+  - `execution/position_manager.py`
+  - `tests/execution/test_order_manager_log_retry.py`
+  - `tests/execution/test_position_manager_close.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+
+- 背景:
+  - 24h raw scan では
+    `orders.db`
+    に
+    `407`
+    件、
+    `trades.db`
+    に
+    `72`
+    件の
+    `entry_units_intent`
+    mismatch が残っていた。
+  - 根は
+    `probability_scaled / submit_attempt / filled`
+    の各 status で nested thesis が actual units へ追随していないことと、
+    `position_manager`
+    が stale contract を保存時に矯正していないことだった。
+
+- 変更:
+  - `execution/order_manager.py`
+    に
+    status ごとの actual
+    `units / side / strategy_tag`
+    を使う logged payload canonicalization を追加した。
+  - `probability_scaled / submit_attempt / filled`
+    の request payload は、
+    nested
+    `entry_thesis`
+    まで actual units に揃え、
+    矯正が起きたときは
+    `entry_contract_corrections`
+    と
+    `entry_units_intent_raw / strategy_tag_raw`
+    を残す。
+  - `execution/position_manager.py`
+    は trade ingest 時に stale
+    `entry_units_intent`
+    を actual trade units へ上書きし、
+    explicit `strategy_tag`
+    を thesis より優先するようにした。
+  - one-off repair で
+    `orders.db updated=32575`,
+    `trades.db updated=15022`
+    を実施し、
+    24h mismatch を
+    `orders 407 -> 0`,
+    `trades 72 -> 0`
+    へ掃除した。

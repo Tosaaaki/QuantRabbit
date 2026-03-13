@@ -4326,30 +4326,160 @@ def _ensure_entry_intent_payload(
     entry_thesis: Optional[dict],
 ) -> Optional[dict]:
     """Attach mandatory intent fields to entry_thesis for order-manager compatibility."""
-    if not isinstance(entry_thesis, dict):
-        if entry_thesis is None:
-            entry_thesis = {}
-        else:
-            return None
-
-    thesis = dict(entry_thesis)
-    if strategy_tag:
-        if isinstance(strategy_tag, str):
-            strategy_tag = strategy_tag.strip()
-            if strategy_tag:
-                thesis["strategy_tag"] = strategy_tag
-
-    thesis["entry_units_intent"] = abs(int(units))
+    thesis, _ = _canonicalize_entry_intent_thesis(
+        entry_thesis,
+        units=units,
+        strategy_tag=strategy_tag,
+        entry_probability=None,
+    )
+    if thesis is None:
+        return None
 
     prob = _entry_probability_value(confidence, thesis)
     if prob is not None:
-        thesis["entry_probability"] = prob
+        thesis, _ = _canonicalize_entry_intent_thesis(
+            thesis,
+            units=units,
+            strategy_tag=strategy_tag,
+            entry_probability=prob,
+        )
+        return thesis
     elif "entry_probability" not in thesis:
         thesis["entry_probability"] = _ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT
     elif _as_float(thesis.get("entry_probability"), None) is None:
         thesis["entry_probability"] = _ORDER_MANAGER_ENTRY_PROBABILITY_DEFAULT
 
     return thesis
+
+
+def _canonicalize_entry_intent_thesis(
+    entry_thesis: Optional[dict],
+    *,
+    units: int,
+    strategy_tag: Optional[str],
+    entry_probability: Optional[float],
+) -> tuple[Optional[dict], dict[str, dict[str, object]]]:
+    if not isinstance(entry_thesis, dict):
+        if entry_thesis is None:
+            entry_thesis = {}
+        else:
+            return None, {}
+
+    thesis = dict(entry_thesis)
+    corrections: dict[str, dict[str, object]] = {}
+
+    normalized_tag = None
+    if isinstance(strategy_tag, str):
+        normalized_tag = strategy_tag.strip() or None
+    if normalized_tag:
+        existing_tag = thesis.get("strategy_tag")
+        existing_tag_text = str(existing_tag).strip() if existing_tag is not None else ""
+        if existing_tag_text and existing_tag_text != normalized_tag:
+            thesis.setdefault("strategy_tag_raw", existing_tag_text)
+            corrections["strategy_tag"] = {
+                "from": existing_tag_text,
+                "to": normalized_tag,
+            }
+        thesis["strategy_tag"] = normalized_tag
+
+    normalized_units = abs(int(units))
+    existing_units = thesis.get("entry_units_intent")
+    existing_units_int = None
+    if existing_units is not None:
+        try:
+            existing_units_int = abs(int(float(existing_units)))
+        except (TypeError, ValueError):
+            existing_units_int = None
+        if existing_units_int != normalized_units:
+            thesis.setdefault("entry_units_intent_raw", existing_units)
+            corrections["entry_units_intent"] = {
+                "from": existing_units,
+                "to": normalized_units,
+            }
+    thesis["entry_units_intent"] = normalized_units
+
+    normalized_prob = _as_float(entry_probability, None)
+    if normalized_prob is not None and 0.0 <= normalized_prob <= 1.0:
+        existing_prob = thesis.get("entry_probability")
+        existing_prob_num = _as_float(existing_prob, None)
+        if existing_prob is not None and (
+            existing_prob_num is None or abs(existing_prob_num - normalized_prob) > 1e-9
+        ):
+            thesis.setdefault("entry_probability_raw", existing_prob)
+            corrections["entry_probability"] = {
+                "from": existing_prob,
+                "to": normalized_prob,
+            }
+        thesis["entry_probability"] = normalized_prob
+
+    return thesis, corrections
+
+
+def _canonicalize_logged_entry_payload(
+    payload: Optional[dict],
+    *,
+    units: int,
+    side: Optional[str],
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    entry_probability: Optional[float],
+    meta: Optional[dict],
+) -> dict:
+    req: dict = {}
+    if isinstance(payload, dict):
+        req.update(payload)
+
+    if strategy_tag is not None:
+        req["strategy_tag"] = strategy_tag
+
+    meta_payload = req.get("meta")
+    if isinstance(meta_payload, dict):
+        meta_payload = dict(meta_payload)
+    elif isinstance(meta, dict):
+        meta_payload = dict(meta)
+    else:
+        meta_payload = meta
+
+    thesis_source = req.get("entry_thesis")
+    if not isinstance(thesis_source, dict) and isinstance(meta_payload, dict):
+        meta_thesis = meta_payload.get("entry_thesis")
+        if isinstance(meta_thesis, dict):
+            thesis_source = meta_thesis
+    if not isinstance(thesis_source, dict) and isinstance(entry_thesis, dict):
+        thesis_source = entry_thesis
+
+    thesis, corrections = _canonicalize_entry_intent_thesis(
+        thesis_source,
+        units=units,
+        strategy_tag=strategy_tag,
+        entry_probability=entry_probability,
+    )
+
+    if meta_payload is not None:
+        if isinstance(meta_payload, dict) and thesis is not None:
+            meta_payload["entry_thesis"] = dict(thesis)
+        req["meta"] = meta_payload
+
+    if thesis is not None:
+        req["entry_thesis"] = thesis
+        req["entry_units_intent"] = thesis.get("entry_units_intent")
+        if thesis.get("entry_probability") is not None:
+            req["entry_probability"] = thesis.get("entry_probability")
+        trail = thesis.get("entry_path_attribution")
+        if isinstance(trail, list):
+            req["entry_path_attribution_version"] = thesis.get(
+                "entry_path_attribution_version"
+            )
+            req["entry_path_attribution"] = trail
+    elif entry_probability is not None:
+        req["entry_probability"] = entry_probability
+
+    req["units"] = int(units)
+    if side:
+        req["side"] = side
+    if corrections:
+        req["entry_contract_corrections"] = corrections
+    return req
 
 
 def _append_entry_path_stage(
@@ -9063,40 +9193,52 @@ async def market_order(
     entry_thesis = _append_dynamic_alloc_entry_path(entry_thesis)
     entry_probability = _entry_probability_value(confidence, entry_thesis)
 
-    def _inject_entry_payload(payload: Optional[dict] = None) -> dict:
-        req: dict = {}
+    def _inject_entry_payload(
+        payload: Optional[dict] = None,
+        *,
+        units_override: Optional[int] = None,
+        side_override: Optional[str] = None,
+    ) -> dict:
+        resolved_units = units if units_override is None else int(units_override)
         if isinstance(payload, dict):
-            req.update(payload)
-        if strategy_tag is not None:
-            req.setdefault("strategy_tag", strategy_tag)
-        if meta is not None:
-            req.setdefault("meta", meta)
-        if isinstance(entry_thesis, dict):
-            req.setdefault("entry_thesis", entry_thesis)
-            if "entry_units_intent" not in req:
-                req["entry_units_intent"] = entry_thesis.get("entry_units_intent")
-            if "entry_probability" not in req:
-                req["entry_probability"] = entry_thesis.get("entry_probability")
-            trail = entry_thesis.get("entry_path_attribution")
-            if isinstance(trail, list):
-                req.setdefault(
-                    "entry_path_attribution_version",
-                    entry_thesis.get("entry_path_attribution_version"),
-                )
-                req.setdefault("entry_path_attribution", trail)
-        if entry_probability is not None:
-            req["entry_probability"] = entry_probability
-        return req
+            payload_units = payload.get("units")
+            try:
+                if payload_units is not None:
+                    resolved_units = int(payload_units)
+            except (TypeError, ValueError):
+                resolved_units = units if units_override is None else int(units_override)
+        resolved_side = "buy" if resolved_units > 0 else "sell"
+        if side_override:
+            resolved_side = str(side_override)
+        if isinstance(payload, dict) and payload.get("side"):
+            resolved_side = str(payload.get("side"))
+        return _canonicalize_logged_entry_payload(
+            payload,
+            units=resolved_units,
+            side=resolved_side,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+            entry_probability=entry_probability,
+            meta=meta,
+        )
 
     _log_order_impl = globals()["_log_order"]
     _cache_order_status_impl = globals()["_cache_order_status"]
 
     def _log_order(**kwargs):
-        kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
+        kwargs["request_payload"] = _inject_entry_payload(
+            kwargs.get("request_payload"),
+            units_override=kwargs.get("units"),
+            side_override=kwargs.get("side"),
+        )
         return _log_order_impl(**kwargs)
 
     def _cache_order_status(**kwargs):
-        kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
+        kwargs["request_payload"] = _inject_entry_payload(
+            kwargs.get("request_payload"),
+            units_override=kwargs.get("units"),
+            side_override=kwargs.get("side"),
+        )
         return _cache_order_status_impl(**kwargs)
 
     if not strategy_tag and isinstance(entry_thesis, dict):
@@ -13534,35 +13676,43 @@ async def limit_order(
     entry_thesis = _append_dynamic_alloc_entry_path(entry_thesis)
     entry_probability = _entry_probability_value(confidence, entry_thesis)
 
-    def _inject_entry_payload(payload: Optional[dict] = None) -> dict:
-        req: dict = {}
+    def _inject_entry_payload(
+        payload: Optional[dict] = None,
+        *,
+        units_override: Optional[int] = None,
+        side_override: Optional[str] = None,
+    ) -> dict:
+        resolved_units = units if units_override is None else int(units_override)
         if isinstance(payload, dict):
-            req.update(payload)
-        if strategy_tag is not None:
-            req.setdefault("strategy_tag", strategy_tag)
-        if meta is not None:
-            req.setdefault("meta", meta)
-        if isinstance(entry_thesis, dict):
-            req.setdefault("entry_thesis", entry_thesis)
-            if "entry_units_intent" not in req:
-                req["entry_units_intent"] = entry_thesis.get("entry_units_intent")
-            if "entry_probability" not in req:
-                req["entry_probability"] = entry_thesis.get("entry_probability")
-            trail = entry_thesis.get("entry_path_attribution")
-            if isinstance(trail, list):
-                req.setdefault(
-                    "entry_path_attribution_version",
-                    entry_thesis.get("entry_path_attribution_version"),
-                )
-                req.setdefault("entry_path_attribution", trail)
-        if entry_probability is not None:
-            req["entry_probability"] = entry_probability
-        return req
+            payload_units = payload.get("units")
+            try:
+                if payload_units is not None:
+                    resolved_units = int(payload_units)
+            except (TypeError, ValueError):
+                resolved_units = units if units_override is None else int(units_override)
+        resolved_side = "buy" if resolved_units > 0 else "sell"
+        if side_override:
+            resolved_side = str(side_override)
+        if isinstance(payload, dict) and payload.get("side"):
+            resolved_side = str(payload.get("side"))
+        return _canonicalize_logged_entry_payload(
+            payload,
+            units=resolved_units,
+            side=resolved_side,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+            entry_probability=entry_probability,
+            meta=meta,
+        )
 
     _log_order_impl = globals()["_log_order"]
 
     def _log_order(**kwargs):
-        kwargs["request_payload"] = _inject_entry_payload(kwargs.get("request_payload"))
+        kwargs["request_payload"] = _inject_entry_payload(
+            kwargs.get("request_payload"),
+            units_override=kwargs.get("units"),
+            side_override=kwargs.get("side"),
+        )
         return _log_order_impl(**kwargs)
 
     entry_intent_guard_reason = _entry_intent_guard_reason(

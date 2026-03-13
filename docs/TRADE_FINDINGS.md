@@ -20697,3 +20697,134 @@ Status:
     赤字 cluster は
     `PrecisionLowVol / scalp_extrema_reversal_live / WickReversalBlend / DroughtRevert`
     の entry/SL 品質側を優先して詰める。
+
+### 2026-03-13 13:15 JST - stale `entry_units_intent` は isolated ではなく、status/trade 保存全体で発生していたので系で潰した
+
+- Why/Hypothesis:
+  - 12:30 JST 時点の contract audit は
+    `missing/invalid`
+    を見ていたため pass だったが、
+    user 指摘どおり
+    「存在はするが stale な照合値」
+    が analytics を汚している可能性が残っていた。
+  - 仮説は、
+    1)
+    `probability_scaled / submit_attempt / filled`
+    の各 status で
+    nested `entry_thesis.entry_units_intent`
+    が actual units に追随していない、
+    2)
+    `position_manager`
+    は missing 補完だけで、
+    stale units/tag を trade 保存時に直していない、
+    である。
+
+- Expected Good:
+  - `orders.db`
+    と
+    `trades.db`
+    の
+    `entry_thesis`
+    が actual units / strategy に揃い、
+    RCA と setup cluster が false mismatch に引っ張られなくなる。
+  - どうしても矯正が必要だった row も
+    `entry_units_intent_raw`
+    /
+    `strategy_tag_raw`
+    で元値を残せる。
+
+- Expected Bad:
+  - raw intent をそのまま見たい監査では、
+    上書き後の値だけ見ると confusing になり得る。
+  - そのため、
+    override が起きた row には
+    raw 値を別 key で残し、
+    order log には
+    `entry_contract_corrections`
+    も載せる。
+
+- Observed/Fact:
+  - 24h 再集計では、
+    `orders.db`
+    の
+    `entry_thesis.entry_units_intent`
+    と actual order units の mismatch が
+    `407 rows`
+    あった。
+    strategy 別では
+    `PrecisionLowVol 135`,
+    `DroughtRevert 108`,
+    `MicroLevelReactor-bounce-lower 72`,
+    `WickReversalBlend 33`,
+    `TickImbalance 22`
+    が多かった。
+  - `trades.db`
+    でも
+    `entry_thesis.entry_units_intent`
+    と actual trade units の mismatch が
+    `72 rows`
+    あった。
+    つまり、
+    「大量欠損は無い」
+    と
+    「actual units と thesis が揃っている」
+    は別問題だった。
+  - 原因は 2 本で、
+    `execution/order_manager.py`
+    の
+    `market_order / limit_order`
+    が
+    top-level payload を inject しても、
+    per-status actual units で nested
+    `entry_thesis`
+    を毎回 canonicalize していなかったこと、
+    そして
+    `execution/position_manager.py`
+    が
+    stale units/tag を
+    「missing でない」
+    という理由でそのまま保存していたことだった。
+  - 対応として、
+    order_manager 側に
+    status ごとの actual `units / side / strategy_tag`
+    を使う canonicalization を追加し、
+    `probability_scaled / submit_attempt / filled`
+    のすべてで
+    nested `entry_thesis`
+    を揃えるようにした。
+    さらに
+    `position_manager`
+    は trade ingest 時に stale
+    `entry_units_intent`
+    を actual trade units で上書きし、
+    explicit `strategy_tag`
+    を thesis より優先するようにした。
+  - 既存 DB も one-off repair を実施した。
+    `orders.db: updated=32575`,
+    `trades.db: updated=15022`
+    で、
+    24h mismatch は
+    `orders 407 -> 0`,
+    `trades 72 -> 0`
+    まで解消した。
+  - test は
+    `tests/execution/test_order_manager_log_retry.py`
+    の targeted subset で
+    `6 passed`,
+    `tests/execution/test_position_manager_close.py`
+    の targeted subset で
+    `5 passed`
+    を確認した。
+
+- Verdict: good
+
+- Next Action:
+  - 以後は
+    `entry_contract_corrections`
+    が新規 row で継続発生するかを見て、
+    もし残るなら
+    worker 側の raw intent 更新漏れ経路まで掘る。
+  - RCA はこの mismatch ノイズを外した状態で、
+    ふたたび
+    `STOP_LOSS_ORDER`
+    cluster の quality 改善へ戻す。
