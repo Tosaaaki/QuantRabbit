@@ -347,6 +347,16 @@ gcloud storage cp --recursive \
     「entry が少ないから即 cooldown を殺す」ではなく、
     recent loser burst の lane を特定して、
     cooldown 条件か loss cluster 条件の妥当性を点検する。
+    `logs/stage_state.db`
+    の
+    `pocket_loss_window`
+    を見て、
+    `strategy_tag`
+    の breadth が 1 本しか無く、
+    損失が contained
+    なら
+    pocket-wide cooldown ではなく
+    culprit strategy 側の改善を優先する。
   - `no_signal:revert_not_found`
     が主因:
     signal 生成側の revert / setup 検出不足を優先し、

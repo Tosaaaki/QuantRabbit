@@ -12,6 +12,37 @@ if str(PROJECT_ROOT) not in sys.path:
 from execution.stage_tracker import StageTracker
 
 
+def _create_trades_db(trades_db: pathlib.Path, rows: list[tuple]) -> None:
+    con = sqlite3.connect(trades_db)
+    try:
+        con.execute(
+            """
+            CREATE TABLE trades (
+                id INTEGER PRIMARY KEY,
+                pocket TEXT,
+                units INTEGER,
+                pl_pips REAL,
+                realized_pl REAL,
+                strategy_tag TEXT,
+                close_time TEXT,
+                close_price REAL,
+                close_reason TEXT
+            )
+            """
+        )
+        con.executemany(
+            """
+            INSERT INTO trades(
+                id, pocket, units, pl_pips, realized_pl, strategy_tag, close_time, close_price, close_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def test_stage_tracker_cooldown_with_timezone_aware_now(tmp_path):
     db_path = tmp_path / "stage.db"
     tracker = StageTracker(db_path=db_path)
@@ -121,29 +152,9 @@ def test_stage_tracker_reentry_state_updates_when_trade_id_regresses(tmp_path):
     trades_db = tmp_path / "trades.db"
     tracker = StageTracker(db_path=stage_db)
     try:
-        tcon = sqlite3.connect(trades_db)
-        try:
-            tcon.execute(
-                """
-                CREATE TABLE trades (
-                    id INTEGER PRIMARY KEY,
-                    pocket TEXT,
-                    units INTEGER,
-                    pl_pips REAL,
-                    realized_pl REAL,
-                    strategy_tag TEXT,
-                    close_time TEXT,
-                    close_price REAL,
-                    close_reason TEXT
-                )
-                """
-            )
-            tcon.execute(
-                """
-                INSERT INTO trades(
-                    id, pocket, units, pl_pips, realized_pl, strategy_tag, close_time, close_price, close_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+        _create_trades_db(
+            trades_db,
+            [
                 (
                     10,
                     "scalp",
@@ -155,10 +166,8 @@ def test_stage_tracker_reentry_state_updates_when_trade_id_regresses(tmp_path):
                     155.854,
                     "MARKET_ORDER_TRADE_CLOSE",
                 ),
-            )
-            tcon.commit()
-        finally:
-            tcon.close()
+            ],
+        )
 
         tracker._con.execute(
             """
@@ -199,5 +208,172 @@ def test_stage_tracker_reentry_state_updates_when_trade_id_regresses(tmp_path):
         assert float(row["last_close_price"]) == pytest.approx(155.854)
         assert row["last_result"] == "loss"
         assert float(row["last_pl_pips"]) == pytest.approx(-1.2)
+    finally:
+        tracker.close()
+
+
+def test_stage_tracker_syncs_loss_window_to_current_trades(tmp_path):
+    stage_db = tmp_path / "stage.db"
+    trades_db = tmp_path / "trades.db"
+    tracker = StageTracker(db_path=stage_db)
+    try:
+        tracker._cooldown_disabled = False
+        tracker._cluster_cooldown_disabled = False
+        tracker._scalp_cluster_cooldown_disabled = False
+        _create_trades_db(
+            trades_db,
+            [
+                (
+                    10,
+                    "scalp",
+                    -3834,
+                    -1.8,
+                    -69.012,
+                    "TickImbalance",
+                    "2026-03-13T00:05:54.265570+00:00",
+                    159.070,
+                    "STOP_LOSS_ORDER",
+                ),
+            ],
+        )
+        tracker._con.execute(
+            """
+            INSERT INTO pocket_loss_window(
+                pocket, trade_id, closed_at, loss_jpy, loss_pips, strategy_tag
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("scalp", 9, "2026-03-13T00:17:29.557361+00:00", 69.012, 1.8, "TickImbalance"),
+        )
+        tracker._con.commit()
+
+        tracker.update_loss_streaks(
+            trades_db=trades_db,
+            now=datetime(2026, 3, 13, 0, 10, tzinfo=timezone.utc),
+            cooldown_seconds=900,
+            cooldown_map={"scalp": 900},
+            atr_pips=3.1,
+            vol_5m=1.2,
+        )
+
+        rows = tracker._con.execute(
+            """
+            SELECT pocket, trade_id, closed_at, loss_jpy, loss_pips, strategy_tag
+            FROM pocket_loss_window
+            ORDER BY trade_id
+            """
+        ).fetchall()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["pocket"] == "scalp"
+        assert int(row["trade_id"]) == 10
+        assert row["closed_at"] == "2026-03-13T00:05:54.265570+00:00"
+        assert float(row["loss_jpy"]) == pytest.approx(69.012)
+        assert float(row["loss_pips"]) == pytest.approx(1.8)
+        assert row["strategy_tag"] == "TickImbalance"
+    finally:
+        tracker.close()
+
+
+def test_stage_tracker_skips_small_single_strategy_scalp_cluster(tmp_path):
+    stage_db = tmp_path / "stage.db"
+    trades_db = tmp_path / "trades.db"
+    tracker = StageTracker(db_path=stage_db)
+    try:
+        tracker._cooldown_disabled = False
+        tracker._cluster_cooldown_disabled = False
+        tracker._scalp_cluster_cooldown_disabled = False
+        _create_trades_db(
+            trades_db,
+            [
+                (
+                    10,
+                    "scalp",
+                    -3834,
+                    -1.8,
+                    -69.012,
+                    "TickImbalance",
+                    "2026-03-13T00:05:54.265570+00:00",
+                    159.070,
+                    "STOP_LOSS_ORDER",
+                ),
+                (
+                    11,
+                    "scalp",
+                    -3834,
+                    -1.8,
+                    -69.012,
+                    "TickImbalance",
+                    "2026-03-13T00:17:29.557361+00:00",
+                    159.070,
+                    "STOP_LOSS_ORDER",
+                ),
+            ],
+        )
+
+        tracker.update_loss_streaks(
+            trades_db=trades_db,
+            now=datetime(2026, 3, 13, 0, 20, tzinfo=timezone.utc),
+            cooldown_seconds=900,
+            cooldown_map={"scalp": 900},
+            atr_pips=3.1,
+            vol_5m=1.2,
+        )
+
+        check_now = datetime(2026, 3, 13, 0, 20, tzinfo=timezone.utc)
+        assert tracker.get_cooldown("scalp", "long", now=check_now) is None
+        assert tracker.get_cooldown("scalp", "short", now=check_now) is None
+    finally:
+        tracker.close()
+
+
+def test_stage_tracker_keeps_multi_strategy_scalp_cluster_cooldown(tmp_path):
+    stage_db = tmp_path / "stage.db"
+    trades_db = tmp_path / "trades.db"
+    tracker = StageTracker(db_path=stage_db)
+    try:
+        _create_trades_db(
+            trades_db,
+            [
+                (
+                    10,
+                    "scalp",
+                    -3834,
+                    -1.8,
+                    -69.012,
+                    "TickImbalance",
+                    "2026-03-13T00:05:54.265570+00:00",
+                    159.070,
+                    "STOP_LOSS_ORDER",
+                ),
+                (
+                    11,
+                    "scalp",
+                    -272,
+                    -1.7,
+                    -69.012,
+                    "PrecisionLowVol",
+                    "2026-03-13T00:17:29.557361+00:00",
+                    159.330,
+                    "STOP_LOSS_ORDER",
+                ),
+            ],
+        )
+
+        tracker.update_loss_streaks(
+            trades_db=trades_db,
+            now=datetime(2026, 3, 13, 0, 20, tzinfo=timezone.utc),
+            cooldown_seconds=900,
+            cooldown_map={"scalp": 900},
+            atr_pips=3.1,
+            vol_5m=1.2,
+        )
+
+        check_now = datetime(2026, 3, 13, 0, 20, tzinfo=timezone.utc)
+        long_cd = tracker.get_cooldown("scalp", "long", now=check_now)
+        short_cd = tracker.get_cooldown("scalp", "short", now=check_now)
+        assert long_cd is not None
+        assert short_cd is not None
+        assert long_cd.reason == "loss_cluster_2"
+        assert short_cd.reason == "loss_cluster_2"
     finally:
         tracker.close()

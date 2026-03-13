@@ -19803,3 +19803,73 @@ Status:
     2. scalp pocket の
        `cluster cooldown`
        が長すぎないかを点検する。
+
+## 2026-03-13 10:09 JST / local-v2: `StageTracker` の stale cluster cooldown を current trades window 基準へ修正
+- Why/Hypothesis:
+  - user が貼った
+    `2026-03-13 09:05 JST`
+    の
+    `TickImbalance`
+    負け以降、
+    `PrecisionLowVol / DroughtRevert / WickReversalBlend`
+    が
+    `cluster cooldown`
+    に張り付いていた。
+  - `logs/stage_state.db`
+    を見ると
+    `pocket_loss_window`
+    に
+    `trade_id=59370`
+    の stale row と
+    `59372 TickImbalance`
+    が残り、
+    実際は single-strategy の small loss なのに
+    scalp pocket 全体へ cooldown が掛かっていた。
+- Expected Good:
+  - `StageTracker`
+    が stale row に引っ張られず、
+    current trades の close time と strategy breadth で
+    cluster cooldown を再判定できる。
+  - one loser lane の contained loss で
+    `scalp`
+    pocket 全体の entry を止めない。
+- Expected Bad:
+  - pocket-wide cooldown の発火が減るぶん、
+    truly broad な loser burst まで見逃すと
+    loser lane が増えるリスクがある。
+- Observed/Fact:
+  - `2026-03-13 10:09 JST`
+    に
+    updated
+    `StageTracker`
+    を local 実DBへ当てると、
+    `pocket_loss_window`
+    は
+    `59372 TickImbalance`
+    だけへ再同期され、
+    stale row は削除された。
+  - 同時点の
+    `scalp`
+    pocket は
+    `loss_jpy=69.012`,
+    `loss_pips=1.8`,
+    `strategy_count=1`
+    となり、
+    `stage_cooldown`
+    の
+    `scalp loss_cluster_*`
+    は消えた。
+  - unit test は
+    `tests/test_stage_tracker.py`
+    で
+    `8 passed`
+    を確認した。
+- Verdict: good
+- Next Action:
+  - next live では
+    `cluster cooldown`
+    の巻き添えが減る前提で
+    `scalp_ping_5s_c_live`
+    の
+    `lookahead_block / revert_not_found`
+    を個別に詰める。

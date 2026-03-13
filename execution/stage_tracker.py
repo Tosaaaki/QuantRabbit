@@ -355,13 +355,19 @@ class StageTracker:
             create_sql="""
             CREATE TABLE IF NOT EXISTS pocket_loss_window (
                 pocket TEXT NOT NULL,
-                trade_id INTEGER NOT NULL,
+                trade_id INTEGER PRIMARY KEY,
                 closed_at TEXT NOT NULL,
                 loss_jpy REAL NOT NULL,
                 loss_pips REAL NOT NULL,
-                PRIMARY KEY (pocket, trade_id)
+                strategy_tag TEXT
             )
             """,
+        )
+        _ensure_column(
+            self._con,
+            table_name="pocket_loss_window",
+            column_name="strategy_tag",
+            alter_sql="ALTER TABLE pocket_loss_window ADD COLUMN strategy_tag TEXT",
         )
         self._loss_window_minutes = int(
             os.getenv("LOSS_CLUSTER_WINDOW_MIN", str(_LOSS_WINDOW_MINUTES)) or _LOSS_WINDOW_MINUTES
@@ -381,13 +387,6 @@ class StageTracker:
             or str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "0")).strip().lower()
             in {"1", "true", "yes"}
         )
-        self._cluster_last_trade_id: Dict[str, int] = {}
-        for row in self._con.execute(
-            "SELECT pocket, MAX(trade_id) AS last_id FROM pocket_loss_window GROUP BY pocket"
-        ):
-            pocket = row["pocket"]
-            if pocket:
-                self._cluster_last_trade_id[pocket] = int(row["last_id"] or 0)
         self._recent_profile: Dict[str, Dict[str, float]] = {}
         self._weight_hint: Dict[str, float] = {}
         self._clamp_state = self._load_clamp_state()
@@ -1123,7 +1122,6 @@ class StageTracker:
 
         ts = now_dt.isoformat()
         reverse_window = _in_jst_reverse_window(now_dt)
-        new_losses: List[Tuple[str, int, datetime, float, float]] = []
         for row in rows:
             pocket = row["pocket"] or ""
             units = int(row["units"] or 0)
@@ -1142,11 +1140,6 @@ class StageTracker:
             if pl_jpy < -_MIN_LOSS_JPY:
                 lose_streak += 1
                 win_streak = 0
-                try:
-                    pl_pips = float(row["pl_pips"] or 0.0)
-                except Exception:
-                    pl_pips = 0.0
-                new_losses.append((pocket, trade_id, now_dt, abs(pl_jpy), abs(pl_pips)))
             elif pl_jpy > _MIN_LOSS_JPY:
                 win_streak += 1
                 lose_streak = 0
@@ -1318,43 +1311,13 @@ class StageTracker:
         if cooldown_lookup:
             fallback_cd = int(min(cooldown_lookup.values()))
 
-        if new_losses:
-            payload = []
-            for pocket, trade_id, closed_at, loss_jpy, loss_pips in new_losses:
-                last_cluster = self._cluster_last_trade_id.get(pocket, 0)
-                if trade_id <= last_cluster:
-                    continue
-                payload.append(
-                    (pocket, trade_id, closed_at.isoformat(), loss_jpy, loss_pips)
-                )
-                self._cluster_last_trade_id[pocket] = max(last_cluster, trade_id)
-            if payload:
-                self._con.executemany(
-                    """
-                    INSERT OR IGNORE INTO pocket_loss_window(pocket, trade_id, closed_at, loss_jpy, loss_pips)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    payload,
-                )
-
-        cutoff = (now_dt - timedelta(minutes=self._loss_window_minutes)).isoformat()
-        self._con.execute(
-            "DELETE FROM pocket_loss_window WHERE closed_at < ?", (cutoff,)
+        loss_window_rows = self._build_loss_window_rows(rows, now=now_dt)
+        self._sync_pocket_loss_window(loss_window_rows)
+        cluster_stats = self._build_cluster_stats_from_loss_rows(
+            loss_window_rows,
+            cooldown_lookup=cooldown_lookup,
+            fallback_cd=fallback_cd,
         )
-
-        cluster_stats: Dict[str, Dict[str, float]] = {}
-        for row in self._con.execute(
-            "SELECT pocket, COUNT(*) AS cnt, SUM(loss_jpy) AS total_jpy, SUM(loss_pips) AS total_pips FROM pocket_loss_window GROUP BY pocket"
-        ):
-            pocket = row["pocket"]
-            if not pocket:
-                continue
-            cluster_stats[pocket] = {
-                "count": float(row["cnt"] or 0.0),
-                "loss_jpy": float(row["total_jpy"] or 0.0),
-                "loss_pips": float(row["total_pips"] or 0.0),
-                "cooldown": int(cooldown_lookup.get(pocket, fallback_cd)),
-            }
 
         self._weight_hint = {}
         if cluster_stats:
@@ -1392,6 +1355,7 @@ class StageTracker:
             count = int(stats.get("count", 0) or 0)
             loss_jpy = float(stats.get("loss_jpy", 0.0) or 0.0)
             loss_pips = float(stats.get("loss_pips", 0.0) or 0.0)
+            strategy_count = int(stats.get("strategy_count", 0) or 0)
             base_cd = int(stats.get("cooldown", 0) or 0)
             if base_cd <= 0:
                 base_cd = 900
@@ -1403,6 +1367,20 @@ class StageTracker:
 
             if pocket == "scalp" and self._scalp_cluster_cooldown_disabled:
                 self._drop_cluster_cooldowns({pocket})
+                continue
+
+            severe_single_strategy = loss_pips >= 20 or loss_jpy >= 2500
+            if pocket in {"micro", "scalp"} and strategy_count <= 1 and not severe_single_strategy:
+                self._drop_cluster_cooldowns({pocket})
+                self._weight_hint.pop(pocket, None)
+                logging.info(
+                    "[STAGE] cluster cooldown skip pocket=%s strategies=%s count=%s loss_pips=%.1f jpy=%.1f reason=single_strategy_contained",
+                    pocket,
+                    strategy_count,
+                    count,
+                    loss_pips,
+                    loss_jpy,
+                )
                 continue
 
             severity = 0.0
@@ -1477,6 +1455,131 @@ class StageTracker:
             tuple(items),
         )
         self._con.commit()
+
+    def _build_loss_window_rows(
+        self,
+        rows: List[sqlite3.Row],
+        *,
+        now: datetime,
+    ) -> List[Dict[str, object]]:
+        loss_rows: List[Dict[str, object]] = []
+        threshold = now - timedelta(minutes=self._loss_window_minutes)
+        for row in rows:
+            try:
+                trade_id = int(row["id"])
+                pocket = str(row["pocket"] or "")
+                units = int(row["units"] or 0)
+                pl_jpy = float(row["realized_pl"] or 0.0)
+                pl_pips = abs(float(row["pl_pips"] or 0.0))
+            except Exception:
+                continue
+            if not pocket or units == 0 or pl_jpy >= -_MIN_LOSS_JPY:
+                continue
+            raw_close_time = row["close_time"] if "close_time" in row.keys() else None
+            if not raw_close_time:
+                continue
+            try:
+                close_time = _parse_timestamp(str(raw_close_time))
+            except Exception:
+                continue
+            if close_time < threshold:
+                continue
+            strategy_tag = ""
+            if "strategy_tag" in row.keys() and row["strategy_tag"]:
+                strategy_tag = str(row["strategy_tag"]).strip()
+            loss_rows.append(
+                {
+                    "pocket": pocket,
+                    "trade_id": trade_id,
+                    "closed_at": close_time.isoformat(),
+                    "loss_jpy": abs(pl_jpy),
+                    "loss_pips": pl_pips,
+                    "strategy_tag": strategy_tag,
+                }
+            )
+        return loss_rows
+
+    def _sync_pocket_loss_window(self, loss_rows: List[Dict[str, object]]) -> None:
+        current_ids = {int(row["trade_id"]) for row in loss_rows}
+        stale_ids: List[int] = []
+        for row in self._con.execute("SELECT trade_id FROM pocket_loss_window"):
+            try:
+                trade_id = int(row["trade_id"])
+            except Exception:
+                continue
+            if trade_id not in current_ids:
+                stale_ids.append(trade_id)
+        if stale_ids:
+            self._con.executemany(
+                "DELETE FROM pocket_loss_window WHERE trade_id=?",
+                [(trade_id,) for trade_id in stale_ids],
+            )
+        if not loss_rows:
+            self._con.commit()
+            return
+        self._con.executemany(
+            """
+            INSERT INTO pocket_loss_window(
+                pocket,
+                trade_id,
+                closed_at,
+                loss_jpy,
+                loss_pips,
+                strategy_tag
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_id)
+            DO UPDATE SET pocket=excluded.pocket,
+                          closed_at=excluded.closed_at,
+                          loss_jpy=excluded.loss_jpy,
+                          loss_pips=excluded.loss_pips,
+                          strategy_tag=excluded.strategy_tag
+            """,
+            [
+                (
+                    str(row["pocket"]),
+                    int(row["trade_id"]),
+                    str(row["closed_at"]),
+                    float(row["loss_jpy"]),
+                    float(row["loss_pips"]),
+                    str(row.get("strategy_tag") or ""),
+                )
+                for row in loss_rows
+            ],
+        )
+        self._con.commit()
+
+    def _build_cluster_stats_from_loss_rows(
+        self,
+        loss_rows: List[Dict[str, object]],
+        *,
+        cooldown_lookup: Dict[str, int],
+        fallback_cd: int,
+    ) -> Dict[str, Dict[str, float]]:
+        cluster_stats: Dict[str, Dict[str, float]] = {}
+        strategy_sets: Dict[str, set[str]] = {}
+        for row in loss_rows:
+            pocket = str(row.get("pocket") or "")
+            if not pocket:
+                continue
+            stats = cluster_stats.setdefault(
+                pocket,
+                {
+                    "count": 0.0,
+                    "loss_jpy": 0.0,
+                    "loss_pips": 0.0,
+                    "cooldown": float(int(cooldown_lookup.get(pocket, fallback_cd))),
+                    "strategy_count": 0.0,
+                },
+            )
+            stats["count"] += 1.0
+            stats["loss_jpy"] += float(row.get("loss_jpy") or 0.0)
+            stats["loss_pips"] += float(row.get("loss_pips") or 0.0)
+            strategy_key = str(row.get("strategy_tag") or "").strip() or "__unknown__"
+            strategy_sets.setdefault(pocket, set()).add(strategy_key)
+        for pocket, strategies in strategy_sets.items():
+            if pocket in cluster_stats:
+                cluster_stats[pocket]["strategy_count"] = float(len(strategies))
+        return cluster_stats
 
     def _build_recent_profile(
         self, rows: List[sqlite3.Row], now_dt: datetime

@@ -18514,3 +18514,51 @@
     recent orders / order-manager / worker logs / health snapshot
     をどう見るか、
     どの dominant reason に対してどこを触るかを明文化した。
+
+### 2026-03-13 10:09 JST - `StageTracker` の cluster cooldown を current trades / strategy breadth 基準へ修正
+
+- 対象:
+  - `execution/stage_tracker.py`
+  - `tests/test_stage_tracker.py`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/TRADE_FINDINGS.md`
+
+- 背景:
+  - scalp pocket の
+    `cluster cooldown`
+    が
+    single loser strategy の small loss でも
+    pocket-wide に発火し、
+    `PrecisionLowVol / DroughtRevert / WickReversalBlend`
+    の entry を巻き込んでいた。
+  - `pocket_loss_window`
+    には current trades に存在しない stale row が残り、
+    breadth 判定も無かった。
+
+- 変更:
+  - `StageTracker`
+    の loss window を
+    current `trades.db`
+    の
+    `close_time`
+    と
+    `strategy_tag`
+    で毎回再構築するよう変更。
+  - `pocket_loss_window`
+    に
+    `strategy_tag`
+    を保持し、
+    stale row を再同期時に削除するようにした。
+  - `micro/scalp`
+    の
+    cluster cooldown
+    は
+    `strategy_count<=1`
+    かつ
+    severe loss でない間は
+    pocket-wide 発火をスキップするようにした。
+  - regression test を 3 本追加して、
+    stale row pruning /
+    single-strategy skip /
+    multi-strategy cooldown
+    を固定した。

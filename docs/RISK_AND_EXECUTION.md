@@ -4971,3 +4971,38 @@
     recent outcome が悪化している間だけ
     neutral-gap / higher-range の weak probe を
     strategy-local setup-pressure で前倒しに cut する。
+
+### 2026-03-13 local-v2 `StageTracker` cluster cooldown breadth fix
+- `execution/stage_tracker.py`
+  の
+  `cluster cooldown`
+  は
+  `pocket_loss_window`
+  の stale row に依存させず、
+  current `trades.db`
+  の
+  `close_time`
+  /
+  `strategy_tag`
+  から毎回再同期する。
+- `micro/scalp`
+  pocket は
+  `strategy_count<=1`
+  かつ
+  severe loss
+  でない限り、
+  shared pocket-wide cooldown を張らず、
+  culprit strategy 側の
+  `strategy_cooldown`
+  /
+  strategy-local guard
+  を優先する。
+- pocket-wide cooldown を残すのは
+  multi-strategy breadth がある loser burst
+  か、
+  単独戦略でも
+  `loss_pips>=20`
+  または
+  `loss_jpy>=2500`
+  の severe case
+  に限定する。
