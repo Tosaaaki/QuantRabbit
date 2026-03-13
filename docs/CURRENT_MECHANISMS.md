@@ -105,6 +105,12 @@
   の open trade に対して broker
   `SL/TP`
   を live 更新する。
+  current local-v2 では
+  base profile に加えて
+  `ATR / spread / setup_quality / continuation_pressure / reversion_support / extrema setup pressure`
+  から
+  `trigger / lock / TP buffer`
+  を補正する market-aware multiplier を持つ。
   共通 exit manager を増やすのではなく、
   dedicated exit worker 内で strategy-local に完結させる。
 

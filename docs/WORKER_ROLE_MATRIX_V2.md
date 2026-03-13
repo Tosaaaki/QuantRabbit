@@ -471,6 +471,11 @@ flowchart LR
   `be_profile / tp_move`
   に基づく broker `SL/TP`
   更新も担当する。
+  current local-v2 では
+  `ATR / spread / setup_quality / continuation_pressure / extrema setup pressure`
+  を使う live multiplier で
+  `trigger / lock / TP buffer`
+  を補正する。
   これは strategy-local 実装であり、
   共通の後付け exit manager を復活させるものではない。
 

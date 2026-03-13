@@ -118,3 +118,49 @@ def test_level_reject_exit_worker_moves_broker_sl_tp_for_extrema_profit(
         sl_price=159.005,
         tp_price=159.018,
     )
+
+
+def test_level_reject_exit_worker_lets_supportive_extrema_run_more_than_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workers.scalp_level_reject.exit_worker as exit_worker
+
+    neutral = exit_worker._level_reject_live_protection_adjustments(
+        thesis={
+            "atr_pips": 1.3,
+            "range_reason": "range",
+            "range_score": 0.52,
+        },
+        fac_m1={"atr_pips": 1.3},
+        range_active=False,
+        side="long",
+        bid=159.010,
+        ask=159.014,
+    )
+    supportive = exit_worker._level_reject_live_protection_adjustments(
+        thesis={
+            "atr_pips": 1.3,
+            "range_reason": "range",
+            "range_score": 0.84,
+            "extrema": {
+                "supportive_long": True,
+                "tick_strength": 0.95,
+                "long_bounce_pips": 1.6,
+                "dist_low_pips": 0.4,
+                "long_setup_pressure": {
+                    "sl_rate": 0.10,
+                    "fast_sl_rate": 0.04,
+                    "net_jpy": 38.0,
+                },
+            },
+        },
+        fac_m1={"atr_pips": 1.3},
+        range_active=False,
+        side="long",
+        bid=159.010,
+        ask=159.014,
+    )
+
+    assert supportive["trigger_mult"] > neutral["trigger_mult"]
+    assert supportive["lock_ratio_mult"] < neutral["lock_ratio_mult"]
+    assert supportive["buffer_mult"] > neutral["buffer_mult"]

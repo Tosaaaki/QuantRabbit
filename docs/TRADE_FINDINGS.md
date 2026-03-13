@@ -19631,3 +19631,95 @@ Status:
     後者が残るなら
     entry guard
     側を優先して詰める。
+
+## 2026-03-13 09:14 JST / local-v2: post-entry protection move を ATR/spread/setup-aware に更新
+- Why/Hypothesis:
+  - 08:35 JST の変更で
+    dedicated exit worker に
+    broker
+    `SL/TP`
+    の live move 自体は入ったが、
+    trigger は strategy ごとの固定
+    `be_profile / tp_move`
+    依存が残っていた。
+  - current live
+    `2026-03-13 09:13 JST`
+    は
+    `USD/JPY bid=159.052 ask=159.060 spread=0.8p`,
+    `ATR14(M1)=3.108p`,
+    `ATR14(M5)=5.002p`,
+    `fills_60m=105`,
+    `rejects_60m=5`,
+    `open_trades=0`
+    で通常帯だった。
+  - よって
+    shared exit manager は増やさず、
+    dedicated exit worker 内で
+    `ATR / spread / setup_quality / continuation_pressure / reversion_support / extrema setup pressure`
+    から
+    `trigger / lock / buffer`
+    を補正するのが妥当と判断した。
+- Expected Good:
+  - `PrecisionLowVol / WickReversalBlend`
+    は
+    headwind + wide-spread
+    のとき
+    `trigger`
+    を早め、
+    `lock_ratio`
+    を上げ、
+    `TP buffer`
+    を狭めて give-back を減らせる。
+  - `scalp_extrema_reversal_live`
+    は
+    supportive extrema setup
+    のときだけ
+    `trigger`
+    を少し遅らせ、
+    `TP buffer`
+    を広げて、
+    反転 winner を刈り過ぎにくくできる。
+- Expected Bad:
+  - stress 判定が過敏だと、
+    runner を早く刈る。
+  - supportive 側の補正が強すぎると、
+    反転 fail で
+    含み益の取りこぼしが増える。
+- Observed/Fact:
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+    に
+    `_wick_live_protection_adjustments`
+    を追加し、
+    headwind / setup-quality / spread
+    に応じて
+    `trigger_mult / lock_ratio_mult / buffer_mult`
+    を返すようにした。
+  - `workers/scalp_level_reject/exit_worker.py`
+    に
+    `_level_reject_live_protection_adjustments`
+    を追加し、
+    supportive extrema / setup-pressure / spread
+    に応じて
+    同種の multiplier を返すようにした。
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+    と
+    `tests/workers/test_scalp_level_reject_exit_worker.py`
+    に、
+    `stressed -> tighten`,
+    `supportive -> loosen`
+    の比較テストを追加した。
+  - 検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+      -> `8 passed`
+    - `python3 -m py_compile workers/scalp_wick_reversal_blend/exit_worker.py workers/scalp_level_reject/exit_worker.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+      -> 成功
+- Verdict: good
+- Next Action:
+  - live の
+    `protection_move`
+    ログに出す
+    `stress / support`
+    と
+    `post_close_tp_touch`
+    の改善有無を
+    6h 窓で照合する。

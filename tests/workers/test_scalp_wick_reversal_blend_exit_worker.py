@@ -162,6 +162,39 @@ def test_precision_exit_worker_moves_broker_sl_tp_once_trade_is_in_profit(
     )
 
 
+def test_precision_exit_worker_tightens_protection_under_headwind_and_wide_spread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workers.scalp_wick_reversal_blend.exit_worker as exit_worker
+
+    neutral = exit_worker._wick_live_protection_adjustments(
+        thesis={"atr_pips": 1.2},
+        fac_m1={"atr_pips": 1.2},
+        range_active=False,
+        bid=158.008,
+        ask=158.019,
+    )
+    stressed = exit_worker._wick_live_protection_adjustments(
+        thesis={
+            "atr_pips": 1.2,
+            "continuation_pressure": 0.92,
+            "setup_quality": 0.40,
+            "reversion_support": 0.18,
+            "range_reason": "volatility_compression",
+            "flow_headwind_regime": "continuation_headwind",
+            "projection": {"score": -1.0},
+        },
+        fac_m1={"atr_pips": 1.2},
+        range_active=False,
+        bid=158.008,
+        ask=158.019,
+    )
+
+    assert stressed["trigger_mult"] < neutral["trigger_mult"]
+    assert stressed["lock_ratio_mult"] > neutral["lock_ratio_mult"]
+    assert stressed["buffer_mult"] < neutral["buffer_mult"]
+
+
 def test_wick_reversal_blend_lock_floor_waits_for_profile_min_hold_before_closing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

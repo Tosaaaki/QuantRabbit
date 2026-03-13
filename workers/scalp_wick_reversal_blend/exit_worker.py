@@ -318,6 +318,131 @@ def _trade_take_profit_price(trade: dict) -> Optional[float]:
         return None
 
 
+def _protection_spread_pips(*, bid: Optional[float], ask: Optional[float]) -> Optional[float]:
+    if bid is None or ask is None:
+        return None
+    try:
+        spread = (float(ask) - float(bid)) / _BB_PIP
+    except Exception:
+        return None
+    if not math.isfinite(spread) or spread < 0.0:
+        return None
+    return spread
+
+
+def _clamp_float(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _wick_live_protection_adjustments(
+    *,
+    thesis: dict,
+    fac_m1: Optional[dict],
+    range_active: bool,
+    bid: Optional[float],
+    ask: Optional[float],
+) -> dict[str, float]:
+    fac_m1 = fac_m1 if isinstance(fac_m1, dict) else {}
+
+    def _pick_float(value: object) -> Optional[float]:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(out):
+            return None
+        return out
+
+    atr_pips = _pick_float(fac_m1.get("atr_pips"))
+    if atr_pips is None or atr_pips <= 0.0:
+        atr_pips = _pick_float(thesis.get("atr_pips"))
+    spread_pips = _protection_spread_pips(bid=bid, ask=ask)
+    spread_ratio = None
+    if spread_pips is not None and atr_pips is not None and atr_pips > 0.0:
+        spread_ratio = spread_pips / max(atr_pips, 0.8)
+
+    continuation_pressure = _pick_float(thesis.get("continuation_pressure"))
+    setup_quality = _pick_float(thesis.get("setup_quality"))
+    reversion_support = _pick_float(thesis.get("reversion_support"))
+    range_reason = str(thesis.get("range_reason") or "").strip().lower()
+    flow_headwind_regime = str(thesis.get("flow_headwind_regime") or "").strip().lower()
+    projection = thesis.get("projection")
+    projection_score = (
+        _pick_float(projection.get("score")) if isinstance(projection, dict) else None
+    )
+
+    stress = 0.0
+    support = 0.0
+
+    if spread_ratio is not None and spread_ratio > 0.40:
+        stress += min(0.14, (spread_ratio - 0.40) * 0.45)
+    elif spread_ratio is not None and spread_ratio < 0.30:
+        support += min(0.04, (0.30 - spread_ratio) * 0.18)
+
+    if continuation_pressure is not None and continuation_pressure > 0.55:
+        stress += min(0.14, (continuation_pressure - 0.55) * 0.35)
+    elif continuation_pressure is not None and continuation_pressure <= 0.35:
+        support += min(0.06, (0.35 - continuation_pressure) * 0.20)
+
+    if setup_quality is not None and setup_quality < 0.58:
+        stress += min(0.12, (0.58 - setup_quality) * 0.45)
+    elif setup_quality is not None and setup_quality > 0.66:
+        support += min(0.08, (setup_quality - 0.66) * 0.30)
+
+    if reversion_support is not None and reversion_support < 0.50:
+        stress += min(0.08, (0.50 - reversion_support) * 0.20)
+    elif reversion_support is not None and reversion_support > 0.55:
+        support += min(0.06, (reversion_support - 0.55) * 0.18)
+
+    if projection_score is not None and projection_score < -0.05:
+        stress += min(0.05, abs(projection_score) * 0.05)
+    elif projection_score is not None and projection_score > 0.15:
+        support += min(0.04, projection_score * 0.02)
+
+    if flow_headwind_regime == "continuation_headwind":
+        stress += 0.05
+    if (
+        range_active
+        and range_reason == "volatility_compression"
+        and (
+            (continuation_pressure is not None and continuation_pressure >= 0.45)
+            or (setup_quality is not None and setup_quality < 0.58)
+        )
+    ):
+        stress += 0.05
+    if (
+        range_active
+        and range_reason in {"range", "volatility_compression"}
+        and setup_quality is not None
+        and setup_quality >= 0.72
+        and (continuation_pressure is None or continuation_pressure <= 0.35)
+    ):
+        support += 0.03
+
+    stress = min(0.28, max(0.0, stress))
+    support = min(0.16, max(0.0, support))
+
+    return {
+        "trigger_mult": round(_clamp_float(1.0 - stress + support, 0.65, 1.22), 3),
+        "lock_ratio_mult": round(_clamp_float(1.0 + stress * 0.85 - support * 0.45, 0.78, 1.28), 3),
+        "min_lock_mult": round(_clamp_float(1.0 + stress * 0.35 - support * 0.10, 0.90, 1.15), 3),
+        "cooldown_mult": round(_clamp_float(1.0 - stress * 0.40 + support * 0.15, 0.65, 1.10), 3),
+        "buffer_mult": round(_clamp_float(1.0 - stress * 0.55 + support * 0.60, 0.62, 1.25), 3),
+        "min_gap_mult": round(
+            _clamp_float(
+                1.0 - stress * 0.15 + min(0.20, (spread_ratio or 0.0) * 0.12),
+                0.85,
+                1.18,
+            ),
+            3,
+        ),
+        "stress": round(stress, 3),
+        "support": round(support, 3),
+        "atr_pips": round(atr_pips, 3) if atr_pips is not None else 0.0,
+        "spread_pips": round(spread_pips, 3) if spread_pips is not None else 0.0,
+    }
+
+
 async def _maybe_move_profit_protection(
     *,
     trade: dict,
@@ -330,6 +455,9 @@ async def _maybe_move_profit_protection(
     mid: Optional[float],
     profit_take: float,
     now: datetime,
+    thesis: Optional[dict] = None,
+    fac_m1: Optional[dict] = None,
+    range_active: bool = False,
 ) -> None:
     if pnl <= 0.0 or pnl >= profit_take:
         return
@@ -356,12 +484,34 @@ async def _maybe_move_profit_protection(
     side_ref = bid if side == "long" else ask
     if side_ref is None:
         side_ref = mid
+    live_adj = _wick_live_protection_adjustments(
+        thesis=thesis if isinstance(thesis, dict) else {},
+        fac_m1=fac_m1,
+        range_active=range_active,
+        bid=bid,
+        ask=ask,
+    )
 
     if isinstance(be_profile, dict):
-        trigger_pips = max(0.0, _pick_float(be_profile.get("trigger_pips"), 0.0))
-        lock_ratio = max(0.0, min(1.0, _pick_float(be_profile.get("lock_ratio"), 0.0)))
-        min_lock_pips = max(0.0, _pick_float(be_profile.get("min_lock_pips"), 0.0))
-        cooldown_sec = max(0.0, _pick_float(be_profile.get("cooldown_sec"), 0.0))
+        trigger_pips = max(
+            0.0,
+            _pick_float(be_profile.get("trigger_pips"), 0.0) * float(live_adj.get("trigger_mult", 1.0)),
+        )
+        lock_ratio = max(
+            0.0,
+            min(
+                1.0,
+                _pick_float(be_profile.get("lock_ratio"), 0.0) * float(live_adj.get("lock_ratio_mult", 1.0)),
+            ),
+        )
+        min_lock_pips = max(
+            0.0,
+            _pick_float(be_profile.get("min_lock_pips"), 0.0) * float(live_adj.get("min_lock_mult", 1.0)),
+        )
+        cooldown_sec = max(
+            0.0,
+            _pick_float(be_profile.get("cooldown_sec"), 0.0) * float(live_adj.get("cooldown_mult", 1.0)),
+        )
         if (
             trigger_pips > 0.0
             and pnl >= trigger_pips
@@ -402,9 +552,18 @@ async def _maybe_move_profit_protection(
 
     if isinstance(tp_move_profile, dict) and locked_profit:
         enabled = _coerce_bool(tp_move_profile.get("enabled"), True)
-        trigger_pips = max(0.0, _pick_float(tp_move_profile.get("trigger_pips"), 0.0))
-        buffer_pips = max(0.0, _pick_float(tp_move_profile.get("buffer_pips"), 0.0))
-        min_gap_pips = max(0.3, _pick_float(tp_move_profile.get("min_gap_pips"), 0.3))
+        trigger_pips = max(
+            0.0,
+            _pick_float(tp_move_profile.get("trigger_pips"), 0.0) * float(live_adj.get("trigger_mult", 1.0)),
+        )
+        buffer_pips = max(
+            0.0,
+            _pick_float(tp_move_profile.get("buffer_pips"), 0.0) * float(live_adj.get("buffer_mult", 1.0)),
+        )
+        min_gap_pips = max(
+            0.3,
+            _pick_float(tp_move_profile.get("min_gap_pips"), 0.3) * float(live_adj.get("min_gap_mult", 1.0)),
+        )
         tp_ref = mid if mid is not None else side_ref
         if enabled and trigger_pips > 0.0 and pnl >= trigger_pips and tp_ref is not None:
             if side == "long":
@@ -454,12 +613,16 @@ async def _maybe_move_profit_protection(
             ts=now,
         )
     LOG.info(
-        "[exit-rangefader] protection_move trade=%s tag=%s pnl=%.2fp sl=%s tp=%s",
+        "[exit-rangefader] protection_move trade=%s tag=%s pnl=%.2fp sl=%s tp=%s stress=%.3f support=%.3f atr=%.2f spread=%.2f",
         trade_id,
         strategy_label,
         pnl,
         f"{desired_sl:.3f}" if desired_sl is not None else "-",
         f"{desired_tp:.3f}" if desired_tp is not None else "-",
+        float(live_adj.get("stress", 0.0)),
+        float(live_adj.get("support", 0.0)),
+        float(live_adj.get("atr_pips", 0.0)),
+        float(live_adj.get("spread_pips", 0.0)),
     )
 
 
@@ -1544,6 +1707,9 @@ class RangeFaderExitWorker:
             mid=mid,
             profit_take=float(profit_take),
             now=now,
+            thesis=thesis,
+            fac_m1=fac_m1,
+            range_active=range_active,
         )
 
         if pnl >= profit_take:

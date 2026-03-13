@@ -18430,3 +18430,39 @@
     -> `6 passed`
   - `python3 -m py_compile workers/scalp_level_reject/exit_worker.py workers/scalp_wick_reversal_blend/exit_worker.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
     -> 成功
+
+### 2026-03-13 09:14 JST - post-entry protection move を live market-aware multiplier 化
+
+- 対象:
+  - `workers/scalp_wick_reversal_blend/exit_worker.py`
+  - `workers/scalp_level_reject/exit_worker.py`
+  - `tests/workers/test_scalp_wick_reversal_blend_exit_worker.py`
+  - `tests/workers/test_scalp_level_reject_exit_worker.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/WORKER_ROLE_MATRIX_V2.md`
+
+- 変更:
+  - `be_profile / tp_move`
+    は base profile のまま残し、
+    live の
+    `ATR / spread / setup_quality / continuation_pressure / reversion_support`
+    と
+    `extrema supportive / setup_pressure`
+    から
+    `trigger_mult / lock_ratio_mult / buffer_mult`
+    を算出する helper を追加した。
+  - `scalp_wick_reversal_blend`
+    は
+    headwind + low-quality
+    で早く守り、
+    `scalp_level_reject`
+    は
+    supportive extrema
+    だけ少し伸ばす方向へ補正する。
+
+- 検証:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+    -> `8 passed`
+  - `python3 -m py_compile workers/scalp_wick_reversal_blend/exit_worker.py workers/scalp_level_reject/exit_worker.py tests/workers/test_scalp_wick_reversal_blend_exit_worker.py tests/workers/test_scalp_level_reject_exit_worker.py`
+    -> 成功
