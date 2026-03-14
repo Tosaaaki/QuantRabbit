@@ -51,6 +51,40 @@
     「成功/失敗の gate」
     を agent に明示させる。
 
+### 2026-03-14 10:55 JST - anti-loop の禁止対象を same parameter ではなく decision surface へ補正
+
+- 対象:
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `scripts/trade_findings_review.py`
+- 背景:
+  - 同じ数値が別 regime で再登場すること自体はあり得る。
+  - loop とみなすべきなのは、
+    数値の一致ではなく、
+    同じ
+    `Hypothesis Key / setup_fingerprint / flow_regime / Primary Loss Driver`
+    を切り取り窓だけ変えて焼き直すこと。
+- 変更:
+  - anti-loop 文言を
+    `same parameter`
+    禁止から
+    `same decision surface`
+    禁止へ補正した。
+  - `Why Not Same As Last Time`
+    は
+    `setup_fingerprint / flow_regime / market regime / evaluation window`
+    の差を書く field として再定義した。
+  - `scripts/trade_findings_review.py`
+    の checklist も同じ基準へ更新した。
+- 意図:
+  - 別 regime の再最適化を止めず、
+    本当に止めたい
+    same-hypothesis loop
+    だけを止める。
+
 ### 2026-03-14 09:55 JST - `MomentumBurst` overbought transition long を pullback 条件へ戻す
 
 - 対象:

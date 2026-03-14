@@ -65,11 +65,12 @@
 - **収益/リスク/ENTRY/EXIT 改善の前には必ず** `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `docs/TRADE_FINDINGS.md` review をまとめて行う。`python3 scripts/trade_findings_review.py ...` の単独実行だけで済ませない。
 - `.githooks/pre-commit` に `scripts/preflight_guard.py` を入れ、runtime / risk / env の staged 変更では fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` が無い commit を止める。clone/環境ごとに 1 回 `scripts/install_git_hooks.sh` を実行して `core.hooksPath=.githooks` を有効化する。
 - `scripts/change_preflight.sh` は review だけでなく `scripts/trade_findings_lint.py` と `scripts/trade_findings_index.py` も走らせる。hook も `trade_findings_lint.py` を再実行し、壊れた台帳のまま runtime commit しない。
-- `docs/TRADE_FINDINGS.md` の新規改善エントリには、上記に加えて `Hypothesis Key`、`Primary Loss Driver`、`Mechanism Fired`、`Do Not Repeat Unless` を必須で残す。`Mechanism Fired=0` か `none` なら明記し、`Primary Loss Driver` が前回と不変なら「何が違うか」を書かずに同じ改善を繰り返さない。
-- 同じ `strategy/setup_fingerprint/Primary Loss Driver` に対して、`pending` の改善を同時に複数積まない。まず前回変更の `Promotion Gate` か `Escalation Trigger` を判定してから次に進む。
+- `docs/TRADE_FINDINGS.md` の新規改善エントリには、上記に加えて `Hypothesis Key`、`Primary Loss Driver`、`Mechanism Fired`、`Do Not Repeat Unless` を必須で残す。`Mechanism Fired=0` か `none` なら明記し、`Primary Loss Driver` が前回と不変で、かつ decision surface（`Hypothesis Key / setup_fingerprint / flow_regime / market regime`）も同じなら、「何が違うか」を書かずに同じ改善を繰り返さない。
+- 改善の禁止対象は `same parameter` ではなく `same hypothesis / same regime / same fingerprint` の焼き直しとする。数値が過去と同じに戻ること自体は禁止しないが、その場合も前回と異なる decision surface か評価窓を `Why Not Same As Last Time` に明記する。
+- 同じ `Hypothesis Key / setup_fingerprint / flow_regime / Primary Loss Driver` を同じ decision surface とみなし、`pending` の改善を同時に複数積まない。まず前回変更の `Promotion Gate` か `Escalation Trigger` を判定してから次に進む。
 - 同じ lane で `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り閾値の焼き直しを禁止する。
 - 同じ lane の改善が `2回連続で bad/pending`、または `Mechanism Fired=0` のまま残る場合は、追加の微調整ではなく `ロールバック / lane分離の再設計 / loser lane停止条件の再定義` のどれかに昇格する。
-- `docs/TRADE_FINDINGS.md` の新規改善エントリには `Why Not Same As Last Time`、`Promotion Gate`、`Escalation Trigger` も必須で残す。これが 1 行で書けない変更は、同じ場所をぐるぐる回っているものとして実装しない。
+- `docs/TRADE_FINDINGS.md` の新規改善エントリには `Why Not Same As Last Time`、`Promotion Gate`、`Escalation Trigger` も必須で残す。`Why Not Same As Last Time` には threshold の差分だけでなく、`setup_fingerprint / flow_regime / market regime / evaluation window` のどれが前回と違うかを書く。これが 1 行で書けない変更は、同じ場所をぐるぐる回っているものとして実装しない。
 - 市況が stale / close / abnormal の window は `market_hold` として扱い、改善の良し悪しを判定しない。`pending` のまま reopen 後の評価窓を別に切る。
 - `scripts/trade_findings_diary_draft.py` と `logs/trade_findings_draft_latest.{json,md}` / `logs/trade_findings_draft_history.jsonl` は review-only の自動下書きとして扱う。`docs/TRADE_FINDINGS.md` への自動追記は禁止し、正式反映は必ずレビュー後に行う。whiteboard 通知は opt-in とし、同一 draft fingerprint では重複投稿しない。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。

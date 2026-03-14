@@ -21,7 +21,7 @@
   - `Change`（何を変えたか）
   - `Why`（なぜ今それをやるか）
   - `Hypothesis`（どう効く想定か）
-  - `Why Not Same As Last Time`（前回と何が違うか）
+  - `Why Not Same As Last Time`（前回と何が違うか。parameter差分ではなく `setup_fingerprint / flow_regime / market regime / evaluation window` の差を書く）
   - `Expected Good`（期待した改善）
   - `Expected Bad`（想定した副作用/悪化条件）
   - `Promotion Gate`（どの条件なら改善を積み上げてよいか）
@@ -67,13 +67,180 @@
 - `scripts/trade_findings_lint.py` は `2026-03-13 20:00` 以降の entry に required fields と `Hypothesis Key` format を要求する。`scripts/trade_findings_index.py` は `logs/trade_findings_index_latest.{json,md}` に latest key / unresolved / dominant loss driver の derived index を出す。
 - `Hypothesis Key` は stable な `snake_case` を使い、同じ仮説で別名を増やさない。新しい名前を作る前に既存 key を review/index で確認する。
 - 新しい改善エントリには `Hypothesis Key` / `Primary Loss Driver` / `Mechanism Fired` / `Do Not Repeat Unless` を必須で残す。
-- `2026-03-14 10:00 JST` 以降の新規 entry には `Why Not Same As Last Time` / `Promotion Gate` / `Escalation Trigger` も必須。これが具体化できない変更は、同じ改善の焼き直しとして実装しない。
+- `2026-03-14 10:00 JST` 以降の新規 entry には `Why Not Same As Last Time` / `Promotion Gate` / `Escalation Trigger` も必須。`Why Not Same As Last Time` は threshold 差分ではなく、前回と違う decision surface（`setup_fingerprint / flow_regime / market regime / evaluation window`）を書く。これが具体化できない変更は、同じ改善の焼き直しとして実装しない。
 - `Mechanism Fired` は `fired=0` や `none` も含めて明記する。発火していない仕組みを、主損失ドライバ不変のまま繰り返さない。
-- 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
+- `same parameter` は禁止対象ではない。過去と同じ値に戻す変更でも、前回と異なる decision surface か評価窓を説明できるなら許容する。説明できないまま同じ値へ戻す変更だけを loop とみなす。
+- 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じで、decision surface も同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
 - close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
-- 同じ `strategy/setup_fingerprint/Primary Loss Driver` では `pending` entry を 1 本だけ持つ。次の tweak は前回 entry の `Promotion Gate` か `Escalation Trigger` を判定してから入れる。
+- 同じ `Hypothesis Key / setup_fingerprint / flow_regime / Primary Loss Driver` では `pending` entry を 1 本だけ持つ。次の tweak は前回 entry の `Promotion Gate` か `Escalation Trigger` を判定してから入れる。
 - `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り threshold の往復を禁止する。
 - stale / close / abnormal market window は `market_hold` として扱い、改善 verdict を出さない。reopen 後の評価窓を別に切る。
+
+## 2026-03-14 10:55 JST / trade_findings: anti-loop を same parameter 禁止ではなく decision surface 規律へ補正
+
+- Hypothesis Key:
+  - `anti_loop_decision_surface_refine_20260314`
+- Primary Loss Driver:
+  - 同じ数値へ戻ること自体を loop と誤認し、
+    本来別 regime の改善まで硬直的に止めてしまうこと
+- Mechanism Fired:
+  - `scripts/change_preflight.sh`
+    review で、
+    直前の anti-loop entry が
+    `same-lane`
+    基準で読める状態を確認した。
+  - 現行 lint は field presence を強制しているが、
+    `same parameter`
+    と
+    `same hypothesis/regime/fingerprint`
+    の違いまでは文面でしか案内していなかった。
+- Do Not Repeat Unless:
+  - `Why Not Same As Last Time`
+    が decision surface 差分ではなく
+    threshold 差分だけを書いた entry が
+    review で still 通ると確認できるまでは、
+    新しい anti-loop field を増やさず、
+    既存 field の定義と checklist を磨く。
+
+- Change:
+  - `AGENTS.md`
+    /
+    `docs/AGENT_COLLAB_HUB.md`
+    /
+    `docs/OPS_LOCAL_RUNBOOK.md`
+    /
+    `docs/TRADE_FINDINGS.md`
+    の anti-loop 文言を、
+    `same parameter`
+    禁止ではなく
+    `same hypothesis / same regime / same fingerprint`
+    の焼き直し禁止へ補正した。
+  - `scripts/trade_findings_review.py`
+    の checklist も
+    decision surface 基準へ更新した。
+
+- Why:
+  - live 改善では、
+    同じ数値が別 regime で再登場すること自体はある。
+  - 問題は数値の一致ではなく、
+    前回と同じ仮説面を、
+    窓を切り取った理由だけで繰り返すことにある。
+
+- Hypothesis:
+  - anti-loop の禁止対象を
+    `same parameter`
+    から
+    `same decision surface`
+    へ寄せれば、
+    本当に止めるべき loop だけを止めつつ、
+    regime/fingerprint が違う改善は残せる。
+
+- Why Not Same As Last Time:
+  - 10:15 JST の anti-loop 導入は
+    `pending`
+    の積み増し防止を主眼にしていたが、
+    `同じ数値に戻ること自体は必ずしも悪ではない`
+    という整理が明文化されていなかった。
+  - 今回は field を増やさず、
+    既存の
+    `Why Not Same As Last Time`
+    を
+    decision surface 差分
+    として定義し直した。
+
+- Expected Good:
+  - agent が
+    `same parameter`
+    と
+    `same hypothesis/regime`
+    を混同しにくくなる。
+  - 別 regime の再最適化まで不必要に止めずに済む。
+  - loop 判定が
+    `同じ数値`
+    ではなく
+    `同じ仮説面`
+    に寄る。
+
+- Expected Bad:
+  - entry の記述粒度が少し上がる。
+  - `decision surface`
+    を雑に書くと、
+    逆に何でも別改善に見せかけられる。
+
+- Promotion Gate:
+  - 次の改善 entry で
+    `Why Not Same As Last Time`
+    が
+    `setup_fingerprint / flow_regime / market regime / evaluation window`
+    の差を実際に書く運用になること。
+  - review checklist が
+    `same parameter`
+    ではなく
+    `same decision surface`
+    を確認対象として表示すること。
+
+- Escalation Trigger:
+  - agent が still
+    `同じ数値だから禁止`
+    または
+    `数値が違うから別改善`
+    という浅い判断を続けるなら、
+    `decision surface`
+    を structured field 化する。
+
+- Period:
+  - `2026-03-14 10:55 JST` 以降の process rule
+
+- Fact:
+  - `2026-03-14 10:54-10:55 JST`
+    の preflight は
+    `spread=1.20p`,
+    `tick_stale=17711.5s`,
+    `fills_30m=0`
+    で
+    `warn`
+    だったため、
+    runtime verdict 窓ではなく
+    process doc 更新として扱った。
+  - `trade_findings_review`
+    の checklist は、
+    anti-loop entry を current rule として表示できた。
+
+- Failure Cause:
+  - anti-loop を硬くしすぎると、
+    「同じ数値に見えるが別の改善」
+    まで止めてしまう。
+
+- Improvement:
+  - 禁止対象を
+    `same hypothesis / same regime / same fingerprint`
+    に再定義し、
+    `Why Not Same As Last Time`
+    の意味を
+    decision surface 差分
+    に固定した。
+
+- Verification:
+  - `scripts/trade_findings_review.py --query 'decision surface anti_loop same parameter'`
+    で checklist と latest entry の文面を確認する。
+  - `scripts/trade_findings_lint.py`
+    が field presence を維持したまま通ることを確認する。
+
+- Verdict:
+  - pending
+
+- Next Action:
+  - 次の live 改善 task で、
+    同じ数値でも
+    decision surface が違う変更を
+    `Why Not Same As Last Time`
+    で説明できるかを見る。
+  - 逆に、
+    数値だけ違って
+    decision surface が同じ変更が通ろうとしたら却下する。
+
+- Status:
+  - done
 
 ## 2026-03-14 10:15 JST / trade_findings: 同じ改善を回し続けない anti-loop 規律を導入
 
