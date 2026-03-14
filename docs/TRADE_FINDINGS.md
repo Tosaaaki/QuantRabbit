@@ -24882,3 +24882,190 @@ Status:
     `oanda_account_snapshot_live.json`
     の更新再開を確認し、
     live verdict を reopen する。
+
+## 2026-03-14 20:35 JST / local-v2: `lane_scoreboard` で lane 単位の promotion gate / auto quarantine を明示し、`participation_alloc` へ接続
+
+- Hypothesis Key:
+  - `lane_scoreboard_promotion_quarantine_20260314`
+- Primary Loss Driver:
+  - winner lane の昇格と loser lane の隔離が
+    `participation_alloc`
+    の内部 heuristics に埋もれており、
+    current lane 単位の意思決定を監査・再利用しづらいこと
+- Mechanism Fired:
+  - `lane_scoreboard`
+  - `promotion_gate`
+  - `auto_quarantine`
+  - `participation_alloc.setup_overrides`
+  - `run_local_feedback_cycle`
+- Do Not Repeat Unless:
+  - lane ごとの
+    `promotion/quarantine`
+    が artifact に露出せず、
+    または
+    `participation_alloc`
+    が setup override として消費できないまま残る場合を除き、
+    同じ shared gate を新設する方向には戻さない。
+
+- Change:
+  - `scripts/lane_scoreboard.py`
+    を追加し、
+    `logs/entry_path_summary_latest.json`
+    と
+    `logs/trades.db`
+    から
+    setup-scoped lane の
+    `fills / share_gap / hard_block_rate / realized_jpy / win_rate / profit_factor / stop_loss_rate`
+    を集計して、
+    `logs/lane_scoreboard_latest.json`
+    と
+    `logs/lane_scoreboard_history.jsonl`
+    を生成するようにした。
+  - `scripts/participation_allocator.py`
+    は
+    `lane_scoreboard`
+    の
+    `boost_participation`
+    /
+    `trim_units`
+    を setup override として merge し、
+    strategy-wide conversion と lane-specific gate を同時に扱えるようにした。
+  - `scripts/run_local_feedback_cycle.py`
+    に
+    `lane_scoreboard`
+    job を追加し、
+    `entry_path_aggregator -> lane_scoreboard -> participation_allocator`
+    の順で local feedback cycle に載せた。
+
+- Why:
+  - 今の repo は strategy 全体より
+    current lane ごとの winner / loser 分離が重要で、
+    「どの型を太らせ、どの型を細らせたか」
+    を artifact 化しないと anti-loop の運用が弱い。
+
+- Hypothesis:
+  - lane scoreboard を explicit に出し、
+    promotion / quarantine を
+    `participation_alloc`
+    の setup override へ渡せば、
+    shared blanket gate を増やさずに
+    current winner lane の昇格と fresh/chronic loser lane の隔離を両立できる。
+
+- Why Not Same As Last Time:
+  - これは
+    `repeat_risk`
+    の preflight 表示を増やしただけの変更ではなく、
+    `orders.db / trades.db`
+    の current setup 実測から
+    lane 単位の
+    `promotion_gate / auto_quarantine`
+    を runtime artifact へ落とした点が違う。
+
+- Expected Good:
+  - winner lane を
+    `boost_participation`
+    として明示的に昇格できる。
+  - loser lane を strategy 全体停止ではなく
+    setup override の
+    `trim_units / probability_offset`
+    で隔離できる。
+  - `participation_alloc`
+    の判断根拠を
+    `lane_scoreboard`
+    から追える。
+
+- Expected Bad:
+  - lane scoreboard の threshold が浅いと、
+    noisy sample を早く昇格/隔離しすぎるリスクがある。
+  - そのため strategy-wide override は残しつつ、
+    scoreboard 側は setup override に限定して merge する。
+
+- Promotion Gate:
+  - market reopen 後に
+    `lane_scoreboard_latest.json`
+    で current lane の
+    `promotion/quarantine`
+    が生成され、
+    `config/participation_alloc.json`
+    の setup override と整合すること。
+
+- Escalation Trigger:
+  - reopen 後も current loser lane が
+    `hold`
+    のまま残る、
+    または winner lane が strategy-wide loser に潰されるなら、
+    threshold 調整ではなく
+    lane identity / closed-trade join / lookback 設計を再検討する。
+
+- Period:
+  - 実装・検証:
+    `2026-03-14 19:58-20:35 JST`
+  - 対象:
+    `scripts/lane_scoreboard.py`,
+    `scripts/participation_allocator.py`,
+    `scripts/run_local_feedback_cycle.py`,
+    `tests/scripts/test_lane_scoreboard.py`,
+    `tests/scripts/test_participation_allocator.py`,
+    `tests/scripts/test_run_local_feedback_cycle.py`
+
+- Fact:
+  - `lane_scoreboard`
+    は
+    setup-scoped lane ごとに
+    `promotion_gate`
+    と
+    `quarantine_gate`
+    を持ち、
+    `boost_participation / trim_units / hold`
+    を explicit に出すようになった。
+  - `participation_allocator`
+    は
+    strategy-wide conversion で作る setup override に加えて、
+    `lane_scoreboard`
+    の同一 setup key override を merge し、
+    scoreboard 側の lane decision を優先する。
+  - `run_local_feedback_cycle`
+    は
+    `lane_scoreboard`
+    job を既定 ON で持ち、
+    `logs/lane_scoreboard_latest.json`
+    を local feedback artifact として扱う。
+
+- Failure Cause:
+  - 既存の
+    `participation_alloc`
+    は結果として winner/loser を押し引きしていたが、
+    lane 単位の gate が explicit artifact ではなかったため、
+    current lane の昇格/隔離を review しにくかった。
+
+- Improvement:
+  - lane scoreboard を追加し、
+    runtime 側は新しい shared gate ではなく
+    existing `participation_alloc`
+    setup override へ接続する構成へ整理した。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_lane_scoreboard.py tests/scripts/test_participation_allocator.py tests/scripts/test_run_local_feedback_cycle.py`
+  - `python3 -m py_compile scripts/lane_scoreboard.py scripts/participation_allocator.py scripts/run_local_feedback_cycle.py`
+  - `python3 scripts/lane_scoreboard.py --output /tmp/qr_lane_scoreboard.json --history /tmp/qr_lane_scoreboard.jsonl`
+  - `python3 scripts/participation_allocator.py --lane-scoreboard /tmp/qr_lane_scoreboard.json --output /tmp/qr_participation_alloc.json`
+
+- Verdict:
+  - pending
+
+- Status:
+  - market_hold / offline_verified
+
+- Next Action:
+  - `2026-03-16 06:00 JST`
+    以降に
+    `lane_scoreboard_latest.json`
+    と
+    `config/participation_alloc.json`
+    を reopen 窓で確認し、
+    `MomentumBurst`
+    の single-focus lane が
+    `promote`
+    か
+    `quarantine`
+    のどちらへ寄るかを first check にする。

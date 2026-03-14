@@ -58,7 +58,9 @@ def test_build_participation_alloc_trims_overused_loser_and_boosts_winner() -> N
     assert winner["cadence_floor"] > 1.0
 
 
-def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_loser() -> None:
+def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_loser() -> (
+    None
+):
     summary = {
         "lookback_hours": 24.0,
         "strategies": {
@@ -107,7 +109,9 @@ def test_build_participation_alloc_can_emit_safe_probability_trim_for_severe_los
     assert loser["probability_multiplier"] == 1.0
 
 
-def test_build_participation_alloc_keeps_mild_loser_on_units_trim_without_probability_offset() -> None:
+def test_build_participation_alloc_keeps_mild_loser_on_units_trim_without_probability_offset() -> (
+    None
+):
     summary = {
         "lookback_hours": 24.0,
         "strategies": {
@@ -159,7 +163,96 @@ def test_build_participation_alloc_keeps_mild_loser_on_units_trim_without_probab
     assert loser["probability_multiplier"] == 1.0
 
 
-def test_build_participation_alloc_can_emit_probability_trim_for_high_reject_loser_with_small_loss() -> None:
+def test_build_participation_alloc_merges_lane_scoreboard_setup_override() -> None:
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "MomentumBurst": {
+                "pocket": "micro",
+                "attempts": 5,
+                "fills": 5,
+                "filled_rate": 1.0,
+                "attempt_share": 0.08,
+                "fill_share": 0.24,
+                "share_gap": -0.16,
+                "terminal_status_counts": {"filled": 5},
+                "setups": [],
+            }
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={"MomentumBurst": 64.0},
+        realized_by_setup={},
+        lane_scoreboard={
+            "strategies": {
+                "MomentumBurst": {
+                    "lanes": [
+                        {
+                            "match_dimension": "setup_fingerprint",
+                            "setup_fingerprint": "MomentumBurst|long|transition|tight_fast|reaccel",
+                            "flow_regime": "transition",
+                            "microstructure_bucket": "tight_fast",
+                            "attempts": 5,
+                            "fills": 5,
+                            "filled": 5,
+                            "filled_rate": 1.0,
+                            "fill_rate": 1.0,
+                            "attempt_share": 0.08,
+                            "fill_share": 0.24,
+                            "share_gap": -0.16,
+                            "hard_block_rate": 0.0,
+                            "quality_score": 1.08,
+                            "action": "boost_participation",
+                            "gate_action": "promote",
+                            "units_multiplier": 1.12,
+                            "lot_multiplier": 1.12,
+                            "probability_boost": 0.05,
+                            "probability_offset": 0.0,
+                            "max_probability_cut": 0.0,
+                            "cadence_floor": 1.11,
+                            "closed_trades": 4,
+                            "wins": 4,
+                            "losses": 0,
+                            "win_rate": 1.0,
+                            "profit_factor": 2.4,
+                            "stop_loss_rate": 0.0,
+                            "primary_close_reason": "TAKE_PROFIT_ORDER",
+                            "promotion_gate": {
+                                "passed": True,
+                                "strength": 0.82,
+                                "reasons": ["positive_realized"],
+                            },
+                            "quarantine_gate": {
+                                "active": False,
+                                "severity": 0.0,
+                                "reasons": [],
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        min_attempts=4,
+        setup_min_attempts=2,
+        max_units_cut=0.22,
+        max_units_boost=0.24,
+        max_prob_boost=0.10,
+    )
+
+    strategy = payload["strategies"]["MomentumBurst"]
+
+    assert strategy["action"] == "boost_participation"
+    assert strategy["setup_overrides"][0]["action"] == "boost_participation"
+    assert strategy["setup_overrides"][0]["gate_action"] == "promote"
+    assert strategy["setup_overrides"][0]["lot_multiplier"] == 1.12
+    assert strategy["setup_overrides"][0]["probability_boost"] == 0.05
+
+
+def test_build_participation_alloc_can_emit_probability_trim_for_high_reject_loser_with_small_loss() -> (
+    None
+):
     summary = {
         "lookback_hours": 24.0,
         "strategies": {
@@ -222,7 +315,9 @@ def test_build_participation_alloc_can_emit_probability_trim_for_high_reject_los
     assert loser["probability_multiplier"] == 1.0
 
 
-def test_build_participation_alloc_keeps_buy_sell_probability_trim_but_exempts_neutral_fade() -> None:
+def test_build_participation_alloc_keeps_buy_sell_probability_trim_but_exempts_neutral_fade() -> (
+    None
+):
     summary = {
         "lookback_hours": 24.0,
         "strategies": {
@@ -411,7 +506,9 @@ def test_build_participation_alloc_does_not_boost_zero_realized_strategy() -> No
     assert neutral["probability_boost"] == 0.0
 
 
-def test_build_participation_alloc_requires_profit_per_fill_for_small_sample_boost() -> None:
+def test_build_participation_alloc_requires_profit_per_fill_for_small_sample_boost() -> (
+    None
+):
     summary = {
         "lookback_hours": 6.0,
         "strategies": {
@@ -542,7 +639,9 @@ def test_build_participation_alloc_boosts_four_trade_session_breakout_winner() -
     assert winner["cadence_floor"] > 1.0
 
 
-def test_build_participation_alloc_boosts_profitable_probe_lane_with_probability_rejects() -> None:
+def test_build_participation_alloc_boosts_profitable_probe_lane_with_probability_rejects() -> (
+    None
+):
     summary = {
         "lookback_hours": 24.0,
         "strategies": {
@@ -594,7 +693,9 @@ def test_build_participation_alloc_boosts_profitable_probe_lane_with_probability
     assert 0.0 < probe["hard_block_rate"] < 1.0
 
 
-def test_build_participation_alloc_expands_small_sample_winner_boost_with_higher_caps() -> None:
+def test_build_participation_alloc_expands_small_sample_winner_boost_with_higher_caps() -> (
+    None
+):
     summary = {
         "lookback_hours": 24.0,
         "strategies": {
@@ -864,7 +965,9 @@ def test_build_participation_alloc_emits_setup_overrides_for_loser_setup() -> No
         item
         for item in lane["setup_overrides"]
         if item["match_dimension"] == "setup_fingerprint"
-        and item["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+        and item["setup_fingerprint"].startswith(
+            "RangeFader-sell-fade|short|trend_long|tight_fast|"
+        )
     )
     assert loser["action"] == "trim_units"
     assert loser["lot_multiplier"] < 1.0
@@ -1046,12 +1149,6 @@ def test_build_participation_alloc_emits_low_sample_precision_setup_overrides() 
         for item in overrides
         if item.get("setup_fingerprint")
         == "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:up_lean|volatility_compression"
-    )
-    loser = next(
-        item
-        for item in overrides
-        if item.get("setup_fingerprint")
-        == "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression"
     )
 
     assert payload["allocation_policy"]["setup_min_attempts"] == 4
@@ -1281,9 +1378,15 @@ def test_build_participation_alloc_boosts_one_trade_small_scalp_winner_setup() -
     assert winner["probability_boost"] > 0.0
 
 
-def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: Path) -> None:
+def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "trades.db"
-    close_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    close_time = (
+        (datetime.now(timezone.utc) - timedelta(hours=1))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
@@ -1311,15 +1414,23 @@ def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(tmp_path: P
         )
         conn.commit()
 
-    realized = participation_allocator._load_recent_realized_jpy(db_path, lookback_hours=48.0)
+    realized = participation_allocator._load_recent_realized_jpy(
+        db_path, lookback_hours=48.0
+    )
 
     assert realized["RangeFader-sell-fade"] == -220.0
     assert "RangeFader" not in realized
 
 
-def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context(tmp_path: Path) -> None:
+def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "trades.db"
-    close_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    close_time = (
+        (datetime.now(timezone.utc) - timedelta(hours=1))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
@@ -1371,7 +1482,9 @@ def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context
         )
         conn.commit()
 
-    realized = participation_allocator._load_recent_realized_setup_jpy(db_path, lookback_hours=48.0)
+    realized = participation_allocator._load_recent_realized_setup_jpy(
+        db_path, lookback_hours=48.0
+    )
 
     key = next(iter(realized.keys()))
     assert "RangeFader-sell-fade" in key

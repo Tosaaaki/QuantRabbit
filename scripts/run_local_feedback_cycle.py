@@ -31,13 +31,19 @@ DEFAULT_PYTHON_BIN = (
 )
 LOG_DIR = Path(os.getenv("LOCAL_FEEDBACK_CYCLE_LOG_DIR", REPO_ROOT / "logs"))
 STATE_FILE = Path(
-    os.getenv("LOCAL_FEEDBACK_CYCLE_STATE_FILE", LOG_DIR / "local_feedback_cycle.state.json")
+    os.getenv(
+        "LOCAL_FEEDBACK_CYCLE_STATE_FILE", LOG_DIR / "local_feedback_cycle.state.json"
+    )
 )
 LATEST_OUTPUT = Path(
-    os.getenv("LOCAL_FEEDBACK_CYCLE_OUTPUT", LOG_DIR / "local_feedback_cycle_latest.json")
+    os.getenv(
+        "LOCAL_FEEDBACK_CYCLE_OUTPUT", LOG_DIR / "local_feedback_cycle_latest.json"
+    )
 )
 HISTORY_OUTPUT = Path(
-    os.getenv("LOCAL_FEEDBACK_CYCLE_HISTORY", LOG_DIR / "local_feedback_cycle_history.jsonl")
+    os.getenv(
+        "LOCAL_FEEDBACK_CYCLE_HISTORY", LOG_DIR / "local_feedback_cycle_history.jsonl"
+    )
 )
 RUN_LOG_DIR = Path(
     os.getenv("LOCAL_FEEDBACK_CYCLE_RUN_LOG_DIR", LOG_DIR / "local_feedback_cycle")
@@ -114,6 +120,23 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
             "6000",
             "--top-k",
             "8",
+        )
+    if job_name == "lane_scoreboard":
+        return (
+            python_bin,
+            "scripts/lane_scoreboard.py",
+            "--lookback-hours",
+            "6",
+            "--min-attempts",
+            "4",
+            "--setup-min-attempts",
+            "2",
+            "--max-units-cut",
+            "0.22",
+            "--max-units-boost",
+            "0.24",
+            "--max-probability-boost",
+            "0.10",
         )
     if job_name == "participation_allocator":
         return (
@@ -208,6 +231,7 @@ def _default_job_command(job_name: str, python_bin: str) -> tuple[str, ...]:
 def _default_job_env_files(job_name: str) -> tuple[Path, ...]:
     if job_name in {
         "entry_path_aggregator",
+        "lane_scoreboard",
         "participation_allocator",
         "market_context",
         "macro_news_context",
@@ -244,6 +268,11 @@ def _default_job_outputs(job_name: str) -> tuple[Path, ...]:
         return (
             _resolve_path("logs/entry_path_summary_latest.json"),
             _resolve_path("logs/entry_path_summary_history.jsonl"),
+        )
+    if job_name == "lane_scoreboard":
+        return (
+            _resolve_path("logs/lane_scoreboard_latest.json"),
+            _resolve_path("logs/lane_scoreboard_history.jsonl"),
         )
     if job_name == "participation_allocator":
         return (_resolve_path("config/participation_alloc.json"),)
@@ -308,6 +337,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     env_prefix = f"LOCAL_FEEDBACK_CYCLE_{job_name.upper()}"
     enabled_defaults = {
         "entry_path_aggregator": True,
+        "lane_scoreboard": True,
         "participation_allocator": True,
         "market_context": True,
         "macro_news_context": True,
@@ -324,6 +354,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     enabled = _env_bool(f"{env_prefix}_ENABLED", enabled_defaults[job_name])
     interval_defaults = {
         "entry_path_aggregator": 120,
+        "lane_scoreboard": 120,
         "participation_allocator": 120,
         "market_context": 300,
         "macro_news_context": 300,
@@ -339,6 +370,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     }
     timeout_defaults = {
         "entry_path_aggregator": 180,
+        "lane_scoreboard": 180,
         "participation_allocator": 180,
         "market_context": 420,
         "macro_news_context": 120,
@@ -354,6 +386,7 @@ def _build_job(job_name: str, python_bin: str) -> JobConfig:
     }
     retry_defaults = {
         "entry_path_aggregator": 0,
+        "lane_scoreboard": 0,
         "participation_allocator": 0,
         "market_context": 0,
         "macro_news_context": 0,
@@ -420,6 +453,7 @@ def _job_order(python_bin: str) -> list[JobConfig]:
         _build_job("pattern_book", python_bin),
         _build_job("strategy_feedback", python_bin),
         _build_job("entry_path_aggregator", python_bin),
+        _build_job("lane_scoreboard", python_bin),
         _build_job("participation_allocator", python_bin),
         _build_job("market_context", python_bin),
         _build_job("macro_news_context", python_bin),
@@ -450,7 +484,9 @@ def _load_env_file(path: Path) -> dict[str, str]:
         if value == "/home/tossaki/QuantRabbit":
             value = str(REPO_ROOT.resolve())
         elif value.startswith("/home/tossaki/QuantRabbit/"):
-            value = str(REPO_ROOT.resolve() / value.removeprefix("/home/tossaki/QuantRabbit/"))
+            value = str(
+                REPO_ROOT.resolve() / value.removeprefix("/home/tossaki/QuantRabbit/")
+            )
         if key:
             env[key] = value
     return env
@@ -508,7 +544,9 @@ def _relative_path(path: Path) -> str:
         return str(path)
 
 
-def _job_due(job: JobConfig, state: dict[str, Any], now_epoch: float, force: bool) -> tuple[bool, float]:
+def _job_due(
+    job: JobConfig, state: dict[str, Any], now_epoch: float, force: bool
+) -> tuple[bool, float]:
     if force:
         return True, 0.0
     jobs_state = state.get("jobs")
@@ -527,7 +565,9 @@ def _job_due(job: JobConfig, state: dict[str, Any], now_epoch: float, force: boo
     return elapsed >= float(job.interval_sec), remaining
 
 
-def _summarize_output_changes(output_paths: tuple[Path, ...], before: dict[Path, float | None]) -> list[dict[str, Any]]:
+def _summarize_output_changes(
+    output_paths: tuple[Path, ...], before: dict[Path, float | None]
+) -> list[dict[str, Any]]:
     changes: list[dict[str, Any]] = []
     for path in output_paths:
         after = _path_mtime(path)
@@ -673,9 +713,13 @@ def _release_lock() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run local analysis/feedback jobs with interval guards.")
+    parser = argparse.ArgumentParser(
+        description="Run local analysis/feedback jobs with interval guards."
+    )
     parser.add_argument("--force", action="store_true", help="ignore interval guards")
-    parser.add_argument("--dry-run", action="store_true", help="report due jobs without executing them")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="report due jobs without executing them"
+    )
     parser.add_argument(
         "--job",
         action="append",

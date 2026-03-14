@@ -20130,3 +20130,73 @@
     を満たす shallow long を worker-local に reject するようにした。
   - signal-flow test に block / keep の回帰を追加し、
     stronger reclaim long は残す境界を固定した。
+
+### 2026-03-14 20:35 JST - `lane_scoreboard` を追加し、winner lane の promotion / loser lane の quarantine を `participation_alloc` へ接続
+
+- 対象:
+  - `scripts/lane_scoreboard.py`
+  - `scripts/participation_allocator.py`
+  - `scripts/run_local_feedback_cycle.py`
+  - `tests/scripts/test_lane_scoreboard.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `tests/scripts/test_run_local_feedback_cycle.py`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - 既存 `participation_alloc` は setup-scoped override を持てても、
+    lane の昇格/隔離判断そのものは artifact として見えず、
+    「なぜこの lane を boost/trim したか」を
+    current window の `orders.db / trades.db` から即追えなかった。
+  - 次の実装課題として整理していた
+    `lane scoreboard + promotion gate + auto quarantine`
+    を、shared blanket gate を増やさず
+    existing `participation_alloc` 導線へつなぐ必要があった。
+- 変更:
+  - `scripts/lane_scoreboard.py`
+    を新設し、
+    `entry_path_summary_latest.json`
+    と
+    `trades.db`
+    から
+    setup-scoped lane の
+    `fills / share_gap / hard_block_rate / realized_jpy / win_rate / profit_factor / stop_loss_rate`
+    を集計して、
+    `promotion_gate`
+    と
+    `quarantine_gate`
+    を持つ
+    `logs/lane_scoreboard_latest.json`
+    を出すようにした。
+  - `scripts/participation_allocator.py`
+    は
+    `lane_scoreboard`
+    を読み、
+    lane の
+    `boost_participation`
+    /
+    `trim_units`
+    を setup override として
+    `config/participation_alloc.json`
+    へ merge するようにした。
+    strategy-wide conversion と lane-specific gate は別物として保持し、
+    同一 setup key では scoreboard 側を優先する。
+  - `scripts/run_local_feedback_cycle.py`
+    に
+    `lane_scoreboard`
+    job を追加し、
+    `entry_path_aggregator -> lane_scoreboard -> participation_allocator`
+    の順で local feedback cycle に載せた。
+- 期待効果:
+  - winner lane は
+    「current setup の勝ち」
+    として明示的に昇格できる。
+  - fresh/chronic loser lane は
+    strategy 全体を止めずに隔離できる。
+  - `participation_alloc`
+    の override を読めば、
+    どの lane が
+    `promotion`
+    /
+    `quarantine`
+    だったかを監査しやすくなる。

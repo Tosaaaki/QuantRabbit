@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compute soft participation boosts/trims from recent entry-path conversion."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -79,6 +80,50 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _override_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(item.get("match_dimension") or "").strip(),
+        str(item.get("setup_fingerprint") or "").strip(),
+        str(item.get("flow_regime") or "").strip(),
+        str(item.get("microstructure_bucket") or "").strip(),
+    )
+
+
+def _merge_setup_overrides(
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for item in primary:
+        if not isinstance(item, dict):
+            continue
+        merged[_override_key(item)] = dict(item)
+    for item in secondary:
+        if not isinstance(item, dict):
+            continue
+        key = _override_key(item)
+        previous = merged.get(key)
+        if isinstance(previous, dict):
+            merged[key] = {**previous, **item}
+        else:
+            merged[key] = dict(item)
+    specificity_rank = {
+        "setup_fingerprint": 4,
+        "flow_micro": 3,
+        "flow_regime": 2,
+        "microstructure_bucket": 1,
+    }
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda item: (
+            specificity_rank.get(str(item.get("match_dimension") or ""), 0),
+            int(item.get("attempts") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
 def _median(values: list[float]) -> float:
     if not values:
         return 0.0
@@ -123,7 +168,11 @@ def _build_allocation_record(
     max_probability_cut = 0.0
     cadence_floor = 1.0
     action = "hold"
-    terminal_status_counts = record.get("terminal_status_counts") if isinstance(record.get("terminal_status_counts"), dict) else {}
+    terminal_status_counts = (
+        record.get("terminal_status_counts")
+        if isinstance(record.get("terminal_status_counts"), dict)
+        else {}
+    )
     hard_block_rate = 0.0
     probability_rejects = 0
     strategy_control_blocks = 0
@@ -148,9 +197,20 @@ def _build_allocation_record(
         hard_block_rate = hard_blocks / max(1, attempts + hard_blocks)
 
     if attempts >= max(1, min_attempts):
-        if share_gap >= 0.08 and filled_rate <= (median_fill_rate * 0.85) and realized_jpy <= 0.0:
+        if (
+            share_gap >= 0.08
+            and filled_rate <= (median_fill_rate * 0.85)
+            and realized_jpy <= 0.0
+        ):
             severity = _clamp((share_gap - 0.08) / 0.22, 0.0, 1.0)
-            severity = max(severity, _clamp((median_fill_rate - filled_rate) / max(0.01, median_fill_rate), 0.0, 1.0))
+            severity = max(
+                severity,
+                _clamp(
+                    (median_fill_rate - filled_rate) / max(0.01, median_fill_rate),
+                    0.0,
+                    1.0,
+                ),
+            )
             reject_pressure = _clamp((hard_block_rate - 0.20) / 0.55, 0.0, 1.0)
             loss_pressure = max(
                 _clamp(abs(min(realized_jpy, 0.0)) / 240.0, 0.0, 1.0),
@@ -171,8 +231,13 @@ def _build_allocation_record(
                 or loss_per_fill >= 6.0
             )
             if should_trim_probability:
-                max_probability_cut = min(0.25, max(max_prob_boost, max_prob_boost * (1.0 + 0.80 * loss_pressure)))
-                probability_offset = -max_probability_cut * (0.20 + 0.80 * trim_strength)
+                max_probability_cut = min(
+                    0.25,
+                    max(max_prob_boost, max_prob_boost * (1.0 + 0.80 * loss_pressure)),
+                )
+                probability_offset = -max_probability_cut * (
+                    0.20 + 0.80 * trim_strength
+                )
             cadence_floor = 0.90
             action = "trim_units"
         elif (
@@ -185,7 +250,9 @@ def _build_allocation_record(
                 _clamp(abs(realized_jpy) / max(1.0, loss_drag_floor), 0.0, 1.0),
                 _clamp(loss_per_fill / 18.0, 0.0, 1.0),
             )
-            participation_drag = _clamp((fill_share - attempt_share + 0.04) / 0.18, 0.0, 1.0)
+            participation_drag = _clamp(
+                (fill_share - attempt_share + 0.04) / 0.18, 0.0, 1.0
+            )
             quality_drag = _clamp(
                 (filled_rate / max(0.01, median_fill_rate) - 0.85) / 0.45,
                 0.0,
@@ -205,8 +272,13 @@ def _build_allocation_record(
                 or loss_per_fill >= 5.0
             )
             if should_trim_probability:
-                max_probability_cut = min(0.25, max(max_prob_boost, max_prob_boost * (1.0 + 0.60 * loss_pressure)))
-                probability_offset = -max_probability_cut * (0.10 + 0.60 * trim_strength)
+                max_probability_cut = min(
+                    0.25,
+                    max(max_prob_boost, max_prob_boost * (1.0 + 0.60 * loss_pressure)),
+                )
+                probability_offset = -max_probability_cut * (
+                    0.10 + 0.60 * trim_strength
+                )
             cadence_floor = 0.94
             action = "trim_units"
         elif (
@@ -216,7 +288,9 @@ def _build_allocation_record(
             and profit_per_fill >= scalp_small_win_floor
         ):
             advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
-            quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
+            quality = _clamp(
+                (filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0
+            )
             boost_strength = max(advantage, quality)
             boost = max_units_boost * (0.42 + 0.58 * boost_strength)
             units_multiplier = 1.0 + boost
@@ -243,7 +317,9 @@ def _build_allocation_record(
     ):
         # Cut fresh loser lanes quickly so the current short-horizon P/L is not
         # dragged by fully participating flows that are already net negative.
-        participation_drag = _clamp((fill_share - attempt_share + 0.02) / 0.18, 0.0, 1.0)
+        participation_drag = _clamp(
+            (fill_share - attempt_share + 0.02) / 0.18, 0.0, 1.0
+        )
         sample_confidence = _clamp(
             (attempts - fast_loser_trim_attempts + 1)
             / max(1, int(min_attempts) - fast_loser_trim_attempts + 1),
@@ -284,7 +360,8 @@ def _build_allocation_record(
     ):
         participation_edge = _clamp((fill_share - attempt_share) / 0.14, 0.0, 1.0)
         sample_confidence = _clamp(
-            (attempts - fast_lane_boost_attempts + 1) / max(1, int(min_attempts) - fast_lane_boost_attempts + 1),
+            (attempts - fast_lane_boost_attempts + 1)
+            / max(1, int(min_attempts) - fast_lane_boost_attempts + 1),
             0.0,
             1.0,
         )
@@ -298,7 +375,9 @@ def _build_allocation_record(
         boost_strength = max(
             participation_edge,
             fill_quality,
-            0.25 * participation_edge + 0.15 * sample_confidence + 0.60 * profit_confidence,
+            0.25 * participation_edge
+            + 0.15 * sample_confidence
+            + 0.60 * profit_confidence,
         )
         units_multiplier = 1.0 + max_units_boost * (0.44 + 0.42 * boost_strength)
         probability_boost = max_prob_boost * (0.24 + 0.46 * boost_strength)
@@ -315,14 +394,19 @@ def _build_allocation_record(
     ):
         participation_edge = _clamp((fill_share - attempt_share) / 0.12, 0.0, 1.0)
         sample_confidence = _clamp(
-            (attempts - small_sample_boost_attempts + 1) / max(1, int(min_attempts) - small_sample_boost_attempts + 1),
+            (attempts - small_sample_boost_attempts + 1)
+            / max(1, int(min_attempts) - small_sample_boost_attempts + 1),
             0.0,
             1.0,
         )
-        profit_confidence = _clamp(realized_jpy / max(120.0, fast_winner_profit_floor * 1.5), 0.0, 1.0)
+        profit_confidence = _clamp(
+            realized_jpy / max(120.0, fast_winner_profit_floor * 1.5), 0.0, 1.0
+        )
         boost_strength = max(
             participation_edge,
-            0.45 * participation_edge + 0.20 * sample_confidence + 0.35 * profit_confidence,
+            0.45 * participation_edge
+            + 0.20 * sample_confidence
+            + 0.35 * profit_confidence,
         )
         units_multiplier = 1.0 + max_units_boost * (0.38 + 0.52 * boost_strength)
         probability_boost = max_prob_boost * (0.22 + 0.56 * boost_strength)
@@ -347,7 +431,12 @@ def _build_allocation_record(
 
     quality_score = _clamp(
         0.45 * _clamp(filled_rate / max(0.01, median_fill_rate), 0.0, 1.25)
-        + 0.30 * _clamp(fill_share / max(0.01, attempt_share) if attempt_share > 0 else 0.0, 0.0, 1.25)
+        + 0.30
+        * _clamp(
+            fill_share / max(0.01, attempt_share) if attempt_share > 0 else 0.0,
+            0.0,
+            1.25,
+        )
         + 0.25 * _clamp((realized_jpy + 500.0) / 1500.0, 0.0, 1.0),
         0.0,
         1.25,
@@ -366,8 +455,12 @@ def _build_allocation_record(
         "target_share": round(fill_share, 6),
         "share_gap": round(share_gap, 6),
         "realized_jpy": round(realized_jpy, 3),
-        "units_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
-        "lot_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
+        "units_multiplier": round(
+            _clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4
+        ),
+        "lot_multiplier": round(
+            _clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4
+        ),
         "probability_multiplier": round(_clamp(probability_multiplier, 0.75, 1.25), 4),
         "probability_offset": round(
             _clamp(
@@ -431,7 +524,9 @@ def _build_setup_overrides(
         context = {
             "setup_fingerprint": str(setup.get("setup_fingerprint") or "").strip(),
             "flow_regime": str(setup.get("flow_regime") or "").strip(),
-            "microstructure_bucket": str(setup.get("microstructure_bucket") or "").strip(),
+            "microstructure_bucket": str(
+                setup.get("microstructure_bucket") or ""
+            ).strip(),
         }
         if not any(context.values()):
             continue
@@ -462,13 +557,20 @@ def _build_setup_overrides(
                     or (
                         "setup_fingerprint"
                         if context["setup_fingerprint"]
-                        else "flow_micro"
-                        if context["flow_regime"] and context["microstructure_bucket"]
-                        else "flow_regime"
-                        if context["flow_regime"]
-                        else "microstructure_bucket"
-                        if context["microstructure_bucket"]
-                        else "unknown"
+                        else (
+                            "flow_micro"
+                            if context["flow_regime"]
+                            and context["microstructure_bucket"]
+                            else (
+                                "flow_regime"
+                                if context["flow_regime"]
+                                else (
+                                    "microstructure_bucket"
+                                    if context["microstructure_bucket"]
+                                    else "unknown"
+                                )
+                            )
+                        )
                     )
                 ),
                 "setup_fingerprint": context["setup_fingerprint"],
@@ -492,17 +594,150 @@ def _build_setup_overrides(
     return overrides
 
 
+def _lane_scoreboard_setup_overrides(
+    lane_scoreboard: dict[str, Any],
+    *,
+    strategy_key: str,
+    max_units_cut: float,
+    max_units_boost: float,
+    max_prob_boost: float,
+) -> list[dict[str, Any]]:
+    strategies = lane_scoreboard.get("strategies")
+    if not isinstance(strategies, dict):
+        return []
+    strategy_record = strategies.get(strategy_key)
+    if not isinstance(strategy_record, dict):
+        return []
+    lanes = strategy_record.get("lanes")
+    if not isinstance(lanes, list):
+        return []
+    overrides: list[dict[str, Any]] = []
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        action = str(lane.get("action") or "hold").strip()
+        units_multiplier = _safe_float(
+            lane.get("units_multiplier"),
+            _safe_float(lane.get("lot_multiplier"), 1.0),
+        )
+        probability_offset = _safe_float(lane.get("probability_offset"), 0.0)
+        probability_boost = _safe_float(lane.get("probability_boost"), 0.0)
+        if (
+            action == "hold"
+            and abs(units_multiplier - 1.0) < 1e-9
+            and abs(probability_offset) < 1e-9
+            and abs(probability_boost) < 1e-9
+        ):
+            continue
+        overrides.append(
+            {
+                "match_dimension": str(
+                    lane.get("match_dimension") or "setup_fingerprint"
+                ),
+                "setup_fingerprint": str(lane.get("setup_fingerprint") or "").strip(),
+                "flow_regime": str(lane.get("flow_regime") or "").strip(),
+                "microstructure_bucket": str(
+                    lane.get("microstructure_bucket") or ""
+                ).strip(),
+                "attempts": _safe_int(lane.get("attempts"), 0),
+                "preflights": _safe_int(
+                    lane.get("preflights"), _safe_int(lane.get("attempts"), 0)
+                ),
+                "fills": _safe_int(lane.get("fills"), 0),
+                "filled": _safe_int(
+                    lane.get("filled"), _safe_int(lane.get("fills"), 0)
+                ),
+                "filled_rate": round(_safe_float(lane.get("filled_rate"), 0.0), 6),
+                "fill_rate": round(
+                    _safe_float(
+                        lane.get("fill_rate"), _safe_float(lane.get("filled_rate"), 0.0)
+                    ),
+                    6,
+                ),
+                "attempt_share": round(_safe_float(lane.get("attempt_share"), 0.0), 6),
+                "current_share": round(_safe_float(lane.get("attempt_share"), 0.0), 6),
+                "fill_share": round(_safe_float(lane.get("fill_share"), 0.0), 6),
+                "target_share": round(_safe_float(lane.get("fill_share"), 0.0), 6),
+                "share_gap": round(_safe_float(lane.get("share_gap"), 0.0), 6),
+                "realized_jpy": round(_safe_float(lane.get("realized_jpy"), 0.0), 3),
+                "quality_score": round(_safe_float(lane.get("quality_score"), 0.0), 4),
+                "hard_block_rate": round(
+                    _safe_float(lane.get("hard_block_rate"), 0.0), 6
+                ),
+                "units_multiplier": round(
+                    _clamp(
+                        units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost
+                    ),
+                    4,
+                ),
+                "lot_multiplier": round(
+                    _clamp(
+                        _safe_float(lane.get("lot_multiplier"), units_multiplier),
+                        1.0 - max_units_cut,
+                        1.0 + max_units_boost,
+                    ),
+                    4,
+                ),
+                "probability_multiplier": 1.0,
+                "probability_offset": round(
+                    _clamp(probability_offset, -0.25, max_prob_boost), 4
+                ),
+                "probability_boost": round(
+                    _clamp(probability_boost, 0.0, max_prob_boost), 4
+                ),
+                "max_probability_cut": round(
+                    _clamp(
+                        _safe_float(lane.get("max_probability_cut"), 0.0), 0.0, 0.25
+                    ),
+                    4,
+                ),
+                "cadence_floor": round(
+                    _clamp(_safe_float(lane.get("cadence_floor"), 1.0), 0.85, 1.24), 4
+                ),
+                "max_units_cut": round(float(max_units_cut), 4),
+                "max_units_boost": round(float(max_units_boost), 4),
+                "max_probability_boost": round(float(max_prob_boost), 4),
+                "action": action,
+                "gate_action": str(lane.get("gate_action") or "hold"),
+                "closed_trades": _safe_int(lane.get("closed_trades"), 0),
+                "wins": _safe_int(lane.get("wins"), 0),
+                "losses": _safe_int(lane.get("losses"), 0),
+                "win_rate": round(_safe_float(lane.get("win_rate"), 0.0), 6),
+                "profit_factor": round(_safe_float(lane.get("profit_factor"), 0.0), 6),
+                "stop_loss_rate": round(
+                    _safe_float(lane.get("stop_loss_rate"), 0.0), 6
+                ),
+                "primary_close_reason": str(lane.get("primary_close_reason") or ""),
+                "promotion_gate": (
+                    lane.get("promotion_gate")
+                    if isinstance(lane.get("promotion_gate"), dict)
+                    else None
+                ),
+                "quarantine_gate": (
+                    lane.get("quarantine_gate")
+                    if isinstance(lane.get("quarantine_gate"), dict)
+                    else None
+                ),
+            }
+        )
+    return overrides
+
+
 _NEGATIVE_PROB_TRIM_MIN_LOSS_PRESSURE = 0.08
 _NEGATIVE_PROB_TRIM_MIN_SEVERITY = 0.78
 _NEGATIVE_PROB_TRIM_MIN_REJECT_PRESSURE = 0.80
 _NEGATIVE_PROB_TRIM_MIN_SHARE_GAP = 0.18
 
 
-def _load_recent_realized_jpy(trades_db: Path, *, lookback_hours: float) -> dict[str, float]:
+def _load_recent_realized_jpy(
+    trades_db: Path, *, lookback_hours: float
+) -> dict[str, float]:
     if not trades_db.exists():
         return {}
     out: dict[str, float] = {}
-    con = sqlite3.connect(f"file:{trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None)
+    con = sqlite3.connect(
+        f"file:{trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None
+    )
     try:
         cur = con.cursor()
         cur.execute(
@@ -521,18 +756,23 @@ def _load_recent_realized_jpy(trades_db: Path, *, lookback_hours: float) -> dict
                 entry_thesis=entry_thesis,
             )
             if not strategy_key:
-                strategy_key = resolve_strategy_tag(str(strategy_tag or strategy or "").strip()) or str(
-                    strategy_tag or strategy or ""
-                ).strip()
+                strategy_key = (
+                    resolve_strategy_tag(str(strategy_tag or strategy or "").strip())
+                    or str(strategy_tag or strategy or "").strip()
+                )
             if not strategy_key:
                 continue
-            out[strategy_key] = out.get(strategy_key, 0.0) + _safe_float(realized_pl, 0.0)
+            out[strategy_key] = out.get(strategy_key, 0.0) + _safe_float(
+                realized_pl, 0.0
+            )
     finally:
         con.close()
     return out
 
 
-def _hard_block_metrics(record: dict[str, Any], attempts: int) -> tuple[float, int, int]:
+def _hard_block_metrics(
+    record: dict[str, Any], attempts: int
+) -> tuple[float, int, int]:
     terminal_status_counts = (
         record.get("terminal_status_counts")
         if isinstance(record.get("terminal_status_counts"), dict)
@@ -578,14 +818,24 @@ def _allocation_record(
     probability_boost = 0.0
     cadence_floor = 1.0
     action = "hold"
-    hard_block_rate, probability_rejects, strategy_control_blocks = _hard_block_metrics(record, attempts)
+    hard_block_rate, probability_rejects, strategy_control_blocks = _hard_block_metrics(
+        record, attempts
+    )
 
     if attempts >= max(1, min_attempts):
-        if share_gap >= 0.08 and filled_rate <= (median_fill_rate * 0.85) and realized_jpy <= 0.0:
+        if (
+            share_gap >= 0.08
+            and filled_rate <= (median_fill_rate * 0.85)
+            and realized_jpy <= 0.0
+        ):
             severity = _clamp((share_gap - 0.08) / 0.22, 0.0, 1.0)
             severity = max(
                 severity,
-                _clamp((median_fill_rate - filled_rate) / max(0.01, median_fill_rate), 0.0, 1.0),
+                _clamp(
+                    (median_fill_rate - filled_rate) / max(0.01, median_fill_rate),
+                    0.0,
+                    1.0,
+                ),
             )
             reject_pressure = _clamp((hard_block_rate - 0.20) / 0.55, 0.0, 1.0)
             loss_pressure = _clamp(abs(min(realized_jpy, 0.0)) / 240.0, 0.0, 1.0)
@@ -606,16 +856,26 @@ def _allocation_record(
                 probability_offset = -max_prob_boost * (0.20 + 0.80 * trim_strength)
             cadence_floor = 0.90
             action = "trim_units"
-        elif fill_share >= attempt_share + 0.02 and filled_rate >= median_fill_rate and realized_jpy > 0.0:
+        elif (
+            fill_share >= attempt_share + 0.02
+            and filled_rate >= median_fill_rate
+            and realized_jpy > 0.0
+        ):
             advantage = _clamp((fill_share - attempt_share) / 0.18, 0.0, 1.0)
-            quality = _clamp((filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0)
+            quality = _clamp(
+                (filled_rate - median_fill_rate) / max(0.01, median_fill_rate), 0.0, 1.0
+            )
             boost_strength = max(advantage, quality)
             boost = max_units_boost * (0.30 + 0.70 * boost_strength)
             units_multiplier = 1.0 + boost
             probability_boost = max_prob_boost * (0.25 + 0.75 * boost_strength)
             cadence_floor = 1.0 + 0.18 * (0.30 + 0.70 * boost_strength)
             action = "boost_participation"
-        elif filled_rate >= median_fill_rate * 1.10 and realized_jpy > 0.0 and attempts >= max(min_attempts, 8):
+        elif (
+            filled_rate >= median_fill_rate * 1.10
+            and realized_jpy > 0.0
+            and attempts >= max(min_attempts, 8)
+        ):
             units_multiplier = 1.0 + max_units_boost * 0.40
             probability_boost = max_prob_boost * 0.35
             cadence_floor = 1.08
@@ -638,7 +898,9 @@ def _allocation_record(
         profit_confidence = _clamp(realized_jpy / 400.0, 0.0, 1.0)
         boost_strength = max(
             participation_edge,
-            0.55 * participation_edge + 0.25 * sample_confidence + 0.20 * profit_confidence,
+            0.55 * participation_edge
+            + 0.25 * sample_confidence
+            + 0.20 * profit_confidence,
         )
         units_multiplier = 1.0 + max_units_boost * (0.18 + 0.32 * boost_strength)
         probability_boost = max_prob_boost * (0.12 + 0.28 * boost_strength)
@@ -662,7 +924,12 @@ def _allocation_record(
 
     quality_score = _clamp(
         0.45 * _clamp(filled_rate / max(0.01, median_fill_rate), 0.0, 1.25)
-        + 0.30 * _clamp(fill_share / max(0.01, attempt_share) if attempt_share > 0 else 0.0, 0.0, 1.25)
+        + 0.30
+        * _clamp(
+            fill_share / max(0.01, attempt_share) if attempt_share > 0 else 0.0,
+            0.0,
+            1.25,
+        )
         + 0.25 * _clamp((realized_jpy + 500.0) / 1500.0, 0.0, 1.0),
         0.0,
         1.25,
@@ -681,10 +948,16 @@ def _allocation_record(
         "target_share": round(fill_share, 6),
         "share_gap": round(share_gap, 6),
         "realized_jpy": round(realized_jpy, 3),
-        "units_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
-        "lot_multiplier": round(_clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4),
+        "units_multiplier": round(
+            _clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4
+        ),
+        "lot_multiplier": round(
+            _clamp(units_multiplier, 1.0 - max_units_cut, 1.0 + max_units_boost), 4
+        ),
         "probability_multiplier": round(_clamp(probability_multiplier, 0.75, 1.25), 4),
-        "probability_offset": round(_clamp(probability_offset, -max_prob_boost, max_prob_boost), 4),
+        "probability_offset": round(
+            _clamp(probability_offset, -max_prob_boost, max_prob_boost), 4
+        ),
         "probability_boost": round(_clamp(probability_boost, 0.0, max_prob_boost), 4),
         "cadence_floor": round(_clamp(cadence_floor, 0.85, 1.18), 4),
         "quality_score": round(quality_score, 4),
@@ -706,11 +979,14 @@ def _build_setup_overrides_legacy(
     setups = record.get("setups")
     if not isinstance(setups, list):
         return []
-    setup_min_attempts = max(6, min(int(min_attempts), max(6, int(round(min_attempts * 0.5)))))
+    setup_min_attempts = max(
+        6, min(int(min_attempts), max(6, int(round(min_attempts * 0.5))))
+    )
     setup_fill_rates = [
         _safe_float(item.get("filled_rate"), 0.0)
         for item in setups
-        if isinstance(item, dict) and int(item.get("attempts") or 0) >= setup_min_attempts
+        if isinstance(item, dict)
+        and int(item.get("attempts") or 0) >= setup_min_attempts
     ]
     setup_median_fill_rate = _median(setup_fill_rates)
     if setup_median_fill_rate <= 0.0:
@@ -741,10 +1017,13 @@ def _build_setup_overrides_legacy(
             continue
         overrides.append(
             {
-                "match_dimension": str(item.get("match_dimension") or "setup_fingerprint"),
+                "match_dimension": str(
+                    item.get("match_dimension") or "setup_fingerprint"
+                ),
                 "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
                 "flow_regime": str(item.get("flow_regime") or "") or None,
-                "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+                "microstructure_bucket": str(item.get("microstructure_bucket") or "")
+                or None,
                 **metrics,
             }
         )
@@ -763,11 +1042,15 @@ def _build_setup_overrides_legacy(
     return overrides
 
 
-def _load_recent_realized_setup_jpy(trades_db: Path, *, lookback_hours: float) -> dict[str, float]:
+def _load_recent_realized_setup_jpy(
+    trades_db: Path, *, lookback_hours: float
+) -> dict[str, float]:
     if not trades_db.exists():
         return {}
     out: dict[str, float] = {}
-    con = sqlite3.connect(f"file:{trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None)
+    con = sqlite3.connect(
+        f"file:{trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None
+    )
     try:
         columns = {
             str(row[1])
@@ -794,16 +1077,21 @@ def _load_recent_realized_setup_jpy(trades_db: Path, *, lookback_hours: float) -
                 entry_thesis=entry_thesis,
             )
             if not strategy_key:
-                strategy_key = resolve_strategy_tag(str(strategy_tag or strategy or "").strip()) or str(
-                    strategy_tag or strategy or ""
-                ).strip()
+                strategy_key = (
+                    resolve_strategy_tag(str(strategy_tag or strategy or "").strip())
+                    or str(strategy_tag or strategy or "").strip()
+                )
             if not strategy_key:
                 continue
-            context = extract_setup_identity(_safe_json_loads(entry_thesis), units=_safe_int(units, 0))
+            context = extract_setup_identity(
+                _safe_json_loads(entry_thesis), units=_safe_int(units, 0)
+            )
             if not context:
                 continue
             realized_key = _setup_realized_key(strategy_key, context)
-            out[realized_key] = out.get(realized_key, 0.0) + _safe_float(realized_pl, 0.0)
+            out[realized_key] = out.get(realized_key, 0.0) + _safe_float(
+                realized_pl, 0.0
+            )
     finally:
         con.close()
     return out
@@ -814,6 +1102,7 @@ def build_participation_alloc(
     *,
     realized_by_strategy: dict[str, float],
     realized_by_setup: dict[str, float] | None = None,
+    lane_scoreboard: dict[str, Any] | None = None,
     min_attempts: int,
     setup_min_attempts: int | None = None,
     max_units_cut: float,
@@ -846,7 +1135,10 @@ def build_participation_alloc(
     for raw_key, record in sorted(strategies.items()):
         if not isinstance(record, dict):
             continue
-        strategy_key = resolve_strategy_tag(str(raw_key or "").strip()) or str(raw_key or "").strip()
+        strategy_key = (
+            resolve_strategy_tag(str(raw_key or "").strip())
+            or str(raw_key or "").strip()
+        )
         realized_jpy = _safe_float(realized_by_strategy.get(strategy_key), 0.0)
         output_record = {
             "strategy_key": str(strategy_key or raw_key),
@@ -872,6 +1164,14 @@ def build_participation_alloc(
             max_units_boost=max_units_boost,
             max_prob_boost=max_prob_boost,
         )
+        scoreboard_overrides = _lane_scoreboard_setup_overrides(
+            lane_scoreboard or {},
+            strategy_key=str(strategy_key or raw_key),
+            max_units_cut=max_units_cut,
+            max_units_boost=max_units_boost,
+            max_prob_boost=max_prob_boost,
+        )
+        setup_overrides = _merge_setup_overrides(setup_overrides, scoreboard_overrides)
         if setup_overrides:
             output_record["setup_overrides"] = setup_overrides
         output_strategies[str(strategy_key or raw_key)] = output_record
@@ -881,7 +1181,8 @@ def build_participation_alloc(
         action = str(rec.get("action") or "hold")
         action_counts[action] = action_counts.get(action, 0) + 1
     negative_probability_offsets_enabled = any(
-        float(rec.get("probability_offset") or 0.0) < 0.0 for rec in output_strategies.values()
+        float(rec.get("probability_offset") or 0.0) < 0.0
+        for rec in output_strategies.values()
     ) or any(
         float(override.get("probability_offset") or 0.0) < 0.0
         for rec in output_strategies.values()
@@ -889,7 +1190,9 @@ def build_participation_alloc(
     )
 
     return {
-        "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "as_of": dt.datetime.now(dt.timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "lookback_hours": _safe_float(entry_path_summary.get("lookback_hours"), 24.0),
         "median_filled_rate": round(median_fill_rate, 6),
         "allocation_policy": {
@@ -907,9 +1210,14 @@ def build_participation_alloc(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Build soft participation allocator artifact")
-    ap.add_argument("--entry-path-summary", default="logs/entry_path_summary_latest.json")
+    ap = argparse.ArgumentParser(
+        description="Build soft participation allocator artifact"
+    )
+    ap.add_argument(
+        "--entry-path-summary", default="logs/entry_path_summary_latest.json"
+    )
     ap.add_argument("--trades-db", default="logs/trades.db")
+    ap.add_argument("--lane-scoreboard", default="logs/lane_scoreboard_latest.json")
     ap.add_argument("--output", default="config/participation_alloc.json")
     ap.add_argument("--lookback-hours", type=float, default=24.0)
     ap.add_argument("--min-attempts", type=int, default=20)
@@ -920,6 +1228,7 @@ def main() -> None:
     args = ap.parse_args()
 
     summary = _read_json(Path(args.entry_path_summary).resolve())
+    lane_scoreboard = _read_json(Path(args.lane_scoreboard).resolve())
     realized_by_strategy = _load_recent_realized_jpy(
         Path(args.trades_db).resolve(),
         lookback_hours=float(args.lookback_hours),
@@ -932,6 +1241,7 @@ def main() -> None:
         summary,
         realized_by_strategy=realized_by_strategy,
         realized_by_setup=realized_by_setup,
+        lane_scoreboard=lane_scoreboard,
         min_attempts=max(1, int(args.min_attempts)),
         setup_min_attempts=max(1, int(args.setup_min_attempts)),
         max_units_cut=_clamp(float(args.max_units_cut), 0.0, 0.5),

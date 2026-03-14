@@ -10,7 +10,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CYCLE_SCRIPT = REPO_ROOT / "scripts" / "run_local_feedback_cycle.py"
-_CYCLE_SPEC = importlib.util.spec_from_file_location("run_local_feedback_cycle_test", CYCLE_SCRIPT)
+_CYCLE_SPEC = importlib.util.spec_from_file_location(
+    "run_local_feedback_cycle_test", CYCLE_SCRIPT
+)
 assert _CYCLE_SPEC is not None and _CYCLE_SPEC.loader is not None
 run_local_feedback_cycle = importlib.util.module_from_spec(_CYCLE_SPEC)
 sys.modules.setdefault("run_local_feedback_cycle_test", run_local_feedback_cycle)
@@ -61,10 +63,18 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
     dyn_env.write_text("DYN_MARKER=dynamic-env\n", encoding="utf-8")
     entry_path_env = tmp_path / "entry_path.env"
     entry_path_env.write_text("ENTRY_PATH_MARKER=entry-path-env\n", encoding="utf-8")
+    lane_scoreboard_env = tmp_path / "lane_scoreboard.env"
+    lane_scoreboard_env.write_text(
+        "LANE_SCOREBOARD_MARKER=lane-scoreboard-env\n", encoding="utf-8"
+    )
     participation_env = tmp_path / "participation.env"
-    participation_env.write_text("PARTICIPATION_MARKER=participation-env\n", encoding="utf-8")
+    participation_env.write_text(
+        "PARTICIPATION_MARKER=participation-env\n", encoding="utf-8"
+    )
     market_context_env = tmp_path / "market_context.env"
-    market_context_env.write_text("MARKET_CONTEXT_MARKER=market-context-env\n", encoding="utf-8")
+    market_context_env.write_text(
+        "MARKET_CONTEXT_MARKER=market-context-env\n", encoding="utf-8"
+    )
     macro_news_env = tmp_path / "macro_news.env"
     macro_news_env.write_text("MACRO_NEWS_MARKER=macro-news-env\n", encoding="utf-8")
     feedback_env = tmp_path / "feedback.env"
@@ -74,11 +84,15 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
     replay_env = tmp_path / "replay.env"
     replay_env.write_text("REPLAY_MARKER=replay-env\n", encoding="utf-8")
     loser_cluster_env = tmp_path / "loser_cluster.env"
-    loser_cluster_env.write_text("LOSER_CLUSTER_MARKER=loser-cluster-env\n", encoding="utf-8")
+    loser_cluster_env.write_text(
+        "LOSER_CLUSTER_MARKER=loser-cluster-env\n", encoding="utf-8"
+    )
     auto_canary_env = tmp_path / "auto_canary.env"
     auto_canary_env.write_text("AUTO_CANARY_MARKER=auto-canary-env\n", encoding="utf-8")
     draft_env = tmp_path / "trade_findings_draft.env"
-    draft_env.write_text("TRADE_FINDINGS_DRAFT_MARKER=trade-findings-draft-env\n", encoding="utf-8")
+    draft_env.write_text(
+        "TRADE_FINDINGS_DRAFT_MARKER=trade-findings-draft-env\n", encoding="utf-8"
+    )
 
     env = os.environ.copy()
     env.update(
@@ -96,7 +110,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key DYN_MARKER --marker dynamic"
             ),
             "LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_ENV_FILES": str(dyn_env),
-            "LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_OUTPUTS": str(outputs_dir / "dynamic.json"),
+            "LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_OUTPUTS": str(
+                outputs_dir / "dynamic.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_INTERVAL_SEC": "120",
             "LOCAL_FEEDBACK_CYCLE_PATTERN_BOOK_ENABLED": "0",
             "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_ENABLED": "1",
@@ -105,15 +121,31 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key ENTRY_PATH_MARKER --marker entry-path"
             ),
             "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_ENV_FILES": str(entry_path_env),
-            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_OUTPUTS": str(outputs_dir / "entry_path.json"),
+            "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_OUTPUTS": str(
+                outputs_dir / "entry_path.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_ENTRY_PATH_AGGREGATOR_INTERVAL_SEC": "300",
+            "LOCAL_FEEDBACK_CYCLE_LANE_SCOREBOARD_ENABLED": "1",
+            "LOCAL_FEEDBACK_CYCLE_LANE_SCOREBOARD_CMD": (
+                f"{sys.executable} {fake_job} --output {outputs_dir / 'lane_scoreboard.json'} "
+                "--env-key LANE_SCOREBOARD_MARKER --marker lane-scoreboard"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_LANE_SCOREBOARD_ENV_FILES": str(lane_scoreboard_env),
+            "LOCAL_FEEDBACK_CYCLE_LANE_SCOREBOARD_OUTPUTS": str(
+                outputs_dir / "lane_scoreboard.json"
+            ),
+            "LOCAL_FEEDBACK_CYCLE_LANE_SCOREBOARD_INTERVAL_SEC": "300",
             "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_CMD": (
                 f"{sys.executable} {fake_job} --output {outputs_dir / 'participation.json'} "
                 "--env-key PARTICIPATION_MARKER --marker participation"
             ),
-            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_ENV_FILES": str(participation_env),
-            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_OUTPUTS": str(outputs_dir / "participation.json"),
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_ENV_FILES": str(
+                participation_env
+            ),
+            "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_OUTPUTS": str(
+                outputs_dir / "participation.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_INTERVAL_SEC": "300",
             "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_CMD": (
@@ -121,7 +153,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key MARKET_CONTEXT_MARKER --marker market-context"
             ),
             "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_ENV_FILES": str(market_context_env),
-            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_OUTPUTS": str(outputs_dir / "market_context.json"),
+            "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_OUTPUTS": str(
+                outputs_dir / "market_context.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_MARKET_CONTEXT_INTERVAL_SEC": "300",
             "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_CMD": (
@@ -129,7 +163,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key MACRO_NEWS_MARKER --marker macro-news"
             ),
             "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_ENV_FILES": str(macro_news_env),
-            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_OUTPUTS": str(outputs_dir / "macro_news.json"),
+            "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_OUTPUTS": str(
+                outputs_dir / "macro_news.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_MACRO_NEWS_CONTEXT_INTERVAL_SEC": "300",
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_CMD": (
@@ -137,7 +173,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key FEEDBACK_MARKER --marker feedback"
             ),
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_ENV_FILES": str(feedback_env),
-            "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_OUTPUTS": str(outputs_dir / "feedback.json"),
+            "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_OUTPUTS": str(
+                outputs_dir / "feedback.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_INTERVAL_SEC": "600",
             "LOCAL_FEEDBACK_CYCLE_TRADE_COUNTERFACTUAL_ENABLED": "0",
             "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_ENABLED": "1",
@@ -146,7 +184,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key FORECAST_MARKER --marker forecast"
             ),
             "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_ENV_FILES": str(forecast_env),
-            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_OUTPUTS": str(outputs_dir / "forecast.json"),
+            "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_OUTPUTS": str(
+                outputs_dir / "forecast.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_FORECAST_IMPROVEMENT_INTERVAL_SEC": "3600",
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_CMD": (
@@ -154,7 +194,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key REPLAY_MARKER --marker replay"
             ),
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_ENV_FILES": str(replay_env),
-            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_OUTPUTS": str(outputs_dir / "replay.json"),
+            "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_OUTPUTS": str(
+                outputs_dir / "replay.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_REPLAY_QUALITY_GATE_INTERVAL_SEC": "10800",
             "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_CMD": (
@@ -162,7 +204,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key LOSER_CLUSTER_MARKER --marker loser-cluster"
             ),
             "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_ENV_FILES": str(loser_cluster_env),
-            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_OUTPUTS": str(outputs_dir / "loser_cluster.json"),
+            "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_OUTPUTS": str(
+                outputs_dir / "loser_cluster.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_LOSER_CLUSTER_INTERVAL_SEC": "1200",
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_CMD": (
@@ -170,7 +214,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key AUTO_CANARY_MARKER --marker auto-canary"
             ),
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_ENV_FILES": str(auto_canary_env),
-            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_OUTPUTS": str(outputs_dir / "auto_canary.json"),
+            "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_OUTPUTS": str(
+                outputs_dir / "auto_canary.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_AUTO_CANARY_INTERVAL_SEC": "1200",
             "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_ENABLED": "1",
             "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_CMD": (
@@ -178,7 +224,9 @@ def _base_env(tmp_path: Path, fake_job: Path) -> dict[str, str]:
                 "--env-key TRADE_FINDINGS_DRAFT_MARKER --marker trade-findings-draft"
             ),
             "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_ENV_FILES": str(draft_env),
-            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_OUTPUTS": str(outputs_dir / "trade_findings_draft.json"),
+            "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_OUTPUTS": str(
+                outputs_dir / "trade_findings_draft.json"
+            ),
             "LOCAL_FEEDBACK_CYCLE_TRADE_FINDINGS_DRAFT_INTERVAL_SEC": "600",
         }
     )
@@ -217,7 +265,9 @@ def test_entry_path_aggregator_job_defaults_are_wired() -> None:
         "--top-k",
         "8",
     )
-    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
+    assert tuple(
+        path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths
+    ) == (
         "logs/entry_path_summary_latest.json",
         "logs/entry_path_summary_history.jsonl",
     )
@@ -243,11 +293,43 @@ def test_dynamic_alloc_job_defaults_are_wired() -> None:
         "--pf-cap",
         "2.0",
         "--target-use",
-        "0.88",
+        "0.96",
         "--half-life-hours",
         "6",
         "--min-lot-multiplier",
         "0.30",
+        "--max-lot-multiplier",
+        "1.85",
+    )
+
+
+def test_lane_scoreboard_job_defaults_are_wired() -> None:
+    job = run_local_feedback_cycle._build_job("lane_scoreboard", sys.executable)
+
+    assert job.enabled is True
+    assert job.interval_sec == 120
+    assert job.timeout_sec == 180
+    assert job.command == (
+        sys.executable,
+        "scripts/lane_scoreboard.py",
+        "--lookback-hours",
+        "6",
+        "--min-attempts",
+        "4",
+        "--setup-min-attempts",
+        "2",
+        "--max-units-cut",
+        "0.22",
+        "--max-units-boost",
+        "0.24",
+        "--max-probability-boost",
+        "0.10",
+    )
+    assert tuple(
+        path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths
+    ) == (
+        "logs/lane_scoreboard_latest.json",
+        "logs/lane_scoreboard_history.jsonl",
     )
 
 
@@ -287,7 +369,9 @@ def test_forecast_improvement_job_defaults_are_wired() -> None:
         "ops/env/quant-v2-runtime.env",
         "ops/env/quant-forecast-improvement-audit.env",
     )
-    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
+    assert tuple(
+        path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths
+    ) == (
         "logs/forecast_improvement_latest.json",
         "logs/forecast_improvement_history.jsonl",
         "logs/reports/forecast_improvement/latest.md",
@@ -303,7 +387,9 @@ def test_trade_findings_draft_job_defaults_are_wired() -> None:
     assert job.retry_count == 0
     assert job.command == (sys.executable, "scripts/trade_findings_diary_draft.py")
     assert job.env_files == ()
-    assert tuple(path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths) == (
+    assert tuple(
+        path.relative_to(REPO_ROOT).as_posix() for path in job.output_paths
+    ) == (
         "logs/trade_findings_draft_latest.json",
         "logs/trade_findings_draft_history.jsonl",
         "logs/trade_findings_draft_latest.md",
@@ -326,6 +412,10 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     assert entry_path["status"] == "ok"
     assert any(output["updated"] for output in entry_path["outputs"])
 
+    lane_scoreboard = jobs["lane_scoreboard"]
+    assert lane_scoreboard["status"] == "ok"
+    assert any(output["updated"] for output in lane_scoreboard["outputs"])
+
     participation = jobs["participation_allocator"]
     assert participation["status"] == "ok"
     assert any(output["updated"] for output in participation["outputs"])
@@ -346,33 +436,66 @@ def test_run_local_feedback_cycle_updates_jobs_and_env_files(tmp_path: Path) -> 
     assert forecast["status"] == "ok"
     assert any(output["updated"] for output in forecast["outputs"])
 
-    dynamic_output = json.loads((tmp_path / "outputs" / "dynamic.json").read_text(encoding="utf-8"))
+    dynamic_output = json.loads(
+        (tmp_path / "outputs" / "dynamic.json").read_text(encoding="utf-8")
+    )
     assert dynamic_output == {"marker": "dynamic", "env_value": "dynamic-env"}
 
-    feedback_output = json.loads((tmp_path / "outputs" / "feedback.json").read_text(encoding="utf-8"))
+    lane_scoreboard_output = json.loads(
+        (tmp_path / "outputs" / "lane_scoreboard.json").read_text(encoding="utf-8")
+    )
+    assert lane_scoreboard_output == {
+        "marker": "lane-scoreboard",
+        "env_value": "lane-scoreboard-env",
+    }
+
+    feedback_output = json.loads(
+        (tmp_path / "outputs" / "feedback.json").read_text(encoding="utf-8")
+    )
     assert feedback_output == {"marker": "feedback", "env_value": "feedback-env"}
 
-    forecast_output = json.loads((tmp_path / "outputs" / "forecast.json").read_text(encoding="utf-8"))
+    forecast_output = json.loads(
+        (tmp_path / "outputs" / "forecast.json").read_text(encoding="utf-8")
+    )
     assert forecast_output == {"marker": "forecast", "env_value": "forecast-env"}
 
-    replay_output = json.loads((tmp_path / "outputs" / "replay.json").read_text(encoding="utf-8"))
+    replay_output = json.loads(
+        (tmp_path / "outputs" / "replay.json").read_text(encoding="utf-8")
+    )
     assert replay_output == {"marker": "replay", "env_value": "replay-env"}
 
-    loser_cluster_output = json.loads((tmp_path / "outputs" / "loser_cluster.json").read_text(encoding="utf-8"))
-    assert loser_cluster_output == {"marker": "loser-cluster", "env_value": "loser-cluster-env"}
+    loser_cluster_output = json.loads(
+        (tmp_path / "outputs" / "loser_cluster.json").read_text(encoding="utf-8")
+    )
+    assert loser_cluster_output == {
+        "marker": "loser-cluster",
+        "env_value": "loser-cluster-env",
+    }
 
-    auto_canary_output = json.loads((tmp_path / "outputs" / "auto_canary.json").read_text(encoding="utf-8"))
-    assert auto_canary_output == {"marker": "auto-canary", "env_value": "auto-canary-env"}
+    auto_canary_output = json.loads(
+        (tmp_path / "outputs" / "auto_canary.json").read_text(encoding="utf-8")
+    )
+    assert auto_canary_output == {
+        "marker": "auto-canary",
+        "env_value": "auto-canary-env",
+    }
 
     draft = jobs["trade_findings_draft"]
     assert draft["status"] == "ok"
     assert any(output["updated"] for output in draft["outputs"])
 
-    draft_output = json.loads((tmp_path / "outputs" / "trade_findings_draft.json").read_text(encoding="utf-8"))
-    assert draft_output == {"marker": "trade-findings-draft", "env_value": "trade-findings-draft-env"}
+    draft_output = json.loads(
+        (tmp_path / "outputs" / "trade_findings_draft.json").read_text(encoding="utf-8")
+    )
+    assert draft_output == {
+        "marker": "trade-findings-draft",
+        "env_value": "trade-findings-draft-env",
+    }
 
 
-def test_run_local_feedback_cycle_prepends_repo_root_to_pythonpath(tmp_path: Path) -> None:
+def test_run_local_feedback_cycle_prepends_repo_root_to_pythonpath(
+    tmp_path: Path,
+) -> None:
     fake_job = _prepare_fake_job(tmp_path)
     env = _base_env(tmp_path, fake_job)
     env["LOCAL_FEEDBACK_CYCLE_DYNAMIC_ALLOC_CMD"] = (
@@ -382,12 +505,16 @@ def test_run_local_feedback_cycle_prepends_repo_root_to_pythonpath(tmp_path: Pat
 
     _run_cycle(tmp_path, force=True, env=env)
 
-    dynamic_output = json.loads((tmp_path / "outputs" / "dynamic.json").read_text(encoding="utf-8"))
+    dynamic_output = json.loads(
+        (tmp_path / "outputs" / "dynamic.json").read_text(encoding="utf-8")
+    )
     assert dynamic_output["marker"] == "dynamic"
     assert str(REPO_ROOT) in str(dynamic_output["env_value"]).split(os.pathsep)
 
 
-def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Path) -> None:
+def test_run_local_feedback_cycle_respects_intervals_without_force(
+    tmp_path: Path,
+) -> None:
     fake_job = _prepare_fake_job(tmp_path)
     env = _base_env(tmp_path, fake_job)
 
@@ -401,6 +528,8 @@ def test_run_local_feedback_cycle_respects_intervals_without_force(tmp_path: Pat
     assert jobs["dynamic_alloc"]["reason"] == "interval_not_elapsed"
     assert jobs["entry_path_aggregator"]["status"] == "skipped"
     assert jobs["entry_path_aggregator"]["reason"] == "interval_not_elapsed"
+    assert jobs["lane_scoreboard"]["status"] == "skipped"
+    assert jobs["lane_scoreboard"]["reason"] == "interval_not_elapsed"
     assert jobs["participation_allocator"]["status"] == "skipped"
     assert jobs["participation_allocator"]["reason"] == "interval_not_elapsed"
     assert jobs["market_context"]["status"] == "skipped"

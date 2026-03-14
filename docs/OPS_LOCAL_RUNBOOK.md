@@ -156,7 +156,7 @@ scripts/uninstall_local_v2_launchd.sh
   を再実行して plist を再生成する。
 - `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開し、sleep/wake 相当のポーリングギャップと network down→up をログ記録する。
 - `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_local_feedback_cycle.py` を非同期起動し、
-  `dynamic_alloc / pattern_book / trade_counterfactual / replay_quality_gate / trade_findings_draft` を
+  `dynamic_alloc / entry_path_aggregator / lane_scoreboard / participation_allocator / pattern_book / trade_counterfactual / replay_quality_gate / trade_findings_draft` を
   ローカルでも interval 管理付きで再計算する（既定ON）。
   `strategy_feedback` は `local_v2_stack` 管理サービス側で loop 更新するため、
   cycle 側は既定OFF。必要時だけ `LOCAL_FEEDBACK_CYCLE_STRATEGY_FEEDBACK_ENABLED=1`
@@ -167,6 +167,8 @@ scripts/uninstall_local_v2_launchd.sh
   `local_feedback_cycle_latest.json` 全体を false positive の `error` にしない。
   - 全体ON/OFF: `QR_LOCAL_V2_FEEDBACK_CYCLE_ENABLED=1|0`
   - 各jobは `LOCAL_FEEDBACK_CYCLE_<JOB>_{ENABLED,INTERVAL_SEC,TIMEOUT_SEC,CMD,ENV_FILES,OUTPUTS}` で上書きできる。
+  - `lane_scoreboard` job の override key は
+    `LOCAL_FEEDBACK_CYCLE_LANE_SCOREBOARD_*` を正とする。
   - `participation_allocator` job の override key は
     `LOCAL_FEEDBACK_CYCLE_PARTICIPATION_ALLOCATOR_*` を正とする。
     `CMD` に空白を含む場合は env 値全体を必ずクォートする。
