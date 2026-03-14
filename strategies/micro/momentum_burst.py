@@ -34,6 +34,21 @@ LONG_BULL_RUN_ROC5_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_ROC5_MIN",
 LONG_BULL_RUN_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_EMA_SLOPE_MIN", "0.0008"))
 LONG_BULL_RUN_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_GAP_MIN", "14.0"))
 LONG_BULL_RUN_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_ADX_MIN", "22.0"))
+TRANSITION_LONG_OVERBOUGHT_RSI_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_OVERBOUGHT_RSI_MIN", "66.0")
+)
+TRANSITION_LONG_OVERBOUGHT_ATR_MAX = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_OVERBOUGHT_ATR_MAX", "3.4")
+)
+TRANSITION_LONG_PULLBACK_CLOSE_POS_MAX = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_PULLBACK_CLOSE_POS_MAX", "0.72")
+)
+TRANSITION_LONG_PULLBACK_UPPER_WICK_MAX = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_PULLBACK_UPPER_WICK_MAX", "1.0")
+)
+TRANSITION_LONG_PULLBACK_UPPER_WICK_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_PULLBACK_UPPER_WICK_ATR_MULT", "0.28")
+)
 RSI_SHORT_MIN = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MIN", "34"))
 RSI_SHORT_MAX = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MAX", "44"))
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
@@ -718,6 +733,53 @@ class MomentumBurstMicro:
         return TRANSITION_LONG_RSI_MIN
 
     @staticmethod
+    def _transition_long_pullback_ok(
+        fac: Dict,
+        *,
+        atr_pips: float,
+        rsi: float,
+        candles: Sequence[Dict],
+        reaccel: bool,
+    ) -> bool:
+        if reaccel:
+            return True
+        if str(fac.get("range_mode") or "").strip().lower() != "transition":
+            return True
+        if rsi < TRANSITION_LONG_OVERBOUGHT_RSI_MIN or atr_pips > TRANSITION_LONG_OVERBOUGHT_ATR_MAX:
+            return True
+        snapshot = fac.get("trend_snapshot")
+        if not isinstance(snapshot, dict):
+            return True
+        if str(snapshot.get("direction") or "").strip().lower() != "long":
+            return True
+        try:
+            snap_gap_pips = abs(float(snapshot.get("gap_pips") or 0.0))
+        except (TypeError, ValueError):
+            snap_gap_pips = 0.0
+        try:
+            snap_adx = float(snapshot.get("adx") or 0.0)
+        except (TypeError, ValueError):
+            snap_adx = 0.0
+        if (
+            snap_gap_pips < TRANSITION_LONG_TREND_GAP_MIN
+            or snap_adx < TRANSITION_LONG_TREND_ADX_MIN
+        ):
+            return True
+        if not candles:
+            return True
+        current = MomentumBurstMicro._candle_shape(candles[-1])
+        if current is None:
+            return True
+        upper_limit = max(
+            TRANSITION_LONG_PULLBACK_UPPER_WICK_MAX,
+            atr_pips * TRANSITION_LONG_PULLBACK_UPPER_WICK_ATR_MULT,
+        )
+        return (
+            float(current["close_pos"]) <= TRANSITION_LONG_PULLBACK_CLOSE_POS_MAX
+            and float(current["upper_pips"]) <= upper_limit
+        )
+
+    @staticmethod
     def _apply_context_tilt(signal: Dict, fac: Dict, *, reaccel: bool) -> Dict | None:
         range_active = bool(fac.get("range_active"))
         range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
@@ -844,6 +906,13 @@ class MomentumBurstMicro:
             and drift_pips > DRIFT_PIPS_FLOOR
             and MomentumBurstMicro._long_reaccel_followthrough_ok(
                 atr_pips=atr_pips,
+                candles=candles,
+                reaccel=long_reaccel,
+            )
+            and MomentumBurstMicro._transition_long_pullback_ok(
+                fac,
+                atr_pips=atr_pips,
+                rsi=rsi,
                 candles=candles,
                 reaccel=long_reaccel,
             )

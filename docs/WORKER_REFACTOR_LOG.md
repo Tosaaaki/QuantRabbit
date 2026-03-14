@@ -5,6 +5,65 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-14 09:55 JST - `MomentumBurst` overbought transition long を pullback 条件へ戻す
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `2026-03-13 22:18 JST`
+    反映後の active window では
+    `MomentumBurst 14 trades / -49.06 JPY`
+    で、
+    `STOP_LOSS_ORDER 10 / -435.8 JPY`
+    が main drag だった。
+  - loser の本丸は
+    `MomentumBurst-open_long|long|transition|...|macro:trend_long`
+    の
+    high-confidence long で、
+    `6 trades / -346.744 JPY`
+    を削っていた。
+  - 一方で同日の
+    `2026-03-14 09:42 JST`
+    preflight は
+    `spread=1.2p / tick_stale=13398s / data_lag_ms=15263 / fills_30m=0`
+    の
+    `warn`
+    だったため、
+    live verdict 自体は reopen 後へ持ち越す必要がある。
+- 変更:
+  - `_transition_long_pullback_ok()`
+    を追加し、
+    non-reaccel
+    `MomentumBurst-open_long`
+    で
+    `range_mode=transition`
+    /
+    `rsi>=66`
+    /
+    `atr_pips<=3.4`
+    /
+    strong
+    `trend_snapshot`
+    のときだけ、
+    current candle の
+    `close_pos<=0.72`
+    と
+    `upper_wick<=max(1.0p, atr*0.28)`
+    を必須化した。
+  - これにより
+    `upper-wick chase`
+    を落としつつ、
+    controlled pullback long は維持する。
+  - `tests/strategies/test_momentum_burst.py`
+    に helper block/keep と signal block/keep を追加した。
+- 意図:
+  - shared gate や broad cadence を触らず、
+    `MomentumBurst transition long`
+    の narrow loser lane だけを strategy-local に圧縮する。
+
 ### 2026-03-13 21:35 JST - `TRADE_FINDINGS` lint/index を preflight と hook に統合
 
 - 対象:

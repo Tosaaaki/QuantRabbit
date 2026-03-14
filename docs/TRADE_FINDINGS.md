@@ -65,6 +65,225 @@
 - 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
 - close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
 
+## 2026-03-14 09:55 JST / local-v2: `MomentumBurst` の overbought transition long chase を worker-local pullback 条件に戻す
+
+- Hypothesis Key:
+  - `momentumburst_transition_pullback_guard_20260314`
+- Primary Loss Driver:
+  - `STOP_LOSS_ORDER`
+- Mechanism Fired:
+  - `0`
+- Do Not Repeat Unless:
+  - reopen 後の active window で
+    `MomentumBurst-open_long|long|transition|...|macro:trend_long`
+    が再び dominant loser のまま残り、
+    今回の pullback guard が live path で発火しても
+    `filled`
+    と
+    `STOP_LOSS_ORDER`
+    寄与が縮まらない時だけ次の tightening を検討する。
+
+- Change:
+  - `strategies/micro/momentum_burst.py`
+    に
+    `_transition_long_pullback_ok()`
+    を追加し、
+    non-reaccel の
+    `MomentumBurst-open_long`
+    で
+    `range_mode=transition`
+    /
+    `rsi>=66`
+    /
+    `atr_pips<=3.4`
+    /
+    `trend_snapshot.direction=long`
+    /
+    `trend_snapshot gap/adx` が十分
+    のときだけ、
+    current candle の
+    `close_pos<=0.72`
+    と
+    `upper_wick<=max(1.0p, atr*0.28)`
+    を必須化した。
+  - `tests/strategies/test_momentum_burst.py`
+    に helper block/keep と signal block/keep の回帰を追加した。
+
+- Why:
+  - `2026-03-13 22:18 JST`
+    反映後の active window
+    （`2026-03-13 22:18 JST - 2026-03-14 05:28 JST`）
+    では
+    `MomentumBurst 14 trades / -49.06 JPY`
+    で、
+    `STOP_LOSS_ORDER 10 trades / -435.8 JPY`
+    が
+    `TAKE_PROFIT_ORDER 4 trades / +386.74 JPY`
+    を食っていた。
+  - loser の本丸は
+    `MomentumBurst-open_long|long|transition|...|macro:trend_long`
+    で、
+    この subset だけで
+    `6 trades / -346.744 JPY`
+    を削っていた。
+  - 対して winner は
+    `trend_long`
+    が中心で、
+    `transition`
+    でも surviving winner は
+    controlled pullback candle
+    （`spin_dn / balanced`）
+    だった。
+  - つまり broad cadence 不足ではなく、
+    `transition long`
+    の overbought chase を high-confidence で通している narrow lane が current 主因だった。
+
+- Hypothesis:
+  - `transition long`
+    の overbought / ultra-low-ATR lane では、
+    fresh chase candle を通すより
+    pullback/absorption 型の current candle に限定した方が、
+    winner の `macro:trend_long`
+    を残したまま
+    `STOP_LOSS_ORDER`
+    を減らせる。
+
+- Expected Good:
+  - `MomentumBurst-open_long`
+    の
+    `transition`
+    loser lane
+    （`overbought + macro:trend_long + ultra_low ATR + upper-wick chase`）
+    だけを strategy-local に薄くできる。
+  - `trend_long`
+    winner や
+    controlled pullback 型の
+    `transition long`
+    は維持できる。
+
+- Expected Bad:
+  - `transition`
+    の early continuation winner を一部取りこぼす可能性がある。
+  - そのため
+    reaccel は対象外にし、
+    `range_mode=transition`
+    かつ
+    `rsi>=66`
+    /
+    `atr<=3.4`
+    /
+    strong higher-TF support
+    の narrow lane に限定した。
+
+- Period:
+  - RCA window:
+    `2026-03-13 13:18 UTC - 2026-03-13 20:28 UTC`
+    （`2026-03-13 22:18 JST - 2026-03-14 05:28 JST`）
+  - market hold check:
+    `2026-03-14 00:42 UTC`
+    （`2026-03-14 09:42 JST`）
+
+- Fact:
+  - active window の
+    `MomentumBurst`
+    は
+    `14 trades / -49.06 JPY`
+    で、
+    close reason 内訳は
+    `STOP_LOSS_ORDER 10 / -435.8 JPY`,
+    `TAKE_PROFIT_ORDER 4 / +386.74 JPY`
+    だった。
+  - worst fingerprints は
+    `MomentumBurst-open_long|long|transition|tight_normal|...|macro:trend_long`
+    で、
+    `entry_probability=0.886-0.959`,
+    `trend_snapshot gap=49.865p`,
+    `trend_snapshot adx=21.59`
+    の high-confidence long が
+    `-127.77 / -78.327 / -44.34 / -39.825 / -30.15 / -26.332 JPY`
+    を出していた。
+  - 一方で
+    `2026-03-14 09:42 JST`
+    の preflight は
+    `USD/JPY 159.727 / 159.739`,
+    `spread=1.2p`,
+    `tick_stale=13398.2s`,
+    `data_lag_ms=15263.3`,
+    `fills_30m=0`
+    で
+    `warn`
+    だった。
+    そのため live verdict は market reopen 後まで保留する。
+  - 実装/検証:
+    - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/strategies/test_momentum_burst.py`
+      -> `43 passed`
+    - `python3 -m py_compile strategies/micro/momentum_burst.py tests/strategies/test_momentum_burst.py`
+      -> 成功
+
+- Failure Cause:
+  - 2026-03-12 に loosen した
+    `MomentumBurst-open_long`
+    の
+    `transition`
+    lane が、
+    strong higher-TF support を根拠に
+    overbought chase candle まで high confidence で通していた。
+  - non-reaccel long に
+    `current candle must be controlled pullback`
+    という条件が無く、
+    `upper wick`
+    を残した shallow continuation を区別できていなかった。
+
+- Improvement:
+  - `transition long`
+    の overbought macro-trend lane にだけ
+    pullback candle guard を追加し、
+    `upper-wick chase`
+    を worker-local に落とす。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/strategies/test_momentum_burst.py`
+    -> `43 passed`
+  - `python3 -m py_compile strategies/micro/momentum_burst.py tests/strategies/test_momentum_burst.py`
+    -> 成功
+  - reopen 後の次
+    `30-120m`
+    で
+    `MomentumBurst-open_long|long|transition|...|macro:trend_long`
+    の
+    `filled`
+    と
+    `STOP_LOSS_ORDER`
+    が減るかを確認する。
+
+- Verdict:
+  - pending
+
+- Next Action:
+  - market reopen 後、
+    `MomentumBurst-open_long`
+    の
+    `transition`
+    lane が
+    `filled`
+    から減るか、
+    逆に
+    `trend_long`
+    winner lane を削りすぎていないかを
+    `30-120m`
+    で確認する。
+  - それでも
+    `MomentumBurst`
+    が loser のままなら、
+    次は
+    `range_fade`
+    側の
+    `up_flat`
+    loser lane を separate に切る。
+
+- Status:
+  - pending
+
 ## 2026-03-13 21:35 JST / trade_findings: lint と derived index で台帳の欠損を commit 前に可視化する
 
 - Hypothesis Key:
