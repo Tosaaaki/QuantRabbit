@@ -304,4 +304,5 @@
 - 週次の中間粒度は `docs/REPO_HISTORY_WEEKLY_ANNEX.md` を参照。
 - 日付単位の raw ledger は `docs/REPO_HISTORY_DAILY_ANNEX.md` を参照。
 - 反復テーマの解釈メモは `docs/REPO_HISTORY_RECURRING_THEMES.md` を参照。
+- `TRADE_FINDINGS` の current lane と履歴の往復は `docs/REPO_HISTORY_LANE_INDEX.md` を参照。
 - 将来的にさらに細かい版が必要なら、次段階として `日次 annex` を `git log --date=short` から自動生成する余地がある。

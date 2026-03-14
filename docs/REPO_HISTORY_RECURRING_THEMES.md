@@ -1,6 +1,7 @@
 # QuantRabbit 履歴から見える反復テーマ
 
 - この文書は [REPO_HISTORY_MINUTES.md](./REPO_HISTORY_MINUTES.md) と各 annex を読んだうえで、「この repo が何を何度も悩んでいたか」を整理したメモです。
+- current live lane と長期履歴を直接つなぐ索引は [REPO_HISTORY_LANE_INDEX.md](./REPO_HISTORY_LANE_INDEX.md) を参照してください。
 - 数値は commit subject の簡易キーワード走査による近似です。厳密な分類ではなく、設計上の重心を見るための補助指標として使ってください。
 - `docs/REPO_HISTORY_*` と `scripts/generate_repo_history_minutes.py` だけを触る履歴メンテ commit はノイズになるため、annex 生成時の集計からは外しています。
 

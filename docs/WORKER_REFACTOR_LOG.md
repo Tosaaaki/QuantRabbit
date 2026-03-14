@@ -85,6 +85,59 @@
     same-hypothesis loop
     だけを止める。
 
+### 2026-03-14 18:10 JST - `TRADE_FINDINGS` の lane と repo history を往復する cross-index を追加
+
+- 対象:
+  - `scripts/generate_repo_history_lane_index.py`
+  - `docs/REPO_HISTORY_LANE_INDEX.md`
+  - `docs/REPO_HISTORY_MINUTES.md`
+  - `docs/REPO_HISTORY_RECURRING_THEMES.md`
+  - `docs/INDEX.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `REPO_HISTORY_*`
+    は長期の流れを見る資料として整ったが、
+    `TRADE_FINDINGS`
+    の
+    current
+    `Hypothesis Key`
+    と
+    「その論点を repo 全体で何回触ったか」
+    を同時に引く導線が無かった。
+  - anti-loop 規律を実運用で使うには、
+    same lane の再調整頻度を history 側からも辿れる必要がある。
+- 変更:
+  - `scripts/generate_repo_history_lane_index.py`
+    を追加し、
+    `TRADE_FINDINGS`
+    の
+    `Hypothesis Key`
+    を lane、
+    `strategy × Primary Loss Driver`
+    を family として集計するようにした。
+  - script は
+    `git log`
+    の subject / changed path を heuristic match し、
+    lane ごとの
+    `history_commit_count`
+    と recent history sample を
+    `docs/REPO_HISTORY_LANE_INDEX.md`
+    へ出力する。
+  - `docs/REPO_HISTORY_MINUTES.md`
+    と
+    `docs/REPO_HISTORY_RECURRING_THEMES.md`
+    と
+    `docs/INDEX.md`
+    から新しい cross-index へ辿れるよう更新した。
+- 意図:
+  - `TRADE_FINDINGS`
+    の
+    current lane
+    と
+    repo 全体の recurring topic
+    を 1 hop で往復できるようにし、
+    same-lane loop を「勘」ではなく history count でも見えるようにする。
+
 ### 2026-03-14 09:55 JST - `MomentumBurst` overbought transition long を pullback 条件へ戻す
 
 - 対象:
