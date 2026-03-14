@@ -43,4 +43,4 @@
 | 2026-W08 | 2026-02-16〜2026-02-22 | 258 | workers, docs, ops | fix(scalp-5s): add resilient open-position fetch and open-market retry logs / fix(scalp-5s): tolerate missing BLOCK_HOURS_JST in config / +256 more |
 | 2026-W09 | 2026-02-23〜2026-03-01 | 303 | docs, ops, tests | tune forecast dynamic meta rnd056 / tune forecast dynamic meta rnd087 / +301 more |
 | 2026-W10 | 2026-03-02〜2026-03-08 | 169 | docs, ops, workers | chore: relax scalp_ping_5s_b entry gates to unblock live entries / docs: require market check before execution / +167 more |
-| 2026-W11 | 2026-03-09〜2026-03-15 | 239 | docs, tests, workers | fix: tighten local reversal guards / fix: harden local loser entry paths / +237 more |
+| 2026-W11 | 2026-03-09〜2026-03-15 | 237 | docs, tests, workers | fix: tighten local reversal guards / fix: harden local loser entry paths / +235 more |

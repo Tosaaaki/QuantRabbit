@@ -176,4 +176,4 @@
 | 2026-03-11 | 35 | docs, tests, workers | docs: formalize trade findings change diary / fix: restore boosted lane feedback coverage / +33 more |
 | 2026-03-12 | 53 | docs, tests, workers | fix(feedback): repair local strategy coverage / fix(trading): block shallow extrema reversal shorts / +51 more |
 | 2026-03-13 | 40 | docs, tests, workers | fix: tighten extrema reversal short setup-pressure guard / fix(local-v2): tighten precision lowvol and extrema guards / +38 more |
-| 2026-03-14 | 5 | docs, scripts, AGENTS.md | fix(trading): tighten momentumburst transition long chase / feat(ops): add anti-loop improvement guardrails / +3 more |
+| 2026-03-14 | 3 | docs, scripts, AGENTS.md | fix(trading): tighten momentumburst transition long chase / feat(ops): add anti-loop improvement guardrails / +1 more |

@@ -26,6 +26,14 @@ class CommitEntry:
     files: tuple[str, ...]
 
 
+def _is_history_maintenance_path(path: str) -> bool:
+    return (
+        path == "docs/INDEX.md"
+        or path == "scripts/generate_repo_history_minutes.py"
+        or path.startswith("docs/REPO_HISTORY_")
+    )
+
+
 def _git_history() -> list[CommitEntry]:
     out = subprocess.check_output(
         [
@@ -47,14 +55,15 @@ def _git_history() -> list[CommitEntry]:
         if line.startswith("@@@"):
             if current is not None:
                 date, short_hash, subject = current
-                entries.append(
-                    CommitEntry(
-                        date=date,
-                        short_hash=short_hash,
-                        subject=subject,
-                        files=tuple(files),
+                if not files or not all(_is_history_maintenance_path(path) for path in files):
+                    entries.append(
+                        CommitEntry(
+                            date=date,
+                            short_hash=short_hash,
+                            subject=subject,
+                            files=tuple(files),
+                        )
                     )
-                )
             if line.startswith("@@@END"):
                 break
             current = tuple(line[3:].split("\t", 2))  # type: ignore[assignment]

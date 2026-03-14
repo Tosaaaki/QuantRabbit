@@ -24475,3 +24475,128 @@ Status:
     の両方で
     `STOP_LOSS_ORDER`
     が減るかを 6h 集計で見直す。
+
+## 2026-03-14 13:02 JST / repo history docs: 週末クローズ帯のため live 判定は hold、docs/script は offline 継続
+
+Period:
+- 確認: JST `12:58-13:02`
+- 対象（実測）:
+  `logs/health_snapshot.json`,
+  `logs/tick_cache.json`,
+  `logs/factor_cache.json`,
+  `logs/oanda_account_snapshot_live.json`,
+  `logs/local_v2_stack/quant-market-data-feed.log`
+- 対象タスク:
+  `docs/REPO_HISTORY_*`
+  と
+  `scripts/generate_repo_history_minutes.py`
+  の commit / push
+
+Fact:
+- `scripts/collect_local_health.sh`
+  は
+  `2026-03-14 12:58:27 JST`
+  に
+  `logs/health_snapshot.json`
+  を更新し、
+  `mechanism_integrity=yes`
+  を確認した。
+- 直近の
+  `tick_cache`
+  は
+  `2026-03-14 05:59:05 JST`
+  で停止しており、
+  `USD/JPY bid=159.727 / ask=159.739 / spread=1.2p`
+  のまま
+  `tick_age_sec=25351.3`
+  だった。
+- `factor_cache`
+  も
+  `M1=2026-03-14 05:59 JST`
+  (`ATR14=0.995p`),
+  `M5=2026-03-14 05:55 JST`
+  (`ATR14=2.565p`)
+  で止まっており、
+  `m1_age_sec=25356.4`,
+  `m5_age_sec=25596.4`
+  だった。
+- `logs/oanda_account_snapshot_live.json`
+  も
+  `2026-03-14 06:57:58 JST`
+  で停止し、
+  `age_sec=21817.8`
+  だった。
+- `quant-market-data-feed.log`
+  では
+  `2026-03-14 08:07:41-08:08:33 JST`
+  に
+  OANDA
+  `pricing/stream`
+  の
+  `503 Service Unavailable`
+  再接続が連続した。
+  その後
+  `2026-03-14 08:08:36 JST`
+  と
+  `2026-03-14 11:49:58 JST`
+  に
+  `HTTP 200 OK`
+  は確認できたが、
+  上記 cache / snapshot は更新再開していない。
+- 直近 30 分の
+  `orders.db`
+  は
+  `fills_30m=0`,
+  `rejects_30m=0`
+  だった。
+- `2026-03-14`
+  は
+  `Saturday`
+  で、
+  USD/JPY spot の週末クローズ帯に当たる。
+  次の通常再開は
+  `2026-03-16 06:00 JST`
+  （`2026-03-15 17:00 America/New_York`）
+  だった。
+
+Failure Cause:
+- stale に見えた主因は障害継続ではなく、
+  `2026-03-14` 土曜の週末クローズ帯で
+  live market data が進まないことだった。
+- `pricing/stream` の
+  `503`
+  は補助的なノイズとして記録するが、
+  現時点で commit/push の blocker を
+  「runtime fault 復旧待ち」とみなすのは過剰。
+- AGENTS の着手前チェック要件では、
+  close/stale window の
+  live 判定や live 反映確認は hold とする。
+
+Improvement:
+- 本タスクは
+  `docs/REPO_HISTORY_*`
+  と
+  `scripts/generate_repo_history_minutes.py`
+  の
+  docs/script-only 変更なので、
+  live restart / live verdict は行わず、
+  offline の commit / push までは進める。
+- 運用ログ
+  `logs/ops_v2_audit_20260314_1302_git_hold.json`
+  には
+  close window の hold 判断を退避し、
+  live 再開判定は週明けへ持ち越す。
+
+Verification:
+- 再開条件:
+  - `tick_cache` が 300 秒以内に更新されること
+  - `factor_cache` の `M1/M5` timestamp が進むこと
+  - `oanda_account_snapshot_live.json` が再更新されること
+  - `quant-market-data-feed.log` で `pricing/stream` の `503` が収束し、
+    `200 OK` 後に cache 更新が再開すること
+- 今回の docs/script タスクでは、
+  上記の live 再開条件を待たずに
+  commit / push を進めてよい。
+
+Status:
+- live_hold / docs_only_proceed

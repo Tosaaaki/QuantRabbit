@@ -14,4 +14,4 @@
 | 2025-12 | 316 | 23 | workers, execution, main.py | Improve momentum burst gating and allow cooldown disable / Disable news strategies and harden fast scalp ATR / +314 more |
 | 2026-01 | 457 | 28 | workers, execution, systemd | Lower scalp absolute lot floor to 0.001 / Drop scalp absolute lot floor to 0.0005 / +455 more |
 | 2026-02 | 883 | 25 | .gcloud, workers, docs | Add daily maintenance window and stabilize tick stream / Increase scalp cadence and sizing defaults / +878 more |
-| 2026-03 | 420 | 13 | docs, tests, workers | chore(ops): retune scalp b/c gates and enforce v2 runtime route / docs: require multi-agent task execution in AGENTS / +418 more |
+| 2026-03 | 417 | 13 | docs, tests, workers | chore(ops): retune scalp b/c gates and enforce v2 runtime route / docs: require multi-agent task execution in AGENTS / +415 more |
