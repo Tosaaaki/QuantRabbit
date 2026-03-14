@@ -45,6 +45,7 @@
 - `docs/TASKS.md`: リポジトリ全体タスク台帳
 - `docs/TRADE_FINDINGS.md`: 改善/敗因の単一台帳兼 change diary（good/bad/pending と次アクションを残す）
 - `docs/REPO_HISTORY_MINUTES.md`: リポジトリ全履歴から再構成した開発議事録
+- `docs/REPO_HISTORY_WEEKLY_ANNEX.md`: 履歴議事録の週次 summary annex
 - `docs/REPO_HISTORY_DAILY_ANNEX.md`: active date ごとの commit 履歴を日次で追う annex
 
 ## その他

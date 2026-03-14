@@ -300,5 +300,6 @@
 
 - この文書は「過去を全部遡った初回版」として置き、以後は月次か major deploy 単位で追記するのが現実的。
 - 実運用の改善履歴は引き続き `docs/TRADE_FINDINGS.md` に集約し、この文書は「長期の流れ」と「大きな設計転換」の記録に使う。
+- 週次の中間粒度は `docs/REPO_HISTORY_WEEKLY_ANNEX.md` を参照。
 - 日付単位の raw ledger は `docs/REPO_HISTORY_DAILY_ANNEX.md` を参照。
 - 将来的にさらに細かい版が必要なら、次段階として `日次 annex` を `git log --date=short` から自動生成する余地がある。
