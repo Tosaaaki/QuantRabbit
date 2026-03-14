@@ -21,8 +21,11 @@
   - `Change`（何を変えたか）
   - `Why`（なぜ今それをやるか）
   - `Hypothesis`（どう効く想定か）
+  - `Why Not Same As Last Time`（前回と何が違うか）
   - `Expected Good`（期待した改善）
   - `Expected Bad`（想定した副作用/悪化条件）
+  - `Promotion Gate`（どの条件なら改善を積み上げてよいか）
+  - `Escalation Trigger`（どの条件なら次の微調整をやめるか）
   - `Period`（集計期間）
   - `Fact`（数値）
   - `Failure Cause`（敗因）
@@ -43,8 +46,11 @@
 - Change:
 - Why:
 - Hypothesis:
+- Why Not Same As Last Time:
 - Expected Good:
 - Expected Bad:
+- Promotion Gate:
+- Escalation Trigger:
 - Period:
 - Fact:
 - Failure Cause:
@@ -61,9 +67,174 @@
 - `scripts/trade_findings_lint.py` は `2026-03-13 20:00` 以降の entry に required fields と `Hypothesis Key` format を要求する。`scripts/trade_findings_index.py` は `logs/trade_findings_index_latest.{json,md}` に latest key / unresolved / dominant loss driver の derived index を出す。
 - `Hypothesis Key` は stable な `snake_case` を使い、同じ仮説で別名を増やさない。新しい名前を作る前に既存 key を review/index で確認する。
 - 新しい改善エントリには `Hypothesis Key` / `Primary Loss Driver` / `Mechanism Fired` / `Do Not Repeat Unless` を必須で残す。
+- `2026-03-14 10:00 JST` 以降の新規 entry には `Why Not Same As Last Time` / `Promotion Gate` / `Escalation Trigger` も必須。これが具体化できない変更は、同じ改善の焼き直しとして実装しない。
 - `Mechanism Fired` は `fired=0` や `none` も含めて明記する。発火していない仕組みを、主損失ドライバ不変のまま繰り返さない。
 - 直近の同系改善で `Verdict=bad|pending|mixed` かつ `Primary Loss Driver` が同じなら、何を変えるのかを `Why` に書かずに同じ改善を再実施しない。
 - close reason が主因なら、`STOP_LOSS_ORDER` / `MARKET_ORDER_TRADE_CLOSE` / `TAKE_PROFIT_ORDER` など dominant reason を `Primary Loss Driver` にそのまま書く。
+- 同じ `strategy/setup_fingerprint/Primary Loss Driver` では `pending` entry を 1 本だけ持つ。次の tweak は前回 entry の `Promotion Gate` か `Escalation Trigger` を判定してから入れる。
+- `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り threshold の往復を禁止する。
+- stale / close / abnormal market window は `market_hold` として扱い、改善 verdict を出さない。reopen 後の評価窓を別に切る。
+
+## 2026-03-14 10:15 JST / trade_findings: 同じ改善を回し続けない anti-loop 規律を導入
+
+- Hypothesis Key:
+  - `anti_loop_improvement_protocol_20260314`
+- Primary Loss Driver:
+  - 同じ lane で `pending` の微調整を積み続け、
+    改善が改善にならず平行線になること
+- Mechanism Fired:
+  - `scripts/trade_findings_review.py`
+    の checklist に
+    anti-loop 項目を追加。
+  - `scripts/trade_findings_lint.py`
+    は
+    `2026-03-14 10:00 JST`
+    以降の entry に
+    `Why Not Same As Last Time / Promotion Gate / Escalation Trigger`
+    を要求する。
+  - `AGENTS.md`
+    /
+    `docs/AGENT_COLLAB_HUB.md`
+    /
+    `docs/OPS_LOCAL_RUNBOOK.md`
+    の運用規律を更新した。
+- Do Not Repeat Unless:
+  - 同じ lane の焼き直しが
+    `Why Not Same As Last Time`
+    を書いても still 通ると確認できるまでは、
+    別の台帳や別ルールを増やさず、
+    preflight/lint/review を拡張する。
+
+- Change:
+  - `AGENTS.md`
+    に
+    `pending 1本制限`,
+    `tighten->reopen->tighten 禁止`,
+    `2回連続 bad/pending なら微調整から昇格`
+    を追加した。
+  - `docs/TRADE_FINDINGS.md`
+    の template / protocol に
+    `Why Not Same As Last Time / Promotion Gate / Escalation Trigger`
+    を追加した。
+  - `scripts/trade_findings_review.py`
+    と
+    `scripts/trade_findings_lint.py`
+    を anti-loop 前提へ更新した。
+
+- Why:
+  - 直近の運用では、
+    同じ
+    `Primary Loss Driver`
+    のまま
+    narrow tweak を積み、
+    `pending`
+    が積み上がる一方で
+    何が前回と違うのか、
+    いつ改善と判定するのか、
+    いつ微調整をやめるのかが弱かった。
+  - これでは改善ではなく
+    「同じ場所を回る管理」
+    になりやすい。
+
+- Hypothesis:
+  - 新規改善 entry に
+    `前回と何が違うか`
+    と
+    `改善/失敗の判定線`
+    を強制すれば、
+    same-lane の threshold churn が減り、
+    微調整から rollback / redesign への昇格が早くなる。
+
+- Why Not Same As Last Time:
+  - 既存ルールは
+    `Hypothesis Key / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless`
+    までで、
+    `今回どこが前回と違うか`
+    と
+    `成功/失敗の gate`
+    を entry 自体へ必須化していなかった。
+  - 今回は
+    `AGENTS`
+    だけでなく
+    `lint/review`
+    まで変えて、
+    書き忘れではなく commit 前に止める形へ変える。
+
+- Expected Good:
+  - 同じ lane の改善を
+    `pending`
+    のまま積み増ししにくくなる。
+  - `Promotion Gate`
+    が無い tweak と
+    `Escalation Trigger`
+    が無い tweak が entry 時点で減る。
+  - rollback / redesign / lane分離へ昇格すべき局面が早く見える。
+
+- Expected Bad:
+  - entry 記述の負荷は増える。
+  - 旧 entry は backfill しない限り、
+    新形式ほどの検索精度は出ない。
+
+- Promotion Gate:
+  - `2026-03-14 10:00 JST`
+    以降の新規 entry で
+    `Why Not Same As Last Time / Promotion Gate / Escalation Trigger`
+    が lint 必須になること。
+  - preflight review が新項目を表示し、
+    次の改善着手時に agent が読み返せること。
+
+- Escalation Trigger:
+  - same-lane の tweak が
+    新項目を書いても still 平行線になる、
+    または agent が `pending`
+    の前回 entry を無視して次の tweak を入れるなら、
+    `review/index/guard`
+    で duplicate pending lane をさらに強く検出する。
+
+- Period:
+  - `2026-03-14 10:00 JST` 以降の運用ルール
+
+- Fact:
+  - この変更は runtime ではなく process change であり、
+    直接の PnL はまだ持たない。
+  - `scripts/trade_findings_lint.py`
+    と
+    `scripts/trade_findings_review.py`
+    の更新で、
+    新形式 entry の必須項目を commit 前 review / lint に載せる。
+
+- Failure Cause:
+  - 改善 entry が
+    `何を試したか`
+    は残していても、
+    `何が前回と違うか`
+    と
+    `どの条件なら次の微調整を止めるか`
+    を強制していなかった。
+
+- Improvement:
+  - anti-loop field の mandatory 化と、
+    AGENTS / review / lint の同時更新。
+
+- Verification:
+  - `python3 scripts/trade_findings_lint.py`
+    が通ること。
+  - `python3 scripts/trade_findings_review.py --query 'anti_loop pending' --limit 3`
+    で新項目が見えること。
+
+- Verdict:
+  - pending
+
+- Next Action:
+  - 次の改善 task から、
+    新項目を書けない tweak を実際に却下できるかを確認する。
+  - same-lane の duplicate pending が still 出るなら、
+    次は review/index 側で
+    `repeat-risk family`
+    の集計を追加する。
+
+- Status:
+  - done
 
 ## 2026-03-14 09:55 JST / local-v2: `MomentumBurst` の overbought transition long chase を worker-local pullback 条件に戻す
 

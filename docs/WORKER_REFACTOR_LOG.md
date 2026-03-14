@@ -5,6 +5,52 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-14 10:15 JST - anti-loop 改善規律を AGENTS / review / lint に導入
+
+- 対象:
+  - `AGENTS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `scripts/trade_findings_review.py`
+  - `scripts/trade_findings_lint.py`
+- 背景:
+  - 同じ lane の
+    `pending`
+    tweak を積み続けると、
+    「何が前回と違うか」
+    と
+    「いつ微調整をやめるか」
+    が弱くなり、
+    改善が平行線になりやすい。
+  - 既存の記録規律だけでは、
+    anti-loop 項目が commit 前に強制されていなかった。
+- 変更:
+  - `AGENTS.md`
+    と運用 docs に
+    `pending 1本制限`,
+    `tighten->reopen->tighten 禁止`,
+    `2回連続 bad/pending なら微調整から昇格`
+    を追加した。
+  - `docs/TRADE_FINDINGS.md`
+    の template / protocol に
+    `Why Not Same As Last Time / Promotion Gate / Escalation Trigger`
+    を追加した。
+  - `scripts/trade_findings_review.py`
+    は checklist と出力へ新項目を追加した。
+  - `scripts/trade_findings_lint.py`
+    は
+    `2026-03-14 10:00 JST`
+    以降の entry に新項目を必須化した。
+- 意図:
+  - same-lane の threshold churn を減らし、
+    微調整を積む前に
+    「前回と何が違うか」
+    と
+    「成功/失敗の gate」
+    を agent に明示させる。
+
 ### 2026-03-14 09:55 JST - `MomentumBurst` overbought transition long を pullback 条件へ戻す
 
 - 対象:

@@ -19,6 +19,7 @@ from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
 
 DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
 DEFAULT_STRICT_SINCE = "2026-03-13 20:00"
+DEFAULT_ANTI_LOOP_STRICT_SINCE = "2026-03-14 10:00"
 HEADING_DT_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})")
 KEY_RE = re.compile(r"^[a-z0-9_]+$")
 
@@ -42,11 +43,18 @@ REQUIRED_FIELDS = {
     "Status": ("Status",),
 }
 
+ANTI_LOOP_REQUIRED_FIELDS = {
+    "Why Not Same As Last Time": ("Why Not Same As Last Time",),
+    "Promotion Gate": ("Promotion Gate",),
+    "Escalation Trigger": ("Escalation Trigger",),
+}
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Lint TRADE_FINDINGS entries for required fields.")
     parser.add_argument("--path", default=str(DEFAULT_FINDINGS_PATH))
     parser.add_argument("--strict-since", default=DEFAULT_STRICT_SINCE)
+    parser.add_argument("--anti-loop-strict-since", default=DEFAULT_ANTI_LOOP_STRICT_SINCE)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -80,6 +88,7 @@ def main() -> int:
     args = _parse_args()
     path = Path(args.path).resolve()
     strict_since = datetime.strptime(args.strict_since, "%Y-%m-%d %H:%M")
+    anti_loop_strict_since = datetime.strptime(args.anti_loop_strict_since, "%Y-%m-%d %H:%M")
     entries = _parse_findings(path)
 
     strict_entries = []
@@ -93,6 +102,11 @@ def main() -> int:
             value = _entry_field(entry, *aliases).strip()
             if not value:
                 issues.append(_issue(entry.heading, "missing_field", label))
+        if entry_dt >= anti_loop_strict_since:
+            for label, aliases in ANTI_LOOP_REQUIRED_FIELDS.items():
+                value = _entry_field(entry, *aliases).strip()
+                if not value:
+                    issues.append(_issue(entry.heading, "missing_field", label))
         hypothesis_key = _normalize_key(_entry_field(entry, "Hypothesis Key"))
         if hypothesis_key and not KEY_RE.fullmatch(hypothesis_key):
             issues.append(_issue(entry.heading, "invalid_hypothesis_key", hypothesis_key))
@@ -100,6 +114,7 @@ def main() -> int:
     payload = {
         "source": str(path.relative_to(REPO_ROOT)) if path.is_relative_to(REPO_ROOT) else str(path),
         "strict_since": args.strict_since,
+        "anti_loop_strict_since": args.anti_loop_strict_since,
         "checked_entries": len(entries),
         "strict_entries": len(strict_entries),
         "issues": issues,
@@ -112,6 +127,7 @@ def main() -> int:
         print("TRADE_FINDINGS lint")
         print(f"source: {payload['source']}")
         print(f"strict_since: {payload['strict_since']}")
+        print(f"anti_loop_strict_since: {payload['anti_loop_strict_since']}")
         print(f"checked_entries: {payload['checked_entries']}")
         print(f"strict_entries: {payload['strict_entries']}")
         print(f"ok: {'yes' if payload['ok'] else 'no'}")

@@ -150,6 +150,18 @@ def _build_output(source: Path, entries: list[Entry], query: str, max_chars: int
                     _entry_field(entry, "Do Not Repeat Unless"),
                     max_chars,
                 ),
+                "why_not_same_as_last_time": _compact(
+                    _entry_field(entry, "Why Not Same As Last Time"),
+                    max_chars,
+                ),
+                "promotion_gate": _compact(
+                    _entry_field(entry, "Promotion Gate"),
+                    max_chars,
+                ),
+                "escalation_trigger": _compact(
+                    _entry_field(entry, "Escalation Trigger"),
+                    max_chars,
+                ),
                 "why": _compact(_entry_field(entry, "Why", "Why/Hypothesis"), max_chars),
                 "hypothesis": _compact(_entry_field(entry, "Hypothesis", "Why/Hypothesis"), max_chars),
                 "observed": _compact(
@@ -166,6 +178,8 @@ def _build_output(source: Path, entries: list[Entry], query: str, max_chars: int
             "Confirm the same hypothesis key was not already tried with the same primary loss driver.",
             "Confirm whether the previous mechanism actually fired; fired=0 means it was not the dominant cause.",
             "If the dominant loss driver is unchanged, explain what is different before repeating the change.",
+            "Do not stack another tweak on the same lane while the previous entry is still pending.",
+            "Write Why Not Same As Last Time / Promotion Gate / Escalation Trigger in the next TRADE_FINDINGS entry.",
             "Write Hypothesis Key / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless in the next TRADE_FINDINGS entry.",
         ],
         "entries": items,
@@ -195,6 +209,9 @@ def _print_human(payload: dict[str, Any]) -> None:
             "primary_loss_driver",
             "mechanism_fired",
             "do_not_repeat_unless",
+            "why_not_same_as_last_time",
+            "promotion_gate",
+            "escalation_trigger",
             "why",
             "hypothesis",
             "observed",
