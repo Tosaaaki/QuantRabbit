@@ -44,6 +44,7 @@
 ## タスク / 変更管理
 - `docs/TASKS.md`: リポジトリ全体タスク台帳
 - `docs/TRADE_FINDINGS.md`: 改善/敗因の単一台帳兼 change diary（good/bad/pending と次アクションを残す）
+- `docs/REPO_HISTORY_MINUTES.md`: リポジトリ全履歴から再構成した開発議事録
 
 ## その他
 - `docs/README_GCP_MULTI.md`: 別プロジェクトで動かすための手順書
