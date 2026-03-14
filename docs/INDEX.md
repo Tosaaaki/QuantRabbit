@@ -20,6 +20,7 @@
 - `docs/GCP_DEPLOY_SETUP.md`: 廃止済みgcloudセットアップ手順の履歴アーカイブ（実行対象外）
 - `docs/OPS_CURRENT.md`: 時限の運用設定（攻め設定・mask 済み unit など）
 - `docs/OPS_SKILLS.md`: 日次運用スキルの使い方
+- `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`: `winner lane review` を毎日同じ観点で回す固定 prompt
 - `docs/LOCAL_LANE_SPLIT.md`: VM本番repoとローカル実売買repoを分離する運用手順
 - `scripts/agent_whiteboard.py`: 共有ホワイトボードCLI（local-only / `logs/agent_whiteboard.db`、`auto-session` で開始〜完了を自動記録）
 - `scripts/trade_findings_diary_draft.py`: local artifact から `TRADE_FINDINGS` 用の review draft（`logs/trade_findings_draft_latest.{json,md}`）を生成し、必要時だけ whiteboard へ通知

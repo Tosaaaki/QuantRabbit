@@ -20200,3 +20200,29 @@
     /
     `quarantine`
     だったかを監査しやすくなる。
+
+### 2026-03-14 20:55 JST - 日次 `winner lane review` 用の固定 prompt を docs 配下へ追加
+
+- 対象:
+  - `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/INDEX.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - `winner lane review` は毎日同じ観点で回すべきだが、
+    その都度 prompt を口頭で組み立てると
+    参照 artifact と判定軸が揺れやすい。
+- 変更:
+  - `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
+    を新設し、
+    `change_preflight / lane_scoreboard / participation_alloc / repo history lane index`
+    を前提にした review prompt を固定化した。
+  - `docs/AGENT_COLLAB_HUB.md`
+    と
+    `docs/INDEX.md`
+    から辿れるようにして、
+    毎日の review 手順の入口を一本化した。
+- 期待効果:
+  - 日次 review の評価軸がぶれにくくなる。
+  - `promote / hold / quarantine / graduate_to_strategy`
+    の4区分で毎回同じ形に裁ける。

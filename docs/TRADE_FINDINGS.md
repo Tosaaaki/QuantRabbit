@@ -25069,3 +25069,121 @@ Status:
     か
     `quarantine`
     のどちらへ寄るかを first check にする。
+
+## 2026-03-14 20:55 JST / docs: 日次 `winner lane review` 用の固定 prompt を repo に追加
+
+- Hypothesis Key:
+  - `winner_lane_review_prompt_daily_20260314`
+- Primary Loss Driver:
+  - 毎日の lane review を都度その場で書くと、
+    参照 artifact と判定軸が揺れて
+    `promote / hold / quarantine / graduate_to_strategy`
+    の判断がぶれやすいこと
+- Mechanism Fired:
+  - `none`
+  - docs/process-only change
+- Do Not Repeat Unless:
+  - 固定 prompt では拾えない review 観点が明確に出るまでは、
+    別の ad-hoc prompt を増やさず
+    `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
+    を更新する。
+
+- Change:
+  - `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
+    を追加し、
+    `change_preflight`
+    /
+    `trade_findings_index`
+    /
+    `lane_scoreboard`
+    /
+    `participation_alloc`
+    /
+    `REPO_HISTORY_LANE_INDEX`
+    を前提にした daily review prompt を固定化した。
+  - `docs/AGENT_COLLAB_HUB.md`
+    と
+    `docs/INDEX.md`
+    から辿れるようにした。
+
+- Why:
+  - 毎日やる review は、その場の思いつきではなく
+    同じ入力と同じ出力形式で回した方がよい。
+
+- Hypothesis:
+  - fixed prompt を repo に置けば、
+    daily review の品質と比較可能性が上がる。
+
+- Why Not Same As Last Time:
+  - これは
+    `lane_scoreboard`
+    本体の実装ではなく、
+    その artifact を毎日どう読むかを固定する docs/process change である。
+
+- Expected Good:
+  - daily review の観点が揺れにくくなる。
+  - `single next action`
+    を 1 本に絞る運用を維持しやすくなる。
+
+- Expected Bad:
+  - prompt が固定されすぎると、
+    新しい failure mode を拾いにくくなる。
+  - その場合は prompt を更新し、
+    別 prompt を乱立させない。
+
+- Promotion Gate:
+  - 次回以降の review が
+    `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
+    を参照して行われ、
+    `promote / hold / quarantine / graduate_to_strategy`
+    の4区分で返ること。
+
+- Escalation Trigger:
+  - daily review で必要な artifact や判定欄が不足するなら、
+    prompt の修正ではなく
+    `lane_scoreboard / trade_findings_index`
+    側の出力を増やす。
+
+- Period:
+  - 実装:
+    `2026-03-14 20:45-20:55 JST`
+  - 対象:
+    `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`,
+    `docs/AGENT_COLLAB_HUB.md`,
+    `docs/INDEX.md`
+
+- Fact:
+  - repo 内に
+    `winner lane review`
+    専用の fixed prompt はまだ無かった。
+  - 追加後は
+    `docs/AGENT_COLLAB_HUB.md`
+    と
+    `docs/INDEX.md`
+    から参照可能になった。
+
+- Failure Cause:
+  - review の観点が docs として固定されていなかった。
+
+- Improvement:
+  - daily review 用 prompt を repo に追加し、
+    参照導線も docs へ組み込んだ。
+
+- Verification:
+  - docs 追加のみのため runtime test はなし。
+  - 参照導線は
+    `docs/AGENT_COLLAB_HUB.md`
+    と
+    `docs/INDEX.md`
+    で確認した。
+
+- Verdict:
+  - good
+
+- Status:
+  - docs_ready
+
+- Next Action:
+  - 次回の daily review から
+    `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
+    をそのまま使う。

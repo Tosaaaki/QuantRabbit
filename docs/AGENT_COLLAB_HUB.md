@@ -36,6 +36,7 @@
 - 収益悪化の RCA は `long/short` の片側説明で止めず、`pattern_tag / RSI / ADX / MA gap / trend_snapshot / divergence / 連続バー偏り` を軸に cluster して、両方向に効く strategy-local quality guard へ落とす。
 - 失敗ケース・検証結果は `docs/TRADE_FINDINGS.md` に1箇所集約。
 - `docs/TRADE_FINDINGS.md` は変更日記として使い、各変更で `Why/Hypothesis / Expected Good / Expected Bad / Observed/Fact / Verdict / Next Action` を最低限残す。
+- 日次の winner/loser lane review は `docs/prompts/WINNER_LANE_REVIEW_DAILY.md` を固定 prompt として使う。review 前に `scripts/change_preflight.sh "<query>" 3` を走らせ、`logs/lane_scoreboard_latest.json` と `config/participation_alloc.json` を最新化したうえで参照する。
 - 収益/リスク/ENTRY/EXIT 改善の前には必ず `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `TRADE_FINDINGS` review に加えて、repo history lane の repeat-risk と reopen single-focus 候補もまとめて出す。raw `python3 scripts/trade_findings_review.py ...` 単独では完了扱いにしない。
 - runtime / risk / env 変更を commit する前は `scripts/install_git_hooks.sh` で有効化した `.githooks/pre-commit` が fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` を確認する。hook 失敗時は先に `scripts/change_preflight.sh` と `TRADE_FINDINGS` 更新をやり直す。
 - `scripts/change_preflight.sh` は `trade_findings_review.py` だけでなく `trade_findings_lint.py` / `trade_findings_index.py` / `generate_repo_history_lane_index.py` も実行し、derived artifact を `logs/` へ更新する。
