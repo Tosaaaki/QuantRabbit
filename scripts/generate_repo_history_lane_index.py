@@ -23,6 +23,7 @@ from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
 DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
 DEFAULT_DOC_PATH = REPO_ROOT / "docs" / "REPO_HISTORY_LANE_INDEX.md"
 DEFAULT_OUT_JSON = REPO_ROOT / "logs" / "repo_history_lane_index_latest.json"
+RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "severe": 3}
 
 ENTRY_DT_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})")
 BACKTICK_RE = re.compile(r"`([^`]+)`")
@@ -93,6 +94,13 @@ NON_STRATEGY_TOKENS = {
     "trades.db",
     "change_preflight.sh",
     "generate_repo_history_lane_index.py",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 }
 GOVERNANCE_KEY_PREFIXES = (
     "anti_loop",
@@ -100,6 +108,7 @@ GOVERNANCE_KEY_PREFIXES = (
     "change_preflight",
     "preflight",
     "improvement_memory",
+    "weekend_close",
 )
 GOVERNANCE_SEARCH_PREFIXES: dict[str, tuple[str, ...]] = {
     "anti_loop": ("anti_loop", "anti-loop"),
@@ -107,6 +116,7 @@ GOVERNANCE_SEARCH_PREFIXES: dict[str, tuple[str, ...]] = {
     "change_preflight": ("change_preflight", "change-preflight", "preflight"),
     "preflight": ("preflight_guard", "preflight", "change_preflight"),
     "improvement_memory": ("improvement_memory", "preflight", "dominant_loss_driver"),
+    "weekend_close": ("weekend_close", "market_hold", "docs_only_hold"),
 }
 
 
@@ -138,6 +148,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-doc", default=str(DEFAULT_DOC_PATH))
     parser.add_argument("--out-json", default=str(DEFAULT_OUT_JSON))
     parser.add_argument("--limit", type=int, default=15)
+    parser.add_argument("--query", default="")
+    parser.add_argument("--json", action="store_true")
     parser.add_argument("--write", action="store_true")
     return parser.parse_args()
 
@@ -447,14 +459,65 @@ def _is_current_lane(entry: LaneEntry) -> bool:
     }
 
 
+def _repeat_risk(
+    *,
+    lane_entries: int,
+    family_entries: int,
+    family_distinct_keys: int,
+    history_commit_count: int,
+) -> tuple[str, list[str]]:
+    risk = "low"
+    reasons: list[str] = []
+
+    if history_commit_count >= 50:
+        risk = "severe"
+        reasons.append(f"history_commits={history_commit_count}")
+    elif history_commit_count >= 15:
+        risk = "high"
+        reasons.append(f"history_commits={history_commit_count}")
+    elif history_commit_count >= 5:
+        risk = "medium"
+        reasons.append(f"history_commits={history_commit_count}")
+
+    if family_entries >= 3 or family_distinct_keys >= 3:
+        risk = "severe"
+        reasons.append(
+            f"family_repeats=entries:{family_entries}/keys:{family_distinct_keys}"
+        )
+    elif family_entries >= 2 or family_distinct_keys >= 2:
+        if RISK_ORDER[risk] < RISK_ORDER["high"]:
+            risk = "high"
+        reasons.append(
+            f"family_repeats=entries:{family_entries}/keys:{family_distinct_keys}"
+        )
+
+    if lane_entries >= 2:
+        if RISK_ORDER[risk] < RISK_ORDER["high"]:
+            risk = "high"
+        reasons.append(f"same_key_entries={lane_entries}")
+
+    deduped: list[str] = []
+    for reason in reasons:
+        if reason not in deduped:
+            deduped.append(reason)
+    return risk, deduped
+
+
+def _trading_focus_key(item: dict[str, object]) -> tuple[dt.datetime, int, int, str]:
+    return (
+        _heading_dt(str(item["latest_heading"])) or dt.datetime.min,
+        RISK_ORDER.get(str(item.get("repeat_risk") or "low"), 0),
+        int(item.get("history_commit_count") or 0),
+        str(item.get("hypothesis_key") or ""),
+    )
+
+
 def _build_payload(findings_path: Path, limit: int) -> dict[str, object]:
     history = _git_history()
     lanes = _lane_entries(findings_path)
     lane_payload: dict[str, dict[str, object]] = {}
     family_groups: dict[str, list[str]] = collections.defaultdict(list)
     strategy_groups: dict[str, list[str]] = collections.defaultdict(list)
-
-    current_lanes: list[dict[str, object]] = []
 
     for key, items in lanes.items():
         latest = items[-1]
@@ -492,10 +555,37 @@ def _build_payload(findings_path: Path, limit: int) -> dict[str, object]:
             "history_match_terms": terms[:8],
             "recent_history_matches": recent_history,
             "family_key": family_key,
+            "is_governance": strategies == ["trade_findings_governance"],
         }
         lane_payload[key] = lane_info
+
+    family_meta: dict[str, dict[str, int]] = {}
+    for family_key, keys in family_groups.items():
+        family_meta[family_key] = {
+            "entries": sum(len(lanes[key]) for key in keys),
+            "distinct_hypothesis_keys": len(set(keys)),
+        }
+
+    current_lanes: list[dict[str, object]] = []
+    current_trading_lanes: list[dict[str, object]] = []
+    for key, items in lanes.items():
+        latest = items[-1]
+        lane_info = lane_payload[key]
+        meta = family_meta[lane_info["family_key"]]
+        repeat_risk, repeat_reasons = _repeat_risk(
+            lane_entries=len(items),
+            family_entries=meta["entries"],
+            family_distinct_keys=meta["distinct_hypothesis_keys"],
+            history_commit_count=int(lane_info["history_commit_count"]),
+        )
+        lane_info["family_entries"] = meta["entries"]
+        lane_info["family_distinct_hypothesis_keys"] = meta["distinct_hypothesis_keys"]
+        lane_info["repeat_risk"] = repeat_risk
+        lane_info["repeat_risk_reasons"] = repeat_reasons
         if _is_current_lane(latest):
             current_lanes.append(lane_info)
+            if not lane_info["is_governance"]:
+                current_trading_lanes.append(lane_info)
 
     family_payload: list[dict[str, object]] = []
     for family_key, keys in family_groups.items():
@@ -511,10 +601,17 @@ def _build_payload(findings_path: Path, limit: int) -> dict[str, object]:
             {
                 "family_key": family_key,
                 "hypothesis_keys": sorted(keys),
-                "entries": sum(len(lanes[key]) for key in keys),
+                "entries": family_meta[family_key]["entries"],
+                "distinct_hypothesis_keys": family_meta[family_key][
+                    "distinct_hypothesis_keys"
+                ],
                 "latest_heading": latest_lane["latest_heading"],
                 "history_commit_count": max(
                     int(lane_payload[key]["history_commit_count"]) for key in keys
+                ),
+                "repeat_risk": max(
+                    (str(lane_payload[key]["repeat_risk"]) for key in keys),
+                    key=lambda item: RISK_ORDER.get(item, 0),
                 ),
             }
         )
@@ -542,6 +639,10 @@ def _build_payload(findings_path: Path, limit: int) -> dict[str, object]:
                     {"primary_loss_driver": driver, "count": count}
                     for driver, count in driver_counts.most_common(3)
                 ],
+                "highest_repeat_risk": max(
+                    (str(lane_payload[key]["repeat_risk"]) for key in unique_keys),
+                    key=lambda item: RISK_ORDER.get(item, 0),
+                ),
             }
         )
 
@@ -549,12 +650,37 @@ def _build_payload(findings_path: Path, limit: int) -> dict[str, object]:
         key=lambda item: _heading_dt(str(item["latest_heading"])) or dt.datetime.min,
         reverse=True,
     )
+    current_trading_lanes.sort(key=_trading_focus_key, reverse=True)
     family_payload.sort(
-        key=lambda item: (-int(item["entries"]), str(item["family_key"]))
+        key=lambda item: (
+            -RISK_ORDER.get(str(item["repeat_risk"]), 0),
+            -int(item["entries"]),
+            str(item["family_key"]),
+        )
     )
     strategy_payload.sort(
-        key=lambda item: (-int(item["findings_entries"]), str(item["strategy"]))
+        key=lambda item: (
+            -RISK_ORDER.get(str(item["highest_repeat_risk"]), 0),
+            -int(item["findings_entries"]),
+            str(item["strategy"]),
+        )
     )
+
+    recommended_focus = None
+    if current_trading_lanes:
+        top = current_trading_lanes[0]
+        recommended_focus = {
+            "hypothesis_key": top["hypothesis_key"],
+            "strategies": top["strategies"],
+            "family_key": top["family_key"],
+            "primary_loss_driver": top["primary_loss_driver"],
+            "latest_heading": top["latest_heading"],
+            "history_commit_count": top["history_commit_count"],
+            "repeat_risk": top["repeat_risk"],
+            "repeat_risk_reasons": top["repeat_risk_reasons"],
+            "selection_reason": "latest unresolved trading lane first; keep reopen validation to one lane before touching adjacent families",
+            "next_action": top["next_action"],
+        }
 
     payload = {
         "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -566,11 +692,73 @@ def _build_payload(findings_path: Path, limit: int) -> dict[str, object]:
         "distinct_hypothesis_keys": len(lane_payload),
         "distinct_lane_families": len(family_payload),
         "current_open_lanes": current_lanes[:limit],
+        "current_open_trading_lanes": current_trading_lanes[:limit],
+        "recommended_single_focus_lane": recommended_focus,
         "lanes": lane_payload,
         "lane_families": family_payload[:limit],
         "strategies": strategy_payload[:limit],
     }
     return payload
+
+
+def build_repo_history_lane_payload(
+    findings_path: Path, limit: int = 15
+) -> dict[str, object]:
+    return _build_payload(findings_path.resolve(), max(limit, 1))
+
+
+def _tokenize_query(raw: str) -> list[str]:
+    parts = [part.strip().lower() for part in raw.replace(",", " ").split()]
+    return [part for part in parts if part]
+
+
+def select_repo_history_lane_matches(
+    payload: dict[str, object], query: str, limit: int = 5
+) -> list[dict[str, object]]:
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, dict):
+        return []
+    tokens = _tokenize_query(query)
+    selected: list[tuple[int, dict[str, object]]] = []
+    for lane in lanes.values():
+        if not isinstance(lane, dict):
+            continue
+        haystack = "\n".join(
+            [
+                str(lane.get("hypothesis_key") or ""),
+                " ".join(str(item) for item in lane.get("strategies") or []),
+                str(lane.get("primary_loss_driver") or ""),
+                str(lane.get("family_key") or ""),
+                str(lane.get("latest_heading") or ""),
+            ]
+        ).lower()
+        score = sum(1 for token in tokens if token in haystack) if tokens else 1
+        if score <= 0:
+            continue
+        selected.append((score, lane))
+    selected.sort(
+        key=lambda item: (
+            item[0],
+            _heading_dt(str(item[1].get("latest_heading") or "")) or dt.datetime.min,
+            RISK_ORDER.get(str(item[1].get("repeat_risk") or "low"), 0),
+            int(item[1].get("history_commit_count") or 0),
+        ),
+        reverse=True,
+    )
+    return [lane for _, lane in selected[: max(limit, 0)]]
+
+
+def _query_payload(
+    payload: dict[str, object], query: str, limit: int
+) -> dict[str, object]:
+    matches = select_repo_history_lane_matches(payload, query, limit)
+    return {
+        "generated_at": payload.get("generated_at"),
+        "source": payload.get("source"),
+        "query": query,
+        "matches": matches,
+        "recommended_single_focus_lane": payload.get("recommended_single_focus_lane"),
+    }
 
 
 def _md(text: object) -> str:
@@ -579,8 +767,10 @@ def _md(text: object) -> str:
 
 def _render_markdown(payload: dict[str, object]) -> str:
     current_lanes = payload["current_open_lanes"]
+    current_trading_lanes = payload["current_open_trading_lanes"]
     lane_families = payload["lane_families"]
     strategies = payload["strategies"]
+    recommended_focus = payload.get("recommended_single_focus_lane")
 
     lines = [
         "# QuantRabbit Repo History Lane Index",
@@ -595,11 +785,12 @@ def _render_markdown(payload: dict[str, object]) -> str:
         f"- distinct hypothesis keys: `{payload['distinct_hypothesis_keys']}`",
         f"- distinct lane families: `{payload['distinct_lane_families']}`",
         f"- current open/pending lanes: `{len(current_lanes)}`",
+        f"- current open trading lanes: `{len(current_trading_lanes)}`",
         "",
         "## Current Open Lanes",
         "",
-        "| Hypothesis Key | Strategy | Driver | Entries | Latest Entry | History Commits |",
-        "| --- | --- | --- | ---: | --- | ---: |",
+        "| Hypothesis Key | Strategy | Driver | Entries | Repeat Risk | Latest Entry | History Commits |",
+        "| --- | --- | --- | ---: | --- | --- | ---: |",
     ]
 
     if current_lanes:
@@ -607,18 +798,34 @@ def _render_markdown(payload: dict[str, object]) -> str:
             lines.append(
                 "| "
                 + f"`{_md(item['hypothesis_key'])}` | {_md(', '.join(item['strategies']))} | {_md(item['primary_loss_driver'])} | "
-                + f"{item['entries']} | {_md(_compact(str(item['latest_heading']), 72))} | {item['history_commit_count']} |"
+                + f"{item['entries']} | {_md(item['repeat_risk'])} | {_md(_compact(str(item['latest_heading']), 72))} | {item['history_commit_count']} |"
             )
     else:
-        lines.append("| - | - | - | 0 | - | 0 |")
+        lines.append("| - | - | - | 0 | - | - | 0 |")
+
+    lines.extend(["", "## Reopen Single-Lane Focus", ""])
+    if isinstance(recommended_focus, dict):
+        lines.append(
+            f"- focus lane: `{_md(recommended_focus['hypothesis_key'])}` / strategy={_md(', '.join(recommended_focus['strategies']))}"
+        )
+        lines.append(
+            f"  reason: {_md(recommended_focus['selection_reason'])} / repeat_risk={_md(recommended_focus['repeat_risk'])} / history_commits={recommended_focus['history_commit_count']}"
+        )
+        lines.append(f"  latest: {_md(str(recommended_focus['latest_heading']))}")
+        if recommended_focus.get("next_action"):
+            lines.append(
+                f"  next_action: {_md(_compact(str(recommended_focus['next_action']), 160))}"
+            )
+    else:
+        lines.append("- none")
 
     lines.extend(
         [
             "",
             "## Repeated Lane Families",
             "",
-            "| Lane Family | Entries | Hypothesis Keys | Latest Entry | History Commits |",
-            "| --- | ---: | ---: | --- | ---: |",
+            "| Lane Family | Entries | Hypothesis Keys | Repeat Risk | Latest Entry | History Commits |",
+            "| --- | ---: | ---: | --- | --- | ---: |",
         ]
     )
 
@@ -627,18 +834,18 @@ def _render_markdown(payload: dict[str, object]) -> str:
             lines.append(
                 "| "
                 + f"`{_md(item['family_key'])}` | {item['entries']} | {len(item['hypothesis_keys'])} | "
-                + f"{_md(_compact(str(item['latest_heading']), 72))} | {item['history_commit_count']} |"
+                + f"{_md(item['repeat_risk'])} | {_md(_compact(str(item['latest_heading']), 72))} | {item['history_commit_count']} |"
             )
     else:
-        lines.append("| - | 0 | 0 | - | 0 |")
+        lines.append("| - | 0 | 0 | - | - | 0 |")
 
     lines.extend(
         [
             "",
             "## Strategy Crosswalk",
             "",
-            "| Strategy | Findings Entries | Distinct Keys | Open Lanes | History Commits | Dominant Drivers |",
-            "| --- | ---: | ---: | ---: | ---: | --- |",
+            "| Strategy | Findings Entries | Distinct Keys | Open Lanes | Highest Repeat Risk | History Commits | Dominant Drivers |",
+            "| --- | ---: | ---: | ---: | --- | ---: | --- |",
         ]
     )
 
@@ -654,10 +861,10 @@ def _render_markdown(payload: dict[str, object]) -> str:
             lines.append(
                 "| "
                 + f"`{_md(item['strategy'])}` | {item['findings_entries']} | {item['distinct_hypothesis_keys']} | "
-                + f"{item['open_lanes']} | {item['history_commit_count']} | {_md(dominant)} |"
+                + f"{item['open_lanes']} | {_md(item['highest_repeat_risk'])} | {item['history_commit_count']} | {_md(dominant)} |"
             )
     else:
-        lines.append("| - | 0 | 0 | 0 | 0 | - |")
+        lines.append("| - | 0 | 0 | 0 | - | 0 | - |")
 
     lines.extend(["", "## Current Lane Samples", ""])
 
@@ -665,7 +872,7 @@ def _render_markdown(payload: dict[str, object]) -> str:
         for item in current_lanes[:8]:
             lines.append(
                 f"- `{item['hypothesis_key']}`: strategy={', '.join(item['strategies']) or 'trade_findings_governance'} / "
-                f"driver={item['primary_loss_driver']} / history_commits={item['history_commit_count']}"
+                f"driver={item['primary_loss_driver']} / repeat_risk={item['repeat_risk']} / history_commits={item['history_commit_count']}"
             )
             recent = item["recent_history_matches"]
             if recent:
@@ -680,6 +887,13 @@ def _render_markdown(payload: dict[str, object]) -> str:
                 lines.append(
                     f"  next_action: {_md(_compact(str(item['next_action']), 160))}"
                 )
+            if item["repeat_risk_reasons"]:
+                lines.append(
+                    "  repeat_risk_reasons: "
+                    + _md(
+                        ", ".join(str(reason) for reason in item["repeat_risk_reasons"])
+                    )
+                )
     else:
         lines.append("- none")
 
@@ -687,10 +901,44 @@ def _render_markdown(payload: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _render_query_human(payload: dict[str, object]) -> str:
+    lines = [
+        "REPO_HISTORY lane repeat-risk",
+        f"source: {payload.get('source')}",
+        f"query: {payload.get('query') or '(current open lanes)'}",
+        "",
+        "Matches:",
+    ]
+    matches = payload.get("matches") or []
+    if not matches:
+        lines.append("- no matching lanes")
+    else:
+        for item in matches:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item['hypothesis_key']} / strategy={', '.join(item['strategies'])} / repeat_risk={item['repeat_risk']} / history_commits={item['history_commit_count']}"
+            )
+            lines.append(
+                f"  family={item['family_key']} / reasons={', '.join(item['repeat_risk_reasons']) or 'n/a'}"
+            )
+            lines.append(f"  latest={item['latest_heading']}")
+    focus = payload.get("recommended_single_focus_lane")
+    lines.extend(["", "Single-Lane Focus:"])
+    if isinstance(focus, dict):
+        lines.append(
+            f"- {focus['hypothesis_key']} / strategy={', '.join(focus['strategies'])} / repeat_risk={focus['repeat_risk']} / history_commits={focus['history_commit_count']}"
+        )
+        lines.append(f"  reason={focus['selection_reason']}")
+    else:
+        lines.append("- none")
+    return "\n".join(lines)
+
+
 def main() -> int:
     args = _parse_args()
     findings_path = Path(args.findings_path).resolve()
-    payload = _build_payload(findings_path, max(args.limit, 1))
+    payload = build_repo_history_lane_payload(findings_path, max(args.limit, 1))
     doc = _render_markdown(payload)
 
     if args.write:
@@ -698,9 +946,18 @@ def main() -> int:
         Path(args.out_json).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    if args.query:
+        query_payload = _query_payload(payload, args.query, max(args.limit, 1))
+        if args.json:
+            print(json.dumps(query_payload, ensure_ascii=False, indent=2))
+        else:
+            print(_render_query_human(query_payload))
         return 0
-
-    print(doc)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    if not args.write:
+        print(doc)
     return 0
 
 

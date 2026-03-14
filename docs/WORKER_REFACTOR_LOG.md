@@ -5,6 +5,50 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-14 19:45 JST - repo history lane の repeat-risk を preflight / index に統合し、週明けは single-lane focus に固定
+
+- 対象:
+  - `scripts/generate_repo_history_lane_index.py`
+  - `scripts/trade_findings_index.py`
+  - `scripts/change_preflight.sh`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/AGENT_COLLAB_HUB.md`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - 18:10 JST の cross-index 追加で
+    `TRADE_FINDINGS`
+    と repo history の往復自体はできるようになったが、
+    preflight と
+    `trade_findings_index`
+    からは repeat-risk が見えず、
+    reopen 時に複数 loser family を同時に触る余地が残っていた。
+- 変更:
+  - `generate_repo_history_lane_index.py`
+    は lane ごとの
+    `repeat_risk`
+    / family repeat /
+    `recommended_single_focus_lane`
+    を payload と markdown に出すよう更新した。
+  - `trade_findings_index.py`
+    は latest key / unresolved entry へ
+    `lane_family`, `history_commit_count`, `repeat_risk`
+    を混ぜ、
+    `recommended_single_focus_lane`
+    も出力するようにした。
+  - `change_preflight.sh`
+    は `logs/repo_history_lane_index_latest.{json,md}`
+    を更新し、
+    query 対応の repeat-risk summary と
+    single-lane focus を標準表示するようにした。
+- 意図:
+  - anti-loop を docs 読み物で終わらせず、
+    preflight 時点で
+    `same family`
+    の反復リスクと
+    「次に触るのは 1 lane だけ」
+    を運用上の default にする。
+
 ### 2026-03-14 10:15 JST - anti-loop 改善規律を AGENTS / review / lint に導入
 
 - 対象:

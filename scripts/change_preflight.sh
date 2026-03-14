@@ -214,6 +214,15 @@ echo "== TRADE_FINDINGS Index =="
 python3 "${ROOT_DIR}/scripts/trade_findings_index.py"
 echo
 
+echo "== Repo History Lane Repeat Risk =="
+python3 "${ROOT_DIR}/scripts/generate_repo_history_lane_index.py" \
+  --query "${QUERY}" \
+  --limit "${LIMIT}" \
+  --write \
+  --out-doc "${ROOT_DIR}/logs/repo_history_lane_index_latest.md" \
+  --out-json "${ROOT_DIR}/logs/repo_history_lane_index_latest.json"
+echo
+
 echo "== Preflight Artifact =="
 python3 - "${ROOT_DIR}" "${QUERY}" "${LIMIT}" <<'PY'
 from __future__ import annotations
@@ -224,6 +233,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import re
 
 
 def load_json(path: Path):
@@ -233,6 +243,16 @@ def load_json(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def normalize_key(text: str) -> str:
+    text = " ".join(str(text).split())
+    if not text:
+        return ""
+    match = re.search(r"`([^`]+)`", text)
+    if match:
+        return match.group(1).strip()
+    return text.lstrip("- ").strip()
 
 
 root = Path(sys.argv[1])
@@ -364,6 +384,27 @@ lint = json.loads(lint_proc.stdout) if lint_proc.stdout.strip() else {
     "ok": False,
     "issues": [{"kind": "lint_runner_error", "detail": lint_proc.stderr.strip() or "unknown"}],
 }
+lane_index = load_json(root / "logs" / "repo_history_lane_index_latest.json") or {}
+lane_lookup = lane_index.get("lanes") if isinstance(lane_index.get("lanes"), dict) else {}
+lane_repeat_matches = []
+for item in review.get("entries") or []:
+    if not isinstance(item, dict):
+        continue
+    key = normalize_key(item.get("hypothesis_key") or "")
+    lane = lane_lookup.get(key) if key else None
+    if not isinstance(lane, dict):
+        continue
+    lane_repeat_matches.append(
+        {
+            "hypothesis_key": key,
+            "repeat_risk": lane.get("repeat_risk"),
+            "history_commit_count": lane.get("history_commit_count"),
+            "family_key": lane.get("family_key"),
+            "family_entries": lane.get("family_entries"),
+            "repeat_risk_reasons": lane.get("repeat_risk_reasons") or [],
+            "latest_heading": lane.get("latest_heading"),
+        }
+    )
 
 git_rev = subprocess.run(
     ["git", "rev-parse", "--short", "HEAD"],
@@ -386,6 +427,10 @@ artifact = {
         "json": str(root / "logs" / "trade_findings_index_latest.json"),
         "md": str(root / "logs" / "trade_findings_index_latest.md"),
     },
+    "lane_repeat_index_paths": {
+        "json": str(root / "logs" / "repo_history_lane_index_latest.json"),
+        "md": str(root / "logs" / "repo_history_lane_index_latest.md"),
+    },
     "market": {
         "bid": latest_bid,
         "ask": latest_ask,
@@ -404,6 +449,10 @@ artifact = {
         "account": account.get("data"),
     },
     "review": review,
+    "lane_repeat_risk": {
+        "matches": lane_repeat_matches[:limit],
+        "recommended_single_focus_lane": lane_index.get("recommended_single_focus_lane"),
+    },
 }
 
 artifact_path = root / "logs" / "change_preflight_latest.json"
@@ -412,6 +461,7 @@ print(f"artifact={artifact_path}")
 print(
     f"artifact_status={artifact['preflight_status']} "
     f"review_entries={len(review.get('entries') or [])} "
+    f"lane_matches={len(lane_repeat_matches)} "
     f"lint_ok={lint.get('ok')}"
 )
 PY

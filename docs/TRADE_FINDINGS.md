@@ -24476,23 +24476,291 @@ Status:
     `STOP_LOSS_ORDER`
     が減るかを 6h 集計で見直す。
 
+## 2026-03-14 19:45 JST / trade_findings: repo history lane の repeat-risk を preflight/index に統合し、週明けは 1 lane だけに固定
+
+- Hypothesis Key:
+  - `lane_repeat_risk_preflight_20260314`
+- Primary Loss Driver:
+  - repo history lane の repeat-risk と reopen single-focus を preflight に出さないと、
+    same family の pending lane を並列に触り、
+    anti-loop が docs 止まりになること
+- Mechanism Fired:
+  - `none`
+  - `2026-03-14 18:10 JST`
+    の cross-index 追加は
+    `docs/REPO_HISTORY_LANE_INDEX.md`
+    までで止まり、
+    `scripts/change_preflight.sh`
+    と
+    `scripts/trade_findings_index.py`
+    からは repeat-risk / focus lane が見えなかった。
+- Do Not Repeat Unless:
+  - week-open の最初の live task で still 複数 family を同時に触ろうとする、
+    もしくは
+    `recommended_single_focus_lane`
+    が stale lane を返すと確認できるまでは、
+    新しい governance field を増やさず、
+    まず repeat-risk の recency / active-lane heuristics を調整する。
+
+- Change:
+  - `scripts/generate_repo_history_lane_index.py`
+    は lane ごとの
+    `repeat_risk`,
+    family repeat,
+    `recommended_single_focus_lane`
+    を payload と markdown へ出すよう更新した。
+  - `scripts/trade_findings_index.py`
+    は latest hypothesis index / unresolved entry に
+    `lane_family`,
+    `history_commit_count`,
+    `repeat_risk`
+    を混ぜ、
+    `recommended_single_focus_lane`
+    も出すようにした。
+  - `scripts/change_preflight.sh`
+    は
+    `logs/repo_history_lane_index_latest.{json,md}`
+    を更新し、
+    query 対応の repeat-risk summary と
+    single-lane focus を
+    `logs/change_preflight_latest.json`
+    へ入れるようにした。
+
+- Why:
+  - cross-index が docs にしか無いと、
+    実際の改善着手時に operator が別導線で history を見ない限り、
+    anti-loop は運用 default にならない。
+
+- Hypothesis:
+  - repeat-risk と single-focus を preflight/index の標準 artifact に入れれば、
+    week-open の最初の live 改善を
+    `MomentumBurst`
+    1 lane に固定しやすくなり、
+    adjacent
+    `STOP_LOSS_ORDER`
+    family への並列 tweak を避けられる。
+
+- Why Not Same As Last Time:
+  - `2026-03-14 18:10 JST`
+    の
+    `repo history lane cross-index`
+    は history navigation を追加しただけで、
+    `change_preflight_latest.json`
+    /
+    `trade_findings_index_latest.json`
+    へ repeat-risk や
+    `recommended_single_focus_lane`
+    を流していなかった。
+  - 今回は same docs lane の焼き直しではなく、
+    preflight / index artifact と reopen single-lane protocol を追加している。
+
+- Expected Good:
+  - `scripts/change_preflight.sh`
+    の query 実行だけで
+    repeat_risk,
+    family repeat,
+    `recommended_single_focus_lane`
+    が見える。
+  - `trade_findings_index_latest.json`
+    から latest key / unresolved を見た時点で
+    `lane_family`
+    と
+    `history_commit_count`
+    が並ぶ。
+  - 週明けの最初の live task を
+    `momentumburst_transition_pullback_guard_20260314`
+    1 本に固定しやすくなる。
+
+- Expected Bad:
+  - history heuristic が古い lane を重く見すぎると、
+    本当に今触るべき recent lane の優先度を歪める。
+  - そのため reopen focus は
+    `current unresolved trading lane`
+    を最優先にし、
+    history count は tie-break に留める。
+
+- Promotion Gate:
+  - `scripts/change_preflight.sh "momentumburst_transition_pullback_guard_20260314" 3`
+    が
+    `lane_repeat_risk.matches`
+    と
+    `recommended_single_focus_lane`
+    を
+    `logs/change_preflight_latest.json`
+    に残すこと。
+  - `python3 scripts/trade_findings_index.py`
+    が
+    `recommended_single_focus_lane: momentumburst_transition_pullback_guard_20260314`
+    を返すこと。
+  - `2026-03-16 06:00 JST`
+    以降の最初の live 改善で、
+    `MomentumBurst`
+    以外の
+    `STOP_LOSS_ORDER`
+    family を同時に触らないこと。
+
+- Escalation Trigger:
+  - reopen 後も複数 family を同時に触る運用が出る、
+    または focus lane が stale legacy lane へ寄るなら、
+    `active-window trades / fresh current_open lane`
+    を scoring に追加する。
+
+- Period:
+  - `2026-03-14 19:20-19:45 JST`
+
+- Fact:
+  - `2026-03-14 19:35 JST`
+    時点でも
+    `logs/oanda_account_snapshot_live.json`
+    は
+    `2026-03-14 06:57:58 JST`
+    で止まっており、
+    土曜クローズ帯のため live verdict は hold のままだった。
+  - `python3 scripts/generate_repo_history_lane_index.py --query "MomentumBurst STOP_LOSS_ORDER" --limit 3`
+    は
+    `MomentumBurst`
+    を
+    `repeat_risk=severe / history_commits=78`
+    で single focus と返した。
+  - `python3 scripts/trade_findings_index.py`
+    は
+    `recommended_single_focus_lane: momentumburst_transition_pullback_guard_20260314`
+    を出力した。
+
+- Failure Cause:
+  - cross-index を docs に置いただけでは、
+    着手前レビューの default action を変えられない。
+
+- Improvement:
+  - repeat-risk を preflight/index artifact に組み込み、
+    reopen 最初の改善は
+    `MomentumBurst`
+    1 lane only
+    を default にする。
+
+- Verification:
+  - `python3 scripts/generate_repo_history_lane_index.py --query "MomentumBurst STOP_LOSS_ORDER" --limit 3`
+  - `python3 scripts/trade_findings_index.py`
+  - `python3 -m py_compile scripts/generate_repo_history_lane_index.py scripts/trade_findings_index.py`
+  - `scripts/change_preflight.sh "momentumburst_transition_pullback_guard_20260314" 3`
+
+- Verdict:
+  - pending
+
+- Status:
+  - `pending`
+
+- Next Action:
+  - `2026-03-16 06:00 JST`
+    再開後の最初の live task では
+    `momentumburst_transition_pullback_guard_20260314`
+    だけを評価対象にし、
+    `PrecisionLowVol`
+    /
+    `WickReversalBlend`
+    /
+    `DroughtRevert`
+    の
+    `STOP_LOSS_ORDER`
+    family はその窓では触らない。
+  - `30-120m`
+    の reopen 窓で
+    `MomentumBurst-open_long|...|transition`
+    の
+    `filled`
+    /
+    `STOP_LOSS_ORDER`
+    が still dominant かを先に判定する。
+
 ## 2026-03-14 13:02 JST / repo history docs: 週末クローズ帯のため live 判定は hold、docs/script は offline 継続
 
-Period:
-- 確認: JST `12:58-13:02`
-- 対象（実測）:
+- Hypothesis Key:
+  - `weekend_close_docs_only_hold_20260314`
+- Primary Loss Driver:
+  - weekend close の stale window を runtime fault と誤認し、
+    docs/script-only task まで止めてしまうこと
+- Mechanism Fired:
+  - `none`
+  - `2026-03-14 12:58-13:02 JST`
+    の着手前チェックでは、
+    cache stale の主因が土曜クローズ帯であることを確認した。
+- Do Not Repeat Unless:
+  - reopen 後も
+    `tick_cache / factor_cache / oanda_account_snapshot_live.json`
+    が更新再開せず、
+    close window ではなく runtime fault が継続していると確認できるまでは、
+    docs/script-only task を hold 側へ寄せない。
+
+- Change:
+  - `docs/REPO_HISTORY_*`
+    と
+    `scripts/generate_repo_history_minutes.py`
+    の docs/script-only task については、
+    live restart / live verdict を行わず、
+    offline の commit / push までは進める運用ログとして残した。
+
+- Why:
+  - stale をすべて障害扱いすると、
+    週末 close window の docs/script-only task まで止まり、
+    runtime 由来ではない作業も進まなくなる。
+
+- Hypothesis:
+  - close/stale window を
+    `market_hold`
+    と明示し、
+    docs/script-only task は offline 継続に分ければ、
+    live judgment を汚さずに履歴整備だけ進められる。
+
+- Why Not Same As Last Time:
+  - この entry は runtime 改善ではなく、
+    `2026-03-14`
+    土曜クローズ帯での docs/script-only task を
+    `market_hold`
+    として切り分けた運用記録である。
+
+- Expected Good:
+  - weekend close を runtime fault と混同せずに済む。
+  - docs/script-only task の commit / push を止めすぎない。
+
+- Expected Bad:
+  - 本当に runtime fault が混ざっていた場合に、
+    docs-only という理由で見落とすリスクがある。
+  - そのため reopen 条件を明示し、
+    live restart は週明けまで持ち越す。
+
+- Promotion Gate:
+  - `tick_cache`
+    と
+    `factor_cache`
+    と
+    `oanda_account_snapshot_live.json`
+    が更新再開し、
+    weekend hold を解除できること。
+
+- Escalation Trigger:
+  - `2026-03-16 06:00 JST`
+    以降も stale が続き、
+    `pricing/stream`
+    の
+    `200 OK`
+    後に cache 更新が戻らないなら、
+    docs-only hold ではなく runtime RCA へ切り替える。
+
+- Period:
+  - 確認: JST `12:58-13:02`
+  - 対象（実測）:
   `logs/health_snapshot.json`,
   `logs/tick_cache.json`,
   `logs/factor_cache.json`,
   `logs/oanda_account_snapshot_live.json`,
   `logs/local_v2_stack/quant-market-data-feed.log`
-- 対象タスク:
+  - 対象タスク:
   `docs/REPO_HISTORY_*`
   と
   `scripts/generate_repo_history_minutes.py`
   の commit / push
 
-Fact:
+- Fact:
 - `scripts/collect_local_health.sh`
   は
   `2026-03-14 12:58:27 JST`
@@ -24559,7 +24827,7 @@ Fact:
   （`2026-03-15 17:00 America/New_York`）
   だった。
 
-Failure Cause:
+- Failure Cause:
 - stale に見えた主因は障害継続ではなく、
   `2026-03-14` 土曜の週末クローズ帯で
   live market data が進まないことだった。
@@ -24572,7 +24840,7 @@ Failure Cause:
   close/stale window の
   live 判定や live 反映確認は hold とする。
 
-Improvement:
+- Improvement:
 - 本タスクは
   `docs/REPO_HISTORY_*`
   と
@@ -24587,8 +24855,8 @@ Improvement:
   close window の hold 判断を退避し、
   live 再開判定は週明けへ持ち越す。
 
-Verification:
-- 再開条件:
+- Verification:
+  - 再開条件:
   - `tick_cache` が 300 秒以内に更新されること
   - `factor_cache` の `M1/M5` timestamp が進むこと
   - `oanda_account_snapshot_live.json` が再更新されること
@@ -24598,5 +24866,19 @@ Verification:
   上記の live 再開条件を待たずに
   commit / push を進めてよい。
 
-Status:
-- live_hold / docs_only_proceed
+- Verdict:
+  - pending
+
+- Status:
+  - live_hold / docs_only_proceed
+
+- Next Action:
+  - `2026-03-16 06:00 JST`
+    以降に
+    `tick_cache`
+    /
+    `factor_cache`
+    /
+    `oanda_account_snapshot_live.json`
+    の更新再開を確認し、
+    live verdict を reopen する。
