@@ -9,7 +9,7 @@ LOCK_DIR="${LOG_DIR}/local_v2_autorecover.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
 STATE_FILE="${LOG_DIR}/local_v2_autorecover.state"
 
-PROFILE="${QR_LOCAL_V2_PROFILE:-trade_cover}"
+PROFILE="${QR_LOCAL_V2_PROFILE:-trade_min}"
 ENV_FILE="${QR_LOCAL_V2_ENV_FILE:-${ROOT_DIR}/ops/env/local-v2-stack.env}"
 SERVICES="${QR_LOCAL_V2_SERVICES:-}"
 NETWORK_HOST="${QR_LOCAL_V2_NET_CHECK_HOST:-api-fxtrade.oanda.com}"
@@ -35,7 +35,7 @@ Usage:
   scripts/local_v2_autorecover_once.sh [options]
 
 Options:
-  --profile <name>    local_v2_stack profile (default: trade_cover)
+  --profile <name>    local_v2_stack profile (default: trade_min)
   --env <file>        override env file (default: ops/env/local-v2-stack.env)
   --services <csv>    optional explicit services list
   -h, --help          show help
@@ -482,13 +482,17 @@ core_stopped_lines="$(printf '%s\n' "${stopped_lines}" | grep -E 'quant-(market-
 if [[ -z "${core_stopped_lines}" ]]; then
 if core_recovery_reason="$(core_recovery_targets "${status_out}")"; then
   log "[recover] bypass market sanity guard for core services: ${core_recovery_reason}"
-elif ! market_sanity_ready >/tmp/qr_local_v2_market_sanity.$$ 2>&1; then
-  market_guard_reason="$(tr '\n' ' ' </tmp/qr_local_v2_market_sanity.$$ | sed 's/[[:space:]]\\+/ /g; s/^ //; s/ $//')"
-  rm -f /tmp/qr_local_v2_market_sanity.$$
-  log "[wait] market sanity guard blocked recovery: ${market_guard_reason:-unknown}"
-  exit 0
+else
+  set +e
+  market_guard_reason="$(market_sanity_ready 2>&1)"
+  market_guard_rc=$?
+  set -e
+  if [[ ${market_guard_rc} -ne 0 ]]; then
+    market_guard_reason="$(printf '%s' "${market_guard_reason}" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g; s/^ //; s/ $//')"
+    log "[wait] market sanity guard blocked recovery: ${market_guard_reason:-unknown}"
+    exit 0
+  fi
 fi
-rm -f /tmp/qr_local_v2_market_sanity.$$ >/dev/null 2>&1 || true
 elif [[ "${VERBOSE}" == "1" ]]; then
   log "[warn] bypass market sanity guard due to stopped core services: ${core_stopped_lines//$'\n'/ ; }"
 fi

@@ -144,6 +144,8 @@ scripts/uninstall_local_v2_launchd.sh
 - watchdog ループ本体: `scripts/local_v2_watchdog.sh`
 - 監視ログ: `logs/local_v2_autorecover.log`
 - watchdog daemon ログ: `logs/local_v2_stack/watchdog.log`
+- `scripts/local_v2_watchdog.sh` / `scripts/local_v2_autorecover_once.sh` / `scripts/install_local_v2_launchd.sh` の既定 profile は `trade_min` を正とする。
+- `scripts/status_local_v2_launchd.sh` は configured profile を表示し、`trade_min` 以外が入った launchd plist を drift warning として返す。warning が出たら `scripts/install_local_v2_launchd.sh --profile trade_min --env ops/env/local-v2-stack.env` を再実行する。
 - network down→up 復帰時は `quant-market-data-feed` を自動再起動（既定ON）して再接続を強制する。
 - `local_vm_parity` 競合時は既存ガードに従って自動復帰をスキップする。
 - `launchd` は `~/Documents` 配下の実ファイル読み取りで `Operation not permitted` になる場合がある。
@@ -154,6 +156,7 @@ scripts/uninstall_local_v2_launchd.sh
   `scripts/status_local_v2_launchd.sh` が symlink plist を警告した場合は、
   `scripts/install_local_v2_launchd.sh --profile trade_min --env ops/env/local-v2-stack.env`
   を再実行して plist を再生成する。
+- `scripts/local_v2_stack.sh` の recovery/status critical path と `local_v2_autorecover_once.sh` の market sanity capture は temp-file-free で扱う。低空き容量時でも `cannot create temp file for here document` だけを理由に `trade_min` worker 復旧を止めない。
 - `local_v2_autorecover_once.sh` はロック異常終了時の stale lock を自動除去して再開し、sleep/wake 相当のポーリングギャップと network down→up をログ記録する。
 - `local_v2_autorecover_once.sh` は健全時/復旧時に `scripts/run_local_feedback_cycle.py` を非同期起動し、
   `dynamic_alloc / entry_path_aggregator / lane_scoreboard / participation_allocator / pattern_book / trade_counterfactual / replay_quality_gate / trade_findings_draft` を

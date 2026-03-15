@@ -25362,3 +25362,244 @@ Status:
     `market_open=true`
     と cache 更新再開を確認してから
     pending lane の live reopen を行う。
+
+## 2026-03-16 08:22 JST / local-v2: autorecover default profile を `trade_min` に揃え、ENOSPC でも worker 復旧を止めない
+
+- Hypothesis Key:
+  - `trade_min_autorecover_profile_parity_20260316`
+- Primary Loss Driver:
+  - `trade_min`
+    専用 worker が launchd autorecover の監視対象から外れ、
+    停止後に復帰しないこと
+- Mechanism Fired:
+  - `scripts/status_local_v2_launchd.sh`
+    実測で、
+    launchd agent は
+    `watchdog --once --profile 'trade_cover'`
+    を実行していた。
+  - 同時刻の
+    `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    では
+    `quant-scalp-precision-lowvol`,
+    `quant-scalp-vwap-revert`,
+    `quant-scalp-drought-revert`,
+    `quant-session-open`
+    が `stale_pid_file` で停止していた。
+  - `logs/local_v2_autorecover.log`
+    には
+    `2026-03-16 08:11 JST`
+    / `08:12 JST`
+    の
+    `scripts/local_v2_stack.sh: line 1115/913/827: cannot create temp file for here document`
+    が残っていた。
+- Do Not Repeat Unless:
+  - launchd の configured profile が
+    `trade_min`
+    で、
+    `local_v2_autorecover.log`
+    から here-doc temp file failure が消えた後も、
+    同じ `trade_min` worker 群が stop のまま残るときだけ
+    次の persistence RCA を開く。
+
+- Change:
+  - `scripts/local_v2_stack.sh`
+    の recovery/status critical path で使っていた
+    bash here-doc を process substitution へ置き換え、
+    temp-file-free にした。
+  - `scripts/local_v2_autorecover_once.sh`
+    の
+    `market_sanity_ready`
+    は
+    `/tmp`
+    一時ファイルを使わずに理由を受けるようにした。
+  - `scripts/local_v2_watchdog.sh`,
+    `scripts/local_v2_autorecover_once.sh`,
+    `scripts/install_local_v2_launchd.sh`
+    の既定 profile を
+    `trade_min`
+    へ統一した。
+  - `scripts/status_local_v2_launchd.sh`
+    は
+    `configured_profile`
+    を表示し、
+    `trade_min`
+    以外を drift warning として出すようにした。
+  - launchd agent を
+    `--profile trade_min`
+    で再インストールし、
+    `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env`
+    で stop していた worker を復旧した。
+
+- Why:
+  - 現行実運用は
+    `trade_min`
+    だが、
+    常駐 autorecover が
+    `trade_cover`
+    を監視していると、
+    `trade_min`
+    専用 worker は停止しても自動復旧しない。
+  - 加えて、
+    recovery/status 自体が shell temp file へ依存すると、
+    空き容量逼迫時に
+    `stack up`
+    が失敗して stop 状態を長引かせる。
+
+- Hypothesis:
+  - autorecover / watchdog / launchd install の default profile を
+    `trade_min`
+    に揃え、
+    `local_v2_stack.sh`
+    の critical path を temp-file-free にすれば、
+    今回のような
+    `trade_min` worker の silent stop を再発させにくくできる。
+
+- Why Not Same As Last Time:
+  - `2026-03-12 20:58 JST`
+    /
+    `21:05 JST`
+    の entry は、
+    stop していた dedicated worker を前提に
+    `strategy_feedback`
+    の active discovery を直したものだった。
+  - 今回の decision surface は
+    `strategy_feedback coverage`
+    ではなく、
+    launchd / watchdog /
+    `local_v2_stack`
+    の
+    `worker persistence contract`
+    そのもの。
+
+- Expected Good:
+  - launchd / watchdog の default だけで
+    `trade_min`
+    専用 worker が復旧対象から漏れなくなる。
+  - 低空き容量時も、
+    here-doc temp file failure だけで
+    `status/up/reconcile`
+    が止まりにくくなる。
+  - `scripts/status_local_v2_launchd.sh`
+    の warning で profile drift を早く見つけられる。
+
+- Expected Bad:
+  - filesystem が完全に枯渇した場合は、
+    log 書き込みや plist 更新まで含めて別の
+    disk RCA
+    が必要になる。
+  - `trade_min`
+    に default を寄せたため、
+    `trade_cover`
+    を意図的に使う端末では明示
+    `--profile trade_cover`
+    が必要になる。
+
+- Promotion Gate:
+  - `scripts/status_local_v2_launchd.sh`
+    が
+    `configured_profile=trade_min`
+    を返し、
+    `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    で
+    `trade_min`
+    全 service が `running`
+    を返すこと。
+
+- Escalation Trigger:
+  - `local_v2_autorecover.log`
+    に
+    `cannot create temp file for here document`
+    が再出現すること。
+  - または、
+    launchd が
+    `trade_min`
+    に揃った後も
+    同じ worker 群が
+    `stopped/stale_pid_file`
+    のまま残ること。
+
+- Period:
+  - 調査:
+    `2026-03-16 08:04-08:18 JST`
+  - 実装/反映:
+    `2026-03-16 08:18-08:22 JST`
+  - 対象:
+    `scripts/local_v2_stack.sh`,
+    `scripts/local_v2_watchdog.sh`,
+    `scripts/local_v2_autorecover_once.sh`,
+    `scripts/install_local_v2_launchd.sh`,
+    `scripts/status_local_v2_launchd.sh`,
+    `tests/scripts/test_local_v2_launchd_scripts.py`
+
+- Fact:
+  - `2026-03-16 08:05 JST`
+    の
+    `scripts/status_local_v2_launchd.sh`
+    は
+    `configured_profile=trade_cover`
+    と drift warning を返した。
+  - 同時刻の
+    `trade_min`
+    status では
+    `quant-scalp-precision-lowvol`,
+    `quant-scalp-vwap-revert`,
+    `quant-scalp-drought-revert`,
+    `quant-session-open`
+    が停止していた。
+  - `2026-03-16 08:22 JST`
+    に launchd を再インストール後、
+    `scripts/status_local_v2_launchd.sh`
+    は
+    `configured_profile=trade_min`
+    を返した。
+  - 同時刻の
+    `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env`
+    は stop していた 4 worker と exit worker を起動し、
+    直後の status で全 service が
+    `running`
+    を返した。
+
+- Failure Cause:
+  - launchd autorecover の configured profile drift
+    （`trade_cover`）
+    と、
+    `local_v2_stack.sh`
+    / `local_v2_autorecover_once.sh`
+    の shell temp file 依存が重なって、
+    `trade_min`
+    worker の stop を長引かせた。
+
+- Improvement:
+  - autorecover / watchdog / launchd install を
+    `trade_min`
+    既定へ統一し、
+    recovery/status critical path から temp-file 依存を除去した。
+
+- Verification:
+  - `bash -n scripts/local_v2_stack.sh scripts/local_v2_watchdog.sh scripts/local_v2_autorecover_once.sh scripts/install_local_v2_launchd.sh scripts/status_local_v2_launchd.sh`
+  - `PYTHONPATH=. python3 -m pytest -q tests/scripts/test_local_v2_launchd_scripts.py`
+    -> `2 passed`
+  - `scripts/status_local_v2_launchd.sh`
+    変更前:
+    `configured_profile=trade_cover`
+  - `scripts/install_local_v2_launchd.sh --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/status_local_v2_launchd.sh`
+    変更後:
+    `configured_profile=trade_min`
+  - `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    -> 全 service `running`
+
+- Verdict:
+  - good
+
+- Status:
+  - done
+
+- Next Action:
+  - `local_v2_autorecover.log`
+    を reopen 後 1 セッション監視し、
+    `configured_profile=trade_min`
+    のまま
+    `trade_min`
+    専用 worker が stop しないことを確認する。

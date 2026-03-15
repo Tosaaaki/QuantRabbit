@@ -20349,3 +20349,94 @@
     と明示されるため、
     既存 pending lane の再検証待ちと
     本当の障害対応を分けやすくなる。
+
+### 2026-03-16 08:22 JST - local-v2 autorecover を `trade_min` 既定に揃え、ENOSPC でも recovery/status critical path を止めない
+
+- 対象:
+  - `scripts/local_v2_stack.sh`
+  - `scripts/local_v2_watchdog.sh`
+  - `scripts/local_v2_autorecover_once.sh`
+  - `scripts/install_local_v2_launchd.sh`
+  - `scripts/status_local_v2_launchd.sh`
+  - `tests/scripts/test_local_v2_launchd_scripts.py`
+  - `docs/OPS_LOCAL_RUNBOOK.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+  - `AGENTS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - 2026-03-16 08:05 JST 時点の `trade_min` status では
+    `quant-scalp-precision-lowvol`,
+    `quant-scalp-vwap-revert`,
+    `quant-scalp-drought-revert`,
+    `quant-session-open`
+    が `stale_pid_file` で停止していた。
+  - 同時刻の `scripts/status_local_v2_launchd.sh` では launchd agent が
+    `watchdog --once --profile 'trade_cover'`
+    で動いており、
+    `trade_min` 専用 worker を監視対象から外していた。
+  - `logs/local_v2_autorecover.log` には
+    `2026-03-16 08:11 JST`
+    / `08:12 JST`
+    の
+    `scripts/local_v2_stack.sh: line 1115/913/827: cannot create temp file for here document`
+    が残っていた。
+
+- 変更:
+  - `scripts/local_v2_stack.sh`
+    の
+    `resolve_services`,
+    pid match,
+    port holder cleanup,
+    service process discovery,
+    status/reconcile
+    で使っていた bash here-doc を process substitution へ置き換え、
+    temp-file-free にした。
+  - `scripts/local_v2_autorecover_once.sh`
+    は
+    `market_sanity_ready`
+    の出力回収で
+    `/tmp/qr_local_v2_market_sanity.$$`
+    を使わず、
+    command substitution で理由を受けるようにした。
+  - `scripts/local_v2_watchdog.sh`,
+    `scripts/local_v2_autorecover_once.sh`,
+    `scripts/install_local_v2_launchd.sh`
+    の既定 profile を
+    `trade_min`
+    に統一した。
+  - `scripts/status_local_v2_launchd.sh`
+    は
+    `configured_profile`
+    を表示し、
+    `trade_min`
+    以外を drift warning として出すようにした。
+  - `tests/scripts/test_local_v2_launchd_scripts.py`
+    を追加し、
+    launchd install default と profile drift warning の回帰を固定した。
+
+- 検証:
+  - `bash -n scripts/local_v2_stack.sh scripts/local_v2_watchdog.sh scripts/local_v2_autorecover_once.sh scripts/install_local_v2_launchd.sh scripts/status_local_v2_launchd.sh`
+  - `PYTHONPATH=. python3 -m pytest -q tests/scripts/test_local_v2_launchd_scripts.py`
+    -> `2 passed`
+  - `scripts/status_local_v2_launchd.sh`
+    実測:
+    変更前は
+    `configured_profile=trade_cover`
+    と drift warning を返し、
+    再インストール後は
+    `configured_profile=trade_min`
+    を返した。
+  - `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env`
+    実測:
+    上記 4 worker と exit worker が再起動し、
+    `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
+    で全 service が `running` を返した。
+
+- 期待効果:
+  - launchd / watchdog / manual `up` の default profile drift で
+    `trade_min` 専用 worker だけが沈んだまま残る状態を防げる。
+  - 空き容量逼迫時も、
+    bash here-doc の temp file 生成失敗だけを理由に
+    recovery/status が落ちにくくなる。

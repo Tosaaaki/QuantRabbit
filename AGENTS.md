@@ -87,6 +87,7 @@
 ## 3. 時限情報（必ず最新を参照）
 - 2025-12 の攻め設定、mask 済み unit などは `docs/OPS_CURRENT.md` を参照。
 - 2026-03-09 追記: local-v2 の Brain は `LOCAL_V2_EXTRA_ENV_FILES=ops/env/profiles/brain-ollama-safe.env` を既定とし、manual restart / watchdog / launchd 復旧でも safe canary（micro-only / apply / fail-open）を維持する。`entry_thesis/meta` に spread/ATR が無い場合もローカル tick / factor_cache を補完し、async prompt/runtime autotune は preflight と分離した timeout で回す。shared Ollama runtime では `BRAIN_AUTOTUNE_LIVE_PRIORITY_COOLDOWN_SEC` を使って live preflight 優先を維持する。さらに local-v2 の common Brain は、strong setup (`entry_probability>=0.80`, `confidence>=75`) かつ通常 spread/ATR 帯では `BLOCK` より `REDUCE` を優先し、`reduce_to_allow_scale` 以上の shallow `REDUCE` は hard risk reason が無い限り `ALLOW` へ戻す。`BRAIN_FAILFAST_CONSECUTIVE_FAILURES=2` / `BRAIN_FAILFAST_COOLDOWN_SEC=30` / `BRAIN_FAILFAST_WINDOW_SEC=60` で timeout 連発時は短い fail-open cooldown へ切り替え、entry 頻度を落とさず quality だけを締めることを正とする。監査根拠は `docs/TRADE_FINDINGS.md` / `docs/RISK_AND_EXECUTION.md` を正とする。
+- 2026-03-16 追記: local-v2 の watchdog / `local_v2_autorecover_once.sh` / `install_local_v2_launchd.sh` の既定 profile は `trade_min` を正とし、`scripts/status_local_v2_launchd.sh` で configured profile drift を必ず確認する。`scripts/local_v2_stack.sh` と `local_v2_autorecover_once.sh` の recovery/status critical path は bash here-doc や `/tmp` 一時ファイルへ依存させず、低空き容量時の `cannot create temp file for here document` で `trade_min` worker 復旧が止まらない状態を維持する。
 - 2026-03-09 追記: `RangeFader` の dedicated env は
   `RANGEFADER_ENTRY_LEADING_PROFILE_REJECT_BELOW=0.30`,
   `RANGEFADER_BASE_UNITS=14000` を現行運用値とし、

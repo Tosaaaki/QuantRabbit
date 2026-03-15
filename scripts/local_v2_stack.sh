@@ -788,9 +788,7 @@ local_parity_supervisor_running() {
     if [[ "${line}" == *"${ROOT_DIR}/${LOCAL_PARITY_SUPERVISOR_REL}"* ]]; then
       return 0
     fi
-  done <<EOF_PARITY
-${lines}
-EOF_PARITY
+  done < <(printf '%s\n' "${lines}")
   return 1
 }
 
@@ -845,9 +843,7 @@ resolve_services() {
       if ! contains_service "${svc}" "${RESOLVED_SERVICES[@]-}"; then
         RESOLVED_SERVICES+=("${svc}")
       fi
-    done <<EOF_PROFILE
-$(resolve_profile_services "${PROFILE}")
-EOF_PROFILE
+    done < <(resolve_profile_services "${PROFILE}")
   fi
 
   if [[ ${#RESOLVED_SERVICES[@]} -eq 0 ]]; then
@@ -928,9 +924,7 @@ pid_matches_service() {
     if [[ "${cmd}" == *"${pattern}"* ]]; then
       return 0
     fi
-  done <<EOF_PATTERNS
-${patterns}
-EOF_PATTERNS
+  done < <(printf '%s\n' "${patterns}")
 
   case "${svc}" in
     quant-order-manager)
@@ -1026,9 +1020,7 @@ cleanup_service_port_binding() {
     fi
 
     echo "[warn] ${svc} port=${port} occupied by non-target pid=${pid}: $(pid_command "${pid}")" >&2
-  done <<EOF_PIDS
-${pids}
-EOF_PIDS
+  done < <(printf '%s\n' "${pids}")
 
   wait_for_port_release "${port}" "${DEFAULT_PORT_RELEASE_WAIT_SEC}" || true
   remaining="$(port_listener_pids "${port}")"
@@ -1059,9 +1051,7 @@ assert_service_port_available() {
     fi
     echo "[error] ${svc} port=${port} already occupied by pid=${pid}: $(pid_command "${pid}")" >&2
     return 1
-  done <<EOF_PIDS
-${pids}
-EOF_PIDS
+  done < <(printf '%s\n' "${pids}")
   return 0
 }
 
@@ -1121,9 +1111,7 @@ service_process_pids() {
   while IFS= read -r pattern; do
     [[ -n "${pattern}" ]] || continue
     pattern_list+=("${pattern}")
-  done <<EOF_PATTERNS
-${patterns}
-EOF_PATTERNS
+  done < <(printf '%s\n' "${patterns}")
   [[ ${#pattern_list[@]} -gt 0 ]] || return 0
 
   while IFS= read -r line; do
@@ -1158,9 +1146,7 @@ cleanup_service_processes() {
       continue
     fi
     terminate_pid "${pid}" 20
-  done <<EOF_PIDS
-${pids}
-EOF_PIDS
+  done < <(printf '%s\n' "${pids}")
 }
 
 service_pid_is_healthy() {
@@ -1401,9 +1387,7 @@ status_service() {
     if ! contains_value "${pattern_pid}" "${pattern_pids[@]-}"; then
       pattern_pids+=("${pattern_pid}")
     fi
-  done <<EOF_PATTERN_PIDS
-${pattern_raw}
-EOF_PATTERN_PIDS
+  done < <(printf '%s\n' "${pattern_raw}")
 
   port="$(service_port_for "${svc}" || true)"
   if [[ -n "${port}" ]]; then
@@ -1421,9 +1405,7 @@ EOF_PATTERN_PIDS
       else
         listener_non_target=1
       fi
-    done <<EOF_LISTENER_PIDS
-${listener_raw}
-EOF_LISTENER_PIDS
+    done < <(printf '%s\n' "${listener_raw}")
   fi
 
   if [[ "${pid_match}" == "1" ]]; then

@@ -30,6 +30,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 PLIST_PATH="${HOME}/Library/LaunchAgents/${LABEL}.plist"
+EXPECTED_PROFILE="trade_min"
 echo "label=${LABEL}"
 echo "plist=${PLIST_PATH}"
 echo "---"
@@ -42,6 +43,15 @@ launchctl print "gui/${UID}/${LABEL}" 2>/dev/null | sed -n '1,120p' || {
   echo "[warn] launchctl print failed; trying list"
   launchctl list | grep -F "${LABEL}" || true
 }
+
+CONFIGURED_PROFILE="$(sed -n "s/.*watchdog --once --profile '\\([^']*\\)'.*/\\1/p" "${PLIST_PATH}" | head -n 1)"
+if [[ -n "${CONFIGURED_PROFILE}" ]]; then
+  echo "configured_profile=${CONFIGURED_PROFILE}"
+  if [[ "${CONFIGURED_PROFILE}" != "${EXPECTED_PROFILE}" ]]; then
+    echo "[warn] launchd autorecover profile drift: configured=${CONFIGURED_PROFILE} expected=${EXPECTED_PROFILE}"
+    echo "[hint] reinstall with: ${ROOT_DIR}/scripts/install_local_v2_launchd.sh --profile ${EXPECTED_PROFILE} --env ops/env/local-v2-stack.env"
+  fi
+fi
 
 if grep -Fq "/Users/tossaki/Documents/App/QuantRabbit/" "${PLIST_PATH}"; then
   echo "[warn] plist still references the Documents symlink path"

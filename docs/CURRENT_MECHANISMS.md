@@ -55,6 +55,9 @@
 - `trade_min`: 上記 12 worker ペアまで
 - `trade_cover`: `macd_rsi_div_b`, `pullback_continuation`, `extrema_reversal`, `failed_break_reverse`, `false_break_fade`, `tick_imbalance`, `squeeze_pulse_break`, `momentumpulse`, `momentumstack`, `trendmomentum`, `vwapbound`, `vwaprevert` を追加
 - `trade_all`: `precision_lowvol`, `ping_5s_c`, `ping_5s_d`, `ping_5s_flow`, `level_reject`, `wick_reversal_blend`, `wick_reversal_pro`, `micro_pullbackema`, `micro_compressionrevert` を含む全展開
+- 自動復帰導線（`scripts/local_v2_watchdog.sh`, `scripts/local_v2_autorecover_once.sh`, `scripts/install_local_v2_launchd.sh`）の既定 profile も `trade_min` で揃える。
+- `scripts/status_local_v2_launchd.sh` は configured profile を表示し、`trade_min` 以外の launchd plist を drift として warning する。
+- `scripts/local_v2_stack.sh` の status/up/reconcile critical path は temp-file-free で扱い、ディスク残量逼迫時の shell temp file 失敗で `trade_min` worker 復旧が止まらないようにしている。
 
 ## 3. Entry / Exit / Execution Mechanisms
 

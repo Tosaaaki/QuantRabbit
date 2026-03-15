@@ -7,7 +7,7 @@ LOG_DIR="${ROOT_DIR}/logs/local_v2_stack"
 PID_FILE="${LOG_DIR}/watchdog.pid"
 DAEMON_LOG="${LOG_DIR}/watchdog.log"
 
-DEFAULT_PROFILE="trade_cover"
+DEFAULT_PROFILE="trade_min"
 DEFAULT_INTERVAL_SEC=10
 DEFAULT_RESUME_GAP_SEC=90
 DEFAULT_ENV_FILE="${ROOT_DIR}/ops/env/local-v2-stack.env"
@@ -32,7 +32,7 @@ Actions:
   status               Show watchdog daemon status
 
 Options:
-  --profile <name>       local_v2_stack profile (default: trade_cover)
+  --profile <name>       local_v2_stack profile (default: trade_min)
   --env <file>           override env file (default: ops/env/local-v2-stack.env)
   --services <csv>       optional explicit services list
   --interval-sec <sec>   polling interval seconds (default: 10)
