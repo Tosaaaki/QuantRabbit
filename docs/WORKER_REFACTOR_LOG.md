@@ -20226,3 +20226,63 @@
   - 日次 review の評価軸がぶれにくくなる。
   - `promote / hold / quarantine / graduate_to_strategy`
     の4区分で毎回同じ形に裁ける。
+
+### 2026-03-15 16:55 JST - `improvement_gate` に baseline-before-complexity 判定を追加
+
+- 対象:
+  - `scripts/improvement_gate.py`
+  - `tests/scripts/test_improvement_gate.py`
+  - `logs/bundle_intake_20260315.md`
+- 背景:
+  - 外部 bundle を intake した結果、
+    現行 `QuantRabbit` に直接入れられる runtime 実装は無かった一方で、
+    `net-first`
+    /
+    `baseline-before-complexity`
+    /
+    `split robustness`
+    の3原則は
+    既存の `improvement_preflight`
+    に吸収できると分かった。
+  - 既存 gate は
+    `market_hold`
+    と
+    `same pending lane`
+    の抑止までは持っていたが、
+    `Kalman/HMM/RL/LLM/feature engineering`
+    のような高度化案を
+    baseline / cost / validation の前に通さない判定は持っていなかった。
+- 変更:
+  - `scripts/improvement_gate.py`
+    に advanced keyword 検出を追加し、
+    candidate spec に
+    `baseline / replay / walk-forward / validation / cost / net / split`
+    の証跡が無いまま
+    高度化ワードが入った案を
+    `baseline_before_complexity`
+    として block するようにした。
+  - candidate payload / markdown / human output へ
+    `complexity_signals`
+    と
+    `has_baseline_evidence`
+    を追加し、
+    なぜ止めたかを監査可能にした。
+  - `tests/scripts/test_improvement_gate.py`
+    に
+    `advanced idea without baseline -> block`
+    と
+    `advanced idea after baseline evidence -> allow`
+    の回帰テストを追加した。
+- 検証:
+  - `PYTHONPATH=. python3 -m pytest -q tests/scripts/test_improvement_gate.py`
+    -> `5 passed`
+- 期待効果:
+  - 外部案や思いつき改善が
+    `baseline 未整備のまま複雑モデルへ飛ぶ`
+    パターンを
+    proposal gate の時点で落とせる。
+  - `market_hold / pending重複 / family escalation`
+    に加えて、
+    `複雑化しすぎ`
+    も自動で弾けるため、
+    改善案の粒度が現行 `local-v2` 方針に揃いやすくなる。

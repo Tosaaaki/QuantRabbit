@@ -1,0 +1,499 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
+
+
+DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
+DEFAULT_ARTIFACT_PATH = REPO_ROOT / "logs" / "change_preflight_latest.json"
+DEFAULT_OUT_JSON = REPO_ROOT / "logs" / "improvement_gate_latest.json"
+DEFAULT_OUT_MD = REPO_ROOT / "logs" / "improvement_gate_latest.md"
+UNRESOLVED_VERDICTS = {"pending", "mixed"}
+UNRESOLVED_STATUS = {"open", "in_progress"}
+BADISH_VERDICTS = {"bad", "pending", "mixed"}
+NOT_FIRED_VALUES = {"", "0", "none", "false", "no"}
+MARKET_HOLD_WARNING_PREFIXES = ("tick_stale", "spread_wide", "data_lag_high")
+ADVANCED_IDEA_PATTERNS = (
+    re.compile(r"\bkalman\b"),
+    re.compile(r"\bhmm\b"),
+    re.compile(r"\brl\b"),
+    re.compile(r"reinforcement learning"),
+    re.compile(r"\bllm\b"),
+    re.compile(r"feature engineering"),
+    re.compile(r"generalized residual"),
+    re.compile(r"\bpca residual\b"),
+)
+BASELINE_EVIDENCE_PATTERNS = (
+    re.compile(r"\bbaseline\b"),
+    re.compile(r"\breplay\b"),
+    re.compile(r"walk[- ]forward"),
+    re.compile(r"\bvalidation\b"),
+    re.compile(r"\bcost\b"),
+    re.compile(r"\bslippage\b"),
+    re.compile(r"\bnet\b"),
+    re.compile(r"\bsplit\b"),
+    re.compile(r"\boos\b"),
+)
+
+
+@dataclass(frozen=True)
+class Candidate:
+    raw: str
+    strategy: str
+    surface: str
+    primary_loss_driver: str
+    idea: str
+
+
+@dataclass(frozen=True)
+class MatchSummary:
+    heading: str
+    hypothesis_key: str
+    verdict: str
+    status: str
+    mechanism_fired: str
+    primary_loss_driver: str
+    why_not_same_as_last_time: str
+    promotion_gate: str
+    escalation_trigger: str
+    score: int
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Gate improvement proposals against open/pending TRADE_FINDINGS lanes."
+    )
+    parser.add_argument("--query", required=True)
+    parser.add_argument(
+        "--candidates",
+        required=True,
+        help=(
+            "Candidate specs separated by '||'. "
+            "Each spec must be 'strategy::surface::primary_loss_driver::idea'. "
+            "The final ::idea segment is optional."
+        ),
+    )
+    parser.add_argument("--path", default=str(DEFAULT_FINDINGS_PATH))
+    parser.add_argument("--artifact", default=str(DEFAULT_ARTIFACT_PATH))
+    parser.add_argument("--out-json", default=str(DEFAULT_OUT_JSON))
+    parser.add_argument("--out-md", default=str(DEFAULT_OUT_MD))
+    parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--json", action="store_true")
+    return parser.parse_args(argv)
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _compact(text: str, max_chars: int = 180) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def _normalize(text: str) -> str:
+    text = " ".join(str(text).split())
+    if not text:
+        return ""
+    match = re.search(r"`([^`]+)`", text)
+    if match:
+        return match.group(1).strip()
+    return text.lstrip("- ").strip()
+
+
+def _blob(text: str) -> str:
+    return " ".join(str(text).split()).lower()
+
+
+def _tokenize_surface(text: str) -> list[str]:
+    return [token.strip().lower() for token in text.split() if token.strip()]
+
+
+def _parse_candidates(raw: str) -> list[Candidate]:
+    items = [item.strip() for item in raw.split("||") if item.strip()]
+    if not items:
+        raise ValueError("at least one candidate is required")
+    parsed: list[Candidate] = []
+    for item in items:
+        parts = [part.strip() for part in item.split("::")]
+        if len(parts) < 3:
+            raise ValueError(
+                "candidate must be 'strategy::surface::primary_loss_driver::idea'"
+            )
+        strategy = parts[0]
+        surface = parts[1]
+        primary_loss_driver = parts[2]
+        idea = "::".join(parts[3:]).strip() if len(parts) > 3 else ""
+        if not strategy or not surface or not primary_loss_driver:
+            raise ValueError(
+                "candidate fields strategy/surface/primary_loss_driver must be non-empty"
+            )
+        parsed.append(
+            Candidate(
+                raw=item,
+                strategy=strategy,
+                surface=surface,
+                primary_loss_driver=primary_loss_driver,
+                idea=idea,
+            )
+        )
+    return parsed
+
+
+def _entry_blob(entry: Any) -> str:
+    return _blob(f"{entry.heading}\n{entry.raw_text}")
+
+
+def _entry_primary_blob(entry: Any) -> str:
+    parts = [
+        entry.heading,
+        _entry_field(entry, "Hypothesis Key"),
+        _entry_field(entry, "Change"),
+        _entry_field(entry, "Improvement"),
+    ]
+    return _blob("\n".join(part for part in parts if part))
+
+
+def _verdict(entry: Any) -> str:
+    return _normalize(_entry_field(entry, "Verdict")).lower()
+
+
+def _status(entry: Any) -> str:
+    return _normalize(_entry_field(entry, "Status")).lower()
+
+
+def _mechanism_fired(entry: Any) -> str:
+    return _normalize(_entry_field(entry, "Mechanism Fired")).lower()
+
+
+def _is_unresolved(entry: Any) -> bool:
+    return _verdict(entry) in UNRESOLVED_VERDICTS or _status(entry) in UNRESOLVED_STATUS
+
+
+def _is_badish(entry: Any) -> bool:
+    return _verdict(entry) in BADISH_VERDICTS or _status(entry) in UNRESOLVED_STATUS
+
+
+def _score_candidate_match(entry: Any, candidate: Candidate) -> int:
+    haystack = _entry_blob(entry)
+    primary_haystack = _entry_primary_blob(entry)
+    strategy = candidate.strategy.lower()
+    driver = candidate.primary_loss_driver.lower()
+    surface = candidate.surface.lower()
+    if strategy not in primary_haystack:
+        return 0
+
+    score = 5
+    driver_hit = driver in haystack
+    surface_phrase_hit = surface in haystack
+    surface_token_hits = sum(
+        1 for token in _tokenize_surface(candidate.surface) if token in haystack
+    )
+    idea_token_hits = sum(
+        1 for token in _tokenize_surface(candidate.idea) if token in haystack
+    )
+    if driver_hit:
+        score += 4
+    if surface_phrase_hit:
+        score += 4
+    score += surface_token_hits
+    score += min(2, idea_token_hits)
+
+    if not driver_hit and not surface_phrase_hit and surface_token_hits == 0:
+        return 0
+    return score
+
+
+def _family_match(entry: Any, candidate: Candidate) -> bool:
+    haystack = _entry_primary_blob(entry)
+    return (
+        candidate.strategy.lower() in haystack
+        and candidate.primary_loss_driver.lower() in haystack
+    )
+
+
+def _build_match_summary(entry: Any, score: int) -> MatchSummary:
+    return MatchSummary(
+        heading=entry.heading,
+        hypothesis_key=_compact(_normalize(_entry_field(entry, "Hypothesis Key")), 120),
+        verdict=_compact(_entry_field(entry, "Verdict"), 64),
+        status=_compact(_entry_field(entry, "Status"), 64),
+        mechanism_fired=_compact(_entry_field(entry, "Mechanism Fired"), 64),
+        primary_loss_driver=_compact(_entry_field(entry, "Primary Loss Driver"), 120),
+        why_not_same_as_last_time=_compact(
+            _entry_field(entry, "Why Not Same As Last Time"), 180
+        ),
+        promotion_gate=_compact(_entry_field(entry, "Promotion Gate"), 180),
+        escalation_trigger=_compact(_entry_field(entry, "Escalation Trigger"), 180),
+        score=score,
+    )
+
+
+def _market_status(artifact: dict[str, Any] | None) -> tuple[str, list[str]]:
+    if not artifact:
+        return ("unknown", ["missing_change_preflight_artifact"])
+    warnings = [
+        str(item)
+        for item in artifact.get("warnings", [])
+        if isinstance(item, str) and item.strip()
+    ]
+    hold_reasons = [
+        warning
+        for warning in warnings
+        if warning.startswith(MARKET_HOLD_WARNING_PREFIXES)
+    ]
+    market = artifact.get("market") if isinstance(artifact.get("market"), dict) else {}
+    tick_age_sec = market.get("tick_age_sec")
+    spread_pips = market.get("spread_pips")
+    data_lag_ms = market.get("data_lag_ms")
+    if isinstance(tick_age_sec, (int, float)) and tick_age_sec > 300:
+        hold_reasons.append(f"tick_stale:{tick_age_sec:.1f}s")
+    if isinstance(spread_pips, (int, float)) and spread_pips > 1.2:
+        hold_reasons.append(f"spread_wide:{spread_pips:.2f}p")
+    if isinstance(data_lag_ms, (int, float)) and data_lag_ms > 1500:
+        hold_reasons.append(f"data_lag_high:{data_lag_ms:.1f}ms")
+    if hold_reasons:
+        return ("market_hold", sorted(set(hold_reasons)))
+    return ("normal", [])
+
+
+def _candidate_complexity_signals(candidate: Candidate) -> list[str]:
+    text = _blob(" ".join([candidate.surface, candidate.idea]))
+    signals: list[str] = []
+    for pattern in ADVANCED_IDEA_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            token = match.group(0).strip().lower()
+            if token not in signals:
+                signals.append(token)
+    return signals
+
+
+def _candidate_has_baseline_evidence(candidate: Candidate) -> bool:
+    text = _blob(" ".join([candidate.surface, candidate.idea]))
+    return any(pattern.search(text) for pattern in BASELINE_EVIDENCE_PATTERNS)
+
+
+def build_improvement_gate_payload(
+    *,
+    findings_path: Path,
+    artifact_path: Path,
+    query: str,
+    candidates_raw: str,
+    limit: int,
+) -> dict[str, Any]:
+    candidates = _parse_candidates(candidates_raw)
+    entries = _parse_findings(findings_path)
+    artifact = _load_json(artifact_path)
+    market_status, market_reasons = _market_status(artifact)
+
+    candidate_results: list[dict[str, Any]] = []
+    blocked = False
+
+    for candidate in candidates:
+        complexity_signals = _candidate_complexity_signals(candidate)
+        has_baseline_evidence = _candidate_has_baseline_evidence(candidate)
+        scored_matches: list[tuple[int, Any]] = []
+        family_entries: list[Any] = []
+        for entry in entries:
+            score = _score_candidate_match(entry, candidate)
+            if score > 0:
+                scored_matches.append((score, entry))
+            if _family_match(entry, candidate):
+                family_entries.append(entry)
+        scored_matches.sort(key=lambda item: (-item[0], item[1].order))
+        matched_entries = [_build_match_summary(entry, score) for score, entry in scored_matches]
+        unresolved_matches = [
+            entry for _, entry in scored_matches if _is_unresolved(entry)
+        ]
+        unresolved_summaries = [
+            _build_match_summary(entry, score)
+            for score, entry in scored_matches
+            if _is_unresolved(entry)
+        ]
+        family_badish_count = sum(1 for entry in family_entries if _is_badish(entry))
+        family_unresolved_count = sum(1 for entry in family_entries if _is_unresolved(entry))
+        mechanism_not_fired_pending = any(
+            _mechanism_fired(entry) in NOT_FIRED_VALUES for entry in unresolved_matches
+        )
+
+        reasons: list[str] = []
+        if market_status == "market_hold":
+            action = "market_hold_review_only"
+            reasons.extend(market_reasons)
+        elif unresolved_matches:
+            action = "review_existing_pending"
+            reasons.append("same-surface or same-query pending lane exists")
+            if mechanism_not_fired_pending:
+                reasons.append("pending lane still has Mechanism Fired=0/none")
+        elif complexity_signals and not has_baseline_evidence:
+            action = "baseline_before_complexity"
+            reasons.append(
+                "advanced-model idea detected before baseline/cost/validation evidence"
+            )
+            reasons.extend(f"advanced_keyword:{signal}" for signal in complexity_signals)
+        elif family_badish_count >= 2:
+            action = "escalate_family_not_tighten"
+            reasons.append(
+                f"same strategy/driver family already has {family_badish_count} bad-or-pending entries"
+            )
+        else:
+            action = "allow_new_lane"
+            reasons.append("no unresolved overlap found for this candidate")
+
+        if action != "allow_new_lane":
+            blocked = True
+
+        candidate_results.append(
+            {
+                "candidate": asdict(candidate),
+                "action": action,
+                "reasons": reasons,
+                "same_surface_matches": [
+                    asdict(item) for item in matched_entries[: max(limit, 1)]
+                ],
+                "same_surface_unresolved": [
+                    asdict(item) for item in unresolved_summaries[: max(limit, 1)]
+                ],
+                "complexity_signals": complexity_signals,
+                "has_baseline_evidence": has_baseline_evidence,
+                "family_summary": {
+                    "family_bad_or_pending_count": family_badish_count,
+                    "family_unresolved_count": family_unresolved_count,
+                },
+            }
+        )
+
+    return {
+        "generated_at": artifact.get("generated_at") if artifact else "",
+        "query": query,
+        "findings_path": str(findings_path),
+        "artifact_path": str(artifact_path),
+        "artifact_query": artifact.get("query") if artifact else None,
+        "market_status": market_status,
+        "market_reasons": market_reasons,
+        "blocked": blocked,
+        "candidates": candidate_results,
+    }
+
+
+def _render_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Improvement Proposal Gate",
+        "",
+        f"- query: `{payload['query']}`",
+        f"- market_status: `{payload['market_status']}`",
+        f"- blocked: `{payload['blocked']}`",
+    ]
+    if payload.get("market_reasons"):
+        lines.append(
+            "- market_reasons: "
+            + ", ".join(f"`{reason}`" for reason in payload["market_reasons"])
+        )
+    for idx, item in enumerate(payload.get("candidates", []), start=1):
+        candidate = item["candidate"]
+        lines.extend(
+            [
+                "",
+                f"## {idx}. `{candidate['strategy']}`",
+                f"- surface: `{candidate['surface']}`",
+                f"- primary_loss_driver: `{candidate['primary_loss_driver']}`",
+                f"- idea: `{candidate['idea'] or 'n/a'}`",
+                f"- action: `{item['action']}`",
+                "- reasons: " + ", ".join(f"`{reason}`" for reason in item["reasons"]),
+                f"- complexity_signals: `{', '.join(item['complexity_signals']) or 'none'}`",
+                f"- has_baseline_evidence: `{item['has_baseline_evidence']}`",
+                f"- family_bad_or_pending_count: `{item['family_summary']['family_bad_or_pending_count']}`",
+                f"- family_unresolved_count: `{item['family_summary']['family_unresolved_count']}`",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _print_human(payload: dict[str, Any]) -> None:
+    print("IMPROVEMENT proposal gate")
+    print(f"query={payload['query']}")
+    print(f"market_status={payload['market_status']}")
+    if payload.get("market_reasons"):
+        print("market_reasons=" + ", ".join(payload["market_reasons"]))
+    print(f"blocked={payload['blocked']}")
+    print("")
+    for idx, item in enumerate(payload.get("candidates", []), start=1):
+        candidate = item["candidate"]
+        print(
+            f"{idx}. {candidate['strategy']} / {candidate['surface']} / "
+            f"{candidate['primary_loss_driver']}"
+        )
+        print(f"   action: {item['action']}")
+        print(f"   reasons: {', '.join(item['reasons'])}")
+        print(
+            "   complexity: "
+            f"signals={','.join(item['complexity_signals']) or 'none'} "
+            f"baseline_evidence={item['has_baseline_evidence']}"
+        )
+        print(
+            "   family: "
+            f"bad_or_pending={item['family_summary']['family_bad_or_pending_count']} "
+            f"unresolved={item['family_summary']['family_unresolved_count']}"
+        )
+        if item["same_surface_unresolved"]:
+            print("   unresolved_matches:")
+            for match in item["same_surface_unresolved"]:
+                print(
+                    "   - "
+                    f"{match['heading']} / key={match['hypothesis_key'] or 'n/a'} / "
+                    f"verdict={match['verdict'] or 'n/a'} / "
+                    f"mechanism_fired={match['mechanism_fired'] or 'n/a'}"
+                )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    payload = build_improvement_gate_payload(
+        findings_path=Path(args.path).resolve(),
+        artifact_path=Path(args.artifact).resolve(),
+        query=args.query,
+        candidates_raw=args.candidates,
+        limit=max(args.limit, 1),
+    )
+
+    out_json = Path(args.out_json).resolve()
+    out_md = Path(args.out_md).resolve()
+    out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_md.write_text(_render_markdown(payload), encoding="utf-8")
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        _print_human(payload)
+        print("")
+        print(f"artifact_json={out_json}")
+        print(f"artifact_md={out_md}")
+
+    return 2 if payload.get("blocked") else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
