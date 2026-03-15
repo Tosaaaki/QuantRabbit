@@ -25187,3 +25187,178 @@ Status:
   - 次回の daily review から
     `docs/prompts/WINNER_LANE_REVIEW_DAILY.md`
     をそのまま使う。
+
+## 2026-03-15 23:35 JST / preflight: weekend close を `market_closed_hold` として明示し、stale fault と混同しない
+
+- Hypothesis Key:
+  - `weekend_close_preflight_hold_20260315`
+- Primary Loss Driver:
+  - weekend close の stale cache を runtime fault と誤認し、
+    reopen 前の改善優先度を誤ること
+- Mechanism Fired:
+  - `none`
+  - `2026-03-15 23:06 JST`
+    の `change_preflight`
+    は日曜クローズ帯なのに
+    `tick_stale=148035.7s`
+    /
+    `data_lag_high=15263.3ms`
+    をそのまま warning に載せていた。
+- Do Not Repeat Unless:
+  - `2026-03-16 07:00 JST`
+    以降の reopen 後も
+    `market_open=true`
+    に戻らず、
+    `tick_cache / factor_cache / oanda_account_snapshot_live.json`
+    の更新再開が確認できないときだけ、
+    weekend hold ではなく runtime RCA を再度開く。
+
+- Change:
+  - `scripts/change_preflight.sh`
+    に
+    `utils.market_hours.is_market_open()/seconds_until_open()`
+    を組み込み、
+    closed 窓では
+    `preflight_status=market_closed_hold`
+    と
+    `warnings=market_closed:*_to_open`
+    を返すようにした。
+  - `scripts/improvement_gate.py`
+    は
+    `artifact.market.market_open=false`
+    を見て
+    `market_hold_review_only`
+    を返すようにした。
+  - `tests/scripts/test_improvement_gate.py`
+    に
+    closed 窓判定の回帰テストを追加した。
+
+- Why:
+  - 週末クローズ中の stale tick は通常故障ではない。
+  - それを runtime fault と同じ警告で出すと、
+    pending lane の再検証待ちと
+    本当の障害対応が混ざる。
+
+- Hypothesis:
+  - preflight / proposal gate が
+    closed 窓を
+    `market_closed_hold`
+    と明示すれば、
+    reopen 前の false triage を減らせる。
+
+- Why Not Same As Last Time:
+  - `weekend_close_docs_only_hold_20260314`
+    は docs/script-only task の hold 運用記録だった。
+  - 今回は
+    `change_preflight.sh`
+    と
+    `scripts/improvement_gate.py`
+    の executable 判定自体を変更しており、
+    decision surface は
+    `docs-only運用`
+    ではなく
+    `improvement preflight runtime governance`
+    である。
+
+- Expected Good:
+  - closed 窓では
+    `market_open=no`
+    /
+    `seconds_until_open=*`
+    /
+    `market_closed_hold`
+    が明示され、
+    stale cache を理由に新規 tweak を始めにくくなる。
+  - reopen 後にだけ
+    本当の stale fault を見に行ける。
+
+- Expected Bad:
+  - 本当に closed 窓中に runtime fault が混ざっていても、
+    `market_closed`
+    という大きなラベルで一段隠れる可能性がある。
+  - そのため
+    `mechanism_integrity_fail`
+    は別 warning として残し、
+    reopen 後の Promotion Gate を明示する。
+
+- Promotion Gate:
+  - reopen 後の
+    `change_preflight`
+    で
+    `market_open=true`
+    になり、
+    `market_closed:*_to_open`
+    が消えること。
+
+- Escalation Trigger:
+  - `2026-03-16 07:00 JST`
+    を過ぎても
+    `market_open=false`
+    のままか、
+    `market_open=true`
+    に戻った後も
+    `tick_stale>300s`
+    か
+    `data_lag_ms>1500`
+    が継続すること。
+
+- Period:
+  - 実装/検証:
+    `2026-03-15 23:20-23:35 JST`
+  - 対象:
+    `scripts/change_preflight.sh`,
+    `scripts/improvement_gate.py`,
+    `tests/scripts/test_improvement_gate.py`,
+    `logs/change_preflight_latest.json`,
+    `logs/improvement_gate_latest.{json,md}`
+
+- Fact:
+  - `date`
+    実測は
+    `2026-03-15 23:27 JST (Sunday)`。
+  - `tick_cache.json`
+    の最終 tick は
+    `2026-03-14 05:59 JST`
+    で、
+    土曜クローズ帯の停止と整合していた。
+  - 修正後の
+    `change_preflight`
+    は
+    `market_open=no`
+    /
+    `seconds_until_open=26951.5`
+    /
+    `preflight_status=market_closed_hold`
+    を返した。
+
+- Failure Cause:
+  - preflight が
+    `market_hours`
+    を見ずに
+    stale tick / lag を常に runtime warning として扱っていた。
+
+- Improvement:
+  - closed 窓では
+    `market_closed_hold`
+    を first-class な hold 理由として扱うようにした。
+
+- Verification:
+  - `PYTHONPATH=. python3 -m pytest -q tests/scripts/test_improvement_gate.py`
+    -> `6 passed`
+  - `scripts/change_preflight.sh "weekend close hold verification" 3`
+    -> `market_open=no`, `preflight_status=market_closed_hold`
+
+- Verdict:
+  - good
+
+- Status:
+  - tooling_ready
+
+- Next Action:
+  - `2026-03-16 07:00 JST`
+    以降に
+    `change_preflight`
+    を再実行し、
+    `market_open=true`
+    と cache 更新再開を確認してから
+    pending lane の live reopen を行う。

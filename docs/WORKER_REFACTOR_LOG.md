@@ -20286,3 +20286,66 @@
     `複雑化しすぎ`
     も自動で弾けるため、
     改善案の粒度が現行 `local-v2` 方針に揃いやすくなる。
+
+### 2026-03-15 23:35 JST - `change_preflight` / `improvement_gate` が weekend close を `market_closed_hold` として扱うよう修正
+
+- 対象:
+  - `scripts/change_preflight.sh`
+  - `scripts/improvement_gate.py`
+  - `tests/scripts/test_improvement_gate.py`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - 2026-03-15 23:06 JST の preflight 実測では、
+    ローカル日時が日曜クローズ帯にもかかわらず
+    `tick_stale=148035.7s`
+    /
+    `data_lag_high=15263.3ms`
+    がそのまま runtime fault のように見えていた。
+  - 実際の最終 tick は
+    `2026-03-14 05:59 JST`
+    で、
+    週末クローズと整合する停止だった。
+- 変更:
+  - `scripts/change_preflight.sh`
+    に
+    `utils.market_hours.is_market_open()/seconds_until_open()`
+    を組み込み、
+    closed 窓では
+    `market_open=no`
+    /
+    `seconds_until_open=*`
+    /
+    `preflight_status=market_closed_hold`
+    を出すようにした。
+  - closed 窓では
+    `tick_stale / data_lag_high / low_activity`
+    を runtime warning として積まず、
+    `warnings=market_closed:*_to_open`
+    のみを残すようにした。
+  - `scripts/improvement_gate.py`
+    は
+    `artifact.market.market_open=false`
+    を見て
+    `market_hold_review_only`
+    を返すようにし、
+    stale cache を reopen 前の改善根拠に使わないようにした。
+  - `tests/scripts/test_improvement_gate.py`
+    に
+    `market_open=false`
+    で
+    `market_hold`
+    へ落ちる回帰テストを追加した。
+- 検証:
+  - `PYTHONPATH=. python3 -m pytest -q tests/scripts/test_improvement_gate.py`
+    -> `6 passed`
+  - `scripts/change_preflight.sh "weekend close hold verification" 3`
+    -> `market_open=no`, `preflight_status=market_closed_hold`, `warnings=market_closed:26951.5s_to_open`
+- 期待効果:
+  - 週末クローズを runtime fault と誤認して
+    不要な stale RCA や tweak を始めるのを防げる。
+  - reopen 前は
+    `market_hold_review_only`
+    と明示されるため、
+    既存 pending lane の再検証待ちと
+    本当の障害対応を分けやすくなる。

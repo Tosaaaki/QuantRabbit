@@ -35,6 +35,7 @@ import json
 import sqlite3
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -60,10 +61,19 @@ def fmt(value, digits: int = 1) -> str:
 
 
 root = Path(sys.argv[1])
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+from utils.market_hours import is_market_open, seconds_until_open
+
 health = load_json(root / "logs" / "health_snapshot.json") or {}
 tick_cache = load_json(root / "logs" / "tick_cache.json") or []
 factor_cache = load_json(root / "logs" / "factor_cache.json") or {}
 account = load_json(root / "logs" / "oanda_account_snapshot_live.json") or {}
+now_utc = datetime.now(timezone.utc)
+now_epoch = now_utc.timestamp()
+market_open = is_market_open(now_utc)
+seconds_to_open = 0.0 if market_open else max(0.0, seconds_until_open(now_utc))
 
 latest_tick = tick_cache[-1] if isinstance(tick_cache, list) and tick_cache else {}
 latest_epoch = latest_tick.get("epoch")
@@ -80,7 +90,7 @@ tick_age_sec = None
 range_6m_pips = None
 range_30m_pips = None
 if latest_epoch is not None:
-    tick_age_sec = max(0.0, time.time() - float(latest_epoch))
+    tick_age_sec = max(0.0, now_epoch - float(latest_epoch))
     mids_6m = [
         float(row["mid"])
         for row in tick_cache
@@ -157,22 +167,29 @@ top_status = ", ".join(
 warnings: list[str] = []
 if mechanism_ok is False:
     warnings.append("mechanism_integrity_fail")
-if spread_pips is not None and spread_pips > 1.2:
-    warnings.append(f"spread_wide:{spread_pips:.2f}p")
-if tick_age_sec is not None and tick_age_sec > 30.0:
-    warnings.append(f"tick_stale:{tick_age_sec:.1f}s")
-if health.get("data_lag_ms") is not None and float(health["data_lag_ms"]) > 1500.0:
-    warnings.append(f"data_lag_high:{float(health['data_lag_ms']):.1f}ms")
-if fills_15m == 0:
-    warnings.append(f"low_activity_15m:fills_15m={fills_15m}")
-if fills_30m <= 1:
-    warnings.append(f"low_activity_30m:fills_30m={fills_30m}")
-if rejects_30m >= max(12, fills_30m * 3):
-    warnings.append(f"reject_pressure_high:rejects_30m={rejects_30m}")
+if not market_open:
+    warnings.append(f"market_closed:{seconds_to_open:.1f}s_to_open")
+else:
+    if spread_pips is not None and spread_pips > 1.2:
+        warnings.append(f"spread_wide:{spread_pips:.2f}p")
+    if tick_age_sec is not None and tick_age_sec > 30.0:
+        warnings.append(f"tick_stale:{tick_age_sec:.1f}s")
+    if health.get("data_lag_ms") is not None and float(health["data_lag_ms"]) > 1500.0:
+        warnings.append(f"data_lag_high:{float(health['data_lag_ms']):.1f}ms")
+    if fills_15m == 0:
+        warnings.append(f"low_activity_15m:fills_15m={fills_15m}")
+    if fills_30m <= 1:
+        warnings.append(f"low_activity_30m:fills_30m={fills_30m}")
+    if rejects_30m >= max(12, fills_30m * 3):
+        warnings.append(f"reject_pressure_high:rejects_30m={rejects_30m}")
 
 print(
     f"generated_at={health.get('generated_at', 'n/a')} "
     f"mechanism_integrity={fmt(mechanism_ok)}"
+)
+print(
+    f"market_open={fmt(market_open)} "
+    f"seconds_until_open={fmt(seconds_to_open, 1)}"
 )
 print(
     f"bid={fmt(latest_bid, 3)} ask={fmt(latest_ask, 3)} mid={fmt(latest_mid, 3)} "
@@ -196,7 +213,7 @@ print(
     f"health_buffer={fmt(health_buffer, 3)}"
 )
 print(f"orders_status_1h={top_status or 'n/a'}")
-print(f"preflight_status={'warn' if warnings else 'ok'}")
+print(f"preflight_status={'market_closed_hold' if not market_open else 'warn' if warnings else 'ok'}")
 if warnings:
     print("warnings=" + ", ".join(warnings))
 PY
@@ -232,6 +249,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 
@@ -256,12 +274,21 @@ def normalize_key(text: str) -> str:
 
 
 root = Path(sys.argv[1])
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+from utils.market_hours import is_market_open, seconds_until_open
+
 query = sys.argv[2]
 limit = int(sys.argv[3])
 health = load_json(root / "logs" / "health_snapshot.json") or {}
 tick_cache = load_json(root / "logs" / "tick_cache.json") or []
 factor_cache = load_json(root / "logs" / "factor_cache.json") or {}
 account = load_json(root / "logs" / "oanda_account_snapshot_live.json") or {}
+now_utc = datetime.now(timezone.utc)
+now_epoch = now_utc.timestamp()
+market_open = is_market_open(now_utc)
+seconds_to_open = 0.0 if market_open else max(0.0, seconds_until_open(now_utc))
 
 latest_tick = tick_cache[-1] if isinstance(tick_cache, list) and tick_cache else {}
 latest_epoch = latest_tick.get("epoch")
@@ -278,7 +305,7 @@ tick_age_sec = None
 range_6m_pips = None
 range_30m_pips = None
 if latest_epoch is not None:
-    tick_age_sec = max(0.0, time.time() - float(latest_epoch))
+    tick_age_sec = max(0.0, now_epoch - float(latest_epoch))
     mids_6m = [
         float(row["mid"])
         for row in tick_cache
@@ -339,18 +366,21 @@ if orders_db.exists():
 warnings: list[str] = []
 if health.get("mechanism_integrity", {}).get("ok") is False:
     warnings.append("mechanism_integrity_fail")
-if spread_pips is not None and spread_pips > 1.2:
-    warnings.append(f"spread_wide:{spread_pips:.2f}p")
-if tick_age_sec is not None and tick_age_sec > 30.0:
-    warnings.append(f"tick_stale:{tick_age_sec:.1f}s")
-if health.get("data_lag_ms") is not None and float(health["data_lag_ms"]) > 1500.0:
-    warnings.append(f"data_lag_high:{float(health['data_lag_ms']):.1f}ms")
-if fills_15m == 0:
-    warnings.append(f"low_activity_15m:fills_15m={fills_15m}")
-if fills_30m <= 1:
-    warnings.append(f"low_activity_30m:fills_30m={fills_30m}")
-if rejects_30m >= max(12, fills_30m * 3):
-    warnings.append(f"reject_pressure_high:rejects_30m={rejects_30m}")
+if not market_open:
+    warnings.append(f"market_closed:{seconds_to_open:.1f}s_to_open")
+else:
+    if spread_pips is not None and spread_pips > 1.2:
+        warnings.append(f"spread_wide:{spread_pips:.2f}p")
+    if tick_age_sec is not None and tick_age_sec > 30.0:
+        warnings.append(f"tick_stale:{tick_age_sec:.1f}s")
+    if health.get("data_lag_ms") is not None and float(health["data_lag_ms"]) > 1500.0:
+        warnings.append(f"data_lag_high:{float(health['data_lag_ms']):.1f}ms")
+    if fills_15m == 0:
+        warnings.append(f"low_activity_15m:fills_15m={fills_15m}")
+    if fills_30m <= 1:
+        warnings.append(f"low_activity_30m:fills_30m={fills_30m}")
+    if rejects_30m >= max(12, fills_30m * 3):
+        warnings.append(f"reject_pressure_high:rejects_30m={rejects_30m}")
 
 review_proc = subprocess.run(
     [
@@ -419,7 +449,13 @@ artifact = {
     "git_rev": git_rev,
     "query": query,
     "limit": limit,
-    "preflight_status": "warn" if warnings else "ok",
+    "next_step": (
+        'scripts/improvement_preflight.sh '
+        f'"{query}" '
+        '"<strategy::surface::primary_loss_driver::idea||...>" '
+        f"{limit}"
+    ),
+    "preflight_status": "market_closed_hold" if not market_open else "warn" if warnings else "ok",
     "warnings": warnings,
     "health_generated_at": health.get("generated_at"),
     "lint": lint,
@@ -432,6 +468,8 @@ artifact = {
         "md": str(root / "logs" / "repo_history_lane_index_latest.md"),
     },
     "market": {
+        "market_open": market_open,
+        "seconds_until_open": round(seconds_to_open, 3) if not market_open else 0.0,
         "bid": latest_bid,
         "ask": latest_ask,
         "mid": latest_mid,
@@ -464,4 +502,5 @@ print(
     f"lane_matches={len(lane_repeat_matches)} "
     f"lint_ok={lint.get('ok')}"
 )
+print(f"next_step={artifact['next_step']}")
 PY

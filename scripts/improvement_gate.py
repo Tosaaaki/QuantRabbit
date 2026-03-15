@@ -26,7 +26,7 @@ UNRESOLVED_VERDICTS = {"pending", "mixed"}
 UNRESOLVED_STATUS = {"open", "in_progress"}
 BADISH_VERDICTS = {"bad", "pending", "mixed"}
 NOT_FIRED_VALUES = {"", "0", "none", "false", "no"}
-MARKET_HOLD_WARNING_PREFIXES = ("tick_stale", "spread_wide", "data_lag_high")
+MARKET_HOLD_WARNING_PREFIXES = ("tick_stale", "spread_wide", "data_lag_high", "market_closed")
 ADVANCED_IDEA_PATTERNS = (
     re.compile(r"\bkalman\b"),
     re.compile(r"\bhmm\b"),
@@ -265,6 +265,12 @@ def _market_status(artifact: dict[str, Any] | None) -> tuple[str, list[str]]:
         if warning.startswith(MARKET_HOLD_WARNING_PREFIXES)
     ]
     market = artifact.get("market") if isinstance(artifact.get("market"), dict) else {}
+    market_open = market.get("market_open")
+    seconds_until_open = market.get("seconds_until_open")
+    if market_open is False:
+        if isinstance(seconds_until_open, (int, float)):
+            return ("market_hold", [f"market_closed:{seconds_until_open:.1f}s_to_open"])
+        return ("market_hold", ["market_closed"])
     tick_age_sec = market.get("tick_age_sec")
     spread_pips = market.get("spread_pips")
     data_lag_ms = market.get("data_lag_ms")
