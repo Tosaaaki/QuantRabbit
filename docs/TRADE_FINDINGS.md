@@ -25603,3 +25603,254 @@ Status:
     のまま
     `trade_min`
     専用 worker が stop しないことを確認する。
+
+## 2026-03-16 09:17 JST / local-v2: `MomentumBurst` single-focus lane の no-signal diagnostics を strategy-local に露出
+
+- Hypothesis Key:
+  - `momentumburst_no_signal_diagnostics_20260316`
+- Primary Loss Driver:
+  - single-focus pending lane の
+    `MomentumBurst`
+    で、
+    「なぜ今 signal が出ていないか」が live log に無く、
+    `review_existing_pending`
+    のまま blind retighten へ流れること
+- Mechanism Fired:
+  - `momentumburst_no_signal_diagnostic`
+  - `2026-03-16 09:11 JST`
+    時点の
+    `quant-micro-momentumburst.log`
+    は
+    `allowlist applied: MomentumBurst`
+    の反復だけで、
+    no-signal reason を残していなかった。
+- Do Not Repeat Unless:
+  - `momentumburst_no_signal`
+    が live log に出るようになった後も、
+    `MomentumBurst`
+    の current lane を判定するのに必要な
+    `pullback / mtf / trend / rsi / quality / context`
+    のどれで止まっているかが still 分からないときだけ、
+    diagnostics field を追加する。
+
+- Change:
+  - `strategies/micro/momentum_burst.py`
+    に
+    `MomentumBurstMicro.diagnostic(fac)`
+    を追加し、
+    `long/short`
+    の
+    `base / pullback / mtf / trend / price / rsi / indicator / context`
+    判定を dict で返すようにした。
+  - `workers/micro_runtime/worker.py`
+    は
+    `MomentumBurst`
+    が `cand=None`
+    を返したときだけ
+    `momentumburst_no_signal`
+    を 120 秒に 1 回 rate-limit して出すようにした。
+  - 同時に
+    `_allowed_strategies()`
+    の allowlist 結果を env 値ごとに cache し、
+    `allowlist applied`
+    を毎ループ出さないようにした。
+  - `tests/strategies/test_momentum_burst.py`
+    に
+    `transition long` の
+    `pullback_guard`
+    block / keep を
+    `diagnostic()`
+    でも確認する回帰を追加した。
+
+- Why:
+  - `scripts/improvement_preflight.sh`
+    実測では
+    `DroughtRevert`
+    と
+    `scalp_extrema_reversal_live`
+    の新規 tweak は
+    どちらも
+    `review_existing_pending`
+    で block された。
+  - 同じ gate は reopen first-focus として
+    `MomentumBurst`
+    を指しているが、
+    直近 24h の
+    `orders.db / trades.db`
+    では
+    `MomentumBurst`
+    の fresh sample が無く、
+    `lane_scoreboard / participation_alloc / entry_path_summary`
+    にも lane が出ていなかった。
+  - この状態で trade logic をさらに触ると、
+    anti-loop に反して
+    「観測なしの tightening」
+    を積むことになる。
+
+- Hypothesis:
+  - `MomentumBurst`
+    の no-signal reason を strategy-local に露出すれば、
+    current pending lane が
+    `pullback_guard`
+    で詰まっているのか、
+    そもそも
+    `base setup`
+    が無いのかを live で切り分けられ、
+    adjacent loser family を blind に触らずに次の一手を決められる。
+
+- Why Not Same As Last Time:
+  - `momentumburst_transition_pullback_guard_20260314`
+    は
+    `MomentumBurst`
+    の trade logic 自体を tighten した entry だった。
+  - 今回は
+    新しい tighten ではなく、
+    その pending lane を reopen 窓で判定するための
+    diagnostics / log hygiene を追加している。
+
+- Expected Good:
+  - `quant-micro-momentumburst.log`
+    で
+    `long_transition_pullback_guard`
+    なのか
+    `long_base_conditions`
+    なのかが見える。
+  - `allowlist applied`
+    のループログが止まり、
+    single-focus lane の判定に必要な log だけが残る。
+  - `MomentumBurst`
+    を触るなら
+    `MomentumBurst`
+    family の中だけで次の change を決められる。
+
+- Expected Bad:
+  - no-signal window が長いと diagnostics log も増える。
+  - そのため
+    `momentumburst_no_signal`
+    は 120 秒 rate-limit に留め、
+    per-loop log にはしない。
+
+- Promotion Gate:
+  - `quant-micro-momentumburst.log`
+    に
+    `momentumburst_no_signal`
+    が出て、
+    `reason`
+    と
+    `long/short`
+    の block summary を live で読めること。
+  - 次の
+    `MomentumBurst`
+    signal が出た場合でも、
+    既存 entry tag / entry_thesis contract を壊していないこと。
+
+- Escalation Trigger:
+  - `momentumburst_no_signal`
+    の同一 reason が
+    reopen 後 30-120 分続き、
+    かつ
+    `MomentumBurst`
+    fills が still `0`
+    のままなら、
+    adjacent
+    `STOP_LOSS_ORDER`
+    family ではなく
+    `MomentumBurst`
+    family 自身の
+    `improvement_preflight`
+    へ進む。
+
+- Period:
+  - 調査:
+    `2026-03-16 08:55-09:11 JST`
+  - 実装/検証:
+    `2026-03-16 09:11-09:17 JST`
+  - 対象:
+    `strategies/micro/momentum_burst.py`,
+    `workers/micro_runtime/worker.py`,
+    `tests/strategies/test_momentum_burst.py`
+
+- Fact:
+  - `scripts/improvement_preflight.sh "live reopen loser-lane triage 2026-03-16" ...`
+    は
+    `DroughtRevert`
+    と
+    `scalp_extrema_reversal_live`
+    の両候補を
+    `review_existing_pending`
+    と判定した。
+  - `logs/strategy_feedback.json`
+    の
+    `MomentumBurst`
+    は
+    `trades=14`,
+    `win_rate=0.286`,
+    `profit_factor=0.611`
+    で、
+    `flow_regime=transition`
+    の setup override は
+    `entry_probability_multiplier=0.875`,
+    `entry_units_multiplier=0.836`
+    だった。
+  - 一方で
+    `2026-03-16 09:11 JST`
+    時点の
+    `orders.db / trades.db`
+    直近 24h に
+    `MomentumBurst`
+    の fresh order/trade は無く、
+    `lane_scoreboard_latest.json`
+    /
+    `participation_alloc.json`
+    /
+    `entry_path_summary_latest.json`
+    にも
+    `MomentumBurst`
+    lane は出ていなかった。
+  - `tests/strategies/test_momentum_burst.py`
+    は
+    `45 passed`
+    を確認した。
+
+- Failure Cause:
+  - current single-focus lane に対して、
+    signal absence を説明する strategy-local diagnostics が無かった。
+  - さらに
+    `allowlist applied`
+    が毎ループ出て、
+    live 判定に必要な log を埋めていた。
+
+- Improvement:
+  - `MomentumBurst`
+    の no-signal diagnostics を strategy-local に出し、
+    live で
+    `pullback / mtf / quality`
+    のどこで止まっているかを読めるようにした。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/strategies/test_momentum_burst.py`
+    -> `45 passed`
+  - `python3 -m py_compile strategies/micro/momentum_burst.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py`
+    -> 成功
+
+- Verdict:
+  - pending
+
+- Status:
+  - `pending_live_reopen_diag`
+
+- Next Action:
+  - `quant-micro-momentumburst`
+    を反映後、
+    `logs/local_v2_stack/quant-micro-momentumburst.log`
+    で
+    `momentumburst_no_signal`
+    を確認する。
+  - その reason が
+    `long_transition_pullback_guard`
+    に偏るなら
+    `MomentumBurst`
+    family の escalation を、
+    `long_base_conditions`
+    に偏るなら
+    trade logic を増やさず market mismatch として扱う。

@@ -388,6 +388,45 @@ def test_transition_long_blocks_overbought_upper_wick_chase() -> None:
     assert signal is None
 
 
+def test_transition_long_diagnostic_reports_pullback_guard() -> None:
+    diag = MomentumBurstMicro.diagnostic(
+        {
+            "close": 159.592,
+            "ma10": 159.578,
+            "ma20": 159.547,
+            "ema20": 159.561,
+            "adx": 19.2,
+            "atr_pips": 3.0,
+            "vol_5m": 1.6,
+            "rsi": 68.4,
+            "plus_di": 24.0,
+            "minus_di": 15.1,
+            "roc5": 0.029,
+            "ema_slope_10": 0.0014,
+            "range_mode": "transition",
+            "range_score": 0.33,
+            "micro_chop_score": 0.44,
+            "projection": {"score": 0.535},
+            "trend_snapshot": {
+                "tf": "H4",
+                "direction": "long",
+                "gap_pips": 49.865,
+                "adx": 21.59,
+            },
+            "candles": [
+                {"high": 159.53, "low": 159.48, "close": 159.50},
+                {"high": 159.55, "low": 159.50, "close": 159.53},
+                {"high": 159.598, "low": 159.55, "close": 159.578},
+                {"open": 159.568, "high": 159.604, "low": 159.560, "close": 159.592},
+            ],
+        }
+    )
+
+    assert diag["reason"] == "long_transition_pullback_guard"
+    assert diag["long"]["base"] is True
+    assert diag["long"]["pullback_ok"] is False
+
+
 def test_transition_long_keeps_overbought_controlled_pullback_lane() -> None:
     signal = MomentumBurstMicro.check(
         {
@@ -424,6 +463,46 @@ def test_transition_long_keeps_overbought_controlled_pullback_lane() -> None:
 
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
+
+
+def test_transition_long_diagnostic_reports_ready_for_controlled_pullback() -> None:
+    diag = MomentumBurstMicro.diagnostic(
+        {
+            "close": 159.581,
+            "ma10": 159.578,
+            "ma20": 159.547,
+            "ema20": 159.561,
+            "adx": 19.2,
+            "atr_pips": 3.0,
+            "vol_5m": 1.6,
+            "rsi": 68.4,
+            "plus_di": 24.0,
+            "minus_di": 15.1,
+            "roc5": 0.029,
+            "ema_slope_10": 0.0014,
+            "range_mode": "transition",
+            "range_score": 0.32,
+            "micro_chop_score": 0.43,
+            "projection": {"score": 0.315},
+            "trend_snapshot": {
+                "tf": "H4",
+                "direction": "long",
+                "gap_pips": 49.865,
+                "adx": 21.59,
+            },
+            "candles": [
+                {"high": 159.53, "low": 159.48, "close": 159.50},
+                {"high": 159.55, "low": 159.50, "close": 159.53},
+                {"high": 159.586, "low": 159.55, "close": 159.57},
+                {"open": 159.594, "high": 159.600, "low": 159.572, "close": 159.581},
+            ],
+        }
+    )
+
+    assert diag["reason"] == "long_ready"
+    assert diag["long"]["base"] is True
+    assert diag["long"]["pullback_ok"] is True
+    assert diag["long"]["indicator_ok"] is True
 
 
 def test_long_rejects_overextended_indicator_state() -> None:

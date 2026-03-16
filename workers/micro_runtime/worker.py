@@ -93,6 +93,7 @@ _STRATEGY_PARTICIPATION_ALLOC_TTL_SEC = max(
     1.0,
     env_float("STRATEGY_PARTICIPATION_ALLOC_TTL_SEC", 30.0),
 )
+_ALLOWED_STRATEGIES_CACHE: tuple[str, tuple] | None = None
 
 
 def _bb_float(value):
@@ -1301,21 +1302,29 @@ def _allowed_strategies() -> List:
         MicroTrendRetest,
         MicroCompressionRevert,
     ]
+    global _ALLOWED_STRATEGIES_CACHE
+    cached = _ALLOWED_STRATEGIES_CACHE
+    if cached is not None and cached[0] == allow_raw:
+        return list(cached[1])
     if not allow_raw:
-        return all_classes
+        _ALLOWED_STRATEGIES_CACHE = (allow_raw, tuple(all_classes))
+        return list(all_classes)
     allow = {s.strip() for s in allow_raw.split(",") if s.strip()}
     if not allow:
-        return all_classes
+        _ALLOWED_STRATEGIES_CACHE = (allow_raw, tuple(all_classes))
+        return list(all_classes)
     filtered = [cls for cls in all_classes if getattr(cls, "name", cls.__name__) in allow]
     if not filtered:
         LOG.warning("%s allowlist empty; using all strategies", config.LOG_PREFIX)
-        return all_classes
+        _ALLOWED_STRATEGIES_CACHE = (allow_raw, tuple(all_classes))
+        return list(all_classes)
     LOG.info(
         "%s allowlist applied: %s",
         config.LOG_PREFIX,
         ",".join(getattr(c, "name", c.__name__) for c in filtered),
     )
-    return filtered
+    _ALLOWED_STRATEGIES_CACHE = (allow_raw, tuple(filtered))
+    return list(filtered)
 
 
 def _strategy_list() -> List:
@@ -1765,6 +1774,7 @@ async def micro_multi_worker() -> None:
     last_perf_block_log = 0.0
     last_hist_override_log = 0.0
     last_mlr_block_log = 0.0
+    last_momentumburst_diag_log = 0.0
     last_pullback_mtf_block_log = 0.0
     last_account_snapshot = None
     last_account_snapshot_error_log = 0.0
@@ -1948,6 +1958,41 @@ async def micro_multi_worker() -> None:
                     continue
             cand = strat.check(strategy_fac)
             if not cand:
+                if strategy_name == MomentumBurstMicro.name:
+                    now_mono = time.monotonic()
+                    if now_mono - last_momentumburst_diag_log > 120.0:
+                        diag = MomentumBurstMicro.diagnostic(strategy_fac)
+                        long_diag = diag.get("long") if isinstance(diag.get("long"), dict) else {}
+                        short_diag = diag.get("short") if isinstance(diag.get("short"), dict) else {}
+                        LOG.info(
+                            "%s momentumburst_no_signal reason=%s gap=%.2f adx=%.2f rsi=%.1f mode=%s "
+                            "long[base=%s pull=%s mtf=%s trend=%s price=%s rsi=%s qual=%s ctx=%s] "
+                            "short[base=%s tight=%s chase=%s mtf=%s trend=%s price=%s rsi=%s qual=%s ctx=%s]",
+                            config.LOG_PREFIX,
+                            diag.get("reason"),
+                            float(diag.get("gap_pips") or 0.0),
+                            float(diag.get("adx") or 0.0),
+                            float(diag.get("rsi") or 0.0),
+                            diag.get("range_mode") or "-",
+                            int(bool(long_diag.get("base"))),
+                            int(bool(long_diag.get("pullback_ok"))),
+                            int(bool(long_diag.get("mtf_ok"))),
+                            int(bool(long_diag.get("trend_ok"))),
+                            int(bool(long_diag.get("price_ok"))),
+                            int(bool(long_diag.get("rsi_ok"))),
+                            int(bool(long_diag.get("indicator_ok"))),
+                            int(bool(long_diag.get("context_ok", True))),
+                            int(bool(short_diag.get("base"))),
+                            int(bool(short_diag.get("tight_ok"))),
+                            int(bool(short_diag.get("chase_ok"))),
+                            int(bool(short_diag.get("mtf_ok"))),
+                            int(bool(short_diag.get("trend_ok"))),
+                            int(bool(short_diag.get("price_ok"))),
+                            int(bool(short_diag.get("rsi_ok"))),
+                            int(bool(short_diag.get("indicator_ok"))),
+                            int(bool(short_diag.get("context_ok", True))),
+                        )
+                        last_momentumburst_diag_log = now_mono
                 continue
             if (
                 strategy_name == MomentumBurstMicro.name

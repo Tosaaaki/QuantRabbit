@@ -20440,3 +20440,78 @@
   - 空き容量逼迫時も、
     bash here-doc の temp file 生成失敗だけを理由に
     recovery/status が落ちにくくなる。
+
+## 2026-03-16 09:17 JST / `MomentumBurst` single-focus lane の no-signal diagnostics を追加
+
+- 対象:
+  - `strategies/micro/momentum_burst.py`
+  - `workers/micro_runtime/worker.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+
+- 背景:
+  - `scripts/improvement_preflight.sh`
+    実測では
+    `DroughtRevert`
+    /
+    `scalp_extrema_reversal_live`
+    の新規 tweak は
+    `review_existing_pending`
+    で block され、
+    reopen single-focus は
+    `MomentumBurst`
+    を先に見る必要があった。
+  - ただし
+    `2026-03-16 09:11 JST`
+    時点の
+    `orders.db / trades.db`
+    直近 24h に
+    `MomentumBurst`
+    の fresh sample は無く、
+    `quant-micro-momentumburst.log`
+    も
+    `allowlist applied`
+    の反復だけで、
+    no-signal reason を読めなかった。
+
+- 変更:
+  - `strategies/micro/momentum_burst.py`
+    に
+    `MomentumBurstMicro.diagnostic(fac)`
+    を追加し、
+    `long/short`
+    の
+    `base / pullback / mtf / trend / price / rsi / indicator / context`
+    判定を dict で返すようにした。
+  - `workers/micro_runtime/worker.py`
+    は
+    `MomentumBurst`
+    が signal を返さない時だけ
+    `momentumburst_no_signal`
+    を 120 秒ごとに記録する。
+  - `_allowed_strategies()`
+    は env 値ごとに cache して、
+    `allowlist applied`
+    を毎ループ出さないようにした。
+  - `tests/strategies/test_momentum_burst.py`
+    に
+    pullback guard の diagnostic block / keep 回帰を追加した。
+
+- 検証:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/strategies/test_momentum_burst.py`
+    -> `45 passed`
+  - `python3 -m py_compile strategies/micro/momentum_burst.py workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py`
+    -> 成功
+
+- 期待効果:
+  - `MomentumBurst`
+    pending lane が
+    `pullback_guard`
+    で止まっているのか、
+    `base setup`
+    自体が出ていないのかを live で切り分けられる。
+  - `allowlist applied`
+    反復ログが止まり、
+    reopen 窓の判定に必要な情報だけを追える。

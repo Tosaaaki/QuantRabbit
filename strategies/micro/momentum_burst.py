@@ -996,3 +996,256 @@ class MomentumBurstMicro:
                 )
 
         return None
+
+    @staticmethod
+    def diagnostic(fac: Dict) -> Dict[str, object]:
+        diag: Dict[str, object] = {
+            "reason": "no_signal",
+            "core_ready": False,
+        }
+        close = fac.get("close")
+        ma10 = fac.get("ma10")
+        ma20 = fac.get("ma20")
+        if close is None or ma10 is None or ma20 is None:
+            diag["reason"] = "missing_core_levels"
+            return diag
+
+        atr_pips = MomentumBurstMicro._atr_pips(fac)
+        vol_5m = MomentumBurstMicro._attr(fac, "vol_5m", 1.0)
+        adx = MomentumBurstMicro._attr(fac, "adx", 0.0)
+        ema20 = fac.get("ema20") or ma20
+        rsi = MomentumBurstMicro._attr(fac, "rsi", 50.0)
+        drift_pips = MomentumBurstMicro._drift_pips(fac)
+        spread_pips = MomentumBurstMicro._attr(fac, "spread_pips", 0.0)
+        candles = fac.get("candles") or []
+        gap_pips = (float(ma10) - float(ma20)) / PIP
+        long_reaccel = MomentumBurstMicro._reaccel_break(
+            candles,
+            fac,
+            "long",
+            float(close),
+            float(ema20),
+        )
+        short_reaccel = MomentumBurstMicro._reaccel_break(
+            candles,
+            fac,
+            "short",
+            float(close),
+            float(ema20),
+        )
+        spread_cap = max(SPREAD_PIPS_MAX, atr_pips * 0.35)
+
+        diag.update(
+            {
+                "core_ready": True,
+                "atr_pips": round(float(atr_pips), 3),
+                "atr_ok": atr_pips >= MIN_ATR,
+                "vol_5m": round(float(vol_5m), 3),
+                "vol_ok": vol_5m >= VOL_MIN,
+                "adx": round(float(adx), 3),
+                "rsi": round(float(rsi), 3),
+                "gap_pips": round(float(gap_pips), 3),
+                "drift_pips": round(float(drift_pips), 3),
+                "spread_pips": round(float(spread_pips), 3),
+                "spread_cap": round(float(spread_cap), 3),
+                "spread_ok": not spread_pips or spread_pips <= spread_cap,
+                "range_mode": str(fac.get("range_mode") or "").strip().lower(),
+                "long_reaccel": bool(long_reaccel),
+                "short_reaccel": bool(short_reaccel),
+            }
+        )
+        if atr_pips < MIN_ATR:
+            diag["reason"] = "atr_below_min"
+            return diag
+        if vol_5m < VOL_MIN:
+            diag["reason"] = "vol_below_min"
+            return diag
+        if spread_pips and spread_pips > spread_cap:
+            diag["reason"] = "spread_cap"
+            return diag
+
+        long_gap_ok = bool(gap_pips >= MIN_GAP_TREND or long_reaccel)
+        long_adx_ok = bool(adx >= MIN_ADX)
+        long_close_ok = bool(float(close) > float(ema20) + 0.0015)
+        long_drift_ok = bool(drift_pips > DRIFT_PIPS_FLOOR)
+        long_base = bool(long_gap_ok and long_adx_ok and long_close_ok and long_drift_ok)
+        long_followthrough_ok = MomentumBurstMicro._long_reaccel_followthrough_ok(
+            atr_pips=atr_pips,
+            candles=candles,
+            reaccel=long_reaccel,
+        )
+        long_pullback_ok = MomentumBurstMicro._transition_long_pullback_ok(
+            fac,
+            atr_pips=atr_pips,
+            rsi=rsi,
+            candles=candles,
+            reaccel=long_reaccel,
+        )
+        long_mtf_ok = MomentumBurstMicro._mtf_supports("long", fac)
+        long_trend_ok = MomentumBurstMicro._trend_snapshot_supports("long", fac)
+        long_price_ok = bool(MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel)
+        long_rsi_min = MomentumBurstMicro._long_rsi_min(
+            fac,
+            gap_pips=gap_pips,
+            reaccel=long_reaccel,
+        )
+        long_rsi_ok = bool(long_rsi_min <= rsi < RSI_LONG_MAX)
+        long_indicator_ok = MomentumBurstMicro._indicator_quality_ok(
+            "long",
+            fac,
+            float(close),
+            float(ema20),
+            gap_pips,
+            atr_pips,
+        )
+        long_context_ok = True
+        if (
+            long_base
+            and long_followthrough_ok
+            and long_pullback_ok
+            and long_mtf_ok
+            and long_trend_ok
+            and long_price_ok
+            and long_rsi_ok
+            and long_indicator_ok
+        ):
+            long_context_ok = (
+                MomentumBurstMicro._apply_context_tilt({"confidence": 60}, fac, reaccel=long_reaccel)
+                is not None
+            )
+
+        short_gap_ok = bool(gap_pips <= -MIN_GAP_TREND or short_reaccel)
+        short_adx_ok = bool(adx >= MIN_ADX)
+        short_close_ok = bool(float(close) < float(ema20) - 0.0015)
+        short_drift_ok = bool(drift_pips < DRIFT_PIPS_CEIL)
+        short_base = bool(short_gap_ok and short_adx_ok and short_close_ok and short_drift_ok)
+        short_tight_ok = MomentumBurstMicro._tight_short_context_ok(
+            fac,
+            atr_pips=atr_pips,
+            vol_5m=vol_5m,
+            drift_pips=drift_pips,
+            gap_pips=gap_pips,
+            close=float(close),
+            ema20=float(ema20),
+            rsi=rsi,
+            candles=candles,
+            reaccel=short_reaccel,
+        )
+        short_chase_ok = MomentumBurstMicro._clean_trend_short_chase_ok(
+            fac,
+            atr_pips=atr_pips,
+            rsi=rsi,
+            candles=candles,
+            reaccel=short_reaccel,
+        )
+        short_mtf_ok = MomentumBurstMicro._mtf_supports("short", fac)
+        short_trend_ok = MomentumBurstMicro._trend_snapshot_supports("short", fac)
+        short_price_ok = bool(MomentumBurstMicro._price_action_direction(candles, "short") or short_reaccel)
+        short_rsi_ok = bool(RSI_SHORT_MIN <= rsi <= RSI_SHORT_MAX)
+        short_indicator_ok = MomentumBurstMicro._indicator_quality_ok(
+            "short",
+            fac,
+            float(close),
+            float(ema20),
+            gap_pips,
+            atr_pips,
+        )
+        short_context_ok = True
+        if (
+            short_base
+            and short_tight_ok
+            and short_chase_ok
+            and short_mtf_ok
+            and short_trend_ok
+            and short_price_ok
+            and short_rsi_ok
+            and short_indicator_ok
+        ):
+            short_context_ok = (
+                MomentumBurstMicro._apply_context_tilt({"confidence": 60}, fac, reaccel=short_reaccel)
+                is not None
+            )
+
+        diag.update(
+            {
+                "long": {
+                    "base": long_base,
+                    "gap_ok": long_gap_ok,
+                    "adx_ok": long_adx_ok,
+                    "close_ok": long_close_ok,
+                    "drift_ok": long_drift_ok,
+                    "followthrough_ok": bool(long_followthrough_ok),
+                    "pullback_ok": bool(long_pullback_ok),
+                    "mtf_ok": bool(long_mtf_ok),
+                    "trend_ok": bool(long_trend_ok),
+                    "price_ok": bool(long_price_ok),
+                    "rsi_min": round(float(long_rsi_min), 3),
+                    "rsi_ok": bool(long_rsi_ok),
+                    "indicator_ok": bool(long_indicator_ok),
+                    "context_ok": bool(long_context_ok),
+                },
+                "short": {
+                    "base": short_base,
+                    "gap_ok": short_gap_ok,
+                    "adx_ok": short_adx_ok,
+                    "close_ok": short_close_ok,
+                    "drift_ok": short_drift_ok,
+                    "tight_ok": bool(short_tight_ok),
+                    "chase_ok": bool(short_chase_ok),
+                    "mtf_ok": bool(short_mtf_ok),
+                    "trend_ok": bool(short_trend_ok),
+                    "price_ok": bool(short_price_ok),
+                    "rsi_ok": bool(short_rsi_ok),
+                    "indicator_ok": bool(short_indicator_ok),
+                    "context_ok": bool(short_context_ok),
+                },
+            }
+        )
+
+        if long_base:
+            if not long_followthrough_ok:
+                diag["reason"] = "long_followthrough_guard"
+            elif not long_pullback_ok:
+                diag["reason"] = "long_transition_pullback_guard"
+            elif not long_mtf_ok:
+                diag["reason"] = "long_mtf_support"
+            elif not long_trend_ok:
+                diag["reason"] = "long_trend_snapshot"
+            elif not long_price_ok:
+                diag["reason"] = "long_price_action"
+            elif not long_rsi_ok:
+                diag["reason"] = "long_rsi_window"
+            elif not long_indicator_ok:
+                diag["reason"] = "long_indicator_quality"
+            elif not long_context_ok:
+                diag["reason"] = "long_context_tilt"
+            else:
+                diag["reason"] = "long_ready"
+            return diag
+
+        if short_base:
+            if not short_tight_ok:
+                diag["reason"] = "short_tight_context"
+            elif not short_chase_ok:
+                diag["reason"] = "short_chase_guard"
+            elif not short_mtf_ok:
+                diag["reason"] = "short_mtf_support"
+            elif not short_trend_ok:
+                diag["reason"] = "short_trend_snapshot"
+            elif not short_price_ok:
+                diag["reason"] = "short_price_action"
+            elif not short_rsi_ok:
+                diag["reason"] = "short_rsi_window"
+            elif not short_indicator_ok:
+                diag["reason"] = "short_indicator_quality"
+            elif not short_context_ok:
+                diag["reason"] = "short_context_tilt"
+            else:
+                diag["reason"] = "short_ready"
+            return diag
+
+        if gap_pips >= 0.0:
+            diag["reason"] = "long_base_conditions"
+        else:
+            diag["reason"] = "short_base_conditions"
+        return diag
