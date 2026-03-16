@@ -1,18 +1,18 @@
 {
-  "generated_at": "2026-03-16T05:16:41Z",
-  "git_rev": "0c387d10",
+  "generated_at": "2026-03-16T12:09:49Z",
+  "git_rev": "1bb537b8",
   "query": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
   "limit": 5,
   "next_step": "scripts/improvement_preflight.sh \"microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316\" \"<strategy::surface::primary_loss_driver::idea||...>\" 5",
   "preflight_status": "ok",
   "warnings": [],
-  "health_generated_at": "2026-03-16T05:16:33.660219+00:00",
+  "health_generated_at": "2026-03-16T12:09:42.062406+00:00",
   "lint": {
     "source": "docs/TRADE_FINDINGS.md",
     "strict_since": "2026-03-13 20:00",
     "anti_loop_strict_since": "2026-03-14 10:00",
-    "checked_entries": 446,
-    "strict_entries": 21,
+    "checked_entries": 449,
+    "strict_entries": 24,
     "issues": [],
     "ok": true
   },
@@ -27,45 +27,41 @@
   "market": {
     "market_open": true,
     "seconds_until_open": 0.0,
-    "bid": 159.454,
-    "ask": 159.462,
-    "mid": 159.458,
+    "bid": 159.113,
+    "ask": 159.121,
+    "mid": 159.117,
     "spread_pips": 0.8,
-    "tick_age_sec": 1.482,
-    "m1_atr14_pips": 1.839,
-    "range_6m_pips": 7.8,
-    "range_30m_pips": 14.0,
-    "data_lag_ms": 792.8731441497803,
-    "decision_latency_ms": 18.941125003038906,
+    "tick_age_sec": 0.283,
+    "m1_atr14_pips": 2.163,
+    "range_6m_pips": 5.3,
+    "range_30m_pips": 11.9,
+    "data_lag_ms": 466.83311462402344,
+    "decision_latency_ms": 15.83937500254251,
     "fills_15m": 1,
-    "fills_30m": 4,
+    "fills_30m": 3,
     "rejects_30m": 0,
     "orders_status_1h": [
       {
-        "status": "submit_attempt",
-        "count": 5
+        "status": "preflight_start",
+        "count": 17
       },
       {
-        "status": "preflight_start",
-        "count": 5
+        "status": "strategy_cooldown",
+        "count": 11
+      },
+      {
+        "status": "submit_attempt",
+        "count": 6
       },
       {
         "status": "filled",
-        "count": 5
-      },
-      {
-        "status": "profit_guard_bypass",
-        "count": 1
-      },
-      {
-        "status": "probability_scaled",
-        "count": 1
+        "count": 6
       }
     ],
     "account": {
-      "nav": 34818.3088,
-      "balance": 34818.3088,
-      "margin_available": 34818.3088,
+      "nav": 34710.9108,
+      "balance": 34710.9108,
+      "margin_available": 34710.9108,
       "margin_used": 0.0,
       "margin_rate": 0.04,
       "unrealized_pl": 0.0,
@@ -86,6 +82,22 @@
       "Write Hypothesis Key / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless in the next TRADE_FINDINGS entry."
     ],
     "entries": [
+      {
+        "heading": "2026-03-16 21:10 JST / local-v2: `MicroLevelReactor-bounce-lower` の pending lane は post-deploy 窓で fill が消えたが、exact `surface_reject` の live fire は未観測",
+        "verdict": "- pending",
+        "status": "- in_progress",
+        "hypothesis_key": "- `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`",
+        "primary_loss_driver": "- `negative_forecast_long_scaled_not_rejected`",
+        "mechanism_fired": "- `entry_leading_profile_surface_reject=0` - `mlr_range_gate_block=1` - `hist_block=1`",
+        "do_not_repeat_unless": "- `2026-03-16 14:08 JST` 以降と同じ通常市況で、 同一 `setup_fingerprint` の `filled` が再発する、 あるいは 24h の reopen window を見ても `entry_leading_profile_surface_reject` / `mlr_range_gate_block` / `hist_block` のどれも観測できず `Mechanism Fired=0`...",
+        "why_not_same_as_last_time": "- 前回 entry は pre-deploy (`2026-03-16 12:11 JST` まで) の `MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|...|gap:down_flat|c:spin_dn|w:lower|tr:flat|...|macro:trend_long` loser surface を根拠に runtime change を...",
+        "promotion_gate": "- 通常市況で `2026-03-16 14:08 JST` 以降 6h+ の window に same loser `setup_fingerprint` の `filled` が 0 件であること。 - そのうえで、 `mlr_range_gate_block` または `hist_block` が live で継続観測されること。",
+        "escalation_trigger": "- same loser `setup_fingerprint` の `filled` が 1 件でも再発する。 - reopen 24h window 後も `Mechanism Fired=0` のままなら、 `entry_leading_profile_surface_reject` 自体の attribution を諦めて family escalation へ切り替える。",
+        "why": "- `scripts/improvement_preflight.sh \"profitability_rca_2026-03-16\" ...` は same-strategy unresolved lane review を要求し、 `MicroLevelReactor` の新規 tweak を `review_existing_pending` で veto した。",
+        "hypothesis": "- `2026-03-16 14:08 JST` の exact surface reject 追加後は、 same loser surface の `filled` が消え、 live では `mlr_range_gate_block` や `hist_block` で再入を止める側に倒れる。",
+        "observed": "- `logs/orders.db` / `logs/trades.db` では、 `2026-03-16 14:08 JST` 以降の `MicroLevelReactor-bounce-lower` の `filled` / close は 0 件だった。 - 同じ `2026-03-16` の loser は `00:21-00:24 UTC` に `tight_normal|...|c:doji_up|w:balanced...",
+        "next_action": "- 同 lane は freeze 継続。 - same loser `setup_fingerprint` の reopen / `filled` が再発した時だけ、 `entry_probability_leading_profile.surface_override` 経路を追加で掘る。 - 再発が無ければ、 次の通常市況 24h window で `good` へ昇格できるか再判定する。"
+      },
       {
         "heading": "2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する",
         "verdict": "- pending",
@@ -108,12 +120,27 @@
     "matches": [
       {
         "hypothesis_key": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
-        "repeat_risk": "low",
+        "repeat_risk": "high",
         "history_commit_count": 0,
         "family_key": "MicroLevelReactor-bounce-lower :: negative_forecast_long_scaled_not_rejected",
-        "family_entries": 1,
-        "repeat_risk_reasons": [],
-        "latest_heading": "2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する"
+        "family_entries": 2,
+        "repeat_risk_reasons": [
+          "family_repeats=entries:2/keys:1",
+          "same_key_entries=2"
+        ],
+        "latest_heading": "2026-03-16 21:10 JST / local-v2: `MicroLevelReactor-bounce-lower` の pending lane は post-deploy 窓で fill が消えたが、exact `surface_reject` の live fire は未観測"
+      },
+      {
+        "hypothesis_key": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
+        "repeat_risk": "high",
+        "history_commit_count": 0,
+        "family_key": "MicroLevelReactor-bounce-lower :: negative_forecast_long_scaled_not_rejected",
+        "family_entries": 2,
+        "repeat_risk_reasons": [
+          "family_repeats=entries:2/keys:1",
+          "same_key_entries=2"
+        ],
+        "latest_heading": "2026-03-16 21:10 JST / local-v2: `MicroLevelReactor-bounce-lower` の pending lane は post-deploy 窓で fill が消えたが、exact `surface_reject` の live fire は未観測"
       }
     ],
     "recommended_single_focus_lane": {
@@ -123,12 +150,15 @@
       ],
       "family_key": "MicroLevelReactor-bounce-lower :: negative_forecast_long_scaled_not_rejected",
       "primary_loss_driver": "negative_forecast_long_scaled_not_rejected",
-      "latest_heading": "2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する",
+      "latest_heading": "2026-03-16 21:10 JST / local-v2: `MicroLevelReactor-bounce-lower` の pending lane は post-deploy 窓で fill が消えたが、exact `surface_reject` の live fire は未観測",
       "history_commit_count": 0,
-      "repeat_risk": "low",
-      "repeat_risk_reasons": [],
+      "repeat_risk": "high",
+      "repeat_risk_reasons": [
+        "family_repeats=entries:2/keys:1",
+        "same_key_entries=2"
+      ],
       "selection_reason": "latest unresolved trading lane first; keep reopen validation to one lane before touching adjacent families",
-      "next_action": "- local-v2 反映後、 `orders.db` と `quant-micro-levelreactor.log` で same surface の `surface_override` 発火を first check する。 - same family の adjacent lane まで落ちていないかは..."
+      "next_action": "- 同 lane は freeze 継続。 - same loser `setup_fingerprint` の reopen / `filled` が再発した時だけ、 `entry_probability_leading_profile.surface_override` 経路を追加で掘る。 - 再発が無ければ..."
     }
   }
 }

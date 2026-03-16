@@ -76,6 +76,220 @@
 - `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り threshold の往復を禁止する。
 - stale / close / abnormal market window は `market_hold` として扱い、改善 verdict を出さない。reopen 後の評価窓を別に切る。
 
+## 2026-03-16 21:10 JST / local-v2: `MicroLevelReactor-bounce-lower` の pending lane は post-deploy 窓で fill が消えたが、exact `surface_reject` の live fire は未観測
+
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `entry_leading_profile_surface_reject=0`
+  - `mlr_range_gate_block=1`
+  - `hist_block=1`
+- Do Not Repeat Unless:
+  - `2026-03-16 14:08 JST`
+    以降と同じ通常市況で、
+    同一
+    `setup_fingerprint`
+    の
+    `filled`
+    が再発する、
+    あるいは
+    24h の reopen window を見ても
+    `entry_leading_profile_surface_reject`
+    / `mlr_range_gate_block`
+    / `hist_block`
+    のどれも観測できず
+    `Mechanism Fired=0`
+    のままになるまでは、
+    同 strategy へ新しい tightening を積まない。
+
+- Change:
+  - runtime 変更は入れず、
+    `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+    の post-deploy review を
+    `logs/orders.db`
+    /
+    `logs/trades.db`
+    /
+    `logs/local_v2_stack/quant-micro-levelreactor.log`
+    で追記した。
+- Why:
+  - `scripts/improvement_preflight.sh "profitability_rca_2026-03-16" ...`
+    は
+    same-strategy unresolved lane review を要求し、
+    `MicroLevelReactor`
+    の新規 tweak を
+    `review_existing_pending`
+    で veto した。
+- Hypothesis:
+  - `2026-03-16 14:08 JST`
+    の exact surface reject 追加後は、
+    same loser surface の
+    `filled`
+    が消え、
+    live では
+    `mlr_range_gate_block`
+    や
+    `hist_block`
+    で再入を止める側に倒れる。
+- Why Not Same As Last Time:
+  - 前回 entry は
+    pre-deploy
+    (`2026-03-16 12:11 JST`
+    まで)
+    の
+    `MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|...|gap:down_flat|c:spin_dn|w:lower|tr:flat|...|macro:trend_long`
+    loser surface を根拠に
+    runtime change を入れた。
+  - 今回は
+    post-deploy
+    (`2026-03-16 14:08-21:05 JST`)
+    の reopen window で、
+    same strategy の live behavior を review しており、
+    decision surface も threshold も増やしていない。
+- Expected Good:
+  - same loser
+    `setup_fingerprint`
+    の
+    `filled`
+    が消え、
+    `STOP_LOSS_ORDER`
+    の再発を抑える。
+- Expected Bad:
+  - exact
+    `entry_leading_profile_surface_reject`
+    が live で観測されないまま、
+    別 gate だけで止まっていると
+    mechanism attribution が曖昧に残る。
+- Promotion Gate:
+  - 通常市況で
+    `2026-03-16 14:08 JST`
+    以降
+    6h+
+    の window に
+    same loser
+    `setup_fingerprint`
+    の
+    `filled`
+    が 0 件であること。
+  - そのうえで、
+    `mlr_range_gate_block`
+    または
+    `hist_block`
+    が live で継続観測されること。
+- Escalation Trigger:
+  - same loser
+    `setup_fingerprint`
+    の
+    `filled`
+    が 1 件でも再発する。
+  - reopen 24h window 後も
+    `Mechanism Fired=0`
+    のままなら、
+    `entry_leading_profile_surface_reject`
+    自体の attribution を諦めて
+    family escalation へ切り替える。
+- Period:
+  - review window:
+    `2026-03-16 14:08-21:05 JST`
+- Fact:
+  - `logs/orders.db`
+    /
+    `logs/trades.db`
+    では、
+    `2026-03-16 14:08 JST`
+    以降の
+    `MicroLevelReactor-bounce-lower`
+    の
+    `filled`
+    /
+    close は 0 件だった。
+  - 同じ
+    `2026-03-16`
+    の loser は
+    `00:21-00:24 UTC`
+    に
+    `tight_normal|...|c:doji_up|w:balanced|tr:dn_mild`
+    で
+    `5 trades / -72.495 JPY`
+    、
+    `03:31-03:45 UTC`
+    に
+    `normal_normal|...|c:spin_dn|w:lower|tr:flat`
+    で
+    `5 trades / -12.028 JPY`
+    だったが、
+    いずれも deploy 前に集中していた。
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`
+    では
+    `14:19-21:05 JST`
+    に
+    `mlr_range_gate_block`
+    が継続し、
+    例:
+    `14:19 JST score=0.350 adx=35.92 ma_gap=3.52`,
+    `16:31 JST score=0.312 adx=28.79 ma_gap=3.94`,
+    `19:22 JST score=0.415 adx=36.43 ma_gap=2.94`
+    を記録した。
+  - `17:25 JST`
+    には
+    `hist_block tag=MicroLevelReactor-bounce-lower strategy=MicroLevelReactor n=61 score=0.147 reason=low_recent_score`
+    が出ており、
+    live worker 自体は止まっていない。
+  - 市況は
+    `scripts/improvement_preflight.sh`
+    の artifact で
+    normal、
+    `USD/JPY 159.252/159.260`,
+    `spread=0.80 pips`,
+    `m1_atr14_pips=2.11`,
+    `fills_15m=2`,
+    `fills_30m=3`
+    だった。
+- Failure Cause:
+  - exact
+    `entry_leading_profile_surface_reject`
+    の live 発火はまだ直接観測できていない。
+  - review window の containment は、
+    現状
+    `mlr_range_gate_block`
+    と
+    `hist_block`
+    の strategy-local guard で説明できる。
+- Improvement:
+  - 新しい tweak は入れず、
+    `MicroLevelReactor`
+    は existing pending lane の review を継続する。
+- Verification:
+  - `sqlite3 logs/orders.db ... strategy_key='MicroLevelReactor-bounce-lower'`
+    で
+    post-deploy fill 有無を確認する。
+  - `sqlite3 logs/trades.db ... strategy_key='MicroLevelReactor-bounce-lower'`
+    で
+    post-deploy close 有無を確認する。
+  - `rg "mlr_range_gate_block|hist_block tag=MicroLevelReactor-bounce-lower" logs/local_v2_stack/quant-micro-levelreactor.log`
+    で
+    live guard 発火を確認する。
+- Verdict:
+  - pending
+- Next Action:
+  - 同 lane は freeze 継続。
+  - same loser
+    `setup_fingerprint`
+    の reopen /
+    `filled`
+    が再発した時だけ、
+    `entry_probability_leading_profile.surface_override`
+    経路を追加で掘る。
+  - 再発が無ければ、
+    次の通常市況
+    24h window で
+    `good`
+    へ昇格できるか再判定する。
+- Status:
+  - in_progress
+
 ## 2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する
 
 - Hypothesis Key:
