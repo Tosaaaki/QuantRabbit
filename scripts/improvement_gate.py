@@ -15,6 +15,7 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from generate_repo_history_lane_index import build_repo_history_lane_payload  # noqa: E402
 from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
 
 
@@ -131,6 +132,22 @@ def _tokenize_surface(text: str) -> list[str]:
     return [token.strip().lower() for token in text.split() if token.strip()]
 
 
+def _strategy_slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(text).lower())
+
+
+def _strategy_related(candidate_strategy: str, lane_strategy: str) -> bool:
+    candidate_slug = _strategy_slug(candidate_strategy)
+    lane_slug = _strategy_slug(lane_strategy)
+    if not candidate_slug or not lane_slug:
+        return False
+    return (
+        candidate_slug == lane_slug
+        or lane_slug.startswith(candidate_slug)
+        or candidate_slug.startswith(lane_slug)
+    )
+
+
 def _parse_candidates(raw: str) -> list[Candidate]:
     items = [item.strip() for item in raw.split("||") if item.strip()]
     if not items:
@@ -234,6 +251,11 @@ def _family_match(entry: Any, candidate: Candidate) -> bool:
     )
 
 
+def _strategy_match(entry: Any, candidate: Candidate) -> bool:
+    haystack = _entry_primary_blob(entry)
+    return candidate.strategy.lower() in haystack
+
+
 def _build_match_summary(entry: Any, score: int) -> MatchSummary:
     return MatchSummary(
         heading=entry.heading,
@@ -249,6 +271,53 @@ def _build_match_summary(entry: Any, score: int) -> MatchSummary:
         escalation_trigger=_compact(_entry_field(entry, "Escalation Trigger"), 180),
         score=score,
     )
+
+
+def _latest_entry_by_hypothesis(entries: list[Any]) -> dict[str, Any]:
+    latest: dict[str, Any] = {}
+    for entry in entries:
+        key = _normalize(_entry_field(entry, "Hypothesis Key"))
+        if key:
+            latest[key] = entry
+    return latest
+
+
+def _lane_matches_candidate_strategy(lane: dict[str, Any], candidate: Candidate) -> bool:
+    strategies = lane.get("strategies")
+    if not isinstance(strategies, list):
+        return False
+    return any(
+        _strategy_related(candidate.strategy, str(strategy))
+        for strategy in strategies
+        if str(strategy).strip()
+    )
+
+
+def _lane_matches_candidate_family(lane: dict[str, Any], candidate: Candidate) -> bool:
+    if not _lane_matches_candidate_strategy(lane, candidate):
+        return False
+    lane_driver = _blob(str(lane.get("primary_loss_driver") or ""))
+    return lane_driver == _blob(candidate.primary_loss_driver)
+
+
+def _lane_summary(
+    lane: dict[str, Any], latest_entry_by_hypothesis: dict[str, Any]
+) -> dict[str, Any]:
+    hypothesis_key = _normalize(str(lane.get("hypothesis_key") or ""))
+    entry = latest_entry_by_hypothesis.get(hypothesis_key)
+    mechanism_fired = _mechanism_fired(entry) if entry is not None else ""
+    return {
+        "hypothesis_key": hypothesis_key,
+        "strategies": lane.get("strategies") or [],
+        "family_key": str(lane.get("family_key") or ""),
+        "primary_loss_driver": str(lane.get("primary_loss_driver") or ""),
+        "latest_heading": str(lane.get("latest_heading") or ""),
+        "latest_verdict": str(lane.get("latest_verdict") or ""),
+        "latest_status": str(lane.get("latest_status") or ""),
+        "repeat_risk": str(lane.get("repeat_risk") or ""),
+        "history_commit_count": int(lane.get("history_commit_count") or 0),
+        "mechanism_fired": mechanism_fired,
+    }
 
 
 def _market_status(artifact: dict[str, Any] | None) -> tuple[str, list[str]]:
@@ -302,6 +371,67 @@ def _candidate_has_baseline_evidence(candidate: Candidate) -> bool:
     return any(pattern.search(text) for pattern in BASELINE_EVIDENCE_PATTERNS)
 
 
+def _entry_strategies(entry: Any) -> list[str]:
+    matches = re.findall(r"`([^`]+)`", entry.heading)
+    return [match.strip() for match in matches if match.strip()]
+
+
+def _fallback_lane_payload(entries: list[Any], limit: int) -> dict[str, Any]:
+    current_open: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    family_counts: dict[str, int] = {}
+
+    for entry in entries:
+        strategies = _entry_strategies(entry) or ["trade_findings_lane"]
+        family_key = (
+            f"{' + '.join(strategies)} :: "
+            f"{_normalize(_entry_field(entry, 'Primary Loss Driver'))}"
+        )
+        family_counts[family_key] = family_counts.get(family_key, 0) + 1
+
+    for entry in reversed(entries):
+        if not _is_unresolved(entry):
+            continue
+        hypothesis_key = _normalize(_entry_field(entry, "Hypothesis Key"))
+        if hypothesis_key and hypothesis_key in seen_keys:
+            continue
+        if hypothesis_key:
+            seen_keys.add(hypothesis_key)
+        strategies = _entry_strategies(entry) or ["trade_findings_lane"]
+        primary_loss_driver = _normalize(_entry_field(entry, "Primary Loss Driver"))
+        family_key = f"{' + '.join(strategies)} :: {primary_loss_driver}"
+        family_entries = family_counts.get(family_key, 1)
+        current_open.append(
+            {
+                "hypothesis_key": hypothesis_key,
+                "strategies": strategies,
+                "family_key": family_key,
+                "primary_loss_driver": primary_loss_driver,
+                "latest_heading": entry.heading,
+                "latest_verdict": _verdict(entry),
+                "latest_status": _status(entry),
+                "history_commit_count": 0,
+                "repeat_risk": "high" if family_entries >= 2 else "low",
+            }
+        )
+
+    recommended_focus = current_open[0] if current_open else None
+    if isinstance(recommended_focus, dict):
+        recommended_focus = {
+            **recommended_focus,
+            "repeat_risk_reasons": [],
+            "selection_reason": "fallback unresolved trading lane first",
+            "next_action": _compact(_entry_field(entries[-1], "Next Action"), 160)
+            if entries
+            else "",
+        }
+
+    return {
+        "current_open_trading_lanes": current_open[: max(limit, 1)],
+        "recommended_single_focus_lane": recommended_focus,
+    }
+
+
 def build_improvement_gate_payload(
     *,
     findings_path: Path,
@@ -312,7 +442,22 @@ def build_improvement_gate_payload(
 ) -> dict[str, Any]:
     candidates = _parse_candidates(candidates_raw)
     entries = _parse_findings(findings_path)
+    latest_entry_by_hypothesis = _latest_entry_by_hypothesis(entries)
     artifact = _load_json(artifact_path)
+    try:
+        lane_payload = build_repo_history_lane_payload(findings_path, max(limit, 20))
+    except ValueError:
+        lane_payload = _fallback_lane_payload(entries, max(limit, 20))
+    current_open_trading = (
+        lane_payload.get("current_open_trading_lanes")
+        if isinstance(lane_payload.get("current_open_trading_lanes"), list)
+        else []
+    )
+    recommended_focus = (
+        lane_payload.get("recommended_single_focus_lane")
+        if isinstance(lane_payload.get("recommended_single_focus_lane"), dict)
+        else None
+    )
     market_status, market_reasons = _market_status(artifact)
 
     candidate_results: list[dict[str, Any]] = []
@@ -323,12 +468,15 @@ def build_improvement_gate_payload(
         has_baseline_evidence = _candidate_has_baseline_evidence(candidate)
         scored_matches: list[tuple[int, Any]] = []
         family_entries: list[Any] = []
+        strategy_entries: list[Any] = []
         for entry in entries:
             score = _score_candidate_match(entry, candidate)
             if score > 0:
                 scored_matches.append((score, entry))
             if _family_match(entry, candidate):
                 family_entries.append(entry)
+            if _strategy_match(entry, candidate):
+                strategy_entries.append(entry)
         scored_matches.sort(key=lambda item: (-item[0], item[1].order))
         matched_entries = [_build_match_summary(entry, score) for score, entry in scored_matches]
         unresolved_matches = [
@@ -341,29 +489,91 @@ def build_improvement_gate_payload(
         ]
         family_badish_count = sum(1 for entry in family_entries if _is_badish(entry))
         family_unresolved_count = sum(1 for entry in family_entries if _is_unresolved(entry))
+        strategy_badish_count = sum(1 for entry in strategy_entries if _is_badish(entry))
+        strategy_unresolved_count = sum(
+            1 for entry in strategy_entries if _is_unresolved(entry)
+        )
         mechanism_not_fired_pending = any(
             _mechanism_fired(entry) in NOT_FIRED_VALUES for entry in unresolved_matches
         )
+        same_strategy_open_lanes = [
+            _lane_summary(lane, latest_entry_by_hypothesis)
+            for lane in current_open_trading
+            if isinstance(lane, dict) and _lane_matches_candidate_strategy(lane, candidate)
+        ]
+        same_family_open_lanes = [
+            lane
+            for lane in same_strategy_open_lanes
+            if _blob(lane.get("primary_loss_driver") or "")
+            == _blob(candidate.primary_loss_driver)
+        ]
+        stubborn_open_lanes = [
+            lane
+            for lane in same_strategy_open_lanes
+            if _blob(lane.get("mechanism_fired") or "") in NOT_FIRED_VALUES
+        ]
 
         reasons: list[str] = []
         if market_status == "market_hold":
             action = "market_hold_review_only"
             reasons.extend(market_reasons)
         elif unresolved_matches:
-            action = "review_existing_pending"
-            reasons.append("same-surface or same-query pending lane exists")
+            if len(unresolved_matches) >= 2 and (
+                mechanism_not_fired_pending or strategy_badish_count >= 2
+            ):
+                action = "escalate_family_not_tighten"
+                reasons.append(
+                    "multiple same-surface or same-query pending lanes are still unresolved"
+                )
+            else:
+                action = "review_existing_pending"
+                reasons.append("same-surface or same-query pending lane exists")
             if mechanism_not_fired_pending:
                 reasons.append("pending lane still has Mechanism Fired=0/none")
+        elif same_family_open_lanes:
+            if len(same_family_open_lanes) >= 2 or family_badish_count >= 2:
+                action = "escalate_family_not_tighten"
+                reasons.append(
+                    "same strategy/driver family already has repeated unresolved trading lanes"
+                )
+            else:
+                action = "review_existing_pending"
+                reasons.append(
+                    "same strategy/driver family already has unresolved trading lane"
+                )
+            if any(
+                _blob(lane.get("mechanism_fired") or "") in NOT_FIRED_VALUES
+                for lane in same_family_open_lanes
+            ):
+                reasons.append("same family open lane still has Mechanism Fired=0/none")
+        elif stubborn_open_lanes:
+            if len(stubborn_open_lanes) >= 2 or strategy_badish_count >= 2:
+                action = "escalate_family_not_tighten"
+                reasons.append("same strategy has repeated unresolved lanes with Mechanism Fired=0/none")
+            else:
+                action = "review_existing_pending"
+                reasons.append("same strategy has unresolved lane with Mechanism Fired=0/none")
+            if recommended_focus and same_strategy_open_lanes:
+                reasons.append(
+                    "validate recommended single-focus lane before opening another same-strategy tweak"
+                )
+        elif same_strategy_open_lanes:
+            action = "review_existing_pending"
+            reasons.append("same strategy already has unresolved trading lane")
+            if recommended_focus:
+                reasons.append(
+                    "validate recommended single-focus lane before opening another same-strategy tweak"
+                )
         elif complexity_signals and not has_baseline_evidence:
             action = "baseline_before_complexity"
             reasons.append(
                 "advanced-model idea detected before baseline/cost/validation evidence"
             )
             reasons.extend(f"advanced_keyword:{signal}" for signal in complexity_signals)
-        elif family_badish_count >= 2:
+        elif family_badish_count >= 2 or strategy_badish_count >= 2:
             action = "escalate_family_not_tighten"
             reasons.append(
-                f"same strategy/driver family already has {family_badish_count} bad-or-pending entries"
+                "same strategy or strategy/driver family already has repeated bad-or-pending entries"
             )
         else:
             action = "allow_new_lane"
@@ -385,9 +595,13 @@ def build_improvement_gate_payload(
                 ],
                 "complexity_signals": complexity_signals,
                 "has_baseline_evidence": has_baseline_evidence,
+                "same_strategy_open_lanes": same_strategy_open_lanes[: max(limit, 1)],
+                "same_family_open_lanes": same_family_open_lanes[: max(limit, 1)],
                 "family_summary": {
                     "family_bad_or_pending_count": family_badish_count,
                     "family_unresolved_count": family_unresolved_count,
+                    "strategy_bad_or_pending_count": strategy_badish_count,
+                    "strategy_unresolved_count": strategy_unresolved_count,
                 },
             }
         )
@@ -401,6 +615,7 @@ def build_improvement_gate_payload(
         "market_status": market_status,
         "market_reasons": market_reasons,
         "blocked": blocked,
+        "recommended_single_focus_lane": recommended_focus,
         "candidates": candidate_results,
     }
 
@@ -433,6 +648,8 @@ def _render_markdown(payload: dict[str, Any]) -> str:
                 f"- has_baseline_evidence: `{item['has_baseline_evidence']}`",
                 f"- family_bad_or_pending_count: `{item['family_summary']['family_bad_or_pending_count']}`",
                 f"- family_unresolved_count: `{item['family_summary']['family_unresolved_count']}`",
+                f"- strategy_bad_or_pending_count: `{item['family_summary']['strategy_bad_or_pending_count']}`",
+                f"- strategy_unresolved_count: `{item['family_summary']['strategy_unresolved_count']}`",
             ]
         )
     return "\n".join(lines) + "\n"
@@ -464,6 +681,11 @@ def _print_human(payload: dict[str, Any]) -> None:
             f"bad_or_pending={item['family_summary']['family_bad_or_pending_count']} "
             f"unresolved={item['family_summary']['family_unresolved_count']}"
         )
+        print(
+            "   strategy: "
+            f"bad_or_pending={item['family_summary']['strategy_bad_or_pending_count']} "
+            f"unresolved={item['family_summary']['strategy_unresolved_count']}"
+        )
         if item["same_surface_unresolved"]:
             print("   unresolved_matches:")
             for match in item["same_surface_unresolved"]:
@@ -472,6 +694,16 @@ def _print_human(payload: dict[str, Any]) -> None:
                     f"{match['heading']} / key={match['hypothesis_key'] or 'n/a'} / "
                     f"verdict={match['verdict'] or 'n/a'} / "
                     f"mechanism_fired={match['mechanism_fired'] or 'n/a'}"
+                )
+        if item["same_strategy_open_lanes"]:
+            print("   same_strategy_open_lanes:")
+            for lane in item["same_strategy_open_lanes"]:
+                print(
+                    "   - "
+                    f"{lane['hypothesis_key'] or 'n/a'} / "
+                    f"driver={lane['primary_loss_driver'] or 'n/a'} / "
+                    f"repeat_risk={lane['repeat_risk'] or 'n/a'} / "
+                    f"mechanism_fired={lane['mechanism_fired'] or 'n/a'}"
                 )
 
 

@@ -26641,3 +26641,236 @@ Status:
     `long_base_conditions`
     に偏るなら
     trade logic を増やさず market mismatch として扱う。
+
+## 2026-03-16 19:06 JST / local-v2: `improvement_preflight` は same-strategy open lane と `Mechanism Fired=0` を新規改善の veto に使う
+
+- Hypothesis Key:
+  - `improvement_gate_same_strategy_repeat_veto_20260316`
+- Primary Loss Driver:
+  - same strategy に unresolved lane が残っていても、
+    surface 文字列が少し違うだけで
+    `allow_new_lane`
+    が返り、
+    operator が口頭で止めないと repeat tweak が積まれること
+- Mechanism Fired:
+  - `improvement_gate_same_strategy_veto`
+  - 変更後の
+    `scripts/improvement_preflight.sh "戦績悪化と得意相場後の吐き出し確認" ...`
+    は
+    `MicroLevelReactor`
+    と
+    `scalp_extrema_reversal_live`
+    を
+    `review_existing_pending`
+    へ、
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    を
+    `escalate_family_not_tighten`
+    へ倒した。
+- Do Not Repeat Unless:
+  - same strategy の unresolved lane が残っているのに、
+    `scripts/improvement_preflight.sh`
+    が再び
+    `allow_new_lane`
+    を返したときだけ、
+    `improvement_gate`
+    の strategy matching /
+    repo-history lane payload /
+    fallback lane reconstruction を再度開く。
+
+- Change:
+  - `scripts/improvement_gate.py`
+    は
+    `generate_repo_history_lane_index.build_repo_history_lane_payload()`
+    を読み、
+    same-surface だけでなく
+    same-strategy の open trading lane も
+    `review_existing_pending`
+    / `escalate_family_not_tighten`
+    の判定材料に使うようにした。
+  - latest unresolved lane の
+    `Mechanism Fired=0/none`
+    を拾い、
+    same family / same strategy で repeat している候補は
+    `allow_new_lane`
+    に流さないようにした。
+  - repo 外の一時
+    `TRADE_FINDINGS.md`
+    でも同じ判定が動くように、
+    findings から current open lane を再構成する fallback を足した。
+  - `tests/scripts/test_improvement_gate.py`
+    に
+    same-strategy open lane block と
+    repeated `Mechanism Fired=0`
+    escalation の回帰を追加した。
+
+- Why:
+  - 今回の repeat-risk は
+    `DroughtRevert / PrecisionLowVol / MicroLevelReactor / scalp_extrema_reversal_live`
+    で既に見えていたが、
+    guard 自体は完全には止められていなかった。
+  - この状態だと、
+    operator が
+    「同じ改善の繰り返しではないか」
+    と毎回確認しない限り、
+    adjacent lane の tweak を積めてしまう。
+
+- Hypothesis:
+  - open lane payload と
+    `Mechanism Fired=0/none`
+    を
+    `improvement_gate`
+    に入れれば、
+    same strategy の unresolved lane がある間は
+    新しい tweak より
+    `recommended_single_focus_lane`
+    の再検証へ強制的に倒せる。
+
+- Why Not Same As Last Time:
+  - `weekend_close_preflight_hold_20260315`
+    は
+    closed 窓を
+    `market_closed_hold`
+    として扱う改善だった。
+  - 今回の decision surface は
+    `market hold`
+    ではなく、
+    reopen 後に
+    「same strategy の pending lane が残っているのに new tweak を出してしまう」
+    anti-loop governance そのもの。
+
+- Expected Good:
+  - `MicroLevelReactor`
+    のように same strategy に open lane がある候補は、
+    surface が少し違っても
+    `review_existing_pending`
+    へ倒れる。
+  - `DroughtRevert / PrecisionLowVol`
+    のように
+    `Mechanism Fired=0`
+    が repeat している family は、
+    小さい tighten の追加ではなく
+    family escalation を返す。
+  - user が毎回
+    repeat-risk を口頭で止めなくても、
+    proposal gate 自体が最初にブレーキをかける。
+
+- Expected Bad:
+  - strategy slug matching が broad すぎると、
+    本当は別 lane として分けたい候補まで
+    `review_existing_pending`
+    に倒す可能性がある。
+  - そのため
+    `recommended_single_focus_lane`
+    と
+    `same_strategy_open_lanes`
+    を payload に露出し、
+    何を理由に止めたかを人間側で読めるようにした。
+
+- Promotion Gate:
+  - `scripts/improvement_preflight.sh "戦績悪化と得意相場後の吐き出し確認" ...`
+    が、
+    同日 repeat-risk 候補に対して
+    `allow_new_lane`
+    を返さず、
+    `review_existing_pending`
+    か
+    `escalate_family_not_tighten`
+    を返すこと。
+  - `tests/scripts/test_improvement_gate.py`
+    の回帰が通ること。
+
+- Escalation Trigger:
+  - same strategy の unresolved lane が残る候補で
+    `allow_new_lane`
+    が再発すること。
+  - または、
+    明らかに別 strategy / 別 family の候補まで
+    broad match で誤って block すること。
+
+- Period:
+  - 調査:
+    `2026-03-16 18:39-18:52 JST`
+  - 実装:
+    `2026-03-16 18:52-19:03 JST`
+  - 検証:
+    `2026-03-16 19:03-19:06 JST`
+  - 対象:
+    `scripts/improvement_gate.py`,
+    `tests/scripts/test_improvement_gate.py`,
+    `docs/CURRENT_MECHANISMS.md`,
+    `docs/WORKER_REFACTOR_LOG.md`
+
+- Fact:
+  - 変更前の
+    `scripts/improvement_preflight.sh`
+    は、
+    同じ 4 候補に対して
+    すべて
+    `allow_new_lane`
+    を返していた。
+  - 変更後の同コマンドは、
+    `MicroLevelReactor`
+    に
+    `same strategy already has unresolved trading lane`
+    /
+    `validate recommended single-focus lane before opening another same-strategy tweak`
+    を返した。
+  - 同じく
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    には、
+    `same strategy has repeated unresolved lanes with Mechanism Fired=0/none`
+    を理由に
+    `escalate_family_not_tighten`
+    を返した。
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_improvement_gate.py`
+    は
+    `8 passed`
+    だった。
+
+- Failure Cause:
+  - 既存の
+    `improvement_gate`
+    は
+    same-surface / same-query の overlap には反応していたが、
+    same strategy の open lane や
+    repeated `Mechanism Fired=0`
+    を first-class の veto にしていなかった。
+
+- Improvement:
+  - `improvement_preflight`
+    は same-strategy open lane と
+    `Mechanism Fired=0/none`
+    の unresolved repeat を見て、
+    新しい tweak より
+    existing pending の再検証か
+    family escalation を優先するようになった。
+
+- Verification:
+  - `python3 -m py_compile scripts/improvement_gate.py tests/scripts/test_improvement_gate.py`
+    -> 成功
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_improvement_gate.py`
+    -> `8 passed`
+  - `scripts/improvement_preflight.sh "戦績悪化と得意相場後の吐き出し確認" "<4 candidate specs>" 5`
+    -> `MicroLevelReactor/scalp_extrema_reversal_live=review_existing_pending`,
+    `DroughtRevert/PrecisionLowVol=escalate_family_not_tighten`
+
+- Verdict:
+  - good
+
+- Status:
+  - done
+
+- Next Action:
+  - live 改善案を返す前は、
+    今後も
+    `recommended_single_focus_lane`
+    を first check にして、
+    same strategy の pending がある family へ新しい tweak を積まない。
+  - false positive block が出た場合だけ、
+    `same_strategy_open_lanes`
+    の中身を見て strategy matching の粒度を再調整する。

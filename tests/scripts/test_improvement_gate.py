@@ -165,6 +165,82 @@ def test_build_improvement_gate_payload_allows_new_lane_without_overlap(tmp_path
     assert candidate["action"] == "allow_new_lane"
 
 
+def test_build_improvement_gate_payload_blocks_same_strategy_open_lane(tmp_path: Path) -> None:
+    findings = _write(
+        tmp_path / "TRADE_FINDINGS.md",
+        """
+## 2026-03-16 10:18 JST / local-v2: `MicroLevelReactor-bounce-lower` loser lane
+- Hypothesis Key: `microlevelreactor_bounce_lower_prefix_bug_20260316`
+- Primary Loss Driver: `STOP_LOSS_ORDER`
+- Mechanism Fired: `1`
+- Verdict: pending
+- Status: pending_live_prefix_validation
+""".strip()
+        + "\n",
+    )
+    artifact = _artifact(tmp_path / "change_preflight_latest.json")
+
+    payload = improvement_gate.build_improvement_gate_payload(
+        findings_path=findings,
+        artifact_path=artifact,
+        query="live reopen loser-lane triage",
+        candidates_raw=(
+            "MicroLevelReactor::range_fade long tight_normal gap:down_flat::"
+            "countertrend_continuation::add reclaim fail hard block"
+        ),
+        limit=5,
+    )
+
+    candidate = payload["candidates"][0]
+    assert payload["blocked"] is True
+    assert candidate["action"] == "review_existing_pending"
+    assert candidate["same_strategy_open_lanes"][0]["hypothesis_key"] == (
+        "microlevelreactor_bounce_lower_prefix_bug_20260316"
+    )
+
+
+def test_build_improvement_gate_payload_escalates_same_strategy_not_fired_repeats(
+    tmp_path: Path,
+) -> None:
+    findings = _write(
+        tmp_path / "TRADE_FINDINGS.md",
+        """
+## 2026-03-13 23:40 JST / local-v2: `PrecisionLowVol` short lane
+- Hypothesis Key: `precision_up_lean_countertrend_guard_20260313_2340`
+- Primary Loss Driver: `STOP_LOSS_ORDER`
+- Mechanism Fired: `0`
+- Verdict: pending
+- Status: pending
+
+## 2026-03-13 23:53 JST / local-v2: `PrecisionLowVol` long lane
+- Hypothesis Key: `precision_up_flat_shallow_long_guard_20260313_2353`
+- Primary Loss Driver: `STOP_LOSS_ORDER`
+- Mechanism Fired: `0`
+- Verdict: pending
+- Status: pending
+""".strip()
+        + "\n",
+    )
+    artifact = _artifact(tmp_path / "change_preflight_latest.json")
+
+    payload = improvement_gate.build_improvement_gate_payload(
+        findings_path=findings,
+        artifact_path=artifact,
+        query="live reopen loser-lane triage",
+        candidates_raw=(
+            "PrecisionLowVol::range_compression long countertrend volatility_compression::"
+            "countertrend_compression_fail::harden setup pressure block"
+        ),
+        limit=5,
+    )
+
+    candidate = payload["candidates"][0]
+    assert payload["blocked"] is True
+    assert candidate["action"] == "escalate_family_not_tighten"
+    assert len(candidate["same_strategy_open_lanes"]) == 2
+    assert any("Mechanism Fired=0/none" in reason for reason in candidate["reasons"])
+
+
 def test_build_improvement_gate_payload_blocks_advanced_idea_without_baseline(tmp_path: Path) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",

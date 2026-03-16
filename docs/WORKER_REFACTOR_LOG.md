@@ -5,6 +5,46 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-16 19:03 JST - `improvement_preflight` は same-strategy の open lane と `Mechanism Fired=0` を新規案の veto に使う
+
+- 対象:
+  - `scripts/improvement_gate.py`
+  - `tests/scripts/test_improvement_gate.py`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - 既存の `improvement_gate` は same-surface の pending overlap には反応する一方、
+    same strategy に unresolved lane が残っていても、
+    surface 文字列が少し違うだけで `allow_new_lane` を返す余地があった。
+  - 実際に `DroughtRevert / PrecisionLowVol / MicroLevelReactor / scalp_extrema_reversal_live`
+    の family では、
+    `Verdict=pending` や `Mechanism Fired=0`
+    の entry が残っていても adjacent lane の新規 tweak を出しやすく、
+    repeat-risk を operator 側の目視確認に依存していた。
+- 変更:
+  - `scripts/improvement_gate.py` は
+    `generate_repo_history_lane_index.build_repo_history_lane_payload()`
+    の current open trading lane を参照し、
+    same-surface だけでなく same-strategy の unresolved lane も
+    `review_existing_pending`
+    対象にした。
+  - same strategy / same family で
+    `Mechanism Fired=0/none`
+    の unresolved が複数残る場合は、
+    単なる review ではなく
+    `escalate_family_not_tighten`
+    を返して、
+    「新しい tweak を足す前に既存 pending を片付ける」方向へ倒す。
+  - repo 外の一時 `TRADE_FINDINGS.md` を使うテストでも同じ判定が動くように、
+    findings から current open lane を再構成する fallback を追加した。
+  - `tests/scripts/test_improvement_gate.py`
+    へ same-strategy open lane と repeated `Mechanism Fired=0`
+    の回帰を追加した。
+- 意図:
+  - repeat-risk をユーザの口頭指摘に依存させず、
+    `improvement_preflight`
+    自体が「まず既存 pending を再検証する」方向へ強制的に倒れる状態を default にする。
+
 ### 2026-03-16 14:08 JST - `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long を `leading_profile` の exact surface override で reject
 
 - 対象:
