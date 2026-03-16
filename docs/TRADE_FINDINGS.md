@@ -9,6 +9,48 @@
 このファイルは、QuantRabbit の「改善記録」と「敗因記録」の単一台帳兼 change diary です。
 以後、同種の記録は必ずここに追記し、他の分散ファイルは作らないこと。
 
+## 2026-03-17 アグレッシブスプリント: レバレッジ修正/ユニット引き上げ/口座反映
+
+- Hypothesis Key: `aggressive_sprint_leverage25_units_boost_20260317`
+- Primary Loss Driver: MAX_LEVERAGE=20.0（実マージンレート0.04=1:25と不一致）、BASE_EQUITY=12,000（実残高34,642と乖離）、ユニット微小（M1SCALP=200, Ping5S_B=6, Flow=18）
+- Mechanism Fired: risk_guard.py MAX_LEVERAGE / _DEFAULT_BASE_EQUITY / local-v2-stack.env units
+
+- Change:
+  1. `execution/risk_guard.py`: MAX_LEVERAGE 20.0→25.0（OANDA実マージンレート0.04に合致）
+  2. `execution/risk_guard.py`: _DEFAULT_BASE_EQUITY 合計18,500→35,000（macro:14k, micro:8k, scalp:8k, scalp_fast:5k）
+  3. `ops/env/local-v2-stack.env`: GLOBAL_DD_EQUITY_BASE_JPY=34642, RISK_MAX_LOT=12.0, MAX_MARGIN_USAGE=0.90, SCALP_TACTICAL=1
+  4. `ops/env/local-v2-stack.env`: M1SCALP_BASE_UNITS 200→4500, PING_5S_B 6→3000, PING_5S_D 3000→4000, FLOW 18→2500
+  5. `ops/env/local-v2-stack.env`: DYN_ALLOC_MULT_MIN/MAX 引き上げ（M1SCALP 0.12-0.90→0.40-1.20, Ping5S_B max 0.80→1.20, Flow 0.12-0.55→0.40-1.10）
+  6. `ops/env/local-v2-stack.env`: RISK_PERF_MIN_MULT 0.55→0.70, Flow有効化
+
+- Why:
+  - OANDA API確認: margin_rate=0.04（1:25）だがrisk_guard.pyはMAX_LEVERAGE=20.0で5倍分の余力を放棄。
+  - 口座残高34,642 JPY なのにヒント12,000 JPY → ポケットDD計算で過小評価。
+  - M1SCALP_BASE_UNITS=200 → 1pip=2JPY。物理的に収益が出ない設定。
+  - 目標: 30分で1000JPY。~4,900units×~49JPY/pip → 5回×4pip or 7回×3pipで到達可能。
+
+- Why Not Same As Last Time:
+  - 前回の変更はTP圧縮/DDガード/SL下限の構造修正。今回はレバレッジ・ユニットの実口座乖離修正。
+  - decision surface: risk_guard.py leverage+equity / local-v2-stack.env sizing params
+
+- Expected Good:
+  - レバレッジ25x化: ポジションサイズ25%拡大 → pip単価25%増
+  - ユニット引き上げ: M1SCALP 200→4500 = 22.5倍。スキャルプ1トレード40-50JPY/pipに
+  - 30分で1000JPY到達に必要な条件を満たす
+
+- Expected Bad:
+  - ポジション拡大 → 1負けあたりの損失額も増加。DD%は同等だが絶対額が増える
+  - 複数戦略同時発火時にマージン競合 → risk_guardが縮小するため暴走はしない
+
+- Observed/Fact: pending（デプロイ前）
+- Verdict: pending
+- Next Action:
+  - commit → push → restart で即デプロイ
+  - 30分後にtrades.dbでPL確認、1時間後にDD/マージン使用率を検証
+
+- Promotion Gate: 30分で累計PL > +500 JPY なら維持。PL < -500 JPY なら units 50%カットへ。
+- Escalation Trigger: マージン使用率95%超が3回以上、またはマージンクローズアウト発生。
+
 ## 2026-03-17 システム診断・5点修正（TP圧縮無効化/DDガード接続/SL下限/レジーム判定/アダプティブSL_TP）
 
 - Hypothesis Key: `system_structural_loss_drivers_20260317`

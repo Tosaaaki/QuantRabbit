@@ -25,7 +25,7 @@ from utils.secrets import get_secret
 from utils.oanda_account import get_position_summary
 
 # --- risk params ---
-MAX_LEVERAGE = 20.0  # 1:20
+MAX_LEVERAGE = 25.0  # 1:25 — OANDA実マージンレート0.04に合致
 MAX_LOT = float(os.getenv("RISK_MAX_LOT", "10.0"))  # aggressive上限（envで絞れる）
 POCKET_DD_LIMITS = {
     "micro": 0.05,
@@ -42,10 +42,10 @@ POCKET_MAX_RATIOS = {
     "scalp_fast": float(os.getenv("POCKET_MAX_RATIO_SCALP_FAST", "0.82")),
 }
 _DEFAULT_BASE_EQUITY = {
-    "macro": 8000.0,
-    "micro": 6000.0,
-    "scalp": 2500.0,
-    "scalp_fast": 2000.0,
+    "macro": 14000.0,
+    "micro": 8000.0,
+    "scalp": 8000.0,
+    "scalp_fast": 5000.0,
 }
 _LOOKBACK_DAYS = 7
 _GLOBAL_DD_LOOKBACK_DAYS = max(
