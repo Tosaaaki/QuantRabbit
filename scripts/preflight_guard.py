@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
@@ -12,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ARTIFACT = REPO_ROOT / "logs" / "change_preflight_latest.json"
+DEFAULT_IMPROVEMENT_ARTIFACT = REPO_ROOT / "logs" / "improvement_gate_latest.json"
 REQUIRED_FINDINGS = "docs/TRADE_FINDINGS.md"
 
 PROTECTED_PREFIXES = (
@@ -49,6 +49,9 @@ def _parse_args() -> argparse.Namespace:
         description="Guard trading/risk commits unless change preflight and TRADE_FINDINGS are present."
     )
     parser.add_argument("--artifact", default=str(DEFAULT_ARTIFACT))
+    parser.add_argument(
+        "--improvement-artifact", default=str(DEFAULT_IMPROVEMENT_ARTIFACT)
+    )
     parser.add_argument("--max-age-min", type=int, default=360)
     parser.add_argument("--paths", nargs="*", help="Optional file list for dry-run/testing.")
     return parser.parse_args()
@@ -81,6 +84,110 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _artifact_age_sec(path: Path, *, now_ts: float | None = None) -> float:
+    current = time.time() if now_ts is None else now_ts
+    return max(0.0, current - path.stat().st_mtime)
+
+
+def _validate_improvement_artifact(
+    path: Path,
+    *,
+    expected_query: str,
+    max_age_sec: float,
+    now_ts: float | None = None,
+) -> tuple[bool, list[str], dict]:
+    details: list[str] = []
+    if not path.exists():
+        return (
+            False,
+            [
+                f"missing improvement artifact: {path}",
+                'run `scripts/improvement_preflight.sh "<query>" "<strategy::surface::primary_loss_driver::idea||...>"` before commit',
+            ],
+            {},
+        )
+
+    try:
+        artifact = _load_json(path)
+    except Exception as exc:
+        return False, [f"invalid improvement artifact json: {path} ({exc})"], {}
+
+    age_sec = _artifact_age_sec(path, now_ts=now_ts)
+    if age_sec > max_age_sec:
+        return (
+            False,
+            [
+                f"stale improvement artifact: age_sec={age_sec:.0f} > max_age_sec={max_age_sec:.0f}",
+                f"artifact query: {artifact.get('query') or 'n/a'}",
+                'rerun `scripts/improvement_preflight.sh "<query>" "<strategy::surface::primary_loss_driver::idea||...>"` and commit again',
+            ],
+            artifact,
+        )
+
+    query = str(artifact.get("query") or "").strip()
+    if not query:
+        return False, ["improvement artifact query is empty"], artifact
+    if expected_query and query != expected_query:
+        return (
+            False,
+            [
+                f"improvement artifact query mismatch: {query!r} != {expected_query!r}",
+                "rerun `scripts/improvement_preflight.sh` with the same query used for change_preflight",
+            ],
+            artifact,
+        )
+
+    candidates = artifact.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return (
+            False,
+            [
+                "improvement artifact is missing candidate results",
+                'run `scripts/improvement_preflight.sh "<query>" "<strategy::surface::primary_loss_driver::idea||...>"` so commit-time guard can validate the lane decision',
+            ],
+            artifact,
+        )
+
+    blocked_items = [
+        item
+        for item in candidates
+        if isinstance(item, dict) and str(item.get("action") or "") != "allow_new_lane"
+    ]
+    blocked = bool(artifact.get("blocked")) or bool(blocked_items)
+    if blocked:
+        details.append("latest improvement_preflight is blocked")
+        recommended = (
+            artifact.get("recommended_single_focus_lane")
+            if isinstance(artifact.get("recommended_single_focus_lane"), dict)
+            else None
+        )
+        if recommended:
+            details.append(
+                "recommended_single_focus_lane: "
+                f"{recommended.get('hypothesis_key') or 'n/a'} / "
+                f"driver={recommended.get('primary_loss_driver') or 'n/a'}"
+            )
+        for item in blocked_items[:4]:
+            candidate = item.get("candidate") if isinstance(item.get("candidate"), dict) else {}
+            reasons = item.get("reasons") if isinstance(item.get("reasons"), list) else []
+            details.append(
+                "blocked_candidate: "
+                f"{candidate.get('strategy') or 'n/a'} / "
+                f"action={item.get('action') or 'n/a'} / "
+                f"reasons={', '.join(str(reason) for reason in reasons[:3]) or 'n/a'}"
+            )
+        details.append(
+            "resolve the pending lane or family escalation first, then rerun `scripts/improvement_preflight.sh` until every candidate is `allow_new_lane`"
+        )
+        return False, details, artifact
+
+    return (
+        True,
+        [f"improvement artifact query: {query}", f"improvement artifact age_sec: {age_sec:.0f}"],
+        artifact,
+    )
+
+
 def _run_findings_lint() -> tuple[bool, str]:
     result = subprocess.run(
         ["python3", "scripts/trade_findings_lint.py"],
@@ -98,10 +205,6 @@ def _run_findings_lint() -> tuple[bool, str]:
 
 def main() -> int:
     args = _parse_args()
-
-    if os.getenv("SKIP_PREFLIGHT_GUARD") == "1":
-        print("preflight-guard: bypass via SKIP_PREFLIGHT_GUARD=1")
-        return 0
 
     staged = _staged_paths(args.paths)
     protected = [path for path in staged if _is_protected(path)]
@@ -130,7 +233,7 @@ def main() -> int:
         print(f"- invalid artifact json: {artifact_path} ({exc})")
         return 1
 
-    artifact_age_sec = max(0.0, time.time() - artifact_path.stat().st_mtime)
+    artifact_age_sec = _artifact_age_sec(artifact_path)
     max_age_sec = max(60, args.max_age_min * 60)
     if artifact_age_sec > max_age_sec:
         print("preflight-guard: blocked")
@@ -154,6 +257,18 @@ def main() -> int:
             print(lint_detail)
         return 1
 
+    improvement_ok, improvement_details, _ = _validate_improvement_artifact(
+        Path(args.improvement_artifact),
+        expected_query=query,
+        max_age_sec=max_age_sec,
+    )
+    if not improvement_ok:
+        print("preflight-guard: blocked")
+        print(f"- staged protected paths: {', '.join(protected[:8])}")
+        for detail in improvement_details:
+            print(f"- {detail}")
+        return 1
+
     review = artifact.get("review") if isinstance(artifact.get("review"), dict) else {}
     market = artifact.get("market") if isinstance(artifact.get("market"), dict) else {}
     print("preflight-guard: ok")
@@ -167,6 +282,8 @@ def main() -> int:
             f"fills_15m={market.get('fills_15m', 'n/a')} rejects_30m={market.get('rejects_30m', 'n/a')} "
             f"status={artifact.get('preflight_status', 'n/a')}"
         )
+    for detail in improvement_details:
+        print(f"- {detail}")
     print("- findings_lint: ok")
     print(f"- review matches: {len(review.get('entries') or [])}")
     return 0

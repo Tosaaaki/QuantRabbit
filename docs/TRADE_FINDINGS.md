@@ -26874,3 +26874,218 @@ Status:
   - false positive block が出た場合だけ、
     `same_strategy_open_lanes`
     の中身を見て strategy matching の粒度を再調整する。
+
+## 2026-03-16 19:34 JST / local-v2: pre-commit は blocked `improvement_preflight` artifact のまま runtime commit を通さない
+
+- Hypothesis Key:
+  - `preflight_guard_improvement_artifact_block_20260316`
+- Primary Loss Driver:
+  - `improvement_preflight`
+    が blocked を返していても、
+    commit hook がその artifact を見ていないため、
+    operator の見落とし次第で same-strategy repeat tweak を runtime commit できること
+- Mechanism Fired:
+  - `preflight_guard_improvement_artifact`
+  - 変更前の
+    `.githooks/pre-commit`
+    は
+    `logs/change_preflight_latest.json`
+    と staged
+    `docs/TRADE_FINDINGS.md`
+    の有無だけを見ており、
+    latest
+    `logs/improvement_gate_latest.json`
+    が
+    `blocked=true`
+    でも commit 自体は止めなかった。
+- Do Not Repeat Unless:
+  - runtime / risk / env 変更を stage した状態で、
+    latest
+    `logs/improvement_gate_latest.json`
+    が
+    `blocked=true`
+    なのに
+    `.githooks/pre-commit`
+    が still 通ると確認できたときだけ、
+    hook と artifact contract を再度開く。
+
+- Change:
+  - `scripts/preflight_guard.py`
+    は
+    fresh
+    `logs/improvement_gate_latest.json`
+    を必須化し、
+    query mismatch / missing candidates /
+    `blocked=true`
+    /
+    `allow_new_lane` 以外の candidate を commit-time で拒否するようにした。
+  - blocked 時は
+    `recommended_single_focus_lane`
+    と blocked candidate の
+    `action / reasons`
+    をそのまま表示し、
+    pending 再検証へ戻すようにした。
+  - `scripts/improvement_preflight.sh`
+    を repo 管理下へ入れ、
+    `scripts/install_git_hooks.sh`
+    は同 script を executable 対象へ追加した。
+  - `tests/scripts/test_preflight_guard.py`
+    に
+    allow / blocked / query mismatch の回帰を追加した。
+
+- Why:
+  - 直前の guard 強化で
+    proposal gate
+    は repeat-risk を止められるようになったが、
+    「見た上で無視する」経路は still 残っていた。
+  - ここを commit-time で止めない限り、
+    user が求める
+    「毎回確認しなくても同じ改善を積まない」
+    状態にはならない。
+
+- Hypothesis:
+  - pre-commit が latest
+    `improvement_preflight`
+    artifact を mandatory にすれば、
+    same-strategy repeat tweak は
+    proposal 時だけでなく commit 時にも hard-stop できる。
+
+- Why Not Same As Last Time:
+  - `improvement_gate_same_strategy_repeat_veto_20260316`
+    は
+    proposal gate
+    の判定精度を上げた変更だった。
+  - 今回の decision surface は
+    その blocked 結果を
+    commit hook
+    が本当に強制するかどうかであり、
+    veto logic 自体ではなく
+    enforcement layer
+    を追加している。
+
+- Expected Good:
+  - runtime / risk / env 変更は、
+    fresh
+    `change_preflight`
+    だけでなく
+    fresh
+    `improvement_preflight`
+    も無いと commit できない。
+  - latest candidate に
+    `review_existing_pending`
+    /
+    `escalate_family_not_tighten`
+    が残る限り、
+    hook が
+    `recommended_single_focus_lane`
+    を表示して止める。
+  - operator の見落としで
+    blocked lane をそのまま runtime commit する経路を潰せる。
+
+- Expected Bad:
+  - runtime bugfix でも
+    protected path
+    に触る限り、
+    `scripts/improvement_preflight.sh`
+    を回す手間は増える。
+  - ただし現行運用では
+    収益/リスク/ENTRY/EXIT 改善の前に
+    `improvement_preflight`
+    を mandatory にしているので、
+    runtime commit に guard を合わせるほうを優先する。
+
+- Promotion Gate:
+  - `tests/scripts/test_preflight_guard.py`
+    が通ること。
+  - blocked
+    `logs/improvement_gate_latest.json`
+    を前提にした protected change commit が、
+    `.githooks/pre-commit`
+    で止まること。
+
+- Escalation Trigger:
+  - false positive が多く、
+    明らかに unrelated な runtime bugfix まで commit が詰まること。
+  - または、
+    `improvement_preflight`
+    を回していないのに hook が通る抜け道が残ること。
+
+- Period:
+  - 調査:
+    `2026-03-16 19:19-19:28 JST`
+  - 実装:
+    `2026-03-16 19:28-19:34 JST`
+  - 検証:
+    `2026-03-16 19:34 JST` 以降
+  - 対象:
+    `scripts/preflight_guard.py`,
+    `scripts/improvement_preflight.sh`,
+    `scripts/install_git_hooks.sh`,
+    `tests/scripts/test_preflight_guard.py`,
+    `docs/CURRENT_MECHANISMS.md`,
+    `docs/WORKER_REFACTOR_LOG.md`
+
+- Fact:
+  - `scripts/preflight_guard.py`
+    の変更前ロジックには
+    `logs/improvement_gate_latest.json`
+    参照が無く、
+    bypass 用の環境変数分岐も残っていた。
+  - 変更後は、
+    improvement artifact の
+    query / freshness / candidates / blocked state
+    を検証し、
+    blocked candidate があると
+    `recommended_single_focus_lane`
+    と
+    `blocked_candidate`
+    を出して commit を拒否する。
+  - `tests/scripts/test_preflight_guard.py`
+    は
+    allow / blocked / query mismatch
+    の 3 ケースを固定する。
+  - `python3 scripts/preflight_guard.py --paths workers/fake_runtime.py docs/TRADE_FINDINGS.md`
+    実測では、
+    `improvement artifact query mismatch`
+    を理由に
+    `preflight-guard: blocked`
+    を返した。
+
+- Failure Cause:
+  - anti-loop の veto は
+    proposal layer
+    にあり、
+    commit layer
+    まで到達していなかった。
+
+- Improvement:
+  - pre-commit は
+    blocked
+    `improvement_preflight`
+    artifact を runtime commit の hard stop として扱うようになった。
+
+- Verification:
+  - `python3 -m py_compile scripts/preflight_guard.py scripts/improvement_preflight.sh tests/scripts/test_preflight_guard.py`
+    -> 成功
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_preflight_guard.py tests/scripts/test_improvement_gate.py`
+    -> 通過
+  - `python3 scripts/preflight_guard.py --paths workers/fake_runtime.py docs/TRADE_FINDINGS.md`
+    -> `preflight-guard: blocked`
+    /
+    `improvement artifact query mismatch`
+
+- Verdict:
+  - good
+
+- Status:
+  - done
+
+- Next Action:
+  - 次に runtime / risk / env 変更を commit するときは、
+    fresh
+    `change_preflight`
+    と
+    fresh
+    `improvement_preflight`
+    の両方を揃えた状態で hook を通し、
+    false positive が多いかどうかだけ監視する。

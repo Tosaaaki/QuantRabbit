@@ -5,6 +5,45 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-16 19:34 JST - pre-commit は blocked `improvement_preflight` artifact を runtime commit で拒否する
+
+- 対象:
+  - `scripts/preflight_guard.py`
+  - `scripts/improvement_preflight.sh`
+  - `scripts/install_git_hooks.sh`
+  - `tests/scripts/test_preflight_guard.py`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - 直前の改善で `improvement_preflight` 自体は same-strategy repeat を veto できるようになったが、
+    commit hook は still
+    `change_preflight_latest.json`
+    と
+    `TRADE_FINDINGS`
+    の有無しか見ていなかった。
+  - そのため operator が blocked artifact を見落としたまま runtime 変更を commit する余地が残っていた。
+- 変更:
+  - `scripts/preflight_guard.py`
+    は
+    `logs/improvement_gate_latest.json`
+    を fresh artifact として必須化し、
+    query mismatch / missing candidates / blocked candidate を commit-time で拒否するようにした。
+  - blocked 時は
+    `recommended_single_focus_lane`
+    と
+    blocked candidate の action / reasons をそのまま表示し、
+    「まず pending lane を片付ける」方向へ戻す。
+  - `scripts/improvement_preflight.sh`
+    は repo 管理下へ置き、
+    `scripts/improvement_gate.py`
+    を `exec` する thin wrapper とした。
+  - `scripts/install_git_hooks.sh`
+    は
+    `scripts/improvement_preflight.sh`
+    も executable に揃える。
+- 意図:
+  - anti-loop を「提案時の注意喚起」ではなく、
+    runtime commit 自体を止める hard-stop へ昇格させる。
+
 ### 2026-03-16 19:03 JST - `improvement_preflight` は same-strategy の open lane と `Mechanism Fired=0` を新規案の veto に使う
 
 - 対象:
