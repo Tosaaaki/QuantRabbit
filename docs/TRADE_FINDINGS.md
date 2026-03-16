@@ -9,6 +9,146 @@
 このファイルは、QuantRabbit の「改善記録」と「敗因記録」の単一台帳兼 change diary です。
 以後、同種の記録は必ずここに追記し、他の分散ファイルは作らないこと。
 
+## 2026-03-17 システム診断・5点修正（TP圧縮無効化/DDガード接続/SL下限/レジーム判定/アダプティブSL_TP）
+
+- Hypothesis Key: `system_structural_loss_drivers_20260317`
+- Primary Loss Driver: (1) TP圧縮でRR≒1.0に潰れ (2) DDガード未接続で57連敗放置 (3) SL<1.5pip帯がノイズ即刈り
+- Mechanism Fired: (1) `_normalize_sl_tp_rr` TP shrink, (2) `can_trade()` DD未チェック, (3) SL floor なし
+
+- Change:
+  1. `ops/env/quant-order-manager.env`: `RR_TP_SHRINK_MAX=0.0`, `RR_SL_EXPAND_MAX=0.0`, `RR_ADAPT_GAIN=0.0` → TP圧縮完全無効化
+  2. `execution/risk_guard.py`: `can_trade()` に `check_global_drawdown()` と `_pocket_dd()` の呼び出しを接続（entry拒否のみ、exitには触れない）
+  3. `execution/risk_guard.py`: `_SL_FLOOR_PIPS=2.0` を追加。`_normalize_sl_tp_rr` 内でSL<2.0pipを2.0pipに引き上げ、RR維持のためTPも同比率拡大
+  4. `analysis/market_regime.py` 新設: M1/M5のfactor_cacheからリアルタイムレジーム判定（trending_up/down, range_tight/wide, volatile, choppy）
+  5. `analysis/adaptive_sl_tp.py` 新設: レジーム×ストラテジータイプ別の動的SL/TP係数テーブル
+
+- Why:
+  - 30日間 -21,112円の損失を分析。RR1-1.5帯で-11,217円（53%）、SL<1.5pip帯で-7,265円（34%）、DDガード不在でマージンクローズアウト-7,696円。
+  - M1Scalperは勝率59%あるのにPL=-5,759円 → TP圧縮でRR≒1.0に潰されていた。
+  - SLヒット率: SL<1.5pip=73%, SL1.5-2=53%, SL3-5=12%。ノイズ刈りが明白。
+
+- Why Not Same As Last Time:
+  - 過去のsetup-scoped改善はworker-localのflow_guard/setup_pressureに留まっていた。
+  - 今回は共通レイヤのバグ修正（DDガード未接続、TP圧縮の逆効果）+ 新規基盤（レジーム判定）の組み合わせ。
+  - decision surface: system-wide / risk_guard.py / _normalize_sl_tp_rr / can_trade()
+
+- Expected Good:
+  - TP圧縮無効化: -11,217円（RR1-1.5帯）の50%以上回復。M1Scalperが勝率59%×RR>1.0でPF>1.0に。
+  - SL下限: -7,265円（SL<1.5pip帯）の70%以上回復。SLヒット率73%→推定20%以下。
+  - DDガード: マージンクローズアウト再発防止。57連敗→推定10-15連敗に制限。
+  - レジーム判定: choppy相場（ADX<15, DI gap<8）でのエントリー全面拒否。
+
+- Expected Bad:
+  - TP圧縮無効化: TP距離が遠くなる → TP hit率が一時的に下がる可能性。ただしRR改善で補償。
+  - SL下限: units が自動縮小（リスク額一定のまま）→ 勝ち1トレードあたりの絶対額が減る可能性。
+  - DDガード: 通常時にentry拒否が多発すると取引機会損失。→ GLOBAL_DD_LIMIT=20%は十分余裕。
+
+- Observed/Fact: pending（デプロイ前）
+- Verdict: pending
+- Next Action:
+  - `scripts/local_v2_stack.sh restart` でデプロイ
+  - 24時間後に trades.db で P/L・SLヒット率・DDガード発火率を検証
+  - 各workerへの `classify_regime()` / `compute_adaptive_sl_tp()` 統合は `docs/REGIME_INTEGRATION_GUIDE.md` に従い段階的に実施
+- Promotion Gate: 24h後の PF>1.0 かつ SL<1.5pip帯のトレード消滅
+- Escalation Trigger: 24h後も PF<0.8 なら SL_FLOOR_PIPS=2.5 に引き上げ + レジーム判定のworker統合を前倒し
+- Do Not Repeat Unless: 新しい market regime / evaluation window で再評価が必要な場合のみ
+
+---
+
+## 2026-03-17 00:23 JST / local-v2: `MicroLevelReactor-bounce-lower` pending 再検証（escalate 反映）
+
+- Change:
+  - 追加実装は行わず、pending lane の再検証ループと pending 解消条件の監査を継続。
+- Why:
+  - `00:22 JST` 時点で低活動・`market_hold` だった再検証では、再発サンプルと低遅延の観測窓を取り戻せず、追加手を止めるのが妥当だったため。
+- Hypothesis:
+  - 同 surface では `negative_forecast_long_scaled_not_rejected` 系の未解決 pending が残るため、解凍は `review_existing_pending` / family 解決を先に満たさないと再発防止の判断にならない。
+- Why Not Same As Last Time:
+  - 00:22 の market-hold 時点から遅延は改善し、実データ再確認では `fills_15m=0`, `fills_30m=0` が継続。再発サンプル無しという点は変わらない。
+- Expected Good:
+  - 再発サンプルのない区間での無駄な `tightening` を回避し、同一 surface の pending を直列的に解く。
+- Expected Bad:
+  - `escalate_family_not_tighten` 条件が継続すると、同 strategy で追加改善が長時間停止する。
+- Promotion Gate:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316` の再検証窓で same surface 再発ゼロかつ原因 `Mechanism Fired` が明瞭化し、family-level escalation を終了できる条件が満たされた時点。
+- Escalation Trigger:
+  - unresolved pending が同 strategy で解消されないまま継続し、`single-focus` が再度ブロックされる場合は family 分離条件の再設計へ移行。
+- Period:
+  - `2026-03-17 00:23 JST` の最新再検証時点
+- Fact:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`: `fills_15m=0`, `fills_30m=0`。
+  - `scripts/improvement_preflight.sh ... review_existing_pending ...` は `blocked=True / action=escalate_family_not_tighten`。
+  - `sqlite3 logs/orders.db`（過去24h）: `MicroLevelReactor-bounce-lower` ステータス別 10 件（`filled=0` 含む、`preflight_start`/`profit_guard_bypass`/`probability_scaled`/`submit_attempt` など）、live open 再発は未確認。
+  - `sqlite3 logs/trades.db`（`open_time >= now-24h`）: `MicroLevelReactor-bounce-lower` は 0 件。
+- Failure Cause:
+  - 同 decision surface の pending が複数未解消で、同一 family 再検証の open lane を先に閉じる必要がある。
+- Improvement:
+  - 今回は `pending` 運用継続を維持し、family escalation なしに新規施策は追加しない。
+- Verification:
+  - `change_preflight` + `improvement_preflight` + DB 集計を再実施し、`review_existing_pending` / `escalate_family_not_tighten` 継続理由の再確認を行う。
+- Verdict:
+  - `pending`
+- Next Action:
+  - open lane が複数残る限り、同一 decision surface に対する再提案を停止。
+  - `single-focus` が解除された後、re-open 監視窓で再度検証を再開し、必要なら family escalation の対象を明確化する。
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_style_mismatch_gap_down_flat_market_hold_20260317`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `entry_leading_profile_surface_reject=0`（観測前）と `mlr_range_gate_block`（live 再発なし）
+- Do Not Repeat Unless:
+  - 同 surface の再発 sample を live で確認し、`setup_fingerprint / flow_regime / market_regime / evaluation_window` の差分を明示できる場合のみ。
+- Status:
+  - `in_progress`
+
+## 2026-03-17 00:30 JST / `MicroLevelReactor-bounce-lower` pending lane 再検証（実データ更新）
+
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_style_mismatch_gap_down_flat_weak_ma_gap_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `entry_leading_profile_surface_reject=0`（観測前）
+- Do Not Repeat Unless:
+  - 同一 `setup_fingerprint / flow_regime / market_regime / evaluation_window` を維持した再挑戦を行う場合は、前回と異なる検証差分（`setup_fingerprint` 展開、`market_regime`、評価窓）を明示する。
+- Change:
+  - 追加ロジックは同一（`execution/strategy_entry.py` の既存分岐）で、現時点では新規変更はなし。
+- Why:
+  - 同 strategy の pending lane が `review_existing_pending / escalate_family_not_tighten` 状態のまま解消していないため、先に実データでの再検証結果を固定する必要がある。
+- Hypothesis:
+  - `mlr` の `expected_pips_contra` / `style_mismatch_range` 系は実働窓で再検証し、同等 surface の再発回数が乖離しないか確認できるまで、追加 tweak を重ねるべきでない。
+- Why Not Same As Last Time:
+  - 更新対象は `strategy` 同一でも、今回観測した事実は `2026-03-17 00:30 JST` 時点の `fills_15m=0`, `fills_30m=0` かつ `MicroLevelReactor-bounce-lower` の本番実流量が `00:03` 以降観測されず、評価窓が明確に新規。
+- Expected Good:
+  - pending lane 進行を `entry` 抑制理由が明確な「事実」に固定し、次に進める改善判断の再入判断誤差を下げる。
+- Expected Bad:
+  - 市況不活性時の評価窓だけ長引き、対症的に新規 lane を止めたまま回収期間が伸びる。
+- Promotion Gate:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316` の `review_existing_pending` が `market_hold` ベースで再検証し、同 surface の `live fire` 実績（`filled/reject`）が同一 evaluation window で確認できること。
+- Escalation Trigger:
+  - `microlevelreactor` family において同 family の未解決 pending が再拡大するか、主因 `fills_15m=0/30m=0` が 2 ウィンドウ以上継続し、かつ `fill path` が `0` のままなら、family escalation を `winner/loser strategy` 分離見直しへ昇格。
+- Period:
+  - `2026-03-17 00:00-00:30 JST`（health / log / db再確認）
+- Fact:
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat_weak_ma_gap"` は `blocked=True`、`action=escalate_family_not_tighten`。
+  - `collect-local-health`（同時点）は `fills_15m=0`, `fills_30m=0`。
+  - `orders.db`（直近7日）では `MicroLevelReactor-bounce-lower` の最新 `filled` は `2026-03-16T03:11:00.367705+00:00`、`00:03` 以降は `filled` ログは増加せず。
+  - `quant-order-manager.log` 末尾（`23:59` まで）で `strategy=MicroLevelReactor-bounce-lower` の `OPEN` 系ログは確認されず。
+  - `quant-micro-levelreactor.log` 末尾では `00:19:03` 以降 `mlr_range_gate_block` 情報が途切れ、`MicroLevelReactor-bounce-lower` の新規 live 発火は未確認。
+- Failure Cause:
+  - 主要因は戦略側の pending 解消未完了に加え、市況低流動性で直近採算観測窓の実データ更新が停滞していること。
+- Improvement:
+  - ここでは新規ロジック改変を行わず、single-lane focused pending 再検証を継続。
+- Verification:
+  - 今回は `change_preflight.sh / improvement_preflight.sh / health / db集計 / ログ再読了` を実施し、追加変更なしで再検証状態を追記。
+- Verdict:
+  - `pending`
+- Next Action:
+  - 次回評価を 1 次ブロック窓（15 分以上）で繰り返し、`MicroLevelReactor-bounce-lower` の新規 live `OPEN` が発生しない場合は `family escalation` 条件を満たすかを再判定。
+- Status:
+  - `open`
+
 ## Rules (Read First)
 - 記録先はこのファイルのみ（`docs/TRADE_FINDINGS.md` 固定）。
 - 新規の改善/敗因分析を行ったら、必ず 1 エントリ以上追記する。
@@ -75,6 +215,157 @@
 - 同じ `Hypothesis Key / setup_fingerprint / flow_regime / Primary Loss Driver` では `pending` entry を 1 本だけ持つ。次の tweak は前回 entry の `Promotion Gate` か `Escalation Trigger` を判定してから入れる。
 - `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り threshold の往復を禁止する。
 - stale / close / abnormal market window は `market_hold` として扱い、改善 verdict を出さない。reopen 後の評価窓を別に切る。
+
+## 2026-03-16 23:35 JST / local-v2: `MicroLevelReactor-bounce-lower` の `style_mismatch_range` + weak-ma-gap surface を追加 reject へ入れる試行
+
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_style_mismatch_gap_down_flat_weak_ma_gap_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `entry_leading_profile_surface_reject=0`（実運用観測前）
+- Do Not Repeat Unless:
+  - 同一
+    `setup_fingerprint` 系列
+    と
+    `flow_regime=range_fade`
+    を保ったまま
+    live で
+    同 surface の
+    `filled`
+    が再発しない
+    ことが確認できる場合は、
+    同じ lane へ再施策を重ねない。
+  - 再施策する場合は
+    `setup_fingerprint / flow_regime / market_regime / evaluation_window` の4点を明示し、
+    前回と異なる証拠を
+    `Why Not Same As Last Time`
+    に追加する。
+
+- Change:
+  - `execution/strategy_entry.py` の
+    `_strategy_surface_leading_override()`
+    に、
+    `MicroLevelReactor-bounce-lower` の
+    `tight_normal|gap:down_flat` かつ
+    `forecast.reason == style_mismatch_range`、
+    `history_score <= 0.55`、
+    `-0.70 <= ma_gap_pips <= -0.30` の
+    surface だけを
+    `entry_leading_profile_surface_reject` へ強制 reject する分岐を追加。
+  - 対象分岐の回帰として
+    `tests/execution/test_strategy_entry_forecast_fusion.py`
+    に
+    `test_entry_leading_profile_surface_override_rejects_mlr_tight_normal_gap_down_flat_style_mismatch`
+    を追加。
+  - `test_entry_leading_profile_...expected_pips_contra` 系と同時に
+    実行し、
+    既存 behavior を維持していることを確認。
+
+- Why:
+  - 同 strategy の
+    `expected_pips_contra` surface は live 観測で
+    同 surface の失速が起きたが、
+    `style_mismatch_range` / `w:lower + tr:dn*` / weak reclaim の近接 surface では
+    live 検証前にも同様の負けを予想したため
+    違反面の先行拒否を追加した。
+
+- Hypothesis:
+  - `tight_normal|down_flat + w:lower + tr:dn_* + (c:doji_up or c:trend_up) + style_mismatch_range + weak ma_gap`
+    の同系は
+    同種の既存勝ち筋 `expected_pips_contra` surface よりも
+    実行コスト比率が悪く、
+    `entry_leading_profile` で早期 reject した方が
+    `MicroLevelReactor-bounce-lower` 全体の実効エントリー品質を上げる。
+
+- Why Not Same As Last Time:
+  - 前回の pending は
+    `MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|`
+    と
+    `forecast.reason=expected_pips_contra`
+    および
+    `c:spin_dn|w:lower|tr:flat`
+    を対象にしていた。
+  - 今回は
+    `tight_normal`
+    へ regime 切替えた
+    `live_setup_context`,
+    `style_mismatch_range` の forecast reason,
+    `ma_gap_pips` の bounded weak reclaim 条件を新たに加えた新 surface。
+
+- Expected Good:
+  - `MicroLevelReactor-bounce-lower` の同系 weak reclaim 長ショートを削減し、
+    同条件での即時 `reject` 比率が上がる。
+- Expected Bad:
+  - 市況遷移（trend 継続）時に有効な小リスク逆回転を取りこぼす可能性がある。
+
+- Period:
+  - primary review window:
+    `2026-03-16 23:35-02:35 JST`
+
+- Fact:
+  - `python3 -m pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`
+    は
+    該当ケースを含め
+    `25 passed`
+    を確認済み。
+  - `scripts/improvement_preflight.sh` は
+    同 strategy の open lane 解消前であるため
+    `blocked=True / action=review_existing_pending` を返した。
+
+- Promotion Gate:
+  - 同 strategy の
+    `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+    が先に
+    `review_existing_pending` から
+    `Verdict` を変更し、
+    機構観測を終えること。
+  - そのうえで
+    当該 surface の
+    `entry_leading_profile_surface_reject`
+    が
+    通常市況ウィンドウで
+    再発し、
+    `Mechanism Fired` が同一方向に観測されること。
+
+- Escalation Trigger:
+  - 同 surface で
+    同 decision surface を再発
+    かつ
+    `Mechanism Fired=0` が継続した場合は、
+    family
+    `micro` の
+    `winner/loser` 分離条件を再設計する方向へ昇格。
+- Verdict:
+  - `pending`
+- Next Action:
+  - まず既存 pending lane
+    `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+    の
+    reopen からの実測（`filled` / `rejection_reasons` / market regime）を完了し、
+    以降同 lane の一件ずつ再検証後に本 lane の live 有効性を判定する。
+
+- Failure Cause:
+  - 既存 lane の実測が再検証前で、今回変更を実運用で検証する前提条件が未充足のため。
+
+- Improvement:
+  - `execution/strategy_entry.py` の
+    `mlr_bounce_lower_range_fade_tight_normal_gap_down_flat_weak_ma_gap_style_mismatch`
+    向け `surface` reject 分岐を追加し、
+    該当ロジックの過剰ロングシグナル流入を抑制。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`
+    を通し、対象ケースを含めて `25 passed` を確認。
+  - ただし
+    `scripts/improvement_preflight.sh`
+    は
+    `review_existing_pending`
+    を返したため、
+    運用有効性は保留。
+
+- Status:
+  - pending
 
 ## 2026-03-16 21:10 JST / local-v2: `MicroLevelReactor-bounce-lower` の pending lane は post-deploy 窓で fill が消えたが、exact `surface_reject` の live fire は未観測
 
@@ -287,6 +578,221 @@
     24h window で
     `good`
     へ昇格できるか再判定する。
+- Status:
+  - in_progress
+
+## 2026-03-17 00:21 JST / local-v2: `MicroLevelReactor-bounce-lower` pending 再検証（00:20時点）
+
+- Change:
+  - 実施したコード変更なし。観測窓を 00:20 に更新。
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `mlr_range_gate_block`
+- Do Not Repeat Unless:
+  - `same surface` の再発サンプルが出る、かつ
+    `Why Not Same As Last Time` で新 decision surface が示せる場合のみ再調整。
+- Period:
+  - `2026-03-17 00:05 JST` 〜 `2026-03-17 00:21 JST`
+- Failure Cause:
+  - 同 lane の live 再発が引き続き確認できず、pending の実運用検証が継続不能。
+- Why Not Same As Last Time:
+  - 23:56 / 23:40 / 00:05 の再検証窓を継続し、同 surface の再発が無い状態で新条件を追加しない方針を維持。
+- Promotion Gate:
+  - `24h` 再発ゼロ窓（`filled` と `reject`）が成立し、再検証観測が完了した時点で `good` 判定を検討。
+- Escalation Trigger:
+  - 再発が続き、`Mechanism Fired=0` が継続する場合は family 分離条件の再設計へ昇格。
+- Why:
+  - `orders` / `trades` に新規約定がなく、同 lane freeze が継続される条件。
+- Hypothesis:
+  - 今回観測では `MicroLevelReactor-bounce-lower` は引き続き freeze 維持が妥当。
+- Observed/Fact:
+  - `sqlite3 logs/orders.db`：
+    `ts > 2026-03-16T15:00:00+00:00` の件数は `0`（前回同様）。
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`：
+    `00:07`〜`00:19` は `active=True/False` の遷移があるが同 lane の fill/reject 再発は観測できず。
+- Expected Good:
+  - 再発ゼロが継続し、同 surface が live で再発しないなら pending 続行の運用を `good` 化候補へ。
+- Expected Bad:
+  - `filled` 再発が確認され、現行機構で制御されないなら family 再設計要。
+- Improvement:
+  - なし。追加観測のみ。
+- Verification:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat" "MicroLevelReactor-bounce-lower::style_mismatch_range::negative_forecast_long_scaled_not_rejected::review_existing_pending" 5`
+  - `sqlite3 logs/orders.db` / `logs/trades.db`
+  - `tail -n 25 logs/local_v2_stack/quant-micro-levelreactor.log`
+- Verdict:
+  - `pending`
+- Next Action:
+  - さらなる同一 surface 再発無ければ、pending 再検証を継続。
+  - 24h再発ゼロ＋観測完了時に次の family 手順へ。
+- Status:
+  - in_progress
+
+## 2026-03-17 00:05 JST / local-v2: `MicroLevelReactor-bounce-lower` pending 再検証（0:00超過窓）
+
+- Change:
+  - コード変更なし。既存 pending 再検証を継続。
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `mlr_range_gate_block`（継続）
+- Do Not Repeat Unless:
+  - `same surface` 再発を伴う `filled` が確認され、`Why Not Same As Last Time` で新 decision surface を明確化できる場合のみ再調整。
+- Period:
+  - `2026-03-16 23:40 JST` 〜 `2026-03-17 00:10 JST`
+- Failure Cause:
+  - pending lane の再発サンプル不足により、運用判定が未完了。
+  - 低活動期間が継続し、再評価サンプルが十分でない。
+- Why Not Same As Last Time:
+  - 本エントリは 23:35/23:56 の `tight_normal` 追加面の検証実行の継続窓であり、新しいパラメータ変更は伴わない。
+- Promotion Gate:
+  - 24 時間以上同 surface で再発ゼロ（`filled` 及び `reject`）が確認されれば、再開可能性を検討。
+- Escalation Trigger:
+  - 同 surface 再発が発生し、`Mechanism Fired=0` が継続した場合は family 分離条件を見直し。
+- Why:
+  - 00:00 超過で `entries` が発生しないことを踏まえ、現状は解凍判断より再検証継続が妥当。
+- Hypothesis:
+  - `MicroLevelReactor-bounce-lower` の pending は live 再発が確認されるまで freeze 維持。
+- Observed/Fact:
+  - `sqlite3 logs/orders.db` の
+    `request_json.strategy_tag=MicroLevelReactor-bounce-lower` で
+    `ts > 2026-03-16T15:00:00+00:00` は 0 件。
+  - `logs/local_v2_stack/quant-micro-levelreactor.log` の
+    `2026-03-17 00:03` でも
+    `mlr_range_gate_block active=False`。
+- Expected Good:
+  - 同 surface 再発ゼロが継続し、再検証窓満了時に pending を good 判定へ進められる。
+- Expected Bad:
+  - 再発が発生し、既存 mechanism が観測されない状態が続くなら family escalation 条件へ進む。
+- Improvement:
+  - なし（再検証観測値の蓄積のみ）。
+- Verification:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat" "MicroLevelReactor-bounce-lower::style_mismatch_range::negative_forecast_long_scaled_not_rejected::review_existing_pending"`
+  - `tail -n 20 logs/local_v2_stack/quant-micro-levelreactor.log`
+  - `sqlite3 logs/orders.db`
+- Verdict:
+  - `pending`
+- Next Action:
+  - 再発サンプルがあるまで `review_existing_pending` を維持し続ける。
+  - 24h の再発ゼロ確認後、`good` へ更新を検討。
+- Status:
+  - in_progress
+
+## 2026-03-16 23:56 JST / local-v2: `MicroLevelReactor-bounce-lower` pending 再検証 (post-14:08) の継続確認
+
+- Change:
+  - 追加のコード変更なし。既知 pending (`expected_pips_contra`) の再検証を優先し、
+    新規 lane の運用解禁を保留した。
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `mlr_range_gate_block`（継続・断続）
+  - `entry_leading_profile_surface_reject=0`
+- Do Not Repeat Unless:
+  - post-deploy
+    同一
+    `setup_fingerprint`
+    の
+    `filled`
+    が再発しない限り
+    同 strategy へ新 tightening は加えない。
+  - 再発がある場合は、
+    `setup_fingerprint / flow_regime / market_regime / evaluation_window`
+    の差分を `Why Not Same As Last Time` で先に明文化する。
+- Why:
+  - `21:10 JST` の pending を待つ条件を守りつつ、
+    14:08 JST 以降で同 loser surface の再発を検知する運用を継続する段階。
+  - `entry_probability_leading_profile.surface_override` を追加運用する前提として、
+    guard の実運用 attribution を再確認する。
+- Period:
+  - `2026-03-16T14:08:00+00:00` から `2026-03-17 00:00 JST`（直近監視窓）
+- Hypothesis:
+  - 14:08 以降、同 face の再発がない限り、
+    既存 pending を維持し、
+    `entry_leading_profile` の追加 tighten を重ねない。
+- Fact:
+  - `sqlite3 logs/orders.db` で
+    `ts > 2026-03-16T14:08:00+00:00`
+    かつ `strategy_tag='MicroLevelReactor-bounce-lower'` の件数は
+    `0`。
+  - `sqlite3 logs/trades.db` で
+    `open_time > 2026-03-16T14:08:00+00:00`
+    かつ `strategy='MicroLevelReactor'` の件数は
+    `0`。
+  - `logs/local_v2_stack/quant-micro-levelreactor.log` の
+    `2026-03-16 22:00-23:55` では
+    `mlr_range_gate_block` が
+    一部 `active=True` から
+    一部 `active=False` へ遷移しており、
+    同 period は
+    guard-driven の継続窓として確認済み。
+- Observation:
+  - `06:00` 台以前の
+    `21:50/21:10` pending window と合わせて、
+    同 surface の再発 sample が
+    実運用で確認できていない。
+- Expected:
+  - reopen 窓で同 surface の再発がない場合は
+    `good` への条件付き昇格を検討できる。
+  - 再発時は
+    機構 attribution を優先し
+    `entry_probability_leading_profile.surface_override`
+    の追加条件再構成を行う。
+- Observed Fact:
+  - 14:08 以降の同 loser
+    `setup_fingerprint`
+    sample は `filled / close / reject_reason=...` で未再発。
+- Verdict:
+  - `pending`
+- Next Action:
+  - `review_existing_pending` を維持し、
+    `same surface` の再発サンプルが出るまで
+    同 lane は freeze する。
+  - 24h 通過かつ再発ゼロ・guard attribution が明確なら、
+    該当 pending lane を `good` 判定へ更新し、
+    新規候補の開放条件を再評価する。
+- Failure Cause:
+  - 直近のデータで同 killer surface の live 再発が 0 である点が未確定扱いとなり、
+    判定の完遂に必要な `filled/reject` の十分サンプルが不足している。
+  - 同時に `fills_15m/fills_30m` が 0 に近く、評価窓が弱い。
+- Improvement:
+  - 追加最適化は行わず、既知 pending 再検証ノートを継続。
+  - `same surface` の再発時のみ、family-level の再設計 or 新規 lane 再オープン判定へ進める。
+- Verification:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat" "MicroLevelReactor-bounce-lower::style_mismatch_range::negative_forecast_long_scaled_not_rejected::review_existing_pending"`
+  - `sqlite3 logs/orders.db`（`strategy_tag=MicroLevelReactor-bounce-lower` の時系列）
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`（`mlr_range_gate_block`）
+- Expected Good:
+  - 再発ゼロが継続し、同 surface の `filled/rejection` が抑制されるなら、pending の運用継続を `good` 判定へ更新。
+- Expected Bad:
+  - 同 surface の reentry `filled` が再発しつつ `entry_leading_profile_surface_reject=0` が継続するなら、
+    lane 再設計（decision surface 分離と家系調整）へ昇格。
+- Observed/Fact:
+  - 14:08 以降の同 loser
+    `setup_fingerprint`
+    sample は `filled / close / reject_reason=...` で未再発。
+- Why Not Same As Last Time:
+  - 23:35 試験は `tight_normal` 側 surface を追加した 23:40 施策の `live観測前` 準備段階であり、本エントリは
+    それを運用データで再検証する継続窓として分離している。
+- Promotion Gate:
+  - `same surface` で
+    24 時間以上再発ゼロ（`filled` / `reject`）が確認でき、
+    `entry_leading_profile_surface_reject` と market regime attribution が
+    いずれも成立すること。
+- Escalation Trigger:
+  - 直近の同 setup 指標で再発が発生し、
+    `Mechanism Fired=0` が継続した場合は
+    `micro` family の winner/loser 分離条件を再設計する。
 - Status:
   - in_progress
 
@@ -27622,3 +28128,50 @@ Status:
     比率が落ちなければ、
     shared trim 追加ではなく
     family escalation の再設計へ進む。
+
+## 2026-03-17 00:22 JST / local-v2: `MicroLevelReactor-bounce-lower` pending 再検証（market hold）
+
+- Change:
+  - 新規実装は行わず、`review_existing_pending / market_hold_review_only` 状態の維持と実データ再確認のみを継続。
+- Why:
+  - 低活動・遅延上昇の窓で追加実装を続けると、`microlevelreactor_bounce_lower_style_mismatch_gap_down_flat_weak_ma_gap_20260316` の再発観測条件を誤判定する可能性が高い。
+- Hypothesis:
+  - `MicroLevelReactor-bounce-lower` は `low_activity_15m/30m` が解消されるまで実行観測窓の品質が不足し、同 surface の再発有無を判断するに十分な live sample が取れない。
+- Why Not Same As Last Time:
+  - 23:35 / 00:21 と同じく `fills_15m=0`, `fills_30m=0` が継続し、`00:03` 以降 `MicroLevelReactor-bounce-lower` の live `OPEN/FILLED` は未観測。
+- Expected Good:
+  - 市況品質ノイズによる誤評価を抑え、再検証条件を安定させる。
+- Expected Bad:
+  - `data_lag_high` と低流動性が長引くことで `open` 判断を遅らせる。
+- Promotion Gate:
+  - `24h` 再発ゼロ確認、かつ `fills_15m/30m` が復帰し、`orders` / `trades` の再確認で同 surface の再検証が可能な判定窓を確保した時点。
+- Escalation Trigger:
+  - `fills_15m=0` / `fills_30m=0` がさらに 2 窓以上継続し、`MicroLevelReactor-bounce-lower` の同 surface 再発観測がないまま `review_existing_pending` が伸長する場合は family escalation 検討へ。
+- Period:
+  - `2026-03-17 00:22 JST` 時点の再検証窓（`change_preflight` 実行時点）
+- Fact:
+  - `scripts/change_preflight.sh` は `preflight_status=warn`、`fills_15m=0`, `fills_30m=0`、`tick_age_sec=1.8ms` まで回復。
+  - `scripts/improvement_preflight.sh` は `blocked=True` / `action=market_hold_review_only` / `reason=data_lag_high`。
+  - `sqlite3 logs/orders.db`（過去24hの `json_extract(request_json, '$.strategy_tag')='MicroLevelReactor-bounce-lower'`）: 0 件。
+  - `sqlite3 logs/trades.db`（`open_time >= now-24h`）: `MicroLevelReactor-bounce-lower` 0 件。
+- Failure Cause:
+  - 低流動性期で live の再発サンプル不足が続いている一方、既存 pending lane が未解決のため、追加改善判断を保留せざるを得ない。
+- Improvement:
+  - 再発サンプルがない窓では施策を増やさず、`market_hold_review_only` として同 strategy の再検証を継続。
+- Verification:
+  - `scripts/change_preflight.sh` + `scripts/improvement_preflight.sh` + `sqlite3` 集計を再実行し、再発サンプルと遅延状況を監視。
+- Verdict:
+  - `pending`
+- Next Action:
+  - `market_hold_review_only` が解除されるまでは新規 candidate を停止。
+  - `market_hold` 解除後、同 query を再実行して `review_existing_pending` の継続可否を再判定し、必要なら family escalation へ移行。
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_style_mismatch_gap_down_flat_market_hold_20260317`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `mlr_range_gate_block`（live 再発観測なし）
+- Do Not Repeat Unless:
+  - 同 surface の再発 sample が確認され、`Why Not Same As Last Time` で新しい `setup_fingerprint / flow_regime / market_regime / evaluation window` を明示できる場合のみ。
+- Status:
+  - `open`

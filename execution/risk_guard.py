@@ -237,6 +237,9 @@ _TREND_HINTS = {
 
 # --- Dynamic RR normalization (TP/SL shape) ---
 PIP = 0.01  # USD/JPY
+# 2026-03-17: SL 下限を設定。SL<1.5pip帯は73%がSLヒット（ノイズ刈り）。
+# SL 3-5pip帯なら勝率51%・SLヒット率12%。下限2.0pipでノイズ刈りを防止。
+_SL_FLOOR_PIPS = max(0.0, float(os.getenv("SL_FLOOR_PIPS", "2.0") or 2.0))
 _RR_NORMALIZE_ENABLED = _env_bool("RR_NORMALIZE_ENABLED", True)
 _RR_LOOKBACK_DAYS = max(1, int(float(os.getenv("RR_LOOKBACK_DAYS", "7") or 7)))
 _RR_MIN_SAMPLES = max(8, int(float(os.getenv("RR_MIN_SAMPLES", "40") or 40)))
@@ -477,6 +480,14 @@ def _normalize_sl_tp_rr(
 
     sl_pips = sl_dist / PIP
     tp_pips = tp_dist / PIP
+
+    # 2026-03-17: SL下限の enforce。ノイズでの即刈りを防止する。
+    # SL を広げた分、TP も同比率で広げて RR を維持する。
+    if _SL_FLOOR_PIPS > 0.0 and sl_pips < _SL_FLOOR_PIPS:
+        original_rr = tp_pips / max(sl_pips, 1e-6)
+        sl_pips = _SL_FLOOR_PIPS
+        tp_pips = sl_pips * original_rr  # RR 維持
+
     rr = tp_pips / max(sl_pips, 1e-6)
     rr = _clamp(rr, _RR_MIN_RATIO, _RR_MAX_RATIO)
     tp_pips = sl_pips * rr
@@ -931,7 +942,30 @@ def can_trade(pocket: str) -> bool:
     # グローバル停止フラグ（環境変数 TRADING_PAUSED=1 で全ポケット停止）
     if _trading_paused():
         return False
-    # DD ガードは撤廃したまま
+
+    # 2026-03-17: グローバルDD ガードを接続（entry 拒否のみ、exit には触れない）。
+    # check_global_drawdown() は実装済みだったが can_trade() から呼ばれていなかった。
+    # 57連敗・マージンクローズアウト(-7,696円)の再発を防止する。
+    if check_global_drawdown():
+        logging.warning(
+            "[RISK] can_trade BLOCKED pocket=%s reason=global_drawdown_limit",
+            pocket,
+        )
+        return False
+
+    # ポケット別DD: 各ポケットの累積損失が equity 比リミットを超えたら entry 拒否。
+    if not _DISABLE_POCKET_DD:
+        dd_ratio = _pocket_dd(pocket)
+        limit = POCKET_DD_LIMITS.get(pocket, 0.05)
+        if dd_ratio >= limit:
+            logging.warning(
+                "[RISK] can_trade BLOCKED pocket=%s reason=pocket_dd dd=%.2f%% limit=%.2f%%",
+                pocket,
+                dd_ratio * 100.0,
+                limit * 100.0,
+            )
+            return False
+
     return True
 
 
