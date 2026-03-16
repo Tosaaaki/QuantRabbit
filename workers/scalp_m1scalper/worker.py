@@ -32,6 +32,8 @@ from workers.common.dyn_cap import compute_cap
 from workers.common.dynamic_alloc import load_strategy_profile
 from workers.common import perf_guard, env_guard
 from analysis import perf_monitor
+from analysis.market_regime import classify_regime, should_enter as regime_should_enter
+from analysis.adaptive_sl_tp import compute_adaptive_sl_tp, map_strategy_tag_to_type
 
 from workers.common.size_utils import scale_base_units
 
@@ -1181,6 +1183,15 @@ async def scalp_m1_worker() -> None:
                     )
                     last_block_log = now_mono
                 continue
+
+        # --- レジーム判定 (strategy-local, AGENTS.md 準拠) ---
+        _fac_m5 = factors.get("M5") or {}
+        try:
+            _regime_snapshot = classify_regime(factors_m1=fac_m1, factors_m5=_fac_m5)
+        except Exception:
+            _regime_snapshot = None
+        # --- end regime ---
+
         perf = perf_monitor.snapshot()
         pf = None
         try:
@@ -1222,6 +1233,22 @@ async def scalp_m1_worker() -> None:
                 )
                 last_block_log = now_mono
             continue
+
+        # --- レジーム・エントリー可否チェック ---
+        if _regime_snapshot is not None:
+            _r_strategy_type = map_strategy_tag_to_type(signal_tag)
+            _r_allowed, _r_reason = regime_should_enter(_regime_snapshot, _r_strategy_type, signal_side)
+            if not _r_allowed:
+                now_mono = time.monotonic()
+                if now_mono - last_block_log > 60.0:
+                    LOG.info(
+                        "%s regime_block tag=%s regime=%s reason=%s",
+                        config.LOG_PREFIX, signal_tag, _regime_snapshot.regime.value, _r_reason,
+                    )
+                    last_block_log = now_mono
+                continue
+        # --- end regime entry check ---
+
         conf_val = _to_confidence_0_100(signal.get("confidence", 0))
         if conf_val < config.CONFIDENCE_FLOOR:
             now_mono = time.monotonic()
@@ -1493,6 +1520,28 @@ async def scalp_m1_worker() -> None:
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:
             continue
+
+        # --- アダプティブ SL/TP (レジーム連動) ---
+        if _regime_snapshot is not None:
+            try:
+                _r_adaptive = compute_adaptive_sl_tp(
+                    regime=_regime_snapshot,
+                    atr_pips=float(fac_m1.get("atr_pips") or sl_pips),
+                    spread_pips=float(fac_m1.get("spread_pips") or 0.3),
+                    strategy_type=map_strategy_tag_to_type(signal_tag),
+                )
+                if _r_adaptive is None:
+                    LOG.info(
+                        "%s adaptive_sl_tp_block tag=%s regime=%s",
+                        config.LOG_PREFIX, signal_tag, _regime_snapshot.regime.value,
+                    )
+                    continue
+                sl_pips = _r_adaptive["sl_pips"]
+                tp_pips = _r_adaptive["tp_pips"]
+            except Exception:
+                pass  # fail-open
+        # --- end adaptive SL/TP ---
+
         proj_flip = False
         entry_size_scale = 1.0
         proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
@@ -1828,6 +1877,8 @@ async def scalp_m1_worker() -> None:
             "hard_stop_pips": round(sl_pips, 2),
             "fast_cut_pips": signal.get("fast_cut_pips"),
             "fast_cut_time_sec": signal.get("fast_cut_time_sec"),
+            "regime": _regime_snapshot.regime.value if _regime_snapshot else "unknown",
+            "regime_confidence": round(_regime_snapshot.confidence, 3) if _regime_snapshot else 0.0,
         }
         if signal_setup_mult != 1.0:
             entry_thesis["signal_setup_mult"] = round(signal_setup_mult, 3)

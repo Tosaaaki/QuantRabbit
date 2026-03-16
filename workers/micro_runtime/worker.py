@@ -44,6 +44,8 @@ from workers.common import perf_guard
 from workers.common.quality_gate import current_regime
 from workers.common.setup_context import derive_live_setup_context
 from analysis import perf_monitor
+from analysis.market_regime import classify_regime, MarketRegime, should_enter as regime_should_enter
+from analysis.adaptive_sl_tp import compute_adaptive_sl_tp, map_strategy_tag_to_type
 
 from workers.common.size_utils import scale_base_units
 
@@ -1910,6 +1912,14 @@ async def micro_multi_worker() -> None:
         regime_label = _normalize_regime_label(fac_m1.get("regime"))
         if not regime_label:
             regime_label = _normalize_regime_label(current_regime("M1", event_mode=False))
+
+        # --- レジーム判定 (strategy-local, AGENTS.md 準拠) ---
+        try:
+            _regime_snapshot = classify_regime(factors_m1=fac_m1, factors_m5=fac_m5)
+        except Exception:
+            _regime_snapshot = None
+        # --- end regime ---
+
         perf = perf_monitor.snapshot()
         pf = None
         try:
@@ -2240,6 +2250,35 @@ async def micro_multi_worker() -> None:
                 sl_pips = round(sl_pips * sl_mult, 2)
             signal_action = "OPEN_LONG" if side == "long" else "OPEN_SHORT"
 
+            # --- レジーム・エントリー可否 + アダプティブ SL/TP ---
+            if _regime_snapshot is not None:
+                _r_strategy_type = map_strategy_tag_to_type(signal_tag)
+                _r_allowed, _r_reason = regime_should_enter(_regime_snapshot, _r_strategy_type, side)
+                if not _r_allowed:
+                    LOG.info(
+                        "%s regime_block tag=%s regime=%s reason=%s",
+                        config.LOG_PREFIX, signal_tag, _regime_snapshot.regime.value, _r_reason,
+                    )
+                    continue
+                try:
+                    _r_adaptive = compute_adaptive_sl_tp(
+                        regime=_regime_snapshot,
+                        atr_pips=atr_pips,
+                        spread_pips=float(fac_m1.get("spread_pips") or 0.3),
+                        strategy_type=_r_strategy_type,
+                    )
+                    if _r_adaptive is None:
+                        LOG.info(
+                            "%s adaptive_sl_tp_block tag=%s regime=%s",
+                            config.LOG_PREFIX, signal_tag, _regime_snapshot.regime.value,
+                        )
+                        continue
+                    sl_pips = _r_adaptive["sl_pips"]
+                    tp_pips = _r_adaptive["tp_pips"]
+                except Exception:
+                    pass  # fail-open: adaptive 失敗時は元の SL/TP を使用
+            # --- end regime entry ---
+
             proj_mode = None
             if strategy_name in _RANGE_STRATEGIES:
                 proj_mode = "range"
@@ -2465,6 +2504,8 @@ async def micro_multi_worker() -> None:
                 "range_score": round(range_score, 3),
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
+                "regime": _regime_snapshot.regime.value if _regime_snapshot else "unknown",
+                "regime_confidence": round(_regime_snapshot.confidence, 3) if _regime_snapshot else 0.0,
             }
             if _momentumburst_entry_thesis_reaccel(strategy_name, signal):
                 entry_thesis["reaccel"] = True

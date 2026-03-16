@@ -53,6 +53,52 @@
 - Escalation Trigger: 24h後も PF<0.8 なら SL_FLOOR_PIPS=2.5 に引き上げ + レジーム判定のworker統合を前倒し
 - Do Not Repeat Unless: 新しい market regime / evaluation window で再評価が必要な場合のみ
 
+## 2026-03-17 追加3点修正（M1Scalper exit改善/MomentumBurst増強/レジーム統合）
+
+- Hypothesis Key: `exit_quality_and_regime_integration_20260317`
+- Primary Loss Driver: (1) M1Scalper win/loss ratio 0.42x (avg win +1.68 / avg loss -4.00), (2) MomentumBurst唯一の勝者だがサイジング不足, (3) レジーム判定がworkerに未統合
+
+- Change:
+  1. `ops/env/local-v2-stack.env`: M1Scalper exit パラメータ調整
+     - `M1SCALP_EXIT_PROFIT_TAKE_PIPS`: 2.2→3.5 (勝ちを伸ばす)
+     - `M1SCALP_EXIT_TRAIL_START_PIPS`: 2.8→2.0 (早期トレイル開始)
+     - `M1SCALP_EXIT_TRAIL_BACKOFF_PIPS`: 0.9→0.5 (トレイル幅縮小で利益確保)
+     - `M1SCALP_EXIT_MAX_ADVERSE_PIPS`: 6.0→4.0 (損切り早期化)
+     - `M1SCALP_EXIT_MAX_HOLD_SEC`: 720→480 (不利ポジション保有短縮)
+  2. `ops/env/local-v2-stack.env`: `MICRO_MULTI_STRATEGY_UNITS_MULT` の MomentumBurst: 1.20→2.50
+  3. `workers/micro_runtime/worker.py`: `classify_regime()` + `regime_should_enter()` + `compute_adaptive_sl_tp()` を統合
+  4. `workers/scalp_m1scalper/worker.py`: 同上のレジーム判定統合
+
+- Why:
+  - M1Scalper: 2,306トレード WR59% だが avg win +1.68 / avg loss -4.00 → PF<1.0。勝ちトレードが早すぎに利確され、負けが長く保持される。
+  - MomentumBurst: 74トレード WR61% で +1,257円の唯一の勝者。サイジング1.20xは保守的すぎ。
+  - レジーム判定: 作成済みだがworker未統合 → choppy相場でのエントリー抑制が機能していなかった。
+
+- Why Not Same As Last Time:
+  - 前回はsystem-wideの構造修正（TP圧縮、DDガード、SL下限）。
+  - 今回はstrategy-localのexit品質とworker統合。改善対象が異なる。
+  - decision surface: exit_worker parameters / strategy_units_mult / worker-local regime integration
+
+- Expected Good:
+  - M1Scalper: avg win +1.68→+2.5-3.0 pips (trail/TP拡大), avg loss -4.00→-3.0 pips (adverse/hold短縮) → win/loss ratio 0.42→0.83-1.0
+  - MomentumBurst: +1,257円/74トレード → サイジング2.08x増で同条件なら +2,621円/74トレード相当
+  - レジーム統合: choppy/volatile相場でのエントリーブロック。推定損失回避率20-30%。
+
+- Expected Bad:
+  - M1Scalper TP拡大: TP hit率が一時的に低下する可能性。トレイル開始を2.0pipに下げることで補償。
+  - MomentumBurst サイジング増: 負けトレードの損失も2.08x増。ただしWR61%・PF>1.0なので期待値はプラス。
+  - レジーム統合: エントリー機会減。fail-open方針（UNKNOWN時は通す）で過剰ブロックを防止。
+
+- Observed/Fact: pending（デプロイ前）
+- Verdict: pending
+- Next Action:
+  - `scripts/local_v2_stack.sh restart` でデプロイ
+  - 4時間後に M1Scalper の avg win/loss ratio を検証
+  - MomentumBurst の PL を前期間比較
+- Promotion Gate: M1Scalper win/loss ratio > 0.70 かつ全体PF > 1.0
+- Escalation Trigger: 4h後も win/loss ratio < 0.50 なら TRAIL_BACKOFF を 0.3 に、MAX_ADVERSE を 3.5 に調整
+- Do Not Repeat Unless: exit parameter 再調整が必要な場合のみ
+
 ---
 
 ## 2026-03-17 00:23 JST / local-v2: `MicroLevelReactor-bounce-lower` pending 再検証（escalate 反映）
