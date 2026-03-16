@@ -911,6 +911,22 @@ def _strategy_tag_to_env_prefix(strategy_tag: Optional[str]) -> Optional[str]:
     return prefix or None
 
 
+def _strategy_tag_family_env_prefixes(strategy_tag: Optional[str]) -> list[str]:
+    raw = str(strategy_tag or "").strip()
+    if not raw or "-" not in raw:
+        return []
+    parts = [part.strip() for part in raw.split("-") if part.strip()]
+    if len(parts) <= 1:
+        return []
+    families: list[str] = []
+    for end in range(len(parts) - 1, 0, -1):
+        candidate = _strategy_tag_to_env_prefix("-".join(parts[:end]))
+        normalized = _normalize_env_prefix(candidate)
+        if normalized and normalized not in families:
+            families.append(normalized)
+    return families
+
+
 def _strategy_env_prefix_candidates(
     strategy_tag: Optional[str],
     entry_thesis: Optional[dict],
@@ -920,6 +936,7 @@ def _strategy_env_prefix_candidates(
     for candidate in (
         _coalesce_env_prefix(entry_thesis, meta, strategy_tag),
         _strategy_tag_to_env_prefix(strategy_tag),
+        *_strategy_tag_family_env_prefixes(strategy_tag),
     ):
         normalized = _normalize_env_prefix(candidate)
         if normalized and normalized not in candidates:

@@ -5,6 +5,57 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-16 10:18 JST - hyphenated setup tag でも base strategy env prefix を辿り、`leading_profile` の strategy-local guard を skip しない
+
+- 対象:
+  - `execution/strategy_entry.py`
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `MicroLevelReactor-bounce-lower`
+    の live loser order では
+    `forecast.allowed=false / style_mismatch_range`
+    でも
+    `entry_path_attribution.leading_profile=status=skip`
+    になっていた。
+  - running worker env には
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    がある一方、
+    shared fallback
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    も存在し、
+    hyphenated tag が base family
+    `MICROLEVELREACTOR`
+    を見に行かないため
+    strategy-local guard が bypass されていた。
+- 変更:
+  - `_strategy_env_prefix_candidates()`
+    は
+    `env_prefix`
+    と exact setup tag だけでなく、
+    hyphenated family fallback
+    も候補に含めるようにした。
+    例:
+    `MicroLevelReactor-bounce-lower`
+    ->
+    `MICROLEVELREACTOR_BOUNCE_LOWER`
+    ->
+    `MICROLEVELREACTOR_BOUNCE`
+    ->
+    `MICROLEVELREACTOR`
+  - 回帰テストで、
+    generic
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    の下でも
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    が
+    `MicroLevelReactor-bounce-lower`
+    に効いて reject することを固定した。
+- 意図:
+  - pending の loser-lane threshold を増やす前に、
+    既存の strategy-local guard が live setup tag 経由でも実際に発火する状態を保証する。
+
 ### 2026-03-16 09:28 JST - micro runtime の strategy cooldown は successful dispatch のときだけ更新
 
 - 対象:

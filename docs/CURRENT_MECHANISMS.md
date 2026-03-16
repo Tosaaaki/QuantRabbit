@@ -78,6 +78,24 @@
 - 共通 `exit_manager` はスタブで、exit 判定の主体ではありません。
 - Brain は optional で、現行 safe canary は `brain-ollama-safe.env` 合成前提です。
 - common layer は preserve-intent 方針で、戦略の方向意図を後付けで再採点しません。
+- `execution/strategy_entry.py`
+  の strategy env lookup は
+  `env_prefix`
+  /
+  exact
+  `strategy_tag`
+  /
+  hyphenated family fallback
+  を順に見る。
+  例:
+  `MicroLevelReactor-bounce-lower`
+  は
+  `MICRO_MULTI -> MICROLEVELREACTOR_BOUNCE_LOWER -> MICROLEVELREACTOR_BOUNCE -> MICROLEVELREACTOR`
+  を候補にし、
+  base strategy の
+  `ENTRY_LEADING_PROFILE`
+  や
+  dedicated env override を setup tag からも拾う。
 - `session_open_breakout` は
   `min_hold_sec=300`
   の negative/candle exit を維持したまま、

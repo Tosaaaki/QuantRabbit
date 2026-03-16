@@ -76,6 +76,278 @@
 - `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り threshold の往復を禁止する。
 - stale / close / abnormal market window は `market_hold` として扱い、改善 verdict を出さない。reopen 後の評価窓を別に切る。
 
+## 2026-03-16 10:18 JST / local-v2: `MicroLevelReactor-bounce-lower` は pending guard の threshold ではなく env-prefix 解決漏れで `leading_profile` が skip されていた
+
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_prefix_bug_20260316`
+- Primary Loss Driver:
+  - `STOP_LOSS_ORDER`
+- Mechanism Fired:
+  - `entry_leading_profile_skip_due_strategy_tag_prefix_miss`
+  - `2026-03-16 09:03 JST`
+    の
+    `MicroLevelReactor-bounce-lower`
+    loser cluster の
+    `orders.db.request_json`
+    では
+    `forecast.allowed=false`,
+    `forecast.reason=style_mismatch_range`,
+    `forecast.p_up=0.291769`,
+    `forecast.expected_pips=-1.0563`
+    なのに、
+    `entry_path_attribution.leading_profile`
+    は
+    `status=skip`
+    だった。
+  - live service env には
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    と
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    が同時に入っていた一方、
+    旧
+    `_strategy_env_prefix_candidates()`
+    は
+    `MICRO_MULTI`
+    と
+    `MICROLEVELREACTOR_BOUNCE_LOWER`
+    までしか見ず、
+    base family
+    `MICROLEVELREACTOR`
+    を候補に入れていなかった。
+- Do Not Repeat Unless:
+  - post-deploy の new
+    `MicroLevelReactor-bounce-lower`
+    sample で
+    `leading_profile`
+    が
+    `skip`
+    ではなく
+    `reject/pass`
+    になったことを確認した後も、
+    同じ
+    `style_mismatch_range`
+    / negative forecast lane が
+    `STOP_LOSS_ORDER`
+    を作るときだけ、
+    threshold 追加 tightening へ進む。
+
+- Change:
+  - `execution/strategy_entry.py`
+    の
+    `_strategy_env_prefix_candidates()`
+    を更新し、
+    hyphenated setup tag で
+    exact prefix だけでなく
+    family fallback
+    まで順に見るようにした。
+    例:
+    `MicroLevelReactor-bounce-lower`
+    は
+    `MICRO_MULTI -> MICROLEVELREACTOR_BOUNCE_LOWER -> MICROLEVELREACTOR_BOUNCE -> MICROLEVELREACTOR`
+    を候補にする。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    に、
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    でも
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    が
+    `MicroLevelReactor-bounce-lower`
+    に効く回帰を追加した。
+
+- Why:
+  - `MicroLevelReactor-bounce-lower`
+    は
+    2026-03-12
+    から pending lane として negative-forecast long を止める方針だったのに、
+    2026-03-16 09:03 JST
+    の live loser burst でも
+    同 lane が 5 本まとめて filled された。
+  - threshold をまた積む前に、
+    既存 pending guard が本当に発火していたかを確認すると、
+    mechanism 自体が skip されていた。
+
+- Hypothesis:
+  - hyphenated setup tag でも base strategy family の env prefix を拾えば、
+    `MicroLevelReactor-bounce-lower`
+    は
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG=0.44`
+    を使えるようになり、
+    negative forecast long を
+    `leading_profile`
+    で reject できる。
+
+- Why Not Same As Last Time:
+  - 2026-03-12 16:05 JST
+    の
+    `MicroLevelReactor-bounce-lower`
+    entry は、
+    同じ loser surface に対して
+    threshold
+    `0.44`
+    を追加した改善だった。
+  - 今回はその threshold をさらに触るのではなく、
+    exact same decision surface で
+    mechanism が
+    `skip`
+    されていた実装不備を直している。
+  - つまり
+    `same lane の新 tweak`
+    ではなく、
+    前回 pending 改善の
+    `Mechanism Fired`
+    が実質
+    `0`
+    だったことの修正である。
+
+- Expected Good:
+  - `MicroLevelReactor-bounce-lower`
+    の
+    `leading_profile`
+    が
+    `skip`
+    ではなく
+    `reject`
+    になり、
+    negative forecast long burst を entry 前に止められる。
+  - `MomentumBurst-open_long-reaccel`
+    など hyphenated setup tag も、
+    必要なら base family env を拾える。
+
+- Expected Bad:
+  - hyphenated setup tag が base family env を継承するため、
+    これまで generic fallback に逃げていた一部 setup が
+    想定より tighter になる可能性がある。
+  - family fallback を広げることで、
+    将来 lane-specific env を置いたときは precedence を監査する必要がある。
+
+- Promotion Gate:
+  - post-deploy の new
+    `MicroLevelReactor-bounce-lower`
+    order で
+    `entry_path_attribution.leading_profile.status`
+    が
+    `skip`
+    ではなく、
+    `reason`
+    と
+    `env_prefixes`
+    に
+    `MICROLEVELREACTOR`
+    が含まれること。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py -k entry_leading_profile`
+    が通ること。
+
+- Escalation Trigger:
+  - post-deploy でも
+    `MicroLevelReactor-bounce-lower`
+    が
+    `leading_profile=skip`
+    のまま filled されるなら、
+    env-prefix ではなく
+    runtime process env / entry path serialization
+    の別バグとして切り直す。
+  - `leading_profile=reject/pass`
+    になった後も同 lane の
+    `STOP_LOSS_ORDER`
+    burst が続くなら、
+    次は threshold ではなく
+    worker-local signal guard
+    / forecast fusion
+    の mechanism audit へ進む。
+
+- Period:
+  - 調査:
+    `2026-03-16 09:44-10:06 JST`
+  - 実装/検証:
+    `2026-03-16 10:06-10:18 JST`
+
+- Fact:
+  - `orders.db`
+    の
+    `2026-03-16T00:03:12.932984+00:00`
+    filled order は
+    `strategy_tag=MicroLevelReactor-bounce-lower`
+    で、
+    `forecast.allowed=false`,
+    `forecast.reason=style_mismatch_range`,
+    `forecast.expected_pips=-1.0563`,
+    `forecast_fusion.entry_probability_after=0.524769`
+    だった。
+  - 同 order の
+    `entry_path_attribution`
+    は
+    `leading_profile`
+    を
+    `status=skip`
+    で記録していた。
+  - running
+    `quant-micro-levelreactor`
+    process env には
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED=1`,
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG=0.44`,
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    が共存していた。
+  - patch 後の helper は
+    `MicroLevelReactor-bounce-lower`
+    で
+    `['MICRO_MULTI', 'MICROLEVELREACTOR_BOUNCE_LOWER', 'MICROLEVELREACTOR_BOUNCE', 'MICROLEVELREACTOR']`
+    を返す。
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/execution/test_strategy_entry_forecast_fusion.py -k 'entry_leading_profile'`
+    は
+    `6 passed`
+    だった。
+
+- Failure Cause:
+  - hyphenated setup tag の env lookup が
+    base strategy family
+    へ fallback せず、
+    shared generic
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    に落ちた。
+  - その結果、
+    pending だった
+    `MicroLevelReactor-bounce-lower`
+    の
+    `leading_profile`
+    threshold は実運用で一度も発火していなかった。
+
+- Improvement:
+  - hyphenated setup tag の env prefix 解決を family fallback まで広げ、
+    setup-specific tag でも base strategy の dedicated env guard を発火できるようにした。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/execution/test_strategy_entry_forecast_fusion.py -k 'entry_leading_profile'`
+  - `ps ewwp <quant-micro-levelreactor pid>`
+    で
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    と
+    `STRATEGY_ENTRY_LEADING_PROFILE_ENABLED=0`
+    の coexist を確認
+  - post-deploy の new
+    `orders.db.request_json.entry_path_attribution`
+    で
+    `leading_profile`
+    stage を確認
+
+- Verdict:
+  - pending
+
+- Next Action:
+  - `quant-micro-levelreactor`
+    を含む active worker を反映後、
+    new
+    `MicroLevelReactor-bounce-lower`
+    sample の
+    `leading_profile`
+    stage を確認する。
+  - 同時に
+    `MomentumBurst-open_long-reaccel`
+    など hyphenated setup tag でも
+    unwanted broad tighten が出ていないかを spot check する。
+
+- Status:
+  - `pending_live_prefix_validation`
+
 ## 2026-03-14 10:55 JST / trade_findings: anti-loop を same parameter 禁止ではなく decision surface 規律へ補正
 
 - Hypothesis Key:
