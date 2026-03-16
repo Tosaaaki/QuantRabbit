@@ -22,6 +22,7 @@
   4. `ops/env/local-v2-stack.env`: M1SCALP_BASE_UNITS 200→4500, PING_5S_B 6→3000, PING_5S_D 3000→4000, FLOW 18→2500
   5. `ops/env/local-v2-stack.env`: DYN_ALLOC_MULT_MIN/MAX 引き上げ（M1SCALP 0.12-0.90→0.40-1.20, Ping5S_B max 0.80→1.20, Flow 0.12-0.55→0.40-1.10）
   6. `ops/env/local-v2-stack.env`: RISK_PERF_MIN_MULT 0.55→0.70, Flow有効化
+  7. `ops/env/local-v2-stack.env`: DISABLE_POCKET_DD=1（scalp_fast DD 13.83%>2%制限でブロック→グローバルDD 20%のみで保護）
 
 - Why:
   - OANDA API確認: margin_rate=0.04（1:25）だがrisk_guard.pyはMAX_LEVERAGE=20.0で5倍分の余力を放棄。
