@@ -723,6 +723,115 @@ def _lane_scoreboard_setup_overrides(
     return overrides
 
 
+def _apply_setup_pressure_strategy_trim(
+    record: dict[str, Any],
+    *,
+    setup_overrides: list[dict[str, Any]],
+    min_attempts: int,
+    max_units_cut: float,
+    max_prob_boost: float,
+) -> dict[str, Any]:
+    if str(record.get("action") or "hold").strip() != "hold":
+        return record
+    attempts = _safe_int(record.get("attempts"), 0)
+    fills = _safe_int(record.get("fills"), 0)
+    realized_jpy = _safe_float(record.get("realized_jpy"), 0.0)
+    if attempts < max(2, int(min_attempts)) or fills < 2 or realized_jpy > 0.0:
+        return record
+
+    loss_share = 0.0
+    quarantine_share = 0.0
+    boost_share = 0.0
+    setup_realized_loss = 0.0
+    negative_prob_offsets: list[float] = []
+
+    for item in setup_overrides:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").strip()
+        attempt_share = max(0.0, _safe_float(item.get("attempt_share"), 0.0))
+        item_realized = _safe_float(item.get("realized_jpy"), 0.0)
+        quarantine_gate = (
+            item.get("quarantine_gate")
+            if isinstance(item.get("quarantine_gate"), dict)
+            else {}
+        )
+        quarantine_active = bool(quarantine_gate.get("active"))
+        if action == "boost_participation" and item_realized > 0.0:
+            boost_share += attempt_share
+            continue
+        if action != "trim_units":
+            continue
+        probability_offset = min(0.0, _safe_float(item.get("probability_offset"), 0.0))
+        if item_realized < 0.0 or quarantine_active or probability_offset < 0.0:
+            loss_share += attempt_share
+            setup_realized_loss += abs(min(item_realized, 0.0))
+            if quarantine_active:
+                quarantine_share += attempt_share
+            if probability_offset < 0.0:
+                negative_prob_offsets.append(abs(probability_offset))
+
+    if loss_share < 0.12 and quarantine_share < 0.10 and abs(realized_jpy) < 4.0:
+        return record
+    if boost_share >= max(0.10, loss_share * 0.85):
+        return record
+
+    share_pressure = _clamp(loss_share / 0.25, 0.0, 1.0)
+    quarantine_pressure = _clamp(quarantine_share / 0.18, 0.0, 1.0)
+    strategy_loss_pressure = _clamp(abs(min(realized_jpy, 0.0)) / 20.0, 0.0, 1.0)
+    setup_loss_pressure = _clamp(setup_realized_loss / 12.0, 0.0, 1.0)
+    trim_strength = max(
+        share_pressure,
+        quarantine_pressure,
+        strategy_loss_pressure,
+        setup_loss_pressure,
+        0.40 * share_pressure
+        + 0.25 * quarantine_pressure
+        + 0.20 * strategy_loss_pressure
+        + 0.15 * setup_loss_pressure,
+    )
+
+    units_multiplier = 1.0 - max_units_cut * (0.08 + 0.32 * trim_strength)
+    units_multiplier = _clamp(units_multiplier, 1.0 - max_units_cut, 1.0)
+
+    probability_offset = 0.0
+    if negative_prob_offsets or quarantine_share >= 0.10:
+        base_cut = max(
+            max_prob_boost * 0.18,
+            (max(negative_prob_offsets) * 0.70) if negative_prob_offsets else 0.0,
+        )
+        strategy_cut = min(max_prob_boost * 0.40, base_cut)
+        probability_offset = -strategy_cut * (0.50 + 0.25 * trim_strength)
+
+    updated = dict(record)
+    updated["action"] = "trim_units"
+    updated["units_multiplier"] = round(
+        min(_safe_float(record.get("units_multiplier"), 1.0), units_multiplier), 4
+    )
+    updated["lot_multiplier"] = round(
+        min(_safe_float(record.get("lot_multiplier"), 1.0), units_multiplier), 4
+    )
+    updated["probability_offset"] = round(
+        min(0.0, probability_offset),
+        4,
+    )
+    updated["max_probability_cut"] = round(
+        max(
+            _safe_float(record.get("max_probability_cut"), 0.0),
+            abs(min(0.0, probability_offset)),
+        ),
+        4,
+    )
+    updated["quality_score"] = round(
+        min(_safe_float(record.get("quality_score"), 0.0), 0.96 - 0.18 * trim_strength),
+        4,
+    )
+    updated["setup_pressure_trim_share"] = round(loss_share, 6)
+    updated["setup_pressure_quarantine_share"] = round(quarantine_share, 6)
+    updated["setup_pressure_boost_share"] = round(boost_share, 6)
+    return updated
+
+
 _NEGATIVE_PROB_TRIM_MIN_LOSS_PRESSURE = 0.08
 _NEGATIVE_PROB_TRIM_MIN_SEVERITY = 0.78
 _NEGATIVE_PROB_TRIM_MIN_REJECT_PRESSURE = 0.80
@@ -1172,6 +1281,13 @@ def build_participation_alloc(
             max_prob_boost=max_prob_boost,
         )
         setup_overrides = _merge_setup_overrides(setup_overrides, scoreboard_overrides)
+        output_record = _apply_setup_pressure_strategy_trim(
+            output_record,
+            setup_overrides=setup_overrides,
+            min_attempts=min_attempts,
+            max_units_cut=max_units_cut,
+            max_prob_boost=max_prob_boost,
+        )
         if setup_overrides:
             output_record["setup_overrides"] = setup_overrides
         output_strategies[str(strategy_key or raw_key)] = output_record

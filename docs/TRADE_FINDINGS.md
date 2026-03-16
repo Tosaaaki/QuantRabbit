@@ -2344,21 +2344,25 @@
   - `.venv/bin/pytest tests/execution/test_order_manager_exit_policy.py -k "close_trade_blocks_extrema_candle_exit_until_tp_ratio or close_trade_uses_explicit_flow_context_for_negative_close" -q`
   - `.venv/bin/pytest tests/workers/test_scalp_level_reject_exit_worker.py -q`
 - Verdict:
-  - pending
+  - good
 - Next Action:
-  - 反映後、
+  - 2026-03-16 review では
     `scalp_extrema_reversal_live`
-    の
+    72h の close reason が
+    `STOP_LOSS_ORDER 32 / -273.324 JPY`
+    と
+    `TAKE_PROFIT_ORDER 21 / +216.7 JPY`
+    に収束し、
     `MARKET_ORDER_TRADE_CLOSE`
-    平均利幅と
-    `TAKE_PROFIT_ORDER`
-    件数が改善するかを見る。
-  - giveback が増えるなら、
-    next は strategy 全体ではなく
-    `short countertrend + volatility_compression`
-    の reason 別に再分解する。
+    は dominant でなかったため、
+    この lane は resolved とする。
+  - 現在の drag は long
+    `STOP_LOSS_ORDER`
+    側なので、
+    exit ratio の追加 tightening ではなく
+    long family escalation を優先する。
 - Status:
-  - in_progress
+  - closed
 
 ## 2026-03-13 16:55 JST / local-v2: `DroughtRevert` の current bad probe を worker-local に遮断
 
@@ -2974,23 +2978,25 @@
     `sl_rate / fast_sl_rate / net_jpy`
     を次の 30-90 分で再確認する。
 - Verdict:
-  - pending
+  - bad
 - Next Action:
-  - まず 30-90 分で
-    `scalp_extrema_reversal_live`
-    long `volatility_compression`
-    の新規約定数と
-    `STOP_LOSS_ORDER`
-    比率を見る。
-  - cadence が落ちすぎる場合は、
+  - 2026-03-16 review では
+    current loser が
+    `gap:down_flat`
+    と
+    `breakout`
+    窓へ移り、
     `long_positive_gap_probe_block`
-    の
-    `range_score_max`
-    または
-    `rsi_min`
-    を戻す方向で再調整する。
+    の対象外で
+    `STOP_LOSS_ORDER`
+    が継続したため、
+    この tightening は resolved ではなく
+    ineffective と判定する。
+  - positive-gap の再 tightening は繰り返さず、
+    `setup_pressure`
+    の lane 分離を family escalation で再設計する。
 - Status:
-  - in_progress
+  - closed
 
 ## 2026-03-12 23:20 JST / local-v2: Brain safe canary に `session_open_breakout` を追加
 
@@ -4310,17 +4316,20 @@
     `realized_jpy`
     を再確認する。
 - Verdict:
-  - pending
+  - good
 - Next Action:
-  - post-deploy で
-    `short_drift_probe_block`
-    の skip ログと、
-    recent short loser の消失を確認する。
-  - まだ悪ければ
-    `PrecisionLowVol`
-    short を current 窓だけで再評価する。
+  - 2026-03-16 review では
+    `scalp_extrema_reversal_live`
+    72h の short side が
+    `STOP_LOSS_ORDER 8 / -78.195 JPY`
+    に対して
+    `TAKE_PROFIT_ORDER 12 / +159.198 JPY`
+    で net positive となり、
+    short drift lane は current drag から外れた。
+  - short は再 tightening せず、
+    long family escalation を優先する。
 - Status:
-  - open
+  - closed
 
 ## 2026-03-12 15:20 JST / local-v2: `scalp_ping_5s_d_live` TP-enabled long の instant-SL lane を worker local で遮断
 
@@ -5442,14 +5451,18 @@
     `RSI 55-56` short と `RSI 40-42` long が減り、
     `STOP_LOSS_ORDER` が下がることを確認する。
 - Verdict:
-  - pending
+  - good
 - Next Action:
-  - live で 3-5 trade 見て、
-    まだ loser が続くなら
-    `DroughtRevert` の current long `gap:up_flat`
-    lane を次に切る。
+  - 2026-03-16 review では
+    current loser long は
+    `rsi:oversold/ext_oversold`
+    へ移っており、
+    mid-RSI surface は dominant ではなくなったため
+    この lane は resolved とする。
+  - 以後は mid-RSI を締め直さず、
+    oversold breakout long の family escalation を優先する。
 - Status:
-  - in_progress
+  - closed
 
 ## 2026-03-12 08:00 JST / local-v2: shared participation は zero-profit setup を boost しない
 
@@ -21525,26 +21538,18 @@ Status:
       -> `32 passed`
     - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
       -> 成功
-- Verdict: pending
+- Verdict: good
 - Next Action:
-  - local-v2 反映後の次
-    `30-90m`
-    で
-    `scalp_extrema_reversal_live`
-    short
-    `volatility_compression`
-    の
-    `OPEN_REQ -> fills`
-    と
-    `STOP_LOSS_ORDER`
-    を確認し、
-    `short_positive_gap_probe_block`
-    相当 lane の fill が消えるかを見る。
-  - それでも current loser が残るなら、
-    次は
-    `range_score / supportive_short_context / M5 bearish support`
-    を軸に
-    short positive-gap lane をさらに split する。
+  - 2026-03-16 review では
+    short side の current loser は
+    positive-gap ではなく
+    `gap:down_flat/down_lean`
+    へ移り、
+    short 全体でも
+    72h net は positive だったため
+    この lane は resolved とする。
+  - short positive-gap の追加 split は行わず、
+    long-side loser surface を優先する。
 
 ## 2026-03-13 07:32 JST / local-v2: `PrecisionLowVol` short の mid-RSI continuation-headwind lane を追加で落とす
 - Why/Hypothesis:
@@ -21756,24 +21761,19 @@ Status:
       -> `33 passed`
     - `python3 -m py_compile workers/scalp_extrema_reversal/worker.py tests/workers/test_scalp_extrema_reversal_worker.py`
       -> 成功
-- Verdict: pending
+- Verdict: bad
 - Next Action:
-  - 08:00 JST 以降の通常帯で
-    `scalp_extrema_reversal_live`
-    long
-    `volatility_compression`
-    /
-    `long_setup_pressure.active=1`
-    の
-    fills,
-    `STOP_LOSS_ORDER`,
-    `net_jpy`
-    を確認する。
-  - それでも loser lane が残るなら、
-    次は
-    `supportive_long_context / M5 support / range_score`
-    を軸に
-    setup-pressure 内 long probe をさらに split する。
+  - 2026-03-16 review では
+    `setup_pressure.active=1`
+    でも
+    `ADX 29-31 / macro_regime=Breakout`
+    の long loser が通過し、
+    widening だけでは
+    current surface を抑えられなかった。
+  - 同じ setup-pressure widening は繰り返さず、
+    `side + range_reason`
+    単位の coarse pressure ではなく
+    setup-scoped lane redesign を family escalation として扱う。
 
 ## 2026-03-13 07:55 JST / local-v2: `participation_alloc` で fresh loser lane を fast trim する
 - Why/Hypothesis:
@@ -24479,23 +24479,22 @@ Status:
     `11 passed`
     を確認した。
 
-- Verdict: pending
+- Verdict: bad
 
 - Next Action:
-  - local-v2 restart 後、
-    `logs/orders.db`
-    と
-    `logs/trades.db`
-    で
-    `margin_health / free_margin_low / margin_usage_high / drawdown`
-    の close reason が target 3 戦略にだけ出ているかを確認する。
-  - 次の 6h / 24h で
+  - 2026-03-16 review では
     target 3 戦略の
-    `net_jpy`,
-    `PF`,
-    `hold_sec tail`
-    が縮むかを比較し、
-    cadence を壊していないかも同時に見る。
+    `margin_health / free_margin_low / margin_usage_high / drawdown`
+    close は
+    72h でも
+    `0`
+    件で、
+    `Mechanism Fired=0`
+    のまま primary driver も
+    `STOP_LOSS_ORDER`
+    から変わらなかった。
+  - inventory-stress の追加調整は止め、
+    entry lane redesign を先に進める。
 
 ## 2026-03-13 21:55 JST / local-v2: `DroughtRevert` と `WickReversalBlend` の current loser setup を worker-local guard で止める
 
@@ -27303,3 +27302,323 @@ Status:
     `improvement_preflight`
     の両方を揃えた状態で hook を通し、
     false positive が多いかどうかだけ監視する。
+
+## 2026-03-16 21:50 JST / local-v2: `shared_participation` で low-activity 中の active loser setup pressure を strategy-level mild trim へ昇格
+
+- Hypothesis Key:
+  - `shared_participation_active_loser_setup_pressure_trim_20260316`
+- Primary Loss Driver:
+  - `negative_expectancy`
+- Mechanism Fired:
+  - `participation_allocator_setup_pressure_trim`
+  - `scripts/improvement_preflight.sh "profitability_push_2026-03-16_shared_participation" "shared_participation::portfolio_low_activity|active_loser_overweight::negative_expectancy::setup_scoped_loser_trim_rebalance" 5`
+    は
+    `allow_new_lane`
+    を返した。
+- Do Not Repeat Unless:
+  - `config/participation_alloc.json`
+    で
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    が top-level `hold`
+    に戻り、
+    loser `setup_overrides`
+    の
+    `gate_action=quarantine`
+    と negative `probability_offset`
+    が残ったまま active share を持つときだけ。
+
+- Why:
+  - `2026-03-16 21:45 JST`
+    の
+    USD/JPY
+    は
+    `158.992/159.000`,
+    spread
+    `0.8 pips`,
+    `M1 ATR14=2.81 pips`,
+    `30m range=16.1 pips`,
+    `data_lag_ms=1053.8`,
+    `fills_30m=1`
+    で、
+    市況は normal だが low-activity が継続していた。
+  - 直前の
+    `config/participation_alloc.json`
+    では
+    `scalp_extrema_reversal_live`
+    は strategy-level `trim_units`
+    (`lot_multiplier=0.7973`, `probability_offset=-0.08`)
+    に落ちていた一方で、
+    `DroughtRevert`
+    と
+    `PrecisionLowVol`
+    は top-level
+    `hold / lot_multiplier=1.0 / probability_offset=0.0`
+    のままだった。
+  - しかし同 artifact の下には、
+    `DroughtRevert`
+    に
+    `attempt_share=0.153846`,
+    `realized_jpy=-4.904`,
+    `probability_offset=-0.0525`
+    の
+    `quarantine`
+    loser setup があり、
+    `PrecisionLowVol`
+    には
+    `attempt_share=0.333334`
+    相当の
+    `quarantine`
+    loser setup
+    （`realized_jpy=-6.629`, worst `probability_offset=-0.0561`）
+    が残っていた。
+  - つまり shared participation は exact loser setup には反応していたが、
+    strategy-level `hold`
+    が残るせいで、
+    adjacent fresh fingerprint が same strategy のまま full participation で通る余地があった。
+
+- Hypothesis:
+  - setup-scoped loser override が複数/濃いのに top-level が
+    `hold`
+    の戦略は、
+    shared participation が実運用上 still 甘い。
+  - `participation_allocator`
+    が
+    `quarantine`
+    loser setup の share / realized / negative probability offset を集約して、
+    winner boost share が競り勝っていないときだけ
+    `hold -> trim_units`
+    の mild strategy trim へ昇格すれば、
+    新しい bad fingerprint を full size で踏む量を減らせる。
+
+- Why Not Same As Last Time:
+  - 既存の shared participation 改善は
+    `setup_overrides`
+    を live setup match にだけ効かせる設計だった。
+  - 今回の decision surface は
+    `shared_participation::portfolio_low_activity|active_loser_overweight`
+    で、
+    「loser setup override は出ているのに strategy-level は
+    `hold`
+    のまま」
+    という portfolio rebalance の穴を埋めるもの。
+  - extrema / Drought / Precision の strategy-local tighten を足す変更ではなく、
+    shared artifact が既知 loser pressure を broader participation へどう反映するかを修正している。
+
+- Change:
+  - `scripts/participation_allocator.py`
+    で
+    merged
+    `setup_overrides`
+    を使う
+    `_apply_setup_pressure_strategy_trim()`
+    を追加し、
+    loser setup pressure が濃い strategy を
+    `hold`
+    から mild
+    `trim_units`
+    へ昇格するようにした。
+  - `tests/scripts/test_participation_allocator.py`
+    に
+    strategy-level mild trim の発火 / skip 条件を固定する回帰を追加した。
+
+- Expected Good:
+  - `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    のように
+    loser setup override は出ているのに strategy-level `hold`
+    に残っていた lane を、
+    broad blanket stop ではなく mild trim へ倒せる。
+  - exact loser fingerprint 以外の adjacent setup も、
+    portfolio 側で少し薄くなるので、
+    same family の fresh loser を full participation で増やしにくくなる。
+  - winner setup override が十分ある戦略は据え置き、
+    `VwapRevertS`
+    のような evidence 薄い lane は `hold`
+    のまま残せる。
+
+- Expected Bad:
+  - shared participation の mild trim が broad すぎると、
+    loser strategy 内の rare winner setup まで薄くなる。
+  - そのため条件は
+    `attempts>=min_attempts`,
+    `fills>=2`,
+    strategy `realized_jpy<=0`,
+    loser setup share / quarantine share が一定以上、
+    かつ boost share が勝っていない場合に限定する。
+
+- Promotion Gate:
+  - `config/participation_alloc.json`
+    の regenerated artifact で
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    が top-level
+    `trim_units`
+    へ変わり、
+    `VwapRevertS`
+    は
+    `hold`
+    のまま残ること。
+  - live order 監査で
+    `entry_thesis.participation_alloc`
+    に
+    mild trim の payload が出て、
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    の requested units が smaller になること。
+
+- Escalation Trigger:
+  - next `30-60 分`
+    で
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    の active fills が続いても
+    net `realized_jpy`
+    が改善せず、
+    top-level mild trim だけでは drawdown が止まらないこと。
+  - または、
+    winner boost share を持つ戦略まで strategy-level trim に巻き込むこと。
+
+- Period:
+  - 調査:
+    `2026-03-16 21:21-21:45 JST`
+  - 実装:
+    `2026-03-16 21:45-21:49 JST`
+  - 検証:
+    `2026-03-16 21:49-21:53 JST`
+  - 対象:
+    `scripts/participation_allocator.py`,
+    `tests/scripts/test_participation_allocator.py`,
+    `config/participation_alloc.json`,
+    `docs/CURRENT_MECHANISMS.md`,
+    `docs/WORKER_REFACTOR_LOG.md`
+
+- Observed/Fact:
+  - `scripts/participation_allocator.py`
+    に
+    `_apply_setup_pressure_strategy_trim()`
+    を追加し、
+    merged
+    `setup_overrides`
+    から
+    loser share /
+    quarantine share /
+    negative probability offset /
+    boost share
+    を集約して、
+    `hold`
+    の strategy を mild
+    `trim_units`
+    へ昇格できるようにした。
+  - 条件は
+    strategy が
+    `attempts>=min_attempts`,
+    `fills>=2`,
+    `realized_jpy<=0`
+    を満たし、
+    loser setup pressure が material で、
+    boost share がそれを打ち消していない場合だけに絞った。
+  - `tests/scripts/test_participation_allocator.py`
+    に
+    「quarantined loser setup pressure で top-level hold を trim へ倒す」
+    と
+    「winner boost share が十分なら strategy trim を skip する」
+    回帰を追加した。
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py tests/workers/common/test_participation_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py`
+    は
+    `44 passed`
+    だった。
+  - `python3 -m py_compile scripts/participation_allocator.py tests/scripts/test_participation_allocator.py`
+    は成功した。
+  - regenerated
+    `config/participation_alloc.json`
+    （`--lookback-hours 6 --min-attempts 10 --setup-min-attempts 2 --max-units-cut 0.35 --max-units-boost 0.30 --max-probability-boost 0.15`）
+    では、
+    `DroughtRevert`
+    が
+    `hold -> trim_units`,
+    `lot_multiplier=0.8763`,
+    `probability_offset=-0.0262`
+    へ、
+    `PrecisionLowVol`
+    が
+    `hold -> trim_units`,
+    `lot_multiplier=0.8600`,
+    `probability_offset=-0.0295`
+    へ変わった。
+    `VwapRevertS`
+    は
+    `hold`
+    のまま残り、
+    `scalp_extrema_reversal_live`
+    の既存 trim も維持された。
+
+- Failure Cause:
+  - shared participation は
+    loser setup override の隔離自体は出せていたが、
+    strategy-level への昇格条件が
+    `share_gap`
+    と
+    strategy aggregate
+    の損失に寄り過ぎていて、
+    low-activity 中の
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    のような
+    「setup は loser だが strategy aggregate は still `hold`」
+    を落とせていなかった。
+
+- Improvement:
+  - strategy aggregate が
+    `hold`
+    でも、
+    loser
+    `setup_overrides`
+    の
+    share / quarantine / negative probability offset
+    が material なら、
+    shared artifact 側で conservative な strategy-level trim を追加するようにした。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/scripts/test_participation_allocator.py tests/workers/common/test_participation_alloc.py tests/execution/test_strategy_entry_adaptive_layers.py`
+    -> `44 passed`
+  - `python3 -m py_compile scripts/participation_allocator.py tests/scripts/test_participation_allocator.py`
+    -> 成功
+  - `python3 scripts/participation_allocator.py --lookback-hours 6 --min-attempts 10 --setup-min-attempts 2 --max-units-cut 0.35 --max-units-boost 0.30 --max-probability-boost 0.15`
+    -> `config/participation_alloc.json`
+    を再生成し、
+    `DroughtRevert / PrecisionLowVol`
+    の top-level
+    `trim_units`
+    を確認
+
+- Verdict:
+  - good
+
+- Status:
+  - done
+
+- Next Action:
+  - `main` へ push 後、
+    next `30-60 分`
+    の
+    `orders.db`
+    で
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    の
+    `filled / submit_attempt / applied_units / participation_alloc.probability_offset`
+    を確認する。
+  - その窓で
+    strategy-level trim が入っても
+    `STOP_LOSS_ORDER`
+    比率が落ちなければ、
+    shared trim 追加ではなく
+    family escalation の再設計へ進む。

@@ -44,6 +44,76 @@
   - anti-loop を「提案時の注意喚起」ではなく、
     runtime commit 自体を止める hard-stop へ昇格させる。
 
+### 2026-03-16 21:50 JST - `shared_participation` は quarantined loser setup pressure を strategy-level mild trim へ昇格する
+
+- 対象:
+  - `scripts/participation_allocator.py`
+  - `tests/scripts/test_participation_allocator.py`
+  - `config/participation_alloc.json`
+  - `docs/CURRENT_MECHANISMS.md`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - current artifact では
+    `DroughtRevert`
+    /
+    `PrecisionLowVol`
+    の loser setup に
+    `quarantine`
+    override が出ていても、
+    strategy-level は
+    `hold`
+    のまま残り、
+    same strategy の fresh fingerprint を full participation で通す余地があった。
+  - `2026-03-16 21:45 JST`
+    時点の市況は normal だが
+    `fills_30m=1`
+    の low-activity で、
+    active loser をそのまま流すコストの方が大きかった。
+- 変更:
+  - `scripts/participation_allocator.py`
+    に
+    `_apply_setup_pressure_strategy_trim()`
+    を追加し、
+    merged
+    `setup_overrides`
+    の loser share /
+    quarantine share /
+    negative probability offset /
+    boost share
+    を集約して、
+    top-level
+    `hold`
+    を mild
+    `trim_units`
+    へ昇格できるようにした。
+  - 条件は
+    `attempts>=min_attempts`,
+    `fills>=2`,
+    strategy `realized_jpy<=0`,
+    loser setup pressure が material、
+    かつ winner boost share が競り勝っていない場合に限定した。
+  - 回帰として
+    `tests/scripts/test_participation_allocator.py`
+    に
+    「quarantined loser setup pressure で hold が trim に倒れる」
+    と
+    「winner boost share が十分なら skip する」
+    ケースを追加した。
+  - regenerated
+    `config/participation_alloc.json`
+    では
+    `DroughtRevert`
+    が
+    `lot_multiplier=0.8763 / probability_offset=-0.0262`,
+    `PrecisionLowVol`
+    が
+    `lot_multiplier=0.8600 / probability_offset=-0.0295`
+    の top-level trim に変わった。
+- 意図:
+  - strategy-local tweak が gate で詰まっている間も、
+    shared participation 側で known loser pressure を broader cadence に反映し、
+    new bad fingerprint の full participation を減らす。
+
 ### 2026-03-16 19:03 JST - `improvement_preflight` は same-strategy の open lane と `Mechanism Fired=0` を新規案の veto に使う
 
 - 対象:

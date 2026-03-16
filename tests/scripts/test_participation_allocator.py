@@ -1491,3 +1491,171 @@ def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context
     assert "trend_long" in key
     assert "tight_fast" in key
     assert realized[key] == -88.0
+
+
+def test_build_participation_alloc_promotes_hold_to_trim_from_quarantined_setup_pressure() -> (
+    None
+):
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "DroughtRevert": {
+                "pocket": "scalp",
+                "attempts": 13,
+                "fills": 13,
+                "filled_rate": 1.0,
+                "attempt_share": 0.22,
+                "fill_share": 0.28,
+                "share_gap": -0.06,
+                "terminal_status_counts": {"filled": 13},
+                "setups": [],
+            }
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={"DroughtRevert": -5.59},
+        realized_by_setup={},
+        lane_scoreboard={
+            "strategies": {
+                "DroughtRevert": {
+                    "lanes": [
+                        {
+                            "match_dimension": "setup_fingerprint",
+                            "setup_fingerprint": "DroughtRevert|short|range_compression|normal_thin|rsi:overbought|atr:low|gap:up_lean|volatility_compression|macro:trend_short",
+                            "flow_regime": "range_compression",
+                            "microstructure_bucket": "normal_thin",
+                            "attempts": 2,
+                            "fills": 2,
+                            "filled": 2,
+                            "filled_rate": 1.0,
+                            "fill_rate": 1.0,
+                            "attempt_share": 0.153846,
+                            "fill_share": 0.153846,
+                            "share_gap": 0.0,
+                            "realized_jpy": -4.904,
+                            "quality_score": 0.5888,
+                            "action": "trim_units",
+                            "gate_action": "quarantine",
+                            "lot_multiplier": 0.8651,
+                            "probability_offset": -0.0525,
+                            "cadence_floor": 0.914,
+                            "closed_trades": 2,
+                            "wins": 0,
+                            "losses": 2,
+                            "win_rate": 0.0,
+                            "profit_factor": 0.0,
+                            "stop_loss_rate": 1.0,
+                            "primary_close_reason": "STOP_LOSS_ORDER",
+                            "quarantine_gate": {
+                                "active": True,
+                                "severity": 0.5744,
+                                "reasons": ["high_stop_loss_rate"],
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        min_attempts=10,
+        setup_min_attempts=2,
+        max_units_cut=0.35,
+        max_units_boost=0.30,
+        max_prob_boost=0.15,
+    )
+
+    strategy = payload["strategies"]["DroughtRevert"]
+
+    assert strategy["action"] == "trim_units"
+    assert strategy["lot_multiplier"] < 1.0
+    assert strategy["probability_offset"] < 0.0
+    assert strategy["setup_pressure_trim_share"] > 0.15
+    assert strategy["setup_pressure_quarantine_share"] > 0.15
+
+
+def test_build_participation_alloc_skips_strategy_trim_when_boost_share_offsets_loser_setup_pressure() -> (
+    None
+):
+    summary = {
+        "lookback_hours": 6.0,
+        "strategies": {
+            "MixedLane": {
+                "pocket": "scalp",
+                "attempts": 12,
+                "fills": 12,
+                "filled_rate": 1.0,
+                "attempt_share": 0.24,
+                "fill_share": 0.24,
+                "share_gap": 0.0,
+                "terminal_status_counts": {"filled": 12},
+                "setups": [],
+            }
+        },
+    }
+
+    payload = participation_allocator.build_participation_alloc(
+        summary,
+        realized_by_strategy={"MixedLane": -1.0},
+        realized_by_setup={},
+        lane_scoreboard={
+            "strategies": {
+                "MixedLane": {
+                    "lanes": [
+                        {
+                            "match_dimension": "setup_fingerprint",
+                            "setup_fingerprint": "MixedLane|long|range_fade|normal_normal|loser",
+                            "flow_regime": "range_fade",
+                            "microstructure_bucket": "normal_normal",
+                            "attempts": 2,
+                            "fills": 2,
+                            "filled": 2,
+                            "filled_rate": 1.0,
+                            "fill_rate": 1.0,
+                            "attempt_share": 0.12,
+                            "fill_share": 0.12,
+                            "share_gap": 0.0,
+                            "realized_jpy": -4.2,
+                            "quality_score": 0.61,
+                            "action": "trim_units",
+                            "gate_action": "quarantine",
+                            "lot_multiplier": 0.88,
+                            "probability_offset": -0.03,
+                            "quarantine_gate": {"active": True, "severity": 0.35, "reasons": ["loss"]},
+                        },
+                        {
+                            "match_dimension": "setup_fingerprint",
+                            "setup_fingerprint": "MixedLane|short|transition|normal_normal|winner",
+                            "flow_regime": "transition",
+                            "microstructure_bucket": "normal_normal",
+                            "attempts": 3,
+                            "fills": 3,
+                            "filled": 3,
+                            "filled_rate": 1.0,
+                            "fill_rate": 1.0,
+                            "attempt_share": 0.20,
+                            "fill_share": 0.20,
+                            "share_gap": 0.0,
+                            "realized_jpy": 6.0,
+                            "quality_score": 1.02,
+                            "action": "boost_participation",
+                            "gate_action": "promote",
+                            "lot_multiplier": 1.12,
+                            "probability_boost": 0.04,
+                        },
+                    ]
+                }
+            }
+        },
+        min_attempts=10,
+        setup_min_attempts=2,
+        max_units_cut=0.35,
+        max_units_boost=0.30,
+        max_prob_boost=0.15,
+    )
+
+    strategy = payload["strategies"]["MixedLane"]
+
+    assert strategy["action"] == "hold"
+    assert strategy["lot_multiplier"] == 1.0
+    assert strategy["probability_offset"] == 0.0
