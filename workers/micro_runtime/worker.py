@@ -1675,6 +1675,18 @@ def _strategy_cooldown_active(
     return (now_ts - last_ts) < cooldown
 
 
+def _record_strategy_dispatch(
+    strategy_name: str,
+    dispatch_result: object,
+    *,
+    now_ts: Optional[float] = None,
+) -> bool:
+    if not dispatch_result:
+        return False
+    _STRATEGY_LAST_TS[strategy_name] = time.time() if now_ts is None else float(now_ts)
+    return True
+
+
 def _clamp_dynamic_alloc_multiplier(
     dyn_mult: float,
     *,
@@ -2817,9 +2829,9 @@ async def micro_multi_worker() -> None:
                 confidence=signal_conf,
                 entry_thesis=entry_thesis,
             )
-            _STRATEGY_LAST_TS[strategy_name] = time.time()
+            cooldown_updated = _record_strategy_dispatch(strategy_name, res)
             LOG.info(
-                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f hist=%.3f(%s,n=%s) dyn=%.2f s_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
+                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f hist=%.3f(%s,n=%s) dyn=%.2f s_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s cooldown_updated=%s",
                 config.LOG_PREFIX,
                 strategy_name,
                 units,
@@ -2839,6 +2851,7 @@ async def micro_multi_worker() -> None:
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
                 res or "none",
+                int(cooldown_updated),
             )
 
 

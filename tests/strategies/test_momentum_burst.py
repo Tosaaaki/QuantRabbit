@@ -755,6 +755,17 @@ def test_momentumburst_reaccel_shortens_only_reaccel_cooldown(monkeypatch) -> No
     )
 
 
+def test_record_strategy_dispatch_updates_last_ts_only_on_success(monkeypatch) -> None:
+    micro_runtime_worker._STRATEGY_LAST_TS.clear()
+    monkeypatch.setattr(micro_runtime_worker.time, "time", lambda: 321.0)
+
+    assert not micro_runtime_worker._record_strategy_dispatch("MomentumBurst", None)
+    assert "MomentumBurst" not in micro_runtime_worker._STRATEGY_LAST_TS
+
+    assert micro_runtime_worker._record_strategy_dispatch("MomentumBurst", "ticket-1")
+    assert micro_runtime_worker._STRATEGY_LAST_TS["MomentumBurst"] == 321.0
+
+
 def test_short_reacceleration_requires_real_breakdown() -> None:
     signal = MomentumBurstMicro.check(
         {

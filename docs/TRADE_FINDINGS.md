@@ -25604,6 +25604,225 @@ Status:
     `trade_min`
     専用 worker が stop しないことを確認する。
 
+## 2026-03-16 09:28 JST / local-v2: micro runtime の cooldown は `dispatch success` 時だけ進め、`res=None` で cadence を落とさない
+
+- Hypothesis Key:
+  - `micro_runtime_dispatch_success_cooldown_20260316`
+- Primary Loss Driver:
+  - `participation_loss`
+- Mechanism Fired:
+  - `dispatch_none_cooldown_burn`
+  - `workers/micro_runtime/worker.py`
+    は
+    `market_order()`
+    直後に
+    `_STRATEGY_LAST_TS`
+    を無条件更新していた。
+    さらに
+    `logs/local_v2_stack/quant-micro-momentumburst.log`
+    には
+    `2026-03-06 07:18 JST`
+    と
+    `18:06 JST`
+    の
+    `res=none`
+    が残っており、
+    no-fill path が実際に存在した。
+- Do Not Repeat Unless:
+  - post-deploy の live log で
+    `res=none cooldown_updated=0`
+    を確認した後も、
+    micro runtime worker が still no-fill path で cadence を失っているときだけ、
+    cooldown key 分離や reject-family 別の cadence 制御へ進む。
+
+- Change:
+  - `workers/micro_runtime/worker.py`
+    に
+    `_record_strategy_dispatch()`
+    を追加し、
+    truthy dispatch result のときだけ
+    `_STRATEGY_LAST_TS`
+    を更新するようにした。
+  - 既存の
+    `sent units ... res=...`
+    log に
+    `cooldown_updated=0/1`
+    を足し、
+    dispatch の成否と cooldown 消費を同時に監査できるようにした。
+  - `tests/strategies/test_momentum_burst.py`
+    に
+    dispatch success 時だけ
+    cooldown timestamp が進む回帰を追加した。
+
+- Why:
+  - `MomentumBurst`
+    の new loser-lane tightening は
+    `scripts/improvement_preflight.sh`
+    で
+    `review_existing_pending`
+    になり、
+    current single-focus lane には積めなかった。
+  - 一方で
+    shared
+    `micro_runtime`
+    には、
+    loser-lane 改修とは独立に
+    participation を削る execution bug が残っていた。
+  - これは同日
+    `range_fade`
+    の別 lane を増やす話ではなく、
+    current live cadence を壊す runtime bug の是正なので、
+    `improvement_preflight`
+    でも
+    `allow_new_lane`
+    を返した。
+
+- Hypothesis:
+  - `market_order() -> None`
+    の pre-order reject / no-fill で strategy cooldown を進めないようにすれば、
+    dedicated micro worker は次の valid setup を待ち時間無しで再評価でき、
+    false cooldown による participation loss を減らせる。
+
+- Why Not Same As Last Time:
+  - `momentumburst_no_signal_diagnostics_20260316`
+    は
+    `MomentumBurst`
+    の signal absence を読むための diagnostics 追加だった。
+  - 今回は
+    `MomentumBurst`
+    family の新しい loser-lane tightening ではなく、
+    shared
+    `micro_runtime`
+    の execution / cooldown bug を直している。
+
+- Expected Good:
+  - `res=None`
+    の no-fill path で
+    `MomentumBurst`
+    を含む dedicated micro worker が cooldown を無駄に消費しない。
+  - live log で
+    `cooldown_updated=0`
+    を確認でき、
+    next RCA で
+    no-signal と post-signal no-fill を分離しやすくなる。
+
+- Expected Bad:
+  - persistent reject path では、
+    同一 setup の再送頻度が一時的に上がる可能性がある。
+  - そのため今回は cooldown key の細分化までは行わず、
+    まず
+    `dispatch success`
+    のときだけ timestamp を進める最小修正に留める。
+
+- Promotion Gate:
+  - `quant-micro-momentumburst.log`
+    など micro runtime worker の live log で
+    `res=none cooldown_updated=0`
+    と
+    `res=<ticket> cooldown_updated=1`
+    の両方を確認できること。
+  - post-deploy で
+    micro worker が crash せず、
+    `tests/strategies/test_momentum_burst.py`
+    の回帰が通ること。
+
+- Escalation Trigger:
+  - post-deploy でも
+    `res=none cooldown_updated=0`
+    が同じ strategy / setup で連発し、
+    `fills_30m`
+    が伸びない場合は、
+    cooldown bug ではなく
+    `strategy_entry / order_manager`
+    の reject family を single-focus RCA に切り替える。
+
+- Period:
+  - 調査:
+    `2026-03-16 09:19-09:28 JST`
+  - 実装/検証:
+    `2026-03-16 09:28 JST` 以降
+
+- Fact:
+  - `scripts/change_preflight.sh "momentumburst_participation_triage_20260316" 3`
+    は
+    `2026-03-16 09:23 JST`
+    時点で
+    `market_open=yes`,
+    `spread=0.8p`,
+    `fills_15m=3`,
+    `fills_30m=9`,
+    `preflight_status=ok`
+    だった。
+  - `scripts/improvement_preflight.sh "micro runtime cooldown after dispatch-none 2026-03-16" ...`
+    は
+    `allow_new_lane`
+    を返し、
+    unresolved overlap 無しと判定した。
+  - `logs/local_v2_stack/quant-micro-momentumburst.log`
+    には
+    `2026-03-06 07:18 JST`
+    と
+    `18:06 JST`
+    の
+    `res=none`
+    が複数あり、
+    no-fill dispatch が historical に存在した。
+  - dedicated
+    `quant-micro-momentumburst`
+    の env は
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90`
+    なので、
+    false cooldown 1 回あたりの逸失が重い。
+
+- Failure Cause:
+  - shared
+    `micro_runtime`
+    は
+    `market_order()`
+    の成否を区別せず、
+    call しただけで strategy cooldown を進めていた。
+  - そのため
+    no-fill / reject で実際の建玉が無いのに、
+    dedicated micro worker は next setup を local cooldown で見送る構造だった。
+
+- Improvement:
+  - `micro_runtime`
+    の cooldown 更新を
+    successful dispatch
+    に限定し、
+    no-fill では cadence を落とさないようにした。
+
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests/strategies/test_momentum_burst.py`
+  - `python3 -m py_compile workers/micro_runtime/worker.py tests/strategies/test_momentum_burst.py`
+  - `scripts/local_v2_stack.sh restart --profile trade_min --env ops/env/local-v2-stack.env --services quant-micro-momentumburst,quant-micro-levelreactor,quant-micro-trendretest,quant-micro-rangebreak`
+  - `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env --services quant-micro-momentumburst,quant-micro-levelreactor,quant-micro-trendretest,quant-micro-rangebreak`
+  - post-deploy live log で
+    `cooldown_updated`
+    を確認する。
+
+- Verdict:
+  - pending
+
+- Status:
+  - `pending_live_dispatch_validation`
+
+- Next Action:
+  - post-deploy の
+    `quant-micro-momentumburst.log`
+    /
+    `quant-micro-levelreactor.log`
+    で
+    `res=none cooldown_updated=0`
+    を first check とし、
+    false cooldown が消えたことを確認する。
+  - その後も
+    `MomentumBurst`
+    が無発火なら、
+    single-focus lane は引き続き
+    `momentumburst_no_signal_diagnostics_20260316`
+    の live reason で判断する。
+
 ## 2026-03-16 09:17 JST / local-v2: `MomentumBurst` single-focus lane の no-signal diagnostics を strategy-local に露出
 
 - Hypothesis Key:

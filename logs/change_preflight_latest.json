@@ -1,18 +1,18 @@
 {
-  "generated_at": "2026-03-16T00:18:51Z",
-  "git_rev": "2cbf1024",
-  "query": "momentumburst_no_signal_diagnostics_20260316",
+  "generated_at": "2026-03-16T00:34:29Z",
+  "git_rev": "cf91a2e1",
+  "query": "micro_runtime_dispatch_success_cooldown_20260316",
   "limit": 3,
-  "next_step": "scripts/improvement_preflight.sh \"momentumburst_no_signal_diagnostics_20260316\" \"<strategy::surface::primary_loss_driver::idea||...>\" 3",
+  "next_step": "scripts/improvement_preflight.sh \"micro_runtime_dispatch_success_cooldown_20260316\" \"<strategy::surface::primary_loss_driver::idea||...>\" 3",
   "preflight_status": "ok",
   "warnings": [],
-  "health_generated_at": "2026-03-16T00:18:46.532957+00:00",
+  "health_generated_at": "2026-03-16T00:34:24.857294+00:00",
   "lint": {
     "source": "docs/TRADE_FINDINGS.md",
     "strict_since": "2026-03-13 20:00",
     "anti_loop_strict_since": "2026-03-14 10:00",
-    "checked_entries": 443,
-    "strict_entries": 18,
+    "checked_entries": 444,
+    "strict_entries": 19,
     "issues": [],
     "ok": true
   },
@@ -27,51 +27,59 @@
   "market": {
     "market_open": true,
     "seconds_until_open": 0.0,
-    "bid": 159.442,
-    "ask": 159.45,
-    "mid": 159.446,
+    "bid": 159.318,
+    "ask": 159.326,
+    "mid": 159.322,
     "spread_pips": 0.8,
-    "tick_age_sec": 0.661,
-    "m1_atr14_pips": 2.81,
-    "range_6m_pips": 6.4,
-    "range_30m_pips": 15.6,
-    "data_lag_ms": 442.6229000091553,
-    "decision_latency_ms": 18.842666999262292,
-    "fills_15m": 1,
-    "fills_30m": 6,
+    "tick_age_sec": 0.458,
+    "m1_atr14_pips": 2.623,
+    "range_6m_pips": 4.1,
+    "range_30m_pips": 20.4,
+    "data_lag_ms": 820.7402229309082,
+    "decision_latency_ms": 30.915499999537133,
+    "fills_15m": 3,
+    "fills_30m": 3,
     "rejects_30m": 0,
     "orders_status_1h": [
       {
-        "status": "submit_attempt",
-        "count": 10
-      },
-      {
         "status": "probability_scaled",
-        "count": 10
+        "count": 12
       },
       {
         "status": "preflight_start",
-        "count": 10
+        "count": 12
+      },
+      {
+        "status": "submit_attempt",
+        "count": 11
       },
       {
         "status": "filled",
-        "count": 10
+        "count": 11
+      },
+      {
+        "status": "profit_guard_bypass",
+        "count": 2
+      },
+      {
+        "status": "profit_guard",
+        "count": 1
       }
     ],
     "account": {
-      "nav": 34896.3298,
-      "balance": 34926.2518,
-      "margin_available": 28159.5069,
-      "margin_used": 6741.3769,
+      "nav": 34842.1898,
+      "balance": 34842.1898,
+      "margin_available": 34842.1898,
+      "margin_used": 0.0,
       "margin_rate": 0.04,
-      "unrealized_pl": -29.922,
-      "free_margin_ratio": 0.8068170223448542,
-      "health_buffer": 0.80684
+      "unrealized_pl": 0.0,
+      "free_margin_ratio": 1.0,
+      "health_buffer": 1.0
     }
   },
   "review": {
     "source": "docs/TRADE_FINDINGS.md",
-    "query": "momentumburst_no_signal_diagnostics_20260316",
+    "query": "micro_runtime_dispatch_success_cooldown_20260316",
     "checklist": [
       "Confirm the same hypothesis key or same decision surface was not already tried with the same primary loss driver.",
       "Confirm whether the previous mechanism actually fired; fired=0 means it was not the dominant cause.",
@@ -83,52 +91,48 @@
     ],
     "entries": [
       {
-        "heading": "2026-03-16 09:17 JST / local-v2: `MomentumBurst` single-focus lane の no-signal diagnostics を strategy-local に露出",
+        "heading": "2026-03-16 09:28 JST / local-v2: micro runtime の cooldown は `dispatch success` 時だけ進め、`res=None` で cadence を落とさない",
         "verdict": "- pending",
-        "status": "- `pending_live_reopen_diag`",
-        "hypothesis_key": "- `momentumburst_no_signal_diagnostics_20260316`",
-        "primary_loss_driver": "- single-focus pending lane の `MomentumBurst` で、 「なぜ今 signal が出ていないか」が live log に無く、 `review_existing_pending` のまま blind retighten へ流れること",
-        "mechanism_fired": "- `momentumburst_no_signal_diagnostic` - `2026-03-16 09:11 JST` 時点の `quant-micro-momentumburst.log` は `allowlist applied: MomentumBurst` の反復だけで、 no-signal reason を残していなかった。",
-        "do_not_repeat_unless": "- `momentumburst_no_signal` が live log に出るようになった後も、 `MomentumBurst` の current lane を判定するのに必要な `pullback / mtf / trend / rsi / quality / context` のどれで止まっているかが still 分からないときだけ、 diagnostics field を追加する。",
-        "why_not_same_as_last_time": "- `momentumburst_transition_pullback_guard_20260314` は `MomentumBurst` の trade logic 自体を tighten した entry だった。 - 今回は 新しい tighten ではなく、 その pending lane を reopen 窓で判定するための diagnostics / log hygiene を追加している。",
-        "promotion_gate": "- `quant-micro-momentumburst.log` に `momentumburst_no_signal` が出て、 `reason` と `long/short` の block summary を live で読めること。 - 次の `MomentumBurst` signal が出た場合でも、 既存 entry tag / entry_thesis contract を壊していないこと。",
-        "escalation_trigger": "- `momentumburst_no_signal` の同一 reason が reopen 後 30-120 分続き、 かつ `MomentumBurst` fills が still `0` のままなら、 adjacent `STOP_LOSS_ORDER` family ではなく `MomentumBurst` family 自身の `improvement_preflight` へ進む。",
-        "why": "- `scripts/improvement_preflight.sh` 実測では `DroughtRevert` と `scalp_extrema_reversal_live` の新規 tweak は どちらも `review_existing_pending` で block された。 - 同じ gate は reopen first-focus として `MomentumBurst` を指しているが、 直近 24h の `o...",
-        "hypothesis": "- `MomentumBurst` の no-signal reason を strategy-local に露出すれば、 current pending lane が `pullback_guard` で詰まっているのか、 そもそも `base setup` が無いのかを live で切り分けられ、 adjacent loser family を blind に触らずに次の一手を決められる。",
-        "observed": "- `scripts/improvement_preflight.sh \"live reopen loser-lane triage 2026-03-16\" ...` は `DroughtRevert` と `scalp_extrema_reversal_live` の両候補を `review_existing_pending` と判定した。 - `logs/strategy_feedback.json` の `MomentumB...",
-        "next_action": "- `quant-micro-momentumburst` を反映後、 `logs/local_v2_stack/quant-micro-momentumburst.log` で `momentumburst_no_signal` を確認する。 - その reason が `long_transition_pullback_guard` に偏るなら `MomentumBurst` family の escalation を、 `l..."
+        "status": "- `pending_live_dispatch_validation`",
+        "hypothesis_key": "- `micro_runtime_dispatch_success_cooldown_20260316`",
+        "primary_loss_driver": "- `participation_loss`",
+        "mechanism_fired": "- `dispatch_none_cooldown_burn` - `workers/micro_runtime/worker.py` は `market_order()` 直後に `_STRATEGY_LAST_TS` を無条件更新していた。 さらに `logs/local_v2_stack/quant-micro-momentumburst.log` には `2026-03-06 07:18 JST` と `18:06 JST...",
+        "do_not_repeat_unless": "- post-deploy の live log で `res=none cooldown_updated=0` を確認した後も、 micro runtime worker が still no-fill path で cadence を失っているときだけ、 cooldown key 分離や reject-family 別の cadence 制御へ進む。",
+        "why_not_same_as_last_time": "- `momentumburst_no_signal_diagnostics_20260316` は `MomentumBurst` の signal absence を読むための diagnostics 追加だった。 - 今回は `MomentumBurst` family の新しい loser-lane tightening ではなく、 shared `micro_runtime` の execution / cooldown...",
+        "promotion_gate": "- `quant-micro-momentumburst.log` など micro runtime worker の live log で `res=none cooldown_updated=0` と `res=<ticket> cooldown_updated=1` の両方を確認できること。 - post-deploy で micro worker が crash せず、 `tests/strategies/test_mom...",
+        "escalation_trigger": "- post-deploy でも `res=none cooldown_updated=0` が同じ strategy / setup で連発し、 `fills_30m` が伸びない場合は、 cooldown bug ではなく `strategy_entry / order_manager` の reject family を single-focus RCA に切り替える。",
+        "why": "- `MomentumBurst` の new loser-lane tightening は `scripts/improvement_preflight.sh` で `review_existing_pending` になり、 current single-focus lane には積めなかった。 - 一方で shared `micro_runtime` には、 loser-lane 改修とは独立に participation...",
+        "hypothesis": "- `market_order() -> None` の pre-order reject / no-fill で strategy cooldown を進めないようにすれば、 dedicated micro worker は次の valid setup を待ち時間無しで再評価でき、 false cooldown による participation loss を減らせる。",
+        "observed": "- `scripts/change_preflight.sh \"momentumburst_participation_triage_20260316\" 3` は `2026-03-16 09:23 JST` 時点で `market_open=yes`, `spread=0.8p`, `fills_15m=3`, `fills_30m=9`, `preflight_status=ok` だった。 - `scripts/improv...",
+        "next_action": "- post-deploy の `quant-micro-momentumburst.log` / `quant-micro-levelreactor.log` で `res=none cooldown_updated=0` を first check とし、 false cooldown が消えたことを確認する。 - その後も `MomentumBurst` が無発火なら、 single-focus lane は引き続き `mo..."
       }
     ]
   },
   "lane_repeat_risk": {
     "matches": [
       {
-        "hypothesis_key": "momentumburst_no_signal_diagnostics_20260316",
-        "repeat_risk": "severe",
-        "history_commit_count": 78,
-        "family_key": "MomentumBurst :: single-focus pending lane の MomentumBurst で、 「なぜ今 signal が出ていないか」が live log に...",
+        "hypothesis_key": "micro_runtime_dispatch_success_cooldown_20260316",
+        "repeat_risk": "low",
+        "history_commit_count": 0,
+        "family_key": "res=None :: participation_loss",
         "family_entries": 1,
-        "repeat_risk_reasons": [
-          "history_commits=78"
-        ],
-        "latest_heading": "2026-03-16 09:17 JST / local-v2: `MomentumBurst` single-focus lane の no-signal diagnostics を strategy-local に露出"
+        "repeat_risk_reasons": [],
+        "latest_heading": "2026-03-16 09:28 JST / local-v2: micro runtime の cooldown は `dispatch success` 時だけ進め、`res=None` で cadence を落とさない"
       }
     ],
     "recommended_single_focus_lane": {
-      "hypothesis_key": "momentumburst_no_signal_diagnostics_20260316",
+      "hypothesis_key": "micro_runtime_dispatch_success_cooldown_20260316",
       "strategies": [
-        "MomentumBurst"
+        "res=None"
       ],
-      "family_key": "MomentumBurst :: single-focus pending lane の MomentumBurst で、 「なぜ今 signal が出ていないか」が live log に...",
-      "primary_loss_driver": "single-focus pending lane の MomentumBurst で、 「なぜ今 signal が出ていないか」が live log に...",
-      "latest_heading": "2026-03-16 09:17 JST / local-v2: `MomentumBurst` single-focus lane の no-signal diagnostics を strategy-local に露出",
-      "history_commit_count": 78,
-      "repeat_risk": "severe",
-      "repeat_risk_reasons": [
-        "history_commits=78"
-      ],
+      "family_key": "res=None :: participation_loss",
+      "primary_loss_driver": "participation_loss",
+      "latest_heading": "2026-03-16 09:28 JST / local-v2: micro runtime の cooldown は `dispatch success` 時だけ進め、`res=None` で cadence を落とさない",
+      "history_commit_count": 0,
+      "repeat_risk": "low",
+      "repeat_risk_reasons": [],
       "selection_reason": "latest unresolved trading lane first; keep reopen validation to one lane before touching adjacent families",
-      "next_action": "- `quant-micro-momentumburst` を反映後、 `logs/local_v2_stack/quant-micro-momentumburst.log` で `momentumburst_no_signal` を確認する。 - その reason が `long_transition_pul..."
+      "next_action": "- post-deploy の `quant-micro-momentumburst.log` / `quant-micro-levelreactor.log` で `res=none cooldown_updated=0` を first check とし、 false cooldown が消えたことを確認する..."
     }
   }
 }

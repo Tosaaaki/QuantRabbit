@@ -5,6 +5,48 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-16 09:28 JST - micro runtime の strategy cooldown は successful dispatch のときだけ更新
+
+- 対象:
+  - `workers/micro_runtime/worker.py`
+  - `tests/strategies/test_momentum_burst.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - shared
+    `micro_runtime`
+    は
+    `market_order()`
+    の戻り値に関係なく
+    `_STRATEGY_LAST_TS`
+    を更新しており、
+    `res=None`
+    の pre-order reject / no-fill でも strategy cooldown を消費していた。
+  - dedicated
+    `quant-micro-momentumburst`
+    は
+    `MICRO_MULTI_STRATEGY_COOLDOWN_SEC=90`
+    なので、
+    empty dispatch で 90 秒 entry cadence を落とす余地があった。
+- 変更:
+  - `workers/micro_runtime/worker.py`
+    に
+    `_record_strategy_dispatch()`
+    を追加し、
+    truthy dispatch result のときだけ
+    `_STRATEGY_LAST_TS`
+    を更新するようにした。
+  - live log に
+    `cooldown_updated=0/1`
+    を追加し、
+    `res=none`
+    と cooldown 消費有無を同時に監査できるようにした。
+- 意図:
+  - strategy-local signal は出ているのに
+    `strategy_entry / order_manager`
+    側で no-fill だったケースで、
+    micro worker 自身が次の valid setup を冷却してしまう再発を止める。
+
 ### 2026-03-14 19:45 JST - repo history lane の repeat-risk を preflight / index に統合し、週明けは single-lane focus に固定
 
 - 対象:
