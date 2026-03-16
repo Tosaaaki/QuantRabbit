@@ -76,6 +76,302 @@
 - `tighten -> reopen -> tighten` を同日反復しない。新しい実測か、新しい fingerprint 分離が無い限り threshold の往復を禁止する。
 - stale / close / abnormal market window は `market_hold` として扱い、改善 verdict を出さない。reopen 後の評価窓を別に切る。
 
+## 2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する
+
+- Hypothesis Key:
+  - `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`
+- Primary Loss Driver:
+  - `negative_forecast_long_scaled_not_rejected`
+- Mechanism Fired:
+  - `entry_leading_profile_surface_reject`
+  - `2026-03-16 12:11 JST`
+    の
+    `orders.db`
+    `id=66326`
+    では、
+    `setup_fingerprint=MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|...|gap:down_flat|c:spin_dn|w:lower|tr:flat|...|macro:trend_long`
+    かつ
+    `forecast.allowed=false`,
+    `forecast.reason=expected_pips_contra`,
+    `forecast.expected_pips=-0.3198`,
+    `forecast.p_up=0.39807`
+    なのに、
+    `entry_probability_leading_profile`
+    は
+    `reason=entry_leading_profile_scaled`,
+    `units_after=353`,
+    `entry_probability_after=0.521538`
+    で reject されていなかった。
+- Do Not Repeat Unless:
+  - post-deploy の同一
+    `setup_fingerprint`
+    で still
+    `filled`
+    が残る、
+    または
+    `entry_probability_leading_profile.surface_override`
+    が欠けて
+    `Mechanism Fired=0`
+    のまま再発すると確認できるまでは、
+    同 lane への追加 tightening を積まず、
+    まず live reject 発火と fill 消失を確認する。
+
+- Change:
+  - `execution/strategy_entry.py`
+    に
+    `_strategy_surface_leading_override()`
+    を追加し、
+    `MicroLevelReactor-bounce-lower`
+    long
+    `range_fade|normal_normal|gap:down_flat`
+    かつ
+    `pattern_tag=c:spin_dn|w:lower|tr:flat`
+    で、
+    `forecast.reason=expected_pips_contra`,
+    `expected_pips<=-0.25`,
+    `p_up<=0.40`,
+    `tech_score<=0.25`,
+    `history_perf.score<=0.25`,
+    `range_score>=0.40`
+    の exact surface を
+    `entry_leading_profile_surface_reject`
+    として強制 reject するようにした。
+  - 同 override は
+    `entry_probability_leading_profile.surface_override`
+    へ
+    `surface / forecast / tech / history / range`
+    を記録する。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    に、
+    same loser surface が
+    `units=0`
+    /
+    `reason=entry_leading_profile_surface_reject`
+    になる回帰を追加した。
+
+- Why:
+  - `2026-03-16 10:18 JST`
+    の pending は
+    `style_mismatch_range`
+    loser lane で、
+    主因は
+    env prefix miss
+    による
+    `leading_profile skip`
+    だった。
+  - ただし
+    `2026-03-16 12:11 JST`
+    の current loser surface は
+    base family env
+    まで到達しており、
+    `leading_profile`
+    自体は発火していた。
+    それでも
+    negative forecast long が
+    scale 止まりで通過していたため、
+    old pending の再実装ではなく、
+    new surface として切り分けて止める必要があった。
+
+- Hypothesis:
+  - `MicroLevelReactor-bounce-lower`
+    のうち、
+    `normal_normal + gap:down_flat + spin_dn/lower/flat`
+    で
+    `expected_pips_contra`
+    を引いている long だけを
+    `leading_profile`
+    で reject すれば、
+    current loser lane を落としつつ、
+    breakout / positive forecast 系の
+    MLR long participation
+    は維持できる。
+
+- Why Not Same As Last Time:
+  - 前回
+    `microlevelreactor_bounce_lower_prefix_bug_20260316`
+    は
+    `tight_normal`,
+    `forecast.reason=style_mismatch_range`,
+    `c:doji_up|w:balanced|tr:dn_mild`
+    の lane で、
+    `leading_profile`
+    自体が
+    `skip`
+    される bug だった。
+  - 今回は
+    `normal_normal`,
+    `forecast.reason=expected_pips_contra`,
+    `c:spin_dn|w:lower|tr:flat`
+    の別 fingerprint で、
+    `leading_profile`
+    は fired 済みだが
+    `scaled`
+    止まりだった。
+    decision surface と failure mode の両方が前回と異なる。
+
+- Expected Good:
+  - same surface の
+    `entry_probability_leading_profile`
+    が
+    `reason=entry_leading_profile_surface_reject`
+    /
+    `units_after=0`
+    を残す。
+  - `MicroLevelReactor-bounce-lower`
+    long
+    `normal_normal|gap:down_flat`
+    loser fills が減り、
+    `STOP_LOSS_ORDER`
+    cluster が薄くなる。
+  - `MicroLevelReactor`
+    の
+    breakout
+    や
+    positive forecast long
+    は引き続き pass-through する。
+
+- Expected Bad:
+  - `pattern_tag`
+    や
+    `setup_fingerprint`
+    の shape が変わると、
+    override が miss して
+    `Mechanism Fired=0`
+    になり得る。
+  - regime shift 後も same fingerprint が再利用されると、
+    recoverable lane を early reject するリスクがある。
+
+- Promotion Gate:
+  - post-deploy の first matching sample で
+    `entry_probability_leading_profile.reason=entry_leading_profile_surface_reject`
+    と
+    `surface_override.surface=mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn`
+    が
+    `orders.db.request_json`
+    に残ること。
+  - restart 後
+    `20-30m`
+    の current window で、
+    exact same
+    `setup_fingerprint`
+    の
+    `filled`
+    が `0`
+    であること。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    の
+    `MicroLevelReactor`
+    positive forecast passthrough 回帰が引き続き通ること。
+
+- Escalation Trigger:
+  - same fingerprint が still
+    `filled`
+    し、
+    `STOP_LOSS_ORDER`
+    を継続する場合。
+  - もしくは
+    `entry_probability_leading_profile.surface_override`
+    が live で欠け、
+    data shape drift で
+    `Mechanism Fired=0`
+    が続く場合。
+  - その場合は
+    threshold 再調整ではなく、
+    worker-local lane 分離
+    か
+    `MicroLevelReactor`
+    の reclaim / range-fade 設計見直しへ昇格する。
+
+- Period:
+  - loser sample:
+    `2026-03-16 12:11 JST`
+  - preflight / implementation:
+    `2026-03-16 14:01-14:08 JST`
+
+- Fact:
+  - `2026-03-16 14:01 JST`
+    の
+    `scripts/improvement_preflight.sh "trade_status_followup_2026_03_16_round2" "MicroLevelReactor::bounce_lower_long_range_fade_gap_down_flat_expected_pips_contra::negative_forecast_long_scaled_not_rejected::tighten_leading_profile_for_this_surface||..."`
+    では、
+    `MicroLevelReactor::bounce_lower_long_range_fade_gap_down_flat_expected_pips_contra::negative_forecast_long_scaled_not_rejected::tighten_leading_profile_for_this_surface`
+    が
+    `action=allow_new_lane`
+    だった。
+  - `2026-03-16 14:13 JST`
+    に
+    same
+    `Hypothesis Key`
+    で rerun した
+    `scripts/improvement_preflight.sh`
+    は
+    `review_existing_pending`
+    を返し、
+    以後は新規 tweak を増やさず
+    current pending lane の live 再検証へ戻る状態になった。
+  - `orders.db`
+    `id=66326`
+    は
+    `history_perf.score=0.182`,
+    `tech_score=0.24`,
+    `range_score=0.444`
+    で、
+    `entry_probability_leading_profile`
+    は
+    `entry_probability_before=0.555051`
+    ->
+    `0.521538`,
+    `reject_below=0.44`,
+    `units_before=488`
+    ->
+    `353`
+    の scale に留まっていた。
+  - targeted pytest は
+    `4 passed, 20 deselected`
+    を確認した。
+
+- Failure Cause:
+  - current loser surface は
+    base family
+    `MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_*`
+    に到達していたが、
+    weighted leading-profile penalty だけでは
+    `reject_below`
+    を割れず、
+    negative expected-pips long fade を submit していた。
+
+- Improvement:
+  - `leading_profile`
+    内に
+    `MicroLevelReactor-bounce-lower`
+    exact-surface reject を追加し、
+    current loser lane だけを
+    `surface_override`
+    で落とす。
+
+- Verification:
+  - `python3 -m py_compile execution/strategy_entry.py tests/execution/test_strategy_entry_forecast_fusion.py`
+  - `pytest -q tests/execution/test_strategy_entry_forecast_fusion.py -k 'test_entry_leading_profile_rejects_mlr_bounce_lower_negative_forecast or test_entry_leading_profile_uses_base_strategy_prefix_for_hyphenated_setup_tag or test_entry_leading_profile_surface_override_rejects_mlr_gap_down_flat_expected_pips_contra or test_entry_leading_profile_keeps_mlr_breakout_long_positive_forecast'`
+    -> `4 passed, 20 deselected`
+
+- Verdict:
+  - pending
+
+- Next Action:
+  - local-v2 反映後、
+    `orders.db`
+    と
+    `quant-micro-levelreactor.log`
+    で
+    same surface の
+    `surface_override`
+    発火を first check する。
+  - same family の adjacent lane まで落ちていないかは、
+    `MicroLevelReactor`
+    long breakout / positive forecast sample の継続有無で確認する。
+
+- Status:
+  - pending_live_deploy
+
 ## 2026-03-16 10:18 JST / local-v2: `MicroLevelReactor-bounce-lower` は pending guard の threshold ではなく env-prefix 解決漏れで `leading_profile` が skip されていた
 
 - Hypothesis Key:

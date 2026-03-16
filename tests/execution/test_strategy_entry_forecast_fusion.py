@@ -620,6 +620,55 @@ def test_entry_leading_profile_uses_base_strategy_prefix_for_hyphenated_setup_ta
     assert "MICROLEVELREACTOR" in applied.get("env_prefixes", [])
 
 
+def test_entry_leading_profile_surface_override_rejects_mlr_gap_down_flat_expected_pips_contra(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("STRATEGY_ENTRY_LEADING_PROFILE_ENABLED", "0")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
+    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
+    thesis: dict[str, object] = {
+        "env_prefix": "MICRO_MULTI",
+        "tech_score": 0.24,
+        "range_score": 0.444,
+        "pattern_tag": "c:spin_dn|w:lower|tr:flat|rsi:mid_low|vol:tight|atr:ultra_low|d:long",
+        "setup_fingerprint": (
+            "MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|"
+            "rsi:oversold|atr:low|gap:down_flat|c:spin_dn|w:lower|tr:flat|"
+            "rsi:mid_low|vol:tight|atr:ultra_low|d:long|macro:trend_long"
+        ),
+        "history_perf": {"score": 0.182},
+    }
+
+    units, prob, applied = strategy_entry._apply_strategy_leading_profile(
+        strategy_tag="MicroLevelReactor-bounce-lower",
+        pocket="micro",
+        units=488,
+        entry_probability=0.555051,
+        entry_thesis=thesis,
+        forecast_context={
+            "allowed": False,
+            "reason": "expected_pips_contra",
+            "expected_pips": -0.3198,
+            "p_up": 0.39807,
+        },
+        meta={},
+    )
+
+    assert units == 0
+    assert prob is not None and prob < 0.44
+    assert applied.get("reject") is True
+    assert applied.get("reason") == "entry_leading_profile_surface_reject"
+    override = applied.get("surface_override")
+    assert isinstance(override, dict)
+    assert override.get("surface") == "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn"
+
+
 def test_entry_leading_profile_keeps_mlr_breakout_long_positive_forecast(monkeypatch) -> None:
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")

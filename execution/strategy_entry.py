@@ -1108,6 +1108,89 @@ def _leading_components(
     return components
 
 
+def _strategy_surface_leading_override(
+    *,
+    strategy_tag: Optional[str],
+    side_sign: int,
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+) -> Optional[dict[str, object]]:
+    if side_sign <= 0 or not isinstance(entry_thesis, dict):
+        return None
+    if not _strategy_key(strategy_tag).startswith("microlevelreactor"):
+        return None
+
+    setup_fingerprint = str(entry_thesis.get("setup_fingerprint") or "").strip()
+    if not setup_fingerprint:
+        live_setup = entry_thesis.get("live_setup_context")
+        if isinstance(live_setup, dict):
+            setup_fingerprint = str(live_setup.get("setup_fingerprint") or "").strip()
+    if not setup_fingerprint.startswith(
+        "MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|"
+    ):
+        return None
+    if "gap:down_flat" not in setup_fingerprint:
+        return None
+
+    pattern_tag = str(entry_thesis.get("pattern_tag") or "").strip().lower()
+    if not all(token in pattern_tag for token in ("c:spin_dn", "w:lower", "tr:flat")):
+        return None
+
+    forecast_payload = (
+        forecast_context
+        if isinstance(forecast_context, dict)
+        else entry_thesis.get("forecast")
+    )
+    if not isinstance(forecast_payload, dict):
+        return None
+    if _coerce_bool(forecast_payload.get("allowed"), None) is not False:
+        return None
+    if str(forecast_payload.get("reason") or "").strip().lower() != "expected_pips_contra":
+        return None
+
+    expected_pips = _to_float(forecast_payload.get("expected_pips"))
+    if expected_pips is None or expected_pips > -0.25:
+        return None
+    forecast_p_up = _to_float(forecast_payload.get("p_up"))
+    if forecast_p_up is not None and forecast_p_up > 0.40:
+        return None
+
+    tech_score = _to_float(entry_thesis.get("tech_score"))
+    if tech_score is None:
+        technical_context = entry_thesis.get("technical_context")
+        if isinstance(technical_context, dict):
+            tech_result = technical_context.get("result")
+            if isinstance(tech_result, dict):
+                tech_score = _to_float(tech_result.get("score"))
+    if tech_score is None or tech_score > 0.25:
+        return None
+
+    history_score = None
+    history_perf = entry_thesis.get("history_perf")
+    if isinstance(history_perf, dict):
+        history_score = _to_float(history_perf.get("score"))
+    if history_score is None or history_score > 0.25:
+        return None
+
+    range_score = _to_float(entry_thesis.get("range_score"))
+    if range_score is None or range_score < 0.40:
+        return None
+
+    return {
+        "mode": "force_reject",
+        "reason": "entry_leading_profile_surface_reject",
+        "surface": "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn",
+        "forecast_reason": str(forecast_payload.get("reason") or ""),
+        "forecast_expected_pips": round(float(expected_pips), 4),
+        "forecast_p_up": round(float(forecast_p_up), 6) if forecast_p_up is not None else None,
+        "tech_score": round(float(tech_score), 6),
+        "history_score": round(float(history_score), 6),
+        "range_score": round(float(range_score), 6),
+        "setup_fingerprint": setup_fingerprint,
+        "pattern_tag": pattern_tag,
+    }
+
+
 def _apply_strategy_leading_profile(
     *,
     strategy_tag: Optional[str],
@@ -1234,6 +1317,19 @@ def _apply_strategy_leading_profile(
         else:
             adjusted_units = (1 if side_sign > 0 else -1) * scaled_units
 
+    surface_override = _strategy_surface_leading_override(
+        strategy_tag=strategy_tag,
+        side_sign=side_sign,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
+    if isinstance(surface_override, dict):
+        adjusted_units = 0
+        reject = True
+        units_multiplier = 0.0
+        if reject_below > 0.0:
+            adjusted_probability = min(adjusted_probability, max(0.0, reject_below - 1e-6))
+
     applied: dict[str, object] = {
         "strategy_tag": str(strategy_tag or ""),
         "env_prefixes": prefixes,
@@ -1252,8 +1348,15 @@ def _apply_strategy_leading_profile(
         "floor": round(float(floor), 6),
         "ceil": round(float(ceil), 6),
     }
+    if isinstance(surface_override, dict):
+        applied["surface_override"] = dict(surface_override)
     if reject:
-        applied["reason"] = "entry_leading_profile_reject"
+        if isinstance(surface_override, dict):
+            applied["reason"] = str(
+                surface_override.get("reason") or "entry_leading_profile_reject"
+            )
+        else:
+            applied["reason"] = "entry_leading_profile_reject"
     elif adjusted_units != units:
         applied["reason"] = "entry_leading_profile_scaled"
     else:

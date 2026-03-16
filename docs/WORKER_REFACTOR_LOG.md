@@ -5,6 +5,76 @@
 - 実務の実行フローはローカルV2導線（`scripts/local_v2_stack.sh`）を最優先とする。
 - 旧VM/GCP資料は過去ログ・移行検証用途に限定し、日次運用はローカル導線の実データを優先する。
 
+### 2026-03-16 14:08 JST - `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long を `leading_profile` の exact surface override で reject
+
+- 対象:
+  - `execution/strategy_entry.py`
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+  - `docs/RISK_AND_EXECUTION.md`
+  - `docs/CURRENT_MECHANISMS.md`
+- 背景:
+  - `2026-03-16 10:18 JST`
+    の pending は
+    env prefix miss
+    で
+    `leading_profile`
+    自体が skip される bug だった。
+  - ただし
+    `2026-03-16 12:11 JST`
+    の
+    `orders.db id=66326`
+    は
+    `MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|...|gap:down_flat|c:spin_dn|w:lower|tr:flat|...`
+    で、
+    `forecast.reason=expected_pips_contra`,
+    `expected_pips=-0.3198`,
+    `p_up=0.39807`
+    でも
+    `entry_probability_leading_profile`
+    は
+    `scaled`
+    止まりだった。
+  - `2026-03-16 14:01 JST`
+    の
+    `scripts/improvement_preflight.sh "trade_status_followup_2026_03_16_round2" ...`
+    でも、
+    この lane は
+    `allow_new_lane`
+    と判定された。
+- 変更:
+  - `execution/strategy_entry.py`
+    に
+    `_strategy_surface_leading_override()`
+    を追加し、
+    `MicroLevelReactor-bounce-lower`
+    long
+    `normal_normal + gap:down_flat + c:spin_dn|w:lower|tr:flat`
+    かつ
+    `expected_pips_contra`
+    /
+    weak
+    `tech/history`
+    の exact surface を
+    `entry_leading_profile_surface_reject`
+    として強制 reject するようにした。
+  - reject 時は
+    `entry_probability_leading_profile.surface_override`
+    へ
+    `surface / forecast / tech / history / range`
+    を残し、
+    live order payload で同 lane を監査できるようにした。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    に
+    same loser surface の reject 回帰と、
+    positive forecast long の pass-through 回帰を残した。
+- 意図:
+  - old prefix bug を再度いじるのではなく、
+    既に
+    `leading_profile`
+    が fired している new loser surface だけを exact setup 条件で止める。
+
 ### 2026-03-16 10:18 JST - hyphenated setup tag でも base strategy env prefix を辿り、`leading_profile` の strategy-local guard を skip しない
 
 - 対象:

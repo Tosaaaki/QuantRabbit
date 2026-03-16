@@ -96,6 +96,27 @@
   `ENTRY_LEADING_PROFILE`
   や
   dedicated env override を setup tag からも拾う。
+- 同じ
+  `leading_profile`
+  path には、
+  `MicroLevelReactor-bounce-lower`
+  long
+  `range_fade|normal_normal|gap:down_flat`
+  で
+  `pattern_tag=c:spin_dn|w:lower|tr:flat`
+  かつ
+  `forecast.reason=expected_pips_contra`
+  /
+  weak
+  `tech/history`
+  が揃った exact surface を
+  `entry_leading_profile_surface_reject`
+  として落とす override がある。
+  監査値は
+  `entry_thesis.entry_probability_leading_profile.surface_override`
+  に残し、
+  `MicroLevelReactor`
+  全体を blanket trim しない。
 - `session_open_breakout` は
   `min_hold_sec=300`
   の negative/candle exit を維持したまま、

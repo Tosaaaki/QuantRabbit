@@ -2436,6 +2436,28 @@
   forecast/tech/range/micro/pattern の成分で補正する。
   共通レイヤは戦略の方向意図を反転させず、最終拒否は `REJECT_BELOW` 設定時のみ。
 - 補正結果は `entry_thesis.entry_probability_leading_profile` に監査記録する。
+- `2026-03-16 14:08 JST`
+  以降の
+  `MicroLevelReactor-bounce-lower`
+  では、
+  `long|range_fade|normal_normal|gap:down_flat`
+  かつ
+  `pattern_tag=c:spin_dn|w:lower|tr:flat`,
+  `forecast.reason=expected_pips_contra`,
+  `expected_pips<=-0.25`,
+  `p_up<=0.40`,
+  `tech_score<=0.25`,
+  `history_perf.score<=0.25`,
+  `range_score>=0.40`
+  の exact surface を
+  `entry_leading_profile_surface_reject`
+  で強制 reject する。
+  監査は
+  `entry_thesis.entry_probability_leading_profile.surface_override`
+  に残し、
+  `breakout`
+  や
+  positive forecast lane へ blanket に広げない。
 - `limit_order` 経路でも黒板協調後の最終 `units` で
   `entry_thesis.entry_units_intent` を再同期する。
 - 運用は `quant-v2-runtime.env` で

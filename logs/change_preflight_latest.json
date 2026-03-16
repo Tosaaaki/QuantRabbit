@@ -1,18 +1,18 @@
 {
-  "generated_at": "2026-03-16T01:14:55Z",
-  "git_rev": "02671a30",
-  "query": "microlevelreactor_bounce_lower_prefix_bug_20260316",
-  "limit": 3,
-  "next_step": "scripts/improvement_preflight.sh \"microlevelreactor_bounce_lower_prefix_bug_20260316\" \"<strategy::surface::primary_loss_driver::idea||...>\" 3",
+  "generated_at": "2026-03-16T05:16:41Z",
+  "git_rev": "0c387d10",
+  "query": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
+  "limit": 5,
+  "next_step": "scripts/improvement_preflight.sh \"microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316\" \"<strategy::surface::primary_loss_driver::idea||...>\" 5",
   "preflight_status": "ok",
   "warnings": [],
-  "health_generated_at": "2026-03-16T01:14:49.201063+00:00",
+  "health_generated_at": "2026-03-16T05:16:33.660219+00:00",
   "lint": {
     "source": "docs/TRADE_FINDINGS.md",
     "strict_since": "2026-03-13 20:00",
     "anti_loop_strict_since": "2026-03-14 10:00",
-    "checked_entries": 444,
-    "strict_entries": 19,
+    "checked_entries": 446,
+    "strict_entries": 21,
     "issues": [],
     "ok": true
   },
@@ -27,30 +27,26 @@
   "market": {
     "market_open": true,
     "seconds_until_open": 0.0,
-    "bid": 159.404,
-    "ask": 159.412,
-    "mid": 159.408,
+    "bid": 159.454,
+    "ask": 159.462,
+    "mid": 159.458,
     "spread_pips": 0.8,
-    "tick_age_sec": 1.735,
-    "m1_atr14_pips": 2.53,
-    "range_6m_pips": 5.3,
-    "range_30m_pips": 16.1,
-    "data_lag_ms": 438.19689750671387,
-    "decision_latency_ms": 17.365333005727734,
+    "tick_age_sec": 1.482,
+    "m1_atr14_pips": 1.839,
+    "range_6m_pips": 7.8,
+    "range_30m_pips": 14.0,
+    "data_lag_ms": 792.8731441497803,
+    "decision_latency_ms": 18.941125003038906,
     "fills_15m": 1,
-    "fills_30m": 2,
+    "fills_30m": 4,
     "rejects_30m": 0,
     "orders_status_1h": [
       {
-        "status": "probability_scaled",
-        "count": 7
+        "status": "submit_attempt",
+        "count": 5
       },
       {
         "status": "preflight_start",
-        "count": 7
-      },
-      {
-        "status": "submit_attempt",
         "count": 5
       },
       {
@@ -59,17 +55,17 @@
       },
       {
         "status": "profit_guard_bypass",
-        "count": 3
+        "count": 1
       },
       {
-        "status": "profit_guard",
-        "count": 2
+        "status": "probability_scaled",
+        "count": 1
       }
     ],
     "account": {
-      "nav": 34840.7948,
-      "balance": 34840.7948,
-      "margin_available": 34840.7948,
+      "nav": 34818.3088,
+      "balance": 34818.3088,
+      "margin_available": 34818.3088,
       "margin_used": 0.0,
       "margin_rate": 0.04,
       "unrealized_pl": 0.0,
@@ -79,7 +75,7 @@
   },
   "review": {
     "source": "docs/TRADE_FINDINGS.md",
-    "query": "microlevelreactor_bounce_lower_prefix_bug_20260316",
+    "query": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
     "checklist": [
       "Confirm the same hypothesis key or same decision surface was not already tried with the same primary loss driver.",
       "Confirm whether the previous mechanism actually fired; fired=0 means it was not the dominant cause.",
@@ -89,23 +85,50 @@
       "Write Why Not Same As Last Time / Promotion Gate / Escalation Trigger in the next TRADE_FINDINGS entry.",
       "Write Hypothesis Key / Primary Loss Driver / Mechanism Fired / Do Not Repeat Unless in the next TRADE_FINDINGS entry."
     ],
-    "entries": []
+    "entries": [
+      {
+        "heading": "2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する",
+        "verdict": "- pending",
+        "status": "- pending_live_deploy",
+        "hypothesis_key": "- `microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316`",
+        "primary_loss_driver": "- `negative_forecast_long_scaled_not_rejected`",
+        "mechanism_fired": "- `entry_leading_profile_surface_reject` - `2026-03-16 12:11 JST` の `orders.db` `id=66326` では、 `setup_fingerprint=MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|...|gap:down_flat|c:spin_dn|w:lower|tr:fla...",
+        "do_not_repeat_unless": "- post-deploy の同一 `setup_fingerprint` で still `filled` が残る、 または `entry_probability_leading_profile.surface_override` が欠けて `Mechanism Fired=0` のまま再発すると確認できるまでは、 同 lane への追加 tightening を積まず、 まず live reject 発火と fill 消失を確...",
+        "why_not_same_as_last_time": "- 前回 `microlevelreactor_bounce_lower_prefix_bug_20260316` は `tight_normal`, `forecast.reason=style_mismatch_range`, `c:doji_up|w:balanced|tr:dn_mild` の lane で、 `leading_profile` 自体が `skip` される bug だった。 - 今回は `normal_n...",
+        "promotion_gate": "- post-deploy の first matching sample で `entry_probability_leading_profile.reason=entry_leading_profile_surface_reject` と `surface_override.surface=mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn` が `o...",
+        "escalation_trigger": "- same fingerprint が still `filled` し、 `STOP_LOSS_ORDER` を継続する場合。 - もしくは `entry_probability_leading_profile.surface_override` が live で欠け、 data shape drift で `Mechanism Fired=0` が続く場合。 - その場合は threshold 再調整ではなく、 worker...",
+        "why": "- `2026-03-16 10:18 JST` の pending は `style_mismatch_range` loser lane で、 主因は env prefix miss による `leading_profile skip` だった。 - ただし `2026-03-16 12:11 JST` の current loser surface は base family env まで到達しており、 `leading_p...",
+        "hypothesis": "- `MicroLevelReactor-bounce-lower` のうち、 `normal_normal + gap:down_flat + spin_dn/lower/flat` で `expected_pips_contra` を引いている long だけを `leading_profile` で reject すれば、 current loser lane を落としつつ、 breakout / positive fore...",
+        "observed": "- `2026-03-16 14:01 JST` の `scripts/improvement_preflight.sh \"trade_status_followup_2026_03_16_round2\" \"MicroLevelReactor::bounce_lower_long_range_fade_gap_down_flat_expected_pips_contra::negative_forecast_long_scaled...",
+        "next_action": "- local-v2 反映後、 `orders.db` と `quant-micro-levelreactor.log` で same surface の `surface_override` 発火を first check する。 - same family の adjacent lane まで落ちていないかは、 `MicroLevelReactor` long breakout / positive forecast samp..."
+      }
+    ]
   },
   "lane_repeat_risk": {
-    "matches": [],
+    "matches": [
+      {
+        "hypothesis_key": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
+        "repeat_risk": "low",
+        "history_commit_count": 0,
+        "family_key": "MicroLevelReactor-bounce-lower :: negative_forecast_long_scaled_not_rejected",
+        "family_entries": 1,
+        "repeat_risk_reasons": [],
+        "latest_heading": "2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する"
+      }
+    ],
     "recommended_single_focus_lane": {
-      "hypothesis_key": "micro_runtime_dispatch_success_cooldown_20260316",
+      "hypothesis_key": "microlevelreactor_bounce_lower_expected_pips_contra_surface_20260316",
       "strategies": [
-        "res=None"
+        "MicroLevelReactor-bounce-lower"
       ],
-      "family_key": "res=None :: participation_loss",
-      "primary_loss_driver": "participation_loss",
-      "latest_heading": "2026-03-16 09:28 JST / local-v2: micro runtime の cooldown は `dispatch success` 時だけ進め、`res=None` で cadence を落とさない",
+      "family_key": "MicroLevelReactor-bounce-lower :: negative_forecast_long_scaled_not_rejected",
+      "primary_loss_driver": "negative_forecast_long_scaled_not_rejected",
+      "latest_heading": "2026-03-16 14:08 JST / local-v2: `MicroLevelReactor-bounce-lower` の `expected_pips_contra` long は old prefix bug と別 surface として `leading_profile` で reject する",
       "history_commit_count": 0,
       "repeat_risk": "low",
       "repeat_risk_reasons": [],
       "selection_reason": "latest unresolved trading lane first; keep reopen validation to one lane before touching adjacent families",
-      "next_action": "- post-deploy の `quant-micro-momentumburst.log` / `quant-micro-levelreactor.log` で `res=none cooldown_updated=0` を first check とし、 false cooldown が消えたことを確認する..."
+      "next_action": "- local-v2 反映後、 `orders.db` と `quant-micro-levelreactor.log` で same surface の `surface_override` 発火を first check する。 - same family の adjacent lane まで落ちていないかは..."
     }
   }
 }
