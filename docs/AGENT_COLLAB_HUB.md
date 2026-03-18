@@ -38,6 +38,11 @@
 - `docs/TRADE_FINDINGS.md` は変更日記として使い、各変更で `Why/Hypothesis / Expected Good / Expected Bad / Observed/Fact / Verdict / Next Action` を最低限残す。
 - 日次の winner/loser lane review は `docs/prompts/WINNER_LANE_REVIEW_DAILY.md` を固定 prompt として使う。review 前に `scripts/change_preflight.sh "<query>" 3` を走らせ、`logs/lane_scoreboard_latest.json` と `config/participation_alloc.json` を最新化したうえで参照する。
 - 収益/リスク/ENTRY/EXIT 改善の前には必ず `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を実行する。wrapper は local health refresh / USD/JPY 市況確認 / `TRADE_FINDINGS` review に加えて、repo history lane の repeat-risk と reopen single-focus 候補もまとめて出す。raw `python3 scripts/trade_findings_review.py ...` 単独では完了扱いにしない。
+- ユーザへ改善案を返す前には必ず `scripts/improvement_preflight.sh "<query>" "<strategy::surface::primary_loss_driver::idea||...>"` を実行する。
+- `scripts/improvement_preflight.sh` は `change_preflight.sh` を内包し、候補ごとに `market_hold / review_existing_pending / escalate_family_not_tighten / allow_new_lane` を返す。
+- `review_existing_pending` が返った候補は新規提案ではなく「既存 pending の再検証」として扱う。
+- `market_hold` が返った候補は reopen 後の評価窓へ回し、その場で良し悪しを判定しない。
+- 候補 spec は `strategy::surface::primary_loss_driver::idea`。`surface` を具体化できない候補は出さない。
 - runtime / risk / env 変更を commit する前は `scripts/install_git_hooks.sh` で有効化した `.githooks/pre-commit` が fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` を確認する。hook 失敗時は先に `scripts/change_preflight.sh` と `TRADE_FINDINGS` 更新をやり直す。
 - `scripts/change_preflight.sh` は `trade_findings_review.py` だけでなく `trade_findings_lint.py` / `trade_findings_index.py` / `generate_repo_history_lane_index.py` も実行し、derived artifact を `logs/` へ更新する。
 - 同じ `Hypothesis Key / setup_fingerprint / flow_regime / Primary Loss Driver` を同じ decision surface とみなし、`pending` 改善を積み重ねない。次の変更は前回 entry の `Promotion Gate` か `Escalation Trigger` を判定してから入れる。

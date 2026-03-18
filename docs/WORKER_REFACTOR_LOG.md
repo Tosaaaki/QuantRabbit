@@ -44,6 +44,99 @@
   - anti-loop を「提案時の注意喚起」ではなく、
     runtime commit 自体を止める hard-stop へ昇格させる。
 
+### 2026-03-17 00:23 JST - `MicroLevelReactor-bounce-lower` pending 再検証の継続（家族同時開放は保留）
+
+- 対象:
+  - `scripts/improvement_preflight.sh` / `scripts/change_preflight.sh`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - `00:22 JST` の market-hold 更新後、同戦略 pending 再検証を継続したところ、同 query で `escalate_family_not_tighten` が返却。
+- 監査:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`:
+    `fills_15m=0`, `fills_30m=0`。
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat" "MicroLevelReactor-bounce-lower::style_mismatch_range::negative_forecast_long_scaled_not_rejected::review_existing_pending" 5`:
+    `blocked=True / action=escalate_family_not_tighten`。
+  - `sqlite3 logs/orders.db`（24h）: `MicroLevelReactor-bounce-lower` 10 件（`filled=0`）。
+  - `sqlite3 logs/trades.db`（24h）: 該当 strategy 0 件。
+- 監査結果:
+  - pending lane の再検証を継続し、新規 tightening/open の追加は保留。
+- 次アクション:
+  - single-focus が再度解除されるまで、同 strategy の未解決 open lane を順次監査。
+  - 同 surface の再発サンプルが確認された場合のみ、family 再設計を検討。
+
+### 2026-03-16 23:40 JST - `MicroLevelReactor-bounce-lower` の `style_mismatch_range` + weak reclaim surface を leading profile で reject 分岐追加
+
+- 対象:
+  - `execution/strategy_entry.py`
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - `normal_normal + expected_pips_contra` の既知悪化 surface に加えて、
+    `tight_normal + gap:down_flat` かつ
+    `style_mismatch_range` の同系クラスターで
+    `ma_gap` が弱い reclaim を示す条件が悪化候補だった。
+  - 同 strategy の既存 pending を維持したまま同面での
+    surface 分離を先に切る必要があった。
+- 変更:
+  - `execution/strategy_entry.py` の
+    `_strategy_surface_leading_override()` に
+    `MicroLevelReactor-bounce-lower|long|range_fade|tight_normal|`
+    かつ
+    `gap:down_flat`, `allowed=False`, `reason=style_mismatch_range`,
+    `-0.70 <= ma_gap_pips <= -0.30`,
+    `history_score <= 0.55`,
+    `range_score >= 0.24`
+    の条件で
+    `entry_leading_profile_surface_reject`
+    を返す新分岐を追加。
+  - `tests/execution/test_strategy_entry_forecast_fusion.py`
+    に
+    `test_entry_leading_profile_surface_override_rejects_mlr_tight_normal_gap_down_flat_style_mismatch`
+    を追加し、既存の
+    `expected_pips_contra` テストとセットで回帰を固定。
+- 結果:
+  - `python3 -m pytest -q tests/execution/test_strategy_entry_forecast_fusion.py`
+    で
+    25/25 passed を確認。
+
+### 2026-03-16 23:56 JST - `MicroLevelReactor-bounce-lower` pending 再検証の継続（新規 lane 実運用評価待ち）
+
+- 対象:
+  - `docs/TRADE_FINDINGS.md`
+  - `docs/WORKER_REFACTOR_LOG.md`
+- 背景:
+  - `23:40 JST` の新規 surface 拒否追加後も、同 strategy の
+    `expected_pips_contra` pending が未解消。
+- 検証:
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`
+    は `review_existing_pending` / `escalate_family_not_tighten` を継続。
+  - `sqlite3 logs/orders.db` で
+    `MicroLevelReactor-bounce-lower` の最新 `orders` は
+    `2026-03-16T03:11:00.367705+00:00`、
+    `trades.db` への該当新規約定は 0 件。
+  - `logs/local_v2_stack/quant-micro-levelreactor.log`（23:57 時点）では
+    `mlr_range_gate_block` 監視のみで同 lane の live fill/fire は未観測。
+- 意図:
+  - 新規改善は保留し、既存 pending lane の再検証と family escalation の判断を先に進める。
+
+### 2026-03-17 00:05 JST - `MicroLevelReactor-bounce-lower` pending 再検証の継続（0:00超過窓）
+
+- 対象:
+  - `docs/TRADE_FINDINGS.md`
+- 背景:
+  - 23:40 の新規 surface 追加後、同日 00:00 超過窓でも
+    既知 `expected_pips_contra` pending は解消前のまま。
+- 検証:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"` の監査結果は `review_existing_pending` 系で未解消。
+  - `logs/orders.db` は `MicroLevelReactor-bounce-lower` の
+    新規サンプルを 2026-03-16 15:00 以降 0 件として維持。
+  - `logs/local_v2_stack/quant-micro-levelreactor.log` は
+    `2026-03-17 00:03` 時点でも `mlr_range_gate_block active=False` が続き、
+    同 lane の live fill/fire の再発は未観測。
+- 意図:
+  - 新規 lane 開放・tighten 再入は `review_existing_pending` が明示的に解除されるまで停止。
+  - 次回判断は再発有無の実データと `Promotion Gate` 条件（再発ゼロ窓）で行う。
+
 ### 2026-03-16 21:50 JST - `shared_participation` は quarantined loser setup pressure を strategy-level mild trim へ昇格する
 
 - 対象:
@@ -20827,3 +20920,21 @@
   - `allowlist applied`
     反復ログが止まり、
     reopen 窓の判定に必要な情報だけを追える。
+
+## 2026-03-17 00:22 JST / local-v2: `MicroLevelReactor-bounce-lower` 再検証を継続（market hold）
+
+- 変更: なし（運用記録更新のみ）
+- 背景:
+  - 先行 `improvement_preflight` が `review_existing_pending` 構成を維持していたため、同 lane 改善提案は抑制。
+  - 本再実行では `data_lag_high` を伴う `market_hold_review_only` に変化し、新規改善は停止。
+- 監査結果:
+  - `scripts/change_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat"`
+    - `preflight_status=warn / fills_15m=0 / fills_30m=0 / data_lag_high:1856.4ms`
+  - `scripts/improvement_preflight.sh "microlevelreactor_bounce_lower_style_mismatch_gap_down_flat" "MicroLevelReactor-bounce-lower::style_mismatch_range::negative_forecast_long_scaled_not_rejected::review_existing_pending" 5`
+    - blocked=True / action=market_hold_review_only
+  - `sqlite3 logs/orders.db`：過去12時間で `MicroLevelReactor-bounce-lower` 該当なし
+  - `sqlite3 logs/trades.db`：`MicroLevelReactor-bounce-lower` 該当なし
+- 結果:
+  - `pending` 状態を継続し、同一 surface への新規 tighten/open は保留。
+- 次アクション:
+  - 市況・遅延品質が回復してから同 query で再実行し、pending 再検証窓を継続。

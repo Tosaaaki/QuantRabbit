@@ -15,6 +15,8 @@
 - 現行はローカルPDCAを優先する。
 - ローカル検証でも作業前にUSD/JPYの市況（価格/スプレッド/ATR/API応答）を確認する。
 - 収益/リスク/ENTRY/EXIT 改善の前は `scripts/change_preflight.sh "<strategy_tag or hypothesis_key or close_reason>"` を正とし、市況確認と `TRADE_FINDINGS` review、repo history lane の repeat-risk / single-focus 候補を1コマンドで通す。
+- ユーザ向けの改善提案を返す前は `scripts/improvement_preflight.sh "<query>" "<strategy::surface::primary_loss_driver::idea||...>"` を正とし、候補ごとの `pending` 重複と `market_hold` を必ず機械判定する。
+- `scripts/improvement_preflight.sh` が `review_existing_pending` を返した候補は「新規改善案」ではなく「既存 pending の再検証対象」として扱う。`allow_new_lane` 以外をそのまま改善案にしない。
 - runtime / risk / env 変更の commit 前ガードとして `.githooks/pre-commit` を使う。新しい clone / 端末では最初に `scripts/install_git_hooks.sh` を実行し、fresh `logs/change_preflight_latest.json` と staged `docs/TRADE_FINDINGS.md` が無い commit を止める。
 - `scripts/change_preflight.sh` 実行時は `logs/change_preflight_latest.json` に加えて `logs/trade_findings_index_latest.{json,md}` と `logs/repo_history_lane_index_latest.{json,md}` を更新する。hook は `trade_findings_lint.py` が失敗した commit も止める。
 - 同じ `Hypothesis Key / setup_fingerprint / flow_regime / Primary Loss Driver` では、前回変更の `Promotion Gate` または `Escalation Trigger` を判定する前に次の tweak を入れない。
