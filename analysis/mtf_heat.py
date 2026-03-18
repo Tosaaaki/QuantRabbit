@@ -206,7 +206,9 @@ def evaluate_mtf_heat(
         if heat_short >= short_hot and long_comp >= long_hot:
             align_component += align_bonus * min(1.0, (heat_short + long_comp) / 2.0)
         if heat_short >= short_hot and long_comp < long_mid:
-            gap = min(1.0, (heat_short - short_hot + 0.15) + max(0.0, long_mid - long_comp))
+            gap = min(
+                1.0, (heat_short - short_hot + 0.15) + max(0.0, long_mid - long_comp)
+            )
             align_component -= mismatch_penalty * gap
         if heat_short * long_comp < 0.0:
             diff = min(1.0, abs(heat_short - long_comp))
@@ -216,30 +218,52 @@ def evaluate_mtf_heat(
 
     bb_component = 0.0
     bb_short = _safe_float(fac_short.get("bbw"))
-    bb_long = _safe_float((fac_long or {}).get("bbw")) or _safe_float((fac_macro or {}).get("bbw"))
+    bb_long = _safe_float((fac_long or {}).get("bbw")) or _safe_float(
+        (fac_macro or {}).get("bbw")
+    )
     bb_floor = max(0.0, _env_float("MTF_HEAT_BB_FLOOR", 0.0011, prefix=env_prefix))
-    bb_expand_ratio = max(0.1, _env_float("MTF_HEAT_BB_EXPAND_RATIO", 1.15, prefix=env_prefix))
-    bb_squeeze_ratio = max(0.1, _env_float("MTF_HEAT_BB_SQUEEZE_RATIO", 0.90, prefix=env_prefix))
-    bb_expand_bonus = max(0.0, _env_float("MTF_HEAT_BB_EXPAND_BONUS", 0.12, prefix=env_prefix))
-    bb_squeeze_penalty = max(0.0, _env_float("MTF_HEAT_BB_SQUEEZE_PENALTY", 0.15, prefix=env_prefix))
+    bb_expand_ratio = max(
+        0.1, _env_float("MTF_HEAT_BB_EXPAND_RATIO", 1.15, prefix=env_prefix)
+    )
+    bb_squeeze_ratio = max(
+        0.1, _env_float("MTF_HEAT_BB_SQUEEZE_RATIO", 0.90, prefix=env_prefix)
+    )
+    bb_expand_bonus = max(
+        0.0, _env_float("MTF_HEAT_BB_EXPAND_BONUS", 0.12, prefix=env_prefix)
+    )
+    bb_squeeze_penalty = max(
+        0.0, _env_float("MTF_HEAT_BB_SQUEEZE_PENALTY", 0.15, prefix=env_prefix)
+    )
     bb_ratio = None
     if bb_short is not None and bb_long is not None and bb_short > 0 and bb_long > 0:
         bb_ratio = bb_short / max(bb_long, 1e-6)
         if heat_short is not None and heat_short > 0:
             if bb_ratio >= bb_expand_ratio:
-                bb_component += bb_expand_bonus * min(1.0, (bb_ratio - bb_expand_ratio) / 0.6)
+                bb_component += bb_expand_bonus * min(
+                    1.0, (bb_ratio - bb_expand_ratio) / 0.6
+                )
             if bb_ratio <= bb_squeeze_ratio and bb_short <= bb_floor:
-                bb_component -= bb_squeeze_penalty * min(1.0, (bb_squeeze_ratio - bb_ratio) / 0.4 + (bb_floor - bb_short) / max(bb_floor, 1e-6))
+                bb_component -= bb_squeeze_penalty * min(
+                    1.0,
+                    (bb_squeeze_ratio - bb_ratio) / 0.4
+                    + (bb_floor - bb_short) / max(bb_floor, 1e-6),
+                )
         if heat_short is not None and heat_short < 0 and bb_ratio >= bb_expand_ratio:
-            bb_component -= bb_expand_bonus * min(1.0, (bb_ratio - bb_expand_ratio) / 0.6)
+            bb_component -= bb_expand_bonus * min(
+                1.0, (bb_ratio - bb_expand_ratio) / 0.6
+            )
 
     price_val = _resolve_price(
         factors,
         (short_tf, mid_tf, long_tf, macro_tf),
         fallback=price,
     )
-    pivot_buffer_pips = max(0.0, _env_float("MTF_HEAT_PIVOT_BUFFER_PIPS", 0.8, prefix=env_prefix))
-    pivot_weight = max(0.0, _env_float("MTF_HEAT_PIVOT_WEIGHT", 0.22, prefix=env_prefix))
+    pivot_buffer_pips = max(
+        0.0, _env_float("MTF_HEAT_PIVOT_BUFFER_PIPS", 0.8, prefix=env_prefix)
+    )
+    pivot_weight = max(
+        0.0, _env_float("MTF_HEAT_PIVOT_WEIGHT", 0.22, prefix=env_prefix)
+    )
     pivot_component = 0.0
     pivot_rows: list[dict] = []
     if price_val is not None and price_val > 0 and pivot_tfs:
@@ -283,9 +307,13 @@ def evaluate_mtf_heat(
         if pivot_scores:
             pivot_component = (sum(pivot_scores) / len(pivot_scores)) * pivot_weight
 
-    score = _clamp(weighted_score + align_component + bb_component + pivot_component, -1.0, 1.0)
+    score = _clamp(
+        weighted_score + align_component + bb_component + pivot_component, -1.0, 1.0
+    )
 
-    conf_max_delta = max(0.0, _env_float("MTF_HEAT_CONF_MAX_DELTA", 12.0, prefix=env_prefix))
+    conf_max_delta = max(
+        0.0, _env_float("MTF_HEAT_CONF_MAX_DELTA", 12.0, prefix=env_prefix)
+    )
     lot_scale = max(0.0, _env_float("MTF_HEAT_LOT_SCALE", 0.28, prefix=env_prefix))
     lot_min = max(0.05, _env_float("MTF_HEAT_LOT_MIN", 0.70, prefix=env_prefix))
     lot_max = max(lot_min, _env_float("MTF_HEAT_LOT_MAX", 1.35, prefix=env_prefix))
@@ -350,4 +378,3 @@ def evaluate_mtf_heat(
         tp_mult=tp_mult,
         debug=debug,
     )
-

@@ -54,7 +54,9 @@ def _trend_from_ma(
     except (TypeError, ValueError):
         return None, 0.0, False
     gap_pips = abs(ma10_val - ma20_val) / PIP
-    direction = "long" if ma10_val > ma20_val else "short" if ma10_val < ma20_val else None
+    direction = (
+        "long" if ma10_val > ma20_val else "short" if ma10_val < ma20_val else None
+    )
     return direction, gap_pips, True
 
 
@@ -88,7 +90,9 @@ class H1MomentumSwing:
         return fac
 
     @classmethod
-    def _h1_factors(cls, factors: Optional[Dict[str, Dict[str, float]]] = None) -> Optional[Dict[str, float]]:
+    def _h1_factors(
+        cls, factors: Optional[Dict[str, Dict[str, float]]] = None
+    ) -> Optional[Dict[str, float]]:
         if factors is None:
             factors = all_factors()
         return cls._tf_factors(factors, "H1")
@@ -150,7 +154,12 @@ class H1MomentumSwing:
 
         if _env_bool("H1M_CANDLE_DIR_REQUIRED", True):
             min_body = _env_float("H1M_CANDLE_DIR_MIN_BODY_PIPS", 2.0)
-            if last_dir and desired_dir and last_dir != desired_dir and body_pips >= min_body:
+            if (
+                last_dir
+                and desired_dir
+                and last_dir != desired_dir
+                and body_pips >= min_body
+            ):
                 return False
 
         return True
@@ -196,7 +205,9 @@ class H1MomentumSwing:
             chase_pips = abs(dist) / PIP
             chasing_long = direction == "long" and dist > 0
             chasing_short = direction == "short" and dist < 0
-            if (chasing_long or chasing_short) and chase_pips >= atr_pips * no_chase_atr_mult:
+            if (
+                chasing_long or chasing_short
+            ) and chase_pips >= atr_pips * no_chase_atr_mult:
                 return None
 
         if not cls._candle_guard(fac_h1, direction):

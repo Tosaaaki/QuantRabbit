@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
-
 LOG = __import__("logging").getLogger(__name__)
 
 
@@ -57,8 +56,7 @@ def _ensure_connection() -> sqlite3.Connection:
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS strategy_control_flags (
                 strategy_slug TEXT PRIMARY KEY,
                 entry_enabled INTEGER NOT NULL CHECK(entry_enabled IN (0, 1)),
@@ -67,8 +65,7 @@ def _ensure_connection() -> sqlite3.Connection:
                 updated_at TEXT NOT NULL,
                 note TEXT DEFAULT ''
             )
-            """
-        )
+            """)
         conn.execute(
             """
             INSERT OR IGNORE INTO strategy_control_flags
@@ -275,7 +272,7 @@ def sync_env_overrides() -> None:
     for key, value in os.environ.items():
         if not key.startswith("STRATEGY_CONTROL_ENTRY_"):
             continue
-        strategy = key[len("STRATEGY_CONTROL_ENTRY_"):]
+        strategy = key[len("STRATEGY_CONTROL_ENTRY_") :]
         strategy = normalize_strategy_slug(strategy)
         if not strategy:
             continue
@@ -286,7 +283,7 @@ def sync_env_overrides() -> None:
     for key, value in os.environ.items():
         if not key.startswith("STRATEGY_CONTROL_EXIT_"):
             continue
-        strategy = key[len("STRATEGY_CONTROL_EXIT_"):]
+        strategy = key[len("STRATEGY_CONTROL_EXIT_") :]
         strategy = normalize_strategy_slug(strategy)
         if not strategy:
             continue
@@ -297,7 +294,7 @@ def sync_env_overrides() -> None:
     for key, value in os.environ.items():
         if not key.startswith("STRATEGY_CONTROL_LOCK_"):
             continue
-        strategy = key[len("STRATEGY_CONTROL_LOCK_"):]
+        strategy = key[len("STRATEGY_CONTROL_LOCK_") :]
         strategy = normalize_strategy_slug(strategy)
         if not strategy:
             continue

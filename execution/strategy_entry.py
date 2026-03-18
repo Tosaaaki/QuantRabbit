@@ -17,7 +17,9 @@ from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
 from workers.common.dynamic_alloc import load_strategy_profile
-from workers.common.macro_news_context import load_current_context as load_macro_news_context
+from workers.common.macro_news_context import (
+    load_current_context as load_macro_news_context,
+)
 from workers.common.participation_alloc import (
     load_strategy_profile as load_participation_profile,
 )
@@ -187,7 +189,9 @@ _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN = max(
 )
 _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX = max(
     0.0,
-    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX", 0.18)),
+    min(
+        0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX", 0.18)
+    ),
 )
 _STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED = _env_bool(
     "STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED",
@@ -218,8 +222,12 @@ _STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT = _env_float(
 )
 _STRATEGY_DYNAMIC_ALLOC_ENABLED = _env_bool("STRATEGY_DYNAMIC_ALLOC_ENABLED", True)
 _STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY = _env_bool("STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True)
-_STRATEGY_DYNAMIC_ALLOC_PATH = os.getenv("STRATEGY_DYNAMIC_ALLOC_PATH", "config/dynamic_alloc.json")
-_STRATEGY_DYNAMIC_ALLOC_TTL_SEC = max(1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_TTL_SEC", 20.0))
+_STRATEGY_DYNAMIC_ALLOC_PATH = os.getenv(
+    "STRATEGY_DYNAMIC_ALLOC_PATH", "config/dynamic_alloc.json"
+)
+_STRATEGY_DYNAMIC_ALLOC_TTL_SEC = max(
+    1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_TTL_SEC", 20.0)
+)
 _STRATEGY_DYNAMIC_ALLOC_MULT_MIN = max(
     0.05,
     min(1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_MULT_MIN", 0.10)),
@@ -233,7 +241,9 @@ _STRATEGY_DYNAMIC_ALLOC_POCKETS = {
     for p in _env_csv("STRATEGY_DYNAMIC_ALLOC_POCKETS", "scalp_fast,micro,scalp")
     if p
 }
-_STRATEGY_PARTICIPATION_ALLOC_ENABLED = _env_bool("STRATEGY_PARTICIPATION_ALLOC_ENABLED", True)
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = _env_bool(
+    "STRATEGY_PARTICIPATION_ALLOC_ENABLED", True
+)
 _STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
     "STRATEGY_PARTICIPATION_ALLOC_PATH",
     "config/participation_alloc.json",
@@ -278,7 +288,9 @@ _STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC = max(
     60.0,
     _env_float("STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC", 1800.0),
 )
-_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED = _env_bool("STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True)
+_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED = _env_bool(
+    "STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True
+)
 _STRATEGY_MACRO_NEWS_CONTEXT_PATH = os.getenv(
     "STRATEGY_MACRO_NEWS_CONTEXT_PATH",
     "logs/macro_news_context.json",
@@ -300,7 +312,11 @@ _STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX = max(
     0.0,
     min(0.10, _env_float("STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX", 0.05)),
 )
-_PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
+_PATTERN_GATE_META_KEYS = (
+    "pattern_gate_opt_in",
+    "use_pattern_gate",
+    "pattern_gate_enabled",
+)
 _TECH_DEFAULT_TFS_BY_POCKET = {
     "macro": ("D1", "H4", "H1", "M5", "M1"),
     "micro": ("H4", "H1", "M5", "M1"),
@@ -404,7 +420,9 @@ def _coalesce_env_prefix(
     for container in (entry_thesis, meta):
         if not isinstance(container, dict):
             continue
-        value = _normalize_env_prefix(container.get("env_prefix") or container.get("ENV_PREFIX"))
+        value = _normalize_env_prefix(
+            container.get("env_prefix") or container.get("ENV_PREFIX")
+        )
         if not value:
             continue
         return value
@@ -417,7 +435,9 @@ def _inject_env_prefix_context(
     strategy_tag: Optional[str] = None,
 ) -> tuple[dict, dict]:
     env_prefix = _coalesce_env_prefix(entry_thesis, meta, strategy_tag)
-    normalized_entry_thesis: dict = dict(entry_thesis) if isinstance(entry_thesis, dict) else {}
+    normalized_entry_thesis: dict = (
+        dict(entry_thesis) if isinstance(entry_thesis, dict) else {}
+    )
     normalized_meta: dict = dict(meta) if isinstance(meta, dict) else {}
     if env_prefix:
         normalized_entry_thesis["env_prefix"] = env_prefix
@@ -430,8 +450,25 @@ def _inject_env_prefix_context(
 _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     "SCALP_PING_5S": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
-        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "1m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 1},
@@ -441,8 +478,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_M1SCALPER": {
         "technical_context_tfs": ["M1", "M5", "H1"],
-        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "ema24", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "ema24",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 120, "M5": 80, "H1": 60},
         "forecast_horizon": "5m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 5},
@@ -452,8 +506,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_MACD_RSI_DIV": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
-        "technical_context_fields": ["ma10", "ma20", "ema12", "ema24", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "macd_hist"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema24",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "macd_hist",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 160, "M5": 100, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -463,8 +534,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_TICK_IMBALANCE": {
         "technical_context_tfs": ["M1", "M5", "H1"],
-        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+            "tick_rate",
+        ],
         "technical_context_candle_counts": {"M1": 160, "M5": 90, "H1": 50},
         "forecast_horizon": "5m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 5},
@@ -474,8 +562,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_PING_5S_B": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
-        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "1m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 1},
@@ -485,8 +590,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_WICK_REVERSAL_BLEND": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
-        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -496,8 +618,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_WICK_REVERSAL_PRO": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
-        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -507,8 +646,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SCALP_SQUEEZE_PULSE_BREAK": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
-        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -518,8 +674,24 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "MICRO_ADAPTIVE_REVERT": {
         "technical_context_tfs": ["M1", "M5", "H1"],
-        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M5": 120, "M1": 80, "H1": 50},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -529,8 +701,25 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "MICRO_MULTISTRAT": {
         "technical_context_tfs": ["M5", "M1", "H1"],
-        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "volume"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "volume",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M5": 120, "M1": 140, "H1": 60},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -540,8 +729,24 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     },
     "SESSION_OPEN": {
         "technical_context_tfs": ["M1", "M5", "H1"],
-        "technical_context_fields": ["ma10", "ma20", "ema12", "ema24", "atr", "atr_pips", "adx", "bbw", "rsi", "macd"],
-        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema24",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "rsi",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
         "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
@@ -553,37 +758,90 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
 
 _STRATEGY_TECH_CONTEXT_REQUIREMENTS.update(
     {
-        "SCALP_TICK_IMBALANCE_RRPLUS": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]),
-        "SCALP_TICK_WICK_REVERSAL": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
-        "SCALP_WICK_REVERSAL": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
-        "SCALP_WICK_REVERSAL_HF": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
-        "SCALP_TICK_WICK_REVERSAL_HF": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
-        "SCALP_LEVEL_REJECT": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]),
-        "SCALP_LEVEL_REJECT_PLUS": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]),
-        "MICRO_RANGEBREAK": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_VWAPBOUND": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_VWAPREVERT": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_MOMENTUMBURST": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_MOMENTUMSTACK": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_PULLBACKEMA": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_LEVELREACTOR": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_TRENDMOMENTUM": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_TRENDRETEST": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_COMPRESSIONREVERT": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_MOMENTUMPULSE": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "SCALP_TICK_IMBALANCE_RRPLUS": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]
+        ),
+        "SCALP_TICK_WICK_REVERSAL": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_WICK_REVERSAL": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_WICK_REVERSAL_HF": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_TICK_WICK_REVERSAL_HF": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_LEVEL_REJECT": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]
+        ),
+        "SCALP_LEVEL_REJECT_PLUS": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]
+        ),
+        "MICRO_RANGEBREAK": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_VWAPBOUND": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_VWAPREVERT": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_MOMENTUMBURST": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_MOMENTUMSTACK": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_PULLBACKEMA": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_LEVELREACTOR": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_TRENDMOMENTUM": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_TRENDRETEST": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_COMPRESSIONREVERT": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_MOMENTUMPULSE": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
         "TECH_FUSION": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MACRO_TECH_FUSION": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
-        "RANGE_COMPRESSION_BREAK": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "MICRO_PULLBACK_FIB": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
-        "SCALP_REVERSAL_NWAVE": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
-        "TREND_RECLAIM_LONG": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
+        "MACRO_TECH_FUSION": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
+        "RANGE_COMPRESSION_BREAK": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_PULLBACK_FIB": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "SCALP_REVERSAL_NWAVE": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]
+        ),
+        "TREND_RECLAIM_LONG": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]
+        ),
         "VOL_SPIKE_RIDER": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
-        "LONDON_MOMENTUM": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
-        "MACRO_H1MOMENTUM": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "LONDON_MOMENTUM": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
+        "MACRO_H1MOMENTUM": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
         "TREND_H1": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
-        "H1_MOMENTUMSWING": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "H1_MOMENTUMSWING": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
     }
 )
+
 
 def _strategy_key(value: Optional[str]) -> str:
     if not value:
@@ -592,7 +850,7 @@ def _strategy_key(value: Optional[str]) -> str:
 
 
 def _normalize_strategy_requirements(
-    requirements: dict[str, dict[str, object]]
+    requirements: dict[str, dict[str, object]],
 ) -> dict[str, dict[str, object]]:
     return {_strategy_key(key): dict(value) for key, value in requirements.items()}
 
@@ -627,7 +885,11 @@ def _resolve_strategy_technical_context_contract(
         return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["TREND_RECLAIM_LONG"])
     if key.startswith("volspikerider"):
         return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["VOL_SPIKE_RIDER"])
-    if key.startswith("macroh1momentum") or key.startswith("h1momentumswing") or key.startswith("trendh1"):
+    if (
+        key.startswith("macroh1momentum")
+        or key.startswith("h1momentumswing")
+        or key.startswith("trendh1")
+    ):
         return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MACRO_H1MOMENTUM"])
     if key.startswith("londonmomentum"):
         return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["LONDON_MOMENTUM"])
@@ -688,7 +950,11 @@ def _attach_strategy_technical_context_requirements(
                 if isinstance(existing_policy, dict) and isinstance(raw_value, dict):
                     merged_policy = dict(existing_policy)
                     for policy_key, policy_value in raw_value.items():
-                        if policy_key in {"require_fib", "require_nwave", "require_candle"}:
+                        if policy_key in {
+                            "require_fib",
+                            "require_nwave",
+                            "require_candle",
+                        }:
                             co = _coerce_bool(policy_value, default=False)
                             if co is not None:
                                 merged_policy[policy_key] = co
@@ -761,11 +1027,7 @@ def _resolve_entry_probability(
         if probability <= 1.0:
             return max(0.0, min(1.0, probability))
         return max(0.0, min(1.0, probability / 100.0))
-    return (
-        _entry_probability_value(confidence)
-        if confidence is not None
-        else None
-    )
+    return _entry_probability_value(confidence) if confidence is not None else None
 
 
 def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
@@ -793,7 +1055,9 @@ def _inject_entry_intent_contract(
             entry_thesis.get("entry_probability")
         )
         if normalized_probability is None:
-            normalized_probability = _entry_probability_value(entry_thesis.get("confidence"))
+            normalized_probability = _entry_probability_value(
+                entry_thesis.get("confidence")
+            )
     if normalized_probability is None:
         normalized_probability = 1.0
     if not isinstance(entry_thesis, dict):
@@ -1125,15 +1389,91 @@ def _strategy_surface_leading_override(
         live_setup = entry_thesis.get("live_setup_context")
         if isinstance(live_setup, dict):
             setup_fingerprint = str(live_setup.get("setup_fingerprint") or "").strip()
-    if not setup_fingerprint.startswith(
+
+    if setup_fingerprint.startswith(
         "MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|"
+    ):
+        if "gap:down_flat" not in setup_fingerprint:
+            return None
+
+        pattern_tag = str(entry_thesis.get("pattern_tag") or "").strip().lower()
+        if not all(
+            token in pattern_tag for token in ("c:spin_dn", "w:lower", "tr:flat")
+        ):
+            return None
+
+        forecast_payload = (
+            forecast_context
+            if isinstance(forecast_context, dict)
+            else entry_thesis.get("forecast")
+        )
+        if not isinstance(forecast_payload, dict):
+            return None
+        if _coerce_bool(forecast_payload.get("allowed"), None) is not False:
+            return None
+        if (
+            str(forecast_payload.get("reason") or "").strip().lower()
+            != "expected_pips_contra"
+        ):
+            return None
+
+        expected_pips = _to_float(forecast_payload.get("expected_pips"))
+        if expected_pips is None or expected_pips > -0.25:
+            return None
+        forecast_p_up = _to_float(forecast_payload.get("p_up"))
+        if forecast_p_up is not None and forecast_p_up > 0.40:
+            return None
+
+        tech_score = _to_float(entry_thesis.get("tech_score"))
+        if tech_score is None:
+            technical_context = entry_thesis.get("technical_context")
+            if isinstance(technical_context, dict):
+                tech_result = technical_context.get("result")
+                if isinstance(tech_result, dict):
+                    tech_score = _to_float(tech_result.get("score"))
+        if tech_score is None or tech_score > 0.25:
+            return None
+
+        history_score = None
+        history_perf = entry_thesis.get("history_perf")
+        if isinstance(history_perf, dict):
+            history_score = _to_float(history_perf.get("score"))
+        if history_score is None or history_score > 0.25:
+            return None
+
+        range_score = _to_float(entry_thesis.get("range_score"))
+        if range_score is None or range_score < 0.40:
+            return None
+
+        return {
+            "mode": "force_reject",
+            "reason": "entry_leading_profile_surface_reject",
+            "surface": "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn",
+            "forecast_reason": str(forecast_payload.get("reason") or ""),
+            "forecast_expected_pips": round(float(expected_pips), 4),
+            "forecast_p_up": (
+                round(float(forecast_p_up), 6) if forecast_p_up is not None else None
+            ),
+            "tech_score": round(float(tech_score), 6),
+            "history_score": round(float(history_score), 6),
+            "range_score": round(float(range_score), 6),
+            "setup_fingerprint": setup_fingerprint,
+            "pattern_tag": pattern_tag,
+        }
+
+    if not setup_fingerprint.startswith(
+        "MicroLevelReactor-bounce-lower|long|range_fade|tight_normal|"
     ):
         return None
     if "gap:down_flat" not in setup_fingerprint:
         return None
 
     pattern_tag = str(entry_thesis.get("pattern_tag") or "").strip().lower()
-    if not all(token in pattern_tag for token in ("c:spin_dn", "w:lower", "tr:flat")):
+    if not any(token in pattern_tag for token in ("w:lower", "w:balanced")):
+        return None
+    if "w:balanced" in pattern_tag and "rsi:os" not in pattern_tag:
+        return None
+    if not any(token in pattern_tag for token in ("c:doji_up", "c:trend_up")):
         return None
 
     forecast_payload = (
@@ -1145,45 +1485,54 @@ def _strategy_surface_leading_override(
         return None
     if _coerce_bool(forecast_payload.get("allowed"), None) is not False:
         return None
-    if str(forecast_payload.get("reason") or "").strip().lower() != "expected_pips_contra":
+    if (
+        str(forecast_payload.get("reason") or "").strip().lower()
+        != "style_mismatch_range"
+    ):
         return None
 
     expected_pips = _to_float(forecast_payload.get("expected_pips"))
-    if expected_pips is None or expected_pips > -0.25:
+    if expected_pips is None or expected_pips > -0.95:
         return None
     forecast_p_up = _to_float(forecast_payload.get("p_up"))
-    if forecast_p_up is not None and forecast_p_up > 0.40:
+    if forecast_p_up is not None and forecast_p_up > 0.35:
         return None
 
-    tech_score = _to_float(entry_thesis.get("tech_score"))
-    if tech_score is None:
-        technical_context = entry_thesis.get("technical_context")
-        if isinstance(technical_context, dict):
-            tech_result = technical_context.get("result")
-            if isinstance(tech_result, dict):
-                tech_score = _to_float(tech_result.get("score"))
-    if tech_score is None or tech_score > 0.25:
+    live_setup_context = entry_thesis.get("live_setup_context")
+    if not isinstance(live_setup_context, dict):
+        return None
+    if str(live_setup_context.get("microstructure_bucket") or "") != "tight_normal":
+        return None
+    if str(live_setup_context.get("gap_bucket") or "") != "down_flat":
+        return None
+
+    ma_gap = _to_float(live_setup_context.get("ma_gap_pips"))
+    if ma_gap is None:
+        return None
+    if ma_gap < -0.70 or ma_gap > -0.30:
         return None
 
     history_score = None
     history_perf = entry_thesis.get("history_perf")
     if isinstance(history_perf, dict):
         history_score = _to_float(history_perf.get("score"))
-    if history_score is None or history_score > 0.25:
+    if history_score is None or history_score > 0.55:
         return None
 
     range_score = _to_float(entry_thesis.get("range_score"))
-    if range_score is None or range_score < 0.40:
+    if range_score is None or range_score < 0.24:
         return None
 
     return {
         "mode": "force_reject",
         "reason": "entry_leading_profile_surface_reject",
-        "surface": "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn",
+        "surface": "mlr_bounce_lower_range_fade_tight_normal_gap_down_flat_weak_ma_gap_style_mismatch",
         "forecast_reason": str(forecast_payload.get("reason") or ""),
         "forecast_expected_pips": round(float(expected_pips), 4),
-        "forecast_p_up": round(float(forecast_p_up), 6) if forecast_p_up is not None else None,
-        "tech_score": round(float(tech_score), 6),
+        "forecast_p_up": (
+            round(float(forecast_p_up), 6) if forecast_p_up is not None else None
+        ),
+        "ma_gap_pips": round(float(ma_gap), 6),
         "history_score": round(float(history_score), 6),
         "range_score": round(float(range_score), 6),
         "setup_fingerprint": setup_fingerprint,
@@ -1219,7 +1568,9 @@ def _apply_strategy_leading_profile(
 
     side_sign = 1 if units > 0 else -1
     side_key = "LONG" if side_sign > 0 else "SHORT"
-    reject_below = _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_REJECT_BELOW", 0.0)
+    reject_below = _strategy_env_float(
+        prefixes, "ENTRY_LEADING_PROFILE_REJECT_BELOW", 0.0
+    )
     reject_below = _strategy_env_float(
         prefixes,
         f"ENTRY_LEADING_PROFILE_REJECT_BELOW_{side_key}",
@@ -1232,11 +1583,16 @@ def _apply_strategy_leading_profile(
     ceil = max(floor, min(1.0, ceil))
     boost_max = max(
         0.0,
-        min(0.5, _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_BOOST_MAX", 0.10)),
+        min(
+            0.5, _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_BOOST_MAX", 0.10)
+        ),
     )
     penalty_max = max(
         0.0,
-        min(0.7, _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_PENALTY_MAX", 0.16)),
+        min(
+            0.7,
+            _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_PENALTY_MAX", 0.16),
+        ),
     )
     units_min_mult = max(
         0.1,
@@ -1283,14 +1639,20 @@ def _apply_strategy_leading_profile(
     support = 0.0
     contra = 0.0
     if total_weight > 0.0:
-        support = sum(
-            max(0.0, components[name]) * weights.get(name, 0.0)
-            for name in components
-        ) / total_weight
-        contra = sum(
-            max(0.0, -components[name]) * weights.get(name, 0.0)
-            for name in components
-        ) / total_weight
+        support = (
+            sum(
+                max(0.0, components[name]) * weights.get(name, 0.0)
+                for name in components
+            )
+            / total_weight
+        )
+        contra = (
+            sum(
+                max(0.0, -components[name]) * weights.get(name, 0.0)
+                for name in components
+            )
+            / total_weight
+        )
     probability_delta = support * boost_max - contra * penalty_max
     adjusted_probability = max(
         floor,
@@ -1328,7 +1690,9 @@ def _apply_strategy_leading_profile(
         reject = True
         units_multiplier = 0.0
         if reject_below > 0.0:
-            adjusted_probability = min(adjusted_probability, max(0.0, reject_below - 1e-6))
+            adjusted_probability = min(
+                adjusted_probability, max(0.0, reject_below - 1e-6)
+            )
 
     applied: dict[str, object] = {
         "strategy_tag": str(strategy_tag or ""),
@@ -1499,10 +1863,15 @@ def _build_entry_forecast_profile(
             step = _to_positive_int(contract.get("forecast_step_bars"))
             if step is not None:
                 profile["step_bars"] = int(step)
-        if "forecast_horizon" in contract and str(contract.get("forecast_horizon")).strip():
+        if (
+            "forecast_horizon" in contract
+            and str(contract.get("forecast_horizon")).strip()
+        ):
             profile["horizon"] = str(contract.get("forecast_horizon")).strip().lower()
         if "forecast_blend_with_bundle" in contract:
-            profile["blend_with_bundle"] = bool(contract.get("forecast_blend_with_bundle"))
+            profile["blend_with_bundle"] = bool(
+                contract.get("forecast_blend_with_bundle")
+            )
         if "forecast_technical_only" in contract:
             profile["technical_only"] = bool(contract.get("forecast_technical_only"))
         if "blend_with_bundle" in contract:
@@ -1517,7 +1886,9 @@ def _build_entry_forecast_profile(
         if support_horizons:
             profile["support_horizons"] = support_horizons
 
-    direct_profile = _normalize_forecast_horizon_profile(entry_thesis.get("forecast_profile"))
+    direct_profile = _normalize_forecast_horizon_profile(
+        entry_thesis.get("forecast_profile")
+    )
     if direct_profile:
         profile.update(direct_profile)
     explicit_timeframe = _normalize_timeframe(entry_thesis.get("forecast_timeframe"))
@@ -1527,7 +1898,9 @@ def _build_entry_forecast_profile(
     if explicit_step is not None:
         profile["step_bars"] = int(explicit_step)
     if "forecast_blend_with_bundle" in entry_thesis:
-        profile["blend_with_bundle"] = bool(entry_thesis.get("forecast_blend_with_bundle"))
+        profile["blend_with_bundle"] = bool(
+            entry_thesis.get("forecast_blend_with_bundle")
+        )
     if "forecast_technical_only" in entry_thesis:
         profile["technical_only"] = bool(entry_thesis.get("forecast_technical_only"))
     explicit_support_horizons = _normalize_horizon_list(
@@ -1566,7 +1939,9 @@ def _build_entry_forecast_profile(
         default_meta = dict(forecast_gate._HORIZON_META)
     except (AttributeError, TypeError):
         default_meta = {}
-    default_meta = default_meta.get(horizon_text) if isinstance(default_meta, dict) else None
+    default_meta = (
+        default_meta.get(horizon_text) if isinstance(default_meta, dict) else None
+    )
     if isinstance(default_meta, dict):
         tf = _normalize_timeframe(default_meta.get("timeframe"))
         if tf is not None:
@@ -1677,7 +2052,9 @@ def _normalize_tf_list(values: Iterable[object] | None) -> list[str]:
     return out
 
 
-def _to_tfs(entry_thesis: Optional[dict], requested: list[str], pocket: str) -> list[str]:
+def _to_tfs(
+    entry_thesis: Optional[dict], requested: list[str], pocket: str
+) -> list[str]:
     output: list[str] = []
 
     if isinstance(entry_thesis, dict):
@@ -1821,7 +2198,12 @@ def _collect_strategy_technical_context(
             continue
         payload: dict[str, object] = {}
         for key, raw in tf_data.items():
-            if key in {"candles", "timestamp", "last_closed_timestamp", "live_updated_ts"}:
+            if key in {
+                "candles",
+                "timestamp",
+                "last_closed_timestamp",
+                "live_updated_ts",
+            }:
                 continue
             if not include_all_fields and key not in fields_set:
                 continue
@@ -1927,7 +2309,9 @@ def _format_forecast_context(decision: Any) -> dict[str, object]:
         "reason": str(decision.reason or ""),
         "edge": _to_float(decision.edge),
         "p_up": _to_float(decision.p_up),
-        "rebound_probability": _to_float(getattr(decision, "rebound_probability", None)),
+        "rebound_probability": _to_float(
+            getattr(decision, "rebound_probability", None)
+        ),
         "expected_pips": _to_float(decision.expected_pips),
         "anchor_price": _to_float(decision.anchor_price),
         "target_price": _to_float(decision.target_price),
@@ -1942,16 +2326,26 @@ def _format_forecast_context(decision: Any) -> dict[str, object]:
         "rr_floor": _to_float(decision.rr_floor),
         "trend_strength": _to_float(decision.trend_strength),
         "range_pressure": _to_float(decision.range_pressure),
-        "future_flow": str(decision.future_flow) if decision.future_flow is not None else None,
-        "volatility_state": str(decision.volatility_state)
-        if decision.volatility_state is not None
-        else None,
-        "trend_state": str(decision.trend_state) if decision.trend_state is not None else None,
-        "range_state": str(decision.range_state) if decision.range_state is not None else None,
+        "future_flow": (
+            str(decision.future_flow) if decision.future_flow is not None else None
+        ),
+        "volatility_state": (
+            str(decision.volatility_state)
+            if decision.volatility_state is not None
+            else None
+        ),
+        "trend_state": (
+            str(decision.trend_state) if decision.trend_state is not None else None
+        ),
+        "range_state": (
+            str(decision.range_state) if decision.range_state is not None else None
+        ),
         "volatility_rank": _to_float(decision.volatility_rank),
         "regime_score": _to_float(decision.regime_score),
         "leading_indicator": (
-            str(decision.leading_indicator) if decision.leading_indicator is not None else None
+            str(decision.leading_indicator)
+            if decision.leading_indicator is not None
+            else None
         ),
         "leading_indicator_strength": _to_float(decision.leading_indicator_strength),
         "tf_confluence_score": _to_float(decision.tf_confluence_score),
@@ -1967,7 +2361,9 @@ def _format_forecast_context(decision: Any) -> dict[str, object]:
         ),
         "source": str(decision.source) if decision.source is not None else None,
         "style": str(decision.style) if decision.style is not None else None,
-        "feature_ts": str(decision.feature_ts) if decision.feature_ts is not None else None,
+        "feature_ts": (
+            str(decision.feature_ts) if decision.feature_ts is not None else None
+        ),
     }
 
 
@@ -2012,7 +2408,9 @@ def _inject_entry_forecast_context(
     )
     if isinstance(forecast_profile, dict) and forecast_profile:
         entry_thesis["forecast_profile"] = forecast_profile
-        if "horizon" in forecast_profile and isinstance(forecast_profile.get("horizon"), str):
+        if "horizon" in forecast_profile and isinstance(
+            forecast_profile.get("horizon"), str
+        ):
             entry_thesis["forecast_horizon"] = str(forecast_profile.get("horizon"))
         if "timeframe" in forecast_profile:
             entry_thesis["forecast_timeframe"] = forecast_profile.get("timeframe")
@@ -2088,7 +2486,12 @@ def _inject_entry_technical_context(
     requested_fields = _to_fields(entry_thesis)
     requested_ticks = _to_tick_requirements(entry_thesis)
     requested_candle_counts = _to_candle_counts(entry_thesis)
-    requested_ticks = requested_ticks or ["latest_bid", "latest_ask", "latest_mid", "spread_pips"]
+    requested_ticks = requested_ticks or [
+        "latest_bid",
+        "latest_ask",
+        "latest_mid",
+        "spread_pips",
+    ]
     technical_snapshot = _collect_strategy_technical_context(
         strategy_tag=strategy_tag,
         requested_tfs=requested_tfs,
@@ -2100,7 +2503,11 @@ def _inject_entry_technical_context(
     )
     existing_context = entry_thesis.get("technical_context")
     if isinstance(existing_context, dict):
-        existing_result = existing_context.get("result") if isinstance(existing_context.get("result"), dict) else None
+        existing_result = (
+            existing_context.get("result")
+            if isinstance(existing_context.get("result"), dict)
+            else None
+        )
     else:
         existing_context = {}
         existing_result = None
@@ -2224,14 +2631,18 @@ def _apply_strategy_feedback(
             applied["entry_units_max"] = int(round(units_max))
 
     if adjusted_probability is not None:
-        probability_multiplier = _to_float(advice.get("entry_probability_multiplier", 1.0))
+        probability_multiplier = _to_float(
+            advice.get("entry_probability_multiplier", 1.0)
+        )
         if probability_multiplier is None:
             probability_multiplier = 1.0
         probability_delta = _to_float(advice.get("entry_probability_delta", 0.0))
         if probability_delta is None:
             probability_delta = 0.0
         if probability_multiplier != 1.0 or probability_delta != 0.0:
-            adjusted_probability = adjusted_probability * probability_multiplier + probability_delta
+            adjusted_probability = (
+                adjusted_probability * probability_multiplier + probability_delta
+            )
             adjusted_probability = max(0.0, min(1.0, adjusted_probability))
             if adjusted_probability != entry_probability:
                 applied["entry_probability"] = {
@@ -2280,12 +2691,22 @@ def _apply_strategy_feedback(
         analysis_feedback["strategy_params"] = strategy_params
     if isinstance(configured_params, dict) and configured_params:
         analysis_feedback["configured_params"] = configured_params
-    if (applied or analysis_feedback.get("strategy_params") or analysis_feedback.get("configured_params")) and entry_thesis is not None:
+    if (
+        applied
+        or analysis_feedback.get("strategy_params")
+        or analysis_feedback.get("configured_params")
+    ) and entry_thesis is not None:
         # Keep both the new key (analysis_feedback) and historical key
         # (analysis_advice) for compatibility with any downstream consumers.
         entry_thesis["analysis_feedback"] = analysis_feedback
         entry_thesis["analysis_advice"] = analysis_feedback
-    return adjusted_units, adjusted_probability, adjusted_sl_price, adjusted_tp_price, applied
+    return (
+        adjusted_units,
+        adjusted_probability,
+        adjusted_sl_price,
+        adjusted_tp_price,
+        applied,
+    )
 
 
 def _apply_forecast_fusion(
@@ -2474,7 +2895,9 @@ def _apply_forecast_fusion(
     if strong_contra or weak_contra:
         adjusted_units = 0
         if adjusted_probability is not None:
-            adjusted_probability = max(0.0, min(float(adjusted_probability), direction_prob))
+            adjusted_probability = max(
+                0.0, min(float(adjusted_probability), direction_prob)
+            )
 
     applied: dict[str, object] = {
         "strategy_tag": str(strategy_tag or ""),
@@ -2496,7 +2919,9 @@ def _apply_forecast_fusion(
         "direction_bias": round(float(direction_bias), 6),
         "edge_strength": round(float(edge_strength), 6),
         "rebound_probability": (
-            round(float(rebound_probability), 6) if rebound_probability is not None else None
+            round(float(rebound_probability), 6)
+            if rebound_probability is not None
+            else None
         ),
         "rebound_side_support": (
             round(float(rebound_side_support), 6)
@@ -2510,7 +2935,9 @@ def _apply_forecast_fusion(
         "forecast_allowed": allowed_flag,
         "forecast_reason": forecast_context.get("reason"),
         "tf_confluence_score": (
-            round(float(tf_confluence_score), 6) if tf_confluence_score is not None else None
+            round(float(tf_confluence_score), 6)
+            if tf_confluence_score is not None
+            else None
         ),
         "tf_confluence_count": tf_confluence_count,
         "strong_contra_reject": bool(strong_contra),
@@ -2585,10 +3012,14 @@ def _apply_strategy_net_edge_gate(
 
     pocket_key = str(pocket or "").strip().lower()
     if pocket_key and pocket_key not in _STRATEGY_ENTRY_NET_EDGE_POCKETS:
-        return units, entry_probability, {
-            "enabled": 0.0,
-            "pocket": pocket_key,
-        }
+        return (
+            units,
+            entry_probability,
+            {
+                "enabled": 0.0,
+                "pocket": pocket_key,
+            },
+        )
 
     prefixes = _strategy_env_prefix_candidates(strategy_tag, entry_thesis, meta)
     probability = _entry_probability_value(entry_probability)
@@ -2659,7 +3090,9 @@ def _apply_strategy_net_edge_gate(
         return units, entry_probability, details
 
     probability = max(0.0, min(1.0, float(probability)))
-    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(sl_pips)
+    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(
+        sl_pips
+    )
     cost_pips = float(spread_pips) + slippage_pips + reject_cost_pips
     net_edge_pips = gross_edge_pips - cost_pips
     details.update(
@@ -2739,7 +3172,9 @@ def _apply_dynamic_alloc_trim(
         mult = 1.0
     if math.isnan(mult) or math.isinf(mult) or mult <= 0.0:
         mult = 1.0
-    mult = max(_STRATEGY_DYNAMIC_ALLOC_MULT_MIN, min(_STRATEGY_DYNAMIC_ALLOC_MULT_MAX, mult))
+    mult = max(
+        _STRATEGY_DYNAMIC_ALLOC_MULT_MIN, min(_STRATEGY_DYNAMIC_ALLOC_MULT_MAX, mult)
+    )
     effective_mult = min(1.0, mult) if _STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY else mult
     if effective_mult >= 0.999:
         return units, None
@@ -2874,7 +3309,8 @@ def _apply_participation_alloc(
         prob_offset = max(
             -min(
                 _STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
-                profile_prob_cut_cap or _STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
+                profile_prob_cut_cap
+                or _STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
             ),
             min(0.0, raw_prob_offset),
         )
@@ -2882,9 +3318,14 @@ def _apply_participation_alloc(
     if profile_prob_cap <= 0.0:
         profile_prob_cap = max(
             0.0,
-            min(0.25, float(profile.get("max_probability_boost", raw_boost) or raw_boost)),
+            min(
+                0.25,
+                float(profile.get("max_probability_boost", raw_boost) or raw_boost),
+            ),
         )
-    prob_boost = min(_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, profile_prob_cap, raw_boost)
+    prob_boost = min(
+        _STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, profile_prob_cap, raw_boost
+    )
     next_probability = normalized_probability
     if normalized_probability is not None:
         if prob_offset < 0.0:
@@ -2892,7 +3333,11 @@ def _apply_participation_alloc(
         elif prob_boost > 0.0:
             next_probability = max(
                 0.0,
-                min(1.0, normalized_probability + (1.0 - normalized_probability) * prob_boost),
+                min(
+                    1.0,
+                    normalized_probability
+                    + (1.0 - normalized_probability) * prob_boost,
+                ),
             )
     if next_probability is not None:
         next_probability = round(float(next_probability), 6)
@@ -2923,16 +3368,29 @@ def _apply_participation_alloc(
         payload["reason"] = "overused_trim"
     if prob_offset < 0.0:
         payload["probability_offset"] = round(prob_offset, 4)
-    if normalized_probability is not None and next_probability is not None and abs(next_probability - normalized_probability) > 1e-9:
+    if (
+        normalized_probability is not None
+        and next_probability is not None
+        and abs(next_probability - normalized_probability) > 1e-9
+    ):
         if prob_boost > 0.0:
             payload["probability_boost"] = round(prob_boost, 4)
         payload["entry_probability_before"] = round(normalized_probability, 6)
         payload["entry_probability_after"] = round(next_probability, 6)
-        if next_probability > normalized_probability + 1e-9 and payload.get("reason") == "pass":
+        if (
+            next_probability > normalized_probability + 1e-9
+            and payload.get("reason") == "pass"
+        ):
             payload["reason"] = "underused_boost"
-        elif next_probability > normalized_probability + 1e-9 and payload.get("reason") == "overused_trim":
+        elif (
+            next_probability > normalized_probability + 1e-9
+            and payload.get("reason") == "overused_trim"
+        ):
             payload["reason"] = "rebalance"
-        elif next_probability < normalized_probability - 1e-9 and payload.get("reason") == "pass":
+        elif (
+            next_probability < normalized_probability - 1e-9
+            and payload.get("reason") == "pass"
+        ):
             payload["reason"] = "overused_trim"
     setup_override = profile.get("setup_override")
     if isinstance(setup_override, dict):
@@ -2956,7 +3414,11 @@ def _inject_macro_news_context(
         )
     except Exception:
         current = None
-    if not isinstance(current, dict) or not current.get("found") or current.get("stale"):
+    if (
+        not isinstance(current, dict)
+        or not current.get("found")
+        or current.get("stale")
+    ):
         return entry_thesis, None
 
     headlines: list[dict[str, object]] = []
@@ -2980,7 +3442,9 @@ def _inject_macro_news_context(
         "caution_window_active": bool(current.get("caution_window_active")),
         "usd_jpy_bias": str(current.get("usd_jpy_bias") or "neutral"),
         "headlines": headlines,
-        "sources": current.get("sources") if isinstance(current.get("sources"), list) else [],
+        "sources": (
+            current.get("sources") if isinstance(current.get("sources"), list) else []
+        ),
     }
     entry_thesis["macro_news_context"] = summary
     if summary["caution_window_active"]:
@@ -3127,7 +3591,11 @@ def _apply_auto_canary(
     setup_override = override.get("setup_override")
     if isinstance(setup_override, dict):
         payload["setup_override"] = dict(setup_override)
-    if normalized_probability is not None and next_probability is not None and abs(next_probability - normalized_probability) > 1e-9:
+    if (
+        normalized_probability is not None
+        and next_probability is not None
+        and abs(next_probability - normalized_probability) > 1e-9
+    ):
         payload["entry_probability_before"] = round(normalized_probability, 6)
         payload["entry_probability_after"] = round(next_probability, 6)
     entry_thesis["auto_canary"] = payload
@@ -3228,7 +3696,9 @@ async def _coordinate_entry_units(
         and final_units_int
         and abs(final_units_int) > requested_abs_units
     ):
-        final_units_int = requested_abs_units if final_units_int > 0 else -requested_abs_units
+        final_units_int = (
+            requested_abs_units if final_units_int > 0 else -requested_abs_units
+        )
     return final_units_int, None
 
 
@@ -3236,11 +3706,7 @@ def _normalized_reject_reason(reason: object, fallback: str) -> str:
     text = str(reason or "").strip().lower()
     if not text:
         return fallback
-    compact = (
-        text.replace(":", "_")
-        .replace("/", "_")
-        .replace(" ", "_")
-    )
+    compact = text.replace(":", "_").replace("/", "_").replace(" ", "_")
     safe = "".join(ch for ch in compact if ch.isalnum() or ch in {"_", "-", "."})
     safe = safe.strip("._-")
     return safe or fallback
@@ -3302,7 +3768,9 @@ async def market_order(
     arbiter_final: bool = False,
 ) -> Optional[str]:
     requested_units = int(units)
-    resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
+    resolved_strategy_tag = _resolve_strategy_tag(
+        strategy_tag, client_order_id, entry_thesis
+    )
     if entry_thesis is None:
         entry_thesis = {}
     entry_thesis = _inject_entry_technical_context(
@@ -3345,7 +3813,9 @@ async def market_order(
         status="pass" if isinstance(live_setup_ctx, dict) else "skip",
         units_after=units,
         entry_probability_after=entry_probability,
-        reason=_entry_path_reason(live_setup_ctx, "flow_regime", "microstructure_bucket"),
+        reason=_entry_path_reason(
+            live_setup_ctx, "flow_regime", "microstructure_bucket"
+        ),
         detail_key="live_setup_context",
     )
     entry_thesis, macro_news_context = _inject_macro_news_context(entry_thesis)
@@ -3376,15 +3846,17 @@ async def market_order(
     )
     feedback_units_before = units
     feedback_probability_before = entry_probability
-    units, entry_probability, sl_price, tp_price, feedback_applied = _apply_strategy_feedback(
-        resolved_strategy_tag,
-        pocket=pocket,
-        units=units,
-        entry_probability=entry_probability,
-        entry_price=_resolve_entry_price(units, entry_thesis),
-        sl_price=sl_price,
-        tp_price=tp_price,
-        entry_thesis=entry_thesis,
+    units, entry_probability, sl_price, tp_price, feedback_applied = (
+        _apply_strategy_feedback(
+            resolved_strategy_tag,
+            pocket=pocket,
+            units=units,
+            entry_probability=entry_probability,
+            entry_price=_resolve_entry_price(units, entry_thesis),
+            sl_price=sl_price,
+            tp_price=tp_price,
+            entry_thesis=entry_thesis,
+        )
     )
     entry_thesis = _append_entry_path_stage(
         entry_thesis,
@@ -3394,7 +3866,8 @@ async def market_order(
             units_after=units,
             entry_probability_before=feedback_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(feedback_applied, dict) or not feedback_applied,
+            skip_when_unchanged=not isinstance(feedback_applied, dict)
+            or not feedback_applied,
         ),
         units_before=feedback_units_before,
         units_after=units,
@@ -3439,13 +3912,16 @@ async def market_order(
             units_after=units,
             entry_probability_before=forecast_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(forecast_applied, dict) or not forecast_applied,
+            skip_when_unchanged=not isinstance(forecast_applied, dict)
+            or not forecast_applied,
         ),
         units_before=forecast_units_before,
         units_after=units,
         entry_probability_before=forecast_probability_before,
         entry_probability_after=entry_probability,
-        reason=_entry_path_reason(forecast_applied, "reject_reason", "forecast_reason", "reason"),
+        reason=_entry_path_reason(
+            forecast_applied, "reject_reason", "forecast_reason", "reason"
+        ),
         detail_key="forecast_fusion",
     )
     if not units:
@@ -3488,7 +3964,8 @@ async def market_order(
             units_after=units,
             entry_probability_before=net_edge_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(net_edge_applied, dict) or not net_edge_applied,
+            skip_when_unchanged=not isinstance(net_edge_applied, dict)
+            or not net_edge_applied,
         ),
         units_before=net_edge_units_before,
         units_after=units,
@@ -3540,7 +4017,8 @@ async def market_order(
             units_after=units,
             entry_probability_before=leading_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(leading_applied, dict) or not leading_applied,
+            skip_when_unchanged=not isinstance(leading_applied, dict)
+            or not leading_applied,
         ),
         units_before=leading_units_before,
         units_after=units,
@@ -3590,7 +4068,8 @@ async def market_order(
             units_after=units,
             entry_probability_before=participation_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(participation_applied, dict) or not participation_applied,
+            skip_when_unchanged=not isinstance(participation_applied, dict)
+            or not participation_applied,
         ),
         units_before=participation_units_before,
         units_after=units,
@@ -3617,7 +4096,8 @@ async def market_order(
             units_after=units,
             entry_probability_before=auto_canary_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(auto_canary_applied, dict) or not auto_canary_applied,
+            skip_when_unchanged=not isinstance(auto_canary_applied, dict)
+            or not auto_canary_applied,
         ),
         units_before=auto_canary_units_before,
         units_after=units,
@@ -3724,7 +4204,9 @@ async def limit_order(
     meta: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     requested_units = int(units)
-    resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
+    resolved_strategy_tag = _resolve_strategy_tag(
+        strategy_tag, client_order_id, entry_thesis
+    )
     if entry_thesis is None:
         entry_thesis = {}
     entry_thesis = _inject_entry_technical_context(
@@ -3767,7 +4249,9 @@ async def limit_order(
         status="pass" if isinstance(live_setup_ctx, dict) else "skip",
         units_after=units,
         entry_probability_after=entry_probability,
-        reason=_entry_path_reason(live_setup_ctx, "flow_regime", "microstructure_bucket"),
+        reason=_entry_path_reason(
+            live_setup_ctx, "flow_regime", "microstructure_bucket"
+        ),
         detail_key="live_setup_context",
     )
     entry_thesis, macro_news_context = _inject_macro_news_context(entry_thesis)
@@ -3798,15 +4282,17 @@ async def limit_order(
     )
     feedback_units_before = units
     feedback_probability_before = entry_probability
-    units, entry_probability, sl_price, tp_price, feedback_applied = _apply_strategy_feedback(
-        resolved_strategy_tag,
-        pocket=pocket,
-        units=units,
-        entry_probability=entry_probability,
-        entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
-        sl_price=sl_price,
-        tp_price=tp_price,
-        entry_thesis=entry_thesis,
+    units, entry_probability, sl_price, tp_price, feedback_applied = (
+        _apply_strategy_feedback(
+            resolved_strategy_tag,
+            pocket=pocket,
+            units=units,
+            entry_probability=entry_probability,
+            entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
+            sl_price=sl_price,
+            tp_price=tp_price,
+            entry_thesis=entry_thesis,
+        )
     )
     entry_thesis = _append_entry_path_stage(
         entry_thesis,
@@ -3816,7 +4302,8 @@ async def limit_order(
             units_after=units,
             entry_probability_before=feedback_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(feedback_applied, dict) or not feedback_applied,
+            skip_when_unchanged=not isinstance(feedback_applied, dict)
+            or not feedback_applied,
         ),
         units_before=feedback_units_before,
         units_after=units,
@@ -3861,13 +4348,16 @@ async def limit_order(
             units_after=units,
             entry_probability_before=forecast_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(forecast_applied, dict) or not forecast_applied,
+            skip_when_unchanged=not isinstance(forecast_applied, dict)
+            or not forecast_applied,
         ),
         units_before=forecast_units_before,
         units_after=units,
         entry_probability_before=forecast_probability_before,
         entry_probability_after=entry_probability,
-        reason=_entry_path_reason(forecast_applied, "reject_reason", "forecast_reason", "reason"),
+        reason=_entry_path_reason(
+            forecast_applied, "reject_reason", "forecast_reason", "reason"
+        ),
         detail_key="forecast_fusion",
     )
     if not units:
@@ -3910,7 +4400,8 @@ async def limit_order(
             units_after=units,
             entry_probability_before=net_edge_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(net_edge_applied, dict) or not net_edge_applied,
+            skip_when_unchanged=not isinstance(net_edge_applied, dict)
+            or not net_edge_applied,
         ),
         units_before=net_edge_units_before,
         units_after=units,
@@ -3962,7 +4453,8 @@ async def limit_order(
             units_after=units,
             entry_probability_before=leading_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(leading_applied, dict) or not leading_applied,
+            skip_when_unchanged=not isinstance(leading_applied, dict)
+            or not leading_applied,
         ),
         units_before=leading_units_before,
         units_after=units,
@@ -4012,7 +4504,8 @@ async def limit_order(
             units_after=units,
             entry_probability_before=participation_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(participation_applied, dict) or not participation_applied,
+            skip_when_unchanged=not isinstance(participation_applied, dict)
+            or not participation_applied,
         ),
         units_before=participation_units_before,
         units_after=units,
@@ -4039,7 +4532,8 @@ async def limit_order(
             units_after=units,
             entry_probability_before=auto_canary_probability_before,
             entry_probability_after=entry_probability,
-            skip_when_unchanged=not isinstance(auto_canary_applied, dict) or not auto_canary_applied,
+            skip_when_unchanged=not isinstance(auto_canary_applied, dict)
+            or not auto_canary_applied,
         ),
         units_before=auto_canary_units_before,
         units_after=units,

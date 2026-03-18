@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compute soft participation boosts/trims from recent entry-path conversion."""
+
 # ruff: noqa: E402
 
 from __future__ import annotations

@@ -116,7 +116,9 @@ def set_block(strategy: str, seconds: int, reason: str) -> None:
         logging.warning("[strategy_guard] set_block failed: %s", exc)
 
 
-def is_blocked(strategy: str, now: Optional[datetime] = None) -> Tuple[bool, Optional[int], Optional[str]]:
+def is_blocked(
+    strategy: str, now: Optional[datetime] = None
+) -> Tuple[bool, Optional[int], Optional[str]]:
     """Return (blocked, remaining_seconds, reason) for the strategy."""
     if not strategy:
         return False, None, None

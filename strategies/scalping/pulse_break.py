@@ -51,7 +51,9 @@ class PulseBreak:
         except Exception:
             adx = 0.0
         if close is None or ema20 is None or ema50 is None:
-            PulseBreak._log_skip("missing_inputs", close=close, ema20=ema20, ema50=ema50)
+            PulseBreak._log_skip(
+                "missing_inputs", close=close, ema20=ema20, ema50=ema50
+            )
             return None
 
         if atr_pips is None:
@@ -80,7 +82,9 @@ class PulseBreak:
         range_pips = 0.0
         if isinstance(candles, list) and candles:
             try:
-                highs = [float(c.get("high") or c.get("h") or 0.0) for c in candles[-18:]]
+                highs = [
+                    float(c.get("high") or c.get("h") or 0.0) for c in candles[-18:]
+                ]
                 lows = [float(c.get("low") or c.get("l") or 0.0) for c in candles[-18:]]
                 if highs and lows:
                     range_pips = (max(highs) - min(lows)) / 0.01
@@ -134,13 +138,17 @@ class PulseBreak:
             return None
 
         vol_thresh = vol_floor
-        short_enabled_env = os.getenv("PULSE_BREAK_ENABLE_SHORT", "1").strip().lower() not in {"", "0", "false", "no"}
+        short_enabled_env = os.getenv(
+            "PULSE_BREAK_ENABLE_SHORT", "1"
+        ).strip().lower() not in {"", "0", "false", "no"}
         try:
             short_adx_gate = float(os.getenv("PULSE_BREAK_SHORT_ADX", "22.0"))
         except Exception:
             short_adx_gate = 22.0
         try:
-            short_vol_cushion = float(os.getenv("PULSE_BREAK_SHORT_VOL_CUSHION", "0.12"))
+            short_vol_cushion = float(
+                os.getenv("PULSE_BREAK_SHORT_VOL_CUSHION", "0.12")
+            )
         except Exception:
             short_vol_cushion = 0.12
         short_vol_cushion = max(0.0, min(short_vol_cushion, 0.4))
@@ -153,6 +161,7 @@ class PulseBreak:
         atr_slope = fac.get("atr_slope_pips", 0.0) or 0.0
         fast_cut = max(6.0, atr_pips * 0.9)
         fast_cut_time = max(60.0, atr_pips * 15.0)
+
         def _build_payload(action: str, slope_bonus: float, tag_suffix: str) -> Dict:
             base_conf = 52.0 + abs(momentum + bias) * 6200 + vol_5m * 5.0 + slope_bonus
             confidence = int(max(50.0, min(92.0, base_conf)))
@@ -162,16 +171,18 @@ class PulseBreak:
                 confidence = int(confidence * 0.93)
             tp = max(4.8, min(6.4, atr_pips * 1.9))
             sl = max(3.1, min(tp * 0.7, atr_pips * 1.4))
-            return _attach_kill({
-                "action": action,
-                "sl_pips": round(sl, 2),
-                "tp_pips": round(tp, 2),
-                "confidence": confidence,
-                "fast_cut_pips": round(fast_cut, 2),
-                "fast_cut_time_sec": int(fast_cut_time),
-                "fast_cut_hard_mult": 1.6,
-                "tag": f"{PulseBreak.name}-{tag_suffix}",
-            })
+            return _attach_kill(
+                {
+                    "action": action,
+                    "sl_pips": round(sl, 2),
+                    "tp_pips": round(tp, 2),
+                    "confidence": confidence,
+                    "fast_cut_pips": round(fast_cut, 2),
+                    "fast_cut_time_sec": int(fast_cut_time),
+                    "fast_cut_hard_mult": 1.6,
+                    "tag": f"{PulseBreak.name}-{tag_suffix}",
+                }
+            )
 
         if momentum > 0 and bias > 0.025:
             if ema100 is not None and ema20 < ema100:
@@ -184,7 +195,9 @@ class PulseBreak:
             if adx_slope < 0.015:
                 PulseBreak._log_skip("adx_slope_flat", adx_slope=round(adx_slope, 4))
                 return None
-            slope_bonus = max(0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0))
+            slope_bonus = max(
+                0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0)
+            )
             return _build_payload("OPEN_LONG", slope_bonus, "momentum-up")
 
         if momentum < 0 and bias < -0.025:
@@ -223,9 +236,13 @@ class PulseBreak:
                 )
                 return None
             if adx_slope < 0.008:
-                PulseBreak._log_skip("adx_slope_flat_short", adx_slope=round(adx_slope, 4))
+                PulseBreak._log_skip(
+                    "adx_slope_flat_short", adx_slope=round(adx_slope, 4)
+                )
                 return None
-            slope_bonus = max(0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0))
+            slope_bonus = max(
+                0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0)
+            )
             return _build_payload("OPEN_SHORT", slope_bonus, "momentum-down")
 
         PulseBreak._log_skip(

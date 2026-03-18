@@ -41,7 +41,6 @@ from workers.common.tick_lookahead_edge import decide_tick_lookahead_edge
 
 from . import config
 
-
 LOG = logging.getLogger(__name__)
 
 
@@ -86,7 +85,9 @@ class TpTimingProfile:
 _TP_TIMING_CACHE: dict[tuple[str, str], tuple[float, TpTimingProfile]] = {}
 _TRADE_MFE_PIPS: dict[str, float] = {}
 _TRADE_FORCE_EXIT_DEFER_LOG_MONO: dict[str, float] = {}
-_PROFIT_BANK_STATS_CACHE: dict[tuple[str, str, str, str], tuple[float, tuple[float, float, float]]] = {}
+_PROFIT_BANK_STATS_CACHE: dict[
+    tuple[str, str, str, str], tuple[float, tuple[float, float, float]]
+] = {}
 _PROFIT_BANK_START_CACHE: tuple[str, Optional[datetime.datetime]] = ("", None)
 _PROFIT_BANK_LAST_CLOSE_MONO: float = 0.0
 _SIGNAL_WINDOW_STATS_CACHE: dict[
@@ -97,7 +98,9 @@ _SIGNAL_WINDOW_SHADOW_LOG_MONO: float = 0.0
 _LAST_FAST_FLIP_MONO: float = 0.0
 _LAST_SIDE_METRICS_FLIP_MONO: float = 0.0
 _SL_STREAK_CACHE: dict[tuple[str, str], tuple[float, Optional["StopLossStreak"]]] = {}
-_SL_METRICS_CACHE: dict[tuple[str, str], tuple[float, Optional["SideCloseMetrics"]]] = {}
+_SL_METRICS_CACHE: dict[tuple[str, str], tuple[float, Optional["SideCloseMetrics"]]] = (
+    {}
+)
 _RECENT_STRATEGY_FILL_CACHE: dict[
     tuple[str, int],
     tuple[float, Optional[int]],
@@ -471,7 +474,7 @@ def _load_tp_timing_profile(strategy_tag: str, pocket: str) -> TpTimingProfile:
     multiplier = 1.0
     if sample >= config.TP_HOLD_MIN_TRADES and avg_tp_sec > 0.0:
         ratio = config.TP_TARGET_HOLD_SEC / max(1.0, avg_tp_sec)
-        multiplier = ratio ** 0.5
+        multiplier = ratio**0.5
     multiplier = max(config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, multiplier))
 
     profile = TpTimingProfile(
@@ -504,7 +507,9 @@ def _norm01(value: float, low: float, high: float) -> float:
     return _clamp((value - low) / (high - low), 0.0, 1.0)
 
 
-def _resolve_allow_hour_entry_policy(now_utc: datetime.datetime) -> AllowHourEntryPolicy:
+def _resolve_allow_hour_entry_policy(
+    now_utc: datetime.datetime,
+) -> AllowHourEntryPolicy:
     outside_hour_jst = _entry_outside_allow_hour_jst(now_utc)
     if outside_hour_jst is None:
         return AllowHourEntryPolicy(
@@ -535,12 +540,18 @@ def _resolve_allow_hour_entry_policy(now_utc: datetime.datetime) -> AllowHourEnt
     min_confidence = int(
         round(
             _safe_float(
-                getattr(config, "ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE", config.CONFIDENCE_FLOOR),
+                getattr(
+                    config,
+                    "ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE",
+                    config.CONFIDENCE_FLOOR,
+                ),
                 float(config.CONFIDENCE_FLOOR),
             )
         )
     )
-    min_confidence = max(config.CONFIDENCE_FLOOR, min(config.CONFIDENCE_CEIL, min_confidence))
+    min_confidence = max(
+        config.CONFIDENCE_FLOOR, min(config.CONFIDENCE_CEIL, min_confidence)
+    )
     min_entry_probability = _clamp(
         _safe_float(
             getattr(config, "ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY", 0.62),
@@ -560,12 +571,17 @@ def _resolve_allow_hour_entry_policy(now_utc: datetime.datetime) -> AllowHourEnt
 
 
 def _signal_window_bucket(window_sec: float) -> float:
-    step = max(0.01, _safe_float(getattr(config, "SIGNAL_WINDOW_ADAPTIVE_BUCKET_SEC", 0.05), 0.05))
+    step = max(
+        0.01,
+        _safe_float(getattr(config, "SIGNAL_WINDOW_ADAPTIVE_BUCKET_SEC", 0.05), 0.05),
+    )
     value = max(0.0, _safe_float(window_sec, 0.0))
     return round(round(value / step) * step, 4)
 
 
-def _load_signal_window_stats(*, strategy_tag: str, pocket: str) -> list[dict[str, object]]:
+def _load_signal_window_stats(
+    *, strategy_tag: str, pocket: str
+) -> list[dict[str, object]]:
     cache_key = (
         str(strategy_tag or "").strip().lower(),
         str(pocket or "").strip().lower(),
@@ -804,7 +820,9 @@ def _maybe_adapt_signal_window(
         signal = candidate["signal"]
         if not isinstance(signal, TickSignal):
             continue
-        metrics = _score_signal_window_candidate(candidate=signal, stats_rows=stats_rows)
+        metrics = _score_signal_window_candidate(
+            candidate=signal, stats_rows=stats_rows
+        )
         scored.append({**candidate, **metrics})
     if not scored:
         return base_signal, {}
@@ -822,7 +840,9 @@ def _maybe_adapt_signal_window(
         ),
     )
 
-    margin = max(0.0, _safe_float(config.SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS, 0.0))
+    margin = max(
+        0.0, _safe_float(config.SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS, 0.0)
+    )
     min_trades = max(1, int(_safe_float(config.SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES, 30)))
     improvement = _safe_float(best_candidate.get("score_pips"), 0.0) - _safe_float(
         live_candidate.get("score_pips"),
@@ -843,7 +863,11 @@ def _maybe_adapt_signal_window(
 
     global _SIGNAL_WINDOW_SHADOW_LOG_MONO
     now_mono = time.monotonic()
-    if shadow_enabled and (now_mono - _SIGNAL_WINDOW_SHADOW_LOG_MONO) >= config.SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC:
+    if (
+        shadow_enabled
+        and (now_mono - _SIGNAL_WINDOW_SHADOW_LOG_MONO)
+        >= config.SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC
+    ):
         top = sorted(
             scored,
             key=lambda item: _safe_float(item.get("score_pips"), 0.0),
@@ -876,10 +900,14 @@ def _maybe_adapt_signal_window(
         "shadow_enabled": shadow_enabled,
         "applied": should_apply,
         "live_window_sec": round(_safe_float(base_signal.signal_window_sec, 0.0), 3),
-        "selected_window_sec": round(_safe_float(selected_signal.signal_window_sec, 0.0), 3),
+        "selected_window_sec": round(
+            _safe_float(selected_signal.signal_window_sec, 0.0), 3
+        ),
         "best_window_sec": round(_safe_float(best_candidate.get("window_sec"), 0.0), 3),
         "live_score_pips": round(_safe_float(live_candidate.get("score_pips"), 0.0), 5),
-        "selected_score_pips": round(_safe_float(selected_candidate.get("score_pips"), 0.0), 5),
+        "selected_score_pips": round(
+            _safe_float(selected_candidate.get("score_pips"), 0.0), 5
+        ),
         "best_score_pips": round(_safe_float(best_candidate.get("score_pips"), 0.0), 5),
         "best_sample": int(_safe_float(best_candidate.get("sample"), 0.0)),
         "candidate_count": len(scored),
@@ -959,9 +987,14 @@ def _maybe_rescue_negative_lookahead(
         return None
     if bool(getattr(config, "TECH_ROUTER_ENABLED", False)):
         return None
-    if lookahead_decision is None or bool(getattr(lookahead_decision, "allow_entry", False)):
+    if lookahead_decision is None or bool(
+        getattr(lookahead_decision, "allow_entry", False)
+    ):
         return None
-    if str(getattr(lookahead_decision, "reason", "")).strip().lower() != "edge_negative_block":
+    if (
+        str(getattr(lookahead_decision, "reason", "")).strip().lower()
+        != "edge_negative_block"
+    ):
         return None
 
     max_negative_edge = max(
@@ -1026,10 +1059,14 @@ def _maybe_rescue_negative_lookahead(
     )
 
     spread_pips = max(0.0, _safe_float(signal.spread_pips, 0.0))
-    if spread_pips <= 0.0 or spread_pips > max(0.0, _safe_float(config.MAX_SPREAD_PIPS, 0.0)):
+    if spread_pips <= 0.0 or spread_pips > max(
+        0.0, _safe_float(config.MAX_SPREAD_PIPS, 0.0)
+    ):
         return None
 
-    pred_move_pips = max(0.0, _safe_float(getattr(lookahead_decision, "pred_move_pips", 0.0), 0.0))
+    pred_move_pips = max(
+        0.0, _safe_float(getattr(lookahead_decision, "pred_move_pips", 0.0), 0.0)
+    )
     edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
     if edge_pips < -max_negative_edge or pred_move_pips < min_pred_move:
         return None
@@ -1053,7 +1090,9 @@ def _maybe_rescue_negative_lookahead(
     if recent_fills is None or recent_fills > max_recent_fills:
         return None
 
-    edge_nearness = _clamp((edge_pips + max_negative_edge) / max(max_negative_edge, 0.05), 0.0, 1.0)
+    edge_nearness = _clamp(
+        (edge_pips + max_negative_edge) / max(max_negative_edge, 0.05), 0.0, 1.0
+    )
     pred_ratio = _clamp(pred_move_pips / max(min_pred_move * 2.0, 0.1), 0.0, 1.0)
     momentum_ratio = _clamp(momentum_abs / max(min_momentum * 2.0, 0.1), 0.0, 1.0)
     range_ratio = _clamp(signal_range_pips / max(min_range * 2.0, 0.1), 0.0, 1.0)
@@ -1098,7 +1137,10 @@ def _maybe_apply_lookahead_rescue_units_floor(
     floor_units = min(
         floor_units,
         max(min_units, min_units * 2),
-        max(min_units, int(_safe_float(getattr(config, "MAX_UNITS", min_units), min_units))),
+        max(
+            min_units,
+            int(_safe_float(getattr(config, "MAX_UNITS", min_units), min_units)),
+        ),
     )
     if units >= floor_units:
         return units, "sufficient"
@@ -1222,8 +1264,12 @@ def _build_mtf_regime(factors: Optional[dict] = None) -> Optional[MtfRegime]:
 
     adx_mix = (0.6 * adx_m1) + (0.4 * adx_m5)
     adx_norm = _norm01(adx_mix, config.MTF_ADX_LOW, config.MTF_ADX_HIGH)
-    atr_norm_m1 = _norm01(atr_m1, config.MTF_ATR_M1_LOW_PIPS, config.MTF_ATR_M1_HIGH_PIPS)
-    atr_norm_m5 = _norm01(atr_m5, config.MTF_ATR_M5_LOW_PIPS, config.MTF_ATR_M5_HIGH_PIPS)
+    atr_norm_m1 = _norm01(
+        atr_m1, config.MTF_ATR_M1_LOW_PIPS, config.MTF_ATR_M1_HIGH_PIPS
+    )
+    atr_norm_m5 = _norm01(
+        atr_m5, config.MTF_ATR_M5_LOW_PIPS, config.MTF_ATR_M5_HIGH_PIPS
+    )
     atr_norm = (0.55 * atr_norm_m1) + (0.45 * atr_norm_m5)
     heat_score = _clamp((0.60 * adx_norm) + (0.40 * atr_norm), 0.0, 1.0)
 
@@ -1267,9 +1313,7 @@ def _trade_side_from_units(units: int) -> Optional[str]:
 
 def _trade_entry_price(trade: dict) -> Optional[float]:
     entry = _safe_float(
-        trade.get("price")
-        or trade.get("entry_price")
-        or trade.get("open_price"),
+        trade.get("price") or trade.get("entry_price") or trade.get("open_price"),
         0.0,
     )
     return entry if entry > 0.0 else None
@@ -1299,7 +1343,7 @@ def _extract_tf_candles(
     if not isinstance(candles, list) or len(candles) < 5:
         return []
     cleaned: list[dict] = []
-    for row in candles[-max(5, int(limit)):]:
+    for row in candles[-max(5, int(limit)) :]:
         if not isinstance(row, dict):
             continue
         high = _safe_float(row.get("high"), 0.0)
@@ -1499,22 +1543,16 @@ def _detect_momentum_stall_for_open_trade(
         return False, first_delta, last_delta
 
     if trade_side == "long":
-        if (
-            first_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS
-            and (
-                last_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
-                or (0.0 <= last_delta <= flat_cap)
-            )
+        if first_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS and (
+            last_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+            or (0.0 <= last_delta <= flat_cap)
         ):
             return True, first_delta, last_delta
         return False, first_delta, last_delta
 
-    if (
-        first_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS
-        and (
-            last_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
-            or ( -flat_cap <= last_delta <= 0.0 )
-        )
+    if first_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS and (
+        last_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+        or (-flat_cap <= last_delta <= 0.0)
     ):
         return True, first_delta, last_delta
     return False, first_delta, last_delta
@@ -1632,7 +1670,9 @@ def _build_technical_trade_profile(
         hard_loss_mult *= config.TECH_ROUTER_COUNTER_HARD_LOSS_MULT
 
     edge_ratio = 0.0
-    if lookahead_decision is not None and bool(getattr(lookahead_decision, "allow_entry", False)):
+    if lookahead_decision is not None and bool(
+        getattr(lookahead_decision, "allow_entry", False)
+    ):
         edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
         edge_ref = max(0.05, float(config.LOOKAHEAD_EDGE_REF_PIPS))
         if edge_pips > edge_ref:
@@ -1641,7 +1681,9 @@ def _build_technical_trade_profile(
     if edge_ratio > 0.0:
         tp_mult *= 1.0 + (config.TECH_ROUTER_EDGE_TP_BOOST_MAX * edge_ratio)
         hold_mult *= 1.0 + (config.TECH_ROUTER_EDGE_HOLD_BOOST_MAX * edge_ratio)
-        hard_loss_mult *= 1.0 + (config.TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX * edge_ratio)
+        hard_loss_mult *= 1.0 + (
+            config.TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX * edge_ratio
+        )
 
     hold_mult = max(0.2, float(hold_mult))
     hard_loss_mult = max(0.2, float(hard_loss_mult))
@@ -1713,7 +1755,9 @@ def _force_exit_thresholds_for_side(side: str) -> tuple[float, float]:
     return max_hold_sec, max_floating_loss_pips
 
 
-def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) -> float:
+def _force_exit_hard_loss_trigger_pips(
+    trade: dict, base_hard_loss_pips: float
+) -> float:
     """Return effective hard-loss trigger pips for force-exit decisions.
 
     `unrealized_pl_pips` includes spread costs; cutting exactly at `-base_hard_loss_pips`
@@ -1885,8 +1929,12 @@ async def _apply_profit_bank_release(
         return 0
 
     target_tag = str(config.STRATEGY_TAG or "").strip().lower()
-    excluded_trade_ids = {str(t).strip() for t in config.PROFIT_BANK_EXCLUDE_TRADE_IDS if str(t).strip()}
-    excluded_client_ids = {str(t).strip() for t in config.PROFIT_BANK_EXCLUDE_CLIENT_IDS if str(t).strip()}
+    excluded_trade_ids = {
+        str(t).strip() for t in config.PROFIT_BANK_EXCLUDE_TRADE_IDS if str(t).strip()
+    }
+    excluded_client_ids = {
+        str(t).strip() for t in config.PROFIT_BANK_EXCLUDE_CLIENT_IDS if str(t).strip()
+    }
     candidates: list[ProfitBankCandidate] = []
     for trade in open_trades:
         if not isinstance(trade, dict):
@@ -1911,7 +1959,9 @@ async def _apply_profit_bank_release(
         units = int(_safe_float(trade.get("units"), 0.0))
         if units == 0:
             continue
-        opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
+        opened_at = _parse_trade_open_time(
+            trade.get("open_time") or trade.get("entry_time")
+        )
         if opened_at is None:
             continue
         if (
@@ -2028,7 +2078,9 @@ async def _enforce_new_entry_time_stop(
 
     target_tag = str(config.STRATEGY_TAG or "").strip().lower()
     target_generation = str(config.FORCE_EXIT_POLICY_GENERATION or "").strip()
-    require_generation = bool(getattr(config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", False))
+    require_generation = bool(
+        getattr(config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", False)
+    )
     closed_count = 0
     seen_trade_ids: set[str] = set()
     now_mono = time.monotonic()
@@ -2057,7 +2109,9 @@ async def _enforce_new_entry_time_stop(
             if generation != target_generation:
                 continue
 
-        opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
+        opened_at = _parse_trade_open_time(
+            trade.get("open_time") or trade.get("entry_time")
+        )
         if opened_at is None:
             continue
         trade_id = str(trade.get("trade_id") or "").strip()
@@ -2089,7 +2143,8 @@ async def _enforce_new_entry_time_stop(
             trade_hard_loss_pips,
         )
         if (
-            hold_sec >= float(getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0))
+            hold_sec
+            >= float(getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0))
             and hard_loss_trigger_pips > 0.0
             and unrealized_pips <= -hard_loss_trigger_pips
         ):
@@ -2174,8 +2229,16 @@ async def _enforce_new_entry_time_stop(
                     (fib.target_price if fib is not None else 0.0),
                     (regime.mode if regime is not None else "none"),
                     (regime.side if regime is not None else "none"),
-                    (_safe_float(regime.trend_score, 0.0) if regime is not None else 0.0),
-                    (_safe_float(regime.heat_score, 0.0) if regime is not None else 0.0),
+                    (
+                        _safe_float(regime.trend_score, 0.0)
+                        if regime is not None
+                        else 0.0
+                    ),
+                    (
+                        _safe_float(regime.heat_score, 0.0)
+                        if regime is not None
+                        else 0.0
+                    ),
                 )
                 _TRADE_FORCE_EXIT_DEFER_LOG_MONO[trade_id] = now_mono
             continue
@@ -2191,7 +2254,10 @@ async def _enforce_new_entry_time_stop(
                 defer_reason,
             )
 
-        client_id = str(trade.get("client_id") or trade.get("client_order_id") or "").strip() or None
+        client_id = (
+            str(trade.get("client_id") or trade.get("client_order_id") or "").strip()
+            or None
+        )
         closed = await close_trade(
             trade_id,
             units=-units,
@@ -2232,14 +2298,20 @@ async def _enforce_new_entry_time_stop(
     stale_ids = [tid for tid in _TRADE_MFE_PIPS.keys() if tid not in seen_trade_ids]
     for tid in stale_ids:
         _TRADE_MFE_PIPS.pop(tid, None)
-    stale_defer_ids = [tid for tid in _TRADE_FORCE_EXIT_DEFER_LOG_MONO.keys() if tid not in seen_trade_ids]
+    stale_defer_ids = [
+        tid
+        for tid in _TRADE_FORCE_EXIT_DEFER_LOG_MONO.keys()
+        if tid not in seen_trade_ids
+    ]
     for tid in stale_defer_ids:
         _TRADE_FORCE_EXIT_DEFER_LOG_MONO.pop(tid, None)
 
     return closed_count
 
 
-def _quotes_from_row(row: dict, fallback_mid: float = 0.0) -> tuple[float, float, float]:
+def _quotes_from_row(
+    row: dict, fallback_mid: float = 0.0
+) -> tuple[float, float, float]:
     bid = _safe_float(row.get("bid"), 0.0)
     ask = _safe_float(row.get("ask"), 0.0)
     mid = _safe_float(row.get("mid"), 0.0)
@@ -2478,9 +2550,15 @@ def _build_tick_signal(
         ) / config.PIP_VALUE
     speed_scale = _instant_speed_scale(instant_range_pips)
 
-    short_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.SHORT_MIN_SIGNAL_TICKS * speed_scale)))
-    long_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale)))
-    min_signal_ticks = max(config.MIN_SIGNAL_TICKS, min(short_min_signal_ticks, long_min_signal_ticks))
+    short_min_signal_ticks = max(
+        config.MIN_SIGNAL_TICKS, int(round(config.SHORT_MIN_SIGNAL_TICKS * speed_scale))
+    )
+    long_min_signal_ticks = max(
+        config.MIN_SIGNAL_TICKS, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale))
+    )
+    min_signal_ticks = max(
+        config.MIN_SIGNAL_TICKS, min(short_min_signal_ticks, long_min_signal_ticks)
+    )
     fallback_rate_windows_sec = None
     if allow_window_fallback and config.MIN_TICK_RATE > 0 and min_signal_ticks > 1:
         fallback_rate_windows_sec = max(
@@ -2499,7 +2577,9 @@ def _build_tick_signal(
 
     signal_window_seed = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
     if signal_window_override_sec is not None:
-        signal_window_seed = max(0.3, _safe_float(signal_window_override_sec, signal_window_seed))
+        signal_window_seed = max(
+            0.3, _safe_float(signal_window_override_sec, signal_window_seed)
+        )
 
     if len(rows) < min_signal_ticks:
         row_min_epoch = latest_epoch
@@ -2530,7 +2610,11 @@ def _build_tick_signal(
 
     signal_window_sec = signal_window_seed
     base_signal_window_sec = signal_window_sec
-    signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
+    signal_rows = [
+        r
+        for r in rows
+        if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec
+    ]
     fallback_signal_rows: list[dict] = signal_rows
     fallback_window_sec: float = signal_window_sec
 
@@ -2543,7 +2627,9 @@ def _build_tick_signal(
         fallback_windows.append(fallback_rate_windows_sec)
     fallback_attempted = False
     if allow_window_fallback and fallback_sec > 0.0:
-        fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
+        fallback_windows.append(
+            min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec))
+        )
     if (
         allow_window_fallback
         and signal_window_override_sec is None
@@ -2563,8 +2649,7 @@ def _build_tick_signal(
         fallback_attempts.append(_safe_float(fallback_window_sec, signal_window_sec))
         fallback_cutoff = latest_epoch - fallback_window_sec
         fallback_signal_rows = [
-            r for r in rows
-            if _safe_float(r.get("epoch"), 0.0) >= fallback_cutoff
+            r for r in rows if _safe_float(r.get("epoch"), 0.0) >= fallback_cutoff
         ]
         if len(fallback_signal_rows) >= min_signal_ticks:
             signal_window_sec = fallback_window_sec
@@ -2627,7 +2712,9 @@ def _build_tick_signal(
             if ep >= instant_cutoff and i < len(mids)
         ]
         if len(instant_mids) >= 2:
-            instant_range_pips = (max(instant_mids) - min(instant_mids)) / config.PIP_VALUE
+            instant_range_pips = (
+                max(instant_mids) - min(instant_mids)
+            ) / config.PIP_VALUE
 
     span_sec = max(0.001, epochs[-1] - epochs[0])
     momentum_pips = (mids[-1] - mids[0]) / config.PIP_VALUE
@@ -2710,9 +2797,13 @@ def _build_tick_signal(
             config.REVERT_SHORT_WINDOW_SEC * speed_scale,
         )
         revert_min_ticks = max(3, int(round(config.REVERT_MIN_TICKS * speed_scale)))
-        revert_confirm_ticks = max(2, int(round(config.REVERT_CONFIRM_TICKS * speed_scale)))
+        revert_confirm_ticks = max(
+            2, int(round(config.REVERT_CONFIRM_TICKS * speed_scale))
+        )
         revert_cutoff = latest_epoch - revert_window_sec
-        revert_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= revert_cutoff]
+        revert_rows = [
+            r for r in rows if _safe_float(r.get("epoch"), 0.0) >= revert_cutoff
+        ]
         if len(revert_rows) >= revert_min_ticks:
             mids_revert: list[float] = []
             epochs_revert: list[float] = []
@@ -2731,7 +2822,9 @@ def _build_tick_signal(
             if len(mids_revert) >= revert_min_ticks:
                 span_revert_sec = max(0.001, epochs_revert[-1] - epochs_revert[0])
                 tick_rate_revert = max(0.0, (len(mids_revert) - 1) / span_revert_sec)
-                range_revert_pips = (max(mids_revert) - min(mids_revert)) / config.PIP_VALUE
+                range_revert_pips = (
+                    max(mids_revert) - min(mids_revert)
+                ) / config.PIP_VALUE
                 if (
                     range_revert_pips >= config.REVERT_RANGE_MIN_PIPS
                     and tick_rate_revert >= config.REVERT_MIN_TICK_RATE
@@ -2743,8 +2836,12 @@ def _build_tick_signal(
                         if ep >= short_cutoff
                     ]
                     if len(mids_short) >= 2:
-                        long_leg_pips = (mids_revert[-1] - mids_revert[0]) / config.PIP_VALUE
-                        short_leg_pips = (mids_short[-1] - mids_short[0]) / config.PIP_VALUE
+                        long_leg_pips = (
+                            mids_revert[-1] - mids_revert[0]
+                        ) / config.PIP_VALUE
+                        short_leg_pips = (
+                            mids_short[-1] - mids_short[0]
+                        ) / config.PIP_VALUE
                         down_flow_ratio = _tail_flow_ratio(
                             mids_revert,
                             want_up=False,
@@ -2771,15 +2868,27 @@ def _build_tick_signal(
                         long_score = 0.0
                         if short_ok:
                             short_score = (
-                                abs(long_leg_pips) / max(0.1, config.REVERT_SWEEP_MIN_PIPS)
-                                + abs(short_leg_pips) / max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
-                                + (range_revert_pips / max(0.1, config.REVERT_RANGE_MIN_PIPS)) * 0.45
+                                abs(long_leg_pips)
+                                / max(0.1, config.REVERT_SWEEP_MIN_PIPS)
+                                + abs(short_leg_pips)
+                                / max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
+                                + (
+                                    range_revert_pips
+                                    / max(0.1, config.REVERT_RANGE_MIN_PIPS)
+                                )
+                                * 0.45
                             )
                         if long_ok:
                             long_score = (
-                                abs(long_leg_pips) / max(0.1, config.REVERT_SWEEP_MIN_PIPS)
-                                + abs(short_leg_pips) / max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
-                                + (range_revert_pips / max(0.1, config.REVERT_RANGE_MIN_PIPS)) * 0.45
+                                abs(long_leg_pips)
+                                / max(0.1, config.REVERT_SWEEP_MIN_PIPS)
+                                + abs(short_leg_pips)
+                                / max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
+                                + (
+                                    range_revert_pips
+                                    / max(0.1, config.REVERT_RANGE_MIN_PIPS)
+                                )
+                                * 0.45
                             )
 
                         if short_score > 0.0 or long_score > 0.0:
@@ -2797,7 +2906,8 @@ def _build_tick_signal(
                                 0.05,
                                 config.REVERT_BOUNCE_MIN_PIPS,
                                 spread_pips * 0.6,
-                                spread_pips * config.MOMENTUM_SPREAD_MULT + config.ENTRY_BID_ASK_EDGE_PIPS,
+                                spread_pips * config.MOMENTUM_SPREAD_MULT
+                                + config.ENTRY_BID_ASK_EDGE_PIPS,
                             )
 
     side: Optional[str] = None
@@ -2886,7 +2996,9 @@ def _build_tick_signal(
         return None, f"side_filter_block:{side}"
 
     selected_strength = abs(selected_momentum_pips) / max(0.01, selected_trigger_pips)
-    confidence = config.CONFIDENCE_FLOOR + 2 if mode == "revert" else config.CONFIDENCE_FLOOR
+    confidence = (
+        config.CONFIDENCE_FLOOR + 2 if mode == "revert" else config.CONFIDENCE_FLOOR
+    )
     confidence += int(min(22.0, selected_strength * 8.0))
     confidence += int(min(10.0, max(0.0, (imbalance - 0.5) * 25.0)))
     confidence += int(min(8.0, tick_rate))
@@ -2895,31 +3007,37 @@ def _build_tick_signal(
 
     return (
         TickSignal(
-        side=side,
-        mode=mode,
-        mode_score=float(mode_score),
-        momentum_score=float(momentum_score),
-        revert_score=float(revert_score),
-        confidence=int(confidence),
-        momentum_pips=float(selected_momentum_pips),
-        trigger_pips=float(selected_trigger_pips),
-        imbalance=imbalance,
-        tick_rate=tick_rate,
-        span_sec=span_sec,
-        range_pips=float(signal_range_pips),
-        instant_range_pips=float(instant_range_pips),
-        signal_window_sec=float(signal_window_sec),
-        tick_age_ms=tick_age_ms,
-        spread_pips=max(0.0, spread_pips),
-        bid=bid,
-        ask=ask,
-        mid=mid,
+            side=side,
+            mode=mode,
+            mode_score=float(mode_score),
+            momentum_score=float(momentum_score),
+            revert_score=float(revert_score),
+            confidence=int(confidence),
+            momentum_pips=float(selected_momentum_pips),
+            trigger_pips=float(selected_trigger_pips),
+            imbalance=imbalance,
+            tick_rate=tick_rate,
+            span_sec=span_sec,
+            range_pips=float(signal_range_pips),
+            instant_range_pips=float(instant_range_pips),
+            signal_window_sec=float(signal_window_sec),
+            tick_age_ms=tick_age_ms,
+            spread_pips=max(0.0, spread_pips),
+            bid=bid,
+            ask=ask,
+            mid=mid,
         ),
         "ok",
     )
 
 
-def _retarget_signal(signal: TickSignal, *, side: str, mode: Optional[str] = None, confidence_add: int = 0) -> TickSignal:
+def _retarget_signal(
+    signal: TickSignal,
+    *,
+    side: str,
+    mode: Optional[str] = None,
+    confidence_add: int = 0,
+) -> TickSignal:
     conf = int(
         _clamp(
             float(signal.confidence + confidence_add),
@@ -2947,7 +3065,7 @@ def _retarget_signal(signal: TickSignal, *, side: str, mode: Optional[str] = Non
         ask=float(signal.ask),
         mid=float(signal.mid),
         signal_window_sec=float(signal.signal_window_sec),
-        )
+    )
 
 
 def _resolve_final_signal_for_side_filter(
@@ -3015,14 +3133,20 @@ def _maybe_rescue_min_units(
     # Bridge the order-manager preserve-intent probability scale without
     # loosening beyond a bounded small-probe floor.
     min_units = max(1, int(_safe_float(getattr(config, "MIN_UNITS", 0), 0.0)))
-    max_units = max(min_units, int(_safe_float(getattr(config, "MAX_UNITS", min_units), min_units)))
+    max_units = max(
+        min_units, int(_safe_float(getattr(config, "MAX_UNITS", min_units), min_units))
+    )
     probability = _clamp(_safe_float(entry_probability, 0.0), 0.0, 1.0)
     rescue_units = min_units
     rescue_reason = "rescued"
     if probability > 0.0:
         bridge_floor = max(
             min_units,
-            int(math.ceil((max(1.0, float(min_units)) - 0.5 + 1e-9) / max(probability, 0.01))),
+            int(
+                math.ceil(
+                    (max(1.0, float(min_units)) - 0.5 + 1e-9) / max(probability, 0.01)
+                )
+            ),
         )
         bridge_floor = min(
             bridge_floor,
@@ -3039,7 +3163,9 @@ def _maybe_rescue_min_units(
     return rescue_units, rescue_reason
 
 
-def _maybe_rescue_short_probe(*, units: int, units_risk: int, side: str) -> tuple[int, str]:
+def _maybe_rescue_short_probe(
+    *, units: int, units_risk: int, side: str
+) -> tuple[int, str]:
     if side != "short":
         return units, "inactive"
     if units >= config.MIN_UNITS:
@@ -3051,7 +3177,9 @@ def _maybe_rescue_short_probe(*, units: int, units_risk: int, side: str) -> tupl
     return config.MIN_UNITS, "short_probe_rescued"
 
 
-def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[Optional[TickSignal], float, str]:
+def _apply_mtf_regime(
+    signal: TickSignal, regime: Optional[MtfRegime]
+) -> tuple[Optional[TickSignal], float, str]:
     if regime is None:
         return signal, 1.0, "regime_unavailable"
 
@@ -3063,7 +3191,11 @@ def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[
         if regime.side != "neutral" and signal.side != regime.side:
             if regime.heat_score >= config.MTF_CONTINUATION_BLOCK_HEAT:
                 units_mult *= config.MTF_CONTINUATION_OPPOSITE_BLOCK_MIN_MULT
-                return adjusted, float(max(0.0, units_mult)), "mtf_continuation_block_counter"
+                return (
+                    adjusted,
+                    float(max(0.0, units_mult)),
+                    "mtf_continuation_block_counter",
+                )
             units_mult *= config.MTF_CONTINUATION_OPPOSITE_UNITS_MULT
             gate = "mtf_continuation_counter_scaled"
         else:
@@ -3148,10 +3280,16 @@ def _tf_score_or_none(factors: dict, timeframe: str) -> Optional[float]:
 
 def _micro_horizon_score(signal: TickSignal) -> float:
     side_sign = 1.0 if signal.side == "long" else -1.0
-    strength = _clamp(abs(signal.momentum_pips) / max(0.01, signal.trigger_pips), 0.0, 2.0)
+    strength = _clamp(
+        abs(signal.momentum_pips) / max(0.01, signal.trigger_pips), 0.0, 2.0
+    )
     imbalance_push = _clamp((signal.imbalance - 0.5) * 1.8, 0.0, 0.9)
     mode_factor = 0.75 if signal.mode == "revert" else 1.0
-    score = side_sign * mode_factor * _clamp(0.20 + (strength * 0.34) + imbalance_push, 0.0, 1.0)
+    score = (
+        side_sign
+        * mode_factor
+        * _clamp(0.20 + (strength * 0.34) + imbalance_push, 0.0, 1.0)
+    )
     return float(_clamp(score, -1.0, 1.0))
 
 
@@ -3202,7 +3340,9 @@ def _build_horizon_bias(signal: TickSignal, factors: dict) -> Optional[HorizonBi
 
     long_side = _score_to_side(long_score if long_score is not None else 0.0, neutral)
     mid_side = _score_to_side(mid_score if mid_score is not None else 0.0, neutral)
-    short_side = _score_to_side(short_score if short_score is not None else 0.0, neutral)
+    short_side = _score_to_side(
+        short_score if short_score is not None else 0.0, neutral
+    )
     micro_side = _score_to_side(micro_score, neutral)
 
     agreement = 0
@@ -3238,7 +3378,11 @@ def _apply_horizon_bias(
     score_abs = abs(horizon.composite_score)
     if signal.side != horizon.composite_side:
         if score_abs >= config.HORIZON_BLOCK_SCORE:
-            return signal, max(0.0, config.HORIZON_OPPOSITE_BLOCK_MIN_MULT), "horizon_block_counter"
+            return (
+                signal,
+                max(0.0, config.HORIZON_OPPOSITE_BLOCK_MIN_MULT),
+                "horizon_block_counter",
+            )
         scale = max(0.0, min(1.0, config.HORIZON_OPPOSITE_UNITS_MULT))
         if horizon.agreement >= 3:
             scale *= 0.9
@@ -3278,11 +3422,15 @@ def _m1_trend_units_multiplier(
         return 1.0, "invalid_side"
 
     score_abs = abs(_safe_float(m1_score, 0.0))
-    vol_bucket = _regime_vol_bucket(
-        regime,
-        low_pips=config.M1_TREND_VOL_LOW_PIPS,
-        high_pips=config.M1_TREND_VOL_HIGH_PIPS,
-    ) if config.M1_TREND_VOL_INTERP_ENABLED else 0.5
+    vol_bucket = (
+        _regime_vol_bucket(
+            regime,
+            low_pips=config.M1_TREND_VOL_LOW_PIPS,
+            high_pips=config.M1_TREND_VOL_HIGH_PIPS,
+        )
+        if config.M1_TREND_VOL_INTERP_ENABLED
+        else 0.5
+    )
     align_score_min = (
         _lerp(
             config.M1_TREND_ALIGN_SCORE_MIN_LOW_VOL,
@@ -3329,8 +3477,7 @@ def _m1_trend_units_multiplier(
         return 1.0, "m1_align_weak"
 
     ratio = _clamp(
-        (score_abs - align_score_min)
-        / max(0.05, 1.0 - align_score_min),
+        (score_abs - align_score_min) / max(0.05, 1.0 - align_score_min),
         0.0,
         1.0,
     )
@@ -3390,15 +3537,23 @@ def _d_negative_window_short_align_block_reason(
     ):
         return None
     live_score_pips = _safe_float(
-        (signal_window_meta or {}).get("live_score_pips") if isinstance(signal_window_meta, dict) else None,
+        (
+            (signal_window_meta or {}).get("live_score_pips")
+            if isinstance(signal_window_meta, dict)
+            else None
+        ),
         0.0,
     )
     if live_score_pips > config.D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX:
         return None
-    lookahead_edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
+    lookahead_edge_pips = _safe_float(
+        getattr(lookahead_decision, "edge_pips", 0.0), 0.0
+    )
     if lookahead_edge_pips > config.D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX:
         return None
-    lookahead_reason = str(getattr(lookahead_decision, "reason", "") or "").strip().lower()
+    lookahead_reason = (
+        str(getattr(lookahead_decision, "reason", "") or "").strip().lower()
+    )
     return (
         f"env={config.ENV_PREFIX} side=short hz={horizon_gate_key} "
         f"m1={m1_trend_gate} live={live_score_pips:.3f} "
@@ -3429,15 +3584,23 @@ def _d_negative_window_long_opposite_block_reason(
     if not horizon_gate_key.startswith("horizon_neutral"):
         return None
     live_score_pips = _safe_float(
-        (signal_window_meta or {}).get("live_score_pips") if isinstance(signal_window_meta, dict) else None,
+        (
+            (signal_window_meta or {}).get("live_score_pips")
+            if isinstance(signal_window_meta, dict)
+            else None
+        ),
         0.0,
     )
     if live_score_pips > config.D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX:
         return None
-    lookahead_edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
+    lookahead_edge_pips = _safe_float(
+        getattr(lookahead_decision, "edge_pips", 0.0), 0.0
+    )
     if lookahead_edge_pips > config.D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX:
         return None
-    lookahead_reason = str(getattr(lookahead_decision, "reason", "") or "").strip().lower()
+    lookahead_reason = (
+        str(getattr(lookahead_decision, "reason", "") or "").strip().lower()
+    )
     return (
         f"env={config.ENV_PREFIX} side=long hz={horizon_gate_key} "
         f"dir={direction_bias_side} m1={m1_trend_gate} "
@@ -3446,7 +3609,9 @@ def _d_negative_window_long_opposite_block_reason(
     )
 
 
-def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
+def _directional_bias_scale(
+    rows: Sequence[dict], side: str
+) -> tuple[float, dict[str, float]]:
     if not config.SIDE_BIAS_ENABLED:
         return 1.0, {"enabled": 0.0}
     if side not in {"long", "short"}:
@@ -3503,7 +3668,9 @@ def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dic
     }
 
 
-def _build_direction_bias(rows: Sequence[dict], spread_pips: float) -> Optional[DirectionBias]:
+def _build_direction_bias(
+    rows: Sequence[dict], spread_pips: float
+) -> Optional[DirectionBias]:
     if not config.DIRECTION_BIAS_ENABLED:
         return None
     if len(rows) < config.DIRECTION_BIAS_MIN_TICKS:
@@ -3605,7 +3772,10 @@ def _direction_units_multiplier(
     if signal_side != bias.side:
         if signal_mode == "revert":
             if score_abs >= config.REVERT_DIRECTION_HARD_BLOCK_SCORE:
-                return config.REVERT_DIRECTION_OPPOSITE_BLOCK_MIN_MULT, "revert_opposite_block"
+                return (
+                    config.REVERT_DIRECTION_OPPOSITE_BLOCK_MIN_MULT,
+                    "revert_opposite_block",
+                )
             return direction_opposite_mult, "revert_opposite_scale"
         if score_abs >= config.DIRECTION_BIAS_BLOCK_SCORE:
             return direction_opposite_mult, "opposite_block"
@@ -3665,7 +3835,9 @@ def _maybe_fast_direction_flip(
         if horizon_agree < int(config.FAST_DIRECTION_FLIP_HORIZON_AGREE_MIN):
             return None, "horizon_disagree"
     elif horizon_side == "neutral":
-        if bias_score < float(config.FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN):
+        if bias_score < float(
+            config.FAST_DIRECTION_FLIP_NEUTRAL_HORIZON_BIAS_SCORE_MIN
+        ):
             return None, "horizon_neutral_bias_weak"
     else:
         return None, "horizon_mismatch"
@@ -3798,7 +3970,9 @@ def _load_recent_side_close_metrics(
         strategy_tag=strategy_tag,
         pocket=pocket,
         lookback=max(1, int(config.SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES)),
-        cache_ttl_sec=max(0.1, float(config.SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC)),
+        cache_ttl_sec=max(
+            0.1, float(config.SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC)
+        ),
         now_mono=now_mono,
         cache_store=_SL_METRICS_CACHE,
     )
@@ -3920,7 +4094,9 @@ def _load_recent_side_close_metrics_for_allocation(
     return _load_side_close_metrics(
         strategy_tag=strategy_tag,
         pocket=pocket,
-        lookback=max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_LOOKBACK_TRADES)),
+        lookback=max(
+            1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_LOOKBACK_TRADES)
+        ),
         cache_ttl_sec=max(
             0.1,
             float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_CACHE_TTL_SEC),
@@ -3975,8 +4151,12 @@ def _load_entry_probability_band_metrics(
     metrics: Optional[EntryProbabilityBandMetrics] = None
     if _TRADES_DB.exists():
         lookback = max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_LOOKBACK_TRADES))
-        low_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD), 0.0, 1.0)
-        high_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD), 0.0, 1.0)
+        low_cutoff = _clamp(
+            float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD), 0.0, 1.0
+        )
+        high_cutoff = _clamp(
+            float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD), 0.0, 1.0
+        )
         if low_cutoff < high_cutoff:
             side_cond = "units > 0" if side_key == "long" else "units < 0"
             con: Optional[sqlite3.Connection] = None
@@ -4088,7 +4268,9 @@ def _maybe_sl_streak_direction_flip(
     min_streak = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_STREAK))
     max_age_sec = max(0.0, float(config.SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC))
     min_side_sl_hits = max(1, int(config.SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS))
-    min_target_market_plus = max(0, int(config.SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS))
+    min_target_market_plus = max(
+        0, int(config.SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS)
+    )
 
     metrics = _load_recent_side_close_metrics(
         strategy_tag=strategy_tag,
@@ -4104,9 +4286,7 @@ def _maybe_sl_streak_direction_flip(
         if current_side == "long"
         else int(metrics.short_trades)
     )
-    side_sl_rate_recent = (
-        float(side_sl_hits_recent) / float(max(1, side_trades_recent))
-    )
+    side_sl_rate_recent = float(side_sl_hits_recent) / float(max(1, side_trades_recent))
 
     streak = _load_stop_loss_streak(
         strategy_tag=strategy_tag,
@@ -4120,7 +4300,9 @@ def _maybe_sl_streak_direction_flip(
         return (
             None,
             "already_opposite",
-            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+            SlFlipEval(
+                streak, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
         )
 
     streak_count = int(streak.streak) if streak is not None else 0
@@ -4132,30 +4314,43 @@ def _maybe_sl_streak_direction_flip(
         metrics_override
         and side_sl_hits_recent >= min_side_sl_hits
         and target_market_plus_recent >= min_target_market_plus
-        and side_trades_recent >= int(config.SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN)
+        and side_trades_recent
+        >= int(config.SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_TRADES_MIN)
         and side_sl_rate_recent
         >= float(config.SL_STREAK_DIRECTION_FLIP_METRICS_SIDE_SL_RATE_MIN)
     )
     if streak is None and not metrics_override:
-        return None, "no_streak", SlFlipEval(None, side_sl_hits_recent, target_market_plus_recent, False, False)
+        return (
+            None,
+            "no_streak",
+            SlFlipEval(
+                None, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
+        )
     if streak_count < min_streak and not metrics_override:
         return (
             None,
             "below_min_streak",
-            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+            SlFlipEval(
+                streak, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
         )
     if streak_is_stale and not metrics_override:
         return (
             None,
             "streak_stale",
-            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+            SlFlipEval(
+                streak, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
         )
 
     if side_sl_hits_recent < min_side_sl_hits:
         return (
             None,
             "side_sl_hits_weak",
-            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+            SlFlipEval(
+                streak, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
         )
 
     force_streak = max(min_streak, int(config.SL_STREAK_DIRECTION_FLIP_FORCE_STREAK))
@@ -4164,38 +4359,41 @@ def _maybe_sl_streak_direction_flip(
         return (
             None,
             "target_market_plus_weak",
-            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+            SlFlipEval(
+                streak, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
         )
 
     if not config.SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP and fast_flip_applied:
         return (
             None,
             "fast_flip_priority",
-            SlFlipEval(streak, side_sl_hits_recent, target_market_plus_recent, False, False),
+            SlFlipEval(
+                streak, side_sl_hits_recent, target_market_plus_recent, False, False
+            ),
         )
 
     # Tech alignment gate: keep SL-streak flip as secondary override.
     if direction_bias is not None:
         bias_side = str(getattr(direction_bias, "side", "")).strip().lower()
         bias_score = abs(_safe_float(getattr(direction_bias, "score", 0.0), 0.0))
-        direction_confirmed = (
-            bias_side == target_side
-            and bias_score >= float(config.SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN)
+        direction_confirmed = bias_side == target_side and bias_score >= float(
+            config.SL_STREAK_DIRECTION_FLIP_DIRECTION_SCORE_MIN
         )
     if horizon is not None:
         horizon_side = str(getattr(horizon, "composite_side", "")).strip().lower()
         horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
-        horizon_confirmed = (
-            horizon_side == target_side
-            and horizon_score >= float(config.SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN)
+        horizon_confirmed = horizon_side == target_side and horizon_score >= float(
+            config.SL_STREAK_DIRECTION_FLIP_HORIZON_SCORE_MIN
         )
-    force_tech_bypass = (
-        force_flip_by_streak
-        and bool(config.SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM)
+    force_tech_bypass = force_flip_by_streak and bool(
+        config.SL_STREAK_DIRECTION_FLIP_FORCE_WITHOUT_TECH_CONFIRM
     )
-    if config.SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM and not (
-        direction_confirmed or horizon_confirmed
-    ) and not force_tech_bypass:
+    if (
+        config.SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM
+        and not (direction_confirmed or horizon_confirmed)
+        and not force_tech_bypass
+    ):
         return (
             None,
             "tech_not_confirmed",
@@ -4227,12 +4425,16 @@ def _maybe_sl_streak_direction_flip(
         f"force={int(force_flip_by_streak)},"
         f"force_tech={int(force_tech_bypass)}"
     )
-    return flipped, reason, SlFlipEval(
-        streak,
-        side_sl_hits_recent,
-        target_market_plus_recent,
-        direction_confirmed,
-        horizon_confirmed,
+    return (
+        flipped,
+        reason,
+        SlFlipEval(
+            streak,
+            side_sl_hits_recent,
+            target_market_plus_recent,
+            direction_confirmed,
+            horizon_confirmed,
+        ),
     )
 
 
@@ -4280,10 +4482,14 @@ def _maybe_side_metrics_direction_flip(
         return None, "metrics_unavailable", empty_eval
 
     current_trades = (
-        int(metrics.long_trades) if current_side == "long" else int(metrics.short_trades)
+        int(metrics.long_trades)
+        if current_side == "long"
+        else int(metrics.short_trades)
     )
     target_trades = (
-        int(metrics.short_trades) if current_side == "long" else int(metrics.long_trades)
+        int(metrics.short_trades)
+        if current_side == "long"
+        else int(metrics.long_trades)
     )
     current_sl_rate = _clamp(
         float(metrics.sl_hits(current_side)) / float(max(1, current_trades)),
@@ -4320,8 +4526,12 @@ def _maybe_side_metrics_direction_flip(
         target_mean_pips=target_mean_pips,
     )
 
-    min_current_trades = max(1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES))
-    min_target_trades = max(1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_TARGET_TRADES))
+    min_current_trades = max(
+        1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_CURRENT_TRADES)
+    )
+    min_target_trades = max(
+        1, int(config.SIDE_METRICS_DIRECTION_FLIP_MIN_TARGET_TRADES)
+    )
     if current_trades < min_current_trades:
         return None, "current_sample_weak", eval_info
     if target_trades < min_target_trades:
@@ -4447,10 +4657,14 @@ def _side_adverse_stack_units_multiplier(
             reason_parts.append("metrics_unavailable")
         else:
             current_trades = (
-                int(metrics.long_trades) if side_key == "long" else int(metrics.short_trades)
+                int(metrics.long_trades)
+                if side_key == "long"
+                else int(metrics.short_trades)
             )
             target_trades = (
-                int(metrics.short_trades) if side_key == "long" else int(metrics.long_trades)
+                int(metrics.short_trades)
+                if side_key == "long"
+                else int(metrics.long_trades)
             )
             current_sl_rate = _clamp(
                 float(metrics.sl_hits(side_key)) / float(max(1, current_trades)),
@@ -4512,7 +4726,9 @@ def _side_adverse_stack_units_multiplier(
                     reason_parts.append("mean_gap_weak")
                 elif metrics_adverse:
                     adverse = True
-                    active_start = max(1, int(config.SIDE_ADVERSE_STACK_UNITS_ACTIVE_START))
+                    active_start = max(
+                        1, int(config.SIDE_ADVERSE_STACK_UNITS_ACTIVE_START)
+                    )
                     if active_same_side >= active_start:
                         extra = active_same_side - active_start + 1
                         step_mult = _clamp(
@@ -4534,14 +4750,20 @@ def _side_adverse_stack_units_multiplier(
 
     if config.SIDE_ADVERSE_STACK_DD_ENABLED:
         active_start = max(1, int(config.SIDE_ADVERSE_STACK_UNITS_ACTIVE_START))
-        if active_same_side >= active_start and dd_pips > float(config.SIDE_ADVERSE_STACK_DD_START_PIPS):
+        if active_same_side >= active_start and dd_pips > float(
+            config.SIDE_ADVERSE_STACK_DD_START_PIPS
+        ):
             dd_start = max(0.0, float(config.SIDE_ADVERSE_STACK_DD_START_PIPS))
             dd_full = max(
                 dd_start + 0.05,
                 float(config.SIDE_ADVERSE_STACK_DD_FULL_PIPS),
             )
-            dd_ratio = _clamp((dd_pips - dd_start) / max(1e-6, dd_full - dd_start), 0.0, 1.0)
-            dd_mult = 1.0 - (1.0 - float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT)) * dd_ratio
+            dd_ratio = _clamp(
+                (dd_pips - dd_start) / max(1e-6, dd_full - dd_start), 0.0, 1.0
+            )
+            dd_mult = (
+                1.0 - (1.0 - float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT)) * dd_ratio
+            )
             dd_mult = _clamp(
                 dd_mult,
                 float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT),
@@ -4553,9 +4775,11 @@ def _side_adverse_stack_units_multiplier(
 
     min_floor = min(
         float(config.SIDE_ADVERSE_STACK_UNITS_MIN_MULT),
-        float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT)
-        if config.SIDE_ADVERSE_STACK_DD_ENABLED
-        else 1.0,
+        (
+            float(config.SIDE_ADVERSE_STACK_DD_MIN_MULT)
+            if config.SIDE_ADVERSE_STACK_DD_ENABLED
+            else 1.0
+        ),
     )
     units_mult = _clamp(side_mult * dd_mult, max(0.05, min_floor), 1.0)
     if units_mult >= 0.999 and not reason_parts:
@@ -4762,9 +4986,8 @@ def _extrema_gate_decision(
                 h4_pos,
             )
         soft_hit = (
-            (m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_SOFT_POS)
-            or (m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_SOFT_POS)
-        )
+            m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_SOFT_POS
+        ) or (m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_SOFT_POS)
         if soft_hit and config.EXTREMA_SOFT_UNITS_MULT < 0.999:
             return ExtremaGateDecision(
                 True,
@@ -4775,8 +4998,12 @@ def _extrema_gate_decision(
                 h4_pos,
             )
     else:
-        m1_bottom = m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
-        m5_bottom = m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
+        m1_bottom = (
+            m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
+        )
+        m5_bottom = (
+            m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
+        )
         if config.EXTREMA_REQUIRE_M1_M5_AGREE_SHORT:
             bottom_block = m1_bottom and m5_bottom
         else:
@@ -4924,7 +5151,10 @@ def _extrema_reversal_route(
             and regime_heat >= config.EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX
         ):
             score -= 0.85
-        elif regime_mode != "continuation" and regime_heat <= config.EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX:
+        elif (
+            regime_mode != "continuation"
+            and regime_heat <= config.EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX
+        ):
             score += 0.25
 
     if horizon is not None:
@@ -4949,7 +5179,11 @@ def _extrema_reversal_route(
         if close > 0.0 and ema20 > 0.0:
             ema_gap_pips = abs(close - ema20) / config.PIP_VALUE
             if ema_gap_pips >= config.EXTREMA_REVERSAL_EMA_GAP_MIN_PIPS:
-                if reverse_side == "long" and close > ema20 and rsi >= config.EXTREMA_REVERSAL_RSI_CONFIRM:
+                if (
+                    reverse_side == "long"
+                    and close > ema20
+                    and rsi >= config.EXTREMA_REVERSAL_RSI_CONFIRM
+                ):
                     score += 1.10
                 elif (
                     reverse_side == "short"
@@ -4960,7 +5194,9 @@ def _extrema_reversal_route(
 
     min_score = float(config.EXTREMA_REVERSAL_MIN_SCORE)
     if side_key == "long":
-        min_score = max(min_score, float(config.EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE))
+        min_score = max(
+            min_score, float(config.EXTREMA_REVERSAL_LONG_TO_SHORT_MIN_SCORE)
+        )
     if score < min_score:
         return None, 1.0, "", float(score)
 
@@ -5045,16 +5281,17 @@ def _adjust_entry_probability_alignment(
     m1_weight = max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_M1_WEIGHT))
 
     if direction_bias is not None and direction_weight > 0.0:
-        direction_edge = _probability_side_edge(side, _safe_float(direction_bias.score, 0.0))
+        direction_edge = _probability_side_edge(
+            side, _safe_float(direction_bias.score, 0.0)
+        )
         meta["direction_edge"] = round(direction_edge, 6)
         weighted_edges.append(("direction", direction_edge, direction_weight))
 
     horizon_edge = 0.0
     if horizon is not None and horizon_weight > 0.0:
-        horizon_edge_raw = (
-            0.7 * (_safe_float(horizon.long_score, 0.0) - _safe_float(horizon.short_score, 0.0))
-            + 0.3 * _safe_float(horizon.composite_score, 0.0)
-        )
+        horizon_edge_raw = 0.7 * (
+            _safe_float(horizon.long_score, 0.0) - _safe_float(horizon.short_score, 0.0)
+        ) + 0.3 * _safe_float(horizon.composite_score, 0.0)
         horizon_edge = _probability_side_edge(side, horizon_edge_raw)
         meta["horizon_edge"] = round(horizon_edge, 6)
         weighted_edges.append(("horizon", horizon_edge, horizon_weight))
@@ -5074,7 +5311,9 @@ def _adjust_entry_probability_alignment(
     boost = support * max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_BOOST_MAX))
     penalty = counter * max(0.0, float(config.ENTRY_PROBABILITY_ALIGN_PENALTY_MAX))
     if mode.startswith("revert"):
-        penalty *= _clamp(float(config.ENTRY_PROBABILITY_ALIGN_REVERT_PENALTY_MULT), 0.0, 1.0)
+        penalty *= _clamp(
+            float(config.ENTRY_PROBABILITY_ALIGN_REVERT_PENALTY_MULT), 0.0, 1.0
+        )
     counter_extra = max(0.0, -horizon_edge) * max(
         0.0, float(config.ENTRY_PROBABILITY_ALIGN_COUNTER_EXTRA_PENALTY_MAX)
     )
@@ -5084,10 +5323,14 @@ def _adjust_entry_probability_alignment(
     if boost > 0.0:
         adjusted += (1.0 - adjusted) * min(0.95, boost)
 
-    floor_raw_min = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN), 0.0, 1.0)
+    floor_raw_min = _clamp(
+        float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_RAW_MIN), 0.0, 1.0
+    )
     floor_prob = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR), 0.0, 1.0)
     floor_requires_support = bool(config.ENTRY_PROBABILITY_ALIGN_FLOOR_REQUIRE_SUPPORT)
-    floor_counter_max = _clamp(float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER), 0.0, 1.0)
+    floor_counter_max = _clamp(
+        float(config.ENTRY_PROBABILITY_ALIGN_FLOOR_MAX_COUNTER), 0.0, 1.0
+    )
     floor_applied = False
     floor_block_reason = ""
     floor_allowed = True
@@ -5185,8 +5428,12 @@ def _entry_probability_band_units_multiplier(
         meta["reason"] = "invalid_side"
         return 1.0, meta
 
-    low_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD), 0.0, 1.0)
-    high_cutoff = _clamp(float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD), 0.0, 1.0)
+    low_cutoff = _clamp(
+        float(config.ENTRY_PROBABILITY_BAND_ALLOC_LOW_THRESHOLD), 0.0, 1.0
+    )
+    high_cutoff = _clamp(
+        float(config.ENTRY_PROBABILITY_BAND_ALLOC_HIGH_THRESHOLD), 0.0, 1.0
+    )
     if low_cutoff >= high_cutoff:
         meta["reason"] = "invalid_threshold"
         return 1.0, meta
@@ -5222,7 +5469,9 @@ def _entry_probability_band_units_multiplier(
         }
     )
 
-    min_band_sample = max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_MIN_TRADES_PER_BAND))
+    min_band_sample = max(
+        1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_MIN_TRADES_PER_BAND)
+    )
     band_mult = 1.0
     band_reason = "insufficient_band_sample"
     if metrics.high_sample >= min_band_sample and metrics.low_sample >= min_band_sample:
@@ -5237,7 +5486,9 @@ def _entry_probability_band_units_multiplier(
             + _clamp(gap_win_rate / win_ref, 0.0, 1.0)
             + _clamp(gap_sl_rate / sl_ref, 0.0, 1.0)
         ) / 3.0
-        strong_sample = max(1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_SAMPLE_STRONG_TRADES))
+        strong_sample = max(
+            1, int(config.ENTRY_PROBABILITY_BAND_ALLOC_SAMPLE_STRONG_TRADES)
+        )
         sample_strength = _clamp(
             min(metrics.high_sample, metrics.low_sample) / float(strong_sample),
             0.0,
@@ -5307,22 +5558,21 @@ def _entry_probability_band_units_multiplier(
                     side_mean_pips
                     / max(
                         0.05,
-                        float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF),
+                        float(
+                            config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_REF
+                        ),
                     ),
                     -1.0,
                     1.0,
                 )
-                side_balance = (
-                    side_rate_balance
-                    * max(
-                        0.0,
-                        float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN),
-                    )
-                    + side_pips_balance
-                    * max(
-                        0.0,
-                        float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN),
-                    )
+                side_balance = side_rate_balance * max(
+                    0.0,
+                    float(config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_GAIN),
+                ) + side_pips_balance * max(
+                    0.0,
+                    float(
+                        config.ENTRY_PROBABILITY_BAND_ALLOC_SIDE_METRICS_MEAN_PIPS_GAIN
+                    ),
                 )
                 side_mult = _clamp(
                     1.0 + side_balance,
@@ -5366,12 +5616,12 @@ def _compute_targets(
 ) -> tuple[float, float]:
     is_short = str(side).strip().lower() == "short"
     tp_base_cfg = config.SHORT_TP_BASE_PIPS if is_short else config.TP_BASE_PIPS
-    tp_net_min_cfg = config.SHORT_TP_NET_MIN_PIPS if is_short else config.TP_NET_MIN_PIPS
+    tp_net_min_cfg = (
+        config.SHORT_TP_NET_MIN_PIPS if is_short else config.TP_NET_MIN_PIPS
+    )
     tp_max_cfg = config.SHORT_TP_MAX_PIPS if is_short else config.TP_MAX_PIPS
     tp_bonus_cap_cfg = (
-        config.SHORT_TP_MOMENTUM_BONUS_MAX
-        if is_short
-        else config.TP_MOMENTUM_BONUS_MAX
+        config.SHORT_TP_MOMENTUM_BONUS_MAX if is_short else config.TP_MOMENTUM_BONUS_MAX
     )
     sl_min_cfg = config.SHORT_SL_MIN_PIPS if is_short else config.SL_MIN_PIPS
     sl_base_cfg = config.SHORT_SL_BASE_PIPS if is_short else config.SL_BASE_PIPS
@@ -5379,7 +5629,9 @@ def _compute_targets(
 
     # Time-aware TP scaling for ping scalp:
     # if average TP holding time drifts too long, reduce TP net edge.
-    tp_mult = max(config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, tp_profile.multiplier))
+    tp_mult = max(
+        config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, tp_profile.multiplier)
+    )
     if config.TP_VOL_ADAPT_ENABLED:
         vol_bucket = _norm01(
             float(signal_range_pips),
@@ -5460,8 +5712,12 @@ def _compute_targets(
     return tp_pips, sl_pips
 
 
-def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, int, int]:
-    open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+def _strategy_trade_counts(
+    pocket_info: dict, strategy_tag: str
+) -> tuple[int, int, int]:
+    open_trades = (
+        pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+    )
     if not isinstance(open_trades, list):
         return 0, 0, 0
 
@@ -5524,8 +5780,13 @@ def _resolve_active_caps(
         return total_cap, side_cap, False
     if margin_available < config.ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY:
         return total_cap, side_cap, False
-    total_cap = max(total_cap, config.MAX_ACTIVE_TRADES + config.ACTIVE_CAP_BYPASS_EXTRA_TOTAL)
-    side_cap = max(side_cap, config.MAX_PER_DIRECTION + config.ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION)
+    total_cap = max(
+        total_cap, config.MAX_ACTIVE_TRADES + config.ACTIVE_CAP_BYPASS_EXTRA_TOTAL
+    )
+    side_cap = max(
+        side_cap,
+        config.MAX_PER_DIRECTION + config.ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION,
+    )
     return total_cap, side_cap, True
 
 
@@ -5555,7 +5816,11 @@ def _resolve_dynamic_direction_cap(
     horizon_side = str(getattr(horizon, "composite_side", "") or "").strip().lower()
     horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
 
-    weak_bias = (not bias_side) or bias_side != side_key or bias_score < config.DYNAMIC_DIRECTION_CAP_WEAK_BIAS_SCORE
+    weak_bias = (
+        (not bias_side)
+        or bias_side != side_key
+        or bias_score < config.DYNAMIC_DIRECTION_CAP_WEAK_BIAS_SCORE
+    )
     weak_horizon = (
         (not horizon_side)
         or horizon_side != side_key
@@ -5567,10 +5832,9 @@ def _resolve_dynamic_direction_cap(
 
     active_same_side = max(0, int(getattr(side_adverse_eval, "active_same_side", 0)))
     dd_pips = max(0.0, _safe_float(getattr(side_adverse_eval, "dd_pips", 0.0), 0.0))
-    if (
-        active_same_side >= int(config.DYNAMIC_DIRECTION_CAP_ADVERSE_ACTIVE_START)
-        and dd_pips >= float(config.DYNAMIC_DIRECTION_CAP_ADVERSE_DD_PIPS)
-    ):
+    if active_same_side >= int(
+        config.DYNAMIC_DIRECTION_CAP_ADVERSE_ACTIVE_START
+    ) and dd_pips >= float(config.DYNAMIC_DIRECTION_CAP_ADVERSE_DD_PIPS):
         reduced_cap = min(reduced_cap, int(config.DYNAMIC_DIRECTION_CAP_ADVERSE_CAP))
         reasons.append("adverse_dd")
 
@@ -5670,7 +5934,9 @@ def _snapshot_retry_delay_seconds(failure_count: int) -> float:
     if failure_count <= 0:
         return 0.0
     multiplier = max(1.1, float(config.SNAPSHOT_FETCH_RETRY_BACKOFF_MULTIPLIER))
-    delay = float(config.SNAPSHOT_FETCH_RETRY_BASE_SEC) * (multiplier ** (failure_count - 1))
+    delay = float(config.SNAPSHOT_FETCH_RETRY_BASE_SEC) * (
+        multiplier ** (failure_count - 1)
+    )
     return min(float(config.SNAPSHOT_FETCH_RETRY_MAX_SEC), delay)
 
 
@@ -5684,7 +5950,12 @@ def _is_oanda_snapshot_auth_valid(logger: logging.Logger) -> bool:
         return _SNAPSHOT_AUTH_VALIDATED
 
     if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
-        logger.error("%s oanda credentials missing (account=%s token=%s)", config.LOG_PREFIX, _mask_value(_OANDA_ACCOUNT), bool(_OANDA_TOKEN))
+        logger.error(
+            "%s oanda credentials missing (account=%s token=%s)",
+            config.LOG_PREFIX,
+            _mask_value(_OANDA_ACCOUNT),
+            bool(_OANDA_TOKEN),
+        )
         _SNAPSHOT_AUTH_VALIDATED = False
         return False
 
@@ -5724,7 +5995,9 @@ def _is_oanda_snapshot_auth_valid(logger: logging.Logger) -> bool:
             _SNAPSHOT_AUTH_VALIDATED = None
             return False
     except httpx.HTTPError as exc:
-        logger.warning("%s oanda auth precheck request failed: %s", config.LOG_PREFIX, exc)
+        logger.warning(
+            "%s oanda auth precheck request failed: %s", config.LOG_PREFIX, exc
+        )
         _SNAPSHOT_AUTH_VALIDATED = None
         return False
 
@@ -5805,12 +6078,18 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
 
     params = {"instruments": "USD_JPY"}
     try:
-        async with httpx.AsyncClient(timeout=config.SNAPSHOT_FETCH_TIMEOUT_SEC) as client:
-            resp = await client.get(_PRICING_URL, headers=_PRICING_HEADERS, params=params)
+        async with httpx.AsyncClient(
+            timeout=config.SNAPSHOT_FETCH_TIMEOUT_SEC
+        ) as client:
+            resp = await client.get(
+                _PRICING_URL, headers=_PRICING_HEADERS, params=params
+            )
             resp.raise_for_status()
             payload = resp.json()
     except httpx.HTTPStatusError as exc:  # noqa: BLE001
-        status_code = getattr(exc.response, "status_code", 0) if exc.response is not None else 0
+        status_code = (
+            getattr(exc.response, "status_code", 0) if exc.response is not None else 0
+        )
         if _snapshot_is_transient_status(int(status_code or 0)):
             _SNAPSHOT_FETCH_FAILURES += 1
             delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
@@ -5886,7 +6165,9 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
     try:
         bid = float(bids[0]["price"])
         ask = float(asks[0]["price"])
-        quote_ts = _parse_time(price.get("time", datetime.datetime.utcnow().isoformat() + "Z"))
+        quote_ts = _parse_time(
+            price.get("time", datetime.datetime.utcnow().isoformat() + "Z")
+        )
     except Exception as exc:
         logger.warning("%s snapshot parse failed: %s", config.LOG_PREFIX, exc)
         _SNAPSHOT_FETCH_FAILURES += 1
@@ -6161,7 +6442,10 @@ async def scalp_ping_5s_worker() -> None:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             _signal_side_hint = None
             loop_start_mono = time.monotonic()
-            if loop_start_mono - last_loop_heartbeat_mono >= _LOOP_HEARTBEAT_INTERVAL_SEC:
+            if (
+                loop_start_mono - last_loop_heartbeat_mono
+                >= _LOOP_HEARTBEAT_INTERVAL_SEC
+            ):
                 last_loop_heartbeat_mono = loop_start_mono
                 LOG.info(
                     "%s loop_heartbeat interval=%ds pocket=%s tag=%s",
@@ -6199,14 +6483,24 @@ async def scalp_ping_5s_worker() -> None:
                 if not protected_seeded:
                     protected_seeded = True
                     if config.FORCE_EXIT_SKIP_EXISTING_ON_START:
-                        open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                        open_trades = (
+                            pocket_info.get("open_trades")
+                            if isinstance(pocket_info, dict)
+                            else None
+                        )
                         protect_total = 0
                         skipped_eligible = 0
                         if isinstance(open_trades, list):
                             max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
-                            hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
-                            recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
-                            recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+                            hard_loss_pips = float(
+                                config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS
+                            )
+                            recovery_window_sec = float(
+                                config.FORCE_EXIT_RECOVERY_WINDOW_SEC
+                            )
+                            recoverable_loss_pips = float(
+                                config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS
+                            )
 
                             for trade in open_trades:
                                 if not isinstance(trade, dict):
@@ -6224,28 +6518,45 @@ async def scalp_ping_5s_worker() -> None:
                                 opened_at = _parse_trade_open_time(
                                     trade.get("open_time") or trade.get("entry_time")
                                 )
-                                hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
+                                hold_sec = (
+                                    (now_utc - opened_at).total_seconds()
+                                    if opened_at is not None
+                                    else 0.0
+                                )
                                 unrealized_pips = _trade_unrealized_pips(trade)
                                 units = int(_safe_float(trade.get("units"), 0.0))
                                 trade_side = _trade_side_from_units(units)
                                 if trade_side is None:
                                     continue
-                                max_hold_sec, hard_loss_pips = _force_exit_thresholds_for_side(
-                                    trade_side
+                                max_hold_sec, hard_loss_pips = (
+                                    _force_exit_thresholds_for_side(trade_side)
                                 )
-                                trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
-                                trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
-                                hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
-                                    trade,
-                                    trade_hard_loss_pips,
+                                trade_max_hold_sec = _trade_force_exit_max_hold_sec(
+                                    trade, max_hold_sec
+                                )
+                                trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(
+                                    trade, hard_loss_pips
+                                )
+                                hard_loss_trigger_pips = (
+                                    _force_exit_hard_loss_trigger_pips(
+                                        trade,
+                                        trade_hard_loss_pips,
+                                    )
                                 )
                                 eligible = False
-                                if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
+                                if (
+                                    trade_max_hold_sec > 0.0
+                                    and hold_sec >= trade_max_hold_sec
+                                ):
                                     eligible = True
                                 elif (
                                     hold_sec
                                     >= float(
-                                        getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0)
+                                        getattr(
+                                            config,
+                                            "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC",
+                                            0.0,
+                                        )
                                     )
                                     and hard_loss_trigger_pips > 0.0
                                     and unrealized_pips <= -hard_loss_trigger_pips
@@ -6286,12 +6597,18 @@ async def scalp_ping_5s_worker() -> None:
 
             # Expire protection once a trade becomes force-exit eligible.
             if protected_trade_ids:
-                open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                open_trades = (
+                    pocket_info.get("open_trades")
+                    if isinstance(pocket_info, dict)
+                    else None
+                )
                 if isinstance(open_trades, list):
                     max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
                     hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
                     recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
-                    recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+                    recoverable_loss_pips = float(
+                        config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS
+                    )
                     protected_seen: set[str] = set()
                     for trade in open_trades:
                         if not isinstance(trade, dict):
@@ -6307,7 +6624,11 @@ async def scalp_ping_5s_worker() -> None:
                         opened_at = _parse_trade_open_time(
                             trade.get("open_time") or trade.get("entry_time")
                         )
-                        hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
+                        hold_sec = (
+                            (now_utc - opened_at).total_seconds()
+                            if opened_at is not None
+                            else 0.0
+                        )
                         unrealized_pips = _trade_unrealized_pips(trade)
                         units = int(_safe_float(trade.get("units"), 0.0))
                         trade_side = _trade_side_from_units(units)
@@ -6332,7 +6653,9 @@ async def scalp_ping_5s_worker() -> None:
                         elif (
                             hold_sec
                             >= float(
-                                getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0)
+                                getattr(
+                                    config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0
+                                )
                             )
                             and hard_loss_trigger_pips > 0.0
                             and unrealized_pips <= -hard_loss_trigger_pips
@@ -6384,7 +6707,8 @@ async def scalp_ping_5s_worker() -> None:
                 pocket_info = positions.get(config.POCKET) or {}
             elif (
                 config.PROFIT_BANK_ENABLED
-                and time.monotonic() - last_profit_bank_log_mono >= config.PROFIT_BANK_LOG_INTERVAL_SEC
+                and time.monotonic() - last_profit_bank_log_mono
+                >= config.PROFIT_BANK_LOG_INTERVAL_SEC
             ):
                 start_utc = _profit_bank_start_time_utc()
                 gross_profit, spent_loss, net_realized = _load_profit_bank_stats(
@@ -6411,17 +6735,24 @@ async def scalp_ping_5s_worker() -> None:
 
             blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)
-            if _is_spread_stale_block(
-                blocked=blocked,
-                spread_state=spread_state,
-                spread_reason=spread_reason,
-            ) and config.SNAPSHOT_FALLBACK_ENABLED:
+            if (
+                _is_spread_stale_block(
+                    blocked=blocked,
+                    spread_state=spread_state,
+                    spread_reason=spread_reason,
+                )
+                and config.SNAPSHOT_FALLBACK_ENABLED
+            ):
                 now_mono = time.monotonic()
                 if now_mono - last_snapshot_fetch >= config.SNAPSHOT_MIN_INTERVAL_SEC:
                     if await _fetch_price_snapshot(LOG):
                         last_snapshot_fetch = now_mono
-                        blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
-                        spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)
+                        blocked, remain, spread_state, spread_reason = (
+                            spread_monitor.is_blocked()
+                        )
+                        spread_pips = _safe_float(
+                            (spread_state or {}).get("spread_pips"), 0.0
+                        )
                         if not blocked and spread_pips <= config.MAX_SPREAD_PIPS:
                             LOG.info(
                                 "%s spread stale recovered via snapshot fallback spread=%.2fp",
@@ -6518,7 +6849,10 @@ async def scalp_ping_5s_worker() -> None:
                     "low_tick_count",
                     f"len={len(ticks)} min={config.MIN_TICKS}",
                 )
-                if snapshot_degraded_mode and now_mono - last_snapshot_degrade_log_mono >= 10.0:
+                if (
+                    snapshot_degraded_mode
+                    and now_mono - last_snapshot_degrade_log_mono >= 10.0
+                ):
                     last_snapshot_degrade_log_mono = now_mono
                     LOG.warning(
                         "%s snapshot degraded: insufficient ticks len=%d < min_ticks=%d (failures=%d)",
@@ -6552,7 +6886,9 @@ async def scalp_ping_5s_worker() -> None:
                 _note_entry_skip(
                     "no_signal",
                     detail=signal_reason,
-                    side=_infer_signal_side_from_reason("no_signal", detail=signal_reason),
+                    side=_infer_signal_side_from_reason(
+                        "no_signal", detail=signal_reason
+                    ),
                 )
                 continue
             _signal_side_hint = signal.side
@@ -6591,20 +6927,23 @@ async def scalp_ping_5s_worker() -> None:
             except Exception:
                 factors = {}
             tech_route_reasons: list[str] = []
-            regime = _build_mtf_regime(factors=factors if isinstance(factors, dict) else None)
+            regime = _build_mtf_regime(
+                factors=factors if isinstance(factors, dict) else None
+            )
             regime_input_signal = signal
-            regime_signal, regime_units_mult, regime_gate = _apply_mtf_regime(signal, regime)
+            regime_signal, regime_units_mult, regime_gate = _apply_mtf_regime(
+                signal, regime
+            )
             if regime_signal is None or regime_units_mult <= 0.0:
-                if now_mono - last_regime_log_mono >= config.MTF_REGIME_LOG_INTERVAL_SEC:
+                if (
+                    now_mono - last_regime_log_mono
+                    >= config.MTF_REGIME_LOG_INTERVAL_SEC
+                ):
                     if regime is not None:
                         LOG.info(
                             "%s mtf %s gate=%s mode=%s side=%s trend=%.2f heat=%.2f adx(m1/m5)=%.1f/%.1f atr(m1/m5)=%.2f/%.2f",
                             config.LOG_PREFIX,
-                            (
-                                "route"
-                                if config.TECH_ROUTER_ENABLED
-                                else "block"
-                            ),
+                            ("route" if config.TECH_ROUTER_ENABLED else "block"),
                             regime_gate,
                             regime.mode,
                             regime.side,
@@ -6625,7 +6964,9 @@ async def scalp_ping_5s_worker() -> None:
                     last_regime_log_mono = now_mono
                 if config.TECH_ROUTER_ENABLED:
                     signal = regime_input_signal
-                    regime_units_mult = max(0.1, float(config.TECH_ROUTER_MTF_BLOCK_UNITS_MULT))
+                    regime_units_mult = max(
+                        0.1, float(config.TECH_ROUTER_MTF_BLOCK_UNITS_MULT)
+                    )
                     regime_gate = f"{regime_gate}_route"
                     tech_route_reasons.append("mtf")
                 else:
@@ -6633,9 +6974,13 @@ async def scalp_ping_5s_worker() -> None:
                     continue
             else:
                 signal = regime_signal
-            horizon = _build_horizon_bias(signal, factors if isinstance(factors, dict) else {})
+            horizon = _build_horizon_bias(
+                signal, factors if isinstance(factors, dict) else {}
+            )
             horizon_input_signal = signal
-            horizon_signal, horizon_units_mult, horizon_gate = _apply_horizon_bias(signal, horizon)
+            horizon_signal, horizon_units_mult, horizon_gate = _apply_horizon_bias(
+                signal, horizon
+            )
             if horizon_signal is None or horizon_units_mult <= 0.0:
                 if now_mono - last_horizon_log_mono >= config.HORIZON_LOG_INTERVAL_SEC:
                     if horizon is not None:
@@ -6666,7 +7011,9 @@ async def scalp_ping_5s_worker() -> None:
                     last_horizon_log_mono = now_mono
                 if config.TECH_ROUTER_ENABLED:
                     signal = horizon_input_signal
-                    horizon_units_mult = max(0.1, float(config.TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT))
+                    horizon_units_mult = max(
+                        0.1, float(config.TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT)
+                    )
                     horizon_gate = f"{horizon_gate}_route"
                     tech_route_reasons.append("horizon")
                 else:
@@ -6690,10 +7037,7 @@ async def scalp_ping_5s_worker() -> None:
                 last_snapshot_fetch=last_snapshot_fetch,
                 logger=LOG,
             )
-            if (
-                density_topup
-                and now_mono - last_density_topup_log_mono >= 5.0
-            ):
+            if density_topup and now_mono - last_density_topup_log_mono >= 5.0:
                 LOG.info(
                     "%s snapshot_topup density=%.3f->%.3f target=%.3f window=%.0fs",
                     config.LOG_PREFIX,
@@ -6704,7 +7048,9 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 last_density_topup_log_mono = now_mono
 
-            direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
+            direction_bias = _build_direction_bias(
+                ticks, spread_pips=signal.spread_pips
+            )
             fast_flip_applied = False
             fast_flip_reason = ""
             sl_streak_flip_applied = False
@@ -6749,7 +7095,10 @@ async def scalp_ping_5s_worker() -> None:
                 signal_mode=signal.mode,
             )
             if bias_units_mult <= 0.0:
-                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                if (
+                    now_mono - last_bias_log_mono
+                    >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC
+                ):
                     score = _safe_float(getattr(direction_bias, "score", 0.0), 0.0)
                     LOG.info(
                         "%s bias %s signal=%s bias=%s score=%.2f mom=%.2fp rng=%.2fp flow=%.2f",
@@ -6764,7 +7113,9 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_bias_log_mono = now_mono
                 if config.TECH_ROUTER_ENABLED:
-                    bias_units_mult = max(0.1, float(config.TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT))
+                    bias_units_mult = max(
+                        0.1, float(config.TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT)
+                    )
                     bias_gate = f"{bias_gate}_route"
                     tech_route_reasons.append("direction")
                 else:
@@ -6788,7 +7139,9 @@ async def scalp_ping_5s_worker() -> None:
             if config.LOOKAHEAD_GATE_ENABLED:
                 direction_score = None
                 if direction_bias is not None:
-                    direction_score = _safe_float(getattr(direction_bias, "score", 0.0), 0.0)
+                    direction_score = _safe_float(
+                        getattr(direction_bias, "score", 0.0), 0.0
+                    )
                 lookahead_decision = decide_tick_lookahead_edge(
                     ticks=ticks,
                     side=signal.side,
@@ -6820,8 +7173,8 @@ async def scalp_ping_5s_worker() -> None:
                     allow_thin_edge=config.LOOKAHEAD_ALLOW_THIN_EDGE,
                     fail_open=True,
                 )
-                lookahead_edge_blocked, lookahead_edge_pips = _lookahead_edge_hard_blocked(
-                    lookahead_decision
+                lookahead_edge_blocked, lookahead_edge_pips = (
+                    _lookahead_edge_hard_blocked(lookahead_decision)
                 )
                 if lookahead_edge_blocked:
                     _note_entry_skip(
@@ -6845,7 +7198,10 @@ async def scalp_ping_5s_worker() -> None:
                             lookahead_rescue_recent_fills,
                         ) = lookahead_rescue
                         lookahead_rescue_applied = True
-                        if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
+                        if (
+                            now_mono - last_lookahead_log_mono
+                            >= config.LOOKAHEAD_LOG_INTERVAL_SEC
+                        ):
                             LOG.info(
                                 "%s lookahead rescue side=%s %s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp units=%.2f",
                                 config.LOG_PREFIX,
@@ -6860,7 +7216,10 @@ async def scalp_ping_5s_worker() -> None:
                             )
                             last_lookahead_log_mono = now_mono
                     else:
-                        if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
+                        if (
+                            now_mono - last_lookahead_log_mono
+                            >= config.LOOKAHEAD_LOG_INTERVAL_SEC
+                        ):
                             LOG.info(
                                 "%s lookahead %s side=%s reason=%s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp",
                                 config.LOG_PREFIX,
@@ -6876,7 +7235,8 @@ async def scalp_ping_5s_worker() -> None:
                             last_lookahead_log_mono = now_mono
                         if config.TECH_ROUTER_ENABLED:
                             lookahead_units_mult = max(
-                                0.1, float(config.TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT)
+                                0.1,
+                                float(config.TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT),
                             )
                             tech_route_reasons.append("lookahead")
                         else:
@@ -6886,7 +7246,9 @@ async def scalp_ping_5s_worker() -> None:
                             )
                             continue
                 else:
-                    lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
+                    lookahead_units_mult = max(
+                        0.1, float(lookahead_decision.units_mult)
+                    )
             extrema_decision = _extrema_gate_decision(
                 signal.side,
                 factors=factors if isinstance(factors, dict) else None,
@@ -6894,22 +7256,30 @@ async def scalp_ping_5s_worker() -> None:
             )
             extrema_units_mult = max(0.1, float(extrema_decision.units_mult))
             m1_pos_log = (
-                -1.0 if extrema_decision.m1_pos is None else float(extrema_decision.m1_pos)
+                -1.0
+                if extrema_decision.m1_pos is None
+                else float(extrema_decision.m1_pos)
             )
             m5_pos_log = (
-                -1.0 if extrema_decision.m5_pos is None else float(extrema_decision.m5_pos)
+                -1.0
+                if extrema_decision.m5_pos is None
+                else float(extrema_decision.m5_pos)
             )
             h4_pos_log = (
-                -1.0 if extrema_decision.h4_pos is None else float(extrema_decision.h4_pos)
+                -1.0
+                if extrema_decision.h4_pos is None
+                else float(extrema_decision.h4_pos)
             )
             extrema_reversal_applied = False
             extrema_reversal_score = 0.0
-            reversed_signal, reversal_units_mult, reversal_reason, reversal_score = _extrema_reversal_route(
-                signal,
-                extrema_decision,
-                regime=regime,
-                horizon=horizon,
-                factors=factors if isinstance(factors, dict) else None,
+            reversed_signal, reversal_units_mult, reversal_reason, reversal_score = (
+                _extrema_reversal_route(
+                    signal,
+                    extrema_decision,
+                    regime=regime,
+                    horizon=horizon,
+                    factors=factors if isinstance(factors, dict) else None,
+                )
             )
             if reversed_signal is not None:
                 signal = reversed_signal
@@ -6952,7 +7322,9 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_extrema_log_mono = now_mono
                 if config.TECH_ROUTER_ENABLED:
-                    extrema_units_mult = max(0.1, float(config.TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT))
+                    extrema_units_mult = max(
+                        0.1, float(config.TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT)
+                    )
                     extrema_decision = ExtremaGateDecision(
                         allow_entry=True,
                         reason=f"{extrema_decision.reason}_route",
@@ -6969,9 +7341,12 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     continue
             if (
-                extrema_units_mult < 0.999
-                or str(extrema_decision.reason).startswith("missing_")
-            ) and now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC:
+                (
+                    extrema_units_mult < 0.999
+                    or str(extrema_decision.reason).startswith("missing_")
+                )
+                and now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC
+            ):
                 LOG.info(
                     "%s extrema pass side=%s reason=%s emult=%.2f m1=%.2f m5=%.2f h4=%.2f",
                     config.LOG_PREFIX,
@@ -6998,9 +7373,11 @@ async def scalp_ping_5s_worker() -> None:
                 fast_flip_applied = True
                 fast_flip_reason = str(post_flip_reason)
                 tech_route_reasons.append("fast_flip")
-                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
-                    signal,
-                    horizon,
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = (
+                    _apply_horizon_bias(
+                        signal,
+                        horizon,
+                    )
                 )
                 if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
                     signal = refreshed_signal
@@ -7017,9 +7394,14 @@ async def scalp_ping_5s_worker() -> None:
                     signal_mode=signal.mode,
                 )
                 if bias_units_mult <= 0.0:
-                    bias_units_mult = max(0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT))
+                    bias_units_mult = max(
+                        0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT)
+                    )
                     bias_gate = f"{bias_gate}_fflip_clamped"
-                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                if (
+                    now_mono - last_bias_log_mono
+                    >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC
+                ):
                     LOG.info(
                         "%s fast_flip side=%s reason=%s bias=%s(%.2f,mom=%.2fp) horizon=%s(%.2f,agree=%d)",
                         config.LOG_PREFIX,
@@ -7034,19 +7416,23 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_bias_log_mono = now_mono
 
-            sl_flip_signal, sl_flip_reason, sl_flip_eval = _maybe_sl_streak_direction_flip(
-                signal,
-                strategy_tag=config.STRATEGY_TAG,
-                pocket=config.POCKET,
-                now_utc=now_utc,
-                now_mono=now_mono,
-                direction_bias=direction_bias,
-                horizon=horizon,
-                fast_flip_applied=fast_flip_applied,
+            sl_flip_signal, sl_flip_reason, sl_flip_eval = (
+                _maybe_sl_streak_direction_flip(
+                    signal,
+                    strategy_tag=config.STRATEGY_TAG,
+                    pocket=config.POCKET,
+                    now_utc=now_utc,
+                    now_mono=now_mono,
+                    direction_bias=direction_bias,
+                    horizon=horizon,
+                    fast_flip_applied=fast_flip_applied,
+                )
             )
             sl_streak = sl_flip_eval.streak
             sl_streak_side_sl_hits_recent = int(sl_flip_eval.side_sl_hits_recent)
-            sl_streak_target_market_plus_recent = int(sl_flip_eval.target_market_plus_recent)
+            sl_streak_target_market_plus_recent = int(
+                sl_flip_eval.target_market_plus_recent
+            )
             sl_streak_direction_confirmed = bool(sl_flip_eval.direction_confirmed)
             sl_streak_horizon_confirmed = bool(sl_flip_eval.horizon_confirmed)
             if sl_streak is not None:
@@ -7059,9 +7445,11 @@ async def scalp_ping_5s_worker() -> None:
                 sl_streak_flip_applied = True
                 sl_streak_flip_reason = str(sl_flip_reason)
                 tech_route_reasons.append("sl_streak_flip")
-                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
-                    signal,
-                    horizon,
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = (
+                    _apply_horizon_bias(
+                        signal,
+                        horizon,
+                    )
                 )
                 if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
                     signal = refreshed_signal
@@ -7078,7 +7466,9 @@ async def scalp_ping_5s_worker() -> None:
                     signal_mode=signal.mode,
                 )
                 if bias_units_mult <= 0.0:
-                    bias_units_mult = max(0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT))
+                    bias_units_mult = max(
+                        0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT)
+                    )
                     bias_gate = f"{bias_gate}_slflip_clamped"
                 if (
                     now_mono - last_sl_streak_log_mono
@@ -7099,13 +7489,15 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_sl_streak_log_mono = now_mono
 
-            side_metrics_flip_signal, side_metrics_flip_candidate_reason, side_metrics_eval = (
-                _maybe_side_metrics_direction_flip(
-                    signal,
-                    strategy_tag=config.STRATEGY_TAG,
-                    pocket=config.POCKET,
-                    now_mono=now_mono,
-                )
+            (
+                side_metrics_flip_signal,
+                side_metrics_flip_candidate_reason,
+                side_metrics_eval,
+            ) = _maybe_side_metrics_direction_flip(
+                signal,
+                strategy_tag=config.STRATEGY_TAG,
+                pocket=config.POCKET,
+                now_mono=now_mono,
             )
             side_metrics_flip_reason = str(side_metrics_flip_candidate_reason)
             side_metrics_flip_current_sl_rate = float(side_metrics_eval.current_sl_rate)
@@ -7116,8 +7508,12 @@ async def scalp_ping_5s_worker() -> None:
             side_metrics_flip_target_market_plus_rate = float(
                 side_metrics_eval.target_market_plus_rate
             )
-            side_metrics_flip_current_mean_pips = float(side_metrics_eval.current_mean_pips)
-            side_metrics_flip_target_mean_pips = float(side_metrics_eval.target_mean_pips)
+            side_metrics_flip_current_mean_pips = float(
+                side_metrics_eval.current_mean_pips
+            )
+            side_metrics_flip_target_mean_pips = float(
+                side_metrics_eval.target_mean_pips
+            )
             side_metrics_flip_current_trades = int(side_metrics_eval.current_trades)
             side_metrics_flip_target_trades = int(side_metrics_eval.target_trades)
             if side_metrics_flip_signal is not None:
@@ -7125,9 +7521,11 @@ async def scalp_ping_5s_worker() -> None:
                 side_metrics_flip_applied = True
                 side_metrics_flip_reason = str(side_metrics_flip_candidate_reason)
                 tech_route_reasons.append("side_metrics_flip")
-                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = _apply_horizon_bias(
-                    signal,
-                    horizon,
+                refreshed_signal, refreshed_horizon_mult, refreshed_horizon_gate = (
+                    _apply_horizon_bias(
+                        signal,
+                        horizon,
+                    )
                 )
                 if refreshed_signal is not None and refreshed_horizon_mult > 0.0:
                     signal = refreshed_signal
@@ -7144,7 +7542,9 @@ async def scalp_ping_5s_worker() -> None:
                     signal_mode=signal.mode,
                 )
                 if bias_units_mult <= 0.0:
-                    bias_units_mult = max(0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT))
+                    bias_units_mult = max(
+                        0.1, float(config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT)
+                    )
                     bias_gate = f"{bias_gate}_smflip_clamped"
                 if (
                     now_mono - last_side_metrics_flip_log_mono
@@ -7181,18 +7581,23 @@ async def scalp_ping_5s_worker() -> None:
                 continue
             if side_filter_routing.startswith("side_filter_fallback:"):
                 tech_route_reasons.append("side_filter_fallback")
-                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                if (
+                    now_mono - last_bias_log_mono
+                    >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC
+                ):
                     LOG.info(
                         "%s %s",
                         config.LOG_PREFIX,
                         side_filter_routing,
                     )
                     last_bias_log_mono = now_mono
-            countertrend_horizon_m1_block_reason = _countertrend_horizon_m1_block_reason(
-                signal,
-                horizon,
-                m1_trend_gate=m1_trend_gate,
-                m1_score=m1_score,
+            countertrend_horizon_m1_block_reason = (
+                _countertrend_horizon_m1_block_reason(
+                    signal,
+                    horizon,
+                    m1_trend_gate=m1_trend_gate,
+                    m1_score=m1_score,
+                )
             )
             if countertrend_horizon_m1_block_reason:
                 _note_entry_skip(
@@ -7234,7 +7639,9 @@ async def scalp_ping_5s_worker() -> None:
                     side=signal.side,
                 )
                 continue
-            signal_mode_blocked, signal_mode_block_token = _is_signal_mode_blocked(signal.mode)
+            signal_mode_blocked, signal_mode_block_token = _is_signal_mode_blocked(
+                signal.mode
+            )
             if signal_mode_blocked:
                 _note_entry_skip(
                     "signal_mode_blocked",
@@ -7270,7 +7677,10 @@ async def scalp_ping_5s_worker() -> None:
                 continue
 
             trap_state = _compute_trap_state(positions, mid_price=signal.mid)
-            if trap_state.active and now_mono - last_trap_log_mono >= config.TRAP_LOG_INTERVAL_SEC:
+            if (
+                trap_state.active
+                and now_mono - last_trap_log_mono >= config.TRAP_LOG_INTERVAL_SEC
+            ):
                 LOG.info(
                     "%s trap_active long=%.0f short=%.0f net=%.2f dd=(L%.2f/S%.2f/C%.2f)p unreal=%.0f",
                     config.LOG_PREFIX,
@@ -7286,8 +7696,12 @@ async def scalp_ping_5s_worker() -> None:
 
             # Use account-level long/short units for risk sizing so manual trades
             # (and other pockets) are correctly reflected in hedge sizing.
-            account_long_units = _safe_float(getattr(trap_state, "long_units", 0.0), 0.0)
-            account_short_units = _safe_float(getattr(trap_state, "short_units", 0.0), 0.0)
+            account_long_units = _safe_float(
+                getattr(trap_state, "long_units", 0.0), 0.0
+            )
+            account_short_units = _safe_float(
+                getattr(trap_state, "short_units", 0.0), 0.0
+            )
 
             long_units = _safe_float(pocket_info.get("long_units"), 0.0)
             short_units = _safe_float(pocket_info.get("short_units"), 0.0)
@@ -7353,14 +7767,16 @@ async def scalp_ping_5s_worker() -> None:
                 free_ratio=free_ratio,
                 margin_available=margin_available,
             )
-            side_adverse_stack_units_mult, side_adverse_eval = _side_adverse_stack_units_multiplier(
-                side=signal.side,
-                strategy_tag=config.STRATEGY_TAG,
-                pocket=config.POCKET,
-                active_long=active_long,
-                active_short=active_short,
-                trap_state=trap_state,
-                now_mono=now_mono,
+            side_adverse_stack_units_mult, side_adverse_eval = (
+                _side_adverse_stack_units_multiplier(
+                    side=signal.side,
+                    strategy_tag=config.STRATEGY_TAG,
+                    pocket=config.POCKET,
+                    active_long=active_long,
+                    active_short=active_short,
+                    trap_state=trap_state,
+                    now_mono=now_mono,
+                )
             )
             side_adverse_stack_reason = str(side_adverse_eval.reason)
             side_adverse_stack_metrics_adverse = bool(side_adverse_eval.adverse)
@@ -7369,7 +7785,9 @@ async def scalp_ping_5s_worker() -> None:
             side_adverse_stack_dd_pips = float(side_adverse_eval.dd_pips)
             side_adverse_stack_current_trades = int(side_adverse_eval.current_trades)
             side_adverse_stack_target_trades = int(side_adverse_eval.target_trades)
-            side_adverse_stack_current_sl_rate = float(side_adverse_eval.current_sl_rate)
+            side_adverse_stack_current_sl_rate = float(
+                side_adverse_eval.current_sl_rate
+            )
             side_adverse_stack_target_sl_rate = float(side_adverse_eval.target_sl_rate)
             side_adverse_stack_current_market_plus_rate = float(
                 side_adverse_eval.current_market_plus_rate
@@ -7377,19 +7795,27 @@ async def scalp_ping_5s_worker() -> None:
             side_adverse_stack_target_market_plus_rate = float(
                 side_adverse_eval.target_market_plus_rate
             )
-            side_adverse_stack_current_mean_pips = float(side_adverse_eval.current_mean_pips)
-            side_adverse_stack_target_mean_pips = float(side_adverse_eval.target_mean_pips)
+            side_adverse_stack_current_mean_pips = float(
+                side_adverse_eval.current_mean_pips
+            )
+            side_adverse_stack_target_mean_pips = float(
+                side_adverse_eval.target_mean_pips
+            )
             side_adverse_stack_mean_gap_pips = float(side_adverse_eval.mean_gap_pips)
-            side_adverse_stack_active_same_side = int(side_adverse_eval.active_same_side)
+            side_adverse_stack_active_same_side = int(
+                side_adverse_eval.active_same_side
+            )
             side_adverse_stack_active_opposite_side = int(
                 side_adverse_eval.active_opposite_side
             )
-            dynamic_per_direction_cap, dynamic_cap_reason = _resolve_dynamic_direction_cap(
-                side=signal.side,
-                base_cap=max_per_direction,
-                side_adverse_eval=side_adverse_eval,
-                direction_bias=direction_bias,
-                horizon=horizon,
+            dynamic_per_direction_cap, dynamic_cap_reason = (
+                _resolve_dynamic_direction_cap(
+                    side=signal.side,
+                    base_cap=max_per_direction,
+                    side_adverse_eval=side_adverse_eval,
+                    direction_bias=direction_bias,
+                    horizon=horizon,
+                )
             )
             if (
                 dynamic_per_direction_cap < max_per_direction
@@ -7426,7 +7852,8 @@ async def scalp_ping_5s_worker() -> None:
                 continue
             if (
                 active_total >= config.MAX_ACTIVE_TRADES
-                and now_mono - last_max_active_bypass_log_mono >= config.ACTIVE_CAP_BYPASS_LOG_INTERVAL_SEC
+                and now_mono - last_max_active_bypass_log_mono
+                >= config.ACTIVE_CAP_BYPASS_LOG_INTERVAL_SEC
             ):
                 LOG.info(
                     "%s max_active bypass side=%s total=%d long=%d short=%d base_cap=%d eff_cap=%d expanded=%s free_ratio=%.3f margin_avail=%.0f",
@@ -7525,49 +7952,66 @@ async def scalp_ping_5s_worker() -> None:
                 else config.TP_BASE_PIPS
             )
             tp_max_cfg = (
-                config.SHORT_TP_MAX_PIPS if signal.side == "short" else config.TP_MAX_PIPS
+                config.SHORT_TP_MAX_PIPS
+                if signal.side == "short"
+                else config.TP_MAX_PIPS
             )
-            tp_floor = max(tp_base_cfg, signal.spread_pips + config.TP_NET_MIN_FLOOR_PIPS)
+            tp_floor = max(
+                tp_base_cfg, signal.spread_pips + config.TP_NET_MIN_FLOOR_PIPS
+            )
             tp_pips = _clamp(tp_pips, tp_floor, tp_max_cfg)
             sl_floor = max(
-                config.SHORT_SL_MIN_PIPS
-                if signal.side == "short"
-                else config.SL_MIN_PIPS,
-                signal.spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_BUFFER_PIPS,
+                (
+                    config.SHORT_SL_MIN_PIPS
+                    if signal.side == "short"
+                    else config.SL_MIN_PIPS
+                ),
+                signal.spread_pips * config.SL_SPREAD_MULT
+                + config.SL_SPREAD_BUFFER_PIPS,
             )
             sl_max_cfg = (
-                config.SHORT_SL_MAX_PIPS if signal.side == "short" else config.SL_MAX_PIPS
+                config.SHORT_SL_MAX_PIPS
+                if signal.side == "short"
+                else config.SL_MAX_PIPS
             )
             sl_pips = _clamp(
                 sl_pips * max(0.2, tech_profile.sl_mult),
                 sl_floor,
                 sl_max_cfg,
             )
-            dynamic_max_hold_sec, dynamic_hard_loss_pips = _scaled_force_exit_thresholds(
-                base_max_hold_sec=_force_exit_thresholds_for_side(signal.side)[0],
-                base_hard_loss_pips=_force_exit_thresholds_for_side(signal.side)[1],
-                profile=tech_profile,
-                vol_bucket=signal_vol_bucket,
+            dynamic_max_hold_sec, dynamic_hard_loss_pips = (
+                _scaled_force_exit_thresholds(
+                    base_max_hold_sec=_force_exit_thresholds_for_side(signal.side)[0],
+                    base_hard_loss_pips=_force_exit_thresholds_for_side(signal.side)[1],
+                    profile=tech_profile,
+                    vol_bucket=signal_vol_bucket,
+                )
             )
             risk_sl_pips = float(sl_pips if config.USE_SL else dynamic_hard_loss_pips)
             if risk_sl_pips <= 0.0:
                 risk_sl_pips = float(
-                    config.SHORT_SL_MIN_PIPS if signal.side == "short" else config.SL_MIN_PIPS
+                    config.SHORT_SL_MIN_PIPS
+                    if signal.side == "short"
+                    else config.SL_MIN_PIPS
                 )
             raw_entry_probability = _raw_entry_probability(signal)
-            entry_probability, probability_units_mult, probability_meta = _adjust_entry_probability_alignment(
-                signal=signal,
-                raw_probability=raw_entry_probability,
-                direction_bias=direction_bias,
-                horizon=horizon,
-                m1_score=m1_score,
+            entry_probability, probability_units_mult, probability_meta = (
+                _adjust_entry_probability_alignment(
+                    signal=signal,
+                    raw_probability=raw_entry_probability,
+                    direction_bias=direction_bias,
+                    horizon=horizon,
+                    m1_score=m1_score,
+                )
             )
-            probability_band_units_mult, probability_band_meta = _entry_probability_band_units_multiplier(
-                strategy_tag=config.STRATEGY_TAG,
-                pocket=config.POCKET,
-                side=signal.side,
-                entry_probability=entry_probability,
-                now_mono=now_mono,
+            probability_band_units_mult, probability_band_meta = (
+                _entry_probability_band_units_multiplier(
+                    strategy_tag=config.STRATEGY_TAG,
+                    pocket=config.POCKET,
+                    side=signal.side,
+                    entry_probability=entry_probability,
+                    now_mono=now_mono,
+                )
             )
             if (
                 allow_hour_policy.soft_mode
@@ -7686,16 +8130,22 @@ async def scalp_ping_5s_worker() -> None:
                 if short_probe_status == "short_probe_rescued":
                     min_units_status = short_probe_status
 
-            units, lookahead_rescue_units_floor_status = _maybe_apply_lookahead_rescue_units_floor(
-                units=units,
-                units_risk=units_risk,
-                entry_probability=entry_probability,
-                lookahead_rescue_applied=lookahead_rescue_applied,
+            units, lookahead_rescue_units_floor_status = (
+                _maybe_apply_lookahead_rescue_units_floor(
+                    units=units,
+                    units_risk=units_risk,
+                    entry_probability=entry_probability,
+                    lookahead_rescue_applied=lookahead_rescue_applied,
+                )
             )
             if lookahead_rescue_units_floor_status == "rescued":
                 tech_route_reasons.append("lookahead_rescue_units_floor")
 
-            if min_units_status in {"rescued", "rescued_post_probability_floor", "short_probe_rescued"}:
+            if min_units_status in {
+                "rescued",
+                "rescued_post_probability_floor",
+                "short_probe_rescued",
+            }:
                 tech_route_reasons.append("min_units_rescue")
                 if (
                     now_mono - last_min_units_rescue_log_mono
@@ -7755,28 +8205,43 @@ async def scalp_ping_5s_worker() -> None:
                 strategy_tag=config.STRATEGY_TAG,
                 pocket=config.POCKET,
             )
-            order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
+            order_policy = (
+                "market_tech_router" if tech_route_reasons else "market_guarded"
+            )
 
             entry_thesis = {
                 "strategy_tag": config.STRATEGY_TAG,
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "env_prefix": config.ENV_PREFIX,
                 "signal_window_sec": round(signal.signal_window_sec, 3),
-                "signal_window_adaptive_enabled": bool(signal_window_meta.get("enabled", False)),
+                "signal_window_adaptive_enabled": bool(
+                    signal_window_meta.get("enabled", False)
+                ),
                 "signal_window_adaptive_shadow_enabled": bool(
                     signal_window_meta.get("shadow_enabled", False)
                 ),
-                "signal_window_adaptive_applied": bool(signal_window_meta.get("applied", False)),
+                "signal_window_adaptive_applied": bool(
+                    signal_window_meta.get("applied", False)
+                ),
                 "signal_window_adaptive_live_sec": round(
-                    _safe_float(signal_window_meta.get("live_window_sec"), signal.signal_window_sec),
+                    _safe_float(
+                        signal_window_meta.get("live_window_sec"),
+                        signal.signal_window_sec,
+                    ),
                     3,
                 ),
                 "signal_window_adaptive_selected_sec": round(
-                    _safe_float(signal_window_meta.get("selected_window_sec"), signal.signal_window_sec),
+                    _safe_float(
+                        signal_window_meta.get("selected_window_sec"),
+                        signal.signal_window_sec,
+                    ),
                     3,
                 ),
                 "signal_window_adaptive_best_sec": round(
-                    _safe_float(signal_window_meta.get("best_window_sec"), signal.signal_window_sec),
+                    _safe_float(
+                        signal_window_meta.get("best_window_sec"),
+                        signal.signal_window_sec,
+                    ),
                     3,
                 ),
                 "signal_window_adaptive_live_score_pips": round(
@@ -7843,18 +8308,33 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "vol_bucket_source": "signal_range_then_regime",
                 "tp_time_avg_sec": (
-                    round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
+                    round(tp_profile.avg_tp_sec, 1)
+                    if tp_profile.avg_tp_sec > 0.0
+                    else None
                 ),
                 "entry_probability": round(entry_probability, 3),
                 "entry_probability_units_mult": round(probability_units_mult, 3),
-                "entry_probability_band_units_mult": round(probability_band_units_mult, 3),
+                "entry_probability_band_units_mult": round(
+                    probability_band_units_mult, 3
+                ),
                 "tp_time_target_sec": round(config.TP_TARGET_HOLD_SEC, 1),
                 "tp_time_sample": int(tp_profile.sample),
                 "side_bias_scale": round(float(bias_scale), 3),
-                "side_bias_drift_pips": round(float(_safe_float(bias_meta.get("drift_pips"), 0.0)), 3),
-                "side_bias_aligned_pips": round(float(_safe_float(bias_meta.get("aligned_pips"), 0.0)), 3),
-                "side_bias_contra_pips": round(float(_safe_float(bias_meta.get("contra_pips"), 0.0)), 3),
-                "side_bias_mode_adjusted_scale": round(float(_safe_float(bias_meta.get("mode_adjusted_scale"), bias_scale)), 3),
+                "side_bias_drift_pips": round(
+                    float(_safe_float(bias_meta.get("drift_pips"), 0.0)), 3
+                ),
+                "side_bias_aligned_pips": round(
+                    float(_safe_float(bias_meta.get("aligned_pips"), 0.0)), 3
+                ),
+                "side_bias_contra_pips": round(
+                    float(_safe_float(bias_meta.get("contra_pips"), 0.0)), 3
+                ),
+                "side_bias_mode_adjusted_scale": round(
+                    float(
+                        _safe_float(bias_meta.get("mode_adjusted_scale"), bias_scale)
+                    ),
+                    3,
+                ),
                 "entry_mode": "market_ping_5s",
                 "mtf_regime_gate": regime_gate,
                 "mtf_regime_units_mult": round(float(regime_units_mult), 3),
@@ -7876,7 +8356,9 @@ async def scalp_ping_5s_worker() -> None:
                 "execution": {
                     "order_policy": order_policy,
                     "ideal_entry": round(entry_price, 3),
-                    "chase_max": round(config.ENTRY_CHASE_MAX_PIPS * config.PIP_VALUE, 4),
+                    "chase_max": round(
+                        config.ENTRY_CHASE_MAX_PIPS * config.PIP_VALUE, 4
+                    ),
                     "chase_max_pips": round(config.ENTRY_CHASE_MAX_PIPS, 3),
                 },
                 "direction_bias_gate": bias_gate,
@@ -7884,16 +8366,22 @@ async def scalp_ping_5s_worker() -> None:
                 "fast_direction_flip_enabled": bool(config.FAST_DIRECTION_FLIP_ENABLED),
                 "fast_direction_flip_applied": bool(fast_flip_applied),
                 "fast_direction_flip_reason": fast_flip_reason,
-                "sl_streak_direction_flip_enabled": bool(config.SL_STREAK_DIRECTION_FLIP_ENABLED),
+                "sl_streak_direction_flip_enabled": bool(
+                    config.SL_STREAK_DIRECTION_FLIP_ENABLED
+                ),
                 "sl_streak_direction_flip_applied": bool(sl_streak_flip_applied),
                 "sl_streak_direction_flip_reason": sl_streak_flip_reason,
                 "sl_streak_side": sl_streak_side,
                 "sl_streak_count": int(sl_streak_count),
                 "sl_streak_age_sec": (
-                    round(float(sl_streak_age_sec), 1) if sl_streak_age_sec >= 0.0 else None
+                    round(float(sl_streak_age_sec), 1)
+                    if sl_streak_age_sec >= 0.0
+                    else None
                 ),
                 "sl_streak_side_sl_hits_recent": int(sl_streak_side_sl_hits_recent),
-                "sl_streak_target_market_plus_recent": int(sl_streak_target_market_plus_recent),
+                "sl_streak_target_market_plus_recent": int(
+                    sl_streak_target_market_plus_recent
+                ),
                 "sl_streak_direction_confirmed": bool(sl_streak_direction_confirmed),
                 "sl_streak_horizon_confirmed": bool(sl_streak_horizon_confirmed),
                 "side_metrics_direction_flip_enabled": bool(
@@ -8024,8 +8512,12 @@ async def scalp_ping_5s_worker() -> None:
                 "counter": round(_safe_float(probability_meta.get("counter"), 0.0), 6),
                 "boost": round(_safe_float(probability_meta.get("boost"), 0.0), 6),
                 "penalty": round(_safe_float(probability_meta.get("penalty"), 0.0), 6),
-                "counter_extra": round(_safe_float(probability_meta.get("counter_extra"), 0.0), 6),
-                "direction_edge": _safe_float(probability_meta.get("direction_edge"), None),
+                "counter_extra": round(
+                    _safe_float(probability_meta.get("counter_extra"), 0.0), 6
+                ),
+                "direction_edge": _safe_float(
+                    probability_meta.get("direction_edge"), None
+                ),
                 "horizon_edge": _safe_float(probability_meta.get("horizon_edge"), None),
                 "m1_edge": _safe_float(probability_meta.get("m1_edge"), None),
                 "floor_applied": bool(probability_meta.get("floor_applied", False)),
@@ -8035,9 +8527,15 @@ async def scalp_ping_5s_worker() -> None:
                 "enabled": bool(probability_band_meta.get("enabled", False)),
                 "reason": str(probability_band_meta.get("reason") or ""),
                 "bucket": str(probability_band_meta.get("bucket") or "mid"),
-                "band_mult": round(_safe_float(probability_band_meta.get("band_mult"), 1.0), 6),
-                "side_mult": round(_safe_float(probability_band_meta.get("side_mult"), 1.0), 6),
-                "units_mult": round(_safe_float(probability_band_meta.get("units_mult"), 1.0), 6),
+                "band_mult": round(
+                    _safe_float(probability_band_meta.get("band_mult"), 1.0), 6
+                ),
+                "side_mult": round(
+                    _safe_float(probability_band_meta.get("side_mult"), 1.0), 6
+                ),
+                "units_mult": round(
+                    _safe_float(probability_band_meta.get("units_mult"), 1.0), 6
+                ),
                 "shift_strength": round(
                     _safe_float(probability_band_meta.get("shift_strength"), 0.0),
                     6,
@@ -8046,8 +8544,12 @@ async def scalp_ping_5s_worker() -> None:
                     _safe_float(probability_band_meta.get("sample_strength"), 0.0),
                     6,
                 ),
-                "high_sample": int(_safe_float(probability_band_meta.get("high_sample"), 0.0)),
-                "low_sample": int(_safe_float(probability_band_meta.get("low_sample"), 0.0)),
+                "high_sample": int(
+                    _safe_float(probability_band_meta.get("high_sample"), 0.0)
+                ),
+                "low_sample": int(
+                    _safe_float(probability_band_meta.get("low_sample"), 0.0)
+                ),
                 "high_mean_pips": round(
                     _safe_float(probability_band_meta.get("high_mean_pips"), 0.0),
                     6,
@@ -8072,7 +8574,9 @@ async def scalp_ping_5s_worker() -> None:
                     _safe_float(probability_band_meta.get("low_sl_rate"), 0.0),
                     6,
                 ),
-                "gap_pips": round(_safe_float(probability_band_meta.get("gap_pips"), 0.0), 6),
+                "gap_pips": round(
+                    _safe_float(probability_band_meta.get("gap_pips"), 0.0), 6
+                ),
                 "gap_win_rate": round(
                     _safe_float(probability_band_meta.get("gap_win_rate"), 0.0),
                     6,
@@ -8081,8 +8585,12 @@ async def scalp_ping_5s_worker() -> None:
                     _safe_float(probability_band_meta.get("gap_sl_rate"), 0.0),
                     6,
                 ),
-                "side_trades": int(_safe_float(probability_band_meta.get("side_trades"), 0.0)),
-                "side_sl_hits": int(_safe_float(probability_band_meta.get("side_sl_hits"), 0.0)),
+                "side_trades": int(
+                    _safe_float(probability_band_meta.get("side_trades"), 0.0)
+                ),
+                "side_sl_hits": int(
+                    _safe_float(probability_band_meta.get("side_sl_hits"), 0.0)
+                ),
                 "side_market_plus": int(
                     _safe_float(probability_band_meta.get("side_market_plus"), 0.0)
                 ),
@@ -8091,7 +8599,9 @@ async def scalp_ping_5s_worker() -> None:
                     6,
                 ),
                 "side_market_plus_rate": round(
-                    _safe_float(probability_band_meta.get("side_market_plus_rate"), 0.0),
+                    _safe_float(
+                        probability_band_meta.get("side_market_plus_rate"), 0.0
+                    ),
                     6,
                 ),
                 "side_mean_pips": round(
@@ -8110,7 +8620,9 @@ async def scalp_ping_5s_worker() -> None:
             if dynamic_max_hold_sec > 0.0:
                 entry_thesis["force_exit_max_hold_sec"] = round(dynamic_max_hold_sec, 1)
             if dynamic_hard_loss_pips > 0.0:
-                entry_thesis["force_exit_max_floating_loss_pips"] = round(dynamic_hard_loss_pips, 3)
+                entry_thesis["force_exit_max_floating_loss_pips"] = round(
+                    dynamic_hard_loss_pips, 3
+                )
             if extrema_decision.m1_pos is not None:
                 entry_thesis["extrema_m1_pos"] = round(extrema_decision.m1_pos, 4)
             if extrema_decision.m5_pos is not None:
@@ -8118,15 +8630,21 @@ async def scalp_ping_5s_worker() -> None:
             if extrema_decision.h4_pos is not None:
                 entry_thesis["extrema_h4_pos"] = round(extrema_decision.h4_pos, 4)
             if extrema_reversal_applied:
-                entry_thesis["extrema_reversal_score"] = round(extrema_reversal_score, 3)
+                entry_thesis["extrema_reversal_score"] = round(
+                    extrema_reversal_score, 3
+                )
             if direction_bias is not None:
                 entry_thesis.update(
                     {
                         "direction_bias_side": direction_bias.side,
                         "direction_bias_score": round(direction_bias.score, 4),
-                        "direction_bias_momentum_pips": round(direction_bias.momentum_pips, 3),
+                        "direction_bias_momentum_pips": round(
+                            direction_bias.momentum_pips, 3
+                        ),
                         "direction_bias_flow": round(direction_bias.flow, 3),
-                        "direction_bias_range_pips": round(direction_bias.range_pips, 3),
+                        "direction_bias_range_pips": round(
+                            direction_bias.range_pips, 3
+                        ),
                         "direction_bias_vol_norm": round(direction_bias.vol_norm, 3),
                         "direction_bias_tick_rate": round(direction_bias.tick_rate, 3),
                         "direction_bias_span_sec": round(direction_bias.span_sec, 3),
@@ -8136,7 +8654,9 @@ async def scalp_ping_5s_worker() -> None:
                 entry_thesis.update(
                     {
                         "lookahead_reason": lookahead_decision.reason,
-                        "lookahead_pred_move_pips": round(lookahead_decision.pred_move_pips, 4),
+                        "lookahead_pred_move_pips": round(
+                            lookahead_decision.pred_move_pips, 4
+                        ),
                         "lookahead_cost_pips": round(lookahead_decision.cost_pips, 4),
                         "lookahead_edge_pips": round(lookahead_decision.edge_pips, 4),
                         "lookahead_slippage_est_pips": round(
@@ -8215,7 +8735,9 @@ async def scalp_ping_5s_worker() -> None:
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
             _tech_side_raw = str(
-                locals().get("side", locals().get("direction", getattr(signal, "side", "long")))
+                locals().get(
+                    "side", locals().get("direction", getattr(signal, "side", "long"))
+                )
             ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
@@ -8240,9 +8762,16 @@ async def scalp_ping_5s_worker() -> None:
 
             entry_thesis_ctx.setdefault(
                 "tech_tfs",
-                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+                {
+                    "fib": ["H1", "M5"],
+                    "median": ["H1", "M5"],
+                    "nwave": ["M1", "M5"],
+                    "candle": ["M1", "M5"],
+                },
             )
-            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_tfs", ["M1", "M5", "H1", "H4"]
+            )
             entry_thesis_ctx.setdefault(
                 "technical_context_fields",
                 [
@@ -8263,8 +8792,14 @@ async def scalp_ping_5s_worker() -> None:
                     "ema24",
                 ],
             )
-            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault(
+                "technical_context_ticks",
+                ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            )
+            entry_thesis_ctx.setdefault(
+                "technical_context_candle_counts",
+                {"M1": 120, "M5": 80, "H1": 70, "H4": 60},
+            )
             entry_thesis_ctx.setdefault("tech_allow_candle", True)
             entry_thesis_ctx.setdefault(
                 "tech_policy",
@@ -8289,7 +8824,9 @@ async def scalp_ping_5s_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
-            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M1", "step_bars": 1})
+            entry_thesis_ctx.setdefault(
+                "forecast_profile", {"timeframe": "M1", "step_bars": 1}
+            )
             entry_thesis_ctx.setdefault("forecast_timeframe", "M1")
             entry_thesis_ctx.setdefault("forecast_step_bars", 1)
             entry_thesis_ctx.setdefault("forecast_horizon", "1m")
@@ -8306,9 +8843,15 @@ async def scalp_ping_5s_worker() -> None:
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
                 continue
 
-            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_score"] = (
+                round(tech_decision.score, 3)
+                if tech_decision.score is not None
+                else None
+            )
             entry_thesis_ctx["tech_coverage"] = (
-                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+                round(tech_decision.coverage, 3)
+                if tech_decision.coverage is not None
+                else None
             )
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
@@ -8318,7 +8861,11 @@ async def scalp_ping_5s_worker() -> None:
                 min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
             )
             entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
-            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+            if (
+                isinstance(tp_price, (int, float))
+                and tp_price > 0
+                and _tech_entry_price > 0
+            ):
                 _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
                 if _tp_gap > 0:
                     _tp_target = (
@@ -8340,7 +8887,9 @@ async def scalp_ping_5s_worker() -> None:
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):
-                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                _tech_units = int(
+                    round(abs(float(_tech_units_raw)) * tech_decision.size_mult)
+                )
                 if _tech_units <= 0:
                     continue
                 # Keep final TECH_ROUTER sizing inside the same hard caps used in
@@ -8360,9 +8909,13 @@ async def scalp_ping_5s_worker() -> None:
                 _tech_conf = float(_tech_conf)
                 if tech_decision.score is not None:
                     if tech_decision.score >= 0:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_BOOST", 0.0
+                        )
                     else:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_PENALTY", 0.0
+                        )
                     conf = _tech_conf
 
             _meta = {"env_prefix": config.ENV_PREFIX, "ENV_PREFIX": config.ENV_PREFIX}
@@ -8381,11 +8934,13 @@ async def scalp_ping_5s_worker() -> None:
             late_contract_signal = SimpleNamespace(
                 side="long" if units > 0 else "short",
             )
-            late_countertrend_horizon_m1_block_reason = _countertrend_horizon_m1_block_reason(
-                late_contract_signal,
-                horizon,
-                m1_trend_gate=m1_trend_gate,
-                m1_score=m1_score,
+            late_countertrend_horizon_m1_block_reason = (
+                _countertrend_horizon_m1_block_reason(
+                    late_contract_signal,
+                    horizon,
+                    m1_trend_gate=m1_trend_gate,
+                    m1_score=m1_score,
+                )
             )
             if late_countertrend_horizon_m1_block_reason:
                 _note_entry_skip(
@@ -8413,7 +8968,9 @@ async def scalp_ping_5s_worker() -> None:
                 meta=_meta,
             )
             if result:
-                pos_manager.register_open_trade(str(result), config.POCKET, client_order_id)
+                pos_manager.register_open_trade(
+                    str(result), config.POCKET, client_order_id
+                )
             else:
                 order_status = get_last_order_status_by_client_id(client_order_id)
                 status = (
@@ -8450,7 +9007,9 @@ async def scalp_ping_5s_worker() -> None:
                     detail,
                     client_order_id,
                 )
-                _note_entry_skip(f"order_reject:{reason}", detail=detail, side=signal.side)
+                _note_entry_skip(
+                    f"order_reject:{reason}", detail=detail, side=signal.side
+                )
 
             last_entry_mono = now_mono
             rate_limiter.record(now_mono)
@@ -8481,7 +9040,11 @@ async def scalp_ping_5s_worker() -> None:
                 (_safe_float(regime.heat_score, 0.0) if regime is not None else 0.0),
                 regime_units_mult,
                 (horizon.composite_side if horizon is not None else "none"),
-                (_safe_float(horizon.composite_score, 0.0) if horizon is not None else 0.0),
+                (
+                    _safe_float(horizon.composite_score, 0.0)
+                    if horizon is not None
+                    else 0.0
+                ),
                 horizon_units_mult,
                 direction_bias.side if direction_bias is not None else "none",
                 _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
@@ -8504,7 +9067,11 @@ async def scalp_ping_5s_worker() -> None:
                 dynamic_max_hold_sec,
                 dynamic_hard_loss_pips,
                 result or "none",
-                str(outside_allow_jst_hour) if outside_allow_jst_hour is not None else "-",
+                (
+                    str(outside_allow_jst_hour)
+                    if outside_allow_jst_hour is not None
+                    else "-"
+                ),
                 int(allow_hour_policy.soft_mode),
                 allow_hour_units_mult,
             )

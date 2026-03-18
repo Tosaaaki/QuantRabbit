@@ -9,9 +9,12 @@ from typing import Any, Optional
 from utils.strategy_tags import resolve_strategy_tag
 from workers.common.setup_context import extract_setup_identity
 
-
 _PATH_RAW = os.getenv("AUTO_CANARY_PATH", "config/auto_canary_overrides.json")
-_PATH = Path(_PATH_RAW) if _PATH_RAW and _PATH_RAW.strip().lower() not in {"", "off", "none"} else None
+_PATH = (
+    Path(_PATH_RAW)
+    if _PATH_RAW and _PATH_RAW.strip().lower() not in {"", "off", "none"}
+    else None
+)
 _REFRESH_SEC = float(os.getenv("AUTO_CANARY_REFRESH_SEC", "30") or 30.0)
 _MAX_AGE_SEC = max(0.0, float(os.getenv("AUTO_CANARY_MAX_AGE_SEC", "1800") or 1800.0))
 _CACHE: dict[str, Any] = {"loaded": 0.0, "mtime": None, "payload": None}
@@ -34,7 +37,9 @@ def _base_strategy_tag(value: Optional[str]) -> str:
     return ""
 
 
-def _strategy_lookup_candidates(strategy_tag: Optional[str], *, known_keys: Optional[list[str]] = None) -> list[str]:
+def _strategy_lookup_candidates(
+    strategy_tag: Optional[str], *, known_keys: Optional[list[str]] = None
+) -> list[str]:
     candidates: list[str] = []
 
     def _append(raw: Optional[str]) -> None:
@@ -137,7 +142,11 @@ def _setup_match_specificity(
     if flow_regime:
         return 2 if setup_context.get("flow_regime") == flow_regime else 0
     if microstructure_bucket:
-        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+        return (
+            1
+            if setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
     return 0
 
 
@@ -191,7 +200,8 @@ def _select_setup_override(
             "match_dimension": str(item.get("match_dimension") or ""),
             "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
             "flow_regime": str(item.get("flow_regime") or "") or None,
-            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "")
+            or None,
             "samples": samples,
             "confidence": max(0.0, min(1.0, confidence)),
         }

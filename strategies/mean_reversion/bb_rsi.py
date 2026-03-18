@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import math
@@ -15,6 +14,8 @@ MIN_SIZE_FACTOR_TREND = 0.55
 MAX_TP_REDUCTION = 0.32
 MIN_VOL_5M = 0.35
 PROFILE_NAME = "bb_range_reversion"
+
+
 # 距離判定を緩めてバンドタッチ手前でもエントリー可能にする
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
@@ -64,7 +65,11 @@ class BBRsi:
         adx = float(fac.get("adx") or 0.0)
         vol_5m = float(fac.get("vol_5m") or 0.0)
         try:
-            ma_gap_pips = abs((ma10 - ma20) / PIP) if ma10 is not None and ma20 is not None else 0.0
+            ma_gap_pips = (
+                abs((ma10 - ma20) / PIP)
+                if ma10 is not None and ma20 is not None
+                else 0.0
+            )
         except (TypeError, ValueError):
             ma_gap_pips = 0.0
 
@@ -76,7 +81,9 @@ class BBRsi:
                     0.01, (TREND_GAP_STRONG_PIPS - TREND_GAP_SOFT_PIPS)
                 )
             if adx > TREND_ADX_SOFT:
-                adx_score = (adx - TREND_ADX_SOFT) / max(1.0, (TREND_ADX_STRONG - TREND_ADX_SOFT))
+                adx_score = (adx - TREND_ADX_SOFT) / max(
+                    1.0, (TREND_ADX_STRONG - TREND_ADX_SOFT)
+                )
             score = 0.58 * gap_score + 0.42 * adx_score
             return max(0.0, min(1.0, score))
 
@@ -202,7 +209,9 @@ class BBRsi:
             if price < lower:
                 return (lower - price) / band_width
             if price <= lower + band_width * touch_buffer:
-                return max(0.0, (lower + band_width * touch_buffer - price) / band_width)
+                return max(
+                    0.0, (lower + band_width * touch_buffer - price) / band_width
+                )
             return 0.0
 
         def _distance_to_upper() -> float:
@@ -211,7 +220,9 @@ class BBRsi:
             if price > upper:
                 return (price - upper) / band_width
             if price >= upper - band_width * touch_buffer:
-                return max(0.0, (price - (upper - band_width * touch_buffer)) / band_width)
+                return max(
+                    0.0, (price - (upper - band_width * touch_buffer)) / band_width
+                )
             return 0.0
 
         distance_lower = _distance_to_lower()
@@ -248,11 +259,23 @@ class BBRsi:
             eta_bonus = 0.0
             if rsi_eta_up is not None:
                 eta_bonus = max(0.0, min(12.0, (8.0 - min(8.0, rsi_eta_up)) * 1.4))
-            squeeze_bias = 0.0 if bbw_eta is None else max(0.0, 6.0 - min(6.0, bbw_eta)) * 0.6
+            squeeze_bias = (
+                0.0 if bbw_eta is None else max(0.0, 6.0 - min(6.0, bbw_eta)) * 0.6
+            )
             if bbw_slope > 0:
                 squeeze_bias *= 0.5
             confidence = int(
-                max(35.0, min(95.0, 45.0 + distance * 70.0 + rsi_gap * 35.0 + eta_bonus + squeeze_bias))
+                max(
+                    35.0,
+                    min(
+                        95.0,
+                        45.0
+                        + distance * 70.0
+                        + rsi_gap * 35.0
+                        + eta_bonus
+                        + squeeze_bias,
+                    ),
+                )
             )
             confidence = min(100, confidence + int(range_score * 20.0))
             if trend_score > 0:
@@ -270,7 +293,9 @@ class BBRsi:
                 "tag": f"{BBRsi.name}-long",
                 "trend_bias": trend_score > 0,
                 "trend_score": round(trend_score, 3) if trend_score > 0 else None,
-                "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
+                "size_factor_hint": (
+                    round(size_factor_trend, 3) if trend_score > 0 else None
+                ),
             }
         if distance_upper > 0 and rsi >= rsi_short_gate:
             distance = distance_upper
@@ -304,11 +329,23 @@ class BBRsi:
             eta_bonus = 0.0
             if rsi_eta_dn is not None:
                 eta_bonus = max(0.0, min(12.0, (8.0 - min(8.0, rsi_eta_dn)) * 1.4))
-            squeeze_bias = 0.0 if bbw_eta is None else max(0.0, 6.0 - min(6.0, bbw_eta)) * 0.6
+            squeeze_bias = (
+                0.0 if bbw_eta is None else max(0.0, 6.0 - min(6.0, bbw_eta)) * 0.6
+            )
             if bbw_slope > 0:
                 squeeze_bias *= 0.5
             confidence = int(
-                max(35.0, min(95.0, 45.0 + distance * 70.0 + rsi_gap * 35.0 + eta_bonus + squeeze_bias))
+                max(
+                    35.0,
+                    min(
+                        95.0,
+                        45.0
+                        + distance * 70.0
+                        + rsi_gap * 35.0
+                        + eta_bonus
+                        + squeeze_bias,
+                    ),
+                )
             )
             confidence = min(100, confidence + int(range_score * 20.0))
             if trend_score > 0:
@@ -326,7 +363,9 @@ class BBRsi:
                 "tag": f"{BBRsi.name}-short",
                 "trend_bias": trend_score > 0,
                 "trend_score": round(trend_score, 3) if trend_score > 0 else None,
-                "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
+                "size_factor_hint": (
+                    round(size_factor_trend, 3) if trend_score > 0 else None
+                ),
             }
         BBRsi._log_skip(
             "no_band_touch",

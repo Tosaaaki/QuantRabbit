@@ -136,7 +136,9 @@ class ParamSnapshot:
             "risk_appetite": round(self.risk_appetite, 3),
             "vol_high_ratio": round(self.vol_high_ratio, 3),
         }
-        payload.update({f"stage_bias_{k}": round(v, 3) for k, v in self.stage_bias.items()})
+        payload.update(
+            {f"stage_bias_{k}": round(v, 3) for k, v in self.stage_bias.items()}
+        )
         payload.update(self.notes)
         return payload
 
@@ -182,9 +184,7 @@ class ParamContext:
         spread_snapshot: Optional[Dict[str, object]] = None,
     ) -> ParamSnapshot:
         atr_pips = _safe_float(
-            fac_m1.get("atr_pips")
-            if fac_m1 is not None
-            else None,
+            fac_m1.get("atr_pips") if fac_m1 is not None else None,
             default=(_safe_float(fac_m1.get("atr"), 0.0) if fac_m1 else 0.0) * 100.0,
         )
         atr_pips = max(0.0, atr_pips)
@@ -200,7 +200,9 @@ class ParamContext:
 
         spread_pips = 0.0
         if spread_snapshot:
-            spread_pips = _safe_float(spread_snapshot.get("spread_pips"), default=0.0, minimum=0.0)
+            spread_pips = _safe_float(
+                spread_snapshot.get("spread_pips"), default=0.0, minimum=0.0
+            )
 
         self._metrics["atr_pips"].add(atr_pips)
         self._metrics["vol_5m"].add(vol_5m)

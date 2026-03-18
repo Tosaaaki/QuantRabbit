@@ -53,7 +53,13 @@ TECHNICAL_CONTEXT_FIELDS = [
     "macd",
     "macd_hist",
 ]
-TECHNICAL_CONTEXT_TICKS = ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"]
+TECHNICAL_CONTEXT_TICKS = [
+    "latest_bid",
+    "latest_ask",
+    "latest_mid",
+    "spread_pips",
+    "tick_rate",
+]
 TECHNICAL_CONTEXT_CANDLE_COUNTS = {"M1": 140, "M5": 100, "H1": 70, "H4": 40}
 
 
@@ -215,7 +221,9 @@ def spread_ok(
     return True, {"spread_pips": spread_pips, "spread_p25": p25}
 
 
-def tick_snapshot(seconds: float, *, limit: int = 120) -> tuple[list[float], Optional[dict]]:
+def tick_snapshot(
+    seconds: float, *, limit: int = 120
+) -> tuple[list[float], Optional[dict]]:
     raw_ticks = tick_window.recent_ticks(seconds=seconds, limit=limit)
     mids: list[float] = []
     for item in raw_ticks:
@@ -232,7 +240,9 @@ def tick_snapshot(seconds: float, *, limit: int = 120) -> tuple[list[float], Opt
     return mids, None
 
 
-def tick_reversal(mids: Sequence[float], *, min_ticks: int = 6) -> tuple[bool, Optional[str], float]:
+def tick_reversal(
+    mids: Sequence[float], *, min_ticks: int = 6
+) -> tuple[bool, Optional[str], float]:
     if len(mids) < min_ticks:
         return False, None, 0.0
     deltas = [mids[i] - mids[i - 1] for i in range(1, len(mids))]
@@ -289,18 +299,28 @@ EXTREMA_LONG_SUPPORT_M5_RSI_MIN = _env_float("LONG_SUPPORT_M5_RSI_MIN", 56.0)
 EXTREMA_LONG_SUPPORT_M5_DI_GAP_MIN = _env_float("LONG_SUPPORT_M5_DI_GAP_MIN", 0.0)
 EXTREMA_LONG_SUPPORT_M5_EMA_SLOPE_MIN = _env_float("LONG_SUPPORT_M5_EMA_SLOPE_MIN", 0.0)
 EXTREMA_LONG_SUPPORT_M1_ADX_MAX = _env_float("LONG_SUPPORT_M1_ADX_MAX", 24.0)
-EXTREMA_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float("LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS", 1.4)
+EXTREMA_LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float(
+    "LONG_SUPPORT_M1_EMA_GAP_MAX_PIPS", 1.4
+)
 EXTREMA_LONG_SUPPORT_RSI_CAP = _env_float("LONG_SUPPORT_RSI_CAP", 50.0)
 EXTREMA_LONG_SUPPORT_LOW_BAND_PIPS = _env_float("LONG_SUPPORT_LOW_BAND_PIPS", 1.2)
 EXTREMA_LONG_SUPPORT_CONF_BONUS = _env_int("LONG_SUPPORT_CONF_BONUS", 4)
 EXTREMA_SHORT_SUPPORT_ENABLED = _env_bool("SHORT_SUPPORT_ENABLED", True)
 EXTREMA_SHORT_SUPPORT_M5_RSI_MAX = _env_float("SHORT_SUPPORT_M5_RSI_MAX", 44.0)
 EXTREMA_SHORT_SUPPORT_M5_DI_GAP_MAX = _env_float("SHORT_SUPPORT_M5_DI_GAP_MAX", 0.0)
-EXTREMA_SHORT_SUPPORT_M5_EMA_SLOPE_MAX = _env_float("SHORT_SUPPORT_M5_EMA_SLOPE_MAX", 0.0)
+EXTREMA_SHORT_SUPPORT_M5_EMA_SLOPE_MAX = _env_float(
+    "SHORT_SUPPORT_M5_EMA_SLOPE_MAX", 0.0
+)
 EXTREMA_SHORT_SUPPORT_M1_ADX_MAX = _env_float("SHORT_SUPPORT_M1_ADX_MAX", 24.0)
-EXTREMA_SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float("SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS", 1.4)
-EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS = _env_float("LONG_COUNTERTREND_GAP_BLOCK_PIPS", 0.5)
-EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS = _env_float("SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.45)
+EXTREMA_SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS = _env_float(
+    "SHORT_SUPPORT_M1_EMA_GAP_MAX_PIPS", 1.4
+)
+EXTREMA_LONG_COUNTERTREND_GAP_BLOCK_PIPS = _env_float(
+    "LONG_COUNTERTREND_GAP_BLOCK_PIPS", 0.5
+)
+EXTREMA_SHORT_COUNTERTREND_GAP_BLOCK_PIPS = _env_float(
+    "SHORT_COUNTERTREND_GAP_BLOCK_PIPS", 0.45
+)
 EXTREMA_LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS = _env_float(
     "LONG_SHALLOW_PROBE_DIST_LOW_MAX_PIPS", 0.30
 )
@@ -310,9 +330,7 @@ EXTREMA_LONG_SHALLOW_PROBE_BOUNCE_MAX_PIPS = _env_float(
 EXTREMA_LONG_SHALLOW_PROBE_TICK_STRENGTH_MAX = _env_float(
     "LONG_SHALLOW_PROBE_TICK_STRENGTH_MAX", 0.20
 )
-EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX = _env_float(
-    "LONG_SHALLOW_PROBE_ADX_MAX", 13.0
-)
+EXTREMA_LONG_SHALLOW_PROBE_ADX_MAX = _env_float("LONG_SHALLOW_PROBE_ADX_MAX", 13.0)
 EXTREMA_LONG_SHALLOW_PROBE_RANGE_SCORE_MAX = _env_float(
     "LONG_SHALLOW_PROBE_RANGE_SCORE_MAX", 0.32
 )
@@ -356,9 +374,7 @@ EXTREMA_SHORT_SHALLOW_PROBE_BOUNCE_MAX_PIPS = _env_float(
 EXTREMA_SHORT_SHALLOW_PROBE_TICK_STRENGTH_MAX = _env_float(
     "SHORT_SHALLOW_PROBE_TICK_STRENGTH_MAX", 0.45
 )
-EXTREMA_SHORT_SHALLOW_PROBE_ADX_MAX = _env_float(
-    "SHORT_SHALLOW_PROBE_ADX_MAX", 26.0
-)
+EXTREMA_SHORT_SHALLOW_PROBE_ADX_MAX = _env_float("SHORT_SHALLOW_PROBE_ADX_MAX", 26.0)
 EXTREMA_SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN = _env_float(
     "SHORT_SHALLOW_PROBE_RANGE_SCORE_MIN", 0.40
 )
@@ -443,7 +459,9 @@ EXTREMA_LONG_SETUP_PRESSURE_RANGE_REASONS = _env_set(
     "LONG_SETUP_PRESSURE_RANGE_REASONS", "volatility_compression"
 )
 EXTREMA_LONG_SETUP_PRESSURE_MIN_TRADES = _env_int("LONG_SETUP_PRESSURE_MIN_TRADES", 6)
-EXTREMA_LONG_SETUP_PRESSURE_SL_RATE_MIN = _env_float("LONG_SETUP_PRESSURE_SL_RATE_MIN", 0.45)
+EXTREMA_LONG_SETUP_PRESSURE_SL_RATE_MIN = _env_float(
+    "LONG_SETUP_PRESSURE_SL_RATE_MIN", 0.45
+)
 EXTREMA_LONG_SETUP_PRESSURE_FAST_SL_RATE_MIN = _env_float(
     "LONG_SETUP_PRESSURE_FAST_SL_RATE_MIN", 0.40
 )
@@ -627,8 +645,14 @@ def _extrema_trend_gate_ok(
         return True, {}
 
     range_active = bool(getattr(range_ctx, "active", False))
-    range_score = float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0
-    range_mode = str(getattr(range_ctx, "mode", "") or "").strip().upper() if range_ctx is not None else ""
+    range_score = (
+        float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0
+    )
+    range_mode = (
+        str(getattr(range_ctx, "mode", "") or "").strip().upper()
+        if range_ctx is not None
+        else ""
+    )
     adx_val = _adx(fac_m1)
     ma_gap_pips = _ma_gap_pips(fac_m1)
     against_gap_pips = ma_gap_pips if side == "short" else -ma_gap_pips
@@ -656,7 +680,9 @@ def _extrema_trend_gate_ok(
                     EXTREMA_TREND_GATE_RANGE_SCORE_MIN,
                 )
             ),
-            "range_max_against_gap_pips": float(EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS),
+            "range_max_against_gap_pips": float(
+                EXTREMA_TREND_GATE_RANGE_MAX_AGAINST_GAP_PIPS
+            ),
         }
 
     range_ready = range_active or range_score >= EXTREMA_TREND_GATE_MIN_RANGE_SCORE
@@ -669,7 +695,9 @@ def _extrema_trend_gate_ok(
             "ma_gap_pips": float(ma_gap_pips),
             "against_gap_pips": float(against_gap_pips),
         }
-    adx_strong = EXTREMA_TREND_GATE_ADX_MIN <= 0.0 or adx_val >= EXTREMA_TREND_GATE_ADX_MIN
+    adx_strong = (
+        EXTREMA_TREND_GATE_ADX_MIN <= 0.0 or adx_val >= EXTREMA_TREND_GATE_ADX_MIN
+    )
     ma_gap_strong = (
         EXTREMA_TREND_GATE_MA_GAP_PIPS <= 0.0
         or against_gap_pips >= EXTREMA_TREND_GATE_MA_GAP_PIPS
@@ -800,14 +828,18 @@ def _signal_extrema_reversal(
         regime = str(fac_m1.get("regime") or "").strip().lower()
         if not regime:
             try:
-                regime = str(current_regime("M1", event_mode=False) or "").strip().lower()
+                regime = (
+                    str(current_regime("M1", event_mode=False) or "").strip().lower()
+                )
             except Exception:
                 regime = ""
         if regime and regime not in EXTREMA_ALLOWED_REGIMES:
             return None
 
     if EXTREMA_SPREAD_P25_MAX > 0.0:
-        ok_spread, _ = spread_ok(max_pips=MAX_SPREAD_PIPS, p25_max=EXTREMA_SPREAD_P25_MAX)
+        ok_spread, _ = spread_ok(
+            max_pips=MAX_SPREAD_PIPS, p25_max=EXTREMA_SPREAD_P25_MAX
+        )
         if not ok_spread:
             return None
 
@@ -833,12 +865,16 @@ def _signal_extrema_reversal(
     )
 
     candles = get_candles_snapshot("M1", limit=max(80, EXTREMA_LOOKBACK + 8))
-    snap = compute_range_snapshot(candles or [], lookback=EXTREMA_LOOKBACK, hi_pct=97.0, lo_pct=3.0)
+    snap = compute_range_snapshot(
+        candles or [], lookback=EXTREMA_LOOKBACK, hi_pct=97.0, lo_pct=3.0
+    )
     if not snap:
         return None
 
     mids, _ = tick_snapshot(EXTREMA_REV_WINDOW_SEC, limit=180)
-    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    rev_ok, rev_dir, rev_strength = (
+        tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    )
     if not rev_ok:
         return None
 
@@ -906,7 +942,8 @@ def _signal_extrema_reversal(
     long_drift_probe_block = (
         not long_supportive
         and range_mode == "RANGE"
-        and str(getattr(range_ctx, "reason", "") or "").strip().lower() == "volatility_compression"
+        and str(getattr(range_ctx, "reason", "") or "").strip().lower()
+        == "volatility_compression"
         and EXTREMA_LONG_DRIFT_PROBE_DIST_LOW_MAX_PIPS > 0.0
         and dist_low <= EXTREMA_LONG_DRIFT_PROBE_DIST_LOW_MAX_PIPS
         and long_bounce_pips <= EXTREMA_LONG_DRIFT_PROBE_BOUNCE_MAX_PIPS
@@ -957,7 +994,8 @@ def _signal_extrema_reversal(
         long_setup_pressure_diag.get("trades", 0.0)
         >= max(1, EXTREMA_LONG_SETUP_PRESSURE_MIN_TRADES)
         and long_setup_pressure_diag.get("net_jpy", 0.0) < 0.0
-        and long_setup_pressure_diag.get("sl_rate", 0.0) >= max(0.0, EXTREMA_LONG_SETUP_PRESSURE_SL_RATE_MIN)
+        and long_setup_pressure_diag.get("sl_rate", 0.0)
+        >= max(0.0, EXTREMA_LONG_SETUP_PRESSURE_SL_RATE_MIN)
         and long_setup_pressure_diag.get("fast_sl_rate", 0.0)
         >= max(0.0, EXTREMA_LONG_SETUP_PRESSURE_FAST_SL_RATE_MIN)
     )
@@ -988,7 +1026,9 @@ def _signal_extrema_reversal(
         and rsi >= EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RSI_MIN
     )
     short_setup_pressure_diag = _recent_setup_pressure("short", short_range_reason)
-    short_setup_pressure_active = bool(short_setup_pressure_diag.get("active", 0.0) >= 1.0)
+    short_setup_pressure_active = bool(
+        short_setup_pressure_diag.get("active", 0.0) >= 1.0
+    )
     short_setup_pressure_block = (
         short_setup_pressure_active
         and range_mode == "RANGE"
@@ -1041,13 +1081,20 @@ def _signal_extrema_reversal(
         return None
 
     if can_short and can_long:
-        side = "short" if (dist_high / max(EXTREMA_HIGH_BAND_PIPS, 0.1)) <= (dist_low / max(EXTREMA_LOW_BAND_PIPS, 0.1)) else "long"
+        side = (
+            "short"
+            if (dist_high / max(EXTREMA_HIGH_BAND_PIPS, 0.1))
+            <= (dist_low / max(EXTREMA_LOW_BAND_PIPS, 0.1))
+            else "long"
+        )
     elif can_short:
         side = "short"
     else:
         side = "long"
 
-    trend_gate_ok, trend_diag = _extrema_trend_gate_ok(side, fac_m1, range_ctx=range_ctx)
+    trend_gate_ok, trend_diag = _extrema_trend_gate_ok(
+        side, fac_m1, range_ctx=range_ctx
+    )
     if not trend_gate_ok:
         return None
 
@@ -1090,21 +1137,41 @@ def _signal_extrema_reversal(
             "supportive_long": bool(long_supportive and side == "long"),
             "supportive_long_context": long_support_diag if long_supportive else {},
             "ma_gap_pips": round(ma_gap_pips, 3),
-            "short_countertrend_block": bool(short_countertrend_block and side == "short"),
-            "short_shallow_probe_block": bool(short_shallow_probe_block and side == "short"),
-            "short_mid_rsi_probe_block": bool(short_mid_rsi_probe_block and side == "short"),
-            "short_drift_probe_block": bool(short_drift_probe_block and side == "short"),
-            "short_setup_pressure_block": bool(short_setup_pressure_block and side == "short"),
+            "short_countertrend_block": bool(
+                short_countertrend_block and side == "short"
+            ),
+            "short_shallow_probe_block": bool(
+                short_shallow_probe_block and side == "short"
+            ),
+            "short_mid_rsi_probe_block": bool(
+                short_mid_rsi_probe_block and side == "short"
+            ),
+            "short_drift_probe_block": bool(
+                short_drift_probe_block and side == "short"
+            ),
+            "short_setup_pressure_block": bool(
+                short_setup_pressure_block and side == "short"
+            ),
             "short_positive_gap_probe_block": bool(
                 short_positive_gap_probe_block and side == "short"
             ),
-            "short_setup_pressure": short_setup_pressure_diag if side == "short" else {},
+            "short_setup_pressure": (
+                short_setup_pressure_diag if side == "short" else {}
+            ),
             "long_countertrend_block": bool(long_countertrend_block and side == "long"),
-            "long_shallow_probe_block": bool(long_shallow_probe_block and side == "long"),
-            "long_mid_rsi_probe_block": bool(long_mid_rsi_probe_block and side == "long"),
+            "long_shallow_probe_block": bool(
+                long_shallow_probe_block and side == "long"
+            ),
+            "long_mid_rsi_probe_block": bool(
+                long_mid_rsi_probe_block and side == "long"
+            ),
             "long_drift_probe_block": bool(long_drift_probe_block and side == "long"),
-            "long_setup_pressure_block": bool(long_setup_pressure_block and side == "long"),
-            "long_positive_gap_probe_block": bool(long_positive_gap_probe_block and side == "long"),
+            "long_setup_pressure_block": bool(
+                long_setup_pressure_block and side == "long"
+            ),
+            "long_positive_gap_probe_block": bool(
+                long_positive_gap_probe_block and side == "long"
+            ),
             "long_setup_pressure": long_setup_pressure_diag if side == "long" else {},
             "trend_gate": trend_diag,
         },
@@ -1112,7 +1179,9 @@ def _signal_extrema_reversal(
     }
 
 
-def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+def _build_entry_thesis(
+    signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx
+) -> Dict[str, object]:
     conf = int(signal.get("confidence", 0) or 0)
     p_raw = _to_probability(conf)
     thesis = {
@@ -1133,12 +1202,16 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "atr_pips": _atr_pips(fac_m1),
         "ma_gap_pips": _ma_gap_pips(fac_m1),
         "bbw": _to_float(fac_m1.get("bbw"), 0.0),
-        "extrema": signal.get("extrema") if isinstance(signal.get("extrema"), dict) else {},
+        "extrema": (
+            signal.get("extrema") if isinstance(signal.get("extrema"), dict) else {}
+        ),
     }
     thesis.setdefault("technical_context_tfs", list(TECHNICAL_CONTEXT_TFS))
     thesis.setdefault("technical_context_fields", list(TECHNICAL_CONTEXT_FIELDS))
     thesis.setdefault("technical_context_ticks", list(TECHNICAL_CONTEXT_TICKS))
-    thesis.setdefault("technical_context_candle_counts", dict(TECHNICAL_CONTEXT_CANDLE_COUNTS))
+    thesis.setdefault(
+        "technical_context_candle_counts", dict(TECHNICAL_CONTEXT_CANDLE_COUNTS)
+    )
     return thesis
 
 
@@ -1227,7 +1300,9 @@ async def _place_order(
         sl_price = round(price + sl_pips * PIP, 3)
         tp_price = round(price - tp_pips * PIP, 3) if tp_pips > 0 else None
 
-    sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=(side == "long"))
+    sl_price, tp_price = clamp_sl_tp(
+        price=price, sl=sl_price, tp=tp_price, is_buy=(side == "long")
+    )
 
     client_id = _client_order_id(str(signal.get("tag") or TAG))
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
@@ -1280,7 +1355,10 @@ async def _run_worker() -> None:
                 positions = pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET, {})
                 open_trades_all = pocket_info.get("open_trades", []) or []
-                if MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= MAX_OPEN_TRADES_GLOBAL:
+                if (
+                    MAX_OPEN_TRADES_GLOBAL > 0
+                    and len(open_trades_all) >= MAX_OPEN_TRADES_GLOBAL
+                ):
                     continue
                 if OPEN_TRADES_SCOPE == "tag":
                     open_trades = [
@@ -1311,7 +1389,9 @@ async def _run_worker() -> None:
 
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="extrema_reversal")
-        if getattr(air, "enabled", False) and not bool(getattr(air, "allow_entry", True)):
+        if getattr(air, "enabled", False) and not bool(
+            getattr(air, "allow_entry", True)
+        ):
             continue
 
         signal = _signal_extrema_reversal(
@@ -1345,7 +1425,9 @@ async def _run_worker() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True
+    )
     try:
         asyncio.run(_run_worker())
     except KeyboardInterrupt:

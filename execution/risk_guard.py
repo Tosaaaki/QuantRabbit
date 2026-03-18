@@ -50,7 +50,11 @@ _DEFAULT_BASE_EQUITY = {
 _LOOKBACK_DAYS = 7
 _GLOBAL_DD_LOOKBACK_DAYS = max(
     1,
-    int(float(os.getenv("GLOBAL_DD_LOOKBACK_DAYS", str(_LOOKBACK_DAYS)) or _LOOKBACK_DAYS)),
+    int(
+        float(
+            os.getenv("GLOBAL_DD_LOOKBACK_DAYS", str(_LOOKBACK_DAYS)) or _LOOKBACK_DAYS
+        )
+    ),
 )
 _LOSS_COOLDOWN_MIN_ABS_JPY = max(
     0.0,
@@ -111,7 +115,13 @@ def _guard_enabled() -> bool:
 
 
 def _trading_paused() -> bool:
-    return os.getenv("TRADING_PAUSED", "0").strip().lower() not in {"", "0", "false", "off"}
+    return os.getenv("TRADING_PAUSED", "0").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "off",
+    }
+
 
 _FAST_SCALP_SHARE = 0.35
 try:
@@ -172,7 +182,9 @@ _RISK_PERF_ENABLED = _env_bool("RISK_PERF_ENABLED", True)
 _RISK_PERF_LOOKBACK_DAYS = max(1, int(float(os.getenv("RISK_PERF_LOOKBACK_DAYS", "7"))))
 _RISK_PERF_MIN_TRADES = max(5, int(float(os.getenv("RISK_PERF_MIN_TRADES", "12"))))
 _RISK_PERF_PF_BAD = float(os.getenv("RISK_PERF_PF_BAD", "0.95") or 0.95)
-_RISK_PERF_PF_REF = max(_RISK_PERF_PF_BAD + 1e-6, float(os.getenv("RISK_PERF_PF_REF", "1.15") or 1.15))
+_RISK_PERF_PF_REF = max(
+    _RISK_PERF_PF_BAD + 1e-6, float(os.getenv("RISK_PERF_PF_REF", "1.15") or 1.15)
+)
 _RISK_PERF_WIN_BAD = float(os.getenv("RISK_PERF_WIN_BAD", "0.47") or 0.47)
 _RISK_PERF_WIN_REF = max(
     _RISK_PERF_WIN_BAD + 1e-6,
@@ -190,7 +202,9 @@ _RISK_REGIME_ENABLED = _env_bool("RISK_REGIME_ENABLED", True)
 _RISK_REGIME_RANGE_PENALTY = float(os.getenv("RISK_REGIME_RANGE_PENALTY", "0.7") or 0.7)
 _RISK_REGIME_RANGE_BONUS = float(os.getenv("RISK_REGIME_RANGE_BONUS", "1.1") or 1.1)
 _RISK_REGIME_TREND_BONUS = float(os.getenv("RISK_REGIME_TREND_BONUS", "1.1") or 1.1)
-_RISK_REGIME_TREND_PENALTY = float(os.getenv("RISK_REGIME_TREND_PENALTY", "0.85") or 0.85)
+_RISK_REGIME_TREND_PENALTY = float(
+    os.getenv("RISK_REGIME_TREND_PENALTY", "0.85") or 0.85
+)
 
 _PERF_CACHE: dict[tuple[str, str, str], tuple[float, float, float, int]] = {}
 _RR_CACHE: dict[tuple[str, str], tuple[float, dict[str, float]]] = {}
@@ -309,7 +323,9 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
         return pf_cached, win_cached, n_cached
 
     placeholders = ",".join("?" for _ in variants)
-    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    tag_clause = (
+        f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    )
     params = list(variants)
     params.extend([pocket, f"-{_RISK_PERF_LOOKBACK_DAYS} day"])
     con_local: sqlite3.Connection | None = None
@@ -354,7 +370,9 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
     return pf, win_rate, n
 
 
-def _query_rr_outcome_stats(tag: Optional[str], pocket: Optional[str]) -> dict[str, float]:
+def _query_rr_outcome_stats(
+    tag: Optional[str], pocket: Optional[str]
+) -> dict[str, float]:
     """
     Fetch recent TP/SL outcome balance used by RR normalization.
     """
@@ -448,7 +466,9 @@ def _query_rr_outcome_stats(tag: Optional[str], pocket: Optional[str]) -> dict[s
         "tp_hits": float(tp_hits),
         "sl_hits": float(sl_hits),
         "tp_rate": float(tp_hits / max(n, 1)),
-        "pf": float(profit / loss if loss > 0 else (float("inf") if profit > 0 else 1.0)),
+        "pf": float(
+            profit / loss if loss > 0 else (float("inf") if profit > 0 else 1.0)
+        ),
         "avg_tp_pips": float(row["avg_tp_pips"] or 0.0),
         "avg_sl_pips": float(row["avg_sl_pips"] or 0.0),
     }
@@ -593,7 +613,9 @@ def _infer_rr_context(
     return tag, pock
 
 
-def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, dict[str, float]]:
+def _perf_multiplier(
+    tag: Optional[str], pocket: Optional[str]
+) -> tuple[float, dict[str, float]]:
     if not _RISK_MULT_ENABLED or not _RISK_PERF_ENABLED or not tag or not pocket:
         return 1.0, {}
     pf, win_rate, n = _query_perf_stats(tag, pocket)
@@ -722,7 +744,9 @@ def _parse_close_time(value: str | None) -> datetime | None:
                 else:
                     frac, tz = tail, "+00:00"
                 frac = frac[:6].ljust(6, "0")
-                return datetime.fromisoformat(f"{head}.{frac}{tz}").astimezone(timezone.utc)
+                return datetime.fromisoformat(f"{head}.{frac}{tz}").astimezone(
+                    timezone.utc
+                )
         except Exception:
             return None
     return None
@@ -769,6 +793,7 @@ def update_dd_context(
 
     # 成績連動（pf中心）で微調整
     if isinstance(perf_hint, dict):
+
         def _scale_from_pf(pf: Optional[float]) -> float:
             try:
                 val = float(pf)
@@ -916,7 +941,9 @@ def check_global_drawdown() -> bool:
         except Exception:
             pass
 
-    net_pl = float((row["net_pl"] if row is not None and "net_pl" in row.keys() else 0.0) or 0.0)
+    net_pl = float(
+        (row["net_pl"] if row is not None and "net_pl" in row.keys() else 0.0) or 0.0
+    )
     if net_pl >= 0:
         return False
 
@@ -1138,7 +1165,9 @@ def allowed_lot(
                 # nettingで使用率が下がる場合は cap を緩和し、flatten分を優先して通す
                 hedge_cap = max(margin_cap, 0.995)
                 hedge_budget_safe = equity * hedge_cap * 0.999
-                lot_margin = max(lot_margin, (hedge_budget_safe - net_used_after) / margin_per_lot)
+                lot_margin = max(
+                    lot_margin, (hedge_budget_safe - net_used_after) / margin_per_lot
+                )
                 lot_margin = max(lot_margin, gap_lot)
                 # margin_budget を超えていてもネット縮小なら最低ロットは通す
                 if lot_margin <= 0 and gap_lot > 0:
@@ -1149,7 +1178,11 @@ def allowed_lot(
             if current_usage >= margin_cap * 0.995 and net_used_after >= used:
                 # Risk-based sizing may overshoot past the flatten point, which would *increase* net usage.
                 # Even in that case, still allow the "flatten" lot when it would reduce net exposure.
-                if net_used_after_gap is not None and net_used_after_gap < used and gap_lot > 0:
+                if (
+                    net_used_after_gap is not None
+                    and net_used_after_gap < used
+                    and gap_lot > 0
+                ):
                     lot_margin = max(lot_margin, gap_lot)
                 else:
                     lot_margin = 0.0
@@ -1189,7 +1222,9 @@ def allowed_lot(
         free_ratio_after = None
         if equity > 0 and projected_used is not None:
             free_ratio_after = max(0.0, (equity - projected_used) / equity)
-        netting_reduce = projected_used is not None and used is not None and projected_used < used
+        netting_reduce = (
+            projected_used is not None and used is not None and projected_used < used
+        )
         try:
             soft = float(os.getenv("FREE_MARGIN_SOFT_RATIO", "0.35") or 0.35)
             hard = float(os.getenv("FREE_MARGIN_HARD_RATIO", "0.2") or 0.2)
@@ -1197,12 +1232,7 @@ def allowed_lot(
             soft, hard = 0.35, 0.2
         hard = max(0.0, min(hard, soft))
         # 低マージン時は「flatten分（ネット縮小）」を優先し、overshoot を避ける。
-        if (
-            gap_lot > 0.0
-            and lot > gap_lot
-            and free_ratio <= soft
-            and used is not None
-        ):
+        if gap_lot > 0.0 and lot > gap_lot and free_ratio <= soft and used is not None:
             projected_gap_used = _net_margin_after(gap_units)
             if projected_gap_used < used:
                 lot = gap_lot
@@ -1371,10 +1401,14 @@ def build_exposure_state(
             continue
         pocket_key = (pocket or "").lower()
         if pocket_key in _EXPOSURE_IGNORE_POCKETS:
-            logging.debug("[EXPOSURE] ignoring pocket=%s units=%s per config", pocket, units)
+            logging.debug(
+                "[EXPOSURE] ignoring pocket=%s units=%s per config", pocket, units
+            )
             continue
         if pocket_key.startswith("manual") and ignore_manual:
-            logging.debug("[EXPOSURE] ignoring manual pocket=%s units=%s", pocket, units)
+            logging.debug(
+                "[EXPOSURE] ignoring manual pocket=%s units=%s", pocket, units
+            )
             continue
         if pocket_key.startswith("manual") or pocket_key == "manual":
             manual_units += units
@@ -1420,7 +1454,9 @@ def build_exposure_state(
         bot_margin=bot_margin,
         unit_margin_cost=unit_margin_cost,
     )
-    _log_exposure_metrics(state, long_units_total=long_units_total, short_units_total=short_units_total)
+    _log_exposure_metrics(
+        state, long_units_total=long_units_total, short_units_total=short_units_total
+    )
     return state
 
 
@@ -1531,7 +1567,11 @@ def loss_cooldown_status(
             pl = float(row["perf_value"] or 0.0)
         except Exception:
             pl = 0.0
-        if using_realized_pl and _LOSS_COOLDOWN_MIN_ABS_JPY > 0.0 and abs(pl) < _LOSS_COOLDOWN_MIN_ABS_JPY:
+        if (
+            using_realized_pl
+            and _LOSS_COOLDOWN_MIN_ABS_JPY > 0.0
+            and abs(pl) < _LOSS_COOLDOWN_MIN_ABS_JPY
+        ):
             pl = 0.0
         if pl < 0:
             streak += 1

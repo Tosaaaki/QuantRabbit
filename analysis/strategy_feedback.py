@@ -18,7 +18,6 @@ from utils.strategy_tags import resolve_strategy_tag
 from utils.strategy_tags import strategy_like_matches
 from workers.common.setup_context import extract_setup_identity
 
-
 _FEEDBACK_ENABLED = os.getenv("STRATEGY_FEEDBACK_ENABLED", "1").strip().lower() not in {
     "0",
     "false",
@@ -44,7 +43,9 @@ _CACHE: dict[str, Any] = {
     "payload": None,
 }
 _PARAM_CACHE: dict[str, Any] = {"loaded": 0.0, "paths": None, "payloads": []}
-_COUNTERFACTUAL_ENABLED = os.getenv("STRATEGY_FEEDBACK_COUNTERFACTUAL_ENABLED", "1").strip().lower() not in {
+_COUNTERFACTUAL_ENABLED = os.getenv(
+    "STRATEGY_FEEDBACK_COUNTERFACTUAL_ENABLED", "1"
+).strip().lower() not in {
     "0",
     "false",
     "off",
@@ -54,13 +55,20 @@ _COUNTERFACTUAL_PATH_RAW = os.getenv(
     "STRATEGY_FEEDBACK_COUNTERFACTUAL_PATH",
     os.getenv("COUNTERFACTUAL_OUT_PATH", "logs/trade_counterfactual_latest.json"),
 )
-if _COUNTERFACTUAL_PATH_RAW and _COUNTERFACTUAL_PATH_RAW.strip().lower() in {"", "none", "off"}:
+if _COUNTERFACTUAL_PATH_RAW and _COUNTERFACTUAL_PATH_RAW.strip().lower() in {
+    "",
+    "none",
+    "off",
+}:
     _COUNTERFACTUAL_PATH_RAW = None
 _COUNTERFACTUAL_PATH: Optional[Path] = (
     Path(_COUNTERFACTUAL_PATH_RAW) if _COUNTERFACTUAL_PATH_RAW else None
 )
 _COUNTERFACTUAL_REFRESH_SEC = float(
-    os.getenv("STRATEGY_FEEDBACK_COUNTERFACTUAL_REFRESH_SEC", str(_FEEDBACK_REFRESH_SEC)) or _FEEDBACK_REFRESH_SEC
+    os.getenv(
+        "STRATEGY_FEEDBACK_COUNTERFACTUAL_REFRESH_SEC", str(_FEEDBACK_REFRESH_SEC)
+    )
+    or _FEEDBACK_REFRESH_SEC
 )
 _COUNTERFACTUAL_MAX_AGE_SEC = max(
     0.0,
@@ -130,7 +138,11 @@ def _setup_match_specificity(
     if flow_regime:
         return 2 if setup_context.get("flow_regime") == flow_regime else 0
     if microstructure_bucket:
-        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+        return (
+            1
+            if setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
     return 0
 
 
@@ -177,7 +189,8 @@ def _select_setup_override(
             "match_dimension": str(item.get("match_dimension") or ""),
             "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
             "flow_regime": str(item.get("flow_regime") or "") or None,
-            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "")
+            or None,
             "trades": int(trades),
             "win_rate": _to_float(item.get("win_rate"), None),
             "profit_factor": _to_float(item.get("profit_factor"), None),
@@ -234,7 +247,10 @@ def _read_file_payload(path: Path) -> Optional[dict[str, Any]]:
 
 _PARAM_SOURCE_PATHS = _parse_csv_paths(
     os.getenv("STRATEGY_PARAMETER_PATHS")
-    or os.getenv("STRATEGY_PARAMS_PATHS", "config/tuning_overlay.yaml,config/tuning_overrides.yaml")
+    or os.getenv(
+        "STRATEGY_PARAMS_PATHS",
+        "config/tuning_overlay.yaml,config/tuning_overrides.yaml",
+    )
 )
 
 
@@ -289,7 +305,9 @@ def _resolve_strategy_metadata(
     return resolved
 
 
-def _merge_strategy_metadata(base: dict[str, Any], extra: Optional[dict[str, Any]]) -> dict[str, Any]:
+def _merge_strategy_metadata(
+    base: dict[str, Any], extra: Optional[dict[str, Any]]
+) -> dict[str, Any]:
     if not extra:
         return base
     merged = dict(base)
@@ -405,7 +423,9 @@ def _to_bool(value: object, default: bool = True) -> bool:
     return default
 
 
-def _coerce_multiplier(value: object, default: float, min_value: float = 0.0, max_value: float = 10.0) -> float:
+def _coerce_multiplier(
+    value: object, default: float, min_value: float = 0.0, max_value: float = 10.0
+) -> float:
     parsed = _to_float(value, default=default)
     if parsed is None:
         return default
@@ -478,13 +498,20 @@ def _refresh_if_needed(force: bool = False) -> None:
         return
     now = time.time()
     if _PATH is not None:
-        if force or not (_CACHE["loaded"] or 0.0) or (
-            now - float(_CACHE["loaded"]) >= _FEEDBACK_REFRESH_SEC
+        if (
+            force
+            or not (_CACHE["loaded"] or 0.0)
+            or (now - float(_CACHE["loaded"]) >= _FEEDBACK_REFRESH_SEC)
         ):
             _read_payload()
     if _COUNTERFACTUAL_ENABLED and _COUNTERFACTUAL_PATH is not None:
-        if force or not (_COUNTERFACTUAL_CACHE["loaded"] or 0.0) or (
-            now - float(_COUNTERFACTUAL_CACHE["loaded"]) >= _COUNTERFACTUAL_REFRESH_SEC
+        if (
+            force
+            or not (_COUNTERFACTUAL_CACHE["loaded"] or 0.0)
+            or (
+                now - float(_COUNTERFACTUAL_CACHE["loaded"])
+                >= _COUNTERFACTUAL_REFRESH_SEC
+            )
         ):
             _read_counterfactual_payload()
 
@@ -530,7 +557,9 @@ def _clamp(value: float, low: float, high: float) -> float:
     return value
 
 
-def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) -> dict[str, Any]:
+def _counterfactual_overlay(
+    strategy_tag: Optional[str], side: Optional[str]
+) -> dict[str, Any]:
     if not _COUNTERFACTUAL_ENABLED or _COUNTERFACTUAL_PATH is None or not strategy_tag:
         return {}
     payload = _read_counterfactual_payload()
@@ -556,18 +585,26 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
     mode = str(reentry.get("mode") or "").strip().lower()
     if mode not in {"tighten", "loosen"}:
         return {}
-    confidence = _clamp(float(_to_float(reentry.get("confidence"), 0.0) or 0.0), 0.0, 1.0)
+    confidence = _clamp(
+        float(_to_float(reentry.get("confidence"), 0.0) or 0.0), 0.0, 1.0
+    )
     if confidence <= 0.0:
         return {}
 
-    cooldown_loss_mult = _clamp(float(_to_float(reentry.get("cooldown_loss_mult"), 1.0) or 1.0), 0.60, 1.80)
-    cooldown_win_mult = _clamp(float(_to_float(reentry.get("cooldown_win_mult"), 1.0) or 1.0), 0.70, 1.50)
+    cooldown_loss_mult = _clamp(
+        float(_to_float(reentry.get("cooldown_loss_mult"), 1.0) or 1.0), 0.60, 1.80
+    )
+    cooldown_win_mult = _clamp(
+        float(_to_float(reentry.get("cooldown_win_mult"), 1.0) or 1.0), 0.70, 1.50
+    )
     reentry_pips_mult = _clamp(
         float(_to_float(reentry.get("same_dir_reentry_pips_mult"), 1.0) or 1.0),
         0.70,
         1.60,
     )
-    lcb_uplift_pips = max(0.0, float(_to_float(reentry.get("lcb_uplift_pips"), 0.0) or 0.0))
+    lcb_uplift_pips = max(
+        0.0, float(_to_float(reentry.get("lcb_uplift_pips"), 0.0) or 0.0)
+    )
     return_wait_bias = str(reentry.get("return_wait_bias") or "").strip().lower()
     if return_wait_bias not in {"avoid", "favor"}:
         return_wait_bias = "avoid" if mode == "tighten" else "favor"
@@ -585,7 +622,9 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
         probability_multiplier = 1.0 - 0.18 * confidence * severity
         probability_delta = -0.03 * confidence * severity
         sl_multiplier = 1.0 - 0.11 * confidence * severity
-        tp_multiplier = 1.0 - 0.16 * confidence * max(severity, _clamp(lcb_uplift_pips / 2.5, 0.0, 1.0))
+        tp_multiplier = 1.0 - 0.16 * confidence * max(
+            severity, _clamp(lcb_uplift_pips / 2.5, 0.0, 1.0)
+        )
     else:
         severity = max(
             0.0,
@@ -598,7 +637,11 @@ def _counterfactual_overlay(strategy_tag: Optional[str], side: Optional[str]) ->
         probability_multiplier = 1.0 + 0.10 * confidence * severity
         probability_delta = 0.02 * confidence * severity
         sl_multiplier = 1.0 + 0.05 * confidence * severity
-        tp_multiplier = 1.0 + 0.14 * confidence * severity + 0.08 * confidence * _clamp(lcb_uplift_pips / 2.5, 0.0, 1.0)
+        tp_multiplier = (
+            1.0
+            + 0.14 * confidence * severity
+            + 0.08 * confidence * _clamp(lcb_uplift_pips / 2.5, 0.0, 1.0)
+        )
 
     if return_wait_bias == "avoid":
         sl_multiplier *= 0.98
@@ -692,7 +735,9 @@ def current_advice(
 
     metadata: dict[str, Any] = {}
     for strategy_key in strategy_keys:
-        metadata = _merge_strategy_metadata(metadata, _resolve_strategy_metadata(payload, strategy_key))
+        metadata = _merge_strategy_metadata(
+            metadata, _resolve_strategy_metadata(payload, strategy_key)
+        )
     for path_payload in _load_param_payloads():
         for strategy_key in strategy_keys:
             metadata = _merge_strategy_metadata(
@@ -730,11 +775,21 @@ def current_advice(
     if not _to_bool(merged.get("enabled"), True):
         return None
     metadata_status = str(metadata.get("status") or "").strip().lower()
-    if metadata_status in {"off", "inactive", "stopped", "pause", "paused", "disabled", "stop"}:
+    if metadata_status in {
+        "off",
+        "inactive",
+        "stopped",
+        "pause",
+        "paused",
+        "disabled",
+        "stop",
+    }:
         return None
     advice: dict[str, Any] = {}
     advice["entry_probability_multiplier"] = _coerce_multiplier(
-        merged.get("entry_probability_multiplier", merged.get("probability_multiplier", 1.0)),
+        merged.get(
+            "entry_probability_multiplier", merged.get("probability_multiplier", 1.0)
+        ),
         default=1.0,
     )
     advice["entry_probability_delta"] = max(
@@ -783,39 +838,47 @@ def current_advice(
             configured_params = nested_configured
     if counterfactual:
         advice["entry_units_multiplier"] = _coerce_multiplier(
-            advice["entry_units_multiplier"] * counterfactual.get("entry_units_multiplier", 1.0),
+            advice["entry_units_multiplier"]
+            * counterfactual.get("entry_units_multiplier", 1.0),
             default=advice["entry_units_multiplier"],
             min_value=0.0,
             max_value=5.0,
         )
         advice["entry_probability_multiplier"] = _coerce_multiplier(
-            advice["entry_probability_multiplier"] * counterfactual.get("entry_probability_multiplier", 1.0),
+            advice["entry_probability_multiplier"]
+            * counterfactual.get("entry_probability_multiplier", 1.0),
             default=advice["entry_probability_multiplier"],
             min_value=0.0,
             max_value=5.0,
         )
         advice["entry_probability_delta"] = _clamp(
-            advice["entry_probability_delta"] + float(counterfactual.get("entry_probability_delta", 0.0) or 0.0),
+            advice["entry_probability_delta"]
+            + float(counterfactual.get("entry_probability_delta", 0.0) or 0.0),
             -1.0,
             1.0,
         )
         advice["sl_distance_multiplier"] = _coerce_multiplier(
-            advice["sl_distance_multiplier"] * counterfactual.get("sl_distance_multiplier", 1.0),
+            advice["sl_distance_multiplier"]
+            * counterfactual.get("sl_distance_multiplier", 1.0),
             default=advice["sl_distance_multiplier"],
             min_value=0.05,
             max_value=5.0,
         )
         advice["tp_distance_multiplier"] = _coerce_multiplier(
-            advice["tp_distance_multiplier"] * counterfactual.get("tp_distance_multiplier", 1.0),
+            advice["tp_distance_multiplier"]
+            * counterfactual.get("tp_distance_multiplier", 1.0),
             default=advice["tp_distance_multiplier"],
             min_value=0.05,
             max_value=5.0,
         )
-        strategy_params_dict["counterfactual_feedback"] = dict(counterfactual.get("meta") or {})
+        strategy_params_dict["counterfactual_feedback"] = dict(
+            counterfactual.get("meta") or {}
+        )
     if strategy_params_dict:
         advice["strategy_params"] = strategy_params_dict
     has_strategy_params = (
-        isinstance(advice.get("strategy_params"), dict) and bool(advice["strategy_params"])
+        isinstance(advice.get("strategy_params"), dict)
+        and bool(advice["strategy_params"])
     ) or (isinstance(configured_params, dict) and bool(configured_params))
     if isinstance(configured_params, dict) and configured_params:
         advice["configured_params"] = dict(configured_params)

@@ -81,9 +81,15 @@ def wick_blend_entry_quality(
     retrace = _clamp(retrace_from_extreme_pips / max(0.35, atr_norm * 0.20))
     projection = _clamp((projection_score + 0.15) / 0.55)
     regime = _clamp(range_score / 0.45)
-    signed_macd = (-_to_float(macd_hist_pips, 0.0)) if side == "long" else _to_float(macd_hist_pips, 0.0)
+    signed_macd = (
+        (-_to_float(macd_hist_pips, 0.0))
+        if side == "long"
+        else _to_float(macd_hist_pips, 0.0)
+    )
     macd_headwind = _clamp((signed_macd - 0.05) / 0.35)
-    signed_di_gap = (-_to_float(di_gap, 0.0)) if side == "long" else _to_float(di_gap, 0.0)
+    signed_di_gap = (
+        (-_to_float(di_gap, 0.0)) if side == "long" else _to_float(di_gap, 0.0)
+    )
     di_headwind = _clamp((signed_di_gap - 4.0) / 6.0)
     trend_headwind = _clamp(macd_headwind * 0.70 + di_headwind * 0.30)
 
@@ -175,7 +181,9 @@ def wick_blend_exit_adjustments(
                 wick_ratio=_to_float(wick.get("ratio"), 0.0),
                 tick_strength=_to_float(wick.get("tick_strength"), 0.0),
                 follow_pips=_to_float(wick.get("follow_pips"), 0.0),
-                retrace_from_extreme_pips=_to_float(wick.get("retrace_from_extreme_pips"), 0.0),
+                retrace_from_extreme_pips=_to_float(
+                    wick.get("retrace_from_extreme_pips"), 0.0
+                ),
                 projection_score=projection_score,
                 range_reason=(
                     str(thesis.get("range_reason"))
@@ -184,8 +192,10 @@ def wick_blend_exit_adjustments(
                 ),
                 macd_hist_pips=_to_float(thesis.get("macd_hist_pips"), None),
                 di_gap=(
-                    _to_float(thesis.get("plus_di"), 0.0) - _to_float(thesis.get("minus_di"), 0.0)
-                    if thesis.get("plus_di") is not None and thesis.get("minus_di") is not None
+                    _to_float(thesis.get("plus_di"), 0.0)
+                    - _to_float(thesis.get("minus_di"), 0.0)
+                    if thesis.get("plus_di") is not None
+                    and thesis.get("minus_di") is not None
                     else None
                 ),
             )
@@ -210,18 +220,32 @@ def wick_blend_exit_adjustments(
     continuation_pressure = _to_float(thesis.get("continuation_pressure"), 0.0)
     if continuation_pressure <= 0.0:
         continuation_pressure = projection_headwind
-    headwind_regime = _flow_guard_regime(continuation_pressure) == "continuation_headwind"
+    headwind_regime = (
+        _flow_guard_regime(continuation_pressure) == "continuation_headwind"
+    )
 
     if entry_tp > 0.0:
-        profit_factor = _clamp(0.60 + quality * 0.20 - projection_headwind * 0.18, 0.34, 0.78)
+        profit_factor = _clamp(
+            0.60 + quality * 0.20 - projection_headwind * 0.18, 0.34, 0.78
+        )
         adjusted_profit_take = max(0.5, entry_tp * profit_factor)
-        trail_anchor = adjusted_profit_take * (0.78 + (1.0 - quality) * 0.04 - projection_headwind * 0.08)
-        trail_floor_mult = 1.0 if quality >= 0.58 and not headwind_regime and projection_headwind <= 0.10 else 0.82
+        trail_anchor = adjusted_profit_take * (
+            0.78 + (1.0 - quality) * 0.04 - projection_headwind * 0.08
+        )
+        trail_floor_mult = (
+            1.0
+            if quality >= 0.58 and not headwind_regime and projection_headwind <= 0.10
+            else 0.82
+        )
         adjusted_trail_start = max(
             0.5,
             min(
                 adjusted_profit_take - 0.10,
-                max(trail_start * max(0.72, trail_floor_mult - projection_headwind * 0.12), trail_anchor),
+                max(
+                    trail_start
+                    * max(0.72, trail_floor_mult - projection_headwind * 0.12),
+                    trail_anchor,
+                ),
             ),
         )
     if entry_sl > 0.0:
@@ -231,7 +255,9 @@ def wick_blend_exit_adjustments(
                 0.18,
                 min(
                     entry_sl * (0.26 - projection_headwind * 0.04 + quality * 0.03),
-                    max(0.22, adjusted_profit_take * (0.24 - projection_headwind * 0.05)),
+                    max(
+                        0.22, adjusted_profit_take * (0.24 - projection_headwind * 0.05)
+                    ),
                 ),
             ),
         )
@@ -248,14 +274,20 @@ def wick_blend_exit_adjustments(
             1.4,
         )
         adjusted_loss_cut_hard = (
-            min(loss_cut_hard_pips, dynamic_hard_cut) if loss_cut_hard_pips > 0.0 else dynamic_hard_cut
+            min(loss_cut_hard_pips, dynamic_hard_cut)
+            if loss_cut_hard_pips > 0.0
+            else dynamic_hard_cut
         )
     rebuilt_penalty_sec = 60.0 if quality_rebuilt else 0.0
     dynamic_hold_sec = max(
         120.0,
         min(
             360.0,
-            120.0 + entry_tp * 35.0 + quality * 60.0 - projection_headwind * 80.0 - rebuilt_penalty_sec,
+            120.0
+            + entry_tp * 35.0
+            + quality * 60.0
+            - projection_headwind * 80.0
+            - rebuilt_penalty_sec,
         ),
     )
     adjusted_loss_cut_max_hold_sec = (

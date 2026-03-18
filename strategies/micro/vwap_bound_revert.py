@@ -38,7 +38,9 @@ class MicroVWAPBound:
     LOW_VOL_HOLD_MAX_BARS = 11
 
     @staticmethod
-    def _vwap_and_sigma(candles: Sequence[Dict[str, object]]) -> tuple[Optional[float], Optional[float]]:
+    def _vwap_and_sigma(
+        candles: Sequence[Dict[str, object]],
+    ) -> tuple[Optional[float], Optional[float]]:
         closes = []
         for candle in candles[-MicroVWAPBound.VWAP_WINDOW :]:
             tp = typical_price(candle)
@@ -130,7 +132,9 @@ class MicroVWAPBound:
 
         z_bonus = clamp(abs(z_score) - MicroVWAPBound.MIN_Z, 0.0, 3.0) * 10.0
         bbw_bonus = clamp(MicroVWAPBound.MAX_BBW - bbw, 0.0, 0.25) * 70.0
-        confidence = clamp(52.0 + z_bonus + bbw_bonus + clamp(range_score, 0.0, 1.0) * 6.0, 48.0, 90.0)
+        confidence = clamp(
+            52.0 + z_bonus + bbw_bonus + clamp(range_score, 0.0, 1.0) * 6.0, 48.0, 90.0
+        )
 
         tag_suffix = "short" if direction == "OPEN_SHORT" else "long"
         return {

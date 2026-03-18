@@ -19,7 +19,6 @@ from typing import Optional
 from workers.common import strategy_control
 from workers.common.quality_gate import current_regime
 
-
 LOG = logging.getLogger(__name__)
 
 _FALSE_VALUES = {"", "0", "false", "no", "off"}
@@ -66,7 +65,9 @@ def _normalize_regime(value: Optional[str]) -> str:
     return ""
 
 
-def _decide_candidate_route(macro_regime: Optional[str], micro_regime: Optional[str]) -> str:
+def _decide_candidate_route(
+    macro_regime: Optional[str], micro_regime: Optional[str]
+) -> str:
     macro = _normalize_regime(macro_regime)
     micro = _normalize_regime(micro_regime)
 
@@ -100,7 +101,9 @@ def _apply_dwell(
     return candidate_route, now_mono, True
 
 
-def _build_entry_plan(managed_strategies: tuple[str, ...], enabled_strategies: set[str]) -> dict[str, bool]:
+def _build_entry_plan(
+    managed_strategies: tuple[str, ...], enabled_strategies: set[str]
+) -> dict[str, bool]:
     return {slug: (slug in enabled_strategies) for slug in managed_strategies}
 
 
@@ -112,7 +115,9 @@ def _apply_entry_plan(entry_plan: dict[str, bool], *, note: str) -> tuple[int, i
         current_entry = True if current is None else bool(current[0])
         if current_entry == bool(desired_entry):
             continue
-        strategy_control.set_strategy_flags(slug, entry=bool(desired_entry), note=note[:255])
+        strategy_control.set_strategy_flags(
+            slug, entry=bool(desired_entry), note=note[:255]
+        )
         changed += 1
     return changed, len(entry_plan)
 
@@ -148,7 +153,9 @@ class RouterConfig:
 
 
 def _load_config() -> RouterConfig:
-    default_managed = "scalp_ping_5s_b,scalp_ping_5s_c,scalp_ping_5s_d,scalp_ping_5s_flow"
+    default_managed = (
+        "scalp_ping_5s_b,scalp_ping_5s_c,scalp_ping_5s_d,scalp_ping_5s_flow"
+    )
     managed = _normalize_strategy_list(
         _env_str("REGIME_ROUTER_MANAGED_STRATEGIES", default_managed)
     )
@@ -174,7 +181,9 @@ def _load_config() -> RouterConfig:
             )
         ),
         "event": set(
-            _normalize_strategy_list(_env_str("REGIME_ROUTER_EVENT_ENTRY_STRATEGIES", ""))
+            _normalize_strategy_list(
+                _env_str("REGIME_ROUTER_EVENT_ENTRY_STRATEGIES", "")
+            )
         ),
         "unknown": set(
             _normalize_strategy_list(
@@ -247,11 +256,11 @@ async def regime_router_worker() -> None:
             min_dwell_sec=cfg.min_dwell_sec,
         )
 
-        enabled_targets = cfg.route_targets.get(active_route) or cfg.route_targets.get("unknown", set())
-        entry_plan = _build_entry_plan(cfg.managed_strategies, enabled_targets)
-        note = (
-            f"regime_router:{active_route}|macro={macro_regime or 'na'}|micro={micro_regime or 'na'}"
+        enabled_targets = cfg.route_targets.get(active_route) or cfg.route_targets.get(
+            "unknown", set()
         )
+        entry_plan = _build_entry_plan(cfg.managed_strategies, enabled_targets)
+        note = f"regime_router:{active_route}|macro={macro_regime or 'na'}|micro={micro_regime or 'na'}"
         changed, total = _apply_entry_plan(entry_plan, note=note)
 
         state = {
@@ -302,4 +311,3 @@ def _configure_logging() -> None:
 if __name__ == "__main__":
     _configure_logging()
     asyncio.run(regime_router_worker())
-

@@ -115,10 +115,18 @@ def _restore_runtime_tech_defaults() -> None:
     global _TECH_DYNAMIC_SESSION_REGIME_GAIN
 
     _TECH_FEATURE_EXPANSION_GAIN = float(_TECH_RUNTIME_BASE["feature_expansion_gain"])
-    _TECH_BREAKOUT_ADAPTIVE_WEIGHT = float(_TECH_RUNTIME_BASE["breakout_adaptive_weight"])
-    _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP = dict(_TECH_RUNTIME_BASE["breakout_adaptive_weight_map"])
-    _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = int(_TECH_RUNTIME_BASE["breakout_adaptive_min_samples"])
-    _TECH_BREAKOUT_ADAPTIVE_LOOKBACK = int(_TECH_RUNTIME_BASE["breakout_adaptive_lookback"])
+    _TECH_BREAKOUT_ADAPTIVE_WEIGHT = float(
+        _TECH_RUNTIME_BASE["breakout_adaptive_weight"]
+    )
+    _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP = dict(
+        _TECH_RUNTIME_BASE["breakout_adaptive_weight_map"]
+    )
+    _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = int(
+        _TECH_RUNTIME_BASE["breakout_adaptive_min_samples"]
+    )
+    _TECH_BREAKOUT_ADAPTIVE_LOOKBACK = int(
+        _TECH_RUNTIME_BASE["breakout_adaptive_lookback"]
+    )
     _TECH_SESSION_BIAS_WEIGHT = float(_TECH_RUNTIME_BASE["session_bias_weight"])
     _TECH_SESSION_BIAS_WEIGHT_MAP = dict(_TECH_RUNTIME_BASE["session_bias_weight_map"])
     _TECH_SESSION_BIAS_MIN_SAMPLES = int(_TECH_RUNTIME_BASE["session_bias_min_samples"])
@@ -128,12 +136,24 @@ def _restore_runtime_tech_defaults() -> None:
     _TECH_DYNAMIC_WEIGHT_ENABLED = bool(_TECH_RUNTIME_BASE["dynamic_weight_enabled"])
     _TECH_DYNAMIC_WEIGHT_HORIZONS = set(_TECH_RUNTIME_BASE["dynamic_weight_horizons"])
     _TECH_DYNAMIC_MAX_SCALE_DELTA = float(_TECH_RUNTIME_BASE["dynamic_max_scale_delta"])
-    _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER = float(_TECH_RUNTIME_BASE["dynamic_breakout_skill_center"])
-    _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN = float(_TECH_RUNTIME_BASE["dynamic_breakout_skill_gain"])
-    _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN = float(_TECH_RUNTIME_BASE["dynamic_breakout_regime_gain"])
-    _TECH_DYNAMIC_SESSION_BIAS_CENTER = float(_TECH_RUNTIME_BASE["dynamic_session_bias_center"])
-    _TECH_DYNAMIC_SESSION_BIAS_GAIN = float(_TECH_RUNTIME_BASE["dynamic_session_bias_gain"])
-    _TECH_DYNAMIC_SESSION_REGIME_GAIN = float(_TECH_RUNTIME_BASE["dynamic_session_regime_gain"])
+    _TECH_DYNAMIC_BREAKOUT_SKILL_CENTER = float(
+        _TECH_RUNTIME_BASE["dynamic_breakout_skill_center"]
+    )
+    _TECH_DYNAMIC_BREAKOUT_SKILL_GAIN = float(
+        _TECH_RUNTIME_BASE["dynamic_breakout_skill_gain"]
+    )
+    _TECH_DYNAMIC_BREAKOUT_REGIME_GAIN = float(
+        _TECH_RUNTIME_BASE["dynamic_breakout_regime_gain"]
+    )
+    _TECH_DYNAMIC_SESSION_BIAS_CENTER = float(
+        _TECH_RUNTIME_BASE["dynamic_session_bias_center"]
+    )
+    _TECH_DYNAMIC_SESSION_BIAS_GAIN = float(
+        _TECH_RUNTIME_BASE["dynamic_session_bias_gain"]
+    )
+    _TECH_DYNAMIC_SESSION_REGIME_GAIN = float(
+        _TECH_RUNTIME_BASE["dynamic_session_regime_gain"]
+    )
 
 
 def _apply_runtime_tech_overrides() -> None:
@@ -163,7 +183,8 @@ def _apply_runtime_tech_overrides() -> None:
     now = time.time()
     if (
         _FORECAST_RUNTIME_OVERRIDE_CACHE.get("loaded")
-        and (now - float(_FORECAST_RUNTIME_OVERRIDE_CACHE["loaded"])) < _FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC
+        and (now - float(_FORECAST_RUNTIME_OVERRIDE_CACHE["loaded"]))
+        < _FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC
     ):
         return
 
@@ -178,7 +199,9 @@ def _apply_runtime_tech_overrides() -> None:
         return
 
     try:
-        payload = json.loads(_FORECAST_RUNTIME_OVERRIDE_PATH.read_text(encoding="utf-8"))
+        payload = json.loads(
+            _FORECAST_RUNTIME_OVERRIDE_PATH.read_text(encoding="utf-8")
+        )
     except Exception:
         _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
         _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = "invalid_json"
@@ -195,10 +218,14 @@ def _apply_runtime_tech_overrides() -> None:
         return
     if not bool(runtime.get("enabled")):
         _FORECAST_RUNTIME_OVERRIDE_CACHE["mtime"] = float(stat.st_mtime)
-        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = str(runtime.get("reason") or "disabled")
+        _FORECAST_RUNTIME_OVERRIDE_CACHE["status"] = str(
+            runtime.get("reason") or "disabled"
+        )
         return
 
-    generated_at = _parse_iso8601(runtime.get("generated_at") or payload.get("generated_at"))
+    generated_at = _parse_iso8601(
+        runtime.get("generated_at") or payload.get("generated_at")
+    )
     max_age_sec = max(
         60.0,
         _safe_float(runtime.get("max_age_sec"), 3 * 3600.0),
@@ -234,23 +261,29 @@ def _apply_runtime_tech_overrides() -> None:
         )
     _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = max(
         16,
-        int(_safe_float(
-            env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES"),
-            _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
-        )),
+        int(
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES"),
+                _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+            )
+        ),
     )
     _TECH_BREAKOUT_ADAPTIVE_LOOKBACK = max(
         _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
-        int(_safe_float(
-            env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK"),
-            _TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
-        )),
+        int(
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK"),
+                _TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
+            )
+        ),
     )
     session_bias_weight = _safe_float(
         env_overrides.get("FORECAST_TECH_SESSION_BIAS_WEIGHT"),
         _TECH_SESSION_BIAS_WEIGHT,
     )
-    _TECH_SESSION_BIAS_WEIGHT = max(0.0, min(_TECH_SESSION_BIAS_WEIGHT_CAP, session_bias_weight))
+    _TECH_SESSION_BIAS_WEIGHT = max(
+        0.0, min(_TECH_SESSION_BIAS_WEIGHT_CAP, session_bias_weight)
+    )
     if "FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP" in env_overrides:
         _TECH_SESSION_BIAS_WEIGHT_MAP = _parse_horizon_weight_map(
             str(env_overrides.get("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP") or ""),
@@ -259,17 +292,21 @@ def _apply_runtime_tech_overrides() -> None:
         )
     _TECH_SESSION_BIAS_MIN_SAMPLES = max(
         8,
-        int(_safe_float(
-            env_overrides.get("FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES"),
-            _TECH_SESSION_BIAS_MIN_SAMPLES,
-        )),
+        int(
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES"),
+                _TECH_SESSION_BIAS_MIN_SAMPLES,
+            )
+        ),
     )
     _TECH_SESSION_BIAS_LOOKBACK = max(
         _TECH_SESSION_BIAS_MIN_SAMPLES,
-        int(_safe_float(
-            env_overrides.get("FORECAST_TECH_SESSION_BIAS_LOOKBACK"),
-            _TECH_SESSION_BIAS_LOOKBACK,
-        )),
+        int(
+            _safe_float(
+                env_overrides.get("FORECAST_TECH_SESSION_BIAS_LOOKBACK"),
+                _TECH_SESSION_BIAS_LOOKBACK,
+            )
+        ),
     )
     rebound_weight = _safe_float(
         env_overrides.get("FORECAST_TECH_REBOUND_WEIGHT"),
@@ -283,12 +320,18 @@ def _apply_runtime_tech_overrides() -> None:
             hi=0.5,
         )
     if "FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED" in env_overrides:
-        dynamic_raw = str(env_overrides.get("FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED") or "").strip().lower()
+        dynamic_raw = (
+            str(env_overrides.get("FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED") or "")
+            .strip()
+            .lower()
+        )
         _TECH_DYNAMIC_WEIGHT_ENABLED = dynamic_raw in {"1", "true", "yes", "on"}
     if "FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS" in env_overrides:
         _TECH_DYNAMIC_WEIGHT_HORIZONS = {
             item.strip().lower()
-            for item in str(env_overrides.get("FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS") or "").split(",")
+            for item in str(
+                env_overrides.get("FORECAST_TECH_DYNAMIC_WEIGHT_HORIZONS") or ""
+            ).split(",")
             if item.strip()
         }
     _TECH_DYNAMIC_MAX_SCALE_DELTA = max(
@@ -371,13 +414,17 @@ _BUNDLE_PATH = os.getenv(
     "config/forecast_models/USD_JPY_bundle.joblib",
 ).strip()
 _TTL_SEC = max(1.0, _env_float("FORECAST_GATE_TTL_SEC", 15.0))
-_SOURCE = os.getenv("FORECAST_GATE_SOURCE", "auto").strip().lower()  # auto|bundle|technical
+_SOURCE = (
+    os.getenv("FORECAST_GATE_SOURCE", "auto").strip().lower()
+)  # auto|bundle|technical
 if _SOURCE not in {"auto", "bundle", "technical"}:
     _SOURCE = "auto"
 _AUTO_BLEND_TECH = max(0.0, min(1.0, _env_float("FORECAST_GATE_AUTO_BLEND_TECH", 0.35)))
 _TECH_ENABLED = _env_bool("FORECAST_TECH_ENABLED", True)
 _TECH_SCORE_GAIN = max(0.1, _env_float("FORECAST_TECH_SCORE_GAIN", 1.0))
-_TECH_PROB_STRENGTH = max(0.0, min(1.0, _env_float("FORECAST_TECH_PROB_STRENGTH", 0.75)))
+_TECH_PROB_STRENGTH = max(
+    0.0, min(1.0, _env_float("FORECAST_TECH_PROB_STRENGTH", 0.75))
+)
 _TECH_PROJECTION_WEIGHT = max(
     0.0,
     min(1.2, _env_float("FORECAST_TECH_PROJECTION_WEIGHT", 0.38)),
@@ -418,7 +465,10 @@ _TECH_SESSION_BIAS_WEIGHT_CAP = max(
 )
 _TECH_SESSION_BIAS_WEIGHT = max(
     0.0,
-    min(_TECH_SESSION_BIAS_WEIGHT_CAP, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12)),
+    min(
+        _TECH_SESSION_BIAS_WEIGHT_CAP,
+        _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12),
+    ),
 )
 _TECH_SESSION_BIAS_WEIGHT_MAP = _parse_horizon_weight_map(
     os.getenv("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP", "1m=0.0,5m=0.26,10m=0.38"),
@@ -531,7 +581,10 @@ _EDGE_BLOCK_TREND = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BLOCK_TREND", max(_EDGE_BLOCK, 0.41)))
 )
 _EDGE_BLOCK_RANGE = max(
-    0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BLOCK_RANGE", max(0.2, _EDGE_BLOCK - 0.03)))
+    0.0,
+    min(
+        1.0, _env_float("FORECAST_GATE_EDGE_BLOCK_RANGE", max(0.2, _EDGE_BLOCK - 0.03))
+    ),
 )
 _EDGE_BAD = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BAD", 0.45)))
 _EDGE_REF = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_REF", 0.55)))
@@ -573,7 +626,9 @@ _TF_CONFLUENCE_MIN_CONFIRM = max(
 )
 _VOL_REGIME_LOW = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_LOW", 0.32)))
 _VOL_REGIME_HIGH = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_HIGH", 0.62)))
-_VOL_REGIME_EXTREME = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_EXTREME", 0.82)))
+_VOL_REGIME_EXTREME = max(
+    0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_EXTREME", 0.82))
+)
 
 _REQUIRE_FRESH = _env_bool("FORECAST_GATE_REQUIRE_FRESH", False)
 _MAX_AGE_SEC = max(1.0, _env_float("FORECAST_GATE_MAX_AGE_SEC", 120.0))
@@ -673,7 +728,9 @@ def _future_flow_plan(
     e = _clamp(float(edge), 0.0, 1.0)
     s = str(side or "").strip().lower()
     is_buy = s == "buy"
-    flow_mode = "trend" if style == "trend" else "range" if style == "range" else "mixed"
+    flow_mode = (
+        "trend" if style == "trend" else "range" if style == "range" else "mixed"
+    )
     if t >= 0.62:
         core = "上昇トレンド継続" if is_buy else "下落トレンド継続"
     elif r >= 0.7:
@@ -813,7 +870,9 @@ _TECH_HORIZON_CFG = {
     "1d": {"trend_w": 0.76, "mr_w": 0.24, "temp": 1.10},
     "1w": {"trend_w": 0.82, "mr_w": 0.18, "temp": 1.00},
 }
-_TECH_MIN_FEATURE_ROWS = max(24, int(_env_float("FORECAST_GATE_TECH_MIN_FEATURE_ROWS", 50)))
+_TECH_MIN_FEATURE_ROWS = max(
+    24, int(_env_float("FORECAST_GATE_TECH_MIN_FEATURE_ROWS", 50))
+)
 
 
 _BUNDLE_CACHE = None
@@ -917,7 +976,9 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
-def _safe_optional_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+def _safe_optional_float(
+    value: Any, default: Optional[float] = None
+) -> Optional[float]:
     try:
         value_float = float(value)
     except Exception:
@@ -1207,7 +1268,9 @@ def _adjust_dynamic_session_weight(
     )
     cap = _clamp(float(_TECH_DYNAMIC_MAX_SCALE_DELTA), 0.0, 0.6)
     delta = _clamp(delta, -cap, cap)
-    return _clamp(base * (1.0 + delta), 0.0, float(_TECH_SESSION_BIAS_WEIGHT_CAP)), float(delta)
+    return _clamp(
+        base * (1.0 + delta), 0.0, float(_TECH_SESSION_BIAS_WEIGHT_CAP)
+    ), float(delta)
 
 
 def _sigmoid(x: float) -> float:
@@ -1241,7 +1304,9 @@ def _estimate_range_sigma_pips(
     expected = abs(_safe_float(row.get("expected_pips"), 0.0))
     step_bars = max(1.0, _safe_float(row.get("step_bars"), 12.0))
     min_move = max(0.2, _safe_float(row.get("min_move_pips"), 0.6))
-    projection_conf = _clamp(_safe_float(row.get("projection_confidence"), 0.0), 0.0, 1.0)
+    projection_conf = _clamp(
+        _safe_float(row.get("projection_confidence"), 0.0), 0.0, 1.0
+    )
     sigma = (
         0.42 * max(0.25, expected)
         + 0.35 * min_move
@@ -1272,17 +1337,38 @@ def _attach_range_band(
 
     current_low = _safe_optional_float(row.get("range_low_pips"))
     current_high = _safe_optional_float(row.get("range_high_pips"))
-    if current_low is not None and current_high is not None and current_low < current_high:
+    if (
+        current_low is not None
+        and current_high is not None
+        and current_low < current_high
+    ):
         row["range_low_pips"] = round(float(current_low), 4)
         row["range_high_pips"] = round(float(current_high), 4)
         sigma_existing = _safe_optional_float(row.get("range_sigma_pips"))
         if sigma_existing is None or sigma_existing <= 0.0:
-            span = max(1e-6, _normal_quantile_z(_RANGE_UPPER_Q) - _normal_quantile_z(_RANGE_LOWER_Q))
-            sigma_existing = max(_RANGE_SIGMA_FLOOR_PIPS, (current_high - current_low) / span)
-        row["range_sigma_pips"] = round(float(max(_RANGE_SIGMA_FLOOR_PIPS, sigma_existing)), 4)
-        row.setdefault("q10_pips", round(expected_pips + _normal_quantile_z(0.10) * row["range_sigma_pips"], 4))
+            span = max(
+                1e-6,
+                _normal_quantile_z(_RANGE_UPPER_Q) - _normal_quantile_z(_RANGE_LOWER_Q),
+            )
+            sigma_existing = max(
+                _RANGE_SIGMA_FLOOR_PIPS, (current_high - current_low) / span
+            )
+        row["range_sigma_pips"] = round(
+            float(max(_RANGE_SIGMA_FLOOR_PIPS, sigma_existing)), 4
+        )
+        row.setdefault(
+            "q10_pips",
+            round(
+                expected_pips + _normal_quantile_z(0.10) * row["range_sigma_pips"], 4
+            ),
+        )
         row.setdefault("q50_pips", round(expected_pips, 4))
-        row.setdefault("q90_pips", round(expected_pips + _normal_quantile_z(0.90) * row["range_sigma_pips"], 4))
+        row.setdefault(
+            "q90_pips",
+            round(
+                expected_pips + _normal_quantile_z(0.90) * row["range_sigma_pips"], 4
+            ),
+        )
         return row
 
     sigma = _estimate_range_sigma_pips(row, fallback=fallback_sigma)
@@ -1298,9 +1384,13 @@ def _attach_range_band(
     row["range_sigma_pips"] = round(float(sigma), 4)
 
     # Optional broader quantiles for VM-side monitoring.
-    row.setdefault("q10_pips", round(expected_pips + _normal_quantile_z(0.10) * sigma, 4))
+    row.setdefault(
+        "q10_pips", round(expected_pips + _normal_quantile_z(0.10) * sigma, 4)
+    )
     row.setdefault("q50_pips", round(expected_pips, 4))
-    row.setdefault("q90_pips", round(expected_pips + _normal_quantile_z(0.90) * sigma, 4))
+    row.setdefault(
+        "q90_pips", round(expected_pips + _normal_quantile_z(0.90) * sigma, 4)
+    )
     return row
 
 
@@ -1437,8 +1527,8 @@ def _rebound_bias_signal(
         1.0,
     )
     rebound_signal = drop_score * core
-    rebound_signal *= (1.0 - 0.42 * breakout_drag)
-    rebound_signal *= (1.0 - 0.48 * trend_drag)
+    rebound_signal *= 1.0 - 0.42 * breakout_drag
+    rebound_signal *= 1.0 - 0.48 * trend_drag
     if drop_score < 0.20:
         rebound_signal *= 0.35
     if oversold_score < 0.15:
@@ -1517,7 +1607,9 @@ def _resolve_forecast_profile(
 
     profile: dict[str, Any] = {}
     for container in source:
-        normalized = _normalize_forecast_horizon_profile(container.get("forecast_profile"))
+        normalized = _normalize_forecast_horizon_profile(
+            container.get("forecast_profile")
+        )
         if normalized:
             profile.update(normalized)
 
@@ -1538,9 +1630,22 @@ def _resolve_forecast_profile(
                 if value:
                     profile["horizon"] = value
 
-        for key in ("blend_with_bundle", "technical_only", "forecast_blend_with_bundle", "forecast_technical_only"):
+        for key in (
+            "blend_with_bundle",
+            "technical_only",
+            "forecast_blend_with_bundle",
+            "forecast_technical_only",
+        ):
             if key in container:
-                normalized_key = "technical_only" if key == "forecast_technical_only" else "blend_with_bundle" if key == "forecast_blend_with_bundle" else key
+                normalized_key = (
+                    "technical_only"
+                    if key == "forecast_technical_only"
+                    else (
+                        "blend_with_bundle"
+                        if key == "forecast_blend_with_bundle"
+                        else key
+                    )
+                )
                 profile[normalized_key] = bool(container.get(key))
 
     return profile
@@ -1681,7 +1786,9 @@ def _strategy_style(strategy_tag: Optional[str]) -> Optional[str]:
     return None
 
 
-def _strategy_env_float(name: str, strategy_tag: Optional[str], default: float) -> float:
+def _strategy_env_float(
+    name: str, strategy_tag: Optional[str], default: float
+) -> float:
     value = _env_float(name, default)
     for suffix in _strategy_env_suffixes(strategy_tag):
         raw = os.getenv(f"{name}_STRATEGY_{suffix}")
@@ -1926,9 +2033,13 @@ def _apply_tf_confluence(
     adjusted = float(edge)
     if confirm_count >= _TF_CONFLUENCE_MIN_CONFIRM:
         if confluence_score >= 0.0:
-            adjusted = _clamp(adjusted + _TF_CONFLUENCE_BONUS * confluence_score, 0.0, 1.0)
+            adjusted = _clamp(
+                adjusted + _TF_CONFLUENCE_BONUS * confluence_score, 0.0, 1.0
+            )
         else:
-            adjusted = _clamp(adjusted - _TF_CONFLUENCE_PENALTY * abs(confluence_score), 0.0, 1.0)
+            adjusted = _clamp(
+                adjusted - _TF_CONFLUENCE_PENALTY * abs(confluence_score), 0.0, 1.0
+            )
     return adjusted, confluence_score, confirm_count, ",".join(used_horizons)
 
 
@@ -2003,7 +2114,9 @@ def _load_candle_rows(path: Path, *, limit: int) -> list[dict]:
     return out
 
 
-def _predict_bundle_latest(bundle, candles_by_tf: dict[str, list[dict]]) -> dict | None:  # noqa: ANN001
+def _predict_bundle_latest(
+    bundle, candles_by_tf: dict[str, list[dict]]
+) -> dict | None:  # noqa: ANN001
     if bundle is None:
         return None
     try:
@@ -2084,7 +2197,9 @@ def _projection_bias_from_candles(
         }
 
     try:
-        ma = compute_ma_projection({"candles": candles}, timeframe_minutes=timeframe_minutes)
+        ma = compute_ma_projection(
+            {"candles": candles}, timeframe_minutes=timeframe_minutes
+        )
         rsi = compute_rsi_projection(candles, timeframe_minutes=timeframe_minutes)
         adx = compute_adx_projection(
             candles,
@@ -2119,7 +2234,9 @@ def _projection_bias_from_candles(
         cross_score = 0.0
         if ma.projected_cross_bars is not None and ma.projected_cross_bars > 0.0:
             horizon_eta = max(1.5, float(step_bars) * 0.28)
-            eta_scale = _clamp(1.0 - (float(ma.projected_cross_bars) / horizon_eta), 0.0, 1.0)
+            eta_scale = _clamp(
+                1.0 - (float(ma.projected_cross_bars) / horizon_eta), 0.0, 1.0
+            )
             if ma.gap_pips < 0.0 and ma.gap_slope_pips > 0.0:
                 cross_score = 0.28 * eta_scale
             elif ma.gap_pips > 0.0 and ma.gap_slope_pips < 0.0:
@@ -2136,9 +2253,13 @@ def _projection_bias_from_candles(
         horizon_eta = max(2.0, float(step_bars) * 0.35)
         exhaustion = 0.0
         if rsi.eta_upper_bars is not None and rsi.eta_upper_bars <= horizon_eta:
-            exhaustion -= 0.18 * _clamp(1.0 - (rsi.eta_upper_bars / horizon_eta), 0.0, 1.0)
+            exhaustion -= 0.18 * _clamp(
+                1.0 - (rsi.eta_upper_bars / horizon_eta), 0.0, 1.0
+            )
         if rsi.eta_lower_bars is not None and rsi.eta_lower_bars <= horizon_eta:
-            exhaustion += 0.18 * _clamp(1.0 - (rsi.eta_lower_bars / horizon_eta), 0.0, 1.0)
+            exhaustion += 0.18 * _clamp(
+                1.0 - (rsi.eta_lower_bars / horizon_eta), 0.0, 1.0
+            )
         rsi_total = 0.7 * (rsi_score + exhaustion)
         score += rsi_total
         components["rsi"] = round(rsi_total, 6)
@@ -2283,7 +2404,9 @@ def _technical_prediction_for_horizon(
     try:
         feats = compute_feature_frame(candles)
     except Exception as exc:
-        LOG.debug("[FORECAST] technical feature build failed horizon=%s err=%s", horizon, exc)
+        LOG.debug(
+            "[FORECAST] technical feature build failed horizon=%s err=%s", horizon, exc
+        )
         return _technical_missing_row(
             horizon=horizon,
             timeframe=timeframe,
@@ -2372,8 +2495,12 @@ def _technical_prediction_for_horizon(
     close_ma50 = _safe_float(last.get("close_ma50_pips"), 0.0) / max(0.8, atr)
     rsi = (_safe_float(last.get("rsi_14"), 50.0) - 50.0) / 16.0
     range_pos = (_safe_float(last.get("range_pos"), 0.5) - 0.5) * 2.0
-    trend_slope20 = _safe_float(last.get("trend_slope_pips_20"), 0.0) / max(0.55, atr * 0.42)
-    trend_slope50 = _safe_float(last.get("trend_slope_pips_50"), 0.0) / max(0.55, atr * 0.46)
+    trend_slope20 = _safe_float(last.get("trend_slope_pips_20"), 0.0) / max(
+        0.55, atr * 0.42
+    )
+    trend_slope50 = _safe_float(last.get("trend_slope_pips_50"), 0.0) / max(
+        0.55, atr * 0.46
+    )
     trend_accel = _safe_float(last.get("trend_accel_pips"), 0.0) / max(0.40, atr * 0.34)
     sr_balance = _clamp(_safe_float(last.get("sr_balance_20"), 0.0), -1.0, 1.0)
     breakout_up = _safe_float(last.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
@@ -2390,15 +2517,19 @@ def _technical_prediction_for_horizon(
     if _TECH_BREAKOUT_ADAPTIVE_ENABLED:
         signal_values: list[float] = []
         try:
-            signal_series = feats["breakout_up_pips_20"] - feats["breakout_down_pips_20"]
+            signal_series = (
+                feats["breakout_up_pips_20"] - feats["breakout_down_pips_20"]
+            )
             signal_values = [float(v) for v in signal_series.tolist()]
         except Exception:
             signal_values = []
-        breakout_skill, breakout_hit_rate, breakout_samples = _estimate_directional_skill(
-            signal_values=signal_values,
-            target_values=future_values,
-            min_samples=_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
-            lookback=_TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
+        breakout_skill, breakout_hit_rate, breakout_samples = (
+            _estimate_directional_skill(
+                signal_values=signal_values,
+                target_values=future_values,
+                min_samples=_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+                lookback=_TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
+            )
         )
     breakout_adaptive = math.tanh(breakout_bias * 0.9) * breakout_skill
     session_bias = 0.0
@@ -2410,18 +2541,26 @@ def _technical_prediction_for_horizon(
             timestamp_values = list(feats.index)
         except Exception:
             timestamp_values = []
-        session_bias, session_mean_pips, session_samples, session_hour_jst = _estimate_session_hour_bias(
-            timestamp_values=timestamp_values,
-            target_values=future_values,
-            current_timestamp=(
-                timestamp_values[last_pos]
-                if (timestamp_values and last_pos is not None and last_pos < len(timestamp_values))
-                else (timestamp_values[-1] if timestamp_values else None)
-            ),
-            min_samples=_TECH_SESSION_BIAS_MIN_SAMPLES,
-            lookback=_TECH_SESSION_BIAS_LOOKBACK,
+        session_bias, session_mean_pips, session_samples, session_hour_jst = (
+            _estimate_session_hour_bias(
+                timestamp_values=timestamp_values,
+                target_values=future_values,
+                current_timestamp=(
+                    timestamp_values[last_pos]
+                    if (
+                        timestamp_values
+                        and last_pos is not None
+                        and last_pos < len(timestamp_values)
+                    )
+                    else (timestamp_values[-1] if timestamp_values else None)
+                ),
+                min_samples=_TECH_SESSION_BIAS_MIN_SAMPLES,
+                lookback=_TECH_SESSION_BIAS_LOOKBACK,
+            )
         )
-    donchian_width = max(0.25, abs(_safe_float(last.get("donchian_width_pips_20"), 0.0)))
+    donchian_width = max(
+        0.25, abs(_safe_float(last.get("donchian_width_pips_20"), 0.0))
+    )
     range_compression = _safe_float(last.get("range_compression_20"), 0.0)
     trend_pullback = _safe_float(last.get("trend_pullback_norm_20"), 0.0)
     width_ratio = donchian_width / max(0.45, atr)
@@ -2486,7 +2625,10 @@ def _technical_prediction_for_horizon(
         1.0,
     )
     trend_strength = _clamp(
-        trend_strength + trend_boost - 0.35 * range_boost + 0.05 * abs(projection_score),
+        trend_strength
+        + trend_boost
+        - 0.35 * range_boost
+        + 0.05 * abs(projection_score),
         0.0,
         1.0,
     )
@@ -2601,9 +2743,15 @@ def _technical_prediction_for_horizon(
             "projection_score": round(float(projection_score), 6),
             "projection_confidence": round(float(projection_confidence), 6),
             "projection_components": proj.get("components"),
-            "trend_slope_pips_20": round(float(_safe_float(last.get("trend_slope_pips_20"), 0.0)), 6),
-            "trend_slope_pips_50": round(float(_safe_float(last.get("trend_slope_pips_50"), 0.0)), 6),
-            "trend_accel_pips": round(float(_safe_float(last.get("trend_accel_pips"), 0.0)), 6),
+            "trend_slope_pips_20": round(
+                float(_safe_float(last.get("trend_slope_pips_20"), 0.0)), 6
+            ),
+            "trend_slope_pips_50": round(
+                float(_safe_float(last.get("trend_slope_pips_50"), 0.0)), 6
+            ),
+            "trend_accel_pips": round(
+                float(_safe_float(last.get("trend_accel_pips"), 0.0)), 6
+            ),
             "sr_balance_20": round(float(sr_balance), 6),
             "breakout_bias_20": round(float(breakout_bias), 6),
             "breakout_skill_20": round(float(breakout_skill), 6),
@@ -2618,7 +2766,9 @@ def _technical_prediction_for_horizon(
             "session_bias_weight": round(float(session_bias_weight), 6),
             "session_mean_pips_jst": round(float(session_mean_pips), 6),
             "session_samples_jst": int(session_samples),
-            "session_hour_jst": int(session_hour_jst) if session_hour_jst is not None else None,
+            "session_hour_jst": (
+                int(session_hour_jst) if session_hour_jst is not None else None
+            ),
             "rebound_signal_20": round(float(rebound_signal), 6),
             "rebound_drop_score_20": rebound_components.get("drop_score"),
             "rebound_oversold_score_20": rebound_components.get("oversold_score"),
@@ -2722,7 +2872,9 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
     if anchor_price is None:
         anchor_price = tech_row.get("anchor_price")
     if isinstance(anchor_price, (int, float)) and math.isfinite(float(anchor_price)):
-        blended_target_price = round(float(anchor_price) + float(blended_expected_pips) * float(_PIP_SIZE), 5)
+        blended_target_price = round(
+            float(anchor_price) + float(blended_expected_pips) * float(_PIP_SIZE), 5
+        )
     else:
         blended_target_price = None
     row = {
@@ -2742,12 +2894,20 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
         "projection_components": tech_row.get("projection_components")
         or base_row.get("projection_components"),
         "trend_strength": round(
-            (1.0 - alpha) * _safe_float(base_row.get("trend_strength"), _safe_float(tech_row.get("trend_strength"), 0.5))
+            (1.0 - alpha)
+            * _safe_float(
+                base_row.get("trend_strength"),
+                _safe_float(tech_row.get("trend_strength"), 0.5),
+            )
             + alpha * _safe_float(tech_row.get("trend_strength"), 0.5),
             6,
         ),
         "range_pressure": round(
-            (1.0 - alpha) * _safe_float(base_row.get("range_pressure"), _safe_float(tech_row.get("range_pressure"), 0.5))
+            (1.0 - alpha)
+            * _safe_float(
+                base_row.get("range_pressure"),
+                _safe_float(tech_row.get("range_pressure"), 0.5),
+            )
             + alpha * _safe_float(tech_row.get("range_pressure"), 0.5),
             6,
         ),
@@ -2888,25 +3048,33 @@ def decide(
     )
     trend_min_strength = _clamp(
         _strategy_env_float(
-            "FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", strategy_tag, _STYLE_TREND_MIN_STRENGTH
+            "FORECAST_GATE_STYLE_TREND_MIN_STRENGTH",
+            strategy_tag,
+            _STYLE_TREND_MIN_STRENGTH,
         ),
         0.0,
         1.0,
     )
     range_min_pressure = _clamp(
         _strategy_env_float(
-            "FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE", strategy_tag, _STYLE_RANGE_MIN_PRESSURE
+            "FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE",
+            strategy_tag,
+            _STYLE_RANGE_MIN_PRESSURE,
         ),
         0.0,
         1.0,
     )
     edge_block_trend = _clamp(
-        _strategy_env_float("FORECAST_GATE_EDGE_BLOCK_TREND", strategy_tag, _EDGE_BLOCK_TREND),
+        _strategy_env_float(
+            "FORECAST_GATE_EDGE_BLOCK_TREND", strategy_tag, _EDGE_BLOCK_TREND
+        ),
         0.0,
         1.0,
     )
     edge_block_range = _clamp(
-        _strategy_env_float("FORECAST_GATE_EDGE_BLOCK_RANGE", strategy_tag, _EDGE_BLOCK_RANGE),
+        _strategy_env_float(
+            "FORECAST_GATE_EDGE_BLOCK_RANGE", strategy_tag, _EDGE_BLOCK_RANGE
+        ),
         0.0,
         1.0,
     )
@@ -2915,9 +3083,13 @@ def decide(
     edge = max(0.0, min(1.0, float(edge)))
     projection_score = _safe_float(row.get("projection_score"), 0.0)
     if projection_score != 0.0:
-        signed_alignment = projection_score if (side_key == "buy" or units > 0) else -projection_score
+        signed_alignment = (
+            projection_score if (side_key == "buy" or units > 0) else -projection_score
+        )
         if signed_alignment > 0.0:
-            edge = _clamp(edge + _EDGE_PROJECTION_BONUS * min(1.0, signed_alignment), 0.0, 1.0)
+            edge = _clamp(
+                edge + _EDGE_PROJECTION_BONUS * min(1.0, signed_alignment), 0.0, 1.0
+            )
         elif signed_alignment < 0.0:
             edge = _clamp(
                 edge - _EDGE_PROJECTION_PENALTY * min(1.0, abs(signed_alignment)),
@@ -2998,7 +3170,9 @@ def decide(
             ),
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
-            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            tp_pips_hint=_safe_abs_float(
+                row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+            ),
             target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3046,7 +3220,9 @@ def decide(
             ),
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
-            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            tp_pips_hint=_safe_abs_float(
+                row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+            ),
             target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3118,7 +3294,9 @@ def decide(
                 ),
                 tf_confluence_count=int(tf_confluence_count),
                 tf_confluence_horizons=tf_confluence_horizons or None,
-                tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                tp_pips_hint=_safe_abs_float(
+                    row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+                ),
                 target_reach_prob=target_reach_prob,
                 sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
                 rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3167,7 +3345,9 @@ def decide(
                 ),
                 tf_confluence_count=int(tf_confluence_count),
                 tf_confluence_horizons=tf_confluence_horizons or None,
-                tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                tp_pips_hint=_safe_abs_float(
+                    row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+                ),
                 target_reach_prob=target_reach_prob,
                 sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
                 rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3235,7 +3415,9 @@ def decide(
             ),
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
-            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            tp_pips_hint=_safe_abs_float(
+                row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+            ),
             target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3294,7 +3476,9 @@ def decide(
             ),
             tf_confluence_count=int(tf_confluence_count),
             tf_confluence_horizons=tf_confluence_horizons or None,
-            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            tp_pips_hint=_safe_abs_float(
+                row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+            ),
             target_reach_prob=target_reach_prob,
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3351,7 +3535,10 @@ def decide(
                     ),
                     tf_confluence_count=int(tf_confluence_count),
                     tf_confluence_horizons=tf_confluence_horizons or None,
-                    tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                    tp_pips_hint=_safe_abs_float(
+                        row.get("tp_pips_hint"),
+                        _safe_abs_float(row.get("expected_pips")),
+                    ),
                     target_reach_prob=target_reach_prob,
                     sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
                     rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -3410,7 +3597,9 @@ def decide(
         ),
         tf_confluence_count=int(tf_confluence_count),
         tf_confluence_horizons=tf_confluence_horizons or None,
-        tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+        tp_pips_hint=_safe_abs_float(
+            row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))
+        ),
         target_reach_prob=target_reach_prob,
         sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
         rr_floor=_safe_optional_float(row.get("rr_floor")),

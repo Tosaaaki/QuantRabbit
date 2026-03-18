@@ -200,7 +200,11 @@ def _extract_open_stats(
             if not tag:
                 thesis = tr.get("entry_thesis")
                 if isinstance(thesis, dict):
-                    tag = thesis.get("strategy_tag") or thesis.get("strategy") or thesis.get("tag")
+                    tag = (
+                        thesis.get("strategy_tag")
+                        or thesis.get("strategy")
+                        or thesis.get("tag")
+                    )
             base = _base_strategy_tag(tag, known_keys=known_keys)
             if not base or base != strategy:
                 continue
@@ -309,7 +313,9 @@ def _get_state(strategy: str, direction: str) -> Optional[ReentryState]:
     except Exception:
         close_price = None
     try:
-        pl_pips = float(row["last_pl_pips"]) if row["last_pl_pips"] is not None else None
+        pl_pips = (
+            float(row["last_pl_pips"]) if row["last_pl_pips"] is not None else None
+        )
     except Exception:
         pl_pips = None
     result = str(row["last_result"] or "flat")
@@ -355,7 +361,9 @@ def allow_entry(
     cd_scale = _BIAS_COOLDOWN_SCALE.get(bias)
     if cd_scale:
         cooldown_win = max(_BIAS_MIN_COOLDOWN_SEC, int(round(cooldown_win * cd_scale)))
-        cooldown_loss = max(_BIAS_MIN_COOLDOWN_SEC, int(round(cooldown_loss * cd_scale)))
+        cooldown_loss = max(
+            _BIAS_MIN_COOLDOWN_SEC, int(round(cooldown_loss * cd_scale))
+        )
     dist_scale = _BIAS_DISTANCE_SCALE.get(bias)
     if dist_scale:
         min_pips = max(0.0, round(min_pips * dist_scale, 3))
@@ -366,11 +374,19 @@ def allow_entry(
     if allow_hours:
         jst_hour = (now_dt + timedelta(hours=9)).hour
         if jst_hour not in allow_hours:
-            return False, "time_filter", {"jst_hour": jst_hour, "allow_jst_hours": allow_hours}
+            return (
+                False,
+                "time_filter",
+                {"jst_hour": jst_hour, "allow_jst_hours": allow_hours},
+            )
     elif block_hours:
         jst_hour = (now_dt + timedelta(hours=9)).hour
         if jst_hour in block_hours:
-            return False, "time_block", {"jst_hour": jst_hour, "block_jst_hours": block_hours}
+            return (
+                False,
+                "time_block",
+                {"jst_hour": jst_hour, "block_jst_hours": block_hours},
+            )
 
     max_open_trades = int(merged.get("max_open_trades") or 0)
     max_open_trades_hard = int(merged.get("max_open_trades_hard") or 0)
@@ -401,12 +417,16 @@ def allow_entry(
                 distance_override = True
         hard_cap = max_open_trades_hard if max_open_trades_hard > 0 else max_open_trades
         if hard_cap > 0 and open_count >= hard_cap:
-            return False, "open_hard_cap", {
-                "open_count": open_count,
-                "max_open_trades_hard": hard_cap,
-                "worst_unrealized_pips": worst_pips,
-                "avg_unrealized_pips": avg_pips,
-            }
+            return (
+                False,
+                "open_hard_cap",
+                {
+                    "open_count": open_count,
+                    "max_open_trades_hard": hard_cap,
+                    "worst_unrealized_pips": worst_pips,
+                    "avg_unrealized_pips": avg_pips,
+                },
+            )
         soft_reason = None
         soft_details: Dict[str, object] = {}
         if max_open_trades > 0 and open_count >= max_open_trades:
@@ -509,12 +529,16 @@ def allow_entry(
                     if distance_details:
                         details.update(distance_details)
                     return True, "cooldown_override_distance", details
-            return False, "cooldown", {
-                "cooldown_remaining_sec": remaining,
-                "last_close_time": state.close_time.isoformat(),
-                "last_result": state.result,
-                "return_wait_bias": bias,
-            }
+            return (
+                False,
+                "cooldown",
+                {
+                    "cooldown_remaining_sec": remaining,
+                    "last_close_time": state.close_time.isoformat(),
+                    "last_result": state.result,
+                    "return_wait_bias": bias,
+                },
+            )
     if distance_ok is False:
         return False, "price_distance", distance_details
 

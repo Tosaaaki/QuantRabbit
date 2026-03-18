@@ -18,7 +18,9 @@ class Donchian55:
     def check(fac: Dict, *, range_active: bool = False) -> Dict | None:
         candles = fac.get("candles")
         if candles is None or len(candles) < 56:
-            Donchian55._log_skip("insufficient_candles", count=len(candles) if candles is not None else 0)
+            Donchian55._log_skip(
+                "insufficient_candles", count=len(candles) if candles is not None else 0
+            )
             return None
 
         df = pd.DataFrame(candles)[-56:]
@@ -63,7 +65,9 @@ class Donchian55:
         distance_bonus = 0.0
         if near_pips is not None:
             distance_bonus = max(0.0, min(10.0, (8.0 - min(8.0, near_pips)) * 1.2))
-        confidence = int(max(45.0, min(95.0, 54.0 + breakout_strength * 42.0 + distance_bonus)))
+        confidence = int(
+            max(45.0, min(95.0, 54.0 + breakout_strength * 42.0 + distance_bonus))
+        )
 
         # レンジ／低勢い時はそもそもエントリー抑制
         if range_active and breakout_strength < 0.4:
@@ -91,7 +95,9 @@ class Donchian55:
             trend_scale = 0.75 if adx < 18.0 else 1.0 if adx < 32.0 else 1.12
             range_scale = 0.55 if range_active else 1.0
             momentum_scale = 0.95 + min(0.35, breakout_strength * 0.35)
-            tp *= max(0.45, min(1.35, vol_scale * trend_scale * range_scale * momentum_scale))
+            tp *= max(
+                0.45, min(1.35, vol_scale * trend_scale * range_scale * momentum_scale)
+            )
             # 到達確度を優先し、ATRと55本レンジで上限を強くクランプ
             range_pips = max(10.0, range_span * 100.0)  # 55本レンジをpip換算
             tp_cap = min(tp, 24.0, atr_pips * 4.5 + 6.0, range_pips * 0.35)
@@ -100,7 +106,9 @@ class Donchian55:
             tp = max(tp_floor, min(tp_cap, sl * 1.25))
             return round(sl, 2), round(tp, 2)
 
-        if close > high55 or (near_pips is not None and near_pips <= 3.0 and close >= high55 - 0.02):
+        if close > high55 or (
+            near_pips is not None and near_pips <= 3.0 and close >= high55 - 0.02
+        ):
             sl, tp = _targets()
             return {
                 "action": "OPEN_LONG",
@@ -113,7 +121,9 @@ class Donchian55:
                 "min_hold_sec": Donchian55._min_hold_seconds(tp),
                 "tag": f"{Donchian55.name}-breakout-up",
             }
-        if close < low55 or (near_pips is not None and near_pips <= 3.0 and close <= low55 + 0.02):
+        if close < low55 or (
+            near_pips is not None and near_pips <= 3.0 and close <= low55 + 0.02
+        ):
             sl, tp = _targets()
             return {
                 "action": "OPEN_SHORT",

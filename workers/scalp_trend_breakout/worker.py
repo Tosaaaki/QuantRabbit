@@ -1,9 +1,15 @@
 """M1Scalper dedicated worker with dynamic cap."""
 
 from __future__ import annotations
-from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import (
+    compute_adx_projection,
+    compute_bbw_projection,
+    compute_ma_projection,
+    compute_rsi_projection,
+)
 from analysis.technique_engine import evaluate_entry_techniques
 from analysis.ma_projection import score_ma_for_side
+
 try:
     from analysis.pattern_stats import derive_pattern_signature
 except ModuleNotFoundError:  # pragma: no cover - optional in slim deployments
@@ -44,12 +50,24 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float(
+    "BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_TREND_EXT_RATIO = env_float(
+    "BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float(
+    "BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float(
+    "BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float(
+    "BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float(
+    "BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX
+)
 _BB_PIP = 0.01
 
 _PATTERN_GATE_OPT_IN = env_bool("SCALP_M1SCALPER_PATTERN_GATE_OPT_IN", True)
@@ -78,7 +96,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _soft_scale_exceed_limit(value, good_limit, soft_limit, min_scale, max_scale):
@@ -125,8 +149,16 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None, conf_val
     if style == "scalp" and range_active:
         style = "reversion"
     if style == "reversion":
-        base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
-        base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
+        base_pips = (
+            _BB_ENTRY_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_ENTRY_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_RATIO
+        )
         block_limit = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             distance_pips = (price - lower) / _BB_PIP
@@ -150,40 +182,52 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None, conf_val
                         max_scale=config.BB_ENTRY_SOFT_FAIL_MAX_SCALE,
                     )
                     if mid_soft_scale > 0.0:
-                        return True, mid_soft_scale, {
+                        return (
+                            True,
+                            mid_soft_scale,
+                            {
+                                "style": style,
+                                "orig_style": orig_style,
+                                "direction": direction,
+                                "range_active": bool(range_active),
+                                "block_limit_pips": 0.0,
+                                "distance_pips": round(mid_distance_pips, 3),
+                                "result": "mid_tolerance_soft_pass",
+                                "reject_reason": "price_inside_mid_soft",
+                                "soft_fail": True,
+                                "soft_scale": round(mid_soft_scale, 3),
+                                "soft_limit_pips": round(mid_tolerance, 4),
+                            },
+                        )
+                    return (
+                        False,
+                        0.0,
+                        {
                             "style": style,
                             "orig_style": orig_style,
                             "direction": direction,
                             "range_active": bool(range_active),
                             "block_limit_pips": 0.0,
                             "distance_pips": round(mid_distance_pips, 3),
-                            "result": "mid_tolerance_soft_pass",
-                            "reject_reason": "price_inside_mid_soft",
-                            "soft_fail": True,
-                            "soft_scale": round(mid_soft_scale, 3),
-                            "soft_limit_pips": round(mid_tolerance, 4),
-                        }
-                    return False, 0.0, {
+                            "result": "hard_reject",
+                            "reject_reason": "price_inside_mid_too_deep",
+                            "soft_fail": False,
+                        },
+                    )
+                return (
+                    False,
+                    0.0,
+                    {
                         "style": style,
                         "orig_style": orig_style,
                         "direction": direction,
                         "range_active": bool(range_active),
                         "block_limit_pips": 0.0,
-                        "distance_pips": round(mid_distance_pips, 3),
+                        "distance_pips": 0.0,
                         "result": "hard_reject",
-                        "reject_reason": "price_inside_mid_too_deep",
-                        "soft_fail": False,
-                    }
-                return False, 0.0, {
-                    "style": style,
-                    "orig_style": orig_style,
-                    "direction": direction,
-                    "range_active": bool(range_active),
-                    "block_limit_pips": 0.0,
-                    "distance_pips": 0.0,
-                    "result": "hard_reject",
-                    "reject_reason": "price_inside_mid_wrong_side",
-                }
+                        "reject_reason": "price_inside_mid_wrong_side",
+                    },
+                )
             # トレンドロングは下限（底）寄りのみ許可。上辺方向への追随は不可。
             distance_pips = (price - lower) / _BB_PIP
             if distance_pips < 0.0:
@@ -205,48 +249,67 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None, conf_val
                         max_scale=config.BB_ENTRY_SOFT_FAIL_MAX_SCALE,
                     )
                     if mid_soft_scale > 0.0:
-                        return True, mid_soft_scale, {
+                        return (
+                            True,
+                            mid_soft_scale,
+                            {
+                                "style": style,
+                                "orig_style": orig_style,
+                                "direction": direction,
+                                "range_active": bool(range_active),
+                                "block_limit_pips": 0.0,
+                                "distance_pips": round(mid_distance_pips, 3),
+                                "result": "mid_tolerance_soft_pass",
+                                "reject_reason": "price_inside_mid_soft",
+                                "soft_fail": True,
+                                "soft_scale": round(mid_soft_scale, 3),
+                                "soft_limit_pips": round(mid_tolerance, 4),
+                            },
+                        )
+                    return (
+                        False,
+                        0.0,
+                        {
                             "style": style,
                             "orig_style": orig_style,
                             "direction": direction,
                             "range_active": bool(range_active),
                             "block_limit_pips": 0.0,
                             "distance_pips": round(mid_distance_pips, 3),
-                            "result": "mid_tolerance_soft_pass",
-                            "reject_reason": "price_inside_mid_soft",
-                            "soft_fail": True,
-                            "soft_scale": round(mid_soft_scale, 3),
-                            "soft_limit_pips": round(mid_tolerance, 4),
-                        }
-                    return False, 0.0, {
+                            "result": "hard_reject",
+                            "reject_reason": "price_inside_mid_too_deep",
+                            "soft_fail": False,
+                        },
+                    )
+                return (
+                    False,
+                    0.0,
+                    {
                         "style": style,
                         "orig_style": orig_style,
                         "direction": direction,
                         "range_active": bool(range_active),
                         "block_limit_pips": 0.0,
-                        "distance_pips": round(mid_distance_pips, 3),
+                        "distance_pips": 0.0,
                         "result": "hard_reject",
-                        "reject_reason": "price_inside_mid_too_deep",
-                        "soft_fail": False,
-                    }
-                return False, 0.0, {
-                    "style": style,
-                    "orig_style": orig_style,
-                    "direction": direction,
-                    "range_active": bool(range_active),
-                    "block_limit_pips": 0.0,
-                    "distance_pips": 0.0,
-                    "result": "hard_reject",
-                    "reject_reason": "price_inside_mid_wrong_side",
-                }
+                        "reject_reason": "price_inside_mid_wrong_side",
+                    },
+                )
             # トレンドショートは上限（天井）寄りのみ許可。下方向への追随は不可。
             distance_pips = (upper - price) / _BB_PIP
             if distance_pips < 0.0:
                 distance_pips = 0.0
         block_limit = max(
-            _BB_ENTRY_SCALP_EXT_PIPS if orig_style == "scalp" else _BB_ENTRY_TREND_EXT_PIPS,
-            span_pips * (
-                _BB_ENTRY_SCALP_EXT_RATIO if orig_style == "scalp" else _BB_ENTRY_TREND_EXT_RATIO
+            (
+                _BB_ENTRY_SCALP_EXT_PIPS
+                if orig_style == "scalp"
+                else _BB_ENTRY_TREND_EXT_PIPS
+            ),
+            span_pips
+            * (
+                _BB_ENTRY_SCALP_EXT_RATIO
+                if orig_style == "scalp"
+                else _BB_ENTRY_TREND_EXT_RATIO
             ),
         )
     detail = {
@@ -304,8 +367,13 @@ def _candle_float(candle, *keys: str) -> Optional[float]:
         return None
     if isinstance(candle, (list, tuple)) and len(candle) >= 4:
         return _candle_float(
-            {"open": candle[0], "high": candle[1], "low": candle[2], "close": candle[3]},
-            *keys
+            {
+                "open": candle[0],
+                "high": candle[1],
+                "low": candle[2],
+                "close": candle[3],
+            },
+            *keys,
         )
     return None
 
@@ -383,14 +451,24 @@ def _detect_usdjpy_quickshot_plan(
 
     spread_cap = max(0.01, float(config.USDJPY_QUICKSHOT_MAX_SPREAD_PIPS))
     if spread_pips > spread_cap:
-        return False, "quickshot_spread_wide", {"spread_pips": round(spread_pips, 3), "max_spread_pips": round(spread_cap, 3)}
+        return (
+            False,
+            "quickshot_spread_wide",
+            {
+                "spread_pips": round(spread_pips, 3),
+                "max_spread_pips": round(spread_cap, 3),
+            },
+        )
 
     if now_utc.tzinfo is None:
         now_utc = now_utc.replace(tzinfo=datetime.timezone.utc)
     else:
         now_utc = now_utc.astimezone(datetime.timezone.utc)
     now_jst = now_utc.astimezone(datetime.timezone(datetime.timedelta(hours=9)))
-    if config.USDJPY_QUICKSHOT_BLOCK_JST_HOURS and now_jst.hour in config.USDJPY_QUICKSHOT_BLOCK_JST_HOURS:
+    if (
+        config.USDJPY_QUICKSHOT_BLOCK_JST_HOURS
+        and now_jst.hour in config.USDJPY_QUICKSHOT_BLOCK_JST_HOURS
+    ):
         return False, "quickshot_maintenance_hour", {"jst_hour": int(now_jst.hour)}
 
     mode = _signal_mode(signal)
@@ -400,7 +478,11 @@ def _detect_usdjpy_quickshot_plan(
     lookback_m5 = max(4, int(config.USDJPY_QUICKSHOT_BREAK_LOOKBACK_M5))
     m5_candles = get_candles_snapshot("M5", limit=lookback_m5 + 3)
     if not m5_candles or len(m5_candles) < lookback_m5 + 1:
-        return False, "quickshot_m5_data_short", {"m5_len": len(m5_candles or []), "lookback_m5": lookback_m5}
+        return (
+            False,
+            "quickshot_m5_data_short",
+            {"m5_len": len(m5_candles or []), "lookback_m5": lookback_m5},
+        )
     m5_recent = list(m5_candles)[-(lookback_m5 + 1) :]
     m5_hist = m5_recent[:-1]
     m5_curr = m5_recent[-1]
@@ -419,14 +501,26 @@ def _detect_usdjpy_quickshot_plan(
     long_break = m5_close >= (m5_break_high + break_margin)
     short_break = m5_close <= (m5_break_low - break_margin)
     if not (long_break or short_break):
-        return False, "quickshot_no_m5_breakout", {
-            "m5_close": round(m5_close, 3),
-            "break_high": round(m5_break_high, 3),
-            "break_low": round(m5_break_low, 3),
-        }
-    anchor_side = "long" if long_break and not short_break else "short" if short_break and not long_break else side
+        return (
+            False,
+            "quickshot_no_m5_breakout",
+            {
+                "m5_close": round(m5_close, 3),
+                "break_high": round(m5_break_high, 3),
+                "break_low": round(m5_break_low, 3),
+            },
+        )
+    anchor_side = (
+        "long"
+        if long_break and not short_break
+        else "short" if short_break and not long_break else side
+    )
     if anchor_side != side:
-        return False, "quickshot_side_mismatch", {"signal_side": side, "m5_anchor_side": anchor_side}
+        return (
+            False,
+            "quickshot_side_mismatch",
+            {"signal_side": side, "m5_anchor_side": anchor_side},
+        )
     break_level = m5_break_high if side == "long" else m5_break_low
 
     m1_candles = get_candles_snapshot("M1", limit=12)
@@ -438,26 +532,48 @@ def _detect_usdjpy_quickshot_plan(
     recent_low = _recent_low(m1_candles, 6)
     recent_high = _recent_high(m1_candles, 6)
     if side == "long":
-        touched = recent_low is not None and recent_low <= (break_level + pullback_band * _BB_PIP)
-        bounce_pips = ((price - recent_low) / _BB_PIP) if recent_low is not None else 0.0
+        touched = recent_low is not None and recent_low <= (
+            break_level + pullback_band * _BB_PIP
+        )
+        bounce_pips = (
+            ((price - recent_low) / _BB_PIP) if recent_low is not None else 0.0
+        )
     else:
-        touched = recent_high is not None and recent_high >= (break_level - pullback_band * _BB_PIP)
-        bounce_pips = ((recent_high - price) / _BB_PIP) if recent_high is not None else 0.0
+        touched = recent_high is not None and recent_high >= (
+            break_level - pullback_band * _BB_PIP
+        )
+        bounce_pips = (
+            ((recent_high - price) / _BB_PIP) if recent_high is not None else 0.0
+        )
     if (not touched) or pullback_gap > pullback_band or bounce_pips < retrace_min:
-        return False, "quickshot_pullback_not_ready", {
-            "pullback_gap_pips": round(pullback_gap, 3),
-            "pullback_band_pips": round(pullback_band, 3),
-            "bounce_pips": round(bounce_pips, 3),
-            "retrace_min_pips": round(retrace_min, 3),
-        }
+        return (
+            False,
+            "quickshot_pullback_not_ready",
+            {
+                "pullback_gap_pips": round(pullback_gap, 3),
+                "pullback_band_pips": round(pullback_band, 3),
+                "bounce_pips": round(bounce_pips, 3),
+                "retrace_min_pips": round(retrace_min, 3),
+            },
+        )
 
     atr_eff = max(0.8, float(atr_pips or 0.0))
     tp_pips = atr_eff * max(0.2, float(config.USDJPY_QUICKSHOT_TP_ATR_MULT))
-    tp_pips = max(float(config.USDJPY_QUICKSHOT_TP_PIPS_MIN), min(float(config.USDJPY_QUICKSHOT_TP_PIPS_MAX), tp_pips))
+    tp_pips = max(
+        float(config.USDJPY_QUICKSHOT_TP_PIPS_MIN),
+        min(float(config.USDJPY_QUICKSHOT_TP_PIPS_MAX), tp_pips),
+    )
     sl_pips = tp_pips * max(0.2, float(config.USDJPY_QUICKSHOT_SL_TP_RATIO))
-    sl_pips = max(float(config.USDJPY_QUICKSHOT_SL_PIPS_MIN), min(float(config.USDJPY_QUICKSHOT_SL_PIPS_MAX), sl_pips))
+    sl_pips = max(
+        float(config.USDJPY_QUICKSHOT_SL_PIPS_MIN),
+        min(float(config.USDJPY_QUICKSHOT_SL_PIPS_MAX), sl_pips),
+    )
 
-    gross_target_jpy = max(1.0, float(config.USDJPY_QUICKSHOT_TARGET_JPY) + max(0.0, float(config.USDJPY_QUICKSHOT_EST_COST_JPY)))
+    gross_target_jpy = max(
+        1.0,
+        float(config.USDJPY_QUICKSHOT_TARGET_JPY)
+        + max(0.0, float(config.USDJPY_QUICKSHOT_EST_COST_JPY)),
+    )
     units_target = int(math.ceil(gross_target_jpy / max(1e-6, tp_pips * _BB_PIP)))
 
     break_dist = abs(m5_close - break_level) / _BB_PIP
@@ -467,32 +583,46 @@ def _detect_usdjpy_quickshot_plan(
     spread_quality = max(0.0, 1.0 - min(1.0, spread_pips / spread_cap))
     setup_score = max(
         0.0,
-        min(1.0, 0.35 * pull_quality + 0.25 * bounce_quality + 0.25 * break_quality + 0.15 * spread_quality),
+        min(
+            1.0,
+            0.35 * pull_quality
+            + 0.25 * bounce_quality
+            + 0.25 * break_quality
+            + 0.15 * spread_quality,
+        ),
     )
     min_prob = max(0.0, min(0.95, float(config.USDJPY_QUICKSHOT_MIN_ENTRY_PROBABILITY)))
-    entry_probability = max(min_prob, min(0.95, min_prob + setup_score * (0.95 - min_prob)))
+    entry_probability = max(
+        min_prob, min(0.95, min_prob + setup_score * (0.95 - min_prob))
+    )
     size_mult = max(0.65, min(1.30, 0.82 + 0.48 * setup_score))
 
-    return True, "allow", {
-        "mode": "quickshot_breakout_pullback",
-        "side": side,
-        "break_level": round(break_level, 3),
-        "m5_close": round(m5_close, 3),
-        "break_dist_pips": round(break_dist, 3),
-        "pullback_gap_pips": round(pullback_gap, 3),
-        "bounce_pips": round(bounce_pips, 3),
-        "setup_score": round(setup_score, 4),
-        "entry_probability": round(entry_probability, 4),
-        "tp_pips": round(tp_pips, 3),
-        "sl_pips": round(sl_pips, 3),
-        "target_units": int(max(1, units_target)),
-        "size_mult": round(size_mult, 4),
-        "target_jpy": round(float(config.USDJPY_QUICKSHOT_TARGET_JPY), 2),
-        "cost_jpy": round(float(config.USDJPY_QUICKSHOT_EST_COST_JPY), 2),
-    }
+    return (
+        True,
+        "allow",
+        {
+            "mode": "quickshot_breakout_pullback",
+            "side": side,
+            "break_level": round(break_level, 3),
+            "m5_close": round(m5_close, 3),
+            "break_dist_pips": round(break_dist, 3),
+            "pullback_gap_pips": round(pullback_gap, 3),
+            "bounce_pips": round(bounce_pips, 3),
+            "setup_score": round(setup_score, 4),
+            "entry_probability": round(entry_probability, 4),
+            "tp_pips": round(tp_pips, 3),
+            "sl_pips": round(sl_pips, 3),
+            "target_units": int(max(1, units_target)),
+            "size_mult": round(size_mult, 4),
+            "target_jpy": round(float(config.USDJPY_QUICKSHOT_TARGET_JPY), 2),
+            "cost_jpy": round(float(config.USDJPY_QUICKSHOT_EST_COST_JPY), 2),
+        },
+    )
 
 
-def _detect_usdjpy_setup_mode(side: str, price: float, fac_m1: dict) -> tuple[Optional[str], dict]:
+def _detect_usdjpy_setup_mode(
+    side: str, price: float, fac_m1: dict
+) -> tuple[Optional[str], dict]:
     if not config.USDJPY_SETUP_GATING:
         return None, {}
     if side != "short":
@@ -543,16 +673,21 @@ def _detect_usdjpy_setup_mode(side: str, price: float, fac_m1: dict) -> tuple[Op
                 "bb_mid": round(bb_mid, 3),
                 "pullback_band_pips": round(pullback_band, 3),
                 "distance_to_mid_pips": round(abs(price - bb_mid) / _BB_PIP, 3),
-                "support_level": round(support_level, 3) if support_level is not None else None,
+                "support_level": (
+                    round(support_level, 3) if support_level is not None else None
+                ),
             },
         )
     return None, {}
+
 
 BB_STYLE = "scalp"
 
 LOG = logging.getLogger(__name__)
 
-_LIMIT_ENTRY_ENABLED = os.getenv("M1SCALP_USE_LIMIT_ENTRY", "0").strip().lower() not in {"", "0", "false", "no"}
+_LIMIT_ENTRY_ENABLED = os.getenv(
+    "M1SCALP_USE_LIMIT_ENTRY", "0"
+).strip().lower() not in {"", "0", "false", "no"}
 _LIMIT_ENTRY_TTL_SEC_DEFAULT = float(os.getenv("M1SCALP_LIMIT_TTL_SEC", "70") or 70.0)
 _PENDING_LIMIT_UNTIL_TS: float = 0.0
 _PENDING_LIMIT_ORDER_ID: Optional[str] = None
@@ -569,7 +704,6 @@ def _htf_trend_state(fac_h1: Dict) -> tuple[str, float, float] | None:
         return None
     trend_dir = "long" if gap_pips > 0 else "short"
     return trend_dir, gap_pips, adx
-
 
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
@@ -721,16 +855,28 @@ def _projection_decision(side, pocket, mode_override=None):
 
     ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
     rsi = compute_rsi_projection(candles, timeframe_minutes=minutes)
-    adx = compute_adx_projection(candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"])
+    adx = compute_adx_projection(
+        candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"]
+    )
     bbw = None
     if mode == "range":
-        bbw = compute_bbw_projection(candles, timeframe_minutes=minutes, squeeze_threshold=params["bbw_threshold"])
+        bbw = compute_bbw_projection(
+            candles,
+            timeframe_minutes=minutes,
+            squeeze_threshold=params["bbw_threshold"],
+        )
 
     scores = {}
     ma_score = _score_ma(ma, side, params["opp_block_bars"])
     if ma_score is not None and "ma" in params["weights"]:
         scores["ma"] = ma_score
-    rsi_score = _score_rsi(rsi, side, params["long_target"], params["short_target"], params["overheat_bars"])
+    rsi_score = _score_rsi(
+        rsi,
+        side,
+        params["long_target"],
+        params["short_target"],
+        params["overheat_bars"],
+    )
     if rsi_score is not None and "rsi" in params["weights"]:
         scores["rsi"] = rsi_score
     adx_score = _score_adx(adx, mode != "range", params["adx_threshold"])
@@ -748,30 +894,38 @@ def _projection_decision(side, pocket, mode_override=None):
         score_sum += weight * score
 
     if not scores:
-        return False, 1.0, {
-            "mode": mode,
-            "tf": tf,
-            "score": None,
-            "size_mult": 1.0,
-            "block_score": round(params["block_score"], 3),
-            "coverage": 0.0,
-            "scores": {},
-            "reject_reason": "projection_no_scores",
-        }
+        return (
+            False,
+            1.0,
+            {
+                "mode": mode,
+                "tf": tf,
+                "score": None,
+                "size_mult": 1.0,
+                "block_score": round(params["block_score"], 3),
+                "coverage": 0.0,
+                "scores": {},
+                "reject_reason": "projection_no_scores",
+            },
+        )
 
     total_weight = sum(params["weights"].values())
     metric_coverage = weight_sum / total_weight if total_weight > 0 else 0.0
     if metric_coverage < params.get("metric_coverage_min", 1.0):
-        return False, 1.0, {
-            "mode": mode,
-            "tf": tf,
-            "score": None,
-            "size_mult": 1.0,
-            "block_score": round(params["block_score"], 3),
-            "coverage": round(metric_coverage, 3),
-            "scores": {k: round(v, 3) for k, v in scores.items()},
-            "reject_reason": "projection_metric_coverage_low",
-        }
+        return (
+            False,
+            1.0,
+            {
+                "mode": mode,
+                "tf": tf,
+                "score": None,
+                "size_mult": 1.0,
+                "block_score": round(params["block_score"], 3),
+                "coverage": round(metric_coverage, 3),
+                "scores": {k: round(v, 3) for k, v in scores.items()},
+                "reject_reason": "projection_metric_coverage_low",
+            },
+        )
 
     score = score_sum / weight_sum if weight_sum > 0 else 0.0
 
@@ -793,20 +947,43 @@ def _projection_decision(side, pocket, mode_override=None):
 
 def _projection_soft_fail_detail(score, allow, detail):
     if allow:
-        return True, 1.0, dict(detail, soft_fail=False, soft_scale=1.0, soft_reason=None)
+        return (
+            True,
+            1.0,
+            dict(detail, soft_fail=False, soft_scale=1.0, soft_reason=None),
+        )
     if not config.PROJ_SOFT_FAIL_ENABLED:
-        return False, 0.0, dict(detail, soft_fail=True, soft_scale=0.0, soft_reason="soft_fail_disabled")
+        return (
+            False,
+            0.0,
+            dict(
+                detail, soft_fail=True, soft_scale=0.0, soft_reason="soft_fail_disabled"
+            ),
+        )
     if score is None:
-        return False, 0.0, dict(detail, soft_fail=True, soft_scale=0.0, soft_reason="no_projection_score")
+        return (
+            False,
+            0.0,
+            dict(
+                detail,
+                soft_fail=True,
+                soft_scale=0.0,
+                soft_reason="no_projection_score",
+            ),
+        )
     hard_score = float(detail.get("block_score", -0.6))
     soft_score = float(config.PROJ_SOFT_FAIL_SCORE)
     if score < soft_score:
-        return False, 0.0, dict(
-            detail,
-            soft_fail=True,
-            soft_scale=0.0,
-            soft_reason="projection_soft_score_too_low",
-            projection_soft_score=score,
+        return (
+            False,
+            0.0,
+            dict(
+                detail,
+                soft_fail=True,
+                soft_scale=0.0,
+                soft_reason="projection_soft_score_too_low",
+                projection_soft_score=score,
+            ),
         )
     soft_scale = _soft_scale_deficit_limit(
         score,
@@ -816,19 +993,27 @@ def _projection_soft_fail_detail(score, allow, detail):
         max_scale=config.PROJ_SOFT_FAIL_MAX_SCALE,
     )
     if soft_scale <= 0.0:
-        return False, 0.0, dict(
+        return (
+            False,
+            0.0,
+            dict(
+                detail,
+                soft_fail=True,
+                soft_scale=0.0,
+                soft_reason="projection_soft_scale_zero",
+                projection_soft_score=score,
+            ),
+        )
+    return (
+        True,
+        soft_scale,
+        dict(
             detail,
             soft_fail=True,
-            soft_scale=0.0,
-            soft_reason="projection_soft_scale_zero",
-            projection_soft_score=score,
-        )
-    return True, soft_scale, dict(
-        detail,
-        soft_fail=True,
-        soft_scale=round(soft_scale, 3),
-        soft_reason="projection_soft_pass",
-        projection_soft_score=round(score, 3),
+            soft_scale=round(soft_scale, 3),
+            soft_reason="projection_soft_pass",
+            projection_soft_score=round(score, 3),
+        ),
     )
 
 
@@ -838,7 +1023,9 @@ def _resolve_min_units_guard(units, signal_tag, side):
     if abs_units >= config.MIN_UNITS:
         return True, int(units), "ok"
 
-    min_threshold = int(round(float(config.MIN_UNITS) * max(0.0, config.MIN_UNITS_SOFT_FAIL_RATIO)))
+    min_threshold = int(
+        round(float(config.MIN_UNITS) * max(0.0, config.MIN_UNITS_SOFT_FAIL_RATIO))
+    )
     if config.ENTRY_GUARD_BYPASS:
         return True, sign * max(1, int(config.MIN_UNITS)), "min_units_bypass"
 
@@ -852,6 +1039,8 @@ def _resolve_min_units_guard(units, signal_tag, side):
             "min_units_soft_raise",
         )
     return False, int(units), "min_units_reject"
+
+
 def _latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=6.0, limit=1)
     if ticks:
@@ -915,10 +1104,16 @@ def _passes_open_trades_guard(
         for tr in open_trades_all
         if (
             str(tr.get("strategy_tag") or "").strip().lower() == tag_lower
-            or str(((tr.get("entry_thesis") or {}).get("strategy_tag") or "")).strip().lower() == tag_lower
+            or str(((tr.get("entry_thesis") or {}).get("strategy_tag") or ""))
+            .strip()
+            .lower()
+            == tag_lower
             or (
                 family_env_prefix
-                and str(((tr.get("entry_thesis") or {}).get("env_prefix") or "")).strip().upper() == family_env_prefix
+                and str(((tr.get("entry_thesis") or {}).get("env_prefix") or ""))
+                .strip()
+                .upper()
+                == family_env_prefix
             )
         )
     ]
@@ -986,7 +1181,11 @@ async def scalp_m1_worker() -> None:
         config.LOG_PREFIX,
         config.LOOP_INTERVAL_SEC,
         config.SIDE_FILTER or "both",
-        ",".join(sorted(config.SIGNAL_TAG_CONTAINS)) if config.SIGNAL_TAG_CONTAINS else "-",
+        (
+            ",".join(sorted(config.SIGNAL_TAG_CONTAINS))
+            if config.SIGNAL_TAG_CONTAINS
+            else "-"
+        ),
         config.STRATEGY_TAG_OVERRIDE or "-",
     )
     if config.AUTOTUNE_ENABLED:
@@ -1038,18 +1237,29 @@ async def scalp_m1_worker() -> None:
             )
             continue
         blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
-        spread_guard_disabled = bool(getattr(spread_monitor, "DISABLE_SPREAD_GUARD", False))
-        spread_pips = float(spread_state.get("spread_pips") or 0.0) if spread_state else 0.0
+        spread_guard_disabled = bool(
+            getattr(spread_monitor, "DISABLE_SPREAD_GUARD", False)
+        )
+        spread_pips = (
+            float(spread_state.get("spread_pips") or 0.0) if spread_state else 0.0
+        )
         spread_stale = bool(spread_state.get("stale")) if spread_state else False
-        local_spread_cap_active = bool(config.LOCAL_SPREAD_CAP_ENABLED or spread_guard_disabled)
-        local_spread_blocked = bool(local_spread_cap_active and spread_pips > config.MAX_SPREAD_PIPS)
-        spread_blocked = bool(blocked or local_spread_blocked or (spread_stale and not spread_guard_disabled))
+        local_spread_cap_active = bool(
+            config.LOCAL_SPREAD_CAP_ENABLED or spread_guard_disabled
+        )
+        local_spread_blocked = bool(
+            local_spread_cap_active and spread_pips > config.MAX_SPREAD_PIPS
+        )
+        spread_blocked = bool(
+            blocked
+            or local_spread_blocked
+            or (spread_stale and not spread_guard_disabled)
+        )
         if spread_blocked:
             now_mono = time.monotonic()
             if now_mono - last_spread_log > 60.0:
-                block_reason = (
-                    spread_reason
-                    or ("local_cap" if local_spread_blocked else "guard_active")
+                block_reason = spread_reason or (
+                    "local_cap" if local_spread_blocked else "guard_active"
                 )
                 LOG.info(
                     "%s blocked by spread spread=%.2fp stale=%s remain=%ss reason=%s",
@@ -1155,13 +1365,18 @@ async def scalp_m1_worker() -> None:
                 not config.REVERSION_ALLOWED_RANGE_MODES
                 or range_mode in config.REVERSION_ALLOWED_RANGE_MODES
             )
-            range_ready = bool(range_ctx.active) or range_score >= config.REVERSION_MIN_RANGE_SCORE
+            range_ready = (
+                bool(range_ctx.active)
+                or range_score >= config.REVERSION_MIN_RANGE_SCORE
+            )
             adx_val = 0.0
             try:
                 adx_val = float(fac_m1.get("adx") or 0.0)
             except Exception:
                 adx_val = 0.0
-            adx_ok = config.REVERSION_MAX_ADX <= 0.0 or adx_val <= config.REVERSION_MAX_ADX
+            adx_ok = (
+                config.REVERSION_MAX_ADX <= 0.0 or adx_val <= config.REVERSION_MAX_ADX
+            )
             if not (range_mode_ok and range_ready and adx_ok):
                 now_mono = time.monotonic()
                 if now_mono - last_block_log > 120.0:
@@ -1223,7 +1438,9 @@ async def scalp_m1_worker() -> None:
                 continue
 
         perf_tag = str(signal_tag or M1Scalper.name)
-        perf_decision = perf_guard.is_allowed(perf_tag, config.POCKET, env_prefix=config.ENV_PREFIX)
+        perf_decision = perf_guard.is_allowed(
+            perf_tag, config.POCKET, env_prefix=config.ENV_PREFIX
+        )
         if not perf_decision.allowed:
             now_mono = time.monotonic()
             if now_mono - last_block_log > 120.0:
@@ -1251,10 +1468,17 @@ async def scalp_m1_worker() -> None:
                     ttl_sec=config.DYN_ALLOC_TTL_SEC,
                 )
             dyn_allow_loser_block = bool(dyn_profile.get("allow_loser_block", True))
-            if config.DYN_ALLOC_LOSER_BLOCK and dyn_allow_loser_block and bool(dyn_profile.get("found")):
+            if (
+                config.DYN_ALLOC_LOSER_BLOCK
+                and dyn_allow_loser_block
+                and bool(dyn_profile.get("found"))
+            ):
                 dyn_trades = int(dyn_profile.get("trades", 0) or 0)
                 dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
-                if dyn_trades >= config.DYN_ALLOC_MIN_TRADES and dyn_score <= config.DYN_ALLOC_LOSER_SCORE:
+                if (
+                    dyn_trades >= config.DYN_ALLOC_MIN_TRADES
+                    and dyn_score <= config.DYN_ALLOC_LOSER_SCORE
+                ):
                     now_mono = time.monotonic()
                     if now_mono - last_block_log > 120.0:
                         LOG.info(
@@ -1271,7 +1495,11 @@ async def scalp_m1_worker() -> None:
         equity = float(snap.nav or snap.balance or 0.0)
 
         balance = float(snap.balance or snap.nav or 0.0)
-        free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+        free_ratio = (
+            float(snap.free_margin_ratio or 0.0)
+            if snap.free_margin_ratio is not None
+            else 0.0
+        )
         margin_usage_ratio = float(snap.margin_used or 0.0) / max(1.0, equity)
         if (
             free_ratio < config.MIN_FREE_MARGIN_RATIO_HARD
@@ -1298,7 +1526,9 @@ async def scalp_m1_worker() -> None:
         try:
             open_positions = snap.positions or {}
             scalp_pos = open_positions.get("scalp") or {}
-            pos_bias = abs(float(scalp_pos.get("units", 0.0) or 0.0)) / max(1.0, float(snap.nav or 1.0))
+            pos_bias = abs(float(scalp_pos.get("units", 0.0) or 0.0)) / max(
+                1.0, float(snap.nav or 1.0)
+            )
         except Exception:
             pos_bias = 0.0
 
@@ -1374,7 +1604,9 @@ async def scalp_m1_worker() -> None:
         proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
         if config.PROJ_FLIP_ENABLED and proj_detail:
             opp_side = "short" if side == "long" else "long"
-            opp_allow, opp_mult, opp_detail = _projection_decision(opp_side, config.POCKET)
+            opp_allow, opp_mult, opp_detail = _projection_decision(
+                opp_side, config.POCKET
+            )
             if opp_detail and opp_allow:
                 score = float(proj_detail.get("score", 0.0))
                 opp_score = float(opp_detail.get("score", 0.0))
@@ -1388,12 +1620,18 @@ async def scalp_m1_worker() -> None:
                     proj_allow, proj_mult, proj_detail = opp_allow, opp_mult, opp_detail
         if not proj_allow:
             proj_allow, proj_soft_scale, proj_detail = _projection_soft_fail_detail(
-                float(proj_detail.get("score", 0.0)) if isinstance(proj_detail, dict) else None,
+                (
+                    float(proj_detail.get("score", 0.0))
+                    if isinstance(proj_detail, dict)
+                    else None
+                ),
                 proj_allow,
                 proj_detail,
             )
             if proj_soft_scale <= 0.0:
-                proj_detail = dict(proj_detail, projection_soft_scale=0.0, soft_fail=True)
+                proj_detail = dict(
+                    proj_detail, projection_soft_scale=0.0, soft_fail=True
+                )
             else:
                 proj_detail = dict(
                     proj_detail,
@@ -1476,13 +1714,15 @@ async def scalp_m1_worker() -> None:
         quickshot_target_units: Optional[int] = None
         quickshot_size_mult = 1.0
         if config.USDJPY_QUICKSHOT_ENABLED:
-            quickshot_allow, quickshot_reason, quickshot_detail = _detect_usdjpy_quickshot_plan(
-                signal_side=side,
-                signal=signal if isinstance(signal, dict) else {},
-                price=price,
-                spread_pips=spread_pips,
-                atr_pips=atr_pips,
-                now_utc=now,
+            quickshot_allow, quickshot_reason, quickshot_detail = (
+                _detect_usdjpy_quickshot_plan(
+                    signal_side=side,
+                    signal=signal if isinstance(signal, dict) else {},
+                    price=price,
+                    spread_pips=spread_pips,
+                    atr_pips=atr_pips,
+                    now_utc=now,
+                )
             )
             if not quickshot_allow:
                 now_mono = time.monotonic()
@@ -1499,11 +1739,18 @@ async def scalp_m1_worker() -> None:
                 continue
             if isinstance(quickshot_detail, dict):
                 quickshot_plan = dict(quickshot_detail)
-                quickshot_size_mult = max(0.5, min(1.6, float(quickshot_plan.get("size_mult", 1.0) or 1.0)))
+                quickshot_size_mult = max(
+                    0.5, min(1.6, float(quickshot_plan.get("size_mult", 1.0) or 1.0))
+                )
                 target_units_raw = quickshot_plan.get("target_units")
-                if isinstance(target_units_raw, (int, float)) and float(target_units_raw) > 0:
+                if (
+                    isinstance(target_units_raw, (int, float))
+                    and float(target_units_raw) > 0
+                ):
                     quickshot_target_units = int(round(float(target_units_raw)))
-                quickshot_entry_probability = _to_probability(quickshot_plan.get("entry_probability"), 0.0)
+                quickshot_entry_probability = _to_probability(
+                    quickshot_plan.get("entry_probability"), 0.0
+                )
                 tp_from_plan = _bb_float(quickshot_plan.get("tp_pips"))
                 sl_from_plan = _bb_float(quickshot_plan.get("sl_pips"))
                 if tp_from_plan is not None and tp_from_plan > 0.0:
@@ -1515,8 +1762,14 @@ async def scalp_m1_worker() -> None:
         usdjpy_setup_mode: Optional[str] = None
         usdjpy_setup_detail: dict = {}
         usdjpy_setup_mult = 1.0
-        if (not config.USDJPY_QUICKSHOT_ENABLED) and config.USDJPY_SETUP_GATING and side == "short":
-            usdjpy_setup_mode, usdjpy_setup_detail = _detect_usdjpy_setup_mode(side, price, fac_m1)
+        if (
+            (not config.USDJPY_QUICKSHOT_ENABLED)
+            and config.USDJPY_SETUP_GATING
+            and side == "short"
+        ):
+            usdjpy_setup_mode, usdjpy_setup_detail = _detect_usdjpy_setup_mode(
+                side, price, fac_m1
+            )
             if not usdjpy_setup_mode:
                 now_mono = time.monotonic()
                 if now_mono - last_block_log > 120.0:
@@ -1578,7 +1831,9 @@ async def scalp_m1_worker() -> None:
             entry_price = _bb_float(signal.get("entry_price"))
             entry_tol = _bb_float(signal.get("entry_tolerance_pips")) or 0.0
             ttl_raw = _bb_float(signal.get("limit_expiry_seconds"))
-            ttl = float(ttl_raw) if ttl_raw is not None else _LIMIT_ENTRY_TTL_SEC_DEFAULT
+            ttl = (
+                float(ttl_raw) if ttl_raw is not None else _LIMIT_ENTRY_TTL_SEC_DEFAULT
+            )
             ttl = max(1.0, min(300.0, ttl))
             if (
                 entry_type == "limit"
@@ -1592,10 +1847,14 @@ async def scalp_m1_worker() -> None:
                 entry_tolerance_pips = float(entry_tol)
                 limit_ttl_sec = float(ttl)
                 # If we're already close enough, take a market fill. Otherwise, stage a passive limit entry.
-                if side == "long" and current_ask <= (entry_signal_price + entry_tolerance_pips * _BB_PIP):
+                if side == "long" and current_ask <= (
+                    entry_signal_price + entry_tolerance_pips * _BB_PIP
+                ):
                     entry_kind = "market"
                     entry_ref_price = price
-                elif side == "short" and current_bid >= (entry_signal_price - entry_tolerance_pips * _BB_PIP):
+                elif side == "short" and current_bid >= (
+                    entry_signal_price - entry_tolerance_pips * _BB_PIP
+                ):
                     entry_kind = "market"
                     entry_ref_price = price
                 else:
@@ -1633,7 +1892,9 @@ async def scalp_m1_worker() -> None:
         dyn_trades = 0
         if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
             dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
-            dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
+            dyn_mult = max(
+                config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult)
+            )
             dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
             dyn_trades = int(dyn_profile.get("trades", 0) or 0)
         total_size_mult = dyn_mult * applied_setup_mult
@@ -1649,10 +1910,14 @@ async def scalp_m1_worker() -> None:
 
         if side == "long":
             sl_price = round(entry_ref_price - sl_pips * 0.01, 3)
-            tp_price = round(entry_ref_price + tp_pips * 0.01, 3) if tp_pips > 0 else None
+            tp_price = (
+                round(entry_ref_price + tp_pips * 0.01, 3) if tp_pips > 0 else None
+            )
         else:
             sl_price = round(entry_ref_price + sl_pips * 0.01, 3)
-            tp_price = round(entry_ref_price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+            tp_price = (
+                round(entry_ref_price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+            )
 
         sl_price, tp_price = clamp_sl_tp(
             price=entry_ref_price,
@@ -1661,7 +1926,9 @@ async def scalp_m1_worker() -> None:
             is_buy=side == "long",
         )
         client_id = _client_order_id(strategy_tag)
-        entry_probability = _to_probability(signal.get("entry_probability"), conf_val / 100.0)
+        entry_probability = _to_probability(
+            signal.get("entry_probability"), conf_val / 100.0
+        )
         if quickshot_entry_probability is not None:
             entry_probability = max(entry_probability, quickshot_entry_probability)
         entry_thesis = {
@@ -1730,7 +1997,9 @@ async def scalp_m1_worker() -> None:
             candle_detail["scale"] = round(candle_mult, 3)
             candle_detail["soft_fail"] = candle_detail.get("soft_fail", False)
         entry_thesis["candle_guard"] = dict(candle_detail or {}, allow=candle_allow)
-        min_units_ok, units, min_units_reason = _resolve_min_units_guard(units, signal_tag, side)
+        min_units_ok, units, min_units_reason = _resolve_min_units_guard(
+            units, signal_tag, side
+        )
         if not min_units_ok:
             now_mono = time.monotonic()
             if now_mono - last_block_log > 120.0:
@@ -1770,7 +2039,9 @@ async def scalp_m1_worker() -> None:
             entry_thesis["entry_type"] = "limit"
             entry_thesis["entry_price"] = round(float(entry_ref_price), 3)
             if entry_tolerance_pips is not None:
-                entry_thesis["entry_tolerance_pips"] = round(float(entry_tolerance_pips), 2)
+                entry_thesis["entry_tolerance_pips"] = round(
+                    float(entry_tolerance_pips), 2
+                )
             entry_thesis["limit_ttl_sec"] = round(max(1.0, limit_ttl_sec), 1)
             entry_thesis_ctx = None
             for _name in ("entry_thesis", "thesis"):
@@ -1782,7 +2053,9 @@ async def scalp_m1_worker() -> None:
                 entry_thesis_ctx = {}
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
-            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            _tech_side_raw = str(
+                locals().get("side", locals().get("direction", "long"))
+            ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
             else:
@@ -1806,9 +2079,16 @@ async def scalp_m1_worker() -> None:
 
             entry_thesis_ctx.setdefault(
                 "tech_tfs",
-                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+                {
+                    "fib": ["H1", "M5"],
+                    "median": ["H1", "M5"],
+                    "nwave": ["M1", "M5"],
+                    "candle": ["M1", "M5"],
+                },
             )
-            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_tfs", ["M1", "M5", "H1", "H4"]
+            )
             entry_thesis_ctx.setdefault(
                 "technical_context_fields",
                 [
@@ -1829,8 +2109,14 @@ async def scalp_m1_worker() -> None:
                     "ema24",
                 ],
             )
-            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault(
+                "technical_context_ticks",
+                ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            )
+            entry_thesis_ctx.setdefault(
+                "technical_context_candle_counts",
+                {"M1": 120, "M5": 80, "H1": 70, "H4": 60},
+            )
             entry_thesis_ctx.setdefault("tech_allow_candle", True)
             entry_thesis_ctx.setdefault(
                 "tech_policy",
@@ -1855,7 +2141,9 @@ async def scalp_m1_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
-            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M1", "step_bars": 5})
+            entry_thesis_ctx.setdefault(
+                "forecast_profile", {"timeframe": "M1", "step_bars": 5}
+            )
             entry_thesis_ctx.setdefault("forecast_timeframe", "M1")
             entry_thesis_ctx.setdefault("forecast_step_bars", 5)
             entry_thesis_ctx.setdefault("forecast_horizon", "5m")
@@ -1872,7 +2160,10 @@ async def scalp_m1_worker() -> None:
             tech_soft_scale = 1.0
             tech_gate_reason = "allowed" if tech_decision.allowed else "hard_fail"
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-                if getattr(config, "TECH_SOFT_FAIL_ENABLED", True) and tech_decision.score is not None:
+                if (
+                    getattr(config, "TECH_SOFT_FAIL_ENABLED", True)
+                    and tech_decision.score is not None
+                ):
                     tech_gate_reason = "soft_fail"
                     tech_soft_scale = _soft_scale_deficit_limit(
                         tech_decision.score,
@@ -1887,7 +2178,9 @@ async def scalp_m1_worker() -> None:
                     tech_gate_reason = "bypass"
                     tech_soft_scale = 1.0
                     _tech_score_txt = (
-                        f"{tech_decision.score:.3f}" if tech_decision.score is not None else "none"
+                        f"{tech_decision.score:.3f}"
+                        if tech_decision.score is not None
+                        else "none"
                     )
                     LOG.warning(
                         "%s entry_guard_bypass reason=tech_entry_block signal=%s side=%s score=%s reason=%s",
@@ -1899,9 +2192,15 @@ async def scalp_m1_worker() -> None:
                     )
                 else:
                     continue
-            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_score"] = (
+                round(tech_decision.score, 3)
+                if tech_decision.score is not None
+                else None
+            )
             entry_thesis_ctx["tech_coverage"] = (
-                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+                round(tech_decision.coverage, 3)
+                if tech_decision.coverage is not None
+                else None
             )
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
@@ -1913,7 +2212,11 @@ async def scalp_m1_worker() -> None:
                 min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
             )
             entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
-            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+            if (
+                isinstance(tp_price, (int, float))
+                and tp_price > 0
+                and _tech_entry_price > 0
+            ):
                 _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
                 if _tp_gap > 0:
                     _tp_target = (
@@ -1949,10 +2252,13 @@ async def scalp_m1_worker() -> None:
 
             if tech_decision.score is not None:
                 if tech_decision.score >= 0:
-                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                    conf_val += tech_decision.score * getattr(
+                        config, "TECH_CONF_BOOST", 0.0
+                    )
                 else:
-                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
-
+                    conf_val += tech_decision.score * getattr(
+                        config, "TECH_CONF_PENALTY", 0.0
+                    )
 
             trade_id, order_id = await limit_order(
                 instrument="USD_JPY",
@@ -1973,19 +2279,19 @@ async def scalp_m1_worker() -> None:
                 _PENDING_LIMIT_UNTIL_TS = time.time() + max(1.0, limit_ttl_sec)
             LOG.info(
                 "%s sent(limit) units=%s side=%s ref=%.3f mid=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f dyn=%.2f setup=%s setup_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s trade_id=%s order_id=%s",
-                    config.LOG_PREFIX,
-                    units,
-                    side,
-                    entry_ref_price,
+                config.LOG_PREFIX,
+                units,
+                side,
+                entry_ref_price,
                 price,
                 sl_price,
-                    f"{tp_price:.3f}" if tp_price is not None else "NA",
-                    conf_val,
-                    cap,
-                    dyn_mult,
-                    setup_label,
-                    applied_setup_mult,
-                    dyn_score,
+                f"{tp_price:.3f}" if tp_price is not None else "NA",
+                conf_val,
+                cap,
+                dyn_mult,
+                setup_label,
+                applied_setup_mult,
+                dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
                 trade_id or "none",
@@ -2002,7 +2308,9 @@ async def scalp_m1_worker() -> None:
                 entry_thesis_ctx = {}
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
-            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            _tech_side_raw = str(
+                locals().get("side", locals().get("direction", "long"))
+            ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
             else:
@@ -2026,9 +2334,16 @@ async def scalp_m1_worker() -> None:
 
             entry_thesis_ctx.setdefault(
                 "tech_tfs",
-                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+                {
+                    "fib": ["H1", "M5"],
+                    "median": ["H1", "M5"],
+                    "nwave": ["M1", "M5"],
+                    "candle": ["M1", "M5"],
+                },
             )
-            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_tfs", ["M1", "M5", "H1", "H4"]
+            )
             entry_thesis_ctx.setdefault(
                 "technical_context_fields",
                 [
@@ -2049,8 +2364,14 @@ async def scalp_m1_worker() -> None:
                     "ema24",
                 ],
             )
-            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault(
+                "technical_context_ticks",
+                ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            )
+            entry_thesis_ctx.setdefault(
+                "technical_context_candle_counts",
+                {"M1": 120, "M5": 80, "H1": 70, "H4": 60},
+            )
             entry_thesis_ctx.setdefault("tech_allow_candle", True)
             entry_thesis_ctx.setdefault(
                 "tech_policy",
@@ -2075,7 +2396,9 @@ async def scalp_m1_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
-            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M1", "step_bars": 5})
+            entry_thesis_ctx.setdefault(
+                "forecast_profile", {"timeframe": "M1", "step_bars": 5}
+            )
             entry_thesis_ctx.setdefault("forecast_timeframe", "M1")
             entry_thesis_ctx.setdefault("forecast_step_bars", 5)
             entry_thesis_ctx.setdefault("forecast_horizon", "5m")
@@ -2092,7 +2415,10 @@ async def scalp_m1_worker() -> None:
             tech_soft_scale = 1.0
             tech_gate_reason = "allowed" if tech_decision.allowed else "hard_fail"
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-                if getattr(config, "TECH_SOFT_FAIL_ENABLED", True) and tech_decision.score is not None:
+                if (
+                    getattr(config, "TECH_SOFT_FAIL_ENABLED", True)
+                    and tech_decision.score is not None
+                ):
                     tech_gate_reason = "soft_fail"
                     tech_soft_scale = _soft_scale_deficit_limit(
                         tech_decision.score,
@@ -2107,7 +2433,9 @@ async def scalp_m1_worker() -> None:
                     tech_gate_reason = "bypass"
                     tech_soft_scale = 1.0
                     _tech_score_txt = (
-                        f"{tech_decision.score:.3f}" if tech_decision.score is not None else "none"
+                        f"{tech_decision.score:.3f}"
+                        if tech_decision.score is not None
+                        else "none"
                     )
                     LOG.warning(
                         "%s entry_guard_bypass reason=tech_entry_block signal=%s side=%s score=%s reason=%s",
@@ -2120,9 +2448,15 @@ async def scalp_m1_worker() -> None:
                 else:
                     continue
 
-            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_score"] = (
+                round(tech_decision.score, 3)
+                if tech_decision.score is not None
+                else None
+            )
             entry_thesis_ctx["tech_coverage"] = (
-                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+                round(tech_decision.coverage, 3)
+                if tech_decision.coverage is not None
+                else None
             )
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
@@ -2134,7 +2468,11 @@ async def scalp_m1_worker() -> None:
                 min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
             )
             entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
-            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+            if (
+                isinstance(tp_price, (int, float))
+                and tp_price > 0
+                and _tech_entry_price > 0
+            ):
                 _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
                 if _tp_gap > 0:
                     _tp_target = (
@@ -2170,10 +2508,13 @@ async def scalp_m1_worker() -> None:
 
             if tech_decision.score is not None:
                 if tech_decision.score >= 0:
-                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                    conf_val += tech_decision.score * getattr(
+                        config, "TECH_CONF_BOOST", 0.0
+                    )
                 else:
-                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
-
+                    conf_val += tech_decision.score * getattr(
+                        config, "TECH_CONF_PENALTY", 0.0
+                    )
 
             res = await market_order(
                 instrument="USD_JPY",
@@ -2206,10 +2547,10 @@ async def scalp_m1_worker() -> None:
             )
 
 
-
-
 _CANDLE_PIP = 0.01
-_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+_CANDLE_WORKER_NAME = (
+    __file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else ""
+).lower()
 
 
 def _candle_tf_for_worker() -> str:
@@ -2303,26 +2644,40 @@ def _score_candle(*, candles, side, min_conf):
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     score = max(-1.0, min(1.0, score))
-    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+    return score, {
+        "type": pattern.get("type"),
+        "confidence": round(conf, 3),
+        "bias": bias,
+    }
 
 
 def _entry_candle_guard(side):
     tf = _candle_tf_for_worker()
     candles = get_candles_snapshot(tf, limit=4)
     if not candles:
-        return True, 1.0, {
-            "result": "pass_no_data",
-            "soft_fail": False,
-            "soft_scale": 1.0,
-            "tf": tf,
-            "side": side,
-            "score": None,
-        }
-    score, _detail = _score_candle(candles=candles, side=side, min_conf=config.CANDLE_MIN_CONF)
+        return (
+            True,
+            1.0,
+            {
+                "result": "pass_no_data",
+                "soft_fail": False,
+                "soft_scale": 1.0,
+                "tf": tf,
+                "side": side,
+                "score": None,
+            },
+        )
+    score, _detail = _score_candle(
+        candles=candles, side=side, min_conf=config.CANDLE_MIN_CONF
+    )
     if score is None:
         detail = dict(_detail or {}, tf=tf, side=side)
         detail["result"] = "soft_pass_no_pattern"
@@ -2334,7 +2689,11 @@ def _entry_candle_guard(side):
         detail["soft_fail"] = True
         soft_scale = max(
             config.CANDLE_SOFT_FAIL_MIN_SCALE,
-            min(config.CANDLE_SOFT_FAIL_MAX_SCALE, 0.5 * config.CANDLE_SOFT_FAIL_MIN_SCALE + 0.5 * config.CANDLE_SOFT_FAIL_MAX_SCALE),
+            min(
+                config.CANDLE_SOFT_FAIL_MAX_SCALE,
+                0.5 * config.CANDLE_SOFT_FAIL_MIN_SCALE
+                + 0.5 * config.CANDLE_SOFT_FAIL_MAX_SCALE,
+            ),
         )
         detail["soft_scale"] = round(soft_scale, 3)
         if soft_scale <= 0.0:
@@ -2342,23 +2701,33 @@ def _entry_candle_guard(side):
             detail["reject_reason"] = "candle_no_pattern"
             return False, 0.0, dict(detail, score=detail.get("confidence"))
         detail["reject_reason"] = "candle_no_pattern_soft"
-        return True, soft_scale, dict(
-            detail,
-            score=detail.get("confidence"),
+        return (
+            True,
+            soft_scale,
+            dict(
+                detail,
+                score=detail.get("confidence"),
+            ),
         )
     if score <= config.CANDLE_ENTRY_BLOCK:
         if not config.CANDLE_SOFT_FAIL_ENABLED:
-            return False, 0.0, {
-                "result": "hard_reject",
-                "reject_reason": "candle_score_below_block",
-                "soft_fail": False,
-                "soft_scale": 0.0,
-                "score": round(score, 3),
-                "tf": tf,
-                "side": side,
-                "block_score": round(config.CANDLE_ENTRY_BLOCK, 3),
-            }
-        soft_limit = min(config.CANDLE_ENTRY_BLOCK, float(config.CANDLE_SOFT_FAIL_SCORE))
+            return (
+                False,
+                0.0,
+                {
+                    "result": "hard_reject",
+                    "reject_reason": "candle_score_below_block",
+                    "soft_fail": False,
+                    "soft_scale": 0.0,
+                    "score": round(score, 3),
+                    "tf": tf,
+                    "side": side,
+                    "block_score": round(config.CANDLE_ENTRY_BLOCK, 3),
+                },
+            )
+        soft_limit = min(
+            config.CANDLE_ENTRY_BLOCK, float(config.CANDLE_SOFT_FAIL_SCORE)
+        )
         soft_scale = _soft_scale_deficit_limit(
             score,
             good_limit=config.CANDLE_ENTRY_BLOCK,
@@ -2367,27 +2736,35 @@ def _entry_candle_guard(side):
             max_scale=config.CANDLE_SOFT_FAIL_MAX_SCALE,
         )
         if soft_scale <= 0.0:
-            return False, 0.0, {
-                "result": "soft_reject",
-                "reject_reason": "candle_score_below_soft_limit",
+            return (
+                False,
+                0.0,
+                {
+                    "result": "soft_reject",
+                    "reject_reason": "candle_score_below_soft_limit",
+                    "soft_fail": True,
+                    "soft_scale": 0.0,
+                    "soft_limit": round(soft_limit, 3),
+                    "score": round(score, 3),
+                    "tf": tf,
+                    "side": side,
+                },
+            )
+        return (
+            True,
+            soft_scale,
+            {
+                "result": "soft_pass",
                 "soft_fail": True,
-                "soft_scale": 0.0,
+                "soft_scale": round(soft_scale, 3),
+                "soft_reason": "candle_soft_pass",
                 "soft_limit": round(soft_limit, 3),
                 "score": round(score, 3),
                 "tf": tf,
                 "side": side,
-            }
-        return True, soft_scale, {
-            "result": "soft_pass",
-            "soft_fail": True,
-            "soft_scale": round(soft_scale, 3),
-            "soft_reason": "candle_soft_pass",
-            "soft_limit": round(soft_limit, 3),
-            "score": round(score, 3),
-            "tf": tf,
-            "side": side,
-            **(_detail or {}),
-        }
+                **(_detail or {}),
+            },
+        )
     mult = 1.0 + score * config.CANDLE_ENTRY_SCALE
     mult = max(config.CANDLE_ENTRY_MIN, min(config.CANDLE_ENTRY_MAX, mult))
     detail = dict(_detail or {})
@@ -2400,6 +2777,9 @@ def _entry_candle_guard(side):
     detail["soft_scale"] = 1.0
     return True, mult, detail
 
+
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True
+    )
     asyncio.run(scalp_m1_worker())

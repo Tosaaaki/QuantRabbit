@@ -55,24 +55,37 @@ def mean_reversion_allowed(
         state = spread_monitor.get_state()
         if state:
             baseline_ready = bool(state.get("baseline_ready"))
-            p50 = state.get("baseline_p50_pips") if baseline_ready else state.get("median_pips")
+            p50 = (
+                state.get("baseline_p50_pips")
+                if baseline_ready
+                else state.get("median_pips")
+            )
             try:
                 p50_val = float(p50) if p50 is not None else None
             except (TypeError, ValueError):
                 p50_val = None
             if p50_val is not None and p50_val > spread_p50_limit:
-                return False, f"spread_p50={p50_val:.2f}p>limit({spread_p50_limit:.2f}p)"
-            if state.get("stale") and (state.get("stale_for_sec") or 0.0) > (state.get("stale_grace_sec") or 0.0):
+                return (
+                    False,
+                    f"spread_p50={p50_val:.2f}p>limit({spread_p50_limit:.2f}p)",
+                )
+            if state.get("stale") and (state.get("stale_for_sec") or 0.0) > (
+                state.get("stale_grace_sec") or 0.0
+            ):
                 return False, "spread_stale"
 
     if ticks is None:
         ticks = tick_window.recent_ticks(
-            seconds=max(return_window_sec, 5.0), limit=int(max(return_window_sec, 5.0) * 12)
+            seconds=max(return_window_sec, 5.0),
+            limit=int(max(return_window_sec, 5.0) * 12),
         )
     tick_list = list(ticks)
     if return_pips_limit > 0.0 and return_window_sec > 0.0 and tick_list:
         window_ticks = [
-            t for t in tick_list if t.get("epoch") and t.get("epoch") >= tick_list[-1].get("epoch", 0.0) - return_window_sec
+            t
+            for t in tick_list
+            if t.get("epoch")
+            and t.get("epoch") >= tick_list[-1].get("epoch", 0.0) - return_window_sec
         ]
         mids = [
             _mid_from_tick(t, float(tick_list[-1].get("mid") or 0.0))
@@ -84,17 +97,18 @@ def mean_reversion_allowed(
                 return False, f"return={move_pips:.2f}p>limit({return_pips_limit:.2f}p)"
 
     if instant_move_limit > 0.0 and len(tick_list) >= 2:
-        latest_mid = _mid_from_tick(tick_list[-1], float(tick_list[-1].get("mid") or 0.0))
+        latest_mid = _mid_from_tick(
+            tick_list[-1], float(tick_list[-1].get("mid") or 0.0)
+        )
         prev_mid = _mid_from_tick(tick_list[-2], latest_mid)
         instant_move = abs(latest_mid - prev_mid) / PIP_VALUE
         if instant_move > instant_move_limit:
-            return False, f"instant_move={instant_move:.2f}p>limit({instant_move_limit:.2f}p)"
+            return (
+                False,
+                f"instant_move={instant_move:.2f}p>limit({instant_move_limit:.2f}p)",
+            )
 
-    if (
-        tick_gap_ms_limit > 0.0
-        and tick_gap_move_pips > 0.0
-        and len(tick_list) >= 2
-    ):
+    if tick_gap_ms_limit > 0.0 and tick_gap_move_pips > 0.0 and len(tick_list) >= 2:
         for prev, curr in zip(tick_list[-10:-1], tick_list[-9:]):
             try:
                 prev_epoch = float(prev.get("epoch"))

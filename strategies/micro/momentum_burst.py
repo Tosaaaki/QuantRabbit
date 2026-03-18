@@ -13,27 +13,61 @@ MIN_ATR = 0.8
 VOL_MIN = 0.5
 RSI_LONG_MIN = 54
 RSI_LONG_MAX = 70
-TRANSITION_LONG_RSI_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_RSI_MIN", "52"))
-TRANSITION_LONG_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_RANGE_SCORE_MAX", "0.30"))
-TRANSITION_LONG_CHOP_SCORE_MAX = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_CHOP_SCORE_MAX", "0.58"))
-TRANSITION_LONG_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_DI_GAP_MIN", "6.0"))
-TRANSITION_LONG_GAP_PIPS_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_GAP_PIPS_MIN", "0.28"))
-TRANSITION_LONG_ROC5_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_ROC5_MIN", "0.022"))
-TRANSITION_LONG_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_EMA_SLOPE_MIN", "0.0010"))
-TRANSITION_LONG_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_GAP_MIN", "12.0"))
-TRANSITION_LONG_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_ADX_MIN", "18.0"))
+TRANSITION_LONG_RSI_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_RSI_MIN", "52")
+)
+TRANSITION_LONG_RANGE_SCORE_MAX = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_RANGE_SCORE_MAX", "0.30")
+)
+TRANSITION_LONG_CHOP_SCORE_MAX = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_CHOP_SCORE_MAX", "0.58")
+)
+TRANSITION_LONG_DI_GAP_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_DI_GAP_MIN", "6.0")
+)
+TRANSITION_LONG_GAP_PIPS_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_GAP_PIPS_MIN", "0.28")
+)
+TRANSITION_LONG_ROC5_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_ROC5_MIN", "0.022")
+)
+TRANSITION_LONG_EMA_SLOPE_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_EMA_SLOPE_MIN", "0.0010")
+)
+TRANSITION_LONG_TREND_GAP_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_GAP_MIN", "12.0")
+)
+TRANSITION_LONG_TREND_ADX_MIN = float(
+    os.getenv("MOMENTUMBURST_TRANSITION_LONG_TREND_ADX_MIN", "18.0")
+)
 TRANSITION_LONG_PROJECTION_SCORE_MIN = float(
     os.getenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", "1.10")
 )
 LONG_BULL_RUN_RSI_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RSI_MAX", "72.0"))
-LONG_BULL_RUN_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RANGE_SCORE_MAX", "0.26"))
-LONG_BULL_RUN_CHOP_SCORE_MAX = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_CHOP_SCORE_MAX", "0.54"))
-LONG_BULL_RUN_GAP_PIPS_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_GAP_PIPS_MIN", "0.34"))
-LONG_BULL_RUN_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_DI_GAP_MIN", "9.0"))
-LONG_BULL_RUN_ROC5_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_ROC5_MIN", "0.024"))
-LONG_BULL_RUN_EMA_SLOPE_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_EMA_SLOPE_MIN", "0.0008"))
-LONG_BULL_RUN_TREND_GAP_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_GAP_MIN", "14.0"))
-LONG_BULL_RUN_TREND_ADX_MIN = float(os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_ADX_MIN", "22.0"))
+LONG_BULL_RUN_RANGE_SCORE_MAX = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_RANGE_SCORE_MAX", "0.26")
+)
+LONG_BULL_RUN_CHOP_SCORE_MAX = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_CHOP_SCORE_MAX", "0.54")
+)
+LONG_BULL_RUN_GAP_PIPS_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_GAP_PIPS_MIN", "0.34")
+)
+LONG_BULL_RUN_DI_GAP_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_DI_GAP_MIN", "9.0")
+)
+LONG_BULL_RUN_ROC5_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_ROC5_MIN", "0.024")
+)
+LONG_BULL_RUN_EMA_SLOPE_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_EMA_SLOPE_MIN", "0.0008")
+)
+LONG_BULL_RUN_TREND_GAP_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_GAP_MIN", "14.0")
+)
+LONG_BULL_RUN_TREND_ADX_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_BULL_RUN_TREND_ADX_MIN", "22.0")
+)
 TRANSITION_LONG_OVERBOUGHT_RSI_MIN = float(
     os.getenv("MOMENTUMBURST_TRANSITION_LONG_OVERBOUGHT_RSI_MIN", "66.0")
 )
@@ -52,13 +86,17 @@ TRANSITION_LONG_PULLBACK_UPPER_WICK_ATR_MULT = float(
 RSI_SHORT_MIN = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MIN", "34"))
 RSI_SHORT_MAX = float(os.getenv("MOMENTUMBURST_RSI_SHORT_MAX", "44"))
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
-DRIFT_PIPS_CEIL = float(os.getenv("MOMENTUMBURST_SHORT_DRIFT_CEIL", "0.30"))  # block shorts if short-term drift is positive
-SPREAD_PIPS_MAX = 1.2    # hard cap; additionally scaled by ATR below
+DRIFT_PIPS_CEIL = float(
+    os.getenv("MOMENTUMBURST_SHORT_DRIFT_CEIL", "0.30")
+)  # block shorts if short-term drift is positive
+SPREAD_PIPS_MAX = 1.2  # hard cap; additionally scaled by ATR below
 REACCEL_EMA_DIST_PIPS = 2.0
 REACCEL_DI_GAP = 6.0
 REACCEL_DI_GAP_SHORT = float(os.getenv("MOMENTUMBURST_REACCEL_DI_GAP_SHORT", "7.0"))
 REACCEL_ROC5_MIN = 0.02
-REACCEL_ROC5_MIN_SHORT = float(os.getenv("MOMENTUMBURST_REACCEL_ROC5_MIN_SHORT", "0.028"))
+REACCEL_ROC5_MIN_SHORT = float(
+    os.getenv("MOMENTUMBURST_REACCEL_ROC5_MIN_SHORT", "0.028")
+)
 TREND_SNAPSHOT_ADX_MIN = 22.0
 TREND_SNAPSHOT_GAP_MIN = 8.0
 MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX = float(
@@ -71,38 +109,90 @@ ENTRY_SL_MIN_PIPS = 2.4
 ENTRY_SL_ATR_MULT = 1.15
 ENTRY_TP_SL_MULT = 1.6
 ENTRY_TP_ATR_BUFFER_MULT = 0.85
-SHORT_EXHAUSTION_RSI_MAX = float(os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_RSI_MAX", "38.0"))
-SHORT_EXHAUSTION_GAP_PIPS = float(os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_GAP_PIPS", "2.8"))
-SHORT_EXHAUSTION_EMA_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_EMA_ATR_MULT", "0.60"))
+SHORT_EXHAUSTION_RSI_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_RSI_MAX", "38.0")
+)
+SHORT_EXHAUSTION_GAP_PIPS = float(
+    os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_GAP_PIPS", "2.8")
+)
+SHORT_EXHAUSTION_EMA_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_SHORT_EXHAUSTION_EMA_ATR_MULT", "0.60")
+)
 RANGE_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_RANGE_SCORE_SOFT_MAX", "0.34"))
 CHOP_SCORE_SOFT_MAX = float(os.getenv("MOMENTUMBURST_CHOP_SCORE_SOFT_MAX", "0.58"))
-CONTEXT_CONF_PENALTY_MAX = float(os.getenv("MOMENTUMBURST_CONTEXT_CONF_PENALTY_MAX", "18.0"))
-CONTEXT_BLOCK_THRESHOLD = float(os.getenv("MOMENTUMBURST_CONTEXT_BLOCK_THRESHOLD", "0.92"))
+CONTEXT_CONF_PENALTY_MAX = float(
+    os.getenv("MOMENTUMBURST_CONTEXT_CONF_PENALTY_MAX", "18.0")
+)
+CONTEXT_BLOCK_THRESHOLD = float(
+    os.getenv("MOMENTUMBURST_CONTEXT_BLOCK_THRESHOLD", "0.92")
+)
 SHORT_TIGHT_ATR_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_ATR_MAX", "3.4"))
 SHORT_TIGHT_VOL_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_VOL_MAX", "2.0"))
-SHORT_TIGHT_DRIFT_CEIL = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_DRIFT_CEIL", "-0.20"))
+SHORT_TIGHT_DRIFT_CEIL = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_DRIFT_CEIL", "-0.20")
+)
 SHORT_TIGHT_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_DI_GAP_MIN", "9.0"))
 SHORT_TIGHT_ROC5_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_ROC5_MIN", "0.024"))
-SHORT_TIGHT_EXHAUSTION_RSI_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_RSI_MAX", "34.5"))
-SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN", "5.5"))
-SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT", "1.7"))
-SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN", "2.8"))
-SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT", "0.85"))
-SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX", "0.22"))
-SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX", "0.35"))
-SHORT_TIGHT_REBOUND_CLOSE_POS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_CLOSE_POS_MIN", "0.82"))
-SHORT_TIGHT_REBOUND_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_UPPER_WICK_MAX", "0.45"))
-SHORT_CLEAN_TREND_RANGE_SCORE_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_RANGE_SCORE_MAX", "0.22"))
-SHORT_CLEAN_TREND_RSI_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_RSI_MAX", "35.0"))
-SHORT_CLEAN_TREND_DI_GAP_MIN = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_DI_GAP_MIN", "10.0"))
-SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN", "2.2"))
-SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT", "0.65"))
-SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX = float(os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX", "0.22"))
-LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN", "1.0"))
-LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT", "0.28"))
-LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN", "0.68"))
-LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX", "1.2"))
-LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT = float(os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT", "0.35"))
+SHORT_TIGHT_EXHAUSTION_RSI_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_RSI_MAX", "34.5")
+)
+SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_EMA_PIPS_MIN", "5.5")
+)
+SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_EXHAUSTION_EMA_ATR_MULT", "1.7")
+)
+SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_BODY_PIPS_MIN", "2.8")
+)
+SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_BODY_ATR_MULT", "0.85")
+)
+SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_CLOSE_POS_MAX", "0.22")
+)
+SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_BREAKDOWN_UPPER_WICK_MAX", "0.35")
+)
+SHORT_TIGHT_REBOUND_CLOSE_POS_MIN = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_CLOSE_POS_MIN", "0.82")
+)
+SHORT_TIGHT_REBOUND_UPPER_WICK_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_TIGHT_REBOUND_UPPER_WICK_MAX", "0.45")
+)
+SHORT_CLEAN_TREND_RANGE_SCORE_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_RANGE_SCORE_MAX", "0.22")
+)
+SHORT_CLEAN_TREND_RSI_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_RSI_MAX", "35.0")
+)
+SHORT_CLEAN_TREND_DI_GAP_MIN = float(
+    os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_DI_GAP_MIN", "10.0")
+)
+SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN = float(
+    os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_PIPS_MIN", "2.2")
+)
+SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_BODY_ATR_MULT", "0.65")
+)
+SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX = float(
+    os.getenv("MOMENTUMBURST_SHORT_CLEAN_TREND_BREAKDOWN_CLOSE_POS_MAX", "0.22")
+)
+LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_BODY_PIPS_MIN", "1.0")
+)
+LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_BODY_ATR_MULT", "0.28")
+)
+LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN = float(
+    os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_CLOSE_POS_MIN", "0.68")
+)
+LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX = float(
+    os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_MAX", "1.2")
+)
+LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT = float(
+    os.getenv("MOMENTUMBURST_LONG_REACCEL_FOLLOWTHROUGH_UPPER_WICK_ATR_MULT", "0.35")
+)
 
 
 def _clamp01(value: float) -> float:
@@ -202,14 +292,10 @@ class MomentumBurstMicro:
         transitions = list(zip(highs, highs[1:], lows, lows[1:]))
         required_votes = max(1, len(transitions) - 1)
         if direction == "long":
-            votes = sum(
-                1 for h1, h2, l1, l2 in transitions if h2 >= h1 and l2 >= l1
-            )
+            votes = sum(1 for h1, h2, l1, l2 in transitions if h2 >= h1 and l2 >= l1)
             return votes >= required_votes
         if direction == "short":
-            votes = sum(
-                1 for h1, h2, l1, l2 in transitions if h2 <= h1 and l2 <= l1
-            )
+            votes = sum(1 for h1, h2, l1, l2 in transitions if h2 <= h1 and l2 <= l1)
             return votes >= required_votes
         return True
 
@@ -334,18 +420,16 @@ class MomentumBurstMicro:
             and rsi <= SHORT_EXHAUSTION_RSI_MAX
             and gap_pips <= -SHORT_EXHAUSTION_GAP_PIPS
             and ema_dist_pips
-            >= max(REACCEL_EMA_DIST_PIPS - 0.5, atr_pips * SHORT_EXHAUSTION_EMA_ATR_MULT)
+            >= max(
+                REACCEL_EMA_DIST_PIPS - 0.5, atr_pips * SHORT_EXHAUSTION_EMA_ATR_MULT
+            )
         ):
             return False
 
         if ema_dist_pips <= stretch_threshold:
             return True
 
-        if (
-            di_gap < weak_di_gap
-            or roc_push < weak_roc_push
-            or slope_push <= 0.0
-        ):
+        if di_gap < weak_di_gap or roc_push < weak_roc_push or slope_push <= 0.0:
             return False
 
         if directional_rsi <= 68.0:
@@ -425,11 +509,15 @@ class MomentumBurstMicro:
         if not isinstance(mtf, dict):
             return True
 
-        def _proj(candles: Optional[Sequence[Dict]], minutes: float) -> Optional[MACrossProjection]:
+        def _proj(
+            candles: Optional[Sequence[Dict]], minutes: float
+        ) -> Optional[MACrossProjection]:
             if not candles:
                 return None
             try:
-                return compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
+                return compute_ma_projection(
+                    {"candles": candles}, timeframe_minutes=minutes
+                )
             except Exception:
                 return None
 
@@ -479,7 +567,10 @@ class MomentumBurstMicro:
             h1_adx = float(h1_ctx.get("adx") or 0.0)
         except (TypeError, ValueError):
             h1_adx = 0.0
-        return h1_gap_pips <= MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX and h1_adx < MTF_H1_WEAK_OPPOSE_ADX_MAX
+        return (
+            h1_gap_pips <= MTF_H1_WEAK_OPPOSE_GAP_PIPS_MAX
+            and h1_adx < MTF_H1_WEAK_OPPOSE_ADX_MAX
+        )
 
     @staticmethod
     def _trend_snapshot_supports(direction: str, fac: Dict) -> bool:
@@ -502,7 +593,9 @@ class MomentumBurstMicro:
             gap_pips = abs(float(snapshot.get("gap_pips") or 0.0))
         except (TypeError, ValueError):
             gap_pips = 0.0
-        return not (adx >= TREND_SNAPSHOT_ADX_MIN and gap_pips >= TREND_SNAPSHOT_GAP_MIN)
+        return not (
+            adx >= TREND_SNAPSHOT_ADX_MIN and gap_pips >= TREND_SNAPSHOT_GAP_MIN
+        )
 
     @staticmethod
     def _drift_pips(fac: Dict) -> float:
@@ -597,7 +690,9 @@ class MomentumBurstMicro:
             ):
                 return False
 
-        if len(prev_shapes) >= 2 and all(bool(shape["bull"]) for shape in prev_shapes[-2:]):
+        if len(prev_shapes) >= 2 and all(
+            bool(shape["bull"]) for shape in prev_shapes[-2:]
+        ):
             if (
                 all(
                     float(shape["close_pos"]) >= SHORT_TIGHT_REBOUND_CLOSE_POS_MIN
@@ -629,7 +724,10 @@ class MomentumBurstMicro:
             return True
         plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
         minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
-        if rsi > SHORT_CLEAN_TREND_RSI_MAX or (minus_di - plus_di) < SHORT_CLEAN_TREND_DI_GAP_MIN:
+        if (
+            rsi > SHORT_CLEAN_TREND_RSI_MAX
+            or (minus_di - plus_di) < SHORT_CLEAN_TREND_DI_GAP_MIN
+        ):
             return True
         if not candles:
             return True
@@ -694,7 +792,10 @@ class MomentumBurstMicro:
             return RSI_LONG_MIN
         range_score = _clamp01(MomentumBurstMicro._attr(fac, "range_score", 0.0))
         chop_score = _clamp01(MomentumBurstMicro._attr(fac, "micro_chop_score", 0.0))
-        if range_score > TRANSITION_LONG_RANGE_SCORE_MAX or chop_score > TRANSITION_LONG_CHOP_SCORE_MAX:
+        if (
+            range_score > TRANSITION_LONG_RANGE_SCORE_MAX
+            or chop_score > TRANSITION_LONG_CHOP_SCORE_MAX
+        ):
             return RSI_LONG_MIN
         plus_di = MomentumBurstMicro._attr(fac, "plus_di", 0.0)
         minus_di = MomentumBurstMicro._attr(fac, "minus_di", 0.0)
@@ -745,7 +846,10 @@ class MomentumBurstMicro:
             return True
         if str(fac.get("range_mode") or "").strip().lower() != "transition":
             return True
-        if rsi < TRANSITION_LONG_OVERBOUGHT_RSI_MIN or atr_pips > TRANSITION_LONG_OVERBOUGHT_ATR_MAX:
+        if (
+            rsi < TRANSITION_LONG_OVERBOUGHT_RSI_MIN
+            or atr_pips > TRANSITION_LONG_OVERBOUGHT_ATR_MAX
+        ):
             return True
         snapshot = fac.get("trend_snapshot")
         if not isinstance(snapshot, dict):
@@ -879,17 +983,19 @@ class MomentumBurstMicro:
             )
             profile = "momentum_burst"
             min_hold = max(90.0, min(540.0, tp * 42.0))
-            sig = _attach_kill({
-                "action": action,
-                "sl_pips": round(sl, 2),
-                "tp_pips": round(tp, 2),
-                "confidence": confidence,
-                "profile": profile,
-                "loss_guard_pips": round(sl, 2),
-                "target_tp_pips": round(tp, 2),
-                "min_hold_sec": round(min_hold, 1),
-                "tag": f"{MomentumBurstMicro.name}-{action.lower()}",
-            })
+            sig = _attach_kill(
+                {
+                    "action": action,
+                    "sl_pips": round(sl, 2),
+                    "tp_pips": round(tp, 2),
+                    "confidence": confidence,
+                    "profile": profile,
+                    "loss_guard_pips": round(sl, 2),
+                    "target_tp_pips": round(tp, 2),
+                    "min_hold_sec": round(min_hold, 1),
+                    "tag": f"{MomentumBurstMicro.name}-{action.lower()}",
+                }
+            )
             # ソフトガード用メタを添付（ハードSLは使わず fast_cut 相当の情報だけ持たせる）
             if "fast_cut_pips" not in sig:
                 sig["fast_cut_pips"] = round(max(6.0, atr_pips * 1.3), 2)
@@ -918,7 +1024,10 @@ class MomentumBurstMicro:
             )
             and MomentumBurstMicro._mtf_supports("long", fac)
             and MomentumBurstMicro._trend_snapshot_supports("long", fac)
-            and (MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel)
+            and (
+                MomentumBurstMicro._price_action_direction(candles, "long")
+                or long_reaccel
+            )
         ):
             long_rsi_min = MomentumBurstMicro._long_rsi_min(
                 fac,
@@ -972,7 +1081,10 @@ class MomentumBurstMicro:
             )
             and MomentumBurstMicro._mtf_supports("short", fac)
             and MomentumBurstMicro._trend_snapshot_supports("short", fac)
-            and (MomentumBurstMicro._price_action_direction(candles, "short") or short_reaccel)
+            and (
+                MomentumBurstMicro._price_action_direction(candles, "short")
+                or short_reaccel
+            )
         ):
             if (
                 RSI_SHORT_MIN <= rsi <= RSI_SHORT_MAX
@@ -1068,7 +1180,9 @@ class MomentumBurstMicro:
         long_adx_ok = bool(adx >= MIN_ADX)
         long_close_ok = bool(float(close) > float(ema20) + 0.0015)
         long_drift_ok = bool(drift_pips > DRIFT_PIPS_FLOOR)
-        long_base = bool(long_gap_ok and long_adx_ok and long_close_ok and long_drift_ok)
+        long_base = bool(
+            long_gap_ok and long_adx_ok and long_close_ok and long_drift_ok
+        )
         long_followthrough_ok = MomentumBurstMicro._long_reaccel_followthrough_ok(
             atr_pips=atr_pips,
             candles=candles,
@@ -1083,7 +1197,9 @@ class MomentumBurstMicro:
         )
         long_mtf_ok = MomentumBurstMicro._mtf_supports("long", fac)
         long_trend_ok = MomentumBurstMicro._trend_snapshot_supports("long", fac)
-        long_price_ok = bool(MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel)
+        long_price_ok = bool(
+            MomentumBurstMicro._price_action_direction(candles, "long") or long_reaccel
+        )
         long_rsi_min = MomentumBurstMicro._long_rsi_min(
             fac,
             gap_pips=gap_pips,
@@ -1110,7 +1226,9 @@ class MomentumBurstMicro:
             and long_indicator_ok
         ):
             long_context_ok = (
-                MomentumBurstMicro._apply_context_tilt({"confidence": 60}, fac, reaccel=long_reaccel)
+                MomentumBurstMicro._apply_context_tilt(
+                    {"confidence": 60}, fac, reaccel=long_reaccel
+                )
                 is not None
             )
 
@@ -1118,7 +1236,9 @@ class MomentumBurstMicro:
         short_adx_ok = bool(adx >= MIN_ADX)
         short_close_ok = bool(float(close) < float(ema20) - 0.0015)
         short_drift_ok = bool(drift_pips < DRIFT_PIPS_CEIL)
-        short_base = bool(short_gap_ok and short_adx_ok and short_close_ok and short_drift_ok)
+        short_base = bool(
+            short_gap_ok and short_adx_ok and short_close_ok and short_drift_ok
+        )
         short_tight_ok = MomentumBurstMicro._tight_short_context_ok(
             fac,
             atr_pips=atr_pips,
@@ -1140,7 +1260,10 @@ class MomentumBurstMicro:
         )
         short_mtf_ok = MomentumBurstMicro._mtf_supports("short", fac)
         short_trend_ok = MomentumBurstMicro._trend_snapshot_supports("short", fac)
-        short_price_ok = bool(MomentumBurstMicro._price_action_direction(candles, "short") or short_reaccel)
+        short_price_ok = bool(
+            MomentumBurstMicro._price_action_direction(candles, "short")
+            or short_reaccel
+        )
         short_rsi_ok = bool(RSI_SHORT_MIN <= rsi <= RSI_SHORT_MAX)
         short_indicator_ok = MomentumBurstMicro._indicator_quality_ok(
             "short",
@@ -1162,7 +1285,9 @@ class MomentumBurstMicro:
             and short_indicator_ok
         ):
             short_context_ok = (
-                MomentumBurstMicro._apply_context_tilt({"confidence": 60}, fac, reaccel=short_reaccel)
+                MomentumBurstMicro._apply_context_tilt(
+                    {"confidence": 60}, fac, reaccel=short_reaccel
+                )
                 is not None
             )
 

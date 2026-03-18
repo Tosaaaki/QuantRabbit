@@ -25,20 +25,38 @@ class MicroRangeBreak:
     name = "MicroRangeBreak"
     pocket = "micro"
 
-    _MIN_RANGE_SCORE = _to_float(os.getenv("MICRO_RANGEBREAK_MIN_RANGE_SCORE", "0.45"), 0.45)
+    _MIN_RANGE_SCORE = _to_float(
+        os.getenv("MICRO_RANGEBREAK_MIN_RANGE_SCORE", "0.45"), 0.45
+    )
     _MAX_ADX = _to_float(os.getenv("MICRO_RANGEBREAK_REVERSION_MAX_ADX", "23.0"), 23.0)
-    _ENTRY_RATIO = _to_float(os.getenv("MICRO_RANGEBREAK_ENTRY_RATIO", "0.28"), 0.28)  # distance to band edge
+    _ENTRY_RATIO = _to_float(
+        os.getenv("MICRO_RANGEBREAK_ENTRY_RATIO", "0.28"), 0.28
+    )  # distance to band edge
     _MAX_DISTANCE_RATIO = 0.65
 
-    _BREAKOUT_ENABLED = _to_bool(os.getenv("MICRO_RANGEBREAK_BREAKOUT_ENABLED", "1"), True)
-    _BREAKOUT_MIN_ADX = _to_float(os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_ADX", "20.0"), 20.0)
-    _BREAKOUT_MIN_RANGE_SCORE = _to_float(os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE", "0.46"), 0.46)
-    _BREAKOUT_BAND_RATIO = _to_float(os.getenv("MICRO_RANGEBREAK_BREAKOUT_BAND_RATIO", "0.22"), 0.22)
-    _BREAKOUT_MIN_ATR = _to_float(os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_ATR", "1.2"), 1.2)
+    _BREAKOUT_ENABLED = _to_bool(
+        os.getenv("MICRO_RANGEBREAK_BREAKOUT_ENABLED", "1"), True
+    )
+    _BREAKOUT_MIN_ADX = _to_float(
+        os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_ADX", "20.0"), 20.0
+    )
+    _BREAKOUT_MIN_RANGE_SCORE = _to_float(
+        os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE", "0.46"), 0.46
+    )
+    _BREAKOUT_BAND_RATIO = _to_float(
+        os.getenv("MICRO_RANGEBREAK_BREAKOUT_BAND_RATIO", "0.22"), 0.22
+    )
+    _BREAKOUT_MIN_ATR = _to_float(
+        os.getenv("MICRO_RANGEBREAK_BREAKOUT_MIN_ATR", "1.2"), 1.2
+    )
 
     # Spread filter: skip entry when spread eats too much of expected profit
-    _MAX_SPREAD_PIPS = _to_float(os.getenv("MICRO_RANGEBREAK_MAX_SPREAD_PIPS", "1.0"), 1.0)
-    _MAX_SPREAD_ATR_RATIO = _to_float(os.getenv("MICRO_RANGEBREAK_MAX_SPREAD_ATR_RATIO", "0.30"), 0.30)
+    _MAX_SPREAD_PIPS = _to_float(
+        os.getenv("MICRO_RANGEBREAK_MAX_SPREAD_PIPS", "1.0"), 1.0
+    )
+    _MAX_SPREAD_ATR_RATIO = _to_float(
+        os.getenv("MICRO_RANGEBREAK_MAX_SPREAD_ATR_RATIO", "0.30"), 0.30
+    )
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -81,9 +99,11 @@ class MicroRangeBreak:
         except (TypeError, ValueError):
             _spread_pips = 0.0
 
-        if MicroRangeBreak._BREAKOUT_ENABLED and (
-            range_score >= MicroRangeBreak._BREAKOUT_MIN_RANGE_SCORE
-        ) and (adx >= MicroRangeBreak._BREAKOUT_MIN_ADX):
+        if (
+            MicroRangeBreak._BREAKOUT_ENABLED
+            and (range_score >= MicroRangeBreak._BREAKOUT_MIN_RANGE_SCORE)
+            and (adx >= MicroRangeBreak._BREAKOUT_MIN_ADX)
+        ):
             atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0
             try:
                 atr_hint = float(atr_hint)
@@ -92,13 +112,20 @@ class MicroRangeBreak:
             atr_hint = max(MicroRangeBreak._BREAKOUT_MIN_ATR, min(atr_hint, 12.0))
             # Skip breakout if spread is too wide
             if _spread_pips > 0:
-                breakout_spread_cap = max(MicroRangeBreak._MAX_SPREAD_PIPS, atr_hint * MicroRangeBreak._MAX_SPREAD_ATR_RATIO)
+                breakout_spread_cap = max(
+                    MicroRangeBreak._MAX_SPREAD_PIPS,
+                    atr_hint * MicroRangeBreak._MAX_SPREAD_ATR_RATIO,
+                )
                 if _spread_pips > breakout_spread_cap:
                     return None
             if breakout_long:
                 sl_pips = max(atr_hint * 0.82, 1.5)
                 tp_pips = max(sl_pips * 1.8, sl_pips + atr_hint * 1.05)
-                confidence = int(52 + range_score * 28 + min(6.0, (adx - MicroRangeBreak._BREAKOUT_MIN_ADX) * 0.9))
+                confidence = int(
+                    52
+                    + range_score * 28
+                    + min(6.0, (adx - MicroRangeBreak._BREAKOUT_MIN_ADX) * 0.9)
+                )
                 confidence = max(40, min(94, confidence))
                 return {
                     "action": "OPEN_LONG",
@@ -115,7 +142,11 @@ class MicroRangeBreak:
             if breakout_short:
                 sl_pips = max(atr_hint * 0.82, 1.5)
                 tp_pips = max(sl_pips * 1.8, sl_pips + atr_hint * 1.05)
-                confidence = int(52 + range_score * 28 + min(6.0, (adx - MicroRangeBreak._BREAKOUT_MIN_ADX) * 0.9))
+                confidence = int(
+                    52
+                    + range_score * 28
+                    + min(6.0, (adx - MicroRangeBreak._BREAKOUT_MIN_ADX) * 0.9)
+                )
                 confidence = max(40, min(94, confidence))
                 return {
                     "action": "OPEN_SHORT",
@@ -130,7 +161,10 @@ class MicroRangeBreak:
                     "signal_mode": "trend",
                 }
 
-        if range_score < MicroRangeBreak._MIN_RANGE_SCORE or adx > MicroRangeBreak._MAX_ADX:
+        if (
+            range_score < MicroRangeBreak._MIN_RANGE_SCORE
+            or adx > MicroRangeBreak._MAX_ADX
+        ):
             return None
 
         # Spread filter: reject entry when spread is wide relative to ATR
@@ -146,7 +180,10 @@ class MicroRangeBreak:
             atr_hint = 4.0
         atr_hint = max(1.0, min(atr_hint, 8.0))
         if spread_pips > 0:
-            spread_cap = max(MicroRangeBreak._MAX_SPREAD_PIPS, atr_hint * MicroRangeBreak._MAX_SPREAD_ATR_RATIO)
+            spread_cap = max(
+                MicroRangeBreak._MAX_SPREAD_PIPS,
+                atr_hint * MicroRangeBreak._MAX_SPREAD_ATR_RATIO,
+            )
             if spread_pips > spread_cap:
                 return None
 

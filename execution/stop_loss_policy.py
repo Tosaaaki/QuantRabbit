@@ -27,6 +27,7 @@ def _env_flag_optional(name: str) -> bool | None:
         return None
     return raw.strip().lower() not in _FALSEY
 
+
 # Trailing/BE SL updates can be toggled separately; default allow.
 TRAILING_SL_ALLOWED: bool = _env_flag("ALLOW_TRAILING_STOP_LOSS", True)
 _FIXED_SL_MODE: bool | None = _env_flag_optional("ORDER_FIXED_SL_MODE")

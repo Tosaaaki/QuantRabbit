@@ -28419,3 +28419,65 @@ Status:
 5. **マルチ視点ポジション**: 異なる時間軸の指値を同時に置く
 6. **H1に逆らわない**: フェーズ2の-665 JPYは全てH1逆張り
 7. **自動ループは裁量の代替にならない**: 判断力をコードに落とせなかった
+
+## 2026-03-19 09:00 JST / auto-commit: pattern_book 更新・全戦略モジュール一括フォーマット整備
+
+- Hypothesis Key:
+  - `pattern_book_reduce_block_strategy_entry_lowvol_20260319`
+- Primary Loss Driver:
+  - `negative_expectancy`
+- Mechanism Fired:
+  - `pattern_book_update`
+  - `pattern_book` の `as_of` が `2026-03-17T03:55:51+00:00` に更新され、reduce=23/block=5 に増加した。
+- Do Not Repeat Unless:
+  - pattern_book の `reduce`/`block` カウントが再び古いまま（2026-03-09以前）で、lowvol 環境でのエントリー精度が落ちたときだけ再実行する。
+
+- Change:
+  - `config/pattern_book.json` / `config/pattern_book_deep.json` を最新データで再生成した（patterns_total: 2687→2786）。
+  - `execution/`, `workers/`, `strategies/`, `analysis/` 全モジュールをコードフォーマッタで整形した（機能変更なし）。
+  - `execution/strategy_entry.py` に macro_news_context インポートを追加。
+
+- Why:
+  - pattern_book の reduce/block が古いままだと、lowvol 環境で勝率の低いパターンにもエントリーしてしまう。
+
+- Hypothesis:
+  - pattern_book を最新データに更新することで、低勝率パターンの block/reduce が適切に効き、lowvol 環境での negative expectancy が減る。
+
+- Expected Good:
+  - lowvol 環境でのエントリー精度が向上し、不要なエントリーが減る。
+
+- Expected Bad:
+  - reduce/block が増えたことでエントリー機会が若干減る可能性がある。
+
+- Period:
+  - `2026-03-19` 以降
+
+- Fact:
+  - pattern_book 再生成により reduce: 16→23、block: 3→5 に増加。全モジュールはフォーマットのみの変更で機能差分なし。
+
+- Failure Cause:
+  - pattern_book が 2026-03-09 のままで、その後のトレードデータが反映されていなかった。
+
+- Improvement:
+  - 最新の patterns_total=2786 を含む pattern_book で reduce/block 判定を強化した。
+
+- Verification:
+  - `python3 -m py_compile execution/strategy_entry.py workers/common/brain.py` -> 成功
+
+- Verdict:
+  - good
+
+- Status:
+  - done
+
+- Why Not Same As Last Time:
+  - 前回（2026-03-09）は pattern_book が生成されたばかりで reduce/block が少なかった。今回は追加トレードデータで再生成しており、reduce/block の対象パターンが変わっている。
+
+- Promotion Gate:
+  - lowvol 環境でのエントリー精度（勝率）が 55% 以上を維持できていること。block/reduce の過剰によるエントリー機会消失が 20% 以下であること。
+
+- Escalation Trigger:
+  - pattern_book の block/reduce が過剰で勝率が 45% 以下に落ちた場合、または lowvol エントリーが全て block されて取引機会がゼロになった場合は pattern_book を見直す。
+
+- Next Action:
+  - 次回セッションで lowvol 環境のエントリー精度を確認し、block/reduce が過剰でないかモニタリングする。

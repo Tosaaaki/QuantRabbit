@@ -15,7 +15,12 @@ from workers.common.pocket_plan import PocketPlan
 _PLANS: Dict[str, PocketPlan] = {}
 _LOCK = Lock()
 _LOG = logging.getLogger(__name__)
-_LOG_PUBLISH = os.getenv("PLAN_BUS_LOG", "0").strip().lower() in {"1", "true", "yes", "on"}
+_LOG_PUBLISH = os.getenv("PLAN_BUS_LOG", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _merge_plans(existing: PocketPlan, incoming: PocketPlan) -> PocketPlan:
@@ -38,10 +43,22 @@ def _merge_plans(existing: PocketPlan, incoming: PocketPlan) -> PocketPlan:
         spread_gate_active=bool(newer.spread_gate_active or older.spread_gate_active),
         spread_gate_reason=newer.spread_gate_reason or older.spread_gate_reason,
         spread_log_context=newer.spread_log_context or older.spread_log_context,
-        lot_allocation=newer.lot_allocation if newer.lot_allocation is not None else older.lot_allocation,
-        risk_override=newer.risk_override if newer.risk_override is not None else older.risk_override,
-        weight_macro=newer.weight_macro if newer.weight_macro is not None else older.weight_macro,
-        scalp_share=newer.scalp_share if newer.scalp_share is not None else older.scalp_share,
+        lot_allocation=(
+            newer.lot_allocation
+            if newer.lot_allocation is not None
+            else older.lot_allocation
+        ),
+        risk_override=(
+            newer.risk_override
+            if newer.risk_override is not None
+            else older.risk_override
+        ),
+        weight_macro=(
+            newer.weight_macro if newer.weight_macro is not None else older.weight_macro
+        ),
+        scalp_share=(
+            newer.scalp_share if newer.scalp_share is not None else older.scalp_share
+        ),
         signals=merged_signals,
         perf_snapshot=newer.perf_snapshot or older.perf_snapshot,
         factors_m1=newer.factors_m1 or older.factors_m1,

@@ -4,6 +4,7 @@ import os
 
 ENV_PREFIX = "SCALP_PRECISION"
 
+
 def _sync_legacy_prefix(prefix: str) -> None:
     legacy_prefix = f"{prefix}_"
     canonical_prefix = f"{ENV_PREFIX}_"
@@ -27,6 +28,7 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
+
 # Backward compatibility:
 #  - MACDRSIDIV_* is still used by historical unit files.
 #  - SCALP_MACD_RSI_DIV_B_* is used by the micro(B) wrapper.
@@ -41,7 +43,9 @@ LOG_PREFIX = os.getenv("SCALP_PRECISION_LOG_PREFIX", "[ScalpPrecision]")
 
 CONFIDENCE_FLOOR = int(float(os.getenv("SCALP_PRECISION_CONF_FLOOR", "32")))
 CONFIDENCE_CEIL = int(float(os.getenv("SCALP_PRECISION_CONF_CEIL", "92")))
-MIN_ENTRY_CONF = int(float(os.getenv("SCALP_PRECISION_MIN_ENTRY_CONF", str(CONFIDENCE_FLOOR))))
+MIN_ENTRY_CONF = int(
+    float(os.getenv("SCALP_PRECISION_MIN_ENTRY_CONF", str(CONFIDENCE_FLOOR)))
+)
 
 MIN_UNITS = int(float(os.getenv("SCALP_PRECISION_MIN_UNITS", "1000")))
 BASE_ENTRY_UNITS = int(float(os.getenv("SCALP_PRECISION_BASE_UNITS", "9000")))
@@ -52,19 +56,27 @@ CAP_MAX = float(os.getenv("SCALP_PRECISION_CAP_MAX", "0.95"))
 
 COOLDOWN_SEC = float(os.getenv("SCALP_PRECISION_COOLDOWN_SEC", "45"))
 MAX_OPEN_TRADES = int(float(os.getenv("SCALP_PRECISION_MAX_OPEN_TRADES", "2")))
-MAX_OPEN_TRADES_GLOBAL = int(float(os.getenv("SCALP_PRECISION_MAX_OPEN_TRADES_GLOBAL", "0")))
-OPEN_TRADES_SCOPE = os.getenv("SCALP_PRECISION_OPEN_TRADES_SCOPE", "tag").strip().lower()
+MAX_OPEN_TRADES_GLOBAL = int(
+    float(os.getenv("SCALP_PRECISION_MAX_OPEN_TRADES_GLOBAL", "0"))
+)
+OPEN_TRADES_SCOPE = (
+    os.getenv("SCALP_PRECISION_OPEN_TRADES_SCOPE", "tag").strip().lower()
+)
 
 MAX_SPREAD_PIPS = float(os.getenv("SCALP_PRECISION_MAX_SPREAD_PIPS", "1.2"))
 
-MAX_SIGNALS_PER_CYCLE = int(float(os.getenv("SCALP_PRECISION_MAX_SIGNALS_PER_CYCLE", "1")))
+MAX_SIGNALS_PER_CYCLE = int(
+    float(os.getenv("SCALP_PRECISION_MAX_SIGNALS_PER_CYCLE", "1"))
+)
 
 MODE = os.getenv("SCALP_PRECISION_MODE", "spread_revert").strip().lower()
 # /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env may define a global allowlist shared by
 # multiple units. Prefer an explicit
 # per-unit override when present so a single-strategy unit can run a new mode without editing
 # the global env file.
-ALLOWLIST_RAW = os.getenv("SCALP_PRECISION_UNIT_ALLOWLIST", os.getenv("SCALP_PRECISION_ALLOWLIST", "")).strip()
+ALLOWLIST_RAW = os.getenv(
+    "SCALP_PRECISION_UNIT_ALLOWLIST", os.getenv("SCALP_PRECISION_ALLOWLIST", "")
+).strip()
 MODE_FILTER_ALLOWLIST = _env_bool("SCALP_PRECISION_MODE_FILTER_ALLOWLIST", False)
 GUARD_BYPASS_MODES = {
     s.strip().lower()
@@ -107,24 +119,46 @@ DROUGHT_ATR_MIN = float(os.getenv("SCALP_PRECISION_DROUGHT_ATR_MIN", "0.5"))
 DROUGHT_ATR_MAX = float(os.getenv("SCALP_PRECISION_DROUGHT_ATR_MAX", "4.0"))
 DROUGHT_BB_TOUCH_PIPS = float(os.getenv("SCALP_PRECISION_DROUGHT_BB_TOUCH_PIPS", "1.0"))
 DROUGHT_RSI_LONG_MAX = float(os.getenv("SCALP_PRECISION_DROUGHT_RSI_LONG_MAX", "49.0"))
-DROUGHT_RSI_SHORT_MIN = float(os.getenv("SCALP_PRECISION_DROUGHT_RSI_SHORT_MIN", "51.0"))
+DROUGHT_RSI_SHORT_MIN = float(
+    os.getenv("SCALP_PRECISION_DROUGHT_RSI_SHORT_MIN", "51.0")
+)
 DROUGHT_SPREAD_P25 = float(os.getenv("SCALP_PRECISION_DROUGHT_SPREAD_P25", "1.0"))
 
 # Precision low-volatility mode tuning (strict entry filters)
-PREC_LOWVOL_RANGE_SCORE = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_RANGE_SCORE", "0.25"))
+PREC_LOWVOL_RANGE_SCORE = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_RANGE_SCORE", "0.25")
+)
 PREC_LOWVOL_ADX_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_ADX_MAX", "30.0"))
 PREC_LOWVOL_BBW_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_BBW_MAX", "0.0010"))
 PREC_LOWVOL_ATR_MIN = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_ATR_MIN", "0.3"))
 PREC_LOWVOL_ATR_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_ATR_MAX", "6.0"))
-PREC_LOWVOL_BB_TOUCH_PIPS = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_BB_TOUCH_PIPS", "1.6"))
-PREC_LOWVOL_RSI_LONG_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_RSI_LONG_MAX", "51.0"))
-PREC_LOWVOL_RSI_SHORT_MIN = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_RSI_SHORT_MIN", "49.0"))
-PREC_LOWVOL_STOCH_LONG_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_STOCH_LONG_MAX", "0.65"))
-PREC_LOWVOL_STOCH_SHORT_MIN = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_STOCH_SHORT_MIN", "0.35"))
-PREC_LOWVOL_VWAP_GAP_MIN = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_VWAP_GAP_MIN", "0.15"))
-PREC_LOWVOL_VWAP_GAP_BLOCK = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_VWAP_GAP_BLOCK", "1.8"))
-PREC_LOWVOL_SPREAD_P25 = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_SPREAD_P25", "1.8"))
-PREC_LOWVOL_REV_MIN_STRENGTH = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_REV_MIN_STRENGTH", "0.28"))
+PREC_LOWVOL_BB_TOUCH_PIPS = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_BB_TOUCH_PIPS", "1.6")
+)
+PREC_LOWVOL_RSI_LONG_MAX = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_RSI_LONG_MAX", "51.0")
+)
+PREC_LOWVOL_RSI_SHORT_MIN = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_RSI_SHORT_MIN", "49.0")
+)
+PREC_LOWVOL_STOCH_LONG_MAX = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_STOCH_LONG_MAX", "0.65")
+)
+PREC_LOWVOL_STOCH_SHORT_MIN = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_STOCH_SHORT_MIN", "0.35")
+)
+PREC_LOWVOL_VWAP_GAP_MIN = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_VWAP_GAP_MIN", "0.15")
+)
+PREC_LOWVOL_VWAP_GAP_BLOCK = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_VWAP_GAP_BLOCK", "1.8")
+)
+PREC_LOWVOL_SPREAD_P25 = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_SPREAD_P25", "1.8")
+)
+PREC_LOWVOL_REV_MIN_STRENGTH = float(
+    os.getenv("SCALP_PRECISION_PREC_LOWVOL_REV_MIN_STRENGTH", "0.28")
+)
 
 # macd_rsi_div specific knobs
 STRATEGY_TAG = os.getenv("SCALP_PRECISION_STRATEGY_TAG", "scalp_macd_rsi_div_live")
@@ -141,7 +175,9 @@ MIN_DIV_SCORE = float(os.getenv("SCALP_PRECISION_MIN_DIV_SCORE", "0.08"))
 MIN_DIV_STRENGTH = float(os.getenv("SCALP_PRECISION_MIN_DIV_STRENGTH", "0.12"))
 MAX_DIV_AGE_BARS = float(os.getenv("SCALP_PRECISION_MAX_DIV_AGE_BARS", "14"))
 ALLOW_HIDDEN_DIVERGENCE = _env_bool("SCALP_PRECISION_ALLOW_HIDDEN_DIVERGENCE", True)
-MIN_FREE_MARGIN_RATIO_HARD = float(os.getenv("SCALP_PRECISION_MIN_FREE_MARGIN_RATIO_HARD", "0.06"))
+MIN_FREE_MARGIN_RATIO_HARD = float(
+    os.getenv("SCALP_PRECISION_MIN_FREE_MARGIN_RATIO_HARD", "0.06")
+)
 MARGIN_USAGE_HARD = float(os.getenv("SCALP_PRECISION_MARGIN_USAGE_HARD", "0.93"))
 SL_ATR_MULT = float(os.getenv("SCALP_PRECISION_SL_ATR_MULT", "0.85"))
 TP_ATR_MULT = float(os.getenv("SCALP_PRECISION_TP_ATR_MULT", "1.10"))
@@ -152,10 +188,16 @@ MIN_TP_PIPS = float(os.getenv("SCALP_PRECISION_MIN_TP_PIPS", "2"))
 MIN_TP_RR = float(os.getenv("SCALP_PRECISION_MIN_TP_RR", "1.15"))
 PATTERN_GATE_OPT_IN = _env_bool("SCALP_PRECISION_PATTERN_GATE_OPT_IN", True)
 DYN_ALLOC_ENABLED = _env_bool("SCALP_PRECISION_DYN_ALLOC_ENABLED", False)
-DYN_ALLOC_PATH = os.getenv("SCALP_PRECISION_DYN_ALLOC_PATH", "config/dynamic_alloc.json")
+DYN_ALLOC_PATH = os.getenv(
+    "SCALP_PRECISION_DYN_ALLOC_PATH", "config/dynamic_alloc.json"
+)
 DYN_ALLOC_TTL_SEC = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_TTL_SEC", "20"))
-DYN_ALLOC_MIN_TRADES = int(float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MIN_TRADES", "8")))
-DYN_ALLOC_LOSER_SCORE = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_LOSER_SCORE", "0.30"))
+DYN_ALLOC_MIN_TRADES = int(
+    float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MIN_TRADES", "8"))
+)
+DYN_ALLOC_LOSER_SCORE = float(
+    os.getenv("SCALP_PRECISION_DYN_ALLOC_LOSER_SCORE", "0.30")
+)
 DYN_ALLOC_LOSER_BLOCK = _env_bool("SCALP_PRECISION_DYN_ALLOC_LOSER_BLOCK", True)
 DYN_ALLOC_MULT_MIN = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MULT_MIN", "0.70"))
 DYN_ALLOC_MULT_MAX = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MULT_MAX", "1.60"))

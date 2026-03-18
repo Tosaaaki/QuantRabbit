@@ -100,7 +100,9 @@ def _copy_entry_thesis_passthrough(
 
 
 def is_live_enabled(prefix: str) -> bool:
-    return bool(_env_bool("ADDON_LIVE_MODE", False) or _env_bool(f"{prefix}_LIVE", False))
+    return bool(
+        _env_bool("ADDON_LIVE_MODE", False) or _env_bool(f"{prefix}_LIVE", False)
+    )
 
 
 def normalize_symbol(symbol: Optional[str]) -> str:
@@ -352,7 +354,9 @@ class AddonLiveBroker:
         self.datafeed = datafeed
         self.exit_cfg = dict(exit_cfg or {})
         self.atr_len = max(1, int(atr_len or 14))
-        self.atr_timeframe = normalize_timeframe(atr_timeframe or datafeed.default_timeframe)
+        self.atr_timeframe = normalize_timeframe(
+            atr_timeframe or datafeed.default_timeframe
+        )
         self.default_budget_bps = default_budget_bps
         self.default_size_bps = default_size_bps
         self.ttl_ms = float(ttl_ms or 800.0)
@@ -446,8 +450,12 @@ class AddonLiveBroker:
         if tp_pips <= 0.0:
             tp_pips = max(1.0, sl_pips * 1.5)
 
-        sl_price, tp_price = self._price_from_pips(entry_price, sl_pips, tp_pips, side == "buy")
-        sl_price, tp_price = clamp_sl_tp(price=entry_price, sl=sl_price, tp=tp_price, is_buy=side == "buy")
+        sl_price, tp_price = self._price_from_pips(
+            entry_price, sl_pips, tp_pips, side == "buy"
+        )
+        sl_price, tp_price = clamp_sl_tp(
+            price=entry_price, sl=sl_price, tp=tp_price, is_buy=side == "buy"
+        )
 
         risk_pct = self._risk_pct(order)
         snap = get_account_snapshot()
@@ -489,15 +497,24 @@ class AddonLiveBroker:
             entry_thesis["ENV_PREFIX"] = env_prefix
         order_probability = order.get("entry_probability")
         if isinstance(order_probability, (int, float)):
-            entry_thesis["entry_probability"] = max(0.0, min(1.0, float(order_probability)))
+            entry_thesis["entry_probability"] = max(
+                0.0, min(1.0, float(order_probability))
+            )
         elif isinstance(intent.get("entry_probability"), (int, float)):
-            entry_thesis["entry_probability"] = max(0.0, min(1.0, float(intent.get("entry_probability"))))
+            entry_thesis["entry_probability"] = max(
+                0.0, min(1.0, float(intent.get("entry_probability")))
+            )
 
         entry_units_intent = order.get("entry_units_intent")
         if entry_units_intent is None:
             entry_units_intent = intent.get("entry_units_intent")
-        if isinstance(entry_units_intent, (int, float)) and float(entry_units_intent) >= 0:
-            entry_thesis["entry_units_intent"] = max(0, int(round(float(entry_units_intent))))
+        if (
+            isinstance(entry_units_intent, (int, float))
+            and float(entry_units_intent) >= 0
+        ):
+            entry_thesis["entry_units_intent"] = max(
+                0, int(round(float(entry_units_intent)))
+            )
         if atr_pips > 0:
             entry_thesis["atr_pips"] = round(atr_pips, 3)
         _copy_entry_thesis_passthrough(entry_thesis, order)
@@ -600,7 +617,9 @@ class AddonLiveBroker:
                 size = size / 100000.0
         return max(0.0005, min(float(size or 0.0), 0.4))
 
-    def _resolve_exits(self, symbol: str, intent: Dict[str, Any]) -> Tuple[float, float, float]:
+    def _resolve_exits(
+        self, symbol: str, intent: Dict[str, Any]
+    ) -> Tuple[float, float, float]:
         sl_pips = 0.0
         tp_pips = 0.0
 

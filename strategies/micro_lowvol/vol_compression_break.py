@@ -62,7 +62,9 @@ class VolCompressionBreak:
         range_low = min(lows)
         range_span = (range_high - range_low) / 0.01
         compression = clamp(max(0.0, 6.0 - range_span), 0.0, 6.0)
-        tuned_pctile = get_tuning_value(("strategies", "VolCompressionBreak", "accel_pctile"))
+        tuned_pctile = get_tuning_value(
+            ("strategies", "VolCompressionBreak", "accel_pctile")
+        )
         if tuned_pctile is not None:
             try:
                 min_comp = max(0.0, min(6.0, float(tuned_pctile) / 100.0 * 6.0))

@@ -22,6 +22,7 @@ import threading
 from typing import Any, Literal, Optional, Tuple
 import requests
 from requests.adapters import HTTPAdapter
+
 try:
     import fcntl
 except Exception:  # pragma: no cover - non-posix fallback
@@ -57,6 +58,7 @@ from workers.common import (
     slo_guard,
     strategy_control,
 )
+
 try:
     from workers.common import brain  # type: ignore
 except Exception:  # pragma: no cover - optional dependency / lane
@@ -65,6 +67,7 @@ from workers.common.quality_gate import current_regime
 from indicators.factor_cache import get_last_regime
 from utils import signal_bus
 from utils.oanda_account import get_account_snapshot
+
 try:
     from market_data import tick_window
 except Exception:  # pragma: no cover - optional
@@ -85,6 +88,7 @@ except KeyError:
 
 ENVIRONMENT = "practice" if PRACTICE_FLAG else "live"
 POSITION_FILL = "OPEN_ONLY" if HEDGING_ENABLED else "DEFAULT"
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -309,7 +313,9 @@ def _order_manager_service_call(path: str, payload: dict) -> dict:
     body = response.json()
     if isinstance(body, dict):
         return body
-    raise RuntimeError(f"Unexpected order_manager service response type: {type(body).__name__}")
+    raise RuntimeError(
+        f"Unexpected order_manager service response type: {type(body).__name__}"
+    )
 
 
 def _extract_service_payload(path: str, payload: Any) -> Any:
@@ -338,7 +344,9 @@ def _order_manager_service_request(
     if not _order_manager_service_enabled():
         return _ORDER_MANAGER_SERVICE_UNHANDLED
     try:
-        return _extract_service_payload(path, _order_manager_service_call(path, payload))
+        return _extract_service_payload(
+            path, _order_manager_service_call(path, payload)
+        )
     except Exception as exc:
         logging.warning(
             "[ORDER] order_manager service call failed path=%s payload=%s err=%s",
@@ -406,7 +414,9 @@ def _forecast_service_request(path: str, payload: dict) -> Any:
         response.raise_for_status()
         body = response.json()
         if not isinstance(body, dict):
-            raise RuntimeError(f"forecast service returned non-dict body: {type(body).__name__}")
+            raise RuntimeError(
+                f"forecast service returned non-dict body: {type(body).__name__}"
+            )
         if "ok" not in body:
             return body.get("result", body)
         if not bool(body.get("ok")):
@@ -422,7 +432,9 @@ def _forecast_service_request(path: str, payload: dict) -> Any:
             return body["result"]
         return body
     except Exception as exc:
-        raise RuntimeError(f"forecast service request failed path={path} err={exc}") from exc
+        raise RuntimeError(
+            f"forecast service request failed path={path} err={exc}"
+        ) from exc
 
 
 def _forecast_service_decision_from_payload(
@@ -452,8 +464,12 @@ def _forecast_service_decision_from_payload(
         target_reach_prob=_as_float(payload.get("target_reach_prob"), None),
         sl_pips_cap=_as_float(payload.get("sl_pips_cap"), None),
         rr_floor=_as_float(payload.get("rr_floor"), None),
-        feature_ts=payload.get("feature_ts") if payload.get("feature_ts") is not None else None,
-        source=str(payload.get("source")) if payload.get("source") is not None else None,
+        feature_ts=(
+            payload.get("feature_ts") if payload.get("feature_ts") is not None else None
+        ),
+        source=(
+            str(payload.get("source")) if payload.get("source") is not None else None
+        ),
         style=str(payload.get("style")) if payload.get("style") is not None else None,
         trend_strength=_as_float(payload.get("trend_strength"), None),
         range_pressure=_as_float(payload.get("range_pressure"), None),
@@ -464,10 +480,14 @@ def _forecast_service_decision_from_payload(
             else None
         ),
         trend_state=(
-            str(payload.get("trend_state")) if payload.get("trend_state") is not None else None
+            str(payload.get("trend_state"))
+            if payload.get("trend_state") is not None
+            else None
         ),
         range_state=(
-            str(payload.get("range_state")) if payload.get("range_state") is not None else None
+            str(payload.get("range_state"))
+            if payload.get("range_state") is not None
+            else None
         ),
         volatility_rank=_as_float(payload.get("volatility_rank"), None),
         regime_score=_as_float(payload.get("regime_score"), None),
@@ -476,7 +496,9 @@ def _forecast_service_decision_from_payload(
             if payload.get("leading_indicator") is not None
             else None
         ),
-        leading_indicator_strength=_as_float(payload.get("leading_indicator_strength"), None),
+        leading_indicator_strength=_as_float(
+            payload.get("leading_indicator_strength"), None
+        ),
         tf_confluence_score=_as_float(payload.get("tf_confluence_score"), None),
         tf_confluence_count=_as_int(payload.get("tf_confluence_count"), None),
         tf_confluence_horizons=(
@@ -752,7 +774,9 @@ def _normalize_regime_label(label: object) -> str | None:
     return None
 
 
-def _entry_quality_regime_from_thesis(entry_thesis: Optional[dict], pocket: str) -> str | None:
+def _entry_quality_regime_from_thesis(
+    entry_thesis: Optional[dict], pocket: str
+) -> str | None:
     if not isinstance(entry_thesis, dict):
         return None
     reg = entry_thesis.get("regime")
@@ -805,7 +829,9 @@ def _infer_entry_quality_style(
     return None
 
 
-def _entry_quality_confidence_value(confidence: Optional[int], entry_thesis: Optional[dict]) -> int | None:
+def _entry_quality_confidence_value(
+    confidence: Optional[int], entry_thesis: Optional[dict]
+) -> int | None:
     raw = confidence
     if raw is None and isinstance(entry_thesis, dict):
         raw = entry_thesis.get("confidence")  # type: ignore[assignment]
@@ -839,8 +865,12 @@ def _entry_quality_regime_gate_decision(
     )
     if required <= 0:
         return True, None, {}
-    style = _infer_entry_quality_style(strategy_tag=strategy_tag, entry_thesis=entry_thesis)
-    regime = _entry_quality_regime_from_thesis(entry_thesis=entry_thesis, pocket=pocket_key)
+    style = _infer_entry_quality_style(
+        strategy_tag=strategy_tag, entry_thesis=entry_thesis
+    )
+    regime = _entry_quality_regime_from_thesis(
+        entry_thesis=entry_thesis, pocket=pocket_key
+    )
     details: dict[str, object] = {
         "style": style,
         "regime": regime,
@@ -890,9 +920,15 @@ def _entry_quality_microstructure_gate_decision(
     )
     if min_density <= 0.0:
         return True, None, {}
-    window_sec = max(1.0, _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", 60.0))
-    max_age_ms = max(0.0, _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", 2500.0))
-    min_span_ratio = _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", 0.7)
+    window_sec = max(
+        1.0, _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", 60.0)
+    )
+    max_age_ms = max(
+        0.0, _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", 2500.0)
+    )
+    min_span_ratio = _env_float(
+        "ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", 0.7
+    )
     min_span_ratio = max(0.0, min(1.0, float(min_span_ratio)))
     details: dict[str, object] = {
         "window_sec": round(window_sec, 3),
@@ -947,9 +983,15 @@ _ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
 )
 _EXIT_CONTEXT_ENABLED = _env_bool("ORDER_EXIT_CONTEXT_ENABLED", True)
 _EXIT_END_REVERSAL_ENABLED = _env_bool("EXIT_END_REVERSAL_ENABLED", True)
-_EXIT_END_REVERSAL_SCORE_MIN = max(0.0, min(1.0, _env_float("EXIT_END_REVERSAL_SCORE_MIN", 0.58)))
-_EXIT_END_REVERSAL_MIN_PROFIT_PIPS = max(0.0, _env_float("EXIT_END_REVERSAL_MIN_PROFIT_PIPS", 0.2))
-_EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC = max(0.0, _env_float("EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC", 150.0))
+_EXIT_END_REVERSAL_SCORE_MIN = max(
+    0.0, min(1.0, _env_float("EXIT_END_REVERSAL_SCORE_MIN", 0.58))
+)
+_EXIT_END_REVERSAL_MIN_PROFIT_PIPS = max(
+    0.0, _env_float("EXIT_END_REVERSAL_MIN_PROFIT_PIPS", 0.2)
+)
+_EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC = max(
+    0.0, _env_float("EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC", 150.0)
+)
 _EXIT_END_REVERSAL_DEFAULT_REASONS = (
     "take_profit",
     "take_profit_zone",
@@ -1021,7 +1063,10 @@ def _load_strategy_protection_config() -> dict:
         payload = _STRATEGY_PROTECTION_CACHE.get("data")  # type: ignore[assignment]
     if yaml is not None and _STRATEGY_PROTECTION_PATH.exists():
         try:
-            loaded = yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8")) or {}
+            loaded = (
+                yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8"))
+                or {}
+            )
             if isinstance(loaded, dict):
                 payload = loaded
         except Exception as exc:  # noqa: BLE001
@@ -1124,7 +1169,9 @@ def _register_strategy_control_exit_block(
         trade_id=trade_id,
     )
     with _STRATEGY_CONTROL_EXIT_BLOCKS_LOCK:
-        first_seen, last_seen, count = _STRATEGY_CONTROL_EXIT_BLOCKS.get(key, (now, now, 0))
+        first_seen, last_seen, count = _STRATEGY_CONTROL_EXIT_BLOCKS.get(
+            key, (now, now, 0)
+        )
         if now - last_seen > _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC:
             first_seen, count = now, 0
         count += 1
@@ -1132,7 +1179,11 @@ def _register_strategy_control_exit_block(
         if len(_STRATEGY_CONTROL_EXIT_BLOCKS) > 4096:
             expired_keys = [
                 item_key
-                for item_key, (_first, item_last, _count) in _STRATEGY_CONTROL_EXIT_BLOCKS.items()
+                for item_key, (
+                    _first,
+                    item_last,
+                    _count,
+                ) in _STRATEGY_CONTROL_EXIT_BLOCKS.items()
                 if now - item_last > _ORDER_STRATEGY_CONTROL_EXIT_FAILOPEN_RESET_SEC
             ]
             for item_key in expired_keys[:2048]:
@@ -1235,7 +1286,9 @@ def _normalize_reason_tokens(
     return tokens
 
 
-def _allow_negative_near_be(exit_reason: Optional[str], est_pips: Optional[float]) -> bool:
+def _allow_negative_near_be(
+    exit_reason: Optional[str], est_pips: Optional[float]
+) -> bool:
     if _EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS <= 0:
         return False
     if est_pips is None or est_pips >= 0:
@@ -1254,7 +1307,9 @@ def _strategy_neg_exit_policy(strategy_tag: Optional[str]) -> dict:
     if isinstance(cfg, dict):
         defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
     neg_defaults = defaults.get("neg_exit") if isinstance(defaults, dict) else None
-    merged: dict[str, Any] = dict(neg_defaults) if isinstance(neg_defaults, dict) else {}
+    merged: dict[str, Any] = (
+        dict(neg_defaults) if isinstance(neg_defaults, dict) else {}
+    )
     override = _strategy_override(cfg, strategy_tag)
     neg_override = override.get("neg_exit") if isinstance(override, dict) else None
     if isinstance(neg_override, dict):
@@ -1263,13 +1318,17 @@ def _strategy_neg_exit_policy(strategy_tag: Optional[str]) -> dict:
             merged["allow_reasons"] = _normalize_reason_tokens(
                 neg_override.get("allow_reasons"),
                 fallback_tokens=(
-                    neg_defaults.get("allow_reasons") if isinstance(neg_defaults, dict) else None
+                    neg_defaults.get("allow_reasons")
+                    if isinstance(neg_defaults, dict)
+                    else None
                 ),
             )
     return merged
 
 
-def _min_profit_pips(pocket: Optional[str], strategy_tag: Optional[str]) -> Optional[float]:
+def _min_profit_pips(
+    pocket: Optional[str], strategy_tag: Optional[str]
+) -> Optional[float]:
     cfg = _load_strategy_protection_config()
     defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
 
@@ -1299,7 +1358,9 @@ def _min_profit_pips(pocket: Optional[str], strategy_tag: Optional[str]) -> Opti
     return float(selected)
 
 
-def _min_profit_ratio(pocket: Optional[str], strategy_tag: Optional[str]) -> Optional[float]:
+def _min_profit_ratio(
+    pocket: Optional[str], strategy_tag: Optional[str]
+) -> Optional[float]:
     cfg = _load_strategy_protection_config()
     defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
 
@@ -1334,7 +1395,10 @@ def _min_profit_ratio_reasons(strategy_tag: Optional[str]) -> set[str]:
     defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
     override = _strategy_override(cfg, strategy_tag)
     raw = None
-    if isinstance(override, dict) and override.get("min_profit_ratio_reasons") is not None:
+    if (
+        isinstance(override, dict)
+        and override.get("min_profit_ratio_reasons") is not None
+    ):
         raw = override.get("min_profit_ratio_reasons")
     if raw is None:
         raw = defaults.get("min_profit_ratio_reasons")
@@ -1352,7 +1416,10 @@ def _min_profit_ratio_min_tp_pips(strategy_tag: Optional[str]) -> float:
     defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
     override = _strategy_override(cfg, strategy_tag)
     value = None
-    if isinstance(override, dict) and override.get("min_profit_ratio_min_tp_pips") is not None:
+    if (
+        isinstance(override, dict)
+        and override.get("min_profit_ratio_min_tp_pips") is not None
+    ):
         value = _as_float(override.get("min_profit_ratio_min_tp_pips"))
     if value is None:
         value = _as_float(defaults.get("min_profit_ratio_min_tp_pips"))
@@ -1389,16 +1456,22 @@ def _end_reversal_policy(strategy_tag: Optional[str]) -> dict[str, Any]:
     cfg = _load_strategy_protection_config()
     defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
     merged: dict[str, Any] = {}
-    defaults_cfg = defaults.get("end_reversal_exit") if isinstance(defaults, dict) else None
+    defaults_cfg = (
+        defaults.get("end_reversal_exit") if isinstance(defaults, dict) else None
+    )
     if isinstance(defaults_cfg, dict):
         merged.update(defaults_cfg)
     override = _strategy_override(cfg, strategy_tag)
-    override_cfg = override.get("end_reversal_exit") if isinstance(override, dict) else None
+    override_cfg = (
+        override.get("end_reversal_exit") if isinstance(override, dict) else None
+    )
     if isinstance(override_cfg, dict):
         merged.update(override_cfg)
 
     score_min = _as_float(merged.get("score_min"), _EXIT_END_REVERSAL_SCORE_MIN)
-    min_profit_pips = _as_float(merged.get("min_profit_pips"), _EXIT_END_REVERSAL_MIN_PROFIT_PIPS)
+    min_profit_pips = _as_float(
+        merged.get("min_profit_pips"), _EXIT_END_REVERSAL_MIN_PROFIT_PIPS
+    )
     max_factor_age_sec = _as_float(
         merged.get("max_factor_age_sec"),
         _EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC,
@@ -1414,10 +1487,28 @@ def _end_reversal_policy(strategy_tag: Optional[str]) -> dict[str, Any]:
 
     return {
         "enabled": _coerce_bool(merged.get("enabled"), _EXIT_END_REVERSAL_ENABLED),
-        "score_min": _bounded01(score_min if score_min is not None else _EXIT_END_REVERSAL_SCORE_MIN),
-        "min_profit_pips": max(0.0, min_profit_pips if min_profit_pips is not None else _EXIT_END_REVERSAL_MIN_PROFIT_PIPS),
-        "max_factor_age_sec": max(0.0, max_factor_age_sec if max_factor_age_sec is not None else _EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC),
-        "reasons": _reason_tokens(merged.get("reasons"), _EXIT_END_REVERSAL_DEFAULT_REASONS),
+        "score_min": _bounded01(
+            score_min if score_min is not None else _EXIT_END_REVERSAL_SCORE_MIN
+        ),
+        "min_profit_pips": max(
+            0.0,
+            (
+                min_profit_pips
+                if min_profit_pips is not None
+                else _EXIT_END_REVERSAL_MIN_PROFIT_PIPS
+            ),
+        ),
+        "max_factor_age_sec": max(
+            0.0,
+            (
+                max_factor_age_sec
+                if max_factor_age_sec is not None
+                else _EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC
+            ),
+        ),
+        "reasons": _reason_tokens(
+            merged.get("reasons"), _EXIT_END_REVERSAL_DEFAULT_REASONS
+        ),
         "rsi_center": max(1.0, rsi_center if rsi_center is not None else 35.0),
         "rsi_band": max(0.5, rsi_band if rsi_band is not None else 12.0),
         "adx_center": max(1.0, adx_center if adx_center is not None else 24.0),
@@ -1425,7 +1516,9 @@ def _end_reversal_policy(strategy_tag: Optional[str]) -> dict[str, Any]:
         "gap_ref_pips": max(0.1, gap_ref_pips if gap_ref_pips is not None else 8.0),
         "gap_band_pips": max(0.1, gap_band_pips if gap_band_pips is not None else 10.0),
         "vwap_ref": max(0.1, vwap_ref if vwap_ref is not None else 16.0),
-        "slope_ref_pips": max(0.1, slope_ref_pips if slope_ref_pips is not None else 6.0),
+        "slope_ref_pips": max(
+            0.1, slope_ref_pips if slope_ref_pips is not None else 6.0
+        ),
     }
 
 
@@ -1439,7 +1532,9 @@ def _exit_end_reversal_eval(
     instrument: Optional[str],
     policy: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    cfg = dict(policy) if isinstance(policy, dict) else _end_reversal_policy(strategy_tag)
+    cfg = (
+        dict(policy) if isinstance(policy, dict) else _end_reversal_policy(strategy_tag)
+    )
     enabled = bool(cfg.get("enabled"))
     reason_tokens = list(cfg.get("reasons") or [])
     reason_match = _reason_matches_tokens(exit_reason, reason_tokens)
@@ -1479,7 +1574,9 @@ def _exit_end_reversal_eval(
         result["factor_age_m1_sec"] = factor_age
         return result
 
-    factors = (exit_context or {}).get("factors") if isinstance(exit_context, dict) else None
+    factors = (
+        (exit_context or {}).get("factors") if isinstance(exit_context, dict) else None
+    )
     if not isinstance(factors, dict):
         result["state"] = "missing_factors"
         return result
@@ -1538,7 +1635,9 @@ def _exit_end_reversal_eval(
     adx_component = None if adx is None else _bounded01((adx_center - adx) / adx_band)
 
     vwap_ref = max(0.1, float(cfg.get("vwap_ref") or 16.0))
-    vwap_component = None if vwap_gap is None else _bounded01(1.0 - abs(vwap_gap) / vwap_ref)
+    vwap_component = (
+        None if vwap_gap is None else _bounded01(1.0 - abs(vwap_gap) / vwap_ref)
+    )
 
     slope_ref = max(0.1, float(cfg.get("slope_ref_pips") or 6.0))
     slope_component = None
@@ -1614,7 +1713,9 @@ def _hold_until_profit_targets() -> tuple[set[str], set[str], float, bool]:
     strict = _EXIT_HOLD_UNTIL_PROFIT_STRICT
     cfg = _hold_until_profit_config()
     if cfg:
-        client_ids |= _normalize_hold_ids(cfg.get("client_order_ids") or cfg.get("client_ids"))
+        client_ids |= _normalize_hold_ids(
+            cfg.get("client_order_ids") or cfg.get("client_ids")
+        )
         trade_ids |= _normalize_hold_ids(cfg.get("trade_ids"))
         cfg_min = _as_float(cfg.get("min_profit_pips"))
         if cfg_min is not None:
@@ -1646,7 +1747,7 @@ def _hold_until_profit_match(
 
 def _factor_age_seconds(tf: str = "M1") -> float | None:
     try:
-        fac = (all_factors().get(tf.upper()) or {})
+        fac = all_factors().get(tf.upper()) or {}
     except Exception:
         return None
     ts_raw = fac.get("timestamp") or fac.get("ts") or fac.get("time")
@@ -1654,7 +1755,9 @@ def _factor_age_seconds(tf: str = "M1") -> float | None:
         return None
     try:
         if isinstance(ts_raw, (int, float)):
-            ts_dt = datetime.utcfromtimestamp(float(ts_raw)).replace(tzinfo=timezone.utc)
+            ts_dt = datetime.utcfromtimestamp(float(ts_raw)).replace(
+                tzinfo=timezone.utc
+            )
         else:
             ts_txt = str(ts_raw)
             if ts_txt.endswith("Z"):
@@ -1678,6 +1781,8 @@ def _range_active_for_entry() -> bool:
         return bool(detect_range_mode(fac_m1, fac_h4).active)
     except Exception:
         return False
+
+
 # エントリーが詰まらないようデフォルトの最小ユニットを下げる。
 _DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
 # Pattern gate で scale 適用後にポケット最小未満になった場合、最小値へフォールバックする。
@@ -1685,7 +1790,9 @@ _PATTERN_GATE_SCALE_TO_MIN_UNITS = _env_bool(
     "ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS", False
 )
 # Macro も環境変数で可変（デフォルト 2,000 units、最低でも DEFAULT_MIN を確保）
-_MACRO_MIN_UNITS_DEFAULT = max(_env_int("ORDER_MIN_UNITS_MACRO", 2_000), _DEFAULT_MIN_UNITS)
+_MACRO_MIN_UNITS_DEFAULT = max(
+    _env_int("ORDER_MIN_UNITS_MACRO", 2_000), _DEFAULT_MIN_UNITS
+)
 _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
@@ -1709,7 +1816,9 @@ _ENTRY_LOSS_CAP_JPY_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_LOSS_CAP_JPY", 0.
 _ENTRY_LOSS_CAP_BUFFER_PIPS_DEFAULT = max(
     0.0, _env_float("ORDER_ENTRY_LOSS_CAP_BUFFER_PIPS", 0.0)
 )
-_ENTRY_LOSS_CAP_NAV_BPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_BPS", 0.0))
+_ENTRY_LOSS_CAP_NAV_BPS_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_BPS", 0.0)
+)
 _ENTRY_LOSS_CAP_NAV_MIN_JPY_DEFAULT = max(
     0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_MIN_JPY", 0.0)
 )
@@ -1823,7 +1932,9 @@ def _strategy_env_str(name: str, strategy_tag: Optional[str]) -> Optional[str]:
     return None
 
 
-def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
+def _entry_hard_stop_pips(
+    pocket: Optional[str], *, strategy_tag: Optional[str] = None
+) -> float:
     """Return the entry hard SL distance in pips (0 = disabled)."""
 
     strategy_key = _strategy_env_key(strategy_tag)
@@ -1848,7 +1959,9 @@ def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] 
     )
 
 
-def _entry_max_sl_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
+def _entry_max_sl_pips(
+    pocket: Optional[str], *, strategy_tag: Optional[str] = None
+) -> float:
     """Return the maximum entry SL distance in pips (0 = disabled)."""
 
     strategy_key = _strategy_env_key(strategy_tag)
@@ -1891,7 +2004,9 @@ def _entry_loss_cap_jpy(
         return max(0.0, float(strategy_static))
     static_cap = max(
         0.0,
-        _pocket_env_float("ORDER_ENTRY_LOSS_CAP_JPY", pocket, _ENTRY_LOSS_CAP_JPY_DEFAULT),
+        _pocket_env_float(
+            "ORDER_ENTRY_LOSS_CAP_JPY", pocket, _ENTRY_LOSS_CAP_JPY_DEFAULT
+        ),
     )
     if static_cap > 0.0:
         return static_cap
@@ -1944,7 +2059,9 @@ def _entry_loss_cap_jpy(
     nav_value = _as_float(nav_hint)
     if nav_value is None or nav_value <= 0.0:
         try:
-            snap = get_account_snapshot(cache_ttl_sec=_ENTRY_LOSS_CAP_NAV_SNAPSHOT_TTL_SEC)
+            snap = get_account_snapshot(
+                cache_ttl_sec=_ENTRY_LOSS_CAP_NAV_SNAPSHOT_TTL_SEC
+            )
             nav_value = float(snap.nav or snap.balance or 0.0)
         except Exception:
             nav_value = 0.0
@@ -1993,7 +2110,9 @@ def _loss_cap_units_from_sl(*, loss_cap_jpy: float, sl_pips: float) -> int:
     if loss_cap_jpy <= 0.0 or sl_pips <= 0.0:
         return 0
     try:
-        return max(0, int(math.floor(loss_cap_jpy / (sl_pips * _JPY_PER_PIP_PER_UNIT_USDJPY))))
+        return max(
+            0, int(math.floor(loss_cap_jpy / (sl_pips * _JPY_PER_PIP_PER_UNIT_USDJPY)))
+        )
     except Exception:
         return 0
 
@@ -2052,10 +2171,15 @@ def _is_isolated_spread_spike(
 
     try:
         rows = tick_window.recent_ticks(
-            seconds=_ORDER_SPREAD_SPIKE_WINDOW_SEC, limit=_ORDER_SPREAD_SPIKE_MIN_TICKS * 6
+            seconds=_ORDER_SPREAD_SPIKE_WINDOW_SEC,
+            limit=_ORDER_SPREAD_SPIKE_MIN_TICKS * 6,
         )
     except Exception as exc:
-        return False, {"enabled": True, "reason": "tick_window_error", "error": str(exc)}
+        return False, {
+            "enabled": True,
+            "reason": "tick_window_error",
+            "error": str(exc),
+        }
 
     spreads: list[float] = []
     now_sec = time.time()
@@ -2088,7 +2212,10 @@ def _is_isolated_spread_spike(
         median_cap = threshold_pips * _ORDER_SPREAD_SPIKE_MEDIAN_RATIO
 
     high_count = sum(1 for val in spreads if val >= threshold_pips)
-    if high_count <= _ORDER_SPREAD_SPIKE_ALLOW_MAX_COUNT and window_median <= median_cap:
+    if (
+        high_count <= _ORDER_SPREAD_SPIKE_ALLOW_MAX_COUNT
+        and window_median <= median_cap
+    ):
         return True, {
             "enabled": True,
             "reason": "isolated",
@@ -2123,7 +2250,9 @@ def _augment_entry_thesis_policy_generation(
     return merged
 
 
-def _sl_price_from_pips(entry_price: float, units: int, sl_pips: float) -> Optional[float]:
+def _sl_price_from_pips(
+    entry_price: float, units: int, sl_pips: float
+) -> Optional[float]:
     if entry_price <= 0 or units == 0 or sl_pips <= 0:
         return None
     offset = round(sl_pips * 0.01, 3)
@@ -2138,7 +2267,6 @@ def min_units_for_pocket(pocket: Optional[str]) -> int:
     return int(_MIN_UNITS_BY_POCKET.get(pocket, _DEFAULT_MIN_UNITS))
 
 
-
 def min_units_for_strategy(
     strategy_tag: Optional[str],
     pocket: Optional[str] = None,
@@ -2151,10 +2279,6 @@ def min_units_for_strategy(
     if strategy_min_units is not None:
         return strategy_min_units
     return min_units_for_pocket(pocket)
-
-
-
-
 
 
 def _policy_gate_allows_entry(
@@ -2201,13 +2325,13 @@ def _policy_gate_allows_entry(
             return False, "policy_missing_strategy", {}
         tag_lower = str(strategy_tag).strip().lower()
         base = tag_lower.split("-", 1)[0]
-        allow = {str(item).strip().lower() for item in strategy_list if str(item).strip()}
+        allow = {
+            str(item).strip().lower() for item in strategy_list if str(item).strip()
+        }
         if tag_lower not in allow and base not in allow:
             return False, "policy_strategy_block", {"allow": sorted(allow)}
 
     return True, None, {}
-
-
 
 
 def _min_rr_for(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
@@ -2277,7 +2401,9 @@ def _tp_cap_factors(
     return tf, {}
 
 
-def _tp_cap_normalize(value: Optional[float], low: float, high: float) -> Optional[float]:
+def _tp_cap_normalize(
+    value: Optional[float], low: float, high: float
+) -> Optional[float]:
     if value is None:
         return None
     if high <= low:
@@ -2366,8 +2492,12 @@ def _tp_cap_for(
     return cap, meta
 
 
-_EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
-_EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv("EXIT_ALLOW_NEGATIVE_BY_WORKER", "1").strip().lower() in {
+_EXIT_NO_NEGATIVE_CLOSE = os.getenv(
+    "EXIT_NO_NEGATIVE_CLOSE", "1"
+).strip().lower() not in {"", "0", "false", "no"}
+_EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv(
+    "EXIT_ALLOW_NEGATIVE_BY_WORKER", "1"
+).strip().lower() in {
     "1",
     "true",
     "yes",
@@ -2382,7 +2512,9 @@ _EXIT_ALLOW_NEGATIVE_REASONS = {
     ).split(",")
     if token.strip()
 }
-_EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS = max(0.0, _env_float("EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS", 0.6))
+_EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS = max(
+    0.0, _env_float("EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS", 0.6)
+)
 _EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
@@ -2392,9 +2524,13 @@ _EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS = {
     if token.strip()
 }
 _EXIT_HOLD_UNTIL_PROFIT_ENABLED = _env_bool("EXIT_HOLD_UNTIL_PROFIT_ENABLED", True)
-_EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS", "")
+_EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS = _env_csv_set(
+    "EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS", ""
+)
 _EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS", "")
-_EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS = max(0.0, _env_float("EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS", 0.0))
+_EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS = max(
+    0.0, _env_float("EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS", 0.0)
+)
 _EXIT_HOLD_UNTIL_PROFIT_STRICT = _env_bool("EXIT_HOLD_UNTIL_PROFIT_STRICT", False)
 _EXIT_HOLD_UNTIL_PROFIT_ALL = _env_bool("EXIT_HOLD_UNTIL_PROFIT_ALL", False)
 _EXIT_FORCE_ALLOW_REASONS = {
@@ -2407,7 +2543,9 @@ _EXIT_FORCE_ALLOW_REASONS = {
     ).split(",")
     if token.strip()
 }
-_EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
+_EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv(
+    "EXIT_EMERGENCY_ALLOW_NEGATIVE", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -2486,9 +2624,11 @@ def _disable_hard_stop_by_strategy(
 ) -> bool:
     base_tag = (strategy_tag or "").strip().lower()
     if not base_tag and isinstance(entry_thesis, dict):
-        base_tag = str(
-            entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or ""
-        ).strip().lower()
+        base_tag = (
+            str(entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or "")
+            .strip()
+            .lower()
+        )
     if not base_tag:
         base_tag = (_strategy_tag_from_thesis(entry_thesis) or "").strip().lower()
 
@@ -2519,7 +2659,9 @@ def _disable_hard_stop_by_strategy(
     )
 
 
-_PROFIT_GUARD_BYPASS_RANGE = os.getenv("PROFIT_GUARD_BYPASS_RANGE", "1").strip().lower() not in {
+_PROFIT_GUARD_BYPASS_RANGE = os.getenv(
+    "PROFIT_GUARD_BYPASS_RANGE", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -2582,10 +2724,17 @@ _DYNAMIC_SL_RATIO = float(os.getenv("ORDER_DYNAMIC_SL_RATIO", "1.2"))
 _DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
 _ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True)
 _ORDER_MANAGER_BRAIN_GATE_ENABLED = _env_bool("ORDER_MANAGER_BRAIN_GATE_ENABLED", False)
-_ORDER_MANAGER_BRAIN_GATE_MODE = (os.getenv("ORDER_MANAGER_BRAIN_GATE_MODE", "") or "").strip().lower()
+_ORDER_MANAGER_BRAIN_GATE_MODE = (
+    (os.getenv("ORDER_MANAGER_BRAIN_GATE_MODE", "") or "").strip().lower()
+)
 if _ORDER_MANAGER_BRAIN_GATE_MODE not in {"off", "shadow", "apply"}:
-    _ORDER_MANAGER_BRAIN_GATE_MODE = "apply" if _ORDER_MANAGER_BRAIN_GATE_ENABLED else "off"
-_ORDER_MANAGER_BRAIN_GATE_ENABLED = _ORDER_MANAGER_BRAIN_GATE_MODE in {"shadow", "apply"}
+    _ORDER_MANAGER_BRAIN_GATE_MODE = (
+        "apply" if _ORDER_MANAGER_BRAIN_GATE_ENABLED else "off"
+    )
+_ORDER_MANAGER_BRAIN_GATE_ENABLED = _ORDER_MANAGER_BRAIN_GATE_MODE in {
+    "shadow",
+    "apply",
+}
 _ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT = _env_bool(
     "ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT", False
 )
@@ -2594,15 +2743,21 @@ _ORDER_MANAGER_BRAIN_GATE_MISSING_LOG_INTERVAL_SEC = max(
     float(os.getenv("ORDER_MANAGER_BRAIN_GATE_MISSING_LOG_INTERVAL_SEC", "90.0")),
 )
 _ORDER_MANAGER_BRAIN_GATE_MISSING_LAST_LOG_MONO = 0.0
-_ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
+_ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool(
+    "ORDER_MANAGER_FORECAST_GATE_ENABLED", False
+)
 _ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT = _env_bool(
     "ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT", False
 )
 _FORECAST_SERVICE_ENABLED = _env_bool("FORECAST_SERVICE_ENABLED", False)
-_FORECAST_SERVICE_URL = os.getenv("FORECAST_SERVICE_URL", "http://127.0.0.1:8302").strip()
+_FORECAST_SERVICE_URL = os.getenv(
+    "FORECAST_SERVICE_URL", "http://127.0.0.1:8302"
+).strip()
 _FORECAST_SERVICE_TIMEOUT = max(0.5, float(_env_float("FORECAST_SERVICE_TIMEOUT", 5.0)))
 _FORECAST_SERVICE_FALLBACK_LOCAL = _env_bool("FORECAST_SERVICE_FALLBACK_LOCAL", True)
-_ORDER_MANAGER_PATTERN_GATE_ENABLED = _env_bool("ORDER_MANAGER_PATTERN_GATE_ENABLED", False)
+_ORDER_MANAGER_PATTERN_GATE_ENABLED = _env_bool(
+    "ORDER_MANAGER_PATTERN_GATE_ENABLED", False
+)
 _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT = _env_bool(
     "ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", True
 )
@@ -2711,7 +2866,9 @@ def _order_profit_guard_scope_override(strategy_tag: Optional[str]) -> Optional[
     return None
 
 
-_ORDER_INTENT_COORDINATION_ENABLED = _env_bool("ORDER_INTENT_COORDINATION_ENABLED", True)
+_ORDER_INTENT_COORDINATION_ENABLED = _env_bool(
+    "ORDER_INTENT_COORDINATION_ENABLED", True
+)
 _ORDER_INTENT_COORDINATION_WINDOW_SEC = max(
     0.25,
     float(os.getenv("ORDER_INTENT_COORDINATION_WINDOW_SEC", "2.0")),
@@ -2746,10 +2903,9 @@ _ENTRY_QUALITY_SPREAD_TP_MAX_RATIO = {
     "scalp": 0.28,
     "scalp_fast": 0.34,
 }
-_ENTRY_QUALITY_SPREAD_TP_SOFTEN_ENABLED = (
-    os.getenv("ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN", "1").strip().lower()
-    not in {"", "0", "false", "no"}
-)
+_ENTRY_QUALITY_SPREAD_TP_SOFTEN_ENABLED = os.getenv(
+    "ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN", "1"
+).strip().lower() not in {"", "0", "false", "no"}
 _ENTRY_QUALITY_SPREAD_TP_SOFTEN_MIN_SCALE = max(
     0.05,
     _env_float("ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN_MIN_SCALE", 0.30),
@@ -2779,9 +2935,7 @@ _ENTRY_QUALITY_STRAT_TTL_SEC = max(
 _ENTRY_QUALITY_STRAT_DB_PATH = pathlib.Path(
     os.getenv("TRADES_DB_PATH", "logs/trades.db")
 )
-_ENTRY_QUALITY_STRAT_CACHE: dict[
-    tuple[str, str], tuple[float, dict[str, float]]
-] = {}
+_ENTRY_QUALITY_STRAT_CACHE: dict[tuple[str, str], tuple[float, dict[str, float]]] = {}
 _ENTRY_NET_EDGE_GATE_ENABLED = _env_bool("ORDER_ENTRY_NET_EDGE_GATE_ENABLED", False)
 _ENTRY_NET_EDGE_POCKETS = _env_csv_set(
     "ORDER_ENTRY_NET_EDGE_POCKETS",
@@ -2822,9 +2976,15 @@ _ROLLOVER_SL_STRIP_MAX_ACTIONS = max(
 )
 MACRO_BE_GRACE_SECONDS = 45
 _MARGIN_REJECT_UNTIL: dict[str, float] = {}
-_PROTECTION_MIN_BUFFER = max(0.0005, float(os.getenv("ORDER_PROTECTION_MIN_BUFFER", "0.003")))
-_PROTECTION_MIN_SEPARATION = max(0.001, float(os.getenv("ORDER_PROTECTION_MIN_SEPARATION", "0.006")))
-_PROTECTION_FALLBACK_PIPS = max(0.02, float(os.getenv("ORDER_PROTECTION_FALLBACK_PIPS", "0.12")))
+_PROTECTION_MIN_BUFFER = max(
+    0.0005, float(os.getenv("ORDER_PROTECTION_MIN_BUFFER", "0.003"))
+)
+_PROTECTION_MIN_SEPARATION = max(
+    0.001, float(os.getenv("ORDER_PROTECTION_MIN_SEPARATION", "0.006"))
+)
+_PROTECTION_FALLBACK_PIPS = max(
+    0.02, float(os.getenv("ORDER_PROTECTION_FALLBACK_PIPS", "0.12"))
+)
 _PROTECTION_RETRY_REASONS = {
     "STOP_LOSS_ON_FILL_LOSS",
     "STOP_LOSS_ON_FILL_INVALID",
@@ -2863,6 +3023,8 @@ def _remember_protections(
         "tp": current_tp,
         "ts": time.time(),
     }
+
+
 _ORDER_QUOTE_RETRY_REASONS = {
     "OFF_QUOTES",
     "PRICE_BOUND_EXCEEDED",
@@ -3000,7 +3162,11 @@ def _apply_min_rr_floor(
         strategy_tag=strategy_tag,
     )
     sl_adjusted = False
-    if mode in {"sl", "sl_first", "both"} and max_sl_pips > 0.0 and sl_pips > max_sl_pips:
+    if (
+        mode in {"sl", "sl_first", "both"}
+        and max_sl_pips > 0.0
+        and sl_pips > max_sl_pips
+    ):
         if units > 0:
             sl_price = round(entry_basis - max_sl_pips * 0.01, 3)
         else:
@@ -3078,7 +3244,9 @@ def _protection_fallback_gap_price(
     *,
     strategy_tag: Optional[str] = None,
 ) -> float:
-    strategy_override = _strategy_env_float("ORDER_PROTECTION_FALLBACK_PIPS", strategy_tag)
+    strategy_override = _strategy_env_float(
+        "ORDER_PROTECTION_FALLBACK_PIPS", strategy_tag
+    )
     if strategy_override is not None:
         return max(0.0005, float(strategy_override))
     pocket_val = _pocket_env_float(
@@ -3087,6 +3255,7 @@ def _protection_fallback_gap_price(
         _PROTECTION_FALLBACK_PIPS,
     )
     return max(0.0005, float(pocket_val))
+
 
 # Cap extreme TP distances (pips) to keep targets realistic.
 _TP_CAP_ENABLED = os.getenv("ORDER_TP_CAP_ENABLED", "1").strip().lower() not in {
@@ -3103,7 +3272,9 @@ _TP_CAP_BY_POCKET = {
     "manual": float(os.getenv("ORDER_TP_CAP_MANUAL", "0.0")),
 }
 # Momentum-aware TP cap scaling (opt-in).
-_TP_CAP_DYNAMIC_ENABLED = os.getenv("ORDER_TP_CAP_DYNAMIC_ENABLED", "0").strip().lower() not in {
+_TP_CAP_DYNAMIC_ENABLED = os.getenv(
+    "ORDER_TP_CAP_DYNAMIC_ENABLED", "0"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -3117,10 +3288,9 @@ _TP_CAP_TF_DEFAULTS = {
     "manual": "H1",
 }
 # ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
-_FORWARD_TO_SIGNAL_GATE = (
-    os.getenv("ORDER_FORWARD_TO_SIGNAL_GATE", "0").strip().lower()
-    not in {"", "0", "false", "no"}
-)
+_FORWARD_TO_SIGNAL_GATE = os.getenv(
+    "ORDER_FORWARD_TO_SIGNAL_GATE", "0"
+).strip().lower() not in {"", "0", "false", "no"}
 _WORKER_ONLY_MODE = os.getenv("WORKER_ONLY_MODE", "0").strip().lower() not in {
     "",
     "0",
@@ -3130,7 +3300,9 @@ _WORKER_ONLY_MODE = os.getenv("WORKER_ONLY_MODE", "0").strip().lower() not in {
 if _WORKER_ONLY_MODE:
     _FORWARD_TO_SIGNAL_GATE = False
 # コメントを付けるとリジェクトが発生する場合に強制オフにするトグル（デフォルトで無効化）
-_DISABLE_CLIENT_COMMENT = os.getenv("ORDER_DISABLE_CLIENT_COMMENT", "1").strip().lower() not in {
+_DISABLE_CLIENT_COMMENT = os.getenv(
+    "ORDER_DISABLE_CLIENT_COMMENT", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -3154,16 +3326,27 @@ except Exception:
 _MIN_ORDER_UNITS = 500
 
 # Directional exposure cap (dynamic; scales units instead of rejecting)
-_DIR_CAP_ENABLE = os.getenv("DIR_CAP_ENABLE", "1").strip().lower() not in {"", "0", "false", "no"}
+_DIR_CAP_ENABLE = os.getenv("DIR_CAP_ENABLE", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 _DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.70"))
 _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 # Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
 _DIR_CAP_CACHE: Optional[PositionManager] = None
 _BLOCK_MANUAL_NETTING = _env_bool("BLOCK_MANUAL_NETTING", True)
-_ORDER_MANUAL_MARGIN_GUARD_ENABLED = _env_bool("ORDER_MANUAL_MARGIN_GUARD_ENABLED", True)
-_ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES = max(1, _env_int("ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES", 1))
-_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO = max(0.0, _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO", 0.12))
+_ORDER_MANUAL_MARGIN_GUARD_ENABLED = _env_bool(
+    "ORDER_MANUAL_MARGIN_GUARD_ENABLED", True
+)
+_ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES = max(
+    1, _env_int("ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES", 1)
+)
+_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO = max(
+    0.0, _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO", 0.12)
+)
 _ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER = max(
     0.0,
     _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER", 0.18),
@@ -3172,7 +3355,9 @@ _ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY = max(
     0.0,
     _env_float("ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY", 8000.0),
 )
-_ORDER_MARGIN_STALE_ALLOW_SEC = max(0.0, _env_float("ORDER_MARGIN_STALE_ALLOW_SEC", 15.0))
+_ORDER_MARGIN_STALE_ALLOW_SEC = max(
+    0.0, _env_float("ORDER_MARGIN_STALE_ALLOW_SEC", 15.0)
+)
 _ORDER_MARGIN_STALE_MIN_FREE_RATIO = max(
     0.0,
     _env_float("ORDER_MARGIN_STALE_MIN_FREE_RATIO", 0.30),
@@ -3182,14 +3367,20 @@ _ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER = max(
     _env_float("ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER", 0.25),
 )
 _DIR_CAP_ADVERSE_ENABLE = _env_bool("DIR_CAP_ADVERSE_ENABLE", True)
-_DIR_CAP_ADVERSE_LOOKBACK_MIN = max(5, min(120, _env_int("DIR_CAP_ADVERSE_LOOKBACK_MIN", 20)))
+_DIR_CAP_ADVERSE_LOOKBACK_MIN = max(
+    5, min(120, _env_int("DIR_CAP_ADVERSE_LOOKBACK_MIN", 20))
+)
 _DIR_CAP_ADVERSE_START_PIPS = max(0.0, _env_float("DIR_CAP_ADVERSE_START_PIPS", 6.0))
 _DIR_CAP_ADVERSE_FULL_PIPS = max(
     _DIR_CAP_ADVERSE_START_PIPS + 1e-6,
     _env_float("DIR_CAP_ADVERSE_FULL_PIPS", 20.0),
 )
-_DIR_CAP_ADVERSE_MIN_SCALE = max(0.05, min(1.0, _env_float("DIR_CAP_ADVERSE_MIN_SCALE", 0.35)))
-_DIR_CAP_ADVERSE_MAX_AGE_SEC = max(30.0, _env_float("DIR_CAP_ADVERSE_MAX_AGE_SEC", 180.0))
+_DIR_CAP_ADVERSE_MIN_SCALE = max(
+    0.05, min(1.0, _env_float("DIR_CAP_ADVERSE_MIN_SCALE", 0.35))
+)
+_DIR_CAP_ADVERSE_MAX_AGE_SEC = max(
+    30.0, _env_float("DIR_CAP_ADVERSE_MAX_AGE_SEC", 180.0)
+)
 _DIR_CAP_ADVERSE_TTL_SEC = max(1.0, _env_float("DIR_CAP_ADVERSE_TTL_SEC", 5.0))
 _DIR_CAP_ADVERSE_CACHE: dict[str, object] = {
     "ts": 0.0,
@@ -3216,7 +3407,9 @@ def _parse_iso_ts(value: object) -> Optional[datetime]:
         return None
 
 
-def _dir_cap_adverse_pips(side_label: str, pocket: str) -> tuple[float, dict[str, float]]:
+def _dir_cap_adverse_pips(
+    side_label: str, pocket: str
+) -> tuple[float, dict[str, float]]:
     if not _DIR_CAP_ADVERSE_ENABLE:
         return 0.0, {}
     lookback = _DIR_CAP_ADVERSE_LOOKBACK_MIN
@@ -3356,7 +3549,9 @@ def _manual_margin_pressure_details(
     if manual_trades_i < _ORDER_MANUAL_MARGIN_GUARD_MIN_TRADES and manual_net_i == 0:
         return None
 
-    margin_available = float(_as_float(getattr(snap, "margin_available", None), 0.0) or 0.0)
+    margin_available = float(
+        _as_float(getattr(snap, "margin_available", None), 0.0) or 0.0
+    )
     free_ratio = _as_float(getattr(snap, "free_margin_ratio", None), None)
     health_buffer = _as_float(getattr(snap, "health_buffer", None), None)
 
@@ -3387,7 +3582,9 @@ def _manual_margin_pressure_details(
         "margin_available_jpy": round(margin_available, 3),
         "min_free_margin_ratio": round(_ORDER_MANUAL_MARGIN_GUARD_MIN_FREE_RATIO, 4),
         "min_health_buffer": round(_ORDER_MANUAL_MARGIN_GUARD_MIN_HEALTH_BUFFER, 4),
-        "min_margin_available_jpy": round(_ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY, 3),
+        "min_margin_available_jpy": round(
+            _ORDER_MANUAL_MARGIN_GUARD_MIN_AVAILABLE_JPY, 3
+        ),
         "trigger_count": len(triggered),
     }
     if free_ratio is not None:
@@ -3409,10 +3606,9 @@ _ORDER_DB_WAL_AUTOCHECKPOINT_PAGES = int(
 _ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES = int(
     os.getenv("ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES", "67108864")
 )
-_ORDER_DB_CHECKPOINT_ENABLE = (
-    os.getenv("ORDER_DB_CHECKPOINT_ENABLE", "1").strip().lower()
-    not in {"", "0", "false", "no"}
-)
+_ORDER_DB_CHECKPOINT_ENABLE = os.getenv(
+    "ORDER_DB_CHECKPOINT_ENABLE", "1"
+).strip().lower() not in {"", "0", "false", "no"}
 _ORDER_DB_CHECKPOINT_INTERVAL_SEC = float(
     os.getenv("ORDER_DB_CHECKPOINT_INTERVAL_SEC", "60")
 )
@@ -3533,15 +3729,11 @@ def _configure_orders_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
     except sqlite3.Error:
         pass
     try:
-        con.execute(
-            f"PRAGMA wal_autocheckpoint={_ORDER_DB_WAL_AUTOCHECKPOINT_PAGES}"
-        )
+        con.execute(f"PRAGMA wal_autocheckpoint={_ORDER_DB_WAL_AUTOCHECKPOINT_PAGES}")
     except sqlite3.Error:
         pass
     try:
-        con.execute(
-            f"PRAGMA journal_size_limit={_ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES}"
-        )
+        con.execute(f"PRAGMA journal_size_limit={_ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES}")
     except sqlite3.Error:
         pass
     return con
@@ -3581,8 +3773,7 @@ def _ensure_orders_schema() -> sqlite3.Connection:
     _ORDERS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(_ORDERS_DB_PATH)
     _configure_orders_sqlite(con)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE IF NOT EXISTS orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           ts TEXT,
@@ -3603,13 +3794,11 @@ def _ensure_orders_schema() -> sqlite3.Connection:
           request_json TEXT,
           response_json TEXT
         )
-        """
-    )
+        """)
     cols = {row[1] for row in con.execute("PRAGMA table_info(orders)")}
     if "stage_index" not in cols:
         con.execute("ALTER TABLE orders ADD COLUMN stage_index INTEGER")
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE IF NOT EXISTS entry_intent_board (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           ts TEXT,
@@ -3627,8 +3816,7 @@ def _ensure_orders_schema() -> sqlite3.Connection:
           ts_epoch REAL,
           expires_at REAL
         )
-        """
-    )
+        """)
     # Useful indexes
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)"
@@ -3823,7 +4011,9 @@ def _latest_bid_ask() -> tuple[Optional[float], Optional[float]]:
     return bid, ask
 
 
-def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Optional[float]:
+def _entry_price_hint(
+    entry_thesis: Optional[dict], meta: Optional[dict]
+) -> Optional[float]:
     if isinstance(entry_thesis, dict):
         for key in ("entry_price", "price", "entry_ref"):
             try:
@@ -3838,7 +4028,9 @@ def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Opt
     return _latest_mid_price()
 
 
-def _entry_nav_hint(meta: Optional[dict], entry_thesis: Optional[dict]) -> Optional[float]:
+def _entry_nav_hint(
+    meta: Optional[dict], entry_thesis: Optional[dict]
+) -> Optional[float]:
     for src in (meta, entry_thesis):
         if not isinstance(src, dict):
             continue
@@ -3977,9 +4169,9 @@ def _probability_scaled_units(
         if boost_span <= 0.0:
             scale = 1.0
         else:
-            scale = 1.0 + (
-                (probability - strategy_boost_probability) / boost_span
-            ) * (strategy_max_scale - 1.0)
+            scale = 1.0 + ((probability - strategy_boost_probability) / boost_span) * (
+                strategy_max_scale - 1.0
+            )
 
     if scale <= 0:
         return 0, "entry_probability_scale_to_zero"
@@ -4160,7 +4352,11 @@ def _coordinate_entry_intent(
             reason="coordination_load_error",
             request_payload={"error": str(exc)},
         )
-        return raw_units, None, {"coordination_enabled": 0.0, "coordination_error": str(exc)}
+        return (
+            raw_units,
+            None,
+            {"coordination_enabled": 0.0, "coordination_error": str(exc)},
+        )
 
     own_prob = _normalize_intent_probability(entry_probability)
     own_units = abs(int(raw_units))
@@ -4189,9 +4385,7 @@ def _coordinate_entry_intent(
 
     final_abs = abs(raw_units)
     forecast_context = (
-        dict(forecast_context)
-        if isinstance(forecast_context, dict)
-        else None
+        dict(forecast_context) if isinstance(forecast_context, dict) else None
     )
     details = {
         "coordination_enabled": 1.0,
@@ -4318,10 +4512,7 @@ async def coordinate_entry_intent(
             final_units = service_result.get("final_units")
             reason = service_result.get("reason")
             details = service_result.get("details")
-            if (
-                isinstance(final_units, int)
-                and isinstance(details, dict)
-            ):
+            if isinstance(final_units, int) and isinstance(details, dict):
                 return final_units, reason, details
         raise RuntimeError(
             f"invalid coordinate_entry_intent service payload: {service_result!r}"
@@ -4394,7 +4585,9 @@ def _canonicalize_entry_intent_thesis(
         normalized_tag = strategy_tag.strip() or None
     if normalized_tag:
         existing_tag = thesis.get("strategy_tag")
-        existing_tag_text = str(existing_tag).strip() if existing_tag is not None else ""
+        existing_tag_text = (
+            str(existing_tag).strip() if existing_tag is not None else ""
+        )
         if existing_tag_text and existing_tag_text != normalized_tag:
             thesis.setdefault("strategy_tag_raw", existing_tag_text)
             corrections["strategy_tag"] = {
@@ -4575,14 +4768,15 @@ def _append_dynamic_alloc_entry_path(entry_thesis: Optional[dict]) -> Optional[d
         stage="dynamic_alloc",
         status=status,
         entry_probability_after=probability,
-        reason=str(dynamic_alloc.get("reason") or dynamic_alloc.get("source") or "").strip() or None,
+        reason=str(
+            dynamic_alloc.get("reason") or dynamic_alloc.get("source") or ""
+        ).strip()
+        or None,
         detail_key="dynamic_alloc",
         extra={
             "source": dynamic_alloc.get("source"),
             "lot_multiplier": (
-                round(float(lot_multiplier), 6)
-                if lot_multiplier is not None
-                else None
+                round(float(lot_multiplier), 6) if lot_multiplier is not None else None
             ),
         },
     )
@@ -4601,7 +4795,10 @@ def _entry_intent_guard_reason(
     if str(pocket or "").strip().lower() == "manual":
         return None
 
-    if _ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY and not str(strategy_tag or "").strip():
+    if (
+        _ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY
+        and not str(strategy_tag or "").strip()
+    ):
         return "missing_strategy_tag"
 
     if _ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS:
@@ -4649,7 +4846,12 @@ def _entry_thesis_sl_tp_pips(
 
     sl_pips = _as_float(entry_thesis.get("sl_pips"))
     if sl_pips is None:
-        for key in ("profile_sl_pips", "loss_guard_pips", "loss_guard", "hard_stop_pips"):
+        for key in (
+            "profile_sl_pips",
+            "loss_guard_pips",
+            "loss_guard",
+            "hard_stop_pips",
+        ):
             value = _as_float(entry_thesis.get(key))
             if value is not None and value > 0.0:
                 sl_pips = value
@@ -4775,7 +4977,9 @@ def _entry_net_edge_gate_decision(
         return True, None, details
 
     probability = max(0.0, min(1.0, float(probability)))
-    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(sl_pips)
+    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(
+        sl_pips
+    )
     cost_pips = spread_pips + slippage_pips + reject_cost_pips
     net_edge_pips = gross_edge_pips - cost_pips
     details.update(
@@ -4947,28 +5151,39 @@ def _dynamic_entry_sl_target_pips(
     snap = _entry_market_snapshot(pocket, entry_thesis)
     atr_pips = _as_float(snap.get("atr_pips"))
     vol_5m = _as_float(snap.get("vol_5m"))
-    spread_pips = _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+    spread_pips = (
+        _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+    )
 
-    ratio = max(1.0, _pocket_env_float("ORDER_DYNAMIC_SL_RATIO", pocket, _DYNAMIC_SL_RATIO))
+    ratio = max(
+        1.0, _pocket_env_float("ORDER_DYNAMIC_SL_RATIO", pocket, _DYNAMIC_SL_RATIO)
+    )
     target = base_sl * ratio
 
     atr_mult = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_ATR_MULT", pocket, 0.72))
     if atr_pips is not None and atr_pips > 0.0 and atr_mult > 0.0:
         target = max(target, atr_pips * atr_mult)
 
-    spread_mult = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_SPREAD_MULT", pocket, 2.8))
+    spread_mult = max(
+        0.0, _pocket_env_float("ORDER_DYNAMIC_SL_SPREAD_MULT", pocket, 2.8)
+    )
     if spread_pips is not None and spread_pips > 0.0 and spread_mult > 0.0:
         target = max(target, spread_pips * spread_mult)
 
     vol_low = _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_LOW", pocket, 0.8)
-    vol_high = max(vol_low + 1e-6, _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_HIGH", pocket, 1.6))
+    vol_high = max(
+        vol_low + 1e-6, _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_HIGH", pocket, 1.6)
+    )
     if vol_5m is not None:
         if vol_5m > vol_high:
             target *= min(1.35, 1.0 + (vol_5m - vol_high) * 0.14)
         elif vol_5m < vol_low:
             target *= max(0.90, 1.0 - (vol_low - vol_5m) * 0.06)
 
-    max_pips = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_MAX_PIPS", pocket, _DYNAMIC_SL_MAX_PIPS))
+    max_pips = max(
+        0.0,
+        _pocket_env_float("ORDER_DYNAMIC_SL_MAX_PIPS", pocket, _DYNAMIC_SL_MAX_PIPS),
+    )
     if max_pips > 0.0:
         target = min(target, max_pips)
     min_pips = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_MIN_PIPS", pocket, 0.0))
@@ -5006,31 +5221,49 @@ def _entry_quality_gate(
     conf = _entry_confidence_score(confidence, entry_thesis)
     base_default = _ENTRY_QUALITY_BASE_MIN_CONF.get(pocket_key, 56.0)
     required = _pocket_env_float("ORDER_ENTRY_QUALITY_MIN_CONF", pocket, base_default)
-    max_conf = max(required, _pocket_env_float("ORDER_ENTRY_QUALITY_MAX_CONF", pocket, 95.0))
+    max_conf = max(
+        required, _pocket_env_float("ORDER_ENTRY_QUALITY_MAX_CONF", pocket, 95.0)
+    )
     bypass_conf = _pocket_env_float("ORDER_ENTRY_QUALITY_BYPASS_CONF", pocket, 92.0)
 
     snap = _entry_market_snapshot(pocket, entry_thesis)
     atr_pips = _as_float(snap.get("atr_pips"))
     vol_5m = _as_float(snap.get("vol_5m"))
-    spread_pips = _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+    spread_pips = (
+        _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+    )
 
     atr_low_d, atr_high_d = _ENTRY_QUALITY_ATR_BANDS.get(pocket_key, (1.2, 4.0))
     atr_low = _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_LOW", pocket, atr_low_d)
-    atr_high = max(atr_low + 1e-6, _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_HIGH", pocket, atr_high_d))
+    atr_high = max(
+        atr_low + 1e-6,
+        _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_HIGH", pocket, atr_high_d),
+    )
     if atr_pips is not None:
         if atr_pips >= atr_high:
-            required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_ATR_BONUS", pocket, 4.0)
+            required += _pocket_env_float(
+                "ORDER_ENTRY_QUALITY_HIGH_ATR_BONUS", pocket, 4.0
+            )
         elif atr_pips <= atr_low:
-            required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_ATR_BONUS", pocket, 2.0)
+            required += _pocket_env_float(
+                "ORDER_ENTRY_QUALITY_LOW_ATR_BONUS", pocket, 2.0
+            )
 
     vol_low_d, vol_high_d = _ENTRY_QUALITY_VOL_BANDS.get(pocket_key, (0.8, 1.6))
     vol_low = _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_LOW", pocket, vol_low_d)
-    vol_high = max(vol_low + 1e-6, _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_HIGH", pocket, vol_high_d))
+    vol_high = max(
+        vol_low + 1e-6,
+        _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_HIGH", pocket, vol_high_d),
+    )
     if vol_5m is not None:
         if vol_5m >= vol_high:
-            required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_VOL_BONUS", pocket, 3.0)
+            required += _pocket_env_float(
+                "ORDER_ENTRY_QUALITY_HIGH_VOL_BONUS", pocket, 3.0
+            )
         elif vol_5m <= vol_low:
-            required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_VOL_BONUS", pocket, 1.0)
+            required += _pocket_env_float(
+                "ORDER_ENTRY_QUALITY_LOW_VOL_BONUS", pocket, 1.0
+            )
 
     strategy_sample = None
     strategy_pf = None
@@ -5064,7 +5297,9 @@ def _entry_quality_gate(
                 )
                 payoff_floor = max(
                     0.0,
-                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PAYOFF_MIN", pocket, 0.30),
+                    _pocket_env_float(
+                        "ORDER_ENTRY_QUALITY_STRAT_PAYOFF_MIN", pocket, 0.30
+                    ),
                 )
                 avg_pips_floor = _pocket_env_float(
                     "ORDER_ENTRY_QUALITY_STRAT_AVG_PIPS_MIN",
@@ -5073,11 +5308,15 @@ def _entry_quality_gate(
                 )
                 bonus_gain = max(
                     0.0,
-                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_GAIN", pocket, 7.0),
+                    _pocket_env_float(
+                        "ORDER_ENTRY_QUALITY_STRAT_BONUS_GAIN", pocket, 7.0
+                    ),
                 )
                 bonus_max = max(
                     0.0,
-                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_MAX", pocket, 10.0),
+                    _pocket_env_float(
+                        "ORDER_ENTRY_QUALITY_STRAT_BONUS_MAX", pocket, 10.0
+                    ),
                 )
 
                 pf_gap = 0.0
@@ -5117,7 +5356,9 @@ def _entry_quality_gate(
         spread_ref_default = max(0.25, _ORDER_SPREAD_BLOCK_PIPS * 0.55)
         spread_ref = max(
             0.05,
-            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_REF_PIPS", pocket, spread_ref_default),
+            _pocket_env_float(
+                "ORDER_ENTRY_QUALITY_SPREAD_REF_PIPS", pocket, spread_ref_default
+            ),
         )
         spread_gain = max(
             0.0,
@@ -5150,28 +5391,40 @@ def _entry_quality_gate(
         pocket,
         _ENTRY_QUALITY_SPREAD_TP_MAX_RATIO.get(pocket_key, 0.24),
     )
-    if spread_sl_ratio is not None and spread_sl_ratio > max_spread_sl_ratio and conf < bypass_conf:
-        return False, "entry_quality_spread_sl", {
-            "enabled": 1.0,
-            "confidence": conf,
-            "required_conf": required,
-            "spread_pips": spread_pips,
-            "sl_pips": sl_pips,
-            "spread_sl_ratio": spread_sl_ratio,
-            "max_spread_sl_ratio": max_spread_sl_ratio,
-            "bypass_conf": bypass_conf,
-            "atr_pips": atr_pips,
-            "vol_5m": vol_5m,
-            "strategy_tag": str(strategy_tag or ""),
-            "strategy_sample": strategy_sample,
-            "strategy_pf": strategy_pf,
-            "strategy_win_rate": strategy_win_rate,
-            "strategy_avg_pips": strategy_avg_pips,
-            "strategy_payoff": strategy_payoff,
-            "strategy_penalty": strategy_penalty,
-            "tf": str(snap.get("tf") or ""),
-        }
-    if spread_tp_ratio is not None and spread_tp_ratio > max_spread_tp_ratio and conf < bypass_conf:
+    if (
+        spread_sl_ratio is not None
+        and spread_sl_ratio > max_spread_sl_ratio
+        and conf < bypass_conf
+    ):
+        return (
+            False,
+            "entry_quality_spread_sl",
+            {
+                "enabled": 1.0,
+                "confidence": conf,
+                "required_conf": required,
+                "spread_pips": spread_pips,
+                "sl_pips": sl_pips,
+                "spread_sl_ratio": spread_sl_ratio,
+                "max_spread_sl_ratio": max_spread_sl_ratio,
+                "bypass_conf": bypass_conf,
+                "atr_pips": atr_pips,
+                "vol_5m": vol_5m,
+                "strategy_tag": str(strategy_tag or ""),
+                "strategy_sample": strategy_sample,
+                "strategy_pf": strategy_pf,
+                "strategy_win_rate": strategy_win_rate,
+                "strategy_avg_pips": strategy_avg_pips,
+                "strategy_payoff": strategy_payoff,
+                "strategy_penalty": strategy_penalty,
+                "tf": str(snap.get("tf") or ""),
+            },
+        )
+    if (
+        spread_tp_ratio is not None
+        and spread_tp_ratio > max_spread_tp_ratio
+        and conf < bypass_conf
+    ):
         spread_tp_soften_target_ratio = _pocket_env_float(
             "ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN_TARGET_RATIO",
             pocket,
@@ -5196,7 +5449,37 @@ def _entry_quality_gate(
             and math.isfinite(soften_scale)
             and soften_scale >= spread_tp_soften_min_scale
         ):
-            return False, "entry_quality_spread_tp_softened", {
+            return (
+                False,
+                "entry_quality_spread_tp_softened",
+                {
+                    "enabled": 1.0,
+                    "confidence": conf,
+                    "required_conf": required,
+                    "spread_pips": spread_pips,
+                    "tp_pips": tp_pips,
+                    "spread_tp_ratio": spread_tp_ratio,
+                    "max_spread_tp_ratio": max_spread_tp_ratio,
+                    "spread_tp_soften_target_ratio": spread_tp_soften_target_ratio,
+                    "spread_tp_soften_min_scale": spread_tp_soften_min_scale,
+                    "recommended_units_scale": soften_scale,
+                    "bypass_conf": bypass_conf,
+                    "atr_pips": atr_pips,
+                    "vol_5m": vol_5m,
+                    "strategy_tag": str(strategy_tag or ""),
+                    "strategy_sample": strategy_sample,
+                    "strategy_pf": strategy_pf,
+                    "strategy_win_rate": strategy_win_rate,
+                    "strategy_avg_pips": strategy_avg_pips,
+                    "strategy_payoff": strategy_payoff,
+                    "strategy_penalty": strategy_penalty,
+                    "tf": str(snap.get("tf") or ""),
+                },
+            )
+        return (
+            False,
+            "entry_quality_spread_tp",
+            {
                 "enabled": 1.0,
                 "confidence": conf,
                 "required_conf": required,
@@ -5204,9 +5487,6 @@ def _entry_quality_gate(
                 "tp_pips": tp_pips,
                 "spread_tp_ratio": spread_tp_ratio,
                 "max_spread_tp_ratio": max_spread_tp_ratio,
-                "spread_tp_soften_target_ratio": spread_tp_soften_target_ratio,
-                "spread_tp_soften_min_scale": spread_tp_soften_min_scale,
-                "recommended_units_scale": soften_scale,
                 "bypass_conf": bypass_conf,
                 "atr_pips": atr_pips,
                 "vol_5m": vol_5m,
@@ -5218,32 +5498,49 @@ def _entry_quality_gate(
                 "strategy_payoff": strategy_payoff,
                 "strategy_penalty": strategy_penalty,
                 "tf": str(snap.get("tf") or ""),
-            }
-        return False, "entry_quality_spread_tp", {
-            "enabled": 1.0,
-            "confidence": conf,
-            "required_conf": required,
-            "spread_pips": spread_pips,
-            "tp_pips": tp_pips,
-            "spread_tp_ratio": spread_tp_ratio,
-            "max_spread_tp_ratio": max_spread_tp_ratio,
-            "bypass_conf": bypass_conf,
-            "atr_pips": atr_pips,
-            "vol_5m": vol_5m,
-            "strategy_tag": str(strategy_tag or ""),
-            "strategy_sample": strategy_sample,
-            "strategy_pf": strategy_pf,
-            "strategy_win_rate": strategy_win_rate,
-            "strategy_avg_pips": strategy_avg_pips,
-            "strategy_payoff": strategy_payoff,
-            "strategy_penalty": strategy_penalty,
-            "tf": str(snap.get("tf") or ""),
-        }
+            },
+        )
 
     required = max(0.0, min(max_conf, required))
     if conf + 1e-6 < required:
-        reason = "entry_quality_strategy_confidence" if strategy_penalty > 0.0 else "entry_quality_confidence"
-        return False, reason, {
+        reason = (
+            "entry_quality_strategy_confidence"
+            if strategy_penalty > 0.0
+            else "entry_quality_confidence"
+        )
+        return (
+            False,
+            reason,
+            {
+                "enabled": 1.0,
+                "confidence": conf,
+                "required_conf": required,
+                "spread_pips": spread_pips,
+                "spread_bonus": spread_bonus,
+                "atr_pips": atr_pips,
+                "vol_5m": vol_5m,
+                "sl_pips": sl_pips,
+                "tp_pips": tp_pips,
+                "spread_sl_ratio": spread_sl_ratio,
+                "spread_tp_ratio": spread_tp_ratio,
+                "max_spread_sl_ratio": max_spread_sl_ratio,
+                "max_spread_tp_ratio": max_spread_tp_ratio,
+                "bypass_conf": bypass_conf,
+                "strategy_tag": str(strategy_tag or ""),
+                "strategy_sample": strategy_sample,
+                "strategy_pf": strategy_pf,
+                "strategy_win_rate": strategy_win_rate,
+                "strategy_avg_pips": strategy_avg_pips,
+                "strategy_payoff": strategy_payoff,
+                "strategy_penalty": strategy_penalty,
+                "tf": str(snap.get("tf") or ""),
+            },
+        )
+
+    return (
+        True,
+        None,
+        {
             "enabled": 1.0,
             "confidence": conf,
             "required_conf": required,
@@ -5266,32 +5563,8 @@ def _entry_quality_gate(
             "strategy_payoff": strategy_payoff,
             "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
-        }
-
-    return True, None, {
-        "enabled": 1.0,
-        "confidence": conf,
-        "required_conf": required,
-        "spread_pips": spread_pips,
-        "spread_bonus": spread_bonus,
-        "atr_pips": atr_pips,
-        "vol_5m": vol_5m,
-        "sl_pips": sl_pips,
-        "tp_pips": tp_pips,
-        "spread_sl_ratio": spread_sl_ratio,
-        "spread_tp_ratio": spread_tp_ratio,
-        "max_spread_sl_ratio": max_spread_sl_ratio,
-        "max_spread_tp_ratio": max_spread_tp_ratio,
-        "bypass_conf": bypass_conf,
-        "strategy_tag": str(strategy_tag or ""),
-        "strategy_sample": strategy_sample,
-        "strategy_pf": strategy_pf,
-        "strategy_win_rate": strategy_win_rate,
-        "strategy_avg_pips": strategy_avg_pips,
-        "strategy_payoff": strategy_payoff,
-        "strategy_penalty": strategy_penalty,
-        "tf": str(snap.get("tf") or ""),
-    }
+        },
+    )
 
 
 def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
@@ -5388,7 +5661,9 @@ _ENTRY_THESIS_FLAG_KEYS = (
     "profile",
 )
 
-_ORDER_THESIS_REGIME_ENABLED = os.getenv("ORDER_THESIS_REGIME_ENABLED", "1").strip().lower() not in {
+_ORDER_THESIS_REGIME_ENABLED = os.getenv(
+    "ORDER_THESIS_REGIME_ENABLED", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -5417,7 +5692,9 @@ def _augment_entry_thesis_flags(entry_thesis: Optional[dict]) -> Optional[dict]:
     return merged
 
 
-def _augment_entry_thesis_regime(entry_thesis: Optional[dict], pocket: str) -> Optional[dict]:
+def _augment_entry_thesis_regime(
+    entry_thesis: Optional[dict], pocket: str
+) -> Optional[dict]:
     if not _ORDER_THESIS_REGIME_ENABLED or not isinstance(entry_thesis, dict):
         return entry_thesis
     reg = entry_thesis.get("regime")
@@ -5434,7 +5711,9 @@ def _augment_entry_thesis_regime(entry_thesis: Optional[dict], pocket: str) -> O
     macro_live = macro
     micro_live = micro
     if not macro_live:
-        macro_live = current_regime("H4", event_mode=False) or current_regime("H1", event_mode=False)
+        macro_live = current_regime("H4", event_mode=False) or current_regime(
+            "H1", event_mode=False
+        )
     if not micro_live:
         micro_live = current_regime("M1", event_mode=False)
     if not macro_live:
@@ -5532,7 +5811,9 @@ def _apply_directional_cap(
     except Exception:
         pocket_ratio = 1.0
     # cap derived from notional limit (NAV * leverage) and pocket share
-    notional_cap_units = (snap.nav / price) * MAX_LEVERAGE * _DIR_CAP_RATIO * pocket_ratio
+    notional_cap_units = (
+        (snap.nav / price) * MAX_LEVERAGE * _DIR_CAP_RATIO * pocket_ratio
+    )
     if notional_cap_units <= 0:
         return units
     adverse_scale = 1.0
@@ -5554,7 +5835,10 @@ def _apply_directional_cap(
                         "pocket": pocket,
                         "side": side_label,
                         "adverse_pips": round(adverse_pips, 1),
-                        "lookback": int(adverse_details.get("lookback_min") or _DIR_CAP_ADVERSE_LOOKBACK_MIN),
+                        "lookback": int(
+                            adverse_details.get("lookback_min")
+                            or _DIR_CAP_ADVERSE_LOOKBACK_MIN
+                        ),
                     },
                 )
             except Exception:
@@ -5632,12 +5916,17 @@ def _quote_is_usable(quote: Optional[dict]) -> bool:
         spread_pips = (ask - bid) / 0.01
     if spread_pips <= 0.0:
         return False
-    if _ORDER_QUOTE_MAX_SPREAD_PIPS > 0.0 and spread_pips > _ORDER_QUOTE_MAX_SPREAD_PIPS:
+    if (
+        _ORDER_QUOTE_MAX_SPREAD_PIPS > 0.0
+        and spread_pips > _ORDER_QUOTE_MAX_SPREAD_PIPS
+    ):
         return False
     return True
 
 
-def _fetch_quote_with_retry(instrument: str, *, attempts: Optional[int] = None) -> dict[str, float] | None:
+def _fetch_quote_with_retry(
+    instrument: str, *, attempts: Optional[int] = None
+) -> dict[str, float] | None:
     max_attempts = max(1, int(attempts or _ORDER_QUOTE_FETCH_ATTEMPTS))
     delay_sec = _ORDER_QUOTE_FETCH_SLEEP_SEC
     for idx in range(max_attempts):
@@ -5668,7 +5957,11 @@ def _fetch_quote(instrument: str) -> dict[str, float] | None:
                 ask = _as_float(tick.get("ask"))
                 mid = _as_float(tick.get("mid"))
                 if bid is not None and ask is not None:
-                    if epoch is not None and max_age > 0 and abs(now - float(epoch)) > max_age:
+                    if (
+                        epoch is not None
+                        and max_age > 0
+                        and abs(now - float(epoch)) > max_age
+                    ):
                         # Stale tick (stream stalled) – fall back to REST snapshot.
                         pass
                     else:
@@ -5689,7 +5982,11 @@ def _fetch_quote(instrument: str) -> dict[str, float] | None:
             # tick_window is best-effort; ignore and fall back to REST.
             pass
     try:
-        base = "https://api-fxpractice.oanda.com" if PRACTICE_FLAG else "https://api-fxtrade.oanda.com"
+        base = (
+            "https://api-fxpractice.oanda.com"
+            if PRACTICE_FLAG
+            else "https://api-fxtrade.oanda.com"
+        )
         url = f"{base}/v3/accounts/{ACCOUNT}/pricing"
         headers = {"Authorization": f"Bearer {TOKEN}"}
         resp = requests.get(
@@ -5725,6 +6022,7 @@ def _safe_json(payload: Optional[dict]) -> str:
     Serialize payload safely; never raises. None -> "{}".
     Coerces non-serializable objects to string to avoid dropping the payload.
     """
+
     def _coerce(obj: object):
         if obj is None or isinstance(obj, (bool, int, str)):
             return obj
@@ -5860,9 +6158,7 @@ def _log_order(
     )
 
     retry_attempts = (
-        _ORDER_DB_LOG_FAST_RETRY_ATTEMPTS
-        if fast_fail
-        else _ORDER_DB_LOG_RETRY_ATTEMPTS
+        _ORDER_DB_LOG_FAST_RETRY_ATTEMPTS if fast_fail else _ORDER_DB_LOG_RETRY_ATTEMPTS
     )
     retry_sleep_sec = (
         _ORDER_DB_LOG_FAST_RETRY_SLEEP_SEC
@@ -5870,9 +6166,7 @@ def _log_order(
         else _ORDER_DB_LOG_RETRY_SLEEP_SEC
     )
     retry_backoff = (
-        _ORDER_DB_LOG_FAST_RETRY_BACKOFF
-        if fast_fail
-        else _ORDER_DB_LOG_RETRY_BACKOFF
+        _ORDER_DB_LOG_FAST_RETRY_BACKOFF if fast_fail else _ORDER_DB_LOG_RETRY_BACKOFF
     )
     retry_max_sleep_sec = (
         _ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC
@@ -5903,10 +6197,7 @@ def _log_order(
                     _maybe_checkpoint_orders_db(con)
             return
         except sqlite3.OperationalError as exc:
-            if (
-                _is_sqlite_locked_error(exc)
-                and attempt_idx + 1 < retry_attempts
-            ):
+            if _is_sqlite_locked_error(exc) and attempt_idx + 1 < retry_attempts:
                 _rollback_orders_con(con)
                 _reset_orders_con()
                 delay = min(sleep_sec, retry_max_sleep_sec)
@@ -6011,7 +6302,9 @@ def get_last_order_status_by_client_id(
         return _cached_order_status(client_order_id)
 
 
-def _latest_filled_trade_id_by_client_id(client_order_id: Optional[str]) -> Optional[str]:
+def _latest_filled_trade_id_by_client_id(
+    client_order_id: Optional[str],
+) -> Optional[str]:
     """
     Resolve a previously-filled trade id for a client order id.
 
@@ -6321,14 +6614,22 @@ def _fallback_protections(
         distance = abs(float(baseline_price) - float(sl_price))
         if distance + 1e-9 < gap_fallback:
             sl_price = round(
-                float(baseline_price) - gap_fallback if is_buy else float(baseline_price) + gap_fallback,
+                (
+                    float(baseline_price) - gap_fallback
+                    if is_buy
+                    else float(baseline_price) + gap_fallback
+                ),
                 3,
             )
     if has_tp and needs_tp and tp_price is not None:
         distance = abs(float(tp_price) - float(baseline_price))
         if distance + 1e-9 < gap_fallback:
             tp_price = round(
-                float(baseline_price) + gap_fallback if is_buy else float(baseline_price) - gap_fallback,
+                (
+                    float(baseline_price) + gap_fallback
+                    if is_buy
+                    else float(baseline_price) - gap_fallback
+                ),
                 3,
             )
     return sl_price, tp_price
@@ -6360,11 +6661,19 @@ def _realign_protections_to_fill(
         basis_price = None
 
     sl_gap_pips = thesis_sl_pips
-    if (sl_gap_pips is None or sl_gap_pips <= 0.0) and basis_price is not None and sl_price is not None:
+    if (
+        (sl_gap_pips is None or sl_gap_pips <= 0.0)
+        and basis_price is not None
+        and sl_price is not None
+    ):
         sl_gap_pips = abs(float(basis_price) - float(sl_price)) / 0.01
 
     tp_gap_pips = thesis_tp_pips
-    if (tp_gap_pips is None or tp_gap_pips <= 0.0) and basis_price is not None and tp_price is not None:
+    if (
+        (tp_gap_pips is None or tp_gap_pips <= 0.0)
+        and basis_price is not None
+        and tp_price is not None
+    ):
         tp_gap_pips = abs(float(tp_price) - float(basis_price)) / 0.01
 
     desired_sl = sl_price
@@ -6425,7 +6734,9 @@ def _current_trade_units(trade_id: str) -> Optional[int]:
             return None
         return abs(int(float(units_raw)))
     except Exception as exc:  # noqa: BLE001
-        logging.warning("[ORDER] Failed to fetch trade units trade=%s err=%s", trade_id, exc)
+        logging.warning(
+            "[ORDER] Failed to fetch trade units trade=%s err=%s", trade_id, exc
+        )
         return None
 
 
@@ -6439,7 +6750,9 @@ def _current_trade_unrealized_pl(trade_id: str) -> Optional[float]:
             return None
         return float(pl)
     except Exception as exc:  # noqa: BLE001
-        logging.warning("[ORDER] Failed to fetch unrealized PL trade=%s err=%s", trade_id, exc)
+        logging.warning(
+            "[ORDER] Failed to fetch unrealized PL trade=%s err=%s", trade_id, exc
+        )
         return None
 
 
@@ -6460,7 +6773,11 @@ def _should_allow_negative_close(client_order_id: Optional[str]) -> bool:
     unrealized = snapshot.unrealized_pl
     allow = False
     reasons = {}
-    if hb is not None and _EXIT_EMERGENCY_HEALTH_BUFFER > 0 and hb <= _EXIT_EMERGENCY_HEALTH_BUFFER:
+    if (
+        hb is not None
+        and _EXIT_EMERGENCY_HEALTH_BUFFER > 0
+        and hb <= _EXIT_EMERGENCY_HEALTH_BUFFER
+    ):
         allow = True
         reasons["health_buffer"] = hb
     if (
@@ -6641,7 +6958,9 @@ def _load_exit_trade_context(
             (trade_id,),
         ).fetchone()
     except Exception as exc:  # noqa: BLE001
-        logging.debug("[ORDER] exit context lookup failed trade=%s err=%s", trade_id, exc)
+        logging.debug(
+            "[ORDER] exit context lookup failed trade=%s err=%s", trade_id, exc
+        )
         return None
     if not row:
         return None
@@ -6664,7 +6983,8 @@ def _load_exit_trade_context(
             if att and att["request_json"]:
                 payload = json.loads(att["request_json"]) or {}
                 entry_thesis = _coerce_entry_thesis(
-                    payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+                    payload.get("entry_thesis")
+                    or (payload.get("meta") or {}).get("entry_thesis")
                 )
                 if entry_thesis:
                     strategy_tag = _strategy_tag_from_thesis(entry_thesis)
@@ -6714,8 +7034,12 @@ def _retry_close_with_actual_units(
     try:
         req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
         api.request(req)
-        response = req.response if isinstance(getattr(req, "response", None), dict) else {}
-        reject = response.get("orderRejectTransaction") or response.get("orderCancelTransaction")
+        response = (
+            req.response if isinstance(getattr(req, "response", None), dict) else {}
+        )
+        reject = response.get("orderRejectTransaction") or response.get(
+            "orderCancelTransaction"
+        )
         if reject:
             reason = reject.get("rejectReason") or reject.get("reason")
             reason_key = str(reason or "").upper() or "rejected"
@@ -6806,8 +7130,13 @@ def _retry_close_with_actual_units(
         )
         return False
 
+
 def _estimate_entry_price(
-    *, units: int, sl_price: Optional[float], tp_price: Optional[float], meta: Optional[dict]
+    *,
+    units: int,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    meta: Optional[dict],
 ) -> Optional[float]:
     """Estimate entry price for margin preflight.
 
@@ -6853,7 +7182,10 @@ def _stale_margin_snapshot_allowed(state: Any) -> tuple[bool, str]:
     if free_ratio is None or float(free_ratio) < _ORDER_MARGIN_STALE_MIN_FREE_RATIO:
         return False, f"free_ratio:{free_ratio}"
     health_buffer = getattr(snapshot, "health_buffer", None)
-    if health_buffer is None or float(health_buffer) < _ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER:
+    if (
+        health_buffer is None
+        or float(health_buffer) < _ORDER_MARGIN_STALE_MIN_HEALTH_BUFFER
+    ):
         return False, f"health_buffer:{health_buffer}"
     return True, error_kind
 
@@ -7075,6 +7407,8 @@ def _is_passive_price(
     if current_bid is None:
         return False
     return price >= (current_bid + min_buffer)
+
+
 _PARTIAL_STAGE: dict[str, int] = {}
 
 _PARTIAL_THRESHOLDS = {
@@ -7290,7 +7624,9 @@ def _trade_matches_rollover_sl_strip(
     return opened_at.astimezone(_JST) < cutoff_jst
 
 
-def _strip_rollover_stop_losses(open_positions: dict, ctx: Optional[dict[str, Any]]) -> int:
+def _strip_rollover_stop_losses(
+    open_positions: dict, ctx: Optional[dict[str, Any]]
+) -> int:
     if not isinstance(open_positions, dict):
         return 0
     if not isinstance(ctx, dict) or not bool(ctx.get("active")):
@@ -7405,7 +7741,10 @@ def _trade_min_hold_seconds(trade: dict, pocket: str) -> float:
     hold = thesis.get("min_hold_sec") or thesis.get("min_hold_seconds")
     if hold is None:
         try:
-            hold = float(thesis.get("min_hold_min") or thesis.get("min_hold_minutes")) * 60.0
+            hold = (
+                float(thesis.get("min_hold_min") or thesis.get("min_hold_minutes"))
+                * 60.0
+            )
         except Exception:
             hold = None
     try:
@@ -7577,8 +7916,13 @@ async def close_trade(
 
     # close 側も client_order_id を必須化。欠損かつ agent 管理外の建玉はスキップして無駄打ちを防ぐ。
     if not client_order_id:
-        log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
-        logging.info("[ORDER] skip close trade=%s missing client_id (likely manual/external)", trade_id)
+        log_metric(
+            "close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)}
+        )
+        logging.info(
+            "[ORDER] skip close trade=%s missing client_id (likely manual/external)",
+            trade_id,
+        )
         return False
     ctx = _load_exit_trade_context(trade_id, client_order_id)
     resolved_pocket = str(pocket or "").strip().lower() or None
@@ -7760,13 +8104,18 @@ async def close_trade(
             mid = quote.get("mid")
     if bid is not None and ask is not None and mid is None:
         mid = (bid + ask) / 2.0
-    if (bid is None or ask is None) and (_EXIT_NO_NEGATIVE_CLOSE or min_profit_pips is not None):
+    if (bid is None or ask is None) and (
+        _EXIT_NO_NEGATIVE_CLOSE or min_profit_pips is not None
+    ):
         emergency_allow = _should_allow_negative_close(client_order_id)
         if not emergency_allow and not _reason_force_allow(exit_reason):
             log_metric(
                 "close_blocked_missing_quote",
                 1.0,
-                tags={"trade_id": str(trade_id), "instrument": str(instrument or "unknown")},
+                tags={
+                    "trade_id": str(trade_id),
+                    "instrument": str(instrument or "unknown"),
+                },
             )
             _console_order_log(
                 "CLOSE_REJECT",
@@ -7858,11 +8207,16 @@ async def close_trade(
             executed_price=None,
             request_payload=_with_exit_reason(payload),
         )
+
     if min_profit_pips is not None:
         if est_pips is not None and est_pips >= 0 and est_pips < min_profit_pips:
             emergency_allow = _should_allow_negative_close(client_order_id)
             bypass_by_end_reversal = bool(end_reversal.get("triggered"))
-            if not emergency_allow and not _reason_force_allow(exit_reason) and not bypass_by_end_reversal:
+            if (
+                not emergency_allow
+                and not _reason_force_allow(exit_reason)
+                and not bypass_by_end_reversal
+            ):
                 log_metric(
                     "close_blocked_profit_buffer",
                     float(est_pips),
@@ -7900,12 +8254,19 @@ async def close_trade(
                     request_payload=_with_exit_reason(
                         {
                             "trade_id": trade_id,
-                            "data": {"min_profit_pips": min_profit_pips, "est_pips": est_pips},
+                            "data": {
+                                "min_profit_pips": min_profit_pips,
+                                "est_pips": est_pips,
+                            },
                         }
                     ),
                 )
                 return False
-            if bypass_by_end_reversal and not emergency_allow and not _reason_force_allow(exit_reason):
+            if (
+                bypass_by_end_reversal
+                and not emergency_allow
+                and not _reason_force_allow(exit_reason)
+            ):
                 _log_end_reversal_bypass(
                     "profit_buffer",
                     {
@@ -7931,7 +8292,11 @@ async def close_trade(
                     if est_pips < min_ratio_pips:
                         emergency_allow = _should_allow_negative_close(client_order_id)
                         bypass_by_end_reversal = bool(end_reversal.get("triggered"))
-                        if not emergency_allow and not _reason_force_allow(exit_reason) and not bypass_by_end_reversal:
+                        if (
+                            not emergency_allow
+                            and not _reason_force_allow(exit_reason)
+                            and not bypass_by_end_reversal
+                        ):
                             log_metric(
                                 "close_blocked_profit_ratio",
                                 float(est_pips),
@@ -7980,7 +8345,11 @@ async def close_trade(
                                 ),
                             )
                             return False
-                        if bypass_by_end_reversal and not emergency_allow and not _reason_force_allow(exit_reason):
+                        if (
+                            bypass_by_end_reversal
+                            and not emergency_allow
+                            and not _reason_force_allow(exit_reason)
+                        ):
                             _log_end_reversal_bypass(
                                 "profit_ratio",
                                 {
@@ -7995,7 +8364,9 @@ async def close_trade(
                                     },
                                 },
                             )
-    hold_match, hold_min_pips, hold_strict = _hold_until_profit_match(trade_id, client_order_id)
+    hold_match, hold_min_pips, hold_strict = _hold_until_profit_match(
+        trade_id, client_order_id
+    )
     if hold_match:
         profit_ok = False
         if est_pips is not None:
@@ -8236,11 +8607,17 @@ async def close_trade(
             attempt=1,
             ticket_id=str(trade_id),
             executed_price=None,
-            request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+            request_payload=_with_exit_reason(
+                {"trade_id": trade_id, "data": data or {}}
+            ),
         )
         api.request(req)
-        response = req.response if isinstance(getattr(req, "response", None), dict) else {}
-        reject = response.get("orderRejectTransaction") or response.get("orderCancelTransaction")
+        response = (
+            req.response if isinstance(getattr(req, "response", None), dict) else {}
+        )
+        reject = response.get("orderRejectTransaction") or response.get(
+            "orderCancelTransaction"
+        )
         if reject:
             reason = reject.get("rejectReason") or reject.get("reason")
             reason_key = str(reason or "").upper() or "rejected"
@@ -8260,7 +8637,9 @@ async def close_trade(
                 error_code=err_code,
                 error_message=reject.get("errorMessage") or str(reason_key),
                 response_payload=response,
-                request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+                request_payload=_with_exit_reason(
+                    {"trade_id": trade_id, "data": data or {}}
+                ),
             )
             _console_order_log(
                 "CLOSE_FAIL",
@@ -8294,7 +8673,9 @@ async def close_trade(
                 error_code="missing_fill",
                 error_message="missing orderFillTransaction in TradeClose response",
                 response_payload=response,
-                request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+                request_payload=_with_exit_reason(
+                    {"trade_id": trade_id, "data": data or {}}
+                ),
             )
             _console_order_log(
                 "CLOSE_FAIL",
@@ -8377,7 +8758,9 @@ async def close_trade(
             error_code=log_error_code,
             error_message=error_payload.get("errorMessage") or str(exc),
             response_payload=error_payload if error_payload else None,
-            request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+            request_payload=_with_exit_reason(
+                {"trade_id": trade_id, "data": data or {}}
+            ),
         )
         _console_order_log(
             "CLOSE_FAIL",
@@ -8466,14 +8849,16 @@ def update_dynamic_protections(
         logging.warning("[PROTECT] rollover SL strip failed: %s", exc)
     if not TRAILING_SL_ALLOWED:
         return
-    _apply_dynamic_protections_v2(open_positions, fac_m1, fac_h4, rollover_ctx=rollover_ctx)
+    _apply_dynamic_protections_v2(
+        open_positions, fac_m1, fac_h4, rollover_ctx=rollover_ctx
+    )
     return
     atr_m1 = fac_m1.get("atr_pips")
     if atr_m1 is None:
         atr_m1 = (fac_m1.get("atr") or 0.0) * 100
     atr_h4 = fac_h4.get("atr_pips")
     if atr_h4 is None:
-        atr_h4 = (fac_h4.get("atr") or atr_m1 or 0.0)
+        atr_h4 = fac_h4.get("atr") or atr_m1 or 0.0
     current_price = fac_m1.get("close")
     defaults = {
         "macro": (max(25.0, (atr_h4 or atr_m1 or 0.0) * 1.1), 2.2),
@@ -8522,7 +8907,9 @@ def update_dynamic_protections(
                     continue
             entry = float(price)
             sl_pips = max(1.0, base_sl)
-            tp_pips = max(sl_pips * tp_ratio, sl_pips + 5.0) if pocket != "scalp" else None
+            tp_pips = (
+                max(sl_pips * tp_ratio, sl_pips + 5.0) if pocket != "scalp" else None
+            )
             opened_at = _parse_trade_open_time(tr.get("open_time"))
             hold_seconds = 0.0
             if opened_at:
@@ -8532,12 +8919,11 @@ def update_dynamic_protections(
                 gain_pips = (current_price or entry) - entry
                 gain_pips *= 100
                 sl_price = round(entry - sl_pips * pip, 3)
-                tp_price = round(entry + tp_pips * pip, 3) if tp_pips is not None else None
+                tp_price = (
+                    round(entry + tp_pips * pip, 3) if tp_pips is not None else None
+                )
                 allow_lock = True
-                if (
-                    pocket == "macro"
-                    and hold_seconds < MACRO_BE_GRACE_SECONDS
-                ):
+                if pocket == "macro" and hold_seconds < MACRO_BE_GRACE_SECONDS:
                     momentum = (fac_m1.get("close") or 0.0) - (
                         fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0
                     )
@@ -8556,12 +8942,11 @@ def update_dynamic_protections(
                 gain_pips = entry - (current_price or entry)
                 gain_pips *= 100
                 sl_price = round(entry + sl_pips * pip, 3)
-                tp_price = round(entry - tp_pips * pip, 3) if tp_pips is not None else None
+                tp_price = (
+                    round(entry - tp_pips * pip, 3) if tp_pips is not None else None
+                )
                 allow_lock = True
-                if (
-                    pocket == "macro"
-                    and hold_seconds < MACRO_BE_GRACE_SECONDS
-                ):
+                if pocket == "macro" and hold_seconds < MACRO_BE_GRACE_SECONDS:
                     momentum = (fac_m1.get("close") or 0.0) - (
                         fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0
                     )
@@ -8606,6 +8991,7 @@ def _apply_dynamic_protections_v2(
     now_ts = time.time()
     current_price = fac_m1.get("close")
     pip = 0.01
+
     # 市況（ATR/短期ボラ）を拾ってトリガーを動的調整
     def _coerce(value: Any, default: float) -> float:
         try:
@@ -8617,8 +9003,12 @@ def _apply_dynamic_protections_v2(
     vol_5m = _coerce(fac_m1.get("vol_5m"), 1.0)
 
     strategy_cfg = _load_strategy_protection_config()
-    defaults_cfg = strategy_cfg.get("defaults", {}) if isinstance(strategy_cfg, dict) else {}
-    apply_when_soft_default = _coerce_bool(defaults_cfg.get("apply_when_soft_tp"), False)
+    defaults_cfg = (
+        strategy_cfg.get("defaults", {}) if isinstance(strategy_cfg, dict) else {}
+    )
+    apply_when_soft_default = _coerce_bool(
+        defaults_cfg.get("apply_when_soft_tp"), False
+    )
     tp_move_min_gap_default = _coerce(
         defaults_cfg.get("tp_move_min_gap_pips"),
         _env_float("TP_MOVE_MIN_GAP_PIPS", 0.3),
@@ -8788,15 +9178,25 @@ def _apply_dynamic_protections_v2(
         be_profile = plan.get("be_profile", {}) if isinstance(plan, dict) else {}
         default_cfg = defaults.get(pocket, defaults["macro"])
         trigger = _coerce(be_profile.get("trigger_pips"), default_cfg["trigger"])
-        lock_ratio = max(0.0, min(1.0, _coerce(be_profile.get("lock_ratio"), default_cfg["lock_ratio"])))
-        min_lock = max(0.0, _coerce(be_profile.get("min_lock_pips"), default_cfg["min_lock"]))
-        cooldown_sec = max(0.0, _coerce(be_profile.get("cooldown_sec"), default_cfg["cooldown"]))
+        lock_ratio = max(
+            0.0,
+            min(1.0, _coerce(be_profile.get("lock_ratio"), default_cfg["lock_ratio"])),
+        )
+        min_lock = max(
+            0.0, _coerce(be_profile.get("min_lock_pips"), default_cfg["min_lock"])
+        )
+        cooldown_sec = max(
+            0.0, _coerce(be_profile.get("cooldown_sec"), default_cfg["cooldown"])
+        )
 
         # ATR/ボラに応じて動的スケール
         atr_val = atr_m1
         if pocket == "macro":
             # マクロは大きめのATRを見て少しだけ拡げる
-            trigger = max(trigger, atr_val * (1.2 if vol_5m < 1.0 else 1.35 if vol_5m < 1.8 else 1.5))
+            trigger = max(
+                trigger,
+                atr_val * (1.2 if vol_5m < 1.0 else 1.35 if vol_5m < 1.8 else 1.5),
+            )
             min_lock = max(min_lock, atr_val * 0.3)
             lock_ratio = max(lock_ratio, 0.50 if vol_5m >= 1.5 else 0.45)
         elif pocket == "micro":
@@ -8833,6 +9233,7 @@ def _apply_dynamic_protections_v2(
         pocket_start_delay = base_start_delay.get(pocket, 45.0)
         pocket_max_delay = max_start_delay.get(pocket, 0.0)
         pocket_tp_cfg = tp_move_cfg.get(pocket, tp_move_cfg["macro"])
+
         # 経過時間に応じてロック強度を少し引き上げる
         def _age_scaled_lock(age_sec: float, base_ratio: float) -> float:
             if age_sec <= 0:
@@ -8859,7 +9260,9 @@ def _apply_dynamic_protections_v2(
             override = _strategy_override(strategy_cfg, strategy_tag)
             if _coerce_bool(override.get("enabled"), True) is False:
                 continue
-            apply_when_soft = _coerce_bool(override.get("apply_when_soft_tp"), apply_when_soft_default)
+            apply_when_soft = _coerce_bool(
+                override.get("apply_when_soft_tp"), apply_when_soft_default
+            )
             if _soft_tp_mode(thesis) and not apply_when_soft:
                 continue
 
@@ -8878,13 +9281,17 @@ def _apply_dynamic_protections_v2(
                     trigger = _coerce(be_override.get("trigger_pips"), trigger)
                     lock_ratio = _coerce(be_override.get("lock_ratio"), lock_ratio)
                     min_lock = _coerce(be_override.get("min_lock_pips"), min_lock)
-                    cooldown_sec = _coerce(be_override.get("cooldown_sec"), cooldown_sec)
+                    cooldown_sec = _coerce(
+                        be_override.get("cooldown_sec"), cooldown_sec
+                    )
                 start_delay = _coerce(override.get("start_delay_sec"), start_delay)
                 max_delay = _coerce(override.get("max_delay_sec"), max_delay)
                 tp_override = override.get("tp_move")
                 if isinstance(tp_override, dict):
                     if tp_override.get("enabled") is not None:
-                        tp_move_enabled_local = _coerce_bool(tp_override.get("enabled"), tp_move_enabled_local)
+                        tp_move_enabled_local = _coerce_bool(
+                            tp_override.get("enabled"), tp_move_enabled_local
+                        )
                     tp_trigger = _coerce(tp_override.get("trigger_pips"), tp_trigger)
                     tp_buffer = _coerce(tp_override.get("buffer_pips"), tp_buffer)
 
@@ -8908,7 +9315,9 @@ def _apply_dynamic_protections_v2(
             # micro/scalp: ATR/ボラに応じた開始遅延＋経過時間でロック強化
             opened_at = _parse_trade_open_time(tr.get("open_time"))
             if pocket in {"micro", "scalp", "scalp_fast"} and opened_at:
-                age_sec = max(0.0, (datetime.now(timezone.utc) - opened_at).total_seconds())
+                age_sec = max(
+                    0.0, (datetime.now(timezone.utc) - opened_at).total_seconds()
+                )
                 if pocket == "micro":
                     delay_mult = 10.0
                 elif pocket == "scalp_fast":
@@ -8952,15 +9361,23 @@ def _apply_dynamic_protections_v2(
             tp_price = trade_tp
             if tp_move_enabled_local and current_price is not None:
                 if gain_pips >= tp_trigger:
-                    locked = (side == "long" and desired_sl > entry) or (side == "short" and desired_sl < entry)
+                    locked = (side == "long" and desired_sl > entry) or (
+                        side == "short" and desired_sl < entry
+                    )
                     if locked:
                         min_gap = max(0.3, tp_move_min_gap_default)
                         if side == "long":
-                            target_tp = max(entry + min_gap * pip, float(current_price) + tp_buffer * pip)
+                            target_tp = max(
+                                entry + min_gap * pip,
+                                float(current_price) + tp_buffer * pip,
+                            )
                             if trade_tp is None or trade_tp - target_tp > 1e-6:
                                 tp_price = round(target_tp, 3)
                         else:
-                            target_tp = min(entry - min_gap * pip, float(current_price) - tp_buffer * pip)
+                            target_tp = min(
+                                entry - min_gap * pip,
+                                float(current_price) - tp_buffer * pip,
+                            )
                             if trade_tp is None or target_tp - trade_tp > 1e-6:
                                 tp_price = round(target_tp, 3)
 
@@ -9104,7 +9521,9 @@ def plan_partial_reductions(
                     pass
             override_units = partial_plan.get("min_units")
             try:
-                min_units_override = int(override_units) if override_units is not None else None
+                min_units_override = (
+                    int(override_units) if override_units is not None else None
+                )
             except (TypeError, ValueError):
                 min_units_override = None
         if not thresholds:
@@ -9128,9 +9547,14 @@ def plan_partial_reductions(
             opened_at = _parse_trade_open_time(tr.get("open_time"))
             age_minutes = None
             if opened_at:
-                age_minutes = max(0.0, (current_time - opened_at).total_seconds() / 60.0)
+                age_minutes = max(
+                    0.0, (current_time - opened_at).total_seconds() / 60.0
+                )
             if range_mode and pocket == "macro":
-                if age_minutes is None or age_minutes < _PARTIAL_RANGE_MACRO_MIN_AGE_MIN:
+                if (
+                    age_minutes is None
+                    or age_minutes < _PARTIAL_RANGE_MACRO_MIN_AGE_MIN
+                ):
                     continue
             current_stage = _PARTIAL_STAGE.get(trade_id, 0)
             min_hold_sec = _trade_min_hold_seconds(tr, pocket)
@@ -9150,9 +9574,13 @@ def plan_partial_reductions(
             profile = pocket_profile or {}
             effective_thresholds = list(thresholds)
             if stage_level >= 3:
-                effective_thresholds = [max(2.0, t * 0.75) for t in effective_thresholds]
+                effective_thresholds = [
+                    max(2.0, t * 0.75) for t in effective_thresholds
+                ]
             elif stage_level >= 1:
-                effective_thresholds = [max(2.0, t * 0.85) for t in effective_thresholds]
+                effective_thresholds = [
+                    max(2.0, t * 0.85) for t in effective_thresholds
+                ]
             if profile.get("win_rate", 0.0) >= 0.55:
                 effective_thresholds = [max(2.0, t * 0.9) for t in effective_thresholds]
             if profile.get("avg_loss_pips", 0.0) > 5.0:
@@ -9173,7 +9601,11 @@ def plan_partial_reductions(
             fraction_idx = min(stage - 1, len(fractions) - 1)
             fraction = fractions[fraction_idx]
             reduce_units = int(abs(units) * fraction)
-            min_units_threshold = min_units_override if min_units_override is not None else _PARTIAL_MIN_UNITS
+            min_units_threshold = (
+                min_units_override
+                if min_units_override is not None
+                else _PARTIAL_MIN_UNITS
+            )
             if reduce_units < min_units_threshold:
                 continue
             reduce_units = min(reduce_units, abs(units))
@@ -9227,7 +9659,9 @@ async def market_order(
                 if payload_units is not None:
                     resolved_units = int(payload_units)
             except (TypeError, ValueError):
-                resolved_units = units if units_override is None else int(units_override)
+                resolved_units = (
+                    units if units_override is None else int(units_override)
+                )
         resolved_side = "buy" if resolved_units > 0 else "sell"
         if side_override:
             resolved_side = str(side_override)
@@ -9469,7 +9903,11 @@ async def market_order(
                 sl_price=sl_price,
                 tp_price=tp_price,
                 client_order_id=client_order_id,
-                note=f"probability_scale:{entry_probability:.3f}" if entry_probability is not None else "probability_scale",
+                note=(
+                    f"probability_scale:{entry_probability:.3f}"
+                    if entry_probability is not None
+                    else "probability_scale"
+                ),
             )
             if _should_persist_preservice_order_log():
                 _log_order(
@@ -9496,9 +9934,11 @@ async def market_order(
                     0.0,
                     min(
                         1.0,
-                        float(entry_probability)
-                        if entry_probability is not None
-                        else 1.0,
+                        (
+                            float(entry_probability)
+                            if entry_probability is not None
+                            else 1.0
+                        ),
                     ),
                 ),
                 tags={
@@ -9589,7 +10029,9 @@ async def market_order(
     virtual_tp_price: Optional[float] = None
     side_label = "buy" if units > 0 else "sell"
     order_t0 = time.monotonic()
-    entry_deadline_sec = _entry_execution_deadline_sec(pocket) if not reduce_only else 0.0
+    entry_deadline_sec = (
+        _entry_execution_deadline_sec(pocket) if not reduce_only else 0.0
+    )
 
     def _merge_virtual(payload: Optional[dict] = None) -> dict:
         base: dict = {}
@@ -9604,6 +10046,7 @@ async def market_order(
     def log_order(**kwargs):
         kwargs["request_payload"] = _merge_virtual(kwargs.get("request_payload"))
         return _log_order(**kwargs)
+
     thesis_sl_pips: Optional[float] = None
     thesis_tp_pips: Optional[float] = None
     soft_tp = _soft_tp_mode(entry_thesis)
@@ -9654,7 +10097,11 @@ async def market_order(
         inferred = _strategy_tag_from_client_id(client_order_id)
         if inferred:
             strategy_tag = inferred
-    if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
+    if (
+        isinstance(entry_thesis, dict)
+        and strategy_tag
+        and not entry_thesis.get("strategy_tag")
+    ):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
     # In non-hedging (netting) accounts, an opposite-direction entry can net out / close
@@ -9812,7 +10259,11 @@ async def market_order(
             client_order_id=client_order_id,
             status=note,
             attempt=0,
-            request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+            request_payload={
+                "strategy_tag": strategy_tag,
+                "meta": meta,
+                "entry_thesis": entry_thesis,
+            },
         )
         log_metric(
             "order_blocked_by_strategy_control",
@@ -9947,7 +10398,11 @@ async def market_order(
             log_metric(
                 "entry_policy_block",
                 1.0,
-                tags={"pocket": pocket, "strategy": strategy_tag or "unknown", "reason": reason},
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason,
+                },
             )
             return None
         entry_thesis = _append_entry_path_stage(
@@ -9988,7 +10443,6 @@ async def market_order(
     )
     _trace("preflight_start")
 
-
     # Perf guard (PF/win-rate gate). Support per-strategy overrides by passing env_prefix
     # via meta/entry_thesis so a multi-strategy worker can tune each strategy independently.
     meta_env_prefix = None
@@ -10021,7 +10475,9 @@ async def market_order(
 
     if pocket != "manual":
         try:
-            pocket_decision = perf_guard.is_pocket_allowed(pocket, env_prefix=env_prefix)
+            pocket_decision = perf_guard.is_pocket_allowed(
+                pocket, env_prefix=env_prefix
+            )
         except Exception:
             pocket_decision = None
         if pocket_decision is not None and not pocket_decision.allowed:
@@ -10058,7 +10514,11 @@ async def market_order(
                 status="perf_block_pocket",
                 attempt=0,
                 stage_index=stage_index,
-                request_payload={"pocket": pocket, "meta": meta, "entry_thesis": entry_thesis},
+                request_payload={
+                    "pocket": pocket,
+                    "meta": meta,
+                    "entry_thesis": entry_thesis,
+                },
             )
             log_metric(
                 "order_perf_block_pocket",
@@ -10138,7 +10598,11 @@ async def market_order(
                     status="perf_block",
                     attempt=0,
                     stage_index=stage_index,
-                    request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                    },
                 )
                 log_metric(
                     "order_perf_block",
@@ -10245,7 +10709,11 @@ async def market_order(
                     status="profit_guard",
                     attempt=0,
                     stage_index=stage_index,
-                    request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                    },
                 )
                 log_metric(
                     "order_profit_block",
@@ -10309,7 +10777,9 @@ async def market_order(
                     units=units,
                     sl_price=sl_price,
                     tp_price=tp_price,
-                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                    entry_thesis=(
+                        entry_thesis if isinstance(entry_thesis, dict) else None
+                    ),
                     meta=meta if isinstance(meta, dict) else None,
                     confidence=confidence,
                     client_order_id=client_order_id,
@@ -10497,7 +10967,10 @@ async def market_order(
                             "scale": f"{brain_decision.scale:.2f}",
                         },
                     )
-            if _ORDER_MANAGER_BRAIN_GATE_MODE != "shadow" or brain_reason_key == "disabled":
+            if (
+                _ORDER_MANAGER_BRAIN_GATE_MODE != "shadow"
+                or brain_reason_key == "disabled"
+            ):
                 entry_thesis = _append_entry_path_stage(
                     entry_thesis,
                     stage="order_manager_brain_gate",
@@ -10872,10 +11345,17 @@ async def market_order(
                 if thesis_tp_pips is None or thesis_tp_pips <= 0.0:
                     thesis_tp_pips = float(tp_hint)
                 else:
-                    thesis_tp_pips = (1.0 - blend) * float(thesis_tp_pips) + blend * float(tp_hint)
+                    thesis_tp_pips = (1.0 - blend) * float(
+                        thesis_tp_pips
+                    ) + blend * float(tp_hint)
                 thesis_tp_pips = max(0.5, float(thesis_tp_pips))
 
-            if sl_cap is not None and sl_cap > 0.0 and thesis_sl_pips is not None and thesis_sl_pips > sl_cap:
+            if (
+                sl_cap is not None
+                and sl_cap > 0.0
+                and thesis_sl_pips is not None
+                and thesis_sl_pips > sl_cap
+            ):
                 thesis_sl_pips = float(sl_cap)
 
             if (
@@ -10894,45 +11374,79 @@ async def market_order(
                 if thesis_sl_pips is not None and thesis_sl_pips > 0.0:
                     entry_thesis["sl_pips"] = round(float(thesis_sl_pips), 3)
                 entry_thesis["forecast_execution"] = {
-                    "tp_before": round(float(base_tp_hint), 4) if base_tp_hint is not None else None,
-                    "tp_after": round(float(thesis_tp_pips), 4) if thesis_tp_pips is not None else None,
-                    "sl_before": round(float(base_sl_hint), 4) if base_sl_hint is not None else None,
-                    "sl_after": round(float(thesis_sl_pips), 4) if thesis_sl_pips is not None else None,
-                    "tp_hint": round(float(tp_hint), 4) if tp_hint is not None else None,
+                    "tp_before": (
+                        round(float(base_tp_hint), 4)
+                        if base_tp_hint is not None
+                        else None
+                    ),
+                    "tp_after": (
+                        round(float(thesis_tp_pips), 4)
+                        if thesis_tp_pips is not None
+                        else None
+                    ),
+                    "sl_before": (
+                        round(float(base_sl_hint), 4)
+                        if base_sl_hint is not None
+                        else None
+                    ),
+                    "sl_after": (
+                        round(float(thesis_sl_pips), 4)
+                        if thesis_sl_pips is not None
+                        else None
+                    ),
+                    "tp_hint": (
+                        round(float(tp_hint), 4) if tp_hint is not None else None
+                    ),
                     "target_reach_prob": (
                         round(float(fc_decision.target_reach_prob), 6)
                         if fc_decision.target_reach_prob is not None
                         else None
                     ),
                     "sl_cap": round(float(sl_cap), 4) if sl_cap is not None else None,
-                    "rr_floor": round(float(rr_floor), 4) if rr_floor is not None else None,
+                    "rr_floor": (
+                        round(float(rr_floor), 4) if rr_floor is not None else None
+                    ),
                     "edge_strength": round(edge_strength, 6),
                     "rebound_probability": (
                         round(float(fc_decision.rebound_probability), 6)
                         if fc_decision.rebound_probability is not None
                         else None
                     ),
-                    "anchor_price": round(float(fc_decision.anchor_price), 5)
-                    if fc_decision.anchor_price is not None
-                    else None,
-                    "target_price": round(float(fc_decision.target_price), 5)
-                    if fc_decision.target_price is not None
-                    else None,
-                    "range_low_pips": round(float(fc_decision.range_low_pips), 4)
-                    if fc_decision.range_low_pips is not None
-                    else None,
-                    "range_high_pips": round(float(fc_decision.range_high_pips), 4)
-                    if fc_decision.range_high_pips is not None
-                    else None,
-                    "range_sigma_pips": round(float(fc_decision.range_sigma_pips), 4)
-                    if fc_decision.range_sigma_pips is not None
-                    else None,
-                    "range_low_price": round(float(fc_decision.range_low_price), 5)
-                    if fc_decision.range_low_price is not None
-                    else None,
-                    "range_high_price": round(float(fc_decision.range_high_price), 5)
-                    if fc_decision.range_high_price is not None
-                    else None,
+                    "anchor_price": (
+                        round(float(fc_decision.anchor_price), 5)
+                        if fc_decision.anchor_price is not None
+                        else None
+                    ),
+                    "target_price": (
+                        round(float(fc_decision.target_price), 5)
+                        if fc_decision.target_price is not None
+                        else None
+                    ),
+                    "range_low_pips": (
+                        round(float(fc_decision.range_low_pips), 4)
+                        if fc_decision.range_low_pips is not None
+                        else None
+                    ),
+                    "range_high_pips": (
+                        round(float(fc_decision.range_high_pips), 4)
+                        if fc_decision.range_high_pips is not None
+                        else None
+                    ),
+                    "range_sigma_pips": (
+                        round(float(fc_decision.range_sigma_pips), 4)
+                        if fc_decision.range_sigma_pips is not None
+                        else None
+                    ),
+                    "range_low_price": (
+                        round(float(fc_decision.range_low_price), 5)
+                        if fc_decision.range_low_price is not None
+                        else None
+                    ),
+                    "range_high_price": (
+                        round(float(fc_decision.range_high_price), 5)
+                        if fc_decision.range_high_price is not None
+                        else None
+                    ),
                     "tf_confluence_score": (
                         round(float(fc_decision.tf_confluence_score), 6)
                         if fc_decision.tf_confluence_score is not None
@@ -10987,11 +11501,7 @@ async def market_order(
     # Pattern gate (pattern_book-driven block/scale; strategy worker opt-in)
     # NOTE: pattern_gate は opt-in のため、preserve_strategy_intent 下でも評価してよい
     # （共通レイヤでの一律選別ではなく、戦略側の明示 opt-in が前提）。
-    if (
-        not reduce_only
-        and pocket != "manual"
-        and _ORDER_MANAGER_PATTERN_GATE_ENABLED
-    ):
+    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_PATTERN_GATE_ENABLED:
         pattern_units_before = units
         pattern_skip_reason: Optional[str] = None
         try:
@@ -11071,10 +11581,7 @@ async def market_order(
                 min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 pattern_scale_floored = False
                 if scaled_units < min_allowed:
-                    if (
-                        _PATTERN_GATE_SCALE_TO_MIN_UNITS
-                        and min_allowed > 0
-                    ):
+                    if _PATTERN_GATE_SCALE_TO_MIN_UNITS and min_allowed > 0:
                         scaled_units = min_allowed
                         pattern_scale_floored = True
                     else:
@@ -11172,13 +11679,19 @@ async def market_order(
                     units = scaled_signed_units
                     log_metric(
                         "order_pattern_scale",
-                        float(scaled_units / raw_units_abs) if raw_units_abs > 0 else 1.0,
+                        (
+                            float(scaled_units / raw_units_abs)
+                            if raw_units_abs > 0
+                            else 1.0
+                        ),
                         tags={
                             "pocket": pocket,
                             "strategy": str(strategy_tag or "unknown"),
-                            "reason": "floor_to_min"
-                            if pattern_scale_floored
-                            else pattern_decision.reason,
+                            "reason": (
+                                "floor_to_min"
+                                if pattern_scale_floored
+                                else pattern_decision.reason
+                            ),
                             "quality": pattern_decision.quality,
                             "source": pattern_decision.source,
                         },
@@ -11223,7 +11736,11 @@ async def market_order(
         chase_max = _as_float(exec_cfg.get("chase_max"))
         price_hint = (
             _as_float((meta or {}).get("entry_price"))
-            or _as_float((entry_thesis or {}).get("entry_ref") if isinstance(entry_thesis, dict) else None)
+            or _as_float(
+                (entry_thesis or {}).get("entry_ref")
+                if isinstance(entry_thesis, dict)
+                else None
+            )
             or _estimate_price(meta)
             or _latest_mid_price()
         )
@@ -11266,7 +11783,9 @@ async def market_order(
         _trace("margin_guard")
         if _load_margin_guard_snapshot is not None:
             try:
-                snap = _load_margin_guard_snapshot(path_label="market_order", cache_ttl_sec=1.0)
+                snap = _load_margin_guard_snapshot(
+                    path_label="market_order", cache_ttl_sec=1.0
+                )
             except Exception as exc:
                 note = "margin_snapshot_failed"
                 logging.warning("[ORDER] margin guard snapshot failed: %s", exc)
@@ -11358,10 +11877,16 @@ async def market_order(
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
-                soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
-                hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
+                soft_cap = min(
+                    float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99
+                )
+                hard_cap = min(
+                    float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995
+                )
                 cap = min(hard_cap, max(soft_cap, 0.0))
-                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "1")).strip().lower() not in {
+                side_cap_enabled = str(
+                    os.getenv("MARGIN_SIDE_CAP_ENABLED", "1")
+                ).strip().lower() not in {
                     "",
                     "0",
                     "false",
@@ -11377,7 +11902,9 @@ async def market_order(
                     long_u, short_u = get_position_summary()
                     net_before_units = float(long_u) - float(short_u)
                     net_after_units = (
-                        net_before_units + abs(units) if side_label.lower() == "buy" else net_before_units - abs(units)
+                        net_before_units + abs(units)
+                        if side_label.lower() == "buy"
+                        else net_before_units - abs(units)
                     )
                     net_reducing = abs(net_after_units) < abs(net_before_units)
                 except Exception:
@@ -11400,11 +11927,18 @@ async def market_order(
                         usage_total=usage_total,
                         projected_usage_total=projected_usage_total,
                     )
-                    usage_for_cap = projected_usage if projected_usage is not None else usage
+                    usage_for_cap = (
+                        projected_usage if projected_usage is not None else usage
+                    )
                     side_units = None
                     side_usage = None
                     side_projected = None
-                    if side_cap_enabled and long_u is not None and short_u is not None and margin_rate > 0:
+                    if (
+                        side_cap_enabled
+                        and long_u is not None
+                        and short_u is not None
+                        and margin_rate > 0
+                    ):
                         price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
                         if price_hint > 0:
                             if side_label.lower() == "buy":
@@ -11412,7 +11946,9 @@ async def market_order(
                             else:
                                 side_units = abs(float(short_u))
                             side_usage = (side_units * price_hint * margin_rate) / nav
-                            side_projected = ((side_units + abs(units)) * price_hint * margin_rate) / nav
+                            side_projected = (
+                                (side_units + abs(units)) * price_hint * margin_rate
+                            ) / nav
                             usage = side_usage
                             projected_usage = side_projected
                             usage_for_cap = side_projected
@@ -11420,11 +11956,20 @@ async def market_order(
                         price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
                         scaled_units = 0
                         cap_target = hard_cap * 0.99
-                        if side_cap_enabled and side_units is not None and price_hint > 0 and margin_rate > 0:
+                        if (
+                            side_cap_enabled
+                            and side_units is not None
+                            and price_hint > 0
+                            and margin_rate > 0
+                        ):
                             try:
-                                allowed_side = (cap_target * nav) / (price_hint * margin_rate) - side_units
+                                allowed_side = (cap_target * nav) / (
+                                    price_hint * margin_rate
+                                ) - side_units
                                 if allowed_side > 0:
-                                    scaled_units = int(math.floor(min(abs(units), allowed_side)))
+                                    scaled_units = int(
+                                        math.floor(min(abs(units), allowed_side))
+                                    )
                             except Exception:
                                 scaled_units = 0
                         elif projected_usage and projected_usage > 0 and abs(units) > 0:
@@ -11432,7 +11977,9 @@ async def market_order(
                             scaled_units = int(math.floor(abs(units) * factor))
                         elif nav > 0 and margin_rate > 0 and price_hint > 0:
                             try:
-                                allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                                allowed_net = (cap_target * nav) / (
+                                    price_hint * margin_rate
+                                )
                                 room = allowed_net - abs(net_before_units)
                                 scaled_units = int(math.floor(min(abs(units), room)))
                             except Exception:
@@ -11504,12 +12051,19 @@ async def market_order(
                 price_hint = _estimate_price(meta) or 0.0
                 projected_usage = None
                 if nav > 0 and margin_rate > 0:
-                    if side_cap_enabled and long_u is not None and short_u is not None and price_hint > 0:
+                    if (
+                        side_cap_enabled
+                        and long_u is not None
+                        and short_u is not None
+                        and price_hint > 0
+                    ):
                         if side_label.lower() == "buy":
                             side_units = abs(float(long_u))
                         else:
                             side_units = abs(float(short_u))
-                        projected_usage = ((side_units + abs(units)) * price_hint * margin_rate) / nav
+                        projected_usage = (
+                            (side_units + abs(units)) * price_hint * margin_rate
+                        ) / nav
                     else:
                         projected_usage = _projected_usage_with_netting(
                             nav,
@@ -11521,7 +12075,9 @@ async def market_order(
                         )
                         if projected_usage is None and price_hint > 0:
                             # フォールバック: 片側加算のみ
-                            projected_used = margin_used + abs(units) * price_hint * margin_rate
+                            projected_used = (
+                                margin_used + abs(units) * price_hint * margin_rate
+                            )
                             projected_usage = projected_used / nav
 
                 if (
@@ -11533,20 +12089,35 @@ async def market_order(
                     scaled_units = 0
                     cap_target = cap * 0.99
                     try:
-                        if side_cap_enabled and long_u is not None and short_u is not None and price_hint > 0:
+                        if (
+                            side_cap_enabled
+                            and long_u is not None
+                            and short_u is not None
+                            and price_hint > 0
+                        ):
                             if side_label.lower() == "buy":
                                 side_units = abs(float(long_u))
                             else:
                                 side_units = abs(float(short_u))
-                            allowed_side = (cap_target * nav) / (price_hint * margin_rate) - side_units
+                            allowed_side = (cap_target * nav) / (
+                                price_hint * margin_rate
+                            ) - side_units
                             if allowed_side > 0:
-                                scaled_units = int(math.floor(min(abs(units), allowed_side)))
+                                scaled_units = int(
+                                    math.floor(min(abs(units), allowed_side))
+                                )
                         else:
-                            factor = cap_target / projected_usage if projected_usage > 0 else 0.0
+                            factor = (
+                                cap_target / projected_usage
+                                if projected_usage > 0
+                                else 0.0
+                            )
                             if factor > 0 and abs(units) > 0:
                                 scaled_units = int(math.floor(abs(units) * factor))
                             elif nav > 0 and margin_rate > 0 and price_hint > 0:
-                                allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                                allowed_net = (cap_target * nav) / (
+                                    price_hint * margin_rate
+                                )
                                 room = allowed_net - abs(net_before_units)
                                 scaled_units = int(math.floor(min(abs(units), room)))
                     except Exception:
@@ -11853,20 +12424,24 @@ async def market_order(
                 )
                 return None
 
-    if (
-        _FORWARD_TO_SIGNAL_GATE
-        and not reduce_only
-        and not arbiter_final
-    ):
+    if _FORWARD_TO_SIGNAL_GATE and not reduce_only and not arbiter_final:
         price_hint = entry_price_meta or _estimate_price(meta) or _latest_mid_price()
-        sl_pips_hint = _as_float((entry_thesis or {}).get("sl_pips")) if isinstance(entry_thesis, dict) else None
+        sl_pips_hint = (
+            _as_float((entry_thesis or {}).get("sl_pips"))
+            if isinstance(entry_thesis, dict)
+            else None
+        )
         if sl_pips_hint is None and isinstance(entry_thesis, dict):
             for alt in ("profile_sl_pips", "loss_guard_pips", "hard_stop_pips"):
                 alt_val = _as_float(entry_thesis.get(alt))
                 if alt_val:
                     sl_pips_hint = alt_val
                     break
-        tp_pips_hint = _as_float((entry_thesis or {}).get("tp_pips")) if isinstance(entry_thesis, dict) else None
+        tp_pips_hint = (
+            _as_float((entry_thesis or {}).get("tp_pips"))
+            if isinstance(entry_thesis, dict)
+            else None
+        )
         if tp_pips_hint is None and isinstance(entry_thesis, dict):
             for alt in ("profile_tp_pips", "target_tp_pips"):
                 alt_val = _as_float(entry_thesis.get(alt))
@@ -11875,7 +12450,15 @@ async def market_order(
                     break
         tag_hint = (strategy_tag or "").strip().lower()
         if not tag_hint and isinstance(entry_thesis, dict):
-            tag_hint = str(entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or "").strip().lower()
+            tag_hint = (
+                str(
+                    entry_thesis.get("strategy_tag")
+                    or entry_thesis.get("strategy")
+                    or ""
+                )
+                .strip()
+                .lower()
+            )
         if tag_hint == "fast_scalp":
             sl_pips_hint = None
         if sl_pips_hint is None and price_hint is not None and sl_price is not None:
@@ -11929,7 +12512,9 @@ async def market_order(
             )
             return None
         except Exception as exc:
-            logging.warning("[ORDER_GATE] enqueue failed, fall back to live order: %s", exc)
+            logging.warning(
+                "[ORDER_GATE] enqueue failed, fall back to live order: %s", exc
+            )
 
     if not is_market_open():
         _trace("market_closed")
@@ -12017,7 +12602,9 @@ async def market_order(
                 tags={
                     "pocket": pocket or "unknown",
                     "strategy": strategy_tag or "unknown",
-                    "reason": str(details.get("mismatch_reason") or "regime_confidence"),
+                    "reason": str(
+                        details.get("mismatch_reason") or "regime_confidence"
+                    ),
                 },
             )
             return None
@@ -12113,18 +12700,18 @@ async def market_order(
             },
         )
         return None
-    if (
-        quote
-        and quote.get("spread_pips") is not None
-        and not preserve_strategy_intent
-    ):
+    if quote and quote.get("spread_pips") is not None and not preserve_strategy_intent:
         _trace("spread_check")
         spread_threshold = _order_spread_block_pips(
             pocket,
             strategy_tag=strategy_tag,
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
         )
-        if spread_threshold > 0.0 and quote["spread_pips"] >= spread_threshold and not reduce_only:
+        if (
+            spread_threshold > 0.0
+            and quote["spread_pips"] >= spread_threshold
+            and not reduce_only
+        ):
             spread_pips = float(quote["spread_pips"])
             is_spike_tolerated, spike_info = _is_isolated_spread_spike(
                 spread_pips=spread_pips,
@@ -12153,7 +12740,11 @@ async def market_order(
                     client_order_id=client_order_id,
                     status="spread_block",
                     attempt=0,
-                    request_payload={"quote": quote, "threshold": spread_threshold, "spread_spike": spike_info},
+                    request_payload={
+                        "quote": quote,
+                        "threshold": spread_threshold,
+                        "spread_spike": spike_info,
+                    },
                 )
                 log_metric(
                     "entry_spread_block",
@@ -12161,7 +12752,9 @@ async def market_order(
                     tags={
                         "pocket": pocket or "unknown",
                         "strategy": strategy_tag or "unknown",
-                        "reason": str((spike_info or {}).get("reason") or "spread_block"),
+                        "reason": str(
+                            (spike_info or {}).get("reason") or "spread_block"
+                        ),
                         "decision": "blocked",
                     },
                 )
@@ -12254,16 +12847,18 @@ async def market_order(
         and sl_price is not None
         and tp_price is not None
     ):
-        sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips = _apply_min_rr_floor(
-            pocket=pocket,
-            strategy_tag=strategy_tag,
-            units=units,
-            entry_basis=entry_basis,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
-            thesis_sl_pips=thesis_sl_pips,
-            thesis_tp_pips=thesis_tp_pips,
+        sl_price, tp_price, entry_thesis, thesis_sl_pips, thesis_tp_pips = (
+            _apply_min_rr_floor(
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                units=units,
+                entry_basis=entry_basis,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                thesis_sl_pips=thesis_sl_pips,
+                thesis_tp_pips=thesis_tp_pips,
+            )
         )
 
     if (
@@ -12296,16 +12891,24 @@ async def market_order(
                         "cap_pips": round(tp_cap, 2),
                         "tp_pips_before": round(tp_pips, 2),
                         "tp_pips_after": round(adj_tp_pips, 2),
-                        "sl_pips_after": round(
-                            abs(entry_basis - sl_price) / 0.01, 2
-                        ) if sl_price is not None else None,
+                        "sl_pips_after": (
+                            round(abs(entry_basis - sl_price) / 0.01, 2)
+                            if sl_price is not None
+                            else None
+                        ),
                     }
                     if isinstance(tp_cap_meta, dict):
                         payload.update(
                             {
-                                "cap_base": round(float(tp_cap_meta.get("cap_base", tp_cap)), 2),
-                                "cap_mult": round(float(tp_cap_meta.get("cap_mult", 1.0)), 3),
-                                "cap_final": round(float(tp_cap_meta.get("cap_final", tp_cap)), 2),
+                                "cap_base": round(
+                                    float(tp_cap_meta.get("cap_base", tp_cap)), 2
+                                ),
+                                "cap_mult": round(
+                                    float(tp_cap_meta.get("cap_mult", 1.0)), 3
+                                ),
+                                "cap_final": round(
+                                    float(tp_cap_meta.get("cap_final", tp_cap)), 2
+                                ),
                                 "cap_tf": tp_cap_meta.get("tf"),
                                 "cap_score": (
                                     round(float(tp_cap_meta.get("score")), 3)
@@ -12400,14 +13003,15 @@ async def market_order(
             tp_pips=tp_pips_live,
         )
         if not quality_ok:
-            if (
-                quality_reason == "entry_quality_spread_tp_softened"
-                and isinstance(quality_meta, dict)
+            if quality_reason == "entry_quality_spread_tp_softened" and isinstance(
+                quality_meta, dict
             ):
                 soften_scale = _as_float(quality_meta.get("recommended_units_scale"))
                 if soften_scale is not None and 0.0 < soften_scale < 1.0:
                     scaled_units = int(round(abs(units) * soften_scale))
-                    min_allowed_units = min_units_for_strategy(strategy_tag, pocket=pocket)
+                    min_allowed_units = min_units_for_strategy(
+                        strategy_tag, pocket=pocket
+                    )
                     if scaled_units <= 0:
                         reason = "entry_quality_scale_below_min"
                         _console_order_log(
@@ -12599,7 +13203,9 @@ async def market_order(
         and min_allowed_units > 0
         and 0 < abs(requested_units) < min_allowed_units
     ):
-        requested_units = min_allowed_units if requested_units > 0 else -min_allowed_units
+        requested_units = (
+            min_allowed_units if requested_units > 0 else -min_allowed_units
+        )
         clamped_to_minimum = True
         units = requested_units
         preflight_units = requested_units
@@ -12711,16 +13317,14 @@ async def market_order(
                         entry_thesis["entry_hard_sl_applied"] = {
                             "pips": round(float(hard_stop_pips), 2),
                             "sl_price": round(float(hard_sl_price), 3),
-                            "prev_gap_pips": round(float(current_gap_pips), 2)
-                            if current_gap_pips is not None
-                            else None,
+                            "prev_gap_pips": (
+                                round(float(current_gap_pips), 2)
+                                if current_gap_pips is not None
+                                else None
+                            ),
                         }
 
-    if (
-        not reduce_only
-        and estimated_entry is not None
-        and not preserve_strategy_intent
-    ):
+    if not reduce_only and estimated_entry is not None and not preserve_strategy_intent:
         norm_sl = None if sl_disabled else sl_price
         norm_tp = tp_price
         norm_sl, norm_tp, normalized = _normalize_protections(
@@ -12749,7 +13353,9 @@ async def market_order(
             pocket,
             strategy_tag=strategy_tag,
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
-            nav_hint=_entry_nav_hint(meta, entry_thesis if isinstance(entry_thesis, dict) else None),
+            nav_hint=_entry_nav_hint(
+                meta, entry_thesis if isinstance(entry_thesis, dict) else None
+            ),
         )
         if loss_cap_jpy > 0.0:
             sl_pips_for_cap: float | None = None
@@ -12774,9 +13380,13 @@ async def market_order(
                 cap_buffer_pips = _entry_loss_cap_buffer_pips(
                     pocket,
                     strategy_tag=strategy_tag,
-                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                    entry_thesis=(
+                        entry_thesis if isinstance(entry_thesis, dict) else None
+                    ),
                 )
-                effective_sl_pips = max(0.0, float(sl_pips_for_cap) + max(0.0, cap_buffer_pips))
+                effective_sl_pips = max(
+                    0.0, float(sl_pips_for_cap) + max(0.0, cap_buffer_pips)
+                )
                 capped_abs_units = _loss_cap_units_from_sl(
                     loss_cap_jpy=loss_cap_jpy,
                     sl_pips=effective_sl_pips,
@@ -12847,7 +13457,9 @@ async def market_order(
                         )
                         return None
                     pre_loss_cap_units = preflight_units
-                    capped_units = capped_abs_units if preflight_units > 0 else -capped_abs_units
+                    capped_units = (
+                        capped_abs_units if preflight_units > 0 else -capped_abs_units
+                    )
                     log_order(
                         pocket=pocket,
                         instrument=instrument,
@@ -12891,13 +13503,17 @@ async def market_order(
     # Virtual SL/TP logging (even if SL is disabled)
     if estimated_entry is not None:
         if thesis_sl_pips is not None:
-            virtual_sl_price = round(
-                estimated_entry - thesis_sl_pips * 0.01, 3
-            ) if units > 0 else round(estimated_entry + thesis_sl_pips * 0.01, 3)
+            virtual_sl_price = (
+                round(estimated_entry - thesis_sl_pips * 0.01, 3)
+                if units > 0
+                else round(estimated_entry + thesis_sl_pips * 0.01, 3)
+            )
         if thesis_tp_pips is not None:
-            virtual_tp_price = round(
-                estimated_entry + thesis_tp_pips * 0.01, 3
-            ) if units > 0 else round(estimated_entry - thesis_tp_pips * 0.01, 3)
+            virtual_tp_price = (
+                round(estimated_entry + thesis_tp_pips * 0.01, 3)
+                if units > 0
+                else round(estimated_entry - thesis_tp_pips * 0.01, 3)
+            )
     if sl_price is not None:
         virtual_sl_price = sl_price
     if tp_price is not None:
@@ -12907,7 +13523,9 @@ async def market_order(
     if not reduce_only and entry_deadline_sec > 0:
         elapsed = time.monotonic() - order_t0
         if elapsed > entry_deadline_sec:
-            note = f"stale_deadline elapsed={elapsed:.2f}s cap={entry_deadline_sec:.2f}s"
+            note = (
+                f"stale_deadline elapsed={elapsed:.2f}s cap={entry_deadline_sec:.2f}s"
+            )
             _console_order_log(
                 "OPEN_SKIP",
                 pocket=pocket,
@@ -13096,7 +13714,9 @@ async def market_order(
                 )
                 reason_key = str(reason or "").upper()
                 if reason_key == "CLIENT_TRADE_ID_ALREADY_EXISTS":
-                    duplicate_trade_id = _latest_filled_trade_id_by_client_id(client_order_id)
+                    duplicate_trade_id = _latest_filled_trade_id_by_client_id(
+                        client_order_id
+                    )
                     if duplicate_trade_id:
                         logging.warning(
                             "[ORDER] duplicate client_id recovered as filled client=%s trade=%s attempt=%d",
@@ -13158,11 +13778,18 @@ async def market_order(
                             pocket=pocket,
                             strategy_tag=strategy_tag,
                         )
-                        if rotated_client_order_id and rotated_client_order_id != client_order_id:
+                        if (
+                            rotated_client_order_id
+                            and rotated_client_order_id != client_order_id
+                        ):
                             prev_client_order_id = client_order_id
                             client_order_id = rotated_client_order_id
-                            order_data["order"]["clientExtensions"]["id"] = client_order_id
-                            order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
+                            order_data["order"]["clientExtensions"][
+                                "id"
+                            ] = client_order_id
+                            order_data["order"]["tradeClientExtensions"][
+                                "id"
+                            ] = client_order_id
                             logging.warning(
                                 "[ORDER] duplicate client_id retry rotate %s -> %s attempt=%d",
                                 prev_client_order_id or "-",
@@ -13245,7 +13872,10 @@ async def market_order(
                     sleep_sec = min(
                         _ORDER_QUOTE_RETRY_MAX_SLEEP_SEC,
                         _ORDER_QUOTE_RETRY_SLEEP_SEC
-                        * (_ORDER_QUOTE_RETRY_SLEEP_BACKOFF ** max(0, quote_retries - 1)),
+                        * (
+                            _ORDER_QUOTE_RETRY_SLEEP_BACKOFF
+                            ** max(0, quote_retries - 1)
+                        ),
                     )
                     if sleep_sec > 0.0:
                         time.sleep(sleep_sec)
@@ -13278,11 +13908,15 @@ async def market_order(
                         and sl_price is not None
                         and _allow_stop_loss_on_fill(pocket, strategy_tag=strategy_tag)
                     ):
-                        order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
+                        order_data["order"]["stopLossOnFill"] = {
+                            "price": f"{sl_price:.3f}"
+                        }
                     elif "stopLossOnFill" in order_data["order"]:
                         order_data["order"].pop("stopLossOnFill", None)
                     if tp_price is not None:
-                        order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
+                        order_data["order"]["takeProfitOnFill"] = {
+                            "price": f"{tp_price:.3f}"
+                        }
                     elif "takeProfitOnFill" in order_data["order"]:
                         order_data["order"].pop("takeProfitOnFill", None)
                     log_order(
@@ -13326,7 +13960,9 @@ async def market_order(
                         strategy_tag=strategy_tag,
                     )
                     # Widen the fallback gap each time to handle continued price movement.
-                    fallback_gap_price = float(base_gap_price) * (1.0 + float(protection_fallbacks))
+                    fallback_gap_price = float(base_gap_price) * (
+                        1.0 + float(protection_fallbacks)
+                    )
                     retry_quote = _fetch_quote_with_retry(instrument)
                     if retry_quote:
                         quote = retry_quote
@@ -13338,17 +13974,43 @@ async def market_order(
                             else _as_float(retry_quote.get("bid"))
                         )
                     if retry_basis is None:
-                        retry_basis = entry_basis if entry_basis is not None else estimated_entry
+                        retry_basis = (
+                            entry_basis if entry_basis is not None else estimated_entry
+                        )
                     sl_gap_retry_pips = thesis_sl_pips
-                    if sl_gap_retry_pips is None and retry_basis is not None and sl_price is not None:
-                        sl_gap_retry_pips = abs(float(retry_basis) - float(sl_price)) / 0.01
-                    elif sl_gap_retry_pips is None and estimated_entry is not None and sl_price is not None:
-                        sl_gap_retry_pips = abs(float(estimated_entry) - float(sl_price)) / 0.01
+                    if (
+                        sl_gap_retry_pips is None
+                        and retry_basis is not None
+                        and sl_price is not None
+                    ):
+                        sl_gap_retry_pips = (
+                            abs(float(retry_basis) - float(sl_price)) / 0.01
+                        )
+                    elif (
+                        sl_gap_retry_pips is None
+                        and estimated_entry is not None
+                        and sl_price is not None
+                    ):
+                        sl_gap_retry_pips = (
+                            abs(float(estimated_entry) - float(sl_price)) / 0.01
+                        )
                     tp_gap_retry_pips = thesis_tp_pips
-                    if tp_gap_retry_pips is None and retry_basis is not None and tp_price is not None:
-                        tp_gap_retry_pips = abs(float(tp_price) - float(retry_basis)) / 0.01
-                    elif tp_gap_retry_pips is None and estimated_entry is not None and tp_price is not None:
-                        tp_gap_retry_pips = abs(float(tp_price) - float(estimated_entry)) / 0.01
+                    if (
+                        tp_gap_retry_pips is None
+                        and retry_basis is not None
+                        and tp_price is not None
+                    ):
+                        tp_gap_retry_pips = (
+                            abs(float(tp_price) - float(retry_basis)) / 0.01
+                        )
+                    elif (
+                        tp_gap_retry_pips is None
+                        and estimated_entry is not None
+                        and tp_price is not None
+                    ):
+                        tp_gap_retry_pips = (
+                            abs(float(tp_price) - float(estimated_entry)) / 0.01
+                        )
 
                     fallback_basis = _derive_fallback_basis(
                         retry_basis,
@@ -13398,7 +14060,11 @@ async def market_order(
                             "[ORDER] protection fallback applied client=%s reason=%s basis=%.3f sl=%s tp=%s gap=%.4f (retry=%d/%d)",
                             client_order_id,
                             reason_key,
-                            float(fallback_basis) if fallback_basis is not None else -1.0,
+                            (
+                                float(fallback_basis)
+                                if fallback_basis is not None
+                                else -1.0
+                            ),
                             f"{fallback_sl:.3f}" if fallback_sl is not None else "-",
                             f"{fallback_tp:.3f}" if fallback_tp is not None else "-",
                             fallback_gap_price,
@@ -13418,12 +14084,11 @@ async def market_order(
 
             trade_id = _extract_trade_id(response)
             if trade_id:
-                fill_type = response.get("orderFillTransaction", {}).get(
-                    "tradeOpened"
-                )
+                fill_type = response.get("orderFillTransaction", {}).get("tradeOpened")
                 if not fill_type:
                     logging.info(
-                        "OANDA order filled by adjusting existing trade(s): %s", trade_id
+                        "OANDA order filled by adjusting existing trade(s): %s",
+                        trade_id,
                     )
                 # Extract executed_price if present
                 executed_price = None
@@ -13478,7 +14143,11 @@ async def market_order(
                 if target_sl is not None and not _allow_stop_loss_on_fill(
                     pocket, strategy_tag=strategy_tag
                 ):
-                    basis = executed_price if executed_price is not None else estimated_entry
+                    basis = (
+                        executed_price
+                        if executed_price is not None
+                        else estimated_entry
+                    )
                     try:
                         basis_val = float(basis) if basis is not None else None
                     except Exception:
@@ -13492,9 +14161,9 @@ async def market_order(
                         )
                         target_sl = None
                     else:
-                        loss_side = (units_to_send > 0 and target_sl < basis_val - 1e-6) or (
-                            units_to_send < 0 and target_sl > basis_val + 1e-6
-                        )
+                        loss_side = (
+                            units_to_send > 0 and target_sl < basis_val - 1e-6
+                        ) or (units_to_send < 0 and target_sl > basis_val + 1e-6)
                         if loss_side:
                             logging.info(
                                 "[ORDER] on_fill_protection skipped SL (EXIT_NO_NEGATIVE_CLOSE) pocket=%s client=%s sl=%s basis=%s",
@@ -13512,15 +14181,19 @@ async def market_order(
                     tp_price,
                     overwrite=False,
                 )
-                target_sl, target_tp, protections_realigned = _realign_protections_to_fill(
-                    executed_price=executed_price,
-                    entry_basis=entry_basis if entry_basis is not None else estimated_entry,
-                    units=units_to_send,
-                    sl_price=target_sl,
-                    tp_price=tp_price,
-                    thesis_sl_pips=thesis_sl_pips,
-                    thesis_tp_pips=thesis_tp_pips,
-                    sl_disabled=target_sl is None,
+                target_sl, target_tp, protections_realigned = (
+                    _realign_protections_to_fill(
+                        executed_price=executed_price,
+                        entry_basis=(
+                            entry_basis if entry_basis is not None else estimated_entry
+                        ),
+                        units=units_to_send,
+                        sl_price=target_sl,
+                        tp_price=tp_price,
+                        thesis_sl_pips=thesis_sl_pips,
+                        thesis_tp_pips=thesis_tp_pips,
+                        sl_disabled=target_sl is None,
+                    )
                 )
                 if protections_realigned:
                     log_metric(
@@ -13715,7 +14388,9 @@ async def limit_order(
                 if payload_units is not None:
                     resolved_units = int(payload_units)
             except (TypeError, ValueError):
-                resolved_units = units if units_override is None else int(units_override)
+                resolved_units = (
+                    units if units_override is None else int(units_override)
+                )
         resolved_side = "buy" if resolved_units > 0 else "sell"
         if side_override:
             resolved_side = str(side_override)
@@ -13926,7 +14601,11 @@ async def limit_order(
                 sl_price=sl_price,
                 tp_price=tp_price,
                 client_order_id=client_order_id,
-                note=f"probability_scale:{entry_probability:.3f}" if entry_probability is not None else "probability_scale",
+                note=(
+                    f"probability_scale:{entry_probability:.3f}"
+                    if entry_probability is not None
+                    else "probability_scale"
+                ),
             )
             _log_order(
                 pocket=pocket,
@@ -13952,9 +14631,11 @@ async def limit_order(
                     0.0,
                     min(
                         1.0,
-                        float(entry_probability)
-                        if entry_probability is not None
-                        else 1.0,
+                        (
+                            float(entry_probability)
+                            if entry_probability is not None
+                            else 1.0
+                        ),
                     ),
                 ),
                 tags={
@@ -13997,7 +14678,9 @@ async def limit_order(
                 current_gap_pips: float | None = None
                 wrong_side = False
                 if sl_price is not None:
-                    wrong_side = (units > 0 and sl_price >= price) or (units < 0 and sl_price <= price)
+                    wrong_side = (units > 0 and sl_price >= price) or (
+                        units < 0 and sl_price <= price
+                    )
                     try:
                         current_gap_pips = abs(price - sl_price) / 0.01
                     except Exception:
@@ -14036,7 +14719,9 @@ async def limit_order(
             pocket,
             strategy_tag=strategy_tag,
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
-            nav_hint=_entry_nav_hint(meta, entry_thesis if isinstance(entry_thesis, dict) else None),
+            nav_hint=_entry_nav_hint(
+                meta, entry_thesis if isinstance(entry_thesis, dict) else None
+            ),
         )
         if loss_cap_jpy > 0.0:
             sl_pips_for_cap: float | None = None
@@ -14051,9 +14736,13 @@ async def limit_order(
                 cap_buffer_pips = _entry_loss_cap_buffer_pips(
                     pocket,
                     strategy_tag=strategy_tag,
-                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                    entry_thesis=(
+                        entry_thesis if isinstance(entry_thesis, dict) else None
+                    ),
                 )
-                effective_sl_pips = max(0.0, float(sl_pips_for_cap) + max(0.0, cap_buffer_pips))
+                effective_sl_pips = max(
+                    0.0, float(sl_pips_for_cap) + max(0.0, cap_buffer_pips)
+                )
                 capped_abs_units = _loss_cap_units_from_sl(
                     loss_cap_jpy=loss_cap_jpy,
                     sl_pips=effective_sl_pips,
@@ -14173,7 +14862,9 @@ async def limit_order(
             meta_guard["entry_price"] = float(price)
         if _load_margin_guard_snapshot is not None:
             try:
-                snap = _load_margin_guard_snapshot(path_label="limit_order", cache_ttl_sec=1.0)
+                snap = _load_margin_guard_snapshot(
+                    path_label="limit_order", cache_ttl_sec=1.0
+                )
             except Exception as exc:
                 note = "margin_snapshot_failed"
                 logging.warning("[ORDER] margin guard snapshot failed: %s", exc)
@@ -14263,10 +14954,16 @@ async def limit_order(
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
-                soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
-                hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
+                soft_cap = min(
+                    float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99
+                )
+                hard_cap = min(
+                    float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995
+                )
                 cap = min(hard_cap, max(soft_cap, 0.0))
-                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "1")).strip().lower() not in {
+                side_cap_enabled = str(
+                    os.getenv("MARGIN_SIDE_CAP_ENABLED", "1")
+                ).strip().lower() not in {
                     "",
                     "0",
                     "false",
@@ -14282,7 +14979,9 @@ async def limit_order(
                     long_u, short_u = get_position_summary()
                     net_before_units = float(long_u) - float(short_u)
                     net_after_units = (
-                        net_before_units + abs(units) if side_label.lower() == "buy" else net_before_units - abs(units)
+                        net_before_units + abs(units)
+                        if side_label.lower() == "buy"
+                        else net_before_units - abs(units)
                     )
                     net_reducing = abs(net_after_units) < abs(net_before_units)
                 except Exception:
@@ -14305,31 +15004,53 @@ async def limit_order(
                         usage_total=usage_total,
                         projected_usage_total=projected_usage_total,
                     )
-                    usage_for_cap = projected_usage if projected_usage is not None else usage
+                    usage_for_cap = (
+                        projected_usage if projected_usage is not None else usage
+                    )
                     side_units = None
                     side_usage = None
                     side_projected = None
-                    if side_cap_enabled and long_u is not None and short_u is not None and margin_rate > 0:
-                        price_hint = _estimate_price(meta_guard) or _latest_mid_price() or 0.0
+                    if (
+                        side_cap_enabled
+                        and long_u is not None
+                        and short_u is not None
+                        and margin_rate > 0
+                    ):
+                        price_hint = (
+                            _estimate_price(meta_guard) or _latest_mid_price() or 0.0
+                        )
                         if price_hint > 0:
                             if side_label.lower() == "buy":
                                 side_units = abs(float(long_u))
                             else:
                                 side_units = abs(float(short_u))
                             side_usage = (side_units * price_hint * margin_rate) / nav
-                            side_projected = ((side_units + abs(units)) * price_hint * margin_rate) / nav
+                            side_projected = (
+                                (side_units + abs(units)) * price_hint * margin_rate
+                            ) / nav
                             usage = side_usage
                             projected_usage = side_projected
                             usage_for_cap = side_projected
                     if usage_for_cap >= hard_cap * 0.995 and not net_reducing_usage:
-                        price_hint = _estimate_price(meta_guard) or _latest_mid_price() or 0.0
+                        price_hint = (
+                            _estimate_price(meta_guard) or _latest_mid_price() or 0.0
+                        )
                         scaled_units = 0
                         cap_target = hard_cap * 0.99
-                        if side_cap_enabled and side_units is not None and price_hint > 0 and margin_rate > 0:
+                        if (
+                            side_cap_enabled
+                            and side_units is not None
+                            and price_hint > 0
+                            and margin_rate > 0
+                        ):
                             try:
-                                allowed_side = (cap_target * nav) / (price_hint * margin_rate) - side_units
+                                allowed_side = (cap_target * nav) / (
+                                    price_hint * margin_rate
+                                ) - side_units
                                 if allowed_side > 0:
-                                    scaled_units = int(math.floor(min(abs(units), allowed_side)))
+                                    scaled_units = int(
+                                        math.floor(min(abs(units), allowed_side))
+                                    )
                             except Exception:
                                 scaled_units = 0
                         elif projected_usage and projected_usage > 0 and abs(units) > 0:
@@ -14337,7 +15058,9 @@ async def limit_order(
                             scaled_units = int(math.floor(abs(units) * factor))
                         elif nav > 0 and margin_rate > 0 and price_hint > 0:
                             try:
-                                allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                                allowed_net = (cap_target * nav) / (
+                                    price_hint * margin_rate
+                                )
                                 room = allowed_net - abs(net_before_units)
                                 scaled_units = int(math.floor(min(abs(units), room)))
                             except Exception:
@@ -14408,12 +15131,19 @@ async def limit_order(
                 price_hint = _estimate_price(meta_guard) or 0.0
                 projected_usage = None
                 if nav > 0 and margin_rate > 0:
-                    if side_cap_enabled and long_u is not None and short_u is not None and price_hint > 0:
+                    if (
+                        side_cap_enabled
+                        and long_u is not None
+                        and short_u is not None
+                        and price_hint > 0
+                    ):
                         if side_label.lower() == "buy":
                             side_units = abs(float(long_u))
                         else:
                             side_units = abs(float(short_u))
-                        projected_usage = ((side_units + abs(units)) * price_hint * margin_rate) / nav
+                        projected_usage = (
+                            (side_units + abs(units)) * price_hint * margin_rate
+                        ) / nav
                     else:
                         projected_usage = _projected_usage_with_netting(
                             nav,
@@ -14424,7 +15154,9 @@ async def limit_order(
                             meta=meta_guard,
                         )
                         if projected_usage is None and price_hint > 0:
-                            projected_used = margin_used + abs(units) * price_hint * margin_rate
+                            projected_used = (
+                                margin_used + abs(units) * price_hint * margin_rate
+                            )
                             projected_usage = projected_used / nav
 
                 if (
@@ -14432,24 +15164,41 @@ async def limit_order(
                     and projected_usage >= cap
                     and not net_reducing_usage
                 ):
-                    price_hint = _estimate_price(meta_guard) or _latest_mid_price() or 0.0
+                    price_hint = (
+                        _estimate_price(meta_guard) or _latest_mid_price() or 0.0
+                    )
                     scaled_units = 0
                     cap_target = cap * 0.99
                     try:
-                        if side_cap_enabled and long_u is not None and short_u is not None and price_hint > 0:
+                        if (
+                            side_cap_enabled
+                            and long_u is not None
+                            and short_u is not None
+                            and price_hint > 0
+                        ):
                             if side_label.lower() == "buy":
                                 side_units = abs(float(long_u))
                             else:
                                 side_units = abs(float(short_u))
-                            allowed_side = (cap_target * nav) / (price_hint * margin_rate) - side_units
+                            allowed_side = (cap_target * nav) / (
+                                price_hint * margin_rate
+                            ) - side_units
                             if allowed_side > 0:
-                                scaled_units = int(math.floor(min(abs(units), allowed_side)))
+                                scaled_units = int(
+                                    math.floor(min(abs(units), allowed_side))
+                                )
                         else:
-                            factor = cap_target / projected_usage if projected_usage > 0 else 0.0
+                            factor = (
+                                cap_target / projected_usage
+                                if projected_usage > 0
+                                else 0.0
+                            )
                             if factor > 0 and abs(units) > 0:
                                 scaled_units = int(math.floor(abs(units) * factor))
                             elif nav > 0 and margin_rate > 0 and price_hint > 0:
-                                allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                                allowed_net = (cap_target * nav) / (
+                                    price_hint * margin_rate
+                                )
                                 room = allowed_net - abs(net_before_units)
                                 scaled_units = int(math.floor(min(abs(units), room)))
                     except Exception:
@@ -14771,7 +15520,9 @@ async def limit_order(
             reason_key_upper = str(reason or "").upper() or "REJECTED"
             reason_key = reason_key_upper.lower()
             if reason_key_upper == "CLIENT_TRADE_ID_ALREADY_EXISTS":
-                duplicate_trade_id = _latest_filled_trade_id_by_client_id(client_order_id)
+                duplicate_trade_id = _latest_filled_trade_id_by_client_id(
+                    client_order_id
+                )
                 if duplicate_trade_id:
                     _log_order(
                         pocket=pocket,
@@ -14814,11 +15565,16 @@ async def limit_order(
                         pocket=pocket,
                         strategy_tag=strategy_tag,
                     )
-                    if rotated_client_order_id and rotated_client_order_id != client_order_id:
+                    if (
+                        rotated_client_order_id
+                        and rotated_client_order_id != client_order_id
+                    ):
                         prev_client_order_id = client_order_id
                         client_order_id = rotated_client_order_id
                         payload["order"]["clientExtensions"]["id"] = client_order_id
-                        payload["order"]["tradeClientExtensions"]["id"] = client_order_id
+                        payload["order"]["tradeClientExtensions"][
+                            "id"
+                        ] = client_order_id
                         _log_order(
                             pocket=pocket,
                             instrument=instrument,
@@ -14922,9 +15678,9 @@ async def limit_order(
 
         trade_id = _extract_trade_id(response)
         executed_price = None
-        if response.get("orderFillTransaction") and response["orderFillTransaction"].get(
-            "price"
-        ):
+        if response.get("orderFillTransaction") and response[
+            "orderFillTransaction"
+        ].get("price"):
             try:
                 executed_price = float(response["orderFillTransaction"]["price"])
             except Exception:

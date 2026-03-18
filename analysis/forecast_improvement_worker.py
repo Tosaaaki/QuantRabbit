@@ -360,12 +360,18 @@ def _default_config() -> WorkerConfig:
             )
         ).strip(),
         steps=str(os.getenv("FORECAST_IMPROVEMENT_AUDIT_STEPS", "1,5,10")).strip(),
-        horizons=_split_csv(os.getenv("FORECAST_IMPROVEMENT_AUDIT_HORIZONS", "1m,5m,10m")),
+        horizons=_split_csv(
+            os.getenv("FORECAST_IMPROVEMENT_AUDIT_HORIZONS", "1m,5m,10m")
+        ),
         max_bars=max(0, _env_int("FORECAST_IMPROVEMENT_AUDIT_MAX_BARS", 8050)),
         timeout_sec=max(60, _env_int("FORECAST_IMPROVEMENT_AUDIT_TIMEOUT_SEC", 900)),
         keep_runs=max(1, _env_int("FORECAST_IMPROVEMENT_AUDIT_KEEP_RUNS", 96)),
-        hit_degrade_threshold=_env_float("FORECAST_IMPROVEMENT_AUDIT_HIT_DEGRADE_THRESHOLD", -0.002),
-        mae_degrade_threshold=_env_float("FORECAST_IMPROVEMENT_AUDIT_MAE_DEGRADE_THRESHOLD", 0.020),
+        hit_degrade_threshold=_env_float(
+            "FORECAST_IMPROVEMENT_AUDIT_HIT_DEGRADE_THRESHOLD", -0.002
+        ),
+        mae_degrade_threshold=_env_float(
+            "FORECAST_IMPROVEMENT_AUDIT_MAE_DEGRADE_THRESHOLD", 0.020
+        ),
         range_cov_degrade_threshold=_env_float(
             "FORECAST_IMPROVEMENT_AUDIT_RANGE_COV_DEGRADE_THRESHOLD",
             -0.030,
@@ -387,8 +393,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--max-bars", type=int, default=default.max_bars)
     ap.add_argument("--timeout-sec", type=int, default=default.timeout_sec)
     ap.add_argument("--keep-runs", type=int, default=default.keep_runs)
-    ap.add_argument("--hit-degrade-threshold", type=float, default=default.hit_degrade_threshold)
-    ap.add_argument("--mae-degrade-threshold", type=float, default=default.mae_degrade_threshold)
+    ap.add_argument(
+        "--hit-degrade-threshold", type=float, default=default.hit_degrade_threshold
+    )
+    ap.add_argument(
+        "--mae-degrade-threshold", type=float, default=default.mae_degrade_threshold
+    )
     ap.add_argument(
         "--range-cov-degrade-threshold",
         type=float,
@@ -446,7 +456,9 @@ def _build_eval_command(cfg: WorkerConfig, *, eval_json_path: Path) -> list[str]
     return cmd
 
 
-def _run_subprocess(cmd: list[str], *, timeout_sec: int) -> subprocess.CompletedProcess[str]:
+def _run_subprocess(
+    cmd: list[str], *, timeout_sec: int
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=str(REPO_ROOT),
@@ -547,7 +559,9 @@ def _classify_verdict(
 
 def _build_next_actions(verdict: str, degraded_horizons: list[str]) -> list[str]:
     if verdict == "degraded":
-        targets = ",".join(degraded_horizons) if degraded_horizons else "degraded horizons"
+        targets = (
+            ",".join(degraded_horizons) if degraded_horizons else "degraded horizons"
+        )
         return [
             f"Reduce `FORECAST_TECH_FEATURE_EXPANSION_GAIN` by 0.05 for {targets} and re-evaluate.",
             f"Lower `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP` weights for {targets} by 0.04, then rerun.",
@@ -634,7 +648,9 @@ def _build_report_markdown(
 
     lines.extend(["", "## Before/After"])
     if rows:
-        for row in sorted(rows, key=lambda r: _sort_horizon_key(str(r.get("horizon") or ""))):
+        for row in sorted(
+            rows, key=lambda r: _sort_horizon_key(str(r.get("horizon") or ""))
+        ):
             horizon = str(row.get("horizon") or row.get("step") or "-").lower()
             lines.append(
                 "- "
@@ -682,7 +698,9 @@ def _iter_report_paths(out_dir: Path) -> list[Path]:
     return reports
 
 
-def _cleanup_old_runs(out_dir: Path, *, keep_runs: int, protected: Path | None = None) -> list[str]:
+def _cleanup_old_runs(
+    out_dir: Path, *, keep_runs: int, protected: Path | None = None
+) -> list[str]:
     if keep_runs <= 0:
         return []
     reports = _iter_report_paths(out_dir)
@@ -754,7 +772,9 @@ def run_once(cfg: WorkerConfig, *, runner: Runner | None = None) -> int:
     _write_text_atomic(report_md_path, report_md)
     _write_text_atomic(cfg.latest_md_path, report_md)
 
-    removed_dirs = _cleanup_old_runs(cfg.out_dir, keep_runs=cfg.keep_runs, protected=report_md_path)
+    removed_dirs = _cleanup_old_runs(
+        cfg.out_dir, keep_runs=cfg.keep_runs, protected=report_md_path
+    )
     finished = datetime.now(timezone.utc)
 
     has_rows = bool(rows)
@@ -767,11 +787,15 @@ def run_once(cfg: WorkerConfig, *, runner: Runner | None = None) -> int:
 
     runtime_override_env = _collect_eval_override_map()
     runtime_overrides = {
-        "enabled": bool(returncode == 0 and verdict != "degraded" and runtime_override_env),
+        "enabled": bool(
+            returncode == 0 and verdict != "degraded" and runtime_override_env
+        ),
         "reason": "",
         "source": "forecast_improvement_worker",
         "generated_at": finished.isoformat(),
-        "max_age_sec": max(300, _env_int("FORECAST_IMPROVEMENT_AUDIT_RUNTIME_MAX_AGE_SEC", 3 * 3600)),
+        "max_age_sec": max(
+            300, _env_int("FORECAST_IMPROVEMENT_AUDIT_RUNTIME_MAX_AGE_SEC", 3 * 3600)
+        ),
         "verdict": verdict,
         "improved_horizons": list(improved_horizons),
         "degraded_horizons": list(degraded_horizons),
@@ -806,7 +830,9 @@ def run_once(cfg: WorkerConfig, *, runner: Runner | None = None) -> int:
         "snapshot_returncode": int(snapshot_proc.returncode),
         "eval_returncode": int(eval_proc.returncode),
         "run_dir": str(run_dir),
-        "snapshot_json_path": str(snapshot_json_path) if snapshot_json_path.exists() else "",
+        "snapshot_json_path": (
+            str(snapshot_json_path) if snapshot_json_path.exists() else ""
+        ),
         "eval_json_path": str(eval_json_path) if eval_json_path.exists() else "",
         "report_md_path": str(report_md_path),
         "latest_md_path": str(cfg.latest_md_path),
@@ -840,7 +866,9 @@ def run_once(cfg: WorkerConfig, *, runner: Runner | None = None) -> int:
 
 def main() -> int:
     if not _env_bool("FORECAST_IMPROVEMENT_AUDIT_ENABLED", True):
-        print("[forecast-improvement-worker] skipped: FORECAST_IMPROVEMENT_AUDIT_ENABLED=0")
+        print(
+            "[forecast-improvement-worker] skipped: FORECAST_IMPROVEMENT_AUDIT_ENABLED=0"
+        )
         return 0
     args = parse_args()
     cfg = _build_config_from_args(args)

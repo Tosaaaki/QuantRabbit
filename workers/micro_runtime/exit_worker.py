@@ -36,13 +36,27 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float(
+    "BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_TREND_EXT_RATIO = env_float(
+    "BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float(
+    "BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float(
+    "BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_EXT_PIPS = env_float(
+    "BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_EXT_RATIO = env_float(
+    "BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_MID_BUFFER_PIPS = env_float(
+    "BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX
+)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -86,7 +100,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _bb_exit_price(fac):
@@ -157,8 +177,16 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
         style = "reversion"
     mid_buffer = max(_BB_EXIT_MID_BUFFER_PIPS, span_pips * 0.05)
     if style == "reversion":
-        base_pips = _BB_EXIT_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_EXIT_REVERT_PIPS
-        base_ratio = _BB_EXIT_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_EXIT_REVERT_RATIO
+        base_pips = (
+            _BB_EXIT_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_EXIT_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_EXIT_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_EXIT_REVERT_RATIO
+        )
         threshold = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             dist = (price - lower) / _BB_PIP
@@ -175,6 +203,7 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
     if price >= mid + mid_buffer * _BB_PIP:
         return True
     return price <= (lower + band_buffer * _BB_PIP)
+
 
 BB_STYLE_DEFAULT = "trend"
 
@@ -196,8 +225,14 @@ def _parse_tag_allowlist(raw: Optional[str]) -> Set[str]:
     return tags
 
 
-ALLOWED_TAGS: Set[str] = _parse_tag_allowlist(os.getenv("MICRO_MULTI_EXIT_TAG_ALLOWLIST", ""))
-REVERSAL_TAG_PREFIXES: Set[str] = {"MicroVWAPBound", "MicroVWAPRevert", "MicroCompressionRevert"}
+ALLOWED_TAGS: Set[str] = _parse_tag_allowlist(
+    os.getenv("MICRO_MULTI_EXIT_TAG_ALLOWLIST", "")
+)
+REVERSAL_TAG_PREFIXES: Set[str] = {
+    "MicroVWAPBound",
+    "MicroVWAPRevert",
+    "MicroCompressionRevert",
+}
 REVERSAL_PROFILES: Set[str] = {
     "bb_range_reversion",
     "micro_vwap_bound",
@@ -252,7 +287,9 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -356,7 +393,9 @@ class _TradeState:
             self.peak = pnl
         if pnl > 0:
             floor = max(0.0, pnl - lock_buffer)
-            self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
+            self.lock_floor = (
+                floor if self.lock_floor is None else max(self.lock_floor, floor)
+            )
 
 
 class MicroMultiExitWorker:
@@ -368,22 +407,40 @@ class MicroMultiExitWorker:
     """
 
     def __init__(self) -> None:
-        self.loop_interval = max(0.3, _float_env("MICRO_MULTI_EXIT_LOOP_INTERVAL_SEC", 1.0))
+        self.loop_interval = max(
+            0.3, _float_env("MICRO_MULTI_EXIT_LOOP_INTERVAL_SEC", 1.0)
+        )
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
         self._loss_cut_last_ts: Dict[str, float] = {}
 
         self.profit_take = max(1.2, _float_env("MICRO_MULTI_EXIT_PROFIT_PIPS", 2.0))
-        self.trail_start = max(1.4, _float_env("MICRO_MULTI_EXIT_TRAIL_START_PIPS", 2.8))
-        self.trail_backoff = max(0.2, _float_env("MICRO_MULTI_EXIT_TRAIL_BACKOFF_PIPS", 0.9))
-        self.lock_buffer = max(0.15, _float_env("MICRO_MULTI_EXIT_LOCK_BUFFER_PIPS", 0.4))
+        self.trail_start = max(
+            1.4, _float_env("MICRO_MULTI_EXIT_TRAIL_START_PIPS", 2.8)
+        )
+        self.trail_backoff = max(
+            0.2, _float_env("MICRO_MULTI_EXIT_TRAIL_BACKOFF_PIPS", 0.9)
+        )
+        self.lock_buffer = max(
+            0.15, _float_env("MICRO_MULTI_EXIT_LOCK_BUFFER_PIPS", 0.4)
+        )
         self.min_hold_sec = max(5.0, _float_env("MICRO_MULTI_EXIT_MIN_HOLD_SEC", 18.0))
 
-        self.range_profit_take = max(1.0, _float_env("MICRO_MULTI_EXIT_RANGE_PROFIT_PIPS", 1.6))
-        self.range_trail_start = max(1.1, _float_env("MICRO_MULTI_EXIT_RANGE_TRAIL_START_PIPS", 2.1))
-        self.range_trail_backoff = max(0.2, _float_env("MICRO_MULTI_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 0.6))
-        self.range_lock_buffer = max(0.1, _float_env("MICRO_MULTI_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.3))
-        self.range_max_hold_sec = max(90.0, _float_env("MICRO_MULTI_EXIT_RANGE_MAX_HOLD_SEC", 30 * 60))
+        self.range_profit_take = max(
+            1.0, _float_env("MICRO_MULTI_EXIT_RANGE_PROFIT_PIPS", 1.6)
+        )
+        self.range_trail_start = max(
+            1.1, _float_env("MICRO_MULTI_EXIT_RANGE_TRAIL_START_PIPS", 2.1)
+        )
+        self.range_trail_backoff = max(
+            0.2, _float_env("MICRO_MULTI_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 0.6)
+        )
+        self.range_lock_buffer = max(
+            0.1, _float_env("MICRO_MULTI_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.3)
+        )
+        self.range_max_hold_sec = max(
+            90.0, _float_env("MICRO_MULTI_EXIT_RANGE_MAX_HOLD_SEC", 30 * 60)
+        )
 
         self.range_adx = max(5.0, _float_env("MICRO_MULTI_EXIT_RANGE_ADX", 22.0))
         self.range_bbw = max(0.02, _float_env("MICRO_MULTI_EXIT_RANGE_BBW", 0.22))
@@ -392,14 +449,30 @@ class MicroMultiExitWorker:
         self.rsi_take_long = _float_env("MICRO_MULTI_EXIT_RSI_TAKE_LONG", 70.0)
         self.rsi_take_short = _float_env("MICRO_MULTI_EXIT_RSI_TAKE_SHORT", 30.0)
 
-        self.partial_trigger = max(0.9, _float_env("MICRO_MULTI_EXIT_PARTIAL_TRIGGER_PIPS", 1.1))
-        self.partial_trigger_low_vol = max(0.8, _float_env("MICRO_MULTI_EXIT_PARTIAL_TRIGGER_PIPS_LOWVOL", 0.9))
-        self.partial_fraction = min(0.8, max(0.1, _float_env("MICRO_MULTI_EXIT_PARTIAL_FRACTION", 0.35)))
-        self.partial_min_units = max(20, int(_float_env("MICRO_MULTI_EXIT_PARTIAL_MIN_UNITS", 500)))
-        self.partial_min_remaining = max(20, int(_float_env("MICRO_MULTI_EXIT_PARTIAL_MIN_REMAIN", 500)))
-        self.be_buffer_pips = max(0.05, _float_env("MICRO_MULTI_EXIT_BE_BUFFER_PIPS", 0.2))
+        self.partial_trigger = max(
+            0.9, _float_env("MICRO_MULTI_EXIT_PARTIAL_TRIGGER_PIPS", 1.1)
+        )
+        self.partial_trigger_low_vol = max(
+            0.8, _float_env("MICRO_MULTI_EXIT_PARTIAL_TRIGGER_PIPS_LOWVOL", 0.9)
+        )
+        self.partial_fraction = min(
+            0.8, max(0.1, _float_env("MICRO_MULTI_EXIT_PARTIAL_FRACTION", 0.35))
+        )
+        self.partial_min_units = max(
+            20, int(_float_env("MICRO_MULTI_EXIT_PARTIAL_MIN_UNITS", 500))
+        )
+        self.partial_min_remaining = max(
+            20, int(_float_env("MICRO_MULTI_EXIT_PARTIAL_MIN_REMAIN", 500))
+        )
+        self.be_buffer_pips = max(
+            0.05, _float_env("MICRO_MULTI_EXIT_BE_BUFFER_PIPS", 0.2)
+        )
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool, Optional[float], Optional[float]]:
+    def _context(
+        self,
+    ) -> tuple[
+        Optional[float], Optional[float], bool, Optional[float], Optional[float]
+    ]:
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
@@ -412,7 +485,10 @@ class MicroMultiExitWorker:
 
         adx = _safe_float(fac_m1.get("adx"))
         bbw = _safe_float(fac_m1.get("bbw"))
-        atr = _safe_float(fac_m1.get("atr_pips")) or (_safe_float(fac_m1.get("atr")) or 0.0) * 100.0
+        atr = (
+            _safe_float(fac_m1.get("atr_pips"))
+            or (_safe_float(fac_m1.get("atr")) or 0.0) * 100.0
+        )
         range_ctx = detect_range_mode(
             fac_m1,
             fac_h4,
@@ -421,7 +497,13 @@ class MicroMultiExitWorker:
             atr_threshold=self.range_atr,
         )
         rsi = _safe_float(fac_m1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active), _safe_float(fac_m1.get("adx")), _safe_float(fac_m1.get("bbw"))
+        return (
+            _latest_mid(),
+            rsi,
+            bool(range_ctx.active),
+            _safe_float(fac_m1.get("adx")),
+            _safe_float(fac_m1.get("bbw")),
+        )
 
     def _trade_has_stop_loss(self, trade: dict) -> bool:
         sl = trade.get("stop_loss")
@@ -469,9 +551,20 @@ class MicroMultiExitWorker:
             env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
-            LOG.info("[EXIT-micro_multi] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
+            LOG.info(
+                "[EXIT-micro_multi] trade=%s units=%s reason=%s pnl=%.2fp",
+                trade_id,
+                units,
+                reason,
+                pnl,
+            )
         else:
-            LOG.error("[EXIT-micro_multi] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+            LOG.error(
+                "[EXIT-micro_multi] close failed trade=%s units=%s reason=%s",
+                trade_id,
+                units,
+                reason,
+            )
 
     async def _review_trade(
         self,
@@ -536,35 +629,47 @@ class MicroMultiExitWorker:
 
         min_hold = self.min_hold_sec
         if not range_active:
-            min_hold = scale_value(self.min_hold_sec, scale=scale, floor=self.min_hold_sec)
+            min_hold = scale_value(
+                self.min_hold_sec, scale=scale, floor=self.min_hold_sec
+            )
 
-        profit_take = self.range_profit_take if range_active else scale_value(
-            self.profit_take, scale=scale, floor=self.profit_take
+        profit_take = (
+            self.range_profit_take
+            if range_active
+            else scale_value(self.profit_take, scale=scale, floor=self.profit_take)
         )
-        trail_start = self.range_trail_start if range_active else scale_value(
-            self.trail_start, scale=scale, floor=self.trail_start
+        trail_start = (
+            self.range_trail_start
+            if range_active
+            else scale_value(self.trail_start, scale=scale, floor=self.trail_start)
         )
-        trail_backoff = self.range_trail_backoff if range_active else scale_value(
-            self.trail_backoff, scale=scale, floor=self.trail_backoff
+        trail_backoff = (
+            self.range_trail_backoff
+            if range_active
+            else scale_value(self.trail_backoff, scale=scale, floor=self.trail_backoff)
         )
-        lock_buffer = self.range_lock_buffer if range_active else scale_value(
-            self.lock_buffer, scale=scale, floor=self.lock_buffer
+        lock_buffer = (
+            self.range_lock_buffer
+            if range_active
+            else scale_value(self.lock_buffer, scale=scale, floor=self.lock_buffer)
         )
         forecast_adj = build_exit_forecast_adjustment(
             side=side,
             entry_thesis=thesis,
             env_prefix=_BB_ENV_PREFIX,
         )
-        profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
-            profit_take=profit_take,
-            trail_start=trail_start,
-            trail_backoff=trail_backoff,
-            lock_buffer=lock_buffer,
-            adjustment=forecast_adj,
-            profit_take_floor=1.0,
-            trail_start_floor=1.0,
-            trail_backoff_floor=0.1,
-            lock_buffer_floor=0.1,
+        profit_take, trail_start, trail_backoff, lock_buffer = (
+            apply_exit_forecast_to_targets(
+                profit_take=profit_take,
+                trail_start=trail_start,
+                trail_backoff=trail_backoff,
+                lock_buffer=lock_buffer,
+                adjustment=forecast_adj,
+                profit_take_floor=1.0,
+                trail_start_floor=1.0,
+                trail_backoff_floor=0.1,
+                lock_buffer_floor=0.1,
+            )
         )
 
         state.update(pnl, lock_buffer)
@@ -574,7 +679,9 @@ class MicroMultiExitWorker:
         if not client_id and isinstance(client_ext, dict):
             client_id = client_ext.get("id")
         if not client_id:
-            LOG.warning("[EXIT-micro_multi] missing client_id trade=%s skip close", trade_id)
+            LOG.warning(
+                "[EXIT-micro_multi] missing client_id trade=%s skip close", trade_id
+            )
             return
         if await maybe_close_pro_stop(trade, now=now):
             return
@@ -614,7 +721,10 @@ class MicroMultiExitWorker:
             if reason:
                 now_mono = time.monotonic()
                 last = self._loss_cut_last_ts.get(trade_id, 0.0)
-                if params.cooldown_sec > 0.0 and (now_mono - last) < params.cooldown_sec:
+                if (
+                    params.cooldown_sec > 0.0
+                    and (now_mono - last) < params.cooldown_sec
+                ):
                     return
                 self._loss_cut_last_ts[trade_id] = now_mono
                 await self._close(
@@ -697,7 +807,10 @@ class MicroMultiExitWorker:
             if pnl >= trigger:
                 reduce_units = int(abs(units) * self.partial_fraction)
                 remaining = abs(units) - reduce_units
-                if reduce_units >= self.partial_min_units and remaining >= self.partial_min_remaining:
+                if (
+                    reduce_units >= self.partial_min_units
+                    and remaining >= self.partial_min_remaining
+                ):
                     ok = await close_trade(
                         trade_id,
                         reduce_units,
@@ -718,19 +831,33 @@ class MicroMultiExitWorker:
                             },
                             ts=now,
                         )
-                        be = entry + (self.be_buffer_pips * 0.01) if side == "long" else entry - (self.be_buffer_pips * 0.01)
-                        be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+                        be = (
+                            entry + (self.be_buffer_pips * 0.01)
+                            if side == "long"
+                            else entry - (self.be_buffer_pips * 0.01)
+                        )
+                        be_ok = await set_trade_protections(
+                            trade_id, sl_price=round(be, 3), tp_price=None
+                        )
                         if be_ok:
                             state.be_moved = True
                         return
 
         if state.partial_done and not state.be_moved:
-            be = entry + (self.be_buffer_pips * 0.01) if side == "long" else entry - (self.be_buffer_pips * 0.01)
+            be = (
+                entry + (self.be_buffer_pips * 0.01)
+                if side == "long"
+                else entry - (self.be_buffer_pips * 0.01)
+            )
             be_ok = False
             if side == "long" and mid >= be:
-                be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+                be_ok = await set_trade_protections(
+                    trade_id, sl_price=round(be, 3), tp_price=None
+                )
             elif side == "short" and mid <= be:
-                be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+                be_ok = await set_trade_protections(
+                    trade_id, sl_price=round(be, 3), tp_price=None
+                )
             if be_ok:
                 state.be_moved = True
         if pnl <= 0 and reversion_kind:
@@ -756,7 +883,11 @@ class MicroMultiExitWorker:
                 log_metric(
                     "micro_multi_reversion_exit",
                     pnl,
-                    tags={"reason": decision.reason, "side": side, "kind": reversion_kind},
+                    tags={
+                        "reason": decision.reason,
+                        "side": side,
+                        "kind": reversion_kind,
+                    },
                     ts=now,
                 )
                 await self._close(
@@ -791,7 +922,14 @@ class MicroMultiExitWorker:
                     tags={"side": side, "kind": reversion_kind},
                     ts=now,
                 )
-                await self._close(trade_id, -units, "take_profit_zone", pnl, client_id, bb_style=bb_style)
+                await self._close(
+                    trade_id,
+                    -units,
+                    "take_profit_zone",
+                    pnl,
+                    client_id,
+                    bb_style=bb_style,
+                )
                 self._states.pop(trade_id, None)
                 return
 
@@ -829,32 +967,49 @@ class MicroMultiExitWorker:
             and pnl > 0
             and pnl <= state.lock_floor
         ):
-            await self._close(trade_id, -units, "lock_floor", pnl, client_id, bb_style=bb_style)
+            await self._close(
+                trade_id, -units, "lock_floor", pnl, client_id, bb_style=bb_style
+            )
             self._states.pop(trade_id, None)
             return
 
-        if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
-            await self._close(trade_id, -units, "trail_take", pnl, client_id, bb_style=bb_style)
+        if (
+            state.peak > 0
+            and state.peak >= trail_start
+            and pnl > 0
+            and pnl <= state.peak - trail_backoff
+        ):
+            await self._close(
+                trade_id, -units, "trail_take", pnl, client_id, bb_style=bb_style
+            )
             self._states.pop(trade_id, None)
             return
 
         if pnl >= profit_take:
-            await self._close(trade_id, -units, "take_profit", pnl, client_id, bb_style=bb_style)
+            await self._close(
+                trade_id, -units, "take_profit", pnl, client_id, bb_style=bb_style
+            )
             self._states.pop(trade_id, None)
             return
 
         if pnl > 0 and rsi is not None and pnl >= rsi_take_min_pips:
             if side == "long" and rsi >= self.rsi_take_long:
-                await self._close(trade_id, -units, "rsi_take", pnl, client_id, bb_style=bb_style)
+                await self._close(
+                    trade_id, -units, "rsi_take", pnl, client_id, bb_style=bb_style
+                )
                 self._states.pop(trade_id, None)
                 return
             if side == "short" and rsi <= self.rsi_take_short:
-                await self._close(trade_id, -units, "rsi_take", pnl, client_id, bb_style=bb_style)
+                await self._close(
+                    trade_id, -units, "rsi_take", pnl, client_id, bb_style=bb_style
+                )
                 self._states.pop(trade_id, None)
                 return
 
         if range_active and hold_sec >= self.range_max_hold_sec and pnl > 0:
-            await self._close(trade_id, -units, "range_timeout", pnl, client_id, bb_style=bb_style)
+            await self._close(
+                trade_id, -units, "range_timeout", pnl, client_id, bb_style=bb_style
+            )
             self._states.pop(trade_id, None)
             return
 
@@ -876,8 +1031,12 @@ class MicroMultiExitWorker:
                 await asyncio.sleep(self.loop_interval)
                 positions = self._pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET) or {}
-                trades = _filter_trades(pocket_info.get("open_trades") or [], ALLOWED_TAGS)
-                active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
+                trades = _filter_trades(
+                    pocket_info.get("open_trades") or [], ALLOWED_TAGS
+                )
+                active_ids = {
+                    str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")
+                }
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
                         self._states.pop(tid, None)
@@ -894,9 +1053,14 @@ class MicroMultiExitWorker:
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active, adx, bbw)
+                        await self._review_trade(
+                            tr, now, mid, rsi, range_active, adx, bbw
+                        )
                     except Exception:
-                        LOG.exception("[EXIT-micro_runtime] review failed trade=%s", tr.get("trade_id"))
+                        LOG.exception(
+                            "[EXIT-micro_runtime] review failed trade=%s",
+                            tr.get("trade_id"),
+                        )
                         continue
         except asyncio.CancelledError:
             LOG.info("[EXIT-micro_runtime] worker cancelled")
@@ -916,7 +1080,9 @@ async def micro_runtime_exit_worker() -> None:
 _CANDLE_PIP = 0.01
 _CANDLE_EXIT_MIN_CONF = 0.35
 _CANDLE_EXIT_SCORE = -0.5
-_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+_CANDLE_WORKER_NAME = (
+    __file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else ""
+).lower()
 
 
 def _candle_tf_for_worker() -> str:
@@ -1010,11 +1176,19 @@ def _score_candle(*, candles, side, min_conf):
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     score = max(-1.0, min(1.0, score))
-    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+    return score, {
+        "type": pattern.get("type"),
+        "confidence": round(conf, 3),
+        "bias": bias,
+    }
 
 
 def _exit_candle_reversal(side):
@@ -1022,7 +1196,9 @@ def _exit_candle_reversal(side):
     candles = (all_factors().get(tf) or {}).get("candles") or []
     if not candles:
         return None
-    score, detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF)
+    score, detail = _score_candle(
+        candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF
+    )
     if score is None:
         return None
     if score <= _CANDLE_EXIT_SCORE:
@@ -1030,6 +1206,9 @@ def _exit_candle_reversal(side):
         return f"candle_{detail_type}" if detail_type else "candle_reversal"
     return None
 
+
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True
+    )
     asyncio.run(micro_runtime_exit_worker())

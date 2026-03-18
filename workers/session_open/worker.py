@@ -6,19 +6,30 @@ from zoneinfo import ZoneInfo
 import asyncio
 import logging
 import os
-from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import (
+    compute_adx_projection,
+    compute_bbw_projection,
+    compute_ma_projection,
+    compute_rsi_projection,
+)
 from analysis.ma_projection import score_ma_for_side
 from indicators.factor_cache import all_factors, get_candles_snapshot
+
 
 # ---- minimal protocols ----
 class DataFeed(Protocol):
     def get_bars(self, symbol: str, tf: str, n: int) -> Any: ...
+
     # bar dicts should include 'timestamp' (epoch seconds) when possible
     def last(self, symbol: str) -> float: ...
-    def best_bid_ask(self, symbol: str) -> Optional[Tuple[float, float]]: ...  # optional
+    def best_bid_ask(
+        self, symbol: str
+    ) -> Optional[Tuple[float, float]]: ...  # optional
+
 
 class Broker(Protocol):
     def send(self, order: Dict[str, Any]) -> Any: ...
+
 
 from workers.common.exit_adapter import build_exit_manager
 
@@ -30,12 +41,24 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float(
+    "BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_TREND_EXT_RATIO = env_float(
+    "BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float(
+    "BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float(
+    "BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float(
+    "BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float(
+    "BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX
+)
 _BB_PIP = 0.01
 _SESSION_OPEN_TECH_CONTEXT_TFS = ["M1", "M5", "H1"]
 _SESSION_OPEN_TECH_CONTEXT_FIELDS = [
@@ -85,7 +108,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
@@ -106,8 +135,16 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if style == "scalp" and range_active:
         style = "reversion"
     if style == "reversion":
-        base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
-        base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
+        base_pips = (
+            _BB_ENTRY_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_ENTRY_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_RATIO
+        )
         threshold = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             dist = (price - lower) / _BB_PIP
@@ -126,6 +163,7 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if orig_style == "scalp":
         max_ext = max(_BB_ENTRY_SCALP_EXT_PIPS, span_pips * _BB_ENTRY_SCALP_EXT_RATIO)
     return ext <= max_ext
+
 
 BB_STYLE = "trend"
 
@@ -274,16 +312,28 @@ def _projection_decision(side, pocket, mode_override=None):
 
     ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
     rsi = compute_rsi_projection(candles, timeframe_minutes=minutes)
-    adx = compute_adx_projection(candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"])
+    adx = compute_adx_projection(
+        candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"]
+    )
     bbw = None
     if mode == "range":
-        bbw = compute_bbw_projection(candles, timeframe_minutes=minutes, squeeze_threshold=params["bbw_threshold"])
+        bbw = compute_bbw_projection(
+            candles,
+            timeframe_minutes=minutes,
+            squeeze_threshold=params["bbw_threshold"],
+        )
 
     scores = {}
     ma_score = _score_ma(ma, side, params["opp_block_bars"])
     if ma_score is not None and "ma" in params["weights"]:
         scores["ma"] = ma_score
-    rsi_score = _score_rsi(rsi, side, params["long_target"], params["short_target"], params["overheat_bars"])
+    rsi_score = _score_rsi(
+        rsi,
+        side,
+        params["long_target"],
+        params["short_target"],
+        params["overheat_bars"],
+    )
     if rsi_score is not None and "rsi" in params["weights"]:
         scores["rsi"] = rsi_score
     adx_score = _score_adx(adx, mode != "range", params["adx_threshold"])
@@ -330,9 +380,11 @@ def _projection_probability(size_mult: float, detail: Optional[dict]) -> float:
     probability = base + 0.08 * score_delta
     return max(0.18, min(0.98, probability))
 
+
 def _as_bars(bars: Any) -> List[Dict[str, float]]:
     out = []
-    if not bars: return out
+    if not bars:
+        return out
     if isinstance(bars, list) and bars and isinstance(bars[0], dict):
         for b in bars:
             d = {
@@ -348,8 +400,10 @@ def _as_bars(bars: Any) -> List[Dict[str, float]]:
     # fallback: cannot parse structure
     return out
 
+
 def _atr(b: List[Dict[str, float]], n: int = 14) -> float:
-    if len(b) < n + 1: return 0.0
+    if len(b) < n + 1:
+        return 0.0
     trs = []
     for i in range(1, n + 1):
         h, l = b[-i]["high"], b[-i]["low"]
@@ -357,15 +411,21 @@ def _atr(b: List[Dict[str, float]], n: int = 14) -> float:
         trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     return sum(trs) / len(trs)
 
-def _initial_range(bars: List[Dict[str, float]], t0: float, t1: float) -> Optional[Dict[str, float]]:
-    seg = [x for x in bars if not math.isnan(x["timestamp"]) and t0 <= x["timestamp"] <= t1]
-    if len(seg) < 2: 
+
+def _initial_range(
+    bars: List[Dict[str, float]], t0: float, t1: float
+) -> Optional[Dict[str, float]]:
+    seg = [
+        x for x in bars if not math.isnan(x["timestamp"]) and t0 <= x["timestamp"] <= t1
+    ]
+    if len(seg) < 2:
         return None
     return {
         "high": max(x["high"] for x in seg),
-        "low":  min(x["low"]  for x in seg),
-        "n": len(seg)
+        "low": min(x["low"] for x in seg),
+        "n": len(seg),
     }
+
 
 def _today_session_start(now: float, start_hhmm: str, tz: str) -> float:
     tzinfo = ZoneInfo(tz)
@@ -375,16 +435,26 @@ def _today_session_start(now: float, start_hhmm: str, tz: str) -> float:
     # if already past next day (unlikely), adjust – also handle if we are before start (then use today's start)
     return session.timestamp()
 
+
 def _bps(a: float, b: float) -> float:
-    if b == 0: return 0.0
+    if b == 0:
+        return 0.0
     return (a / b - 1.0) * 1e4
+
 
 class SessionOpenWorker:
     """
     Build an initial range during the first X minutes of each configured session window.
     Trade a breakout of that range with small padding in bps.
     """
-    def __init__(self, cfg: Dict[str, Any], broker: Optional[Broker], datafeed: DataFeed, logger: Any = None):
+
+    def __init__(
+        self,
+        cfg: Dict[str, Any],
+        broker: Optional[Broker],
+        datafeed: DataFeed,
+        logger: Any = None,
+    ):
         self.c = cfg
         self.b = broker
         self.d = datafeed
@@ -406,10 +476,12 @@ class SessionOpenWorker:
         intents = []
         for sym in self.c.get("universe", []):
             ti = self.edge(sym, now)
-            if not ti: 
+            if not ti:
                 continue
             pocket = str(self.c.get("pocket", "micro"))
-            proj_allow, proj_mult, proj_detail = _projection_decision(ti["side"], pocket)
+            proj_allow, proj_mult, proj_detail = _projection_decision(
+                ti["side"], pocket
+            )
             if not proj_allow:
                 continue
             entry_probability = _projection_probability(proj_mult, proj_detail)
@@ -426,7 +498,9 @@ class SessionOpenWorker:
 
     def edge(self, sym: str, now: float) -> Optional[Dict[str, Any]]:
         # bars for entry tf
-        bars = _as_bars(self.d.get_bars(sym, self.tf, max(self.filters.get("min_bars", 60), 200)))
+        bars = _as_bars(
+            self.d.get_bars(sym, self.tf, max(self.filters.get("min_bars", 60), 200))
+        )
         if len(bars) < self.filters.get("min_bars", 60):
             return None
 
@@ -476,13 +550,23 @@ class SessionOpenWorker:
                 if not _bb_entry_allowed(BB_STYLE, "long", last, fac_m1):
                     continue
                 self._last_entry_bar[sym] = len(bars) - 1
-                return {"symbol": sym, "side": "long", "px": last, "meta": {"atr": atr, "rng": (lo, hi), "session": ses}}
+                return {
+                    "symbol": sym,
+                    "side": "long",
+                    "px": last,
+                    "meta": {"atr": atr, "rng": (lo, hi), "session": ses},
+                }
             if last < dn_trig:
                 fac_m1 = all_factors().get("M1") or {}
                 if not _bb_entry_allowed(BB_STYLE, "short", last, fac_m1):
                     continue
                 self._last_entry_bar[sym] = len(bars) - 1
-                return {"symbol": sym, "side": "short", "px": last, "meta": {"atr": atr, "rng": (lo, hi), "session": ses}}
+                return {
+                    "symbol": sym,
+                    "side": "short",
+                    "px": last,
+                    "meta": {"atr": atr, "rng": (lo, hi), "session": ses},
+                }
 
         return None
 
@@ -500,12 +584,20 @@ class SessionOpenWorker:
             size *= size_mult
 
         order = {
-            "symbol": sym, "side": side, "type": "market", "size": size,
-            "meta": {"worker_id": self.c.get("id", "session_open_breakout"), "intent": intent},
+            "symbol": sym,
+            "side": side,
+            "type": "market",
+            "size": size,
+            "meta": {
+                "worker_id": self.c.get("id", "session_open_breakout"),
+                "intent": intent,
+            },
             "technical_context_tfs": list(_SESSION_OPEN_TECH_CONTEXT_TFS),
             "technical_context_fields": list(_SESSION_OPEN_TECH_CONTEXT_FIELDS),
             "technical_context_ticks": list(_SESSION_OPEN_TECH_CONTEXT_TICKS),
-            "technical_context_candle_counts": dict(_SESSION_OPEN_TECH_CONTEXT_CANDLE_COUNTS),
+            "technical_context_candle_counts": dict(
+                _SESSION_OPEN_TECH_CONTEXT_CANDLE_COUNTS
+            ),
         }
         if size > 0:
             order["entry_units_intent"] = max(1, int(round(float(size) * 100000)))
@@ -525,12 +617,18 @@ async def _idle_loop() -> None:
     """
     log = logging.getLogger("session_open")
     while True:
-        log.info("[SESSION_OPEN] inactive (no datafeed/broker configured); sleeping 300s")
+        log.info(
+            "[SESSION_OPEN] inactive (no datafeed/broker configured); sleeping 300s"
+        )
         await asyncio.sleep(300)
 
 
 if __name__ == "__main__":  # pragma: no cover - service entrypoint
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
     from .config import DEFAULT_CONFIG
     from workers.common import addon_live
 
@@ -543,7 +641,9 @@ if __name__ == "__main__":  # pragma: no cover - service entrypoint
     )
     if not cfg.get("live_enabled"):
         LOG = logging.getLogger("session_open")
-        LOG.info("session_open idle mode (set SESSION_OPEN_LIVE=1 or ADDON_LIVE_MODE=1 to enable)")
+        LOG.info(
+            "session_open idle mode (set SESSION_OPEN_LIVE=1 or ADDON_LIVE_MODE=1 to enable)"
+        )
         try:
             asyncio.run(_idle_loop())
         except KeyboardInterrupt:
@@ -566,7 +666,9 @@ if __name__ == "__main__":  # pragma: no cover - service entrypoint
         require_passive=bool(cfg.get("require_passive", True)),
         logger=logging.getLogger("session_open"),
     )
-    worker = SessionOpenWorker(cfg, broker=broker, datafeed=datafeed, logger=logging.getLogger("session_open"))
+    worker = SessionOpenWorker(
+        cfg, broker=broker, datafeed=datafeed, logger=logging.getLogger("session_open")
+    )
     addon_live.run_loop(
         worker,
         loop_interval_sec=float(cfg.get("loop_interval_sec", 20.0)),

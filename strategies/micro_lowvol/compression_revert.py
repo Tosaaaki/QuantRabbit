@@ -22,7 +22,9 @@ class MicroCompressionRevert:
     _MID_GAP_BLOCK_PIPS = 3.2
 
     @staticmethod
-    def _bb_levels(fac: Dict[str, object]) -> Optional[tuple[float, float, float, float, float]]:
+    def _bb_levels(
+        fac: Dict[str, object],
+    ) -> Optional[tuple[float, float, float, float, float]]:
         upper = to_float(fac.get("bb_upper"))
         lower = to_float(fac.get("bb_lower"))
         mid = to_float(fac.get("bb_mid"))
@@ -39,7 +41,13 @@ class MicroCompressionRevert:
         if span <= 0:
             return None
         span_pips = span / PIP
-        return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span_pips
+        return (
+            upper,
+            mid if mid is not None else (upper + lower) / 2.0,
+            lower,
+            span,
+            span_pips,
+        )
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -75,9 +83,15 @@ class MicroCompressionRevert:
 
         rsi = to_float(fac.get("rsi"), 50.0) or 50.0
         side = None
-        if price >= upper - touch_pips * PIP and rsi >= MicroCompressionRevert._RSI_SHORT_MIN:
+        if (
+            price >= upper - touch_pips * PIP
+            and rsi >= MicroCompressionRevert._RSI_SHORT_MIN
+        ):
             side = "OPEN_SHORT"
-        elif price <= lower + touch_pips * PIP and rsi <= MicroCompressionRevert._RSI_LONG_MAX:
+        elif (
+            price <= lower + touch_pips * PIP
+            and rsi <= MicroCompressionRevert._RSI_LONG_MAX
+        ):
             side = "OPEN_LONG"
         if side is None:
             return None
@@ -104,8 +118,21 @@ class MicroCompressionRevert:
         sl_pips = max(1.8, min(3.5, atr * 1.10))
         tp_pips = max(sl_pips * 1.3, min(4.5, atr * 1.50))
 
-        compression_score = max(0.0, min(1.0, (MicroCompressionRevert._BBW_MAX - bbw) / max(MicroCompressionRevert._BBW_MAX, 1e-6)))
-        confidence = 56 + int(min(18.0, compression_score * 24.0 + max(0.0, (MicroCompressionRevert._ATR_MAX - atr)) * 1.6))
+        compression_score = max(
+            0.0,
+            min(
+                1.0,
+                (MicroCompressionRevert._BBW_MAX - bbw)
+                / max(MicroCompressionRevert._BBW_MAX, 1e-6),
+            ),
+        )
+        confidence = 56 + int(
+            min(
+                18.0,
+                compression_score * 24.0
+                + max(0.0, (MicroCompressionRevert._ATR_MAX - atr)) * 1.6,
+            )
+        )
         confidence = max(45, min(92, confidence))
 
         return {

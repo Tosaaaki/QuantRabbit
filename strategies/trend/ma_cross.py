@@ -8,7 +8,9 @@ from pathlib import Path
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 
-_SESSION_BIAS_ENABLED = os.getenv("MA_CROSS_SESSION_BIAS_ENABLED", "0").strip().lower() not in {
+_SESSION_BIAS_ENABLED = os.getenv(
+    "MA_CROSS_SESSION_BIAS_ENABLED", "0"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -22,30 +24,32 @@ class MovingAverageCross:
     profile = "macro_trend_ma"
 
     # Entry quality baselines (pips are 0.01 for USD/JPY)
-    _MIN_GAP_PIPS = 0.28            # allow smaller MA10/MA20 separation
-    _MIN_TREND_ADX = 12.5           # allow weaker trend
-    _MIN_GAP_IN_WEAK_TREND = 0.60   # lower gap requirement when ADX is weak
-    _MIN_SLOPE_IN_WEAK_TREND = 0.03 # allow gentler slope
-    _NARROW_BBW_LIMIT = 0.14        # stand down only in ultra compression
-    _MAX_FAST_DISTANCE = 8.0        # avoid stretched entries far from fast MA
+    _MIN_GAP_PIPS = 0.28  # allow smaller MA10/MA20 separation
+    _MIN_TREND_ADX = 12.5  # allow weaker trend
+    _MIN_GAP_IN_WEAK_TREND = 0.60  # lower gap requirement when ADX is weak
+    _MIN_SLOPE_IN_WEAK_TREND = 0.03  # allow gentler slope
+    _NARROW_BBW_LIMIT = 0.14  # stand down only in ultra compression
+    _MAX_FAST_DISTANCE = 8.0  # avoid stretched entries far from fast MA
     # Use bars-based threshold to work across timeframes (M1/H4)
-    _CROSS_BARS_STOP = 1.5          # allow entries closer to a cross
-    _MIN_ATR_PIPS = 0.55            # allow lower ATR
-    _MIN_GAP_ATR_RATIO = 0.14       # require separation vs ATR
+    _CROSS_BARS_STOP = 1.5  # allow entries closer to a cross
+    _MIN_ATR_PIPS = 0.55  # allow lower ATR
+    _MIN_GAP_ATR_RATIO = 0.14  # require separation vs ATR
 
     # Pullback gating: avoid buying too far below fast MA or selling too far above
-    _PULLBACK_LIMIT = 1.60          # pips relative to fast MA
+    _PULLBACK_LIMIT = 1.60  # pips relative to fast MA
 
     # Simple M1-only range suppression to avoid trend entries under compression
     _RANGE_ADX_CUTOFF = 12.0  # さらに緩和して弱トレンドでも拾う
     _RANGE_BBW_CUTOFF = 0.12  # 締まり気味でも拾う
-    _RANGE_ATR_MAX = 10.0     # 高ATRでも抑制しすぎない
+    _RANGE_ATR_MAX = 10.0  # 高ATRでも抑制しすぎない
     _MACRO_TREND_ADX_OVERRIDE = 24.0
     _MACRO_TREND_GAP_PIPS = 1.2
     _OPPOSITE_FLIP_COOLDOWN_SEC = 1800  # 30min flip guard for macro direction changes
 
     @staticmethod
-    def _swing_levels(candles: List[Dict], close_val: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+    def _swing_levels(
+        candles: List[Dict], close_val: Optional[float]
+    ) -> Tuple[Optional[float], Optional[float]]:
         candles_list = list(candles or [])
         highs: List[float] = []
         lows: List[float] = []
@@ -81,25 +85,45 @@ class MovingAverageCross:
         vwap_gap = None
         try:
             vwap = fac.get("vwap")
-            vwap_gap = abs(close_price - float(vwap)) / 0.01 if vwap is not None else None
+            vwap_gap = (
+                abs(close_price - float(vwap)) / 0.01 if vwap is not None else None
+            )
         except Exception:
             vwap_gap = None
-        slope_boost = abs(projection.gap_slope_pips or 0.0) * 9.0  # ~0.1 slope -> +0.9pips
+        slope_boost = (
+            abs(projection.gap_slope_pips or 0.0) * 9.0
+        )  # ~0.1 slope -> +0.9pips
 
         tp_out = tp_pips
         sl_out = sl_pips
         if direction == "long":
-            swing_room = (swing_high - close_price) / 0.01 if swing_high and swing_high > close_price else None
+            swing_room = (
+                (swing_high - close_price) / 0.01
+                if swing_high and swing_high > close_price
+                else None
+            )
             if swing_room is not None:
                 tp_out = max(tp_out, min(tp_out * 1.6, swing_room * 0.9 + slope_boost))
-            swing_buffer = (close_price - swing_low) / 0.01 * 0.9 if swing_low and swing_low < close_price else None
+            swing_buffer = (
+                (close_price - swing_low) / 0.01 * 0.9
+                if swing_low and swing_low < close_price
+                else None
+            )
             if swing_buffer:
                 sl_out = max(sl_out, min(sl_out * 1.6, swing_buffer))
         else:
-            swing_room = (close_price - swing_low) / 0.01 if swing_low and swing_low < close_price else None
+            swing_room = (
+                (close_price - swing_low) / 0.01
+                if swing_low and swing_low < close_price
+                else None
+            )
             if swing_room is not None:
                 tp_out = max(tp_out, min(tp_out * 1.6, swing_room * 0.9 + slope_boost))
-            swing_buffer = (swing_high - close_price) / 0.01 * 0.9 if swing_high and swing_high > close_price else None
+            swing_buffer = (
+                (swing_high - close_price) / 0.01 * 0.9
+                if swing_high and swing_high > close_price
+                else None
+            )
             if swing_buffer:
                 sl_out = max(sl_out, min(sl_out * 1.6, swing_buffer))
         if vwap_gap is not None and tp_out > 0:
@@ -138,8 +162,7 @@ class MovingAverageCross:
         try:
             with sqlite3.connect(path) as con:
                 con.row_factory = sqlite3.Row
-                row = con.execute(
-                    """
+                row = con.execute("""
                     SELECT close_time, units
                     FROM trades
                     WHERE state='CLOSED'
@@ -147,8 +170,7 @@ class MovingAverageCross:
                       AND close_time IS NOT NULL
                     ORDER BY close_time DESC
                     LIMIT 1
-                    """
-                ).fetchone()
+                    """).fetchone()
         except Exception as exc:  # pragma: no cover - defensive
             logging.warning("[TrendMA] flip_guard_lookup_failed err=%s", exc)
             return False, None, None
@@ -182,9 +204,11 @@ class MovingAverageCross:
         try:
             if isinstance(candles, list) and len(candles) >= 2:
                 import datetime as _dt
+
                 def _parse(ts: str) -> _dt.datetime:
                     t = ts.replace("Z", "+00:00")
                     return _dt.datetime.fromisoformat(t)
+
                 t2 = _parse(str(candles[-1]["timestamp"]))
                 t1 = _parse(str(candles[-2]["timestamp"]))
                 delta_min = max(1.0, (t2 - t1).total_seconds() / 60.0)
@@ -241,7 +265,10 @@ class MovingAverageCross:
 
         trend_override = False
         try:
-            trend_override = abs(projection.gap_pips) >= 1.0 and abs(projection.gap_slope_pips or 0.0) >= 0.05
+            trend_override = (
+                abs(projection.gap_pips) >= 1.0
+                and abs(projection.gap_slope_pips or 0.0) >= 0.05
+            )
         except Exception:
             trend_override = False
 
@@ -253,12 +280,17 @@ class MovingAverageCross:
         if direction:
             try:
                 from indicators.factor_cache import all_factors
+
                 fac_h4 = all_factors().get("H4") or {}
                 h4_adx = float(fac_h4.get("adx") or 0.0)
                 ma10_h4 = float(fac_h4.get("ma10") or 0.0)
                 ma20_h4 = float(fac_h4.get("ma20") or 0.0)
                 if ma10_h4 and ma20_h4:
-                    h4_dir = "long" if ma10_h4 > ma20_h4 else "short" if ma10_h4 < ma20_h4 else None
+                    h4_dir = (
+                        "long"
+                        if ma10_h4 > ma20_h4
+                        else "short" if ma10_h4 < ma20_h4 else None
+                    )
                     h4_gap_pips = abs(ma10_h4 - ma20_h4) / 0.01
                 if (
                     h4_dir
@@ -277,7 +309,11 @@ class MovingAverageCross:
                 "h4_conflict",
                 h4_dir=h4_dir,
                 h4_adx=round(float(h4_adx or 0.0), 2) if h4_adx is not None else None,
-                h4_gap=round(float(h4_gap_pips or 0.0), 3) if h4_gap_pips is not None else None,
+                h4_gap=(
+                    round(float(h4_gap_pips or 0.0), 3)
+                    if h4_gap_pips is not None
+                    else None
+                ),
                 dir=direction,
             )
             return None
@@ -312,7 +348,11 @@ class MovingAverageCross:
                 gap_slope=round(projection.gap_slope_pips or 0.0, 5),
                 adx=round(float(adx or 0.0), 2),
                 bbw=round(float(bbw), 4) if isinstance(bbw, (int, float)) else None,
-                atr_pips=round(float(atr_pips_val or 0.0), 3) if atr_pips_val is not None else None,
+                atr_pips=(
+                    round(float(atr_pips_val or 0.0), 3)
+                    if atr_pips_val is not None
+                    else None
+                ),
             )
 
         # 市況に合わせた動的ギャップ/ADXゲート（戦略の主旨を維持しつつ緩和）
@@ -320,8 +360,12 @@ class MovingAverageCross:
         atr_norm = max(0.6, min(8.0, atr_pips_val or 2.0))
         recent_range = 0.0
         try:
-            highs = [float(c.get("high") or c.get("h") or 0.0) for c in (candles or [])[-24:]]
-            lows = [float(c.get("low") or c.get("l") or 0.0) for c in (candles or [])[-24:]]
+            highs = [
+                float(c.get("high") or c.get("h") or 0.0) for c in (candles or [])[-24:]
+            ]
+            lows = [
+                float(c.get("low") or c.get("l") or 0.0) for c in (candles or [])[-24:]
+            ]
             if highs and lows:
                 recent_range = (max(highs) - min(lows)) / 0.01
         except Exception:
@@ -359,7 +403,13 @@ class MovingAverageCross:
             return None
 
         # 短期ドリフトが逆行しているときは方向を捨てる
-        drift_keys = ("drift_pips_15m", "drift_15m", "return_15m_pips", "drift_pips_30m", "return_30m_pips")
+        drift_keys = (
+            "drift_pips_15m",
+            "drift_15m",
+            "return_15m_pips",
+            "drift_pips_30m",
+            "return_30m_pips",
+        )
         drift_pips = 0.0
         for k in drift_keys:
             val = fac.get(k)
@@ -378,9 +428,12 @@ class MovingAverageCross:
             return None
 
         # ギャップ不足・弱トレンド時のブロックを無効化してエントリー優先
-        if (
-            abs(projection.price_to_fast_pips) > MovingAverageCross._MAX_FAST_DISTANCE
-            and abs(projection.price_to_fast_pips) > abs(projection.price_to_slow_pips)
+        if abs(
+            projection.price_to_fast_pips
+        ) > MovingAverageCross._MAX_FAST_DISTANCE and abs(
+            projection.price_to_fast_pips
+        ) > abs(
+            projection.price_to_slow_pips
         ):
             MovingAverageCross._log_skip(
                 "price_far_from_fast",
@@ -427,25 +480,35 @@ class MovingAverageCross:
             )
             return None
 
-        blocked, since_min, last_dir = MovingAverageCross._opposite_flip_blocked(direction)
+        blocked, since_min, last_dir = MovingAverageCross._opposite_flip_blocked(
+            direction
+        )
         if blocked:
             MovingAverageCross._log_skip(
                 "opposite_flip_cooldown",
                 last_dir=last_dir,
                 minutes=round(since_min or 0.0, 2),
-                cooldown_min=round(MovingAverageCross._OPPOSITE_FLIP_COOLDOWN_SEC / 60.0, 1),
+                cooldown_min=round(
+                    MovingAverageCross._OPPOSITE_FLIP_COOLDOWN_SEC / 60.0, 1
+                ),
             )
             return None
 
         # Avoid chasing when price sits on the wrong side of the fast MA too far
-        if direction == "long" and projection.price_to_fast_pips < -MovingAverageCross._PULLBACK_LIMIT:
+        if (
+            direction == "long"
+            and projection.price_to_fast_pips < -MovingAverageCross._PULLBACK_LIMIT
+        ):
             MovingAverageCross._log_skip(
                 "long_pullback_too_far",
                 price_to_fast=round(projection.price_to_fast_pips, 4),
                 limit=MovingAverageCross._PULLBACK_LIMIT,
             )
             return None
-        if direction == "short" and projection.price_to_fast_pips > MovingAverageCross._PULLBACK_LIMIT:
+        if (
+            direction == "short"
+            and projection.price_to_fast_pips > MovingAverageCross._PULLBACK_LIMIT
+        ):
             MovingAverageCross._log_skip(
                 "short_pullback_too_far",
                 price_to_fast=round(projection.price_to_fast_pips, 4),
@@ -488,10 +551,16 @@ class MovingAverageCross:
             else:
                 conf_adj -= 2
         if isinstance(mtf, dict):
-            def _proj_from_candles(candles: List[Dict[str, float]], minutes: float) -> Optional[MACrossProjection]:
+
+            def _proj_from_candles(
+                candles: List[Dict[str, float]], minutes: float
+            ) -> Optional[MACrossProjection]:
                 if not candles:
                     return None
-                return compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
+                return compute_ma_projection(
+                    {"candles": candles}, timeframe_minutes=minutes
+                )
+
             p_h1 = _proj_from_candles(mtf.get("candles_h1") or [], 60.0)
             p_m10 = _proj_from_candles(mtf.get("candles_m10") or [], 10.0)
             p_m5 = _proj_from_candles(mtf.get("candles_m5") or [], 5.0)
@@ -507,10 +576,18 @@ class MovingAverageCross:
                 elif s < -thr:
                     oppose += 1
             # Hard gate: if H1 opposes and either M10 or M5 opposes, stand down
-            if (p_h1 and p_h1.gap_slope_pips is not None and p_h1.gap_slope_pips * dir_sign < -0.05) and (oppose >= 2):
+            if (
+                p_h1
+                and p_h1.gap_slope_pips is not None
+                and p_h1.gap_slope_pips * dir_sign < -0.05
+            ) and (oppose >= 2):
                 MovingAverageCross._log_skip(
                     "mtf_opposition",
-                    h1_slope=round(p_h1.gap_slope_pips, 5) if p_h1 and p_h1.gap_slope_pips is not None else None,
+                    h1_slope=(
+                        round(p_h1.gap_slope_pips, 5)
+                        if p_h1 and p_h1.gap_slope_pips is not None
+                        else None
+                    ),
                     oppose=oppose,
                     support=support,
                     dir=direction,
@@ -518,7 +595,7 @@ class MovingAverageCross:
                 return None
             # Adjust confidence and risk: reward broad alignment, penalize near-term opposition
             conf_adj += max(0, support - 1) * 6  # +6..+12 when 2–3 agree
-            conf_adj -= max(0, oppose - 0) * 5   # -5..-10 when 1–2 oppose
+            conf_adj -= max(0, oppose - 0) * 5  # -5..-10 when 1–2 oppose
             if support >= 2:
                 tp_scale = 1.06
             if oppose >= 1:
@@ -526,7 +603,9 @@ class MovingAverageCross:
 
         # Cluster / VWAP context (favor breakouts when room, penalize when tight)
         try:
-            cluster_gap = float(fac.get("cluster_high_gap") or fac.get("cluster_low_gap") or 0.0)
+            cluster_gap = float(
+                fac.get("cluster_high_gap") or fac.get("cluster_low_gap") or 0.0
+            )
         except Exception:
             cluster_gap = 0.0
         try:
@@ -592,7 +671,9 @@ class MovingAverageCross:
             if strong_momentum:
                 pullback *= 0.85
             pullback = max(1.2, min(6.5, round(pullback, 2)))
-            tolerance = max(0.35, min(1.2, pullback * 0.32 + (0.18 if atr_value <= 2.0 else 0.1)))
+            tolerance = max(
+                0.35, min(1.2, pullback * 0.32 + (0.18 if atr_value <= 2.0 else 0.1))
+            )
             if direction == "long":
                 entry_price = round(close_val - pullback * 0.01, 3)
             else:
@@ -620,8 +701,12 @@ class MovingAverageCross:
             "strength_ratio": strength_ratio,
             "atr_pips": atr_pips_val,
             "adx": adx,
-            "mtf_support": int(locals().get("support", 0)) if isinstance(mtf, dict) else 0,
-            "mtf_oppose": int(locals().get("oppose", 0)) if isinstance(mtf, dict) else 0,
+            "mtf_support": (
+                int(locals().get("support", 0)) if isinstance(mtf, dict) else 0
+            ),
+            "mtf_oppose": (
+                int(locals().get("oppose", 0)) if isinstance(mtf, dict) else 0
+            ),
         }
         payload = {
             "action": action,
@@ -655,16 +740,30 @@ class MovingAverageCross:
         # Emphasize separation and directional slope; penalize stretch and near-cross risk
         sep = max(0.0, abs(projection.gap_pips) - 0.8)
         gap_term = min(26.0, sep * 3.2)
-        signed_slope = projection.gap_slope_pips if direction == "long" else -projection.gap_slope_pips
+        signed_slope = (
+            projection.gap_slope_pips
+            if direction == "long"
+            else -projection.gap_slope_pips
+        )
         slope_term = max(-10.0, min(20.0, signed_slope * 7.5))
         stretch_penalty = max(0.0, abs(projection.price_to_fast_pips) - 2.0) * 1.4
 
         cross_penalty = 0.0
         if projection.projected_cross_bars is not None:
-            cross_penalty = min(16.0, max(0.0, 6.0 - projection.projected_cross_bars) * 2.5)
+            cross_penalty = min(
+                16.0, max(0.0, 6.0 - projection.projected_cross_bars) * 2.5
+            )
 
         adx_bonus = max(0.0, adx - 22.0) * 0.85
-        raw = 50.0 + gap_term + slope_term + adx_bonus + macd_adjust - stretch_penalty - cross_penalty
+        raw = (
+            50.0
+            + gap_term
+            + slope_term
+            + adx_bonus
+            + macd_adjust
+            - stretch_penalty
+            - cross_penalty
+        )
         return int(max(40.0, min(96.0, raw)))
 
     @staticmethod
@@ -676,7 +775,11 @@ class MovingAverageCross:
         spread_pips: float = 0.0,
         adx_val: float = 0.0,
     ) -> tuple[float, float]:
-        slope = projection.gap_slope_pips if direction == "long" else -projection.gap_slope_pips
+        slope = (
+            projection.gap_slope_pips
+            if direction == "long"
+            else -projection.gap_slope_pips
+        )
         slope = max(-3.5, min(3.5, slope))
         trend_strength = min(6.0, max(0.0, abs(projection.gap_pips) - 0.8))
 

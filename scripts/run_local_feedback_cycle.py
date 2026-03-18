@@ -22,7 +22,6 @@ import tempfile
 import time
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PYTHON_BIN = (
     str((REPO_ROOT / ".venv" / "bin" / "python").resolve())

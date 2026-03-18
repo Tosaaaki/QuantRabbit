@@ -35,7 +35,9 @@ class LossCutParams:
     reason_time: str
 
 
-def resolve_loss_cut(exit_profile: dict, *, sl_pips: Optional[float] = None) -> LossCutParams:
+def resolve_loss_cut(
+    exit_profile: dict, *, sl_pips: Optional[float] = None
+) -> LossCutParams:
     """Resolve per-trade loss-cut parameters from the strategy exit_profile.
 
     Supports optional derived thresholds:
@@ -48,14 +50,29 @@ def resolve_loss_cut(exit_profile: dict, *, sl_pips: Optional[float] = None) -> 
     enabled = _coerce_bool(exit_profile.get("loss_cut_enabled"), False)
     require_sl = _coerce_bool(exit_profile.get("loss_cut_require_sl"), True)
 
-    soft_pips = max(0.0, float(_safe_float(exit_profile.get("loss_cut_soft_pips")) or 0.0))
+    soft_pips = max(
+        0.0, float(_safe_float(exit_profile.get("loss_cut_soft_pips")) or 0.0)
+    )
     hard_pips = float(_safe_float(exit_profile.get("loss_cut_hard_pips")) or 0.0)
-    max_hold_sec = max(0.0, float(_safe_float(exit_profile.get("loss_cut_max_hold_sec")) or 0.0))
-    cooldown_sec = max(0.0, float(_safe_float(exit_profile.get("loss_cut_cooldown_sec")) or 0.0))
+    max_hold_sec = max(
+        0.0, float(_safe_float(exit_profile.get("loss_cut_max_hold_sec")) or 0.0)
+    )
+    cooldown_sec = max(
+        0.0, float(_safe_float(exit_profile.get("loss_cut_cooldown_sec")) or 0.0)
+    )
 
-    reason_soft = str(exit_profile.get("loss_cut_reason_soft") or "hard_stop").strip() or "hard_stop"
-    reason_hard = str(exit_profile.get("loss_cut_reason_hard") or "max_adverse").strip() or "max_adverse"
-    reason_time = str(exit_profile.get("loss_cut_reason_time") or "time_stop").strip() or "time_stop"
+    reason_soft = (
+        str(exit_profile.get("loss_cut_reason_soft") or "hard_stop").strip()
+        or "hard_stop"
+    )
+    reason_hard = (
+        str(exit_profile.get("loss_cut_reason_hard") or "max_adverse").strip()
+        or "max_adverse"
+    )
+    reason_time = (
+        str(exit_profile.get("loss_cut_reason_time") or "time_stop").strip()
+        or "time_stop"
+    )
 
     hint = float(sl_pips) if sl_pips is not None and sl_pips > 0 else None
     if hint is not None:
@@ -109,4 +126,3 @@ def pick_loss_cut_reason(
     if params.soft_pips > 0.0 and adverse >= params.soft_pips:
         return params.reason_soft
     return None
-

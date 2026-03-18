@@ -9,6 +9,7 @@ from . import config as strategy_config
 from utils.metrics_logger import log_metric
 from indicators.factor_cache import all_factors
 
+
 @dataclass
 class ReentryConfig:
     enabled: bool
@@ -59,6 +60,7 @@ class ReentryConfig:
     edge_scale_atr: float
     edge_atr_fallback: float
 
+
 @dataclass
 class ReentryDecision:
     action: Optional[str]
@@ -69,7 +71,9 @@ class ReentryDecision:
     min_adverse: float
     enabled: bool
 
+
 _LAST_LOG_TS: dict[str, float] = {}
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -77,11 +81,13 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes"}
 
+
 def _env_bool_opt(name: str) -> Optional[bool]:
     raw = os.getenv(name)
     if raw is None:
         return None
     return str(raw).strip().lower() in {"1", "true", "yes"}
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
@@ -91,6 +97,7 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
 
 def _safe_float(value: object) -> Optional[float]:
     try:
@@ -121,7 +128,9 @@ def _mix(low: float, high: float, ratio: float) -> float:
     return float(low) + (float(high) - float(low)) * float(ratio)
 
 
-def _atr_ratio(*, atr_pips: Optional[float], atr_low_pips: float, atr_high_pips: float) -> float:
+def _atr_ratio(
+    *, atr_pips: Optional[float], atr_low_pips: float, atr_high_pips: float
+) -> float:
     ratio = _norm(atr_pips, atr_low_pips, atr_high_pips)
     if ratio is None:
         return 0.5
@@ -136,7 +145,9 @@ def _blend_by_atr(
     low_value: float,
     high_value: float,
 ) -> float:
-    ratio = _atr_ratio(atr_pips=atr_pips, atr_low_pips=atr_low_pips, atr_high_pips=atr_high_pips)
+    ratio = _atr_ratio(
+        atr_pips=atr_pips, atr_low_pips=atr_low_pips, atr_high_pips=atr_high_pips
+    )
     return _mix(low_value, high_value, ratio)
 
 
@@ -224,8 +235,14 @@ def _reentry_scores(
         ]
     )
 
-    adx_trend = _norm(adx, cfg.adx_trend_min, cfg.adx_trend_max) if adx is not None else None
-    atr_trend = _norm(atr_pips, cfg.atr_trend_min, cfg.atr_trend_max) if atr_pips is not None else None
+    adx_trend = (
+        _norm(adx, cfg.adx_trend_min, cfg.adx_trend_max) if adx is not None else None
+    )
+    atr_trend = (
+        _norm(atr_pips, cfg.atr_trend_min, cfg.atr_trend_max)
+        if atr_pips is not None
+        else None
+    )
     ma_trend = None
     if ma_pair is not None:
         ma10, ma20 = ma_pair
@@ -272,13 +289,17 @@ def _reentry_scores(
 
     return revert_score, trend_score
 
-def _reentry_edge(adverse_pips: float, atr_pips: Optional[float], cfg: ReentryConfig) -> float:
+
+def _reentry_edge(
+    adverse_pips: float, atr_pips: Optional[float], cfg: ReentryConfig
+) -> float:
     if adverse_pips <= 0:
         return 0.0
     atr_base = atr_pips if atr_pips is not None else cfg.edge_atr_fallback
     base = adverse_pips / max(atr_base, 0.1)
     edge_scale = max(abs(cfg.edge_scale_atr), 1e-6)
     return float(_clamp01((base - cfg.edge_base_adverse_atr) / edge_scale) or 0.0)
+
 
 def _load_config(prefix: str) -> ReentryConfig:
     name = prefix.strip().upper()
@@ -292,10 +313,18 @@ def _load_config(prefix: str) -> ReentryConfig:
         shadow = _env_bool_opt("REENTRY_SHADOW_ALL")
     if shadow is None:
         shadow = True
-    base_revert_min = _env_float(f"{name}_REENTRY_REVERT_MIN", strategy_config.REENTRY_REVERT_MIN_LOW_ATR)
-    base_trend_min = _env_float(f"{name}_REENTRY_TREND_MIN", strategy_config.REENTRY_TREND_MIN_LOW_ATR)
-    base_trend_max = _env_float(f"{name}_REENTRY_TREND_MAX", strategy_config.REENTRY_TREND_MAX_LOW_ATR)
-    base_edge_min = _env_float(f"{name}_REENTRY_EDGE_MIN", strategy_config.REENTRY_EDGE_MIN_LOW_ATR)
+    base_revert_min = _env_float(
+        f"{name}_REENTRY_REVERT_MIN", strategy_config.REENTRY_REVERT_MIN_LOW_ATR
+    )
+    base_trend_min = _env_float(
+        f"{name}_REENTRY_TREND_MIN", strategy_config.REENTRY_TREND_MIN_LOW_ATR
+    )
+    base_trend_max = _env_float(
+        f"{name}_REENTRY_TREND_MAX", strategy_config.REENTRY_TREND_MAX_LOW_ATR
+    )
+    base_edge_min = _env_float(
+        f"{name}_REENTRY_EDGE_MIN", strategy_config.REENTRY_EDGE_MIN_LOW_ATR
+    )
     legacy_revert_min_set = os.getenv(f"{name}_REENTRY_REVERT_MIN") is not None
     legacy_trend_min_set = os.getenv(f"{name}_REENTRY_TREND_MIN") is not None
     legacy_trend_max_set = os.getenv(f"{name}_REENTRY_TREND_MAX") is not None
@@ -315,27 +344,49 @@ def _load_config(prefix: str) -> ReentryConfig:
         min_adverse_atr=_env_float(f"{name}_REENTRY_MIN_ADVERSE_ATR", 1.0),
         log_interval_sec=_env_float(f"{name}_REENTRY_LOG_INTERVAL_SEC", 8.0),
         name=name,
-        atr_low_pips=_prefixed_float("REENTRY_ATR_LOW_PIPS", strategy_config.REENTRY_ATR_LOW_PIPS),
-        atr_high_pips=_prefixed_float("REENTRY_ATR_HIGH_PIPS", strategy_config.REENTRY_ATR_HIGH_PIPS),
-        revert_min_low_atr=_prefixed_float("REENTRY_REVERT_MIN_ATR_LOW", base_revert_min),
+        atr_low_pips=_prefixed_float(
+            "REENTRY_ATR_LOW_PIPS", strategy_config.REENTRY_ATR_LOW_PIPS
+        ),
+        atr_high_pips=_prefixed_float(
+            "REENTRY_ATR_HIGH_PIPS", strategy_config.REENTRY_ATR_HIGH_PIPS
+        ),
+        revert_min_low_atr=_prefixed_float(
+            "REENTRY_REVERT_MIN_ATR_LOW", base_revert_min
+        ),
         revert_min_high_atr=_prefixed_float(
             "REENTRY_REVERT_MIN_ATR_HIGH",
-            base_revert_min if legacy_revert_min_set else strategy_config.REENTRY_REVERT_MIN_HIGH_ATR,
+            (
+                base_revert_min
+                if legacy_revert_min_set
+                else strategy_config.REENTRY_REVERT_MIN_HIGH_ATR
+            ),
         ),
         trend_min_low_atr=_prefixed_float("REENTRY_TREND_MIN_ATR_LOW", base_trend_min),
         trend_min_high_atr=_prefixed_float(
             "REENTRY_TREND_MIN_ATR_HIGH",
-            base_trend_min if legacy_trend_min_set else strategy_config.REENTRY_TREND_MIN_HIGH_ATR,
+            (
+                base_trend_min
+                if legacy_trend_min_set
+                else strategy_config.REENTRY_TREND_MIN_HIGH_ATR
+            ),
         ),
         trend_max_low_atr=_prefixed_float("REENTRY_TREND_MAX_ATR_LOW", base_trend_max),
         trend_max_high_atr=_prefixed_float(
             "REENTRY_TREND_MAX_ATR_HIGH",
-            base_trend_max if legacy_trend_max_set else strategy_config.REENTRY_TREND_MAX_HIGH_ATR,
+            (
+                base_trend_max
+                if legacy_trend_max_set
+                else strategy_config.REENTRY_TREND_MAX_HIGH_ATR
+            ),
         ),
         edge_min_low_atr=_prefixed_float("REENTRY_EDGE_MIN_ATR_LOW", base_edge_min),
         edge_min_high_atr=_prefixed_float(
             "REENTRY_EDGE_MIN_ATR_HIGH",
-            base_edge_min if legacy_edge_min_set else strategy_config.REENTRY_EDGE_MIN_HIGH_ATR,
+            (
+                base_edge_min
+                if legacy_edge_min_set
+                else strategy_config.REENTRY_EDGE_MIN_HIGH_ATR
+            ),
         ),
         range_revert_bonus_low_atr=_prefixed_float(
             "REENTRY_RANGE_REVERT_BONUS_LOW_ATR",
@@ -354,52 +405,137 @@ def _load_config(prefix: str) -> ReentryConfig:
             strategy_config.REENTRY_RANGE_TREND_PENALTY_HIGH_ATR,
         ),
         revert_weights_low_atr=(
-            _prefixed_float("REENTRY_REVERT_WEIGHT_RSI_LOW_ATR", strategy_config.REENTRY_REVERT_WEIGHT_RSI_LOW_ATR),
-            _prefixed_float("REENTRY_REVERT_WEIGHT_ADX_LOW_ATR", strategy_config.REENTRY_REVERT_WEIGHT_ADX_LOW_ATR),
-            _prefixed_float("REENTRY_REVERT_WEIGHT_BBW_LOW_ATR", strategy_config.REENTRY_REVERT_WEIGHT_BBW_LOW_ATR),
-            _prefixed_float("REENTRY_REVERT_WEIGHT_VWAP_LOW_ATR", strategy_config.REENTRY_REVERT_WEIGHT_VWAP_LOW_ATR),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_RSI_LOW_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_RSI_LOW_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_ADX_LOW_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_ADX_LOW_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_BBW_LOW_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_BBW_LOW_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_VWAP_LOW_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_VWAP_LOW_ATR,
+            ),
         ),
         revert_weights_high_atr=(
-            _prefixed_float("REENTRY_REVERT_WEIGHT_RSI_HIGH_ATR", strategy_config.REENTRY_REVERT_WEIGHT_RSI_HIGH_ATR),
-            _prefixed_float("REENTRY_REVERT_WEIGHT_ADX_HIGH_ATR", strategy_config.REENTRY_REVERT_WEIGHT_ADX_HIGH_ATR),
-            _prefixed_float("REENTRY_REVERT_WEIGHT_BBW_HIGH_ATR", strategy_config.REENTRY_REVERT_WEIGHT_BBW_HIGH_ATR),
-            _prefixed_float("REENTRY_REVERT_WEIGHT_VWAP_HIGH_ATR", strategy_config.REENTRY_REVERT_WEIGHT_VWAP_HIGH_ATR),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_RSI_HIGH_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_RSI_HIGH_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_ADX_HIGH_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_ADX_HIGH_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_BBW_HIGH_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_BBW_HIGH_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_REVERT_WEIGHT_VWAP_HIGH_ATR",
+                strategy_config.REENTRY_REVERT_WEIGHT_VWAP_HIGH_ATR,
+            ),
         ),
         trend_weights_low_atr=(
-            _prefixed_float("REENTRY_TREND_WEIGHT_ADX_LOW_ATR", strategy_config.REENTRY_TREND_WEIGHT_ADX_LOW_ATR),
-            _prefixed_float("REENTRY_TREND_WEIGHT_ATR_LOW_ATR", strategy_config.REENTRY_TREND_WEIGHT_ATR_LOW_ATR),
-            _prefixed_float("REENTRY_TREND_WEIGHT_MA_LOW_ATR", strategy_config.REENTRY_TREND_WEIGHT_MA_LOW_ATR),
-            _prefixed_float("REENTRY_TREND_WEIGHT_VWAP_LOW_ATR", strategy_config.REENTRY_TREND_WEIGHT_VWAP_LOW_ATR),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_ADX_LOW_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_ADX_LOW_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_ATR_LOW_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_ATR_LOW_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_MA_LOW_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_MA_LOW_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_VWAP_LOW_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_VWAP_LOW_ATR,
+            ),
         ),
         trend_weights_high_atr=(
-            _prefixed_float("REENTRY_TREND_WEIGHT_ADX_HIGH_ATR", strategy_config.REENTRY_TREND_WEIGHT_ADX_HIGH_ATR),
-            _prefixed_float("REENTRY_TREND_WEIGHT_ATR_HIGH_ATR", strategy_config.REENTRY_TREND_WEIGHT_ATR_HIGH_ATR),
-            _prefixed_float("REENTRY_TREND_WEIGHT_MA_HIGH_ATR", strategy_config.REENTRY_TREND_WEIGHT_MA_HIGH_ATR),
-            _prefixed_float("REENTRY_TREND_WEIGHT_VWAP_HIGH_ATR", strategy_config.REENTRY_TREND_WEIGHT_VWAP_HIGH_ATR),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_ADX_HIGH_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_ADX_HIGH_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_ATR_HIGH_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_ATR_HIGH_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_MA_HIGH_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_MA_HIGH_ATR,
+            ),
+            _prefixed_float(
+                "REENTRY_TREND_WEIGHT_VWAP_HIGH_ATR",
+                strategy_config.REENTRY_TREND_WEIGHT_VWAP_HIGH_ATR,
+            ),
         ),
-        rsi_short_min=_prefixed_float("REENTRY_RSI_SHORT_MIN", strategy_config.REENTRY_RSI_SHORT_MIN),
-        rsi_short_max=_prefixed_float("REENTRY_RSI_SHORT_MAX", strategy_config.REENTRY_RSI_SHORT_MAX),
-        rsi_long_neutral=_prefixed_float("REENTRY_RSI_LONG_NEUTRAL", strategy_config.REENTRY_RSI_LONG_NEUTRAL),
-        rsi_long_extreme=_prefixed_float("REENTRY_RSI_LONG_EXTREME", strategy_config.REENTRY_RSI_LONG_EXTREME),
-        adx_revert_neutral=_prefixed_float("REENTRY_ADX_REVERT_NEUTRAL", strategy_config.REENTRY_ADX_REVERT_NEUTRAL),
-        adx_revert_extreme=_prefixed_float("REENTRY_ADX_REVERT_EXTREME", strategy_config.REENTRY_ADX_REVERT_EXTREME),
-        bbw_revert_neutral=_prefixed_float("REENTRY_BBW_REVERT_NEUTRAL", strategy_config.REENTRY_BBW_REVERT_NEUTRAL),
-        bbw_revert_extreme=_prefixed_float("REENTRY_BBW_REVERT_EXTREME", strategy_config.REENTRY_BBW_REVERT_EXTREME),
-        vwap_revert_min=_prefixed_float("REENTRY_VWAP_REVERT_MIN", strategy_config.REENTRY_VWAP_REVERT_MIN),
-        vwap_revert_max=_prefixed_float("REENTRY_VWAP_REVERT_MAX", strategy_config.REENTRY_VWAP_REVERT_MAX),
-        adx_trend_min=_prefixed_float("REENTRY_ADX_TREND_MIN", strategy_config.REENTRY_ADX_TREND_MIN),
-        adx_trend_max=_prefixed_float("REENTRY_ADX_TREND_MAX", strategy_config.REENTRY_ADX_TREND_MAX),
-        atr_trend_min=_prefixed_float("REENTRY_ATR_TREND_MIN", strategy_config.REENTRY_ATR_TREND_MIN),
-        atr_trend_max=_prefixed_float("REENTRY_ATR_TREND_MAX", strategy_config.REENTRY_ATR_TREND_MAX),
-        vwap_trend_min=_prefixed_float("REENTRY_VWAP_TREND_MIN", strategy_config.REENTRY_VWAP_TREND_MIN),
-        vwap_trend_max=_prefixed_float("REENTRY_VWAP_TREND_MAX", strategy_config.REENTRY_VWAP_TREND_MAX),
+        rsi_short_min=_prefixed_float(
+            "REENTRY_RSI_SHORT_MIN", strategy_config.REENTRY_RSI_SHORT_MIN
+        ),
+        rsi_short_max=_prefixed_float(
+            "REENTRY_RSI_SHORT_MAX", strategy_config.REENTRY_RSI_SHORT_MAX
+        ),
+        rsi_long_neutral=_prefixed_float(
+            "REENTRY_RSI_LONG_NEUTRAL", strategy_config.REENTRY_RSI_LONG_NEUTRAL
+        ),
+        rsi_long_extreme=_prefixed_float(
+            "REENTRY_RSI_LONG_EXTREME", strategy_config.REENTRY_RSI_LONG_EXTREME
+        ),
+        adx_revert_neutral=_prefixed_float(
+            "REENTRY_ADX_REVERT_NEUTRAL", strategy_config.REENTRY_ADX_REVERT_NEUTRAL
+        ),
+        adx_revert_extreme=_prefixed_float(
+            "REENTRY_ADX_REVERT_EXTREME", strategy_config.REENTRY_ADX_REVERT_EXTREME
+        ),
+        bbw_revert_neutral=_prefixed_float(
+            "REENTRY_BBW_REVERT_NEUTRAL", strategy_config.REENTRY_BBW_REVERT_NEUTRAL
+        ),
+        bbw_revert_extreme=_prefixed_float(
+            "REENTRY_BBW_REVERT_EXTREME", strategy_config.REENTRY_BBW_REVERT_EXTREME
+        ),
+        vwap_revert_min=_prefixed_float(
+            "REENTRY_VWAP_REVERT_MIN", strategy_config.REENTRY_VWAP_REVERT_MIN
+        ),
+        vwap_revert_max=_prefixed_float(
+            "REENTRY_VWAP_REVERT_MAX", strategy_config.REENTRY_VWAP_REVERT_MAX
+        ),
+        adx_trend_min=_prefixed_float(
+            "REENTRY_ADX_TREND_MIN", strategy_config.REENTRY_ADX_TREND_MIN
+        ),
+        adx_trend_max=_prefixed_float(
+            "REENTRY_ADX_TREND_MAX", strategy_config.REENTRY_ADX_TREND_MAX
+        ),
+        atr_trend_min=_prefixed_float(
+            "REENTRY_ATR_TREND_MIN", strategy_config.REENTRY_ATR_TREND_MIN
+        ),
+        atr_trend_max=_prefixed_float(
+            "REENTRY_ATR_TREND_MAX", strategy_config.REENTRY_ATR_TREND_MAX
+        ),
+        vwap_trend_min=_prefixed_float(
+            "REENTRY_VWAP_TREND_MIN", strategy_config.REENTRY_VWAP_TREND_MIN
+        ),
+        vwap_trend_max=_prefixed_float(
+            "REENTRY_VWAP_TREND_MAX", strategy_config.REENTRY_VWAP_TREND_MAX
+        ),
         edge_base_adverse_atr=_prefixed_float(
             "REENTRY_EDGE_BASE_ADVERSE_ATR",
             strategy_config.REENTRY_EDGE_BASE_ADVERSE_ATR,
         ),
-        edge_scale_atr=_prefixed_float("REENTRY_EDGE_SCALE_ATR", strategy_config.REENTRY_EDGE_SCALE_ATR),
-        edge_atr_fallback=_prefixed_float("REENTRY_EDGE_ATR_FALLBACK", strategy_config.REENTRY_EDGE_ATR_FALLBACK),
+        edge_scale_atr=_prefixed_float(
+            "REENTRY_EDGE_SCALE_ATR", strategy_config.REENTRY_EDGE_SCALE_ATR
+        ),
+        edge_atr_fallback=_prefixed_float(
+            "REENTRY_EDGE_ATR_FALLBACK", strategy_config.REENTRY_EDGE_ATR_FALLBACK
+        ),
     )
+
 
 def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -> None:
     now = time.monotonic()
@@ -411,6 +547,7 @@ def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -
     payload["decision"] = decision
     payload["name"] = prefix
     log_metric("reentry_decision", 1.0, tags=payload)
+
 
 def decide_reentry_from_factors(
     *,
@@ -444,6 +581,7 @@ def decide_reentry_from_factors(
         range_active=range_active,
         log_tags=log_tags,
     )
+
 
 def decide_reentry(
     *,

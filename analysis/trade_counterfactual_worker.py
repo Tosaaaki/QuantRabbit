@@ -238,12 +238,19 @@ class ReviewConfig:
     include_live_trades: bool = True
     stuck_hold_sec: float = 120.0
     stuck_loss_pips: float = -0.30
-    stuck_reasons: tuple[str, ...] = ("time_stop", "no_recovery", "max_floating_loss", "end_of_replay")
+    stuck_reasons: tuple[str, ...] = (
+        "time_stop",
+        "no_recovery",
+        "max_floating_loss",
+        "end_of_replay",
+    )
     block_stuck_rate: float = 0.45
     reduce_stuck_rate: float = 0.30
     boost_stuck_rate: float = 0.10
     pattern_prior_enabled: bool = True
-    pattern_book_path: Path = (REPO_ROOT / "config" / "pattern_book_deep.json").resolve()
+    pattern_book_path: Path = (
+        REPO_ROOT / "config" / "pattern_book_deep.json"
+    ).resolve()
     pattern_prior_weight: float = 0.35
     noise_spread_weight: float = 0.65
     noise_stuck_weight: float = 0.50
@@ -293,7 +300,9 @@ def _hold_bin(hold_sec: float | None) -> str:
 
 def _is_stuck(sample: TradeSample, cfg: ReviewConfig) -> bool:
     reason_hit = sample.reason in cfg.stuck_reasons
-    hold_hit = sample.hold_sec is not None and float(sample.hold_sec) >= float(cfg.stuck_hold_sec)
+    hold_hit = sample.hold_sec is not None and float(sample.hold_sec) >= float(
+        cfg.stuck_hold_sec
+    )
     loss_hit = float(sample.pl_pips) <= float(cfg.stuck_loss_pips)
     if reason_hit and loss_hit:
         return True
@@ -309,7 +318,9 @@ def _load_live_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
     since = datetime.now(timezone.utc) - timedelta(days=max(1, cfg.lookback_days))
     rows: list[TradeSample] = []
 
-    con = sqlite3.connect(f"file:{cfg.trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None)
+    con = sqlite3.connect(
+        f"file:{cfg.trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None
+    )
     con.row_factory = sqlite3.Row
     try:
         sql = """
@@ -415,9 +426,15 @@ def _load_replay_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
         for idx, item in enumerate(trades):
             if not isinstance(item, dict):
                 continue
-            strategy_tag = str(
-                item.get("strategy_tag") or item.get("strategy") or item.get("tag") or ""
-            ).strip() or "unknown"
+            strategy_tag = (
+                str(
+                    item.get("strategy_tag")
+                    or item.get("strategy")
+                    or item.get("tag")
+                    or ""
+                ).strip()
+                or "unknown"
+            )
             if not matcher.match(strategy_tag):
                 continue
 
@@ -445,14 +462,18 @@ def _load_replay_trade_rows(cfg: ReviewConfig) -> list[TradeSample]:
 
             rows.append(
                 TradeSample(
-                    ticket_id=str(item.get("trade_id") or item.get("ticket_id") or f"replay-{idx}"),
+                    ticket_id=str(
+                        item.get("trade_id") or item.get("ticket_id") or f"replay-{idx}"
+                    ),
                     client_order_id=str(item.get("client_order_id") or "").strip(),
                     strategy_tag=strategy_tag,
                     side=side,
                     hour_jst=int(jst_ts.hour),
                     day_jst=jst_ts.date().isoformat(),
                     pl_pips=float(pl_pips),
-                    entry_probability=_normalize_probability(item.get("entry_probability")),
+                    entry_probability=_normalize_probability(
+                        item.get("entry_probability")
+                    ),
                     spread_pips=_to_float(item.get("spread_pips")),
                     reason=_normalize_reason(item.get("reason")),
                     hold_sec=hold_sec,
@@ -507,7 +528,11 @@ def _load_spread_map(cfg: ReviewConfig, client_ids: list[str]) -> dict[str, floa
                     continue
                 ts = str(row["ts"] or "")
                 payload = _safe_json_loads(row["request_json"])
-                quote = payload.get("quote") if isinstance(payload.get("quote"), dict) else {}
+                quote = (
+                    payload.get("quote")
+                    if isinstance(payload.get("quote"), dict)
+                    else {}
+                )
                 spread = _to_float(quote.get("spread_pips"))
                 if spread is None:
                     bid = _to_float(quote.get("bid"))
@@ -525,10 +550,14 @@ def _load_spread_map(cfg: ReviewConfig, client_ids: list[str]) -> dict[str, floa
     return {cid: spread for cid, (_, spread) in out.items()}
 
 
-def _inject_spread(samples: list[TradeSample], spread_map: dict[str, float]) -> list[TradeSample]:
+def _inject_spread(
+    samples: list[TradeSample], spread_map: dict[str, float]
+) -> list[TradeSample]:
     updated: list[TradeSample] = []
     for sample in samples:
-        spread = spread_map.get(sample.client_order_id) if sample.client_order_id else None
+        spread = (
+            spread_map.get(sample.client_order_id) if sample.client_order_id else None
+        )
         updated.append(
             TradeSample(
                 ticket_id=sample.ticket_id,
@@ -548,7 +577,9 @@ def _inject_spread(samples: list[TradeSample], spread_map: dict[str, float]) -> 
     return updated
 
 
-def _fold_index(day: str, day_to_index: dict[str, int], day_count: int, fold_count: int) -> int:
+def _fold_index(
+    day: str, day_to_index: dict[str, int], day_count: int, fold_count: int
+) -> int:
     if day_count <= 1:
         return 0
     idx = int(day_to_index.get(day, 0))
@@ -683,7 +714,9 @@ def _candidate_noise_metrics(
     oos_positive_ratio: float,
 ) -> dict[str, float]:
     n = len(rows)
-    spread_values = [float(row.spread_pips) for row in rows if row.spread_pips is not None]
+    spread_values = [
+        float(row.spread_pips) for row in rows if row.spread_pips is not None
+    ]
     spread_coverage = (len(spread_values) / float(n)) if n > 0 else 0.0
     mean_spread = _mean(spread_values) if spread_values else 0.0
     spread_excess = max(0.0, mean_spread - 0.40)
@@ -693,11 +726,11 @@ def _candidate_noise_metrics(
         * abs(expected_uplift)
         * max(0.0, cfg.noise_spread_weight)
     )
-    stuck_penalty = (
-        max(0.0, stuck_rate) * float(n) * max(0.0, cfg.noise_stuck_weight)
-    )
+    stuck_penalty = max(0.0, stuck_rate) * float(n) * max(0.0, cfg.noise_stuck_weight)
     oos_conf = _clamp(0.5 * oos_action_match_ratio + 0.5 * oos_positive_ratio, 0.0, 1.0)
-    oos_penalty = (1.0 - oos_conf) * abs(expected_uplift) * max(0.0, cfg.noise_oos_weight)
+    oos_penalty = (
+        (1.0 - oos_conf) * abs(expected_uplift) * max(0.0, cfg.noise_oos_weight)
+    )
     total_penalty = spread_penalty + coverage_penalty + stuck_penalty + oos_penalty
     return {
         "spread_coverage_ratio": round(spread_coverage, 6),
@@ -746,7 +779,9 @@ def _infer_action(
     sum_pips = sum(pips)
     stuck_rate = sum(1 for row in rows if _is_stuck(row, cfg)) / float(max(1, n))
 
-    if stuck_rate >= cfg.block_stuck_rate and (lb_pips <= cfg.block_lb_pips or mean_pips <= 0.0):
+    if stuck_rate >= cfg.block_stuck_rate and (
+        lb_pips <= cfg.block_lb_pips or mean_pips <= 0.0
+    ):
         action = "block"
         expected_uplift = -sum_pips
     elif stuck_rate >= cfg.reduce_stuck_rate and mean_pips <= 0.05:
@@ -889,7 +924,11 @@ def _build_recommendations(
         for row in rows:
             fold = _fold_index(row.fold_day_key, day_to_index, day_count, fold_count)
             fold_values[fold].append(row.pl_pips)
-        fold_means = [sum(vs) / float(len(vs)) for vs in fold_values.values() if len(vs) >= cfg.min_fold_samples]
+        fold_means = [
+            sum(vs) / float(len(vs))
+            for vs in fold_values.values()
+            if len(vs) >= cfg.min_fold_samples
+        ]
 
         if fold_means:
             pos = sum(1 for v in fold_means if v >= 0.0)
@@ -954,7 +993,9 @@ def _build_recommendations(
             oos_positive_ratio=float(oos["oos_positive_ratio"]),
         )
         noise_adjusted_uplift = expected_uplift - float(noise["noise_penalty_pips"])
-        noise_lcb_uplift = min(noise_adjusted_uplift, float(oos["oos_lb95_uplift_pips"]))
+        noise_lcb_uplift = min(
+            noise_adjusted_uplift, float(oos["oos_lb95_uplift_pips"])
+        )
 
         long_count = sum(1 for row in rows if row.side == "long")
         short_count = sum(1 for row in rows if row.side == "short")
@@ -966,8 +1007,12 @@ def _build_recommendations(
             prior_side = "short"
         else:
             prior_side = "unknown"
-        pattern_prior_score = float(prior.get(prior_side, prior.get("__overall__", 0.0)))
-        signed_prior = pattern_prior_score if action == "boost" else -pattern_prior_score
+        pattern_prior_score = float(
+            prior.get(prior_side, prior.get("__overall__", 0.0))
+        )
+        signed_prior = (
+            pattern_prior_score if action == "boost" else -pattern_prior_score
+        )
         pattern_multiplier = 1.0 + _clamp(
             signed_prior * max(0.0, cfg.pattern_prior_weight),
             -0.35,
@@ -992,7 +1037,9 @@ def _build_recommendations(
                 "expected_uplift_pips": round(expected_uplift, 4),
                 "certainty": certainty,
                 "oos_eval_folds": int(oos["oos_eval_folds"]),
-                "oos_action_match_ratio": round(float(oos["oos_action_match_ratio"]), 4),
+                "oos_action_match_ratio": round(
+                    float(oos["oos_action_match_ratio"]), 4
+                ),
                 "oos_positive_ratio": round(float(oos["oos_positive_ratio"]), 4),
                 "oos_mean_uplift_pips": round(float(oos["oos_mean_uplift_pips"]), 4),
                 "oos_lb95_uplift_pips": round(float(oos["oos_lb95_uplift_pips"]), 4),
@@ -1019,7 +1066,9 @@ def _build_recommendations(
     return recs[: max(1, cfg.top_k)]
 
 
-def _extract_policy_hints(recs: list[dict[str, Any]], cfg: ReviewConfig) -> dict[str, Any]:
+def _extract_policy_hints(
+    recs: list[dict[str, Any]], cfg: ReviewConfig
+) -> dict[str, Any]:
     block_hours: list[int] = []
     block_reasons: list[str] = []
     reduce_reasons: list[str] = []
@@ -1036,7 +1085,12 @@ def _extract_policy_hints(recs: list[dict[str, Any]], cfg: ReviewConfig) -> dict
 
         feature = str(rec.get("feature") or "")
         bucket = str(rec.get("bucket") or "")
-        if feature == "hour" and bucket.startswith("h") and len(bucket) == 3 and action == "block":
+        if (
+            feature == "hour"
+            and bucket.startswith("h")
+            and len(bucket) == 3
+            and action == "block"
+        ):
             try:
                 block_hours.append(int(bucket[1:3]))
             except Exception:
@@ -1108,7 +1162,9 @@ def _extract_policy_hints(recs: list[dict[str, Any]], cfg: ReviewConfig) -> dict
             "action": str(rec.get("action") or ""),
             "quality_score": round(float(rec.get("quality_score") or 0.0), 6),
             "certainty": round(float(rec.get("certainty") or 0.0), 4),
-            "noise_lcb_uplift_pips": round(float(rec.get("noise_lcb_uplift_pips") or 0.0), 4),
+            "noise_lcb_uplift_pips": round(
+                float(rec.get("noise_lcb_uplift_pips") or 0.0), 4
+            ),
         }
         for rec in actionable[:5]
     ]
@@ -1160,7 +1216,9 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
         source_counts[str(sample.source or "unknown")] += 1
     top_reasons = [
         {"reason": reason, "trades": count}
-        for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+        for reason, count in sorted(
+            reason_counts.items(), key=lambda item: (-item[1], item[0])
+        )[:8]
     ]
 
     return {
@@ -1173,10 +1231,16 @@ def build_report(cfg: ReviewConfig) -> dict[str, Any]:
             "mean_pips": round(mean_pips, 4),
             "win_rate": round(win_rate, 4),
             "stuck_trades": stuck_trades,
-            "stuck_trade_ratio": round(stuck_trades / float(total_trades), 4) if total_trades else 0.0,
+            "stuck_trade_ratio": (
+                round(stuck_trades / float(total_trades), 4) if total_trades else 0.0
+            ),
             "coverage": {
-                "with_spread_ratio": round(with_spread / float(total_trades), 4) if total_trades else 0.0,
-                "with_entry_probability_ratio": round(with_prob / float(total_trades), 4) if total_trades else 0.0,
+                "with_spread_ratio": (
+                    round(with_spread / float(total_trades), 4) if total_trades else 0.0
+                ),
+                "with_entry_probability_ratio": (
+                    round(with_prob / float(total_trades), 4) if total_trades else 0.0
+                ),
                 "sources": dict(source_counts),
             },
             "top_close_reasons": top_reasons,
@@ -1231,11 +1295,15 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--out-path",
-        default=os.getenv("COUNTERFACTUAL_OUT_PATH", "logs/trade_counterfactual_latest.json"),
+        default=os.getenv(
+            "COUNTERFACTUAL_OUT_PATH", "logs/trade_counterfactual_latest.json"
+        ),
     )
     ap.add_argument(
         "--history-path",
-        default=os.getenv("COUNTERFACTUAL_HISTORY_PATH", "logs/trade_counterfactual_history.jsonl"),
+        default=os.getenv(
+            "COUNTERFACTUAL_HISTORY_PATH", "logs/trade_counterfactual_history.jsonl"
+        ),
     )
     ap.add_argument(
         "--replay-json-globs",
@@ -1371,7 +1439,9 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--pattern-book-path",
-        default=os.getenv("COUNTERFACTUAL_PATTERN_BOOK_PATH", "config/pattern_book_deep.json"),
+        default=os.getenv(
+            "COUNTERFACTUAL_PATTERN_BOOK_PATH", "config/pattern_book_deep.json"
+        ),
     )
     ap.add_argument(
         "--pattern-prior-weight",
@@ -1431,14 +1501,18 @@ def _build_config(args: argparse.Namespace) -> ReviewConfig:
         top_k=max(1, int(args.top_k)),
         oos_enabled=bool(int(args.oos_enabled)),
         oos_min_folds=max(1, int(args.oos_min_folds)),
-        oos_min_action_match_ratio=max(0.0, min(1.0, float(args.oos_min_action_match_ratio))),
+        oos_min_action_match_ratio=max(
+            0.0, min(1.0, float(args.oos_min_action_match_ratio))
+        ),
         oos_min_positive_ratio=max(0.0, min(1.0, float(args.oos_min_positive_ratio))),
         oos_min_lb_uplift_pips=float(args.oos_min_lb_uplift_pips),
         replay_json_globs=_parse_csv(args.replay_json_globs),
         include_live_trades=bool(int(args.include_live_trades)),
         stuck_hold_sec=max(10.0, float(args.stuck_hold_sec)),
         stuck_loss_pips=float(args.stuck_loss_pips),
-        stuck_reasons=tuple(_normalize_reason(v) for v in _parse_csv(args.stuck_reasons)),
+        stuck_reasons=tuple(
+            _normalize_reason(v) for v in _parse_csv(args.stuck_reasons)
+        ),
         block_stuck_rate=max(0.0, min(1.0, float(args.block_stuck_rate))),
         reduce_stuck_rate=max(0.0, min(1.0, float(args.reduce_stuck_rate))),
         boost_stuck_rate=max(0.0, min(1.0, float(args.boost_stuck_rate))),
@@ -1448,8 +1522,12 @@ def _build_config(args: argparse.Namespace) -> ReviewConfig:
         noise_spread_weight=max(0.0, min(2.0, float(args.noise_spread_weight))),
         noise_stuck_weight=max(0.0, min(2.0, float(args.noise_stuck_weight))),
         noise_oos_weight=max(0.0, min(2.0, float(args.noise_oos_weight))),
-        noise_min_spread_coverage=max(0.0, min(1.0, float(args.noise_min_spread_coverage))),
-        reentry_hint_min_confidence=max(0.0, min(1.0, float(args.reentry_hint_min_confidence))),
+        noise_min_spread_coverage=max(
+            0.0, min(1.0, float(args.noise_min_spread_coverage))
+        ),
+        reentry_hint_min_confidence=max(
+            0.0, min(1.0, float(args.reentry_hint_min_confidence))
+        ),
         reentry_hint_min_lcb_uplift_pips=float(args.reentry_hint_min_lcb_uplift_pips),
     )
 
@@ -1469,9 +1547,17 @@ def main() -> int:
     cfg = _build_config(args)
     report = run_once(cfg)
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
-    recs = report.get("recommendations") if isinstance(report.get("recommendations"), list) else []
-    coverage = summary.get("coverage") if isinstance(summary.get("coverage"), dict) else {}
-    sources = coverage.get("sources") if isinstance(coverage.get("sources"), dict) else {}
+    recs = (
+        report.get("recommendations")
+        if isinstance(report.get("recommendations"), list)
+        else []
+    )
+    coverage = (
+        summary.get("coverage") if isinstance(summary.get("coverage"), dict) else {}
+    )
+    sources = (
+        coverage.get("sources") if isinstance(coverage.get("sources"), dict) else {}
+    )
     print(
         "[trade-counterfactual-worker] "
         f"trades={summary.get('trades', 0)} "

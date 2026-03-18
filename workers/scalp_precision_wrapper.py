@@ -46,9 +46,7 @@ def apply_precision_mode_env(
     os.environ[f"{_ENTRY_BASE_PREFIX}_ENABLED"] = str(
         os.getenv(f"{source_prefix}_ENABLED", "1")
     )
-    os.environ[f"{_ENTRY_BASE_PREFIX}_MODE"] = os.getenv(
-        f"{source_prefix}_MODE", mode
-    )
+    os.environ[f"{_ENTRY_BASE_PREFIX}_MODE"] = os.getenv(f"{source_prefix}_MODE", mode)
     os.environ[f"{_ENTRY_BASE_PREFIX}_MODE_FILTER_ALLOWLIST"] = os.getenv(
         f"{source_prefix}_MODE_FILTER_ALLOWLIST", "1"
     )
@@ -71,7 +69,9 @@ def apply_precision_exit_env(
     fallback_pocket: str = "scalp",
 ) -> None:
     exit_source_prefix = f"{source_prefix}_EXIT"
-    _project_prefixed_env(base_prefix=_EXIT_BASE_PREFIX, source_prefix=exit_source_prefix)
+    _project_prefixed_env(
+        base_prefix=_EXIT_BASE_PREFIX, source_prefix=exit_source_prefix
+    )
     os.environ[f"{_ENTRY_BASE_PREFIX}_POCKET"] = os.getenv(
         f"{exit_source_prefix}_POCKET", fallback_pocket
     )

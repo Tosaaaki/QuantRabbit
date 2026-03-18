@@ -30,10 +30,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     # remove non-B SCALP_PING_5S_* variables so stale A-layer values are not mixed.
     # Keep B variables intact during cleanup so they can be copied down below.
     for key in list(os.environ):
-        if (
-            str(key).startswith(f"{base_prefix}_")
-            and not str(key).startswith(source)
-        ):
+        if str(key).startswith(f"{base_prefix}_") and not str(key).startswith(source):
             del os.environ[key]
 
     # Capture all variables after cleanup before mutating so we don't lose B keys
@@ -188,7 +185,11 @@ def _run_worker() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = str(repo_root) if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    env["PYTHONPATH"] = (
+        str(repo_root)
+        if not existing_pythonpath
+        else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    )
     logging.getLogger(__name__).info("Application started!")
     # Replace this wrapper process with the actual worker so stack stop/start
     # controls a single PID and does not leave child workers orphaned.

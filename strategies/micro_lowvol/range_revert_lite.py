@@ -56,7 +56,11 @@ def _tuned_float(keys: tuple[str, ...], default: float) -> float:
 def _bb_levels(fac: Dict) -> Optional[Tuple[float, float, float, float]]:
     upper = to_float(fac.get("bb_upper"))
     lower = to_float(fac.get("bb_lower"))
-    mid = to_float(fac.get("bb_mid")) or to_float(fac.get("ma20")) or to_float(fac.get("ma10"))
+    mid = (
+        to_float(fac.get("bb_mid"))
+        or to_float(fac.get("ma20"))
+        or to_float(fac.get("ma10"))
+    )
     bbw = to_float(fac.get("bbw"))
     if upper is None or lower is None:
         if mid is None or bbw is None or bbw <= 0:
@@ -94,7 +98,9 @@ class RangeRevertLite:
         range_active = bool(fac.get("range_active"))
 
         range_score_min = _env_float("RRL_RANGE_SCORE_MIN", 0.40)
-        range_score_min = _tuned_float(("strategies", "RangeRevertLite", "range_score_min"), range_score_min)
+        range_score_min = _tuned_float(
+            ("strategies", "RangeRevertLite", "range_score_min"), range_score_min
+        )
         require_range = _env_bool("RRL_REQUIRE_RANGE_ACTIVE", False)
         require_score = _env_bool("RRL_REQUIRE_RANGE_SCORE", True)
         if require_score and range_score < range_score_min:
@@ -120,12 +126,16 @@ class RangeRevertLite:
             return None
 
         macd_max = _env_float("RRL_MACD_HIST_MAX", 0.35)
-        macd_max = _tuned_float(("strategies", "RangeRevertLite", "macd_hist_max"), macd_max)
+        macd_max = _tuned_float(
+            ("strategies", "RangeRevertLite", "macd_hist_max"), macd_max
+        )
         if abs(macd_hist) > macd_max:
             return None
 
         ema_slope_max = _env_float("RRL_EMA_SLOPE_MAX", 0.45)
-        ema_slope_max = _tuned_float(("strategies", "RangeRevertLite", "ema_slope_max"), ema_slope_max)
+        ema_slope_max = _tuned_float(
+            ("strategies", "RangeRevertLite", "ema_slope_max"), ema_slope_max
+        )
         if abs(ema_slope) / PIP > ema_slope_max:
             return None
 
@@ -138,22 +148,34 @@ class RangeRevertLite:
 
         band_dist = _env_float("RRL_BAND_DIST_PIPS", 2.0)
         band_ratio = _env_float("RRL_BAND_DIST_RATIO", 0.22)
-        band_dist = _tuned_float(("strategies", "RangeRevertLite", "band_dist_pips"), band_dist)
-        band_ratio = _tuned_float(("strategies", "RangeRevertLite", "band_dist_ratio"), band_ratio)
+        band_dist = _tuned_float(
+            ("strategies", "RangeRevertLite", "band_dist_pips"), band_dist
+        )
+        band_ratio = _tuned_float(
+            ("strategies", "RangeRevertLite", "band_dist_ratio"), band_ratio
+        )
         band_threshold = max(band_dist, span_pips * band_ratio)
 
         rsi_long = _env_float("RRL_RSI_LONG", 35.0)
         rsi_short = _env_float("RRL_RSI_SHORT", 65.0)
         rsi_long = _tuned_float(("strategies", "RangeRevertLite", "rsi_long"), rsi_long)
-        rsi_short = _tuned_float(("strategies", "RangeRevertLite", "rsi_short"), rsi_short)
+        rsi_short = _tuned_float(
+            ("strategies", "RangeRevertLite", "rsi_short"), rsi_short
+        )
 
         stoch_long = _env_float("RRL_STOCH_LONG", 0.20)
         stoch_short = _env_float("RRL_STOCH_SHORT", 0.80)
-        stoch_long = _tuned_float(("strategies", "RangeRevertLite", "stoch_long"), stoch_long)
-        stoch_short = _tuned_float(("strategies", "RangeRevertLite", "stoch_short"), stoch_short)
+        stoch_long = _tuned_float(
+            ("strategies", "RangeRevertLite", "stoch_long"), stoch_long
+        )
+        stoch_short = _tuned_float(
+            ("strategies", "RangeRevertLite", "stoch_short"), stoch_short
+        )
 
         vwap_gap_min = _env_float("RRL_VWAP_GAP_MIN", 0.9)
-        vwap_gap_min = _tuned_float(("strategies", "RangeRevertLite", "vwap_gap_min"), vwap_gap_min)
+        vwap_gap_min = _tuned_float(
+            ("strategies", "RangeRevertLite", "vwap_gap_min"), vwap_gap_min
+        )
 
         div_min = _env_float("RRL_DIV_MIN", 0.12)
         div_min = _tuned_float(("strategies", "RangeRevertLite", "div_min"), div_min)
@@ -196,7 +218,10 @@ class RangeRevertLite:
             conf = 48.0
             conf += clamp(max(0.0, span_pips - 2.0), 0.0, 6.0) * 0.9
             conf += clamp(max(0.0, 2.3 - atr), 0.0, 1.6) * 3.2
-            conf += clamp(max(0.0, band_threshold - min(dist_lower, dist_upper)), 0.0, 2.0) * 2.5
+            conf += (
+                clamp(max(0.0, band_threshold - min(dist_lower, dist_upper)), 0.0, 2.0)
+                * 2.5
+            )
             conf -= clamp(abs(ema_slope) / PIP, 0.0, 0.6) * 1.8
             return conf
 

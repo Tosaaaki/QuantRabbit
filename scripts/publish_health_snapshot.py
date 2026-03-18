@@ -65,7 +65,9 @@ def _safe_query_rows(db_path: Path, query: str) -> Optional[list[dict[str, Any]]
         return None
 
 
-def _load_recent_signals(db_path: Path, limit: int = 5) -> Optional[list[dict[str, Any]]]:
+def _load_recent_signals(
+    db_path: Path, limit: int = 5
+) -> Optional[list[dict[str, Any]]]:
     if not db_path.exists():
         return None
     try:
@@ -286,7 +288,9 @@ def _age_sec_from_iso(raw: Optional[str]) -> Optional[float]:
         dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except Exception:
         return None
-    return max(0.0, (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds())
+    return max(
+        0.0, (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
+    )
 
 
 def _age_sec_from_mtime(path: Path) -> Optional[float]:
@@ -316,7 +320,11 @@ def _artifact_integrity(
             if isinstance(raw, str) and raw.strip():
                 timestamp_value = raw.strip()
                 break
-    age_sec = _age_sec_from_iso(timestamp_value) if timestamp_value else _age_sec_from_mtime(path)
+    age_sec = (
+        _age_sec_from_iso(timestamp_value)
+        if timestamp_value
+        else _age_sec_from_mtime(path)
+    )
     if timestamp_value:
         info["timestamp"] = timestamp_value
     if age_sec is not None:
@@ -370,8 +378,12 @@ def _merge_strategy_records(*sources: dict[str, Any]) -> dict[str, Any]:
                     "sources": set(),
                 },
             )
-            bucket["entry_active"] = bucket["entry_active"] or bool(getattr(rec, "entry_active", False))
-            bucket["exit_active"] = bucket["exit_active"] or bool(getattr(rec, "exit_active", False))
+            bucket["entry_active"] = bucket["entry_active"] or bool(
+                getattr(rec, "entry_active", False)
+            )
+            bucket["exit_active"] = bucket["exit_active"] or bool(
+                getattr(rec, "exit_active", False)
+            )
             bucket["active"] = bucket["active"] or bool(getattr(rec, "active", False))
             if getattr(rec, "enabled", None) is not None:
                 bucket["enabled"] = bool(getattr(rec, "enabled"))
@@ -417,14 +429,25 @@ def _participation_feedback_boosts(
             continue
         attempts = _coerce_int(item.get("attempts") or item.get("preflights"), 0)
         fills = _coerce_int(item.get("fills") or item.get("filled"), 0)
-        lot_multiplier = float(item.get("lot_multiplier") or item.get("units_multiplier") or 1.0)
-        probability_boost = float(item.get("probability_boost") or item.get("probability_offset") or 0.0)
+        lot_multiplier = float(
+            item.get("lot_multiplier") or item.get("units_multiplier") or 1.0
+        )
+        probability_boost = float(
+            item.get("probability_boost") or item.get("probability_offset") or 0.0
+        )
         cadence_floor = float(item.get("cadence_floor") or 1.0)
         if attempts < 1 or fills < 1:
             continue
-        if max(lot_multiplier, 1.0) <= 1.0 and max(probability_boost, 0.0) <= 0.0 and max(cadence_floor, 1.0) <= 1.0:
+        if (
+            max(lot_multiplier, 1.0) <= 1.0
+            and max(probability_boost, 0.0) <= 0.0
+            and max(cadence_floor, 1.0) <= 1.0
+        ):
             continue
-        strategy_key = resolve_strategy_tag(str(raw_key or "").strip()) or str(raw_key or "").strip()
+        strategy_key = (
+            resolve_strategy_tag(str(raw_key or "").strip())
+            or str(raw_key or "").strip()
+        )
         if known_keys:
             strategy_key = _canonical_known_strategy_key(strategy_key, known_keys)
         if not strategy_key:
@@ -477,10 +500,14 @@ def _strategy_feedback_integrity(
         systemd_dir = project_root / "systemd"
         running_services = feedback_worker._systemctl_running_services()
         if not running_services:
-            running_services = feedback_worker._local_stack_running_services(local_pid_dir)
+            running_services = feedback_worker._local_stack_running_services(
+                local_pid_dir
+            )
         discovered = _merge_strategy_records(
             feedback_worker._discover_from_control(),
-            feedback_worker._discover_from_systemd(systemd_dir, running_services, datetime.now(timezone.utc)),
+            feedback_worker._discover_from_systemd(
+                systemd_dir, running_services, datetime.now(timezone.utc)
+            ),
         )
         boosted_probe_strategies = (
             _participation_feedback_boosts(
@@ -491,7 +518,9 @@ def _strategy_feedback_integrity(
             else {}
         )
         info["boosted_low_sample_strategies"] = sorted(boosted_probe_strategies.keys())
-        stats_by_tag, latest_by_tag = feedback_worker._discover_from_trades(trades_db, lookback_days)
+        stats_by_tag, latest_by_tag = feedback_worker._discover_from_trades(
+            trades_db, lookback_days
+        )
         if discovered:
             stats_by_tag, latest_by_tag = feedback_worker._remap_stats_to_known_keys(
                 stats_by_tag,
@@ -538,25 +567,43 @@ def _build_mechanism_integrity(
         max_age_sec=_coerce_int(os.getenv("HEALTH_DYNAMIC_ALLOC_MAX_AGE_SEC"), 1800),
     )
     dynamic_payload = dynamic_alloc.pop("_payload", None)
-    dynamic_alloc["strategies_count"] = len((dynamic_payload or {}).get("strategies") or {})
+    dynamic_alloc["strategies_count"] = len(
+        (dynamic_payload or {}).get("strategies") or {}
+    )
 
     pattern_book = _artifact_integrity(
         project_root / "config" / "pattern_book.json",
         max_age_sec=_coerce_int(os.getenv("HEALTH_PATTERN_BOOK_MAX_AGE_SEC"), 1800),
     )
     pattern_payload = pattern_book.pop("_payload", None)
-    pattern_book["has_content"] = bool(pattern_payload) if pattern_payload is not None else bool(pattern_book["size_bytes"])
+    pattern_book["has_content"] = (
+        bool(pattern_payload)
+        if pattern_payload is not None
+        else bool(pattern_book["size_bytes"])
+    )
 
     forecast_runtime = _artifact_integrity(
         logs_dir / "forecast_improvement_latest.json",
         timestamp_fields=("generated_at",),
-        max_age_sec=_coerce_int(os.getenv("HEALTH_FORECAST_RUNTIME_MAX_AGE_SEC"), 21600),
+        max_age_sec=_coerce_int(
+            os.getenv("HEALTH_FORECAST_RUNTIME_MAX_AGE_SEC"), 21600
+        ),
     )
     forecast_payload = forecast_runtime.pop("_payload", None)
-    runtime_overrides = (forecast_payload or {}).get("runtime_overrides") if isinstance(forecast_payload, dict) else {}
-    forecast_runtime["verdict"] = (forecast_payload or {}).get("verdict") if isinstance(forecast_payload, dict) else None
+    runtime_overrides = (
+        (forecast_payload or {}).get("runtime_overrides")
+        if isinstance(forecast_payload, dict)
+        else {}
+    )
+    forecast_runtime["verdict"] = (
+        (forecast_payload or {}).get("verdict")
+        if isinstance(forecast_payload, dict)
+        else None
+    )
     forecast_runtime["runtime_overrides_enabled"] = (
-        runtime_overrides.get("enabled") if isinstance(runtime_overrides, dict) else None
+        runtime_overrides.get("enabled")
+        if isinstance(runtime_overrides, dict)
+        else None
     )
 
     forecast_service = {
@@ -571,7 +618,9 @@ def _build_mechanism_integrity(
     )
 
     blackboard = {
-        "entry_intent_board_table": _sqlite_table_exists(orders_db, "entry_intent_board"),
+        "entry_intent_board_table": _sqlite_table_exists(
+            orders_db, "entry_intent_board"
+        ),
         "recent_rows_24h": _safe_query(
             orders_db,
             "select count(*) from entry_intent_board where ts_epoch >= strftime('%s','now') - 86400;",
@@ -581,19 +630,29 @@ def _build_mechanism_integrity(
     entry_path_summary = _artifact_integrity(
         logs_dir / "entry_path_summary_latest.json",
         timestamp_fields=("generated_at",),
-        max_age_sec=_coerce_int(os.getenv("HEALTH_ENTRY_PATH_SUMMARY_MAX_AGE_SEC"), 1800),
+        max_age_sec=_coerce_int(
+            os.getenv("HEALTH_ENTRY_PATH_SUMMARY_MAX_AGE_SEC"), 1800
+        ),
     )
     entry_path_payload = entry_path_summary.pop("_payload", None)
-    entry_path_summary["strategies_count"] = len((entry_path_payload or {}).get("strategies") or {})
-    entry_path_summary["orders_considered"] = (entry_path_payload or {}).get("orders_considered")
+    entry_path_summary["strategies_count"] = len(
+        (entry_path_payload or {}).get("strategies") or {}
+    )
+    entry_path_summary["orders_considered"] = (entry_path_payload or {}).get(
+        "orders_considered"
+    )
 
     participation_alloc = _artifact_integrity(
         project_root / "config" / "participation_alloc.json",
         timestamp_fields=("as_of",),
-        max_age_sec=_coerce_int(os.getenv("HEALTH_PARTICIPATION_ALLOC_MAX_AGE_SEC"), 1800),
+        max_age_sec=_coerce_int(
+            os.getenv("HEALTH_PARTICIPATION_ALLOC_MAX_AGE_SEC"), 1800
+        ),
     )
     participation_payload = participation_alloc.pop("_payload", None)
-    participation_alloc["strategies_count"] = len((participation_payload or {}).get("strategies") or {})
+    participation_alloc["strategies_count"] = len(
+        (participation_payload or {}).get("strategies") or {}
+    )
 
     loser_cluster = _artifact_integrity(
         logs_dir / "loser_cluster_latest.json",
@@ -601,8 +660,12 @@ def _build_mechanism_integrity(
         max_age_sec=_coerce_int(os.getenv("HEALTH_LOSER_CLUSTER_MAX_AGE_SEC"), 3600),
     )
     loser_cluster_payload = loser_cluster.pop("_payload", None)
-    loser_cluster["strategies_count"] = len((loser_cluster_payload or {}).get("strategies") or {})
-    loser_cluster["top_clusters_count"] = len((loser_cluster_payload or {}).get("top_clusters") or [])
+    loser_cluster["strategies_count"] = len(
+        (loser_cluster_payload or {}).get("strategies") or {}
+    )
+    loser_cluster["top_clusters_count"] = len(
+        (loser_cluster_payload or {}).get("top_clusters") or []
+    )
 
     auto_canary = _artifact_integrity(
         project_root / "config" / "auto_canary_overrides.json",
@@ -610,16 +673,24 @@ def _build_mechanism_integrity(
         max_age_sec=_coerce_int(os.getenv("HEALTH_AUTO_CANARY_MAX_AGE_SEC"), 3600),
     )
     auto_canary_payload = auto_canary.pop("_payload", None)
-    auto_canary["strategies_count"] = len((auto_canary_payload or {}).get("strategies") or {})
+    auto_canary["strategies_count"] = len(
+        (auto_canary_payload or {}).get("strategies") or {}
+    )
 
     macro_news_context = _artifact_integrity(
         logs_dir / "macro_news_context.json",
         timestamp_fields=("generated_at",),
-        max_age_sec=_coerce_int(os.getenv("HEALTH_MACRO_NEWS_CONTEXT_MAX_AGE_SEC"), 3600),
+        max_age_sec=_coerce_int(
+            os.getenv("HEALTH_MACRO_NEWS_CONTEXT_MAX_AGE_SEC"), 3600
+        ),
     )
     macro_news_payload = macro_news_context.pop("_payload", None)
-    macro_news_context["event_severity"] = (macro_news_payload or {}).get("event_severity")
-    macro_news_context["caution_window_active"] = (macro_news_payload or {}).get("caution_window_active")
+    macro_news_context["event_severity"] = (macro_news_payload or {}).get(
+        "event_severity"
+    )
+    macro_news_context["caution_window_active"] = (macro_news_payload or {}).get(
+        "caution_window_active"
+    )
     macro_news_context["source_error_count"] = _coerce_int(
         (macro_news_payload or {}).get("source_error_count"),
         0,
@@ -629,7 +700,9 @@ def _build_mechanism_integrity(
         project_root=project_root,
         logs_dir=logs_dir,
         trades_db=trades_db,
-        participation_payload=participation_payload if participation_alloc.get("exists") else None,
+        participation_payload=(
+            participation_payload if participation_alloc.get("exists") else None
+        ),
         participation_fresh=participation_alloc.get("fresh") is not False,
     )
 
@@ -704,7 +777,10 @@ def _build_mechanism_integrity(
 
 def _upload_via_cli(bucket: str, object_path: str, payload: str) -> bool:
     target = f"gs://{bucket}/{object_path}"
-    for cmd in (["gcloud", "storage", "cp", "-", target], ["gsutil", "cp", "-", target]):
+    for cmd in (
+        ["gcloud", "storage", "cp", "-", target],
+        ["gsutil", "cp", "-", target],
+    ):
         if not shutil.which(cmd[0]):
             continue
         try:
@@ -828,7 +904,9 @@ def _build_snapshot() -> dict[str, Any]:
         "service_active": {
             "quantrabbit": _systemd_is_active("quantrabbit.service"),
             "quant_main": _systemd_is_active("quant-main.service"),
-            "quant_health_snapshot": _systemd_is_active("quant-health-snapshot.service"),
+            "quant_health_snapshot": _systemd_is_active(
+                "quant-health-snapshot.service"
+            ),
             "quant_health_timer": _systemd_is_active("quant-health-snapshot.timer"),
             "quant_ssh_watchdog": _systemd_is_active("quant-ssh-watchdog.service"),
             "quant_ssh_timer": _systemd_is_active("quant-ssh-watchdog.timer"),
@@ -903,7 +981,9 @@ def main() -> None:
         blob = bucket.blob(object_path)
         blob.cache_control = "no-cache"
         blob.upload_from_string(payload, content_type="application/json")
-        logging.info("[HEALTH] snapshot uploaded bucket=%s object=%s", bucket_name, object_path)
+        logging.info(
+            "[HEALTH] snapshot uploaded bucket=%s object=%s", bucket_name, object_path
+        )
         return
     except Exception as exc:  # noqa: BLE001
         logging.warning("[HEALTH] upload failed: %s", exc)

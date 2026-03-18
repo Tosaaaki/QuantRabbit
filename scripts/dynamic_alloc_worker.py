@@ -5,6 +5,7 @@ Compute simple strategy scores from recent trades and emit config/dynamic_alloc.
 Intended to run periodically (cron/systemd timer) to feed score-driven allocation context
 confidence trims and pocket caps.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,9 +77,10 @@ def _setup_context_from_row(row: Tuple) -> dict[str, str]:
 def _setup_match_dimension(context: dict[str, str]) -> str:
     if str(context.get("setup_fingerprint") or "").strip():
         return "setup_fingerprint"
-    if str(context.get("flow_regime") or "").strip() and str(
-        context.get("microstructure_bucket") or ""
-    ).strip():
+    if (
+        str(context.get("flow_regime") or "").strip()
+        and str(context.get("microstructure_bucket") or "").strip()
+    ):
         return "flow_micro"
     if str(context.get("flow_regime") or "").strip():
         return "flow_regime"
@@ -163,7 +165,9 @@ def _update_perf_bucket(
                 bucket["w_market_close_loss_realized_jpy"] += abs(realized_jpy) * weight
 
 
-def _compute_perf_snapshot(stats: Dict[str, float], *, pf_cap: float) -> Dict[str, float]:
+def _compute_perf_snapshot(
+    stats: Dict[str, float], *, pf_cap: float
+) -> Dict[str, float]:
     wins = int(stats["wins"])
     trades = int(stats["trades"])
     sum_pips = float(stats["sum_pips"])
@@ -182,14 +186,20 @@ def _compute_perf_snapshot(stats: Dict[str, float], *, pf_cap: float) -> Dict[st
     w_market_close = float(stats.get("w_market_close", 0.0))
     w_market_close_loss = float(stats.get("w_market_close_loss", 0.0))
     w_market_close_loss_pips = float(stats.get("w_market_close_loss_pips", 0.0))
-    w_market_close_loss_realized_jpy = float(stats.get("w_market_close_loss_realized_jpy", 0.0))
+    w_market_close_loss_realized_jpy = float(
+        stats.get("w_market_close_loss_realized_jpy", 0.0)
+    )
 
     wr = wins / max(1, trades)
     weighted_wr = w_wins / max(1e-9, w_trades)
     avg_pl = w_sum_pips / max(1e-9, w_trades)
     avg_realized_jpy = w_sum_realized_jpy / max(1e-9, w_trades)
     realized_jpy_per_1k_units = 1000.0 * w_sum_realized_jpy / max(1.0, w_abs_units)
-    pf = w_win_pips / w_loss_pips if w_loss_pips > 0 else (w_win_pips if w_win_pips > 0 else 0.0)
+    pf = (
+        w_win_pips / w_loss_pips
+        if w_loss_pips > 0
+        else (w_win_pips if w_win_pips > 0 else 0.0)
+    )
     pf = min(pf, max(0.1, pf_cap))
     jpy_pf = (
         w_win_realized_jpy / w_loss_realized_jpy
@@ -198,14 +208,20 @@ def _compute_perf_snapshot(stats: Dict[str, float], *, pf_cap: float) -> Dict[st
     )
     jpy_pf = min(jpy_pf, max(0.1, pf_cap))
     downside_share = w_loss_pips / max(1e-9, w_win_pips + w_loss_pips)
-    jpy_downside_share = w_loss_realized_jpy / max(1e-9, w_win_realized_jpy + w_loss_realized_jpy)
+    jpy_downside_share = w_loss_realized_jpy / max(
+        1e-9, w_win_realized_jpy + w_loss_realized_jpy
+    )
     sl_rate = w_sl_like / max(1e-9, w_trades)
     margin_closeout_rate = w_margin_closeout / max(1e-9, w_trades)
     market_close_rate = w_market_close / max(1e-9, w_trades)
     market_close_loss_rate = w_market_close_loss / max(1e-9, w_trades)
     market_close_loss_pips_share = w_market_close_loss_pips / max(1e-9, w_loss_pips)
-    market_close_loss_jpy_share = w_market_close_loss_realized_jpy / max(1e-9, w_loss_realized_jpy)
-    market_close_loss_share = max(market_close_loss_pips_share, market_close_loss_jpy_share)
+    market_close_loss_jpy_share = w_market_close_loss_realized_jpy / max(
+        1e-9, w_loss_realized_jpy
+    )
+    market_close_loss_share = max(
+        market_close_loss_pips_share, market_close_loss_jpy_share
+    )
 
     wr_norm = _clamp((weighted_wr - 0.42) / 0.26, 0.0, 1.0)
     pf_norm = _clamp((pf - 0.60) / max(0.10, (pf_cap - 0.60)), 0.0, 1.0)
@@ -217,7 +233,9 @@ def _compute_perf_snapshot(stats: Dict[str, float], *, pf_cap: float) -> Dict[st
     sl_penalty = _clamp((sl_rate - 0.38) / 0.40, 0.0, 1.0)
     margin_closeout_penalty = _clamp((margin_closeout_rate - 0.01) / 0.10, 0.0, 1.0)
     market_close_penalty = _clamp((market_close_rate - 0.45) / 0.35, 0.0, 1.0)
-    market_close_loss_penalty = _clamp((market_close_loss_share - 0.40) / 0.30, 0.0, 1.0)
+    market_close_loss_penalty = _clamp(
+        (market_close_loss_share - 0.40) / 0.30, 0.0, 1.0
+    )
 
     base_score = (
         0.28 * pf_norm
@@ -308,8 +326,12 @@ def _compute_pocket_profiles(
             "weighted_win_rate": round(float(snapshot["weighted_wr"]), 3),
             "sum_realized_jpy": round(float(snapshot["sum_realized_jpy"]), 2),
             "sum_pips": round(float(snapshot["sum_pips"]), 2),
-            "realized_jpy_per_1k_units": round(float(snapshot["realized_jpy_per_1k_units"]), 3),
-            "market_close_loss_share": round(float(snapshot["market_close_loss_share"]), 3),
+            "realized_jpy_per_1k_units": round(
+                float(snapshot["realized_jpy_per_1k_units"]), 3
+            ),
+            "market_close_loss_share": round(
+                float(snapshot["market_close_loss_share"]), 3
+            ),
         }
     return profiles
 
@@ -388,11 +410,19 @@ def _score_snapshot_to_record(
     if severe_low_sample_loser:
         strategy_lot_multiplier = min(
             strategy_lot_multiplier,
-            0.20 if realized_jpy_per_1k_units <= -8.0 or avg_realized_jpy <= -8.0 else 0.24,
+            (
+                0.20
+                if realized_jpy_per_1k_units <= -8.0 or avg_realized_jpy <= -8.0
+                else 0.24
+            ),
         )
         effective_min_mult = min(
             effective_min_mult,
-            0.16 if realized_jpy_per_1k_units <= -8.0 or avg_realized_jpy <= -8.0 else 0.18,
+            (
+                0.16
+                if realized_jpy_per_1k_units <= -8.0 or avg_realized_jpy <= -8.0
+                else 0.18
+            ),
         )
     if trades >= max(24, min_trades) and sum_realized_jpy <= -1500.0:
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.70)
@@ -428,7 +458,11 @@ def _score_snapshot_to_record(
     ):
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.32)
         effective_min_mult = min(effective_min_mult, 0.15)
-    if trades >= max(32, min_trades * 2) and market_close_loss_share >= 0.55 and sum_realized_jpy < 0.0:
+    if (
+        trades >= max(32, min_trades * 2)
+        and market_close_loss_share >= 0.55
+        and sum_realized_jpy < 0.0
+    ):
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.28)
         effective_min_mult = min(effective_min_mult, 0.14)
     if (
@@ -447,7 +481,11 @@ def _score_snapshot_to_record(
     ):
         strategy_lot_multiplier = min(strategy_lot_multiplier, 0.12)
         effective_min_mult = min(effective_min_mult, 0.10)
-    if trades >= max(16, min_trades) and sum_realized_jpy <= 0.0 and avg_realized_jpy < 0.0:
+    if (
+        trades >= max(16, min_trades)
+        and sum_realized_jpy <= 0.0
+        and avg_realized_jpy < 0.0
+    ):
         if realized_jpy_per_1k_units <= -1.0:
             strategy_lot_multiplier = min(strategy_lot_multiplier, 0.62)
             effective_min_mult = min(effective_min_mult, 0.24)
@@ -469,11 +507,15 @@ def _score_snapshot_to_record(
         strategy_lot_multiplier = max(strategy_lot_multiplier, 0.85)
     if trades < max(1, min_trades):
         strategy_lot_multiplier = min(strategy_lot_multiplier, 1.00)
-    strategy_lot_multiplier = _clamp(strategy_lot_multiplier, effective_min_mult, max_mult)
+    strategy_lot_multiplier = _clamp(
+        strategy_lot_multiplier, effective_min_mult, max_mult
+    )
 
     pocket_lot_multiplier_applied = pocket_lot_multiplier
     cash_profitable = (
-        sum_realized_jpy >= 0.0 and avg_realized_jpy >= 0.0 and realized_jpy_per_1k_units >= 0.0
+        sum_realized_jpy >= 0.0
+        and avg_realized_jpy >= 0.0
+        and realized_jpy_per_1k_units >= 0.0
     )
     if (
         score >= 0.55
@@ -486,7 +528,9 @@ def _score_snapshot_to_record(
             pocket_lot_multiplier_applied = min(1.0, pocket_lot_multiplier_applied)
     elif pf < 0.95 or sum_realized_jpy < 0.0:
         if pocket_lot_multiplier_applied > 1.0:
-            pocket_lot_multiplier_applied = 1.0 + (pocket_lot_multiplier_applied - 1.0) * 0.35
+            pocket_lot_multiplier_applied = (
+                1.0 + (pocket_lot_multiplier_applied - 1.0) * 0.35
+            )
 
     lot_multiplier = strategy_lot_multiplier * pocket_lot_multiplier_applied
     lot_multiplier = _clamp(lot_multiplier, effective_min_mult, max_mult)
@@ -548,7 +592,8 @@ def _build_setup_overrides(
         trades = int(snapshot["trades"])
         low_sample_winner_relief = bool(
             0 < trades < resolved_setup_min_trades
-            and float(snapshot.get("sum_realized_jpy", 0.0) or 0.0) >= (1.5 if trades <= 1 else 3.0)
+            and float(snapshot.get("sum_realized_jpy", 0.0) or 0.0)
+            >= (1.5 if trades <= 1 else 3.0)
             and float(snapshot.get("avg_realized_jpy", 0.0) or 0.0) > 0.0
             and float(snapshot.get("avg_pl", 0.0) or 0.0) > 0.0
             and float(snapshot.get("weighted_wr", 0.0) or 0.0) >= 0.75
@@ -581,8 +626,10 @@ def _build_setup_overrides(
             continue
         match_dimension, setup_fingerprint, flow_regime, microstructure_bucket = key
         pocket_counts = setup_pockets.get(key, {})
-        pocket = max(pocket_counts, key=pocket_counts.get) if pocket_counts else str(
-            strategy_record.get("pocket") or "unknown"
+        pocket = (
+            max(pocket_counts, key=pocket_counts.get)
+            if pocket_counts
+            else str(strategy_record.get("pocket") or "unknown")
         )
         setup_record = _score_snapshot_to_record(
             snapshot,
@@ -595,13 +642,19 @@ def _build_setup_overrides(
             allow_winner_only=allow_winner_only,
         )
         setup_multiplier = _clamp(
-            float(setup_record.get("lot_multiplier", parent_multiplier) or parent_multiplier),
+            float(
+                setup_record.get("lot_multiplier", parent_multiplier)
+                or parent_multiplier
+            ),
             0.10,
             max(0.10, parent_cap),
         )
         effective_min = min(
             setup_multiplier,
-            float(setup_record.get("effective_min_lot_multiplier", setup_multiplier) or setup_multiplier),
+            float(
+                setup_record.get("effective_min_lot_multiplier", setup_multiplier)
+                or setup_multiplier
+            ),
         )
         if low_sample_winner_relief:
             # Let current winner setups recover faster than strategy-wide losers
@@ -620,26 +673,39 @@ def _build_setup_overrides(
             "score": round(float(setup_record.get("score", 0.0) or 0.0), 3),
             "lot_multiplier": round(setup_multiplier, 3),
             "strategy_lot_multiplier": round(
-                float(setup_record.get("strategy_lot_multiplier", setup_multiplier) or setup_multiplier),
+                float(
+                    setup_record.get("strategy_lot_multiplier", setup_multiplier)
+                    or setup_multiplier
+                ),
                 3,
             ),
             "effective_min_lot_multiplier": round(max(0.10, effective_min), 3),
             "trades": trades,
             "win_rate": round(float(setup_record.get("win_rate", 0.0) or 0.0), 3),
-            "weighted_win_rate": round(float(setup_record.get("weighted_win_rate", 0.0) or 0.0), 3),
+            "weighted_win_rate": round(
+                float(setup_record.get("weighted_win_rate", 0.0) or 0.0), 3
+            ),
             "pf": round(float(setup_record.get("pf", 0.0) or 0.0), 3),
             "jpy_pf": round(float(setup_record.get("jpy_pf", 0.0) or 0.0), 3),
             "avg_pips": round(float(setup_record.get("avg_pips", 0.0) or 0.0), 3),
             "sum_pips": round(float(setup_record.get("sum_pips", 0.0) or 0.0), 2),
-            "avg_realized_jpy": round(float(setup_record.get("avg_realized_jpy", 0.0) or 0.0), 3),
-            "sum_realized_jpy": round(float(setup_record.get("sum_realized_jpy", 0.0) or 0.0), 2),
+            "avg_realized_jpy": round(
+                float(setup_record.get("avg_realized_jpy", 0.0) or 0.0), 3
+            ),
+            "sum_realized_jpy": round(
+                float(setup_record.get("sum_realized_jpy", 0.0) or 0.0), 2
+            ),
             "realized_jpy_per_1k_units": round(
                 float(setup_record.get("realized_jpy_per_1k_units", 0.0) or 0.0),
                 3,
             ),
             "sl_rate": round(float(setup_record.get("sl_rate", 0.0) or 0.0), 3),
-            "margin_closeout_rate": round(float(setup_record.get("margin_closeout_rate", 0.0) or 0.0), 3),
-            "market_close_rate": round(float(setup_record.get("market_close_rate", 0.0) or 0.0), 3),
+            "margin_closeout_rate": round(
+                float(setup_record.get("margin_closeout_rate", 0.0) or 0.0), 3
+            ),
+            "market_close_rate": round(
+                float(setup_record.get("market_close_rate", 0.0) or 0.0), 3
+            ),
             "market_close_loss_rate": round(
                 float(setup_record.get("market_close_loss_rate", 0.0) or 0.0),
                 3,
@@ -681,7 +747,9 @@ def _parse_utc_timestamp(raw: object) -> dt.datetime | None:
     return ts.astimezone(dt.timezone.utc)
 
 
-def _recency_weight(close_time_raw: object, *, now_utc: dt.datetime, half_life_hours: float) -> float:
+def _recency_weight(
+    close_time_raw: object, *, now_utc: dt.datetime, half_life_hours: float
+) -> float:
     ts = _parse_utc_timestamp(close_time_raw)
     if ts is None:
         return 1.0
@@ -751,7 +819,9 @@ def compute_scores(
         close_reason = str(row[4] if len(row) > 4 else "")
         pocket = pocket or "unknown"
         key = strat
-        weight = _recency_weight(close_time, now_utc=now_utc, half_life_hours=half_life_hours)
+        weight = _recency_weight(
+            close_time, now_utc=now_utc, half_life_hours=half_life_hours
+        )
         s = stats.setdefault(key, _empty_perf_bucket())
         ps = pocket_stats.setdefault(pocket, _empty_perf_bucket())
         pockets.setdefault(key, {})
@@ -787,7 +857,9 @@ def compute_scores(
                 str(setup_context.get("microstructure_bucket") or "").strip(),
             )
             strategy_setup_stats = setup_stats.setdefault(key, {})
-            setup_bucket = strategy_setup_stats.setdefault(setup_key, _empty_perf_bucket())
+            setup_bucket = strategy_setup_stats.setdefault(
+                setup_key, _empty_perf_bucket()
+            )
             _update_perf_bucket(
                 setup_bucket,
                 pl=pl,
@@ -810,7 +882,9 @@ def compute_scores(
     for strat, s in stats.items():
         snapshot = _compute_perf_snapshot(s, pf_cap=pf_cap)
         pocket_counts = pockets.get(strat, {})
-        pocket = max(pocket_counts, key=pocket_counts.get) if pocket_counts else "unknown"
+        pocket = (
+            max(pocket_counts, key=pocket_counts.get) if pocket_counts else "unknown"
+        )
         pocket_profile = pocket_profiles.get(pocket, {})
         score_record = _score_snapshot_to_record(
             snapshot,
@@ -849,14 +923,42 @@ def main() -> None:
         default=5000,
         help="Number of recent trades to use (0 to disable LIMIT and use full lookback window)",
     )
-    ap.add_argument("--lookback-days", type=int, default=7, help="Lookback window in days")
-    ap.add_argument("--min-trades", type=int, default=12, help="Min trades for full score weight")
-    ap.add_argument("--setup-min-trades", type=int, default=4, help="Min trades for setup-scoped override emission")
-    ap.add_argument("--pf-cap", type=float, default=2.0, help="Profit factor cap for normalization")
-    ap.add_argument("--target-use", type=float, default=0.88, help="Target margin usage fraction")
-    ap.add_argument("--half-life-hours", type=float, default=36.0, help="Recency half-life for scoring")
-    ap.add_argument("--min-lot-multiplier", type=float, default=0.45, help="Lower bound of strategy lot multiplier")
-    ap.add_argument("--max-lot-multiplier", type=float, default=1.65, help="Upper bound of strategy lot multiplier")
+    ap.add_argument(
+        "--lookback-days", type=int, default=7, help="Lookback window in days"
+    )
+    ap.add_argument(
+        "--min-trades", type=int, default=12, help="Min trades for full score weight"
+    )
+    ap.add_argument(
+        "--setup-min-trades",
+        type=int,
+        default=4,
+        help="Min trades for setup-scoped override emission",
+    )
+    ap.add_argument(
+        "--pf-cap", type=float, default=2.0, help="Profit factor cap for normalization"
+    )
+    ap.add_argument(
+        "--target-use", type=float, default=0.88, help="Target margin usage fraction"
+    )
+    ap.add_argument(
+        "--half-life-hours",
+        type=float,
+        default=36.0,
+        help="Recency half-life for scoring",
+    )
+    ap.add_argument(
+        "--min-lot-multiplier",
+        type=float,
+        default=0.45,
+        help="Lower bound of strategy lot multiplier",
+    )
+    ap.add_argument(
+        "--max-lot-multiplier",
+        type=float,
+        default=1.65,
+        help="Upper bound of strategy lot multiplier",
+    )
     ap.add_argument(
         "--soft-participation",
         type=int,
@@ -898,9 +1000,15 @@ def main() -> None:
 
     pocket_cap_weights = {
         "macro": 1.0,
-        "micro": float(pocket_profiles.get("micro", {}).get("lot_multiplier", 1.0) or 1.0),
-        "scalp": float(pocket_profiles.get("scalp", {}).get("lot_multiplier", 1.0) or 1.0),
-        "scalp_fast": float(pocket_profiles.get("scalp_fast", {}).get("lot_multiplier", 1.0) or 1.0),
+        "micro": float(
+            pocket_profiles.get("micro", {}).get("lot_multiplier", 1.0) or 1.0
+        ),
+        "scalp": float(
+            pocket_profiles.get("scalp", {}).get("lot_multiplier", 1.0) or 1.0
+        ),
+        "scalp_fast": float(
+            pocket_profiles.get("scalp_fast", {}).get("lot_multiplier", 1.0) or 1.0
+        ),
     }
     cap_total = sum(max(0.10, value) for value in pocket_cap_weights.values())
     pocket_caps = {
@@ -909,7 +1017,9 @@ def main() -> None:
     }
 
     alloc = {
-        "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "as_of": dt.datetime.now(dt.timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "lookback_days": int(args.lookback_days),
         "min_trades": int(args.min_trades),
         "setup_min_trades": max(1, int(args.setup_min_trades)),

@@ -19,6 +19,7 @@ LOG = logging.getLogger(__name__)
 
 _DB = pathlib.Path("logs/trades.db")
 
+
 @dataclass(frozen=True, slots=True)
 class ProfitGuardCfg:
     env_prefix: Optional[str]
@@ -63,7 +64,9 @@ def _strategy_env_float(name: str, default: float, *, prefix: Optional[str]) -> 
     )
 
 
-def _strategy_env_get(name: str, default: Optional[str], *, prefix: Optional[str]) -> Optional[str]:
+def _strategy_env_get(
+    name: str, default: Optional[str], *, prefix: Optional[str]
+) -> Optional[str]:
     return env_get(
         name,
         default,
@@ -81,7 +84,14 @@ def _get_cfg(env_prefix: Optional[str]) -> ProfitGuardCfg:
     prefix_norm = key or None
 
     enabled = _strategy_env_bool("PROFIT_GUARD_ENABLED", True, prefix=prefix_norm)
-    mode = str(_strategy_env_get("PROFIT_GUARD_MODE", "block", prefix=prefix_norm) or "block").strip().lower()
+    mode = (
+        str(
+            _strategy_env_get("PROFIT_GUARD_MODE", "block", prefix=prefix_norm)
+            or "block"
+        )
+        .strip()
+        .lower()
+    )
     lookback_min = max(
         10,
         env_int(
@@ -91,15 +101,35 @@ def _get_cfg(env_prefix: Optional[str]) -> ProfitGuardCfg:
             allow_global_fallback=False,
         ),
     )
-    ttl_sec = max(10.0, _strategy_env_float("PROFIT_GUARD_TTL_SEC", 30.0, prefix=prefix_norm))
+    ttl_sec = max(
+        10.0, _strategy_env_float("PROFIT_GUARD_TTL_SEC", 30.0, prefix=prefix_norm)
+    )
 
-    scope = str(_strategy_env_get("PROFIT_GUARD_SCOPE", "pocket", prefix=prefix_norm) or "pocket").strip().lower()
+    scope = (
+        str(
+            _strategy_env_get("PROFIT_GUARD_SCOPE", "pocket", prefix=prefix_norm)
+            or "pocket"
+        )
+        .strip()
+        .lower()
+    )
     if scope not in {"pocket", "strategy"}:
         scope = "pocket"
 
-    raw_pockets = str(_strategy_env_get("PROFIT_GUARD_POCKETS", "scalp", prefix=prefix_norm) or "scalp").strip().lower()
+    raw_pockets = (
+        str(
+            _strategy_env_get("PROFIT_GUARD_POCKETS", "scalp", prefix=prefix_norm)
+            or "scalp"
+        )
+        .strip()
+        .lower()
+    )
     pockets_all = raw_pockets in {"*", "all"}
-    pockets = set() if pockets_all else {item.strip() for item in raw_pockets.split(",") if item.strip()}
+    pockets = (
+        set()
+        if pockets_all
+        else {item.strip() for item in raw_pockets.split(",") if item.strip()}
+    )
 
     cfg = ProfitGuardCfg(
         env_prefix=key or None,
@@ -110,10 +140,18 @@ def _get_cfg(env_prefix: Optional[str]) -> ProfitGuardCfg:
         pockets_all=pockets_all,
         pockets=pockets,
         scope=scope,
-        min_peak_pips_default=_strategy_env_float("PROFIT_GUARD_MIN_PEAK_PIPS", 6.0, prefix=prefix_norm),
-        max_giveback_pips_default=_strategy_env_float("PROFIT_GUARD_MAX_GIVEBACK_PIPS", 3.0, prefix=prefix_norm),
-        min_peak_jpy_default=_strategy_env_float("PROFIT_GUARD_MIN_PEAK_JPY", 0.0, prefix=prefix_norm),
-        max_giveback_jpy_default=_strategy_env_float("PROFIT_GUARD_MAX_GIVEBACK_JPY", 0.0, prefix=prefix_norm),
+        min_peak_pips_default=_strategy_env_float(
+            "PROFIT_GUARD_MIN_PEAK_PIPS", 6.0, prefix=prefix_norm
+        ),
+        max_giveback_pips_default=_strategy_env_float(
+            "PROFIT_GUARD_MAX_GIVEBACK_PIPS", 3.0, prefix=prefix_norm
+        ),
+        min_peak_jpy_default=_strategy_env_float(
+            "PROFIT_GUARD_MIN_PEAK_JPY", 0.0, prefix=prefix_norm
+        ),
+        max_giveback_jpy_default=_strategy_env_float(
+            "PROFIT_GUARD_MAX_GIVEBACK_JPY", 0.0, prefix=prefix_norm
+        ),
     )
     _CFG_CACHE[key] = cfg
     return cfg
@@ -240,7 +278,9 @@ def _query_guard(
     min_peak_pips = _threshold(
         "PROFIT_GUARD_MIN_PEAK_PIPS", pocket, cfg.min_peak_pips_default, cfg=cfg
     )
-    min_peak_jpy = _threshold("PROFIT_GUARD_MIN_PEAK_JPY", pocket, cfg.min_peak_jpy_default, cfg=cfg)
+    min_peak_jpy = _threshold(
+        "PROFIT_GUARD_MIN_PEAK_JPY", pocket, cfg.min_peak_jpy_default, cfg=cfg
+    )
     max_giveback_pips = _threshold(
         "PROFIT_GUARD_MAX_GIVEBACK_PIPS", pocket, cfg.max_giveback_pips_default, cfg=cfg
     )
@@ -249,12 +289,18 @@ def _query_guard(
     )
 
     if min_peak_pips <= 0 and min_peak_jpy <= 0:
-        return ProfitDecision(True, "min_peak_disabled", peak_pips, current_pips, peak_jpy, current_jpy)
+        return ProfitDecision(
+            True, "min_peak_disabled", peak_pips, current_pips, peak_jpy, current_jpy
+        )
     if max_giveback_pips <= 0 and max_giveback_jpy <= 0:
-        return ProfitDecision(True, "giveback_disabled", peak_pips, current_pips, peak_jpy, current_jpy)
+        return ProfitDecision(
+            True, "giveback_disabled", peak_pips, current_pips, peak_jpy, current_jpy
+        )
 
     if peak_pips < max(0.0, min_peak_pips) and peak_jpy < max(0.0, min_peak_jpy):
-        return ProfitDecision(True, "peak_below_min", peak_pips, current_pips, peak_jpy, current_jpy)
+        return ProfitDecision(
+            True, "peak_below_min", peak_pips, current_pips, peak_jpy, current_jpy
+        )
 
     giveback_pips = max(0.0, peak_pips - current_pips)
     giveback_jpy = max(0.0, peak_jpy - current_jpy)
@@ -278,7 +324,9 @@ def _query_guard(
                 f"giveback={giveback_jpy:.0f}jpy peak={peak_jpy:.0f}jpy "
                 f"curr={current_jpy:.0f}jpy win={cfg.lookback_min}m"
             )
-        return ProfitDecision(False, reason, peak_pips, current_pips, peak_jpy, current_jpy)
+        return ProfitDecision(
+            False, reason, peak_pips, current_pips, peak_jpy, current_jpy
+        )
 
     return ProfitDecision(True, "ok", peak_pips, current_pips, peak_jpy, current_jpy)
 

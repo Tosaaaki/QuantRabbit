@@ -61,7 +61,11 @@ def _run_worker() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = str(repo_root) if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    env["PYTHONPATH"] = (
+        str(repo_root)
+        if not existing_pythonpath
+        else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    )
 
     logging.getLogger(__name__).info("Application started!")
     subprocess.run(

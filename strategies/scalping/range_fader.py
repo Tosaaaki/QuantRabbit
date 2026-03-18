@@ -4,39 +4,97 @@ from typing import Dict, Iterable, Optional
 import os
 import logging
 
-BUY_SUPPORT_DI_GAP_FLOOR = float(os.getenv("RANGE_FADER_BUY_SUPPORT_DI_GAP_FLOOR", "-2.0"))
-BUY_SUPPORT_EMA_SLOPE_FLOOR = float(os.getenv("RANGE_FADER_BUY_SUPPORT_EMA_SLOPE_FLOOR", "-0.0012"))
+BUY_SUPPORT_DI_GAP_FLOOR = float(
+    os.getenv("RANGE_FADER_BUY_SUPPORT_DI_GAP_FLOOR", "-2.0")
+)
+BUY_SUPPORT_EMA_SLOPE_FLOOR = float(
+    os.getenv("RANGE_FADER_BUY_SUPPORT_EMA_SLOPE_FLOOR", "-0.0012")
+)
 BUY_SUPPORT_MAX_ADX = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MAX_ADX", "32.0"))
-BUY_SUPPORT_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_BUY_SUPPORT_MOMENTUM_PIPS_CAP", "2.4"))
-BUY_SUPPORT_GATE_EXTRA = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_GATE_EXTRA", "2.0")))
-BUY_SUPPORT_CONF_BONUS = int(float(os.getenv("RANGE_FADER_BUY_SUPPORT_CONF_BONUS", "6.0")))
-FADE_HEADWIND_RANGE_SCORE_MAX = float(os.getenv("RANGE_FADER_FADE_HEADWIND_RANGE_SCORE_MAX", "0.28"))
+BUY_SUPPORT_MOMENTUM_PIPS_CAP = float(
+    os.getenv("RANGE_FADER_BUY_SUPPORT_MOMENTUM_PIPS_CAP", "2.4")
+)
+BUY_SUPPORT_GATE_EXTRA = int(
+    float(os.getenv("RANGE_FADER_BUY_SUPPORT_GATE_EXTRA", "2.0"))
+)
+BUY_SUPPORT_CONF_BONUS = int(
+    float(os.getenv("RANGE_FADER_BUY_SUPPORT_CONF_BONUS", "6.0"))
+)
+FADE_HEADWIND_RANGE_SCORE_MAX = float(
+    os.getenv("RANGE_FADER_FADE_HEADWIND_RANGE_SCORE_MAX", "0.28")
+)
 FADE_HEADWIND_ADX_MIN = float(os.getenv("RANGE_FADER_FADE_HEADWIND_ADX_MIN", "26.0"))
-FADE_HEADWIND_DI_GAP_MIN = float(os.getenv("RANGE_FADER_FADE_HEADWIND_DI_GAP_MIN", "9.0"))
-FADE_HEADWIND_EMA_SLOPE_MIN = float(os.getenv("RANGE_FADER_FADE_HEADWIND_EMA_SLOPE_MIN", "0.0020"))
-FADE_HEADWIND_MOMENTUM_ATR_MULT = float(os.getenv("RANGE_FADER_FADE_HEADWIND_MOMENTUM_ATR_MULT", "1.05"))
-FADE_HEADWIND_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_FADE_HEADWIND_MOMENTUM_PIPS_CAP", "3.0"))
-FADE_HEADWIND_GATE_EXTRA = int(float(os.getenv("RANGE_FADER_FADE_HEADWIND_GATE_EXTRA", "6.0")))
-FLOW_HEADWIND_RANGE_SCORE_MAX = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_RANGE_SCORE_MAX", "0.36"))
+FADE_HEADWIND_DI_GAP_MIN = float(
+    os.getenv("RANGE_FADER_FADE_HEADWIND_DI_GAP_MIN", "9.0")
+)
+FADE_HEADWIND_EMA_SLOPE_MIN = float(
+    os.getenv("RANGE_FADER_FADE_HEADWIND_EMA_SLOPE_MIN", "0.0020")
+)
+FADE_HEADWIND_MOMENTUM_ATR_MULT = float(
+    os.getenv("RANGE_FADER_FADE_HEADWIND_MOMENTUM_ATR_MULT", "1.05")
+)
+FADE_HEADWIND_MOMENTUM_PIPS_CAP = float(
+    os.getenv("RANGE_FADER_FADE_HEADWIND_MOMENTUM_PIPS_CAP", "3.0")
+)
+FADE_HEADWIND_GATE_EXTRA = int(
+    float(os.getenv("RANGE_FADER_FADE_HEADWIND_GATE_EXTRA", "6.0"))
+)
+FLOW_HEADWIND_RANGE_SCORE_MAX = float(
+    os.getenv("RANGE_FADER_FLOW_HEADWIND_RANGE_SCORE_MAX", "0.36")
+)
 FLOW_HEADWIND_ADX_MIN = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_ADX_MIN", "22.0"))
-FLOW_HEADWIND_GAP_ATR_MIN = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_GAP_ATR_MIN", "0.55"))
-FLOW_HEADWIND_MOMENTUM_ATR_MIN = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_MOMENTUM_ATR_MIN", "0.70"))
-FLOW_HEADWIND_CLOSE_POS_MIN = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_CLOSE_POS_MIN", "0.58"))
-FLOW_HEADWIND_SHORT_EXTREME_RSI_MIN = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_SHORT_EXTREME_RSI_MIN", "71.0"))
-FLOW_HEADWIND_LONG_EXTREME_RSI_MAX = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_LONG_EXTREME_RSI_MAX", "29.0"))
-FLOW_HEADWIND_GATE_STEP = int(float(os.getenv("RANGE_FADER_FLOW_HEADWIND_GATE_STEP", "3.0")))
+FLOW_HEADWIND_GAP_ATR_MIN = float(
+    os.getenv("RANGE_FADER_FLOW_HEADWIND_GAP_ATR_MIN", "0.55")
+)
+FLOW_HEADWIND_MOMENTUM_ATR_MIN = float(
+    os.getenv("RANGE_FADER_FLOW_HEADWIND_MOMENTUM_ATR_MIN", "0.70")
+)
+FLOW_HEADWIND_CLOSE_POS_MIN = float(
+    os.getenv("RANGE_FADER_FLOW_HEADWIND_CLOSE_POS_MIN", "0.58")
+)
+FLOW_HEADWIND_SHORT_EXTREME_RSI_MIN = float(
+    os.getenv("RANGE_FADER_FLOW_HEADWIND_SHORT_EXTREME_RSI_MIN", "71.0")
+)
+FLOW_HEADWIND_LONG_EXTREME_RSI_MAX = float(
+    os.getenv("RANGE_FADER_FLOW_HEADWIND_LONG_EXTREME_RSI_MAX", "29.0")
+)
+FLOW_HEADWIND_GATE_STEP = int(
+    float(os.getenv("RANGE_FADER_FLOW_HEADWIND_GATE_STEP", "3.0"))
+)
 FLOW_HEADWIND_CONF_CUT = float(os.getenv("RANGE_FADER_FLOW_HEADWIND_CONF_CUT", "0.16"))
-SETUP_QUALITY_BLOCK_MIN = float(os.getenv("RANGE_FADER_SETUP_QUALITY_BLOCK_MIN", "0.26"))
-SHALLOW_PROBE_RANGE_SCORE_MIN = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_RANGE_SCORE_MIN", "0.28"))
-SHALLOW_PROBE_RANGE_SCORE_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_RANGE_SCORE_MAX", "0.36"))
-SHALLOW_PROBE_QUALITY_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_QUALITY_MAX", "0.58"))
-SHALLOW_PROBE_MOMENTUM_ATR_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_ATR_MAX", "0.95"))
-SHALLOW_PROBE_MOMENTUM_PIPS_CAP = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_PIPS_CAP", "1.8"))
-SHALLOW_PROBE_BUY_RSI_DIST_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_BUY_RSI_DIST_MAX", "3.5"))
-SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX = float(os.getenv("RANGE_FADER_SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX", "6.5"))
-FRAGILE_SELL_TRANSITION_QUALITY_MAX = float(os.getenv("RANGE_FADER_FRAGILE_SELL_TRANSITION_QUALITY_MAX", "0.58"))
-FRAGILE_SELL_RANGE_P1_QUALITY_MAX = float(os.getenv("RANGE_FADER_FRAGILE_SELL_RANGE_P1_QUALITY_MAX", "0.60"))
-FRAGILE_NEUTRAL_LONG_QUALITY_MAX = float(os.getenv("RANGE_FADER_FRAGILE_NEUTRAL_LONG_QUALITY_MAX", "0.50"))
+SETUP_QUALITY_BLOCK_MIN = float(
+    os.getenv("RANGE_FADER_SETUP_QUALITY_BLOCK_MIN", "0.26")
+)
+SHALLOW_PROBE_RANGE_SCORE_MIN = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_RANGE_SCORE_MIN", "0.28")
+)
+SHALLOW_PROBE_RANGE_SCORE_MAX = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_RANGE_SCORE_MAX", "0.36")
+)
+SHALLOW_PROBE_QUALITY_MAX = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_QUALITY_MAX", "0.58")
+)
+SHALLOW_PROBE_MOMENTUM_ATR_MAX = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_ATR_MAX", "0.95")
+)
+SHALLOW_PROBE_MOMENTUM_PIPS_CAP = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_MOMENTUM_PIPS_CAP", "1.8")
+)
+SHALLOW_PROBE_BUY_RSI_DIST_MAX = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_BUY_RSI_DIST_MAX", "3.5")
+)
+SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX = float(
+    os.getenv("RANGE_FADER_SHALLOW_PROBE_NEUTRAL_RSI_DIST_MAX", "6.5")
+)
+FRAGILE_SELL_TRANSITION_QUALITY_MAX = float(
+    os.getenv("RANGE_FADER_FRAGILE_SELL_TRANSITION_QUALITY_MAX", "0.58")
+)
+FRAGILE_SELL_RANGE_P1_QUALITY_MAX = float(
+    os.getenv("RANGE_FADER_FRAGILE_SELL_RANGE_P1_QUALITY_MAX", "0.60")
+)
+FRAGILE_NEUTRAL_LONG_QUALITY_MAX = float(
+    os.getenv("RANGE_FADER_FRAGILE_NEUTRAL_LONG_QUALITY_MAX", "0.50")
+)
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -136,20 +194,44 @@ class RangeFader:
         avg_close_pos = close_pos_sum / max(1, close_pos_count)
         pressure = 0
         if side == "short":
-            rising_closes = sum(1 for idx in range(1, len(closes)) if closes[idx] >= closes[idx - 1] - 1e-9)
-            higher_highs = sum(1 for idx in range(1, len(highs)) if highs[idx] >= highs[idx - 1] - 1e-9)
+            rising_closes = sum(
+                1
+                for idx in range(1, len(closes))
+                if closes[idx] >= closes[idx - 1] - 1e-9
+            )
+            higher_highs = sum(
+                1 for idx in range(1, len(highs)) if highs[idx] >= highs[idx - 1] - 1e-9
+            )
             net_move_pips = max(0.0, (closes[-1] - closes[0]) / 0.01)
-            if rising_closes >= 2 and net_move_pips >= max(0.8, atr_pips * FLOW_HEADWIND_MOMENTUM_ATR_MIN):
+            if rising_closes >= 2 and net_move_pips >= max(
+                0.8, atr_pips * FLOW_HEADWIND_MOMENTUM_ATR_MIN
+            ):
                 pressure += 1
-            if higher_highs >= 2 and avg_close_pos >= FLOW_HEADWIND_CLOSE_POS_MIN and closes[-1] > ema20:
+            if (
+                higher_highs >= 2
+                and avg_close_pos >= FLOW_HEADWIND_CLOSE_POS_MIN
+                and closes[-1] > ema20
+            ):
                 pressure += 1
         else:
-            falling_closes = sum(1 for idx in range(1, len(closes)) if closes[idx] <= closes[idx - 1] + 1e-9)
-            lower_lows = sum(1 for idx in range(1, len(lows)) if lows[idx] <= lows[idx - 1] + 1e-9)
+            falling_closes = sum(
+                1
+                for idx in range(1, len(closes))
+                if closes[idx] <= closes[idx - 1] + 1e-9
+            )
+            lower_lows = sum(
+                1 for idx in range(1, len(lows)) if lows[idx] <= lows[idx - 1] + 1e-9
+            )
             net_move_pips = max(0.0, (closes[0] - closes[-1]) / 0.01)
-            if falling_closes >= 2 and net_move_pips >= max(0.8, atr_pips * FLOW_HEADWIND_MOMENTUM_ATR_MIN):
+            if falling_closes >= 2 and net_move_pips >= max(
+                0.8, atr_pips * FLOW_HEADWIND_MOMENTUM_ATR_MIN
+            ):
                 pressure += 1
-            if lower_lows >= 2 and avg_close_pos <= (1.0 - FLOW_HEADWIND_CLOSE_POS_MIN) and closes[-1] < ema20:
+            if (
+                lower_lows >= 2
+                and avg_close_pos <= (1.0 - FLOW_HEADWIND_CLOSE_POS_MIN)
+                and closes[-1] < ema20
+            ):
                 pressure += 1
         return min(2, pressure)
 
@@ -165,7 +247,9 @@ class RangeFader:
         adx_val: float,
     ) -> tuple[int, Optional[float], Optional[float], str]:
         ma_gap_pips = cls._ma_gap_pips(fac)
-        gap_ratio = abs(ma_gap_pips) / max(1.0, atr_pips) if ma_gap_pips is not None else None
+        gap_ratio = (
+            abs(ma_gap_pips) / max(1.0, atr_pips) if ma_gap_pips is not None else None
+        )
         range_score = cls._float_attr(fac, "range_score", 0.0)
         pressure = cls._recent_flow_headwind(
             fac,
@@ -179,12 +263,26 @@ class RangeFader:
             and ma_gap_pips is not None
             and gap_ratio is not None
         ):
-            if side == "short" and close > ema20 and ma_gap_pips > 0.0 and gap_ratio >= FLOW_HEADWIND_GAP_ATR_MIN:
+            if (
+                side == "short"
+                and close > ema20
+                and ma_gap_pips > 0.0
+                and gap_ratio >= FLOW_HEADWIND_GAP_ATR_MIN
+            ):
                 pressure += 1
-            elif side == "long" and close < ema20 and ma_gap_pips < 0.0 and gap_ratio >= FLOW_HEADWIND_GAP_ATR_MIN:
+            elif (
+                side == "long"
+                and close < ema20
+                and ma_gap_pips < 0.0
+                and gap_ratio >= FLOW_HEADWIND_GAP_ATR_MIN
+            ):
                 pressure += 1
         pressure = min(2, pressure)
-        if gap_ratio is not None and gap_ratio >= 0.85 and adx_val >= FLOW_HEADWIND_ADX_MIN:
+        if (
+            gap_ratio is not None
+            and gap_ratio >= 0.85
+            and adx_val >= FLOW_HEADWIND_ADX_MIN
+        ):
             flow_regime = "trend_long" if (ma_gap_pips or 0.0) > 0 else "trend_short"
         elif range_score >= 0.28 and adx_val < 32.0:
             flow_regime = "range_fade"
@@ -249,7 +347,9 @@ class RangeFader:
             return False
         if spread is not None and spread > 1.0:
             return False
-        momentum_cap = max(FADE_HEADWIND_MOMENTUM_PIPS_CAP, atr_pips * FADE_HEADWIND_MOMENTUM_ATR_MULT)
+        momentum_cap = max(
+            FADE_HEADWIND_MOMENTUM_PIPS_CAP, atr_pips * FADE_HEADWIND_MOMENTUM_ATR_MULT
+        )
         if momentum_pips > momentum_cap:
             return False
         if side == "short":
@@ -293,7 +393,11 @@ class RangeFader:
         if gap_ratio is not None:
             gap_component = cls._clamp(1.0 - max(0.0, gap_ratio - 0.40) / 0.70)
         adx_component = cls._clamp(1.0 - max(0.0, adx_val - 20.0) / 18.0)
-        regime_bias = 0.04 if flow_regime == "range_fade" else 0.0 if flow_regime == "transition" else -0.12
+        regime_bias = (
+            0.04
+            if flow_regime == "range_fade"
+            else 0.0 if flow_regime == "transition" else -0.12
+        )
         pressure_penalty = continuation_pressure * 0.18
         quality = (
             0.05
@@ -316,8 +420,14 @@ class RangeFader:
         continuation_pressure: int,
         flow_regime: str,
     ) -> float:
-        regime_bonus = 0.03 if flow_regime == "range_fade" else 0.0 if flow_regime == "transition" else -0.06
-        size_mult = 0.62 + setup_quality * 0.55 - continuation_pressure * 0.07 + regime_bonus
+        regime_bonus = (
+            0.03
+            if flow_regime == "range_fade"
+            else 0.0 if flow_regime == "transition" else -0.06
+        )
+        size_mult = (
+            0.62 + setup_quality * 0.55 - continuation_pressure * 0.07 + regime_bonus
+        )
         return round(cls._clamp(size_mult, 0.55, 1.10), 3)
 
     @classmethod
@@ -363,7 +473,11 @@ class RangeFader:
         if buy_supportive or flow_regime != "range_fade" or continuation_pressure != 0:
             return False
         range_score = cls._float_attr(fac, "range_score", 0.0)
-        if not (SHALLOW_PROBE_RANGE_SCORE_MIN <= range_score <= SHALLOW_PROBE_RANGE_SCORE_MAX):
+        if not (
+            SHALLOW_PROBE_RANGE_SCORE_MIN
+            <= range_score
+            <= SHALLOW_PROBE_RANGE_SCORE_MAX
+        ):
             return False
         momentum_cap = max(
             SHALLOW_PROBE_MOMENTUM_PIPS_CAP,
@@ -435,7 +549,11 @@ class RangeFader:
         if flow_regime == "transition":
             if continuation_pressure > 1:
                 return False
-            if gap_ratio is not None and gap_ratio >= 0.70 and momentum_pips >= max(2.8, atr_pips * 1.15):
+            if (
+                gap_ratio is not None
+                and gap_ratio >= 0.70
+                and momentum_pips >= max(2.8, atr_pips * 1.15)
+            ):
                 return False
             return (
                 setup_quality < FRAGILE_SELL_TRANSITION_QUALITY_MAX
@@ -444,7 +562,11 @@ class RangeFader:
         if flow_regime == "range_fade" and continuation_pressure == 1:
             if range_score < 0.28:
                 return False
-            if gap_ratio is not None and gap_ratio >= 0.52 and momentum_pips >= max(2.8, atr_pips * 1.10):
+            if (
+                gap_ratio is not None
+                and gap_ratio >= 0.52
+                and momentum_pips >= max(2.8, atr_pips * 1.10)
+            ):
                 return False
             return (
                 setup_quality < FRAGILE_SELL_RANGE_P1_QUALITY_MAX
@@ -479,7 +601,12 @@ class RangeFader:
         except Exception:
             atr_pips = 0.0
 
-        scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
+        scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "no",
+        }
         spread = fac.get("spread_pips")
         try:
             spread = float(spread) if spread is not None else None
@@ -596,21 +723,25 @@ class RangeFader:
             adx_val=adx_val,
             vol_5m=vol_5m,
         )
-        long_flow_pressure, long_ma_gap_pips, long_gap_ratio, long_flow_regime = RangeFader._flow_headwind_context(
-            fac,
-            "long",
-            close=float(close),
-            ema20=float(ema20),
-            atr_pips=atr_pips,
-            adx_val=adx_val,
+        long_flow_pressure, long_ma_gap_pips, long_gap_ratio, long_flow_regime = (
+            RangeFader._flow_headwind_context(
+                fac,
+                "long",
+                close=float(close),
+                ema20=float(ema20),
+                atr_pips=atr_pips,
+                adx_val=adx_val,
+            )
         )
-        short_flow_pressure, short_ma_gap_pips, short_gap_ratio, short_flow_regime = RangeFader._flow_headwind_context(
-            fac,
-            "short",
-            close=float(close),
-            ema20=float(ema20),
-            atr_pips=atr_pips,
-            adx_val=adx_val,
+        short_flow_pressure, short_ma_gap_pips, short_gap_ratio, short_flow_regime = (
+            RangeFader._flow_headwind_context(
+                fac,
+                "short",
+                close=float(close),
+                ema20=float(ema20),
+                atr_pips=atr_pips,
+                adx_val=adx_val,
+            )
         )
         buy_long_gate = long_gate + (BUY_SUPPORT_GATE_EXTRA if buy_supportive else 0)
         if long_headwind:
@@ -631,9 +762,13 @@ class RangeFader:
         if atr_pips > 3.0 or momentum_pips > drift_cap * 0.8:
             confidence_scale *= 0.75
         if long_flow_pressure > 0:
-            long_conf_scale *= max(0.55, 1.0 - FLOW_HEADWIND_CONF_CUT * long_flow_pressure)
+            long_conf_scale *= max(
+                0.55, 1.0 - FLOW_HEADWIND_CONF_CUT * long_flow_pressure
+            )
         if short_flow_pressure > 0:
-            short_conf_scale *= max(0.55, 1.0 - FLOW_HEADWIND_CONF_CUT * short_flow_pressure)
+            short_conf_scale *= max(
+                0.55, 1.0 - FLOW_HEADWIND_CONF_CUT * short_flow_pressure
+            )
         confidence_scale = max(0.45, min(confidence_scale, 1.0))
 
         if rsi <= buy_long_gate:
@@ -643,8 +778,14 @@ class RangeFader:
                     continuation_pressure=long_flow_pressure,
                     flow_regime=long_flow_regime,
                     rsi=round(float(rsi), 3),
-                    ma_gap_pips=round(long_ma_gap_pips, 3) if long_ma_gap_pips is not None else None,
-                    gap_ratio=round(long_gap_ratio, 3) if long_gap_ratio is not None else None,
+                    ma_gap_pips=(
+                        round(long_ma_gap_pips, 3)
+                        if long_ma_gap_pips is not None
+                        else None
+                    ),
+                    gap_ratio=(
+                        round(long_gap_ratio, 3) if long_gap_ratio is not None else None
+                    ),
                 )
                 return None
             long_setup_quality = RangeFader._fade_setup_quality(
@@ -705,7 +846,11 @@ class RangeFader:
                     ),
                 )
             )
-            tag = f"{RangeFader.name}-buy-supportive" if buy_supportive and rsi > long_gate else f"{RangeFader.name}-buy-fade"
+            tag = (
+                f"{RangeFader.name}-buy-supportive"
+                if buy_supportive and rsi > long_gate
+                else f"{RangeFader.name}-buy-fade"
+            )
             tag_kind = tag.split("-", 1)[-1]
             if RangeFader._shallow_probe_guard(
                 fac,
@@ -726,7 +871,9 @@ class RangeFader:
                     setup_quality=round(long_setup_quality, 3),
                     flow_regime=long_flow_regime,
                     continuation_pressure=long_flow_pressure,
-                    range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
+                    range_score=round(
+                        RangeFader._float_attr(fac, "range_score", 0.0), 3
+                    ),
                     rsi=round(float(rsi), 3),
                     gate=round(float(buy_long_gate), 3),
                     momentum_pips=round(momentum_pips, 3),
@@ -735,23 +882,31 @@ class RangeFader:
             final_confidence = int(confidence * confidence_scale * long_conf_scale)
             if tag.endswith("buy-supportive"):
                 final_confidence = min(90, final_confidence + BUY_SUPPORT_CONF_BONUS)
-            return _attach_kill({
-                "action": "OPEN_LONG",
-                "sl_pips": round(sl, 2),
-                "tp_pips": round(tp, 2),
-                "confidence": final_confidence,
-                "fast_cut_pips": round(fast_cut, 2),
-                "fast_cut_time_sec": int(fast_cut_time),
-                "fast_cut_hard_mult": 1.6,
-                "tag": tag,
-                "continuation_pressure": long_flow_pressure,
-                "flow_regime": long_flow_regime,
-                "ma_gap_pips": round(long_ma_gap_pips, 3) if long_ma_gap_pips is not None else None,
-                "gap_ratio": round(long_gap_ratio, 3) if long_gap_ratio is not None else None,
-                "setup_quality": long_setup_quality,
-                "setup_size_mult": long_setup_size_mult,
-                "setup_fingerprint": f"{RangeFader.name}|long|{tag.split('-', 1)[-1]}|{long_flow_regime}|p{long_flow_pressure}",
-            })
+            return _attach_kill(
+                {
+                    "action": "OPEN_LONG",
+                    "sl_pips": round(sl, 2),
+                    "tp_pips": round(tp, 2),
+                    "confidence": final_confidence,
+                    "fast_cut_pips": round(fast_cut, 2),
+                    "fast_cut_time_sec": int(fast_cut_time),
+                    "fast_cut_hard_mult": 1.6,
+                    "tag": tag,
+                    "continuation_pressure": long_flow_pressure,
+                    "flow_regime": long_flow_regime,
+                    "ma_gap_pips": (
+                        round(long_ma_gap_pips, 3)
+                        if long_ma_gap_pips is not None
+                        else None
+                    ),
+                    "gap_ratio": (
+                        round(long_gap_ratio, 3) if long_gap_ratio is not None else None
+                    ),
+                    "setup_quality": long_setup_quality,
+                    "setup_size_mult": long_setup_size_mult,
+                    "setup_fingerprint": f"{RangeFader.name}|long|{tag.split('-', 1)[-1]}|{long_flow_regime}|p{long_flow_pressure}",
+                }
+            )
 
         if rsi >= short_gate:
             if short_flow_pressure >= 2 and rsi < FLOW_HEADWIND_SHORT_EXTREME_RSI_MIN:
@@ -760,8 +915,16 @@ class RangeFader:
                     continuation_pressure=short_flow_pressure,
                     flow_regime=short_flow_regime,
                     rsi=round(float(rsi), 3),
-                    ma_gap_pips=round(short_ma_gap_pips, 3) if short_ma_gap_pips is not None else None,
-                    gap_ratio=round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
+                    ma_gap_pips=(
+                        round(short_ma_gap_pips, 3)
+                        if short_ma_gap_pips is not None
+                        else None
+                    ),
+                    gap_ratio=(
+                        round(short_gap_ratio, 3)
+                        if short_gap_ratio is not None
+                        else None
+                    ),
                 )
                 return None
             short_setup_quality = RangeFader._fade_setup_quality(
@@ -815,8 +978,14 @@ class RangeFader:
                     setup_quality=round(short_setup_quality, 3),
                     continuation_pressure=short_flow_pressure,
                     flow_regime=short_flow_regime,
-                    range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
-                    gap_ratio=round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
+                    range_score=round(
+                        RangeFader._float_attr(fac, "range_score", 0.0), 3
+                    ),
+                    gap_ratio=(
+                        round(short_gap_ratio, 3)
+                        if short_gap_ratio is not None
+                        else None
+                    ),
                     momentum_pips=round(momentum_pips, 3),
                 )
                 return None
@@ -833,24 +1002,36 @@ class RangeFader:
             rsi_eta_dn = fac.get("rsi_eta_lower_min")
             if rsi_eta_dn is not None:
                 eta_bonus = max(0.0, min(8.0, (6.0 - min(6.0, rsi_eta_dn)) * 1.0))
-            confidence = int(min(90, max(45, (rsi - 62) * 2.6 + vol_5m * 5.5 + eta_bonus)))
-            return _attach_kill({
-                "action": "OPEN_SHORT",
-                "sl_pips": round(sl, 2),
-                "tp_pips": round(tp, 2),
-                "confidence": int(confidence * confidence_scale * short_conf_scale),
-                "fast_cut_pips": round(fast_cut, 2),
-                "fast_cut_time_sec": int(fast_cut_time),
-                "fast_cut_hard_mult": 1.6,
-                "tag": f"{RangeFader.name}-sell-fade",
-                "continuation_pressure": short_flow_pressure,
-                "flow_regime": short_flow_regime,
-                "ma_gap_pips": round(short_ma_gap_pips, 3) if short_ma_gap_pips is not None else None,
-                "gap_ratio": round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
-                "setup_quality": short_setup_quality,
-                "setup_size_mult": short_setup_size_mult,
-                "setup_fingerprint": f"{RangeFader.name}|short|sell-fade|{short_flow_regime}|p{short_flow_pressure}",
-            })
+            confidence = int(
+                min(90, max(45, (rsi - 62) * 2.6 + vol_5m * 5.5 + eta_bonus))
+            )
+            return _attach_kill(
+                {
+                    "action": "OPEN_SHORT",
+                    "sl_pips": round(sl, 2),
+                    "tp_pips": round(tp, 2),
+                    "confidence": int(confidence * confidence_scale * short_conf_scale),
+                    "fast_cut_pips": round(fast_cut, 2),
+                    "fast_cut_time_sec": int(fast_cut_time),
+                    "fast_cut_hard_mult": 1.6,
+                    "tag": f"{RangeFader.name}-sell-fade",
+                    "continuation_pressure": short_flow_pressure,
+                    "flow_regime": short_flow_regime,
+                    "ma_gap_pips": (
+                        round(short_ma_gap_pips, 3)
+                        if short_ma_gap_pips is not None
+                        else None
+                    ),
+                    "gap_ratio": (
+                        round(short_gap_ratio, 3)
+                        if short_gap_ratio is not None
+                        else None
+                    ),
+                    "setup_quality": short_setup_quality,
+                    "setup_size_mult": short_setup_size_mult,
+                    "setup_fingerprint": f"{RangeFader.name}|short|sell-fade|{short_flow_regime}|p{short_flow_pressure}",
+                }
+            )
 
         # ニュートラルRSIでもEMAからの乖離方向にフェードを打つ
         neutral_side = "short" if close > ema20 else "long"
@@ -859,7 +1040,11 @@ class RangeFader:
                 "neutral_headwind_short",
                 range_score=round(float(fac.get("range_score") or 0.0), 3),
                 adx=round(adx_val, 3),
-                di_gap=round(RangeFader._float_attr(fac, "plus_di", 0.0) - RangeFader._float_attr(fac, "minus_di", 0.0), 3),
+                di_gap=round(
+                    RangeFader._float_attr(fac, "plus_di", 0.0)
+                    - RangeFader._float_attr(fac, "minus_di", 0.0),
+                    3,
+                ),
             )
             return None
         if neutral_side == "short" and short_flow_pressure > 0:
@@ -867,8 +1052,14 @@ class RangeFader:
                 "neutral_flow_headwind_short",
                 continuation_pressure=short_flow_pressure,
                 flow_regime=short_flow_regime,
-                ma_gap_pips=round(short_ma_gap_pips, 3) if short_ma_gap_pips is not None else None,
-                gap_ratio=round(short_gap_ratio, 3) if short_gap_ratio is not None else None,
+                ma_gap_pips=(
+                    round(short_ma_gap_pips, 3)
+                    if short_ma_gap_pips is not None
+                    else None
+                ),
+                gap_ratio=(
+                    round(short_gap_ratio, 3) if short_gap_ratio is not None else None
+                ),
             )
             return None
         if neutral_side == "long" and long_headwind:
@@ -876,7 +1067,11 @@ class RangeFader:
                 "neutral_headwind_long",
                 range_score=round(float(fac.get("range_score") or 0.0), 3),
                 adx=round(adx_val, 3),
-                di_gap=round(RangeFader._float_attr(fac, "minus_di", 0.0) - RangeFader._float_attr(fac, "plus_di", 0.0), 3),
+                di_gap=round(
+                    RangeFader._float_attr(fac, "minus_di", 0.0)
+                    - RangeFader._float_attr(fac, "plus_di", 0.0),
+                    3,
+                ),
             )
             return None
         if neutral_side == "long" and long_flow_pressure > 0:
@@ -884,19 +1079,35 @@ class RangeFader:
                 "neutral_flow_headwind_long",
                 continuation_pressure=long_flow_pressure,
                 flow_regime=long_flow_regime,
-                ma_gap_pips=round(long_ma_gap_pips, 3) if long_ma_gap_pips is not None else None,
-                gap_ratio=round(long_gap_ratio, 3) if long_gap_ratio is not None else None,
+                ma_gap_pips=(
+                    round(long_ma_gap_pips, 3) if long_ma_gap_pips is not None else None
+                ),
+                gap_ratio=(
+                    round(long_gap_ratio, 3) if long_gap_ratio is not None else None
+                ),
             )
             return None
         sl = max(2.4, min(5.0, atr_pips * 1.2))
         tp = max(sl * 1.2, min(6.0, atr_pips * 1.6))
         conf_base = 48 + min(12.0, abs(momentum_pips) * 1.8)
-        neutral_conf_scale = short_conf_scale if neutral_side == "short" else long_conf_scale
-        confidence = int(max(40, min(85, conf_base * confidence_scale * neutral_conf_scale)))
-        neutral_flow_regime = short_flow_regime if neutral_side == "short" else long_flow_regime
-        neutral_flow_pressure = short_flow_pressure if neutral_side == "short" else long_flow_pressure
-        neutral_ma_gap_pips = short_ma_gap_pips if neutral_side == "short" else long_ma_gap_pips
-        neutral_gap_ratio = short_gap_ratio if neutral_side == "short" else long_gap_ratio
+        neutral_conf_scale = (
+            short_conf_scale if neutral_side == "short" else long_conf_scale
+        )
+        confidence = int(
+            max(40, min(85, conf_base * confidence_scale * neutral_conf_scale))
+        )
+        neutral_flow_regime = (
+            short_flow_regime if neutral_side == "short" else long_flow_regime
+        )
+        neutral_flow_pressure = (
+            short_flow_pressure if neutral_side == "short" else long_flow_pressure
+        )
+        neutral_ma_gap_pips = (
+            short_ma_gap_pips if neutral_side == "short" else long_ma_gap_pips
+        )
+        neutral_gap_ratio = (
+            short_gap_ratio if neutral_side == "short" else long_gap_ratio
+        )
         neutral_gate = short_gate if neutral_side == "short" else buy_long_gate
         neutral_setup_quality = RangeFader._fade_setup_quality(
             fac,
@@ -926,7 +1137,11 @@ class RangeFader:
                 continuation_pressure=neutral_flow_pressure,
                 flow_regime=neutral_flow_regime,
                 range_score=round(RangeFader._float_attr(fac, "range_score", 0.0), 3),
-                gap_ratio=round(neutral_gap_ratio, 3) if neutral_gap_ratio is not None else None,
+                gap_ratio=(
+                    round(neutral_gap_ratio, 3)
+                    if neutral_gap_ratio is not None
+                    else None
+                ),
                 momentum_pips=round(momentum_pips, 3),
             )
             return None
@@ -976,20 +1191,30 @@ class RangeFader:
             continuation_pressure=neutral_flow_pressure,
             flow_regime=neutral_flow_regime,
         )
-        return _attach_kill({
-            "action": "OPEN_SHORT" if neutral_side == "short" else "OPEN_LONG",
-            "sl_pips": round(sl, 2),
-            "tp_pips": round(tp, 2),
-            "confidence": confidence,
-            "fast_cut_pips": round(max(5.5, sl * 0.9), 2),
-            "fast_cut_time_sec": int(max(60.0, atr_pips * 12.0)),
-            "fast_cut_hard_mult": 1.6,
-            "tag": f"{RangeFader.name}-neutral-fade",
-            "continuation_pressure": neutral_flow_pressure,
-            "flow_regime": neutral_flow_regime,
-            "ma_gap_pips": round(neutral_ma_gap_pips, 3) if neutral_ma_gap_pips is not None else None,
-            "gap_ratio": round(neutral_gap_ratio, 3) if neutral_gap_ratio is not None else None,
-            "setup_quality": neutral_setup_quality,
-            "setup_size_mult": neutral_setup_size_mult,
-            "setup_fingerprint": f"{RangeFader.name}|{neutral_side}|neutral-fade|{neutral_flow_regime}|p{neutral_flow_pressure}",
-        })
+        return _attach_kill(
+            {
+                "action": "OPEN_SHORT" if neutral_side == "short" else "OPEN_LONG",
+                "sl_pips": round(sl, 2),
+                "tp_pips": round(tp, 2),
+                "confidence": confidence,
+                "fast_cut_pips": round(max(5.5, sl * 0.9), 2),
+                "fast_cut_time_sec": int(max(60.0, atr_pips * 12.0)),
+                "fast_cut_hard_mult": 1.6,
+                "tag": f"{RangeFader.name}-neutral-fade",
+                "continuation_pressure": neutral_flow_pressure,
+                "flow_regime": neutral_flow_regime,
+                "ma_gap_pips": (
+                    round(neutral_ma_gap_pips, 3)
+                    if neutral_ma_gap_pips is not None
+                    else None
+                ),
+                "gap_ratio": (
+                    round(neutral_gap_ratio, 3)
+                    if neutral_gap_ratio is not None
+                    else None
+                ),
+                "setup_quality": neutral_setup_quality,
+                "setup_size_mult": neutral_setup_size_mult,
+                "setup_fingerprint": f"{RangeFader.name}|{neutral_side}|neutral-fade|{neutral_flow_regime}|p{neutral_flow_pressure}",
+            }
+        )

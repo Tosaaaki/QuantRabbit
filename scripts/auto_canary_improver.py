@@ -29,7 +29,9 @@ def _safe_text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _setup_match_dimension(setup_fingerprint: str, flow_regime: str, microstructure_bucket: str) -> str:
+def _setup_match_dimension(
+    setup_fingerprint: str, flow_regime: str, microstructure_bucket: str
+) -> str:
     if setup_fingerprint:
         return "setup_fingerprint"
     if flow_regime and microstructure_bucket:
@@ -93,7 +95,11 @@ def _apply_validation_adjustments(
     top_uplift: float,
 ) -> tuple[float, float, float, list[str]]:
     reasons: list[str] = []
-    if strategy_key and counterfactual_strategy and strategy_key == counterfactual_strategy:
+    if (
+        strategy_key
+        and counterfactual_strategy
+        and strategy_key == counterfactual_strategy
+    ):
         if top_action in {"block", "reduce"}:
             confidence = min(1.0, confidence + 0.15)
             units_multiplier -= 0.05
@@ -139,20 +145,26 @@ def _build_setup_overrides(
         setup_context = _cluster_setup_context(cluster)
         if not setup_context:
             continue
-        suggestion = cluster.get("suggestion") if isinstance(cluster.get("suggestion"), dict) else {}
+        suggestion = (
+            cluster.get("suggestion")
+            if isinstance(cluster.get("suggestion"), dict)
+            else {}
+        )
         severity = _safe_float(cluster.get("severity"), 0.0)
         confidence = severity * 0.75
         units_multiplier = _safe_float(suggestion.get("units_multiplier"), 1.0)
         probability_offset = _safe_float(suggestion.get("probability_offset"), 0.0)
-        confidence, units_multiplier, probability_offset, reasons = _apply_validation_adjustments(
-            strategy_key=strategy_key,
-            confidence=confidence,
-            units_multiplier=units_multiplier,
-            probability_offset=probability_offset,
-            replay_status=replay_status,
-            counterfactual_strategy=counterfactual_strategy,
-            top_action=top_action,
-            top_uplift=top_uplift,
+        confidence, units_multiplier, probability_offset, reasons = (
+            _apply_validation_adjustments(
+                strategy_key=strategy_key,
+                confidence=confidence,
+                units_multiplier=units_multiplier,
+                probability_offset=probability_offset,
+                replay_status=replay_status,
+                counterfactual_strategy=counterfactual_strategy,
+                top_action=top_action,
+                top_uplift=top_uplift,
+            )
         )
         if confidence < min_confidence:
             continue
@@ -232,14 +244,37 @@ def build_auto_canary(
     *,
     min_confidence: float,
 ) -> dict[str, Any]:
-    replay_status = str(replay_quality_gate.get("gate_status") or replay_quality_gate.get("status") or "").strip() or "unknown"
-    counterfactual_like = str(trade_counterfactual.get("strategy_like") or "").strip().rstrip("%")
-    counterfactual_strategy = resolve_strategy_tag(counterfactual_like) or counterfactual_like
+    replay_status = (
+        str(
+            replay_quality_gate.get("gate_status")
+            or replay_quality_gate.get("status")
+            or ""
+        ).strip()
+        or "unknown"
+    )
+    counterfactual_like = (
+        str(trade_counterfactual.get("strategy_like") or "").strip().rstrip("%")
+    )
+    counterfactual_strategy = (
+        resolve_strategy_tag(counterfactual_like) or counterfactual_like
+    )
     recommendations = trade_counterfactual.get("recommendations")
-    top_recommendation = recommendations[0] if isinstance(recommendations, list) and recommendations else {}
-    top_action = str(top_recommendation.get("action") or "").strip().lower() if isinstance(top_recommendation, dict) else ""
+    top_recommendation = (
+        recommendations[0]
+        if isinstance(recommendations, list) and recommendations
+        else {}
+    )
+    top_action = (
+        str(top_recommendation.get("action") or "").strip().lower()
+        if isinstance(top_recommendation, dict)
+        else ""
+    )
     top_uplift = _safe_float(
-        (top_recommendation or {}).get("noise_lcb_uplift_pips") if isinstance(top_recommendation, dict) else 0.0,
+        (
+            (top_recommendation or {}).get("noise_lcb_uplift_pips")
+            if isinstance(top_recommendation, dict)
+            else 0.0
+        ),
         0.0,
     )
 
@@ -251,21 +286,30 @@ def build_auto_canary(
     for raw_key, summary in sorted(strategies.items()):
         if not isinstance(summary, dict):
             continue
-        strategy_key = resolve_strategy_tag(str(raw_key or "").strip()) or str(raw_key or "").strip()
-        suggestion = summary.get("suggestion") if isinstance(summary.get("suggestion"), dict) else {}
+        strategy_key = (
+            resolve_strategy_tag(str(raw_key or "").strip())
+            or str(raw_key or "").strip()
+        )
+        suggestion = (
+            summary.get("suggestion")
+            if isinstance(summary.get("suggestion"), dict)
+            else {}
+        )
         severity = _safe_float(summary.get("worst_severity"), 0.0)
         confidence = severity * 0.75
         units_multiplier = _safe_float(suggestion.get("units_multiplier"), 1.0)
         probability_offset = _safe_float(suggestion.get("probability_offset"), 0.0)
-        confidence, units_multiplier, probability_offset, reasons = _apply_validation_adjustments(
-            strategy_key=strategy_key,
-            confidence=confidence,
-            units_multiplier=units_multiplier,
-            probability_offset=probability_offset,
-            replay_status=replay_status,
-            counterfactual_strategy=counterfactual_strategy,
-            top_action=top_action,
-            top_uplift=top_uplift,
+        confidence, units_multiplier, probability_offset, reasons = (
+            _apply_validation_adjustments(
+                strategy_key=strategy_key,
+                confidence=confidence,
+                units_multiplier=units_multiplier,
+                probability_offset=probability_offset,
+                replay_status=replay_status,
+                counterfactual_strategy=counterfactual_strategy,
+                top_action=top_action,
+                top_uplift=top_uplift,
+            )
         )
 
         if confidence < min_confidence:
@@ -314,8 +358,12 @@ def build_auto_canary(
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build auto-canary override artifact")
     ap.add_argument("--loser-cluster-path", default="logs/loser_cluster_latest.json")
-    ap.add_argument("--replay-quality-gate-path", default="logs/replay_quality_gate_latest.json")
-    ap.add_argument("--trade-counterfactual-path", default="logs/trade_counterfactual_latest.json")
+    ap.add_argument(
+        "--replay-quality-gate-path", default="logs/replay_quality_gate_latest.json"
+    )
+    ap.add_argument(
+        "--trade-counterfactual-path", default="logs/trade_counterfactual_latest.json"
+    )
     ap.add_argument("--output", default="config/auto_canary_overrides.json")
     ap.add_argument("--latest-output", default="logs/auto_canary_latest.json")
     ap.add_argument("--history", default="logs/auto_canary_history.jsonl")

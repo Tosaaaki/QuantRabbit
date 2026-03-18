@@ -188,7 +188,9 @@ def spread_ok(
     return True, {"spread_pips": spread_pips, "spread_p25": p25}
 
 
-def tick_snapshot(seconds: float, *, limit: int = 80) -> tuple[list[float], Optional[dict]]:
+def tick_snapshot(
+    seconds: float, *, limit: int = 80
+) -> tuple[list[float], Optional[dict]]:
     raw_ticks = tick_window.recent_ticks(seconds=seconds, limit=limit)
     mids: list[float] = []
     for item in raw_ticks:
@@ -205,7 +207,9 @@ def tick_snapshot(seconds: float, *, limit: int = 80) -> tuple[list[float], Opti
     return mids, None
 
 
-def tick_reversal(mids: Sequence[float], *, min_ticks: int = 6) -> tuple[bool, Optional[str], float]:
+def tick_reversal(
+    mids: Sequence[float], *, min_ticks: int = 6
+) -> tuple[bool, Optional[str], float]:
     if len(mids) < min_ticks:
         return False, None, 0.0
     deltas = [mids[i] - mids[i - 1] for i in range(1, len(mids))]
@@ -271,14 +275,18 @@ def _signal_level_reject(
         regime = str(fac_m1.get("regime") or "").strip().lower()
         if not regime:
             try:
-                regime = str(current_regime("M1", event_mode=False) or "").strip().lower()
+                regime = (
+                    str(current_regime("M1", event_mode=False) or "").strip().lower()
+                )
             except Exception:
                 regime = ""
         if regime and regime not in LEVEL_REJECT_ALLOWED_REGIMES:
             return None
 
     if LEVEL_REJECT_SPREAD_P25 > 0.0:
-        ok_spread, _ = spread_ok(max_pips=MAX_SPREAD_PIPS, p25_max=LEVEL_REJECT_SPREAD_P25)
+        ok_spread, _ = spread_ok(
+            max_pips=MAX_SPREAD_PIPS, p25_max=LEVEL_REJECT_SPREAD_P25
+        )
         if not ok_spread:
             return None
 
@@ -294,12 +302,16 @@ def _signal_level_reject(
         return None
 
     candles = get_candles_snapshot("M1", limit=max(60, LEVEL_LOOKBACK + 6))
-    snap = compute_range_snapshot(candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0)
+    snap = compute_range_snapshot(
+        candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0
+    )
     if not snap:
         return None
 
     mids, _ = tick_snapshot(6.0, limit=120)
-    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    rev_ok, rev_dir, rev_strength = (
+        tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    )
     if not rev_ok:
         return None
 
@@ -307,16 +319,25 @@ def _signal_level_reject(
         tick_strength = float(rev_strength or 0.0)
     except Exception:
         tick_strength = 0.0
-    if LEVEL_REJECT_TICK_STRENGTH_MIN > 0.0 and tick_strength < LEVEL_REJECT_TICK_STRENGTH_MIN:
+    if (
+        LEVEL_REJECT_TICK_STRENGTH_MIN > 0.0
+        and tick_strength < LEVEL_REJECT_TICK_STRENGTH_MIN
+    ):
         return None
 
     rsi = _rsi(fac_m1)
     dist_high = abs(price - snap.high) / PIP
     dist_low = abs(price - snap.low) / PIP
 
-    if dist_high <= LEVEL_BAND_PIPS and rsi >= LEVEL_RSI_SHORT_MIN and rev_dir == "short":
+    if (
+        dist_high <= LEVEL_BAND_PIPS
+        and rsi >= LEVEL_RSI_SHORT_MIN
+        and rev_dir == "short"
+    ):
         side = "short"
-    elif dist_low <= LEVEL_BAND_PIPS and rsi <= LEVEL_RSI_LONG_MAX and rev_dir == "long":
+    elif (
+        dist_low <= LEVEL_BAND_PIPS and rsi <= LEVEL_RSI_LONG_MAX and rev_dir == "long"
+    ):
         side = "long"
     else:
         return None
@@ -341,11 +362,17 @@ def _signal_level_reject(
             "rsi": round(rsi, 2),
             "tick_strength": round(tick_strength, 3),
         },
-        "range_score": float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx is not None else 0.0,
+        "range_score": (
+            float(getattr(range_ctx, "score", 0.0) or 0.0)
+            if range_ctx is not None
+            else 0.0
+        ),
     }
 
 
-def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+def _build_entry_thesis(
+    signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx
+) -> Dict[str, object]:
     conf = int(signal.get("confidence", 0) or 0)
     return {
         "strategy_tag": signal.get("tag") or STRATEGY_TAG,
@@ -453,7 +480,9 @@ async def _place_order(
         sl_price = round(price + sl_pips * PIP, 3)
         tp_price = round(price - tp_pips * PIP, 3) if tp_pips > 0 else None
 
-    sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=(side == "long"))
+    sl_price, tp_price = clamp_sl_tp(
+        price=price, sl=sl_price, tp=tp_price, is_buy=(side == "long")
+    )
 
     client_id = _client_order_id(str(signal.get("tag") or STRATEGY_TAG))
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
@@ -506,7 +535,10 @@ async def _run_worker() -> None:
                 positions = pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET, {})
                 open_trades_all = pocket_info.get("open_trades", []) or []
-                if MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= MAX_OPEN_TRADES_GLOBAL:
+                if (
+                    MAX_OPEN_TRADES_GLOBAL > 0
+                    and len(open_trades_all) >= MAX_OPEN_TRADES_GLOBAL
+                ):
                     continue
                 if OPEN_TRADES_SCOPE == "tag":
                     open_trades = [
@@ -536,7 +568,9 @@ async def _run_worker() -> None:
 
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="level_reject")
-        if getattr(air, "enabled", False) and not bool(getattr(air, "allow_entry", True)):
+        if getattr(air, "enabled", False) and not bool(
+            getattr(air, "allow_entry", True)
+        ):
             continue
 
         signal = _signal_level_reject(
@@ -569,7 +603,9 @@ async def _run_worker() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True
+    )
     try:
         asyncio.run(_run_worker())
     except KeyboardInterrupt:

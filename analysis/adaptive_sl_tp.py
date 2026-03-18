@@ -38,9 +38,13 @@ PIP = 0.01
 # --- 設定パラメータ（env override 可能） ---
 
 # SL の絶対下限（ノイズ刈り防止）
-_SL_ABSOLUTE_FLOOR_PIPS = max(0.0, float(os.getenv("ADAPTIVE_SL_FLOOR_PIPS", "2.0") or 2.0))
+_SL_ABSOLUTE_FLOOR_PIPS = max(
+    0.0, float(os.getenv("ADAPTIVE_SL_FLOOR_PIPS", "2.0") or 2.0)
+)
 # SL はスプレッドの何倍以上にするか
-_SL_SPREAD_MULT_MIN = max(1.0, float(os.getenv("ADAPTIVE_SL_SPREAD_MULT", "3.0") or 3.0))
+_SL_SPREAD_MULT_MIN = max(
+    1.0, float(os.getenv("ADAPTIVE_SL_SPREAD_MULT", "3.0") or 3.0)
+)
 
 
 # --- レジーム別のSL/TP係数 ---
@@ -48,60 +52,57 @@ _SL_SPREAD_MULT_MIN = max(1.0, float(os.getenv("ADAPTIVE_SL_SPREAD_MULT", "3.0")
 # value: (sl_atr_mult, tp_atr_mult)
 _REGIME_PARAMS: Dict[tuple, tuple] = {
     # scalp_reversal: 逆張り系（extrema_reversal, wick_reversal_blend, DroughtRevert, PrecisionLowVol）
-    (MarketRegime.RANGE_TIGHT, "scalp_reversal"):    (1.2, 1.8),   # レンジ: SL狭め、TP近め
-    (MarketRegime.RANGE_WIDE, "scalp_reversal"):     (1.5, 2.2),   # 広めレンジ: やや広げる
-    (MarketRegime.TRENDING_UP, "scalp_reversal"):    (1.8, 2.5),   # トレンド順方向: SL広め、TP遠め
-    (MarketRegime.TRENDING_DOWN, "scalp_reversal"):  (1.8, 2.5),
-    (MarketRegime.VOLATILE, "scalp_reversal"):       (2.5, 3.5),   # ボラ高: 大きめSL/TP
-    (MarketRegime.CHOPPY, "scalp_reversal"):         (0.0, 0.0),   # エントリー禁止
-
+    (MarketRegime.RANGE_TIGHT, "scalp_reversal"): (1.2, 1.8),  # レンジ: SL狭め、TP近め
+    (MarketRegime.RANGE_WIDE, "scalp_reversal"): (1.5, 2.2),  # 広めレンジ: やや広げる
+    (MarketRegime.TRENDING_UP, "scalp_reversal"): (
+        1.8,
+        2.5,
+    ),  # トレンド順方向: SL広め、TP遠め
+    (MarketRegime.TRENDING_DOWN, "scalp_reversal"): (1.8, 2.5),
+    (MarketRegime.VOLATILE, "scalp_reversal"): (2.5, 3.5),  # ボラ高: 大きめSL/TP
+    (MarketRegime.CHOPPY, "scalp_reversal"): (0.0, 0.0),  # エントリー禁止
     # scalp_breakout: ブレイクアウト系（M1Scalper, session_open_breakout）
-    (MarketRegime.RANGE_TIGHT, "scalp_breakout"):    (1.5, 2.0),
-    (MarketRegime.RANGE_WIDE, "scalp_breakout"):     (1.5, 2.5),
-    (MarketRegime.TRENDING_UP, "scalp_breakout"):    (1.5, 3.0),   # トレンドに乗る: TP遠め
-    (MarketRegime.TRENDING_DOWN, "scalp_breakout"):  (1.5, 3.0),
-    (MarketRegime.VOLATILE, "scalp_breakout"):       (2.0, 3.5),
-    (MarketRegime.CHOPPY, "scalp_breakout"):         (0.0, 0.0),
-
+    (MarketRegime.RANGE_TIGHT, "scalp_breakout"): (1.5, 2.0),
+    (MarketRegime.RANGE_WIDE, "scalp_breakout"): (1.5, 2.5),
+    (MarketRegime.TRENDING_UP, "scalp_breakout"): (1.5, 3.0),  # トレンドに乗る: TP遠め
+    (MarketRegime.TRENDING_DOWN, "scalp_breakout"): (1.5, 3.0),
+    (MarketRegime.VOLATILE, "scalp_breakout"): (2.0, 3.5),
+    (MarketRegime.CHOPPY, "scalp_breakout"): (0.0, 0.0),
     # momentum: モメンタム系（MomentumBurst）
-    (MarketRegime.RANGE_TIGHT, "momentum"):          (0.0, 0.0),   # レンジ: 不適
-    (MarketRegime.RANGE_WIDE, "momentum"):           (0.0, 0.0),
-    (MarketRegime.TRENDING_UP, "momentum"):          (1.5, 3.5),   # トレンド: TP最大
-    (MarketRegime.TRENDING_DOWN, "momentum"):        (1.5, 3.5),
-    (MarketRegime.VOLATILE, "momentum"):             (2.0, 4.0),
-    (MarketRegime.CHOPPY, "momentum"):               (0.0, 0.0),
-
+    (MarketRegime.RANGE_TIGHT, "momentum"): (0.0, 0.0),  # レンジ: 不適
+    (MarketRegime.RANGE_WIDE, "momentum"): (0.0, 0.0),
+    (MarketRegime.TRENDING_UP, "momentum"): (1.5, 3.5),  # トレンド: TP最大
+    (MarketRegime.TRENDING_DOWN, "momentum"): (1.5, 3.5),
+    (MarketRegime.VOLATILE, "momentum"): (2.0, 4.0),
+    (MarketRegime.CHOPPY, "momentum"): (0.0, 0.0),
     # range_fade: レンジフェード系（RangeFader）
-    (MarketRegime.RANGE_TIGHT, "range_fade"):        (1.0, 1.5),   # タイトレンジ: 最小SL/TP
-    (MarketRegime.RANGE_WIDE, "range_fade"):         (1.5, 2.0),
-    (MarketRegime.TRENDING_UP, "range_fade"):        (0.0, 0.0),   # トレンド: 不適
-    (MarketRegime.TRENDING_DOWN, "range_fade"):      (0.0, 0.0),
-    (MarketRegime.VOLATILE, "range_fade"):           (0.0, 0.0),
-    (MarketRegime.CHOPPY, "range_fade"):             (0.0, 0.0),
-
+    (MarketRegime.RANGE_TIGHT, "range_fade"): (1.0, 1.5),  # タイトレンジ: 最小SL/TP
+    (MarketRegime.RANGE_WIDE, "range_fade"): (1.5, 2.0),
+    (MarketRegime.TRENDING_UP, "range_fade"): (0.0, 0.0),  # トレンド: 不適
+    (MarketRegime.TRENDING_DOWN, "range_fade"): (0.0, 0.0),
+    (MarketRegime.VOLATILE, "range_fade"): (0.0, 0.0),
+    (MarketRegime.CHOPPY, "range_fade"): (0.0, 0.0),
     # trend_follow: トレンドフォロー系（MicroTrendRetest）
-    (MarketRegime.RANGE_TIGHT, "trend_follow"):      (0.0, 0.0),
-    (MarketRegime.RANGE_WIDE, "trend_follow"):       (1.5, 2.0),
-    (MarketRegime.TRENDING_UP, "trend_follow"):      (1.5, 3.0),
-    (MarketRegime.TRENDING_DOWN, "trend_follow"):    (1.5, 3.0),
-    (MarketRegime.VOLATILE, "trend_follow"):         (2.0, 3.5),
-    (MarketRegime.CHOPPY, "trend_follow"):           (0.0, 0.0),
-
+    (MarketRegime.RANGE_TIGHT, "trend_follow"): (0.0, 0.0),
+    (MarketRegime.RANGE_WIDE, "trend_follow"): (1.5, 2.0),
+    (MarketRegime.TRENDING_UP, "trend_follow"): (1.5, 3.0),
+    (MarketRegime.TRENDING_DOWN, "trend_follow"): (1.5, 3.0),
+    (MarketRegime.VOLATILE, "trend_follow"): (2.0, 3.5),
+    (MarketRegime.CHOPPY, "trend_follow"): (0.0, 0.0),
     # ping_5s: 超短期スキャルピング系
-    (MarketRegime.RANGE_TIGHT, "ping_5s"):           (1.2, 1.5),
-    (MarketRegime.RANGE_WIDE, "ping_5s"):            (1.5, 2.0),
-    (MarketRegime.TRENDING_UP, "ping_5s"):           (1.5, 2.5),
-    (MarketRegime.TRENDING_DOWN, "ping_5s"):         (1.5, 2.5),
-    (MarketRegime.VOLATILE, "ping_5s"):              (0.0, 0.0),   # ボラ高: 不適
-    (MarketRegime.CHOPPY, "ping_5s"):                (0.0, 0.0),
-
+    (MarketRegime.RANGE_TIGHT, "ping_5s"): (1.2, 1.5),
+    (MarketRegime.RANGE_WIDE, "ping_5s"): (1.5, 2.0),
+    (MarketRegime.TRENDING_UP, "ping_5s"): (1.5, 2.5),
+    (MarketRegime.TRENDING_DOWN, "ping_5s"): (1.5, 2.5),
+    (MarketRegime.VOLATILE, "ping_5s"): (0.0, 0.0),  # ボラ高: 不適
+    (MarketRegime.CHOPPY, "ping_5s"): (0.0, 0.0),
     # micro_level: レベルリアクター系
-    (MarketRegime.RANGE_TIGHT, "micro_level"):       (1.5, 2.0),
-    (MarketRegime.RANGE_WIDE, "micro_level"):        (1.8, 2.5),
-    (MarketRegime.TRENDING_UP, "micro_level"):       (2.0, 3.0),
-    (MarketRegime.TRENDING_DOWN, "micro_level"):     (2.0, 3.0),
-    (MarketRegime.VOLATILE, "micro_level"):          (2.5, 3.5),
-    (MarketRegime.CHOPPY, "micro_level"):            (0.0, 0.0),
+    (MarketRegime.RANGE_TIGHT, "micro_level"): (1.5, 2.0),
+    (MarketRegime.RANGE_WIDE, "micro_level"): (1.8, 2.5),
+    (MarketRegime.TRENDING_UP, "micro_level"): (2.0, 3.0),
+    (MarketRegime.TRENDING_DOWN, "micro_level"): (2.0, 3.0),
+    (MarketRegime.VOLATILE, "micro_level"): (2.5, 3.5),
+    (MarketRegime.CHOPPY, "micro_level"): (0.0, 0.0),
 }
 
 # デフォルトパラメータ（未定義の組み合わせ用）
@@ -134,7 +135,8 @@ def compute_adaptive_sl_tp(
     if sl_mult <= 0.0 or tp_mult <= 0.0:
         logging.debug(
             "[ADAPTIVE_SL_TP] blocked: regime=%s strategy=%s",
-            regime.regime.value, strategy_type,
+            regime.regime.value,
+            strategy_type,
         )
         return None
 
@@ -168,7 +170,11 @@ def compute_adaptive_sl_tp(
 
     logging.debug(
         "[ADAPTIVE_SL_TP] regime=%s strategy=%s sl=%.2f tp=%.2f rr=%.3f",
-        regime.regime.value, strategy_type, sl_pips, tp_pips, rr,
+        regime.regime.value,
+        strategy_type,
+        sl_pips,
+        tp_pips,
+        rr,
     )
 
     return result
@@ -183,35 +189,64 @@ def map_strategy_tag_to_type(strategy_tag: str) -> str:
     tag = (strategy_tag or "").lower()
 
     # 逆張り系
-    if any(k in tag for k in (
-        "extrema_reversal", "wick_reversal", "droughtrevert", "drought_revert",
-        "precisionlowvol", "precision_lowvol", "vwapreverts", "vwaprevert",
-        "wickreversalblend", "falsebreakfade", "false_break_fade",
-    )):
+    if any(
+        k in tag
+        for k in (
+            "extrema_reversal",
+            "wick_reversal",
+            "droughtrevert",
+            "drought_revert",
+            "precisionlowvol",
+            "precision_lowvol",
+            "vwapreverts",
+            "vwaprevert",
+            "wickreversalblend",
+            "falsebreakfade",
+            "false_break_fade",
+        )
+    ):
         return "scalp_reversal"
 
     # ブレイクアウト系
-    if any(k in tag for k in (
-        "m1scalper", "session_open", "squeezepulsebreak",
-    )):
+    if any(
+        k in tag
+        for k in (
+            "m1scalper",
+            "session_open",
+            "squeezepulsebreak",
+        )
+    ):
         return "scalp_breakout"
 
     # モメンタム系
-    if any(k in tag for k in (
-        "momentumburst", "momentum_burst",
-    )):
+    if any(
+        k in tag
+        for k in (
+            "momentumburst",
+            "momentum_burst",
+        )
+    ):
         return "momentum"
 
     # レンジフェード系
-    if any(k in tag for k in (
-        "rangefader", "range_fader",
-    )):
+    if any(
+        k in tag
+        for k in (
+            "rangefader",
+            "range_fader",
+        )
+    ):
         return "range_fade"
 
     # トレンドフォロー系
-    if any(k in tag for k in (
-        "microtrendretest", "trend_retest", "micropullbackema",
-    )):
+    if any(
+        k in tag
+        for k in (
+            "microtrendretest",
+            "trend_retest",
+            "micropullbackema",
+        )
+    ):
         return "trend_follow"
 
     # ping_5s系
@@ -219,12 +254,18 @@ def map_strategy_tag_to_type(strategy_tag: str) -> str:
         return "ping_5s"
 
     # micro_level系
-    if any(k in tag for k in (
-        "microlevelreactor", "level_reactor",
-        "microrangebreak", "range_break",
-        "microvwaprevert", "microvwapbound",
-        "microcompressionrevert",
-    )):
+    if any(
+        k in tag
+        for k in (
+            "microlevelreactor",
+            "level_reactor",
+            "microrangebreak",
+            "range_break",
+            "microvwaprevert",
+            "microvwapbound",
+            "microcompressionrevert",
+        )
+    ):
         return "micro_level"
 
     # デフォルト

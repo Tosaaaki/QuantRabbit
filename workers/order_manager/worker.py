@@ -147,7 +147,9 @@ async def close_trade(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             "close_trade",
             order_manager.close_trade,
             trade_id=trade_id,
-            units=_to_int(body.get("units"), 0) if body.get("units") is not None else None,
+            units=(
+                _to_int(body.get("units"), 0) if body.get("units") is not None else None
+            ),
             client_order_id=body.get("client_order_id"),
             allow_negative=_to_bool(body.get("allow_negative"), False),
             exit_reason=body.get("exit_reason"),
@@ -207,7 +209,11 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             entry_thesis=body.get("entry_thesis"),
             meta=body.get("meta"),
             confidence=resolved_confidence,
-            stage_index=_to_int(body.get("stage_index"), 0) if body.get("stage_index") is not None else None,
+            stage_index=(
+                _to_int(body.get("stage_index"), 0)
+                if body.get("stage_index") is not None
+                else None
+            ),
             arbiter_final=_to_bool(body.get("arbiter_final"), False),
         )
     except Exception as exc:
@@ -216,7 +222,9 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 
 @app.post("/order/coordinate_entry_intent")
-async def coordinate_entry_intent(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+async def coordinate_entry_intent(
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
     body = _as_dict(payload)
     instrument = str(body.get("instrument") or "").strip()
     if not instrument:

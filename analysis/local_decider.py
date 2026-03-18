@@ -95,8 +95,12 @@ _DECIDER_PERF_HOURLY_MULT_MAX = _env_float("DECIDER_PERF_HOURLY_MULT_MAX", 1.05)
 _DECIDER_PERF_TOTAL_MULT_MIN = _env_float("DECIDER_PERF_TOTAL_MULT_MIN", 0.7)
 _DECIDER_PERF_TOTAL_MULT_MAX = _env_float("DECIDER_PERF_TOTAL_MULT_MAX", 1.15)
 _DECIDER_FORECAST_ENABLED = _env_bool("DECIDER_FORECAST_ENABLED", True)
-_DECIDER_FORECAST_EDGE_MIN = _clamp(_env_float("DECIDER_FORECAST_EDGE_MIN", 0.08), 0.0, 0.8)
-_DECIDER_FORECAST_WEIGHT_MAX = _clamp(_env_float("DECIDER_FORECAST_WEIGHT_MAX", 0.16), 0.0, 0.35)
+_DECIDER_FORECAST_EDGE_MIN = _clamp(
+    _env_float("DECIDER_FORECAST_EDGE_MIN", 0.08), 0.0, 0.8
+)
+_DECIDER_FORECAST_WEIGHT_MAX = _clamp(
+    _env_float("DECIDER_FORECAST_WEIGHT_MAX", 0.16), 0.0, 0.35
+)
 _DECIDER_FORECAST_PROJECTION_WEIGHT = _clamp(
     _env_float("DECIDER_FORECAST_PROJECTION_WEIGHT", 0.34),
     0.0,
@@ -215,14 +219,20 @@ def _projection_bias_from_factors(
     norm_atr = max(0.6, atr_ref_pips)
 
     try:
-        ma = compute_ma_projection({"candles": candles}, timeframe_minutes=timeframe_minutes)
+        ma = compute_ma_projection(
+            {"candles": candles}, timeframe_minutes=timeframe_minutes
+        )
         if ma is not None:
             gap_norm = ma.gap_pips / max(1.0, norm_atr)
             slope_norm = ma.gap_slope_pips / max(0.6, norm_atr * 0.5)
-            ma_score = 0.58 * math.tanh(gap_norm * 1.2) + 0.42 * math.tanh(slope_norm * 1.35)
+            ma_score = 0.58 * math.tanh(gap_norm * 1.2) + 0.42 * math.tanh(
+                slope_norm * 1.35
+            )
             if ma.projected_cross_bars is not None and ma.projected_cross_bars > 0.0:
                 horizon_eta = max(1.5, float(step_bars) * 0.3)
-                eta_scale = _clamp(1.0 - (float(ma.projected_cross_bars) / horizon_eta), 0.0, 1.0)
+                eta_scale = _clamp(
+                    1.0 - (float(ma.projected_cross_bars) / horizon_eta), 0.0, 1.0
+                )
                 if ma.gap_pips < 0.0 and ma.gap_slope_pips > 0.0:
                     ma_score += 0.25 * eta_scale
                 elif ma.gap_pips > 0.0 and ma.gap_slope_pips < 0.0:
@@ -237,24 +247,36 @@ def _projection_bias_from_factors(
             rsi_score = 0.55 * math.tanh(rsi_center) + 0.45 * rsi_slope
             horizon_eta = max(2.0, float(step_bars) * 0.35)
             if rsi.eta_upper_bars is not None and rsi.eta_upper_bars <= horizon_eta:
-                rsi_score -= 0.16 * _clamp(1.0 - (rsi.eta_upper_bars / horizon_eta), 0.0, 1.0)
+                rsi_score -= 0.16 * _clamp(
+                    1.0 - (rsi.eta_upper_bars / horizon_eta), 0.0, 1.0
+                )
             if rsi.eta_lower_bars is not None and rsi.eta_lower_bars <= horizon_eta:
-                rsi_score += 0.16 * _clamp(1.0 - (rsi.eta_lower_bars / horizon_eta), 0.0, 1.0)
+                rsi_score += 0.16 * _clamp(
+                    1.0 - (rsi.eta_lower_bars / horizon_eta), 0.0, 1.0
+                )
             score += 0.7 * rsi_score
 
-        adx = compute_adx_projection(candles, timeframe_minutes=timeframe_minutes, trend_threshold=20.0)
+        adx = compute_adx_projection(
+            candles, timeframe_minutes=timeframe_minutes, trend_threshold=20.0
+        )
         if adx is not None:
             adx_level = _clamp((adx.adx - 16.0) / 18.0, 0.0, 1.0)
             adx_slope = math.tanh(adx.slope_per_bar / 2.2)
             score += 0.34 * adx_slope
             trend_boost += 0.18 * adx_level + 0.1 * max(0.0, adx_slope)
 
-        bbw = compute_bbw_projection(candles, timeframe_minutes=timeframe_minutes, squeeze_threshold=0.16)
+        bbw = compute_bbw_projection(
+            candles, timeframe_minutes=timeframe_minutes, squeeze_threshold=0.16
+        )
         if bbw is not None:
             squeeze = _clamp((0.16 - bbw.bbw) / 0.10, 0.0, 1.0)
             expansion = max(0.0, math.tanh(bbw.slope_per_bar / 0.015))
             quiet = _clamp(1.0 - expansion, 0.0, 1.0)
-            hint_sign = 1.0 if trend_hint > 0.05 else -1.0 if trend_hint < -0.05 else (1.0 if score >= 0 else -1.0)
+            hint_sign = (
+                1.0
+                if trend_hint > 0.05
+                else -1.0 if trend_hint < -0.05 else (1.0 if score >= 0 else -1.0)
+            )
             score += 0.24 * hint_sign * squeeze * expansion
             trend_boost += 0.1 * squeeze * expansion
             range_boost += 0.16 * squeeze * quiet
@@ -406,7 +428,9 @@ def heuristic_decision(
     perf_hourly = payload.get("perf_hourly") or {}
 
     macro_adx = _safe_float(factors_h4.get("adx"))
-    macro_gap = abs(_safe_float(factors_h4.get("ma10")) - _safe_float(factors_h4.get("ma20")))
+    macro_gap = abs(
+        _safe_float(factors_h4.get("ma10")) - _safe_float(factors_h4.get("ma20"))
+    )
     micro_adx = _safe_float(factors_m1.get("adx"))
     micro_rsi = _safe_float(factors_m1.get("rsi"), 50.0)
     atr_pips = _atr_pips(factors_m1)
@@ -474,11 +498,17 @@ def heuristic_decision(
 
         if edge >= _DECIDER_FORECAST_EDGE_MIN:
             edge_strength = _clamp(
-                (edge - _DECIDER_FORECAST_EDGE_MIN) / max(1e-6, 1.0 - _DECIDER_FORECAST_EDGE_MIN),
+                (edge - _DECIDER_FORECAST_EDGE_MIN)
+                / max(1e-6, 1.0 - _DECIDER_FORECAST_EDGE_MIN),
                 0.0,
                 1.0,
             )
-            macro_shift = _DECIDER_FORECAST_WEIGHT_MAX * edge_strength * (trend_strength - 0.5) * 2.0
+            macro_shift = (
+                _DECIDER_FORECAST_WEIGHT_MAX
+                * edge_strength
+                * (trend_strength - 0.5)
+                * 2.0
+            )
             weight_macro = _clamp(weight_macro + macro_shift, 0.0, 0.9)
 
             if trend_strength >= 0.65 and focus_tag == "micro":
@@ -530,7 +560,9 @@ def heuristic_decision(
                     mult_max=_DECIDER_PERF_HOURLY_MULT_MAX,
                 )
                 mult *= h_mult
-            return _clamp(mult, _DECIDER_PERF_TOTAL_MULT_MIN, _DECIDER_PERF_TOTAL_MULT_MAX)
+            return _clamp(
+                mult, _DECIDER_PERF_TOTAL_MULT_MIN, _DECIDER_PERF_TOTAL_MULT_MAX
+            )
 
         base_macro = max(0.0, weight_macro)
         base_scalp = max(0.0, weight_scalp)

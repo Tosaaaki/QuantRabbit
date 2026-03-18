@@ -32,7 +32,6 @@ from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-
 PIP_USDJPY = 0.01
 _NORMAL_DIST = NormalDist()
 _RANGE_LOW_Q = 0.20
@@ -49,12 +48,22 @@ class HorizonSpec:
 
 
 DEFAULT_HORIZONS: tuple[HorizonSpec, ...] = (
-    HorizonSpec("1h", timeframe="M5", step_bars=12, min_move_pips=0.35, calibration="sigmoid"),
-    HorizonSpec("8h", timeframe="M5", step_bars=96, min_move_pips=1.0, calibration="sigmoid"),
-    HorizonSpec("1d", timeframe="H1", step_bars=24, min_move_pips=2.0, calibration="sigmoid"),
+    HorizonSpec(
+        "1h", timeframe="M5", step_bars=12, min_move_pips=0.35, calibration="sigmoid"
+    ),
+    HorizonSpec(
+        "8h", timeframe="M5", step_bars=96, min_move_pips=1.0, calibration="sigmoid"
+    ),
+    HorizonSpec(
+        "1d", timeframe="H1", step_bars=24, min_move_pips=2.0, calibration="sigmoid"
+    ),
     # D1 candles are trading-day bars (no weekend). Interpret as ~5D / ~21D.
-    HorizonSpec("1w", timeframe="D1", step_bars=5, min_move_pips=5.0, calibration="sigmoid"),
-    HorizonSpec("1m", timeframe="D1", step_bars=21, min_move_pips=10.0, calibration="sigmoid"),
+    HorizonSpec(
+        "1w", timeframe="D1", step_bars=5, min_move_pips=5.0, calibration="sigmoid"
+    ),
+    HorizonSpec(
+        "1m", timeframe="D1", step_bars=21, min_move_pips=10.0, calibration="sigmoid"
+    ),
 )
 
 
@@ -112,7 +121,9 @@ def _estimate_dispersion_pips(model: ForecastModel) -> float:
     return max(0.25, float(sigma))
 
 
-def _quantile_from_normal(*, mean_pips: float, sigma_pips: float, quantile: float) -> float:
+def _quantile_from_normal(
+    *, mean_pips: float, sigma_pips: float, quantile: float
+) -> float:
     q = min(0.99, max(0.01, float(quantile)))
     sigma = max(1e-4, abs(float(sigma_pips)))
     try:
@@ -126,7 +137,9 @@ def _quantile_from_normal(*, mean_pips: float, sigma_pips: float, quantile: floa
 
 
 def _build_range_band(*, expected_pips: float, sigma_pips: float) -> dict[str, float]:
-    low = _quantile_from_normal(mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=_RANGE_LOW_Q)
+    low = _quantile_from_normal(
+        mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=_RANGE_LOW_Q
+    )
     high = _quantile_from_normal(
         mean_pips=expected_pips,
         sigma_pips=sigma_pips,
@@ -136,12 +149,16 @@ def _build_range_band(*, expected_pips: float, sigma_pips: float) -> dict[str, f
         low, high = high, low
     return {
         "q10_pips": round(
-            _quantile_from_normal(mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=0.10),
+            _quantile_from_normal(
+                mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=0.10
+            ),
             4,
         ),
         "q50_pips": round(float(expected_pips), 4),
         "q90_pips": round(
-            _quantile_from_normal(mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=0.90),
+            _quantile_from_normal(
+                mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=0.90
+            ),
             4,
         ),
         "range_low_pips": round(float(low), 4),
@@ -249,8 +266,12 @@ def compute_feature_frame(
     ma50 = close.rolling(50).mean()
     trend_window_short = 20
     trend_window_long = 50
-    slope20 = (close - close.shift(trend_window_short - 1)) / max(1, trend_window_short - 1)
-    slope50 = (close - close.shift(trend_window_long - 1)) / max(1, trend_window_long - 1)
+    slope20 = (close - close.shift(trend_window_short - 1)) / max(
+        1, trend_window_short - 1
+    )
+    slope50 = (close - close.shift(trend_window_long - 1)) / max(
+        1, trend_window_long - 1
+    )
 
     prev_close = close.shift(1)
     tr = pd.concat(
@@ -276,7 +297,9 @@ def compute_feature_frame(
     resistance_gap_pips = (hh - close) / pip_size
     breakout_up_pips = (close - hh_prev) / pip_size
     breakout_down_pips = (ll_prev - close) / pip_size
-    sr_balance = ((support_gap_pips - resistance_gap_pips) / sr_span_pips).clip(-1.0, 1.0)
+    sr_balance = ((support_gap_pips - resistance_gap_pips) / sr_span_pips).clip(
+        -1.0, 1.0
+    )
     compression_ratio = vol20 / sr_span_pips.replace(0.0, np.nan)
     trend_pullback_norm = ((close - ma20) / pip_size) / atr14.replace(0.0, np.nan)
     trend_accel = (slope20 - slope50) / pip_size
@@ -535,7 +558,9 @@ def predict_latest(
         p_up = float(model.predict_proba(x_last)[0, 1])
         expected_pips = float(model.expected_pips(p_up))
         dispersion_pips = _estimate_dispersion_pips(model)
-        range_band = _build_range_band(expected_pips=expected_pips, sigma_pips=dispersion_pips)
+        range_band = _build_range_band(
+            expected_pips=expected_pips, sigma_pips=dispersion_pips
+        )
         out[name] = {
             "instrument": bundle.instrument,
             "horizon": name,

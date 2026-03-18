@@ -207,7 +207,9 @@ def _extract_report_path_from_stdout(stdout: str, *, out_dir: Path) -> Path | No
     return None
 
 
-def _cleanup_old_runs(out_dir: Path, *, keep_runs: int, protected: Path | None = None) -> list[str]:
+def _cleanup_old_runs(
+    out_dir: Path, *, keep_runs: int, protected: Path | None = None
+) -> list[str]:
     if keep_runs <= 0 or not out_dir.exists():
         return []
     reports = _iter_report_paths(out_dir)
@@ -247,20 +249,30 @@ class WorkerConfig:
     auto_improve_include_live_trades: bool = False
     auto_improve_replay_json_globs: str = ""
     auto_improve_counterfactual_timeout_sec: int = 600
-    auto_improve_counterfactual_out_dir: Path = (REPO_ROOT / "logs" / "replay_auto_improve").resolve()
+    auto_improve_counterfactual_out_dir: Path = (
+        REPO_ROOT / "logs" / "replay_auto_improve"
+    ).resolve()
     auto_improve_min_trades: int = 40
     auto_improve_max_block_hours: int = 8
     auto_improve_apply_block_hours: bool = False
     auto_improve_min_reentry_confidence: float = 0.70
     auto_improve_min_reentry_lcb_uplift_pips: float = 0.20
     auto_improve_min_apply_interval_sec: int = 10800
-    auto_improve_apply_state_path: Path = (REPO_ROOT / "logs" / "replay_auto_improve_state.json").resolve()
-    auto_improve_reentry_config_path: Path = (REPO_ROOT / "config" / "worker_reentry.yaml").resolve()
+    auto_improve_apply_state_path: Path = (
+        REPO_ROOT / "logs" / "replay_auto_improve_state.json"
+    ).resolve()
+    auto_improve_reentry_config_path: Path = (
+        REPO_ROOT / "config" / "worker_reentry.yaml"
+    ).resolve()
     auto_improve_apply_reentry: bool = True
 
 
 def _default_config() -> WorkerConfig:
-    scope = str(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE", "failing")).strip().lower()
+    scope = (
+        str(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_SCOPE", "failing"))
+        .strip()
+        .lower()
+    )
     if scope not in _AUTO_IMPROVE_SCOPE_VALUES:
         scope = "failing"
     return WorkerConfig(
@@ -273,11 +285,16 @@ def _default_config() -> WorkerConfig:
             base_dir=REPO_ROOT,
         ),
         state_path=_resolve_path(
-            os.getenv("REPLAY_QUALITY_GATE_STATE_PATH", "logs/replay_quality_gate_latest.json"),
+            os.getenv(
+                "REPLAY_QUALITY_GATE_STATE_PATH", "logs/replay_quality_gate_latest.json"
+            ),
             base_dir=REPO_ROOT,
         ),
         history_path=_resolve_path(
-            os.getenv("REPLAY_QUALITY_GATE_HISTORY_PATH", "logs/replay_quality_gate_history.jsonl"),
+            os.getenv(
+                "REPLAY_QUALITY_GATE_HISTORY_PATH",
+                "logs/replay_quality_gate_history.jsonl",
+            ),
             base_dir=REPO_ROOT,
         ),
         timeout_sec=max(30, _env_int("REPLAY_QUALITY_GATE_TIMEOUT_SEC", 1800)),
@@ -286,9 +303,13 @@ def _default_config() -> WorkerConfig:
         ticks_glob=str(os.getenv("REPLAY_QUALITY_GATE_TICKS_GLOB", "")).strip(),
         workers=str(os.getenv("REPLAY_QUALITY_GATE_WORKERS", "")).strip(),
         backend=str(os.getenv("REPLAY_QUALITY_GATE_BACKEND", "")).strip(),
-        auto_improve_enabled=_env_bool("REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED", False),
+        auto_improve_enabled=_env_bool(
+            "REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED", False
+        ),
         auto_improve_scope=scope,
-        auto_improve_strategies=str(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_STRATEGIES", "")).strip(),
+        auto_improve_strategies=str(
+            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_STRATEGIES", "")
+        ).strip(),
         auto_improve_include_live_trades=_env_bool(
             "REPLAY_QUALITY_GATE_AUTO_IMPROVE_INCLUDE_LIVE_TRADES",
             False,
@@ -298,10 +319,15 @@ def _default_config() -> WorkerConfig:
         ).strip(),
         auto_improve_counterfactual_timeout_sec=max(
             60,
-            _env_int("REPLAY_QUALITY_GATE_AUTO_IMPROVE_COUNTERFACTUAL_TIMEOUT_SEC", 600),
+            _env_int(
+                "REPLAY_QUALITY_GATE_AUTO_IMPROVE_COUNTERFACTUAL_TIMEOUT_SEC", 600
+            ),
         ),
         auto_improve_counterfactual_out_dir=_resolve_path(
-            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_COUNTERFACTUAL_OUT_DIR", "logs/replay_auto_improve"),
+            os.getenv(
+                "REPLAY_QUALITY_GATE_AUTO_IMPROVE_COUNTERFACTUAL_OUT_DIR",
+                "logs/replay_auto_improve",
+            ),
             base_dir=REPO_ROOT,
         ),
         auto_improve_min_trades=max(
@@ -314,7 +340,10 @@ def _default_config() -> WorkerConfig:
         ),
         auto_improve_apply_block_hours=False,
         auto_improve_min_reentry_confidence=_clamp(
-            _safe_float(os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_CONFIDENCE"), 0.70),
+            _safe_float(
+                os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_REENTRY_CONFIDENCE"),
+                0.70,
+            ),
             0.0,
             1.0,
         ),
@@ -334,10 +363,15 @@ def _default_config() -> WorkerConfig:
             base_dir=REPO_ROOT,
         ),
         auto_improve_reentry_config_path=_resolve_path(
-            os.getenv("REPLAY_QUALITY_GATE_AUTO_IMPROVE_REENTRY_CONFIG_PATH", "config/worker_reentry.yaml"),
+            os.getenv(
+                "REPLAY_QUALITY_GATE_AUTO_IMPROVE_REENTRY_CONFIG_PATH",
+                "config/worker_reentry.yaml",
+            ),
             base_dir=REPO_ROOT,
         ),
-        auto_improve_apply_reentry=_env_bool("REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_REENTRY", True),
+        auto_improve_apply_reentry=_env_bool(
+            "REPLAY_QUALITY_GATE_AUTO_IMPROVE_APPLY_REENTRY", True
+        ),
     )
 
 
@@ -369,14 +403,19 @@ def parse_args() -> argparse.Namespace:
         choices=("failing", "all"),
         default=default.auto_improve_scope,
     )
-    ap.add_argument("--auto-improve-strategies", default=default.auto_improve_strategies)
+    ap.add_argument(
+        "--auto-improve-strategies", default=default.auto_improve_strategies
+    )
     ap.add_argument(
         "--auto-improve-include-live-trades",
         type=int,
         choices=(0, 1),
         default=1 if default.auto_improve_include_live_trades else 0,
     )
-    ap.add_argument("--auto-improve-replay-json-globs", default=default.auto_improve_replay_json_globs)
+    ap.add_argument(
+        "--auto-improve-replay-json-globs",
+        default=default.auto_improve_replay_json_globs,
+    )
     ap.add_argument(
         "--auto-improve-counterfactual-timeout-sec",
         type=int,
@@ -387,13 +426,19 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=default.auto_improve_counterfactual_out_dir,
     )
-    ap.add_argument("--auto-improve-min-trades", type=int, default=default.auto_improve_min_trades)
+    ap.add_argument(
+        "--auto-improve-min-trades", type=int, default=default.auto_improve_min_trades
+    )
     ap.add_argument(
         "--auto-improve-reentry-config-path",
         type=Path,
         default=default.auto_improve_reentry_config_path,
     )
-    ap.add_argument("--auto-improve-max-block-hours", type=int, default=default.auto_improve_max_block_hours)
+    ap.add_argument(
+        "--auto-improve-max-block-hours",
+        type=int,
+        default=default.auto_improve_max_block_hours,
+    )
     ap.add_argument(
         "--auto-improve-apply-block-hours",
         type=int,
@@ -467,11 +512,21 @@ def _run_subprocess(
     )
 
 
-def _summarize_report(report_payload: dict[str, Any] | None) -> tuple[str, list[str], int]:
+def _summarize_report(
+    report_payload: dict[str, Any] | None,
+) -> tuple[str, list[str], int]:
     if not isinstance(report_payload, dict):
         return "unknown", [], 0
-    overall = report_payload.get("overall") if isinstance(report_payload.get("overall"), dict) else {}
-    meta = report_payload.get("meta") if isinstance(report_payload.get("meta"), dict) else {}
+    overall = (
+        report_payload.get("overall")
+        if isinstance(report_payload.get("overall"), dict)
+        else {}
+    )
+    meta = (
+        report_payload.get("meta")
+        if isinstance(report_payload.get("meta"), dict)
+        else {}
+    )
     status = str(overall.get("status") or "unknown")
     failing_workers = overall.get("failing_workers")
     if not isinstance(failing_workers, list):
@@ -503,10 +558,18 @@ def _build_config_from_args(args: argparse.Namespace) -> WorkerConfig:
         auto_improve_enabled=bool(int(args.auto_improve_enabled)),
         auto_improve_scope=scope,
         auto_improve_strategies=str(args.auto_improve_strategies or "").strip(),
-        auto_improve_include_live_trades=bool(int(args.auto_improve_include_live_trades)),
-        auto_improve_replay_json_globs=str(args.auto_improve_replay_json_globs or "").strip(),
-        auto_improve_counterfactual_timeout_sec=max(60, int(args.auto_improve_counterfactual_timeout_sec)),
-        auto_improve_counterfactual_out_dir=Path(args.auto_improve_counterfactual_out_dir).resolve(),
+        auto_improve_include_live_trades=bool(
+            int(args.auto_improve_include_live_trades)
+        ),
+        auto_improve_replay_json_globs=str(
+            args.auto_improve_replay_json_globs or ""
+        ).strip(),
+        auto_improve_counterfactual_timeout_sec=max(
+            60, int(args.auto_improve_counterfactual_timeout_sec)
+        ),
+        auto_improve_counterfactual_out_dir=Path(
+            args.auto_improve_counterfactual_out_dir
+        ).resolve(),
         auto_improve_min_trades=max(1, int(args.auto_improve_min_trades)),
         auto_improve_max_block_hours=max(1, int(args.auto_improve_max_block_hours)),
         auto_improve_apply_block_hours=_AUTO_IMPROVE_APPLY_BLOCK_HOURS_POLICY,
@@ -515,10 +578,18 @@ def _build_config_from_args(args: argparse.Namespace) -> WorkerConfig:
             0.0,
             1.0,
         ),
-        auto_improve_min_reentry_lcb_uplift_pips=float(args.auto_improve_min_reentry_lcb_uplift_pips),
-        auto_improve_min_apply_interval_sec=max(0, int(args.auto_improve_min_apply_interval_sec)),
-        auto_improve_apply_state_path=Path(args.auto_improve_apply_state_path).resolve(),
-        auto_improve_reentry_config_path=Path(args.auto_improve_reentry_config_path).resolve(),
+        auto_improve_min_reentry_lcb_uplift_pips=float(
+            args.auto_improve_min_reentry_lcb_uplift_pips
+        ),
+        auto_improve_min_apply_interval_sec=max(
+            0, int(args.auto_improve_min_apply_interval_sec)
+        ),
+        auto_improve_apply_state_path=Path(
+            args.auto_improve_apply_state_path
+        ).resolve(),
+        auto_improve_reentry_config_path=Path(
+            args.auto_improve_reentry_config_path
+        ).resolve(),
         auto_improve_apply_reentry=bool(int(args.auto_improve_apply_reentry)),
     )
 
@@ -532,10 +603,22 @@ def _collect_auto_improve_strategies(
         return explicit
     if not isinstance(report_payload, dict):
         return []
-    meta = report_payload.get("meta") if isinstance(report_payload.get("meta"), dict) else {}
-    overall = report_payload.get("overall") if isinstance(report_payload.get("overall"), dict) else {}
+    meta = (
+        report_payload.get("meta")
+        if isinstance(report_payload.get("meta"), dict)
+        else {}
+    )
+    overall = (
+        report_payload.get("overall")
+        if isinstance(report_payload.get("overall"), dict)
+        else {}
+    )
     workers = meta.get("workers") if isinstance(meta.get("workers"), list) else []
-    failing_workers = overall.get("failing_workers") if isinstance(overall.get("failing_workers"), list) else []
+    failing_workers = (
+        overall.get("failing_workers")
+        if isinstance(overall.get("failing_workers"), list)
+        else []
+    )
     selected = failing_workers if cfg.auto_improve_scope == "failing" else workers
     candidates = [str(worker).strip() for worker in selected if str(worker).strip()]
     out: list[str] = []
@@ -742,15 +825,21 @@ def _apply_reentry_updates(
         )
         current_reentry_pips = abs(
             _safe_float(
-                row.get("same_dir_reentry_pips", defaults.get("same_dir_reentry_pips", 1.8)),
+                row.get(
+                    "same_dir_reentry_pips", defaults.get("same_dir_reentry_pips", 1.8)
+                ),
                 1.8,
             )
         )
         if current_reentry_pips <= 0.0:
             current_reentry_pips = 1.8
 
-        cooldown_loss_mult = _clamp(_safe_float(hint.get("cooldown_loss_mult"), 1.0), 0.60, 1.80)
-        cooldown_win_mult = _clamp(_safe_float(hint.get("cooldown_win_mult"), 1.0), 0.70, 1.50)
+        cooldown_loss_mult = _clamp(
+            _safe_float(hint.get("cooldown_loss_mult"), 1.0), 0.60, 1.80
+        )
+        cooldown_win_mult = _clamp(
+            _safe_float(hint.get("cooldown_win_mult"), 1.0), 0.70, 1.50
+        )
         reentry_pips_mult = _clamp(
             _safe_float(hint.get("same_dir_reentry_pips_mult"), 1.0),
             0.70,
@@ -795,7 +884,9 @@ def _apply_reentry_updates(
                     "after": target_reentry_rounded,
                 }
             )
-        current_bias = _normalize_bias(row.get("return_wait_bias", defaults.get("return_wait_bias", "neutral")))
+        current_bias = _normalize_bias(
+            row.get("return_wait_bias", defaults.get("return_wait_bias", "neutral"))
+        )
         if target_bias != current_bias:
             row["return_wait_bias"] = target_bias
             row_changes.append(
@@ -826,7 +917,9 @@ def _run_auto_improve(
     replay_returncode: int,
     report_payload: dict[str, Any] | None,
     report_path: Path | None,
-    counterfactual_runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    counterfactual_runner: (
+        Callable[[list[str]], subprocess.CompletedProcess[str]] | None
+    ) = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "enabled": bool(cfg.auto_improve_enabled),
@@ -865,7 +958,9 @@ def _run_auto_improve(
         result["reason"] = "replay_json_globs_empty"
         return result
 
-    out_root = (cfg.auto_improve_counterfactual_out_dir / report_path.parent.name).resolve()
+    out_root = (
+        cfg.auto_improve_counterfactual_out_dir / report_path.parent.name
+    ).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
 
     executor = counterfactual_runner or (
@@ -911,14 +1006,26 @@ def _run_auto_improve(
             strategy_runs.append(row)
             continue
 
-        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-        hints = payload.get("policy_hints") if isinstance(payload.get("policy_hints"), dict) else {}
+        summary = (
+            payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        )
+        hints = (
+            payload.get("policy_hints")
+            if isinstance(payload.get("policy_hints"), dict)
+            else {}
+        )
         trades = _safe_int(summary.get("trades"), default=0)
         block_hours = _normalize_hours(hints.get("block_jst_hours"))
         stuck_ratio = _safe_float(summary.get("stuck_trade_ratio"), default=0.0)
-        reentry_hint = hints.get("reentry_overrides") if isinstance(hints.get("reentry_overrides"), dict) else {}
+        reentry_hint = (
+            hints.get("reentry_overrides")
+            if isinstance(hints.get("reentry_overrides"), dict)
+            else {}
+        )
         reentry_mode = str(reentry_hint.get("mode") or "").strip().lower()
-        reentry_confidence = _clamp(_safe_float(reentry_hint.get("confidence"), 0.0), 0.0, 1.0)
+        reentry_confidence = _clamp(
+            _safe_float(reentry_hint.get("confidence"), 0.0), 0.0, 1.0
+        )
         reentry_lcb = max(0.0, _safe_float(reentry_hint.get("lcb_uplift_pips"), 0.0))
 
         row["trades"] = trades
@@ -938,27 +1045,39 @@ def _run_auto_improve(
         if reentry_mode in {"tighten", "loosen"}:
             if reentry_confidence < cfg.auto_improve_min_reentry_confidence:
                 row["status"] = "skipped_low_reentry_confidence"
-                row["min_reentry_confidence"] = round(cfg.auto_improve_min_reentry_confidence, 4)
+                row["min_reentry_confidence"] = round(
+                    cfg.auto_improve_min_reentry_confidence, 4
+                )
             elif reentry_lcb < cfg.auto_improve_min_reentry_lcb_uplift_pips:
                 row["status"] = "skipped_low_reentry_lcb"
-                row["min_reentry_lcb_uplift_pips"] = round(cfg.auto_improve_min_reentry_lcb_uplift_pips, 4)
+                row["min_reentry_lcb_uplift_pips"] = round(
+                    cfg.auto_improve_min_reentry_lcb_uplift_pips, 4
+                )
             else:
                 strategy_update["reentry_overrides"] = {
                     "mode": reentry_mode,
                     "confidence": reentry_confidence,
                     "lcb_uplift_pips": reentry_lcb,
                     "cooldown_loss_mult": _clamp(
-                        _safe_float(reentry_hint.get("cooldown_loss_mult"), 1.0), 0.60, 1.80
+                        _safe_float(reentry_hint.get("cooldown_loss_mult"), 1.0),
+                        0.60,
+                        1.80,
                     ),
                     "cooldown_win_mult": _clamp(
-                        _safe_float(reentry_hint.get("cooldown_win_mult"), 1.0), 0.70, 1.50
+                        _safe_float(reentry_hint.get("cooldown_win_mult"), 1.0),
+                        0.70,
+                        1.50,
                     ),
                     "same_dir_reentry_pips_mult": _clamp(
-                        _safe_float(reentry_hint.get("same_dir_reentry_pips_mult"), 1.0),
+                        _safe_float(
+                            reentry_hint.get("same_dir_reentry_pips_mult"), 1.0
+                        ),
                         0.70,
                         1.60,
                     ),
-                    "return_wait_bias": _normalize_bias(reentry_hint.get("return_wait_bias")),
+                    "return_wait_bias": _normalize_bias(
+                        reentry_hint.get("return_wait_bias")
+                    ),
                     "source": str(reentry_hint.get("source") or "counterfactual"),
                 }
 
@@ -1012,8 +1131,11 @@ def _run_auto_improve(
                     "state_path": str(cfg.auto_improve_apply_state_path),
                     "last_applied_at": last_applied_at.isoformat(),
                     "elapsed_sec": elapsed_sec,
-                    "min_apply_interval_sec": int(cfg.auto_improve_min_apply_interval_sec),
-                    "remaining_sec": int(cfg.auto_improve_min_apply_interval_sec) - elapsed_sec,
+                    "min_apply_interval_sec": int(
+                        cfg.auto_improve_min_apply_interval_sec
+                    ),
+                    "remaining_sec": int(cfg.auto_improve_min_apply_interval_sec)
+                    - elapsed_sec,
                 }
                 return result
 
@@ -1041,17 +1163,23 @@ def run_once(
     cfg: WorkerConfig,
     *,
     runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
-    counterfactual_runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    counterfactual_runner: (
+        Callable[[list[str]], subprocess.CompletedProcess[str]] | None
+    ) = None,
 ) -> int:
     started = datetime.now(timezone.utc)
     cmd = _build_command(cfg)
-    executor = runner or (lambda c: _run_subprocess(c, cwd=REPO_ROOT, timeout_sec=cfg.timeout_sec))
+    executor = runner or (
+        lambda c: _run_subprocess(c, cwd=REPO_ROOT, timeout_sec=cfg.timeout_sec)
+    )
     proc = executor(cmd)
     finished = datetime.now(timezone.utc)
 
     upstream_returncode = int(proc.returncode)
     soft_skip_reason = _detect_soft_skip(proc.stderr)
-    report_path = _extract_report_path_from_stdout(proc.stdout or "", out_dir=cfg.out_dir)
+    report_path = _extract_report_path_from_stdout(
+        proc.stdout or "", out_dir=cfg.out_dir
+    )
     fresh_report = _is_fresh_report(report_path, started=started)
     if upstream_returncode != 0 and not fresh_report:
         report_path = None
@@ -1082,7 +1210,9 @@ def run_once(
             report_path=report_path,
             counterfactual_runner=counterfactual_runner,
         )
-    removed_dirs = _cleanup_old_runs(cfg.out_dir, keep_runs=cfg.keep_runs, protected=report_path)
+    removed_dirs = _cleanup_old_runs(
+        cfg.out_dir, keep_runs=cfg.keep_runs, protected=report_path
+    )
     effective_returncode = 0 if soft_skip_reason else upstream_returncode
 
     payload = {
@@ -1126,7 +1256,10 @@ def main() -> int:
     if not _env_bool("REPLAY_QUALITY_GATE_ENABLED", True):
         print("[replay-quality-gate-worker] skipped: REPLAY_QUALITY_GATE_ENABLED=0")
         return 0
-    if _env_bool("REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN", False) and is_market_open():
+    if (
+        _env_bool("REPLAY_QUALITY_GATE_SKIP_WHEN_MARKET_OPEN", False)
+        and is_market_open()
+    ):
         print("[replay-quality-gate-worker] skipped: market_open")
         return 0
     args = parse_args()

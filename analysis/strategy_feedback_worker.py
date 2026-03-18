@@ -42,7 +42,11 @@ LOCAL_V2_PID_DIR = LOCAL_V2_STACK_DIR / "pids"
 class WorkerConfig:
     def __init__(self) -> None:
         self.trades_db = _resolve_repo_local_path(
-            Path(os.getenv("STRATEGY_FEEDBACK_TRADES_DB", BASE_DIR / "logs" / "trades.db"))
+            Path(
+                os.getenv(
+                    "STRATEGY_FEEDBACK_TRADES_DB", BASE_DIR / "logs" / "trades.db"
+                )
+            )
         )
         raw_feedback_path = os.getenv(
             "STRATEGY_FEEDBACK_PATH", BASE_DIR / "logs" / "strategy_feedback.json"
@@ -69,8 +73,12 @@ class WorkerConfig:
         )
         self.lookback_days = int(os.getenv("STRATEGY_FEEDBACK_LOOKBACK_DAYS", "14"))
         self.min_trades = int(os.getenv("STRATEGY_FEEDBACK_MIN_TRADES", "12"))
-        self.keep_inactive_days = int(os.getenv("STRATEGY_FEEDBACK_KEEP_INACTIVE_DAYS", "14"))
-        self.loop_sec = max(0.0, _to_float(os.getenv("STRATEGY_FEEDBACK_LOOP_SEC"), 0.0))
+        self.keep_inactive_days = int(
+            os.getenv("STRATEGY_FEEDBACK_KEEP_INACTIVE_DAYS", "14")
+        )
+        self.loop_sec = max(
+            0.0, _to_float(os.getenv("STRATEGY_FEEDBACK_LOOP_SEC"), 0.0)
+        )
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -95,7 +103,9 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 
 def _normalize_prefix(value: str) -> str:
-    return re.sub(r"_+", "_", re.sub(r"[^0-9a-zA-Z]+", "_", str(value or "").strip().upper())).strip("_")
+    return re.sub(
+        r"_+", "_", re.sub(r"[^0-9a-zA-Z]+", "_", str(value or "").strip().upper())
+    ).strip("_")
 
 
 def _coerce_env_value(raw: Any) -> Any:
@@ -200,10 +210,15 @@ def _load_participation_feedback_boosts(
         cadence_floor = _to_float(item.get("cadence_floor"), 1.0)
         if attempts < 1 or fills < 1:
             continue
-        if max(lot_multiplier or 1.0, 1.0) <= 1.0 and max(probability_boost or 0.0, 0.0) <= 0.0 and max(
-            cadence_floor or 1.0,
-            1.0,
-        ) <= 1.0:
+        if (
+            max(lot_multiplier or 1.0, 1.0) <= 1.0
+            and max(probability_boost or 0.0, 0.0) <= 0.0
+            and max(
+                cadence_floor or 1.0,
+                1.0,
+            )
+            <= 1.0
+        ):
             continue
         strategy_key = _norm_tag(raw_key) or str(raw_key or "").strip()
         if known_keys:
@@ -212,8 +227,14 @@ def _load_participation_feedback_boosts(
             continue
         current = boosted.get(strategy_key)
         payload_age = None if age_sec is None else round(float(age_sec), 1)
-        if current and current.get("payload_age_sec") is not None and payload_age is not None:
-            payload_age = min(payload_age, _to_float(current.get("payload_age_sec"), payload_age))
+        if (
+            current
+            and current.get("payload_age_sec") is not None
+            and payload_age is not None
+        ):
+            payload_age = min(
+                payload_age, _to_float(current.get("payload_age_sec"), payload_age)
+            )
         elif current and current.get("payload_age_sec") is not None:
             payload_age = _to_float(current.get("payload_age_sec"), 0.0)
         boosted[strategy_key] = {
@@ -222,15 +243,24 @@ def _load_participation_feedback_boosts(
             "attempts": attempts + _to_int((current or {}).get("attempts"), 0),
             "fills": fills + _to_int((current or {}).get("fills"), 0),
             "lot_multiplier": round(
-                max(max(lot_multiplier or 1.0, 1.0), _to_float((current or {}).get("lot_multiplier"), 1.0)),
+                max(
+                    max(lot_multiplier or 1.0, 1.0),
+                    _to_float((current or {}).get("lot_multiplier"), 1.0),
+                ),
                 4,
             ),
             "probability_boost": round(
-                max(max(probability_boost or 0.0, 0.0), _to_float((current or {}).get("probability_boost"), 0.0)),
+                max(
+                    max(probability_boost or 0.0, 0.0),
+                    _to_float((current or {}).get("probability_boost"), 0.0),
+                ),
                 4,
             ),
             "cadence_floor": round(
-                max(max(cadence_floor or 1.0, 1.0), _to_float((current or {}).get("cadence_floor"), 1.0)),
+                max(
+                    max(cadence_floor or 1.0, 1.0),
+                    _to_float((current or {}).get("cadence_floor"), 1.0),
+                ),
                 4,
             ),
             "payload_age_sec": payload_age,
@@ -358,11 +388,15 @@ class _StatsAccumulator:
         if hold_sec is not None and hold_sec >= 0.0:
             self.hold_sec_sum += hold_sec
             self.hold_sec_count += 1
-        if close_time and (self.last_closed is None or str(close_time) > str(self.last_closed)):
+        if close_time and (
+            self.last_closed is None or str(close_time) > str(self.last_closed)
+        ):
             self.last_closed = str(close_time)
 
     def to_stats(self, tag: str) -> StrategyStats:
-        avg_hold = self.hold_sec_sum / self.hold_sec_count if self.hold_sec_count > 0 else None
+        avg_hold = (
+            self.hold_sec_sum / self.hold_sec_count if self.hold_sec_count > 0 else None
+        )
         return StrategyStats(
             tag=tag,
             trades=self.trades,
@@ -378,7 +412,9 @@ class _StatsAccumulator:
         )
 
 
-def _merge_strategy_stats(canonical_tag: str, stats_list: list[StrategyStats]) -> StrategyStats:
+def _merge_strategy_stats(
+    canonical_tag: str, stats_list: list[StrategyStats]
+) -> StrategyStats:
     trades = sum(max(0, int(stats.trades)) for stats in stats_list)
     wins = sum(max(0, int(stats.wins)) for stats in stats_list)
     losses = sum(max(0, int(stats.losses)) for stats in stats_list)
@@ -432,7 +468,9 @@ def _remap_stats_to_known_keys(
         resolved = _canonical_known_strategy_key(key, known_keys)
         grouped.setdefault(resolved, []).append(stats)
         latest = str(latest_by_tag.get(key) or stats.last_closed or "").strip()
-        if latest and (resolved not in remapped_latest or latest > remapped_latest[resolved]):
+        if latest and (
+            resolved not in remapped_latest or latest > remapped_latest[resolved]
+        ):
             remapped_latest[resolved] = latest
 
     remapped_stats: dict[str, StrategyStats] = {}
@@ -454,7 +492,14 @@ def _systemctl_running_services() -> set[str]:
         return services
     try:
         cp = subprocess.run(
-            ["systemctl", "list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"],
+            [
+                "systemctl",
+                "list-units",
+                "--type=service",
+                "--state=running",
+                "--no-pager",
+                "--no-legend",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -660,7 +705,9 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _local_service_running(service_name: str, *, pid_dir: Path = LOCAL_V2_PID_DIR) -> bool:
+def _local_service_running(
+    service_name: str, *, pid_dir: Path = LOCAL_V2_PID_DIR
+) -> bool:
     base = str(service_name or "").strip()
     if not base:
         return False
@@ -745,7 +792,11 @@ def _looks_like_strategy_mode_value(token: str) -> bool:
         return False
     if key in _DISCOVERY_TAG_ALIASES:
         return True
-    if any(ch in raw for ch in "_-") or any(ch.isdigit() for ch in raw) or any(ch.isupper() for ch in raw):
+    if (
+        any(ch in raw for ch in "_-")
+        or any(ch.isdigit() for ch in raw)
+        or any(ch.isupper() for ch in raw)
+    ):
         return True
     resolved = resolve_strategy_tag(raw)
     return bool(resolved and resolved != raw)
@@ -763,7 +814,9 @@ def _extract_tag_candidates_from_env(env: dict[str, str]) -> set[str]:
 
         is_mode = key_u.endswith("_MODE")
         is_tags = key_u.endswith("_TAGS")
-        is_strategy_tag = key_u.endswith("_STRATEGY_TAG") or key_u.endswith("_STRATEGY_TAG_OVERRIDE")
+        is_strategy_tag = key_u.endswith("_STRATEGY_TAG") or key_u.endswith(
+            "_STRATEGY_TAG_OVERRIDE"
+        )
         is_exit_tags = key_u.endswith("_EXIT_TAGS")
         is_allowlist = key_u.endswith("_ALLOWLIST") or key_u.endswith("_UNIT_ALLOWLIST")
 
@@ -823,7 +876,9 @@ def _fallback_strategy_tags(service_name: str, modules: list[str]) -> set[str]:
     for candidate in (
         service_name,
         service_name.removeprefix("quant-").removesuffix(".service"),
-        service_name.removeprefix("quant-").removesuffix(".service").removesuffix("-exit"),
+        service_name.removeprefix("quant-")
+        .removesuffix(".service")
+        .removesuffix("-exit"),
     ):
         resolved = _infer_strategy_tag_from_identifier(candidate)
         if resolved:
@@ -925,7 +980,9 @@ def _parse_strategy_records_from_unit(
     if not worker_tags:
         return {}
 
-    strategy_prefixes = _derive_strategy_prefixes(service_name, modules, set(worker_tags))
+    strategy_prefixes = _derive_strategy_prefixes(
+        service_name, modules, set(worker_tags)
+    )
     for path in env_paths:
         if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
             continue
@@ -1018,7 +1075,9 @@ def _extract_strategy_params(env: dict[str, str], prefixes: set[str]) -> dict[st
     return params
 
 
-def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: dt.datetime) -> dict[str, StrategyRecord]:
+def _discover_from_systemd(
+    systemd_dir: Path, running_services: set[str], now: dt.datetime
+) -> dict[str, StrategyRecord]:
     discovered: dict[str, StrategyRecord] = {}
 
     def _merge(records: dict[str, StrategyRecord]) -> None:
@@ -1038,8 +1097,14 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
         local_unit_names.add(name)
         if not name.startswith("quant-"):
             continue
-        is_running = name in running_services if running else _local_service_running(name)
-        _merge(_parse_strategy_records_from_unit(name, body, is_running, repo_root=BASE_DIR))
+        is_running = (
+            name in running_services if running else _local_service_running(name)
+        )
+        _merge(
+            _parse_strategy_records_from_unit(
+                name, body, is_running, repo_root=BASE_DIR
+            )
+        )
 
     if running:
         for service_name in running_services:
@@ -1052,7 +1117,11 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
                 body = _synthetic_local_unit_body(service_name, repo_root=BASE_DIR)
             if not body:
                 continue
-            _merge(_parse_strategy_records_from_unit(service_name, body, True, repo_root=BASE_DIR))
+            _merge(
+                _parse_strategy_records_from_unit(
+                    service_name, body, True, repo_root=BASE_DIR
+                )
+            )
 
     return discovered
 
@@ -1149,7 +1218,9 @@ def _parse_entry_thesis(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _entry_setup_context(entry_thesis: dict[str, Any], *, units: int = 0) -> dict[str, str]:
+def _entry_setup_context(
+    entry_thesis: dict[str, Any], *, units: int = 0
+) -> dict[str, str]:
     return extract_setup_identity(entry_thesis, units=units)
 
 
@@ -1159,7 +1230,10 @@ def _setup_matches(context: dict[str, str]) -> list[dict[str, str]]:
     flow_regime = context.get("flow_regime")
     microstructure_bucket = context.get("microstructure_bucket")
     if setup_fingerprint:
-        match = {"match_dimension": "setup_fingerprint", "setup_fingerprint": setup_fingerprint}
+        match = {
+            "match_dimension": "setup_fingerprint",
+            "setup_fingerprint": setup_fingerprint,
+        }
         if flow_regime:
             match["flow_regime"] = flow_regime
         if microstructure_bucket:
@@ -1177,7 +1251,10 @@ def _setup_matches(context: dict[str, str]) -> list[dict[str, str]]:
         matches.append({"match_dimension": "flow_regime", "flow_regime": flow_regime})
     if microstructure_bucket:
         matches.append(
-            {"match_dimension": "microstructure_bucket", "microstructure_bucket": microstructure_bucket}
+            {
+                "match_dimension": "microstructure_bucket",
+                "microstructure_bucket": microstructure_bucket,
+            }
         )
     return matches
 
@@ -1260,8 +1337,12 @@ def _discover_setup_stats(
         if row["open_time"] and row["close_time"]:
             try:
                 hold_sec = (
-                    dt.datetime.fromisoformat(str(row["close_time"]).replace("Z", "+00:00"))
-                    - dt.datetime.fromisoformat(str(row["open_time"]).replace("Z", "+00:00"))
+                    dt.datetime.fromisoformat(
+                        str(row["close_time"]).replace("Z", "+00:00")
+                    )
+                    - dt.datetime.fromisoformat(
+                        str(row["open_time"]).replace("Z", "+00:00")
+                    )
                 ).total_seconds()
             except Exception:
                 hold_sec = None
@@ -1271,7 +1352,11 @@ def _discover_setup_stats(
             if group_key not in strategy_bucket:
                 strategy_bucket[group_key] = (dict(match), _StatsAccumulator())
             _, acc = strategy_bucket[group_key]
-            acc.add(pl_pips=pl_pips, hold_sec=hold_sec, close_time=str(row["close_time"] or ""))
+            acc.add(
+                pl_pips=pl_pips,
+                hold_sec=hold_sec,
+                close_time=str(row["close_time"] or ""),
+            )
 
     out: dict[str, list[tuple[dict[str, str], StrategyStats]]] = {}
     for tag, bucket in grouped.items():
@@ -1281,7 +1366,9 @@ def _discover_setup_stats(
             if stats.trades <= 0:
                 continue
             entries.append((match, stats))
-        entries.sort(key=lambda item: (_match_sort_key(item[0]), item[1].trades), reverse=True)
+        entries.sort(
+            key=lambda item: (_match_sort_key(item[0]), item[1].trades), reverse=True
+        )
         if entries:
             out[tag] = entries
     return out
@@ -1382,14 +1469,21 @@ def _squad_recommendation(
         units_multiplier *= 0.95
         sl_multiplier *= 0.96
 
-    prev_params = previous_feedback.get("strategy_params") if isinstance(previous_feedback, dict) else {}
+    prev_params = (
+        previous_feedback.get("strategy_params")
+        if isinstance(previous_feedback, dict)
+        else {}
+    )
     if not isinstance(prev_params, dict):
         prev_params = {}
     prev_pf = _to_optional_float(prev_params.get("profit_factor"))
     prev_avg_pips = _to_optional_float(prev_params.get("avg_pips"))
     prev_loss_asym = _to_optional_float(prev_params.get("loss_asymmetry"))
     profitable_now = pf == float("inf") or pf >= 1.05
-    payoff_ok = stats.avg_pips > 0.0 and (stats.loss_asymmetry <= 1.15 or (wr >= 0.62 and (pf == float("inf") or pf >= 1.20)))
+    payoff_ok = stats.avg_pips > 0.0 and (
+        stats.loss_asymmetry <= 1.15
+        or (wr >= 0.62 and (pf == float("inf") or pf >= 1.20))
+    )
     improved_vs_prev = prev_pf is None and prev_avg_pips is None
     if not improved_vs_prev:
         improved_vs_prev = False
@@ -1424,7 +1518,11 @@ def _squad_recommendation(
             "profit_factor": None if pf == float("inf") else round(pf, 3),
             "trades": stats.trades,
             "avg_pips": round(stats.avg_pips, 3),
-            "loss_asymmetry": None if stats.loss_asymmetry == float("inf") else round(stats.loss_asymmetry, 3),
+            "loss_asymmetry": (
+                None
+                if stats.loss_asymmetry == float("inf")
+                else round(stats.loss_asymmetry, 3)
+            ),
             "avg_hold_sec": None if avg_hold is None else round(avg_hold, 1),
             "configured_params": dict(strategy_params or {}),
             "feedback_growth_gate": {
@@ -1433,8 +1531,12 @@ def _squad_recommendation(
                 "payoff_ok": bool(payoff_ok),
                 "improved_vs_prev": bool(improved_vs_prev),
                 "prev_profit_factor": None if prev_pf is None else round(prev_pf, 3),
-                "prev_avg_pips": None if prev_avg_pips is None else round(prev_avg_pips, 3),
-                "prev_loss_asymmetry": None if prev_loss_asym is None else round(prev_loss_asym, 3),
+                "prev_avg_pips": (
+                    None if prev_avg_pips is None else round(prev_avg_pips, 3)
+                ),
+                "prev_loss_asymmetry": (
+                    None if prev_loss_asym is None else round(prev_loss_asym, 3)
+                ),
             },
         },
     }
@@ -1503,7 +1605,9 @@ def _build_setup_overrides(
         override["win_rate"] = round(_clamp(stats.win_rate, 0.0, 1.0), 3)
         pf = stats.profit_factor
         override["profit_factor"] = None if pf == float("inf") else round(pf, 3)
-        override["avg_hold_sec"] = None if stats.avg_hold_sec is None else round(stats.avg_hold_sec, 1)
+        override["avg_hold_sec"] = (
+            None if stats.avg_hold_sec is None else round(stats.avg_hold_sec, 1)
+        )
         overrides.append(override)
     overrides.sort(
         key=lambda item: (
@@ -1515,7 +1619,9 @@ def _build_setup_overrides(
     return overrides[:8]
 
 
-def _previous_setup_override_map(strategy_cfg: dict[str, Any] | None) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+def _previous_setup_override_map(
+    strategy_cfg: dict[str, Any] | None,
+) -> dict[tuple[str, str, str, str], dict[str, Any]]:
     if not isinstance(strategy_cfg, dict):
         return {}
     raw_overrides = strategy_cfg.get("setup_overrides")
@@ -1538,11 +1644,17 @@ def _previous_setup_override_map(strategy_cfg: dict[str, Any] | None) -> dict[tu
 def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     previous_payload = _read_json_dict(config.feedback_path) or {}
-    previous_strategies = previous_payload.get("strategies") if isinstance(previous_payload.get("strategies"), dict) else {}
+    previous_strategies = (
+        previous_payload.get("strategies")
+        if isinstance(previous_payload.get("strategies"), dict)
+        else {}
+    )
     running_services = _systemctl_running_services()
     if not running_services:
         running_services = _local_stack_running_services(config.local_pid_dir)
-    discovered_systemd = _discover_from_systemd(config.systemd_dir, running_services, dt.datetime.utcnow())
+    discovered_systemd = _discover_from_systemd(
+        config.systemd_dir, running_services, dt.datetime.utcnow()
+    )
     discovered_control = _discover_from_control()
 
     # merge discovery signals
@@ -1559,7 +1671,9 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             if rec.enabled is not None:
                 merged[key].enabled = rec.enabled
 
-    stats_by_tag, latest_by_tag = _discover_from_trades(config.trades_db, config.lookback_days)
+    stats_by_tag, latest_by_tag = _discover_from_trades(
+        config.trades_db, config.lookback_days
+    )
     if merged:
         stats_by_tag, latest_by_tag = _remap_stats_to_known_keys(
             stats_by_tag,
@@ -1616,7 +1730,12 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             # strategy workers removed/stopped: keep silent to avoid applying stale knobs
             if cutoff is not None and rec.last_closed:
                 try:
-                    if dt.datetime.fromisoformat(str(rec.last_closed).replace("Z", "+00:00")) < cutoff:
+                    if (
+                        dt.datetime.fromisoformat(
+                            str(rec.last_closed).replace("Z", "+00:00")
+                        )
+                        < cutoff
+                    ):
                         continue
                 except Exception:
                     pass
@@ -1629,7 +1748,11 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             config.min_trades,
             strategy_params=rec.strategy_params,
             probe_feedback=probe_feedback_by_tag.get(tag),
-            previous_feedback=previous_strategies.get(tag) if isinstance(previous_strategies, dict) else None,
+            previous_feedback=(
+                previous_strategies.get(tag)
+                if isinstance(previous_strategies, dict)
+                else None
+            ),
         )
         if not advice:
             continue
@@ -1639,7 +1762,9 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             setup_stats_by_tag.get(tag, []),
             min_trades=config.min_trades,
             previous_overrides=_previous_setup_override_map(
-                previous_strategies.get(tag) if isinstance(previous_strategies, dict) else None
+                previous_strategies.get(tag)
+                if isinstance(previous_strategies, dict)
+                else None
             ),
         )
         if setup_overrides:
@@ -1660,7 +1785,9 @@ def _write_payload(path: Path, payload: dict[str, Any]) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate strategy_feedback JSON")
-    parser.add_argument("--nowrite", action="store_true", help="Do not write output file")
+    parser.add_argument(
+        "--nowrite", action="store_true", help="Do not write output file"
+    )
     parser.add_argument(
         "--loop-sec",
         type=float,
@@ -1673,7 +1800,10 @@ def _parse_args() -> argparse.Namespace:
 def _run_once(config: WorkerConfig, *, nowrite: bool) -> None:
     payload = _build_payload(config)
     if nowrite:
-        logging.info("[strategy-feedback-worker] nowrite mode: %s", json.dumps(payload, ensure_ascii=False))
+        logging.info(
+            "[strategy-feedback-worker] nowrite mode: %s",
+            json.dumps(payload, ensure_ascii=False),
+        )
         return
     _write_payload(config.feedback_path, payload)
     logging.info(
@@ -1687,7 +1817,9 @@ def main() -> None:
     args = _parse_args()
     logging.basicConfig(level=logging.INFO)
     config = WorkerConfig()
-    loop_sec = config.loop_sec if args.loop_sec is None else max(0.0, float(args.loop_sec))
+    loop_sec = (
+        config.loop_sec if args.loop_sec is None else max(0.0, float(args.loop_sec))
+    )
 
     if loop_sec <= 0.0:
         _run_once(config, nowrite=args.nowrite)

@@ -1,7 +1,12 @@
 """Micro multi-strategy worker with dynamic cap."""
 
 from __future__ import annotations
-from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import (
+    compute_adx_projection,
+    compute_bbw_projection,
+    compute_ma_projection,
+    compute_rsi_projection,
+)
 from analysis.technique_engine import evaluate_entry_techniques
 from analysis.ma_projection import score_ma_for_side
 
@@ -16,7 +21,11 @@ from typing import Dict, List, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
 from analysis.range_model import compute_range_snapshot
-from indicators.factor_cache import all_factors, get_candles_snapshot, refresh_cache_from_disk
+from indicators.factor_cache import (
+    all_factors,
+    get_candles_snapshot,
+    refresh_cache_from_disk,
+)
 from execution.strategy_entry import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
@@ -31,12 +40,18 @@ from strategies.micro_lowvol.compression_revert import MicroCompressionRevert
 from strategies.micro_lowvol.momentum_pulse import MomentumPulse
 from strategies.micro.trend_momentum import TrendMomentumMicro
 from strategies.micro.trend_retest import MicroTrendRetest
-from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
+from utils.divergence import (
+    apply_divergence_confidence,
+    divergence_bias,
+    divergence_snapshot,
+)
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.metrics_logger import log_metric
 from workers.common.dyn_cap import compute_cap
-from workers.common.dynamic_alloc import load_strategy_profile as load_dynamic_alloc_profile
+from workers.common.dynamic_alloc import (
+    load_strategy_profile as load_dynamic_alloc_profile,
+)
 from workers.common.participation_alloc import (
     load_strategy_profile as load_participation_profile,
 )
@@ -44,7 +59,11 @@ from workers.common import perf_guard
 from workers.common.quality_gate import current_regime
 from workers.common.setup_context import derive_live_setup_context
 from analysis import perf_monitor
-from analysis.market_regime import classify_regime, MarketRegime, should_enter as regime_should_enter
+from analysis.market_regime import (
+    classify_regime,
+    MarketRegime,
+    should_enter as regime_should_enter,
+)
 from analysis.adaptive_sl_tp import compute_adaptive_sl_tp, map_strategy_tag_to_type
 
 from workers.common.size_utils import scale_base_units
@@ -58,12 +77,24 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float(
+    "BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_TREND_EXT_RATIO = env_float(
+    "BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float(
+    "BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float(
+    "BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float(
+    "BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float(
+    "BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX
+)
 _BB_PIP = 0.01
 try:
     from analysis.pattern_stats import derive_pattern_signature
@@ -71,12 +102,20 @@ except Exception:
     derive_pattern_signature = None  # type: ignore
 
 # Pattern gate (pattern_book-driven). Opt-in per strategy to avoid global enforcement.
-_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN", True)
-_MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC", True)
-_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN = env_bool("MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN", True)
+_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN = env_bool(
+    "MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN", True
+)
+_MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC = env_bool(
+    "MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC", True
+)
+_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN = env_bool(
+    "MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN", True
+)
 _ACCOUNT_SNAPSHOT_TTL_SEC = max(
     0.1,
-    env_float("ACCOUNT_SNAPSHOT_TTL_SEC", 1.0, prefix=getattr(config, "ENV_PREFIX", "")),
+    env_float(
+        "ACCOUNT_SNAPSHOT_TTL_SEC", 1.0, prefix=getattr(config, "ENV_PREFIX", "")
+    ),
 )
 _ACCOUNT_SNAPSHOT_ALLOW_STALE_SEC = max(
     _ACCOUNT_SNAPSHOT_TTL_SEC,
@@ -86,7 +125,9 @@ _ACCOUNT_SNAPSHOT_ALLOW_STALE_SEC = max(
         prefix=getattr(config, "ENV_PREFIX", ""),
     ),
 )
-_STRATEGY_PARTICIPATION_ALLOC_ENABLED = env_bool("STRATEGY_PARTICIPATION_ALLOC_ENABLED", True)
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = env_bool(
+    "STRATEGY_PARTICIPATION_ALLOC_ENABLED", True
+)
 _STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
     "STRATEGY_PARTICIPATION_ALLOC_PATH",
     "config/participation_alloc.json",
@@ -121,7 +162,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _resolve_account_snapshot(
@@ -163,8 +210,16 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if style == "scalp" and range_active:
         style = "reversion"
     if style == "reversion":
-        base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
-        base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
+        base_pips = (
+            _BB_ENTRY_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_ENTRY_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_RATIO
+        )
         threshold = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             dist = (price - lower) / _BB_PIP
@@ -233,7 +288,12 @@ def _build_m1_from_ticks(ticks: List[Dict]) -> Optional[Dict[str, object]]:
         bucket = ts_ms // 60000
         candle = buckets.get(bucket)
         if candle is None:
-            buckets[bucket] = {"open": price, "high": price, "low": price, "close": price}
+            buckets[bucket] = {
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+            }
         else:
             candle["high"] = max(candle["high"], price)
             candle["low"] = min(candle["low"], price)
@@ -284,7 +344,12 @@ def _build_m1_from_ticks(ticks: List[Dict]) -> Optional[Dict[str, object]]:
 
 
 def _trend_snapshot(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict):
-    for tf_name, fac in (("H4", fac_h4), ("H1", fac_h1), ("M5", fac_m5), ("M1", fac_m1)):
+    for tf_name, fac in (
+        ("H4", fac_h4),
+        ("H1", fac_h1),
+        ("M5", fac_m5),
+        ("M1", fac_m1),
+    ):
         if not fac:
             continue
         ma10 = fac.get("ma10")
@@ -347,7 +412,9 @@ def _ma_gap_pips(fac: Dict) -> Optional[float]:
     return (ma_fast - ma_slow) / _BB_PIP
 
 
-def _mtf_context(fac_m5: Dict, fac_h1: Dict, fac_h4: Dict) -> Dict[str, Dict[str, object]]:
+def _mtf_context(
+    fac_m5: Dict, fac_h1: Dict, fac_h4: Dict
+) -> Dict[str, Dict[str, object]]:
     context: Dict[str, Dict[str, object]] = {}
     for name, fac in (("m5", fac_m5), ("h1", fac_h1), ("h4", fac_h4)):
         gap_pips = _ma_gap_pips(fac)
@@ -368,7 +435,9 @@ def _mtf_context(fac_m5: Dict, fac_h1: Dict, fac_h4: Dict) -> Dict[str, Dict[str
     return context
 
 
-def _pullback_mtf_confirm(action: str, fac_m5: Dict, fac_h1: Dict) -> tuple[bool, Dict[str, object]]:
+def _pullback_mtf_confirm(
+    action: str, fac_m5: Dict, fac_h1: Dict
+) -> tuple[bool, Dict[str, object]]:
     side = "long" if action == "OPEN_LONG" else "short"
     m5_gap = _ma_gap_pips(fac_m5)
     h1_gap = _ma_gap_pips(fac_h1)
@@ -396,7 +465,10 @@ def _pullback_mtf_confirm(action: str, fac_m5: Dict, fac_h1: Dict) -> tuple[bool
             return False, diag
 
     if h1_gap is not None:
-        if abs(h1_gap) >= _PULLBACK_MTF_H1_GAP_NEUTRAL_PIPS and h1_adx >= _PULLBACK_MTF_H1_ADX_MIN:
+        if (
+            abs(h1_gap) >= _PULLBACK_MTF_H1_GAP_NEUTRAL_PIPS
+            and h1_adx >= _PULLBACK_MTF_H1_ADX_MIN
+        ):
             if side == "long" and h1_gap < 0:
                 diag["reason"] = "h1_counter_trend"
                 return False, diag
@@ -420,7 +492,10 @@ def _apply_trend_flip(
     trend = _trend_snapshot(fac_m1, fac_m5, fac_h1, fac_h4)
     if not config.TREND_FLIP_ENABLED or not trend:
         return side, signal_tag, None, 1.0, 1.0, trend
-    if config.TREND_FLIP_STRATEGY_ALLOWLIST and strategy_name not in config.TREND_FLIP_STRATEGY_ALLOWLIST:
+    if (
+        config.TREND_FLIP_STRATEGY_ALLOWLIST
+        and strategy_name not in config.TREND_FLIP_STRATEGY_ALLOWLIST
+    ):
         return side, signal_tag, None, 1.0, 1.0, trend
     if strategy_name in config.TREND_FLIP_STRATEGY_BLOCKLIST:
         return side, signal_tag, None, 1.0, 1.0, trend
@@ -438,7 +513,15 @@ def _apply_trend_flip(
         "gap_pips": trend["gap_pips"],
         "adx": trend["adx"],
     }
-    return flipped_side, f"{signal_tag}-trendflip", flip_meta, config.TREND_FLIP_TP_MULT, config.TREND_FLIP_SL_MULT, trend
+    return (
+        flipped_side,
+        f"{signal_tag}-trendflip",
+        flip_meta,
+        config.TREND_FLIP_TP_MULT,
+        config.TREND_FLIP_SL_MULT,
+        trend,
+    )
+
 
 LOG = logging.getLogger(__name__)
 
@@ -468,7 +551,11 @@ _RANGE_STRATEGIES = {
 _RANGE_TREND_ALLOWLIST = {name for name in config.RANGE_ONLY_TREND_ALLOWLIST}
 
 _HISTORY_PROFILE_CACHE: Dict[Tuple[str, str, str], tuple[float, Dict[str, object]]] = {}
-_SETUP_HISTORY_PROFILE_CACHE: Dict[Tuple[str, str], tuple[float, Dict[str, object]]] = {}
+_SETUP_HISTORY_PROFILE_CACHE: Dict[Tuple[str, str], tuple[float, Dict[str, object]]] = (
+    {}
+)
+
+
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
@@ -489,7 +576,7 @@ def _extract_m1_candle_rows(raw_candles, *, lookback: int) -> List[Dict[str, flo
     rows: List[Dict[str, float]] = []
     if not isinstance(raw_candles, list):
         return rows
-    for item in raw_candles[-max(lookback, 2):]:
+    for item in raw_candles[-max(lookback, 2) :]:
         if not isinstance(item, dict):
             continue
         try:
@@ -540,7 +627,9 @@ def _micro_chop_context(fac_m1: Dict) -> Dict[str, float]:
     net_move_pips = abs(rows[-1]["close"] - rows[0]["open"]) / _BB_PIP
     sign_flips = sum(1 for prev, cur in zip(diffs, diffs[1:]) if prev * cur < 0.0)
     sign_flip_ratio = sign_flips / max(1, len(diffs) - 1)
-    mean_range_pips = sum((row["high"] - row["low"]) / _BB_PIP for row in rows) / max(1, len(rows))
+    mean_range_pips = sum((row["high"] - row["low"]) / _BB_PIP for row in rows) / max(
+        1, len(rows)
+    )
     directional_eff = net_move_pips / max(path_move_pips, 1e-9)
     active = bool(
         mean_range_pips >= config.CHOP_MEAN_RANGE_MIN_PIPS
@@ -568,7 +657,9 @@ def _micro_chop_context(fac_m1: Dict) -> Dict[str, float]:
     }
 
 
-def _strategy_chop_score_adjustment(strategy_name: str, chop_ctx: Dict[str, float]) -> float:
+def _strategy_chop_score_adjustment(
+    strategy_name: str, chop_ctx: Dict[str, float]
+) -> float:
     if not chop_ctx.get("active"):
         return 0.0
     score = _clamp01(float(chop_ctx.get("score", 0.0) or 0.0))
@@ -577,11 +668,15 @@ def _strategy_chop_score_adjustment(strategy_name: str, chop_ctx: Dict[str, floa
     return (bonus - penalty) * score
 
 
-def _strategy_chop_units_multiplier(strategy_name: str, chop_ctx: Dict[str, float]) -> float:
+def _strategy_chop_units_multiplier(
+    strategy_name: str, chop_ctx: Dict[str, float]
+) -> float:
     if not chop_ctx.get("active"):
         return 1.0
     target_mult = float(config.CHOP_STRATEGY_UNITS_MULT.get(strategy_name, 1.0) or 1.0)
-    return _context_scaled_multiplier(target_mult, float(chop_ctx.get("score", 0.0) or 0.0))
+    return _context_scaled_multiplier(
+        target_mult, float(chop_ctx.get("score", 0.0) or 0.0)
+    )
 
 
 def _normalize_tag_key(raw: object) -> str:
@@ -838,7 +933,9 @@ def _history_profile(
     )
     used_regime = bool(normalized_regime)
     source = "regime"
-    if normalized_regime and int(row.get("n", 0) or 0) < max(1, int(config.HIST_REGIME_MIN_TRADES)):
+    if normalized_regime and int(row.get("n", 0) or 0) < max(
+        1, int(config.HIST_REGIME_MIN_TRADES)
+    ):
         fallback = _query_strategy_history(
             strategy_key=strategy_key,
             pocket=pocket,
@@ -989,12 +1086,16 @@ def _build_signal_history_setup_fingerprint(
                 "atr_pips": fac_m1.get("atr_pips"),
                 "bbw": fac_m1.get("bbw"),
             }
-            pattern_tag, _pattern_meta = derive_pattern_signature(pattern_fac, action=signal_action)
+            pattern_tag, _pattern_meta = derive_pattern_signature(
+                pattern_fac, action=signal_action
+            )
             if pattern_tag:
                 entry_thesis["pattern_tag"] = pattern_tag
         except Exception:
             pass
-    live_setup = derive_live_setup_context(entry_thesis, units=1 if side == "long" else -1)
+    live_setup = derive_live_setup_context(
+        entry_thesis, units=1 if side == "long" else -1
+    )
     if not isinstance(live_setup, dict):
         return ""
     return str(live_setup.get("setup_fingerprint") or "").strip()
@@ -1025,7 +1126,6 @@ def _apply_setup_history_winner_override(
         "avg_pips": float(setup_profile.get("avg_pips", 0.0) or 0.0),
     }
     return adjusted, setup_profile
-
 
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
@@ -1173,16 +1273,28 @@ def _projection_decision(side, pocket, mode_override=None):
 
     ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
     rsi = compute_rsi_projection(candles, timeframe_minutes=minutes)
-    adx = compute_adx_projection(candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"])
+    adx = compute_adx_projection(
+        candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"]
+    )
     bbw = None
     if mode == "range":
-        bbw = compute_bbw_projection(candles, timeframe_minutes=minutes, squeeze_threshold=params["bbw_threshold"])
+        bbw = compute_bbw_projection(
+            candles,
+            timeframe_minutes=minutes,
+            squeeze_threshold=params["bbw_threshold"],
+        )
 
     scores = {}
     ma_score = _score_ma(ma, side, params["opp_block_bars"])
     if ma_score is not None and "ma" in params["weights"]:
         scores["ma"] = ma_score
-    rsi_score = _score_rsi(rsi, side, params["long_target"], params["short_target"], params["overheat_bars"])
+    rsi_score = _score_rsi(
+        rsi,
+        side,
+        params["long_target"],
+        params["short_target"],
+        params["overheat_bars"],
+    )
     if rsi_score is not None and "rsi" in params["weights"]:
         scores["rsi"] = rsi_score
     adx_score = _score_adx(adx, mode != "range", params["adx_threshold"])
@@ -1212,6 +1324,8 @@ def _projection_decision(side, pocket, mode_override=None):
         "scores": {k: round(v, 3) for k, v in scores.items()},
     }
     return allow, size_mult, detail
+
+
 def _latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=10.0, limit=1)
     if ticks:
@@ -1315,7 +1429,9 @@ def _allowed_strategies() -> List:
     if not allow:
         _ALLOWED_STRATEGIES_CACHE = (allow_raw, tuple(all_classes))
         return list(all_classes)
-    filtered = [cls for cls in all_classes if getattr(cls, "name", cls.__name__) in allow]
+    filtered = [
+        cls for cls in all_classes if getattr(cls, "name", cls.__name__) in allow
+    ]
     if not filtered:
         LOG.warning("%s allowlist empty; using all strategies", config.LOG_PREFIX)
         _ALLOWED_STRATEGIES_CACHE = (allow_raw, tuple(all_classes))
@@ -1352,7 +1468,9 @@ def _mlr_strict_range_ok(
 
     range_ready = bool(range_active) or range_score >= config.MLR_MIN_RANGE_SCORE
     adx_ok = config.MLR_MAX_ADX <= 0.0 or adx_val <= config.MLR_MAX_ADX
-    ma_gap_ok = config.MLR_MAX_MA_GAP_PIPS <= 0.0 or ma_gap_pips <= config.MLR_MAX_MA_GAP_PIPS
+    ma_gap_ok = (
+        config.MLR_MAX_MA_GAP_PIPS <= 0.0 or ma_gap_pips <= config.MLR_MAX_MA_GAP_PIPS
+    )
     allow = bool(range_ready and adx_ok and ma_gap_ok)
     chop_active = bool((chop_ctx or {}).get("active"))
     chop_score = float((chop_ctx or {}).get("score", 0.0) or 0.0)
@@ -1363,7 +1481,9 @@ def _mlr_strict_range_ok(
         and chop_active
         and chop_score >= config.MLR_CHOP_SCORE_MIN
     ):
-        chop_adx_ok = config.MLR_CHOP_MAX_ADX <= 0.0 or adx_val <= config.MLR_CHOP_MAX_ADX
+        chop_adx_ok = (
+            config.MLR_CHOP_MAX_ADX <= 0.0 or adx_val <= config.MLR_CHOP_MAX_ADX
+        )
         chop_ma_gap_ok = (
             config.MLR_CHOP_MAX_MA_GAP_PIPS <= 0.0
             or ma_gap_pips <= config.MLR_CHOP_MAX_MA_GAP_PIPS
@@ -1389,7 +1509,12 @@ def _is_mr_signal(tag: str) -> bool:
     if not tag_str:
         return False
     base_tag = tag_str.split("-", 1)[0]
-    if base_tag in {"MicroVWAPBound", "MicroVWAPRevert", "MicroCompressionRevert", "BB_RSI"}:
+    if base_tag in {
+        "MicroVWAPBound",
+        "MicroVWAPRevert",
+        "MicroCompressionRevert",
+        "BB_RSI",
+    }:
         return True
     lower = tag_str.lower()
     return lower.startswith("mlr-fade") or lower.startswith("mlr-bounce")
@@ -1447,7 +1572,9 @@ def _factor_age_seconds(factors: Dict[str, float]) -> float:
     try:
         if isinstance(ts_raw, (int, float)):
             ts_val = float(ts_raw)
-            ts_dt = datetime.datetime.utcfromtimestamp(ts_val).replace(tzinfo=datetime.timezone.utc)
+            ts_dt = datetime.datetime.utcfromtimestamp(ts_val).replace(
+                tzinfo=datetime.timezone.utc
+            )
         else:
             ts_txt = str(ts_raw)
             if ts_txt.endswith("Z"):
@@ -1494,7 +1621,9 @@ def _momentumburst_entry_thesis_reaccel(
     strategy_name: str,
     signal: Optional[Dict[str, object]],
 ) -> bool:
-    return strategy_name == MomentumBurstMicro.name and _momentumburst_reaccel_signal(signal)
+    return strategy_name == MomentumBurstMicro.name and _momentumburst_reaccel_signal(
+        signal
+    )
 
 
 def _signal_tag(signal: Optional[Dict[str, object]]) -> str:
@@ -1503,7 +1632,9 @@ def _signal_tag(signal: Optional[Dict[str, object]]) -> str:
     return str(signal.get("tag") or "").strip()
 
 
-_DIRECTIONAL_PROFILE_TAG_SEGMENTS = frozenset({"long", "short", "open_long", "open_short"})
+_DIRECTIONAL_PROFILE_TAG_SEGMENTS = frozenset(
+    {"long", "short", "open_long", "open_short"}
+)
 
 
 def _strategy_profile_lookup_keys(
@@ -1653,13 +1784,19 @@ def _strategy_effective_cooldown_sec(
         has_effective = True
     elif cadence_floor > 1.0:
         boosted_cooldown = ref_cooldown / cadence_floor
-        effective_cooldown = boosted_cooldown if not has_effective else min(effective_cooldown, boosted_cooldown)
+        effective_cooldown = (
+            boosted_cooldown
+            if not has_effective
+            else min(effective_cooldown, boosted_cooldown)
+        )
         has_effective = True
     if dyn_mult < 1.0:
         dyn_cooldown = ref_cooldown / max(config.DYN_ALLOC_MULT_MIN, dyn_mult)
         if cadence_floor > 1.0:
             dyn_cooldown = dyn_cooldown / cadence_floor
-        effective_cooldown = dyn_cooldown if not has_effective else max(effective_cooldown, dyn_cooldown)
+        effective_cooldown = (
+            dyn_cooldown if not has_effective else max(effective_cooldown, dyn_cooldown)
+        )
     return max(0.0, effective_cooldown)
 
 
@@ -1744,9 +1881,14 @@ def _clamp_strategy_units_multiplier(
 
     history_underperforming = (
         isinstance(dyn_clamp_meta, dict)
-        and str(dyn_clamp_meta.get("reason") or "").strip().lower() == "history_underperforming"
+        and str(dyn_clamp_meta.get("reason") or "").strip().lower()
+        == "history_underperforming"
     )
-    if dyn_mult >= 1.0 and dyn_score > float(config.DYN_ALLOC_LOSER_SCORE) and not history_underperforming:
+    if (
+        dyn_mult >= 1.0
+        and dyn_score > float(config.DYN_ALLOC_LOSER_SCORE)
+        and not history_underperforming
+    ):
         return strategy_units_mult, {}
 
     return 1.0, {
@@ -1757,7 +1899,9 @@ def _clamp_strategy_units_multiplier(
         "trades": int(dyn_trades),
         "reason": (
             "respect_dynamic_alloc_history_clamp"
-            if history_underperforming and dyn_mult >= 1.0 and dyn_score > float(config.DYN_ALLOC_LOSER_SCORE)
+            if history_underperforming
+            and dyn_mult >= 1.0
+            and dyn_score > float(config.DYN_ALLOC_LOSER_SCORE)
             else "respect_dynamic_alloc_reduce"
         ),
     }
@@ -1823,7 +1967,10 @@ async def micro_multi_worker() -> None:
         age_m1 = _factor_age_seconds(fac_m1)
         if age_m1 > config.MAX_FACTOR_AGE_SEC:
             # Refresh M1 factors from recent ticks instead of blocking entries.
-            if config.FRESH_TICKS_ON_STALE and now_ts - last_fresh_m1_ts >= config.FRESH_TICKS_REFRESH_SEC:
+            if (
+                config.FRESH_TICKS_ON_STALE
+                and now_ts - last_fresh_m1_ts >= config.FRESH_TICKS_REFRESH_SEC
+            ):
                 try:
                     tick_limit = max(1000, int(config.FRESH_TICKS_LOOKBACK_SEC * 5))
                     ticks = tick_window.recent_ticks(
@@ -1843,7 +1990,10 @@ async def micro_multi_worker() -> None:
                     log_metric(
                         "micro_multi_refresh_m1",
                         float(age_m1),
-                        tags={"source": "ticks", "candles": len(fresh.get("candles") or [])},
+                        tags={
+                            "source": "ticks",
+                            "candles": len(fresh.get("candles") or []),
+                        },
                         ts=now,
                     )
             if age_m1 > config.MAX_FACTOR_AGE_SEC:
@@ -1859,9 +2009,15 @@ async def micro_multi_worker() -> None:
                 local_fresh_m1 = fac_m1
                 state["_LOCAL_FRESH_M1"] = fac_m1
             if age_m1 > config.MAX_FACTOR_AGE_SEC:
-                hard_age = max(config.MAX_FACTOR_AGE_SEC, config.FRESH_TICKS_STALE_SCALE_HARD_SEC)
+                hard_age = max(
+                    config.MAX_FACTOR_AGE_SEC, config.FRESH_TICKS_STALE_SCALE_HARD_SEC
+                )
                 if hard_age > config.MAX_FACTOR_AGE_SEC:
-                    stale_ratio = max(0.0, (age_m1 - config.MAX_FACTOR_AGE_SEC) / (hard_age - config.MAX_FACTOR_AGE_SEC))
+                    stale_ratio = max(
+                        0.0,
+                        (age_m1 - config.MAX_FACTOR_AGE_SEC)
+                        / (hard_age - config.MAX_FACTOR_AGE_SEC),
+                    )
                     stale_scale = max(
                         config.FRESH_TICKS_STALE_SCALE_MIN,
                         1.0 - stale_ratio * (1.0 - config.FRESH_TICKS_STALE_SCALE_MIN),
@@ -1911,7 +2067,9 @@ async def micro_multi_worker() -> None:
         )
         regime_label = _normalize_regime_label(fac_m1.get("regime"))
         if not regime_label:
-            regime_label = _normalize_regime_label(current_regime("M1", event_mode=False))
+            regime_label = _normalize_regime_label(
+                current_regime("M1", event_mode=False)
+            )
 
         # --- レジーム判定 (strategy-local, AGENTS.md 準拠) ---
         try:
@@ -1928,12 +2086,13 @@ async def micro_multi_worker() -> None:
             pf = None
 
         strategy_fac = _strategy_fac_view(fac_m1, fac_m5, fac_h1, fac_h4)
-        candidates: List[Tuple[float, int, Dict, str, Dict[str, object], Dict[str, object]]] = []
+        candidates: List[
+            Tuple[float, int, Dict, str, Dict[str, object], Dict[str, object]]
+        ] = []
         for strat in _strategy_list():
             strategy_name = getattr(strat, "name", strat.__name__)
-            if (
-                strategy_name != MomentumBurstMicro.name
-                and _strategy_cooldown_active(strategy_name, now_ts)
+            if strategy_name != MomentumBurstMicro.name and _strategy_cooldown_active(
+                strategy_name, now_ts
             ):
                 continue
             if (
@@ -1984,8 +2143,16 @@ async def micro_multi_worker() -> None:
                     now_mono = time.monotonic()
                     if now_mono - last_momentumburst_diag_log > 120.0:
                         diag = MomentumBurstMicro.diagnostic(strategy_fac)
-                        long_diag = diag.get("long") if isinstance(diag.get("long"), dict) else {}
-                        short_diag = diag.get("short") if isinstance(diag.get("short"), dict) else {}
+                        long_diag = (
+                            diag.get("long")
+                            if isinstance(diag.get("long"), dict)
+                            else {}
+                        )
+                        short_diag = (
+                            diag.get("short")
+                            if isinstance(diag.get("short"), dict)
+                            else {}
+                        )
                         LOG.info(
                             "%s momentumburst_no_signal reason=%s gap=%.2f adx=%.2f rsi=%.1f mode=%s "
                             "long[base=%s pull=%s mtf=%s trend=%s price=%s rsi=%s qual=%s ctx=%s] "
@@ -2016,13 +2183,14 @@ async def micro_multi_worker() -> None:
                         )
                         last_momentumburst_diag_log = now_mono
                 continue
-            if (
-                strategy_name == MomentumBurstMicro.name
-                and _strategy_cooldown_active(strategy_name, now_ts, cand)
+            if strategy_name == MomentumBurstMicro.name and _strategy_cooldown_active(
+                strategy_name, now_ts, cand
             ):
                 continue
             if strategy_name == MicroPullbackEMA.name:
-                mtf_ok, mtf_diag = _pullback_mtf_confirm(str(cand.get("action") or ""), fac_m5, fac_h1)
+                mtf_ok, mtf_diag = _pullback_mtf_confirm(
+                    str(cand.get("action") or ""), fac_m5, fac_h1
+                )
                 if not mtf_ok:
                     now_mono = time.monotonic()
                     if now_mono - last_pullback_mtf_block_log > 120.0:
@@ -2038,7 +2206,9 @@ async def micro_multi_worker() -> None:
                         )
                         last_pullback_mtf_block_log = now_mono
                     continue
-            perf_decision = perf_guard.is_allowed(strategy_name, config.POCKET, env_prefix=config.ENV_PREFIX)
+            perf_decision = perf_guard.is_allowed(
+                strategy_name, config.POCKET, env_prefix=config.ENV_PREFIX
+            )
             if not perf_decision.allowed:
                 now_mono = time.monotonic()
                 if now_mono - last_perf_block_log > 120.0:
@@ -2058,7 +2228,11 @@ async def micro_multi_worker() -> None:
                     signal_tag,
                 )
                 dyn_allow_loser_block = bool(dyn_profile.get("allow_loser_block", True))
-                if config.DYN_ALLOC_LOSER_BLOCK and dyn_allow_loser_block and bool(dyn_profile.get("found")):
+                if (
+                    config.DYN_ALLOC_LOSER_BLOCK
+                    and dyn_allow_loser_block
+                    and bool(dyn_profile.get("found"))
+                ):
                     dyn_trades = int(dyn_profile.get("trades", 0) or 0)
                     dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
                     if (
@@ -2068,7 +2242,9 @@ async def micro_multi_worker() -> None:
                         continue
             if config.SIGNAL_TAG_CONTAINS:
                 signal_tag_lower = signal_tag.lower()
-                if not any(token in signal_tag_lower for token in config.SIGNAL_TAG_CONTAINS):
+                if not any(
+                    token in signal_tag_lower for token in config.SIGNAL_TAG_CONTAINS
+                ):
                     continue
             base_tag = signal_tag.split("-", 1)[0].strip()
             if not base_tag:
@@ -2092,7 +2268,9 @@ async def micro_multi_worker() -> None:
                 setup_fingerprint=setup_fingerprint,
                 pocket=config.POCKET,
             )
-            if isinstance(hist_profile, dict) and bool(hist_profile.get("winner_setup_override")):
+            if isinstance(hist_profile, dict) and bool(
+                hist_profile.get("winner_setup_override")
+            ):
                 now_mono = time.monotonic()
                 if now_mono - last_hist_override_log > 120.0:
                     LOG.info(
@@ -2129,9 +2307,13 @@ async def micro_multi_worker() -> None:
                 else:
                     score -= config.RANGE_TREND_PENALTY * range_score
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
-                score += config.DYN_ALLOC_SCORE_BONUS * float(dyn_profile.get("score", 0.0) or 0.0)
+                score += config.DYN_ALLOC_SCORE_BONUS * float(
+                    dyn_profile.get("score", 0.0) or 0.0
+                )
             score += config.HIST_CONF_WEIGHT * float(hist_profile.get("score", 0.5))
-            candidates.append((score, base_conf, cand, strategy_name, dyn_profile, hist_profile))
+            candidates.append(
+                (score, base_conf, cand, strategy_name, dyn_profile, hist_profile)
+            )
         if not candidates:
             continue
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -2144,13 +2326,18 @@ async def micro_multi_worker() -> None:
                 if bool(profile.get("found")):
                     dyn_allow_winner_only = bool(profile.get("allow_winner_only", True))
                     break
-        if config.DYN_ALLOC_ENABLED and config.DYN_ALLOC_WINNER_ONLY and dyn_allow_winner_only:
+        if (
+            config.DYN_ALLOC_ENABLED
+            and config.DYN_ALLOC_WINNER_ONLY
+            and dyn_allow_winner_only
+        ):
             winners = [
                 item
                 for item in candidates
                 if bool(item[4].get("found"))
                 and int(item[4].get("trades", 0) or 0) >= config.DYN_ALLOC_MIN_TRADES
-                and float(item[4].get("score", 0.0) or 0.0) >= config.DYN_ALLOC_WINNER_SCORE
+                and float(item[4].get("score", 0.0) or 0.0)
+                >= config.DYN_ALLOC_WINNER_SCORE
             ]
             if winners:
                 selected = winners[:max_signals]
@@ -2170,7 +2357,10 @@ async def micro_multi_worker() -> None:
                 )
                 last_account_snapshot_error_log = now_mono
             continue
-        if snapshot_err is not None and now_mono - last_account_snapshot_error_log > 60.0:
+        if (
+            snapshot_err is not None
+            and now_mono - last_account_snapshot_error_log > 60.0
+        ):
             LOG.warning(
                 "%s account_snapshot_fallback err=%s",
                 config.LOG_PREFIX,
@@ -2180,7 +2370,11 @@ async def micro_multi_worker() -> None:
         equity = float(snap.nav or snap.balance or 0.0)
 
         balance = float(snap.balance or snap.nav or 0.0)
-        free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+        free_ratio = (
+            float(snap.free_margin_ratio or 0.0)
+            if snap.free_margin_ratio is not None
+            else 0.0
+        )
         try:
             atr_pips = float(fac_m1.get("atr_pips") or 0.0)
         except Exception:
@@ -2193,7 +2387,9 @@ async def micro_multi_worker() -> None:
         try:
             open_positions = snap.positions or {}
             micro_pos = open_positions.get("micro") or {}
-            pos_bias = abs(float(micro_pos.get("units", 0.0) or 0.0)) / max(1.0, float(snap.nav or 1.0))
+            pos_bias = abs(float(micro_pos.get("units", 0.0) or 0.0)) / max(
+                1.0, float(snap.nav or 1.0)
+            )
         except Exception:
             pos_bias = 0.0
 
@@ -2236,14 +2432,16 @@ async def micro_multi_worker() -> None:
             trend_snapshot = None
             tp_mult = 1.0
             sl_mult = 1.0
-            side, signal_tag, trend_flip_meta, tp_mult, sl_mult, trend_snapshot = _apply_trend_flip(
-                side,
-                signal_tag,
-                strategy_name,
-                fac_m1,
-                fac_m5,
-                fac_h1,
-                fac_h4,
+            side, signal_tag, trend_flip_meta, tp_mult, sl_mult, trend_snapshot = (
+                _apply_trend_flip(
+                    side,
+                    signal_tag,
+                    strategy_name,
+                    fac_m1,
+                    fac_m5,
+                    fac_h1,
+                    fac_h4,
+                )
             )
             if trend_flip_meta:
                 tp_pips = round(tp_pips * tp_mult, 2)
@@ -2253,11 +2451,16 @@ async def micro_multi_worker() -> None:
             # --- レジーム・エントリー可否 + アダプティブ SL/TP ---
             if _regime_snapshot is not None:
                 _r_strategy_type = map_strategy_tag_to_type(signal_tag)
-                _r_allowed, _r_reason = regime_should_enter(_regime_snapshot, _r_strategy_type, side)
+                _r_allowed, _r_reason = regime_should_enter(
+                    _regime_snapshot, _r_strategy_type, side
+                )
                 if not _r_allowed:
                     LOG.info(
                         "%s regime_block tag=%s regime=%s reason=%s",
-                        config.LOG_PREFIX, signal_tag, _regime_snapshot.regime.value, _r_reason,
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        _regime_snapshot.regime.value,
+                        _r_reason,
                     )
                     continue
                 try:
@@ -2270,7 +2473,9 @@ async def micro_multi_worker() -> None:
                     if _r_adaptive is None:
                         LOG.info(
                             "%s adaptive_sl_tp_block tag=%s regime=%s",
-                            config.LOG_PREFIX, signal_tag, _regime_snapshot.regime.value,
+                            config.LOG_PREFIX,
+                            signal_tag,
+                            _regime_snapshot.regime.value,
                         )
                         continue
                     sl_pips = _r_adaptive["sl_pips"]
@@ -2334,7 +2539,9 @@ async def micro_multi_worker() -> None:
                 bb_style = "trend"
             elif strategy_name in _TREND_STRATEGIES:
                 bb_style = "trend"
-            if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
+            if not _bb_entry_allowed(
+                bb_style, side, price, fac_m1, range_active=range_ctx.active
+            ):
                 continue
 
             base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
@@ -2396,7 +2603,9 @@ async def micro_multi_worker() -> None:
                 )
             )
 
-            conf_scale = _confidence_scale(_to_confidence_0_100(signal.get("confidence", 50)))
+            conf_scale = _confidence_scale(
+                _to_confidence_0_100(signal.get("confidence", 50))
+            )
             dyn_mult = 1.0
             dyn_score = 0.0
             dyn_trades = 0
@@ -2404,11 +2613,23 @@ async def micro_multi_worker() -> None:
             strategy_units_mult = 1.0
             strategy_units_mult_meta: Dict[str, object] = {}
             hist_mult = 1.0
-            hist_score = float(hist_profile.get("score", 0.5) if isinstance(hist_profile, dict) else 0.5)
-            hist_n = int(hist_profile.get("n", 0) if isinstance(hist_profile, dict) else 0)
-            hist_source = str(hist_profile.get("source", "disabled") if isinstance(hist_profile, dict) else "disabled")
+            hist_score = float(
+                hist_profile.get("score", 0.5)
+                if isinstance(hist_profile, dict)
+                else 0.5
+            )
+            hist_n = int(
+                hist_profile.get("n", 0) if isinstance(hist_profile, dict) else 0
+            )
+            hist_source = str(
+                hist_profile.get("source", "disabled")
+                if isinstance(hist_profile, dict)
+                else "disabled"
+            )
             if base_tag:
-                strategy_units_mult = float(config.STRATEGY_UNITS_MULT.get(base_tag, 1.0) or 1.0)
+                strategy_units_mult = float(
+                    config.STRATEGY_UNITS_MULT.get(base_tag, 1.0) or 1.0
+                )
             if strategy_units_mult <= 0.0:
                 strategy_units_mult = 1.0
             chop_units_mult = _strategy_chop_units_multiplier(
@@ -2417,23 +2638,31 @@ async def micro_multi_worker() -> None:
             )
             if isinstance(hist_profile, dict):
                 hist_mult = float(hist_profile.get("lot_multiplier", 1.0) or 1.0)
-                hist_mult = max(config.HIST_LOT_MIN, min(config.HIST_LOT_MAX, hist_mult))
+                hist_mult = max(
+                    config.HIST_LOT_MIN, min(config.HIST_LOT_MAX, hist_mult)
+                )
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
-                dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
+                dyn_mult = max(
+                    config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult)
+                )
                 dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
                 dyn_trades = int(dyn_profile.get("trades", 0) or 0)
                 dyn_mult, dyn_clamp_meta = _clamp_dynamic_alloc_multiplier(
                     dyn_mult,
-                    hist_profile=hist_profile if isinstance(hist_profile, dict) else None,
+                    hist_profile=(
+                        hist_profile if isinstance(hist_profile, dict) else None
+                    ),
                 )
-            strategy_units_mult, strategy_units_mult_meta = _clamp_strategy_units_multiplier(
-                strategy_units_mult,
-                dyn_profile=dyn_profile if isinstance(dyn_profile, dict) else None,
-                dyn_mult=dyn_mult,
-                dyn_score=dyn_score,
-                dyn_trades=dyn_trades,
-                dyn_clamp_meta=dyn_clamp_meta,
+            strategy_units_mult, strategy_units_mult_meta = (
+                _clamp_strategy_units_multiplier(
+                    strategy_units_mult,
+                    dyn_profile=dyn_profile if isinstance(dyn_profile, dict) else None,
+                    dyn_mult=dyn_mult,
+                    dyn_score=dyn_score,
+                    dyn_trades=dyn_trades,
+                    dyn_clamp_meta=dyn_clamp_meta,
+                )
             )
             lot = allowed_lot(
                 float(snap.nav or 0.0),
@@ -2494,7 +2723,9 @@ async def micro_multi_worker() -> None:
                 "profile": signal.get("profile"),
                 "confidence": signal_conf,
                 "entry_probability": round(
-                    _to_probability(signal.get("entry_probability"), signal_conf / 100.0),
+                    _to_probability(
+                        signal.get("entry_probability"), signal_conf / 100.0
+                    ),
                     3,
                 ),
                 "tp_pips": tp_pips,
@@ -2504,19 +2735,27 @@ async def micro_multi_worker() -> None:
                 "range_score": round(range_score, 3),
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
-                "regime": _regime_snapshot.regime.value if _regime_snapshot else "unknown",
-                "regime_confidence": round(_regime_snapshot.confidence, 3) if _regime_snapshot else 0.0,
+                "regime": (
+                    _regime_snapshot.regime.value if _regime_snapshot else "unknown"
+                ),
+                "regime_confidence": (
+                    round(_regime_snapshot.confidence, 3) if _regime_snapshot else 0.0
+                ),
             }
             if _momentumburst_entry_thesis_reaccel(strategy_name, signal):
                 entry_thesis["reaccel"] = True
             if strategy_tag != signal_tag:
                 entry_thesis["strategy_tag_raw"] = signal_tag
             if base_tag == "MicroRangeBreak":
-                entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN)
+                entry_thesis["pattern_gate_opt_in"] = bool(
+                    _MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN
+                )
                 if _MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC:
                     entry_thesis["pattern_gate_allow_generic"] = True
             elif base_tag == "MicroVWAPBound":
-                entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN)
+                entry_thesis["pattern_gate_opt_in"] = bool(
+                    _MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN
+                )
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 entry_thesis["dynamic_alloc"] = {
                     "strategy_key": dyn_profile.get("strategy_key"),
@@ -2532,20 +2771,36 @@ async def micro_multi_worker() -> None:
                     "source": hist_profile.get("source", "disabled"),
                     "n": int(hist_profile.get("n", 0) or 0),
                     "score": round(float(hist_profile.get("score", 0.5) or 0.5), 3),
-                    "lot_multiplier": round(float(hist_profile.get("lot_multiplier", 1.0) or 1.0), 3),
+                    "lot_multiplier": round(
+                        float(hist_profile.get("lot_multiplier", 1.0) or 1.0), 3
+                    ),
                     "pf": round(float(hist_profile.get("pf", 1.0) or 1.0), 3),
-                    "win_rate": round(float(hist_profile.get("win_rate", 0.0) or 0.0), 3),
-                    "avg_pips": round(float(hist_profile.get("avg_pips", 0.0) or 0.0), 3),
+                    "win_rate": round(
+                        float(hist_profile.get("win_rate", 0.0) or 0.0), 3
+                    ),
+                    "avg_pips": round(
+                        float(hist_profile.get("avg_pips", 0.0) or 0.0), 3
+                    ),
                 }
                 winner_setup_override = hist_profile.get("winner_setup_override")
                 if isinstance(winner_setup_override, dict):
                     entry_thesis["history_perf"]["winner_setup_override"] = {
-                        "setup_fingerprint": str(winner_setup_override.get("setup_fingerprint") or ""),
+                        "setup_fingerprint": str(
+                            winner_setup_override.get("setup_fingerprint") or ""
+                        ),
                         "n": int(winner_setup_override.get("n", 0) or 0),
-                        "score": round(float(winner_setup_override.get("score", 0.5) or 0.5), 3),
-                        "pf": round(float(winner_setup_override.get("pf", 1.0) or 1.0), 3),
-                        "win_rate": round(float(winner_setup_override.get("win_rate", 0.0) or 0.0), 3),
-                        "avg_pips": round(float(winner_setup_override.get("avg_pips", 0.0) or 0.0), 3),
+                        "score": round(
+                            float(winner_setup_override.get("score", 0.5) or 0.5), 3
+                        ),
+                        "pf": round(
+                            float(winner_setup_override.get("pf", 1.0) or 1.0), 3
+                        ),
+                        "win_rate": round(
+                            float(winner_setup_override.get("win_rate", 0.0) or 0.0), 3
+                        ),
+                        "avg_pips": round(
+                            float(winner_setup_override.get("avg_pips", 0.0) or 0.0), 3
+                        ),
                     }
             if abs(strategy_units_mult - 1.0) > 1e-9:
                 entry_thesis["strategy_units_mult"] = round(strategy_units_mult, 3)
@@ -2555,9 +2810,14 @@ async def micro_multi_worker() -> None:
                     3,
                 )
             if strategy_units_mult_meta:
-                entry_thesis["strategy_units_mult_applied"] = round(strategy_units_mult, 3)
+                entry_thesis["strategy_units_mult_applied"] = round(
+                    strategy_units_mult, 3
+                )
                 entry_thesis["strategy_units_mult_guard"] = strategy_units_mult_meta
-            if bool(chop_ctx.get("active")) or float(chop_ctx.get("score", 0.0) or 0.0) > 0.0:
+            if (
+                bool(chop_ctx.get("active"))
+                or float(chop_ctx.get("score", 0.0) or 0.0) > 0.0
+            ):
                 entry_thesis["micro_chop"] = {
                     "active": bool(chop_ctx.get("active")),
                     "score": round(float(chop_ctx.get("score", 0.0) or 0.0), 3),
@@ -2630,7 +2890,10 @@ async def micro_multi_worker() -> None:
                             entry_mean = None
                 elif base_tag == "BB_RSI":
                     try:
-                        entry_mean = float(fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0) or None
+                        entry_mean = (
+                            float(fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0)
+                            or None
+                        )
                     except Exception:
                         entry_mean = None
                 entry_thesis.update(
@@ -2645,12 +2908,16 @@ async def micro_multi_worker() -> None:
                     rf = entry_thesis.get("reversion_failure")
                     if isinstance(rf, dict):
                         rf["z_ext"] = min(float(rf.get("z_ext") or 0.40), 0.40)
-                        rf["contraction_min"] = max(float(rf.get("contraction_min") or 0.55), 0.55)
+                        rf["contraction_min"] = max(
+                            float(rf.get("contraction_min") or 0.55), 0.55
+                        )
                         bars_budget = rf.get("bars_budget")
                         if not isinstance(bars_budget, dict):
                             bars_budget = {}
                             rf["bars_budget"] = bars_budget
-                        bars_budget["k_per_z"] = min(float(bars_budget.get("k_per_z") or 2.6), 2.6)
+                        bars_budget["k_per_z"] = min(
+                            float(bars_budget.get("k_per_z") or 2.6), 2.6
+                        )
                         bars_budget["max"] = min(int(bars_budget.get("max") or 8), 8)
                 if base_tag == "MicroVWAPBound":
                     notes = signal.get("notes") or {}
@@ -2667,11 +2934,19 @@ async def micro_multi_worker() -> None:
                             bars_budget = {}
                             rf["bars_budget"] = bars_budget
                         if z_val >= 2.5:
-                            bars_budget["k_per_z"] = max(float(bars_budget.get("k_per_z") or 0.0), 3.1)
-                            bars_budget["max"] = max(int(bars_budget.get("max") or 0), 10)
+                            bars_budget["k_per_z"] = max(
+                                float(bars_budget.get("k_per_z") or 0.0), 3.1
+                            )
+                            bars_budget["max"] = max(
+                                int(bars_budget.get("max") or 0), 10
+                            )
                         elif z_val <= 1.4:
-                            bars_budget["k_per_z"] = min(float(bars_budget.get("k_per_z") or 2.6), 2.3)
-                            bars_budget["max"] = min(int(bars_budget.get("max") or 8), 7)
+                            bars_budget["k_per_z"] = min(
+                                float(bars_budget.get("k_per_z") or 2.6), 2.3
+                            )
+                            bars_budget["max"] = min(
+                                int(bars_budget.get("max") or 8), 7
+                            )
                 atr_for_vol = atr_m5 or atr_pips or 0.0
                 low_vol = (
                     atr_for_vol > 0
@@ -2699,7 +2974,9 @@ async def micro_multi_worker() -> None:
                 sign = 1 if units > 0 else -1
                 units = int(round(abs(units) * proj_mult)) * sign
 
-            candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
+            candle_allow, candle_mult = _entry_candle_guard(
+                "long" if units > 0 else "short"
+            )
             if not candle_allow:
                 continue
             if candle_mult != 1.0:
@@ -2718,7 +2995,9 @@ async def micro_multi_worker() -> None:
                 entry_thesis_ctx = {}
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
-            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            _tech_side_raw = str(
+                locals().get("side", locals().get("direction", "long"))
+            ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
             else:
@@ -2742,9 +3021,16 @@ async def micro_multi_worker() -> None:
 
             entry_thesis_ctx.setdefault(
                 "tech_tfs",
-                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+                {
+                    "fib": ["H1", "M5"],
+                    "median": ["H1", "M5"],
+                    "nwave": ["M1", "M5"],
+                    "candle": ["M1", "M5"],
+                },
             )
-            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_tfs", ["M1", "M5", "H1", "H4"]
+            )
             entry_thesis_ctx.setdefault(
                 "technical_context_fields",
                 [
@@ -2765,8 +3051,14 @@ async def micro_multi_worker() -> None:
                     "ema24",
                 ],
             )
-            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault(
+                "technical_context_ticks",
+                ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            )
+            entry_thesis_ctx.setdefault(
+                "technical_context_candle_counts",
+                {"M1": 120, "M5": 80, "H1": 70, "H4": 60},
+            )
             entry_thesis_ctx.setdefault("tech_allow_candle", True)
             entry_thesis_ctx.setdefault(
                 "tech_policy",
@@ -2791,7 +3083,9 @@ async def micro_multi_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
-            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M5", "step_bars": 2})
+            entry_thesis_ctx.setdefault(
+                "forecast_profile", {"timeframe": "M5", "step_bars": 2}
+            )
             entry_thesis_ctx.setdefault("forecast_timeframe", "M5")
             entry_thesis_ctx.setdefault("forecast_step_bars", 2)
             entry_thesis_ctx.setdefault("forecast_horizon", "10m")
@@ -2808,9 +3102,15 @@ async def micro_multi_worker() -> None:
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
                 continue
 
-            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_score"] = (
+                round(tech_decision.score, 3)
+                if tech_decision.score is not None
+                else None
+            )
             entry_thesis_ctx["tech_coverage"] = (
-                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+                round(tech_decision.coverage, 3)
+                if tech_decision.coverage is not None
+                else None
             )
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
@@ -2820,7 +3120,11 @@ async def micro_multi_worker() -> None:
                 min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
             )
             entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
-            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+            if (
+                isinstance(tp_price, (int, float))
+                and tp_price > 0
+                and _tech_entry_price > 0
+            ):
                 _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
                 if _tp_gap > 0:
                     _tp_target = (
@@ -2842,7 +3146,9 @@ async def micro_multi_worker() -> None:
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):
-                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                _tech_units = int(
+                    round(abs(float(_tech_units_raw)) * tech_decision.size_mult)
+                )
                 if _tech_units <= 0:
                     continue
                 units = _tech_units if _tech_side == "long" else -_tech_units
@@ -2853,11 +3159,14 @@ async def micro_multi_worker() -> None:
                 _tech_conf = float(_tech_conf)
                 if tech_decision.score is not None:
                     if tech_decision.score >= 0:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_BOOST", 0.0
+                        )
                     else:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_PENALTY", 0.0
+                        )
                 conf = _tech_conf
-
 
             res = await market_order(
                 instrument="USD_JPY",
@@ -2896,15 +3205,15 @@ async def micro_multi_worker() -> None:
             )
 
 
-
-
 _CANDLE_PIP = 0.01
 _CANDLE_MIN_CONF = 0.35
 _CANDLE_ENTRY_BLOCK = -0.7
 _CANDLE_ENTRY_SCALE = 0.2
 _CANDLE_ENTRY_MIN = 0.8
 _CANDLE_ENTRY_MAX = 1.2
-_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+_CANDLE_WORKER_NAME = (
+    __file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else ""
+).lower()
 
 
 def _candle_tf_for_worker() -> str:
@@ -2998,11 +3307,19 @@ def _score_candle(*, candles, side, min_conf):
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     score = max(-1.0, min(1.0, score))
-    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+    return score, {
+        "type": pattern.get("type"),
+        "confidence": round(conf, 3),
+        "bias": bias,
+    }
 
 
 def _entry_candle_guard(side):
@@ -3010,7 +3327,9 @@ def _entry_candle_guard(side):
     candles = get_candles_snapshot(tf, limit=4)
     if not candles:
         return True, 1.0
-    score, _detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_MIN_CONF)
+    score, _detail = _score_candle(
+        candles=candles, side=side, min_conf=_CANDLE_MIN_CONF
+    )
     if score is None:
         return True, 1.0
     if score <= _CANDLE_ENTRY_BLOCK:
@@ -3018,6 +3337,7 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
 
 if __name__ == "__main__":
     asyncio.run(micro_multi_worker())

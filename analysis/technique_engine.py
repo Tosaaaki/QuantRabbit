@@ -981,7 +981,9 @@ def _resolve_forecast_profile(
             timeframe = _normalize_tf(
                 profile.get("timeframe") or profile.get("forecast_timeframe")
             )
-            step_raw = _to_float(profile.get("step_bars") or profile.get("forecast_step_bars"))
+            step_raw = _to_float(
+                profile.get("step_bars") or profile.get("forecast_step_bars")
+            )
             if step_raw is not None and step_raw > 0:
                 step_bars = int(round(step_raw))
         if timeframe is None:
@@ -1128,9 +1130,9 @@ def _build_local_forecast_adjustment(
         ma_window = min(max(8, step_bars * 8), len(closes))
         ma_price = sum(closes[-ma_window:]) / float(ma_window)
         deviation = closes[-1] - ma_price
-        momentum_move = (
-            w_short * short_drift + (1.0 - w_short) * long_drift
-        ) * float(step_bars)
+        momentum_move = (w_short * short_drift + (1.0 - w_short) * long_drift) * float(
+            step_bars
+        )
         expected_move = momentum_move + (0.10 * close_deltas[-1]) - (0.05 * deviation)
         regime = "micro_reversion_blend"
         cap = 1.9 * close_vol * float(max(step_bars, 1))
@@ -1146,9 +1148,9 @@ def _build_local_forecast_adjustment(
             for delta in recent_close_deltas
         ]
         persistence = abs(sum(signs)) / float(len(signs)) if signs else 0.0
-        momentum_move = (
-            w_short * short_drift + (1.0 - w_short) * long_drift
-        ) * float(step_bars)
+        momentum_move = (w_short * short_drift + (1.0 - w_short) * long_drift) * float(
+            step_bars
+        )
         reversion_move = (-deviation) * (1.0 - persistence) * 0.06
         expected_move = momentum_move + (0.12 * close_deltas[-1]) + reversion_move
         regime = "trend_persistence_blend"
@@ -1165,7 +1167,9 @@ def _build_local_forecast_adjustment(
         abs_deltas = [abs(delta) for delta in close_deltas]
         if not abs_deltas:
             return None
-        avg_range = sum(abs_deltas[-min(24, len(abs_deltas)) :]) / float(min(24, len(abs_deltas)))
+        avg_range = sum(abs_deltas[-min(24, len(abs_deltas)) :]) / float(
+            min(24, len(abs_deltas))
+        )
     avg_range = max(avg_range, close_vol, PIP * 0.2)
     avg_range_pips = avg_range / PIP
 
@@ -1223,7 +1227,9 @@ def _resolve_mtf_tfs(
     entry_thesis: Optional[dict],
 ) -> list[str]:
     if label == "candle" and not _common_candle_enabled():
-        if not (isinstance(entry_thesis, dict) and entry_thesis.get("tech_allow_candle")):
+        if not (
+            isinstance(entry_thesis, dict) and entry_thesis.get("tech_allow_candle")
+        ):
             return []
     mtf_enabled = _env_bool("TECH_MTF_ENABLED")
     if mtf_enabled is False:
@@ -1248,7 +1254,9 @@ def _resolve_mtf_tfs(
         if isinstance(blob, dict):
             tfs = blob.get(label)
         if tfs is None:
-            tfs = entry_thesis.get(f"tech_tfs_{label}") or entry_thesis.get(f"{label}_tfs")
+            tfs = entry_thesis.get(f"tech_tfs_{label}") or entry_thesis.get(
+                f"{label}_tfs"
+            )
         norm = _normalize_tf_list(tfs)
         if norm:
             return norm
@@ -1288,7 +1296,9 @@ def _strategy_overrides(strategy_tag: Optional[str]) -> dict[str, object]:
     return dict(_STRATEGY_POLICY_OVERRIDES.get(key, {}))
 
 
-def _apply_override(policy: TechniquePolicy, overrides: Mapping[str, object]) -> TechniquePolicy:
+def _apply_override(
+    policy: TechniquePolicy, overrides: Mapping[str, object]
+) -> TechniquePolicy:
     data = {k: v for k, v in overrides.items() if v is not None}
     if not data:
         return policy
@@ -1332,7 +1342,9 @@ def _resolve_policy(
     thesis_policy = thesis.get("tech_policy") if isinstance(thesis, dict) else None
     if isinstance(thesis_policy, dict):
         policy = _apply_override(policy, thesis_policy)
-        policy_locked = _coerce_bool(thesis_policy.get("tech_policy_locked"), default=False)
+        policy_locked = _coerce_bool(
+            thesis_policy.get("tech_policy_locked"), default=False
+        )
     else:
         policy_locked = False
 
@@ -1381,7 +1393,12 @@ def _resolve_policy(
                 continue
             env_overrides[field] = specific
 
-        for flag in ("require_fib", "require_median", "require_nwave", "require_candle"):
+        for flag in (
+            "require_fib",
+            "require_median",
+            "require_nwave",
+            "require_candle",
+        ):
             env_name = f"TECH_{flag.upper()}"
             specific = None
             if key:
@@ -1397,7 +1414,13 @@ def _resolve_policy(
             policy = _apply_override(policy, env_overrides)
 
     if isinstance(thesis, dict):
-        for k in ("tech_tf", "tech_tf_fib", "tech_tf_median", "tech_tf_nwave", "tech_tf_candle"):
+        for k in (
+            "tech_tf",
+            "tech_tf_fib",
+            "tech_tf_median",
+            "tech_tf_nwave",
+            "tech_tf_candle",
+        ):
             val = thesis.get(k)
             if val:
                 norm = _normalize_tf(val)
@@ -1420,8 +1443,6 @@ def _resolve_policy(
     if not allow_candle:
         policy = replace(policy, weight_candle=0.0, require_candle=False)
     return policy
-
-
 
 
 def evaluate_entry_techniques(
@@ -1450,7 +1471,11 @@ def evaluate_entry_techniques(
         strategy_tag=strategy_tag,
         entry_thesis=entry_thesis,
     )
-    axis_override = _axis_from_thesis(entry_thesis or {}) if isinstance(entry_thesis, dict) else None
+    axis_override = (
+        _axis_from_thesis(entry_thesis or {})
+        if isinstance(entry_thesis, dict)
+        else None
+    )
     for tf in fib_tfs:
         axis = axis_override or _range_from_policy(
             policy,
@@ -1613,7 +1638,10 @@ def evaluate_entry_techniques(
     if weight_sum > 0:
         score = _clamp(score_sum / weight_sum, -1.0, 1.0)
         coverage = weight_sum / max(
-            policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle,
+            policy.weight_fib
+            + policy.weight_median
+            + policy.weight_nwave
+            + policy.weight_candle,
             1e-6,
         )
         debug["score"] = round(score, 3)
@@ -1631,7 +1659,9 @@ def evaluate_entry_techniques(
         allowed = False
         reason = "low_coverage"
 
-    def _entry_require_failed(required: bool, score_val: Optional[float], label: str) -> bool:
+    def _entry_require_failed(
+        required: bool, score_val: Optional[float], label: str
+    ) -> bool:
         if not required:
             return False
         if score_val is None:
@@ -1692,6 +1722,8 @@ def evaluate_entry_techniques(
         debug=debug,
         tp_mult=float(forecast_tp_mult),
     )
+
+
 def _axis_from_thesis(thesis: dict) -> Optional[RangeSnapshot]:
     if not isinstance(thesis, dict):
         return None
@@ -1750,7 +1782,9 @@ def _extract_candles(raw: Iterable[dict]) -> list[tuple[float, float, float, flo
     return candles
 
 
-def _detect_candlestick_pattern(candles: Sequence[tuple[float, float, float, float]]) -> Optional[Dict[str, object]]:
+def _detect_candlestick_pattern(
+    candles: Sequence[tuple[float, float, float, float]],
+) -> Optional[Dict[str, object]]:
     if len(candles) < 2:
         return None
     o0, h0, l0, c0 = candles[-2]
@@ -1977,7 +2011,11 @@ def _score_candle(
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     return _clamp(score, -1.0, 1.0), {
@@ -2005,14 +2043,18 @@ def _pivot_levels(candles: Sequence[dict]) -> Optional[Dict[str, float]]:
     return {"pivot": pivot, "r1": r1, "s1": s1}
 
 
-def _exit_pivot_tf(strategy_tag: Optional[str], pocket: str, policy: TechniquePolicy) -> Optional[str]:
+def _exit_pivot_tf(
+    strategy_tag: Optional[str], pocket: str, policy: TechniquePolicy
+) -> Optional[str]:
     key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
     pocket_upper = pocket.upper()
     candidate = None
     if key:
         candidate = _env_str(f"TECH_EXIT_PIVOT_TF_{key}")
     if candidate is None:
-        candidate = _env_str(f"TECH_EXIT_PIVOT_TF_{pocket_upper}") or _env_str("TECH_EXIT_PIVOT_TF")
+        candidate = _env_str(f"TECH_EXIT_PIVOT_TF_{pocket_upper}") or _env_str(
+            "TECH_EXIT_PIVOT_TF"
+        )
     if not candidate:
         candidate = policy.median_tf or policy.fib_tf
     norm = _normalize_tf(str(candidate))
@@ -2039,7 +2081,9 @@ def _exit_pivot_min_pips(strategy_tag: Optional[str], pocket: str) -> float:
     return max(0.0, float(value))
 
 
-def _exit_momentum_tf(strategy_tag: Optional[str], pocket: str, policy: TechniquePolicy) -> Optional[str]:
+def _exit_momentum_tf(
+    strategy_tag: Optional[str], pocket: str, policy: TechniquePolicy
+) -> Optional[str]:
     key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
     pocket_upper = pocket.upper()
     candidate = None
@@ -2062,9 +2106,9 @@ def _exit_momentum_min_score(strategy_tag: Optional[str], pocket: str) -> float:
     if key:
         value = _env_float(f"TECH_EXIT_MOMENTUM_MIN_SCORE_{key}")
     if value is None:
-        value = _env_float(f"TECH_EXIT_MOMENTUM_MIN_SCORE_{pocket_upper}") or _env_float(
-            "TECH_EXIT_MOMENTUM_MIN_SCORE"
-        )
+        value = _env_float(
+            f"TECH_EXIT_MOMENTUM_MIN_SCORE_{pocket_upper}"
+        ) or _env_float("TECH_EXIT_MOMENTUM_MIN_SCORE")
     if value is None:
         if pocket in {"scalp", "scalp_fast"}:
             value = 0.34
@@ -2075,7 +2119,9 @@ def _exit_momentum_min_score(strategy_tag: Optional[str], pocket: str) -> float:
     return max(0.0, float(value))
 
 
-def _exit_momentum_rsi_bounds(strategy_tag: Optional[str], pocket: str) -> tuple[float, float]:
+def _exit_momentum_rsi_bounds(
+    strategy_tag: Optional[str], pocket: str
+) -> tuple[float, float]:
     key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
     pocket_upper = pocket.upper()
     upper = None
@@ -2084,9 +2130,13 @@ def _exit_momentum_rsi_bounds(strategy_tag: Optional[str], pocket: str) -> tuple
         upper = _env_float(f"TECH_EXIT_RSI_UPPER_{key}")
         lower = _env_float(f"TECH_EXIT_RSI_LOWER_{key}")
     if upper is None:
-        upper = _env_float(f"TECH_EXIT_RSI_UPPER_{pocket_upper}") or _env_float("TECH_EXIT_RSI_UPPER")
+        upper = _env_float(f"TECH_EXIT_RSI_UPPER_{pocket_upper}") or _env_float(
+            "TECH_EXIT_RSI_UPPER"
+        )
     if lower is None:
-        lower = _env_float(f"TECH_EXIT_RSI_LOWER_{pocket_upper}") or _env_float("TECH_EXIT_RSI_LOWER")
+        lower = _env_float(f"TECH_EXIT_RSI_LOWER_{pocket_upper}") or _env_float(
+            "TECH_EXIT_RSI_LOWER"
+        )
     if upper is None:
         upper = 55.0
     if lower is None:
@@ -2199,11 +2249,19 @@ def evaluate_exit_techniques(
     if not strategy_tag:
         strategy_tag = trade.get("strategy_tag")
     tag_key = _normalize_tag_key(strategy_tag) if strategy_tag else ""
-    policy = _resolve_policy(strategy_tag=strategy_tag, pocket=pocket, entry_thesis=trade.get("entry_thesis"))
+    policy = _resolve_policy(
+        strategy_tag=strategy_tag, pocket=pocket, entry_thesis=trade.get("entry_thesis")
+    )
 
     allow_negative = _env_bool("TECH_EXIT_ALLOW_NEGATIVE") or False
-    entry_thesis = trade.get("entry_thesis") if isinstance(trade.get("entry_thesis"), dict) else None
-    axis_override = _axis_from_thesis(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis = (
+        trade.get("entry_thesis")
+        if isinstance(trade.get("entry_thesis"), dict)
+        else None
+    )
+    axis_override = (
+        _axis_from_thesis(entry_thesis) if isinstance(entry_thesis, dict) else None
+    )
     entry_price = None
     try:
         entry_price = float(trade.get("price") or trade.get("entry_price") or 0.0)
@@ -2211,7 +2269,11 @@ def evaluate_exit_techniques(
         entry_price = None
     pnl_pips = None
     if entry_price and entry_price > 0 and current_price:
-        pnl_pips = (current_price - entry_price) / PIP if side == "long" else (entry_price - current_price) / PIP
+        pnl_pips = (
+            (current_price - entry_price) / PIP
+            if side == "long"
+            else (entry_price - current_price) / PIP
+        )
 
     fib_score = fib_debug = None
     fib_items: list[tuple[str, float, Dict[str, object]]] = []
@@ -2227,7 +2289,9 @@ def evaluate_exit_techniques(
         )
     )
     for tf in fib_tfs:
-        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        axis = axis_override or _range_from_policy(
+            policy, tf=tf, entry_thesis=entry_thesis
+        )
         if axis:
             score, detail = _score_fib(
                 entry_price=current_price,
@@ -2255,7 +2319,9 @@ def evaluate_exit_techniques(
         )
     )
     for tf in median_tfs:
-        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        axis = axis_override or _range_from_policy(
+            policy, tf=tf, entry_thesis=entry_thesis
+        )
         if axis:
             dist_scale = _tf_length_scale(tf)
             score, detail = _score_median(
@@ -2368,7 +2434,10 @@ def evaluate_exit_techniques(
     if weight_sum > 0:
         return_score = _clamp(score_sum / weight_sum, -1.0, 1.0)
         coverage = weight_sum / max(
-            policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle,
+            policy.weight_fib
+            + policy.weight_median
+            + policy.weight_nwave
+            + policy.weight_candle,
             1e-6,
         )
         debug["return_score"] = round(return_score, 3)
@@ -2467,7 +2536,9 @@ def evaluate_exit_techniques(
             policy_default=policy.require_candle,
         )
 
-        def _exit_require_failed(required: bool, score_val: Optional[float], label: str) -> bool:
+        def _exit_require_failed(
+            required: bool, score_val: Optional[float], label: str
+        ) -> bool:
             if not required:
                 return False
             if score_val is None:
@@ -2577,7 +2648,11 @@ def evaluate_exit_techniques(
         return pnl_pips is not None and pnl_pips < 0 and not allow_negative_reversal
 
     if reversal_signal and reversal_confirmed:
-        reason = "tech_candle_reversal" if candle_score is not None and candle_score < 0 else "tech_nwave_flip"
+        reason = (
+            "tech_candle_reversal"
+            if candle_score is not None and candle_score < 0
+            else "tech_nwave_flip"
+        )
         if reversal_combo:
             reason = "tech_reversal_combo"
         if _neg_blocked():
@@ -2590,6 +2665,8 @@ def evaluate_exit_techniques(
     if return_score is not None and return_score <= policy.exit_return_score:
         if _neg_blocked():
             return TechniqueExitDecision(False, None, False, debug)
-        return TechniqueExitDecision(True, "tech_return_fail", allow_negative_reversal, debug)
+        return TechniqueExitDecision(
+            True, "tech_return_fail", allow_negative_reversal, debug
+        )
 
     return TechniqueExitDecision(False, None, False, {})

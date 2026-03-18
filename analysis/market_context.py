@@ -7,11 +7,16 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-
 _PATH_RAW = os.getenv("MARKET_CONTEXT_PATH", "logs/market_context_latest.json")
-_PATH = Path(_PATH_RAW) if _PATH_RAW and _PATH_RAW.strip().lower() not in {"", "off", "none"} else None
+_PATH = (
+    Path(_PATH_RAW)
+    if _PATH_RAW and _PATH_RAW.strip().lower() not in {"", "off", "none"}
+    else None
+)
 _REFRESH_SEC = float(os.getenv("MARKET_CONTEXT_REFRESH_SEC", "30") or 30.0)
-_STALE_MAX_AGE_SEC = max(60.0, float(os.getenv("MARKET_CONTEXT_MAX_AGE_SEC", "1800") or 1800.0))
+_STALE_MAX_AGE_SEC = max(
+    60.0, float(os.getenv("MARKET_CONTEXT_MAX_AGE_SEC", "1800") or 1800.0)
+)
 _CACHE: dict[str, Any] = {"loaded": 0.0, "mtime": None, "payload": None}
 
 
@@ -84,20 +89,32 @@ def current_context(
     pairs = payload.get("pairs") if isinstance(payload.get("pairs"), dict) else {}
     pair_key = str(pair or "").strip().lower()
     pair_row = pairs.get(pair_key) if isinstance(pairs, dict) else None
-    pair_change = _safe_float(pair_row.get("change_pct_24h"), 0.0) if isinstance(pair_row, dict) else 0.0
-    pair_price = _safe_float(pair_row.get("price"), 0.0) if isinstance(pair_row, dict) else 0.0
+    pair_change = (
+        _safe_float(pair_row.get("change_pct_24h"), 0.0)
+        if isinstance(pair_row, dict)
+        else 0.0
+    )
+    pair_price = (
+        _safe_float(pair_row.get("price"), 0.0) if isinstance(pair_row, dict) else 0.0
+    )
 
     dollar = payload.get("dollar") if isinstance(payload.get("dollar"), dict) else {}
     rates = payload.get("rates") if isinstance(payload.get("rates"), dict) else {}
     risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
-    events = payload.get("events_summary") if isinstance(payload.get("events_summary"), dict) else {}
+    events = (
+        payload.get("events_summary")
+        if isinstance(payload.get("events_summary"), dict)
+        else {}
+    )
 
     dxy_change = _safe_float(dollar.get("dxy_change_pct_24h"), 0.0)
     spread_10y = _safe_float(rates.get("us_jp_10y_spread"), 0.0)
     risk_mode = str(risk.get("mode") or "neutral").strip().lower()
     high_impact_events = _safe_int(events.get("high_impact_events"), 0)
     total_events = _safe_int(events.get("total_events"), 0)
-    next_event = events.get("next_event") if isinstance(events.get("next_event"), dict) else {}
+    next_event = (
+        events.get("next_event") if isinstance(events.get("next_event"), dict) else {}
+    )
     minutes_to_next_event = _safe_int(next_event.get("minutes_to_event"), 999999)
 
     risk_bias = 0.0
@@ -124,8 +141,12 @@ def current_context(
 
     generated_at = str(payload.get("generated_at") or "").strip()
     generated_epoch = _parse_iso_epoch(generated_at)
-    age_sec = max(0.0, time.time() - generated_epoch) if generated_epoch is not None else None
-    stale_max_age_sec = _STALE_MAX_AGE_SEC if max_age_sec is None else max(60.0, float(max_age_sec))
+    age_sec = (
+        max(0.0, time.time() - generated_epoch) if generated_epoch is not None else None
+    )
+    stale_max_age_sec = (
+        _STALE_MAX_AGE_SEC if max_age_sec is None else max(60.0, float(max_age_sec))
+    )
     stale = bool(age_sec is None or age_sec > stale_max_age_sec)
 
     if bias_score >= 0.15:
@@ -147,7 +168,9 @@ def current_context(
         "risk_mode": risk_mode,
         "high_impact_events": high_impact_events,
         "total_events": total_events,
-        "minutes_to_next_event": minutes_to_next_event if minutes_to_next_event != 999999 else None,
+        "minutes_to_next_event": (
+            minutes_to_next_event if minutes_to_next_event != 999999 else None
+        ),
         "next_event_name": str(next_event.get("name") or "").strip() or None,
         "event_severity": event_severity,
         "bias_score": round(bias_score, 6),

@@ -58,7 +58,9 @@ def count_pullback_touches(
         return PullbackTouchResult(0, None, None, None, None)
 
     pip = max(1e-6, float(pip_value))
-    reset_pips = max(0.05, float(reset_pips) if reset_pips is not None else pullback_pips * 0.45)
+    reset_pips = max(
+        0.05, float(reset_pips) if reset_pips is not None else pullback_pips * 0.45
+    )
     direction = 1.0 if side == "long" else -1.0
 
     anchor = clean_prices[0] * direction
@@ -105,7 +107,9 @@ def count_pullback_touches(
     if last_touch_idx is not None and clean_times:
         last_touch_ts = clean_times[last_touch_idx]
 
-    last_touch_price = clean_prices[last_touch_idx] if last_touch_idx is not None else None
+    last_touch_price = (
+        clean_prices[last_touch_idx] if last_touch_idx is not None else None
+    )
     extreme_price = extreme * direction if clean_prices else None
     trend_pips = (extreme - anchor) / pip if clean_prices else None
     if not trend_confirmed:

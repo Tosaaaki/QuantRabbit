@@ -71,7 +71,9 @@ def _stage_conditions_met(
     slope_h4 = abs(fac_h4.get("ma20", 0.0) - fac_h4.get("ma10", 0.0))
     atr_h4_raw = fac_h4.get("atr")
     atr_h4_pips = (atr_h4_raw or 0.0) * 100.0
-    gap_h4_pips = abs((fac_h4.get("ma10", 0.0) or 0.0) - (fac_h4.get("ma20", 0.0) or 0.0)) * 100.0
+    gap_h4_pips = (
+        abs((fac_h4.get("ma10", 0.0) or 0.0) - (fac_h4.get("ma20", 0.0) or 0.0)) * 100.0
+    )
     strength_ratio = gap_h4_pips / atr_h4_pips if atr_h4_pips > 1e-6 else 0.0
 
     if pocket == "macro":
@@ -157,12 +159,16 @@ def _stage_conditions_met(
         if price is not None and avg_price:
             if action == "OPEN_LONG" and price < avg_price - 0.02:
                 LOG.info(
-                    "[STAGE] Macro buy gating: price %.3f below avg %.3f.", price, avg_price
+                    "[STAGE] Macro buy gating: price %.3f below avg %.3f.",
+                    price,
+                    avg_price,
                 )
                 return False
             if action == "OPEN_SHORT" and price > avg_price + 0.02:
                 LOG.info(
-                    "[STAGE] Macro sell gating: price %.3f above avg %.3f.", price, avg_price
+                    "[STAGE] Macro sell gating: price %.3f above avg %.3f.",
+                    price,
+                    avg_price,
                 )
                 return False
         if action == "OPEN_LONG":
@@ -213,7 +219,9 @@ def _stage_conditions_met(
     if pocket == "scalp":
         atr = fac_m1.get("atr", 0.0) * 100
         if atr < 2.2:
-            LOG.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
+            LOG.info(
+                "[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx
+            )
             return False
         momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
         if action == "OPEN_LONG" and momentum > 0:
@@ -294,4 +302,3 @@ def compute_stage_lot(
             )
             return next_lot, stage_idx
     return 0.0, len(plan)
-

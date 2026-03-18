@@ -28,18 +28,20 @@ PIP = 0.01
 
 class MarketRegime(str, Enum):
     """市況レジームの分類"""
-    TRENDING_UP = "trending_up"        # ADX>25, DI+ > DI-, 上昇トレンド
-    TRENDING_DOWN = "trending_down"    # ADX>25, DI- > DI+, 下降トレンド
-    RANGE_TIGHT = "range_tight"        # ADX<20, BBW<0.001, 狭いレンジ
-    RANGE_WIDE = "range_wide"          # ADX<20, BBW>0.002, 広いレンジ
-    VOLATILE = "volatile"              # ATR急上昇, 高ボラ
-    CHOPPY = "choppy"                  # ADX<15, DI gap<8, 方向性なし（最も危険）
-    UNKNOWN = "unknown"                # 判定不能
+
+    TRENDING_UP = "trending_up"  # ADX>25, DI+ > DI-, 上昇トレンド
+    TRENDING_DOWN = "trending_down"  # ADX>25, DI- > DI+, 下降トレンド
+    RANGE_TIGHT = "range_tight"  # ADX<20, BBW<0.001, 狭いレンジ
+    RANGE_WIDE = "range_wide"  # ADX<20, BBW>0.002, 広いレンジ
+    VOLATILE = "volatile"  # ATR急上昇, 高ボラ
+    CHOPPY = "choppy"  # ADX<15, DI gap<8, 方向性なし（最も危険）
+    UNKNOWN = "unknown"  # 判定不能
 
 
 @dataclass(frozen=True)
 class RegimeSnapshot:
     """レジーム判定結果と根拠指標のスナップショット"""
+
     regime: MarketRegime
     adx: float
     rsi: float
@@ -53,7 +55,9 @@ class RegimeSnapshot:
 
     def is_tradeable(self) -> bool:
         """トレード可能なレジームか"""
-        return self.regime != MarketRegime.CHOPPY and self.regime != MarketRegime.UNKNOWN
+        return (
+            self.regime != MarketRegime.CHOPPY and self.regime != MarketRegime.UNKNOWN
+        )
 
     def favors_long(self) -> bool:
         """ロング有利なレジームか"""
@@ -104,6 +108,7 @@ def classify_regime(
     if factors_m1 is None:
         try:
             from indicators.factor_cache import all_factors
+
             all_f = all_factors()
             factors_m1 = all_f.get("M1", {})
             if factors_m5 is None:
@@ -111,17 +116,29 @@ def classify_regime(
         except Exception:
             return RegimeSnapshot(
                 regime=MarketRegime.UNKNOWN,
-                adx=0.0, rsi=0.0, atr_pips=0.0, bbw=0.0,
-                di_gap=0.0, di_plus=0.0, di_minus=0.0,
-                ema_slope_10=0.0, confidence=0.0,
+                adx=0.0,
+                rsi=0.0,
+                atr_pips=0.0,
+                bbw=0.0,
+                di_gap=0.0,
+                di_plus=0.0,
+                di_minus=0.0,
+                ema_slope_10=0.0,
+                confidence=0.0,
             )
 
     if not factors_m1:
         return RegimeSnapshot(
             regime=MarketRegime.UNKNOWN,
-            adx=0.0, rsi=0.0, atr_pips=0.0, bbw=0.0,
-            di_gap=0.0, di_plus=0.0, di_minus=0.0,
-            ema_slope_10=0.0, confidence=0.0,
+            adx=0.0,
+            rsi=0.0,
+            atr_pips=0.0,
+            bbw=0.0,
+            di_gap=0.0,
+            di_plus=0.0,
+            di_minus=0.0,
+            ema_slope_10=0.0,
+            confidence=0.0,
         )
 
     adx = float(factors_m1.get("adx", 0.0) or 0.0)
@@ -153,7 +170,11 @@ def classify_regime(
         confidence = 0.8 if m5_adx < _ADX_RANGE_MAX else 0.6
 
     # 2. ボラ急変判定
-    elif atr_rolling_mean and atr_rolling_mean > 0 and atr_pips > atr_rolling_mean * _ATR_VOLATILE_MULT:
+    elif (
+        atr_rolling_mean
+        and atr_rolling_mean > 0
+        and atr_pips > atr_rolling_mean * _ATR_VOLATILE_MULT
+    ):
         regime = MarketRegime.VOLATILE
         confidence = min(0.9, 0.5 + (atr_pips / atr_rolling_mean - 1.0) * 0.3)
 
@@ -211,13 +232,20 @@ def classify_regime(
 
     logging.debug(
         "[REGIME] %s adx=%.1f rsi=%.1f atr=%.2f bbw=%.5f di_gap=%.1f conf=%.2f",
-        regime.value, adx, rsi, atr_pips, bbw, di_gap, confidence,
+        regime.value,
+        adx,
+        rsi,
+        atr_pips,
+        bbw,
+        di_gap,
+        confidence,
     )
 
     return result
 
 
 # --- ストラテジー別の推奨アクション ---
+
 
 def should_enter(
     regime: RegimeSnapshot,

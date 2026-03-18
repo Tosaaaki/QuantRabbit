@@ -15,7 +15,9 @@ from .common import (
 from utils.tuning_loader import get_tuning_value
 
 
-def _band_edges(ma: Optional[float], bbw: Optional[float]) -> Optional[Tuple[float, float, float]]:
+def _band_edges(
+    ma: Optional[float], bbw: Optional[float]
+) -> Optional[Tuple[float, float, float]]:
     if ma is None or bbw is None:
         return None
     try:
@@ -102,7 +104,11 @@ class BBRsiFast:
             if prev_body is not None and prev_body >= 0.6 and (last_body or 0.0) >= 0.2:
                 long_ready = False
         if short_ready and prev_body is not None and last_body is not None:
-            if prev_body is not None and prev_body <= -0.6 and (last_body or 0.0) <= -0.2:
+            if (
+                prev_body is not None
+                and prev_body <= -0.6
+                and (last_body or 0.0) <= -0.2
+            ):
                 short_ready = False
 
         if not long_ready and not short_ready:

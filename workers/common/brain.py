@@ -20,6 +20,7 @@ from typing import Any, Optional
 from utils.ollama_client import call_ollama_chat_json
 from utils.vertex_client import call_vertex_text
 from utils.metrics_logger import log_metric
+
 try:
     from indicators.factor_cache import all_factors
 except Exception:  # pragma: no cover - optional market context lane
@@ -35,15 +36,35 @@ _DB_PATH = pathlib.Path(os.getenv("BRAIN_DB_PATH", "logs/brain_state.db"))
 _TRADES_DB_PATH = pathlib.Path(os.getenv("BRAIN_TRADES_DB_PATH", "logs/trades.db"))
 _DB_TIMEOUT = float(os.getenv("BRAIN_DB_TIMEOUT_SEC", "3.0"))
 
-_ENABLED = os.getenv("BRAIN_ENABLED", "0").strip().lower() not in {"", "0", "false", "no", "off"}
-_ALLOWLIST = {item.strip().lower() for item in os.getenv("BRAIN_STRATEGY_ALLOWLIST", "").split(",") if item.strip()}
-_BLOCKLIST = {item.strip().lower() for item in os.getenv("BRAIN_STRATEGY_BLOCKLIST", "").split(",") if item.strip()}
-_POCKET_ALLOWLIST = {item.strip().lower() for item in os.getenv("BRAIN_POCKET_ALLOWLIST", "").split(",") if item.strip()}
+_ENABLED = os.getenv("BRAIN_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+_ALLOWLIST = {
+    item.strip().lower()
+    for item in os.getenv("BRAIN_STRATEGY_ALLOWLIST", "").split(",")
+    if item.strip()
+}
+_BLOCKLIST = {
+    item.strip().lower()
+    for item in os.getenv("BRAIN_STRATEGY_BLOCKLIST", "").split(",")
+    if item.strip()
+}
+_POCKET_ALLOWLIST = {
+    item.strip().lower()
+    for item in os.getenv("BRAIN_POCKET_ALLOWLIST", "").split(",")
+    if item.strip()
+}
 _SAMPLE_RATE = max(0.0, min(1.0, float(os.getenv("BRAIN_SAMPLE_RATE", "1.0") or 1.0)))
 
 _TTL_SEC = max(5.0, float(os.getenv("BRAIN_TTL_SEC", "90") or 90.0))
 _MEMORY_TTL_H = max(1.0, float(os.getenv("BRAIN_MEMORY_TTL_H", "72") or 72.0))
-_MAX_CONTEXT_CHARS = max(200, int(float(os.getenv("BRAIN_MAX_CONTEXT_CHARS", "1200") or 1200)))
+_MAX_CONTEXT_CHARS = max(
+    200, int(float(os.getenv("BRAIN_MAX_CONTEXT_CHARS", "1200") or 1200))
+)
 _MIN_SCALE = max(0.05, float(os.getenv("BRAIN_MIN_SCALE", "0.2") or 0.2))
 _BACKEND = (os.getenv("BRAIN_BACKEND", "vertex") or "vertex").strip().lower()
 if _BACKEND not in {"vertex", "ollama"}:
@@ -55,7 +76,9 @@ _VERTEX_MODEL = (
     or os.getenv("VERTEX_MODEL")
     or "gemini-2.0-flash"
 )
-_OLLAMA_MODEL = (os.getenv("BRAIN_OLLAMA_MODEL", "gpt-oss:20b") or "gpt-oss:20b").strip()
+_OLLAMA_MODEL = (
+    os.getenv("BRAIN_OLLAMA_MODEL", "gpt-oss:20b") or "gpt-oss:20b"
+).strip()
 _OLLAMA_URL = (
     os.getenv("BRAIN_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
     or "http://127.0.0.1:11434/api/chat"
@@ -98,6 +121,7 @@ def _fail_policy_for_pocket(pocket: str) -> str:
     if raw not in {"allow", "reduce", "block"}:
         return _FAIL_POLICY
     return raw
+
 
 _PERSONA_ENABLED = os.getenv("BRAIN_PERSONA_ENABLED", "1").strip().lower() not in {
     "",
@@ -175,7 +199,9 @@ _PROMPT_EXTRA_RULE_LEN = max(
     24, int(float(os.getenv("BRAIN_PROMPT_EXTRA_RULE_LEN", "160") or 160))
 )
 
-_PROMPT_AUTOTUNE_ENABLED = os.getenv("BRAIN_PROMPT_AUTO_TUNE_ENABLED", "0").strip().lower() not in {
+_PROMPT_AUTOTUNE_ENABLED = os.getenv(
+    "BRAIN_PROMPT_AUTO_TUNE_ENABLED", "0"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -211,14 +237,20 @@ _PROMPT_AUTOTUNE_URL = (
     or _OLLAMA_URL
 ).strip()
 _PROMPT_REPORT_LATEST_PATH = pathlib.Path(
-    os.getenv("BRAIN_PROMPT_REPORT_LATEST_PATH", "logs/brain_prompt_autotune_latest.json")
+    os.getenv(
+        "BRAIN_PROMPT_REPORT_LATEST_PATH", "logs/brain_prompt_autotune_latest.json"
+    )
 )
 _PROMPT_REPORT_HISTORY_PATH = pathlib.Path(
-    os.getenv("BRAIN_PROMPT_REPORT_HISTORY_PATH", "logs/brain_prompt_autotune_history.jsonl")
+    os.getenv(
+        "BRAIN_PROMPT_REPORT_HISTORY_PATH", "logs/brain_prompt_autotune_history.jsonl"
+    )
 )
 
 _RUNTIME_PARAM_PROFILE_PATH = pathlib.Path(
-    os.getenv("BRAIN_RUNTIME_PARAM_PROFILE_PATH", "config/brain_runtime_param_profile.json")
+    os.getenv(
+        "BRAIN_RUNTIME_PARAM_PROFILE_PATH", "config/brain_runtime_param_profile.json"
+    )
 )
 _RUNTIME_PARAM_PROFILE_TTL_SEC = max(
     5.0, float(os.getenv("BRAIN_RUNTIME_PARAM_PROFILE_TTL_SEC", "30") or 30.0)
@@ -282,7 +314,10 @@ _FAILFAST_WINDOW_SEC = max(
     ),
 )
 _RUNTIME_PARAM_REPORT_LATEST_PATH = pathlib.Path(
-    os.getenv("BRAIN_RUNTIME_PARAM_REPORT_LATEST_PATH", "logs/brain_runtime_param_autotune_latest.json")
+    os.getenv(
+        "BRAIN_RUNTIME_PARAM_REPORT_LATEST_PATH",
+        "logs/brain_runtime_param_autotune_latest.json",
+    )
 )
 _RUNTIME_PARAM_REPORT_HISTORY_PATH = pathlib.Path(
     os.getenv(
@@ -388,7 +423,10 @@ def _active_failfast_reason(strategy_tag: str, pocket: str) -> Optional[str]:
         last_failure_mono = float(state.get("last_failure_mono") or 0.0)
         if cooldown_until > now_mono:
             return "recent_llm_timeout_cooldown"
-        if last_failure_mono <= 0.0 or now_mono - last_failure_mono > _FAILFAST_WINDOW_SEC:
+        if (
+            last_failure_mono <= 0.0
+            or now_mono - last_failure_mono > _FAILFAST_WINDOW_SEC
+        ):
             _FAILFAST_STATE.pop(key, None)
     return None
 
@@ -402,7 +440,10 @@ def _record_failfast_failure(strategy_tag: str, pocket: str) -> None:
         state = _FAILFAST_STATE.get(key) or {}
         last_failure_mono = float(state.get("last_failure_mono") or 0.0)
         failure_count = int(state.get("failure_count") or 0)
-        if last_failure_mono <= 0.0 or now_mono - last_failure_mono > _FAILFAST_WINDOW_SEC:
+        if (
+            last_failure_mono <= 0.0
+            or now_mono - last_failure_mono > _FAILFAST_WINDOW_SEC
+        ):
             failure_count = 0
         failure_count += 1
         cooldown_until = float(state.get("cooldown_until") or 0.0)
@@ -425,8 +466,7 @@ def _ensure_schema() -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE IF NOT EXISTS brain_memory (
                 strategy_tag TEXT NOT NULL,
                 pocket TEXT NOT NULL,
@@ -438,13 +478,11 @@ def _ensure_schema() -> None:
                 last_ts REAL,
                 PRIMARY KEY (strategy_tag, pocket)
             )
-            """
-        )
+            """)
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_brain_memory_updated ON brain_memory(updated_at)"
         )
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE IF NOT EXISTS brain_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
@@ -473,19 +511,19 @@ def _ensure_schema() -> None:
                 response_json TEXT,
                 error TEXT
             )
-            """
-        )
+            """)
         try:
             cols = {
                 str(row[1] or "").strip().lower()
                 for row in con.execute("PRAGMA table_info(brain_decisions)").fetchall()
             }
             if "market_metrics_json" not in cols:
-                con.execute("ALTER TABLE brain_decisions ADD COLUMN market_metrics_json TEXT")
+                con.execute(
+                    "ALTER TABLE brain_decisions ADD COLUMN market_metrics_json TEXT"
+                )
         except Exception:
             pass
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE IF NOT EXISTS brain_prompt_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
@@ -500,10 +538,8 @@ def _ensure_schema() -> None:
                 response_json TEXT,
                 error TEXT
             )
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS brain_runtime_param_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
@@ -518,8 +554,7 @@ def _ensure_schema() -> None:
                 response_json TEXT,
                 error TEXT
             )
-            """
-        )
+            """)
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_brain_decisions_ts ON brain_decisions(ts_epoch)"
         )
@@ -686,7 +721,11 @@ def _compact_jsonable(
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
-        return value if value == value and value not in {float("inf"), float("-inf")} else None
+        return (
+            value
+            if value == value and value not in {float("inf"), float("-inf")}
+            else None
+        )
     if isinstance(value, str):
         return _trim_text(value, max_string)
     if depth >= max_depth:
@@ -858,7 +897,9 @@ def _compact_context(context: dict[str, Any]) -> dict[str, Any]:
         ],
     )
     if ticks:
-        ticks_compact = _pick_present(ticks, ["spread_pips", "bid", "ask", "mid", "age_sec"])
+        ticks_compact = _pick_present(
+            ticks, ["spread_pips", "bid", "ask", "mid", "age_sec"]
+        )
         if ticks_compact:
             meta_compact["ticks"] = ticks_compact
     if meta_compact:
@@ -981,7 +1022,9 @@ def _coerce_runtime_param_profile(raw: Any) -> dict[str, Any]:
         "version": str(merged.get("version") or "").strip() or str(defaults["version"]),
         "updated_at": str(merged.get("updated_at") or "").strip() or _now_iso(),
         "min_scale": round(
-            _clamp_float(merged.get("min_scale"), float(defaults["min_scale"]), 0.05, 0.95),
+            _clamp_float(
+                merged.get("min_scale"), float(defaults["min_scale"]), 0.05, 0.95
+            ),
             4,
         ),
         "block_rate_soft_limit": round(
@@ -1110,7 +1153,9 @@ def _load_runtime_param_profile(force: bool = False) -> dict[str, Any]:
         profile: dict[str, Any]
         if _RUNTIME_PARAM_PROFILE_PATH.exists():
             try:
-                raw = json.loads(_RUNTIME_PARAM_PROFILE_PATH.read_text(encoding="utf-8"))
+                raw = json.loads(
+                    _RUNTIME_PARAM_PROFILE_PATH.read_text(encoding="utf-8")
+                )
             except Exception:
                 raw = {}
             profile = _coerce_runtime_param_profile(raw)
@@ -1125,11 +1170,7 @@ def _load_prompt_profile(force: bool = False) -> dict[str, Any]:
     now = time.monotonic()
     with _PROMPT_PROFILE_LOCK:
         cached_ts, cached = _PROMPT_PROFILE_CACHE
-        if (
-            not force
-            and cached
-            and now - cached_ts <= _PROMPT_PROFILE_TTL_SEC
-        ):
+        if not force and cached and now - cached_ts <= _PROMPT_PROFILE_TTL_SEC:
             return dict(cached)
         profile: dict[str, Any] = {}
         if _PROMPT_PROFILE_PATH.exists():
@@ -1353,7 +1394,15 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                     """,
                     (cutoff_epoch,),
                 )
-                for action, trades, wins, avg_pips, avg_realized, gross_win, gross_loss in cur.fetchall():
+                for (
+                    action,
+                    trades,
+                    wins,
+                    avg_pips,
+                    avg_realized,
+                    gross_win,
+                    gross_loss,
+                ) in cur.fetchall():
                     trades_n = int(trades or 0)
                     wins_n = int(wins or 0)
                     gross_win_f = float(gross_win or 0.0)
@@ -1366,7 +1415,9 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                     summary["filled_trade_outcome"][str(action)] = {
                         "trades": trades_n,
                         "wins": wins_n,
-                        "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
+                        "win_rate": (
+                            round(wins_n / trades_n, 4) if trades_n > 0 else 0.0
+                        ),
                         "avg_pips": round(float(avg_pips or 0.0), 4),
                         "avg_realized": round(float(avg_realized or 0.0), 6),
                         "gross_win": round(gross_win_f, 6),
@@ -1397,7 +1448,17 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                     """,
                     (cutoff_epoch,),
                 )
-                for strat, pocket, action, trades, wins, avg_pips, avg_realized, gross_win, gross_loss in cur.fetchall():
+                for (
+                    strat,
+                    pocket,
+                    action,
+                    trades,
+                    wins,
+                    avg_pips,
+                    avg_realized,
+                    gross_win,
+                    gross_loss,
+                ) in cur.fetchall():
                     trades_n = int(trades or 0)
                     wins_n = int(wins or 0)
                     gross_win_f = float(gross_win or 0.0)
@@ -1414,7 +1475,9 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
                             "action": str(action or ""),
                             "trades": trades_n,
                             "wins": wins_n,
-                            "win_rate": round(wins_n / trades_n, 4) if trades_n > 0 else 0.0,
+                            "win_rate": (
+                                round(wins_n / trades_n, 4) if trades_n > 0 else 0.0
+                            ),
                             "avg_pips": round(float(avg_pips or 0.0), 4),
                             "avg_realized": round(float(avg_realized or 0.0), 6),
                             "gross_win": round(gross_win_f, 6),
@@ -1437,7 +1500,9 @@ def _collect_autotune_summary(lookback_hours: float) -> dict[str, Any]:
         except Exception:
             pass
     summary["market_summary"] = _collect_market_summary(lookback_hours)
-    summary["market_outcome_features"] = _collect_market_outcome_features(lookback_hours)
+    summary["market_outcome_features"] = _collect_market_outcome_features(
+        lookback_hours
+    )
     return summary
 
 
@@ -1446,15 +1511,13 @@ def _load_latest_applied_prompt_run() -> tuple[Optional[str], dict[str, Any]]:
         return None, {}
     con = sqlite3.connect(_DB_PATH, timeout=_DB_TIMEOUT)
     try:
-        row = con.execute(
-            """
+        row = con.execute("""
             SELECT profile_version, summary_json
             FROM brain_prompt_runs
             WHERE applied = 1
             ORDER BY ts_epoch DESC, id DESC
             LIMIT 1
-            """
-        ).fetchone()
+            """).fetchone()
     except Exception:
         row = None
     finally:
@@ -1505,16 +1568,22 @@ def _summary_metrics(summary: Optional[dict[str, Any]]) -> dict[str, dict[str, f
             "trades": trades,
             "wins": wins,
             "win_rate": round((wins / trades), 4) if trades > 0 else 0.0,
-            "profit_factor": round(gross_win / gross_loss, 4) if gross_loss > 1e-9 else (round(gross_win, 4) if gross_win > 0.0 else 0.0),
+            "profit_factor": (
+                round(gross_win / gross_loss, 4)
+                if gross_loss > 1e-9
+                else (round(gross_win, 4) if gross_win > 0.0 else 0.0)
+            ),
         }
 
     metrics["COMBINED"] = {
         "trades": trades_total,
         "wins": wins_total,
         "win_rate": round((wins_total / trades_total), 4) if trades_total > 0 else 0.0,
-        "profit_factor": round(gross_win_total / gross_loss_total, 4)
-        if gross_loss_total > 1e-9
-        else (round(gross_win_total, 4) if gross_win_total > 0.0 else 0.0),
+        "profit_factor": (
+            round(gross_win_total / gross_loss_total, 4)
+            if gross_loss_total > 1e-9
+            else (round(gross_win_total, 4) if gross_win_total > 0.0 else 0.0)
+        ),
     }
     return metrics
 
@@ -1524,17 +1593,31 @@ def _build_summary_comparison(
     previous_summary: Optional[dict[str, Any]],
 ) -> dict[str, Any]:
     current = _summary_metrics(current_summary)
-    previous = _summary_metrics(previous_summary) if isinstance(previous_summary, dict) and previous_summary else {}
+    previous = (
+        _summary_metrics(previous_summary)
+        if isinstance(previous_summary, dict) and previous_summary
+        else {}
+    )
     comparison: dict[str, Any] = {}
     for key in ("ALLOW", "REDUCE", "COMBINED"):
-        cur = current.get(key, {"trades": 0.0, "wins": 0.0, "win_rate": 0.0, "profit_factor": 0.0})
+        cur = current.get(
+            key, {"trades": 0.0, "wins": 0.0, "win_rate": 0.0, "profit_factor": 0.0}
+        )
         prev = previous.get(key)
         comparison[key] = {
             "current": cur,
             "previous": prev,
             "delta": {
-                "win_rate": round(cur["win_rate"] - prev["win_rate"], 6) if prev is not None else None,
-                "profit_factor": round(cur["profit_factor"] - prev["profit_factor"], 6) if prev is not None else None,
+                "win_rate": (
+                    round(cur["win_rate"] - prev["win_rate"], 6)
+                    if prev is not None
+                    else None
+                ),
+                "profit_factor": (
+                    round(cur["profit_factor"] - prev["profit_factor"], 6)
+                    if prev is not None
+                    else None
+                ),
             },
         }
     return comparison
@@ -1543,7 +1626,9 @@ def _build_summary_comparison(
 def _write_prompt_report(report: dict[str, Any]) -> None:
     try:
         _PROMPT_REPORT_LATEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp_latest = _PROMPT_REPORT_LATEST_PATH.with_suffix(_PROMPT_REPORT_LATEST_PATH.suffix + ".tmp")
+        tmp_latest = _PROMPT_REPORT_LATEST_PATH.with_suffix(
+            _PROMPT_REPORT_LATEST_PATH.suffix + ".tmp"
+        )
         tmp_latest.write_text(
             json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2),
             encoding="utf-8",
@@ -1648,7 +1733,9 @@ def _write_runtime_param_profile(profile_payload: dict[str, Any]) -> dict[str, A
         merged.update(profile_payload)
     merged = _coerce_runtime_param_profile(merged)
     merged["updated_at"] = _now_iso()
-    tmp_path = _RUNTIME_PARAM_PROFILE_PATH.with_suffix(_RUNTIME_PARAM_PROFILE_PATH.suffix + ".tmp")
+    tmp_path = _RUNTIME_PARAM_PROFILE_PATH.with_suffix(
+        _RUNTIME_PARAM_PROFILE_PATH.suffix + ".tmp"
+    )
     tmp_path.write_text(
         json.dumps(merged, ensure_ascii=True, sort_keys=True, indent=2),
         encoding="utf-8",
@@ -1677,7 +1764,9 @@ def _normalize_confidence_score(value: Any) -> Optional[float]:
     return None
 
 
-def _resolve_confidence_score(confidence: Any, entry_thesis: Optional[dict[str, Any]]) -> Optional[float]:
+def _resolve_confidence_score(
+    confidence: Any, entry_thesis: Optional[dict[str, Any]]
+) -> Optional[float]:
     entry = _safe_dict(entry_thesis)
     for candidate in (
         entry.get("confidence"),
@@ -1709,7 +1798,10 @@ def _extract_market_metrics(context: dict[str, Any]) -> dict[str, Optional[float
         m1_factors.get("atr_pips"),
         meta.get("atr_pips"),
     ]
-    def _first_valid(candidates: list[Any], *, low: float, high: float) -> Optional[float]:
+
+    def _first_valid(
+        candidates: list[Any], *, low: float, high: float
+    ) -> Optional[float]:
         for item in candidates:
             try:
                 number = float(item)
@@ -1863,7 +1955,10 @@ def _augment_context_with_live_market(context: dict[str, Any]) -> dict[str, Any]
     tick_snapshot = _latest_tick_snapshot()
     if tick_snapshot:
         ticks.update({k: v for k, v in tick_snapshot.items() if v not in (None, "")})
-        if meta.get("spread_pips") in (None, "") and tick_snapshot.get("spread_pips") is not None:
+        if (
+            meta.get("spread_pips") in (None, "")
+            and tick_snapshot.get("spread_pips") is not None
+        ):
             meta["spread_pips"] = tick_snapshot["spread_pips"]
         for key in ("bid", "ask", "mid"):
             if meta.get(key) in (None, "") and tick_snapshot.get(key) is not None:
@@ -1879,13 +1974,19 @@ def _augment_context_with_live_market(context: dict[str, Any]) -> dict[str, Any]
             entry["factors_M1"] = factors_m1
         if entry.get("atr_pips") in (None, "") and live_m1.get("atr_pips") is not None:
             entry["atr_pips"] = live_m1["atr_pips"]
-        if entry.get("range_score") in (None, "") and live_m1.get("range_score") is not None:
+        if (
+            entry.get("range_score") in (None, "")
+            and live_m1.get("range_score") is not None
+        ):
             entry["range_score"] = live_m1["range_score"]
         if entry.get("market_regime") in (None, "") and live_m1.get("regime"):
             entry["market_regime"] = live_m1["regime"]
         if meta.get("atr_pips") in (None, "") and live_m1.get("atr_pips") is not None:
             meta["atr_pips"] = live_m1["atr_pips"]
-        if meta.get("range_score") in (None, "") and live_m1.get("range_score") is not None:
+        if (
+            meta.get("range_score") in (None, "")
+            and live_m1.get("range_score") is not None
+        ):
             meta["range_score"] = live_m1["range_score"]
         if meta.get("market_regime") in (None, "") and live_m1.get("regime"):
             meta["market_regime"] = live_m1["regime"]
@@ -1923,20 +2024,30 @@ def _context_cache_fingerprint(context: dict[str, Any]) -> str:
     recent = _safe_dict(context.get("recent_outcome"))
     forecast = _safe_dict(entry.get("forecast_fusion") or meta.get("forecast_fusion"))
     metrics = _extract_market_metrics(context)
-    regime = str(
-        entry.get("market_regime")
-        or meta.get("market_regime")
-        or entry.get("range_mode")
-        or meta.get("range_mode")
-        or ""
-    ).strip().lower() or "na"
-    signal = str(
-        entry.get("signal_tag")
-        or entry.get("signal_mode")
-        or meta.get("signal_tag")
-        or meta.get("signal_mode")
-        or ""
-    ).strip().lower() or "na"
+    regime = (
+        str(
+            entry.get("market_regime")
+            or meta.get("market_regime")
+            or entry.get("range_mode")
+            or meta.get("range_mode")
+            or ""
+        )
+        .strip()
+        .lower()
+        or "na"
+    )
+    signal = (
+        str(
+            entry.get("signal_tag")
+            or entry.get("signal_mode")
+            or meta.get("signal_tag")
+            or meta.get("signal_mode")
+            or ""
+        )
+        .strip()
+        .lower()
+        or "na"
+    )
     trades = int(_float_or_none(recent.get("trades")) or 0.0)
     return "|".join(
         [
@@ -2070,10 +2181,18 @@ def _bucket_confidence(confidence: float) -> str:
 
 
 def _new_outcome_bucket() -> dict[str, float]:
-    return {"trades": 0.0, "wins": 0.0, "gross_win": 0.0, "gross_loss": 0.0, "sum_pips": 0.0}
+    return {
+        "trades": 0.0,
+        "wins": 0.0,
+        "gross_win": 0.0,
+        "gross_loss": 0.0,
+        "sum_pips": 0.0,
+    }
 
 
-def _add_outcome_sample(bucket: dict[str, float], *, realized_pl: float, pl_pips: float) -> None:
+def _add_outcome_sample(
+    bucket: dict[str, float], *, realized_pl: float, pl_pips: float
+) -> None:
     bucket["trades"] = float(bucket.get("trades", 0.0) + 1.0)
     if realized_pl > 0.0:
         bucket["wins"] = float(bucket.get("wins", 0.0) + 1.0)
@@ -2083,7 +2202,9 @@ def _add_outcome_sample(bucket: dict[str, float], *, realized_pl: float, pl_pips
     bucket["sum_pips"] = float(bucket.get("sum_pips", 0.0) + pl_pips)
 
 
-def _finalize_outcome_buckets(buckets: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
+def _finalize_outcome_buckets(
+    buckets: dict[str, dict[str, float]],
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name, values in buckets.items():
         trades = int(values.get("trades") or 0)
@@ -2107,7 +2228,9 @@ def _finalize_outcome_buckets(buckets: dict[str, dict[str, float]]) -> list[dict
                 "profit_factor": round(float(pf), 4),
             }
         )
-    rows.sort(key=lambda row: (-int(row.get("trades") or 0), str(row.get("bucket") or "")))
+    rows.sort(
+        key=lambda row: (-int(row.get("trades") or 0), str(row.get("bucket") or ""))
+    )
     return rows
 
 
@@ -2207,7 +2330,9 @@ def _collect_market_outcome_features(lookback_hours: float) -> dict[str, Any]:
             _add_outcome_sample(atr_row, realized_pl=realized, pl_pips=pips)
         if confidence is not None:
             bucket = _bucket_confidence(float(confidence))
-            confidence_row = confidence_buckets.setdefault(bucket, _new_outcome_bucket())
+            confidence_row = confidence_buckets.setdefault(
+                bucket, _new_outcome_bucket()
+            )
             _add_outcome_sample(confidence_row, realized_pl=realized, pl_pips=pips)
 
     summary["by_spread_bucket"] = _finalize_outcome_buckets(spread_buckets)
@@ -2425,9 +2550,13 @@ def _apply_runtime_param_guard(
         20,
         2000,
     )
-    min_guard_samples = _clamp_int(runtime_profile.get("min_guard_samples"), 30, 10, 500)
+    min_guard_samples = _clamp_int(
+        runtime_profile.get("min_guard_samples"), 30, 10, 500
+    )
     max_block_streak = _clamp_int(runtime_profile.get("max_block_streak"), 4, 2, 50)
-    outcome_min_trades = _clamp_int(runtime_profile.get("outcome_min_trades"), 8, 1, 200)
+    outcome_min_trades = _clamp_int(
+        runtime_profile.get("outcome_min_trades"), 8, 1, 200
+    )
     outcome_positive_pf_floor = _clamp_float(
         runtime_profile.get("outcome_positive_pf_floor"),
         1.05,
@@ -2488,8 +2617,12 @@ def _apply_runtime_param_guard(
         overrides.append("raise_min_scale")
 
     enough_samples = int(stats.get("samples") or 0) >= min_guard_samples
-    over_block_rate = bool(float(stats.get("block_rate") or 0.0) > block_rate_soft_limit)
-    under_activity = bool(float(stats.get("activity_rate") or 1.0) < activity_rate_floor)
+    over_block_rate = bool(
+        float(stats.get("block_rate") or 0.0) > block_rate_soft_limit
+    )
+    under_activity = bool(
+        float(stats.get("activity_rate") or 1.0) < activity_rate_floor
+    )
     over_block_streak = bool(int(stats.get("block_streak") or 0) >= max_block_streak)
     suppression_risk = over_block_rate or under_activity or over_block_streak
     outcome_trades = int(outcome_stats.get("trades") or 0)
@@ -2508,7 +2641,9 @@ def _apply_runtime_param_guard(
 
     convert_block_to_reduce = False
     preserve_setup = _is_activity_preserving_setup(context)
-    strong_setup_preserve = action == "BLOCK" and not negative_outcome_signal and preserve_setup
+    strong_setup_preserve = (
+        action == "BLOCK" and not negative_outcome_signal and preserve_setup
+    )
     if action == "BLOCK" and enough_samples and suppression_risk:
         convert_block_to_reduce = True
     elif action == "BLOCK" and suppression_risk and positive_outcome_signal:
@@ -2573,7 +2708,9 @@ def _apply_runtime_param_guard(
         if scale < 1.0:
             action = "REDUCE"
 
-    adjusted = BrainDecision(allowed, float(scale), reason, action, memory=decision.memory)
+    adjusted = BrainDecision(
+        allowed, float(scale), reason, action, memory=decision.memory
+    )
     guard_info = {
         "runtime_profile_version": _runtime_profile_version(runtime_profile),
         "min_scale": round(min_scale, 4),
@@ -2588,8 +2725,12 @@ def _apply_runtime_param_guard(
         "outcome_positive_pf_floor": round(outcome_positive_pf_floor, 4),
         "outcome_positive_win_rate_floor": round(outcome_positive_win_rate_floor, 4),
         "outcome_negative_pf_ceiling": round(outcome_negative_pf_ceiling, 4),
-        "outcome_negative_win_rate_ceiling": round(outcome_negative_win_rate_ceiling, 4),
-        "outcome_negative_avg_pips_ceiling": round(outcome_negative_avg_pips_ceiling, 4),
+        "outcome_negative_win_rate_ceiling": round(
+            outcome_negative_win_rate_ceiling, 4
+        ),
+        "outcome_negative_avg_pips_ceiling": round(
+            outcome_negative_avg_pips_ceiling, 4
+        ),
         "outcome_negative_reduce_scale": round(outcome_negative_reduce_scale, 4),
         "stats": stats,
         "outcome_stats": outcome_stats,
@@ -2646,7 +2787,9 @@ def _maybe_autotune_prompt_profile() -> None:
             f"Current profile: {_stringify(current_profile, 6000)}\n"
             f"Recent summary: {_stringify(summary, 9000)}\n"
         )
-        autotune_slot_acquired, defer_reason = _acquire_autotune_ollama_slot(_PROMPT_AUTOTUNE_URL)
+        autotune_slot_acquired, defer_reason = _acquire_autotune_ollama_slot(
+            _PROMPT_AUTOTUNE_URL
+        )
         if not autotune_slot_acquired:
             _record_prompt_run(
                 lookback_hours=_PROMPT_AUTOTUNE_LOOKBACK_HOURS,
@@ -2775,10 +2918,14 @@ def _collect_runtime_autotune_summary(lookback_hours: float) -> dict[str, Any]:
         "reduce": reduce_n,
         "block": block_n,
         "block_rate": round(block_n / total_n, 4) if total_n > 0 else 0.0,
-        "activity_rate": round((allow_n + reduce_n) / total_n, 4) if total_n > 0 else 0.0,
+        "activity_rate": (
+            round((allow_n + reduce_n) / total_n, 4) if total_n > 0 else 0.0
+        ),
     }
     summary["market_summary"] = _collect_market_summary(lookback_hours)
-    summary["market_outcome_features"] = _collect_market_outcome_features(lookback_hours)
+    summary["market_outcome_features"] = _collect_market_outcome_features(
+        lookback_hours
+    )
     summary["runtime_profile"] = _load_runtime_param_profile(force=True)
     return summary
 
@@ -2848,17 +2995,25 @@ def _maybe_autotune_runtime_param_profile() -> None:
     if not _RUNTIME_PARAM_AUTOTUNE_ENABLED:
         return
     now_epoch = time.time()
-    if now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
+    if (
+        now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS
+        < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC
+    ):
         return
     if not _RUNTIME_PARAM_AUTOTUNE_LOCK.acquire(blocking=False):
         return
     autotune_slot_acquired = False
     try:
         now_epoch = time.time()
-        if now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
+        if (
+            now_epoch - _LAST_RUNTIME_PARAM_AUTOTUNE_TS
+            < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC
+        ):
             return
         _LAST_RUNTIME_PARAM_AUTOTUNE_TS = now_epoch
-        summary = _collect_runtime_autotune_summary(_RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS)
+        summary = _collect_runtime_autotune_summary(
+            _RUNTIME_PARAM_AUTOTUNE_LOOKBACK_HOURS
+        )
         decision_count = int(summary.get("decision_count") or 0)
         current_profile = _load_runtime_param_profile(force=True)
         if decision_count < _RUNTIME_PARAM_AUTOTUNE_MIN_DECISIONS:
@@ -2998,7 +3153,10 @@ def _maybe_autotune_runtime_param_profile() -> None:
 def _maybe_autotune_runtime_param_profile_async() -> None:
     if not _RUNTIME_PARAM_AUTOTUNE_ENABLED:
         return
-    if time.time() - _LAST_RUNTIME_PARAM_AUTOTUNE_TS < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC:
+    if (
+        time.time() - _LAST_RUNTIME_PARAM_AUTOTUNE_TS
+        < _RUNTIME_PARAM_AUTOTUNE_INTERVAL_SEC
+    ):
         return
     thread = threading.Thread(
         target=_maybe_autotune_runtime_param_profile,
@@ -3037,7 +3195,12 @@ def _select_persona_key(tag: str) -> str:
         return "neutral"
     tokens = [t for t in text.replace("-", "_").split("_") if t]
     token_set = set(tokens)
-    if "range" in token_set or "revert" in token_set or "reversion" in token_set or "fade" in token_set:
+    if (
+        "range" in token_set
+        or "revert" in token_set
+        or "reversion" in token_set
+        or "fade" in token_set
+    ):
         return "range"
     if "bbrsi" in token_set or "bb" in token_set or "rsi" in token_set:
         return "range"
@@ -3047,7 +3210,12 @@ def _select_persona_key(tag: str) -> str:
         return "pullback"
     if "trend" in token_set or "donchian" in token_set or "breakout" in token_set:
         return "trend"
-    if "momentum" in token_set or "impulse" in token_set or "burst" in token_set or "squeeze" in token_set:
+    if (
+        "momentum" in token_set
+        or "impulse" in token_set
+        or "burst" in token_set
+        or "squeeze" in token_set
+    ):
         return "momentum"
     if "scalp" in token_set:
         return "scalp"
@@ -3061,7 +3229,9 @@ def _persona_text(strategy_tag: str, pocket: str) -> str:
         return _PERSONA_DEFAULT
     tag_key = _normalize_tag(strategy_tag)
     # Overrides can be string or dict with fields.
-    override = _PERSONA_OVERRIDES.get(tag_key) or _PERSONA_OVERRIDES.get(strategy_tag.strip().lower())
+    override = _PERSONA_OVERRIDES.get(tag_key) or _PERSONA_OVERRIDES.get(
+        strategy_tag.strip().lower()
+    )
     if override:
         if isinstance(override, str):
             return override
@@ -3154,7 +3324,9 @@ def _llm_failure_decision(
         return BrainDecision(False, 0.0, "no_llm_block", "BLOCK", memory=memory)
     if fail_policy == "reduce":
         fail_scale = min(0.5, max(_MIN_SCALE, 0.5))
-        return BrainDecision(True, float(fail_scale), "no_llm_reduce", "REDUCE", memory=memory)
+        return BrainDecision(
+            True, float(fail_scale), "no_llm_reduce", "REDUCE", memory=memory
+        )
     return BrainDecision(True, 1.0, allow_reason, "ALLOW", memory=memory)
 
 
@@ -3249,7 +3421,9 @@ def decide(
             pass
         return decision
 
-    failfast_reason = _active_failfast_reason(tag, pocket_key) if _BACKEND == "ollama" else None
+    failfast_reason = (
+        _active_failfast_reason(tag, pocket_key) if _BACKEND == "ollama" else None
+    )
     if failfast_reason:
         decision = _llm_failure_decision(
             memory=memory_before,
@@ -3428,9 +3602,10 @@ def decide(
             )
             if _COST_INPUT_PER_1K > 0 or _COST_OUTPUT_PER_1K > 0:
                 est_cost = (
-                    (float(vertex_resp.prompt_tokens or 0) / 1000.0) * _COST_INPUT_PER_1K
-                    + (float(vertex_resp.output_tokens or 0) / 1000.0) * _COST_OUTPUT_PER_1K
-                )
+                    float(vertex_resp.prompt_tokens or 0) / 1000.0
+                ) * _COST_INPUT_PER_1K + (
+                    float(vertex_resp.output_tokens or 0) / 1000.0
+                ) * _COST_OUTPUT_PER_1K
                 log_metric(
                     "brain_cost_est",
                     float(est_cost),

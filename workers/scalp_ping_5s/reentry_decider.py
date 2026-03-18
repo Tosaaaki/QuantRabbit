@@ -8,6 +8,7 @@ from typing import Optional, Sequence, Tuple
 from utils.metrics_logger import log_metric
 from indicators.factor_cache import all_factors
 
+
 @dataclass
 class ReentryConfig:
     enabled: bool
@@ -39,6 +40,7 @@ class ReentryConfig:
     trend_weights_low_atr: Tuple[float, float, float, float]
     trend_weights_high_atr: Tuple[float, float, float, float]
 
+
 @dataclass
 class ReentryDecision:
     action: Optional[str]
@@ -49,7 +51,9 @@ class ReentryDecision:
     min_adverse: float
     enabled: bool
 
+
 _LAST_LOG_TS: dict[str, float] = {}
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -57,11 +61,13 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes"}
 
+
 def _env_bool_opt(name: str) -> Optional[bool]:
     raw = os.getenv(name)
     if raw is None:
         return None
     return str(raw).strip().lower() in {"1", "true", "yes"}
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
@@ -71,6 +77,7 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
 
 def _safe_float(value: object) -> Optional[float]:
     try:
@@ -101,7 +108,9 @@ def _mix(low: float, high: float, ratio: float) -> float:
     return float(low) + (float(high) - float(low)) * float(ratio)
 
 
-def _atr_ratio(*, atr_pips: Optional[float], atr_low_pips: float, atr_high_pips: float) -> float:
+def _atr_ratio(
+    *, atr_pips: Optional[float], atr_low_pips: float, atr_high_pips: float
+) -> float:
     ratio = _norm(atr_pips, atr_low_pips, atr_high_pips)
     if ratio is None:
         return 0.5
@@ -116,7 +125,9 @@ def _blend_by_atr(
     low_value: float,
     high_value: float,
 ) -> float:
-    ratio = _atr_ratio(atr_pips=atr_pips, atr_low_pips=atr_low_pips, atr_high_pips=atr_high_pips)
+    ratio = _atr_ratio(
+        atr_pips=atr_pips, atr_low_pips=atr_low_pips, atr_high_pips=atr_high_pips
+    )
     return _mix(low_value, high_value, ratio)
 
 
@@ -232,11 +243,13 @@ def _reentry_scores(
 
     return revert_score, trend_score
 
+
 def _reentry_edge(adverse_pips: float, atr_pips: Optional[float]) -> float:
     if adverse_pips <= 0:
         return 0.0
     base = adverse_pips / max(atr_pips or 6.0, 0.1)
     return float(_clamp01((base - 0.8) / 1.4) or 0.0)
+
 
 def _load_config(prefix: str) -> ReentryConfig:
     name = prefix.strip().upper()
@@ -277,18 +290,34 @@ def _load_config(prefix: str) -> ReentryConfig:
         name=name,
         atr_low_pips=_prefixed_float("REENTRY_ATR_LOW_PIPS", 6.0),
         atr_high_pips=_prefixed_float("REENTRY_ATR_HIGH_PIPS", 14.0),
-        revert_min_low_atr=_prefixed_float("REENTRY_REVERT_MIN_ATR_LOW", base_revert_min),
-        revert_min_high_atr=_prefixed_float("REENTRY_REVERT_MIN_ATR_HIGH", base_revert_min),
+        revert_min_low_atr=_prefixed_float(
+            "REENTRY_REVERT_MIN_ATR_LOW", base_revert_min
+        ),
+        revert_min_high_atr=_prefixed_float(
+            "REENTRY_REVERT_MIN_ATR_HIGH", base_revert_min
+        ),
         trend_min_low_atr=_prefixed_float("REENTRY_TREND_MIN_ATR_LOW", base_trend_min),
-        trend_min_high_atr=_prefixed_float("REENTRY_TREND_MIN_ATR_HIGH", base_trend_min),
+        trend_min_high_atr=_prefixed_float(
+            "REENTRY_TREND_MIN_ATR_HIGH", base_trend_min
+        ),
         trend_max_low_atr=_prefixed_float("REENTRY_TREND_MAX_ATR_LOW", base_trend_max),
-        trend_max_high_atr=_prefixed_float("REENTRY_TREND_MAX_ATR_HIGH", base_trend_max),
+        trend_max_high_atr=_prefixed_float(
+            "REENTRY_TREND_MAX_ATR_HIGH", base_trend_max
+        ),
         edge_min_low_atr=_prefixed_float("REENTRY_EDGE_MIN_ATR_LOW", base_edge_min),
         edge_min_high_atr=_prefixed_float("REENTRY_EDGE_MIN_ATR_HIGH", base_edge_min),
-        range_revert_bonus_low_atr=_prefixed_float("REENTRY_RANGE_REVERT_BONUS_LOW_ATR", 0.15),
-        range_revert_bonus_high_atr=_prefixed_float("REENTRY_RANGE_REVERT_BONUS_HIGH_ATR", 0.15),
-        range_trend_penalty_low_atr=_prefixed_float("REENTRY_RANGE_TREND_PENALTY_LOW_ATR", 0.15),
-        range_trend_penalty_high_atr=_prefixed_float("REENTRY_RANGE_TREND_PENALTY_HIGH_ATR", 0.15),
+        range_revert_bonus_low_atr=_prefixed_float(
+            "REENTRY_RANGE_REVERT_BONUS_LOW_ATR", 0.15
+        ),
+        range_revert_bonus_high_atr=_prefixed_float(
+            "REENTRY_RANGE_REVERT_BONUS_HIGH_ATR", 0.15
+        ),
+        range_trend_penalty_low_atr=_prefixed_float(
+            "REENTRY_RANGE_TREND_PENALTY_LOW_ATR", 0.15
+        ),
+        range_trend_penalty_high_atr=_prefixed_float(
+            "REENTRY_RANGE_TREND_PENALTY_HIGH_ATR", 0.15
+        ),
         revert_weights_low_atr=(
             _prefixed_float("REENTRY_REVERT_WEIGHT_RSI_LOW_ATR", 0.35),
             _prefixed_float("REENTRY_REVERT_WEIGHT_ADX_LOW_ATR", 0.25),
@@ -315,6 +344,7 @@ def _load_config(prefix: str) -> ReentryConfig:
         ),
     )
 
+
 def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -> None:
     now = time.monotonic()
     last = _LAST_LOG_TS.get(prefix, 0.0)
@@ -325,6 +355,7 @@ def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -
     payload["decision"] = decision
     payload["name"] = prefix
     log_metric("reentry_decision", 1.0, tags=payload)
+
 
 def decide_reentry_from_factors(
     *,
@@ -358,6 +389,7 @@ def decide_reentry_from_factors(
         range_active=range_active,
         log_tags=log_tags,
     )
+
 
 def decide_reentry(
     *,

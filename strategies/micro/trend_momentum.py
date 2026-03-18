@@ -16,7 +16,7 @@ class TrendMomentumMicro:
     _MIN_SLOPE = 0.03
     _MAX_PULLBACK = 1.2
     _MIN_ATR_PIPS = 0.9  # quietでも拾う
-    _MIN_BBW = 0.10      # バンドが締まりすぎなら見送り
+    _MIN_BBW = 0.10  # バンドが締まりすぎなら見送り
     _SPREAD_PIPS_MAX = 1.2
     _SPREAD_ATR_RATIO_MAX = 0.30
 
@@ -36,11 +36,16 @@ class TrendMomentumMicro:
         except (TypeError, ValueError):
             spread_pips = 0.0
         try:
-            atr_check = float(fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0)
+            atr_check = float(
+                fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0
+            )
         except (TypeError, ValueError):
             atr_check = 0.0
         if spread_pips > 0 and atr_check > 0:
-            spread_cap = max(TrendMomentumMicro._SPREAD_PIPS_MAX, atr_check * TrendMomentumMicro._SPREAD_ATR_RATIO_MAX)
+            spread_cap = max(
+                TrendMomentumMicro._SPREAD_PIPS_MAX,
+                atr_check * TrendMomentumMicro._SPREAD_ATR_RATIO_MAX,
+            )
             if spread_pips > spread_cap:
                 return None
         try:
@@ -83,7 +88,13 @@ class TrendMomentumMicro:
             return None
 
         # 15-30mドリフトが逆行している場合はスキップして方向精度を担保する
-        drift_keys = ("drift_pips_15m", "drift_15m", "return_15m_pips", "drift_pips_30m", "return_30m_pips")
+        drift_keys = (
+            "drift_pips_15m",
+            "drift_15m",
+            "return_15m_pips",
+            "drift_pips_30m",
+            "return_30m_pips",
+        )
         drift_pips = 0.0
         for k in drift_keys:
             val = fac.get(k)
@@ -123,7 +134,9 @@ class TrendMomentumMicro:
         sl_pips = round(max(sl_floor, atr_pips * 1.05), 2)
         tp_pips = round(max(sl_pips * 1.7, sl_pips + max(atr_pips * 0.8, 1.2)), 2)
 
-        confidence = 50 + int(min(18.0, abs(diff)) + max(0.0, (adx - TrendMomentumMicro._MIN_ADX) * 0.7))
+        confidence = 50 + int(
+            min(18.0, abs(diff)) + max(0.0, (adx - TrendMomentumMicro._MIN_ADX) * 0.7)
+        )
         confidence = max(45, min(95, confidence))
 
         # 短期で刈られないよう最低ホールドを伸ばす

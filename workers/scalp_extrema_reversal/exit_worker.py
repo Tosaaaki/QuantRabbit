@@ -34,7 +34,9 @@ def _map_exit_env() -> None:
         "SCALP_LEVEL_REJECT_EXIT_PROFILE_PATH",
         os.getenv(
             "SCALP_EXTREMA_REVERSAL_EXIT_PROFILE_PATH",
-            os.getenv("STRATEGY_PROTECTION_PATH", "config/strategy_exit_protections.yaml"),
+            os.getenv(
+                "STRATEGY_PROTECTION_PATH", "config/strategy_exit_protections.yaml"
+            ),
         ),
     )
     os.environ.setdefault(

@@ -96,7 +96,11 @@ def _metrics_db_path() -> pathlib.Path:
 
 
 def _mode_filter() -> str:
-    return str(os.getenv("ORDER_SLO_GUARD_MODE_FILTER", "strategy_control") or "").strip().lower()
+    return (
+        str(os.getenv("ORDER_SLO_GUARD_MODE_FILTER", "strategy_control") or "")
+        .strip()
+        .lower()
+    )
 
 
 def _applies_to(pocket: str, strategy_tag: Optional[str]) -> bool:
@@ -231,7 +235,11 @@ def _query_decision() -> SLODecision:
             decision_latency_latest_ms=latency_latest,
             decision_latency_p95_ms=latency_p95,
         )
-    if latency_p95 is not None and latency_p95_max > 0 and latency_p95 > latency_p95_max:
+    if (
+        latency_p95 is not None
+        and latency_p95_max > 0
+        and latency_p95 > latency_p95_max
+    ):
         return SLODecision(
             allowed=False,
             reason="decision_latency_p95_exceeded",
@@ -270,4 +278,3 @@ def decide(*, pocket: str, strategy_tag: Optional[str]) -> SLODecision:
     decision = _query_decision()
     _CACHE = (now_mono, decision)
     return decision
-

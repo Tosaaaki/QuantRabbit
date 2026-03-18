@@ -46,7 +46,9 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -106,7 +108,9 @@ def _soft_tp_mode(thesis: Dict[str, object]) -> bool:
     return str(mode or "").lower() in {"soft_zone", "soft"}
 
 
-def _atr_pips_from_factors(factors: Dict[str, Dict[str, float]], tf: str) -> Optional[float]:
+def _atr_pips_from_factors(
+    factors: Dict[str, Dict[str, float]], tf: str
+) -> Optional[float]:
     fac = factors.get(tf, {}) if isinstance(factors, dict) else {}
     atr_pips = _safe_float(fac.get("atr_pips"))
     if atr_pips is None:
@@ -177,7 +181,9 @@ def evaluate_reversion_failure(
     if entry_mean is None:
         entry_mean = snapshot.mid
 
-    atr_entry = _safe_float(thesis.get("atr_entry")) or _atr_pips_from_factors(factors, struct_tf)
+    atr_entry = _safe_float(thesis.get("atr_entry")) or _atr_pips_from_factors(
+        factors, struct_tf
+    )
     if atr_entry is None or atr_entry <= 0.0:
         return ReversionFailureDecision(False, None, {}, trend_hits)
 
@@ -207,7 +213,9 @@ def evaluate_reversion_failure(
                     {"range_low": snapshot.low, "buffer": buffer_price},
                     trend_hits,
                 )
-            if side == "short" and all(c >= snapshot.high + buffer_price for c in closes):
+            if side == "short" and all(
+                c >= snapshot.high + buffer_price for c in closes
+            ):
                 return ReversionFailureDecision(
                     True,
                     "structure_break",
@@ -319,7 +327,9 @@ def evaluate_tp_zone(
             return TpZoneDecision(False, None, {})
         entry_mean = snapshot.mid
 
-    atr_entry = _safe_float(thesis.get("atr_entry")) or _atr_pips_from_factors(factors, struct_tf)
+    atr_entry = _safe_float(thesis.get("atr_entry")) or _atr_pips_from_factors(
+        factors, struct_tf
+    )
     if atr_entry is None or atr_entry <= 0.0:
         return TpZoneDecision(False, None, {})
 
@@ -336,7 +346,9 @@ def evaluate_tp_zone(
         hit = current_price <= entry_mean + pad_price
 
     if not hit:
-        return TpZoneDecision(False, None, {"entry_mean": entry_mean, "pad_pips": pad_pips})
+        return TpZoneDecision(
+            False, None, {"entry_mean": entry_mean, "pad_pips": pad_pips}
+        )
     return TpZoneDecision(
         True,
         "take_profit_zone",

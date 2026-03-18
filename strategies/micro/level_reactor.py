@@ -24,13 +24,21 @@ class MicroLevelReactor:
     # Optional absolute overrides (price). If unset, dynamic ATR-based levels are used.
     ABS_LEVEL_UP = __import__("os").getenv("MLR_LEVEL_UP")
     ABS_LEVEL_DOWN = __import__("os").getenv("MLR_LEVEL_DOWN")
-    BAND_PIPS = float(__import__("os").getenv("MLR_BAND_PIPS", "1.0"))  # allow +- band checks
+    BAND_PIPS = float(
+        __import__("os").getenv("MLR_BAND_PIPS", "1.0")
+    )  # allow +- band checks
     UP_ATR_MULT = float(__import__("os").getenv("MLR_UP_ATR_MULT", "2.0"))
     DOWN_ATR_MULT = float(__import__("os").getenv("MLR_DOWN_ATR_MULT", "2.0"))
     LONG_RSI_MIN = float(__import__("os").getenv("MLR_LONG_RSI_MIN", "54.0"))
-    LONG_BOUNCE_RSI_MAX = float(__import__("os").getenv("MLR_LONG_BOUNCE_RSI_MAX", "52.0"))
-    BOUNCE_BODY_BEAR_MAX_PIPS = float(__import__("os").getenv("MLR_BOUNCE_BODY_BEAR_MAX_PIPS", "1.2"))
-    BOUNCE_MIN_LOWER_WICK_PIPS = float(__import__("os").getenv("MLR_BOUNCE_MIN_LOWER_WICK_PIPS", "0.8"))
+    LONG_BOUNCE_RSI_MAX = float(
+        __import__("os").getenv("MLR_LONG_BOUNCE_RSI_MAX", "52.0")
+    )
+    BOUNCE_BODY_BEAR_MAX_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_BODY_BEAR_MAX_PIPS", "1.2")
+    )
+    BOUNCE_MIN_LOWER_WICK_PIPS = float(
+        __import__("os").getenv("MLR_BOUNCE_MIN_LOWER_WICK_PIPS", "0.8")
+    )
     BOUNCE_COUNTERTREND_MIN_GAP_PIPS = float(
         __import__("os").getenv("MLR_BOUNCE_COUNTERTREND_MIN_GAP_PIPS", "0.6")
     )
@@ -147,8 +155,12 @@ class MicroLevelReactor:
         if len(closes) < 3 or len(lows) < 3:
             return 0
 
-        down_closes = sum(1 for idx in range(1, len(closes)) if closes[idx] < closes[idx - 1])
-        lower_lows = sum(1 for idx in range(1, len(lows)) if lows[idx] <= lows[idx - 1] + 1e-9)
+        down_closes = sum(
+            1 for idx in range(1, len(closes)) if closes[idx] < closes[idx - 1]
+        )
+        lower_lows = sum(
+            1 for idx in range(1, len(lows)) if lows[idx] <= lows[idx - 1] + 1e-9
+        )
         net_drop_pips = max(0.0, (closes[0] - closes[-1]) / PIP)
         avg_close_pos = close_pos_sum / close_pos_count if close_pos_count > 0 else 0.5
 
@@ -252,21 +264,22 @@ class MicroLevelReactor:
 
         # Determine levels: prefer absolute env overrides, otherwise dynamic ATR-based.
         if cls.ABS_LEVEL_UP:
-            up = cls._as_float(cls.ABS_LEVEL_UP, anchor + atr_pips * cls.UP_ATR_MULT * PIP)
+            up = cls._as_float(
+                cls.ABS_LEVEL_UP, anchor + atr_pips * cls.UP_ATR_MULT * PIP
+            )
         else:
             up = anchor + atr_pips * cls.UP_ATR_MULT * PIP
         if cls.ABS_LEVEL_DOWN:
-            down = cls._as_float(cls.ABS_LEVEL_DOWN, anchor - atr_pips * cls.DOWN_ATR_MULT * PIP)
+            down = cls._as_float(
+                cls.ABS_LEVEL_DOWN, anchor - atr_pips * cls.DOWN_ATR_MULT * PIP
+            )
         else:
             down = anchor - atr_pips * cls.DOWN_ATR_MULT * PIP
 
         band = cls.BAND_PIPS * PIP
-        breakout_supportive = (
-            body_pips >= 0.0
-            or (
-                lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS
-                and lower_wick_pips + 0.2 >= upper_wick_pips
-            )
+        breakout_supportive = body_pips >= 0.0 or (
+            lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS
+            and lower_wick_pips + 0.2 >= upper_wick_pips
         )
 
         # Breakout long: push above upper level with supportive RSI
@@ -287,11 +300,15 @@ class MicroLevelReactor:
         if price <= down + band and rsi <= cls.LONG_BOUNCE_RSI_MAX:
             bullish_reject = (
                 body_pips >= -cls.BOUNCE_BODY_BEAR_MAX_PIPS
-                and (body_pips >= 0.0 or lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS)
+                and (
+                    body_pips >= 0.0
+                    or lower_wick_pips >= cls.BOUNCE_MIN_LOWER_WICK_PIPS
+                )
                 and lower_wick_pips + 0.1 >= upper_wick_pips
             )
             countertrend_probe = (
-                ma_gap_pips is not None and ma_gap_pips <= -cls.BOUNCE_COUNTERTREND_MIN_GAP_PIPS
+                ma_gap_pips is not None
+                and ma_gap_pips <= -cls.BOUNCE_COUNTERTREND_MIN_GAP_PIPS
             )
             di_continuation_pressure = cls._bounce_continuation_pressure(
                 fac,
@@ -307,7 +324,9 @@ class MicroLevelReactor:
                 atr_pips=atr_pips,
             )
             continuation_pressure = (
-                di_continuation_pressure + recent_continuation_pressure + ma_gap_pressure
+                di_continuation_pressure
+                + recent_continuation_pressure
+                + ma_gap_pressure
             )
             if countertrend_probe:
                 bullish_reject = (
@@ -318,17 +337,25 @@ class MicroLevelReactor:
                 )
             if continuation_pressure:
                 if continuation_pressure >= 4:
-                    strong_body_reclaim = body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
+                    strong_body_reclaim = (
+                        body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
+                    )
                     strong_wick_reclaim = (
-                        lower_wick_pips >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
+                        lower_wick_pips
+                        >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
                         and (lower_wick_pips - upper_wick_pips)
                         >= cls.BOUNCE_CONTINUATION_STRONG_WICK_EDGE_PIPS
                     )
-                    bullish_reject = bullish_reject and strong_body_reclaim and strong_wick_reclaim
+                    bullish_reject = (
+                        bullish_reject and strong_body_reclaim and strong_wick_reclaim
+                    )
                 elif continuation_pressure >= 2:
-                    strong_body_reclaim = body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
+                    strong_body_reclaim = (
+                        body_pips >= cls.BOUNCE_CONTINUATION_STRONG_BODY_PIPS
+                    )
                     strong_wick_reclaim = (
-                        lower_wick_pips >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
+                        lower_wick_pips
+                        >= cls.BOUNCE_CONTINUATION_STRONG_LOWER_WICK_PIPS
                         and (lower_wick_pips - upper_wick_pips)
                         >= cls.BOUNCE_CONTINUATION_STRONG_WICK_EDGE_PIPS
                     )
@@ -338,7 +365,8 @@ class MicroLevelReactor:
                 else:
                     bullish_reject = (
                         bullish_reject
-                        and lower_wick_pips >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS
+                        and lower_wick_pips
+                        >= cls.BOUNCE_CONTINUATION_MIN_LOWER_WICK_PIPS
                         and lower_wick_pips > upper_wick_pips
                         and body_pips >= 0.0
                     )

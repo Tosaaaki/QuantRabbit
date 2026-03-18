@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 
 from workers.common.setup_context import extract_setup_identity
 
-
 _CACHE: Dict[str, Dict[str, Any]] = {}
 
 
@@ -81,7 +80,9 @@ def _payload_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
         age_sec = max(0.0, time.time() - epoch)
     stale_max_age_sec = max(
         0.0,
-        _safe_float(os.getenv("WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC"), 600.0),
+        _safe_float(
+            os.getenv("WORKER_DYNAMIC_ALLOC_UNKNOWN_FALLBACK_MAX_AGE_SEC"), 600.0
+        ),
     )
     is_stale = bool(
         as_of
@@ -100,7 +101,9 @@ def _load_payload(path: Path, ttl_sec: float) -> Optional[Dict[str, Any]]:
     cache_key = str(path)
     now = time.time()
     cached = _CACHE.get(cache_key)
-    if cached is not None and now - float(cached.get("loaded_ts", 0.0)) < max(1.0, ttl_sec):
+    if cached is not None and now - float(cached.get("loaded_ts", 0.0)) < max(
+        1.0, ttl_sec
+    ):
         return cached.get("payload")
     if not path.exists():
         _CACHE.pop(cache_key, None)
@@ -119,7 +122,11 @@ def _load_payload(path: Path, ttl_sec: float) -> Optional[Dict[str, Any]]:
         return None
     if not isinstance(payload, dict):
         return None
-    _CACHE[cache_key] = {"mtime": float(stat.st_mtime), "loaded_ts": now, "payload": payload}
+    _CACHE[cache_key] = {
+        "mtime": float(stat.st_mtime),
+        "loaded_ts": now,
+        "payload": payload,
+    }
     return payload
 
 
@@ -145,7 +152,11 @@ def _setup_match_specificity(
     if flow_regime:
         return 2 if setup_context.get("flow_regime") == flow_regime else 0
     if microstructure_bucket:
-        return 1 if setup_context.get("microstructure_bucket") == microstructure_bucket else 0
+        return (
+            1
+            if setup_context.get("microstructure_bucket") == microstructure_bucket
+            else 0
+        )
     return 0
 
 
@@ -206,7 +217,8 @@ def _select_setup_override(
             "match_dimension": str(item.get("match_dimension") or ""),
             "setup_fingerprint": str(item.get("setup_fingerprint") or "") or None,
             "flow_regime": str(item.get("flow_regime") or "") or None,
-            "microstructure_bucket": str(item.get("microstructure_bucket") or "") or None,
+            "microstructure_bucket": str(item.get("microstructure_bucket") or "")
+            or None,
             "trades": trades,
             "score": _safe_float(item.get("score"), 0.0),
             "pf": _safe_float(item.get("pf"), 0.0),
@@ -223,7 +235,9 @@ def load_strategy_profile(
     path: str | Path | None = None,
     ttl_sec: float = 20.0,
 ) -> Dict[str, Any]:
-    file_path = Path(path or os.getenv("WORKER_DYNAMIC_ALLOC_PATH", "config/dynamic_alloc.json"))
+    file_path = Path(
+        path or os.getenv("WORKER_DYNAMIC_ALLOC_PATH", "config/dynamic_alloc.json")
+    )
     payload = _load_payload(file_path, ttl_sec=ttl_sec)
     base = {
         "found": False,
@@ -295,9 +309,15 @@ def load_strategy_profile(
         if item_min_mult > 0.0:
             mult = max(mult, item_min_mult)
         if item_max_mult > 0.0:
-            mult = min(mult, max(item_min_mult if item_min_mult > 0.0 else 0.0, item_max_mult))
-        allow_loser_block = _safe_bool(item.get("allow_loser_block"), policy_allow_loser_block)
-        allow_winner_only = _safe_bool(item.get("allow_winner_only"), policy_allow_winner_only)
+            mult = min(
+                mult, max(item_min_mult if item_min_mult > 0.0 else 0.0, item_max_mult)
+            )
+        allow_loser_block = _safe_bool(
+            item.get("allow_loser_block"), policy_allow_loser_block
+        )
+        allow_winner_only = _safe_bool(
+            item.get("allow_winner_only"), policy_allow_winner_only
+        )
         profile = {
             "found": True,
             "strategy_key": str(lookup_key),

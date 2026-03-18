@@ -15,10 +15,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
 
     # Keep B/other clones isolated from the base SCALP_PING_5S_* values.
     for key in list(os.environ):
-        if (
-            str(key).startswith(f"{base_prefix}_")
-            and not str(key).startswith(source)
-        ):
+        if str(key).startswith(f"{base_prefix}_") and not str(key).startswith(source):
             del os.environ[key]
 
     alt_items = list(os.environ.items())
@@ -29,7 +26,9 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         os.environ[mapped_key] = str(value)
 
     os.environ[f"{base_prefix}_ENV_PREFIX"] = source_prefix
-    os.environ[f"{base_prefix}_ENABLED"] = str(os.getenv(f"{source_prefix}_ENABLED", "0"))
+    os.environ[f"{base_prefix}_ENABLED"] = str(
+        os.getenv(f"{source_prefix}_ENABLED", "0")
+    )
     os.environ[f"{base_prefix}_STRATEGY_TAG"] = os.getenv(
         f"{source_prefix}_STRATEGY_TAG", fallback_tag
     )

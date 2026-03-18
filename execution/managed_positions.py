@@ -53,7 +53,11 @@ def filter_bot_managed_positions(
                 abs_units = abs(units)
                 short_units += abs_units
                 short_weighted += price * abs_units
-        avg_price = (weighted_price / total_units) if total_units else info.get("avg_price", 0.0)
+        avg_price = (
+            (weighted_price / total_units)
+            if total_units
+            else info.get("avg_price", 0.0)
+        )
         long_avg = (long_weighted / long_units) if long_units else 0.0
         short_avg = (short_weighted / short_units) if short_units else 0.0
         managed[pocket] = {

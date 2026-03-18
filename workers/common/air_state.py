@@ -2,6 +2,7 @@
 workers.common.air_state
 ~~~~~~~~~~~~~~~~~~~~~~~~
 """
+
 from __future__ import annotations
 
 import math
@@ -111,11 +112,19 @@ class AirSnapshot:
             "velocity_pps": round(self.velocity_pps, 3),
             "imbalance": round(self.imbalance, 3),
             "spread_state": self.spread_state,
-            "spread_p25": None if self.spread_p25 is None else round(self.spread_p25, 3),
-            "spread_p50": None if self.spread_p50 is None else round(self.spread_p50, 3),
-            "spread_p95": None if self.spread_p95 is None else round(self.spread_p95, 3),
+            "spread_p25": (
+                None if self.spread_p25 is None else round(self.spread_p25, 3)
+            ),
+            "spread_p50": (
+                None if self.spread_p50 is None else round(self.spread_p50, 3)
+            ),
+            "spread_p95": (
+                None if self.spread_p95 is None else round(self.spread_p95, 3)
+            ),
             "spread_blocked": self.spread_blocked,
-            "data_age_ms": None if self.data_age_ms is None else round(self.data_age_ms, 1),
+            "data_age_ms": (
+                None if self.data_age_ms is None else round(self.data_age_ms, 1)
+            ),
             "range_mode": self.range_mode,
             "range_score": round(self.range_score, 3),
             "range_pref": self.range_pref,
@@ -199,7 +208,10 @@ def _tick_pressure(window_sec: float) -> tuple[float, str, float, float, float]:
     vel_score = _clamp(abs(velocity_pps) / max(0.05, AIR_VELOCITY_REF_PPS), 0.0, 1.0)
     pressure = _clamp((tick_score * 0.55) + (vel_score * 0.45), 0.0, 1.0)
     direction = "neutral"
-    if imbalance >= AIR_IMBALANCE_MIN and abs(velocity_pps) >= AIR_VELOCITY_REF_PPS * 0.4:
+    if (
+        imbalance >= AIR_IMBALANCE_MIN
+        and abs(velocity_pps) >= AIR_VELOCITY_REF_PPS * 0.4
+    ):
         if velocity_pps > 0:
             direction = "long"
         elif velocity_pps < 0:
@@ -278,7 +290,9 @@ def evaluate_air(
         except Exception:
             range_ctx = None
 
-    range_mode = bool(getattr(range_ctx, "active", False)) if range_ctx else bool(range_active)
+    range_mode = (
+        bool(getattr(range_ctx, "active", False)) if range_ctx else bool(range_active)
+    )
     range_score = float(getattr(range_ctx, "score", 0.0) or 0.0) if range_ctx else 0.0
     range_pref = _range_pref(range_mode, range_score)
 

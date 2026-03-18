@@ -5,7 +5,15 @@ import sqlite3
 import time
 from typing import Dict, Optional
 
-from .common import PIP, atr_pips, candle_body_pips, clamp, latest_candles, price_delta_pips, to_float
+from .common import (
+    PIP,
+    atr_pips,
+    candle_body_pips,
+    clamp,
+    latest_candles,
+    price_delta_pips,
+    to_float,
+)
 from utils.tuning_loader import get_tuning_value
 
 _HIST_ENABLED = True
@@ -52,7 +60,9 @@ def _normalize_regime_label(raw: object) -> str:
     return str(raw).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
-def _history_profile_cache_key(strategy_key: str, pocket: str, regime_label: str) -> tuple[str, str, str]:
+def _history_profile_cache_key(
+    strategy_key: str, pocket: str, regime_label: str
+) -> tuple[str, str, str]:
     return (_normalize_tag_key(strategy_key), str(pocket).strip().lower(), regime_label)
 
 
@@ -67,7 +77,10 @@ def _query_strategy_history(
     if not db_path.exists():
         return {"n": 0, "pf": 1.0, "win_rate": 0.0, "avg_pips": 0.0}
 
-    params: list[object] = [str(pocket).strip().lower(), f"-{int(_HIST_LOOKBACK_DAYS)} day"]
+    params: list[object] = [
+        str(pocket).strip().lower(),
+        f"-{int(_HIST_LOOKBACK_DAYS)} day",
+    ]
     pattern = f"{strategy_key}-%"
     conditions = [
         "LOWER(pocket) = ?",
@@ -157,7 +170,9 @@ def _derive_history_score(row: Dict[str, object]) -> float:
     return _clamp01(score)
 
 
-def _history_profile(strategy_key: str, pocket: str, regime_label: Optional[str]) -> Dict[str, object]:
+def _history_profile(
+    strategy_key: str, pocket: str, regime_label: Optional[str]
+) -> Dict[str, object]:
     if not _HIST_ENABLED:
         return {
             "enabled": False,
@@ -192,7 +207,9 @@ def _history_profile(strategy_key: str, pocket: str, regime_label: Optional[str]
     source = "regime"
 
     if used_regime and int(row.get("n", 0) or 0) < max(1, _HIST_REGIME_MIN_TRADES):
-        fallback = _query_strategy_history(strategy_key=strategy_key, pocket=pocket, regime_label=None)
+        fallback = _query_strategy_history(
+            strategy_key=strategy_key, pocket=pocket, regime_label=None
+        )
         if int(fallback.get("n", 0) or 0) > 0:
             row = fallback
             used_regime = False
@@ -269,16 +286,26 @@ class MicroAdaptiveRevert:
             return None
         upper, mid, lower, span_pips = levels
 
-        bb_ratio = _tuned_float(("strategies", "MicroAdaptiveRevert", "band_ratio"), 0.22)
-        bb_min = _tuned_float(("strategies", "MicroAdaptiveRevert", "band_min_pips"), 1.0)
+        bb_ratio = _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "band_ratio"), 0.22
+        )
+        bb_min = _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "band_min_pips"), 1.0
+        )
         band_touch = max(bb_min, span_pips * bb_ratio)
-        if span_pips < _tuned_float(("strategies", "MicroAdaptiveRevert", "span_min_pips"), 1.5):
+        if span_pips < _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "span_min_pips"), 1.5
+        ):
             return None
 
-        if bbw is None or bbw > _tuned_float(("strategies", "MicroAdaptiveRevert", "bbw_max"), 0.36):
+        if bbw is None or bbw > _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "bbw_max"), 0.36
+        ):
             return None
 
-        if adx is not None and adx > _tuned_float(("strategies", "MicroAdaptiveRevert", "adx_max"), 33.0):
+        if adx is not None and adx > _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "adx_max"), 33.0
+        ):
             return None
 
         candles = latest_candles(fac, 9)
@@ -299,18 +326,26 @@ class MicroAdaptiveRevert:
 
         body = candle_body_pips(candles[-1]) or 0.0
         vol = to_float(fac.get("vol_5m"))
-        if vol is not None and vol > _tuned_float(("strategies", "MicroAdaptiveRevert", "vol_5m_max"), 2.0):
+        if vol is not None and vol > _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "vol_5m_max"), 2.0
+        ):
             return None
 
         ema_slope = to_float(fac.get("ema_slope_10"), 0.0) or 0.0
-        ema_slope_max = _tuned_float(("strategies", "MicroAdaptiveRevert", "ema_slope_max_pip"), 0.55)
+        ema_slope_max = _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "ema_slope_max_pip"), 0.55
+        )
         if abs(ema_slope) / PIP > ema_slope_max:
             return None
 
         dist_low = max(0.0, (close - lower) / PIP)
         dist_high = max(0.0, (upper - close) / PIP)
 
-        threshold = max(1.05, atr * _tuned_float(("strategies", "MicroAdaptiveRevert", "atr_dev_mult"), 0.55))
+        threshold = max(
+            1.05,
+            atr
+            * _tuned_float(("strategies", "MicroAdaptiveRevert", "atr_dev_mult"), 0.55),
+        )
         if abs(dev) < threshold:
             return None
 
@@ -321,15 +356,39 @@ class MicroAdaptiveRevert:
             return None
 
         retrace = abs(dev - prev_dev)
-        if retrace < _tuned_float(("strategies", "MicroAdaptiveRevert", "retrace_min_pips"), 0.12):
+        if retrace < _tuned_float(
+            ("strategies", "MicroAdaptiveRevert", "retrace_min_pips"), 0.12
+        ):
             return None
 
         action: Optional[str] = None
-        if long_touch and dev <= -threshold and (rsi <= _tuned_float(("strategies", "MicroAdaptiveRevert", "rsi_long"), 34.0)) and stoch <= _tuned_float(("strategies", "MicroAdaptiveRevert", "stoch_long"), 0.22):
+        if (
+            long_touch
+            and dev <= -threshold
+            and (
+                rsi
+                <= _tuned_float(("strategies", "MicroAdaptiveRevert", "rsi_long"), 34.0)
+            )
+            and stoch
+            <= _tuned_float(("strategies", "MicroAdaptiveRevert", "stoch_long"), 0.22)
+        ):
             if body > 0:
                 return None
             action = "OPEN_LONG"
-        elif short_touch and dev >= threshold and (rsi >= _tuned_float(("strategies", "MicroAdaptiveRevert", "rsi_short"), 66.0) and stoch >= _tuned_float(("strategies", "MicroAdaptiveRevert", "stoch_short"), 0.78)):
+        elif (
+            short_touch
+            and dev >= threshold
+            and (
+                rsi
+                >= _tuned_float(
+                    ("strategies", "MicroAdaptiveRevert", "rsi_short"), 66.0
+                )
+                and stoch
+                >= _tuned_float(
+                    ("strategies", "MicroAdaptiveRevert", "stoch_short"), 0.78
+                )
+            )
+        ):
             if body < 0:
                 return None
             action = "OPEN_SHORT"
@@ -338,7 +397,10 @@ class MicroAdaptiveRevert:
 
         range_score = to_float(fac.get("range_score"), 0.0) or 0.0
         regime_label = _normalize_regime_label(
-            fac.get("micro_regime") or fac.get("macro_regime") or fac.get("range_mode") or fac.get("regime")
+            fac.get("micro_regime")
+            or fac.get("macro_regime")
+            or fac.get("range_mode")
+            or fac.get("regime")
         )
         history_profile = _history_profile(
             strategy_key=MicroAdaptiveRevert.name,
@@ -356,14 +418,22 @@ class MicroAdaptiveRevert:
         conf += clamp(range_score, 0.0, 1.0) * 3.5
 
         if action == "OPEN_LONG":
-            conf += _tuned_float(("strategies", "MicroAdaptiveRevert", "rsi_bonus"), 0.45) * clamp(
-                1.0 - rsi / 100.0, 0.0, 1.0
-            ) * 9.0
+            conf += (
+                _tuned_float(("strategies", "MicroAdaptiveRevert", "rsi_bonus"), 0.45)
+                * clamp(1.0 - rsi / 100.0, 0.0, 1.0)
+                * 9.0
+            )
             conf += clamp(1.0 - dist_low / max(1.0, band_touch), 0.0, 1.0) * 4.2
         else:
             conf += (
                 clamp(
-                    (rsi - _tuned_float(("strategies", "MicroAdaptiveRevert", "rsi_bonus"), 58.0)) / 100.0,
+                    (
+                        rsi
+                        - _tuned_float(
+                            ("strategies", "MicroAdaptiveRevert", "rsi_bonus"), 58.0
+                        )
+                    )
+                    / 100.0,
                     0.0,
                     1.0,
                 )
@@ -376,7 +446,11 @@ class MicroAdaptiveRevert:
 
         sl_base = _tuned_float(("strategies", "MicroAdaptiveRevert", "sl_mul"), 1.18)
         tp_base = _tuned_float(("strategies", "MicroAdaptiveRevert", "tp_mul"), 0.98)
-        sl_pips = clamp(atr * sl_base, 1.0, _tuned_float(("strategies", "MicroAdaptiveRevert", "sl_max"), 2.4))
+        sl_pips = clamp(
+            atr * sl_base,
+            1.0,
+            _tuned_float(("strategies", "MicroAdaptiveRevert", "sl_max"), 2.4),
+        )
         tp_pips = clamp(
             max(0.8, sl_pips * tp_base),
             _tuned_float(("strategies", "MicroAdaptiveRevert", "tp_min"), 0.8),
@@ -398,7 +472,9 @@ class MicroAdaptiveRevert:
             "regime": regime_label,
             "history_score": round(float(history_profile.get("score", 0.5)), 3),
             "history_n": int(history_profile.get("n", 0) or 0),
-            "history_lot_mult": round(float(history_profile.get("lot_multiplier", 1.0)), 3),
+            "history_lot_mult": round(
+                float(history_profile.get("lot_multiplier", 1.0)), 3
+            ),
             "history_source": history_profile.get("source", "disabled"),
             "history_pf": round(float(history_profile.get("pf", 1.0)), 3),
             "history_used_regime": bool(history_profile.get("used_regime", False)),

@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 _CACHE: dict[str, dict[str, Any]] = {}
 
 
@@ -30,7 +29,9 @@ def _load_payload(path: Path, ttl_sec: float) -> dict[str, Any] | None:
     cache_key = str(path)
     now = time.time()
     cached = _CACHE.get(cache_key)
-    if cached is not None and now - float(cached.get("loaded_ts", 0.0)) < max(1.0, ttl_sec):
+    if cached is not None and now - float(cached.get("loaded_ts", 0.0)) < max(
+        1.0, ttl_sec
+    ):
         payload = cached.get("payload")
         return payload if isinstance(payload, dict) else None
     if not path.exists():
@@ -51,7 +52,11 @@ def _load_payload(path: Path, ttl_sec: float) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    _CACHE[cache_key] = {"mtime": float(stat.st_mtime), "loaded_ts": now, "payload": payload}
+    _CACHE[cache_key] = {
+        "mtime": float(stat.st_mtime),
+        "loaded_ts": now,
+        "payload": payload,
+    }
     return payload
 
 
@@ -88,7 +93,17 @@ def load_current_context(
         "event_severity": str(payload.get("event_severity") or "unknown"),
         "caution_window_active": bool(payload.get("caution_window_active")),
         "usd_jpy_bias": str(payload.get("usd_jpy_bias") or "neutral"),
-        "headlines": payload.get("headlines") if isinstance(payload.get("headlines"), list) else [],
-        "sources": payload.get("sources") if isinstance(payload.get("sources"), list) else [],
-        "market_snapshot": payload.get("market_snapshot") if isinstance(payload.get("market_snapshot"), dict) else {},
+        "headlines": (
+            payload.get("headlines")
+            if isinstance(payload.get("headlines"), list)
+            else []
+        ),
+        "sources": (
+            payload.get("sources") if isinstance(payload.get("sources"), list) else []
+        ),
+        "market_snapshot": (
+            payload.get("market_snapshot")
+            if isinstance(payload.get("market_snapshot"), dict)
+            else {}
+        ),
     }

@@ -17,13 +17,18 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-
 _LOCK = threading.Lock()
 _POLICY: "PolicySnapshot" | None = None
 _RAW_POLICY_PATH = os.getenv("POLICY_OVERLAY_PATH") or os.getenv("POLICY_SNAPSHOT_PATH")
-if _RAW_POLICY_PATH is not None and _RAW_POLICY_PATH.strip().lower() in {"", "none", "off"}:
+if _RAW_POLICY_PATH is not None and _RAW_POLICY_PATH.strip().lower() in {
+    "",
+    "none",
+    "off",
+}:
     _RAW_POLICY_PATH = None
-_POLICY_PATH = Path(_RAW_POLICY_PATH) if _RAW_POLICY_PATH else Path("logs/policy_overlay.json")
+_POLICY_PATH = (
+    Path(_RAW_POLICY_PATH) if _RAW_POLICY_PATH else Path("logs/policy_overlay.json")
+)
 _POLICY_REFRESH_SEC = float(os.getenv("POLICY_REFRESH_SEC", "5"))
 _POLICY_LAST_LOAD = 0.0
 _POLICY_LAST_MTIME: float | None = None

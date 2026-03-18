@@ -61,7 +61,9 @@ def latest_mid(fallback: float) -> float:
     return fallback
 
 
-def bb_levels(fac: Dict[str, object]) -> Optional[tuple[float, float, float, float, float]]:
+def bb_levels(
+    fac: Dict[str, object],
+) -> Optional[tuple[float, float, float, float, float]]:
     if not fac:
         return None
     upper = _as_float(fac.get("bb_upper"))
@@ -81,7 +83,14 @@ def bb_levels(fac: Dict[str, object]) -> Optional[tuple[float, float, float, flo
     return upper, mid_val, lower, span, span / PIP
 
 
-def bb_entry_allowed(style: str, side: str, price: float, fac: Dict[str, object], *, range_active: Optional[bool] = None) -> bool:
+def bb_entry_allowed(
+    style: str,
+    side: str,
+    price: float,
+    fac: Dict[str, object],
+    *,
+    range_active: Optional[bool] = None,
+) -> bool:
     levels = bb_levels(fac)
     if price <= 0 or not levels:
         return True
@@ -108,7 +117,11 @@ def bb_entry_allowed(style: str, side: str, price: float, fac: Dict[str, object]
         if price > mid:
             return False
         ext = max(0.0, lower - price) / PIP
-    max_ext = max(2.4, span_pips * 0.30) if orig_style == "scalp" else max(3.5, span_pips * 0.40)
+    max_ext = (
+        max(2.4, span_pips * 0.30)
+        if orig_style == "scalp"
+        else max(3.5, span_pips * 0.40)
+    )
     return ext <= max_ext
 
 
@@ -140,7 +153,9 @@ def parse_hours(raw: str) -> set[int]:
     return hours
 
 
-def session_allowed(hour_utc: int, *, allow_hours: set[int], block_hours: set[int], offset: int = 9) -> bool:
+def session_allowed(
+    hour_utc: int, *, allow_hours: set[int], block_hours: set[int], offset: int = 9
+) -> bool:
     hour_local = (hour_utc + offset) % 24
     if block_hours and hour_local in block_hours:
         return False
@@ -149,7 +164,9 @@ def session_allowed(hour_utc: int, *, allow_hours: set[int], block_hours: set[in
     return True
 
 
-def tick_reversal(mids: Sequence[float], *, min_ticks: int = 6) -> tuple[bool, Optional[str], float]:
+def tick_reversal(
+    mids: Sequence[float], *, min_ticks: int = 6
+) -> tuple[bool, Optional[str], float]:
     if len(mids) < min_ticks:
         return False, None, 0.0
     deltas = [mids[i] - mids[i - 1] for i in range(1, len(mids))]
@@ -180,7 +197,9 @@ class TickImbalance:
     span_seconds: float
 
 
-def tick_imbalance(mids: Sequence[float], span_seconds: float) -> Optional[TickImbalance]:
+def tick_imbalance(
+    mids: Sequence[float], span_seconds: float
+) -> Optional[TickImbalance]:
     if len(mids) < 4:
         return None
     ups = 0
@@ -204,7 +223,9 @@ def tick_imbalance(mids: Sequence[float], span_seconds: float) -> Optional[TickI
     )
 
 
-def spread_ok(*, max_pips: Optional[float] = None, p25_max: Optional[float] = None) -> tuple[bool, Optional[dict]]:
+def spread_ok(
+    *, max_pips: Optional[float] = None, p25_max: Optional[float] = None
+) -> tuple[bool, Optional[dict]]:
     state = spread_monitor.get_state()
     if state is None:
         # spread_monitor is process-local; fall back to the cross-process tick cache so
@@ -253,7 +274,9 @@ def spread_ok(*, max_pips: Optional[float] = None, p25_max: Optional[float] = No
     return True, state
 
 
-def _projection_candles(tfs: Sequence[str]) -> tuple[Optional[str], Optional[list[dict]]]:
+def _projection_candles(
+    tfs: Sequence[str],
+) -> tuple[Optional[str], Optional[list[dict]]]:
     for tf in tfs:
         candles = get_candles_snapshot(tf, limit=120)
         if candles and len(candles) >= 30:
@@ -267,7 +290,9 @@ def _score_ma(ma, side: str, opp_block_bars: float) -> Optional[float]:
     return score_ma_for_side(ma, side, opp_block_bars)
 
 
-def _score_rsi(rsi, side: str, long_target: float, short_target: float, overheat_bars: float) -> Optional[float]:
+def _score_rsi(
+    rsi, side: str, long_target: float, short_target: float, overheat_bars: float
+) -> Optional[float]:
     if rsi is None:
         return None
     score = 0.0
@@ -364,16 +389,28 @@ def projection_decision(
 
     ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
     rsi = compute_rsi_projection(candles, timeframe_minutes=minutes)
-    adx = compute_adx_projection(candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"])
+    adx = compute_adx_projection(
+        candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"]
+    )
     bbw = None
     if mode == "range":
-        bbw = compute_bbw_projection(candles, timeframe_minutes=minutes, squeeze_threshold=params["bbw_threshold"])
+        bbw = compute_bbw_projection(
+            candles,
+            timeframe_minutes=minutes,
+            squeeze_threshold=params["bbw_threshold"],
+        )
 
     scores: Dict[str, float] = {}
     ma_score = _score_ma(ma, side, params["opp_block_bars"])
     if ma_score is not None and "ma" in params["weights"]:
         scores["ma"] = ma_score
-    rsi_score = _score_rsi(rsi, side, params["long_target"], params["short_target"], params["overheat_bars"])
+    rsi_score = _score_rsi(
+        rsi,
+        side,
+        params["long_target"],
+        params["short_target"],
+        params["overheat_bars"],
+    )
     if rsi_score is not None and "rsi" in params["weights"]:
         scores["rsi"] = rsi_score
     adx_score = _score_adx(adx, mode != "range", params["adx_threshold"])
@@ -422,7 +459,9 @@ def tick_snapshot(seconds: float, *, limit: int = 240) -> tuple[list[float], flo
     span = 0.0
     if ticks:
         try:
-            span = float(ticks[-1].get("epoch", 0.0)) - float(ticks[0].get("epoch", 0.0))
+            span = float(ticks[-1].get("epoch", 0.0)) - float(
+                ticks[0].get("epoch", 0.0)
+            )
         except Exception:
             span = 0.0
     return mids, max(0.0, span)

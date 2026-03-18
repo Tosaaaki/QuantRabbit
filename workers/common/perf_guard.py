@@ -22,6 +22,7 @@ LOG = logging.getLogger(__name__)
 
 _DB = pathlib.Path("logs/trades.db")
 
+
 @dataclass(frozen=True, slots=True)
 class PerfGuardCfg:
     env_prefix: Optional[str]
@@ -93,7 +94,9 @@ def _cfg_key(env_prefix: Optional[str]) -> str:
     return str(env_prefix or "").strip().upper()
 
 
-def _strategy_env_get(name: str, default: Optional[str], *, env_prefix: Optional[str]) -> Optional[str]:
+def _strategy_env_get(
+    name: str, default: Optional[str], *, env_prefix: Optional[str]
+) -> Optional[str]:
     return env_get(
         name,
         default,
@@ -120,7 +123,9 @@ def _strategy_env_int(name: str, default: int, *, env_prefix: Optional[str]) -> 
     )
 
 
-def _strategy_env_float(name: str, default: float, *, env_prefix: Optional[str]) -> float:
+def _strategy_env_float(
+    name: str, default: float, *, env_prefix: Optional[str]
+) -> float:
     return env_float(
         name,
         default,
@@ -137,41 +142,102 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
 
     raw_enabled = _strategy_env_get("PERF_GUARD_ENABLED", None, env_prefix=env_prefix)
     if raw_enabled is None:
-        raw_enabled = _strategy_env_get("PERF_GUARD_GLOBAL_ENABLED", "1", env_prefix=env_prefix)
+        raw_enabled = _strategy_env_get(
+            "PERF_GUARD_GLOBAL_ENABLED", "1", env_prefix=env_prefix
+        )
     enabled = str(raw_enabled).strip().lower() not in {"", "0", "false", "no", "off"}
 
-    mode = str(_strategy_env_get("PERF_GUARD_MODE", "block", env_prefix=env_prefix) or "block").strip().lower()
-    lookback_days = max(1, _strategy_env_int("PERF_GUARD_LOOKBACK_DAYS", 3, env_prefix=env_prefix))
-    min_trades = max(5, _strategy_env_int("PERF_GUARD_MIN_TRADES", 12, env_prefix=env_prefix))
-    pf_min_default = float(_strategy_env_float("PERF_GUARD_PF_MIN", 0.9, env_prefix=env_prefix) or 0.9)
-    win_min_default = float(_strategy_env_float("PERF_GUARD_WIN_MIN", 0.48, env_prefix=env_prefix) or 0.48)
-    ttl_sec = max(30.0, float(_strategy_env_float("PERF_GUARD_TTL_SEC", 120.0, env_prefix=env_prefix) or 120.0))
+    mode = (
+        str(
+            _strategy_env_get("PERF_GUARD_MODE", "block", env_prefix=env_prefix)
+            or "block"
+        )
+        .strip()
+        .lower()
+    )
+    lookback_days = max(
+        1, _strategy_env_int("PERF_GUARD_LOOKBACK_DAYS", 3, env_prefix=env_prefix)
+    )
+    min_trades = max(
+        5, _strategy_env_int("PERF_GUARD_MIN_TRADES", 12, env_prefix=env_prefix)
+    )
+    pf_min_default = float(
+        _strategy_env_float("PERF_GUARD_PF_MIN", 0.9, env_prefix=env_prefix) or 0.9
+    )
+    win_min_default = float(
+        _strategy_env_float("PERF_GUARD_WIN_MIN", 0.48, env_prefix=env_prefix) or 0.48
+    )
+    ttl_sec = max(
+        30.0,
+        float(
+            _strategy_env_float("PERF_GUARD_TTL_SEC", 120.0, env_prefix=env_prefix)
+            or 120.0
+        ),
+    )
 
-    hourly_enabled = _strategy_env_bool("PERF_GUARD_HOURLY", False, env_prefix=env_prefix)
-    hourly_min_trades = max(5, _strategy_env_int("PERF_GUARD_HOURLY_MIN_TRADES", 12, env_prefix=env_prefix))
+    hourly_enabled = _strategy_env_bool(
+        "PERF_GUARD_HOURLY", False, env_prefix=env_prefix
+    )
+    hourly_min_trades = max(
+        5, _strategy_env_int("PERF_GUARD_HOURLY_MIN_TRADES", 12, env_prefix=env_prefix)
+    )
 
     relax_raw = _strategy_env_get("PERF_GUARD_RELAX_TAGS", None, env_prefix=env_prefix)
     if relax_raw is None:
         relax_raw = "ImpulseRetrace"
-    relax_tags = {tag.strip().lower() for tag in str(relax_raw).split(",") if tag.strip()}
-    split_directional = _strategy_env_bool("PERF_GUARD_SPLIT_DIRECTIONAL", True, env_prefix=env_prefix)
+    relax_tags = {
+        tag.strip().lower() for tag in str(relax_raw).split(",") if tag.strip()
+    }
+    split_directional = _strategy_env_bool(
+        "PERF_GUARD_SPLIT_DIRECTIONAL", True, env_prefix=env_prefix
+    )
 
-    regime_filter_enabled = _strategy_env_bool("PERF_GUARD_REGIME_FILTER", True, env_prefix=env_prefix)
-    regime_min_trades = max(5, _strategy_env_int("PERF_GUARD_REGIME_MIN_TRADES", 20, env_prefix=env_prefix))
+    regime_filter_enabled = _strategy_env_bool(
+        "PERF_GUARD_REGIME_FILTER", True, env_prefix=env_prefix
+    )
+    regime_min_trades = max(
+        5, _strategy_env_int("PERF_GUARD_REGIME_MIN_TRADES", 20, env_prefix=env_prefix)
+    )
 
-    setup_enabled = _strategy_env_bool("PERF_GUARD_SETUP_ENABLED", False, env_prefix=env_prefix)
-    setup_use_hour = _strategy_env_bool("PERF_GUARD_SETUP_USE_HOUR", True, env_prefix=env_prefix)
-    setup_use_direction = _strategy_env_bool("PERF_GUARD_SETUP_USE_DIRECTION", True, env_prefix=env_prefix)
-    setup_use_regime = _strategy_env_bool("PERF_GUARD_SETUP_USE_REGIME", True, env_prefix=env_prefix)
-    setup_min_trades = max(5, _strategy_env_int("PERF_GUARD_SETUP_MIN_TRADES", 10, env_prefix=env_prefix))
-    setup_pf_min_default = _strategy_env_float("PERF_GUARD_SETUP_PF_MIN", 1.02, env_prefix=env_prefix)
-    setup_win_min_default = _strategy_env_float("PERF_GUARD_SETUP_WIN_MIN", 0.53, env_prefix=env_prefix)
-    setup_avg_pips_min_default = _strategy_env_float("PERF_GUARD_SETUP_AVG_PIPS_MIN", 0.0, env_prefix=env_prefix)
+    setup_enabled = _strategy_env_bool(
+        "PERF_GUARD_SETUP_ENABLED", False, env_prefix=env_prefix
+    )
+    setup_use_hour = _strategy_env_bool(
+        "PERF_GUARD_SETUP_USE_HOUR", True, env_prefix=env_prefix
+    )
+    setup_use_direction = _strategy_env_bool(
+        "PERF_GUARD_SETUP_USE_DIRECTION", True, env_prefix=env_prefix
+    )
+    setup_use_regime = _strategy_env_bool(
+        "PERF_GUARD_SETUP_USE_REGIME", True, env_prefix=env_prefix
+    )
+    setup_min_trades = max(
+        5, _strategy_env_int("PERF_GUARD_SETUP_MIN_TRADES", 10, env_prefix=env_prefix)
+    )
+    setup_pf_min_default = _strategy_env_float(
+        "PERF_GUARD_SETUP_PF_MIN", 1.02, env_prefix=env_prefix
+    )
+    setup_win_min_default = _strategy_env_float(
+        "PERF_GUARD_SETUP_WIN_MIN", 0.53, env_prefix=env_prefix
+    )
+    setup_avg_pips_min_default = _strategy_env_float(
+        "PERF_GUARD_SETUP_AVG_PIPS_MIN", 0.0, env_prefix=env_prefix
+    )
 
-    failfast_min_trades = max(0, _strategy_env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, env_prefix=env_prefix))
-    failfast_pf = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_PF", 0.75, env_prefix=env_prefix))
-    failfast_win = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_WIN", 0.40, env_prefix=env_prefix))
-    failfast_hard_pf_floor = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_HARD_PF", 0.30, env_prefix=env_prefix))
+    failfast_min_trades = max(
+        0,
+        _strategy_env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, env_prefix=env_prefix),
+    )
+    failfast_pf = max(
+        0.0, _strategy_env_float("PERF_GUARD_FAILFAST_PF", 0.75, env_prefix=env_prefix)
+    )
+    failfast_win = max(
+        0.0, _strategy_env_float("PERF_GUARD_FAILFAST_WIN", 0.40, env_prefix=env_prefix)
+    )
+    failfast_hard_pf_floor = max(
+        0.0,
+        _strategy_env_float("PERF_GUARD_FAILFAST_HARD_PF", 0.30, env_prefix=env_prefix),
+    )
     failfast_hard_require_both = _strategy_env_bool(
         "PERF_GUARD_FAILFAST_HARD_REQUIRE_BOTH",
         True,
@@ -185,15 +251,21 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
 
     margin_closeout_hard_min_trades = max(
         1,
-        _strategy_env_int("PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES", 24, env_prefix=env_prefix),
+        _strategy_env_int(
+            "PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_TRADES", 24, env_prefix=env_prefix
+        ),
     )
     margin_closeout_hard_rate = max(
         0.0,
-        _strategy_env_float("PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE", 0.03, env_prefix=env_prefix),
+        _strategy_env_float(
+            "PERF_GUARD_MARGIN_CLOSEOUT_HARD_RATE", 0.03, env_prefix=env_prefix
+        ),
     )
     margin_closeout_hard_min_count = max(
         1,
-        _strategy_env_int("PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT", 1, env_prefix=env_prefix),
+        _strategy_env_int(
+            "PERF_GUARD_MARGIN_CLOSEOUT_HARD_MIN_COUNT", 1, env_prefix=env_prefix
+        ),
     )
     hard_margin_closeout_enabled = _strategy_env_bool(
         "PERF_GUARD_HARD_MARGIN_CLOSEOUT_ENABLED",
@@ -201,30 +273,67 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         env_prefix=env_prefix,
     )
 
-    sl_loss_rate_min_trades = max(0, _strategy_env_int("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, env_prefix=env_prefix))
-    sl_loss_rate_max_default = _strategy_env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, env_prefix=env_prefix)
+    sl_loss_rate_min_trades = max(
+        0,
+        _strategy_env_int(
+            "PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, env_prefix=env_prefix
+        ),
+    )
+    sl_loss_rate_max_default = _strategy_env_float(
+        "PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, env_prefix=env_prefix
+    )
     hard_sl_loss_rate_enabled = _strategy_env_bool(
         "PERF_GUARD_HARD_SL_LOSS_RATE_ENABLED",
         True,
         env_prefix=env_prefix,
     )
 
-    pocket_enabled = _strategy_env_bool("POCKET_PERF_GUARD_ENABLED", False, env_prefix=env_prefix)
-    pocket_lookback_days = max(1, _strategy_env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, env_prefix=env_prefix))
-    pocket_min_trades = max(10, _strategy_env_int("POCKET_PERF_GUARD_MIN_TRADES", 60, env_prefix=env_prefix))
-    pocket_pf_min_default = _strategy_env_float("POCKET_PERF_GUARD_PF_MIN", 0.95, env_prefix=env_prefix)
-    pocket_win_min_default = _strategy_env_float("POCKET_PERF_GUARD_WIN_MIN", 0.50, env_prefix=env_prefix)
-    pocket_ttl_sec = max(30.0, _strategy_env_float("POCKET_PERF_GUARD_TTL_SEC", 180.0, env_prefix=env_prefix))
+    pocket_enabled = _strategy_env_bool(
+        "POCKET_PERF_GUARD_ENABLED", False, env_prefix=env_prefix
+    )
+    pocket_lookback_days = max(
+        1,
+        _strategy_env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, env_prefix=env_prefix),
+    )
+    pocket_min_trades = max(
+        10, _strategy_env_int("POCKET_PERF_GUARD_MIN_TRADES", 60, env_prefix=env_prefix)
+    )
+    pocket_pf_min_default = _strategy_env_float(
+        "POCKET_PERF_GUARD_PF_MIN", 0.95, env_prefix=env_prefix
+    )
+    pocket_win_min_default = _strategy_env_float(
+        "POCKET_PERF_GUARD_WIN_MIN", 0.50, env_prefix=env_prefix
+    )
+    pocket_ttl_sec = max(
+        30.0,
+        _strategy_env_float("POCKET_PERF_GUARD_TTL_SEC", 180.0, env_prefix=env_prefix),
+    )
 
-    scale_enabled = _strategy_env_bool("PERF_SCALE_ENABLED", True, env_prefix=env_prefix)
-    scale_lookback_days = max(1, _strategy_env_int("PERF_SCALE_LOOKBACK_DAYS", 7, env_prefix=env_prefix))
-    scale_min_trades = max(5, _strategy_env_int("PERF_SCALE_MIN_TRADES", 20, env_prefix=env_prefix))
+    scale_enabled = _strategy_env_bool(
+        "PERF_SCALE_ENABLED", True, env_prefix=env_prefix
+    )
+    scale_lookback_days = max(
+        1, _strategy_env_int("PERF_SCALE_LOOKBACK_DAYS", 7, env_prefix=env_prefix)
+    )
+    scale_min_trades = max(
+        5, _strategy_env_int("PERF_SCALE_MIN_TRADES", 20, env_prefix=env_prefix)
+    )
     scale_pf_min = _strategy_env_float("PERF_SCALE_PF_MIN", 1.15, env_prefix=env_prefix)
-    scale_win_min = _strategy_env_float("PERF_SCALE_WIN_MIN", 0.55, env_prefix=env_prefix)
-    scale_avg_pips_min = _strategy_env_float("PERF_SCALE_AVG_PIPS_MIN", 0.20, env_prefix=env_prefix)
-    scale_step = max(0.0, _strategy_env_float("PERF_SCALE_STEP", 0.05, env_prefix=env_prefix))
-    scale_max_mult = max(1.0, _strategy_env_float("PERF_SCALE_MAX_MULT", 1.25, env_prefix=env_prefix))
-    scale_ttl_sec = max(30.0, _strategy_env_float("PERF_SCALE_TTL_SEC", 180.0, env_prefix=env_prefix))
+    scale_win_min = _strategy_env_float(
+        "PERF_SCALE_WIN_MIN", 0.55, env_prefix=env_prefix
+    )
+    scale_avg_pips_min = _strategy_env_float(
+        "PERF_SCALE_AVG_PIPS_MIN", 0.20, env_prefix=env_prefix
+    )
+    scale_step = max(
+        0.0, _strategy_env_float("PERF_SCALE_STEP", 0.05, env_prefix=env_prefix)
+    )
+    scale_max_mult = max(
+        1.0, _strategy_env_float("PERF_SCALE_MAX_MULT", 1.25, env_prefix=env_prefix)
+    )
+    scale_ttl_sec = max(
+        30.0, _strategy_env_float("PERF_SCALE_TTL_SEC", 180.0, env_prefix=env_prefix)
+    )
 
     cfg = PerfGuardCfg(
         env_prefix=env_prefix,
@@ -280,6 +389,7 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
     )
     _CFG_CACHE[key] = cfg
     return cfg
+
 
 _DIRECTIONAL_TOKENS = {"bear", "bull", "long", "short"}
 
@@ -444,7 +554,9 @@ def _strategy_int_threshold(
     return int(default)
 
 
-def _strategy_bool_override(name: str, tag: str, default: bool, cfg: PerfGuardCfg) -> bool:
+def _strategy_bool_override(
+    name: str, tag: str, default: bool, cfg: PerfGuardCfg
+) -> bool:
     seen: set[str] = set()
     for variant in _tag_variants(tag, split_directional=False):
         suffix = _strategy_env_suffix(variant)
@@ -476,7 +588,9 @@ def _sl_loss_rate_max(pocket: str, cfg: PerfGuardCfg) -> float:
     p = (pocket or "").strip().lower()
     if p.startswith("scalp"):
         return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, 0.65, cfg)
-    return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, cfg.sl_loss_rate_max_default, cfg)
+    return _threshold(
+        "PERF_GUARD_SL_LOSS_RATE_MAX", pocket, cfg.sl_loss_rate_max_default, cfg
+    )
 
 
 def _is_hard_block_reason(reason: str, cfg: Optional[PerfGuardCfg] = None) -> bool:
@@ -674,7 +788,9 @@ def _query_perf_row(
         return None
 
 
-def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, float, float, int]:
+def _query_perf_scale(
+    tag: str, pocket: str, cfg: PerfGuardCfg
+) -> Tuple[float, float, float, int]:
     if not _DB.exists():
         return 1.0, 0.0, 0.0, 0
     try:
@@ -795,7 +911,9 @@ def _query_setup_perf(
             params,
         ).fetchone()
     except Exception as exc:
-        LOG.debug("[PERF_GUARD] setup query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
+        LOG.debug(
+            "[PERF_GUARD] setup query failed tag=%s pocket=%s err=%s", tag, pocket, exc
+        )
         return True, "query_failed", 0
     finally:
         try:
@@ -828,8 +946,12 @@ def _query_setup_perf(
     win_rate = win / n if n > 0 else 0.0
     avg_pips = sum_pips / n if n > 0 else 0.0
 
-    pf_min = _strategy_threshold("PERF_GUARD_SETUP_PF_MIN", pocket, tag, cfg.setup_pf_min_default, cfg)
-    win_min = _strategy_threshold("PERF_GUARD_SETUP_WIN_MIN", pocket, tag, cfg.setup_win_min_default, cfg)
+    pf_min = _strategy_threshold(
+        "PERF_GUARD_SETUP_PF_MIN", pocket, tag, cfg.setup_pf_min_default, cfg
+    )
+    win_min = _strategy_threshold(
+        "PERF_GUARD_SETUP_WIN_MIN", pocket, tag, cfg.setup_win_min_default, cfg
+    )
     avg_pips_min = _strategy_threshold(
         "PERF_GUARD_SETUP_AVG_PIPS_MIN",
         pocket,
@@ -838,12 +960,20 @@ def _query_setup_perf(
         cfg,
     )
     if pf < pf_min or avg_pips < avg_pips_min or (pf < 1.0 and win_rate < win_min):
-        return False, f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}", n
+        return (
+            False,
+            f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}",
+            n,
+        )
     return True, f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}", n
 
 
 def _query_perf(
-    tag: str, pocket: str, hour: Optional[int], regime_label: Optional[str], cfg: PerfGuardCfg
+    tag: str,
+    pocket: str,
+    hour: Optional[int],
+    regime_label: Optional[str],
+    cfg: PerfGuardCfg,
 ) -> Tuple[bool, str, int]:
     if not _DB.exists():
         return True, "no_db", 0
@@ -924,7 +1054,9 @@ def _query_perf(
 
     # Emergency block: broker forced liquidation observed in this window.
     if margin_closeout_n > 0:
-        closeout_rate = (float(margin_closeout_n) / float(hard_n)) if hard_n > 0 else 1.0
+        closeout_rate = (
+            (float(margin_closeout_n) / float(hard_n)) if hard_n > 0 else 1.0
+        )
         warmup_closeout = hard_n < cfg.margin_closeout_hard_min_trades
         if warmup_closeout and cfg.mode != "block":
             return (
@@ -938,8 +1070,16 @@ def _query_perf(
         )
         hard_closeout = warmup_closeout or threshold_closeout
         if hard_closeout:
-            return False, f"margin_closeout_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}", hard_n
-        return False, f"margin_closeout_soft_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}", hard_n
+            return (
+                False,
+                f"margin_closeout_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}",
+                hard_n,
+            )
+        return (
+            False,
+            f"margin_closeout_soft_n={margin_closeout_n} rate={closeout_rate:.3f} n={hard_n}",
+            hard_n,
+        )
 
     # Fail-fast (before warmup) when stats are clearly bad.
     if cfg.failfast_min_trades > 0 and hard_n >= cfg.failfast_min_trades:
@@ -954,8 +1094,16 @@ def _query_perf(
             else:
                 hard_failfast = failfast_pf_hit or failfast_win_hit
             if hard_failfast:
-                return False, f"failfast:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}", hard_n
-            return False, f"failfast_soft:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}", hard_n
+                return (
+                    False,
+                    f"failfast:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}",
+                    hard_n,
+                )
+            return (
+                False,
+                f"failfast_soft:pf={hard_pf:.2f} win={hard_win_rate:.2f} n={hard_n}",
+                hard_n,
+            )
 
     # Stop-loss (loss) rate guard (before warmup). Only apply when PF < 1.0 (already losing).
     sl_rate_max = _sl_loss_rate_max(pocket, cfg)
@@ -967,10 +1115,16 @@ def _query_perf(
     ):
         sl_rate = (float(sl_loss_n) / float(hard_n)) if hard_n > 0 else 0.0
         if sl_rate >= sl_rate_max:
-            return False, f"sl_loss_rate={sl_rate:.2f} pf={hard_pf:.2f} n={hard_n}", hard_n
+            return (
+                False,
+                f"sl_loss_rate={sl_rate:.2f} pf={hard_pf:.2f} n={hard_n}",
+                hard_n,
+            )
 
     min_trades_default = cfg.hourly_min_trades if hour is not None else cfg.min_trades
-    min_trades_key = "PERF_GUARD_HOURLY_MIN_TRADES" if hour is not None else "PERF_GUARD_MIN_TRADES"
+    min_trades_key = (
+        "PERF_GUARD_HOURLY_MIN_TRADES" if hour is not None else "PERF_GUARD_MIN_TRADES"
+    )
     min_trades = max(
         1,
         _strategy_int_threshold(
@@ -984,8 +1138,12 @@ def _query_perf(
     if n < min_trades:
         return True, f"warmup_n={n}", n
 
-    pf_min = _strategy_threshold("PERF_GUARD_PF_MIN", pocket, tag, cfg.pf_min_default, cfg)
-    win_min = _strategy_threshold("PERF_GUARD_WIN_MIN", pocket, tag, cfg.win_min_default, cfg)
+    pf_min = _strategy_threshold(
+        "PERF_GUARD_PF_MIN", pocket, tag, cfg.pf_min_default, cfg
+    )
+    win_min = _strategy_threshold(
+        "PERF_GUARD_WIN_MIN", pocket, tag, cfg.win_min_default, cfg
+    )
     if pf < pf_min or (pf < 1.0 and win_rate < win_min):
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
@@ -1034,8 +1192,12 @@ def _query_pocket_perf(pocket: str, cfg: PerfGuardCfg) -> Tuple[bool, str, int]:
     pf = profit / loss if loss > 0 else float("inf")
     win_rate = win / n if n > 0 else 0.0
 
-    pf_min = _threshold("POCKET_PERF_GUARD_PF_MIN", pocket, cfg.pocket_pf_min_default, cfg)
-    win_min = _threshold("POCKET_PERF_GUARD_WIN_MIN", pocket, cfg.pocket_win_min_default, cfg)
+    pf_min = _threshold(
+        "POCKET_PERF_GUARD_PF_MIN", pocket, cfg.pocket_pf_min_default, cfg
+    )
+    win_min = _threshold(
+        "POCKET_PERF_GUARD_WIN_MIN", pocket, cfg.pocket_win_min_default, cfg
+    )
     if pf < pf_min or (pf < 1.0 and win_rate < win_min):
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
@@ -1057,7 +1219,9 @@ def is_allowed(
     if not cfg.enabled or cfg.mode in {"off", "disabled", "false", "no"}:
         return PerfDecision(True, "disabled", 0)
     relaxed = _is_relaxed(tag, cfg)
-    needs_regime = cfg.regime_filter_enabled or (cfg.setup_enabled and cfg.setup_use_regime)
+    needs_regime = cfg.regime_filter_enabled or (
+        cfg.setup_enabled and cfg.setup_use_regime
+    )
     live_regime = _pocket_regime_label(pocket) if needs_regime else None
     regime_label = live_regime if cfg.regime_filter_enabled else None
     setup_hour = hour if (cfg.setup_enabled and cfg.setup_use_hour) else None
@@ -1081,7 +1245,9 @@ def is_allowed(
 
     # hourly check first (stricter). If enabled and blocked, return immediately.
     if cfg.hourly_enabled and hour is not None:
-        ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour, regime_label, cfg)
+        ok_hour, reason_hour, sample_hour = _query_perf(
+            tag, pocket, hour, regime_label, cfg
+        )
         if not ok_hour:
             reason_txt = f"hour{hour}:{reason_hour}"
             hard_block = _is_hard_block_reason(reason_hour, cfg)
@@ -1098,7 +1264,9 @@ def is_allowed(
             _cache[key] = (now, allowed, reason_txt, sample_hour)
             return PerfDecision(allowed, reason_txt, sample_hour)
 
-    setup_enabled = _strategy_bool_override("PERF_GUARD_SETUP_ENABLED", tag, cfg.setup_enabled, cfg)
+    setup_enabled = _strategy_bool_override(
+        "PERF_GUARD_SETUP_ENABLED", tag, cfg.setup_enabled, cfg
+    )
     if setup_enabled:
         ok_setup, setup_reason, setup_sample = _query_setup_perf(
             tag=tag,
@@ -1160,7 +1328,9 @@ def is_pocket_allowed(pocket: str, *, env_prefix: Optional[str] = None) -> PerfD
     return PerfDecision(allowed, reason, n)
 
 
-def perf_scale(tag: str, pocket: str, *, env_prefix: Optional[str] = None) -> PerfScaleDecision:
+def perf_scale(
+    tag: str, pocket: str, *, env_prefix: Optional[str] = None
+) -> PerfScaleDecision:
     cfg = _get_cfg(env_prefix)
     if not cfg.scale_enabled:
         return PerfScaleDecision(1.0, "disabled", 0, 1.0, 0.0, 0.0)
@@ -1168,12 +1338,22 @@ def perf_scale(tag: str, pocket: str, *, env_prefix: Optional[str] = None) -> Pe
     now = time.time()
     cached = _scale_cache.get(key)
     if cached and (now - cached[0]) < cfg.scale_ttl_sec:
-        return PerfScaleDecision(cached[1], cached[2], cached[3], cached[4], cached[5], cached[6])
+        return PerfScaleDecision(
+            cached[1], cached[2], cached[3], cached[4], cached[5], cached[6]
+        )
 
     pf, win_rate, avg_pips, n = _query_perf_scale(tag, pocket, cfg)
     if n < cfg.scale_min_trades:
         dec = PerfScaleDecision(1.0, "insufficient", n, pf, win_rate, avg_pips)
-        _scale_cache[key] = (now, dec.multiplier, dec.reason, dec.sample, dec.pf, dec.win_rate, dec.avg_pips)
+        _scale_cache[key] = (
+            now,
+            dec.multiplier,
+            dec.reason,
+            dec.sample,
+            dec.pf,
+            dec.win_rate,
+            dec.avg_pips,
+        )
         return dec
 
     score = 0
@@ -1201,5 +1381,13 @@ def perf_scale(tag: str, pocket: str, *, env_prefix: Optional[str] = None) -> Pe
     else:
         reason = "flat"
     dec = PerfScaleDecision(mult, reason, n, pf, win_rate, avg_pips)
-    _scale_cache[key] = (now, dec.multiplier, dec.reason, dec.sample, dec.pf, dec.win_rate, dec.avg_pips)
+    _scale_cache[key] = (
+        now,
+        dec.multiplier,
+        dec.reason,
+        dec.sample,
+        dec.pf,
+        dec.win_rate,
+        dec.avg_pips,
+    )
     return dec

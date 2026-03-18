@@ -3,6 +3,7 @@
 Thin launcher: sets strategy-specific env vars, then delegates to the
 shared micro_runtime exit loop to avoid code duplication across micro workers.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,5 +24,7 @@ async def micro_levelreactor_exit_worker() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True
+    )
     asyncio.run(micro_levelreactor_exit_worker())

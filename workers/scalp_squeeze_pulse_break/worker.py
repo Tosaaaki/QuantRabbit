@@ -67,36 +67,39 @@ def _to_probability(value: object) -> float:
 
 
 _MODE_TAG_MAP = {
-    'spread_revert': 'SpreadRangeRevert',
-    'rangefaderpro': 'RangeFaderPro',
-    'vwap_revert': 'VwapRevertS',
-    'stoch_bounce': 'StochBollBounce',
-    'divergence_revert': 'DivergenceRevert',
-    'compression_retest': 'CompressionRetest',
-    'htf_pullback': 'HTFPullbackS',
-    'macd_trend': 'MacdTrendRide',
-    'ema_slope_pull': 'EmaSlopePull',
-    'tick_imbalance': 'TickImbalance',
-    'tick_imbalance_rrplus': 'TickImbalanceRRPlus',
-    'level_reject': 'LevelReject',
-    'level_reject_plus': 'LevelRejectPlus',
-    'wick_reversal': 'WickReversal',
-    'wick_reversal_blend': 'WickReversalBlend',
-    'wick_reversal_hf': 'WickReversalHF',
-    'wick_reversal_pro': 'WickReversalPro',
-    'tick_wick_reversal': 'TickWickReversal',
-    'session_edge': 'SessionEdge',
-    'drought_revert': 'DroughtRevert',
-    'precision_lowvol': 'PrecisionLowVol',
-    'liquidity_sweep': 'LiquiditySweep',
-    'squeeze_pulse_break': 'SqueezePulseBreak',
-    'false_break_fade': 'FalseBreakFade',
+    "spread_revert": "SpreadRangeRevert",
+    "rangefaderpro": "RangeFaderPro",
+    "vwap_revert": "VwapRevertS",
+    "stoch_bounce": "StochBollBounce",
+    "divergence_revert": "DivergenceRevert",
+    "compression_retest": "CompressionRetest",
+    "htf_pullback": "HTFPullbackS",
+    "macd_trend": "MacdTrendRide",
+    "ema_slope_pull": "EmaSlopePull",
+    "tick_imbalance": "TickImbalance",
+    "tick_imbalance_rrplus": "TickImbalanceRRPlus",
+    "level_reject": "LevelReject",
+    "level_reject_plus": "LevelRejectPlus",
+    "wick_reversal": "WickReversal",
+    "wick_reversal_blend": "WickReversalBlend",
+    "wick_reversal_hf": "WickReversalHF",
+    "wick_reversal_pro": "WickReversalPro",
+    "tick_wick_reversal": "TickWickReversal",
+    "session_edge": "SessionEdge",
+    "drought_revert": "DroughtRevert",
+    "precision_lowvol": "PrecisionLowVol",
+    "liquidity_sweep": "LiquiditySweep",
+    "squeeze_pulse_break": "SqueezePulseBreak",
+    "false_break_fade": "FalseBreakFade",
 }
 
+
 def _mode_to_tag(mode: str) -> Optional[str]:
-    return _MODE_TAG_MAP.get((mode or '').strip().lower())
+    return _MODE_TAG_MAP.get((mode or "").strip().lower())
+
 
 # --- env helpers ---
+
 
 def _env_float(key: str, default: float) -> float:
     raw = os.getenv(key)
@@ -192,7 +195,9 @@ def _fetch_last_entry_time() -> Optional[datetime.datetime]:
     return _parse_iso_ts(str(row[0]))
 
 
-def _fetch_latest_closed_trade(tag: str) -> Optional[Tuple[datetime.datetime, float, float, int]]:
+def _fetch_latest_closed_trade(
+    tag: str,
+) -> Optional[Tuple[datetime.datetime, float, float, int]]:
     if not tag:
         return None
     query = (
@@ -326,9 +331,7 @@ TICK_IMB_MA_GAP_MIN_PIPS = _env_float("TICK_IMB_MA_GAP_MIN_PIPS", 0.0)
 TICK_IMB_MA_ALIGN_STRICT = _env_int("TICK_IMB_MA_ALIGN_STRICT", 0)
 TICK_IMB_SIZE_MULT = _env_float("TICK_IMB_SIZE_MULT", 1.25)
 TICK_IMB_ALLOWED_REGIMES = {
-    s.strip().lower()
-    for s in _env_csv("TICK_IMB_ALLOWED_REGIMES", "")
-    if s.strip()
+    s.strip().lower() for s in _env_csv("TICK_IMB_ALLOWED_REGIMES", "") if s.strip()
 }
 TICK_IMB_BLOCK_RANGE_MODE = _env_bool("TICK_IMB_BLOCK_RANGE_MODE", True)
 # Entry-quality gates (precision-first, no side/hour hard block).
@@ -338,14 +341,22 @@ TICK_IMB_QUALITY_MOM_MIN_PIPS = _env_float("TICK_IMB_QUALITY_MOM_MIN_PIPS", 0.65
 TICK_IMB_QUALITY_RANGE_MIN_PIPS = _env_float("TICK_IMB_QUALITY_RANGE_MIN_PIPS", 0.70)
 TICK_IMB_CONFIRM_WINDOW_SEC = _env_float("TICK_IMB_CONFIRM_WINDOW_SEC", 8.0)
 TICK_IMB_CONFIRM_RATIO_MIN = _env_float("TICK_IMB_CONFIRM_RATIO_MIN", 0.68)
-TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS = _env_float("TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS", 0.20)
+TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS = _env_float(
+    "TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS", 0.20
+)
 TICK_IMB_REQUIRE_CONFIRM_SIGN = _env_bool("TICK_IMB_REQUIRE_CONFIRM_SIGN", True)
 TICK_IMB_REENTRY_LOOKBACK_SEC = _env_float("TICK_IMB_REENTRY_LOOKBACK_SEC", 0.0)
-TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS = _env_float("TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS", 0.0)
-TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT = _env_bool("TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT", True)
+TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS = _env_float(
+    "TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS", 0.0
+)
+TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT = _env_bool(
+    "TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT", True
+)
 # Pattern gate (pattern_book-driven). TickImbalance currently has strong direction-only edge/avoid signals.
 TICK_IMB_PATTERN_GATE_OPT_IN = _env_bool("TICK_IMB_PATTERN_GATE_OPT_IN", True)
-TICK_IMB_PATTERN_GATE_ALLOW_GENERIC = _env_bool("TICK_IMB_PATTERN_GATE_ALLOW_GENERIC", True)
+TICK_IMB_PATTERN_GATE_ALLOW_GENERIC = _env_bool(
+    "TICK_IMB_PATTERN_GATE_ALLOW_GENERIC", True
+)
 
 SPB_BBW_MAX = _env_float("SPB_BBW_MAX", 0.0016)
 SPB_ATR_MIN = _env_float("SPB_ATR_MIN", 0.7)
@@ -479,10 +490,16 @@ WICK_HF_ADX_MAX = _env_float("WICK_HF_ADX_MAX", 28.0)
 WICK_HF_ADX_OVERRIDE_ENABLED = _env_bool("WICK_HF_ADX_OVERRIDE_ENABLED", False)
 WICK_HF_ADX_OVERRIDE_MAX_ADX = _env_float("WICK_HF_ADX_OVERRIDE_MAX_ADX", 55.0)
 WICK_HF_ADX_OVERRIDE_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_MIN_RATIO", 0.65)
-WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH = _env_float("WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH", 0.20)
+WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH = _env_float(
+    "WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH", 0.20
+)
 # If tick reversal detection is missing but wick rejection is extreme, allow entry even in high ADX.
-WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV = _env_bool("WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV", True)
-WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO", 0.80)
+WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV = _env_bool(
+    "WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV", True
+)
+WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO = _env_float(
+    "WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO", 0.80
+)
 
 WICK_HF_BBW_MAX = _env_float("WICK_HF_BBW_MAX", 0.0016)
 WICK_HF_ATR_MIN = _env_float("WICK_HF_ATR_MIN", 0.7)
@@ -528,7 +545,9 @@ WICK_BLEND_TICK_MIN_TICKS = _env_int("WICK_BLEND_TICK_MIN_TICKS", 6)
 WICK_BLEND_TICK_MIN_STRENGTH = _env_float("WICK_BLEND_TICK_MIN_STRENGTH", 0.28)
 # Require a small follow-through away from the band after the rejection candle to avoid "too early" fades.
 WICK_BLEND_FOLLOW_PIPS = _env_float("WICK_BLEND_FOLLOW_PIPS", 0.0)
-WICK_BLEND_EXTREME_RETRACE_MIN_PIPS = _env_float("WICK_BLEND_EXTREME_RETRACE_MIN_PIPS", 0.0)
+WICK_BLEND_EXTREME_RETRACE_MIN_PIPS = _env_float(
+    "WICK_BLEND_EXTREME_RETRACE_MIN_PIPS", 0.0
+)
 WICK_BLEND_DIAG = _env_bool("WICK_BLEND_DIAG", False)
 WICK_BLEND_DIAG_INTERVAL_SEC = _env_float("WICK_BLEND_DIAG_INTERVAL_SEC", 20.0)
 
@@ -575,7 +594,9 @@ LSR_ALLOWED_REGIMES = {
     s.strip().lower() for s in _env_csv("LSR_ALLOWED_REGIMES", "") if s.strip()
 }
 
-SESSION_ALLOW_HOURS = parse_hours(os.getenv("SESSION_EDGE_ALLOW_HOURS_JST", "12,13,18-22"))
+SESSION_ALLOW_HOURS = parse_hours(
+    os.getenv("SESSION_EDGE_ALLOW_HOURS_JST", "12,13,18-22")
+)
 SESSION_BLOCK_HOURS = parse_hours(os.getenv("SESSION_EDGE_BLOCK_HOURS_JST", "00-02,16"))
 
 VWAP_REV_GAP_MIN = _env_float("VWAP_REV_GAP_MIN", 1.2)
@@ -645,6 +666,7 @@ class RetestState:
 
 _RETEST_STATE: Dict[str, RetestState] = {}
 
+
 @dataclass
 class FalseBreakState:
     direction: str  # fade direction
@@ -709,6 +731,7 @@ def _bbw(fac_m1: Dict[str, object]) -> float:
     except Exception:
         return 0.0
 
+
 def _stoch_rsi(fac_m1: Dict[str, object]) -> float:
     try:
         return float(fac_m1.get("stoch_rsi") or 0.0)
@@ -763,7 +786,6 @@ def _div_score(fac_m1: Dict[str, object]) -> float:
     return rsi_score * 0.6 + macd_score * 0.4
 
 
-
 def _signal_spread_revert(
     fac_m1: Dict[str, object],
     range_ctx,
@@ -779,11 +801,15 @@ def _signal_spread_revert(
     upper, mid, lower, _, span_pips = levels
 
     range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
-    range_ok = bool(range_ctx and (range_ctx.active or range_score >= SPREAD_REV_RANGE_ONLY_SCORE))
+    range_ok = bool(
+        range_ctx and (range_ctx.active or range_score >= SPREAD_REV_RANGE_ONLY_SCORE)
+    )
     if not range_ok:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPREAD_REV_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=SPREAD_REV_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -804,9 +830,15 @@ def _signal_spread_revert(
     side = None
     dist_lower = (price - lower) / PIP
     dist_upper = (upper - price) / PIP
-    if dist_lower <= max(SPREAD_REV_BB_TOUCH_PIPS, span_pips * 0.18) and rsi <= SPREAD_REV_RSI_LONG_MAX:
+    if (
+        dist_lower <= max(SPREAD_REV_BB_TOUCH_PIPS, span_pips * 0.18)
+        and rsi <= SPREAD_REV_RSI_LONG_MAX
+    ):
         side = "long"
-    elif dist_upper <= max(SPREAD_REV_BB_TOUCH_PIPS, span_pips * 0.18) and rsi >= SPREAD_REV_RSI_SHORT_MIN:
+    elif (
+        dist_upper <= max(SPREAD_REV_BB_TOUCH_PIPS, span_pips * 0.18)
+        and rsi >= SPREAD_REV_RSI_SHORT_MIN
+    ):
         side = "short"
     if not side or rev_dir != side:
         return None
@@ -844,11 +876,15 @@ def _signal_drought_revert(
     upper, _, lower, _, span_pips = levels
 
     range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
-    range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.DROUGHT_RANGE_SCORE))
+    range_ok = bool(
+        range_ctx and (range_ctx.active or range_score >= config.DROUGHT_RANGE_SCORE)
+    )
     if not range_ok:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=config.DROUGHT_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=config.DROUGHT_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -862,7 +898,9 @@ def _signal_drought_revert(
         return None
 
     mids, _ = tick_snapshot(6.0, limit=60)
-    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=max(4, SPREAD_REV_TICK_MIN - 2))
+    rev_ok, rev_dir, rev_strength = tick_reversal(
+        mids, min_ticks=max(4, SPREAD_REV_TICK_MIN - 2)
+    )
     if not rev_ok:
         return None
 
@@ -918,13 +956,20 @@ def _signal_precision_lowvol(
     vgap = _vwap_gap_pips(fac_m1)
 
     range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
-    range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.PREC_LOWVOL_RANGE_SCORE))
+    range_ok = bool(
+        range_ctx
+        and (range_ctx.active or range_score >= config.PREC_LOWVOL_RANGE_SCORE)
+    )
     if not range_ok:
-        range_ok = adx <= config.PREC_LOWVOL_ADX_MAX and bbw <= config.PREC_LOWVOL_BBW_MAX
+        range_ok = (
+            adx <= config.PREC_LOWVOL_ADX_MAX and bbw <= config.PREC_LOWVOL_BBW_MAX
+        )
     if not range_ok:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=config.PREC_LOWVOL_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=config.PREC_LOWVOL_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -943,8 +988,14 @@ def _signal_precision_lowvol(
     dist_upper = (upper - price) / PIP
 
     side = None
-    long_osc_ok = rsi <= config.PREC_LOWVOL_RSI_LONG_MAX or stoch <= config.PREC_LOWVOL_STOCH_LONG_MAX
-    short_osc_ok = rsi >= config.PREC_LOWVOL_RSI_SHORT_MIN or stoch >= config.PREC_LOWVOL_STOCH_SHORT_MIN
+    long_osc_ok = (
+        rsi <= config.PREC_LOWVOL_RSI_LONG_MAX
+        or stoch <= config.PREC_LOWVOL_STOCH_LONG_MAX
+    )
+    short_osc_ok = (
+        rsi >= config.PREC_LOWVOL_RSI_SHORT_MIN
+        or stoch >= config.PREC_LOWVOL_STOCH_SHORT_MIN
+    )
     if dist_lower <= band and long_osc_ok and rev_dir == "long":
         side = "long"
     elif dist_upper <= band and short_osc_ok and rev_dir == "short":
@@ -960,7 +1011,9 @@ def _signal_precision_lowvol(
             return None
 
     vgap_bias_min = config.PREC_LOWVOL_VWAP_GAP_MIN
-    vgap_bias_ok = (vgap <= -vgap_bias_min and side == "long") or (vgap >= vgap_bias_min and side == "short")
+    vgap_bias_ok = (vgap <= -vgap_bias_min and side == "long") or (
+        vgap >= vgap_bias_min and side == "short"
+    )
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
@@ -1040,7 +1093,9 @@ def _signal_compression_retest(
                 tp = max(2.0, min(3.0, atr * 1.2))
                 conf = 60 + int(min(15, abs(imb.momentum_pips)))
                 return {
-                    "action": "OPEN_LONG" if state.direction == "long" else "OPEN_SHORT",
+                    "action": (
+                        "OPEN_LONG" if state.direction == "long" else "OPEN_SHORT"
+                    ),
                     "sl_pips": round(sl, 2),
                     "tp_pips": round(tp, 2),
                     "confidence": int(max(45, min(92, conf))),
@@ -1140,7 +1195,9 @@ def _signal_squeeze_pulse_break(
 
     side = "long" if breakout_long else "short"
     # Require tick momentum in the breakout direction.
-    if (side == "long" and imb.momentum_pips <= 0) or (side == "short" and imb.momentum_pips >= 0):
+    if (side == "long" and imb.momentum_pips <= 0) or (
+        side == "short" and imb.momentum_pips >= 0
+    ):
         return None
 
     sl = max(1.3, min(2.4, atr * 0.85))
@@ -1178,7 +1235,9 @@ def _spb_post_entry_guard(
         return True, "not_spb"
 
     action = str(signal.get("action") or "").strip().upper()
-    side = "long" if action == "OPEN_LONG" else "short" if action == "OPEN_SHORT" else ""
+    side = (
+        "long" if action == "OPEN_LONG" else "short" if action == "OPEN_SHORT" else ""
+    )
     if not side:
         return False, "unknown_side"
 
@@ -1226,7 +1285,9 @@ def _spb_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]
     price = _latest_price(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
-    ok_spread, spread_state = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25)
+    ok_spread, spread_state = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25
+    )
     spread_pips = 0.0
     p25_pips = 0.0
     if isinstance(spread_state, dict):
@@ -1301,7 +1362,9 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
 
-    ok_spread, spread_state = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_HF_SPREAD_P25)
+    ok_spread, spread_state = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_HF_SPREAD_P25
+    )
     spread_pips = 0.0
     p25_pips = 0.0
     if isinstance(spread_state, dict):
@@ -1324,7 +1387,11 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
             range_active = False
             range_score = 0.0
     range_ok = True
-    if not range_active and WICK_HF_RANGE_SCORE_MIN > 0.0 and range_score < WICK_HF_RANGE_SCORE_MIN:
+    if (
+        not range_active
+        and WICK_HF_RANGE_SCORE_MIN > 0.0
+        and range_score < WICK_HF_RANGE_SCORE_MIN
+    ):
         range_ok = False
 
     rng_pips = 0.0
@@ -1361,7 +1428,8 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
     adx_ok = not (WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX)
     bbw_ok = not (WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX)
     atr_ok = not (
-        (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX)
+        (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN)
+        or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX)
     )
 
     bb_ok = True
@@ -1372,11 +1440,17 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         if levels:
             try:
                 upper, _, lower, _, span_pips = levels
-                bb_touch_pips = max(WICK_HF_BB_TOUCH_PIPS, float(span_pips or 0.0) * 0.18)
+                bb_touch_pips = max(
+                    WICK_HF_BB_TOUCH_PIPS, float(span_pips or 0.0) * 0.18
+                )
                 if side == "short":
-                    bb_ok = upper_wick_pips > 0 and (candle_high >= float(upper) - bb_touch_pips * PIP)
+                    bb_ok = upper_wick_pips > 0 and (
+                        candle_high >= float(upper) - bb_touch_pips * PIP
+                    )
                 elif side == "long":
-                    bb_ok = lower_wick_pips > 0 and (candle_low <= float(lower) + bb_touch_pips * PIP)
+                    bb_ok = lower_wick_pips > 0 and (
+                        candle_low <= float(lower) + bb_touch_pips * PIP
+                    )
             except Exception:
                 bb_ok = False
 
@@ -1391,7 +1465,9 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         mids, _ = tick_snapshot(WICK_HF_TICK_WINDOW_SEC, limit=160)
         tick_n = len(mids or [])
         rev_ok, rev_dir, rev_strength = (
-            tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+            tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS)
+            if mids
+            else (False, None, 0.0)
         )
         tick_ok = bool(rev_ok)
         tick_dir = rev_dir
@@ -1399,7 +1475,14 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
             tick_strength = float(rev_strength or 0.0)
         except Exception:
             tick_strength = 0.0
-        tick_gate_ok = tick_ok and (tick_dir == side) and (WICK_HF_TICK_MIN_STRENGTH <= 0.0 or tick_strength >= WICK_HF_TICK_MIN_STRENGTH)
+        tick_gate_ok = (
+            tick_ok
+            and (tick_dir == side)
+            and (
+                WICK_HF_TICK_MIN_STRENGTH <= 0.0
+                or tick_strength >= WICK_HF_TICK_MIN_STRENGTH
+            )
+        )
 
     proj_allow = None
     try:
@@ -1499,7 +1582,11 @@ def _signal_false_break_fade(
         except Exception:
             range_score = 0.0
             range_active = False
-    if not range_active and FBF_RANGE_SCORE_MIN > 0.0 and range_score < FBF_RANGE_SCORE_MIN:
+    if (
+        not range_active
+        and FBF_RANGE_SCORE_MIN > 0.0
+        and range_score < FBF_RANGE_SCORE_MIN
+    ):
         return None
 
     candles = get_candles_snapshot("M1", limit=max(40, FBF_LOOKBACK + 6))
@@ -1538,18 +1625,32 @@ def _signal_false_break_fade(
         slope_10_pips = _ema_slope_pips(fac_m1, "ema_slope_10")
         vwap_gap_pips = _vwap_gap_pips(fac_m1)
         if want_dir == "long":
-            if FBF_MAX_COUNTER_SLOPE_PIPS > 0.0 and slope_10_pips < -FBF_MAX_COUNTER_SLOPE_PIPS:
+            if (
+                FBF_MAX_COUNTER_SLOPE_PIPS > 0.0
+                and slope_10_pips < -FBF_MAX_COUNTER_SLOPE_PIPS
+            ):
                 return None
-            if FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0 and vwap_gap_pips < -FBF_MAX_COUNTER_VWAP_GAP_PIPS:
+            if (
+                FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0
+                and vwap_gap_pips < -FBF_MAX_COUNTER_VWAP_GAP_PIPS
+            ):
                 return None
         else:
-            if FBF_MAX_COUNTER_SLOPE_PIPS > 0.0 and slope_10_pips > FBF_MAX_COUNTER_SLOPE_PIPS:
+            if (
+                FBF_MAX_COUNTER_SLOPE_PIPS > 0.0
+                and slope_10_pips > FBF_MAX_COUNTER_SLOPE_PIPS
+            ):
                 return None
-            if FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0 and vwap_gap_pips > FBF_MAX_COUNTER_VWAP_GAP_PIPS:
+            if (
+                FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0
+                and vwap_gap_pips > FBF_MAX_COUNTER_VWAP_GAP_PIPS
+            ):
                 return None
 
         mids, _ = tick_snapshot(FBF_TICK_WINDOW_SEC, limit=140)
-        rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+        rev_ok, rev_dir, rev_strength = (
+            tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+        )
         if FBF_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != want_dir):
             return None
         if FBF_TICK_MIN_STRENGTH > 0.0:
@@ -1562,10 +1663,14 @@ def _signal_false_break_fade(
 
         sl = max(1.4, min(2.8, atr * 0.9))
         tp = max(sl * 1.35, min(4.0, atr * 1.25))
-        conf = 60 + int(min(12.0, sweep_pips * 3.0)) + int(min(10.0, rev_strength * 4.0))
+        conf = (
+            60 + int(min(12.0, sweep_pips * 3.0)) + int(min(10.0, rev_strength * 4.0))
+        )
         conf = int(max(45, min(92, conf)))
 
-        size_mult = max(0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05))))
+        size_mult = max(
+            0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05)))
+        )
         _FALSE_BREAK_STATE.pop(tag, None)
         return {
             "action": "OPEN_LONG" if want_dir == "long" else "OPEN_SHORT",
@@ -1685,7 +1790,10 @@ def _tick_imb_reentry_gap_ok(
     direction: str,
     tag: str,
 ) -> bool:
-    if TICK_IMB_REENTRY_LOOKBACK_SEC <= 0.0 or TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS <= 0.0:
+    if (
+        TICK_IMB_REENTRY_LOOKBACK_SEC <= 0.0
+        or TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS <= 0.0
+    ):
         return True
     latest = _fetch_latest_closed_trade(tag)
     if latest is None:
@@ -1761,16 +1869,24 @@ def _signal_tick_imbalance(
             return None
         if imb.range_pips < TICK_IMB_QUALITY_RANGE_MIN_PIPS:
             return None
-        mids_confirm, span_confirm = tick_snapshot(TICK_IMB_CONFIRM_WINDOW_SEC, limit=220)
+        mids_confirm, span_confirm = tick_snapshot(
+            TICK_IMB_CONFIRM_WINDOW_SEC, limit=220
+        )
         imb_confirm = tick_imbalance(mids_confirm, span_confirm)
         if not imb_confirm:
             return None
         if imb_confirm.ratio < TICK_IMB_CONFIRM_RATIO_MIN:
             return None
-        confirm_signed_mom = imb_confirm.momentum_pips if direction == "long" else -imb_confirm.momentum_pips
+        confirm_signed_mom = (
+            imb_confirm.momentum_pips
+            if direction == "long"
+            else -imb_confirm.momentum_pips
+        )
         if confirm_signed_mom <= TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS:
             return None
-        if TICK_IMB_REQUIRE_CONFIRM_SIGN and (imb_confirm.momentum_pips > 0.0) != (imb.momentum_pips > 0.0):
+        if TICK_IMB_REQUIRE_CONFIRM_SIGN and (imb_confirm.momentum_pips > 0.0) != (
+            imb.momentum_pips > 0.0
+        ):
             return None
     if TICK_IMB_REQUIRE_MA_ALIGN:
         try:
@@ -1799,7 +1915,10 @@ def _signal_tick_imbalance(
         "tag": tag,
         "reason": "tick_imbalance",
         "size_mult": round(TICK_IMB_SIZE_MULT, 3),
-        "imbalance": {"ratio": round(imb.ratio, 3), "momentum_pips": round(imb.momentum_pips, 3)},
+        "imbalance": {
+            "ratio": round(imb.ratio, 3),
+            "momentum_pips": round(imb.momentum_pips, 3),
+        },
     }
 
 
@@ -1865,7 +1984,11 @@ def _signal_tick_imbalance_rrplus(
 
     sl = max(1.3, min(2.4, atr * 0.75 + 0.3))
     tp = max(sl * 1.55, min(4.4, atr * 1.45))
-    conf = 62 + int(min(16.0, (imb.ratio - 0.6) * 30.0)) + int(min(10.0, abs(imb.momentum_pips) * 3.0))
+    conf = (
+        62
+        + int(min(16.0, (imb.ratio - 0.6) * 30.0))
+        + int(min(10.0, abs(imb.momentum_pips) * 3.0))
+    )
     conf = int(max(45, min(92, conf)))
 
     return {
@@ -1899,7 +2022,9 @@ def _signal_level_reject(
         if regime and regime.lower() not in LEVEL_REJECT_ALLOWED_REGIMES:
             return None
     if LEVEL_REJECT_SPREAD_P25 > 0.0:
-        ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=LEVEL_REJECT_SPREAD_P25)
+        ok_spread, _ = spread_ok(
+            max_pips=config.MAX_SPREAD_PIPS, p25_max=LEVEL_REJECT_SPREAD_P25
+        )
         if not ok_spread:
             return None
     if LEVEL_REJECT_ADX_MAX > 0 and _adx(fac_m1) > LEVEL_REJECT_ADX_MAX:
@@ -1911,7 +2036,9 @@ def _signal_level_reject(
     if price <= 0:
         return None
     candles = get_candles_snapshot("M1", limit=60)
-    snap = compute_range_snapshot(candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0)
+    snap = compute_range_snapshot(
+        candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0
+    )
     if not snap:
         return None
 
@@ -1924,9 +2051,15 @@ def _signal_level_reject(
     dist_high = abs(price - snap.high) / PIP
     dist_low = abs(price - snap.low) / PIP
 
-    if dist_high <= LEVEL_BAND_PIPS and rsi >= LEVEL_RSI_SHORT_MIN and rev_dir == "short":
+    if (
+        dist_high <= LEVEL_BAND_PIPS
+        and rsi >= LEVEL_RSI_SHORT_MIN
+        and rev_dir == "short"
+    ):
         side = "short"
-    elif dist_low <= LEVEL_BAND_PIPS and rsi <= LEVEL_RSI_LONG_MAX and rev_dir == "long":
+    elif (
+        dist_low <= LEVEL_BAND_PIPS and rsi <= LEVEL_RSI_LONG_MAX and rev_dir == "long"
+    ):
         side = "long"
     else:
         return None
@@ -1944,6 +2077,7 @@ def _signal_level_reject(
         "reason": "level_reject",
         "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
     }
+
 
 def _signal_level_reject_plus(
     fac_m1: Dict[str, object],
@@ -1979,7 +2113,11 @@ def _signal_level_reject_plus(
         except Exception:
             range_active = False
             range_score = 0.0
-    if not range_active and LRP_RANGE_SCORE_MIN > 0.0 and range_score < LRP_RANGE_SCORE_MIN:
+    if (
+        not range_active
+        and LRP_RANGE_SCORE_MIN > 0.0
+        and range_score < LRP_RANGE_SCORE_MIN
+    ):
         return None
 
     adx = _adx(fac_m1)
@@ -1990,7 +2128,9 @@ def _signal_level_reject_plus(
         return None
 
     candles = get_candles_snapshot("M1", limit=max(60, LEVEL_LOOKBACK + 10))
-    snap = compute_range_snapshot(candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0)
+    snap = compute_range_snapshot(
+        candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0
+    )
     if not snap:
         return None
 
@@ -2018,7 +2158,9 @@ def _signal_level_reject_plus(
 
     mids, _ = tick_snapshot(LRP_TICK_WINDOW_SEC, limit=200)
     rev_ok, rev_dir, rev_strength = (
-        tick_reversal(mids, min_ticks=LRP_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+        tick_reversal(mids, min_ticks=LRP_TICK_MIN_TICKS)
+        if mids
+        else (False, None, 0.0)
     )
     if not rev_ok:
         return None
@@ -2133,7 +2275,7 @@ def _signal_liquidity_sweep(
     if wick_ratio < LSR_WICK_RATIO_MIN:
         return None
 
-    history = candles[-(LSR_LOOKBACK + 1):-1]
+    history = candles[-(LSR_LOOKBACK + 1) : -1]
     highs = []
     lows = []
     for candle in history:
@@ -2149,12 +2291,17 @@ def _signal_liquidity_sweep(
 
     side = None
     sweep_dist = 0.0
-    if h >= level_high + LSR_SWEEP_PIPS * PIP and c < level_high - LSR_RECLAIM_PIPS * PIP:
+    if (
+        h >= level_high + LSR_SWEEP_PIPS * PIP
+        and c < level_high - LSR_RECLAIM_PIPS * PIP
+    ):
         side = "short"
         sweep_dist = (h - level_high) / PIP
         if upper_wick < max(LSR_SWEEP_PIPS, 0.4):
             return None
-    elif l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP:
+    elif (
+        l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP
+    ):
         side = "long"
         sweep_dist = (level_low - l) / PIP
         if lower_wick < max(LSR_SWEEP_PIPS, 0.4):
@@ -2163,9 +2310,13 @@ def _signal_liquidity_sweep(
         return None
 
     mids, _ = tick_snapshot(6.0, limit=90)
-    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    rev_ok, rev_dir, rev_strength = (
+        tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    )
     if LSR_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != side):
-        hard_sweep_ok = sweep_dist >= (LSR_SWEEP_PIPS * 2.0) and wick_ratio >= (LSR_WICK_RATIO_MIN + 0.15)
+        hard_sweep_ok = sweep_dist >= (LSR_SWEEP_PIPS * 2.0) and wick_ratio >= (
+            LSR_WICK_RATIO_MIN + 0.15
+        )
         if not hard_sweep_ok:
             return None
 
@@ -2236,6 +2387,7 @@ def _signal_wick_reversal(
         "reason": "wick_reversal",
     }
 
+
 def _signal_wick_reversal_blend(
     fac_m1: Dict[str, object],
     range_ctx=None,
@@ -2250,12 +2402,18 @@ def _signal_wick_reversal_blend(
         except Exception:
             range_active = False
             range_score = 0.0
-        if not range_active and WICK_BLEND_RANGE_SCORE_MIN > 0.0 and range_score < WICK_BLEND_RANGE_SCORE_MIN:
+        if (
+            not range_active
+            and WICK_BLEND_RANGE_SCORE_MIN > 0.0
+            and range_score < WICK_BLEND_RANGE_SCORE_MIN
+        ):
             return None
     elif WICK_BLEND_RANGE_SCORE_MIN > 0.0:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_BLEND_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_BLEND_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -2309,7 +2467,9 @@ def _signal_wick_reversal_blend(
     if not levels:
         return None
     upper, _, lower, _, span_pips = levels
-    touch_pips = max(WICK_BLEND_BB_TOUCH_PIPS, span_pips * max(0.0, WICK_BLEND_BB_TOUCH_RATIO))
+    touch_pips = max(
+        WICK_BLEND_BB_TOUCH_PIPS, span_pips * max(0.0, WICK_BLEND_BB_TOUCH_RATIO)
+    )
     if side == "short":
         if h < upper - touch_pips * PIP:
             return None
@@ -2321,7 +2481,9 @@ def _signal_wick_reversal_blend(
     if WICK_BLEND_REQUIRE_TICK_REV:
         mids, _ = tick_snapshot(WICK_BLEND_TICK_WINDOW_SEC, limit=160)
         rev_ok, rev_dir, rev_strength = (
-            tick_reversal(mids, min_ticks=WICK_BLEND_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+            tick_reversal(mids, min_ticks=WICK_BLEND_TICK_MIN_TICKS)
+            if mids
+            else (False, None, 0.0)
         )
         if not rev_ok or rev_dir != side:
             return None
@@ -2329,7 +2491,10 @@ def _signal_wick_reversal_blend(
             strength = float(rev_strength or 0.0)
         except Exception:
             strength = 0.0
-        if WICK_BLEND_TICK_MIN_STRENGTH > 0.0 and strength < WICK_BLEND_TICK_MIN_STRENGTH:
+        if (
+            WICK_BLEND_TICK_MIN_STRENGTH > 0.0
+            and strength < WICK_BLEND_TICK_MIN_STRENGTH
+        ):
             return None
 
     price = _latest_price(fac_m1)
@@ -2366,7 +2531,10 @@ def _signal_wick_reversal_blend(
     conf = int(max(45, min(92, conf)))
 
     global _LAST_WICK_BLEND_DIAG_TS
-    if WICK_BLEND_DIAG and time.monotonic() - _LAST_WICK_BLEND_DIAG_TS >= WICK_BLEND_DIAG_INTERVAL_SEC:
+    if (
+        WICK_BLEND_DIAG
+        and time.monotonic() - _LAST_WICK_BLEND_DIAG_TS >= WICK_BLEND_DIAG_INTERVAL_SEC
+    ):
         _LAST_WICK_BLEND_DIAG_TS = time.monotonic()
         LOG.info(
             "%s wick_blend signal side=%s rng=%s body=%s ratio=%s adx=%s bbw=%s atr=%s strength=%s touch_pips=%s",
@@ -2416,10 +2584,16 @@ def _signal_wick_reversal_hf(
         except Exception:
             range_active = False
             range_score = 0.0
-        if not range_active and WICK_HF_RANGE_SCORE_MIN > 0.0 and range_score < WICK_HF_RANGE_SCORE_MIN:
+        if (
+            not range_active
+            and WICK_HF_RANGE_SCORE_MIN > 0.0
+            and range_score < WICK_HF_RANGE_SCORE_MIN
+        ):
             return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_HF_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_HF_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -2458,9 +2632,15 @@ def _signal_wick_reversal_hf(
     atr = _atr_pips(fac_m1)
     if WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX:
         return None
-    if (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX):
+    if (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (
+        WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX
+    ):
         return None
-    if WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX and not WICK_HF_ADX_OVERRIDE_ENABLED:
+    if (
+        WICK_HF_ADX_MAX > 0.0
+        and adx > WICK_HF_ADX_MAX
+        and not WICK_HF_ADX_OVERRIDE_ENABLED
+    ):
         return None
 
     side = "short" if upper_wick > lower_wick else "long"
@@ -2494,7 +2674,9 @@ def _signal_wick_reversal_hf(
     if WICK_HF_REQUIRE_TICK_REV or WICK_HF_ADX_OVERRIDE_ENABLED:
         mids, _ = tick_snapshot(WICK_HF_TICK_WINDOW_SEC, limit=160)
         rev_ok, rev_dir, rev_strength = (
-            tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+            tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS)
+            if mids
+            else (False, None, 0.0)
         )
         # Direction mismatch stays blocked even if hard-wick fallback is enabled.
         if rev_ok and rev_dir != side:
@@ -2503,15 +2685,21 @@ def _signal_wick_reversal_hf(
             strength = float(rev_strength or 0.0)
         except Exception:
             strength = 0.0
-        tick_ok = bool(rev_ok) and (rev_dir == side) and (
-            WICK_HF_TICK_MIN_STRENGTH <= 0.0 or strength >= WICK_HF_TICK_MIN_STRENGTH
+        tick_ok = (
+            bool(rev_ok)
+            and (rev_dir == side)
+            and (
+                WICK_HF_TICK_MIN_STRENGTH <= 0.0
+                or strength >= WICK_HF_TICK_MIN_STRENGTH
+            )
         )
         if WICK_HF_REQUIRE_TICK_REV and not tick_ok:
             if not WICK_HF_TICK_FALLBACK_HARD_WICK:
                 return None
-            hard_wick_ok = (
-                wick_ratio >= (WICK_HF_RATIO_MIN + max(0.0, WICK_HF_HARD_WICK_EXTRA_RATIO))
-                and rng >= (WICK_HF_RANGE_MIN_PIPS * max(1.0, WICK_HF_HARD_WICK_RANGE_MULT))
+            hard_wick_ok = wick_ratio >= (
+                WICK_HF_RATIO_MIN + max(0.0, WICK_HF_HARD_WICK_EXTRA_RATIO)
+            ) and rng >= (
+                WICK_HF_RANGE_MIN_PIPS * max(1.0, WICK_HF_HARD_WICK_RANGE_MULT)
             )
             if not hard_wick_ok:
                 return None
@@ -2563,6 +2751,7 @@ def _signal_wick_reversal_hf(
         },
     }
 
+
 def _signal_wick_reversal_pro(
     fac_m1: Dict[str, object],
     range_ctx=None,
@@ -2582,7 +2771,9 @@ def _signal_wick_reversal_pro(
         if WICK_PRO_RANGE_SCORE_MIN > 0.0 and range_score < WICK_PRO_RANGE_SCORE_MIN:
             return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_PRO_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_PRO_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -2644,7 +2835,9 @@ def _signal_wick_reversal_pro(
     if WICK_PRO_REQUIRE_TICK_REV:
         mids, _ = tick_snapshot(WICK_PRO_TICK_WINDOW_SEC, limit=90)
         rev_ok, rev_dir, rev_strength = (
-            tick_reversal(mids, min_ticks=WICK_PRO_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+            tick_reversal(mids, min_ticks=WICK_PRO_TICK_MIN_TICKS)
+            if mids
+            else (False, None, 0.0)
         )
         if not rev_ok or rev_dir != side:
             return None
@@ -2693,21 +2886,28 @@ def _signal_tick_wick_reversal(
     if range_ctx is not None:
         try:
             range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
-            range_ok = bool(getattr(range_ctx, "active", False)) or range_score >= TICK_WICK_RANGE_SCORE_MIN
+            range_ok = (
+                bool(getattr(range_ctx, "active", False))
+                or range_score >= TICK_WICK_RANGE_SCORE_MIN
+            )
         except Exception:
             range_score = 0.0
             range_ok = False
     if not range_ok:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=TICK_WICK_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=TICK_WICK_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
     if _adx(fac_m1) > TICK_WICK_ADX_MAX or _bbw(fac_m1) > TICK_WICK_BBW_MAX:
         return None
 
-    mids, span = tick_snapshot(TICK_WICK_WINDOW_SEC, limit=max(60, int(TICK_WICK_MIN_TICKS * 5)))
+    mids, span = tick_snapshot(
+        TICK_WICK_WINDOW_SEC, limit=max(60, int(TICK_WICK_MIN_TICKS * 5))
+    )
     if not mids or len(mids) < TICK_WICK_MIN_TICKS or span <= 0.0:
         return None
 
@@ -2746,10 +2946,18 @@ def _signal_tick_wick_reversal(
         if side == "short" and h < upper - band * PIP:
             return None
 
-    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=max(6, int(TICK_WICK_MIN_TICKS * 0.35)))
+    rev_ok, rev_dir, rev_strength = tick_reversal(
+        mids, min_ticks=max(6, int(TICK_WICK_MIN_TICKS * 0.35))
+    )
     if TICK_WICK_REQUIRE_TICK_REV:
-        if not rev_ok or rev_dir != side or (rev_strength is not None and rev_strength < TICK_WICK_MIN_REV_STRENGTH):
-            hard_wick_ok = wick_ratio >= (TICK_WICK_RATIO_MIN + 0.12) and rng_pips >= (TICK_WICK_RANGE_MIN_PIPS * 1.35)
+        if (
+            not rev_ok
+            or rev_dir != side
+            or (rev_strength is not None and rev_strength < TICK_WICK_MIN_REV_STRENGTH)
+        ):
+            hard_wick_ok = wick_ratio >= (TICK_WICK_RATIO_MIN + 0.12) and rng_pips >= (
+                TICK_WICK_RANGE_MIN_PIPS * 1.35
+            )
             if not hard_wick_ok:
                 return None
 
@@ -2804,11 +3012,15 @@ def _signal_vwap_revert(
     upper, _, lower, _, span_pips = levels
 
     range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
-    range_ok = bool(range_ctx and (range_ctx.active or range_score >= VWAP_REV_RANGE_SCORE))
+    range_ok = bool(
+        range_ctx and (range_ctx.active or range_score >= VWAP_REV_RANGE_SCORE)
+    )
     if not range_ok:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=VWAP_REV_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=VWAP_REV_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -2835,11 +3047,23 @@ def _signal_vwap_revert(
         return None
 
     side = None
-    if vgap <= -VWAP_REV_GAP_MIN and dist_lower <= max(VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18):
-        if rsi <= VWAP_REV_RSI_LONG_MAX and stoch <= VWAP_REV_STOCH_LONG_MAX and rev_dir == "long":
+    if vgap <= -VWAP_REV_GAP_MIN and dist_lower <= max(
+        VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18
+    ):
+        if (
+            rsi <= VWAP_REV_RSI_LONG_MAX
+            and stoch <= VWAP_REV_STOCH_LONG_MAX
+            and rev_dir == "long"
+        ):
             side = "long"
-    elif vgap >= VWAP_REV_GAP_MIN and dist_upper <= max(VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18):
-        if rsi >= VWAP_REV_RSI_SHORT_MIN and stoch >= VWAP_REV_STOCH_SHORT_MIN and rev_dir == "short":
+    elif vgap >= VWAP_REV_GAP_MIN and dist_upper <= max(
+        VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18
+    ):
+        if (
+            rsi >= VWAP_REV_RSI_SHORT_MIN
+            and stoch >= VWAP_REV_STOCH_SHORT_MIN
+            and rev_dir == "short"
+        ):
             side = "short"
     if not side:
         return None
@@ -2878,7 +3102,9 @@ def _signal_stoch_bounce(
     upper, _, lower, _, span_pips = levels
 
     range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
-    range_ok = bool(range_ctx and (range_ctx.active or range_score >= STOCH_BOUNCE_RANGE_SCORE))
+    range_ok = bool(
+        range_ctx and (range_ctx.active or range_score >= STOCH_BOUNCE_RANGE_SCORE)
+    )
     if not range_ok:
         return None
 
@@ -2890,7 +3116,9 @@ def _signal_stoch_bounce(
     if atr < STOCH_BOUNCE_ATR_MIN or atr > STOCH_BOUNCE_ATR_MAX:
         return None
 
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=VWAP_REV_SPREAD_P25)
+    ok_spread, _ = spread_ok(
+        max_pips=config.MAX_SPREAD_PIPS, p25_max=VWAP_REV_SPREAD_P25
+    )
     if not ok_spread:
         return None
 
@@ -2908,10 +3136,14 @@ def _signal_stoch_bounce(
     dist_lower = (price - lower) / PIP
     dist_upper = (upper - price) / PIP
     side = None
-    if stoch <= STOCH_BOUNCE_STOCH_LONG_MAX and dist_lower <= max(STOCH_BOUNCE_BB_TOUCH_PIPS, span_pips * 0.18):
+    if stoch <= STOCH_BOUNCE_STOCH_LONG_MAX and dist_lower <= max(
+        STOCH_BOUNCE_BB_TOUCH_PIPS, span_pips * 0.18
+    ):
         if rsi <= STOCH_BOUNCE_RSI_LONG_MAX and rev_dir == "long":
             side = "long"
-    elif stoch >= STOCH_BOUNCE_STOCH_SHORT_MIN and dist_upper <= max(STOCH_BOUNCE_BB_TOUCH_PIPS, span_pips * 0.18):
+    elif stoch >= STOCH_BOUNCE_STOCH_SHORT_MIN and dist_upper <= max(
+        STOCH_BOUNCE_BB_TOUCH_PIPS, span_pips * 0.18
+    ):
         if rsi >= STOCH_BOUNCE_RSI_SHORT_MIN and rev_dir == "short":
             side = "short"
     if not side:
@@ -3066,7 +3298,9 @@ def _signal_divergence_revert(
     if div_score > 0 and dist_lower <= max(DIV_REVERT_BB_TOUCH_PIPS, span_pips * 0.18):
         if rsi <= DIV_REVERT_RSI_LONG_MAX and rev_dir == "long":
             side = "long"
-    elif div_score < 0 and dist_upper <= max(DIV_REVERT_BB_TOUCH_PIPS, span_pips * 0.18):
+    elif div_score < 0 and dist_upper <= max(
+        DIV_REVERT_BB_TOUCH_PIPS, span_pips * 0.18
+    ):
         if rsi >= DIV_REVERT_RSI_SHORT_MIN and rev_dir == "short":
             side = "short"
     if not side:
@@ -3141,9 +3375,13 @@ def _signal_ema_slope_pull(
         return None
 
     rsi = _rsi(fac_m1)
-    if direction == "long" and not (EMA_PULL_RSI_LONG_MIN <= rsi <= EMA_PULL_RSI_LONG_MAX):
+    if direction == "long" and not (
+        EMA_PULL_RSI_LONG_MIN <= rsi <= EMA_PULL_RSI_LONG_MAX
+    ):
         return None
-    if direction == "short" and not (EMA_PULL_RSI_SHORT_MIN <= rsi <= EMA_PULL_RSI_SHORT_MAX):
+    if direction == "short" and not (
+        EMA_PULL_RSI_SHORT_MIN <= rsi <= EMA_PULL_RSI_SHORT_MAX
+    ):
         return None
 
     m5_slope = _ema_slope_pips(fac_m5, "ema_slope_20")
@@ -3180,12 +3418,16 @@ def _signal_session_edge(
     tag: str,
     now_utc: datetime.datetime,
 ) -> Optional[Dict[str, object]]:
-    if not session_allowed(now_utc.hour, allow_hours=SESSION_ALLOW_HOURS, block_hours=SESSION_BLOCK_HOURS):
+    if not session_allowed(
+        now_utc.hour, allow_hours=SESSION_ALLOW_HOURS, block_hours=SESSION_BLOCK_HOURS
+    ):
         return None
     return _signal_spread_revert(fac_m1, range_ctx, tag=tag)
 
 
-def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+def _build_entry_thesis(
+    signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx
+) -> Dict[str, object]:
     signal_confidence = int(signal.get("confidence", 0) or 0)
     thesis = {
         "strategy_tag": signal.get("tag"),
@@ -3238,21 +3480,41 @@ async def _place_order(
     )
     price = _latest_price(fac_m1)
     if price <= 0:
-        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+        if (
+            diag_tick_wick
+            and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS
+            >= TICK_WICK_DIAG_INTERVAL_SEC
+        ):
             _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
-            LOG.info("%s tick_wick place skip reason=bad_price price=%s", config.LOG_PREFIX, price)
+            LOG.info(
+                "%s tick_wick place skip reason=bad_price price=%s",
+                config.LOG_PREFIX,
+                price,
+            )
         return None
     side = "long" if signal.get("action") == "OPEN_LONG" else "short"
     sl_pips = float(signal.get("sl_pips") or 0.0)
     tp_pips = float(signal.get("tp_pips") or 0.0)
     if sl_pips <= 0:
-        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+        if (
+            diag_tick_wick
+            and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS
+            >= TICK_WICK_DIAG_INTERVAL_SEC
+        ):
             _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
-            LOG.info("%s tick_wick place skip reason=bad_sl sl_pips=%s", config.LOG_PREFIX, sl_pips)
+            LOG.info(
+                "%s tick_wick place skip reason=bad_sl sl_pips=%s",
+                config.LOG_PREFIX,
+                sl_pips,
+            )
         return None
 
     snap = get_account_snapshot()
-    free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+    free_ratio = (
+        float(snap.free_margin_ratio or 0.0)
+        if snap.free_margin_ratio is not None
+        else 0.0
+    )
     atr = _atr_pips(fac_m1)
 
     cap_res = compute_cap(
@@ -3267,7 +3529,11 @@ async def _place_order(
     )
     cap = cap_res.cap
     if cap <= 0.0:
-        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+        if (
+            diag_tick_wick
+            and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS
+            >= TICK_WICK_DIAG_INTERVAL_SEC
+        ):
             _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
             LOG.info(
                 "%s tick_wick place skip reason=cap_zero cap=%s free_ratio=%s atr=%s range_active=%s",
@@ -3281,7 +3547,11 @@ async def _place_order(
 
     conf = int(signal.get("confidence", 0) or 0)
     if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
-        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+        if (
+            diag_tick_wick
+            and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS
+            >= TICK_WICK_DIAG_INTERVAL_SEC
+        ):
             _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
             LOG.info(
                 "%s tick_wick place skip reason=conf_low conf=%s min=%s",
@@ -3290,7 +3560,9 @@ async def _place_order(
                 config.MIN_ENTRY_CONF,
             )
         return None
-    conf_scale = _confidence_scale(conf, lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
+    conf_scale = _confidence_scale(
+        conf, lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL
+    )
     size_mult = float(signal.get("size_mult", 1.0) or 1.0)
     size_mult = max(0.6, min(1.4, size_mult))
 
@@ -3336,7 +3608,8 @@ async def _place_order(
         else:
             if (
                 diag_tick_wick
-                and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC
+                and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS
+                >= TICK_WICK_DIAG_INTERVAL_SEC
             ):
                 _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
                 LOG.info(
@@ -3360,7 +3633,9 @@ async def _place_order(
         sl_price = round(price + sl_pips * PIP, 3)
         tp_price = round(price - tp_pips * PIP, 3) if tp_pips > 0 else None
 
-    sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=side == "long")
+    sl_price, tp_price = clamp_sl_tp(
+        price=price, sl=sl_price, tp=tp_price, is_buy=side == "long"
+    )
     client_id = _client_order_id(str(signal.get("tag") or "scalp_squeeze_pulse_break"))
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
     if isinstance(entry_thesis, dict):
@@ -3382,7 +3657,9 @@ async def _place_order(
         entry_thesis_ctx = {}
 
     _tech_pocket = str(locals().get("pocket", config.POCKET))
-    _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+    _tech_side_raw = str(
+        locals().get("side", locals().get("direction", "long"))
+    ).lower()
     if _tech_side_raw in {"long", "short"}:
         _tech_side = _tech_side_raw
     else:
@@ -3406,7 +3683,12 @@ async def _place_order(
 
     entry_thesis_ctx.setdefault(
         "tech_tfs",
-        {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+        {
+            "fib": ["H1", "M5"],
+            "median": ["H1", "M5"],
+            "nwave": ["M1", "M5"],
+            "candle": ["M1", "M5"],
+        },
     )
     entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
     entry_thesis_ctx.setdefault(
@@ -3429,8 +3711,13 @@ async def _place_order(
             "ema24",
         ],
     )
-    entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-    entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+    entry_thesis_ctx.setdefault(
+        "technical_context_ticks",
+        ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+    )
+    entry_thesis_ctx.setdefault(
+        "technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60}
+    )
     entry_thesis_ctx.setdefault("tech_allow_candle", True)
     entry_thesis_ctx.setdefault(
         "tech_policy",
@@ -3467,7 +3754,9 @@ async def _place_order(
     if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
         return None
 
-    entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+    entry_thesis_ctx["tech_score"] = (
+        round(tech_decision.score, 3) if tech_decision.score is not None else None
+    )
     entry_thesis_ctx["tech_coverage"] = (
         round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
     )
@@ -3488,11 +3777,14 @@ async def _place_order(
         _tech_conf = float(_tech_conf)
         if tech_decision.score is not None:
             if tech_decision.score >= 0:
-                _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                _tech_conf += tech_decision.score * getattr(
+                    config, "TECH_CONF_BOOST", 0.0
+                )
             else:
-                _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
+                _tech_conf += tech_decision.score * getattr(
+                    config, "TECH_CONF_PENALTY", 0.0
+                )
         conf = _tech_conf
-
 
     order_id = await market_order(
         instrument="USD_JPY",
@@ -3506,7 +3798,11 @@ async def _place_order(
         meta=meta,
         confidence=conf,
     )
-    if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+    if (
+        diag_tick_wick
+        and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS
+        >= TICK_WICK_DIAG_INTERVAL_SEC
+    ):
         _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
         LOG.info(
             "%s tick_wick place result order_id=%s units=%s side=%s sl=%s tp=%s conf=%s cap=%s",
@@ -3531,7 +3827,12 @@ async def scalp_squeeze_pulse_break_worker() -> None:
         except asyncio.CancelledError:
             return
 
-    LOG.info("%s worker start (interval=%.1fs mode=%s)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC, config.MODE)
+    LOG.info(
+        "%s worker start (interval=%.1fs mode=%s)",
+        config.LOG_PREFIX,
+        config.LOOP_INTERVAL_SEC,
+        config.MODE,
+    )
     LOG.info("Application started!")
     pos_manager = PositionManager()
     stage_tracker = StageTracker()
@@ -3544,7 +3845,12 @@ async def scalp_squeeze_pulse_break_worker() -> None:
     # Guard bypass is risky for modes that can generate large tail losses when data/exits degrade.
     # In particular, tick_imbalance suffered margin closeouts when common guards (spread/air/perf/stage)
     # were skipped. Keep these modes under the common guardrails regardless of env settings.
-    if config.MODE in {"level_reject", "level_reject_plus", "tick_imbalance", "tick_imbalance_rrplus"}:
+    if config.MODE in {
+        "level_reject",
+        "level_reject_plus",
+        "tick_imbalance",
+        "tick_imbalance_rrplus",
+    }:
         if bypass_common_guard:
             LOG.warning(
                 "%s guard bypass requested but disabled for mode=%s",
@@ -3606,12 +3912,17 @@ async def scalp_squeeze_pulse_break_worker() -> None:
             open_trades_all = None
 
             # max open trades guard
-            if (config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0) and not bypass_common_guard:
+            if (
+                config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0
+            ) and not bypass_common_guard:
                 try:
                     positions = pos_manager.get_open_positions()
                     scalp_info = positions.get(config.POCKET) or {}
                     open_trades_all = scalp_info.get("open_trades") or []
-                    if config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL:
+                    if (
+                        config.MAX_OPEN_TRADES_GLOBAL > 0
+                        and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL
+                    ):
                         continue
                     open_trades = open_trades_all
                     if config.OPEN_TRADES_SCOPE == "tag":
@@ -3621,9 +3932,13 @@ async def scalp_squeeze_pulse_break_worker() -> None:
                             open_trades = [
                                 tr
                                 for tr in open_trades_all
-                                if str(tr.get("strategy_tag") or "").lower() == tag_lower
+                                if str(tr.get("strategy_tag") or "").lower()
+                                == tag_lower
                             ]
-                    if config.MAX_OPEN_TRADES > 0 and len(open_trades) >= config.MAX_OPEN_TRADES:
+                    if (
+                        config.MAX_OPEN_TRADES > 0
+                        and len(open_trades) >= config.MAX_OPEN_TRADES
+                    ):
                         continue
                 except Exception:
                     pass
@@ -3650,7 +3965,9 @@ async def scalp_squeeze_pulse_break_worker() -> None:
                         atr_m5_pips=float(fac_m5.get("atr_pips") or 0.0),
                     )
                 except Exception as exc:
-                    LOG.debug("%s stage_tracker update error: %s", config.LOG_PREFIX, exc)
+                    LOG.debug(
+                        "%s stage_tracker update error: %s", config.LOG_PREFIX, exc
+                    )
                 last_stage_sync = now_mono
 
             # spread guard
@@ -3663,7 +3980,14 @@ async def scalp_squeeze_pulse_break_worker() -> None:
             # /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env may define a global allowlist
             # shared across multiple scalp_precision units. Prefer per-unit override when present so
             # a single unit can run an extra mode without editing the global env file.
-            allowlist = set([s.lower() for s in _env_csv("SCALP_PRECISION_UNIT_ALLOWLIST", config.ALLOWLIST_RAW)])
+            allowlist = set(
+                [
+                    s.lower()
+                    for s in _env_csv(
+                        "SCALP_PRECISION_UNIT_ALLOWLIST", config.ALLOWLIST_RAW
+                    )
+                ]
+            )
             mode = (config.MODE or "").strip().lower()
             if mode:
                 if config.MODE_FILTER_ALLOWLIST:
@@ -3684,53 +4008,157 @@ async def scalp_squeeze_pulse_break_worker() -> None:
                 return name.lower() in allowlist
 
             if enabled("spread_revert"):
-                strategies.append(("SpreadRangeRevert", _signal_spread_revert, {"tag": "SpreadRangeRevert"}))
+                strategies.append(
+                    (
+                        "SpreadRangeRevert",
+                        _signal_spread_revert,
+                        {"tag": "SpreadRangeRevert"},
+                    )
+                )
             if enabled("drought_revert"):
-                strategies.append(("DroughtRevert", _signal_drought_revert, {"tag": "DroughtRevert"}))
+                strategies.append(
+                    ("DroughtRevert", _signal_drought_revert, {"tag": "DroughtRevert"})
+                )
             if enabled("precision_lowvol"):
-                strategies.append(("PrecisionLowVol", _signal_precision_lowvol, {"tag": "PrecisionLowVol"}))
+                strategies.append(
+                    (
+                        "PrecisionLowVol",
+                        _signal_precision_lowvol,
+                        {"tag": "PrecisionLowVol"},
+                    )
+                )
             if enabled("rangefaderpro"):
-                strategies.append(("RangeFaderPro", _signal_spread_revert, {"tag": "RangeFaderPro"}))
+                strategies.append(
+                    ("RangeFaderPro", _signal_spread_revert, {"tag": "RangeFaderPro"})
+                )
             if enabled("vwap_revert"):
-                strategies.append(("VwapRevertS", _signal_vwap_revert, {"tag": "VwapRevertS"}))
+                strategies.append(
+                    ("VwapRevertS", _signal_vwap_revert, {"tag": "VwapRevertS"})
+                )
             if enabled("stoch_bounce"):
-                strategies.append(("StochBollBounce", _signal_stoch_bounce, {"tag": "StochBollBounce"}))
+                strategies.append(
+                    (
+                        "StochBollBounce",
+                        _signal_stoch_bounce,
+                        {"tag": "StochBollBounce"},
+                    )
+                )
             if enabled("divergence_revert"):
-                strategies.append(("DivergenceRevert", _signal_divergence_revert, {"tag": "DivergenceRevert"}))
+                strategies.append(
+                    (
+                        "DivergenceRevert",
+                        _signal_divergence_revert,
+                        {"tag": "DivergenceRevert"},
+                    )
+                )
             if enabled("compression_retest"):
-                strategies.append(("CompressionRetest", _signal_compression_retest, {"tag": "CompressionRetest"}))
+                strategies.append(
+                    (
+                        "CompressionRetest",
+                        _signal_compression_retest,
+                        {"tag": "CompressionRetest"},
+                    )
+                )
             if enabled("htf_pullback"):
-                strategies.append(("HTFPullbackS", _signal_htf_pullback, {"tag": "HTFPullbackS"}))
+                strategies.append(
+                    ("HTFPullbackS", _signal_htf_pullback, {"tag": "HTFPullbackS"})
+                )
             if enabled("macd_trend"):
-                strategies.append(("MacdTrendRide", _signal_macd_trend, {"tag": "MacdTrendRide"}))
+                strategies.append(
+                    ("MacdTrendRide", _signal_macd_trend, {"tag": "MacdTrendRide"})
+                )
             if enabled("ema_slope_pull"):
-                strategies.append(("EmaSlopePull", _signal_ema_slope_pull, {"tag": "EmaSlopePull"}))
+                strategies.append(
+                    ("EmaSlopePull", _signal_ema_slope_pull, {"tag": "EmaSlopePull"})
+                )
             if enabled("tick_imbalance"):
-                strategies.append(("TickImbalance", _signal_tick_imbalance, {"tag": "TickImbalance"}))
+                strategies.append(
+                    ("TickImbalance", _signal_tick_imbalance, {"tag": "TickImbalance"})
+                )
             if enabled("tick_imbalance_rrplus"):
-                strategies.append(("TickImbalanceRRPlus", _signal_tick_imbalance_rrplus, {"tag": "TickImbalanceRRPlus"}))
+                strategies.append(
+                    (
+                        "TickImbalanceRRPlus",
+                        _signal_tick_imbalance_rrplus,
+                        {"tag": "TickImbalanceRRPlus"},
+                    )
+                )
             if enabled("level_reject"):
-                strategies.append(("LevelReject", _signal_level_reject, {"tag": "LevelReject"}))
+                strategies.append(
+                    ("LevelReject", _signal_level_reject, {"tag": "LevelReject"})
+                )
             if enabled("level_reject_plus"):
-                strategies.append(("LevelRejectPlus", _signal_level_reject_plus, {"tag": "LevelRejectPlus"}))
+                strategies.append(
+                    (
+                        "LevelRejectPlus",
+                        _signal_level_reject_plus,
+                        {"tag": "LevelRejectPlus"},
+                    )
+                )
             if enabled("liquidity_sweep"):
-                strategies.append(("LiquiditySweep", _signal_liquidity_sweep, {"tag": "LiquiditySweep"}))
+                strategies.append(
+                    (
+                        "LiquiditySweep",
+                        _signal_liquidity_sweep,
+                        {"tag": "LiquiditySweep"},
+                    )
+                )
             if enabled("wick_reversal"):
-                strategies.append(("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"}))
+                strategies.append(
+                    ("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"})
+                )
             if enabled("wick_reversal_blend"):
-                strategies.append(("WickReversalBlend", _signal_wick_reversal_blend, {"tag": "WickReversalBlend"}))
+                strategies.append(
+                    (
+                        "WickReversalBlend",
+                        _signal_wick_reversal_blend,
+                        {"tag": "WickReversalBlend"},
+                    )
+                )
             if enabled("wick_reversal_hf"):
-                strategies.append(("WickReversalHF", _signal_wick_reversal_hf, {"tag": "WickReversalHF"}))
+                strategies.append(
+                    (
+                        "WickReversalHF",
+                        _signal_wick_reversal_hf,
+                        {"tag": "WickReversalHF"},
+                    )
+                )
             if enabled("wick_reversal_pro"):
-                strategies.append(("WickReversalPro", _signal_wick_reversal_pro, {"tag": "WickReversalPro"}))
+                strategies.append(
+                    (
+                        "WickReversalPro",
+                        _signal_wick_reversal_pro,
+                        {"tag": "WickReversalPro"},
+                    )
+                )
             if enabled("tick_wick_reversal"):
-                strategies.append(("TickWickReversal", _signal_tick_wick_reversal, {"tag": "TickWickReversal"}))
+                strategies.append(
+                    (
+                        "TickWickReversal",
+                        _signal_tick_wick_reversal,
+                        {"tag": "TickWickReversal"},
+                    )
+                )
             if enabled("session_edge"):
-                strategies.append(("SessionEdge", _signal_session_edge, {"tag": "SessionEdge"}))
+                strategies.append(
+                    ("SessionEdge", _signal_session_edge, {"tag": "SessionEdge"})
+                )
             if enabled("squeeze_pulse_break"):
-                strategies.append(("SqueezePulseBreak", _signal_squeeze_pulse_break, {"tag": "SqueezePulseBreak"}))
+                strategies.append(
+                    (
+                        "SqueezePulseBreak",
+                        _signal_squeeze_pulse_break,
+                        {"tag": "SqueezePulseBreak"},
+                    )
+                )
             if enabled("false_break_fade"):
-                strategies.append(("FalseBreakFade", _signal_false_break_fade, {"tag": "FalseBreakFade"}))
+                strategies.append(
+                    (
+                        "FalseBreakFade",
+                        _signal_false_break_fade,
+                        {"tag": "FalseBreakFade"},
+                    )
+                )
 
             signals: List[Dict[str, object]] = []
             for name, fn, kwargs in strategies:
@@ -3762,7 +4190,9 @@ async def scalp_squeeze_pulse_break_worker() -> None:
                     signal = adjust_signal(signal, air)
                     if signal:
                         if str(signal.get("tag") or "").strip() == "SqueezePulseBreak":
-                            ok_spb, spb_reason = _spb_post_entry_guard(signal, fac_m1, now)
+                            ok_spb, spb_reason = _spb_post_entry_guard(
+                                signal, fac_m1, now
+                            )
                             if not ok_spb:
                                 if SPB_DIAG and config.MODE == "squeeze_pulse_break":
                                     LOG.info(
@@ -3834,7 +4264,9 @@ async def scalp_squeeze_pulse_break_worker() -> None:
                                         )
                                         last_guard_log = now_mono
                                     continue
-                                blocked, remain, reason = stage_tracker.is_strategy_blocked(tag, now=now)
+                                blocked, remain, reason = (
+                                    stage_tracker.is_strategy_blocked(tag, now=now)
+                                )
                                 if blocked:
                                     if now_mono - last_guard_log > 30.0:
                                         LOG.info(
@@ -3866,7 +4298,9 @@ async def scalp_squeeze_pulse_break_worker() -> None:
 
             if not signals:
                 if TICK_WICK_DIAG and config.MODE == "tick_wick_reversal":
-                    if now_mono - last_diag_log >= max(1.0, TICK_WICK_DIAG_INTERVAL_SEC):
+                    if now_mono - last_diag_log >= max(
+                        1.0, TICK_WICK_DIAG_INTERVAL_SEC
+                    ):
                         last_diag_log = now_mono
                         LOG.info(
                             "%s tick_wick diag signals=0 air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f adx=%.1f bbw=%.3f",
@@ -3901,7 +4335,11 @@ async def scalp_squeeze_pulse_break_worker() -> None:
                             bool(m.get("tick_ok")),
                             str(m.get("tick_dir") or ""),
                             float(m.get("tick_strength") or 0.0),
-                            bool(m.get("proj_allow")) if m.get("proj_allow") is not None else None,
+                            (
+                                bool(m.get("proj_allow"))
+                                if m.get("proj_allow") is not None
+                                else None
+                            ),
                             float(m.get("adx") or 0.0),
                             float(m.get("bbw") or 0.0),
                             float(m.get("atr") or 0.0),
@@ -4002,7 +4440,9 @@ async def scalp_squeeze_pulse_break_worker() -> None:
             signals.sort(key=lambda s: int(s.get("confidence", 0)), reverse=True)
             selected = signals[: max(1, config.MAX_SIGNALS_PER_CYCLE)]
             for sig in selected:
-                order_id = await _place_order(sig, fac_m1=fac_m1, fac_h4=fac_h4, range_ctx=range_ctx, now=now)
+                order_id = await _place_order(
+                    sig, fac_m1=fac_m1, fac_h4=fac_h4, range_ctx=range_ctx, now=now
+                )
                 if order_id:
                     last_entry_ts = time.monotonic()
     except asyncio.CancelledError:
@@ -4019,7 +4459,11 @@ async def scalp_squeeze_pulse_break_worker() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
     asyncio.run(scalp_squeeze_pulse_break_worker())
 
 

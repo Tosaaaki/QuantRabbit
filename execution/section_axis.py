@@ -261,7 +261,9 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -324,12 +326,21 @@ def _pick_tf_extremes(tfs: list[str]) -> tuple[Optional[str], Optional[str]]:
 
 
 def _resolve_tf(thesis: Dict[str, object], pocket: str) -> str:
-    for key in ("section_tf", "range_tf", "tf", "timeframe", "entry_tf", "timeframe_entry"):
+    for key in (
+        "section_tf",
+        "range_tf",
+        "tf",
+        "timeframe",
+        "entry_tf",
+        "timeframe_entry",
+    ):
         tf = _normalize_tf(thesis.get(key))
         if tf:
             return tf
     pocket_upper = pocket.upper()
-    tf_env = _normalize_tf(os.getenv(f"SECTION_AXIS_TF_{pocket_upper}") or os.getenv("SECTION_AXIS_TF"))
+    tf_env = _normalize_tf(
+        os.getenv(f"SECTION_AXIS_TF_{pocket_upper}") or os.getenv("SECTION_AXIS_TF")
+    )
     if tf_env:
         return tf_env
     return _DEFAULT_TF_BY_POCKET.get(pocket, "M1")
@@ -338,7 +349,9 @@ def _resolve_tf(thesis: Dict[str, object], pocket: str) -> str:
 def _resolve_lookback(thesis: Dict[str, object], tf: str) -> int:
     lb = _safe_int(thesis.get("section_lookback") or thesis.get("range_lookback"))
     if lb is None:
-        lb = _env_int(f"SECTION_AXIS_LOOKBACK_{tf}") or _env_int("SECTION_AXIS_LOOKBACK")
+        lb = _env_int(f"SECTION_AXIS_LOOKBACK_{tf}") or _env_int(
+            "SECTION_AXIS_LOOKBACK"
+        )
     if lb is None or lb <= 0:
         lb = _DEFAULT_LOOKBACK_BY_TF.get(tf, 20)
     return max(5, lb)
@@ -388,7 +401,11 @@ def _axis_from_mapping(raw: Dict[str, object], source: str) -> Optional[SectionA
 
 
 def _extract_axis(thesis: Dict[str, object]) -> Optional[SectionAxis]:
-    raw = thesis.get("section_axis") or thesis.get("range_snapshot") or thesis.get("range")
+    raw = (
+        thesis.get("section_axis")
+        or thesis.get("range_snapshot")
+        or thesis.get("range")
+    )
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
@@ -481,7 +498,10 @@ def _strategy_key_candidates(tag: Optional[str]) -> tuple[str, ...]:
 
 
 def _resolve_by_pocket(
-    name: str, pocket: str, defaults: Dict[str, float], strategy_keys: tuple[str, ...] | None = None
+    name: str,
+    pocket: str,
+    defaults: Dict[str, float],
+    strategy_keys: tuple[str, ...] | None = None,
 ) -> float:
     if strategy_keys:
         for key in strategy_keys:
@@ -499,7 +519,10 @@ def _resolve_by_pocket(
 
 
 def _resolve_int_by_pocket(
-    name: str, pocket: str, defaults: Dict[str, int], strategy_keys: tuple[str, ...] | None = None
+    name: str,
+    pocket: str,
+    defaults: Dict[str, int],
+    strategy_keys: tuple[str, ...] | None = None,
 ) -> int:
     if strategy_keys:
         for key in strategy_keys:
@@ -570,7 +593,9 @@ def _resolve_exit_mtf_tfs(
                 if tfs:
                     return tfs
     pocket_upper = pocket.upper()
-    raw = os.getenv(f"SECTION_EXIT_MTF_TFS_{pocket_upper}") or os.getenv("SECTION_EXIT_MTF_TFS")
+    raw = os.getenv(f"SECTION_EXIT_MTF_TFS_{pocket_upper}") or os.getenv(
+        "SECTION_EXIT_MTF_TFS"
+    )
     if raw:
         tfs = _parse_tf_list(raw)
         if tfs:
@@ -581,7 +606,9 @@ def _resolve_exit_mtf_tfs(
 
 def _trend_metrics(
     fac: Dict[str, object],
-) -> tuple[Optional[int], Optional[float], Optional[float], Optional[float], Optional[float]]:
+) -> tuple[
+    Optional[int], Optional[float], Optional[float], Optional[float], Optional[float]
+]:
     ma10 = _safe_float(fac.get("ma10"))
     ma20 = _safe_float(fac.get("ma20"))
     trend_dir = None
@@ -627,7 +654,12 @@ def _collect_trend_signals(
     trend_dir, adx, ma_diff_pips, ma10, ma20 = _trend_metrics(fac)
     dir_hint: Optional[int] = None
     dir_source: Optional[str] = None
-    if trend_dir is not None and trend_dir != 0 and ma10 is not None and ma20 is not None:
+    if (
+        trend_dir is not None
+        and trend_dir != 0
+        and ma10 is not None
+        and ma20 is not None
+    ):
         add_signal(
             "ma_cross",
             trend_dir == -side_dir,
@@ -756,7 +788,9 @@ def _collect_trend_signals(
         and (adx_val >= adx_min or ma_diff_val >= ma_min or di_gap_val >= di_gap_min)
     )
     strength_debug = {
-        "dir": "up" if (dir_hint or 0) > 0 else "down" if (dir_hint or 0) < 0 else "flat",
+        "dir": (
+            "up" if (dir_hint or 0) > 0 else "down" if (dir_hint or 0) < 0 else "flat"
+        ),
         "dir_source": dir_source,
         "adx": round(adx_val, 2),
         "ma_diff_pips": round(ma_diff_val, 2),
@@ -810,7 +844,9 @@ def _collect_momentum_signals(
 
     stoch_rsi = _safe_float(fac.get("stoch_rsi"))
     if stoch_rsi is not None and 0.0 <= stoch_rsi <= 1.0:
-        stoch_against = stoch_rsi <= stoch_low if side_dir > 0 else stoch_rsi >= stoch_high
+        stoch_against = (
+            stoch_rsi <= stoch_low if side_dir > 0 else stoch_rsi >= stoch_high
+        )
         add_signal(
             "stoch_rsi",
             stoch_against,
@@ -1283,7 +1319,9 @@ def _axis_is_usable(
     return True
 
 
-def _section_exit_enabled(pocket: str, strategy_keys: tuple[str, ...] | None = None) -> bool:
+def _section_exit_enabled(
+    pocket: str, strategy_keys: tuple[str, ...] | None = None
+) -> bool:
     if strategy_keys:
         for key in strategy_keys:
             specific = _env_bool(f"SECTION_EXIT_ENABLED_{key}")
@@ -1348,7 +1386,11 @@ def evaluate_section_exit(
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
-    pnl_pips = (current_price - entry) / PIP if side == "long" else (entry - current_price) / PIP
+    pnl_pips = (
+        (current_price - entry) / PIP
+        if side == "long"
+        else (entry - current_price) / PIP
+    )
 
     pocket_key = pocket or "default"
     min_hold = _resolve_by_pocket(
@@ -1479,7 +1521,11 @@ def evaluate_section_exit(
                 and float(return_score) <= left_return_score
             ):
                 return SectionExitDecision(True, "left_behind_return", True, debug)
-            if coverage >= left_min_coverage and neg_count >= left_neg_count and pos_count == 0:
+            if (
+                coverage >= left_min_coverage
+                and neg_count >= left_neg_count
+                and pos_count == 0
+            ):
                 return SectionExitDecision(True, "left_behind_signal", True, debug)
 
     axis = _extract_axis(thesis) or _compute_axis(thesis, pocket_key)
@@ -1526,7 +1572,11 @@ def evaluate_section_exit(
     current_rel = _clamp((current_price - axis.low) / range_span, 0.0, 1.0)
     entry_section = _section_index(entry_rel)
     current_section = _section_index(current_rel)
-    section_delta = entry_section - current_section if side == "long" else current_section - entry_section
+    section_delta = (
+        entry_section - current_section
+        if side == "long"
+        else current_section - entry_section
+    )
     section_delta_threshold = _resolve_int_by_pocket(
         "SECTION_EXIT_SECTION_DELTA",
         pocket_key,
@@ -1640,7 +1690,11 @@ def attach_section_axis(
         return entry_thesis
     if not _entry_attach_enabled():
         return entry_thesis
-    if entry_thesis.get("section_axis") or entry_thesis.get("range_snapshot") or entry_thesis.get("range"):
+    if (
+        entry_thesis.get("section_axis")
+        or entry_thesis.get("range_snapshot")
+        or entry_thesis.get("range")
+    ):
         return entry_thesis
     axis = _compute_axis(entry_thesis, pocket)
     if axis is None:

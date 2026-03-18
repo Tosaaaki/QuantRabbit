@@ -47,7 +47,10 @@ class MicroPullbackEMA:
             except (TypeError, ValueError):
                 atr_pips = 0.0
         if spread_pips > 0 and atr_pips > 0:
-            spread_cap = max(MicroPullbackEMA._SPREAD_PIPS_MAX, atr_pips * MicroPullbackEMA._SPREAD_ATR_RATIO_MAX)
+            spread_cap = max(
+                MicroPullbackEMA._SPREAD_PIPS_MAX,
+                atr_pips * MicroPullbackEMA._SPREAD_ATR_RATIO_MAX,
+            )
             if spread_pips > spread_cap:
                 return None
 
@@ -77,12 +80,17 @@ class MicroPullbackEMA:
         except (TypeError, ValueError):
             range_score = 0.0
         if range_score >= MicroPullbackEMA._RANGE_BIAS_SCORE:
-            adx_threshold = max(adx_threshold, MicroPullbackEMA._MIN_ADX + MicroPullbackEMA._RANGE_BIAS_ADX_BONUS)
+            adx_threshold = max(
+                adx_threshold,
+                MicroPullbackEMA._MIN_ADX + MicroPullbackEMA._RANGE_BIAS_ADX_BONUS,
+            )
 
         gap = (ma10 - ma20) / PIP
         direction = None
         if atr_pips > 0.0:
-            gap_threshold = max(gap_threshold, atr_pips * MicroPullbackEMA._GAP_ATR_RATIO_MIN)
+            gap_threshold = max(
+                gap_threshold, atr_pips * MicroPullbackEMA._GAP_ATR_RATIO_MIN
+            )
         if gap >= gap_threshold and adx >= adx_threshold:
             direction = "OPEN_LONG"
         elif gap <= -gap_threshold and adx >= adx_threshold:
@@ -110,8 +118,12 @@ class MicroPullbackEMA:
         pull_min = MicroPullbackEMA._PULLBACK_MIN
         pull_max = MicroPullbackEMA._PULLBACK_MAX
         if atr_pips > 0.0:
-            pull_min = max(pull_min, atr_pips * MicroPullbackEMA._PULLBACK_ATR_MIN_RATIO)
-            pull_max = min(pull_max, atr_pips * MicroPullbackEMA._PULLBACK_ATR_MAX_RATIO)
+            pull_min = max(
+                pull_min, atr_pips * MicroPullbackEMA._PULLBACK_ATR_MIN_RATIO
+            )
+            pull_max = min(
+                pull_max, atr_pips * MicroPullbackEMA._PULLBACK_ATR_MAX_RATIO
+            )
             if pull_max < pull_min:
                 pull_max = pull_min
         if direction == "OPEN_LONG":
@@ -123,7 +135,10 @@ class MicroPullbackEMA:
 
         buffer_pips = MicroPullbackEMA._PULLBACK_OVER_GAP_BUFFER_MIN_PIPS
         if atr_pips > 0.0:
-            buffer_pips = max(buffer_pips, atr_pips * MicroPullbackEMA._PULLBACK_OVER_GAP_BUFFER_ATR_RATIO)
+            buffer_pips = max(
+                buffer_pips,
+                atr_pips * MicroPullbackEMA._PULLBACK_OVER_GAP_BUFFER_ATR_RATIO,
+            )
         if abs(pullback) > abs(gap) + buffer_pips:
             return None
 
@@ -140,7 +155,9 @@ class MicroPullbackEMA:
             rsi = float(rsi) if rsi is not None else 50.0
         except (TypeError, ValueError):
             rsi = 50.0
-        confidence = 60 + int(min(14.0, abs(gap)) + min(10.0, max(0.0, adx - MicroPullbackEMA._MIN_ADX)))
+        confidence = 60 + int(
+            min(14.0, abs(gap)) + min(10.0, max(0.0, adx - MicroPullbackEMA._MIN_ADX))
+        )
         if direction == "OPEN_LONG" and rsi < 45:
             confidence += 4
         if direction == "OPEN_SHORT" and rsi > 55:

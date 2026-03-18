@@ -30,10 +30,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     # remove non-D SCALP_PING_5S_* variables so stale A-layer values are not mixed.
     # Keep D variables intact during cleanup so they can be copied down below.
     for key in list(os.environ):
-        if (
-            str(key).startswith(f"{base_prefix}_")
-            and not str(key).startswith(source)
-        ):
+        if str(key).startswith(f"{base_prefix}_") and not str(key).startswith(source):
             del os.environ[key]
 
     # Capture all variables after cleanup before mutating so we don't lose D keys

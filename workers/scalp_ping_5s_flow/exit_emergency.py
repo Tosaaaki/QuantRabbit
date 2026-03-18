@@ -6,7 +6,9 @@ import time
 from utils.metrics_logger import log_metric
 from utils.oanda_account import get_account_snapshot
 
-_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
+_ALLOW_NEGATIVE = os.getenv(
+    "EXIT_EMERGENCY_ALLOW_NEGATIVE", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -44,7 +46,11 @@ def should_allow_negative_close() -> bool:
         margin_used = snapshot.margin_used
         unrealized = snapshot.unrealized_pl
     except Exception:
-        if _LAST_ALLOW and _LAST_CHECK_TS is not None and now - _LAST_CHECK_TS < _STALE_GRACE_SEC:
+        if (
+            _LAST_ALLOW
+            and _LAST_CHECK_TS is not None
+            and now - _LAST_CHECK_TS < _STALE_GRACE_SEC
+        ):
             return True
         return False
     allow = False
@@ -52,7 +58,11 @@ def should_allow_negative_close() -> bool:
     if hb is not None and _HEALTH_BUFFER > 0 and hb <= _HEALTH_BUFFER:
         allow = True
         reasons["health_buffer"] = hb
-    if free_ratio is not None and _FREE_MARGIN_RATIO > 0 and free_ratio <= _FREE_MARGIN_RATIO:
+    if (
+        free_ratio is not None
+        and _FREE_MARGIN_RATIO > 0
+        and free_ratio <= _FREE_MARGIN_RATIO
+    ):
         allow = True
         reasons["free_margin_ratio"] = free_ratio
     if nav > 0 and _MARGIN_USAGE_RATIO > 0:

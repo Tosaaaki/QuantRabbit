@@ -15,8 +15,12 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
-from market_data.candle_fetcher import Candle, TimeFrame, initialize_history, start_candle_stream
-
+from market_data.candle_fetcher import (
+    Candle,
+    TimeFrame,
+    initialize_history,
+    start_candle_stream,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -85,7 +89,9 @@ def _bind_factor_handler(
     return _handler
 
 
-def _build_handlers(timeframes: Sequence[TimeFrame]) -> List[Tuple[TimeFrame, Callable[[Candle], Any]]]:
+def _build_handlers(
+    timeframes: Sequence[TimeFrame],
+) -> List[Tuple[TimeFrame, Callable[[Candle], Any]]]:
     try:
         from indicators.factor_cache import on_candle as factor_on_candle
     except Exception:
@@ -102,11 +108,15 @@ async def market_data_feed_worker() -> None:
         while True:
             await asyncio.sleep(3600.0)
 
-    instrument = os.getenv("MARKET_DATA_FEED_INSTRUMENT", "USD_JPY").strip().upper() or "USD_JPY"
+    instrument = (
+        os.getenv("MARKET_DATA_FEED_INSTRUMENT", "USD_JPY").strip().upper() or "USD_JPY"
+    )
     timeframes = _active_timeframes()
     handlers = _build_handlers(timeframes)
     retry_interval_sec = max(1.0, _env_float("MARKET_DATA_FEED_RETRY_SEC", 8.0))
-    seed_interval_sec = max(60.0, _env_float("MARKET_DATA_FEED_SEED_INTERVAL_SEC", 900.0))
+    seed_interval_sec = max(
+        60.0, _env_float("MARKET_DATA_FEED_SEED_INTERVAL_SEC", 900.0)
+    )
     last_seed_ts = 0.0
 
     loop_no = 0
@@ -120,7 +130,11 @@ async def market_data_feed_worker() -> None:
                     LOG.warning("[MARKET_DATA_FEED] seed incomplete for %s", instrument)
                 last_seed_ts = time.monotonic()
             except Exception as exc:
-                LOG.warning("[MARKET_DATA_FEED] initialize_history failed (%s): %s", instrument, exc)
+                LOG.warning(
+                    "[MARKET_DATA_FEED] initialize_history failed (%s): %s",
+                    instrument,
+                    exc,
+                )
 
         LOG.info(
             "[MARKET_DATA_FEED] loop=%d starting stream instrument=%s timeframes=%s",

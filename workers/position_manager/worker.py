@@ -173,7 +173,11 @@ async def _background_sync_loop(app: FastAPI) -> None:
                 max_fetch=_BACKGROUND_SYNC_MAX_FETCH,
             )
             now = time.monotonic()
-            if saved > 0 and now - last_success_log_ts >= _BACKGROUND_SYNC_SUCCESS_LOG_INTERVAL_SEC:
+            if (
+                saved > 0
+                and now - last_success_log_ts
+                >= _BACKGROUND_SYNC_SUCCESS_LOG_INTERVAL_SEC
+            ):
                 LOG.info(
                     "[POSITION_MANAGER_WORKER] background sync saved trades=%s max_fetch=%s",
                     saved,
@@ -202,7 +206,7 @@ async def _lifespan(app: FastAPI):
         except Exception as exc:
             init_error = exc
             if attempt < 2:
-                sleep_seconds = 2 ** attempt
+                sleep_seconds = 2**attempt
                 LOG.warning(
                     "[POSITION_MANAGER_WORKER] init attempt failed (attempt=%s): %s",
                     attempt + 1,
@@ -660,7 +664,9 @@ async def sync_trades(
             if stale is not None:
                 result, _ = stale
                 if isinstance(result, list):
-                    return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
+                    return _success(
+                        result[-max_fetch:] if max_fetch > 0 else list(result)
+                    )
             return _failure(
                 f"sync_trades timeout ({_WORKER_SYNC_TRADES_TIMEOUT_SEC:.1f}s)"
             )
@@ -673,7 +679,9 @@ async def sync_trades(
             if stale is not None:
                 result, _ = stale
                 if isinstance(result, list):
-                    return _success(result[-max_fetch:] if max_fetch > 0 else list(result))
+                    return _success(
+                        result[-max_fetch:] if max_fetch > 0 else list(result)
+                    )
             return _failure(str(exc))
 
         result = _normalize_sync_trades_result(raw, max_fetch=max_fetch)

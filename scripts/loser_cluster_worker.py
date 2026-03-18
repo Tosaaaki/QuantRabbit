@@ -91,10 +91,24 @@ def _extract_nested_number(payload: dict[str, Any], *path: str) -> float | None:
     return value
 
 
-def _feature_snapshot(entry_thesis: dict[str, Any], *, units: int = 0) -> dict[str, Any]:
-    technical_context = entry_thesis.get("technical_context") if isinstance(entry_thesis.get("technical_context"), dict) else {}
-    ticks = technical_context.get("ticks") if isinstance(technical_context.get("ticks"), dict) else {}
-    factors = technical_context.get("factors") if isinstance(technical_context.get("factors"), dict) else {}
+def _feature_snapshot(
+    entry_thesis: dict[str, Any], *, units: int = 0
+) -> dict[str, Any]:
+    technical_context = (
+        entry_thesis.get("technical_context")
+        if isinstance(entry_thesis.get("technical_context"), dict)
+        else {}
+    )
+    ticks = (
+        technical_context.get("ticks")
+        if isinstance(technical_context.get("ticks"), dict)
+        else {}
+    )
+    factors = (
+        technical_context.get("factors")
+        if isinstance(technical_context.get("factors"), dict)
+        else {}
+    )
     m1 = factors.get("M1") if isinstance(factors.get("M1"), dict) else {}
     setup_context = extract_setup_identity(entry_thesis, units=units)
     side = str(entry_thesis.get("side") or "").strip().lower()
@@ -112,12 +126,58 @@ def _feature_snapshot(entry_thesis: dict[str, Any], *, units: int = 0) -> dict[s
         spread_pips = _extract_nested_number(ticks, "spread_pips")
     return {
         "side": side or "unknown",
-        "rsi_bin": _bin(rsi, [35.0, 45.0, 55.0, 65.0], ["rsi_00_le_35", "rsi_01_35_45", "rsi_02_45_55", "rsi_03_55_65", "rsi_04_gt_65"]),
-        "adx_bin": _bin(adx, [15.0, 25.0, 35.0], ["adx_00_le_15", "adx_01_15_25", "adx_02_25_35", "adx_03_gt_35"]),
-        "ma_gap_bin": _bin(ma_gap_pips, [-1.0, 0.0, 1.0, 3.0], ["magap_00_le_-1", "magap_01_-1_0", "magap_02_0_1", "magap_03_1_3", "magap_04_gt_3"]),
-        "range_bin": _bin(range_score, [0.25, 0.45, 0.65], ["range_00_le_025", "range_01_025_045", "range_02_045_065", "range_03_gt_065"]),
-        "chop_bin": _bin(chop_score, [0.35, 0.55, 0.75], ["chop_00_le_035", "chop_01_035_055", "chop_02_055_075", "chop_03_gt_075"]),
-        "spread_bin": _bin(spread_pips, [0.40, 0.80, 1.20], ["spread_00_le_040", "spread_01_040_080", "spread_02_080_120", "spread_03_gt_120"]),
+        "rsi_bin": _bin(
+            rsi,
+            [35.0, 45.0, 55.0, 65.0],
+            [
+                "rsi_00_le_35",
+                "rsi_01_35_45",
+                "rsi_02_45_55",
+                "rsi_03_55_65",
+                "rsi_04_gt_65",
+            ],
+        ),
+        "adx_bin": _bin(
+            adx,
+            [15.0, 25.0, 35.0],
+            ["adx_00_le_15", "adx_01_15_25", "adx_02_25_35", "adx_03_gt_35"],
+        ),
+        "ma_gap_bin": _bin(
+            ma_gap_pips,
+            [-1.0, 0.0, 1.0, 3.0],
+            [
+                "magap_00_le_-1",
+                "magap_01_-1_0",
+                "magap_02_0_1",
+                "magap_03_1_3",
+                "magap_04_gt_3",
+            ],
+        ),
+        "range_bin": _bin(
+            range_score,
+            [0.25, 0.45, 0.65],
+            [
+                "range_00_le_025",
+                "range_01_025_045",
+                "range_02_045_065",
+                "range_03_gt_065",
+            ],
+        ),
+        "chop_bin": _bin(
+            chop_score,
+            [0.35, 0.55, 0.75],
+            ["chop_00_le_035", "chop_01_035_055", "chop_02_055_075", "chop_03_gt_075"],
+        ),
+        "spread_bin": _bin(
+            spread_pips,
+            [0.40, 0.80, 1.20],
+            [
+                "spread_00_le_040",
+                "spread_01_040_080",
+                "spread_02_080_120",
+                "spread_03_gt_120",
+            ],
+        ),
         "setup_fingerprint": str(setup_context.get("setup_fingerprint") or ""),
         "flow_regime": str(setup_context.get("flow_regime") or ""),
         "microstructure_bucket": str(setup_context.get("microstructure_bucket") or ""),
@@ -144,7 +204,9 @@ def _cluster_key(features: dict[str, Any]) -> str:
 def _fetch_trade_rows(trades_db: Path, *, lookback_days: int) -> list[dict[str, Any]]:
     if not trades_db.exists():
         return []
-    con = sqlite3.connect(f"file:{trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None)
+    con = sqlite3.connect(
+        f"file:{trades_db}?mode=ro", uri=True, timeout=8.0, isolation_level=None
+    )
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
@@ -169,7 +231,9 @@ def _fetch_trade_rows(trades_db: Path, *, lookback_days: int) -> list[dict[str, 
     return [dict(row) for row in rows]
 
 
-def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, top_k: int) -> dict[str, Any]:
+def build_loser_clusters(
+    rows: list[dict[str, Any]], *, min_cluster_size: int, top_k: int
+) -> dict[str, Any]:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         strategy_tag, _canonical_tag = extract_strategy_tags(
@@ -178,9 +242,10 @@ def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, t
             entry_thesis=row.get("entry_thesis"),
         )
         if not strategy_tag:
-            strategy_tag = resolve_strategy_tag(str(row.get("strategy_key") or "").strip()) or str(
-                row.get("strategy_key") or ""
-            ).strip()
+            strategy_tag = (
+                resolve_strategy_tag(str(row.get("strategy_key") or "").strip())
+                or str(row.get("strategy_key") or "").strip()
+            )
         if not strategy_tag:
             continue
         entry_thesis = _safe_json_loads(row.get("entry_thesis"))
@@ -189,7 +254,9 @@ def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, t
             units=int(_safe_float(row.get("units"), 0.0)),
         )
         if features["side"] == "unknown":
-            features["side"] = "long" if _safe_float(row.get("units"), 0.0) >= 0.0 else "short"
+            features["side"] = (
+                "long" if _safe_float(row.get("units"), 0.0) >= 0.0 else "short"
+            )
         setup_context = {
             "setup_fingerprint": str(features.get("setup_fingerprint") or ""),
             "flow_regime": str(features.get("flow_regime") or ""),
@@ -246,17 +313,37 @@ def build_loser_clusters(rows: list[dict[str, Any]], *, min_cluster_size: int, t
             },
         }
         sample_setup_context = samples[0].get("setup_context")
-        if isinstance(sample_setup_context, dict) and any(sample_setup_context.values()):
+        if isinstance(sample_setup_context, dict) and any(
+            sample_setup_context.values()
+        ):
             cluster["setup_context"] = dict(sample_setup_context)
-            cluster["setup_fingerprint"] = str(sample_setup_context.get("setup_fingerprint") or "") or None
-            cluster["flow_regime"] = str(sample_setup_context.get("flow_regime") or "") or None
-            cluster["microstructure_bucket"] = str(sample_setup_context.get("microstructure_bucket") or "") or None
+            cluster["setup_fingerprint"] = (
+                str(sample_setup_context.get("setup_fingerprint") or "") or None
+            )
+            cluster["flow_regime"] = (
+                str(sample_setup_context.get("flow_regime") or "") or None
+            )
+            cluster["microstructure_bucket"] = (
+                str(sample_setup_context.get("microstructure_bucket") or "") or None
+            )
         per_strategy[strategy_tag].append(cluster)
         all_clusters.append(cluster)
 
     for clusters in per_strategy.values():
-        clusters.sort(key=lambda item: (-float(item["severity"]), -int(item["samples"]), item["cluster_key"]))
-    all_clusters.sort(key=lambda item: (-float(item["severity"]), -int(item["samples"]), item["cluster_key"]))
+        clusters.sort(
+            key=lambda item: (
+                -float(item["severity"]),
+                -int(item["samples"]),
+                item["cluster_key"],
+            )
+        )
+    all_clusters.sort(
+        key=lambda item: (
+            -float(item["severity"]),
+            -int(item["samples"]),
+            item["cluster_key"],
+        )
+    )
 
     strategy_summary: dict[str, Any] = {}
     for strategy_tag, clusters in sorted(per_strategy.items()):
@@ -289,8 +376,14 @@ def main() -> None:
     ap.add_argument("--top-k", type=int, default=8)
     args = ap.parse_args()
 
-    rows = _fetch_trade_rows(Path(args.trades_db).resolve(), lookback_days=max(1, int(args.lookback_days)))
-    payload = build_loser_clusters(rows, min_cluster_size=max(1, int(args.min_cluster_size)), top_k=max(1, int(args.top_k)))
+    rows = _fetch_trade_rows(
+        Path(args.trades_db).resolve(), lookback_days=max(1, int(args.lookback_days))
+    )
+    payload = build_loser_clusters(
+        rows,
+        min_cluster_size=max(1, int(args.min_cluster_size)),
+        top_k=max(1, int(args.top_k)),
+    )
     payload["lookback_days"] = max(1, int(args.lookback_days))
     payload["min_cluster_size"] = max(1, int(args.min_cluster_size))
     _write_json_atomic(Path(args.output).resolve(), payload)

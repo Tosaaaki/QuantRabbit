@@ -175,7 +175,10 @@ class MicroTrendRetest:
     ) -> int:
         pressure = 0
         atr_norm = max(1.0, atr_pips)
-        if abs(gap_pips) / atr_norm >= MicroTrendRetest._CHASE_EXHAUSTION_GAP_ATR_MIN and adx >= MicroTrendRetest._CHASE_EXHAUSTION_ADX_MIN:
+        if (
+            abs(gap_pips) / atr_norm >= MicroTrendRetest._CHASE_EXHAUSTION_GAP_ATR_MIN
+            and adx >= MicroTrendRetest._CHASE_EXHAUSTION_ADX_MIN
+        ):
             pressure += 1
         snapshot = fac.get("trend_snapshot")
         if not isinstance(snapshot, dict):
@@ -224,7 +227,10 @@ class MicroTrendRetest:
         atr_norm = max(1.0, atr_pips)
         pressure_step = max(0, pressure - 1)
         if direction == "OPEN_LONG":
-            if rsi < MicroTrendRetest._CHASE_EXHAUSTION_LONG_RSI_MIN - pressure_step * 3.0:
+            if (
+                rsi
+                < MicroTrendRetest._CHASE_EXHAUSTION_LONG_RSI_MIN - pressure_step * 3.0
+            ):
                 return True
             breakout_stretch_pips = max(0.0, (prev_close - level) / PIP)
             retest_depth_pips = max(0.0, (level - last_low) / PIP)
@@ -241,10 +247,17 @@ class MicroTrendRetest:
                     MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_MAX
                     + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_STEP
                 )
-                if breakout_stretch_pips >= shallow_breakout_min and retest_depth_pips <= shallow_retest_max:
+                if (
+                    breakout_stretch_pips >= shallow_breakout_min
+                    and retest_depth_pips <= shallow_retest_max
+                ):
                     body_pips = (last_close - last_open) / PIP
-                    upper_wick_pips = max(0.0, (last_high - max(last_open, last_close)) / PIP)
-                    lower_wick_pips = max(0.0, (min(last_open, last_close) - last_low) / PIP)
+                    upper_wick_pips = max(
+                        0.0, (last_high - max(last_open, last_close)) / PIP
+                    )
+                    lower_wick_pips = max(
+                        0.0, (min(last_open, last_close) - last_low) / PIP
+                    )
                     recovery_min = (
                         MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_MIN
                         + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_STEP
@@ -252,7 +265,9 @@ class MicroTrendRetest:
                     if (
                         body_pips <= MicroTrendRetest._LOW_ATR_CHASE_BODY_MIN_PIPS
                         or close_pos < recovery_min
-                        or lower_wick_pips <= upper_wick_pips + MicroTrendRetest._LOW_ATR_CHASE_WICK_EDGE_PIPS
+                        or lower_wick_pips
+                        <= upper_wick_pips
+                        + MicroTrendRetest._LOW_ATR_CHASE_WICK_EDGE_PIPS
                     ):
                         return False
             return (
@@ -278,10 +293,17 @@ class MicroTrendRetest:
                 MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_MAX
                 + pressure_step * MicroTrendRetest._LOW_ATR_CHASE_RETEST_ATR_STEP
             )
-            if breakout_stretch_pips >= shallow_breakout_min and retest_depth_pips <= shallow_retest_max:
+            if (
+                breakout_stretch_pips >= shallow_breakout_min
+                and retest_depth_pips <= shallow_retest_max
+            ):
                 body_pips = (last_open - last_close) / PIP
-                upper_wick_pips = max(0.0, (last_high - max(last_open, last_close)) / PIP)
-                lower_wick_pips = max(0.0, (min(last_open, last_close) - last_low) / PIP)
+                upper_wick_pips = max(
+                    0.0, (last_high - max(last_open, last_close)) / PIP
+                )
+                lower_wick_pips = max(
+                    0.0, (min(last_open, last_close) - last_low) / PIP
+                )
                 recovery = 1.0 - close_pos
                 recovery_min = (
                     MicroTrendRetest._LOW_ATR_CHASE_RECOVERY_MIN
@@ -290,7 +312,8 @@ class MicroTrendRetest:
                 if (
                     body_pips <= MicroTrendRetest._LOW_ATR_CHASE_BODY_MIN_PIPS
                     or recovery < recovery_min
-                    or upper_wick_pips <= lower_wick_pips + MicroTrendRetest._LOW_ATR_CHASE_WICK_EDGE_PIPS
+                    or upper_wick_pips
+                    <= lower_wick_pips + MicroTrendRetest._LOW_ATR_CHASE_WICK_EDGE_PIPS
                 ):
                     return False
         return (
@@ -312,7 +335,10 @@ class MicroTrendRetest:
         spread_pips = MicroTrendRetest._to_float(fac.get("spread_pips"), 0.0) or 0.0
         atr_check = MicroTrendRetest._to_float(fac.get("atr_pips"), 0.0) or 0.0
         if spread_pips > 0 and atr_check > 0:
-            spread_cap = max(MicroTrendRetest._SPREAD_PIPS_MAX, atr_check * MicroTrendRetest._SPREAD_ATR_RATIO_MAX)
+            spread_cap = max(
+                MicroTrendRetest._SPREAD_PIPS_MAX,
+                atr_check * MicroTrendRetest._SPREAD_ATR_RATIO_MAX,
+            )
             if spread_pips > spread_cap:
                 return None
 
@@ -346,7 +372,7 @@ class MicroTrendRetest:
         if len(candles) < MicroTrendRetest._LOOKBACK + 2:
             return None
 
-        recent = candles[-(MicroTrendRetest._LOOKBACK + 2):]
+        recent = candles[-(MicroTrendRetest._LOOKBACK + 2) :]
         history = recent[:-2]
         prev = recent[-2]
         last = recent[-1]
@@ -359,7 +385,9 @@ class MicroTrendRetest:
         level_low = min(lows)
 
         prev_close = MicroTrendRetest._to_float(prev.get("close"), 0.0) or 0.0
-        last_open = MicroTrendRetest._to_float(last.get("open"), prev_close) or prev_close
+        last_open = (
+            MicroTrendRetest._to_float(last.get("open"), prev_close) or prev_close
+        )
         last_close = MicroTrendRetest._to_float(last.get("close"), 0.0) or 0.0
         last_low = MicroTrendRetest._to_float(last.get("low"), 0.0) or 0.0
         last_high = MicroTrendRetest._to_float(last.get("high"), 0.0) or 0.0
@@ -369,7 +397,10 @@ class MicroTrendRetest:
                 return None
             if last_low > level_high + MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
-            if abs(last_close - level_high) > MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
+            if (
+                abs(last_close - level_high)
+                > MicroTrendRetest._RETEST_BUFFER_PIPS * PIP
+            ):
                 return None
             if not MicroTrendRetest._retest_close_supports(
                 direction=direction,
@@ -464,7 +495,9 @@ class MicroTrendRetest:
         sl_pips = max(2.5, atr_hint * 1.10)
         tp_pips = max(sl_pips * 1.5, sl_pips + atr_hint * 0.95)
 
-        confidence = 58 + int(min(16.0, abs(gap)) + min(10.0, max(0.0, adx - MicroTrendRetest._MIN_ADX)))
+        confidence = 58 + int(
+            min(16.0, abs(gap)) + min(10.0, max(0.0, adx - MicroTrendRetest._MIN_ADX))
+        )
         if direction == "OPEN_LONG" and rsi < 52:
             confidence += 4
         if direction == "OPEN_SHORT" and rsi > 48:

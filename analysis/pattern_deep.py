@@ -55,7 +55,9 @@ def _df_records(df: pd.DataFrame, columns: list[str]) -> list[dict[str, Any]]:
     if df.empty:
         return []
     clipped = df.loc[:, columns]
-    return json.loads(clipped.to_json(orient="records", date_format="iso", force_ascii=False))
+    return json.loads(
+        clipped.to_json(orient="records", date_format="iso", force_ascii=False)
+    )
 
 
 def _bootstrap_ci(
@@ -82,32 +84,31 @@ def _compute_pattern_scores(
     if frame.empty:
         return pd.DataFrame()
 
-    aggregate = (
-        frame.groupby(
-            ["pattern_id", "pocket", "strategy_tag", "direction"],
-            dropna=False,
-            as_index=False,
-        )
-        .agg(
-            trades=("pl_pips", "size"),
-            wins=("win", "sum"),
-            avg_pips=("pl_pips", "mean"),
-            std_pips=("pl_pips", "std"),
-            total_pips=("pl_pips", "sum"),
-            gross_profit=("pl_pips", lambda s: float(s[s > 0].sum())),
-            gross_loss=("pl_pips", lambda s: float((-s[s < 0]).sum())),
-            avg_hold_sec=("hold_sec", "mean"),
-            spread_pips_mean=("spread_pips", "mean"),
-            tp_pips_mean=("tp_pips", "mean"),
-            sl_pips_mean=("sl_pips", "mean"),
-            confidence_mean=("confidence", "mean"),
-            chase_risk_rate=("is_chase_risk", "mean"),
-            last_close_time=("close_time", "max"),
-        )
+    aggregate = frame.groupby(
+        ["pattern_id", "pocket", "strategy_tag", "direction"],
+        dropna=False,
+        as_index=False,
+    ).agg(
+        trades=("pl_pips", "size"),
+        wins=("win", "sum"),
+        avg_pips=("pl_pips", "mean"),
+        std_pips=("pl_pips", "std"),
+        total_pips=("pl_pips", "sum"),
+        gross_profit=("pl_pips", lambda s: float(s[s > 0].sum())),
+        gross_loss=("pl_pips", lambda s: float((-s[s < 0]).sum())),
+        avg_hold_sec=("hold_sec", "mean"),
+        spread_pips_mean=("spread_pips", "mean"),
+        tp_pips_mean=("tp_pips", "mean"),
+        sl_pips_mean=("sl_pips", "mean"),
+        confidence_mean=("confidence", "mean"),
+        chase_risk_rate=("is_chase_risk", "mean"),
+        last_close_time=("close_time", "max"),
     )
     aggregate["losses"] = aggregate["trades"] - aggregate["wins"]
     aggregate["win_rate"] = aggregate["wins"] / aggregate["trades"].clip(lower=1.0)
-    aggregate["bayes_win_rate"] = (aggregate["wins"] + 2.0) / (aggregate["trades"] + 4.0)
+    aggregate["bayes_win_rate"] = (aggregate["wins"] + 2.0) / (
+        aggregate["trades"] + 4.0
+    )
     aggregate["profit_factor"] = np.where(
         aggregate["gross_loss"] <= 1e-9,
         np.where(aggregate["gross_profit"] > 0.0, 9.99, 0.0),
@@ -141,7 +142,11 @@ def _compute_pattern_scores(
     prior = max(1, int(config.prior_strength))
 
     base_avg = aggregate["base_avg_pips"].fillna(global_avg)
-    base_std = aggregate["base_std_pips"].fillna(global_std).clip(lower=max(0.05, global_std * 0.1))
+    base_std = (
+        aggregate["base_std_pips"]
+        .fillna(global_std)
+        .clip(lower=max(0.05, global_std * 0.1))
+    )
     aggregate["shrink_avg_pips"] = (
         aggregate["avg_pips"] * aggregate["trades"] + base_avg * prior
     ) / (aggregate["trades"] + prior)
@@ -207,7 +212,9 @@ def _compute_pattern_scores(
         by=["robust_score", "shrink_avg_pips", "trades"],
         ascending=[False, False, False],
     )
-    aggregate = aggregate.drop_duplicates(subset=["pattern_id"], keep="first").reset_index(drop=True)
+    aggregate = aggregate.drop_duplicates(
+        subset=["pattern_id"], keep="first"
+    ).reset_index(drop=True)
     aggregate["score_rank"] = np.arange(1, len(aggregate) + 1, dtype=int)
 
     by_pattern = {
@@ -257,9 +264,16 @@ def _compute_drift(
 
     payload: list[dict[str, Any]] = []
     for pattern_id, group in window.groupby("pattern_id", sort=False):
-        recent = group.loc[group["close_dt"] >= recent_from, "pl_pips"].to_numpy(dtype=float)
-        prev = group.loc[group["close_dt"] < recent_from, "pl_pips"].to_numpy(dtype=float)
-        if recent.size < config.min_recent_samples or prev.size < config.min_prev_samples:
+        recent = group.loc[group["close_dt"] >= recent_from, "pl_pips"].to_numpy(
+            dtype=float
+        )
+        prev = group.loc[group["close_dt"] < recent_from, "pl_pips"].to_numpy(
+            dtype=float
+        )
+        if (
+            recent.size < config.min_recent_samples
+            or prev.size < config.min_prev_samples
+        ):
             continue
         try:
             pval = float(mannwhitneyu(recent, prev, alternative="two-sided").pvalue)
@@ -313,7 +327,9 @@ def _cluster_patterns(
     if score_df.empty:
         return pd.DataFrame(), pd.DataFrame(), {"k": 0, "silhouette": 0.0}
 
-    source = score_df.loc[score_df["trades"] >= max(1, config.cluster_min_samples)].copy()
+    source = score_df.loc[
+        score_df["trades"] >= max(1, config.cluster_min_samples)
+    ].copy()
     if source.empty:
         source = score_df.head(min(len(score_df), 40)).copy()
     if source.empty:
@@ -386,8 +402,7 @@ def _cluster_patterns(
 
 
 def _ensure_deep_schema(con: Any) -> None:
-    con.executescript(
-        """
+    con.executescript("""
         CREATE TABLE IF NOT EXISTS pattern_scores (
           pattern_id TEXT PRIMARY KEY,
           strategy_tag TEXT NOT NULL,
@@ -456,8 +471,7 @@ def _ensure_deep_schema(con: Any) -> None:
           quality_mix TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
-        """
-    )
+        """)
 
 
 def _persist_deep_analysis(
@@ -670,7 +684,14 @@ def run_pattern_deep_analysis(
 
     frame["close_dt"] = pd.to_datetime(frame["close_time"], utc=True, errors="coerce")
     frame = frame.dropna(subset=["close_dt"]).copy().reset_index(drop=True)
-    for col in ["pl_pips", "hold_sec", "confidence", "spread_pips", "tp_pips", "sl_pips"]:
+    for col in [
+        "pl_pips",
+        "hold_sec",
+        "confidence",
+        "spread_pips",
+        "tp_pips",
+        "sl_pips",
+    ]:
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
     frame["pl_pips"] = frame["pl_pips"].fillna(0.0)
     frame["hold_sec"] = frame["hold_sec"].fillna(0.0)
@@ -683,8 +704,12 @@ def run_pattern_deep_analysis(
     frame["range_bucket"] = token_rows.map(lambda t: t.get("rg", "na"))
     frame["pattern_side"] = token_rows.map(lambda t: t.get("sd", "unknown"))
     direction_norm = frame["direction"].fillna("").astype(str).str.lower()
-    direction_norm = direction_norm.where(direction_norm.isin(["long", "short"]), "unknown")
-    frame["direction"] = np.where(direction_norm == "unknown", frame["pattern_side"], direction_norm)
+    direction_norm = direction_norm.where(
+        direction_norm.isin(["long", "short"]), "unknown"
+    )
+    frame["direction"] = np.where(
+        direction_norm == "unknown", frame["pattern_side"], direction_norm
+    )
     frame["direction"] = pd.Series(frame["direction"]).astype(str).str.lower()
     frame.loc[~frame["direction"].isin(["long", "short"]), "direction"] = "unknown"
     frame["win"] = (frame["pl_pips"] > 0.0).astype(int)
@@ -698,7 +723,9 @@ def run_pattern_deep_analysis(
     if pd.isna(as_of_ts):
         as_of_ts = pd.Timestamp.now(tz="UTC")
     drift_df = _compute_drift(frame, as_of=as_of_ts, config=conf)
-    cluster_map_df, cluster_summary_df, cluster_meta = _cluster_patterns(score_df, config=conf)
+    cluster_map_df, cluster_summary_df, cluster_meta = _cluster_patterns(
+        score_df, config=conf
+    )
 
     _persist_deep_analysis(
         con,
@@ -710,7 +737,9 @@ def run_pattern_deep_analysis(
     )
 
     quality_counts = (
-        score_df["quality"].value_counts().sort_index().to_dict() if not score_df.empty else {}
+        score_df["quality"].value_counts().sort_index().to_dict()
+        if not score_df.empty
+        else {}
     )
     if drift_df.empty or "drift_state" not in drift_df.columns:
         drift_alerts_df = pd.DataFrame()
@@ -724,11 +753,17 @@ def run_pattern_deep_analysis(
         "rows_total": int(len(frame)),
         "patterns_scored": int(len(score_df)),
         "drift_rows": int(len(drift_df)),
-        "cluster_count": int(cluster_summary_df["cluster_id"].nunique() if not cluster_summary_df.empty else 0),
+        "cluster_count": int(
+            cluster_summary_df["cluster_id"].nunique()
+            if not cluster_summary_df.empty
+            else 0
+        ),
         "cluster_meta": cluster_meta,
         "quality_counts": {str(k): int(v) for k, v in quality_counts.items()},
         "top_robust": _df_records(
-            score_df.sort_values(by=["robust_score", "trades"], ascending=[False, False]).head(30),
+            score_df.sort_values(
+                by=["robust_score", "trades"], ascending=[False, False]
+            ).head(30),
             [
                 "pattern_id",
                 "strategy_tag",
@@ -748,7 +783,9 @@ def run_pattern_deep_analysis(
             ],
         ),
         "top_weak": _df_records(
-            score_df.sort_values(by=["robust_score", "trades"], ascending=[True, False]).head(30),
+            score_df.sort_values(
+                by=["robust_score", "trades"], ascending=[True, False]
+            ).head(30),
             [
                 "pattern_id",
                 "strategy_tag",

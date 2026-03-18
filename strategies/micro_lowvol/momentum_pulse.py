@@ -100,7 +100,9 @@ class MomentumPulse:
         vol_term = max(0.0, min(1.0, (1.15 - (vol_5m or 1.15)) * 0.8))
         slope_term = clamp(abs(slope_ma), 0.0, 3.0) * 1.6
         bias_penalty = max(0.0, abs(bias) - 1.2) * 3.0
-        base_conf = 52.0 + clamp(abs(mom_pips), 0.0, 2.4) * 3.2 + vol_term * 14.0 + slope_term
+        base_conf = (
+            52.0 + clamp(abs(mom_pips), 0.0, 2.4) * 3.2 + vol_term * 14.0 + slope_term
+        )
         conf = int(clamp(base_conf - bias_penalty, 44.0, 88.0))
 
         # Previous: sl = clamp(atr*1.05, 1.3, 2.7), tp = clamp(sl*0.92, 0.9, 2.4)

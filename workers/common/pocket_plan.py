@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Literal
 
-
 PocketType = Literal["macro", "micro", "scalp"]
 
 

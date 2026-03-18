@@ -61,7 +61,9 @@ def _bucket_label(
     return cuts[-1][1] if cuts else default
 
 
-def _technical_indicator_frame(entry_thesis: Mapping[str, Any], tf: str = "M1") -> dict[str, object]:
+def _technical_indicator_frame(
+    entry_thesis: Mapping[str, Any], tf: str = "M1"
+) -> dict[str, object]:
     technical_context = entry_thesis.get("technical_context")
     if not isinstance(technical_context, Mapping):
         return {}
@@ -93,12 +95,18 @@ def _frame_flow_snapshot(frame: Mapping[str, Any]) -> dict[str, object]:
     adx = _to_float(frame.get("adx"))
     plus_di = _to_float(frame.get("plus_di"))
     minus_di = _to_float(frame.get("minus_di"))
-    di_gap = plus_di - minus_di if plus_di is not None and minus_di is not None else None
+    di_gap = (
+        plus_di - minus_di if plus_di is not None and minus_di is not None else None
+    )
     ma_fast, ma_slow = _frame_ma_pair(frame)
     ma_gap_pips = None
     if ma_fast is not None and ma_slow is not None:
         ma_gap_pips = (ma_fast - ma_slow) / 0.01
-    gap_ratio = abs(ma_gap_pips) / max(atr_pips or 0.0, 1.0) if ma_gap_pips is not None else None
+    gap_ratio = (
+        abs(ma_gap_pips) / max(atr_pips or 0.0, 1.0)
+        if ma_gap_pips is not None
+        else None
+    )
 
     trend_dir = "neutral"
     if di_gap is not None:
@@ -165,10 +173,18 @@ def _derive_mtf_context(
         mtf_alignment = "mixed"
     elif vote_long > 0:
         macro_flow_regime = "trend_long"
-        mtf_alignment = "aligned" if side_label == "long" else "countertrend" if side_label == "short" else "unknown"
+        mtf_alignment = (
+            "aligned"
+            if side_label == "long"
+            else "countertrend" if side_label == "short" else "unknown"
+        )
     elif vote_short > 0:
         macro_flow_regime = "trend_short"
-        mtf_alignment = "aligned" if side_label == "short" else "countertrend" if side_label == "long" else "unknown"
+        mtf_alignment = (
+            "aligned"
+            if side_label == "short"
+            else "countertrend" if side_label == "long" else "unknown"
+        )
     else:
         macro_flow_regime = "transition"
         mtf_alignment = "neutral"
@@ -210,7 +226,9 @@ def derive_live_setup_context(
         return None
     frame_m1 = _technical_indicator_frame(entry_thesis, "M1")
     technical_context = entry_thesis.get("technical_context")
-    ticks_raw = technical_context.get("ticks") if isinstance(technical_context, Mapping) else {}
+    ticks_raw = (
+        technical_context.get("ticks") if isinstance(technical_context, Mapping) else {}
+    )
     ticks = ticks_raw if isinstance(ticks_raw, Mapping) else {}
 
     atr_pips = _to_float(frame_m1.get("atr_pips"))
@@ -229,11 +247,20 @@ def derive_live_setup_context(
     ma_gap_pips = None
     if ma_fast is not None and ma_slow is not None:
         ma_gap_pips = (ma_fast - ma_slow) / 0.01
-    gap_ratio = abs(ma_gap_pips) / max(atr_pips or 0.0, 1.0) if ma_gap_pips is not None else None
+    gap_ratio = (
+        abs(ma_gap_pips) / max(atr_pips or 0.0, 1.0)
+        if ma_gap_pips is not None
+        else None
+    )
 
     range_mode = str(entry_thesis.get("range_mode") or "").strip().lower()
     range_score = _to_float(entry_thesis.get("range_score"))
-    if range_mode == "range" and range_score is not None and range_score >= 0.45 and (adx is None or adx < 24.0):
+    if (
+        range_mode == "range"
+        and range_score is not None
+        and range_score >= 0.45
+        and (adx is None or adx < 24.0)
+    ):
         flow_regime = "range_compression"
     else:
         trend_dir = "neutral"
@@ -242,9 +269,18 @@ def derive_live_setup_context(
                 trend_dir = "long"
             elif minus_di > plus_di:
                 trend_dir = "short"
-        if gap_ratio is not None and gap_ratio >= 0.85 and (adx or 0.0) >= 22.0 and trend_dir != "neutral":
+        if (
+            gap_ratio is not None
+            and gap_ratio >= 0.85
+            and (adx or 0.0) >= 22.0
+            and trend_dir != "neutral"
+        ):
             flow_regime = f"trend_{trend_dir}"
-        elif range_score is not None and range_score >= 0.28 and (adx is None or adx < 32.0):
+        elif (
+            range_score is not None
+            and range_score >= 0.28
+            and (adx is None or adx < 32.0)
+        ):
             flow_regime = "range_fade"
         else:
             flow_regime = "transition"
@@ -273,12 +309,24 @@ def derive_live_setup_context(
 
     rsi_bucket = _bucket_label(
         rsi,
-        cuts=((35.0, "ext_oversold"), (45.0, "oversold"), (55.0, "mid"), (65.0, "overbought"), (1e9, "ext_overbought")),
+        cuts=(
+            (35.0, "ext_oversold"),
+            (45.0, "oversold"),
+            (55.0, "mid"),
+            (65.0, "overbought"),
+            (1e9, "ext_overbought"),
+        ),
         default="unknown",
     )
     atr_bucket = _bucket_label(
         atr_pips,
-        cuts=((1.2, "ultra_low"), (2.6, "low"), (5.5, "mid"), (9.0, "high"), (1e9, "extreme")),
+        cuts=(
+            (1.2, "ultra_low"),
+            (2.6, "low"),
+            (5.5, "mid"),
+            (9.0, "high"),
+            (1e9, "extreme"),
+        ),
         default="unknown",
     )
     if ma_gap_pips is None or gap_ratio is None:
@@ -296,9 +344,15 @@ def derive_live_setup_context(
     mtf_context = _derive_mtf_context(entry_thesis, side_label=side_label)
     macro_flow_regime = str(mtf_context.get("macro_flow_regime") or "").strip()
     mtf_alignment = str(mtf_context.get("mtf_alignment") or "").strip()
-    setup_anchor = str(entry_thesis.get("pattern_tag") or entry_thesis.get("range_reason") or "").strip().lower()
+    setup_anchor = (
+        str(entry_thesis.get("pattern_tag") or entry_thesis.get("range_reason") or "")
+        .strip()
+        .lower()
+    )
     setup_parts = [
-        str(entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or "").strip(),
+        str(
+            entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or ""
+        ).strip(),
         side_label,
         flow_regime,
         microstructure_bucket,
@@ -308,7 +362,10 @@ def derive_live_setup_context(
     ]
     if setup_anchor:
         setup_parts.append(setup_anchor)
-    if macro_flow_regime in {"trend_long", "trend_short"} and macro_flow_regime != flow_regime:
+    if (
+        macro_flow_regime in {"trend_long", "trend_short"}
+        and macro_flow_regime != flow_regime
+    ):
         setup_parts.append(f"macro:{macro_flow_regime}")
     if mtf_alignment in {"countertrend", "mixed"}:
         setup_parts.append(f"align:{mtf_alignment}")

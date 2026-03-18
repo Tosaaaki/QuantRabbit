@@ -10,7 +10,9 @@ from datetime import timezone
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_DB_PATH = Path(os.getenv("AGENT_WHITEBOARD_DB_PATH", "logs/agent_whiteboard.db"))
+DEFAULT_DB_PATH = Path(
+    os.getenv("AGENT_WHITEBOARD_DB_PATH", "logs/agent_whiteboard.db")
+)
 ALLOWED_STATUSES = ("open", "resolved", "archived")
 ALLOWED_EVENT_TYPES = ("event", "note", "error", "system")
 DB_TIMEOUT_SEC = 3.0
@@ -107,8 +109,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 def init_db(db_path: Path | str | None = None) -> None:
     target = _resolve_db_path(db_path)
     with _connect(target) as con:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE IF NOT EXISTS agent_whiteboard_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task TEXT NOT NULL,
@@ -121,22 +122,16 @@ def init_db(db_path: Path | str | None = None) -> None:
                 resolved_at TEXT,
                 archived_at TEXT
             )
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_whiteboard_status_updated
             ON agent_whiteboard_tasks(status, updated_at DESC, id DESC)
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_whiteboard_updated
             ON agent_whiteboard_tasks(updated_at DESC, id DESC)
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS agent_whiteboard_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id INTEGER NOT NULL,
@@ -148,22 +143,16 @@ def init_db(db_path: Path | str | None = None) -> None:
                 metadata TEXT,
                 FOREIGN KEY(task_id) REFERENCES agent_whiteboard_tasks(id) ON DELETE CASCADE
             )
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_whiteboard_events_task
             ON agent_whiteboard_events(task_id, id DESC)
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_whiteboard_events_created
             ON agent_whiteboard_events(created_at DESC, id DESC)
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE TABLE IF NOT EXISTS agent_whiteboard_activity (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL CHECK(kind IN ('task', 'event')),
@@ -173,22 +162,16 @@ def init_db(db_path: Path | str | None = None) -> None:
                 FOREIGN KEY(task_id) REFERENCES agent_whiteboard_tasks(id) ON DELETE CASCADE,
                 FOREIGN KEY(event_id) REFERENCES agent_whiteboard_events(id) ON DELETE CASCADE
             )
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_whiteboard_activity_task
             ON agent_whiteboard_activity(task_id, id DESC)
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_whiteboard_activity_created
             ON agent_whiteboard_activity(created_at DESC, id DESC)
-            """
-        )
-        con.execute(
-            """
+            """)
+        con.execute("""
             INSERT INTO agent_whiteboard_activity (kind, task_id, event_id, created_at)
             SELECT 'task', t.id, NULL, t.created_at
             FROM agent_whiteboard_tasks t
@@ -199,8 +182,7 @@ def init_db(db_path: Path | str | None = None) -> None:
                   AND a.task_id = t.id
             )
             ORDER BY t.id ASC
-            """
-        )
+            """)
         con.commit()
 
 
@@ -270,7 +252,9 @@ def _event_from_activity_row(row: sqlite3.Row) -> Optional[WhiteboardEvent]:
     )
 
 
-def _append_task_activity(con: sqlite3.Connection, *, task_id: int, created_at: str) -> None:
+def _append_task_activity(
+    con: sqlite3.Connection, *, task_id: int, created_at: str
+) -> None:
     con.execute(
         """
         INSERT INTO agent_whiteboard_activity (kind, task_id, event_id, created_at)
@@ -296,7 +280,9 @@ def _append_event_activity(
     )
 
 
-def get_task(task_id: int, *, db_path: Path | str | None = None) -> Optional[WhiteboardTask]:
+def get_task(
+    task_id: int, *, db_path: Path | str | None = None
+) -> Optional[WhiteboardTask]:
     target = _resolve_db_path(db_path)
     init_db(target)
     with _connect(target) as con:
@@ -411,7 +397,9 @@ def watch_tasks(
     return [_row_to_task(row) for row in rows]
 
 
-def resolve_task(task_id: int, *, db_path: Path | str | None = None) -> Optional[WhiteboardTask]:
+def resolve_task(
+    task_id: int, *, db_path: Path | str | None = None
+) -> Optional[WhiteboardTask]:
     target = _resolve_db_path(db_path)
     init_db(target)
     now = _now_iso()
@@ -433,7 +421,9 @@ def resolve_task(task_id: int, *, db_path: Path | str | None = None) -> Optional
     return get_task(task_id, db_path=target)
 
 
-def archive_task(task_id: int, *, db_path: Path | str | None = None) -> Optional[WhiteboardTask]:
+def archive_task(
+    task_id: int, *, db_path: Path | str | None = None
+) -> Optional[WhiteboardTask]:
     target = _resolve_db_path(db_path)
     init_db(target)
     now = _now_iso()
@@ -454,7 +444,9 @@ def archive_task(task_id: int, *, db_path: Path | str | None = None) -> Optional
     return get_task(task_id, db_path=target)
 
 
-def get_event(event_id: int, *, db_path: Path | str | None = None) -> Optional[WhiteboardEvent]:
+def get_event(
+    event_id: int, *, db_path: Path | str | None = None
+) -> Optional[WhiteboardEvent]:
     target = _resolve_db_path(db_path)
     init_db(target)
     with _connect(target) as con:

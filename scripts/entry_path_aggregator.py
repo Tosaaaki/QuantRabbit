@@ -70,13 +70,26 @@ def _is_entry_status(status: str) -> bool:
 
 def _is_hard_block_status(status: str) -> bool:
     status_l = status.lower()
-    if status_l in {"preflight_start", "submit_attempt", "filled", "brain_shadow", "probability_scaled"}:
+    if status_l in {
+        "preflight_start",
+        "submit_attempt",
+        "filled",
+        "brain_shadow",
+        "probability_scaled",
+    }:
         return False
-    return any(token in status_l for token in ("block", "reject", "disabled", "cooldown", "rejected"))
+    return any(
+        token in status_l
+        for token in ("block", "reject", "disabled", "cooldown", "rejected")
+    )
 
 
 def _extract_strategy_tag(payload: dict[str, Any]) -> tuple[str, str]:
-    thesis = payload.get("entry_thesis") if isinstance(payload.get("entry_thesis"), dict) else {}
+    thesis = (
+        payload.get("entry_thesis")
+        if isinstance(payload.get("entry_thesis"), dict)
+        else {}
+    )
     raw_tag, canonical_tag = extract_strategy_tags(
         strategy_tag=payload.get("strategy_tag"),
         strategy=payload.get("strategy"),
@@ -88,7 +101,11 @@ def _extract_strategy_tag(payload: dict[str, Any]) -> tuple[str, str]:
 
 
 def _extract_pocket(payload: dict[str, Any], row_pocket: Any) -> str:
-    thesis = payload.get("entry_thesis") if isinstance(payload.get("entry_thesis"), dict) else {}
+    thesis = (
+        payload.get("entry_thesis")
+        if isinstance(payload.get("entry_thesis"), dict)
+        else {}
+    )
     for raw in (row_pocket, payload.get("pocket"), thesis.get("pocket")):
         text = str(raw or "").strip().lower()
         if text:
@@ -133,7 +150,10 @@ def _setup_bucket_key(context: dict[str, str]) -> str:
 def _setup_match_dimension(context: dict[str, str]) -> str:
     if str(context.get("setup_fingerprint") or "").strip():
         return "setup_fingerprint"
-    if str(context.get("flow_regime") or "").strip() and str(context.get("microstructure_bucket") or "").strip():
+    if (
+        str(context.get("flow_regime") or "").strip()
+        and str(context.get("microstructure_bucket") or "").strip()
+    ):
         return "flow_micro"
     if str(context.get("flow_regime") or "").strip():
         return "flow_regime"
@@ -143,7 +163,11 @@ def _setup_match_dimension(context: dict[str, str]) -> str:
 
 
 def _extract_trail(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    thesis = payload.get("entry_thesis") if isinstance(payload.get("entry_thesis"), dict) else {}
+    thesis = (
+        payload.get("entry_thesis")
+        if isinstance(payload.get("entry_thesis"), dict)
+        else {}
+    )
     for container in (payload, thesis):
         trail = container.get("entry_path_attribution")
         if isinstance(trail, list):
@@ -151,7 +175,9 @@ def _extract_trail(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _sort_counts(counts: dict[str, int], *, top_k: int | None = None) -> list[dict[str, Any]]:
+def _sort_counts(
+    counts: dict[str, int], *, top_k: int | None = None
+) -> list[dict[str, Any]]:
     rows = [
         {"key": key, "count": int(count)}
         for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
@@ -161,7 +187,9 @@ def _sort_counts(counts: dict[str, int], *, top_k: int | None = None) -> list[di
     return rows
 
 
-def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) -> dict[str, Any]:
+def build_report(
+    db_path: Path, *, lookback_hours: int, limit: int, top_k: int
+) -> dict[str, Any]:
     rows: list[tuple[str, str, str]] = []
     if db_path.exists():
         uri = f"file:{db_path}?mode=ro"
@@ -180,7 +208,10 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
                 sql += " LIMIT ?"
                 params.append(int(limit))
             cur.execute(sql, params)
-            rows = [(str(ts or ""), str(pocket or ""), str(status or ""), request_json) for ts, pocket, status, request_json in cur.fetchall()]
+            rows = [
+                (str(ts or ""), str(pocket or ""), str(status or ""), request_json)
+                for ts, pocket, status, request_json in cur.fetchall()
+            ]
 
     global_status_counts: dict[str, int] = defaultdict(int)
     global_stage_counts: dict[str, int] = defaultdict(int)
@@ -196,7 +227,9 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
         strategy, strategy_canonical = _extract_strategy_tag(payload)
         pocket = _extract_pocket(payload, pocket_raw)
         strategy_key = strategy
-        if strategy_key in strategies and strategies[strategy_key].get("pocket") not in {pocket, None}:
+        if strategy_key in strategies and strategies[strategy_key].get(
+            "pocket"
+        ) not in {pocket, None}:
             strategy_key = f"{strategy}:{pocket}"
         bucket = strategies.setdefault(
             strategy_key,
@@ -224,9 +257,13 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
                 {
                     "setup_key": setup_key,
                     "match_dimension": _setup_match_dimension(setup_context),
-                    "setup_fingerprint": str(setup_context.get("setup_fingerprint") or ""),
+                    "setup_fingerprint": str(
+                        setup_context.get("setup_fingerprint") or ""
+                    ),
                     "flow_regime": str(setup_context.get("flow_regime") or ""),
-                    "microstructure_bucket": str(setup_context.get("microstructure_bucket") or ""),
+                    "microstructure_bucket": str(
+                        setup_context.get("microstructure_bucket") or ""
+                    ),
                     "preflights": 0,
                     "submit_attempts": 0,
                     "filled": 0,
@@ -295,14 +332,17 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
         attempt_share = preflights / float(max(1, total_attempts))
         fill_share = filled / float(max(1, total_fills))
         total_setup_attempts = sum(
-            int(item.get("preflights") or 0) for item in bucket.get("setups", {}).values()
+            int(item.get("preflights") or 0)
+            for item in bucket.get("setups", {}).values()
         )
         total_setup_fills = sum(
             int(item.get("filled") or 0) for item in bucket.get("setups", {}).values()
         )
         status_counts_map = {
             str(name): int(count)
-            for name, count in sorted(bucket["status_counts"].items(), key=lambda item: item[0])
+            for name, count in sorted(
+                bucket["status_counts"].items(), key=lambda item: item[0]
+            )
         }
         setup_rows: list[dict[str, Any]] = []
         for setup_key, setup_bucket in sorted(
@@ -318,15 +358,23 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
             setup_fill_share = setup_filled / float(max(1, total_setup_fills))
             setup_status_counts = {
                 str(name): int(count)
-                for name, count in sorted(setup_bucket["status_counts"].items(), key=lambda item: item[0])
+                for name, count in sorted(
+                    setup_bucket["status_counts"].items(), key=lambda item: item[0]
+                )
             }
             setup_rows.append(
                 {
                     "setup_key": setup_key,
-                    "match_dimension": str(setup_bucket.get("match_dimension") or "unknown"),
-                    "setup_fingerprint": str(setup_bucket.get("setup_fingerprint") or ""),
+                    "match_dimension": str(
+                        setup_bucket.get("match_dimension") or "unknown"
+                    ),
+                    "setup_fingerprint": str(
+                        setup_bucket.get("setup_fingerprint") or ""
+                    ),
                     "flow_regime": str(setup_bucket.get("flow_regime") or ""),
-                    "microstructure_bucket": str(setup_bucket.get("microstructure_bucket") or ""),
+                    "microstructure_bucket": str(
+                        setup_bucket.get("microstructure_bucket") or ""
+                    ),
                     "attempts": setup_preflights,
                     "preflights": setup_preflights,
                     "fills": setup_filled,
@@ -334,16 +382,24 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
                     "filled": setup_filled,
                     "hard_blocks": setup_hard_blocks,
                     "soft_reduces": int(setup_bucket["soft_reduces"]),
-                    "filled_rate": round(setup_filled / float(max(1, setup_preflights)), 4),
-                    "fill_rate": round(setup_filled / float(max(1, setup_preflights)), 4),
+                    "filled_rate": round(
+                        setup_filled / float(max(1, setup_preflights)), 4
+                    ),
+                    "fill_rate": round(
+                        setup_filled / float(max(1, setup_preflights)), 4
+                    ),
                     "attempt_share": round(setup_attempt_share, 6),
                     "fill_share": round(setup_fill_share, 6),
                     "share_gap": round(setup_attempt_share - setup_fill_share, 6),
-                    "hard_block_rate": round(setup_hard_blocks / float(max(1, setup_preflights)), 4),
+                    "hard_block_rate": round(
+                        setup_hard_blocks / float(max(1, setup_preflights)), 4
+                    ),
                     "terminal_status_counts": setup_status_counts,
                     "status_counts": _sort_counts(setup_bucket["status_counts"]),
                     "stage_counts": _sort_counts(setup_bucket["stage_counts"]),
-                    "top_blockers": _sort_counts(setup_bucket["blockers"], top_k=max(1, int(top_k))),
+                    "top_blockers": _sort_counts(
+                        setup_bucket["blockers"], top_k=max(1, int(top_k))
+                    ),
                 }
             )
         strategy_rows[key] = {
@@ -383,7 +439,9 @@ def build_report(db_path: Path, *, lookback_hours: int, limit: int, top_k: int) 
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Aggregate entry-path attribution from orders.db")
+    ap = argparse.ArgumentParser(
+        description="Aggregate entry-path attribution from orders.db"
+    )
     ap.add_argument("--orders-db", default="logs/orders.db")
     ap.add_argument("--output", default="logs/entry_path_summary_latest.json")
     ap.add_argument("--history", default="logs/entry_path_summary_history.jsonl")

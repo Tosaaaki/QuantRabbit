@@ -59,7 +59,9 @@ def _derive_vix_and_dxy(factors: Dict[str, Dict[str, float]]) -> Tuple[float, fl
     return round(vix, 3), round(dxy, 3)
 
 
-def _derive_yields(scores: Dict[str, float], base_pairs: Iterable[str]) -> Dict[str, float]:
+def _derive_yields(
+    scores: Dict[str, float], base_pairs: Iterable[str]
+) -> Dict[str, float]:
     yields: Dict[str, float] = {}
     for ccy in base_pairs:
         bias = scores.get(ccy, 0.0)
@@ -84,7 +86,9 @@ def refresh_macro_snapshot(
     needs_refresh = True
     if snapshot_path.exists():
         try:
-            mtime = dt.datetime.fromtimestamp(snapshot_path.stat().st_mtime, tz=dt.timezone.utc)
+            mtime = dt.datetime.fromtimestamp(
+                snapshot_path.stat().st_mtime, tz=dt.timezone.utc
+            )
             mtime_age_min = (now - mtime).total_seconds() / 60.0
         except Exception:
             mtime_age_min = refresh_if_older_than_minutes + 1

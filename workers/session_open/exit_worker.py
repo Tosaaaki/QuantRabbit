@@ -21,7 +21,11 @@ from .exit_forecast import (
 from .exit_utils import close_trade, mark_pnl_pips
 from .reentry_decider import decide_reentry
 from .loss_cut import LossCutParams, pick_loss_cut_reason, resolve_loss_cut
-from utils.strategy_protection import be_profile_for_tag, exit_profile_for_tag, tp_move_profile_for_tag
+from utils.strategy_protection import (
+    be_profile_for_tag,
+    exit_profile_for_tag,
+    tp_move_profile_for_tag,
+)
 
 
 from . import config
@@ -31,13 +35,27 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float(
+    "BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_TREND_EXT_RATIO = env_float(
+    "BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float(
+    "BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float(
+    "BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_EXT_PIPS = env_float(
+    "BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_EXT_RATIO = env_float(
+    "BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_MID_BUFFER_PIPS = env_float(
+    "BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX
+)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -81,7 +99,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _bb_exit_price(fac):
@@ -145,8 +169,16 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
         style = "reversion"
     mid_buffer = max(_BB_EXIT_MID_BUFFER_PIPS, span_pips * 0.05)
     if style == "reversion":
-        base_pips = _BB_EXIT_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_EXIT_REVERT_PIPS
-        base_ratio = _BB_EXIT_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_EXIT_REVERT_RATIO
+        base_pips = (
+            _BB_EXIT_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_EXIT_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_EXIT_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_EXIT_REVERT_RATIO
+        )
         threshold = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             dist = (price - lower) / _BB_PIP
@@ -164,10 +196,11 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
         return True
     return price <= (lower + band_buffer * _BB_PIP)
 
+
 BB_STYLE = "trend"
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS: Set[str] = {'session_open_breakout', 'session_open'}
+ALLOWED_TAGS: Set[str] = {"session_open_breakout", "session_open"}
 
 
 def _tags_env(key: str, default: Set[str]) -> Set[str]:
@@ -201,7 +234,9 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -266,7 +301,9 @@ class _TradeState:
             self.peak = pnl
         if pnl > 0:
             floor = max(0.0, pnl - lock_buffer)
-            self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
+            self.lock_floor = (
+                floor if self.lock_floor is None else max(self.lock_floor, floor)
+            )
 
 
 def _trade_stop_loss_price(trade: dict) -> Optional[float]:
@@ -346,7 +383,6 @@ class SessionOpenExitWorker:
             _float_env("SESSION_OPEN_EXIT_LOSS_CUT_MIN_HOLD_SEC", 600.0),
         )
 
-
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
@@ -361,7 +397,15 @@ class SessionOpenExitWorker:
             range_active = False
         return _latest_mid(), range_active
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> None:
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+    ) -> None:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
             pnl_val = locals().get("pnl")
@@ -370,7 +414,12 @@ class SessionOpenExitWorker:
                 price = _bb_exit_price(fac)
                 side = "long" if units > 0 else "short"
                 if not _bb_exit_allowed(BB_STYLE, side, price, fac):
-                    LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
+                    LOG.info(
+                        "[exit-bb] trade=%s reason=%s price=%.3f",
+                        trade_id,
+                        reason,
+                        price or 0.0,
+                    )
                     return
         if pnl <= 0:
             allow_negative = True
@@ -383,9 +432,20 @@ class SessionOpenExitWorker:
             env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
-            LOG.info("[exit-session-open] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
+            LOG.info(
+                "[exit-session-open] trade=%s units=%s reason=%s pnl=%.2fp",
+                trade_id,
+                units,
+                reason,
+                pnl,
+            )
         else:
-            LOG.error("[exit-session-open] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+            LOG.error(
+                "[exit-session-open] close failed trade=%s units=%s reason=%s",
+                trade_id,
+                units,
+                reason,
+            )
 
     async def _maybe_move_profit_protection(
         self,
@@ -423,29 +483,42 @@ class SessionOpenExitWorker:
 
         if isinstance(be_profile, dict):
             trigger_pips = max(0.0, _pick_float(be_profile.get("trigger_pips"), 0.0))
-            lock_ratio = max(0.0, min(1.0, _pick_float(be_profile.get("lock_ratio"), 0.0)))
+            lock_ratio = max(
+                0.0, min(1.0, _pick_float(be_profile.get("lock_ratio"), 0.0))
+            )
             min_lock_pips = max(0.0, _pick_float(be_profile.get("min_lock_pips"), 0.0))
             cooldown_sec = max(0.0, _pick_float(be_profile.get("cooldown_sec"), 0.0))
             if (
                 trigger_pips > 0.0
                 and pnl >= trigger_pips
                 and lock_ratio > 0.0
-                and (cooldown_sec <= 0.0 or (now_mono - float(state.be_last_ts or 0.0)) >= cooldown_sec)
+                and (
+                    cooldown_sec <= 0.0
+                    or (now_mono - float(state.be_last_ts or 0.0)) >= cooldown_sec
+                )
             ):
                 lock_pips = max(min_lock_pips, float(pnl) * lock_ratio)
-                candidate_sl = entry + lock_pips * _BB_PIP if side == "long" else entry - lock_pips * _BB_PIP
+                candidate_sl = (
+                    entry + lock_pips * _BB_PIP
+                    if side == "long"
+                    else entry - lock_pips * _BB_PIP
+                )
                 if mid is not None:
                     if side == "long":
                         candidate_sl = min(candidate_sl, float(mid) - 0.003)
                     else:
                         candidate_sl = max(candidate_sl, float(mid) + 0.003)
                 if side == "long":
-                    if candidate_sl > entry + 1e-6 and (current_sl is None or candidate_sl > current_sl + 1e-6):
+                    if candidate_sl > entry + 1e-6 and (
+                        current_sl is None or candidate_sl > current_sl + 1e-6
+                    ):
                         desired_sl = round(candidate_sl, 3)
                         sl_updated = True
                         lock_metric_pips = lock_pips
                 else:
-                    if candidate_sl < entry - 1e-6 and (current_sl is None or candidate_sl < current_sl - 1e-6):
+                    if candidate_sl < entry - 1e-6 and (
+                        current_sl is None or candidate_sl < current_sl - 1e-6
+                    ):
                         desired_sl = round(candidate_sl, 3)
                         sl_updated = True
                         lock_metric_pips = lock_pips
@@ -453,24 +526,43 @@ class SessionOpenExitWorker:
         effective_sl = desired_sl if sl_updated else current_sl
         locked_profit = False
         if effective_sl is not None:
-            locked_profit = (
-                (side == "long" and effective_sl > entry + 1e-6)
-                or (side == "short" and effective_sl < entry - 1e-6)
+            locked_profit = (side == "long" and effective_sl > entry + 1e-6) or (
+                side == "short" and effective_sl < entry - 1e-6
             )
 
         if isinstance(tp_move_profile, dict) and locked_profit:
-            enabled = str(tp_move_profile.get("enabled", True)).strip().lower() not in {"0", "false", "no", "off"}
-            trigger_pips = max(0.0, _pick_float(tp_move_profile.get("trigger_pips"), 0.0))
+            enabled = str(tp_move_profile.get("enabled", True)).strip().lower() not in {
+                "0",
+                "false",
+                "no",
+                "off",
+            }
+            trigger_pips = max(
+                0.0, _pick_float(tp_move_profile.get("trigger_pips"), 0.0)
+            )
             buffer_pips = max(0.0, _pick_float(tp_move_profile.get("buffer_pips"), 0.0))
-            min_gap_pips = max(0.3, _pick_float(tp_move_profile.get("min_gap_pips"), 0.3))
-            if enabled and trigger_pips > 0.0 and pnl >= trigger_pips and mid is not None:
+            min_gap_pips = max(
+                0.3, _pick_float(tp_move_profile.get("min_gap_pips"), 0.3)
+            )
+            if (
+                enabled
+                and trigger_pips > 0.0
+                and pnl >= trigger_pips
+                and mid is not None
+            ):
                 if side == "long":
-                    candidate_tp = max(entry + min_gap_pips * _BB_PIP, float(mid) + buffer_pips * _BB_PIP)
+                    candidate_tp = max(
+                        entry + min_gap_pips * _BB_PIP,
+                        float(mid) + buffer_pips * _BB_PIP,
+                    )
                     if current_tp is None or current_tp - candidate_tp > 1e-6:
                         desired_tp = round(candidate_tp, 3)
                         tp_updated = True
                 else:
-                    candidate_tp = min(entry - min_gap_pips * _BB_PIP, float(mid) - buffer_pips * _BB_PIP)
+                    candidate_tp = min(
+                        entry - min_gap_pips * _BB_PIP,
+                        float(mid) - buffer_pips * _BB_PIP,
+                    )
                     if current_tp is None or candidate_tp - current_tp > 1e-6:
                         desired_tp = round(candidate_tp, 3)
                         tp_updated = True
@@ -505,7 +597,9 @@ class SessionOpenExitWorker:
                 lock_metric_pips,
             )
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, range_active: bool) -> None:
+    async def _review_trade(
+        self, trade: dict, now: datetime, mid: float, range_active: bool
+    ) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -534,7 +628,9 @@ class SessionOpenExitWorker:
         if not client_id and isinstance(client_ext, dict):
             client_id = client_ext.get("id")
         if not client_id:
-            LOG.warning("[exit-session-open] missing client_id trade=%s skip close", trade_id)
+            LOG.warning(
+                "[exit-session-open] missing client_id trade=%s skip close", trade_id
+            )
             return
 
         state = self._states.get(trade_id)
@@ -607,10 +703,15 @@ class SessionOpenExitWorker:
             if reason:
                 now_mono = time.monotonic()
                 last = self._loss_cut_last_ts.get(trade_id, 0.0)
-                if params.cooldown_sec > 0.0 and (now_mono - last) < params.cooldown_sec:
+                if (
+                    params.cooldown_sec > 0.0
+                    and (now_mono - last) < params.cooldown_sec
+                ):
                     return
                 self._loss_cut_last_ts[trade_id] = now_mono
-                await self._close(trade_id, -units, reason, pnl, client_id, allow_negative=True)
+                await self._close(
+                    trade_id, -units, reason, pnl, client_id, allow_negative=True
+                )
                 self._states.pop(trade_id, None)
                 return
         # Candle reversal detection: only exit on reversal if we have held long enough
@@ -623,7 +724,9 @@ class SessionOpenExitWorker:
                 if isinstance(client_ext, dict):
                     candle_client_id = client_ext.get("id")
             if candle_client_id:
-                await self._close(trade_id, -units, candle_reason, pnl, candle_client_id)
+                await self._close(
+                    trade_id, -units, candle_reason, pnl, candle_client_id
+                )
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
                 return
@@ -665,23 +768,29 @@ class SessionOpenExitWorker:
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start
         trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
-        profit_take, trail_start, trail_backoff, lock_buffer = apply_exit_forecast_to_targets(
-            profit_take=profit_take,
-            trail_start=trail_start,
-            trail_backoff=trail_backoff,
-            lock_buffer=lock_buffer,
-            adjustment=forecast_adj,
-            profit_take_floor=2.0,
-            trail_start_floor=3.0,
-            trail_backoff_floor=0.5,
-            lock_buffer_floor=0.5,
+        profit_take, trail_start, trail_backoff, lock_buffer = (
+            apply_exit_forecast_to_targets(
+                profit_take=profit_take,
+                trail_start=trail_start,
+                trail_backoff=trail_backoff,
+                lock_buffer=lock_buffer,
+                adjustment=forecast_adj,
+                profit_take_floor=2.0,
+                trail_start_floor=3.0,
+                trail_backoff_floor=0.5,
+                lock_buffer_floor=0.5,
+            )
         )
 
         state.update(pnl, lock_buffer)
 
         if pnl >= trail_start:
             candidate = max(0.0, pnl - trail_backoff)
-            state.lock_floor = candidate if state.lock_floor is None else max(state.lock_floor, candidate)
+            state.lock_floor = (
+                candidate
+                if state.lock_floor is None
+                else max(state.lock_floor, candidate)
+            )
 
         if pnl >= profit_take:
             await self._close(trade_id, -units, "take_profit", pnl, client_id)
@@ -716,8 +825,12 @@ class SessionOpenExitWorker:
                 await asyncio.sleep(self.loop_interval)
                 positions = self._pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET) or {}
-                trades = _filter_trades(pocket_info.get("open_trades") or [], ALLOWED_TAGS)
-                active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
+                trades = _filter_trades(
+                    pocket_info.get("open_trades") or [], ALLOWED_TAGS
+                )
+                active_ids = {
+                    str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")
+                }
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
                         self._states.pop(tid, None)
@@ -735,7 +848,10 @@ class SessionOpenExitWorker:
                     try:
                         await self._review_trade(tr, now, mid, range_active)
                     except Exception:
-                        LOG.exception("[exit-session-open] review failed trade=%s", tr.get("trade_id"))
+                        LOG.exception(
+                            "[exit-session-open] review failed trade=%s",
+                            tr.get("trade_id"),
+                        )
         except asyncio.CancelledError:
             LOG.info("[exit-session-open] worker cancelled")
             raise
@@ -754,12 +870,19 @@ async def session_open_exit_worker() -> None:
 _CANDLE_PIP = 0.01
 _CANDLE_EXIT_MIN_CONF = 0.35
 _CANDLE_EXIT_SCORE = -0.5
-_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+_CANDLE_WORKER_NAME = (
+    __file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else ""
+).lower()
 
 
 def _candle_tf_for_worker() -> str:
     name = _CANDLE_WORKER_NAME
-    if "macro" in name or "trend_h1" in name or "manual" in name or "session_open" in name:
+    if (
+        "macro" in name
+        or "trend_h1" in name
+        or "manual" in name
+        or "session_open" in name
+    ):
         return "H1"
     if "scalp" in name or "s5" in name or "fast" in name:
         return "M1"
@@ -848,11 +971,19 @@ def _score_candle(*, candles, side, min_conf):
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     score = max(-1.0, min(1.0, score))
-    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+    return score, {
+        "type": pattern.get("type"),
+        "confidence": round(conf, 3),
+        "bias": bias,
+    }
 
 
 def _exit_candle_reversal(side):
@@ -860,12 +991,16 @@ def _exit_candle_reversal(side):
     candles = (all_factors().get(tf) or {}).get("candles") or []
     if not candles:
         return None
-    score, detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF)
+    score, detail = _score_candle(
+        candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF
+    )
     if score is None:
         return None
     if score <= _CANDLE_EXIT_SCORE:
         detail_type = detail.get("type") if isinstance(detail, dict) else None
         return f"candle_{detail_type}" if detail_type else "candle_reversal"
     return None
+
+
 if __name__ == "__main__":
     asyncio.run(session_open_exit_worker())

@@ -11,12 +11,14 @@ from indicators.factor_cache import all_factors
 from utils.env_utils import env_bool, env_float, env_get
 from utils.metrics_logger import log_metric
 from workers.common.exit_emergency import should_allow_negative_close
+
 try:  # optional in offline/backtest
     from market_data import tick_window
 except ImportError:  # pragma: no cover
     tick_window = None
 
 LOG = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class ExitCompositeCfg:
@@ -62,16 +64,29 @@ def _get_exit_composite_cfg(env_prefix: str | None) -> ExitCompositeCfg:
         enabled=env_bool("EXIT_COMPOSITE_ENABLED", True, prefix=env_prefix),
         reasons=reasons,
         min_score=env_float("EXIT_COMPOSITE_MIN_SCORE", 3.0, prefix=env_prefix),
-        failopen=_env_bool_truey("EXIT_COMPOSITE_FAILOPEN", False, env_prefix=env_prefix),
-        rsi_fade_long=env_float("EXIT_COMPOSITE_RSI_FADE_LONG", 44.0, prefix=env_prefix),
-        rsi_fade_short=env_float("EXIT_COMPOSITE_RSI_FADE_SHORT", 56.0, prefix=env_prefix),
+        failopen=_env_bool_truey(
+            "EXIT_COMPOSITE_FAILOPEN", False, env_prefix=env_prefix
+        ),
+        rsi_fade_long=env_float(
+            "EXIT_COMPOSITE_RSI_FADE_LONG", 44.0, prefix=env_prefix
+        ),
+        rsi_fade_short=env_float(
+            "EXIT_COMPOSITE_RSI_FADE_SHORT", 56.0, prefix=env_prefix
+        ),
         vwap_gap_pips=env_float("EXIT_COMPOSITE_VWAP_GAP_PIPS", 0.8, prefix=env_prefix),
-        structure_adx=env_float("EXIT_COMPOSITE_STRUCTURE_ADX", 20.0, prefix=env_prefix),
-        structure_gap_pips=env_float("EXIT_COMPOSITE_STRUCTURE_GAP_PIPS", 1.8, prefix=env_prefix),
-        atr_spike_pips=env_float("EXIT_COMPOSITE_ATR_SPIKE_PIPS", 5.0, prefix=env_prefix),
+        structure_adx=env_float(
+            "EXIT_COMPOSITE_STRUCTURE_ADX", 20.0, prefix=env_prefix
+        ),
+        structure_gap_pips=env_float(
+            "EXIT_COMPOSITE_STRUCTURE_GAP_PIPS", 1.8, prefix=env_prefix
+        ),
+        atr_spike_pips=env_float(
+            "EXIT_COMPOSITE_ATR_SPIKE_PIPS", 5.0, prefix=env_prefix
+        ),
     )
     _EXIT_COMPOSITE_CFG_CACHE[key] = cfg
     return cfg
+
 
 _LAST_COMPOSITE_LOG_TS = 0.0
 
@@ -95,7 +110,9 @@ def _latest_bid_ask_mid() -> Tuple[Optional[float], Optional[float], Optional[fl
     return bid, ask, mid
 
 
-def mark_pnl_pips(entry_price: float, units: int, *, mid: Optional[float] = None) -> Optional[float]:
+def mark_pnl_pips(
+    entry_price: float, units: int, *, mid: Optional[float] = None
+) -> Optional[float]:
     if entry_price <= 0 or units == 0:
         return None
     bid, ask, latest_mid = _latest_bid_ask_mid()
@@ -152,7 +169,7 @@ def _composite_exit_allowed(
         return cfg.failopen
     side = "long" if close_units < 0 else "short"
     try:
-        fac = (all_factors().get("M1") or {})
+        fac = all_factors().get("M1") or {}
     except Exception:  # noqa: BLE001 - all_factors can raise many types
         LOG.debug("all_factors lookup failed for composite exit", exc_info=True)
         fac = {}
@@ -183,8 +200,12 @@ def _composite_exit_allowed(
     structure_break = False
     if adx is not None and ma10 is not None and ma20 is not None:
         gap = abs(ma10 - ma20) / 0.01
-        cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
-        structure_break = adx <= cfg.structure_adx and (cross_bad or gap <= cfg.structure_gap_pips)
+        cross_bad = (side == "long" and ma10 <= ma20) or (
+            side == "short" and ma10 >= ma20
+        )
+        structure_break = adx <= cfg.structure_adx and (
+            cross_bad or gap <= cfg.structure_gap_pips
+        )
 
     score = 0
     if rsi_fade:

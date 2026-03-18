@@ -38,6 +38,7 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
+
 # --- config ---
 # env / secret から OANDA 設定を取得
 TOKEN = get_secret("oanda_token")
@@ -159,6 +160,8 @@ def _normalize_worker_tag(tag: object | str | None) -> str | None:
     ):
         return "scalp"
     return tag_str
+
+
 # SQLite locking周り
 # ロック頻発に備えてデフォルトを広めに取る
 _DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "20000"))
@@ -168,8 +171,12 @@ _DB_LOCK_RETRY_SLEEP = float(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY_SLEEP", "
 _DB_JOURNAL_MODE = os.getenv("POSITION_MANAGER_DB_JOURNAL_MODE", "WAL")
 _DB_SYNCHRONOUS = os.getenv("POSITION_MANAGER_DB_SYNCHRONOUS", "NORMAL")
 _DB_TEMP_STORE = os.getenv("POSITION_MANAGER_DB_TEMP_STORE", "MEMORY")
-_DB_LOCK_PATH = pathlib.Path(os.getenv("POSITION_MANAGER_DB_LOCK_PATH", "logs/trades.db.lock"))
-_DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "30.0"))
+_DB_LOCK_PATH = pathlib.Path(
+    os.getenv("POSITION_MANAGER_DB_LOCK_PATH", "logs/trades.db.lock")
+)
+_DB_FILE_LOCK_TIMEOUT = float(
+    os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "30.0")
+)
 _METRICS_READ_TIMEOUT_SEC = float(
     os.getenv("POSITION_MANAGER_METRICS_TIMEOUT_SEC", "0.2")
 )
@@ -186,7 +193,9 @@ _CHART_MARKERS_MAX = int(os.getenv("UI_CHART_MARKERS_MAX", "140"))
 _HOURLY_LOOKBACK_HOURS = max(
     6, int(os.getenv("POSITION_MANAGER_HOURLY_LOOKBACK_HOURS", "24"))
 )
-_BACKFILL_ENABLED = os.getenv("POSITION_MANAGER_BACKFILL_ATTR", "1").strip().lower() not in {
+_BACKFILL_ENABLED = os.getenv(
+    "POSITION_MANAGER_BACKFILL_ATTR", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -548,7 +557,9 @@ def _position_manager_service_request(path: str, payload: dict) -> object | None
             f" (retry in {max(0.0, _POSITION_MANAGER_SERVICE_NEXT_RETRY - now_ts):.1f}s)"
         )
     try:
-        result = _extract_service_payload(path, _position_manager_service_call(path, payload))
+        result = _extract_service_payload(
+            path, _position_manager_service_call(path, payload)
+        )
         _POSITION_MANAGER_SERVICE_ERROR_COUNT = 0
         _POSITION_MANAGER_SERVICE_NEXT_RETRY = 0.0
         _POSITION_MANAGER_SERVICE_LAST_ERROR = None
@@ -589,13 +600,13 @@ def _is_closed_db_error(exc: Exception) -> bool:
     return (
         "closed database" in message
         or "connection is closed" in message
-        or "closed" in message and "database" in message
+        or "closed" in message
+        and "database" in message
     )
 
+
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
-agent_client_prefixes = tuple(
-    os.getenv("AGENT_CLIENT_PREFIXES", "qr-,qs-").split(",")
-)
+agent_client_prefixes = tuple(os.getenv("AGENT_CLIENT_PREFIXES", "qr-,qs-").split(","))
 agent_client_prefixes = tuple(p for p in agent_client_prefixes if p)
 if not agent_client_prefixes:
     agent_client_prefixes = ("qr-",)
@@ -832,7 +843,9 @@ def _normalize_entry_contract_fields(
     return thesis
 
 
-def _apply_strategy_tag_normalization(thesis: dict | None, raw_tag: object | None) -> tuple[dict | None, str | None]:
+def _apply_strategy_tag_normalization(
+    thesis: dict | None, raw_tag: object | None
+) -> tuple[dict | None, str | None]:
     """Ensure thesis carries normalized strategy_tag while preserving raw tag."""
     norm = _normalize_strategy_tag(raw_tag)
     if not norm and thesis is None:
@@ -862,6 +875,7 @@ def _infer_pocket_from_client_id(client_id: object | None) -> str | None:
         return "scalp"
     try:
         import re
+
         match = re.match(r"^(?:qr|qs)-\d+-(micro|macro|scalp|scalp_fast)-", cid)
         if match:
             return match.group(1)
@@ -1018,8 +1032,7 @@ def _ensure_orders_db() -> sqlite3.Connection:
     con = sqlite3.connect(_ORDERS_DB, timeout=_DB_BUSY_TIMEOUT_MS / 1000)
     con.row_factory = sqlite3.Row
     _configure_sqlite(con)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE IF NOT EXISTS orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           ts TEXT,
@@ -1040,9 +1053,10 @@ def _ensure_orders_db() -> sqlite3.Connection:
           request_json TEXT,
           response_json TEXT
         )
-        """
+        """)
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)"
     )
-    con.execute("CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_orders_ts ON orders(ts)")
     con.commit()
     return con
@@ -1229,7 +1243,9 @@ def _load_latest_candles(tf: str) -> list[tuple[datetime, float, float, float, f
                 open_v = open_v if open_v is not None else _coerce_float(mid.get("o"))
                 high_v = high_v if high_v is not None else _coerce_float(mid.get("h"))
                 low_v = low_v if low_v is not None else _coerce_float(mid.get("l"))
-                close_v = close_v if close_v is not None else _coerce_float(mid.get("c"))
+                close_v = (
+                    close_v if close_v is not None else _coerce_float(mid.get("c"))
+                )
         if open_v is None or high_v is None or low_v is None or close_v is None:
             continue
         candles.append((dt, open_v, high_v, low_v, close_v))
@@ -1251,7 +1267,10 @@ def _build_chart_data(
         return int(dt.timestamp() * 1000)
 
     perf_specs = {
-        "5m": {"delta": timedelta(minutes=5), "max_points": min(_CHART_MAX_POINTS, 120)},
+        "5m": {
+            "delta": timedelta(minutes=5),
+            "max_points": min(_CHART_MAX_POINTS, 120),
+        },
         "1h": {"delta": timedelta(hours=1), "max_points": min(_CHART_MAX_POINTS, 200)},
         "1d": {"delta": timedelta(days=1), "max_points": _CHART_MAX_POINTS},
         "1w": {"delta": timedelta(days=7), "max_points": _CHART_MAX_POINTS},
@@ -1260,11 +1279,31 @@ def _build_chart_data(
     }
 
     price_specs = {
-        "5m": {"delta": timedelta(minutes=5), "tf": "M1", "max_points": min(_CHART_PRICE_MAX_POINTS, 120)},
-        "1h": {"delta": timedelta(hours=1), "tf": "M1", "max_points": min(_CHART_PRICE_MAX_POINTS, 200)},
-        "1d": {"delta": timedelta(days=1), "tf": "M1", "max_points": _CHART_PRICE_MAX_POINTS},
-        "1w": {"delta": timedelta(days=7), "tf": "H1", "max_points": _CHART_PRICE_MAX_POINTS},
-        "1m": {"delta": timedelta(days=30), "tf": "H4", "max_points": _CHART_PRICE_MAX_POINTS},
+        "5m": {
+            "delta": timedelta(minutes=5),
+            "tf": "M1",
+            "max_points": min(_CHART_PRICE_MAX_POINTS, 120),
+        },
+        "1h": {
+            "delta": timedelta(hours=1),
+            "tf": "M1",
+            "max_points": min(_CHART_PRICE_MAX_POINTS, 200),
+        },
+        "1d": {
+            "delta": timedelta(days=1),
+            "tf": "M1",
+            "max_points": _CHART_PRICE_MAX_POINTS,
+        },
+        "1w": {
+            "delta": timedelta(days=7),
+            "tf": "H1",
+            "max_points": _CHART_PRICE_MAX_POINTS,
+        },
+        "1m": {
+            "delta": timedelta(days=30),
+            "tf": "H4",
+            "max_points": _CHART_PRICE_MAX_POINTS,
+        },
         "1y": {"start": year_start, "tf": "H4", "max_points": _CHART_PRICE_MAX_POINTS},
     }
 
@@ -1280,7 +1319,9 @@ def _build_chart_data(
         cum_jpy.append(total_jpy)
         cum_pips.append(total_pips)
 
-    def _series_since(start_dt: datetime) -> tuple[list[tuple[datetime, float]], list[tuple[datetime, float]], int]:
+    def _series_since(
+        start_dt: datetime,
+    ) -> tuple[list[tuple[datetime, float]], list[tuple[datetime, float]], int]:
         if not event_times:
             return [], [], 0
         idx = bisect_left(event_times, start_dt)
@@ -1358,7 +1399,9 @@ def _build_chart_data(
             earliest_candidates.append(start_dt)
         else:
             earliest_candidates.append(now - spec["delta"])
-    earliest_price_start = min(earliest_candidates) if earliest_candidates else now - timedelta(days=1)
+    earliest_price_start = (
+        min(earliest_candidates) if earliest_candidates else now - timedelta(days=1)
+    )
     markers: list[dict] = []
     agent_prefixes = ("qr-", "qs-")
 
@@ -1415,7 +1458,9 @@ def _build_chart_data(
             worker = _normalize_worker_tag(strategy_label) or strategy_label
         entry_time = row["entry_time"]
         close_time = row["close_time"]
-        entry_price = _coerce_float(row["entry_price"]) or _coerce_float(row["fill_price"])
+        entry_price = _coerce_float(row["entry_price"]) or _coerce_float(
+            row["fill_price"]
+        )
         close_price = _coerce_float(row["close_price"])
         units_abs = int(abs(units)) if units else None
 
@@ -1478,7 +1523,7 @@ def _build_chart_data(
 
     markers.sort(key=lambda m: m["ts_ms"])
     if _CHART_MARKERS_MAX > 0 and len(markers) > _CHART_MARKERS_MAX:
-        markers = markers[-_CHART_MARKERS_MAX :]
+        markers = markers[-_CHART_MARKERS_MAX:]
 
     for key, spec in price_specs.items():
         start_dt = spec.get("start") or (now - spec["delta"])
@@ -1500,7 +1545,7 @@ def _build_chart_data(
             m for m in markers if range_start_ms <= m["ts_ms"] <= range_end_ms
         ]
         if _CHART_MARKERS_MAX > 0 and len(range_markers) > _CHART_MARKERS_MAX:
-            range_markers = range_markers[-_CHART_MARKERS_MAX :]
+            range_markers = range_markers[-_CHART_MARKERS_MAX:]
         price_ranges[key] = {
             "label": key,
             "tf": spec["tf"],
@@ -1566,7 +1611,9 @@ class PositionManager:
         self._sync_trades_lock = threading.Lock()
         self._last_sync_cache: list[dict] = []
         self._last_sync_cache_ts: float = 0.0
-        self._last_sync_cache_window_sec: float = _POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC
+        self._last_sync_cache_window_sec: float = (
+            _POSITION_MANAGER_SYNC_CACHE_WINDOW_SEC
+        )
         self._last_sync_poll_ts: float = 0.0
         self._last_positions_meta: dict | None = None
         self._entry_meta_cache: dict[str, dict] = {}
@@ -1652,7 +1699,9 @@ class PositionManager:
         return dict(self._last_sync_breakdown or {})
 
     @staticmethod
-    def _infer_strategy_tag(thesis: dict | None, client_id: str | None, pocket: str | None) -> str | None:
+    def _infer_strategy_tag(
+        thesis: dict | None, client_id: str | None, pocket: str | None
+    ) -> str | None:
         """
         推定ルール:
         - thesis.strategy_tag / strategy を最優先
@@ -1668,7 +1717,15 @@ class PositionManager:
         try:
             import re
 
-            pocket_tokens = {"micro", "macro", "scalp", "scalp_fast", "event", "hybrid", "mar"}
+            pocket_tokens = {
+                "micro",
+                "macro",
+                "scalp",
+                "scalp_fast",
+                "event",
+                "hybrid",
+                "mar",
+            }
             suffix_token_re = re.compile(r"^[sb]?[a-f0-9]{6,16}$")
 
             # Known prefixes
@@ -1727,18 +1784,33 @@ class PositionManager:
 
             # qr-<pocket>-<ts>-<tag...>
             if cid.startswith("qr-") and cid.count("-") >= 4:
-                m2 = re.match(r"^qr-(micro|macro|scalp|scalp_fast|event|hybrid|mar)-\d+-([^-]+)", cid)
+                m2 = re.match(
+                    r"^qr-(micro|macro|scalp|scalp_fast|event|hybrid|mar)-\d+-([^-]+)",
+                    cid,
+                )
                 if m2:
                     return _normalize_strategy_tag(m2.group(2))
 
             # qr-<ts>-<pocket>-<tag...>
             if cid.startswith("qr-") and cid.count("-") >= 3:
-                m = re.match(r"^qr-\d+-(micro|macro|scalp|scalp_fast|event|hybrid|mar)-(.+)$", cid)
+                m = re.match(
+                    r"^qr-\d+-(micro|macro|scalp|scalp_fast|event|hybrid|mar)-(.+)$",
+                    cid,
+                )
                 if m:
                     return _normalize_strategy_tag(m.group(2))
             # fallback: qr-<word>-<rest>
             m3 = re.match(r"^qr-([a-zA-Z0-9_]+)-(.+)$", cid)
-            if m3 and m3.group(1) not in {"micro", "macro", "scalp", "scalp_fast", "event", "hybrid", "mar", "lm"}:
+            if m3 and m3.group(1) not in {
+                "micro",
+                "macro",
+                "scalp",
+                "scalp_fast",
+                "event",
+                "hybrid",
+                "mar",
+                "lm",
+            }:
                 return _normalize_strategy_tag(m3.group(1))
         except Exception:
             return None
@@ -1765,8 +1837,7 @@ class PositionManager:
     def _ensure_schema(self):
         self._ensure_connection_open()
         # trades テーブルが存在しない場合のベース定義
-        self.con.execute(
-            """
+        self.con.execute("""
             CREATE TABLE IF NOT EXISTS trades (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               transaction_id INTEGER,
@@ -1791,8 +1862,7 @@ class PositionManager:
               version TEXT DEFAULT 'v1',
               unrealized_pl REAL
             )
-            """
-        )
+            """)
 
         # 欠損カラムを追加（既存データを保持する）
         existing = {row[1] for row in self.con.execute("PRAGMA table_info(trades)")}
@@ -1858,8 +1928,7 @@ class PositionManager:
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
         )
-        self.con.execute(
-            """
+        self.con.execute("""
             CREATE TABLE IF NOT EXISTS cashflows (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               transaction_id INTEGER UNIQUE,
@@ -1869,8 +1938,7 @@ class PositionManager:
               type TEXT,
               funding_reason TEXT
             )
-            """
-        )
+            """)
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_cashflows_time ON cashflows(time)"
         )
@@ -1919,9 +1987,7 @@ class PositionManager:
         # Skip if we already ran recently for this YTD window.
         if _CASHFLOW_BACKFILL_TTL_SEC > 0 and _CASHFLOW_BACKFILL_MARKER.exists():
             try:
-                data = json.loads(
-                    _CASHFLOW_BACKFILL_MARKER.read_text(encoding="utf-8")
-                )
+                data = json.loads(_CASHFLOW_BACKFILL_MARKER.read_text(encoding="utf-8"))
                 last_ts = float(data.get("ts") or 0.0)
                 marker_ver = int(data.get("version") or 0)
                 marker_from = str(data.get("from") or "")
@@ -1953,7 +2019,9 @@ class PositionManager:
                 batch.clear()
                 return inserted
             except TimeoutError:
-                logging.warning("[PositionManager] cashflow backfill lock busy; skip batch")
+                logging.warning(
+                    "[PositionManager] cashflow backfill lock busy; skip batch"
+                )
                 batch.clear()
                 return 0
 
@@ -1992,15 +2060,18 @@ class PositionManager:
             url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
             for tx_type in _CASHFLOW_OANDA_QUERY_TYPES:
                 try:
-                    summary = self._request_json(
-                        url,
-                        params={
-                            "from": year_start_iso,
-                            "to": now_iso,
-                            "pageSize": 1000,
-                            "type": tx_type,
-                        },
-                    ) or {}
+                    summary = (
+                        self._request_json(
+                            url,
+                            params={
+                                "from": year_start_iso,
+                                "to": now_iso,
+                                "pageSize": 1000,
+                                "type": tx_type,
+                            },
+                        )
+                        or {}
+                    )
                 except requests.RequestException as exc:
                     logging.warning(
                         "[PositionManager] cashflow backfill summary failed type=%s: %s",
@@ -2097,7 +2168,9 @@ class PositionManager:
                     if isinstance(payload, dict):
                         entry_thesis_obj = payload
                         if not current_tag:
-                            current_tag = payload.get("strategy_tag") or payload.get("strategy")
+                            current_tag = payload.get("strategy_tag") or payload.get(
+                                "strategy"
+                            )
                 except Exception:
                     entry_thesis_obj = None
             norm_tag = _normalize_strategy_tag(current_tag)
@@ -2128,7 +2201,14 @@ class PositionManager:
             ):
                 continue
             updates.append(
-                (final_pocket, final_tag, final_strategy, macro_regime, micro_regime, row["id"])
+                (
+                    final_pocket,
+                    final_tag,
+                    final_strategy,
+                    macro_regime,
+                    micro_regime,
+                    row["id"],
+                )
             )
         if updates:
             con.executemany(
@@ -2198,8 +2278,7 @@ class PositionManager:
         self._ensure_connection_open()
         try:
             self.con.execute("BEGIN")
-            self.con.execute(
-                """
+            self.con.execute("""
                 CREATE TABLE IF NOT EXISTS trades_migrated (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   transaction_id INTEGER,
@@ -2224,8 +2303,7 @@ class PositionManager:
                   version TEXT DEFAULT 'v1',
                   unrealized_pl REAL
                 )
-                """
-            )
+                """)
             columns = (
                 "id, transaction_id, ticket_id, pocket, instrument, units, closed_units, "
                 "entry_price, close_price, fill_price, pl_pips, realized_pl, commission, "
@@ -2420,7 +2498,9 @@ class PositionManager:
                     if not fallback.get("details_source"):
                         fallback["details_source"] = "orders"
                     return fallback
-            print(f"[PositionManager] Error fetching trade details for {trade_id}: {exc}")
+            print(
+                f"[PositionManager] Error fetching trade details for {trade_id}: {exc}"
+            )
             fallback = self._get_trade_details_from_orders(trade_id)
             if fallback and not fallback.get("details_source"):
                 fallback["details_source"] = "orders"
@@ -2451,7 +2531,9 @@ class PositionManager:
                 (trade_id,),
             ).fetchone()
         except sqlite3.Error as exc:
-            print(f"[PositionManager] orders.db lookup failed for trade {trade_id}: {exc}")
+            print(
+                f"[PositionManager] orders.db lookup failed for trade {trade_id}: {exc}"
+            )
             return None
         finally:
             if con is not None:
@@ -2512,7 +2594,9 @@ class PositionManager:
                     except Exception:
                         pass
         if strategy_tag is None:
-            strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
+            strategy_tag = self._infer_strategy_tag(
+                thesis_obj, client_id, row["pocket"]
+            )
         raw_tag = strategy_tag
         if not raw_tag and isinstance(thesis_obj, dict):
             raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
@@ -2544,7 +2628,9 @@ class PositionManager:
             "details_source": "orders",
         }
 
-    def _get_trade_details_from_orders_by_client_order_id(self, client_order_id: str) -> dict | None:
+    def _get_trade_details_from_orders_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict | None:
         if not client_order_id:
             return None
         client_id = str(client_order_id).strip()
@@ -2630,7 +2716,9 @@ class PositionManager:
                     pass
 
         if strategy_tag is None:
-            strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
+            strategy_tag = self._infer_strategy_tag(
+                thesis_obj, client_id, row["pocket"]
+            )
         raw_tag = strategy_tag
         if not raw_tag and isinstance(thesis_obj, dict):
             raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
@@ -2729,7 +2817,9 @@ class PositionManager:
 
                 close_price = float(tx.get("price", 0.0))
                 close_time = _parse_timestamp(tx.get("time"))
-                client_trade_id = closed_trade.get("clientTradeID") or closed_trade.get("client_trade_id")
+                client_trade_id = closed_trade.get("clientTradeID") or closed_trade.get(
+                    "client_trade_id"
+                )
 
                 details_start = time.monotonic()
                 details = self._get_trade_details(trade_id)
@@ -2738,8 +2828,10 @@ class PositionManager:
                 if not details:
                     if client_trade_id:
                         details_start2 = time.monotonic()
-                        details = self._get_trade_details_from_orders_by_client_order_id(
-                            str(client_trade_id)
+                        details = (
+                            self._get_trade_details_from_orders_by_client_order_id(
+                                str(client_trade_id)
+                            )
                         )
                         details_ms += max(
                             0.0, (time.monotonic() - details_start2) * 1000.0
@@ -2748,14 +2840,22 @@ class PositionManager:
                 if not details:
                     try:
                         units_raw = closed_trade.get("units")
-                        closure_units = int(float(units_raw)) if units_raw is not None else 0
+                        closure_units = (
+                            int(float(units_raw)) if units_raw is not None else 0
+                        )
                     except Exception:
                         closure_units = 0
                     inferred_tag = None
-                    client_id_str = str(client_trade_id).strip() if client_trade_id else ""
+                    client_id_str = (
+                        str(client_trade_id).strip() if client_trade_id else ""
+                    )
                     if client_id_str:
-                        inferred_tag = self._infer_strategy_tag(None, client_id_str, None)
-                    thesis_obj, norm_tag = _apply_strategy_tag_normalization(None, inferred_tag)
+                        inferred_tag = self._infer_strategy_tag(
+                            None, client_id_str, None
+                        )
+                    thesis_obj, norm_tag = _apply_strategy_tag_normalization(
+                        None, inferred_tag
+                    )
                     if norm_tag:
                         inferred_tag = norm_tag
                     thesis_obj = _normalize_entry_contract_fields(
@@ -2790,7 +2890,10 @@ class PositionManager:
                 if inferred_tag and not details.get("strategy_tag"):
                     details["strategy_tag"] = inferred_tag
                 if client_trade_id:
-                    if not details.get("client_order_id") or details.get("details_source") != "oanda":
+                    if (
+                        not details.get("client_order_id")
+                        or details.get("details_source") != "oanda"
+                    ):
                         details["client_order_id"] = client_trade_id
                     inferred_from_trade = self._infer_strategy_tag(
                         details.get("entry_thesis"),
@@ -2798,7 +2901,8 @@ class PositionManager:
                         details.get("pocket"),
                     )
                     if inferred_from_trade and (
-                        not details.get("strategy_tag") or details.get("details_source") != "oanda"
+                        not details.get("strategy_tag")
+                        or details.get("details_source") != "oanda"
                     ):
                         details["strategy_tag"] = inferred_from_trade
 
@@ -2810,7 +2914,11 @@ class PositionManager:
                 try:
                     closed_units_raw = closed_trade.get("units")
                     # OANDAの tradesClosed[].units は方向に応じて符号が付く場合があるため、絶対値で保存
-                    closed_units = abs(int(float(closed_units_raw))) if closed_units_raw is not None else 0
+                    closed_units = (
+                        abs(int(float(closed_units_raw)))
+                        if closed_units_raw is not None
+                        else 0
+                    )
                 except Exception:
                     closed_units = 0
 
@@ -2831,7 +2939,9 @@ class PositionManager:
                     if pip_units > 0 and abs(pl_pips) < 0.2 and abs(realized_pl) >= 100:
                         pl_pips = realized_pl / (pip_units * pip_value)
                 else:
-                    pl_pips = realized_pl / (pip_units * pip_value) if pip_units else 0.0
+                    pl_pips = (
+                        realized_pl / (pip_units * pip_value) if pip_units else 0.0
+                    )
                 # 取引コスト類（存在すれば保存）
                 try:
                     commission = float(tx.get("commission", 0.0) or 0.0)
@@ -3057,7 +3167,10 @@ class PositionManager:
 
         now = time.monotonic()
         cache_age = max(0.0, now - self._last_sync_cache_ts)
-        if self._last_sync_cache_ts > 0.0 and cache_age <= self._last_sync_cache_window_sec:
+        if (
+            self._last_sync_cache_ts > 0.0
+            and cache_age <= self._last_sync_cache_window_sec
+        ):
             if max_fetch_int > 0:
                 return self._last_sync_cache[-max_fetch_int:]
             return list(self._last_sync_cache)
@@ -3123,7 +3236,9 @@ class PositionManager:
             self._sync_trades_lock.release()
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:
-        return self._request_json_with_timeout(url, params=params, timeout_sec=_REQUEST_TIMEOUT)
+        return self._request_json_with_timeout(
+            url, params=params, timeout_sec=_REQUEST_TIMEOUT
+        )
 
     def _request_json_with_timeout(
         self,
@@ -3160,7 +3275,9 @@ class PositionManager:
                 pass
             self._http = _build_http_session()
 
-    def register_open_trade(self, trade_id: str, pocket: str, client_id: str | None = None):
+    def register_open_trade(
+        self, trade_id: str, pocket: str, client_id: str | None = None
+    ):
         if trade_id and pocket:
             _bounded_cache_put(
                 self._pocket_cache,
@@ -3212,10 +3329,13 @@ class PositionManager:
 
             url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/openTrades"
             try:
-                payload = self._request_json_with_timeout(
-                    url,
-                    timeout_sec=_OPEN_TRADES_REQUEST_TIMEOUT,
-                ) or {}
+                payload = (
+                    self._request_json_with_timeout(
+                        url,
+                        timeout_sec=_OPEN_TRADES_REQUEST_TIMEOUT,
+                    )
+                    or {}
+                )
                 trades = payload.get("trades", [])
                 self._open_trade_failures = 0
                 self._next_open_fetch_after = now_mono + _OPEN_TRADES_CACHE_TTL
@@ -3224,7 +3344,8 @@ class PositionManager:
                 self._reset_http_if_needed(e)
                 self._open_trade_failures += 1
                 backoff = min(
-                    _OPEN_TRADES_FAIL_BACKOFF_BASE * (2 ** (self._open_trade_failures - 1)),
+                    _OPEN_TRADES_FAIL_BACKOFF_BASE
+                    * (2 ** (self._open_trade_failures - 1)),
                     _OPEN_TRADES_FAIL_BACKOFF_MAX,
                 )
                 self._next_open_fetch_after = now_mono + backoff
@@ -3251,7 +3372,9 @@ class PositionManager:
                 tag_raw = client_ext.get("tag") or ""
                 tag = str(tag_raw)
                 trade_id = tr.get("id") or tr.get("tradeID")
-                cached_pocket = self._pocket_cache.get(str(trade_id), "") if trade_id else ""
+                cached_pocket = (
+                    self._pocket_cache.get(str(trade_id), "") if trade_id else ""
+                )
 
                 pocket: str
                 is_agent_client = client_id.startswith(agent_client_prefixes)
@@ -3282,7 +3405,9 @@ class PositionManager:
                 open_time_iso: str | None = None
                 if open_time_raw:
                     try:
-                        opened_dt = _parse_timestamp(open_time_raw).astimezone(timezone.utc)
+                        opened_dt = _parse_timestamp(open_time_raw).astimezone(
+                            timezone.utc
+                        )
                         open_time_iso = opened_dt.isoformat()
                     except Exception:
                         open_time_iso = open_time_raw
@@ -3327,7 +3452,9 @@ class PositionManager:
                     tp_price_raw = tp_order.get("price")
                     tp_order_id = tp_order.get("id")
                     try:
-                        tp_price = float(tp_price_raw) if tp_price_raw is not None else None
+                        tp_price = (
+                            float(tp_price_raw) if tp_price_raw is not None else None
+                        )
                     except (TypeError, ValueError):
                         tp_price = None
                     if tp_price is not None and tp_price > 0:
@@ -3341,7 +3468,9 @@ class PositionManager:
                     sl_price_raw = sl_order.get("price")
                     sl_order_id = sl_order.get("id")
                     try:
-                        sl_price = float(sl_price_raw) if sl_price_raw is not None else None
+                        sl_price = (
+                            float(sl_price_raw) if sl_price_raw is not None else None
+                        )
                     except (TypeError, ValueError):
                         sl_price = None
                     if sl_price is not None and sl_price > 0:
@@ -3395,20 +3524,26 @@ class PositionManager:
                     if not trade_entry.get("entry_thesis"):
                         trade_entry["entry_thesis"] = thesis_from_comment
                     if not trade_entry.get("strategy_tag"):
-                        tag_val = thesis_from_comment.get("strategy_tag") or thesis_from_comment.get(
-                            "tag"
-                        )
+                        tag_val = thesis_from_comment.get(
+                            "strategy_tag"
+                        ) or thesis_from_comment.get("tag")
                         if tag_val:
                             trade_entry["strategy_tag"] = tag_val
                 if not trade_entry.get("strategy_tag"):
-                    inferred = self._infer_strategy_tag(trade_entry.get("entry_thesis"), client_id, pocket)
+                    inferred = self._infer_strategy_tag(
+                        trade_entry.get("entry_thesis"), client_id, pocket
+                    )
                     if inferred:
                         trade_entry["strategy_tag"] = inferred
                 raw_tag = trade_entry.get("strategy_tag")
                 thesis_obj = trade_entry.get("entry_thesis")
                 if not raw_tag and isinstance(thesis_obj, dict):
-                    raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
-                thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+                    raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get(
+                        "strategy"
+                    )
+                thesis_obj, norm_tag = _apply_strategy_tag_normalization(
+                    thesis_obj, raw_tag
+                )
                 if thesis_obj is not None:
                     trade_entry["entry_thesis"] = thesis_obj
                 if norm_tag:
@@ -3423,7 +3558,9 @@ class PositionManager:
                         entry_thesis_client_ids.add(client_id)
                     else:
                         strategy_tag_val = trade_entry.get("strategy_tag")
-                        strategy_is_canonical = _is_canonical_strategy_tag(strategy_tag_val)
+                        strategy_is_canonical = _is_canonical_strategy_tag(
+                            strategy_tag_val
+                        )
                         needs_entry_enrich = (
                             not strategy_tag_val
                             or not strategy_is_canonical
@@ -3481,7 +3618,9 @@ class PositionManager:
                     info["short_units"] = new_units
 
                 info["unrealized_pl"] = info.get("unrealized_pl", 0.0) + unrealized_pl
-                info["unrealized_pl_pips"] = info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
+                info["unrealized_pl_pips"] = (
+                    info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
+                )
                 net_units += units
                 if pocket == _MANUAL_POCKET_NAME:
                     manual_trades += 1
@@ -3491,7 +3630,11 @@ class PositionManager:
             if entry_thesis_client_ids:
                 entry_map = self._load_entry_thesis(list(entry_thesis_client_ids))
                 for pocket_info in pockets.values():
-                    trades_list = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                    trades_list = (
+                        pocket_info.get("open_trades")
+                        if isinstance(pocket_info, dict)
+                        else None
+                    )
                     if not trades_list:
                         continue
                     for trade in trades_list:
@@ -3500,16 +3643,22 @@ class PositionManager:
                             thesis_obj = entry_map[cid]
                             raw_tag = trade.get("strategy_tag")
                             if not raw_tag and isinstance(thesis_obj, dict):
-                                raw_tag = thesis_obj.get("strategy_tag_raw") or thesis_obj.get("strategy_tag")
+                                raw_tag = thesis_obj.get(
+                                    "strategy_tag_raw"
+                                ) or thesis_obj.get("strategy_tag")
                                 if not raw_tag:
                                     raw_tag = thesis_obj.get("strategy")
-                            thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+                            thesis_obj, norm_tag = _apply_strategy_tag_normalization(
+                                thesis_obj, raw_tag
+                            )
                             if thesis_obj is not None:
                                 trade["entry_thesis"] = thesis_obj
-                                trade["entry_thesis"] = _normalize_entry_contract_fields(
-                                    thesis_obj,
-                                    trade,
-                                    fallback_units=trade.get("units"),
+                                trade["entry_thesis"] = (
+                                    _normalize_entry_contract_fields(
+                                        thesis_obj,
+                                        trade,
+                                        fallback_units=trade.get("units"),
+                                    )
                                 )
                             if norm_tag:
                                 trade["strategy_tag"] = norm_tag
@@ -3526,10 +3675,11 @@ class PositionManager:
                     "manual_unrealized_pl": manual_unrealized,
                 }
             self._last_positions_meta = dict(extra_meta)
-            return self._package_positions(pockets, stale=False, age_sec=0.0, extra_meta=extra_meta)
+            return self._package_positions(
+                pockets, stale=False, age_sec=0.0, extra_meta=extra_meta
+            )
         finally:
             self._open_positions_lock.release()
-
 
     def _commit_with_retry(self) -> None:
         """Commit with retry to survive short lock bursts."""
@@ -3700,7 +3850,9 @@ class PositionManager:
             except json.JSONDecodeError:
                 fetched[cid] = None
                 continue
-            thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+            thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get(
+                "entry_thesis"
+            )
             if not isinstance(thesis, dict):
                 thesis = None
             thesis_obj = _normalize_entry_contract_fields(
@@ -3719,9 +3871,14 @@ class PositionManager:
 
         with self._entry_thesis_cache_lock:
             for cid, thesis_obj in fetched.items():
-                cached_value = dict(thesis_obj) if isinstance(thesis_obj, dict) else None
+                cached_value = (
+                    dict(thesis_obj) if isinstance(thesis_obj, dict) else None
+                )
                 self._entry_thesis_cache[cid] = (now_mono, cached_value)
-            overflow = len(self._entry_thesis_cache) - _POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES
+            overflow = (
+                len(self._entry_thesis_cache)
+                - _POSITION_MANAGER_ENTRY_THESIS_CACHE_MAX_ENTRIES
+            )
             if overflow > 0:
                 stale_keys = sorted(
                     self._entry_thesis_cache.items(),
@@ -3797,8 +3954,12 @@ class PositionManager:
             "SELECT pl_pips, realized_pl, close_time, pocket, client_order_id "
             "FROM trades WHERE close_time IS NOT NULL"
         ).fetchall()
-        year_start = now_jst.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        year_start_utc = year_start.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+        year_start = now_jst.replace(
+            month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        year_start_utc = (
+            year_start.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+        )
         agent_prefixes = tuple(p for p in ("qr-", "qs-") if p)
         daily_table: dict[str, dict] = {}
         weekly_table: dict[str, dict] = {}
@@ -3880,6 +4041,7 @@ class PositionManager:
                     "loss_pips": 0.0,
                 }
             return table[key]
+
         pocket_raw: dict[str, dict[str, float | int]] = {}
         for row in rows:
             try:
@@ -3919,7 +4081,9 @@ class PositionManager:
             if close_dt_jst >= year_start and pocket != _MANUAL_POCKET_NAME:
                 if _is_agent_trade(pocket, client_id):
                     day_key = close_dt_jst.date().isoformat()
-                    week_start_date = close_dt_jst.date() - timedelta(days=close_dt_jst.weekday())
+                    week_start_date = close_dt_jst.date() - timedelta(
+                        days=close_dt_jst.weekday()
+                    )
                     week_key = week_start_date.isoformat()
                     month_key = close_dt_jst.strftime("%Y-%m")
                     for key, table in (
@@ -4119,7 +4283,9 @@ class PositionManager:
         weekly_start = _start_balance_map(list(weekly_table.keys()), "weekly")
         monthly_start = _start_balance_map(list(monthly_table.keys()), "monthly")
 
-        def _apply_start_balance(rows: list[dict], start_map: dict[str, float | None]) -> None:
+        def _apply_start_balance(
+            rows: list[dict], start_map: dict[str, float | None]
+        ) -> None:
             for row in rows:
                 key = row.get("key")
                 start_balance = start_map.get(key)
@@ -4265,7 +4431,7 @@ class PositionManager:
                 "entry_thesis": row["entry_thesis"],
             }
             for row in rows
-            ]
+        ]
 
     def close(self):
         # Never propagate close() to the shared position-manager service.

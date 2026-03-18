@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from statistics import mean
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-
 _PIP = 0.01
 
 
@@ -27,7 +26,9 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _extract_candles(raw: Optional[Iterable[dict]]) -> List[Tuple[float, float, float, float]]:
+def _extract_candles(
+    raw: Optional[Iterable[dict]],
+) -> List[Tuple[float, float, float, float]]:
     candles: List[Tuple[float, float, float, float]] = []
     if not raw:
         return candles
@@ -40,7 +41,9 @@ def _extract_candles(raw: Optional[Iterable[dict]]) -> List[Tuple[float, float, 
     return candles
 
 
-def _aggregate(candles: Sequence[Tuple[float, float, float, float]], group: int) -> List[Tuple[float, float, float, float]]:
+def _aggregate(
+    candles: Sequence[Tuple[float, float, float, float]], group: int
+) -> List[Tuple[float, float, float, float]]:
     if group <= 1 or not candles:
         return list(candles)
     aggregated: List[Tuple[float, float, float, float]] = []
@@ -73,8 +76,8 @@ def _blended_slope(
 ) -> float:
     if not candles:
         return 0.0
-    short = _slope(candles[-max(short_count, 2):])
-    long = _slope(candles[-max(long_count, 3):])
+    short = _slope(candles[-max(short_count, 2) :])
+    long = _slope(candles[-max(long_count, 3) :])
     weight = max(0.0, min(1.0, short_weight))
     return short * weight + long * (1.0 - weight)
 
@@ -87,7 +90,7 @@ def _volatility(candles: Sequence[Tuple[float, float, float, float]]) -> float:
 
 
 def _pivot_levels(
-    candles: Sequence[Tuple[float, float, float, float]]
+    candles: Sequence[Tuple[float, float, float, float]],
 ) -> Dict[str, float]:
     if len(candles) < 2:
         return {}
@@ -346,7 +349,9 @@ class ChartStory:
     def __init__(self) -> None:
         self._last_snapshot: Optional[ChartStorySnapshot] = None
 
-    def update(self, fac_m1: Dict[str, object], fac_h4: Dict[str, object]) -> Optional[ChartStorySnapshot]:
+    def update(
+        self, fac_m1: Dict[str, object], fac_h4: Dict[str, object]
+    ) -> Optional[ChartStorySnapshot]:
         candles_m1 = _extract_candles(fac_m1.get("candles"))
         if len(candles_m1) < 30:
             return self._last_snapshot
@@ -363,7 +368,9 @@ class ChartStory:
         slope_m5 = _slope(m5[-12:])
         slope_m15 = _slope(m15[-8:])
         slope_h1 = _blended_slope(h1, short_count=4, long_count=12, short_weight=0.65)
-        slope_h4 = _blended_slope(candles_h4, short_count=3, long_count=8, short_weight=0.55)
+        slope_h4 = _blended_slope(
+            candles_h4, short_count=3, long_count=8, short_weight=0.55
+        )
         slope_d1 = _blended_slope(d1, short_count=3, long_count=8, short_weight=0.5)
 
         vol_m5 = _volatility(m5[-12:])
@@ -372,19 +379,35 @@ class ChartStory:
         macro_mix = (slope_h1 + slope_h4) / 2.0
         higher_mix = (slope_h4 + slope_d1) / 2.0
 
-        micro_trend = _trend_state(slope_m5, vol_m5, slope_threshold=2.5, vol_sensitivity=0.25)
-        macro_trend = _trend_state(macro_mix, vol_h1, slope_threshold=5.0, vol_sensitivity=0.35)
-        higher_trend = _trend_state(higher_mix, vol_h1, slope_threshold=6.0, vol_sensitivity=0.35)
+        micro_trend = _trend_state(
+            slope_m5, vol_m5, slope_threshold=2.5, vol_sensitivity=0.25
+        )
+        macro_trend = _trend_state(
+            macro_mix, vol_h1, slope_threshold=5.0, vol_sensitivity=0.35
+        )
+        higher_trend = _trend_state(
+            higher_mix, vol_h1, slope_threshold=6.0, vol_sensitivity=0.35
+        )
 
         structure_bias = (macro_mix + higher_mix) / 2.0
-        volatility_state = "high" if vol_h1 > 8.0 else ("low" if vol_h1 < 3.0 else "normal")
+        volatility_state = (
+            "high" if vol_h1 > 8.0 else ("low" if vol_h1 < 3.0 else "normal")
+        )
 
         summary = {
             "M5": micro_trend,
-            "M15": _trend_state(slope_m15, vol_m5, slope_threshold=3.5, vol_sensitivity=0.2),
-            "H1": _trend_state(slope_h1, vol_h1, slope_threshold=5.0, vol_sensitivity=0.3),
-            "H4": _trend_state(slope_h4, vol_h1, slope_threshold=6.0, vol_sensitivity=0.35),
-            "D1": _trend_state(slope_d1, vol_h1, slope_threshold=6.5, vol_sensitivity=0.35),
+            "M15": _trend_state(
+                slope_m15, vol_m5, slope_threshold=3.5, vol_sensitivity=0.2
+            ),
+            "H1": _trend_state(
+                slope_h1, vol_h1, slope_threshold=5.0, vol_sensitivity=0.3
+            ),
+            "H4": _trend_state(
+                slope_h4, vol_h1, slope_threshold=6.0, vol_sensitivity=0.35
+            ),
+            "D1": _trend_state(
+                slope_d1, vol_h1, slope_threshold=6.5, vol_sensitivity=0.35
+            ),
         }
 
         levels = {

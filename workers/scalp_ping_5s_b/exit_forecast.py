@@ -96,7 +96,9 @@ def _resolve_price_hints(
 
     range_span_pips: Optional[float] = None
     if range_low_price is not None and range_high_price is not None:
-        range_span_pips = abs(float(range_high_price) - float(range_low_price)) / pip_size
+        range_span_pips = (
+            abs(float(range_high_price) - float(range_low_price)) / pip_size
+        )
 
     if price_hint_pips is not None and price_hint_pips <= 0.0:
         price_hint_pips = None
@@ -168,7 +170,9 @@ def build_exit_forecast_adjustment(
         0.95,
     )
     edge_strength = _resolve_edge_strength(forecast, direction_prob)
-    contra_prob = _clamp((against_prob - min_against) / max(1e-6, (1.0 - min_against)), 0.0, 1.0)
+    contra_prob = _clamp(
+        (against_prob - min_against) / max(1e-6, (1.0 - min_against)), 0.0, 1.0
+    )
     contra_score = _clamp(contra_prob * (0.35 + 0.65 * edge_strength), 0.0, 1.0)
 
     allowed = forecast.get("allowed")
@@ -180,9 +184,8 @@ def build_exit_forecast_adjustment(
         )
         contra_score = max(contra_score, disallow_floor)
     target_reach_prob = _resolve_target_reach_prob(forecast)
-    if (
-        target_reach_prob is not None
-        and env_bool("EXIT_FORECAST_TARGET_REACH_ENABLED", True, prefix=env_prefix)
+    if target_reach_prob is not None and env_bool(
+        "EXIT_FORECAST_TARGET_REACH_ENABLED", True, prefix=env_prefix
     ):
         reach_weight = _clamp(
             env_float("EXIT_FORECAST_TARGET_REACH_WEIGHT_MAX", 0.28, prefix=env_prefix),
@@ -203,7 +206,9 @@ def build_exit_forecast_adjustment(
             high_prob = min(0.95, low_prob + 0.22)
 
         if target_reach_prob <= low_prob:
-            shortfall = _clamp((low_prob - target_reach_prob) / max(1e-6, low_prob), 0.0, 1.0)
+            shortfall = _clamp(
+                (low_prob - target_reach_prob) / max(1e-6, low_prob), 0.0, 1.0
+            )
             contra_score = _clamp(
                 contra_score + reach_weight * shortfall * (0.45 + 0.55 * edge_strength),
                 0.0,
@@ -256,11 +261,15 @@ def build_exit_forecast_adjustment(
         if range_span_pips is not None:
             narrow_pips = max(
                 0.1,
-                env_float("EXIT_FORECAST_RANGE_HINT_NARROW_PIPS", 3.5, prefix=env_prefix),
+                env_float(
+                    "EXIT_FORECAST_RANGE_HINT_NARROW_PIPS", 3.5, prefix=env_prefix
+                ),
             )
             wide_pips = max(
                 narrow_pips + 0.1,
-                env_float("EXIT_FORECAST_RANGE_HINT_WIDE_PIPS", 18.0, prefix=env_prefix),
+                env_float(
+                    "EXIT_FORECAST_RANGE_HINT_WIDE_PIPS", 18.0, prefix=env_prefix
+                ),
             )
             if range_span_pips <= narrow_pips:
                 contra_score = _clamp(
@@ -269,7 +278,9 @@ def build_exit_forecast_adjustment(
                     1.0,
                 )
             elif range_span_pips >= wide_pips and direction_prob >= 0.58:
-                contra_score = _clamp(contra_score * (1.0 - hint_weight * 0.10), 0.0, 1.0)
+                contra_score = _clamp(
+                    contra_score * (1.0 - hint_weight * 0.10), 0.0, 1.0
+                )
 
     profit_tighten = _clamp(
         env_float("EXIT_FORECAST_PROFIT_TIGHTEN_MAX", 0.30, prefix=env_prefix),
@@ -311,7 +322,9 @@ def build_exit_forecast_adjustment(
         reason=str(forecast.get("reason") or ""),
         profit_take_mult=_clamp(1.0 - profit_tighten * contra_score, 0.30, 1.0),
         trail_start_mult=_clamp(1.0 - trail_start_tighten * contra_score, 0.30, 1.0),
-        trail_backoff_mult=_clamp(1.0 - trail_backoff_tighten * contra_score, 0.20, 1.0),
+        trail_backoff_mult=_clamp(
+            1.0 - trail_backoff_tighten * contra_score, 0.20, 1.0
+        ),
         lock_buffer_mult=_clamp(1.0 + lock_boost * contra_score, 1.0, 2.5),
         loss_cut_mult=_clamp(1.0 - loss_tighten * contra_score, 0.20, 1.0),
         max_hold_mult=_clamp(1.0 - hold_tighten * contra_score, 0.25, 1.0),
@@ -322,7 +335,9 @@ def build_exit_forecast_adjustment(
             round(float(range_span_pips), 6) if range_span_pips is not None else None
         ),
         target_reach_prob=(
-            round(float(target_reach_prob), 6) if target_reach_prob is not None else None
+            round(float(target_reach_prob), 6)
+            if target_reach_prob is not None
+            else None
         ),
     )
 
@@ -341,11 +356,24 @@ def apply_exit_forecast_to_targets(
 ) -> tuple[float, float, float, float]:
     if not adjustment.enabled:
         return profit_take, trail_start, trail_backoff, lock_buffer
-    adjusted_profit = max(float(profit_take_floor), float(profit_take) * adjustment.profit_take_mult)
-    adjusted_trail_start = max(float(trail_start_floor), float(trail_start) * adjustment.trail_start_mult)
-    adjusted_trail_backoff = max(float(trail_backoff_floor), float(trail_backoff) * adjustment.trail_backoff_mult)
-    adjusted_lock_buffer = max(float(lock_buffer_floor), float(lock_buffer) * adjustment.lock_buffer_mult)
-    return adjusted_profit, adjusted_trail_start, adjusted_trail_backoff, adjusted_lock_buffer
+    adjusted_profit = max(
+        float(profit_take_floor), float(profit_take) * adjustment.profit_take_mult
+    )
+    adjusted_trail_start = max(
+        float(trail_start_floor), float(trail_start) * adjustment.trail_start_mult
+    )
+    adjusted_trail_backoff = max(
+        float(trail_backoff_floor), float(trail_backoff) * adjustment.trail_backoff_mult
+    )
+    adjusted_lock_buffer = max(
+        float(lock_buffer_floor), float(lock_buffer) * adjustment.lock_buffer_mult
+    )
+    return (
+        adjusted_profit,
+        adjusted_trail_start,
+        adjusted_trail_backoff,
+        adjusted_lock_buffer,
+    )
 
 
 def apply_exit_forecast_to_loss_cut(

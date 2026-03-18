@@ -4,6 +4,7 @@ import os
 
 ENV_PREFIX = "MICRO_MULTI"
 
+
 def _parse_hours(raw: str) -> set[int]:
     hours: set[int] = set()
     for token in raw.split(","):
@@ -67,9 +68,15 @@ def _bool(key: str, default: bool) -> bool:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
+
 POCKET = "micro"
 LOOP_INTERVAL_SEC = float(os.getenv("MICRO_MULTI_LOOP_INTERVAL_SEC", "8.0"))
-ENABLED = os.getenv("MICRO_MULTI_ENABLED", "0").strip().lower() not in {"", "0", "false", "no"}
+ENABLED = os.getenv("MICRO_MULTI_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 LOG_PREFIX = os.getenv("MICRO_MULTI_LOG_PREFIX", "[MicroMulti]")
 
 CONFIDENCE_FLOOR = 35
@@ -109,10 +116,16 @@ PROJ_CONFLICT_ALLOW = _bool("MICRO_MULTI_PROJ_CONFLICT_ALLOW", True)
 
 # Fresh factor fallback (avoid stale M1 driving wrong direction).
 FRESH_TICKS_ON_STALE = _bool("MICRO_MULTI_FRESH_TICKS_ON_STALE", True)
-FRESH_TICKS_LOOKBACK_SEC = float(os.getenv("MICRO_MULTI_FRESH_TICKS_LOOKBACK_SEC", "1800.0"))
+FRESH_TICKS_LOOKBACK_SEC = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_LOOKBACK_SEC", "1800.0")
+)
 FRESH_TICKS_MIN_CANDLES = int(os.getenv("MICRO_MULTI_FRESH_TICKS_MIN_CANDLES", "30"))
-FRESH_TICKS_REFRESH_SEC = float(os.getenv("MICRO_MULTI_FRESH_TICKS_REFRESH_SEC", "20.0"))
-FRESH_TICKS_STALE_SCALE_MIN = float(os.getenv("MICRO_MULTI_FRESH_TICKS_STALE_SCALE_MIN", "0.32"))
+FRESH_TICKS_REFRESH_SEC = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_REFRESH_SEC", "20.0")
+)
+FRESH_TICKS_STALE_SCALE_MIN = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_STALE_SCALE_MIN", "0.32")
+)
 FRESH_TICKS_STALE_SCALE_HARD_SEC = float(
     os.getenv("MICRO_MULTI_FRESH_TICKS_STALE_SCALE_HARD_SEC", "420.0")
 )
@@ -131,8 +144,12 @@ RANGE_ONLY_TREND_ALLOWLIST = _parse_csv(
 CHOP_ENABLED = _bool("MICRO_MULTI_CHOP_ENABLED", True)
 CHOP_LOOKBACK_BARS = int(os.getenv("MICRO_MULTI_CHOP_LOOKBACK_BARS", "12"))
 CHOP_SIGN_FLIP_MIN = float(os.getenv("MICRO_MULTI_CHOP_SIGN_FLIP_MIN", "0.42"))
-CHOP_DIRECTIONAL_EFF_MAX = float(os.getenv("MICRO_MULTI_CHOP_DIRECTIONAL_EFF_MAX", "0.18"))
-CHOP_MEAN_RANGE_MIN_PIPS = float(os.getenv("MICRO_MULTI_CHOP_MEAN_RANGE_MIN_PIPS", "2.0"))
+CHOP_DIRECTIONAL_EFF_MAX = float(
+    os.getenv("MICRO_MULTI_CHOP_DIRECTIONAL_EFF_MAX", "0.18")
+)
+CHOP_MEAN_RANGE_MIN_PIPS = float(
+    os.getenv("MICRO_MULTI_CHOP_MEAN_RANGE_MIN_PIPS", "2.0")
+)
 CHOP_STRATEGY_SCORE_BONUS = _parse_strategy_mults(
     os.getenv("MICRO_MULTI_CHOP_STRATEGY_SCORE_BONUS", "")
 )
@@ -151,10 +168,14 @@ MLR_MAX_MA_GAP_PIPS = float(os.getenv("MICRO_MULTI_MLR_MAX_MA_GAP_PIPS", "2.2"))
 MLR_CHOP_OVERRIDE_ENABLED = _bool("MICRO_MULTI_MLR_CHOP_OVERRIDE_ENABLED", True)
 MLR_CHOP_SCORE_MIN = float(os.getenv("MICRO_MULTI_MLR_CHOP_SCORE_MIN", "0.55"))
 MLR_CHOP_MAX_ADX = float(os.getenv("MICRO_MULTI_MLR_CHOP_MAX_ADX", "42.0"))
-MLR_CHOP_MAX_MA_GAP_PIPS = float(os.getenv("MICRO_MULTI_MLR_CHOP_MAX_MA_GAP_PIPS", "4.8"))
+MLR_CHOP_MAX_MA_GAP_PIPS = float(
+    os.getenv("MICRO_MULTI_MLR_CHOP_MAX_MA_GAP_PIPS", "4.8")
+)
 
 # Strategy diversity: promote idle strategies without inflating risk sizing.
-DIVERSITY_ENABLED = os.getenv("MICRO_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
+DIVERSITY_ENABLED = os.getenv(
+    "MICRO_MULTI_DIVERSITY_ENABLED", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -173,14 +194,18 @@ STRATEGY_COOLDOWN_SEC = float(os.getenv("MICRO_MULTI_STRATEGY_COOLDOWN_SEC", "0.
 MOMENTUMBURST_REACCEL_COOLDOWN_SEC = float(
     os.getenv("MOMENTUMBURST_REACCEL_COOLDOWN_SEC", "0.0")
 )
-STRATEGY_UNITS_MULT = _parse_strategy_mults(os.getenv("MICRO_MULTI_STRATEGY_UNITS_MULT", ""))
+STRATEGY_UNITS_MULT = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_STRATEGY_UNITS_MULT", "")
+)
 SIGNAL_TAG_CONTAINS = frozenset(
     token.lower()
     for token in _parse_csv(os.getenv("MICRO_MULTI_SIGNAL_TAG_CONTAINS", ""))
 )
 
 # Dynamic winner routing from config/dynamic_alloc.json
-DYN_ALLOC_ENABLED = os.getenv("MICRO_MULTI_DYN_ALLOC_ENABLED", "1").strip().lower() not in {
+DYN_ALLOC_ENABLED = os.getenv(
+    "MICRO_MULTI_DYN_ALLOC_ENABLED", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -191,13 +216,17 @@ DYN_ALLOC_TTL_SEC = float(os.getenv("MICRO_MULTI_DYN_ALLOC_TTL_SEC", "20"))
 DYN_ALLOC_MIN_TRADES = int(os.getenv("MICRO_MULTI_DYN_ALLOC_MIN_TRADES", "10"))
 DYN_ALLOC_WINNER_SCORE = float(os.getenv("MICRO_MULTI_DYN_ALLOC_WINNER_SCORE", "0.62"))
 DYN_ALLOC_LOSER_SCORE = float(os.getenv("MICRO_MULTI_DYN_ALLOC_LOSER_SCORE", "0.28"))
-DYN_ALLOC_WINNER_ONLY = os.getenv("MICRO_MULTI_DYN_ALLOC_WINNER_ONLY", "1").strip().lower() not in {
+DYN_ALLOC_WINNER_ONLY = os.getenv(
+    "MICRO_MULTI_DYN_ALLOC_WINNER_ONLY", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
     "no",
 }
-DYN_ALLOC_LOSER_BLOCK = os.getenv("MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK", "1").strip().lower() not in {
+DYN_ALLOC_LOSER_BLOCK = os.getenv(
+    "MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
@@ -222,7 +251,9 @@ HIST_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_MIN_TRADES", "12"))
 HIST_REGIME_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_REGIME_MIN_TRADES", "8"))
 HIST_PF_CAP = float(os.getenv("MICRO_MULTI_HIST_PF_CAP", "2.0"))
 HIST_SKIP_SCORE = float(os.getenv("MICRO_MULTI_HIST_SKIP_SCORE", "0.34"))
-_hist_skip_score_override_raw = os.getenv("MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE", "").strip()
+_hist_skip_score_override_raw = os.getenv(
+    "MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE", ""
+).strip()
 HIST_SKIP_SCORE_OVERRIDE = (
     float(_hist_skip_score_override_raw) if _hist_skip_score_override_raw else None
 )
@@ -239,5 +270,9 @@ HIST_SETUP_WINNER_PROTECT_ENABLED = os.getenv(
     "no",
     "off",
 }
-HIST_SETUP_WINNER_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_MIN_TRADES", "2"))
-HIST_SETUP_WINNER_SCORE = float(os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_SCORE", "0.58"))
+HIST_SETUP_WINNER_MIN_TRADES = int(
+    os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_MIN_TRADES", "2")
+)
+HIST_SETUP_WINNER_SCORE = float(
+    os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_SCORE", "0.58")
+)

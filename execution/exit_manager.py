@@ -36,4 +36,3 @@ class ExitManager:
         order = order or {}
         order.setdefault("exit_disabled", True)
         return order
-

@@ -1,5 +1,10 @@
 from __future__ import annotations
-from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import (
+    compute_adx_projection,
+    compute_bbw_projection,
+    compute_ma_projection,
+    compute_rsi_projection,
+)
 from analysis.technique_engine import evaluate_entry_techniques
 from analysis.ma_projection import score_ma_for_side
 
@@ -18,7 +23,11 @@ from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import tick_window
 from strategies.scalping.range_fader import RangeFader
-from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
+from utils.divergence import (
+    apply_divergence_confidence,
+    divergence_bias,
+    divergence_snapshot,
+)
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
@@ -36,14 +45,28 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
-_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float(
+    "BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_TREND_EXT_RATIO = env_float(
+    "BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float(
+    "BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float(
+    "BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float(
+    "BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX
+)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float(
+    "BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX
+)
 _BB_PIP = 0.01
-_STRATEGY_PARTICIPATION_ALLOC_ENABLED = env_bool("STRATEGY_PARTICIPATION_ALLOC_ENABLED", True)
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = env_bool(
+    "STRATEGY_PARTICIPATION_ALLOC_ENABLED", True
+)
 _STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
     "STRATEGY_PARTICIPATION_ALLOC_PATH",
     "config/participation_alloc.json",
@@ -77,7 +100,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
@@ -98,8 +127,16 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if style == "scalp" and range_active:
         style = "reversion"
     if style == "reversion":
-        base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
-        base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
+        base_pips = (
+            _BB_ENTRY_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_ENTRY_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_ENTRY_REVERT_RATIO
+        )
         threshold = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             dist = (price - lower) / _BB_PIP
@@ -118,6 +155,7 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if orig_style == "scalp":
         max_ext = max(_BB_ENTRY_SCALP_EXT_PIPS, span_pips * _BB_ENTRY_SCALP_EXT_RATIO)
     return ext <= max_ext
+
 
 BB_STYLE = "reversion"
 
@@ -168,7 +206,9 @@ def _participation_cadence_floor(signal_tag: str) -> float:
 def _entry_cooldown_sec(signal_tag: str) -> float:
     tag_key = (signal_tag or RangeFader.name).strip().lower()
     if tag_key.startswith("rangefader-buy-"):
-        cooldown_sec = max(0.0, float(getattr(config, "BUY_COOLDOWN_SEC", config.COOLDOWN_SEC)))
+        cooldown_sec = max(
+            0.0, float(getattr(config, "BUY_COOLDOWN_SEC", config.COOLDOWN_SEC))
+        )
     else:
         cooldown_sec = max(0.0, float(config.COOLDOWN_SEC))
     if cooldown_sec <= 0.0:
@@ -197,7 +237,9 @@ def _entry_cooldown_active(
     return (now_mono - last_ts) < cooldown_sec
 
 
-def _range_size_mult(range_score: Optional[float], free_ratio: Optional[float]) -> float:
+def _range_size_mult(
+    range_score: Optional[float], free_ratio: Optional[float]
+) -> float:
     if free_ratio is not None and free_ratio < config.SIZE_MULT_MIN_FMR:
         return 1.0
     mult = config.SIZE_MULT_BASE
@@ -208,7 +250,9 @@ def _range_size_mult(range_score: Optional[float], free_ratio: Optional[float]) 
     return float(mult)
 
 
-def _apply_signal_flow_context(entry_thesis: Dict[str, object], signal: Dict[str, object]) -> Dict[str, object]:
+def _apply_signal_flow_context(
+    entry_thesis: Dict[str, object], signal: Dict[str, object]
+) -> Dict[str, object]:
     if not isinstance(entry_thesis, dict) or not isinstance(signal, dict):
         return entry_thesis
     flow_context: Dict[str, object] = {}
@@ -249,7 +293,10 @@ def _rangefader_long_weak_probe_guard(
     tag_key = (signal_tag or "").strip().lower()
     if tag_key not in {"rangefader-buy-fade", "rangefader-neutral-fade"}:
         return None
-    if str(entry_thesis.get("range_reason") or "").strip().lower() != "volatility_compression":
+    if (
+        str(entry_thesis.get("range_reason") or "").strip().lower()
+        != "volatility_compression"
+    ):
         return None
     if str(entry_thesis.get("range_mode") or "").strip().upper() != "RANGE":
         return None
@@ -264,9 +311,18 @@ def _rangefader_long_weak_probe_guard(
     tech_score = _bb_float(entry_thesis.get("tech_score"))
     entry_probability = _bb_float(entry_thesis.get("entry_probability"))
     gap_ratio = _bb_float(entry_thesis.get("gap_ratio"))
-    forecast_side_pips = _nested_float(entry_thesis, "tech_entry", "forecast", "expected_side_pips")
-    forecast_edge = _nested_float(entry_thesis, "tech_entry", "forecast", "directional_edge")
-    if range_score is None or projection_score is None or tech_score is None or entry_probability is None:
+    forecast_side_pips = _nested_float(
+        entry_thesis, "tech_entry", "forecast", "expected_side_pips"
+    )
+    forecast_edge = _nested_float(
+        entry_thesis, "tech_entry", "forecast", "directional_edge"
+    )
+    if (
+        range_score is None
+        or projection_score is None
+        or tech_score is None
+        or entry_probability is None
+    ):
         return None
 
     if tag_key.endswith("buy-fade"):
@@ -281,8 +337,12 @@ def _rangefader_long_weak_probe_guard(
             "tech_score": round(tech_score, 3),
             "entry_probability": round(entry_probability, 3),
             "gap_ratio": round(gap_ratio, 3) if gap_ratio is not None else "na",
-            "forecast_side_pips": round(forecast_side_pips, 3) if forecast_side_pips is not None else "na",
-            "forecast_edge": round(forecast_edge, 3) if forecast_edge is not None else "na",
+            "forecast_side_pips": (
+                round(forecast_side_pips, 3) if forecast_side_pips is not None else "na"
+            ),
+            "forecast_edge": (
+                round(forecast_edge, 3) if forecast_edge is not None else "na"
+            ),
         }
 
     if range_score < 0.48:
@@ -305,7 +365,6 @@ def _rangefader_long_weak_probe_guard(
         "forecast_side_pips": round(forecast_side_pips, 3),
         "forecast_edge": round(forecast_edge, 3),
     }
-
 
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
@@ -453,16 +512,28 @@ def _projection_decision(side, pocket, mode_override=None):
 
     ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
     rsi = compute_rsi_projection(candles, timeframe_minutes=minutes)
-    adx = compute_adx_projection(candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"])
+    adx = compute_adx_projection(
+        candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"]
+    )
     bbw = None
     if mode == "range":
-        bbw = compute_bbw_projection(candles, timeframe_minutes=minutes, squeeze_threshold=params["bbw_threshold"])
+        bbw = compute_bbw_projection(
+            candles,
+            timeframe_minutes=minutes,
+            squeeze_threshold=params["bbw_threshold"],
+        )
 
     scores = {}
     ma_score = _score_ma(ma, side, params["opp_block_bars"])
     if ma_score is not None and "ma" in params["weights"]:
         scores["ma"] = ma_score
-    rsi_score = _score_rsi(rsi, side, params["long_target"], params["short_target"], params["overheat_bars"])
+    rsi_score = _score_rsi(
+        rsi,
+        side,
+        params["long_target"],
+        params["short_target"],
+        params["overheat_bars"],
+    )
     if rsi_score is not None and "rsi" in params["weights"]:
         scores["rsi"] = rsi_score
     adx_score = _score_adx(adx, mode != "range", params["adx_threshold"])
@@ -492,6 +563,8 @@ def _projection_decision(side, pocket, mode_override=None):
         "scores": {k: round(v, 3) for k, v in scores.items()},
     }
     return allow, size_mult, detail
+
+
 def _latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=8.0, limit=1)
     if ticks:
@@ -528,7 +601,9 @@ def _confidence_scale(conf: int, *, lo: int, hi: int) -> float:
     return 0.5 + span * 0.5
 
 
-def _compute_cap(*, cap_min: float, cap_max: float, **kwargs) -> Tuple[float, Dict[str, float]]:
+def _compute_cap(
+    *, cap_min: float, cap_max: float, **kwargs
+) -> Tuple[float, Dict[str, float]]:
     kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(cap_min=cap_min, cap_max=cap_max, **kwargs)
     return res.cap, res.reasons
@@ -587,7 +662,9 @@ async def scalp_rangefader_worker() -> None:
         except asyncio.CancelledError:
             return
 
-    LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    LOG.info(
+        "%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC
+    )
     pos_manager = PositionManager()
     last_entry_ts_by_key: Dict[str, float] = {}
 
@@ -621,7 +698,10 @@ async def scalp_rangefader_worker() -> None:
                     positions = pos_manager.get_open_positions()
                     scalp_info = positions.get(config.POCKET) or {}
                     open_trades_all = scalp_info.get("open_trades") or []
-                    if config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL:
+                    if (
+                        config.MAX_OPEN_TRADES_GLOBAL > 0
+                        and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL
+                    ):
                         continue
                     open_trades = open_trades_all
                     if config.OPEN_TRADES_SCOPE == "tag":
@@ -631,7 +711,10 @@ async def scalp_rangefader_worker() -> None:
                             for tr in open_trades_all
                             if str(tr.get("strategy_tag") or "").lower() == tag_lower
                         ]
-                    if config.MAX_OPEN_TRADES > 0 and len(open_trades) >= config.MAX_OPEN_TRADES:
+                    if (
+                        config.MAX_OPEN_TRADES > 0
+                        and len(open_trades) >= config.MAX_OPEN_TRADES
+                    ):
                         continue
                 except Exception:
                     pass
@@ -664,7 +747,11 @@ async def scalp_rangefader_worker() -> None:
             div_meta = divergence_snapshot(fac_m1, max_age_bars=14)
 
             snap = get_account_snapshot()
-            free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+            free_ratio = (
+                float(snap.free_margin_ratio or 0.0)
+                if snap.free_margin_ratio is not None
+                else 0.0
+            )
             try:
                 atr_pips = float(fac_m1.get("atr_pips") or 0.0)
             except Exception:
@@ -720,7 +807,9 @@ async def scalp_rangefader_worker() -> None:
 
             # BB_ENTRY_GUARD
 
-            if not _bb_entry_allowed(BB_STYLE, side, price, fac_m1, range_active=range_ctx.active):
+            if not _bb_entry_allowed(
+                BB_STYLE, side, price, fac_m1, range_active=range_ctx.active
+            ):
 
                 continue
 
@@ -728,7 +817,11 @@ async def scalp_rangefader_worker() -> None:
             tp_scale = max(0.4, min(1.2, tp_scale))
             base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale * size_mult))
 
-            conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
+            conf_scale = _confidence_scale(
+                int(signal.get("confidence", 50)),
+                lo=config.CONFIDENCE_FLOOR,
+                hi=config.CONFIDENCE_CEIL,
+            )
             long_units = 0.0
             short_units = 0.0
             try:
@@ -765,7 +858,9 @@ async def scalp_rangefader_worker() -> None:
                 sl_price = round(price + sl_pips * 0.01, 3)
                 tp_price = round(price - tp_pips * 0.01, 3) if tp_pips > 0 else None
 
-            sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=side == "long")
+            sl_price, tp_price = clamp_sl_tp(
+                price=price, sl=sl_price, tp=tp_price, is_buy=side == "long"
+            )
             client_id = _client_order_id(signal_tag)
             entry_thesis: Dict[str, object] = {
                 "strategy_tag": signal_tag,
@@ -790,9 +885,15 @@ async def scalp_rangefader_worker() -> None:
                 entry_thesis["divergence"] = div_meta
             entry_mean = None
             try:
-                entry_mean = float(
-                    fac_m1.get("ema20") or fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0
-                ) or None
+                entry_mean = (
+                    float(
+                        fac_m1.get("ema20")
+                        or fac_m1.get("ma20")
+                        or fac_m1.get("ma10")
+                        or 0.0
+                    )
+                    or None
+                )
             except Exception:
                 entry_mean = None
             entry_thesis.update(
@@ -838,7 +939,9 @@ async def scalp_rangefader_worker() -> None:
                 sign = 1 if units > 0 else -1
                 units = max(1, int(round(abs(units) * signal_setup_mult))) * sign
 
-            candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
+            candle_allow, candle_mult = _entry_candle_guard(
+                "long" if units > 0 else "short"
+            )
             if not candle_allow:
                 continue
             if candle_mult != 1.0:
@@ -855,7 +958,9 @@ async def scalp_rangefader_worker() -> None:
                 entry_thesis_ctx = {}
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
-            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            _tech_side_raw = str(
+                locals().get("side", locals().get("direction", "long"))
+            ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
             else:
@@ -879,9 +984,16 @@ async def scalp_rangefader_worker() -> None:
 
             entry_thesis_ctx.setdefault(
                 "tech_tfs",
-                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+                {
+                    "fib": ["H1", "M5"],
+                    "median": ["H1", "M5"],
+                    "nwave": ["M1", "M5"],
+                    "candle": ["M1", "M5"],
+                },
             )
-            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_tfs", ["M1", "M5", "H1", "H4"]
+            )
             entry_thesis_ctx.setdefault(
                 "technical_context_fields",
                 [
@@ -902,8 +1014,14 @@ async def scalp_rangefader_worker() -> None:
                     "ema24",
                 ],
             )
-            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault(
+                "technical_context_ticks",
+                ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            )
+            entry_thesis_ctx.setdefault(
+                "technical_context_candle_counts",
+                {"M1": 120, "M5": 80, "H1": 70, "H4": 60},
+            )
             entry_thesis_ctx.setdefault("tech_allow_candle", True)
             entry_thesis_ctx.setdefault(
                 "tech_policy",
@@ -928,7 +1046,9 @@ async def scalp_rangefader_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
-            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M1", "step_bars": 5})
+            entry_thesis_ctx.setdefault(
+                "forecast_profile", {"timeframe": "M1", "step_bars": 5}
+            )
             entry_thesis_ctx.setdefault("forecast_timeframe", "M1")
             entry_thesis_ctx.setdefault("forecast_step_bars", 5)
             entry_thesis_ctx.setdefault("forecast_horizon", "5m")
@@ -945,9 +1065,15 @@ async def scalp_rangefader_worker() -> None:
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
                 continue
 
-            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_score"] = (
+                round(tech_decision.score, 3)
+                if tech_decision.score is not None
+                else None
+            )
             entry_thesis_ctx["tech_coverage"] = (
-                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+                round(tech_decision.coverage, 3)
+                if tech_decision.coverage is not None
+                else None
             )
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
@@ -957,7 +1083,11 @@ async def scalp_rangefader_worker() -> None:
                 min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
             )
             entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
-            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+            if (
+                isinstance(tp_price, (int, float))
+                and tp_price > 0
+                and _tech_entry_price > 0
+            ):
                 _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
                 if _tp_gap > 0:
                     _tp_target = (
@@ -979,7 +1109,9 @@ async def scalp_rangefader_worker() -> None:
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):
-                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                _tech_units = int(
+                    round(abs(float(_tech_units_raw)) * tech_decision.size_mult)
+                )
                 if _tech_units <= 0:
                     continue
                 units = _tech_units if _tech_side == "long" else -_tech_units
@@ -990,9 +1122,13 @@ async def scalp_rangefader_worker() -> None:
                 _tech_conf = float(_tech_conf)
                 if tech_decision.score is not None:
                     if tech_decision.score >= 0:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_BOOST", 0.0
+                        )
                     else:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_PENALTY", 0.0
+                        )
                 conf = _tech_conf
             else:
                 conf = float(signal.get("confidence", 0))
@@ -1005,7 +1141,9 @@ async def scalp_rangefader_worker() -> None:
 
             weak_long_probe_block = None
             if units > 0:
-                weak_long_probe_block = _rangefader_long_weak_probe_guard(signal_tag, entry_thesis_ctx)
+                weak_long_probe_block = _rangefader_long_weak_probe_guard(
+                    signal_tag, entry_thesis_ctx
+                )
             if weak_long_probe_block is not None:
                 LOG.info(
                     "%s skip weak_long_probe_guard tag=%s lane=%s range_score=%s projection_score=%s tech_score=%s "
@@ -1022,7 +1160,6 @@ async def scalp_rangefader_worker() -> None:
                     weak_long_probe_block.get("entry_probability"),
                 )
                 continue
-
 
             res = await market_order(
                 instrument="USD_JPY",
@@ -1060,15 +1197,15 @@ async def scalp_rangefader_worker() -> None:
             LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
 
 
-
-
 _CANDLE_PIP = 0.01
 _CANDLE_MIN_CONF = 0.35
 _CANDLE_ENTRY_BLOCK = -0.7
 _CANDLE_ENTRY_SCALE = 0.2
 _CANDLE_ENTRY_MIN = 0.8
 _CANDLE_ENTRY_MAX = 1.2
-_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+_CANDLE_WORKER_NAME = (
+    __file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else ""
+).lower()
 
 
 def _candle_tf_for_worker() -> str:
@@ -1162,11 +1299,19 @@ def _score_candle(*, candles, side, min_conf):
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     score = max(-1.0, min(1.0, score))
-    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+    return score, {
+        "type": pattern.get("type"),
+        "confidence": round(conf, 3),
+        "bias": bias,
+    }
 
 
 def _entry_candle_guard(side):
@@ -1174,7 +1319,9 @@ def _entry_candle_guard(side):
     candles = get_candles_snapshot(tf, limit=4)
     if not candles:
         return True, 1.0
-    score, _detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_MIN_CONF)
+    score, _detail = _score_candle(
+        candles=candles, side=side, min_conf=_CANDLE_MIN_CONF
+    )
     if score is None:
         return True, 1.0
     if score <= _CANDLE_ENTRY_BLOCK:
@@ -1182,6 +1329,7 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
 
 if __name__ == "__main__":
     asyncio.run(scalp_rangefader_worker())

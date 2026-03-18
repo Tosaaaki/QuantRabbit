@@ -27,7 +27,9 @@ def atr_pips(factors: Dict[str, object], *, default: float = 0.0) -> float:
     return float(max(0.0, atr_raw) * 100.0)
 
 
-def latest_candles(factors: Dict[str, object], count: int) -> Tuple[Dict[str, float], ...]:
+def latest_candles(
+    factors: Dict[str, object], count: int
+) -> Tuple[Dict[str, float], ...]:
     """Return the last N candles as tuple to avoid accidental mutation."""
     candles = factors.get("candles") or []
     if not isinstance(candles, Iterable):

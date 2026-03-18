@@ -57,7 +57,9 @@ def _normalize_regime_label(raw: object) -> str:
     return str(raw).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
-def _history_profile_cache_key(strategy_key: str, pocket: str, regime_label: str) -> tuple[str, str, str]:
+def _history_profile_cache_key(
+    strategy_key: str, pocket: str, regime_label: str
+) -> tuple[str, str, str]:
     return (_normalize_tag_key(strategy_key), str(pocket).strip().lower(), regime_label)
 
 
@@ -166,7 +168,9 @@ def _derive_history_score(row: Dict[str, object]) -> float:
     return _clamp01(score)
 
 
-def _history_profile(strategy_key: str, pocket: str, regime_label: Optional[str]) -> Dict[str, object]:
+def _history_profile(
+    strategy_key: str, pocket: str, regime_label: Optional[str]
+) -> Dict[str, object]:
     if not _HIST_ENABLED:
         return {
             "enabled": False,
@@ -198,7 +202,9 @@ def _history_profile(strategy_key: str, pocket: str, regime_label: Optional[str]
     used_regime = bool(normalized_regime)
     source = "regime"
     if used_regime and int(row.get("n", 0) or 0) < max(1, int(_HIST_REGIME_MIN_TRADES)):
-        fallback = _query_strategy_history(strategy_key=strategy_key, pocket=pocket, regime_label=None)
+        fallback = _query_strategy_history(
+            strategy_key=strategy_key, pocket=pocket, regime_label=None
+        )
         if int(fallback.get("n", 0) or 0) > 0:
             row = fallback
             used_regime = False
@@ -311,11 +317,15 @@ class MicroVWAPRevert:
         )
         max_counter_drift = max(
             0.4,
-            _tuned_float(("strategies", "MicroVWAPRevert", "max_counter_drift_pips"), 1.45),
+            _tuned_float(
+                ("strategies", "MicroVWAPRevert", "max_counter_drift_pips"), 1.45
+            ),
         )
         confirm_body_min = max(
             0.0,
-            _tuned_float(("strategies", "MicroVWAPRevert", "confirm_body_min_pips"), 0.08),
+            _tuned_float(
+                ("strategies", "MicroVWAPRevert", "confirm_body_min_pips"), 0.08
+            ),
         )
 
         retrace_from_prev = 0.0
@@ -405,7 +415,9 @@ class MicroVWAPRevert:
                 "history_score": round(float(hist_profile.get("score", 0.5)), 3),
                 "history_n": int(hist_profile.get("n", 0) or 0),
                 "history_source": hist_profile.get("source", "disabled"),
-                "history_lot_mult": round(float(hist_profile.get("lot_multiplier", 1.0)), 3),
+                "history_lot_mult": round(
+                    float(hist_profile.get("lot_multiplier", 1.0)), 3
+                ),
                 "history_pf": round(float(hist_profile.get("pf", 1.0)), 3),
                 "history_used_regime": bool(hist_profile.get("used_regime", False)),
             },

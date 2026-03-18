@@ -168,7 +168,9 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 def _column_exists(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
     table_ident = _safe_identifier(table_name)
     column = str(column_name)
-    for row in _execute_with_lock_retry(conn, f"PRAGMA table_info({table_ident})").fetchall():
+    for row in _execute_with_lock_retry(
+        conn, f"PRAGMA table_info({table_ident})"
+    ).fetchall():
         if str(row[1]) == column:
             return True
     return False
@@ -184,7 +186,9 @@ def _ensure_table(
         return
     _execute_with_lock_retry(conn, create_sql)
     if not _table_exists(conn, table_name):
-        raise sqlite3.OperationalError(f"table create did not take effect: {table_name}")
+        raise sqlite3.OperationalError(
+            f"table create did not take effect: {table_name}"
+        )
 
 
 def _ensure_column(
@@ -370,23 +374,22 @@ class StageTracker:
             alter_sql="ALTER TABLE pocket_loss_window ADD COLUMN strategy_tag TEXT",
         )
         self._loss_window_minutes = int(
-            os.getenv("LOSS_CLUSTER_WINDOW_MIN", str(_LOSS_WINDOW_MINUTES)) or _LOSS_WINDOW_MINUTES
+            os.getenv("LOSS_CLUSTER_WINDOW_MIN", str(_LOSS_WINDOW_MINUTES))
+            or _LOSS_WINDOW_MINUTES
         )
-        self._loss_decay_minutes = int(os.getenv("LOSS_STREAK_DECAY_MINUTES", "120") or 120)
-        self._cooldown_disabled = (
-            AGGRESSIVE_TRADING
-            or str(os.getenv("DISABLE_ALL_COOLDOWNS", "")).strip().lower() in {"1", "true", "yes"}
+        self._loss_decay_minutes = int(
+            os.getenv("LOSS_STREAK_DECAY_MINUTES", "120") or 120
         )
-        self._cluster_cooldown_disabled = (
-            AGGRESSIVE_TRADING
-            or str(os.getenv("DISABLE_CLUSTER_COOLDOWN", "")).strip().lower() in {"1", "true", "yes"}
-        )
+        self._cooldown_disabled = AGGRESSIVE_TRADING or str(
+            os.getenv("DISABLE_ALL_COOLDOWNS", "")
+        ).strip().lower() in {"1", "true", "yes"}
+        self._cluster_cooldown_disabled = AGGRESSIVE_TRADING or str(
+            os.getenv("DISABLE_CLUSTER_COOLDOWN", "")
+        ).strip().lower() in {"1", "true", "yes"}
         # デフォルトで scalp の損失クラスタークールダウンを無効化（リクエスト対応）
-        self._scalp_cluster_cooldown_disabled = (
-            AGGRESSIVE_TRADING
-            or str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "0")).strip().lower()
-            in {"1", "true", "yes"}
-        )
+        self._scalp_cluster_cooldown_disabled = AGGRESSIVE_TRADING or str(
+            os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "0")
+        ).strip().lower() in {"1", "true", "yes"}
         self._recent_profile: Dict[str, Dict[str, float]] = {}
         self._weight_hint: Dict[str, float] = {}
         self._clamp_state = self._load_clamp_state()
@@ -394,7 +397,9 @@ class StageTracker:
         self._clamp_recent: Deque[Tuple[datetime, int, float, float, str]] = deque()
         # 再起動後に過去のクラスターを再検知しないよう、前回イベントの trade_id を初期値にする
         try:
-            self._clamp_last_scanned = int(self._clamp_state.get("last_trade_id", 0) or 0)
+            self._clamp_last_scanned = int(
+                self._clamp_state.get("last_trade_id", 0) or 0
+            )
         except Exception:
             self._clamp_last_scanned = 0
 
@@ -412,12 +417,10 @@ class StageTracker:
             "impulse_stop_until": None,
         }
         if not row:
-            self._con.execute(
-                """
+            self._con.execute("""
                 INSERT OR IGNORE INTO clamp_guard_state(id, level, event_count, clamp_score, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
                 VALUES (1, 0, 0, 0.0, 0, NULL, NULL, NULL)
-                """
-            )
+                """)
             self._con.commit()
             return state
         try:
@@ -464,11 +467,17 @@ class StageTracker:
                 int(st.get("event_count", 0) or 0),
                 float(st.get("clamp_score", 0.0) or 0.0),
                 int(st.get("last_trade_id", 0) or 0),
-                st.get("last_event_at").isoformat() if st.get("last_event_at") else None,
+                (
+                    st.get("last_event_at").isoformat()
+                    if st.get("last_event_at")
+                    else None
+                ),
                 st.get("clamp_until").isoformat() if st.get("clamp_until") else None,
-                st.get("impulse_stop_until").isoformat()
-                if st.get("impulse_stop_until")
-                else None,
+                (
+                    st.get("impulse_stop_until").isoformat()
+                    if st.get("impulse_stop_until")
+                    else None
+                ),
             ),
         )
         self._con.commit()
@@ -525,8 +534,12 @@ class StageTracker:
         else:
             new_level = max(1, 1 if current_level == 0 else current_level + 1)
         self._clamp_state["level"] = new_level
-        self._clamp_state["event_count"] = int(self._clamp_state.get("event_count", 0) or 0) + 1
-        self._clamp_state["last_trade_id"] = max(int(trade_id), int(self._clamp_state.get("last_trade_id", 0) or 0))
+        self._clamp_state["event_count"] = (
+            int(self._clamp_state.get("event_count", 0) or 0) + 1
+        )
+        self._clamp_state["last_trade_id"] = max(
+            int(trade_id), int(self._clamp_state.get("last_trade_id", 0) or 0)
+        )
         self._clamp_state["last_event_at"] = event_time
         base_cd = _CLAMP_LEVEL_COOLDOWN.get(new_level, _CLAMP_LEVEL_COOLDOWN[1])
         scaled_cd = int(max(1, base_cd * cooldown_scale))
@@ -616,9 +629,8 @@ class StageTracker:
             count = len(window)
             loss_sum_jpy = sum(item[2] for item in window)
             loss_sum_pips = sum(item[3] for item in window)
-            if (
-                count >= n_min
-                and (loss_sum_jpy <= -clamp_jpy or loss_sum_pips <= -clamp_pips)
+            if count >= n_min and (
+                loss_sum_jpy <= -clamp_jpy or loss_sum_pips <= -clamp_pips
             ):
                 severity = 1
                 dir_counts: Dict[str, int] = {"long": 0, "short": 0}
@@ -659,7 +671,11 @@ class StageTracker:
                                 now=ts,
                             )
                         except Exception:
-                            logging.exception("[CLAMP] failed to set cooldown pocket=%s dir=%s", pocket_name, main_dir)
+                            logging.exception(
+                                "[CLAMP] failed to set cooldown pocket=%s dir=%s",
+                                pocket_name,
+                                main_dir,
+                            )
                     logging.info(
                         "[CLAMP] cooldown dir=%s level=%s sec=%s pockets=scalp|micro|macro",
                         main_dir,
@@ -707,7 +723,9 @@ class StageTracker:
             "scalp_conf_scale": float(scalp_scale),
             "impulse_stop_until": impulse_stop_until,
             "impulse_thin_active": impulse_thin_active,
-            "impulse_thin_scale": _CLAMP_IMPULSE_THIN_SCALE if impulse_thin_active else 1.0,
+            "impulse_thin_scale": (
+                _CLAMP_IMPULSE_THIN_SCALE if impulse_thin_active else 1.0
+            ),
         }
 
     def close(self) -> None:
@@ -718,9 +736,7 @@ class StageTracker:
             return
         now = _coerce_utc(now)
         ts = now.isoformat()
-        self._con.execute(
-            "DELETE FROM stage_cooldown WHERE cooldown_until <= ?", (ts,)
-        )
+        self._con.execute("DELETE FROM stage_cooldown WHERE cooldown_until <= ?", (ts,))
         self._con.execute(
             "DELETE FROM strategy_cooldown WHERE cooldown_until <= ?",
             (ts,),
@@ -748,12 +764,15 @@ class StageTracker:
         )
         self._con.commit()
 
-    def reset_stage(self, pocket: str, direction: str, *, now: Optional[datetime] = None) -> None:
+    def reset_stage(
+        self, pocket: str, direction: str, *, now: Optional[datetime] = None
+    ) -> None:
         self.set_stage(pocket, direction, 0, now=now)
 
     def get_stage(self, pocket: str, direction: str) -> int:
         row = self._con.execute(
-            "SELECT stage FROM stage_state WHERE pocket=? AND direction=?", (pocket, direction)
+            "SELECT stage FROM stage_state WHERE pocket=? AND direction=?",
+            (pocket, direction),
         ).fetchone()
         if not row:
             return 0
@@ -841,7 +860,9 @@ class StageTracker:
             "SELECT pocket, direction, stage, updated_at FROM stage_state WHERE stage>0"
         ):
             info = positions.get(pocket) or {}
-            units = int(info.get("long_units" if direction == "long" else "short_units", 0) or 0)
+            units = int(
+                info.get("long_units" if direction == "long" else "short_units", 0) or 0
+            )
             if units != 0:
                 continue
             try:
@@ -1042,6 +1063,7 @@ class StageTracker:
         clamp_pips = _CLAMP_WINDOW_PIPS
         cooldown_scale = 1.0
         try:
+
             def _clampf(val: float, lo: float, hi: float) -> float:
                 return max(lo, min(hi, val))
 
@@ -1192,7 +1214,9 @@ class StageTracker:
             strategy_tag = row["strategy_tag"] if "strategy_tag" in row.keys() else None
             if strategy_tag:
                 base_strategy = _base_strategy_tag(strategy_tag)
-                strat_last, strat_lose, strat_win = strategy_existing.get(strategy_tag, (0, 0, 0))
+                strat_last, strat_lose, strat_win = strategy_existing.get(
+                    strategy_tag, (0, 0, 0)
+                )
                 if trade_id > strat_last:
                     if pl_jpy < -1.0:
                         strat_lose += 1
@@ -1218,7 +1242,9 @@ class StageTracker:
                     )
                     strategy_existing[strategy_tag] = (trade_id, strat_lose, strat_win)
                     if strat_lose >= strategy_loss_threshold:
-                        strat_seconds = (cooldown_map or {}).get(pocket, cooldown_seconds)
+                        strat_seconds = (cooldown_map or {}).get(
+                            pocket, cooldown_seconds
+                        )
                         self.set_strategy_cooldown(
                             strategy_tag,
                             reason="loss_streak",
@@ -1232,8 +1258,12 @@ class StageTracker:
                         )
                 if base_strategy:
                     reentry_key = (base_strategy, direction)
-                    last_reentry_id, last_reentry_close = reentry_existing.get(reentry_key, (0, None))
-                    close_time = row["close_time"] if "close_time" in row.keys() else None
+                    last_reentry_id, last_reentry_close = reentry_existing.get(
+                        reentry_key, (0, None)
+                    )
+                    close_time = (
+                        row["close_time"] if "close_time" in row.keys() else None
+                    )
                     close_time_dt: Optional[datetime] = None
                     if close_time:
                         try:
@@ -1370,7 +1400,11 @@ class StageTracker:
                 continue
 
             severe_single_strategy = loss_pips >= 20 or loss_jpy >= 2500
-            if pocket in {"micro", "scalp"} and strategy_count <= 1 and not severe_single_strategy:
+            if (
+                pocket in {"micro", "scalp"}
+                and strategy_count <= 1
+                and not severe_single_strategy
+            ):
                 self._drop_cluster_cooldowns({pocket})
                 self._weight_hint.pop(pocket, None)
                 logging.info(
@@ -1433,7 +1467,9 @@ class StageTracker:
                 seconds=seconds,
                 now=now_dt,
             )
-            self._weight_hint[pocket] = max(0.3, round(1.0 - min(severity * 0.25, 0.6), 3))
+            self._weight_hint[pocket] = max(
+                0.3, round(1.0 - min(severity * 0.25, 0.6), 3)
+            )
             logging.info(
                 "[STAGE] cluster cooldown pocket=%s count=%s loss_pips=%.1f jpy=%.1f sec=%s atr=%.2f vol=%.2f",
                 pocket,
@@ -1622,7 +1658,9 @@ class StageTracker:
                 stats["loss_jpy"] += abs(pl_jpy)
                 stats["loss_pips"] += abs(pl_pips)
         for stats in profile.values():
-            stats["sample_size"] = float(stats.get("win_count", 0.0) + stats.get("loss_count", 0.0))
+            stats["sample_size"] = float(
+                stats.get("win_count", 0.0) + stats.get("loss_count", 0.0)
+            )
         return profile
 
     def _decay_loss_streaks(self, now: datetime) -> None:
@@ -1699,7 +1737,9 @@ class StageTracker:
         elif win_streak >= 2:
             factor *= 0.9
 
-        reverse_brake = pocket == "macro" and lose_streak > 0 and _in_jst_reverse_window()
+        reverse_brake = (
+            pocket == "macro" and lose_streak > 0 and _in_jst_reverse_window()
+        )
         if reverse_brake:
             factor = min(factor, _STAGE_REVERSE_LOSS_FLOOR)
 

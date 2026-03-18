@@ -161,14 +161,8 @@ class TrendReclaimLong:
         recent = candles[-lookback:]
         pullback_window = candles[-pb_lookback:]
 
-        highs = [
-            _candle_value(c, ("high", "h"))
-            for c in recent
-        ]
-        lows = [
-            _candle_value(c, ("low", "l"))
-            for c in pullback_window
-        ]
+        highs = [_candle_value(c, ("high", "h")) for c in recent]
+        lows = [_candle_value(c, ("low", "l")) for c in pullback_window]
         highs = [h for h in highs if h is not None]
         lows = [l for l in lows if l is not None]
         if not highs or not lows:

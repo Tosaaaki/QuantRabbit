@@ -4,12 +4,14 @@ import os
 
 from execution.stop_loss_policy import stop_loss_disabled_for_pocket
 
-
 ENV_PREFIX = (
-    os.getenv("SCALP_PING_5S_ENV_PREFIX", "SCALP_PING_5S").strip()
-    or "SCALP_PING_5S"
+    os.getenv("SCALP_PING_5S_ENV_PREFIX", "SCALP_PING_5S").strip() or "SCALP_PING_5S"
 )
-_IS_B_OR_C_PREFIX = ENV_PREFIX in {"SCALP_PING_5S_B", "SCALP_PING_5S_C", "SCALP_PING_5S_D"}
+_IS_B_OR_C_PREFIX = ENV_PREFIX in {
+    "SCALP_PING_5S_B",
+    "SCALP_PING_5S_C",
+    "SCALP_PING_5S_D",
+}
 PIP_VALUE = 0.01
 
 
@@ -104,17 +106,29 @@ DYN_ALLOC_PATH: str = (
     os.getenv("SCALP_PING_5S_DYN_ALLOC_PATH", "config/dynamic_alloc.json").strip()
     or "config/dynamic_alloc.json"
 )
-DYN_ALLOC_TTL_SEC: float = max(1.0, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_TTL_SEC", "20")))
-DYN_ALLOC_MULT_MIN: float = max(0.05, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_MULT_MIN", "0.25")))
-DYN_ALLOC_MULT_MAX: float = max(DYN_ALLOC_MULT_MIN, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_MULT_MAX", "1.65")))
+DYN_ALLOC_TTL_SEC: float = max(
+    1.0, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_TTL_SEC", "20"))
+)
+DYN_ALLOC_MULT_MIN: float = max(
+    0.05, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_MULT_MIN", "0.25"))
+)
+DYN_ALLOC_MULT_MAX: float = max(
+    DYN_ALLOC_MULT_MIN, float(os.getenv("SCALP_PING_5S_DYN_ALLOC_MULT_MAX", "1.65"))
+)
 SIDE_FILTER: str = _normalize_side(os.getenv("SCALP_PING_5S_SIDE_FILTER", ""))
 SIGNAL_MODE_BLOCKLIST: tuple[str, ...] = _csv_lower_env(
     "SCALP_PING_5S_SIGNAL_MODE_BLOCKLIST"
 )
 DROP_FLOW_ONLY: bool = _bool_env("SCALP_PING_5S_DROP_FLOW_ONLY", False)
-DROP_FLOW_WINDOW_SEC: float = max(0.5, float(os.getenv("SCALP_PING_5S_DROP_FLOW_WINDOW_SEC", "15.0")))
-DROP_FLOW_MIN_PIPS: float = max(0.05, float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_PIPS", "0.30")))
-DROP_FLOW_MIN_TICKS: int = max(2, int(float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_TICKS", "6"))))
+DROP_FLOW_WINDOW_SEC: float = max(
+    0.5, float(os.getenv("SCALP_PING_5S_DROP_FLOW_WINDOW_SEC", "15.0"))
+)
+DROP_FLOW_MIN_PIPS: float = max(
+    0.05, float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_PIPS", "0.30"))
+)
+DROP_FLOW_MIN_TICKS: int = max(
+    2, int(float(os.getenv("SCALP_PING_5S_DROP_FLOW_MIN_TICKS", "6")))
+)
 DROP_FLOW_MAX_BOUNCE_PIPS: float = max(
     0.0,
     float(os.getenv("SCALP_PING_5S_DROP_FLOW_MAX_BOUNCE_PIPS", "0.05")),
@@ -133,9 +147,13 @@ ALLOW_HOURS_OUTSIDE_UNITS_MULT: float = max(
     ),
 )
 
-LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
+LOOP_INTERVAL_SEC: float = max(
+    0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2"))
+)
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))
-SIGNAL_WINDOW_SEC: float = max(0.4, float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_SEC", "1.2")))
+SIGNAL_WINDOW_SEC: float = max(
+    0.4, float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_SEC", "1.2"))
+)
 SIGNAL_WINDOW_FALLBACK_SEC: float = max(
     0.0,
     float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_SEC", "0.0")),
@@ -194,15 +212,23 @@ SIGNAL_WINDOW_ADAPTIVE_UCB_BONUS_PIPS: float = max(
 )
 SIGNAL_WINDOW_ADAPTIVE_COLDSTART_PENALTY_PIPS: float = max(
     0.0,
-    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_COLDSTART_PENALTY_PIPS", "0.20")),
+    float(
+        os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_COLDSTART_PENALTY_PIPS", "0.20")
+    ),
 )
 SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS: float = max(
     0.0,
-    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", "0.05")),
+    float(
+        os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", "0.05")
+    ),
 )
 SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC: float = max(
     1.0,
-    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC", "15.0")),
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC", "15.0"
+        )
+    ),
 )
 INSTANT_VOL_WINDOW_SEC: float = max(
     0.25,
@@ -241,14 +267,18 @@ INSTANT_COOLDOWN_SCALE_MIN: float = max(
     min(1.0, float(os.getenv("SCALP_PING_5S_INSTANT_COOLDOWN_SCALE_MIN", "0.35"))),
 )
 MIN_TICKS: int = max(4, int(float(os.getenv("SCALP_PING_5S_MIN_TICKS", "12"))))
-MIN_SIGNAL_TICKS: int = max(3, int(float(os.getenv("SCALP_PING_5S_MIN_SIGNAL_TICKS", "5"))))
+MIN_SIGNAL_TICKS: int = max(
+    3, int(float(os.getenv("SCALP_PING_5S_MIN_SIGNAL_TICKS", "5")))
+)
 LONG_MIN_SIGNAL_TICKS: int = max(
     3,
     int(float(os.getenv("SCALP_PING_5S_LONG_MIN_SIGNAL_TICKS", str(MIN_SIGNAL_TICKS)))),
 )
 SHORT_MIN_SIGNAL_TICKS: int = max(
     3,
-    int(float(os.getenv("SCALP_PING_5S_SHORT_MIN_SIGNAL_TICKS", str(MIN_SIGNAL_TICKS)))),
+    int(
+        float(os.getenv("SCALP_PING_5S_SHORT_MIN_SIGNAL_TICKS", str(MIN_SIGNAL_TICKS)))
+    ),
 )
 MIN_TICK_RATE: float = max(0.5, float(os.getenv("SCALP_PING_5S_MIN_TICK_RATE", "4.0")))
 LONG_MIN_TICK_RATE: float = max(
@@ -259,10 +289,16 @@ SHORT_MIN_TICK_RATE: float = max(
     0.5,
     float(os.getenv("SCALP_PING_5S_SHORT_MIN_TICK_RATE", str(MIN_TICK_RATE))),
 )
-MAX_TICK_AGE_MS: float = max(100.0, float(os.getenv("SCALP_PING_5S_MAX_TICK_AGE_MS", "800.0")))
+MAX_TICK_AGE_MS: float = max(
+    100.0, float(os.getenv("SCALP_PING_5S_MAX_TICK_AGE_MS", "800.0"))
+)
 
-MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_MAX_SPREAD_PIPS", "0.85")))
-MOMENTUM_TRIGGER_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_MOMENTUM_TRIGGER_PIPS", "0.8")))
+MAX_SPREAD_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_MAX_SPREAD_PIPS", "0.85"))
+)
+MOMENTUM_TRIGGER_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_MOMENTUM_TRIGGER_PIPS", "0.8"))
+)
 LONG_MOMENTUM_TRIGGER_PIPS: float = max(
     0.1,
     float(
@@ -281,7 +317,9 @@ SHORT_MOMENTUM_TRIGGER_PIPS: float = max(
         )
     ),
 )
-MOMENTUM_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_MOMENTUM_SPREAD_MULT", "1.0")))
+MOMENTUM_SPREAD_MULT: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_MOMENTUM_SPREAD_MULT", "1.0"))
+)
 ENTRY_BID_ASK_EDGE_PIPS: float = max(
     0.0,
     float(
@@ -291,7 +329,9 @@ ENTRY_BID_ASK_EDGE_PIPS: float = max(
         )
     ),
 )
-IMBALANCE_MIN: float = max(0.5, min(0.95, float(os.getenv("SCALP_PING_5S_IMBALANCE_MIN", "0.60"))))
+IMBALANCE_MIN: float = max(
+    0.5, min(0.95, float(os.getenv("SCALP_PING_5S_IMBALANCE_MIN", "0.60")))
+)
 
 DIRECTION_BIAS_ENABLED: bool = _bool_env("SCALP_PING_5S_DIRECTION_BIAS_ENABLED", True)
 DIRECTION_BIAS_WINDOW_SEC: float = max(
@@ -316,7 +356,10 @@ DIRECTION_BIAS_ALIGN_SCORE_MIN: float = max(
 )
 DIRECTION_BIAS_OPPOSITE_UNITS_MULT: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_OPPOSITE_UNITS_MULT", "0.72"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_OPPOSITE_UNITS_MULT", "0.72")),
+    ),
 )
 DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: float = max(
     0.05,
@@ -327,8 +370,8 @@ DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: float = max(
                 "SCALP_PING_5S_DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT",
                 str(DIRECTION_BIAS_OPPOSITE_UNITS_MULT),
             )
-        )
-    )
+        ),
+    ),
 )
 DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: float = max(
     0.05,
@@ -339,12 +382,15 @@ DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: float = max(
                 "SCALP_PING_5S_DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT",
                 str(DIRECTION_BIAS_OPPOSITE_UNITS_MULT),
             )
-        )
-    )
+        ),
+    ),
 )
 DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX: float = max(
     0.0,
-    min(1.0, float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX", "0.20"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX", "0.20")),
+    ),
 )
 DIRECTION_BIAS_VOL_LOW_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_VOL_LOW_PIPS", "0.40"))
@@ -435,7 +481,9 @@ SL_STREAK_DIRECTION_FLIP_MIN_STREAK: int = max(
 )
 SL_STREAK_DIRECTION_FLIP_LOOKBACK_TRADES: int = max(
     SL_STREAK_DIRECTION_FLIP_MIN_STREAK,
-    int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_LOOKBACK_TRADES", "6"))),
+    int(
+        float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_LOOKBACK_TRADES", "6"))
+    ),
 )
 SL_STREAK_DIRECTION_FLIP_MAX_AGE_SEC: float = max(
     0.0,
@@ -459,11 +507,19 @@ SL_STREAK_DIRECTION_FLIP_ALLOW_WITH_FAST_FLIP: bool = _bool_env(
 )
 SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS: int = max(
     1,
-    int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS", "2"))),
+    int(
+        float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_MIN_SIDE_SL_HITS", "2"))
+    ),
 )
 SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS: int = max(
     0,
-    int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS", "1"))),
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_MIN_TARGET_MARKET_PLUS", "1"
+            )
+        )
+    ),
 )
 SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_OVERRIDE_ENABLED",
@@ -509,11 +565,19 @@ SL_STREAK_DIRECTION_FLIP_FORCE_STREAK: int = max(
 )
 SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES: int = max(
     SL_STREAK_DIRECTION_FLIP_LOOKBACK_TRADES,
-    int(float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES", "24"))),
+    int(
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_LOOKBACK_TRADES", "24"
+            )
+        )
+    ),
 )
 SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC: float = max(
     0.1,
-    float(os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC", "2.0")),
+    float(
+        os.getenv("SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_METRICS_CACHE_TTL_SEC", "2.0")
+    ),
 )
 SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM: bool = _bool_env(
     "SCALP_PING_5S_SL_STREAK_DIRECTION_FLIP_REQUIRE_TECH_CONFIRM",
@@ -818,7 +882,9 @@ SIDE_ADVERSE_STACK_LOG_INTERVAL_SEC: float = max(
 )
 
 LOOKAHEAD_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_GATE_ENABLED", True)
-LOOKAHEAD_ALLOW_THIN_EDGE: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_ALLOW_THIN_EDGE", True)
+LOOKAHEAD_ALLOW_THIN_EDGE: bool = _bool_env(
+    "SCALP_PING_5S_LOOKAHEAD_ALLOW_THIN_EDGE", True
+)
 LOOKAHEAD_HORIZON_SEC: float = max(
     0.5,
     float(os.getenv("SCALP_PING_5S_LOOKAHEAD_HORIZON_SEC", "3.0")),
@@ -1103,7 +1169,10 @@ MTF_HEAT_CONTINUATION_MIN: float = max(
 )
 MTF_HEAT_REVERSION_MAX: float = max(
     0.0,
-    min(MTF_HEAT_CONTINUATION_MIN, float(os.getenv("SCALP_PING_5S_MTF_HEAT_REVERSION_MAX", "0.40"))),
+    min(
+        MTF_HEAT_CONTINUATION_MIN,
+        float(os.getenv("SCALP_PING_5S_MTF_HEAT_REVERSION_MAX", "0.40")),
+    ),
 )
 MTF_ADX_LOW: float = max(1.0, float(os.getenv("SCALP_PING_5S_MTF_ADX_LOW", "16.0")))
 MTF_ADX_HIGH: float = max(
@@ -1126,11 +1195,16 @@ MTF_ATR_M5_HIGH_PIPS: float = max(
 )
 MTF_CONTINUATION_ALIGN_BOOST_MAX: float = max(
     0.0,
-    min(2.0, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_ALIGN_BOOST_MAX", "0.80"))),
+    min(
+        2.0, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_ALIGN_BOOST_MAX", "0.80"))
+    ),
 )
 MTF_CONTINUATION_OPPOSITE_UNITS_MULT: float = max(
     0.0,
-    min(1.0, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_OPPOSITE_UNITS_MULT", "0.35"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_OPPOSITE_UNITS_MULT", "0.35")),
+    ),
 )
 MTF_CONTINUATION_OPPOSITE_BLOCK_MIN_MULT: float = max(
     0.05,
@@ -1283,7 +1357,12 @@ M1_TREND_ALIGN_SCORE_MIN_LOW_VOL: float = max(
     0.05,
     min(
         0.95,
-        float(os.getenv("SCALP_PING_5S_M1_TREND_ALIGN_SCORE_MIN_LOW_VOL", str(M1_TREND_ALIGN_SCORE_MIN))),
+        float(
+            os.getenv(
+                "SCALP_PING_5S_M1_TREND_ALIGN_SCORE_MIN_LOW_VOL",
+                str(M1_TREND_ALIGN_SCORE_MIN),
+            )
+        ),
     ),
 )
 M1_TREND_ALIGN_SCORE_MIN_HIGH_VOL: float = max(
@@ -1468,11 +1547,7 @@ EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT: float = max(
         float(
             os.getenv(
                 "SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_UNITS_MULT",
-                (
-                    "0.42"
-                    if _IS_B_OR_C_PREFIX
-                    else "0.68"
-                ),
+                ("0.42" if _IS_B_OR_C_PREFIX else "0.68"),
             )
         ),
     ),
@@ -1530,11 +1605,19 @@ EXTREMA_TECH_FILTER_ADX_WEAK_MAX: float = max(
 )
 EXTREMA_TECH_FILTER_LONG_TOP_RSI_MAX: float = max(
     1.0,
-    min(99.0, float(os.getenv("SCALP_PING_5S_EXTREMA_TECH_FILTER_LONG_TOP_RSI_MAX", "45.0"))),
+    min(
+        99.0,
+        float(os.getenv("SCALP_PING_5S_EXTREMA_TECH_FILTER_LONG_TOP_RSI_MAX", "45.0")),
+    ),
 )
 EXTREMA_TECH_FILTER_SHORT_BOTTOM_RSI_MIN: float = max(
     1.0,
-    min(99.0, float(os.getenv("SCALP_PING_5S_EXTREMA_TECH_FILTER_SHORT_BOTTOM_RSI_MIN", "55.0"))),
+    min(
+        99.0,
+        float(
+            os.getenv("SCALP_PING_5S_EXTREMA_TECH_FILTER_SHORT_BOTTOM_RSI_MIN", "55.0")
+        ),
+    ),
 )
 EXTREMA_TECH_FILTER_REQ_EMA_GAP_PIPS: float = max(
     0.0,
@@ -1542,7 +1625,10 @@ EXTREMA_TECH_FILTER_REQ_EMA_GAP_PIPS: float = max(
 )
 EXTREMA_TECH_FILTER_BLOCK_SOFT_MULT: float = max(
     0.05,
-    min(1.0, float(os.getenv("SCALP_PING_5S_EXTREMA_TECH_FILTER_BLOCK_SOFT_MULT", "0.55"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_EXTREMA_TECH_FILTER_BLOCK_SOFT_MULT", "0.55")),
+    ),
 )
 EXTREMA_SOFT_UNITS_MULT: float = max(
     0.10,
@@ -1604,11 +1690,19 @@ EXTREMA_REVERSAL_EMA_GAP_MIN_PIPS: float = max(
 )
 EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX: float = max(
     0.0,
-    min(1.0, float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX", "0.74"))),
+    min(
+        1.0,
+        float(
+            os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX", "0.74")
+        ),
+    ),
 )
 EXTREMA_REVERSAL_HORIZON_SCORE_MIN: float = max(
     0.0,
-    min(1.0, float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_HORIZON_SCORE_MIN", "0.24"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_HORIZON_SCORE_MIN", "0.24")),
+    ),
 )
 EXTREMA_REVERSAL_HORIZON_AGREE_MIN: int = max(
     1,
@@ -1618,23 +1712,41 @@ EXTREMA_REVERSAL_HORIZON_AGREE_MIN: int = max(
 TECH_ROUTER_ENABLED: bool = _bool_env("SCALP_PING_5S_TECH_ROUTER_ENABLED", True)
 TECH_ROUTER_MTF_BLOCK_UNITS_MULT: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_MTF_BLOCK_UNITS_MULT", "0.38"))),
+    min(
+        1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_MTF_BLOCK_UNITS_MULT", "0.38"))
+    ),
 )
 TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT", "0.42"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT", "0.42")),
+    ),
 )
 TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT", "0.50"))),
+    min(
+        1.0,
+        float(
+            os.getenv("SCALP_PING_5S_TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT", "0.50")
+        ),
+    ),
 )
 TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT", "0.52"))),
+    min(
+        1.0,
+        float(
+            os.getenv("SCALP_PING_5S_TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT", "0.52")
+        ),
+    ),
 )
 TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT", "0.45"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT", "0.45")),
+    ),
 )
 TECH_ROUTER_COUNTER_TP_MULT: float = max(
     0.3,
@@ -1650,7 +1762,10 @@ TECH_ROUTER_COUNTER_HOLD_MULT: float = max(
 )
 TECH_ROUTER_COUNTER_HARD_LOSS_MULT: float = max(
     0.2,
-    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_COUNTER_HARD_LOSS_MULT", "0.88"))),
+    min(
+        2.0,
+        float(os.getenv("SCALP_PING_5S_TECH_ROUTER_COUNTER_HARD_LOSS_MULT", "0.88")),
+    ),
 )
 TECH_ROUTER_EDGE_TP_BOOST_MAX: float = max(
     0.0,
@@ -1662,7 +1777,10 @@ TECH_ROUTER_EDGE_HOLD_BOOST_MAX: float = max(
 )
 TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX: float = max(
     0.0,
-    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX", "0.15"))),
+    min(
+        2.0,
+        float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX", "0.15")),
+    ),
 )
 TECH_ROUTER_HOLD_MIN_SEC: float = max(
     5.0,
@@ -1673,7 +1791,9 @@ TECH_ROUTER_HOLD_MAX_MULT: float = max(
     min(3.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_HOLD_MAX_MULT", "1.40"))),
 )
 
-ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
+ENTRY_COOLDOWN_SEC: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0"))
+)
 MIN_ORDER_SPACING_SEC: float = max(
     0.05, float(os.getenv("SCALP_PING_5S_MIN_ORDER_SPACING_SEC", "1.0"))
 )
@@ -1768,7 +1888,9 @@ ACTIVE_CAP_BYPASS_MIN_FREE_RATIO: float = max(
 )
 ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY: float = max(
     0.0,
-    float(os.getenv("SCALP_PING_5S_ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", "8000")),
+    float(
+        os.getenv("SCALP_PING_5S_ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", "8000")
+    ),
 )
 ACTIVE_CAP_BYPASS_EXTRA_TOTAL: int = max(
     0,
@@ -1803,7 +1925,9 @@ TRAP_LOG_INTERVAL_SEC: float = max(
 )
 
 MIN_UNITS: int = max(1, int(float(os.getenv("SCALP_PING_5S_MIN_UNITS", "2000"))))
-MAX_UNITS: int = max(MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_MAX_UNITS", "25000"))))
+MAX_UNITS: int = max(
+    MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_MAX_UNITS", "25000")))
+)
 BASE_ENTRY_UNITS: int = max(
     MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_BASE_ENTRY_UNITS", "10000")))
 )
@@ -2109,9 +2233,7 @@ ENTRY_PROBABILITY_BAND_ALLOC_LOW_BOOST_MAX: float = max(
 )
 ENTRY_PROBABILITY_BAND_ALLOC_GAP_PIPS_REF: float = max(
     0.05,
-    float(
-        os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_GAP_PIPS_REF", "1.0")
-    ),
+    float(os.getenv("SCALP_PING_5S_ENTRY_PROBABILITY_BAND_ALLOC_GAP_PIPS_REF", "1.0")),
 )
 ENTRY_PROBABILITY_BAND_ALLOC_GAP_WIN_RATE_REF: float = max(
     0.01,
@@ -2276,8 +2398,12 @@ SIDE_BIAS_BLOCK_THRESHOLD: float = max(
 )
 
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_TP_BASE_PIPS", "0.30")))
-TP_NET_MIN_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_PIPS", "0.30")))
-TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIPS", "0.80")))
+TP_NET_MIN_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_PIPS", "0.30"))
+)
+TP_MAX_PIPS: float = max(
+    TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIPS", "0.80"))
+)
 TP_ENABLED: bool = _bool_env("SCALP_PING_5S_TP_ENABLED", True)
 TP_MOMENTUM_BONUS_MAX: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX", "0.2"))
@@ -2294,7 +2420,12 @@ SHORT_TP_MAX_PIPS: float = max(
     float(os.getenv("SCALP_PING_5S_SHORT_TP_MAX_PIPS", str(TP_MAX_PIPS))),
 )
 SHORT_TP_MOMENTUM_BONUS_MAX: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_SHORT_TP_MOMENTUM_BONUS_MAX", str(TP_MOMENTUM_BONUS_MAX)))
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SHORT_TP_MOMENTUM_BONUS_MAX", str(TP_MOMENTUM_BONUS_MAX)
+        )
+    ),
 )
 TP_TIME_ADAPT_ENABLED: bool = _bool_env("SCALP_PING_5S_TP_TIME_ADAPT_ENABLED", True)
 TP_TARGET_HOLD_SEC: float = max(
@@ -2354,8 +2485,12 @@ ENTRY_CHASE_MAX_PIPS: float = max(
 # SL defaults tightened: 4.20 max was far too wide for 5s scalp (TP 0.3-0.8p).
 SL_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_BASE_PIPS", "1.20")))
 SL_MIN_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_MIN_PIPS", "0.80")))
-SL_MAX_PIPS: float = max(SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS", "2.50")))
-SL_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_MULT", "1.2")))
+SL_MAX_PIPS: float = max(
+    SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS", "2.50"))
+)
+SL_SPREAD_MULT: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_MULT", "1.2"))
+)
 SL_SPREAD_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_BUFFER_PIPS", "0.30"))
 )
@@ -2374,10 +2509,13 @@ SHORT_SL_MIN_PIPS: float = max(
     0.2, float(os.getenv("SCALP_PING_5S_SHORT_SL_MIN_PIPS", str(SL_MIN_PIPS)))
 )
 SHORT_SL_MAX_PIPS: float = max(
-    SHORT_SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SHORT_SL_MAX_PIPS", str(SL_MAX_PIPS)))
+    SHORT_SL_MIN_PIPS,
+    float(os.getenv("SCALP_PING_5S_SHORT_SL_MAX_PIPS", str(SL_MAX_PIPS))),
 )
 
-SNAPSHOT_FALLBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_FALLBACK_ENABLED", True)
+SNAPSHOT_FALLBACK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SNAPSHOT_FALLBACK_ENABLED", True
+)
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.1, float(os.getenv("SCALP_PING_5S_SNAPSHOT_MIN_INTERVAL_SEC", "0.2"))
 )
@@ -2392,7 +2530,8 @@ SNAPSHOT_FETCH_RETRY_MAX_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_SNAPSHOT_FETCH_RETRY_MAX_SEC", "8.0")),
 )
 SNAPSHOT_FETCH_RETRY_BACKOFF_MULTIPLIER: float = max(
-    1.1, float(os.getenv("SCALP_PING_5S_SNAPSHOT_FETCH_RETRY_BACKOFF_MULTIPLIER", "1.8"))
+    1.1,
+    float(os.getenv("SCALP_PING_5S_SNAPSHOT_FETCH_RETRY_BACKOFF_MULTIPLIER", "1.8")),
 )
 SNAPSHOT_FETCH_FAILURE_STALE_MODE_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_SNAPSHOT_FAILURE_STALE_MODE_ENABLED", True
@@ -2407,7 +2546,10 @@ SNAPSHOT_FETCH_FAILURE_STALE_MAX_AGE_MS: float = max(
 )
 SNAPSHOT_FETCH_FAILURE_STALE_UNITS_SCALE: float = max(
     0.1,
-    min(1.0, float(os.getenv("SCALP_PING_5S_SNAPSHOT_FAILURE_STALE_UNITS_SCALE", "0.55"))),
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_SNAPSHOT_FAILURE_STALE_UNITS_SCALE", "0.55")),
+    ),
 )
 ENTRY_QUALITY_WINDOW_SEC: float = max(
     1.0,
@@ -2419,7 +2561,10 @@ ENTRY_QUALITY_MAX_AGE_MS: float = max(
 )
 ENTRY_QUALITY_MIN_SPAN_RATIO: float = max(
     0.0,
-    min(1.0, float(os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", "0.7"))),
+    min(
+        1.0,
+        float(os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", "0.7")),
+    ),
 )
 ENTRY_QUALITY_MIN_DENSITY: float = max(
     0.0,
@@ -2444,7 +2589,9 @@ SNAPSHOT_TOPUP_TARGET_DENSITY: float = max(
         )
     ),
 )
-SNAPSHOT_KEEPALIVE_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_KEEPALIVE_ENABLED", True)
+SNAPSHOT_KEEPALIVE_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SNAPSHOT_KEEPALIVE_ENABLED", True
+)
 SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC: float = max(
     SNAPSHOT_MIN_INTERVAL_SEC,
     float(os.getenv("SCALP_PING_5S_SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC", "0.8")),
@@ -2563,7 +2710,9 @@ FORCE_EXIT_REASON: str = (
     os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
 )
 FORCE_EXIT_MAX_FLOATING_LOSS_REASON: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss").strip()
+    os.getenv(
+        "SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss"
+    ).strip()
     or "max_floating_loss"
 )
 FORCE_EXIT_RECOVERY_REASON: str = (
@@ -2594,12 +2743,10 @@ FORCE_EXIT_REQUIRE_POLICY_GENERATION: bool = _bool_env(
     "SCALP_PING_5S_FORCE_EXIT_REQUIRE_POLICY_GENERATION",
     True,
 )
-FORCE_EXIT_POLICY_GENERATION: str = (
-    os.getenv(
-        "SCALP_PING_5S_FORCE_EXIT_POLICY_GENERATION",
-        os.getenv("ORDER_ENTRY_POLICY_GENERATION", ""),
-    ).strip()
-)
+FORCE_EXIT_POLICY_GENERATION: str = os.getenv(
+    "SCALP_PING_5S_FORCE_EXIT_POLICY_GENERATION",
+    os.getenv("ORDER_ENTRY_POLICY_GENERATION", ""),
+).strip()
 FORCE_EXIT_SKIP_EXISTING_ON_START: bool = _bool_env(
     "SCALP_PING_5S_FORCE_EXIT_SKIP_EXISTING_ON_START",
     True,
@@ -2657,12 +2804,16 @@ FORCE_EXIT_MTF_FIB_OPPOSITE_HEAT_BLOCK: float = max(
     0.0,
     min(
         1.0,
-        float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_HEAT_BLOCK", "0.72")),
+        float(
+            os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_HEAT_BLOCK", "0.72")
+        ),
     ),
 )
 FORCE_EXIT_MTF_FIB_OPPOSITE_RSI: float = max(
     1.0,
-    min(99.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_RSI", "42.0"))),
+    min(
+        99.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_RSI", "42.0"))
+    ),
 )
 FORCE_EXIT_MTF_FIB_OPPOSITE_EMA_GAP_PIPS: float = max(
     0.0,
@@ -2714,11 +2865,15 @@ FORCE_EXIT_MOMENTUM_STALL_MAX_TICK_AGE_MS: float = max(
     float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_MAX_TICK_AGE_MS", "1200")),
 )
 FORCE_EXIT_MOMENTUM_STALL_TP_REASON: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_TP_REASON", "TAKE_PROFIT_ORDER").strip()
+    os.getenv(
+        "SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_TP_REASON", "TAKE_PROFIT_ORDER"
+    ).strip()
     or "TAKE_PROFIT_ORDER"
 )
 FORCE_EXIT_MOMENTUM_STALL_LOSS_REASON: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_LOSS_REASON", "momentum_stop_loss").strip()
+    os.getenv(
+        "SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_LOSS_REASON", "momentum_stop_loss"
+    ).strip()
     or "momentum_stop_loss"
 )
 
@@ -2726,9 +2881,9 @@ PROFIT_BANK_ENABLED: bool = _bool_env(
     "SCALP_PING_5S_PROFIT_BANK_ENABLED",
     False,
 )
-PROFIT_BANK_START_TIME_UTC: str = (
-    os.getenv("SCALP_PING_5S_PROFIT_BANK_START_TIME_UTC", "").strip()
-)
+PROFIT_BANK_START_TIME_UTC: str = os.getenv(
+    "SCALP_PING_5S_PROFIT_BANK_START_TIME_UTC", ""
+).strip()
 PROFIT_BANK_REASON: str = (
     os.getenv("SCALP_PING_5S_PROFIT_BANK_REASON", "profit_bank_release").strip()
     or "profit_bank_release"
@@ -2800,19 +2955,25 @@ FORCE_EXIT_REASON_MAX_FLOATING_LOSS: str = FORCE_EXIT_MAX_FLOATING_LOSS_REASON
 FORCE_EXIT_REASON_RECOVERY: str = FORCE_EXIT_RECOVERY_REASON
 FORCE_EXIT_REASON_GIVEBACK: str = FORCE_EXIT_GIVEBACK_REASON
 
-FORCE_EXIT_ACTIVE: bool = FORCE_EXIT_ENABLED and FORCE_EXIT_MAX_ACTIONS > 0 and (
-    FORCE_EXIT_MAX_HOLD_SEC > 0.0
-    or FORCE_EXIT_MAX_FLOATING_LOSS_PIPS > 0.0
-    or FORCE_EXIT_RECOVERY_WINDOW_SEC > 0.0
-    or (
-        FORCE_EXIT_GIVEBACK_ENABLED
-        and FORCE_EXIT_GIVEBACK_ARM_PIPS > 0.0
-        and FORCE_EXIT_GIVEBACK_BACKOFF_PIPS > 0.0
+FORCE_EXIT_ACTIVE: bool = (
+    FORCE_EXIT_ENABLED
+    and FORCE_EXIT_MAX_ACTIONS > 0
+    and (
+        FORCE_EXIT_MAX_HOLD_SEC > 0.0
+        or FORCE_EXIT_MAX_FLOATING_LOSS_PIPS > 0.0
+        or FORCE_EXIT_RECOVERY_WINDOW_SEC > 0.0
+        or (
+            FORCE_EXIT_GIVEBACK_ENABLED
+            and FORCE_EXIT_GIVEBACK_ARM_PIPS > 0.0
+            and FORCE_EXIT_GIVEBACK_BACKOFF_PIPS > 0.0
+        )
     )
 )
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
-_IS_B_OR_C_VARIANT: bool = STRATEGY_TAG.startswith(("scalp_ping_5s_b", "scalp_ping_5s_c", "scalp_ping_5s_d"))
+_IS_B_OR_C_VARIANT: bool = STRATEGY_TAG.startswith(
+    ("scalp_ping_5s_b", "scalp_ping_5s_c", "scalp_ping_5s_d")
+)
 USE_SL: bool = _bool_env("SCALP_PING_5S_USE_SL", _IS_B_OR_C_VARIANT)
 DISABLE_ENTRY_HARD_STOP: bool = _bool_env(
     "SCALP_PING_5S_DISABLE_ENTRY_HARD_STOP", not USE_SL

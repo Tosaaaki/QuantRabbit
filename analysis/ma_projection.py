@@ -182,7 +182,11 @@ def score_ma_for_side(
     align_now = gap >= 0 if is_long else gap <= 0
     cross_soon = eta is not None and eta <= float(opp_block_bars or 0.0)
 
-    enabled = _PROJ_MA_LOOKAHEAD_ENABLED if lookahead_enabled is None else bool(lookahead_enabled)
+    enabled = (
+        _PROJ_MA_LOOKAHEAD_ENABLED
+        if lookahead_enabled is None
+        else bool(lookahead_enabled)
+    )
     if not enabled:
         if align_now and not cross_soon:
             return 0.7
@@ -198,7 +202,9 @@ def score_ma_for_side(
     # Cross direction is implied by (gap sign, slope sign) because projected_cross_bars
     # is only defined when the gap is closing toward zero.
     bullish_cross = gap < 0 and slope > 0  # ma10 below ma20 but rising -> bullish cross
-    bearish_cross = gap > 0 and slope < 0  # ma10 above ma20 but falling -> bearish cross
+    bearish_cross = (
+        gap > 0 and slope < 0
+    )  # ma10 above ma20 but falling -> bearish cross
 
     cross_favorable = (bullish_cross and is_long) or (bearish_cross and not is_long)
     cross_adverse = (bullish_cross and not is_long) or (bearish_cross and is_long)
@@ -273,18 +279,22 @@ def compute_rsi_projection(
     closes = [float(c.get("close", 0.0)) for c in candles if c and "close" in c]
     if len(closes) < period + 2:
         return None
+
     # compute RSI last 2 values
     def _rsi_seq(vals: List[float]) -> float:
         import math
+
         diffs = [vals[i] - vals[i - 1] for i in range(1, len(vals))]
         gains = [max(0.0, d) for d in diffs]
         losses = [max(0.0, -d) for d in diffs]
         alpha = 1.0 / period
+
         def _ewm(seq: List[float]) -> float:
             s = seq[0]
             for v in seq[1:]:
                 s = alpha * v + (1 - alpha) * s
             return s
+
         avg_gain = _ewm(gains)
         avg_loss = _ewm(losses)
         rs = avg_gain / (avg_loss if avg_loss != 0 else float("nan"))
@@ -302,8 +312,10 @@ def compute_rsi_projection(
         eta_upper_bars = (upper - rsi_curr) / slope
     if slope < 0 and rsi_curr > lower:
         eta_lower_bars = (rsi_curr - lower) / (-slope)
+
     def _mins(x: Optional[float]) -> Optional[float]:
         return x * timeframe_minutes if x is not None else None
+
     return RSIProjection(
         rsi=rsi_curr,
         slope_per_bar=slope,
@@ -330,11 +342,14 @@ def compute_bbw_projection(
     squeeze_threshold: float = 0.14,
 ) -> Optional[BBWProjection]:
     import math
+
     closes = [float(c.get("close", 0.0)) for c in candles if c and "close" in c]
     if len(closes) < period + 2:
         return None
+
     def _boll(vals: List[float]) -> Tuple[float, float, float]:
         import statistics as st
+
         seg = vals[-period:]
         mid = sum(seg) / period
         # population std to align with calc_core default ddof=0
@@ -343,11 +358,12 @@ def compute_bbw_projection(
         else:
             mean = mid
             var = sum((v - mean) ** 2 for v in seg) / period
-            sd = var ** 0.5
+            sd = var**0.5
         upper = mid + std_mult * sd
         lower = mid - std_mult * sd
         bbw = (upper - lower) / mid if mid != 0 else 0.0
         return upper, mid, lower, bbw  # type: ignore
+
     _, mid_prev, _, bbw_prev = _boll(closes[:-1])
     _, mid_curr, _, bbw_curr = _boll(closes)
     slope = bbw_curr - bbw_prev
@@ -358,7 +374,9 @@ def compute_bbw_projection(
         bbw=bbw_curr,
         slope_per_bar=slope,
         squeeze_eta_bars=eta_bars,
-        squeeze_eta_minutes=(eta_bars * timeframe_minutes) if eta_bars is not None else None,
+        squeeze_eta_minutes=(
+            (eta_bars * timeframe_minutes) if eta_bars is not None else None
+        ),
     )
 
 
@@ -379,29 +397,40 @@ def compute_adx_projection(
     highs = [float(c.get("high", 0.0)) for c in candles if c and "high" in c]
     lows = [float(c.get("low", 0.0)) for c in candles if c and "low" in c]
     closes = [float(c.get("close", 0.0)) for c in candles if c and "close" in c]
-    if not (len(highs) >= period + 2 and len(lows) >= period + 2 and len(closes) >= period + 2):
+    if not (
+        len(highs) >= period + 2
+        and len(lows) >= period + 2
+        and len(closes) >= period + 2
+    ):
         return None
 
     def _atr(h, l, c):
         prev_c = c[:-1] + [c[-1]]
-        tr = [max(h[i]-l[i], abs(h[i]-prev_c[i]), abs(l[i]-prev_c[i])) for i in range(1, len(c))]
+        tr = [
+            max(h[i] - l[i], abs(h[i] - prev_c[i]), abs(l[i] - prev_c[i]))
+            for i in range(1, len(c))
+        ]
         alpha = 1.0 / period
         s = tr[0]
         for v in tr[1:]:
             s = alpha * v + (1 - alpha) * s
         return s
+
     def _adx_last(vals_h, vals_l, vals_c) -> float:
         import numpy as np  # local import is ok
+
         # Reuse simplified version consistent with calc_core
         # Compute +/-DM
-        up = [max(0.0, vals_h[i] - vals_h[i-1]) for i in range(1, len(vals_h))]
-        down = [max(0.0, vals_l[i-1] - vals_l[i]) for i in range(1, len(vals_l))]
+        up = [max(0.0, vals_h[i] - vals_h[i - 1]) for i in range(1, len(vals_h))]
+        down = [max(0.0, vals_l[i - 1] - vals_l[i]) for i in range(1, len(vals_l))]
         alpha = 1.0 / period
+
         def _ewm(seq: List[float]) -> float:
             s = seq[0]
             for v in seq[1:]:
                 s = alpha * v + (1 - alpha) * s
             return s
+
         tr = _atr(vals_h, vals_l, vals_c)
         plus_di = 100.0 * _ewm(up) / (tr if tr != 0 else 1e-9)
         minus_di = 100.0 * _ewm(down) / (tr if tr != 0 else 1e-9)
@@ -420,7 +449,9 @@ def compute_adx_projection(
         adx=adx_curr,
         slope_per_bar=slope,
         eta_to_trend_bars=eta_bars,
-        eta_to_trend_minutes=(eta_bars * timeframe_minutes) if eta_bars is not None else None,
+        eta_to_trend_minutes=(
+            (eta_bars * timeframe_minutes) if eta_bars is not None else None
+        ),
     )
 
 
@@ -439,11 +470,19 @@ def compute_atr_projection(
     highs = [float(c.get("high", 0.0)) for c in candles if c and "high" in c]
     lows = [float(c.get("low", 0.0)) for c in candles if c and "low" in c]
     closes = [float(c.get("close", 0.0)) for c in candles if c and "close" in c]
-    if not (len(highs) >= period + 2 and len(lows) >= period + 2 and len(closes) >= period + 2):
+    if not (
+        len(highs) >= period + 2
+        and len(lows) >= period + 2
+        and len(closes) >= period + 2
+    ):
         return None
+
     def _true_range(i: int) -> float:
         prev_close = closes[i - 1]
-        return max(highs[i] - lows[i], abs(highs[i] - prev_close), abs(lows[i] - prev_close))
+        return max(
+            highs[i] - lows[i], abs(highs[i] - prev_close), abs(lows[i] - prev_close)
+        )
+
     alpha = 1.0 / period
     s_prev = None
     for i in range(1, len(closes) - 1):
@@ -456,7 +495,9 @@ def compute_atr_projection(
     atr_prev = s_prev if s_prev is not None else tr_last
     atr_curr = alpha * tr_last + (1 - alpha) * atr_prev
     slope = (atr_curr - atr_prev) / PIP
-    return ATRProjection(atr=atr_curr, atr_pips=atr_curr / PIP, slope_per_bar_pips=slope)
+    return ATRProjection(
+        atr=atr_curr, atr_pips=atr_curr / PIP, slope_per_bar_pips=slope
+    )
 
 
 @dataclass
@@ -476,6 +517,7 @@ def compute_donchian_projection(
     if len(arr) < lookback + 1:
         return None
     import math
+
     highs = [float(c.get("high", 0.0)) for c in arr[-(lookback + 1) : -1]]
     lows = [float(c.get("low", 0.0)) for c in arr[-(lookback + 1) : -1]]
     if not highs or not lows:

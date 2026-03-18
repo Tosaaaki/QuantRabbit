@@ -122,11 +122,24 @@ def _is_generic_pattern_id(pattern_id: str) -> bool:
     return informative == 0
 
 
-_PATTERN_TOKEN_ORDER: tuple[str, ...] = ("st", "pk", "sd", "sg", "mtf", "hz", "ex", "rg", "pt")
+_PATTERN_TOKEN_ORDER: tuple[str, ...] = (
+    "st",
+    "pk",
+    "sd",
+    "sg",
+    "mtf",
+    "hz",
+    "ex",
+    "rg",
+    "pt",
+)
 
 
 def _tokens_key(tokens: dict[str, str], include_keys: tuple[str, ...]) -> str:
-    return "|".join(f"{key}:{str(tokens.get(key, 'na') or 'na').strip().lower()}" for key in include_keys)
+    return "|".join(
+        f"{key}:{str(tokens.get(key, 'na') or 'na').strip().lower()}"
+        for key in include_keys
+    )
 
 
 def _row_rank(row: dict[str, Any]) -> tuple[int, float]:
@@ -140,10 +153,14 @@ _ENABLED = _env_bool("ORDER_PATTERN_GATE_ENABLED", True)
 _TTL_SEC = max(2.0, _env_float("ORDER_PATTERN_GATE_TTL_SEC", 20.0))
 _MAX_AGE_SEC = max(0.0, _env_float("ORDER_PATTERN_GATE_MAX_AGE_SEC", 1800.0))
 _DB_PATH = Path(os.getenv("ORDER_PATTERN_GATE_DB_PATH", "logs/patterns.db"))
-_JSON_PATH = Path(os.getenv("ORDER_PATTERN_GATE_JSON_PATH", "config/pattern_book_deep.json"))
+_JSON_PATH = Path(
+    os.getenv("ORDER_PATTERN_GATE_JSON_PATH", "config/pattern_book_deep.json")
+)
 _GLOBAL_OPT_IN = _env_bool("ORDER_PATTERN_GATE_GLOBAL_OPT_IN", False)
 
-_POCKET_ALLOWLIST = _env_set("ORDER_PATTERN_GATE_POCKET_ALLOWLIST", "micro,macro,scalp,scalp_fast")
+_POCKET_ALLOWLIST = _env_set(
+    "ORDER_PATTERN_GATE_POCKET_ALLOWLIST", "micro,macro,scalp,scalp_fast"
+)
 _POCKET_BLOCKLIST = _env_set("ORDER_PATTERN_GATE_POCKET_BLOCKLIST", "")
 _STRATEGY_ALLOWLIST = _env_set("ORDER_PATTERN_GATE_STRATEGY_ALLOWLIST", "")
 _STRATEGY_BLOCKLIST = _env_set("ORDER_PATTERN_GATE_STRATEGY_BLOCKLIST", "")
@@ -152,20 +169,28 @@ _BLOCK_QUALITIES = _env_set("ORDER_PATTERN_GATE_BLOCK_QUALITIES", "avoid")
 _REDUCE_QUALITIES = _env_set("ORDER_PATTERN_GATE_REDUCE_QUALITIES", "weak")
 
 _SCALE_MIN_TRADES = max(1, _env_int("ORDER_PATTERN_GATE_SCALE_MIN_TRADES", 30))
-_BLOCK_MIN_TRADES = max(_SCALE_MIN_TRADES, _env_int("ORDER_PATTERN_GATE_BLOCK_MIN_TRADES", 90))
+_BLOCK_MIN_TRADES = max(
+    _SCALE_MIN_TRADES, _env_int("ORDER_PATTERN_GATE_BLOCK_MIN_TRADES", 90)
+)
 
-_BLOCK_MAX_PVALUE = max(0.0, min(1.0, _env_float("ORDER_PATTERN_GATE_BLOCK_MAX_PVALUE", 0.35)))
+_BLOCK_MAX_PVALUE = max(
+    0.0, min(1.0, _env_float("ORDER_PATTERN_GATE_BLOCK_MAX_PVALUE", 0.35))
+)
 _BLOCK_MAX_SCORE = _env_float("ORDER_PATTERN_GATE_BLOCK_MAX_SCORE", -0.9)
 
 _ALLOW_BOOST = _env_bool("ORDER_PATTERN_GATE_ALLOW_BOOST", True)
 _SCALE_MIN = max(0.1, _env_float("ORDER_PATTERN_GATE_SCALE_MIN", 0.70))
 _SCALE_MAX = max(1.0, _env_float("ORDER_PATTERN_GATE_SCALE_MAX", 1.20))
 _MIN_SCALE_DELTA = max(0.0, _env_float("ORDER_PATTERN_GATE_MIN_SCALE_DELTA", 0.03))
-_REDUCE_FALLBACK_SCALE = max(0.2, min(1.0, _env_float("ORDER_PATTERN_GATE_REDUCE_FALLBACK_SCALE", 0.88)))
+_REDUCE_FALLBACK_SCALE = max(
+    0.2, min(1.0, _env_float("ORDER_PATTERN_GATE_REDUCE_FALLBACK_SCALE", 0.88))
+)
 
 _DRIFT_PENALTY_ENABLED = _env_bool("ORDER_PATTERN_GATE_DRIFT_PENALTY_ENABLED", True)
 _DRIFT_MIN_TRADES = max(1, _env_int("ORDER_PATTERN_GATE_DRIFT_MIN_TRADES", 40))
-_DRIFT_DETERIORATION_SCALE = max(0.2, min(1.0, _env_float("ORDER_PATTERN_GATE_DRIFT_DETERIORATION_SCALE", 0.82)))
+_DRIFT_DETERIORATION_SCALE = max(
+    0.2, min(1.0, _env_float("ORDER_PATTERN_GATE_DRIFT_DETERIORATION_SCALE", 0.82))
+)
 _DRIFT_SOFT_DETERIORATION_SCALE = max(
     0.2, min(1.0, _env_float("ORDER_PATTERN_GATE_DRIFT_SOFT_DETERIORATION_SCALE", 0.90))
 )
@@ -173,8 +198,12 @@ _DRIFT_SOFT_DETERIORATION_SCALE = max(
 _FALLBACK_ENABLED = _env_bool("ORDER_PATTERN_GATE_FALLBACK_ENABLED", True)
 _FALLBACK_DISABLE_BLOCK = _env_bool("ORDER_PATTERN_GATE_FALLBACK_DISABLE_BLOCK", True)
 _FALLBACK_ALLOW_BOOST = _env_bool("ORDER_PATTERN_GATE_FALLBACK_ALLOW_BOOST", False)
-_FALLBACK_SCALE_MIN = max(0.1, _env_float("ORDER_PATTERN_GATE_FALLBACK_SCALE_MIN", 0.85))
-_FALLBACK_SCALE_MAX = max(1.0, _env_float("ORDER_PATTERN_GATE_FALLBACK_SCALE_MAX", 1.05))
+_FALLBACK_SCALE_MIN = max(
+    0.1, _env_float("ORDER_PATTERN_GATE_FALLBACK_SCALE_MIN", 0.85)
+)
+_FALLBACK_SCALE_MAX = max(
+    1.0, _env_float("ORDER_PATTERN_GATE_FALLBACK_SCALE_MAX", 1.05)
+)
 _FALLBACK_MATCH_ORDER: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("drop_pt", ("st", "pk", "sd", "sg", "mtf", "hz", "ex", "rg")),
     ("drop_rg", ("st", "pk", "sd", "sg", "mtf", "hz", "ex", "pt")),
@@ -216,7 +245,8 @@ class PatternGateDecision:
             "match_mode": str(self.match_mode or "exact"),
             "requested_pattern_id": (
                 str(self.requested_pattern_id)
-                if self.requested_pattern_id and self.requested_pattern_id != self.pattern_id
+                if self.requested_pattern_id
+                and self.requested_pattern_id != self.pattern_id
                 else None
             ),
         }
@@ -277,9 +307,15 @@ def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
         return False
     tag = str(strategy_tag or "").strip().lower()
     base = _strategy_base(strategy_tag)
-    if _STRATEGY_BLOCKLIST and (tag in _STRATEGY_BLOCKLIST or base in _STRATEGY_BLOCKLIST):
+    if _STRATEGY_BLOCKLIST and (
+        tag in _STRATEGY_BLOCKLIST or base in _STRATEGY_BLOCKLIST
+    ):
         return False
-    if _STRATEGY_ALLOWLIST and tag not in _STRATEGY_ALLOWLIST and base not in _STRATEGY_ALLOWLIST:
+    if (
+        _STRATEGY_ALLOWLIST
+        and tag not in _STRATEGY_ALLOWLIST
+        and base not in _STRATEGY_ALLOWLIST
+    ):
         return False
     return True
 
@@ -300,11 +336,19 @@ def _entry_opt_in(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
 
 def _allow_generic(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
     if isinstance(entry_thesis, dict):
-        for key in ("pattern_gate_allow_generic", "pattern_gate_generic_ok", "allow_generic_pattern_id"):
+        for key in (
+            "pattern_gate_allow_generic",
+            "pattern_gate_generic_ok",
+            "allow_generic_pattern_id",
+        ):
             if bool(entry_thesis.get(key)):
                 return True
     if isinstance(meta, dict):
-        for key in ("pattern_gate_allow_generic", "pattern_gate_generic_ok", "allow_generic_pattern_id"):
+        for key in (
+            "pattern_gate_allow_generic",
+            "pattern_gate_generic_ok",
+            "allow_generic_pattern_id",
+        ):
             if bool(meta.get(key)):
                 return True
     return False
@@ -322,14 +366,12 @@ def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]
         con = sqlite3.connect(_DB_PATH, timeout=2.5)
         con.row_factory = sqlite3.Row
         try:
-            for row in con.execute(
-                """
+            for row in con.execute("""
                 SELECT
                   pattern_id, trades, quality, suggested_multiplier,
                   robust_score, p_value, win_rate, avg_pips, profit_factor
                 FROM pattern_scores
-                """
-            ).fetchall():
+                """).fetchall():
                 pid = str(row["pattern_id"] or "")
                 if not pid:
                     continue
@@ -337,7 +379,9 @@ def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]
                     "pattern_id": pid,
                     "trades": _safe_int(row["trades"]),
                     "quality": str(row["quality"] or "neutral").strip().lower(),
-                    "suggested_multiplier": _safe_float(row["suggested_multiplier"], 1.0),
+                    "suggested_multiplier": _safe_float(
+                        row["suggested_multiplier"], 1.0
+                    ),
                     "robust_score": _safe_float(row["robust_score"], 0.0),
                     "p_value": _safe_float(row["p_value"], 1.0),
                     "win_rate": _safe_float(row["win_rate"], 0.0),
@@ -347,12 +391,10 @@ def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]
         except sqlite3.OperationalError:
             rows = {}
         try:
-            for row in con.execute(
-                """
+            for row in con.execute("""
                 SELECT pattern_id, drift_state, delta_avg_pips, delta_win_rate, p_value
                 FROM pattern_drift
-                """
-            ).fetchall():
+                """).fetchall():
                 pid = str(row["pattern_id"] or "")
                 if not pid:
                     continue
@@ -368,12 +410,10 @@ def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]
         # Fallback to legacy action table if deep score table is not present yet.
         if not rows:
             try:
-                for row in con.execute(
-                    """
+                for row in con.execute("""
                     SELECT pattern_id, action, lot_multiplier, reason, trades
                     FROM pattern_actions
-                    """
-                ).fetchall():
+                    """).fetchall():
                     pid = str(row["pattern_id"] or "")
                     if not pid:
                         continue
@@ -406,7 +446,9 @@ def _load_from_db() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]
     return rows, drift, "db"
 
 
-def _load_from_json() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str]:
+def _load_from_json() -> (
+    tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str]
+):
     if not _JSON_PATH.exists():
         return {}, {}, "json_missing"
     try:
@@ -433,7 +475,9 @@ def _load_from_json() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, An
                 "pattern_id": pid,
                 "trades": _safe_int(rec.get("trades"), 0),
                 "quality": str(rec.get("quality") or quality).strip().lower(),
-                "suggested_multiplier": _safe_float(rec.get("suggested_multiplier"), 1.0),
+                "suggested_multiplier": _safe_float(
+                    rec.get("suggested_multiplier"), 1.0
+                ),
                 "robust_score": _safe_float(rec.get("robust_score"), 0.0),
                 "p_value": _safe_float(rec.get("p_value"), 1.0),
             }
@@ -476,7 +520,12 @@ def _build_fallback_index(rows: dict[str, dict[str, Any]]) -> dict[str, dict[str
     return indexes
 
 
-def _load_cache() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], str, dict[str, dict[str, str]]]:
+def _load_cache() -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    str,
+    dict[str, dict[str, str]],
+]:
     global _CACHE_TS, _CACHE_ROWS, _CACHE_DRIFT, _CACHE_SOURCE, _CACHE_FALLBACK_INDEX
     now = time.monotonic()
     if _CACHE_ROWS and (now - _CACHE_TS) <= _TTL_SEC:
@@ -535,7 +584,11 @@ def _resolve_scale(row: dict[str, Any], drift_row: Optional[dict[str, Any]]) -> 
     if trades < _SCALE_MIN_TRADES:
         mult = 1.0
 
-    if _DRIFT_PENALTY_ENABLED and trades >= _DRIFT_MIN_TRADES and isinstance(drift_row, dict):
+    if (
+        _DRIFT_PENALTY_ENABLED
+        and trades >= _DRIFT_MIN_TRADES
+        and isinstance(drift_row, dict)
+    ):
         state = str(drift_row.get("drift_state") or "").strip().lower()
         if state == "deterioration":
             mult = min(mult, _DRIFT_DETERIORATION_SCALE)
@@ -580,7 +633,9 @@ def decide(
     if side_key == "unknown":
         return None
 
-    strategy_fallback = str(strategy_tag or entry_thesis.get("strategy_tag") or "").strip()
+    strategy_fallback = str(
+        strategy_tag or entry_thesis.get("strategy_tag") or ""
+    ).strip()
     if not strategy_fallback:
         return None
     requested_pattern_id = build_pattern_id(
@@ -590,7 +645,9 @@ def decide(
         strategy_tag_fallback=strategy_fallback,
     )
     allow_generic = _allow_generic(entry_thesis, meta)
-    if not requested_pattern_id or (_is_generic_pattern_id(requested_pattern_id) and not allow_generic):
+    if not requested_pattern_id or (
+        _is_generic_pattern_id(requested_pattern_id) and not allow_generic
+    ):
         return None
 
     rows, drift_map, source, fallback_index = _load_cache()
@@ -616,8 +673,7 @@ def decide(
 
     if (
         (match_mode == "exact" or not _FALLBACK_DISABLE_BLOCK)
-        and
-        quality in _BLOCK_QUALITIES
+        and quality in _BLOCK_QUALITIES
         and trades >= _BLOCK_MIN_TRADES
         and robust_score <= _BLOCK_MAX_SCORE
         and p_value <= _BLOCK_MAX_PVALUE
@@ -646,7 +702,11 @@ def decide(
         return PatternGateDecision(
             allowed=True,
             scale=1.0,
-            reason="pattern_neutral" if match_mode == "exact" else "pattern_fallback_neutral",
+            reason=(
+                "pattern_neutral"
+                if match_mode == "exact"
+                else "pattern_fallback_neutral"
+            ),
             action="pass",
             pattern_id=str(matched_pattern_id or requested_pattern_id),
             quality=quality,

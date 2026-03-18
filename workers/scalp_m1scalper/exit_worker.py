@@ -34,13 +34,27 @@ _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
-_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float(
+    "BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_TREND_EXT_RATIO = env_float(
+    "BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float(
+    "BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float(
+    "BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_EXT_PIPS = env_float(
+    "BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_SCALP_EXT_RATIO = env_float(
+    "BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX
+)
+_BB_EXIT_MID_BUFFER_PIPS = env_float(
+    "BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX
+)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -59,6 +73,7 @@ _BB_EXIT_BYPASS_TOKENS = {
 }
 _BB_EXIT_TF = "M1"
 _BB_PIP = 0.01
+
 
 def _env_bool_opt(name: str) -> Optional[bool]:
     raw = os.getenv(name)
@@ -117,7 +132,13 @@ def _bb_levels(fac):
     span = upper - lower
     if span <= 0:
         return None
-    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+    return (
+        upper,
+        mid if mid is not None else (upper + lower) / 2.0,
+        lower,
+        span,
+        span / _BB_PIP,
+    )
 
 
 def _bb_exit_price(fac):
@@ -181,8 +202,16 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
         style = "reversion"
     mid_buffer = max(_BB_EXIT_MID_BUFFER_PIPS, span_pips * 0.05)
     if style == "reversion":
-        base_pips = _BB_EXIT_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_EXIT_REVERT_PIPS
-        base_ratio = _BB_EXIT_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_EXIT_REVERT_RATIO
+        base_pips = (
+            _BB_EXIT_SCALP_REVERT_PIPS
+            if orig_style == "scalp"
+            else _BB_EXIT_REVERT_PIPS
+        )
+        base_ratio = (
+            _BB_EXIT_SCALP_REVERT_RATIO
+            if orig_style == "scalp"
+            else _BB_EXIT_REVERT_RATIO
+        )
         threshold = max(base_pips, span_pips * base_ratio)
         if direction == "long":
             dist = (price - lower) / _BB_PIP
@@ -323,6 +352,7 @@ def _log_reentry_decision(*, decision: str, tags: dict) -> None:
     payload["decision"] = decision
     log_metric("m1scalp_reentry_decision", 1.0, tags=payload)
 
+
 BB_STYLE = "scalp"
 LOG = logging.getLogger(__name__)
 
@@ -333,7 +363,9 @@ def _parse_tag_allowlist(raw: Optional[str]) -> Set[str]:
     source = str(raw or _DEFAULT_ALLOWED_TAGS)
     tags = {token.strip() for token in source.split(",") if token.strip()}
     if not tags:
-        tags = {token.strip() for token in _DEFAULT_ALLOWED_TAGS.split(",") if token.strip()}
+        tags = {
+            token.strip() for token in _DEFAULT_ALLOWED_TAGS.split(",") if token.strip()
+        }
     return tags
 
 
@@ -369,7 +401,9 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -428,7 +462,9 @@ def _first_float(*values: object) -> Optional[float]:
     return None
 
 
-def _infer_setup_mode(strategy_mode: Optional[str], setup_fingerprint: Optional[str]) -> Optional[str]:
+def _infer_setup_mode(
+    strategy_mode: Optional[str], setup_fingerprint: Optional[str]
+) -> Optional[str]:
     mode = _first_text(strategy_mode)
     if mode:
         return mode
@@ -442,7 +478,9 @@ def _infer_setup_mode(strategy_mode: Optional[str], setup_fingerprint: Optional[
     return None
 
 
-def _flow_alignment(*, side: str, flow_regime: Optional[str], strategy_mode: Optional[str]) -> float:
+def _flow_alignment(
+    *, side: str, flow_regime: Optional[str], strategy_mode: Optional[str]
+) -> float:
     regime = _first_text(flow_regime) or ""
     mode = _first_text(strategy_mode) or ""
     side_key = str(side).lower()
@@ -497,7 +535,9 @@ def _trade_local_exit_thresholds(
         setup_fingerprint,
     )
     flow_regime = _first_text(m1_setup.get("flow_regime"), thesis.get("flow_regime"))
-    setup_quality = _clamp01(_first_float(m1_setup.get("setup_quality"), thesis.get("setup_quality")))
+    setup_quality = _clamp01(
+        _first_float(m1_setup.get("setup_quality"), thesis.get("setup_quality"))
+    )
     continuation_pressure = _first_float(
         m1_setup.get("continuation_pressure"),
         thesis.get("continuation_pressure"),
@@ -533,19 +573,41 @@ def _trade_local_exit_thresholds(
     quality = setup_quality if setup_quality is not None else 0.5
     quality_edge = quality - 0.5
     pressure_norm = _clamp(continuation_pressure / 2.0, 0.0, 1.0)
-    flow_bias = _flow_alignment(side=side, flow_regime=flow_regime, strategy_mode=strategy_mode)
-    mode_hold_bias = 0.04 if strategy_mode == "breakout_retest" else -0.06 if strategy_mode == "vshape_rebound" else 0.0
-    mode_lock_bias = 0.03 if strategy_mode == "breakout_retest" else -0.04 if strategy_mode == "vshape_rebound" else 0.0
-    mode_soft_bias = 0.06 if strategy_mode == "breakout_retest" else -0.08 if strategy_mode == "vshape_rebound" else 0.0
+    flow_bias = _flow_alignment(
+        side=side, flow_regime=flow_regime, strategy_mode=strategy_mode
+    )
+    mode_hold_bias = (
+        0.04
+        if strategy_mode == "breakout_retest"
+        else -0.06 if strategy_mode == "vshape_rebound" else 0.0
+    )
+    mode_lock_bias = (
+        0.03
+        if strategy_mode == "breakout_retest"
+        else -0.04 if strategy_mode == "vshape_rebound" else 0.0
+    )
+    mode_soft_bias = (
+        0.06
+        if strategy_mode == "breakout_retest"
+        else -0.08 if strategy_mode == "vshape_rebound" else 0.0
+    )
 
     hold_mult = _clamp(
-        1.0 + mode_hold_bias + quality_edge * 0.26 + flow_bias * 0.12 - pressure_norm * 0.18,
+        1.0
+        + mode_hold_bias
+        + quality_edge * 0.26
+        + flow_bias * 0.12
+        - pressure_norm * 0.18,
         0.78,
         1.24,
     )
     adverse_mult = _clamp(
         1.0
-        + (0.04 if strategy_mode == "breakout_retest" else -0.04 if strategy_mode == "vshape_rebound" else 0.0)
+        + (
+            0.04
+            if strategy_mode == "breakout_retest"
+            else -0.04 if strategy_mode == "vshape_rebound" else 0.0
+        )
         + quality_edge * 0.18
         + flow_bias * 0.10
         - pressure_norm * 0.20,
@@ -571,17 +633,29 @@ def _trade_local_exit_thresholds(
         1.20,
     )
     trail_start_mult = _clamp(
-        1.0 + mode_hold_bias + quality_edge * 0.12 + flow_bias * 0.10 - pressure_norm * 0.14,
+        1.0
+        + mode_hold_bias
+        + quality_edge * 0.12
+        + flow_bias * 0.10
+        - pressure_norm * 0.14,
         0.80,
         1.18,
     )
     trail_backoff_mult = _clamp(
-        1.0 + mode_lock_bias + quality_edge * 0.10 + flow_bias * 0.08 - pressure_norm * 0.10,
+        1.0
+        + mode_lock_bias
+        + quality_edge * 0.10
+        + flow_bias * 0.08
+        - pressure_norm * 0.10,
         0.78,
         1.18,
     )
     lock_buffer_mult = _clamp(
-        1.0 + mode_lock_bias + quality_edge * 0.08 + flow_bias * 0.06 - pressure_norm * 0.08,
+        1.0
+        + mode_lock_bias
+        + quality_edge * 0.08
+        + flow_bias * 0.06
+        - pressure_norm * 0.08,
         0.78,
         1.16,
     )
@@ -595,7 +669,11 @@ def _trade_local_exit_thresholds(
         - quality_edge * 0.18
         - flow_bias * 0.16
         + pressure_norm * 0.20
-        + (0.10 if strategy_mode == "vshape_rebound" else -0.06 if strategy_mode == "breakout_retest" else 0.0),
+        + (
+            0.10
+            if strategy_mode == "vshape_rebound"
+            else -0.06 if strategy_mode == "breakout_retest" else 0.0
+        ),
         0.72,
         1.30,
     )
@@ -604,7 +682,11 @@ def _trade_local_exit_thresholds(
         - quality_edge * 0.12
         - flow_bias * 0.15
         + pressure_norm * 0.18
-        + (0.08 if strategy_mode == "vshape_rebound" else -0.04 if strategy_mode == "breakout_retest" else 0.0),
+        + (
+            0.08
+            if strategy_mode == "vshape_rebound"
+            else -0.04 if strategy_mode == "breakout_retest" else 0.0
+        ),
         0.78,
         1.25,
     )
@@ -613,7 +695,11 @@ def _trade_local_exit_thresholds(
         - quality_edge * 0.14
         - flow_bias * 0.12
         + pressure_norm * 0.20
-        + (0.10 if strategy_mode == "vshape_rebound" else -0.04 if strategy_mode == "breakout_retest" else 0.0),
+        + (
+            0.10
+            if strategy_mode == "vshape_rebound"
+            else -0.04 if strategy_mode == "breakout_retest" else 0.0
+        ),
         0.72,
         1.30,
     )
@@ -622,7 +708,11 @@ def _trade_local_exit_thresholds(
         + quality_edge * 0.14
         + flow_bias * 0.15
         - pressure_norm * 0.18
-        + (0.04 if strategy_mode == "breakout_retest" else -0.06 if strategy_mode == "vshape_rebound" else 0.0),
+        + (
+            0.04
+            if strategy_mode == "breakout_retest"
+            else -0.06 if strategy_mode == "vshape_rebound" else 0.0
+        ),
         0.75,
         1.28,
     )
@@ -663,7 +753,9 @@ class _TradeState:
             self.peak = pnl
         if pnl > 0:
             floor = max(0.0, pnl - lock_buffer)
-            self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
+            self.lock_floor = (
+                floor if self.lock_floor is None else max(self.lock_floor, floor)
+            )
 
 
 async def _run_exit_loop(
@@ -693,7 +785,9 @@ async def _run_exit_loop(
     structure_gap_pips = _float_env("M1SCALP_EXIT_STRUCTURE_GAP_PIPS", 1.8)
     atr_spike_pips = _float_env("M1SCALP_EXIT_ATR_SPIKE_PIPS", 5.0)
     rollout_start_ts = load_rollout_start_ts("M1SCALP_EXIT_POLICY_START_TS")
-    allow_negative_exit = os.getenv("M1SCALP_EXIT_ALLOW_NEGATIVE", "1").strip().lower() not in {
+    allow_negative_exit = os.getenv(
+        "M1SCALP_EXIT_ALLOW_NEGATIVE", "1"
+    ).strip().lower() not in {
         "",
         "0",
         "false",
@@ -720,7 +814,14 @@ async def _run_exit_loop(
         ma10 = _safe_float(fac_m1.get("ma10"))
         ma20 = _safe_float(fac_m1.get("ma20"))
         bbw = _safe_float(fac_m1.get("bbw"))
-        return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None, bbw
+        return (
+            rsi,
+            adx,
+            atr_pips,
+            vwap_gap,
+            (ma10, ma20) if ma10 is not None and ma20 is not None else None,
+            bbw,
+        )
 
     def _maybe_log_rollout_skip(
         *,
@@ -747,7 +848,6 @@ async def _run_exit_loop(
             hold_sec,
         )
 
-
     async def _close(
         trade_id: str,
         units: int,
@@ -770,8 +870,15 @@ async def _run_exit_loop(
                 fac = factors.get(_BB_EXIT_TF) or fac_m1
                 price = _bb_exit_price(fac)
                 side = "long" if units > 0 else "short"
-                if not _bb_exit_allowed(BB_STYLE, side, price, fac, range_active=range_active):
-                    LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
+                if not _bb_exit_allowed(
+                    BB_STYLE, side, price, fac, range_active=range_active
+                ):
+                    LOG.info(
+                        "[exit-bb] trade=%s reason=%s price=%.3f",
+                        trade_id,
+                        reason,
+                        price or 0.0,
+                    )
                     return False
         ok = await close_trade(
             trade_id,
@@ -782,9 +889,17 @@ async def _run_exit_loop(
             env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
-            LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
+            LOG.info(
+                "[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason
+            )
         else:
-            LOG.error("[EXIT-%s] close failed trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
+            LOG.error(
+                "[EXIT-%s] close failed trade=%s units=%s reason=%s",
+                pocket,
+                trade_id,
+                units,
+                reason,
+            )
         return ok
 
     async def _review_trade(trade: dict, now: datetime) -> None:
@@ -873,7 +988,11 @@ async def _run_exit_loop(
             trail_backoff_floor=0.05,
             lock_buffer_floor=0.05,
         )
-        hard_stop_base = state.hard_stop if state.hard_stop and state.hard_stop > 0.0 else max_adverse
+        hard_stop_base = (
+            state.hard_stop
+            if state.hard_stop and state.hard_stop > 0.0
+            else max_adverse
+        )
         _soft_adverse, hard_adverse, hold_adj = apply_exit_forecast_to_loss_cut(
             soft_pips=max_adverse,
             hard_pips=max(max_adverse, hard_stop_base),
@@ -916,12 +1035,24 @@ async def _run_exit_loop(
         ts = float(local_thresholds.get("trail_start_pips") or ts)
         tb = float(local_thresholds.get("trail_backoff_pips") or tb)
         lb = float(local_thresholds.get("lock_buffer_pips") or lb)
-        rsi_fade_long_local = float(local_thresholds.get("rsi_fade_long") or rsi_fade_long)
-        rsi_fade_short_local = float(local_thresholds.get("rsi_fade_short") or rsi_fade_short)
-        vwap_gap_pips_local = float(local_thresholds.get("vwap_gap_pips") or vwap_gap_pips)
-        structure_adx_local = float(local_thresholds.get("structure_adx") or structure_adx)
-        structure_gap_pips_local = float(local_thresholds.get("structure_gap_pips") or structure_gap_pips)
-        atr_spike_pips_local = float(local_thresholds.get("atr_spike_pips") or atr_spike_pips)
+        rsi_fade_long_local = float(
+            local_thresholds.get("rsi_fade_long") or rsi_fade_long
+        )
+        rsi_fade_short_local = float(
+            local_thresholds.get("rsi_fade_short") or rsi_fade_short
+        )
+        vwap_gap_pips_local = float(
+            local_thresholds.get("vwap_gap_pips") or vwap_gap_pips
+        )
+        structure_adx_local = float(
+            local_thresholds.get("structure_adx") or structure_adx
+        )
+        structure_gap_pips_local = float(
+            local_thresholds.get("structure_gap_pips") or structure_gap_pips
+        )
+        atr_spike_pips_local = float(
+            local_thresholds.get("atr_spike_pips") or atr_spike_pips
+        )
 
         state.update(pnl, lb)
 
@@ -944,11 +1075,19 @@ async def _run_exit_loop(
                 if isinstance(client_ext, dict):
                     candle_client_id = client_ext.get("id")
             if candle_client_id:
-                await _close(trade_id, -units, candle_reason, candle_client_id, allow_negative=allow_negative)
+                await _close(
+                    trade_id,
+                    -units,
+                    candle_reason,
+                    candle_client_id,
+                    allow_negative=allow_negative,
+                )
                 states.pop(trade_id, None)
                 return
         if not client_id:
-            LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
+            LOG.warning(
+                "[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id
+            )
             return
 
         if (
@@ -957,7 +1096,9 @@ async def _run_exit_loop(
             and pnl > 0
             and pnl <= state.lock_floor
         ):
-            await _close(trade_id, -units, "lock_floor", client_id, allow_negative=allow_negative)
+            await _close(
+                trade_id, -units, "lock_floor", client_id, allow_negative=allow_negative
+            )
             states.pop(trade_id, None)
             return
 
@@ -1037,7 +1178,11 @@ async def _run_exit_loop(
                             states.pop(trade_id, None)
                             return
                         soft_failed = True
-                if not soft_failed and vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips_local:
+                if (
+                    not soft_failed
+                    and vwap_gap is not None
+                    and abs(vwap_gap) <= vwap_gap_pips_local
+                ):
                     ok = await _close(
                         trade_id,
                         -units,
@@ -1052,8 +1197,12 @@ async def _run_exit_loop(
                 if not soft_failed and adx is not None and ma_pair is not None:
                     ma10, ma20 = ma_pair
                     gap = abs(ma10 - ma20) / 0.01
-                    cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
-                    if adx <= structure_adx_local and (cross_bad or gap <= structure_gap_pips_local):
+                    cross_bad = (side == "long" and ma10 <= ma20) or (
+                        side == "short" and ma10 >= ma20
+                    )
+                    if adx <= structure_adx_local and (
+                        cross_bad or gap <= structure_gap_pips_local
+                    ):
                         ok = await _close(
                             trade_id,
                             -units,
@@ -1065,7 +1214,11 @@ async def _run_exit_loop(
                             states.pop(trade_id, None)
                             return
                         soft_failed = True
-                if not soft_failed and atr_pips is not None and atr_pips >= atr_spike_pips_local:
+                if (
+                    not soft_failed
+                    and atr_pips is not None
+                    and atr_pips >= atr_spike_pips_local
+                ):
                     ok = await _close(
                         trade_id,
                         -units,
@@ -1079,13 +1232,21 @@ async def _run_exit_loop(
 
         if policy_active and max_adverse > 0 and pnl <= -max_adverse:
             log_metric("m1scalp_max_adverse", pnl, tags={"side": side})
-            await _close(trade_id, -units, "max_adverse", client_id, allow_negative=allow_negative)
+            await _close(
+                trade_id,
+                -units,
+                "max_adverse",
+                client_id,
+                allow_negative=allow_negative,
+            )
             states.pop(trade_id, None)
             return
 
         if policy_active and max_hold > 0 and hold_sec >= max_hold and pnl <= 0:
             log_metric("m1scalp_max_hold", pnl, tags={"side": side})
-            await _close(trade_id, -units, "max_hold", client_id, allow_negative=allow_negative)
+            await _close(
+                trade_id, -units, "max_hold", client_id, allow_negative=allow_negative
+            )
             states.pop(trade_id, None)
             return
 
@@ -1098,12 +1259,20 @@ async def _run_exit_loop(
             and pnl > 0
             and pnl <= state.peak - tb
         ):
-            await _close(trade_id, -units, "trail_take", client_id, allow_negative=allow_negative)
+            await _close(
+                trade_id, -units, "trail_take", client_id, allow_negative=allow_negative
+            )
             states.pop(trade_id, None)
             return
 
         if pnl >= tp:
-            await _close(trade_id, -units, "take_profit", client_id, allow_negative=allow_negative)
+            await _close(
+                trade_id,
+                -units,
+                "take_profit",
+                client_id,
+                allow_negative=allow_negative,
+            )
             states.pop(trade_id, None)
             return
 
@@ -1132,7 +1301,9 @@ async def _run_exit_loop(
             pocket_info = positions.get(pocket) or {}
             trades = pocket_info.get("open_trades") or []
             trades = _filter_trades(trades, tags)
-            active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
+            active_ids = {
+                str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")
+            }
             for tid in list(states.keys()):
                 if tid not in active_ids:
                     states.pop(tid, None)
@@ -1146,7 +1317,9 @@ async def _run_exit_loop(
                 try:
                     await _review_trade(tr, now)
                 except Exception:
-                    LOG.exception("[EXIT-%s] review failed trade=%s", pocket, tr.get("trade_id"))
+                    LOG.exception(
+                        "[EXIT-%s] review failed trade=%s", pocket, tr.get("trade_id")
+                    )
                     continue
     except asyncio.CancelledError:  # pragma: no cover - loop cancellation
         pass
@@ -1154,7 +1327,9 @@ async def _run_exit_loop(
 
 async def m1_scalper_exit_worker() -> None:
     min_hold_sec = 10.0
-    max_hold_sec = max(min_hold_sec + 1.0, _float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 12 * 60))
+    max_hold_sec = max(
+        min_hold_sec + 1.0, _float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 12 * 60)
+    )
     max_adverse_pips = max(0.0, _float_env("M1SCALP_EXIT_MAX_ADVERSE_PIPS", 6.0))
     profit_take = max(0.5, _float_env("M1SCALP_EXIT_PROFIT_TAKE_PIPS", 2.2))
     trail_start = max(0.5, _float_env("M1SCALP_EXIT_TRAIL_START_PIPS", 2.8))
@@ -1191,7 +1366,9 @@ async def m1_scalper_exit_worker() -> None:
 _CANDLE_PIP = 0.01
 _CANDLE_EXIT_MIN_CONF = 0.35
 _CANDLE_EXIT_SCORE = -0.5
-_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+_CANDLE_WORKER_NAME = (
+    __file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else ""
+).lower()
 
 
 def _candle_tf_for_worker() -> str:
@@ -1285,11 +1462,19 @@ def _score_candle(*, candles, side, min_conf):
     if conf < min_conf:
         return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
     if bias is None:
-        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+        return 0.0, {
+            "type": pattern.get("type"),
+            "confidence": round(conf, 3),
+            "bias": None,
+        }
     match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
     score = conf if match else -conf * 0.7
     score = max(-1.0, min(1.0, score))
-    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+    return score, {
+        "type": pattern.get("type"),
+        "confidence": round(conf, 3),
+        "bias": bias,
+    }
 
 
 def _exit_candle_reversal(side):
@@ -1297,7 +1482,9 @@ def _exit_candle_reversal(side):
     candles = (all_factors().get(tf) or {}).get("candles") or []
     if not candles:
         return None
-    score, detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF)
+    score, detail = _score_candle(
+        candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF
+    )
     if score is None:
         return None
     if score <= _CANDLE_EXIT_SCORE:
@@ -1307,5 +1494,7 @@ def _exit_candle_reversal(side):
 
 
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True
+    )
     asyncio.run(m1_scalper_exit_worker())

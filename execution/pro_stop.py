@@ -115,7 +115,9 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -247,7 +249,9 @@ def _load_pro_stop_config() -> dict:
     payload: dict[str, Any] = {"defaults": {}, "strategies": {}}
     if yaml is not None and _PRO_STOP_CONFIG_PATH.exists():
         try:
-            loaded = yaml.safe_load(_PRO_STOP_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            loaded = (
+                yaml.safe_load(_PRO_STOP_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            )
             if isinstance(loaded, dict):
                 payload = loaded
         except Exception:
@@ -380,7 +384,9 @@ def plan_pro_stop_closes(
         now = now.replace(tzinfo=timezone.utc)
     cfg = _load_pro_stop_config()
     defaults_cfg = cfg.get("defaults", {}) if isinstance(cfg, dict) else {}
-    default_pro = defaults_cfg.get("pro_stop", {}) if isinstance(defaults_cfg, dict) else {}
+    default_pro = (
+        defaults_cfg.get("pro_stop", {}) if isinstance(defaults_cfg, dict) else {}
+    )
     bid, ask, mid = _latest_bid_ask_mid()
     if mid is None:
         mid = _safe_float((fac_m1 or {}).get("close"))
@@ -417,7 +423,10 @@ def plan_pro_stop_closes(
 
             thesis = tr.get("entry_thesis")
             if isinstance(thesis, dict):
-                if thesis.get("disable_pro_stop") or thesis.get("pro_stop_enabled") is False:
+                if (
+                    thesis.get("disable_pro_stop")
+                    or thesis.get("pro_stop_enabled") is False
+                ):
                     continue
             strategy_tag = tr.get("strategy_tag")
             if isinstance(thesis, dict) and not strategy_tag:
@@ -431,12 +440,17 @@ def plan_pro_stop_closes(
             )
             if not pro_enabled:
                 continue
-            score_min = _coerce_float(pro_cfg.get("score_min"), _coerce_float(default_pro.get("score_min"), None))
+            score_min = _coerce_float(
+                pro_cfg.get("score_min"),
+                _coerce_float(default_pro.get("score_min"), None),
+            )
             if score_min is None:
                 score_min = _PRO_STOP_SCORE_MIN
             require_signal = _coerce_bool(
                 pro_cfg.get("require_signal"),
-                _coerce_bool(default_pro.get("require_signal"), _PRO_STOP_REQUIRE_SIGNAL),
+                _coerce_bool(
+                    default_pro.get("require_signal"), _PRO_STOP_REQUIRE_SIGNAL
+                ),
             )
 
             entry = _safe_float(tr.get("price")) or 0.0
@@ -455,7 +469,10 @@ def plan_pro_stop_closes(
             if opened_at:
                 age_sec = max(0.0, (now - opened_at).total_seconds())
 
-            min_hold = _coerce_float(pro_cfg.get("min_hold_sec"), _coerce_float(default_pro.get("min_hold_sec"), None))
+            min_hold = _coerce_float(
+                pro_cfg.get("min_hold_sec"),
+                _coerce_float(default_pro.get("min_hold_sec"), None),
+            )
             if min_hold is None:
                 min_hold = _min_hold_sec(thesis)
             if min_hold is None:
@@ -463,17 +480,26 @@ def plan_pro_stop_closes(
             if age_sec is not None and age_sec < min_hold:
                 continue
 
-            max_hold = _coerce_float(pro_cfg.get("max_hold_sec"), _coerce_float(default_pro.get("max_hold_sec"), None))
+            max_hold = _coerce_float(
+                pro_cfg.get("max_hold_sec"),
+                _coerce_float(default_pro.get("max_hold_sec"), None),
+            )
             if max_hold is None:
                 max_hold = _max_hold_sec(thesis)
             if max_hold is None:
                 max_hold = _default_max_hold(pocket_key)
 
             loss_guard = _loss_guard_pips(thesis)
-            soft = _coerce_float(pro_cfg.get("soft_pips"), _coerce_float(default_pro.get("soft_pips"), None))
+            soft = _coerce_float(
+                pro_cfg.get("soft_pips"),
+                _coerce_float(default_pro.get("soft_pips"), None),
+            )
             if soft is None:
                 soft = _default_soft(pocket_key)
-            hard = _coerce_float(pro_cfg.get("hard_pips"), _coerce_float(default_pro.get("hard_pips"), None))
+            hard = _coerce_float(
+                pro_cfg.get("hard_pips"),
+                _coerce_float(default_pro.get("hard_pips"), None),
+            )
             if hard is None:
                 hard = _default_hard(pocket_key, soft)
             if loss_guard:
@@ -516,7 +542,9 @@ def plan_pro_stop_closes(
             if adx is not None and ma10 is not None and ma20 is not None:
                 gap = abs(ma10 - ma20) / 0.01
                 side_long = units > 0
-                cross_bad = (side_long and ma10 <= ma20) or ((not side_long) and ma10 >= ma20)
+                cross_bad = (side_long and ma10 <= ma20) or (
+                    (not side_long) and ma10 >= ma20
+                )
                 if adx <= _STRUCTURE_ADX and (cross_bad or gap <= _STRUCTURE_GAP_PIPS):
                     structure_break = True
 

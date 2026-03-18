@@ -129,9 +129,7 @@ class ImpulseRetraceScalp:
         vol_5m = fac.get("vol_5m")
         try:
             if vol_5m is not None and float(vol_5m) < VOL_MIN:
-                ImpulseRetraceScalp._log_skip(
-                    "vol_low", vol_5m=round(float(vol_5m), 3)
-                )
+                ImpulseRetraceScalp._log_skip("vol_low", vol_5m=round(float(vol_5m), 3))
                 return None
         except (TypeError, ValueError):
             ImpulseRetraceScalp._log_skip("vol_parse_error", vol_5m=vol_5m)
@@ -197,7 +195,8 @@ class ImpulseRetraceScalp:
             profile = "impulse_retrace"
             # 軽い逆行トレンドの場合は信頼度を下げてロットを抑える
             if dist < dislocation_min * 1.2 and (
-                (trend_up and action == "OPEN_SHORT") or (trend_down and action == "OPEN_LONG")
+                (trend_up and action == "OPEN_SHORT")
+                or (trend_down and action == "OPEN_LONG")
             ):
                 confidence = int(confidence * ImpulseRetraceScalp.TREND_WEAK_PENALTY)
             min_hold = max(60.0, min(420.0, tp * 36.0))
@@ -210,20 +209,22 @@ class ImpulseRetraceScalp:
             elif dist >= max(1.0, atr_pips * 1.2):
                 scale = 0.7
             confidence = int(confidence * scale)
-            return _attach_kill({
-                "action": action,
-                "sl_pips": round(sl, 2),
-                "tp_pips": round(tp, 2),
-                "confidence": confidence,
-                "profile": profile,
-                "loss_guard_pips": round(sl, 2),
-                "target_tp_pips": round(tp, 2),
-                "min_hold_sec": round(min_hold, 1),
-                "fast_cut_pips": round(fast_cut, 2),
-                "fast_cut_time_sec": int(fast_cut_time),
-                "fast_cut_hard_mult": 1.6,
-                "tag": f"{ImpulseRetraceScalp.name}-{action.lower()}",
-            })
+            return _attach_kill(
+                {
+                    "action": action,
+                    "sl_pips": round(sl, 2),
+                    "tp_pips": round(tp, 2),
+                    "confidence": confidence,
+                    "profile": profile,
+                    "loss_guard_pips": round(sl, 2),
+                    "target_tp_pips": round(tp, 2),
+                    "min_hold_sec": round(min_hold, 1),
+                    "fast_cut_pips": round(fast_cut, 2),
+                    "fast_cut_time_sec": int(fast_cut_time),
+                    "fast_cut_hard_mult": 1.6,
+                    "tag": f"{ImpulseRetraceScalp.name}-{action.lower()}",
+                }
+            )
 
         if dislocation_pips <= -MIN_DISLOCATION and rsi_val <= RSI_LONG_MAX:
             # oversold spike, look for retrace long

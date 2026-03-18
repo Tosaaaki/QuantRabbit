@@ -97,7 +97,9 @@ def _to_probability(value: object) -> float:
     return max(0.0, min(1.0, val))
 
 
-def _compute_cap(*, atr_pips: float, free_ratio: float, range_active: bool, perf_pf: Optional[float]) -> tuple[float, Dict[str, float]]:
+def _compute_cap(
+    *, atr_pips: float, free_ratio: float, range_active: bool, perf_pf: Optional[float]
+) -> tuple[float, Dict[str, float]]:
     res = compute_cap(
         atr_pips=atr_pips,
         free_ratio=free_ratio,
@@ -149,7 +151,9 @@ def _signal_side(
     return None, meta
 
 
-def _compute_confidence(*, side: str, rsi: float, div_score: float, div_strength: float, range_score: float) -> int:
+def _compute_confidence(
+    *, side: str, rsi: float, div_score: float, div_strength: float, range_score: float
+) -> int:
     div_term = min(20.0, abs(div_score) * 40.0)
     strength_term = min(12.0, max(0.0, div_strength) * 18.0)
     range_term = min(9.0, max(0.0, range_score) * 12.0)
@@ -161,8 +165,12 @@ def _compute_confidence(*, side: str, rsi: float, div_score: float, div_strength
     elif side == "short" and rsi >= 55.0:
         directional_term = min(6.0, (rsi - 55.0) * 0.35)
 
-    confidence = 52.0 + div_term + strength_term + range_term + heat_term + directional_term
-    confidence = max(float(config.CONFIDENCE_FLOOR), min(float(config.CONFIDENCE_CEIL), confidence))
+    confidence = (
+        52.0 + div_term + strength_term + range_term + heat_term + directional_term
+    )
+    confidence = max(
+        float(config.CONFIDENCE_FLOOR), min(float(config.CONFIDENCE_CEIL), confidence)
+    )
     return int(round(confidence))
 
 
@@ -185,7 +193,10 @@ def _passes_open_trades_guard(pos_manager: PositionManager, strategy_tag: str) -
         return True
     pocket_info = positions.get(config.POCKET) or {}
     open_trades_all = pocket_info.get("open_trades") or []
-    if config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL:
+    if (
+        config.MAX_OPEN_TRADES_GLOBAL > 0
+        and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL
+    ):
         return False
     open_trades = open_trades_all
     if config.OPEN_TRADES_SCOPE == "tag":
@@ -209,7 +220,9 @@ async def scalp_macd_rsi_div_worker() -> None:
         except asyncio.CancelledError:
             return
 
-    LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    LOG.info(
+        "%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC
+    )
     LOG.info("Application started!")
     pos_manager = PositionManager()
 
@@ -262,7 +275,10 @@ async def scalp_macd_rsi_div_worker() -> None:
             if rsi >= config.RSI_SHORT_ARM:
                 short_arm_until = now_mono + max(30.0, config.RSI_ARM_TTL_SEC)
 
-            if config.COOLDOWN_SEC > 0.0 and (now_mono - last_entry_mono) < config.COOLDOWN_SEC:
+            if (
+                config.COOLDOWN_SEC > 0.0
+                and (now_mono - last_entry_mono) < config.COOLDOWN_SEC
+            ):
                 prev_rsi = rsi
                 continue
 
@@ -370,7 +386,10 @@ async def scalp_macd_rsi_div_worker() -> None:
             free_ratio = _safe_float(snap.free_margin_ratio, 0.0)
             margin_used = _safe_float(snap.margin_used, 0.0)
             margin_usage = margin_used / nav if nav > 0 else 0.0
-            if free_ratio <= config.MIN_FREE_MARGIN_RATIO_HARD or margin_usage >= config.MARGIN_USAGE_HARD:
+            if (
+                free_ratio <= config.MIN_FREE_MARGIN_RATIO_HARD
+                or margin_usage >= config.MARGIN_USAGE_HARD
+            ):
                 if now_mono - last_margin_log_mono > 60.0:
                     LOG.info(
                         "%s gate_block margin free_ratio=%.4f min=%.4f usage=%.4f max=%.4f",
@@ -459,15 +478,25 @@ async def scalp_macd_rsi_div_worker() -> None:
                     ttl_sec=config.DYN_ALLOC_TTL_SEC,
                 )
                 dyn_allow_loser_block = bool(dyn_profile.get("allow_loser_block", True))
-                if config.DYN_ALLOC_LOSER_BLOCK and dyn_allow_loser_block and bool(dyn_profile.get("found")):
+                if (
+                    config.DYN_ALLOC_LOSER_BLOCK
+                    and dyn_allow_loser_block
+                    and bool(dyn_profile.get("found"))
+                ):
                     dyn_trades = int(dyn_profile.get("trades", 0) or 0)
                     dyn_score = _safe_float(dyn_profile.get("score"), 0.0)
-                    if dyn_trades >= config.DYN_ALLOC_MIN_TRADES and dyn_score <= config.DYN_ALLOC_LOSER_SCORE:
+                    if (
+                        dyn_trades >= config.DYN_ALLOC_MIN_TRADES
+                        and dyn_score <= config.DYN_ALLOC_LOSER_SCORE
+                    ):
                         prev_rsi = rsi
                         continue
                 if bool(dyn_profile.get("found")):
                     dyn_mult = _safe_float(dyn_profile.get("lot_multiplier"), 1.0)
-                    dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
+                    dyn_mult = max(
+                        config.DYN_ALLOC_MULT_MIN,
+                        min(config.DYN_ALLOC_MULT_MAX, dyn_mult),
+                    )
             units = int(round(units * dyn_mult))
             if units < config.MIN_UNITS:
                 prev_rsi = rsi
@@ -524,7 +553,9 @@ async def scalp_macd_rsi_div_worker() -> None:
                 entry_thesis_ctx = {}
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
-            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            _tech_side_raw = str(
+                locals().get("side", locals().get("direction", "long"))
+            ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
             else:
@@ -548,9 +579,16 @@ async def scalp_macd_rsi_div_worker() -> None:
 
             entry_thesis_ctx.setdefault(
                 "tech_tfs",
-                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+                {
+                    "fib": ["H1", "M5"],
+                    "median": ["H1", "M5"],
+                    "nwave": ["M1", "M5"],
+                    "candle": ["M1", "M5"],
+                },
             )
-            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_tfs", ["M1", "M5", "H1", "H4"]
+            )
             entry_thesis_ctx.setdefault(
                 "technical_context_fields",
                 [
@@ -571,8 +609,14 @@ async def scalp_macd_rsi_div_worker() -> None:
                     "ema24",
                 ],
             )
-            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
-            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault(
+                "technical_context_ticks",
+                ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            )
+            entry_thesis_ctx.setdefault(
+                "technical_context_candle_counts",
+                {"M1": 120, "M5": 80, "H1": 70, "H4": 60},
+            )
             entry_thesis_ctx.setdefault("tech_allow_candle", True)
             entry_thesis_ctx.setdefault(
                 "tech_policy",
@@ -597,7 +641,9 @@ async def scalp_macd_rsi_div_worker() -> None:
             entry_thesis_ctx.setdefault("env_tf", "M1")
             entry_thesis_ctx.setdefault("struct_tf", "M1")
             entry_thesis_ctx.setdefault("entry_tf", "M1")
-            entry_thesis_ctx.setdefault("forecast_profile", {"timeframe": "M5", "step_bars": 2})
+            entry_thesis_ctx.setdefault(
+                "forecast_profile", {"timeframe": "M5", "step_bars": 2}
+            )
             entry_thesis_ctx.setdefault("forecast_timeframe", "M5")
             entry_thesis_ctx.setdefault("forecast_step_bars", 2)
             entry_thesis_ctx.setdefault("forecast_horizon", "10m")
@@ -614,9 +660,15 @@ async def scalp_macd_rsi_div_worker() -> None:
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
                 continue
 
-            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_score"] = (
+                round(tech_decision.score, 3)
+                if tech_decision.score is not None
+                else None
+            )
             entry_thesis_ctx["tech_coverage"] = (
-                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+                round(tech_decision.coverage, 3)
+                if tech_decision.coverage is not None
+                else None
             )
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
@@ -626,7 +678,11 @@ async def scalp_macd_rsi_div_worker() -> None:
                 min(2.0, float(getattr(tech_decision, "tp_mult", 1.0) or 1.0)),
             )
             entry_thesis_ctx["tech_tp_mult"] = round(_tech_tp_mult, 3)
-            if isinstance(tp_price, (int, float)) and tp_price > 0 and _tech_entry_price > 0:
+            if (
+                isinstance(tp_price, (int, float))
+                and tp_price > 0
+                and _tech_entry_price > 0
+            ):
                 _tp_gap = abs(float(tp_price) - float(_tech_entry_price))
                 if _tp_gap > 0:
                     _tp_target = (
@@ -648,7 +704,9 @@ async def scalp_macd_rsi_div_worker() -> None:
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):
-                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                _tech_units = int(
+                    round(abs(float(_tech_units_raw)) * tech_decision.size_mult)
+                )
                 if _tech_units <= 0:
                     continue
                 units = _tech_units if _tech_side == "long" else -_tech_units
@@ -659,11 +717,14 @@ async def scalp_macd_rsi_div_worker() -> None:
                 _tech_conf = float(_tech_conf)
                 if tech_decision.score is not None:
                     if tech_decision.score >= 0:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_BOOST", 0.0
+                        )
                     else:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
+                        _tech_conf += tech_decision.score * getattr(
+                            config, "TECH_CONF_PENALTY", 0.0
+                        )
                 conf = _tech_conf
-
 
             res = await market_order(
                 instrument="USD_JPY",
@@ -674,7 +735,7 @@ async def scalp_macd_rsi_div_worker() -> None:
                 client_order_id=_client_order_id(config.STRATEGY_TAG),
                 strategy_tag=config.STRATEGY_TAG,
                 entry_thesis=dict(entry_thesis, entry_units_intent=abs(units)),
-                )
+            )
             last_entry_mono = now_mono
             if side == "long":
                 long_arm_until = 0.0

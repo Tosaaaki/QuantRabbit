@@ -40,11 +40,16 @@ class MicroMomentumStack:
         except (TypeError, ValueError):
             spread_pips = 0.0
         try:
-            atr_check = float(fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0)
+            atr_check = float(
+                fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 0.0
+            )
         except (TypeError, ValueError):
             atr_check = 0.0
         if spread_pips > 0 and atr_check > 0:
-            spread_cap = max(MicroMomentumStack._SPREAD_PIPS_MAX, atr_check * MicroMomentumStack._SPREAD_ATR_RATIO_MAX)
+            spread_cap = max(
+                MicroMomentumStack._SPREAD_PIPS_MAX,
+                atr_check * MicroMomentumStack._SPREAD_ATR_RATIO_MAX,
+            )
             if spread_pips > spread_cap:
                 return None
 

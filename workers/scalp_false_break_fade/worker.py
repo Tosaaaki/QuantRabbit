@@ -200,7 +200,9 @@ def spread_ok(
     return True, {"spread_pips": spread_pips, "spread_p25": p25}
 
 
-def tick_snapshot(seconds: float, *, limit: int = 80) -> tuple[list[float], Optional[dict]]:
+def tick_snapshot(
+    seconds: float, *, limit: int = 80
+) -> tuple[list[float], Optional[dict]]:
     raw_ticks = tick_window.recent_ticks(seconds=seconds, limit=limit)
     mids: list[float] = []
     for item in raw_ticks:
@@ -217,7 +219,9 @@ def tick_snapshot(seconds: float, *, limit: int = 80) -> tuple[list[float], Opti
     return mids, None
 
 
-def tick_reversal(mids: Sequence[float], *, min_ticks: int = 6) -> tuple[bool, Optional[str], float]:
+def tick_reversal(
+    mids: Sequence[float], *, min_ticks: int = 6
+) -> tuple[bool, Optional[str], float]:
     if len(mids) < min_ticks:
         return False, None, 0.0
     deltas = [mids[i] - mids[i - 1] for i in range(1, len(mids))]
@@ -330,11 +334,20 @@ def _signal_false_break_fade(
         except Exception:
             range_score = 0.0
             range_active = False
-    if not range_active and FBF_RANGE_SCORE_MIN > 0.0 and range_score < FBF_RANGE_SCORE_MIN:
+    if (
+        not range_active
+        and FBF_RANGE_SCORE_MIN > 0.0
+        and range_score < FBF_RANGE_SCORE_MIN
+    ):
         return None
 
     candles = get_candles_snapshot("M1", limit=max(40, FBF_LOOKBACK + 6))
-    snap = compute_range_snapshot(candles or [], lookback=max(10, FBF_LOOKBACK), hi_pct=FBF_HI_PCT, lo_pct=FBF_LO_PCT)
+    snap = compute_range_snapshot(
+        candles or [],
+        lookback=max(10, FBF_LOOKBACK),
+        hi_pct=FBF_HI_PCT,
+        lo_pct=FBF_LO_PCT,
+    )
     if not snap:
         return None
 
@@ -362,14 +375,26 @@ def _signal_false_break_fade(
         slope_10_pips = _ema_slope_pips(fac_m1, "ema_slope_10")
         vwap_gap_pips = _vwap_gap_pips(fac_m1)
         if want_dir == "long":
-            if FBF_MAX_COUNTER_SLOPE_PIPS > 0.0 and slope_10_pips < -FBF_MAX_COUNTER_SLOPE_PIPS:
+            if (
+                FBF_MAX_COUNTER_SLOPE_PIPS > 0.0
+                and slope_10_pips < -FBF_MAX_COUNTER_SLOPE_PIPS
+            ):
                 return None
-            if FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0 and vwap_gap_pips < -FBF_MAX_COUNTER_VWAP_GAP_PIPS:
+            if (
+                FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0
+                and vwap_gap_pips < -FBF_MAX_COUNTER_VWAP_GAP_PIPS
+            ):
                 return None
         else:
-            if FBF_MAX_COUNTER_SLOPE_PIPS > 0.0 and slope_10_pips > FBF_MAX_COUNTER_SLOPE_PIPS:
+            if (
+                FBF_MAX_COUNTER_SLOPE_PIPS > 0.0
+                and slope_10_pips > FBF_MAX_COUNTER_SLOPE_PIPS
+            ):
                 return None
-            if FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0 and vwap_gap_pips > FBF_MAX_COUNTER_VWAP_GAP_PIPS:
+            if (
+                FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0
+                and vwap_gap_pips > FBF_MAX_COUNTER_VWAP_GAP_PIPS
+            ):
                 return None
 
         mids, _ = tick_snapshot(FBF_TICK_WINDOW_SEC, limit=140)
@@ -388,10 +413,14 @@ def _signal_false_break_fade(
 
         sl = max(1.4, min(2.8, atr * 0.9))
         tp = max(sl * 1.35, min(4.0, atr * 1.25))
-        conf = 60 + int(min(12.0, sweep_pips * 3.0)) + int(min(10.0, rev_strength * 4.0))
+        conf = (
+            60 + int(min(12.0, sweep_pips * 3.0)) + int(min(10.0, rev_strength * 4.0))
+        )
         conf = int(max(45, min(92, conf)))
 
-        size_mult = max(0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05))))
+        size_mult = max(
+            0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05)))
+        )
         _FALSE_BREAK_STATE.pop(tag, None)
         return {
             "action": "OPEN_LONG" if want_dir == "long" else "OPEN_SHORT",
@@ -428,7 +457,9 @@ def _signal_false_break_fade(
     return None
 
 
-def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+def _build_entry_thesis(
+    signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx
+) -> Dict[str, object]:
     signal_confidence = int(signal.get("confidence", 0) or 0)
     return {
         "strategy_tag": signal.get("tag") or STRATEGY_TAG,
@@ -541,7 +572,9 @@ async def _place_order(
         sl_price = round(price + sl_pips * PIP, 3)
         tp_price = round(price - tp_pips * PIP, 3) if tp_pips > 0 else None
 
-    sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=(side == "long"))
+    sl_price, tp_price = clamp_sl_tp(
+        price=price, sl=sl_price, tp=tp_price, is_buy=(side == "long")
+    )
     client_id = _client_order_id(str(signal.get("tag") or STRATEGY_TAG))
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
     entry_thesis["entry_probability"] = _to_probability(conf)
@@ -592,7 +625,10 @@ async def _run_worker() -> None:
                 positions = pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET, {})
                 open_trades_all = pocket_info.get("open_trades", []) or []
-                if MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= MAX_OPEN_TRADES_GLOBAL:
+                if (
+                    MAX_OPEN_TRADES_GLOBAL > 0
+                    and len(open_trades_all) >= MAX_OPEN_TRADES_GLOBAL
+                ):
                     continue
                 if OPEN_TRADES_SCOPE == "tag":
                     open_trades = [
@@ -622,7 +658,9 @@ async def _run_worker() -> None:
 
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="false_break_fade")
-        if getattr(air, "enabled", False) and not bool(getattr(air, "allow_entry", True)):
+        if getattr(air, "enabled", False) and not bool(
+            getattr(air, "allow_entry", True)
+        ):
             continue
 
         signal = _signal_false_break_fade(fac_m1, range_ctx, tag=STRATEGY_TAG)
@@ -649,7 +687,9 @@ async def _run_worker() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True
+    )
     try:
         asyncio.run(_run_worker())
     except KeyboardInterrupt:

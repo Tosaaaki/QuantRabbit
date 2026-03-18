@@ -45,7 +45,9 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return None
 
 
-def _bucket(value: float, thresholds: Tuple[float, ...], labels: Tuple[str, ...]) -> str:
+def _bucket(
+    value: float, thresholds: Tuple[float, ...], labels: Tuple[str, ...]
+) -> str:
     for th, lb in zip(thresholds, labels):
         if value < th:
             return lb
@@ -96,7 +98,11 @@ def derive_pattern_signature(
 
     ma10 = _safe_float(fac_m1.get("ma10"))
     ma20 = _safe_float(fac_m1.get("ma20"))
-    gap_pips = (ma10 - ma20) * 100 if ma10 and ma20 else (close_px - ma20) * 100 if ma20 else 0.0
+    gap_pips = (
+        (ma10 - ma20) * 100
+        if ma10 and ma20
+        else (close_px - ma20) * 100 if ma20 else 0.0
+    )
     trend_bucket = _bucket(
         gap_pips,
         thresholds=(-0.6, -0.25, 0.25, 0.6),
@@ -140,7 +146,9 @@ def derive_pattern_signature(
         "atr_pips": round(atr_pips, 3),
         "atr_bucket": atr_bucket,
     }
-    direction_hint = "long" if (action or "").upper() == "OPEN_LONG" else "short" if action else None
+    direction_hint = (
+        "long" if (action or "").upper() == "OPEN_LONG" else "short" if action else None
+    )
     parts = [
         f"c:{shape}",
         f"w:{wick_bias}",
@@ -250,12 +258,20 @@ class PatternStats:
             direction = "long" if units > 0 else "short"
             try:
                 thesis_raw = row["entry_thesis"]
-                thesis = json.loads(thesis_raw) if isinstance(thesis_raw, str) else thesis_raw
+                thesis = (
+                    json.loads(thesis_raw)
+                    if isinstance(thesis_raw, str)
+                    else thesis_raw
+                )
             except Exception:
                 thesis = {}
             pattern = None
             if isinstance(thesis, dict):
-                pattern = thesis.get("pattern_tag") or thesis.get("pattern") or thesis.get("pattern_id")
+                pattern = (
+                    thesis.get("pattern_tag")
+                    or thesis.get("pattern")
+                    or thesis.get("pattern_id")
+                )
             if not pattern or not isinstance(pattern, str):
                 continue
             pl_pips = _safe_float(row["pl_pips"])
@@ -279,7 +295,11 @@ class PatternStats:
                     gross_loss=loss,
                 )
 
-        logger.info("[PATTERN] refreshed %d pattern buckets (lookback=%dd)", len(self._cache), self._lookback.days)
+        logger.info(
+            "[PATTERN] refreshed %d pattern buckets (lookback=%dd)",
+            len(self._cache),
+            self._lookback.days,
+        )
 
     def evaluate(
         self,
@@ -296,9 +316,19 @@ class PatternStats:
         key = (pattern_tag, pocket, direction)
         summary = self._cache.get(key)
         if not summary or summary.count < self._min_samples:
-            return PatternBoost(1.0, summary.count if summary else 0, summary.win_rate if summary else 0.0, summary.profit_factor if summary else 0.0)
+            return PatternBoost(
+                1.0,
+                summary.count if summary else 0,
+                summary.win_rate if summary else 0.0,
+                summary.profit_factor if summary else 0.0,
+            )
         factor = self._score_to_factor(summary, range_mode=range_mode)
-        return PatternBoost(factor=factor, sample_size=summary.count, win_rate=summary.win_rate, profit_factor=summary.profit_factor)
+        return PatternBoost(
+            factor=factor,
+            sample_size=summary.count,
+            win_rate=summary.win_rate,
+            profit_factor=summary.profit_factor,
+        )
 
     def _score_to_factor(self, summary: PatternSummary, *, range_mode: bool) -> float:
         wr = summary.win_rate

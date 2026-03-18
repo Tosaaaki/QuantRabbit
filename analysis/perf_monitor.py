@@ -22,7 +22,9 @@ _DB = pathlib.Path("logs/trades.db")
 _DB.parent.mkdir(exist_ok=True)
 
 _DB_TIMEOUT = float(os.getenv("PERF_DB_TIMEOUT_SEC", "8.0"))
-_BUSY_TIMEOUT_MS = int(os.getenv("PERF_DB_BUSY_TIMEOUT_MS", str(int(_DB_TIMEOUT * 1000))))
+_BUSY_TIMEOUT_MS = int(
+    os.getenv("PERF_DB_BUSY_TIMEOUT_MS", str(int(_DB_TIMEOUT * 1000)))
+)
 _JOURNAL_MODE = os.getenv("PERF_DB_JOURNAL_MODE", "WAL")
 _SYNCHRONOUS = os.getenv("PERF_DB_SYNCHRONOUS", "NORMAL")
 _TEMP_STORE = os.getenv("PERF_DB_TEMP_STORE", "MEMORY")
@@ -39,7 +41,9 @@ _CACHE_STRATEGY: dict[int, dict[str, Any]] = {}
 _CACHE_HOURLY: dict[str, Any] = {"ts": 0.0, "data": None}
 
 _HOURLY_TTL_SEC = max(0.0, float(os.getenv("PERF_HOURLY_TTL_SEC", "600") or 600.0))
-_HOURLY_LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_HOURLY_LOOKBACK_DAYS", "14") or 14)))
+_HOURLY_LOOKBACK_DAYS = max(
+    1, int(float(os.getenv("PERF_HOURLY_LOOKBACK_DAYS", "14") or 14))
+)
 
 
 def invalidate_cache() -> None:
@@ -95,8 +99,7 @@ def _connect(readonly: bool = False) -> sqlite3.Connection:
 def _ensure_schema() -> None:
     """trades テーブルが存在しない / 欠損カラムがある場合に補正する。"""
     with _connect(readonly=False) as con:
-        con.execute(
-            """
+        con.execute("""
     CREATE TABLE IF NOT EXISTS trades (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       transaction_id INTEGER,
@@ -126,9 +129,10 @@ def _ensure_schema() -> None:
       strategy_tag TEXT,
       entry_thesis TEXT
     )
-    """
-        )
-        existing = {row[1] for row in con.execute("PRAGMA table_info(trades)")}  # pragma: no cover
+    """)
+        existing = {
+            row[1] for row in con.execute("PRAGMA table_info(trades)")
+        }  # pragma: no cover
         columns: dict[str, str] = {
             "transaction_id": "INTEGER",
             "ticket_id": "TEXT",
@@ -160,14 +164,14 @@ def _ensure_schema() -> None:
         for name, ddl in columns.items():
             if name not in existing:
                 con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
-        con.execute(
-            """
+        con.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS uniq_trades_tx_trade
             ON trades(transaction_id, ticket_id)
-            """
-        )
+            """)
         con.execute("CREATE INDEX IF NOT EXISTS idx_trades_ticket ON trades(ticket_id)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
+        )
 
 
 _ensure_schema()
@@ -252,8 +256,7 @@ def _sum_jpy_units_only(row: dict[str, Any]) -> float:
 
 
 def _aggregate_by_pocket() -> list[dict[str, Any]]:
-    return _query_rows(
-        """
+    return _query_rows("""
         SELECT
           pocket,
           COUNT(*) AS n_rows,
@@ -273,13 +276,11 @@ def _aggregate_by_pocket() -> list[dict[str, Any]]:
         FROM trades
         WHERE pocket IS NOT NULL AND pocket != ''
         GROUP BY pocket
-        """
-    )
+        """)
 
 
 def _aggregate_by_strategy() -> list[dict[str, Any]]:
-    return _query_rows(
-        """
+    return _query_rows("""
         SELECT
           CASE
             WHEN strategy_tag IS NOT NULL AND strategy_tag != '' THEN strategy_tag
@@ -300,8 +301,7 @@ def _aggregate_by_strategy() -> list[dict[str, Any]]:
           SUM(COALESCE(realized_pl, 0) + COALESCE(commission, 0) + COALESCE(financing, 0)) AS realized_sum
         FROM trades
         GROUP BY 1
-        """
-    )
+        """)
 
 
 def _aggregate_by_hour(lookback_days: int) -> list[dict[str, Any]]:
@@ -388,7 +388,11 @@ def snapshot_strategy(limit: int = 30) -> list[dict]:
     lim = max(1, int(limit))
     now = time.monotonic()
     cached = _CACHE_STRATEGY.get(lim)
-    if cached and _STRATEGY_TTL_SEC > 0 and (now - _as_float(cached.get("ts"), 0.0)) < _STRATEGY_TTL_SEC:
+    if (
+        cached
+        and _STRATEGY_TTL_SEC > 0
+        and (now - _as_float(cached.get("ts"), 0.0)) < _STRATEGY_TTL_SEC
+    ):
         data = cached.get("data")
         if isinstance(data, list):
             return _clone_rows(data)
@@ -439,7 +443,11 @@ def snapshot_hourly() -> dict[str, dict[int, dict[str, float]]]:
     now = time.monotonic()
     cached_ts = _as_float(_CACHE_HOURLY.get("ts"), 0.0)
     cached = _CACHE_HOURLY.get("data")
-    if _HOURLY_TTL_SEC > 0 and isinstance(cached, dict) and (now - cached_ts) < _HOURLY_TTL_SEC:
+    if (
+        _HOURLY_TTL_SEC > 0
+        and isinstance(cached, dict)
+        and (now - cached_ts) < _HOURLY_TTL_SEC
+    ):
         return _clone_hourly(cached)
 
     rows = _aggregate_by_hour(_HOURLY_LOOKBACK_DAYS)

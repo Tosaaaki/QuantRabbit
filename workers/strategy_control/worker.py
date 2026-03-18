@@ -20,7 +20,6 @@ from utils.market_hours import is_market_open
 from utils.metrics_logger import log_metric
 from workers.common import strategy_control
 
-
 LOG = logging.getLogger(__name__)
 
 
@@ -57,7 +56,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 def _snapshot() -> tuple[bool, bool, bool, int]:
     entry, exit_enabled, lock = strategy_control.get_global_flags()
-    return bool(entry), bool(exit_enabled), bool(lock), len(strategy_control.list_enabled_strategies())
+    return (
+        bool(entry),
+        bool(exit_enabled),
+        bool(lock),
+        len(strategy_control.list_enabled_strategies()),
+    )
 
 
 def _sync_from_file(path: Path) -> None:
@@ -74,7 +78,11 @@ def _sync_from_file(path: Path) -> None:
         return
 
     if not isinstance(payload, dict):
-        LOG.warning("[STRATEGY_CONTROL] invalid payload type in %s: %s", path, type(payload).__name__)
+        LOG.warning(
+            "[STRATEGY_CONTROL] invalid payload type in %s: %s",
+            path,
+            type(payload).__name__,
+        )
         return
 
     global_cfg = payload.get("global", {})
@@ -173,7 +181,10 @@ async def strategy_control_worker() -> None:
                     total,
                 )
                 last_heartbeat = now
-            if slo_metrics_enabled and now - last_slo_metrics >= slo_metrics_interval_sec:
+            if (
+                slo_metrics_enabled
+                and now - last_slo_metrics >= slo_metrics_interval_sec
+            ):
                 emitted = _emit_slo_metrics(loop_start)
                 if emitted is not None:
                     data_lag_ms, decision_latency_ms = emitted

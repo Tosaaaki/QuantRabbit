@@ -157,13 +157,13 @@ def detect_range_mode(
         and adx_m1 <= (adx_threshold * (relax_cap + 0.2))
     ):
         is_low_adx = effective_adx_m1 <= (adx_threshold + 2.0)
-    h4_trend_weak = (
-        effective_adx_h4 <= (adx_threshold + 3.0) and slope_h4 <= 0.00045
-    )
+    h4_trend_weak = effective_adx_h4 <= (adx_threshold + 3.0) and slope_h4 <= 0.00045
 
     components = [
         _score_component(effective_adx_m1, adx_threshold),
-        _score_component(bbw_pips, bbw_thresh_pips if bbw_thresh_pips > 0 else bbw_threshold),
+        _score_component(
+            bbw_pips, bbw_thresh_pips if bbw_thresh_pips > 0 else bbw_threshold
+        ),
         _score_component(atr_m1, atr_threshold),
         _score_component(effective_adx_h4, adx_threshold + 3.0),
         min(1.0, (0.00045 / slope_h4) if slope_h4 else 1.0),
@@ -173,7 +173,9 @@ def detect_range_mode(
     ]
     composite = sum(components) / len(components)
 
-    composite_threshold = range_score_threshold  # require stronger confluence before range=ON
+    composite_threshold = (
+        range_score_threshold  # require stronger confluence before range=ON
+    )
     compression_trigger = (
         compression_ratio >= 0.65
         and volatility_ratio >= 0.50
