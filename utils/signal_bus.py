@@ -12,15 +12,13 @@ _FALSEY = {"", "0", "false", "no"}
 
 
 def _ensure_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts_ms INTEGER NOT NULL,
             payload TEXT NOT NULL
         );
-        """
-    )
+        """)
     conn.execute("PRAGMA journal_mode=WAL;")
 
 

@@ -12,10 +12,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from workers.scalp_ping_5s import worker as scalp_worker
 
 
-def _create_trades_db(path: pathlib.Path, rows: list[tuple[str, int, str, str, str, float]]) -> None:
+def _create_trades_db(
+    path: pathlib.Path, rows: list[tuple[str, int, str, str, str, float]]
+) -> None:
     con = sqlite3.connect(path)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE trades (
           close_time TEXT,
           units INTEGER,
@@ -24,8 +25,7 @@ def _create_trades_db(path: pathlib.Path, rows: list[tuple[str, int, str, str, s
           pocket TEXT,
           realized_pl REAL
         )
-        """
-    )
+        """)
     con.executemany(
         """
         INSERT INTO trades (close_time, units, close_reason, strategy_tag, pocket, realized_pl)
@@ -189,15 +189,38 @@ def _sample_horizon(side: str, score: float) -> scalp_worker.HorizonBias:
     )
 
 
-def test_load_stop_loss_streak_detects_same_side_streak(monkeypatch, tmp_path: pathlib.Path) -> None:
+def test_load_stop_loss_streak_detects_same_side_streak(
+    monkeypatch, tmp_path: pathlib.Path
+) -> None:
     now_utc = datetime.datetime(2026, 2, 19, 10, 0, tzinfo=datetime.timezone.utc)
     db_path = tmp_path / "trades.db"
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:40+00:00", -1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -22.0),
-            ("2026-02-19T09:59:15+00:00", -1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -19.0),
-            ("2026-02-19T09:58:30+00:00", 900, "TAKE_PROFIT_ORDER", "scalp_ping_5s_b_live", "scalp_fast", 6.0),
+            (
+                "2026-02-19T09:59:40+00:00",
+                -1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -22.0,
+            ),
+            (
+                "2026-02-19T09:59:15+00:00",
+                -1000,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -19.0,
+            ),
+            (
+                "2026-02-19T09:58:30+00:00",
+                900,
+                "TAKE_PROFIT_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                6.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -228,9 +251,30 @@ def test_sl_streak_direction_flip_applies_when_signal_is_same_side(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:50+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -22.0),
-            ("2026-02-19T09:59:20+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -19.0),
-            ("2026-02-19T09:58:50+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 5.0),
+            (
+                "2026-02-19T09:59:50+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -22.0,
+            ),
+            (
+                "2026-02-19T09:59:20+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -19.0,
+            ),
+            (
+                "2026-02-19T09:58:50+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                5.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -266,9 +310,30 @@ def test_sl_streak_direction_flip_skips_when_signal_already_opposite(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:50+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -21.0),
-            ("2026-02-19T09:59:20+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
-            ("2026-02-19T09:58:50+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 4.0),
+            (
+                "2026-02-19T09:59:50+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -21.0,
+            ),
+            (
+                "2026-02-19T09:59:20+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -20.0,
+            ),
+            (
+                "2026-02-19T09:58:50+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                4.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -308,9 +373,30 @@ def test_sl_streak_direction_flip_skips_stale_streak(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:58:00+00:00", -1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
-            ("2026-02-19T09:57:30+00:00", -900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -16.0),
-            ("2026-02-19T09:57:00+00:00", 700, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 3.0),
+            (
+                "2026-02-19T09:58:00+00:00",
+                -1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -20.0,
+            ),
+            (
+                "2026-02-19T09:57:30+00:00",
+                -900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -16.0,
+            ),
+            (
+                "2026-02-19T09:57:00+00:00",
+                700,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                3.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -344,9 +430,30 @@ def test_sl_streak_direction_flip_skips_when_target_market_plus_is_weak(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:50+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -22.0),
-            ("2026-02-19T09:59:20+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -19.0),
-            ("2026-02-19T09:58:50+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", -1.0),
+            (
+                "2026-02-19T09:59:50+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -22.0,
+            ),
+            (
+                "2026-02-19T09:59:20+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -19.0,
+            ),
+            (
+                "2026-02-19T09:58:50+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -1.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -385,10 +492,38 @@ def test_sl_streak_direction_flip_allows_force_streak_even_if_target_market_plus
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
-            ("2026-02-19T09:59:35+00:00", 1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -18.0),
-            ("2026-02-19T09:59:10+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -15.0),
-            ("2026-02-19T09:58:45+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", -2.0),
+            (
+                "2026-02-19T09:59:55+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -20.0,
+            ),
+            (
+                "2026-02-19T09:59:35+00:00",
+                1000,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -18.0,
+            ),
+            (
+                "2026-02-19T09:59:10+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -15.0,
+            ),
+            (
+                "2026-02-19T09:58:45+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -2.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -435,10 +570,38 @@ def test_sl_streak_direction_flip_force_streak_can_bypass_tech_confirm(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
-            ("2026-02-19T09:59:35+00:00", 1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -18.0),
-            ("2026-02-19T09:59:10+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -15.0),
-            ("2026-02-19T09:58:45+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", -2.0),
+            (
+                "2026-02-19T09:59:55+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -20.0,
+            ),
+            (
+                "2026-02-19T09:59:35+00:00",
+                1000,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -18.0,
+            ),
+            (
+                "2026-02-19T09:59:10+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -15.0,
+            ),
+            (
+                "2026-02-19T09:58:45+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -2.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -486,10 +649,38 @@ def test_sl_streak_direction_flip_force_streak_requires_tech_when_bypass_disable
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -20.0),
-            ("2026-02-19T09:59:35+00:00", 1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -18.0),
-            ("2026-02-19T09:59:10+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -15.0),
-            ("2026-02-19T09:58:45+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", -2.0),
+            (
+                "2026-02-19T09:59:55+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -20.0,
+            ),
+            (
+                "2026-02-19T09:59:35+00:00",
+                1000,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -18.0,
+            ),
+            (
+                "2026-02-19T09:59:10+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -15.0,
+            ),
+            (
+                "2026-02-19T09:58:45+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -2.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -522,9 +713,30 @@ def test_sl_streak_direction_flip_skips_when_fast_flip_is_already_applied(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:50+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -22.0),
-            ("2026-02-19T09:59:20+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -19.0),
-            ("2026-02-19T09:58:50+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 5.0),
+            (
+                "2026-02-19T09:59:50+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -22.0,
+            ),
+            (
+                "2026-02-19T09:59:20+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -19.0,
+            ),
+            (
+                "2026-02-19T09:58:50+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                5.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -588,12 +800,54 @@ def test_sl_streak_direction_flip_metrics_override_applies_without_consecutive_s
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -22.0),
-            ("2026-02-19T09:59:40+00:00", -900, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 5.0),
-            ("2026-02-19T09:59:20+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -19.0),
-            ("2026-02-19T09:58:50+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 4.5),
-            ("2026-02-19T09:58:20+00:00", 1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -18.5),
-            ("2026-02-19T09:57:50+00:00", -1000, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 4.0),
+            (
+                "2026-02-19T09:59:55+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -22.0,
+            ),
+            (
+                "2026-02-19T09:59:40+00:00",
+                -900,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                5.0,
+            ),
+            (
+                "2026-02-19T09:59:20+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -19.0,
+            ),
+            (
+                "2026-02-19T09:58:50+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                4.5,
+            ),
+            (
+                "2026-02-19T09:58:20+00:00",
+                1000,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -18.5,
+            ),
+            (
+                "2026-02-19T09:57:50+00:00",
+                -1000,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                4.0,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
@@ -658,12 +912,54 @@ def test_sl_streak_direction_flip_metrics_override_respects_sl_rate_floor(
     _create_trades_db(
         db_path,
         [
-            ("2026-02-19T09:59:55+00:00", 1200, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -22.0),
-            ("2026-02-19T09:59:40+00:00", -900, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 5.0),
-            ("2026-02-19T09:59:20+00:00", 900, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", -19.0),
-            ("2026-02-19T09:58:50+00:00", -1100, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 4.5),
-            ("2026-02-19T09:58:20+00:00", -1000, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 4.0),
-            ("2026-02-19T09:57:50+00:00", -1000, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", 3.8),
+            (
+                "2026-02-19T09:59:55+00:00",
+                1200,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -22.0,
+            ),
+            (
+                "2026-02-19T09:59:40+00:00",
+                -900,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                5.0,
+            ),
+            (
+                "2026-02-19T09:59:20+00:00",
+                900,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                -19.0,
+            ),
+            (
+                "2026-02-19T09:58:50+00:00",
+                -1100,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                4.5,
+            ),
+            (
+                "2026-02-19T09:58:20+00:00",
+                -1000,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                4.0,
+            ),
+            (
+                "2026-02-19T09:57:50+00:00",
+                -1000,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                3.8,
+            ),
         ],
     )
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)

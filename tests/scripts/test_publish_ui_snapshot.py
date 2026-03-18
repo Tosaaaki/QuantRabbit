@@ -9,16 +9,14 @@ from scripts import publish_ui_snapshot
 def _create_trades_db(path, rows: list[tuple[str, str, float, float]]) -> None:
     con = sqlite3.connect(path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE trades (
                 close_time TEXT,
                 pocket TEXT,
                 pl_pips REAL,
                 realized_pl REAL
             )
-            """
-        )
+            """)
         con.executemany(
             "INSERT INTO trades(close_time, pocket, pl_pips, realized_pl) VALUES (?, ?, ?, ?)",
             rows,
@@ -28,7 +26,9 @@ def _create_trades_db(path, rows: list[tuple[str, str, float, float]]) -> None:
         con.close()
 
 
-def test_build_hourly_trades_from_db_populates_full_lookback(tmp_path, monkeypatch) -> None:
+def test_build_hourly_trades_from_db_populates_full_lookback(
+    tmp_path, monkeypatch
+) -> None:
     now = datetime(2026, 2, 27, 6, 30, tzinfo=timezone.utc)
     db_path = tmp_path / "trades.db"
     rows = [
@@ -52,7 +52,9 @@ def test_build_hourly_trades_from_db_populates_full_lookback(tmp_path, monkeypat
     assert round(sum(float(row["pips"]) for row in payload["hours"]), 2) == 0.7
 
 
-def test_build_hourly_trades_from_db_returns_none_when_db_missing(tmp_path, monkeypatch) -> None:
+def test_build_hourly_trades_from_db_returns_none_when_db_missing(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr(publish_ui_snapshot, "TRADES_DB", tmp_path / "missing.db")
 
     payload = publish_ui_snapshot._build_hourly_trades_from_db(
@@ -62,7 +64,9 @@ def test_build_hourly_trades_from_db_returns_none_when_db_missing(tmp_path, monk
     assert payload is None
 
 
-def test_build_hourly_trades_from_recent_trades_fallback_works_without_db(monkeypatch) -> None:
+def test_build_hourly_trades_from_recent_trades_fallback_works_without_db(
+    monkeypatch,
+) -> None:
     now = datetime(2026, 2, 27, 6, 30, tzinfo=timezone.utc)
     monkeypatch.setattr(publish_ui_snapshot, "HOURLY_LOOKBACK_HOURS", 6)
     payload = publish_ui_snapshot._build_hourly_trades_from_recent_trades(

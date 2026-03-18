@@ -7,6 +7,7 @@ tune_scalp.py
 - 既存の backtest_scalp.py を import できる場合は run_backtest() を直接呼ぶが、
   そうでなければサブプロセスで backtest_scalp.py を起動して JSON を拾う
 """
+
 from __future__ import annotations
 
 import argparse, json, os, random, subprocess, sys, time, pathlib, datetime
@@ -23,7 +24,9 @@ ACTIVE_PARAMS_PATH = (
     if _ACTIVE_PARAMS_OVERRIDE
     else (REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json")
 )
-LEGACY_ACTIVE_PARAMS_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"  # tracked legacy path
+LEGACY_ACTIVE_PARAMS_PATH = (
+    REPO_ROOT / "configs" / "scalp_active_params.json"
+)  # tracked legacy path
 DEFAULT_DB_PATH = REPO_ROOT / "logs" / "autotune.db"
 
 if str(REPO_ROOT) not in sys.path:
@@ -101,9 +104,11 @@ PROFILE_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+
 def _load_param_space(path: pathlib.Path) -> Dict[str, Any]:
     with open(path, "r") as f:
         return json.load(f)
+
 
 def _coerce(value, spec):
     t = spec.get("type")
@@ -114,6 +119,7 @@ def _coerce(value, spec):
     if t == "choice":
         return value
     return value
+
 
 def sample_params_for_strategy(space: Dict[str, Any], seed=None) -> Dict[str, Any]:
     rng = random.Random(seed)
@@ -132,6 +138,7 @@ def sample_params_for_strategy(space: Dict[str, Any], seed=None) -> Dict[str, An
             raise ValueError(f"Unsupported type in param space: {t}")
     return params
 
+
 def list_candle_files(
     candles_dir: pathlib.Path, pattern: str, limit: int | None = None
 ) -> List[pathlib.Path]:
@@ -141,16 +148,19 @@ def list_candle_files(
         return filtered[-limit:]
     return filtered
 
+
 def _try_import_backtester():
     # 可能なら import して直接呼び出す（パッチ適用後の run_backtest を期待）
     try:
         sys.path.insert(0, str(REPO_ROOT))
         import scripts.backtest_scalp as backtest_mod  # type: ignore
+
         if hasattr(backtest_mod, "run_backtest"):
             return backtest_mod
     except Exception:
         return None
     return None
+
 
 def run_backtest_once(
     candles_path: pathlib.Path,
@@ -173,13 +183,21 @@ def run_backtest_once(
                 timeframe=timeframe,
             )
         except Exception as e:
-            print(f"[WARN] run_backtest() direct call failed -> fallback to subprocess: {e}", file=sys.stderr)
+            print(
+                f"[WARN] run_backtest() direct call failed -> fallback to subprocess: {e}",
+                file=sys.stderr,
+            )
 
     # サブプロセス実行：--params-json / --json-out を使う（パッチ適用が必要）
-    tmp_json = candles_path.parent / f".bt_{candles_path.stem}_{int(time.time()*1000)}.json"
+    tmp_json = (
+        candles_path.parent / f".bt_{candles_path.stem}_{int(time.time()*1000)}.json"
+    )
     with open(tmp_json, "w") as f:
         pass  # pre-create
-    params_json_path = candles_path.parent / f".params_{candles_path.stem}_{int(time.time()*1000)}.json"
+    params_json_path = (
+        candles_path.parent
+        / f".params_{candles_path.stem}_{int(time.time()*1000)}.json"
+    )
     with open(params_json_path, "w") as f:
         json.dump(strategies_params, f, ensure_ascii=False)
     try:
@@ -199,7 +217,9 @@ def run_backtest_once(
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if r.returncode != 0:
-            print("[ERR] backtest subprocess failed:", r.stdout, r.stderr, file=sys.stderr)
+            print(
+                "[ERR] backtest subprocess failed:", r.stdout, r.stderr, file=sys.stderr
+            )
             raise RuntimeError("backtest subprocess failed")
         with open(tmp_json, "r") as f:
             data = json.load(f)
@@ -210,6 +230,7 @@ def run_backtest_once(
             params_json_path.unlink(missing_ok=True)  # type: ignore
         except Exception:
             pass
+
 
 def compute_metrics(result: ResultDict) -> Dict[str, Any]:
     """
@@ -227,8 +248,9 @@ def compute_metrics(result: ResultDict) -> Dict[str, Any]:
         "trades": int(s.get("trades", 0)),
         "win_rate": float(s.get("win_rate", 0.0)),
         "profit_factor": float(s.get("profit_factor", 0.0)),
-        "max_dd_pips": float(s.get("max_dd_pips", 0.0))
+        "max_dd_pips": float(s.get("max_dd_pips", 0.0)),
     }
+
 
 def merge_metrics(metrics_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     # 単純集計 + 簡易 PF 計算（近似）。DD は max を採用（保守的）
@@ -243,8 +265,9 @@ def merge_metrics(metrics_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         "trades": int(total_trades),
         "win_rate": round(avg_win_rate, 4),
         "profit_factor": round(avg_pf, 4),
-        "max_dd_pips": round(max_dd, 2)
+        "max_dd_pips": round(max_dd, 2),
     }
+
 
 def passes_gates(agg: Dict[str, Any], profile_cfg: Dict[str, Any]) -> bool:
     min_trades = int(profile_cfg.get("min_trades", 8))
@@ -273,22 +296,49 @@ def score(agg: Dict[str, Any], profile_cfg: Dict[str, Any]) -> float:
     penalty = dd_penalty * max(0.0, dd - dd_anchor)
     return base + bonus - penalty
 
-def walk_forward_split(files: List[pathlib.Path], valid_ratio: float = 0.3) -> Tuple[List[pathlib.Path], List[pathlib.Path]]:
+
+def walk_forward_split(
+    files: List[pathlib.Path], valid_ratio: float = 0.3
+) -> Tuple[List[pathlib.Path], List[pathlib.Path]]:
     n = len(files)
     if n <= 1:
         return files, []
     k = max(1, int(n * (1 - valid_ratio)))
     return files[:k], files[k:]
 
+
 def main():
     profile_choices = ", ".join(PROFILE_CONFIGS.keys())
     ap = argparse.ArgumentParser()
-    ap.add_argument("--candles-dir", default=str(DEFAULT_LOG_DIR), help="logs ディレクトリのパス")
-    ap.add_argument("--profile", default="scalp", help=f"対象プロファイル（{profile_choices} または 'all'）")
-    ap.add_argument("--glob", default="", help="candles ファイルの glob。空ならプロファイル既定を使用")
-    ap.add_argument("--dates", default="", help="'20251020,20251021' のように日付指定。空なら最新を自動選択")
-    ap.add_argument("--strategies", default="", help="カンマ区切りで明示指定（単一プロファイル時のみ有効）")
-    ap.add_argument("--trials-per-strategy", type=int, default=0, help="各ストラテジーの試行数。0 ならプロファイル既定")
+    ap.add_argument(
+        "--candles-dir", default=str(DEFAULT_LOG_DIR), help="logs ディレクトリのパス"
+    )
+    ap.add_argument(
+        "--profile",
+        default="scalp",
+        help=f"対象プロファイル（{profile_choices} または 'all'）",
+    )
+    ap.add_argument(
+        "--glob",
+        default="",
+        help="candles ファイルの glob。空ならプロファイル既定を使用",
+    )
+    ap.add_argument(
+        "--dates",
+        default="",
+        help="'20251020,20251021' のように日付指定。空なら最新を自動選択",
+    )
+    ap.add_argument(
+        "--strategies",
+        default="",
+        help="カンマ区切りで明示指定（単一プロファイル時のみ有効）",
+    )
+    ap.add_argument(
+        "--trials-per-strategy",
+        type=int,
+        default=0,
+        help="各ストラテジーの試行数。0 ならプロファイル既定",
+    )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument(
         "--write-best",
@@ -325,7 +375,9 @@ def main():
     if profile_input == "all":
         profile_names = list(PROFILE_CONFIGS.keys())
     else:
-        profile_names = [name.strip() for name in args.profile.split(",") if name.strip()]
+        profile_names = [
+            name.strip() for name in args.profile.split(",") if name.strip()
+        ]
     if not profile_names:
         print("[ERR] プロファイルが指定されていません", file=sys.stderr)
         sys.exit(2)
@@ -336,7 +388,10 @@ def main():
 
     user_strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
     if user_strategies and len(profile_names) > 1:
-        print("[ERR] --strategies は単一プロファイル指定時のみ利用できます", file=sys.stderr)
+        print(
+            "[ERR] --strategies は単一プロファイル指定時のみ利用できます",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -355,7 +410,10 @@ def main():
             files = files_all[-int(lookback) :] if lookback else files_all
 
         if not files:
-            print(f"[WARN] profile={profile_name}: candles が見つかりません (pattern={pattern})", file=sys.stderr)
+            print(
+                f"[WARN] profile={profile_name}: candles が見つかりません (pattern={pattern})",
+                file=sys.stderr,
+            )
             continue
 
         valid_ratio = float(cfg.get("valid_ratio", 0.3))
@@ -363,7 +421,10 @@ def main():
 
         selected_strategies = user_strategies or cfg.get("strategies", [])
         if not selected_strategies:
-            print(f"[WARN] profile={profile_name}: strategies が未設定のためスキップします", file=sys.stderr)
+            print(
+                f"[WARN] profile={profile_name}: strategies が未設定のためスキップします",
+                file=sys.stderr,
+            )
             continue
 
         trials = args.trials_per_strategy or int(cfg.get("trials_per_strategy", 40))
@@ -384,7 +445,9 @@ def main():
 
                 train_metrics = []
                 for cp in train_files:
-                    result = run_backtest_once(cp, merged_params, [strat], timeframe=cfg["timeframe"])
+                    result = run_backtest_once(
+                        cp, merged_params, [strat], timeframe=cfg["timeframe"]
+                    )
                     train_metrics.append(compute_metrics(result))
                 agg_train = merge_metrics(train_metrics)
 
@@ -405,14 +468,30 @@ def main():
 
                 valid_metrics = []
                 for cp in valid_files:
-                    result = run_backtest_once(cp, merged_params, [strat], timeframe=cfg["timeframe"])
+                    result = run_backtest_once(
+                        cp, merged_params, [strat], timeframe=cfg["timeframe"]
+                    )
                     valid_metrics.append(compute_metrics(result))
-                agg_valid_raw = merge_metrics(valid_metrics) if valid_metrics else dict(agg_train)
+                agg_valid_raw = (
+                    merge_metrics(valid_metrics) if valid_metrics else dict(agg_train)
+                )
 
                 train_payload = dict(agg_train)
-                train_payload.update({"profile": profile_name, "timeframe": cfg["timeframe"], "window": "train"})
+                train_payload.update(
+                    {
+                        "profile": profile_name,
+                        "timeframe": cfg["timeframe"],
+                        "window": "train",
+                    }
+                )
                 valid_payload = dict(agg_valid_raw)
-                valid_payload.update({"profile": profile_name, "timeframe": cfg["timeframe"], "window": "valid"})
+                valid_payload.update(
+                    {
+                        "profile": profile_name,
+                        "timeframe": cfg["timeframe"],
+                        "window": "valid",
+                    }
+                )
 
                 sc = score(agg_valid_raw, cfg)
                 rec = {
@@ -477,7 +556,9 @@ def main():
             )
         print(f"[INFO] recorded tuning results into BigQuery table {bq_table}")
     except Exception as exc:  # pragma: no cover
-        print(f"[ERR] failed to record tuning result to BigQuery: {exc}", file=sys.stderr)
+        print(
+            f"[ERR] failed to record tuning result to BigQuery: {exc}", file=sys.stderr
+        )
         sys.exit(1)
 
     if args.write_best:

@@ -105,7 +105,11 @@ def _read_trade_metrics(
                 WHERE strategy_tag = ?
                   AND datetime(substr(COALESCE(close_time, entry_time), 1, 19)) >= datetime('now', ?)
                 """,
-                (max(100, int(lookback_rows)), strategy_tag, f"-{int(window_minutes)} minutes"),
+                (
+                    max(100, int(lookback_rows)),
+                    strategy_tag,
+                    f"-{int(window_minutes)} minutes",
+                ),
             ).fetchone()
         except sqlite3.OperationalError:
             row = con.execute(
@@ -345,7 +349,12 @@ def _decide(
         pass_jpy = trade_metrics.jpy_per_hour > min_jpy_per_hour
         pass_freq = trade_metrics.trades_per_hour >= min_trades_per_hour
         pass_margin = order_metrics.margin_reject_count <= max_margin_reject
-        if pass_jpy and pass_freq and pass_margin and trade_metrics.trade_count >= min_observed_trades:
+        if (
+            pass_jpy
+            and pass_freq
+            and pass_margin
+            and trade_metrics.trade_count >= min_observed_trades
+        ):
             reasons.append("all_pass")
             decision = "promote"
             target_units = int(promote_units)
@@ -379,7 +388,9 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Canary guard for scalp_ping_5s_d.")
     ap.add_argument("--trades-db", type=Path, default=Path("logs/trades.db"))
     ap.add_argument("--orders-db", type=Path, default=Path("logs/orders.db"))
-    ap.add_argument("--env-file", type=Path, default=Path("ops/env/scalp_ping_5s_d.env"))
+    ap.add_argument(
+        "--env-file", type=Path, default=Path("ops/env/scalp_ping_5s_d.env")
+    )
     ap.add_argument("--strategy-tag", default="scalp_ping_5s_d_live")
     ap.add_argument("--window-minutes", type=int, default=120)
     ap.add_argument("--trades-lookback-rows", type=int, default=20000)
@@ -391,13 +402,17 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--rollback-jpy-per-hour", type=float, default=-200.0)
     ap.add_argument("--promote-units", type=int, default=22000)
     ap.add_argument("--rollback-units", type=int, default=15000)
-    ap.add_argument("--apply", action="store_true", help="Apply units decision to env file.")
+    ap.add_argument(
+        "--apply", action="store_true", help="Apply units decision to env file."
+    )
     ap.add_argument(
         "--decision-exit-codes",
         action="store_true",
         help="Return 10 on promote, 20 on rollback, 0 on hold.",
     )
-    ap.add_argument("--out", type=Path, default=Path("logs/ping5s_d_canary_guard_latest.json"))
+    ap.add_argument(
+        "--out", type=Path, default=Path("logs/ping5s_d_canary_guard_latest.json")
+    )
     return ap.parse_args()
 
 
@@ -469,7 +484,9 @@ def main() -> int:
     }
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    args.out.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
     if args.decision_exit_codes:

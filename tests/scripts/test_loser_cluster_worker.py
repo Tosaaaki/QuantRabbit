@@ -39,7 +39,9 @@ def test_build_loser_clusters_extracts_strategy_cluster_and_suggestion() -> None
         },
     ]
 
-    payload = loser_cluster_worker.build_loser_clusters(rows, min_cluster_size=4, top_k=3)
+    payload = loser_cluster_worker.build_loser_clusters(
+        rows, min_cluster_size=4, top_k=3
+    )
 
     strategy = payload["strategies"]["MicroTrendRetest-long"]
     assert strategy["cluster_count"] == 1
@@ -88,7 +90,9 @@ def test_build_loser_clusters_prefers_lane_from_entry_thesis() -> None:
         },
     ]
 
-    payload = loser_cluster_worker.build_loser_clusters(rows, min_cluster_size=4, top_k=3)
+    payload = loser_cluster_worker.build_loser_clusters(
+        rows, min_cluster_size=4, top_k=3
+    )
 
     assert "RangeFader-buy-fade" in payload["strategies"]
     assert "RangeFader" not in payload["strategies"]
@@ -130,9 +134,13 @@ def test_build_loser_clusters_exposes_setup_context_when_present() -> None:
         },
     ]
 
-    payload = loser_cluster_worker.build_loser_clusters(rows, min_cluster_size=4, top_k=3)
+    payload = loser_cluster_worker.build_loser_clusters(
+        rows, min_cluster_size=4, top_k=3
+    )
 
     cluster = payload["strategies"]["RangeFader-sell-fade"]["clusters"][0]
     assert cluster["setup_context"]["flow_regime"] == "trend_long"
     assert cluster["setup_context"]["microstructure_bucket"] == "tight_fast"
-    assert cluster["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    assert cluster["setup_fingerprint"].startswith(
+        "RangeFader-sell-fade|short|trend_long|tight_fast|"
+    )

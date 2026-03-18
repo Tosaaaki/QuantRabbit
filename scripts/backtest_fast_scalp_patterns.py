@@ -12,7 +12,6 @@ import joblib
 import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
-
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs"
 
@@ -58,7 +57,9 @@ def _load_dataset(limit: int, min_abs_pips: float) -> tuple[np.ndarray, np.ndarr
     trades_db.close()
 
     if not features:
-        raise RuntimeError("No pattern feature rows found. Collect more live data first.")
+        raise RuntimeError(
+            "No pattern feature rows found. Collect more live data first."
+        )
 
     return np.asarray(features, dtype=float), np.asarray(labels, dtype=int)
 

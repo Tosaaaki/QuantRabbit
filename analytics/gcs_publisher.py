@@ -84,7 +84,9 @@ class GCSRealtimePublisher:
         try:
             if storage is None:
                 raise RuntimeError("google-cloud-storage not available")
-            self._client = storage.Client(project=project_id) if project_id else storage.Client()
+            self._client = (
+                storage.Client(project=project_id) if project_id else storage.Client()
+            )
             self._bucket = self._client.bucket(bucket_name)
         except Exception as exc:  # noqa: BLE001
             logging.exception("[GCS] クライアント初期化に失敗しました: %s", exc)
@@ -105,7 +107,10 @@ class GCSRealtimePublisher:
         if not self._bucket_name:
             return False
         target = f"gs://{self._bucket_name}/{self._object_path}"
-        for cmd in (["gcloud", "storage", "cp", "-", target], ["gsutil", "cp", "-", target]):
+        for cmd in (
+            ["gcloud", "storage", "cp", "-", target],
+            ["gsutil", "cp", "-", target],
+        ):
             if not shutil.which(cmd[0]):
                 continue
             try:

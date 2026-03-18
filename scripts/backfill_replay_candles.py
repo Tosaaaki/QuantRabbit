@@ -41,7 +41,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from utils.secrets import get_secret
 
-
 SUPPORTED_TIMEFRAMES = ("M5", "H1", "D1")
 _OANDA_GRANULARITY_MAP = {
     "D1": "D",
@@ -74,7 +73,11 @@ def _parse_time(value: str) -> dt.datetime:
 def _iso_z(ts: dt.datetime) -> str:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=dt.timezone.utc)
-    return ts.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        ts.astimezone(dt.timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _parse_dt(text: str) -> dt.datetime:
@@ -97,7 +100,9 @@ def _oanda_host_and_token() -> Tuple[str, str]:
         pract = str(get_secret("oanda_practice")).lower() == "true"
     except Exception:
         pract = False
-    host = "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+    host = (
+        "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+    )
     return host, token
 
 
@@ -121,7 +126,9 @@ def _discover_targets(
     for tf in timeframes:
         tf_norm = tf.strip().upper()
         if tf_norm not in SUPPORTED_TIMEFRAMES:
-            raise ValueError(f"unsupported_timeframe:{tf_norm} (supported={','.join(SUPPORTED_TIMEFRAMES)})")
+            raise ValueError(
+                f"unsupported_timeframe:{tf_norm} (supported={','.join(SUPPORTED_TIMEFRAMES)})"
+            )
         if start is not None:
             tf_start = start
         else:
@@ -210,7 +217,9 @@ def _fetch_oanda_page(
     raise RuntimeError(f"oanda_fetch_failed:{timeframe}:{last_exc}")
 
 
-def _chunk_days_for(timeframe: str, *, chunk_m5_days: int, chunk_h1_days: int, chunk_d1_days: int) -> int:
+def _chunk_days_for(
+    timeframe: str, *, chunk_m5_days: int, chunk_h1_days: int, chunk_d1_days: int
+) -> int:
     tf = (timeframe or "").strip().upper()
     if tf == "M5":
         return max(1, int(chunk_m5_days))
@@ -381,8 +390,14 @@ def parse_args() -> argparse.Namespace:
         help=f"comma-separated list (default: M5,H1,D1; supported: {','.join(SUPPORTED_TIMEFRAMES)})",
     )
     ap.add_argument("--replay-dir", type=Path, default=REPO_ROOT / "logs" / "replay")
-    ap.add_argument("--start", default="", help="ISO datetime or YYYY-MM-DD (UTC). Overrides lookback-days.")
-    ap.add_argument("--end", default="", help="ISO datetime or YYYY-MM-DD (UTC). Default: now (UTC)")
+    ap.add_argument(
+        "--start",
+        default="",
+        help="ISO datetime or YYYY-MM-DD (UTC). Overrides lookback-days.",
+    )
+    ap.add_argument(
+        "--end", default="", help="ISO datetime or YYYY-MM-DD (UTC). Default: now (UTC)"
+    )
     ap.add_argument("--lookback-m5-days", type=int, default=120)
     ap.add_argument("--lookback-h1-days", type=int, default=540)
     ap.add_argument("--lookback-d1-days", type=int, default=2000)
@@ -405,17 +420,35 @@ def parse_args() -> argparse.Namespace:
         default=2000,
         help="Fetch window size for D1 backfill (default: 2000 days).",
     )
-    ap.add_argument("--sleep-sec", type=float, default=0.1, help="Sleep between windows (default: 0.1s)")
-    ap.add_argument("--timeout-sec", type=float, default=12.0, help="HTTP timeout seconds (default: 12)")
+    ap.add_argument(
+        "--sleep-sec",
+        type=float,
+        default=0.1,
+        help="Sleep between windows (default: 0.1s)",
+    )
+    ap.add_argument(
+        "--timeout-sec",
+        type=float,
+        default=12.0,
+        help="HTTP timeout seconds (default: 12)",
+    )
     ap.add_argument("--max-retries", type=int, default=4)
-    ap.add_argument("--dry-run", action="store_true", help="Fetch and count only; do not write files")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Fetch and count only; do not write files",
+    )
     return ap.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     tfs = [t.strip() for t in str(args.timeframes).split(",") if t.strip()]
-    end = _parse_dt(args.end) if str(args.end).strip() else dt.datetime.now(dt.timezone.utc)
+    end = (
+        _parse_dt(args.end)
+        if str(args.end).strip()
+        else dt.datetime.now(dt.timezone.utc)
+    )
     start = _parse_dt(args.start) if str(args.start).strip() else None
 
     targets = _discover_targets(

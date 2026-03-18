@@ -40,8 +40,12 @@ def load_preset(name: Optional[str], file_path: Optional[str]) -> Dict[str, floa
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ticks", required=True, help="JSONL or CSV (timestamp,bid,ask[,spread])")
-    ap.add_argument("--entries", help="Optional entries file (timestamp,direction,price)")
+    ap.add_argument(
+        "--ticks", required=True, help="JSONL or CSV (timestamp,bid,ask[,spread])"
+    )
+    ap.add_argument(
+        "--entries", help="Optional entries file (timestamp,direction,price)"
+    )
     ap.add_argument("--symbol", default="USD_JPY")
     ap.add_argument("--pip-scale", type=float, default=100.0)
     ap.add_argument("--spread-col", default="spread")
@@ -56,13 +60,27 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--hazard-cost-spread-base", type=float, default=0.3)
     ap.add_argument("--hazard-cost-latency-base-ms", type=float, default=300.0)
     ap.add_argument("--upper-bound-sec", type=float, default=4.2)
-    ap.add_argument("--timeout-soft-tp-frac", type=float, default=0.7,
-                    help="soft TP triggers if elapsed >= frac*upper_bound and pips >= soft-tp-pips")
-    ap.add_argument("--soft-tp-pips", type=float, default=0.3,
-                    help="pips threshold for soft TP before hard timeout")
+    ap.add_argument(
+        "--timeout-soft-tp-frac",
+        type=float,
+        default=0.7,
+        help="soft TP triggers if elapsed >= frac*upper_bound and pips >= soft-tp-pips",
+    )
+    ap.add_argument(
+        "--soft-tp-pips",
+        type=float,
+        default=0.3,
+        help="pips threshold for soft TP before hard timeout",
+    )
     ap.add_argument("--momentum-win-ms", type=int, default=400)
-    ap.add_argument("--auto-entry", action="store_true", help="generate momentum-based entries if not provided")
-    ap.add_argument("--preset", help="preset name defined in tuning_presets.yaml (or --preset-file)")
+    ap.add_argument(
+        "--auto-entry",
+        action="store_true",
+        help="generate momentum-based entries if not provided",
+    )
+    ap.add_argument(
+        "--preset", help="preset name defined in tuning_presets.yaml (or --preset-file)"
+    )
     ap.add_argument("--preset-file", help="optional path to preset yaml")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -278,12 +296,19 @@ def run_exit(
 
             p_tp = sigmoid(0.08 * side * mom - 4.0 * spread - 0.003 * latency_ms)
             p_sl = 1.0 - p_tp
-            cost_k = 1.0 + (spread / max(hazard_cost_spread_base, 1e-6)) + (
-                latency_ms / max(hazard_cost_latency_base, 1.0)
+            cost_k = (
+                1.0
+                + (spread / max(hazard_cost_spread_base, 1e-6))
+                + (latency_ms / max(hazard_cost_latency_base, 1.0))
             )
 
             # optional gap threshold (difference between p_sl and p_tp) from presets
-            gap = float(os.environ.get("HAZARD_GAP_THRESH", os.environ.get("hazard_gap_thresh", 0.0)) or 0.0)
+            gap = float(
+                os.environ.get(
+                    "HAZARD_GAP_THRESH", os.environ.get("hazard_gap_thresh", 0.0)
+                )
+                or 0.0
+            )
             hazard_cond = (p_tp < p_sl * cost_k) or ((p_sl - p_tp) > gap)
 
             if hazard_cond:

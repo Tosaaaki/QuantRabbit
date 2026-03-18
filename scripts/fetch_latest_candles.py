@@ -26,10 +26,18 @@ from utils.secrets import get_secret  # noqa: E402
 
 def _oanda_base_url() -> str:
     try:
-        practice_flag = get_secret("oanda_practice").strip().lower() in {"1", "true", "yes"}
+        practice_flag = get_secret("oanda_practice").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
     except KeyError:
         practice_flag = False
-    return "https://api-fxpractice.oanda.com" if practice_flag else "https://api-fxtrade.oanda.com"
+    return (
+        "https://api-fxpractice.oanda.com"
+        if practice_flag
+        else "https://api-fxtrade.oanda.com"
+    )
 
 
 def _default_output(instrument: str, granularity: str) -> pathlib.Path:
@@ -54,7 +62,9 @@ def fetch_candles(
     if include_weekends:
         params["includeFirst"] = "true"
     query = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{_oanda_base_url()}/v3/instruments/{instrument}/candles?{query}")
+    req = urllib.request.Request(
+        f"{_oanda_base_url()}/v3/instruments/{instrument}/candles?{query}"
+    )
     req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=15) as resp:
         payload = resp.read().decode("utf-8")
@@ -63,9 +73,15 @@ def fetch_candles(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch the latest OANDA candles.")
-    parser.add_argument("--instrument", default="USD_JPY", help="Instrument symbol (default: USD_JPY)")
-    parser.add_argument("--granularity", default="M1", help="OANDA granularity (default: M1)")
-    parser.add_argument("--count", type=int, default=60, help="Number of candles to fetch (<=500)")
+    parser.add_argument(
+        "--instrument", default="USD_JPY", help="Instrument symbol (default: USD_JPY)"
+    )
+    parser.add_argument(
+        "--granularity", default="M1", help="OANDA granularity (default: M1)"
+    )
+    parser.add_argument(
+        "--count", type=int, default=60, help="Number of candles to fetch (<=500)"
+    )
     parser.add_argument(
         "--price",
         default="M",

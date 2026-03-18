@@ -25,7 +25,6 @@ import requests
 
 from utils.secrets import get_secret
 
-
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -43,10 +42,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch OANDA candles into JSON")
     parser.add_argument("--instrument", required=True)
     parser.add_argument("--granularity", required=True)
-    parser.add_argument("--start", required=True, help="ISO timestamp e.g. 2025-10-01T00:00:00Z")
+    parser.add_argument(
+        "--start", required=True, help="ISO timestamp e.g. 2025-10-01T00:00:00Z"
+    )
     parser.add_argument("--end", required=True, help="ISO timestamp (exclusive)")
     parser.add_argument("--price", default="M")
-    parser.add_argument("--chunk-hours", type=int, default=6, help="Chunk window in hours (default 6)")
+    parser.add_argument(
+        "--chunk-hours", type=int, default=6, help="Chunk window in hours (default 6)"
+    )
     parser.add_argument("--out", required=True, help="Output JSON path")
     return parser.parse_args()
 
@@ -99,14 +102,20 @@ def fetch_chunk(creds: Dict[str, str], req: CandleRequest) -> List[Dict]:
                 file=sys.stderr,
             )
             time.sleep(wait)
-    raise RuntimeError(f"Failed to fetch candles for window {params['from']} -> {params['to']}")
+    raise RuntimeError(
+        f"Failed to fetch candles for window {params['from']} -> {params['to']}"
+    )
 
 
 def main() -> int:
     args = parse_args()
     try:
-        start = dt.datetime.fromisoformat(args.start.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-        end = dt.datetime.fromisoformat(args.end.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+        start = dt.datetime.fromisoformat(args.start.replace("Z", "+00:00")).astimezone(
+            dt.timezone.utc
+        )
+        end = dt.datetime.fromisoformat(args.end.replace("Z", "+00:00")).astimezone(
+            dt.timezone.utc
+        )
     except ValueError as exc:
         print(f"invalid timestamp: {exc}", file=sys.stderr)
         return 1

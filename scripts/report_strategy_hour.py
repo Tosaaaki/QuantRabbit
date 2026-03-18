@@ -2,6 +2,7 @@
 """
 Report strategy performance by time bucket with optional dimensions.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -88,15 +89,21 @@ def _coerce_jpy(df: pd.DataFrame) -> pd.Series:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="logs/trades.db", help="Path to trades.db")
-    ap.add_argument("--lookback-days", type=int, default=14, help="Lookback window in days")
-    ap.add_argument("--lookback-hours", type=int, default=None, help="Lookback window in hours")
+    ap.add_argument(
+        "--lookback-days", type=int, default=14, help="Lookback window in days"
+    )
+    ap.add_argument(
+        "--lookback-hours", type=int, default=None, help="Lookback window in hours"
+    )
     ap.add_argument(
         "--time-col",
         choices=["close_time", "open_time"],
         default="close_time",
         help="Timestamp column used for lookback and hour bucket",
     )
-    ap.add_argument("--instrument", default=None, help="Filter instrument (e.g. USD_JPY)")
+    ap.add_argument(
+        "--instrument", default=None, help="Filter instrument (e.g. USD_JPY)"
+    )
     ap.add_argument(
         "--bucket-timezone",
         default="UTC",
@@ -117,7 +124,9 @@ def main() -> None:
     ap.add_argument("--min-trades", type=int, default=8, help="Min trades per group")
     ap.add_argument("--by-pocket", action="store_true", help="Group by pocket")
     ap.add_argument("--by-source", action="store_true", help="Group by decision source")
-    ap.add_argument("--by-range", action="store_true", help="Group by range_active flag")
+    ap.add_argument(
+        "--by-range", action="store_true", help="Group by range_active flag"
+    )
     ap.add_argument("--top", type=int, default=60, help="Max rows to display")
     args = ap.parse_args()
 
@@ -145,17 +154,25 @@ def main() -> None:
         print("[report] no valid timestamp rows")
         return
     try:
-        bucket_time = time_series.loc[time_series.notna()].dt.tz_convert(args.bucket_timezone)
+        bucket_time = time_series.loc[time_series.notna()].dt.tz_convert(
+            args.bucket_timezone
+        )
     except Exception as exc:
-        raise SystemExit(f"[report] invalid --bucket-timezone: {args.bucket_timezone}: {exc}")
+        raise SystemExit(
+            f"[report] invalid --bucket-timezone: {args.bucket_timezone}: {exc}"
+        )
     if args.bucket_shift_hours:
-        bucket_time = bucket_time + pd.to_timedelta(int(args.bucket_shift_hours), unit="h")
+        bucket_time = bucket_time + pd.to_timedelta(
+            int(args.bucket_shift_hours), unit="h"
+        )
     df["bucket_hour"] = bucket_time.dt.hour
     df["pl_pips"] = df["pl_pips"].fillna(0.0).astype(float)
     df["jpy"] = _coerce_jpy(df)
 
-    decision_meta = df["entry_thesis"].map(_parse_thesis).map(
-        lambda t: t.get("decision_meta") if isinstance(t, dict) else {}
+    decision_meta = (
+        df["entry_thesis"]
+        .map(_parse_thesis)
+        .map(lambda t: t.get("decision_meta") if isinstance(t, dict) else {})
     )
     df["decision_source"] = decision_meta.map(
         lambda d: (d or {}).get("source") if isinstance(d, dict) else None
@@ -191,9 +208,13 @@ def main() -> None:
     agg = agg.reset_index()
     agg = agg[agg["trades"] >= int(args.min_trades)]
     if args.sort == "worst":
-        agg = agg.sort_values(["sum_jpy", "sum_pips"], ascending=True).head(int(args.top))
+        agg = agg.sort_values(["sum_jpy", "sum_pips"], ascending=True).head(
+            int(args.top)
+        )
     else:
-        agg = agg.sort_values(["sum_jpy", "sum_pips"], ascending=False).head(int(args.top))
+        agg = agg.sort_values(["sum_jpy", "sum_pips"], ascending=False).head(
+            int(args.top)
+        )
 
     cols = group_cols + [
         "trades",

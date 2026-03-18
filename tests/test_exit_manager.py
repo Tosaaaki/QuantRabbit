@@ -10,5 +10,7 @@ from execution.exit_manager import ExitManager
 
 def test_exit_manager_is_noop():
     manager = ExitManager()
-    decisions = manager.plan_closures({}, [], {}, {}, event_soon=False, range_mode=False)
+    decisions = manager.plan_closures(
+        {}, [], {}, {}, event_soon=False, range_mode=False
+    )
     assert decisions == []

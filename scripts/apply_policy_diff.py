@@ -27,7 +27,9 @@ def _load_diff(path: Path | None) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Apply a policy_diff JSON to the overlay.")
-    ap.add_argument("--diff", default=None, help="Path to policy_diff.json (stdin if omitted)")
+    ap.add_argument(
+        "--diff", default=None, help="Path to policy_diff.json (stdin if omitted)"
+    )
     ap.add_argument("--overlay-path", default="logs/policy_overlay.json")
     ap.add_argument("--history-dir", default="logs/policy_history")
     ap.add_argument("--latest-path", default="logs/policy_latest.json")
@@ -38,7 +40,9 @@ def main() -> None:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
     diff_path = Path(args.diff) if args.diff else None
     payload = _load_diff(diff_path)
-    payload = normalize_policy_diff(payload, source=str(payload.get("source") or "manual"))
+    payload = normalize_policy_diff(
+        payload, source=str(payload.get("source") or "manual")
+    )
     errors = validate_policy_diff(payload)
     if errors:
         logging.error("[POLICY] invalid policy_diff: %s", ", ".join(errors))

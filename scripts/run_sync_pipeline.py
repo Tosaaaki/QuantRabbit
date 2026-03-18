@@ -187,7 +187,11 @@ def _load_recent_log_errors(limit: int = 10) -> list[dict]:
             if len(results) >= limit:
                 return results
             upper = line.upper()
-            if "ERROR" not in upper and "CRITICAL" not in upper and "TRACEBACK" not in upper:
+            if (
+                "ERROR" not in upper
+                and "CRITICAL" not in upper
+                and "TRACEBACK" not in upper
+            ):
                 continue
             parsed = _parse_log_line(line)
             parsed["source"] = path.name
@@ -207,7 +211,9 @@ def _load_health_snapshot() -> Optional[dict]:
 
 def _extract_order_meta(payload: dict) -> dict:
     meta: dict = {}
-    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get(
+        "entry_thesis"
+    )
     if isinstance(entry_thesis, dict):
         limited: dict = {}
         for key in (
@@ -271,9 +277,23 @@ def _normalize_order_side(side: object, units: object) -> Optional[str]:
     return None
 
 
-def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
-    client_ids = sorted({str(row.get("client_order_id") or "").strip() for row in rows if row.get("client_order_id")})
-    ticket_ids = sorted({str(row.get("ticket_id") or "").strip() for row in rows if row.get("ticket_id")})
+def _load_order_context_rows(
+    con: sqlite3.Connection, rows: list[dict]
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    client_ids = sorted(
+        {
+            str(row.get("client_order_id") or "").strip()
+            for row in rows
+            if row.get("client_order_id")
+        }
+    )
+    ticket_ids = sorted(
+        {
+            str(row.get("ticket_id") or "").strip()
+            for row in rows
+            if row.get("ticket_id")
+        }
+    )
     if not client_ids and not ticket_ids:
         return {}, {}
 
@@ -303,8 +323,7 @@ def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple
         "WHEN 'accepted' THEN 2 "
         "WHEN 'preflight_start' THEN 3 "
         "ELSE 9 END, "
-        "ts ASC"
-        ,
+        "ts ASC",
         tuple(params),
     )
     refs = [dict(r) for r in cur.fetchall()]
@@ -330,7 +349,9 @@ def _merge_order_meta(primary_payload: dict, fallback_payload: dict) -> dict:
         return primary
     merged = dict(fallback)
     merged.update(primary)
-    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(primary.get("entry_thesis"), dict):
+    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(
+        primary.get("entry_thesis"), dict
+    ):
         thesis = dict(fallback["entry_thesis"])
         thesis.update(primary["entry_thesis"])
         merged["entry_thesis"] = thesis
@@ -529,8 +550,10 @@ def _run_cycle(
         if isinstance(metrics, dict):
             hourly_trades = ui_snapshot_builder._build_hourly_trades_from_db()
             if not hourly_trades:
-                hourly_trades = ui_snapshot_builder._build_hourly_trades_from_recent_trades(
-                    list(recent_trades or []),
+                hourly_trades = (
+                    ui_snapshot_builder._build_hourly_trades_from_recent_trades(
+                        list(recent_trades or []),
+                    )
                 )
             if hourly_trades:
                 metrics["hourly_trades"] = hourly_trades
@@ -777,7 +800,10 @@ def main() -> int:
                             )
                             if analyzer is not None and stats.exported > 0:
                                 lot_interval = max(0.0, args.lot_insights_interval)
-                                if lot_interval <= 0.0 or now - last_lot_insights >= lot_interval:
+                                if (
+                                    lot_interval <= 0.0
+                                    or now - last_lot_insights >= lot_interval
+                                ):
                                     try:
                                         insights = analyzer.run()
                                         logging.info(
@@ -786,14 +812,17 @@ def main() -> int:
                                         )
                                         last_lot_insights = now
                                     except Exception as exc:  # noqa: BLE001
-                                        logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
+                                        logging.exception(
+                                            "[PIPELINE] lot insights 生成に失敗: %s",
+                                            exc,
+                                        )
                             last_bq_export = now
                         except Exception as exc:  # noqa: BLE001
                             bq_failure_count += 1
                             power = min(10, max(0, bq_failure_count - 1))
                             cooldown = min(
                                 BQ_FAILURE_BACKOFF_MAX_SEC,
-                                BQ_FAILURE_BACKOFF_BASE_SEC * (2 ** power),
+                                BQ_FAILURE_BACKOFF_BASE_SEC * (2**power),
                             )
                             bq_pause_until = time.monotonic() + cooldown
                             last_bq_export = now

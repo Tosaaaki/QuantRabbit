@@ -99,7 +99,9 @@ def _reject_streak(orders_db: Path, limit: int = 5) -> int:
         streak = 0
         for status, error_code in cur.fetchall():
             status = str(status or "").upper()
-            failed = status in {"REJECTED", "FAILED", "ERROR", "CANCELLED"} or bool(error_code)
+            failed = status in {"REJECTED", "FAILED", "ERROR", "CANCELLED"} or bool(
+                error_code
+            )
             if not failed:
                 break
             streak += 1
@@ -135,7 +137,9 @@ def evaluate_slo(
     lookback_min: int,
 ) -> Dict[str, object]:
     since = (datetime.now(timezone.utc) - timedelta(minutes=lookback_min)).isoformat()
-    decision_latency_values = _load_metric_values(metrics_db, "decision_latency_ms", since)
+    decision_latency_values = _load_metric_values(
+        metrics_db, "decision_latency_ms", since
+    )
     data_lag_values = _load_metric_values(metrics_db, "data_lag_ms", since)
     decision_latency = _percentile(decision_latency_values, 0.95)
     data_lag = _percentile(data_lag_values, 0.95)
@@ -155,8 +159,12 @@ def evaluate_slo(
         "data_lag_p95": data_lag,
         "decision_latency_count": len(decision_latency_values),
         "data_lag_count": len(data_lag_values),
-        "decision_latency_latest_ts": decision_latest_ts.isoformat() if decision_latest_ts else None,
-        "data_lag_latest_ts": data_lag_latest_ts.isoformat() if data_lag_latest_ts else None,
+        "decision_latency_latest_ts": (
+            decision_latest_ts.isoformat() if decision_latest_ts else None
+        ),
+        "data_lag_latest_ts": (
+            data_lag_latest_ts.isoformat() if data_lag_latest_ts else None
+        ),
         "drawdown_pct_max": drawdown_max,
         "order_success_min": order_success_min,
         "reject_rate_max": reject_rate_max,
@@ -198,17 +206,29 @@ def collect_violations(
     now_utc: Optional[datetime] = None,
 ) -> List[str]:
     violations: List[str] = []
-    if metrics.get("decision_latency_p95") and metrics["decision_latency_p95"] > max_decision_ms:
+    if (
+        metrics.get("decision_latency_p95")
+        and metrics["decision_latency_p95"] > max_decision_ms
+    ):
         violations.append("decision_latency_p95")
     if metrics.get("data_lag_p95") and metrics["data_lag_p95"] > max_data_lag_ms:
         violations.append("data_lag_p95")
-    if metrics.get("drawdown_pct_max") and metrics["drawdown_pct_max"] > max_drawdown_pct:
+    if (
+        metrics.get("drawdown_pct_max")
+        and metrics["drawdown_pct_max"] > max_drawdown_pct
+    ):
         violations.append("drawdown_pct_max")
-    if metrics.get("order_success_min") is not None and metrics["order_success_min"] < min_order_success:
+    if (
+        metrics.get("order_success_min") is not None
+        and metrics["order_success_min"] < min_order_success
+    ):
         violations.append("order_success_rate")
     if metrics.get("reject_rate_max") and metrics["reject_rate_max"] > max_reject_rate:
         violations.append("reject_rate_max")
-    if metrics.get("gpt_timeout_rate_max") and metrics["gpt_timeout_rate_max"] > max_gpt_timeout:
+    if (
+        metrics.get("gpt_timeout_rate_max")
+        and metrics["gpt_timeout_rate_max"] > max_gpt_timeout
+    ):
         violations.append("gpt_timeout_rate_max")
     if metrics.get("reject_streak", 0) >= reject_streak_threshold:
         violations.append("reject_streak")
@@ -233,21 +253,70 @@ def collect_violations(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Policy guard and auto rollback.")
-    ap.add_argument("--metrics-db", default=os.getenv("POLICY_GUARD_METRICS_DB", "logs/metrics.db"))
-    ap.add_argument("--orders-db", default=os.getenv("POLICY_GUARD_ORDERS_DB", "logs/orders.db"))
-    ap.add_argument("--overlay-path", default=os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"))
-    ap.add_argument("--stable-path", default=os.getenv("POLICY_GUARD_STABLE_PATH", "logs/policy_stable.json"))
-    ap.add_argument("--latest-path", default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
-    ap.add_argument("--lookback-min", type=int, default=int(os.getenv("POLICY_GUARD_LOOKBACK_MIN", "120")))
-    ap.add_argument("--stable-min-sec", type=int, default=int(os.getenv("POLICY_GUARD_STABLE_MIN_SEC", "1800")))
-    ap.add_argument("--max-decision-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DECISION_MS", "2000")))
+    ap.add_argument(
+        "--metrics-db", default=os.getenv("POLICY_GUARD_METRICS_DB", "logs/metrics.db")
+    )
+    ap.add_argument(
+        "--orders-db", default=os.getenv("POLICY_GUARD_ORDERS_DB", "logs/orders.db")
+    )
+    ap.add_argument(
+        "--overlay-path",
+        default=os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"),
+    )
+    ap.add_argument(
+        "--stable-path",
+        default=os.getenv("POLICY_GUARD_STABLE_PATH", "logs/policy_stable.json"),
+    )
+    ap.add_argument(
+        "--latest-path",
+        default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"),
+    )
+    ap.add_argument(
+        "--lookback-min",
+        type=int,
+        default=int(os.getenv("POLICY_GUARD_LOOKBACK_MIN", "120")),
+    )
+    ap.add_argument(
+        "--stable-min-sec",
+        type=int,
+        default=int(os.getenv("POLICY_GUARD_STABLE_MIN_SEC", "1800")),
+    )
+    ap.add_argument(
+        "--max-decision-ms",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MAX_DECISION_MS", "2000")),
+    )
     # Data lag p95 default: align with the "stale" guardrail (3000ms) unless overridden explicitly.
-    ap.add_argument("--max-data-lag-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DATA_LAG_MS", "3000")))
-    ap.add_argument("--max-drawdown-pct", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DRAWDOWN_PCT", "0.18")))
-    ap.add_argument("--min-order-success", type=float, default=float(os.getenv("POLICY_GUARD_MIN_ORDER_SUCCESS", "0.995")))
-    ap.add_argument("--max-reject-rate", type=float, default=float(os.getenv("POLICY_GUARD_MAX_REJECT_RATE", "0.01")))
-    ap.add_argument("--max-gpt-timeout", type=float, default=float(os.getenv("POLICY_GUARD_MAX_GPT_TIMEOUT", "0.05")))
-    ap.add_argument("--reject-streak", type=int, default=int(os.getenv("POLICY_GUARD_REJECT_STREAK", "3")))
+    ap.add_argument(
+        "--max-data-lag-ms",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MAX_DATA_LAG_MS", "3000")),
+    )
+    ap.add_argument(
+        "--max-drawdown-pct",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MAX_DRAWDOWN_PCT", "0.18")),
+    )
+    ap.add_argument(
+        "--min-order-success",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MIN_ORDER_SUCCESS", "0.995")),
+    )
+    ap.add_argument(
+        "--max-reject-rate",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MAX_REJECT_RATE", "0.01")),
+    )
+    ap.add_argument(
+        "--max-gpt-timeout",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MAX_GPT_TIMEOUT", "0.05")),
+    )
+    ap.add_argument(
+        "--reject-streak",
+        type=int,
+        default=int(os.getenv("POLICY_GUARD_REJECT_STREAK", "3")),
+    )
     ap.add_argument(
         "--require-slo-metrics-when-open",
         type=int,
@@ -290,14 +359,20 @@ def main() -> None:
 
     if violations:
         if not stable_path.exists():
-            logging.warning("[POLICY_GUARD] violations but no stable policy: %s", violations)
+            logging.warning(
+                "[POLICY_GUARD] violations but no stable policy: %s", violations
+            )
             return
         stable_snapshot = load_policy_snapshot(stable_path)
         save_policy_snapshot(overlay_path, stable_snapshot)
         save_policy_snapshot(latest_path, stable_snapshot)
         policy_id = (
             stable_snapshot.get("policy_id")
-            or (stable_snapshot.get("notes", {}).get("policy_id") if isinstance(stable_snapshot.get("notes"), dict) else None)
+            or (
+                stable_snapshot.get("notes", {}).get("policy_id")
+                if isinstance(stable_snapshot.get("notes"), dict)
+                else None
+            )
             or "stable"
         )
         payload = {
@@ -310,14 +385,20 @@ def main() -> None:
         }
         logging.warning("[POLICY_GUARD] rollback applied: %s", ", ".join(violations))
         if ledger:
-            ledger.record(payload, status="rollback", summary={"violations": violations, "metrics": metrics})
+            ledger.record(
+                payload,
+                status="rollback",
+                summary={"violations": violations, "metrics": metrics},
+            )
         return
 
     if overlay_path.exists():
         current = load_policy_snapshot(overlay_path)
         applied_at = _load_applied_at(current)
         if applied_at is None:
-            applied_at = datetime.now(timezone.utc) - timedelta(seconds=args.stable_min_sec)
+            applied_at = datetime.now(timezone.utc) - timedelta(
+                seconds=args.stable_min_sec
+            )
         age = (datetime.now(timezone.utc) - applied_at).total_seconds()
         if age >= args.stable_min_sec:
             save_policy_snapshot(stable_path, current)
@@ -325,7 +406,11 @@ def main() -> None:
             if ledger:
                 policy_id = (
                     current.get("policy_id")
-                    or (current.get("notes", {}).get("policy_id") if isinstance(current.get("notes"), dict) else None)
+                    or (
+                        current.get("notes", {}).get("policy_id")
+                        if isinstance(current.get("notes"), dict)
+                        else None
+                    )
                     or "stable"
                 )
                 ledger.record(

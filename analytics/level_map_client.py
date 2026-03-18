@@ -116,4 +116,3 @@ class LevelMapClient:
         if nearest_b is None:
             return None
         return bucket_map.get(nearest_b)
-

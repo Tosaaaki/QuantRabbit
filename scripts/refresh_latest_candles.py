@@ -23,10 +23,18 @@ from utils.secrets import get_secret  # noqa: E402
 
 def _oanda_base_url() -> str:
     try:
-        practice_flag = get_secret("oanda_practice").strip().lower() in {"1", "true", "yes"}
+        practice_flag = get_secret("oanda_practice").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
     except KeyError:
         practice_flag = False
-    return "https://api-fxpractice.oanda.com" if practice_flag else "https://api-fxtrade.oanda.com"
+    return (
+        "https://api-fxpractice.oanda.com"
+        if practice_flag
+        else "https://api-fxtrade.oanda.com"
+    )
 
 
 def _default_output(granularity: str) -> pathlib.Path:
@@ -40,7 +48,9 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
-def _normalize_candle(raw: Dict[str, Any], instrument: str, timeframe: str) -> Dict[str, Any]:
+def _normalize_candle(
+    raw: Dict[str, Any], instrument: str, timeframe: str
+) -> Dict[str, Any]:
     mid = raw.get("mid") or {}
     return {
         "time": raw.get("time") or raw.get("timestamp") or raw.get("ts"),
@@ -72,7 +82,9 @@ def fetch_candles(
     if include_weekends:
         params["includeFirst"] = "true"
     query = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{_oanda_base_url()}/v3/instruments/{instrument}/candles?{query}")
+    req = urllib.request.Request(
+        f"{_oanda_base_url()}/v3/instruments/{instrument}/candles?{query}"
+    )
     req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=15) as resp:
         payload = resp.read().decode("utf-8")
@@ -80,10 +92,18 @@ def fetch_candles(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Refresh latest OANDA candles into a normalized JSON file.")
-    parser.add_argument("--instrument", default="USD_JPY", help="Instrument symbol (default: USD_JPY)")
-    parser.add_argument("--granularity", default="M1", help="OANDA granularity (default: M1)")
-    parser.add_argument("--count", type=int, default=500, help="Number of candles to fetch (<=500)")
+    parser = argparse.ArgumentParser(
+        description="Refresh latest OANDA candles into a normalized JSON file."
+    )
+    parser.add_argument(
+        "--instrument", default="USD_JPY", help="Instrument symbol (default: USD_JPY)"
+    )
+    parser.add_argument(
+        "--granularity", default="M1", help="OANDA granularity (default: M1)"
+    )
+    parser.add_argument(
+        "--count", type=int, default=500, help="Number of candles to fetch (<=500)"
+    )
     parser.add_argument(
         "--price",
         default="M",
@@ -121,7 +141,9 @@ def main() -> None:
         "timeframe": args.granularity,
         "candles": normalized,
     }
-    output_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8"
+    )
     print(f"[candles] wrote {len(normalized)} -> {output_path}")
 
 

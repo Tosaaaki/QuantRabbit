@@ -13,7 +13,6 @@ from google.cloud import bigquery
 
 from market_data.candle_fetcher import fetch_historical_candles
 
-
 DEFAULT_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 DEFAULT_TABLE = os.getenv("BQ_CANDLES_TABLE", "candles")
@@ -76,7 +75,9 @@ def _fetch_and_transform(
     ]
 
 
-def _insert(client: bigquery.Client, dataset_id: str, table_id: str, rows: Iterable[dict]) -> int:
+def _insert(
+    client: bigquery.Client, dataset_id: str, table_id: str, rows: Iterable[dict]
+) -> int:
     rows = list(rows)
     if not rows:
         return 0

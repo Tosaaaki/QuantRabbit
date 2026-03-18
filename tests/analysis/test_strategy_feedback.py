@@ -8,10 +8,18 @@ from analysis import strategy_feedback
 def _reset_feedback_caches(monkeypatch, *, feedback_path, counterfactual_path) -> None:
     monkeypatch.setattr(strategy_feedback, "_FEEDBACK_ENABLED", True, raising=False)
     monkeypatch.setattr(strategy_feedback, "_PATH", feedback_path, raising=False)
-    monkeypatch.setattr(strategy_feedback, "_COUNTERFACTUAL_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_feedback, "_COUNTERFACTUAL_PATH", counterfactual_path, raising=False)
-    monkeypatch.setattr(strategy_feedback, "_FEEDBACK_MAX_AGE_SEC", 864000.0, raising=False)
-    monkeypatch.setattr(strategy_feedback, "_COUNTERFACTUAL_MAX_AGE_SEC", 864000.0, raising=False)
+    monkeypatch.setattr(
+        strategy_feedback, "_COUNTERFACTUAL_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_feedback, "_COUNTERFACTUAL_PATH", counterfactual_path, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_feedback, "_FEEDBACK_MAX_AGE_SEC", 864000.0, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_feedback, "_COUNTERFACTUAL_MAX_AGE_SEC", 864000.0, raising=False
+    )
     monkeypatch.setattr(strategy_feedback, "_PARAM_SOURCE_PATHS", [], raising=False)
     monkeypatch.setattr(
         strategy_feedback,
@@ -33,7 +41,9 @@ def _reset_feedback_caches(monkeypatch, *, feedback_path, counterfactual_path) -
     )
 
 
-def test_current_advice_applies_counterfactual_overlay_for_side(monkeypatch, tmp_path) -> None:
+def test_current_advice_applies_counterfactual_overlay_for_side(
+    monkeypatch, tmp_path
+) -> None:
     feedback_path = tmp_path / "strategy_feedback.json"
     feedback_path.write_text(
         json.dumps(
@@ -73,9 +83,15 @@ def test_current_advice_applies_counterfactual_overlay_for_side(monkeypatch, tmp
         ),
         encoding="utf-8",
     )
-    _reset_feedback_caches(monkeypatch, feedback_path=feedback_path, counterfactual_path=counterfactual_path)
+    _reset_feedback_caches(
+        monkeypatch,
+        feedback_path=feedback_path,
+        counterfactual_path=counterfactual_path,
+    )
 
-    advice = strategy_feedback.current_advice("scalp_ping_5s_b_live-labc12345", side="sell")
+    advice = strategy_feedback.current_advice(
+        "scalp_ping_5s_b_live-labc12345", side="sell"
+    )
 
     assert advice is not None
     assert advice["entry_units_multiplier"] < 0.9
@@ -88,7 +104,9 @@ def test_current_advice_applies_counterfactual_overlay_for_side(monkeypatch, tmp
     assert advice["strategy_params"]["counterfactual_feedback"]["mode"] == "tighten"
 
 
-def test_current_advice_returns_counterfactual_only_when_feedback_missing(monkeypatch, tmp_path) -> None:
+def test_current_advice_returns_counterfactual_only_when_feedback_missing(
+    monkeypatch, tmp_path
+) -> None:
     counterfactual_path = tmp_path / "trade_counterfactual_latest.json"
     counterfactual_path.write_text(
         json.dumps(
@@ -108,7 +126,9 @@ def test_current_advice_returns_counterfactual_only_when_feedback_missing(monkey
         ),
         encoding="utf-8",
     )
-    _reset_feedback_caches(monkeypatch, feedback_path=None, counterfactual_path=counterfactual_path)
+    _reset_feedback_caches(
+        monkeypatch, feedback_path=None, counterfactual_path=counterfactual_path
+    )
 
     advice = strategy_feedback.current_advice("M1Scalper-M1", side="long")
 
@@ -192,9 +212,15 @@ def test_current_advice_ignores_stale_feedback_payload(monkeypatch, tmp_path) ->
         ),
         encoding="utf-8",
     )
-    _reset_feedback_caches(monkeypatch, feedback_path=feedback_path, counterfactual_path=counterfactual_path)
+    _reset_feedback_caches(
+        monkeypatch,
+        feedback_path=feedback_path,
+        counterfactual_path=counterfactual_path,
+    )
     monkeypatch.setattr(strategy_feedback, "_FEEDBACK_MAX_AGE_SEC", 60.0, raising=False)
-    monkeypatch.setattr(strategy_feedback, "_COUNTERFACTUAL_MAX_AGE_SEC", 1800.0, raising=False)
+    monkeypatch.setattr(
+        strategy_feedback, "_COUNTERFACTUAL_MAX_AGE_SEC", 1800.0, raising=False
+    )
 
     advice = strategy_feedback.current_advice("MicroTrendRetest-long", side="long")
 
@@ -266,7 +292,9 @@ def test_current_advice_prefers_setup_specific_override(monkeypatch, tmp_path) -
     assert advice["_meta"]["setup_override"]["trades"] == 9
 
 
-def test_current_advice_derives_setup_context_from_technical_context(monkeypatch, tmp_path) -> None:
+def test_current_advice_derives_setup_context_from_technical_context(
+    monkeypatch, tmp_path
+) -> None:
     feedback_path = tmp_path / "strategy_feedback.json"
     feedback_path.write_text(
         json.dumps(

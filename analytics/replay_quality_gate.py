@@ -83,7 +83,9 @@ def compute_trade_metrics(
         if math.isnan(pnl):
             continue
         pnl_jpy = _safe_float(trade.get("pnl_jpy"), default=0.0)
-        ts = _parse_iso8601(trade.get("exit_time")) or _parse_iso8601(trade.get("entry_time"))
+        ts = _parse_iso8601(trade.get("exit_time")) or _parse_iso8601(
+            trade.get("entry_time")
+        )
         ts_key = ts.timestamp() if ts is not None else 0.0
         if ts is not None:
             observed_ts.append(ts_key)
@@ -243,7 +245,9 @@ def evaluate_fold_gate(
             _safe_float(test_metrics.get("max_drawdown_jpy"), default=0.0),
             threshold.max_test_drawdown_jpy,
         ),
-        _check_ge("pf_stability_ratio", pf_stability_ratio, threshold.min_pf_stability_ratio),
+        _check_ge(
+            "pf_stability_ratio", pf_stability_ratio, threshold.min_pf_stability_ratio
+        ),
     ]
     passed = all(bool(item.get("ok")) for item in checks)
 
@@ -295,8 +299,16 @@ def summarize_worker_folds(
         "required_pass_rate": float(min_fold_pass_rate),
         "status": "pass" if total > 0 and pass_rate >= min_fold_pass_rate else "fail",
         "median_test_pf": float(median(test_pf_values)) if test_pf_values else 0.0,
-        "median_test_win_rate": float(median(test_wr_values)) if test_wr_values else 0.0,
-        "median_test_max_drawdown_pips": float(median(test_dd_values)) if test_dd_values else 0.0,
-        "median_test_total_jpy": float(median(test_jpy_values)) if test_jpy_values else 0.0,
-        "median_test_jpy_per_hour": float(median(test_jpy_hour_values)) if test_jpy_hour_values else 0.0,
+        "median_test_win_rate": (
+            float(median(test_wr_values)) if test_wr_values else 0.0
+        ),
+        "median_test_max_drawdown_pips": (
+            float(median(test_dd_values)) if test_dd_values else 0.0
+        ),
+        "median_test_total_jpy": (
+            float(median(test_jpy_values)) if test_jpy_values else 0.0
+        ),
+        "median_test_jpy_per_hour": (
+            float(median(test_jpy_hour_values)) if test_jpy_hour_values else 0.0
+        ),
     }

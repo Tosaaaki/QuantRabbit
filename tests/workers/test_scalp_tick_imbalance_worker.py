@@ -17,11 +17,15 @@ def test_tick_imbalance_blocks_trend_exhausted_short(monkeypatch) -> None:
     monkeypatch.setattr(worker, "TICK_IMB_BLOCK_RANGE_MODE", False)
     monkeypatch.setattr(worker, "TICK_IMB_REQUIRE_MA_ALIGN", 0)
     monkeypatch.setattr(worker, "TICK_IMB_ENTRY_QUALITY_ENABLED", False)
-    monkeypatch.setattr(worker, "tick_snapshot", lambda *_args, **_kwargs: ([159.31, 159.29], 4.5))
+    monkeypatch.setattr(
+        worker, "tick_snapshot", lambda *_args, **_kwargs: ([159.31, 159.29], 4.5)
+    )
     monkeypatch.setattr(
         worker,
         "tick_imbalance",
-        lambda *_args, **_kwargs: SimpleNamespace(ratio=0.82, momentum_pips=-0.86, range_pips=1.14),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ratio=0.82, momentum_pips=-0.86, range_pips=1.14
+        ),
     )
 
     signal = worker._signal_tick_imbalance(
@@ -42,16 +46,22 @@ def test_tick_imbalance_blocks_trend_exhausted_short(monkeypatch) -> None:
     assert signal is None
 
 
-def test_tick_imbalance_allows_non_exhausted_reclaim_long_and_preserves_diag(monkeypatch) -> None:
+def test_tick_imbalance_allows_non_exhausted_reclaim_long_and_preserves_diag(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(worker, "TICK_IMB_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "TICK_IMB_BLOCK_RANGE_MODE", False)
     monkeypatch.setattr(worker, "TICK_IMB_REQUIRE_MA_ALIGN", 0)
     monkeypatch.setattr(worker, "TICK_IMB_ENTRY_QUALITY_ENABLED", False)
-    monkeypatch.setattr(worker, "tick_snapshot", lambda *_args, **_kwargs: ([159.41, 159.45], 4.5))
+    monkeypatch.setattr(
+        worker, "tick_snapshot", lambda *_args, **_kwargs: ([159.41, 159.45], 4.5)
+    )
     monkeypatch.setattr(
         worker,
         "tick_imbalance",
-        lambda *_args, **_kwargs: SimpleNamespace(ratio=0.79, momentum_pips=0.74, range_pips=0.98),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ratio=0.79, momentum_pips=0.74, range_pips=0.98
+        ),
     )
     signal = worker._signal_tick_imbalance(
         {
@@ -99,11 +109,15 @@ def test_tick_imbalance_allows_non_exhausted_reclaim_long_and_preserves_diag(mon
 def test_tick_imbalance_rrplus_blocks_trend_exhausted_long(monkeypatch) -> None:
     monkeypatch.setattr(worker, "TIRP_BLOCK_RANGE_MODE", False)
     monkeypatch.setattr(worker, "TIRP_REQUIRE_MA_ALIGN", False)
-    monkeypatch.setattr(worker, "tick_snapshot", lambda *_args, **_kwargs: ([159.41, 159.45], 5.0))
+    monkeypatch.setattr(
+        worker, "tick_snapshot", lambda *_args, **_kwargs: ([159.41, 159.45], 5.0)
+    )
     monkeypatch.setattr(
         worker,
         "tick_imbalance",
-        lambda *_args, **_kwargs: SimpleNamespace(ratio=0.84, momentum_pips=0.92, range_pips=1.20),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ratio=0.84, momentum_pips=0.92, range_pips=1.20
+        ),
     )
     monkeypatch.setattr(worker, "spread_ok", lambda **_kwargs: (True, {}))
 

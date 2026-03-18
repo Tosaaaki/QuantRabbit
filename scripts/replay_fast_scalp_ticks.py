@@ -36,9 +36,12 @@ from execution.risk_guard import clamp_sl_tp  # noqa: E402
 from workers.fast_scalp import config  # noqa: E402
 from workers.fast_scalp.patterns import pattern_score  # noqa: E402
 from workers.fast_scalp.profiles import StrategyProfile, select_profile  # noqa: E402
-from workers.fast_scalp.signal import SignalFeatures, extract_features, evaluate_signal  # noqa: E402
+from workers.fast_scalp.signal import (
+    SignalFeatures,
+    extract_features,
+    evaluate_signal,
+)  # noqa: E402
 from workers.fast_scalp.timeout_controller import TimeoutController  # noqa: E402
-
 
 PIP_VALUE = config.PIP_VALUE
 
@@ -236,7 +239,9 @@ def _parse_candle_time(ts: str) -> datetime:
     return datetime.fromisoformat(ts).astimezone(timezone.utc)
 
 
-def load_candles(paths: Sequence[Path]) -> List[Tuple[datetime, float, float, float, float]]:
+def load_candles(
+    paths: Sequence[Path],
+) -> List[Tuple[datetime, float, float, float, float]]:
     candles: List[Tuple[datetime, float, float, float, float]] = []
     for path in paths:
         with path.open(encoding="utf-8") as fh:
@@ -257,7 +262,9 @@ def load_candles(paths: Sequence[Path]) -> List[Tuple[datetime, float, float, fl
     return candles
 
 
-def load_candles_payload(items: Sequence[Dict[str, object]]) -> List[Tuple[datetime, float, float, float, float]]:
+def load_candles_payload(
+    items: Sequence[Dict[str, object]],
+) -> List[Tuple[datetime, float, float, float, float]]:
     candles: List[Tuple[datetime, float, float, float, float]] = []
     for cndl in items:
         mid = cndl.get("mid") or cndl
@@ -406,7 +413,9 @@ class FastScalpReplayer:
         while self.buffer and self.buffer[0]["epoch"] < cutoff:
             self.buffer.popleft()
 
-    def _extract_features(self, tick: ReplayTick, *, spread_pips: float) -> Optional[SignalFeatures]:
+    def _extract_features(
+        self, tick: ReplayTick, *, spread_pips: float
+    ) -> Optional[SignalFeatures]:
         if len(self.buffer) < config.MIN_TICK_COUNT:
             return None
         ticks_list = list(self.buffer)
@@ -446,7 +455,9 @@ class FastScalpReplayer:
         bid, ask = self._effective_bid_ask(tick)
         return bid if direction == "long" else ask
 
-    def _apply_slip(self, price: float, direction: str, *, is_entry: bool, slip_pips: float) -> float:
+    def _apply_slip(
+        self, price: float, direction: str, *, is_entry: bool, slip_pips: float
+    ) -> float:
         slip = slip_pips * PIP_VALUE
         if direction == "long":
             return price + slip if is_entry else price - slip
@@ -478,7 +489,9 @@ class FastScalpReplayer:
             latency_ms=latency_ms,
         )
 
-    def _resolve_fill_tick(self, ready_epoch: float, current_tick: ReplayTick) -> ReplayTick:
+    def _resolve_fill_tick(
+        self, ready_epoch: float, current_tick: ReplayTick
+    ) -> ReplayTick:
         if self.fill_mode == "next_tick":
             return current_tick
         if current_tick.epoch <= ready_epoch:
@@ -500,7 +513,9 @@ class FastScalpReplayer:
             atr_pips=pending.features.atr_pips,
             latency_ms=pending.latency_ms,
         )
-        entry_price = self._apply_slip(expected, pending.direction, is_entry=True, slip_pips=slip_pips)
+        entry_price = self._apply_slip(
+            expected, pending.direction, is_entry=True, slip_pips=slip_pips
+        )
 
         if self.fill_mode == "next_tick":
             fill_epoch = tick.epoch
@@ -510,7 +525,9 @@ class FastScalpReplayer:
 
         sl_price = pending.sl_price
         tp_price = pending.tp_price
-        sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, pending.direction == "long")
+        sl_price, tp_price = clamp_sl_tp(
+            entry_price, sl_price, tp_price, pending.direction == "long"
+        )
 
         trade_units = max(1, abs(self.units))
         self.trade_seq += 1
@@ -551,13 +568,17 @@ class FastScalpReplayer:
         self.profile_counter[pending.profile.name] += 1
         self.pending_entry = None
 
-    def _execute_exit(self, tick: ReplayTick, features: Optional[SignalFeatures]) -> None:
+    def _execute_exit(
+        self, tick: ReplayTick, features: Optional[SignalFeatures]
+    ) -> None:
         if self.pending_exit is None or self.active_trade is None:
             return
         pending = self.pending_exit
         trade = self.active_trade
         expected_exit = pending.trigger_price
-        atr_pips = pending.trigger_atr_pips if pending.trigger_atr_pips is not None else None
+        atr_pips = (
+            pending.trigger_atr_pips if pending.trigger_atr_pips is not None else None
+        )
         if atr_pips is None and features is not None:
             atr_pips = features.atr_pips
         fill_tick = self._resolve_fill_tick(pending.ready_epoch, tick)
@@ -568,7 +589,9 @@ class FastScalpReplayer:
             latency_ms=pending.latency_ms,
         )
         raw_exit = self._expected_exit_price(fill_tick, trade.direction)
-        exit_price = self._apply_slip(raw_exit, trade.direction, is_entry=False, slip_pips=slip_pips)
+        exit_price = self._apply_slip(
+            raw_exit, trade.direction, is_entry=False, slip_pips=slip_pips
+        )
         if trade.direction == "long":
             gain_pips = (exit_price - trade.entry_price) / PIP_VALUE
         else:
@@ -667,7 +690,9 @@ class FastScalpReplayer:
         else:
             tick_rate = 1.0
         tick_rate = tick_rate if tick_rate > 0.0 else 0.1
-        latency_ms = self.latency_ms if self.latency_ms > 0.0 else 1000.0 / max(tick_rate, 0.1)
+        latency_ms = (
+            self.latency_ms if self.latency_ms > 0.0 else 1000.0 / max(tick_rate, 0.1)
+        )
         price = self._expected_exit_price(tick, trade.direction)
         if trade.direction == "long":
             gain_pips = (price - trade.entry_price) / PIP_VALUE
@@ -761,7 +786,10 @@ class FastScalpReplayer:
             ):
                 return
             reason_key = reason.lower()
-            if reason_key in self.exit_ignore_reasons and reason not in forced_exit_reasons:
+            if (
+                reason_key in self.exit_ignore_reasons
+                and reason not in forced_exit_reasons
+            ):
                 return
             if (
                 self.exit_min_loss_pips > 0.0
@@ -769,9 +797,17 @@ class FastScalpReplayer:
                 and gain_pips > -self.exit_min_loss_pips
             ):
                 return
-            if self.no_loss_close and gain_pips < 0 and reason not in forced_exit_reasons:
+            if (
+                self.no_loss_close
+                and gain_pips < 0
+                and reason not in forced_exit_reasons
+            ):
                 return
-            if self.positive_exit_only and gain_pips <= 0 and reason not in forced_exit_reasons:
+            if (
+                self.positive_exit_only
+                and gain_pips <= 0
+                and reason not in forced_exit_reasons
+            ):
                 return
             self._schedule_exit(
                 reason=reason,
@@ -796,7 +832,11 @@ class FastScalpReplayer:
         spread_pips = self._effective_spread_pips(tick)
         features = self._extract_features(tick, spread_pips=spread_pips)
         try:
-            if self.pending_exit is not None and self.active_trade and tick.epoch >= self.pending_exit.ready_epoch:
+            if (
+                self.pending_exit is not None
+                and self.active_trade
+                and tick.epoch >= self.pending_exit.ready_epoch
+            ):
                 self._execute_exit(tick, features)
                 return
 
@@ -808,7 +848,10 @@ class FastScalpReplayer:
                     return
 
             if self.pending_entry is not None:
-                if self.active_trade is None and tick.epoch >= self.pending_entry.ready_epoch:
+                if (
+                    self.active_trade is None
+                    and tick.epoch >= self.pending_entry.ready_epoch
+                ):
                     self._execute_entry(tick)
                 return
 
@@ -842,7 +885,9 @@ class FastScalpReplayer:
             spread_padding = max(spread_pips, config.TP_SPREAD_BUFFER_PIPS)
             tp_margin = max(config.TP_SAFE_MARGIN_PIPS, spread_pips * 0.5)
             base_tp = config.TP_BASE_PIPS + spread_padding + tp_margin
-            tp_pips = max(0.2, base_tp * profile.tp_margin_multiplier + profile.tp_adjust)
+            tp_pips = max(
+                0.2, base_tp * profile.tp_margin_multiplier + profile.tp_adjust
+            )
             sl_pips = profile.sl_pips if profile.sl_pips is not None else config.SL_PIPS
 
             entry_price = self._expected_entry_price(tick, direction)
@@ -853,7 +898,9 @@ class FastScalpReplayer:
                 sl_price = entry_price + sl_pips * PIP_VALUE
                 tp_price = entry_price - tp_pips * PIP_VALUE
 
-            sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
+            sl_price, tp_price = clamp_sl_tp(
+                entry_price, sl_price, tp_price, direction == "long"
+            )
             sl_adjust = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
             if direction == "long":
                 sl_price = entry_price - sl_adjust * PIP_VALUE
@@ -866,7 +913,11 @@ class FastScalpReplayer:
                 else float(features.tick_count)
             )
             entry_tick_rate = entry_tick_rate if entry_tick_rate > 0.0 else 0.1
-            entry_latency_ms = self.latency_ms if self.latency_ms > 0.0 else 1000.0 / max(entry_tick_rate, 0.1)
+            entry_latency_ms = (
+                self.latency_ms
+                if self.latency_ms > 0.0
+                else 1000.0 / max(entry_tick_rate, 0.1)
+            )
             ready_epoch = tick.epoch + max(0.0, entry_latency_ms) / 1000.0
             self.pending_entry = PendingEntry(
                 direction=direction,
@@ -936,7 +987,11 @@ class FastScalpReplayer:
             "total_pnl_pips": round(total_pips, 3),
             "total_pnl_jpy": round(total_jpy, 2),
             "win_rate": round(win_rate, 4),
-            "profit_factor": round(profit_factor, 4) if math.isfinite(profit_factor) else float("inf"),
+            "profit_factor": (
+                round(profit_factor, 4)
+                if math.isfinite(profit_factor)
+                else float("inf")
+            ),
             "avg_hold_seconds": round(avg_hold, 2),
             "profiles": dict(self.profile_counter),
             "reason_stats": reason_stats,
@@ -970,33 +1025,118 @@ def resolve_tick_paths(args: argparse.Namespace) -> List[Path]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Replay FastScalp against recorded tick JSONL files.")
-    parser.add_argument("--ticks", nargs="*", help="Explicit tick JSONL files or directories.")
-    parser.add_argument("--glob", nargs=1, help="Glob pattern for tick files (e.g. 'logs/replay/USD_JPY/*.jsonl').")
-    parser.add_argument("--instrument", default="USD_JPY", help="Instrument symbol (default: USD_JPY).")
-    parser.add_argument("--units", type=int, default=config.MIN_UNITS, help="Simulation trade size (default: FAST_SCALP_MIN_UNITS).")
-    parser.add_argument("--range-active", action="store_true", help="Force range mode flag during replay.")
+    parser = argparse.ArgumentParser(
+        description="Replay FastScalp against recorded tick JSONL files."
+    )
+    parser.add_argument(
+        "--ticks", nargs="*", help="Explicit tick JSONL files or directories."
+    )
+    parser.add_argument(
+        "--glob",
+        nargs=1,
+        help="Glob pattern for tick files (e.g. 'logs/replay/USD_JPY/*.jsonl').",
+    )
+    parser.add_argument(
+        "--instrument", default="USD_JPY", help="Instrument symbol (default: USD_JPY)."
+    )
+    parser.add_argument(
+        "--units",
+        type=int,
+        default=config.MIN_UNITS,
+        help="Simulation trade size (default: FAST_SCALP_MIN_UNITS).",
+    )
+    parser.add_argument(
+        "--range-active",
+        action="store_true",
+        help="Force range mode flag during replay.",
+    )
     parser.add_argument("--m1-rsi", type=float, help="Optional constant M1 RSI bias.")
-    parser.add_argument("--json-out", type=Path, help="Write detailed trade log JSON to this path.")
-    parser.add_argument("--print-trades", action="store_true", help="Print each trade result to stdout.")
-    parser.add_argument("--candles", nargs="*", help="M1 candle JSON (OANDA format) to synthesize ticks from.")
-    parser.add_argument("--bq", action="store_true", help="Load M1 candles from BigQuery.")
-    parser.add_argument("--bq-start", help="ISO timestamp (UTC) start for BigQuery candles.")
-    parser.add_argument("--bq-end", help="ISO timestamp (UTC) end for BigQuery candles.")
-    parser.add_argument("--bq-project", default=os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT"), help="BigQuery project override.")
-    parser.add_argument("--bq-dataset", default=os.getenv("BQ_DATASET", "quantrabbit"), help="BigQuery dataset.")
-    parser.add_argument("--bq-table", default=os.getenv("BQ_CANDLES_TABLE", "candles_m1"), help="BigQuery candles table.")
-    parser.add_argument("--bq-instrument", default="USD_JPY", help="Instrument symbol for BigQuery candles.")
-    parser.add_argument("--bq-timeframe", default="M1", help="Timeframe for BigQuery candles.")
-    parser.add_argument("--bq-limit", type=int, default=None, help="Optional BigQuery row limit.")
-    parser.add_argument("--bq-no-dedupe", action="store_true", help="Disable ts dedupe for BigQuery candles.")
-    parser.add_argument("--bq-out", type=Path, help="Optional output path for fetched BigQuery candles JSON.")
-    parser.add_argument("--latency-ms", type=float, default=150.0, help="Execution latency in ms (entry/exit).")
-    parser.add_argument("--slip-base-pips", type=float, default=0.0, help="Base slippage in pips.")
-    parser.add_argument("--slip-spread-coef", type=float, default=0.0, help="Slippage coefficient for spread.")
-    parser.add_argument("--slip-atr-coef", type=float, default=0.0, help="Slippage coefficient for ATR.")
-    parser.add_argument("--slip-latency-coef", type=float, default=0.0, help="Slippage coefficient for latency (per ms).")
-    parser.add_argument("--synthetic-spread", type=float, default=0.32, help="Spread (pips) used when synthesizing ticks from candles.")
+    parser.add_argument(
+        "--json-out", type=Path, help="Write detailed trade log JSON to this path."
+    )
+    parser.add_argument(
+        "--print-trades", action="store_true", help="Print each trade result to stdout."
+    )
+    parser.add_argument(
+        "--candles",
+        nargs="*",
+        help="M1 candle JSON (OANDA format) to synthesize ticks from.",
+    )
+    parser.add_argument(
+        "--bq", action="store_true", help="Load M1 candles from BigQuery."
+    )
+    parser.add_argument(
+        "--bq-start", help="ISO timestamp (UTC) start for BigQuery candles."
+    )
+    parser.add_argument(
+        "--bq-end", help="ISO timestamp (UTC) end for BigQuery candles."
+    )
+    parser.add_argument(
+        "--bq-project",
+        default=os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT"),
+        help="BigQuery project override.",
+    )
+    parser.add_argument(
+        "--bq-dataset",
+        default=os.getenv("BQ_DATASET", "quantrabbit"),
+        help="BigQuery dataset.",
+    )
+    parser.add_argument(
+        "--bq-table",
+        default=os.getenv("BQ_CANDLES_TABLE", "candles_m1"),
+        help="BigQuery candles table.",
+    )
+    parser.add_argument(
+        "--bq-instrument",
+        default="USD_JPY",
+        help="Instrument symbol for BigQuery candles.",
+    )
+    parser.add_argument(
+        "--bq-timeframe", default="M1", help="Timeframe for BigQuery candles."
+    )
+    parser.add_argument(
+        "--bq-limit", type=int, default=None, help="Optional BigQuery row limit."
+    )
+    parser.add_argument(
+        "--bq-no-dedupe",
+        action="store_true",
+        help="Disable ts dedupe for BigQuery candles.",
+    )
+    parser.add_argument(
+        "--bq-out",
+        type=Path,
+        help="Optional output path for fetched BigQuery candles JSON.",
+    )
+    parser.add_argument(
+        "--latency-ms",
+        type=float,
+        default=150.0,
+        help="Execution latency in ms (entry/exit).",
+    )
+    parser.add_argument(
+        "--slip-base-pips", type=float, default=0.0, help="Base slippage in pips."
+    )
+    parser.add_argument(
+        "--slip-spread-coef",
+        type=float,
+        default=0.0,
+        help="Slippage coefficient for spread.",
+    )
+    parser.add_argument(
+        "--slip-atr-coef", type=float, default=0.0, help="Slippage coefficient for ATR."
+    )
+    parser.add_argument(
+        "--slip-latency-coef",
+        type=float,
+        default=0.0,
+        help="Slippage coefficient for latency (per ms).",
+    )
+    parser.add_argument(
+        "--synthetic-spread",
+        type=float,
+        default=0.32,
+        help="Spread (pips) used when synthesizing ticks from candles.",
+    )
     parser.add_argument(
         "--fill-mode",
         choices=["lko", "next_tick"],
@@ -1015,7 +1155,9 @@ def parse_args() -> argparse.Namespace:
         default="actual",
         help="Spread handling for filters/slippage (actual or zero).",
     )
-    parser.add_argument("--no-sl", action="store_true", help="Disable SL-triggered exits.")
+    parser.add_argument(
+        "--no-sl", action="store_true", help="Disable SL-triggered exits."
+    )
     parser.add_argument(
         "--positive-exit-only",
         action="store_true",
@@ -1076,8 +1218,12 @@ def main() -> None:
             bq_out_path = args.bq_out
         else:
             try:
-                start_tag = _parse_candle_time(str(args.bq_start)).strftime("%Y%m%dT%H%M%SZ")
-                end_tag = _parse_candle_time(str(args.bq_end)).strftime("%Y%m%dT%H%M%SZ")
+                start_tag = _parse_candle_time(str(args.bq_start)).strftime(
+                    "%Y%m%dT%H%M%SZ"
+                )
+                end_tag = _parse_candle_time(str(args.bq_end)).strftime(
+                    "%Y%m%dT%H%M%SZ"
+                )
             except Exception:
                 start_tag = "start"
                 end_tag = "end"
@@ -1158,7 +1304,9 @@ def main() -> None:
             atr_pips=None,
             latency_ms=0.0,
         )
-        exit_price = replayer._apply_slip(expected_exit, trade.direction, is_entry=False, slip_pips=slip_pips)
+        exit_price = replayer._apply_slip(
+            expected_exit, trade.direction, is_entry=False, slip_pips=slip_pips
+        )
         if trade.direction == "long":
             final_gain = (exit_price - trade.entry_price) / PIP_VALUE
         else:
@@ -1180,7 +1328,9 @@ def main() -> None:
 
     summary = replayer.summary()
     print("----- FastScalp Tick Replay Summary -----")
-    print(f"tick_files: {len(tick_paths)} candle_files: {len(candle_paths)} bq_candles: {len(bq_candles)}")
+    print(
+        f"tick_files: {len(tick_paths)} candle_files: {len(candle_paths)} bq_candles: {len(bq_candles)}"
+    )
     print(f"ticks_total: {len(ticks)}")
     for key, value in summary.items():
         print(f"{key}: {value}")
@@ -1202,7 +1352,11 @@ def main() -> None:
                     "entry_time": tr.entry_time.isoformat(),
                     "exit_time": tr.exit_time.isoformat(),
                     "signal_time": tr.signal_time.isoformat(),
-                    "trigger_time": tr.trigger_time.isoformat() if tr.trigger_time is not None else None,
+                    "trigger_time": (
+                        tr.trigger_time.isoformat()
+                        if tr.trigger_time is not None
+                        else None
+                    ),
                     "hold_seconds": tr.hold_seconds,
                     "entry_price": round(tr.entry_price, 5),
                     "entry_expected": round(tr.entry_expected, 5),
@@ -1228,7 +1382,9 @@ def main() -> None:
             ],
         }
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print(f"Saved details -> {args.json_out}")
 
 

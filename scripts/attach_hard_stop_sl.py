@@ -57,7 +57,9 @@ def _desired_sl_price(entry: float, units: int, sl_pips: float) -> Optional[floa
     return round(entry + offset, 3)
 
 
-def _tighten_sl(existing: Optional[float], desired: float, units: int) -> Optional[float]:
+def _tighten_sl(
+    existing: Optional[float], desired: float, units: int
+) -> Optional[float]:
     if units == 0:
         return None
     if existing is None:
@@ -74,7 +76,9 @@ async def _run(args: argparse.Namespace) -> int:
     apply = bool(args.apply)
     min_pips = float(args.min_sl_pips) if args.min_sl_pips is not None else None
     max_pips = float(args.max_sl_pips) if args.max_sl_pips is not None else None
-    fallback_pips = float(args.fallback_sl_pips) if args.fallback_sl_pips is not None else None
+    fallback_pips = (
+        float(args.fallback_sl_pips) if args.fallback_sl_pips is not None else None
+    )
     max_sl_to_tp_ratio = (
         float(args.max_sl_to_tp_ratio) if args.max_sl_to_tp_ratio is not None else None
     )
@@ -233,7 +237,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         args.limit = None
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     return asyncio.run(_run(args))
 
 

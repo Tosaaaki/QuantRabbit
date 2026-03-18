@@ -31,9 +31,13 @@ APPLY_SCRIPT = PROJECT_ROOT / "scripts" / "apply_brain_model_selection.py"
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare local Brain/Ollama canary readiness for Monday open.")
+    parser = argparse.ArgumentParser(
+        description="Prepare local Brain/Ollama canary readiness for Monday open."
+    )
     parser.add_argument("--benchmark", type=Path, default=DEFAULT_BENCHMARK)
-    parser.add_argument("--selection-output", type=Path, default=DEFAULT_SELECTION_OUTPUT)
+    parser.add_argument(
+        "--selection-output", type=Path, default=DEFAULT_SELECTION_OUTPUT
+    )
     parser.add_argument("--env-profile", type=Path, default=DEFAULT_ENV_PROFILE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-benchmark-age-hours", type=float, default=72.0)
@@ -92,7 +96,10 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -128,7 +135,9 @@ def _resolve_tags_url(chat_url: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
-def _collect_required_models(env_values: dict[str, str], selection_payload: dict[str, Any]) -> list[str]:
+def _collect_required_models(
+    env_values: dict[str, str], selection_payload: dict[str, Any]
+) -> list[str]:
     required: list[str] = []
 
     def add(value: str | None) -> None:
@@ -136,15 +145,25 @@ def _collect_required_models(env_values: dict[str, str], selection_payload: dict
         if model and model not in required:
             required.append(model)
 
-    add(env_values.get("BRAIN_OLLAMA_MODEL") or selection_payload.get("preflight_model"))
+    add(
+        env_values.get("BRAIN_OLLAMA_MODEL") or selection_payload.get("preflight_model")
+    )
     if _bool_env(env_values.get("BRAIN_PROMPT_AUTO_TUNE_ENABLED")):
-        add(env_values.get("BRAIN_PROMPT_AUTO_TUNE_MODEL") or selection_payload.get("autotune_model"))
+        add(
+            env_values.get("BRAIN_PROMPT_AUTO_TUNE_MODEL")
+            or selection_payload.get("autotune_model")
+        )
     if _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED")):
-        add(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL") or selection_payload.get("autotune_model"))
+        add(
+            env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_MODEL")
+            or selection_payload.get("autotune_model")
+        )
     return required
 
 
-def _find_benchmark_row(benchmark_payload: dict[str, Any], model: str | None) -> dict[str, Any]:
+def _find_benchmark_row(
+    benchmark_payload: dict[str, Any], model: str | None
+) -> dict[str, Any]:
     model_key = str(model or "").strip()
     if not model_key:
         return {}
@@ -159,7 +178,9 @@ def _find_benchmark_row(benchmark_payload: dict[str, Any], model: str | None) ->
     return {}
 
 
-def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float) -> list[str]:
+def _profile_safety_issues(
+    env_values: dict[str, str], *, timeout_cap_sec: float
+) -> list[str]:
     issues: list[str] = []
     profile_mode = str(env_values.get("BRAIN_PROFILE_MODE") or "safe").strip().lower()
     profit_mode = profile_mode == "profit"
@@ -179,9 +200,14 @@ def _profile_safety_issues(env_values: dict[str, str], *, timeout_cap_sec: float
         issues.append("sample_rate_out_of_range")
     if _bool_env(env_values.get("BRAIN_PROMPT_AUTO_TUNE_ENABLED")) and not profit_mode:
         issues.append("prompt_autotune_enabled")
-    if _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED")) and not profit_mode:
+    if (
+        _bool_env(env_values.get("BRAIN_RUNTIME_PARAM_AUTO_TUNE_ENABLED"))
+        and not profit_mode
+    ):
         issues.append("runtime_autotune_enabled")
-    gate_mode = str(env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE") or "").strip().lower()
+    gate_mode = (
+        str(env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE") or "").strip().lower()
+    )
     if gate_mode not in {"shadow", "apply"}:
         issues.append("brain_gate_mode_invalid")
     workers = _float_env(env_values.get("ORDER_MANAGER_SERVICE_WORKERS"))
@@ -229,13 +255,19 @@ def _run_selection_sync(args: argparse.Namespace) -> tuple[dict[str, Any], list[
             payload = parsed
             break
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "apply_brain_model_selection failed")
+        raise RuntimeError(
+            proc.stderr.strip()
+            or proc.stdout.strip()
+            or "apply_brain_model_selection failed"
+        )
     if not payload:
         payload = _load_json(args.selection_output)
     return payload, stdout_lines
 
 
-def _fetch_ollama_status(chat_url: str, required_models: list[str], timeout_sec: float) -> dict[str, Any]:
+def _fetch_ollama_status(
+    chat_url: str, required_models: list[str], timeout_sec: float
+) -> dict[str, Any]:
     tags_url = _resolve_tags_url(chat_url)
     started = time.monotonic()
     try:
@@ -290,10 +322,14 @@ def _warmup_model(chat_url: str, model: str, timeout_sec: float) -> dict[str, An
         except Exception:
             payload["keep_alive"] = keep_alive
         else:
-            payload["keep_alive"] = int(keep_alive_num) if keep_alive_num.is_integer() else keep_alive_num
+            payload["keep_alive"] = (
+                int(keep_alive_num) if keep_alive_num.is_integer() else keep_alive_num
+            )
     started = time.monotonic()
     try:
-        resp = requests.post(chat_url, json=payload, timeout=max(1.0, float(timeout_sec)))
+        resp = requests.post(
+            chat_url, json=payload, timeout=max(1.0, float(timeout_sec))
+        )
         resp.raise_for_status()
         body = resp.json()
     except Exception as exc:
@@ -330,12 +366,22 @@ def _atr(values: list[float], period: int = 14) -> float | None:
     return current
 
 
-def _fetch_market_snapshot(max_tick_age_sec: float, max_spread_pips: float) -> dict[str, Any]:
+def _fetch_market_snapshot(
+    max_tick_age_sec: float, max_spread_pips: float
+) -> dict[str, Any]:
     instrument = "USD_JPY"
     now_utc = datetime.now(timezone.utc)
     try:
-        practice = str(get_secret("oanda_practice")).strip().lower() in {"1", "true", "yes"}
-        api_base = "https://api-fxpractice.oanda.com" if practice else "https://api-fxtrade.oanda.com"
+        practice = str(get_secret("oanda_practice")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        api_base = (
+            "https://api-fxpractice.oanda.com"
+            if practice
+            else "https://api-fxtrade.oanda.com"
+        )
         account_id = get_secret("oanda_account_id")
         token = get_secret("oanda_token")
     except Exception as exc:
@@ -356,7 +402,9 @@ def _fetch_market_snapshot(max_tick_age_sec: float, max_spread_pips: float) -> d
         ask = float(price["asks"][0]["price"])
         spread_pips = (ask - bid) * 100.0
         tick_time = _parse_iso(price.get("time"))
-        tick_age_sec = (now_utc - tick_time).total_seconds() if tick_time is not None else math.inf
+        tick_age_sec = (
+            (now_utc - tick_time).total_seconds() if tick_time is not None else math.inf
+        )
 
         candles = requests.get(
             f"{api_base}/v3/instruments/{instrument}/candles",
@@ -370,7 +418,9 @@ def _fetch_market_snapshot(max_tick_age_sec: float, max_spread_pips: float) -> d
             timeout=12.0,
         )
         candles.raise_for_status()
-        m1_rows = [row for row in candles.json().get("candles", []) if row.get("complete")]
+        m1_rows = [
+            row for row in candles.json().get("candles", []) if row.get("complete")
+        ]
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
 
@@ -387,7 +437,10 @@ def _fetch_market_snapshot(max_tick_age_sec: float, max_spread_pips: float) -> d
 
     recent = closes[-6:] if len(closes) >= 6 else closes
     atr14 = _atr(tr_values, 14)
-    market_ok = bool(spread_pips <= float(max_spread_pips) and tick_age_sec <= float(max_tick_age_sec))
+    market_ok = bool(
+        spread_pips <= float(max_spread_pips)
+        and tick_age_sec <= float(max_tick_age_sec)
+    )
     return {
         "status": "ok",
         "instrument": instrument,
@@ -395,7 +448,9 @@ def _fetch_market_snapshot(max_tick_age_sec: float, max_spread_pips: float) -> d
         "ask": round(ask, 3),
         "spread_pips": round(spread_pips, 3),
         "tick_age_sec": round(tick_age_sec, 1) if math.isfinite(tick_age_sec) else None,
-        "recent_range_pips_6m": round((max(recent) - min(recent)) * 100.0, 3) if recent else None,
+        "recent_range_pips_6m": (
+            round((max(recent) - min(recent)) * 100.0, 3) if recent else None
+        ),
         "atr_proxy_pips": round(atr14 * 100.0, 3) if atr14 is not None else None,
         "ok": market_ok,
     }
@@ -416,13 +471,19 @@ def main() -> int:
         sync_stdout = []
         sync_error = str(exc)
 
-    selection_payload = selection_sync if selection_sync else _load_json(args.selection_output)
+    selection_payload = (
+        selection_sync if selection_sync else _load_json(args.selection_output)
+    )
     selection_age_hours = _age_hours(selection_payload.get("generated_at"), now=now_utc)
 
     env_values = _parse_env_file(args.env_profile)
-    profile_safety_issues = _profile_safety_issues(env_values, timeout_cap_sec=float(args.timeout_cap_sec))
+    profile_safety_issues = _profile_safety_issues(
+        env_values, timeout_cap_sec=float(args.timeout_cap_sec)
+    )
     required_models = _collect_required_models(env_values, selection_payload)
-    preflight_model = env_values.get("BRAIN_OLLAMA_MODEL") or selection_payload.get("preflight_model")
+    preflight_model = env_values.get("BRAIN_OLLAMA_MODEL") or selection_payload.get(
+        "preflight_model"
+    )
     benchmark_row = _find_benchmark_row(benchmark_payload, preflight_model)
 
     if args.skip_ollama:
@@ -441,10 +502,19 @@ def main() -> int:
         )
 
     warmups: list[dict[str, Any]] = []
-    if args.warmup and not args.skip_ollama and ollama_status.get("reachable") and not ollama_status.get("missing_models"):
+    if (
+        args.warmup
+        and not args.skip_ollama
+        and ollama_status.get("reachable")
+        and not ollama_status.get("missing_models")
+    ):
         chat_url = env_values.get("BRAIN_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
         for model in required_models:
-            warmups.append(_warmup_model(chat_url, model, timeout_sec=float(args.warmup_timeout_sec)))
+            warmups.append(
+                _warmup_model(
+                    chat_url, model, timeout_sec=float(args.warmup_timeout_sec)
+                )
+            )
 
     if args.skip_market:
         market_status = {"status": "skipped", "ok": True}
@@ -454,24 +524,31 @@ def main() -> int:
             max_spread_pips=float(args.max_spread_pips),
         )
 
-    benchmark_fresh = benchmark_age_hours is not None and benchmark_age_hours <= float(args.max_benchmark_age_hours)
-    selection_fresh = selection_age_hours is not None and selection_age_hours <= float(args.max_selection_age_hours)
+    benchmark_fresh = benchmark_age_hours is not None and benchmark_age_hours <= float(
+        args.max_benchmark_age_hours
+    )
+    selection_fresh = selection_age_hours is not None and selection_age_hours <= float(
+        args.max_selection_age_hours
+    )
     parse_pass_rate = benchmark_row.get("parse_pass_rate")
     latency_p95_ms = benchmark_row.get("latency_p95_ms")
     quality_gate_ok = False
     try:
-        quality_gate_ok = (
-            float(parse_pass_rate) >= float(args.min_parse_pass_rate)
-            and float(latency_p95_ms) <= float(args.max_preflight_latency_ms)
-        )
+        quality_gate_ok = float(parse_pass_rate) >= float(
+            args.min_parse_pass_rate
+        ) and float(latency_p95_ms) <= float(args.max_preflight_latency_ms)
     except Exception:
         quality_gate_ok = False
     profile_enabled = _bool_env(env_values.get("BRAIN_ENABLED")) and _bool_env(
         env_values.get("ORDER_MANAGER_BRAIN_GATE_ENABLED")
     )
-    ollama_ready = bool(ollama_status.get("reachable")) and not ollama_status.get("missing_models")
+    ollama_ready = bool(ollama_status.get("reachable")) and not ollama_status.get(
+        "missing_models"
+    )
     if warmups:
-        ollama_ready = ollama_ready and all(item.get("status") == "ok" for item in warmups)
+        ollama_ready = ollama_ready and all(
+            item.get("status") == "ok" for item in warmups
+        )
     market_ready = bool(market_status.get("ok"))
 
     checks = {
@@ -511,7 +588,9 @@ def main() -> int:
             "path": str(args.env_profile),
             "exists": args.env_profile.exists(),
             "brain_enabled": env_values.get("BRAIN_ENABLED"),
-            "order_manager_brain_gate_enabled": env_values.get("ORDER_MANAGER_BRAIN_GATE_ENABLED"),
+            "order_manager_brain_gate_enabled": env_values.get(
+                "ORDER_MANAGER_BRAIN_GATE_ENABLED"
+            ),
             "brain_gate_mode": env_values.get("ORDER_MANAGER_BRAIN_GATE_MODE"),
             "ollama_model": env_values.get("BRAIN_OLLAMA_MODEL"),
             "ollama_keep_alive": env_values.get("BRAIN_OLLAMA_KEEP_ALIVE"),

@@ -4,7 +4,6 @@ from datetime import date
 
 from scripts import import_market_brief
 
-
 SAMPLE = """
 以下、2026/2/27 時点の市況
 

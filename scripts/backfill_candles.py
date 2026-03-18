@@ -29,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.secrets import get_secret
+
 DEFAULT_REPLAY_DIR = REPO_ROOT / "logs" / "replay"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "logs"
 SUPPORTED_TIMEFRAMES = {"M1", "M5", "H1", "H4", "D1"}
@@ -142,7 +143,9 @@ def _oanda_host() -> str:
         pract = str(get_secret("oanda_practice")).lower() == "true"
     except Exception:
         pract = False
-    base = "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+    base = (
+        "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+    )
     return base, token
 
 
@@ -158,7 +161,9 @@ def _fetch_oanda_candles(
     params = {
         "granularity": granularity,
         "price": "M",
-        "from": start_dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "from": start_dt.replace(tzinfo=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "to": end_dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     headers = {"Authorization": f"Bearer {token}"}
@@ -169,7 +174,9 @@ def _fetch_oanda_candles(
             data = resp.json()
             return data.get("candles", [])
     except Exception as exc:
-        print(f"[WARN] failed to fetch OANDA candles ({instrument} {timeframe} {start_dt:%Y-%m-%d}): {exc}")
+        print(
+            f"[WARN] failed to fetch OANDA candles ({instrument} {timeframe} {start_dt:%Y-%m-%d}): {exc}"
+        )
         return None
 
 
@@ -214,7 +221,9 @@ def _resolve_dates(cfg: Config) -> List[date]:
             day_token = stem[len(prefix) :]
             if len(day_token) != 8 or not day_token.isdigit():
                 continue
-            replay_dates.add(_parse_date(f"{day_token[:4]}-{day_token[4:6]}-{day_token[6:]}"))
+            replay_dates.add(
+                _parse_date(f"{day_token[:4]}-{day_token[4:6]}-{day_token[6:]}")
+            )
     if cfg.start and replay_dates:
         filtered = [d for d in replay_dates if d >= cfg.start]
         return sorted(filtered)
@@ -238,7 +247,11 @@ def process(cfg: Config) -> None:
             if tf not in SUPPORTED_TIMEFRAMES:
                 print(f"[WARN] unsupported timeframe: {tf}. skip.")
                 continue
-            replay_path = cfg.replay_dir / cfg.instrument / f"{cfg.instrument}_{tf}_{day.strftime('%Y%m%d')}.jsonl"
+            replay_path = (
+                cfg.replay_dir
+                / cfg.instrument
+                / f"{cfg.instrument}_{tf}_{day.strftime('%Y%m%d')}.jsonl"
+            )
             out_path = cfg.output_dir / f"candles_{tf}_{day.strftime('%Y%m%d')}.json"
 
             if out_path.exists() and not cfg.overwrite:
@@ -250,11 +263,15 @@ def process(cfg: Config) -> None:
                 payload = _build_payload_from_replay(cfg.instrument, tf, rows)
                 with out_path.open("w", encoding="utf-8") as fh:
                     json.dump(payload, fh, ensure_ascii=False, indent=2)
-                print(f"  [OK] wrote {out_path.name} from replay ({len(payload['candles'])} candles).")
+                print(
+                    f"  [OK] wrote {out_path.name} from replay ({len(payload['candles'])} candles)."
+                )
                 continue
 
             if not cfg.fetch_missing:
-                print(f"  [MISS] replay not found for {tf} {day}. use --fetch-missing to download.")
+                print(
+                    f"  [MISS] replay not found for {tf} {day}. use --fetch-missing to download."
+                )
                 continue
 
             if day >= now_utc:
@@ -262,7 +279,9 @@ def process(cfg: Config) -> None:
                 continue
 
             start_dt = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-            end_dt = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+            end_dt = datetime.combine(
+                day + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+            )
             if end_dt.date() >= now_utc:
                 end_dt = datetime.utcnow().replace(tzinfo=timezone.utc)
 
@@ -274,19 +293,37 @@ def process(cfg: Config) -> None:
             payload = _build_payload_from_oanda(cfg.instrument, tf, candles)
             with out_path.open("w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
-            print(f"  [OK] wrote {out_path.name} from OANDA ({len(payload['candles'])} candles).")
+            print(
+                f"  [OK] wrote {out_path.name} from OANDA ({len(payload['candles'])} candles)."
+            )
 
 
 def parse_args() -> Config:
-    ap = argparse.ArgumentParser(description="Replay/OANDA からローソク JSON を再生成します")
+    ap = argparse.ArgumentParser(
+        description="Replay/OANDA からローソク JSON を再生成します"
+    )
     ap.add_argument("--instrument", default="USD_JPY", help="対象銘柄 (既定: USD_JPY)")
-    ap.add_argument("--timeframes", default="M1", help="カンマ区切りで TF 指定 (例: M1,H4)")
+    ap.add_argument(
+        "--timeframes", default="M1", help="カンマ区切りで TF 指定 (例: M1,H4)"
+    )
     ap.add_argument("--start-date", help="YYYY-MM-DD 形式。省略時はリプレイから推定")
-    ap.add_argument("--end-date", help="YYYY-MM-DD 形式。省略時は start-date と同じ扱い")
-    ap.add_argument("--replay-dir", default=str(DEFAULT_REPLAY_DIR), help="リプレイログのフォルダ")
-    ap.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="出力先ディレクトリ (logs 配下推奨)")
+    ap.add_argument(
+        "--end-date", help="YYYY-MM-DD 形式。省略時は start-date と同じ扱い"
+    )
+    ap.add_argument(
+        "--replay-dir", default=str(DEFAULT_REPLAY_DIR), help="リプレイログのフォルダ"
+    )
+    ap.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_OUTPUT_DIR),
+        help="出力先ディレクトリ (logs 配下推奨)",
+    )
     ap.add_argument("--overwrite", action="store_true", help="既存ファイルを上書き")
-    ap.add_argument("--fetch-missing", action="store_true", help="リプレイが無い場合は OANDA API から補完")
+    ap.add_argument(
+        "--fetch-missing",
+        action="store_true",
+        help="リプレイが無い場合は OANDA API から補完",
+    )
     args = ap.parse_args()
 
     start = _parse_date(args.start_date) if args.start_date else None

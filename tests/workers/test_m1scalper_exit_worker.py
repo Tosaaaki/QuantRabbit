@@ -39,7 +39,10 @@ def test_trade_local_exit_thresholds_relax_aligned_breakout_setup() -> None:
 
     assert thresholds["setup_dynamicized"] is True
     assert thresholds["strategy_mode"] == "breakout_retest"
-    assert thresholds["setup_fingerprint"] == "M1Scalper|long|breakout_retest|trend_long|p0|normal_fast"
+    assert (
+        thresholds["setup_fingerprint"]
+        == "M1Scalper|long|breakout_retest|trend_long|p0|normal_fast"
+    )
     assert thresholds["flow_regime"] == "trend_long"
     assert thresholds["max_hold_sec"] > 720.0
     assert thresholds["max_adverse_pips"] > 6.0
@@ -56,7 +59,9 @@ def test_trade_local_exit_thresholds_relax_aligned_breakout_setup() -> None:
     assert thresholds["atr_spike_pips"] > 5.0
 
 
-def test_trade_local_exit_thresholds_tighten_headwind_vshape_setup_from_fingerprint() -> None:
+def test_trade_local_exit_thresholds_tighten_headwind_vshape_setup_from_fingerprint() -> (
+    None
+):
     from workers.scalp_m1scalper import exit_worker
 
     thresholds = exit_worker._trade_local_exit_thresholds(
@@ -113,7 +118,10 @@ def test_trade_local_exit_thresholds_prioritize_nested_m1_setup_context() -> Non
     assert thresholds["setup_dynamicized"] is True
     assert thresholds["strategy_mode"] == "breakout_retest"
     assert thresholds["flow_regime"] == "trend_long"
-    assert thresholds["setup_fingerprint"] == "M1Scalper|long|breakout_retest|trend_long|p0|tight_fast"
+    assert (
+        thresholds["setup_fingerprint"]
+        == "M1Scalper|long|breakout_retest|trend_long|p0|tight_fast"
+    )
     assert thresholds["setup_quality"] == 0.86
     assert thresholds["continuation_pressure"] == 0.0
     assert thresholds["profit_take_pips"] > 2.2

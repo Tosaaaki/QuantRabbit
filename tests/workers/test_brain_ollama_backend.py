@@ -93,7 +93,9 @@ def test_brain_decide_uses_ollama_backend(monkeypatch, tmp_path: Path) -> None:
     assert captured["url"] == "http://127.0.0.1:11434/api/chat"
 
 
-def test_brain_fail_policy_reduce_for_ollama_failure(monkeypatch, tmp_path: Path) -> None:
+def test_brain_fail_policy_reduce_for_ollama_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("BRAIN_FAIL_POLICY", "reduce")
     brain = _prepare_brain(monkeypatch, tmp_path)
 
@@ -164,14 +166,12 @@ def test_brain_failfast_skips_repeated_timeout_without_reducing_frequency(
 
     con = sqlite3.connect(brain._DB_PATH)
     try:
-        row = con.execute(
-            """
+        row = con.execute("""
             SELECT source, llm_ok, error
             FROM brain_decisions
             ORDER BY id DESC
             LIMIT 1
-            """
-        ).fetchone()
+            """).fetchone()
     finally:
         con.close()
 
@@ -233,7 +233,9 @@ def test_brain_failfast_resets_after_success(monkeypatch, tmp_path: Path) -> Non
     assert call_count["n"] == 3
 
 
-def test_brain_context_keeps_entry_and_meta_with_sl_tp(monkeypatch, tmp_path: Path) -> None:
+def test_brain_context_keeps_entry_and_meta_with_sl_tp(
+    monkeypatch, tmp_path: Path
+) -> None:
     brain = _prepare_brain(monkeypatch, tmp_path)
 
     captured: dict[str, str] = {}
@@ -290,7 +292,10 @@ def test_brain_context_keeps_entry_and_meta_with_sl_tp(monkeypatch, tmp_path: Pa
     assert '"entry_units_intent": 5042' in prompt
     assert '"confidence": 80.0' in prompt
     assert "confidence is a score from 0 to 100." in prompt
-    assert "Do not compare confidence and entry_probability as if they share the same numeric scale." in prompt
+    assert (
+        "Do not compare confidence and entry_probability as if they share the same numeric scale."
+        in prompt
+    )
     assert '"meta": {' in prompt
     assert '"spread_pips": 0.8' in prompt
 
@@ -385,7 +390,9 @@ def test_brain_cache_fingerprint_separates_side_and_reuses_matching_context(
     assert len(calls) == 2
 
 
-def test_brain_context_backfills_live_tick_and_m1_factors(monkeypatch, tmp_path: Path) -> None:
+def test_brain_context_backfills_live_tick_and_m1_factors(
+    monkeypatch, tmp_path: Path
+) -> None:
     brain = _prepare_brain(monkeypatch, tmp_path)
 
     captured: dict[str, str] = {}

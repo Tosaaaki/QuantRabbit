@@ -17,7 +17,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-
 ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = ROOT / "logs"
 
@@ -63,16 +62,22 @@ def _load_dataset(limit: int, min_abs_pips: float) -> tuple[np.ndarray, np.ndarr
     trades_db.close()
 
     if not features:
-        raise RuntimeError("No pattern feature rows found. Collect more live data first.")
+        raise RuntimeError(
+            "No pattern feature rows found. Collect more live data first."
+        )
     if len(set(labels)) < 2:
-        raise RuntimeError("Pattern dataset has only one class. Adjust --min-positive-pips or collect more data.")
+        raise RuntimeError(
+            "Pattern dataset has only one class. Adjust --min-positive-pips or collect more data."
+        )
 
     X = np.asarray(features, dtype=float)
     y = np.asarray(labels, dtype=int)
     return X, y
 
 
-def train_model(limit: int, min_abs_pips: float) -> tuple[Pipeline, np.ndarray, np.ndarray]:
+def train_model(
+    limit: int, min_abs_pips: float
+) -> tuple[Pipeline, np.ndarray, np.ndarray]:
     X, y = _load_dataset(limit, min_abs_pips)
     pipeline = Pipeline(
         [
@@ -107,7 +112,9 @@ def train_model(limit: int, min_abs_pips: float) -> tuple[Pipeline, np.ndarray, 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path("fast_scalp_pattern.joblib"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("fast_scalp_pattern.joblib")
+    )
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--min-positive-pips", type=float, default=0.2)
     args = parser.parse_args()

@@ -22,7 +22,9 @@ Timeline = Iterable[float]
 PIP_SIZE = 0.01  # USD/JPY pip value
 
 
-def _copy_cfg(base: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _copy_cfg(
+    base: Dict[str, Any], overrides: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
     merged = dict(base)
     if overrides:
         merged.update(overrides)
@@ -185,7 +187,9 @@ class AddonSystem:
         self.mm_lite = None
         if mm_lite_cfg is not False:
             cfg = _copy_cfg(MM_LITE_DEFAULT, mm_lite_cfg or {})
-            self.mm_lite = MMLiteWorker(cfg, broker, datafeed, event_flags=None, logger=logger)
+            self.mm_lite = MMLiteWorker(
+                cfg, broker, datafeed, event_flags=None, logger=logger
+            )
             self._configs["mm_lite"] = cfg
 
         self._registry: List[Tuple[str, Any, bool]] = []
@@ -206,7 +210,9 @@ class AddonSystem:
         step_signals: Dict[str, List[Dict[str, Any]]] = {}
         for name, worker, needs_now in self._registry:
             try:
-                intents = worker.run_once(now=now_epoch) if needs_now else worker.run_once()
+                intents = (
+                    worker.run_once(now=now_epoch) if needs_now else worker.run_once()
+                )
             except TypeError:
                 intents = worker.run_once()
             if not intents:
@@ -232,7 +238,9 @@ class AddonSystem:
             self._close_remaining(last_ts)
         return RunOutcome(steps=results, trades=list(self._closed_trades))
 
-    def _maybe_open_trade(self, worker_name: str, intent: Dict[str, Any], now_epoch: float) -> None:
+    def _maybe_open_trade(
+        self, worker_name: str, intent: Dict[str, Any], now_epoch: float
+    ) -> None:
         if worker_name == "mm_lite":
             return  # quoting only
         cfg = self._configs.get(worker_name, {})
@@ -317,7 +325,9 @@ class AddonSystem:
                     self._close_trade(trade, trade.stop, bar_ts, "stop")
                     continue
 
-    def _close_trade(self, trade: SimTrade, price: float, ts: float, outcome: str) -> None:
+    def _close_trade(
+        self, trade: SimTrade, price: float, ts: float, outcome: str
+    ) -> None:
         if trade not in self._open_trades:
             return
         self._open_trades.remove(trade)
@@ -363,9 +373,8 @@ class AddonSystem:
                 if batch:
                     avg_price = sum(float(it.get("px", 0.0)) for it in intents) / batch
                     entry["avg_px"] = (
-                        (entry["avg_px"] * prior + avg_price * batch)
-                        / max(entry["signals"], 1)
-                    )
+                        entry["avg_px"] * prior + avg_price * batch
+                    ) / max(entry["signals"], 1)
         return summary
 
     @staticmethod

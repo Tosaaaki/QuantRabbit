@@ -34,8 +34,12 @@ def _trade_row(*, ticket: str, hours_ago: float, pl_pips: float) -> dict:
     }
 
 
-def _hourly_rows(lookback: int, *, reference_now: datetime, trades: int = 1) -> list[dict]:
-    anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
+def _hourly_rows(
+    lookback: int, *, reference_now: datetime, trades: int = 1
+) -> list[dict]:
+    anchor = reference_now.astimezone(ui._JST).replace(
+        minute=0, second=0, microsecond=0
+    )
     rows: list[dict] = []
     for i in range(lookback):
         hour = anchor - timedelta(hours=i)
@@ -84,7 +88,14 @@ def test_summarise_snapshot_prefers_db_rollup_for_summary_cards(monkeypatch):
         "metrics": {
             "daily": {"pips": 0.0, "jpy": 0.0, "trades": 0},
             "weekly": {"pips": 0.0, "jpy": 0.0, "trades": 0},
-            "total": {"pips": 0.0, "jpy": 0.0, "wins": 0, "losses": 0, "win_rate": 0.0, "trades": 0},
+            "total": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "trades": 0,
+            },
         },
     }
 
@@ -114,7 +125,14 @@ def test_summarise_snapshot_repairs_zero_win_loss_when_rollup_unavailable(monkey
         "open_positions": {},
         "metrics": {
             "daily": {"pips": 0.0, "jpy": 0.0, "trades": 3},
-            "total": {"pips": 0.0, "jpy": 0.0, "wins": 0, "losses": 0, "win_rate": 0.0, "trades": 3},
+            "total": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "trades": 3,
+            },
         },
     }
 
@@ -127,7 +145,9 @@ def test_summarise_snapshot_repairs_zero_win_loss_when_rollup_unavailable(monkey
     assert perf["win_rate_percent"] == 50.0
 
 
-def test_summarise_snapshot_repairs_daily_zero_metrics_when_recent_trades_exist(monkeypatch):
+def test_summarise_snapshot_repairs_daily_zero_metrics_when_recent_trades_exist(
+    monkeypatch,
+):
     monkeypatch.setattr(ui, "_load_strategy_control_state", _strategy_control_stub)
     monkeypatch.setattr(ui, "_load_trade_rollup_jst", lambda _now: None)
 
@@ -141,8 +161,20 @@ def test_summarise_snapshot_repairs_daily_zero_metrics_when_recent_trades_exist(
         "metrics": {
             "daily": {"pips": 0.0, "jpy": 0.0, "trades": 2},
             "weekly": {"pips": 0.0, "jpy": 0.0, "trades": 2},
-            "total": {"pips": 0.0, "jpy": 0.0, "wins": 0, "losses": 0, "win_rate": 0.0, "trades": 2},
-            "daily_change": {"pips": 0.0, "jpy": 0.0, "jpy_pct": 0.0, "equity_nav": 50000.0},
+            "total": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "trades": 2,
+            },
+            "daily_change": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "jpy_pct": 0.0,
+                "equity_nav": 50000.0,
+            },
         },
     }
 
@@ -178,8 +210,20 @@ def test_summarise_snapshot_reconciles_nonzero_metrics_from_recent_trades_withou
             "daily": {"pips": 5.0, "jpy": 500.0, "trades": 5},
             "yesterday": {"pips": 2.0, "jpy": 200.0, "trades": 2},
             "weekly": {"pips": 5.0, "jpy": 500.0, "trades": 5},
-            "total": {"pips": 5.0, "jpy": 500.0, "wins": 5, "losses": 0, "win_rate": 1.0, "trades": 5},
-            "daily_change": {"pips": 3.0, "jpy": 300.0, "jpy_pct": 1.0, "equity_nav": 50000.0},
+            "total": {
+                "pips": 5.0,
+                "jpy": 500.0,
+                "wins": 5,
+                "losses": 0,
+                "win_rate": 1.0,
+                "trades": 5,
+            },
+            "daily_change": {
+                "pips": 3.0,
+                "jpy": 300.0,
+                "jpy_pct": 1.0,
+                "equity_nav": 50000.0,
+            },
         },
     }
 
@@ -220,8 +264,20 @@ def test_summarise_snapshot_keeps_snapshot_metrics_when_hourly_snapshot_is_usabl
             "daily": {"pips": 5.0, "jpy": 500.0, "trades": 5},
             "yesterday": {"pips": 2.0, "jpy": 200.0, "trades": 2},
             "weekly": {"pips": 5.0, "jpy": 500.0, "trades": 5},
-            "total": {"pips": 5.0, "jpy": 500.0, "wins": 5, "losses": 0, "win_rate": 1.0, "trades": 5},
-            "daily_change": {"pips": 3.0, "jpy": 300.0, "jpy_pct": 1.0, "equity_nav": 50000.0},
+            "total": {
+                "pips": 5.0,
+                "jpy": 500.0,
+                "wins": 5,
+                "losses": 0,
+                "win_rate": 1.0,
+                "trades": 5,
+            },
+            "daily_change": {
+                "pips": 3.0,
+                "jpy": 300.0,
+                "jpy_pct": 1.0,
+                "equity_nav": 50000.0,
+            },
             "hourly_trades": {
                 "timezone": "JST",
                 "lookback_hours": 24,
@@ -282,16 +338,14 @@ def test_load_trade_rollup_jst_aggregates_windows(tmp_path, monkeypatch):
     db_path = tmp_path / "trades.db"
     con = sqlite3.connect(db_path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE trades (
                 close_time TEXT,
                 pocket TEXT,
                 pl_pips REAL,
                 realized_pl REAL
             )
-            """
-        )
+            """)
         now = datetime(2026, 2, 27, 4, 0, tzinfo=timezone.utc)
         rows = [
             # today(JST): 2 trades -> pips +1.0

@@ -59,7 +59,12 @@ def alloc(
 
     # Tactical override: prioritize scalp in choppy/late-trend conditions
     # Set env SCALP_TACTICAL=1 to cap macro and floor scalp allocation.
-    scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
+    scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+    }
     tactical_macro_cap = 0.15 if scalp_tactical else None
     tactical_scalp_floor = 0.22 if scalp_tactical else None
 
@@ -95,7 +100,9 @@ def alloc(
         min_scalp = round(min(total_lot * MIN_SCALP_FRACTION, total_lot), 3)
         if dist["scalp"] + 1e-6 < min_scalp:
             shortfall = round(min_scalp - dist["scalp"], 3)
-            for donor in sorted(("micro", "macro"), key=lambda k: dist[k], reverse=True):
+            for donor in sorted(
+                ("micro", "macro"), key=lambda k: dist[k], reverse=True
+            ):
                 if shortfall <= 0 or dist[donor] <= 0:
                     continue
                 give_cap = round(dist[donor] * MAX_SCALP_REALLOC_FRACTION, 3)
@@ -116,7 +123,10 @@ def alloc(
     # Enforce tactical scalp floor after distribution, if requested
     if scalp_tactical and total_lot > 0:
         # Cap macro and boost scalp minimally, taking from the larger of micro/macro
-        if tactical_macro_cap is not None and dist["macro"] > total_lot * tactical_macro_cap:
+        if (
+            tactical_macro_cap is not None
+            and dist["macro"] > total_lot * tactical_macro_cap
+        ):
             excess = dist["macro"] - round(total_lot * tactical_macro_cap, 3)
             dist["macro"] = round(dist["macro"] - excess, 3)
             dist["micro"] = round(dist["micro"] + excess, 3)

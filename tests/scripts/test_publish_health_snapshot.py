@@ -17,14 +17,12 @@ def _write_json(path: Path, payload: dict) -> None:
 def _seed_entry_intent_board(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE entry_intent_board (
                 ts TEXT,
                 ts_epoch REAL
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO entry_intent_board(ts, ts_epoch) VALUES (?, strftime('%s','now'))",
             ("2026-03-10T00:00:00Z",),
@@ -44,7 +42,11 @@ def _seed_health_artifacts(project_root: Path, *, include_feedback_tag: bool) ->
     )
     _write_json(
         project_root / "logs" / "forecast_improvement_latest.json",
-        {"generated_at": now, "verdict": "mixed", "runtime_overrides": {"enabled": True}},
+        {
+            "generated_at": now,
+            "verdict": "mixed",
+            "runtime_overrides": {"enabled": True},
+        },
     )
     _write_json(
         project_root / "logs" / "entry_path_summary_latest.json",
@@ -70,7 +72,9 @@ def _seed_health_artifacts(project_root: Path, *, include_feedback_tag: bool) ->
         project_root / "config" / "auto_canary_overrides.json",
         {
             "generated_at": now,
-            "strategies": {"MicroTrendRetest": {"enabled": True, "units_multiplier": 0.9}},
+            "strategies": {
+                "MicroTrendRetest": {"enabled": True, "units_multiplier": 0.9}
+            },
         },
     )
     _write_json(
@@ -128,7 +132,9 @@ def _mock_feedback_discovery(monkeypatch) -> None:
         last_closed="2026-03-10T00:00:00+00:00",
     )
     monkeypatch.setattr(feedback_worker, "_systemctl_running_services", lambda: set())
-    monkeypatch.setattr(feedback_worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(
+        feedback_worker, "_local_stack_running_services", lambda _pid_dir: set()
+    )
     monkeypatch.setattr(feedback_worker, "_discover_from_control", lambda: {})
     monkeypatch.setattr(
         feedback_worker,
@@ -138,7 +144,10 @@ def _mock_feedback_discovery(monkeypatch) -> None:
     monkeypatch.setattr(
         feedback_worker,
         "_discover_from_trades",
-        lambda _db_path, _lookback_days: ({"MicroTrendRetest": stats}, {"MicroTrendRetest": stats.last_closed or ""}),
+        lambda _db_path, _lookback_days: (
+            {"MicroTrendRetest": stats},
+            {"MicroTrendRetest": stats.last_closed or ""},
+        ),
     )
     monkeypatch.setattr(
         feedback_worker,
@@ -147,7 +156,9 @@ def _mock_feedback_discovery(monkeypatch) -> None:
     )
 
 
-def test_build_mechanism_integrity_flags_missing_strategy_feedback_coverage(monkeypatch, tmp_path: Path) -> None:
+def test_build_mechanism_integrity_flags_missing_strategy_feedback_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
     project_root = tmp_path
     logs_dir = project_root / "logs"
     orders_db = logs_dir / "orders.db"
@@ -158,7 +169,9 @@ def test_build_mechanism_integrity_flags_missing_strategy_feedback_coverage(monk
     trades_db.touch()
     _mock_feedback_discovery(monkeypatch)
     monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
-    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+    monkeypatch.setattr(
+        snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True}
+    )
 
     integrity = snapshot._build_mechanism_integrity(
         project_root=project_root,
@@ -169,7 +182,9 @@ def test_build_mechanism_integrity_flags_missing_strategy_feedback_coverage(monk
 
     assert integrity["ok"] is False
     assert "strategy_feedback_coverage_gap" in integrity["missing_mechanisms"]
-    assert integrity["strategy_feedback"]["eligible_missing_strategies"] == ["MicroTrendRetest"]
+    assert integrity["strategy_feedback"]["eligible_missing_strategies"] == [
+        "MicroTrendRetest"
+    ]
     assert integrity["blackboard"]["entry_intent_board_table"] is True
 
 
@@ -207,7 +222,9 @@ def test_build_mechanism_integrity_is_ok_when_artifacts_and_feedback_are_present
     trades_db.touch()
     _mock_feedback_discovery(monkeypatch)
     monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
-    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+    monkeypatch.setattr(
+        snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True}
+    )
 
     integrity = snapshot._build_mechanism_integrity(
         project_root=project_root,
@@ -238,14 +255,18 @@ def test_build_mechanism_integrity_flags_macro_news_source_errors(
     trades_db = logs_dir / "trades.db"
 
     _seed_health_artifacts(project_root, include_feedback_tag=True)
-    payload = json.loads((project_root / "logs" / "macro_news_context.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (project_root / "logs" / "macro_news_context.json").read_text(encoding="utf-8")
+    )
     payload["source_error_count"] = 2
     _write_json(project_root / "logs" / "macro_news_context.json", payload)
     _seed_entry_intent_board(orders_db)
     trades_db.touch()
     _mock_feedback_discovery(monkeypatch)
     monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
-    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+    monkeypatch.setattr(
+        snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True}
+    )
 
     integrity = snapshot._build_mechanism_integrity(
         project_root=project_root,
@@ -273,7 +294,11 @@ def test_build_mechanism_integrity_accepts_forecast_health_when_port_probe_misse
     trades_db.touch()
     _mock_feedback_discovery(monkeypatch)
     monkeypatch.setattr(snapshot, "_port_listening", lambda _port: False)
-    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True, "service": "quant-forecast"})
+    monkeypatch.setattr(
+        snapshot,
+        "_http_json",
+        lambda _url, timeout_sec=1.5: {"ok": True, "service": "quant-forecast"},
+    )
 
     integrity = snapshot._build_mechanism_integrity(
         project_root=project_root,
@@ -299,7 +324,9 @@ def test_build_mechanism_integrity_flags_missing_blackboard_when_orders_db_absen
     trades_db.touch()
     _mock_feedback_discovery(monkeypatch)
     monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
-    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+    monkeypatch.setattr(
+        snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True}
+    )
 
     integrity = snapshot._build_mechanism_integrity(
         project_root=project_root,
@@ -362,7 +389,9 @@ def test_build_mechanism_integrity_flags_missing_feedback_for_boosted_low_sample
         last_closed="2026-03-10T00:00:00+00:00",
     )
     monkeypatch.setattr(feedback_worker, "_systemctl_running_services", lambda: set())
-    monkeypatch.setattr(feedback_worker, "_local_stack_running_services", lambda _pid_dir: set())
+    monkeypatch.setattr(
+        feedback_worker, "_local_stack_running_services", lambda _pid_dir: set()
+    )
     monkeypatch.setattr(feedback_worker, "_discover_from_control", lambda: {})
     monkeypatch.setattr(
         feedback_worker,
@@ -372,7 +401,10 @@ def test_build_mechanism_integrity_flags_missing_feedback_for_boosted_low_sample
     monkeypatch.setattr(
         feedback_worker,
         "_discover_from_trades",
-        lambda _db_path, _lookback_days: ({"PrecisionLowVol": stats}, {"PrecisionLowVol": stats.last_closed or ""}),
+        lambda _db_path, _lookback_days: (
+            {"PrecisionLowVol": stats},
+            {"PrecisionLowVol": stats.last_closed or ""},
+        ),
     )
     monkeypatch.setattr(
         feedback_worker,
@@ -380,7 +412,9 @@ def test_build_mechanism_integrity_flags_missing_feedback_for_boosted_low_sample
         lambda stats_by_tag, latest_by_tag, _known_keys: (stats_by_tag, latest_by_tag),
     )
     monkeypatch.setattr(snapshot, "_port_listening", lambda _port: True)
-    monkeypatch.setattr(snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True})
+    monkeypatch.setattr(
+        snapshot, "_http_json", lambda _url, timeout_sec=1.5: {"ok": True}
+    )
 
     integrity = snapshot._build_mechanism_integrity(
         project_root=project_root,
@@ -391,4 +425,6 @@ def test_build_mechanism_integrity_flags_missing_feedback_for_boosted_low_sample
 
     assert integrity["ok"] is False
     assert "strategy_feedback_coverage_gap" in integrity["missing_mechanisms"]
-    assert integrity["strategy_feedback"]["eligible_missing_strategies"] == ["PrecisionLowVol"]
+    assert integrity["strategy_feedback"]["eligible_missing_strategies"] == [
+        "PrecisionLowVol"
+    ]

@@ -24,7 +24,6 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, Optional
 
-
 TRADES_DB = Path("logs/trades.db")
 TX_GLOB = "logs/oanda/transactions_*.jsonl"
 
@@ -68,7 +67,9 @@ def build_tid_to_client_map() -> Dict[str, str]:
                         continue
                     if obj.get("type") != "ORDER_FILL":
                         continue
-                    cid = obj.get("clientOrderID") or obj.get("clientExtensions", {}).get("id")
+                    cid = obj.get("clientOrderID") or obj.get(
+                        "clientExtensions", {}
+                    ).get("id")
                     if not cid:
                         continue
                     # open

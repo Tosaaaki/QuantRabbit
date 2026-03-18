@@ -78,10 +78,10 @@ def test_exposure_state_uses_margin_pool(monkeypatch):
     assert state.bot_margin == expected_bot_margin
     ratio = state.ratio()
     assert 0 < ratio < 1
-    assert abs(
-        ratio
-        - ((expected_manual_margin + expected_bot_margin) / expected_pool)
-    ) < 1e-6
+    assert (
+        abs(ratio - ((expected_manual_margin + expected_bot_margin) / expected_pool))
+        < 1e-6
+    )
 
 
 def test_perf_multiplier_pf_gates_win_score(monkeypatch):
@@ -136,7 +136,9 @@ def test_allowed_lot_allows_flatten_when_risk_overshoots(monkeypatch):
     should still be allowed up to the flatten amount (even if risk-based sizing would overshoot).
     """
     # Avoid dynamic multipliers / DB access in this unit test.
-    monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
+    monkeypatch.setattr(
+        risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False
+    )
 
     # Keep safety scaling out of the way for deterministic assertions.
     monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
@@ -167,7 +169,9 @@ def test_allowed_lot_allows_flatten_when_risk_overshoots(monkeypatch):
 
 
 def test_allowed_lot_distinguishes_hedge_direction_under_tight_margin(monkeypatch):
-    monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
+    monkeypatch.setattr(
+        risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False
+    )
     monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
 
     equity = 200_000.0
@@ -210,7 +214,9 @@ def test_allowed_lot_distinguishes_hedge_direction_under_tight_margin(monkeypatc
 
 
 def test_allowed_lot_prefers_flatten_size_when_free_margin_is_tight(monkeypatch):
-    monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
+    monkeypatch.setattr(
+        risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False
+    )
     monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
     monkeypatch.setenv("FREE_MARGIN_SOFT_RATIO", "0.35")
     monkeypatch.setenv("FREE_MARGIN_HARD_RATIO", "0.20")
@@ -255,7 +261,7 @@ def test_clamp_sl_tp_applies_rr_floor(monkeypatch):
 
     sl, tp = risk_guard.clamp_sl_tp(
         price=150.0,
-        sl=149.9,   # 10 pips
+        sl=149.9,  # 10 pips
         tp=150.05,  # 5 pips -> RR 0.5
         is_buy=True,
     )
@@ -273,7 +279,9 @@ def test_clamp_sl_tp_adapts_for_low_tp_rate(monkeypatch):
     monkeypatch.setattr(risk_guard, "_RR_SL_EXPAND_MAX", 0.10, raising=False)
     monkeypatch.setattr(risk_guard, "_RR_ALLOW_SL_EXPAND_PF", 1.05, raising=False)
     monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD", 0.95, raising=False)
-    monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD_TP_SHRINK_CAP", 0.10, raising=False)
+    monkeypatch.setattr(
+        risk_guard, "_RR_PF_HARD_GUARD_TP_SHRINK_CAP", 0.10, raising=False
+    )
     monkeypatch.setattr(risk_guard, "_RR_MIN_SAMPLES", 40, raising=False)
     monkeypatch.setattr(
         risk_guard,
@@ -302,7 +310,9 @@ def test_clamp_sl_tp_limits_tp_shrink_when_pf_is_bad(monkeypatch):
     monkeypatch.setattr(risk_guard, "_RR_SL_EXPAND_MAX", 0.10, raising=False)
     monkeypatch.setattr(risk_guard, "_RR_ALLOW_SL_EXPAND_PF", 1.05, raising=False)
     monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD", 0.95, raising=False)
-    monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD_TP_SHRINK_CAP", 0.10, raising=False)
+    monkeypatch.setattr(
+        risk_guard, "_RR_PF_HARD_GUARD_TP_SHRINK_CAP", 0.10, raising=False
+    )
     monkeypatch.setattr(risk_guard, "_RR_MIN_SAMPLES", 40, raising=False)
     monkeypatch.setattr(
         risk_guard,

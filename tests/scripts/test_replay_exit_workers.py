@@ -203,8 +203,12 @@ def test_patch_exit_module_patches_delegate_module(monkeypatch) -> None:
         source="test",
     )
 
-    assert asyncio.run(wrapper.close_trade(str(trade_a["trade_id"]), exit_reason="wrapper"))
-    assert asyncio.run(delegate.close_trade(str(trade_b["trade_id"]), exit_reason="delegate"))
+    assert asyncio.run(
+        wrapper.close_trade(str(trade_a["trade_id"]), exit_reason="wrapper")
+    )
+    assert asyncio.run(
+        delegate.close_trade(str(trade_b["trade_id"]), exit_reason="delegate")
+    )
 
 
 def test_patch_module_clock_uses_sim_clock() -> None:
@@ -272,7 +276,9 @@ def test_replay_hour_filters_fallback_to_variant_env(monkeypatch) -> None:
         importlib.reload(reloaded)
 
 
-def test_resolve_scalp_replay_selection_defaults_to_ping_variant_mode_and_pocket(monkeypatch) -> None:
+def test_resolve_scalp_replay_selection_defaults_to_ping_variant_mode_and_pocket(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("SCALP_REPLAY_PING_VARIANT", "D")
     monkeypatch.delenv("SCALP_REPLAY_MODE", raising=False)
     monkeypatch.delenv("SCALP_REPLAY_ALLOWLIST", raising=False)
@@ -283,7 +289,11 @@ def test_resolve_scalp_replay_selection_defaults_to_ping_variant_mode_and_pocket
         monkeypatch.setattr(
             reloaded,
             "_load_ping5s_runtime",
-            lambda: (SimpleNamespace(), SimpleNamespace(POCKET="scalp_fast"), SimpleNamespace()),
+            lambda: (
+                SimpleNamespace(),
+                SimpleNamespace(POCKET="scalp_fast"),
+                SimpleNamespace(),
+            ),
         )
         cfg = reloaded.ReplayScalpConfig(
             MODE="spread_revert",
@@ -402,15 +412,25 @@ def test_ping5s_signal_respects_post_regime_side_filter(monkeypatch) -> None:
         SIDE_FILTER="long",
     )
 
-    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
-    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
-    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.2, None, None))
+    monkeypatch.setattr(
+        replay,
+        "_load_ping5s_runtime",
+        lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}]
+    )
+    monkeypatch.setattr(
+        replay.spread_monitor, "is_blocked", lambda: (False, 0.2, None, None)
+    )
 
     out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
     assert out is None
 
 
-def test_ping5s_signal_applies_live_probability_and_side_metrics_flip(monkeypatch) -> None:
+def test_ping5s_signal_applies_live_probability_and_side_metrics_flip(
+    monkeypatch,
+) -> None:
     def _signal(side: str, confidence: int, mode: str = "momentum"):
         return SimpleNamespace(
             side=side,
@@ -439,7 +459,9 @@ def test_ping5s_signal_applies_live_probability_and_side_metrics_flip(monkeypatc
         def _maybe_adapt_signal_window(self, *, ticks, spread_pips, base_signal):
             assert ticks
             assert spread_pips == 0.3
-            signal = _signal(base_signal.side, base_signal.confidence, mode=base_signal.mode)
+            signal = _signal(
+                base_signal.side, base_signal.confidence, mode=base_signal.mode
+            )
             signal.signal_window_sec = 0.8
             return signal, {
                 "enabled": True,
@@ -473,21 +495,31 @@ def test_ping5s_signal_applies_live_probability_and_side_metrics_flip(monkeypatc
 
         def _build_horizon_bias(self, signal, factors):
             _ = signal, factors
-            return SimpleNamespace(long_score=0.6, short_score=-0.2, composite_score=0.5)
+            return SimpleNamespace(
+                long_score=0.6, short_score=-0.2, composite_score=0.5
+            )
 
         def _tf_score_or_none(self, factors, timeframe):
             _ = factors
             assert timeframe == "M1"
             return 0.4
 
-        def _maybe_side_metrics_direction_flip(self, signal, *, strategy_tag, pocket, now_mono):
+        def _maybe_side_metrics_direction_flip(
+            self, signal, *, strategy_tag, pocket, now_mono
+        ):
             assert signal.side == "long"
             assert strategy_tag == "scalp_ping_5s_d_live"
             assert pocket == "scalp_fast"
             assert now_mono > 0
-            return _signal("short", 86, mode="momentum_smflip"), "long->short:test", SimpleNamespace()
+            return (
+                _signal("short", 86, mode="momentum_smflip"),
+                "long->short:test",
+                SimpleNamespace(),
+            )
 
-        def _resolve_final_signal_for_side_filter(self, *, routed_signal, anchor_signal):
+        def _resolve_final_signal_for_side_filter(
+            self, *, routed_signal, anchor_signal
+        ):
             _ = anchor_signal
             return routed_signal, "side_filter_inactive"
 
@@ -535,10 +567,20 @@ def test_ping5s_signal_applies_live_probability_and_side_metrics_flip(monkeypatc
         SIDE_FILTER="",
     )
 
-    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
-    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
-    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
-    monkeypatch.setattr(replay.factor_cache, "all_factors", lambda: {"M1": {"score": 0.4}})
+    monkeypatch.setattr(
+        replay,
+        "_load_ping5s_runtime",
+        lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}]
+    )
+    monkeypatch.setattr(
+        replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None)
+    )
+    monkeypatch.setattr(
+        replay.factor_cache, "all_factors", lambda: {"M1": {"score": 0.4}}
+    )
 
     out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
 
@@ -562,19 +604,22 @@ def test_ping5s_signal_respects_adaptive_live_score_block(monkeypatch) -> None:
     class _FakeWorker:
         def _build_tick_signal(self, rows, spread_pips):
             _ = rows, spread_pips
-            return SimpleNamespace(
-                side="long",
-                confidence=80,
-                spread_pips=0.3,
-                momentum_pips=1.0,
-                range_pips=2.0,
-                instant_range_pips=1.0,
-                mode="momentum",
-                bid=150.0,
-                ask=150.002,
-                mid=150.001,
-                signal_window_sec=1.2,
-            ), "ok"
+            return (
+                SimpleNamespace(
+                    side="long",
+                    confidence=80,
+                    spread_pips=0.3,
+                    momentum_pips=1.0,
+                    range_pips=2.0,
+                    instant_range_pips=1.0,
+                    mode="momentum",
+                    bid=150.0,
+                    ask=150.002,
+                    mid=150.001,
+                    signal_window_sec=1.2,
+                ),
+                "ok",
+            )
 
         def _maybe_adapt_signal_window(self, *, ticks, spread_pips, base_signal):
             _ = ticks, spread_pips, base_signal
@@ -599,31 +644,44 @@ def test_ping5s_signal_respects_adaptive_live_score_block(monkeypatch) -> None:
         SIDE_FILTER="",
     )
 
-    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
-    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
-    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+    monkeypatch.setattr(
+        replay,
+        "_load_ping5s_runtime",
+        lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}]
+    )
+    monkeypatch.setattr(
+        replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None)
+    )
 
     out = replay._signal_scalp_ping_5s_b({}, {}, {}, None, datetime.now(timezone.utc))
     assert out is None
 
 
-def test_ping5s_signal_applies_dynamic_alloc_multiplier_and_metadata(monkeypatch) -> None:
+def test_ping5s_signal_applies_dynamic_alloc_multiplier_and_metadata(
+    monkeypatch,
+) -> None:
     class _FakeWorker:
         def _build_tick_signal(self, rows, spread_pips):
             _ = rows, spread_pips
-            return SimpleNamespace(
-                side="long",
-                confidence=80,
-                spread_pips=0.3,
-                momentum_pips=1.0,
-                range_pips=2.0,
-                instant_range_pips=1.0,
-                mode="momentum",
-                bid=150.0,
-                ask=150.002,
-                mid=150.001,
-                signal_window_sec=1.2,
-            ), "ok"
+            return (
+                SimpleNamespace(
+                    side="long",
+                    confidence=80,
+                    spread_pips=0.3,
+                    momentum_pips=1.0,
+                    range_pips=2.0,
+                    instant_range_pips=1.0,
+                    mode="momentum",
+                    bid=150.0,
+                    ask=150.002,
+                    mid=150.001,
+                    signal_window_sec=1.2,
+                ),
+                "ok",
+            )
 
         def _build_mtf_regime(self, _factors):
             return SimpleNamespace(mode="balanced", side="long", heat_score=0.4)
@@ -662,9 +720,17 @@ def test_ping5s_signal_applies_dynamic_alloc_multiplier_and_metadata(monkeypatch
         DYN_ALLOC_MULT_MAX=1.2,
     )
 
-    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
-    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
-    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+    monkeypatch.setattr(
+        replay,
+        "_load_ping5s_runtime",
+        lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}]
+    )
+    monkeypatch.setattr(
+        replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None)
+    )
     monkeypatch.setattr(
         replay,
         "load_strategy_profile",
@@ -693,19 +759,22 @@ def test_ping5s_signal_clamps_dynamic_alloc_multiplier(monkeypatch) -> None:
     class _FakeWorker:
         def _build_tick_signal(self, rows, spread_pips):
             _ = rows, spread_pips
-            return SimpleNamespace(
-                side="long",
-                confidence=80,
-                spread_pips=0.3,
-                momentum_pips=1.0,
-                range_pips=2.0,
-                instant_range_pips=1.0,
-                mode="momentum",
-                bid=150.0,
-                ask=150.002,
-                mid=150.001,
-                signal_window_sec=1.2,
-            ), "ok"
+            return (
+                SimpleNamespace(
+                    side="long",
+                    confidence=80,
+                    spread_pips=0.3,
+                    momentum_pips=1.0,
+                    range_pips=2.0,
+                    instant_range_pips=1.0,
+                    mode="momentum",
+                    bid=150.0,
+                    ask=150.002,
+                    mid=150.001,
+                    signal_window_sec=1.2,
+                ),
+                "ok",
+            )
 
         def _build_mtf_regime(self, _factors):
             return SimpleNamespace(mode="balanced", side="long", heat_score=0.4)
@@ -744,9 +813,17 @@ def test_ping5s_signal_clamps_dynamic_alloc_multiplier(monkeypatch) -> None:
         DYN_ALLOC_MULT_MAX=0.6,
     )
 
-    monkeypatch.setattr(replay, "_load_ping5s_runtime", lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()))
-    monkeypatch.setattr(replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}])
-    monkeypatch.setattr(replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None))
+    monkeypatch.setattr(
+        replay,
+        "_load_ping5s_runtime",
+        lambda: (_FakeWorker(), fake_cfg, SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        replay.tick_window, "recent_ticks", lambda _sec: [{"mid": 150.0}]
+    )
+    monkeypatch.setattr(
+        replay.spread_monitor, "is_blocked", lambda: (False, 0.3, None, None)
+    )
     monkeypatch.setattr(
         replay,
         "load_strategy_profile",

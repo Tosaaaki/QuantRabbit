@@ -43,9 +43,13 @@ def _sample_signal(side: str, *, mode: str = "momentum"):
 def test_adaptive_live_score_blocked_when_below_threshold(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
-    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS", 0.0)
+    monkeypatch.setattr(
+        worker.config, "SIGNAL_WINDOW_ADAPTIVE_LIVE_SCORE_MIN_PIPS", 0.0
+    )
 
-    blocked, live_score = worker._adaptive_live_score_blocked({"live_score_pips": -0.05})
+    blocked, live_score = worker._adaptive_live_score_blocked(
+        {"live_score_pips": -0.05}
+    )
 
     assert blocked is True
     assert live_score == pytest.approx(-0.05, abs=1e-9)
@@ -56,25 +60,45 @@ def test_lookahead_edge_hard_blocked_when_below_threshold(monkeypatch) -> None:
 
     monkeypatch.setattr(worker.config, "LOOKAHEAD_EDGE_HARD_REJECT_PIPS", 0.0)
 
-    blocked, edge = worker._lookahead_edge_hard_blocked(SimpleNamespace(edge_pips=-0.02))
+    blocked, edge = worker._lookahead_edge_hard_blocked(
+        SimpleNamespace(edge_pips=-0.02)
+    )
 
     assert blocked is True
     assert edge == pytest.approx(-0.02, abs=1e-9)
 
 
-def test_negative_lookahead_rescue_routes_strong_low_activity_signal(monkeypatch) -> None:
+def test_negative_lookahead_rescue_routes_strong_low_activity_signal(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED", True)
     monkeypatch.setattr(worker.config, "TECH_ROUTER_ENABLED", False)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_LOOKBACK_MINUTES", 30)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT", 0.18)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MAX_MULT", 0.42)
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_LOOKBACK_MINUTES", 30
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MIN_MULT", 0.18
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_UNITS_MAX_MULT", 0.42
+    )
     monkeypatch.setattr(worker.config, "MAX_SPREAD_PIPS", 2.0)
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_c_live")
     monkeypatch.setattr(worker, "_recent_strategy_fill_count", lambda **_: 0)
@@ -108,11 +132,21 @@ def test_negative_lookahead_rescue_skips_once_fills_resume(monkeypatch) -> None:
 
     monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_ENABLED", True)
     monkeypatch.setattr(worker.config, "TECH_ROUTER_ENABLED", False)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40)
-    monkeypatch.setattr(worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40)
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_RECENT_FILLS", 0
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MAX_NEG_EDGE_PIPS", 0.95
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_PRED_MOVE_PIPS", 0.24
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_MOMENTUM_PIPS", 0.40
+    )
+    monkeypatch.setattr(
+        worker.config, "LOOKAHEAD_NEGATIVE_EDGE_RESCUE_MIN_RANGE_PIPS", 0.40
+    )
     monkeypatch.setattr(worker.config, "MAX_SPREAD_PIPS", 2.0)
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_c_live")
     monkeypatch.setattr(worker, "_recent_strategy_fill_count", lambda **_: 1)
@@ -137,7 +171,9 @@ def test_negative_lookahead_rescue_skips_once_fills_resume(monkeypatch) -> None:
     assert rescue is None
 
 
-def test_negative_lookahead_rescue_units_floor_bridges_probability_scale(monkeypatch) -> None:
+def test_negative_lookahead_rescue_units_floor_bridges_probability_scale(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "MIN_UNITS", 5)
@@ -154,7 +190,9 @@ def test_negative_lookahead_rescue_units_floor_bridges_probability_scale(monkeyp
     assert status == "rescued"
 
 
-def test_negative_lookahead_rescue_units_floor_inactive_without_rescue(monkeypatch) -> None:
+def test_negative_lookahead_rescue_units_floor_inactive_without_rescue(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "MIN_UNITS", 5)
@@ -171,11 +209,17 @@ def test_negative_lookahead_rescue_units_floor_inactive_without_rescue(monkeypat
     assert status == "inactive"
 
 
-def test_d_negative_window_short_align_block_reason_blocks_loser_lane(monkeypatch) -> None:
+def test_d_negative_window_short_align_block_reason_blocks_loser_lane(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED", True)
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX", -0.85)
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED", True
+    )
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX", -0.85
+    )
     monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX", 0.40)
     monkeypatch.setattr(worker.config, "ENV_PREFIX", "SCALP_PING_5S_D")
 
@@ -192,11 +236,17 @@ def test_d_negative_window_short_align_block_reason_blocks_loser_lane(monkeypatc
     assert "edge=0.320" in reason
 
 
-def test_d_negative_window_short_align_block_reason_preserves_supported_lane(monkeypatch) -> None:
+def test_d_negative_window_short_align_block_reason_preserves_supported_lane(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED", True)
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX", -0.85)
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_BLOCK_ENABLED", True
+    )
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_LIVE_SCORE_MAX", -0.85
+    )
     monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_SHORT_ALIGN_EDGE_MAX", 0.40)
 
     reason = worker._d_negative_window_short_align_block_reason(
@@ -215,8 +265,12 @@ def test_d_negative_window_long_opposite_block_reason_blocks_tp_enabled_loser_la
 ) -> None:
     from workers.scalp_ping_5s import worker
 
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED", True)
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX", -1.0)
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED", True
+    )
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX", -1.0
+    )
     monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX", 0.60)
     monkeypatch.setattr(worker.config, "TP_ENABLED", True)
     monkeypatch.setattr(worker.config, "ENV_PREFIX", "SCALP_PING_5S_D")
@@ -240,8 +294,12 @@ def test_d_negative_window_long_opposite_block_reason_preserves_supported_lane(
 ) -> None:
     from workers.scalp_ping_5s import worker
 
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED", True)
-    monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX", -1.0)
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_BLOCK_ENABLED", True
+    )
+    monkeypatch.setattr(
+        worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_LIVE_SCORE_MAX", -1.0
+    )
     monkeypatch.setattr(worker.config, "D_NEGATIVE_WINDOW_LONG_OPPOSITE_EDGE_MAX", 0.60)
     monkeypatch.setattr(worker.config, "TP_ENABLED", True)
 
@@ -263,7 +321,9 @@ def test_countertrend_horizon_m1_block_reason_blocks_d_horizon_aligned_m1_opposi
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED", True)
-    monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN", 0.03)
+    monkeypatch.setattr(
+        worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN", 0.03
+    )
     monkeypatch.setattr(worker.config, "ENV_PREFIX", "SCALP_PING_5S_D")
 
     reason = worker._countertrend_horizon_m1_block_reason(
@@ -285,7 +345,9 @@ def test_countertrend_horizon_m1_block_reason_preserves_weak_m1_conflict_lane(
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED", True)
-    monkeypatch.setattr(worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN", 0.05)
+    monkeypatch.setattr(
+        worker.config, "D_COUNTERTREND_HORIZON_M1_BLOCK_M1_SCORE_MIN", 0.05
+    )
 
     reason = worker._countertrend_horizon_m1_block_reason(
         _sample_signal("long"),
@@ -346,31 +408,40 @@ def test_client_order_id_is_unique_with_same_millisecond(monkeypatch) -> None:
 def test_is_spread_stale_block_detects_state_stale() -> None:
     from workers.scalp_ping_5s import worker
 
-    assert worker._is_spread_stale_block(
-        blocked=True,
-        spread_state={"stale": True},
-        spread_reason="",
-    ) is True
+    assert (
+        worker._is_spread_stale_block(
+            blocked=True,
+            spread_state={"stale": True},
+            spread_reason="",
+        )
+        is True
+    )
 
 
 def test_is_spread_stale_block_detects_reason_only() -> None:
     from workers.scalp_ping_5s import worker
 
-    assert worker._is_spread_stale_block(
-        blocked=True,
-        spread_state={"stale": False},
-        spread_reason="spread_stale age=9000ms > max=4000ms",
-    ) is True
+    assert (
+        worker._is_spread_stale_block(
+            blocked=True,
+            spread_state={"stale": False},
+            spread_reason="spread_stale age=9000ms > max=4000ms",
+        )
+        is True
+    )
 
 
 def test_is_spread_stale_block_skips_when_not_blocked() -> None:
     from workers.scalp_ping_5s import worker
 
-    assert worker._is_spread_stale_block(
-        blocked=False,
-        spread_state={"stale": True},
-        spread_reason="spread_stale",
-    ) is False
+    assert (
+        worker._is_spread_stale_block(
+            blocked=False,
+            spread_state={"stale": True},
+            spread_reason="spread_stale",
+        )
+        is False
+    )
 
 
 def test_resolve_allow_hour_entry_policy_inside_allow_hours(monkeypatch) -> None:
@@ -410,7 +481,9 @@ def test_resolve_allow_hour_entry_policy_soft_mode_outside(monkeypatch) -> None:
     monkeypatch.setattr(worker.config, "ALLOW_HOURS_SOFT_ENABLED", True)
     monkeypatch.setattr(worker.config, "ALLOW_HOURS_OUTSIDE_UNITS_MULT", 0.58)
     monkeypatch.setattr(worker.config, "ALLOW_HOURS_OUTSIDE_MIN_CONFIDENCE", 74)
-    monkeypatch.setattr(worker.config, "ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY", 0.67)
+    monkeypatch.setattr(
+        worker.config, "ALLOW_HOURS_OUTSIDE_MIN_ENTRY_PROBABILITY", 0.67
+    )
     monkeypatch.setattr(worker.config, "CONFIDENCE_FLOOR", 58)
     monkeypatch.setattr(worker.config, "CONFIDENCE_CEIL", 92)
 
@@ -441,7 +514,9 @@ def test_resolve_final_signal_for_side_filter_keeps_aligned_signal(monkeypatch) 
     assert reason == "side_filter_aligned"
 
 
-def test_resolve_final_signal_for_side_filter_restores_anchor_after_flip(monkeypatch) -> None:
+def test_resolve_final_signal_for_side_filter_restores_anchor_after_flip(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "SIDE_FILTER", "short")
@@ -459,7 +534,9 @@ def test_resolve_final_signal_for_side_filter_restores_anchor_after_flip(monkeyp
     assert reason == "side_filter_fallback:long->short"
 
 
-def test_resolve_final_signal_for_side_filter_blocks_without_anchor(monkeypatch) -> None:
+def test_resolve_final_signal_for_side_filter_blocks_without_anchor(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "SIDE_FILTER", "short")
@@ -528,7 +605,9 @@ def test_maybe_rescue_min_units_applies_when_thresholds_met(monkeypatch) -> None
     assert reason == "rescued"
 
 
-def test_maybe_rescue_min_units_bridges_probability_scale_for_small_probe(monkeypatch) -> None:
+def test_maybe_rescue_min_units_bridges_probability_scale_for_small_probe(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "MIN_UNITS", 5)
@@ -687,7 +766,9 @@ def test_compute_targets_is_spread_aware() -> None:
         max(worker.config.TP_BASE_PIPS, 0.9 + worker.config.TP_NET_MIN_PIPS),
     )
     assert tp_pips <= worker.config.TP_MAX_PIPS
-    assert sl_pips >= (0.9 * worker.config.SL_SPREAD_MULT + worker.config.SL_SPREAD_BUFFER_PIPS)
+    assert sl_pips >= (
+        0.9 * worker.config.SL_SPREAD_MULT + worker.config.SL_SPREAD_BUFFER_PIPS
+    )
     assert sl_pips <= worker.config.SL_MAX_PIPS
 
 
@@ -813,8 +894,12 @@ def test_trade_force_exit_threshold_overrides_from_entry_thesis() -> None:
             "force_exit_max_floating_loss_pips": 1.8,
         }
     }
-    assert worker._trade_force_exit_max_hold_sec(trade, 120.0) == pytest.approx(45.0, abs=1e-9)
-    assert worker._trade_force_exit_hard_loss_pips(trade, 3.0) == pytest.approx(1.8, abs=1e-9)
+    assert worker._trade_force_exit_max_hold_sec(trade, 120.0) == pytest.approx(
+        45.0, abs=1e-9
+    )
+    assert worker._trade_force_exit_hard_loss_pips(trade, 3.0) == pytest.approx(
+        1.8, abs=1e-9
+    )
 
 
 def test_compute_trap_state_active_when_hedged_and_underwater(monkeypatch) -> None:
@@ -950,7 +1035,9 @@ def test_allow_signal_when_max_active_respects_disable_flag(monkeypatch) -> None
     )
 
 
-def test_resolve_active_caps_expands_when_margin_headroom_is_healthy(monkeypatch) -> None:
+def test_resolve_active_caps_expands_when_margin_headroom_is_healthy(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("oanda_token", "dummy")
     monkeypatch.setenv("oanda_account_id", "dummy")
     monkeypatch.setenv("oanda_practice", "true")
@@ -960,7 +1047,9 @@ def test_resolve_active_caps_expands_when_margin_headroom_is_healthy(monkeypatch
     monkeypatch.setattr(worker.config, "MAX_PER_DIRECTION", 12)
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_MARGIN_BYPASS_ENABLED", True)
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_FREE_RATIO", 0.06)
-    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", 8000.0)
+    monkeypatch.setattr(
+        worker.config, "ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", 8000.0
+    )
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_TOTAL", 12)
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION", 8)
 
@@ -974,7 +1063,9 @@ def test_resolve_active_caps_expands_when_margin_headroom_is_healthy(monkeypatch
     assert side_cap == 20
 
 
-def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch) -> None:
+def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("oanda_token", "dummy")
     monkeypatch.setenv("oanda_account_id", "dummy")
     monkeypatch.setenv("oanda_practice", "true")
@@ -984,7 +1075,9 @@ def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch)
     monkeypatch.setattr(worker.config, "MAX_PER_DIRECTION", 12)
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_MARGIN_BYPASS_ENABLED", True)
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_FREE_RATIO", 0.06)
-    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", 8000.0)
+    monkeypatch.setattr(
+        worker.config, "ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", 8000.0
+    )
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_TOTAL", 12)
     monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION", 8)
 
@@ -997,7 +1090,9 @@ def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch)
     assert side_cap == 12
 
 
-def test_resolve_dynamic_direction_cap_tightens_to_min_on_adverse_cluster(monkeypatch) -> None:
+def test_resolve_dynamic_direction_cap_tightens_to_min_on_adverse_cluster(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("oanda_token", "dummy")
     monkeypatch.setenv("oanda_account_id", "dummy")
     monkeypatch.setenv("oanda_practice", "true")
@@ -1107,7 +1202,9 @@ def test_resolve_dynamic_direction_cap_returns_base_when_disabled(monkeypatch) -
     assert reason == "disabled"
 
 
-def test_enforce_new_entry_time_stop_uses_entry_thesis_hold_override(monkeypatch) -> None:
+def test_enforce_new_entry_time_stop_uses_entry_thesis_hold_override(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
@@ -1117,7 +1214,9 @@ def test_enforce_new_entry_time_stop_uses_entry_thesis_hold_override(monkeypatch
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 0.0)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss"
+    )
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", False)
 
@@ -1174,7 +1273,9 @@ def test_enforce_new_entry_time_stop_uses_entry_thesis_hold_override(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatch) -> None:
+async def test_enforce_new_entry_time_stop_respects_policy_generation(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
@@ -1184,10 +1285,14 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 0.0)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss"
+    )
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-11-losscap-v1")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-11-losscap-v1"
+    )
 
     calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
 
@@ -1199,7 +1304,16 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
         exit_reason: str | None = None,
         env_prefix: str | None = None,
     ) -> bool:
-        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        calls.append(
+            (
+                trade_id,
+                int(units or 0),
+                client_order_id,
+                allow_negative,
+                exit_reason,
+                env_prefix,
+            )
+        )
         return True
 
     monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
@@ -1263,7 +1377,9 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_enforce_new_entry_time_stop_skips_protected_existing_trades(monkeypatch) -> None:
+async def test_enforce_new_entry_time_stop_skips_protected_existing_trades(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
@@ -1274,7 +1390,9 @@ async def test_enforce_new_entry_time_stop_skips_protected_existing_trades(monke
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-ping5-root-v1")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-ping5-root-v1"
+    )
 
     calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
 
@@ -1286,7 +1404,16 @@ async def test_enforce_new_entry_time_stop_skips_protected_existing_trades(monke
         exit_reason: str | None = None,
         env_prefix: str | None = None,
     ) -> bool:
-        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        calls.append(
+            (
+                trade_id,
+                int(units or 0),
+                client_order_id,
+                allow_negative,
+                exit_reason,
+                env_prefix,
+            )
+        )
         return True
 
     monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
@@ -1342,10 +1469,14 @@ async def test_enforce_new_entry_time_stop_closes_no_recovery_loss(monkeypatch) 
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 1.5)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss"
+    )
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-hold600-v2")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-hold600-v2"
+    )
 
     calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
 
@@ -1357,7 +1488,16 @@ async def test_enforce_new_entry_time_stop_closes_no_recovery_loss(monkeypatch) 
         exit_reason: str | None = None,
         env_prefix: str | None = None,
     ) -> bool:
-        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        calls.append(
+            (
+                trade_id,
+                int(units or 0),
+                client_order_id,
+                allow_negative,
+                exit_reason,
+                env_prefix,
+            )
+        )
         return True
 
     monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
@@ -1414,7 +1554,9 @@ async def test_enforce_new_entry_time_stop_closes_no_recovery_loss(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_enforce_new_entry_time_stop_closes_max_floating_loss(monkeypatch) -> None:
+async def test_enforce_new_entry_time_stop_closes_max_floating_loss(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
@@ -1424,10 +1566,14 @@ async def test_enforce_new_entry_time_stop_closes_max_floating_loss(monkeypatch)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 1.5)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss"
+    )
     monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-hold600-v2")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-hold600-v2"
+    )
 
     calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
 
@@ -1439,7 +1585,16 @@ async def test_enforce_new_entry_time_stop_closes_max_floating_loss(monkeypatch)
         exit_reason: str | None = None,
         env_prefix: str | None = None,
     ) -> bool:
-        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        calls.append(
+            (
+                trade_id,
+                int(units or 0),
+                client_order_id,
+                allow_negative,
+                exit_reason,
+                env_prefix,
+            )
+        )
         return True
 
     monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
@@ -1490,7 +1645,9 @@ async def test_enforce_new_entry_time_stop_closes_giveback_lock(monkeypatch) -> 
     monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_REASON", "giveback_lock")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
-    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-giveback-v1")
+    monkeypatch.setattr(
+        worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-giveback-v1"
+    )
 
     calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
 
@@ -1502,7 +1659,16 @@ async def test_enforce_new_entry_time_stop_closes_giveback_lock(monkeypatch) -> 
         exit_reason: str | None = None,
         env_prefix: str | None = None,
     ) -> bool:
-        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        calls.append(
+            (
+                trade_id,
+                int(units or 0),
+                client_order_id,
+                allow_negative,
+                exit_reason,
+                env_prefix,
+            )
+        )
         return True
 
     monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
@@ -1570,9 +1736,13 @@ async def test_apply_profit_bank_release_respects_exclusions(monkeypatch) -> Non
     monkeypatch.setattr(worker.config, "PROFIT_BANK_MAX_TARGET_LOSS_JPY", 5000.0)
     monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_MIN_HOLD_SEC", 60.0)
     monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_ORDER", "largest_loss")
-    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START", False)
+    monkeypatch.setattr(
+        worker.config, "PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START", False
+    )
     monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_TRADE_IDS", ("skip-trade",))
-    monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_CLIENT_IDS", ("skip-client",))
+    monkeypatch.setattr(
+        worker.config, "PROFIT_BANK_EXCLUDE_CLIENT_IDS", ("skip-client",)
+    )
     monkeypatch.setattr(worker.config, "PROFIT_BANK_REASON", "profit_bank_release")
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
     monkeypatch.setattr(worker.config, "POCKET", "scalp_fast")
@@ -1599,7 +1769,16 @@ async def test_apply_profit_bank_release_respects_exclusions(monkeypatch) -> Non
         exit_reason: str | None = None,
         env_prefix: str | None = None,
     ) -> bool:
-        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        calls.append(
+            (
+                trade_id,
+                int(units or 0),
+                client_order_id,
+                allow_negative,
+                exit_reason,
+                env_prefix,
+            )
+        )
         return True
 
     monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
@@ -1650,7 +1829,9 @@ async def test_apply_profit_bank_release_respects_exclusions(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_apply_profit_bank_release_skips_when_budget_is_too_small(monkeypatch) -> None:
+async def test_apply_profit_bank_release_skips_when_budget_is_too_small(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "PROFIT_BANK_ENABLED", True)
@@ -1660,7 +1841,9 @@ async def test_apply_profit_bank_release_skips_when_budget_is_too_small(monkeypa
     monkeypatch.setattr(worker.config, "PROFIT_BANK_MAX_TARGET_LOSS_JPY", 5000.0)
     monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_MIN_HOLD_SEC", 60.0)
     monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_ORDER", "largest_loss")
-    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START", False)
+    monkeypatch.setattr(
+        worker.config, "PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START", False
+    )
     monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_TRADE_IDS", ())
     monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_CLIENT_IDS", ())
     monkeypatch.setattr(worker.config, "PROFIT_BANK_REASON", "profit_bank_release")
@@ -1778,7 +1961,9 @@ async def test_maybe_keepalive_snapshot_fetches_when_stale(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_maybe_keepalive_snapshot_skips_when_microstructure_is_healthy(monkeypatch) -> None:
+async def test_maybe_keepalive_snapshot_skips_when_microstructure_is_healthy(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
@@ -1817,7 +2002,9 @@ async def test_maybe_keepalive_snapshot_skips_when_microstructure_is_healthy(mon
 
 
 @pytest.mark.asyncio
-async def test_maybe_topup_micro_density_fetches_snapshot_when_below_target(monkeypatch) -> None:
+async def test_maybe_topup_micro_density_fetches_snapshot_when_below_target(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
@@ -1827,7 +2014,9 @@ async def test_maybe_topup_micro_density_fetches_snapshot_when_below_target(monk
     monkeypatch.setattr(worker.config, "ENTRY_QUALITY_WINDOW_SEC", 30.0)
 
     density_values = iter([0.6, 1.5])
-    monkeypatch.setattr(worker, "_tick_density_over_window", lambda _sec: next(density_values))
+    monkeypatch.setattr(
+        worker, "_tick_density_over_window", lambda _sec: next(density_values)
+    )
 
     snapshot_calls: list[bool] = []
 
@@ -1852,7 +2041,9 @@ async def test_maybe_topup_micro_density_fetches_snapshot_when_below_target(monk
 
 
 @pytest.mark.asyncio
-async def test_maybe_topup_micro_density_skips_when_density_is_enough(monkeypatch) -> None:
+async def test_maybe_topup_micro_density_skips_when_density_is_enough(
+    monkeypatch,
+) -> None:
     from workers.scalp_ping_5s import worker
 
     monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
@@ -1888,7 +2079,9 @@ def test_fetch_price_snapshot_normalizes_stale_quote_timestamp(monkeypatch) -> N
     monkeypatch.setattr(worker, "_OANDA_ACCOUNT", "account")
     monkeypatch.setattr(worker.config, "MAX_TICK_AGE_MS", 2500.0)
 
-    stale_quote_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=5)
+    stale_quote_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        seconds=5
+    )
     monkeypatch.setattr(worker, "_parse_time", lambda _raw: stale_quote_ts)
 
     class _DummyResponse:
@@ -1922,8 +2115,14 @@ def test_fetch_price_snapshot_normalizes_stale_quote_timestamp(monkeypatch) -> N
     monkeypatch.setattr(worker.httpx, "AsyncClient", _DummyClient)
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(worker.spread_monitor, "update_from_tick", lambda tick: captured.setdefault("tick", tick))
-    monkeypatch.setattr(worker.tick_window, "record", lambda tick: captured.setdefault("recorded", tick))
+    monkeypatch.setattr(
+        worker.spread_monitor,
+        "update_from_tick",
+        lambda tick: captured.setdefault("tick", tick),
+    )
+    monkeypatch.setattr(
+        worker.tick_window, "record", lambda tick: captured.setdefault("recorded", tick)
+    )
 
     ok = asyncio.run(worker._fetch_price_snapshot(worker.LOG))
     assert ok is True
@@ -1932,5 +2131,7 @@ def test_fetch_price_snapshot_normalizes_stale_quote_timestamp(monkeypatch) -> N
     recorded_time = getattr(recorded, "time")
     if recorded_time.tzinfo is None:
         recorded_time = recorded_time.replace(tzinfo=datetime.timezone.utc)
-    age_sec = (datetime.datetime.now(datetime.timezone.utc) - recorded_time).total_seconds()
+    age_sec = (
+        datetime.datetime.now(datetime.timezone.utc) - recorded_time
+    ).total_seconds()
     assert age_sec < 1.5

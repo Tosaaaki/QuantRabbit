@@ -74,7 +74,10 @@ def _emit_tasks(tasks: list[whiteboard.WhiteboardTask], *, as_json: bool) -> Non
 
 def _emit_events(events: list[whiteboard.WhiteboardEvent], *, as_json: bool) -> None:
     if as_json:
-        payload = {"count": len(events), "events": [event.to_dict() for event in events]}
+        payload = {
+            "count": len(events),
+            "events": [event.to_dict() for event in events],
+        }
         print(json.dumps(payload, ensure_ascii=False))
         return
     for event in events:
@@ -108,7 +111,9 @@ def _parse_args() -> argparse.Namespace:
     post_parser = subparsers.add_parser("post", help="Create a whiteboard task")
     post_parser.add_argument("--task", required=True, help="Task title")
     post_parser.add_argument("--body", default="", help="Task body")
-    post_parser.add_argument("--author", default=os.getenv("USER", "agent"), help="Author")
+    post_parser.add_argument(
+        "--author", default=os.getenv("USER", "agent"), help="Author"
+    )
 
     list_parser = subparsers.add_parser("list", help="List tasks")
     list_parser.add_argument(
@@ -120,17 +125,25 @@ def _parse_args() -> argparse.Namespace:
     list_parser.add_argument("--limit", type=int, default=50, help="Max rows")
 
     watch_parser = subparsers.add_parser("watch", help="Watch new tasks")
-    watch_parser.add_argument("--since-id", type=int, default=0, help="Only show id > since-id")
+    watch_parser.add_argument(
+        "--since-id", type=int, default=0, help="Only show id > since-id"
+    )
     watch_parser.add_argument(
         "--status",
         default="all",
         choices=("open", "resolved", "archived", "all"),
         help="Task status filter",
     )
-    watch_parser.add_argument("--task-id", type=int, default=None, help="Only show one task")
+    watch_parser.add_argument(
+        "--task-id", type=int, default=None, help="Only show one task"
+    )
     watch_parser.add_argument("--limit", type=int, default=100, help="Rows per poll")
-    watch_parser.add_argument("--interval-sec", type=float, default=2.0, help="Polling interval")
-    watch_parser.add_argument("--timeout-sec", type=float, default=0.0, help="Stop after timeout")
+    watch_parser.add_argument(
+        "--interval-sec", type=float, default=2.0, help="Polling interval"
+    )
+    watch_parser.add_argument(
+        "--timeout-sec", type=float, default=0.0, help="Stop after timeout"
+    )
     watch_parser.add_argument("--once", action="store_true", help="Poll once and exit")
 
     resolve_parser = subparsers.add_parser("resolve", help="Resolve task")
@@ -141,24 +154,39 @@ def _parse_args() -> argparse.Namespace:
 
     purge_parser = subparsers.add_parser("purge-task", help="Delete task permanently")
     purge_parser.add_argument("task_id", type=int, help="Task ID")
-    purge_parser.add_argument("--yes", action="store_true", help="Required safety switch")
+    purge_parser.add_argument(
+        "--yes", action="store_true", help="Required safety switch"
+    )
 
     note_parser = subparsers.add_parser("note", help="Add note to task")
     note_parser.add_argument("task_id", type=int, help="Task ID")
     note_parser.add_argument("--body", required=True, help="Note body")
-    note_parser.add_argument("--author", default=os.getenv("USER", "agent"), help="Author")
+    note_parser.add_argument(
+        "--author", default=os.getenv("USER", "agent"), help="Author"
+    )
     note_parser.add_argument("--metadata", default="", help="Optional JSON metadata")
 
     event_parser = subparsers.add_parser("event", help="Add event to task")
     event_parser.add_argument("task_id", type=int, help="Task ID")
-    event_parser.add_argument("--type", default="event", choices=whiteboard.ALLOWED_EVENT_TYPES, help="Event type")
+    event_parser.add_argument(
+        "--type",
+        default="event",
+        choices=whiteboard.ALLOWED_EVENT_TYPES,
+        help="Event type",
+    )
     event_parser.add_argument("--body", required=True, help="Event body")
-    event_parser.add_argument("--author", default=os.getenv("USER", "agent"), help="Author")
+    event_parser.add_argument(
+        "--author", default=os.getenv("USER", "agent"), help="Author"
+    )
     event_parser.add_argument("--metadata", default="", help="Optional JSON metadata")
 
     events_parser = subparsers.add_parser("events", help="List events")
-    events_parser.add_argument("--task-id", type=int, default=None, help="Task ID filter")
-    events_parser.add_argument("--since-id", type=int, default=0, help="Only show id > since-id")
+    events_parser.add_argument(
+        "--task-id", type=int, default=None, help="Task ID filter"
+    )
+    events_parser.add_argument(
+        "--since-id", type=int, default=0, help="Only show id > since-id"
+    )
     events_parser.add_argument("--limit", type=int, default=100, help="Max rows")
 
     auto_parser = subparsers.add_parser(
@@ -167,8 +195,12 @@ def _parse_args() -> argparse.Namespace:
     )
     auto_parser.add_argument("--task", required=True, help="Task title")
     auto_parser.add_argument("--body", default="", help="Task body")
-    auto_parser.add_argument("--author", default=os.getenv("USER", "agent"), help="Author")
-    auto_parser.add_argument("--start-note", default="auto-session started", help="Start event message")
+    auto_parser.add_argument(
+        "--author", default=os.getenv("USER", "agent"), help="Author"
+    )
+    auto_parser.add_argument(
+        "--start-note", default="auto-session started", help="Start event message"
+    )
     auto_parser.add_argument(
         "--success-note",
         default="auto-session completed",
@@ -266,7 +298,10 @@ def _run_auto_session(args: argparse.Namespace, *, db_path: Path) -> int:
         if args.json:
             print(json.dumps(payload, ensure_ascii=False))
         else:
-            print(f"auto-session exception (task kept open): task#{task.id}", file=sys.stderr)
+            print(
+                f"auto-session exception (task kept open): task#{task.id}",
+                file=sys.stderr,
+            )
         return 1
 
     if exit_code == 0:
@@ -297,7 +332,12 @@ def _run_auto_session(args: argparse.Namespace, *, db_path: Path) -> int:
         body=f"{args.failure_note_prefix} (exit_code={exit_code})",
         author=args.author,
         event_type="error",
-        metadata={"mode": "auto-session", "phase": "failure", "command": cmd, "exit_code": exit_code},
+        metadata={
+            "mode": "auto-session",
+            "phase": "failure",
+            "command": cmd,
+            "exit_code": exit_code,
+        },
         db_path=db_path,
     )
     failed = whiteboard.get_task(task.id, db_path=db_path)

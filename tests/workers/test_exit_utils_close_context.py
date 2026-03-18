@@ -15,7 +15,9 @@ def test_flow_exit_utils_forwards_explicit_close_context(monkeypatch):
         return True
 
     monkeypatch.setattr(flow_exit_utils, "_close_trade", _fake_close_trade)
-    monkeypatch.setattr(flow_exit_utils, "_composite_exit_allowed", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        flow_exit_utils, "_composite_exit_allowed", lambda **_kwargs: True
+    )
 
     ok = asyncio.run(
         flow_exit_utils.close_trade(
@@ -52,7 +54,9 @@ def test_range_exit_utils_forwards_explicit_close_context(monkeypatch):
         return True
 
     monkeypatch.setattr(range_exit_utils, "_close_trade", _fake_close_trade)
-    monkeypatch.setattr(range_exit_utils, "_composite_exit_allowed", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        range_exit_utils, "_composite_exit_allowed", lambda **_kwargs: True
+    )
 
     ok = asyncio.run(
         range_exit_utils.close_trade(

@@ -149,7 +149,11 @@ def main() -> int:
         logging.info("[READ] %s -> %d rows", path, len(rows))
         all_rows.extend(rows)
 
-    write_disp = bigquery.WriteDisposition.WRITE_TRUNCATE if args.truncate else bigquery.WriteDisposition.WRITE_APPEND
+    write_disp = (
+        bigquery.WriteDisposition.WRITE_TRUNCATE
+        if args.truncate
+        else bigquery.WriteDisposition.WRITE_APPEND
+    )
     try:
         _load(client, all_rows, args.dataset, args.table, write_disposition=write_disp)
     except Exception as exc:  # noqa: BLE001

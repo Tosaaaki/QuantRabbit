@@ -47,7 +47,13 @@ def test_c_exit_direction_flip_short_side_overrides_apply(monkeypatch):
         c_exit_worker,
         "all_factors",
         lambda: {
-            "M1": {"rsi": 54.0, "adx": 20.0, "atr_pips": 1.2, "ma10": 150.0, "ma20": 150.0},
+            "M1": {
+                "rsi": 54.0,
+                "adx": 20.0,
+                "atr_pips": 1.2,
+                "ma10": 150.0,
+                "ma20": 150.0,
+            },
             "H4": {},
         },
     )
@@ -59,7 +65,9 @@ def test_c_exit_direction_flip_short_side_overrides_apply(monkeypatch):
 
     closed_reasons: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False
+    ):
         closed_reasons.append(str(reason))
 
     monkeypatch.setattr(worker, "_close", _fake_close)
@@ -110,7 +118,9 @@ def test_c_exit_non_range_max_hold_short_override_applies(monkeypatch):
 
     closed: list[tuple[str, str]] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False
+    ):
         closed.append((str(trade_id), str(reason)))
 
     monkeypatch.setattr(worker, "_close", _fake_close)
@@ -140,4 +150,3 @@ def test_c_exit_non_range_max_hold_short_override_applies(monkeypatch):
 
     assert ("C-short-hold", "time_stop_side") in closed
     assert all(trade_id != "C-long-hold" for trade_id, _ in closed)
-

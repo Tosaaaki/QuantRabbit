@@ -84,7 +84,9 @@ def test_apply_alt_env_b_keeps_valid_explicit_side_filter(monkeypatch) -> None:
     assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "buy"
 
 
-def test_apply_alt_env_b_allows_no_side_filter_override_when_enabled(monkeypatch) -> None:
+def test_apply_alt_env_b_allows_no_side_filter_override_when_enabled(
+    monkeypatch,
+) -> None:
     _clear_scalp_ping_env(monkeypatch)
     monkeypatch.setenv("SCALP_PING_5S_B_ENABLED", "1")
     monkeypatch.setenv("SCALP_PING_5S_B_SIDE_FILTER", "none")
@@ -99,7 +101,9 @@ def test_apply_alt_env_b_allows_no_side_filter_override_when_enabled(monkeypatch
     assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == ""
 
 
-def test_apply_alt_env_b_missing_side_filter_still_fails_closed_when_allow_enabled(monkeypatch) -> None:
+def test_apply_alt_env_b_missing_side_filter_still_fails_closed_when_allow_enabled(
+    monkeypatch,
+) -> None:
     _clear_scalp_ping_env(monkeypatch)
     monkeypatch.setenv("SCALP_PING_5S_B_ENABLED", "1")
     monkeypatch.setenv("SCALP_PING_5S_B_ALLOW_NO_SIDE_FILTER", "1")
@@ -156,7 +160,9 @@ def test_apply_alt_env_c_keeps_valid_explicit_side_filter(monkeypatch) -> None:
     assert os.getenv("SCALP_PING_5S_SIDE_FILTER") == "buy"
 
 
-def test_apply_alt_env_c_allows_no_side_filter_override_when_enabled(monkeypatch) -> None:
+def test_apply_alt_env_c_allows_no_side_filter_override_when_enabled(
+    monkeypatch,
+) -> None:
     _clear_scalp_ping_env(monkeypatch)
     monkeypatch.setenv("SCALP_PING_5S_C_ENABLED", "1")
     monkeypatch.setenv("SCALP_PING_5S_C_SIDE_FILTER", "none")

@@ -163,7 +163,9 @@ def test_bounce_long_allows_clear_lower_wick_under_same_down_di_pressure() -> No
     assert signal["tag"] == "MicroLevelReactor-bounce-lower"
 
 
-def test_bounce_long_rejects_small_reclaim_body_under_strong_continuation_pressure() -> None:
+def test_bounce_long_rejects_small_reclaim_body_under_strong_continuation_pressure() -> (
+    None
+):
     signal = MicroLevelReactor.check(
         {
             "close": 157.956,
@@ -209,7 +211,9 @@ def test_bounce_long_keeps_tiny_lower_wick_when_di_pressure_is_not_strong() -> N
     assert signal["tag"] == "MicroLevelReactor-bounce-lower"
 
 
-def test_bounce_long_rejects_clear_wick_when_strong_down_continuation_keeps_wide_ma_gap() -> None:
+def test_bounce_long_rejects_clear_wick_when_strong_down_continuation_keeps_wide_ma_gap() -> (
+    None
+):
     signal = MicroLevelReactor.check(
         {
             "close": 157.956,

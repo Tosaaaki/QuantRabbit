@@ -71,7 +71,9 @@ def _format_agg(rows: List, keys: Tuple[str, ...]) -> List[Dict[str, Any]]:
     return out
 
 
-def _top_bottom(items: List[Dict[str, Any]], *, key: str, n: int) -> Dict[str, List[Dict[str, Any]]]:
+def _top_bottom(
+    items: List[Dict[str, Any]], *, key: str, n: int
+) -> Dict[str, List[Dict[str, Any]]]:
     if not items:
         return {"top": [], "bottom": []}
     sorted_items = sorted(items, key=lambda x: x.get(key) or 0.0)
@@ -81,7 +83,9 @@ def _top_bottom(items: List[Dict[str, Any]], *, key: str, n: int) -> Dict[str, L
     }
 
 
-def summarize_policy_rows(rows: Iterable[Dict[str, Any]], *, top_n: int = 6) -> Dict[str, Any]:
+def summarize_policy_rows(
+    rows: Iterable[Dict[str, Any]], *, top_n: int = 6
+) -> Dict[str, Any]:
     normalized = _normalize_rows(rows)
     pockets = aggregate_rows(normalized, ("pocket",))
     strategies = aggregate_rows(normalized, ("pocket", "strategy"))
@@ -106,7 +110,9 @@ def summarize_policy_rows(rows: Iterable[Dict[str, Any]], *, top_n: int = 6) -> 
 
 
 def _build_prompt(summary: Dict[str, Any]) -> str:
-    schema_text = json.dumps(POLICY_DIFF_SCHEMA, ensure_ascii=True, separators=(",", ":"))
+    schema_text = json.dumps(
+        POLICY_DIFF_SCHEMA, ensure_ascii=True, separators=(",", ":")
+    )
     summary_text = json.dumps(summary, ensure_ascii=True, separators=(",", ":"))
     return (
         "You are QuantRabbit's automated policy diff generator.\n"
@@ -184,9 +190,9 @@ def heuristic_policy_diff(
             continue
         if pf < pf_min and win_rate < win_min:
             blocked.append(pocket)
-            patch.setdefault("pockets", {}).setdefault(pocket, {}).setdefault("entry_gates", {})[
-                "allow_new"
-            ] = False
+            patch.setdefault("pockets", {}).setdefault(pocket, {}).setdefault(
+                "entry_gates", {}
+            )["allow_new"] = False
 
     if blocked:
         notes["heuristic_blocked_pockets"] = blocked

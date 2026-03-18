@@ -10,16 +10,14 @@ def _init_metrics_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE metrics (
               ts TEXT NOT NULL,
               metric TEXT NOT NULL,
               value REAL NOT NULL,
               tags TEXT
             )
-            """
-        )
+            """)
         con.commit()
     finally:
         con.close()

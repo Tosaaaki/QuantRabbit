@@ -4,8 +4,12 @@ import importlib.util
 import json
 from pathlib import Path
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "replay_quality_gate.py"
-_spec = importlib.util.spec_from_file_location("replay_quality_gate_script", _SCRIPT_PATH)
+_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[2] / "scripts" / "replay_quality_gate.py"
+)
+_spec = importlib.util.spec_from_file_location(
+    "replay_quality_gate_script", _SCRIPT_PATH
+)
 if _spec is None or _spec.loader is None:
     raise RuntimeError(f"failed to load script module: {_SCRIPT_PATH}")
 _module = importlib.util.module_from_spec(_spec)
@@ -19,7 +23,9 @@ def _arg_value(cmd: list[str], flag: str) -> str | None:
     return None
 
 
-def test_load_worker_trades_main_filters_and_excludes_end_reason(tmp_path: Path) -> None:
+def test_load_worker_trades_main_filters_and_excludes_end_reason(
+    tmp_path: Path,
+) -> None:
     out_path = tmp_path / "replay_exit_workers.json"
     payload = {
         "trades": [
@@ -55,7 +61,14 @@ def test_load_worker_trades_main_filters_and_excludes_end_reason(tmp_path: Path)
     }
     out_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    workers = ["__overall__", "TrendMA", "BB_RSI", "pocket:micro", "source:strategy", "source:scalp_replay"]
+    workers = [
+        "__overall__",
+        "TrendMA",
+        "BB_RSI",
+        "pocket:micro",
+        "source:strategy",
+        "source:scalp_replay",
+    ]
     grouped = _module._load_worker_trades_main(
         out_path=out_path,
         workers=workers,
@@ -223,7 +236,9 @@ def test_filter_tick_files_by_min_lines(tmp_path: Path) -> None:
     assert dropped == {p2.name: 1, p3.name: 0}
 
 
-def test_collect_tick_files_deduplicates_by_basename_and_prefers_larger_file(tmp_path: Path) -> None:
+def test_collect_tick_files_deduplicates_by_basename_and_prefers_larger_file(
+    tmp_path: Path,
+) -> None:
     d1 = tmp_path / "replay"
     d2 = tmp_path / "archive"
     d1.mkdir(parents=True, exist_ok=True)
@@ -251,12 +266,19 @@ def test_collect_tick_files_deduplicates_by_basename_and_prefers_larger_file(tmp
 
 
 def test_resolve_ticks_globs_prefers_cli_then_list_then_legacy() -> None:
-    assert _module._resolve_ticks_globs({}, "a/*.jsonl, b/*.jsonl") == ["a/*.jsonl", "b/*.jsonl"]
-    assert _module._resolve_ticks_globs({"ticks_globs": ["x/*.jsonl", "y/*.jsonl"]}, None) == [
+    assert _module._resolve_ticks_globs({}, "a/*.jsonl, b/*.jsonl") == [
+        "a/*.jsonl",
+        "b/*.jsonl",
+    ]
+    assert _module._resolve_ticks_globs(
+        {"ticks_globs": ["x/*.jsonl", "y/*.jsonl"]}, None
+    ) == [
         "x/*.jsonl",
         "y/*.jsonl",
     ]
-    assert _module._resolve_ticks_globs({"ticks_glob": "z/*.jsonl"}, None) == ["z/*.jsonl"]
+    assert _module._resolve_ticks_globs({"ticks_glob": "z/*.jsonl"}, None) == [
+        "z/*.jsonl"
+    ]
 
 
 def test_build_replay_env_applies_overrides_and_bool_coercion(monkeypatch) -> None:

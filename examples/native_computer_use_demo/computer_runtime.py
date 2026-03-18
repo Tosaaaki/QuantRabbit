@@ -53,7 +53,9 @@ def detect_environment() -> str:
         return "linux"
     if sys.platform.startswith("win"):
         return "windows"
-    raise RuntimeError(f"unsupported platform for computer tool demo: {platform.platform()}")
+    raise RuntimeError(
+        f"unsupported platform for computer tool demo: {platform.platform()}"
+    )
 
 
 def action_to_dict(action: Any) -> Any:
@@ -130,7 +132,9 @@ class ComputerRuntime:
         target = self.artifacts_dir / relative_path
         _write_artifact(target, json.dumps(payload, indent=2, ensure_ascii=False))
 
-    def capture_screenshot_output(self, *, step_index: int, call_index: int) -> tuple[dict[str, str], int, int]:
+    def capture_screenshot_output(
+        self, *, step_index: int, call_index: int
+    ) -> tuple[dict[str, str], int, int]:
         try:
             image = ImageGrab.grab()
         except Exception as exc:
@@ -144,7 +148,11 @@ class ComputerRuntime:
         if self.artifacts_dir is not None:
             rel = f"step_{step_index:02d}/call_{call_index:02d}_screen.png"
             _write_artifact(self.artifacts_dir / rel, png_bytes)
-        return {"type": "computer_screenshot", "image_url": _data_url_from_png(png_bytes)}, width, height
+        return (
+            {"type": "computer_screenshot", "image_url": _data_url_from_png(png_bytes)},
+            width,
+            height,
+        )
 
     def execute_actions(self, actions: Iterable[dict[str, Any]]) -> None:
         for action in actions:

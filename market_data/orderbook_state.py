@@ -77,7 +77,9 @@ _persist_inflight = False
 _persist_payload: dict[str, object] | None = None
 
 
-def _normalize_levels(levels: Iterable[Tuple[float, float]]) -> Tuple[OrderBookLevel, ...]:
+def _normalize_levels(
+    levels: Iterable[Tuple[float, float]],
+) -> Tuple[OrderBookLevel, ...]:
     normalized = []
     for price, size in levels:
         try:

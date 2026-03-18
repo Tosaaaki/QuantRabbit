@@ -11,7 +11,9 @@ from workers.scalp_ping_5s import worker as scalp_worker
 
 
 def _set_fast_flip_config(monkeypatch) -> None:
-    monkeypatch.setattr(scalp_worker.config, "FAST_DIRECTION_FLIP_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        scalp_worker.config, "FAST_DIRECTION_FLIP_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         scalp_worker.config,
         "FAST_DIRECTION_FLIP_DIRECTION_SCORE_MIN",
@@ -221,7 +223,9 @@ def test_fast_direction_flip_respects_cooldown(monkeypatch) -> None:
     assert reason == "cooldown"
 
 
-def test_fast_direction_flip_allows_neutral_horizon_when_bias_is_strong(monkeypatch) -> None:
+def test_fast_direction_flip_allows_neutral_horizon_when_bias_is_strong(
+    monkeypatch,
+) -> None:
     _set_fast_flip_config(monkeypatch)
     monkeypatch.setattr(scalp_worker, "_LAST_FAST_FLIP_MONO", 0.0)
 

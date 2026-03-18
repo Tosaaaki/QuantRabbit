@@ -32,7 +32,9 @@ def _load_worker_namespace() -> dict[str, object]:
         "_build_entry_thesis",
     }
     selected = [
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
     ]
     module = ast.Module(body=selected, type_ignores=[])
     namespace: dict[str, object] = {
@@ -120,14 +122,24 @@ def _load_worker_namespace() -> dict[str, object]:
         "_atr_pips": lambda fac: float(fac.get("atr_pips") or 0.0),
         "_rsi": lambda fac: float(fac.get("rsi") or 0.0),
         "_stoch_rsi": lambda fac: float(fac.get("stoch_rsi") or 0.0),
-        "_macd_hist_pips": lambda fac: float(fac.get("macd_hist_pips", fac.get("macd_hist") or 0.0)),
+        "_macd_hist_pips": lambda fac: float(
+            fac.get("macd_hist_pips", fac.get("macd_hist") or 0.0)
+        ),
         "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0),
         "_vwap_gap_pips": lambda fac: float(fac.get("vwap_gap") or 0.0),
         "_div_score": lambda fac: float(fac.get("div_score") or 0.0),
         "tick_snapshot": lambda *_args, **_kwargs: ([1.0, 2.0, 3.0], 1.0),
         "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.38),
-        "projection_decision": lambda side, mode="range": (True, 1.0, {"side": side, "mode": mode}),
-        "wick_blend_entry_quality": lambda **_kwargs: {"allow": True, "quality": 0.75, "components": {}},
+        "projection_decision": lambda side, mode="range": (
+            True,
+            1.0,
+            {"side": side, "mode": mode},
+        ),
+        "wick_blend_entry_quality": lambda **_kwargs: {
+            "allow": True,
+            "quality": 0.75,
+            "components": {},
+        },
         "get_candles_snapshot": lambda *_args, **_kwargs: [
             {"open": 158.18, "high": 158.19, "low": 158.15, "close": 158.18}
         ],
@@ -204,7 +216,11 @@ def test_reversion_short_flow_guard_blocks_current_like_continuation_short() -> 
 
 def test_drought_revert_requires_projection_gate() -> None:
     ns = _load_worker_namespace()
-    ns["projection_decision"] = lambda side, mode="range": (False, 1.0, {"side": side, "mode": mode})
+    ns["projection_decision"] = lambda side, mode="range": (
+        False,
+        1.0,
+        {"side": side, "mode": mode},
+    )
     signal_fn = ns["_signal_drought_revert"]
     fac = {
         "close": 158.046,
@@ -360,7 +376,9 @@ def test_drought_revert_blocks_weak_long_under_recent_setup_pressure() -> None:
         "plus_di": 19.0,
         "minus_di": 25.0,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.46, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.46, reason="volatility_compression"
+    )
 
     signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
 
@@ -403,7 +421,9 @@ def test_drought_revert_keeps_strong_long_under_recent_setup_pressure() -> None:
         "plus_di": 19.0,
         "minus_di": 22.0,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.46, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.46, reason="volatility_compression"
+    )
 
     signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
 
@@ -455,14 +475,18 @@ def test_drought_revert_blocks_mid_oversold_flat_gap_soft_trend_long_probe() -> 
         "plus_di": 24.0,
         "minus_di": 20.6,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.44, reason="volatility_compression"
+    )
 
     signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
 
     assert signal is None
 
 
-def test_drought_revert_keeps_deeper_oversold_flat_gap_when_trend_support_recovers() -> None:
+def test_drought_revert_keeps_deeper_oversold_flat_gap_when_trend_support_recovers() -> (
+    None
+):
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_drought_revert"]
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.74)
@@ -505,7 +529,9 @@ def test_drought_revert_keeps_deeper_oversold_flat_gap_when_trend_support_recove
         "plus_di": 18.8,
         "minus_di": 34.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.44, reason="volatility_compression"
+    )
 
     signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
 
@@ -556,14 +582,18 @@ def test_drought_revert_blocks_current_down_flat_weak_trend_long_probe() -> None
         "plus_di": 21.1,
         "minus_di": 29.5,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.44, reason="volatility_compression"
+    )
 
     signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
 
     assert signal is None
 
 
-def test_drought_revert_keeps_down_flat_trend_long_when_projection_and_di_support_recover() -> None:
+def test_drought_revert_keeps_down_flat_trend_long_when_projection_and_di_support_recover() -> (
+    None
+):
     ns = _load_worker_namespace()
     signal_fn = ns["_signal_drought_revert"]
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.70)
@@ -606,7 +636,9 @@ def test_drought_revert_keeps_down_flat_trend_long_when_projection_and_di_suppor
         "plus_di": 18.8,
         "minus_di": 34.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.44, reason="volatility_compression"
+    )
 
     signal = signal_fn(fac, range_ctx, tag="DroughtRevert")
 
@@ -676,7 +708,9 @@ def test_precision_lowvol_blocks_weak_short_under_recent_setup_pressure() -> Non
         "stoch_rsi": 0.74,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.44, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -718,7 +752,9 @@ def test_precision_lowvol_blocks_current_weak_overbought_short_lane() -> None:
         "stoch_rsi": 1.0,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -755,7 +791,9 @@ def test_precision_lowvol_keeps_higher_projection_short_when_rsi_is_high() -> No
         "stoch_rsi": 1.0,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -793,7 +831,9 @@ def test_precision_lowvol_blocks_marginal_short_under_continuation_headwind() ->
         "stoch_rsi": 0.91,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -830,7 +870,9 @@ def test_precision_lowvol_keeps_marginal_short_when_headwind_is_absent() -> None
         "stoch_rsi": 0.91,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -868,7 +910,9 @@ def test_precision_lowvol_blocks_headwind_short_just_below_marginal_rsi() -> Non
         "stoch_rsi": 0.88,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -905,7 +949,9 @@ def test_precision_lowvol_keeps_headwind_short_when_quality_recovers() -> None:
         "stoch_rsi": 0.88,
         "vwap_gap": 1.4,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -946,7 +992,9 @@ def test_precision_lowvol_blocks_oversold_negative_projection_long_lane() -> Non
         "ma20": 158.028,
         "ema20": 158.024,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.31, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.31, reason="volatility_compression"
+    )
 
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.40)
     ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
@@ -987,7 +1035,9 @@ def test_precision_lowvol_keeps_strong_reclaim_long_when_projection_recovers() -
         "ma20": 158.016,
         "ema20": 158.012,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.37, reason="volatility_compression"
+    )
 
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.86)
     ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
@@ -1030,7 +1080,9 @@ def test_precision_lowvol_blocks_up_flat_shallow_long_lane() -> None:
         "ma20": 158.004,
         "ema20": 158.006,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.37, reason="volatility_compression"
+    )
 
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.74)
     ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
@@ -1072,7 +1124,9 @@ def test_precision_lowvol_keeps_up_flat_long_when_reclaim_strength_recovers() ->
         "ma20": 158.004,
         "ema20": 158.006,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.37, reason="volatility_compression"
+    )
 
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.86)
     ns["_reversion_long_flow_guard"] = lambda **_kwargs: (
@@ -1121,7 +1175,9 @@ def test_precision_lowvol_blocks_short_when_higher_timeframes_stay_bullish() -> 
         "plus_di": 23.0,
         "minus_di": 18.0,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.45, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.45, reason="volatility_compression"
+    )
     ns["projection_decision"] = lambda side, mode="range": (
         True,
         1.0,
@@ -1264,7 +1320,9 @@ def test_precision_lowvol_blocks_up_flat_shallow_short_lane() -> None:
         "ma10": 158.024,
         "ma20": 158.020,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.48, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.48, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -1303,7 +1361,9 @@ def test_precision_lowvol_blocks_low_score_down_flat_short_lane() -> None:
         "ma10": 158.018,
         "ma20": 158.020,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.42, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.42, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -1342,7 +1402,9 @@ def test_precision_lowvol_keeps_down_flat_short_when_range_score_recovers() -> N
         "ma10": 158.018,
         "ma20": 158.020,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.61, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.61, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -1382,7 +1444,9 @@ def test_precision_lowvol_keeps_up_flat_short_when_setup_quality_is_strong() -> 
         "ma10": 158.024,
         "ma20": 158.020,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.46, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.46, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -1420,7 +1484,9 @@ def test_precision_lowvol_keeps_stronger_short_under_recent_setup_pressure() -> 
         "stoch_rsi": 0.82,
         "vwap_gap": 1.8,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.44, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.44, reason="volatility_compression"
+    )
 
     ns["_reversion_short_flow_guard"] = lambda **_kwargs: (
         True,
@@ -1542,7 +1608,9 @@ def test_wick_blend_signal_blocks_current_breakout_loser_lane() -> None:
         "atr_pips": 2.43,
         "rsi": 46.97,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.411, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.411, reason="volatility_compression"
+    )
 
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.9)
     ns["projection_decision"] = lambda side, mode="range": (
@@ -1578,7 +1646,9 @@ def test_wick_blend_signal_blocks_weak_countertrend_short_lane() -> None:
         "plus_di": 30.5,
         "minus_di": 19.8,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.29, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.29, reason="volatility_compression"
+    )
 
     ns["get_candles_snapshot"] = lambda *_args, **_kwargs: [
         {"open": 159.220, "high": 159.240, "low": 159.115, "close": 159.231}
@@ -1617,7 +1687,9 @@ def test_wick_blend_signal_keeps_stronger_countertrend_short_lane() -> None:
         "plus_di": 32.4,
         "minus_di": 14.7,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.24, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.24, reason="volatility_compression"
+    )
 
     ns["get_candles_snapshot"] = lambda *_args, **_kwargs: [
         {"open": 159.246, "high": 159.280, "low": 159.224, "close": 159.232}
@@ -1659,7 +1731,9 @@ def test_wick_blend_signal_blocks_vol_compression_lean_gap_long_lane() -> None:
         "plus_di": 25.8,
         "minus_di": 30.9,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.33, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.33, reason="volatility_compression"
+    )
 
     ns["get_candles_snapshot"] = lambda *_args, **_kwargs: [
         {"open": 159.190, "high": 159.205, "low": 159.160, "close": 159.184}
@@ -1694,7 +1768,9 @@ def test_wick_blend_signal_uses_wider_sl_band() -> None:
         "atr_pips": 1.6,
         "rsi": 46.97,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.511, reason="volatility_compression")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.511, reason="volatility_compression"
+    )
 
     ns["tick_reversal"] = lambda *_args, **_kwargs: (True, "long", 0.9)
     ns["projection_decision"] = lambda side, mode="range": (
@@ -1749,7 +1825,9 @@ def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:
         "plus_di": 24.0,
         "minus_di": 19.0,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.42, reason="volatility_compression", mode="RANGE")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.42, reason="volatility_compression", mode="RANGE"
+    )
 
     thesis = build_entry_thesis(signal, fac, range_ctx)
 
@@ -1766,7 +1844,9 @@ def test_build_entry_thesis_promotes_flow_guard_to_dynamic_fields() -> None:
     assert thesis["minus_di"] == 19.0
 
 
-def test_build_entry_thesis_preserves_direct_dynamic_fields_without_nested_flow_guard() -> None:
+def test_build_entry_thesis_preserves_direct_dynamic_fields_without_nested_flow_guard() -> (
+    None
+):
     ns = _load_worker_namespace()
     build_entry_thesis = ns["_build_entry_thesis"]
     signal = {
@@ -1793,7 +1873,9 @@ def test_build_entry_thesis_preserves_direct_dynamic_fields_without_nested_flow_
         "plus_di": 27.0,
         "minus_di": 18.0,
     }
-    range_ctx = SimpleNamespace(active=True, score=0.37, reason="volatility_compression", mode="RANGE")
+    range_ctx = SimpleNamespace(
+        active=True, score=0.37, reason="volatility_compression", mode="RANGE"
+    )
 
     thesis = build_entry_thesis(signal, fac, range_ctx)
 

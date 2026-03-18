@@ -73,7 +73,9 @@ def linspace(start: float, end: float, steps: int) -> List[float]:
     return [start + delta * i for i in range(1, steps + 1)]
 
 
-def _make_skeleton_path(o: float, h: float, l: float, c: float, rng: random.Random) -> List[float]:
+def _make_skeleton_path(
+    o: float, h: float, l: float, c: float, rng: random.Random
+) -> List[float]:
     if rng.random() < 0.5:
         return [o, h, l, c] if c >= o else [o, l, h, c]
     return [o, l, h, c] if c >= o else [o, h, l, c]
@@ -92,7 +94,9 @@ def generate_ticks_for_candle(
         "ny": cfg.density.tpm_5s_ny,
         "asia": cfg.density.tpm_5s_asia,
     }[sess]
-    lam = base_lambda * (cfg.density.atr_k_high if atr_pips > 0.4 else cfg.density.atr_k_low)
+    lam = base_lambda * (
+        cfg.density.atr_k_high if atr_pips > 0.4 else cfg.density.atr_k_low
+    )
     n_ticks = poisson(lam, rng)
 
     o, h, l, c = candle["o"], candle["h"], candle["l"], candle["c"]
@@ -123,7 +127,12 @@ def generate_ticks_for_candle(
     ):
         start = rng.randrange(1, len(samples) - cfg.shape.impulse_ticks - 1)
         direction = 1 if c >= o else -1
-        step = cfg.shape.impulse_atr_k * atr_pips * PIP_VALUE / max(1, cfg.shape.impulse_ticks)
+        step = (
+            cfg.shape.impulse_atr_k
+            * atr_pips
+            * PIP_VALUE
+            / max(1, cfg.shape.impulse_ticks)
+        )
         for k in range(cfg.shape.impulse_ticks):
             samples[start + k] = clamp(samples[start + k] + direction * step, l, h)
 
@@ -139,7 +148,9 @@ def generate_ticks_for_candle(
     timestamps = []
     elapsed = 0
     for _ in samples:
-        delta_ms = max(1, int(rng.expovariate(lam / max(1.0, window_ms / 1000.0)) * 1000))
+        delta_ms = max(
+            1, int(rng.expovariate(lam / max(1.0, window_ms / 1000.0)) * 1000)
+        )
         elapsed += delta_ms
         if elapsed >= window_ms:
             elapsed = window_ms - 1
@@ -235,7 +246,9 @@ def scan_tick_density(
     return count, meet, coverage
 
 
-def density_summary(ticks: List[Dict[str, float]], cfg: SimCfg) -> List[Dict[str, float]]:
+def density_summary(
+    ticks: List[Dict[str, float]], cfg: SimCfg
+) -> List[Dict[str, float]]:
     summary: List[Dict[str, float]] = []
     for window_sec, min_ticks in cfg.density.tickrate_checks:
         count, meet, coverage = scan_tick_density(ticks, window_sec, min_ticks)

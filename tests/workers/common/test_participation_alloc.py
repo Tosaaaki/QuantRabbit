@@ -50,7 +50,9 @@ def test_load_strategy_profile_prefers_setup_override(tmp_path: Path) -> None:
     assert profile["setup_override"]["match_dimension"] == "setup_fingerprint"
 
 
-def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp_path: Path) -> None:
+def test_load_strategy_profile_derives_setup_override_from_technical_context(
+    tmp_path: Path,
+) -> None:
     payload = {
         "strategies": {
             "RangeFader-sell-fade": {
@@ -107,7 +109,9 @@ def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp
     assert profile["setup_override"]["match_dimension"] == "flow_micro"
 
 
-def test_load_strategy_profile_preserves_setup_override_runtime_caps(tmp_path: Path) -> None:
+def test_load_strategy_profile_preserves_setup_override_runtime_caps(
+    tmp_path: Path,
+) -> None:
     payload = {
         "strategies": {
             "PrecisionLowVol": {

@@ -10,7 +10,9 @@ if str(PROJECT_ROOT) not in sys.path:
 import execution.order_manager as order_manager
 
 
-def test_allow_stop_loss_on_fill_strategy_override_for_scalp_ping_5s_b(monkeypatch) -> None:
+def test_allow_stop_loss_on_fill_strategy_override_for_scalp_ping_5s_b(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: None)
     monkeypatch.delenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", raising=False)
 
@@ -39,7 +41,9 @@ def test_allow_stop_loss_on_fill_generic_strategy_override(monkeypatch) -> None:
     )
 
 
-def test_allow_stop_loss_on_fill_generic_strategy_override_supports_underscore_tags(monkeypatch) -> None:
+def test_allow_stop_loss_on_fill_generic_strategy_override_supports_underscore_tags(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
     monkeypatch.setenv(
         "ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SESSION_OPEN_BREAKOUT",
@@ -62,7 +66,9 @@ def test_allow_stop_loss_on_fill_generic_strategy_override_supports_underscore_t
     )
 
 
-def test_allow_stop_loss_on_fill_generic_strategy_override_can_disable(monkeypatch) -> None:
+def test_allow_stop_loss_on_fill_generic_strategy_override_can_disable(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
     monkeypatch.setenv(
         "ORDER_ALLOW_STOP_LOSS_ON_FILL_STRATEGY_SCALP_PING_5S_B_LIVE",
@@ -79,7 +85,9 @@ def test_allow_stop_loss_on_fill_generic_strategy_override_can_disable(monkeypat
     )
 
 
-def test_allow_stop_loss_on_fill_keeps_default_off_for_non_override(monkeypatch) -> None:
+def test_allow_stop_loss_on_fill_keeps_default_off_for_non_override(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: None)
     monkeypatch.delenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_B", raising=False)
 
@@ -105,7 +113,9 @@ def test_allow_stop_loss_on_fill_b_variant_can_override_global_off(monkeypatch) 
     )
 
 
-def test_allow_stop_loss_on_fill_c_variant_respects_family_override(monkeypatch) -> None:
+def test_allow_stop_loss_on_fill_c_variant_respects_family_override(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: None)
     monkeypatch.setenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C", "1")
 
@@ -144,7 +154,9 @@ def test_entry_sl_disabled_for_c_variant_can_be_reenabled(monkeypatch) -> None:
     )
 
 
-def test_entry_sl_disabled_for_c_variant_stays_disabled_without_override(monkeypatch) -> None:
+def test_entry_sl_disabled_for_c_variant_stays_disabled_without_override(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(order_manager, "fixed_sl_mode", lambda: False)
     monkeypatch.delenv("ORDER_ALLOW_STOP_LOSS_ON_FILL_SCALP_PING_5S_C", raising=False)
 

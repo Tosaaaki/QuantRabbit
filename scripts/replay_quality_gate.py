@@ -213,7 +213,9 @@ def _resolve_scenario_names(
         if scenario_names != ["all"]:
             return (
                 ["all"],
-                ["[WARN] scenario filtering is only supported by exit_workers_groups; using all baseline data only."],
+                [
+                    "[WARN] scenario filtering is only supported by exit_workers_groups; using all baseline data only."
+                ],
                 None,
             )
         return scenario_names, [], None
@@ -224,7 +226,9 @@ def _resolve_scenario_names(
     return scenario_names, [], None
 
 
-def _resolve_ticks_globs(config: Mapping[str, Any], cli_ticks_glob: str | None) -> list[str]:
+def _resolve_ticks_globs(
+    config: Mapping[str, Any], cli_ticks_glob: str | None
+) -> list[str]:
     cli_patterns = _split_csv_patterns(cli_ticks_glob)
     if cli_patterns:
         return cli_patterns
@@ -262,11 +266,15 @@ def _collect_tick_files(
             continue
         current_size = _stat_size(current)
         candidate_size = _stat_size(path)
-        if candidate_size > current_size or (candidate_size == current_size and str(path) > str(current)):
+        if candidate_size > current_size or (
+            candidate_size == current_size and str(path) > str(current)
+        ):
             by_name[path.name] = path
 
     deduped_tick_files = [by_name[name] for name in sorted(by_name.keys())]
-    duplicate_tick_file_count = max(0, matched_tick_file_count - len(deduped_tick_files))
+    duplicate_tick_file_count = max(
+        0, matched_tick_file_count - len(deduped_tick_files)
+    )
     return deduped_tick_files, matched_tick_file_count, duplicate_tick_file_count
 
 
@@ -301,7 +309,9 @@ def _build_threshold(
     )
 
 
-def _build_replay_env(replay_cfg: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+def _build_replay_env(
+    replay_cfg: Mapping[str, Any],
+) -> tuple[dict[str, str], dict[str, str]]:
     env = dict(os.environ)
     overrides: dict[str, str] = {}
     raw = replay_cfg.get("env")
@@ -459,7 +469,11 @@ def _build_replay_command_main(
         if key in slip_values:
             cmd.extend([flag, str(slip_values[key])])
 
-    fill_mode = str(replay_cfg.get("fill_mode") or ("next_tick" if realistic else "")).strip().lower()
+    fill_mode = (
+        str(replay_cfg.get("fill_mode") or ("next_tick" if realistic else ""))
+        .strip()
+        .lower()
+    )
     if fill_mode in {"lko", "next_tick"}:
         cmd.extend(["--fill-mode", fill_mode])
     return cmd
@@ -500,7 +514,9 @@ def _load_worker_trades(
             typed_trades = [t for t in trades if isinstance(t, dict)]
             if exclude_end_of_replay:
                 typed_trades = [
-                    t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"
+                    t
+                    for t in typed_trades
+                    if str(t.get("reason") or "") != "end_of_replay"
                 ]
             worker_trades_by_scenario[scenario] = typed_trades
 
@@ -526,7 +542,9 @@ def _load_worker_trades_main(
         return out
     typed_trades = [t for t in trades if isinstance(t, dict)]
     if exclude_end_of_replay:
-        typed_trades = [t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"]
+        typed_trades = [
+            t for t in typed_trades if str(t.get("reason") or "") != "end_of_replay"
+        ]
 
     for worker in workers:
         if worker == "__overall__":
@@ -534,17 +552,22 @@ def _load_worker_trades_main(
             continue
         if worker.startswith("pocket:"):
             pocket = worker.split(":", 1)[1].strip().lower()
-            out[worker] = [t for t in typed_trades if str(t.get("pocket") or "").lower() == pocket]
+            out[worker] = [
+                t for t in typed_trades if str(t.get("pocket") or "").lower() == pocket
+            ]
             continue
         if worker.startswith("source:"):
             source = worker.split(":", 1)[1].strip().lower()
-            out[worker] = [t for t in typed_trades if str(t.get("source") or "").lower() == source]
+            out[worker] = [
+                t for t in typed_trades if str(t.get("source") or "").lower() == source
+            ]
             continue
         key = worker.strip().lower()
         out[worker] = [
             t
             for t in typed_trades
-            if str(t.get("strategy_tag") or "").lower() == key or str(t.get("strategy") or "").lower() == key
+            if str(t.get("strategy_tag") or "").lower() == key
+            or str(t.get("strategy") or "").lower() == key
         ]
     return out
 
@@ -619,14 +642,18 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Replay walk-forward quality gate")
-    ap.add_argument("--config", type=Path, default=Path("config/replay_quality_gate.yaml"))
+    ap.add_argument(
+        "--config", type=Path, default=Path("config/replay_quality_gate.yaml")
+    )
     ap.add_argument(
         "--ticks-glob",
         default=None,
         help="Glob pattern(s) for replay tick JSONL files. Use comma-separated patterns for multiple roots.",
     )
     ap.add_argument("--workers", default=None, help="Comma separated worker names.")
-    ap.add_argument("--backend", default=None, choices=("exit_workers_groups", "exit_workers_main"))
+    ap.add_argument(
+        "--backend", default=None, choices=("exit_workers_groups", "exit_workers_main")
+    )
     ap.add_argument(
         "--scenarios",
         default=None,
@@ -639,7 +666,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--min-fold-pass-rate", type=float, default=None)
     ap.add_argument("--min-tick-lines", type=int, default=None)
     ap.add_argument("--timeout-sec", type=int, default=1800)
-    ap.add_argument("--strict", action="store_true", help="Return non-zero if gate fails.")
+    ap.add_argument(
+        "--strict", action="store_true", help="Return non-zero if gate fails."
+    )
     return ap.parse_args()
 
 
@@ -649,24 +678,38 @@ def main() -> int:
 
     workers = _resolve_workers(config, args.workers)
     if not workers:
-        print("No workers specified. Use --workers or config.replay_quality_gate.yaml:workers", file=sys.stderr)
+        print(
+            "No workers specified. Use --workers or config.replay_quality_gate.yaml:workers",
+            file=sys.stderr,
+        )
         return 2
 
     ticks_globs = _resolve_ticks_globs(config, args.ticks_glob)
     if not ticks_globs:
-        print("No ticks_glob(s) specified. Use --ticks-glob or config file.", file=sys.stderr)
+        print(
+            "No ticks_glob(s) specified. Use --ticks-glob or config file.",
+            file=sys.stderr,
+        )
         return 2
 
-    tick_files, matched_tick_file_count, duplicate_tick_file_count = _collect_tick_files(ticks_globs)
+    tick_files, matched_tick_file_count, duplicate_tick_file_count = (
+        _collect_tick_files(ticks_globs)
+    )
     if not tick_files:
         print(f"No tick files matched: {','.join(ticks_globs)}", file=sys.stderr)
         return 2
     if duplicate_tick_file_count > 0:
-        print(f"[INFO] deduplicated tick files by basename: duplicates={duplicate_tick_file_count}")
+        print(
+            f"[INFO] deduplicated tick files by basename: duplicates={duplicate_tick_file_count}"
+        )
 
     min_tick_lines = max(
         0,
-        int(args.min_tick_lines if args.min_tick_lines is not None else config.get("min_tick_lines") or 0),
+        int(
+            args.min_tick_lines
+            if args.min_tick_lines is not None
+            else config.get("min_tick_lines") or 0
+        ),
     )
     tick_files, filtered_out_files = _filter_tick_files_by_min_lines(
         tick_files,
@@ -684,12 +727,20 @@ def main() -> int:
         )
         return 2
 
-    wf_cfg = config.get("walk_forward") if isinstance(config.get("walk_forward"), dict) else {}
+    wf_cfg = (
+        config.get("walk_forward")
+        if isinstance(config.get("walk_forward"), dict)
+        else {}
+    )
     train_files = max(1, int(args.train_files or wf_cfg.get("train_files") or 4))
     test_files = max(1, int(args.test_files or wf_cfg.get("test_files") or 1))
     step_files = max(1, int(args.step_files or wf_cfg.get("step_files") or 1))
     min_fold_pass_rate = _to_float(
-        args.min_fold_pass_rate if args.min_fold_pass_rate is not None else wf_cfg.get("min_fold_pass_rate"),
+        (
+            args.min_fold_pass_rate
+            if args.min_fold_pass_rate is not None
+            else wf_cfg.get("min_fold_pass_rate")
+        ),
         1.0,
     )
 
@@ -708,14 +759,25 @@ def main() -> int:
         return 2
 
     replay_cfg = config.get("replay") if isinstance(config.get("replay"), dict) else {}
-    backend = str(args.backend or replay_cfg.get("backend") or "exit_workers_groups").strip().lower()
+    backend = (
+        str(args.backend or replay_cfg.get("backend") or "exit_workers_groups")
+        .strip()
+        .lower()
+    )
     scenario_names, scenario_warnings, scenario_error = _resolve_scenario_names(
-        raw_scenarios=args.scenarios if args.scenarios is not None else replay_cfg.get("scenarios"),
+        raw_scenarios=(
+            args.scenarios
+            if args.scenarios is not None
+            else replay_cfg.get("scenarios")
+        ),
         backend=backend,
     )
     if scenario_error:
         print(f"[ERROR] {scenario_error}", file=sys.stderr)
-        print(f"[ERROR] supported scenarios: {','.join(sorted(SCENARIO_OPTIONS))}", file=sys.stderr)
+        print(
+            f"[ERROR] supported scenarios: {','.join(sorted(SCENARIO_OPTIONS))}",
+            file=sys.stderr,
+        )
         return 2
     for message in scenario_warnings:
         print(message)
@@ -805,8 +867,12 @@ def main() -> int:
     )
 
     gates_cfg = config.get("gates") if isinstance(config.get("gates"), dict) else {}
-    default_gate = gates_cfg.get("default") if isinstance(gates_cfg.get("default"), dict) else {}
-    worker_gates = gates_cfg.get("workers") if isinstance(gates_cfg.get("workers"), dict) else {}
+    default_gate = (
+        gates_cfg.get("default") if isinstance(gates_cfg.get("default"), dict) else {}
+    )
+    worker_gates = (
+        gates_cfg.get("workers") if isinstance(gates_cfg.get("workers"), dict) else {}
+    )
 
     worker_results: dict[str, Any] = {}
     failing_workers: list[str] = []
@@ -814,7 +880,11 @@ def main() -> int:
     for worker in workers:
         threshold = _build_threshold(
             base=default_gate,
-            override=worker_gates.get(worker) if isinstance(worker_gates.get(worker), dict) else None,
+            override=(
+                worker_gates.get(worker)
+                if isinstance(worker_gates.get(worker), dict)
+                else None
+            ),
         )
         scenarios_to_eval = [s for s in (scenario_names or ["all"]) if s]
         if "all" not in scenarios_to_eval:
@@ -851,7 +921,9 @@ def main() -> int:
                     }
                 )
 
-            summary = summarize_worker_folds(fold_records, min_fold_pass_rate=min_fold_pass_rate)
+            summary = summarize_worker_folds(
+                fold_records, min_fold_pass_rate=min_fold_pass_rate
+            )
             worker_scenario_folds[scenario] = fold_records
             worker_scenario_summaries[scenario] = summary
 
@@ -902,7 +974,10 @@ def main() -> int:
 
     json_path = out_root / "quality_gate_report.json"
     md_path = out_root / "quality_gate_report.md"
-    json_path.write_text(json.dumps(_sanitize_json(report), ensure_ascii=False, indent=2), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(_sanitize_json(report), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     md_path.write_text(_render_markdown(report), encoding="utf-8")
 
     print(str(json_path))

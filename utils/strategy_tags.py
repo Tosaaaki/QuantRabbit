@@ -13,7 +13,10 @@ _PREFIX_ALIAS_PATTERNS = (
     (re.compile(r"^micropul[0-9a-f]{8,}$", re.IGNORECASE), "MicroPullbackEMA"),
     (re.compile(r"^microran[0-9a-f]{8,}$", re.IGNORECASE), "MicroRangeBreak"),
     (re.compile(r"^microtre[0-9a-f]{8,}$", re.IGNORECASE), "MicroTrendRetest-long"),
-    (re.compile(r"^scalpmacdrsi[0-9a-f]{8,}$", re.IGNORECASE), "scalp_macd_rsi_div_b_live"),
+    (
+        re.compile(r"^scalpmacdrsi[0-9a-f]{8,}$", re.IGNORECASE),
+        "scalp_macd_rsi_div_b_live",
+    ),
 )
 
 _EXACT_ALIASES = {
@@ -128,7 +131,9 @@ def _match_known(text: str, known_keys: Iterable[str] | None) -> str:
     return text
 
 
-def resolve_strategy_tag(raw: str | None, *, known_keys: Iterable[str] | None = None) -> str:
+def resolve_strategy_tag(
+    raw: str | None, *, known_keys: Iterable[str] | None = None
+) -> str:
     text = strip_ephemeral_strategy_suffix(raw)
     if not text:
         return ""
@@ -194,7 +199,9 @@ def extract_strategy_tags(
         strategy_tag,
         raw_tag,
     ):
-        resolved = resolve_strategy_tag(str(candidate or "").strip(), known_keys=known_keys)
+        resolved = resolve_strategy_tag(
+            str(candidate or "").strip(), known_keys=known_keys
+        )
         if resolved:
             canonical_tag = resolved
             break
@@ -216,7 +223,9 @@ def strategy_like_matches(
     if not text:
         return True
     escaped = re.escape(text)
-    regex = re.compile("^" + escaped.replace("%", ".*").replace("_", ".") + "$", re.IGNORECASE)
+    regex = re.compile(
+        "^" + escaped.replace("%", ".*").replace("_", ".") + "$", re.IGNORECASE
+    )
     candidates = (
         str(strategy_tag or "").strip(),
         strip_ephemeral_strategy_suffix(strategy_tag),

@@ -22,7 +22,9 @@ def _patch_db_settings(tmp_path: pathlib.Path, monkeypatch) -> pathlib.Path:
     return db_path
 
 
-def test_log_metric_writes_when_db_available(tmp_path: pathlib.Path, monkeypatch) -> None:
+def test_log_metric_writes_when_db_available(
+    tmp_path: pathlib.Path, monkeypatch
+) -> None:
     db_path = _patch_db_settings(tmp_path, monkeypatch)
 
     ok = metrics_logger.log_metric(
@@ -42,7 +44,9 @@ def test_log_metric_writes_when_db_available(tmp_path: pathlib.Path, monkeypatch
     assert row == ("range_mode_active", 1.0)
 
 
-def test_log_metric_returns_false_when_db_is_locked(tmp_path: pathlib.Path, monkeypatch) -> None:
+def test_log_metric_returns_false_when_db_is_locked(
+    tmp_path: pathlib.Path, monkeypatch
+) -> None:
     db_path = _patch_db_settings(tmp_path, monkeypatch)
 
     lock_con = sqlite3.connect(str(db_path))

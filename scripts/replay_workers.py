@@ -120,7 +120,9 @@ def load_ticks(path: Path) -> List[Tick]:
                 if epoch > 10**11:  # assume milliseconds
                     epoch /= 1000.0
             else:
-                epoch = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp()
+                epoch = datetime.fromisoformat(
+                    ts_raw.replace("Z", "+00:00")
+                ).timestamp()
             bid = float(payload.get("bid", 0.0))
             ask = float(payload.get("ask", 0.0))
             ticks.append(Tick(epoch=epoch, bid=bid, ask=ask))
@@ -205,7 +207,9 @@ def _build_live_trade_overlap(worker: str, ticks: Sequence[Tick]) -> Dict[str, o
     total_strategy_trades = 0
     overlap_count = 0
     for row in rows:
-        opened_at = _parse_time_value(row["open_time"]) or _parse_time_value(row["entry_time"])
+        opened_at = _parse_time_value(row["open_time"]) or _parse_time_value(
+            row["entry_time"]
+        )
         closed_at = _parse_time_value(row["close_time"]) or opened_at
         if opened_at is None or closed_at is None:
             continue
@@ -224,7 +228,9 @@ def _build_live_trade_overlap(worker: str, ticks: Sequence[Tick]) -> Dict[str, o
     }
 
 
-def attach_replay_coverage(result: Dict[str, object], *, ticks: Sequence[Tick], worker: str) -> Dict[str, object]:
+def attach_replay_coverage(
+    result: Dict[str, object], *, ticks: Sequence[Tick], worker: str
+) -> Dict[str, object]:
     summary = result.setdefault("summary", {})
     if not isinstance(summary, dict):
         summary = {}
@@ -284,7 +290,7 @@ def _z_score(values: Iterable[float]) -> Optional[float]:
     var = sum((v - mu) ** 2 for v in sample) / max(len(sample) - 1, 1)
     if var <= 0.0:
         return 0.0
-    sigma = var ** 0.5
+    sigma = var**0.5
     if sigma == 0:
         return 0.0
     return (sample[-1] - mu) / sigma
@@ -434,13 +440,17 @@ def replay_fast_scalp(
     else:
         fs_config.REQUIRE_CONSOLIDATION = True
     if overrides.get("consolidation_window_sec") is not None:
-        fs_config.CONSOLIDATION_WINDOW_SEC = max(0.1, float(overrides["consolidation_window_sec"]))
+        fs_config.CONSOLIDATION_WINDOW_SEC = max(
+            0.1, float(overrides["consolidation_window_sec"])
+        )
     if overrides.get("consolidation_range_pips") is not None:
         fs_config.CONSOLIDATION_MAX_RANGE_PIPS = max(
             0.0, float(overrides["consolidation_range_pips"])
         )
     if overrides.get("impulse_window_sec") is not None:
-        fs_config.IMPULSE_LOOKBACK_SEC = max(0.2, float(overrides["impulse_window_sec"]))
+        fs_config.IMPULSE_LOOKBACK_SEC = max(
+            0.2, float(overrides["impulse_window_sec"])
+        )
     if overrides.get("min_impulse_pips") is not None:
         fs_config.MIN_IMPULSE_PIPS = max(0.0, float(overrides["min_impulse_pips"]))
     if overrides.get("min_entry_atr_pips") is not None:
@@ -461,7 +471,9 @@ def replay_fast_scalp(
         max_ticks_in_window = fs_config.MIN_TICK_COUNT
 
     if max_ticks_in_window >= 8:
-        effective_entry_ticks = min(fs_config.MIN_ENTRY_TICK_COUNT, max_ticks_in_window - 1)
+        effective_entry_ticks = min(
+            fs_config.MIN_ENTRY_TICK_COUNT, max_ticks_in_window - 1
+        )
         effective_min_ticks = min(fs_config.MIN_TICK_COUNT, max_ticks_in_window - 2)
     else:
         effective_entry_ticks = min(fs_config.MIN_ENTRY_TICK_COUNT, max_ticks_in_window)
@@ -507,7 +519,9 @@ def replay_fast_scalp(
         sample_features = extract_features(spread, ticks=feature_sample)
         if sample_features and sample_features.atr_pips is not None:
             atr_samples.append(float(sample_features.atr_pips))
-    original_consolidation_range = getattr(fs_config, "CONSOLIDATION_MAX_RANGE_PIPS", 0.55)
+    original_consolidation_range = getattr(
+        fs_config, "CONSOLIDATION_MAX_RANGE_PIPS", 0.55
+    )
     if atr_samples and "min_entry_atr_pips" not in overrides:
         atr_samples.sort()
         median_atr = atr_samples[len(atr_samples) // 2]
@@ -515,7 +529,9 @@ def replay_fast_scalp(
             0.04, min(fs_config.MIN_ENTRY_ATR_PIPS, median_atr * 0.5)
         )
     elif "min_entry_atr_pips" not in overrides:
-        fs_config.MIN_ENTRY_ATR_PIPS = max(0.04, min(fs_config.MIN_ENTRY_ATR_PIPS, 0.055))
+        fs_config.MIN_ENTRY_ATR_PIPS = max(
+            0.04, min(fs_config.MIN_ENTRY_ATR_PIPS, 0.055)
+        )
     if "min_impulse_pips" not in overrides:
         fs_config.MIN_IMPULSE_PIPS = min(
             getattr(fs_config, "MIN_IMPULSE_PIPS", 0.7),
@@ -531,7 +547,9 @@ def replay_fast_scalp(
             0.45, min(0.85, original_consolidation_range * 1.4)
         )
 
-    scheme_key = (exit_scheme or os.getenv("FAST_SCALP_EXIT_SCHEME", "B")).strip().upper()
+    scheme_key = (
+        (exit_scheme or os.getenv("FAST_SCALP_EXIT_SCHEME", "B")).strip().upper()
+    )
     if scheme_key not in FAST_SCALP_EXIT_SCHEMES:
         scheme_key = "B"
     exit_cfg = FAST_SCALP_EXIT_SCHEMES[scheme_key]
@@ -558,7 +576,11 @@ def replay_fast_scalp(
         gate_kwargs["min_atr_pips"] = max(0.0, float(overrides["min_entry_atr_pips"]))
     session_override = overrides.get("sessions")
     if session_override is not None:
-        tokens = [token.strip().lower() for token in str(session_override).split(",") if token.strip()]
+        tokens = [
+            token.strip().lower()
+            for token in str(session_override).split(",")
+            if token.strip()
+        ]
         gate_kwargs["sessions"] = set(tokens) if tokens else None
     tickrate_window_sec = float(overrides.get("tickrate_window_sec", 5.0))
     min_tickrate = overrides.get("tickrate_min")
@@ -578,7 +600,9 @@ def replay_fast_scalp(
         entry_cooldown_sec = max(15.0, getattr(fs_config, "ENTRY_COOLDOWN_SEC", 1.0))
     cooldown_until = {"long": ticks[0].epoch - 1.0, "short": ticks[0].epoch - 1.0}
 
-    def close_position(pos: Dict[str, object], reason: str, exit_tick: Tick, *, force: bool = False) -> None:
+    def close_position(
+        pos: Dict[str, object], reason: str, exit_tick: Tick, *, force: bool = False
+    ) -> None:
         nonlocal loss_streak, loss_cooldown_until
         hold_sec = exit_tick.epoch - pos["entry_epoch"]
         if not force and hold_sec < min_hold_sec:
@@ -590,7 +614,12 @@ def replay_fast_scalp(
         if direction == "short":
             gross_pips = -gross_pips
         exit_spread = (exit_tick.ask - exit_tick.bid) / fs_config.PIP_VALUE
-        cost_pips = pos.get("entry_spread", 0.0) + exit_spread + cost_cfg["slippage"] + cost_cfg["commission"]
+        cost_pips = (
+            pos.get("entry_spread", 0.0)
+            + exit_spread
+            + cost_cfg["slippage"]
+            + cost_cfg["commission"]
+        )
         net_pips = gross_pips - cost_pips
         trades.append(
             {
@@ -615,7 +644,9 @@ def replay_fast_scalp(
         if net_pips < 0:
             loss_streak += 1
             if fs_config.LOSS_STREAK_MAX and loss_streak >= fs_config.LOSS_STREAK_MAX:
-                loss_cooldown_until = exit_tick.epoch + fs_config.LOSS_STREAK_COOLDOWN_MIN * 60.0
+                loss_cooldown_until = (
+                    exit_tick.epoch + fs_config.LOSS_STREAK_COOLDOWN_MIN * 60.0
+                )
         else:
             loss_streak = 0
         open_positions.remove(pos)
@@ -638,7 +669,11 @@ def replay_fast_scalp(
         for pos in list(open_positions):
             hold_age = tick.epoch - pos["entry_epoch"]
             atr_snapshot = pos.get("atr_snapshot", 0.1)
-            max_hold_sec = max(30.0, atr_snapshot * 60.0 * max_hold_k) if max_hold_k > 0 else float("inf")
+            max_hold_sec = (
+                max(30.0, atr_snapshot * 60.0 * max_hold_k)
+                if max_hold_k > 0
+                else float("inf")
+            )
             if hold_age >= max_hold_sec:
                 close_position(pos, "max_hold", tick, force=True)
                 continue
@@ -690,13 +725,11 @@ def replay_fast_scalp(
         features = extract_features(spread_pips, ticks=tick_buffer)
         if features is None:
             continue
-        if (
-            min_tickrate is not None
-            and min_tickrate > 0
-            and tickrate_window_sec > 0
-        ):
+        if min_tickrate is not None and min_tickrate > 0 and tickrate_window_sec > 0:
             recent_tick_count = sum(
-                1 for _t in tick_buffer if tick.epoch - _t["epoch"] <= tickrate_window_sec
+                1
+                for _t in tick_buffer
+                if tick.epoch - _t["epoch"] <= tickrate_window_sec
             )
             if recent_tick_count < min_tickrate:
                 continue
@@ -788,27 +821,29 @@ def replay_fast_scalp(
         "trades": len(trades),
         "total_pnl_pips": round(sum(t["pnl_pips"] for t in trades), 3),
         "total_pnl_jpy": round(sum(t["pnl_pips"] for t in trades) * 100, 3),
-        "win_rate": round(
-            sum(1 for t in trades if t["pnl_pips"] > 0) / len(trades), 4
-        )
-        if trades
-        else 0.0,
+        "win_rate": (
+            round(sum(1 for t in trades if t["pnl_pips"] > 0) / len(trades), 4)
+            if trades
+            else 0.0
+        ),
         "profit_factor": (
-            round(
-                sum(t["pnl_pips"] for t in trades if t["pnl_pips"] > 0)
-                / abs(sum(t["pnl_pips"] for t in trades if t["pnl_pips"] < 0)),
-                4,
+            (
+                round(
+                    sum(t["pnl_pips"] for t in trades if t["pnl_pips"] > 0)
+                    / abs(sum(t["pnl_pips"] for t in trades if t["pnl_pips"] < 0)),
+                    4,
+                )
+                if any(t["pnl_pips"] < 0 for t in trades)
+                else float("inf")
             )
-            if any(t["pnl_pips"] < 0 for t in trades)
-            else float("inf")
-        )
-        if trades
-        else 0.0,
-        "avg_hold_seconds": round(
-            sum(t["hold_seconds"] for t in trades) / len(trades), 3
-        )
-        if trades
-        else 0.0,
+            if trades
+            else 0.0
+        ),
+        "avg_hold_seconds": (
+            round(sum(t["hold_seconds"] for t in trades) / len(trades), 3)
+            if trades
+            else 0.0
+        ),
     }
 
     profiles: Dict[str, int] = {}
@@ -831,7 +866,9 @@ def replay_pullback_s5(ticks: List[Tick]) -> Dict[str, object]:
     cfg = __import__("workers.pullback_s5.config", fromlist=["config"])
 
     bucket: List[Dict[str, float]] = []
-    bucket_end = ticks[0].epoch - (ticks[0].epoch % cfg.BUCKET_SECONDS) + cfg.BUCKET_SECONDS
+    bucket_end = (
+        ticks[0].epoch - (ticks[0].epoch % cfg.BUCKET_SECONDS) + cfg.BUCKET_SECONDS
+    )
     trades: List[Dict[str, object]] = []
     open_positions: List[Dict[str, object]] = []
     last_entry_epoch = ticks[0].epoch - cfg.COOLDOWN_SEC
@@ -925,7 +962,7 @@ def replay_pullback_s5(ticks: List[Tick]) -> Dict[str, object]:
             var = sum((x - mean_val) ** 2 for x in series) / max(len(series) - 1, 1)
             if var <= 0.0:
                 return 0.0
-            return (series[-1] - mean_val) / (var ** 0.5)
+            return (series[-1] - mean_val) / (var**0.5)
 
         z_fast = _zscore(fast_series)
         z_slow = _zscore(slow_series)
@@ -939,11 +976,23 @@ def replay_pullback_s5(ticks: List[Tick]) -> Dict[str, object]:
         rsi_fast = _rsi(fast_series, cfg.RSI_PERIOD)
 
         side: Optional[str] = None
-        if cfg.FAST_Z_MIN <= z_fast <= cfg.FAST_Z_MAX and z_slow <= cfg.SLOW_Z_SHORT_MAX:
-            if rsi_fast is None or cfg.RSI_SHORT_RANGE[0] <= rsi_fast <= cfg.RSI_SHORT_RANGE[1]:
+        if (
+            cfg.FAST_Z_MIN <= z_fast <= cfg.FAST_Z_MAX
+            and z_slow <= cfg.SLOW_Z_SHORT_MAX
+        ):
+            if (
+                rsi_fast is None
+                or cfg.RSI_SHORT_RANGE[0] <= rsi_fast <= cfg.RSI_SHORT_RANGE[1]
+            ):
                 side = "short"
-        elif -cfg.FAST_Z_MAX <= z_fast <= -cfg.FAST_Z_MIN and z_slow >= cfg.SLOW_Z_LONG_MIN:
-            if rsi_fast is None or cfg.RSI_LONG_RANGE[0] <= rsi_fast <= cfg.RSI_LONG_RANGE[1]:
+        elif (
+            -cfg.FAST_Z_MAX <= z_fast <= -cfg.FAST_Z_MIN
+            and z_slow >= cfg.SLOW_Z_LONG_MIN
+        ):
+            if (
+                rsi_fast is None
+                or cfg.RSI_LONG_RANGE[0] <= rsi_fast <= cfg.RSI_LONG_RANGE[1]
+            ):
                 side = "long"
         if side is None:
             continue
@@ -1124,7 +1173,7 @@ def replay_vwap_magnet_s5(ticks: List[Tick]) -> Dict[str, object]:
         var = sum((c - mean_val) ** 2 for c in window_closes) / max(
             cfg.VWAP_WINDOW_BUCKETS - 1, 1
         )
-        sigma = var ** 0.5 if var > 0.0 else 0.0
+        sigma = var**0.5 if var > 0.0 else 0.0
         if sigma == 0.0:
             continue
         latest_close = window_closes[-1]
@@ -1172,9 +1221,7 @@ def replay_vwap_magnet_s5(ticks: List[Tick]) -> Dict[str, object]:
             if side == "long"
             else entry_price + sl_pips * cfg.PIP_VALUE
         )
-        stage_index = (
-            sum(1 for pos in open_positions if pos["side"] == side) + 1
-        )
+        stage_index = sum(1 for pos in open_positions if pos["side"] == side) + 1
         open_positions.append(
             {
                 "side": side,
@@ -1320,8 +1367,16 @@ def _coerce_float(value: object, default: float = 0.0) -> float:
 
 
 def _profit_factor_from_trades(trades: List[Dict[str, object]]) -> float:
-    gains = sum(float(t.get("pnl_pips") or 0.0) for t in trades if float(t.get("pnl_pips") or 0.0) > 0.0)
-    losses = sum(float(t.get("pnl_pips") or 0.0) for t in trades if float(t.get("pnl_pips") or 0.0) < 0.0)
+    gains = sum(
+        float(t.get("pnl_pips") or 0.0)
+        for t in trades
+        if float(t.get("pnl_pips") or 0.0) > 0.0
+    )
+    losses = sum(
+        float(t.get("pnl_pips") or 0.0)
+        for t in trades
+        if float(t.get("pnl_pips") or 0.0) < 0.0
+    )
     if not trades:
         return 0.0
     if losses == 0.0:
@@ -1333,7 +1388,9 @@ def _replay_m1_family(
     worker_name: str,
     ticks: List[Tick],
     *,
-    signal_func: Optional[Callable[[Dict[str, object]], Optional[Dict[str, object]]]] = None,
+    signal_func: Optional[
+        Callable[[Dict[str, object]], Optional[Dict[str, object]]]
+    ] = None,
 ) -> Dict[str, object]:
     spec = M1_FAMILY_REPLAY_SPECS.get(worker_name)
     if spec is None:
@@ -1377,7 +1434,9 @@ def _replay_m1_family(
         cooldown_sec = float(getattr(config, "COOLDOWN_SEC", 120.0) or 120.0)
         cooldown_until = ticks[0].epoch - cooldown_sec if ticks else 0.0
         use_limit_entry = _env_file_bool(env_data, "M1SCALP_USE_LIMIT_ENTRY", False)
-        limit_ttl_default = max(1.0, _env_file_float(env_data, "M1SCALP_LIMIT_TTL_SEC", 70.0))
+        limit_ttl_default = max(
+            1.0, _env_file_float(env_data, "M1SCALP_LIMIT_TTL_SEC", 70.0)
+        )
 
         def _close_position(pos: Dict[str, object], tick: Tick, reason: str) -> None:
             side = str(pos.get("side") or "long")
@@ -1450,7 +1509,9 @@ def _replay_m1_family(
                 "reject_gate": reason,
                 "tag": str(signal.get("tag") or spec["strategy_tag"]),
                 "action": str(signal.get("action") or "").upper(),
-                "confidence": None if confidence is None else round(float(confidence), 4),
+                "confidence": (
+                    None if confidence is None else round(float(confidence), 4)
+                ),
                 "spread_pips": round(float(spread_pips), 4),
                 "range_mode": str(range_mode or ""),
                 "range_score": round(float(range_score or 0.0), 4),
@@ -1517,7 +1578,9 @@ def _replay_m1_family(
                     "high": closed["high"],
                     "low": closed["low"],
                     "close": closed["close"],
-                    "time": datetime.fromtimestamp(float(closed["timestamp"]), tz=timezone.utc),
+                    "time": datetime.fromtimestamp(
+                        float(closed["timestamp"]), tz=timezone.utc
+                    ),
                 }
                 loop.run_until_complete(factor_cache.on_candle(tf, candle))
                 closed_bar_counts[tf] += 1
@@ -1582,8 +1645,12 @@ def _replay_m1_family(
                 continue
             side = "long" if action == "OPEN_LONG" else "short"
 
-            allowed_tokens = set(getattr(config, "SIGNAL_TAG_CONTAINS", frozenset()) or ())
-            if allowed_tokens and not any(token in signal_tag_l for token in allowed_tokens):
+            allowed_tokens = set(
+                getattr(config, "SIGNAL_TAG_CONTAINS", frozenset()) or ()
+            )
+            if allowed_tokens and not any(
+                token in signal_tag_l for token in allowed_tokens
+            ):
                 gate_counts["tag_filtered"] += 1
                 _remember_reject(
                     "tag_filtered",
@@ -1642,9 +1709,13 @@ def _replay_m1_family(
                     range_score=range_score,
                 )
                 continue
-            if is_reversion and bool(getattr(config, "REVERSION_REQUIRE_STRONG_RANGE", False)):
+            if is_reversion and bool(
+                getattr(config, "REVERSION_REQUIRE_STRONG_RANGE", False)
+            ):
                 range_mode = str(range_ctx.mode or "").strip().lower()
-                allowed_modes = set(getattr(config, "REVERSION_ALLOWED_RANGE_MODES", frozenset()) or ())
+                allowed_modes = set(
+                    getattr(config, "REVERSION_ALLOWED_RANGE_MODES", frozenset()) or ()
+                )
                 range_mode_ok = not allowed_modes or range_mode in allowed_modes
                 range_ready = bool(range_ctx.active) or range_score >= float(
                     getattr(config, "REVERSION_MIN_RANGE_SCORE", 0.0) or 0.0
@@ -1704,13 +1775,22 @@ def _replay_m1_family(
                 )
                 continue
 
-            units = max(1000, abs(int(getattr(config, "BASE_ENTRY_UNITS", 6000) or 6000)))
-            strategy_tag = str(getattr(config, "STRATEGY_TAG_OVERRIDE", spec["strategy_tag"]) or spec["strategy_tag"])
+            units = max(
+                1000, abs(int(getattr(config, "BASE_ENTRY_UNITS", 6000) or 6000))
+            )
+            strategy_tag = str(
+                getattr(config, "STRATEGY_TAG_OVERRIDE", spec["strategy_tag"])
+                or spec["strategy_tag"]
+            )
 
             entry_type = str(signal.get("entry_type") or "").strip().lower()
             entry_signal_price = _coerce_float(signal.get("entry_price"), 0.0)
-            entry_tolerance_pips = max(0.0, _coerce_float(signal.get("entry_tolerance_pips"), 0.0))
-            limit_ttl = _coerce_float(signal.get("limit_expiry_seconds"), limit_ttl_default)
+            entry_tolerance_pips = max(
+                0.0, _coerce_float(signal.get("entry_tolerance_pips"), 0.0)
+            )
+            limit_ttl = _coerce_float(
+                signal.get("limit_expiry_seconds"), limit_ttl_default
+            )
             if (
                 use_limit_entry
                 and entry_type == "limit"
@@ -1718,9 +1798,11 @@ def _replay_m1_family(
                 and limit_ttl > 0.0
             ):
                 fill_now = (
-                    side == "long" and tick.ask <= (entry_signal_price + entry_tolerance_pips * PIP)
+                    side == "long"
+                    and tick.ask <= (entry_signal_price + entry_tolerance_pips * PIP)
                 ) or (
-                    side == "short" and tick.bid >= (entry_signal_price - entry_tolerance_pips * PIP)
+                    side == "short"
+                    and tick.bid >= (entry_signal_price - entry_tolerance_pips * PIP)
                 )
                 if not fill_now:
                     pending_orders.append(
@@ -1761,12 +1843,21 @@ def _replay_m1_family(
 
         summary = {
             "trades": len(trades),
-            "total_pnl_pips": round(sum(float(t.get("pnl_pips") or 0.0) for t in trades), 3),
-            "total_pnl_jpy": round(sum(float(t.get("pnl_pips") or 0.0) for t in trades) * 100.0, 3),
-            "win_rate": round(
-                sum(1 for t in trades if float(t.get("pnl_pips") or 0.0) > 0.0) / len(trades),
-                4,
-            ) if trades else 0.0,
+            "total_pnl_pips": round(
+                sum(float(t.get("pnl_pips") or 0.0) for t in trades), 3
+            ),
+            "total_pnl_jpy": round(
+                sum(float(t.get("pnl_pips") or 0.0) for t in trades) * 100.0, 3
+            ),
+            "win_rate": (
+                round(
+                    sum(1 for t in trades if float(t.get("pnl_pips") or 0.0) > 0.0)
+                    / len(trades),
+                    4,
+                )
+                if trades
+                else 0.0
+            ),
             "profit_factor": _profit_factor_from_trades(trades),
             "pending_unfilled": len(pending_orders),
             "gate_counts": dict(sorted(gate_counts.items())),
@@ -1806,7 +1897,9 @@ def replay_failed_break_reverse(ticks: List[Tick]) -> Dict[str, object]:
     return _replay_m1_family("failed_break_reverse", ticks)
 
 
-def _resolve_exit_pips(exit_cfg: Dict[str, object], atr_pips: float, intent: Dict[str, object]) -> Tuple[float, float]:
+def _resolve_exit_pips(
+    exit_cfg: Dict[str, object], atr_pips: float, intent: Dict[str, object]
+) -> Tuple[float, float]:
     sl_pips = 0.0
     tp_pips = 0.0
     for key in ("sl_pips", "stop_pips", "stop_loss_pips"):
@@ -1858,7 +1951,10 @@ def replay_stop_run_reversal(ticks: List[Tick]) -> Dict[str, object]:
 
     from indicators import factor_cache
     from workers.stop_run_reversal import config as sr_cfg
-    from workers.stop_run_reversal.worker import StopRunReversalWorker, _projection_decision
+    from workers.stop_run_reversal.worker import (
+        StopRunReversalWorker,
+        _projection_decision,
+    )
 
     cfg = dict(sr_cfg.DEFAULT_CONFIG)
     cfg["universe"] = ["USD_JPY"]
@@ -1912,7 +2008,9 @@ def replay_stop_run_reversal(ticks: List[Tick]) -> Dict[str, object]:
                 "high": closed_m1["high"],
                 "low": closed_m1["low"],
                 "close": closed_m1["close"],
-                "time": datetime.fromtimestamp(float(closed_m1["timestamp"]), tz=timezone.utc),
+                "time": datetime.fromtimestamp(
+                    float(closed_m1["timestamp"]), tz=timezone.utc
+                ),
             }
             loop.run_until_complete(factor_cache.on_candle("M1", candle))
 
@@ -1925,7 +2023,9 @@ def replay_stop_run_reversal(ticks: List[Tick]) -> Dict[str, object]:
             "high": closed_m5["high"],
             "low": closed_m5["low"],
             "close": closed_m5["close"],
-            "time": datetime.fromtimestamp(float(closed_m5["timestamp"]), tz=timezone.utc),
+            "time": datetime.fromtimestamp(
+                float(closed_m5["timestamp"]), tz=timezone.utc
+            ),
         }
         loop.run_until_complete(factor_cache.on_candle("M5", candle_m5))
 
@@ -1933,7 +2033,9 @@ def replay_stop_run_reversal(ticks: List[Tick]) -> Dict[str, object]:
         if not intent:
             continue
         pocket = str(cfg.get("pocket", "micro"))
-        proj_allow, _, _ = _projection_decision(intent["side"], pocket, mode_override="range")
+        proj_allow, _, _ = _projection_decision(
+            intent["side"], pocket, mode_override="range"
+        )
         if not proj_allow:
             continue
 
@@ -1955,7 +2057,9 @@ def replay_stop_run_reversal(ticks: List[Tick]) -> Dict[str, object]:
         trades.append(
             {
                 "direction": direction,
-                "entry_time": datetime.fromtimestamp(float(closed_m5["timestamp"]), tz=timezone.utc).isoformat(),
+                "entry_time": datetime.fromtimestamp(
+                    float(closed_m5["timestamp"]), tz=timezone.utc
+                ).isoformat(),
                 "entry_price": round(entry_price, 5),
                 "tp_price": round(tp_price, 5),
                 "sl_price": round(sl_price, 5),
@@ -2030,7 +2134,9 @@ def replay_session_open(ticks: List[Tick]) -> Dict[str, object]:
             "high": closed_m1["high"],
             "low": closed_m1["low"],
             "close": closed_m1["close"],
-            "time": datetime.fromtimestamp(float(closed_m1["timestamp"]), tz=timezone.utc),
+            "time": datetime.fromtimestamp(
+                float(closed_m1["timestamp"]), tz=timezone.utc
+            ),
         }
         loop.run_until_complete(factor_cache.on_candle("M1", candle))
 
@@ -2039,9 +2145,13 @@ def replay_session_open(ticks: List[Tick]) -> Dict[str, object]:
         if not intent:
             continue
         style = str(intent.get("style") or intent.get("mode") or "").lower()
-        mode_override = "range" if style in {"reversion", "mean_reversion", "fade"} else None
+        mode_override = (
+            "range" if style in {"reversion", "mean_reversion", "fade"} else None
+        )
         pocket = str(cfg.get("pocket", "micro"))
-        proj_allow, _, _ = _projection_decision(intent["side"], pocket, mode_override=mode_override)
+        proj_allow, _, _ = _projection_decision(
+            intent["side"], pocket, mode_override=mode_override
+        )
         if not proj_allow:
             continue
 
@@ -2064,7 +2174,9 @@ def replay_session_open(ticks: List[Tick]) -> Dict[str, object]:
         trades.append(
             {
                 "direction": direction,
-                "entry_time": datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat(),
+                "entry_time": datetime.fromtimestamp(
+                    now_ts, tz=timezone.utc
+                ).isoformat(),
                 "entry_price": round(entry_price, 5),
                 "tp_price": round(tp_price, 5),
                 "sl_price": round(sl_price, 5),
@@ -2113,7 +2225,7 @@ def _replay_impulse_style(
         var = sum((v - mean_val) ** 2 for v in sample) / max(len(sample) - 1, 1)
         if var <= 0.0:
             return 0.0
-        return (sample[-1] - mean_val) / (var ** 0.5)
+        return (sample[-1] - mean_val) / (var**0.5)
 
     def atr_from_closes(values: Sequence[float], period: int) -> float:
         if len(values) <= 1:
@@ -2433,9 +2545,17 @@ def replay_impulse_retest_s5(ticks: List[Tick]) -> Dict[str, object]:
         fib_high = start + (end - start) * cfg.FIB_UPPER
 
         in_zone = False
-        if direction == "long" and fib_low <= latest_close <= fib_high and rsi <= cfg.RSI_LONG_MAX:
+        if (
+            direction == "long"
+            and fib_low <= latest_close <= fib_high
+            and rsi <= cfg.RSI_LONG_MAX
+        ):
             in_zone = True
-        elif direction == "short" and fib_high <= latest_close <= fib_low and rsi >= cfg.RSI_SHORT_MIN:
+        elif (
+            direction == "short"
+            and fib_high <= latest_close <= fib_low
+            and rsi >= cfg.RSI_SHORT_MIN
+        ):
             in_zone = True
         if not in_zone:
             continue
@@ -2510,7 +2630,9 @@ def replay_impulse_retest_s5(ticks: List[Tick]) -> Dict[str, object]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Simplified tick replays for worker strategies.")
+    ap = argparse.ArgumentParser(
+        description="Simplified tick replays for worker strategies."
+    )
     ap.add_argument(
         "--worker",
         required=True,
@@ -2519,36 +2641,82 @@ def main() -> None:
     ap.add_argument("--ticks", help="Tick JSONL file (timestamp,bid,ask).")
     ap.add_argument("--candles", help="S5 candle JSON to generate synthetic ticks.")
     ap.add_argument("--candles-sim", help="S5 candles JSON to synthesise pseudo ticks.")
-    ap.add_argument("--sim-out", help="Optional path to write generated pseudo ticks JSONL.")
-    ap.add_argument("--sim-seed", type=int, help="Random seed for pseudo tick generator.")
-    ap.add_argument("--sim-tpm-london", type=float, help="Target ticks/5s for London session.")
-    ap.add_argument("--sim-tpm-ny", type=float, help="Target ticks/5s for New York session.")
-    ap.add_argument("--sim-tpm-asia", type=float, help="Target ticks/5s for Asia session.")
-    ap.add_argument("--sim-atr-high", type=float, help="ATR multiplier (high volatility).")
-    ap.add_argument("--sim-atr-low", type=float, help="ATR multiplier (low volatility).")
-    ap.add_argument("--sim-target-min", type=int, help="Target minimum ticks per window.")
-    ap.add_argument("--sim-target-window", type=int, help="Window seconds for target density.")
-    ap.add_argument("--sim-target-coverage", type=float, help="Required coverage ratio (0-1).")
-    ap.add_argument("--sim-stall-prob", type=float, help="Probability to insert consolidation block.")
-    ap.add_argument("--sim-stall-range", type=float, help="Consolidation range in pips.")
-    ap.add_argument("--sim-stall-ticks", type=int, help="Number of consolidation ticks.")
-    ap.add_argument("--sim-impulse-prob", type=float, help="Probability to insert impulse block.")
+    ap.add_argument(
+        "--sim-out", help="Optional path to write generated pseudo ticks JSONL."
+    )
+    ap.add_argument(
+        "--sim-seed", type=int, help="Random seed for pseudo tick generator."
+    )
+    ap.add_argument(
+        "--sim-tpm-london", type=float, help="Target ticks/5s for London session."
+    )
+    ap.add_argument(
+        "--sim-tpm-ny", type=float, help="Target ticks/5s for New York session."
+    )
+    ap.add_argument(
+        "--sim-tpm-asia", type=float, help="Target ticks/5s for Asia session."
+    )
+    ap.add_argument(
+        "--sim-atr-high", type=float, help="ATR multiplier (high volatility)."
+    )
+    ap.add_argument(
+        "--sim-atr-low", type=float, help="ATR multiplier (low volatility)."
+    )
+    ap.add_argument(
+        "--sim-target-min", type=int, help="Target minimum ticks per window."
+    )
+    ap.add_argument(
+        "--sim-target-window", type=int, help="Window seconds for target density."
+    )
+    ap.add_argument(
+        "--sim-target-coverage", type=float, help="Required coverage ratio (0-1)."
+    )
+    ap.add_argument(
+        "--sim-stall-prob",
+        type=float,
+        help="Probability to insert consolidation block.",
+    )
+    ap.add_argument(
+        "--sim-stall-range", type=float, help="Consolidation range in pips."
+    )
+    ap.add_argument(
+        "--sim-stall-ticks", type=int, help="Number of consolidation ticks."
+    )
+    ap.add_argument(
+        "--sim-impulse-prob", type=float, help="Probability to insert impulse block."
+    )
     ap.add_argument("--sim-impulse-atr-k", type=float, help="Impulse ATR multiplier.")
     ap.add_argument("--sim-impulse-ticks", type=int, help="Impulse tick length.")
-    ap.add_argument("--sim-noise-sigma", type=float, help="Gaussian noise sigma in pips.")
-    ap.add_argument("--sim-spread-london", type=float, help="Mean spread in pips for London.")
-    ap.add_argument("--sim-spread-ny", type=float, help="Mean spread in pips for New York.")
-    ap.add_argument("--sim-spread-asia", type=float, help="Mean spread in pips for Asia.")
-    ap.add_argument("--sim-spread-std", type=float, help="Spread standard deviation in pips.")
-    ap.add_argument("--sim-spread-night-mul", type=float, help="Night spread multiplier for Asia.")
+    ap.add_argument(
+        "--sim-noise-sigma", type=float, help="Gaussian noise sigma in pips."
+    )
+    ap.add_argument(
+        "--sim-spread-london", type=float, help="Mean spread in pips for London."
+    )
+    ap.add_argument(
+        "--sim-spread-ny", type=float, help="Mean spread in pips for New York."
+    )
+    ap.add_argument(
+        "--sim-spread-asia", type=float, help="Mean spread in pips for Asia."
+    )
+    ap.add_argument(
+        "--sim-spread-std", type=float, help="Spread standard deviation in pips."
+    )
+    ap.add_argument(
+        "--sim-spread-night-mul", type=float, help="Night spread multiplier for Asia."
+    )
     ap.add_argument("--out", default="", help="Optional output JSON path.")
     ap.add_argument(
         "--exit-scheme",
         choices=sorted(FAST_SCALP_EXIT_SCHEMES.keys()),
         help="FastScalp exit scheme (A/B/C).",
     )
-    ap.add_argument("--min-impulse-pips", type=float, help="Override minimum impulse size in pips.")
-    ap.add_argument("--impulse-window-sec", type=float, help="Impulse lookback window seconds.")
+    ap.add_argument(
+        "--min-impulse-pips", type=float, help="Override minimum impulse size in pips."
+    )
+    ap.add_argument(
+        "--impulse-window-sec", type=float, help="Impulse lookback window seconds."
+    )
     ap.add_argument(
         "--require-consolidation",
         action="store_true",
@@ -2562,20 +2730,46 @@ def main() -> None:
         help="Allow entries without consolidation.",
     )
     ap.set_defaults(require_consolidation=None)
-    ap.add_argument("--consolidation-sec", type=float, help="Consolidation window seconds.")
-    ap.add_argument("--consolidation-range-pips", type=float, help="Maximum consolidation range in pips.")
-    ap.add_argument("--spread-max-pips", type=float, help="Maximum spread in pips for entries.")
-    ap.add_argument("--tickrate-min", type=float, help="Minimum tick count within tickrate window.")
-    ap.add_argument("--tickrate-window-sec", type=float, help="Tickrate measurement window seconds.")
-    ap.add_argument("--min-atr-pips", type=float, help="Override minimum ATR in pips for entries.")
-    ap.add_argument("--gate-min-atr-pips", type=float, help="Quality gate ATR floor in pips.")
-    ap.add_argument("--cooldown-sec", type=float, help="Entry cooldown seconds per direction.")
-    ap.add_argument("--hold-ms", type=float, help="Minimum hold duration in milliseconds.")
-    ap.add_argument("--sessions", type=str, help="Comma separated session tags to allow (asia,london,newyork).")
+    ap.add_argument(
+        "--consolidation-sec", type=float, help="Consolidation window seconds."
+    )
+    ap.add_argument(
+        "--consolidation-range-pips",
+        type=float,
+        help="Maximum consolidation range in pips.",
+    )
+    ap.add_argument(
+        "--spread-max-pips", type=float, help="Maximum spread in pips for entries."
+    )
+    ap.add_argument(
+        "--tickrate-min", type=float, help="Minimum tick count within tickrate window."
+    )
+    ap.add_argument(
+        "--tickrate-window-sec", type=float, help="Tickrate measurement window seconds."
+    )
+    ap.add_argument(
+        "--min-atr-pips", type=float, help="Override minimum ATR in pips for entries."
+    )
+    ap.add_argument(
+        "--gate-min-atr-pips", type=float, help="Quality gate ATR floor in pips."
+    )
+    ap.add_argument(
+        "--cooldown-sec", type=float, help="Entry cooldown seconds per direction."
+    )
+    ap.add_argument(
+        "--hold-ms", type=float, help="Minimum hold duration in milliseconds."
+    )
+    ap.add_argument(
+        "--sessions",
+        type=str,
+        help="Comma separated session tags to allow (asia,london,newyork).",
+    )
     args = ap.parse_args()
 
     if not args.ticks and not args.candles and not args.candles_sim:
-        raise SystemExit("--ticks / --candles / --candles-sim のいずれかを指定してください")
+        raise SystemExit(
+            "--ticks / --candles / --candles-sim のいずれかを指定してください"
+        )
 
     sim_meta: Optional[Dict[str, Any]] = None
 
@@ -2627,10 +2821,7 @@ def main() -> None:
             spread_kwargs["night_multiplier"] = args.sim_spread_night_mul
 
         density_cfg = DensityCfg(**density_kwargs)
-        if (
-            args.sim_target_window is not None
-            and args.sim_target_min is not None
-        ):
+        if args.sim_target_window is not None and args.sim_target_min is not None:
             density_cfg.tickrate_checks = (
                 (5, density_cfg.target_tickrate_min),
                 (args.sim_target_window, args.sim_target_min),
@@ -2640,14 +2831,21 @@ def main() -> None:
             density=density_cfg,
             shape=ShapeCfg(**shape_kwargs),
             spread=SpreadCfg(**spread_kwargs),
-            random_seed=args.sim_seed if args.sim_seed is not None else SimCfg().random_seed,
+            random_seed=(
+                args.sim_seed if args.sim_seed is not None else SimCfg().random_seed
+            ),
         )
 
-        sim_out = Path(args.sim_out) if args.sim_out else Path("tmp") / (
-            f"sim_{Path(args.candles_sim).stem}_{int(time.time())}.jsonl"
+        sim_out = (
+            Path(args.sim_out)
+            if args.sim_out
+            else Path("tmp")
+            / (f"sim_{Path(args.candles_sim).stem}_{int(time.time())}.jsonl")
         )
         sim_out.parent.mkdir(parents=True, exist_ok=True)
-        sim_path, density_info = synth_from_candles(args.candles_sim, str(sim_out), sim_cfg)
+        sim_path, density_info = synth_from_candles(
+            args.candles_sim, str(sim_out), sim_cfg
+        )
         ticks = load_ticks(sim_path)
         sim_meta = {
             "ticks_path": str(sim_path),
@@ -2702,7 +2900,9 @@ def main() -> None:
         overrides["sessions"] = args.sessions
 
     if args.worker == "fast_scalp":
-        result = replay_fast_scalp(ticks, exit_scheme=args.exit_scheme, overrides=overrides)
+        result = replay_fast_scalp(
+            ticks, exit_scheme=args.exit_scheme, overrides=overrides
+        )
     elif args.worker == "pullback_s5":
         result = replay_pullback_s5(ticks)
     elif args.worker == "vwap_magnet_s5":
@@ -2733,7 +2933,9 @@ def main() -> None:
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
 

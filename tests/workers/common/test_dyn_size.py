@@ -15,9 +15,15 @@ def _snapshot(*, free_margin_ratio: float = 0.25):
     )
 
 
-def test_compute_units_keeps_soft_floor_when_conditions_are_healthy(monkeypatch) -> None:
+def test_compute_units_keeps_soft_floor_when_conditions_are_healthy(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(dyn_size, "get_account_snapshot", lambda: _snapshot())
-    monkeypatch.setattr(dyn_size, "scale_base_units", lambda base_entry_units, **kwargs: base_entry_units)
+    monkeypatch.setattr(
+        dyn_size,
+        "scale_base_units",
+        lambda base_entry_units, **kwargs: base_entry_units,
+    )
     monkeypatch.setattr(dyn_size, "allowed_lot", lambda *args, **kwargs: 0.008)
     monkeypatch.setattr(
         dyn_size.perf_guard,
@@ -43,9 +49,15 @@ def test_compute_units_keeps_soft_floor_when_conditions_are_healthy(monkeypatch)
     assert res.factors["perf_mult"] == 1.0
 
 
-def test_compute_units_preserves_reduction_below_base_when_perf_scale_reduces(monkeypatch) -> None:
+def test_compute_units_preserves_reduction_below_base_when_perf_scale_reduces(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(dyn_size, "get_account_snapshot", lambda: _snapshot())
-    monkeypatch.setattr(dyn_size, "scale_base_units", lambda base_entry_units, **kwargs: base_entry_units)
+    monkeypatch.setattr(
+        dyn_size,
+        "scale_base_units",
+        lambda base_entry_units, **kwargs: base_entry_units,
+    )
     monkeypatch.setattr(dyn_size, "allowed_lot", lambda *args, **kwargs: 0.01)
     monkeypatch.setattr(
         dyn_size.perf_guard,

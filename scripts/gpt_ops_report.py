@@ -61,7 +61,12 @@ def _safe_float(value: object, default: float = 0.0) -> float:
 
 _PLAYBOOK_FACTOR_MAX_AGE_SEC = max(
     30.0,
-    _safe_float(os.getenv("OPS_PLAYBOOK_FACTOR_MAX_AGE_SEC", str(_PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT)), _PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT),
+    _safe_float(
+        os.getenv(
+            "OPS_PLAYBOOK_FACTOR_MAX_AGE_SEC", str(_PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT)
+        ),
+        _PLAYBOOK_FACTOR_MAX_AGE_SEC_DEFAULT,
+    ),
 )
 
 
@@ -90,7 +95,9 @@ def _to_jst_label(dt: datetime) -> str:
     return dt.astimezone(JST).strftime("%Y-%m-%d %H:%M JST")
 
 
-def _parse_iso_datetime(raw: object, *, default_tz: timezone = UTC) -> Optional[datetime]:
+def _parse_iso_datetime(
+    raw: object, *, default_tz: timezone = UTC
+) -> Optional[datetime]:
     if raw is None:
         return None
     if isinstance(raw, datetime):
@@ -226,11 +233,17 @@ def _extract_pair_entry(payload: dict[str, Any], pair: str) -> dict[str, Any]:
 
     return {
         "price": round(price, 6) if isinstance(price, (int, float)) else None,
-        "change_pct_24h": round(change_pct_24h, 6) if isinstance(change_pct_24h, (int, float)) else None,
+        "change_pct_24h": (
+            round(change_pct_24h, 6)
+            if isinstance(change_pct_24h, (int, float))
+            else None
+        ),
     }
 
 
-def _extract_rate_entry(payload: dict[str, Any], aliases: tuple[str, ...]) -> Optional[float]:
+def _extract_rate_entry(
+    payload: dict[str, Any], aliases: tuple[str, ...]
+) -> Optional[float]:
     rates = payload.get("rates") if isinstance(payload.get("rates"), dict) else {}
     for key in aliases:
         if key in rates:
@@ -244,7 +257,9 @@ def _extract_rate_entry(payload: dict[str, Any], aliases: tuple[str, ...]) -> Op
     return None
 
 
-def _extract_risk_entry(payload: dict[str, Any], aliases: tuple[str, ...]) -> Optional[float]:
+def _extract_risk_entry(
+    payload: dict[str, Any], aliases: tuple[str, ...]
+) -> Optional[float]:
     risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
     for key in aliases:
         if key in risk:
@@ -268,7 +283,12 @@ def _infer_risk_mode(*, vix: Optional[float], us500_change_pct: Optional[float])
         return "risk_off"
     if us500_change_pct is not None and us500_change_pct <= -0.6:
         return "risk_off"
-    if vix is not None and vix <= 17.0 and us500_change_pct is not None and us500_change_pct >= 0.4:
+    if (
+        vix is not None
+        and vix <= 17.0
+        and us500_change_pct is not None
+        and us500_change_pct >= 0.4
+    ):
         return "risk_on"
     if vix is not None or us500_change_pct is not None:
         return "neutral"
@@ -306,13 +326,27 @@ def _build_market_context(
     )
     dxy_macro = _safe_float_or_none(macro_snapshot.get("dxy"))
     dxy = dxy_external if dxy_external is not None else dxy_macro
-    dxy_source = "external" if dxy_external is not None else ("macro_snapshot" if dxy_macro is not None else "missing")
+    dxy_source = (
+        "external"
+        if dxy_external is not None
+        else ("macro_snapshot" if dxy_macro is not None else "missing")
+    )
 
-    us10y = _extract_rate_entry(external_snapshot, ("US10Y", "US_10Y", "UST10Y", "us10y", "us_10y"))
-    jp10y = _extract_rate_entry(external_snapshot, ("JP10Y", "JP_10Y", "JGB10Y", "jp10y", "jp_10y"))
-    us_jp_10y_spread = (us10y - jp10y) if us10y is not None and jp10y is not None else None
+    us10y = _extract_rate_entry(
+        external_snapshot, ("US10Y", "US_10Y", "UST10Y", "us10y", "us_10y")
+    )
+    jp10y = _extract_rate_entry(
+        external_snapshot, ("JP10Y", "JP_10Y", "JGB10Y", "jp10y", "jp_10y")
+    )
+    us_jp_10y_spread = (
+        (us10y - jp10y) if us10y is not None and jp10y is not None else None
+    )
 
-    macro_yield = macro_snapshot.get("yield2y") if isinstance(macro_snapshot.get("yield2y"), dict) else {}
+    macro_yield = (
+        macro_snapshot.get("yield2y")
+        if isinstance(macro_snapshot.get("yield2y"), dict)
+        else {}
+    )
     usd2y_proxy = _safe_float_or_none(macro_yield.get("USD"))
     jpy2y_proxy = _safe_float_or_none(macro_yield.get("JPY"))
     us_jp_2y_proxy_spread = (
@@ -324,15 +358,26 @@ def _build_market_context(
     vix_external = _extract_risk_entry(external_snapshot, ("vix", "VIX"))
     vix_macro = _safe_float_or_none(macro_snapshot.get("vix"))
     vix = vix_external if vix_external is not None else vix_macro
-    vix_source = "external" if vix_external is not None else ("macro_snapshot" if vix_macro is not None else "missing")
+    vix_source = (
+        "external"
+        if vix_external is not None
+        else ("macro_snapshot" if vix_macro is not None else "missing")
+    )
 
     us500_change_pct = _extract_risk_entry(
         external_snapshot,
-        ("us500_change_pct", "spx_change_pct", "sp500_change_pct", "us_equity_change_pct"),
+        (
+            "us500_change_pct",
+            "spx_change_pct",
+            "sp500_change_pct",
+            "us_equity_change_pct",
+        ),
     )
     risk_mode = _infer_risk_mode(vix=vix, us500_change_pct=us500_change_pct)
 
-    high_impact = [e for e in events if str(e.get("impact") or "").lower() in {"high", "red"}]
+    high_impact = [
+        e for e in events if str(e.get("impact") or "").lower() in {"high", "red"}
+    ]
     next_event = None
     for event in events:
         minutes = _safe_int(event.get("minutes_to_event"), 999999)
@@ -345,25 +390,39 @@ def _build_market_context(
         "pairs": pairs,
         "dollar": {
             "dxy": round(dxy, 6) if isinstance(dxy, (int, float)) else None,
-            "dxy_change_pct_24h": round(dxy_change, 6) if isinstance(dxy_change, (int, float)) else None,
+            "dxy_change_pct_24h": (
+                round(dxy_change, 6) if isinstance(dxy_change, (int, float)) else None
+            ),
             "source": dxy_source,
         },
         "rates": {
             "us10y": round(us10y, 6) if isinstance(us10y, (int, float)) else None,
             "jp10y": round(jp10y, 6) if isinstance(jp10y, (int, float)) else None,
-            "us_jp_10y_spread": round(us_jp_10y_spread, 6) if isinstance(us_jp_10y_spread, (int, float)) else None,
-            "usd2y_proxy": round(usd2y_proxy, 6) if isinstance(usd2y_proxy, (int, float)) else None,
-            "jpy2y_proxy": round(jpy2y_proxy, 6) if isinstance(jpy2y_proxy, (int, float)) else None,
-            "us_jp_2y_proxy_spread": round(us_jp_2y_proxy_spread, 6)
-            if isinstance(us_jp_2y_proxy_spread, (int, float))
-            else None,
+            "us_jp_10y_spread": (
+                round(us_jp_10y_spread, 6)
+                if isinstance(us_jp_10y_spread, (int, float))
+                else None
+            ),
+            "usd2y_proxy": (
+                round(usd2y_proxy, 6) if isinstance(usd2y_proxy, (int, float)) else None
+            ),
+            "jpy2y_proxy": (
+                round(jpy2y_proxy, 6) if isinstance(jpy2y_proxy, (int, float)) else None
+            ),
+            "us_jp_2y_proxy_spread": (
+                round(us_jp_2y_proxy_spread, 6)
+                if isinstance(us_jp_2y_proxy_spread, (int, float))
+                else None
+            ),
         },
         "risk": {
             "vix": round(vix, 6) if isinstance(vix, (int, float)) else None,
             "vix_source": vix_source,
-            "us500_change_pct": round(us500_change_pct, 6)
-            if isinstance(us500_change_pct, (int, float))
-            else None,
+            "us500_change_pct": (
+                round(us500_change_pct, 6)
+                if isinstance(us500_change_pct, (int, float))
+                else None
+            ),
             "mode": risk_mode,
         },
         "events_summary": {
@@ -433,7 +492,9 @@ def _forecast_decision_to_dict(decision: Any) -> Optional[dict[str, Any]]:
         "edge": _safe_float(getattr(decision, "edge", 0.0), 0.0),
         "p_up": _safe_float(getattr(decision, "p_up", 0.5), 0.5),
         "expected_pips": _safe_float(getattr(decision, "expected_pips", 0.0), 0.0),
-        "target_reach_prob": _safe_float(getattr(decision, "target_reach_prob", 0.0), 0.0),
+        "target_reach_prob": _safe_float(
+            getattr(decision, "target_reach_prob", 0.0), 0.0
+        ),
         "future_flow": str(getattr(decision, "future_flow", "") or ""),
         "style": str(getattr(decision, "style", "") or ""),
         "trend_state": str(getattr(decision, "trend_state", "") or ""),
@@ -499,7 +560,9 @@ def _trend_sign(label: str) -> float:
 
 
 def _extract_levels(story: dict[str, Any], current_price: float) -> tuple[float, float]:
-    levels = story.get("major_levels") if isinstance(story.get("major_levels"), dict) else {}
+    levels = (
+        story.get("major_levels") if isinstance(story.get("major_levels"), dict) else {}
+    )
     candidates: list[float] = []
     for tf in ("h4", "d1"):
         row = levels.get(tf) if isinstance(levels, dict) else None
@@ -549,10 +612,16 @@ def _load_chart_story(fac_m1: dict[str, Any], fac_h4: dict[str, Any]) -> dict[st
     return out
 
 
-def _extract_market_pair_price(market_context: Optional[dict[str, Any]], pair: str) -> Optional[float]:
+def _extract_market_pair_price(
+    market_context: Optional[dict[str, Any]], pair: str
+) -> Optional[float]:
     if not isinstance(market_context, dict):
         return None
-    pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
+    pairs = (
+        market_context.get("pairs")
+        if isinstance(market_context.get("pairs"), dict)
+        else {}
+    )
     row = pairs.get(pair.lower()) if isinstance(pairs, dict) else None
     if not isinstance(row, dict):
         return None
@@ -569,14 +638,18 @@ def _factor_timestamp_from_row(row: dict[str, Any]) -> Optional[datetime]:
     return None
 
 
-def _build_factor_freshness(fac_m1: dict[str, Any], *, now_utc: datetime) -> dict[str, Any]:
+def _build_factor_freshness(
+    fac_m1: dict[str, Any], *, now_utc: datetime
+) -> dict[str, Any]:
     ts = _factor_timestamp_from_row(fac_m1)
     age_sec: Optional[float]
     if ts is None:
         age_sec = None
     else:
         age_sec = max(0.0, (now_utc - ts).total_seconds())
-    stale = bool(not fac_m1) or age_sec is None or age_sec > _PLAYBOOK_FACTOR_MAX_AGE_SEC
+    stale = (
+        bool(not fac_m1) or age_sec is None or age_sec > _PLAYBOOK_FACTOR_MAX_AGE_SEC
+    )
     return {
         "stale": stale,
         "age_sec": round(age_sec, 3) if isinstance(age_sec, (int, float)) else None,
@@ -585,7 +658,9 @@ def _build_factor_freshness(fac_m1: dict[str, Any], *, now_utc: datetime) -> dic
     }
 
 
-def _extract_candle_ranges(candles: list[dict[str, Any]], bars: int) -> tuple[float, float]:
+def _extract_candle_ranges(
+    candles: list[dict[str, Any]], bars: int
+) -> tuple[float, float]:
     if not candles:
         return 0.0, 0.0
     window = candles[-min(len(candles), max(1, bars)) :]
@@ -616,19 +691,35 @@ def _extract_price_snapshot(
     factor_stale = bool(factor_freshness.get("stale"))
     factor_age_sec = _safe_float_or_none(factor_freshness.get("age_sec"))
     factor_timestamp_utc = str(factor_freshness.get("timestamp_utc") or "")
-    max_factor_age_sec = _safe_float(factor_freshness.get("max_age_sec"), _PLAYBOOK_FACTOR_MAX_AGE_SEC)
+    max_factor_age_sec = _safe_float(
+        factor_freshness.get("max_age_sec"), _PLAYBOOK_FACTOR_MAX_AGE_SEC
+    )
 
     factor_close = _safe_float_or_none(fac_m1.get("close"))
     market_close = _extract_market_pair_price(market_context, "USD_JPY")
     use_market_price = bool(
         isinstance(market_close, (int, float))
         and market_close > 0.0
-        and (factor_stale or not isinstance(factor_close, (int, float)) or factor_close <= 0.0)
+        and (
+            factor_stale
+            or not isinstance(factor_close, (int, float))
+            or factor_close <= 0.0
+        )
     )
-    current_price = float(market_close) if use_market_price else _safe_float(fac_m1.get("close"), 0.0)
-    current_price_source = "external_snapshot" if use_market_price else ("factor_cache" if current_price > 0 else "missing")
+    current_price = (
+        float(market_close)
+        if use_market_price
+        else _safe_float(fac_m1.get("close"), 0.0)
+    )
+    current_price_source = (
+        "external_snapshot"
+        if use_market_price
+        else ("factor_cache" if current_price > 0 else "missing")
+    )
 
-    atr_pips = max(0.0, _safe_float(fac_m1.get("atr_pips"), 0.0)) if not factor_stale else 0.0
+    atr_pips = (
+        max(0.0, _safe_float(fac_m1.get("atr_pips"), 0.0)) if not factor_stale else 0.0
+    )
     m1_gap_pips = (
         (_safe_float(fac_m1.get("ma10")) - _safe_float(fac_m1.get("ma20"))) / 0.01
         if not factor_stale
@@ -641,27 +732,38 @@ def _extract_price_snapshot(
     )
     vol_5m = _safe_float(fac_m1.get("vol_5m"), 0.0) if not factor_stale else 0.0
 
-    m1_candles = fac_m1.get("candles") if (not factor_stale and isinstance(fac_m1.get("candles"), list)) else []
+    m1_candles = (
+        fac_m1.get("candles")
+        if (not factor_stale and isinstance(fac_m1.get("candles"), list))
+        else []
+    )
     high_3h, low_3h = _extract_candle_ranges(m1_candles, bars=180)
     high_24h, low_24h = _extract_candle_ranges(m1_candles, bars=1440)
     range_3h_pips = max(0.0, (high_3h - low_3h) / 0.01) if high_3h and low_3h else 0.0
-    range_24h_pips = max(0.0, (high_24h - low_24h) / 0.01) if high_24h and low_24h else 0.0
+    range_24h_pips = (
+        max(0.0, (high_24h - low_24h) / 0.01) if high_24h and low_24h else 0.0
+    )
 
-    support_price, resistance_price = _extract_levels(story, current_price) if (current_price > 0 and not factor_stale) else (0.0, 0.0)
+    support_price, resistance_price = (
+        _extract_levels(story, current_price)
+        if (current_price > 0 and not factor_stale)
+        else (0.0, 0.0)
+    )
     if current_price > 0 and (support_price <= 0.0 or resistance_price <= 0.0):
         support_price = round(current_price - 0.15, 3)
         resistance_price = round(current_price + 0.15, 3)
 
-    forecast_ref = forecast.get("reference") if isinstance(forecast.get("reference"), dict) else {}
+    forecast_ref = (
+        forecast.get("reference") if isinstance(forecast.get("reference"), dict) else {}
+    )
     p_up = _safe_float(forecast_ref.get("p_up"), 0.5)
     edge = _safe_float(forecast_ref.get("edge"), 0.0)
 
     base_trend = 0.0
     if not factor_stale:
-        base_trend = (
-            0.80 * math.tanh(h4_gap_pips / max(4.0, atr_pips * 1.8, 4.0))
-            + 0.50 * math.tanh(m1_gap_pips / max(2.0, atr_pips, 2.0))
-        )
+        base_trend = 0.80 * math.tanh(
+            h4_gap_pips / max(4.0, atr_pips * 1.8, 4.0)
+        ) + 0.50 * math.tanh(m1_gap_pips / max(2.0, atr_pips, 2.0))
     if forecast_ref and not factor_stale:
         forecast_bias = (p_up - 0.5) * 2.0
         edge_scale = 0.5 + 0.5 * _clamp(edge, 0.0, 1.0)
@@ -675,9 +777,15 @@ def _extract_price_snapshot(
 
     range_position = 0.5
     if current_price > 0 and high_24h > low_24h and not factor_stale:
-        range_position = _clamp((current_price - low_24h) / (high_24h - low_24h), 0.0, 1.0)
+        range_position = _clamp(
+            (current_price - low_24h) / (high_24h - low_24h), 0.0, 1.0
+        )
 
-    volatility_state = "unknown" if factor_stale else ("high" if atr_pips >= 8.5 else ("low" if atr_pips <= 3.5 else "normal"))
+    volatility_state = (
+        "unknown"
+        if factor_stale
+        else ("high" if atr_pips >= 8.5 else ("low" if atr_pips <= 3.5 else "normal"))
+    )
     if not factor_stale and vol_5m >= 1.45 and volatility_state != "high":
         volatility_state = "high"
 
@@ -691,9 +799,15 @@ def _extract_price_snapshot(
         "range_position_24h": round(range_position, 3),
         "micro_regime": str(fac_m1.get("regime") or "stale"),
         "macro_regime": str(fac_h4.get("regime") or "stale"),
-        "micro_rsi": round(_safe_float(fac_m1.get("rsi"), 0.0), 3) if not factor_stale else None,
-        "micro_adx": round(_safe_float(fac_m1.get("adx"), 0.0), 3) if not factor_stale else None,
-        "macro_adx": round(_safe_float(fac_h4.get("adx"), 0.0), 3) if not factor_stale else None,
+        "micro_rsi": (
+            round(_safe_float(fac_m1.get("rsi"), 0.0), 3) if not factor_stale else None
+        ),
+        "micro_adx": (
+            round(_safe_float(fac_m1.get("adx"), 0.0), 3) if not factor_stale else None
+        ),
+        "macro_adx": (
+            round(_safe_float(fac_h4.get("adx"), 0.0), 3) if not factor_stale else None
+        ),
         "ma_gap_m1_pips": round(m1_gap_pips, 3),
         "ma_gap_h4_pips": round(h4_gap_pips, 3),
         "volatility_state": volatility_state,
@@ -701,7 +815,11 @@ def _extract_price_snapshot(
         "support_price": support_price if support_price > 0 else None,
         "resistance_price": resistance_price if resistance_price > 0 else None,
         "factor_stale": factor_stale,
-        "factor_age_m1_sec": round(factor_age_sec, 1) if isinstance(factor_age_sec, (int, float)) else None,
+        "factor_age_m1_sec": (
+            round(factor_age_sec, 1)
+            if isinstance(factor_age_sec, (int, float))
+            else None
+        ),
         "factor_timestamp_utc": factor_timestamp_utc or None,
         "factor_max_age_sec": round(max_factor_age_sec, 1),
         "policy_event_lock": bool(policy.get("event_lock", False)),
@@ -710,7 +828,9 @@ def _extract_price_snapshot(
     return snapshot, direction_score
 
 
-def _sqlite_rows(path: Path, query: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+def _sqlite_rows(
+    path: Path, query: str, params: tuple[Any, ...]
+) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     con: Optional[sqlite3.Connection] = None
@@ -783,7 +903,10 @@ def _summarize_trades(rows: list[dict[str, Any]], *, hours: float) -> dict[str, 
         pocket = str(row.get("pocket") or "unknown").strip().lower() or "unknown"
         by_pocket_rows.setdefault(pocket, []).append(row)
 
-    by_pocket = {pocket: _calc_bucket_metrics(bucket) for pocket, bucket in by_pocket_rows.items()}
+    by_pocket = {
+        pocket: _calc_bucket_metrics(bucket)
+        for pocket, bucket in by_pocket_rows.items()
+    }
     return {
         "window_hours": round(float(hours), 3),
         "overall": _calc_bucket_metrics(rows),
@@ -817,11 +940,15 @@ def _summarize_orders(path: Path, *, hours: float) -> dict[str, Any]:
 
     by_status = [
         {"status": status, "count": count}
-        for status, count in sorted(status_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        for status, count in sorted(
+            status_counts.items(), key=lambda kv: (-kv[1], kv[0])
+        )
     ][:10]
     top_fail_reasons = [
         {"reason": reason, "count": count}
-        for reason, count in sorted(reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        for reason, count in sorted(
+            reason_counts.items(), key=lambda kv: (-kv[1], kv[0])
+        )
     ][:8]
 
     reject_rate = (failed / total) if total > 0 else 0.0
@@ -876,8 +1003,9 @@ def _load_events(path: Path, *, now_utc: datetime) -> list[dict[str, Any]]:
         if minutes_to_event < -60 or minutes_to_event > 24 * 60:
             continue
         name = (
-            str(row.get("name") or row.get("title") or row.get("event") or "event")
-            .strip()
+            str(
+                row.get("name") or row.get("title") or row.get("event") or "event"
+            ).strip()
             or "event"
         )
         impact = str(row.get("impact") or row.get("level") or "medium").strip().lower()
@@ -899,7 +1027,9 @@ def _load_policy_overlay(path: Path) -> dict[str, Any]:
     return payload if payload is not None else {}
 
 
-def _event_context(*, events: list[dict[str, Any]], policy: dict[str, Any]) -> dict[str, Any]:
+def _event_context(
+    *, events: list[dict[str, Any]], policy: dict[str, Any]
+) -> dict[str, Any]:
     event_lock = bool(policy.get("event_lock", False))
     next_event = None
     soon = False
@@ -934,7 +1064,11 @@ def _avg(values: list[float]) -> float:
 def _get_pair_metric(
     market_context: dict[str, Any], pair: str, field: str, default: float = 0.0
 ) -> float:
-    pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
+    pairs = (
+        market_context.get("pairs")
+        if isinstance(market_context.get("pairs"), dict)
+        else {}
+    )
     row = pairs.get(pair.lower()) if isinstance(pairs, dict) else None
     if not isinstance(row, dict):
         return default
@@ -946,9 +1080,21 @@ def _build_driver_breakdown(
     market_context: dict[str, Any],
     event_ctx: dict[str, Any],
 ) -> dict[str, Any]:
-    rates = market_context.get("rates") if isinstance(market_context.get("rates"), dict) else {}
-    risk = market_context.get("risk") if isinstance(market_context.get("risk"), dict) else {}
-    dollar = market_context.get("dollar") if isinstance(market_context.get("dollar"), dict) else {}
+    rates = (
+        market_context.get("rates")
+        if isinstance(market_context.get("rates"), dict)
+        else {}
+    )
+    risk = (
+        market_context.get("risk")
+        if isinstance(market_context.get("risk"), dict)
+        else {}
+    )
+    dollar = (
+        market_context.get("dollar")
+        if isinstance(market_context.get("dollar"), dict)
+        else {}
+    )
 
     spread_10y = _safe_float_or_none(rates.get("us_jp_10y_spread"))
     spread_2y = _safe_float_or_none(rates.get("us_jp_2y_proxy_spread"))
@@ -986,7 +1132,13 @@ def _build_driver_breakdown(
         dxy_level = _safe_float_or_none(dollar.get("dxy"))
         if usdjpy >= 154.0 and dxy_level is not None and dxy_level <= 100.0:
             yen_structural = 0.25
-    yen_flow_score = _clamp(0.55 * math.tanh(yen_flow / 0.8) + 0.45 * math.tanh(contradiction / 0.8) + yen_structural, -1.0, 1.0)
+    yen_flow_score = _clamp(
+        0.55 * math.tanh(yen_flow / 0.8)
+        + 0.45 * math.tanh(contradiction / 0.8)
+        + yen_structural,
+        -1.0,
+        1.0,
+    )
 
     risk_mode = str(risk.get("mode") or "unknown").lower()
     us500_change = _safe_float_or_none(risk.get("us500_change_pct"))
@@ -1008,7 +1160,9 @@ def _build_driver_breakdown(
     }
     net_score = _clamp(sum(components.values()), -1.0, 1.0)
     dominant_key = max(components, key=lambda key: abs(components[key]))
-    dominant_sign = "bullish_usd_jpy" if components[dominant_key] >= 0.0 else "bearish_usd_jpy"
+    dominant_sign = (
+        "bullish_usd_jpy" if components[dominant_key] >= 0.0 else "bearish_usd_jpy"
+    )
 
     available_count = 0
     if spread_10y is not None or spread_2y is not None:
@@ -1052,7 +1206,11 @@ def _build_break_points(
 ) -> list[dict[str, Any]]:
     support = _safe_float(snapshot.get("support_price"), 0.0)
     resistance = _safe_float(snapshot.get("resistance_price"), 0.0)
-    rates = market_context.get("rates") if isinstance(market_context.get("rates"), dict) else {}
+    rates = (
+        market_context.get("rates")
+        if isinstance(market_context.get("rates"), dict)
+        else {}
+    )
     spread_10y = _safe_float_or_none(rates.get("us_jp_10y_spread"))
     spread_2y = _safe_float_or_none(rates.get("us_jp_2y_proxy_spread"))
     reject_rate = _safe_float(order_stats.get("reject_rate"), 0.0)
@@ -1098,8 +1256,14 @@ def _build_break_points(
                 "impact": "reduce_size_or_standby",
             }
         )
-    next_event = event_ctx.get("next_event") if isinstance(event_ctx.get("next_event"), dict) else {}
-    minutes = _safe_int(next_event.get("minutes_to_event"), 999999) if next_event else 999999
+    next_event = (
+        event_ctx.get("next_event")
+        if isinstance(event_ctx.get("next_event"), dict)
+        else {}
+    )
+    minutes = (
+        _safe_int(next_event.get("minutes_to_event"), 999999) if next_event else 999999
+    )
     if next_event and minutes <= 180:
         out.append(
             {
@@ -1137,7 +1301,11 @@ def _build_if_then_rules(
     driver: dict[str, Any],
     break_points: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    primary = max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0)) if scenarios else {}
+    primary = (
+        max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0))
+        if scenarios
+        else {}
+    )
     primary_bias = str(primary.get("bias") or "neutral")
     support = _safe_float(snapshot.get("support_price"), 0.0)
     resistance = _safe_float(snapshot.get("resistance_price"), 0.0)
@@ -1149,7 +1317,9 @@ def _build_if_then_rules(
     if not event_soon:
         event_rule = "normal_execution"
 
-    bp_key_text = ",".join(str(row.get("key")) for row in break_points[:3] if isinstance(row, dict))
+    bp_key_text = ",".join(
+        str(row.get("key")) for row in break_points[:3] if isinstance(row, dict)
+    )
 
     return [
         {
@@ -1288,7 +1458,11 @@ def _build_short_term_playbook(
     snapshot: dict[str, Any],
     event_ctx: dict[str, Any],
 ) -> dict[str, Any]:
-    primary = max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0)) if scenarios else {}
+    primary = (
+        max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0))
+        if scenarios
+        else {}
+    )
     bias = str(primary.get("bias") or "neutral")
     mode = "post_event_confirmation" if event_ctx.get("event_soon") else "normal"
 
@@ -1321,7 +1495,11 @@ def _build_swing_playbook(
     snapshot: dict[str, Any],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
-    primary = max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0)) if scenarios else {}
+    primary = (
+        max(scenarios, key=lambda row: _safe_float(row.get("probability_pct"), 0.0))
+        if scenarios
+        else {}
+    )
     macro_regime = str(snapshot.get("macro_regime") or "")
     volatility_state = str(snapshot.get("volatility_state") or "normal")
     total_pf = (performance.get("overall") or {}).get("profit_factor")
@@ -1348,8 +1526,12 @@ def _build_risk_protocol(
     event_ctx: dict[str, Any],
     order_stats: dict[str, Any],
 ) -> dict[str, Any]:
-    per_trade_loss_pct = _clamp(_safe_float(os.getenv("OPS_PLAYBOOK_MAX_LOSS_PCT", 0.8), 0.8), 0.1, 3.0)
-    theme_cap_pct = _clamp(_safe_float(os.getenv("OPS_PLAYBOOK_THEME_CAP_PCT", 2.4), 2.4), 0.5, 8.0)
+    per_trade_loss_pct = _clamp(
+        _safe_float(os.getenv("OPS_PLAYBOOK_MAX_LOSS_PCT", 0.8), 0.8), 0.1, 3.0
+    )
+    theme_cap_pct = _clamp(
+        _safe_float(os.getenv("OPS_PLAYBOOK_THEME_CAP_PCT", 2.4), 2.4), 0.5, 8.0
+    )
     max_positions = max(1, _safe_int(os.getenv("OPS_PLAYBOOK_MAX_POSITIONS", 3), 3))
     reject_rate = _safe_float(order_stats.get("reject_rate"), 0.0)
     execution_guard = "normal"
@@ -1402,8 +1584,12 @@ def build_ops_report(
     )
     if bool(snapshot.get("factor_stale")):
         direction_score *= 0.45
-    driver_breakdown = _build_driver_breakdown(market_context=market_context, event_ctx=event_ctx)
-    direction_score = _blend_direction_score(base_score=direction_score, driver=driver_breakdown)
+    driver_breakdown = _build_driver_breakdown(
+        market_context=market_context, event_ctx=event_ctx
+    )
+    direction_score = _blend_direction_score(
+        base_score=direction_score, driver=driver_breakdown
+    )
     scenarios = _build_scenarios(
         direction_score=direction_score,
         snapshot=snapshot,
@@ -1440,7 +1626,9 @@ def build_ops_report(
 
     base_conf = 1.0 - _clamp(1.0 - abs(direction_score), 0.0, 1.0)
     driver_conf = _safe_float(driver_breakdown.get("confidence"), 0.0)
-    confidence = round(_clamp(base_conf * 0.72 + driver_conf * 0.28, 0.0, 1.0) * 100.0, 1)
+    confidence = round(
+        _clamp(base_conf * 0.72 + driver_conf * 0.28, 0.0, 1.0) * 100.0, 1
+    )
     if event_ctx.get("event_soon"):
         confidence = max(20.0, round(confidence - 18.0, 1))
     if bool(snapshot.get("factor_stale")):
@@ -1471,28 +1659,66 @@ def build_ops_report(
             "factors_ready": bool(fac_m1) and bool(fac_h4),
             "factors_m1_stale": bool(snapshot.get("factor_stale")),
             "factors_m1_age_sec": snapshot.get("factor_age_m1_sec"),
-            "trades_window_count": _safe_int((performance.get("overall") or {}).get("trade_count"), 0),
+            "trades_window_count": _safe_int(
+                (performance.get("overall") or {}).get("trade_count"), 0
+            ),
             "orders_window_count": _safe_int(order_stats.get("total_orders"), 0),
             "events_count": len(events),
             "policy_overlay_present": bool(policy),
-            "market_context_ready": bool(market_context.get("pairs")) if isinstance(market_context, dict) else False,
+            "market_context_ready": (
+                bool(market_context.get("pairs"))
+                if isinstance(market_context, dict)
+                else False
+            ),
         },
     }
     return report
 
 
 def _render_markdown(report: dict[str, Any]) -> str:
-    market_context = report.get("market_context") if isinstance(report.get("market_context"), dict) else {}
-    driver = report.get("driver_breakdown") if isinstance(report.get("driver_breakdown"), dict) else {}
-    snapshot = report.get("snapshot") if isinstance(report.get("snapshot"), dict) else {}
-    short_term = report.get("short_term") if isinstance(report.get("short_term"), dict) else {}
+    market_context = (
+        report.get("market_context")
+        if isinstance(report.get("market_context"), dict)
+        else {}
+    )
+    driver = (
+        report.get("driver_breakdown")
+        if isinstance(report.get("driver_breakdown"), dict)
+        else {}
+    )
+    snapshot = (
+        report.get("snapshot") if isinstance(report.get("snapshot"), dict) else {}
+    )
+    short_term = (
+        report.get("short_term") if isinstance(report.get("short_term"), dict) else {}
+    )
     swing = report.get("swing") if isinstance(report.get("swing"), dict) else {}
-    scenarios = report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
-    break_points = report.get("break_points") if isinstance(report.get("break_points"), list) else []
-    if_then_rules = report.get("if_then_rules") if isinstance(report.get("if_then_rules"), list) else []
-    risk = report.get("risk_protocol") if isinstance(report.get("risk_protocol"), dict) else {}
-    event_ctx = report.get("event_context") if isinstance(report.get("event_context"), dict) else {}
-    perf = report.get("performance") if isinstance(report.get("performance"), dict) else {}
+    scenarios = (
+        report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
+    )
+    break_points = (
+        report.get("break_points")
+        if isinstance(report.get("break_points"), list)
+        else []
+    )
+    if_then_rules = (
+        report.get("if_then_rules")
+        if isinstance(report.get("if_then_rules"), list)
+        else []
+    )
+    risk = (
+        report.get("risk_protocol")
+        if isinstance(report.get("risk_protocol"), dict)
+        else {}
+    )
+    event_ctx = (
+        report.get("event_context")
+        if isinstance(report.get("event_context"), dict)
+        else {}
+    )
+    perf = (
+        report.get("performance") if isinstance(report.get("performance"), dict) else {}
+    )
     perf_overall = perf.get("overall") if isinstance(perf.get("overall"), dict) else {}
 
     lines: list[str] = []
@@ -1500,7 +1726,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"- generated_at: {report.get('generated_at')}")
     lines.append(f"- direction_score: {report.get('direction_score')}")
-    lines.append(f"- direction_confidence_pct: {report.get('direction_confidence_pct')}")
+    lines.append(
+        f"- direction_confidence_pct: {report.get('direction_confidence_pct')}"
+    )
     lines.append("")
     lines.append("## Snapshot")
     lines.append(f"- instrument: {snapshot.get('instrument')}")
@@ -1508,11 +1736,19 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- current_price_source: {snapshot.get('current_price_source')}")
     lines.append(f"- atr_pips: {snapshot.get('atr_pips')}")
     lines.append(f"- range_24h_pips: {snapshot.get('range_24h_pips')}")
-    lines.append(f"- macro_regime/micro_regime: {snapshot.get('macro_regime')} / {snapshot.get('micro_regime')}")
+    lines.append(
+        f"- macro_regime/micro_regime: {snapshot.get('macro_regime')} / {snapshot.get('micro_regime')}"
+    )
     lines.append(f"- factor_stale: {snapshot.get('factor_stale')}")
     lines.append(f"- factor_age_m1_sec: {snapshot.get('factor_age_m1_sec')}")
-    lines.append(f"- support/resistance: {snapshot.get('support_price')} / {snapshot.get('resistance_price')}")
-    pairs = market_context.get("pairs") if isinstance(market_context.get("pairs"), dict) else {}
+    lines.append(
+        f"- support/resistance: {snapshot.get('support_price')} / {snapshot.get('resistance_price')}"
+    )
+    pairs = (
+        market_context.get("pairs")
+        if isinstance(market_context.get("pairs"), dict)
+        else {}
+    )
     usdjpy = pairs.get("usd_jpy") if isinstance(pairs.get("usd_jpy"), dict) else {}
     eurusd = pairs.get("eur_usd") if isinstance(pairs.get("eur_usd"), dict) else {}
     audjpy = pairs.get("aud_jpy") if isinstance(pairs.get("aud_jpy"), dict) else {}
@@ -1521,8 +1757,16 @@ def _render_markdown(report: dict[str, Any]) -> str:
         "- pairs(USD/JPY EUR/USD AUD/JPY EUR/JPY): "
         f"{usdjpy.get('price')} / {eurusd.get('price')} / {audjpy.get('price')} / {eurjpy.get('price')}"
     )
-    dollar = market_context.get("dollar") if isinstance(market_context.get("dollar"), dict) else {}
-    rates = market_context.get("rates") if isinstance(market_context.get("rates"), dict) else {}
+    dollar = (
+        market_context.get("dollar")
+        if isinstance(market_context.get("dollar"), dict)
+        else {}
+    )
+    rates = (
+        market_context.get("rates")
+        if isinstance(market_context.get("rates"), dict)
+        else {}
+    )
     lines.append(f"- dxy: {dollar.get('dxy')} ({dollar.get('source')})")
     lines.append(
         "- rates(US10Y/JP10Y/spread): "
@@ -1533,7 +1777,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- dominant_driver: {driver.get('dominant_driver')}")
     lines.append(f"- dominant_sign: {driver.get('dominant_sign')}")
     lines.append(f"- net_score: {driver.get('net_score')}")
-    comp = driver.get("components") if isinstance(driver.get("components"), dict) else {}
+    comp = (
+        driver.get("components") if isinstance(driver.get("components"), dict) else {}
+    )
     lines.append(
         "- components(rate/yen_flow/risk): "
         f"{comp.get('rate_diff')} / {comp.get('yen_flow')} / {comp.get('risk_sentiment')}"
@@ -1548,7 +1794,11 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- bias: {short_term.get('bias')}")
     lines.append(f"- primary_scenario: {short_term.get('primary_scenario')}")
     lines.append(f"- watch_zone: {short_term.get('watch_zone')}")
-    rules = short_term.get("execution_rules") if isinstance(short_term.get("execution_rules"), list) else []
+    rules = (
+        short_term.get("execution_rules")
+        if isinstance(short_term.get("execution_rules"), list)
+        else []
+    )
     for rule in rules:
         lines.append(f"- rule: {rule}")
     lines.append("")
@@ -1556,7 +1806,11 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- bias: {swing.get('bias')}")
     lines.append(f"- macro_regime: {swing.get('macro_regime')}")
     lines.append(f"- confidence_note: {swing.get('confidence_note')}")
-    mgr = swing.get("management_rules") if isinstance(swing.get("management_rules"), list) else []
+    mgr = (
+        swing.get("management_rules")
+        if isinstance(swing.get("management_rules"), list)
+        else []
+    )
     for rule in mgr:
         lines.append(f"- rule: {rule}")
     lines.append("")
@@ -1577,7 +1831,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
         for row in break_points[:6]:
             if not isinstance(row, dict):
                 continue
-            lines.append(f"- {row.get('key')}: {row.get('condition')} -> {row.get('impact')}")
+            lines.append(
+                f"- {row.get('key')}: {row.get('condition')} -> {row.get('impact')}"
+            )
     lines.append("")
     lines.append("## If-Then Rules")
     if not if_then_rules:
@@ -1586,7 +1842,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
         for row in if_then_rules[:8]:
             if not isinstance(row, dict):
                 continue
-            lines.append(f"- [{row.get('horizon')}] if {row.get('if')} then {row.get('then')}")
+            lines.append(
+                f"- [{row.get('horizon')}] if {row.get('if')} then {row.get('then')}"
+            )
     lines.append("")
     lines.append("## Risk Protocol")
     lines.append(f"- max_loss_per_trade_pct: {risk.get('max_loss_per_trade_pct')}")
@@ -1602,7 +1860,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- total_pips: {perf_overall.get('total_pips')}")
     lines.append("")
     lines.append("## Upcoming Events")
-    events = event_ctx.get("events") if isinstance(event_ctx.get("events"), list) else []
+    events = (
+        event_ctx.get("events") if isinstance(event_ctx.get("events"), list) else []
+    )
     if not events:
         lines.append("- none")
     else:
@@ -1632,7 +1892,9 @@ def _scenario_probability_map(scenarios: list[dict[str, Any]]) -> dict[str, floa
         key = str(row.get("key") or "").strip().lower()
         if not key:
             continue
-        out[key] = round(_clamp(_safe_float(row.get("probability_pct"), 0.0), 0.0, 100.0), 3)
+        out[key] = round(
+            _clamp(_safe_float(row.get("probability_pct"), 0.0), 0.0, 100.0), 3
+        )
     return out
 
 
@@ -1640,7 +1902,9 @@ def _deep_subset_equal(base: object, patch: object) -> bool:
     if isinstance(patch, dict):
         if not isinstance(base, dict):
             return False
-        return all(_deep_subset_equal(base.get(key), value) for key, value in patch.items())
+        return all(
+            _deep_subset_equal(base.get(key), value) for key, value in patch.items()
+        )
     if isinstance(patch, (int, float)) and isinstance(base, (int, float)):
         return abs(float(base) - float(patch)) <= 1e-9
     return base == patch
@@ -1652,15 +1916,35 @@ def _build_policy_diff_from_report(
     current_policy: dict[str, Any],
     now_utc: datetime,
 ) -> dict[str, Any]:
-    short_term = report.get("short_term") if isinstance(report.get("short_term"), dict) else {}
-    event_ctx = report.get("event_context") if isinstance(report.get("event_context"), dict) else {}
-    snapshot = report.get("snapshot") if isinstance(report.get("snapshot"), dict) else {}
-    performance = report.get("performance") if isinstance(report.get("performance"), dict) else {}
-    order_quality = report.get("order_quality") if isinstance(report.get("order_quality"), dict) else {}
-    scenarios = report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
+    short_term = (
+        report.get("short_term") if isinstance(report.get("short_term"), dict) else {}
+    )
+    event_ctx = (
+        report.get("event_context")
+        if isinstance(report.get("event_context"), dict)
+        else {}
+    )
+    snapshot = (
+        report.get("snapshot") if isinstance(report.get("snapshot"), dict) else {}
+    )
+    performance = (
+        report.get("performance") if isinstance(report.get("performance"), dict) else {}
+    )
+    order_quality = (
+        report.get("order_quality")
+        if isinstance(report.get("order_quality"), dict)
+        else {}
+    )
+    scenarios = (
+        report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
+    )
 
-    direction_score = round(_clamp(_safe_float(report.get("direction_score"), 0.0), -1.0, 1.0), 4)
-    direction_conf_pct = round(_clamp(_safe_float(report.get("direction_confidence_pct"), 0.0), 0.0, 100.0), 2)
+    direction_score = round(
+        _clamp(_safe_float(report.get("direction_score"), 0.0), -1.0, 1.0), 4
+    )
+    direction_conf_pct = round(
+        _clamp(_safe_float(report.get("direction_confidence_pct"), 0.0), 0.0, 100.0), 2
+    )
     scenario_probs = _scenario_probability_map(scenarios)
     sorted_probs = sorted(scenario_probs.values(), reverse=True)
     primary_prob = sorted_probs[0] if sorted_probs else 0.0
@@ -1671,7 +1955,9 @@ def _build_policy_diff_from_report(
     event_active = bool(event_ctx.get("event_active_window"))
     factor_stale = bool(snapshot.get("factor_stale"))
     reject_rate = _clamp(_safe_float(order_quality.get("reject_rate"), 0.0), 0.0, 1.0)
-    total_pf = _safe_float_or_none(((performance.get("overall") or {}).get("profit_factor")))
+    total_pf = _safe_float_or_none(
+        ((performance.get("overall") or {}).get("profit_factor"))
+    )
 
     min_conf_pct = _clamp(
         _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_MIN_CONF_PCT", "58"), 58.0),
@@ -1684,17 +1970,23 @@ def _build_policy_diff_from_report(
         100.0,
     )
     reject_warn_threshold = _clamp(
-        _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_REJECT_WARN_THRESHOLD", "0.12"), 0.12),
+        _safe_float(
+            os.getenv("OPS_PLAYBOOK_POLICY_REJECT_WARN_THRESHOLD", "0.12"), 0.12
+        ),
         0.01,
         0.9,
     )
     reject_block_threshold = _clamp(
-        _safe_float(os.getenv("OPS_PLAYBOOK_POLICY_REJECT_BLOCK_THRESHOLD", "0.28"), 0.28),
+        _safe_float(
+            os.getenv("OPS_PLAYBOOK_POLICY_REJECT_BLOCK_THRESHOLD", "0.28"), 0.28
+        ),
         reject_warn_threshold,
         0.95,
     )
 
-    scenario_two_way = _clamp(_safe_float(scenario_probs.get("event_two_way"), 0.0) / 100.0, 0.0, 1.0)
+    scenario_two_way = _clamp(
+        _safe_float(scenario_probs.get("event_two_way"), 0.0) / 100.0, 0.0, 1.0
+    )
     uncertainty = _clamp(
         max(
             scenario_two_way,
@@ -1719,7 +2011,9 @@ def _build_policy_diff_from_report(
     if isinstance(total_pf, (int, float)) and total_pf < 0.80:
         policy_bias = "neutral"
 
-    allow_new = not (event_active or factor_stale or reject_rate >= reject_block_threshold)
+    allow_new = not (
+        event_active or factor_stale or reject_rate >= reject_block_threshold
+    )
     require_retest = bool(event_soon or uncertainty >= 0.55)
     spread_ok = reject_rate < reject_warn_threshold
     drift_ok = not factor_stale
@@ -1734,7 +2028,10 @@ def _build_policy_diff_from_report(
 
     micro_regime = str(snapshot.get("micro_regime") or "").strip().lower()
     range_mode = bool(
-        "range" in micro_regime or policy_bias == "neutral" and uncertainty >= 0.50 or event_soon
+        "range" in micro_regime
+        or policy_bias == "neutral"
+        and uncertainty >= 0.50
+        or event_soon
     )
 
     pocket_patch: dict[str, dict[str, Any]] = {}
@@ -1797,7 +2094,9 @@ def _build_policy_diff_from_report(
     diff = normalize_policy_diff(diff_input, source="ops_playbook")
     errors = validate_policy_diff(diff)
     if errors:
-        logging.error("[OPS_POLICY] invalid generated policy diff: %s", ", ".join(errors))
+        logging.error(
+            "[OPS_POLICY] invalid generated policy diff: %s", ", ".join(errors)
+        )
         return normalize_policy_diff(
             {
                 "source": "ops_playbook",
@@ -1814,34 +2113,70 @@ def _build_policy_diff_from_report(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Ops report (deterministic playbook, LLM disabled)")
+    ap = argparse.ArgumentParser(
+        description="Ops report (deterministic playbook, LLM disabled)"
+    )
     ap.add_argument("--hours", type=float, default=24.0)
     ap.add_argument("--output", default="logs/gpt_ops_report.json")
-    ap.add_argument("--markdown-output", default=os.getenv("GPT_OPS_REPORT_MD_OUTPUT", "logs/gpt_ops_report.md"))
-    ap.add_argument("--trades-db", default=os.getenv("OPS_PLAYBOOK_TRADES_DB", "logs/trades.db"))
-    ap.add_argument("--orders-db", default=os.getenv("OPS_PLAYBOOK_ORDERS_DB", "logs/orders.db"))
-    ap.add_argument("--overlay-path", default=os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"))
-    ap.add_argument("--events-path", default=os.getenv("OPS_PLAYBOOK_EVENTS_PATH", "logs/market_events.json"))
+    ap.add_argument(
+        "--markdown-output",
+        default=os.getenv("GPT_OPS_REPORT_MD_OUTPUT", "logs/gpt_ops_report.md"),
+    )
+    ap.add_argument(
+        "--trades-db", default=os.getenv("OPS_PLAYBOOK_TRADES_DB", "logs/trades.db")
+    )
+    ap.add_argument(
+        "--orders-db", default=os.getenv("OPS_PLAYBOOK_ORDERS_DB", "logs/orders.db")
+    )
+    ap.add_argument(
+        "--overlay-path",
+        default=os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"),
+    )
+    ap.add_argument(
+        "--events-path",
+        default=os.getenv("OPS_PLAYBOOK_EVENTS_PATH", "logs/market_events.json"),
+    )
     ap.add_argument(
         "--market-context-path",
-        default=os.getenv("OPS_PLAYBOOK_MARKET_CONTEXT_PATH", "logs/market_context_latest.json"),
+        default=os.getenv(
+            "OPS_PLAYBOOK_MARKET_CONTEXT_PATH", "logs/market_context_latest.json"
+        ),
     )
     ap.add_argument(
         "--market-external-path",
-        default=os.getenv("OPS_PLAYBOOK_EXTERNAL_SNAPSHOT_PATH", "logs/market_external_snapshot.json"),
+        default=os.getenv(
+            "OPS_PLAYBOOK_EXTERNAL_SNAPSHOT_PATH", "logs/market_external_snapshot.json"
+        ),
     )
     ap.add_argument(
         "--macro-snapshot-path",
-        default=os.getenv("OPS_PLAYBOOK_MACRO_SNAPSHOT_PATH", "fixtures/macro_snapshots/latest.json"),
+        default=os.getenv(
+            "OPS_PLAYBOOK_MACRO_SNAPSHOT_PATH", "fixtures/macro_snapshots/latest.json"
+        ),
     )
-    ap.add_argument("--forecast-strategy-tag", default=os.getenv("OPS_PLAYBOOK_FORECAST_STRATEGY_TAG", "scalp_ping_5s_b_live"))
-    ap.add_argument("--forecast-pocket", default=os.getenv("OPS_PLAYBOOK_FORECAST_POCKET", "scalp"))
-    ap.add_argument("--forecast-units", type=int, default=_safe_int(os.getenv("OPS_PLAYBOOK_FORECAST_UNITS", "10000"), 10000))
+    ap.add_argument(
+        "--forecast-strategy-tag",
+        default=os.getenv("OPS_PLAYBOOK_FORECAST_STRATEGY_TAG", "scalp_ping_5s_b_live"),
+    )
+    ap.add_argument(
+        "--forecast-pocket", default=os.getenv("OPS_PLAYBOOK_FORECAST_POCKET", "scalp")
+    )
+    ap.add_argument(
+        "--forecast-units",
+        type=int,
+        default=_safe_int(os.getenv("OPS_PLAYBOOK_FORECAST_UNITS", "10000"), 10000),
+    )
     ap.add_argument("--policy", action="store_true")
     ap.add_argument("--policy-output", default="logs/policy_diff_ops.json")
     ap.add_argument("--apply-policy", action="store_true")
-    ap.add_argument("--policy-history-dir", default=os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"))
-    ap.add_argument("--policy-latest-path", default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
+    ap.add_argument(
+        "--policy-history-dir",
+        default=os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"),
+    )
+    ap.add_argument(
+        "--policy-latest-path",
+        default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"),
+    )
     ap.add_argument("--gpt", action="store_true")
     ap.add_argument("--log-level", default="INFO")
     args, _ = ap.parse_known_args()
@@ -1850,7 +2185,9 @@ def main() -> int:
     now_utc = _utcnow()
 
     if args.gpt:
-        logging.info("[OPS_REPORT] --gpt requested, but LLM execution is disabled. Running deterministic mode.")
+        logging.info(
+            "[OPS_REPORT] --gpt requested, but LLM execution is disabled. Running deterministic mode."
+        )
 
     factors = _load_factors()
     forecast = _load_forecast_snapshot(
@@ -1862,7 +2199,9 @@ def main() -> int:
         _load_trade_rows(Path(args.trades_db), hours=max(0.1, float(args.hours))),
         hours=max(0.1, float(args.hours)),
     )
-    order_stats = _summarize_orders(Path(args.orders_db), hours=max(0.1, float(args.hours)))
+    order_stats = _summarize_orders(
+        Path(args.orders_db), hours=max(0.1, float(args.hours))
+    )
     policy = _load_policy_overlay(Path(args.overlay_path))
     events = _load_events(Path(args.events_path), now_utc=now_utc)
     market_context = _load_or_build_market_context(

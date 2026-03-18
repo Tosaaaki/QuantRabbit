@@ -39,4 +39,3 @@ def test_build_report_outputs_wfo_summary_and_strategy_stats() -> None:
     assert len(stats) == 2
     assert "dsr" in stats[0]
     assert "sr_star" in stats[0]
-

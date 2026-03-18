@@ -116,7 +116,9 @@ def _parse_entry_thesis(raw: Optional[str]) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _iter_ticks(paths: list[Path], *, instrument: str) -> Iterable[tuple[dt.datetime, float, float]]:
+def _iter_ticks(
+    paths: list[Path], *, instrument: str
+) -> Iterable[tuple[dt.datetime, float, float]]:
     for path in paths:
         with path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -175,9 +177,17 @@ def _compute_tick_metrics(
     sl_price = None
     tp_price = None
     if sl_pips is not None:
-        sl_price = trade.entry_price - (sl_pips * pip) if is_long else trade.entry_price + (sl_pips * pip)
+        sl_price = (
+            trade.entry_price - (sl_pips * pip)
+            if is_long
+            else trade.entry_price + (sl_pips * pip)
+        )
     if tp_pips is not None:
-        tp_price = trade.entry_price + (tp_pips * pip) if is_long else trade.entry_price - (tp_pips * pip)
+        tp_price = (
+            trade.entry_price + (tp_pips * pip)
+            if is_long
+            else trade.entry_price - (tp_pips * pip)
+        )
 
     open_time = trade.open_time
     max_h = max(horizons) if horizons else 0
@@ -219,10 +229,16 @@ def _compute_tick_metrics(
                             cur_side = 1 if px > sl_price else 0
                             prev_side = prev_sl_side_by_h.get(h)
                             if prev_side is not None and cur_side != prev_side:
-                                m.sl_crossings_by_h[h] = int(m.sl_crossings_by_h.get(h, 0)) + 1
+                                m.sl_crossings_by_h[h] = (
+                                    int(m.sl_crossings_by_h.get(h, 0)) + 1
+                                )
                             prev_sl_side_by_h[h] = cur_side
-                            if abs(px - sl_price) / pip <= max(0.0, float(sl_near_band_pips)):
-                                m.sl_near_ticks_by_h[h] = int(m.sl_near_ticks_by_h.get(h, 0)) + 1
+                            if abs(px - sl_price) / pip <= max(
+                                0.0, float(sl_near_band_pips)
+                            ):
+                                m.sl_near_ticks_by_h[h] = (
+                                    int(m.sl_near_ticks_by_h.get(h, 0)) + 1
+                                )
 
         # Post-close TP-touch (detect "exit too early").
         if (
@@ -302,17 +318,58 @@ def _load_exit_composite_blocks(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Multi-perspective SL/entry diagnostics for a single trade ticket.")
+    ap = argparse.ArgumentParser(
+        description="Multi-perspective SL/entry diagnostics for a single trade ticket."
+    )
     ap.add_argument("--ticket", required=True, help="ticket_id (e.g. 316549)")
     ap.add_argument("--trades-db", type=Path, default=Path("logs/trades.db"))
-    ap.add_argument("--orders-db", type=Path, default=None, help="Optional orders.db to include close/open trace")
-    ap.add_argument("--metrics-db", type=Path, default=None, help="Optional metrics.db to include exit_composite blocks")
-    ap.add_argument("--ticks", type=Path, action="append", default=[], help="Tick JSONL path (repeatable; chronological order)")
-    ap.add_argument("--horizons-sec", default="120,300,600", help="Comma-separated horizons in seconds (default: 120,300,600)")
-    ap.add_argument("--post-close-sec", type=int, default=600, help="Seconds after close to check post-close TP touch")
-    ap.add_argument("--sl-near-band-pips", type=float, default=0.2, help="Band around SL line to count 'near-SL' ticks")
-    ap.add_argument("--tz", default="Asia/Tokyo", help="Timezone for extra timestamp column (default: Asia/Tokyo)")
-    ap.add_argument("--out-tsv", type=Path, default=None, help="Write a one-line TSV summary to this path")
+    ap.add_argument(
+        "--orders-db",
+        type=Path,
+        default=None,
+        help="Optional orders.db to include close/open trace",
+    )
+    ap.add_argument(
+        "--metrics-db",
+        type=Path,
+        default=None,
+        help="Optional metrics.db to include exit_composite blocks",
+    )
+    ap.add_argument(
+        "--ticks",
+        type=Path,
+        action="append",
+        default=[],
+        help="Tick JSONL path (repeatable; chronological order)",
+    )
+    ap.add_argument(
+        "--horizons-sec",
+        default="120,300,600",
+        help="Comma-separated horizons in seconds (default: 120,300,600)",
+    )
+    ap.add_argument(
+        "--post-close-sec",
+        type=int,
+        default=600,
+        help="Seconds after close to check post-close TP touch",
+    )
+    ap.add_argument(
+        "--sl-near-band-pips",
+        type=float,
+        default=0.2,
+        help="Band around SL line to count 'near-SL' ticks",
+    )
+    ap.add_argument(
+        "--tz",
+        default="Asia/Tokyo",
+        help="Timezone for extra timestamp column (default: Asia/Tokyo)",
+    )
+    ap.add_argument(
+        "--out-tsv",
+        type=Path,
+        default=None,
+        help="Write a one-line TSV summary to this path",
+    )
     args = ap.parse_args()
 
     trade = _load_trade(args.trades_db, args.ticket)
@@ -324,7 +381,9 @@ def main() -> int:
 
     print(f"ticket_id: {trade.ticket_id}")
     print(f"strategy_tag: {trade.strategy_tag or ''}")
-    print(f"pocket: {trade.pocket}  instrument: {trade.instrument}  dir: {direction}  units: {trade.units}")
+    print(
+        f"pocket: {trade.pocket}  instrument: {trade.instrument}  dir: {direction}  units: {trade.units}"
+    )
     print(f"entry: {trade.entry_price:.3f}")
     if trade.close_time is not None:
         print(
@@ -390,15 +449,26 @@ def main() -> int:
         pip = _pip_size(trade.instrument)
         print("")
         print("ticks (trigger-side, derived):")
-        print(f"  sl_pips: {_format_float(sl_pips, 2)}  tp_pips: {_format_float(tp_pips, 2)}  pip: {pip}")
+        print(
+            f"  sl_pips: {_format_float(sl_pips, 2)}  tp_pips: {_format_float(tp_pips, 2)}  pip: {pip}"
+        )
         if tick_metrics.sl_hit_time is not None:
             sec = (tick_metrics.sl_hit_time - trade.open_time).total_seconds()
-            print(f"  sl_hit_s: {_format_float(sec, 0)}  sl_hit_{args.tz}: {_format_dt(tick_metrics.sl_hit_time, args.tz)}")
+            print(
+                f"  sl_hit_s: {_format_float(sec, 0)}  sl_hit_{args.tz}: {_format_dt(tick_metrics.sl_hit_time, args.tz)}"
+            )
         if tick_metrics.tp_touch_time is not None:
             sec = (tick_metrics.tp_touch_time - trade.open_time).total_seconds()
-            print(f"  tp_touch_s: {_format_float(sec, 0)}  tp_touch_{args.tz}: {_format_dt(tick_metrics.tp_touch_time, args.tz)}")
-        if trade.close_time is not None and tick_metrics.post_close_tp_touch_time is not None:
-            sec = (tick_metrics.post_close_tp_touch_time - trade.close_time).total_seconds()
+            print(
+                f"  tp_touch_s: {_format_float(sec, 0)}  tp_touch_{args.tz}: {_format_dt(tick_metrics.tp_touch_time, args.tz)}"
+            )
+        if (
+            trade.close_time is not None
+            and tick_metrics.post_close_tp_touch_time is not None
+        ):
+            sec = (
+                tick_metrics.post_close_tp_touch_time - trade.close_time
+            ).total_seconds()
             print(f"  post_close_tp_touch_s: {_format_float(sec, 0)}")
 
         for h in horizons:
@@ -468,12 +538,37 @@ def main() -> int:
             "tp_pips": _format_float(tp_pips, 2),
         }
         if tick_metrics is not None:
-            row["sl_hit_s"] = _format_float((tick_metrics.sl_hit_time - trade.open_time).total_seconds(), 0) if tick_metrics.sl_hit_time else ""
-            row["tp_touch_s"] = _format_float((tick_metrics.tp_touch_time - trade.open_time).total_seconds(), 0) if tick_metrics.tp_touch_time else ""
-            row["post_close_tp_touch_s"] = _format_float((tick_metrics.post_close_tp_touch_time - trade.close_time).total_seconds(), 0) if (trade.close_time and tick_metrics.post_close_tp_touch_time) else ""
+            row["sl_hit_s"] = (
+                _format_float(
+                    (tick_metrics.sl_hit_time - trade.open_time).total_seconds(), 0
+                )
+                if tick_metrics.sl_hit_time
+                else ""
+            )
+            row["tp_touch_s"] = (
+                _format_float(
+                    (tick_metrics.tp_touch_time - trade.open_time).total_seconds(), 0
+                )
+                if tick_metrics.tp_touch_time
+                else ""
+            )
+            row["post_close_tp_touch_s"] = (
+                _format_float(
+                    (
+                        tick_metrics.post_close_tp_touch_time - trade.close_time
+                    ).total_seconds(),
+                    0,
+                )
+                if (trade.close_time and tick_metrics.post_close_tp_touch_time)
+                else ""
+            )
             for h in horizons:
-                row[f"sl_crossings_{h}s"] = str(tick_metrics.sl_crossings_by_h.get(h, ""))
-                row[f"sl_near_ticks_{h}s"] = str(tick_metrics.sl_near_ticks_by_h.get(h, ""))
+                row[f"sl_crossings_{h}s"] = str(
+                    tick_metrics.sl_crossings_by_h.get(h, "")
+                )
+                row[f"sl_near_ticks_{h}s"] = str(
+                    tick_metrics.sl_near_ticks_by_h.get(h, "")
+                )
         # deterministic header order (TSV)
         header = list(row.keys())
         with args.out_tsv.open("w", encoding="utf-8", newline="") as f:
@@ -486,4 +581,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

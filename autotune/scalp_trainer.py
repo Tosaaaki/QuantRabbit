@@ -15,12 +15,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = REPO_ROOT / "logs" / "tuning"
 LEGACY_CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
 _CONFIG_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
-CONFIG_PATH = Path(_CONFIG_OVERRIDE) if _CONFIG_OVERRIDE else (RUNTIME_DIR / "scalp_active_params.json")
+CONFIG_PATH = (
+    Path(_CONFIG_OVERRIDE)
+    if _CONFIG_OVERRIDE
+    else (RUNTIME_DIR / "scalp_active_params.json")
+)
 TRADES_DB_PATH = REPO_ROOT / "logs" / "trades.db"
 ORDERS_DB_PATH = REPO_ROOT / "logs" / "orders.db"
 STATE_PATH = REPO_ROOT / "logs" / "tuning" / "scalp_autotune_state.json"
 ENV_FALLBACK_PATH = Path(
-    os.getenv("QUANTRABBIT_ENV_FILE", "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env")
+    os.getenv(
+        "QUANTRABBIT_ENV_FILE", "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env"
+    )
 )
 
 from utils.env_utils import load_env_file_hot
@@ -178,7 +184,11 @@ def _load_config() -> dict:
     if _CONFIG_OVERRIDE:
         paths = (CONFIG_PATH,)
     else:
-        paths = (CONFIG_PATH, LEGACY_CONFIG_PATH) if CONFIG_PATH != LEGACY_CONFIG_PATH else (CONFIG_PATH,)
+        paths = (
+            (CONFIG_PATH, LEGACY_CONFIG_PATH)
+            if CONFIG_PATH != LEGACY_CONFIG_PATH
+            else (CONFIG_PATH,)
+        )
     for path in paths:
         if not path.exists():
             continue
@@ -243,10 +253,21 @@ def run_autotune_once() -> dict | None:
         return None
 
     # 産出値に安全域クランプを適用
-    recommended_sl_floor = max(5.4, round(high_sl_distance + 0.5, 2)) if sl_samples else float(existing_fallback.get("sl_floor", 5.8))
+    recommended_sl_floor = (
+        max(5.4, round(high_sl_distance + 0.5, 2))
+        if sl_samples
+        else float(existing_fallback.get("sl_floor", 5.8))
+    )
     recommended_sl_floor = min(recommended_sl_floor, 7.2)
 
-    recommended_tp_floor = max(1.4, round(median_tp_distance, 2) if tp_samples else float(existing_fallback.get("tp_floor", 1.8)))
+    recommended_tp_floor = max(
+        1.4,
+        (
+            round(median_tp_distance, 2)
+            if tp_samples
+            else float(existing_fallback.get("tp_floor", 1.8))
+        ),
+    )
     recommended_tp_floor = min(recommended_tp_floor, 2.2)
 
     recommended_sl_atr = 2.15 if win_rate >= 0.52 else 2.3
@@ -260,7 +281,9 @@ def run_autotune_once() -> dict | None:
     recommended_wick = 0.0008 if win_rate >= 0.55 else 0.00088
     recommended_wick = max(0.0007, min(recommended_wick, 0.00095))
 
-    recommended_timeout = int(max(600, min(1500, (hold_win + hold_loss) / 2 * 60 * 2.0)))
+    recommended_timeout = int(
+        max(600, min(1500, (hold_win + hold_loss) / 2 * 60 * 2.0))
+    )
 
     recommended_nwave_leg = 2.1 if win_rate >= 0.55 else 1.9
     recommended_nwave_leg = max(1.8, min(recommended_nwave_leg, 2.4))
@@ -335,6 +358,8 @@ async def scalp_autotune_loop() -> None:
         await asyncio.sleep(AUTO_INTERVAL_SEC)
 
 
-def start_background_autotune(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task:
+def start_background_autotune(
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> asyncio.Task:
     event_loop = loop or asyncio.get_event_loop()
     return event_loop.create_task(scalp_autotune_loop(), name="scalp_autotune_loop")

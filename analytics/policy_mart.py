@@ -59,8 +59,14 @@ class PolicyMartClient:
         self.dataset_id = dataset_id
         self.trades_table = trades_table
         self.timezone = timezone or DEFAULT_TIMEZONE
-        self.vol_thresholds = list(vol_thresholds or _parse_thresholds(_VOL_BUCKETS_RAW))
-        self.client = bigquery.Client(project=self.project_id) if self.project_id else bigquery.Client()
+        self.vol_thresholds = list(
+            vol_thresholds or _parse_thresholds(_VOL_BUCKETS_RAW)
+        )
+        self.client = (
+            bigquery.Client(project=self.project_id)
+            if self.project_id
+            else bigquery.Client()
+        )
         self._table_schema = self._get_table_schema()
 
     def _get_table_schema(self) -> Dict[str, bigquery.SchemaField]:
@@ -88,9 +94,7 @@ class PolicyMartClient:
         if self._has_column("regime"):
             return "COALESCE(SAFE_CAST(regime AS STRING), 'unknown')"
         if self._has_column("entry_thesis"):
-            return (
-                "COALESCE(JSON_EXTRACT_SCALAR(CAST(entry_thesis AS STRING), '$.regime'), 'unknown')"
-            )
+            return "COALESCE(JSON_EXTRACT_SCALAR(CAST(entry_thesis AS STRING), '$.regime'), 'unknown')"
         return "'unknown'"
 
     def _atr_expr(self) -> str:
@@ -186,15 +190,29 @@ GROUP BY pocket, strategy, regime, time_band, vol_bucket
 
         params: List[bigquery.ScalarQueryParameter] = []
         if not inline_params:
-            params.append(bigquery.ScalarQueryParameter("lookback_days", "INT64", int(lookback_days)))
+            params.append(
+                bigquery.ScalarQueryParameter(
+                    "lookback_days", "INT64", int(lookback_days)
+                )
+            )
             if min_trades > 0:
-                params.append(bigquery.ScalarQueryParameter("min_trades", "INT64", int(min_trades)))
+                params.append(
+                    bigquery.ScalarQueryParameter(
+                        "min_trades", "INT64", int(min_trades)
+                    )
+                )
         return sql, params
 
-    def fetch_rows(self, *, lookback_days: int = 14, min_trades: int = 0) -> List[Dict[str, Any]]:
-        sql, params = self.build_query(lookback_days=lookback_days, min_trades=min_trades)
+    def fetch_rows(
+        self, *, lookback_days: int = 14, min_trades: int = 0
+    ) -> List[Dict[str, Any]]:
+        sql, params = self.build_query(
+            lookback_days=lookback_days, min_trades=min_trades
+        )
         try:
-            job = self.client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
+            job = self.client.query(
+                sql, job_config=bigquery.QueryJobConfig(query_parameters=params)
+            )
             return [dict(row) for row in job.result()]
         except gexc.NotFound:
             logging.warning("[POLICY_MART] trades table not found.")
@@ -203,8 +221,16 @@ GROUP BY pocket, strategy, regime, time_band, vol_bucket
             logging.warning("[POLICY_MART] query failed: %s", exc)
             return []
 
-    def create_view(self, *, view_name: str = "policy_mart_view", lookback_days: int = 14, min_trades: int = 0) -> None:
-        sql, _ = self.build_query(lookback_days=lookback_days, min_trades=min_trades, inline_params=True)
+    def create_view(
+        self,
+        *,
+        view_name: str = "policy_mart_view",
+        lookback_days: int = 14,
+        min_trades: int = 0,
+    ) -> None:
+        sql, _ = self.build_query(
+            lookback_days=lookback_days, min_trades=min_trades, inline_params=True
+        )
         view_ref = f"{self.client.project}.{self.dataset_id}.{view_name}"
         query = f"CREATE OR REPLACE VIEW `{view_ref}` AS {sql}"
         try:

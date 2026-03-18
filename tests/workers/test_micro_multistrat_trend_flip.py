@@ -7,7 +7,9 @@ import pytest
 from workers.micro_runtime import worker
 
 
-def _patch_trend_snapshot(monkeypatch, direction: str = "short", adx: float = 30.0) -> None:
+def _patch_trend_snapshot(
+    monkeypatch, direction: str = "short", adx: float = 30.0
+) -> None:
     monkeypatch.setattr(
         worker,
         "_trend_snapshot",
@@ -105,9 +107,12 @@ def test_trend_flip_still_applies_when_allowed(monkeypatch):
     assert tp_mult == 1.12
     assert sl_mult == 0.95
 
+
 def test_strategy_cooldown_active_when_recent(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
     worker._STRATEGY_LAST_TS.clear()
     worker._STRATEGY_LAST_TS["MicroLevelReactor"] = 100.0
@@ -119,7 +124,9 @@ def test_strategy_cooldown_active_when_recent(monkeypatch):
 
 def test_strategy_cooldown_disabled_by_default(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 0.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
     worker._STRATEGY_LAST_TS.clear()
     worker._STRATEGY_LAST_TS["MicroLevelReactor"] = 100.0
@@ -132,9 +139,18 @@ def test_momentumburst_entry_thesis_marks_only_reaccel_signals() -> None:
     reaccel_signal = {"metadata": {"momentum_burst": {"reaccel": True}}}
     normal_signal = {"metadata": {"momentum_burst": {"reaccel": False}}}
 
-    assert worker._momentumburst_entry_thesis_reaccel("MomentumBurst", reaccel_signal) is True
-    assert worker._momentumburst_entry_thesis_reaccel("MomentumBurst", normal_signal) is False
-    assert worker._momentumburst_entry_thesis_reaccel("MicroLevelReactor", reaccel_signal) is False
+    assert (
+        worker._momentumburst_entry_thesis_reaccel("MomentumBurst", reaccel_signal)
+        is True
+    )
+    assert (
+        worker._momentumburst_entry_thesis_reaccel("MomentumBurst", normal_signal)
+        is False
+    )
+    assert (
+        worker._momentumburst_entry_thesis_reaccel("MicroLevelReactor", reaccel_signal)
+        is False
+    )
 
 
 def test_history_profile_uses_override_skip_threshold(monkeypatch):
@@ -237,7 +253,9 @@ def test_apply_setup_history_winner_override_unblocks_hist_skip(monkeypatch):
 
 def test_strategy_cooldown_extends_with_fresh_participation_trim(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
     monkeypatch.setattr(
         worker,
@@ -252,12 +270,16 @@ def test_strategy_cooldown_extends_with_fresh_participation_trim(monkeypatch):
         raising=False,
     )
 
-    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(50.0)
+    assert worker._strategy_effective_cooldown_sec(
+        "MicroLevelReactor"
+    ) == pytest.approx(50.0)
 
 
 def test_strategy_cooldown_shortens_with_fresh_participation_boost(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", False)
     monkeypatch.setattr(
         worker,
@@ -272,12 +294,16 @@ def test_strategy_cooldown_shortens_with_fresh_participation_boost(monkeypatch):
         raising=False,
     )
 
-    assert worker._strategy_effective_cooldown_sec("MomentumBurst") == pytest.approx(45.0 / 1.10)
+    assert worker._strategy_effective_cooldown_sec("MomentumBurst") == pytest.approx(
+        45.0 / 1.10
+    )
 
 
 def test_strategy_cooldown_boost_offsets_mild_dynamic_alloc_trim(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MULT_MIN", 0.7)
@@ -315,7 +341,9 @@ def test_strategy_cooldown_boost_offsets_mild_dynamic_alloc_trim(monkeypatch):
 def test_strategy_cooldown_uses_dynamic_alloc_when_base_is_zero(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 0.0)
     monkeypatch.setattr(worker.config, "LOOP_INTERVAL_SEC", 8.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MULT_MIN", 0.7)
@@ -332,12 +360,16 @@ def test_strategy_cooldown_uses_dynamic_alloc_when_base_is_zero(monkeypatch):
         raising=False,
     )
 
-    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(10.0)
+    assert worker._strategy_effective_cooldown_sec(
+        "MicroLevelReactor"
+    ) == pytest.approx(10.0)
 
 
 def test_strategy_cooldown_ignores_stale_missing_and_noop_dynamic_inputs(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(
@@ -404,7 +436,9 @@ def test_strategy_cooldown_ignores_stale_missing_and_noop_dynamic_inputs(monkeyp
 def test_momentumburst_reaccel_shortens_before_dynamic_extension(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
     monkeypatch.setattr(worker.config, "MOMENTUMBURST_REACCEL_COOLDOWN_SEC", 20.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(
@@ -427,7 +461,9 @@ def test_momentumburst_reaccel_shortens_before_dynamic_extension(monkeypatch):
 
 def test_trendretest_side_specific_dynamic_alloc_key_is_resolved(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     seen = []
@@ -466,7 +502,9 @@ def test_trendretest_side_specific_dynamic_alloc_key_is_resolved(monkeypatch):
 
 def test_momentumburst_open_long_dynamic_alloc_key_is_resolved(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     seen = []
@@ -505,7 +543,9 @@ def test_momentumburst_open_long_dynamic_alloc_key_is_resolved(monkeypatch):
 
 def test_setup_tag_prefers_exact_profile_key_before_strategy_fallback(monkeypatch):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     seen = []
@@ -535,9 +575,13 @@ def test_setup_tag_prefers_exact_profile_key_before_strategy_fallback(monkeypatc
     assert seen == ["MicroLevelReactor-bounce-lower"]
 
 
-def test_strategy_cooldown_uses_stronger_dynamic_extension_when_both_present(monkeypatch):
+def test_strategy_cooldown_uses_stronger_dynamic_extension_when_both_present(
+    monkeypatch,
+):
     monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
-    monkeypatch.setattr(worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(
@@ -564,7 +608,9 @@ def test_strategy_cooldown_uses_stronger_dynamic_extension_when_both_present(mon
         raising=False,
     )
 
-    assert worker._strategy_effective_cooldown_sec("MicroLevelReactor") == pytest.approx(56.25)
+    assert worker._strategy_effective_cooldown_sec(
+        "MicroLevelReactor"
+    ) == pytest.approx(56.25)
 
 
 def test_mlr_strict_range_gate_blocks_without_range_context(monkeypatch):
@@ -651,7 +697,9 @@ def test_mlr_strict_range_gate_allows_chop_override(monkeypatch):
 
 
 def test_strategy_chop_units_multiplier_reduces_momentumburst_in_chop(monkeypatch):
-    monkeypatch.setattr(worker.config, "CHOP_STRATEGY_UNITS_MULT", {"MomentumBurst": 0.70})
+    monkeypatch.setattr(
+        worker.config, "CHOP_STRATEGY_UNITS_MULT", {"MomentumBurst": 0.70}
+    )
 
     mult = worker._strategy_chop_units_multiplier(
         "MomentumBurst",
@@ -721,7 +769,9 @@ def test_resolve_account_snapshot_marks_unavailable_without_cache(monkeypatch):
     assert isinstance(err, RuntimeError)
 
 
-def test_clamp_dynamic_alloc_multiplier_when_recent_history_is_underperforming(monkeypatch):
+def test_clamp_dynamic_alloc_multiplier_when_recent_history_is_underperforming(
+    monkeypatch,
+):
     monkeypatch.setattr(worker.config, "HIST_REGIME_MIN_TRADES", 8)
     monkeypatch.setattr(worker.config, "HIST_MIN_TRADES", 12)
 
@@ -740,7 +790,9 @@ def test_clamp_dynamic_alloc_multiplier_when_recent_history_is_underperforming(m
     assert meta["dyn_mult_before"] == 1.65
 
 
-def test_clamp_dynamic_alloc_multiplier_keeps_boost_when_history_is_healthy(monkeypatch):
+def test_clamp_dynamic_alloc_multiplier_keeps_boost_when_history_is_healthy(
+    monkeypatch,
+):
     monkeypatch.setattr(worker.config, "HIST_REGIME_MIN_TRADES", 8)
     monkeypatch.setattr(worker.config, "HIST_MIN_TRADES", 12)
 
@@ -758,7 +810,9 @@ def test_clamp_dynamic_alloc_multiplier_keeps_boost_when_history_is_healthy(monk
     assert meta == {}
 
 
-def test_clamp_strategy_units_multiplier_skips_positive_boost_for_dyn_alloc_loser(monkeypatch):
+def test_clamp_strategy_units_multiplier_skips_positive_boost_for_dyn_alloc_loser(
+    monkeypatch,
+):
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_LOSER_SCORE", 0.28)
@@ -777,7 +831,9 @@ def test_clamp_strategy_units_multiplier_skips_positive_boost_for_dyn_alloc_lose
     assert meta["configured_mult"] == 1.3
 
 
-def test_clamp_strategy_units_multiplier_keeps_positive_boost_for_dyn_alloc_winner(monkeypatch):
+def test_clamp_strategy_units_multiplier_keeps_positive_boost_for_dyn_alloc_winner(
+    monkeypatch,
+):
     monkeypatch.setattr(worker.config, "DYN_ALLOC_ENABLED", True)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_MIN_TRADES", 10)
     monkeypatch.setattr(worker.config, "DYN_ALLOC_LOSER_SCORE", 0.28)

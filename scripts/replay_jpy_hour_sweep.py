@@ -96,24 +96,36 @@ def _gate_ok(
     return True
 
 
-def _calc_target_feasibility(folds: list[dict[str, Any]], target_jpy_per_hour: float) -> dict[str, Any]:
+def _calc_target_feasibility(
+    folds: list[dict[str, Any]], target_jpy_per_hour: float
+) -> dict[str, Any]:
     total_jpy = 0.0
     total_hours = 0.0
     total_trades = 0.0
     per_fold: list[dict[str, Any]] = []
 
     for row in folds:
-        tm = row.get("test_metrics") if isinstance(row.get("test_metrics"), dict) else {}
+        tm = (
+            row.get("test_metrics") if isinstance(row.get("test_metrics"), dict) else {}
+        )
         fold_id = _safe_int(row.get("fold_id"), 0)
-        test_files = row.get("test_files") if isinstance(row.get("test_files"), list) else []
+        test_files = (
+            row.get("test_files") if isinstance(row.get("test_files"), list) else []
+        )
         test_file = str(test_files[0]) if test_files else ""
         trade_count = _safe_float(tm.get("trade_count"), 0.0)
         duration_hours = _safe_float(tm.get("duration_hours"), 0.0)
         total_jpy_fold = _safe_float(tm.get("total_jpy"), 0.0)
         avg_jpy = _safe_float(tm.get("avg_jpy"), 0.0)
         jpy_per_hour = _safe_float(tm.get("jpy_per_hour"), 0.0)
-        trades_per_hour = (trade_count / duration_hours) if duration_hours > 0.0 else 0.0
-        required_jpy_per_trade = (target_jpy_per_hour / trades_per_hour) if trades_per_hour > 0.0 else float("inf")
+        trades_per_hour = (
+            (trade_count / duration_hours) if duration_hours > 0.0 else 0.0
+        )
+        required_jpy_per_trade = (
+            (target_jpy_per_hour / trades_per_hour)
+            if trades_per_hour > 0.0
+            else float("inf")
+        )
         uplift_vs_avg_jpy = (
             (required_jpy_per_trade / avg_jpy)
             if avg_jpy > 0.0 and not math.isinf(required_jpy_per_trade)
@@ -139,7 +151,9 @@ def _calc_target_feasibility(folds: list[dict[str, Any]], target_jpy_per_hour: f
 
     achieved_jpy_per_hour = (total_jpy / total_hours) if total_hours > 0.0 else 0.0
     achieved_jpy_per_trade = (total_jpy / total_trades) if total_trades > 0.0 else 0.0
-    achieved_trades_per_hour = (total_trades / total_hours) if total_hours > 0.0 else 0.0
+    achieved_trades_per_hour = (
+        (total_trades / total_hours) if total_hours > 0.0 else 0.0
+    )
     required_trades_per_hour = (
         (target_jpy_per_hour / achieved_jpy_per_trade)
         if achieved_jpy_per_trade > 0.0
@@ -173,14 +187,22 @@ def _render_markdown(result: dict[str, Any]) -> str:
     lines.append("# Replay JPY/Hour Sweep")
     lines.append("")
     lines.append("## Target Feasibility")
-    tf = result.get("target_feasibility") if isinstance(result.get("target_feasibility"), dict) else {}
+    tf = (
+        result.get("target_feasibility")
+        if isinstance(result.get("target_feasibility"), dict)
+        else {}
+    )
     agg = tf.get("aggregate") if isinstance(tf.get("aggregate"), dict) else {}
     lines.append(f"- target_jpy_per_hour: {tf.get('target_jpy_per_hour')}")
     lines.append(f"- achieved_jpy_per_hour: {agg.get('achieved_jpy_per_hour')}")
     lines.append(f"- achieved_trades_per_hour: {agg.get('achieved_trades_per_hour')}")
     lines.append(f"- achieved_jpy_per_trade: {agg.get('achieved_jpy_per_trade')}")
-    lines.append(f"- required_trades_per_hour_at_current_ev: {agg.get('required_trades_per_hour_at_current_ev')}")
-    lines.append(f"- required_jpy_per_trade_at_current_freq: {agg.get('required_jpy_per_trade_at_current_freq')}")
+    lines.append(
+        f"- required_trades_per_hour_at_current_ev: {agg.get('required_trades_per_hour_at_current_ev')}"
+    )
+    lines.append(
+        f"- required_jpy_per_trade_at_current_freq: {agg.get('required_jpy_per_trade_at_current_freq')}"
+    )
     lines.append("")
     lines.append("## Threshold Sweep")
     lines.append("| min_test_jpy_per_hour | folds | passed | pass_rate | status |")
@@ -202,9 +224,15 @@ def _render_markdown(result: dict[str, Any]) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Sweep min_test_jpy_per_hour on existing replay report")
-    ap.add_argument("--report", type=Path, required=True, help="quality_gate_report.json path")
-    ap.add_argument("--worker", default="", help="worker key (default: first in report)")
+    ap = argparse.ArgumentParser(
+        description="Sweep min_test_jpy_per_hour on existing replay report"
+    )
+    ap.add_argument(
+        "--report", type=Path, required=True, help="quality_gate_report.json path"
+    )
+    ap.add_argument(
+        "--worker", default="", help="worker key (default: first in report)"
+    )
     ap.add_argument(
         "--thresholds",
         default="150,300,500,2000",
@@ -212,8 +240,12 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--target-jpy-per-hour", type=float, default=2000.0)
     ap.add_argument("--required-pass-rate", type=float, default=1.0)
-    ap.add_argument("--out-json", type=Path, default=Path("tmp/replay_jpy_hour_sweep/result.json"))
-    ap.add_argument("--out-md", type=Path, default=Path("tmp/replay_jpy_hour_sweep/result.md"))
+    ap.add_argument(
+        "--out-json", type=Path, default=Path("tmp/replay_jpy_hour_sweep/result.json")
+    )
+    ap.add_argument(
+        "--out-md", type=Path, default=Path("tmp/replay_jpy_hour_sweep/result.md")
+    )
     return ap.parse_args()
 
 
@@ -256,12 +288,18 @@ def main() -> int:
                 "passed_folds": int(passed),
                 "pass_rate": float(pass_rate),
                 "required_pass_rate": float(args.required_pass_rate),
-                "status": "pass" if total > 0 and pass_rate >= float(args.required_pass_rate) else "fail",
+                "status": (
+                    "pass"
+                    if total > 0 and pass_rate >= float(args.required_pass_rate)
+                    else "fail"
+                ),
                 "failed_fold_ids": failed_fold_ids,
             }
         )
 
-    target_feasibility = _calc_target_feasibility(folds, float(args.target_jpy_per_hour))
+    target_feasibility = _calc_target_feasibility(
+        folds, float(args.target_jpy_per_hour)
+    )
     result = {
         "source_report": str(args.report),
         "worker": worker,
@@ -283,4 +321,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

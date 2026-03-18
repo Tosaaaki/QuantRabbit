@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 JSONRPC_VERSION = "2.0"
 MAX_RESULT_ROWS = 1000
 DEFAULT_RESULT_ROWS = 200
@@ -50,7 +49,9 @@ def _write_mcp_message(message: dict) -> None:
     sys.stdout.buffer.flush()
 
 
-def _json_response(message_id: Any, result: dict | None = None, error: dict | None = None) -> dict:
+def _json_response(
+    message_id: Any, result: dict | None = None, error: dict | None = None
+) -> dict:
     base = {
         "jsonrpc": JSONRPC_VERSION,
         "id": message_id,
@@ -74,11 +75,11 @@ def _text_content(payload: dict) -> dict:
 
 
 def _is_readonly_sql(sql: str) -> bool:
-    trimmed = re.sub(r"(--.*?$|/\*.*?\*/)", "", sql, flags=re.MULTILINE | re.DOTALL).strip()
+    trimmed = re.sub(
+        r"(--.*?$|/\*.*?\*/)", "", sql, flags=re.MULTILINE | re.DOTALL
+    ).strip()
     lowered = trimmed.lower()
-    return bool(
-        lowered.startswith(("select", "with", "pragma", "explain"))
-    )
+    return bool(lowered.startswith(("select", "with", "pragma", "explain")))
 
 
 class ReadonlySqliteClient:
@@ -91,7 +92,9 @@ class ReadonlySqliteClient:
 
     def query(self, sql: str, max_rows: int | None = None) -> dict:
         if not _is_readonly_sql(sql):
-            raise PermissionError("Only read-only SQL is allowed (SELECT/WITH/PRAGMA/EXPLAIN).")
+            raise PermissionError(
+                "Only read-only SQL is allowed (SELECT/WITH/PRAGMA/EXPLAIN)."
+            )
         if max_rows is None:
             max_rows = DEFAULT_RESULT_ROWS
         if not isinstance(max_rows, int):
@@ -148,7 +151,9 @@ def _tool_list() -> dict:
     }
 
 
-def _tool_call(name: str, args: dict[str, Any] | None, client: ReadonlySqliteClient) -> dict:
+def _tool_call(
+    name: str, args: dict[str, Any] | None, client: ReadonlySqliteClient
+) -> dict:
     if name != "query":
         raise RuntimeError(f"Unknown tool: {name}")
     if not args:
@@ -244,7 +249,9 @@ def _handle_message(message: dict, client: ReadonlySqliteClient) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only SQLite MCP server")
-    parser.add_argument("--db", required=True, help="Absolute or relative path to SQLite DB")
+    parser.add_argument(
+        "--db", required=True, help="Absolute or relative path to SQLite DB"
+    )
     args = parser.parse_args()
     try:
         client = ReadonlySqliteClient(args.db)
@@ -258,7 +265,10 @@ def main() -> int:
         message = _read_mcp_message()
         if message is None:
             return 0
-        if message.get("method") in {"notifications/initialized", "notifications/cancelled"}:
+        if message.get("method") in {
+            "notifications/initialized",
+            "notifications/cancelled",
+        }:
             continue
         if message.get("method") == "initialize" and startup_error:
             _write_mcp_message(
@@ -266,7 +276,10 @@ def main() -> int:
                     message.get("id"),
                     {
                         "protocolVersion": "2025-06-18",
-                        "serverInfo": {"name": "qr-sqlite-readonly", "version": "1.1.0"},
+                        "serverInfo": {
+                            "name": "qr-sqlite-readonly",
+                            "version": "1.1.0",
+                        },
                         "capabilities": {},
                     },
                 )

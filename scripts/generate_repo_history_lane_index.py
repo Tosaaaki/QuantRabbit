@@ -11,14 +11,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
-
 
 DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
 DEFAULT_DOC_PATH = REPO_ROOT / "docs" / "REPO_HISTORY_LANE_INDEX.md"

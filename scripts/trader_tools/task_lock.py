@@ -12,6 +12,7 @@ status:  Print all locks.
 
 Lock files: logs/locks/<task_name>.lock (JSON with pid + started_at)
 """
+
 import json
 import os
 import sys
@@ -38,10 +39,14 @@ def acquire(task_name: str, timeout_min: int) -> bool:
                     started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
                     elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
                     if elapsed < timeout_min * 60:
-                        print(f"SKIP: {task_name} is already running (started {int(elapsed)}s ago, pid={lock.get('pid','')})")
+                        print(
+                            f"SKIP: {task_name} is already running (started {int(elapsed)}s ago, pid={lock.get('pid','')})"
+                        )
                         return False
                     else:
-                        print(f"STALE: {task_name} lock expired ({int(elapsed)}s > {timeout_min*60}s), taking over")
+                        print(
+                            f"STALE: {task_name} lock expired ({int(elapsed)}s > {timeout_min*60}s), taking over"
+                        )
         except (json.JSONDecodeError, ValueError, KeyError):
             pass  # corrupt lock file, take over
 
@@ -58,7 +63,10 @@ def acquire(task_name: str, timeout_min: int) -> bool:
 def release(task_name: str) -> None:
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
     lf = _lock_file(task_name)
-    lock_data = {"running": False, "released_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    lock_data = {
+        "running": False,
+        "released_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
     lf.write_text(json.dumps(lock_data))
     print(f"RELEASED: {task_name}")
 
@@ -75,7 +83,9 @@ def status() -> None:
             running = lock.get("running", False)
             started = lock.get("started_at", lock.get("released_at", "?"))
             pid = lock.get("pid", "")
-            print(f"  {lf.stem}: {'RUNNING' if running else 'idle'} (at: {started}, pid: {pid})")
+            print(
+                f"  {lf.stem}: {'RUNNING' if running else 'idle'} (at: {started}, pid: {pid})"
+            )
         except (json.JSONDecodeError, ValueError):
             print(f"  {lf.stem}: CORRUPT")
     if not found:

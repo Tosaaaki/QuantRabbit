@@ -51,10 +51,10 @@ SYNC_TRADES_TTL_SEC = float(os.getenv("UI_SNAPSHOT_SYNC_TTL_SEC", "60"))
 SYNC_TRADES_MARKER = Path(
     os.getenv("UI_SNAPSHOT_SYNC_MARKER", "logs/ui_snapshot_sync.json")
 )
-LITE_SNAPSHOT_FAST = (
-    os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
-    in {"fast", "minimal"}
-)
+LITE_SNAPSHOT_FAST = os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower() in {
+    "fast",
+    "minimal",
+}
 LITE_INCLUDE_EXTENDED_METRICS = os.getenv(
     "UI_SNAPSHOT_LITE_INCLUDE_EXTENDED_METRICS", "0"
 ).strip().lower() in {
@@ -167,7 +167,11 @@ def _load_recent_log_errors(limit: int = 10) -> list[dict]:
             if len(results) >= limit:
                 return results
             upper = line.upper()
-            if "ERROR" not in upper and "CRITICAL" not in upper and "TRACEBACK" not in upper:
+            if (
+                "ERROR" not in upper
+                and "CRITICAL" not in upper
+                and "TRACEBACK" not in upper
+            ):
                 continue
             parsed = _parse_log_line(line)
             parsed["source"] = path.name
@@ -302,7 +306,9 @@ def _build_hourly_trades_from_rows(
     }
 
 
-def _load_recent_trade_rows_for_hourly(start_hour_utc: datetime) -> Optional[list[dict[str, Any]]]:
+def _load_recent_trade_rows_for_hourly(
+    start_hour_utc: datetime,
+) -> Optional[list[dict[str, Any]]]:
     if not TRADES_DB.exists():
         return None
     sql_variants: list[tuple[str, tuple[Any, ...]]] = [
@@ -375,7 +381,9 @@ def _build_hourly_trades_from_recent_trades(
 
 def _extract_order_meta(payload: dict) -> dict:
     meta: dict = {}
-    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get(
+        "entry_thesis"
+    )
     if isinstance(entry_thesis, dict):
         limited: dict = {}
         for key in (
@@ -439,9 +447,23 @@ def _normalize_order_side(side: object, units: object) -> Optional[str]:
     return None
 
 
-def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
-    client_ids = sorted({str(row.get("client_order_id") or "").strip() for row in rows if row.get("client_order_id")})
-    ticket_ids = sorted({str(row.get("ticket_id") or "").strip() for row in rows if row.get("ticket_id")})
+def _load_order_context_rows(
+    con: sqlite3.Connection, rows: list[dict]
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    client_ids = sorted(
+        {
+            str(row.get("client_order_id") or "").strip()
+            for row in rows
+            if row.get("client_order_id")
+        }
+    )
+    ticket_ids = sorted(
+        {
+            str(row.get("ticket_id") or "").strip()
+            for row in rows
+            if row.get("ticket_id")
+        }
+    )
     if not client_ids and not ticket_ids:
         return {}, {}
 
@@ -471,8 +493,7 @@ def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple
         "WHEN 'accepted' THEN 2 "
         "WHEN 'preflight_start' THEN 3 "
         "ELSE 9 END, "
-        "ts ASC"
-        ,
+        "ts ASC",
         tuple(params),
     )
     refs = [dict(r) for r in cur.fetchall()]
@@ -498,7 +519,9 @@ def _merge_order_meta(primary_payload: dict, fallback_payload: dict) -> dict:
         return primary
     merged = dict(fallback)
     merged.update(primary)
-    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(primary.get("entry_thesis"), dict):
+    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(
+        primary.get("entry_thesis"), dict
+    ):
         thesis = dict(fallback["entry_thesis"])
         thesis.update(primary["entry_thesis"])
         merged["entry_thesis"] = thesis
@@ -691,7 +714,9 @@ def _load_recent_order_signals(limit: int = 5) -> list[dict]:
             continue
         confidence = entry_thesis.get("confidence") or payload.get("confidence")
         side = (row.get("side") or "").lower()
-        action = "OPEN_LONG" if side == "buy" else "OPEN_SHORT" if side == "sell" else None
+        action = (
+            "OPEN_LONG" if side == "buy" else "OPEN_SHORT" if side == "sell" else None
+        )
         results.append(
             {
                 "ts_ms": ts_ms,
@@ -803,7 +828,9 @@ def _mark_sync_trades(count: int) -> None:
 
 def _init_position_manager():
     if SKIP_OANDA:
-        logging.info("[UI] UI_SNAPSHOT_SKIP_OANDA=1 -> OANDA 呼び出しをスキップします。")
+        logging.info(
+            "[UI] UI_SNAPSHOT_SKIP_OANDA=1 -> OANDA 呼び出しをスキップします。"
+        )
         return None
     try:
         from execution.position_manager import PositionManager
@@ -852,7 +879,11 @@ def main() -> int:
     if pm is not None:
         if args.lite:
             try:
-                if SYNC_TRADES_ENABLED and SYNC_TRADES_LITE_ENABLED and _should_sync_trades():
+                if (
+                    SYNC_TRADES_ENABLED
+                    and SYNC_TRADES_LITE_ENABLED
+                    and _should_sync_trades()
+                ):
                     try:
                         synced = pm.sync_trades()
                         _mark_sync_trades(len(synced or []))
@@ -863,7 +894,9 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 logging.warning("[UI] get_performance_summary failed: %s", exc)
                 metrics = {}
-            if LITE_INCLUDE_POSITIONS and ((not LITE_SNAPSHOT_FAST) or INCLUDE_POSITIONS):
+            if LITE_INCLUDE_POSITIONS and (
+                (not LITE_SNAPSHOT_FAST) or INCLUDE_POSITIONS
+            ):
                 try:
                     open_positions = pm.get_open_positions(include_unknown=True)
                 except Exception as exc:  # noqa: BLE001

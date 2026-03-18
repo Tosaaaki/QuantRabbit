@@ -9,8 +9,7 @@ from analysis.pattern_deep import DeepPatternConfig, run_pattern_deep_analysis
 
 
 def _create_features_table(con: sqlite3.Connection) -> None:
-    con.executescript(
-        """
+    con.executescript("""
         CREATE TABLE pattern_trade_features (
           pattern_id TEXT NOT NULL,
           pocket TEXT NOT NULL,
@@ -28,8 +27,7 @@ def _create_features_table(con: sqlite3.Connection) -> None:
           tp_pips REAL,
           sl_pips REAL
         );
-        """
-    )
+        """)
 
 
 def _insert_trade(

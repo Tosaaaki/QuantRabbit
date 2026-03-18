@@ -31,7 +31,9 @@ _STREAM_WRITE_TIMEOUT = float(os.getenv("TICK_STREAM_WRITE_TIMEOUT_SEC", "5"))
 _STREAM_POOL_TIMEOUT = float(os.getenv("TICK_STREAM_POOL_TIMEOUT_SEC", "5"))
 _STREAM_MAX_IDLE_SEC = float(os.getenv("TICK_STREAM_MAX_IDLE_SEC", "20"))
 _STREAM_MAX_IDLE_STRIKES = int(os.getenv("TICK_STREAM_MAX_IDLE_STRIKES", "3"))
-_STREAM_IDLE_IGNORE_CLOSED = os.getenv("TICK_STREAM_IDLE_IGNORE_CLOSED", "1").strip().lower() not in {"0","false","no","off",""}
+_STREAM_IDLE_IGNORE_CLOSED = os.getenv(
+    "TICK_STREAM_IDLE_IGNORE_CLOSED", "1"
+).strip().lower() not in {"0", "false", "no", "off", ""}
 
 STREAM_HOST = (
     "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
@@ -188,7 +190,10 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                                 ):
                                     idle_for = time.monotonic() - last_price_mono
                                     if idle_for >= _STREAM_MAX_IDLE_SEC:
-                                        if _STREAM_IDLE_IGNORE_CLOSED and not is_market_open():
+                                        if (
+                                            _STREAM_IDLE_IGNORE_CLOSED
+                                            and not is_market_open()
+                                        ):
                                             continue
                                         idle_strikes += 1
                                         if idle_strikes >= _STREAM_MAX_IDLE_STRIKES:
@@ -218,9 +223,19 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                                 for entry in raw_asks
                                 if entry.get("price") is not None
                             )
-                            top_bid = bids[0][0] if bids else float(raw_bids[0]["price"]) if raw_bids else 0.0
-                            top_ask = asks[0][0] if asks else float(raw_asks[0]["price"]) if raw_asks else 0.0
-                            top_liquidity = int(raw_bids[0].get("liquidity", 0)) if raw_bids else 0
+                            top_bid = (
+                                bids[0][0]
+                                if bids
+                                else float(raw_bids[0]["price"]) if raw_bids else 0.0
+                            )
+                            top_ask = (
+                                asks[0][0]
+                                if asks
+                                else float(raw_asks[0]["price"]) if raw_asks else 0.0
+                            )
+                            top_liquidity = (
+                                int(raw_bids[0].get("liquidity", 0)) if raw_bids else 0
+                            )
                             tick = Tick(
                                 instrument=msg["instrument"],
                                 time=_parse_time(msg["time"]),

@@ -108,8 +108,14 @@ def _load_oanda_creds() -> OandaCreds:
         practice = get_secret("oanda_practice").strip().lower() == "true"
     except Exception:
         practice = False
-    base_url = "https://api-fxpractice.oanda.com" if practice else "https://api-fxtrade.oanda.com"
-    return OandaCreds(token=token, account_id=account_id, practice=practice, base_url=base_url)
+    base_url = (
+        "https://api-fxpractice.oanda.com"
+        if practice
+        else "https://api-fxtrade.oanda.com"
+    )
+    return OandaCreds(
+        token=token, account_id=account_id, practice=practice, base_url=base_url
+    )
 
 
 def _oanda_get_json(
@@ -128,10 +134,18 @@ def _oanda_get_json(
         payload = resp.json()
         if not isinstance(payload, dict):
             raise ValueError("unexpected_json_shape")
-        return payload, {"ok": True, "status": int(resp.status_code), "latency_ms": round(latency_ms, 1)}
+        return payload, {
+            "ok": True,
+            "status": int(resp.status_code),
+            "latency_ms": round(latency_ms, 1),
+        }
     except Exception as exc:
         latency_ms = (time.time() - started) * 1000.0
-        meta: dict[str, Any] = {"ok": False, "latency_ms": round(latency_ms, 1), "error": str(exc)}
+        meta: dict[str, Any] = {
+            "ok": False,
+            "latency_ms": round(latency_ms, 1),
+            "error": str(exc),
+        }
         try:
             if resp is not None:
                 meta["status"] = int(resp.status_code)
@@ -168,14 +182,20 @@ def _fetch_oanda_summary(creds: OandaCreds, *, timeout_sec: float) -> dict[str, 
             "margin_available_jpy": f("marginAvailable", 2),
             "margin_rate": round(_safe_float(account.get("marginRate"), 0.0), 6),
             "open_trade_count": int(_safe_float(account.get("openTradeCount"), 0.0)),
-            "open_position_count": int(_safe_float(account.get("openPositionCount"), 0.0)),
-            "pending_order_count": int(_safe_float(account.get("pendingOrderCount"), 0.0)),
+            "open_position_count": int(
+                _safe_float(account.get("openPositionCount"), 0.0)
+            ),
+            "pending_order_count": int(
+                _safe_float(account.get("pendingOrderCount"), 0.0)
+            ),
         }
     )
     return out
 
 
-def _fetch_oanda_pricing(creds: OandaCreds, *, instrument: str, timeout_sec: float) -> dict[str, Any]:
+def _fetch_oanda_pricing(
+    creds: OandaCreds, *, instrument: str, timeout_sec: float
+) -> dict[str, Any]:
     headers = {"Authorization": f"Bearer {creds.token}"}
     payload, meta = _oanda_get_json(
         f"{creds.base_url}/v3/accounts/{creds.account_id}/pricing",
@@ -192,8 +212,12 @@ def _fetch_oanda_pricing(creds: OandaCreds, *, instrument: str, timeout_sec: flo
     px = prices[0]
     bids = px.get("bids") if isinstance(px.get("bids"), list) else []
     asks = px.get("asks") if isinstance(px.get("asks"), list) else []
-    bid = _safe_float(bids[0].get("price") if bids and isinstance(bids[0], dict) else None, 0.0)
-    ask = _safe_float(asks[0].get("price") if asks and isinstance(asks[0], dict) else None, 0.0)
+    bid = _safe_float(
+        bids[0].get("price") if bids and isinstance(bids[0], dict) else None, 0.0
+    )
+    ask = _safe_float(
+        asks[0].get("price") if asks and isinstance(asks[0], dict) else None, 0.0
+    )
     out["time"] = _safe_str(px.get("time")) or None
     out["bid"] = bid if bid > 0 else None
     out["ask"] = ask if ask > 0 else None
@@ -264,11 +288,15 @@ def _fetch_oanda_open_trades(
 
     instrument_key = _safe_str(instrument).upper()
     instrument_trades = [
-        t for t in trade_dicts if _safe_str(t.get("instrument")).upper() == instrument_key
+        t
+        for t in trade_dicts
+        if _safe_str(t.get("instrument")).upper() == instrument_key
     ]
     out["open_trades_count_instrument"] = len(instrument_trades)
 
-    def _count_missing(trs: list[dict[str, Any]]) -> tuple[int, int, list[dict[str, Any]]]:
+    def _count_missing(
+        trs: list[dict[str, Any]],
+    ) -> tuple[int, int, list[dict[str, Any]]]:
         no_sl: list[dict[str, Any]] = []
         no_tp = 0
         for tr in trs:
@@ -292,12 +320,18 @@ def _fetch_oanda_open_trades(
     )
     limit = max(0, int(top_n))
     for tr in no_sl_sorted[:limit]:
-        client = tr.get("clientExtensions") if isinstance(tr.get("clientExtensions"), dict) else {}
+        client = (
+            tr.get("clientExtensions")
+            if isinstance(tr.get("clientExtensions"), dict)
+            else {}
+        )
         out["no_sl_top"].append(
             {
                 "id": _safe_str(tr.get("id")) or None,
                 "instrument": _safe_str(tr.get("instrument")) or None,
-                "units": _safe_str(tr.get("currentUnits") or tr.get("initialUnits") or tr.get("units"))
+                "units": _safe_str(
+                    tr.get("currentUnits") or tr.get("initialUnits") or tr.get("units")
+                )
                 or None,
                 "unrealized_pl": _safe_float(tr.get("unrealizedPL"), 0.0),
                 "client_id": _safe_str(client.get("id")) or None,
@@ -396,8 +430,12 @@ def _bucket(value: object, *, default: str = "unknown") -> str:
     return text or default
 
 
-def _rank_items(items: list[dict[str, Any]], *, sort_key: str, top_n: int) -> dict[str, list[dict[str, Any]]]:
-    winners = sorted(items, key=lambda r: _safe_float(r.get(sort_key), 0.0), reverse=True)[:top_n]
+def _rank_items(
+    items: list[dict[str, Any]], *, sort_key: str, top_n: int
+) -> dict[str, list[dict[str, Any]]]:
+    winners = sorted(
+        items, key=lambda r: _safe_float(r.get(sort_key), 0.0), reverse=True
+    )[:top_n]
     losers = sorted(items, key=lambda r: _safe_float(r.get(sort_key), 0.0))[:top_n]
     return {"top_winners": winners, "top_losers": losers}
 
@@ -415,18 +453,29 @@ def _build_trade_window(rows: list[dict[str, Any]], *, top_n: int) -> dict[str, 
         by_strategy[strategy].append(row)
         by_combo[(pocket, strategy)].append(row)
 
-    pocket_items: list[dict[str, Any]] = [{"pocket": p, **_calc_trade_metrics(b)} for p, b in by_pocket.items()]
-    strategy_items: list[dict[str, Any]] = [{"strategy_tag": s, **_calc_trade_metrics(b)} for s, b in by_strategy.items()]
+    pocket_items: list[dict[str, Any]] = [
+        {"pocket": p, **_calc_trade_metrics(b)} for p, b in by_pocket.items()
+    ]
+    strategy_items: list[dict[str, Any]] = [
+        {"strategy_tag": s, **_calc_trade_metrics(b)} for s, b in by_strategy.items()
+    ]
     combo_items: list[dict[str, Any]] = [
-        {"pocket": p, "strategy_tag": s, **_calc_trade_metrics(b)} for (p, s), b in by_combo.items()
+        {"pocket": p, "strategy_tag": s, **_calc_trade_metrics(b)}
+        for (p, s), b in by_combo.items()
     ]
 
     return {
         "overall": overall,
         "rankings": {
-            "by_pocket_net_jpy": _rank_items(pocket_items, sort_key="net_jpy", top_n=top_n),
-            "by_strategy_net_jpy": _rank_items(strategy_items, sort_key="net_jpy", top_n=top_n),
-            "by_pocket_strategy_net_jpy": _rank_items(combo_items, sort_key="net_jpy", top_n=top_n),
+            "by_pocket_net_jpy": _rank_items(
+                pocket_items, sort_key="net_jpy", top_n=top_n
+            ),
+            "by_strategy_net_jpy": _rank_items(
+                strategy_items, sort_key="net_jpy", top_n=top_n
+            ),
+            "by_pocket_strategy_net_jpy": _rank_items(
+                combo_items, sort_key="net_jpy", top_n=top_n
+            ),
         },
     }
 
@@ -483,7 +532,12 @@ def _summarize_orders_window(
     """
     rows, err = _sqlite_rows(orders_db, query, tuple(params), timeout_sec=timeout_sec)
     if err is not None:
-        return {"total_orders": 0, "failed_orders": 0, "reject_rate": 0.0, "status_counts": []}, err
+        return {
+            "total_orders": 0,
+            "failed_orders": 0,
+            "reject_rate": 0.0,
+            "status_counts": [],
+        }, err
 
     status_counts: Counter[str] = Counter()
     error_code_counts: Counter[str] = Counter()
@@ -523,12 +577,20 @@ def _summarize_orders_window(
     failed_orders = sum(fail_reason_counts.values())
     reject_rate = (failed_orders / total_orders) if total_orders else 0.0
 
-    top_status_counts = [{"status": s, "count": n} for s, n in status_counts.most_common(30)]
+    top_status_counts = [
+        {"status": s, "count": n} for s, n in status_counts.most_common(30)
+    ]
     top_error_codes = [
-        {"error_code": code, "count": n, "sample_message": error_code_samples.get(code) or None}
+        {
+            "error_code": code,
+            "count": n,
+            "sample_message": error_code_samples.get(code) or None,
+        }
         for code, n in error_code_counts.most_common(top_n)
     ]
-    top_fail_reasons = [{"reason": r, "count": n} for r, n in fail_reason_counts.most_common(top_n)]
+    top_fail_reasons = [
+        {"reason": r, "count": n} for r, n in fail_reason_counts.most_common(top_n)
+    ]
 
     return {
         "total_orders": total_orders,
@@ -551,7 +613,9 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    _atomic_write_text(
+        path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -586,7 +650,9 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
     oanda = report.get("oanda") if isinstance(report.get("oanda"), dict) else {}
     summary = oanda.get("summary") if isinstance(oanda.get("summary"), dict) else {}
     pricing = oanda.get("pricing") if isinstance(oanda.get("pricing"), dict) else {}
-    open_trades = oanda.get("open_trades") if isinstance(oanda.get("open_trades"), dict) else {}
+    open_trades = (
+        oanda.get("open_trades") if isinstance(oanda.get("open_trades"), dict) else {}
+    )
     trades = report.get("trades") if isinstance(report.get("trades"), dict) else {}
     t24 = trades.get("24h") if isinstance(trades.get("24h"), dict) else {}
     t7d = trades.get("7d") if isinstance(trades.get("7d"), dict) else {}
@@ -606,12 +672,16 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
     lines.append("## OANDA Snapshot")
     lines.append(f"- env: {oanda.get('env')}")
     lines.append(f"- account: {oanda.get('account_id_masked')}")
-    if isinstance(summary.get("balance_jpy"), (int, float)) and isinstance(summary.get("nav_jpy"), (int, float)):
+    if isinstance(summary.get("balance_jpy"), (int, float)) and isinstance(
+        summary.get("nav_jpy"), (int, float)
+    ):
         lines.append(
             f"- balance/nav: {summary.get('balance_jpy'):,.2f} / {summary.get('nav_jpy'):,.2f} JPY "
             f"(uPL {summary.get('unrealized_pl_jpy'):,.2f} JPY)"
         )
-    if isinstance(summary.get("margin_used_jpy"), (int, float)) and isinstance(summary.get("margin_available_jpy"), (int, float)):
+    if isinstance(summary.get("margin_used_jpy"), (int, float)) and isinstance(
+        summary.get("margin_available_jpy"), (int, float)
+    ):
         lines.append(
             f"- margin: used {summary.get('margin_used_jpy'):,.2f} / avail {summary.get('margin_available_jpy'):,.2f} JPY "
             f"rate {summary.get('margin_rate')}"
@@ -631,7 +701,9 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
             f"- no_tp: total={open_trades.get('no_tp_count')} (instrument={open_trades.get('no_tp_count_instrument')})"
         )
         no_sl_top = (
-            open_trades.get("no_sl_top") if isinstance(open_trades.get("no_sl_top"), list) else []
+            open_trades.get("no_sl_top")
+            if isinstance(open_trades.get("no_sl_top"), list)
+            else []
         )
         if no_sl_top:
             lines.append("- no_sl_top:")
@@ -651,7 +723,9 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
     lines.append("")
 
     def _trade_line(label: str, section: dict[str, Any]) -> str:
-        overall = section.get("overall") if isinstance(section.get("overall"), dict) else {}
+        overall = (
+            section.get("overall") if isinstance(section.get("overall"), dict) else {}
+        )
         return (
             f"- {label}: trades={overall.get('trades')} win={_fmt_pct(overall.get('win_rate'))} "
             f"PF(pips)={_fmt_pf(overall.get('pf_pips'))} net_pips={overall.get('net_pips')} net_jpy={overall.get('net_jpy')}"
@@ -665,8 +739,14 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
     def _rank_block(title: str, block: dict[str, Any]) -> None:
         if not isinstance(block, dict):
             return
-        winners = block.get("top_winners") if isinstance(block.get("top_winners"), list) else []
-        losers = block.get("top_losers") if isinstance(block.get("top_losers"), list) else []
+        winners = (
+            block.get("top_winners")
+            if isinstance(block.get("top_winners"), list)
+            else []
+        )
+        losers = (
+            block.get("top_losers") if isinstance(block.get("top_losers"), list) else []
+        )
         lines.append(f"### {title}")
         if losers:
             lines.append("- top_losers:")
@@ -691,9 +771,13 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
     r24 = t24.get("rankings") if isinstance(t24.get("rankings"), dict) else {}
     r7 = t7d.get("rankings") if isinstance(t7d.get("rankings"), dict) else {}
     if r24.get("by_pocket_strategy_net_jpy"):
-        _rank_block("24h pocket/strategy (net_jpy)", r24.get("by_pocket_strategy_net_jpy"))
+        _rank_block(
+            "24h pocket/strategy (net_jpy)", r24.get("by_pocket_strategy_net_jpy")
+        )
     if r7.get("by_pocket_strategy_net_jpy"):
-        _rank_block("7d pocket/strategy (net_jpy)", r7.get("by_pocket_strategy_net_jpy"))
+        _rank_block(
+            "7d pocket/strategy (net_jpy)", r7.get("by_pocket_strategy_net_jpy")
+        )
 
     lines.append("## Orders (reject/error)")
     lines.append(
@@ -722,7 +806,9 @@ def _render_markdown(report: dict[str, Any], *, top_n: int) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Local V2 profitability PDCA report (report-only)")
+    ap = argparse.ArgumentParser(
+        description="Local V2 profitability PDCA report (report-only)"
+    )
     ap.add_argument("--instrument", default="USD_JPY")
     ap.add_argument("--trades-db", default="logs/trades.db")
     ap.add_argument("--orders-db", default="logs/orders.db")
@@ -774,7 +860,9 @@ def main() -> int:
             creds = _load_oanda_creds()
             oanda_section["env"] = "practice" if creds.practice else "live"
             oanda_section["account_id_masked"] = _mask_account_id(creds.account_id)
-            oanda_section["summary"] = _fetch_oanda_summary(creds, timeout_sec=float(ns.oanda_timeout))
+            oanda_section["summary"] = _fetch_oanda_summary(
+                creds, timeout_sec=float(ns.oanda_timeout)
+            )
             oanda_section["pricing"] = _fetch_oanda_pricing(
                 creds, instrument=instrument, timeout_sec=float(ns.oanda_timeout)
             )

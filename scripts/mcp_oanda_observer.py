@@ -23,7 +23,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from utils.secrets import get_secret
 
-
 JSONRPC_VERSION = "2.0"
 SERVER_VERSION = "1.2.0"
 ALLOWED_GRANULARITIES = {
@@ -103,7 +102,9 @@ def _load_secret(name: str, *, default: str | None = None) -> str:
     except KeyError:
         if default is not None:
             return default
-        raise RuntimeError(f"{name} is not set in env/config/env.toml/Secret Manager") from None
+        raise RuntimeError(
+            f"{name} is not set in env/config/env.toml/Secret Manager"
+        ) from None
     except Exception as exc:
         raise RuntimeError(
             f"failed to resolve {name} via env/config/env.toml/Secret Manager: {exc}"
@@ -145,7 +146,9 @@ def _require_granularity(value: object) -> str:
         raise RuntimeError("granularity must be string")
     granularity = value.strip().upper()
     if granularity not in ALLOWED_GRANULARITIES:
-        raise RuntimeError(f"granularity must be one of {sorted(ALLOWED_GRANULARITIES)}")
+        raise RuntimeError(
+            f"granularity must be one of {sorted(ALLOWED_GRANULARITIES)}"
+        )
     return granularity
 
 
@@ -154,7 +157,11 @@ class OandaReadOnlyClient:
         self.account_id = _load_secret("oanda_account_id")
         self.token = _load_secret("oanda_token")
         practice = _load_secret("oanda_practice", default="false").strip().lower()
-        self.host = "https://api-fxpractice.oanda.com" if practice in ("1", "true", "yes") else "https://api-fxtrade.oanda.com"
+        self.host = (
+            "https://api-fxpractice.oanda.com"
+            if practice in ("1", "true", "yes")
+            else "https://api-fxtrade.oanda.com"
+        )
 
     def _request(self, path: str, params: dict | None = None) -> dict:
         query = ""
@@ -174,7 +181,9 @@ class OandaReadOnlyClient:
         context = ssl.create_default_context()
         started_at = time.time()
         try:
-            with urllib.request.urlopen(request, context=context, timeout=8.0) as response:
+            with urllib.request.urlopen(
+                request, context=context, timeout=8.0
+            ) as response:
                 body = response.read().decode("utf-8")
                 return {
                     "status": response.getcode(),
@@ -184,7 +193,9 @@ class OandaReadOnlyClient:
         except Exception as exc:
             raise RuntimeError(str(exc)) from exc
 
-    def pricing(self, instrument: str = "USD_JPY", include_units_available: bool = True) -> dict:
+    def pricing(
+        self, instrument: str = "USD_JPY", include_units_available: bool = True
+    ) -> dict:
         return self._request(
             f"/accounts/{self.account_id}/pricing",
             {
@@ -286,7 +297,9 @@ def _tool_call(name: str, args: dict | None, client: OandaReadOnlyClient) -> dic
     if name == "candles":
         return client.candles(
             instrument=_require_instrument(args.get("instrument", "USD_JPY")),
-            count=_require_int(args.get("count", 30), name="count", minimum=1, maximum=5000),
+            count=_require_int(
+                args.get("count", 30), name="count", minimum=1, maximum=5000
+            ),
             granularity=_require_granularity(args.get("granularity", "M5")),
             smooth=_require_bool(args.get("smooth", False), name="smooth"),
         )
@@ -302,13 +315,16 @@ def _handle_message(message: dict, client: OandaReadOnlyClient) -> None:
     if method == "initialize":
         _write_mcp_message(
             _json_response(
-                    message_id,
-                    {
-                        "protocolVersion": "2025-06-18",
-                        "serverInfo": {"name": "qr-oanda-observer", "version": SERVER_VERSION},
-                        "capabilities": {
-                            "tools": {"listChanged": False},
-                        },
+                message_id,
+                {
+                    "protocolVersion": "2025-06-18",
+                    "serverInfo": {
+                        "name": "qr-oanda-observer",
+                        "version": SERVER_VERSION,
+                    },
+                    "capabilities": {
+                        "tools": {"listChanged": False},
+                    },
                 },
             )
         )
@@ -391,7 +407,10 @@ def main() -> int:
         message = _read_mcp_message()
         if message is None:
             return 0
-        if message.get("method") in {"notifications/initialized", "notifications/cancelled"}:
+        if message.get("method") in {
+            "notifications/initialized",
+            "notifications/cancelled",
+        }:
             continue
 
         if message.get("method") == "initialize" and startup_error:
@@ -400,7 +419,10 @@ def main() -> int:
                     message.get("id"),
                     {
                         "protocolVersion": "2025-06-18",
-                        "serverInfo": {"name": "qr-oanda-observer", "version": SERVER_VERSION},
+                        "serverInfo": {
+                            "name": "qr-oanda-observer",
+                            "version": SERVER_VERSION,
+                        },
                         "capabilities": {},
                     },
                 )
@@ -411,7 +433,15 @@ def main() -> int:
             _write_mcp_message(
                 _json_response(
                     message.get("id"),
-                    {"content": [{"type": "text", "text": f"startup config error: {startup_error}"}], "isError": True}
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"startup config error: {startup_error}",
+                            }
+                        ],
+                        "isError": True,
+                    },
                 )
             )
             if message.get("method") != "initialize":

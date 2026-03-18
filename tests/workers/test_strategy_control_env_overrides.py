@@ -3,7 +3,9 @@ from __future__ import annotations
 import importlib
 
 
-def test_strategy_control_sync_env_overrides_applies_per_strategy_flags(monkeypatch, tmp_path) -> None:
+def test_strategy_control_sync_env_overrides_applies_per_strategy_flags(
+    monkeypatch, tmp_path
+) -> None:
     db_path = tmp_path / "strategy_control.db"
 
     monkeypatch.setenv("STRATEGY_CONTROL_DB_PATH", str(db_path))
@@ -25,4 +27,3 @@ def test_strategy_control_sync_env_overrides_applies_per_strategy_flags(monkeypa
     bar = sc.get_flags("bar")
     assert bar is not None
     assert bar == (True, False, True)
-

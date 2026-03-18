@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover - optional secret manager integration
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = REPO_ROOT / "logs" / "autotune.db"
 
+
 def _load_autotune_env(name: str) -> str:
     """Fetch AUTOTUNE_* settings with fallback to env.toml / Secret Manager."""
     value = os.getenv(name, "").strip()
@@ -55,8 +56,7 @@ def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS tuning_runs (
             run_id TEXT NOT NULL,
             strategy TEXT NOT NULL,
@@ -72,18 +72,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             comment TEXT,
             PRIMARY KEY (run_id, strategy)
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS autotune_settings (
             id TEXT PRIMARY KEY,
             enabled INTEGER NOT NULL,
             updated_at TEXT NOT NULL,
             updated_by TEXT
         )
-        """
-    )
+        """)
     # ensure default row
     cur = conn.execute("SELECT COUNT(*) FROM autotune_settings WHERE id='default'")
     if cur.fetchone()[0] == 0:
@@ -436,12 +433,19 @@ def get_settings_bigquery(table_override: Optional[str] = None) -> Dict[str, Any
     """
     rows = list(client.query(query).result())
     if not rows:
-        return {"id": "default", "enabled": True, "updated_at": None, "updated_by": None}
+        return {
+            "id": "default",
+            "enabled": True,
+            "updated_at": None,
+            "updated_by": None,
+        }
     row = dict(rows[0])
     return {
         "id": row.get("id", "default"),
         "enabled": bool(row.get("enabled", True)),
-        "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+        "updated_at": (
+            row.get("updated_at").isoformat() if row.get("updated_at") else None
+        ),
         "updated_by": row.get("updated_by"),
     }
 
@@ -535,16 +539,14 @@ def update_status(
 def get_stats(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
     if conn is None:
         return get_stats_bigquery()
-    row = conn.execute(
-        """
+    row = conn.execute("""
         SELECT
           COUNT(*) AS total,
           SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
           SUM(CASE WHEN status='approved' THEN 1 ELSE 0 END) AS approved,
           SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) AS rejected
         FROM tuning_runs
-        """
-    ).fetchone()
+        """).fetchone()
     stats = dict(row)
     last_row = conn.execute(
         "SELECT updated_at FROM tuning_runs WHERE status='approved' ORDER BY updated_at DESC LIMIT 1"
@@ -560,7 +562,12 @@ def get_settings(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
         "SELECT id, enabled, updated_at, updated_by FROM autotune_settings WHERE id='default'"
     ).fetchone()
     if not row:
-        return {"id": "default", "enabled": True, "updated_at": None, "updated_by": None}
+        return {
+            "id": "default",
+            "enabled": True,
+            "updated_at": None,
+            "updated_by": None,
+        }
     return {
         "id": row["id"],
         "enabled": bool(row["enabled"]),

@@ -16,7 +16,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from workers.scalp_ping_5s import worker as scalp_worker
 
 
-def _sample_signal_for_prob(side: str = "long", mode: str = "momentum") -> scalp_worker.TickSignal:
+def _sample_signal_for_prob(
+    side: str = "long", mode: str = "momentum"
+) -> scalp_worker.TickSignal:
     return scalp_worker.TickSignal(
         side=side,
         mode=mode,
@@ -209,7 +211,9 @@ def test_probability_band_units_multiplier_boosts_low_prob_size(monkeypatch) -> 
     assert units_mult == pytest.approx(1.30, abs=1e-9)
 
 
-def test_probability_band_units_multiplier_uses_side_metrics_penalty(monkeypatch) -> None:
+def test_probability_band_units_multiplier_uses_side_metrics_penalty(
+    monkeypatch,
+) -> None:
     _set_band_alloc_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker.config,
@@ -283,7 +287,9 @@ def test_probability_band_units_multiplier_uses_side_metrics_penalty(monkeypatch
     assert units_mult == pytest.approx(0.85, abs=1e-9)
 
 
-def test_probability_band_units_multiplier_uses_side_mean_pips_penalty(monkeypatch) -> None:
+def test_probability_band_units_multiplier_uses_side_mean_pips_penalty(
+    monkeypatch,
+) -> None:
     _set_band_alloc_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker.config,
@@ -470,7 +476,9 @@ def _set_side_adverse_stack_config(monkeypatch) -> None:
     )
 
 
-def test_side_adverse_stack_units_multiplier_scales_when_side_is_adverse(monkeypatch) -> None:
+def test_side_adverse_stack_units_multiplier_scales_when_side_is_adverse(
+    monkeypatch,
+) -> None:
     _set_side_adverse_stack_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker,
@@ -517,7 +525,9 @@ def test_side_adverse_stack_units_multiplier_scales_when_side_is_adverse(monkeyp
     assert units_mult == pytest.approx(0.24, abs=1e-9)
 
 
-def test_side_adverse_stack_units_multiplier_stays_neutral_when_not_adverse(monkeypatch) -> None:
+def test_side_adverse_stack_units_multiplier_stays_neutral_when_not_adverse(
+    monkeypatch,
+) -> None:
     _set_side_adverse_stack_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker,
@@ -562,7 +572,9 @@ def test_side_adverse_stack_units_multiplier_stays_neutral_when_not_adverse(monk
     assert units_mult == pytest.approx(1.0, abs=1e-9)
 
 
-def test_side_adverse_stack_units_multiplier_blocks_on_mean_gap_weak(monkeypatch) -> None:
+def test_side_adverse_stack_units_multiplier_blocks_on_mean_gap_weak(
+    monkeypatch,
+) -> None:
     _set_side_adverse_stack_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker.config,
@@ -700,7 +712,9 @@ def test_side_metrics_direction_flip_requires_mean_pips_gap(monkeypatch) -> None
     assert eval_info.target_mean_pips == pytest.approx(-0.10, abs=1e-9)
 
 
-def test_load_entry_probability_band_metrics_from_trades_db(monkeypatch, tmp_path: pathlib.Path) -> None:
+def test_load_entry_probability_band_metrics_from_trades_db(
+    monkeypatch, tmp_path: pathlib.Path
+) -> None:
     _set_band_alloc_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker.config,
@@ -717,8 +731,7 @@ def test_load_entry_probability_band_metrics_from_trades_db(monkeypatch, tmp_pat
 
     db_path = tmp_path / "trades.db"
     con = sqlite3.connect(db_path)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE trades (
           close_time TEXT,
           units INTEGER,
@@ -728,26 +741,67 @@ def test_load_entry_probability_band_metrics_from_trades_db(monkeypatch, tmp_pat
           entry_thesis TEXT,
           pl_pips REAL
         )
-        """
-    )
+        """)
     con.executemany(
         """
         INSERT INTO trades (close_time, units, close_reason, strategy_tag, pocket, entry_thesis, pl_pips)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("2026-02-19T10:00:00+00:00", -1000, "STOP_LOSS_ORDER", "scalp_ping_5s_b_live", "scalp_fast", '{"entry_probability":0.95}', -1.5),
-            ("2026-02-19T09:59:00+00:00", -1000, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", '{"entry_probability":0.92}', 0.2),
-            ("2026-02-19T09:58:00+00:00", -1000, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", '{"entry_probability":0.55}', 1.0),
-            ("2026-02-19T09:57:00+00:00", -1000, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", '{"entry_probability":0.60}', 0.4),
-            ("2026-02-19T09:56:00+00:00", 900, "MARKET_ORDER_TRADE_CLOSE", "scalp_ping_5s_b_live", "scalp_fast", '{"entry_probability":0.95}', 2.0),
+            (
+                "2026-02-19T10:00:00+00:00",
+                -1000,
+                "STOP_LOSS_ORDER",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                '{"entry_probability":0.95}',
+                -1.5,
+            ),
+            (
+                "2026-02-19T09:59:00+00:00",
+                -1000,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                '{"entry_probability":0.92}',
+                0.2,
+            ),
+            (
+                "2026-02-19T09:58:00+00:00",
+                -1000,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                '{"entry_probability":0.55}',
+                1.0,
+            ),
+            (
+                "2026-02-19T09:57:00+00:00",
+                -1000,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                '{"entry_probability":0.60}',
+                0.4,
+            ),
+            (
+                "2026-02-19T09:56:00+00:00",
+                900,
+                "MARKET_ORDER_TRADE_CLOSE",
+                "scalp_ping_5s_b_live",
+                "scalp_fast",
+                '{"entry_probability":0.95}',
+                2.0,
+            ),
         ],
     )
     con.commit()
     con.close()
 
     monkeypatch.setattr(scalp_worker, "_TRADES_DB", db_path, raising=False)
-    monkeypatch.setattr(scalp_worker, "_ENTRY_PROB_BAND_METRICS_CACHE", {}, raising=False)
+    monkeypatch.setattr(
+        scalp_worker, "_ENTRY_PROB_BAND_METRICS_CACHE", {}, raising=False
+    )
 
     metrics = scalp_worker._load_entry_probability_band_metrics(
         strategy_tag="scalp_ping_5s_b_live",
@@ -874,7 +928,9 @@ def _set_probability_align_config(monkeypatch) -> None:
     )
 
 
-def test_entry_probability_alignment_floor_is_blocked_when_counter_dominates(monkeypatch) -> None:
+def test_entry_probability_alignment_floor_is_blocked_when_counter_dominates(
+    monkeypatch,
+) -> None:
     _set_probability_align_config(monkeypatch)
 
     direction_bias = scalp_worker.DirectionBias(
@@ -902,7 +958,9 @@ def test_entry_probability_alignment_floor_is_blocked_when_counter_dominates(mon
     assert meta["floor_block_reason"] == "support_lt_counter"
 
 
-def test_entry_probability_alignment_floor_applies_when_support_not_weaker(monkeypatch) -> None:
+def test_entry_probability_alignment_floor_applies_when_support_not_weaker(
+    monkeypatch,
+) -> None:
     _set_probability_align_config(monkeypatch)
     monkeypatch.setattr(
         scalp_worker.config,

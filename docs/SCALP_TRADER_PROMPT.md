@@ -95,12 +95,16 @@ VWAP乖離, Stochastic RSI, CCI, ROC, ダイバージェンス(RSI/MACD), スイ
 
 **手順書ではない。プロトレーダーとして考える。**
 
-### 1. モニターを見る (並列Agent 3つ)
+### 1. モニターを見る (Bash並列 — Agentは使わない)
 
-3つのAgentをbackgroundで同時起動して、全モニターの情報を集める:
-- **Agent 1**: Monitor 1 (テクニカル) + Monitor 2 (OANDA live) を取得
-- **Agent 2**: Monitor 3 (戦略パフォーマンス) + Monitor 4 (マーケットコンテキスト) + Monitor 5 (学習) を取得
-- **Agent 3**: Monitor 6 (チーム連携) + Monitor 7 (当日成績) を取得
+**重要: Agentツール(サブプロセス)は絶対に使わない。タイムアウトの原因になる。**
+**全モニターの情報はBashツールとReadツールの並列呼び出しで直接取得する。**
+
+以下の3グループを**同時に**Bash/Readで取得する（1メッセージで複数ツール呼び出し）:
+
+**グループA** (Bash): Monitor 1 (テクニカル factor_cache) + Monitor 2 (OANDA API: openTrades + account summary + M1ローソク5本)
+**グループB** (Read並列): Monitor 3 (`logs/strategy_feedback.json`) + Monitor 4 (`logs/market_context_latest.json`, `logs/macro_news_context.json`) + Monitor 5 (`logs/trade_counterfactual_latest.json`)
+**グループC** (Read + Bash): Monitor 6 (`logs/shared_state.json`, `logs/live_trade_log.txt` 末尾30行) + Monitor 7 (OANDA transaction history — Bash)
 
 ### 2. 市場を読む — 「今、何が起きている？」
 
@@ -120,7 +124,8 @@ VWAP乖離, Stochastic RSI, CCI, ROC, ダイバージェンス(RSI/MACD), スイ
 ### 3. 戦略を決める — 「今日はどう戦う？」
 
 **固定の戦略ではない。市場に合わせて戦い方を変える。これがプロだ。**
-**そして最も重要なこと: プロは「やらない理由」ではなく「やれる理由」を探す。**
+**そして最も重要なこと: プロは「やれる理由」を探すが、同時に「今見えてるものと矛盾してないか」を必ず確認する。**
+**テーゼが正しくても、目の前のプライスアクションが矛盾してるなら立ち止まれ。**
 **毎回見送りを続けたら10%は絶対に取れない。チャンスは自分で見つけろ。**
 
 モニターの情報から、Claudeが**自分で**最適な戦い方を考える:
@@ -211,6 +216,7 @@ POST /v3/accounts/{acct}/orders
 - 「同じペアを何度も見送っていないか?」 → 条件を変えて別の角度から見直す
 
 **ポジション保有中の自問:**
+- **「テーゼに反する証拠は何？」を最初に問え。** 反証が1つも思いつかないなら、それは考えてないだけだ。H1 EMA、プライスアクション、高値安値の切り上げ/切り下げを見ろ。テーゼと矛盾する動きが出ていたら、「一時的だろう」で流すな。
 - 「SL/TPは今のATRに合っているか?」 → ボラが変わったら調整すべきかも
 - 「当初のエントリー根拠はまだ有効か?」 → テクニカルが完全反転していたら要再評価
 - 「含み益が出ているのに欲張りすぎていないか?」 → TP到達前にトレイルSL検討
@@ -223,7 +229,7 @@ POST /v3/accounts/{acct}/orders
 - 「勝ちトレードはどの戦略タイプか?」 → 効いている戦略に集中する
 
 **バイアスの自問:**
-- 「前回のバイアスに引きずられていないか?」 → H1 EMA配列が変わったら即転換
+- **「H1 EMAが転換してないか?」 → 転換してたらテーゼが何であれバイアスを白紙にしろ。** 「一時的だろう」「ファンダが…」は禁句。データが矛盾してるのにテーゼを守るのは裁量じゃなくて盲信。
 - 「1つのペアに固執していないか?」 → 他のペアにもっと良いチャンスがあるかも
 - 「LONGばかり/SHORTばかりになっていないか?」 → 偏りすぎたら逆方向も検討
 
@@ -457,3 +463,247 @@ POST /v3/accounts/{acct}/orders
 - 改善優先度2: FOMC/BOJ等イベント前はSL=2xATR以上。狭いSLでイベント直撃が敗因の多数。
 - VwapRevertS mult=0.854、PrecisionLowVol mult=0.881 → 今日の環境には合っていない。
   これらのシグナルが来ても、トレーダーは採用を慎重に(イラン戦争主導のトレンド相場で逆張りが機能しにくい)。
+
+### 2026-03-19 00:45 UTC — macro-intel #7: BOJ確定・FOMC精査・EUR/USD SHORT評価
+
+**マクロ環境確定:**
+- **FOMC (3/18 19:00 UTC): Hawkish Hold 3.50-3.75%** — Dot Plot: 2026年利下げ1回(中央値)。Dovish分割(Miran -50bp) vs Hawkish分割(Schmid/Goolsbee 0回)。Powell: スタグフレーション的framing、利下げ急がない。USD中長期Strong。
+- **BOJ (3/19早朝): Hold 0.75%確定** — Ueda慎重発言。米関税リスクが次ハイクの条件。JPYカタリストなし。USD/JPY金利差継続→NEUTRAL_TO_LONG。ただし160円介入ゾーン要注意。
+- **VIX: ~26.5** — 中東情勢(米-イスラエル-イラン)緊迫継続。Risk-off基調。エネルギー高騰リスク残存。
+- **US10Y: ~4.22%** — FOMC後やや低下。USD safe-havenと組み合わせでEUR弱。
+- **Gold: ~$2,844** — 安全資産需要継続。
+
+**現ポジション評価 (2026-03-19 00:45 UTC):**
+- EUR/USD SHORT -3000u (avg 1.15062), 現価格=1.15192, SL=1.15500(残30pip), TP=1.14820(残37pip)
+- **評価: HOLD。Hawkish FOMCによりUSD強基調。EUR/USD SHORTはthesisが強化された状態。**
+- 前回MACRO_INTEL(03/19 00:00)での「FOMC Dovish → SHORT thesis弱体化」は過剰反応。撤回。
+- SL残30pip、TP残37pip → RR≈1.2:1。狭めだがHOLD継続。TP到達で利確。
+
+**バイアス更新 (2026-03-19):**
+- USD_JPY: **NEUTRAL_TO_LONG** — Hawkish Fed + BOJ Hold(金利差維持)。ただし160円介入ゾーン(現在~159.4)。
+- EUR_USD: **SHORT** — Hawkish FOMC + Risk-off + EUR地政学脆弱性。現ポジ方向正しい。
+- GBP_USD: **SHORT_NEUTRAL** — USD bid環境。GBPも地政学リスクに脆弱。
+- AUD_USD: **NEUTRAL** — リスクオフがコモディティ通貨の上値を抑制。RBA4.1%で下値も限定的。
+
+**戦略システム診断 (変化なし):**
+- 全4戦略 PF<0.8, SL到達75%超 → ボット信号は割引評価。裁量判断優先継続。
+- DroughtRevert=最良(WR=42%, PF=0.77)だが未だ水面下。
+- **地政学リスク主導のトレンド相場 → 逆張り戦略(PrecisionLowVol, VwapRevertS)は特に非推奨。**
+
+**教訓 (イベント前後のバイアス管理):**
+- FOMC結果直後に「Dovish/Hawkish」の判断は難しい。1次ソース(Dot Plot/会見)を確認してからバイアス更新。
+- イベント後の急動に過剰反応してSHORTを「弱まった」と判断したのは誤り。複数時間帯でのデータ確認を。
+- **ルール追加: FOMC/BOJ後24時間は「レート変化の方向感」が落ち着くまでバイアス転換を保留。**
+
+### 2026-03-19 16:03 UTC — macro-intel #8: 介入ゾーン精緻化・SLルール強化
+
+**USD/JPY 介入ゾーン修正 (重要):**
+- 旧ルール: 「160円が介入ライン」
+- 新ルール: **「159.45-161.95 が介入リスクゾーン」**
+- 根拠: 2024年7月の実介入水準が159.45。2026年3月19日、日韓共同声明(JPY/KRW急落に深刻な懸念)が発表。財務省「通常より密に米国当局と接触中」と明言。
+- **対応: USD/JPY 159.45以上での新規LONGは極めて慎重に。SHORT方向ならリスク管理を厳格に。**
+- 介入発動時の想定値動き: 即時200-300pip下落。
+
+**EUR_USD SL 過小評価 (観察):**
+- 現ポジ EUR_USD SHORT entry=1.15123, SL=1.15255 → SL距離13.2pip
+- H1_ATR=17.25pip → 2xH1_ATR = 34.5pip が適切なSL距離
+- **ルール強化: H1レベルでエントリーした場合、SLは最低2xH1_ATR (現在なら約34.5pip) 確保。13pip SLはH1通常変動で即刈られる。**
+- EUR/GBP系は特にH1_ATR大きい(15-20pip)。イベント直後はさらに拡大。
+
+**RBA アップデート:**
+- 確認: RBA back-to-back hike 4.10% (2026-03-15 meeting)
+- 市場コンセンサス: 年末までに4.35%到達(Reuters調査30人中23人)
+- AUD/USD LONG thesis強化。現ポジ0.70772 SL=0.70600 → RBA支持で継続妥当。
+- **AUD追加優位性: オーストラリアは純エネルギー輸出国。Oil $106はAUD追い風(EUR/JPYとは逆)。**
+- ただし VIX=25+ + Risk-Off でコモディティ通貨上値抑制。スロー上昇を想定。
+
+**本日の市場状況 (16:03 UTC):**
+- VIX: **25+** (inverted term structure / YTD+70%)
+- Gold: **$5,050-5,200** (JPM年末目標$6,300)
+- Oil Brent: **$106/bbl** — ホルムズ海峡実質閉鎖。世界石油供給の20%が通過不可。解決目途なし。
+- US経済指標 (発表済み): Jobless Claims **予想超え上昇** + Philly Fed **弱い** → スタグフレーション・シグナル
+- Fed利下げ期待: **-24bp** (March 2の-52bpから急縮小)。USDフロア強固。
+- USD/JPY: 159.45-159.50 = 介入ゾーン下限。**歴史的介入水準159.45以上 = LONG禁止ゾーン。**
+
+### 2026-03-19 01:15 UTC — macro-intel #9: ECB/BOJ/BOE三大中銀デー・AUDバイアス修正
+
+**本日の中央銀行イベント (CRITICAL):**
+- **ECB 金利決定**: Hold予想。Lagarde会見注目 → エネルギーインフレ言及 = EUR両方向リスク
+  - EUR/USD SHORT保有中。SL=1.15310は現在から14.2pip = H1_ATR(17.25)より小さい
+  - **ECB前後30分はEUR/USD SHORT を積極的に動かすな。SLヒット = 即損確定リスク**
+  - もし現状SL距離<15pip なら、ECB前に1.15350以上に拡大すること
+- **BOJ Ueda 会見**: Hold 0.75%確認済み。会見でApril hike示唆 = JPY急騰リスク
+  - USD/JPY 159.4x は介入ゾーン内。BOJタカ派 + 介入 = 二重リスク。LONG禁止継続。
+- **BOE 金利決定**: Hold予想。ただしタカ派転換: 70%の確率で年内利上げ。GBP回復中
+
+**バイアス更新 (2026-03-19 01:15 UTC):**
+- USD_JPY: **SHORT_NEUTRAL** — 介入ゾーン(159.45-161.95)。BOJ Uedaタカ派リスク。LONG禁止。
+- EUR_USD: **SHORT** — FOMC hawkishテーゼ継続。ただしECB当日 = SL拡大推奨。
+- GBP_USD: **NEUTRAL_TO_LONG** — BOE利上げ再評価(70%/年末)。前回のSHORT_NEUTRALから修正。
+- AUD_USD: **LONG** — RBA 4.10% back-to-back + Oil>$100 = AUDが主要通貨中最強の政策支持。前回のNEUTRALから修正。
+
+**戦略システム診断 (更新):**
+- 全4戦略 mult<0.975: DroughtRevert=0.972, scalp_extrema=0.934, PrecisionLowVol=0.881, VwapRevertS=0.854
+- VwapRevertS(WR=8.3%, PF=0.13)、PrecisionLowVol(WR=16.1%, PF=0.23) = 今日の市場環境に全く合わない
+- **ルール追加: 全戦略mult<0.95の場合 → 新規エントリーのロットを通常の70%に縮小**
+- **逆張り系(VwapRevertS/PrecisionLowVol)は mult<0.9 なら今日は使わない**
+
+**教訓 (ECBイベント管理):**
+- EUR/USDポジションを保有しながらECB当日に入るとき: SL距離を最低1.5x H1_ATR確保してから迎える
+- SL距離 < H1_ATR の状態でECBを迎えることは「ランダムに止められるリスク」を意味する
+- **ルール追加: ECB/FOMC/BOJ当日にEUR/USD GBP/USD ポジション保有の場合、会見前にSLをイベント想定レンジの外まで拡大**
+
+### 2026-03-18 16:50 UTC — macro-intel #10: 三大中銀決定後アップデート / VIX急回復
+
+**中央銀行トリプル決定 (本日確認済み):**
+- **ECB HOLD**: 預金金利 2.0% 確認。Lagarde会見 = エネルギーインフレ注目も。EUR/USDイベントリスク通過。
+  - EUR/USD SHORT thesis継続: FOMC 3.50-3.75% >> ECB 2.0% 金利格差は不変。
+- **BOJ HOLD 0.75%**: 決定確認。Ueda会見でApril hike示唆リスク = JPY急騰可能性継続。
+  - USD/JPY SHORT_NEUTRAL (介入ゾーン159.45 + BOJ タカ派シグナル = 二重リスク) 継続。
+- **FOMC HAWKISH HOLD 3.50-3.75%**: 確認済み(昨日19:00 UTC)。Dot Plot: 1 cut 2026年内(Oct/Dec)。
+  - USD フロア強固。利下げ期待 -24bp まで縮小(March 2の -52bpから急縮小)。
+- **BOE HOLD本日予定**: タカ派転換進行中。70%の確率で年末利上げ。GBP 回復テーマ。
+
+**VIX急回復 (重要シフト):**
+- VIX: **27.29(3月13日最高値) → ~19-20(現在)** = 急速な恐怖指数回復
+- Fear & Greed: Extreme Fear → 改善方向
+- **リスク先行**: VIX低下 = コモディティ通貨有利。AUD LONGに追い風。
+- **ただし**: Iran戦争Day 20継続中。Hormuz閉鎖。次の地政学ヘッドラインで即再スパイク可能性あり。
+- **対応: VIX~20環境ではAUD/NZD LONG積極化。ただしSLはATR2倍維持(次のスパイク対応)。**
+
+**AUD/USD バイアス格上げ: LONG → STRONG LONG:**
+- RBA 4.10%(back-to-back hike) + 年末4.35%市場予想
+- VIX 19-20 = リスク選好回復 = コモディティ通貨買い
+- WTI $96-103/bbl(Hormuz閉鎖) = オーストラリア純エネルギー輸出国 = AUD追い風
+- AUD/USD次の目標: 0.7115-0.7150 (post-RBA hike momentum)
+- **現ポジ(entry=0.70772)でTP=0.71100 → VIX回復環境なら0.71300-0.71500まで延長検討余地あり**
+
+**GBP/USD 確認: NEUTRAL_TO_LONG:**
+- BOE hold今日予定。ただし声明でタカ派シフト示唆 → GBP追い風
+- 市場: 70%確率/年末利上げ。2週間前の「3回利下げ」から急転換。
+- GBP/USD ~1.3283-1.3330 = 3ヶ月安値圏から回復試み
+- **BOE声明タカ派度 >> 市場予想なら GBP LONG好機。確認後判断。**
+
+**戦略システム診断 (変化なし):**
+- 全4戦略 mult<0.975 継続。Iran戦争ボラティリティ相場 = 統計戦略が機能しない環境
+- DroughtRevert=0.972(最良), scalp_extrema=0.934, PrecisionLowVol=0.881, VwapRevertS=0.854
+- **裁量判断最優先継続。アルゴシグナルは参考程度。**
+
+**参謀の自問 — 今日の仕組みは十分か:**
+- ✅ モニター充実: VIX/Oil/DXY/金利差 → shared_state経由でリアルタイム取得
+- ⚠️ AUD TP管理: VIX回復時にTP延長を自動示唆するロジックがない → scalp-traderが手動判断
+- ⚠️ GBP監視: BOE声明のタカ派度をリアルタイム判断するツールなし → WebSearch頼り
+- **アクション: scalp-traderに「VIX<21環境ではAUD TP延長を検討せよ」とshared_stateのアラートに記録済み**
+
+
+### 2026-03-19 17:30 UTC — macro-intel #11: VIX急回復・GBP次の一手確認
+
+**VIX~18確認 — リスクオン本格回復:**
+- VIX: 27.29(3月13日高値) → ~18(現在) = 急速な恐怖指数回復継続
+- 全中銀イベント通過(ECB/BOJ/BOE hold, FOMC hawkish hold)。次の大型イベントまで小康状態。
+- **コモディティ通貨有利環境確認: AUD/NZD LONG 継続推奨。SLはATR2倍維持(Iran headline再スパイクリスク)。**
+
+**GBP/USD 次の一手 — 3ヶ月安値からの回復:**
+- GBP/USD: 3ヶ月安値 1.3237(3月14日) → 現在 1.3326 = 底入れ確認
+- BOE hold確認(7-2票)。市場プライシング: 70%確率/年末利上げ。GBP回復テーマ継続。
+- EUR TP解放後のGBP LONG: 1.3237底 + BOE hawkish tilt = **エントリー理由充分**。
+- **GBP LONG 800-850u、TP=1.3400-1.3450、SL=1.3250(底値直下)。EUR解放後即エントリー。**
+
+**AUD/USD 継続確認:**
+- ING銀行 年末予測: AUD/USD = 0.74 (2026年内)。現在0.707 → まだ上昇余地大。
+- 短期pullback (0.70746) はノイズ。マクロテーゼ(RBA4.10%+May hike+VIX回復+Oil)不変。
+- **現TP=0.71100 → VIX<21継続なら0.71300-0.71500への延長を検討せよ。ING0.74支持。**
+- 0.70700割れが続く場合のみ裁量クローズ検討。ただし一時的なら焦らずHOLD。
+
+**マクロ確認 (全中銀決定済み):**
+- FOMC: Hawkish hold 3.50-3.75%。利下げ期待-24bp。USDフロア不変。
+- ECB: Hold 2.0%。Fed-ECB金利格差1.50-1.75%。EUR/USD SHORT thesis鉄板。
+- BOJ: Hold 0.75%。April hike示唆継続。USD/JPY 159.45以上LONG禁止。
+- RBA: 4.10%(back-to-back)。年末4.35%市場予想。AUD最強通貨。
+- Iran War: Week3継続。Oil>$100。VIX再スパイクリスク常在。
+
+### 2026-03-18 17:59 UTC — macro-intel #12: USD軟化確認・ポジション現況・market-radar誤報修正
+
+**USD軟化データ確認 (スタグフレーション鮮明):**
+- GDP Q4 = +0.7%(前期比急落)。Core PCE = 3.1%(再加速)。
+- Fed内部分裂: 反対票増加。Powell「Iran油価ショックが政策を複雑化」。
+- 30年債利回り = 4.91%(95パーセンタイル) — 長期スタグフレーション織り込み進行。
+- **含意**: USD軟化方向は長期的。しかしFOMC Hawkish Hold + 金利格差でshort-termフロア維持。
+- EUR/USD SHORT thesis: 短期bounce(~1.15166)あっても、FOMC-ECB格差1.5-1.75%で方向は不変。
+
+**Gold $5,040-5,114 (JPM年末目標$6,300):**
+- 記録的水準継続。インフレ+地政学リスクで需要拡大。
+- **含意**: リスクオフ底流継続。Iran/USD/インフレ全て金を支持。
+
+**現ポジション確認 (OANDA API直接取得 17:59 UTC):**
+- EUR/USD SHORT 200u @1.15100 → UPL=-22 JPY, SL=1.15350(18.4pip), TP=1.14900(26.6pip) #463690
+- EUR/USD SHORT 600u @1.15123 → UPL=-45 JPY, SL=1.15450(28.4pip), TP=1.14900(26.6pip) #463676
+- AUD/USD LONG 5000u @0.70772 → **UPL=+382 JPY** SL=0.70500(32.7pip), TP=0.71300(47.3pip) #463664 ✅
+- 口座: NAV=31,153 JPY / UPL=+314 JPY / MarginAvail=2,760 JPY (91.2%)
+
+**EUR SHORT short-term bounce (注意):**
+- EUR/USD: 本日安値 1.15038 → 現在 1.15166(+12.8pip反発)。USD軟化データが原因。
+- TP=1.14900まで26.6pip。SL=1.15350まで463690は18.4pip。
+- **ルール再確認: 463690のSL距離が狭い(18.4pip vs H1_ATR=17.2pip)。SL=1.15350維持か1.15400への拡大を検討せよ。**
+- SHORT thesis: FOMC-ECB格差不変。USD軟化は長期的でも短期はHawkish Holdがfloor。HOLD。
+
+**AUD STRONG_LONG継続:**
+- TP=0.71300(scalp-trader延長済み。VIX=18+H4 ichimoku根拠)。
+- UPL=+382 JPY — RBAバックアップで強い推移確認。
+- 0.70500割れのみ裁量クローズ検討。現在+32.7pip余裕で安全。
+
+**market-radar誤報(17:57)について:**
+- market-radarがopen_trades=0と報告したが誤り。APIデータ不整合のバグ。
+- 判断基準: margin_avail=2,747(NAV比8.8%)というdata点がポジション存在を示す。
+- **ルール追加: market-radarの「ポジション0」報告は、margin_used>50%の場合は無視せよ。必ずOANDA API直接確認。**
+
+**次のアクション:**
+1. EUR TP=1.14900到達(残26.6pip) → EUR SHORT全クローズ → **GBP/USD LONG 800-850u即エントリー(TP=1.3450, SL=1.3220)**
+2. AUD TP=0.71300維持(残47.3pip)。ING年末0.74支持で延長余地あり。
+3. USD/JPY 159.406: 介入ゾーン継続。NO TRADE。
+
+### 2026-03-19 19:30 UTC — macro-intel #13: FOMC事後レビュー・新バイアス設定
+
+**FOMC確定後ポジション決済結果 (18:00-19:00 UTC):**
+- EUR/USD SHORT #463676 600u @1.15123 → TP @1.14900 = **+213 JPY ✓** (18:45 UTC)
+- EUR/USD SHORT #463690 200u @1.15100 → TP @1.14900 = **+64 JPY ✓** (18:45 UTC)
+- AUD/USD LONG #463664 5000u @0.70772 → SL @0.70500 = **-2,176 JPY ✗** (18:58 UTC)
+- **セッション純損益: -1,899 JPY / 残高: 28,939 JPY**
+
+**FOMC事後分析 — AUD LONG SL被弾の根因:**
+1. **FOMCリスクの非対称性**: FOMC HawkishはRBA基本ファンダを一時的に上書きする。短期=FOMCドライバー、長期=RBAドライバー。
+2. **SL=0.70500は適切**: 27.2pip = 1.6xATR。十分な余裕があったが、FOMC後の急落(-31pip)に届いた。
+3. **本当の問題**: FOMC直前(2-3時間前)に新規でAUD LONGを追加したこと。FOMC方向に敏感なペアで、結果がどちらに動くか不明確な状態でのエントリーは高リスク。
+
+**教訓 — FOMC前ポジション管理ルール (新追加):**
+> **FOMC/BOJ/ECB等主要中銀決定の2時間前は「結果依存型ポジション」を保有しない。**
+> - 定義: Hawkish→利益/Dovish→SL被弾、またはその逆、のどちらかにしか動かないポジション
+> - 対応: FOMC前にクローズ、または両シナリオ対応のSL/TP設定に修正
+> - 例: AUD LONG during FOMC = USD強ければ即SL → これが「結果依存型ポジション」
+> - 例外: 両シナリオともTP方向に有利なポジション(稀)
+
+**現在の市場状況 (19:15 UTC 2026-03-19):**
+- USD/JPY: **159.744** — 介入ゾーン(159.45-161.95)内。FOMC後USD急騰継続。
+- AUD/USD: **0.70490** — FOMC後急落。RBA強でも短期は上値重い。
+- EUR/USD: **1.14770** — FOMC後下落。TP到達後レンジ推移。
+- GBP/USD: **1.32880** — BOE本日予定。方向感待ち。
+- BOJ: **Hold 0.75% 確定** (本日早朝)。April hike示唆継続。
+- BOE: **本日12:00 UTC予定** (Hold予想 + タカ派声明期待)
+
+**バイアス更新 (2026-03-19 19:30 UTC):**
+- USD_JPY: **SHORT_NEUTRAL** — 介入ゾーン(159.45+)でLONG禁止。160超えで即介入リスク。
+  - 新規LONGは159.45以上では一切禁止。SHORTなら160超えで検討可。
+- AUD_USD: **CAUTIOUS_LONG** — RBA4.1%基本テーゼ不変。FOMC後急落で0.700-0.705エリアは押し目候補。
+  - VIX<21継続なら0.700-0.703でLONG検討(SL=2xATR=34pip)。急ぎ不要。
+- EUR_USD: **SHORT** — FOMC-ECB金利格差(1.5-1.75%)継続。1.14770→1.14500が次の目標。
+  - BOE声明でUSD方向感変わる可能性。新規SHORTはBOE後に確認してから。
+- GBP_USD: **NEUTRAL → BOE後判断** — Hold+タカ派声明ならLONG。CutシグナルならSHORT。
+  - BOE 12:00 UTC結果確認後エントリー。
+
+**次のアクション (scalp-traderへ):**
+1. **ノーポジ確認済み** — 残高28,939 JPY、マージン全解放。
+2. **BOE待機**: 本日12:00 UTC BOE決定後にGBP/USD方向確認 → LONG or NEUTRAL判断
+3. **AUD/USD**: 0.700-0.705エリアへの下押し確認 → LONG押し目買い検討
+4. **USD/JPY**: 159.45以上でLONG禁止継続。160超えならSHORT検討(介入加速期待)
+5. **EUR/USD SHORT**: BOE後のUSD方向感確認後、1.1490-1.1500でSHORT再エントリー検討
+

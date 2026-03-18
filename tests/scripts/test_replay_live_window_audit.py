@@ -8,7 +8,6 @@ from pathlib import Path
 
 import scripts.replay_live_window_audit as audit
 
-
 UTC = timezone.utc
 
 
@@ -56,16 +55,14 @@ def _write_candles(path: Path, start: datetime, prices: list[float]) -> None:
 
 def _write_trades_db(path: Path, rows: list[tuple[str, str, str, str]]) -> None:
     con = sqlite3.connect(path)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE trades (
             strategy_tag TEXT,
             entry_time TEXT,
             open_time TEXT,
             close_time TEXT
         )
-        """
-    )
+        """)
     con.executemany(
         "INSERT INTO trades(strategy_tag, entry_time, open_time, close_time) VALUES (?, ?, ?, ?)",
         rows,
@@ -119,8 +116,18 @@ def test_build_report_marks_missing_and_covered_windows(tmp_path) -> None:
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", first_open.isoformat(), first_open.isoformat(), (first_open + timedelta(minutes=4)).isoformat()),
-            ("TrendBreakout", second_open.isoformat(), second_open.isoformat(), (second_open + timedelta(minutes=2)).isoformat()),
+            (
+                "TrendBreakout",
+                first_open.isoformat(),
+                first_open.isoformat(),
+                (first_open + timedelta(minutes=4)).isoformat(),
+            ),
+            (
+                "TrendBreakout",
+                second_open.isoformat(),
+                second_open.isoformat(),
+                (second_open + timedelta(minutes=2)).isoformat(),
+            ),
         ],
     )
 
@@ -150,7 +157,9 @@ def test_build_report_marks_missing_and_covered_windows(tmp_path) -> None:
     first_window = worker["windows"][0]
     assert first_window["coverage"]["status"] == "covered"
     assert first_window["required_tick_basenames"] == ["USD_JPY_ticks_20260306.jsonl"]
-    assert first_window["replay_required_tick_basenames"] == ["USD_JPY_ticks_20260306.jsonl"]
+    assert first_window["replay_required_tick_basenames"] == [
+        "USD_JPY_ticks_20260306.jsonl"
+    ]
     assert first_window["clipped_tick_count"] > 0
     assert Path(first_window["clipped_ticks_path"]).exists()
     assert first_window["replay_window_start"] == first_window["window_start"]
@@ -160,7 +169,9 @@ def test_build_report_marks_missing_and_covered_windows(tmp_path) -> None:
     second_window = worker["windows"][1]
     assert second_window["coverage"]["status"] == "missing"
     assert second_window["required_tick_basenames"] == ["USD_JPY_ticks_20260307.jsonl"]
-    assert second_window["replay_required_tick_basenames"] == ["USD_JPY_ticks_20260307.jsonl"]
+    assert second_window["replay_required_tick_basenames"] == [
+        "USD_JPY_ticks_20260307.jsonl"
+    ]
     assert second_window["clipped_tick_count"] == 0
     assert second_window["clipped_ticks_path"] is None
     assert second_window["replay_ticks_path"] is None
@@ -173,7 +184,12 @@ def test_build_report_extends_replay_window_with_warmup(tmp_path) -> None:
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), close_time.isoformat()),
+            (
+                "TrendBreakout",
+                open_time.isoformat(),
+                open_time.isoformat(),
+                close_time.isoformat(),
+            ),
         ],
     )
 
@@ -197,8 +213,12 @@ def test_build_report_extends_replay_window_with_warmup(tmp_path) -> None:
 
     window = report["workers"]["trend_breakout"]["windows"][0]
     assert window["window_start"] == (open_time - timedelta(minutes=3)).isoformat()
-    assert window["replay_window_start"] == (open_time - timedelta(minutes=8)).isoformat()
-    assert window["replay_window_end"] == (close_time + timedelta(minutes=5)).isoformat()
+    assert (
+        window["replay_window_start"] == (open_time - timedelta(minutes=8)).isoformat()
+    )
+    assert (
+        window["replay_window_end"] == (close_time + timedelta(minutes=5)).isoformat()
+    )
     assert window["replay_required_tick_basenames"] == ["USD_JPY_ticks_20260306.jsonl"]
     assert window["clipped_tick_count"] < window["replay_tick_count"]
     assert window["replay_ticks_path"] != window["clipped_ticks_path"]
@@ -206,14 +226,21 @@ def test_build_report_extends_replay_window_with_warmup(tmp_path) -> None:
     assert window["coverage"]["replay_tick_file_count"] == 1
 
 
-def test_build_report_uses_candle_sim_fallback_with_replay_warmup(tmp_path, monkeypatch) -> None:
+def test_build_report_uses_candle_sim_fallback_with_replay_warmup(
+    tmp_path, monkeypatch
+) -> None:
     trades_db = tmp_path / "trades.db"
     open_time = datetime(2026, 3, 6, 9, 6, tzinfo=UTC)
     close_time = open_time + timedelta(minutes=4)
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), close_time.isoformat()),
+            (
+                "TrendBreakout",
+                open_time.isoformat(),
+                open_time.isoformat(),
+                close_time.isoformat(),
+            ),
         ],
     )
 
@@ -285,7 +312,12 @@ def test_build_report_uses_default_replay_warmup_for_m1_family(tmp_path) -> None
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), close_time.isoformat()),
+            (
+                "TrendBreakout",
+                open_time.isoformat(),
+                open_time.isoformat(),
+                close_time.isoformat(),
+            ),
         ],
     )
 
@@ -309,7 +341,10 @@ def test_build_report_uses_default_replay_warmup_for_m1_family(tmp_path) -> None
     assert report["requested_replay_warmup_minutes"] is None
     window = report["workers"]["trend_breakout"]["windows"][0]
     assert window["replay_warmup_minutes"] == 120.0
-    assert window["replay_window_start"] == (open_time - timedelta(minutes=123)).isoformat()
+    assert (
+        window["replay_window_start"]
+        == (open_time - timedelta(minutes=123)).isoformat()
+    )
 
 
 def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None:
@@ -318,7 +353,12 @@ def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), (open_time + timedelta(minutes=2)).isoformat()),
+            (
+                "TrendBreakout",
+                open_time.isoformat(),
+                open_time.isoformat(),
+                (open_time + timedelta(minutes=2)).isoformat(),
+            ),
         ],
     )
     ticks = tmp_path / "USD_JPY_ticks_20260306.jsonl"
@@ -330,7 +370,9 @@ def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None
 
     calls: list[tuple[str, Path, Path]] = []
 
-    def fake_run_replay(*, worker: str, ticks_path: Path, out_dir: Path) -> dict[str, object]:
+    def fake_run_replay(
+        *, worker: str, ticks_path: Path, out_dir: Path
+    ) -> dict[str, object]:
         calls.append((worker, ticks_path, out_dir))
         out_dir.mkdir(parents=True, exist_ok=True)
         summary_path = out_dir / "summary_all.json"
@@ -372,7 +414,10 @@ def test_main_runs_standard_replay_when_requested(tmp_path, monkeypatch) -> None
     assert len(calls) == 1
     assert worker["windows"][0]["replay"]["status"] == "completed"
     assert worker["windows"][0]["replay"]["summary_all_path"] is not None
-    assert worker["windows"][0]["replay_ticks_path"] == worker["windows"][0]["clipped_ticks_path"]
+    assert (
+        worker["windows"][0]["replay_ticks_path"]
+        == worker["windows"][0]["clipped_ticks_path"]
+    )
 
 
 def test_build_report_runs_real_candle_sim_fallback(tmp_path, monkeypatch) -> None:
@@ -381,11 +426,18 @@ def test_build_report_runs_real_candle_sim_fallback(tmp_path, monkeypatch) -> No
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), (open_time + timedelta(minutes=2)).isoformat()),
+            (
+                "TrendBreakout",
+                open_time.isoformat(),
+                open_time.isoformat(),
+                (open_time + timedelta(minutes=2)).isoformat(),
+            ),
         ],
     )
 
-    def fake_fetch_candles(*, instrument: str, start: datetime, end: datetime, out_path: Path) -> dict[str, object]:
+    def fake_fetch_candles(
+        *, instrument: str, start: datetime, end: datetime, out_path: Path
+    ) -> dict[str, object]:
         assert instrument == "USD_JPY"
         assert start <= end
         _write_candles(out_path, start=start, prices=[157.8, 157.81, 157.82])
@@ -410,7 +462,15 @@ def test_build_report_runs_real_candle_sim_fallback(tmp_path, monkeypatch) -> No
             "status": "completed",
             "ticks_path": str(out_path),
             "tick_count": 3,
-            "density": [{"window_sec": 5, "min_ticks": 1, "samples": 1, "meet": 1, "coverage": 1.0}],
+            "density": [
+                {
+                    "window_sec": 5,
+                    "min_ticks": 1,
+                    "samples": 1,
+                    "meet": 1,
+                    "coverage": 1.0,
+                }
+            ],
         }
 
     monkeypatch.setattr(audit, "_fetch_candles_to_json", fake_fetch_candles)
@@ -447,11 +507,18 @@ def test_main_runs_replay_with_candle_sim_fallback(tmp_path, monkeypatch) -> Non
     _write_trades_db(
         trades_db,
         [
-            ("TrendBreakout", open_time.isoformat(), open_time.isoformat(), (open_time + timedelta(minutes=2)).isoformat()),
+            (
+                "TrendBreakout",
+                open_time.isoformat(),
+                open_time.isoformat(),
+                (open_time + timedelta(minutes=2)).isoformat(),
+            ),
         ],
     )
 
-    def fake_fetch_candles(*, instrument: str, start: datetime, end: datetime, out_path: Path) -> dict[str, object]:
+    def fake_fetch_candles(
+        *, instrument: str, start: datetime, end: datetime, out_path: Path
+    ) -> dict[str, object]:
         _write_candles(out_path, start=start, prices=[157.9, 157.91, 157.92])
         return {
             "status": "completed",
@@ -478,7 +545,9 @@ def test_main_runs_replay_with_candle_sim_fallback(tmp_path, monkeypatch) -> Non
 
     calls: list[tuple[str, Path, Path]] = []
 
-    def fake_run_replay(*, worker: str, ticks_path: Path, out_dir: Path) -> dict[str, object]:
+    def fake_run_replay(
+        *, worker: str, ticks_path: Path, out_dir: Path
+    ) -> dict[str, object]:
         calls.append((worker, ticks_path, out_dir))
         out_dir.mkdir(parents=True, exist_ok=True)
         summary_path = out_dir / "summary_all.json"

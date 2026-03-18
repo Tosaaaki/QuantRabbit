@@ -118,10 +118,7 @@ def _load_m1_for_dates(dates: Iterable[dt.date]) -> Dict[dt.date, List[Candle]]:
         if not path.exists():
             # Prefer replay JSONL if present (this is what live workers write).
             jsonl = (
-                LOGS
-                / "replay"
-                / "USD_JPY"
-                / f"USD_JPY_M1_{d.strftime('%Y%m%d')}.jsonl"
+                LOGS / "replay" / "USD_JPY" / f"USD_JPY_M1_{d.strftime('%Y%m%d')}.jsonl"
             )
             if jsonl.exists():
                 entries: List[Candle] = []
@@ -345,7 +342,9 @@ def _classify_return_wait(stats: dict, min_trades: int) -> Tuple[str, str]:
     be_post_60 = (
         stats["be_post_hit"].get(60, 0) / max(1, seen_60) if seen_60 > 0 else None
     )
-    avg_be_time = stats["be_hold_sum"] / stats["be_hold_hits"] if stats["be_hold_hits"] else None
+    avg_be_time = (
+        stats["be_hold_sum"] / stats["be_hold_hits"] if stats["be_hold_hits"] else None
+    )
     win_p50 = _percentile(stats["hold_win"], 50) if stats["hold_win"] else None
     loss_p50 = _percentile(stats["hold_loss"], 50) if stats["hold_loss"] else None
 
@@ -522,9 +521,13 @@ def main() -> None:
     ap.add_argument("--post-min", type=int, nargs="*", default=[30, 60])
     ap.add_argument("--min-trades", type=int, default=30)
     ap.add_argument("--top", type=int, default=30)
-    ap.add_argument("--raw-tag", action="store_true", help="use raw strategy_tag (no base grouping)")
+    ap.add_argument(
+        "--raw-tag", action="store_true", help="use raw strategy_tag (no base grouping)"
+    )
     ap.add_argument("--out-json", default="", help="optional output JSON path")
-    ap.add_argument("--out-yaml", default="", help="optional worker_reentry.yaml output path")
+    ap.add_argument(
+        "--out-yaml", default="", help="optional worker_reentry.yaml output path"
+    )
     ap.add_argument("--block-hour-trades", type=int, default=20)
     ap.add_argument("--block-hour-mfe-max", type=float, default=1.2)
     ap.add_argument("--block-hour-mae-max", type=float, default=1.2)
@@ -534,7 +537,9 @@ def main() -> None:
         default="",
         help="optional JST hour window, e.g. 3-6 or 3,4,5",
     )
-    ap.add_argument("--block-hours-scope", default="global", choices=["global", "per_strategy"])
+    ap.add_argument(
+        "--block-hours-scope", default="global", choices=["global", "per_strategy"]
+    )
     args = ap.parse_args()
     block_hour_window = _parse_hour_window(args.block_hour_window)
 
@@ -635,7 +640,9 @@ def main() -> None:
             if hit:
                 stats["be_post_hit"][window] += 1
 
-    ranked = sorted(stats_by_strategy.items(), key=lambda item: item[1]["count"], reverse=True)
+    ranked = sorted(
+        stats_by_strategy.items(), key=lambda item: item[1]["count"], reverse=True
+    )
     global_block_hours = _suggest_block_hours(
         global_hours,
         min_trades=args.block_hour_trades,
@@ -660,7 +667,11 @@ def main() -> None:
         loss_p50 = _percentile(stats["hold_loss"], 50) or 0.0
         win_p90 = _percentile(stats["hold_win"], 90) or 0.0
         loss_p90 = _percentile(stats["hold_loss"], 90) or 0.0
-        be_avg = stats["be_hold_sum"] / stats["be_hold_hits"] if stats["be_hold_hits"] else None
+        be_avg = (
+            stats["be_hold_sum"] / stats["be_hold_hits"]
+            if stats["be_hold_hits"]
+            else None
+        )
         bias, reason = _classify_return_wait(stats, args.min_trades)
         pf = (
             stats["gross_profit"] / max(1e-6, stats["gross_loss"])
@@ -712,7 +723,9 @@ def main() -> None:
             "min_trades": args.min_trades,
             "post_windows": post_windows,
             "defaults": {
-                "block_jst_hours": global_block_hours if args.block_hours_scope == "global" else [],
+                "block_jst_hours": (
+                    global_block_hours if args.block_hours_scope == "global" else []
+                ),
                 "block_hours_scope": args.block_hours_scope,
                 "block_hour_window": block_hour_window,
                 "block_hour_thresholds": {
@@ -753,12 +766,25 @@ def main() -> None:
                 "hold_win_p90": _percentile(stats["hold_win"], 90),
                 "hold_loss_p50": _percentile(stats["hold_loss"], 50),
                 "hold_loss_p90": _percentile(stats["hold_loss"], 90),
-                "avg_mfe": stats["mfe_sum"] / stats["mfe_count"] if stats["mfe_count"] else None,
-                "avg_mae": stats["mae_sum"] / stats["mae_count"] if stats["mae_count"] else None,
-                "avg_be_min": stats["be_hold_sum"] / stats["be_hold_hits"] if stats["be_hold_hits"] else None,
+                "avg_mfe": (
+                    stats["mfe_sum"] / stats["mfe_count"]
+                    if stats["mfe_count"]
+                    else None
+                ),
+                "avg_mae": (
+                    stats["mae_sum"] / stats["mae_count"]
+                    if stats["mae_count"]
+                    else None
+                ),
+                "avg_be_min": (
+                    stats["be_hold_sum"] / stats["be_hold_hits"]
+                    if stats["be_hold_hits"]
+                    else None
+                ),
                 "be_post_hit": {
                     str(w): (
-                        stats["be_post_hit"][w] / max(1, int((stats.get("be_post_seen") or {}).get(w, 0) or 0))
+                        stats["be_post_hit"][w]
+                        / max(1, int((stats.get("be_post_seen") or {}).get(w, 0) or 0))
                         if int((stats.get("be_post_seen") or {}).get(w, 0) or 0) > 0
                         else None
                     )
@@ -801,7 +827,9 @@ def main() -> None:
         defaults_override = {}
         if args.block_hours_scope == "global":
             defaults_override["block_jst_hours"] = global_block_hours
-        _write_reentry_yaml(out_path, yaml_strategies, defaults_override=defaults_override)
+        _write_reentry_yaml(
+            out_path, yaml_strategies, defaults_override=defaults_override
+        )
         print(f"Wrote {out_path}")
 
 

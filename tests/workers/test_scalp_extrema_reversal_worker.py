@@ -11,8 +11,12 @@ os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
 from workers.scalp_extrema_reversal import worker
 
 
-def _range_ctx(*, active: bool, score: float, mode: str, reason: str | None = None) -> SimpleNamespace:
-    return SimpleNamespace(active=active, score=score, mode=mode, reason=reason or mode.lower())
+def _range_ctx(
+    *, active: bool, score: float, mode: str, reason: str | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        active=active, score=score, mode=mode, reason=reason or mode.lower()
+    )
 
 
 def test_extrema_trend_gate_blocks_countertrend_continuation(monkeypatch):
@@ -110,9 +114,13 @@ def test_place_order_uses_actual_free_ratio_for_cap(monkeypatch):
         "compute_units",
         lambda **_kwargs: SimpleNamespace(units=100, factors={"free_ratio": 0.07}),
     )
-    monkeypatch.setattr(worker, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"]))
+    monkeypatch.setattr(
+        worker, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"])
+    )
     monkeypatch.setattr(worker, "market_order", fake_market_order)
-    monkeypatch.setattr(worker.spread_monitor, "get_state", lambda: {"spread_pips": 0.8})
+    monkeypatch.setattr(
+        worker.spread_monitor, "get_state", lambda: {"spread_pips": 0.8}
+    )
 
     import utils.oanda_account as oanda_account
 
@@ -165,8 +173,19 @@ def test_build_entry_thesis_requests_mtf_technical_context() -> None:
     )
 
     assert thesis["technical_context_tfs"] == ["M1", "M5", "H1", "H4"]
-    assert thesis["technical_context_ticks"] == ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"]
-    assert thesis["technical_context_candle_counts"] == {"M1": 140, "M5": 100, "H1": 70, "H4": 40}
+    assert thesis["technical_context_ticks"] == [
+        "latest_bid",
+        "latest_ask",
+        "latest_mid",
+        "spread_pips",
+        "tick_rate",
+    ]
+    assert thesis["technical_context_candle_counts"] == {
+        "M1": 140,
+        "M5": 100,
+        "H1": 70,
+        "H4": 40,
+    }
     assert "plus_di" in thesis["technical_context_fields"]
     assert "macd_hist" in thesis["technical_context_fields"]
 
@@ -206,8 +225,12 @@ def test_signal_extrema_reversal_uses_wider_strategy_local_sl_tp_caps(monkeypatc
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.462, 158.459, 158.455, 158.452, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 1.2))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 1.2)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {"close": 158.450, "adx": 18.0, "atr_pips": 3.0, "rsi": 58.0},
@@ -261,13 +284,33 @@ def test_signal_extrema_reversal_allows_supportive_long_when_m5_is_bullish(monke
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.450, 158.449, 158.448, 158.447, 158.448, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.450, 158.449, 158.448, 158.447, 158.448, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
-    fac_m1 = {"close": 158.450, "ema20": 158.446, "adx": 18.0, "atr_pips": 1.8, "rsi": 49.0}
-    fac_m5 = {"close": 158.470, "ema20": 158.440, "rsi": 61.0, "plus_di": 25.0, "minus_di": 16.0, "ema_slope_10": 0.01}
+    fac_m1 = {
+        "close": 158.450,
+        "ema20": 158.446,
+        "adx": 18.0,
+        "atr_pips": 1.8,
+        "rsi": 49.0,
+    }
+    fac_m5 = {
+        "close": 158.470,
+        "ema20": 158.440,
+        "rsi": 61.0,
+        "plus_di": 25.0,
+        "minus_di": 16.0,
+        "ema_slope_10": 0.01,
+    }
     signal = worker._signal_extrema_reversal(
         fac_m1,
         fac_m5=fac_m5,
@@ -283,7 +326,9 @@ def test_signal_extrema_reversal_allows_supportive_long_when_m5_is_bullish(monke
     assert signal["extrema"]["long_low_band_pips"] == 1.2
 
 
-def test_signal_extrema_reversal_requires_supportive_context_for_shallow_long(monkeypatch):
+def test_signal_extrema_reversal_requires_supportive_context_for_shallow_long(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -309,14 +354,28 @@ def test_signal_extrema_reversal_requires_supportive_context_for_shallow_long(mo
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.446, 158.444, 158.441, 158.439, 158.442, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.446, 158.444, 158.441, 158.439, 158.442, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {"close": 158.450, "ema20": 158.446, "adx": 18.0, "atr_pips": 1.8, "rsi": 49.0},
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.44, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -324,7 +383,9 @@ def test_signal_extrema_reversal_requires_supportive_context_for_shallow_long(mo
     assert signal is None
 
 
-def test_signal_extrema_reversal_blocks_non_supportive_long_under_countertrend_gap(monkeypatch):
+def test_signal_extrema_reversal_blocks_non_supportive_long_under_countertrend_gap(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -351,10 +412,17 @@ def test_signal_extrema_reversal_blocks_non_supportive_long_under_countertrend_g
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.446, 158.444, 158.441, 158.439, 158.442, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.446, 158.444, 158.441, 158.439, 158.442, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -366,7 +434,14 @@ def test_signal_extrema_reversal_blocks_non_supportive_long_under_countertrend_g
             "atr_pips": 1.8,
             "rsi": 40.0,
         },
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.44, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -374,7 +449,9 @@ def test_signal_extrema_reversal_blocks_non_supportive_long_under_countertrend_g
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_supportive_long_under_same_countertrend_gap(monkeypatch):
+def test_signal_extrema_reversal_keeps_supportive_long_under_same_countertrend_gap(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -409,10 +486,17 @@ def test_signal_extrema_reversal_keeps_supportive_long_under_same_countertrend_g
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.446, 158.444, 158.441, 158.439, 158.442, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.446, 158.444, 158.441, 158.439, 158.442, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.8)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -424,7 +508,14 @@ def test_signal_extrema_reversal_keeps_supportive_long_under_same_countertrend_g
             "atr_pips": 1.8,
             "rsi": 49.0,
         },
-        fac_m5={"close": 158.470, "ema20": 158.440, "rsi": 61.0, "plus_di": 25.0, "minus_di": 16.0, "ema_slope_10": 0.01},
+        fac_m5={
+            "close": 158.470,
+            "ema20": 158.440,
+            "rsi": 61.0,
+            "plus_di": 25.0,
+            "minus_di": 16.0,
+            "ema_slope_10": 0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.44, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -434,7 +525,9 @@ def test_signal_extrema_reversal_keeps_supportive_long_under_same_countertrend_g
     assert signal["extrema"]["supportive_long"] is True
 
 
-def test_signal_extrema_reversal_blocks_non_supportive_short_under_bullish_gap(monkeypatch):
+def test_signal_extrema_reversal_blocks_non_supportive_short_under_bullish_gap(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -463,8 +556,12 @@ def test_signal_extrema_reversal_blocks_non_supportive_short_under_bullish_gap(m
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.451, 158.449, 158.447, 158.446, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -476,7 +573,14 @@ def test_signal_extrema_reversal_blocks_non_supportive_short_under_bullish_gap(m
             "atr_pips": 1.8,
             "rsi": 61.0,
         },
-        fac_m5={"close": 158.470, "ema20": 158.440, "rsi": 61.0, "plus_di": 25.0, "minus_di": 16.0, "ema_slope_10": 0.01},
+        fac_m5={
+            "close": 158.470,
+            "ema20": 158.440,
+            "rsi": 61.0,
+            "plus_di": 25.0,
+            "minus_di": 16.0,
+            "ema_slope_10": 0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.46, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -519,8 +623,12 @@ def test_signal_extrema_reversal_blocks_non_supportive_shallow_probe_short(monke
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.454, 158.452, 158.451, 158.450, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -532,7 +640,14 @@ def test_signal_extrema_reversal_blocks_non_supportive_shallow_probe_short(monke
             "atr_pips": 1.8,
             "rsi": 61.0,
         },
-        fac_m5={"close": 158.470, "ema20": 158.440, "rsi": 61.0, "plus_di": 25.0, "minus_di": 16.0, "ema_slope_10": 0.01},
+        fac_m5={
+            "close": 158.470,
+            "ema20": 158.440,
+            "rsi": 61.0,
+            "plus_di": 25.0,
+            "minus_di": 16.0,
+            "ema_slope_10": 0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.48, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -540,11 +655,12 @@ def test_signal_extrema_reversal_blocks_non_supportive_shallow_probe_short(monke
     assert signal is None
 
 
-def test_recent_setup_pressure_marks_losing_short_vol_compression_lane_active(monkeypatch, tmp_path):
+def test_recent_setup_pressure_marks_losing_short_vol_compression_lane_active(
+    monkeypatch, tmp_path
+):
     db_path = tmp_path / "trades.db"
     con = sqlite3.connect(db_path)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE trades (
           strategy_tag TEXT,
           realized_pl REAL,
@@ -553,8 +669,7 @@ def test_recent_setup_pressure_marks_losing_short_vol_compression_lane_active(mo
           close_reason TEXT,
           entry_thesis TEXT
         )
-        """
-    )
+        """)
     now = datetime.now(timezone.utc)
     rows = [
         (-0.9, "STOP_LOSS_ORDER", 12),
@@ -627,12 +742,22 @@ def test_signal_extrema_reversal_blocks_short_under_recent_setup_pressure(monkey
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.454, 158.452, 158.451, 158.450, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 6.0, "sl_rate": 0.833, "fast_sl_rate": 0.667, "net_jpy": -4.2, "active": 1.0},
+        lambda side, reason: {
+            "trades": 6.0,
+            "sl_rate": 0.833,
+            "fast_sl_rate": 0.667,
+            "net_jpy": -4.2,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -657,7 +782,9 @@ def test_signal_extrema_reversal_blocks_short_under_recent_setup_pressure(monkey
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_stronger_short_even_under_setup_pressure(monkeypatch):
+def test_signal_extrema_reversal_keeps_stronger_short_even_under_setup_pressure(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -686,12 +813,22 @@ def test_signal_extrema_reversal_keeps_stronger_short_even_under_setup_pressure(
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.460, 158.456, 158.452, 158.449, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.8))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.8)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 6.0, "sl_rate": 0.833, "fast_sl_rate": 0.667, "net_jpy": -4.2, "active": 1.0},
+        lambda side, reason: {
+            "trades": 6.0,
+            "sl_rate": 0.833,
+            "fast_sl_rate": 0.667,
+            "net_jpy": -4.2,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -719,7 +856,9 @@ def test_signal_extrema_reversal_keeps_stronger_short_even_under_setup_pressure(
     assert signal["extrema"]["short_setup_pressure"]["active"] == 1.0
 
 
-def test_signal_extrema_reversal_blocks_positive_gap_short_under_setup_pressure(monkeypatch):
+def test_signal_extrema_reversal_blocks_positive_gap_short_under_setup_pressure(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -737,9 +876,15 @@ def test_signal_extrema_reversal_blocks_positive_gap_short_under_setup_pressure(
     monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
     monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_ENABLED", True)
     monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_MIN_PIPS", 0.15)
-    monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS", 0.90)
-    monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.75)
-    monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.40)
+    monkeypatch.setattr(
+        worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS", 0.90
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.75
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.40
+    )
     monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_RSI_MAX", 68.0)
     monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
     monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
@@ -758,12 +903,22 @@ def test_signal_extrema_reversal_blocks_positive_gap_short_under_setup_pressure(
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.457, 158.454, 158.452, 158.451, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 6.0, "sl_rate": 0.833, "fast_sl_rate": 0.667, "net_jpy": -10.6, "active": 1.0},
+        lambda side, reason: {
+            "trades": 6.0,
+            "sl_rate": 0.833,
+            "fast_sl_rate": 0.667,
+            "net_jpy": -10.6,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -808,9 +963,15 @@ def test_signal_extrema_reversal_keeps_more_extended_positive_gap_short_under_se
     monkeypatch.setattr(worker, "EXTREMA_SWEEP_MIN_PIPS", 0.06)
     monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_ENABLED", True)
     monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_MIN_PIPS", 0.15)
-    monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS", 0.90)
-    monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.75)
-    monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.40)
+    monkeypatch.setattr(
+        worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_DIST_HIGH_MAX_PIPS", 0.90
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.75
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.40
+    )
     monkeypatch.setattr(worker, "EXTREMA_SHORT_SETUP_PRESSURE_POS_GAP_RSI_MAX", 68.0)
     monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
     monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
@@ -827,14 +988,27 @@ def test_signal_extrema_reversal_keeps_more_extended_positive_gap_short_under_se
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4555, 158.4535, 158.452, 158.451, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.4555, 158.4535, 158.452, 158.451, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.35))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.35)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 6.0, "sl_rate": 0.833, "fast_sl_rate": 0.667, "net_jpy": -4.3, "active": 1.0},
+        lambda side, reason: {
+            "trades": 6.0,
+            "sl_rate": 0.833,
+            "fast_sl_rate": 0.667,
+            "net_jpy": -4.3,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -901,14 +1075,27 @@ def test_signal_extrema_reversal_blocks_long_under_recent_setup_pressure(monkeyp
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.448, 158.4475, 158.447, 158.4472, 158.448, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.448, 158.4475, 158.447, 158.4472, 158.448, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 8.0, "sl_rate": 0.50, "fast_sl_rate": 0.50, "net_jpy": -5.1, "active": 0.0},
+        lambda side, reason: {
+            "trades": 8.0,
+            "sl_rate": 0.50,
+            "fast_sl_rate": 0.50,
+            "net_jpy": -5.1,
+            "active": 0.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -933,7 +1120,9 @@ def test_signal_extrema_reversal_blocks_long_under_recent_setup_pressure(monkeyp
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_stronger_long_even_under_setup_pressure(monkeypatch):
+def test_signal_extrema_reversal_keeps_stronger_long_even_under_setup_pressure(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -973,14 +1162,27 @@ def test_signal_extrema_reversal_keeps_stronger_long_even_under_setup_pressure(m
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.448, 158.4475, 158.447, 158.4473, 158.4485, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.448, 158.4475, 158.447, 158.4473, 158.4485, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 8.0, "sl_rate": 0.50, "fast_sl_rate": 0.50, "net_jpy": -5.1, "active": 0.0},
+        lambda side, reason: {
+            "trades": 8.0,
+            "sl_rate": 0.50,
+            "fast_sl_rate": 0.50,
+            "net_jpy": -5.1,
+            "active": 0.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -1008,7 +1210,9 @@ def test_signal_extrema_reversal_keeps_stronger_long_even_under_setup_pressure(m
     assert signal["extrema"]["long_setup_pressure"]["trades"] == 8.0
 
 
-def test_signal_extrema_reversal_blocks_neutral_gap_long_under_setup_pressure(monkeypatch):
+def test_signal_extrema_reversal_blocks_neutral_gap_long_under_setup_pressure(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1048,14 +1252,27 @@ def test_signal_extrema_reversal_blocks_neutral_gap_long_under_setup_pressure(mo
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4490, 158.4491, 158.4490, 158.4492, 158.4494, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.4490, 158.4491, 158.4490, 158.4492, 158.4494, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.15))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.15)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 8.0, "sl_rate": 0.50, "fast_sl_rate": 0.50, "net_jpy": -5.1, "active": 1.0},
+        lambda side, reason: {
+            "trades": 8.0,
+            "sl_rate": 0.50,
+            "fast_sl_rate": 0.50,
+            "net_jpy": -5.1,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -1080,7 +1297,9 @@ def test_signal_extrema_reversal_blocks_neutral_gap_long_under_setup_pressure(mo
     assert signal is None
 
 
-def test_signal_extrema_reversal_blocks_shallow_positive_gap_long_under_setup_pressure(monkeypatch):
+def test_signal_extrema_reversal_blocks_shallow_positive_gap_long_under_setup_pressure(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1101,10 +1320,18 @@ def test_signal_extrema_reversal_blocks_shallow_positive_gap_long_under_setup_pr
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_DIST_LOW_MAX_PIPS", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_ENABLED", True)
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_MIN_PIPS", 0.45)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS", 0.70)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.20)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.20)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX", 0.46)
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS", 0.70
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.20
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.20
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX", 0.46
+    )
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RSI_MIN", 38.0)
     monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
     monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
@@ -1121,14 +1348,27 @@ def test_signal_extrema_reversal_blocks_shallow_positive_gap_long_under_setup_pr
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4490, 158.4491, 158.4490, 158.4492, 158.4494, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.4490, 158.4491, 158.4490, 158.4492, 158.4494, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.1))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.1)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 8.0, "sl_rate": 0.50, "fast_sl_rate": 0.50, "net_jpy": -5.1, "active": 1.0},
+        lambda side, reason: {
+            "trades": 8.0,
+            "sl_rate": 0.50,
+            "fast_sl_rate": 0.50,
+            "net_jpy": -5.1,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -1153,7 +1393,9 @@ def test_signal_extrema_reversal_blocks_shallow_positive_gap_long_under_setup_pr
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_deeper_positive_gap_long_under_setup_pressure(monkeypatch):
+def test_signal_extrema_reversal_keeps_deeper_positive_gap_long_under_setup_pressure(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1174,10 +1416,18 @@ def test_signal_extrema_reversal_keeps_deeper_positive_gap_long_under_setup_pres
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_DIST_LOW_MAX_PIPS", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_ENABLED", True)
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_MIN_PIPS", 0.45)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS", 0.70)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.20)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.20)
-    monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX", 0.46)
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_DIST_LOW_MAX_PIPS", 0.70
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_BOUNCE_MAX_PIPS", 0.20
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_TICK_STRENGTH_MAX", 0.20
+    )
+    monkeypatch.setattr(
+        worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RANGE_SCORE_MAX", 0.46
+    )
     monkeypatch.setattr(worker, "EXTREMA_LONG_SETUP_PRESSURE_POS_GAP_RSI_MIN", 38.0)
     monkeypatch.setattr(worker, "_latest_price", lambda *_args, **_kwargs: 158.450)
     monkeypatch.setattr(worker, "_atr_pips", lambda *_args, **_kwargs: 1.8)
@@ -1194,14 +1444,27 @@ def test_signal_extrema_reversal_keeps_deeper_positive_gap_long_under_setup_pres
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.444, 158.4435, 158.4432, 158.4445, 158.447, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.444, 158.4435, 158.4432, 158.4445, 158.447, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.4))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.4)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 8.0, "sl_rate": 0.50, "fast_sl_rate": 0.50, "net_jpy": -5.1, "active": 1.0},
+        lambda side, reason: {
+            "trades": 8.0,
+            "sl_rate": 0.50,
+            "fast_sl_rate": 0.50,
+            "net_jpy": -5.1,
+            "active": 1.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -1229,7 +1492,9 @@ def test_signal_extrema_reversal_keeps_deeper_positive_gap_long_under_setup_pres
     assert signal["extrema"]["long_setup_pressure"]["trades"] == 8.0
 
 
-def test_signal_extrema_reversal_keeps_supportive_short_under_same_bullish_gap(monkeypatch):
+def test_signal_extrema_reversal_keeps_supportive_short_under_same_bullish_gap(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1269,8 +1534,12 @@ def test_signal_extrema_reversal_keeps_supportive_short_under_same_bullish_gap(m
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.454, 158.452, 158.451, 158.450, 158.450], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.4)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1282,7 +1551,14 @@ def test_signal_extrema_reversal_keeps_supportive_short_under_same_bullish_gap(m
             "atr_pips": 1.8,
             "rsi": 61.0,
         },
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 39.0, "plus_di": 14.0, "minus_di": 25.0, "ema_slope_10": -0.01},
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 39.0,
+            "plus_di": 14.0,
+            "minus_di": 25.0,
+            "ema_slope_10": -0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.48, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -1330,8 +1606,12 @@ def test_signal_extrema_reversal_blocks_non_supportive_short_drift_probe(monkeyp
         "tick_snapshot",
         lambda *_args, **_kwargs: ([158.460, 158.455, 158.451, 158.450, 158.449], None),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1343,14 +1623,18 @@ def test_signal_extrema_reversal_blocks_non_supportive_short_drift_probe(monkeyp
             "atr_pips": 1.8,
             "rsi": 56.5,
         },
-        range_ctx=_range_ctx(active=True, score=0.46, mode="RANGE", reason="volatility_compression"),
+        range_ctx=_range_ctx(
+            active=True, score=0.46, mode="RANGE", reason="volatility_compression"
+        ),
         tag="scalp_extrema_reversal_live",
     )
 
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_bearish_gap_short_outside_drift_probe(monkeypatch):
+def test_signal_extrema_reversal_keeps_bearish_gap_short_outside_drift_probe(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1386,14 +1670,27 @@ def test_signal_extrema_reversal_keeps_bearish_gap_short_outside_drift_probe(mon
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4585, 158.455, 158.451, 158.450, 158.449], None),
+        lambda *_args, **_kwargs: (
+            [158.4585, 158.455, 158.451, 158.450, 158.449],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
     monkeypatch.setattr(
         worker,
         "_recent_setup_pressure",
-        lambda side, reason: {"trades": 0.0, "sl_rate": 0.0, "fast_sl_rate": 0.0, "net_jpy": 0.0, "active": 0.0},
+        lambda side, reason: {
+            "trades": 0.0,
+            "sl_rate": 0.0,
+            "fast_sl_rate": 0.0,
+            "net_jpy": 0.0,
+            "active": 0.0,
+        },
     )
 
     signal = worker._signal_extrema_reversal(
@@ -1406,7 +1703,9 @@ def test_signal_extrema_reversal_keeps_bearish_gap_short_outside_drift_probe(mon
             "atr_pips": 1.8,
             "rsi": 59.2,
         },
-        range_ctx=_range_ctx(active=True, score=0.45, mode="RANGE", reason="volatility_compression"),
+        range_ctx=_range_ctx(
+            active=True, score=0.45, mode="RANGE", reason="volatility_compression"
+        ),
         tag="scalp_extrema_reversal_live",
     )
 
@@ -1447,14 +1746,28 @@ def test_signal_extrema_reversal_blocks_non_supportive_shallow_probe_long(monkey
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.446, 158.444, 158.441, 158.439, 158.442, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.446, 158.444, 158.441, 158.439, 158.442, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {"close": 158.450, "ema20": 158.446, "adx": 12.6, "atr_pips": 1.8, "rsi": 40.2},
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.31, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -1462,7 +1775,9 @@ def test_signal_extrema_reversal_blocks_non_supportive_shallow_probe_long(monkey
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_non_supportive_long_with_deeper_probe(monkeypatch):
+def test_signal_extrema_reversal_keeps_non_supportive_long_with_deeper_probe(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1494,14 +1809,28 @@ def test_signal_extrema_reversal_keeps_non_supportive_long_with_deeper_probe(mon
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.449, 158.447, 158.444, 158.445, 158.447, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.449, 158.447, 158.444, 158.445, 158.447, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.6))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.6)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {"close": 158.450, "ema20": 158.446, "adx": 12.9, "atr_pips": 1.8, "rsi": 45.3},
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.31, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )
@@ -1546,10 +1875,17 @@ def test_signal_extrema_reversal_blocks_non_supportive_long_drift_probe(monkeypa
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4479, 158.4472, 158.4470, 158.4471, 158.4473, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.4479, 158.4472, 158.4470, 158.4471, 158.4473, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1561,15 +1897,26 @@ def test_signal_extrema_reversal_blocks_non_supportive_long_drift_probe(monkeypa
             "atr_pips": 1.8,
             "rsi": 38.6,
         },
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
-        range_ctx=_range_ctx(active=True, score=0.40, mode="RANGE", reason="volatility_compression"),
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
+        range_ctx=_range_ctx(
+            active=True, score=0.40, mode="RANGE", reason="volatility_compression"
+        ),
         tag="scalp_extrema_reversal_live",
     )
 
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_non_supportive_long_without_drift_probe_headwind(monkeypatch):
+def test_signal_extrema_reversal_keeps_non_supportive_long_without_drift_probe_headwind(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1605,10 +1952,17 @@ def test_signal_extrema_reversal_keeps_non_supportive_long_without_drift_probe_h
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.446, 158.443, 158.442, 158.4418, 158.445, 158.450], None),
+        lambda *_args, **_kwargs: (
+            [158.446, 158.443, 158.442, 158.4418, 158.445, 158.450],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.2)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1620,8 +1974,17 @@ def test_signal_extrema_reversal_keeps_non_supportive_long_without_drift_probe_h
             "atr_pips": 1.8,
             "rsi": 39.8,
         },
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
-        range_ctx=_range_ctx(active=True, score=0.43, mode="RANGE", reason="volatility_compression"),
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
+        range_ctx=_range_ctx(
+            active=True, score=0.43, mode="RANGE", reason="volatility_compression"
+        ),
         tag="scalp_extrema_reversal_live",
     )
 
@@ -1661,10 +2024,17 @@ def test_signal_extrema_reversal_blocks_non_supportive_mid_rsi_short(monkeypatch
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4585, 158.4520, 158.4500, 158.4495, 158.4500], None),
+        lambda *_args, **_kwargs: (
+            [158.4585, 158.4520, 158.4500, 158.4495, 158.4500],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.1)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1683,7 +2053,9 @@ def test_signal_extrema_reversal_blocks_non_supportive_mid_rsi_short(monkeypatch
     assert signal is None
 
 
-def test_signal_extrema_reversal_keeps_higher_rsi_short_outside_mid_rsi_probe(monkeypatch):
+def test_signal_extrema_reversal_keeps_higher_rsi_short_outside_mid_rsi_probe(
+    monkeypatch,
+):
     monkeypatch.setattr(worker, "EXTREMA_ALLOWED_REGIMES", set())
     monkeypatch.setattr(worker, "EXTREMA_SPREAD_P25_MAX", 0.0)
     monkeypatch.setattr(worker, "EXTREMA_ADX_MAX", 35.0)
@@ -1715,10 +2087,17 @@ def test_signal_extrema_reversal_keeps_higher_rsi_short_outside_mid_rsi_probe(mo
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4555, 158.4525, 158.4505, 158.4490, 158.4500], None),
+        lambda *_args, **_kwargs: (
+            [158.4555, 158.4525, 158.4505, 158.4490, 158.4500],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.35))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "short", 0.35)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1772,10 +2151,17 @@ def test_signal_extrema_reversal_blocks_non_supportive_mid_rsi_long(monkeypatch)
     monkeypatch.setattr(
         worker,
         "tick_snapshot",
-        lambda *_args, **_kwargs: ([158.4492, 158.4479, 158.4475, 158.4476, 158.4500], None),
+        lambda *_args, **_kwargs: (
+            [158.4492, 158.4479, 158.4475, 158.4476, 158.4500],
+            None,
+        ),
     )
-    monkeypatch.setattr(worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.25))
-    monkeypatch.setattr(worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {}))
+    monkeypatch.setattr(
+        worker, "tick_reversal", lambda *_args, **_kwargs: (True, "long", 0.25)
+    )
+    monkeypatch.setattr(
+        worker, "_extrema_trend_gate_ok", lambda *_args, **_kwargs: (True, {})
+    )
 
     signal = worker._signal_extrema_reversal(
         {
@@ -1787,7 +2173,14 @@ def test_signal_extrema_reversal_blocks_non_supportive_mid_rsi_long(monkeypatch)
             "atr_pips": 1.8,
             "rsi": 41.5,
         },
-        fac_m5={"close": 158.430, "ema20": 158.440, "rsi": 52.0, "plus_di": 16.0, "minus_di": 20.0, "ema_slope_10": -0.01},
+        fac_m5={
+            "close": 158.430,
+            "ema20": 158.440,
+            "rsi": 52.0,
+            "plus_di": 16.0,
+            "minus_di": 20.0,
+            "ema_slope_10": -0.01,
+        },
         range_ctx=_range_ctx(active=True, score=0.73, mode="RANGE"),
         tag="scalp_extrema_reversal_live",
     )

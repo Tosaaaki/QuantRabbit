@@ -81,7 +81,9 @@ class CallOutcome:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark local LLM Brain quality against local DB contexts.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark local LLM Brain quality against local DB contexts."
+    )
     parser.add_argument("--source", choices=("auto", "brain", "orders"), default="auto")
     parser.add_argument("--brain-db", type=Path, default=DEFAULT_BRAIN_DB)
     parser.add_argument("--orders-db", type=Path, default=DEFAULT_ORDERS_DB)
@@ -193,7 +195,9 @@ def _call_ollama_chat_json_verbose(
     temperature: float = 0.2,
     max_tokens: int = 256,
 ) -> CallOutcome:
-    def _single_call(num_predict: int) -> tuple[Optional[dict[str, Any]], str, str, bool]:
+    def _single_call(
+        num_predict: int,
+    ) -> tuple[Optional[dict[str, Any]], str, str, bool]:
         req_payload = {
             "model": model,
             "stream": False,
@@ -205,7 +209,9 @@ def _call_ollama_chat_json_verbose(
             },
         }
         try:
-            resp = requests.post(url, json=req_payload, timeout=max(1.0, float(timeout_sec)))
+            resp = requests.post(
+                url, json=req_payload, timeout=max(1.0, float(timeout_sec))
+            )
         except requests.Timeout:
             return None, "http_timeout", "", False
         except Exception:
@@ -245,7 +251,9 @@ def _call_ollama_chat_json_verbose(
     parsed_retry, reason_retry, raw_retry, _ = _single_call(boosted_tokens)
     if parsed_retry is not None:
         return CallOutcome(payload=parsed_retry, fail_reason="", raw_content=raw_retry)
-    return CallOutcome(payload=None, fail_reason=reason_retry or reason, raw_content=raw_retry or raw)
+    return CallOutcome(
+        payload=None, fail_reason=reason_retry or reason, raw_content=raw_retry or raw
+    )
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -274,7 +282,9 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _normalized_confidence(entry_thesis: dict[str, Any], context_confidence: Any = None) -> Optional[float]:
+def _normalized_confidence(
+    entry_thesis: dict[str, Any], context_confidence: Any = None
+) -> Optional[float]:
     cands: list[Any] = [
         entry_thesis.get("entry_probability"),
         entry_thesis.get("entry_probability_raw"),
@@ -327,8 +337,7 @@ def _load_trade_outcomes(trades_db: Path) -> dict[str, dict[str, float]]:
         return outcomes
     con = sqlite3.connect(trades_db)
     try:
-        rows = con.execute(
-            """
+        rows = con.execute("""
             SELECT client_order_id,
                    SUM(COALESCE(realized_pl, 0.0)) AS realized_pl,
                    AVG(COALESCE(pl_pips, 0.0)) AS pl_pips,
@@ -338,8 +347,7 @@ def _load_trade_outcomes(trades_db: Path) -> dict[str, dict[str, float]]:
               AND client_order_id IS NOT NULL
               AND TRIM(client_order_id) <> ''
             GROUP BY client_order_id
-            """
-        ).fetchall()
+            """).fetchall()
     finally:
         con.close()
 
@@ -454,7 +462,9 @@ def _load_samples_from_orders(
     if not orders_db.exists():
         return []
 
-    cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=max(1.0, float(lookback_hours)))
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(
+        hours=max(1.0, float(lookback_hours))
+    )
     fetch_limit = max(200, max_samples * 8)
 
     con = sqlite3.connect(orders_db)
@@ -474,7 +484,17 @@ def _load_samples_from_orders(
 
     samples: list[Sample] = []
     for row in rows:
-        row_id, ts, pocket, side, units, sl_price, tp_price, client_order_id, request_json = row
+        (
+            row_id,
+            ts,
+            pocket,
+            side,
+            units,
+            sl_price,
+            tp_price,
+            client_order_id,
+            request_json,
+        ) = row
         ts_text = str(ts or "")
         ts_dt = _parse_iso(ts_text)
         if ts_dt is None or ts_dt < cutoff_dt:
@@ -489,7 +509,11 @@ def _load_samples_from_orders(
             except Exception:
                 payload = {}
 
-        entry_thesis = payload.get("entry_thesis") if isinstance(payload.get("entry_thesis"), dict) else {}
+        entry_thesis = (
+            payload.get("entry_thesis")
+            if isinstance(payload.get("entry_thesis"), dict)
+            else {}
+        )
         meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
         strategy_tag = str(
             payload.get("strategy_tag")
@@ -617,7 +641,9 @@ def _normalize_action(raw_action: Any) -> Optional[Action]:
     return None
 
 
-def _normalize_decision(payload: Optional[dict[str, Any]]) -> tuple[Optional[dict[str, Any]], str]:
+def _normalize_decision(
+    payload: Optional[dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], str]:
     if payload is None:
         return None, "no_payload"
     if not isinstance(payload, dict):
@@ -787,9 +813,15 @@ def _evaluate_variant(
         "positive_trades": int(align_pos),
         "negative_trades": int(align_neg),
         "neutral_trades": int(align_neutral),
-        "score_mean": round(sum(align_scores) / align_scored, 4) if align_scored else None,
-        "score_median": round(statistics.median(align_scores), 4) if align_scored else None,
-        "hard_alignment_rate": round(align_hard_hits / align_scored, 4) if align_scored else None,
+        "score_mean": (
+            round(sum(align_scores) / align_scored, 4) if align_scored else None
+        ),
+        "score_median": (
+            round(statistics.median(align_scores), 4) if align_scored else None
+        ),
+        "hard_alignment_rate": (
+            round(align_hard_hits / align_scored, 4) if align_scored else None
+        ),
         "action_realized_stats": {},
     }
     for action_key, stats in action_realized_stats.items():
@@ -941,8 +973,12 @@ def _select_samples(
         load_meta["order_samples"] = 0
 
     if source == "auto":
-        brain_outcomes = sum(1 for sample in brain_samples if sample.realized_pl is not None)
-        order_outcomes = sum(1 for sample in order_samples if sample.realized_pl is not None)
+        brain_outcomes = sum(
+            1 for sample in brain_samples if sample.realized_pl is not None
+        )
+        order_outcomes = sum(
+            1 for sample in order_samples if sample.realized_pl is not None
+        )
         load_meta["brain_outcome_samples"] = int(brain_outcomes)
         load_meta["order_outcome_samples"] = int(order_outcomes)
         if outcome_sample_policy in {"prioritize", "require"}:
@@ -985,17 +1021,15 @@ def _select_samples(
     if outcome_sample_policy == "prioritize":
         samples = outcome_samples + non_outcome_samples
         if len(outcome_samples) < requested_samples:
-            outcome_insufficient_reason = (
-                f"insufficient_realized_outcome_samples:{len(outcome_samples)}/{requested_samples}"
-            )
+            outcome_insufficient_reason = f"insufficient_realized_outcome_samples:{len(outcome_samples)}/{requested_samples}"
     elif outcome_sample_policy == "require":
         samples = outcome_samples
         if len(outcome_samples) == 0:
-            outcome_insufficient_reason = "outcome_required_but_no_realized_outcome_samples"
-        elif len(outcome_samples) < requested_samples:
             outcome_insufficient_reason = (
-                f"required_realized_outcomes_below_requested:{len(outcome_samples)}/{requested_samples}"
+                "outcome_required_but_no_realized_outcome_samples"
             )
+        elif len(outcome_samples) < requested_samples:
+            outcome_insufficient_reason = f"required_realized_outcomes_below_requested:{len(outcome_samples)}/{requested_samples}"
     else:
         if len(outcome_samples) == 0:
             outcome_insufficient_reason = "no_realized_outcome_samples"
@@ -1048,7 +1082,9 @@ def _rank_variants(
         elif not isinstance(align_score, (int, float)):
             outcome_score_reason = "outcome_score_unavailable"
         else:
-            outcome_score_reason = f"insufficient_scored_trades:{scored_trades}<{required_scored}"
+            outcome_score_reason = (
+                f"insufficient_scored_trades:{scored_trades}<{required_scored}"
+            )
 
         p95 = float(latency_info.get("p95") or 0.0)
         ranking_rows.append(
@@ -1060,7 +1096,11 @@ def _rank_variants(
                 "alignment_score_mean": align_score,
                 "alignment_coverage": alignment_coverage,
                 "outcome_scored_trades": scored_trades,
-                "outcome_score": (float(align_score) * float(alignment_coverage) if outcome_score_used else None),
+                "outcome_score": (
+                    float(align_score) * float(alignment_coverage)
+                    if outcome_score_used
+                    else None
+                ),
                 "outcome_score_used": outcome_score_used,
                 "outcome_score_reason": outcome_score_reason,
                 "latency_p95_ms": p95,
@@ -1096,7 +1136,11 @@ def main() -> int:
     )
 
     if not samples:
-        outcome_meta = load_meta.get("outcome_policy") if isinstance(load_meta.get("outcome_policy"), dict) else {}
+        outcome_meta = (
+            load_meta.get("outcome_policy")
+            if isinstance(load_meta.get("outcome_policy"), dict)
+            else {}
+        )
         report = {
             "generated_at": _iso_now(),
             "status": "no_samples",
@@ -1132,7 +1176,10 @@ def main() -> int:
             ],
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
+        args.output.write_text(
+            json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         print(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True))
         return 0
 
@@ -1171,8 +1218,12 @@ def main() -> int:
         "sample_summary": {
             "total_samples": len(samples),
             "source_counts": {
-                "brain_decisions": sum(1 for s in samples if s.source == "brain_decisions"),
-                "orders_preflight": sum(1 for s in samples if s.source == "orders_preflight"),
+                "brain_decisions": sum(
+                    1 for s in samples if s.source == "brain_decisions"
+                ),
+                "orders_preflight": sum(
+                    1 for s in samples if s.source == "orders_preflight"
+                ),
             },
             "with_trade_outcome": sum(1 for s in samples if s.realized_pl is not None),
             "outcome_coverage": {},
@@ -1197,7 +1248,9 @@ def main() -> int:
     strategy_counts: dict[str, int] = {}
     pocket_counts: dict[str, int] = {}
     for sample in samples:
-        strategy_counts[sample.strategy_tag] = strategy_counts.get(sample.strategy_tag, 0) + 1
+        strategy_counts[sample.strategy_tag] = (
+            strategy_counts.get(sample.strategy_tag, 0) + 1
+        )
         pocket_counts[sample.pocket] = pocket_counts.get(sample.pocket, 0) + 1
     report["sample_summary"]["strategy_counts"] = dict(
         sorted(strategy_counts.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -1205,7 +1258,11 @@ def main() -> int:
     report["sample_summary"]["pocket_counts"] = dict(
         sorted(pocket_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     )
-    outcome_meta = load_meta.get("outcome_policy") if isinstance(load_meta.get("outcome_policy"), dict) else {}
+    outcome_meta = (
+        load_meta.get("outcome_policy")
+        if isinstance(load_meta.get("outcome_policy"), dict)
+        else {}
+    )
     report["sample_summary"]["outcome_coverage"] = outcome_meta
     report["sample_summary"]["insufficient_data_reason"] = (
         str(outcome_meta.get("insufficient_data_reason"))

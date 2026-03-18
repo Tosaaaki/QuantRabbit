@@ -58,7 +58,9 @@ def main() -> int:
         default=None,
         help="Optional path to write payload JSON (in addition to Firestore)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Do not write to Firestore")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Do not write to Firestore"
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     _setup_logging(args.verbose)
@@ -104,4 +106,3 @@ def exporter_default(kind: str) -> str | None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

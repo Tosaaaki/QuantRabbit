@@ -38,7 +38,13 @@ def test_end_reversal_triggers_for_short_exhaustion() -> None:
         exit_context={
             "factor_age_m1_sec": 20.0,
             "factors": {
-                "M1": {"rsi": 25.0, "adx": 17.0, "ma10": 153.312, "ma20": 153.326, "vwap_gap": 3.5},
+                "M1": {
+                    "rsi": 25.0,
+                    "adx": 17.0,
+                    "ma10": 153.312,
+                    "ma20": 153.326,
+                    "vwap_gap": 3.5,
+                },
                 "M5": {"ma10": 153.255, "ma20": 153.338},
             },
         },
@@ -59,7 +65,13 @@ def test_end_reversal_does_not_trigger_in_strong_trend_extension() -> None:
         exit_context={
             "factor_age_m1_sec": 18.0,
             "factors": {
-                "M1": {"rsi": 46.0, "adx": 35.0, "ma10": 153.196, "ma20": 153.332, "vwap_gap": 24.0},
+                "M1": {
+                    "rsi": 46.0,
+                    "adx": 35.0,
+                    "ma10": 153.196,
+                    "ma20": 153.332,
+                    "vwap_gap": 24.0,
+                },
                 "M5": {"ma10": 153.225, "ma20": 153.349},
             },
         },
@@ -96,4 +108,3 @@ def test_end_reversal_blocks_when_factors_are_stale() -> None:
     )
     assert decision["triggered"] is False
     assert decision["state"] == "stale_factors"
-

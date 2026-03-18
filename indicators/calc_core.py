@@ -115,10 +115,14 @@ class IndicatorEngine:
         chaikin_vol = _chaikin_vol(high, low, period=10, slow=20)
         vwap_gap = _vwap_gap(df)
         swing_high_dist, swing_low_dist = _swing_distance(close, high, low, lookback=50)
-        ichimoku_a_gap, ichimoku_b_gap, ichimoku_pos = _ichimoku_position(high, low, close)
+        ichimoku_a_gap, ichimoku_b_gap, ichimoku_pos = _ichimoku_position(
+            high, low, close
+        )
         cluster_high_gap, cluster_low_gap = _cluster_distance(high, low, close)
         upper_wick_avg, lower_wick_avg = _wick_ratios(df, window=20)
-        high_hits, low_hits, high_int, low_int = _hit_stats(high, low, window=30, band=0.0008)
+        high_hits, low_hits, high_int, low_int = _hit_stats(
+            high, low, window=30, band=0.0008
+        )
 
         rsi_div = compute_divergence(
             price_high=high.values,
@@ -151,7 +155,9 @@ class IndicatorEngine:
             "bb_span_pips": float(bb_span_pips) if np.isfinite(bb_span_pips) else 0.0,
             "vol_5m": float(vol_5m.iloc[-1]) if not vol_5m.empty else 0.0,
             "macd": float(macd_line.iloc[-1]) if not macd_line.empty else 0.0,
-            "macd_signal": float(macd_signal.iloc[-1]) if not macd_signal.empty else 0.0,
+            "macd_signal": (
+                float(macd_signal.iloc[-1]) if not macd_signal.empty else 0.0
+            ),
             "macd_hist": float(macd_hist.iloc[-1]) if not macd_hist.empty else 0.0,
             "roc5": float(roc5.iloc[-1]) if not roc5.empty else 0.0,
             "roc10": float(roc10.iloc[-1]) if not roc10.empty else 0.0,
@@ -163,18 +169,38 @@ class IndicatorEngine:
             "ema_slope_10": float(ema_slope_10) if np.isfinite(ema_slope_10) else 0.0,
             "ema_slope_20": float(ema_slope_20) if np.isfinite(ema_slope_20) else 0.0,
             "kc_width": float(kc_width) if np.isfinite(kc_width) else 0.0,
-            "donchian_width": float(donchian_width) if np.isfinite(donchian_width) else 0.0,
+            "donchian_width": (
+                float(donchian_width) if np.isfinite(donchian_width) else 0.0
+            ),
             "chaikin_vol": float(chaikin_vol) if np.isfinite(chaikin_vol) else 0.0,
             "vwap_gap": float(vwap_gap) if np.isfinite(vwap_gap) else 0.0,
-            "swing_dist_high": float(swing_high_dist) if np.isfinite(swing_high_dist) else 0.0,
-            "swing_dist_low": float(swing_low_dist) if np.isfinite(swing_low_dist) else 0.0,
-            "ichimoku_span_a_gap": float(ichimoku_a_gap) if np.isfinite(ichimoku_a_gap) else 0.0,
-            "ichimoku_span_b_gap": float(ichimoku_b_gap) if np.isfinite(ichimoku_b_gap) else 0.0,
-            "ichimoku_cloud_pos": float(ichimoku_pos) if np.isfinite(ichimoku_pos) else 0.0,
-            "cluster_high_gap": float(cluster_high_gap) if np.isfinite(cluster_high_gap) else 0.0,
-            "cluster_low_gap": float(cluster_low_gap) if np.isfinite(cluster_low_gap) else 0.0,
-            "upper_wick_avg_pips": float(upper_wick_avg) if np.isfinite(upper_wick_avg) else 0.0,
-            "lower_wick_avg_pips": float(lower_wick_avg) if np.isfinite(lower_wick_avg) else 0.0,
+            "swing_dist_high": (
+                float(swing_high_dist) if np.isfinite(swing_high_dist) else 0.0
+            ),
+            "swing_dist_low": (
+                float(swing_low_dist) if np.isfinite(swing_low_dist) else 0.0
+            ),
+            "ichimoku_span_a_gap": (
+                float(ichimoku_a_gap) if np.isfinite(ichimoku_a_gap) else 0.0
+            ),
+            "ichimoku_span_b_gap": (
+                float(ichimoku_b_gap) if np.isfinite(ichimoku_b_gap) else 0.0
+            ),
+            "ichimoku_cloud_pos": (
+                float(ichimoku_pos) if np.isfinite(ichimoku_pos) else 0.0
+            ),
+            "cluster_high_gap": (
+                float(cluster_high_gap) if np.isfinite(cluster_high_gap) else 0.0
+            ),
+            "cluster_low_gap": (
+                float(cluster_low_gap) if np.isfinite(cluster_low_gap) else 0.0
+            ),
+            "upper_wick_avg_pips": (
+                float(upper_wick_avg) if np.isfinite(upper_wick_avg) else 0.0
+            ),
+            "lower_wick_avg_pips": (
+                float(lower_wick_avg) if np.isfinite(lower_wick_avg) else 0.0
+            ),
             "high_hits": float(high_hits),
             "low_hits": float(low_hits),
             "high_hit_interval": float(high_int),
@@ -242,12 +268,26 @@ def _dm(high: pd.Series, low: pd.Series) -> tuple[pd.Series, pd.Series]:
     return pd.Series(plus_dm, index=high.index), pd.Series(minus_dm, index=high.index)
 
 
-def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int, with_di: bool = False):
+def _adx(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int,
+    with_di: bool = False,
+):
     atr = _atr(high, low, close, period)
     plus_dm, minus_dm = _dm(high, low)
 
-    plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0.0, np.nan)
-    minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0.0, np.nan)
+    plus_di = (
+        100
+        * plus_dm.ewm(alpha=1 / period, adjust=False).mean()
+        / atr.replace(0.0, np.nan)
+    )
+    minus_di = (
+        100
+        * minus_dm.ewm(alpha=1 / period, adjust=False).mean()
+        / atr.replace(0.0, np.nan)
+    )
 
     dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).abs()) * 100
     adx = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean().fillna(0.0)
@@ -290,14 +330,20 @@ def _slope(series: pd.Series, window: int) -> float:
     return coeffs[0]
 
 
-def _keltner_width(close: pd.Series, high: pd.Series, low: pd.Series, period: int, mult: float) -> float:
+def _keltner_width(
+    close: pd.Series, high: pd.Series, low: pd.Series, period: int, mult: float
+) -> float:
     ema = close.ewm(span=period, adjust=False, min_periods=period).mean()
     atr = _atr(high, low, close, period)
     if ema.empty or atr.empty or ema.iloc[-1] == 0:
         return 0.0
     upper = ema + mult * atr
     lower = ema - mult * atr
-    return float((upper.iloc[-1] - lower.iloc[-1]) / ema.iloc[-1]) if ema.iloc[-1] != 0 else 0.0
+    return (
+        float((upper.iloc[-1] - lower.iloc[-1]) / ema.iloc[-1])
+        if ema.iloc[-1] != 0
+        else 0.0
+    )
 
 
 def _donchian_width(high: pd.Series, low: pd.Series, period: int) -> float:
@@ -311,7 +357,9 @@ def _donchian_width(high: pd.Series, low: pd.Series, period: int) -> float:
     return float((upper - lower) / mid)
 
 
-def _chaikin_vol(high: pd.Series, low: pd.Series, period: int = 10, slow: int = 20) -> float:
+def _chaikin_vol(
+    high: pd.Series, low: pd.Series, period: int = 10, slow: int = 20
+) -> float:
     if len(high) < slow or len(low) < slow:
         return 0.0
     hl = high - low
@@ -338,7 +386,9 @@ def _vwap_gap(df: pd.DataFrame) -> float:
         return 0.0
 
 
-def _swing_distance(close: pd.Series, high: pd.Series, low: pd.Series, lookback: int = 50) -> tuple[float, float]:
+def _swing_distance(
+    close: pd.Series, high: pd.Series, low: pd.Series, lookback: int = 50
+) -> tuple[float, float]:
     if len(close) < max(5, lookback):
         return (0.0, 0.0)
     segment_high = high.iloc[-lookback:]
@@ -380,7 +430,9 @@ def _wick_ratios(df: pd.DataFrame, window: int = 20) -> tuple[float, float]:
     return (float(np.mean(uppers)), float(np.mean(lowers)))
 
 
-def _hit_stats(high: pd.Series, low: pd.Series, window: int = 30, band: float = 0.0008) -> tuple[int, int, float, float]:
+def _hit_stats(
+    high: pd.Series, low: pd.Series, window: int = 30, band: float = 0.0008
+) -> tuple[int, int, float, float]:
     """
     Count how many times recent highs/lows retest the extreme within a band, and average interval (bars) between hits.
     """
@@ -390,7 +442,9 @@ def _hit_stats(high: pd.Series, low: pd.Series, window: int = 30, band: float = 
     segment_low = low.iloc[-window:]
     recent_high = segment_high.max()
     recent_low = segment_low.min()
-    hit_high_idx = [i for i, val in enumerate(segment_high) if recent_high - val <= band]
+    hit_high_idx = [
+        i for i, val in enumerate(segment_high) if recent_high - val <= band
+    ]
     hit_low_idx = [i for i, val in enumerate(segment_low) if val - recent_low <= band]
 
     def _avg_interval(idxs: list[int]) -> float:
@@ -399,10 +453,17 @@ def _hit_stats(high: pd.Series, low: pd.Series, window: int = 30, band: float = 
         diffs = [idxs[i] - idxs[i - 1] for i in range(1, len(idxs))]
         return float(np.mean(diffs))
 
-    return (len(hit_high_idx), len(hit_low_idx), _avg_interval(hit_high_idx), _avg_interval(hit_low_idx))
+    return (
+        len(hit_high_idx),
+        len(hit_low_idx),
+        _avg_interval(hit_high_idx),
+        _avg_interval(hit_low_idx),
+    )
 
 
-def _ichimoku_position(high: pd.Series, low: pd.Series, close: pd.Series) -> tuple[float, float, float]:
+def _ichimoku_position(
+    high: pd.Series, low: pd.Series, close: pd.Series
+) -> tuple[float, float, float]:
     """
     Price vs Ichimoku cloud.
     Returns (spanA_gap_pips, spanB_gap_pips, cloud_position)
@@ -410,10 +471,22 @@ def _ichimoku_position(high: pd.Series, low: pd.Series, close: pd.Series) -> tup
     """
     if len(close) < 52:
         return (0.0, 0.0, 0.0)
-    tenkan = (high.rolling(window=9, min_periods=9).max() + low.rolling(window=9, min_periods=9).min()) / 2.0
-    kijun = (high.rolling(window=26, min_periods=26).max() + low.rolling(window=26, min_periods=26).min()) / 2.0
+    tenkan = (
+        high.rolling(window=9, min_periods=9).max()
+        + low.rolling(window=9, min_periods=9).min()
+    ) / 2.0
+    kijun = (
+        high.rolling(window=26, min_periods=26).max()
+        + low.rolling(window=26, min_periods=26).min()
+    ) / 2.0
     senkou_a = ((tenkan + kijun) / 2.0).shift(26)
-    senkou_b = ((high.rolling(window=52, min_periods=52).max() + low.rolling(window=52, min_periods=52).min()) / 2.0).shift(26)
+    senkou_b = (
+        (
+            high.rolling(window=52, min_periods=52).max()
+            + low.rolling(window=52, min_periods=52).min()
+        )
+        / 2.0
+    ).shift(26)
     span_a = senkou_a.iloc[-1] if not senkou_a.empty else np.nan
     span_b = senkou_b.iloc[-1] if not senkou_b.empty else np.nan
     price = close.iloc[-1]
@@ -432,7 +505,13 @@ def _ichimoku_position(high: pd.Series, low: pd.Series, close: pd.Series) -> tup
     return (float(span_a_gap), float(span_b_gap), float(pos))
 
 
-def _cluster_distance(high: pd.Series, low: pd.Series, close: pd.Series, lookback: int = 120, bin_size: float = 0.02) -> tuple[float, float]:
+def _cluster_distance(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    lookback: int = 120,
+    bin_size: float = 0.02,
+) -> tuple[float, float]:
     """
     Approximate distance (pips) to nearest high/low price clusters within lookback.
     bin_size in price units (0.02 ~= 2 pips).

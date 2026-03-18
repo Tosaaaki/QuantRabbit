@@ -59,9 +59,7 @@ RELEASE_SAMPLES = _load_int("spread_guard_release_samples", 4, minimum=1)
 BASELINE_WINDOW_SECONDS = _load_float(
     "spread_guard_baseline_window_sec", 120.0, minimum=10.0
 )
-BASELINE_MIN_SAMPLES = _load_int(
-    "spread_guard_baseline_min_samples", 30, minimum=5
-)
+BASELINE_MIN_SAMPLES = _load_int("spread_guard_baseline_min_samples", 30, minimum=5)
 BASELINE_BLOCK_PIPS = _load_float(
     "spread_guard_baseline_block_pips", MAX_SPREAD_PIPS, minimum=0.1
 )
@@ -70,7 +68,9 @@ BASELINE_BLOCK_SECONDS = _load_float(
 )
 STALE_GRACE_SECONDS = _load_float("spread_guard_stale_grace_sec", 12.0, minimum=0.0)
 # 直近スプレッドがこの値未満なら、たとえ古くなっていても原則 stale ブロックしない。
-STALE_BLOCK_MIN_PIPS = _load_float("spread_guard_stale_block_min_pips", 0.0, minimum=0.0)
+STALE_BLOCK_MIN_PIPS = _load_float(
+    "spread_guard_stale_block_min_pips", 0.0, minimum=0.0
+)
 # 瞬間スパイクを無視する上限（max がここ以下で pX が閾値未満ならガードしない）
 SPIKE_FORGIVE_PIPS = _load_float(
     "spread_guard_spike_forgive_pips", max(MAX_SPREAD_PIPS * 2.0, MAX_SPREAD_PIPS + 0.5)
@@ -249,7 +249,9 @@ def _state_from_tick_cache(now_monotonic: float) -> Optional[dict]:
     if epochs and latest_epoch > 0.0:
         cutoff_epoch = latest_epoch - HOT_WINDOW_SECONDS
         hot_samples = sum(
-            1 for epoch, spread in zip(epochs, spreads) if epoch >= cutoff_epoch and spread >= HOT_TRIGGER_PIPS
+            1
+            for epoch, spread in zip(epochs, spreads)
+            if epoch >= cutoff_epoch and spread >= HOT_TRIGGER_PIPS
         )
 
     state = {
@@ -328,7 +330,10 @@ def _hydrate_snapshot_from_state(state: dict, *, now_monotonic: float) -> None:
         _hot_history.popleft()
 
     _baseline_history.append((now_monotonic, spread_pips))
-    while _baseline_history and now_monotonic - _baseline_history[0][0] > BASELINE_WINDOW_SECONDS:
+    while (
+        _baseline_history
+        and now_monotonic - _baseline_history[0][0] > BASELINE_WINDOW_SECONDS
+    ):
         _baseline_history.popleft()
 
 

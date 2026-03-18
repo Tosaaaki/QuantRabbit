@@ -62,9 +62,17 @@ def main() -> int:
                 "realizedPL": t.get("realizedPL"),
                 "marginUsed": t.get("marginUsed"),
                 "clientExtensions": t.get("clientExtensions") or {},
-                "takeProfit": {"id": tp.get("id"), "price": tp.get("price")} if tp else None,
-                "stopLoss": {"id": sl.get("id"), "price": sl.get("price")} if sl else None,
-                "trailingStopLoss": {"id": tsl.get("id"), "distance": tsl.get("distance")} if tsl else None,
+                "takeProfit": (
+                    {"id": tp.get("id"), "price": tp.get("price")} if tp else None
+                ),
+                "stopLoss": (
+                    {"id": sl.get("id"), "price": sl.get("price")} if sl else None
+                ),
+                "trailingStopLoss": (
+                    {"id": tsl.get("id"), "distance": tsl.get("distance")}
+                    if tsl
+                    else None
+                ),
             }
         )
 
@@ -74,4 +82,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

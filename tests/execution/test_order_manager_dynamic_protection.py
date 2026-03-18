@@ -49,9 +49,24 @@ def test_dynamic_protection_uses_scalp_defaults_for_scalp_fast(monkeypatch) -> N
         lambda: {
             "defaults": {
                 "be_profile": {
-                    "macro": {"trigger_pips": 6.8, "lock_ratio": 0.55, "min_lock_pips": 2.6, "cooldown_sec": 90},
-                    "micro": {"trigger_pips": 2.2, "lock_ratio": 0.5, "min_lock_pips": 0.6, "cooldown_sec": 45},
-                    "scalp": {"trigger_pips": 1.6, "lock_ratio": 0.35, "min_lock_pips": 0.5, "cooldown_sec": 20},
+                    "macro": {
+                        "trigger_pips": 6.8,
+                        "lock_ratio": 0.55,
+                        "min_lock_pips": 2.6,
+                        "cooldown_sec": 90,
+                    },
+                    "micro": {
+                        "trigger_pips": 2.2,
+                        "lock_ratio": 0.5,
+                        "min_lock_pips": 0.6,
+                        "cooldown_sec": 45,
+                    },
+                    "scalp": {
+                        "trigger_pips": 1.6,
+                        "lock_ratio": 0.35,
+                        "min_lock_pips": 0.5,
+                        "cooldown_sec": 20,
+                    },
                 },
                 "start_delay_sec": {"micro": 25, "scalp": 12},
                 "max_delay_sec": {"micro": 70, "scalp": 35},
@@ -69,7 +84,9 @@ def test_dynamic_protection_uses_scalp_defaults_for_scalp_fast(monkeypatch) -> N
     monkeypatch.setattr(
         order_manager,
         "_maybe_update_protections",
-        lambda trade_id, sl, tp, *, context, ref_price: captured.append((trade_id, sl, tp, context, ref_price)),
+        lambda trade_id, sl, tp, *, context, ref_price: captured.append(
+            (trade_id, sl, tp, context, ref_price)
+        ),
     )
     order_manager._LAST_PROTECTIONS.clear()
 
@@ -114,9 +131,24 @@ def test_dynamic_protection_honors_scalp_ping_5s_live_override(monkeypatch) -> N
         lambda: {
             "defaults": {
                 "be_profile": {
-                    "macro": {"trigger_pips": 6.8, "lock_ratio": 0.55, "min_lock_pips": 2.6, "cooldown_sec": 90},
-                    "micro": {"trigger_pips": 2.2, "lock_ratio": 0.5, "min_lock_pips": 0.6, "cooldown_sec": 45},
-                    "scalp": {"trigger_pips": 1.6, "lock_ratio": 0.35, "min_lock_pips": 0.5, "cooldown_sec": 20},
+                    "macro": {
+                        "trigger_pips": 6.8,
+                        "lock_ratio": 0.55,
+                        "min_lock_pips": 2.6,
+                        "cooldown_sec": 90,
+                    },
+                    "micro": {
+                        "trigger_pips": 2.2,
+                        "lock_ratio": 0.5,
+                        "min_lock_pips": 0.6,
+                        "cooldown_sec": 45,
+                    },
+                    "scalp": {
+                        "trigger_pips": 1.6,
+                        "lock_ratio": 0.35,
+                        "min_lock_pips": 0.5,
+                        "cooldown_sec": 20,
+                    },
                 },
                 "start_delay_sec": {"micro": 25, "scalp": 12},
                 "max_delay_sec": {"micro": 70, "scalp": 35},
@@ -138,7 +170,11 @@ def test_dynamic_protection_honors_scalp_ping_5s_live_override(monkeypatch) -> N
                         "min_lock_pips": 0.18,
                         "cooldown_sec": 3,
                     },
-                    "tp_move": {"enabled": True, "trigger_pips": 0.75, "buffer_pips": 0.25},
+                    "tp_move": {
+                        "enabled": True,
+                        "trigger_pips": 0.75,
+                        "buffer_pips": 0.25,
+                    },
                 }
             },
         },
@@ -146,7 +182,9 @@ def test_dynamic_protection_honors_scalp_ping_5s_live_override(monkeypatch) -> N
     monkeypatch.setattr(
         order_manager,
         "_maybe_update_protections",
-        lambda trade_id, sl, tp, *, context, ref_price: captured.append((trade_id, sl, tp, context, ref_price)),
+        lambda trade_id, sl, tp, *, context, ref_price: captured.append(
+            (trade_id, sl, tp, context, ref_price)
+        ),
     )
     order_manager._LAST_PROTECTIONS.clear()
 
@@ -198,10 +236,18 @@ def test_rollover_sl_strip_cancels_carry_trade(monkeypatch) -> None:
         "_cancel_order_sync",
         lambda **kwargs: cancelled.append(kwargs) or True,
     )
-    monkeypatch.setattr(order_manager, "_ROLLOVER_SL_STRIP_COOLDOWN_SEC", 0.0, raising=False)
-    monkeypatch.setattr(order_manager, "_ROLLOVER_SL_STRIP_MAX_ACTIONS", 4, raising=False)
-    monkeypatch.setattr(order_manager, "_ROLLOVER_SL_STRIP_INCLUDE_MANUAL", False, raising=False)
-    monkeypatch.setattr(order_manager, "_ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER", True, raising=False)
+    monkeypatch.setattr(
+        order_manager, "_ROLLOVER_SL_STRIP_COOLDOWN_SEC", 0.0, raising=False
+    )
+    monkeypatch.setattr(
+        order_manager, "_ROLLOVER_SL_STRIP_MAX_ACTIONS", 4, raising=False
+    )
+    monkeypatch.setattr(
+        order_manager, "_ROLLOVER_SL_STRIP_INCLUDE_MANUAL", False, raising=False
+    )
+    monkeypatch.setattr(
+        order_manager, "_ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER", True, raising=False
+    )
     order_manager._LAST_ROLLOVER_SL_STRIP_TS.clear()
     order_manager._LAST_PROTECTIONS.clear()
 
@@ -244,9 +290,24 @@ def test_dynamic_protection_skips_trade_during_rollover_sl_strip(monkeypatch) ->
         lambda: {
             "defaults": {
                 "be_profile": {
-                    "macro": {"trigger_pips": 6.8, "lock_ratio": 0.55, "min_lock_pips": 2.6, "cooldown_sec": 90},
-                    "micro": {"trigger_pips": 2.2, "lock_ratio": 0.5, "min_lock_pips": 0.6, "cooldown_sec": 45},
-                    "scalp": {"trigger_pips": 1.6, "lock_ratio": 0.35, "min_lock_pips": 0.5, "cooldown_sec": 20},
+                    "macro": {
+                        "trigger_pips": 6.8,
+                        "lock_ratio": 0.55,
+                        "min_lock_pips": 2.6,
+                        "cooldown_sec": 90,
+                    },
+                    "micro": {
+                        "trigger_pips": 2.2,
+                        "lock_ratio": 0.5,
+                        "min_lock_pips": 0.6,
+                        "cooldown_sec": 45,
+                    },
+                    "scalp": {
+                        "trigger_pips": 1.6,
+                        "lock_ratio": 0.35,
+                        "min_lock_pips": 0.5,
+                        "cooldown_sec": 20,
+                    },
                 },
                 "start_delay_sec": {"micro": 25, "scalp": 12},
                 "max_delay_sec": {"micro": 70, "scalp": 35},
@@ -264,10 +325,16 @@ def test_dynamic_protection_skips_trade_during_rollover_sl_strip(monkeypatch) ->
     monkeypatch.setattr(
         order_manager,
         "_maybe_update_protections",
-        lambda trade_id, sl, tp, *, context, ref_price: captured.append((trade_id, sl, tp, context, ref_price)),
+        lambda trade_id, sl, tp, *, context, ref_price: captured.append(
+            (trade_id, sl, tp, context, ref_price)
+        ),
     )
-    monkeypatch.setattr(order_manager, "_ROLLOVER_SL_STRIP_INCLUDE_MANUAL", False, raising=False)
-    monkeypatch.setattr(order_manager, "_ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER", True, raising=False)
+    monkeypatch.setattr(
+        order_manager, "_ROLLOVER_SL_STRIP_INCLUDE_MANUAL", False, raising=False
+    )
+    monkeypatch.setattr(
+        order_manager, "_ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER", True, raising=False
+    )
     order_manager._LAST_PROTECTIONS.clear()
 
     open_positions = {
@@ -288,8 +355,12 @@ def test_dynamic_protection_skips_trade_during_rollover_sl_strip(monkeypatch) ->
     }
     fac_m1 = {"close": 153.020, "atr_pips": 0.4, "vol_5m": 1.0}
 
-    order_manager._apply_dynamic_protections_v2(open_positions, fac_m1, {}, rollover_ctx=active_ctx)
+    order_manager._apply_dynamic_protections_v2(
+        open_positions, fac_m1, {}, rollover_ctx=active_ctx
+    )
     assert captured == []
 
-    order_manager._apply_dynamic_protections_v2(open_positions, fac_m1, {}, rollover_ctx={"active": False})
+    order_manager._apply_dynamic_protections_v2(
+        open_positions, fac_m1, {}, rollover_ctx={"active": False}
+    )
     assert len(captured) == 1

@@ -97,4 +97,3 @@ def apply_costs(
     total_cost = costs.total_cost_pips(instrument, units=units)
     net = gross_pips - total_cost
     return net, total_cost
-

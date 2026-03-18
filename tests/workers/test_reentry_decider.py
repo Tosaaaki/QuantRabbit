@@ -51,7 +51,9 @@ def test_legacy_threshold_envs_remain_constant_across_atr(monkeypatch) -> None:
     assert high == pytest.approx(0.72)
 
 
-def test_global_reentry_profile_is_used_when_prefix_specific_is_missing(monkeypatch) -> None:
+def test_global_reentry_profile_is_used_when_prefix_specific_is_missing(
+    monkeypatch,
+) -> None:
     _clear_prefix_env(monkeypatch, "TEST")
     monkeypatch.setenv("TEST_REENTRY_ENABLE", "1")
     monkeypatch.setenv("REENTRY_ATR_LOW_PIPS", "5.0")

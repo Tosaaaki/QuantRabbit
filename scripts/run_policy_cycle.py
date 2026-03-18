@@ -39,12 +39,16 @@ def main() -> None:
     ap.add_argument("--overlay-path", default="logs/policy_overlay.json")
     ap.add_argument("--history-dir", default="logs/policy_history")
     ap.add_argument("--latest-path", default="logs/policy_latest.json")
-    ap.add_argument("--no-vertex", action="store_true", help="Disable Vertex AI generation")
+    ap.add_argument(
+        "--no-vertex", action="store_true", help="Disable Vertex AI generation"
+    )
     ap.add_argument("--vertex-model", default=None)
     ap.add_argument("--vertex-location", default=None)
     ap.add_argument("--temperature", type=float, default=0.2)
     ap.add_argument("--max-tokens", type=int, default=1024)
-    ap.add_argument("--no-ledger", action="store_true", help="Disable BQ/GCS/Firestore ledger")
+    ap.add_argument(
+        "--no-ledger", action="store_true", help="Disable BQ/GCS/Firestore ledger"
+    )
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
@@ -55,7 +59,9 @@ def main() -> None:
         dataset_id=args.dataset or os.getenv("BQ_DATASET", "quantrabbit"),
         trades_table=args.table or os.getenv("BQ_TRADES_TABLE", "trades_raw"),
     )
-    rows = client.fetch_rows(lookback_days=args.lookback_days, min_trades=args.min_trades)
+    rows = client.fetch_rows(
+        lookback_days=args.lookback_days, min_trades=args.min_trades
+    )
     diff, summary = generate_policy_diff(
         rows,
         use_vertex=not args.no_vertex,

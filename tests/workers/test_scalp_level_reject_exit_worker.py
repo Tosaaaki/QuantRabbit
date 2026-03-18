@@ -13,12 +13,19 @@ class _DummyPosManager:
         return None
 
 
-def _sample_trade(*, opened_sec: float, pnl_pips: float, strategy_tag: str = "scalp_extrema_reversal_live") -> dict:
+def _sample_trade(
+    *,
+    opened_sec: float,
+    pnl_pips: float,
+    strategy_tag: str = "scalp_extrema_reversal_live",
+) -> dict:
     return {
         "trade_id": "extrema-trade-1",
         "units": 1000,
         "price": 159.000,
-        "open_time": (datetime.now(timezone.utc) - timedelta(seconds=opened_sec)).isoformat(),
+        "open_time": (
+            datetime.now(timezone.utc) - timedelta(seconds=opened_sec)
+        ).isoformat(),
         "client_order_id": "qr-test-extrema",
         "entry_thesis": {
             "strategy_tag": strategy_tag,
@@ -31,10 +38,16 @@ def _build_worker(monkeypatch: pytest.MonkeyPatch):
     import workers.scalp_level_reject.exit_worker as exit_worker
 
     monkeypatch.setattr(exit_worker, "PositionManager", lambda: _DummyPosManager())
-    monkeypatch.setattr(exit_worker, "load_rollout_start_ts", lambda *_args, **_kwargs: 0.0)
+    monkeypatch.setattr(
+        exit_worker, "load_rollout_start_ts", lambda *_args, **_kwargs: 0.0
+    )
     worker = exit_worker.RangeFaderExitWorker()
-    monkeypatch.setattr(exit_worker, "trade_passes_rollout", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(exit_worker, "build_exit_forecast_adjustment", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        exit_worker, "trade_passes_rollout", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        exit_worker, "build_exit_forecast_adjustment", lambda **_kwargs: None
+    )
     monkeypatch.setattr(
         exit_worker,
         "apply_exit_forecast_to_targets",
@@ -54,12 +67,18 @@ def _build_worker(monkeypatch: pytest.MonkeyPatch):
             kwargs["max_hold_sec"],
         ),
     )
-    monkeypatch.setattr(exit_worker, "maybe_close_pro_stop", AsyncMock(return_value=False))
-    monkeypatch.setattr(exit_worker, "_exit_candle_reversal", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        exit_worker, "maybe_close_pro_stop", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        exit_worker, "_exit_candle_reversal", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(exit_worker, "_latest_bid_ask", lambda: (None, None))
     monkeypatch.setattr(exit_worker, "all_factors", lambda: {})
     monkeypatch.setattr(exit_worker, "log_metric", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(exit_worker, "set_trade_protections", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        exit_worker, "set_trade_protections", AsyncMock(return_value=False)
+    )
     return exit_worker, worker
 
 

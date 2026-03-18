@@ -55,12 +55,18 @@ def _make_worker(monkeypatch):
 def test_negative_close_failure_uses_retry_cooldown(monkeypatch):
     worker = _make_worker(monkeypatch)
     now_monotonic = {"value": 100.0}
-    monkeypatch.setattr(range_exit_worker.time, "monotonic", lambda: now_monotonic["value"])
-    monkeypatch.setattr(range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: -3.2)
+    monkeypatch.setattr(
+        range_exit_worker.time, "monotonic", lambda: now_monotonic["value"]
+    )
+    monkeypatch.setattr(
+        range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: -3.2
+    )
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs
+    ):
         attempts.append(str(reason))
         return False
 
@@ -90,11 +96,15 @@ def test_negative_close_failure_uses_retry_cooldown(monkeypatch):
 
 def test_negative_close_success_clears_worker_state(monkeypatch):
     worker = _make_worker(monkeypatch)
-    monkeypatch.setattr(range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: -3.2)
+    monkeypatch.setattr(
+        range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: -3.2
+    )
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs
+    ):
         attempts.append(str(reason))
         return True
 
@@ -118,11 +128,15 @@ def test_negative_close_success_clears_worker_state(monkeypatch):
 
 def test_hostile_low_quality_setup_cuts_soft_adverse_earlier(monkeypatch):
     worker = _make_worker(monkeypatch)
-    monkeypatch.setattr(range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: -1.9)
+    monkeypatch.setattr(
+        range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: -1.9
+    )
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs
+    ):
         attempts.append(str(reason))
         return True
 
@@ -151,11 +165,15 @@ def test_hostile_low_quality_setup_cuts_soft_adverse_earlier(monkeypatch):
 
 def test_hostile_low_quality_setup_takes_profit_earlier(monkeypatch):
     worker = _make_worker(monkeypatch)
-    monkeypatch.setattr(range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: 1.1)
+    monkeypatch.setattr(
+        range_exit_worker, "mark_pnl_pips", lambda *_args, **_kwargs: 1.1
+    )
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs
+    ):
         attempts.append(str(reason))
         return True
 

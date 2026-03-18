@@ -17,7 +17,6 @@ import sys
 from collections import Counter, defaultdict
 from typing import Iterable, TextIO
 
-
 PATTERN = re.compile(r"\[STRAT_SKIP_DETAIL\]\s+(\w+)\s+reason=([^\s]+)")
 
 

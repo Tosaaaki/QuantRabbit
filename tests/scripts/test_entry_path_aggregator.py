@@ -11,8 +11,7 @@ from scripts import entry_path_aggregator
 def _seed_orders_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT,
@@ -20,8 +19,7 @@ def _seed_orders_db(db_path: Path) -> None:
                 status TEXT,
                 request_json TEXT
             )
-            """
-        )
+            """)
         rows = [
             (
                 "2026-03-10 00:00:01",
@@ -36,7 +34,11 @@ def _seed_orders_db(db_path: Path) -> None:
                             "strategy_tag": "MomentumBurst",
                             "entry_path_attribution": [
                                 {"stage": "technical_context", "status": "pass"},
-                                {"stage": "forecast_fusion", "status": "reduce", "reason": "soft_contra"},
+                                {
+                                    "stage": "forecast_fusion",
+                                    "status": "reduce",
+                                    "reason": "soft_contra",
+                                },
                             ],
                         },
                     }
@@ -67,7 +69,11 @@ def _seed_orders_db(db_path: Path) -> None:
                             "strategy_tag": "RangeFader-neutral-fade",
                             "entry_path_attribution": [
                                 {"stage": "technical_context", "status": "pass"},
-                                {"stage": "entry_net_edge_gate", "status": "block", "reason": "negative"},
+                                {
+                                    "stage": "entry_net_edge_gate",
+                                    "status": "block",
+                                    "reason": "negative",
+                                },
                             ],
                         },
                     }
@@ -136,7 +142,10 @@ def test_build_report_aggregates_entry_statuses_and_shares(tmp_path: Path) -> No
     assert range_fader["strategy_canonical"] == "RangeFader"
     assert range_fader["terminal_status_counts"]["perf_block"] == 1
     assert range_fader["hard_blocks"] >= 1
-    assert any(item["key"] == "entry_net_edge_gate:negative" for item in range_fader["top_blockers"])
+    assert any(
+        item["key"] == "entry_net_edge_gate:negative"
+        for item in range_fader["top_blockers"]
+    )
 
 
 def test_extract_strategy_tag_prefers_raw_lane_from_entry_thesis() -> None:
@@ -155,15 +164,16 @@ def test_extract_strategy_tag_prefers_raw_lane_from_entry_thesis() -> None:
     assert canonical == "RangeFader"
 
 
-def test_build_report_respects_lookback_for_iso8601_utc_timestamps(tmp_path: Path) -> None:
+def test_build_report_respects_lookback_for_iso8601_utc_timestamps(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "orders.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     now_utc = datetime.now(timezone.utc)
     stale_ts = (now_utc - timedelta(hours=8)).isoformat()
     recent_ts = (now_utc - timedelta(hours=2)).isoformat()
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT,
@@ -171,8 +181,7 @@ def test_build_report_respects_lookback_for_iso8601_utc_timestamps(tmp_path: Pat
                 status TEXT,
                 request_json TEXT
             )
-            """
-        )
+            """)
         conn.executemany(
             "INSERT INTO orders(ts, pocket, status, request_json) VALUES (?, ?, ?, ?)",
             [

@@ -14,7 +14,9 @@ from workers.scalp_pullback_continuation import worker as pullback_worker
 
 
 class _DummyPositionManager:
-    def __init__(self, positions: dict | None = None, *, err: Exception | None = None) -> None:
+    def __init__(
+        self, positions: dict | None = None, *, err: Exception | None = None
+    ) -> None:
         self._positions = positions or {}
         self._err = err
 

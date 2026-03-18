@@ -79,7 +79,9 @@ def _parse_jst_cell_to_datetime(cell: str, base_date: date) -> Optional[datetime
 
 def _guess_impact(name: str) -> str:
     token = name.lower()
-    if any(k in token for k in ("ppi", "cpi", "nfp", "fomc", "pce", "boj", "ecb", "fed")):
+    if any(
+        k in token for k in ("ppi", "cpi", "nfp", "fomc", "pce", "boj", "ecb", "fed")
+    ):
         return "high"
     if any(k in token for k in ("pmi", "ism", "gdp", "employment")):
         return "medium"
@@ -125,7 +127,9 @@ def _extract_events_from_lines(text: str, base_date: date) -> list[ParsedEvent]:
         cleaned = re.sub(r"\d{1,2}:\d{2}", "", cleaned).strip(" -:|")
         if len(cleaned) < 3:
             cleaned = "event"
-        events.append(ParsedEvent(name=cleaned, when_jst=when, impact=_guess_impact(cleaned)))
+        events.append(
+            ParsedEvent(name=cleaned, when_jst=when, impact=_guess_impact(cleaned))
+        )
     return events
 
 
@@ -142,11 +146,25 @@ def _dedupe_events(events: list[ParsedEvent]) -> list[ParsedEvent]:
 
 
 def _build_external_snapshot(text: str) -> dict:
-    usdjpy = _find_first_number(text, [r"USD\s*/\s*JPY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"])
-    eurusd = _find_first_number(text, [r"EUR\s*/\s*USD\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"])
-    audjpy = _find_first_number(text, [r"AUD\s*/\s*JPY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"])
-    eurjpy = _find_first_number(text, [r"EUR\s*/\s*JPY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"])
-    dxy = _find_first_number(text, [r"DXY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)", r"ドル指数\s*DXY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"])
+    usdjpy = _find_first_number(
+        text, [r"USD\s*/\s*JPY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"]
+    )
+    eurusd = _find_first_number(
+        text, [r"EUR\s*/\s*USD\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"]
+    )
+    audjpy = _find_first_number(
+        text, [r"AUD\s*/\s*JPY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"]
+    )
+    eurjpy = _find_first_number(
+        text, [r"EUR\s*/\s*JPY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)"]
+    )
+    dxy = _find_first_number(
+        text,
+        [
+            r"DXY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)",
+            r"ドル指数\s*DXY\s*[：:]\s*([0-9]+(?:\.[0-9]+)?)",
+        ],
+    )
     us10y = _find_first_number(text, [r"米10年\s*([0-9]+(?:\.[0-9]+)?)"])
     jp10y = _find_first_number(text, [r"日10年\s*([0-9]+(?:\.[0-9]+)?)"])
 
@@ -181,7 +199,9 @@ def _build_events_payload(events: list[ParsedEvent]) -> dict:
                 "name": ev.name,
                 "impact": ev.impact,
                 "time_jst": ev.when_jst.strftime("%Y-%m-%d %H:%M"),
-                "time_utc": ev.when_jst.astimezone(UTC).replace(microsecond=0).isoformat(),
+                "time_utc": ev.when_jst.astimezone(UTC)
+                .replace(microsecond=0)
+                .isoformat(),
             }
         )
     return {"events": rows}
@@ -193,7 +213,9 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Import market brief markdown/text to playbook input JSON")
+    ap = argparse.ArgumentParser(
+        description="Import market brief markdown/text to playbook input JSON"
+    )
     ap.add_argument("--input", required=True, help="Path to market brief text/markdown")
     ap.add_argument(
         "--external-output",

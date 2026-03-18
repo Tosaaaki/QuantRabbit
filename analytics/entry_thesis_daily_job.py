@@ -1,4 +1,5 @@
 """Aggregate entry_thesis factors into a daily BigQuery table."""
+
 from __future__ import annotations
 
 import argparse
@@ -7,7 +8,6 @@ import os
 
 from google.api_core import exceptions as gexc
 from google.cloud import bigquery
-
 
 DEFAULT_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
@@ -220,7 +220,9 @@ HAVING trade_count >= @min_trades
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Daily entry_thesis cause analysis job.")
+    parser = argparse.ArgumentParser(
+        description="Daily entry_thesis cause analysis job."
+    )
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--table", default=DEFAULT_TABLE)
@@ -231,7 +233,11 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-    client = bigquery.Client(project=DEFAULT_PROJECT) if DEFAULT_PROJECT else bigquery.Client()
+    client = (
+        bigquery.Client(project=DEFAULT_PROJECT)
+        if DEFAULT_PROJECT
+        else bigquery.Client()
+    )
 
     _ensure_table(client, args.dataset, args.table)
     _ensure_view(client, args.dataset, args.view)

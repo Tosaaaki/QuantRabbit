@@ -40,10 +40,18 @@ class FirestoreStrategyClient:
         enable: Optional[bool] = None,
     ) -> None:
         self.enabled = True if enable is None else bool(enable)
-        self.collection = collection or os.getenv("FIRESTORE_COLLECTION", "strategy_scores")
+        self.collection = collection or os.getenv(
+            "FIRESTORE_COLLECTION", "strategy_scores"
+        )
         self.document = document or os.getenv("FIRESTORE_DOCUMENT", "current")
         self.ttl_sec = ttl_sec or int(os.getenv("FIRESTORE_STRATEGY_TTL_SEC", "60"))
-        self.project = project or os.getenv("FIRESTORE_PROJECT") or os.getenv("BQ_PROJECT") or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        self.project = (
+            project
+            or os.getenv("FIRESTORE_PROJECT")
+            or os.getenv("BQ_PROJECT")
+            or os.getenv("GCP_PROJECT")
+            or os.getenv("GOOGLE_CLOUD_PROJECT")
+        )
         if not self.project:
             try:
                 self.project = get_secret("gcp_project_id")
@@ -59,7 +67,9 @@ class FirestoreStrategyClient:
                 self._client = None
         else:
             if self.enabled:
-                logging.warning("[FS] google-cloud-firestore is not installed; disabling client.")
+                logging.warning(
+                    "[FS] google-cloud-firestore is not installed; disabling client."
+                )
             self.enabled = False
 
     def refresh(self, *, force: bool = False) -> None:
@@ -89,7 +99,9 @@ class FirestoreStrategyClient:
             return 1.0
         if not self._cache:
             self.refresh(force=True)
-        scores = (self._cache.payload.get("strategy_scores") if self._cache else None) or []
+        scores = (
+            self._cache.payload.get("strategy_scores") if self._cache else None
+        ) or []
         pocket_low = str(pocket).lower()
         strategy_key = str(strategy)
         best = None
@@ -113,12 +125,16 @@ class FirestoreStrategyClient:
         except Exception:
             return 1.0
 
-    def get_sltp(self, strategy: str, pocket: str, regime: str | None = None) -> Tuple[Optional[float], Optional[float]]:
+    def get_sltp(
+        self, strategy: str, pocket: str, regime: str | None = None
+    ) -> Tuple[Optional[float], Optional[float]]:
         if not self.enabled:
             return None, None
         if not self._cache:
             self.refresh(force=True)
-        scores = (self._cache.payload.get("strategy_scores") if self._cache else None) or []
+        scores = (
+            self._cache.payload.get("strategy_scores") if self._cache else None
+        ) or []
         pocket_low = str(pocket).lower()
         strategy_key = str(strategy)
         regime_key = (regime or "all").lower()

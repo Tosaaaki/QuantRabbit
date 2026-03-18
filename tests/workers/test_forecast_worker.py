@@ -18,4 +18,3 @@ def test_serialize_decision_includes_rebound_and_target_prob() -> None:
     payload = worker._serialize_decision(decision)
     assert payload["rebound_probability"] == 0.71
     assert payload["target_reach_prob"] == 0.56
-

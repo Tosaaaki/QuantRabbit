@@ -15,8 +15,7 @@ from analysis import strategy_feedback_worker as worker
 def _seed_trades(db_path: Path, *, strategy_tag: str, count: int = 12) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE trades (
             strategy_tag TEXT,
             strategy TEXT,
@@ -24,12 +23,13 @@ def _seed_trades(db_path: Path, *, strategy_tag: str, count: int = 12) -> None:
             open_time TEXT,
             close_time TEXT
         )
-        """
-    )
+        """)
     now = dt.datetime.utcnow()
     for idx in range(count):
         close_time = (now - dt.timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
-        open_time = (now - dt.timedelta(minutes=idx, seconds=45)).strftime("%Y-%m-%d %H:%M:%S")
+        open_time = (now - dt.timedelta(minutes=idx, seconds=45)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         pl_pips = 1.2 if idx < 9 else -0.4
         conn.execute(
             "INSERT INTO trades(strategy_tag, strategy, pl_pips, open_time, close_time) VALUES (?, ?, ?, ?, ?)",
@@ -50,8 +50,7 @@ def _seed_trades_with_setup_context(
 ) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE trades (
             strategy_tag TEXT,
             strategy TEXT,
@@ -60,8 +59,7 @@ def _seed_trades_with_setup_context(
             close_time TEXT,
             entry_thesis TEXT
         )
-        """
-    )
+        """)
     now = dt.datetime.utcnow()
     thesis = json.dumps(
         {
@@ -73,7 +71,9 @@ def _seed_trades_with_setup_context(
     )
     for idx in range(count):
         close_time = (now - dt.timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
-        open_time = (now - dt.timedelta(minutes=idx, seconds=40)).strftime("%Y-%m-%d %H:%M:%S")
+        open_time = (now - dt.timedelta(minutes=idx, seconds=40)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         pl_pips = -0.9 if idx < max(3, count - 2) else 0.4
         conn.execute(
             """
@@ -95,8 +95,7 @@ def _seed_trades_with_derived_setup_context(
 ) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE trades (
             strategy_tag TEXT,
             strategy TEXT,
@@ -106,8 +105,7 @@ def _seed_trades_with_derived_setup_context(
             close_time TEXT,
             entry_thesis TEXT
         )
-        """
-    )
+        """)
     now = dt.datetime.utcnow()
     thesis = json.dumps(
         {
@@ -135,7 +133,9 @@ def _seed_trades_with_derived_setup_context(
     )
     for idx in range(count):
         close_time = (now - dt.timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
-        open_time = (now - dt.timedelta(minutes=idx, seconds=40)).strftime("%Y-%m-%d %H:%M:%S")
+        open_time = (now - dt.timedelta(minutes=idx, seconds=40)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         pl_pips = -0.9 if idx < max(3, count - 2) else 0.4
         conn.execute(
             """
@@ -176,7 +176,9 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
         ),
         encoding="utf-8",
     )
-    (pid_dir / "quant-scalp-ping-5s-b.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    (pid_dir / "quant-scalp-ping-5s-b.pid").write_text(
+        f"{os.getpid()}\n", encoding="utf-8"
+    )
     _seed_trades(trades_db, strategy_tag="scalp_ping_5s_b_live")
 
     monkeypatch.setattr(worker, "BASE_DIR", repo)
@@ -186,14 +188,19 @@ def test_build_payload_discovers_local_v2_services(monkeypatch, tmp_path: Path) 
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
     monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
 
     payload = worker._build_payload(worker.WorkerConfig())
 
     strategies = payload["strategies"]
     assert "scalp_ping_5s_b_live" in strategies
     advice = strategies["scalp_ping_5s_b_live"]
-    assert advice["strategy_params"]["configured_params"]["SCALP_PING_5S_B_MODE"] == "scalp_ping_5s_b_live"
+    assert (
+        advice["strategy_params"]["configured_params"]["SCALP_PING_5S_B_MODE"]
+        == "scalp_ping_5s_b_live"
+    )
     assert advice["entry_probability_multiplier"] > 1.0
 
 
@@ -264,7 +271,9 @@ def test_build_payload_discovers_dedicated_worker_without_explicit_tag_env(
         ),
         encoding="utf-8",
     )
-    (pid_dir / service_name.removesuffix(".service").replace(".service", "")).with_suffix(".pid").write_text(
+    (
+        pid_dir / service_name.removesuffix(".service").replace(".service", "")
+    ).with_suffix(".pid").write_text(
         f"{os.getpid()}\n",
         encoding="utf-8",
     )
@@ -277,7 +286,9 @@ def test_build_payload_discovers_dedicated_worker_without_explicit_tag_env(
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
     monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
 
     payload = worker._build_payload(worker.WorkerConfig())
 
@@ -359,7 +370,9 @@ def test_build_payload_discovers_local_pid_only_service_without_systemd_unit(
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
     monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
 
     payload = worker._build_payload(worker.WorkerConfig())
 
@@ -405,7 +418,9 @@ def test_build_payload_remaps_directional_trade_tags_to_discovered_base_strategy
         ),
         encoding="utf-8",
     )
-    (pid_dir / "quant-micro-trendretest.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    (pid_dir / "quant-micro-trendretest.pid").write_text(
+        f"{os.getpid()}\n", encoding="utf-8"
+    )
     _seed_trades(trades_db, strategy_tag="MicroTrendRetest-long", count=14)
 
     monkeypatch.setattr(worker, "BASE_DIR", repo)
@@ -415,7 +430,9 @@ def test_build_payload_remaps_directional_trade_tags_to_discovered_base_strategy
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(systemd_dir))
     monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(pid_dir))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
 
     payload = worker._build_payload(worker.WorkerConfig())
 
@@ -446,7 +463,9 @@ def test_squad_recommendation_keeps_metadata_for_neutral_strategy() -> None:
         last_closed="2026-03-10 00:00:00",
     )
 
-    advice = worker._squad_recommendation("MicroLevelReactor", stats, 12, strategy_params={"FOO": "bar"})
+    advice = worker._squad_recommendation(
+        "MicroLevelReactor", stats, 12, strategy_params={"FOO": "bar"}
+    )
 
     assert advice["strategy_params"]["analysis_squad"] == "micro"
     assert advice["strategy_params"]["configured_params"]["FOO"] == "bar"
@@ -494,7 +513,10 @@ def test_squad_recommendation_blocks_positive_adjustment_without_payoff_edge() -
     assert "entry_probability_multiplier" not in advice
     assert "entry_units_multiplier" not in advice
     assert advice["strategy_params"]["feedback_growth_gate"]["payoff_ok"] is False
-    assert advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"] is False
+    assert (
+        advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"]
+        is False
+    )
 
 
 def test_squad_recommendation_requires_improvement_for_positive_adjustment() -> None:
@@ -528,11 +550,18 @@ def test_squad_recommendation_requires_improvement_for_positive_adjustment() -> 
     assert "entry_probability_multiplier" not in advice
     assert "entry_units_multiplier" not in advice
     assert advice["strategy_params"]["feedback_growth_gate"]["payoff_ok"] is True
-    assert advice["strategy_params"]["feedback_growth_gate"]["improved_vs_prev"] is False
-    assert advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"] is False
+    assert (
+        advice["strategy_params"]["feedback_growth_gate"]["improved_vs_prev"] is False
+    )
+    assert (
+        advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"]
+        is False
+    )
 
 
-def test_squad_recommendation_allows_positive_adjustment_for_improving_profitable_setup() -> None:
+def test_squad_recommendation_allows_positive_adjustment_for_improving_profitable_setup() -> (
+    None
+):
     stats = worker.StrategyStats(
         tag="MomentumBurst",
         trades=12,
@@ -563,10 +592,15 @@ def test_squad_recommendation_allows_positive_adjustment_for_improving_profitabl
     assert advice["entry_probability_multiplier"] > 1.0
     assert advice["entry_units_multiplier"] > 1.0
     assert advice["strategy_params"]["feedback_growth_gate"]["improved_vs_prev"] is True
-    assert advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"] is True
+    assert (
+        advice["strategy_params"]["feedback_growth_gate"]["allow_positive_adjustment"]
+        is True
+    )
 
 
-def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(monkeypatch, tmp_path: Path) -> None:
+def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(
+    monkeypatch, tmp_path: Path
+) -> None:
     repo = tmp_path
     log_dir = repo / "logs"
     trades_db = log_dir / "trades.db"
@@ -612,16 +646,23 @@ def test_build_payload_keeps_boosted_low_sample_lane_in_feedback(monkeypatch, tm
     )
     monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_LOCAL_PID_DIR",
+        str(repo / "logs" / "local_v2_stack" / "pids"),
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_PARTICIPATION_PATH", str(participation_path))
 
     payload = worker._build_payload(worker.WorkerConfig())
 
     advice = payload["strategies"]["PrecisionLowVol"]
     assert "entry_probability_multiplier" not in advice
-    assert advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
+    assert (
+        advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
+    )
     assert advice["strategy_params"]["feedback_probe"]["mode"] == "low_sample_safe"
     assert advice["strategy_params"]["feedback_probe"]["lot_multiplier"] == 1.03
 
@@ -675,9 +716,14 @@ def test_build_payload_remaps_directional_boost_probe_to_canonical_strategy(
     )
     monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_LOCAL_PID_DIR",
+        str(repo / "logs" / "local_v2_stack" / "pids"),
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_PARTICIPATION_PATH", str(participation_path))
 
     payload = worker._build_payload(worker.WorkerConfig())
@@ -685,11 +731,15 @@ def test_build_payload_remaps_directional_boost_probe_to_canonical_strategy(
     assert "MomentumBurst" in payload["strategies"]
     assert "MomentumBurst-open_long" not in payload["strategies"]
     advice = payload["strategies"]["MomentumBurst"]
-    assert advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
+    assert (
+        advice["strategy_params"]["feedback_probe"]["source"] == "participation_alloc"
+    )
     assert advice["strategy_params"]["feedback_probe"]["lot_multiplier"] == 1.2064
 
 
-def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatch, tmp_path: Path) -> None:
+def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(
+    monkeypatch, tmp_path: Path
+) -> None:
     repo = tmp_path
     log_dir = repo / "logs"
     trades_db = log_dir / "trades.db"
@@ -721,9 +771,14 @@ def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatc
     )
     monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_LOCAL_PID_DIR",
+        str(repo / "logs" / "local_v2_stack" / "pids"),
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_MIN_TRADES", "6")
 
     payload = worker._build_payload(worker.WorkerConfig())
@@ -731,7 +786,11 @@ def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatc
     advice = payload["strategies"]["RangeFader"]
     assert advice["strategy_params"]["trades"] == 8
     assert isinstance(advice.get("setup_overrides"), list)
-    exact = next(item for item in advice["setup_overrides"] if item["match_dimension"] == "setup_fingerprint")
+    exact = next(
+        item
+        for item in advice["setup_overrides"]
+        if item["match_dimension"] == "setup_fingerprint"
+    )
     assert exact["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
     assert exact["flow_regime"] == "trend_long"
     assert exact["microstructure_bucket"] == "tight_fast"
@@ -739,7 +798,9 @@ def test_build_payload_emits_setup_overrides_from_recent_entry_thesis(monkeypatc
     assert exact["entry_probability_multiplier"] < 1.0
 
 
-def test_build_payload_derives_setup_overrides_from_technical_context(monkeypatch, tmp_path: Path) -> None:
+def test_build_payload_derives_setup_overrides_from_technical_context(
+    monkeypatch, tmp_path: Path
+) -> None:
     repo = tmp_path
     log_dir = repo / "logs"
     trades_db = log_dir / "trades.db"
@@ -769,23 +830,40 @@ def test_build_payload_derives_setup_overrides_from_technical_context(monkeypatc
     )
     monkeypatch.setattr(worker, "_discover_from_systemd", lambda *_args, **_kwargs: {})
     monkeypatch.setenv("STRATEGY_FEEDBACK_TRADES_DB", str(trades_db))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_PATH", str(log_dir / "strategy_feedback.json")
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_SYSTEMD_DIR", str(repo / "systemd"))
-    monkeypatch.setenv("STRATEGY_FEEDBACK_LOCAL_PID_DIR", str(repo / "logs" / "local_v2_stack" / "pids"))
+    monkeypatch.setenv(
+        "STRATEGY_FEEDBACK_LOCAL_PID_DIR",
+        str(repo / "logs" / "local_v2_stack" / "pids"),
+    )
     monkeypatch.setenv("STRATEGY_FEEDBACK_MIN_TRADES", "6")
 
     payload = worker._build_payload(worker.WorkerConfig())
 
     advice = payload["strategies"]["RangeFader"]
     assert isinstance(advice.get("setup_overrides"), list)
-    flow_micro = next(item for item in advice["setup_overrides"] if item["match_dimension"] == "flow_micro")
+    flow_micro = next(
+        item
+        for item in advice["setup_overrides"]
+        if item["match_dimension"] == "flow_micro"
+    )
     assert flow_micro["flow_regime"] == "trend_long"
     assert flow_micro["microstructure_bucket"] == "tight_fast"
-    exact = next(item for item in advice["setup_overrides"] if item["match_dimension"] == "setup_fingerprint")
-    assert exact["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    exact = next(
+        item
+        for item in advice["setup_overrides"]
+        if item["match_dimension"] == "setup_fingerprint"
+    )
+    assert exact["setup_fingerprint"].startswith(
+        "RangeFader-sell-fade|short|trend_long|tight_fast|"
+    )
 
 
-def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> None:
+def test_remap_stats_prefers_display_case_base_key_over_lowercase_control_slug() -> (
+    None
+):
     stats_by_tag = {
         "MicroTrendRetest-long": worker.StrategyStats(
             tag="MicroTrendRetest-long",

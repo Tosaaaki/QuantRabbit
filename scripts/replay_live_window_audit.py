@@ -81,7 +81,11 @@ class TickFileSpan:
 
 def _parse_iso(value: object) -> Optional[datetime]:
     if isinstance(value, datetime):
-        return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return (
+            value.astimezone(UTC)
+            if value.tzinfo is not None
+            else value.replace(tzinfo=UTC)
+        )
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         stamp = float(value)
         if stamp > 1.0e12:
@@ -96,7 +100,11 @@ def _parse_iso(value: object) -> Optional[datetime]:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except Exception:
         return None
-    return parsed.astimezone(UTC) if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return (
+        parsed.astimezone(UTC)
+        if parsed.tzinfo is not None
+        else parsed.replace(tzinfo=UTC)
+    )
 
 
 def _split_csv(values: Sequence[str]) -> List[str]:
@@ -123,7 +131,9 @@ def _default_tick_patterns() -> List[str]:
     ]
 
 
-def _load_live_trades(trades_db: Path, workers: Sequence[str]) -> Dict[str, List[LiveTrade]]:
+def _load_live_trades(
+    trades_db: Path, workers: Sequence[str]
+) -> Dict[str, List[LiveTrade]]:
     worker_tags: Dict[str, str] = {}
     for worker in workers:
         strategy_tag = WORKER_TAGS.get(worker)
@@ -193,9 +203,15 @@ def _build_trade_windows(
             current_end = max(current_end, end)
             current_count += 1
             continue
-        windows.append(ReplayWindow(start=current_start, end=current_end, trade_count=current_count))
+        windows.append(
+            ReplayWindow(
+                start=current_start, end=current_end, trade_count=current_count
+            )
+        )
         current_start, current_end, current_count = start, end, 1
-    windows.append(ReplayWindow(start=current_start, end=current_end, trade_count=current_count))
+    windows.append(
+        ReplayWindow(start=current_start, end=current_end, trade_count=current_count)
+    )
     return windows
 
 
@@ -248,11 +264,11 @@ def _tick_spans(paths: Sequence[Path]) -> List[TickFileSpan]:
     return spans
 
 
-def _overlapping_tick_files(window: ReplayWindow, spans: Sequence[TickFileSpan]) -> List[TickFileSpan]:
+def _overlapping_tick_files(
+    window: ReplayWindow, spans: Sequence[TickFileSpan]
+) -> List[TickFileSpan]:
     return [
-        span
-        for span in spans
-        if span.start <= window.end and span.end >= window.start
+        span for span in spans if span.start <= window.end and span.end >= window.start
     ]
 
 
@@ -338,7 +354,9 @@ def _window_label(index: int, window: ReplayWindow) -> str:
     return f"{index:02d}_{window.start.strftime('%Y%m%dT%H%M%SZ')}_{window.end.strftime('%Y%m%dT%H%M%SZ')}"
 
 
-def _required_tick_basenames(window: ReplayWindow, *, instrument: str = "USD_JPY") -> List[str]:
+def _required_tick_basenames(
+    window: ReplayWindow, *, instrument: str = "USD_JPY"
+) -> List[str]:
     basenames: List[str] = []
     cursor = window.start.date()
     end_date = window.end.date()
@@ -359,7 +377,9 @@ def _with_warmup(window: ReplayWindow, *, replay_warmup_minutes: float) -> Repla
     )
 
 
-def _resolve_replay_warmup_minutes(worker: str, replay_warmup_minutes: Optional[float]) -> float:
+def _resolve_replay_warmup_minutes(
+    worker: str, replay_warmup_minutes: Optional[float]
+) -> float:
     if replay_warmup_minutes is not None:
         return max(0.0, float(replay_warmup_minutes))
     return max(0.0, float(DEFAULT_REPLAY_WARMUP_MINUTES.get(worker, 0.0)))
@@ -456,7 +476,9 @@ def _synth_candles_to_ticks(
     from sim.pseudo_ticks import synth_from_candles
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    sim_path, density_info = synth_from_candles(str(candles_path), str(out_path), SimCfg())
+    sim_path, density_info = synth_from_candles(
+        str(candles_path), str(out_path), SimCfg()
+    )
     tick_count = _count_nonempty_lines(sim_path)
     return {
         "status": "completed" if tick_count > 0 else "empty_ticks",
@@ -549,7 +571,9 @@ def build_report(
         "tick_file_count": len(spans),
         "allow_candle_sim_fallback": bool(allow_candle_sim_fallback),
         "requested_replay_warmup_minutes": (
-            None if replay_warmup_minutes is None else max(0.0, float(replay_warmup_minutes))
+            None
+            if replay_warmup_minutes is None
+            else max(0.0, float(replay_warmup_minutes))
         ),
         "workers": {},
     }
@@ -557,7 +581,9 @@ def build_report(
     workers_payload: Dict[str, object] = {}
     for worker in workers:
         strategy_tag = WORKER_TAGS.get(worker)
-        worker_replay_warmup = _resolve_replay_warmup_minutes(worker, replay_warmup_minutes)
+        worker_replay_warmup = _resolve_replay_warmup_minutes(
+            worker, replay_warmup_minutes
+        )
         worker_trades = live_trades.get(worker, [])
         windows = _build_trade_windows(
             worker_trades,
@@ -567,7 +593,9 @@ def build_report(
         window_payloads: List[Dict[str, object]] = []
         for index, window in enumerate(windows, start=1):
             label = _window_label(index, window)
-            replay_window = _with_warmup(window, replay_warmup_minutes=worker_replay_warmup)
+            replay_window = _with_warmup(
+                window, replay_warmup_minutes=worker_replay_warmup
+            )
             matched_spans = _overlapping_tick_files(window, spans)
             replay_spans = _overlapping_tick_files(replay_window, spans)
             coverage_status = "covered" if matched_spans else "missing"
@@ -627,10 +655,14 @@ def build_report(
                 )
                 if bool(fallback_payload.get("used")):
                     coverage_status = "candle_simulated"
-                    ticks_path_text = str(fallback_payload.get("generated_ticks_path") or "").strip()
+                    ticks_path_text = str(
+                        fallback_payload.get("generated_ticks_path") or ""
+                    ).strip()
                     if ticks_path_text:
                         replay_ticks_path = Path(ticks_path_text)
-                        replay_tick_count = int(fallback_payload.get("generated_tick_count") or 0)
+                        replay_tick_count = int(
+                            fallback_payload.get("generated_tick_count") or 0
+                        )
             elif not allow_candle_sim_fallback:
                 fallback_payload["status"] = "disabled"
             if replay_ticks_path is not None and run_replay:
@@ -660,9 +692,15 @@ def build_report(
                         "fallback_used": bool(fallback_payload.get("used")),
                         "fallback": fallback_payload,
                     },
-                    "clipped_ticks_path": str(clipped_path) if clipped_tick_count > 0 else None,
+                    "clipped_ticks_path": (
+                        str(clipped_path) if clipped_tick_count > 0 else None
+                    ),
                     "clipped_tick_count": clipped_tick_count,
-                    "replay_ticks_path": str(replay_ticks_path) if replay_ticks_path is not None else None,
+                    "replay_ticks_path": (
+                        str(replay_ticks_path)
+                        if replay_ticks_path is not None
+                        else None
+                    ),
                     "replay_tick_count": replay_tick_count,
                     "replay": replay_result,
                 }
@@ -678,8 +716,12 @@ def build_report(
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Audit exact replay coverage for live trade windows.")
-    ap.add_argument("--workers", required=True, help="Comma-separated replay worker names")
+    ap = argparse.ArgumentParser(
+        description="Audit exact replay coverage for live trade windows."
+    )
+    ap.add_argument(
+        "--workers", required=True, help="Comma-separated replay worker names"
+    )
     ap.add_argument(
         "--ticks-glob",
         action="append",
@@ -689,7 +731,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--trades-db", type=Path, default=_default_trades_db())
     ap.add_argument("--pre-minutes", type=float, default=5.0)
     ap.add_argument("--post-minutes", type=float, default=15.0)
-    ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_live_window_audit"))
+    ap.add_argument(
+        "--out-dir", type=Path, default=Path("tmp/replay_live_window_audit")
+    )
     ap.add_argument("--run-replay", action="store_true")
     ap.add_argument("--allow-candle-sim-fallback", action="store_true")
     ap.add_argument("--replay-warmup-minutes", type=float, default=None)
@@ -711,7 +755,9 @@ def main() -> None:
     )
     report_path = args.out_dir / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(str(report_path))
 
 

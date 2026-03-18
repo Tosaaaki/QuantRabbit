@@ -14,7 +14,9 @@ import execution.strategy_entry as strategy_entry
 
 
 def _set_default_fusion_knobs(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_FORECAST_FUSION_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_FORECAST_FUSION_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "_STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX",
@@ -174,7 +176,9 @@ def _set_default_fusion_knobs(monkeypatch) -> None:
 
 
 def test_inject_entry_forecast_context_keeps_allow_decision(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_FORECAST_CONTEXT_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_FORECAST_CONTEXT_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "_build_entry_forecast_profile",
@@ -388,7 +392,9 @@ def test_forecast_fusion_rejects_weak_contra_on_low_edge_strength(monkeypatch) -
     assert thesis.get("sl_pips") == 1.3
 
 
-def test_forecast_fusion_keeps_high_edge_contra_when_weak_contra_enabled(monkeypatch) -> None:
+def test_forecast_fusion_keeps_high_edge_contra_when_weak_contra_enabled(
+    monkeypatch,
+) -> None:
     _set_default_fusion_knobs(monkeypatch)
     monkeypatch.setattr(
         strategy_entry,
@@ -447,7 +453,9 @@ def test_forecast_fusion_rebound_supports_contra_buy(monkeypatch) -> None:
     )
 
     assert units_rebound > units_base
-    assert prob_rebound is not None and prob_base is not None and prob_rebound > prob_base
+    assert (
+        prob_rebound is not None and prob_base is not None and prob_rebound > prob_base
+    )
     assert applied.get("rebound_probability") == 0.9
     assert float(applied.get("rebound_side_support") or 0.0) > 0.0
 
@@ -500,7 +508,9 @@ def test_forecast_fusion_tf_confluence_cuts_units(monkeypatch) -> None:
     assert applied.get("tf_confluence_count") == 3
 
 
-def test_entry_leading_profile_boosts_probability_with_strategy_prefix(monkeypatch) -> None:
+def test_entry_leading_profile_boosts_probability_with_strategy_prefix(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_ENABLED", "1")
     monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.18")
     monkeypatch.setenv("SCALP_TEST_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.05")
@@ -553,12 +563,18 @@ def test_entry_leading_profile_rejects_under_strategy_threshold(monkeypatch) -> 
     assert applied.get("reason") == "entry_leading_profile_reject"
 
 
-def test_entry_leading_profile_rejects_mlr_bounce_lower_negative_forecast(monkeypatch) -> None:
+def test_entry_leading_profile_rejects_mlr_bounce_lower_negative_forecast(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
@@ -590,10 +606,14 @@ def test_entry_leading_profile_uses_base_strategy_prefix_for_hyphenated_setup_ta
 ) -> None:
     monkeypatch.setenv("STRATEGY_ENTRY_LEADING_PROFILE_ENABLED", "0")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
@@ -625,10 +645,14 @@ def test_entry_leading_profile_surface_override_rejects_mlr_gap_down_flat_expect
 ) -> None:
     monkeypatch.setenv("STRATEGY_ENTRY_LEADING_PROFILE_ENABLED", "0")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
@@ -666,7 +690,10 @@ def test_entry_leading_profile_surface_override_rejects_mlr_gap_down_flat_expect
     assert applied.get("reason") == "entry_leading_profile_surface_reject"
     override = applied.get("surface_override")
     assert isinstance(override, dict)
-    assert override.get("surface") == "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn"
+    assert (
+        override.get("surface")
+        == "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn"
+    )
 
 
 def test_entry_leading_profile_surface_override_rejects_mlr_tight_normal_gap_down_flat_style_mismatch(
@@ -674,10 +701,14 @@ def test_entry_leading_profile_surface_override_rejects_mlr_tight_normal_gap_dow
 ) -> None:
     monkeypatch.setenv("STRATEGY_ENTRY_LEADING_PROFILE_ENABLED", "0")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
@@ -720,17 +751,24 @@ def test_entry_leading_profile_surface_override_rejects_mlr_tight_normal_gap_dow
     assert applied.get("reason") == "entry_leading_profile_surface_reject"
     override = applied.get("surface_override")
     assert isinstance(override, dict)
-    assert override.get(
-        "surface"
-    ) == "mlr_bounce_lower_range_fade_tight_normal_gap_down_flat_weak_ma_gap_style_mismatch"
+    assert (
+        override.get("surface")
+        == "mlr_bounce_lower_range_fade_tight_normal_gap_down_flat_weak_ma_gap_style_mismatch"
+    )
 
 
-def test_entry_leading_profile_keeps_mlr_breakout_long_positive_forecast(monkeypatch) -> None:
+def test_entry_leading_profile_keeps_mlr_breakout_long_positive_forecast(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_ENABLED", "1")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_REJECT_BELOW_LONG", "0.44"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_BOOST_MAX", "0.00")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_PENALTY_MAX", "0.22")
-    monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60")
+    monkeypatch.setenv(
+        "MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", "0.60"
+    )
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_TECH", "0.15")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_RANGE", "0.20")
     monkeypatch.setenv("MICROLEVELREACTOR_ENTRY_LEADING_PROFILE_WEIGHT_MICRO", "0.05")
@@ -781,7 +819,8 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     monkeypatch.setattr(
         strategy_entry,
         "_resolve_strategy_tag",
-        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "scalp_ping_5s_b_live",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag
+        or "scalp_ping_5s_b_live",
         raising=False,
     )
     monkeypatch.setattr(
@@ -811,7 +850,10 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     monkeypatch.setattr(
         strategy_entry,
         "_inject_entry_forecast_context",
-        lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": False, "p_up": 0.08, "edge": 0.92}),
+        lambda **kwargs: (
+            kwargs.get("entry_thesis") or {},
+            {"allowed": False, "p_up": 0.08, "edge": 0.92},
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -865,7 +907,9 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     monkeypatch.setattr(
         strategy_entry,
         "_apply_strategy_leading_profile",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("leading profile should not run")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("leading profile should not run")
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -877,7 +921,9 @@ def test_market_order_reject_reason_from_forecast_is_cached(monkeypatch) -> None
     monkeypatch.setattr(
         strategy_entry.order_manager,
         "market_order",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("order dispatch should not run")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("order dispatch should not run")
+        ),
         raising=False,
     )
 
@@ -925,7 +971,8 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
     monkeypatch.setattr(
         strategy_entry,
         "_resolve_strategy_tag",
-        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "scalp_ping_5s_b_live",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag
+        or "scalp_ping_5s_b_live",
         raising=False,
     )
     monkeypatch.setattr(
@@ -955,7 +1002,10 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
     monkeypatch.setattr(
         strategy_entry,
         "_inject_entry_forecast_context",
-        lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": True, "p_up": 0.68, "edge": 0.62}),
+        lambda **kwargs: (
+            kwargs.get("entry_thesis") or {},
+            {"allowed": True, "p_up": 0.68, "edge": 0.62},
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -1100,13 +1150,16 @@ def test_market_order_dispatch_includes_entry_path_attribution(monkeypatch) -> N
     ]
 
 
-def test_market_order_preserves_richer_live_setup_context_over_worker_headwind_label(monkeypatch) -> None:
+def test_market_order_preserves_richer_live_setup_context_over_worker_headwind_label(
+    monkeypatch,
+) -> None:
     dispatched: dict[str, object] = {}
 
     monkeypatch.setattr(
         strategy_entry,
         "_resolve_strategy_tag",
-        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "DroughtRevert",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag
+        or "DroughtRevert",
         raising=False,
     )
     monkeypatch.setattr(
@@ -1270,17 +1323,22 @@ def test_market_order_preserves_richer_live_setup_context_over_worker_headwind_l
     assert thesis["flow_headwind_regime"] == "continuation_headwind"
     assert thesis["flow_regime"] == "trend_long"
     assert thesis["microstructure_bucket"] == "tight_fast"
-    assert thesis["setup_fingerprint"].startswith("DroughtRevert|short|trend_long|tight_fast|")
+    assert thesis["setup_fingerprint"].startswith(
+        "DroughtRevert|short|trend_long|tight_fast|"
+    )
     assert thesis["live_setup_context"]["flow_regime"] == "trend_long"
 
 
-def test_limit_order_preserves_richer_live_setup_context_over_worker_headwind_label(monkeypatch) -> None:
+def test_limit_order_preserves_richer_live_setup_context_over_worker_headwind_label(
+    monkeypatch,
+) -> None:
     dispatched: dict[str, object] = {}
 
     monkeypatch.setattr(
         strategy_entry,
         "_resolve_strategy_tag",
-        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "DroughtRevert",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag
+        or "DroughtRevert",
         raising=False,
     )
     monkeypatch.setattr(
@@ -1446,7 +1504,9 @@ def test_limit_order_preserves_richer_live_setup_context_over_worker_headwind_la
     assert thesis["flow_headwind_regime"] == "continuation_headwind"
     assert thesis["flow_regime"] == "trend_long"
     assert thesis["microstructure_bucket"] == "tight_fast"
-    assert thesis["setup_fingerprint"].startswith("DroughtRevert|short|trend_long|tight_fast|")
+    assert thesis["setup_fingerprint"].startswith(
+        "DroughtRevert|short|trend_long|tight_fast|"
+    )
     assert thesis["live_setup_context"]["flow_regime"] == "trend_long"
 
 
@@ -1456,7 +1516,8 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     monkeypatch.setattr(
         strategy_entry,
         "_resolve_strategy_tag",
-        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag or "scalp_ping_5s_c_live",
+        lambda strategy_tag, client_order_id, entry_thesis: strategy_tag
+        or "scalp_ping_5s_c_live",
         raising=False,
     )
     monkeypatch.setattr(
@@ -1486,7 +1547,10 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     monkeypatch.setattr(
         strategy_entry,
         "_inject_entry_forecast_context",
-        lambda **kwargs: (kwargs.get("entry_thesis") or {}, {"allowed": True, "p_up": 0.62, "edge": 0.71}),
+        lambda **kwargs: (
+            kwargs.get("entry_thesis") or {},
+            {"allowed": True, "p_up": 0.62, "edge": 0.71},
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -1550,7 +1614,9 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     monkeypatch.setattr(
         strategy_entry,
         "_coordinate_entry_units",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("coordination should not run")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("coordination should not run")
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -1562,7 +1628,9 @@ def test_limit_order_reject_reason_from_leading_profile_is_cached(monkeypatch) -
     monkeypatch.setattr(
         strategy_entry.order_manager,
         "limit_order",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("order dispatch should not run")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("order dispatch should not run")
+        ),
         raising=False,
     )
 

@@ -22,7 +22,6 @@ from typing import Any, Iterable
 from analytics.replay_quality_gate import compute_trade_metrics
 from scripts.replay_exit_workers import _candidate_regime_route
 
-
 ROUTES = ("trend", "breakout", "range", "mixed", "event", "unknown")
 
 
@@ -62,7 +61,9 @@ def _route_from_trade(trade: dict[str, Any]) -> str:
     return route if route in ROUTES else "unknown"
 
 
-def _load_route_trades(path: Path, *, worker: str, exclude_end_of_replay: bool) -> list[RouteTrade]:
+def _load_route_trades(
+    path: Path, *, worker: str, exclude_end_of_replay: bool
+) -> list[RouteTrade]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     trades = payload.get("trades")
     if not isinstance(trades, list):
@@ -137,7 +138,9 @@ def _rows_to_metric_trades(rows: Iterable[RouteTrade]) -> list[dict[str, Any]]:
     return out
 
 
-def _route_worker_stats(rows: Iterable[RouteTrade]) -> dict[tuple[str, str], dict[str, float]]:
+def _route_worker_stats(
+    rows: Iterable[RouteTrade],
+) -> dict[tuple[str, str], dict[str, float]]:
     bucket: dict[tuple[str, str], list[RouteTrade]] = {}
     for row in rows:
         key = (row.route, row.worker)
@@ -216,7 +219,9 @@ def _build_env_suggestion(
         worker_votes = votes.get(route) or {}
         if not worker_votes:
             continue
-        winner = sorted(worker_votes.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        winner = sorted(worker_votes.items(), key=lambda item: (-item[1], item[0]))[0][
+            0
+        ]
         final_mapping[route] = winner
 
     out: dict[str, str] = {}
@@ -232,7 +237,9 @@ def _build_env_suggestion(
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="WFO tuner for regime-router mapping (ping5s C/D)")
+    ap = argparse.ArgumentParser(
+        description="WFO tuner for regime-router mapping (ping5s C/D)"
+    )
     ap.add_argument("--replay-c", type=Path, required=True)
     ap.add_argument("--replay-d", type=Path, required=True)
     ap.add_argument("--worker-c", default="C")
@@ -246,8 +253,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--default-worker", default="C")
     ap.add_argument("--exclude-end-of-replay", action="store_true")
     ap.add_argument("--target-jpy-per-hour", type=float, default=2000.0)
-    ap.add_argument("--out-json", type=Path, default=Path("tmp/replay_regime_router_wfo.json"))
-    ap.add_argument("--out-md", type=Path, default=Path("tmp/replay_regime_router_wfo.md"))
+    ap.add_argument(
+        "--out-json", type=Path, default=Path("tmp/replay_regime_router_wfo.json")
+    )
+    ap.add_argument(
+        "--out-md", type=Path, default=Path("tmp/replay_regime_router_wfo.md")
+    )
     return ap.parse_args()
 
 
@@ -301,7 +312,9 @@ def main() -> None:
         )
         selected_test = _apply_mapping(test_rows, mapping)
         selected_all.extend(selected_test)
-        train_metrics = compute_trade_metrics(_rows_to_metric_trades(_apply_mapping(train_rows, mapping)))
+        train_metrics = compute_trade_metrics(
+            _rows_to_metric_trades(_apply_mapping(train_rows, mapping))
+        )
         test_metrics = compute_trade_metrics(_rows_to_metric_trades(selected_test))
 
         fold_results.append(
@@ -312,15 +325,19 @@ def main() -> None:
                 "route_mapping": mapping,
                 "train_metrics_selected": train_metrics,
                 "test_metrics_selected": test_metrics,
-                "test_trade_count_selected": int(test_metrics.get("trade_count") or 0.0),
+                "test_trade_count_selected": int(
+                    test_metrics.get("trade_count") or 0.0
+                ),
             }
         )
 
     test_jpy_per_hour_values = [
-        float(item["test_metrics_selected"].get("jpy_per_hour") or 0.0) for item in fold_results
+        float(item["test_metrics_selected"].get("jpy_per_hour") or 0.0)
+        for item in fold_results
     ]
     test_total_jpy_values = [
-        float(item["test_metrics_selected"].get("total_jpy") or 0.0) for item in fold_results
+        float(item["test_metrics_selected"].get("total_jpy") or 0.0)
+        for item in fold_results
     ]
     summary_selected = compute_trade_metrics(_rows_to_metric_trades(selected_all))
     achieved_jpy_per_hour = float(summary_selected.get("jpy_per_hour") or 0.0)
@@ -329,7 +346,11 @@ def main() -> None:
     trade_count = float(summary_selected.get("trade_count") or 0.0)
     if duration_hours > 0.0:
         achieved_trades_per_hour = trade_count / duration_hours
-    achieved_jpy_per_trade = 0.0 if trade_count <= 0 else float(summary_selected.get("total_jpy") or 0.0) / trade_count
+    achieved_jpy_per_trade = (
+        0.0
+        if trade_count <= 0
+        else float(summary_selected.get("total_jpy") or 0.0) / trade_count
+    )
 
     target = float(args.target_jpy_per_hour)
     required_jpy_per_trade = 0.0
@@ -379,7 +400,9 @@ def main() -> None:
     }
 
     args.out_json.parent.mkdir(parents=True, exist_ok=True)
-    args.out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    args.out_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     md_lines = [
         "# Replay Regime Router WFO",
@@ -420,4 +443,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

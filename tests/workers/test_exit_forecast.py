@@ -24,7 +24,9 @@ def _mod(module_path: str):
 
 
 @pytest.mark.parametrize("module_path", EXIT_FORECAST_MODULES)
-def test_build_adjustment_disabled(module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_adjustment_disabled(
+    module_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     module = _mod(module_path)
     monkeypatch.setenv("EXIT_FORECAST_ENABLED", "0")
     adj = module.build_exit_forecast_adjustment(
@@ -37,7 +39,9 @@ def test_build_adjustment_disabled(module_path: str, monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.parametrize("module_path", EXIT_FORECAST_MODULES)
-def test_build_adjustment_contra_tightens_exit(module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_adjustment_contra_tightens_exit(
+    module_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     module = _mod(module_path)
     monkeypatch.delenv("EXIT_FORECAST_ENABLED", raising=False)
     monkeypatch.setenv("EXIT_FORECAST_MIN_AGAINST_PROB", "0.54")
@@ -68,12 +72,14 @@ def test_apply_adjustments_for_targets_and_loss_cut(module_path: str) -> None:
             "forecast": {"p_up": 0.85, "edge": 0.8},
         },
     )
-    profit_take, trail_start, trail_backoff, lock_buffer = module.apply_exit_forecast_to_targets(
-        profit_take=3.0,
-        trail_start=2.0,
-        trail_backoff=1.0,
-        lock_buffer=0.5,
-        adjustment=adj,
+    profit_take, trail_start, trail_backoff, lock_buffer = (
+        module.apply_exit_forecast_to_targets(
+            profit_take=3.0,
+            trail_start=2.0,
+            trail_backoff=1.0,
+            lock_buffer=0.5,
+            adjustment=adj,
+        )
     )
     assert profit_take <= 3.0
     assert trail_start <= 2.0

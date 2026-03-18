@@ -27,7 +27,9 @@ def _set_quickshot_env(monkeypatch, worker) -> None:
     monkeypatch.setattr(worker.config, "USDJPY_QUICKSHOT_SL_PIPS_MIN", 3.5)
     monkeypatch.setattr(worker.config, "USDJPY_QUICKSHOT_SL_PIPS_MAX", 9.0)
     monkeypatch.setattr(worker.config, "USDJPY_QUICKSHOT_MIN_ENTRY_PROBABILITY", 0.55)
-    monkeypatch.setattr(worker.config, "USDJPY_QUICKSHOT_BLOCK_JST_HOURS", frozenset({7}))
+    monkeypatch.setattr(
+        worker.config, "USDJPY_QUICKSHOT_BLOCK_JST_HOURS", frozenset({7})
+    )
 
 
 def _seed_candles(monkeypatch, worker) -> None:
@@ -60,7 +62,9 @@ def _seed_candles(monkeypatch, worker) -> None:
     monkeypatch.setattr(worker, "get_candles_snapshot", _fake_snapshot)
 
 
-def test_detect_usdjpy_quickshot_plan_allows_long_breakout_pullback(monkeypatch) -> None:
+def test_detect_usdjpy_quickshot_plan_allows_long_breakout_pullback(
+    monkeypatch,
+) -> None:
     from workers.scalp_m1scalper import worker
 
     _set_quickshot_env(monkeypatch, worker)
@@ -97,7 +101,9 @@ def test_detect_usdjpy_quickshot_plan_blocks_jst_maintenance_hour(monkeypatch) -
         price=156.02,
         spread_pips=0.18,
         atr_pips=3.8,
-        now_utc=datetime.datetime(2026, 2, 26, 22, 10, tzinfo=datetime.timezone.utc),  # JST 07:10
+        now_utc=datetime.datetime(
+            2026, 2, 26, 22, 10, tzinfo=datetime.timezone.utc
+        ),  # JST 07:10
     )
 
     assert allow is False

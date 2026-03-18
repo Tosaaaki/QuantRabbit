@@ -48,10 +48,19 @@ def _mask(s: str) -> str:
 def _oanda_host() -> str:
     practice = False
     try:
-        practice = get_secret("oanda_practice").strip().lower() in {"1", "true", "yes", "on"}
+        practice = get_secret("oanda_practice").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     except Exception:
         practice = False
-    return "https://api-fxpractice.oanda.com" if practice else "https://api-fxtrade.oanda.com"
+    return (
+        "https://api-fxpractice.oanda.com"
+        if practice
+        else "https://api-fxtrade.oanda.com"
+    )
 
 
 @dataclass(frozen=True)
@@ -65,7 +74,9 @@ def _load_creds() -> _OandaCreds:
     token = get_secret("oanda_token")
     account = get_secret("oanda_account_id")
     host = _oanda_host()
-    return _OandaCreds(host=host, account=account, headers={"Authorization": f"Bearer {token}"})
+    return _OandaCreds(
+        host=host, account=account, headers={"Authorization": f"Bearer {token}"}
+    )
 
 
 def _get_last_transaction_id(creds: _OandaCreds) -> int:
@@ -124,12 +135,29 @@ def _iter_closure_trade_ids(transactions: Iterable[dict[str, Any]]) -> set[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backfill trades.db from OANDA transactions idrange.")
+    parser = argparse.ArgumentParser(
+        description="Backfill trades.db from OANDA transactions idrange."
+    )
     parser.add_argument("--from-id", type=int, help="Start transaction id (inclusive).")
-    parser.add_argument("--to-id", type=int, help="End transaction id (inclusive). Default: lastTransactionID.")
-    parser.add_argument("--last-n", type=int, default=5000, help="Backfill last N transactions when from/to not set.")
-    parser.add_argument("--chunk-size", type=int, default=500, help="idrange chunk size.")
-    parser.add_argument("--dry-run", action="store_true", help="Fetch and summarize but do not write trades.db.")
+    parser.add_argument(
+        "--to-id",
+        type=int,
+        help="End transaction id (inclusive). Default: lastTransactionID.",
+    )
+    parser.add_argument(
+        "--last-n",
+        type=int,
+        default=5000,
+        help="Backfill last N transactions when from/to not set.",
+    )
+    parser.add_argument(
+        "--chunk-size", type=int, default=500, help="idrange chunk size."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Fetch and summarize but do not write trades.db.",
+    )
     args = parser.parse_args()
 
     # Keep this run focused; avoid PositionManager init-time backfills.
@@ -140,7 +168,12 @@ def main() -> int:
     creds = _load_creds()
     last_id = _get_last_transaction_id(creds)
     if last_id <= 0:
-        print(json.dumps({"ok": False, "reason": "failed_to_get_lastTransactionID"}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {"ok": False, "reason": "failed_to_get_lastTransactionID"},
+                ensure_ascii=False,
+            )
+        )
         return 2
 
     to_id = int(args.to_id or last_id)
@@ -151,7 +184,9 @@ def main() -> int:
         from_id = max(1, to_id - last_n + 1)
 
     t0 = time.time()
-    transactions = _fetch_transactions_idrange(creds, from_id, to_id, chunk_size=args.chunk_size)
+    transactions = _fetch_transactions_idrange(
+        creds, from_id, to_id, chunk_size=args.chunk_size
+    )
     dt_ms = int((time.time() - t0) * 1000)
     closure_trade_ids = _iter_closure_trade_ids(transactions)
     summary = {
@@ -182,4 +217,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -28,7 +28,9 @@ def _artifact(path: Path, *, warnings: list[str] | None = None) -> Path:
     return path
 
 
-def test_build_improvement_gate_payload_blocks_same_surface_pending(tmp_path: Path) -> None:
+def test_build_improvement_gate_payload_blocks_same_surface_pending(
+    tmp_path: Path,
+) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",
         """
@@ -41,8 +43,7 @@ def test_build_improvement_gate_payload_blocks_same_surface_pending(tmp_path: Pa
 - Escalation Trigger: `same fingerprint の filled が残る`
 - Verdict: pending
 - Status: pending
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
 
@@ -75,8 +76,7 @@ def test_build_improvement_gate_payload_marks_market_hold(tmp_path: Path) -> Non
 - Mechanism Fired: `0`
 - Verdict: pending
 - Status: pending
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(
         tmp_path / "change_preflight_latest.json",
@@ -99,7 +99,9 @@ def test_build_improvement_gate_payload_marks_market_hold(tmp_path: Path) -> Non
     assert "tick_stale:58416.6s" in candidate["reasons"]
 
 
-def test_build_improvement_gate_payload_marks_market_closed_hold(tmp_path: Path) -> None:
+def test_build_improvement_gate_payload_marks_market_closed_hold(
+    tmp_path: Path,
+) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",
         """
@@ -109,15 +111,16 @@ def test_build_improvement_gate_payload_marks_market_closed_hold(tmp_path: Path)
 - Mechanism Fired: `0`
 - Verdict: pending
 - Status: pending
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     payload["warnings"] = []
     payload["market"]["market_open"] = False
     payload["market"]["seconds_until_open"] = 28080.0
-    artifact.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     result = improvement_gate.build_improvement_gate_payload(
         findings_path=findings,
@@ -135,7 +138,9 @@ def test_build_improvement_gate_payload_marks_market_closed_hold(tmp_path: Path)
     assert "market_closed:28080.0s_to_open" in candidate["reasons"]
 
 
-def test_build_improvement_gate_payload_allows_new_lane_without_overlap(tmp_path: Path) -> None:
+def test_build_improvement_gate_payload_allows_new_lane_without_overlap(
+    tmp_path: Path,
+) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",
         """
@@ -145,8 +150,7 @@ def test_build_improvement_gate_payload_allows_new_lane_without_overlap(tmp_path
 - Mechanism Fired: `1`
 - Verdict: good
 - Status: done
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
 
@@ -165,7 +169,9 @@ def test_build_improvement_gate_payload_allows_new_lane_without_overlap(tmp_path
     assert candidate["action"] == "allow_new_lane"
 
 
-def test_build_improvement_gate_payload_blocks_same_strategy_open_lane(tmp_path: Path) -> None:
+def test_build_improvement_gate_payload_blocks_same_strategy_open_lane(
+    tmp_path: Path,
+) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",
         """
@@ -175,8 +181,7 @@ def test_build_improvement_gate_payload_blocks_same_strategy_open_lane(tmp_path:
 - Mechanism Fired: `1`
 - Verdict: pending
 - Status: pending_live_prefix_validation
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
 
@@ -218,8 +223,7 @@ def test_build_improvement_gate_payload_escalates_same_strategy_not_fired_repeat
 - Mechanism Fired: `0`
 - Verdict: pending
 - Status: pending
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
 
@@ -241,7 +245,9 @@ def test_build_improvement_gate_payload_escalates_same_strategy_not_fired_repeat
     assert any("Mechanism Fired=0/none" in reason for reason in candidate["reasons"])
 
 
-def test_build_improvement_gate_payload_blocks_advanced_idea_without_baseline(tmp_path: Path) -> None:
+def test_build_improvement_gate_payload_blocks_advanced_idea_without_baseline(
+    tmp_path: Path,
+) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",
         """
@@ -251,8 +257,7 @@ def test_build_improvement_gate_payload_blocks_advanced_idea_without_baseline(tm
 - Mechanism Fired: `1`
 - Verdict: good
 - Status: done
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
 
@@ -274,7 +279,9 @@ def test_build_improvement_gate_payload_blocks_advanced_idea_without_baseline(tm
     assert candidate["has_baseline_evidence"] is False
 
 
-def test_build_improvement_gate_payload_allows_advanced_idea_after_baseline_evidence(tmp_path: Path) -> None:
+def test_build_improvement_gate_payload_allows_advanced_idea_after_baseline_evidence(
+    tmp_path: Path,
+) -> None:
     findings = _write(
         tmp_path / "TRADE_FINDINGS.md",
         """
@@ -284,8 +291,7 @@ def test_build_improvement_gate_payload_allows_advanced_idea_after_baseline_evid
 - Mechanism Fired: `1`
 - Verdict: good
 - Status: done
-""".strip()
-        + "\n",
+""".strip() + "\n",
     )
     artifact = _artifact(tmp_path / "change_preflight_latest.json")
 

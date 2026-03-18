@@ -9,7 +9,6 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -19,7 +18,6 @@ from generate_repo_history_lane_index import (
     build_repo_history_lane_payload,
 )  # noqa: E402
 from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
-
 
 DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
 DEFAULT_OUT_JSON = REPO_ROOT / "logs" / "trade_findings_index_latest.json"

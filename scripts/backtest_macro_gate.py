@@ -84,9 +84,11 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ma10"] = prices.rolling(window=10, min_periods=10).mean()
     df["ma20"] = prices.rolling(window=20, min_periods=20).mean()
     std20 = prices.rolling(window=20, min_periods=20).std()
-    df["bbw"] = ((std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan))).replace(
-        [np.inf, -np.inf], np.nan
-    ).fillna(0.0)
+    df["bbw"] = (
+        ((std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan)))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
 
     delta = prices.diff()
     gain = delta.clip(lower=0.0)
@@ -170,7 +172,12 @@ def build_fac(row: pd.Series, history: pd.DataFrame) -> Dict[str, float]:
         if val is not None and not np.isnan(val):
             fac[key] = float(val)
     candles = [
-        {"open": float(item.open), "high": float(item.high), "low": float(item.low), "close": float(item.close)}
+        {
+            "open": float(item.open),
+            "high": float(item.high),
+            "low": float(item.low),
+            "close": float(item.close),
+        }
         for item in history.itertuples(index=False)
     ]
     fac["candles"] = candles[-60:]
@@ -183,7 +190,17 @@ def current_h4_row(df_h4: pd.DataFrame, t: datetime) -> Dict[str, float]:
         return {}
     row = subset.iloc[-1]
     data: Dict[str, float] = {}
-    for col in ("close", "ema20", "ma10", "ma20", "adx", "bbw", "atr", "atr_pips", "vol_5m"):
+    for col in (
+        "close",
+        "ema20",
+        "ma10",
+        "ma20",
+        "adx",
+        "bbw",
+        "atr",
+        "atr_pips",
+        "vol_5m",
+    ):
         if col in row and not pd.isna(row[col]):
             data[col] = float(row[col])
     data["time"] = row["time"]
@@ -337,12 +354,22 @@ def simulate_day(
             action = sig.get("action")
             if action == "OPEN_LONG" and not cur_long:
                 open_trades.append(
-                    SimTrade(side="long", units=1000, open_time=t, open_px=float(row["close"]))
+                    SimTrade(
+                        side="long",
+                        units=1000,
+                        open_time=t,
+                        open_px=float(row["close"]),
+                    )
                 )
                 cur_long = True
             elif action == "OPEN_SHORT" and not cur_short:
                 open_trades.append(
-                    SimTrade(side="short", units=1000, open_time=t, open_px=float(row["close"]))
+                    SimTrade(
+                        side="short",
+                        units=1000,
+                        open_time=t,
+                        open_px=float(row["close"]),
+                    )
                 )
                 cur_short = True
 
@@ -381,7 +408,9 @@ def simulate_day(
         "trades": len(closed),
         "profit_pips": round(total_pips, 2),
         "win_rate": round(win_rate, 4),
-        "profit_factor": round(profit_factor if profit_factor != float("inf") else 0.0, 4),
+        "profit_factor": round(
+            profit_factor if profit_factor != float("inf") else 0.0, 4
+        ),
         "max_dd_pips": round(max_dd, 2),
     }
 
@@ -399,14 +428,24 @@ def main() -> None:
     ap.add_argument("--candles", required=True, help="logs/candles_M1_YYYYMMDD.json")
     ap.add_argument("--snapshot", help="MacroState snapshot JSON file")
     ap.add_argument("--deadzone", type=float, default=0.25, help="Macro bias deadzone")
-    ap.add_argument("--gate-enabled", action="store_true", help="Enable macro bias gating")
-    ap.add_argument("--event-block", action="store_true", help="Block entries during event window")
-    ap.add_argument("--event-before", type=float, default=2.0, help="Event window hours before")
-    ap.add_argument("--event-after", type=float, default=1.0, help="Event window hours after")
+    ap.add_argument(
+        "--gate-enabled", action="store_true", help="Enable macro bias gating"
+    )
+    ap.add_argument(
+        "--event-block", action="store_true", help="Block entries during event window"
+    )
+    ap.add_argument(
+        "--event-before", type=float, default=2.0, help="Event window hours before"
+    )
+    ap.add_argument(
+        "--event-after", type=float, default=1.0, help="Event window hours after"
+    )
     args = ap.parse_args()
 
     df = load_candles(Path(args.candles))
-    macro_state = load_macro_state(Path(args.snapshot), args.deadzone) if args.snapshot else None
+    macro_state = (
+        load_macro_state(Path(args.snapshot), args.deadzone) if args.snapshot else None
+    )
 
     result = simulate_day(
         df,

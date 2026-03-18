@@ -17,9 +17,15 @@ def _module_source(module_name: str) -> str:
 
 
 def test_scenario_workers_do_not_import_m1scalper_entry_engine():
-    assert "workers.scalp_m1scalper" not in _module_source("workers.scalp_trend_breakout.worker")
-    assert "workers.scalp_m1scalper" not in _module_source("workers.scalp_pullback_continuation.worker")
-    assert "workers.scalp_m1scalper" not in _module_source("workers.scalp_failed_break_reverse.worker")
+    assert "workers.scalp_m1scalper" not in _module_source(
+        "workers.scalp_trend_breakout.worker"
+    )
+    assert "workers.scalp_m1scalper" not in _module_source(
+        "workers.scalp_pullback_continuation.worker"
+    )
+    assert "workers.scalp_m1scalper" not in _module_source(
+        "workers.scalp_failed_break_reverse.worker"
+    )
 
 
 def test_scenario_configs_have_strategy_specific_defaults(monkeypatch):

@@ -23,7 +23,7 @@ from market_data import spread_monitor
 from market_data import tick_window
 from market_data import orderbook_state
 
-# 
+#
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
 
@@ -100,9 +100,9 @@ class CandleAggregator:
         self.subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
             defaultdict(list)
         )
-        self.live_subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
-            defaultdict(list)
-        )
+        self.live_subscribers: Dict[
+            TimeFrame, List[Callable[[Candle], Awaitable[None]]]
+        ] = defaultdict(list)
         # Keep live updates non-blocking: if a prior live update task is still running,
         # skip enqueuing another one for that subscriber.
         self._live_tasks: Dict[Tuple[TimeFrame, int], asyncio.Task[None]] = {}
@@ -191,7 +191,11 @@ class CandleAggregator:
                     try:
                         coro = sub(dict(live_candle))
                     except Exception as exc:  # noqa: BLE001
-                        logging.debug("[candle] live subscriber schedule failed tf=%s err=%s", tf, exc)
+                        logging.debug(
+                            "[candle] live subscriber schedule failed tf=%s err=%s",
+                            tf,
+                            exc,
+                        )
                         continue
                     task = asyncio.create_task(coro)
                     task.add_done_callback(
@@ -221,6 +225,7 @@ async def start_candle_stream(
         on_candle_live = None
     if on_candle_live is not None:
         for tf in timeframes:
+
             async def _live_handler(candle: Candle, tf: TimeFrame = tf) -> None:
                 await on_candle_live(tf, candle)
 
@@ -243,8 +248,12 @@ async def start_candle_stream(
         try:
             bids_raw = getattr(tick, "bids", None)
             asks_raw = getattr(tick, "asks", None)
-            bids = bids_raw or ((float(tick.bid), float(getattr(tick, "liquidity", 0) or 0)),)
-            asks = asks_raw or ((float(tick.ask), float(getattr(tick, "liquidity", 0) or 0)),)
+            bids = bids_raw or (
+                (float(tick.bid), float(getattr(tick, "liquidity", 0) or 0)),
+            )
+            asks = asks_raw or (
+                (float(tick.ask), float(getattr(tick, "liquidity", 0) or 0)),
+            )
             now_utc = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
             latency_ms = abs((now_utc - tick.time).total_seconds()) * 1000.0
             orderbook_state.update_snapshot(
@@ -256,7 +265,10 @@ async def start_candle_stream(
             )
             if ORDERBOOK_DEBUG_LOG:
                 now_mono = time.monotonic()
-                if now_mono - last_orderbook_log_mono >= ORDERBOOK_DEBUG_LOG_INTERVAL_SEC:
+                if (
+                    now_mono - last_orderbook_log_mono
+                    >= ORDERBOOK_DEBUG_LOG_INTERVAL_SEC
+                ):
                     last_orderbook_log_mono = now_mono
                     snap = orderbook_state.get_latest()
                     if snap:
@@ -282,7 +294,12 @@ async def start_candle_stream(
 
 
 async def fetch_historical_candles(
-    instrument: str, granularity: TimeFrame, count: int | None = None, *, from_time: datetime.datetime | None = None, to_time: datetime.datetime | None = None
+    instrument: str,
+    granularity: TimeFrame,
+    count: int | None = None,
+    *,
+    from_time: datetime.datetime | None = None,
+    to_time: datetime.datetime | None = None,
 ) -> List[Candle]:
     """OANDA REST から過去ローソク足を取得する（失敗時は空配列）。"""
     url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
@@ -360,6 +377,7 @@ async def initialize_history(instrument: str) -> bool:
     for tf in ("M1", "M5", "H1", "H4", "D1"):
         required = max(20, min_required.get(tf, 20))
         from indicators.factor_cache import get_candles_snapshot
+
         attempts = 0
         last_cached = _get_last_cached_candle_time(tf)
         cached_count = 0

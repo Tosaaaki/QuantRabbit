@@ -94,4 +94,3 @@ def test_build_env_suggestion_majority_vote() -> None:
     assert env["REGIME_ROUTER_TREND_ENTRY_STRATEGIES"] == "scalp_ping_5s_d"
     assert env["REGIME_ROUTER_RANGE_ENTRY_STRATEGIES"] == "scalp_ping_5s_c"
     assert env["REGIME_ROUTER_MIXED_ENTRY_STRATEGIES"] == "scalp_ping_5s_c"
-

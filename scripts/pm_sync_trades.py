@@ -31,7 +31,9 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Sync trades.db via local PositionManager service")
+    ap = argparse.ArgumentParser(
+        description="Sync trades.db via local PositionManager service"
+    )
     ap.add_argument("--max-fetch", type=int, default=120)
     ap.add_argument("--timeout", type=float, default=9.0)
     return ap.parse_args()
@@ -88,4 +90,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

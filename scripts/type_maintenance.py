@@ -101,9 +101,18 @@ def run_mypy(paths: List[str]) -> Dict[str, Any]:
             "applied": False,
         }
 
-    cmd = [sys.executable, "-m", "mypy", "--config-file", str(ROOT / "mypy.ini"), *paths]
+    cmd = [
+        sys.executable,
+        "-m",
+        "mypy",
+        "--config-file",
+        str(ROOT / "mypy.ini"),
+        *paths,
+    ]
     result = run_command(cmd, cwd=ROOT, label="mypy")
-    result["issues"] = (result["stderr"].count("error: ") + result["stdout"].count("error: "))
+    result["issues"] = result["stderr"].count("error: ") + result["stdout"].count(
+        "error: "
+    )
     result["applied"] = False
     return result
 
@@ -145,7 +154,9 @@ def print_result(name: str, result: Dict[str, Any], *, stream: str = "stdout") -
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="QuantRabbit type maintenance workflow")
+    parser = argparse.ArgumentParser(
+        description="QuantRabbit type maintenance workflow"
+    )
     parser.add_argument(
         "--paths",
         nargs="*",
@@ -182,8 +193,15 @@ def main() -> int:
     print_result("mypy", mypy, stream="stderr" if mypy["returncode"] else "stdout")
 
     ensure_report_dir()
-    report = build_report(args=args, ruff_fix=ruff_fix if args.apply else {}, ruff_check=ruff_check, mypy=mypy)
-    REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report = build_report(
+        args=args,
+        ruff_fix=ruff_fix if args.apply else {},
+        ruff_check=ruff_check,
+        mypy=mypy,
+    )
+    REPORT_PATH.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"Saved report: {REPORT_PATH}")
 
     if ruff_check["returncode"] != 0:

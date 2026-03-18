@@ -39,7 +39,9 @@ def _hourly_rows(
     label: str,
     trades: int = 1,
 ) -> list[dict]:
-    anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
+    anchor = reference_now.astimezone(ui._JST).replace(
+        minute=0, second=0, microsecond=0
+    )
     rows: list[dict] = []
     for i in range(lookback):
         hour = anchor - timedelta(hours=i)
@@ -149,7 +151,9 @@ def test_summarise_snapshot_falls_back_when_hourly_trades_is_stale_zero(monkeypa
                 "timezone": "JST",
                 "lookback_hours": 24,
                 "exclude_manual": True,
-                "hours": _hourly_rows(24, reference_now=now, label="snapshot-zero", trades=0),
+                "hours": _hourly_rows(
+                    24, reference_now=now, label="snapshot-zero", trades=0
+                ),
             }
         },
     }

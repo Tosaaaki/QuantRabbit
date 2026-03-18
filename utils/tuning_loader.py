@@ -22,14 +22,22 @@ _PRESETS_ENV = os.getenv("TUNING_PRESETS_PATH")
 _overlay_paths = (
     [Path(_OVERLAY_ENV)]
     if _OVERLAY_ENV
-    else [_RUNTIME_DIR / "tuning_overlay.yaml", _ROOT / "config" / "tuning_overlay.yaml"]
+    else [
+        _RUNTIME_DIR / "tuning_overlay.yaml",
+        _ROOT / "config" / "tuning_overlay.yaml",
+    ]
 )
 _override_paths = (
     [Path(_OVERRIDES_ENV)]
     if _OVERRIDES_ENV
-    else [_RUNTIME_DIR / "tuning_overrides.yaml", _ROOT / "config" / "tuning_overrides.yaml"]
+    else [
+        _RUNTIME_DIR / "tuning_overrides.yaml",
+        _ROOT / "config" / "tuning_overrides.yaml",
+    ]
 )
-_preset_paths = [Path(_PRESETS_ENV)] if _PRESETS_ENV else [_ROOT / "config" / "tuning_presets.yaml"]
+_preset_paths = (
+    [Path(_PRESETS_ENV)] if _PRESETS_ENV else [_ROOT / "config" / "tuning_presets.yaml"]
+)
 
 _PATHS: list[Path] = []
 _SEEN: set[str] = set()

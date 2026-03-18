@@ -110,18 +110,28 @@ def select_interval_sec(
             return cfg.active_interval_sec, "event_active", event
 
     # Pre-window before upcoming event.
-    future = [(mins, event) for mins, event in minutes_list if 0 <= mins <= cfg.pre_window_min]
+    future = [
+        (mins, event) for mins, event in minutes_list if 0 <= mins <= cfg.pre_window_min
+    ]
     if future:
         mins, event = min(future, key=lambda x: x[0])
         return cfg.event_interval_sec, "event_pre", event
 
     # Post-window after event.
-    post = [(mins, event) for mins, event in minutes_list if -cfg.post_window_min <= mins < -cfg.active_before_min]
+    post = [
+        (mins, event)
+        for mins, event in minutes_list
+        if -cfg.post_window_min <= mins < -cfg.active_before_min
+    ]
     if post:
         mins, event = max(post, key=lambda x: x[0])
         return cfg.post_interval_sec, "event_post", event
 
-    return cfg.normal_interval_sec, "normal", (min(minutes_list, key=lambda x: abs(x[0]))[1] if minutes_list else None)
+    return (
+        cfg.normal_interval_sec,
+        "normal",
+        (min(minutes_list, key=lambda x: abs(x[0]))[1] if minutes_list else None),
+    )
 
 
 def _next_run_from_state(state_path: Path) -> Optional[datetime]:
@@ -161,7 +171,9 @@ def _run_gpt_report(args: argparse.Namespace) -> None:
     subprocess.run(cmd, check=True, cwd=str(ROOT))
 
 
-def _run_cycle(args: argparse.Namespace, now_utc: datetime) -> tuple[bool, str, list[dict[str, Any]]]:
+def _run_cycle(
+    args: argparse.Namespace, now_utc: datetime
+) -> tuple[bool, str, list[dict[str, Any]]]:
     fetch_ok = True
     events_payload: dict[str, Any] = {}
 
@@ -169,7 +181,11 @@ def _run_cycle(args: argparse.Namespace, now_utc: datetime) -> tuple[bool, str, 
         external, events_payload = fetch_market_snapshot.build_snapshot(now_utc)
         _write_json(Path(args.external_output), external)
         _write_json(Path(args.events_path), events_payload)
-        logging.info("[PLAYBOOK_CYCLE] snapshot updated external=%s events=%s", args.external_output, args.events_path)
+        logging.info(
+            "[PLAYBOOK_CYCLE] snapshot updated external=%s events=%s",
+            args.external_output,
+            args.events_path,
+        )
     except Exception as exc:
         fetch_ok = False
         logging.warning("[PLAYBOOK_CYCLE] market snapshot fetch failed: %s", exc)
@@ -221,7 +237,9 @@ def main() -> int:
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO))
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO)
+    )
     now_utc = datetime.now(UTC)
     state_path = Path(args.state_path)
 
@@ -246,7 +264,9 @@ def main() -> int:
         active_after_min=max(0, int(args.active_after_min)),
         post_window_min=max(1, int(args.post_window_min)),
     )
-    interval_sec, phase, next_event = select_interval_sec(events=events, now_utc=now_utc, cfg=cfg)
+    interval_sec, phase, next_event = select_interval_sec(
+        events=events, now_utc=now_utc, cfg=cfg
+    )
 
     # If run failed, retry sooner.
     if not ok:

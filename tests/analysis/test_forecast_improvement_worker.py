@@ -7,8 +7,12 @@ import subprocess
 from analysis import forecast_improvement_worker as worker
 
 
-def _completed(stdout: str, stderr: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=["python"], returncode=returncode, stdout=stdout, stderr=stderr)
+def _completed(
+    stdout: str, stderr: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["python"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 def _cfg(tmp_path: Path) -> worker.WorkerConfig:
@@ -30,12 +34,16 @@ def _cfg(tmp_path: Path) -> worker.WorkerConfig:
     )
 
 
-def test_build_eval_command_applies_runtime_overrides(monkeypatch, tmp_path: Path) -> None:
+def test_build_eval_command_applies_runtime_overrides(
+    monkeypatch, tmp_path: Path
+) -> None:
     cfg = _cfg(tmp_path)
     out_json = tmp_path / "eval.json"
 
     monkeypatch.setenv("FORECAST_TECH_FEATURE_EXPANSION_GAIN", "0.04")
-    monkeypatch.setenv("FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP", "1m=0.12,5m=0.20,10m=0.30")
+    monkeypatch.setenv(
+        "FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP", "1m=0.12,5m=0.20,10m=0.30"
+    )
     monkeypatch.setenv("FORECAST_TECH_DYNAMIC_WEIGHT_ENABLED", "true")
 
     cmd = worker._build_eval_command(cfg, eval_json_path=out_json)
@@ -54,11 +62,37 @@ def test_run_once_writes_state_history_and_report(monkeypatch, tmp_path: Path) -
         script_name = Path(cmd[1]).name
         if script_name == "vm_forecast_snapshot.py":
             snapshot_rows = [
-                ["1m", {"p_up": 0.55, "edge": 0.12, "expected_pips": 1.2, "feature_ts": "2026-02-25T00:00:00Z"}],
-                ["5m", {"p_up": 0.48, "edge": -0.02, "expected_pips": -0.4, "feature_ts": "2026-02-25T00:00:00Z"}],
-                ["10m", {"p_up": 0.53, "edge": 0.06, "expected_pips": 2.1, "feature_ts": "2026-02-25T00:00:00Z"}],
+                [
+                    "1m",
+                    {
+                        "p_up": 0.55,
+                        "edge": 0.12,
+                        "expected_pips": 1.2,
+                        "feature_ts": "2026-02-25T00:00:00Z",
+                    },
+                ],
+                [
+                    "5m",
+                    {
+                        "p_up": 0.48,
+                        "edge": -0.02,
+                        "expected_pips": -0.4,
+                        "feature_ts": "2026-02-25T00:00:00Z",
+                    },
+                ],
+                [
+                    "10m",
+                    {
+                        "p_up": 0.53,
+                        "edge": 0.06,
+                        "expected_pips": 2.1,
+                        "feature_ts": "2026-02-25T00:00:00Z",
+                    },
+                ],
             ]
-            return _completed(stdout=json.dumps(snapshot_rows, ensure_ascii=False), returncode=0)
+            return _completed(
+                stdout=json.dumps(snapshot_rows, ensure_ascii=False), returncode=0
+            )
 
         if script_name == "eval_forecast_before_after.py":
             out_idx = cmd.index("--json-out")
@@ -109,7 +143,9 @@ def test_run_once_writes_state_history_and_report(monkeypatch, tmp_path: Path) -
                     },
                 ],
             }
-            out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            out_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             return _completed(stdout=f"json_out={out_path}\n", returncode=0)
 
         raise AssertionError(f"unexpected command: {cmd}")

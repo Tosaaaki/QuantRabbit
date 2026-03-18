@@ -1388,8 +1388,7 @@ def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(
         .replace("+00:00", "Z")
     )
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE trades (
                 strategy_tag TEXT,
                 strategy TEXT,
@@ -1397,8 +1396,7 @@ def test_load_recent_realized_jpy_prefers_lane_tag_from_entry_thesis(
                 realized_pl REAL,
                 close_time TEXT
             )
-            """
-        )
+            """)
         conn.execute(
             """
             INSERT INTO trades(strategy_tag, strategy, entry_thesis, realized_pl, close_time)
@@ -1432,8 +1430,7 @@ def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context
         .replace("+00:00", "Z")
     )
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE trades (
                 strategy_tag TEXT,
                 strategy TEXT,
@@ -1442,8 +1439,7 @@ def test_load_recent_realized_setup_jpy_derives_setup_key_from_technical_context
                 realized_pl REAL,
                 close_time TEXT
             )
-            """
-        )
+            """)
         conn.execute(
             """
             INSERT INTO trades(strategy_tag, strategy, units, entry_thesis, realized_pl, close_time)
@@ -1621,7 +1617,11 @@ def test_build_participation_alloc_skips_strategy_trim_when_boost_share_offsets_
                             "gate_action": "quarantine",
                             "lot_multiplier": 0.88,
                             "probability_offset": -0.03,
-                            "quarantine_gate": {"active": True, "severity": 0.35, "reasons": ["loss"]},
+                            "quarantine_gate": {
+                                "active": True,
+                                "severity": 0.35,
+                                "reasons": ["loss"],
+                            },
                         },
                         {
                             "match_dimension": "setup_fingerprint",

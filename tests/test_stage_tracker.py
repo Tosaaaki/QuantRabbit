@@ -15,8 +15,7 @@ from execution.stage_tracker import StageTracker
 def _create_trades_db(trades_db: pathlib.Path, rows: list[tuple]) -> None:
     con = sqlite3.connect(trades_db)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE trades (
                 id INTEGER PRIMARY KEY,
                 pocket TEXT,
@@ -28,8 +27,7 @@ def _create_trades_db(trades_db: pathlib.Path, rows: list[tuple]) -> None:
                 close_price REAL,
                 close_reason TEXT
             )
-            """
-        )
+            """)
         con.executemany(
             """
             INSERT INTO trades(
@@ -138,7 +136,9 @@ def test_stage_tracker_ensure_cooldown_handles_naive_public_cooldown(tmp_path):
             now=now_aware + timedelta(seconds=10),
         )
 
-        cooldown = tracker.get_cooldown("micro", "short", now=now_aware + timedelta(seconds=10))
+        cooldown = tracker.get_cooldown(
+            "micro", "short", now=now_aware + timedelta(seconds=10)
+        )
         assert extended is False
         assert cooldown is not None
         assert cooldown.cooldown_until.tzinfo is None
@@ -242,7 +242,14 @@ def test_stage_tracker_syncs_loss_window_to_current_trades(tmp_path):
                 pocket, trade_id, closed_at, loss_jpy, loss_pips, strategy_tag
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ("scalp", 9, "2026-03-13T00:17:29.557361+00:00", 69.012, 1.8, "TickImbalance"),
+            (
+                "scalp",
+                9,
+                "2026-03-13T00:17:29.557361+00:00",
+                69.012,
+                1.8,
+                "TickImbalance",
+            ),
         )
         tracker._con.commit()
 
@@ -255,13 +262,11 @@ def test_stage_tracker_syncs_loss_window_to_current_trades(tmp_path):
             vol_5m=1.2,
         )
 
-        rows = tracker._con.execute(
-            """
+        rows = tracker._con.execute("""
             SELECT pocket, trade_id, closed_at, loss_jpy, loss_pips, strategy_tag
             FROM pocket_loss_window
             ORDER BY trade_id
-            """
-        ).fetchall()
+            """).fetchall()
         assert len(rows) == 1
         row = rows[0]
         assert row["pocket"] == "scalp"

@@ -139,7 +139,9 @@ def test_trend_flip_extreme_guard_blocks_extended_trend_long(monkeypatch):
     monkeypatch.setattr(strategy, "_load_scalper_config", lambda: {})
     monkeypatch.setattr(strategy, "_shock_guard", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(strategy, "_liquidity_guard", lambda: True)
-    monkeypatch.setattr(strategy, "detect_latest_n_wave", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        strategy, "detect_latest_n_wave", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(strategy, "_BREAKOUT_RETEST_ENABLED", False)
     monkeypatch.setattr(strategy, "_VSHAPE_REBOUND_ENABLED", False)
     monkeypatch.setattr(strategy, "derive_pattern_signature", None)

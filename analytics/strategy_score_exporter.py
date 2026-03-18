@@ -206,7 +206,9 @@ GROUP BY pocket, strategy, regime
 """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("lookback_days", "INT64", self.lookback_days),
+                bigquery.ScalarQueryParameter(
+                    "lookback_days", "INT64", self.lookback_days
+                ),
             ]
         )
         try:
@@ -231,7 +233,11 @@ GROUP BY pocket, strategy, regime
         win_rate = win / trade_count if trade_count else 0.0
         gross_profit = float(row.get("gross_profit") or 0.0)
         gross_loss = float(row.get("gross_loss") or 0.0)
-        profit_factor = gross_profit / gross_loss if gross_loss > 1e-9 else float("inf") if gross_profit > 0 else 0.0
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss > 1e-9
+            else float("inf") if gross_profit > 0 else 0.0
+        )
         avg_pips = float(row.get("avg_pips") or 0.0)
         total_pips = float(row.get("total_pips") or 0.0)
         std_pips = float(row.get("std_pips") or 0.0)
@@ -270,10 +276,14 @@ GROUP BY pocket, strategy, regime
         sharpe_like: float,
     ) -> Tuple[float, float]:
         # score は win, PF, 安定度の簡易合成
-        pf_c = max(0.0, min(3.0, profit_factor if math.isfinite(profit_factor) else 3.0))
+        pf_c = max(
+            0.0, min(3.0, profit_factor if math.isfinite(profit_factor) else 3.0)
+        )
         win_c = max(0.0, min(1.0, win_rate))
         stab = max(0.0, min(2.0, abs(sharpe_like)))
-        volume = 1.0 + min(0.4, math.log1p(trade_count) / 10.0)  # サンプルが多いほどわずかに加点
+        volume = 1.0 + min(
+            0.4, math.log1p(trade_count) / 10.0
+        )  # サンプルが多いほどわずかに加点
         score = (0.55 * pf_c + 0.35 * win_c * 2 + 0.1 * stab) * volume
         # ロット倍率は 0.7〜1.3 にクランプ（安全側）
         raw_mult = 1.0
@@ -285,7 +295,9 @@ GROUP BY pocket, strategy, regime
         return lot_multiplier, score
 
     @staticmethod
-    def _derive_sltp(tp_p50: Any, sl_p50: Any, avg_pips: float) -> Tuple[Optional[float], Optional[float]]:
+    def _derive_sltp(
+        tp_p50: Any, sl_p50: Any, avg_pips: float
+    ) -> Tuple[Optional[float], Optional[float]]:
         tp = None
         sl = None
         try:
@@ -318,4 +330,3 @@ def payload_summary(payload: Dict[str, Any]) -> str:
         },
         ensure_ascii=False,
     )
-

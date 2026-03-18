@@ -11,8 +11,7 @@ from scripts import benchmark_brain_local_llm as bench
 def _init_orders_db(path: Path) -> None:
     con = sqlite3.connect(path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE orders (
               id INTEGER PRIMARY KEY,
               ts TEXT,
@@ -26,8 +25,7 @@ def _init_orders_db(path: Path) -> None:
               status TEXT,
               request_json TEXT
             )
-            """
-        )
+            """)
         con.commit()
     finally:
         con.close()
@@ -36,8 +34,7 @@ def _init_orders_db(path: Path) -> None:
 def _init_trades_db(path: Path) -> None:
     con = sqlite3.connect(path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE trades (
               id INTEGER PRIMARY KEY,
               client_order_id TEXT,
@@ -45,8 +42,7 @@ def _init_trades_db(path: Path) -> None:
               pl_pips REAL,
               close_time TEXT
             )
-            """
-        )
+            """)
         con.commit()
     finally:
         con.close()
@@ -55,8 +51,7 @@ def _init_trades_db(path: Path) -> None:
 def _init_brain_db(path: Path) -> None:
     con = sqlite3.connect(path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE brain_decisions (
               id INTEGER PRIMARY KEY,
               ts TEXT,
@@ -71,8 +66,7 @@ def _init_brain_db(path: Path) -> None:
               client_order_id TEXT,
               context_json TEXT
             )
-            """
-        )
+            """)
         con.commit()
     finally:
         con.close()
@@ -173,7 +167,9 @@ def _insert_order(
         con.close()
 
 
-def _insert_trade(trades_db: Path, *, client_order_id: str, realized_pl: float, pl_pips: float) -> None:
+def _insert_trade(
+    trades_db: Path, *, client_order_id: str, realized_pl: float, pl_pips: float
+) -> None:
     con = sqlite3.connect(trades_db)
     try:
         con.execute(
@@ -269,7 +265,12 @@ def test_evaluate_variant_reports_parse_and_alignment() -> None:
             tp_price=None,
             confidence=0.7,
             client_order_id="cid-pos",
-            context={"strategy_tag": "a", "pocket": "scalp_fast", "side": "buy", "units": 10},
+            context={
+                "strategy_tag": "a",
+                "pocket": "scalp_fast",
+                "side": "buy",
+                "units": 10,
+            },
             realized_pl=10.0,
             pl_pips=1.2,
         ),
@@ -285,7 +286,12 @@ def test_evaluate_variant_reports_parse_and_alignment() -> None:
             tp_price=None,
             confidence=0.55,
             client_order_id="cid-neg",
-            context={"strategy_tag": "a", "pocket": "scalp_fast", "side": "sell", "units": 12},
+            context={
+                "strategy_tag": "a",
+                "pocket": "scalp_fast",
+                "side": "sell",
+                "units": 12,
+            },
             realized_pl=-8.0,
             pl_pips=-1.1,
         ),
@@ -349,7 +355,12 @@ def test_evaluate_variant_reports_caller_fail_reason_and_example() -> None:
             tp_price=None,
             confidence=0.7,
             client_order_id="cid-pos",
-            context={"strategy_tag": "a", "pocket": "scalp_fast", "side": "buy", "units": 10},
+            context={
+                "strategy_tag": "a",
+                "pocket": "scalp_fast",
+                "side": "buy",
+                "units": 10,
+            },
             realized_pl=None,
             pl_pips=None,
         )
@@ -364,7 +375,9 @@ def test_evaluate_variant_reports_caller_fail_reason_and_example() -> None:
     )
 
     def _fake_caller(_prompt: str, **_kwargs):
-        return bench.CallOutcome(payload=None, fail_reason="http_timeout", raw_content="timeout")
+        return bench.CallOutcome(
+            payload=None, fail_reason="http_timeout", raw_content="timeout"
+        )
 
     result = bench._evaluate_variant(
         samples=samples,
@@ -423,7 +436,10 @@ def test_select_samples_prioritize_outcomes_and_reason(tmp_path: Path) -> None:
     outcome_meta = load_meta["outcome_policy"]
     assert outcome_meta["selected_with_trade_outcome"] == 1
     assert outcome_meta["selected_without_trade_outcome"] == 1
-    assert outcome_meta["insufficient_data_reason"] == "insufficient_realized_outcome_samples:1/2"
+    assert (
+        outcome_meta["insufficient_data_reason"]
+        == "insufficient_realized_outcome_samples:1/2"
+    )
 
 
 def test_select_samples_require_outcomes_no_data_reason(tmp_path: Path) -> None:
@@ -454,7 +470,10 @@ def test_select_samples_require_outcomes_no_data_reason(tmp_path: Path) -> None:
     assert samples == []
     outcome_meta = load_meta["outcome_policy"]
     assert outcome_meta["selected_total_samples"] == 0
-    assert outcome_meta["insufficient_data_reason"] == "outcome_required_but_no_realized_outcome_samples"
+    assert (
+        outcome_meta["insufficient_data_reason"]
+        == "outcome_required_but_no_realized_outcome_samples"
+    )
 
 
 def test_rank_variants_uses_outcome_score_only_when_enough_samples() -> None:
@@ -503,8 +522,12 @@ def test_auto_source_prefers_higher_outcome_coverage(tmp_path: Path) -> None:
         ts="2026-03-05T03:01:00+00:00",
         client_order_id="cid-order-2",
     )
-    _insert_trade(trades_db, client_order_id="cid-order-1", realized_pl=5.0, pl_pips=0.5)
-    _insert_trade(trades_db, client_order_id="cid-order-2", realized_pl=8.0, pl_pips=0.9)
+    _insert_trade(
+        trades_db, client_order_id="cid-order-1", realized_pl=5.0, pl_pips=0.5
+    )
+    _insert_trade(
+        trades_db, client_order_id="cid-order-2", realized_pl=8.0, pl_pips=0.9
+    )
 
     _insert_brain_decision(
         brain_db,
@@ -516,7 +539,9 @@ def test_auto_source_prefers_higher_outcome_coverage(tmp_path: Path) -> None:
         units=3,
         client_order_id="cid-brain-1",
     )
-    _insert_trade(trades_db, client_order_id="cid-brain-1", realized_pl=4.0, pl_pips=0.4)
+    _insert_trade(
+        trades_db, client_order_id="cid-brain-1", realized_pl=4.0, pl_pips=0.4
+    )
 
     selected_source, samples, load_meta = bench._select_samples(
         source="auto",

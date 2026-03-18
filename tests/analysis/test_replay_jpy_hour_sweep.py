@@ -4,8 +4,12 @@ import importlib.util
 import json
 from pathlib import Path
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "replay_jpy_hour_sweep.py"
-_spec = importlib.util.spec_from_file_location("replay_jpy_hour_sweep_script", _SCRIPT_PATH)
+_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[2] / "scripts" / "replay_jpy_hour_sweep.py"
+)
+_spec = importlib.util.spec_from_file_location(
+    "replay_jpy_hour_sweep_script", _SCRIPT_PATH
+)
 if _spec is None or _spec.loader is None:
     raise RuntimeError(f"failed to load script module: {_SCRIPT_PATH}")
 _module = importlib.util.module_from_spec(_spec)
@@ -29,8 +33,16 @@ def _sample_report() -> dict:
                         },
                         "gate": {
                             "checks": [
-                                {"name": "test_trade_count", "ok": True, "actual": 10.0},
-                                {"name": "test_jpy_per_hour", "ok": True, "actual": 200.0},
+                                {
+                                    "name": "test_trade_count",
+                                    "ok": True,
+                                    "actual": 10.0,
+                                },
+                                {
+                                    "name": "test_jpy_per_hour",
+                                    "ok": True,
+                                    "actual": 200.0,
+                                },
                             ]
                         },
                     },
@@ -47,7 +59,11 @@ def _sample_report() -> dict:
                         "gate": {
                             "checks": [
                                 {"name": "test_trade_count", "ok": True, "actual": 6.0},
-                                {"name": "test_jpy_per_hour", "ok": True, "actual": 120.0},
+                                {
+                                    "name": "test_jpy_per_hour",
+                                    "ok": True,
+                                    "actual": 120.0,
+                                },
                             ]
                         },
                     },
@@ -77,13 +93,17 @@ def test_calc_target_feasibility_computes_required_values() -> None:
     assert round(float(agg["achieved_jpy_per_hour"]), 6) == 170.0
     assert round(float(agg["achieved_trades_per_hour"]), 6) == 2.0
     assert round(float(agg["achieved_jpy_per_trade"]), 6) == 85.0
-    assert round(float(agg["required_trades_per_hour_at_current_ev"]), 6) == round(2000.0 / 85.0, 6)
+    assert round(float(agg["required_trades_per_hour_at_current_ev"]), 6) == round(
+        2000.0 / 85.0, 6
+    )
     assert round(float(agg["required_jpy_per_trade_at_current_freq"]), 6) == 1000.0
 
 
 def test_script_main_outputs_json_and_md(tmp_path: Path) -> None:
     report_path = tmp_path / "quality_gate_report.json"
-    report_path.write_text(json.dumps(_sample_report(), ensure_ascii=False), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(_sample_report(), ensure_ascii=False), encoding="utf-8"
+    )
     out_json = tmp_path / "out.json"
     out_md = tmp_path / "out.md"
 

@@ -155,7 +155,9 @@ def _env_hours(name: str) -> set[int]:
     return values
 
 
-def _replay_or_strategy_hours(replay_env_name: str, *, strategy_suffix: str) -> set[int]:
+def _replay_or_strategy_hours(
+    replay_env_name: str, *, strategy_suffix: str
+) -> set[int]:
     values = _env_hours(replay_env_name)
     if values:
         return values
@@ -274,9 +276,11 @@ def _ping5s_variant_from_replay_mode(value: object) -> str:
     return ""
 
 
-_PING5S_VARIANT = (str(os.getenv("SCALP_REPLAY_PING_VARIANT", "")).strip().upper() or "")
+_PING5S_VARIANT = str(os.getenv("SCALP_REPLAY_PING_VARIANT", "")).strip().upper() or ""
 if not _PING5S_VARIANT:
-    _PING5S_VARIANT = _ping5s_variant_from_replay_mode(os.getenv("SCALP_REPLAY_MODE", ""))
+    _PING5S_VARIANT = _ping5s_variant_from_replay_mode(
+        os.getenv("SCALP_REPLAY_MODE", "")
+    )
 if _PING5S_VARIANT not in _PING5S_VARIANTS:
     _PING5S_VARIANT = "B"
 _PING5S_VARIANT_CFG = _PING5S_VARIANTS[_PING5S_VARIANT]
@@ -292,11 +296,17 @@ _PING5S_RUNTIME: Optional[tuple[Any, Any, Any]] = None
 _PING5S_RUNTIME_FAILED = False
 
 
-def _resolve_scalp_replay_selection(config: ReplayScalpConfig) -> tuple[str, set[str], str]:
+def _resolve_scalp_replay_selection(
+    config: ReplayScalpConfig,
+) -> tuple[str, set[str], str]:
     raw_allow = os.getenv("SCALP_REPLAY_ALLOWLIST", config.ALLOWLIST_RAW)
     allowlist = {s.strip().lower() for s in (raw_allow or "").split(",") if s.strip()}
     mode = (config.MODE or "").strip().lower()
-    if not allowlist and not _env_explicit("SCALP_REPLAY_MODE") and _env_explicit("SCALP_REPLAY_PING_VARIANT"):
+    if (
+        not allowlist
+        and not _env_explicit("SCALP_REPLAY_MODE")
+        and _env_explicit("SCALP_REPLAY_PING_VARIANT")
+    ):
         mode = _PING5S_MODE
     if mode and not allowlist:
         allowlist.add(mode)
@@ -325,14 +335,20 @@ def _ping5s_force_exit_timeout_sec(ping_config: Any, *, side: str) -> float:
         max_actions = 0
     if max_actions <= 0:
         return 0.0
-    hold_key = "SHORT_FORCE_EXIT_MAX_HOLD_SEC" if side == "short" else "FORCE_EXIT_MAX_HOLD_SEC"
+    hold_key = (
+        "SHORT_FORCE_EXIT_MAX_HOLD_SEC"
+        if side == "short"
+        else "FORCE_EXIT_MAX_HOLD_SEC"
+    )
     try:
         timeout_sec = float(getattr(ping_config, hold_key, 0.0) or 0.0)
     except Exception:
         timeout_sec = 0.0
     if timeout_sec <= 0.0 and hold_key != "FORCE_EXIT_MAX_HOLD_SEC":
         try:
-            timeout_sec = float(getattr(ping_config, "FORCE_EXIT_MAX_HOLD_SEC", 0.0) or 0.0)
+            timeout_sec = float(
+                getattr(ping_config, "FORCE_EXIT_MAX_HOLD_SEC", 0.0) or 0.0
+            )
         except Exception:
             timeout_sec = 0.0
     return max(0.0, timeout_sec)
@@ -350,7 +366,9 @@ def _ping5s_entry_units_intent(
     confidence: int,
 ) -> int:
     try:
-        base_units = int(round(float(getattr(ping_config, "BASE_ENTRY_UNITS", 10000) or 10000.0)))
+        base_units = int(
+            round(float(getattr(ping_config, "BASE_ENTRY_UNITS", 10000) or 10000.0))
+        )
     except Exception:
         base_units = 10000
     try:
@@ -358,7 +376,13 @@ def _ping5s_entry_units_intent(
     except Exception:
         min_units = 100
     try:
-        max_units = int(round(float(getattr(ping_config, "MAX_UNITS", max(base_units, min_units)) or 0.0)))
+        max_units = int(
+            round(
+                float(
+                    getattr(ping_config, "MAX_UNITS", max(base_units, min_units)) or 0.0
+                )
+            )
+        )
     except Exception:
         max_units = max(base_units, min_units)
 
@@ -389,7 +413,9 @@ def _ping5s_scale_units_intent(
     units_mult: float,
 ) -> int:
     try:
-        max_units = int(round(float(getattr(ping_config, "MAX_UNITS", max(1, units)) or 0.0)))
+        max_units = int(
+            round(float(getattr(ping_config, "MAX_UNITS", max(1, units)) or 0.0))
+        )
     except Exception:
         max_units = max(1, units)
     scaled = int(round(float(units) * max(0.0, float(units_mult))))
@@ -443,7 +469,8 @@ def _ping5s_live_signal_adjustments(
 
     anchor_signal = (
         signal
-        if side_filter in {"long", "short"} and str(getattr(signal, "side", "")).strip().lower() == side_filter
+        if side_filter in {"long", "short"}
+        and str(getattr(signal, "side", "")).strip().lower() == side_filter
         else None
     )
 
@@ -451,7 +478,9 @@ def _ping5s_live_signal_adjustments(
     build_direction_bias = getattr(ping_worker, "_build_direction_bias", None)
     if callable(build_direction_bias):
         try:
-            direction_bias = build_direction_bias(rows, spread_pips=float(getattr(signal, "spread_pips", 0.0)))
+            direction_bias = build_direction_bias(
+                rows, spread_pips=float(getattr(signal, "spread_pips", 0.0))
+            )
         except Exception:
             direction_bias = None
 
@@ -471,7 +500,9 @@ def _ping5s_live_signal_adjustments(
         except Exception:
             m1_score = None
 
-    maybe_side_metrics_flip = getattr(ping_worker, "_maybe_side_metrics_direction_flip", None)
+    maybe_side_metrics_flip = getattr(
+        ping_worker, "_maybe_side_metrics_direction_flip", None
+    )
     if callable(maybe_side_metrics_flip):
         try:
             flipped_signal, flip_reason, _ = maybe_side_metrics_flip(
@@ -487,7 +518,9 @@ def _ping5s_live_signal_adjustments(
         except Exception:
             pass
 
-    resolve_side_filter = getattr(ping_worker, "_resolve_final_signal_for_side_filter", None)
+    resolve_side_filter = getattr(
+        ping_worker, "_resolve_final_signal_for_side_filter", None
+    )
     if callable(resolve_side_filter):
         try:
             signal, routing = resolve_side_filter(
@@ -497,7 +530,10 @@ def _ping5s_live_signal_adjustments(
             meta["side_filter_routing"] = str(routing)
         except Exception:
             signal = signal
-    elif side_filter in {"long", "short"} and str(getattr(signal, "side", "")).strip().lower() != side_filter:
+    elif (
+        side_filter in {"long", "short"}
+        and str(getattr(signal, "side", "")).strip().lower() != side_filter
+    ):
         return None, meta
     if signal is None:
         return None, meta
@@ -505,7 +541,9 @@ def _ping5s_live_signal_adjustments(
     is_signal_mode_blocked = getattr(ping_worker, "_is_signal_mode_blocked", None)
     if callable(is_signal_mode_blocked):
         try:
-            blocked, token = is_signal_mode_blocked(str(getattr(signal, "mode", "") or ""))
+            blocked, token = is_signal_mode_blocked(
+                str(getattr(signal, "mode", "") or "")
+            )
             meta["signal_mode_blocked_token"] = token
             if blocked:
                 return None, meta
@@ -520,20 +558,26 @@ def _ping5s_live_signal_adjustments(
         except Exception:
             raw_entry_probability = None
     if raw_entry_probability is None or not math.isfinite(raw_entry_probability):
-        raw_entry_probability = _clamp(float(getattr(signal, "confidence", 0.0) or 0.0) / 100.0, 0.0, 1.0)
+        raw_entry_probability = _clamp(
+            float(getattr(signal, "confidence", 0.0) or 0.0) / 100.0, 0.0, 1.0
+        )
     meta["entry_probability_raw"] = float(raw_entry_probability)
 
     entry_probability = float(raw_entry_probability)
     probability_units_mult = 1.0
-    adjust_entry_probability_alignment = getattr(ping_worker, "_adjust_entry_probability_alignment", None)
+    adjust_entry_probability_alignment = getattr(
+        ping_worker, "_adjust_entry_probability_alignment", None
+    )
     if callable(adjust_entry_probability_alignment):
         try:
-            entry_probability, probability_units_mult, probability_meta = adjust_entry_probability_alignment(
-                signal=signal,
-                raw_probability=float(raw_entry_probability),
-                direction_bias=direction_bias,
-                horizon=horizon,
-                m1_score=m1_score,
+            entry_probability, probability_units_mult, probability_meta = (
+                adjust_entry_probability_alignment(
+                    signal=signal,
+                    raw_probability=float(raw_entry_probability),
+                    direction_bias=direction_bias,
+                    horizon=horizon,
+                    m1_score=m1_score,
+                )
             )
             meta["entry_probability_alignment"] = probability_meta
         except Exception:
@@ -547,12 +591,14 @@ def _ping5s_live_signal_adjustments(
     )
     if callable(entry_probability_band_units_multiplier):
         try:
-            probability_band_units_mult, probability_band_meta = entry_probability_band_units_multiplier(
-                strategy_tag=strategy_tag,
-                pocket=pocket,
-                side=str(getattr(signal, "side", "") or ""),
-                entry_probability=float(entry_probability),
-                now_mono=now_mono,
+            probability_band_units_mult, probability_band_meta = (
+                entry_probability_band_units_multiplier(
+                    strategy_tag=strategy_tag,
+                    pocket=pocket,
+                    side=str(getattr(signal, "side", "") or ""),
+                    entry_probability=float(entry_probability),
+                    now_mono=now_mono,
+                )
             )
             meta["entry_probability_band_allocation"] = probability_band_meta
         except Exception:
@@ -586,7 +632,10 @@ def _ping5s_dynamic_alloc_profile(
     dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
     dyn_mult = max(
         float(getattr(ping_config, "DYN_ALLOC_MULT_MIN", dyn_mult) or dyn_mult),
-        min(float(getattr(ping_config, "DYN_ALLOC_MULT_MAX", dyn_mult) or dyn_mult), dyn_mult),
+        min(
+            float(getattr(ping_config, "DYN_ALLOC_MULT_MAX", dyn_mult) or dyn_mult),
+            dyn_mult,
+        ),
     )
     return dyn_mult, {
         "strategy_key": dyn_profile.get("strategy_key"),
@@ -627,6 +676,7 @@ def _load_ping5s_runtime() -> Optional[tuple[Any, Any, Any]]:
         )
         import workers.scalp_ping_5s.worker as ping_worker
         import workers.scalp_ping_5s.config as ping_config
+
         ping_exit = importlib.import_module(_PING5S_EXIT_MODULE)
 
         _PING5S_RUNTIME = (ping_worker, ping_config, ping_exit)
@@ -683,7 +733,9 @@ def _signal_scalp_ping_5s_b(
             )
         except Exception:
             signal_window_meta = {}
-    adaptive_live_score_blocked = getattr(ping_worker, "_adaptive_live_score_blocked", None)
+    adaptive_live_score_blocked = getattr(
+        ping_worker, "_adaptive_live_score_blocked", None
+    )
     if callable(adaptive_live_score_blocked) and signal_window_meta:
         try:
             blocked, _ = adaptive_live_score_blocked(signal_window_meta)
@@ -697,7 +749,9 @@ def _signal_scalp_ping_5s_b(
     regime_units_mult = 1.0
     try:
         regime = ping_worker._build_mtf_regime(factor_cache.all_factors())
-        adjusted, regime_mult, regime_gate = ping_worker._apply_mtf_regime(signal, regime)
+        adjusted, regime_mult, regime_gate = ping_worker._apply_mtf_regime(
+            signal, regime
+        )
         if adjusted is None or float(regime_mult) <= 0.0:
             return None
         signal = adjusted
@@ -782,7 +836,9 @@ def _signal_scalp_ping_5s_b(
             if live_meta.get("entry_probability_raw") is not None
             else _clamp(int(signal.confidence) / 100.0, 0.0, 1.0)
         ),
-        "entry_probability_units_mult": float(live_meta.get("entry_probability_units_mult", 1.0) or 1.0),
+        "entry_probability_units_mult": float(
+            live_meta.get("entry_probability_units_mult", 1.0) or 1.0
+        ),
         "entry_probability_band_units_mult": float(
             live_meta.get("entry_probability_band_units_mult", 1.0) or 1.0
         ),
@@ -796,19 +852,32 @@ def _signal_scalp_ping_5s_b(
         "signal_reason": str(reason),
         "mtf_regime_gate": str(regime_gate),
         "regime_units_mult": float(regime_units_mult),
-        "signal_window_adaptive_enabled": bool(signal_window_meta.get("enabled", False)),
+        "signal_window_adaptive_enabled": bool(
+            signal_window_meta.get("enabled", False)
+        ),
         "signal_window_adaptive_shadow_enabled": bool(
             signal_window_meta.get("shadow_enabled", False)
         ),
-        "signal_window_adaptive_applied": bool(signal_window_meta.get("applied", False)),
+        "signal_window_adaptive_applied": bool(
+            signal_window_meta.get("applied", False)
+        ),
         "signal_window_adaptive_live_sec": float(
-            signal_window_meta.get("live_window_sec", getattr(signal, "signal_window_sec", 0.0)) or 0.0
+            signal_window_meta.get(
+                "live_window_sec", getattr(signal, "signal_window_sec", 0.0)
+            )
+            or 0.0
         ),
         "signal_window_adaptive_selected_sec": float(
-            signal_window_meta.get("selected_window_sec", getattr(signal, "signal_window_sec", 0.0)) or 0.0
+            signal_window_meta.get(
+                "selected_window_sec", getattr(signal, "signal_window_sec", 0.0)
+            )
+            or 0.0
         ),
         "signal_window_adaptive_best_sec": float(
-            signal_window_meta.get("best_window_sec", getattr(signal, "signal_window_sec", 0.0)) or 0.0
+            signal_window_meta.get(
+                "best_window_sec", getattr(signal, "signal_window_sec", 0.0)
+            )
+            or 0.0
         ),
         "signal_window_adaptive_live_score_pips": float(
             signal_window_meta.get("live_score_pips", 0.0) or 0.0
@@ -831,10 +900,14 @@ def _signal_scalp_ping_5s_b(
         "side_metrics_direction_flip_reason": str(
             live_meta.get("side_metrics_direction_flip_reason", "")
         ),
-        "side_filter_routing": str(live_meta.get("side_filter_routing", "side_filter_inactive")),
+        "side_filter_routing": str(
+            live_meta.get("side_filter_routing", "side_filter_inactive")
+        ),
         "signal_mode_blocked_token": live_meta.get("signal_mode_blocked_token"),
         "entry_probability_alignment": live_meta.get("entry_probability_alignment"),
-        "entry_probability_band_allocation": live_meta.get("entry_probability_band_allocation"),
+        "entry_probability_band_allocation": live_meta.get(
+            "entry_probability_band_allocation"
+        ),
     }
     if dynamic_alloc_meta is not None:
         signal_payload["dynamic_alloc"] = dynamic_alloc_meta
@@ -992,7 +1065,9 @@ class CandleBuilder:
         return candle
 
 
-def _iter_ticks(path: Path, instrument: str, start: Optional[datetime], end: Optional[datetime]) -> Iterable[TickRow]:
+def _iter_ticks(
+    path: Path, instrument: str, start: Optional[datetime], end: Optional[datetime]
+) -> Iterable[TickRow]:
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -1013,7 +1088,9 @@ def _iter_ticks(path: Path, instrument: str, start: Optional[datetime], end: Opt
                 ask_f = float(ask)
             except (TypeError, ValueError):
                 continue
-            ts_raw = payload.get("ts") or payload.get("time") or payload.get("timestamp")
+            ts_raw = (
+                payload.get("ts") or payload.get("time") or payload.get("timestamp")
+            )
             if not ts_raw:
                 continue
             ts = parse_iso8601(str(ts_raw))
@@ -1116,7 +1193,9 @@ class SimBroker:
         self.latency_ms = float(latency_ms)
         self.fill_mode = (fill_mode or "lko").strip().lower()
 
-    def _close_guard_params(self, pocket: Optional[str], strategy_tag: Optional[str]) -> dict:
+    def _close_guard_params(
+        self, pocket: Optional[str], strategy_tag: Optional[str]
+    ) -> dict:
         key = (str(pocket or "").strip().lower(), str(strategy_tag or "").strip())
         cached = self._close_guard_cache.get(key)
         if isinstance(cached, dict):
@@ -1186,7 +1265,9 @@ class SimBroker:
         return max(0.0, slip)
 
     @staticmethod
-    def _apply_slip(price: float, direction: str, *, is_entry: bool, slip_pips: float) -> float:
+    def _apply_slip(
+        price: float, direction: str, *, is_entry: bool, slip_pips: float
+    ) -> float:
         slip = slip_pips * PIP
         if direction == "long":
             return price + slip if is_entry else price - slip
@@ -1235,7 +1316,9 @@ class SimBroker:
         slip_pips = 0.0
         if source != "fast_scalp":
             slip_pips = self._calc_slip_pips(slip_tick)
-            entry_price = self._apply_slip(entry_price, direction, is_entry=True, slip_pips=slip_pips)
+            entry_price = self._apply_slip(
+                entry_price, direction, is_entry=True, slip_pips=slip_pips
+            )
         thesis: dict = {
             "strategy_tag": strategy_tag,
             "strategy": strategy_tag,
@@ -1267,7 +1350,12 @@ class SimBroker:
             else:
                 tp_price = entry_price - tp_pips * PIP
         if sl_price is not None or tp_price is not None:
-            sl_price, tp_price = clamp_sl_tp(entry_price, sl_price or entry_price, tp_price or entry_price, direction == "long")
+            sl_price, tp_price = clamp_sl_tp(
+                entry_price,
+                sl_price or entry_price,
+                tp_price or entry_price,
+                direction == "long",
+            )
         trade = {
             "trade_id": trade_id,
             "units": signed_units,
@@ -1308,7 +1396,11 @@ class SimBroker:
     ) -> dict:
         units = int(trade.get("units", 0) or 0)
         entry_price = float(trade.get("price") or 0.0)
-        thesis = trade.get("entry_thesis") if isinstance(trade.get("entry_thesis"), dict) else {}
+        thesis = (
+            trade.get("entry_thesis")
+            if isinstance(trade.get("entry_thesis"), dict)
+            else {}
+        )
         if exit_price_override is not None:
             exit_price = exit_price_override
         else:
@@ -1317,7 +1409,9 @@ class SimBroker:
         if trade.get("source") != "fast_scalp":
             direction = "long" if units > 0 else "short"
             slip_pips = self._calc_slip_pips(slip_tick)
-            exit_price = self._apply_slip(exit_price, direction, is_entry=False, slip_pips=slip_pips)
+            exit_price = self._apply_slip(
+                exit_price, direction, is_entry=False, slip_pips=slip_pips
+            )
         if units > 0:
             pnl_pips = (exit_price - entry_price) / PIP
         else:
@@ -1368,7 +1462,9 @@ class SimBroker:
                 if now_epoch < pending["ready_epoch"]:
                     remaining_opens.append(pending)
                     continue
-                fill_tick = self._resolve_fill_tick(pending["ready_epoch"], tick, prev_tick)
+                fill_tick = self._resolve_fill_tick(
+                    pending["ready_epoch"], tick, prev_tick
+                )
                 direction = pending["direction"]
                 expected_entry = fill_tick.ask if direction == "long" else fill_tick.bid
                 if self.fill_mode == "next_tick":
@@ -1406,7 +1502,9 @@ class SimBroker:
                 trade = self.open_trades.pop(pending["trade_id"], None)
                 if trade is None:
                     continue
-                fill_tick = self._resolve_fill_tick(pending["ready_epoch"], tick, prev_tick)
+                fill_tick = self._resolve_fill_tick(
+                    pending["ready_epoch"], tick, prev_tick
+                )
                 self._close_trade_record(
                     trade,
                     fill_tick,
@@ -1473,7 +1571,9 @@ class SimBroker:
             latency_ms=0.0,
         )
 
-    def close_trade(self, trade_id: str, reason: str, *, exit_price_override: Optional[float] = None) -> bool:
+    def close_trade(
+        self, trade_id: str, reason: str, *, exit_price_override: Optional[float] = None
+    ) -> bool:
         trade = self.open_trades.get(trade_id)
         if trade is None:
             return False
@@ -1511,9 +1611,18 @@ class SimBroker:
                     return False
 
                 ratio = guard.get("ratio")
-                ratio_reasons = guard.get("ratio_reasons") if isinstance(guard.get("ratio_reasons"), set) else set()
+                ratio_reasons = (
+                    guard.get("ratio_reasons")
+                    if isinstance(guard.get("ratio_reasons"), set)
+                    else set()
+                )
                 tp_min = float(guard.get("tp_min") or 0.0)
-                if ratio is not None and float(ratio) > 0 and est_pips >= 0 and not force_allow:
+                if (
+                    ratio is not None
+                    and float(ratio) > 0
+                    and est_pips >= 0
+                    and not force_allow
+                ):
                     try:
                         matches = bool(
                             reason_key
@@ -1525,7 +1634,9 @@ class SimBroker:
                     if matches:
                         tp_price = trade.get("tp_price")
                         try:
-                            tp_price_f = float(tp_price) if tp_price is not None else None
+                            tp_price_f = (
+                                float(tp_price) if tp_price is not None else None
+                            )
                         except Exception:
                             tp_price_f = None
                         if tp_price_f is not None:
@@ -1609,7 +1720,9 @@ class SimBroker:
         thesis = trade.get("entry_thesis")
         reason = ""
         if isinstance(thesis, dict):
-            reason = str(thesis.get("force_exit_reason") or thesis.get("timeout_reason") or "").strip()
+            reason = str(
+                thesis.get("force_exit_reason") or thesis.get("timeout_reason") or ""
+            ).strip()
         if not reason:
             reason = "time_stop"
         return reason
@@ -1628,7 +1741,11 @@ class SimBroker:
                 open_time = str(trade.get("open_time") or "").strip()
                 if open_time:
                     try:
-                        opened_epoch = datetime.fromisoformat(open_time).astimezone(timezone.utc).timestamp()
+                        opened_epoch = (
+                            datetime.fromisoformat(open_time)
+                            .astimezone(timezone.utc)
+                            .timestamp()
+                        )
                     except Exception:
                         opened_epoch = 0.0
             if opened_epoch <= 0.0:
@@ -1729,7 +1846,9 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
     def _snapshot_stub(*args, **kwargs):
         return account.snapshot(broker)
 
-    def _pos_summary_stub(instrument: str = "USD_JPY", timeout: float = 7.0) -> tuple[float, float]:
+    def _pos_summary_stub(
+        instrument: str = "USD_JPY", timeout: float = 7.0
+    ) -> tuple[float, float]:
         long_units = 0.0
         short_units = 0.0
         for trade in broker.open_trades.values():
@@ -1765,7 +1884,12 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
         sl_pips = abs(entry_price - sl_price) / PIP if sl_price else None
         tp_pips = abs(entry_price - tp_price) / PIP if tp_price else None
         if (sl_pips is None or sl_pips <= 0.0) and thesis:
-            for key in ("sl_pips", "hard_stop_pips", "loss_guard_pips", "fast_cut_pips"):
+            for key in (
+                "sl_pips",
+                "hard_stop_pips",
+                "loss_guard_pips",
+                "fast_cut_pips",
+            ):
                 raw = thesis.get(key)
                 try:
                     hint = float(raw) if raw is not None else None
@@ -1796,7 +1920,11 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
             entry_time=tick.ts,
             tp_pips=tp_pips,
             sl_pips=sl_pips,
-            timeout_sec=float(thesis.get("timeout_sec") or thesis.get("force_exit_max_hold_sec") or 0.0)
+            timeout_sec=float(
+                thesis.get("timeout_sec")
+                or thesis.get("force_exit_max_hold_sec")
+                or 0.0
+            )
             or None,
             units=abs(units),
             source="scalp_replay",
@@ -1847,6 +1975,7 @@ def _patch_exit_module(module, broker: SimBroker) -> None:
         target.close_trade = _close_trade_stub
 
         if hasattr(target, "set_trade_protections"):
+
             async def _set_trade_protections_stub(
                 _trade_id: str,
                 *,
@@ -1910,13 +2039,19 @@ def _summarize(trades: List[dict]) -> dict:
         "total_pnl_jpy": round(total_jpy, 2),
         "win_rate": round(win_rate, 4),
         "profit_factor": round(pf, 4) if pf != float("inf") else float("inf"),
-        "profit_factor_jpy": round(pf_jpy, 4) if pf_jpy != float("inf") else float("inf"),
+        "profit_factor_jpy": (
+            round(pf_jpy, 4) if pf_jpy != float("inf") else float("inf")
+        ),
     }
 
 
 class FastScalpEntryEngine:
     def __init__(self, broker: SimBroker) -> None:
-        if not _FAST_SCALP_AVAILABLE or FastScalpReplayer is None or fast_config is None:
+        if (
+            not _FAST_SCALP_AVAILABLE
+            or FastScalpReplayer is None
+            or fast_config is None
+        ):
             raise RuntimeError("fast_scalp replay modules are unavailable")
         self._broker = broker
         self._active_trade_id: Optional[str] = None
@@ -1993,8 +2128,12 @@ class ScalpReplayEntryEngine:
         self._live_entry = bool(live_entry)
         self._loop = loop
         self._config = _SP_CFG
-        self._bypass_common_guard = (self._config.MODE or "").strip().lower() in self._config.GUARD_BYPASS_MODES
-        mode, allowlist, effective_pocket = _resolve_scalp_replay_selection(self._config)
+        self._bypass_common_guard = (
+            self._config.MODE or ""
+        ).strip().lower() in self._config.GUARD_BYPASS_MODES
+        mode, allowlist, effective_pocket = _resolve_scalp_replay_selection(
+            self._config
+        )
         self._resolved_mode = mode
         self._resolved_allowlist = set(allowlist)
         self._effective_pocket = effective_pocket
@@ -2047,16 +2186,26 @@ class ScalpReplayEntryEngine:
         regime_route = _candidate_regime_route(macro_regime, micro_regime)
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="scalp_replay")
-        if self._live_entry and air.enabled and not air.allow_entry and not self._bypass_common_guard:
+        if (
+            self._live_entry
+            and air.enabled
+            and not air.allow_entry
+            and not self._bypass_common_guard
+        ):
             return
         if self._live_entry and not self._bypass_common_guard:
             blocked, _, _, _ = spread_monitor.is_blocked()
             if blocked:
                 return
         if self._config.MAX_OPEN_TRADES > 0 or self._config.MAX_OPEN_TRADES_GLOBAL > 0:
-            positions = self._broker.get_open_positions().get(self._effective_pocket) or {}
+            positions = (
+                self._broker.get_open_positions().get(self._effective_pocket) or {}
+            )
             open_trades_all = positions.get("open_trades") or []
-            if self._config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= self._config.MAX_OPEN_TRADES_GLOBAL:
+            if (
+                self._config.MAX_OPEN_TRADES_GLOBAL > 0
+                and len(open_trades_all) >= self._config.MAX_OPEN_TRADES_GLOBAL
+            ):
                 return
             open_trades = open_trades_all
             if self._config.OPEN_TRADES_SCOPE == "tag":
@@ -2068,9 +2217,14 @@ class ScalpReplayEntryEngine:
                         break
                 if tag_filter:
                     open_trades = [
-                        tr for tr in open_trades_all if str(tr.get("strategy_tag") or "").lower() == tag_filter
+                        tr
+                        for tr in open_trades_all
+                        if str(tr.get("strategy_tag") or "").lower() == tag_filter
                     ]
-            if self._config.MAX_OPEN_TRADES > 0 and len(open_trades) >= self._config.MAX_OPEN_TRADES:
+            if (
+                self._config.MAX_OPEN_TRADES > 0
+                and len(open_trades) >= self._config.MAX_OPEN_TRADES
+            ):
                 return
 
         for mode, fn in self._modes.items():
@@ -2111,13 +2265,19 @@ class ScalpReplayEntryEngine:
                 if self._loop is None:
                     continue
                 conf = int(signal.get("confidence") or 0)
-                sl_price = entry_price - sl_pips * PIP if direction == "long" else entry_price + sl_pips * PIP
+                sl_price = (
+                    entry_price - sl_pips * PIP
+                    if direction == "long"
+                    else entry_price + sl_pips * PIP
+                )
                 tp_price = (
                     entry_price + tp_pips * PIP
                     if direction == "long" and tp_pips > 0
-                    else entry_price - tp_pips * PIP
-                    if direction == "short" and tp_pips > 0
-                    else None
+                    else (
+                        entry_price - tp_pips * PIP
+                        if direction == "short" and tp_pips > 0
+                        else None
+                    )
                 )
                 order_id = self._loop.run_until_complete(
                     order_manager.market_order(
@@ -2146,11 +2306,21 @@ class ScalpReplayEntryEngine:
             entry_price = tick.ask if direction == "long" else tick.bid
             if direction == "long":
                 sl_price = entry_price - sl_pips * PIP
-                tp_price = entry_price + tp_pips * PIP if tp_pips > 0 else entry_price + 2.0 * PIP
+                tp_price = (
+                    entry_price + tp_pips * PIP
+                    if tp_pips > 0
+                    else entry_price + 2.0 * PIP
+                )
             else:
                 sl_price = entry_price + sl_pips * PIP
-                tp_price = entry_price - tp_pips * PIP if tp_pips > 0 else entry_price - 2.0 * PIP
-            sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
+                tp_price = (
+                    entry_price - tp_pips * PIP
+                    if tp_pips > 0
+                    else entry_price - 2.0 * PIP
+                )
+            sl_price, tp_price = clamp_sl_tp(
+                entry_price, sl_price, tp_price, direction == "long"
+            )
             self._broker.open_trade(
                 pocket=self._effective_pocket,
                 strategy_tag=strategy_tag,
@@ -2199,7 +2369,9 @@ class StrategyEntryEngine:
             return
         macro_regime = classify(fac_h4, "H4")
         micro_regime = classify(fac_m1, "M1")
-        focus_tag, weight_macro = decide_focus(macro_regime, micro_regime, event_soon=False)
+        focus_tag, weight_macro = decide_focus(
+            macro_regime, micro_regime, event_soon=False
+        )
         payload = {
             "ts": tick.ts.isoformat(timespec="seconds"),
             "reg_macro": macro_regime,
@@ -2273,7 +2445,9 @@ class StrategyEntryEngine:
             margin_rate=self._margin_rate,
         )
         scalp_share = DEFAULT_SCALP_SHARE if weight_scalp is None else 0.0
-        pocket_lots = alloc(lot_total, weight_macro, weight_scalp=weight_scalp, scalp_share=scalp_share)
+        pocket_lots = alloc(
+            lot_total, weight_macro, weight_scalp=weight_scalp, scalp_share=scalp_share
+        )
 
         for sig in signals:
             name = sig.get("strategy")
@@ -2303,7 +2477,9 @@ class StrategyEntryEngine:
                 units=abs(units),
                 source="strategy",
                 entry_thesis={
-                    "entry_probability": min(1.0, max(0.0, float(sig.get("confidence", 0) or 0) / 100.0)),
+                    "entry_probability": min(
+                        1.0, max(0.0, float(sig.get("confidence", 0) or 0) / 100.0)
+                    ),
                     "entry_units_intent": abs(units),
                     "macro_regime": _normalize_regime_label(macro_regime),
                     "micro_regime": _normalize_regime_label(micro_regime),
@@ -2343,7 +2519,11 @@ class ExitRunner:
             for tr in trades:
                 await self.worker._review_trade(tr, now, mid, rsi, range_active)
             return
-        if self.name in {"scalp_level_reject", "scalp_false_break_fade", _PING5S_RUNNER_NAME}:
+        if self.name in {
+            "scalp_level_reject",
+            "scalp_false_break_fade",
+            _PING5S_RUNNER_NAME,
+        }:
             mid, range_active = self.worker._context()
             if mid is None:
                 return
@@ -2362,25 +2542,49 @@ class ExitRunner:
             if mid is None and bid is None and ask is None:
                 return
             for tr in trades:
-                await self.worker._review_trade(tr, now, bid, ask, mid, rsi, range_active, fac_h1)
+                await self.worker._review_trade(
+                    tr, now, bid, ask, mid, rsi, range_active, fac_h1
+                )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay with exit_worker logic.")
-    parser.add_argument("--ticks", type=Path, required=True, help="Tick JSONL (bid/ask).")
+    parser.add_argument(
+        "--ticks", type=Path, required=True, help="Tick JSONL (bid/ask)."
+    )
     parser.add_argument("--instrument", default="USD_JPY")
     parser.add_argument("--start", default="", help="ISO start (UTC).")
     parser.add_argument("--end", default="", help="ISO end (UTC).")
-    parser.add_argument("--out", type=Path, default=Path("tmp/replay_exit_workers.json"))
-    parser.add_argument("--quiet", action="store_true", help="Disable logging output (CRITICAL only).")
-    parser.add_argument("--no-stdout", action="store_true", help="Do not print replay JSON to stdout (still writes --out).")
+    parser.add_argument(
+        "--out", type=Path, default=Path("tmp/replay_exit_workers.json")
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Disable logging output (CRITICAL only)."
+    )
+    parser.add_argument(
+        "--no-stdout",
+        action="store_true",
+        help="Do not print replay JSON to stdout (still writes --out).",
+    )
     parser.add_argument("--equity", type=float, default=12000.0)
     parser.add_argument("--margin-available", type=float, default=9000.0)
     parser.add_argument("--margin-rate", type=float, default=0.04)
-    parser.add_argument("--no-exit-worker", action="store_true", help="Disable exit_worker processing.")
-    parser.add_argument("--no-hard-sl-tp", action="store_true", help="Disable hard SL/TP triggers.")
-    parser.add_argument("--no-hard-sl", action="store_true", help="Disable hard SL (keep TP if enabled).")
-    parser.add_argument("--no-hard-tp", action="store_true", help="Disable hard TP (keep SL if enabled).")
+    parser.add_argument(
+        "--no-exit-worker", action="store_true", help="Disable exit_worker processing."
+    )
+    parser.add_argument(
+        "--no-hard-sl-tp", action="store_true", help="Disable hard SL/TP triggers."
+    )
+    parser.add_argument(
+        "--no-hard-sl",
+        action="store_true",
+        help="Disable hard SL (keep TP if enabled).",
+    )
+    parser.add_argument(
+        "--no-hard-tp",
+        action="store_true",
+        help="Disable hard TP (keep SL if enabled).",
+    )
     parser.add_argument(
         "--exclude-end-of-replay",
         action="store_true",
@@ -2401,8 +2605,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use live scalp replay entry path (market_order + risk/size guards).",
     )
-    parser.add_argument("--disable-macro", action="store_true", help="Disable macro entries/exit.")
-    parser.add_argument("--no-main-strategies", action="store_true", help="Disable main strategy entries.")
+    parser.add_argument(
+        "--disable-macro", action="store_true", help="Disable macro entries/exit."
+    )
+    parser.add_argument(
+        "--no-main-strategies",
+        action="store_true",
+        help="Disable main strategy entries.",
+    )
     parser.add_argument(
         "--main-only",
         action="store_true",
@@ -2425,7 +2635,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.fast_only and not _FAST_SCALP_AVAILABLE:
-        raise SystemExit("--fast-only is unavailable because fast_scalp modules were removed")
+        raise SystemExit(
+            "--fast-only is unavailable because fast_scalp modules were removed"
+        )
     if args.fast_only and args.main_only:
         raise SystemExit("--fast-only and --main-only cannot be enabled together")
     if args.quiet:
@@ -2473,12 +2685,14 @@ def main() -> None:
     if args.sp_live_entry and not args.fast_only and not args.main_only:
         sim_account = SimAccount(balance=args.equity, margin_rate=args.margin_rate)
         _patch_live_deps(broker, sim_account)
+
         def _on_close(trade: dict) -> None:
             if fast_entry is not None:
                 fast_entry.on_closed(trade)
             pnl_jpy = trade.get("pnl_jpy")
             if pnl_jpy is not None and sim_account is not None:
                 sim_account.apply_realized(float(pnl_jpy))
+
         broker.on_close = _on_close
     else:
         if fast_entry is not None:
@@ -2520,7 +2734,9 @@ def main() -> None:
 
     fast_runner = None
     if not args.sp_only and not args.main_only and fast_exit is not None:
-        fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
+        fast_runner = ExitRunner(
+            "fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker
+        )
     sp_level_reject_runner = None
     sp_false_break_runner = None
     sp_ping5s_runner = None
@@ -2547,14 +2763,22 @@ def main() -> None:
                 broker,
             )
         if bbrsi_exit is not None:
-            bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
+            bbrsi_runner = ExitRunner(
+                "micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker
+            )
         if not args.disable_macro and trendma_exit is not None:
-            trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
+            trend_runner = ExitRunner(
+                "macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker
+            )
     elif args.main_only:
         if bbrsi_exit is not None:
-            bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
+            bbrsi_runner = ExitRunner(
+                "micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker
+            )
         if not args.disable_macro and trendma_exit is not None:
-            trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
+            trend_runner = ExitRunner(
+                "macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker
+            )
 
     # Pre-feed H4 candles (system_backtest-style) to align macro context.
     prefeed_h4: List[dict] = []
@@ -2666,17 +2890,25 @@ def main() -> None:
             "slip_latency_coef": args.slip_latency_coef,
             "latency_ms": args.latency_ms,
             "scalp_entry_min_entry_conf": _SP_CFG.MIN_ENTRY_CONF,
-            "scalp_entry_allowlist": os.getenv("SCALP_REPLAY_ALLOWLIST", _SP_CFG.ALLOWLIST_RAW),
+            "scalp_entry_allowlist": os.getenv(
+                "SCALP_REPLAY_ALLOWLIST", _SP_CFG.ALLOWLIST_RAW
+            ),
             "scalp_entry_allowlist_effective": (
-                sorted(getattr(sp_entry, "_resolved_allowlist", set())) if sp_entry is not None else []
+                sorted(getattr(sp_entry, "_resolved_allowlist", set()))
+                if sp_entry is not None
+                else []
             ),
             "scalp_entry_mode_effective": (
-                getattr(sp_entry, "_resolved_mode", (_SP_CFG.MODE or "").strip().lower())
+                getattr(
+                    sp_entry, "_resolved_mode", (_SP_CFG.MODE or "").strip().lower()
+                )
                 if sp_entry is not None
                 else (_SP_CFG.MODE or "").strip().lower()
             ),
             "scalp_entry_modes_enabled": (
-                sorted(getattr(sp_entry, "_modes", {}).keys()) if sp_entry is not None else []
+                sorted(getattr(sp_entry, "_modes", {}).keys())
+                if sp_entry is not None
+                else []
             ),
             "scalp_entry_pocket_effective": (
                 getattr(sp_entry, "_effective_pocket", _SP_CFG.POCKET)
@@ -2693,7 +2925,9 @@ def main() -> None:
         "trades": broker.closed_trades,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(out_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    args.out.write_text(
+        json.dumps(out_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     if not args.no_stdout:
         print(json.dumps(out_payload, ensure_ascii=False))
 

@@ -38,12 +38,10 @@ def main() -> None:
 
 
 def _report_by_strategy(con: sqlite3.Connection, threshold: dt.datetime) -> None:
-    rows = con.execute(
-        """
+    rows = con.execute("""
         SELECT client_order_id, strategy_tag, pl_pips, realized_pl, close_time, updated_at
         FROM trades WHERE state='CLOSED'
-        """
-    ).fetchall()
+        """).fetchall()
     UTC = dt.timezone.utc
     agg = defaultdict(lambda: {"count": 0, "pips": 0.0, "jpy": 0.0})
     for r in rows:
@@ -102,8 +100,9 @@ def _report_hold_time(con: sqlite3.Connection, threshold: dt.datetime) -> None:
             WHEN '10-30m' THEN 3
             ELSE 4
           END
-        """
-    , (threshold_iso,)).fetchall()
+        """,
+        (threshold_iso,),
+    ).fetchall()
     total = sum(r["cnt"] for r in rows)
     lt60 = next((r["cnt"] for r in rows if r["bucket"] == "<60s"), 0)
     ratio = (lt60 / total) if total else 0.0

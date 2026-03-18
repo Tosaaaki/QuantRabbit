@@ -209,7 +209,9 @@ def _winner(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Compare local lane vs VM lane trade performance.")
+    ap = argparse.ArgumentParser(
+        description="Compare local lane vs VM lane trade performance."
+    )
     ap.add_argument("--local-log", default="logs/codex_long_autotrade.log")
     ap.add_argument("--vm-trades-db", default="logs/trades.db")
     ap.add_argument("--hours", type=float, default=24.0)
@@ -240,7 +242,9 @@ def main() -> int:
             "local": local_summary,
             "vm": vm_summary,
         },
-        "winner": _winner(local_summary, vm_summary, min_trades=max(1, int(args.min_trades))),
+        "winner": _winner(
+            local_summary, vm_summary, min_trades=max(1, int(args.min_trades))
+        ),
     }
     print(json.dumps(result, ensure_ascii=False))
     return 0

@@ -17,7 +17,6 @@ from typing import Dict, Optional
 from google.api_core import exceptions as gexc
 from google.cloud import bigquery
 
-
 DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 METRICS_TABLE = os.getenv("BQ_REALTIME_METRICS_TABLE", "realtime_metrics")
 RECO_TABLE = os.getenv("BQ_RECOMMENDATION_TABLE", "strategy_recommendations")
@@ -98,7 +97,9 @@ class RealtimeMetricsClient:
             if isinstance(generated_at, datetime):
                 if generated_at.tzinfo is None:
                     generated_at = generated_at.replace(tzinfo=timezone.utc)
-                latest_ts = generated_at if latest_ts is None else max(latest_ts, generated_at)
+                latest_ts = (
+                    generated_at if latest_ts is None else max(latest_ts, generated_at)
+                )
             merged[key] = StrategyHealth(
                 pocket=row["pocket"],
                 strategy=row["strategy"],
@@ -156,14 +157,12 @@ class RealtimeMetricsClient:
     def _fetch_recommendations(self):
         table = f"{self.client.project}.{self._dataset}.{RECO_TABLE}"
         try:
-            job = self.client.query(
-                f"""
+            job = self.client.query(f"""
                 SELECT * EXCEPT(row_num) FROM (
                   SELECT *, ROW_NUMBER() OVER (PARTITION BY pocket, strategy ORDER BY generated_at DESC) AS row_num
                   FROM `{table}`
                 ) WHERE row_num = 1
-                """
-            )
+                """)
             return list(job.result())
         except gexc.NotFound:
             return []
@@ -256,7 +255,10 @@ class ConfidencePolicy:
         if health.total_trades < self.min_trades:
             return health
 
-        if health.max_drawdown_pips >= self.dd_cap or health.losing_streak >= self.streak_cap:
+        if (
+            health.max_drawdown_pips >= self.dd_cap
+            or health.losing_streak >= self.streak_cap
+        ):
             health.allowed = False
             health.reason = "risk_guard_drawdown"
             return health

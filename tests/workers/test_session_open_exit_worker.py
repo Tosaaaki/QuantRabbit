@@ -12,12 +12,16 @@ class _DummyPosManager:
         return None
 
 
-def _sample_trade(*, opened_sec: float, pnl_pips: float, strategy_tag: str = "session_open_breakout") -> dict:
+def _sample_trade(
+    *, opened_sec: float, pnl_pips: float, strategy_tag: str = "session_open_breakout"
+) -> dict:
     return {
         "trade_id": "session-open-trade-1",
         "units": 1000,
         "price": 158.000,
-        "open_time": (datetime.now(timezone.utc) - timedelta(seconds=opened_sec)).isoformat(),
+        "open_time": (
+            datetime.now(timezone.utc) - timedelta(seconds=opened_sec)
+        ).isoformat(),
         "client_order_id": "qr-test-session-open",
         "entry_thesis": {
             "strategy_tag": strategy_tag,
@@ -32,7 +36,9 @@ def _build_worker(monkeypatch: pytest.MonkeyPatch):
     import workers.session_open.exit_worker as exit_worker
 
     monkeypatch.setattr(exit_worker, "PositionManager", lambda: _DummyPosManager())
-    monkeypatch.setattr(exit_worker, "build_exit_forecast_adjustment", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        exit_worker, "build_exit_forecast_adjustment", lambda **_kwargs: None
+    )
     monkeypatch.setattr(
         exit_worker,
         "apply_exit_forecast_to_targets",
@@ -52,7 +58,11 @@ def _build_worker(monkeypatch: pytest.MonkeyPatch):
             kwargs["max_hold_sec"],
         ),
     )
-    monkeypatch.setattr(exit_worker, "detect_range_mode", lambda *_args, **_kwargs: type("R", (), {"active": False})())
+    monkeypatch.setattr(
+        exit_worker,
+        "detect_range_mode",
+        lambda *_args, **_kwargs: type("R", (), {"active": False})(),
+    )
     monkeypatch.setattr(exit_worker, "all_factors", lambda: {})
     worker = exit_worker.SessionOpenExitWorker()
     worker.min_hold_sec = 300.0

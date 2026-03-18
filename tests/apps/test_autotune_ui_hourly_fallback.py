@@ -20,7 +20,9 @@ def _total_trades(payload: dict) -> int:
 
 
 def _hourly_rows_for_reference(*, lookback: int, reference_now: datetime) -> list[dict]:
-    anchor = reference_now.astimezone(ui._JST).replace(minute=0, second=0, microsecond=0)
+    anchor = reference_now.astimezone(ui._JST).replace(
+        minute=0, second=0, microsecond=0
+    )
     rows: list[dict] = []
     for i in range(lookback):
         hour = anchor - timedelta(hours=i)
@@ -92,7 +94,9 @@ def test_build_hourly_fallback_uses_aggregate_query_when_available(monkeypatch):
     assert _total_trades(result) == 0
 
 
-def test_build_hourly_fallback_uses_snapshot_trades_when_aggregate_is_empty(monkeypatch):
+def test_build_hourly_fallback_uses_snapshot_trades_when_aggregate_is_empty(
+    monkeypatch,
+):
     monkeypatch.setattr(ui, "_HOURLY_TRADES_LOOKBACK", 6)
     monkeypatch.setattr(ui, "_load_hourly_fallback_aggregates", lambda _start: {})
     monkeypatch.setattr(ui, "_load_hourly_fallback_trades", lambda: [])

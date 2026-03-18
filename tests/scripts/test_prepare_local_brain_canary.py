@@ -5,7 +5,6 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "prepare_local_brain_canary.py"
 
@@ -125,7 +124,9 @@ def test_prepare_local_brain_canary_blocks_on_stale_benchmark(tmp_path: Path) ->
     env_path = tmp_path / "brain-ollama-safe.env"
     output_path = tmp_path / "readiness.json"
 
-    stale_ts = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(timespec="seconds")
+    stale_ts = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(
+        timespec="seconds"
+    )
     _write_benchmark(benchmark_path, generated_at=stale_ts)
     _write_safe_profile(env_path)
 

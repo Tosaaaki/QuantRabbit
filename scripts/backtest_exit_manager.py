@@ -10,6 +10,7 @@ and measures how often macro trades are closed too early (e.g., <5m, <2pips).
 Usage:
   python scripts/backtest_exit_manager.py --candles logs/candles_M1_20251023.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,6 @@ from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from analysis.range_guard import detect_range_mode
 from execution.exit_manager import ExitManager
-
 
 PIP = 0.01
 
@@ -75,7 +75,11 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ma10"] = prices.rolling(window=10, min_periods=10).mean()
     df["ma20"] = prices.rolling(window=20, min_periods=20).mean()
     std20 = prices.rolling(window=20, min_periods=20).std()
-    df["bbw"] = ((std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan))).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    df["bbw"] = (
+        ((std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan)))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
 
     delta = prices.diff()
     gain = delta.clip(lower=0.0)
@@ -87,11 +91,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # ATR and ADX approximations
     prev_close = prices.shift(1)
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - prev_close).abs(),
-        (df["low"] - prev_close).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            df["high"] - df["low"],
+            (df["high"] - prev_close).abs(),
+            (df["low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
     atr = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean().fillna(0.0)
     df["atr"] = atr
     df["atr_pips"] = df["atr"] / PIP
@@ -106,8 +113,16 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     tr3 = (df["low"] - df["close"].shift(1)).abs()
     tr_all = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     atr14 = tr_all.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
-    plus_di = pd.Series(plus_dm, index=df.index).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
-    minus_di = pd.Series(minus_dm, index=df.index).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    plus_di = (
+        pd.Series(plus_dm, index=df.index)
+        .ewm(alpha=1 / 14, adjust=False, min_periods=14)
+        .mean()
+    )
+    minus_di = (
+        pd.Series(minus_dm, index=df.index)
+        .ewm(alpha=1 / 14, adjust=False, min_periods=14)
+        .mean()
+    )
     atr_safe = atr14.replace(0.0, np.nan)
     plus_di = 100 * (plus_di / atr_safe)
     minus_di = 100 * (minus_di / atr_safe)
@@ -155,13 +170,31 @@ def current_h4_row(df_h4: pd.DataFrame, t: datetime) -> Dict[str, float]:
 
 def build_fac(row: pd.Series, history: pd.DataFrame) -> Dict[str, float]:
     fac: Dict[str, float] = {}
-    for k in ("close", "ema20", "ma10", "ma20", "bbw", "rsi", "atr", "atr_pips", "adx", "vol_5m"):
+    for k in (
+        "close",
+        "ema20",
+        "ma10",
+        "ma20",
+        "bbw",
+        "rsi",
+        "atr",
+        "atr_pips",
+        "adx",
+        "vol_5m",
+    ):
         if k in row and not pd.isna(row[k]):
             fac[k] = float(row[k])
     # candles list for Donchian
     candles_list: List[Dict[str, float]] = []
     for item in history.itertuples(index=False):
-        candles_list.append({"open": float(item.open), "high": float(item.high), "low": float(item.low), "close": float(item.close)})
+        candles_list.append(
+            {
+                "open": float(item.open),
+                "high": float(item.high),
+                "low": float(item.low),
+                "close": float(item.close),
+            }
+        )
     fac["candles"] = candles_list[-60:]
     return fac
 
@@ -195,15 +228,17 @@ def simulate_day(df_m1: pd.DataFrame) -> Dict[str, float]:
                 continue
             # For the purpose of exit jitter evaluation, allow entries even in range;
             # range effect is applied via ExitManager range_mode behavior.
-            signals.append({
-                "strategy": Strat.name,
-                "pocket": "macro",
-                "action": sig.get("action"),
-                "confidence": int(sig.get("confidence", 50) or 50),
-                "sl_pips": float(sig.get("sl_pips", 30) or 30),
-                "tp_pips": float(sig.get("tp_pips", 60) or 60),
-                "tag": sig.get("tag", Strat.name),
-            })
+            signals.append(
+                {
+                    "strategy": Strat.name,
+                    "pocket": "macro",
+                    "action": sig.get("action"),
+                    "confidence": int(sig.get("confidence", 50) or 50),
+                    "sl_pips": float(sig.get("sl_pips", 30) or 30),
+                    "tp_pips": float(sig.get("tp_pips", 60) or 60),
+                    "tag": sig.get("tag", Strat.name),
+                }
+            )
 
         # Construct open_positions compatible with ExitManager
         long_units = sum(tr.units for tr in open_trades if tr.side == "long")
@@ -214,8 +249,16 @@ def simulate_day(df_m1: pd.DataFrame) -> Dict[str, float]:
             "trades": len(open_trades),
             "long_units": long_units,
             "short_units": short_units,
-            "long_avg_price": (np.mean([tr.open_px for tr in open_trades if tr.side == "long"]) if long_units else 0.0),
-            "short_avg_price": (np.mean([tr.open_px for tr in open_trades if tr.side == "short"]) if short_units else 0.0),
+            "long_avg_price": (
+                np.mean([tr.open_px for tr in open_trades if tr.side == "long"])
+                if long_units
+                else 0.0
+            ),
+            "short_avg_price": (
+                np.mean([tr.open_px for tr in open_trades if tr.side == "short"])
+                if short_units
+                else 0.0
+            ),
             "open_trades": [
                 {
                     "trade_id": f"sim-{i}",
@@ -259,10 +302,24 @@ def simulate_day(df_m1: pd.DataFrame) -> Dict[str, float]:
         for sig in signals:
             action = sig.get("action")
             if action == "OPEN_LONG" and not cur_long:
-                open_trades.append(SimTrade(side="long", units=1000, open_time=t, open_px=float(row["close"])) )
+                open_trades.append(
+                    SimTrade(
+                        side="long",
+                        units=1000,
+                        open_time=t,
+                        open_px=float(row["close"]),
+                    )
+                )
                 cur_long = True
             elif action == "OPEN_SHORT" and not cur_short:
-                open_trades.append(SimTrade(side="short", units=1000, open_time=t, open_px=float(row["close"])) )
+                open_trades.append(
+                    SimTrade(
+                        side="short",
+                        units=1000,
+                        open_time=t,
+                        open_px=float(row["close"]),
+                    )
+                )
                 cur_short = True
 
     # Close any remaining at last price

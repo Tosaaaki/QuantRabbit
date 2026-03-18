@@ -288,12 +288,16 @@ def _adjust_dynamic_breakout_weight(
     skill_abs = abs(_safe_float(breakout_skill, 0.0))
     skill_signal = _clamp((skill_abs - center) / center, -1.0, 1.0)
     sample_conf = _clamp(
-        float(max(0, int(breakout_samples))) / max(float(max(1, int(breakout_min_samples)) * 2), 1.0),
+        float(max(0, int(breakout_samples)))
+        / max(float(max(1, int(breakout_min_samples)) * 2), 1.0),
         0.0,
         1.0,
     )
     regime_signal = _clamp(float(trend_strength) - float(range_pressure), -1.0, 1.0)
-    delta = float(skill_gain) * skill_signal * sample_conf + float(regime_gain) * regime_signal
+    delta = (
+        float(skill_gain) * skill_signal * sample_conf
+        + float(regime_gain) * regime_signal
+    )
     cap = _clamp(float(max_scale_delta), 0.0, 0.6)
     delta = _clamp(delta, -cap, cap)
     return _clamp(base * (1.0 + delta), 0.0, 1.0), float(delta)
@@ -325,12 +329,16 @@ def _adjust_dynamic_session_weight(
     bias_abs = abs(_safe_float(session_bias, 0.0))
     bias_signal = _clamp((bias_abs - center) / center, -1.0, 1.0)
     sample_conf = _clamp(
-        float(max(0, int(session_samples))) / max(float(max(1, int(session_min_samples)) * 3), 1.0),
+        float(max(0, int(session_samples)))
+        / max(float(max(1, int(session_min_samples)) * 3), 1.0),
         0.0,
         1.0,
     )
     regime_signal = _clamp(float(range_pressure) - float(trend_strength), -1.0, 1.0)
-    delta = float(bias_gain) * bias_signal * sample_conf + float(regime_gain) * regime_signal
+    delta = (
+        float(bias_gain) * bias_signal * sample_conf
+        + float(regime_gain) * regime_signal
+    )
     cap = _clamp(float(max_scale_delta), 0.0, 0.6)
     delta = _clamp(delta, -cap, cap)
     return _clamp(base * (1.0 + delta), 0.0, 1.0), float(delta)
@@ -348,7 +356,9 @@ def _extract_ohlc(row: pd.Series) -> Optional[tuple[float, float, float, float]]
     h = _safe_float(row.get("high"), math.nan)
     l = _safe_float(row.get("low"), math.nan)
     c = _safe_float(row.get("close"), math.nan)
-    if not (math.isfinite(o) and math.isfinite(h) and math.isfinite(l) and math.isfinite(c)):
+    if not (
+        math.isfinite(o) and math.isfinite(h) and math.isfinite(l) and math.isfinite(c)
+    ):
         return None
     if h < l:
         h, l = l, h
@@ -417,8 +427,8 @@ def _rebound_bias_signal(
         1.0,
     )
     rebound_signal = drop_score * core
-    rebound_signal *= (1.0 - 0.42 * breakout_drag)
-    rebound_signal *= (1.0 - 0.48 * trend_drag)
+    rebound_signal *= 1.0 - 0.42 * breakout_drag
+    rebound_signal *= 1.0 - 0.48 * trend_drag
     if drop_score < 0.20:
         rebound_signal *= 0.35
     if oversold_score < 0.15:
@@ -442,7 +452,8 @@ def _build_range_band(
 ) -> tuple[float, float]:
     sigma = max(
         RANGE_SIGMA_FLOOR_PIPS,
-        float(expected_move) * (0.62 + 0.38 * (1.0 - _clamp(float(projection_confidence), 0.0, 1.0))),
+        float(expected_move)
+        * (0.62 + 0.38 * (1.0 - _clamp(float(projection_confidence), 0.0, 1.0))),
     )
     low = float(expected_pips) + _normal_quantile_z(RANGE_BAND_LOWER_Q) * sigma
     high = float(expected_pips) + _normal_quantile_z(RANGE_BAND_UPPER_Q) * sigma
@@ -609,12 +620,17 @@ def _prediction_before(
         1.0,
     )
     trend_strength = _clamp(
-        trend_strength + trend_boost - 0.35 * range_boost + 0.05 * abs(projection_score),
+        trend_strength
+        + trend_boost
+        - 0.35 * range_boost
+        + 0.05 * abs(projection_score),
         0.0,
         1.0,
     )
     range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
-    range_pressure = _clamp(range_pressure + 0.45 * range_boost - 0.15 * trend_boost, 0.0, 1.0)
+    range_pressure = _clamp(
+        range_pressure + 0.45 * range_boost - 0.15 * trend_boost, 0.0, 1.0
+    )
 
     horizon = _horizon_from_step(step)
     cfg = TECH_HORIZON_CFG.get(horizon, TECH_HORIZON_CFG["8h"])
@@ -683,14 +699,20 @@ def _prediction_after(
     rsi = (_safe_float(row.get("rsi_14"), 50.0) - 50.0) / 16.0
     range_pos = (_safe_float(row.get("range_pos"), 0.5) - 0.5) * 2.0
 
-    trend_slope20 = _safe_float(row.get("trend_slope_pips_20"), 0.0) / max(0.55, atr * 0.42)
-    trend_slope50 = _safe_float(row.get("trend_slope_pips_50"), 0.0) / max(0.55, atr * 0.46)
+    trend_slope20 = _safe_float(row.get("trend_slope_pips_20"), 0.0) / max(
+        0.55, atr * 0.42
+    )
+    trend_slope50 = _safe_float(row.get("trend_slope_pips_50"), 0.0) / max(
+        0.55, atr * 0.46
+    )
     trend_accel = _safe_float(row.get("trend_accel_pips"), 0.0) / max(0.40, atr * 0.34)
     sr_balance = _clamp(_safe_float(row.get("sr_balance_20"), 0.0), -1.0, 1.0)
     breakout_up = _safe_float(row.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
     breakout_down = _safe_float(row.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
     breakout_bias = breakout_up - breakout_down
-    breakout_adaptive = math.tanh(breakout_bias * 0.9) * _clamp(float(breakout_skill), -1.0, 1.0)
+    breakout_adaptive = math.tanh(breakout_bias * 0.9) * _clamp(
+        float(breakout_skill), -1.0, 1.0
+    )
     donchian_width = max(0.25, abs(_safe_float(row.get("donchian_width_pips_20"), 0.0)))
     range_compression = _safe_float(row.get("range_compression_20"), 0.0)
     trend_pullback = _safe_float(row.get("trend_pullback_norm_20"), 0.0)
@@ -746,7 +768,10 @@ def _prediction_after(
         1.0,
     )
     trend_strength = _clamp(
-        trend_strength + trend_boost - 0.35 * range_boost + 0.05 * abs(projection_score),
+        trend_strength
+        + trend_boost
+        - 0.35 * range_boost
+        + 0.05 * abs(projection_score),
         0.0,
         1.0,
     )
@@ -952,7 +977,10 @@ def _evaluate_step(
         if breakout_adaptive_weight_eff > 0.0:
             signal_hist = breakout_signal_hist
             target_hist = realized_hist
-            if breakout_adaptive_lookback > 0 and len(breakout_signal_hist) > breakout_adaptive_lookback:
+            if (
+                breakout_adaptive_lookback > 0
+                and len(breakout_signal_hist) > breakout_adaptive_lookback
+            ):
                 signal_hist = breakout_signal_hist[-breakout_adaptive_lookback:]
                 target_hist = realized_hist[-breakout_adaptive_lookback:]
             breakout_skill, _, breakout_skill_samples = _estimate_directional_skill(
@@ -1013,12 +1041,18 @@ def _evaluate_step(
         mae_before.append(abs(expected_before - realized))
         mae_after.append(abs(expected_after - realized))
         range_coverage_before.append(
-            1 if pred_before.range_low_pips <= realized <= pred_before.range_high_pips else 0
+            1
+            if pred_before.range_low_pips <= realized <= pred_before.range_high_pips
+            else 0
         )
         range_coverage_after.append(
-            1 if pred_after.range_low_pips <= realized <= pred_after.range_high_pips else 0
+            1
+            if pred_after.range_low_pips <= realized <= pred_after.range_high_pips
+            else 0
         )
-        range_width_before.append(pred_before.range_high_pips - pred_before.range_low_pips)
+        range_width_before.append(
+            pred_before.range_high_pips - pred_before.range_low_pips
+        )
         range_width_after.append(pred_after.range_high_pips - pred_after.range_low_pips)
 
         breakout_bias = float(row["breakout_up_pips_20"] - row["breakout_down_pips_20"])
@@ -1074,7 +1108,9 @@ def _evaluate_step(
     hit_a = sum(hit_after) / float(n)
     mae_b = sum(mae_before) / float(n)
     mae_a = sum(mae_after) / float(n)
-    breakout_hit = sum(breakout_hits) / float(len(breakout_hits)) if breakout_hits else 0.0
+    breakout_hit = (
+        sum(breakout_hits) / float(len(breakout_hits)) if breakout_hits else 0.0
+    )
     breakout_hit_filtered = (
         sum(breakout_filtered_hits) / float(len(breakout_filtered_hits))
         if breakout_filtered_hits
@@ -1248,7 +1284,9 @@ def main() -> int:
     ap.add_argument("--json-out", default="", help="Optional output JSON path.")
     args = ap.parse_args()
 
-    patterns = [token.strip() for token in str(args.patterns).split(",") if token.strip()]
+    patterns = [
+        token.strip() for token in str(args.patterns).split(",") if token.strip()
+    ]
     candles = _load_candles(patterns)
     if not candles:
         print("no candles loaded")
@@ -1283,7 +1321,9 @@ def main() -> int:
 
     feature_expansion_gain = _clamp(float(args.feature_expansion_gain), 0.0, 1.0)
     breakout_adaptive_weight = _clamp(float(args.breakout_adaptive_weight), 0.0, 1.0)
-    breakout_adaptive_weight_map = _parse_horizon_weight_map(args.breakout_adaptive_weight_map)
+    breakout_adaptive_weight_map = _parse_horizon_weight_map(
+        args.breakout_adaptive_weight_map
+    )
     breakout_adaptive_min_samples = max(1, int(args.breakout_adaptive_min_samples))
     breakout_adaptive_lookback = max(
         breakout_adaptive_min_samples,
@@ -1301,12 +1341,22 @@ def main() -> int:
     dynamic_weight_enabled = bool(int(args.dynamic_weight_enabled))
     dynamic_weight_horizons = _parse_horizon_set(args.dynamic_weight_horizons)
     dynamic_max_scale_delta = _clamp(float(args.dynamic_max_scale_delta), 0.0, 0.6)
-    dynamic_breakout_skill_center = _clamp(float(args.dynamic_breakout_skill_center), 0.0, 0.5)
-    dynamic_breakout_skill_gain = _clamp(float(args.dynamic_breakout_skill_gain), 0.0, 1.0)
-    dynamic_breakout_regime_gain = _clamp(float(args.dynamic_breakout_regime_gain), 0.0, 1.0)
-    dynamic_session_bias_center = _clamp(float(args.dynamic_session_bias_center), 0.0, 0.5)
+    dynamic_breakout_skill_center = _clamp(
+        float(args.dynamic_breakout_skill_center), 0.0, 0.5
+    )
+    dynamic_breakout_skill_gain = _clamp(
+        float(args.dynamic_breakout_skill_gain), 0.0, 1.0
+    )
+    dynamic_breakout_regime_gain = _clamp(
+        float(args.dynamic_breakout_regime_gain), 0.0, 1.0
+    )
+    dynamic_session_bias_center = _clamp(
+        float(args.dynamic_session_bias_center), 0.0, 0.5
+    )
     dynamic_session_bias_gain = _clamp(float(args.dynamic_session_bias_gain), 0.0, 1.0)
-    dynamic_session_regime_gain = _clamp(float(args.dynamic_session_regime_gain), 0.0, 1.0)
+    dynamic_session_regime_gain = _clamp(
+        float(args.dynamic_session_regime_gain), 0.0, 1.0
+    )
 
     rows = [
         _evaluate_step(
@@ -1416,7 +1466,9 @@ def main() -> int:
         }
         out = Path(args.json_out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        out.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print(f"json_out={out}")
 
     return 0

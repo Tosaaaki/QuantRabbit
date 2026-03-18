@@ -46,7 +46,11 @@ class _Tick:
 
 
 def _pricing_host(practice: bool) -> str:
-    return "https://stream-fxpractice.oanda.com" if practice else "https://stream-fxtrade.oanda.com"
+    return (
+        "https://stream-fxpractice.oanda.com"
+        if practice
+        else "https://stream-fxtrade.oanda.com"
+    )
 
 
 def _now_utc() -> datetime:
@@ -126,9 +130,15 @@ async def stream_ticks(instrument: str, minutes: float) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Fetch live ticks from OANDA pricing stream and store to logs/replay.")
-    ap.add_argument("--instrument", default="USD_JPY", help="Instrument (default USD_JPY)")
-    ap.add_argument("--minutes", type=float, default=10.0, help="Duration to stream (minutes)")
+    ap = argparse.ArgumentParser(
+        description="Fetch live ticks from OANDA pricing stream and store to logs/replay."
+    )
+    ap.add_argument(
+        "--instrument", default="USD_JPY", help="Instrument (default USD_JPY)"
+    )
+    ap.add_argument(
+        "--minutes", type=float, default=10.0, help="Duration to stream (minutes)"
+    )
     args = ap.parse_args()
     try:
         asyncio.run(stream_ticks(args.instrument, args.minutes))

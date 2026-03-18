@@ -18,16 +18,30 @@ from scripts import gpt_ops_report
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Build market context JSON for ops playbook")
-    ap.add_argument("--output", default=os.getenv("OPS_PLAYBOOK_MARKET_CONTEXT_PATH", "logs/market_context_latest.json"))
-    ap.add_argument("--events-path", default=os.getenv("OPS_PLAYBOOK_EVENTS_PATH", "logs/market_events.json"))
+    ap = argparse.ArgumentParser(
+        description="Build market context JSON for ops playbook"
+    )
+    ap.add_argument(
+        "--output",
+        default=os.getenv(
+            "OPS_PLAYBOOK_MARKET_CONTEXT_PATH", "logs/market_context_latest.json"
+        ),
+    )
+    ap.add_argument(
+        "--events-path",
+        default=os.getenv("OPS_PLAYBOOK_EVENTS_PATH", "logs/market_events.json"),
+    )
     ap.add_argument(
         "--market-external-path",
-        default=os.getenv("OPS_PLAYBOOK_EXTERNAL_SNAPSHOT_PATH", "logs/market_external_snapshot.json"),
+        default=os.getenv(
+            "OPS_PLAYBOOK_EXTERNAL_SNAPSHOT_PATH", "logs/market_external_snapshot.json"
+        ),
     )
     ap.add_argument(
         "--macro-snapshot-path",
-        default=os.getenv("OPS_PLAYBOOK_MACRO_SNAPSHOT_PATH", "fixtures/macro_snapshots/latest.json"),
+        default=os.getenv(
+            "OPS_PLAYBOOK_MACRO_SNAPSHOT_PATH", "fixtures/macro_snapshots/latest.json"
+        ),
     )
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()

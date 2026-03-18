@@ -15,11 +15,15 @@ LOG = logging.getLogger(__name__)
 
 _FALSEY = {"", "0", "false", "no", "off"}
 
-_STRATEGY_PROTECTION_ENABLED = os.getenv("STRATEGY_PROTECTION_ENABLED", "1").strip().lower() not in _FALSEY
+_STRATEGY_PROTECTION_ENABLED = (
+    os.getenv("STRATEGY_PROTECTION_ENABLED", "1").strip().lower() not in _FALSEY
+)
 _STRATEGY_PROTECTION_PATH = pathlib.Path(
     os.getenv("STRATEGY_PROTECTION_PATH", "config/strategy_exit_protections.yaml")
 )
-_STRATEGY_PROTECTION_TTL_SEC = max(1.0, float(os.getenv("STRATEGY_PROTECTION_TTL_SEC", "12.0") or 12.0))
+_STRATEGY_PROTECTION_TTL_SEC = max(
+    1.0, float(os.getenv("STRATEGY_PROTECTION_TTL_SEC", "12.0") or 12.0)
+)
 _STRATEGY_PROTECTION_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 
 # Keep consistent with execution.order_manager / workers.scalp_precision.exit_worker.
@@ -70,11 +74,16 @@ def _load_strategy_protection_config() -> dict:
         payload = _STRATEGY_PROTECTION_CACHE.get("data")  # type: ignore[assignment]
     if yaml is not None and _STRATEGY_PROTECTION_PATH.exists():
         try:
-            loaded = yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8")) or {}
+            loaded = (
+                yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8"))
+                or {}
+            )
             if isinstance(loaded, dict):
                 payload = loaded
         except Exception as exc:  # noqa: BLE001
-            LOG.warning("Strategy protection config load failed (using cached): %s", exc)
+            LOG.warning(
+                "Strategy protection config load failed (using cached): %s", exc
+            )
     _STRATEGY_PROTECTION_CACHE["ts"] = now
     _STRATEGY_PROTECTION_CACHE["data"] = payload
     return payload
@@ -118,18 +127,26 @@ def _merge_profile(base: Optional[dict], override: Optional[dict]) -> dict:
 def exit_profile_for_tag(strategy_tag: Optional[str]) -> dict:
     cfg = _load_strategy_protection_config()
     defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
-    defaults_profile = defaults.get("exit_profile") if isinstance(defaults, dict) else None
+    defaults_profile = (
+        defaults.get("exit_profile") if isinstance(defaults, dict) else None
+    )
     override = _strategy_override(cfg, strategy_tag)
-    override_profile = override.get("exit_profile") if isinstance(override, dict) else None
+    override_profile = (
+        override.get("exit_profile") if isinstance(override, dict) else None
+    )
     return _merge_profile(defaults_profile, override_profile)
 
 
 def be_profile_for_tag(strategy_tag: Optional[str]) -> dict:
     cfg = _load_strategy_protection_config()
     defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
-    defaults_profile = defaults.get("be_profile") if isinstance(defaults, dict) else None
+    defaults_profile = (
+        defaults.get("be_profile") if isinstance(defaults, dict) else None
+    )
     override = _strategy_override(cfg, strategy_tag)
-    override_profile = override.get("be_profile") if isinstance(override, dict) else None
+    override_profile = (
+        override.get("be_profile") if isinstance(override, dict) else None
+    )
     return _merge_profile(defaults_profile, override_profile)
 
 

@@ -38,19 +38,21 @@ def fetch_latest(pattern_limit: int = 80):
                 thesis = payload.get("meta", {}).get("entry_thesis", {})
             except json.JSONDecodeError:
                 pass
-        records.append({
-            "ticket_id": tr["ticket_id"],
-            "close_reason": tr["close_reason"],
-            "pl_pips": tr["pl_pips"],
-            "entry": tr["entry_time"],
-            "pattern": thesis.get("pattern_tag", "unknown"),
-            "momentum": thesis.get("momentum_pips"),
-            "short_momentum": thesis.get("short_momentum_pips"),
-            "atr": thesis.get("tick_atr"),
-            "rsi": thesis.get("tick_rsi"),
-            "range": thesis.get("range_pips"),
-            "tick_count": thesis.get("tick_count"),
-        })
+        records.append(
+            {
+                "ticket_id": tr["ticket_id"],
+                "close_reason": tr["close_reason"],
+                "pl_pips": tr["pl_pips"],
+                "entry": tr["entry_time"],
+                "pattern": thesis.get("pattern_tag", "unknown"),
+                "momentum": thesis.get("momentum_pips"),
+                "short_momentum": thesis.get("short_momentum_pips"),
+                "atr": thesis.get("tick_atr"),
+                "rsi": thesis.get("tick_rsi"),
+                "range": thesis.get("range_pips"),
+                "tick_count": thesis.get("tick_count"),
+            }
+        )
 
     orders.close()
     trades.close()

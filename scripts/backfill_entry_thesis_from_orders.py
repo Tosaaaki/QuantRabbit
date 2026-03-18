@@ -38,7 +38,9 @@ from typing import Any
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Backfill trades.entry_thesis from orders.db (contract fields)")
+    p = argparse.ArgumentParser(
+        description="Backfill trades.entry_thesis from orders.db (contract fields)"
+    )
     p.add_argument("--trades-db", default="logs/trades.db", help="Path to trades.db")
     p.add_argument("--orders-db", default="logs/orders.db", help="Path to orders.db")
     p.add_argument(
@@ -46,15 +48,23 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Only backfill trades with close_time <= this ISO8601 UTC timestamp (e.g. 2026-02-27T23:59:59+00:00)",
     )
-    p.add_argument("--limit", type=int, default=0, help="Max rows to scan (0 = no limit)")
+    p.add_argument(
+        "--limit", type=int, default=0, help="Max rows to scan (0 = no limit)"
+    )
     p.add_argument("--dry-run", action="store_true", help="Do not write anything")
-    p.add_argument("--no-backup", action="store_true", help="Skip pre-write backup (not recommended)")
+    p.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Skip pre-write backup (not recommended)",
+    )
     p.add_argument(
         "--backup-dir",
         default="logs/archive",
         help="Directory to store backup copy of trades.db",
     )
-    p.add_argument("--print-samples", type=int, default=8, help="Print N sample updates")
+    p.add_argument(
+        "--print-samples", type=int, default=8, help="Print N sample updates"
+    )
     return p.parse_args()
 
 
@@ -278,7 +288,9 @@ def main() -> int:
                 tuple(params),
             ).fetchall()
 
-            print(f"[backfill] candidates={len(rows)} dry_run={bool(args.dry_run)} until_utc={args.until_utc or '-'}")
+            print(
+                f"[backfill] candidates={len(rows)} dry_run={bool(args.dry_run)} until_utc={args.until_utc or '-'}"
+            )
             if not rows:
                 return 0
 
@@ -316,10 +328,16 @@ def main() -> int:
                 if strategy_tag:
                     merged.setdefault("strategy_tag", strategy_tag)
 
-                normalized_prob = _normalize_entry_probability(merged.get("entry_probability"))
-                merged["entry_probability"] = normalized_prob if normalized_prob is not None else 1.0
+                normalized_prob = _normalize_entry_probability(
+                    merged.get("entry_probability")
+                )
+                merged["entry_probability"] = (
+                    normalized_prob if normalized_prob is not None else 1.0
+                )
 
-                normalized_units = _normalize_units_intent(merged.get("entry_units_intent"))
+                normalized_units = _normalize_units_intent(
+                    merged.get("entry_units_intent")
+                )
                 if normalized_units is None and trade_units is not None:
                     normalized_units = _normalize_units_intent(trade_units)
                 merged["entry_units_intent"] = int(normalized_units or 0)
@@ -341,7 +359,9 @@ def main() -> int:
                             int(has_order_row),
                             int(bool(row["request_json"])),
                             str(row["order_status"] or "-"),
-                            json.dumps(existing, ensure_ascii=False, sort_keys=True)[:160],
+                            json.dumps(existing, ensure_ascii=False, sort_keys=True)[
+                                :160
+                            ],
                             new_json[:160],
                         )
                     )
@@ -349,7 +369,13 @@ def main() -> int:
 
             print(
                 "[backfill] updates=%d orders_matched=%d orders_with_request=%d recovered_from_orders=%d fallback_only=%d"
-                % (len(updates), orders_matched, orders_with_request, recovered, fallback_only)
+                % (
+                    len(updates),
+                    orders_matched,
+                    orders_with_request,
+                    recovered,
+                    fallback_only,
+                )
             )
 
             if args.dry_run or not updates:

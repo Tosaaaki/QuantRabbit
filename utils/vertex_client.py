@@ -17,7 +17,9 @@ except Exception:  # pragma: no cover
     GoogleAuthRequest = None  # type: ignore
 
 
-DEFAULT_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", os.getenv("GCP_LOCATION", "us-central1"))
+DEFAULT_VERTEX_LOCATION = os.getenv(
+    "VERTEX_LOCATION", os.getenv("GCP_LOCATION", "us-central1")
+)
 DEFAULT_VERTEX_MODEL = os.getenv("VERTEX_MODEL", "")
 DEFAULT_TIMEOUT_SEC = float(os.getenv("VERTEX_TIMEOUT_SEC", "20"))
 
@@ -40,7 +42,9 @@ class VertexResponse:
 def _refresh_token(project_id: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     if google is None or GoogleAuthRequest is None:
         return None, project_id
-    creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds, project = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
     creds.refresh(GoogleAuthRequest())
     token = creds.token
     exp = time.time() + 300
@@ -91,7 +95,12 @@ def call_vertex_text(
     timeout_sec: Optional[float] = None,
     response_mime_type: Optional[str] = None,
 ) -> Optional[VertexResponse]:
-    resolved_model = model or DEFAULT_VERTEX_MODEL or os.getenv("VERTEX_POLICY_MODEL") or "gemini-2.0-flash"
+    resolved_model = (
+        model
+        or DEFAULT_VERTEX_MODEL
+        or os.getenv("VERTEX_POLICY_MODEL")
+        or "gemini-2.0-flash"
+    )
     resolved_location = location or DEFAULT_VERTEX_LOCATION
     resolved_project = (
         project_id
@@ -120,7 +129,12 @@ def call_vertex_text(
     }
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout_sec or DEFAULT_TIMEOUT_SEC)
+        resp = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=timeout_sec or DEFAULT_TIMEOUT_SEC,
+        )
         resp.raise_for_status()
         data = resp.json()
         text = _extract_text(data)

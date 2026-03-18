@@ -7,7 +7,9 @@ from pathlib import Path
 from workers.common.dynamic_alloc import load_strategy_profile
 
 
-def test_load_strategy_profile_applies_soft_participation_policy(tmp_path: Path) -> None:
+def test_load_strategy_profile_applies_soft_participation_policy(
+    tmp_path: Path,
+) -> None:
     payload = {
         "allocation_policy": {
             "soft_participation": True,
@@ -36,7 +38,9 @@ def test_load_strategy_profile_applies_soft_participation_policy(tmp_path: Path)
     assert profile["lot_multiplier"] == 0.30
 
 
-def test_load_strategy_profile_defaults_keep_block_behavior_without_policy(tmp_path: Path) -> None:
+def test_load_strategy_profile_defaults_keep_block_behavior_without_policy(
+    tmp_path: Path,
+) -> None:
     payload = {
         "strategies": {
             "scalp_ping_5s_c_live": {
@@ -57,7 +61,9 @@ def test_load_strategy_profile_defaults_keep_block_behavior_without_policy(tmp_p
     assert profile["allow_winner_only"] is True
 
 
-def test_load_strategy_profile_falls_back_to_case_insensitive_key(tmp_path: Path) -> None:
+def test_load_strategy_profile_falls_back_to_case_insensitive_key(
+    tmp_path: Path,
+) -> None:
     payload = {
         "strategies": {
             "m1scalper-m1": {
@@ -124,7 +130,9 @@ def test_load_strategy_profile_prefers_setup_override(tmp_path: Path) -> None:
     assert profile["setup_override"]["match_dimension"] == "setup_fingerprint"
 
 
-def test_load_strategy_profile_derives_setup_override_from_technical_context(tmp_path: Path) -> None:
+def test_load_strategy_profile_derives_setup_override_from_technical_context(
+    tmp_path: Path,
+) -> None:
     payload = {
         "strategies": {
             "RangeFader-sell-fade": {
@@ -218,7 +226,9 @@ def test_load_strategy_profile_keeps_strategy_level_trim_without_matching_setup_
     assert profile["setup_identity"]["flow_regime"] == "range_fade"
 
 
-def test_load_strategy_profile_returns_policy_default_when_unknown(tmp_path: Path) -> None:
+def test_load_strategy_profile_returns_policy_default_when_unknown(
+    tmp_path: Path,
+) -> None:
     payload = {
         "allocation_policy": {
             "soft_participation": True,

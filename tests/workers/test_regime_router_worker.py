@@ -11,7 +11,9 @@ def test_decide_candidate_route_prefers_unknown_when_missing() -> None:
 def test_decide_candidate_route_matrix() -> None:
     assert regime_router_worker._decide_candidate_route("Trend", "Trend") == "trend"
     assert regime_router_worker._decide_candidate_route("Breakout", "Trend") == "trend"
-    assert regime_router_worker._decide_candidate_route("Range", "Breakout") == "breakout"
+    assert (
+        regime_router_worker._decide_candidate_route("Range", "Breakout") == "breakout"
+    )
     assert regime_router_worker._decide_candidate_route("Range", "Range") == "range"
     assert regime_router_worker._decide_candidate_route("Mixed", "Range") == "range"
     assert regime_router_worker._decide_candidate_route("Trend", "Mixed") == "mixed"
@@ -57,11 +59,15 @@ def test_apply_entry_plan_updates_only_changed_rows(monkeypatch) -> None:
         lambda slug: state.get(slug),
     )
 
-    def _set_flags(slug: str, *, entry=None, exit=None, lock=None, note=None) -> None:  # noqa: A002
+    def _set_flags(
+        slug: str, *, entry=None, exit=None, lock=None, note=None
+    ) -> None:  # noqa: A002
         state[slug] = (bool(entry), True, False)
         calls.append((slug, bool(entry), str(note or "")))
 
-    monkeypatch.setattr(regime_router_worker.strategy_control, "set_strategy_flags", _set_flags)
+    monkeypatch.setattr(
+        regime_router_worker.strategy_control, "set_strategy_flags", _set_flags
+    )
 
     changed, total = regime_router_worker._apply_entry_plan(
         {
@@ -81,15 +87,18 @@ def test_apply_entry_plan_updates_only_changed_rows(monkeypatch) -> None:
 
 
 def test_load_config_normalizes_routes(monkeypatch) -> None:
-    monkeypatch.setenv("REGIME_ROUTER_MANAGED_STRATEGIES", "scalp_ping_5s_c_live,SCALP_PING_5S_D")
+    monkeypatch.setenv(
+        "REGIME_ROUTER_MANAGED_STRATEGIES", "scalp_ping_5s_c_live,SCALP_PING_5S_D"
+    )
     monkeypatch.setenv("REGIME_ROUTER_TREND_ENTRY_STRATEGIES", "scalp_ping_5s_d_live")
     monkeypatch.setenv("REGIME_ROUTER_RANGE_ENTRY_STRATEGIES", "scalp_ping_5s_c_live")
     monkeypatch.setenv("REGIME_ROUTER_MIXED_ENTRY_STRATEGIES", "scalp_ping_5s_c_live")
-    monkeypatch.setenv("REGIME_ROUTER_BREAKOUT_ENTRY_STRATEGIES", "scalp_ping_5s_d_live")
+    monkeypatch.setenv(
+        "REGIME_ROUTER_BREAKOUT_ENTRY_STRATEGIES", "scalp_ping_5s_d_live"
+    )
     monkeypatch.setenv("REGIME_ROUTER_UNKNOWN_ENTRY_STRATEGIES", "scalp_ping_5s_c_live")
 
     cfg = regime_router_worker._load_config()
     assert cfg.managed_strategies == ("scalp_ping_5s_c", "scalp_ping_5s_d")
     assert cfg.route_targets["trend"] == {"scalp_ping_5s_d"}
     assert cfg.route_targets["range"] == {"scalp_ping_5s_c"}
-

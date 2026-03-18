@@ -4,6 +4,7 @@ Claude Scalp Loop — MTF分析ベースの裁量スキャルプ自動ループ
 目標: 30分で1000 JPY
 手法: H1トレンド方向 × M5タイミング × M1微調整
 """
+
 from __future__ import annotations
 
 import json
@@ -31,13 +32,13 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 INSTRUMENT = "USD_JPY"
 
 # Trading params
-BASE_UNITS = 5000          # ~50 JPY/pip at USD/JPY ~159
-SL_PIPS = 4.0              # Stop loss
-TP_PIPS = 6.0              # Take profit (RR 1.5:1)
-MAX_POSITIONS = 1           # Max concurrent trades
-LOOP_INTERVAL_SEC = 15      # Analysis interval
-SESSION_TARGET_JPY = 1000   # 30-min target
-MAX_DRAWDOWN_JPY = -500     # Max session drawdown before pause
+BASE_UNITS = 5000  # ~50 JPY/pip at USD/JPY ~159
+SL_PIPS = 4.0  # Stop loss
+TP_PIPS = 6.0  # Take profit (RR 1.5:1)
+MAX_POSITIONS = 1  # Max concurrent trades
+LOOP_INTERVAL_SEC = 15  # Analysis interval
+SESSION_TARGET_JPY = 1000  # 30-min target
+MAX_DRAWDOWN_JPY = -500  # Max session drawdown before pause
 
 LOG_PATH = PROJECT_ROOT / "logs" / "claude_scalp_loop.jsonl"
 
@@ -51,11 +52,13 @@ log = logging.getLogger("scalp_loop")
 
 # ─── OANDA API Helpers ───
 
+
 def get_price() -> tuple[float, float]:
     """Returns (bid, ask)"""
     resp = requests.get(
         f"{HOST}/v3/accounts/{ACCOUNT}/pricing?instruments={INSTRUMENT}",
-        headers=HEADERS, timeout=10,
+        headers=HEADERS,
+        timeout=10,
     )
     resp.raise_for_status()
     p = resp.json()["prices"][0]
@@ -65,7 +68,8 @@ def get_price() -> tuple[float, float]:
 def get_candles(tf: str, count: int) -> list[dict]:
     resp = requests.get(
         f"{HOST}/v3/instruments/{INSTRUMENT}/candles?granularity={tf}&count={count}",
-        headers=HEADERS, timeout=10,
+        headers=HEADERS,
+        timeout=10,
     )
     resp.raise_for_status()
     candles = resp.json()["candles"]
@@ -74,22 +78,25 @@ def get_candles(tf: str, count: int) -> list[dict]:
         if not c.get("complete", True) and tf != "M1":
             continue  # Skip incomplete except M1
         mid = c["mid"]
-        result.append({
-            "time": c["time"],
-            "o": float(mid["o"]),
-            "h": float(mid["h"]),
-            "l": float(mid["l"]),
-            "c": float(mid["c"]),
-            "vol": c["volume"],
-            "complete": c["complete"],
-        })
+        result.append(
+            {
+                "time": c["time"],
+                "o": float(mid["o"]),
+                "h": float(mid["h"]),
+                "l": float(mid["l"]),
+                "c": float(mid["c"]),
+                "vol": c["volume"],
+                "complete": c["complete"],
+            }
+        )
     return result
 
 
 def get_account_nav() -> float:
     resp = requests.get(
         f"{HOST}/v3/accounts/{ACCOUNT}/summary",
-        headers=HEADERS, timeout=10,
+        headers=HEADERS,
+        timeout=10,
     )
     resp.raise_for_status()
     return float(resp.json()["account"]["NAV"])
@@ -98,7 +105,8 @@ def get_account_nav() -> float:
 def get_open_trades() -> list[dict]:
     resp = requests.get(
         f"{HOST}/v3/accounts/{ACCOUNT}/openTrades",
-        headers=HEADERS, timeout=10,
+        headers=HEADERS,
+        timeout=10,
     )
     resp.raise_for_status()
     return resp.json().get("trades", [])
@@ -129,21 +137,26 @@ def place_market_order(
     resp = requests.post(
         f"{HOST}/v3/accounts/{ACCOUNT}/orders",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json=body, timeout=10,
+        json=body,
+        timeout=10,
     )
     data = resp.json()
 
     if "orderFillTransaction" in data:
         trade_id = data["orderFillTransaction"].get("tradeOpened", {}).get("tradeID")
         fill_price = data["orderFillTransaction"].get("price", "?")
-        log.info(f"FILLED: {units}u @ {fill_price} | SL={sl_price:.3f} TP={tp_price:.3f} | {reason}")
+        log.info(
+            f"FILLED: {units}u @ {fill_price} | SL={sl_price:.3f} TP={tp_price:.3f} | {reason}"
+        )
         return trade_id
     elif "orderCancelTransaction" in data:
         cancel_reason = data["orderCancelTransaction"].get("reason", "unknown")
         log.warning(f"ORDER CANCELLED: {cancel_reason}")
         return None
     else:
-        log.warning(f"ORDER UNKNOWN RESPONSE: {json.dumps(data, ensure_ascii=False)[:300]}")
+        log.warning(
+            f"ORDER UNKNOWN RESPONSE: {json.dumps(data, ensure_ascii=False)[:300]}"
+        )
         return None
 
 
@@ -165,7 +178,9 @@ def close_trade(trade_id: str) -> Optional[float]:
         return None
 
 
-def modify_trade_sl_tp(trade_id: str, sl_price: Optional[float] = None, tp_price: Optional[float] = None):
+def modify_trade_sl_tp(
+    trade_id: str, sl_price: Optional[float] = None, tp_price: Optional[float] = None
+):
     """Modify SL/TP on an existing trade."""
     body = {}
     if sl_price is not None:
@@ -177,7 +192,8 @@ def modify_trade_sl_tp(trade_id: str, sl_price: Optional[float] = None, tp_price
     resp = requests.put(
         f"{HOST}/v3/accounts/{ACCOUNT}/trades/{trade_id}/orders",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json=body, timeout=10,
+        json=body,
+        timeout=10,
     )
     if resp.status_code == 200:
         log.info(f"Modified trade {trade_id}: SL={sl_price} TP={tp_price}")
@@ -186,6 +202,7 @@ def modify_trade_sl_tp(trade_id: str, sl_price: Optional[float] = None, tp_price
 
 
 # ─── Technical Analysis ───
+
 
 def compute_ema(values: list[float], period: int) -> list[float]:
     if not values:
@@ -270,8 +287,8 @@ def detect_m5_signal(candles: list[dict], h1_trend: str) -> tuple[Optional[str],
         h1_trend == "up"
         and ema_bullish
         and prev["l"] <= ema8[-2]  # Dipped to EMA
-        and last["c"] > ema8[-1]   # Recovered above
-        and rsi < 65               # Not overbought
+        and last["c"] > ema8[-1]  # Recovered above
+        and rsi < 65  # Not overbought
         and last["c"] > last["o"]  # Bullish candle
     )
 
@@ -293,7 +310,8 @@ def detect_m5_signal(candles: list[dict], h1_trend: str) -> tuple[Optional[str],
         and last["c"] > last["o"]
         and is_strong
         and last["c"] > max(c["h"] for c in candles[-5:-1])  # New 5-bar high
-        and rsi > 50 and rsi < 75
+        and rsi > 50
+        and rsi < 75
     )
 
     momentum_sell = (
@@ -301,7 +319,8 @@ def detect_m5_signal(candles: list[dict], h1_trend: str) -> tuple[Optional[str],
         and last["c"] < last["o"]
         and is_strong
         and last["c"] < min(c["l"] for c in candles[-5:-1])  # New 5-bar low
-        and rsi < 50 and rsi > 25
+        and rsi < 50
+        and rsi > 25
     )
 
     # V-shape reversal (from previous session's winning pattern)
@@ -313,9 +332,9 @@ def detect_m5_signal(candles: list[dict], h1_trend: str) -> tuple[Optional[str],
         range_pips > 8  # Significant move
         and candles[-3]["c"] < candles[-3]["o"]  # Down candle
         and candles[-2]["c"] < candles[-2]["o"]  # Down candle
-        and last["c"] > last["o"]                # Reversal up
-        and last["c"] > candles[-2]["h"]          # Engulfing
-        and rsi < 45                              # Was oversold
+        and last["c"] > last["o"]  # Reversal up
+        and last["c"] > candles[-2]["h"]  # Engulfing
+        and rsi < 45  # Was oversold
     )
 
     v_reversal_sell = (
@@ -373,6 +392,7 @@ def compute_dynamic_sl_tp(
 
 # ─── Position Management ───
 
+
 def manage_open_position(trade: dict, bid: float, ask: float, atr_m5: float):
     """Trail stop and manage existing position."""
     trade_id = trade["id"]
@@ -382,7 +402,9 @@ def manage_open_position(trade: dict, bid: float, ask: float, atr_m5: float):
 
     is_long = units > 0
     current_price = bid if is_long else ask
-    pips_profit = ((current_price - entry) if is_long else (entry - current_price)) * 100
+    pips_profit = (
+        (current_price - entry) if is_long else (entry - current_price)
+    ) * 100
 
     # Get existing SL
     existing_sl = None
@@ -399,28 +421,37 @@ def manage_open_position(trade: dict, bid: float, ask: float, atr_m5: float):
         if is_long:
             new_sl = current_price - trail_distance * pip
             if new_sl > existing_sl + 0.002:  # Only move up
-                log.info(f"TRAIL: trade {trade_id} SL {existing_sl:.3f} → {new_sl:.3f} (profit={pips_profit:.1f}pip)")
+                log.info(
+                    f"TRAIL: trade {trade_id} SL {existing_sl:.3f} → {new_sl:.3f} (profit={pips_profit:.1f}pip)"
+                )
                 modify_trade_sl_tp(trade_id, sl_price=new_sl)
         else:
             new_sl = current_price + trail_distance * pip
             if new_sl < existing_sl - 0.002:  # Only move down
-                log.info(f"TRAIL: trade {trade_id} SL {existing_sl:.3f} → {new_sl:.3f} (profit={pips_profit:.1f}pip)")
+                log.info(
+                    f"TRAIL: trade {trade_id} SL {existing_sl:.3f} → {new_sl:.3f} (profit={pips_profit:.1f}pip)"
+                )
                 modify_trade_sl_tp(trade_id, sl_price=new_sl)
 
     # Emergency close if held too long with small profit
     open_time_str = trade.get("openTime", "")
     if open_time_str:
         try:
-            open_time = datetime.fromisoformat(open_time_str.replace("Z", "+00:00").split(".")[0] + "+00:00")
+            open_time = datetime.fromisoformat(
+                open_time_str.replace("Z", "+00:00").split(".")[0] + "+00:00"
+            )
             hold_secs = (datetime.now(timezone.utc) - open_time).total_seconds()
             if hold_secs > 600 and pips_profit > 0.5:  # 10min+ with small profit
-                log.info(f"TIME EXIT: trade {trade_id} held {hold_secs:.0f}s, profit={pips_profit:.1f}pip")
+                log.info(
+                    f"TIME EXIT: trade {trade_id} held {hold_secs:.0f}s, profit={pips_profit:.1f}pip"
+                )
                 close_trade(trade_id)
         except Exception:
             pass
 
 
 # ─── Session Tracking ───
+
 
 class SessionTracker:
     def __init__(self):
@@ -487,7 +518,9 @@ class SessionTracker:
 
         reasons = []
         if trades == 0:
-            reasons.append("NO_TRADES: シグナルが出なかった。フィルター条件を緩和すべきか検討")
+            reasons.append(
+                "NO_TRADES: シグナルが出なかった。フィルター条件を緩和すべきか検討"
+            )
         elif trades < 3:
             reasons.append(f"LOW_FREQUENCY: {trades}回のみ。エントリー機会が少なすぎ")
 
@@ -495,12 +528,18 @@ class SessionTracker:
             wr = self.wins / max(1, self.total_trades)
             if wr < 0.5:
                 reasons.append(f"LOW_WINRATE: {wr:.0%}。トレンド方向の精度を上げる必要")
-            reasons.append(f"NEGATIVE_PL: {pl:.0f}JPY。SL/TP比率やエントリー精度を見直す")
+            reasons.append(
+                f"NEGATIVE_PL: {pl:.0f}JPY。SL/TP比率やエントリー精度を見直す"
+            )
 
         if 0 <= pl < SESSION_TARGET_JPY:
-            reasons.append(f"INSUFFICIENT_GAIN: {pl:.0f}/{SESSION_TARGET_JPY}JPY。ユニット数かTP幅の拡大を検討")
+            reasons.append(
+                f"INSUFFICIENT_GAIN: {pl:.0f}/{SESSION_TARGET_JPY}JPY。ユニット数かTP幅の拡大を検討"
+            )
 
-        reflection = f"[30min振り返り] PL={pl:.0f}JPY, Trades={trades} | " + " | ".join(reasons)
+        reflection = f"[30min振り返り] PL={pl:.0f}JPY, Trades={trades} | " + " | ".join(
+            reasons
+        )
         self.reflections.append(reflection)
         log.warning(reflection)
 
@@ -514,6 +553,7 @@ class SessionTracker:
 
 # ─── Log to file ───
 
+
 def log_to_file(entry: dict):
     entry["timestamp"] = datetime.now(timezone.utc).isoformat()
     with open(LOG_PATH, "a") as f:
@@ -521,6 +561,7 @@ def log_to_file(entry: dict):
 
 
 # ─── Main Loop ───
+
 
 def main():
     log.info("=" * 60)
@@ -559,10 +600,7 @@ def main():
 
             # 2. Check open positions
             open_trades = get_open_trades()
-            our_trades = [
-                t for t in open_trades
-                if t.get("instrument") == INSTRUMENT
-            ]
+            our_trades = [t for t in open_trades if t.get("instrument") == INSTRUMENT]
 
             # Manage existing positions
             if our_trades:
@@ -620,7 +658,9 @@ def main():
                 window = tracker.check_30min_window()
                 if "achieved" in window:
                     log_to_file({"type": "30min_window", **window})
-                    log.info(f"30min window: PL={window['pl']:.0f} JPY {'ACHIEVED' if window['achieved'] else 'MISSED'}")
+                    log.info(
+                        f"30min window: PL={window['pl']:.0f} JPY {'ACHIEVED' if window['achieved'] else 'MISSED'}"
+                    )
 
                 continue
 
@@ -628,13 +668,17 @@ def main():
 
             # 5. Execute trade
             entry_price = ask if signal == "buy" else bid
-            sl, tp = compute_dynamic_sl_tp(signal, entry_price, atr_m5 or 0.05, h1_trend)
+            sl, tp = compute_dynamic_sl_tp(
+                signal, entry_price, atr_m5 or 0.05, h1_trend
+            )
 
             units = BASE_UNITS if signal == "buy" else -BASE_UNITS
 
             log.info(f"SIGNAL: {signal.upper()} | {reason}")
             log.info(f"  Entry={entry_price:.3f} SL={sl:.3f} TP={tp:.3f} Units={units}")
-            log.info(f"  H1={h1_trend} M5={m5_trend} RSI={rsi_m5:.0f if rsi_m5 else '?'}")
+            log.info(
+                f"  H1={h1_trend} M5={m5_trend} RSI={rsi_m5:.0f if rsi_m5 else '?'}"
+            )
 
             trade_id = place_market_order(units, sl, tp, reason)
 
@@ -643,20 +687,22 @@ def main():
                 last_trade_time = now
                 cooldown_until = now + 30  # 30s cooldown after entry
 
-                log_to_file({
-                    "type": "entry",
-                    "signal": signal,
-                    "reason": reason,
-                    "entry_price": entry_price,
-                    "sl": sl,
-                    "tp": tp,
-                    "units": units,
-                    "trade_id": trade_id,
-                    "h1_trend": h1_trend,
-                    "m5_trend": m5_trend,
-                    "rsi": rsi_m5,
-                    "atr_m5": atr_m5,
-                })
+                log_to_file(
+                    {
+                        "type": "entry",
+                        "signal": signal,
+                        "reason": reason,
+                        "entry_price": entry_price,
+                        "sl": sl,
+                        "tp": tp,
+                        "units": units,
+                        "trade_id": trade_id,
+                        "h1_trend": h1_trend,
+                        "m5_trend": m5_trend,
+                        "rsi": rsi_m5,
+                        "atr_m5": atr_m5,
+                    }
+                )
             else:
                 cooldown_until = now + 60  # Wait longer on failure
 
@@ -666,13 +712,17 @@ def main():
             window = tracker.check_30min_window()
             if "achieved" in window:
                 log_to_file({"type": "30min_window", **window})
-                log.info(f"30min window: PL={window['pl']:.0f} JPY {'ACHIEVED' if window['achieved'] else 'MISSED'}")
+                log.info(
+                    f"30min window: PL={window['pl']:.0f} JPY {'ACHIEVED' if window['achieved'] else 'MISSED'}"
+                )
 
             # Session drawdown check
             current_nav = get_account_nav()
             session_pl = current_nav - tracker.start_nav
             if session_pl < MAX_DRAWDOWN_JPY:
-                log.error(f"SESSION DRAWDOWN LIMIT: {session_pl:.0f} JPY < {MAX_DRAWDOWN_JPY}. PAUSING 5min.")
+                log.error(
+                    f"SESSION DRAWDOWN LIMIT: {session_pl:.0f} JPY < {MAX_DRAWDOWN_JPY}. PAUSING 5min."
+                )
                 log_to_file({"type": "drawdown_pause", "session_pl": session_pl})
                 time.sleep(300)
 
@@ -690,7 +740,9 @@ def main():
     log.info("=" * 60)
     log.info(f"Session ended. {tracker.summary()}")
     final_nav = get_account_nav()
-    log.info(f"NAV: {tracker.start_nav:.0f} → {final_nav:.0f} JPY (PL={final_nav - tracker.start_nav:.0f})")
+    log.info(
+        f"NAV: {tracker.start_nav:.0f} → {final_nav:.0f} JPY (PL={final_nav - tracker.start_nav:.0f})"
+    )
     if tracker.reflections:
         log.info("Reflections:")
         for r in tracker.reflections:

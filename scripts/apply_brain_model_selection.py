@@ -54,7 +54,9 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Apply Brain model selection from benchmark JSON")
+    parser = argparse.ArgumentParser(
+        description="Apply Brain model selection from benchmark JSON"
+    )
     parser.add_argument("--benchmark", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--env-profile", type=Path, default=DEFAULT_ENV_PROFILE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -116,27 +118,43 @@ def _pick_models(
     quality_rows = [
         row
         for row in rows
-        if row.parse_pass_rate >= min_parse_pass_rate and row.alignment_coverage >= min_alignment_coverage
+        if row.parse_pass_rate >= min_parse_pass_rate
+        and row.alignment_coverage >= min_alignment_coverage
     ]
     if not quality_rows:
-        quality_rows = [row for row in rows if row.parse_pass_rate >= min_parse_pass_rate]
+        quality_rows = [
+            row for row in rows if row.parse_pass_rate >= min_parse_pass_rate
+        ]
     if not quality_rows:
         preflight_model = str(fallback_preflight_model).strip() or "qwen2.5:7b"
         autotune_model = str(fallback_autotune_model).strip() or preflight_model
         latency_row = next((row for row in rows if row.model == preflight_model), None)
-        latency_ms = float(latency_row.latency_p95_ms) if latency_row is not None else 0.0
+        latency_ms = (
+            float(latency_row.latency_p95_ms) if latency_row is not None else 0.0
+        )
         return preflight_model, autotune_model, latency_ms
 
     preflight_candidates = [
-        row for row in quality_rows if row.latency_p95_ms > 0.0 and row.latency_p95_ms <= max_preflight_latency_ms
+        row
+        for row in quality_rows
+        if row.latency_p95_ms > 0.0 and row.latency_p95_ms <= max_preflight_latency_ms
     ]
     if preflight_candidates:
-        preflight = max(preflight_candidates, key=lambda row: (row.score, -row.latency_p95_ms))
+        preflight = max(
+            preflight_candidates, key=lambda row: (row.score, -row.latency_p95_ms)
+        )
     else:
         with_latency = [row for row in quality_rows if row.latency_p95_ms > 0.0]
-        preflight = min(with_latency, key=lambda row: row.latency_p95_ms) if with_latency else quality_rows[0]
+        preflight = (
+            min(with_latency, key=lambda row: row.latency_p95_ms)
+            if with_latency
+            else quality_rows[0]
+        )
 
-    autotune = max(quality_rows, key=lambda row: (row.score, row.parse_pass_rate, -row.latency_p95_ms))
+    autotune = max(
+        quality_rows,
+        key=lambda row: (row.score, row.parse_pass_rate, -row.latency_p95_ms),
+    )
 
     preflight_model = preflight.model or str(fallback_preflight_model).strip()
     autotune_model = autotune.model or str(fallback_autotune_model).strip()
@@ -220,10 +238,16 @@ def main() -> int:
         "BRAIN_TIMEOUT_SEC": str(timeout_sec),
     }
 
-    env_before = args.env_profile.read_text(encoding="utf-8") if args.env_profile.exists() else ""
+    env_before = (
+        args.env_profile.read_text(encoding="utf-8")
+        if args.env_profile.exists()
+        else ""
+    )
     env_after = _apply_env_updates(env_before, updates)
     env_before_values = _parse_env_values(env_before)
-    changed_keys = sorted([key for key, value in updates.items() if env_before_values.get(key) != value])
+    changed_keys = sorted(
+        [key for key, value in updates.items() if env_before_values.get(key) != value]
+    )
     env_changed = bool(changed_keys)
 
     result = {
@@ -253,7 +277,9 @@ def main() -> int:
     if not args.dry_run:
         if env_after != env_before:
             _write_atomic(args.env_profile, env_after)
-        _write_atomic(args.output, json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
+        _write_atomic(
+            args.output, json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2)
+        )
 
     print(json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
     return 0

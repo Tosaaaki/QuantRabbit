@@ -88,24 +88,46 @@ def _setup_market_order_local_path(
         }
 
     monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", False)
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT", True)
-    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
-    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT", True
+    )
+    monkeypatch.setattr(
+        order_manager, "_should_persist_preservice_order_log", lambda: True
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False
+    )
     monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
     monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
-    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "attach_section_axis", lambda thesis, pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "attach_section_axis", lambda thesis, pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis
+    )
     monkeypatch.setattr(
         order_manager,
         "_augment_entry_thesis_policy_generation",
         lambda thesis, reduce_only=False: thesis,
     )
-    monkeypatch.setattr(order_manager, "_reject_entry_by_control", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager, "_reject_entry_by_control", lambda *_a, **_k: False
+    )
     monkeypatch.setattr(
         order_manager.strategy_guard,
         "is_blocked",
@@ -134,7 +156,9 @@ def _setup_market_order_local_path(
             decision_latency_p95_ms=0,
         ),
     )
-    monkeypatch.setattr(order_manager, "_policy_gate_allows_entry", lambda *_a, **_k: (True, None, {}))
+    monkeypatch.setattr(
+        order_manager, "_policy_gate_allows_entry", lambda *_a, **_k: (True, None, {})
+    )
     monkeypatch.setattr(
         order_manager.perf_guard,
         "is_pocket_allowed",
@@ -156,12 +180,18 @@ def _setup_market_order_local_path(
         "is_allowed",
         lambda *_a, **_k: SimpleNamespace(allowed=True, reason="pass"),
     )
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_ENABLED", brain_decision is not None)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_BRAIN_GATE_ENABLED", brain_decision is not None
+    )
     monkeypatch.setattr(order_manager, "_ORDER_MANAGER_BRAIN_GATE_MODE", brain_mode)
     monkeypatch.setattr(
         order_manager,
         "brain",
-        SimpleNamespace(decide=lambda **_k: brain_decision) if brain_decision is not None else None,
+        (
+            SimpleNamespace(decide=lambda **_k: brain_decision)
+            if brain_decision is not None
+            else None
+        ),
     )
     monkeypatch.setattr(
         order_manager,
@@ -169,27 +199,48 @@ def _setup_market_order_local_path(
         lambda **_k: forecast_decision is not None,
     )
     if forecast_decision is not None:
-        monkeypatch.setattr(order_manager, "_forecast_decide_with_service", lambda **_k: forecast_decision)
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PATTERN_GATE_ENABLED", pattern_decision is not None)
+        monkeypatch.setattr(
+            order_manager,
+            "_forecast_decide_with_service",
+            lambda **_k: forecast_decision,
+        )
+    monkeypatch.setattr(
+        order_manager,
+        "_ORDER_MANAGER_PATTERN_GATE_ENABLED",
+        pattern_decision is not None,
+    )
     if pattern_decision is not None:
         monkeypatch.setattr(
             order_manager,
             "pattern_gate",
             SimpleNamespace(decide=lambda **_k: pattern_decision),
         )
-    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
-    monkeypatch.setattr(order_manager, "_load_margin_guard_snapshot", lambda **_k: _LimitSnapshot())
-    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+    monkeypatch.setattr(
+        order_manager, "_manual_margin_pressure_details", lambda **_k: None
+    )
+    monkeypatch.setattr(
+        order_manager, "_load_margin_guard_snapshot", lambda **_k: _LimitSnapshot()
+    )
+    monkeypatch.setattr(
+        "utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0)
+    )
     monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
     monkeypatch.setattr(
         order_manager,
         "_fetch_quote_with_retry",
-        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+        lambda *_a, **_k: {
+            "bid": 150.000,
+            "ask": 150.010,
+            "mid": 150.005,
+            "spread_pips": 1.0,
+        },
     )
     monkeypatch.setattr(order_manager, "_quote_is_usable", lambda quote: True)
     monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs)))
+    monkeypatch.setattr(
+        order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs))
+    )
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
     monkeypatch.setattr(
@@ -226,9 +277,13 @@ def test_log_order_retries_locked_once_and_succeeds(monkeypatch, caplog) -> None
     monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_RETRY_BACKOFF", 2.0)
     monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC", 0.05)
     monkeypatch.setattr(order_manager, "_orders_con", lambda: con)
-    monkeypatch.setattr(order_manager, "_reset_orders_con", lambda: reset_calls.append(1))
+    monkeypatch.setattr(
+        order_manager, "_reset_orders_con", lambda: reset_calls.append(1)
+    )
     monkeypatch.setattr(order_manager, "_maybe_checkpoint_orders_db", lambda _con: None)
-    monkeypatch.setattr(order_manager.time, "sleep", lambda sec: sleep_calls.append(sec))
+    monkeypatch.setattr(
+        order_manager.time, "sleep", lambda sec: sleep_calls.append(sec)
+    )
 
     with caplog.at_level(logging.WARNING):
         _invoke_log_order()
@@ -241,7 +296,9 @@ def test_log_order_retries_locked_once_and_succeeds(monkeypatch, caplog) -> None
     assert "[ORDER][LOG] failed to persist orders log" not in caplog.text
 
 
-def test_log_order_emits_warning_after_retry_budget_exhausted(monkeypatch, caplog) -> None:
+def test_log_order_emits_warning_after_retry_budget_exhausted(
+    monkeypatch, caplog
+) -> None:
     con = _FakeConnection(lock_failures=8)
     reset_calls: list[int] = []
     sleep_calls: list[float] = []
@@ -251,9 +308,13 @@ def test_log_order_emits_warning_after_retry_budget_exhausted(monkeypatch, caplo
     monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_RETRY_BACKOFF", 2.0)
     monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_RETRY_MAX_SLEEP_SEC", 0.05)
     monkeypatch.setattr(order_manager, "_orders_con", lambda: con)
-    monkeypatch.setattr(order_manager, "_reset_orders_con", lambda: reset_calls.append(1))
+    monkeypatch.setattr(
+        order_manager, "_reset_orders_con", lambda: reset_calls.append(1)
+    )
     monkeypatch.setattr(order_manager, "_maybe_checkpoint_orders_db", lambda _con: None)
-    monkeypatch.setattr(order_manager.time, "sleep", lambda sec: sleep_calls.append(sec))
+    monkeypatch.setattr(
+        order_manager.time, "sleep", lambda sec: sleep_calls.append(sec)
+    )
 
     with caplog.at_level(logging.WARNING):
         _invoke_log_order()
@@ -280,9 +341,13 @@ def test_log_order_fast_fail_uses_short_retry_budget(monkeypatch, caplog) -> Non
     monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_FAST_RETRY_BACKOFF", 1.0)
     monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_FAST_RETRY_MAX_SLEEP_SEC", 0.0)
     monkeypatch.setattr(order_manager, "_orders_con", lambda: con)
-    monkeypatch.setattr(order_manager, "_reset_orders_con", lambda: reset_calls.append(1))
+    monkeypatch.setattr(
+        order_manager, "_reset_orders_con", lambda: reset_calls.append(1)
+    )
     monkeypatch.setattr(order_manager, "_maybe_checkpoint_orders_db", lambda _con: None)
-    monkeypatch.setattr(order_manager.time, "sleep", lambda sec: sleep_calls.append(sec))
+    monkeypatch.setattr(
+        order_manager.time, "sleep", lambda sec: sleep_calls.append(sec)
+    )
 
     with caplog.at_level(logging.INFO):
         _invoke_log_order(fast_fail=True)
@@ -301,7 +366,9 @@ def test_market_order_skips_preservice_db_log_when_service_mode(monkeypatch) -> 
 
     logged_statuses: list[str] = []
 
-    monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False
+    )
     monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
     monkeypatch.setattr(
         order_manager,
@@ -313,8 +380,14 @@ def test_market_order_skips_preservice_db_log_when_service_mode(monkeypatch) -> 
         "_probability_scaled_units",
         lambda *_args, **_kwargs: (500, None),
     )
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: logged_statuses.append(str(kwargs.get("status"))))
-    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: logged_statuses.append(str(kwargs.get("status"))),
+    )
+    monkeypatch.setattr(
+        order_manager, "_console_order_log", lambda *_args, **_kwargs: None
+    )
 
     ticket = asyncio.run(
         order_manager.market_order(
@@ -334,7 +407,9 @@ def test_market_order_skips_preservice_db_log_when_service_mode(monkeypatch) -> 
     assert logged_statuses == []
 
 
-def test_market_order_service_mode_defers_probability_gate_to_worker(monkeypatch) -> None:
+def test_market_order_service_mode_defers_probability_gate_to_worker(
+    monkeypatch,
+) -> None:
     captured_payloads: list[dict[str, object]] = []
 
     async def _fake_service_request_async(_path: str, payload: dict) -> str:
@@ -351,10 +426,14 @@ def test_market_order_service_mode_defers_probability_gate_to_worker(monkeypatch
         order_manager,
         "_probability_scaled_units",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("client-side probability gate should be skipped in service mode")
+            AssertionError(
+                "client-side probability gate should be skipped in service mode"
+            )
         ),
     )
-    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        order_manager, "_console_order_log", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(order_manager, "_log_order", lambda **_kwargs: None)
 
     ticket = asyncio.run(
@@ -376,7 +455,9 @@ def test_market_order_service_mode_defers_probability_gate_to_worker(monkeypatch
     assert captured_payloads[0]["units"] == 1000
 
 
-def test_market_order_service_fallback_runs_probability_gate_locally(monkeypatch) -> None:
+def test_market_order_service_fallback_runs_probability_gate_locally(
+    monkeypatch,
+) -> None:
     async def _fake_service_request_async(_path: str, _payload: dict):
         return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
 
@@ -388,7 +469,9 @@ def test_market_order_service_fallback_runs_probability_gate_locally(monkeypatch
         return 0, "entry_probability_reject_threshold"
 
     monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
-    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(
+        order_manager, "_should_persist_preservice_order_log", lambda: True
+    )
     monkeypatch.setattr(
         order_manager,
         "_order_manager_service_request_async",
@@ -399,8 +482,14 @@ def test_market_order_service_fallback_runs_probability_gate_locally(monkeypatch
         "_probability_scaled_units",
         _fake_probability_scaled_units,
     )
-    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(
+        order_manager, "_console_order_log", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: statuses.append(str(kwargs.get("status"))),
+    )
     monkeypatch.setattr(order_manager, "log_metric", lambda *_args, **_kwargs: None)
 
     ticket = asyncio.run(
@@ -426,7 +515,9 @@ def test_market_order_service_none_result_does_not_fallback_local(monkeypatch) -
     async def _fake_service_request_async(_path: str, _payload: dict) -> None:
         return None
 
-    monkeypatch.setattr(order_manager, "_ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_DB_LOG_PRESERVICE_IN_SERVICE_MODE", False
+    )
     monkeypatch.setattr(order_manager, "_order_manager_service_enabled", lambda: True)
     monkeypatch.setattr(
         order_manager,
@@ -441,9 +532,13 @@ def test_market_order_service_none_result_does_not_fallback_local(monkeypatch) -
     monkeypatch.setattr(
         order_manager,
         "_log_order",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("local_fallback_called")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("local_fallback_called")
+        ),
     )
-    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        order_manager, "_console_order_log", lambda *_args, **_kwargs: None
+    )
 
     ticket = asyncio.run(
         order_manager.market_order(
@@ -480,9 +575,13 @@ def test_limit_order_service_none_result_does_not_fallback_local(monkeypatch) ->
     monkeypatch.setattr(
         order_manager,
         "_log_order",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("local_fallback_called")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("local_fallback_called")
+        ),
     )
-    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        order_manager, "_console_order_log", lambda *_args, **_kwargs: None
+    )
 
     trade_id, order_id = asyncio.run(
         order_manager.limit_order(
@@ -502,7 +601,9 @@ def test_limit_order_service_none_result_does_not_fallback_local(monkeypatch) ->
     assert order_id is None
 
 
-def test_limit_order_service_mode_defers_probability_gate_to_worker(monkeypatch) -> None:
+def test_limit_order_service_mode_defers_probability_gate_to_worker(
+    monkeypatch,
+) -> None:
     captured_payloads: list[dict[str, object]] = []
 
     async def _fake_service_request_async(_path: str, payload: dict):
@@ -519,10 +620,14 @@ def test_limit_order_service_mode_defers_probability_gate_to_worker(monkeypatch)
         order_manager,
         "_probability_scaled_units",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("client-side probability gate should be skipped in service mode")
+            AssertionError(
+                "client-side probability gate should be skipped in service mode"
+            )
         ),
     )
-    monkeypatch.setattr(order_manager, "_console_order_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        order_manager, "_console_order_log", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(order_manager, "_log_order", lambda **_kwargs: None)
 
     trade_id, order_id = asyncio.run(
@@ -549,7 +654,9 @@ def test_limit_order_service_mode_defers_probability_gate_to_worker(monkeypatch)
     assert captured_payloads[0]["units"] == 1000
 
 
-def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(monkeypatch) -> None:
+def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(
+    monkeypatch,
+) -> None:
     async def _fake_service_request_async(_path: str, _payload: dict):
         return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
 
@@ -574,38 +681,67 @@ def test_limit_order_quote_retry_runs_even_when_submit_attempts_is_one(monkeypat
     monkeypatch.setenv("ORDER_SUBMIT_MAX_ATTEMPTS", "1")
     monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 1)
     monkeypatch.setattr(order_manager.time, "sleep", lambda _sec: None)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (1000, None))
-    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (1000, None)
+    )
+    monkeypatch.setattr(
+        order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False
+    )
     monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
     monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
-    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis
+    )
     monkeypatch.setattr(
         order_manager,
         "_augment_entry_thesis_policy_generation",
         lambda thesis, reduce_only=False: thesis,
     )
-    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(
+        order_manager, "_manual_margin_pressure_details", lambda **_k: None
+    )
     monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
     monkeypatch.setattr(order_manager, "_is_passive_price", lambda **_k: True)
     monkeypatch.setattr(
         order_manager,
         "_fetch_quote_with_retry",
-        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+        lambda *_a, **_k: {
+            "bid": 150.000,
+            "ask": 150.010,
+            "mid": 150.005,
+            "spread_pips": 1.0,
+        },
     )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: statuses.append(str(kwargs.get("status"))),
+    )
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
     monkeypatch.setattr(
         "utils.oanda_account.get_account_snapshot_state",
         lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
     )
-    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+    monkeypatch.setattr(
+        "utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0)
+    )
 
     trade_id, order_id = asyncio.run(
         order_manager.limit_order(
@@ -645,32 +781,59 @@ def test_limit_order_allows_net_reducing_under_side_cap(monkeypatch) -> None:
     monkeypatch.setenv("MAX_MARGIN_USAGE_HARD", "0.96")
     monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
     monkeypatch.setattr(order_manager.time, "sleep", lambda _sec: None)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (-180, None))
-    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (-180, None)
+    )
+    monkeypatch.setattr(
+        order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False
+    )
     monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
     monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
-    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis
+    )
     monkeypatch.setattr(
         order_manager,
         "_augment_entry_thesis_policy_generation",
         lambda thesis, reduce_only=False: thesis,
     )
-    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(
+        order_manager, "_manual_margin_pressure_details", lambda **_k: None
+    )
     monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
     monkeypatch.setattr(order_manager, "_is_passive_price", lambda **_k: True)
     monkeypatch.setattr(
         order_manager,
         "_fetch_quote_with_retry",
-        lambda *_a, **_k: {"bid": 155.000, "ask": 155.010, "mid": 155.005, "spread_pips": 1.0},
+        lambda *_a, **_k: {
+            "bid": 155.000,
+            "ask": 155.010,
+            "mid": 155.005,
+            "spread_pips": 1.0,
+        },
     )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: statuses.append(str(kwargs.get("status"))),
+    )
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
     monkeypatch.setattr(
         "utils.oanda_account.get_account_snapshot_state",
@@ -678,7 +841,10 @@ def test_limit_order_allows_net_reducing_under_side_cap(monkeypatch) -> None:
     )
     # Long/short both large (hedged) but net is small:
     # sell -180 reduces net exposure while side_cap would appear high.
-    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (8900.0, 8700.0))
+    monkeypatch.setattr(
+        "utils.oanda_account.get_position_summary",
+        lambda *args, **kwargs: (8900.0, 8700.0),
+    )
 
     trade_id, order_id = asyncio.run(
         order_manager.limit_order(
@@ -767,24 +933,44 @@ def test_canonicalize_logged_entry_payload_overrides_stale_contract_fields() -> 
     assert corrections["entry_units_intent"]["to"] == 377
 
 
-def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch) -> None:
+def test_market_order_entry_intent_guard_rejects_missing_probability(
+    monkeypatch,
+) -> None:
     async def _unexpected_service_call(_path: str, _payload: dict) -> None:
-        raise AssertionError("service should not be called when entry intent guard rejects")
+        raise AssertionError(
+            "service should not be called when entry intent guard rejects"
+        )
 
     statuses: list[str] = []
 
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS", True)
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY", True)
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
-    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_FIELDS", True
+    )
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_REQUIRE_ENTRY_INTENT_PROBABILITY", True
+    )
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True
+    )
+    monkeypatch.setattr(
+        order_manager, "_should_persist_preservice_order_log", lambda: True
+    )
     monkeypatch.setattr(
         order_manager,
         "_ensure_entry_intent_payload",
-        lambda units, confidence, strategy_tag, entry_thesis: {"entry_units_intent": abs(int(units))},
+        lambda units, confidence, strategy_tag, entry_thesis: {
+            "entry_units_intent": abs(int(units))
+        },
     )
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
+    monkeypatch.setattr(
+        order_manager, "_order_manager_service_request_async", _unexpected_service_call
+    )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: statuses.append(str(kwargs.get("status"))),
+    )
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
 
     ticket = asyncio.run(
@@ -805,18 +991,32 @@ def test_market_order_entry_intent_guard_rejects_missing_probability(monkeypatch
     assert "entry_intent_guard_reject" in statuses
 
 
-def test_market_order_entry_intent_guard_logs_dynamic_alloc_attribution(monkeypatch) -> None:
+def test_market_order_entry_intent_guard_logs_dynamic_alloc_attribution(
+    monkeypatch,
+) -> None:
     captured: list[dict[str, object]] = []
 
     async def _unexpected_service_call(_path: str, _payload: dict) -> None:
-        raise AssertionError("service should not be called when entry intent guard rejects")
+        raise AssertionError(
+            "service should not be called when entry intent guard rejects"
+        )
 
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
-    monkeypatch.setattr(order_manager, "_should_persist_preservice_order_log", lambda: True)
-    monkeypatch.setattr(order_manager, "_strategy_tag_from_client_id", lambda _cid: None)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True
+    )
+    monkeypatch.setattr(
+        order_manager, "_should_persist_preservice_order_log", lambda: True
+    )
+    monkeypatch.setattr(
+        order_manager, "_strategy_tag_from_client_id", lambda _cid: None
+    )
+    monkeypatch.setattr(
+        order_manager, "_order_manager_service_request_async", _unexpected_service_call
+    )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs)))
+    monkeypatch.setattr(
+        order_manager, "_log_order", lambda **kwargs: captured.append(dict(kwargs))
+    )
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
 
     ticket = asyncio.run(
@@ -857,11 +1057,15 @@ def test_market_order_entry_intent_guard_logs_dynamic_alloc_attribution(monkeypa
     assert request_payload.get("entry_path_attribution") == trail
 
 
-def test_market_order_probability_scaled_logs_canonicalized_entry_contract(monkeypatch) -> None:
+def test_market_order_probability_scaled_logs_canonicalized_entry_contract(
+    monkeypatch,
+) -> None:
     captured = _setup_market_order_local_path(monkeypatch)
 
     monkeypatch.setattr(order_manager, "_ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", True)
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (77, None))
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (77, None)
+    )
 
     trade_id = asyncio.run(
         order_manager.market_order(
@@ -900,7 +1104,9 @@ def test_market_order_probability_scaled_logs_canonicalized_entry_contract(monke
     submit_attempt = _captured_log_by_status(captured, "submit_attempt")
     submit_payload = submit_attempt["request_payload"]
     assert isinstance(submit_payload, dict)
-    assert submit_payload["entry_thesis"]["entry_units_intent"] == submit_attempt["units"]
+    assert (
+        submit_payload["entry_thesis"]["entry_units_intent"] == submit_attempt["units"]
+    )
 
     filled = _captured_log_by_status(captured, "filled")
     filled_payload = filled["request_payload"]
@@ -951,12 +1157,16 @@ def test_market_order_perf_block_logs_entry_path_attribution(monkeypatch) -> Non
     assert trail[-1]["status"] == "block"
 
 
-def test_market_order_uses_strategy_specific_profit_guard_scope_override(monkeypatch) -> None:
+def test_market_order_uses_strategy_specific_profit_guard_scope_override(
+    monkeypatch,
+) -> None:
     captured = _setup_market_order_local_path(monkeypatch)
     scopes: list[object] = []
 
     monkeypatch.setenv("ORDER_PROFIT_GUARD_SCOPE_STRATEGY_PRECISIONLOWVOL", "strategy")
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None))
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None)
+    )
     monkeypatch.setattr(
         order_manager.profit_guard,
         "is_allowed",
@@ -1140,13 +1350,21 @@ def test_market_order_brain_block_records_entry_path_attribution(monkeypatch) ->
         "_ORDER_MANAGER_BRAIN_GATE_APPLY_WITH_PRESERVE_INTENT",
         True,
     )
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None))
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None)
+    )
     monkeypatch.setattr(
         order_manager,
         "perf_guard",
         SimpleNamespace(
-            is_pocket_allowed=lambda *_a, **_k: SimpleNamespace(allowed=True, reason="ok"),
+            is_pocket_allowed=lambda *_a, **_k: SimpleNamespace(
+                allowed=True, reason="ok"
+            ),
             is_allowed=lambda *_a, **_k: SimpleNamespace(allowed=True, reason="ok"),
         ),
     )
@@ -1172,14 +1390,30 @@ def test_market_order_brain_block_records_entry_path_attribution(monkeypatch) ->
             ),
         ),
     )
-    monkeypatch.setattr(order_manager, "_policy_gate_allows_entry", lambda *_a, **_k: (True, None, {}))
-    monkeypatch.setattr(order_manager, "_reject_entry_by_control", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "attach_section_axis", lambda thesis, pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager, "_policy_gate_allows_entry", lambda *_a, **_k: (True, None, {})
+    )
+    monkeypatch.setattr(
+        order_manager, "_reject_entry_by_control", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "attach_section_axis", lambda thesis, pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis
+    )
     monkeypatch.setattr(
         order_manager,
         "_augment_entry_thesis_policy_generation",
@@ -1198,7 +1432,9 @@ def test_market_order_brain_block_records_entry_path_attribution(monkeypatch) ->
         ),
     )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: logged.append(dict(kwargs)))
+    monkeypatch.setattr(
+        order_manager, "_log_order", lambda **kwargs: logged.append(dict(kwargs))
+    )
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
 
     ticket = asyncio.run(
@@ -1275,37 +1511,68 @@ def test_market_order_shadow_skips_disabled_brain_decision(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None))
-    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (120, None)
+    )
+    monkeypatch.setattr(
+        order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False
+    )
     monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
     monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
-    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis
+    )
     monkeypatch.setattr(
         order_manager,
         "_augment_entry_thesis_policy_generation",
         lambda thesis, reduce_only=False: thesis,
     )
-    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(
+        order_manager, "_manual_margin_pressure_details", lambda **_k: None
+    )
     monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
     monkeypatch.setattr(
         order_manager,
         "_fetch_quote_with_retry",
-        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+        lambda *_a, **_k: {
+            "bid": 150.000,
+            "ask": 150.010,
+            "mid": 150.005,
+            "spread_pips": 1.0,
+        },
     )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
-    monkeypatch.setattr(order_manager, "log_metric", lambda name, *_a, **_k: metrics.append(str(name)))
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: statuses.append(str(kwargs.get("status"))),
+    )
+    monkeypatch.setattr(
+        order_manager, "log_metric", lambda name, *_a, **_k: metrics.append(str(name))
+    )
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
     monkeypatch.setattr(
         "utils.oanda_account.get_account_snapshot_state",
         lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
     )
-    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+    monkeypatch.setattr(
+        "utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0)
+    )
 
     asyncio.run(
         order_manager.market_order(
@@ -1329,18 +1596,30 @@ def test_market_order_shadow_skips_disabled_brain_decision(monkeypatch) -> None:
     assert "order_brain_shadow" not in metrics
 
 
-def test_limit_order_entry_intent_guard_records_entry_path_attribution(monkeypatch) -> None:
+def test_limit_order_entry_intent_guard_records_entry_path_attribution(
+    monkeypatch,
+) -> None:
     async def _unexpected_service_call(_path: str, _payload: dict) -> None:
-        raise AssertionError("service should not be called when entry intent guard rejects")
+        raise AssertionError(
+            "service should not be called when entry intent guard rejects"
+        )
 
     logged: list[dict[str, object]] = []
 
-    monkeypatch.setattr(order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True)
-    monkeypatch.setattr(order_manager, "_strategy_tag_from_client_id", lambda _cid: None)
+    monkeypatch.setattr(
+        order_manager, "_ORDER_MANAGER_REQUIRE_STRATEGY_TAG_FOR_ENTRY", True
+    )
+    monkeypatch.setattr(
+        order_manager, "_strategy_tag_from_client_id", lambda _cid: None
+    )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: logged.append(dict(kwargs)))
+    monkeypatch.setattr(
+        order_manager, "_log_order", lambda **kwargs: logged.append(dict(kwargs))
+    )
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _unexpected_service_call)
+    monkeypatch.setattr(
+        order_manager, "_order_manager_service_request_async", _unexpected_service_call
+    )
 
     trade_id, order_id = asyncio.run(
         order_manager.limit_order(
@@ -1361,7 +1640,9 @@ def test_limit_order_entry_intent_guard_records_entry_path_attribution(monkeypat
 
     assert trade_id is None
     assert order_id is None
-    reject = next(item for item in logged if item.get("status") == "entry_intent_guard_reject")
+    reject = next(
+        item for item in logged if item.get("status") == "entry_intent_guard_reject"
+    )
     request_payload = reject.get("request_payload")
     assert isinstance(request_payload, dict)
     thesis = request_payload.get("entry_thesis")
@@ -1373,7 +1654,9 @@ def test_limit_order_entry_intent_guard_records_entry_path_attribution(monkeypat
     assert trail[0]["reason"] == "missing_strategy_tag"
 
 
-def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypatch) -> None:
+def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(
+    monkeypatch,
+) -> None:
     async def _fake_service_request_async(_path: str, _payload: dict):
         return order_manager._ORDER_MANAGER_SERVICE_UNHANDLED
 
@@ -1381,7 +1664,9 @@ def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypa
     statuses: list[str] = []
 
     def _fake_api_request(endpoint) -> None:
-        submit_client_ids.append(str(endpoint.data["order"]["clientExtensions"].get("id") or ""))
+        submit_client_ids.append(
+            str(endpoint.data["order"]["clientExtensions"].get("id") or "")
+        )
         if len(submit_client_ids) == 1:
             endpoint.response = {
                 "orderRejectTransaction": {
@@ -1397,30 +1682,55 @@ def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypa
 
     monkeypatch.setenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2")
     monkeypatch.setattr(order_manager, "_ORDER_QUOTE_RETRY_MAX_RETRIES", 0)
-    monkeypatch.setattr(order_manager, "_order_manager_service_request_async", _fake_service_request_async)
-    monkeypatch.setattr(order_manager, "_probability_scaled_units", lambda *_a, **_k: (1000, None))
-    monkeypatch.setattr(order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False)
-    monkeypatch.setattr(order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        order_manager,
+        "_order_manager_service_request_async",
+        _fake_service_request_async,
+    )
+    monkeypatch.setattr(
+        order_manager, "_probability_scaled_units", lambda *_a, **_k: (1000, None)
+    )
+    monkeypatch.setattr(
+        order_manager, "_entry_sl_disabled_for_strategy", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr(
+        order_manager, "_disable_hard_stop_by_strategy", lambda *_a, **_k: False
+    )
     monkeypatch.setattr(order_manager, "_soft_tp_mode", lambda *_a, **_k: False)
     monkeypatch.setattr(order_manager, "_entry_hard_stop_pips", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(order_manager, "_entry_loss_cap_jpy", lambda *_a, **_k: 0.0)
-    monkeypatch.setattr(order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis)
-    monkeypatch.setattr(order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis)
+    monkeypatch.setattr(
+        order_manager, "_apply_default_entry_thesis_tfs", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_regime", lambda thesis, _pocket: thesis
+    )
+    monkeypatch.setattr(
+        order_manager, "_augment_entry_thesis_flags", lambda thesis: thesis
+    )
     monkeypatch.setattr(
         order_manager,
         "_augment_entry_thesis_policy_generation",
         lambda thesis, reduce_only=False: thesis,
     )
-    monkeypatch.setattr(order_manager, "_manual_margin_pressure_details", lambda **_k: None)
+    monkeypatch.setattr(
+        order_manager, "_manual_margin_pressure_details", lambda **_k: None
+    )
     monkeypatch.setattr(order_manager, "is_market_open", lambda: True)
     monkeypatch.setattr(order_manager, "_is_passive_price", lambda **_k: True)
     monkeypatch.setattr(
         order_manager,
         "_fetch_quote_with_retry",
-        lambda *_a, **_k: {"bid": 150.000, "ask": 150.010, "mid": 150.005, "spread_pips": 1.0},
+        lambda *_a, **_k: {
+            "bid": 150.000,
+            "ask": 150.010,
+            "mid": 150.005,
+            "spread_pips": 1.0,
+        },
     )
-    monkeypatch.setattr(order_manager, "_latest_filled_trade_id_by_client_id", lambda _cid: None)
+    monkeypatch.setattr(
+        order_manager, "_latest_filled_trade_id_by_client_id", lambda _cid: None
+    )
     monkeypatch.setattr(
         order_manager,
         "_rotate_client_order_id",
@@ -1428,13 +1738,19 @@ def test_limit_order_retries_with_rotated_client_id_on_duplicate_reject(monkeypa
     )
     monkeypatch.setattr(order_manager, "_console_order_log", lambda *_a, **_k: None)
     monkeypatch.setattr(order_manager, "log_metric", lambda *_a, **_k: None)
-    monkeypatch.setattr(order_manager, "_log_order", lambda **kwargs: statuses.append(str(kwargs.get("status"))))
+    monkeypatch.setattr(
+        order_manager,
+        "_log_order",
+        lambda **kwargs: statuses.append(str(kwargs.get("status"))),
+    )
     monkeypatch.setattr(order_manager.api, "request", _fake_api_request)
     monkeypatch.setattr(
         "utils.oanda_account.get_account_snapshot_state",
         lambda **_kwargs: _SnapshotState(_LimitSnapshot()),
     )
-    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0))
+    monkeypatch.setattr(
+        "utils.oanda_account.get_position_summary", lambda *args, **kwargs: (0.0, 0.0)
+    )
 
     trade_id, order_id = asyncio.run(
         order_manager.limit_order(

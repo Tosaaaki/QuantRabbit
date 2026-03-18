@@ -147,7 +147,9 @@ class FastScalpBacktester:
         mids = [t.mid for t in self.ticks]
         latest = mids[-1]
         long_mean = mean(mids)
-        short_len = max(5, int(len(mids) * config.SHORT_WINDOW_SEC / config.LONG_WINDOW_SEC))
+        short_len = max(
+            5, int(len(mids) * config.SHORT_WINDOW_SEC / config.LONG_WINDOW_SEC)
+        )
         short_slice = mids[-short_len:]
         short_mean = mean(short_slice)
         high_mid = max(mids)
@@ -179,7 +181,9 @@ class FastScalpBacktester:
         self.trades.append(
             {
                 "entry_time": self.trade.entry_time.isoformat(),
-                "exit_time": datetime.fromtimestamp(tick.epoch, tz=timezone.utc).isoformat(),
+                "exit_time": datetime.fromtimestamp(
+                    tick.epoch, tz=timezone.utc
+                ).isoformat(),
                 "direction": self.trade.direction,
                 "entry_price": round(entry, 5),
                 "exit_price": round(exit_price, 5),
@@ -194,7 +198,9 @@ class FastScalpBacktester:
         self.trade = None
 
     def _ensure_tp_sl(self, entry_price: float, direction: str) -> tuple[float, float]:
-        tp_pips = config.TP_BASE_PIPS + max(self.spread_pips, config.TP_SPREAD_BUFFER_PIPS)
+        tp_pips = config.TP_BASE_PIPS + max(
+            self.spread_pips, config.TP_SPREAD_BUFFER_PIPS
+        )
         sl_pips = config.SL_PIPS
         if direction == "long":
             tp_price = entry_price + tp_pips * PIP_VALUE
@@ -276,7 +282,11 @@ class FastScalpBacktester:
             "total_pnl_pips": round(total_pips, 3),
             "total_pnl_jpy": round(total_jpy, 2),
             "win_rate": round(win_rate, 4),
-            "profit_factor": round(profit_factor, 3) if math.isfinite(profit_factor) else float("inf"),
+            "profit_factor": (
+                round(profit_factor, 3)
+                if math.isfinite(profit_factor)
+                else float("inf")
+            ),
         }
 
 
@@ -291,11 +301,30 @@ def generate_ticks(candles: List[Candle], *, spread_pips: float) -> List[Tick]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FastScalp synthetic backtest")
-    parser.add_argument("--candles", type=Path, required=True, help="Path to M1 candle JSON")
-    parser.add_argument("--spread-pips", type=float, default=0.3, help="Assumed spread in pips (default 0.3)")
-    parser.add_argument("--min-units", type=int, default=10000, help="Minimum trade units (default 10000)")
-    parser.add_argument("--max-units", type=int, default=10000, help="Maximum trade units (default 10000)")
-    parser.add_argument("--json-out", type=Path, help="Optional path to write JSON results")
+    parser.add_argument(
+        "--candles", type=Path, required=True, help="Path to M1 candle JSON"
+    )
+    parser.add_argument(
+        "--spread-pips",
+        type=float,
+        default=0.3,
+        help="Assumed spread in pips (default 0.3)",
+    )
+    parser.add_argument(
+        "--min-units",
+        type=int,
+        default=10000,
+        help="Minimum trade units (default 10000)",
+    )
+    parser.add_argument(
+        "--max-units",
+        type=int,
+        default=10000,
+        help="Maximum trade units (default 10000)",
+    )
+    parser.add_argument(
+        "--json-out", type=Path, help="Optional path to write JSON results"
+    )
     args = parser.parse_args()
 
     candles = load_candles(args.candles)

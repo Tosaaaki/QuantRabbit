@@ -5,6 +5,7 @@ Deep analysis for today's manual trades using factor_cache.json and local indica
 Run on the VM:
   cd ~/QuantRabbit && source .venv/bin/activate && python scripts/remote_analyze_manual.py
 """
+
 from __future__ import annotations
 
 import json
@@ -17,11 +18,11 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 import sys
+
 BASE = Path(__file__).resolve().parent.parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 from indicators.calc_core import IndicatorEngine
-
 
 DB_PATH = Path("/home/tossaki/QuantRabbit/logs/trades.db")
 FACTOR_JSON = Path("/home/tossaki/QuantRabbit/logs/factor_cache.json")
@@ -96,12 +97,16 @@ def _candles_to_df(candles: List[Dict]) -> pd.DataFrame:
             }
         )
     if not recs:
-        return pd.DataFrame(columns=["time", "open", "high", "low", "close"]).set_index("time")
+        return pd.DataFrame(columns=["time", "open", "high", "low", "close"]).set_index(
+            "time"
+        )
     df = pd.DataFrame(recs).sort_values("time").set_index("time")
     return df
 
 
-def _nearest_index_at_or_before(df: pd.DataFrame, t: datetime) -> Optional[pd.Timestamp]:
+def _nearest_index_at_or_before(
+    df: pd.DataFrame, t: datetime
+) -> Optional[pd.Timestamp]:
     if df.empty:
         return None
     idx = df.index[df.index <= pd.Timestamp(t)].max()
@@ -155,7 +160,9 @@ def mae_mfe(df: pd.DataFrame, trade: Trade) -> Dict[str, float]:
     return {"mae_pips": round(mae, 2), "mfe_pips": round(mfe, 2)}
 
 
-def post_exit_extension(df: pd.DataFrame, trade: Trade, minutes: List[int]) -> Dict[int, Dict[str, float]]:
+def post_exit_extension(
+    df: pd.DataFrame, trade: Trade, minutes: List[int]
+) -> Dict[int, Dict[str, float]]:
     out: Dict[int, Dict[str, float]] = {}
     if df is None or df.empty:
         return out
@@ -204,9 +211,7 @@ def main():
         rsi = fac.get("rsi", 0.0)
         atr_pips = fac.get("atr", 0.0) * 100.0  # USDJPY 1 pip = 0.01
         ztxt = f", zBB={zbb:.2f}" if zbb is not None else ""
-        return (
-            f"{tf}: ADX={adx:.1f}, BBW={bbw:.3f}, RSI={rsi:.1f}, ATR={atr_pips:.1f}p{ztxt}"
-        )
+        return f"{tf}: ADX={adx:.1f}, BBW={bbw:.3f}, RSI={rsi:.1f}, ATR={atr_pips:.1f}p{ztxt}"
 
     for tr in trades:
         print("--- manual", tr.ticket_id, "units=", tr.units, "pl_pips=", tr.pl_pips)
@@ -216,7 +221,9 @@ def main():
             for tf in ("M1", "M5", "H1", "H4"):
                 df = frames.get(tf)
                 if df is None:
-                    df = pd.DataFrame(columns=["time","open","high","low","close"]).set_index("time")
+                    df = pd.DataFrame(
+                        columns=["time", "open", "high", "low", "close"]
+                    ).set_index("time")
                 fac = compute_factors_at(df, t)
                 zbb = zscore_vs_bb(df, t) if tf in ("M1", "M5") else None
                 lines.append(_fmt(tf, fac, zbb))
@@ -229,7 +236,7 @@ def main():
             adx = f_entry.get("adx", 0.0)
             bbw = f_entry.get("bbw", 0.0)
             atr_pips = f_entry.get("atr", 0.0) * 100.0
-            range_mode = (adx <= 22.0 and bbw <= 0.20 and atr_pips <= 6.0)
+            range_mode = adx <= 22.0 and bbw <= 0.20 and atr_pips <= 6.0
             print(
                 f"range_mode@entry={range_mode} (ADX<={adx:.1f} BBW<={bbw:.2f} ATRp<={atr_pips:.1f})"
             )
@@ -238,11 +245,16 @@ def main():
         m1 = frames.get("M1")
         if m1 is not None and not m1.empty:
             ex = mae_mfe(m1, tr)
-            print(f"hold_excursion: MAE={ex['mae_pips']:.2f}p, MFE={ex['mfe_pips']:.2f}p")
+            print(
+                f"hold_excursion: MAE={ex['mae_pips']:.2f}p, MFE={ex['mfe_pips']:.2f}p"
+            )
             cont = post_exit_extension(m1, tr, [15, 30, 60])
             parts = []
             for k in (15, 30, 60):
-                v = cont.get(k) or {"further_profit_pips": 0.0, "rebound_risk_pips": 0.0}
+                v = cont.get(k) or {
+                    "further_profit_pips": 0.0,
+                    "rebound_risk_pips": 0.0,
+                }
                 parts.append(
                     f"+{k}m Δprofit={v['further_profit_pips']:.2f}p / rebound={v['rebound_risk_pips']:.2f}p"
                 )

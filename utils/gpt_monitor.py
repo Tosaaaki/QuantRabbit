@@ -18,9 +18,13 @@ def _sanitize(val: object) -> object:
 class GPTCallTracker:
     __slots__ = ("_source", "_extra", "_tags", "_start", "_status")
 
-    def __init__(self, source: str, extra_tags: Optional[Mapping[str, object]] = None) -> None:
+    def __init__(
+        self, source: str, extra_tags: Optional[Mapping[str, object]] = None
+    ) -> None:
         self._source = source
-        self._extra = {k: _sanitize(v) for k, v in (extra_tags or {}).items() if v is not None}
+        self._extra = {
+            k: _sanitize(v) for k, v in (extra_tags or {}).items() if v is not None
+        }
         self._tags: dict[str, object] = {}
         self._start = time.perf_counter()
         self._status: Optional[str] = None

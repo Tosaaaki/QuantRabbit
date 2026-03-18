@@ -14,6 +14,7 @@ Notes:
 - This script is best-effort; it skips gaps shorter than --gap-sec.
 - OANDA API is used directly with from/to to minimize load; ensure secrets are configured.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,7 +63,9 @@ def _iter_tick_times(
     for path in sorted((base_dir / instrument).glob(f"{instrument}_ticks_*.jsonl")):
         try:
             day_str = path.name.split("_")[-1].split(".")[0]
-            day_dt = dt.datetime.strptime(day_str, "%Y%m%d").replace(tzinfo=dt.timezone.utc)
+            day_dt = dt.datetime.strptime(day_str, "%Y%m%d").replace(
+                tzinfo=dt.timezone.utc
+            )
         except Exception:
             day_dt = None
         if day_dt and day_dt.date() < cutoff.date():
@@ -109,7 +112,9 @@ async def fetch_candles_range(
         pract = str(get_secret("oanda_practice")).lower() == "true"
     except Exception:
         pract = False
-    host = "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+    host = (
+        "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+    )
     params = {
         "price": "M",
         "granularity": granularity,
@@ -135,7 +140,9 @@ async def fetch_candles_range(
                 }
             )
     except Exception as exc:  # noqa: BLE001
-        print(f"[BACKFILL] fetch failed {instrument} {granularity} {start}->{end}: {exc}")
+        print(
+            f"[BACKFILL] fetch failed {instrument} {granularity} {start}->{end}: {exc}"
+        )
     candles.sort(key=lambda x: x["time"])
     return candles
 
@@ -153,7 +160,9 @@ async def backfill_gaps(
         for start, end in gaps:
             print(f"[BACKFILL] gap {start.isoformat()} -> {end.isoformat()}")
             for tf in ("M1", "H1", "H4"):
-                candles = await fetch_candles_range(instrument, tf, start, end, client=client)
+                candles = await fetch_candles_range(
+                    instrument, tf, start, end, client=client
+                )
                 if not candles:
                     print(f"[BACKFILL]  {tf}: no candles fetched")
                     continue
@@ -173,18 +182,35 @@ async def backfill_gaps(
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Detect tick gaps and backfill candles from OANDA.")
-    parser.add_argument("--instrument", default="USD_JPY", help="Instrument name (default: USD_JPY)")
-    parser.add_argument("--lookback-hours", type=int, default=48, help="Lookback window for gap detection")
-    parser.add_argument("--gap-sec", type=float, default=3.0, help="Threshold seconds to treat as a gap")
-    parser.add_argument("--dry-run", action="store_true", help="Detect and fetch counts only, no writes")
+    parser = argparse.ArgumentParser(
+        description="Detect tick gaps and backfill candles from OANDA."
+    )
+    parser.add_argument(
+        "--instrument", default="USD_JPY", help="Instrument name (default: USD_JPY)"
+    )
+    parser.add_argument(
+        "--lookback-hours",
+        type=int,
+        default=48,
+        help="Lookback window for gap detection",
+    )
+    parser.add_argument(
+        "--gap-sec", type=float, default=3.0, help="Threshold seconds to treat as a gap"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Detect and fetch counts only, no writes"
+    )
     args = parser.parse_args()
 
     base_dir = Path("logs/replay")
-    ticks = list(_iter_tick_times(base_dir, args.instrument, lookback_hours=args.lookback_hours))
+    ticks = list(
+        _iter_tick_times(base_dir, args.instrument, lookback_hours=args.lookback_hours)
+    )
     ticks.sort()
     gaps = detect_gaps(ticks, gap_sec=args.gap_sec)
-    print(f"[GAP] inspected {len(ticks)} ticks, detected {len(gaps)} gaps (> {args.gap_sec}s)")
+    print(
+        f"[GAP] inspected {len(ticks)} ticks, detected {len(gaps)} gaps (> {args.gap_sec}s)"
+    )
     await backfill_gaps(args.instrument, gaps, dry_run=args.dry_run)
 
 

@@ -37,7 +37,11 @@ def _response_payload(response: Any) -> dict[str, Any]:
 
 
 def _extract_computer_calls(response: Any) -> list[Any]:
-    return [item for item in getattr(response, "output", []) if getattr(item, "type", None) == "computer_call"]
+    return [
+        item
+        for item in getattr(response, "output", [])
+        if getattr(item, "type", None) == "computer_call"
+    ]
 
 
 def _print_output_text(response: Any) -> None:
@@ -61,7 +65,9 @@ def _confirm_pending_safety_checks(
         return checks
     if not sys.stdin.isatty():
         return None
-    answer = input("Acknowledge these safety checks and continue? [y/N]: ").strip().lower()
+    answer = (
+        input("Acknowledge these safety checks and continue? [y/N]: ").strip().lower()
+    )
     if answer in {"y", "yes"}:
         return checks
     return None
@@ -95,11 +101,29 @@ def main() -> int:
         required=True,
         help="Natural-language task for the computer-use model.",
     )
-    parser.add_argument("--api-key", help="Optional API key override. Defaults to OPENAI_API_KEY.")
-    parser.add_argument("--model", default="gpt-5.4", help="Responses API model. Default: gpt-5.4")
-    parser.add_argument("--max-steps", type=int, default=20, help="Maximum number of computer-action turns.")
-    parser.add_argument("--pause-seconds", type=float, default=0.35, help="Delay used for wait and drag pacing.")
-    parser.add_argument("--live", action="store_true", help="Actually execute mouse and keyboard actions.")
+    parser.add_argument(
+        "--api-key", help="Optional API key override. Defaults to OPENAI_API_KEY."
+    )
+    parser.add_argument(
+        "--model", default="gpt-5.4", help="Responses API model. Default: gpt-5.4"
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=20,
+        help="Maximum number of computer-action turns.",
+    )
+    parser.add_argument(
+        "--pause-seconds",
+        type=float,
+        default=0.35,
+        help="Delay used for wait and drag pacing.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Actually execute mouse and keyboard actions.",
+    )
     parser.add_argument(
         "--artifacts-dir",
         type=Path,
@@ -139,7 +163,9 @@ def main() -> int:
     while computer_calls:
         step_index += 1
         if step_index > args.max_steps:
-            print(f"Stopping after {args.max_steps} steps with computer calls still pending.")
+            print(
+                f"Stopping after {args.max_steps} steps with computer calls still pending."
+            )
             return 2
 
         outputs: list[dict[str, Any]] = []
@@ -150,19 +176,25 @@ def main() -> int:
                 auto_approve=args.auto_approve_safety,
             )
             if checks and acknowledged is None:
-                print("Safety checks were not acknowledged. Stopping without sending computer_call_output.")
+                print(
+                    "Safety checks were not acknowledged. Stopping without sending computer_call_output."
+                )
                 return 3
 
             actions = extract_actions_from_call(call)
             if not actions:
-                print(f"[step {step_index} call {call_index}] no actions returned; capturing a fresh screenshot.")
+                print(
+                    f"[step {step_index} call {call_index}] no actions returned; capturing a fresh screenshot."
+                )
 
             for action_index, action in enumerate(actions, start=1):
                 runtime.save_json(
                     f"step_{step_index:02d}/call_{call_index:02d}_action_{action_index:02d}.json",
                     action,
                 )
-                print(f"[step {step_index} call {call_index} action {action_index}] {json.dumps(action, ensure_ascii=False)}")
+                print(
+                    f"[step {step_index} call {call_index} action {action_index}] {json.dumps(action, ensure_ascii=False)}"
+                )
 
             runtime.execute_actions(actions)
             screenshot_output, width, height = runtime.capture_screenshot_output(
@@ -186,7 +218,9 @@ def main() -> int:
             previous_response_id=response.id,
             input=outputs,
         )
-        runtime.save_json(f"response_{step_index:04d}.json", _response_payload(response))
+        runtime.save_json(
+            f"response_{step_index:04d}.json", _response_payload(response)
+        )
         _print_output_text(response)
         computer_calls = _extract_computer_calls(response)
 

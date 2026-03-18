@@ -8,6 +8,7 @@ Secret Manager / 環境変数 から必要なキーを収集し、config/env.tom
   - oanda_account_id, oanda_token, oanda_practice, oanda_hedging_enabled
   - gcp_project_id, gcp_pubsub_topic
 """
+
 from __future__ import annotations
 import os
 import sys

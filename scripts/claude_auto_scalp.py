@@ -3,6 +3,7 @@
 Claude Auto Scalp — 改良版自律スキャルパー
 レンジ/トレンド自動判別 + マルチテクニカル
 """
+
 import json
 import logging
 import os
@@ -45,38 +46,54 @@ log = logging.getLogger("auto_scalp")
 
 # ─── API ───
 
+
 def get_price():
-    r = requests.get(f"{HOST}/v3/accounts/{ACCOUNT}/pricing?instruments={INSTRUMENT}",
-                     headers=HEADERS, timeout=10)
+    r = requests.get(
+        f"{HOST}/v3/accounts/{ACCOUNT}/pricing?instruments={INSTRUMENT}",
+        headers=HEADERS,
+        timeout=10,
+    )
     r.raise_for_status()
     p = r.json()["prices"][0]
     return float(p["bids"][0]["price"]), float(p["asks"][0]["price"])
 
 
 def get_candles(tf, count):
-    r = requests.get(f"{HOST}/v3/instruments/{INSTRUMENT}/candles?granularity={tf}&count={count}",
-                     headers=HEADERS, timeout=10)
+    r = requests.get(
+        f"{HOST}/v3/instruments/{INSTRUMENT}/candles?granularity={tf}&count={count}",
+        headers=HEADERS,
+        timeout=10,
+    )
     r.raise_for_status()
     out = []
     for c in r.json()["candles"]:
         mid = c["mid"]
-        out.append({
-            "o": float(mid["o"]), "h": float(mid["h"]),
-            "l": float(mid["l"]), "c": float(mid["c"]),
-            "vol": c["volume"], "complete": c["complete"],
-            "time": c["time"],
-        })
+        out.append(
+            {
+                "o": float(mid["o"]),
+                "h": float(mid["h"]),
+                "l": float(mid["l"]),
+                "c": float(mid["c"]),
+                "vol": c["volume"],
+                "complete": c["complete"],
+                "time": c["time"],
+            }
+        )
     return out
 
 
 def get_nav():
-    r = requests.get(f"{HOST}/v3/accounts/{ACCOUNT}/summary", headers=HEADERS, timeout=10)
+    r = requests.get(
+        f"{HOST}/v3/accounts/{ACCOUNT}/summary", headers=HEADERS, timeout=10
+    )
     r.raise_for_status()
     return float(r.json()["account"]["NAV"])
 
 
 def get_open_trades():
-    r = requests.get(f"{HOST}/v3/accounts/{ACCOUNT}/openTrades", headers=HEADERS, timeout=10)
+    r = requests.get(
+        f"{HOST}/v3/accounts/{ACCOUNT}/openTrades", headers=HEADERS, timeout=10
+    )
     r.raise_for_status()
     return [t for t in r.json().get("trades", []) if t.get("instrument") == INSTRUMENT]
 
@@ -84,16 +101,22 @@ def get_open_trades():
 def place_order(units, sl, tp, comment=""):
     body = {
         "order": {
-            "type": "MARKET", "instrument": INSTRUMENT,
-            "units": str(units), "timeInForce": "FOK", "positionFill": "OPEN_ONLY",
+            "type": "MARKET",
+            "instrument": INSTRUMENT,
+            "units": str(units),
+            "timeInForce": "FOK",
+            "positionFill": "OPEN_ONLY",
             "stopLossOnFill": {"price": f"{sl:.3f}", "timeInForce": "GTC"},
             "takeProfitOnFill": {"price": f"{tp:.3f}", "timeInForce": "GTC"},
             "clientExtensions": {"tag": "pocket=manual", "comment": comment[:60]},
         }
     }
-    r = requests.post(f"{HOST}/v3/accounts/{ACCOUNT}/orders",
-                      headers={**HEADERS, "Content-Type": "application/json"},
-                      json=body, timeout=10)
+    r = requests.post(
+        f"{HOST}/v3/accounts/{ACCOUNT}/orders",
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json=body,
+        timeout=10,
+    )
     data = r.json()
     if "orderFillTransaction" in data:
         fill = data["orderFillTransaction"]
@@ -104,14 +127,17 @@ def place_order(units, sl, tp, comment=""):
 
 
 def modify_sl(trade_id, new_sl):
-    r = requests.put(f"{HOST}/v3/accounts/{ACCOUNT}/trades/{trade_id}/orders",
-                     headers={**HEADERS, "Content-Type": "application/json"},
-                     json={"stopLoss": {"price": f"{new_sl:.3f}", "timeInForce": "GTC"}},
-                     timeout=10)
+    r = requests.put(
+        f"{HOST}/v3/accounts/{ACCOUNT}/trades/{trade_id}/orders",
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json={"stopLoss": {"price": f"{new_sl:.3f}", "timeInForce": "GTC"}},
+        timeout=10,
+    )
     return r.status_code == 200
 
 
 # ─── Technicals ───
+
 
 def ema(values, period):
     k = 2 / (period + 1)
@@ -124,7 +150,7 @@ def ema(values, period):
 def rsi(closes, period=14):
     if len(closes) < period + 1:
         return 50.0
-    deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
     gains = [max(0, d) for d in deltas[-period:]]
     losses = [max(0, -d) for d in deltas[-period:]]
     ag = sum(gains) / period
@@ -139,7 +165,7 @@ def atr(candles, period=14):
         return 0.05
     trs = []
     for i in range(1, len(candles)):
-        h, l, pc = candles[i]["h"], candles[i]["l"], candles[i-1]["c"]
+        h, l, pc = candles[i]["h"], candles[i]["l"], candles[i - 1]["c"]
         trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     return sum(trs[-period:]) / period
 
@@ -151,7 +177,7 @@ def bollinger_bands(closes, period=20, std_mult=2.0):
     window = closes[-period:]
     mid = sum(window) / period
     variance = sum((x - mid) ** 2 for x in window) / period
-    std = variance ** 0.5
+    std = variance**0.5
     width = (std * std_mult * 2) * 100  # in pips
     return mid - std * std_mult, mid, mid + std * std_mult, width
 
@@ -244,6 +270,7 @@ def log_trade(entry):
 
 # ─── Main ───
 
+
 def main():
     start_nav = get_nav()
     log.info("=" * 50)
@@ -327,10 +354,17 @@ def main():
 
             if tid:
                 total_trades += 1
-                log_trade({
-                    "type": "entry", "signal": signal, "regime": regime,
-                    "reason": reason, "entry": fill_price, "sl": sl, "tp": tp,
-                })
+                log_trade(
+                    {
+                        "type": "entry",
+                        "signal": signal,
+                        "regime": regime,
+                        "reason": reason,
+                        "entry": fill_price,
+                        "sl": sl,
+                        "tp": tp,
+                    }
+                )
                 # Wait for trade to close, then check result
                 pre_nav = get_nav()
                 cooldown_until = time.time() + COOLDOWN_AFTER_TRADE
@@ -350,16 +384,20 @@ def main():
                 trade_pl = post_nav - pre_nav
                 if trade_pl > 0:
                     wins += 1
-                    log.info(f"  WIN: +{trade_pl:.0f} JPY | Total: {post_nav-start_nav:+.0f}")
+                    log.info(
+                        f"  WIN: +{trade_pl:.0f} JPY | Total: {post_nav-start_nav:+.0f}"
+                    )
                     cooldown_until = time.time() + COOLDOWN_AFTER_TRADE
                     consecutive_losses = 0
                 else:
                     losses += 1
                     consecutive_losses += 1
-                    log.info(f"  LOSS: {trade_pl:.0f} JPY | Total: {post_nav-start_nav:+.0f}")
+                    log.info(
+                        f"  LOSS: {trade_pl:.0f} JPY | Total: {post_nav-start_nav:+.0f}"
+                    )
                     cooldown_until = time.time() + COOLDOWN_AFTER_LOSS
                     if consecutive_losses >= 3:
-                        log.warning(f"3 consecutive losses. Extra cooldown 3min.")
+                        log.warning("3 consecutive losses. Extra cooldown 3min.")
                         cooldown_until = time.time() + 180
                         consecutive_losses = 0
             else:

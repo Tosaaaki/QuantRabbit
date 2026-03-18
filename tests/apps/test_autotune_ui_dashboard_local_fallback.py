@@ -32,14 +32,20 @@ def _strategy_control_stub() -> dict:
     }
 
 
-def test_load_dashboard_data_uses_local_fallback_when_snapshots_unavailable(monkeypatch):
+def test_load_dashboard_data_uses_local_fallback_when_snapshots_unavailable(
+    monkeypatch,
+):
     monkeypatch.setattr(
         ui,
         "_collect_snapshot_candidates",
         lambda: (
             [],
             [
-                {"source": "remote(ui_snapshot_lite_url)", "status": "skip", "error": "timeout"},
+                {
+                    "source": "remote(ui_snapshot_lite_url)",
+                    "status": "skip",
+                    "error": "timeout",
+                },
                 {"source": "gcs", "status": "skip", "error": "missing"},
             ],
         ),

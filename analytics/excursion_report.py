@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOGS = REPO_ROOT / "logs"
 PIP = 0.01  # USD/JPY
@@ -99,7 +98,11 @@ def _load_m1_for_dates(dates: Iterable[dt.date]) -> Dict[dt.date, List[Candle]]:
                 entries.append(cnd)
             except Exception:
                 continue
-        if path.name.startswith("candles_M1_") and path.name.endswith(".json") and len(entries) > 0:
+        if (
+            path.name.startswith("candles_M1_")
+            and path.name.endswith(".json")
+            and len(entries) > 0
+        ):
             # If aggregated, keep all and filter later by date keys when accessing
             out[d] = entries
     return out
@@ -185,7 +188,11 @@ def _load_trades(days: int) -> List[TradeRow]:
                     pocket=str(r["pocket"] or ""),
                     units=int(r["units"] or 0),
                     entry_price=float(r["entry_price"]),
-                    close_price=float(r["close_price"]) if r["close_price"] is not None else None,
+                    close_price=(
+                        float(r["close_price"])
+                        if r["close_price"] is not None
+                        else None
+                    ),
                     open_time=ot,
                     close_time=ct,
                     strategy_tag=tag,
@@ -316,26 +323,30 @@ def main() -> None:
         "hit_post_exit": {thr: 0 for thr in args.thresholds},
         "neg_then_post_hit": {thr: 0 for thr in args.thresholds},
     }
-    by_hour: Dict[int, dict] = defaultdict(lambda: {
-        "count": 0,
-        "neg_trades": 0,
-        "mfe_sum": 0.0,
-        "mae_sum": 0.0,
-        "post_mfe_sum": 0.0,
-        "be_hits": 0,
-        "be_sum": 0.0,
-        "hit_during_hold": {thr: 0 for thr in args.thresholds},
-        "hit_post_exit": {thr: 0 for thr in args.thresholds},
-        "neg_then_post_hit": {thr: 0 for thr in args.thresholds},
-    })
-    by_strategy: Dict[str, dict] = defaultdict(lambda: {
-        "count": 0,
-        "mfe_sum": 0.0,
-        "mae_sum": 0.0,
-        "post_mfe_sum": 0.0,
-        "be_hits": 0,
-        "be_sum": 0.0,
-    })
+    by_hour: Dict[int, dict] = defaultdict(
+        lambda: {
+            "count": 0,
+            "neg_trades": 0,
+            "mfe_sum": 0.0,
+            "mae_sum": 0.0,
+            "post_mfe_sum": 0.0,
+            "be_hits": 0,
+            "be_sum": 0.0,
+            "hit_during_hold": {thr: 0 for thr in args.thresholds},
+            "hit_post_exit": {thr: 0 for thr in args.thresholds},
+            "neg_then_post_hit": {thr: 0 for thr in args.thresholds},
+        }
+    )
+    by_strategy: Dict[str, dict] = defaultdict(
+        lambda: {
+            "count": 0,
+            "mfe_sum": 0.0,
+            "mae_sum": 0.0,
+            "post_mfe_sum": 0.0,
+            "be_hits": 0,
+            "be_sum": 0.0,
+        }
+    )
 
     for tr in trades:
         mfe, mae, _t = _mfe_mae_for_trade(tr, candles_by_day)
@@ -349,7 +360,11 @@ def main() -> None:
             overall["be_hits"] += 1
             overall["be_sum"] += be_min
 
-        jst_hour = tr.close_time.astimezone(dt.timezone(dt.timedelta(hours=9))).hour if tr.close_time else tr.open_time.astimezone(dt.timezone(dt.timedelta(hours=9))).hour
+        jst_hour = (
+            tr.close_time.astimezone(dt.timezone(dt.timedelta(hours=9))).hour
+            if tr.close_time
+            else tr.open_time.astimezone(dt.timezone(dt.timedelta(hours=9))).hour
+        )
         agg = by_hour[jst_hour]
         agg["count"] += 1
         agg["mfe_sum"] += mfe
@@ -371,7 +386,11 @@ def main() -> None:
             strat["be_hits"] += 1
             strat["be_sum"] += be_min
 
-        realized_negative = (tr.close_price is not None and ((tr.close_price - tr.entry_price) / PIP) * (1 if tr.units > 0 else -1) < 0)
+        realized_negative = (
+            tr.close_price is not None
+            and ((tr.close_price - tr.entry_price) / PIP) * (1 if tr.units > 0 else -1)
+            < 0
+        )
         if realized_negative:
             overall["neg_trades"] += 1
             agg["neg_trades"] += 1
@@ -391,40 +410,58 @@ def main() -> None:
         return "-" if d == 0 else f"{(100.0 * n / d):.1f}%"
 
     print("=== Overall (last %d days, post %d min) ===" % (args.days, args.post_min))
-    print(f"trades={overall['count']} avg_MFE={overall['mfe_sum']/max(1,overall['count']):.2f}p avg_MAE={overall['mae_sum']/max(1,overall['count']):.2f}p post_MFE={overall['post_mfe_sum']/max(1,overall['count']):.2f}p")
-    be_avg = "-" if overall["be_hits"] == 0 else f"{overall['be_sum']/overall['be_hits']:.1f}m"
-    print(f"BE_hit={overall['be_hits']}/{overall['count']} ({_ratio(overall['be_hits'], overall['count'])}) avg_BE={be_avg}")
+    print(
+        f"trades={overall['count']} avg_MFE={overall['mfe_sum']/max(1,overall['count']):.2f}p avg_MAE={overall['mae_sum']/max(1,overall['count']):.2f}p post_MFE={overall['post_mfe_sum']/max(1,overall['count']):.2f}p"
+    )
+    be_avg = (
+        "-"
+        if overall["be_hits"] == 0
+        else f"{overall['be_sum']/overall['be_hits']:.1f}m"
+    )
+    print(
+        f"BE_hit={overall['be_hits']}/{overall['count']} ({_ratio(overall['be_hits'], overall['count'])}) avg_BE={be_avg}"
+    )
     for thr in args.thresholds:
         during = overall["hit_during_hold"][thr]
         post = overall["hit_post_exit"][thr]
         neg_post = overall["neg_then_post_hit"][thr]
-        print(f"hit≥{thr:.1f}p during_hold: {during}/{overall['count']} ({_ratio(during, overall['count'])}) | post_exit: {post}/{overall['count']} ({_ratio(post, overall['count'])}) | neg_then_post: {neg_post}/{overall['neg_trades']} ({_ratio(neg_post, overall['neg_trades'])})")
+        print(
+            f"hit≥{thr:.1f}p during_hold: {during}/{overall['count']} ({_ratio(during, overall['count'])}) | post_exit: {post}/{overall['count']} ({_ratio(post, overall['count'])}) | neg_then_post: {neg_post}/{overall['neg_trades']} ({_ratio(neg_post, overall['neg_trades'])})"
+        )
 
     print("\n=== By JST close hour ===")
     for h in sorted(by_hour):
         v = by_hour[h]
-        avg_mfe = v['mfe_sum']/max(1,v['count'])
-        avg_mae = v['mae_sum']/max(1,v['count'])
-        avg_post = v['post_mfe_sum']/max(1,v['count'])
+        avg_mfe = v["mfe_sum"] / max(1, v["count"])
+        avg_mae = v["mae_sum"] / max(1, v["count"])
+        avg_post = v["post_mfe_sum"] / max(1, v["count"])
         be_avg = "-" if v["be_hits"] == 0 else f"{v['be_sum']/v['be_hits']:.1f}m"
         be_rate = _ratio(v["be_hits"], v["count"])
-        print(f"{h:02d}: trades={v['count']:3d} avg_MFE={avg_mfe:.2f}p avg_MAE={avg_mae:.2f}p post_MFE={avg_post:.2f}p BE_hit={be_rate} avg_BE={be_avg}")
+        print(
+            f"{h:02d}: trades={v['count']:3d} avg_MFE={avg_mfe:.2f}p avg_MAE={avg_mae:.2f}p post_MFE={avg_post:.2f}p BE_hit={be_rate} avg_BE={be_avg}"
+        )
         parts = []
         for thr in args.thresholds:
-            during = v['hit_during_hold'][thr]
-            post = v['hit_post_exit'][thr]
-            parts.append(f"≥{thr:.1f}p hold:{_ratio(during,v['count'])} post:{_ratio(post,v['count'])}")
+            during = v["hit_during_hold"][thr]
+            post = v["hit_post_exit"][thr]
+            parts.append(
+                f"≥{thr:.1f}p hold:{_ratio(during,v['count'])} post:{_ratio(post,v['count'])}"
+            )
         print("    " + " | ".join(parts))
 
     print("\n=== By strategy tag (top %d) ===" % args.top)
-    ranked = sorted(by_strategy.items(), key=lambda item: item[1]["count"], reverse=True)
+    ranked = sorted(
+        by_strategy.items(), key=lambda item: item[1]["count"], reverse=True
+    )
     for tag, v in ranked[: max(1, args.top)]:
-        avg_mfe = v['mfe_sum']/max(1,v['count'])
-        avg_mae = v['mae_sum']/max(1,v['count'])
-        avg_post = v['post_mfe_sum']/max(1,v['count'])
+        avg_mfe = v["mfe_sum"] / max(1, v["count"])
+        avg_mae = v["mae_sum"] / max(1, v["count"])
+        avg_post = v["post_mfe_sum"] / max(1, v["count"])
         be_avg = "-" if v["be_hits"] == 0 else f"{v['be_sum']/v['be_hits']:.1f}m"
         be_rate = _ratio(v["be_hits"], v["count"])
-        print(f"{tag}: trades={v['count']:3d} avg_MFE={avg_mfe:.2f}p avg_MAE={avg_mae:.2f}p post_MFE={avg_post:.2f}p BE_hit={be_rate} avg_BE={be_avg}")
+        print(
+            f"{tag}: trades={v['count']:3d} avg_MFE={avg_mfe:.2f}p avg_MAE={avg_mae:.2f}p post_MFE={avg_post:.2f}p BE_hit={be_rate} avg_BE={be_avg}"
+        )
 
 
 if __name__ == "__main__":

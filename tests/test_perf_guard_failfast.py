@@ -9,8 +9,7 @@ def _init_trades_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE trades (
               pocket TEXT,
               strategy_tag TEXT,
@@ -23,8 +22,7 @@ def _init_trades_db(db_path: Path) -> None:
               micro_regime TEXT,
               macro_regime TEXT
             )
-            """
-        )
+            """)
         con.commit()
     finally:
         con.close()
@@ -159,7 +157,9 @@ def test_perf_guard_failfast_matches_hashed_strategy_tag_suffix(
     assert "failfast:" in dec.reason
 
 
-def test_perf_guard_sl_loss_rate_blocks_before_warmup(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_sl_loss_rate_blocks_before_warmup(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 
@@ -209,7 +209,9 @@ def test_perf_guard_sl_loss_rate_blocks_before_warmup(monkeypatch, tmp_path: Pat
     assert "sl_loss_rate=" in dec.reason
 
 
-def test_perf_guard_margin_closeout_blocks_immediately(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_margin_closeout_blocks_immediately(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 
@@ -396,7 +398,9 @@ def test_perf_guard_sl_loss_rate_hard_can_be_disabled(
     assert "warn:sl_loss_rate=" in dec.reason
 
 
-def test_perf_guard_margin_closeout_soft_in_reduce_mode(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_margin_closeout_soft_in_reduce_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 
@@ -541,14 +545,18 @@ def test_perf_guard_regime_slice_cannot_bypass_global_hard_block(
             "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
         },
     )
-    monkeypatch.setattr(perf_guard, "current_regime", lambda tf, event_mode=False: "trend")
+    monkeypatch.setattr(
+        perf_guard, "current_regime", lambda tf, event_mode=False: "trend"
+    )
 
     dec = perf_guard.is_allowed("RegimeLeak", "scalp")
     assert dec.allowed is False
     assert "margin_closeout_n=" in dec.reason
 
 
-def test_perf_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_prefix_does_not_fallback_to_global(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 
@@ -587,7 +595,9 @@ def test_perf_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Pa
     assert "failfast:" in dec.reason
 
 
-def test_perf_guard_setup_blocks_bad_direction_only(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_setup_blocks_bad_direction_only(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 
@@ -646,12 +656,16 @@ def test_perf_guard_setup_blocks_bad_direction_only(monkeypatch, tmp_path: Path)
     assert dec_buy.allowed is False
     assert dec_buy.reason.startswith("setup_pf=")
 
-    dec_sell = perf_guard.is_allowed("SideSplit", "scalp", hour=current_hour, side="sell")
+    dec_sell = perf_guard.is_allowed(
+        "SideSplit", "scalp", hour=current_hour, side="sell"
+    )
     assert dec_sell.allowed is True
     assert dec_sell.reason.startswith("warmup_n=") or dec_sell.reason.startswith("pf=")
 
 
-def test_perf_guard_setup_strategy_override_relaxes_threshold(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_setup_strategy_override_relaxes_threshold(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 
@@ -787,7 +801,9 @@ def test_perf_guard_setup_strategy_override_global_fallback_with_prefix(
     assert dec.allowed is True
 
 
-def test_perf_guard_setup_strategy_min_trades_override(monkeypatch, tmp_path: Path) -> None:
+def test_perf_guard_setup_strategy_min_trades_override(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
 

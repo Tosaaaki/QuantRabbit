@@ -151,7 +151,9 @@ def dedupe_service(
         except OSError as exc:
             notes.append(f"read_error file={path} err={exc}")
             continue
-        updated = [line for i, line in enumerate(original, start=1) if i not in remove_set]
+        updated = [
+            line for i, line in enumerate(original, start=1) if i not in remove_set
+        ]
         if updated == original:
             continue
         text = "\n".join(updated)
@@ -197,7 +199,9 @@ def main() -> int:
         print("No matching services found.")
         return 0
 
-    remove_envfiles = {_normalize_envfile(item) for item in args.remove_envfile if item.strip()}
+    remove_envfiles = {
+        _normalize_envfile(item) for item in args.remove_envfile if item.strip()
+    }
     total_duplicates = 0
     total_explicit_removed = 0
     total_changed_files = 0

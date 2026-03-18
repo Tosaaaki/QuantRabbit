@@ -31,7 +31,9 @@ class InsightClient:
       }
     """
 
-    def __init__(self, object_path: str = "analytics/lot_insights.json", ttl_sec: int = 600):
+    def __init__(
+        self, object_path: str = "analytics/lot_insights.json", ttl_sec: int = 600
+    ):
         self._ttl = ttl_sec
         self._object_path = object_path
         self._bucket = self._resolve_bucket()
@@ -81,4 +83,3 @@ class InsightClient:
             return float(val)
         val = data.get(f"{pocket}:ALL")
         return float(val) if val is not None else 1.0
-

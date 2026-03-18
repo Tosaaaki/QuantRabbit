@@ -10,8 +10,7 @@ def _init_trades_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
     try:
-        con.execute(
-            """
+        con.execute("""
             CREATE TABLE trades (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               pocket TEXT,
@@ -21,8 +20,7 @@ def _init_trades_db(db_path: Path) -> None:
               pl_pips REAL,
               realized_pl REAL
             )
-            """
-        )
+            """)
         con.commit()
     finally:
         con.close()
@@ -44,7 +42,14 @@ def _insert_trade(
             INSERT INTO trades (pocket, strategy_tag, strategy, close_time, pl_pips, realized_pl)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (pocket, strategy_tag, strategy_tag, close_time, float(pl_pips), float(realized_pl)),
+            (
+                pocket,
+                strategy_tag,
+                strategy_tag,
+                close_time,
+                float(pl_pips),
+                float(realized_pl),
+            ),
         )
         con.commit()
     finally:
@@ -103,7 +108,9 @@ def test_profit_guard_reason_uses_cfg_lookback(monkeypatch, tmp_path: Path) -> N
     assert "win=180m" in dec.reason
 
 
-def test_profit_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Path) -> None:
+def test_profit_guard_prefix_does_not_fallback_to_global(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "trades.db"
     _init_trades_db(db_path)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

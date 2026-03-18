@@ -21,7 +21,7 @@ import logging
 
 # 保持ウィンドウを戦略要件（最大で ~6 分〜10 分）に合わせて拡張
 _MAX_SECONDS = 600  # 10 分保持（S5×60本などの要件に対応）
-_MAX_TICKS = 6000   # 10 tick/sec を想定した上限
+_MAX_TICKS = 6000  # 10 tick/sec を想定した上限
 _BASE_DIR = Path(__file__).resolve().parents[1]
 _CACHE_PATH = (_BASE_DIR / "logs" / "tick_cache.json").resolve()
 # ディスクキャッシュに含める最大件数（ワーカーが十分な窓幅を再構成できるよう拡張）
@@ -156,7 +156,9 @@ def _persist_cache() -> None:
         if _persist_inflight:
             return
         _persist_inflight = True
-    thread = threading.Thread(target=_persist_worker, name="tick-cache-persist", daemon=True)
+    thread = threading.Thread(
+        target=_persist_worker, name="tick-cache-persist", daemon=True
+    )
     thread.start()
 
 
@@ -251,7 +253,9 @@ def _iter_recent(seconds: float) -> Iterable[_TickRow]:
     return (row for row in reversed(_TICKS) if row.epoch >= cutoff)
 
 
-def recent_ticks(seconds: float = 60.0, *, limit: int | None = None) -> List[Dict[str, float]]:
+def recent_ticks(
+    seconds: float = 60.0, *, limit: int | None = None
+) -> List[Dict[str, float]]:
     """
     直近 seconds 秒以内のティックを新しい順で返す。
     """
@@ -259,7 +263,9 @@ def recent_ticks(seconds: float = 60.0, *, limit: int | None = None) -> List[Dic
     _reload_cache_if_updated()
     rows = []
     for idx, row in enumerate(_iter_recent(seconds)):
-        rows.append({"epoch": row.epoch, "bid": row.bid, "ask": row.ask, "mid": row.mid})
+        rows.append(
+            {"epoch": row.epoch, "bid": row.bid, "ask": row.ask, "mid": row.mid}
+        )
         if limit is not None and idx + 1 >= limit:
             break
     rows.reverse()
@@ -275,8 +281,16 @@ def summarize(seconds: float = 60.0) -> Dict[str, float]:
     rows = list(_iter_recent(seconds))
     if not rows:
         return {}
-    highs = max(row.bid for row in rows), max(row.ask for row in rows), max(row.mid for row in rows)
-    lows = min(row.bid for row in rows), min(row.ask for row in rows), min(row.mid for row in rows)
+    highs = (
+        max(row.bid for row in rows),
+        max(row.ask for row in rows),
+        max(row.mid for row in rows),
+    )
+    lows = (
+        min(row.bid for row in rows),
+        min(row.ask for row in rows),
+        min(row.mid for row in rows),
+    )
     latest = rows[0]
     span = latest.epoch - rows[-1].epoch if len(rows) > 1 else 0.0
     spread_pips = (latest.ask - latest.bid) / 0.01

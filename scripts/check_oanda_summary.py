@@ -43,13 +43,18 @@ def main() -> int:
         return 2
 
     summary = resp.json().get("account", {})
-    print(json.dumps({
-        "account": account,
-        "hedgingEnabled": summary.get("hedgingEnabled"),
-        "marginRate": summary.get("marginRate"),
-        "openTradeCount": summary.get("openTradeCount"),
-        "pl": summary.get("pl"),
-    }, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "account": account,
+                "hedgingEnabled": summary.get("hedgingEnabled"),
+                "marginRate": summary.get("marginRate"),
+                "openTradeCount": summary.get("openTradeCount"),
+                "pl": summary.get("pl"),
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

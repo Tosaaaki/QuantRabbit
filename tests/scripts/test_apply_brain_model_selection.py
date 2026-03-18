@@ -4,7 +4,6 @@ import json
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_brain_model_selection.py"
 
@@ -217,7 +216,9 @@ def test_apply_brain_model_selection_reports_no_change(tmp_path: Path) -> None:
     assert report["changed_keys"] == []
 
 
-def test_apply_brain_model_selection_caps_timeout_when_requested(tmp_path: Path) -> None:
+def test_apply_brain_model_selection_caps_timeout_when_requested(
+    tmp_path: Path,
+) -> None:
     benchmark_path = tmp_path / "benchmark.json"
     env_path = tmp_path / "brain-ollama.env"
     output_path = tmp_path / "selection.json"
@@ -286,7 +287,9 @@ def test_apply_brain_model_selection_caps_timeout_when_requested(tmp_path: Path)
     assert float(report["timeout_cap_sec"]) == 4.0
 
 
-def test_apply_brain_model_selection_uses_fallback_when_quality_is_too_low(tmp_path: Path) -> None:
+def test_apply_brain_model_selection_uses_fallback_when_quality_is_too_low(
+    tmp_path: Path,
+) -> None:
     benchmark_path = tmp_path / "benchmark.json"
     env_path = tmp_path / "brain-ollama.env"
     output_path = tmp_path / "selection.json"

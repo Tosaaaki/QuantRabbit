@@ -23,7 +23,9 @@ _BQ_EXPORT_BATCH_SIZE = max(1, int(os.getenv("BQ_EXPORT_BATCH_SIZE", "500")))
 _BQ_INSERT_TIMEOUT_SEC = max(1.0, float(os.getenv("BQ_INSERT_TIMEOUT_SEC", "20.0")))
 _BQ_RETRY_TIMEOUT_SEC = max(5.0, float(os.getenv("BQ_RETRY_TIMEOUT_SEC", "90.0")))
 _BQ_RETRY_INITIAL_SEC = max(0.1, float(os.getenv("BQ_RETRY_INITIAL_SEC", "1.0")))
-_BQ_RETRY_MAX_SEC = max(_BQ_RETRY_INITIAL_SEC, float(os.getenv("BQ_RETRY_MAX_SEC", "10.0")))
+_BQ_RETRY_MAX_SEC = max(
+    _BQ_RETRY_INITIAL_SEC, float(os.getenv("BQ_RETRY_MAX_SEC", "10.0"))
+)
 _BQ_RETRY_MULTIPLIER = max(1.0, float(os.getenv("BQ_RETRY_MULTIPLIER", "2.0")))
 
 
@@ -75,7 +77,12 @@ class BigQueryExporter:
         total_rows = len(rows)
         exported = 0
         last_updated: Optional[str] = None
-        logging.info("[BQ] %s 件を %s へ送信中... (batch=%s)", total_rows, table_ref, self.batch_size)
+        logging.info(
+            "[BQ] %s 件を %s へ送信中... (batch=%s)",
+            total_rows,
+            table_ref,
+            self.batch_size,
+        )
         for offset in range(0, total_rows, self.batch_size):
             chunk = rows[offset : offset + self.batch_size]
             row_ids = [self._row_insert_id(row) for row in chunk]

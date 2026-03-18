@@ -76,7 +76,16 @@ def _run(cmd: list[str], *, timeout: float = 10.0) -> tuple[int, str, str]:
 
 
 def _unit_file_exists(unit: str) -> bool:
-    rc, stdout, _ = _run(["systemctl", "list-unit-files", "--no-legend", "--no-pager", "--type=service", unit])
+    rc, stdout, _ = _run(
+        [
+            "systemctl",
+            "list-unit-files",
+            "--no-legend",
+            "--no-pager",
+            "--type=service",
+            unit,
+        ]
+    )
     if rc != 0:
         return False
     return unit in stdout
@@ -118,7 +127,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         if "=" not in line:
             continue
         key, value = line.split("=", 1)
@@ -138,7 +147,9 @@ def _parse_csv_set(raw_value: str) -> set[str]:
 
 
 def _journal_405_count(hours: int = 3) -> int:
-    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     method_not_allowed = re.compile(r"method not allowed", re.IGNORECASE)
     status_405 = re.compile(r"status\s*=\s*405\b", re.IGNORECASE)
     request_405 = re.compile(
@@ -195,8 +206,19 @@ def _emit_findings_summary(findings: list[Finding]) -> tuple[int, int, int]:
     return severity["critical"], severity["warn"], severity["info"]
 
 
-def _add_finding(results: list[Finding], *, level: str, component: str, message: str, details: dict[str, Any] | None = None) -> None:
-    results.append(Finding(level=level, component=component, message=message, details=details or {}))
+def _add_finding(
+    results: list[Finding],
+    *,
+    level: str,
+    component: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    results.append(
+        Finding(
+            level=level, component=component, message=message, details=details or {}
+        )
+    )
 
 
 def main() -> int:
@@ -226,8 +248,12 @@ def main() -> int:
         latest_report = log_dir / "ops_v2_audit_latest.json"
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         archive_report = log_dir / f"ops_v2_audit_{timestamp}.json"
-        latest_report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        archive_report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        latest_report.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        archive_report.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print("[ops-v2-audit] skipped: systemctl not available on this host")
         return 0
 
@@ -254,20 +280,41 @@ def main() -> int:
         ("quant-micro-pullbackema.service", "quant-micro-pullbackema-exit.service"),
         ("quant-micro-trendmomentum.service", "quant-micro-trendmomentum-exit.service"),
         ("quant-micro-trendretest.service", "quant-micro-trendretest-exit.service"),
-        ("quant-micro-compressionrevert.service", "quant-micro-compressionrevert-exit.service"),
+        (
+            "quant-micro-compressionrevert.service",
+            "quant-micro-compressionrevert-exit.service",
+        ),
         ("quant-micro-momentumpulse.service", "quant-micro-momentumpulse-exit.service"),
         ("quant-scalp-macd-rsi-div.service", "quant-scalp-macd-rsi-div-exit.service"),
-        ("quant-scalp-tick-imbalance.service", "quant-scalp-tick-imbalance-exit.service"),
-        ("quant-scalp-squeeze-pulse-break.service", "quant-scalp-squeeze-pulse-break-exit.service"),
-        ("quant-scalp-wick-reversal-blend.service", "quant-scalp-wick-reversal-blend-exit.service"),
-        ("quant-scalp-wick-reversal-pro.service", "quant-scalp-wick-reversal-pro-exit.service"),
+        (
+            "quant-scalp-tick-imbalance.service",
+            "quant-scalp-tick-imbalance-exit.service",
+        ),
+        (
+            "quant-scalp-squeeze-pulse-break.service",
+            "quant-scalp-squeeze-pulse-break-exit.service",
+        ),
+        (
+            "quant-scalp-wick-reversal-blend.service",
+            "quant-scalp-wick-reversal-blend-exit.service",
+        ),
+        (
+            "quant-scalp-wick-reversal-pro.service",
+            "quant-scalp-wick-reversal-pro-exit.service",
+        ),
         ("quant-m1scalper.service", "quant-m1scalper-exit.service"),
     ]
 
     optional_pairs = [
-        ("quant-scalp-macd-rsi-div-b.service", "quant-scalp-macd-rsi-div-b-exit.service"),
+        (
+            "quant-scalp-macd-rsi-div-b.service",
+            "quant-scalp-macd-rsi-div-b-exit.service",
+        ),
         ("quant-scalp-rangefader.service", "quant-scalp-rangefader-exit.service"),
-        ("quant-scalp-extrema-reversal.service", "quant-scalp-extrema-reversal-exit.service"),
+        (
+            "quant-scalp-extrema-reversal.service",
+            "quant-scalp-extrema-reversal-exit.service",
+        ),
     ]
 
     required_env_by_service: dict[str, list[str]] = {
@@ -370,7 +417,10 @@ def main() -> int:
                     level="warn",
                     component="systemd",
                     message=f"Strategy pair unit is missing: {service}",
-                    details={"service": service, "pair": f"{entry_service}/{exit_service}"},
+                    details={
+                        "service": service,
+                        "pair": f"{entry_service}/{exit_service}",
+                    },
                 )
                 continue
 
@@ -381,7 +431,10 @@ def main() -> int:
                     level="warn",
                     component="systemd",
                     message=f"Unable to get active state for strategy unit: {service}",
-                    details={"service": service, "pair": f"{entry_service}/{exit_service}"},
+                    details={
+                        "service": service,
+                        "pair": f"{entry_service}/{exit_service}",
+                    },
                 )
             elif not active:
                 _add_finding(
@@ -389,7 +442,10 @@ def main() -> int:
                     level="warn",
                     component="systemd",
                     message=f"Strategy unit is not active: {service}",
-                    details={"service": service, "pair": f"{entry_service}/{exit_service}"},
+                    details={
+                        "service": service,
+                        "pair": f"{entry_service}/{exit_service}",
+                    },
                 )
 
     for pair in mandatory_pairs:
@@ -584,10 +640,16 @@ def main() -> int:
     latest_report = log_dir / "ops_v2_audit_latest.json"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     archive_report = log_dir / f"ops_v2_audit_{timestamp}.json"
-    latest_report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    archive_report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    latest_report.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    archive_report.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
-    print(f"[ops-v2-audit] core findings: critical={critical}, warn={warn}, info={info}")
+    print(
+        f"[ops-v2-audit] core findings: critical={critical}, warn={warn}, info={info}"
+    )
     for finding in findings[:12]:
         print(f"- {finding.level.upper()} [{finding.component}] {finding.message}")
     if len(findings) > 12:

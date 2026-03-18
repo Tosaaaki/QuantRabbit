@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from workers.common.setup_context import derive_live_setup_context, extract_setup_identity
+from workers.common.setup_context import (
+    derive_live_setup_context,
+    extract_setup_identity,
+)
 
 
-def test_derive_live_setup_context_prefers_common_fingerprint_over_conflicting_flow_label() -> None:
+def test_derive_live_setup_context_prefers_common_fingerprint_over_conflicting_flow_label() -> (
+    None
+):
     fingerprint = (
         "PrecisionLowVol|short|range_compression|tight_fast|"
         "rsi:overbought|atr:low|gap:up_flat|volatility_compression"
@@ -78,7 +83,9 @@ def test_derive_live_setup_context_appends_mtf_suffix_for_countertrend_macro() -
     assert "align:countertrend" in str(summary["setup_fingerprint"])
 
 
-def test_extract_setup_identity_repairs_common_fingerprint_context_from_live_setup() -> None:
+def test_extract_setup_identity_repairs_common_fingerprint_context_from_live_setup() -> (
+    None
+):
     fingerprint = (
         "DroughtRevert|long|range_compression|unknown|"
         "rsi:mid|atr:low|gap:up_flat|volatility_compression"
@@ -101,7 +108,9 @@ def test_extract_setup_identity_repairs_common_fingerprint_context_from_live_set
     }
 
 
-def test_extract_setup_identity_preserves_custom_strategy_context_when_fingerprint_is_non_common() -> None:
+def test_extract_setup_identity_preserves_custom_strategy_context_when_fingerprint_is_non_common() -> (
+    None
+):
     fingerprint = "RangeFader|short|sell-fade|trend_long|p0"
     context = extract_setup_identity(
         {

@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CYCLE_SCRIPT = REPO_ROOT / "scripts" / "run_local_feedback_cycle.py"
 _CYCLE_SPEC = importlib.util.spec_from_file_location(

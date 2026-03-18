@@ -10,8 +10,12 @@ from analysis import replay_quality_gate_worker as worker
 import pytest
 
 
-def _completed(stdout: str, stderr: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=["python"], returncode=returncode, stdout=stdout, stderr=stderr)
+def _completed(
+    stdout: str, stderr: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["python"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 def _base_cfg(tmp_path: Path) -> worker.WorkerConfig:
@@ -126,14 +130,21 @@ def test_run_once_soft_skips_when_replay_input_is_insufficient(tmp_path: Path) -
     assert latest["auto_improve"]["reason"] == "insufficient_tick_files"
 
 
-def test_collect_auto_improve_strategies_filters_virtual_workers(tmp_path: Path) -> None:
+def test_collect_auto_improve_strategies_filters_virtual_workers(
+    tmp_path: Path,
+) -> None:
     cfg = replace(_base_cfg(tmp_path), auto_improve_scope="failing")
     report = {
         "meta": {
             "workers": ["session_open", "pocket:scalp", "__overall__"],
         },
         "overall": {
-            "failing_workers": ["session_open", "pocket:scalp", "__overall__", "session_open"],
+            "failing_workers": [
+                "session_open",
+                "pocket:scalp",
+                "__overall__",
+                "session_open",
+            ],
         },
     }
 
@@ -215,7 +226,9 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
     report_md.write_text("# report\n", encoding="utf-8")
 
     reentry_path = tmp_path / "worker_reentry.yaml"
-    reentry_path.write_text("defaults:\n  block_jst_hours: []\nstrategies: {}\n", encoding="utf-8")
+    reentry_path.write_text(
+        "defaults:\n  block_jst_hours: []\nstrategies: {}\n", encoding="utf-8"
+    )
 
     cfg = replace(
         _base_cfg(tmp_path),
@@ -242,7 +255,9 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
         )
         return _completed(stdout=str(out_path), returncode=0)
 
-    rc = worker.run_once(cfg, runner=fake_runner, counterfactual_runner=fake_counterfactual_runner)
+    rc = worker.run_once(
+        cfg, runner=fake_runner, counterfactual_runner=fake_counterfactual_runner
+    )
 
     assert rc == 0
     latest = worker._read_json(cfg.state_path)
@@ -258,7 +273,9 @@ def test_run_once_auto_improve_updates_reentry(tmp_path: Path) -> None:
     assert "block_jst_hours" not in session_cfg
     strategy_runs = auto.get("strategy_runs", [])
     assert isinstance(strategy_runs, list) and strategy_runs
-    run = next((row for row in strategy_runs if row.get("strategy") == "session_open"), {})
+    run = next(
+        (row for row in strategy_runs if row.get("strategy") == "session_open"), {}
+    )
     assert run.get("block_jst_hours") == [4, 22]
     assert run.get("block_hours_status") == "ignored_by_policy"
 
@@ -285,7 +302,9 @@ def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:
     )
     apply_state_path = tmp_path / "replay_auto_improve_state.json"
     apply_state_path.write_text(
-        '{"applied_at":"' + datetime.now(timezone.utc).isoformat() + '","updates":{"session_open":[1]}}',
+        '{"applied_at":"'
+        + datetime.now(timezone.utc).isoformat()
+        + '","updates":{"session_open":[1]}}',
         encoding="utf-8",
     )
 
@@ -314,7 +333,9 @@ def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:
         )
         return _completed(stdout=str(out_path), returncode=0)
 
-    rc = worker.run_once(cfg, runner=fake_runner, counterfactual_runner=fake_counterfactual_runner)
+    rc = worker.run_once(
+        cfg, runner=fake_runner, counterfactual_runner=fake_counterfactual_runner
+    )
 
     assert rc == 0
     latest = worker._read_json(cfg.state_path)
@@ -324,7 +345,9 @@ def test_run_once_auto_improve_respects_apply_cooldown(tmp_path: Path) -> None:
     assert auto.get("status") == "analyzed"
     assert auto.get("reason") == "reentry_apply_cooldown"
     payload = worker._load_yaml_dict(reentry_path)
-    assert payload.get("strategies", {}).get("session_open", {}).get("block_jst_hours") == [1]
+    assert payload.get("strategies", {}).get("session_open", {}).get(
+        "block_jst_hours"
+    ) == [1]
 
 
 def test_main_skips_when_market_open(monkeypatch) -> None:
@@ -333,7 +356,9 @@ def test_main_skips_when_market_open(monkeypatch) -> None:
     monkeypatch.setattr(worker, "is_market_open", lambda: True)
 
     def _fail_parse_args():
-        raise AssertionError("parse_args should not be called when market-open skip is active")
+        raise AssertionError(
+            "parse_args should not be called when market-open skip is active"
+        )
 
     monkeypatch.setattr(worker, "parse_args", _fail_parse_args)
     assert worker.main() == 0

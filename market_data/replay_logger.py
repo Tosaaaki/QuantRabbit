@@ -134,12 +134,19 @@ def log_tick(tick) -> None:
         "instrument": tick.instrument,
         "bid": getattr(tick, "bid", None),
         "ask": getattr(tick, "ask", None),
-        "mid": (getattr(tick, "bid", 0.0) + getattr(tick, "ask", 0.0)) / 2
-        if getattr(tick, "bid", None) is not None and getattr(tick, "ask", None) is not None
-        else None,
+        "mid": (
+            (getattr(tick, "bid", 0.0) + getattr(tick, "ask", 0.0)) / 2
+            if getattr(tick, "bid", None) is not None
+            and getattr(tick, "ask", None) is not None
+            else None
+        ),
         "liquidity": getattr(tick, "liquidity", None),
-        "bids": list(getattr(tick, "bids", ())[:5]) if getattr(tick, "bids", ()) else None,
-        "asks": list(getattr(tick, "asks", ())[:5]) if getattr(tick, "asks", ()) else None,
+        "bids": (
+            list(getattr(tick, "bids", ())[:5]) if getattr(tick, "bids", ()) else None
+        ),
+        "asks": (
+            list(getattr(tick, "asks", ())[:5]) if getattr(tick, "asks", ()) else None
+        ),
     }
     _enqueue_write(path, payload)
 
@@ -152,18 +159,16 @@ def log_candle(instrument: str, timeframe: str, candle: Mapping[str, Any]) -> No
     else:
         dt = ts or datetime.datetime.now(datetime.timezone.utc)
     day = _day_key(dt)
-    path = (
-        _BASE_DIR
-        / instrument
-        / f"{instrument}_{timeframe}_{day}.jsonl"
-    )
+    path = _BASE_DIR / instrument / f"{instrument}_{timeframe}_{day}.jsonl"
     payload = {
         "ts": _to_utc_iso(dt),
         "timeframe": timeframe,
         "open": float(candle.get("open")) if candle.get("open") is not None else None,
         "high": float(candle.get("high")) if candle.get("high") is not None else None,
         "low": float(candle.get("low")) if candle.get("low") is not None else None,
-        "close": float(candle.get("close")) if candle.get("close") is not None else None,
+        "close": (
+            float(candle.get("close")) if candle.get("close") is not None else None
+        ),
         "volume": candle.get("volume"),
     }
     _enqueue_write(path, payload)

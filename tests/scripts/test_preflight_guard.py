@@ -70,7 +70,9 @@ def test_validate_improvement_artifact_rejects_blocked_payload(tmp_path: Path) -
     )
 
     assert ok is False
-    assert any("latest improvement_preflight is blocked" in detail for detail in details)
+    assert any(
+        "latest improvement_preflight is blocked" in detail for detail in details
+    )
     assert any("recommended_single_focus_lane:" in detail for detail in details)
     assert any("blocked_candidate: MicroLevelReactor" in detail for detail in details)
 

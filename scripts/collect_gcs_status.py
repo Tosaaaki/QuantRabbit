@@ -17,7 +17,9 @@ import re
 def _run(cmd: list[str]) -> str:
     proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "command failed")
+        raise RuntimeError(
+            proc.stderr.strip() or proc.stdout.strip() or "command failed"
+        )
     return proc.stdout
 
 
@@ -86,13 +88,17 @@ def _parse_iso_ts(raw: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
-def _hours_lag(earlier: Optional[datetime], later: Optional[datetime]) -> Optional[float]:
+def _hours_lag(
+    earlier: Optional[datetime], later: Optional[datetime]
+) -> Optional[float]:
     if earlier is None or later is None:
         return None
     return (later - earlier).total_seconds() / 3600.0
 
 
-def _classify_staleness(hours: Optional[float], warn_hours: float, critical_hours: float) -> str | None:
+def _classify_staleness(
+    hours: Optional[float], warn_hours: float, critical_hours: float
+) -> str | None:
     if hours is None:
         return None
     if hours < 0:
@@ -140,7 +146,13 @@ def _load_recent_signals(db_path: Path, limit: int = 5) -> list[dict[str, Any]]:
 
 def _extract_core_tar(tar_path: Path, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    wanted = {"trades.db", "orders.db", "orders_snapshot_48h.db", "signals.db", "metrics.db"}
+    wanted = {
+        "trades.db",
+        "orders.db",
+        "orders_snapshot_48h.db",
+        "signals.db",
+        "metrics.db",
+    }
     with tarfile.open(tar_path, "r:*") as tf:
         for member in tf.getmembers():
             name = Path(member.name).name
@@ -153,7 +165,9 @@ def _find_latest_core(bucket: str, host: str, project: Optional[str]) -> Optiona
     objects = _gcs_ls(prefix, project)
     if not objects:
         return None
-    core_objects = [o for o in objects if re.search(r"/core_\d{8}T\d{6}Z\.tar(\.gz)?$", o)]
+    core_objects = [
+        o for o in objects if re.search(r"/core_\d{8}T\d{6}Z\.tar(\.gz)?$", o)
+    ]
     if not core_objects:
         return None
     return sorted(core_objects)[-1]
@@ -197,12 +211,28 @@ def collect_status(
         orders_db_source = "orders_snapshot_48h.db(fallback)"
     elif orders_db is not None:
         orders_db_source = "orders.db"
-    snapshot_order = _safe_query(orders_snapshot_db, "select max(ts) from orders;") if orders_snapshot_db else None
-    order_db_latest = _safe_query(orders_db, "select max(ts) from orders;") if orders_db else None
-    trade_db_latest = _safe_query(trades_db, "select max(entry_time) from trades;") if trades_db else None
+    snapshot_order = (
+        _safe_query(orders_snapshot_db, "select max(ts) from orders;")
+        if orders_snapshot_db
+        else None
+    )
+    order_db_latest = (
+        _safe_query(orders_db, "select max(ts) from orders;") if orders_db else None
+    )
+    trade_db_latest = (
+        _safe_query(trades_db, "select max(entry_time) from trades;")
+        if trades_db
+        else None
+    )
     if trade_db_latest is None:
-        trade_db_latest = _safe_query(trades_db, "select max(close_time) from trades;") if trades_db else None
-    orders_snapshot_age_vs_trades_h = _hours_lag(_parse_iso_ts(snapshot_order), _parse_iso_ts(trade_db_latest))
+        trade_db_latest = (
+            _safe_query(trades_db, "select max(close_time) from trades;")
+            if trades_db
+            else None
+        )
+    orders_snapshot_age_vs_trades_h = _hours_lag(
+        _parse_iso_ts(snapshot_order), _parse_iso_ts(trade_db_latest)
+    )
 
     core = {
         "core_object": core_obj,
@@ -216,59 +246,75 @@ def collect_status(
             orders_snapshot_warn_hours,
             orders_snapshot_critical_hours,
         ),
-        "trades_recent": _safe_query_rows(
-            trades_db,
-            "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips,state "
-            "from trades order by entry_time desc limit 5;",
-        )
-        if trades_db
-        else [],
-        "orders_last": _safe_query_rows(
-            orders_db,
-            "select ts,pocket,side,units,client_order_id,status from orders "
-            "order by ts desc limit 5;",
-        )
-        if orders_db
-        else [],
-        "orders_status_1h": _safe_query_rows(
-            orders_db,
-            "select status,count(*) as count from orders "
-            "where ts >= datetime('now','-1 hour') "
-            "group by status order by count desc limit 8;",
-        )
-        if orders_db
-        else [],
-        "signals_last_ts_ms": _safe_query(
-            signals_db, "select max(ts_ms) from signals;"
-        )
-        if signals_db
-        else None,
-        "signals_recent": _load_recent_signals(signals_db, limit=5) if signals_db else [],
-        "data_lag_ms": _safe_query(
-            metrics_db,
-            "select value from metrics where metric='data_lag_ms' order by ts desc limit 1;",
-        )
-        if metrics_db
-        else None,
-        "decision_latency_ms": _safe_query(
-            metrics_db,
-            "select value from metrics where metric='decision_latency_ms' order by ts desc limit 1;",
-        )
-        if metrics_db
-        else None,
-        "healthbeat_ts": _safe_query(
-            metrics_db,
-            "select max(ts) from metrics where metric='healthbeat';",
-        )
-        if metrics_db
-        else None,
+        "trades_recent": (
+            _safe_query_rows(
+                trades_db,
+                "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips,state "
+                "from trades order by entry_time desc limit 5;",
+            )
+            if trades_db
+            else []
+        ),
+        "orders_last": (
+            _safe_query_rows(
+                orders_db,
+                "select ts,pocket,side,units,client_order_id,status from orders "
+                "order by ts desc limit 5;",
+            )
+            if orders_db
+            else []
+        ),
+        "orders_status_1h": (
+            _safe_query_rows(
+                orders_db,
+                "select status,count(*) as count from orders "
+                "where ts >= datetime('now','-1 hour') "
+                "group by status order by count desc limit 8;",
+            )
+            if orders_db
+            else []
+        ),
+        "signals_last_ts_ms": (
+            _safe_query(signals_db, "select max(ts_ms) from signals;")
+            if signals_db
+            else None
+        ),
+        "signals_recent": (
+            _load_recent_signals(signals_db, limit=5) if signals_db else []
+        ),
+        "data_lag_ms": (
+            _safe_query(
+                metrics_db,
+                "select value from metrics where metric='data_lag_ms' order by ts desc limit 1;",
+            )
+            if metrics_db
+            else None
+        ),
+        "decision_latency_ms": (
+            _safe_query(
+                metrics_db,
+                "select value from metrics where metric='decision_latency_ms' order by ts desc limit 1;",
+            )
+            if metrics_db
+            else None
+        ),
+        "healthbeat_ts": (
+            _safe_query(
+                metrics_db,
+                "select max(ts) from metrics where metric='healthbeat';",
+            )
+            if metrics_db
+            else None
+        ),
     }
 
     return {"ui_state": ui_state, "core": core, "core_object": core_obj}
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect VM status from GCS snapshots.")
+    parser = argparse.ArgumentParser(
+        description="Collect VM status from GCS snapshots."
+    )
     parser.add_argument("--ui-bucket", required=True, help="UI bucket name")
     parser.add_argument("--backup-bucket", required=True, help="Backup bucket name")
     parser.add_argument("--host", required=True, help="VM hostname")

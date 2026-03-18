@@ -14,7 +14,9 @@ from workers.scalp_m1scalper import worker as m1_worker
 
 
 class _DummyPositionManager:
-    def __init__(self, positions: dict | None = None, *, err: Exception | None = None) -> None:
+    def __init__(
+        self, positions: dict | None = None, *, err: Exception | None = None
+    ) -> None:
         self._positions = positions or {}
         self._err = err
 
@@ -94,7 +96,9 @@ def test_resolve_account_snapshot_uses_cached_snapshot_on_error(monkeypatch) -> 
 
     monkeypatch.setattr(m1_worker, "get_account_snapshot", _raise)
 
-    snap, unavailable, err = m1_worker._resolve_account_snapshot(cached, cache_ttl_sec=0.5)
+    snap, unavailable, err = m1_worker._resolve_account_snapshot(
+        cached, cache_ttl_sec=0.5
+    )
 
     assert snap is cached
     assert unavailable is False
@@ -107,7 +111,9 @@ def test_resolve_account_snapshot_marks_unavailable_without_cache(monkeypatch) -
 
     monkeypatch.setattr(m1_worker, "get_account_snapshot", _raise)
 
-    snap, unavailable, err = m1_worker._resolve_account_snapshot(None, cache_ttl_sec=0.5)
+    snap, unavailable, err = m1_worker._resolve_account_snapshot(
+        None, cache_ttl_sec=0.5
+    )
 
     assert snap is None
     assert unavailable is True

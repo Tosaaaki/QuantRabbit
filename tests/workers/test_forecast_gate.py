@@ -37,7 +37,9 @@ def _synthetic_candles(*, n: int, freq: str, drift: float) -> list[dict[str, obj
 
 @pytest.fixture(autouse=True)
 def _disable_runtime_overrides(monkeypatch) -> None:
-    monkeypatch.setattr(forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_PATH", None, raising=False)
+    monkeypatch.setattr(
+        forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_PATH", None, raising=False
+    )
     monkeypatch.setattr(
         forecast_gate,
         "_FORECAST_RUNTIME_OVERRIDE_CACHE",
@@ -46,7 +48,9 @@ def _disable_runtime_overrides(monkeypatch) -> None:
     )
 
 
-def test_apply_runtime_tech_overrides_updates_forecast_weights(monkeypatch, tmp_path) -> None:
+def test_apply_runtime_tech_overrides_updates_forecast_weights(
+    monkeypatch, tmp_path
+) -> None:
     generated_at = datetime.now(timezone.utc).isoformat()
     override_path = tmp_path / "forecast_improvement_latest.json"
     override_path.write_text(
@@ -69,7 +73,11 @@ def test_apply_runtime_tech_overrides_updates_forecast_weights(monkeypatch, tmp_
         encoding="utf-8",
     )
     base = {
-        key: (dict(value) if isinstance(value, dict) else set(value) if isinstance(value, set) else value)
+        key: (
+            dict(value)
+            if isinstance(value, dict)
+            else set(value) if isinstance(value, set) else value
+        )
         for key, value in forecast_gate._TECH_RUNTIME_BASE.items()
     }
     base["feature_expansion_gain"] = 0.03
@@ -77,8 +85,12 @@ def test_apply_runtime_tech_overrides_updates_forecast_weights(monkeypatch, tmp_
     base["dynamic_weight_enabled"] = False
 
     monkeypatch.setattr(forecast_gate, "_TECH_RUNTIME_BASE", base, raising=False)
-    monkeypatch.setattr(forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_PATH", override_path, raising=False)
-    monkeypatch.setattr(forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC", 0.0, raising=False)
+    monkeypatch.setattr(
+        forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_PATH", override_path, raising=False
+    )
+    monkeypatch.setattr(
+        forecast_gate, "_FORECAST_RUNTIME_OVERRIDE_REFRESH_SEC", 0.0, raising=False
+    )
     monkeypatch.setattr(
         forecast_gate,
         "_FORECAST_RUNTIME_OVERRIDE_CACHE",
@@ -98,8 +110,12 @@ def test_technical_prediction_direction_changes_with_trend() -> None:
     up = _synthetic_candles(n=450, freq="5min", drift=0.0028)
     down = _synthetic_candles(n=450, freq="5min", drift=-0.0028)
 
-    up_row = forecast_gate._technical_prediction_for_horizon(up, horizon="1h", step_bars=12)
-    down_row = forecast_gate._technical_prediction_for_horizon(down, horizon="1h", step_bars=12)
+    up_row = forecast_gate._technical_prediction_for_horizon(
+        up, horizon="1h", step_bars=12
+    )
+    down_row = forecast_gate._technical_prediction_for_horizon(
+        down, horizon="1h", step_bars=12
+    )
 
     assert isinstance(up_row, dict)
     assert isinstance(down_row, dict)
@@ -113,8 +129,12 @@ def test_technical_prediction_projection_score_tracks_direction() -> None:
     up = _synthetic_candles(n=520, freq="5min", drift=0.0032)
     down = _synthetic_candles(n=520, freq="5min", drift=-0.0032)
 
-    up_row = forecast_gate._technical_prediction_for_horizon(up, horizon="1h", step_bars=12)
-    down_row = forecast_gate._technical_prediction_for_horizon(down, horizon="1h", step_bars=12)
+    up_row = forecast_gate._technical_prediction_for_horizon(
+        up, horizon="1h", step_bars=12
+    )
+    down_row = forecast_gate._technical_prediction_for_horizon(
+        down, horizon="1h", step_bars=12
+    )
 
     assert isinstance(up_row, dict)
     assert isinstance(down_row, dict)
@@ -128,8 +148,12 @@ def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
     up = _synthetic_candles(n=520, freq="5min", drift=0.0032)
     down = _synthetic_candles(n=520, freq="5min", drift=-0.0032)
 
-    up_row = forecast_gate._technical_prediction_for_horizon(up, horizon="1h", step_bars=12)
-    down_row = forecast_gate._technical_prediction_for_horizon(down, horizon="1h", step_bars=12)
+    up_row = forecast_gate._technical_prediction_for_horizon(
+        up, horizon="1h", step_bars=12
+    )
+    down_row = forecast_gate._technical_prediction_for_horizon(
+        down, horizon="1h", step_bars=12
+    )
 
     assert isinstance(up_row, dict)
     assert isinstance(down_row, dict)
@@ -205,7 +229,9 @@ def test_rebound_bias_signal_rewards_lower_wick_rejection() -> None:
 
     assert 0.0 <= float(reject_signal) <= 1.0
     assert 0.0 <= float(continuation_signal) <= 1.0
-    assert float(reject_components["wick_score"]) > float(continuation_components["wick_score"])
+    assert float(reject_components["wick_score"]) > float(
+        continuation_components["wick_score"]
+    )
     assert float(reject_signal) > float(continuation_signal)
 
 
@@ -295,7 +321,9 @@ def test_decide_includes_range_band_fields(monkeypatch) -> None:
     assert 0.0 <= float(decision.target_reach_prob) <= 1.0
 
 
-def test_decide_blocks_opposite_side_when_only_technical_source_available(monkeypatch) -> None:
+def test_decide_blocks_opposite_side_when_only_technical_source_available(
+    monkeypatch,
+) -> None:
     candles_m5 = _synthetic_candles(n=600, freq="5min", drift=0.0025)
     candles_h1 = _synthetic_candles(n=520, freq="1h", drift=0.018)
     candles_d1 = _synthetic_candles(n=240, freq="1d", drift=0.07)
@@ -476,7 +504,9 @@ def test_decide_uses_strategy_specific_style_override(monkeypatch) -> None:
     assert decision.style == "range"
 
 
-def test_decide_uses_strategy_specific_edge_override_with_underscore_suffix(monkeypatch) -> None:
+def test_decide_uses_strategy_specific_edge_override_with_underscore_suffix(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("FORECAST_GATE_EDGE_BLOCK_STRATEGY_SCALP_PING_5S_B_LIVE", "0.76")
     monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
     monkeypatch.setattr(

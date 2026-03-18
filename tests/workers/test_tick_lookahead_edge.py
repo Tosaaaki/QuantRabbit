@@ -3,7 +3,9 @@ from __future__ import annotations
 from workers.common.tick_lookahead_edge import decide_tick_lookahead_edge
 
 
-def _ticks(mids: list[float], start: float = 100.0, step: float = 0.2) -> list[dict[str, float]]:
+def _ticks(
+    mids: list[float], start: float = 100.0, step: float = 0.2
+) -> list[dict[str, float]]:
     out: list[dict[str, float]] = []
     for idx, mid in enumerate(mids):
         out.append(
@@ -110,4 +112,3 @@ def test_tick_lookahead_scales_up_when_edge_is_strong() -> None:
     assert decision.reason == "edge_ok"
     assert decision.edge_pips >= 0.10
     assert decision.units_mult > 1.0
-

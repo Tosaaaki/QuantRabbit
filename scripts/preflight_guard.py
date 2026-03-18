@@ -8,7 +8,6 @@ import sys
 import time
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ARTIFACT = REPO_ROOT / "logs" / "change_preflight_latest.json"
 DEFAULT_IMPROVEMENT_ARTIFACT = REPO_ROOT / "logs" / "improvement_gate_latest.json"
@@ -53,7 +52,9 @@ def _parse_args() -> argparse.Namespace:
         "--improvement-artifact", default=str(DEFAULT_IMPROVEMENT_ARTIFACT)
     )
     parser.add_argument("--max-age-min", type=int, default=360)
-    parser.add_argument("--paths", nargs="*", help="Optional file list for dry-run/testing.")
+    parser.add_argument(
+        "--paths", nargs="*", help="Optional file list for dry-run/testing."
+    )
     return parser.parse_args()
 
 
@@ -168,8 +169,12 @@ def _validate_improvement_artifact(
                 f"driver={recommended.get('primary_loss_driver') or 'n/a'}"
             )
         for item in blocked_items[:4]:
-            candidate = item.get("candidate") if isinstance(item.get("candidate"), dict) else {}
-            reasons = item.get("reasons") if isinstance(item.get("reasons"), list) else []
+            candidate = (
+                item.get("candidate") if isinstance(item.get("candidate"), dict) else {}
+            )
+            reasons = (
+                item.get("reasons") if isinstance(item.get("reasons"), list) else []
+            )
             details.append(
                 "blocked_candidate: "
                 f"{candidate.get('strategy') or 'n/a'} / "
@@ -183,7 +188,10 @@ def _validate_improvement_artifact(
 
     return (
         True,
-        [f"improvement artifact query: {query}", f"improvement artifact age_sec: {age_sec:.0f}"],
+        [
+            f"improvement artifact query: {query}",
+            f"improvement artifact age_sec: {age_sec:.0f}",
+        ],
         artifact,
     )
 
@@ -216,7 +224,9 @@ def main() -> int:
         print("preflight-guard: blocked")
         print(f"- staged protected paths: {', '.join(protected[:8])}")
         print(f"- required staged file missing: {REQUIRED_FINDINGS}")
-        print('- run `scripts/change_preflight.sh "<query>"` and update docs/TRADE_FINDINGS.md before commit')
+        print(
+            '- run `scripts/change_preflight.sh "<query>"` and update docs/TRADE_FINDINGS.md before commit'
+        )
         return 1
 
     artifact_path = Path(args.artifact)
@@ -237,7 +247,9 @@ def main() -> int:
     max_age_sec = max(60, args.max_age_min * 60)
     if artifact_age_sec > max_age_sec:
         print("preflight-guard: blocked")
-        print(f"- stale artifact: age_sec={artifact_age_sec:.0f} > max_age_sec={max_age_sec}")
+        print(
+            f"- stale artifact: age_sec={artifact_age_sec:.0f} > max_age_sec={max_age_sec}"
+        )
         print(f"- artifact query: {artifact.get('query') or 'n/a'}")
         print('- rerun `scripts/change_preflight.sh "<query>"` and commit again')
         return 1

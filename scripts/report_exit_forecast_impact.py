@@ -11,7 +11,6 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Iterable
 
-
 TP_REASON_TOKENS = (
     "take_profit",
     "trail_take",
@@ -50,10 +49,8 @@ class TradeRow:
     exit_class: str
 
 
-
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
 
 
 def _to_float(value: Any) -> float | None:
@@ -63,7 +60,6 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
-
 
 
 def _to_bool(value: Any) -> bool | None:
@@ -82,7 +78,6 @@ def _to_bool(value: Any) -> bool | None:
     return None
 
 
-
 def _parse_json(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -94,7 +89,6 @@ def _parse_json(value: Any) -> dict[str, Any]:
         except Exception:
             return {}
     return {}
-
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -111,7 +105,6 @@ def _parse_time(value: Any) -> datetime | None:
         return None
 
 
-
 def _exit_class(close_reason: str) -> str:
     reason = (close_reason or "").strip().lower()
     if any(token in reason for token in TP_REASON_TOKENS):
@@ -119,7 +112,6 @@ def _exit_class(close_reason: str) -> str:
     if any(token in reason for token in SL_REASON_TOKENS):
         return "sl"
     return "other"
-
 
 
 def _trade_side(units: int, thesis: dict[str, Any]) -> str | None:
@@ -135,7 +127,6 @@ def _trade_side(units: int, thesis: dict[str, Any]) -> str | None:
     if units < 0:
         return "short"
     return None
-
 
 
 def _forecast_state(side: str | None, forecast: dict[str, Any]) -> str:
@@ -168,13 +159,11 @@ def _forecast_state(side: str | None, forecast: dict[str, Any]) -> str:
     return "forecast_neutral"
 
 
-
 def _safe_avg(values: Iterable[float]) -> float | None:
     vals = [float(v) for v in values]
     if not vals:
         return None
     return sum(vals) / float(len(vals))
-
 
 
 def _safe_median(values: Iterable[float]) -> float | None:
@@ -184,15 +173,15 @@ def _safe_median(values: Iterable[float]) -> float | None:
     return float(median(vals))
 
 
-
 def _fmt(value: float | None, digits: int = 3) -> str:
     if value is None:
         return "-"
     return f"{value:.{digits}f}"
 
 
-
-def _summarize(rows: list[TradeRow], early_tp_sec: float, early_sl_sec: float) -> dict[str, Any]:
+def _summarize(
+    rows: list[TradeRow], early_tp_sec: float, early_sl_sec: float
+) -> dict[str, Any]:
     trades = len(rows)
     if trades == 0:
         return {
@@ -219,8 +208,12 @@ def _summarize(rows: list[TradeRow], early_tp_sec: float, early_sl_sec: float) -
     tp_rows = [r for r in rows if r.exit_class == "tp"]
     sl_rows = [r for r in rows if r.exit_class == "sl"]
 
-    tp_early = [r for r in tp_rows if r.hold_sec is not None and r.hold_sec <= early_tp_sec]
-    sl_early = [r for r in sl_rows if r.hold_sec is not None and r.hold_sec <= early_sl_sec]
+    tp_early = [
+        r for r in tp_rows if r.hold_sec is not None and r.hold_sec <= early_tp_sec
+    ]
+    sl_early = [
+        r for r in sl_rows if r.hold_sec is not None and r.hold_sec <= early_sl_sec
+    ]
 
     loss_holds = [r.hold_sec for r in losses if r.hold_sec is not None]
 
@@ -241,10 +234,11 @@ def _summarize(rows: list[TradeRow], early_tp_sec: float, early_sl_sec: float) -
     }
 
 
-
 def _impact_deltas(state_summary: dict[str, dict[str, Any]]) -> dict[str, Any]:
     favorable = state_summary.get("forecast_favorable")
-    adverse = state_summary.get("forecast_contra") or state_summary.get("forecast_blocked")
+    adverse = state_summary.get("forecast_contra") or state_summary.get(
+        "forecast_blocked"
+    )
     if not favorable or not adverse:
         return {}
 
@@ -268,7 +262,6 @@ def _impact_deltas(state_summary: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-
 def _load_rows(db: Path, lookback_hours: int, instrument: str | None) -> list[TradeRow]:
     if not db.exists():
         raise FileNotFoundError(f"db not found: {db}")
@@ -290,9 +283,22 @@ def _load_rows(db: Path, lookback_hours: int, instrument: str | None) -> list[Tr
             params["instrument"] = instrument
 
         out: list[TradeRow] = []
-        for close_time, open_time, strategy_tag, strategy, close_reason, pl_pips, units, entry_thesis in con.execute(sql, params):
+        for (
+            close_time,
+            open_time,
+            strategy_tag,
+            strategy,
+            close_reason,
+            pl_pips,
+            units,
+            entry_thesis,
+        ) in con.execute(sql, params):
             thesis = _parse_json(entry_thesis)
-            forecast = thesis.get("forecast") if isinstance(thesis.get("forecast"), dict) else {}
+            forecast = (
+                thesis.get("forecast")
+                if isinstance(thesis.get("forecast"), dict)
+                else {}
+            )
             side = _trade_side(int(units or 0), thesis)
             state = _forecast_state(side=side, forecast=forecast)
 
@@ -317,19 +323,32 @@ def _load_rows(db: Path, lookback_hours: int, instrument: str | None) -> list[Tr
         con.close()
 
 
-
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Report 1h exit forecast impact from trades.db")
+    ap = argparse.ArgumentParser(
+        description="Report 1h exit forecast impact from trades.db"
+    )
     ap.add_argument("--db", default="logs/trades.db", help="Path to trades.db")
-    ap.add_argument("--lookback-hours", type=int, default=1, help="Lookback window in hours")
-    ap.add_argument("--instrument", default=None, help="Optional instrument filter (e.g. USD_JPY)")
-    ap.add_argument("--early-tp-sec", type=float, default=120.0, help="Threshold for early TP")
-    ap.add_argument("--early-sl-sec", type=float, default=180.0, help="Threshold for early SL")
-    ap.add_argument("--strategy-top", type=int, default=12, help="Max strategies in text summary")
+    ap.add_argument(
+        "--lookback-hours", type=int, default=1, help="Lookback window in hours"
+    )
+    ap.add_argument(
+        "--instrument", default=None, help="Optional instrument filter (e.g. USD_JPY)"
+    )
+    ap.add_argument(
+        "--early-tp-sec", type=float, default=120.0, help="Threshold for early TP"
+    )
+    ap.add_argument(
+        "--early-sl-sec", type=float, default=180.0, help="Threshold for early SL"
+    )
+    ap.add_argument(
+        "--strategy-top", type=int, default=12, help="Max strategies in text summary"
+    )
     ap.add_argument("--json-out", default=None, help="Optional JSON output path")
     args = ap.parse_args()
 
-    rows = _load_rows(Path(args.db), lookback_hours=args.lookback_hours, instrument=args.instrument)
+    rows = _load_rows(
+        Path(args.db), lookback_hours=args.lookback_hours, instrument=args.instrument
+    )
     total = len(rows)
     if total == 0:
         print("[exit-forecast-impact] no trades in window")
@@ -342,13 +361,19 @@ def main() -> None:
         by_strategy[row.strategy].append(row)
 
     state_summary = {
-        state: _summarize(state_rows, early_tp_sec=args.early_tp_sec, early_sl_sec=args.early_sl_sec)
+        state: _summarize(
+            state_rows, early_tp_sec=args.early_tp_sec, early_sl_sec=args.early_sl_sec
+        )
         for state, state_rows in sorted(by_state.items())
     }
 
     strategy_rows = []
     for strategy, strategy_trades in by_strategy.items():
-        summary = _summarize(strategy_trades, early_tp_sec=args.early_tp_sec, early_sl_sec=args.early_sl_sec)
+        summary = _summarize(
+            strategy_trades,
+            early_tp_sec=args.early_tp_sec,
+            early_sl_sec=args.early_sl_sec,
+        )
         with_forecast = sum(1 for r in strategy_trades if r.state != "no_forecast")
         summary["forecast_coverage"] = with_forecast / max(len(strategy_trades), 1)
         summary["strategy"] = strategy
@@ -405,7 +430,9 @@ def main() -> None:
     if args.json_out:
         out_path = Path(args.json_out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print(f"\n[exit-forecast-impact] json={out_path}")
 
 

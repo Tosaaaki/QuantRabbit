@@ -14,22 +14,30 @@ from analytics.policy_mart import PolicyMartClient
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Create/refresh the BigQuery policy mart view.")
+    ap = argparse.ArgumentParser(
+        description="Create/refresh the BigQuery policy mart view."
+    )
     ap.add_argument("--project", default=None, help="GCP project id (defaults to env)")
     ap.add_argument("--dataset", default=None, help="BigQuery dataset id")
-    ap.add_argument("--table", default=None, help="Trades table id (default trades_raw)")
+    ap.add_argument(
+        "--table", default=None, help="Trades table id (default trades_raw)"
+    )
     ap.add_argument("--view", default="policy_mart_view", help="View name to create")
     ap.add_argument("--lookback-days", type=int, default=14)
     ap.add_argument("--min-trades", type=int, default=0)
     ap.add_argument("--timezone", default=None)
-    ap.add_argument("--vol-buckets", default=None, help="Comma-separated ATR bucket thresholds")
+    ap.add_argument(
+        "--vol-buckets", default=None, help="Comma-separated ATR bucket thresholds"
+    )
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
     thresholds = None
     if args.vol_buckets:
-        thresholds = [float(x.strip()) for x in args.vol_buckets.split(",") if x.strip()]
+        thresholds = [
+            float(x.strip()) for x in args.vol_buckets.split(",") if x.strip()
+        ]
 
     client = PolicyMartClient(
         project_id=args.project,

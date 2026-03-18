@@ -25,7 +25,6 @@ from typing import Dict, Iterable, List
 from google.api_core import exceptions as gexc
 from google.cloud import bigquery
 
-
 DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 DEFAULT_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 RECO_TABLE = os.getenv("BQ_RECOMMENDATION_TABLE", "strategy_recommendations")
@@ -78,7 +77,9 @@ def _train_model(client: bigquery.Client, dataset_id: str) -> None:
     client.query(query).result()
 
 
-def _fetch_latest_metrics(client: bigquery.Client, dataset_id: str) -> List[bigquery.table.Row]:
+def _fetch_latest_metrics(
+    client: bigquery.Client, dataset_id: str
+) -> List[bigquery.table.Row]:
     query = f"""
     SELECT
       pocket,
@@ -157,9 +158,8 @@ def _build_prompt(rows: List[Dict[str, object]]) -> str:
         f"- {r['pocket']}/{r['strategy']}: action={r['action']} win_rate={r['win_rate']:.2f} pf={r['profit_factor']:.2f}"
         for r in rows
     ]
-    return (
-        "以下の指標を分析し、戦略ポートフォリオの調整ポイントを100文字以内でまとめてください:\n"
-        + "\n".join(bullet_lines)
+    return "以下の指標を分析し、戦略ポートフォリオの調整ポイントを100文字以内でまとめてください:\n" + "\n".join(
+        bullet_lines
     )
 
 

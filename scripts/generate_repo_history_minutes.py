@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "docs"
 DAILY_PATH = DOCS_DIR / "REPO_HISTORY_DAILY_ANNEX.md"
@@ -55,7 +54,9 @@ def _git_history() -> list[CommitEntry]:
         if line.startswith("@@@"):
             if current is not None:
                 date, short_hash, subject = current
-                if not files or not all(_is_history_maintenance_path(path) for path in files):
+                if not files or not all(
+                    _is_history_maintenance_path(path) for path in files
+                ):
                     entries.append(
                         CommitEntry(
                             date=date,
@@ -85,7 +86,11 @@ def _top_roots(entries: Iterable[CommitEntry], limit: int = 3) -> str:
 
 
 def _subject_summary(entries: Iterable[CommitEntry], limit: int = 2) -> str:
-    subjects = [entry.subject.replace("|", "/").replace("\n", " ") for entry in entries if not entry.subject.startswith("Merge ")]
+    subjects = [
+        entry.subject.replace("|", "/").replace("\n", " ")
+        for entry in entries
+        if not entry.subject.startswith("Merge ")
+    ]
     if not subjects:
         return "merge-only day"
     summary = " / ".join(subjects[:limit])
@@ -141,7 +146,9 @@ def _render_weekly(entries: list[CommitEntry]) -> str:
     for entry in entries:
         by_week[_week_start(entry.date)].append(entry)
 
-    by_year: dict[int, list[tuple[dt.date, list[CommitEntry]]]] = collections.OrderedDict()
+    by_year: dict[int, list[tuple[dt.date, list[CommitEntry]]]] = (
+        collections.OrderedDict()
+    )
     for start in sorted(by_week):
         by_year.setdefault(start.isocalendar().year, []).append((start, by_week[start]))
 
@@ -206,7 +213,9 @@ def _render_monthly(entries: list[CommitEntry]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate repository history annex markdown files.")
+    parser = argparse.ArgumentParser(
+        description="Generate repository history annex markdown files."
+    )
     parser.add_argument(
         "--which",
         choices=("daily", "weekly", "monthly", "all"),

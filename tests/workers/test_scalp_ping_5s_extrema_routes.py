@@ -35,7 +35,9 @@ def _sample_signal(side: str) -> scalp_worker.TickSignal:
 
 
 def test_extrema_reversal_respects_long_to_short_disable(monkeypatch) -> None:
-    monkeypatch.setattr(scalp_worker.config, "EXTREMA_REVERSAL_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        scalp_worker.config, "EXTREMA_REVERSAL_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         scalp_worker.config,
         "EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT",
@@ -48,7 +50,9 @@ def test_extrema_reversal_respects_long_to_short_disable(monkeypatch) -> None:
         1.0,
         raising=False,
     )
-    monkeypatch.setattr(scalp_worker.config, "EXTREMA_REVERSAL_MIN_SCORE", 1.0, raising=False)
+    monkeypatch.setattr(
+        scalp_worker.config, "EXTREMA_REVERSAL_MIN_SCORE", 1.0, raising=False
+    )
 
     signal = _sample_signal("long")
     extrema_decision = scalp_worker.ExtremaGateDecision(
@@ -74,14 +78,18 @@ def test_extrema_reversal_respects_long_to_short_disable(monkeypatch) -> None:
 
 
 def test_extrema_reversal_keeps_short_to_long_path(monkeypatch) -> None:
-    monkeypatch.setattr(scalp_worker.config, "EXTREMA_REVERSAL_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        scalp_worker.config, "EXTREMA_REVERSAL_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         scalp_worker.config,
         "EXTREMA_REVERSAL_ALLOW_LONG_TO_SHORT",
         False,
         raising=False,
     )
-    monkeypatch.setattr(scalp_worker.config, "EXTREMA_REVERSAL_MIN_SCORE", 1.45, raising=False)
+    monkeypatch.setattr(
+        scalp_worker.config, "EXTREMA_REVERSAL_MIN_SCORE", 1.45, raising=False
+    )
 
     signal = _sample_signal("short")
     extrema_decision = scalp_worker.ExtremaGateDecision(
@@ -107,8 +115,12 @@ def test_extrema_reversal_keeps_short_to_long_path(monkeypatch) -> None:
     assert score >= 1.45
 
 
-def test_extrema_gate_uses_tighter_short_soft_mult_in_balanced_regime(monkeypatch) -> None:
-    monkeypatch.setattr(scalp_worker.config, "EXTREMA_GATE_ENABLED", True, raising=False)
+def test_extrema_gate_uses_tighter_short_soft_mult_in_balanced_regime(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        scalp_worker.config, "EXTREMA_GATE_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         scalp_worker.config,
         "EXTREMA_SHORT_BOTTOM_BLOCK_POS",
@@ -158,7 +170,9 @@ def test_extrema_gate_uses_tighter_short_soft_mult_in_balanced_regime(monkeypatc
         raising=False,
     )
 
-    def _fake_range_pos_from_candles(*, tf: str, lookback: int, min_span_pips: float) -> float:
+    def _fake_range_pos_from_candles(
+        *, tf: str, lookback: int, min_span_pips: float
+    ) -> float:
         if tf == "M1":
             return 0.18
         if tf == "M5":
@@ -269,7 +283,9 @@ def test_countertrend_horizon_m1_block_skips_neutral_horizon(monkeypatch) -> Non
     assert reason is None
 
 
-def test_countertrend_horizon_m1_block_blocks_horizon_aligned_fast_flip_lane(monkeypatch) -> None:
+def test_countertrend_horizon_m1_block_blocks_horizon_aligned_fast_flip_lane(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         scalp_worker.config,
         "D_COUNTERTREND_HORIZON_M1_BLOCK_ENABLED",

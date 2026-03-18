@@ -38,7 +38,9 @@ def test_apply_signal_flow_context_copies_rangefader_signal_metadata() -> None:
 def test_entry_cooldown_is_scoped_by_signal_tag_and_side(monkeypatch) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 24.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 16.0)
-    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     last_entry_ts_by_key = {
         rf_worker._entry_cooldown_key("RangeFader-buy-fade", "long"): 100.0,
     }
@@ -66,7 +68,9 @@ def test_entry_cooldown_is_scoped_by_signal_tag_and_side(monkeypatch) -> None:
 def test_entry_cooldown_can_be_disabled(monkeypatch) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 0.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 0.0)
-    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
 
     assert not rf_worker._entry_cooldown_active(
         {
@@ -81,7 +85,9 @@ def test_entry_cooldown_can_be_disabled(monkeypatch) -> None:
 def test_entry_cooldown_uses_shorter_buy_fade_window(monkeypatch) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 20.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 14.0)
-    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False)
+    monkeypatch.setattr(
+        rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", False, raising=False
+    )
     last_entry_ts_by_key = {
         rf_worker._entry_cooldown_key("RangeFader-buy-fade", "long"): 100.0,
         rf_worker._entry_cooldown_key("RangeFader-buy-supportive", "long"): 100.0,
@@ -108,10 +114,14 @@ def test_entry_cooldown_uses_shorter_buy_fade_window(monkeypatch) -> None:
     )
 
 
-def test_entry_cooldown_extends_with_fresh_trim_participation_profile(monkeypatch) -> None:
+def test_entry_cooldown_extends_with_fresh_trim_participation_profile(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 20.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 14.0)
-    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         rf_worker,
         "load_participation_profile",
@@ -125,14 +135,22 @@ def test_entry_cooldown_extends_with_fresh_trim_participation_profile(monkeypatc
         raising=False,
     )
 
-    assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == pytest.approx(22.2222, rel=1e-3)
-    assert rf_worker._entry_cooldown_sec("RangeFader-buy-fade") == pytest.approx(15.5556, rel=1e-3)
+    assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == pytest.approx(
+        22.2222, rel=1e-3
+    )
+    assert rf_worker._entry_cooldown_sec("RangeFader-buy-fade") == pytest.approx(
+        15.5556, rel=1e-3
+    )
 
 
-def test_entry_cooldown_shortens_with_fresh_boost_participation_profile(monkeypatch) -> None:
+def test_entry_cooldown_shortens_with_fresh_boost_participation_profile(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 20.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 14.0)
-    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         rf_worker,
         "load_participation_profile",
@@ -146,14 +164,22 @@ def test_entry_cooldown_shortens_with_fresh_boost_participation_profile(monkeypa
         raising=False,
     )
 
-    assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == pytest.approx(20.0 / 1.10, rel=1e-3)
-    assert rf_worker._entry_cooldown_sec("RangeFader-buy-fade") == pytest.approx(14.0 / 1.10, rel=1e-3)
+    assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == pytest.approx(
+        20.0 / 1.10, rel=1e-3
+    )
+    assert rf_worker._entry_cooldown_sec("RangeFader-buy-fade") == pytest.approx(
+        14.0 / 1.10, rel=1e-3
+    )
 
 
-def test_entry_cooldown_ignores_stale_or_non_trim_participation_profile(monkeypatch) -> None:
+def test_entry_cooldown_ignores_stale_or_non_trim_participation_profile(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(rf_worker.config, "COOLDOWN_SEC", 20.0)
     monkeypatch.setattr(rf_worker.config, "BUY_COOLDOWN_SEC", 14.0)
-    monkeypatch.setattr(rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        rf_worker, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
 
     monkeypatch.setattr(
         rf_worker,
@@ -184,7 +210,9 @@ def test_entry_cooldown_ignores_stale_or_non_trim_participation_profile(monkeypa
     assert rf_worker._entry_cooldown_sec("RangeFader-sell-fade") == 20.0
 
 
-def test_rangefader_long_weak_probe_guard_blocks_neutral_fade_with_negative_forecast() -> None:
+def test_rangefader_long_weak_probe_guard_blocks_neutral_fade_with_negative_forecast() -> (
+    None
+):
     blocked = rf_worker._rangefader_long_weak_probe_guard(
         "RangeFader-neutral-fade",
         {
@@ -210,7 +238,9 @@ def test_rangefader_long_weak_probe_guard_blocks_neutral_fade_with_negative_fore
     assert blocked["lane"] == "neutral-fade"
 
 
-def test_rangefader_long_weak_probe_guard_allows_neutral_fade_with_positive_reclaim_context() -> None:
+def test_rangefader_long_weak_probe_guard_allows_neutral_fade_with_positive_reclaim_context() -> (
+    None
+):
     blocked = rf_worker._rangefader_long_weak_probe_guard(
         "RangeFader-neutral-fade",
         {
@@ -235,7 +265,9 @@ def test_rangefader_long_weak_probe_guard_allows_neutral_fade_with_positive_recl
     assert blocked is None
 
 
-def test_rangefader_long_weak_probe_guard_blocks_buy_fade_low_projection_probe() -> None:
+def test_rangefader_long_weak_probe_guard_blocks_buy_fade_low_projection_probe() -> (
+    None
+):
     blocked = rf_worker._rangefader_long_weak_probe_guard(
         "RangeFader-buy-fade",
         {

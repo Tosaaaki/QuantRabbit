@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Push existing SQLite autotune runs into BigQuery."""
+
 import argparse
 from pathlib import Path
 

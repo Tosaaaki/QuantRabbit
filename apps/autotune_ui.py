@@ -62,6 +62,7 @@ def _load_strategy_control():
     # compatibility fallback for environments that expect package import path
     try:
         from workers.common import strategy_control as module  # type: ignore
+
         return module
     except Exception as exc:  # pragma: no cover - defensive for import-path drift
         _LOGGER.warning(
@@ -121,7 +122,9 @@ TEMPLATE_DIR = REPO_ROOT / "templates" / "autotune"
 _SCALP_PARAMS_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
 _SCALP_PARAMS_RUNTIME = REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json"
 _SCALP_PARAMS_LEGACY = REPO_ROOT / "configs" / "scalp_active_params.json"
-CONFIG_PATH = Path(_SCALP_PARAMS_OVERRIDE) if _SCALP_PARAMS_OVERRIDE else _SCALP_PARAMS_RUNTIME
+CONFIG_PATH = (
+    Path(_SCALP_PARAMS_OVERRIDE) if _SCALP_PARAMS_OVERRIDE else _SCALP_PARAMS_RUNTIME
+)
 METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
@@ -131,11 +134,13 @@ HEALTH_SNAPSHOT = Path("logs/health_snapshot.json")
 _LIVE_SNAPSHOT_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_TTL_SEC", "8"))
 _REMOTE_SNAPSHOT_TIMEOUT_SEC = float(os.getenv("UI_SNAPSHOT_TIMEOUT_SEC", "4.0"))
 _LIVE_SNAPSHOT_LITE_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_LITE_TTL_SEC", "5"))
-_LITE_SNAPSHOT_FAST = (
-    os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
-    in {"fast", "minimal"}
-)
-_INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lower() in {
+_LITE_SNAPSHOT_FAST = os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower() in {
+    "fast",
+    "minimal",
+}
+_INCLUDE_POSITIONS = os.getenv(
+    "UI_SNAPSHOT_INCLUDE_POSITIONS", "1"
+).strip().lower() in {
     "1",
     "true",
     "yes",
@@ -154,19 +159,24 @@ _HOURLY_FALLBACK_SCAN_LIMIT = max(
 )
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 _HOURLY_FALLBACK_QUERY_TIMEOUT_SEC = max(
-    _DB_READ_TIMEOUT_SEC, float(os.getenv("UI_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC", "1.5"))
+    _DB_READ_TIMEOUT_SEC,
+    float(os.getenv("UI_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC", "1.5")),
 )
 _OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
 _OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
 _DEFAULT_UI_STATE_OBJECT = "realtime/ui_state.json"
-_LOCAL_FALLBACK_ENABLED = os.getenv("UI_DASHBOARD_LOCAL_FALLBACK", "1").strip().lower() not in {
+_LOCAL_FALLBACK_ENABLED = os.getenv(
+    "UI_DASHBOARD_LOCAL_FALLBACK", "1"
+).strip().lower() not in {
     "",
     "0",
     "false",
     "no",
 }
 _LOCAL_FALLBACK_MODE = os.getenv("UI_DASHBOARD_LOCAL_MODE", "lite").strip().lower()
-_LITE_SYNC_TRADES_ENABLED = os.getenv("UI_SNAPSHOT_SYNC_TRADES", "1").strip().lower() in {
+_LITE_SYNC_TRADES_ENABLED = os.getenv(
+    "UI_SNAPSHOT_SYNC_TRADES", "1"
+).strip().lower() in {
     "1",
     "true",
     "yes",
@@ -190,7 +200,9 @@ _secret_cache: dict[str, tuple[float, Optional[str]]] = {}
 _strategy_control_cache_lock = threading.Lock()
 _strategy_control_cache: dict[str, Any] | None = None
 _strategy_control_cache_ts: float = 0.0
-_strategy_control_cache_sig: tuple[Optional[int], Optional[int], Optional[int], Optional[int]] | None = None
+_strategy_control_cache_sig: (
+    tuple[Optional[int], Optional[int], Optional[int], Optional[int]] | None
+) = None
 
 app = FastAPI(title="QuantRabbit UI")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -281,7 +293,9 @@ def _coerce_thesis(value: Any) -> Optional[dict]:
 
 def _extract_order_meta(payload: dict) -> dict:
     meta: dict = {}
-    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get(
+        "entry_thesis"
+    )
     if isinstance(entry_thesis, dict):
         limited: dict = {}
         for key in (
@@ -389,9 +403,23 @@ def _normalize_order_side(side: object, units: object) -> Optional[str]:
     return None
 
 
-def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
-    client_ids = sorted({str(row.get("client_order_id") or "").strip() for row in rows if row.get("client_order_id")})
-    ticket_ids = sorted({str(row.get("ticket_id") or "").strip() for row in rows if row.get("ticket_id")})
+def _load_order_context_rows(
+    con: sqlite3.Connection, rows: list[dict]
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    client_ids = sorted(
+        {
+            str(row.get("client_order_id") or "").strip()
+            for row in rows
+            if row.get("client_order_id")
+        }
+    )
+    ticket_ids = sorted(
+        {
+            str(row.get("ticket_id") or "").strip()
+            for row in rows
+            if row.get("ticket_id")
+        }
+    )
     if not client_ids and not ticket_ids:
         return {}, {}
 
@@ -421,8 +449,7 @@ def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple
         "WHEN 'accepted' THEN 2 "
         "WHEN 'preflight_start' THEN 3 "
         "ELSE 9 END, "
-        "ts ASC"
-        ,
+        "ts ASC",
         tuple(params),
     )
     refs = [dict(r) for r in cur.fetchall()]
@@ -448,7 +475,9 @@ def _merge_order_meta(primary_payload: dict, fallback_payload: dict) -> dict:
         return primary
     merged = dict(fallback)
     merged.update(primary)
-    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(primary.get("entry_thesis"), dict):
+    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(
+        primary.get("entry_thesis"), dict
+    ):
         thesis = dict(fallback["entry_thesis"])
         thesis.update(primary["entry_thesis"])
         merged["entry_thesis"] = thesis
@@ -543,7 +572,7 @@ def _build_summary(run: dict) -> str:
         if profit_pips is not None:
             parts.append(f"PL {profit_pips:+.1f} pips")
         if profit_jpy is not None:
-            parts.append(f"({profit_jpy:+.0f} 円)" )
+            parts.append(f"({profit_jpy:+.0f} 円)")
         if pf is not None:
             parts.append(f"PF {pf:.2f}")
         if wr is not None:
@@ -804,7 +833,9 @@ def _strategy_control_db_path() -> Path:
     return Path(os.getenv("STRATEGY_CONTROL_DB_PATH", "logs/strategy_control.db"))
 
 
-def _strategy_control_cache_signature() -> tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
+def _strategy_control_cache_signature() -> (
+    tuple[Optional[int], Optional[int], Optional[int], Optional[int]]
+):
     return (
         _path_mtime_ns(_strategy_control_db_path()),
         _path_mtime_ns(TRADES_DB),
@@ -833,7 +864,12 @@ def _compute_strategy_control_state() -> dict[str, Any]:
     }
 
     rows: dict[str, dict[str, Any]] = {}
-    for slug, entry_enabled, exit_enabled, global_lock in strategy_control.list_enabled_strategies():
+    for (
+        slug,
+        entry_enabled,
+        exit_enabled,
+        global_lock,
+    ) in strategy_control.list_enabled_strategies():
         rows[slug] = {
             "slug": slug,
             "entry_enabled": entry_enabled,
@@ -882,7 +918,8 @@ def _load_strategy_control_state() -> dict[str, Any]:
         current_sig = _strategy_control_cache_signature()
         if (
             _strategy_control_cache is not None
-            and (now_mono - _strategy_control_cache_ts) < _STRATEGY_CONTROL_CACHE_TTL_SEC
+            and (now_mono - _strategy_control_cache_ts)
+            < _STRATEGY_CONTROL_CACHE_TTL_SEC
             and _strategy_control_cache_sig == current_sig
         ):
             return copy.deepcopy(_strategy_control_cache)
@@ -1076,12 +1113,16 @@ def _load_health_snapshot_local() -> Optional[dict]:
 
 
 def _resolve_ui_state_object_path() -> str:
-    value = _get_secret_optional("ui_state_object_path") or os.getenv("UI_STATE_OBJECT_PATH")
+    value = _get_secret_optional("ui_state_object_path") or os.getenv(
+        "UI_STATE_OBJECT_PATH"
+    )
     value = (value or _DEFAULT_UI_STATE_OBJECT).strip()
     return value or _DEFAULT_UI_STATE_OBJECT
 
 
-def _snapshot_age_sec(snapshot: Optional[dict], *, now: Optional[datetime] = None) -> Optional[int]:
+def _snapshot_age_sec(
+    snapshot: Optional[dict], *, now: Optional[datetime] = None
+) -> Optional[int]:
     if not isinstance(snapshot, dict):
         return None
     dt = _parse_dt(snapshot.get("generated_at"))
@@ -1091,7 +1132,9 @@ def _snapshot_age_sec(snapshot: Optional[dict], *, now: Optional[datetime] = Non
     return int(max(0, (now_dt - dt).total_seconds()))
 
 
-def _is_snapshot_fresh(snapshot: Optional[dict], *, now: Optional[datetime] = None) -> bool:
+def _is_snapshot_fresh(
+    snapshot: Optional[dict], *, now: Optional[datetime] = None
+) -> bool:
     age_sec = _snapshot_age_sec(snapshot, now=now)
     return age_sec is not None and age_sec <= _SNAPSHOT_STALE_MAX_AGE_SEC
 
@@ -1160,16 +1203,24 @@ def _snapshot_sort_key(source: str, snapshot: dict) -> tuple[int, int, float, in
 def _snapshot_quality_key(source: str, snapshot: dict) -> tuple[int, int, int, float]:
     metric_count = _snapshot_metric_count(snapshot)
     metrics_snapshot = snapshot.get("metrics")
-    hourly = metrics_snapshot.get("hourly_trades") if isinstance(metrics_snapshot, dict) else None
+    hourly = (
+        metrics_snapshot.get("hourly_trades")
+        if isinstance(metrics_snapshot, dict)
+        else None
+    )
     reference_now = _parse_dt(snapshot.get("generated_at"))
-    hourly_score = 1 if _hourly_trades_is_usable(hourly, reference_now=reference_now) else 0
+    hourly_score = (
+        1 if _hourly_trades_is_usable(hourly, reference_now=reference_now) else 0
+    )
     priority = {"local": 0, "gcs": 1, "remote": 2}.get(source, 0)
     dt = _parse_dt(snapshot.get("generated_at"))
     ts = dt.timestamp() if dt else 0.0
     return (hourly_score, metric_count, priority, ts)
 
 
-def _pick_latest_snapshot(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
+def _pick_latest_snapshot(
+    candidates: list[tuple[str, dict]],
+) -> Optional[tuple[str, dict]]:
     if not candidates:
         return None
     return max(candidates, key=lambda item: _snapshot_sort_key(item[0], item[1]))
@@ -1186,11 +1237,15 @@ def _has_fresh_candidate(
     return False
 
 
-def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[str, Any]]]:
+def _collect_snapshot_candidates() -> (
+    tuple[list[tuple[str, dict]], list[dict[str, Any]]]
+):
     candidates: list[tuple[str, dict]] = []
     fetch_attempts: list[dict[str, Any]] = []
 
-    remote_snapshot, remote_lite_error = _fetch_remote_snapshot_with_status("ui_snapshot_lite_url")
+    remote_snapshot, remote_lite_error = _fetch_remote_snapshot_with_status(
+        "ui_snapshot_lite_url"
+    )
     fetch_attempts.append(
         {
             "source": "remote(ui_snapshot_lite_url)",
@@ -1199,7 +1254,9 @@ def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[st
         }
     )
     if not remote_snapshot:
-        remote_snapshot, remote_error = _fetch_remote_snapshot_with_status("ui_snapshot_url")
+        remote_snapshot, remote_error = _fetch_remote_snapshot_with_status(
+            "ui_snapshot_url"
+        )
         fetch_attempts.append(
             {
                 "source": "remote(ui_snapshot_url)",
@@ -1245,7 +1302,9 @@ def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[st
     return candidates, fetch_attempts
 
 
-def _pick_snapshot_by_preference(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
+def _pick_snapshot_by_preference(
+    candidates: list[tuple[str, dict]],
+) -> Optional[tuple[str, dict]]:
     fresh_candidates = [
         (source, snapshot)
         for source, snapshot in candidates
@@ -1275,7 +1334,9 @@ def _fetch_gcs_snapshot() -> tuple[Optional[dict], Optional[str]]:
         return None, str(exc)
 
 
-def _fetch_remote_snapshot_with_status(key: str) -> tuple[Optional[dict], Optional[str]]:
+def _fetch_remote_snapshot_with_status(
+    key: str,
+) -> tuple[Optional[dict], Optional[str]]:
     url = _get_secret_optional(key)
     if not url:
         return None, f"{key} が未設定です"
@@ -1294,7 +1355,12 @@ def _fetch_remote_snapshot_with_status(key: str) -> tuple[Optional[dict], Option
             elapsed_ms = int((time.monotonic() - start) * 1000)
             print(f"[ui_snapshot] remote_ok elapsed_ms={elapsed_ms}")
         return data, None
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout) as exc:
+    except (
+        urllib.error.URLError,
+        json.JSONDecodeError,
+        TimeoutError,
+        socket.timeout,
+    ) as exc:
         if debug:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             print(
@@ -1363,7 +1429,9 @@ def _fallback_dashboard_local() -> Optional[Dict[str, Any]]:
 
 
 def _ops_required_token() -> Optional[str]:
-    return _get_secret_optional("ui_ops_token") or _get_secret_optional("ui_snapshot_token")
+    return _get_secret_optional("ui_ops_token") or _get_secret_optional(
+        "ui_snapshot_token"
+    )
 
 
 def _ops_remote_url() -> Optional[str]:
@@ -1406,7 +1474,10 @@ def _handle_strategy_control_action(
 
     if target_norm == "global":
         if entry is None and exit_value is None and lock is None:
-            raise HTTPException(status_code=400, detail="entry_enabled または exit_enabled または global_lock を指定してください")
+            raise HTTPException(
+                status_code=400,
+                detail="entry_enabled または exit_enabled または global_lock を指定してください",
+            )
         strategy_control.set_global_flags(
             entry=entry,
             exit=exit_value,
@@ -1426,7 +1497,10 @@ def _handle_strategy_control_action(
     if not normalized_strategy:
         raise HTTPException(status_code=400, detail="strategy is required")
     if entry is None and exit_value is None and lock is None:
-        raise HTTPException(status_code=400, detail="entry_enabled または exit_enabled を指定してください")
+        raise HTTPException(
+            status_code=400,
+            detail="entry_enabled または exit_enabled を指定してください",
+        )
 
     strategy_control.set_strategy_flags(
         normalized_strategy,
@@ -1476,7 +1550,9 @@ def _ensure_sudo() -> None:
             check=False,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"sudo check failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"sudo check failed: {exc}"
+        ) from exc
     if result.returncode != 0:
         raise HTTPException(status_code=403, detail="sudo permission is required")
 
@@ -1521,8 +1597,12 @@ def _proxy_ops_action(action: str, confirm: str, token: str) -> dict:
     ops_url = _ops_remote_url()
     if not ops_url:
         return {"ok": False, "error": "ops remote url is not configured"}
-    payload = urlencode({"action": action, "confirm": confirm, "ops_token": token}).encode("utf-8")
-    req = urllib.request.Request(f"{ops_url}/api/ops/control", data=payload, method="POST")
+    payload = urlencode(
+        {"action": action, "confirm": confirm, "ops_token": token}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{ops_url}/api/ops/control", data=payload, method="POST"
+    )
     if token:
         req.add_header("X-QR-Token", token)
         req.add_header("Authorization", f"Bearer {token}")
@@ -1721,7 +1801,9 @@ def _load_recent_order_signals(limit: int = 5) -> list[dict]:
             continue
         confidence = entry_thesis.get("confidence") or payload.get("confidence")
         side = (row.get("side") or "").lower()
-        action = "OPEN_LONG" if side == "buy" else "OPEN_SHORT" if side == "sell" else None
+        action = (
+            "OPEN_LONG" if side == "buy" else "OPEN_SHORT" if side == "sell" else None
+        )
         results.append(
             {
                 "ts_ms": ts_ms,
@@ -1828,14 +1910,20 @@ def _load_hourly_fallback_trades() -> list[dict]:
         return []
 
 
-def _load_hourly_fallback_aggregates(start_hour_utc: datetime) -> Optional[dict[str, dict[str, float | int]]]:
+def _load_hourly_fallback_aggregates(
+    start_hour_utc: datetime,
+) -> Optional[dict[str, dict[str, float | int]]]:
     if not TRADES_DB.exists():
         return None
     db_uri = f"file:{TRADES_DB}?mode=ro"
     try:
-        con = sqlite3.connect(db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC)
+        con = sqlite3.connect(
+            db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC
+        )
         con.row_factory = sqlite3.Row
-        con.execute(f"PRAGMA busy_timeout={int(_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC * 1000)}")
+        con.execute(
+            f"PRAGMA busy_timeout={int(_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC * 1000)}"
+        )
         cur = con.execute(
             """
             SELECT
@@ -1887,7 +1975,9 @@ def _build_hourly_fallback(trades: list[dict]) -> dict:
     if aggregate:
         for hour_key, values in aggregate.items():
             try:
-                hour = datetime.strptime(hour_key, "%Y-%m-%d %H:%M:%S").replace(tzinfo=jst)
+                hour = datetime.strptime(hour_key, "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=jst
+                )
             except Exception:
                 continue
             bucket = buckets.get(hour)
@@ -1957,7 +2047,9 @@ def _hourly_window_anchor(reference_now: Optional[datetime] = None) -> datetime:
     return now.astimezone(_JST).replace(minute=0, second=0, microsecond=0)
 
 
-def _parse_hourly_label_as_jst_hour(label: Any, *, reference_now: Optional[datetime] = None) -> Optional[str]:
+def _parse_hourly_label_as_jst_hour(
+    label: Any, *, reference_now: Optional[datetime] = None
+) -> Optional[str]:
     if not isinstance(label, str):
         return None
     text = label.strip()
@@ -1982,10 +2074,14 @@ def _parse_hourly_label_as_jst_hour(label: Any, *, reference_now: Optional[datet
     # Support year boundaries when labels don't include the year.
     if candidate > anchor + timedelta(hours=1):
         candidate = candidate.replace(year=candidate.year - 1)
-    return candidate.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:00:00")
+    return candidate.replace(minute=0, second=0, microsecond=0).strftime(
+        "%Y-%m-%d %H:00:00"
+    )
 
 
-def _canonical_hourly_row_key(row: Any, *, reference_now: Optional[datetime] = None) -> Optional[str]:
+def _canonical_hourly_row_key(
+    row: Any, *, reference_now: Optional[datetime] = None
+) -> Optional[str]:
     if not isinstance(row, dict):
         return None
     key = row.get("key")
@@ -1999,11 +2095,17 @@ def _canonical_hourly_row_key(row: Any, *, reference_now: Optional[datetime] = N
             except Exception:
                 continue
     if dt is None:
-        label_key = _parse_hourly_label_as_jst_hour(row.get("label"), reference_now=reference_now)
+        label_key = _parse_hourly_label_as_jst_hour(
+            row.get("label"), reference_now=reference_now
+        )
         if label_key:
             return label_key
         return None
-    return dt.astimezone(_JST).replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:00:00")
+    return (
+        dt.astimezone(_JST)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%d %H:00:00")
+    )
 
 
 def _expected_hourly_row_keys(reference_now: Optional[datetime] = None) -> set[str]:
@@ -2014,7 +2116,9 @@ def _expected_hourly_row_keys(reference_now: Optional[datetime] = None) -> set[s
     }
 
 
-def _hourly_trades_is_usable(payload: Any, *, reference_now: Optional[datetime] = None) -> bool:
+def _hourly_trades_is_usable(
+    payload: Any, *, reference_now: Optional[datetime] = None
+) -> bool:
     if not isinstance(payload, dict):
         return False
     rows = payload.get("hours")
@@ -2035,15 +2139,16 @@ def _hourly_trades_is_usable(payload: Any, *, reference_now: Optional[datetime] 
     actual_keys = {
         key
         for key in (
-            _canonical_hourly_row_key(row, reference_now=reference_now)
-            for row in rows
+            _canonical_hourly_row_key(row, reference_now=reference_now) for row in rows
         )
         if key
     }
     return expected_keys.issubset(actual_keys)
 
 
-def _hourly_payload_activity(payload: Any, *, reference_now: Optional[datetime] = None) -> dict[str, float | int]:
+def _hourly_payload_activity(
+    payload: Any, *, reference_now: Optional[datetime] = None
+) -> dict[str, float | int]:
     stats: dict[str, float | int] = {"trades": 0, "pips": 0.0, "jpy": 0.0}
     if not isinstance(payload, dict):
         return stats
@@ -2082,7 +2187,9 @@ def _hourly_recent_trade_activity(
         close_dt = _parse_dt(item.get("close_time"))
         if not close_dt:
             continue
-        close_jst_hour = close_dt.astimezone(_JST).replace(minute=0, second=0, microsecond=0)
+        close_jst_hour = close_dt.astimezone(_JST).replace(
+            minute=0, second=0, microsecond=0
+        )
         if close_jst_hour < start_hour or close_jst_hour > anchor:
             continue
         stats["trades"] += 1
@@ -2113,7 +2220,11 @@ def _hourly_trades_is_stale(
 def _load_trade_rollup_jst(reference_now: datetime) -> Optional[dict[str, float | int]]:
     if not TRADES_DB.exists():
         return None
-    now = reference_now if reference_now.tzinfo else reference_now.replace(tzinfo=timezone.utc)
+    now = (
+        reference_now
+        if reference_now.tzinfo
+        else reference_now.replace(tzinfo=timezone.utc)
+    )
     now_jst = now.astimezone(_JST)
     today_start_jst = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday_start_jst = today_start_jst - timedelta(days=1)
@@ -2123,9 +2234,13 @@ def _load_trade_rollup_jst(reference_now: datetime) -> Optional[dict[str, float 
     week_cutoff_utc = week_cutoff_jst.astimezone(timezone.utc).isoformat()
     db_uri = f"file:{TRADES_DB}?mode=ro"
     try:
-        con = sqlite3.connect(db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC)
+        con = sqlite3.connect(
+            db_uri, uri=True, timeout=_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC
+        )
         con.row_factory = sqlite3.Row
-        con.execute(f"PRAGMA busy_timeout={int(_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC * 1000)}")
+        con.execute(
+            f"PRAGMA busy_timeout={int(_HOURLY_FALLBACK_QUERY_TIMEOUT_SEC * 1000)}"
+        )
         cur = con.execute(
             """
             SELECT
@@ -2328,7 +2443,9 @@ def _build_lite_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "new_trades": [],
         "recent_trades": list(recent_trades),
-        "open_positions": dict(open_positions) if isinstance(open_positions, dict) else {},
+        "open_positions": (
+            dict(open_positions) if isinstance(open_positions, dict) else {}
+        ),
         "metrics": metrics,
         "snapshot_mode": "lite-fast" if _LITE_SNAPSHOT_FAST else "lite",
         "snapshot_source": "local",
@@ -2342,7 +2459,10 @@ def _cached_live_snapshot() -> dict:
         return _live_snapshot_cache
     with _live_snapshot_lock:
         now_mono = time.monotonic()
-        if _live_snapshot_cache and (now_mono - _live_snapshot_ts) < _LIVE_SNAPSHOT_TTL_SEC:
+        if (
+            _live_snapshot_cache
+            and (now_mono - _live_snapshot_ts) < _LIVE_SNAPSHOT_TTL_SEC
+        ):
             return _live_snapshot_cache
         snapshot = _build_live_snapshot()
         _live_snapshot_cache = snapshot
@@ -2353,11 +2473,17 @@ def _cached_live_snapshot() -> dict:
 def _cached_lite_snapshot() -> dict:
     global _lite_snapshot_cache, _lite_snapshot_ts
     now_mono = time.monotonic()
-    if _lite_snapshot_cache and (now_mono - _lite_snapshot_ts) < _LIVE_SNAPSHOT_LITE_TTL_SEC:
+    if (
+        _lite_snapshot_cache
+        and (now_mono - _lite_snapshot_ts) < _LIVE_SNAPSHOT_LITE_TTL_SEC
+    ):
         return _lite_snapshot_cache
     with _lite_snapshot_lock:
         now_mono = time.monotonic()
-        if _lite_snapshot_cache and (now_mono - _lite_snapshot_ts) < _LIVE_SNAPSHOT_LITE_TTL_SEC:
+        if (
+            _lite_snapshot_cache
+            and (now_mono - _lite_snapshot_ts) < _LIVE_SNAPSHOT_LITE_TTL_SEC
+        ):
             return _lite_snapshot_cache
         snapshot = _build_lite_snapshot()
         _lite_snapshot_cache = snapshot
@@ -2384,7 +2510,12 @@ def _fetch_remote_snapshot(key: str = "ui_snapshot_url") -> Optional[dict]:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             print(f"[ui_snapshot] remote_ok elapsed_ms={elapsed_ms}")
         return data
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout) as exc:
+    except (
+        urllib.error.URLError,
+        json.JSONDecodeError,
+        TimeoutError,
+        socket.timeout,
+    ) as exc:
         if debug:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             print(
@@ -2416,17 +2547,21 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             "nav": account_nav,
             "balance": account_balance,
             "margin_usage_ratio": margin_usage_ratio,
-            "margin_usage_pct": round(margin_usage_ratio * 100.0, 1)
-            if margin_usage_ratio is not None
-            else None,
+            "margin_usage_pct": (
+                round(margin_usage_ratio * 100.0, 1)
+                if margin_usage_ratio is not None
+                else None
+            ),
             "free_margin_ratio": free_margin_ratio,
-            "free_margin_pct": round(free_margin_ratio * 100.0, 1)
-            if free_margin_ratio is not None
-            else None,
+            "free_margin_pct": (
+                round(free_margin_ratio * 100.0, 1)
+                if free_margin_ratio is not None
+                else None
+            ),
             "health_buffer": health_buffer,
-            "health_buffer_pct": round(health_buffer * 100.0, 1)
-            if health_buffer is not None
-            else None,
+            "health_buffer_pct": (
+                round(health_buffer * 100.0, 1) if health_buffer is not None else None
+            ),
         }
     )
     base["account"] = account
@@ -2453,7 +2588,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     for item in trades_raw[:_RECENT_TRADES_DISPLAY]:
         entry_dt = _parse_dt(item.get("entry_time"))
         close_dt = _parse_dt(item.get("close_time"))
-        updated_dt = _parse_dt(item.get("updated_at") or item.get("close_time") or item.get("entry_time"))
+        updated_dt = _parse_dt(
+            item.get("updated_at") or item.get("close_time") or item.get("entry_time")
+        )
         units_val = _safe_float(item.get("units"))
         direction = "Long" if units_val > 0 else "Short" if units_val < 0 else "Flat"
         units_abs = int(round(abs(units_val)))
@@ -2590,8 +2727,12 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     today_pips_from_trades = round(sum(t["pl_pips"] for t in today_closed_trades), 2)
     today_jpy_from_trades = round(sum(t["pl_jpy"] for t in today_closed_trades), 2)
-    yesterday_pips_from_trades = round(sum(t["pl_pips"] for t in yesterday_closed_trades), 2)
-    yesterday_jpy_from_trades = round(sum(t["pl_jpy"] for t in yesterday_closed_trades), 2)
+    yesterday_pips_from_trades = round(
+        sum(t["pl_pips"] for t in yesterday_closed_trades), 2
+    )
+    yesterday_jpy_from_trades = round(
+        sum(t["pl_jpy"] for t in yesterday_closed_trades), 2
+    )
     weekly_pips_from_trades = round(sum(t["pl_pips"] for t in weekly_closed_trades), 2)
     weekly_jpy_from_trades = round(sum(t["pl_jpy"] for t in weekly_closed_trades), 2)
     snapshot_rollup_present = all(
@@ -2620,7 +2761,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         perf["win_rate"] = (wins / wl_total) if wl_total else 0.0
         perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
         if (perf.get("total_trades") or 0) < (perf.get("recent_closed") or 0):
-            perf["total_trades"] = max(len(parsed_trades), int(perf.get("recent_closed") or 0))
+            perf["total_trades"] = max(
+                len(parsed_trades), int(perf.get("recent_closed") or 0)
+            )
 
     daily_stale_zero = (
         not rollup_applied
@@ -2632,7 +2775,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         not rollup_applied
         and _safe_float(perf.get("yesterday_pl_pips")) == 0.0
         and _safe_float(perf.get("yesterday_pl_jpy")) == 0.0
-        and (abs(yesterday_pips_from_trades) > 0.01 or abs(yesterday_jpy_from_trades) > 0.5)
+        and (
+            abs(yesterday_pips_from_trades) > 0.01
+            or abs(yesterday_jpy_from_trades) > 0.5
+        )
     )
     weekly_stale_zero = (
         not rollup_applied
@@ -2642,53 +2788,77 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     if perf.get("daily_pl_pips") is None or daily_stale_zero:
-        perf["daily_pl_pips"] = round(
-            _sum_if(
-                lambda t: t.get("close_time_jst")
-                and t["close_time_jst"].date() == today_date
-            ),
-            2,
-        ) if closed_trades else 0.0
+        perf["daily_pl_pips"] = (
+            round(
+                _sum_if(
+                    lambda t: t.get("close_time_jst")
+                    and t["close_time_jst"].date() == today_date
+                ),
+                2,
+            )
+            if closed_trades
+            else 0.0
+        )
     if perf.get("daily_pl_jpy") is None or daily_stale_zero:
-        perf["daily_pl_jpy"] = round(
-            _sum_jpy(
-                lambda t: t.get("close_time_jst")
-                and t["close_time_jst"].date() == today_date
-            ),
-            2,
-        ) if closed_trades else 0.0
+        perf["daily_pl_jpy"] = (
+            round(
+                _sum_jpy(
+                    lambda t: t.get("close_time_jst")
+                    and t["close_time_jst"].date() == today_date
+                ),
+                2,
+            )
+            if closed_trades
+            else 0.0
+        )
     if perf.get("weekly_pl_pips") is None or weekly_stale_zero:
-        perf["weekly_pl_pips"] = round(
-            _sum_if(
-                lambda t: t.get("close_time_jst")
-                and t["close_time_jst"] >= week_cutoff
-            ),
-            2,
-        ) if closed_trades else 0.0
+        perf["weekly_pl_pips"] = (
+            round(
+                _sum_if(
+                    lambda t: t.get("close_time_jst")
+                    and t["close_time_jst"] >= week_cutoff
+                ),
+                2,
+            )
+            if closed_trades
+            else 0.0
+        )
     if perf.get("weekly_pl_jpy") is None or weekly_stale_zero:
-        perf["weekly_pl_jpy"] = round(
-            _sum_jpy(
-                lambda t: t.get("close_time_jst")
-                and t["close_time_jst"] >= week_cutoff
-            ),
-            2,
-        ) if closed_trades else 0.0
+        perf["weekly_pl_jpy"] = (
+            round(
+                _sum_jpy(
+                    lambda t: t.get("close_time_jst")
+                    and t["close_time_jst"] >= week_cutoff
+                ),
+                2,
+            )
+            if closed_trades
+            else 0.0
+        )
 
     if metrics_snapshot.get("yesterday") is None or yesterday_stale_zero:
-        perf["yesterday_pl_pips"] = round(
-            _sum_if(
-                lambda t: t.get("close_time_jst")
-                and t["close_time_jst"].date() == yesterday_date
-            ),
-            2,
-        ) if closed_trades else 0.0
-        perf["yesterday_pl_jpy"] = round(
-            _sum_jpy(
-                lambda t: t.get("close_time_jst")
-                and t["close_time_jst"].date() == yesterday_date
-            ),
-            2,
-        ) if closed_trades else 0.0
+        perf["yesterday_pl_pips"] = (
+            round(
+                _sum_if(
+                    lambda t: t.get("close_time_jst")
+                    and t["close_time_jst"].date() == yesterday_date
+                ),
+                2,
+            )
+            if closed_trades
+            else 0.0
+        )
+        perf["yesterday_pl_jpy"] = (
+            round(
+                _sum_jpy(
+                    lambda t: t.get("close_time_jst")
+                    and t["close_time_jst"].date() == yesterday_date
+                ),
+                2,
+            )
+            if closed_trades
+            else 0.0
+        )
     if perf.get("total_pips") is None:
         perf["total_pips"] = round(sum(t["pl_pips"] for t in closed_trades), 2)
     if perf.get("total_jpy") is None:
@@ -2738,11 +2908,11 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     wins_val = perf.get("wins")
     losses_val = perf.get("losses")
     wins_total = int(wins_val or 0) + int(losses_val or 0)
-    wins_inconsistent = (
-        not rollup_applied
-        and (
-            ((perf.get("recent_closed") or 0) > 0 and wins_total == 0)
-            or ((perf.get("recent_closed") or 0) > 0 and wins_total > int(perf.get("recent_closed") or 0))
+    wins_inconsistent = not rollup_applied and (
+        ((perf.get("recent_closed") or 0) > 0 and wins_total == 0)
+        or (
+            (perf.get("recent_closed") or 0) > 0
+            and wins_total > int(perf.get("recent_closed") or 0)
         )
     )
     if wins_val is None or losses_val is None or wins_inconsistent:
@@ -2761,7 +2931,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         last_trade = metrics_snapshot.get("last_trade_at")
         if not last_trade and closed_trades:
             last_trade = max(closed_trades, key=lambda t: t["close_time"])["close_time"]
-        perf["last_trade_at"] = _format_dt(_parse_dt(last_trade)) if last_trade else None
+        perf["last_trade_at"] = (
+            _format_dt(_parse_dt(last_trade)) if last_trade else None
+        )
 
     open_positions = snapshot.get("open_positions") or {}
     open_entries: list[Dict[str, Any]] = []
@@ -2805,7 +2977,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         )
         for trade in trades:
             trade_units = _safe_float(trade.get("units"))
-            trade_side = trade.get("side") or ("Long" if trade_units > 0 else "Short" if trade_units < 0 else "Flat")
+            trade_side = trade.get("side") or (
+                "Long" if trade_units > 0 else "Short" if trade_units < 0 else "Flat"
+            )
             if isinstance(trade_side, str):
                 trade_side = trade_side.capitalize()
             open_dt = _parse_dt(trade.get("open_time"))
@@ -2822,17 +2996,22 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                     "entry_price": _opt_float(trade.get("price")),
                     "open_label": _format_dt(open_dt) or "-",
                     "open_time": open_dt,
-                    "unrealized_pips": round(_safe_float(trade.get("unrealized_pl_pips")), 2),
+                    "unrealized_pips": round(
+                        _safe_float(trade.get("unrealized_pl_pips")), 2
+                    ),
                     "unrealized_jpy": round(_safe_float(trade.get("unrealized_pl")), 2),
                 }
             )
     open_entries.sort(key=lambda row: row["pocket"])
     open_trades_detail.sort(
-        key=lambda row: row.get("open_time") or datetime.min.replace(tzinfo=timezone.utc),
+        key=lambda row: row.get("open_time")
+        or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
     if len(open_trades_detail) > int(os.getenv("UI_OPEN_TRADES_LIMIT", "50")):
-        open_trades_detail = open_trades_detail[: int(os.getenv("UI_OPEN_TRADES_LIMIT", "50"))]
+        open_trades_detail = open_trades_detail[
+            : int(os.getenv("UI_OPEN_TRADES_LIMIT", "50"))
+        ]
 
     net_units = _safe_float((open_positions.get("__net__") or {}).get("units"))
     base["open_summary"] = {
@@ -2844,7 +3023,11 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "unrealized_pl_pips": round(total_unrealized_pips, 2),
         "unrealized_pl_jpy": round(total_unrealized_jpy, 2),
         "open_trades": open_trades_detail,
-        "meta": open_positions.get("__meta__", {}) if isinstance(open_positions, dict) else {},
+        "meta": (
+            open_positions.get("__meta__", {})
+            if isinstance(open_positions, dict)
+            else {}
+        ),
     }
     perf["open_positions"] = total_positions
     perf["net_units"] = net_units
@@ -2866,7 +3049,11 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                 "pips": round(_safe_float(pips), 2),
                 "jpy": round(_safe_float(jpy), 2),
                 "trades": int(trades) if trades is not None else 0,
-                "win_rate": round(_safe_float(win_rate) * 100.0, 1) if win_rate is not None else None,
+                "win_rate": (
+                    round(_safe_float(win_rate) * 100.0, 1)
+                    if win_rate is not None
+                    else None
+                ),
                 "pf": round(_safe_float(pf), 2) if pf is not None else None,
             }
         )
@@ -2884,7 +3071,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     if decision_latency_ms is not None:
         decision_latency_ms = float(decision_latency_ms)
         system["decision_latency_ms"] = round(decision_latency_ms, 0)
-        system["decision_latency_level"] = _level_for_value(decision_latency_ms, 2000.0, 4000.0)
+        system["decision_latency_level"] = _level_for_value(
+            decision_latency_ms, 2000.0, 4000.0
+        )
 
     healthbeat_dt = _parse_dt(metrics_snapshot.get("healthbeat_ts"))
     healthbeat_age = _age_minutes(healthbeat_dt, now)
@@ -2943,7 +3132,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     signals_recent = []
     for row in metrics_snapshot.get("signals_recent") or []:
-        ts_label = _format_dt(_parse_ts_ms(row.get("ts_ms"))) or str(row.get("ts_ms") or "-")
+        ts_label = _format_dt(_parse_ts_ms(row.get("ts_ms"))) or str(
+            row.get("ts_ms") or "-"
+        )
         signal_id = row.get("client_order_id")
         worker = _infer_worker_name(row)
         signals_recent.append(
@@ -3011,7 +3202,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         health["deploy_id"] = health_snapshot.get("deploy_id")
         health["git_rev"] = health_snapshot.get("git_rev")
         health["uptime_sec"] = health_snapshot.get("uptime_sec")
-        health["uptime_label"] = _format_uptime(_safe_float(health_snapshot.get("uptime_sec")))
+        health["uptime_label"] = _format_uptime(
+            _safe_float(health_snapshot.get("uptime_sec"))
+        )
         health["service_active"] = health_snapshot.get("service_active") or {}
         service_info_rows = []
         for unit, info in (health_snapshot.get("service_info") or {}).items():
@@ -3150,7 +3343,9 @@ def _load_dashboard_data() -> Dict[str, Any]:
         base.setdefault("snapshot", {})["fetch_attempts"] = fetch_attempts
         base.setdefault("snapshot", {})["fetch_error"] = None
         if not base["snapshot"].get("metrics_available"):
-            base["snapshot"]["fetch_error"] = "snapshot.metrics が空です（取得元を確認してください）"
+            base["snapshot"][
+                "fetch_error"
+            ] = "snapshot.metrics が空です（取得元を確認してください）"
         return base
 
     fallback_error = "スナップショットを取得できませんでした"
@@ -3436,7 +3631,9 @@ def run_detail(request: Request, run_id: str, strategy: str):
     if not row:
         raise HTTPException(status_code=404, detail="Run not found")
     run = dump_dict(row)
-    run["params_pretty"] = json.dumps(run.get("params", {}), ensure_ascii=False, indent=2)
+    run["params_pretty"] = json.dumps(
+        run.get("params", {}), ensure_ascii=False, indent=2
+    )
     run["train_pretty"] = json.dumps(run.get("train", {}), ensure_ascii=False, indent=2)
     run["valid_pretty"] = json.dumps(run.get("valid", {}), ensure_ascii=False, indent=2)
     run["summary_jp"] = _build_summary(run)
@@ -3489,7 +3686,11 @@ def _apply_params_to_config(run: dict) -> None:
     if _SCALP_PARAMS_OVERRIDE:
         read_paths = (CONFIG_PATH,)
     else:
-        read_paths = (CONFIG_PATH, _SCALP_PARAMS_LEGACY) if CONFIG_PATH != _SCALP_PARAMS_LEGACY else (CONFIG_PATH,)
+        read_paths = (
+            (CONFIG_PATH, _SCALP_PARAMS_LEGACY)
+            if CONFIG_PATH != _SCALP_PARAMS_LEGACY
+            else (CONFIG_PATH,)
+        )
     for path in read_paths:
         if not path.exists():
             continue

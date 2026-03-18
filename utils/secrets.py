@@ -102,7 +102,11 @@ def _from_toml(key: str, data: Optional[dict] = None) -> Optional[str]:
 
 
 def _gcp_disabled() -> bool:
-    return os.environ.get("DISABLE_GCP_SECRET_MANAGER", "").lower() in {"1", "true", "yes"}
+    return os.environ.get("DISABLE_GCP_SECRET_MANAGER", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def _prefer_gcp(key: str) -> bool:

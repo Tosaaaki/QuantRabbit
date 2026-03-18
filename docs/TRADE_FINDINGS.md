@@ -9,6 +9,29 @@
 このファイルは、QuantRabbit の「改善記録」と「敗因記録」の単一台帳兼 change diary です。
 以後、同種の記録は必ずここに追記し、他の分散ファイルは作らないこと。
 
+---
+
+## 2026-03-19 パターンブック更新・戦略エントリー・低ボラenv調整
+
+- **hypothesis_key**: `pattern_book_reduce_block_update_lowvol_env_20260319`
+- **strategy**: PrecisionLowVol, pattern_book governance
+- **surface**: エントリー制御 / パターン学習 / env設定
+
+**Why:**
+pattern_book を 2026-03-17 時点のデータに更新（2686→2786パターン）。reduce アクション増加（16→23）、block 増加（3→5）により、低エッジパターンへの過剰エントリーを抑制。strategy_entry.py と quant-scalp-precision-lowvol.env も同期。
+
+**Hypothesis:**
+reduce/block 強化により低ボラ帯での損失エントリーが減少し、トータルPFが改善する。
+
+**Observed:**
+- pattern_book更新: 2026-03-17T03:55:51 時点。patterns_total 2786件
+- RangeFader short の boost エントリーが top_edges から除外（勝率劣化による降格）
+- reduce: 16→23, block: 3→5
+
+**Verdict:** 変更適用。次セッションで reduce/block 判定が正常に機能するか確認。
+
+**Next Action:** scalp-trader セッション後に fill/reject 比率を確認。reject_pressure_high が出ていないか監視。
+
 ## 2026-03-17 手動APIトレード・セッション議事録（Claude裁量スキャルプ）
 
 ### セッション概要

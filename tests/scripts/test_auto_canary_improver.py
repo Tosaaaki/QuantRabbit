@@ -3,7 +3,9 @@ from __future__ import annotations
 from scripts import auto_canary_improver
 
 
-def test_build_auto_canary_reinforces_loser_cluster_with_counterfactual_reduce() -> None:
+def test_build_auto_canary_reinforces_loser_cluster_with_counterfactual_reduce() -> (
+    None
+):
     loser_cluster = {
         "strategies": {
             "MomentumBurst": {
@@ -81,5 +83,7 @@ def test_build_auto_canary_emits_setup_overrides_when_cluster_has_live_setup() -
     assert isinstance(rec.get("setup_overrides"), list)
     override = rec["setup_overrides"][0]
     assert override["match_dimension"] == "setup_fingerprint"
-    assert override["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    assert override["setup_fingerprint"].startswith(
+        "RangeFader-sell-fade|short|trend_long|tight_fast|"
+    )
     assert override["units_multiplier"] == 0.84

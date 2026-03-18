@@ -30,7 +30,10 @@ def _load_dispatch_helper():
                 }:
                     selected.append(node)
                     break
-        elif isinstance(node, ast.FunctionDef) and node.name == "_dispatch_strategy_signal":
+        elif (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "_dispatch_strategy_signal"
+        ):
             selected.append(node)
     module = ast.Module(body=selected, type_ignores=[])
     namespace = {
@@ -81,7 +84,9 @@ def _load_worker_functions(*names: str):
         ("wick_reversal_blend", "SCALP_PRECISION_PERF_GUARD_ENABLED"),
     ],
 )
-def test_perf_guard_bypass_enabled_when_mode_specific_guard_is_disabled(mode: str, enabled_key: str) -> None:
+def test_perf_guard_bypass_enabled_when_mode_specific_guard_is_disabled(
+    mode: str, enabled_key: str
+) -> None:
     namespace = _load_worker_functions("_perf_guard_bypass_enabled")
     seen: list[tuple[str, bool]] = []
 
@@ -108,7 +113,9 @@ def test_perf_guard_bypass_enabled_when_mode_specific_guard_is_disabled(mode: st
         ("wick_reversal_blend", "SCALP_PRECISION_PERF_GUARD_ENABLED"),
     ],
 )
-def test_perf_guard_bypass_disabled_when_mode_specific_guard_is_enabled(mode: str, enabled_key: str) -> None:
+def test_perf_guard_bypass_disabled_when_mode_specific_guard_is_enabled(
+    mode: str, enabled_key: str
+) -> None:
     namespace = _load_worker_functions("_perf_guard_bypass_enabled")
     seen: list[tuple[str, bool]] = []
 
@@ -252,9 +259,16 @@ def test_short_reversion_signals_block_wrong_way_bullish_headwind(
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
             "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
             "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.180, 158.191, 158.198], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.180, 158.191, 158.198],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.82),
-            "projection_decision": lambda side, mode="range": (side == "short", 1.0, {"mode": mode}),
+            "projection_decision": lambda side, mode="range": (
+                side == "short",
+                1.0,
+                {"mode": mode},
+            ),
         }
     )
 
@@ -316,7 +330,10 @@ def test_precision_lowvol_short_keeps_local_flow_guard_when_headwind_is_mild() -
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
             "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
             "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.188, 158.196, 158.198], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.188, 158.196, 158.198],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.88),
             "projection_decision": lambda side, mode="range": (
                 side == "short",
@@ -340,7 +357,9 @@ def test_precision_lowvol_short_keeps_local_flow_guard_when_headwind_is_mild() -
     }
     range_ctx = SimpleNamespace(active=True, score=0.66)
 
-    signal = namespace["_signal_precision_lowvol"](fac_m1, range_ctx, tag="PrecisionLowVol")
+    signal = namespace["_signal_precision_lowvol"](
+        fac_m1, range_ctx, tag="PrecisionLowVol"
+    )
 
     assert isinstance(signal, dict)
     assert signal["action"] == "OPEN_SHORT"
@@ -348,10 +367,15 @@ def test_precision_lowvol_short_keeps_local_flow_guard_when_headwind_is_mild() -
     assert signal["reason"] == "precision_lowvol"
     assert signal["size_mult"] < 1.08
     assert signal["flow_guard"]["setup_quality"] > 0.5
-    assert signal["flow_guard"]["continuation_pressure"] < signal["flow_guard"]["max_pressure"]
+    assert (
+        signal["flow_guard"]["continuation_pressure"]
+        < signal["flow_guard"]["max_pressure"]
+    )
 
 
-def test_precision_lowvol_blocks_weak_gap_stretched_hostile_projection_short_lane() -> None:
+def test_precision_lowvol_blocks_weak_gap_stretched_hostile_projection_short_lane() -> (
+    None
+):
     namespace = _load_worker_functions(
         "_unit_bound",
         "_positive_norm",
@@ -388,7 +412,10 @@ def test_precision_lowvol_blocks_weak_gap_stretched_hostile_projection_short_lan
             "_rsi": lambda fac: float(fac.get("rsi") or 50.0),
             "_stoch_rsi": lambda fac: float(fac.get("stoch") or 0.0),
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.278, 158.283, 158.286], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.278, 158.283, 158.286],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.58),
             "_reversion_short_flow_guard": lambda **_kwargs: (
                 True,
@@ -417,12 +444,16 @@ def test_precision_lowvol_blocks_weak_gap_stretched_hostile_projection_short_lan
     }
     range_ctx = SimpleNamespace(active=True, score=0.43)
 
-    signal = namespace["_signal_precision_lowvol"](fac_m1, range_ctx, tag="PrecisionLowVol")
+    signal = namespace["_signal_precision_lowvol"](
+        fac_m1, range_ctx, tag="PrecisionLowVol"
+    )
 
     assert signal is None
 
 
-def test_precision_lowvol_keeps_strong_reversal_probe_under_hostile_projection() -> None:
+def test_precision_lowvol_keeps_strong_reversal_probe_under_hostile_projection() -> (
+    None
+):
     namespace = _load_worker_functions(
         "_unit_bound",
         "_positive_norm",
@@ -459,7 +490,10 @@ def test_precision_lowvol_keeps_strong_reversal_probe_under_hostile_projection()
             "_rsi": lambda fac: float(fac.get("rsi") or 50.0),
             "_stoch_rsi": lambda fac: float(fac.get("stoch") or 0.0),
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.278, 158.284, 158.287], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.278, 158.284, 158.287],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.88),
             "_reversion_short_flow_guard": lambda **_kwargs: (
                 True,
@@ -488,7 +522,9 @@ def test_precision_lowvol_keeps_strong_reversal_probe_under_hostile_projection()
     }
     range_ctx = SimpleNamespace(active=True, score=0.43)
 
-    signal = namespace["_signal_precision_lowvol"](fac_m1, range_ctx, tag="PrecisionLowVol")
+    signal = namespace["_signal_precision_lowvol"](
+        fac_m1, range_ctx, tag="PrecisionLowVol"
+    )
 
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
@@ -535,7 +571,10 @@ def test_precision_lowvol_prefers_short_up_lean_over_down_flat_lane() -> None:
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
             "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
             "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.278, 158.284, 158.286], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.278, 158.284, 158.286],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.88),
             "_reversion_short_flow_guard": lambda **_kwargs: (
                 True,
@@ -624,7 +663,10 @@ def test_vwap_revert_short_blocks_gap_strong_hostile_projection_lane() -> None:
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
             "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
             "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.020, 158.034, 158.046], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.020, 158.034, 158.046],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.82),
             "_reversion_short_flow_guard": lambda **_kwargs: (
                 True,
@@ -697,7 +739,10 @@ def test_vwap_revert_prefers_short_up_lean_lane() -> None:
             "_vwap_gap_pips": lambda fac: float(fac.get("vgap") or 0.0),
             "_ema_slope_pips": lambda fac, key: float(fac.get(key) or 0.0) / 0.01,
             "_macd_hist_pips": lambda fac: float(fac.get("macd_hist") or 0.0) / 0.01,
-            "tick_snapshot": lambda *_args, **_kwargs: ([158.020, 158.034, 158.046], 6.0),
+            "tick_snapshot": lambda *_args, **_kwargs: (
+                [158.020, 158.034, 158.046],
+                6.0,
+            ),
             "tick_reversal": lambda *_args, **_kwargs: (True, "short", 0.86),
             "_reversion_short_flow_guard": lambda **_kwargs: (
                 True,

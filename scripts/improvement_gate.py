@@ -9,15 +9,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from generate_repo_history_lane_index import build_repo_history_lane_payload  # noqa: E402
+from generate_repo_history_lane_index import (
+    build_repo_history_lane_payload,
+)  # noqa: E402
 from trade_findings_review import _entry_field, _parse_findings  # noqa: E402
-
 
 DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
 DEFAULT_ARTIFACT_PATH = REPO_ROOT / "logs" / "change_preflight_latest.json"
@@ -27,7 +27,12 @@ UNRESOLVED_VERDICTS = {"pending", "mixed"}
 UNRESOLVED_STATUS = {"open", "in_progress"}
 BADISH_VERDICTS = {"bad", "pending", "mixed"}
 NOT_FIRED_VALUES = {"", "0", "none", "false", "no"}
-MARKET_HOLD_WARNING_PREFIXES = ("tick_stale", "spread_wide", "data_lag_high", "market_closed")
+MARKET_HOLD_WARNING_PREFIXES = (
+    "tick_stale",
+    "spread_wide",
+    "data_lag_high",
+    "market_closed",
+)
 ADVANCED_IDEA_PATTERNS = (
     re.compile(r"\bkalman\b"),
     re.compile(r"\bhmm\b"),
@@ -282,7 +287,9 @@ def _latest_entry_by_hypothesis(entries: list[Any]) -> dict[str, Any]:
     return latest
 
 
-def _lane_matches_candidate_strategy(lane: dict[str, Any], candidate: Candidate) -> bool:
+def _lane_matches_candidate_strategy(
+    lane: dict[str, Any], candidate: Candidate
+) -> bool:
     strategies = lane.get("strategies")
     if not isinstance(strategies, list):
         return False
@@ -421,9 +428,11 @@ def _fallback_lane_payload(entries: list[Any], limit: int) -> dict[str, Any]:
             **recommended_focus,
             "repeat_risk_reasons": [],
             "selection_reason": "fallback unresolved trading lane first",
-            "next_action": _compact(_entry_field(entries[-1], "Next Action"), 160)
-            if entries
-            else "",
+            "next_action": (
+                _compact(_entry_field(entries[-1], "Next Action"), 160)
+                if entries
+                else ""
+            ),
         }
 
     return {
@@ -478,7 +487,9 @@ def build_improvement_gate_payload(
             if _strategy_match(entry, candidate):
                 strategy_entries.append(entry)
         scored_matches.sort(key=lambda item: (-item[0], item[1].order))
-        matched_entries = [_build_match_summary(entry, score) for score, entry in scored_matches]
+        matched_entries = [
+            _build_match_summary(entry, score) for score, entry in scored_matches
+        ]
         unresolved_matches = [
             entry for _, entry in scored_matches if _is_unresolved(entry)
         ]
@@ -488,8 +499,12 @@ def build_improvement_gate_payload(
             if _is_unresolved(entry)
         ]
         family_badish_count = sum(1 for entry in family_entries if _is_badish(entry))
-        family_unresolved_count = sum(1 for entry in family_entries if _is_unresolved(entry))
-        strategy_badish_count = sum(1 for entry in strategy_entries if _is_badish(entry))
+        family_unresolved_count = sum(
+            1 for entry in family_entries if _is_unresolved(entry)
+        )
+        strategy_badish_count = sum(
+            1 for entry in strategy_entries if _is_badish(entry)
+        )
         strategy_unresolved_count = sum(
             1 for entry in strategy_entries if _is_unresolved(entry)
         )
@@ -499,7 +514,8 @@ def build_improvement_gate_payload(
         same_strategy_open_lanes = [
             _lane_summary(lane, latest_entry_by_hypothesis)
             for lane in current_open_trading
-            if isinstance(lane, dict) and _lane_matches_candidate_strategy(lane, candidate)
+            if isinstance(lane, dict)
+            and _lane_matches_candidate_strategy(lane, candidate)
         ]
         same_family_open_lanes = [
             lane
@@ -549,10 +565,14 @@ def build_improvement_gate_payload(
         elif stubborn_open_lanes:
             if len(stubborn_open_lanes) >= 2 or strategy_badish_count >= 2:
                 action = "escalate_family_not_tighten"
-                reasons.append("same strategy has repeated unresolved lanes with Mechanism Fired=0/none")
+                reasons.append(
+                    "same strategy has repeated unresolved lanes with Mechanism Fired=0/none"
+                )
             else:
                 action = "review_existing_pending"
-                reasons.append("same strategy has unresolved lane with Mechanism Fired=0/none")
+                reasons.append(
+                    "same strategy has unresolved lane with Mechanism Fired=0/none"
+                )
             if recommended_focus and same_strategy_open_lanes:
                 reasons.append(
                     "validate recommended single-focus lane before opening another same-strategy tweak"
@@ -569,7 +589,9 @@ def build_improvement_gate_payload(
             reasons.append(
                 "advanced-model idea detected before baseline/cost/validation evidence"
             )
-            reasons.extend(f"advanced_keyword:{signal}" for signal in complexity_signals)
+            reasons.extend(
+                f"advanced_keyword:{signal}" for signal in complexity_signals
+            )
         elif family_badish_count >= 2 or strategy_badish_count >= 2:
             action = "escalate_family_not_tighten"
             reasons.append(
@@ -719,7 +741,9 @@ def main(argv: list[str] | None = None) -> int:
 
     out_json = Path(args.out_json).resolve()
     out_md = Path(args.out_md).resolve()
-    out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     out_md.write_text(_render_markdown(payload), encoding="utf-8")
 
     if args.json:

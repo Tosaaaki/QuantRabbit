@@ -34,18 +34,26 @@ def test_signal_window_shadow_only_keeps_live_signal(monkeypatch) -> None:
 
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_ENABLED", False)
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SHADOW_ENABLED", True)
-    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC", (0.8, 1.5))
+    monkeypatch.setattr(
+        worker.config, "SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC", (0.8, 1.5)
+    )
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SCALE_WITH_SPEED", False)
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES", 20)
-    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", 0.05)
-    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC", 99999.0)
+    monkeypatch.setattr(
+        worker.config, "SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", 0.05
+    )
+    monkeypatch.setattr(
+        worker.config, "SIGNAL_WINDOW_ADAPTIVE_SHADOW_LOG_INTERVAL_SEC", 99999.0
+    )
     monkeypatch.setattr(worker, "_SIGNAL_WINDOW_SHADOW_LOG_MONO", 0.0)
 
     live = _signal(worker=worker, window_sec=1.2)
     alt_fast = _signal(worker=worker, window_sec=0.8)
     alt_slow = _signal(worker=worker, window_sec=1.5)
 
-    def _fake_build(_ticks, _spread, *, signal_window_override_sec=None, allow_window_fallback=True):
+    def _fake_build(
+        _ticks, _spread, *, signal_window_override_sec=None, allow_window_fallback=True
+    ):
         if abs(float(signal_window_override_sec or 0.0) - 0.8) < 1e-9:
             return alt_fast, "ok"
         if abs(float(signal_window_override_sec or 0.0) - 1.5) < 1e-9:
@@ -97,7 +105,9 @@ def test_signal_window_adaptive_applies_when_improvement_is_large(monkeypatch) -
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC", (0.8,))
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SCALE_WITH_SPEED", False)
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES", 20)
-    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", 0.05)
+    monkeypatch.setattr(
+        worker.config, "SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", 0.05
+    )
 
     live = _signal(worker=worker, window_sec=1.2)
     alt_fast = _signal(worker=worker, window_sec=0.8)
@@ -151,7 +161,9 @@ def test_signal_window_adaptive_requires_min_sample(monkeypatch) -> None:
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_CANDIDATES_SEC", (0.8,))
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SCALE_WITH_SPEED", False)
     monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_MIN_TRADES", 50)
-    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", 0.0)
+    monkeypatch.setattr(
+        worker.config, "SIGNAL_WINDOW_ADAPTIVE_SELECTION_MARGIN_PIPS", 0.0
+    )
 
     live = _signal(worker=worker, window_sec=1.2)
     alt_fast = _signal(worker=worker, window_sec=0.8)

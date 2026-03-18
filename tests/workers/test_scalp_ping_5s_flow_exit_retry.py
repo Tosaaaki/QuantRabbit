@@ -20,16 +20,22 @@ def _make_worker(monkeypatch):
 def test_failed_close_uses_reason_scoped_retry_cooldown(monkeypatch):
     worker = _make_worker(monkeypatch)
     now_monotonic = {"value": 100.0}
-    monkeypatch.setattr(flow_exit_worker.time, "monotonic", lambda: now_monotonic["value"])
+    monkeypatch.setattr(
+        flow_exit_worker.time, "monotonic", lambda: now_monotonic["value"]
+    )
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs
+    ):
         attempts.append(str(reason))
         return False
 
     monkeypatch.setattr(worker, "_close", _fake_close)
-    worker._direction_flip_states["T-flow-retry"] = flow_exit_worker._DirectionFlipState(hits=2)
+    worker._direction_flip_states["T-flow-retry"] = (
+        flow_exit_worker._DirectionFlipState(hits=2)
+    )
 
     asyncio.run(
         worker._attempt_close(
@@ -77,12 +83,16 @@ def test_successful_close_clears_direction_flip_state(monkeypatch):
 
     attempts: list[str] = []
 
-    async def _fake_close(trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs):
+    async def _fake_close(
+        trade_id, units, reason, pnl, client_order_id, allow_negative=False, **_kwargs
+    ):
         attempts.append(str(reason))
         return True
 
     monkeypatch.setattr(worker, "_close", _fake_close)
-    worker._direction_flip_states["T-flow-ok"] = flow_exit_worker._DirectionFlipState(hits=1)
+    worker._direction_flip_states["T-flow-ok"] = flow_exit_worker._DirectionFlipState(
+        hits=1
+    )
 
     asyncio.run(
         worker._attempt_close(

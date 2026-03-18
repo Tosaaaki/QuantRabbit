@@ -8,7 +8,9 @@ from analytics.bq_exporter import BigQueryExporter
 
 
 class _FakeBigQueryClient:
-    def __init__(self, *, errors_by_call: list[list[dict[str, Any]]] | None = None) -> None:
+    def __init__(
+        self, *, errors_by_call: list[list[dict[str, Any]]] | None = None
+    ) -> None:
         self.project = "quantrabbit"
         self.calls: list[dict[str, Any]] = []
         self._errors_by_call = errors_by_call or []
@@ -58,20 +60,42 @@ def _build_exporter(
 
     monkeypatch.setattr(exporter, "_fetch_trades", lambda _limit: list(rows))
     cursor_updates: list[str] = []
-    monkeypatch.setattr(exporter, "_set_last_cursor", lambda value: cursor_updates.append(str(value)))
+    monkeypatch.setattr(
+        exporter, "_set_last_cursor", lambda value: cursor_updates.append(str(value))
+    )
     return exporter, cursor_updates
 
 
-def test_export_batches_rows_and_updates_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_export_batches_rows_and_updates_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rows = [
-        {"ticket_id": "t1", "updated_at": "2026-02-20T09:00:01+00:00", "transaction_id": 1},
-        {"ticket_id": "t2", "updated_at": "2026-02-20T09:00:02+00:00", "transaction_id": 2},
-        {"ticket_id": "t3", "updated_at": "2026-02-20T09:00:03+00:00", "transaction_id": 3},
+        {
+            "ticket_id": "t1",
+            "updated_at": "2026-02-20T09:00:01+00:00",
+            "transaction_id": 1,
+        },
+        {
+            "ticket_id": "t2",
+            "updated_at": "2026-02-20T09:00:02+00:00",
+            "transaction_id": 2,
+        },
+        {
+            "ticket_id": "t3",
+            "updated_at": "2026-02-20T09:00:03+00:00",
+            "transaction_id": 3,
+        },
         {"ticket_id": "t4", "updated_at": "2026-02-20T09:00:04+00:00"},
-        {"ticket_id": "t5", "updated_at": "2026-02-20T09:00:05+00:00", "transaction_id": 5},
+        {
+            "ticket_id": "t5",
+            "updated_at": "2026-02-20T09:00:05+00:00",
+            "transaction_id": 5,
+        },
     ]
     fake_client = _FakeBigQueryClient()
-    exporter, cursor_updates = _build_exporter(monkeypatch, rows=rows, fake_client=fake_client)
+    exporter, cursor_updates = _build_exporter(
+        monkeypatch, rows=rows, fake_client=fake_client
+    )
 
     stats = exporter.export(limit=500)
 
@@ -94,9 +118,21 @@ def test_export_raises_on_chunk_error_and_does_not_advance_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rows = [
-        {"ticket_id": "t1", "updated_at": "2026-02-20T09:00:01+00:00", "transaction_id": 1},
-        {"ticket_id": "t2", "updated_at": "2026-02-20T09:00:02+00:00", "transaction_id": 2},
-        {"ticket_id": "t3", "updated_at": "2026-02-20T09:00:03+00:00", "transaction_id": 3},
+        {
+            "ticket_id": "t1",
+            "updated_at": "2026-02-20T09:00:01+00:00",
+            "transaction_id": 1,
+        },
+        {
+            "ticket_id": "t2",
+            "updated_at": "2026-02-20T09:00:02+00:00",
+            "transaction_id": 2,
+        },
+        {
+            "ticket_id": "t3",
+            "updated_at": "2026-02-20T09:00:03+00:00",
+            "transaction_id": 3,
+        },
     ]
     fake_client = _FakeBigQueryClient(
         errors_by_call=[
@@ -104,7 +140,9 @@ def test_export_raises_on_chunk_error_and_does_not_advance_cursor(
             [{"index": 0, "errors": [{"reason": "backendError"}]}],
         ]
     )
-    exporter, cursor_updates = _build_exporter(monkeypatch, rows=rows, fake_client=fake_client)
+    exporter, cursor_updates = _build_exporter(
+        monkeypatch, rows=rows, fake_client=fake_client
+    )
 
     with pytest.raises(RuntimeError, match="chunk_offset=2"):
         exporter.export(limit=500)

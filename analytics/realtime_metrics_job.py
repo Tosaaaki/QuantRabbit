@@ -23,7 +23,6 @@ from typing import Iterable, List
 from google.api_core import exceptions as gexc
 from google.cloud import bigquery
 
-
 DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 DEFAULT_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 DEFAULT_TABLE = os.getenv("BQ_REALTIME_METRICS_TABLE", "realtime_metrics")
@@ -172,9 +171,7 @@ ORDER BY pocket, strategy
         query,
         job_config=bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter(
-                    "lookback", "INT64", lookback_minutes
-                )
+                bigquery.ScalarQueryParameter("lookback", "INT64", lookback_minutes)
             ]
         ),
     )
@@ -228,9 +225,7 @@ WHERE generated_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @retention HOUR
         query,
         job_config=bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter(
-                    "retention", "INT64", retention_hours
-                )
+                bigquery.ScalarQueryParameter("retention", "INT64", retention_hours)
             ]
         ),
     ).result()

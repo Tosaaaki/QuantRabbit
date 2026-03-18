@@ -21,7 +21,10 @@ from analysis.pattern_book import (  # noqa: E402
     build_pattern_id,
     classify_pattern_action,
 )
-from analysis.pattern_deep import DeepPatternConfig, run_pattern_deep_analysis  # noqa: E402
+from analysis.pattern_deep import (
+    DeepPatternConfig,
+    run_pattern_deep_analysis,
+)  # noqa: E402
 
 DEFAULT_TRADES_DB = BASE_DIR / "logs" / "trades.db"
 DEFAULT_PATTERNS_DB = BASE_DIR / "logs" / "patterns.db"
@@ -59,8 +62,7 @@ def _parse_iso_utc(value: Any) -> dt.datetime | None:
 
 
 def _ensure_schema(con: sqlite3.Connection) -> None:
-    con.executescript(
-        """
+    con.executescript("""
         CREATE TABLE IF NOT EXISTS pattern_trade_features (
           transaction_id INTEGER PRIMARY KEY,
           ticket_id TEXT,
@@ -119,8 +121,7 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
           avg_pips REAL NOT NULL,
           updated_at TEXT NOT NULL
         );
-        """
-    )
+        """)
 
 
 def _extract_entry_thesis(raw: Any) -> dict[str, Any]:
@@ -214,8 +215,16 @@ def _upsert_feature_rows(
                 _safe_float(row["pl_pips"]),
                 _safe_float(row["realized_pl"]),
                 pattern_id,
-                str(entry_thesis.get("signal_mode") or entry_thesis.get("entry_mode") or ""),
-                str(entry_thesis.get("mtf_regime_gate") or entry_thesis.get("mtf_gate") or ""),
+                str(
+                    entry_thesis.get("signal_mode")
+                    or entry_thesis.get("entry_mode")
+                    or ""
+                ),
+                str(
+                    entry_thesis.get("mtf_regime_gate")
+                    or entry_thesis.get("mtf_gate")
+                    or ""
+                ),
                 str(entry_thesis.get("horizon_gate") or ""),
                 str(entry_thesis.get("extrema_gate_reason") or ""),
                 _safe_int(entry_thesis.get("confidence")),
@@ -486,7 +495,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     deep_output_path = Path(args.deep_output_json).resolve()
     deep_summary: dict[str, Any] = {}
 
-    with sqlite3.connect(trades_db_path, timeout=30.0, isolation_level=None) as trades_con:
+    with sqlite3.connect(
+        trades_db_path, timeout=30.0, isolation_level=None
+    ) as trades_con:
         trades_con.row_factory = sqlite3.Row
         trades_con.execute("PRAGMA query_only=ON")
         with sqlite3.connect(patterns_db_path, timeout=30.0) as patterns_con:
@@ -572,11 +583,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backfill/update pattern stats from trades.db")
+    parser = argparse.ArgumentParser(
+        description="Backfill/update pattern stats from trades.db"
+    )
     parser.add_argument("--trades-db", type=Path, default=DEFAULT_TRADES_DB)
     parser.add_argument("--patterns-db", type=Path, default=DEFAULT_PATTERNS_DB)
     parser.add_argument("--output-json", type=Path, default=DEFAULT_OUTPUT_JSON)
-    parser.add_argument("--deep-output-json", type=Path, default=DEFAULT_DEEP_OUTPUT_JSON)
+    parser.add_argument(
+        "--deep-output-json", type=Path, default=DEFAULT_DEEP_OUTPUT_JSON
+    )
     parser.add_argument("--lookback-days", type=int, default=180)
     parser.add_argument("--batch-size", type=int, default=4000)
     parser.add_argument("--max-backfill-rows", type=int, default=500000)

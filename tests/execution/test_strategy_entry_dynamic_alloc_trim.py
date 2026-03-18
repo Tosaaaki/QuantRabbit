@@ -5,10 +5,18 @@ from types import SimpleNamespace
 import execution.strategy_entry as strategy_entry
 
 
-def test_apply_dynamic_alloc_trim_scales_down_and_rescues_min_units(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"micro"}, raising=False)
+def test_apply_dynamic_alloc_trim_scales_down_and_rescues_min_units(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"micro"}, raising=False
+    )
 
     monkeypatch.setattr(
         strategy_entry,
@@ -38,8 +46,12 @@ def test_apply_dynamic_alloc_trim_scales_down_and_rescues_min_units(monkeypatch)
 
 
 def test_apply_dynamic_alloc_trim_skips_when_already_applied(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp_fast"}, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp_fast"}, raising=False
+    )
 
     thesis: dict = {"dynamic_alloc": {"source": "worker", "lot_multiplier": 0.5}}
     units, reason = strategy_entry._apply_dynamic_alloc_trim(
@@ -56,10 +68,18 @@ def test_apply_dynamic_alloc_trim_skips_when_already_applied(monkeypatch) -> Non
 def test_apply_dynamic_alloc_trim_allows_headroom_boost_for_fresh_winner_lane(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_MULT_MAX", 1.35, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_MULT_MAX", 1.35, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_strategy_profile",
@@ -106,11 +126,21 @@ def test_apply_dynamic_alloc_trim_allows_headroom_boost_for_fresh_winner_lane(
     assert thesis["dynamic_alloc"]["current_margin_usage"] == 0.1
 
 
-def test_apply_dynamic_alloc_trim_keeps_trim_only_behavior_near_target_use(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_MULT_MAX", 1.35, raising=False)
+def test_apply_dynamic_alloc_trim_keeps_trim_only_behavior_near_target_use(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_MULT_MAX", 1.35, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_strategy_profile",
@@ -151,9 +181,18 @@ def test_apply_dynamic_alloc_trim_keeps_trim_only_behavior_near_target_use(monke
     assert "dynamic_alloc" not in thesis
 
 
-def test_apply_participation_alloc_trims_units_and_boosts_probability(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
+def test_apply_participation_alloc_trims_units_and_boosts_probability(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -190,7 +229,9 @@ def test_apply_participation_alloc_trims_units_and_boosts_probability(monkeypatc
 
 
 def test_inject_macro_news_context_skips_stale_payload(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_macro_news_context",
@@ -211,7 +252,9 @@ def test_inject_macro_news_context_skips_stale_payload(monkeypatch) -> None:
 
 
 def test_inject_macro_news_context_attaches_summary(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_macro_news_context",

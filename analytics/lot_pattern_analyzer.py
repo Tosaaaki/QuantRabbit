@@ -71,19 +71,29 @@ class LotPatternAnalyzer:
         gcs_bucket: Optional[str] = None,
         gcs_object: str = "analytics/lot_insights.json",
     ) -> None:
-        secret_project = _optional_secret("gcp_project_id") or _optional_secret("BQ_PROJECT")
+        secret_project = _optional_secret("gcp_project_id") or _optional_secret(
+            "BQ_PROJECT"
+        )
         self.project_id = project_id or secret_project
         self.dataset_id = dataset_id or _optional_secret("BQ_DATASET") or "quantrabbit"
-        self.trades_table = trades_table or _optional_secret("BQ_TRADES_TABLE") or "trades_raw"
+        self.trades_table = (
+            trades_table or _optional_secret("BQ_TRADES_TABLE") or "trades_raw"
+        )
         self.insights_table = insights_table or "lot_insights"
         self.lookback_days = lookback_days
         self.min_trades = min_trades
-        self.client = bigquery.Client(project=self.project_id) if self.project_id else bigquery.Client()
+        self.client = (
+            bigquery.Client(project=self.project_id)
+            if self.project_id
+            else bigquery.Client()
+        )
 
         # GCS 出力は任意
         bucket = gcs_bucket
         if bucket is None:
-            bucket = _optional_secret("analytics_bucket_name") or _optional_secret("ui_bucket_name")
+            bucket = _optional_secret("analytics_bucket_name") or _optional_secret(
+                "ui_bucket_name"
+            )
         self._gcs_bucket_name = bucket
         self._gcs_object = gcs_object
         self._storage_client: Optional[storage.Client] = None
@@ -190,14 +200,18 @@ ORDER BY pocket, side
 """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("lookback_days", "INT64", self.lookback_days),
+                bigquery.ScalarQueryParameter(
+                    "lookback_days", "INT64", self.lookback_days
+                ),
             ]
         )
         try:
             job = self.client.query(sql, job_config=job_config)
             return list(job.result())
         except gexc.NotFound as exc:
-            raise RuntimeError(f"LotAnalyzer trades table missing: {table_ref}") from exc
+            raise RuntimeError(
+                f"LotAnalyzer trades table missing: {table_ref}"
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"LotAnalyzer query failed: {exc}") from exc
 
@@ -243,7 +257,9 @@ ORDER BY pocket, side
             avg_pips=round(avg_pips, 3),
             std_pips=round(std_pips, 3) if std_pips is not None else 0.0,
             total_pips=round(total_pips, 3),
-            avg_hold_minutes=round(avg_hold_minutes, 2) if avg_hold_minutes is not None else None,
+            avg_hold_minutes=(
+                round(avg_hold_minutes, 2) if avg_hold_minutes is not None else None
+            ),
             score=round(score, 3),
             risk_multiplier=round(multiplier, 3),
             confidence=confidence,
@@ -309,7 +325,11 @@ ORDER BY pocket, side
         )
 
     def _write_gcs(self, insights: Iterable[LotInsight]) -> None:
-        if not self._gcs_bucket_name or not self._storage_client or not self._storage_bucket:
+        if (
+            not self._gcs_bucket_name
+            or not self._storage_client
+            or not self._storage_bucket
+        ):
             return
         data = [asdict(ins) for ins in insights]
         serialized = json.dumps(
@@ -357,14 +377,18 @@ ORDER BY pocket, side
             table.clustering_fields = ["pocket", "side"]
             self.client.create_table(table)
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"LotAnalyzer insights table check failed: {exc}") from exc
+            raise RuntimeError(
+                f"LotAnalyzer insights table check failed: {exc}"
+            ) from exc
 
     def _ensure_dataset(self) -> None:
         dataset_ref = bigquery.DatasetReference(self.client.project, self.dataset_id)
         try:
             self.client.get_dataset(dataset_ref)
         except gexc.NotFound:
-            logging.info("[LotAnalyzer] dataset %s を作成します。", dataset_ref.dataset_id)
+            logging.info(
+                "[LotAnalyzer] dataset %s を作成します。", dataset_ref.dataset_id
+            )
             dataset = bigquery.Dataset(dataset_ref)
             location = _optional_secret("BQ_LOCATION") or "US"
             dataset.location = location

@@ -36,11 +36,17 @@ def _seed_closed_m1(count: int = 40, start_price: float = 150.0) -> datetime:
 
 @pytest.fixture(autouse=True)
 def _reset_factor_cache(monkeypatch, tmp_path):
-    monkeypatch.setattr(factor_cache, "_CACHE_PATH", tmp_path / "factor_cache_test.json", raising=False)
+    monkeypatch.setattr(
+        factor_cache, "_CACHE_PATH", tmp_path / "factor_cache_test.json", raising=False
+    )
     monkeypatch.setattr(factor_cache, "_LIVE_UPDATE_ENABLED", True, raising=False)
     monkeypatch.setattr(factor_cache, "_LIVE_UPDATE_TFS", {"M1"}, raising=False)
-    monkeypatch.setattr(factor_cache, "_LIVE_UPDATE_MIN_INTERVAL_SEC", 0.0, raising=False)
-    monkeypatch.setattr(factor_cache, "_INCLUDE_LIVE_CANDLE_DEFAULT", True, raising=False)
+    monkeypatch.setattr(
+        factor_cache, "_LIVE_UPDATE_MIN_INTERVAL_SEC", 0.0, raising=False
+    )
+    monkeypatch.setattr(
+        factor_cache, "_INCLUDE_LIVE_CANDLE_DEFAULT", True, raising=False
+    )
 
     factor_cache._LAST_RESTORE_MTIME = None
     factor_cache._LAST_REGIME.clear()

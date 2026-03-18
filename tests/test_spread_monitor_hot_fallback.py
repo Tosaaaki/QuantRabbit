@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
 
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 from analysis.ma_projection import MACrossProjection, score_ma_for_side
 
 
-def _ma(*, gap_pips: float, slope_pips: float, eta_bars: float | None) -> MACrossProjection:
+def _ma(
+    *, gap_pips: float, slope_pips: float, eta_bars: float | None
+) -> MACrossProjection:
     return MACrossProjection(
         fast_ma=150.0,
         slow_ma=150.0,
@@ -44,4 +46,3 @@ def test_score_ma_pre_cross_lookahead_works_for_short_side() -> None:
     ma = _ma(gap_pips=1.0, slope_pips=-0.2, eta_bars=2.0)
     assert score_ma_for_side(ma, "short", 5.0, lookahead_enabled=True) > 0.3
     assert score_ma_for_side(ma, "short", 5.0, lookahead_enabled=False) == -0.8
-

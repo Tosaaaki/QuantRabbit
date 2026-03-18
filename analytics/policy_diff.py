@@ -48,7 +48,13 @@ POCKET_ALLOWED_KEYS = {
 
 ENTRY_GATE_KEYS = {"allow_new", "require_retest", "spread_ok", "drift_ok"}
 EXIT_PROFILE_KEYS = {"reverse_threshold", "time_stop"}
-BE_PROFILE_KEYS = {"enabled", "trigger_pips", "cooldown_sec", "lock_ratio", "min_lock_pips"}
+BE_PROFILE_KEYS = {
+    "enabled",
+    "trigger_pips",
+    "cooldown_sec",
+    "lock_ratio",
+    "min_lock_pips",
+}
 PARTIAL_PROFILE_KEYS = {"thresholds_pips", "fractions", "min_units"}
 
 
@@ -106,7 +112,9 @@ def default_policy_snapshot() -> Dict[str, Any]:
     return PolicySnapshot(version=0, generated_ts=time.time()).to_dict()
 
 
-def normalize_policy_diff(diff: Dict[str, Any], *, source: str | None = None) -> Dict[str, Any]:
+def normalize_policy_diff(
+    diff: Dict[str, Any], *, source: str | None = None
+) -> Dict[str, Any]:
     data = dict(diff or {})
     if source and not data.get("source"):
         data["source"] = source
@@ -251,7 +259,14 @@ def aggregate_rows(
         key = tuple(str(row.get(k) or "unknown") for k in keys)
         bucket = buckets.setdefault(
             key,
-            {"trade_count": 0, "wins": 0, "gross_profit": 0.0, "gross_loss": 0.0, "total_pips": 0.0, "hold": 0.0},
+            {
+                "trade_count": 0,
+                "wins": 0,
+                "gross_profit": 0.0,
+                "gross_loss": 0.0,
+                "total_pips": 0.0,
+                "hold": 0.0,
+            },
         )
         trade_count = int(row.get("trade_count") or 0)
         bucket["trade_count"] += trade_count

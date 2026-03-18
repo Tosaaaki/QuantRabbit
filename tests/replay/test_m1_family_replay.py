@@ -34,18 +34,18 @@ def _write_ticks_jsonl(path: Path, ticks: list[rw.Tick]) -> None:
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def _write_trades_db(path: Path, rows: list[tuple[str, str | None, str | None, str | None]]) -> None:
+def _write_trades_db(
+    path: Path, rows: list[tuple[str, str | None, str | None, str | None]]
+) -> None:
     con = sqlite3.connect(path)
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE trades (
             strategy_tag TEXT,
             entry_time TEXT,
             open_time TEXT,
             close_time TEXT
         )
-        """
-    )
+        """)
     con.executemany(
         "INSERT INTO trades(strategy_tag, entry_time, open_time, close_time) VALUES (?, ?, ?, ?)",
         rows,
@@ -124,7 +124,9 @@ def test_replay_trend_breakout_limit_entry_hits_tp(tmp_path, monkeypatch) -> Non
     assert trade["reason"] == "tp"
 
 
-def test_replay_trend_breakout_reports_tag_filtered_diagnostics(tmp_path, monkeypatch) -> None:
+def test_replay_trend_breakout_reports_tag_filtered_diagnostics(
+    tmp_path, monkeypatch
+) -> None:
     ticks = _ticks_from_mids([157.000 + (idx * 0.001) for idx in range(24)])
     trades_db = tmp_path / "trades.db"
     _write_trades_db(trades_db, [])
@@ -158,7 +160,9 @@ def test_replay_trend_breakout_reports_tag_filtered_diagnostics(tmp_path, monkey
     assert result["summary"]["last_reject_sample"]["tag"] == "M1Scalper-buy-dip"
 
 
-def test_replay_exit_workers_groups_accepts_trend_breakout(tmp_path, monkeypatch) -> None:
+def test_replay_exit_workers_groups_accepts_trend_breakout(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("M1SCALP_EXIT_MAX_HOLD_SEC", "60")
 
     ticks = _ticks_from_mids([157.000] * 15)
@@ -194,7 +198,9 @@ def test_replay_exit_workers_groups_accepts_trend_breakout(tmp_path, monkeypatch
     assert payload["trades"][0]["reason"] == "time_stop"
 
 
-def test_replay_exit_workers_groups_summary_all_keeps_entry_replay_coverage(tmp_path, monkeypatch) -> None:
+def test_replay_exit_workers_groups_summary_all_keeps_entry_replay_coverage(
+    tmp_path, monkeypatch
+) -> None:
     ticks = _ticks_from_mids([157.000 + (idx * 0.001) for idx in range(24)])
     ticks_path = tmp_path / "USD_JPY_ticks_20260225.jsonl"
     _write_ticks_jsonl(ticks_path, ticks)

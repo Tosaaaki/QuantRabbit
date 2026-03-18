@@ -64,7 +64,9 @@ def test_range_fader_buy_supportive_context_extends_long_gate() -> None:
     assert signal["confidence"] == 51
 
 
-def test_range_fader_buy_supportive_context_without_cluster_falls_back_to_neutral() -> None:
+def test_range_fader_buy_supportive_context_without_cluster_falls_back_to_neutral() -> (
+    None
+):
     fac = {
         "close": 156.50,
         "ema20": 156.515,
@@ -131,7 +133,9 @@ def test_range_fader_blocks_shallow_neutral_fade_probe_in_range_regime() -> None
     assert signal is None
 
 
-def test_range_fader_buy_supportive_survives_shallow_probe_guard_in_range_regime() -> None:
+def test_range_fader_buy_supportive_survives_shallow_probe_guard_in_range_regime() -> (
+    None
+):
     signal = RangeFader.check(
         {
             "close": 156.50,

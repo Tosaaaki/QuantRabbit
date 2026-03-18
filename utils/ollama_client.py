@@ -72,7 +72,9 @@ def call_ollama_chat_json(
         payload["options"] = dict(base_payload["options"])
         payload["options"]["num_predict"] = max(64, int(num_predict))
         try:
-            resp = requests.post(url, json=payload, timeout=max(1.0, float(timeout_sec)))
+            resp = requests.post(
+                url, json=payload, timeout=max(1.0, float(timeout_sec))
+            )
             resp.raise_for_status()
             body = resp.json()
         except Exception:

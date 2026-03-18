@@ -27,7 +27,9 @@ def test_fetch_bytes_uses_browser_like_headers(monkeypatch) -> None:
         captured["timeout"] = str(timeout)
         return _Resp()
 
-    monkeypatch.setattr(macro_news_context_worker.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(
+        macro_news_context_worker.urllib.request, "urlopen", _fake_urlopen
+    )
 
     body = macro_news_context_worker._fetch_bytes(
         "https://www.federalreserve.gov/feeds/press_all.xml",
@@ -39,7 +41,10 @@ def test_fetch_bytes_uses_browser_like_headers(monkeypatch) -> None:
     assert captured["url"] == "https://www.federalreserve.gov/feeds/press_all.xml"
     assert "QuantRabbit" in captured["user_agent"]
     assert "application/rss+xml" in captured["accept"]
-    assert captured["referer"] == "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+    assert (
+        captured["referer"]
+        == "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+    )
 
 
 def test_build_report_reads_official_rss_and_scores_context(monkeypatch) -> None:

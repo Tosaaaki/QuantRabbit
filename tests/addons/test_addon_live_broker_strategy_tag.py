@@ -39,10 +39,14 @@ def test_send_falls_back_to_worker_id_strategy_tag(monkeypatch):
     monkeypatch.setattr(
         addon_live,
         "get_account_snapshot",
-        lambda: SimpleNamespace(nav=1_000_000.0, margin_available=800_000.0, margin_rate=0.04),
+        lambda: SimpleNamespace(
+            nav=1_000_000.0, margin_available=800_000.0, margin_rate=0.04
+        ),
     )
     monkeypatch.setattr(addon_live, "allowed_lot", lambda *args, **kwargs: 0.1)
-    monkeypatch.setattr(addon_live, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"]))
+    monkeypatch.setattr(
+        addon_live, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"])
+    )
 
     broker = addon_live.AddonLiveBroker(
         worker_id="session_open",
@@ -80,10 +84,14 @@ def test_send_preserves_entry_thesis_context_passthrough(monkeypatch):
     monkeypatch.setattr(
         addon_live,
         "get_account_snapshot",
-        lambda: SimpleNamespace(nav=1_000_000.0, margin_available=800_000.0, margin_rate=0.04),
+        lambda: SimpleNamespace(
+            nav=1_000_000.0, margin_available=800_000.0, margin_rate=0.04
+        ),
     )
     monkeypatch.setattr(addon_live, "allowed_lot", lambda *args, **kwargs: 0.1)
-    monkeypatch.setattr(addon_live, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"]))
+    monkeypatch.setattr(
+        addon_live, "clamp_sl_tp", lambda **kwargs: (kwargs["sl"], kwargs["tp"])
+    )
 
     broker = addon_live.AddonLiveBroker(
         worker_id="session_open_breakout",
@@ -98,8 +106,21 @@ def test_send_preserves_entry_thesis_context_passthrough(monkeypatch):
             "side": "buy",
             "type": "market",
             "technical_context_tfs": ["M1", "M5", "H1"],
-            "technical_context_fields": ["ma10", "ma20", "adx", "plus_di", "minus_di", "rsi"],
-            "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
+            "technical_context_fields": [
+                "ma10",
+                "ma20",
+                "adx",
+                "plus_di",
+                "minus_di",
+                "rsi",
+            ],
+            "technical_context_ticks": [
+                "latest_bid",
+                "latest_ask",
+                "latest_mid",
+                "spread_pips",
+                "tick_rate",
+            ],
             "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
         }
     )
@@ -123,4 +144,8 @@ def test_send_preserves_entry_thesis_context_passthrough(monkeypatch):
         "spread_pips",
         "tick_rate",
     ]
-    assert thesis.get("technical_context_candle_counts") == {"M1": 120, "M5": 90, "H1": 60}
+    assert thesis.get("technical_context_candle_counts") == {
+        "M1": 120,
+        "M5": 90,
+        "H1": 60,
+    }

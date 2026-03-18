@@ -48,4 +48,3 @@ def test_non_empty_strategy_hours_override_default(monkeypatch) -> None:
     )
     assert allowed is True
     assert reason == "no_state"
-

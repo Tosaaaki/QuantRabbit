@@ -10,6 +10,7 @@
 
 Exit順序: GRACE -> EVENT_BUDGET -> HAZARD(debounce) -> UPPER_BOUND
 """
+
 import argparse
 import json
 import math
@@ -22,8 +23,16 @@ import pandas as pd
 
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ticks", required=True, help="JSONL or CSV of ticks (timestamp,bid,ask[,spread])")
-    ap.add_argument("--entries", default=None, help="optional entries file (timestamp,direction,price)")
+    ap.add_argument(
+        "--ticks",
+        required=True,
+        help="JSONL or CSV of ticks (timestamp,bid,ask[,spread])",
+    )
+    ap.add_argument(
+        "--entries",
+        default=None,
+        help="optional entries file (timestamp,direction,price)",
+    )
     ap.add_argument("--symbol", default="USD_JPY")
     ap.add_argument("--pip-scale", type=float, default=100.0)
     ap.add_argument("--spread-col", default="spread")
@@ -34,7 +43,11 @@ def parse_args():
     ap.add_argument("--upper-bound-sec", type=float, default=4.2)
     ap.add_argument("--momentum-win-ms", type=int, default=400)
     ap.add_argument("--imbalance-win-ms", type=int, default=400)
-    ap.add_argument("--auto-entry", action="store_true", help="generate entries by micro momentum if --entries not given")
+    ap.add_argument(
+        "--auto-entry",
+        action="store_true",
+        help="generate entries by micro momentum if --entries not given",
+    )
     ap.add_argument("--out", required=True)
     return ap.parse_args()
 
@@ -129,7 +142,11 @@ def run_exit(
                 prev_mid = tix.iloc[row.name - 1]["mid"]
             mom = float((mid - prev_mid) * pip_scale)
             imb = math.copysign(min(1.0, abs(mom) / 0.2), mom) if mom else 0.0
-            health = 0.5 + 0.4 * math.tanh(mom / 0.3) - 0.3 * (spread / (0.0003 if pip_scale == 100000 else 0.03))
+            health = (
+                0.5
+                + 0.4 * math.tanh(mom / 0.3)
+                - 0.3 * (spread / (0.0003 if pip_scale == 100000 else 0.03))
+            )
 
             if elapsed_ms < grace_ms:
                 grace_used_ms = elapsed_ms

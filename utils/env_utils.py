@@ -46,7 +46,10 @@ def load_env_file_hot(path: str | Path | None = None) -> dict:
                 current_mtime = p.stat().st_mtime
             except OSError:
                 return _env_file_cache.get(key, {})
-            if current_mtime != _env_file_mtime.get(key, 0.0) or key not in _env_file_cache:
+            if (
+                current_mtime != _env_file_mtime.get(key, 0.0)
+                or key not in _env_file_cache
+            ):
                 data: dict = {}
                 try:
                     content = p.read_text(encoding="utf-8")
@@ -107,7 +110,9 @@ def env_bool(
     prefix: Optional[str] = None,
     allow_global_fallback: bool = True,
 ) -> bool:
-    raw = env_get(name, None, prefix=prefix, allow_global_fallback=allow_global_fallback)
+    raw = env_get(
+        name, None, prefix=prefix, allow_global_fallback=allow_global_fallback
+    )
     if raw is None:
         return bool(default)
     return str(raw).strip().lower() not in _FALSEY
@@ -120,7 +125,9 @@ def env_float(
     prefix: Optional[str] = None,
     allow_global_fallback: bool = True,
 ) -> float:
-    raw = env_get(name, None, prefix=prefix, allow_global_fallback=allow_global_fallback)
+    raw = env_get(
+        name, None, prefix=prefix, allow_global_fallback=allow_global_fallback
+    )
     if raw is None or str(raw).strip() == "":
         return float(default)
     try:
@@ -136,7 +143,9 @@ def env_int(
     prefix: Optional[str] = None,
     allow_global_fallback: bool = True,
 ) -> int:
-    raw = env_get(name, None, prefix=prefix, allow_global_fallback=allow_global_fallback)
+    raw = env_get(
+        name, None, prefix=prefix, allow_global_fallback=allow_global_fallback
+    )
     if raw is None or str(raw).strip() == "":
         return int(default)
     try:

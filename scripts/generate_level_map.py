@@ -103,9 +103,18 @@ def main() -> int:
     parser.add_argument("--dataset", type=str, default="quantrabbit")
     parser.add_argument("--table", type=str, default="candles_m1")
     parser.add_argument("--lookback-days", type=int, default=90)
-    parser.add_argument("--bucket-pips", type=float, default=5.0, help="バケット幅（pips単位, 1 pip=0.01)")
-    parser.add_argument("--retrace-pips", type=float, default=10.0, help="到達判定のしきい値（pips）")
-    parser.add_argument("--min-hits", type=int, default=30, help="この件数未満のバケットは除外")
+    parser.add_argument(
+        "--bucket-pips",
+        type=float,
+        default=5.0,
+        help="バケット幅（pips単位, 1 pip=0.01)",
+    )
+    parser.add_argument(
+        "--retrace-pips", type=float, default=10.0, help="到達判定のしきい値（pips）"
+    )
+    parser.add_argument(
+        "--min-hits", type=int, default=30, help="この件数未満のバケットは除外"
+    )
     parser.add_argument("--json-out", type=Path, default=Path("/tmp/level_map.json"))
     parser.add_argument("--gcs-bucket", type=str, default=None)
     parser.add_argument("--gcs-object", type=str, default="analytics/level_map.json")
@@ -146,7 +155,12 @@ def main() -> int:
 
     if args.gcs_bucket:
         try:
-            _write_gcs(args.gcs_bucket, args.gcs_object, args.json_out.read_text(), args.project)
+            _write_gcs(
+                args.gcs_bucket,
+                args.gcs_object,
+                args.json_out.read_text(),
+                args.project,
+            )
         except Exception as exc:  # noqa: BLE001
             logging.error("[GCS] upload failed: %s", exc)
             return 1

@@ -209,12 +209,20 @@ def compute_divergence(
     low_arr = low_arr[-n:]
     osc_arr = osc_arr[-n:]
 
-    pivot_window = DEFAULT_PIVOT_WINDOW if pivot_window is None else max(1, pivot_window)
+    pivot_window = (
+        DEFAULT_PIVOT_WINDOW if pivot_window is None else max(1, pivot_window)
+    )
     min_sep = DEFAULT_MIN_SEP if min_sep is None else max(1, min_sep)
-    lookback_bars = DEFAULT_LOOKBACK_BARS if lookback_bars is None else max(1, lookback_bars)
-    min_price_pips = DEFAULT_MIN_PRICE_PIPS if min_price_pips is None else max(0.0, min_price_pips)
+    lookback_bars = (
+        DEFAULT_LOOKBACK_BARS if lookback_bars is None else max(1, lookback_bars)
+    )
+    min_price_pips = (
+        DEFAULT_MIN_PRICE_PIPS if min_price_pips is None else max(0.0, min_price_pips)
+    )
     min_osc = DEFAULT_MIN_RSI if min_osc is None else max(0.0, min_osc)
-    max_age_bars = DEFAULT_MAX_AGE_BARS if max_age_bars is None else max(0, max_age_bars)
+    max_age_bars = (
+        DEFAULT_MAX_AGE_BARS if max_age_bars is None else max(0, max_age_bars)
+    )
     pip_value = PIP_DEFAULT if pip_value is None else max(pip_value, 1e-9)
 
     if n < pivot_window * 2 + 3:
@@ -252,4 +260,3 @@ def compute_divergence(
     if max_age_bars >= 0 and best.age_bars > max_age_bars:
         return DivergenceResult()
     return best
-

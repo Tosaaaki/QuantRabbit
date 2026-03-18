@@ -5,6 +5,7 @@ import sys
 
 import yaml
 
+
 def deep_update(base, over):
     for k, v in over.items():
         if isinstance(v, dict):
@@ -13,11 +14,12 @@ def deep_update(base, over):
             base[k] = v
     return base
 
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--base', required=True)
-    ap.add_argument('--over', required=True)
-    ap.add_argument('--out', required=True)
+    ap.add_argument("--base", required=True)
+    ap.add_argument("--over", required=True)
+    ap.add_argument("--out", required=True)
     args = ap.parse_args()
     with open(args.base, "r", encoding="utf-8") as f:
         base = yaml.safe_load(f) or {}
@@ -29,5 +31,6 @@ def main():
         yaml.safe_dump(merged, f, sort_keys=False)
     print(f"[yaml_merge] wrote {args.out}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

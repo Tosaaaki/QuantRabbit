@@ -42,4 +42,3 @@ def test_safe_json_preserves_finite_floats() -> None:
     out = _safe_json(payload)
     obj = _strict_loads(out)
     assert obj == payload
-

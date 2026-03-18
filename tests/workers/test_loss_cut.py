@@ -9,10 +9,15 @@ import pytest
 def test_resolve_loss_cut_disabled() -> None:
     from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
 
-    params = resolve_loss_cut({"loss_cut_enabled": False, "loss_cut_hard_pips": 5.0}, sl_pips=5.0)
+    params = resolve_loss_cut(
+        {"loss_cut_enabled": False, "loss_cut_hard_pips": 5.0}, sl_pips=5.0
+    )
     assert params.enabled is False
     assert (
-        pick_loss_cut_reason(pnl_pips=-10.0, hold_sec=999.0, params=params, has_stop_loss=False) is None
+        pick_loss_cut_reason(
+            pnl_pips=-10.0, hold_sec=999.0, params=params, has_stop_loss=False
+        )
+        is None
     )
 
 
@@ -29,10 +34,15 @@ def test_resolve_loss_cut_requires_sl() -> None:
     )
     assert params.enabled is True
     assert (
-        pick_loss_cut_reason(pnl_pips=-3.1, hold_sec=10.0, params=params, has_stop_loss=False) is None
+        pick_loss_cut_reason(
+            pnl_pips=-3.1, hold_sec=10.0, params=params, has_stop_loss=False
+        )
+        is None
     )
     assert (
-        pick_loss_cut_reason(pnl_pips=-3.1, hold_sec=10.0, params=params, has_stop_loss=True)
+        pick_loss_cut_reason(
+            pnl_pips=-3.1, hold_sec=10.0, params=params, has_stop_loss=True
+        )
         == "max_adverse"
     )
 
@@ -54,15 +64,22 @@ def test_resolve_loss_cut_derived_from_sl_mult() -> None:
     assert params.hard_pips == pytest.approx(6.0)
     assert params.cooldown_sec == pytest.approx(6.0)
     assert (
-        pick_loss_cut_reason(pnl_pips=-5.9, hold_sec=10.0, params=params, has_stop_loss=False) is None
+        pick_loss_cut_reason(
+            pnl_pips=-5.9, hold_sec=10.0, params=params, has_stop_loss=False
+        )
+        is None
     )
     assert (
-        pick_loss_cut_reason(pnl_pips=-6.0, hold_sec=10.0, params=params, has_stop_loss=False)
+        pick_loss_cut_reason(
+            pnl_pips=-6.0, hold_sec=10.0, params=params, has_stop_loss=False
+        )
         == "max_adverse"
     )
 
 
-def test_strategy_exit_profile_merge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_strategy_exit_profile_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = tmp_path / "strategy_exit_protections.yaml"
     cfg.write_text(
         "\n".join(
@@ -93,4 +110,3 @@ def test_strategy_exit_profile_merge(tmp_path: Path, monkeypatch: pytest.MonkeyP
     prof = sp.exit_profile_for_tag("Foo-bar")
     assert prof.get("loss_cut_enabled") is True
     assert float(prof.get("loss_cut_hard_pips") or 0) == 5.0
-

@@ -4,7 +4,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install_local_v2_launchd.sh"
 STATUS_SCRIPT = REPO_ROOT / "scripts" / "status_local_v2_launchd.sh"
@@ -57,7 +56,12 @@ def test_install_local_v2_launchd_defaults_to_trade_min(tmp_path: Path) -> None:
         text=True,
     )
 
-    plist_path = Path(env["HOME"]) / "Library" / "LaunchAgents" / "com.quantrabbit.local-v2-autorecover.plist"
+    plist_path = (
+        Path(env["HOME"])
+        / "Library"
+        / "LaunchAgents"
+        / "com.quantrabbit.local-v2-autorecover.plist"
+    )
     plist = plist_path.read_text(encoding="utf-8")
 
     assert "[ok] installed launchd agent" in completed.stdout
@@ -68,7 +72,12 @@ def test_install_local_v2_launchd_defaults_to_trade_min(tmp_path: Path) -> None:
 def test_status_local_v2_launchd_warns_on_profile_drift(tmp_path: Path) -> None:
     bin_dir = _write_launchctl_stub(tmp_path)
     env = _env(tmp_path, bin_dir)
-    plist_path = Path(env["HOME"]) / "Library" / "LaunchAgents" / "com.quantrabbit.local-v2-autorecover.plist"
+    plist_path = (
+        Path(env["HOME"])
+        / "Library"
+        / "LaunchAgents"
+        / "com.quantrabbit.local-v2-autorecover.plist"
+    )
     plist_path.write_text(
         """<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">

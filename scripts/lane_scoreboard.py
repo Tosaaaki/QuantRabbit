@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build lane-level winner/loser gates from recent entry-path and trade outcomes."""
+
 # ruff: noqa: E402
 
 from __future__ import annotations

@@ -48,14 +48,15 @@ from strategies.breakout.donchian55 import Donchian55
 
 from utils.pips import CostBreakdown, apply_costs, from_pips, to_pips
 
-
 INSTRUMENT = "USD_JPY"
 PIP_VALUE = from_pips(INSTRUMENT, 1.0)
 DEFAULT_TIMEOUT_SEC = 30 * 60  # 30 minutes
 _SCALP_PARAMS_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
 _RUNTIME_PARAM_FILE = REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json"
 _LEGACY_PARAM_FILE = REPO_ROOT / "configs" / "scalp_active_params.json"
-DEFAULT_PARAM_FILE = Path(_SCALP_PARAMS_OVERRIDE) if _SCALP_PARAMS_OVERRIDE else _RUNTIME_PARAM_FILE
+DEFAULT_PARAM_FILE = (
+    Path(_SCALP_PARAMS_OVERRIDE) if _SCALP_PARAMS_OVERRIDE else _RUNTIME_PARAM_FILE
+)
 
 TIMEFRAME_RULES = {
     "M1": None,
@@ -140,8 +141,10 @@ def compute_indicators(df: pd.DataFrame, *, timeframe: str = "M1") -> pd.DataFra
     std20 = prices.rolling(window=20, min_periods=20).std()
     # Bollinger band width relative to moving average
     df["bbw"] = (
-        (std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan))
-    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        ((std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan)))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
 
     delta = prices.diff()
     gain = delta.clip(lower=0.0)
@@ -172,7 +175,9 @@ def compute_indicators(df: pd.DataFrame, *, timeframe: str = "M1") -> pd.DataFra
     return df
 
 
-def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+def _compute_adx(
+    high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14
+) -> pd.Series:
     up_move = high.diff()
     down_move = low.shift(1) - low
 
@@ -278,9 +283,17 @@ def should_skip_by_params(
     if "vol_5m_min" in params and vol is not None and vol < float(params["vol_5m_min"]):
         return True
     atr_pips = fac.get("atr_pips")
-    if "atr_pips_max" in params and atr_pips is not None and atr_pips > float(params["atr_pips_max"]):
+    if (
+        "atr_pips_max" in params
+        and atr_pips is not None
+        and atr_pips > float(params["atr_pips_max"])
+    ):
         return True
-    if "atr_pips_min" in params and atr_pips is not None and atr_pips < float(params["atr_pips_min"]):
+    if (
+        "atr_pips_min" in params
+        and atr_pips is not None
+        and atr_pips < float(params["atr_pips_min"])
+    ):
         return True
 
     # trend_ema parameter (mainly for PulseBreak)
@@ -334,7 +347,9 @@ def should_skip_by_params(
 
     projected_cross = fac.get("projected_cross_minutes")
     if "projected_cross_minutes_max" in params and projected_cross is not None:
-        if projected_cross <= 0 or projected_cross < float(params["projected_cross_minutes_max"]):
+        if projected_cross <= 0 or projected_cross < float(
+            params["projected_cross_minutes_max"]
+        ):
             return True
 
     gap_slope = fac.get("gap_slope_pips")
@@ -393,9 +408,17 @@ def apply_signal_overrides(
             high_val = fac.get("donchian_high")
             low_val = fac.get("donchian_low")
             buffer_px = float(buffer) * PIP_VALUE
-            if action == "OPEN_LONG" and high_val is not None and price < high_val + buffer_px:
+            if (
+                action == "OPEN_LONG"
+                and high_val is not None
+                and price < high_val + buffer_px
+            ):
                 return None
-            if action == "OPEN_SHORT" and low_val is not None and price > low_val - buffer_px:
+            if (
+                action == "OPEN_SHORT"
+                and low_val is not None
+                and price > low_val - buffer_px
+            ):
                 return None
         tp_factor = params.get("tp_factor")
         if tp_factor is not None and sl > 0:
@@ -470,7 +493,9 @@ def simulate(
                         exit_reason = "SL"
 
                 if exit_price is None and trd.timeout_sec > 0:
-                    if (row["time"] - trd.entry_time) >= timedelta(seconds=trd.timeout_sec):
+                    if (row["time"] - trd.entry_time) >= timedelta(
+                        seconds=trd.timeout_sec
+                    ):
                         exit_price = float(row["close"])
                         exit_reason = "TIME"
 
@@ -523,7 +548,9 @@ def simulate(
             fac["donchian_low"] = None
 
         # Projections: MA/MACD + RSI/BBW/ADX/ATR/Donchian
-        proj_ma = compute_ma_projection({"candles": fac["candles"]}, timeframe_minutes=1.0)
+        proj_ma = compute_ma_projection(
+            {"candles": fac["candles"]}, timeframe_minutes=1.0
+        )
         if proj_ma:
             fac["ma_gap_pips"] = proj_ma.gap_pips
             fac["gap_slope_pips"] = proj_ma.gap_slope_pips
@@ -617,7 +644,9 @@ def simulate(
             direction = 1 if trd.side == "LONG" else -1
             raw_delta = (final_close - trd.entry_price) * direction
             gross_pips = to_pips(INSTRUMENT, raw_delta)
-            net_pips, cost_pips = apply_costs(INSTRUMENT, gross_pips, costs=cost_profile)
+            net_pips, cost_pips = apply_costs(
+                INSTRUMENT, gross_pips, costs=cost_profile
+            )
             trd.gross_pips = gross_pips
             trd.cost_pips = cost_pips
             trd.pnl_pips = net_pips
@@ -657,6 +686,7 @@ def summarise_trades(trades: Dict[str, List[Trade]]) -> Dict[str, Any]:
     gross_pnl = [tr.gross_pips for tr in all_trades]
     cost_pnl = [tr.cost_pips for tr in all_trades]
     pf = calc_profit_factor(pnl)
+
     def _pf_value(pf_val: float) -> float:
         if pf_val == float("inf") or math.isinf(pf_val):
             return float("inf")
@@ -685,11 +715,11 @@ def summarise_trades(trades: Dict[str, List[Trade]]) -> Dict[str, Any]:
             "cost_pips": round(sum(strat_cost), 2),
             "profit_pips": round(sum(strat_pnl), 2),
             "trades": len(items),
-            "win_rate": round(
-                sum(1 for p in strat_pnl if p > 0) / len(strat_pnl), 4
-            )
-            if strat_pnl
-            else 0.0,
+            "win_rate": (
+                round(sum(1 for p in strat_pnl if p > 0) / len(strat_pnl), 4)
+                if strat_pnl
+                else 0.0
+            ),
             "profit_factor": _pf_value(pf_strat) if strat_pnl else 0.0,
             "max_dd_pips": calc_max_drawdown(items),
         }
@@ -756,16 +786,24 @@ def run_backtest(
         "timeframe": timeframe,
         "summary": metrics["summary"],
         "by_strategy": metrics["by_strategy"],
-        "params_used": {k: merged_params.get(k, {}) for k in metrics["by_strategy"].keys()},
+        "params_used": {
+            k: merged_params.get(k, {}) for k in metrics["by_strategy"].keys()
+        },
         "trades": trades_to_dict(trades),
     }
     return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Replay scalp strategies on candle data.")
-    parser.add_argument("--candles", required=True, help="logs/candles_M1_YYYYMMDD.json")
-    parser.add_argument("--params-json", default="", help="Parameter override JSON file")
+    parser = argparse.ArgumentParser(
+        description="Replay scalp strategies on candle data."
+    )
+    parser.add_argument(
+        "--candles", required=True, help="logs/candles_M1_YYYYMMDD.json"
+    )
+    parser.add_argument(
+        "--params-json", default="", help="Parameter override JSON file"
+    )
     parser.add_argument(
         "--strategies",
         default="",
@@ -799,7 +837,9 @@ def main() -> None:
     args = parser.parse_args()
 
     overrides = load_params(Path(args.params_json)) if args.params_json else {}
-    strat_list = [s for s in args.strategies.split(",") if s] if args.strategies else None
+    strat_list = (
+        [s for s in args.strategies.split(",") if s] if args.strategies else None
+    )
     cost_profile = CostBreakdown(
         entry_spread_pips=args.cost_entry_spread,
         exit_spread_pips=args.cost_exit_spread,

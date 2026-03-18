@@ -15,7 +15,9 @@ _DB_PATH = Path("logs/metrics.db")
 _LOCK = threading.Lock()
 _DB_BUSY_TIMEOUT_MS = max(500, int(os.getenv("METRICS_DB_BUSY_TIMEOUT_MS", "5000")))
 _DB_WRITE_RETRIES = max(1, int(os.getenv("METRICS_DB_WRITE_RETRIES", "6")))
-_DB_RETRY_BASE_SLEEP_SEC = max(0.0, float(os.getenv("METRICS_DB_RETRY_BASE_SLEEP_SEC", "0.08")))
+_DB_RETRY_BASE_SLEEP_SEC = max(
+    0.0, float(os.getenv("METRICS_DB_RETRY_BASE_SLEEP_SEC", "0.08"))
+)
 _DB_RETRY_MAX_SLEEP_SEC = max(
     _DB_RETRY_BASE_SLEEP_SEC,
     float(os.getenv("METRICS_DB_RETRY_MAX_SLEEP_SEC", "0.60")),
@@ -44,7 +46,9 @@ _AGG_VLONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_VLONG_PREFIXES",
     "fast_scalp_skip",
 )
-_AGG_VLONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_VLONG_WINDOW_SEC", "300.0")))
+_AGG_VLONG_WINDOW_SEC = max(
+    1.0, float(os.getenv("METRICS_AGG_VLONG_WINDOW_SEC", "300.0"))
+)
 _AGG_LONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_LONG_PREFIXES",
     "",
@@ -75,16 +79,14 @@ _LAST_SAMPLE_TS: dict[str, float] = {}
 
 
 def _ensure_schema(con: sqlite3.Connection) -> None:
-    con.execute(
-        """
+    con.execute("""
         CREATE TABLE IF NOT EXISTS metrics (
             ts TEXT NOT NULL,
             metric TEXT NOT NULL,
             value REAL NOT NULL,
             tags TEXT
         )
-        """
-    )
+        """)
 
 
 def _sanitize_tag_value(value: object) -> object:
@@ -127,7 +129,9 @@ def _write_payload(payload: dict[str, object], metric: str) -> bool:
     for attempt in range(1, _DB_WRITE_RETRIES + 1):
         con: sqlite3.Connection | None = None
         try:
-            con = sqlite3.connect(str(_DB_PATH), timeout=max(1.0, _DB_BUSY_TIMEOUT_MS / 1000.0))
+            con = sqlite3.connect(
+                str(_DB_PATH), timeout=max(1.0, _DB_BUSY_TIMEOUT_MS / 1000.0)
+            )
             con.execute(f"PRAGMA busy_timeout={_DB_BUSY_TIMEOUT_MS};")
             if not _SCHEMA_READY:
                 _ensure_schema(con)
@@ -188,7 +192,9 @@ def log_metric(
         with _LOCK:
             bucket = _AGG_BUCKETS.get(key)
             if bucket is None:
-                bucket = _AggBucket(tags=norm_tags, window_sec=_resolve_agg_window(metric))
+                bucket = _AggBucket(
+                    tags=norm_tags, window_sec=_resolve_agg_window(metric)
+                )
                 _AGG_BUCKETS[key] = bucket
             val = float(value)
             bucket.count += 1

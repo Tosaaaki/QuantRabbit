@@ -100,7 +100,7 @@ def _parse_horizon_spec(horizon: str) -> dict[str, Any] | None:
 
 
 def _horizon_sort_key(horizon: str) -> tuple[int, int, str]:
-    h = (str(horizon or "").strip().lower())
+    h = str(horizon or "").strip().lower()
     m = re.fullmatch(r"^(\d+)\s*([mhdw])$", h)
     if not m:
         return (999, 0, h)
@@ -163,7 +163,12 @@ def _format_line(horizon: str, row: dict[str, Any]) -> str:
     step = int(row.get("step_bars") or 0)
     ts = row.get("feature_ts") or "-"
     status = str(row.get("status") or ("ready" if row.get("forecast_ready") else ""))
-    ready = bool(row.get("forecast_ready", row.get("p_up") is not None and row.get("status") != "insufficient_history"))
+    ready = bool(
+        row.get(
+            "forecast_ready",
+            row.get("p_up") is not None and row.get("status") != "insufficient_history",
+        )
+    )
     note = ""
     if not ready:
         reason = str(row.get("reason") or "")
@@ -345,16 +350,22 @@ def _build_technical_fallback_row(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Show latest forecast snapshot from forecast_gate")
+    parser = argparse.ArgumentParser(
+        description="Show latest forecast snapshot from forecast_gate"
+    )
     parser.add_argument(
         "--env-file",
         default=str(_repo_root() / "ops" / "env" / "quant-v2-runtime.env"),
         help="path to runtime env file",
     )
     parser.add_argument(
-        "--json", action="store_true", help="output raw forecast rows as JSON instead of text"
+        "--json",
+        action="store_true",
+        help="output raw forecast rows as JSON instead of text",
     )
-    parser.add_argument("--horizon", action="append", help="horizon to show (default: all)")
+    parser.add_argument(
+        "--horizon", action="append", help="horizon to show (default: all)"
+    )
     return parser.parse_args()
 
 
@@ -382,10 +393,15 @@ def main() -> int:
     selected: list[tuple[str, dict[str, Any]]] = []
 
     if isinstance(preds, dict):
-        for horizon, row in sorted(preds.items(), key=lambda item: _horizon_sort_key(item[0])):
+        for horizon, row in sorted(
+            preds.items(), key=lambda item: _horizon_sort_key(item[0])
+        ):
             if not isinstance(row, dict):
                 continue
-            if horizon_filter_set and str(horizon).strip().lower() not in horizon_filter_set:
+            if (
+                horizon_filter_set
+                and str(horizon).strip().lower() not in horizon_filter_set
+            ):
                 continue
             selected.append((str(horizon).strip().lower(), dict(row)))
     elif not horizon_filter:
@@ -409,7 +425,9 @@ def main() -> int:
             fallback.setdefault("reason", "not_generated")
             fallback["horizon"] = str(horizon)
             selected_map[str(horizon)] = fallback
-        selected = sorted(selected_map.items(), key=lambda item: _horizon_sort_key(item[0]))
+        selected = sorted(
+            selected_map.items(), key=lambda item: _horizon_sort_key(item[0])
+        )
 
     if not selected:
         print("NO_MATCHING_HORIZONS")
@@ -420,7 +438,9 @@ def main() -> int:
         return 0
 
     print("USD/JPY forecast snapshot")
-    print("source: forecast_gate | as_of: {}".format(selected[0][1].get("as_of") or "-"))
+    print(
+        "source: forecast_gate | as_of: {}".format(selected[0][1].get("as_of") or "-")
+    )
     print("")
     for horizon, row in selected:
         print(_format_line(horizon, row))

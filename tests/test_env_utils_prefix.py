@@ -14,8 +14,18 @@ def test_env_get_uses_prefixed_keys_first(monkeypatch) -> None:
 def test_env_get_strict_prefix_does_not_fallback_to_global(monkeypatch) -> None:
     monkeypatch.setenv("PERF_GUARD_MODE", "warn")
 
-    assert env_get("PERF_GUARD_MODE", "block", prefix="TRENDMA", allow_global_fallback=False) == "block"
-    assert env_get("PERF_GUARD_MODE", "block", prefix="TRENDMA", allow_global_fallback=True) == "warn"
+    assert (
+        env_get(
+            "PERF_GUARD_MODE", "block", prefix="TRENDMA", allow_global_fallback=False
+        )
+        == "block"
+    )
+    assert (
+        env_get(
+            "PERF_GUARD_MODE", "block", prefix="TRENDMA", allow_global_fallback=True
+        )
+        == "warn"
+    )
 
 
 def test_env_typed_helpers_respect_strict_prefix_mode(monkeypatch) -> None:
@@ -23,6 +33,24 @@ def test_env_typed_helpers_respect_strict_prefix_mode(monkeypatch) -> None:
     monkeypatch.setenv("DYN_SIZE_BASE_RISK_PCT", "0.05")
     monkeypatch.setenv("PERF_GUARD_MIN_TRADES", "77")
 
-    assert env_bool("PERF_GUARD_ENABLED", True, prefix="M1SCALP", allow_global_fallback=False) is True
-    assert env_float("DYN_SIZE_BASE_RISK_PCT", 0.01, prefix="M1SCALP", allow_global_fallback=False) == 0.01
-    assert env_int("PERF_GUARD_MIN_TRADES", 12, prefix="M1SCALP", allow_global_fallback=False) == 12
+    assert (
+        env_bool(
+            "PERF_GUARD_ENABLED", True, prefix="M1SCALP", allow_global_fallback=False
+        )
+        is True
+    )
+    assert (
+        env_float(
+            "DYN_SIZE_BASE_RISK_PCT",
+            0.01,
+            prefix="M1SCALP",
+            allow_global_fallback=False,
+        )
+        == 0.01
+    )
+    assert (
+        env_int(
+            "PERF_GUARD_MIN_TRADES", 12, prefix="M1SCALP", allow_global_fallback=False
+        )
+        == 12
+    )

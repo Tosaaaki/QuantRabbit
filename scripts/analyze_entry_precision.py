@@ -11,7 +11,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
-
 PIP = 0.01  # USD/JPY
 
 
@@ -112,8 +111,12 @@ def _chunked(items: list[str], size: int) -> Iterable[list[str]]:
         yield items[i : i + size]
 
 
-def _load_events(con: sqlite3.Connection, client_ids: list[str]) -> dict[str, dict[str, list[dt.datetime]]]:
-    out: dict[str, dict[str, list[dt.datetime]]] = defaultdict(lambda: defaultdict(list))
+def _load_events(
+    con: sqlite3.Connection, client_ids: list[str]
+) -> dict[str, dict[str, list[dt.datetime]]]:
+    out: dict[str, dict[str, list[dt.datetime]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     if not client_ids:
         return out
     # SQLite default max variables is typically 999; stay below.
@@ -159,7 +162,15 @@ def _pips_diff(price_a: float, price_b: float) -> float:
 
 def _summarize(values: list[float]) -> dict[str, Optional[float]]:
     if not values:
-        return {"n": 0, "mean": None, "p50": None, "p90": None, "p95": None, "max": None, "min": None}
+        return {
+            "n": 0,
+            "mean": None,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "max": None,
+            "min": None,
+        }
     values_sorted = sorted(values)
     return {
         "n": float(len(values_sorted)),
@@ -172,7 +183,9 @@ def _summarize(values: list[float]) -> dict[str, Optional[float]]:
     }
 
 
-def _print_summary(name: str, values: list[float], *, digits: int = 3, unit: str = "") -> None:
+def _print_summary(
+    name: str, values: list[float], *, digits: int = 3, unit: str = ""
+) -> None:
     s = _summarize(values)
     n = int(s["n"] or 0)
     if n <= 0:
@@ -186,12 +199,23 @@ def _print_summary(name: str, values: list[float], *, digits: int = 3, unit: str
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Analyze entry execution precision from logs/orders.db")
+    ap = argparse.ArgumentParser(
+        description="Analyze entry execution precision from logs/orders.db"
+    )
     ap.add_argument("--db", default="logs/orders.db", help="Path to orders.db")
-    ap.add_argument("--limit", type=int, default=300, help="Number of latest filled entry orders to analyze")
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=300,
+        help="Number of latest filled entry orders to analyze",
+    )
     ap.add_argument("--pocket", default=None, help="Filter pocket (e.g., scalp)")
-    ap.add_argument("--strategy", default=None, help="Filter strategy_tag (e.g., TickImbalance)")
-    ap.add_argument("--show-worst", type=int, default=12, help="Show worst slippage samples")
+    ap.add_argument(
+        "--strategy", default=None, help="Filter strategy_tag (e.g., TickImbalance)"
+    )
+    ap.add_argument(
+        "--show-worst", type=int, default=12, help="Show worst slippage samples"
+    )
     args = ap.parse_args()
 
     con = sqlite3.connect(args.db)
@@ -264,8 +288,12 @@ def main() -> int:
         thesis_sl_pips = None
         entry_thesis = payload.get("entry_thesis")
         if isinstance(entry_thesis, dict):
-            thesis_tp_pips = _as_float(entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips"))
-            thesis_sl_pips = _as_float(entry_thesis.get("sl_pips") or entry_thesis.get("loss_guard_pips"))
+            thesis_tp_pips = _as_float(
+                entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips")
+            )
+            thesis_sl_pips = _as_float(
+                entry_thesis.get("sl_pips") or entry_thesis.get("loss_guard_pips")
+            )
 
         preflight_ts = None
         submit_ts = None
@@ -274,7 +302,9 @@ def main() -> int:
         if ev.get("preflight_start"):
             preflight_ts = min(ev["preflight_start"])
         if ev.get("submit_attempt"):
-            submit_ts = max([t for t in ev["submit_attempt"] if t <= ts] or ev["submit_attempt"])
+            submit_ts = max(
+                [t for t in ev["submit_attempt"] if t <= ts] or ev["submit_attempt"]
+            )
 
         latency_preflight_ms = None
         latency_submit_ms = None
@@ -342,18 +372,26 @@ def main() -> int:
         return 2
 
     rows_sorted = sorted(rows, key=lambda x: x.ts)
-    print(f"db={args.db} sample={len(rows)} range={rows_sorted[0].ts.isoformat()}..{rows_sorted[-1].ts.isoformat()}")
+    print(
+        f"db={args.db} sample={len(rows)} range={rows_sorted[0].ts.isoformat()}..{rows_sorted[-1].ts.isoformat()}"
+    )
     if args.pocket:
         print(f"filter pocket={args.pocket}")
     if args.strategy:
         print(f"filter strategy={args.strategy}")
-    print(f"missing quote={missing_quote}/{len(rows)} missing executed_price={missing_executed}/{len(rows)}")
+    print(
+        f"missing quote={missing_quote}/{len(rows)} missing executed_price={missing_executed}/{len(rows)}"
+    )
 
     slip_vals = [r.slip_vs_side_pips for r in rows if r.slip_vs_side_pips is not None]
     cost_vals = [r.cost_vs_mid_pips for r in rows if r.cost_vs_mid_pips is not None]
     spread_vals = [r.quote_spread_pips for r in rows if r.quote_spread_pips is not None]
-    lat_submit_vals = [r.latency_submit_ms for r in rows if r.latency_submit_ms is not None]
-    lat_pre_vals = [r.latency_preflight_ms for r in rows if r.latency_preflight_ms is not None]
+    lat_submit_vals = [
+        r.latency_submit_ms for r in rows if r.latency_submit_ms is not None
+    ]
+    lat_pre_vals = [
+        r.latency_preflight_ms for r in rows if r.latency_preflight_ms is not None
+    ]
     tp_vals = [r.eff_tp_pips for r in rows if r.eff_tp_pips is not None]
     sl_vals = [r.eff_sl_pips for r in rows if r.eff_sl_pips is not None]
 
@@ -372,10 +410,14 @@ def main() -> int:
         by_strategy[r.strategy_tag].append(r)
     print("")
     print("by_strategy (count desc):")
-    for tag, group in sorted(by_strategy.items(), key=lambda kv: len(kv[1]), reverse=True)[:12]:
+    for tag, group in sorted(
+        by_strategy.items(), key=lambda kv: len(kv[1]), reverse=True
+    )[:12]:
         s_slip = [x.slip_vs_side_pips for x in group if x.slip_vs_side_pips is not None]
         s_lat = [x.latency_submit_ms for x in group if x.latency_submit_ms is not None]
-        s_spread = [x.quote_spread_pips for x in group if x.quote_spread_pips is not None]
+        s_spread = [
+            x.quote_spread_pips for x in group if x.quote_spread_pips is not None
+        ]
         s_tp = [x.eff_tp_pips for x in group if x.eff_tp_pips is not None]
         s_sl = [x.eff_sl_pips for x in group if x.eff_sl_pips is not None]
         p95 = None
@@ -413,4 +455,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -47,7 +47,9 @@ def test_apply_precision_mode_env_projects_prefixed_values(monkeypatch) -> None:
 def test_apply_precision_exit_env_projects_prefixed_values(monkeypatch) -> None:
     _clear_precision_env(monkeypatch)
     monkeypatch.setenv("SCALP_PRECISION_VWAP_REVERT_EXIT_TAGS", "VwapRevertS")
-    monkeypatch.setenv("SCALP_PRECISION_VWAP_REVERT_EXIT_LOG_PREFIX", "[ScalpExit:VWAP]")
+    monkeypatch.setenv(
+        "SCALP_PRECISION_VWAP_REVERT_EXIT_LOG_PREFIX", "[ScalpExit:VWAP]"
+    )
     monkeypatch.setenv("SCALP_PRECISION_VWAP_REVERT_EXIT_PROFILE_ENABLED", "0")
     monkeypatch.setenv("SCALP_PRECISION_VWAP_REVERT_EXIT_POCKET", "scalp_fast")
 

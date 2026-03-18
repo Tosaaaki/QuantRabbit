@@ -58,7 +58,9 @@ class PolicyLedger:
         firestore_collection: str = "policy_diffs",
         firestore_document: str = "latest",
     ) -> None:
-        self.project_id = project_id or os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        self.project_id = (
+            project_id or os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        )
         self.dataset_id = dataset_id
         self.table_id = table_id
         self.gcs_prefix = gcs_prefix.rstrip("/")
@@ -93,7 +95,11 @@ class PolicyLedger:
             try:
                 if storage is None:
                     raise RuntimeError("google-cloud-storage not available")
-                self._gcs_client = storage.Client(project=self.project_id) if self.project_id else storage.Client()
+                self._gcs_client = (
+                    storage.Client(project=self.project_id)
+                    if self.project_id
+                    else storage.Client()
+                )
                 self._gcs_bucket_obj = self._gcs_client.bucket(self._gcs_bucket)
             except Exception as exc:
                 logging.warning("[POLICY_LEDGER] GCS client init failed: %s", exc)
@@ -118,7 +124,9 @@ class PolicyLedger:
     def _ensure_bq_table(self) -> None:
         if not self._bq_client:
             return
-        dataset_ref = bigquery.DatasetReference(self._bq_client.project, self.dataset_id)
+        dataset_ref = bigquery.DatasetReference(
+            self._bq_client.project, self.dataset_id
+        )
         try:
             self._bq_client.get_dataset(dataset_ref)
         except gexc.NotFound:
@@ -148,12 +156,16 @@ class PolicyLedger:
         status: str = "generated",
         summary: Optional[Dict[str, Any]] = None,
     ) -> None:
-        policy_id = str(payload.get("policy_id") or f"policy-{int(datetime.now().timestamp())}")
+        policy_id = str(
+            payload.get("policy_id") or f"policy-{int(datetime.now().timestamp())}"
+        )
         generated_at = payload.get("generated_at") or _utc_now_iso()
         source = payload.get("source") or "unknown"
         payload_text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         summary_text = (
-            json.dumps(summary, ensure_ascii=True, separators=(",", ":")) if summary else None
+            json.dumps(summary, ensure_ascii=True, separators=(",", ":"))
+            if summary
+            else None
         )
         phash = policy_hash(payload)
 
@@ -180,7 +192,9 @@ class PolicyLedger:
 
         if self.enable_firestore and self._fs_client:
             try:
-                doc_ref = self._fs_client.collection(self.firestore_collection).document(self.firestore_document)
+                doc_ref = self._fs_client.collection(
+                    self.firestore_collection
+                ).document(self.firestore_document)
                 doc_ref.set(payload)
             except Exception as exc:
                 logging.warning("[POLICY_LEDGER] Firestore write failed: %s", exc)
@@ -195,14 +209,19 @@ class PolicyLedger:
                 for obj in (object_latest, object_history):
                     blob = self._gcs_bucket_obj.blob(obj)
                     blob.cache_control = "no-cache"
-                    blob.upload_from_string(payload_text, content_type="application/json")
+                    blob.upload_from_string(
+                        payload_text, content_type="application/json"
+                    )
                 return
             except Exception as exc:
                 logging.warning("[POLICY_LEDGER] GCS upload failed: %s", exc)
         if self._gcs_use_cli:
             for obj in (object_latest, object_history):
                 target = f"gs://{self._gcs_bucket}/{obj}"
-                for cmd in (["gcloud", "storage", "cp", "-", target], ["gsutil", "cp", "-", target]):
+                for cmd in (
+                    ["gcloud", "storage", "cp", "-", target],
+                    ["gsutil", "cp", "-", target],
+                ):
                     if not shutil.which(cmd[0]):
                         continue
                     try:
@@ -219,6 +238,9 @@ class PolicyLedger:
                     if proc.returncode == 0:
                         break
         if self._gcs_use_metadata:
-            upload_json_via_metadata(self._gcs_bucket, object_latest, payload_text, cache_control="no-cache")
-            upload_json_via_metadata(self._gcs_bucket, object_history, payload_text, cache_control="no-cache")
-
+            upload_json_via_metadata(
+                self._gcs_bucket, object_latest, payload_text, cache_control="no-cache"
+            )
+            upload_json_via_metadata(
+                self._gcs_bucket, object_history, payload_text, cache_control="no-cache"
+            )

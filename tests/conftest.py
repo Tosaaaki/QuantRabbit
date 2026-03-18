@@ -17,4 +17,6 @@ if str(ROOT) not in sys.path:
 # current tuning overlays (which are frequently updated for live trading).
 # Keep presets enabled (baseline), but disable overlay/overrides in tests.
 os.environ["TUNING_OVERLAY_PATH"] = str(ROOT / "config" / "__disabled_for_tests__.yaml")
-os.environ["TUNING_OVERRIDES_PATH"] = str(ROOT / "config" / "__disabled_for_tests__.yaml")
+os.environ["TUNING_OVERRIDES_PATH"] = str(
+    ROOT / "config" / "__disabled_for_tests__.yaml"
+)

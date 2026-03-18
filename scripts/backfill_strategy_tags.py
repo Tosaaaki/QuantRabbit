@@ -53,6 +53,7 @@ def _classify_from_client_id(client_id: str | None) -> str | None:
         return "main.BB_RSI"
     return None
 
+
 TRADES_DB = Path("logs/trades.db")
 ORDERS_DB = Path("logs/orders.db")
 
@@ -81,13 +82,11 @@ def backfill() -> int:
     ensure_columns(tcon)
 
     # Pull candidates without strategy_tag
-    rows = tcon.execute(
-        """
+    rows = tcon.execute("""
         SELECT DISTINCT ticket_id
         FROM trades
         WHERE strategy_tag IS NULL OR strategy_tag = ''
-        """
-    ).fetchall()
+        """).fetchall()
     if not rows:
         print("No trades require backfill (strategy_tag already present).")
         return 0

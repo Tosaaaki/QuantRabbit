@@ -65,7 +65,9 @@ def main() -> int:
 
     insights = analyzer.run()
     if args.print_json and insights:
-        print(json.dumps([ins.__dict__ for ins in insights], ensure_ascii=False, indent=2))
+        print(
+            json.dumps([ins.__dict__ for ins in insights], ensure_ascii=False, indent=2)
+        )
 
     if not insights:
         logging.info("No insights generated.")

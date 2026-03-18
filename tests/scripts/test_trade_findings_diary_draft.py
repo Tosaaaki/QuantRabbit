@@ -7,10 +7,11 @@ from pathlib import Path
 
 from workers.common import agent_whiteboard as whiteboard
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "trade_findings_diary_draft.py"
-_SPEC = importlib.util.spec_from_file_location("trade_findings_diary_draft_test", SCRIPT)
+_SPEC = importlib.util.spec_from_file_location(
+    "trade_findings_diary_draft_test", SCRIPT
+)
 assert _SPEC is not None and _SPEC.loader is not None
 trade_findings_diary_draft = importlib.util.module_from_spec(_SPEC)
 sys.modules.setdefault("trade_findings_diary_draft_test", trade_findings_diary_draft)
@@ -54,19 +55,43 @@ def _prepare_sources(tmp_path: Path) -> dict[str, Path]:
             "generated_at_utc": "2026-03-10T17:10:00+00:00",
             "generated_at_jst": "2026-03-11T02:10:00+09:00",
             "oanda": {
-                "pricing": {"bid": 157.486, "ask": 157.494, "spread_pips": 0.8, "meta": {"ok": True}},
-                "summary": {"nav_jpy": 35777.42, "margin_rate": 0.04, "open_trade_count": 1},
+                "pricing": {
+                    "bid": 157.486,
+                    "ask": 157.494,
+                    "spread_pips": 0.8,
+                    "meta": {"ok": True},
+                },
+                "summary": {
+                    "nav_jpy": 35777.42,
+                    "margin_rate": 0.04,
+                    "open_trade_count": 1,
+                },
             },
             "trades": {
                 "24h": {
-                    "overall": {"trades": 218, "net_jpy": -1050.433, "pf_jpy": 0.2525, "win_rate": 0.3028},
+                    "overall": {
+                        "trades": 218,
+                        "net_jpy": -1050.433,
+                        "pf_jpy": 0.2525,
+                        "win_rate": 0.3028,
+                    },
                     "rankings": {
                         "by_strategy_net_jpy": {
                             "top_losers": [
-                                {"strategy_tag": "microlevelreactor", "net_jpy": -298.128, "trades": 53, "pf_jpy": 0.06}
+                                {
+                                    "strategy_tag": "microlevelreactor",
+                                    "net_jpy": -298.128,
+                                    "trades": 53,
+                                    "pf_jpy": 0.06,
+                                }
                             ],
                             "top_winners": [
-                                {"strategy_tag": "precisionlowvol", "net_jpy": 31.198, "trades": 9, "pf_jpy": 2.7203}
+                                {
+                                    "strategy_tag": "precisionlowvol",
+                                    "net_jpy": 31.198,
+                                    "trades": 9,
+                                    "pf_jpy": 2.7203,
+                                }
                             ],
                         }
                     },
@@ -87,7 +112,11 @@ def _prepare_sources(tmp_path: Path) -> dict[str, Path]:
             "generated_at": "2026-03-10T17:12:00+00:00",
             "summary": {"trades": 45, "mean_pips": -0.45, "stuck_trade_ratio": 0.21},
             "recommendations": [
-                {"strategy_tag": "microlevelreactor", "action": "tighten_quality", "reason": "loss cluster"}
+                {
+                    "strategy_tag": "microlevelreactor",
+                    "action": "tighten_quality",
+                    "reason": "loss cluster",
+                }
             ],
         },
     )
@@ -99,7 +128,11 @@ def _prepare_sources(tmp_path: Path) -> dict[str, Path]:
             "failing_workers": ["microlevelreactor"],
             "auto_improve": {
                 "accepted_updates": [
-                    {"strategy": "microlevelreactor", "field": "quality_floor", "value": 0.62}
+                    {
+                        "strategy": "microlevelreactor",
+                        "field": "quality_floor",
+                        "value": 0.62,
+                    }
                 ]
             },
         },
@@ -132,7 +165,9 @@ def _run_once(paths: dict[str, Path], *, whiteboard_enabled: bool = False) -> di
         "--whiteboard-author",
         "pytest",
     ]
-    argv.append("--whiteboard-enabled" if whiteboard_enabled else "--no-whiteboard-enabled")
+    argv.append(
+        "--whiteboard-enabled" if whiteboard_enabled else "--no-whiteboard-enabled"
+    )
     assert trade_findings_diary_draft.main(argv) == 0
     return json.loads(paths["out_json"].read_text(encoding="utf-8"))
 
@@ -144,7 +179,10 @@ def test_trade_findings_diary_draft_generates_required_sections(tmp_path: Path) 
 
     assert report["status"] == "actionable"
     assert report["history"]["action"] == "appended"
-    assert report["draft_policy"] == {"review_only": True, "writes_to_trade_findings": False}
+    assert report["draft_policy"] == {
+        "review_only": True,
+        "writes_to_trade_findings": False,
+    }
     assert set(report["sources"]) == {
         "health_snapshot",
         "pdca_profitability",
@@ -179,7 +217,9 @@ def test_trade_findings_diary_draft_generates_required_sections(tmp_path: Path) 
     assert "microlevelreactor" in markdown
 
 
-def test_trade_findings_diary_draft_dedupes_history_and_reuses_single_whiteboard_task(tmp_path: Path) -> None:
+def test_trade_findings_diary_draft_dedupes_history_and_reuses_single_whiteboard_task(
+    tmp_path: Path,
+) -> None:
     paths = _prepare_sources(tmp_path)
 
     first = _run_once(paths, whiteboard_enabled=True)
@@ -224,5 +264,7 @@ def test_trade_findings_diary_draft_dedupes_history_and_reuses_single_whiteboard
     events = whiteboard.list_events(task_id=tasks[0].id, db_path=paths["whiteboard_db"])
     assert len(events) == 2
 
-    history_lines = paths["out_history"].read_text(encoding="utf-8").strip().splitlines()
+    history_lines = (
+        paths["out_history"].read_text(encoding="utf-8").strip().splitlines()
+    )
     assert len(history_lines) == 2

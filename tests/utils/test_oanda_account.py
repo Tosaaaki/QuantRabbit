@@ -23,7 +23,9 @@ def _fake_secret(name: str) -> str:
     return values[name]
 
 
-def test_get_account_snapshot_state_uses_stale_disk_cache_on_http_503(monkeypatch, tmp_path):
+def test_get_account_snapshot_state_uses_stale_disk_cache_on_http_503(
+    monkeypatch, tmp_path
+):
     now = time.time()
     monkeypatch.setattr(oanda_account, "_LOG_DIR", tmp_path)
     monkeypatch.setattr(oanda_account, "_SHARED_CACHE_ENABLED", True)
@@ -58,7 +60,9 @@ def test_get_account_snapshot_state_uses_stale_disk_cache_on_http_503(monkeypatc
         raise requests.HTTPError(response=response)
 
     monkeypatch.setattr(oanda_account.requests, "get", _fail)
-    state = oanda_account.get_account_snapshot_state(cache_ttl_sec=1.0, allow_stale_sec=5.0)
+    state = oanda_account.get_account_snapshot_state(
+        cache_ttl_sec=1.0, allow_stale_sec=5.0
+    )
 
     assert state.stale is True
     assert state.source == "disk_cache"
@@ -67,7 +71,9 @@ def test_get_account_snapshot_state_uses_stale_disk_cache_on_http_503(monkeypatc
     assert state.snapshot.margin_available == 60000.0
 
 
-def test_get_position_summary_uses_stale_disk_cache_on_request_error(monkeypatch, tmp_path):
+def test_get_position_summary_uses_stale_disk_cache_on_request_error(
+    monkeypatch, tmp_path
+):
     now = time.time()
     monkeypatch.setattr(oanda_account, "_LOG_DIR", tmp_path)
     monkeypatch.setattr(oanda_account, "_SHARED_CACHE_ENABLED", True)
@@ -92,13 +98,17 @@ def test_get_position_summary_uses_stale_disk_cache_on_request_error(monkeypatch
 
     monkeypatch.setattr(oanda_account.requests, "get", _fail)
 
-    long_units, short_units = oanda_account.get_position_summary("USD_JPY", cache_ttl_sec=1.0)
+    long_units, short_units = oanda_account.get_position_summary(
+        "USD_JPY", cache_ttl_sec=1.0
+    )
 
     assert long_units == 1200.0
     assert short_units == 300.0
 
 
-def test_side_free_margin_ratio_keeps_global_ratio_when_positions_unavailable(monkeypatch):
+def test_side_free_margin_ratio_keeps_global_ratio_when_positions_unavailable(
+    monkeypatch,
+):
     snap = oanda_account.AccountSnapshot(
         nav=100000.0,
         balance=100000.0,

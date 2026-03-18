@@ -79,7 +79,9 @@ def _bbw(fac_m1: Dict[str, object]) -> float:
     candles = fac_m1.get("candles")
     if not isinstance(candles, list) or not candles:
         return 0.0
-    closes = [ _to_float(c.get("close", c.get("c")) for c in candles if isinstance(c, dict) ]
+    closes = [
+        _to_float(c.get("close", c.get("c"))) for c in candles if isinstance(c, dict)
+    ]
     if len(closes) < 2:
         return 0.0
     hi = max(closes)
@@ -111,7 +113,10 @@ def _signal_liquidity_sweep(
         return None
     if _bbw(fac_m1) > LSR_BBW_MAX:
         return None
-    if LSR_RANGE_SCORE_MIN > 0.0 and _current_regime_score(range_ctx) < LSR_RANGE_SCORE_MIN:
+    if (
+        LSR_RANGE_SCORE_MIN > 0.0
+        and _current_regime_score(range_ctx) < LSR_RANGE_SCORE_MIN
+    ):
         return None
 
     candles = fac_m1.get("candles")
@@ -139,7 +144,7 @@ def _signal_liquidity_sweep(
     if wick_ratio < LSR_WICK_RATIO_MIN:
         return None
 
-    history = candles[-(LSR_LOOKBACK + 1):-1]
+    history = candles[-(LSR_LOOKBACK + 1) : -1]
     highs: List[float] = []
     lows: List[float] = []
     for candle in history:
@@ -157,12 +162,17 @@ def _signal_liquidity_sweep(
     level_low = min(lows)
     side: Optional[str] = None
     sweep_dist = 0.0
-    if h >= level_high + LSR_SWEEP_PIPS * PIP and c < level_high - LSR_RECLAIM_PIPS * PIP:
+    if (
+        h >= level_high + LSR_SWEEP_PIPS * PIP
+        and c < level_high - LSR_RECLAIM_PIPS * PIP
+    ):
         side = "short"
         sweep_dist = (h - level_high) / PIP
         if upper_wick < max(LSR_SWEEP_PIPS, 0.4):
             return None
-    elif l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP:
+    elif (
+        l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP
+    ):
         side = "long"
         sweep_dist = (level_low - l) / PIP
         if lower_wick < max(LSR_SWEEP_PIPS, 0.4):
@@ -175,7 +185,9 @@ def _signal_liquidity_sweep(
     rev_dir = "long" if c >= prev_close else "short"
     rev_strength = 1.0
     if LSR_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != side):
-        hard_sweep_ok = sweep_dist >= (LSR_SWEEP_PIPS * 2.0) and wick_ratio >= (LSR_WICK_RATIO_MIN + 0.15)
+        hard_sweep_ok = sweep_dist >= (LSR_SWEEP_PIPS * 2.0) and wick_ratio >= (
+            LSR_WICK_RATIO_MIN + 0.15
+        )
         if not hard_sweep_ok:
             return None
         rev_strength = 1.0
@@ -246,7 +258,12 @@ def load_ticks(path: Path) -> List[Tick]:
             if not line:
                 continue
             payload = json.loads(line)
-            ts_raw = payload.get("timestamp") or payload.get("ts") or payload.get("time") or payload.get("ts_ms")
+            ts_raw = (
+                payload.get("timestamp")
+                or payload.get("ts")
+                or payload.get("time")
+                or payload.get("ts_ms")
+            )
             epoch = _parse_epoch(ts_raw)
             if epoch is None:
                 continue
@@ -301,7 +318,9 @@ def build_candles(ticks: Iterable[Tick]) -> List[Dict[str, float]]:
     return candles
 
 
-def compute_factors(candles: List[Dict[str, float]], idx: int, window: deque) -> Optional[Dict[str, object]]:
+def compute_factors(
+    candles: List[Dict[str, float]], idx: int, window: deque
+) -> Optional[Dict[str, object]]:
     if idx >= len(candles):
         return None
     window.append(candles[idx])
@@ -323,8 +342,12 @@ def compute_factors(candles: List[Dict[str, float]], idx: int, window: deque) ->
     return factors
 
 
-def simulate(signals: List[Dict], candles: List[Dict[str, float]], max_hold: int) -> Dict[str, Dict[str, float]]:
-    summaries: Dict[str, Dict[str, float]] = defaultdict(lambda: {"n": 0, "win": 0, "sum_pips": 0.0, "profit": 0.0, "loss": 0.0})
+def simulate(
+    signals: List[Dict], candles: List[Dict[str, float]], max_hold: int
+) -> Dict[str, Dict[str, float]]:
+    summaries: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {"n": 0, "win": 0, "sum_pips": 0.0, "profit": 0.0, "loss": 0.0}
+    )
     for sig in signals:
         idx = sig["index"]
         side = sig["side"]
@@ -355,7 +378,9 @@ def simulate(signals: List[Dict], candles: List[Dict[str, float]], max_hold: int
                 break
         else:
             exit_price = candles[last_idx]["close"]
-        pnl_pips = (exit_price - entry) / PIP if side == "long" else (entry - exit_price) / PIP
+        pnl_pips = (
+            (exit_price - entry) / PIP if side == "long" else (entry - exit_price) / PIP
+        )
         strat = sig["strategy"]
         summary = summaries[strat]
         summary["n"] += 1
@@ -369,7 +394,9 @@ def simulate(signals: List[Dict], candles: List[Dict[str, float]], max_hold: int
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Replay new strategies on tick data (signal + simple TP/SL).")
+    ap = argparse.ArgumentParser(
+        description="Replay new strategies on tick data (signal + simple TP/SL)."
+    )
     ap.add_argument("--ticks", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-hold", type=int, default=30)

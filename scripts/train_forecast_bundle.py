@@ -29,7 +29,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.forecast_sklearn import DEFAULT_HORIZONS, save_bundle, train_bundle  # noqa: E402
+from analysis.forecast_sklearn import (
+    DEFAULT_HORIZONS,
+    save_bundle,
+    train_bundle,
+)  # noqa: E402
 
 
 def _utc_today() -> dt.date:
@@ -155,7 +159,9 @@ def main() -> None:
     save_bundle(bundle, args.out)
 
     print("=== Forecast bundle trained ===")
-    print(f"instrument={bundle.instrument} created_at={bundle.created_at} out={args.out}")
+    print(
+        f"instrument={bundle.instrument} created_at={bundle.created_at} out={args.out}"
+    )
     for spec in DEFAULT_HORIZONS:
         r = reports.get(spec.name, {})
         logloss = r.get("logloss")

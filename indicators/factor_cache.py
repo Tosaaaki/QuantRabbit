@@ -53,6 +53,7 @@ def _env_tf_set(name: str, default: str) -> set[TimeFrame]:
             out.add(tf)  # type: ignore[arg-type]
     return out
 
+
 _CANDLES_MAX = {
     "M1": 2000,
     "M5": 1200,
@@ -143,7 +144,9 @@ def _normalize_candle(candle: Dict[str, float]) -> Dict[str, float] | None:
     }
 
 
-def _merge_live_candle(candles: list[dict], live_candle: Dict[str, float] | None) -> list[dict]:
+def _merge_live_candle(
+    candles: list[dict], live_candle: Dict[str, float] | None
+) -> list[dict]:
     if not live_candle:
         return candles
     merged = list(candles)
@@ -230,7 +233,7 @@ def _restore_cache() -> bool:
             candles = snapshot.get("candles") or []
             dq = _CANDLES[tf]
             dq.clear()
-            for cndl in candles[-_CANDLES_MAX[tf]:]:
+            for cndl in candles[-_CANDLES_MAX[tf] :]:
                 if not isinstance(cndl, dict):
                     continue
                 dq.append(
@@ -260,7 +263,9 @@ def _restore_cache() -> bool:
             if "regime" not in _FACTORS[tf]:
                 _update_regime(tf, _FACTORS[tf])
         except Exception as exc:  # noqa: BLE001
-            logging.warning("[FACTOR_CACHE] failed to restore timeframe %s: %s", tf, exc)
+            logging.warning(
+                "[FACTOR_CACHE] failed to restore timeframe %s: %s", tf, exc
+            )
     return True
 
 
@@ -347,7 +352,9 @@ def get_candles_snapshot(
     if not dq:
         return []
     candles = list(dq)
-    use_live = _INCLUDE_LIVE_CANDLE_DEFAULT if include_live is None else bool(include_live)
+    use_live = (
+        _INCLUDE_LIVE_CANDLE_DEFAULT if include_live is None else bool(include_live)
+    )
     if use_live:
         candles = _merge_live_candle(candles, _LIVE_CANDLES.get(tf))
     if limit is not None and limit > 0:

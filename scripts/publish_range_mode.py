@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Publish range_mode_active metric from cached factors or latest candles."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,7 +25,6 @@ from indicators.calc_core import IndicatorEngine
 from indicators.factor_cache import all_factors
 from utils.market_hours import is_market_open
 from utils.metrics_logger import log_metric
-
 
 DEFAULT_MIN_INTERVAL_SEC = int(os.getenv("RANGE_MODE_PUBLISH_MIN_INTERVAL_SEC", "180"))
 DEFAULT_MAX_DATA_AGE_SEC = int(os.getenv("RANGE_MODE_PUBLISH_MAX_DATA_AGE_SEC", "900"))
@@ -52,8 +52,12 @@ def _parse_int(value: str, default: int) -> int:
         return default
 
 
-REFRESH_M1_COUNT = _parse_int(os.getenv("RANGE_MODE_PUBLISH_REFRESH_M1_COUNT", "500"), 500)
-REFRESH_MACRO_COUNT = _parse_int(os.getenv("RANGE_MODE_PUBLISH_REFRESH_MACRO_COUNT", "200"), 200)
+REFRESH_M1_COUNT = _parse_int(
+    os.getenv("RANGE_MODE_PUBLISH_REFRESH_M1_COUNT", "500"), 500
+)
+REFRESH_MACRO_COUNT = _parse_int(
+    os.getenv("RANGE_MODE_PUBLISH_REFRESH_MACRO_COUNT", "200"), 200
+)
 
 
 def _utcnow() -> dt.datetime:
@@ -70,7 +74,9 @@ def _macro_tf_seconds() -> int:
 
 
 def _macro_max_data_age_sec() -> int:
-    explicit = _parse_int(os.getenv("RANGE_MODE_PUBLISH_MACRO_MAX_DATA_AGE_SEC", "0"), 0)
+    explicit = _parse_int(
+        os.getenv("RANGE_MODE_PUBLISH_MACRO_MAX_DATA_AGE_SEC", "0"), 0
+    )
     if explicit > 0:
         return explicit
     # Macro candles are inherently older than M1 ticks; allow up to 135% of one macro bar.
@@ -184,7 +190,13 @@ def _has_required(factors: Dict[str, Any]) -> bool:
     return True
 
 
-def _resolve_factors() -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, float]], str, Optional[dt.datetime], Optional[dt.datetime]]:
+def _resolve_factors() -> Tuple[
+    Optional[Dict[str, float]],
+    Optional[Dict[str, float]],
+    str,
+    Optional[dt.datetime],
+    Optional[dt.datetime],
+]:
     factors = all_factors()
     fac_m1 = factors.get("M1") or {}
     fac_macro = factors.get(MACRO_TF) or {}
@@ -227,7 +239,12 @@ def _refresh_candles() -> bool:
     macro_count = REFRESH_MACRO_COUNT
     m1_count = REFRESH_M1_COUNT
     try:
-        logging.info("[range_metric] refreshing candles (M1=%d %s=%d)", m1_count, macro_tf, macro_count)
+        logging.info(
+            "[range_metric] refreshing candles (M1=%d %s=%d)",
+            m1_count,
+            macro_tf,
+            macro_count,
+        )
         subprocess.run(
             [
                 sys.executable,
@@ -259,12 +276,18 @@ def _refresh_candles() -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish range_mode_active metric.")
     parser.add_argument("--log-level", default="INFO")
-    parser.add_argument("--force", action="store_true", help="Ignore min interval guard.")
+    parser.add_argument(
+        "--force", action="store_true", help="Ignore min interval guard."
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    enabled = os.getenv("RANGE_MODE_PUBLISH_ENABLED", "1").lower() not in {"0", "false", "off"}
+    enabled = os.getenv("RANGE_MODE_PUBLISH_ENABLED", "1").lower() not in {
+        "0",
+        "false",
+        "off",
+    }
     if not enabled:
         logging.info("[range_metric] disabled")
         return
@@ -278,12 +301,10 @@ def main() -> None:
             return
 
     fac_m1, fac_macro, source, ts_m1, ts_macro = _resolve_factors()
-    stale_data, m1_age_sec, macro_age_sec, macro_limit_sec = _freshness_state(now, ts_m1, ts_macro)
-    needs_refresh = (
-        not fac_m1
-        or not fac_macro
-        or stale_data
+    stale_data, m1_age_sec, macro_age_sec, macro_limit_sec = _freshness_state(
+        now, ts_m1, ts_macro
     )
+    needs_refresh = not fac_m1 or not fac_macro or stale_data
     if needs_refresh and _refresh_candles():
         fac_m1, fac_macro, source, ts_m1, ts_macro = _resolve_factors()
         stale_data, m1_age_sec, macro_age_sec, macro_limit_sec = _freshness_state(
@@ -326,7 +347,9 @@ def main() -> None:
         tags["macro_age_sec"] = int(macro_age_sec)
     if stale_reason:
         tags["stale"] = stale_reason
-    written = log_metric("range_mode_active", 1.0 if range_ctx.active else 0.0, tags=tags, ts=now)
+    written = log_metric(
+        "range_mode_active", 1.0 if range_ctx.active else 0.0, tags=tags, ts=now
+    )
     if not written:
         logging.warning(
             "[range_metric] metric_write_failed metric=range_mode_active db=%s",

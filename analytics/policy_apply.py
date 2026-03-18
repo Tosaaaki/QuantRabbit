@@ -14,17 +14,25 @@ except Exception:  # pragma: no cover
 from analytics.policy_diff import apply_policy_diff, default_policy_snapshot
 from utils.yaml_merge import deep_update
 
-DEFAULT_OVERLAY_PATH = Path(os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"))
+DEFAULT_OVERLAY_PATH = Path(
+    os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json")
+)
 DEFAULT_HISTORY_DIR = Path(os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"))
 DEFAULT_LATEST_PATH = Path(os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
 
-REENTRY_CONFIG_PATH = Path(os.getenv("REENTRY_CONFIG_PATH", "config/worker_reentry.yaml"))
+REENTRY_CONFIG_PATH = Path(
+    os.getenv("REENTRY_CONFIG_PATH", "config/worker_reentry.yaml")
+)
 _TUNING_RUNTIME_DIR = os.getenv("TUNING_RUNTIME_DIR", "logs/tuning")
 TUNING_OVERRIDES_PATH = Path(
     os.getenv("TUNING_OVERRIDES_PATH", f"{_TUNING_RUNTIME_DIR}/tuning_overrides.yaml")
 )
-TUNING_PRESETS_PATH = Path(os.getenv("TUNING_PRESETS_PATH", "config/tuning_presets.yaml"))
-TUNING_OVERLAY_PATH = Path(os.getenv("TUNING_OVERLAY_PATH", f"{_TUNING_RUNTIME_DIR}/tuning_overlay.yaml"))
+TUNING_PRESETS_PATH = Path(
+    os.getenv("TUNING_PRESETS_PATH", "config/tuning_presets.yaml")
+)
+TUNING_OVERLAY_PATH = Path(
+    os.getenv("TUNING_OVERLAY_PATH", f"{_TUNING_RUNTIME_DIR}/tuning_overlay.yaml")
+)
 
 
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -81,7 +89,9 @@ def _apply_tuning_overrides(overrides: Dict[str, Any]) -> bool:
     base: Dict[str, Any] = {}
     if TUNING_OVERRIDES_PATH.exists():
         try:
-            base = yaml.safe_load(TUNING_OVERRIDES_PATH.read_text(encoding="utf-8")) or {}
+            base = (
+                yaml.safe_load(TUNING_OVERRIDES_PATH.read_text(encoding="utf-8")) or {}
+            )
         except Exception:
             base = {}
     merged = deep_update(base, overrides)
@@ -122,7 +132,11 @@ def apply_policy_diff_to_paths(
 
     applied_flags = {"reentry": False, "tuning": False}
     if apply_reentry and isinstance(policy_diff.get("reentry_overrides"), dict):
-        applied_flags["reentry"] = _apply_reentry_overrides(policy_diff["reentry_overrides"], REENTRY_CONFIG_PATH)
+        applied_flags["reentry"] = _apply_reentry_overrides(
+            policy_diff["reentry_overrides"], REENTRY_CONFIG_PATH
+        )
     if apply_tuning and isinstance(policy_diff.get("tuning_overrides"), dict):
-        applied_flags["tuning"] = _apply_tuning_overrides(policy_diff["tuning_overrides"])
+        applied_flags["tuning"] = _apply_tuning_overrides(
+            policy_diff["tuning_overrides"]
+        )
     return updated, changed, applied_flags

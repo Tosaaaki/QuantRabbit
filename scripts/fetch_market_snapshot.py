@@ -112,7 +112,9 @@ def _fetch_stooq_symbol(symbol: str) -> dict[str, Any]:
     return _parse_stooq_row(csv_text)
 
 
-def _calc_change_pct(open_price: Optional[float], close_price: Optional[float]) -> Optional[float]:
+def _calc_change_pct(
+    open_price: Optional[float], close_price: Optional[float]
+) -> Optional[float]:
     if open_price is None or close_price is None:
         return None
     if abs(open_price) < 1e-12:
@@ -225,7 +227,9 @@ def _extract_calendar_events(
             "impact": row.impact,
             "time_utc": row.time_utc.replace(microsecond=0).isoformat(),
             "time_jst": row.time_utc.astimezone(JST).strftime("%Y-%m-%d %H:%M JST"),
-            "minutes_to_event": int(round((row.time_utc - now_utc).total_seconds() / 60.0)),
+            "minutes_to_event": int(
+                round((row.time_utc - now_utc).total_seconds() / 60.0)
+            ),
         }
         for row in out
     ]

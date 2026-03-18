@@ -7,10 +7,17 @@ from analysis import auto_canary
 
 def _reset_auto_canary(monkeypatch, *, path) -> None:
     monkeypatch.setattr(auto_canary, "_PATH", path, raising=False)
-    monkeypatch.setattr(auto_canary, "_CACHE", {"loaded": 0.0, "mtime": None, "payload": None}, raising=False)
+    monkeypatch.setattr(
+        auto_canary,
+        "_CACHE",
+        {"loaded": 0.0, "mtime": None, "payload": None},
+        raising=False,
+    )
 
 
-def test_current_override_resolves_base_strategy_for_directional_tag(monkeypatch, tmp_path) -> None:
+def test_current_override_resolves_base_strategy_for_directional_tag(
+    monkeypatch, tmp_path
+) -> None:
     path = tmp_path / "auto_canary.json"
     path.write_text(
         json.dumps(

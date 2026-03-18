@@ -30,9 +30,8 @@ class HoldMonitor:
         """
         if not self.db_path.exists():
             return None, 0, 0
-        threshold = (
-            dt.datetime.now(dt.timezone.utc)
-            - dt.timedelta(hours=self.lookback_hours)
+        threshold = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+            hours=self.lookback_hours
         )
         threshold_iso = threshold.isoformat().replace("+00:00", "Z")
         try:

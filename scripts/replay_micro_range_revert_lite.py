@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Tick replay for micro_range_revert_lite (entry + exit)."""
+
 from __future__ import annotations
 
 import argparse
@@ -123,7 +124,9 @@ def iter_ticks(path: Path) -> Iterable[Tick]:
             if not line:
                 continue
             payload = json.loads(line)
-            ts_raw = payload.get("timestamp") or payload.get("ts") or payload.get("time")
+            ts_raw = (
+                payload.get("timestamp") or payload.get("ts") or payload.get("time")
+            )
             if ts_raw is None:
                 continue
             if isinstance(ts_raw, (int, float)):
@@ -131,13 +134,17 @@ def iter_ticks(path: Path) -> Iterable[Tick]:
                 if epoch > 10**11:
                     epoch /= 1000.0
             else:
-                epoch = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")).timestamp()
+                epoch = datetime.fromisoformat(
+                    str(ts_raw).replace("Z", "+00:00")
+                ).timestamp()
             bid = float(payload.get("bid", 0.0))
             ask = float(payload.get("ask", 0.0))
             yield Tick(epoch=epoch, bid=bid, ask=ask)
 
 
-def _calc_sl_tp(side: str, price: float, sl_pips: float, tp_pips: float) -> tuple[float, float]:
+def _calc_sl_tp(
+    side: str, price: float, sl_pips: float, tp_pips: float
+) -> tuple[float, float]:
     if side == "long":
         sl_price = price - sl_pips * PIP
         tp_price = price + tp_pips * PIP
@@ -158,7 +165,12 @@ def _trade_pips(entry: float, exit_price: float, side: str) -> float:
 
 
 def _build_factors(candles: Deque[Candle]) -> Dict[str, float]:
-    df = pd.DataFrame([{"open": c.open, "high": c.high, "low": c.low, "close": c.close} for c in candles])
+    df = pd.DataFrame(
+        [
+            {"open": c.open, "high": c.high, "low": c.low, "close": c.close}
+            for c in candles
+        ]
+    )
     factors = IndicatorEngine.compute(df)
     last = candles[-1]
     tail = list(candles)[-60:]
@@ -204,7 +216,9 @@ def replay(
     last_exit_eval = 0.0
     last_tick: Optional[Tick] = None
 
-    def _record_close(trade: Trade, close_units: int, exit_price: float, ts: datetime, reason: str) -> None:
+    def _record_close(
+        trade: Trade, close_units: int, exit_price: float, ts: datetime, reason: str
+    ) -> None:
         pl_pips = _trade_pips(trade.entry_price, exit_price, trade.side)
         trade_records.append(
             {
@@ -251,8 +265,12 @@ def replay(
                     sl_pips = float(signal.get("sl_pips") or 0.0)
                     tp_pips = float(signal.get("tp_pips") or 0.0)
                     if sl_pips > 0 and tp_pips > 0:
-                        sl_price, tp_price = _calc_sl_tp(side, m1_candle.close, sl_pips, tp_pips)
-                        sl_price, tp_price = clamp_sl_tp(m1_candle.close, sl_price, tp_price, side == "long")
+                        sl_price, tp_price = _calc_sl_tp(
+                            side, m1_candle.close, sl_pips, tp_pips
+                        )
+                        sl_price, tp_price = clamp_sl_tp(
+                            m1_candle.close, sl_price, tp_price, side == "long"
+                        )
                         tag = signal.get("tag", RangeRevertLite.name)
                         trade = Trade(
                             trade_id=f"sim-{trade_id_seq}",
@@ -276,23 +294,31 @@ def replay(
                 exit_price = _close_price(trade.side, tick)
                 if not no_hard_tp and trade.tp_price is not None:
                     if trade.side == "long" and exit_price >= trade.tp_price:
-                        _record_close(trade, trade.remaining_units, trade.tp_price, ts, "hard_tp")
+                        _record_close(
+                            trade, trade.remaining_units, trade.tp_price, ts, "hard_tp"
+                        )
                         trade.remaining_units = 0
                         open_trades.remove(trade)
                         continue
                     if trade.side == "short" and exit_price <= trade.tp_price:
-                        _record_close(trade, trade.remaining_units, trade.tp_price, ts, "hard_tp")
+                        _record_close(
+                            trade, trade.remaining_units, trade.tp_price, ts, "hard_tp"
+                        )
                         trade.remaining_units = 0
                         open_trades.remove(trade)
                         continue
                 if not no_hard_sl and trade.sl_price is not None:
                     if trade.side == "long" and exit_price <= trade.sl_price:
-                        _record_close(trade, trade.remaining_units, trade.sl_price, ts, "hard_sl")
+                        _record_close(
+                            trade, trade.remaining_units, trade.sl_price, ts, "hard_sl"
+                        )
                         trade.remaining_units = 0
                         open_trades.remove(trade)
                         continue
                     if trade.side == "short" and exit_price >= trade.sl_price:
-                        _record_close(trade, trade.remaining_units, trade.sl_price, ts, "hard_sl")
+                        _record_close(
+                            trade, trade.remaining_units, trade.sl_price, ts, "hard_sl"
+                        )
                         trade.remaining_units = 0
                         open_trades.remove(trade)
                         continue
@@ -315,7 +341,9 @@ def replay(
                     "entry_thesis": {"strategy_tag": RangeRevertLite.name},
                     "strategy_tag": RangeRevertLite.name,
                 }
-                state = rrl_exit._TradeState(max_pnl=trade.max_pnl, partial_done=trade.partial_done)
+                state = rrl_exit._TradeState(
+                    max_pnl=trade.max_pnl, partial_done=trade.partial_done
+                )
                 decision = rrl_exit.evaluate_exit(
                     trade_dict,
                     now=ts,
@@ -333,17 +361,27 @@ def replay(
                     continue
                 close_units = int(close_units)
                 if abs(close_units) >= abs(trade.remaining_units):
-                    _record_close(trade, trade.remaining_units, _close_price(trade.side, tick), ts, reason)
+                    _record_close(
+                        trade,
+                        trade.remaining_units,
+                        _close_price(trade.side, tick),
+                        ts,
+                        reason,
+                    )
                     trade.remaining_units = 0
                     open_trades.remove(trade)
                 else:
-                    _record_close(trade, close_units, _close_price(trade.side, tick), ts, reason)
+                    _record_close(
+                        trade, close_units, _close_price(trade.side, tick), ts, reason
+                    )
                     trade.remaining_units -= close_units
 
     if not exclude_end_of_replay and last_tick is not None:
         for trade in list(open_trades):
             exit_price = _close_price(trade.side, last_tick)
-            _record_close(trade, trade.remaining_units, exit_price, last_tick.dt, "end_of_replay")
+            _record_close(
+                trade, trade.remaining_units, exit_price, last_tick.dt, "end_of_replay"
+            )
             trade.remaining_units = 0
             open_trades.remove(trade)
 
@@ -386,7 +424,9 @@ def main() -> int:
         exclude_end_of_replay=bool(args.exclude_end_of_replay),
     )
     payload = {"summary": result.summary, "trades": result.trades}
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(json.dumps(result.summary, ensure_ascii=False))
     return 0
 

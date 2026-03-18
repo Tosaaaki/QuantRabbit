@@ -10,8 +10,7 @@ from analysis.pattern_book import build_pattern_id
 
 def _create_pattern_db(path: Path) -> None:
     con = sqlite3.connect(path)
-    con.executescript(
-        """
+    con.executescript("""
         CREATE TABLE pattern_scores (
           pattern_id TEXT PRIMARY KEY,
           strategy_tag TEXT,
@@ -69,8 +68,7 @@ def _create_pattern_db(path: Path) -> None:
           avg_pips REAL NOT NULL,
           updated_at TEXT NOT NULL
         );
-        """
-    )
+        """)
     con.commit()
     con.close()
 
@@ -307,7 +305,9 @@ def test_pattern_gate_no_opt_in_returns_none(monkeypatch, tmp_path: Path) -> Non
     assert decision is None
 
 
-def test_pattern_gate_fallback_matches_when_range_bucket_differs(monkeypatch, tmp_path: Path) -> None:
+def test_pattern_gate_fallback_matches_when_range_bucket_differs(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "patterns.db"
     _create_pattern_db(db_path)
     base_entry = _entry_thesis_for_pattern()
@@ -355,7 +355,9 @@ def test_pattern_gate_fallback_matches_when_range_bucket_differs(monkeypatch, tm
     assert decision.requested_pattern_id == fallback_pid
 
 
-def test_pattern_gate_fallback_does_not_block_avoid_by_default(monkeypatch, tmp_path: Path) -> None:
+def test_pattern_gate_fallback_does_not_block_avoid_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "patterns.db"
     _create_pattern_db(db_path)
     base_entry = _entry_thesis_for_pattern()
@@ -402,7 +404,9 @@ def test_pattern_gate_fallback_does_not_block_avoid_by_default(monkeypatch, tmp_
     assert decision.pattern_id == base_pid
 
 
-def test_pattern_gate_db_source_skips_stale_artifact(monkeypatch, tmp_path: Path) -> None:
+def test_pattern_gate_db_source_skips_stale_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "patterns.db"
     _create_pattern_db(db_path)
     os.utime(db_path, (1, 1))
@@ -417,7 +421,9 @@ def test_pattern_gate_db_source_skips_stale_artifact(monkeypatch, tmp_path: Path
     assert source == "db_stale"
 
 
-def test_pattern_gate_json_source_skips_stale_artifact(monkeypatch, tmp_path: Path) -> None:
+def test_pattern_gate_json_source_skips_stale_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
     json_path = tmp_path / "pattern_book_deep.json"
     json_path.write_text(
         """

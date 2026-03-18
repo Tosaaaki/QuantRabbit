@@ -148,7 +148,10 @@ def _improved_expected(closes: list[float], idx: int, step: int) -> float:
         ma_window = min(max(8, step * 10), idx + 1)
         ma_price = mean(closes[idx - ma_window + 1 : idx + 1])
         deviation = closes[idx] - ma_price
-        signs = [1.0 if delta > 0 else (-1.0 if delta < 0 else 0.0) for delta in recent_deltas]
+        signs = [
+            1.0 if delta > 0 else (-1.0 if delta < 0 else 0.0)
+            for delta in recent_deltas
+        ]
         persistence = abs(sum(signs)) / float(len(signs)) if signs else 0.0
         momentum_move = ((0.70 * short_drift) + (0.30 * long_drift)) * float(step)
         reversion_move = (-deviation) * (1.0 - persistence) * 0.06
@@ -200,7 +203,9 @@ def main() -> int:
     args = parser.parse_args()
 
     paths: list[str] = []
-    for pattern in [token.strip() for token in args.patterns.split(",") if token.strip()]:
+    for pattern in [
+        token.strip() for token in args.patterns.split(",") if token.strip()
+    ]:
         paths.extend(glob.glob(pattern))
     paths = sorted(set(paths))
     rows = _iter_candle_rows(paths)
@@ -208,7 +213,9 @@ def main() -> int:
         print("no candle rows")
         return 1
     closes = [close for _, close in rows]
-    print(f"bars={len(closes)} from={rows[0][0].isoformat()} to={rows[-1][0].isoformat()}")
+    print(
+        f"bars={len(closes)} from={rows[0][0].isoformat()} to={rows[-1][0].isoformat()}"
+    )
 
     steps: list[int] = []
     for token in [token.strip() for token in args.steps.split(",") if token.strip()]:
@@ -243,4 +250,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

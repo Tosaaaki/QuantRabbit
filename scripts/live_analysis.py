@@ -12,37 +12,50 @@ ACCOUNT = "001-009-13679149-002"
 BASE = "https://api-fxtrade.oanda.com/v3"
 INSTRUMENT = "USD_JPY"
 
+
 def fetch_candles(granularity, count):
     url = f"{BASE}/instruments/{INSTRUMENT}/candles?granularity={granularity}&count={count}&price=MAB"
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {TOKEN}",
-        "Content-Type": "application/json"
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode())
     candles = []
     for c in data.get("candles", []):
         if c["complete"] or granularity == "M1":
             mid = c["mid"]
-            candles.append({
-                "time": c["time"],
-                "o": float(mid["o"]), "h": float(mid["h"]),
-                "l": float(mid["l"]), "c": float(mid["c"]),
-                "vol": int(c["volume"]),
-                "ba_spread": float(c["ask"]["c"]) - float(c["bid"]["c"])
-            })
+            candles.append(
+                {
+                    "time": c["time"],
+                    "o": float(mid["o"]),
+                    "h": float(mid["h"]),
+                    "l": float(mid["l"]),
+                    "c": float(mid["c"]),
+                    "vol": int(c["volume"]),
+                    "ba_spread": float(c["ask"]["c"]) - float(c["bid"]["c"]),
+                }
+            )
     # Always include last candle even if incomplete
     if not candles or candles[-1]["time"] != data["candles"][-1]["time"]:
         c = data["candles"][-1]
         mid = c["mid"]
-        candles.append({
-            "time": c["time"],
-            "o": float(mid["o"]), "h": float(mid["h"]),
-            "l": float(mid["l"]), "c": float(mid["c"]),
-            "vol": int(c["volume"]),
-            "ba_spread": float(c["ask"]["c"]) - float(c["bid"]["c"])
-        })
+        candles.append(
+            {
+                "time": c["time"],
+                "o": float(mid["o"]),
+                "h": float(mid["h"]),
+                "l": float(mid["l"]),
+                "c": float(mid["c"]),
+                "vol": int(c["volume"]),
+                "ba_spread": float(c["ask"]["c"]) - float(c["bid"]["c"]),
+            }
+        )
     return candles
+
 
 def ema(values, period):
     if len(values) < period:
@@ -56,21 +69,23 @@ def ema(values, period):
         result.append(val)
     return result
 
+
 def sma(values, period):
     result = []
     for i in range(len(values)):
         if i < period - 1:
             result.append(None)
         else:
-            result.append(sum(values[i-period+1:i+1]) / period)
+            result.append(sum(values[i - period + 1 : i + 1]) / period)
     return result
+
 
 def rsi(closes, period=14):
     if len(closes) < period + 1:
         return None
     gains, losses = [], []
     for i in range(1, len(closes)):
-        d = closes[i] - closes[i-1]
+        d = closes[i] - closes[i - 1]
         gains.append(max(d, 0))
         losses.append(max(-d, 0))
     if len(gains) < period:
@@ -85,12 +100,13 @@ def rsi(closes, period=14):
     rs = avg_g / avg_l
     return 100.0 - (100.0 / (1.0 + rs))
 
+
 def stochastic(candles, k_period=14, d_period=3):
     if len(candles) < k_period:
         return None, None
     k_vals = []
     for i in range(k_period - 1, len(candles)):
-        window = candles[i - k_period + 1:i + 1]
+        window = candles[i - k_period + 1 : i + 1]
         highest = max(c["h"] for c in window)
         lowest = min(c["l"] for c in window)
         if highest == lowest:
@@ -101,6 +117,7 @@ def stochastic(candles, k_period=14, d_period=3):
         return k_vals[-1] if k_vals else None, None
     d_val = sum(k_vals[-d_period:]) / d_period
     return k_vals[-1], d_val
+
 
 def macd(closes, fast=12, slow=26, signal=9):
     ema_fast = ema(closes, fast)
@@ -120,12 +137,13 @@ def macd(closes, fast=12, slow=26, signal=9):
     hist = macd_val - sig_val if sig_val is not None else None
     return macd_val, sig_val, hist
 
+
 def atr(candles, period=14):
     if len(candles) < 2:
         return None
     trs = []
     for i in range(1, len(candles)):
-        h, l, pc = candles[i]["h"], candles[i]["l"], candles[i-1]["c"]
+        h, l, pc = candles[i]["h"], candles[i]["l"], candles[i - 1]["c"]
         tr = max(h - l, abs(h - pc), abs(l - pc))
         trs.append(tr)
     if len(trs) < period:
@@ -134,6 +152,7 @@ def atr(candles, period=14):
     for i in range(period, len(trs)):
         atr_val = (atr_val * (period - 1) + trs[i]) / period
     return atr_val
+
 
 def bollinger(closes, period=20, std_mult=2.0):
     if len(closes) < period:
@@ -144,14 +163,15 @@ def bollinger(closes, period=20, std_mult=2.0):
     std = math.sqrt(variance)
     return mid - std_mult * std, mid, mid + std_mult * std
 
+
 def adx(candles, period=14):
     if len(candles) < period + 1:
         return None
     plus_dm_list, minus_dm_list, tr_list = [], [], []
     for i in range(1, len(candles)):
         h, l = candles[i]["h"], candles[i]["l"]
-        ph, pl = candles[i-1]["h"], candles[i-1]["l"]
-        pc = candles[i-1]["c"]
+        ph, pl = candles[i - 1]["h"], candles[i - 1]["l"]
+        pc = candles[i - 1]["c"]
         plus_dm = max(h - ph, 0) if (h - ph) > (pl - l) else 0
         minus_dm = max(pl - l, 0) if (pl - l) > (h - ph) else 0
         tr = max(h - l, abs(h - pc), abs(l - pc))
@@ -177,24 +197,33 @@ def adx(candles, period=14):
     dx = 100 * abs(plus_di - minus_di) / di_sum
     return dx
 
+
 def momentum(closes, period=5):
     if len(closes) < period + 1:
         return None
     return closes[-1] - closes[-period - 1]
 
+
 def find_swing_points(candles, lookback=3):
     """Find swing highs and lows using N-bar pivots."""
     swings = []
     for i in range(lookback, len(candles) - lookback):
-        is_high = all(candles[i]["h"] >= candles[i+j]["h"] and candles[i]["h"] >= candles[i-j]["h"]
-                       for j in range(1, lookback + 1))
-        is_low = all(candles[i]["l"] <= candles[i+j]["l"] and candles[i]["l"] <= candles[i-j]["l"]
-                      for j in range(1, lookback + 1))
+        is_high = all(
+            candles[i]["h"] >= candles[i + j]["h"]
+            and candles[i]["h"] >= candles[i - j]["h"]
+            for j in range(1, lookback + 1)
+        )
+        is_low = all(
+            candles[i]["l"] <= candles[i + j]["l"]
+            and candles[i]["l"] <= candles[i - j]["l"]
+            for j in range(1, lookback + 1)
+        )
         if is_high:
             swings.append(("H", candles[i]["h"], i))
         if is_low:
             swings.append(("L", candles[i]["l"], i))
     return swings
+
 
 def analyze_nwave(swings):
     if len(swings) < 4:
@@ -219,6 +248,7 @@ def analyze_nwave(swings):
     else:
         return f"MIXED({types})"
 
+
 def score_h1(candles):
     closes = [c["c"] for c in candles]
     e5 = ema(closes, 5)
@@ -236,6 +266,7 @@ def score_h1(candles):
             if adx_val and adx_val > 25:
                 score = -2
     return score, adx_val
+
 
 def score_m5(candles, h1_bias):
     closes = [c["c"] for c in candles]
@@ -264,6 +295,7 @@ def score_m5(candles, h1_bias):
                 score = -1
     return score
 
+
 def score_m1(candles):
     closes = [c["c"] for c in candles]
     rsi_val = rsi(closes)
@@ -279,6 +311,7 @@ def score_m1(candles):
         elif rsi_val > 60 and mom < 0:
             score = -1
     return score
+
 
 def get_signal(total, h1, m5, m1, stoch_m5, rsi_m5, near_ema, vol_spike):
     if total >= 4 and near_ema and (stoch_m5 is not None and stoch_m5 < 20):
@@ -303,11 +336,13 @@ def get_signal(total, h1, m5, m1, stoch_m5, rsi_m5, near_ema, vol_spike):
             reasons.append("stoch neutral")
         return "WAIT", " + ".join(reasons) if reasons else "no clear setup"
 
+
 def f(val, fmt=".1f", mul=1):
     """Safe format: return formatted val or '-'."""
     if val is None:
         return "-"
     return format(val * mul, fmt)
+
 
 def run_cycle(cycle_num):
     now = datetime.now(timezone.utc)
@@ -377,8 +412,9 @@ def run_cycle(cycle_num):
     nwave = analyze_nwave(swings)
 
     # Signal
-    signal, reason = get_signal(total, h1_score, m5_score, m1_score,
-                                 m5_stoch_k, m5_rsi, near_ema, vol_spike)
+    signal, reason = get_signal(
+        total, h1_score, m5_score, m1_score, m5_stoch_k, m5_rsi, near_ema, vol_spike
+    )
 
     # === Output ===
     ema_tag = ""
@@ -398,24 +434,37 @@ def run_cycle(cycle_num):
     vol_tag = " !!SPIKE!!" if vol_spike else ""
 
     print(f"\n{'='*72}")
-    print(f"[{ts}] Cycle {cycle_num}/15 | Price:{price:.3f} | Score:{total:+d} (H1:{h1_score:+d} M5:{m5_score:+d} M1:{m1_score:+d}) | Regime:{regime}")
+    print(
+        f"[{ts}] Cycle {cycle_num}/15 | Price:{price:.3f} | Score:{total:+d} (H1:{h1_score:+d} M5:{m5_score:+d} M1:{m1_score:+d}) | Regime:{regime}"
+    )
     print(f"  H1: ADX:{f(h1_adx)} RSI:{f(h1_rsi)} ATR:{f(h1_atr, '.1f', 100)}p")
-    print(f"  M5: RSI:{f(m5_rsi)} Stoch:{f(m5_stoch_k, '.0f')}/{f(m5_stoch_d, '.0f')}{stoch_tag} EMA9:{f(m5_e9[-1], '.3f')} dist:{f(dist_e9)}p | BB:{f(m5_bb_lo, '.3f')}-{f(m5_bb_hi, '.3f')}")
-    print(f"      MACD:{f(m5_macd_val, '.4f')} Hist:{f(m5_macd_hist, '.4f')} ATR:{f(m5_atr, '.1f', 100)}p")
-    print(f"  M1: RSI:{f(m1_rsi)} Stoch:{f(m1_stoch_k, '.0f')}/{f(m1_stoch_d, '.0f')} Mom:{f(m1_mom, '.1f', 100)}p Vol:{vol_ratio:.1f}x{vol_tag}")
+    print(
+        f"  M5: RSI:{f(m5_rsi)} Stoch:{f(m5_stoch_k, '.0f')}/{f(m5_stoch_d, '.0f')}{stoch_tag} EMA9:{f(m5_e9[-1], '.3f')} dist:{f(dist_e9)}p | BB:{f(m5_bb_lo, '.3f')}-{f(m5_bb_hi, '.3f')}"
+    )
+    print(
+        f"      MACD:{f(m5_macd_val, '.4f')} Hist:{f(m5_macd_hist, '.4f')} ATR:{f(m5_atr, '.1f', 100)}p"
+    )
+    print(
+        f"  M1: RSI:{f(m1_rsi)} Stoch:{f(m1_stoch_k, '.0f')}/{f(m1_stoch_d, '.0f')} Mom:{f(m1_mom, '.1f', 100)}p Vol:{vol_ratio:.1f}x{vol_tag}"
+    )
     print(f"  N-Wave: {nwave}{ema_tag}")
     print(f"  >>> SIGNAL: {signal} - {reason}")
     if signal != "WAIT":
         if "SHORT" in signal:
             sl_dist = 10
             tp_dist = 15
-            print(f"      Entry zone: {price:.3f} | SL: {price + sl_dist/100:.3f} (+{sl_dist}p) | TP: {price - tp_dist/100:.3f} (-{tp_dist}p)")
+            print(
+                f"      Entry zone: {price:.3f} | SL: {price + sl_dist/100:.3f} (+{sl_dist}p) | TP: {price - tp_dist/100:.3f} (-{tp_dist}p)"
+            )
         else:
             sl_dist = 10
             tp_dist = 15
-            print(f"      Entry zone: {price:.3f} | SL: {price - sl_dist/100:.3f} (-{sl_dist}p) | TP: {price + tp_dist/100:.3f} (+{tp_dist}p)")
-        print(f"      NOTE: FOMC+BOJ today - SIZE 50% REDUCED")
+            print(
+                f"      Entry zone: {price:.3f} | SL: {price - sl_dist/100:.3f} (-{sl_dist}p) | TP: {price + tp_dist/100:.3f} (+{tp_dist}p)"
+            )
+        print("      NOTE: FOMC+BOJ today - SIZE 50% REDUCED")
     print(f"{'='*72}")
+
 
 def main():
     print("=" * 72)
@@ -431,6 +480,7 @@ def main():
             time.sleep(12)
 
     print("\n\n=== ANALYSIS COMPLETE (15 cycles) ===")
+
 
 if __name__ == "__main__":
     main()

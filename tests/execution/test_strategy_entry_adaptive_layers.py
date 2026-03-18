@@ -4,9 +4,18 @@ import execution.strategy_entry as strategy_entry
 
 
 def test_apply_participation_alloc_trims_and_boosts_probability(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -45,9 +54,18 @@ def test_apply_participation_alloc_trims_and_boosts_probability(monkeypatch) -> 
 def test_apply_participation_alloc_trims_units_and_lowers_probability_for_loser_lane(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -90,10 +108,21 @@ def test_apply_participation_alloc_trims_units_and_lowers_probability_for_loser_
     assert thesis["participation_alloc"]["action"] == "trim_units"
 
 
-def test_apply_participation_alloc_uses_max_probability_cut_when_present(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+def test_apply_participation_alloc_uses_max_probability_cut_when_present(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -134,10 +163,21 @@ def test_apply_participation_alloc_uses_max_probability_cut_when_present(monkeyp
     assert thesis["participation_alloc"]["action"] == "trim_units"
 
 
-def test_apply_participation_alloc_boosts_units_for_explicit_boost_signal(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+def test_apply_participation_alloc_boosts_units_for_explicit_boost_signal(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -180,11 +220,27 @@ def test_apply_participation_alloc_boosts_units_for_explicit_boost_signal(monkey
     assert thesis["participation_alloc"]["action"] == "boost_participation"
 
 
-def test_apply_participation_alloc_allows_higher_explicit_boost_cap(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.18, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX", 0.10, raising=False)
+def test_apply_participation_alloc_allows_higher_explicit_boost_cap(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.18, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX",
+        0.10,
+        raising=False,
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -225,10 +281,21 @@ def test_apply_participation_alloc_allows_higher_explicit_boost_cap(monkeypatch)
     assert payload["reason"] == "boost_participation"
 
 
-def test_apply_participation_alloc_does_not_boost_units_without_explicit_signal(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"micro"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+def test_apply_participation_alloc_does_not_boost_units_without_explicit_signal(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"micro"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_participation_profile",
@@ -269,14 +336,27 @@ def test_apply_participation_alloc_does_not_boost_units_without_explicit_signal(
     assert thesis["participation_alloc"]["lot_multiplier"] == 1.0
 
 
-def test_apply_participation_alloc_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+def test_apply_participation_alloc_passes_entry_thesis_for_setup_override(
+    monkeypatch,
+) -> None:
     captured: dict = {}
 
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_POCKETS", {"scalp"}, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry,
+        "_STRATEGY_PARTICIPATION_ALLOC_POCKETS",
+        {"scalp"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.12, raising=False
+    )
 
-    def _fake_load_participation_profile(strategy_tag, pocket, *, path=None, ttl_sec=None, entry_thesis=None):
+    def _fake_load_participation_profile(
+        strategy_tag, pocket, *, path=None, ttl_sec=None, entry_thesis=None
+    ):
         captured["strategy_tag"] = strategy_tag
         captured["pocket"] = pocket
         captured["entry_thesis"] = dict(entry_thesis or {})
@@ -328,16 +408,22 @@ def test_apply_participation_alloc_passes_entry_thesis_for_setup_override(monkey
 
     assert captured["strategy_tag"] == "RangeFader-sell-fade"
     assert captured["pocket"] == "scalp"
-    assert captured["entry_thesis"]["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
+    assert captured["entry_thesis"]["setup_fingerprint"].startswith(
+        "RangeFader-sell-fade|short|trend_long|tight_fast|"
+    )
     assert units == -84
     assert prob == 0.58
     assert isinstance(payload, dict)
     assert payload["setup_override"]["match_dimension"] == "setup_fingerprint"
-    assert thesis["participation_alloc"]["setup_override"]["flow_regime"] == "trend_long"
+    assert (
+        thesis["participation_alloc"]["setup_override"]["flow_regime"] == "trend_long"
+    )
 
 
 def test_inject_market_context_records_slow_market_snapshot(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_MARKET_CONTEXT_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_MARKET_CONTEXT_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry.market_context,
         "current_context",
@@ -375,7 +461,9 @@ def test_inject_market_context_records_slow_market_snapshot(monkeypatch) -> None
 
 
 def test_apply_auto_canary_caps_units_and_probability(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_AUTO_CANARY_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_AUTO_CANARY_ENABLED", True, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry.auto_canary,
         "current_override",
@@ -409,7 +497,9 @@ def test_apply_auto_canary_caps_units_and_probability(monkeypatch) -> None:
 def test_apply_auto_canary_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
     captured: dict = {}
 
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_AUTO_CANARY_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_AUTO_CANARY_ENABLED", True, raising=False
+    )
 
     def _fake_current_override(strategy_tag, *, entry_thesis=None):
         captured["strategy_tag"] = strategy_tag
@@ -451,18 +541,30 @@ def test_apply_auto_canary_passes_entry_thesis_for_setup_override(monkeypatch) -
     )
 
     assert captured["strategy_tag"] == "RangeFader-sell-fade"
-    assert captured["entry_thesis"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert (
+        captured["entry_thesis"]["setup_fingerprint"]
+        == "RangeFader|short|sell-fade|trend_long|p2"
+    )
     assert units == -81
     assert prob == 0.59
     assert isinstance(payload, dict)
     assert payload["setup_override"]["match_dimension"] == "setup_fingerprint"
-    assert thesis["auto_canary"]["setup_override"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert (
+        thesis["auto_canary"]["setup_override"]["setup_fingerprint"]
+        == "RangeFader|short|sell-fade|trend_long|p2"
+    )
 
 
 def test_apply_dynamic_alloc_trim_skips_stale_profile(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"micro"}, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"micro"}, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_strategy_profile",
@@ -489,14 +591,24 @@ def test_apply_dynamic_alloc_trim_skips_stale_profile(monkeypatch) -> None:
     assert "dynamic_alloc" not in thesis
 
 
-def test_apply_dynamic_alloc_trim_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+def test_apply_dynamic_alloc_trim_passes_entry_thesis_for_setup_override(
+    monkeypatch,
+) -> None:
     captured: dict = {}
 
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False
+    )
 
-    def _fake_load_strategy_profile(strategy_tag, pocket, *, entry_thesis=None, path=None, ttl_sec=None):
+    def _fake_load_strategy_profile(
+        strategy_tag, pocket, *, entry_thesis=None, path=None, ttl_sec=None
+    ):
         captured["strategy_tag"] = strategy_tag
         captured["pocket"] = pocket
         captured["entry_thesis"] = dict(entry_thesis or {})
@@ -539,16 +651,30 @@ def test_apply_dynamic_alloc_trim_passes_entry_thesis_for_setup_override(monkeyp
 
     assert captured["strategy_tag"] == "RangeFader-sell-fade"
     assert captured["pocket"] == "scalp"
-    assert captured["entry_thesis"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert (
+        captured["entry_thesis"]["setup_fingerprint"]
+        == "RangeFader|short|sell-fade|trend_long|p2"
+    )
     assert units == -58
     assert reason is None
-    assert thesis["dynamic_alloc"]["setup_override"]["match_dimension"] == "setup_fingerprint"
+    assert (
+        thesis["dynamic_alloc"]["setup_override"]["match_dimension"]
+        == "setup_fingerprint"
+    )
 
 
-def test_apply_dynamic_alloc_trim_keeps_strategy_level_trim_when_setup_override_is_missing(monkeypatch) -> None:
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False)
-    monkeypatch.setattr(strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False)
+def test_apply_dynamic_alloc_trim_keeps_strategy_level_trim_when_setup_override_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_ENABLED", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True, raising=False
+    )
+    monkeypatch.setattr(
+        strategy_entry, "_STRATEGY_DYNAMIC_ALLOC_POCKETS", {"scalp"}, raising=False
+    )
     monkeypatch.setattr(
         strategy_entry,
         "load_strategy_profile",
@@ -618,14 +744,22 @@ def test_inject_live_setup_context_records_flow_regime_and_fingerprint() -> None
     assert payload["gap_bucket"] == "up_strong"
     assert thesis["flow_regime"] == "trend_long"
     assert thesis["microstructure_bucket"] == "tight_fast"
-    assert thesis["setup_fingerprint"].startswith("RangeFader-sell-fade|short|trend_long|tight_fast|")
-    assert thesis["live_setup_context"]["setup_fingerprint"] == thesis["setup_fingerprint"]
+    assert thesis["setup_fingerprint"].startswith(
+        "RangeFader-sell-fade|short|trend_long|tight_fast|"
+    )
+    assert (
+        thesis["live_setup_context"]["setup_fingerprint"] == thesis["setup_fingerprint"]
+    )
 
 
-def test_apply_strategy_feedback_passes_entry_thesis_for_setup_override(monkeypatch) -> None:
+def test_apply_strategy_feedback_passes_entry_thesis_for_setup_override(
+    monkeypatch,
+) -> None:
     captured: dict = {}
 
-    def _fake_current_advice(strategy_tag, *, pocket=None, side=None, entry_thesis=None):
+    def _fake_current_advice(
+        strategy_tag, *, pocket=None, side=None, entry_thesis=None
+    ):
         captured["strategy_tag"] = strategy_tag
         captured["pocket"] = pocket
         captured["side"] = side
@@ -641,7 +775,12 @@ def test_apply_strategy_feedback_passes_entry_thesis_for_setup_override(monkeypa
             },
         }
 
-    monkeypatch.setattr(strategy_entry.strategy_feedback, "current_advice", _fake_current_advice, raising=False)
+    monkeypatch.setattr(
+        strategy_entry.strategy_feedback,
+        "current_advice",
+        _fake_current_advice,
+        raising=False,
+    )
 
     thesis = {
         "setup_fingerprint": "RangeFader|short|sell-fade|trend_long|p2",
@@ -650,20 +789,25 @@ def test_apply_strategy_feedback_passes_entry_thesis_for_setup_override(monkeypa
             "microstructure_bucket": "tight_fast",
         },
     }
-    units, probability, sl_price, tp_price, applied = strategy_entry._apply_strategy_feedback(
-        "RangeFader-sell-fade",
-        pocket="scalp",
-        units=-100,
-        entry_probability=0.5,
-        entry_price=158.0,
-        sl_price=158.2,
-        tp_price=157.7,
-        entry_thesis=thesis,
+    units, probability, sl_price, tp_price, applied = (
+        strategy_entry._apply_strategy_feedback(
+            "RangeFader-sell-fade",
+            pocket="scalp",
+            units=-100,
+            entry_probability=0.5,
+            entry_price=158.0,
+            sl_price=158.2,
+            tp_price=157.7,
+            entry_thesis=thesis,
+        )
     )
 
     assert captured["strategy_tag"] == "RangeFader-sell-fade"
     assert captured["side"] == "short"
-    assert captured["entry_thesis"]["setup_fingerprint"] == "RangeFader|short|sell-fade|trend_long|p2"
+    assert (
+        captured["entry_thesis"]["setup_fingerprint"]
+        == "RangeFader|short|sell-fade|trend_long|p2"
+    )
     assert units == -75
     assert probability == 0.4
     assert sl_price == 158.2

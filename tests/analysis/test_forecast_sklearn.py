@@ -94,8 +94,12 @@ def test_compute_feature_frame_trendline_features_follow_trend() -> None:
 
     assert float(up_last["trend_slope_pips_20"]) > 0.0
     assert float(down_last["trend_slope_pips_20"]) < 0.0
-    assert float(up_last["breakout_up_pips_20"]) > float(down_last["breakout_up_pips_20"])
-    assert float(down_last["breakout_down_pips_20"]) > float(up_last["breakout_down_pips_20"])
+    assert float(up_last["breakout_up_pips_20"]) > float(
+        down_last["breakout_up_pips_20"]
+    )
+    assert float(down_last["breakout_down_pips_20"]) > float(
+        up_last["breakout_down_pips_20"]
+    )
 
 
 def test_build_direction_dataset_shapes() -> None:

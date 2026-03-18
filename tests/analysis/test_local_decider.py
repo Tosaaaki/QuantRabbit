@@ -56,7 +56,9 @@ def test_heuristic_decision_prefers_trend_when_forecast_is_directional() -> None
     out = heuristic_decision(payload)
     forecast = out.get("forecast_bias")
     assert isinstance(forecast, dict)
-    assert float(forecast.get("trend_strength") or 0.0) >= float(forecast.get("range_pressure") or 0.0)
+    assert float(forecast.get("trend_strength") or 0.0) >= float(
+        forecast.get("range_pressure") or 0.0
+    )
     assert out["ranked_strategies"][0] in {
         "H1Momentum",
         "TrendMA",
@@ -88,7 +90,9 @@ def test_heuristic_decision_prefers_reversion_when_range_pressure_is_high() -> N
     out = heuristic_decision(payload)
     forecast = out.get("forecast_bias")
     assert isinstance(forecast, dict)
-    assert float(forecast.get("range_pressure") or 0.0) >= float(forecast.get("trend_strength") or 0.0)
+    assert float(forecast.get("range_pressure") or 0.0) >= float(
+        forecast.get("trend_strength") or 0.0
+    )
     assert out["ranked_strategies"][0] in {
         "BB_RSI",
         "BB_RSI_Fast",

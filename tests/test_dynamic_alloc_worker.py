@@ -7,8 +7,14 @@ from scripts.dynamic_alloc_worker import compute_scores, normalize_strategy_key
 
 
 def test_normalize_strategy_key_strips_ephemeral_suffix() -> None:
-    assert normalize_strategy_key("scalp_ping_5s_b_live-l6ab7c614") == "scalp_ping_5s_b_live"
-    assert normalize_strategy_key("scalp_ping_5s_flow_live-fe90be38") == "scalp_ping_5s_flow_live"
+    assert (
+        normalize_strategy_key("scalp_ping_5s_b_live-l6ab7c614")
+        == "scalp_ping_5s_b_live"
+    )
+    assert (
+        normalize_strategy_key("scalp_ping_5s_flow_live-fe90be38")
+        == "scalp_ping_5s_flow_live"
+    )
     assert normalize_strategy_key("microranbcc01f5cc") == "MicroRangeBreak"
     assert normalize_strategy_key("microtre584b929c1") == "MicroTrendRetest-long"
     assert normalize_strategy_key("micropul9f1b2a3c") == "MicroPullbackEMA"
@@ -28,7 +34,9 @@ def test_compute_scores_aggregates_ephemeral_tags() -> None:
     assert strategy_scores["scalp_ping_5s_b_live"]["sum_pips"] == -0.9
 
 
-def test_compute_scores_prefers_lane_tag_from_entry_thesis_when_trade_rows_are_canonicalized() -> None:
+def test_compute_scores_prefers_lane_tag_from_entry_thesis_when_trade_rows_are_canonicalized() -> (
+    None
+):
     rows = [
         (
             "RangeFader",
@@ -64,11 +72,23 @@ def test_compute_scores_prefers_lane_tag_from_entry_thesis_when_trade_rows_are_c
 
 def test_compute_scores_stronger_loss_penalty_applies() -> None:
     bad_rows = [
-        (f"scalp_ping_5s_b_live-l{i:08x}", "scalp_fast", -2.0, f"2026-02-24T00:{i:02d}:00Z", "STOP_LOSS_ORDER")
+        (
+            f"scalp_ping_5s_b_live-l{i:08x}",
+            "scalp_fast",
+            -2.0,
+            f"2026-02-24T00:{i:02d}:00Z",
+            "STOP_LOSS_ORDER",
+        )
         for i in range(60)
     ]
     good_rows = [
-        ("MicroPullbackEMA", "micro", 2.5, f"2026-02-24T01:{i:02d}:00Z", "TAKE_PROFIT_ORDER")
+        (
+            "MicroPullbackEMA",
+            "micro",
+            2.5,
+            f"2026-02-24T01:{i:02d}:00Z",
+            "TAKE_PROFIT_ORDER",
+        )
         for i in range(60)
     ]
     strategy_scores, _ = compute_scores(bad_rows + good_rows, min_trades=24, pf_cap=2.0)
@@ -127,7 +147,9 @@ def test_compute_scores_emits_setup_override_for_fast_reactive_loser() -> None:
             "VwapRevertS",
             "scalp",
             -0.8,
-            (now - timedelta(minutes=2)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            (now - timedelta(minutes=2))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
             "STOP_LOSS_ORDER",
             -12.0,
             -1200,
@@ -139,7 +161,9 @@ def test_compute_scores_emits_setup_override_for_fast_reactive_loser() -> None:
             "VwapRevertS",
             "scalp",
             -0.6,
-            (now - timedelta(minutes=1)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            (now - timedelta(minutes=1))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
             "MARKET_ORDER_TRADE_CLOSE",
             -9.0,
             -1200,
@@ -179,7 +203,9 @@ def test_compute_scores_recent_cash_loser_does_not_get_boosted_by_good_pips() ->
                 "MicroLevelReactor",
                 "micro",
                 2.2,
-                (now - timedelta(minutes=47 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                (now - timedelta(minutes=47 - i))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z"),
                 "TAKE_PROFIT_ORDER",
                 -6.0,
                 1400,
@@ -221,7 +247,9 @@ def test_compute_scores_caps_size_when_margin_closeout_rate_is_high() -> None:
     assert prof["lot_multiplier"] <= 0.5
 
 
-def test_compute_scores_keeps_strong_winner_above_floor_despite_small_margin_closeout_noise() -> None:
+def test_compute_scores_keeps_strong_winner_above_floor_despite_small_margin_closeout_noise() -> (
+    None
+):
     rows = []
     for i in range(27):
         rows.append(
@@ -255,7 +283,9 @@ def test_compute_scores_keeps_strong_winner_above_floor_despite_small_margin_clo
     assert prof["lot_multiplier"] >= 0.85
 
 
-def test_compute_scores_caps_size_below_global_floor_when_market_close_losses_dominate() -> None:
+def test_compute_scores_caps_size_below_global_floor_when_market_close_losses_dominate() -> (
+    None
+):
     rows = []
     for i in range(72):
         rows.append(
@@ -354,7 +384,9 @@ def test_compute_scores_emits_setup_overrides_from_entry_thesis() -> None:
     assert loser_override["lot_multiplier"] < winner_override["lot_multiplier"]
 
 
-def test_compute_scores_emits_four_trade_setup_override_when_strategy_window_is_wider() -> None:
+def test_compute_scores_emits_four_trade_setup_override_when_strategy_window_is_wider() -> (
+    None
+):
     rows = []
     for i in range(4):
         rows.append(
@@ -531,7 +563,9 @@ def test_compute_scores_emits_low_sample_winner_relief_override() -> None:
                 "PrecisionLowVol",
                 "scalp",
                 -1.8,
-                (now - timedelta(minutes=6 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                (now - timedelta(minutes=6 - i))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z"),
                 "STOP_LOSS_ORDER",
                 -12.0,
                 1400,
@@ -545,7 +579,9 @@ def test_compute_scores_emits_low_sample_winner_relief_override() -> None:
             "PrecisionLowVol",
             "scalp",
             2.0,
-            (now - timedelta(minutes=1)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            (now - timedelta(minutes=1))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
             "TAKE_PROFIT_ORDER",
             1.92,
             1400,
@@ -586,7 +622,9 @@ def test_compute_scores_emits_two_trade_winner_relief_near_full_size() -> None:
                 "DroughtRevert",
                 "scalp",
                 -1.7,
-                (now - timedelta(minutes=8 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                (now - timedelta(minutes=8 - i))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z"),
                 "STOP_LOSS_ORDER",
                 -11.5,
                 1400,
@@ -601,7 +639,9 @@ def test_compute_scores_emits_two_trade_winner_relief_near_full_size() -> None:
                 "DroughtRevert",
                 "scalp",
                 2.3,
-                (now - timedelta(minutes=1 - i)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                (now - timedelta(minutes=1 - i))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z"),
                 "TAKE_PROFIT_ORDER",
                 2.24,
                 1400,

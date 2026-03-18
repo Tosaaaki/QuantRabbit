@@ -12,10 +12,13 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_FEEDS = (
     ("fed_press_all", "https://www.federalreserve.gov/feeds/press_all.xml", "fed"),
-    ("fed_press_monetary", "https://www.federalreserve.gov/feeds/press_monetary.xml", "fed"),
+    (
+        "fed_press_monetary",
+        "https://www.federalreserve.gov/feeds/press_monetary.xml",
+        "fed",
+    ),
     ("boj_whatsnew", "https://www.boj.or.jp/en/rss/whatsnew.xml", "boj"),
     ("boj_statistics", "https://www.boj.or.jp/en/rss/statistics.xml", "boj"),
 )
@@ -79,7 +82,9 @@ def _build_request(url: str) -> urllib.request.Request:
     headers = dict(DEFAULT_HEADERS)
     lowered = url.lower()
     if "federalreserve.gov" in lowered:
-        headers["Referer"] = "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+        headers["Referer"] = (
+            "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+        )
     elif "boj.or.jp" in lowered:
         headers["Referer"] = "https://www.boj.or.jp/en/"
     return urllib.request.Request(url, headers=headers)
@@ -96,7 +101,9 @@ def _fetch_bytes(
     last_exc: Exception | None = None
     for attempt in range(attempts):
         try:
-            with urllib.request.urlopen(_build_request(url), timeout=timeout_sec) as resp:
+            with urllib.request.urlopen(
+                _build_request(url), timeout=timeout_sec
+            ) as resp:
                 return resp.read()
         except Exception as exc:
             last_exc = exc
@@ -117,7 +124,9 @@ def _first_text(node: ET.Element, *paths: str) -> str:
 
 
 def _parse_published_at(node: ET.Element) -> str:
-    raw = _first_text(node, "pubDate", "updated", "published", "{http://www.w3.org/2005/Atom}updated")
+    raw = _first_text(
+        node, "pubDate", "updated", "published", "{http://www.w3.org/2005/Atom}updated"
+    )
     if not raw:
         return ""
     try:
@@ -193,7 +202,13 @@ def build_report(
     severity_value = 0
 
     for source_name, url, source_kind in DEFAULT_FEEDS:
-        source_row = {"name": source_name, "url": url, "kind": source_kind, "status": "ok", "item_count": 0}
+        source_row = {
+            "name": source_name,
+            "url": url,
+            "kind": source_kind,
+            "status": "ok",
+            "item_count": 0,
+        }
         try:
             payload = _fetch_bytes(url, timeout_sec=float(timeout_sec))
             items = _iter_items(payload)
@@ -207,7 +222,9 @@ def build_report(
         for item in items:
             published_at = _parse_published_at(item)
             if published_at:
-                published_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(timezone.utc)
+                published_dt = datetime.fromisoformat(
+                    published_at.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
                 if published_dt < cutoff:
                     continue
                 age_hours = max(0.0, (now_utc - published_dt).total_seconds() / 3600.0)
@@ -240,13 +257,17 @@ def build_report(
 
     headlines.sort(
         key=lambda item: (
-            {"high": 3, "medium": 2, "low": 1, "none": 0}.get(str(item.get("severity") or "none"), 0),
+            {"high": 3, "medium": 2, "low": 1, "none": 0}.get(
+                str(item.get("severity") or "none"), 0
+            ),
             -float(item.get("age_hours") or 9999.0),
             str(item.get("title") or ""),
         ),
         reverse=True,
     )
-    severity_label = {0: "none", 1: "low", 2: "medium", 3: "high"}.get(severity_value, "none")
+    severity_label = {0: "none", 1: "low", 2: "medium", 3: "high"}.get(
+        severity_value, "none"
+    )
     caution_window_active = bool(severity_value >= 2 and headlines)
     if bias_score >= 1:
         usd_jpy_bias = "up"
@@ -258,7 +279,9 @@ def build_report(
         "generated_at": now_utc.isoformat(),
         "lookback_hours": int(lookback_hours),
         "feed_count": len(DEFAULT_FEEDS),
-        "source_error_count": sum(1 for row in source_rows if row.get("status") == "error"),
+        "source_error_count": sum(
+            1 for row in source_rows if row.get("status") == "error"
+        ),
         "event_severity": severity_label,
         "caution_window_active": caution_window_active,
         "usd_jpy_bias": usd_jpy_bias,
@@ -269,7 +292,9 @@ def build_report(
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Fetch slow macro/news context from official feeds")
+    ap = argparse.ArgumentParser(
+        description="Fetch slow macro/news context from official feeds"
+    )
     ap.add_argument("--output", default="logs/macro_news_context.json")
     ap.add_argument("--history", default="logs/macro_news_context_history.jsonl")
     ap.add_argument("--lookback-hours", type=int, default=72)

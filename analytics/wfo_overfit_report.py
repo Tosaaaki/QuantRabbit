@@ -21,7 +21,6 @@ import sqlite3
 from statistics import NormalDist
 from typing import Any
 
-
 _ND = NormalDist()
 _EULER_GAMMA = 0.5772156649015329
 
@@ -75,7 +74,7 @@ def _sample_moments(values: list[float]) -> tuple[float, float, float, float]:
         return mean, 0.0, 0.0, 3.0
     m3 = sum(v * v * v for v in centered) / n
     m4 = sum(v * v * v * v for v in centered) / n
-    skew = m3 / (m2 ** 1.5)
+    skew = m3 / (m2**1.5)
     kurt = m4 / (m2 * m2)
     # Use sample std for Sharpe stability.
     sample_var = sum(v * v for v in centered) / (n - 1)
@@ -149,7 +148,9 @@ def _deflated_sharpe_ratio(
     else:
         p1 = max(1e-9, min(1 - 1e-9, 1.0 - 1.0 / n_trials))
         p2 = max(1e-9, min(1 - 1e-9, 1.0 - 1.0 / (n_trials * math.e)))
-        sr_star = std_sr * ((1.0 - _EULER_GAMMA) * _ND.inv_cdf(p1) + _EULER_GAMMA * _ND.inv_cdf(p2))
+        sr_star = std_sr * (
+            (1.0 - _EULER_GAMMA) * _ND.inv_cdf(p1) + _EULER_GAMMA * _ND.inv_cdf(p2)
+        )
     dsr = _probabilistic_sharpe_ratio(
         sharpe=sharpe,
         sr_ref=sr_star,
@@ -286,11 +287,16 @@ def build_report(
         candidates = [
             name
             for name, vals in train_by_strategy.items()
-            if len(vals) >= min_train_trades and len(test_by_strategy.get(name, [])) >= min_test_trades
+            if len(vals) >= min_train_trades
+            and len(test_by_strategy.get(name, [])) >= min_test_trades
         ]
         if len(candidates) >= 2:
-            train_stats = {name: _trade_stats(train_by_strategy[name]) for name in candidates}
-            test_stats = {name: _trade_stats(test_by_strategy[name]) for name in candidates}
+            train_stats = {
+                name: _trade_stats(train_by_strategy[name]) for name in candidates
+            }
+            test_stats = {
+                name: _trade_stats(test_by_strategy[name]) for name in candidates
+            }
             ranked_train = sorted(
                 candidates,
                 key=lambda name: _metric_score(train_stats[name], metric),
@@ -455,7 +461,9 @@ def main() -> int:
     out_json = Path(args.out_json) if args.out_json else None
     if out_json is not None:
         out_json.parent.mkdir(parents=True, exist_ok=True)
-        out_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_json.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     out_md = Path(args.out_md) if args.out_md else None
     if out_md is not None:

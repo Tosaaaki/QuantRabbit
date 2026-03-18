@@ -1,4 +1,5 @@
 """Export ops insights (execution quality, market state, exposure, health) to BigQuery."""
+
 from __future__ import annotations
 
 import argparse
@@ -95,7 +96,9 @@ def _ensure_table(
         if missing:
             table.schema = list(table.schema) + missing
             client.update_table(table, ["schema"])
-            logging.info("[BQ] table %s schema updated (+%d)", table_ref.path, len(missing))
+            logging.info(
+                "[BQ] table %s schema updated (+%d)", table_ref.path, len(missing)
+            )
         return
     except gexc.NotFound:
         pass
@@ -149,7 +152,9 @@ def _range_stats(con: sqlite3.Connection, since_ts: str) -> Dict[str, Any]:
                     except Exception:
                         pass
     if not values and DEFAULT_RANGE_FALLBACK_MIN > 0:
-        fallback_ts = (_utcnow() - timedelta(minutes=DEFAULT_RANGE_FALLBACK_MIN)).isoformat()
+        fallback_ts = (
+            _utcnow() - timedelta(minutes=DEFAULT_RANGE_FALLBACK_MIN)
+        ).isoformat()
         rows = _fetch_rows(fallback_ts)
         values = []
         scores = []
@@ -240,7 +245,9 @@ def _trend_from_candles(candles: List[Dict[str, Any]]) -> Optional[Dict[str, Any
     if not candles or len(candles) < 5:
         return None
     candles = sorted(candles, key=lambda r: r.get("ts") or "")
-    closes = [c.get("close") for c in candles if isinstance(c.get("close"), (int, float))]
+    closes = [
+        c.get("close") for c in candles if isinstance(c.get("close"), (int, float))
+    ]
     highs = [c.get("high") for c in candles if isinstance(c.get("high"), (int, float))]
     lows = [c.get("low") for c in candles if isinstance(c.get("low"), (int, float))]
     if not closes or not highs or not lows:
@@ -282,13 +289,26 @@ def _build_execution_quality_rows(
         return []
     rows: List[Dict[str, Any]] = []
     with sqlite3.connect(str(METRICS_DB)) as con:
-        spread_p95 = _percentile(_metric_values(con, "decision_spread_pips", since_ts), 0.95)
-        latency_p95 = _percentile(_metric_values(con, "decision_latency_ms", since_ts), 0.95)
+        spread_p95 = _percentile(
+            _metric_values(con, "decision_spread_pips", since_ts), 0.95
+        )
+        latency_p95 = _percentile(
+            _metric_values(con, "decision_latency_ms", since_ts), 0.95
+        )
         lag_p95 = _percentile(_metric_values(con, "data_lag_ms", since_ts), 0.95)
 
     pocket_stats = _orders_stats(since_ts)
     if not pocket_stats:
-        pocket_stats = {"all": {"orders_total": 0, "orders_failed": 0, "orders_reject_like": 0, "reject_rate": 0.0, "reject_like_rate": 0.0, "pocket": "all"}}
+        pocket_stats = {
+            "all": {
+                "orders_total": 0,
+                "orders_failed": 0,
+                "orders_reject_like": 0,
+                "reject_rate": 0.0,
+                "reject_like_rate": 0.0,
+                "pocket": "all",
+            }
+        }
 
     for pocket_key, data in pocket_stats.items():
         rows.append(
@@ -325,6 +345,7 @@ def _build_market_state_row(
             range_score = stats.get("score_avg")
             range_reason = stats.get("reason")
     trend = _trend_snapshot()
+
     def _get_tf(tf: str) -> Dict[str, Any]:
         item = trend.get(tf) if isinstance(trend, dict) else None
         if not isinstance(item, dict):
@@ -416,10 +437,16 @@ def _build_health_row(generated_at: str) -> Optional[Dict[str, Any]]:
         "decision_latency_ms": snap.get("decision_latency_ms"),
         "disk_used_pct": snap.get("disk_used_pct"),
         "disk_free_mb": snap.get("disk_free_mb"),
-        "service_active_json": json.dumps(snap.get("service_active") or {}, ensure_ascii=True),
-        "orders_status_1h_json": json.dumps(snap.get("orders_status_1h") or [], ensure_ascii=True),
+        "service_active_json": json.dumps(
+            snap.get("service_active") or {}, ensure_ascii=True
+        ),
+        "orders_status_1h_json": json.dumps(
+            snap.get("orders_status_1h") or [], ensure_ascii=True
+        ),
         "db_mtime_json": json.dumps(snap.get("db_mtime") or {}, ensure_ascii=True),
-        "db_size_bytes_json": json.dumps(snap.get("db_size_bytes") or {}, ensure_ascii=True),
+        "db_size_bytes_json": json.dumps(
+            snap.get("db_size_bytes") or {}, ensure_ascii=True
+        ),
         "load_avg_json": json.dumps(snap.get("load_avg") or [], ensure_ascii=True),
     }
 
@@ -453,7 +480,9 @@ WHERE generated_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @retention HOUR
     client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("retention", "INT64", retention_hours)]
+            query_parameters=[
+                bigquery.ScalarQueryParameter("retention", "INT64", retention_hours)
+            ]
         ),
     ).result()
 

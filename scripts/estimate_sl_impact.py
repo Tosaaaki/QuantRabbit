@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-
 PIP_DEFAULT = 0.01  # USDJPY
 
 
@@ -135,9 +134,14 @@ def _load_closed_trades(
             pocket_text = str(pocket_val or "unknown").strip().lower() or "unknown"
             if pocket and pocket_text != pocket.strip().lower():
                 continue
-            tag = (strategy_tag or strategy) if (strategy_tag or strategy) else "unknown"
+            tag = (
+                (strategy_tag or strategy) if (strategy_tag or strategy) else "unknown"
+            )
             tag_text = str(tag).strip() or "unknown"
-            if strategy_contains and strategy_contains.strip().lower() not in tag_text.lower():
+            if (
+                strategy_contains
+                and strategy_contains.strip().lower() not in tag_text.lower()
+            ):
                 continue
             et = _parse_iso_to_epoch(str(entry_time))
             ct = _parse_iso_to_epoch(str(close_time))
@@ -217,7 +221,10 @@ def _group_key(metrics: TradeMetrics, group_by: str) -> tuple[str, ...]:
     if group_by == "pocket":
         return (metrics.trade.pocket or "unknown",)
     if group_by in {"pocket_strategy", "pocket_strategy_tag"}:
-        return (metrics.trade.pocket or "unknown", metrics.trade.strategy_tag or "unknown")
+        return (
+            metrics.trade.pocket or "unknown",
+            metrics.trade.strategy_tag or "unknown",
+        )
     return ("ALL",)
 
 
@@ -236,7 +243,9 @@ def _iter_metrics_for_tickfile(
     selected = [
         t
         for t in trades
-        if t.ticket_id not in seen_ticket_ids and t.entry_ts >= start and t.close_ts <= end
+        if t.ticket_id not in seen_ticket_ids
+        and t.entry_ts >= start
+        and t.close_ts <= end
     ]
     if not selected:
         return []
@@ -289,7 +298,9 @@ def _print_group_summary(
     for th in sl_pips:
         stopped = [m for m in items if m.mae_pips >= th - 1e-9]
         winners_stopped = [m for m in winners if m.mae_pips >= th - 1e-9]
-        new_pnl = sum((-th if m.mae_pips >= th - 1e-9 else m.trade.pl_pips) for m in items)
+        new_pnl = sum(
+            (-th if m.mae_pips >= th - 1e-9 else m.trade.pl_pips) for m in items
+        )
         stop_rate = (len(stopped) / len(items)) if items else 0.0
         win_stop_rate = (len(winners_stopped) / len(winners)) if winners else 0.0
         print(
@@ -320,8 +331,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         default="3,4,5,6,8,10,12,15,20",
         help="Comma-separated SL thresholds in pips to simulate.",
     )
-    parser.add_argument("--pocket", default=None, help="Filter pocket (e.g. scalp, macro, micro)")
-    parser.add_argument("--strategy-contains", default=None, help="Filter strategy_tag contains token")
+    parser.add_argument(
+        "--pocket", default=None, help="Filter pocket (e.g. scalp, macro, micro)"
+    )
+    parser.add_argument(
+        "--strategy-contains", default=None, help="Filter strategy_tag contains token"
+    )
     parser.add_argument(
         "--group-by",
         default="pocket",
@@ -392,4 +407,3 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

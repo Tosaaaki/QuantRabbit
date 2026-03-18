@@ -24,7 +24,9 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate policy shadow diff (LLM disabled).")
+    ap = argparse.ArgumentParser(
+        description="Generate policy shadow diff (LLM disabled)."
+    )
     ap.add_argument("--project", default=None)
     ap.add_argument("--dataset", default=None)
     ap.add_argument("--table", default=None)
@@ -36,7 +38,12 @@ def main() -> None:
     args = ap.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-    if os.getenv("POLICY_SHADOW_ENABLED", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+    if os.getenv("POLICY_SHADOW_ENABLED", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
         logging.info("[POLICY_SHADOW] disabled (POLICY_SHADOW_ENABLED=0)")
         return
 
@@ -45,7 +52,9 @@ def main() -> None:
         dataset_id=args.dataset or os.getenv("BQ_DATASET", "quantrabbit"),
         trades_table=args.table or os.getenv("BQ_TRADES_TABLE", "trades_raw"),
     )
-    rows = client.fetch_rows(lookback_days=args.lookback_days, min_trades=args.min_trades)
+    rows = client.fetch_rows(
+        lookback_days=args.lookback_days, min_trades=args.min_trades
+    )
     summary = summarize_policy_rows(rows)
 
     payload = normalize_policy_diff(

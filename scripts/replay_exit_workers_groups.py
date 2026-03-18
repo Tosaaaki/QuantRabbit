@@ -5,6 +5,7 @@
 This matches the exit_worker-based replay pattern used for the replay scalp workers,
 while reusing each worker's replay entry logic to generate entry events.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,6 +33,7 @@ import scripts.replay_exit_workers as rew
 import scripts.replay_workers as rw
 
 PIP = 0.01
+
 
 def _optional_import(module_name: str):
     try:
@@ -114,7 +116,9 @@ for _worker_name, _spec in WORKER_SPECS.items():
 
 WORKER_TAGS = {name: str(spec["tag"]) for name, spec in _AVAILABLE_SPECS.items()}
 EXIT_MODULES = {name: spec["exit_module"] for name, spec in _AVAILABLE_SPECS.items()}
-EXIT_WORKER_CLASSES = {name: str(spec["exit_worker_class"]) for name, spec in _AVAILABLE_SPECS.items()}
+EXIT_WORKER_CLASSES = {
+    name: str(spec["exit_worker_class"]) for name, spec in _AVAILABLE_SPECS.items()
+}
 M1_FAMILY_WORKERS = {"trend_breakout", "pullback_continuation", "failed_break_reverse"}
 
 
@@ -274,7 +278,15 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
     if isinstance(payload, dict):
         trades = payload.get("trades")
         if trades is None:
-            for key in ("entries", "signals", "actions", "data", "record", "records", "entry"):
+            for key in (
+                "entries",
+                "signals",
+                "actions",
+                "data",
+                "record",
+                "records",
+                "entry",
+            ):
                 candidate = payload.get(key)
                 if candidate is not None:
                     if isinstance(candidate, dict):
@@ -312,10 +324,21 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
             continue
         entry_time = _first_present(
             tr,
-            ["entry_time", "open_time", "time", "ts", "timestamp", "created_at", "open_epoch", "epoch"],
+            [
+                "entry_time",
+                "open_time",
+                "time",
+                "ts",
+                "timestamp",
+                "created_at",
+                "open_epoch",
+                "epoch",
+            ],
         )
         direction = _first_present(tr, ["direction", "side", "action"])
-        entry_price = _first_present(tr, ["entry_price", "price", "open_price", "entry", "entry_px"])
+        entry_price = _first_present(
+            tr, ["entry_price", "price", "open_price", "entry", "entry_px"]
+        )
         if entry_time is None or direction is None:
             issues["missing_required"] += 1
             continue
@@ -340,7 +363,9 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
 
         tp_pips = None
         sl_pips = None
-        tp_price = _first_present(tr, ["tp_price", "tp_price_val", "take_profit_price", "take_profit"])
+        tp_price = _first_present(
+            tr, ["tp_price", "tp_price_val", "take_profit_price", "take_profit"]
+        )
         if tp_price is not None:
             tp_price_value = _safe_float_value(tp_price)
             if tp_price_value is not None:
@@ -348,14 +373,18 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
             else:
                 issues["invalid_tp_sl"] += 1
         else:
-            tp_pips_raw = _first_present(tr, ["tp_pips", "target_pips", "tp", "tp_distance"])
+            tp_pips_raw = _first_present(
+                tr, ["tp_pips", "target_pips", "tp", "tp_distance"]
+            )
             tp_pips_value = _safe_float_value(tp_pips_raw)
             if tp_pips_raw is not None and tp_pips_value is not None:
                 tp_pips = abs(tp_pips_value)
             elif tp_pips_raw is not None and tp_pips_value is None:
                 issues["invalid_tp_sl"] += 1
 
-        sl_price = _first_present(tr, ["sl_price", "sl_price_val", "stop_loss_price", "stop_loss"])
+        sl_price = _first_present(
+            tr, ["sl_price", "sl_price_val", "stop_loss_price", "stop_loss"]
+        )
         if sl_price is not None:
             sl_price_value = _safe_float_value(sl_price)
             if sl_price_value is not None:
@@ -381,7 +410,12 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
             issues["invalid_units"] += 1
             continue
 
-        strategy_tag = tr.get("strategy_tag") or tr.get("strategy") or tr.get("tag") or tr.get("name")
+        strategy_tag = (
+            tr.get("strategy_tag")
+            or tr.get("strategy")
+            or tr.get("tag")
+            or tr.get("name")
+        )
         entries.append(
             EntryEvent(
                 ts=parsed_time,
@@ -439,7 +473,9 @@ def _run_replay_workers(
             raise RuntimeError(f"replay function not found: {func_name}")
         result = getattr(rw, func_name)(ticks)
         rw.attach_replay_coverage(result, ticks=ticks, worker=worker)
-        out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return result
     finally:
         for key in list(os.environ.keys()):
@@ -566,12 +602,16 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
     spreads: List[float] = []
     mid_values: List[float] = []
     if not ticks:
-        return [], {"all": []}, {
-            "count": 0,
-            "spread_percentiles": {"q20": 0.0, "q80": 0.0},
-            "minute_rows": 0,
-            "counts": {"all": 0},
-        }
+        return (
+            [],
+            {"all": []},
+            {
+                "count": 0,
+                "spread_percentiles": {"q20": 0.0, "q80": 0.0},
+                "minute_rows": 0,
+                "counts": {"all": 0},
+            },
+        )
     for tick in ticks:
         ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
         if ts is None:
@@ -585,12 +625,16 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
             mid_values.append(0.0)
     total = len(times)
     if total == 0:
-        return [], {"all": []}, {
-            "count": 0,
-            "spread_percentiles": {"q20": 0.0, "q80": 0.0},
-            "minute_rows": 0,
-            "counts": {"all": 0},
-        }
+        return (
+            [],
+            {"all": []},
+            {
+                "count": 0,
+                "spread_percentiles": {"q20": 0.0, "q80": 0.0},
+                "minute_rows": 0,
+                "counts": {"all": 0},
+            },
+        )
 
     sorted_spreads = sorted(spreads)
     if sorted_spreads:
@@ -672,7 +716,9 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
         fallback_tick = first_tick_with_ts or ticks[0]
         minute_rows.append(
             {
-                "start": getattr(fallback_tick, "ts", times[0]).replace(second=0, microsecond=0),
+                "start": getattr(fallback_tick, "ts", times[0]).replace(
+                    second=0, microsecond=0
+                ),
                 "open": float(getattr(fallback_tick, "mid", 0.0)),
                 "high": float(getattr(fallback_tick, "mid", 0.0)),
                 "low": float(getattr(fallback_tick, "mid", 0.0)),
@@ -698,7 +744,9 @@ def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
             recent_deltas.append(delta_pips)
         if recent_ranges:
             avg_range = sum(recent_ranges) / len(recent_ranges)
-            avg_delta = sum(recent_deltas) / len(recent_deltas) if recent_deltas else avg_range
+            avg_delta = (
+                sum(recent_deltas) / len(recent_deltas) if recent_deltas else avg_range
+            )
             flags: Set[str] = set()
             if avg_range > 0:
                 if range_pips >= avg_range * 1.6:
@@ -806,7 +854,11 @@ def _filter_entries_for_scenario(
     scenario_flags: Dict[str, List[bool]],
 ) -> tuple[List[EntryEvent], Dict[str, int]]:
     if scenario == "all":
-        return list(entries), {"requested": len(entries), "applied": len(entries), "excluded": 0}
+        return list(entries), {
+            "requested": len(entries),
+            "applied": len(entries),
+            "excluded": 0,
+        }
     active = scenario_flags.get(scenario)
     if active is None or not times:
         return [], {"requested": len(entries), "applied": 0, "excluded": len(entries)}
@@ -818,7 +870,11 @@ def _filter_entries_for_scenario(
             excluded += 1
             continue
         selected.append(ent)
-    return selected, {"requested": len(entries), "applied": len(selected), "excluded": excluded}
+    return selected, {
+        "requested": len(entries),
+        "applied": len(selected),
+        "excluded": excluded,
+    }
 
 
 def _scenario_output_path(out_dir: Path, worker: str, mode: str, scenario: str) -> Path:
@@ -888,7 +944,9 @@ class GenericExitRunner:
         trades = self._filter_trades(trades)
         if hasattr(self.worker, "_states"):
             try:
-                active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
+                active_ids = {
+                    str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")
+                }
                 for tid in list(self.worker._states.keys()):  # type: ignore[attr-defined]
                     if tid not in active_ids:
                         self.worker._states.pop(tid, None)  # type: ignore[attr-defined]
@@ -971,7 +1029,9 @@ class GenericExitRunner:
                     "allow_negative": allow_negative,
                     "touch_count": touch_count,
                 }
-                kwargs = {k: v for k, v in candidate.items() if k in close_sig.parameters}
+                kwargs = {
+                    k: v for k, v in candidate.items() if k in close_sig.parameters
+                }
                 await close_fn(**kwargs)
             else:
                 self.broker.close_trade(trade_id, str(reason))
@@ -991,17 +1051,25 @@ class BasicM1FamilyExitRunner:
     def __init__(self, broker: rew.SimBroker) -> None:
         self._broker = broker
         self._states: dict[str, dict[str, float]] = {}
-        self._min_hold_sec = max(1.0, float(os.getenv("M1SCALP_EXIT_MIN_HOLD_SEC", "10") or 10.0))
+        self._min_hold_sec = max(
+            1.0, float(os.getenv("M1SCALP_EXIT_MIN_HOLD_SEC", "10") or 10.0)
+        )
         self._max_hold_sec = max(
             self._min_hold_sec + 1.0,
-            float(os.getenv("M1SCALP_EXIT_MAX_HOLD_SEC", str(12 * 60.0)) or (12 * 60.0)),
+            float(
+                os.getenv("M1SCALP_EXIT_MAX_HOLD_SEC", str(12 * 60.0)) or (12 * 60.0)
+            ),
         )
         self._max_adverse_pips = max(
             0.0,
             float(os.getenv("M1SCALP_EXIT_MAX_ADVERSE_PIPS", "6.0") or 6.0),
         )
-        self._profit_take = max(0.1, float(os.getenv("M1SCALP_EXIT_PROFIT_TAKE_PIPS", "2.2") or 2.2))
-        self._trail_start = max(0.1, float(os.getenv("M1SCALP_EXIT_TRAIL_START_PIPS", "2.8") or 2.8))
+        self._profit_take = max(
+            0.1, float(os.getenv("M1SCALP_EXIT_PROFIT_TAKE_PIPS", "2.2") or 2.2)
+        )
+        self._trail_start = max(
+            0.1, float(os.getenv("M1SCALP_EXIT_TRAIL_START_PIPS", "2.8") or 2.8)
+        )
         self._trail_backoff = max(
             0.05,
             float(os.getenv("M1SCALP_EXIT_TRAIL_BACKOFF_PIPS", "0.9") or 0.9),
@@ -1010,7 +1078,9 @@ class BasicM1FamilyExitRunner:
             0.05,
             float(os.getenv("M1SCALP_EXIT_LOCK_BUFFER_PIPS", "0.5") or 0.5),
         )
-        self._loop_interval = max(0.1, float(os.getenv("M1SCALP_EXIT_LOOP_INTERVAL_SEC", "0.8") or 0.8))
+        self._loop_interval = max(
+            0.1, float(os.getenv("M1SCALP_EXIT_LOOP_INTERVAL_SEC", "0.8") or 0.8)
+        )
         self._last_eval = 0.0
 
     async def step(self, now: datetime) -> None:
@@ -1107,7 +1177,11 @@ def _simulate(
                 worker_obj = getattr(exit_mod, name)()
                 break
     if worker_obj is None:
-        runner = BasicM1FamilyExitRunner(broker) if worker in M1_FAMILY_WORKERS else NoopExitRunner()
+        runner = (
+            BasicM1FamilyExitRunner(broker)
+            if worker in M1_FAMILY_WORKERS
+            else NoopExitRunner()
+        )
     else:
         runner = GenericExitRunner(worker, exit_mod, worker_obj, broker)
 
@@ -1132,7 +1206,11 @@ def _simulate(
     entry_idx = 0
     total_entries = len(entries)
 
-    tick_iter = ticks_cache if ticks_cache is not None else rew._iter_ticks(ticks_path, "USD_JPY", start, end)
+    tick_iter = (
+        ticks_cache
+        if ticks_cache is not None
+        else rew._iter_ticks(ticks_path, "USD_JPY", start, end)
+    )
     for tick in tick_iter:
         tick_ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
         if tick_ts is None:
@@ -1207,21 +1285,36 @@ def _simulate(
         "summary": summary,
         "trades": broker.closed_trades,
     }
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return summary
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Exit-worker replay for S5/pullback groups.")
+    ap = argparse.ArgumentParser(
+        description="Exit-worker replay for S5/pullback groups."
+    )
     ap.add_argument("--ticks", required=True, type=Path)
     ap.add_argument("--workers", required=True, help="Comma separated worker names")
-    ap.add_argument("--out-dir", type=Path, default=Path("tmp/replay_exit_workers_groups"))
+    ap.add_argument(
+        "--out-dir", type=Path, default=Path("tmp/replay_exit_workers_groups")
+    )
     ap.add_argument("--no-hard-sl", action="store_true")
     ap.add_argument("--no-hard-tp", action="store_true")
     ap.add_argument("--exclude-end-of-replay", action="store_true")
     ap.add_argument("--tune", action="store_true")
-    ap.add_argument("--resample-sec", type=float, default=0.0, help="Optional downsample interval in seconds.")
-    ap.add_argument("--realistic", action="store_true", help="Apply realistic latency/slippage defaults.")
+    ap.add_argument(
+        "--resample-sec",
+        type=float,
+        default=0.0,
+        help="Optional downsample interval in seconds.",
+    )
+    ap.add_argument(
+        "--realistic",
+        action="store_true",
+        help="Apply realistic latency/slippage defaults.",
+    )
     ap.add_argument(
         "--scenarios",
         default="all",
@@ -1283,7 +1376,9 @@ def main() -> None:
     runnable_workers = [w for w in workers if w in WORKER_TAGS]
     skipped_workers = [w for w in workers if w not in WORKER_TAGS]
     if skipped_workers:
-        print(f"[replay_exit_workers_groups] skip unavailable workers: {','.join(skipped_workers)}")
+        print(
+            f"[replay_exit_workers_groups] skip unavailable workers: {','.join(skipped_workers)}"
+        )
     if not runnable_workers:
         available = ",".join(sorted(WORKER_TAGS.keys())) or "<none>"
         raise SystemExit(
@@ -1310,7 +1405,9 @@ def main() -> None:
         if closed:
             prefeed_h4.append(closed)
     scenario_names = _parse_scenarios(args.scenarios)
-    invalid_scenarios = [name for name in scenario_names if name not in SCENARIO_OPTIONS]
+    invalid_scenarios = [
+        name for name in scenario_names if name not in SCENARIO_OPTIONS
+    ]
     if invalid_scenarios:
         raise SystemExit(f"unknown scenario(s): {','.join(invalid_scenarios)}")
     tick_times, scenario_flags, scenario_meta = _build_tick_scenarios(replay_ticks)
@@ -1390,7 +1487,9 @@ def main() -> None:
                     times=tick_times,
                     scenario_flags=scenario_flags,
                 )
-                tuned_out = _scenario_output_path(args.out_dir, worker, "tuned", scenario)
+                tuned_out = _scenario_output_path(
+                    args.out_dir, worker, "tuned", scenario
+                )
                 tuned_summary = _simulate(
                     ticks_path=args.ticks,
                     ticks_cache=replay_ticks,
@@ -1425,7 +1524,9 @@ def main() -> None:
             results[worker]["tuned_scenarios"] = tuned_scenarios
 
     summary_path = args.out_dir / "summary_all.json"
-    summary_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(str(summary_path))
 
 

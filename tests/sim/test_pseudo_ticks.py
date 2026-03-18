@@ -34,7 +34,9 @@ def test_synth_from_candles_accepts_nanosecond_precision(tmp_path: Path) -> None
     }
     candles_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    sim_path, density_info = synth_from_candles(str(candles_path), str(out_path), SimCfg())
+    sim_path, density_info = synth_from_candles(
+        str(candles_path), str(out_path), SimCfg()
+    )
 
     assert sim_path == out_path
     assert out_path.exists()

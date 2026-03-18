@@ -7,7 +7,9 @@ from strategies.micro.momentum_burst import MomentumBurstMicro
 from workers.micro_runtime import worker as micro_runtime_worker
 
 
-def _synthetic_candles(*, start: float, drift: float, n: int = 40) -> list[dict[str, object]]:
+def _synthetic_candles(
+    *, start: float, drift: float, n: int = 40
+) -> list[dict[str, object]]:
     candles: list[dict[str, object]] = []
     close = start
     for idx in range(n):
@@ -90,7 +92,9 @@ def _h4_tiebreak_transition_long_fixture(
         "mtf": {
             "candles_m5": _synthetic_candles(start=158.10, drift=0.018),
             "candles_h1": _synthetic_candles(start=158.80, drift=-0.014),
-            "candles_h4": _synthetic_candles(start=157.90, drift=0.060 if h4_is_long else -0.060),
+            "candles_h4": _synthetic_candles(
+                start=157.90, drift=0.060 if h4_is_long else -0.060
+            ),
         },
         "mtf_context": {
             "m5": {"gap_pips": 3.6, "adx": 23.7, "direction": "long"},
@@ -219,7 +223,9 @@ def test_transition_long_keeps_rsi_floor_in_range_chop_context() -> None:
     assert signal is None
 
 
-def test_transition_long_keeps_rsi_floor_under_softly_contra_snapshot_without_projection_override() -> None:
+def test_transition_long_keeps_rsi_floor_under_softly_contra_snapshot_without_projection_override() -> (
+    None
+):
     module = importlib.reload(momentum_burst_module)
 
     signal = module.MomentumBurstMicro.check(
@@ -242,7 +248,9 @@ def test_transition_long_allows_projection_backed_mid_rsi_under_softly_contra_sn
         assert signal is not None
         assert signal["action"] == "OPEN_LONG"
     finally:
-        monkeypatch.delenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False)
+        monkeypatch.delenv(
+            "MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False
+        )
         importlib.reload(momentum_burst_module)
 
 
@@ -258,7 +266,9 @@ def test_transition_long_rejects_weak_projection_override_under_softly_contra_sn
         )
         assert signal is None
     finally:
-        monkeypatch.delenv("MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False)
+        monkeypatch.delenv(
+            "MOMENTUMBURST_TRANSITION_LONG_PROJECTION_SCORE_MIN", raising=False
+        )
         importlib.reload(momentum_burst_module)
 
 
@@ -291,7 +301,9 @@ def test_transition_long_preserves_legacy_m5_h1_support_when_h4_disagrees() -> N
     assert signal["action"] == "OPEN_LONG"
 
 
-def test_transition_long_keeps_h1_countertrend_block_when_h1_headwind_is_strong() -> None:
+def test_transition_long_keeps_h1_countertrend_block_when_h1_headwind_is_strong() -> (
+    None
+):
     signal = MomentumBurstMicro.check(
         _h4_tiebreak_transition_long_fixture(h1_gap_pips=-6.2, h1_adx=20.0)
     )
@@ -376,14 +388,14 @@ def test_transition_long_blocks_overbought_upper_wick_chase() -> None:
                 "gap_pips": 49.865,
                 "adx": 21.59,
             },
-                "candles": [
-                    {"high": 159.53, "low": 159.48, "close": 159.50},
-                    {"high": 159.55, "low": 159.50, "close": 159.53},
-                    {"high": 159.598, "low": 159.55, "close": 159.578},
-                    {"open": 159.568, "high": 159.604, "low": 159.560, "close": 159.592},
-                ],
-            }
-        )
+            "candles": [
+                {"high": 159.53, "low": 159.48, "close": 159.50},
+                {"high": 159.55, "low": 159.50, "close": 159.53},
+                {"high": 159.598, "low": 159.55, "close": 159.578},
+                {"open": 159.568, "high": 159.604, "low": 159.560, "close": 159.592},
+            ],
+        }
+    )
 
     assert signal is None
 
@@ -533,7 +545,9 @@ def test_long_rejects_overextended_indicator_state() -> None:
     assert signal is None
 
 
-def test_long_bull_run_allows_strong_followthrough_before_extreme_impulse_threshold() -> None:
+def test_long_bull_run_allows_strong_followthrough_before_extreme_impulse_threshold() -> (
+    None
+):
     signal = MomentumBurstMicro.check(
         {
             "close": 158.590,

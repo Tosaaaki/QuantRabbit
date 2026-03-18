@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CYCLE_SCRIPT = REPO_ROOT / "scripts" / "run_brain_autopdca_cycle.sh"
 
@@ -96,7 +95,14 @@ printf '[fake-stack] %s\n' "$*"
 """,
     )
 
-    return logs_dir, benchmark_script, apply_script, stack_script, env_profile, stack_calls
+    return (
+        logs_dir,
+        benchmark_script,
+        apply_script,
+        stack_script,
+        env_profile,
+        stack_calls,
+    )
 
 
 def _run_cycle(
@@ -156,7 +162,9 @@ def _run_cycle(
     return payload, stack_text
 
 
-def test_run_brain_autopdca_cycle_restarts_only_when_env_changes(tmp_path: Path) -> None:
+def test_run_brain_autopdca_cycle_restarts_only_when_env_changes(
+    tmp_path: Path,
+) -> None:
     changed_payload, changed_stack = _run_cycle(tmp_path / "changed", apply_change=True)
     assert changed_payload["status"] == "ok"
     assert changed_payload["apply_result"]["env_changed"] is True
@@ -171,7 +179,9 @@ def test_run_brain_autopdca_cycle_restarts_only_when_env_changes(tmp_path: Path)
     assert stable_stack == ""
 
 
-def test_run_brain_autopdca_cycle_respects_interval_without_force(tmp_path: Path) -> None:
+def test_run_brain_autopdca_cycle_respects_interval_without_force(
+    tmp_path: Path,
+) -> None:
     run_dir = tmp_path / "interval"
 
     first_payload, first_stack = _run_cycle(run_dir, apply_change=True, force=True)

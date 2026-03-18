@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FINDINGS_PATH = REPO_ROOT / "docs" / "TRADE_FINDINGS.md"
 ENTRY_HEADING_RE = re.compile(r"^#{2,3}\s+(\d{4}-\d{2}-\d{2}\b.*)$")
@@ -28,15 +27,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Review TRADE_FINDINGS entries before profitability/risk changes."
     )
-    parser.add_argument("--path", default=str(DEFAULT_FINDINGS_PATH), help="Path to TRADE_FINDINGS.md")
+    parser.add_argument(
+        "--path", default=str(DEFAULT_FINDINGS_PATH), help="Path to TRADE_FINDINGS.md"
+    )
     parser.add_argument(
         "--query",
         default="",
         help="Comma or space separated strategy/hypothesis/close_reason terms to search.",
     )
-    parser.add_argument("--limit", type=int, default=5, help="Maximum number of entries to print.")
-    parser.add_argument("--chars", type=int, default=220, help="Maximum characters per printed field.")
-    parser.add_argument("--json", action="store_true", help="Emit JSON instead of plain text.")
+    parser.add_argument(
+        "--limit", type=int, default=5, help="Maximum number of entries to print."
+    )
+    parser.add_argument(
+        "--chars", type=int, default=220, help="Maximum characters per printed field."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit JSON instead of plain text."
+    )
     return parser.parse_args(argv)
 
 
@@ -135,7 +142,9 @@ def _select_entries(entries: list[Entry], tokens: list[str], limit: int) -> list
     return [entry for _, entry in scored[: max(0, limit)]]
 
 
-def _build_output(source: Path, entries: list[Entry], query: str, max_chars: int) -> dict[str, Any]:
+def _build_output(
+    source: Path, entries: list[Entry], query: str, max_chars: int
+) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for entry in entries:
         items.append(
@@ -143,9 +152,15 @@ def _build_output(source: Path, entries: list[Entry], query: str, max_chars: int
                 "heading": entry.heading,
                 "verdict": _compact(_entry_field(entry, "Verdict"), max_chars),
                 "status": _compact(_entry_field(entry, "Status"), max_chars),
-                "hypothesis_key": _compact(_entry_field(entry, "Hypothesis Key"), max_chars),
-                "primary_loss_driver": _compact(_entry_field(entry, "Primary Loss Driver"), max_chars),
-                "mechanism_fired": _compact(_entry_field(entry, "Mechanism Fired"), max_chars),
+                "hypothesis_key": _compact(
+                    _entry_field(entry, "Hypothesis Key"), max_chars
+                ),
+                "primary_loss_driver": _compact(
+                    _entry_field(entry, "Primary Loss Driver"), max_chars
+                ),
+                "mechanism_fired": _compact(
+                    _entry_field(entry, "Mechanism Fired"), max_chars
+                ),
                 "do_not_repeat_unless": _compact(
                     _entry_field(entry, "Do Not Repeat Unless"),
                     max_chars,
@@ -162,8 +177,12 @@ def _build_output(source: Path, entries: list[Entry], query: str, max_chars: int
                     _entry_field(entry, "Escalation Trigger"),
                     max_chars,
                 ),
-                "why": _compact(_entry_field(entry, "Why", "Why/Hypothesis"), max_chars),
-                "hypothesis": _compact(_entry_field(entry, "Hypothesis", "Why/Hypothesis"), max_chars),
+                "why": _compact(
+                    _entry_field(entry, "Why", "Why/Hypothesis"), max_chars
+                ),
+                "hypothesis": _compact(
+                    _entry_field(entry, "Hypothesis", "Why/Hypothesis"), max_chars
+                ),
                 "observed": _compact(
                     _entry_field(entry, "Observed/Fact", "Observed", "Fact"),
                     max_chars,
@@ -172,7 +191,11 @@ def _build_output(source: Path, entries: list[Entry], query: str, max_chars: int
             }
         )
     return {
-        "source": str(source.relative_to(REPO_ROOT)) if source.is_relative_to(REPO_ROOT) else str(source),
+        "source": (
+            str(source.relative_to(REPO_ROOT))
+            if source.is_relative_to(REPO_ROOT)
+            else str(source)
+        ),
         "query": query,
         "checklist": [
             "Confirm the same hypothesis key or same decision surface was not already tried with the same primary loss driver.",

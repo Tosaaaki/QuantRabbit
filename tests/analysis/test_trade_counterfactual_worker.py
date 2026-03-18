@@ -71,7 +71,9 @@ def test_recommendations_block_when_negative_and_consistent(tmp_path: Path) -> N
 
     recs = worker._build_recommendations(rows, cfg)
     assert recs
-    block = next((r for r in recs if r["feature"] == "side" and r["bucket"] == "short"), None)
+    block = next(
+        (r for r in recs if r["feature"] == "side" and r["bucket"] == "short"), None
+    )
     assert block is not None
     assert block["action"] == "block"
     assert float(block["expected_uplift_pips"]) > 0.0
@@ -197,7 +199,10 @@ def test_recommendations_include_stuck_block_signal(tmp_path: Path) -> None:
         for i in range(8)
     ]
     recs = worker._build_recommendations(rows, cfg)
-    stuck_rec = next((rec for rec in recs if rec["feature"] == "stuck" and rec["bucket"] == "stuck"), None)
+    stuck_rec = next(
+        (rec for rec in recs if rec["feature"] == "stuck" and rec["bucket"] == "stuck"),
+        None,
+    )
     assert stuck_rec is not None
     assert stuck_rec["action"] == "block"
     assert float(stuck_rec["stuck_rate"]) >= 0.5
@@ -234,11 +239,12 @@ def test_policy_hints_emit_reentry_overrides(tmp_path: Path) -> None:
 
 
 def test_load_live_trade_rows_uses_close_reason(tmp_path: Path) -> None:
-    cfg = _cfg(tmp_path, lookback_days=5, include_live_trades=True, replay_json_globs=())
+    cfg = _cfg(
+        tmp_path, lookback_days=5, include_live_trades=True, replay_json_globs=()
+    )
     con = worker.sqlite3.connect(cfg.trades_db)
     try:
-        con.executescript(
-            """
+        con.executescript("""
             CREATE TABLE trades (
               ticket_id TEXT,
               client_order_id TEXT,
@@ -251,8 +257,7 @@ def test_load_live_trade_rows_uses_close_reason(tmp_path: Path) -> None:
               close_reason TEXT,
               entry_thesis TEXT
             );
-            """
-        )
+            """)
         now = datetime.now(timezone.utc)
         con.execute(
             """
@@ -284,7 +289,9 @@ def test_load_live_trade_rows_uses_close_reason(tmp_path: Path) -> None:
     assert rows[0].entry_probability == 0.61
 
 
-def test_load_spread_map_tolerates_sqlite_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_spread_map_tolerates_sqlite_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = _cfg(tmp_path)
     cfg.orders_db.touch()
 
@@ -297,7 +304,9 @@ def test_load_spread_map_tolerates_sqlite_error(tmp_path: Path, monkeypatch: pyt
         def close(self) -> None:
             return None
 
-    monkeypatch.setattr(worker.sqlite3, "connect", lambda *_args, **_kwargs: _BrokenConnection())
+    monkeypatch.setattr(
+        worker.sqlite3, "connect", lambda *_args, **_kwargs: _BrokenConnection()
+    )
     assert worker._load_spread_map(cfg, ["cid-1", "cid-2"]) == {}
 
 
@@ -306,7 +315,9 @@ def test_main_skips_when_market_open(monkeypatch) -> None:
     monkeypatch.setattr(worker, "is_market_open", lambda: True)
 
     def _fail_parse_args():
-        raise AssertionError("parse_args should not be called when market-open skip is active")
+        raise AssertionError(
+            "parse_args should not be called when market-open skip is active"
+        )
 
     monkeypatch.setattr(worker, "parse_args", _fail_parse_args)
     assert worker.main() == 0

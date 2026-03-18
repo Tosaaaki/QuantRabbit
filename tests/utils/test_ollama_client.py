@@ -23,7 +23,9 @@ def test_call_ollama_chat_json_uses_content_json(monkeypatch) -> None:
 
     def _fake_post(url: str, json: dict[str, Any], timeout: float):
         captured["json"] = json
-        return _Resp({"message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'}})
+        return _Resp(
+            {"message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'}}
+        )
 
     monkeypatch.setattr(oc.requests, "post", _fake_post)
     payload = oc.call_ollama_chat_json(
@@ -71,7 +73,9 @@ def test_call_ollama_chat_json_think_none_omits_field(monkeypatch) -> None:
     def _fake_post(_url: str, json: dict[str, Any], timeout: float):
         captured["json"] = json
         assert timeout >= 1.0
-        return _Resp({"message": {"content": '{"action":"BLOCK","scale":0.0,"reason":"avoid"}'}})
+        return _Resp(
+            {"message": {"content": '{"action":"BLOCK","scale":0.0,"reason":"avoid"}'}}
+        )
 
     monkeypatch.setattr(oc.requests, "post", _fake_post)
     payload = oc.call_ollama_chat_json(
@@ -93,7 +97,9 @@ def test_call_ollama_chat_json_includes_keep_alive_when_set(monkeypatch) -> None
     def _fake_post(_url: str, json: dict[str, Any], timeout: float):
         captured["json"] = json
         assert timeout >= 1.0
-        return _Resp({"message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'}})
+        return _Resp(
+            {"message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'}}
+        )
 
     monkeypatch.setattr(oc.requests, "post", _fake_post)
     payload = oc.call_ollama_chat_json(
@@ -121,7 +127,12 @@ def test_call_ollama_chat_json_retries_when_truncated_thinking(monkeypatch) -> N
                     "message": {"content": "", "thinking": "long thought without json"},
                 }
             )
-        return _Resp({"done_reason": "stop", "message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'}})
+        return _Resp(
+            {
+                "done_reason": "stop",
+                "message": {"content": '{"action":"ALLOW","scale":1.0,"reason":"ok"}'},
+            }
+        )
 
     monkeypatch.setattr(oc.requests, "post", _fake_post)
     payload = oc.call_ollama_chat_json(
