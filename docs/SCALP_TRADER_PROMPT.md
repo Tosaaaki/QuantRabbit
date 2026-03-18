@@ -324,6 +324,20 @@ Add to this prompt's monitor section.
 - **Risk-off baseline (VIX>20, Oil>$90, active war) = widen all SL by 1.2x.** Geopolitical events cause erratic whipsaws that hit normal SLs.
 - **Iran war regime:** Oil >$100 = persistent risk-off floor. Gold near ATH ($5000+) = safe-haven demand confirmed. Trade with elevated VIX as baseline, not as spike.
 
+### 2026-03-19 (macro-intel 23:01Z) — BOE Event Management + SL Rate Analysis
+
+**CRITICAL: BOE rate decision at ~12:00Z today.**
+- Existing GBP SHORT at BE stop (1.32658): zero-risk but binary. Dovish vote split = down toward TP 1.31930. Hawkish surprise = BE stop triggered.
+- **Pre-BOE window (07:00-12:00Z EU open):** EUR/GBP trend continuation likely before decision. This is the HIGH-VALUE window for existing positions.
+- **Post-BOE:** If GBP SHORT stopped out at BE, consider re-entry only if: H1 still bearish AND macro bias still neutral/short. DON'T revenge-enter on binary event confusion.
+
+**Legacy strategy SL-hit rate: 75.8% (771/1017 trades hit SL).** This is structural failure.
+- Root cause: Entry timing is wrong (counter-trend entries in trending markets) OR SLs too tight.
+- Protocol: Legacy bot strategies are REFERENCE only. Discretionary judgment supersedes all bot signals.
+- Discretionary positions (EUR/GBP SHORT with proper 35-40pip SL) outperforming all bot strategies. Trust macro-aligned judgment over algo signals.
+
+**Oil WTI update: ~$93-96 (not $99).** Hormuz disruption Week 3. JP Morgan: prices may underestimate sustained risk. Treat oil $90+ as persistent.
+
 ### 2026-03-18 — Key Lessons (consolidated from JP log)
 - SL too tight is #1 loss cause. Minimum 2x ATR. For H1-level entries, minimum 2x H1_ATR (~35pip for EUR)
 - FOMC/BOJ/ECB day: widen SL to 1.5x H1_ATR before event. SL < H1_ATR = random stop-out
