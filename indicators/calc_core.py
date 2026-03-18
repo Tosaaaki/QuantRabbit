@@ -9,7 +9,16 @@ import pandas as pd
 
 from indicators.divergence import compute_divergence, DEFAULT_MIN_MACD_PIPS
 
-PIP = 0.01
+PIP = 0.01  # default for JPY pairs
+
+
+def _detect_pip_size(close_series: pd.Series) -> float:
+    """Auto-detect pip size from price level. JPY pairs use 0.01, others use 0.0001."""
+    if close_series.empty:
+        return 0.01
+    price = float(close_series.iloc[-1])
+    # JPY pairs have prices > 50 (e.g., USD/JPY ~159), others < 10 (e.g., EUR/USD ~1.14)
+    return 0.01 if price > 50 else 0.0001
 
 
 class IndicatorEngine:
@@ -79,6 +88,11 @@ class IndicatorEngine:
         high = df["high"].astype(float)
         low = df["low"].astype(float)
 
+        # Auto-detect pip size based on price level
+        global PIP
+        pip = _detect_pip_size(close)
+        PIP = pip  # Update global so helper functions use correct pip size
+
         ma10 = close.rolling(window=10, min_periods=10).mean()
         ma20 = close.rolling(window=20, min_periods=20).mean()
         ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
@@ -87,7 +101,7 @@ class IndicatorEngine:
         ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
 
         # pip単位のボラ（5本平均）
-        vol_5m = close.diff().abs().rolling(window=5, min_periods=5).mean() / 0.01
+        vol_5m = close.diff().abs().rolling(window=5, min_periods=5).mean() / pip
 
         rsi = _rsi(close, period=14)
         atr = _atr(high, low, close, period=14)
@@ -98,7 +112,7 @@ class IndicatorEngine:
         bb_upper = float(upper.iloc[-1]) if not upper.empty else 0.0
         bb_mid = float(middle.iloc[-1]) if not middle.empty else 0.0
         bb_lower = float(lower.iloc[-1]) if not lower.empty else 0.0
-        bb_span_pips = (bb_upper - bb_lower) / 0.01 if bb_upper and bb_lower else 0.0
+        bb_span_pips = (bb_upper - bb_lower) / pip if bb_upper and bb_lower else 0.0
 
         macd_line = ema12 - ema26
         macd_signal = macd_line.ewm(span=9, adjust=False, min_periods=9).mean()
@@ -146,7 +160,7 @@ class IndicatorEngine:
             "ema24": float(ema24.iloc[-1]) if not ema24.empty else 0.0,
             "rsi": float(rsi.iloc[-1]) if not rsi.empty else 0.0,
             "atr": float(atr.iloc[-1]) if not atr.empty else 0.0,
-            "atr_pips": (float(atr.iloc[-1]) / 0.01) if not atr.empty else 0.0,
+            "atr_pips": (float(atr.iloc[-1]) / pip) if not atr.empty else 0.0,
             "adx": float(adx.iloc[-1]) if not adx.empty else 0.0,
             "bbw": float(bbw_series[-1]) if bbw_series.size else 0.0,
             "bb_upper": float(bb_upper) if np.isfinite(bb_upper) else 0.0,
@@ -381,7 +395,7 @@ def _vwap_gap(df: pd.DataFrame) -> float:
         latest = price.iloc[-1]
         if vwap == 0:
             return 0.0
-        return float((latest - vwap) / 0.01)
+        return float((latest - vwap) / PIP)
     except Exception:
         return 0.0
 
@@ -396,7 +410,7 @@ def _swing_distance(
     ch = segment_high.max()
     cl = segment_low.min()
     last = close.iloc[-1]
-    return ((ch - last) / 0.01, (last - cl) / 0.01)
+    return ((ch - last) / PIP, (last - cl) / PIP)
 
 
 def _bollinger(close: pd.Series, period: int, std_mult: float):
@@ -421,8 +435,8 @@ def _wick_ratios(df: pd.DataFrame, window: int = 20) -> tuple[float, float]:
             l = float(row["low"])
         except Exception:
             continue
-        upper = max(0.0, h - max(o, c)) / 0.01
-        lower = max(0.0, min(o, c) - l) / 0.01
+        upper = max(0.0, h - max(o, c)) / PIP
+        lower = max(0.0, min(o, c) - l) / PIP
         uppers.append(upper)
         lowers.append(lower)
     if not uppers:
@@ -492,14 +506,14 @@ def _ichimoku_position(
     price = close.iloc[-1]
     if not np.isfinite(span_a) or not np.isfinite(span_b) or not np.isfinite(price):
         return (0.0, 0.0, 0.0)
-    span_a_gap = (price - span_a) / 0.01
-    span_b_gap = (price - span_b) / 0.01
+    span_a_gap = (price - span_a) / PIP
+    span_b_gap = (price - span_b) / PIP
     cloud_top = max(span_a, span_b)
     cloud_bottom = min(span_a, span_b)
     if price > cloud_top:
-        pos = (price - cloud_top) / 0.01
+        pos = (price - cloud_top) / PIP
     elif price < cloud_bottom:
-        pos = (price - cloud_bottom) / 0.01
+        pos = (price - cloud_bottom) / PIP
     else:
         pos = 0.0
     return (float(span_a_gap), float(span_b_gap), float(pos))
@@ -534,6 +548,6 @@ def _cluster_distance(
             gap = max(0.0, center - last)
         else:
             gap = max(0.0, last - center)
-        return gap / 0.01
+        return gap / PIP
 
     return (_cluster_gap(high, above=True), _cluster_gap(low, above=False))
