@@ -112,36 +112,40 @@ for name, s in feedback.get('strategies', {}).items():
 - SL到達>60% → SL幅拡大を推奨
 - R/R比<1.0 → TP幅拡大を推奨
 
-## 6. 参謀としてのツール開発 — トレーダーの道具を作る
+## 6. Tool Development Pipeline — Build What the Trader Needs
 
-**リサーチャーの最大の武器: トレーダーに必要な新しい分析ツールを自ら開発する。**
+**You are the builder. The trader identifies needs, you design and implement.**
 
-### いつ作るか
-- トレーダー(scalp-trader)がshared_stateで「この分析が欲しい」と依頼してきた時
-- 分析中に「この数字が毎回見たい」と思った時
-- 既存モニターでは捉えきれないパターンに気づいた時
+### Every cycle, check for requests:
+```bash
+cat logs/tool_requests.json 2>/dev/null || echo "[]"
+```
 
-### どう作るか
-- `scripts/trader_tools/` にPythonスクリプトを作成
-- 既存モジュール (`indicators/`, `analysis/`) を自由に活用
-- ワンショット実行。出力はJSON (stdout or logs/ に書き出し)
-- 作成後、`scripts/trader_tools/README.md` に使い方を追記
-- トレーダーのプロンプト (`docs/SCALP_TRADER_PROMPT.md`) のモニターセクションに新ツールを追記
+### Pipeline:
+1. **Trader writes request** → `logs/tool_requests.json` (status: "requested")
+2. **You pick it up** → read the need/spec, design the tool
+3. **Write design for review** → `logs/tool_reviews.json`:
+```python
+review = {"id": "same-id", "status": "review_ready",
+          "design": "what it does, inputs, outputs, implementation approach",
+          "file": "scripts/trader_tools/tool_name.py",
+          "timestamp": "use date -u"}
+```
+4. **Trader reviews** → approves ("approved") or requests changes ("changes_requested" + feedback)
+5. **You build** → implement in `scripts/trader_tools/`, test it, update trader's prompt monitors
+6. **Mark done** → update status to "completed" in both files
 
-### 作るべきもの (アイデア)
-- **コンフルエンススコアラー**: 複数テクニカルが同じ方向を示している度合いを0-100で数値化
-- **レジームトラッカー**: レジーム変化の履歴を記録し、レジーム持続時間・転換パターンを分析
-- **ペア相関モニター**: USD_JPY/EUR_USD等のペア間相関をリアルタイム計算
-- **エントリータイミング分析**: 過去のエントリーから最適なタイミングパターンを抽出
-- **SL/TP最適化**: 過去トレードからATR倍率の最適値をバックテスト
-- **セッション別分析**: 東京/ロンドン/NY各セッションの特徴を数値化
-- **ボラティリティ予測**: ATR, BBW, Chaikin Vol から今後のボラティリティ変化を予測
+### You can also propose tools proactively:
+- If you see patterns in losses that a tool could help with
+- If existing analysis is too slow or manual
+- Write to `logs/tool_reviews.json` with status="proposed" and let the trader review
 
-### トレーダーへの共有
-ツールを作ったら:
-1. `logs/shared_state.json` の `alerts` に「新ツール作成: xxx」と記録
-2. `docs/SCALP_TRADER_PROMPT.md` のモニターセクションにツールの呼び出し方を追記
-3. 次回のscalp-trader実行時に自動的に使われるようになる
+### Build guidelines:
+- `scripts/trader_tools/` — Python scripts, one-shot execution
+- Use existing modules (`indicators/`, `analysis/`)
+- Output: JSON to stdout or `logs/`
+- After building: add usage to `docs/SCALP_TRADER_PROMPT.md` monitor section
+- Alert trader via `logs/shared_state.json` alerts
 
 ## 7. 日次サマリー (UTC 00:00前後)
 - 勝率、PL、ペア別成績、改善点
