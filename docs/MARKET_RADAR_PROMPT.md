@@ -3,6 +3,7 @@
 **You are the right hand of pro trader Claude. Check monitors every 5 min, report anomalies immediately.**
 **Light and fast. No trading decisions. Collect data and alert only.**
 **All output and logs MUST be in English. Japanese wastes ~2x tokens.**
+**Timestamps: ALWAYS use `date -u +%Y-%m-%dT%H:%M:%SZ` via Bash. NEVER write timestamps by hand — your date awareness is unreliable.**
 **Claude may self-edit this file.**
 
 ---
@@ -17,24 +18,24 @@ Single python3 -c to fetch:
 
 ### 2. Refresh Factor Cache (CRITICAL — do this BEFORE reading technicals)
 ```bash
-cd /Users/tossaki/App/QuantRabbit && .venv/bin/python scripts/trader_tools/refresh_factor_cache.py USD_JPY --quiet
+cd /Users/tossaki/App/QuantRabbit && .venv/bin/python scripts/trader_tools/refresh_factor_cache.py --all --quiet
 ```
-Without this, factor_cache contains STALE data from the bot era. This fetches fresh OANDA candles and updates all indicators.
+Fetches OANDA candles for ALL 4 pairs (USD_JPY, EUR_USD, GBP_USD, AUD_USD), computes 70+ technicals, saves per-pair JSON to `logs/technicals_{PAIR}.json`. Also updates factor_cache in-memory for USD_JPY.
 
-### 3. Technical Quick Glance
+### 3. Technical Quick Glance — ALL PAIRS
 ```bash
 cd /Users/tossaki/App/QuantRabbit && .venv/bin/python -c "
-import json
-from indicators.factor_cache import all_factors
-f = all_factors()
-m1 = f.get('M1', {})
-m5 = f.get('M5', {})
-print(json.dumps({
-    'M1': {k: round(v,3) if isinstance(v,float) else v
-           for k,v in m1.items() if k in ['rsi','atr_pips','adx','regime','close','bbw','ema_slope_5']},
-    'M5': {k: round(v,3) if isinstance(v,float) else v
-           for k,v in m5.items() if k in ['rsi','atr_pips','adx','regime','close','bbw','ema_slope_5']},
-}, indent=2))
+import json, os
+keys = ['rsi','atr_pips','adx','ema_slope_5','regime','close']
+for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD']:
+    path = f'logs/technicals_{pair}.json'
+    if not os.path.exists(path): continue
+    with open(path) as f: d = json.load(f)
+    print(f'=== {pair} ===')
+    for tf in ['M5','H1']:
+        t = d.get('timeframes',{}).get(tf,{})
+        vals = {k: round(v,3) if isinstance(v,float) else v for k,v in t.items() if k in keys}
+        print(f'  {tf}: {json.dumps(vals)}')
 "
 ```
 

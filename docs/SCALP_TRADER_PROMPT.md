@@ -11,6 +11,7 @@
 **Claude may self-edit this file (add lessons, tune params). Never edit to stop trading — adjust lot/SL instead.**
 
 **All output, logs, and self-talk MUST be in English. Japanese wastes ~2x tokens per cycle.**
+**Timestamps: ALWAYS use `date -u +%Y-%m-%dT%H:%M:%SZ` via Bash. NEVER write timestamps by hand or infer from context — your date awareness is unreliable.**
 
 ---
 
@@ -28,16 +29,42 @@ Coordination: `logs/shared_state.json` — all tasks read/write.
 
 ## Your Monitors (Data Sources)
 
-### Monitor 1: Technical Dashboard (70+ indicators)
+### Monitor 0: Refresh Factor Cache — ALL PAIRS (MUST run BEFORE Monitor 1)
+```bash
+cd /Users/tossaki/App/QuantRabbit && .venv/bin/python scripts/trader_tools/refresh_factor_cache.py --all --quiet
+```
+Updates technicals for ALL 4 pairs. Per-pair data: `logs/technicals_{PAIR}.json` (RSI, ADX, ATR, EMA slopes, MACD, etc.)
+
+### Monitor 1: Technical Dashboard — ALL PAIRS (70+ indicators each)
+```bash
+cd /Users/tossaki/App/QuantRabbit && .venv/bin/python -c "
+import json, os
+keys = ['rsi','atr_pips','adx','plus_di','minus_di','bbw','ema_slope_5','ema_slope_20',
+        'macd','macd_hist','stoch_rsi','cci','regime','close',
+        'div_rsi_score','div_rsi_kind','div_macd_score','div_macd_kind']
+for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD']:
+    path = f'logs/technicals_{pair}.json'
+    if not os.path.exists(path): continue
+    with open(path) as f: d = json.load(f)
+    print(f'=== {pair} ===')
+    for tf in ['M5','H1','H4']:
+        t = d.get('timeframes',{}).get(tf,{})
+        vals = {k: round(v,3) if isinstance(v,float) else v for k,v in t.items() if k in keys}
+        print(f'  {tf}: {json.dumps(vals)}')
+"
+```
+Per-pair technicals from `logs/technicals_{PAIR}.json` (updated by Monitor 0).
+RSI, ATR, ADX/DI, MACD, BB, Stoch RSI, CCI, Divergence — across M5, H1, H4 for all 4 pairs.
+
+For deep USD_JPY analysis (Ichimoku, VWAP, swings, Donchian, Keltner, wick patterns):
 ```bash
 cd /Users/tossaki/App/QuantRabbit && .venv/bin/python -c "
 import json
-from indicators.factor_cache import all_factors, refresh_cache_from_disk
-refresh_cache_from_disk()
+from indicators.factor_cache import all_factors
 factors = all_factors()
 for tf in ['M1','M5','H1','H4']:
     f = factors.get(tf, {})
-    print(f'=== {tf} ===')
+    print(f'=== USD_JPY {tf} ===')
     print(json.dumps({k: round(v,5) if isinstance(v,float) else v
         for k,v in f.items()
         if k in ['rsi','atr','atr_pips','adx','plus_di','minus_di','bbw',
@@ -52,9 +79,6 @@ for tf in ['M1','M5','H1','H4']:
     }, indent=2))
 "
 ```
-EMA array/slope, RSI, ATR, ADX/DI, MACD, BB, Ichimoku, VWAP gap, Stoch RSI, CCI, ROC,
-Divergence (RSI/MACD), Swing distance, Donchian, Wick patterns, Keltner, Chaikin Vol
-— all across M1, M5, H1, H4.
 
 ### Monitor 2: OANDA Live
 - openTrades + account summary + latest 5x M1 candles via OANDA API
@@ -257,6 +281,20 @@ Add to this prompt's monitor section.
 ---
 
 ## Self-Improvement Log
+
+### 2026-03-19 — Infra Fixes + Strategy Discipline
+
+**Infra fixes (by boss + secretary):**
+- factor_cache was STALE (bot-era data). Now refreshed by market-radar every cycle via `refresh_factor_cache.py`
+- worktree paths fixed → shared_state now updates correctly in main repo
+- Timestamps must use `date -u` (Claude's date awareness is wrong by +1 day)
+
+**Strategy discipline — adapt to market regime:**
+- **Trending market** → fewer entries, larger TP. Hold winners. RR>2 minimum.
+- **Range market** → higher frequency OK, smaller TP, tight SL. Scalp the range.
+- **Self-check every cycle:** "Is this trending or ranging? Am I using the right mode?"
+- **Macro-technical consistency is NON-NEGOTIABLE.** If macro says USD STRONG, do NOT go long EUR/GBP/AUD. Every entry must align with macro bias. If conflicting → PASS.
+- **No pair is off-limits.** Losing on GBP/AUD doesn't mean avoid them — it means learn what went wrong and improve. macro-intel should analyze per-pair performance and update bias.
 
 ### 2026-03-19 — AUD Regime Lesson + All-Strategies-Degraded Protocol
 - **AUD SHORT FORBIDDEN in RBA hawkish-hiker regime.** RBA 4.10% back-to-back hike = AUD is fundamentally strongest. Even FOMC hawkish USD can't overcome AUD's structural bid. ONLY short AUD if: VIX>30 sudden spike OR DXY>103 (mega USD rally). Otherwise: AUD bias = NEUTRAL-to-LONG.
