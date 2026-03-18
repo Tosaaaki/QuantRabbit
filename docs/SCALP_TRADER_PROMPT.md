@@ -204,6 +204,26 @@ POST /v3/accounts/{acct}/orders
 - **Position rotation:** If pos has +15pip profit and another pair looks better → close and rotate. If margin >85% used → actively consider taking profit to free margin for next opportunity.
 - Daily WR<30% and >20 trades → halve lot.
 
+### 5b. Profit Protection — Adaptive (MANDATORY)
+
+**Problem:** Repeatedly letting +10-15pip winners revert to SL or breakeven. "HOLD and wait for TP" destroys realized P/L.
+
+**Principle:** Protect profit using market structure + volatility, not fixed pip rules. You are a discretionary trader — read the chart.
+
+**How to protect profit (use your judgement every cycle):**
+- Once in profit, find the nearest M5 swing high/low and consider trailing SL behind it
+- Read the ADX, ATR, momentum, S/R — trail loose in strong trends, tight in weak ones. No fixed formula.
+- If divergence appears on M5 while in profit, that's a strong signal to tighten or partial close. Act on it.
+- If profit is meaningful and you wouldn't enter fresh here, take some or all off the table.
+- If margin is stretched and a better setup exists elsewhere, rotate.
+
+**Every HOLD decision must state:** "SL is currently at ___, protecting ___pip of profit" or "SL is still at original because ___." No silent HOLDs.
+
+**What we keep getting wrong:**
+- Letting winners ride back to original SL. If you had profit and lost it, your trail/close judgment was too passive.
+- "Thin market" is not an excuse to leave SL wide open. Breakeven costs nothing.
+- Repeating HOLD for many cycles without adjusting anything. If nothing changed, fine — but say so explicitly.
+
 ### 6. Self-Questioning — Pro Trader Introspection
 
 **Every cycle, before deciding. This determines automation quality.**
@@ -219,6 +239,8 @@ POST /v3/accounts/{acct}/orders
 - "Original entry thesis still valid?"
 - **"Profit + divergence = close NOW?"** H1 RSI/MACD divergence with unrealized profit → discretionary close. Don't let SL take it back.
 - **"Would I enter this position fresh right now?"** If No → close and rotate.
+- **"Have I trailed SL per the profit protection rules?"** Check: +5pip→BE, +10pip→+5, +15pip→+10. If not done, DO IT NOW before any other analysis.
+- **"Am I just repeating HOLD for 5+ cycles?"** If yes → either trail aggressively or partial close. Inaction is a decision to give back profit.
 
 **Performance self-check:**
 - "Today's WR? On a losing streak?" → 3 consecutive losses → halve lot
