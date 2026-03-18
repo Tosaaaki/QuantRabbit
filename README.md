@@ -1,427 +1,209 @@
-# QuantRabbit – USD/JPY Autonomous Trading Agent
+# QuantRabbit — Claude 裁量 FX スキャルピングシステム
 
-QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディング・エージェントです。実装と運用の責務は下記の 2 つのドキュメントを中心に整理されています。
+USD/JPY 専門の裁量トレーディングシステム。Claude が市況を分析し、自分の判断で OANDA API に直接注文する。ボット/自動売買ではない。
 
-> **運用ミッション**: 口座資金を長期的に最大化することだけを目的とし、  
-> どの変更でも資本成長のために最善を尽くす（守りではなく勝ちにいく）方針を明記しています。
+> **運用ミッション**: 口座資金を長期的に最大化する。守りではなく勝ちにいく。
 
-- 現行の仕組み一覧: [docs/CURRENT_MECHANISMS.md](docs/CURRENT_MECHANISMS.md)
+## システム概要
 
-### Quick Deploy（覚書）
-ローカル専用運用が現行。
+### 現行アーキテクチャ: Claude Code Scheduled Tasks
 
-本番導線は `scripts/local_v2_stack.sh` のみを実行対象とします。
-`VM/GCP/Cloud Run` 関連手順は履歴アーカイブであり、現行運用では実行しません。
+4つの定期タスクが連携して動く裁量スキャルプシステム:
 
-- ローカル起動（trade_min）:
-  `scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env`
-- ローカル状態確認:
-  `scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env`
-- ローカル停止:
-  `scripts/local_v2_stack.sh down --profile trade_min --env ops/env/local-v2-stack.env`
+| タスク | モデル | 間隔 | 役割 |
+|--------|--------|------|------|
+| **scalp-trader** | Opus | 3分 | 市況分析 → 裁量判断 → OANDA 直接注文 |
+| **market-radar** | Sonnet | 2分 | ポジション監視・急変検知・レジーム変化検知 |
+| **macro-intel** | Sonnet | 15分 | マクロ分析・戦略改善・ツール開発 |
+| **secretary** | Sonnet | 10分 | エージェント監視・状況レポート・異常検知 |
 
-* **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
-* **ニュース** : 廃止（ニュース連動なし）  
-* **LLM (Brain gate)** : 任意の preflight でのみ使用可。既定は無効で `analysis/local_decider.py` のローカル判定が主。  
-* **Pocket 方式** : 同じ口座内で _micro_（スキャル）／_macro_（順張り）を tag 管理  
-* **インフラ** : ローカルV2スタックが本体（`scripts/local_v2_stack.sh`）  
-* **月額コスト** : ローカル実行系のみを対象に最適化。  
+- 排他制御: `scripts/trader_tools/task_lock.py` でファイルロック
+- エージェント間連携: `logs/shared_state.json`
+- 各タスクのプロンプト: `docs/*_PROMPT.md`
+- セットアップ: `bash scripts/trader_tools/setup_scheduled_tasks.sh`
 
-**Runtime defaults（Exit/worker）**
-- `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0` が既定。main は 60s ループのログ/metrics 更新のみを行い、発注/EXIT は各 worker で完結させる。
-- 共通 `execution/exit_manager.py` は互換スタブ（自動EXITなし）。戦略ごとに専用の `exit_worker` を起動し、最低保有＋PnL>0 決済（例外は強制ドローダウン/ヘルスチェック）の運用がデフォルト。
-- 発注はワーカーが `order_manager` 経由で直接送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両方のフラグを `1` にする。
+### 絶対ルール
 
-### Replay（標準手順）
-- 実運用寄せの既定は `scripts/replay_exit_workers_groups.py` を使用する。
-- **ハードTPは有効 / ハードSLは無効**（`--no-hard-sl` を付ける、`--no-hard-tp` は付けない）。
-- `end_of_replay` 強制決済は除外（`--exclude-end-of-replay`）。
-- 対象ワーカーは **毎回 `--workers` で選ぶ**（運用中の勝ち筋だけに絞る前提）。
-- 出力は `summary_all.json` を採用。
+- **ボット禁止**: `while True` + `sleep` の常駐スクリプトを書かない
+- **OANDA 直接注文**: urllib で REST API を叩く。ボットプロセス経由禁止
+- **裁量トレーダーであれ**: ルール実行マシンではない。市況を読んで自分で判断する
+- テクニカル指標は `indicators/factor_cache.py` から取得（手計算しない）
+- 注文は必ず `logs/live_trade_log.txt` にファイル記録
+
+## ディレクトリ構成
+
+```
+.
+├── CLAUDE.md                # Claude エージェントへの指示書（現行システムの定義）
+├── AGENTS.md                # ワーカーシステムの仕様（レガシー含む）
+│
+├── docs/                    # プロンプト、トレードログ、仕様書
+│   ├── SCALP_TRADER_PROMPT.md   # scalp-trader タスクのプロンプト
+│   ├── MARKET_RADAR_PROMPT.md   # market-radar タスクのプロンプト
+│   ├── MACRO_INTEL_PROMPT.md    # macro-intel タスクのプロンプト
+│   ├── SECRETARY_PROMPT.md      # secretary タスクのプロンプト
+│   ├── CLAUDE_TRADE_LOG.md      # Claude 裁量トレードの記録
+│   ├── TRADE_FINDINGS.md        # 改善/敗因の単一台帳（change diary）
+│   ├── ARCHITECTURE.md          # システム全体フロー
+│   ├── RISK_AND_EXECUTION.md    # リスク制御・発注仕様
+│   ├── INDEX.md                 # ドキュメント索引
+│   └── ...
+│
+├── scripts/
+│   └── trader_tools/        # Claude 裁量トレード用ツール
+│       ├── task_lock.py         # タスク間排他制御
+│       └── setup_scheduled_tasks.sh  # スケジュールタスクのセットアップ
+│
+├── config/
+│   └── env.toml             # OANDA API キー等（gitignore 対象）
+│
+├── indicators/              # テクニカル指標
+│   ├── calc_core.py             # ta-lib ラッパ
+│   └── factor_cache.py          # 最新指標の共有キャッシュ
+│
+├── analysis/                # 分析ロジック
+│   ├── regime_classifier.py     # Trend / Range / Breakout 判定
+│   ├── market_regime.py         # マーケットレジーム
+│   ├── market_context.py        # 市況コンテキスト
+│   └── ...
+│
+├── market_data/             # データ取得
+│   ├── tick_fetcher.py          # OANDA WebSocket
+│   └── candle_fetcher.py        # Tick → Candle 生成
+│
+├── execution/               # 発注 & リスク
+│   ├── order_manager.py         # OANDA REST 発注
+│   ├── risk_guard.py            # lot/SL/TP & DD 監視
+│   ├── position_manager.py      # ポジション管理
+│   └── strategy_entry.py        # 戦略間の意図協調（黒板）
+│
+├── strategies/              # 戦略プラグイン
+│   ├── scalping/                # スキャルピング戦略
+│   ├── micro/                   # マイクロ戦略
+│   ├── trend/                   # トレンドフォロー
+│   ├── breakout/                # ブレイクアウト
+│   └── mean_reversion/          # 平均回帰
+│
+├── workers/                 # ワーカープロセス（レガシー自律ボット系）
+│   ├── common/                  # 共通ユーティリティ
+│   ├── scalp_*/                 # スキャルプ系ワーカー（約 20 種）
+│   ├── micro_*/                 # マイクロ系ワーカー（約 15 種）
+│   └── ...                      # 計約 40 ワーカー
+│
+├── logs/                    # ログ・DB・共有状態
+│   ├── shared_state.json        # エージェント間共有状態
+│   ├── live_trade_log.txt       # Claude の裁量トレード記録
+│   └── trades.db                # トレード履歴 DB
+│
+└── ops/env/                 # 環境変数プロファイル
+    └── local-v2-stack.env       # ローカル V2 スタック設定
+```
+
+## ユーザーコマンド
+
+- **「トレード開始」** → マルチエージェント裁量トレードセッション起動
+- **「秘書」** → トレーディング秘書モード（状況確認・指示伝達）
+
+## 市場前提（USD/JPY）
+
+- OANDA 平常時スプレッド: 約 0.8 pips
+- スプレッド 1.5 pips 以上の急拡大時はクールダウン
+- 対象時間帯: 東京〜ロンドン（JST 7-8 時はメンテ除外）
+
+## レガシーシステム（ワーカーベース自律ボット）
+
+本リポジトリには以前の自律ボットトレーディングシステムのコードも含まれている。
+現行の Claude 裁量トレードでは `workers/` のコードは参照のみで、ワーカープロセスの起動は行わない。
+
+<details>
+<summary>レガシー: ローカル V2 スタック（ワーカーベース）</summary>
+
+### 起動/停止
+
+```bash
+# 起動
+scripts/local_v2_stack.sh up --profile trade_min --env ops/env/local-v2-stack.env
+# 状態確認
+scripts/local_v2_stack.sh status --profile trade_min --env ops/env/local-v2-stack.env
+# 停止
+scripts/local_v2_stack.sh down --profile trade_min --env ops/env/local-v2-stack.env
+```
+
+### V2 アーキテクチャ
+
+```mermaid
+flowchart LR
+  Tick[OANDA Tick/Candle] --> MF["quant-market-data-feed"]
+  MF --> TW["tick_window"]
+  MF --> FC["factor_cache"]
+  FC --> SW["strategy workers (ENTRY)"]
+  TW --> SW
+  SC["quant-strategy-control"] --> SW
+  SC --> EW["strategy workers (EXIT)"]
+  SW --> OM["quant-order-manager"]
+  OM --> OANDA[OANDA Order API]
+  PM["quant-position-manager"] --> EW
+  PM --> PMDB[(trades.db / positions)]
+  AF["analysis services"] --> SW
+```
+
+### 主要サービス
+
+- `quant-market-data-feed` — Tick/Candle 取得、factor_cache 更新
+- `quant-strategy-control` — entry/exit/global_lock 制御
+- `quant-order-manager` — OANDA REST 発注
+- `quant-position-manager` — ポジション管理
+- 戦略 ENTRY/EXIT ワーカー対（scalp / micro 系）
+
+### Replay（バックテスト）
 
 ```bash
 python scripts/replay_exit_workers_groups.py \
   --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
-  --workers impulse_break_s5,impulse_momentum_s5,impulse_retest_s5,pullback_s5 \
+  --workers impulse_break_s5,impulse_momentum_s5 \
   --no-hard-sl \
   --exclude-end-of-replay \
-  --out-dir tmp/replay_exit_workers_groups_YYYYMM_all
+  --out-dir tmp/replay_out
 ```
 
-### ローカルログの確認
+詳細は `AGENTS.md` を参照。
 
-`scripts/local_v2_stack.sh logs` / `scripts/collect_local_health.sh` を使って主要サービスの最新ログを確認する。
+</details>
 
----
-Make を使わない場合は、必要に応じて `scripts/local_v2_stack.sh` の直接実行オプションを利用する。
+<details>
+<summary>レガシー: データ同期・ダッシュボード（GCP/BQ/Looker — 廃止済み）</summary>
 
-.
-├── execution/               # strategy entry/exit dispatchと制御
-├── Dockerfile               # 実行基盤共通（VM/Cloud Run は履歴アーカイブ）
-├── requirements.txt         # ライブラリ pin
-│
-├── config/
-│   ├── env.toml             # OANDA / GCP 設定
-│   └── pool.yaml            # 手法メタ定義
-│
-├── market_data/             # ⇢ データ取得
-│   ├── tick_fetcher.py      # OANDA WebSocket
-│   ├── candle_fetcher.py    # Tick → Candle 生成
-│
-├── indicators/              # ⇢ テクニカル
-│   ├── calc_core.py         # ta‑lib ラッパ
-│   └── factor_cache.py      # 最新指標共有
-│
-├── analysis/                # ⇢ 判断ロジック
-│   ├── regime_classifier.py # Trend / Range / Breakout
-│   ├── focus_decider.py     # micro/macro/event 判定
-│   ├── local_decider.py     # ローカル判定（LLMなし）
-│   ├── perf_monitor.py      # PF / Sharpe 更新
-│
-├── strategies/              # ⇢ 手法プラグイン
-│   ├── trend/ma_cross.py
-│   ├── breakout/donchian55.py
-│   └── mean_reversion/bb_rsi.py
-│
-├── signals/
-│   └── pocket_allocator.py  # lot を micro/macro に分配
-│
-├── execution/               # ⇢ 発注 & リスク
-│   ├── risk_guard.py        # lot/SL/TP & DD監視
-│   ├── order_manager.py     # OANDA REST 発注
-│   └── position_manager.py  # (今後追加)
-│
-├── utils/
-│   └── backup_to_gcs.sh     # SQLite/logs nightly backup
-│
-├── logs/                    # SQLite DB 等
-│   └── trades.db
-│
-├── docs/
-│   ├── ONLINE_TUNER.md       # オンラインチューナの導入方法
-│   ├── autotune_taskboard.md # 現行タスク・検証状況のサマリ
-│   ├── GCP_DEPLOY_SETUP.md   # gcloud/OS Login/IAP のゼロトラブル手順
-│   └── TASKS.md              # リポ内タスク台帳（Open/Archive）
-│
-└── infra/terraform/         # ⇢ IaC
-├── main.tf   (旧VM向け / 履歴)
-├── run.tf    (Cloud Run 履歴アーカイブ)
-└── storage.tf(GCS / PubSub)
+以下は過去の GCP 運用の記録。現行ローカル運用では実行しない。
 
-## Architecture Snapshot
-- Tick/Candle 取得は `market_data/*` が担当し、`indicators/*` でテクニカル要因を集計する
-- レジーム判定とフォーカス決定 (`analysis/regime_classifier.py` / `focus_decider.py`) を経由し、`analysis/local_decider.py` がローカル指標で戦略配分を補正
-- `strategies/*` が pocket 別のエントリー候補を返し、`execution/*` がステージ管理、リスク審査、発注、クローズまでを連結
-- 運用要件、リスクガード、トークン制御、デプロイ戦略などの詳細は `AGENTS.md` と `docs/INDEX.md` を参照
+- **BQ 同期**: `scripts/run_sync_pipeline.py` — trades.db → BigQuery
+- **Looker Studio**: `scripts/setup_looker_sources.sh` — GCS/BQ 接続
+- **オートチューニング UI**: `cloudrun/autotune_ui/` — FastAPI 製承認ダッシュボード
+- **GCE SSH**: OS Login / IAP 経由接続
 
-## 市場前提（USD/JPY）
+詳細は各スクリプト内のコメントおよび `docs/OPS_GCP_RUNBOOK.md`（履歴アーカイブ）を参照。
 
-- OANDA（東京〜ロンドン時間帯）の板スプレッドは平常時で **約 0.8 pips**（例: MID が 154.001 の場合、BID 154.001 / ASK 154.009 の組み合わせ）を上限として設計しています。
-- スキャル系ワーカーは `workers/pullback_s5/config.py` の `SPREAD_P50_LIMIT=0.9` を閾値に環境ガードを行うため、これを大幅に超えるスプレッド環境では自動的にエントリーを停止します。
-- 週末クローズ直後や指標イベント時は 1.5 pips 以上まで拡大するケースがあるため、急激な拡大を検知した際は `spread_monitor` によるクールダウンが働きます。
+</details>
 
----
+## ドキュメント
 
-## Quick Start (Local Demo)
+| ドキュメント | 内容 |
+|---|---|
+| `CLAUDE.md` | Claude エージェントへの指示書（現行の定義） |
+| `AGENTS.md` | ワーカーシステム仕様・非交渉ルール |
+| `docs/INDEX.md` | ドキュメント全体の索引 |
+| `docs/ARCHITECTURE.md` | システム全体フロー |
+| `docs/RISK_AND_EXECUTION.md` | リスク制御・発注仕様 |
+| `docs/TRADE_FINDINGS.md` | 改善/敗因の台帳（change diary） |
+| `docs/OBSERVABILITY.md` | ログ・DB スキーマ・SLO |
+| `docs/OPS_LOCAL_RUNBOOK.md` | ローカル運用手順 |
 
-- OpenAI Native Computer-Use の最小デモ:
-  [examples/native_computer_use_demo/README.md](examples/native_computer_use_demo/README.md)
-  - QuantRabbit 本体とは独立したサンプルです。
-  - `OPENAI_API_KEY` と macOS の `Screen Recording` / `Accessibility` 権限が必要です。
-
-## Troubleshooting
-- ローカル運用時は `scripts/local_v2_stack.sh status` / `scripts/local_v2_stack.sh logs` / `logs/local_v2_stack/*.log` を優先して確認する。  
-
-## Logs / DB Access
-- ローカルDB確認: `sqlite3 logs/trades.db "..."`、`scripts/inspect_orders_db.py` 系スクリプト
-- `remote_logs_current/` は履歴スナップショットとしてのみ扱う
-- `logs/*.db` と戦略イベントは `docs/OBSERVABILITY.md` を参照
-- `logs/*.db` のスキーマや運用メモは `docs/OBSERVABILITY.md` を参照
-
-# 3. run (practice account, small lot)
-# main.py は廃止済み。最小検証は該当する strategy worker を systemd/service で起動する。
-
-# pool.yaml example
-```yaml
-strategies:
-  - name: TrendMA
-    sl: 30
-    tp: 60
-    enabled: true
-  - name: Donchian55
-    sl: 55
-    tp: 110
-    enabled: true
-  - name: BB_RSI
-    sl: 10
-    tp: 15
-    enabled: true
-```
-
-### Worker Group Toggles
-
-- `SCALP_WORKERS_ENABLED` (`true` default): 一括で S5/tick 系のスキャルワーカー群（pullback/impulse/mirror など）の起動可否を切り替えます。個別の `*_ENABLED` が `true` でも、このフラグが `false` のときは起動されません。
-- `MICRO_WORKERS_ENABLED` (`true` default): ミクロ戦略ワーカー群（専用 micro_* のみ、core は廃止）の起動可否をまとめて制御します。
-- `MACRO_WORKERS_ENABLED` (`true` default): H1/H4 ベースのマクロワーカー（`trend_h1`, `manual_swing` 等）の起動可否をまとめて制御します。
-- 個別の戦略スイッチは従来どおり `workers/<name>/config.py` の `ENABLED` で制御できます。グループ旗を `false` にすると、負荷確認や検証時に特定レンジだけを動かす/止める運用が容易になります。
-- `MICRO_DELEGATE_TO_WORKER` (`true` default): main からのミクロ発注を停止し、専用 micro_* ワーカーへ委譲します（core は廃止済み）。
-- `analysis.plan_bus.latest("macro" | "scalp")` で直近サイクルの Plan（lot 配分・シグナル・レンジ情報など）を取得できます。macro/scalp のコアワーカーを実装する際に利用してください。
-
-Trade Loop Overview
-	1.	Tick → Candle(M1) 生成 → factor_cache 更新
-	2.	regime_classifier で Macro/Micro レジーム判定
-	3.	local_decider が指標 + 成績から focus_tag / weight_macro / 戦略順位 を決定（LLM なし）
-	4.	pocket_allocator で lot を micro/macro に分配
-	5.	Strategy プラグイン (MA クロス / Donchian55 / BB+RSI) がシグナルを返す
-	6.	risk_guard が lot/SL/TP をクランプし OANDA REST 発注
-	7.	成績は logs/trades.db に保存 → perf_monitor が PF/Sharpe 更新
-	8.	夜間 cron で DB & ログを GCS へバックアップ
-
-## オンラインチューナ影運用
-- `scripts/run_online_tuner.py` が 5〜15 分間隔で低リスクなノブ（Exit 感度・入口ゲート・quiet_low_vol 配分）だけを微調整します。  
-- 出力は既定で `logs/tuning/` 配下（`tuning_overrides.yaml`, `tuning_overlay.yaml`, `history/`）に書きます（deploy の `git pull` と競合させないため）。必要なら `TUNING_*_PATH` / `TUNING_RUNTIME_DIR` で上書きします。  
-- ランタイムの読込は `utils/tuning_loader.py` が `logs/tuning/` → 旧 `config/` → `config/tuning_presets.yaml` の順で解決します（`TUNING_*_PATH` を明示した場合はそのパスのみ）。  
-- 進行中の検証タスク・レビュー項目は `docs/autotune_taskboard.md` に集約しているので、運用状況の確認や ToDo 更新はここを参照してください。  
-- 詳細な導入手順・設計方針は `docs/ONLINE_TUNER.md` を参照。
-
----
-
-## データ同期パイプライン（廃止済みアーカイブ）
-
-トレード履歴 (`logs/trades.db`) を BigQuery へ常時同期するための常駐スクリプトを追加しています。
-現行ローカル運用ではこの節のクラウド同期手順は実行しません。
-
-1. **環境変数**  
-   - `BQ_PROJECT`（省略時は `GOOGLE_CLOUD_PROJECT` を利用）  
-   - `BQ_DATASET`（既定: `quantrabbit`）  
-   - `BQ_TRADES_TABLE`（既定: `trades_raw`）  
-   - 任意: `BQ_MAX_EXPORT`（1 バッチの最大行数）
-
-2. **起動コマンド**
+## Logs / DB
 
 ```bash
-source .venv/bin/activate
-python scripts/run_sync_pipeline.py \
-  --interval 120 \
-  --limit 2000
+# ローカル DB 確認
+sqlite3 logs/trades.db "SELECT * FROM trades ORDER BY rowid DESC LIMIT 5"
+
+# ログ確認（レガシーワーカー系）
+scripts/local_v2_stack.sh logs
+scripts/collect_local_health.sh
 ```
-
-`--once` を渡すと単発実行、`--verbose` で DEBUG ログを出力します。標準出力と `logs/pipeline.log` に実行ログが残ります。
-
-3. **BigQuery テーブル**  
-   スクリプトが起動すると、存在しない場合でも dataset/table を自動作成し、`ticket_id`（OANDA tradeID）をキーにアップサートします。`logs/bq_sync_state.json` には最終同期時刻が保存されるため、監視に利用できます。
-
-4. **ロット調整インサイト**  
-   `analytics/lot_pattern_analyzer.py` が BigQuery のトレード履歴 (lookback 既定 14 日) を集計し、Pocket × Side 別の勝率 / PF / 標準偏差からロット倍率を提案します。結果は BigQuery `lot_insights` テーブルに追記され、`analytics/lot_insights.json`（GCS UI バケットまたは `GCS_ANALYTICS_BUCKET`）に JSON スナップショットを保存します。手動実行やパラメータ変更は `scripts/generate_lot_insights.py` を利用してください。
-
-5. **戦略スコア スナップショット（オプション）**  
-   `scripts/generate_strategy_scores.py` が BQ `trades_raw` を集計し、strategy×pocket の PF / Sharpe / ロット係数 / SLTP 推奨値を Firestore `strategy_scores/current` にコンパクトに上書きします（1 ドキュメントのみ）。VM 側は TTL キャッシュ付きリーダーで読むだけ、未設定時は無効のためリアルタイム売買に影響しません。
-
-6. **価格帯マップ（オプション）**  
-   `scripts/generate_level_map.py` が BQ のローソクテーブル（例: `candles_m1`）を集計し、価格バケットごとの反転/到達傾向マップを JSON として出力します。`scripts/upload_candles_to_bq.py` でローカルのローソクログを BQ にロードしておくと利用可能です。
-
-7. **Level map / 戦略スコアのVM適用（オプトイン）**  
-   - level_map.json（GCS）: `LEVEL_MAP_ENABLE=true` で range/entry 補助の TTL キャッシュを読み込み、エントリー thesis に近傍バケット情報を添付（挙動はデフォルトOFF）。  
-   - strategy_scores (Firestore): `FIRESTORE_STRATEGY_ENABLE=true` でロット係数/SLTP推奨を読み込めます（挙動はデフォルトOFF、SLTPは `FIRESTORE_STRATEGY_APPLY_SLTP` で制御）。
-
-8. **systemd への登録例**
-
-```ini
-[Unit]
-Description=QuantRabbit trade sync pipeline
-After=network-online.target
-
-[Service]
-WorkingDirectory=/opt/quantrabbit
-Environment="BQ_PROJECT=quantrabbit"
-ExecStart=/opt/quantrabbit/.venv/bin/python scripts/run_sync_pipeline.py --interval 180
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-タイマーや cron と組み合わせる場合でも、`run_sync_pipeline.py` が `PositionManager.sync_trades()` → BigQuery export を順に実行します。
-旧 VM 環境向け記述は履歴情報であり、現行運用では未適用です。
-
----
-
-## オートチューニング ダッシュボード（ウェブ UI / 履歴）
-
-FastAPI 製の承認 UI は旧 Cloud Run/VM 経路の履歴です。
-現行ローカル運用ではこの節のクラウド手順は実行しません。
-バックエンドは BigQuery `autotune_runs` テーブルを参照します。
-
-1. **BigQuery テーブル作成**  
-   例: `cloudrun/autotune_ui/bq_autotune_runs.sql` を実行（`autotune_runs` と `autotune_settings`）
-   ```bash
-   bq query --use_legacy_sql=false < cloudrun/autotune_ui/bq_autotune_runs.sql
-   bq query --use_legacy_sql=false "CREATE TABLE IF NOT EXISTS \`quantrabbit.autotune_settings\` (
-     id STRING NOT NULL,
-     enabled BOOL DEFAULT TRUE,
-     updated_at TIMESTAMP,
-     updated_by STRING
-   )"
-   ```
-
-2. **チューニング結果を BigQuery へ記録**  
-   `scripts/tune_scalp.py` に `--bq-table` を渡すか、環境変数 `AUTOTUNE_BQ_TABLE` を設定します。
-   ```bash
-   AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs \
-   python scripts/tune_scalp.py --trials-per-strategy 20 --bq-table quantrabbit.autotune_runs
-   ```
-
-3. **Cloud Run へデプロイ（履歴アーカイブ / 実行対象外）**  
-   ```bash
-   gcloud builds submit --tag gcr.io/$PROJECT/autotune-ui .
-   gcloud run deploy autotune-ui \
-     --image gcr.io/$PROJECT/autotune-ui \
-     --region asia-northeast1 \
-     --platform managed \
-     --allow-unauthenticated \
-     --set-env-vars AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs
-   ```
-
-4. **アクセス**  
-   デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。`status` 更新はローカル導線側の運用反映と整合する前提で、`logs/tuning/scalp_active_params.json`（`SCALP_ACTIVE_PARAMS_PATH` で上書き可）へ反映されます。
-
-BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI からの承認・却下操作で更新されます。
-VM/Cloud Run UI の記述は履歴アーカイブです（現行運用では未使用）。
-
-**オートチューニング自動運用**
-
-- `scripts/install_service.sh` を使うと VM に systemd タイマーを展開でき、1 時間毎に `scripts/continuous_backtest.py --profile all --write-best` を実行しながら BigQuery (`AUTOTUNE_BQ_TABLE`) へ提案をアップロードします。
-  ```bash
-  sudo bash scripts/install_service.sh /home/tossaki/QuantRabbit tossaki --with-ui
-  ```
-  - `quant-autotune.timer` が 1 時間毎に起動します。環境変数 `AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs` を自動で設定済みです。
-  - UI サービス (`quant-autotune-ui.service`) も同時に有効化され、8088 ポートで承認ダッシュボードが待ち受けます（IAP トンネル経由で閲覧可能）。
-- Cloud Run/VM UI の記述は履歴アーカイブです（現行運用では未使用）。
-- コマンドラインからも制御可能です：
-  ```bash
-  python - <<'PY'
-  from autotune.database import set_settings
-  set_settings(None, enabled=False, updated_by="cli")
-  PY
-  ```
-
-**既存データの移行**
-
-- ローカルの SQLite (`logs/autotune.db`) に残っている履歴は、次のスクリプトで BigQuery にコピー可能です：
-  ```bash
-  AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs \
-  python scripts/sync_autotune_runs.py --limit 1000
-  ```
-- 旧 Cloud Run / VM 併用環境の記述は履歴アーカイブです（現行運用では未使用）。
-
----
-
-## Dashboards: Looker Studio 接続
-
-Looker Studio から GCS（リアルタイム UI）と BigQuery（履歴集計）へ接続するためのブートストラップを同梱しました。
-
-- 1 回セットアップ: `scripts/setup_looker_sources.sh`
-- 以降は Looker Studio 側でデータソースを追加するだけです。
-
-1) GCS リアルタイム JSON（UI 用）
-- コネクタ: Google Cloud Storage
-- サービスアカウント: `ui-dashboard-sa@<project>.iam.gserviceaccount.com` のキーを使用
-- オブジェクト: `gs://fx-ui-realtime/realtime/ui_state.json`
-- フィールド例:
-  - `generated_at`（DateTime）
-  - `new_trades`（Record → JSON 展開用にカスタム関数）
-  - `recent_trades`（Record → 同上、UNNEST 相当の展開で可視化）
-  - `open_positions`（Record → カスタムフィールドで net units 抽出）
-
-2) BigQuery 集計（履歴向け）
-- コネクタ: BigQuery → プロジェクト `<project>` → データセット `quantrabbit`
-- テーブル/ビュー: `trades_raw` / `trades_recent_view` / `trades_daily_features`
-- 推奨更新間隔: 15 分〜1 時間
-- 可視化例:
-  - 指標カード: 当日 `SUM(pl_pips)`
-  - 円グラフ: ポケット別 `win_rate`
-  - 折れ線: `close_time` の時系列 P/L
-  - ツリーマップ: `strategy × pl_pips`
-
-セットアップ（自動化）
-
-```bash
-# 環境に合わせて上書き可（未指定は config/env(.example).toml から読み取り）
-GCP_PROJECT=quantrabbit \
-UI_BUCKET=fx-ui-realtime \
-BQ_DATASET=quantrabbit \
-BQ_LOCATION=asia-northeast1 \
-UI_SA_EMAIL=ui-dashboard-sa@quantrabbit.iam.gserviceaccount.com \
-KEY_OUT=./ui-dashboard-sa.json \
-./scripts/setup_looker_sources.sh
-```
-
-スクリプトが行うこと:
-- SA 作成（存在すれば skip）とキー発行（`.gitignore` 対応済）
-- GCS バケット `gs://fx-ui-realtime` の作成と `objectViewer` 付与
-- プレースホルダ `realtime/ui_state.json` を配置
-- BigQuery dataset `quantrabbit` の作成
-- `trades_raw` が存在する場合、`trades_recent_view` と `trades_daily_features` を作成
-
-接続前チェックと検証
-- `scripts/run_sync_pipeline.py` を定期実行する（例: `python scripts/run_sync_pipeline.py --once` で GCS `realtime/ui_state.json` を更新）。ダッシュボードはこの GCS スナップショットをリアルタイム表示に利用します。
-- `scripts/run_sync_pipeline.py` が一度以上走り `trades_raw` にデータがある
-- Looker Studio のデータソースプレビューでレコードが表示される
-- 権限エラー時は SA の IAM を再確認（`roles/storage.objectViewer`, `roles/bigquery.dataViewer`, `roles/bigquery.jobUser`）
-
-注意事項
-- サービスアカウントキー（`ui-dashboard-sa.json`）は厳重に保管し、Git にコミットしないでください。
-- GCS 側の UI JSON は `analytics/gcs_publisher.py` が出力します（`ui_bucket_name`, `ui_state_object_path`）。
-- BigQuery への同期は `scripts/run_sync_pipeline.py`（`BQ_*` 環境変数）で制御します。
-
-
-## Ops: GCE SSH / OS Login（廃止済みアーカイブ）
-
-現行運用ではこの節の手順を実行しません。  
-以下は過去履歴としてのみ保持しています。
-
-推奨は OS Login（IAM + 一時鍵）。外部 IP がない場合は IAP を使用。
-
-- 前提ロール: `roles/compute.osLogin` か `roles/compute.osAdminLogin`
-- IAP 経由時: `roles/iap.tunnelResourceAccessor`
-
-Setup (一度だけ)
-
-```bash
-# OS Login を（必要なら）インスタンスで有効化
-gcloud compute instances add-metadata fx-trader-vm \
-  --zone asia-northeast1-b --metadata enable-oslogin=TRUE
-
-# 鍵を作成して OS Login に登録（30 日 TTL）
-ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-quantrabbit'
-gcloud compute os-login ssh-keys add \
-  --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d
-```
-
-Connect
-
-```bash
-# 外部 IP あり
-gcloud compute ssh fx-trader-vm \
-  --project quantrabbit --zone asia-northeast1-b \
-  --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit
-
-# 外部 IP なし / IAP 経由
-gcloud compute ssh fx-trader-vm \
-  --project quantrabbit --zone asia-northeast1-b \
-  --tunnel-through-iap \
-  --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit
-
-# 直接 SSH（OS Login ユーザ名は describe-profile で確認）
-ssh -i ~/.ssh/gcp_oslogin_quantrabbit <oslogin_username>@<EXTERNAL_IP>
-```
-
-Troubleshooting
-
-- `Permission denied (publickey)` のとき:
-  - OS Login 有効化状態を確認（enable-oslogin=TRUE）
-  - IAM osLogin 権限があるか確認
-  - OS Login 側の公開鍵 TTL 切れに注意（再登録）
-  - `--ssh-key-file` で鍵を明示、`--troubleshoot` で診断
-- OS Login 有効時はメタデータ `ssh-keys` は無視されます。
-- 組織ポリシー `compute.requireOsLogin` が有効な場合は OS Login のみ許可。
