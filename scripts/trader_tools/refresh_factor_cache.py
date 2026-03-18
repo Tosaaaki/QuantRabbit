@@ -25,7 +25,7 @@ from indicators.factor_cache import on_candle, all_factors
 from indicators.calc_core import IndicatorEngine
 
 OANDA_BASE = "https://api-fxtrade.oanda.com"
-ALL_PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD"]
+ALL_PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 
 EXPORT_KEYS = [
     "rsi", "atr", "atr_pips", "adx", "plus_di", "minus_di", "bbw",

@@ -33,7 +33,7 @@ Coordination: `logs/shared_state.json` — all tasks read/write.
 ```bash
 cd /Users/tossaki/App/QuantRabbit && .venv/bin/python scripts/trader_tools/refresh_factor_cache.py --all --quiet
 ```
-Updates technicals for ALL 4 pairs. Per-pair data: `logs/technicals_{PAIR}.json` (RSI, ADX, ATR, EMA slopes, MACD, etc.)
+Updates technicals for ALL 7 pairs. Per-pair data: `logs/technicals_{PAIR}.json` (RSI, ADX, ATR, EMA slopes, MACD, etc.)
 
 ### Monitor 1: Technical Dashboard — ALL PAIRS (70+ indicators each)
 ```bash
@@ -42,7 +42,7 @@ import json, os
 keys = ['rsi','atr_pips','adx','plus_di','minus_di','bbw','ema_slope_5','ema_slope_20',
         'macd','macd_hist','stoch_rsi','cci','regime','close',
         'div_rsi_score','div_rsi_kind','div_macd_score','div_macd_kind']
-for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD']:
+for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD','EUR_JPY','GBP_JPY','AUD_JPY']:
     path = f'logs/technicals_{pair}.json'
     if not os.path.exists(path): continue
     with open(path) as f: d = json.load(f)
@@ -54,7 +54,7 @@ for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD']:
 "
 ```
 Per-pair technicals from `logs/technicals_{PAIR}.json` (updated by Monitor 0).
-RSI, ATR, ADX/DI, MACD, BB, Stoch RSI, CCI, Divergence — across M5, H1, H4 for all 4 pairs.
+RSI, ATR, ADX/DI, MACD, BB, Stoch RSI, CCI, Divergence — across M5, H1, H4 for all 7 pairs.
 
 For deep USD_JPY analysis (Ichimoku, VWAP, swings, Donchian, Keltner, wick patterns):
 ```bash
@@ -154,8 +154,7 @@ for tf in ['M1','M5','H1','H4']:
 
 **Every cycle, actively seek entry points. After 3 consecutive passes, question if criteria too strict.**
 
-**Pairs:** USD_JPY, AUD_USD, GBP_USD, EUR_USD (every cycle)
-**Secondary:** EUR_JPY, GBP_JPY, AUD_JPY (when opportunity exists)
+**Pairs:** USD_JPY, EUR_USD, GBP_USD, AUD_USD, EUR_JPY, GBP_JPY, AUD_JPY (every cycle, all have technicals)
 **Correlation watch:** XAU_USD
 
 **Entry criteria (thresholds are guidelines, not absolutes):**

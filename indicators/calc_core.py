@@ -142,13 +142,15 @@ class IndicatorEngine:
             price_high=high.values,
             price_low=low.values,
             osc=rsi.values,
+            pip_value=pip,
         )
-        macd_hist_pips = (macd_hist / PIP) if not macd_hist.empty else macd_hist
+        macd_hist_pips = (macd_hist / pip) if not macd_hist.empty else macd_hist
         macd_div = compute_divergence(
             price_high=high.values,
             price_low=low.values,
             osc=macd_hist_pips.values if not macd_hist_pips.empty else [],
             min_osc=DEFAULT_MIN_MACD_PIPS,
+            pip_value=pip,
         )
         div_score = rsi_div.score * 0.6 + macd_div.score * 0.4
 

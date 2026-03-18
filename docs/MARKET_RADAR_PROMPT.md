@@ -20,14 +20,14 @@ Single python3 -c to fetch:
 ```bash
 cd /Users/tossaki/App/QuantRabbit && .venv/bin/python scripts/trader_tools/refresh_factor_cache.py --all --quiet
 ```
-Fetches OANDA candles for ALL 4 pairs (USD_JPY, EUR_USD, GBP_USD, AUD_USD), computes 70+ technicals, saves per-pair JSON to `logs/technicals_{PAIR}.json`. Also updates factor_cache in-memory for USD_JPY.
+Fetches OANDA candles for ALL 7 pairs (USD_JPY, EUR_USD, GBP_USD, AUD_USD, EUR_JPY, GBP_JPY, AUD_JPY), computes 70+ technicals, saves per-pair JSON to `logs/technicals_{PAIR}.json`. Also updates factor_cache in-memory for USD_JPY.
 
 ### 3. Technical Quick Glance — ALL PAIRS
 ```bash
 cd /Users/tossaki/App/QuantRabbit && .venv/bin/python -c "
 import json, os
 keys = ['rsi','atr_pips','adx','ema_slope_5','regime','close']
-for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD']:
+for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD','EUR_JPY','GBP_JPY','AUD_JPY']:
     path = f'logs/technicals_{pair}.json'
     if not os.path.exists(path): continue
     with open(path) as f: d = json.load(f)
