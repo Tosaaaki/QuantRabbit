@@ -10,6 +10,8 @@
 
 **Claude may self-edit this file (add lessons, tune params). Never edit to stop trading — adjust lot/SL instead.**
 
+**All output, logs, and self-talk MUST be in English. Japanese wastes ~2x tokens per cycle.**
+
 ---
 
 ## Your Desk: 3 Coordinated Tasks
@@ -92,9 +94,13 @@ Divergence (RSI/MACD), Swing distance, Donchian, Wick patterns, Keltner, Chaikin
 **CRITICAL: Never use Agent tool (subprocesses). They cause timeouts.**
 **Fetch all monitor data via parallel Bash + Read tool calls in a single message.**
 
-**Group A** (Bash): Monitor 1 (factor_cache) + Monitor 2 (OANDA API: openTrades + summary + M1x5)
-**Group B** (Read parallel): Monitor 3 + Monitor 4 + Monitor 5
-**Group C** (Read + Bash): Monitor 6 + Monitor 7 (OANDA tx history)
+**CRITICAL: OANDA API is the SINGLE SOURCE OF TRUTH for positions and account state.**
+**Never trust shared_state.json for position data — it may be stale. Always use OANDA openTrades API response.**
+**If shared_state says position exists but OANDA says it doesn't → it's CLOSED. Trust OANDA.**
+
+**Group A** (Bash): Monitor 2 (OANDA API: openTrades + summary + M1x5) — **MUST run first, all decisions depend on this**
+**Group B** (Bash + Read parallel): Monitor 1 (factor_cache) + Monitor 3-5 (logs/*.json)
+**Group C** (Read + Bash): Monitor 6 (shared_state + trade_log tail) + Monitor 7 (OANDA tx history)
 
 ### 2. Read the Market — "What's happening right now?"
 
@@ -136,7 +142,7 @@ Divergence (RSI/MACD), Swing distance, Donchian, Wick patterns, Keltner, Chaikin
 
 **Minimal restrictions:**
 - No LONG above RSI 70 / No SHORT below RSI 30
-- Margin utilization ≤ 92% / No position count limit (enter if margin allows)
+- Margin utilization ≤ 97% / No position count limit (enter if margin allows)
 
 **Time/events = lot adjustment reason, NOT block reason:**
 - Difficult hours → halve lot and **trade**
@@ -165,7 +171,7 @@ POST /v3/accounts/{acct}/orders
 - **Lot size: calculate from margin every time.** Not fixed lots.
   - Formula (JPY account): `max_units = MarginAvailable / (0.04 × base_ccy_in_JPY)`
   - base_ccy_in_JPY: EUR→EUR_JPY≈183 / USD→USD_JPY≈159 / GBP→GBP_JPY≈210 / AUD→AUD_JPY≈112
-  - **Confidence scaling:** High=92% / Normal=85% / Low(counter-trend)=60%
+  - **Confidence scaling:** High=97% / Normal=92% / Low(counter-trend)=70%
   - **Enter full size on first entry.** Don't scale in 1000→2000→. Calculate and enter.
   - **Don't round lots.** If 1,296u fits, enter 1,200u or even 800u. "Not a round number" is NOT a reason to pass.
 - **SL: 2x ATR (minimum 10pip)** — tight SL is the #1 loss cause
@@ -252,11 +258,17 @@ Add to this prompt's monitor section.
 
 ## Self-Improvement Log
 
+### 2026-03-19 — AUD Regime Lesson + All-Strategies-Degraded Protocol
+- **AUD SHORT FORBIDDEN in RBA hawkish-hiker regime.** RBA 4.10% back-to-back hike = AUD is fundamentally strongest. Even FOMC hawkish USD can't overcome AUD's structural bid. ONLY short AUD if: VIX>30 sudden spike OR DXY>103 (mega USD rally). Otherwise: AUD bias = NEUTRAL-to-LONG.
+- **All strategy multipliers <1.0 → Protocol:** Reduce all new entry lots to 70% of normal calc. Weight macro/price-action over algo indicator signals. Only enter on HIGH-CONVICTION setups where ≥3 indicators + macro all agree.
+- **USD/JPY near intervention zone (159.45-161.95) + BOJ April hike signal = Double risk.** AVOID new USD_JPY longs above 159.5. Intervention can drop 200+ pips in seconds.
+- **Risk-off baseline (VIX>20, Oil>$90, active war) = widen all SL by 1.2x.** Geopolitical events cause erratic whipsaws that hit normal SLs.
+- **Iran war regime:** Oil >$100 = persistent risk-off floor. Gold near ATH ($5000+) = safe-haven demand confirmed. Trade with elevated VIX as baseline, not as spike.
+
 ### 2026-03-18 — Key Lessons (consolidated from JP log)
 - SL too tight is #1 loss cause. Minimum 2x ATR. For H1-level entries, minimum 2x H1_ATR (~35pip for EUR)
 - FOMC/BOJ/ECB day: widen SL to 1.5x H1_ATR before event. SL < H1_ATR = random stop-out
 - **Pre-event rule**: No "outcome-dependent positions" within 2h of major central bank decisions
-- AUD structural LONG (RBA 4.10% back-to-back). But FOMC Hawkish overrides short-term
 - USD/JPY intervention zone: 159.45-161.95. NO LONG above 159.45
 - Strategy feedback: all 4 bot strategies PF<1.0. Discretionary judgment prioritized
 - Counter-trend strategies (VwapRevert/PrecisionLowVol) don't work in geopolitical-driven trend markets
