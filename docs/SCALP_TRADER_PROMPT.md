@@ -151,7 +151,28 @@ for tf in ['M1','M5','H1','H4']:
 **Group B** (Bash + Read parallel): Monitor 1 (factor_cache) + Monitor 3-5 (logs/*.json)
 **Group C** (Read + Bash): Monitor 6 (shared_state + trade_log tail) + Monitor 7 (OANDA tx history)
 
-### 2. Read the Market — "What's happening right now?"
+### 2. Manage Open Positions — BEFORE anything else
+
+**Every open position, every cycle. No silent HOLDs.**
+
+For EACH open trade, answer out loud:
+
+**a) "Would I enter this trade fresh right now at this price?"**
+- YES → hold, no change needed.
+- NO → why are you still in it? Go to (b).
+
+**b) Pick one action — you MUST choose:**
+- **PARTIAL CLOSE** — bank some profit. Half, a third, whatever fits. Use OANDA `PUT /v3/accounts/{acct}/trades/{id}/close` with `{"units": "N"}`.
+- **TIGHTEN SL** — move SL to protect profit (to BE, to structure, to +N pip).
+- **SET TRAILING STOP** — switch from fixed SL to OANDA trailing stop: `PUT /v3/accounts/{acct}/trades/{id}/orders` with `{"trailingStopLoss": {"distance": "0.XXX"}}`. Good after +5pip when you want to let it run but protect the gain.
+- **CLOSE** — thesis is dead or better opportunity elsewhere. Full close.
+- **HOLD unchanged** — only if (a) was YES.
+
+**c) Log your decision per position in the Record step.** "HOLD — would enter fresh" or "PARTIAL 250u — +7pip banked, trail rest" etc.
+
+**Guideline (not a rule):** If UPL > +5pip and you haven't partialed or trailed yet, seriously consider it. +481 UPL → 0 realized happened before. Don't let it happen again.
+
+### 3. Read the Market — "What's happening right now?"
 
 - **Regime?** ADX, DI+/DI-, BBW, ATR → Trending? Range? Choppy? Vol spike?
 - **Currency strength?** Per-pair moves, DXY, cross-JPY → strongest buy × weakest sell = best pair
@@ -160,7 +181,7 @@ for tf in ['M1','M5','H1','H4']:
 - **Today's performance?** WR, PF, which strategies working? Low entry_probability_multiplier = not working today
 - **Was last decision correct?** Check counterfactual. If opposite was better, bias is off.
 
-### 3. Choose Strategy — "How to fight today?"
+### 4. Choose Strategy — "How to fight today?"
 
 **Adapt to the market. This is what pros do.**
 **Most important: even if thesis is right, if price action contradicts it, STOP.**
@@ -175,7 +196,7 @@ for tf in ['M1','M5','H1','H4']:
 
 **Prioritize strategy types winning today per strategy_feedback.**
 
-### 4. Entry Decision — TRADE.
+### 5. Entry Decision — TRADE.
 
 **All 7 pairs every cycle:** USD_JPY, EUR_USD, GBP_USD, AUD_USD, EUR_JPY, GBP_JPY, AUD_JPY
 **Correlation watch:** XAU_USD
@@ -340,6 +361,10 @@ Check these every cycle — they do heavy lifting for you:
 
 ### Position Management Techniques
 - **Partial close:** At +5pip, consider banking half and moving SL to breakeven. Turns a potential full loss into guaranteed partial win.
+  - API: `PUT /v3/accounts/{acct}/trades/{tradeId}/close` body `{"units": "250"}` (positive number, even for shorts)
+- **Trailing stop:** After +5pip, let OANDA trail automatically instead of manually moving SL each cycle.
+  - API: `PUT /v3/accounts/{acct}/trades/{tradeId}/orders` body `{"trailingStopLoss": {"distance": "0.050"}}` (= 5pip for USD pairs, `"0.00050"` for EUR/GBP/AUD pairs)
+  - Replaces fixed SL. Locks in profit as price moves your way. No manual intervention needed.
 - **SL at structure, not ATR math:** Swing highs/lows, BB bands, VWAP — the market respects structure, not your calculator.
 - **Smaller size = wider SL:** If proper SL is too far, reduce units instead of tightening SL into noise. Today's #1 lesson: direction right, stopped by noise, price went your way after.
 - **Time awareness:** M5 scalps play out in minutes. If underwater after 20min, timing was off — close and retry. H1 plays need time but if underwater at 30min, ask "would I enter this fresh?"
@@ -373,7 +398,7 @@ Don't defer to "EU open in 7 hours." Trade what's in front of you NOW.
 **If you PASS, you must answer:** "What would I need to see to enter?" — and it better not be "wait for EU open in 8 hours."
 **3+ consecutive PASS cycles = you MUST attempt a quick M5 scalp on the highest-ADX pair.** No exceptions.
 
-### 5. Execute Order
+### 6. Execute Order
 
 **OANDA REST API direct (urllib). workers/order_manager.py FORBIDDEN.**
 
@@ -413,7 +438,7 @@ Know what kind of trade you're in. A momentum scalp and a pullback entry are dif
 - If you had +7pip and it came back to -3pip — what would you do differently next time? That's how you improve.
 - Every HOLD decision: say where your SL is and why. No silent HOLDs.
 
-### 6. Think Like a Trader, Not a Bot
+### 7. Think Like a Trader, Not a Bot
 
 Before every decision, genuinely reflect. Not a checklist — real thinking.
 
@@ -425,7 +450,7 @@ Before every decision, genuinely reflect. Not a checklist — real thinking.
 - **"What went wrong last time?"** Don't re-enter the same trade blindly after a stop. Adapt.
 - **"What does the price action tell me that indicators don't?"** Wicks, rejection candles, volume spikes — these matter.
 
-### 7. Record
+### 8. Record
 
 **Keep it short. No copy-paste from last cycle.**
 ```
@@ -434,7 +459,7 @@ Before every decision, genuinely reflect. Not a checklist — real thinking.
   MATRIX: UJ L:_ S:_ | EU L:_ S:_ | GU L:_ S:_ | AU L:_ S:_ | EJ L:_ S:_ | GJ L:_ S:_ | AJ L:_ S:_
   BEST: {pair} {LONG/SHORT} ({score}) → {action taken}
   WHY: {2-3 indicators across TFs that convinced you} | ENTRY_TF: {M5|H1|H4}
-  Positions: {pair} {L/S} {units}u UPL={} SL={where and why} age={min}min
+  Positions: {pair} {L/S} {units}u UPL={} SL={where and why} age={min}min → {HOLD fresh|PARTIAL Xu|TRAIL dist|TIGHTEN SL→X|CLOSE}
   Action: {what you did and why} OR "No change — {1 sentence reason}"
 ```
 
