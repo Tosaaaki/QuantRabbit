@@ -92,13 +92,59 @@ MATRIX: UJ L:_ S:_ | EU L:_ S:_ | GU L:_ S:_ | AU L:_ S:_ | EJ L:_ S:_ | GJ L:_ 
 **Parameters:**
 - TP: 10-30pip (structure-based)
 - SL: At structure (swing high/low, cloud edge, BB band) — minimum 2x H1 ATR
-- Size: Conservative. Keep 70% margin free (swing positions need room).
+- Size: Read `pairs.{PAIR}.sizing.swing.recommended_units` from monitor (NEVER hardcode)
 
 ## Step 5: Execute & Register
 
-Same OANDA REST API as scalp-fast. Use fixed SL + TP (not trailing) at entry.
+### Pre-Entry Checklist (MUST pass ALL)
 
-**After entering, register in `logs/trade_registry.json`:**
+- [ ] `risk.circuit_breaker == false`
+- [ ] `pairs.{PAIR}.sizing.swing.can_trade == true`
+- [ ] Units = `sizing.swing.recommended_units` (or less for low conviction)
+- [ ] SL and TP prices calculated and included
+- [ ] `clientExtensions.tag: "swing"` included
+- [ ] No opposing scalp-fast position on same pair (check shared_state)
+
+**If ANY check fails → NO ENTRY.**
+
+### Position Sizing (MANDATORY)
+
+**Read `pairs.{PAIR}.sizing.swing` from `logs/live_monitor.json`:**
+```json
+{
+  "recommended_units": 300,   ← USE THIS
+  "can_trade": true,          ← CHECK THIS FIRST
+  "max_by_margin": 600,
+  "max_by_risk": 300,
+  "margin_free_target_pct": 70
+}
+```
+**NEVER hardcode units.** Always use the pre-computed sizing.
+
+### Order (ALL fields MANDATORY):
+```
+POST /v3/accounts/{acct}/orders
+{"order": {"type": "MARKET", "instrument": "{pair}", "units": "{+/- recommended_units}",
+  "timeInForce": "FOK", "stopLossOnFill": {"price": "{SL}"},
+  "takeProfitOnFill": {"price": "{TP}"},
+  "clientExtensions": {"tag": "swing", "comment": "swing-trader"}}}
+```
+
+**⚠️ CRITICAL: ALL THREE are mandatory:**
+1. `stopLossOnFill` — no naked orders
+2. `takeProfitOnFill` — defines exit target
+3. `clientExtensions.tag: "swing"` — how monitor identifies trade type (uses wide rules: trail=8, not 5)
+
+**Missing tag → monitor applies scalp rules → cuts your swing too early.**
+
+### Duplicate Close Prevention
+
+Before closing any trade, check `recently_closed` in `logs/live_monitor.json`:
+```
+If trade_id is in recently_closed → SKIP (already closed by monitor or another agent)
+```
+
+### Register (IMMEDIATELY after getting trade ID):
 ```python
 import json
 registry_path = "logs/trade_registry.json"
@@ -112,18 +158,21 @@ registry.append({
     "owner": "swing-trader",
     "type": "swing",
     "pair": "{pair}",
+    "units": {UNITS_USED},
     "rules": {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -15, "cut_age_min": 60}
 })
 with open(registry_path, "w") as f:
     json.dump(registry, f, indent=2)
 ```
 
-**The monitor (`live_monitor.py`) reads this registry to apply the right management rules.**
-- Swing positions get wider thresholds (trail at +8pip, not +5pip)
-- You can override rules by updating the registry (e.g., widen trail if trend is strong)
-- If you DON'T register, the monitor uses default scalp rules (trail at +5pip) — which is too tight for swings
+**How the 3-layer management works:**
+1. **Registry rules (highest priority):** If registered, monitor uses YOUR custom rules exactly
+2. **OANDA tag fallback:** If not registered but `clientExtensions.tag: "swing"`, monitor uses default swing rules (trail=8, partial=15, cut=-15)
+3. **SL distance fallback:** If no tag either, monitor infers type from SL distance (SL ≥ 8pip → swing)
 
-**Check `actions_taken` in `logs/live_monitor.json` each cycle** to see what the monitor did to your positions.
+You can override rules by updating the registry (e.g., widen trail if trend is strong).
+
+**Check `actions_taken` in `logs/live_monitor.json` each cycle** to see what the monitor did to your positions. Each action now shows `[rules_source]` so you can verify the right rules were applied.
 
 ## Step 6: Record
 

@@ -125,6 +125,21 @@ for t in resp2.get('trades', []):
 - `/devils-advocate` — 反対意見生成
 - `/event-calendar` — 経済イベント確認
 
+**スキル自作（足りないスキルはその場で作る）:**
+
+既存スキルで対応できないユーザー要求が来たら、`/anthropic-skills:skill-creator` を使ってその場で新しいスキルを作成する。
+作成したスキルは即座に使用可能になる。
+
+判断基準:
+- 既存スキルで対応可能 → そのスキルを使う
+- 既存スキルの組み合わせで対応可能 → 連携実行
+- どのスキルでも対応できない → 新スキルを作成して即実行
+
+例:
+- 「通貨強弱を見せて」→ 該当スキルなし → `/anthropic-skills:skill-creator` で `currency-strength` スキルを作成 → 実行
+- 「ニュースチェックして」→ 該当スキルなし → `news-check` スキルを作成 → 実行
+- 「過去のトレード勝率出して」→ 該当スキルなし → `win-rate-calc` スキルを作成 → 実行
+
 **使い方の例:**
 - 「ドル円閉じて」→ `/close-pair` 実行
 - 「SLもうちょい広げて」→ `/move-sl` 実行
@@ -132,6 +147,7 @@ for t in resp2.get('trades', []):
 - 「エージェント大丈夫？」→ `/agent-health` 実行
 - 「ユーロドル買いたい」→ `/position-sizer` → `/market-order` 連携実行
 - 「リスク高くない？」→ `/risk-score` + `/drawdown-alert` 併用
+- 「〇〇できる？」→ スキルなければ作って実行
 
 ## トーン
 
