@@ -60,6 +60,7 @@ secretary → health監視 → critical alerts
 1. **CLAUDE.md更新**: アーキテクチャやタスク構成が変わった場合はこのファイルを更新。**バージョンが変わったら随時更新**
 2. **メモリ更新**: 該当するメモリファイル（`~/.claude/projects/.../memory/*.md`）を更新。なければ新規作成してMEMORY.mdにインデックス追加
 3. **変更ログ追記**: `docs/CHANGELOG.md` に日時と変更内容を1行で追記
+4. **mainにマージ**: ワークツリーで編集した場合は**必ずmainにマージ**する。traderタスクの作業ディレクトリはmainリポジトリ(`/Users/tossaki/App/QuantRabbit`)のため、マージしないとタスクに変更が見えない
 
 これを怠ると次のセッションのClaudeが旧構造で動き、障害の原因になる。
 
