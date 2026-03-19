@@ -39,6 +39,7 @@ OUTPUT_PATH = ROOT / "logs" / "live_monitor.json"
 SUMMARY_PATH = ROOT / "logs" / "live_monitor_summary.json"
 REGISTRY_PATH = ROOT / "logs" / "trade_registry.json"
 TRADE_LOG_PATH = ROOT / "logs" / "live_trade_log.txt"
+CRITICAL_LOG_PATH = ROOT / "logs" / "critical_events.log"
 RECENTLY_CLOSED_PATH = ROOT / "logs" / "recently_closed.json"
 PREDICTION_TRACKER_PATH = ROOT / "logs" / "prediction_tracker.json"
 
@@ -264,10 +265,19 @@ def _pip_size(pair: str) -> float:
 
 
 def _log_action(msg: str):
-    """Append to live trade log."""
+    """Append to live trade log. Falls back to critical_events.log if disk is full."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    with open(TRADE_LOG_PATH, "a") as f:
-        f.write(f"[{ts}] MONITOR: {msg}\n")
+    line = f"[{ts}] MONITOR: {msg}\n"
+    try:
+        with open(TRADE_LOG_PATH, "a") as f:
+            f.write(line)
+    except OSError:
+        # Disk full or write error — write to small fallback log so close events are never lost
+        try:
+            with open(CRITICAL_LOG_PATH, "a") as f:
+                f.write(line)
+        except Exception:
+            pass  # last resort: silently discard rather than crash the monitor
 
 
 # ─────────────────────────────────────────────

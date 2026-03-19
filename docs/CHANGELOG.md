@@ -2,6 +2,7 @@
 
 ## 2026-03-20
 
+- **fix: SCALP_FAST_PROMPT ボット化防止** — ゾーン固執禁止(3cycle reset)・PASSは1行・ゾーンはゲートではなく参考・やるな項目追加
 - **fix: live_monitor_summary.jsonのスコアが全ペア0だったバグ修正** — `LONG_score`→`long_score`キー名不一致。scalp-fastがスコアゼロで判断していた
 - **fix: swing-traderロック飢餓** — market-radarをロック不要化(読取専用)、ROTATION_GRACE_SEC 30→10秒。swing-traderが183分停止していた問題を解消
 - **fix: trade_performance.pyにclaude_only統計追加** — monitorの自動決済(11勝0敗)を除外した実判断WRを表示。79%→61.5%の実態を可視化
