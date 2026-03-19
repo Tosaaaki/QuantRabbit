@@ -2,6 +2,24 @@
 
 ## 2026-03-20
 
+- **v4アーキテクチャ: 5エージェント→3エージェント統合、脱ボット化**
+  - 5タスク(scalp-fast/swing-trader/market-radar/macro-intel/secretary) → 3タスク(trader/analyst/secretary)に統合
+  - trader: 一人のプロトレーダー。スキャルプもスウィングも市場が差し出すものに応じて判断
+  - analyst: マクロ+クロスペア+パフォーマンス+ツール開発を一人で担当
+  - secretary: シンプル化。ヘルスチェックとクリティカルアラートのみ
+  - live_monitor_summary.json: スコア(long_score/short_score)を削除、生データ(H1バイアス、DI、ATR、regime等)を追加
+  - プロンプト: 手順書型チェックリスト → トレーダーの心得・原則ベースに全面書き換え
+  - 新ファイル: TRADER_PROMPT.md, ANALYST_PROMPT.md, scheduled-tasks/trader/, scheduled-tasks/analyst/
+- **v4強化: ポートフォリオ思考・スケールイン/アウト・構造TP/SL・R:R・データループ完全接続**
+  - マルチ通貨同時ポジション可。通貨テーマ（USD弱い→複数ペアでUSD売り）で考える設計
+  - 相関管理: EUR_USD+GBP_USDは半分ずつ。全ポジ合計NAV5%リスク上限
+  - スケールイン/アウト: 段階的エントリー＆半分利確+トレイル
+  - 構造ベースTP/SL: swing_dist_high/low, Ichimoku雲端, VWAPを根拠に。「SL 5pip」だけはNG
+  - R:R 1:1未満のトレード禁止
+  - 「効いてないトレード」5分横ばいで切る判断を追加
+  - 1500u固定上限を撤廃→NAVベース動的サイジング
+  - データフロー完全接続: trader↔analyst↔trade_log↔shared_state 全ループを閉じた
+  - analystアラート: 段落→1行シグナル。通貨テーマで伝達
 - **fix: SCALP_FAST_PROMPT ボット化防止** — ゾーン固執禁止(3cycle reset)・PASSは1行・ゾーンはゲートではなく参考・やるな項目追加
 - **fix: live_monitor_summary.jsonのスコアが全ペア0だったバグ修正** — `LONG_score`→`long_score`キー名不一致。scalp-fastがスコアゼロで判断していた
 - **fix: swing-traderロック飢餓** — market-radarをロック不要化(読取専用)、ROTATION_GRACE_SEC 30→10秒。swing-traderが183分停止していた問題を解消

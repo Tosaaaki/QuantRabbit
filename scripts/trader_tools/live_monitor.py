@@ -197,8 +197,22 @@ PAIR_PROFILES = {
 }
 
 # Default management rules (used when trade not in registry)
-DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -5, "cut_age_min": 10}
-DEFAULT_SWING_RULES = {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -15, "cut_age_min": 60}
+# Safety net only — normal position management is Claude's discretionary call.
+# These rules exist ONLY to prevent catastrophic losses when Claude is between cycles.
+DEFAULT_SCALP_RULES = {
+    "trail_at_pip": 99,      # disabled — Claude decides when to trail
+    "partial_at_pip": 99,    # disabled — Claude decides when to partial
+    "max_hold_min": 30,      # safety net: 30min放置はさすがに異常
+    "cut_at_pip": -8,        # safety net: -8pipは破滅的。これ以前にClaudeが切るべき
+    "cut_age_min": 1,        # safety net発動は即座に
+}
+DEFAULT_SWING_RULES = {
+    "trail_at_pip": 99,      # disabled — Claude decides when to trail
+    "partial_at_pip": 99,    # disabled — Claude decides when to partial
+    "max_hold_min": 480,     # safety net: 8時間放置
+    "cut_at_pip": -20,       # safety net: -20pipは破滅的
+    "cut_age_min": 1,        # safety net発動は即座に
+}
 
 # Risk limits
 MAX_MARGIN_USAGE_PCT = 80
@@ -1476,16 +1490,8 @@ def build_monitor() -> dict:
 
         pair_data = {"price": price_data, "micro": micro, "m1": m1, "m5": m5, "bias": bias}
 
-        # Signal scoring v4 (direction + timing + confluence + macro + session)
-        long_score, long_reasons, long_confluence = score_pair(pair_data, "LONG", pair, macro_bias, session)
-        short_score, short_reasons, short_confluence = score_pair(pair_data, "SHORT", pair, macro_bias, session)
-        best_dir = "LONG" if long_score > short_score else "SHORT"
-        best_score = max(long_score, short_score)
-        pair_data["signal"] = {
-            "long_score": long_score, "long_reasons": long_reasons, "long_confluence": long_confluence,
-            "short_score": short_score, "short_reasons": short_reasons, "short_confluence": short_confluence,
-            "best": best_dir, "best_score": best_score,
-        }
+        # Scoring removed in v4 — Claude reads raw data and decides.
+        # score_pair() kept in code for potential future analysis but not called.
 
         # Pair profile for Claude's discretionary use
         profile = PAIR_PROFILES.get(pair, {})
@@ -1652,45 +1658,66 @@ def _verify_predictions(monitor: dict) -> None:
 
 
 def _build_summary(monitor: dict) -> dict:
-    """Build compact summary for scalp-fast. ~2KB instead of ~25KB."""
+    """Build compact summary for trader. Raw data, no scores — trader reads and decides."""
     pairs_summary = {}
     for pair, data in monitor.get("pairs", {}).items():
         price = data.get("price", {})
         micro = data.get("micro", {})
         m1 = data.get("m1", {})
         m5 = data.get("m5", {})
-        signal = data.get("signal", {})
-        sizing = data.get("sizing", {}).get("scalp", {})
+        bias = data.get("bias", {})
+        sizing_scalp = data.get("sizing", {}).get("scalp", {})
+        sizing_swing = data.get("sizing", {}).get("swing", {})
         sp = data.get("scalp_params", {})
+        profile = data.get("profile", {})
 
         pairs_summary[pair] = {
+            # Price
             "bid": price.get("bid"), "ask": price.get("ask"),
             "spread": price.get("spread_pips"),
+            # Momentum (what's happening NOW)
             "micro_dir": micro.get("direction"), "micro_vel": micro.get("velocity"),
-            # Key predictive indicators
+            # M1 — entry timing
             "m1_rsi": round(m1.get("rsi", 50), 1),
             "m1_stoch": round(m1.get("stoch_rsi", 0.5), 2),
+            "m1_macd_hist": round(m1.get("macd_hist", 0), 6),
+            # M5 — trend & structure
             "m5_adx": round(m5.get("adx", 0), 1),
+            "m5_plus_di": round(m5.get("plus_di", 0), 1),
+            "m5_minus_di": round(m5.get("minus_di", 0), 1),
             "m5_rsi": round(m5.get("rsi", 50), 1),
             "m5_macd_hist": round(m5.get("macd_hist", 0), 5),
+            "m5_ema_slope_5": round(m5.get("ema_slope_5", 0), 4),
             "m5_bbw": round(m5.get("bbw", 0), 5),
             "m5_bb_pos": round((price.get("mid", 0) - m5.get("bb_lower", 0)) /
                                max(m5.get("bb_upper", 1) - m5.get("bb_lower", 1), 0.0001), 2)
                          if m5.get("bb_upper") and m5.get("bb_lower") else None,
+            "m5_atr_pips": round(m5.get("atr_pips", 0), 1),
+            "m5_regime": m5.get("regime", "unknown"),
+            # M5 — confluence signals
             "m5_vwap_gap": round(m5.get("vwap_gap", 0), 1),
             "m5_ichimoku_cloud": round(m5.get("ichimoku_cloud_pos", 0), 1),
             "m5_div_rsi": m5.get("div_rsi_kind", 0),
             "m5_div_macd": m5.get("div_macd_kind", 0),
+            # Structure — support/resistance proximity
             "swing_dist_high": m5.get("swing_dist_high"),
             "swing_dist_low": m5.get("swing_dist_low"),
-            # Scores
-            "long_score": signal.get("long_score", 0),
-            "short_score": signal.get("short_score", 0),
+            # H1 bias — bigger picture
+            "h1_adx": round(bias.get("h1_adx", 0) or 0, 1),
+            "h1_plus_di": round(bias.get("h1_plus_di", 0) or 0, 1),
+            "h1_minus_di": round(bias.get("h1_minus_di", 0) or 0, 1),
+            "h1_rsi": round(bias.get("h1_rsi", 50) or 50, 1),
             # Sizing
-            "can_trade": sizing.get("can_trade", False),
-            "rec_units": sizing.get("recommended_units", 0),
-            # Scalp params
+            "can_trade": sizing_scalp.get("can_trade", False),
+            "scalp_units": sizing_scalp.get("recommended_units", 0),
+            "swing_units": sizing_swing.get("recommended_units", 0),
+            # Scalp params (ATR-adaptive)
             "tp_pips": sp.get("tp_pips"), "sl_pips": sp.get("sl_pips"),
+            # Spread cost — what % of TP does spread eat?
+            "spread_cost_pct": round(price.get("spread_pips", 0) / sp.get("tp_pips", 3) * 100, 1)
+                               if sp.get("tp_pips") else None,
+            # Pair character
+            "character": profile.get("character", ""),
         }
 
     # Recent predictions for agent context (so agents know what they predicted last)

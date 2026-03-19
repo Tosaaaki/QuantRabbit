@@ -1,54 +1,49 @@
-# QuantRabbit — Claude裁量FXスキャルプシステム
+# QuantRabbit — Claude裁量FXトレーディングシステム
 
-このリポジトリはClaudeによる裁量FXスキャルピングの運用基盤。
-ボット/自動売買ではない。Claudeが自分の頭で判断してOANDA APIで直接注文する。
-テクニカル計算・機械的ポジション管理はPythonスクリプトが担う。
+Claudeがプロの裁量トレーダーとして市場を読み、自分の頭で判断してOANDA APIで直接注文する。
+ボット/自動売買ではない。テクニカル計算・機械的ポジション管理はPythonスクリプトが担う。
 
-## アーキテクチャ (v3)
+## アーキテクチャ (v4)
 
 ### Python層（LLMコストゼロ、30秒間隔）
 - `scripts/trader_tools/live_monitor.py` — launchdで30秒ごとに実行
   - データ: pricing, S5/M1/M5指標(divergence, Ichimoku, VWAP含む), H1/H4バイアス
-  - シグナルスコアリングv4: 7ペア×2方向、5カテゴリ(Direction+Timing+Confluence+Macro+Session)、最大+10点
+  - **生データ提供**: スコアではなく指標の生値をトレーダーに渡す。判断はClaudeが行う
   - ペアプロファイル: pair別のspread gate, SL/TP範囲, ADX閾値, セッション適性, ペア性格
   - 機械的ポジ管理: `logs/trade_registry.json` のルールに従いtrail/partial/close実行
   - リスク: margin使用率, ドローダウン, サーキットブレーカー
-  - 出力: `logs/live_monitor.json`
+  - 出力: `logs/live_monitor.json`, `logs/live_monitor_summary.json`
 
-### Claude層（裁量判断 — 予測ファースト）
+### Claude層（3エージェント裁量体制）
 
-**核心原則: Claudeはスコアを見る前に「予測」を立てる。スコアは確認材料。予測がエッジ。**
+**核心原則: Claudeはプロの裁量トレーダー。スコアに頼らず、市場を自分の目で読んで判断する。**
 
 | タスク | モデル | 間隔 | ロック | 役割 |
 |--------|--------|------|--------|------|
-| scalp-fast | Opus | 2分 | なし | PREDICT→score確認→2-4pipスキャルプ。裁量判断で貪欲に利確 |
-| swing-trader | Opus | 10分 | global | THESIS→H1/H4深い分析→10-50pipスウィング。thesis正否の記録必須 |
-| market-radar | Sonnet | 7分 | global | 監視・急変検知・4層Self-Check（機会と危険の両方） |
-| macro-intel | Sonnet | 19分 | global | マクロ分析・5つの必須自問・クロスエージェント学習・ツール開発 |
-| secretary | Sonnet | 11分 | global | アカウンタビリティ監査・エージェント間学習中継・複雑性プルーニング |
+| trader | Opus | 2-3分 | なし | 一人のプロトレーダー。スキャルプもスウィングも打てる。市場を読んで判断 |
+| analyst | Sonnet | 10分 | global | トレーダーの右腕。マクロ分析・クロスペア分析・パフォーマンス確認・ツール開発 |
+| secretary | Sonnet | 11分 | なし | 裏方。ヘルスチェック・ゴミ掃除・重要アラートのみ |
 
-- 排他制御: `scripts/trader_tools/task_lock.py` でグローバルロック（`global_agent`）
 - エージェント間連携: `logs/shared_state.json`
 - ポジション所有権: `logs/trade_registry.json`
-- 各タスクのプロンプト: `docs/*_PROMPT.md`
+- 各タスクのプロンプト: `docs/TRADER_PROMPT.md`, `docs/ANALYST_PROMPT.md`, `docs/SECRETARY_PROMPT.md`
 - タスク定義: `~/.claude/scheduled-tasks/*/SKILL.md`
+- 排他制御: analystのみ `scripts/trader_tools/task_lock.py` でグローバルロック
 
-### 自己改善ループ
+### 学習ループ
 ```
-scalp-fast → REFLECTION: → live_trade_log.txt
-swing-trader → SWING REVIEW: → live_trade_log.txt
-macro-intel → reads reflections → identifies patterns → updates shared_state/prompts
-secretary → audits compliance → relays findings → prunes complexity
+trader → LEARN: → live_trade_log.txt（一行で。フォーマットに縛られるな）
+analyst → reads trade log → updates shared_state bias → takes one action
+secretary → health check → alerts only when critical
 ```
 
 ## 絶対ルール
 
-- **ボット禁止**: `while True` + `sleep` の常駐スクリプトを書かない。`workers/` のコードは参照のみ
-- **Pythonツールは可**: テクニカル計算・機械的ポジ管理のスクリプトは可。トレード判断はClaude裁量
-- **OANDA直接注文**: urllib で REST API を叩く。ボットプロセス経由禁止
-- **予測ファースト**: スコアを見る前に予測を立てる。スコアは確認材料。予測がエッジ
-- **裁量トレーダーであれ**: ルール実行マシンではない。市況を読んで自分で判断する
-- テクニカル指標は `logs/live_monitor.json` から読む（手計算しない）
+- **ボット禁止**: `while True` + `sleep` の常駐スクリプトを書かない
+- **スコアに頼るな**: 生データを自分で読んで判断しろ。スコアは参考値
+- **裁量トレーダーであれ**: ルール実行マシンではない。市場を読んで自分で判断する
+- **OANDA直接注文**: urllib で REST API を叩く
+- テクニカル指標は `logs/live_monitor_summary.json` から読む（手計算しない）
 - 注文は必ず `logs/live_trade_log.txt` にファイル記録
 - エントリー後は `logs/trade_registry.json` に登録（Python管理ルール適用のため）
 
@@ -68,13 +63,20 @@ secretary → audits compliance → relays findings → prunes complexity
 
 | ファイル | 読む人 | 内容 |
 |----------|--------|------|
-| `CLAUDE.md` (このファイル) | 全員 | アーキテクチャ全体像、絶対ルール、変更時の必須ルール |
-| `docs/SCALP_FAST_PROMPT.md` | scalp-fast | 高速スキャルプ手法・ワークフロー |
-| `docs/SWING_TRADER_PROMPT.md` | swing-trader | スウィング手法・MTF分析・ワークフロー |
-| `docs/SCALP_TRADER_PROMPT.md` | (参考) | 旧scalp-trader。教訓・Playsは今も有効。直接使うタスクはなし |
-| `docs/MARKET_RADAR_PROMPT.md` | market-radar | 監視・急変検知・アラート |
-| `docs/MACRO_INTEL_PROMPT.md` | macro-intel | マクロ分析・戦略改善・ツール開発 |
-| `docs/SECRETARY_PROMPT.md` | secretary | アカウンタビリティ監査・クロスエージェント中継・複雑性プルーニング |
+| `CLAUDE.md` (このファイル) | 全員 | アーキテクチャ全体像、絶対ルール |
+| `docs/TRADER_PROMPT.md` | trader | 裁量トレーダーの心得。スキャルプもスウィングもここ |
+| `docs/ANALYST_PROMPT.md` | analyst | マクロ分析・クロスペア・パフォーマンス・ツール開発 |
+| `docs/SECRETARY_PROMPT.md` | secretary | ヘルスチェック・アラート・ゴミ掃除 |
+
+### レガシープロンプト（参考のみ、旧5エージェント体制）
+
+| ファイル | 内容 |
+|----------|------|
+| `docs/SCALP_FAST_PROMPT.md` | 旧scalp-fast。教訓は有効 |
+| `docs/SWING_TRADER_PROMPT.md` | 旧swing-trader。教訓は有効 |
+| `docs/MARKET_RADAR_PROMPT.md` | 旧market-radar |
+| `docs/MACRO_INTEL_PROMPT.md` | 旧macro-intel |
+| `docs/SCALP_TRADER_PROMPT.md` | 旧scalp-trader |
 
 ### 運用ドキュメント（必要時に参照）
 
@@ -98,24 +100,23 @@ secretary → audits compliance → relays findings → prunes complexity
 
 | ファイル | 誰が書く | 誰が読む | 内容 |
 |----------|----------|----------|------|
-| `logs/live_monitor.json` | live_monitor.py | 全タスク | モニター画面（30秒更新） |
+| `logs/live_monitor.json` | live_monitor.py | 全タスク | 全データ（30秒更新） |
+| `logs/live_monitor_summary.json` | live_monitor.py | trader | コンパクト版（生データ、スコアなし） |
 | `logs/trade_registry.json` | Claude(entry時) | live_monitor.py | ポジション所有権と管理ルール |
-| `logs/shared_state.json` | 全タスク | 全タスク | エージェント間連携（バイアス、アラート等） |
+| `logs/shared_state.json` | analyst/secretary | 全タスク | マクロバイアス・アラート |
 | `logs/live_trade_log.txt` | 全タスク + monitor | 全タスク | トレード実行ログ（時系列） |
 | `logs/technicals_*.json` | refresh_factor_cache | live_monitor.py | H1/H4テクニカル指標 |
-| `logs/strategy_feedback.json` | trade_performance.py | macro-intel/全タスク | v3パフォーマンス統計（W/L,ペア別,セッション別,予測精度） |
-| `logs/market_context_latest.json` | macro-intel | swing-trader | マクロコンテキスト |
+| `logs/strategy_feedback.json` | trade_performance.py | analyst | パフォーマンス統計 |
 
 ### スクリプト
 
 | ファイル | 実行方法 | 内容 |
 |----------|----------|------|
-| `scripts/trader_tools/live_monitor.py` | launchd 30秒 | データ収集+シグナル+機械的ポジ管理 |
-| `scripts/trader_tools/refresh_factor_cache.py` | swing-traderが呼ぶ | H1/H4テクニカル指標の更新 |
-| `scripts/trader_tools/task_lock.py` | 各タスク | グローバルロック排他制御 |
+| `scripts/trader_tools/live_monitor.py` | launchd 30秒 | データ収集+機械的ポジ管理 |
+| `scripts/trader_tools/refresh_factor_cache.py` | analystが呼ぶ | H1/H4テクニカル指標の更新 |
+| `scripts/trader_tools/task_lock.py` | analyst | グローバルロック排他制御 |
+| `scripts/trader_tools/trade_performance.py` | analystが呼ぶ | パフォーマンス集計 |
 | `scripts/trader_tools/setup_live_monitor.sh` | 手動(初回) | launchdへのmonitor登録 |
-| `scripts/trader_tools/trade_performance.py` | macro-intelが呼ぶ | v3パフォーマンス集計（live_trade_log.txt解析） |
-| `scripts/trader_tools/setup_scheduled_tasks.sh` | 手動(初回) | 全タスクの登録 |
 
 ## 主要ディレクトリ
 
